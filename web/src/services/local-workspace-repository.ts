@@ -98,7 +98,7 @@ export async function createLocalCanvasProject(title: string, projectId?: string
 }
 
 /** Serialize writes per canvas so optimistic revisions cannot race each other. */
-function syncLocalCanvasProject(id: string, includeGeneratedAssets: boolean): Promise<void> {
+function syncLocalCanvasProject(id: string, includeGeneratedAssets: boolean, generationEffectKey?: string): Promise<void> {
     const previous = backendSaveTails.get(id) || Promise.resolve();
     const next = previous.catch(() => undefined).then(async () => {
         const project = openLocalCanvasProject(id);
@@ -106,7 +106,7 @@ function syncLocalCanvasProject(id: string, includeGeneratedAssets: boolean): Pr
         const assets = includeGeneratedAssets ? canvasGenerationCommitAssets(project, useAssetStore.getState().assets) : [];
         const projectForSave = includeGeneratedAssets ? bindCanvasGenerationCommitAssets(project, assets) : project;
         const endpoint = includeGeneratedAssets ? `/canvas-projects/${encodeURIComponent(id)}/generated-assets` : `/canvas-projects/${encodeURIComponent(id)}`;
-        const response = await http.put<{ project: CanvasSaveSummary }>(endpoint, includeGeneratedAssets ? { project: projectForSave, assets } : { project: projectForSave });
+        const response = await http.put<{ project: CanvasSaveSummary }>(endpoint, includeGeneratedAssets ? { project: projectForSave, assets, effectKey: generationEffectKey } : { project: projectForSave });
         const saved = response.project;
         if (!saved) return;
         useCanvasStore.setState((state) => ({
@@ -135,8 +135,8 @@ export function syncLocalCanvasProjectToBackend(id: string): Promise<void> {
     return syncLocalCanvasProject(id, false);
 }
 
-export function syncLocalCanvasGenerationProjectToBackend(id: string): Promise<void> {
-    return syncLocalCanvasProject(id, true);
+export function syncLocalCanvasGenerationProjectToBackend(id: string, generationEffectKey: string): Promise<void> {
+    return syncLocalCanvasProject(id, true, generationEffectKey);
 }
 
 export function scheduleLocalCanvasBackendSync(id: string) {

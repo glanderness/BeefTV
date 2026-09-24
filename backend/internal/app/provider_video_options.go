@@ -270,7 +270,9 @@ func normalizeSeedanceResolution(value string, model string) string {
 			resolution = "720"
 		}
 	}
-	if strings.Contains(strings.ToLower(model), "fast") && (resolution == "1080" || resolution == "2160") {
+	modelName := strings.ToLower(model)
+	limitedResolution := strings.Contains(modelName, "seedance") && (strings.Contains(modelName, "mini") || strings.Contains(modelName, "fast"))
+	if limitedResolution && resolution != "480" && resolution != "720" {
 		resolution = "720"
 	}
 	return resolution + "p"

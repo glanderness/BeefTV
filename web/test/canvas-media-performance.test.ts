@@ -71,7 +71,7 @@ describe("large canvas media rendering", () => {
 
     test("keeps inactive video nodes on a viewport-gated static first frame", () => {
         const inactivePreviewSource = canvasNodeContentSource.match(/function InactiveVideoPreview[\s\S]*?\n}\n\nfunction VideoPreviewPlayButton/)?.[0] || "";
-        expect(canvasNodeContentSource).toContain("if (previewUrl || !nearViewport || (!node.metadata?.content && !node.metadata?.storageKey) || !updateMetadataRef.current)");
+        expect(canvasNodeContentSource).toContain("if (!previewNeedsRefresh || !nearViewport || (!node.metadata?.content && !node.metadata?.storageKey) || !updateMetadataRef.current)");
         expect(canvasNodeContentSource).not.toContain("hydrateMediaPreview");
         expect(inactivePreviewSource).not.toContain("<video");
         expect(inactivePreviewSource).toContain("<VideoPreviewPlayButton");
@@ -305,7 +305,7 @@ describe("passive video previews", () => {
         const video = node("video", CanvasNodeType.Video);
         video.metadata = { ...metadata, previewContent: "https://example.com/legacy-poster.jpg" };
 
-        expect(metadata.videoPreview).toEqual({ content: "blob:poster", storageKey: "image:user:1", width: 400, height: 225, bytes: 256, mimeType: "image/jpeg" });
+        expect(metadata.videoPreview).toEqual({ content: "blob:poster", storageKey: "image:user:1", captureVersion: 2, width: 400, height: 225, bytes: 256, mimeType: "image/jpeg" });
         expect(metadata.hasAudio).toBe(false);
         expect(collectImageStorageKeys(metadata)).toContain("image:user:1");
         expect(canvasNodeVideoPreviewUrl(video)).toBe("blob:poster");

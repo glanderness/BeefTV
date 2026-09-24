@@ -42,21 +42,21 @@ async function readVideoSourceBlob(source: VideoSegmentSource) {
 
 async function runSegmentJob(
     source: VideoSegmentSource,
-    range: VideoSegmentRange,
+    range: VideoSegmentRange | undefined,
     durationMs: number | undefined,
     buildArgs: (startSec: string, durationSec: string) => string[],
     onProgress?: (progress: VideoSegmentProgress) => void,
     outputType = "video/mp4",
     outputName = OUTPUT_NAME,
 ) {
-    assertValidRange(range, durationMs);
+    if (range) assertValidRange(range, durationMs);
     const ffmpeg = await loadFFmpeg(({ phase, progress }) => onProgress?.({ phase: phase === "loading" ? "loading" : "reading", progress }));
     const { fetchFile } = await import("@ffmpeg/util");
     const blob = await readVideoSourceBlob(source);
     onProgress?.({ phase: "reading", progress: 45 });
     await ffmpeg.writeFile(INPUT_NAME, await fetchFile(blob));
-    const startSec = String(range.startMs / 1000);
-    const durationSec = String((range.endMs - range.startMs) / 1000);
+    const startSec = range ? String(range.startMs / 1000) : "";
+    const durationSec = range ? String((range.endMs - range.startMs) / 1000) : "";
     onProgress?.({ phase: "encoding", progress: 55 });
     try {
         const exitCode = await ffmpeg.exec(["-y", ...buildArgs(startSec, durationSec)]);
@@ -75,27 +75,24 @@ export async function trimVideoSegment(source: VideoSegmentSource, range: VideoS
 }
 
 /** 从视频中移除音轨，保留画面并输出独立无声视频。 */
-export async function removeAudioFromVideo(source: VideoSegmentSource, range: VideoSegmentRange, durationMs?: number, onProgress?: (progress: VideoSegmentProgress) => void) {
-    return runSegmentJob(source, range, durationMs, (startSec, durationSec) => buildRemoveAudioArgs(startSec, durationSec), onProgress, "video/mp4", MUTED_VIDEO_OUTPUT_NAME);
+export async function removeAudioFromVideo(source: VideoSegmentSource, onProgress?: (progress: VideoSegmentProgress) => void) {
+    return runSegmentJob(source, undefined, undefined, () => buildRemoveAudioArgs(), onProgress, "video/mp4", MUTED_VIDEO_OUTPUT_NAME);
 }
 
-/** 从视频片段提取声音；优先 MP3，精简 FFmpeg 内核不支持 MP3 时自动回退 WAV。 */
-export async function extractVideoAudio(source: VideoSegmentSource, range: VideoSegmentRange, durationMs?: number, onProgress?: (progress: VideoSegmentProgress) => void) {
-    assertValidRange(range, durationMs);
+/** 从整段视频提取声音；优先直接复制，编码器不兼容时自动回退。 */
+export async function extractVideoAudio(source: VideoSegmentSource, onProgress?: (progress: VideoSegmentProgress) => void) {
     const ffmpeg = await loadFFmpeg(({ phase, progress }) => onProgress?.({ phase: phase === "loading" ? "loading" : "reading", progress }));
     const { fetchFile } = await import("@ffmpeg/util");
     const blob = await readVideoSourceBlob(source);
     onProgress?.({ phase: "reading", progress: 45 });
     await ffmpeg.writeFile(INPUT_NAME, await fetchFile(blob));
-    const startSec = String(range.startMs / 1000);
-    const durationSec = String((range.endMs - range.startMs) / 1000);
     onProgress?.({ phase: "encoding", progress: 55 });
     try {
-        const args = (audioCodec: string, outputName = AUDIO_OUTPUT_NAME) => buildExtractAudioArgs(audioCodec, startSec, durationSec, outputName);
+        const args = (audioCodec: string, outputName = AUDIO_OUTPUT_NAME) => buildExtractAudioArgs(audioCodec, outputName);
         let outputName = AUDIO_OUTPUT_NAME;
         let outputType = "audio/mpeg";
         // 大多数 MP4 音轨本身就是 AAC；优先直接复制，避免无谓的整段重编码。
-        let exitCode = await ffmpeg.exec(["-y", ...buildCopyAudioArgs(startSec, durationSec, AUDIO_COPY_OUTPUT_NAME)]);
+        let exitCode = await ffmpeg.exec(["-y", ...buildCopyAudioArgs(AUDIO_COPY_OUTPUT_NAME)]);
         if (exitCode === 0) {
             outputName = AUDIO_COPY_OUTPUT_NAME;
             outputType = "audio/mp4";
@@ -106,7 +103,7 @@ export async function extractVideoAudio(source: VideoSegmentSource, range: Video
             // 若内核缺少音频编码器，直接复制源音轨到 M4A，避免重编码依赖。
             outputName = AUDIO_COPY_OUTPUT_NAME;
             outputType = "audio/mp4";
-            exitCode = await ffmpeg.exec(["-y", ...buildCopyAudioArgs(startSec, durationSec, outputName)]);
+            exitCode = await ffmpeg.exec(["-y", ...buildCopyAudioArgs(outputName)]);
         }
         if (exitCode !== 0) {
             // The bundled core may omit both MP3 encoders. PCM/WAV is broadly

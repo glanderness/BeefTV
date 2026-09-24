@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -132,4 +136,129 @@ func TestPrepareDesktopAppStartsRuntimeBeforeWailsMainLoop(t *testing.T) {
 	if config.BaseURL == "" || config.LaunchToken == "" {
 		t.Fatalf("desktop app was not ready before Wails main loop: %#v", config)
 	}
+}
+
+func TestDesktopExportResourceWritesStoredBytesToSelectedDirectory(t *testing.T) {
+	app := newDesktopApp(t.TempDir())
+	if err := app.start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer app.stop(context.Background())
+
+	resourceID := uploadDesktopTestResource(t, app, "video.mp4", "video", []byte("desktop-export"))
+	exportDir := t.TempDir()
+	app.chooseExportDirectory = func(context.Context) (string, error) { return exportDir, nil }
+
+	result, err := app.ExportResource(resourceID, "水牛视频.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Canceled {
+		t.Fatal("export was unexpectedly canceled")
+	}
+	wantPath := filepath.Join(exportDir, "水牛视频.mp4")
+	if result.Path != wantPath {
+		t.Fatalf("export path = %q, want %q", result.Path, wantPath)
+	}
+	content, err := os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "desktop-export" {
+		t.Fatalf("exported content = %q", content)
+	}
+}
+
+func TestDesktopExportResourceCancelLeavesDirectoryUntouched(t *testing.T) {
+	app := newDesktopApp(t.TempDir())
+	app.chooseExportDirectory = func(context.Context) (string, error) { return "", nil }
+
+	result, err := app.ExportResource("resource-id", "video.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Canceled || result.Path != "" {
+		t.Fatalf("cancel result = %#v", result)
+	}
+}
+
+func TestDesktopExportResourceDoesNotOverwriteExistingFile(t *testing.T) {
+	app := newDesktopApp(t.TempDir())
+	if err := app.start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer app.stop(context.Background())
+
+	resourceID := uploadDesktopTestResource(t, app, "image.png", "image", []byte("new-image"))
+	exportDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(exportDir, "画面.png"), []byte("existing-image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app.chooseExportDirectory = func(context.Context) (string, error) { return exportDir, nil }
+
+	result, err := app.ExportResource(resourceID, "画面.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPath := filepath.Join(exportDir, "画面 (1).png")
+	if result.Path != wantPath {
+		t.Fatalf("export path = %q, want %q", result.Path, wantPath)
+	}
+	original, err := os.ReadFile(filepath.Join(exportDir, "画面.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(original) != "existing-image" {
+		t.Fatalf("existing file was overwritten: %q", original)
+	}
+}
+
+func uploadDesktopTestResource(t *testing.T, app *DesktopApp, fileName string, kind string, content []byte) string {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", fileName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("kind", kind); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	config := app.RuntimeConfig()
+	request, err := http.NewRequest(http.MethodPost, config.BaseURL+"/resources", &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("X-Desktop-Token", config.LaunchToken)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		payload, _ := io.ReadAll(response.Body)
+		t.Fatalf("upload status = %d, body=%s", response.StatusCode, payload)
+	}
+	var envelope struct {
+		Data struct {
+			Resource struct {
+				ID string `json:"id"`
+			} `json:"resource"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Data.Resource.ID == "" {
+		t.Fatal("upload returned an empty resource id")
+	}
+	return envelope.Data.Resource.ID
 }

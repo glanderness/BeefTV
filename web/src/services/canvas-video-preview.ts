@@ -1,11 +1,20 @@
 import { captureVideoPoster } from "@/lib/video-poster";
+import { canvasNodeVideoPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 
 type VideoPreview = NonNullable<CanvasNodeMetadata["videoPreview"]>;
 
+export const CANVAS_VIDEO_PREVIEW_CAPTURE_VERSION = 2;
+
 const previewRequests = new Map<string, Promise<VideoPreview | null>>();
+
+export function canvasVideoPreviewNeedsRefresh(node: CanvasNodeData) {
+    const generatedPreview = node.metadata?.videoPreview;
+    if (generatedPreview?.content) return generatedPreview.captureVersion !== CANVAS_VIDEO_PREVIEW_CAPTURE_VERSION;
+    return !canvasNodeVideoPreviewUrl(node);
+}
 
 export function hydrateCanvasVideoPreview(node: CanvasNodeData, signal?: AbortSignal) {
     const sourceKey = node.metadata?.storageKey || node.metadata?.content || "";
@@ -41,6 +50,7 @@ async function generateCanvasVideoPreview(node: CanvasNodeData, signal?: AbortSi
     return {
         content: preview.url,
         storageKey: preview.storageKey,
+        captureVersion: CANVAS_VIDEO_PREVIEW_CAPTURE_VERSION,
         width: preview.width,
         height: preview.height,
         bytes: preview.bytes,

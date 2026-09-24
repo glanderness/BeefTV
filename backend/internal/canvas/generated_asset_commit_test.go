@@ -91,6 +91,72 @@ func TestCommitUserCanvasProjectAssetsRollsBackAssetWhenCanvasRevisionConflicts(
 	}
 }
 
+func TestCommitUserCanvasGenerationAssetsRebasesStampedNodeOntoLatestCanvas(t *testing.T) {
+	svc := newCanvasHistoryTestService(t)
+	if _, err := svc.UpsertUserCanvasProject("owner", json.RawMessage(`{
+		"id":"canvas","revision":0,"title":"before",
+		"nodes":[{"id":"generated","type":"video","metadata":{"status":"loading"}}],
+		"connections":[]
+	}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpsertUserCanvasProject("owner", json.RawMessage(`{
+		"id":"canvas","revision":1,"title":"latest user edit",
+		"nodes":[
+			{"id":"generated","type":"video","metadata":{"status":"loading"}},
+			{"id":"ordinary-edit","type":"text","metadata":{"content":"keep me"}}
+		],
+		"connections":[]
+	}`)); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	resource := model.Resource{ID: "resource-video", UserID: "owner", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "users/owner/video/result.mp4", CreatedAt: now, UpdatedAt: now}
+	if err := svc.repo.CreateResource(&resource); err != nil {
+		t.Fatal(err)
+	}
+	asset := json.RawMessage(`{"id":"generation_video","kind":"video","title":"generated","coverUrl":"/api/resources/resource-video/file","tags":["generated"],"status":"confirmed","source":"generation","data":{"dataUrl":"/api/resources/resource-video/file","storageKey":"resource:resource-video","width":1280,"height":720,"durationMs":6000,"bytes":1,"mimeType":"video/mp4"}}`)
+	staleGeneration := json.RawMessage(`{
+		"id":"canvas","revision":1,"title":"before",
+		"nodes":[{"id":"generated","type":"video","metadata":{"status":"success","storageKey":"resource:resource-video","content":"/api/resources/resource-video/file","generationEffectKeys":["task:output:0"]}}],
+		"connections":[]
+	}`)
+
+	saved, err := svc.CommitUserCanvasGenerationAssets("owner", staleGeneration, []json.RawMessage{asset}, "task:output:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Revision != 3 {
+		t.Fatalf("revision = %d, want 3", saved.Revision)
+	}
+	persisted, err := svc.UserCanvasProject("owner", "canvas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Title string `json:"title"`
+		Nodes []struct {
+			ID       string `json:"id"`
+			Metadata struct {
+				Status  string `json:"status"`
+				AssetID string `json:"assetId"`
+			} `json:"metadata"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(persisted, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document.Title != "latest user edit" {
+		t.Fatalf("title = %q, want latest user edit", document.Title)
+	}
+	if len(document.Nodes) != 2 || document.Nodes[1].ID != "ordinary-edit" {
+		t.Fatalf("ordinary edit was overwritten: %s", persisted)
+	}
+	if document.Nodes[0].Metadata.Status != "success" || document.Nodes[0].Metadata.AssetID != "generation_video" {
+		t.Fatalf("generated node was not committed: %s", persisted)
+	}
+}
+
 func TestBindCanvasMediaAssetsCoversImageVideoAndAudio(t *testing.T) {
 	items := []model.Asset{
 		{ID: "asset-image", PayloadJSON: `{"data":{"storageKey":"resource:image-resource"}}`},

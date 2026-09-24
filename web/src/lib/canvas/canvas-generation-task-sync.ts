@@ -13,6 +13,7 @@ import { applyGenerationConsumerEffect, generationEffectApplied } from "@/servic
 import { attachNodeEffectKey } from "@/services/generation-task-materializer";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
+import { CANVAS_VIDEO_PREVIEW_CAPTURE_VERSION } from "@/services/canvas-video-preview";
 
 export function generationTaskInput(task: GenerationTask) {
     if (!task.inputJson) return null;
@@ -72,6 +73,7 @@ export function videoMetadata(video: UploadedFile): CanvasNodeMetadata {
         videoPreview: video.preview ? {
             content: video.preview.url,
             storageKey: video.preview.storageKey,
+            captureVersion: CANVAS_VIDEO_PREVIEW_CAPTURE_VERSION,
             width: video.preview.width,
             height: video.preview.height,
             bytes: video.preview.bytes,

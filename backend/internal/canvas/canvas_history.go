@@ -44,7 +44,7 @@ func SaveDocumentWithHistoryAndAssets(repo *repository.Repository, before *model
 }
 
 func canvasRevisionConflict() error {
-	return kernel.NewAppError(http.StatusConflict, "云端画布已有更新，已停止覆盖；请保留本地草稿并加载最新版本")
+	return kernel.NewAppError(http.StatusConflict, "画布内容已更新，当前修改未覆盖新版本；请刷新后重试")
 }
 
 type CanvasHistoryList struct {

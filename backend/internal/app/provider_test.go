@@ -1711,6 +1711,16 @@ func TestBeefAPIVideoBodyUsesFlatFirstFrameContract(t *testing.T) {
 	}
 }
 
+func TestSeedanceLimitedModelsNormalizeHigherResolutionsTo720P(t *testing.T) {
+	for _, modelName := range []string{"seedance-2.0-mini", "seedance-2.0-fast"} {
+		for _, resolution := range []string{"1080p", "1440p", "2160p"} {
+			if got := normalizeSeedanceResolution(resolution, modelName); got != "720p" {
+				t.Fatalf("normalizeSeedanceResolution(%q, %q) = %q, want 720p", resolution, modelName, got)
+			}
+		}
+	}
+}
+
 func TestBeefAPIVideoBodyKeepsAspectRatioWithoutFirstFrame(t *testing.T) {
 	body, err := beefAPIVideoRequestBody(canvasGenerationInput{
 		Prompt: "make it move",

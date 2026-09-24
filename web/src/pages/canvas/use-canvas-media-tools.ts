@@ -38,7 +38,6 @@ import { createPortraitTextureNode } from "@/lib/canvas/canvas-image-source";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { canvasNodesMissingResourceAssetBinding } from "@/lib/canvas/canvas-node-asset";
 import { captureVideoFrames } from "@/lib/canvas/canvas-video-frame";
-import { resolveCanvasVideoDurationMs } from "@/lib/canvas/canvas-video-duration";
 import { buildVideoFrameNodes } from "@/lib/canvas/canvas-video-frame-nodes";
 import { mergeVideos, warmFFmpeg, type MergeVideoProgress } from "@/lib/canvas/canvas-video-merge";
 import { cropVideo, extractVideoAudio, removeAudioFromVideo, trimVideoSegment } from "@/lib/canvas/canvas-video-segment";
@@ -524,16 +523,15 @@ export function useCanvasMediaTools({
     }, [connectionsRef, message, nodesRef, persistMediaNodes, selectedNodeIdsRef, setConnections, setDialogNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds, startUploadStatus]);
 
     // 音视频分离同时产出独立音轨和无声视频，原视频始终保留。
-    const runExtractVideoAudio = useCallback(async (node: CanvasNodeData, params: { startMs: number; endMs: number }) => {
+    const runExtractVideoAudio = useCallback(async (node: CanvasNodeData) => {
         const progress = startUploadStatus("音视频分离", "生成无声视频与音轨", 6);
         try {
             const source = { url: node.metadata?.content, storageKey: node.metadata?.storageKey };
-            const range = { startMs: params.startMs, endMs: params.endMs };
-            const mutedVideo = await removeAudioFromVideo(source, range, node.metadata?.durationMs, (status) => {
+            const mutedVideo = await removeAudioFromVideo(source, (status) => {
                 progress.update(status.phase === "loading" ? "加载 FFmpeg" : status.phase === "reading" ? "读取视频资源" : "正在生成无声视频", status.phase === "encoding" ? 2 : 1);
             });
             progress.update("正在提取音轨", 3);
-            const audio = await extractVideoAudio(source, range, node.metadata?.durationMs, (status) => {
+            const audio = await extractVideoAudio(source, (status) => {
                 progress.update(status.phase === "loading" ? "加载 FFmpeg" : status.phase === "reading" ? "读取视频资源" : "正在提取音轨", status.phase === "encoding" ? 4 : 3);
             });
             progress.update("保存两个独立结果", 5);
@@ -548,7 +546,7 @@ export function useCanvasMediaTools({
             silentVideo.title = `${node.title || "视频"} · 无声视频`;
             const audioNode = createCanvasNode(CanvasNodeType.Audio, { x: outputX + audioSpec.width / 2, y: node.position.y + videoSpec.height + 96 + audioSpec.height / 2 }, mediaResultMetadata("derived", {
                 ...audioMetadata(uploadedAudio), prompt: `从「${node.title || "视频"}」提取的声音`, status: NODE_STATUS_SUCCESS,
-                audioExtractSourceNodeId: node.id, audioExtractStartMs: params.startMs, audioExtractEndMs: params.endMs,
+                audioExtractSourceNodeId: node.id, audioExtractStartMs: 0, audioExtractEndMs: uploadedAudio.durationMs,
             }));
             audioNode.title = `${node.title || "视频"} · 音轨`;
             const outputs = [silentVideo, audioNode];
@@ -586,15 +584,7 @@ export function useCanvasMediaTools({
         setSegmentRunningMode("audio");
         setHoveredNodeId(null);
         setToolbarNodeId(null);
-        const video = document.querySelector<HTMLVideoElement>(`[data-node-id="${CSS.escape(node.id)}"] video`);
-        const durationMs = resolveCanvasVideoDurationMs(node.metadata.durationMs, video?.duration);
-        if (!durationMs || durationMs <= 0) {
-            segmentRunningRef.current = false;
-            setSegmentRunningMode(null);
-            message.warning("视频时长尚未就绪，无法分离整段音频，请稍后重试");
-            return;
-        }
-        void runExtractVideoAudio(node, { startMs: 0, endMs: durationMs }).finally(() => {
+        void runExtractVideoAudio(node).finally(() => {
             segmentRunningRef.current = false;
             setSegmentRunningMode(null);
         });

@@ -77,13 +77,22 @@ export function isSeedanceFastModel(model: string) {
     return isSeedanceVideoModel(value) && value.includes("fast");
 }
 
+export function isSeedanceLimitedResolutionModel(model: string) {
+    const value = model.toLowerCase();
+    return isSeedanceVideoModel(value) && (value.includes("mini") || value.includes("fast"));
+}
+
+export function isSeedanceResolutionSupported(model: string, resolution: string) {
+    return !isSeedanceLimitedResolutionModel(model) || ["480p", "720p"].includes(normalizeResolutionToken(resolution));
+}
+
 export function isArkPlanBaseUrl(baseUrl: string) {
     return baseUrl.toLowerCase().includes("ark.cn-beijing.volces.com/api/plan/v3") || baseUrl.toLowerCase().includes("/api/plan/v3");
 }
 
 export function normalizeSeedanceResolution(value: string, model = "") {
     const normalized = normalizeResolutionToken(value);
-    if (isSeedanceFastModel(model) && (normalized === "1080p" || normalized === "2160p")) return "720p";
+    if (!isSeedanceResolutionSupported(model, normalized)) return "720p";
     return normalized === "2160p" || seedanceResolutionOptions.some((item) => item.value === normalized) ? normalized : "720p";
 }
 

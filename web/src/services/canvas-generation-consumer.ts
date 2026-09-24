@@ -542,7 +542,7 @@ export async function persistCanvasGenerationEffect(input: CanvasGenerationEffec
         // the Go repository that will hydrate the next app launch.
         if (getActiveUserScope() === scope) {
             const { syncLocalCanvasGenerationProjectToBackend } = await import("@/services/local-workspace-repository");
-            await syncLocalCanvasGenerationProjectToBackend(input.projectId);
+            await syncLocalCanvasGenerationProjectToBackend(input.projectId, input.effectKey);
         }
         return persisted;
     } finally {

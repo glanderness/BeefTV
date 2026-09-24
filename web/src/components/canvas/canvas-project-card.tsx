@@ -234,7 +234,7 @@ export function ProjectPreview({ project, preferLatestImage = false, emptyVarian
 }
 
 function LibTvEmptyPreview() {
-    return <div className="canvas-project-empty is-libtv size-full"><span className="canvas-project-empty-image" aria-hidden="true" /><Workflow className="canvas-project-empty-icon" aria-hidden="true" /></div>;
+    return <div className="canvas-project-empty is-libtv size-full"><Workflow className="canvas-project-empty-icon" aria-hidden="true" /></div>;
 }
 
 export function projectPreviewMedia(nodes: CanvasNodeData[], preferLatestImage = false) {

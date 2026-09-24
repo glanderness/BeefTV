@@ -1,3 +1,5 @@
+import { videoFrameSeekSeconds, waitForPresentedVideoFrame } from "@/lib/canvas/canvas-video-frame";
+
 export type CapturedVideoPoster = {
     width: number;
     height: number;
@@ -18,6 +20,24 @@ const MP4_AUDIO_PROBE_RANGE_BYTES = 1024 * 1024;
 const videoAudioProbeCache = new Map<string, Promise<boolean | undefined>>();
 
 let captureQueue: Promise<void> = Promise.resolve();
+
+/** Rejects only effectively empty black decoder buffers; legitimate dark footage remains valid. */
+export function isUsableVideoPosterPixels(pixels: Uint8ClampedArray) {
+    let visiblePixels = 0;
+    let nonBlackPixels = 0;
+    for (let offset = 0; offset + 3 < pixels.length; offset += 4) {
+        if (pixels[offset + 3] === 0) continue;
+        visiblePixels += 1;
+        if (Math.max(pixels[offset], pixels[offset + 1], pixels[offset + 2]) > 8) nonBlackPixels += 1;
+    }
+    return visiblePixels > 0 && nonBlackPixels / visiblePixels > 0.01;
+}
+
+export function videoPosterCandidateTimes(durationMs: number) {
+    if (!Number.isFinite(durationMs) || durationMs <= 0) return [0];
+    const contentSampleMs = Math.min(1_000, Math.max(250, Math.round(durationMs * 0.05)));
+    return Array.from(new Set([0, Math.min(100, Math.max(0, durationMs - 1)), Math.min(contentSampleMs, Math.max(0, durationMs - 1))]));
+}
 
 /** Serializes browser video decoding so batch uploads and poster hydration never fan out decoders. */
 export function captureVideoPoster(source: string, options: CaptureVideoPosterOptions = {}) {
@@ -96,19 +116,53 @@ function captureVideoPosterNow(source: string, options: CaptureVideoPosterOption
                 finish(metadata);
                 return;
             }
-            try {
-                context.fillStyle = "#000";
-                context.fillRect(0, 0, width, height);
-                context.drawImage(video, 0, 0, width, height);
-                canvas.toBlob((poster) => finish({ ...metadata, poster: poster || undefined }), "image/jpeg", 0.82);
-            } catch {
+            void capturePresentedPoster(video, canvas, context, metadata.durationMs || 0, signal)
+                .then((poster) => finish({ ...metadata, poster }))
                 // Cross-origin videos without CORS can still expose metadata but cannot be drawn safely.
-                finish(metadata);
-            }
+                .catch(() => finish(metadata));
         };
         video.src = source;
         video.load();
     });
+}
+
+async function capturePresentedPoster(video: HTMLVideoElement, canvas: HTMLCanvasElement, context: CanvasRenderingContext2D, durationMs: number, signal?: AbortSignal) {
+    for (const timeMs of videoPosterCandidateTimes(durationMs)) {
+        if (signal?.aborted) throw abortError();
+        const targetSeconds = videoFrameSeekSeconds(timeMs, durationMs);
+        if (Math.abs(video.currentTime - targetSeconds) > 0.0005) {
+            const seeked = waitForVideoSeek(video, signal);
+            video.currentTime = targetSeconds;
+            await seeked;
+        }
+        await waitForPresentedVideoFrame(video);
+        context.fillStyle = "#000";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        if (!isUsableVideoPosterPixels(context.getImageData(0, 0, canvas.width, canvas.height).data)) continue;
+        return await canvasToJpegBlob(canvas);
+    }
+    return undefined;
+}
+
+function waitForVideoSeek(video: HTMLVideoElement, signal?: AbortSignal) {
+    return new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+            signal?.removeEventListener("abort", onAbort);
+            video.removeEventListener("seeked", onSeeked);
+            video.removeEventListener("error", onError);
+        };
+        const onSeeked = () => { cleanup(); resolve(); };
+        const onError = () => { cleanup(); reject(new Error("视频封面定位失败")); };
+        const onAbort = () => { cleanup(); reject(abortError()); };
+        signal?.addEventListener("abort", onAbort, { once: true });
+        video.addEventListener("seeked", onSeeked, { once: true });
+        video.addEventListener("error", onError, { once: true });
+    });
+}
+
+function canvasToJpegBlob(canvas: HTMLCanvasElement) {
+    return new Promise<Blob | undefined>((resolve) => canvas.toBlob((blob) => resolve(blob || undefined), "image/jpeg", 0.82));
 }
 
 function isCrossOriginHttpUrl(source: string) {

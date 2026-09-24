@@ -3,12 +3,13 @@ package canvas
 import (
 	"encoding/json"
 	"errors"
-	"infinite-canvas/backend/internal/kernel"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 
@@ -221,19 +222,156 @@ func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (U
 }
 
 func (s *Service) CommitUserCanvasProjectAssets(userID string, raw json.RawMessage, assetPayloads []json.RawMessage) (UserDataSummary, error) {
-	items := make([]model.Asset, 0, len(assetPayloads))
-	for _, payload := range assetPayloads {
-		asset, err := AssetFromJSON(userID, payload)
-		if err != nil {
-			return UserDataSummary{}, err
-		}
-		items = append(items, asset)
+	items, err := canvasAssetsFromJSON(userID, assetPayloads)
+	if err != nil {
+		return UserDataSummary{}, err
 	}
 	bound, err := BindCanvasMediaAssets(raw, items)
 	if err != nil {
 		return UserDataSummary{}, err
 	}
 	return s.upsertUserCanvasProjectWithAssets(userID, bound, items, "automatic")
+}
+
+func canvasAssetsFromJSON(userID string, assetPayloads []json.RawMessage) ([]model.Asset, error) {
+	items := make([]model.Asset, 0, len(assetPayloads))
+	for _, payload := range assetPayloads {
+		asset, err := AssetFromJSON(userID, payload)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, asset)
+	}
+	return items, nil
+}
+
+// CommitUserCanvasGenerationAssets applies only entities stamped by effectKey
+// to the latest canvas. Generation can finish minutes after it started, so its
+// original whole-document revision must not overwrite intervening user edits.
+func (s *Service) CommitUserCanvasGenerationAssets(userID string, raw json.RawMessage, assetPayloads []json.RawMessage, effectKey string) (UserDataSummary, error) {
+	effectKey = strings.TrimSpace(effectKey)
+	if effectKey == "" {
+		return UserDataSummary{}, kernel.BadAuthRequest("生成结果缺少幂等标识")
+	}
+	var identity struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &identity); err != nil || strings.TrimSpace(identity.ID) == "" {
+		return UserDataSummary{}, kernel.BadAuthRequest("画布数据格式错误")
+	}
+	current, err := s.UserCanvasProject(userID, identity.ID)
+	if err != nil {
+		return UserDataSummary{}, err
+	}
+	merged, err := mergeCanvasGenerationEffect(current, raw, effectKey)
+	if err != nil {
+		return UserDataSummary{}, err
+	}
+	items, err := canvasAssetsFromJSON(userID, assetPayloads)
+	if err != nil {
+		return UserDataSummary{}, err
+	}
+	bound, err := BindCanvasMediaAssets(merged, items)
+	if err != nil {
+		return UserDataSummary{}, err
+	}
+	return s.upsertUserCanvasProjectWithAssets(userID, bound, items, "automatic")
+}
+
+func mergeCanvasGenerationEffect(currentRaw, generatedRaw json.RawMessage, effectKey string) (json.RawMessage, error) {
+	var current, generated map[string]json.RawMessage
+	if json.Unmarshal(currentRaw, &current) != nil || json.Unmarshal(generatedRaw, &generated) != nil {
+		return nil, kernel.BadAuthRequest("画布数据格式错误")
+	}
+	affectedNodeIDs := map[string]bool{}
+	mergedAny := false
+	mergeStamped := func(field string, nestedMetadata bool) error {
+		var latest, incoming []map[string]json.RawMessage
+		if value := current[field]; len(value) > 0 && json.Unmarshal(value, &latest) != nil {
+			return kernel.BadAuthRequest("画布" + field + "数据格式错误")
+		}
+		if value := generated[field]; len(value) > 0 && json.Unmarshal(value, &incoming) != nil {
+			return kernel.BadAuthRequest("画布" + field + "数据格式错误")
+		}
+		positions := map[string]int{}
+		for index, item := range latest {
+			var id string
+			_ = json.Unmarshal(item["id"], &id)
+			positions[id] = index
+		}
+		for _, item := range incoming {
+			target := item
+			if nestedMetadata {
+				var metadata map[string]json.RawMessage
+				if json.Unmarshal(item["metadata"], &metadata) != nil {
+					continue
+				}
+				target = metadata
+			}
+			var keys []string
+			_ = json.Unmarshal(target["generationEffectKeys"], &keys)
+			if !slices.Contains(keys, effectKey) {
+				continue
+			}
+			var id string
+			_ = json.Unmarshal(item["id"], &id)
+			if id == "" {
+				continue
+			}
+			if index, exists := positions[id]; exists {
+				latest[index] = item
+			} else {
+				positions[id] = len(latest)
+				latest = append(latest, item)
+			}
+			if field == "nodes" {
+				affectedNodeIDs[id] = true
+			}
+			mergedAny = true
+		}
+		encoded, err := json.Marshal(latest)
+		if err == nil {
+			current[field] = encoded
+		}
+		return err
+	}
+	if err := mergeStamped("nodes", true); err != nil {
+		return nil, err
+	}
+	if err := mergeStamped("chatSessions", false); err != nil {
+		return nil, err
+	}
+	if !mergedAny {
+		return nil, kernel.BadAuthRequest("生成结果与幂等标识不匹配")
+	}
+	if len(affectedNodeIDs) > 0 {
+		var latest, incoming []map[string]json.RawMessage
+		_ = json.Unmarshal(current["connections"], &latest)
+		_ = json.Unmarshal(generated["connections"], &incoming)
+		positions := map[string]int{}
+		for index, item := range latest {
+			var id string
+			_ = json.Unmarshal(item["id"], &id)
+			positions[id] = index
+		}
+		for _, item := range incoming {
+			var id, from, to string
+			_ = json.Unmarshal(item["id"], &id)
+			_ = json.Unmarshal(item["fromNodeId"], &from)
+			_ = json.Unmarshal(item["toNodeId"], &to)
+			if id == "" || (!affectedNodeIDs[from] && !affectedNodeIDs[to]) {
+				continue
+			}
+			if index, exists := positions[id]; exists {
+				latest[index] = item
+			} else {
+				positions[id] = len(latest)
+				latest = append(latest, item)
+			}
+		}
+		current["connections"], _ = json.Marshal(latest)
+	}
+	return json.Marshal(current)
 }
 
 // DeleteUserCanvasNode applies a single-node mutation without exposing the

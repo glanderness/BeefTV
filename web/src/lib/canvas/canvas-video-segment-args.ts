@@ -16,21 +16,20 @@ export function buildSegmentTrimArgs(startSec: string, durationSec: string): str
     return ["-i", SEGMENT_INPUT_NAME, "-ss", startSec, "-t", durationSec, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-movflags", "+faststart", SEGMENT_OUTPUT_NAME];
 }
 
-/** 从视频片段提取声音：同样使用输出 seek，保证起点与裁切路径一致。 */
-export function buildExtractAudioArgs(audioCodec: string, startSec: string, durationSec: string, outputName = SEGMENT_OUTPUT_NAME): string[] {
-    return ["-i", SEGMENT_INPUT_NAME, "-ss", startSec, "-t", durationSec, "-vn", "-c:a", audioCodec, "-q:a", "2", outputName];
+/** 从整段视频提取声音，不依赖播放器先解析出时长。 */
+export function buildExtractAudioArgs(audioCodec: string, outputName = SEGMENT_OUTPUT_NAME): string[] {
+    return ["-i", SEGMENT_INPUT_NAME, "-vn", "-c:a", audioCodec, "-q:a", "2", outputName];
 }
 
 /** 直接复制原音轨，绕过精简内核缺少 MP3/AAC 编码器的问题。 */
-export function buildCopyAudioArgs(startSec: string, durationSec: string, outputName = AUDIO_COPY_OUTPUT_NAME): string[] {
-    return ["-i", SEGMENT_INPUT_NAME, "-ss", startSec, "-t", durationSec, "-map", "0:a:0?", "-vn", "-c:a", "copy", "-movflags", "+faststart", outputName];
+export function buildCopyAudioArgs(outputName = AUDIO_COPY_OUTPUT_NAME): string[] {
+    return ["-i", SEGMENT_INPUT_NAME, "-map", "0:a:0?", "-vn", "-c:a", "copy", "-movflags", "+faststart", outputName];
 }
 
-/** 去掉原视频音轨并重编码画面，避免输出 seek 遇到非零时间戳时得到空视频。 */
-export function buildRemoveAudioArgs(startSec: string, durationSec: string, outputName = MUTED_VIDEO_OUTPUT_NAME): string[] {
-    // 分离音视频不需要重新编码画面。直接复制视频码流可避免浏览器 WASM
-    // 对整段高分辨率视频做 libx264 转码（这是之前长时间停在“处理中”的主因）。
-    return ["-i", SEGMENT_INPUT_NAME, "-ss", startSec, "-t", durationSec, "-map", "0:v:0", "-an", "-c:v", "copy", outputName];
+/** 去掉整段视频的音轨：不做 seek，避免码流复制丢掉第一组 GOP。 */
+export function buildRemoveAudioArgs(outputName = MUTED_VIDEO_OUTPUT_NAME): string[] {
+    // 分离始终处理整段视频。直接重封装保留画质和速度，同时保留 0 秒开始的首个 GOP。
+    return ["-i", SEGMENT_INPUT_NAME, "-map", "0:v:0", "-an", "-c:v", "copy", "-movflags", "+faststart", outputName];
 }
 
 /** 空间裁切视频，坐标和尺寸使用源视频像素值。 */

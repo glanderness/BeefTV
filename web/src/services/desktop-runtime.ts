@@ -5,8 +5,14 @@ export type DesktopRuntimeConfig = {
     launchToken: string;
 };
 
+export type DesktopExportResult = {
+    canceled: boolean;
+    path: string;
+};
+
 type DesktopRuntimeBinding = {
     RuntimeConfig: () => Promise<DesktopRuntimeConfig>;
+    ExportResource?: (resourceId: string, fileName: string) => Promise<DesktopExportResult>;
 };
 
 declare global {
@@ -62,4 +68,10 @@ export async function bootstrapDesktopRuntime() {
     if (!config) return false;
     configureDesktopRuntime(config);
     return true;
+}
+
+export function desktopResourceExporter() {
+    const binding = typeof window === "undefined" ? undefined : window.go?.main?.DesktopApp;
+    if (!binding?.ExportResource) return undefined;
+    return (resourceId: string, fileName: string) => binding.ExportResource!(resourceId, fileName);
 }

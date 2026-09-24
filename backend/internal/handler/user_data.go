@@ -607,8 +607,9 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 10<<20)
 		var req struct {
-			Project json.RawMessage   `json:"project"`
-			Assets  []json.RawMessage `json:"assets"`
+			Project   json.RawMessage   `json:"project"`
+			Assets    []json.RawMessage `json:"assets"`
+			EffectKey string            `json:"effectKey"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			fail(c, http.StatusBadRequest, err)
@@ -621,7 +622,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("画布 ID 与请求路径不一致"))
 			return
 		}
-		project, err := svc.CommitUserCanvasProjectAssets(user.ID, req.Project, req.Assets)
+		project, err := svc.CommitUserCanvasGenerationAssets(user.ID, req.Project, req.Assets, req.EffectKey)
 		if err != nil {
 			failService(c, err)
 			return

@@ -19,7 +19,7 @@ import type { GenerationTask } from "@/services/api/task-center";
 import { cacheResourceObjectUrl, getCachedResourceObjectUrl, peekCachedResourceObjectUrl, scheduleResourceBlobCache } from "@/services/resource-blob-cache";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { resolveImageUrl } from "@/services/image-storage";
-import { hydrateCanvasVideoPreview } from "@/services/canvas-video-preview";
+import { canvasVideoPreviewNeedsRefresh, hydrateCanvasVideoPreview } from "@/services/canvas-video-preview";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { ART_CRITIQUE_NODE_TYPE } from "@/lib/art-critique/contracts";
@@ -571,7 +571,8 @@ function AudioNodeContent({ node, theme }: CanvasNodeContentProps) {
 function InactiveVideoPreview({ node, theme, onPlay }: Pick<CanvasNodeContentProps, "node" | "theme"> & { onPlay: () => void }) {
     const previewRef = useRef<HTMLDivElement>(null);
     const nearViewport = useNearViewport(previewRef);
-    const previewUrl = canvasNodeVideoPreviewUrl(node);
+    const previewNeedsRefresh = canvasVideoPreviewNeedsRefresh(node);
+    const previewUrl = previewNeedsRefresh ? "" : canvasNodeVideoPreviewUrl(node);
     const { updateMetadata } = useCanvasNodeActions();
     const updateMetadataRef = useRef(updateMetadata);
     const [hydrating, setHydrating] = useState(false);
@@ -589,7 +590,7 @@ function InactiveVideoPreview({ node, theme, onPlay }: Pick<CanvasNodeContentPro
     }, [updateMetadata]);
 
     useEffect(() => {
-        if (previewUrl || !nearViewport || (!node.metadata?.content && !node.metadata?.storageKey) || !updateMetadataRef.current) {
+        if (!previewNeedsRefresh || !nearViewport || (!node.metadata?.content && !node.metadata?.storageKey) || !updateMetadataRef.current) {
             setHydrating(false);
             return;
         }
@@ -604,7 +605,7 @@ function InactiveVideoPreview({ node, theme, onPlay }: Pick<CanvasNodeContentPro
                 if (!controller.signal.aborted) setHydrating(false);
             });
         return () => controller.abort();
-    }, [nearViewport, node.id, node.metadata?.content, node.metadata?.storageKey, previewUrl]);
+    }, [nearViewport, node.id, node.metadata?.content, node.metadata?.storageKey, previewNeedsRefresh]);
 
     if (previewUrl) {
         return <div ref={previewRef} className="group/video-preview relative size-full overflow-hidden rounded-[var(--node-radius)] bg-black">

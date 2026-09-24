@@ -216,6 +216,7 @@ export type CanvasNodeMetadata = {
     videoPreview?: {
         content: string;
         storageKey?: string;
+        captureVersion?: number;
         width?: number;
         height?: number;
         bytes?: number;

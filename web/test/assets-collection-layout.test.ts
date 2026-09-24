@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import { ProjectPreview } from "../src/components/canvas/canvas-project-card";
 
 describe("asset library category sidebar", () => {
     test("keeps type, business and folder filters in the product asset workspace", () => {
@@ -65,7 +69,6 @@ describe("project card actions", () => {
         const previewCard = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-project-card.tsx"), "utf8");
         expect(previewCard).toContain('preload="auto"');
         expect(previewCard).toContain("firstVideo || firstImage");
-        expect(previewCard).toContain("canvas-project-empty-image");
         const canvasPage = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/index.tsx"), "utf8");
         expect(canvasPage).toContain("<LibraryCardShell");
         expect(canvasPage).toContain("maxSize = 1280");
@@ -94,6 +97,15 @@ describe("project card actions", () => {
         expect(globalStyles).toContain("min-height: 230.8px");
         expect(globalStyles).toContain("height: 34.8px !important");
         expect(page).toContain('label: "打开"');
+    });
+});
+
+describe("empty project cover", () => {
+    test("centers the visible default icon without an invisible spacer", () => {
+        const html = renderToStaticMarkup(React.createElement(ProjectPreview, { project: { id: "empty-project", nodes: [] }, emptyVariant: "libtv" }));
+
+        expect(html).toContain("canvas-project-empty-icon");
+        expect(html).not.toContain("canvas-project-empty-image");
     });
 });
 

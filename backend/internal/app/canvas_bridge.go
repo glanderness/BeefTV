@@ -206,6 +206,10 @@ func (s *Service) CommitUserCanvasProjectAssets(userID string, raw json.RawMessa
 	return s.canvasDomain().CommitUserCanvasProjectAssets(userID, raw, assets)
 }
 
+func (s *Service) CommitUserCanvasGenerationAssets(userID string, raw json.RawMessage, assets []json.RawMessage, effectKey string) (UserDataSummary, error) {
+	return s.canvasDomain().CommitUserCanvasGenerationAssets(userID, raw, assets, effectKey)
+}
+
 func (s *Service) DeleteUserCanvasNode(userID, canvasID, nodeID string) (UserDataSummary, error) {
 	return s.canvasDomain().DeleteUserCanvasNode(userID, canvasID, nodeID)
 }

@@ -400,7 +400,6 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                                 onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
                                 onMissingConfig={() => navigateToSettings({ continueCreation: true })}
                                 onOpenChange={expanded ? undefined : onImageSettingsOpenChange}
-                                summaryOverride={localOnly ? "16:9 · 标准画质 · 2K · 1张" : undefined}
                             />
                         </>
                     ) : mode === "video" ? (
@@ -416,7 +415,6 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                                 config={config}
                                 buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
                                 onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))}
-                                summaryOverride={localOnly ? "16:9 · 720P · 5s · 1个" : undefined}
                             />
                         </>
                     ) : mode === "audio" ? (
@@ -424,7 +422,6 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                             config={config}
                             buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
                             onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))}
-                            summaryOverride={localOnly ? "中文 · 24k · wav" : undefined}
                         />
                     ) : null}
                     {renderSubmitButton(expanded)}
