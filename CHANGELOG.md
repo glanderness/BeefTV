@@ -16,6 +16,11 @@ All notable public changes to BeefTV are documented in this file.
 - Preserve safe error codes and request identifiers for support, including business errors returned with HTTP 200 and JSON errors inside media downloads.
 - Prevent unsafe unchanged batch retries; edited prompts and reference media can be submitted as new attempts after moderation failures.
 - Cover all 42 currently declared BeefAPI error codes with a shared frontend and backend regression contract.
+- Improved the shared model picker with a viewport-safe, internally scrollable layout and consistent single-line model options.
+- Removed redundant model icons, secondary descriptions, and stale option backgrounds from model selection UI.
+- Restored native right-click paste behavior in canvas prompt editors and added regression coverage.
+- Added regression coverage for generation output delivery, model picker overflow, and local generation error handling.
+- Added a canonical local app update script to keep one installed BeefTV application instead of accumulating duplicate builds.
 
 ## v1.5.3
 

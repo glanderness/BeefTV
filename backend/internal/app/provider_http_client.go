@@ -93,6 +93,24 @@ func postJSON(ctx context.Context, config providerConfig, path string, body inte
 	return doJSON(req, target)
 }
 
+func postJSONWithSubmissionKey(ctx context.Context, config providerConfig, path string, body interface{}, target interface{}) error {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("序列化上游请求失败：%w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL(config.BaseURL, path), bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	applyProviderAuth(req, config)
+	req.Header.Set("Content-Type", "application/json")
+	ApplyOutboundHeaders(req, config.Headers)
+	if key, _ := ctx.Value(providerSubmissionKeyContext{}).(string); strings.TrimSpace(key) != "" {
+		req.Header.Set("Idempotency-Key", strings.TrimSpace(key))
+	}
+	return doJSON(req, target)
+}
+
 func applyProviderAuth(req *http.Request, config providerConfig) {
 	if config.APIFormat == "claude" {
 		req.Header.Set("x-api-key", config.APIKey)
