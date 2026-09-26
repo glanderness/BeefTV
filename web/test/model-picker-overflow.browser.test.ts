@@ -11,11 +11,11 @@ beforeAll(async () => {
     const executablePath = [process.env.CHROME_PATH, "/usr/bin/google-chrome", "/usr/bin/chromium", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((path): path is string => Boolean(path && existsSync(path)));
     browser = await chromium.launch({ headless: true, executablePath });
     page = await browser.newPage({ viewport: { width: 1280, height: 640 } });
-});
+}, 30_000);
 
 afterAll(async () => {
     await browser?.close();
-});
+}, 30_000);
 
 test("model picker keeps a viewport-safe frame and scrolls long brand and model lists internally", async () => {
     const brands = Array.from({ length: 12 }, (_, index) => `<button class="canvas-model-picker-brand">渠道 ${index + 1}</button>`).join("");

@@ -9,6 +9,12 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.5.5
+
+- Desktop update checks and downloads now use the current user's static HTTP/HTTPS system proxy on macOS and Windows when no explicit environment proxy is configured.
+- Keep a manual update check in the sidebar and show a retry action when checking fails, instead of hiding connection failures.
+- Preserve proxy bypass rules, signed manifest verification and package integrity checks throughout redirected downloads.
+
 ## v1.5.4
 
 - Generation failures now explain the cause and the next action across canvas nodes, task history and custom channels.
