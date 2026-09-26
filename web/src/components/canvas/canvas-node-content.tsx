@@ -3,7 +3,7 @@ import { AlertCircle, BookOpenCheck, Clock3, Download, FileText, Image as ImageI
 
 import { VideoPlayer } from "@/components/video-player";
 import { CachedResourceImage } from "@/components/cached-resource-image";
-import { CONTENT_MODERATION_ERROR_CODE, generationErrorMessage, isContentModerationError } from "@/lib/generation-error";
+import { CONTENT_MODERATION_ERROR_CODE, generationErrorMessage, isContentModerationError, isProviderPaymentRequiredError, PROVIDER_PAYMENT_REQUIRED_ERROR_CODE } from "@/lib/generation-error";
 import { generationTaskShowsProgress, generationTaskStageLabel, generationTaskStatusLabel, isGenerationTaskSubmissionUncertain } from "@/lib/generation-task-display";
 import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
@@ -252,6 +252,7 @@ function shortTaskId(id: string) {
 
 function ErrorContent({ node, theme, onRetry, onReloadResource }: Pick<CanvasNodeContentProps, "node" | "theme" | "onRetry" | "onReloadResource">) {
     const moderationFailure = node.metadata?.generationErrorCode === CONTENT_MODERATION_ERROR_CODE || isContentModerationError(node.metadata?.errorDetails);
+    const paymentRequiredFailure = node.metadata?.generationErrorCode === PROVIDER_PAYMENT_REQUIRED_ERROR_CODE || isProviderPaymentRequiredError(node.metadata?.errorDetails);
     const errorDisplayTask = {
         provider: node.metadata?.taskProvider,
         status: (node.metadata?.taskStatus || "failed") as GenerationTask["status"],
@@ -267,9 +268,9 @@ function ErrorContent({ node, theme, onRetry, onReloadResource }: Pick<CanvasNod
                 <div className="rounded-[var(--r-sm)] px-3 py-2 text-[var(--fs-label)] leading-4" style={{ background: theme.toolbar.itemHover, color: theme.node.muted }}>
                     {generationTaskStageLabel(errorDisplayTask)}
                 </div>
-            ) : moderationFailure ? (
+            ) : moderationFailure || paymentRequiredFailure ? (
                 <div className="rounded-[var(--r-sm)] px-3 py-2 text-[var(--fs-label)] leading-4" style={{ background: theme.toolbar.itemHover, color: theme.node.muted }}>
-                    修改节点提示词后，可重新点击生成。
+                    {paymentRequiredFailure ? "检查当前 API Key 所属账户的余额、模型套餐和订阅权限后再重试。" : "修改节点提示词后，可重新点击生成。"}
                 </div>
             ) : node.metadata?.resourceReloadAvailable ? (
                 <div className="flex flex-wrap justify-center gap-2">

@@ -249,6 +249,8 @@ func (e providerHTTPError) Error() string {
 		return "上游网关超时（524）：模型请求可能仍在服务端执行，请勿立即重试，请先到供应商后台核对任务状态"
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		return "模型服务拒绝了请求，请检查模型和参数"
+	case http.StatusPaymentRequired:
+		return "上游模型服务返回 HTTP 402：当前 API Key 所属账户的余额、额度或订阅权限不足，请检查渠道计费状态和模型权限"
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return "模型服务鉴权失败，请检查 API Key 和模型权限"
 	case http.StatusNotFound:
@@ -280,11 +282,14 @@ func providerUserFacingErrorMessage(err error) string {
 	}
 	var httpErr providerHTTPError
 	if errors.As(err, &httpErr) {
-		// 仅对上游参数校验类状态码解析正文。其他状态码的正文可能是网关 HTML、
-		// 鉴权诊断或含密钥的内部信息，归类价值低且更容易误判。
+		// 仅对参数校验和计费拒绝解析正文，且只返回白名单分类。
+		// 其他状态码的正文可能是网关 HTML、鉴权诊断或含密钥的内部信息。
 		switch httpErr.StatusCode {
-		case http.StatusBadRequest, http.StatusUnprocessableEntity:
+		case http.StatusBadRequest, http.StatusPaymentRequired, http.StatusUnprocessableEntity:
 			if message, ok := providerPayloadErrorCategory(httpErr.Body); ok {
+				if httpErr.StatusCode == http.StatusPaymentRequired {
+					return "上游模型服务返回 HTTP 402：" + message
+				}
 				return message
 			}
 		}
@@ -311,8 +316,11 @@ func providerPayloadErrorCategory(raw string) (string, bool) {
 		return "输入素材疑似包含真人形象，该模型拒绝生成，请更换为非真人素材或改用其他模型", true
 	case strings.Contains(normalized, "safety"), strings.Contains(normalized, "moderation"), strings.Contains(normalized, "content policy"), strings.Contains(normalized, "blocked"):
 		return "请求内容未通过模型服务安全审核，请调整后重试", true
-	case strings.Contains(normalized, "quota"), strings.Contains(normalized, "insufficient"), strings.Contains(normalized, "balance"):
-		return "模型服务额度不足，请检查渠道余额或配额", true
+	case strings.Contains(normalized, "balance"), strings.Contains(normalized, "quota"), strings.Contains(normalized, "credit"),
+		strings.Contains(normalized, "insufficient funds"), strings.Contains(normalized, "insufficient balance"), strings.Contains(normalized, "insufficient quota"):
+		return "当前 API Key 所属账户的余额或额度不足，请检查渠道余额、充值状态和配额", true
+	case strings.Contains(normalized, "subscription"), strings.Contains(normalized, "payment required"), strings.Contains(normalized, "billing plan"), strings.Contains(normalized, "account tier"):
+		return "当前账户的订阅或模型权限不足，请检查模型套餐、计费状态和账号权限", true
 	case strings.Contains(normalized, "model") && (strings.Contains(normalized, "not found") || strings.Contains(normalized, "permission") || strings.Contains(normalized, "access")):
 		return "模型不存在或当前渠道未获得模型权限", true
 	// 推理/思考模式模型通常禁止强制指定工具调用：DeepSeek 思考模式返回

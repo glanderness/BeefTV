@@ -182,6 +182,10 @@ const CanvasDrawingEditorModal = lazy(() => import("@/components/canvas/canvas-d
 const NODE_STATUS_SUCCESS = "success" as const;
 const EMPTY_RESOURCE_REFERENCES: CanvasResourceReference[] = [];
 
+function isCanvasTextEditingTarget(target: EventTarget | null) {
+    return target instanceof Element && Boolean(target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])"));
+}
+
 async function copyImageToSystemClipboard(source: string, storageKey?: string) {
     if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) throw new Error("当前浏览器不支持复制图片");
     if (typeof window !== "undefined") window.focus();
@@ -2352,6 +2356,7 @@ function InfiniteCanvasPage() {
 
     const handleNodeContextMenu = useCallback(
         (event: ReactMouseEvent, id: string) => {
+            if (isCanvasTextEditingTarget(event.target)) return;
             event.preventDefault();
             event.stopPropagation();
             setSelectedNodeIds((current) => {

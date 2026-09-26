@@ -29,6 +29,12 @@ func (s *Service) enrichAPICallLogFailureSummary(log *model.ApiCallLog, response
 		return
 	}
 	userMessage := providerUserFacingErrorMessage(providerHTTPError{StatusCode: log.StatusCode, Body: string(responseBody)})
+	if log.StatusCode == 402 {
+		// 402 正文经常同时回显账户、Key 或请求详情；日志只保留稳定错误码和白名单归类。
+		log.ErrorCode = "provider_payment_required"
+		log.Error = userMessage
+		return
+	}
 	detail := strings.TrimSpace(log.Error)
 	if detail == "" || detail == userMessage {
 		log.Error = userMessage

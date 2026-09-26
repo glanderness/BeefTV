@@ -1,6 +1,7 @@
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
 
 export const CONTENT_MODERATION_ERROR_CODE = "sensitive_words_detected";
+export const PROVIDER_PAYMENT_REQUIRED_ERROR_CODE = "provider_payment_required";
 
 export const CONTENT_MODERATION_MESSAGE = "内容审核未通过，本次平台积分未扣除或已退还。请修改提示词后重新生成。";
 
@@ -15,6 +16,12 @@ export type GenerationFailureMetadata = {
 
 export function generationFailureMetadata(error: unknown, prompt: string): GenerationFailureMetadata {
     const raw = rawGenerationError(error);
+    if (isProviderPaymentRequiredError(raw)) {
+        return {
+            errorDetails: generationErrorMessage(error),
+            generationErrorCode: PROVIDER_PAYMENT_REQUIRED_ERROR_CODE,
+        };
+    }
     if (!isContentModerationError(raw)) return { errorDetails: generationErrorMessage(error) };
     return {
         errorDetails: CONTENT_MODERATION_MESSAGE,
@@ -34,12 +41,24 @@ export function generationErrorMessage(error: unknown) {
     if (resourceStorageMessage) return resourceStorageMessage;
     if (isNetworkFailure(displayMessage)) return NETWORK_ERROR_MESSAGE;
     if (!providerMessage) {
+        if (hasHttpStatus(raw, 402) && raw.includes("余额或额度不足")) {
+            return "上游模型服务返回 HTTP 402：当前 API Key 所属账户的余额或额度不足，请检查渠道余额、充值状态和配额。";
+        }
+        if (hasHttpStatus(raw, 402) && raw.includes("订阅或模型权限不足")) {
+            return "上游模型服务返回 HTTP 402：当前账户的订阅或模型权限不足，请检查模型套餐、计费状态和账号权限。";
+        }
+        if (hasHttpStatus(raw, 402)) return "上游模型服务返回 HTTP 402：当前 API Key 所属账户的余额、额度或订阅权限不足，请检查渠道计费状态和模型权限。";
         if (hasHttpStatus(raw, 429)) return "服务当前繁忙，请稍后重试。";
         if (hasHttpStatus(raw, 401, 403)) return "生成服务鉴权失败，请检查渠道配置。";
         if (hasHttpStatus(raw, 404)) return "生成服务地址不可用，请检查渠道配置。";
         if (hasHttpStatus(raw, 500, 502, 503, 504) || containsInfrastructureDetails(raw)) return NETWORK_ERROR_MESSAGE;
     }
     return displayMessage || DEFAULT_GENERATION_ERROR_MESSAGE;
+}
+
+export function isProviderPaymentRequiredError(value: unknown) {
+    const text = value instanceof Error ? value.message : String(value || "");
+    return text.includes(PROVIDER_PAYMENT_REQUIRED_ERROR_CODE) || /\bHTTP\s*402\b|\b402\s+Payment Required\b/i.test(text);
 }
 
 export function generationErrorCode(error: unknown) {

@@ -282,6 +282,8 @@ func (e HTTPError) Error() string {
 		return "上游网关超时（524）：模型请求可能仍在服务端执行并产生费用，请勿立即重试，请先到供应商后台核对任务或账单"
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		return "模型服务拒绝了请求，请检查模型和参数"
+	case http.StatusPaymentRequired:
+		return "上游模型服务返回 HTTP 402：当前 API Key 所属账户的余额、额度或订阅权限不足，请检查渠道计费状态和模型权限"
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return "模型服务鉴权失败，请检查 API Key 和模型权限"
 	case http.StatusNotFound:

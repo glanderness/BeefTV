@@ -9,6 +9,15 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.5.4
+
+- Improved the shared model picker with a viewport-safe, internally scrollable layout and consistent single-line model options.
+- Removed redundant model icons, secondary descriptions, and stale option backgrounds from model selection UI.
+- Restored native right-click paste behavior in canvas prompt editors and added regression coverage.
+- Added clearer provider/task error context and upstream response logging for failed generation requests.
+- Added regression coverage for generation output delivery, model picker overflow, and local generation error handling.
+- Added a canonical local app update script to keep one installed BeefTV application instead of accumulating duplicate builds.
+
 ## v1.5.3
 
 - Desktop builds show the installed version in the sidebar and check for published updates on startup.

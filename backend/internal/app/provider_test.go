@@ -857,6 +857,36 @@ func TestProviderHTTPErrorWarnsAboutUncertain524Execution(t *testing.T) {
 	}
 }
 
+func TestPostJSONWithSubmissionKeyUsesStableHeaderOnly(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	const submissionKey = "02d94154-2379-5bb1-b528-57633fbb689a"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Idempotency-Key"); got != submissionKey {
+			t.Errorf("Idempotency-Key = %q, want %q", got, submissionKey)
+		}
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if _, leaked := body["idempotencyKey"]; leaked {
+			t.Fatalf("submission key leaked into provider body: %#v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"provider-video-1"}`))
+	}))
+	defer server.Close()
+
+	ctx := context.WithValue(context.Background(), providerSubmissionKeyContext{}, submissionKey)
+	var created map[string]interface{}
+	err := postJSONWithSubmissionKey(ctx, providerConfig{BaseURL: server.URL + "/v1", APIKey: "test-key"}, "/videos", map[string]interface{}{"model": "seedance-2.0"}, &created)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created["id"] != "provider-video-1" {
+		t.Fatalf("created = %#v", created)
+	}
+}
+
 func TestProviderHTTPErrorDoesNotExposeResponseBody(t *testing.T) {
 	message := (providerHTTPError{
 		StatusCode: http.StatusBadGateway,
@@ -868,6 +898,20 @@ func TestProviderHTTPErrorDoesNotExposeResponseBody(t *testing.T) {
 	}
 	if !strings.Contains(message, "HTTP 502") {
 		t.Fatalf("providerHTTPError.Error() = %q", message)
+	}
+}
+
+func TestProviderHTTPErrorExplainsPaymentRequired(t *testing.T) {
+	message := (providerHTTPError{
+		StatusCode: http.StatusPaymentRequired,
+		Status:     "402 Payment Required",
+		Body:       `{"error":{"message":"insufficient balance api-key=secret"}}`,
+	}).Error()
+	if !strings.Contains(message, "HTTP 402") || !strings.Contains(message, "余额") || !strings.Contains(message, "订阅") {
+		t.Fatalf("providerHTTPError.Error() = %q", message)
+	}
+	if strings.Contains(message, "secret") || strings.Contains(message, "api-key") {
+		t.Fatalf("providerHTTPError exposed upstream response body: %q", message)
 	}
 }
 
@@ -978,6 +1022,18 @@ func TestProviderUserFacingErrorMessageClassifiesRejectedRequestBodies(t *testin
 			body:       `{"error":{"message":"Thinking mode does not support this tool_choice","request_id":"secret"}}`,
 			want:       "不支持强制工具调用",
 		},
+		{
+			name:       "payment required because balance is insufficient",
+			statusCode: http.StatusPaymentRequired,
+			body:       `{"error":{"message":"insufficient balance, api-key=secret"}}`,
+			want:       "余额或额度不足",
+		},
+		{
+			name:       "payment required because subscription is missing",
+			statusCode: http.StatusPaymentRequired,
+			body:       `{"error":{"message":"subscription required for this model, api-key=secret"}}`,
+			want:       "订阅或模型权限不足",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -989,6 +1045,19 @@ func TestProviderUserFacingErrorMessageClassifiesRejectedRequestBodies(t *testin
 				t.Fatalf("provider response body leaked: %q", message)
 			}
 		})
+	}
+}
+
+func TestProviderUserFacingErrorMessageKeepsUnknown402SafeAndActionable(t *testing.T) {
+	message := providerUserFacingErrorMessage(providerHTTPError{
+		StatusCode: http.StatusPaymentRequired,
+		Body:       `{"error":{"message":"internal billing trace api-key=secret"}}`,
+	})
+	if !strings.Contains(message, "HTTP 402") || !strings.Contains(message, "订阅") {
+		t.Fatalf("providerUserFacingErrorMessage() = %q", message)
+	}
+	if strings.Contains(message, "secret") || strings.Contains(message, "api-key") || strings.Contains(message, "trace") {
+		t.Fatalf("provider response body leaked: %q", message)
 	}
 }
 

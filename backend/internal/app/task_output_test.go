@@ -61,6 +61,13 @@ func TestTaskClientContextRequiresCreatePageMetadata(t *testing.T) {
 	}
 }
 
+func TestTaskSummaryExposesStablePaymentRequiredCode(t *testing.T) {
+	summary := taskSummaryForOutput(model.Task{Error: "上游模型服务返回 HTTP 402：当前账户余额不足"})
+	if summary.ErrorCode != "provider_payment_required" {
+		t.Fatalf("ErrorCode = %q, want provider_payment_required", summary.ErrorCode)
+	}
+}
+
 func TestTaskClientContextPreservesCanvasNodeID(t *testing.T) {
 	context := taskClientContext(`{"mode":"image","metadata":{"nodeId":"canvas-node-1","source":"canvas"}}`)
 	if context == nil || context.NodeID != "canvas-node-1" {

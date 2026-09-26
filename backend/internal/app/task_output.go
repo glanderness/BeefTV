@@ -27,6 +27,8 @@ func taskSummaryForOutput(task model.Task) TaskSummary {
 	errorCode := ""
 	if isContentModerationFailure(task.Error) {
 		errorCode = contentModerationErrorCode
+	} else if isProviderPaymentRequiredFailure(task.Error) {
+		errorCode = "provider_payment_required"
 	}
 	previewURL, previewKind, previewPosterURL := taskMediaPreviewWithPoster(task.ResultJSON, task.Type)
 	return TaskSummary{
@@ -57,6 +59,11 @@ func taskSummaryForOutput(task model.Task) TaskSummary {
 		UpdatedAt:                 task.UpdatedAt,
 		ClientContext:             taskClientContext(task.InputJSON),
 	}
+}
+
+func isProviderPaymentRequiredFailure(value string) bool {
+	normalized := strings.ToLower(value)
+	return strings.Contains(normalized, "http 402") || strings.Contains(normalized, "402 payment required")
 }
 
 // 列表只暴露页面恢复所需的非敏感关联 ID，不下发完整任务输入或其他 metadata。
