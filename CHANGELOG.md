@@ -9,6 +9,14 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.5.4
+
+- Generation failures now explain the cause and the next action across canvas nodes, task history and custom channels.
+- Distinguish content moderation, account quota, provider billing, invalid parameters, rate limits, uncertain submissions and failed result downloads without guessing refunds or the offending input.
+- Preserve safe error codes and request identifiers for support, including business errors returned with HTTP 200 and JSON errors inside media downloads.
+- Prevent unsafe unchanged batch retries; edited prompts and reference media can be submitted as new attempts after moderation failures.
+- Cover all 42 currently declared BeefAPI error codes with a shared frontend and backend regression contract.
+
 ## v1.5.3
 
 - Desktop builds show the installed version in the sidebar and check for published updates on startup.
