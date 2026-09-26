@@ -5,6 +5,7 @@ import { PanelLeftOpen } from "lucide-react";
 import { ModelSetupGuide } from "@/components/layout/model-setup-guide";
 import { WorkspaceSidebarNav } from "@/components/layout/workspace-sidebar-nav";
 import { readWorkspaceSidebarCollapsed, writeWorkspaceSidebarCollapsed } from "@/components/layout/workspace-sidebar-state";
+import { useDesktopUpdateBootstrap } from "@/hooks/use-desktop-update";
 import { cn } from "@/lib/utils";
 import { isSpatialWorkbenchPath } from "@/lib/workspace-routes";
 import { useUserStore } from "@/stores/use-user-store";
@@ -22,6 +23,7 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
     const storageMode = useUserStore((state) => state.storageMode);
     const user = useUserStore((state) => state.user);
     const localMode = isLocalWorkspaceMode() || storageMode === "local" || user?.username === "local";
+    useDesktopUpdateBootstrap();
 
     const hideChrome = pathname.startsWith("/admin") || /^\/canvas\/[^/]+/.test(pathname);
     const spatialWorkbench = isSpatialWorkbenchPath(pathname);

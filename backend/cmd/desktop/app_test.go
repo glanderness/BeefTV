@@ -148,7 +148,7 @@ func TestDesktopAppBoundMethodsStayTiny(t *testing.T) {
 		names = append(names, typ.Method(i).Name)
 	}
 	sort.Strings(names)
-	if !reflect.DeepEqual(names, []string{"RuntimeConfig", "SaveOwnedArtifact", "SaveOwnedMedia"}) {
+	if !reflect.DeepEqual(names, []string{"CheckForUpdate", "DownloadUpdate", "InstallUpdate", "RuntimeConfig", "SaveOwnedArtifact", "SaveOwnedMedia", "UpdateStatus"}) {
 		t.Fatalf("bound methods = %v", names)
 	}
 }

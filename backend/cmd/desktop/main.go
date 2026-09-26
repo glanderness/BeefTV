@@ -8,12 +8,22 @@ import (
 	"path/filepath"
 	"strings"
 
+	"infinite-canvas/backend/internal/desktopupdate"
+
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 )
 
 func main() {
+	// The updater helper must run before defaultDataDir/prepareDesktopApp so a
+	// replacement never opens the user database or data directory.
+	if done, err := desktopupdate.HandleHelperCommand(os.Args); done {
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	dataDir, err := defaultDataDir()
 	if err != nil {
 		log.Fatal(err)

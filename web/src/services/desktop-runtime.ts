@@ -5,10 +5,28 @@ export type DesktopRuntimeConfig = {
     launchToken: string;
 };
 
-type DesktopRuntimeBinding = {
+export const DESKTOP_UPDATE_STATUSES = ["disabled", "idle", "checking", "available", "downloading", "ready", "installing", "error"] as const;
+
+export type DesktopUpdateStatus = (typeof DESKTOP_UPDATE_STATUSES)[number];
+
+export type DesktopUpdateState = {
+    status: DesktopUpdateStatus;
+    currentVersion: string;
+    latestVersion: string;
+    releaseNotes: string;
+    downloadedBytes: number;
+    totalBytes: number;
+    error: string;
+};
+
+export type DesktopRuntimeBinding = {
     RuntimeConfig: () => Promise<DesktopRuntimeConfig>;
     SaveOwnedMedia?: (fileName: string, resourceID: string) => Promise<boolean>;
     SaveOwnedArtifact?: (fileName: string, data: string) => Promise<boolean>;
+    UpdateStatus?: () => Promise<DesktopUpdateState>;
+    CheckForUpdate?: () => Promise<DesktopUpdateState>;
+    DownloadUpdate?: () => Promise<DesktopUpdateState>;
+    InstallUpdate?: () => Promise<void>;
 };
 
 declare global {
@@ -19,6 +37,10 @@ declare global {
             };
         };
     }
+}
+
+export function getDesktopAppBinding(): DesktopRuntimeBinding | undefined {
+    return window.go?.main?.DesktopApp;
 }
 
 let nativeFetch: typeof fetch | undefined;

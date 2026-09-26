@@ -89,12 +89,14 @@ func (a *DesktopApp) stop(ctx context.Context) error {
 	defer a.mu.Unlock()
 	runtime := a.runtime()
 	if runtime == nil {
+		a.clearUpdater()
 		return nil
 	}
 	err := runtime.Close(ctx)
 	desktopRuntimeRegistryMu.Lock()
 	delete(desktopRuntimeRegistry, a)
 	desktopRuntimeRegistryMu.Unlock()
+	a.clearUpdater()
 	return err
 }
 

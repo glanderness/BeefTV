@@ -4,6 +4,7 @@ import { createDirectorSaveCoordinator, type DirectorCloseDecision, type Directo
 import { directorSaveProgress, idleDirectorSaveProgress, resolveDirectorDraftStorage, type DirectorSaveProgress } from "@/lib/canvas/director/director-save-wiring";
 import { recordDirectorDiagnostic } from "@/lib/canvas/director/director-diagnostics-recorder";
 import { useUserStore } from "@/stores/use-user-store";
+import { registerDesktopUpdatePreparation } from "@/services/desktop-update-preparation";
 import type { DirectorScene } from "@/types/director";
 
 export type DirectorSaveController = {
@@ -77,8 +78,13 @@ export function useDirectorSaveCoordinator(input: { sceneId: string | null; init
             setProgress(directorSaveProgress(coordinator.getSnapshot()));
         });
 
+        const unregisterUpdate = registerDesktopUpdatePreparation(async () => {
+            if (!(await coordinator.flushLatest())) throw new Error("导演工作台尚未保存完成。");
+        });
+
         return () => {
             active = false;
+            unregisterUpdate();
             unsubscribe();
             coordinatorRef.current = null;
 

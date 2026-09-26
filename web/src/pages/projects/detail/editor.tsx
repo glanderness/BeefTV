@@ -21,6 +21,7 @@ import { useEditorSlots, type EditorSlotRegistration } from "@/lib/plugins/edito
 import { pluginMayRenderEditorSlot } from "@/lib/plugins/plugin-permission-check";
 import { EditorStoreProvider } from "@/components/editor/editor-context";
 import { createEditorStore } from "@/stores/editor/editor-store";
+import { registerDesktopUpdatePreparation } from "@/services/desktop-update-preparation";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { normalizeTimelineProject } from "@/lib/timeline/timeline-tracks";
@@ -327,6 +328,14 @@ export default function ProjectEditorView({ detail }: { detail: ProjectDetail })
             }),
         [projectId, scope],
     );
+
+    useEffect(() => registerDesktopUpdatePreparation(async () => {
+        if (store.getState().inPreview) throw new Error("请先完成当前剪辑操作。");
+        await store.getState().flushSave();
+        const saved = store.getState();
+        // The editor records save failures in state rather than rejecting.
+        if (saved.isDirty || saved.saving || saved.saveError) throw new Error("剪辑内容尚未保存完成。");
+    }), [store]);
 
     // 进入编辑器时只加载当前用户和项目作用域的本地时间线；没有真实数据时保持空时间线，禁止注入虚构片段。
     useEffect(() => {

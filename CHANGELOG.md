@@ -9,6 +9,13 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.5.3
+
+- Desktop builds show the installed version in the sidebar and check for published updates on startup.
+- Signed updates can be downloaded in the app, then installed with an explicit restart while keeping local projects, assets, settings and connections.
+- Pending canvas, director and timeline saves are checked before restarting; failed downloads or verification leave the current installation intact.
+- Maintainers can build and publish signed macOS and Windows update packages from main. Existing installations need one manual upgrade to this version before in-app updates are available.
+
 ## v1.5.2
 
 - Improved canvas node rendering and inline image cropping, annotation, and local redraw interactions.

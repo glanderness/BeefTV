@@ -26,25 +26,66 @@ if ! command -v go >/dev/null 2>&1; then
   exit 1
 fi
 
-# Desktop releases intentionally include the complete FFmpeg/MediaPipe asset
-# set. Keep their release gate separate from the 65 MiB slim-web budget.
-export BEEFTV_WEB_BUDGET_MIB="${BEEFTV_WEB_BUDGET_MIB:-110}"
+# Use the shared size gate default; an explicit BEEFTV_WEB_BUDGET_MIB override
+# applies consistently to local and CI builds.
 
-"$ROOT_DIR/scripts/verify-beeftv-local-release.sh"
+if [[ "${BEEFTV_SKIP_LOCAL_VERIFY:-}" != "1" ]]; then
+  "$ROOT_DIR/scripts/verify-beeftv-local-release.sh"
+fi
 
 COMMIT_VALUE="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 BUILD_TIME_VALUE="${CANVAS_BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 export CANVAS_BUILD_VERSION="$VERSION_VALUE"
 export GOTOOLCHAIN="${GOTOOLCHAIN:-local}"
 
+LDFLAGS="-X infinite-canvas/backend/internal/buildinfo.Version=$VERSION_VALUE -X infinite-canvas/backend/internal/buildinfo.Commit=$COMMIT_VALUE -X infinite-canvas/backend/internal/buildinfo.BuildTime=$BUILD_TIME_VALUE"
+if [[ -n "${BEEFTV_UPDATER_PUBLIC_KEY:-}" ]]; then
+  UPDATER_LDFLAGS="$(
+    cd "$ROOT_DIR/backend"
+    go run ./cmd/update-release print-ldflags
+  )"
+  LDFLAGS="$LDFLAGS $UPDATER_LDFLAGS"
+fi
+if [[ -n "${BEEFTV_EXTRA_LDFLAGS:-}" ]]; then
+  LDFLAGS="$LDFLAGS $BEEFTV_EXTRA_LDFLAGS"
+fi
+
+if [[ -n "${BEEFTV_WAILS_PLATFORM:-}" ]]; then
+  host_arch="$(uname -m)"
+  case "$BEEFTV_WAILS_PLATFORM" in
+    darwin/amd64)
+      if [[ "$host_arch" == "arm64" ]]; then
+        export CGO_ENABLED=1
+        export CGO_CFLAGS="${CGO_CFLAGS:+$CGO_CFLAGS }-arch x86_64"
+        export CGO_LDFLAGS="${CGO_LDFLAGS:+$CGO_LDFLAGS }-arch x86_64"
+      fi
+      ;;
+    darwin/arm64)
+      if [[ "$host_arch" == "x86_64" ]]; then
+        export CGO_ENABLED=1
+        export CGO_CFLAGS="${CGO_CFLAGS:+$CGO_CFLAGS }-arch arm64"
+        export CGO_LDFLAGS="${CGO_LDFLAGS:+$CGO_LDFLAGS }-arch arm64"
+      fi
+      ;;
+  esac
+fi
+
 echo "Building BeefTV $VERSION_VALUE ($COMMIT_VALUE)"
 
 (
   cd "$DESKTOP_DIR"
-  go run github.com/wailsapp/wails/v2/cmd/wails@v2.16.0 build \
-    -clean \
-    -trimpath \
-    -ldflags "-X infinite-canvas/backend/internal/buildinfo.Version=$VERSION_VALUE -X infinite-canvas/backend/internal/buildinfo.Commit=$COMMIT_VALUE -X infinite-canvas/backend/internal/buildinfo.BuildTime=$BUILD_TIME_VALUE"
+  if [[ -n "${BEEFTV_WAILS_PLATFORM:-}" ]]; then
+    go run github.com/wailsapp/wails/v2/cmd/wails@v2.16.0 build \
+      -clean \
+      -trimpath \
+      -platform "$BEEFTV_WAILS_PLATFORM" \
+      -ldflags "$LDFLAGS"
+  else
+    go run github.com/wailsapp/wails/v2/cmd/wails@v2.16.0 build \
+      -clean \
+      -trimpath \
+      -ldflags "$LDFLAGS"
+  fi
 )
 
 # Official protocol packages are runtime dependencies. Finder launches use the

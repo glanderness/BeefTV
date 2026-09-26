@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSPrope
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 
 import { BrandLogoFrame } from "@/components/brand/brand-logo";
+import { WorkspaceSidebarUpdate } from "@/components/layout/workspace-sidebar-update";
 import { Kbd } from "@/components/ui/base/kbd";
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { aceternityMotion } from "@/lib/aceternity-motion";
@@ -289,13 +290,16 @@ export function WorkspaceSidebarNav({ collapsed, onNavigate, onOpenSearch, onExp
             </div>
             </LayoutGroup>
 
-            {footer.length ? <div className="app-workspace-sidebar-footer shrink-0 px-3 py-3">
-                <div className="flex flex-col gap-0.5">
-                    {footer.map((item) => (
-                        <NavItem key={item.id} item={item} activeId={activeId} onSelect={onNavigate} onOpenSearch={onOpenSearch} collapsed={collapsed} />
-                    ))}
-                </div>
-            </div> : null}
+            <div className="app-workspace-sidebar-footer shrink-0 px-3 py-3">
+                {footer.length ? (
+                    <div className="flex flex-col gap-0.5">
+                        {footer.map((item) => (
+                            <NavItem key={item.id} item={item} activeId={activeId} onSelect={onNavigate} onOpenSearch={onOpenSearch} collapsed={collapsed} />
+                        ))}
+                    </div>
+                ) : null}
+                <WorkspaceSidebarUpdate collapsed={collapsed} />
+            </div>
         </div>
     );
 }

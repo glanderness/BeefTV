@@ -1,4 +1,5 @@
 import { App, Button, Input, Skeleton, Tabs } from "antd";
+import { registerDesktopUpdatePreparation } from "@/services/desktop-update-preparation";
 import { Select } from "@/components/ui/base/select";
 import { SegmentedControl } from "@/components/ui/base/segmented-control";
 import { StatusBadge } from "@/components/ui/base/badges";
@@ -80,7 +81,13 @@ export function PromptPreferencesPane() {
         if (!dirty) return undefined;
         const preventUnload = (event: BeforeUnloadEvent) => event.preventDefault();
         window.addEventListener("beforeunload", preventUnload);
-        return () => window.removeEventListener("beforeunload", preventUnload);
+        const unregisterUpdate = registerDesktopUpdatePreparation(() => {
+            throw new Error("请先保存或放弃提示词设置中的改动。");
+        });
+        return () => {
+            unregisterUpdate();
+            window.removeEventListener("beforeunload", preventUnload);
+        };
     }, [dirty]);
 
     const selectOperation = (operation: string) => {

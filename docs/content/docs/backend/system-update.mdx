@@ -5,7 +5,7 @@ description: 容器镜像更新、数据库备份迁移、健康验证与异常�
 
 # 部署更新与安全回退
 
-公开仓库提供版本化容器镜像与 `docker-compose.deploy.yml`，不附带宿主机自动更新守护程序。部署管理员应在宿主机完成数据库备份、镜像拉取、服务切换和健康验证；业务后端不挂载 Docker Socket。
+公开仓库提供版本化容器镜像与 `docker-compose.deploy.yml`，不附带宿主机自动更新守护程序。部署管理员应在宿主机完成数据库备份、镜像拉取、服务切换和健康验证；业务后端不挂载 Docker Socket。桌面应用的签名更新源和发布流程见 [桌面自动更新发布](/docs/backend/desktop-updater)。
 
 ## 安全更新顺序
 

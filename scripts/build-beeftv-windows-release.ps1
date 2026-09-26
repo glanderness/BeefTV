@@ -367,6 +367,25 @@ if ([string]::IsNullOrWhiteSpace($env:CANVAS_BUILD_TIME)) {
 }
 $env:CANVAS_BUILD_VERSION = $versionValue
 $ldflags = "-X infinite-canvas/backend/internal/buildinfo.Version=$versionValue -X infinite-canvas/backend/internal/buildinfo.Commit=$commitValue -X infinite-canvas/backend/internal/buildinfo.BuildTime=$($env:CANVAS_BUILD_TIME)"
+if (-not [string]::IsNullOrWhiteSpace($env:BEEFTV_UPDATER_PUBLIC_KEY)) {
+    Write-Step "Injecting desktop updater FeedURL and PublicKey ldflags"
+    $previousLocation = Get-Location
+    Set-Location (Join-Path $repoRoot "backend")
+    try {
+        $ldflagsResult = Invoke-NativeExecutable -FilePath "go" -ArgumentList @("run", "./cmd/update-release", "print-ldflags") -CaptureOutput -FailureMessage "update-release print-ldflags failed. Set BEEFTV_UPDATER_PUBLIC_KEY to the base64 32-byte Ed25519 public key that matches GitHub variable BEEFTV_UPDATER_PUBLIC_KEY."
+        $updaterLdflags = ([string]$ldflagsResult.Output).Trim()
+        if ([string]::IsNullOrWhiteSpace($updaterLdflags)) {
+            throw "update-release print-ldflags produced no output"
+        }
+        $ldflags = "$ldflags $updaterLdflags"
+    }
+    finally {
+        Set-Location $previousLocation
+    }
+}
+if (-not [string]::IsNullOrWhiteSpace($env:BEEFTV_EXTRA_LDFLAGS)) {
+    $ldflags = "$ldflags $($env:BEEFTV_EXTRA_LDFLAGS.Trim())"
+}
 
 Write-Step "Building BeefTV $versionValue ($commitValue) for windows/amd64"
 Push-Location $desktopDir

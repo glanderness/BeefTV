@@ -4,7 +4,9 @@ import { readdirSync, statSync } from "node:fs";
 import { resolve, relative } from "node:path";
 
 const root = resolve(process.argv[2] || "web/dist");
-const budgetMiB = Number(process.env.BEEFTV_WEB_BUDGET_MIB || 65);
+// Bundled FFmpeg, MediaPipe and presets put the current full-feature build near
+// 99.24 MiB. Keep a small growth allowance while retaining the release gate.
+const budgetMiB = Number(process.env.BEEFTV_WEB_BUDGET_MIB || 105);
 const files = [];
 
 function walk(directory) {

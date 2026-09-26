@@ -573,6 +573,31 @@
 .app-user-workspace.app-product-workspace .app-workspace-nav-link .app-workspace-nav-icon svg { width: 22px; height: 22px; }
 .app-user-workspace.app-product-workspace .app-workspace-nav-group-toggle { color:#656565; }
 .app-user-workspace.app-product-workspace .app-workspace-sidebar-footer { border-top: 1px solid rgba(255,255,255,.085); background:#121212; }
+.app-user-workspace.app-product-workspace .app-workspace-update-version {
+    color: #8d8d8d;
+}
+.app-user-workspace.app-product-workspace .app-workspace-update-version:hover,
+.app-user-workspace.app-product-workspace .app-workspace-update-version:focus-visible {
+    background: #252525;
+    color: #f2f2f2;
+}
+.app-user-workspace.app-product-workspace .app-workspace-update-copy {
+    color: #8d8d8d;
+}
+.app-user-workspace.app-product-workspace .app-workspace-update-action {
+    background: color-mix(in srgb, #22cbed 16%, transparent);
+    color: #7ee9f8;
+}
+.app-user-workspace.app-product-workspace .app-workspace-update-action:hover,
+.app-user-workspace.app-product-workspace .app-workspace-update-action:focus-visible {
+    background: color-mix(in srgb, #22cbed 26%, transparent);
+}
+.app-user-workspace.app-product-workspace .app-workspace-update-progress-bar {
+    background: rgba(255, 255, 255, .12);
+}
+.app-user-workspace.app-product-workspace .app-workspace-update-progress-bar > span {
+    background: #22cbed;
+}
 .app-user-workspace.app-product-workspace .app-workspace-sidebar-checkin,
 .app-user-workspace.app-product-workspace .app-workspace-sidebar-storage { display:none; }
 .app-user-workspace.app-product-workspace .app-workspace-sidebar-profile { color:#d7d7d7; }
