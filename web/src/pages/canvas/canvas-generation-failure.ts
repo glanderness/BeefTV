@@ -4,6 +4,7 @@ import type { GenerationTask } from "@/services/api/task-center";
 
 type GenerationReference = { id?: string; storageKey?: string; url?: string; dataUrl?: string };
 export type CanvasGenerationFailureInput = {
+    mode?: "text" | "image" | "video" | "audio";
     prompt: string;
     referenceImages?: GenerationReference[];
     referenceVideos?: GenerationReference[];
@@ -12,7 +13,10 @@ export type CanvasGenerationFailureInput = {
 };
 
 function submittedReferences(input: CanvasGenerationFailureInput) {
-    return [...(input.referenceImages || []), ...(input.referenceVideos || []), ...(input.referenceAudios || []), ...(input.mask ? [input.mask] : [])].map((reference) => ({
+    if (input.mode === "audio") return [];
+    const videos = input.mode === "image" ? [] : input.referenceVideos || [];
+    const audios = input.mode === "image" || input.mode === "text" ? [] : input.referenceAudios || [];
+    return [...(input.referenceImages || []), ...videos, ...audios, ...(input.mask ? [input.mask] : [])].map((reference) => ({
         id: reference.storageKey || reference.url || reference.dataUrl ? undefined : reference.id,
         // Blob URLs and signed download URLs may change while the stored input stays the same.
         ...(reference.storageKey ? { storageKey: reference.storageKey } : { url: reference.url || reference.dataUrl }),

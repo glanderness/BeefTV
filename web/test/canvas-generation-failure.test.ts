@@ -40,6 +40,8 @@ describe("canvas generation failure consumers", () => {
         expect(canvasGenerationRetryBlocked(failure, input)).toBe(true);
         expect(canvasGenerationRetryBlocked(failure, { ...input, referenceAudios: [] })).toBe(false);
         expect(canvasGenerationRetryBlocked(failure, { ...input, mask: { id: "mask", dataUrl: "mask-b" } })).toBe(false);
+        const imageOnly = { ...input, mode: "image" as const };
+        expect(canvasGenerationRetryBlocked(canvasGenerationFailureMetadata(rejection, imageOnly), { ...imageOnly, referenceAudios: [] })).toBe(true);
     });
 
     test("stored references survive a deleted source without pretending to be new input", async () => {
