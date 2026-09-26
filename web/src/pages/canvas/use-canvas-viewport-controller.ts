@@ -5,6 +5,7 @@ import { isHiddenBatchChild } from "@/lib/canvas/canvas-project-domain";
 import { applyCanvasLiveViewport } from "@/lib/canvas/canvas-live-viewport";
 import { canOpenCanvasNodePromptPanel, isCanvasMediaResultNode } from "@/lib/canvas/canvas-node-semantics";
 import { getCanvasNodesBounds, viewportAtScale, viewportForBounds, type CanvasViewportSize } from "@/lib/canvas/canvas-viewport";
+import { shouldRefreshCanvasVirtualization } from "@/lib/canvas/canvas-viewport-render-sync";
 import { CanvasNodeType, type CanvasNodeData, type ContextMenuState, type Position, type ViewportTransform } from "@/types/canvas";
 import { useCanvasViewportTransition } from "./use-canvas-viewport-transition";
 import { unobscuredCanvasArea, viewportForAgentNodes } from "@/lib/canvas/canvas-viewport";
@@ -39,6 +40,8 @@ export function useCanvasViewportController({
     setToolbarNodeId,
 }: UseCanvasViewportControllerOptions) {
     const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const renderedViewportRef = useRef(viewportRef.current);
+    const lastVirtualizationRefreshAtRef = useRef(0);
 
     const previewViewport = useCallback((next: ViewportTransform) => {
         viewportRef.current = next;
@@ -52,6 +55,8 @@ export function useCanvasViewportController({
             commitTimerRef.current = null;
         }
         viewportRef.current = next;
+        renderedViewportRef.current = next;
+        lastVirtualizationRefreshAtRef.current = performance.now();
         delete containerRef.current?.dataset.canvasViewportInteracting;
         setViewport((current) => current.x === next.x && current.y === next.y && current.k === next.k ? current : next);
     }, [containerRef, setViewport, viewportRef]);
@@ -174,7 +179,12 @@ export function useCanvasViewportController({
     const handleViewportPreviewChange = useCallback((next: ViewportTransform) => {
         cancelViewportTransition();
         viewportRef.current = next;
-    }, [cancelViewportTransition, viewportRef]);
+        const now = performance.now();
+        if (!shouldRefreshCanvasVirtualization(renderedViewportRef.current, next, lastVirtualizationRefreshAtRef.current, now)) return;
+        renderedViewportRef.current = next;
+        lastVirtualizationRefreshAtRef.current = now;
+        setViewport((current) => current.x === next.x && current.y === next.y && current.k === next.k ? current : next);
+    }, [cancelViewportTransition, setViewport, viewportRef]);
 
     return {
         fitCanvasContent,

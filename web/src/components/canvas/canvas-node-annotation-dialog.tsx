@@ -1,175 +1,105 @@
-import { Button, Modal, Slider } from "antd";
-import { Tooltip } from "@/components/ui/base/tooltip";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-
-import { Brush, Eraser, Redo2, RotateCcw, Save, Undo2 } from "lucide-react";
-
+import { Brush, LoaderCircle, Redo2, Save, Square, Type, Undo2, X } from "lucide-react";
+import { Tooltip } from "@/components/ui/base/tooltip";
 import { imageToDataUrl } from "@/services/image-storage";
+import { annotationHistory, normalizeAnnotationRect, type AnnotationHistory, type AnnotationOperation, type AnnotationPoint } from "./canvas-image-annotation-model";
 
-type Point = { x: number; y: number };
-type Stroke = { color: string; size: number; erase: boolean; points: Point[] };
-
+type Tool = "brush" | "rectangle" | "text";
 const colors = ["#ef4444", "#f59e0b", "#22c55e", "#14b8a6", "#3b82f6", "#a855f7", "#ffffff", "#111827"];
 
-export function CanvasNodeAnnotationDialog({ image, open, onClose, onConfirm }: {
-    image: { url: string; storageKey?: string };
-    open: boolean;
-    onClose: () => void;
-    onConfirm: (dataUrl: string) => void;
-}) {
+export function CanvasImageAnnotationEditor({ image, scale, onCancel, onConfirm }: { image: { url: string; storageKey?: string }; scale: number; onCancel: () => void; onConfirm: (dataUrl: string) => void | Promise<void> }) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const sourceImageRef = useRef<HTMLImageElement | null>(null);
-    const drawingRef = useRef<Stroke | null>(null);
-    const [source, setSource] = useState("");
+    const draftRef = useRef<AnnotationOperation | null>(null);
+    const rectOriginRef = useRef<AnnotationPoint | null>(null);
     const [size, setSize] = useState({ width: 0, height: 0 });
-    const [mode, setMode] = useState<"brush" | "erase">("brush");
+    const [tool, setTool] = useState<Tool>("brush");
     const [color, setColor] = useState(colors[0]);
-    const [brushSize, setBrushSize] = useState(18);
-    const [strokes, setStrokes] = useState<Stroke[]>([]);
-    const [redoStrokes, setRedoStrokes] = useState<Stroke[]>([]);
+    const [strokeSize, setStrokeSize] = useState(18);
+    const [textSize, setTextSize] = useState(42);
+    const [history, setHistory] = useState<AnnotationHistory>(() => annotationHistory.empty());
+    const [textDraft, setTextDraft] = useState<{ point: AnnotationPoint; value: string } | null>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     useEffect(() => {
-        if (!open) return;
         let cancelled = false;
-        void imageToDataUrl({ url: image.url, storageKey: image.storageKey }).then((dataUrl) => {
+        void imageToDataUrl(image).then((dataUrl) => {
             if (cancelled || !dataUrl) return;
             const element = new Image();
-            element.onload = () => {
-                if (cancelled) return;
-                sourceImageRef.current = element;
-                setSource(dataUrl);
-                setSize({ width: element.naturalWidth, height: element.naturalHeight });
-                setStrokes([]);
-                setRedoStrokes([]);
-            };
+            element.onload = () => { if (!cancelled) { sourceImageRef.current = element; setSize({ width: element.naturalWidth, height: element.naturalHeight }); setHistory(annotationHistory.empty()); } };
             element.src = dataUrl;
         });
         return () => { cancelled = true; };
-    }, [image.storageKey, image.url, open]);
+    }, [image.storageKey, image.url]);
+    useEffect(() => redraw(canvasRef.current, history.items), [history, size]);
+    useEffect(() => {
+        const keydown = (event: KeyboardEvent) => { if (event.key === "Escape") { if (textDraft) setTextDraft(null); else onCancel(); } };
+        window.addEventListener("keydown", keydown);
+        return () => window.removeEventListener("keydown", keydown);
+    }, [onCancel, textDraft]);
 
-    useEffect(() => redraw(canvasRef.current, strokes), [size, strokes]);
-
-    const startDraw = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-        event.preventDefault();
-        event.stopPropagation();
+    const pointFor = (event: ReactPointerEvent<HTMLCanvasElement>) => canvasPoint(event.currentTarget, event.clientX, event.clientY);
+    const begin = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+        event.preventDefault(); event.stopPropagation();
+        const point = pointFor(event);
+        if (tool === "text") { setTextDraft({ point, value: "" }); return; }
         event.currentTarget.setPointerCapture(event.pointerId);
-        const stroke: Stroke = { color, size: brushSize, erase: mode === "erase", points: [canvasPoint(event.currentTarget, event.clientX, event.clientY)] };
-        drawingRef.current = stroke;
-        drawStroke(canvasRef.current, stroke);
+        rectOriginRef.current = point;
+        draftRef.current = tool === "brush" ? { type: "brush", color, size: strokeSize, points: [point] } : { type: "rectangle", color, size: strokeSize, x: point.x, y: point.y, width: 0, height: 0 };
     };
-
-    const moveDraw = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-        const stroke = drawingRef.current;
-        if (!stroke) return;
-        event.preventDefault();
-        stroke.points.push(canvasPoint(event.currentTarget, event.clientX, event.clientY));
-        redraw(canvasRef.current, [...strokes, stroke]);
+    const move = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+        const draft = draftRef.current;
+        if (!draft) return;
+        event.preventDefault(); event.stopPropagation();
+        if (draft.type === "brush") draft.points.push(pointFor(event));
+        else if (draft.type === "rectangle" && rectOriginRef.current) Object.assign(draft, normalizeAnnotationRect(rectOriginRef.current, pointFor(event)));
+        redraw(canvasRef.current, [...history.items, draft]);
     };
-
-    const stopDraw = () => {
-        const stroke = drawingRef.current;
-        if (!stroke) return;
-        drawingRef.current = null;
-        setStrokes((current) => [...current, stroke]);
-        setRedoStrokes([]);
+    const finish = () => {
+        const draft = draftRef.current;
+        draftRef.current = null; rectOriginRef.current = null;
+        if (!draft || (draft.type === "rectangle" && (!draft.width || !draft.height))) return;
+        setHistory((current) => annotationHistory.push(current, draft));
     };
-
-    const undo = () => setStrokes((current) => {
-        const last = current.at(-1);
-        if (!last) return current;
-        setRedoStrokes((redo) => [...redo, last]);
-        return current.slice(0, -1);
-    });
-
-    const redo = () => setRedoStrokes((current) => {
-        const last = current.at(-1);
-        if (!last) return current;
-        setStrokes((items) => [...items, last]);
-        return current.slice(0, -1);
-    });
-
-    const save = () => {
-        const sourceImage = sourceImageRef.current;
-        const annotation = canvasRef.current;
-        if (!sourceImage || !annotation || !strokes.length) return;
-        const output = document.createElement("canvas");
-        output.width = size.width;
-        output.height = size.height;
-        const context = output.getContext("2d");
-        if (!context) return;
-        context.drawImage(sourceImage, 0, 0, output.width, output.height);
-        context.drawImage(annotation, 0, 0);
-        onConfirm(output.toDataURL("image/png"));
+    const commitText = () => {
+        if (!textDraft?.value.trim()) { setTextDraft(null); return; }
+        setHistory((current) => annotationHistory.push(current, { type: "text", color, size: textSize, ...textDraft.point, text: textDraft.value.trim() }));
+        setTextDraft(null);
     };
+    const save = async () => {
+        if (isSubmitting || !history.items.length || !sourceImageRef.current || !canvasRef.current) return;
+        setIsSubmitting(true);
+        try {
+            const output = document.createElement("canvas"); output.width = size.width; output.height = size.height;
+            const context = output.getContext("2d"); if (!context) return;
+            context.drawImage(sourceImageRef.current, 0, 0, output.width, output.height); context.drawImage(canvasRef.current, 0, 0);
+            await onConfirm(output.toDataURL("image/png"));
+        } finally { setIsSubmitting(false); }
+    };
+    const currentSize = tool === "text" ? textSize : strokeSize;
 
-    return (
-        <Modal title={null} open={open} onCancel={onClose} footer={null} width="min(1120px, calc(100vw - 32px))" centered destroyOnHidden>
-            <div className="flex flex-col gap-3">
-                <div className="flex flex-wrap items-center gap-2 rounded-lg border p-2" style={{ borderColor: "rgba(127,127,127,.22)" }}>
-                    <span className="px-1 text-sm font-semibold">标注</span>
-                    <span className="mx-1 h-6 w-px bg-current opacity-15" />
-                    <ToolButton title="画笔" active={mode === "brush"} onClick={() => setMode("brush")}><Brush className="size-4" /></ToolButton>
-                    <ToolButton title="橡皮" active={mode === "erase"} onClick={() => setMode("erase")}><Eraser className="size-4" /></ToolButton>
-                    <div className="flex items-center gap-1 px-1">
-                        {colors.map((item) => <button key={item} type="button" aria-label={`颜色 ${item}`} className="size-5 rounded-full border-2 transition" style={{ background: item, borderColor: color === item ? "currentColor" : "transparent", boxShadow: item === "#ffffff" ? "inset 0 0 0 1px rgba(0,0,0,.18)" : undefined }} onClick={() => { setColor(item); setMode("brush"); }} />)}
-                    </div>
-                    <div className="flex w-40 items-center gap-2 px-2"><Brush className="size-3.5 opacity-55" /><Slider className="m-0 flex-1" min={3} max={80} value={brushSize} onChange={setBrushSize} /></div>
-                    <span className="mx-1 h-6 w-px bg-current opacity-15" />
-                    <ToolButton title="撤销" disabled={!strokes.length} onClick={undo}><Undo2 className="size-4" /></ToolButton>
-                    <ToolButton title="重做" disabled={!redoStrokes.length} onClick={redo}><Redo2 className="size-4" /></ToolButton>
-                    <ToolButton title="清空" disabled={!strokes.length} onClick={() => { setStrokes([]); setRedoStrokes([]); }}><RotateCcw className="size-4" /></ToolButton>
-                    <span className="min-w-0 flex-1" />
-                    <Button type="primary" icon={<Save className="size-4" />} disabled={!strokes.length} onClick={save}>保存为新节点</Button>
-                </div>
-                <div className="flex min-h-[360px] items-center justify-center overflow-hidden rounded-lg bg-black/5 dark:bg-white/[0.03]">
-                    {source && size.width ? (
-                        <div className="relative inline-block max-h-[72vh] max-w-full overflow-hidden">
-                            <img src={source} alt="待标注图片" className="block max-h-[72vh] max-w-full select-none object-contain" draggable={false} />
-                            <canvas ref={canvasRef} width={size.width} height={size.height} className="absolute inset-0 h-full w-full cursor-crosshair touch-none" onPointerDown={startDraw} onPointerMove={moveDraw} onPointerUp={stopDraw} onPointerCancel={stopDraw} />
-                        </div>
-                    ) : <span className="text-sm opacity-50">正在读取图片...</span>}
-                </div>
-            </div>
-        </Modal>
-    );
+    return <div data-image-annotation-inline="true" className="absolute inset-0 z-[calc(var(--node-z-overlay)+3)] overflow-visible rounded-[inherit]" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+        <canvas ref={canvasRef} width={size.width || 1} height={size.height || 1} aria-label="图片标注画布" className="absolute inset-0 h-full w-full touch-none cursor-crosshair rounded-[inherit]" onPointerDown={begin} onPointerMove={move} onPointerUp={finish} onPointerCancel={finish} />
+        {textDraft ? <input autoFocus aria-label="标注文字" value={textDraft.value} onChange={(event) => setTextDraft({ ...textDraft, value: event.target.value })} onBlur={commitText} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") commitText(); if (event.key === "Escape") setTextDraft(null); }} className="absolute z-20 min-w-24 border-b-2 bg-black/55 px-1 py-0.5 text-white outline-none" style={{ left: `${textDraft.point.x / Math.max(1, size.width) * 100}%`, top: `${textDraft.point.y / Math.max(1, size.height) * 100}%`, borderColor: color, fontSize: Math.max(12, textSize * 0.45) }} /> : null}
+        <div data-canvas-no-zoom="true" className="absolute bottom-[calc(100%+14px)] left-1/2 flex h-14 items-center gap-1 rounded-2xl border border-white/10 bg-[#242424]/96 p-1.5 text-white shadow-2xl backdrop-blur-xl" style={{ transform: `translateX(-50%) scale(var(--canvas-live-inverse-scale, ${1 / Math.max(scale, 0.01)}))`, transformOrigin: "center bottom" }}>
+            <ToolButton title="关闭标注" onClick={onCancel}><X /></ToolButton><Divider />
+            <ToolButton title="画笔" active={tool === "brush"} onClick={() => setTool("brush")}><Brush /></ToolButton><ToolButton title="矩形" active={tool === "rectangle"} onClick={() => setTool("rectangle")}><Square /></ToolButton><ToolButton title="文字" active={tool === "text"} onClick={() => setTool("text")}><Type /></ToolButton><Divider />
+            <label className="relative grid size-9 cursor-pointer place-items-center rounded-xl hover:bg-white/10" title="颜色"><span className="size-5 rounded-full border border-white/70" style={{ background: color }} /><input aria-label="标注颜色" type="color" value={color} onChange={(event) => setColor(event.target.value)} className="absolute inset-0 cursor-pointer opacity-0" /></label>
+            <input aria-label={tool === "text" ? "文字字号" : "线条粗细"} type="range" min={tool === "text" ? 18 : 3} max={tool === "text" ? 96 : 80} value={currentSize} onChange={(event) => tool === "text" ? setTextSize(Number(event.target.value)) : setStrokeSize(Number(event.target.value))} className="mx-2 w-24 accent-white" /><Divider />
+            <ToolButton title="撤销" disabled={!history.items.length} onClick={() => setHistory(annotationHistory.undo)}><Undo2 /></ToolButton><ToolButton title="重做" disabled={!history.redo.length} onClick={() => setHistory(annotationHistory.redo)}><Redo2 /></ToolButton>
+            <button type="button" aria-label={isSubmitting ? "正在保存" : "保存标注"} title={isSubmitting ? "正在保存" : "保存标注"} disabled={!history.items.length || isSubmitting} onClick={() => void save()} className="ml-2 grid size-10 place-items-center rounded-xl bg-white text-neutral-900 transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40">{isSubmitting ? <LoaderCircle className="size-4 animate-spin text-neutral-900" /> : <Save className="size-4 text-neutral-900" />}</button>
+        </div>
+    </div>;
 }
 
-function ToolButton({ title, active, disabled, children, onClick }: { title: string; active?: boolean; disabled?: boolean; children: ReactNode; onClick: () => void }) {
-    return <Tooltip title={title}><button type="button" disabled={disabled} className={`grid size-9 place-items-center rounded-md transition disabled:cursor-not-allowed disabled:opacity-25 ${active ? "bg-black/10 dark:bg-white/15" : "hover:bg-black/5 dark:hover:bg-white/10"}`} onClick={onClick}>{children}</button></Tooltip>;
-}
-
-function canvasPoint(canvas: HTMLCanvasElement, clientX: number, clientY: number): Point {
-    const rect = canvas.getBoundingClientRect();
-    return { x: ((clientX - rect.left) / Math.max(1, rect.width)) * canvas.width, y: ((clientY - rect.top) / Math.max(1, rect.height)) * canvas.height };
-}
-
-function redraw(canvas: HTMLCanvasElement | null, strokes: Stroke[]) {
-    const context = canvas?.getContext("2d");
-    if (!canvas || !context) return;
-    context.clearRect(0, 0, canvas.width, canvas.height);
-    strokes.forEach((stroke) => drawStroke(canvas, stroke));
-}
-
-function drawStroke(canvas: HTMLCanvasElement | null, stroke: Stroke) {
-    const context = canvas?.getContext("2d");
-    if (!context || !stroke.points.length) return;
-    context.save();
-    context.globalCompositeOperation = stroke.erase ? "destination-out" : "source-over";
-    context.strokeStyle = stroke.color;
-    context.fillStyle = stroke.color;
-    context.lineWidth = stroke.size;
-    context.lineCap = "round";
-    context.lineJoin = "round";
-    const first = stroke.points[0];
-    if (stroke.points.length === 1) {
-        context.beginPath();
-        context.arc(first.x, first.y, stroke.size / 2, 0, Math.PI * 2);
-        context.fill();
-    } else {
-        context.beginPath();
-        context.moveTo(first.x, first.y);
-        stroke.points.slice(1).forEach((point) => context.lineTo(point.x, point.y));
-        context.stroke();
-    }
+function Divider() { return <span className="mx-1 h-7 w-px bg-white/12" />; }
+function ToolButton({ title, active, disabled, children, onClick }: { title: string; active?: boolean; disabled?: boolean; children: ReactNode; onClick: () => void }) { return <Tooltip title={title}><button type="button" aria-label={title} disabled={disabled} className={`grid size-10 place-items-center rounded-xl transition disabled:opacity-25 ${active ? "bg-white/16 text-white" : "text-white/72 hover:bg-white/10 hover:text-white"}`} onClick={onClick}>{children}</button></Tooltip>; }
+function canvasPoint(canvas: HTMLCanvasElement, clientX: number, clientY: number): AnnotationPoint { const rect = canvas.getBoundingClientRect(); return { x: (clientX - rect.left) / Math.max(1, rect.width) * canvas.width, y: (clientY - rect.top) / Math.max(1, rect.height) * canvas.height }; }
+function redraw(canvas: HTMLCanvasElement | null, operations: AnnotationOperation[]) { const context = canvas?.getContext("2d"); if (!canvas || !context) return; context.clearRect(0, 0, canvas.width, canvas.height); operations.forEach((operation) => drawOperation(context, operation)); }
+function drawOperation(context: CanvasRenderingContext2D, operation: AnnotationOperation) {
+    context.save(); context.strokeStyle = operation.color; context.fillStyle = operation.color; context.lineWidth = operation.size; context.lineCap = "round"; context.lineJoin = "round";
+    if (operation.type === "brush") { const first = operation.points[0]; if (first) { context.beginPath(); if (operation.points.length === 1) { context.arc(first.x, first.y, operation.size / 2, 0, Math.PI * 2); context.fill(); } else { context.moveTo(first.x, first.y); operation.points.slice(1).forEach((point) => context.lineTo(point.x, point.y)); context.stroke(); } } }
+    if (operation.type === "rectangle") context.strokeRect(operation.x, operation.y, operation.width, operation.height);
+    if (operation.type === "text") { context.font = `600 ${operation.size}px sans-serif`; context.textBaseline = "top"; context.fillText(operation.text, operation.x, operation.y); }
     context.restore();
 }

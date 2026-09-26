@@ -5,6 +5,7 @@ import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { listWorkspaceCanvasProjectsPage, type CanvasLibrarySummary } from "@/services/api/workspace-data";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
+import { listCanvasWorkspaceProjectRoots, previewNodesForWorkspaceProject } from "@/lib/canvas/canvas-workspace-project";
 import { HomeDashboard } from "./home-dashboard";
 import "./home-dashboard.css";
 
@@ -20,13 +21,13 @@ export default function HomePage() {
         queryFn: () => listWorkspaceCanvasProjectsPage({ page: 1, pageSize: 4, sort: "updated" }),
         enabled: !localMode && Boolean(userId) && sessionHydrated,
     });
-    const localSummaries = useMemo<CanvasLibrarySummary[]>(() => [...localProjects]
+    const localSummaries = useMemo<CanvasLibrarySummary[]>(() => listCanvasWorkspaceProjectRoots(localProjects)
         .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
         .slice(0, 4)
         .map((project) => ({
             ...project,
             nodeCount: project.nodes.length,
-            previewNodes: project.nodes.slice(0, 4),
+            previewNodes: previewNodesForWorkspaceProject(localProjects, project.id),
         })), [localProjects]);
     const projects = localMode ? localSummaries : query.data?.projects || [];
 

@@ -5,6 +5,9 @@ import { ConnectionPath } from "@/components/canvas/canvas-connections";
 import { CanvasFrameNode } from "@/components/canvas/canvas-frame-node";
 import { CanvasNode } from "@/components/canvas/canvas-node";
 import type { CanvasVideoCropRect } from "@/components/canvas/canvas-video-crop-dialog";
+import type { CanvasImageCropRect } from "@/components/canvas/canvas-node-crop-dialog";
+import type { CanvasImageMaskEditPayload } from "@/components/canvas/canvas-node-mask-edit-dialog";
+import type { AiConfig } from "@/stores/use-config-store";
 import type { CanvasConnectionApproach } from "@/lib/canvas/canvas-connection-tilt";
 import type { CanvasBatchConnectionPreview } from "@/lib/canvas/canvas-batch-connection";
 import { sortCanvasNodesByStackOrder, type CanvasNodeStackOrder } from "@/lib/canvas/canvas-node-stack-order";
@@ -79,6 +82,16 @@ type CanvasProjectWorldLayersProps = {
     onOpenDirector: (node: CanvasNodeData) => void;
     onOpenDrawing: (node: CanvasNodeData) => void;
     onStartBatchConnection: (event: ReactPointerEvent, sourceNodeIds: string[]) => void;
+    imageCropNodeId?: string | null;
+    onCancelImageCrop?: () => void;
+    onConfirmImageCrop?: (node: CanvasNodeData, crop: CanvasImageCropRect) => void | Promise<void>;
+    annotationNodeId?: string | null;
+    onCancelAnnotation?: () => void;
+    onConfirmAnnotation?: (node: CanvasNodeData, dataUrl: string) => void | Promise<void>;
+    maskEditNodeId?: string | null;
+    maskEditConfig?: AiConfig;
+    onCancelMaskEdit?: () => void;
+    onConfirmMaskEdit?: (node: CanvasNodeData, payload: CanvasImageMaskEditPayload) => void | Promise<void>;
     videoCropNodeId?: string | null;
     onCancelVideoCrop?: () => void;
     onConfirmVideoCrop?: (node: CanvasNodeData, crop: CanvasVideoCropRect, sourceDimensions: { width: number; height: number }) => void | Promise<void>;
@@ -163,6 +176,16 @@ export const CanvasProjectWorldLayers = memo(function CanvasProjectWorldLayers(p
                         isSelected={props.selectedNodeIds.has(node.id)}
                         mediaActive={activeMediaNodeId === node.id}
                         onMediaPlayRequest={setActiveMediaNodeId}
+                        imageCropActive={props.imageCropNodeId === node.id}
+                        onCancelImageCrop={props.onCancelImageCrop}
+                        onConfirmImageCrop={props.onConfirmImageCrop}
+                        annotationActive={props.annotationNodeId === node.id}
+                        onCancelAnnotation={props.onCancelAnnotation}
+                        onConfirmAnnotation={props.onConfirmAnnotation}
+                        maskEditActive={props.maskEditNodeId === node.id}
+                        maskEditConfig={props.maskEditConfig}
+                        onCancelMaskEdit={props.onCancelMaskEdit}
+                        onConfirmMaskEdit={props.onConfirmMaskEdit}
                         videoCropActive={props.videoCropNodeId === node.id}
                         onCancelVideoCrop={props.onCancelVideoCrop}
                         onConfirmVideoCrop={props.onConfirmVideoCrop}

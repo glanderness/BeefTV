@@ -1,8 +1,6 @@
 <p align="center">
-  <img src="web/public/logo.svg" width="88" alt="BeefTV logo">
+  <img src="assets/readme/beeftv-wordmark.svg" width="640" alt="BeefTV — 本地优先、轻量、AI Native 的视频创作工作台">
 </p>
-
-<h1 align="center">BeefTV</h1>
 
 <p align="center">Local-first, lightweight, AI-native video workspace.</p>
 
@@ -18,6 +16,10 @@ BeefTV 是一个开源的 AI 视频创作工作台，专注三个方向：
 - **本地优先**：项目、画布、素材和任务默认保存在本机。
 - **轻量**：单用户桌面应用优先，不依赖账号、团队 SaaS 或云存储。
 - **AI Native**：用自由画布组织文字、图片、音频和视频生成与编辑流程。
+
+## 产品演示
+
+<video src="https://github.com/user-attachments/assets/7acc2ad6-5312-4e22-bf1c-96d05c7cd1e3" controls muted></video>
 
 > 项目仍在快速开发。数据结构和外部接口可能变化，建议在个人本地或可信环境中使用，不要将本地 workspace API 直接暴露到公网。
 

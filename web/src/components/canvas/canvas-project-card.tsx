@@ -1,5 +1,5 @@
 import { Check, Clapperboard, CloudUpload, Download, FileText, Frame, HardDriveUpload, Image as ImageIcon, MoreHorizontal, Music2, Pencil, Plus, Settings2, Sparkles, Trash2, Video, Workflow, X } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { App, Dropdown, Input } from "antd";
 
@@ -12,12 +12,13 @@ import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resour
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { resolveBackendApiUrl } from "@/stores/use-config-store";
 import { CachedResourceImage } from "@/components/cached-resource-image";
+import { resolveMediaUrl } from "@/services/file-storage";
 import { MediaPlaceholder } from "@/components/ui/product/media-placeholder";
 import { cn } from "@/lib/utils";
 import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
 
-type ProjectPreviewMedia = { node: CanvasNodeData; url: string; storageKey?: string };
-const projectPreviewMediaCache = new WeakMap<CanvasNodeData[], { first?: ProjectPreviewMedia; latest?: ProjectPreviewMedia }>();
+type ProjectPreviewMedia = { node: CanvasNodeData; url: string; storageKey?: string; kind: "image" | "video" };
+const projectPreviewMediaCache = new WeakMap<CanvasNodeData[], { first: ProjectPreviewMedia[]; latest: ProjectPreviewMedia[] }>();
 
 export function CanvasCreateCard({ disabled, onClick }: { disabled?: boolean; onClick: () => void }) {
     return (
@@ -154,25 +155,16 @@ export function ProjectPreview({ project, preferLatestImage = false, emptyVarian
     // persistence boundary as the source of truth so local workspaces never
     // render cloud-upload copy or a cloud icon during a local write.
     const isLocalSave = isLocalWorkspaceMode() || syncProgress?.message?.includes("本地") === true;
-    const media = projectPreviewMedia(project.nodes, preferLatestImage);
-    const [videoFailed, setVideoFailed] = useState(false);
-    const hasUsableMedia = Boolean(media && !(media.node.type === CanvasNodeType.Video && videoFailed));
+    const [failedMedia, setFailedMedia] = useState<string[]>([]);
+    const media = projectPreviewMediaCandidates(project.nodes, preferLatestImage).find((candidate) => !failedMedia.includes(`${candidate.node.id}:${candidate.kind}:${candidate.url}`));
+    const failMedia = () => { if (media) setFailedMedia((current) => [...current, `${media.node.id}:${media.kind}:${media.url}`]); };
 
-    const content = hasUsableMedia && media ? (
+    const content = media ? (
         <div className="canvas-project-media size-full">
-            {media.node.type === CanvasNodeType.Video ? (
-                <video
-                    className="canvas-project-video size-full object-cover"
-                    src={media.url}
-                    muted
-                    playsInline
-                    preload="auto"
-                    aria-label={media.node.title || "项目视频"}
-                    onLoadedData={(event) => { event.currentTarget.currentTime = 0; }}
-                    onError={() => setVideoFailed(true)}
-                />
+            {media.kind === "video" ? (
+                <ProjectPreviewVideo key={`${media.node.id}:${media.url}`} media={media} onError={failMedia} />
             ) : (
-                <CachedResourceImage storageKey={media.storageKey} src={media.url} alt={media.node.title || "项目图片"} loading="lazy" decoding="async" className="size-full min-h-0 object-cover" fallback={emptyVariant === "libtv" ? <LibTvEmptyPreview /> : <MediaPlaceholder failed />} loadingFallback={<MediaPlaceholder label="正在读取封面" />} />
+                <CachedResourceImage key={`${media.node.id}:${media.url}`} storageKey={media.storageKey} src={media.url} alt={media.node.title || "项目图片"} loading="lazy" decoding="async" className="size-full min-h-0 object-cover" fallback={emptyVariant === "libtv" ? <LibTvEmptyPreview /> : <MediaPlaceholder failed />} loadingFallback={<MediaPlaceholder label="正在读取封面" />} onError={failMedia} />
             )}
         </div>
     ) : emptyVariant === "libtv" ? (
@@ -236,38 +228,56 @@ export function ProjectPreview({ project, preferLatestImage = false, emptyVarian
 }
 
 function LibTvEmptyPreview() {
-    return <div className="canvas-project-empty is-libtv size-full"><span className="canvas-project-empty-image" aria-hidden="true" /><Workflow className="canvas-project-empty-icon" aria-hidden="true" /></div>;
+    return <div className="canvas-project-empty is-libtv size-full"><Workflow className="canvas-project-empty-icon" aria-hidden="true" /></div>;
 }
 
 export function projectPreviewMedia(nodes: CanvasNodeData[], preferLatestImage = false) {
+    return projectPreviewMediaCandidates(nodes, preferLatestImage)[0];
+}
+
+export function projectPreviewMediaCandidates(nodes: CanvasNodeData[], preferLatestImage = false) {
     let cached = projectPreviewMediaCache.get(nodes);
     if (!cached) {
-        let firstVideo: ProjectPreviewMedia | undefined;
-        let firstImage: ProjectPreviewMedia | undefined;
-        let latestMedia: ProjectPreviewMedia | undefined;
-        let latestImage: ProjectPreviewMedia | undefined;
+        const images: ProjectPreviewMedia[] = [];
+        const videos: ProjectPreviewMedia[] = [];
         for (const node of nodes) {
             if (node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video) continue;
-            const url = getNodeMediaUrl(node);
-            if (!isPreviewUrl(url)) continue;
-            const media = { node, url, storageKey: node.metadata?.storageKey };
-            if (node.type === CanvasNodeType.Video) firstVideo ||= media;
-            latestMedia = media;
-            if (node.type === CanvasNodeType.Image) {
-                firstImage ||= media;
-                latestImage = media;
+            const metadata = node.metadata;
+            const pushSource = (kind: "image" | "video", url: string, storageKey?: string) => {
+                if (!isPreviewUrl(url) && !storageKey) return;
+                const group = kind === "video" ? videos : images;
+                if (!group.some((media) => media.node === node && media.url === url && media.storageKey === storageKey)) group.push({ node, url, storageKey, kind });
+            };
+            if (node.type === CanvasNodeType.Video) {
+                const poster = metadata?.videoPreview;
+                if (poster?.content && poster.content !== metadata?.content) pushSource("image", resolveBackendApiUrl(poster.content), poster.storageKey);
+            }
+            const kind = node.type === CanvasNodeType.Video ? "video" : "image";
+            const resourceId = resourceIdFromStorageKey(metadata?.storageKey);
+            if (metadata?.storageKey) pushSource(kind, resourceId ? resourceFileUrl(resourceId) : "", metadata.storageKey);
+            for (const value of [metadata?.previewContent, metadata?.content]) {
+                if (value) pushSource(kind, resolveBackendApiUrl(value));
             }
         }
-        cached = { first: firstVideo || firstImage, latest: latestImage || latestMedia };
+        cached = { first: [...images, ...videos], latest: [...images].reverse().concat([...videos].reverse()) };
         projectPreviewMediaCache.set(nodes, cached);
     }
     return preferLatestImage ? cached.latest : cached.first;
 }
 
-function getNodeMediaUrl(node: CanvasNodeData) {
-    const resourceId = resourceIdFromStorageKey(node.metadata?.storageKey);
-    if (resourceId) return resourceFileUrl(resourceId);
-    return resolveBackendApiUrl(node.metadata?.previewContent || node.metadata?.content || "");
+function ProjectPreviewVideo({ media, onError }: { media: ProjectPreviewMedia; onError: () => void }) {
+    const [source, setSource] = useState("");
+    useEffect(() => {
+        let active = true;
+        setSource("");
+        void resolveMediaUrl(media.storageKey, media.url).then((url) => {
+            if (!active) return;
+            if (url) setSource(url);
+            else onError();
+        }).catch(() => { if (active) onError(); });
+        return () => { active = false; };
+    }, [media.storageKey, media.url]);
+    return source ? <video className="canvas-project-video size-full object-cover" src={source} muted playsInline preload="auto" aria-label={media.node.title || "项目视频"} onLoadedData={(event) => { event.currentTarget.currentTime = 0; }} onError={onError} /> : null;
 }
 
 function buildNodePreviewLayout(nodes: CanvasNodeData[]) {
@@ -310,7 +320,7 @@ function getNodePresentation(node: CanvasNodeData) {
 }
 
 function isPreviewUrl(value?: string) {
-    return Boolean(value && /^(https?:|blob:|data:image\/|data:video\/|\/api\/)/.test(value));
+    return Boolean(value && /^(https?:|blob:|data:image\/|data:video\/|\/(?:api\/)?resources\/)/.test(value));
 }
 
 export function formatProjectTime(value: string) {

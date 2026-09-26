@@ -28,7 +28,6 @@ type UseCanvasRenderModelOptions = {
     addedSkills: Skill[];
     directorScenes?: DirectorScene[];
     infoNodeId: string | null;
-    cropNodeId: string | null;
     maskEditNodeId: string | null;
     annotationNodeId: string | null;
     splitNodeId: string | null;
@@ -59,7 +58,6 @@ export function useCanvasRenderModel({
     addedSkills,
     directorScenes,
     infoNodeId,
-    cropNodeId,
     maskEditNodeId,
     annotationNodeId,
     splitNodeId,
@@ -222,7 +220,6 @@ export function useCanvasRenderModel({
     const toolbarCandidate = selectedNodeIdForToolbar ? nodeById.get(selectedNodeIdForToolbar) || null : null;
     const toolbarNode = isFrameNode(toolbarCandidate) ? null : toolbarCandidate;
     const infoNode = infoNodeId ? nodeById.get(infoNodeId) || null : null;
-    const cropNode = cropNodeId ? nodeById.get(cropNodeId) || null : null;
     const maskEditNode = maskEditNodeId ? nodeById.get(maskEditNodeId) || null : null;
     const annotationNode = annotationNodeId ? nodeById.get(annotationNodeId) || null : null;
     const splitNode = splitNodeId ? nodeById.get(splitNodeId) || null : null;
@@ -375,7 +372,6 @@ export function useCanvasRenderModel({
         configInputsById,
         connectionLayerBounds,
         contextMenuNode,
-        cropNode,
         displayConnections,
         frameChildrenById,
         imageAssets,

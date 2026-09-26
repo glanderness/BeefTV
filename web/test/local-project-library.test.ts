@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 
 const libraryPage = readFileSync(new URL("../src/pages/canvas/index.tsx", import.meta.url), "utf8");
 const card = readFileSync(new URL("../src/components/canvas/canvas-folder-card.tsx", import.meta.url), "utf8");
-const history = readFileSync(new URL("../src/components/canvas/canvas-history-drawer.tsx", import.meta.url), "utf8");
+const recycleBin = readFileSync(new URL("../src/components/canvas/recycle-bin-dialog.tsx", import.meta.url), "utf8");
 const exportService = readFileSync(new URL("../src/lib/canvas/canvas-export.ts", import.meta.url), "utf8");
 const exportTypes = readFileSync(new URL("../src/types/canvas-export.ts", import.meta.url), "utf8");
 const deleteDialog = readFileSync(new URL("../src/components/canvas/canvas-delete-projects-dialog.tsx", import.meta.url), "utf8");
@@ -28,9 +28,9 @@ test("local project library exposes the complete local workspace lifecycle", () 
     expect(card).toContain("移动至文件夹");
     expect(card).toContain("创建副本");
     expect(card).toContain("删除");
-    expect(history).toContain("恢复到项目列表");
-    expect(history).toContain("isLocalWorkspaceMode()");
-    expect(history).not.toContain('import.meta.env.VITE_CANVAS_LOCAL_MODE !== "false"');
+    expect(recycleBin).toContain("恢复到项目列表");
+    expect(recycleBin).toContain("isLocalWorkspaceMode()");
+    expect(recycleBin).not.toContain('import.meta.env.VITE_CANVAS_LOCAL_MODE !== "false"');
     expect(exportService).toContain("folders?: CanvasFolder[]");
     expect(exportService).toContain("projectFolderIds");
     expect(libraryPage).toContain("folderIdMap");

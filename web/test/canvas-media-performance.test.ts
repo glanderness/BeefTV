@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
 
 import { canvasNodeRenderPadding, resolveActiveCanvasMediaNodeId } from "../src/lib/canvas/canvas-performance-mode";
+import { shouldRefreshCanvasVirtualization } from "../src/lib/canvas/canvas-viewport-render-sync";
 import { videoMetadata } from "../src/lib/canvas/canvas-generation-task-sync";
 import { canvasNodeVideoPreviewUrl, canvasVideoAssetPreviewUrl } from "../src/lib/canvas/canvas-media-preview";
 import { collectImageStorageKeys } from "../src/services/image-storage";
@@ -48,6 +49,14 @@ describe("canvas dimension header rendering", () => {
 });
 
 describe("large canvas media rendering", () => {
+    test("refreshes the virtualized node window during continuous viewport movement without committing every wheel event", () => {
+        const previous = { x: 0, y: 0, k: 1 };
+        const moved = { x: 0, y: -360, k: 1 };
+        expect(shouldRefreshCanvasVirtualization(previous, moved, 1_000, 1_030)).toBe(false);
+        expect(shouldRefreshCanvasVirtualization(previous, moved, 1_000, 1_064)).toBe(true);
+        expect(shouldRefreshCanvasVirtualization(previous, previous, 1_000, 1_200)).toBe(false);
+    });
+
     test("keeps rendered nodes mounted longer than newly entering nodes", () => {
         expect(canvasNodeRenderPadding(true, false)).toBe(128);
         expect(canvasNodeRenderPadding(true, true)).toBe(640);

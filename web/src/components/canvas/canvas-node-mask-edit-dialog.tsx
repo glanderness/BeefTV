@@ -1,14 +1,13 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { Button, Input, Modal, Slider } from "antd";
-import { Brush, ChevronDown, Eraser, RotateCcw, WandSparkles, X } from "lucide-react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Brush, Eraser, LoaderCircle, RotateCcw, Settings2, WandSparkles, X } from "lucide-react";
 
-import { readImageMeta } from "@/lib/image-utils";
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
-import { defaultImageParamsForModel } from "@/lib/model-selection";
-import type { AiConfig } from "@/stores/use-config-store";
+import { Tooltip } from "@/components/ui/base/tooltip";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { defaultImageParamsForModel } from "@/lib/model-selection";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
+import type { AiConfig } from "@/stores/use-config-store";
 
 export type CanvasImageMaskEditPayload = {
     prompt: string;
@@ -17,310 +16,111 @@ export type CanvasImageMaskEditPayload = {
 };
 
 type DrawMode = "paint" | "erase";
-
 const defaultBrushSize = 100;
 const maskFillColor = "rgba(37, 99, 235, .38)";
 const maskBorderColor = "rgba(255, 255, 255, .72)";
 
-export function CanvasNodeMaskEditDialog({ dataUrl, open, config, onClose, onConfirm }: { dataUrl: string; open: boolean; config: AiConfig; onClose: () => void; onConfirm: (payload: CanvasImageMaskEditPayload) => void }) {
+export function CanvasImageMaskEditor({ imageDimensions, scale, config, onCancel, onConfirm }: {
+    imageDimensions: { width: number; height: number };
+    scale: number;
+    config: AiConfig;
+    onCancel: () => void;
+    onConfirm: (payload: CanvasImageMaskEditPayload) => void | Promise<void>;
+}) {
     const maskCanvasRef = useRef<HTMLCanvasElement>(null);
     const previewCanvasRef = useRef<HTMLCanvasElement>(null);
     const drawingRef = useRef<{ active: boolean; last: { x: number; y: number } | null }>({ active: false, last: null });
-    const [image, setImage] = useState<{ width: number; height: number } | null>(null);
     const [prompt, setPrompt] = useState("");
     const [brushSize, setBrushSize] = useState(defaultBrushSize);
     const [mode, setMode] = useState<DrawMode>("paint");
     const [error, setError] = useState("");
+    const [settingsOpen, setSettingsOpen] = useState(false);
     const [generationConfig, setGenerationConfig] = useState<AiConfig>(() => config);
-    const [advancedOpen, setAdvancedOpen] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const theme = canvasThemes[useActiveTheme()];
 
     useEffect(() => {
-        if (!open) return;
-        setPrompt("");
-        setBrushSize(defaultBrushSize);
-        setMode("paint");
-        setError("");
-        setAdvancedOpen(true);
-        setGenerationConfig(config);
-        void readImageMeta(dataUrl).then(setImage);
-    }, [dataUrl, open]);
-
+        setPrompt(""); setBrushSize(defaultBrushSize); setMode("paint"); setError(""); setSettingsOpen(false);
+        clearCanvas(maskCanvasRef.current); clearCanvas(previewCanvasRef.current);
+    }, [imageDimensions.height, imageDimensions.width]);
     useEffect(() => {
-        clearCanvas(maskCanvasRef.current);
-        clearCanvas(previewCanvasRef.current);
-    }, [image]);
+        const keydown = (event: KeyboardEvent) => { if (event.key === "Escape") settingsOpen ? setSettingsOpen(false) : onCancel(); };
+        window.addEventListener("keydown", keydown);
+        return () => window.removeEventListener("keydown", keydown);
+    }, [onCancel, settingsOpen]);
 
     const draw = (event: ReactPointerEvent<HTMLCanvasElement>) => {
         const point = readCanvasPoint(event.currentTarget, event.clientX, event.clientY);
-        const maskCanvas = maskCanvasRef.current;
-        const context = maskCanvas?.getContext("2d");
-        if (!maskCanvas || !context) return;
-        context.lineCap = "round";
-        context.lineJoin = "round";
-        context.lineWidth = brushSize;
+        const context = maskCanvasRef.current?.getContext("2d");
+        if (!context) return;
+        context.lineCap = "round"; context.lineJoin = "round"; context.lineWidth = brushSize;
         context.globalCompositeOperation = mode === "paint" ? "source-over" : "destination-out";
-        context.strokeStyle = "#000";
-        context.fillStyle = "#000";
-        if (!drawingRef.current.last) {
-            drawMaskStroke(context, point, point, brushSize);
-        } else {
-            drawMaskStroke(context, drawingRef.current.last, point, brushSize);
-        }
-        renderMaskPreview(maskCanvas, previewCanvasRef.current);
-        drawingRef.current.last = point;
-        if (mode === "paint") {
-            setError("");
-        }
-    };
-
-    const startDraw = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-        event.preventDefault();
-        event.stopPropagation();
-        event.currentTarget.setPointerCapture(event.pointerId);
-        drawingRef.current = { active: true, last: null };
+        context.strokeStyle = "#000"; context.fillStyle = "#000";
+        drawMaskStroke(context, drawingRef.current.last || point, point, brushSize);
         if (maskCanvasRef.current) renderMaskPreview(maskCanvasRef.current, previewCanvasRef.current);
-        draw(event);
+        drawingRef.current.last = point;
+        if (mode === "paint") setError("");
     };
-
-    const moveDraw = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-        if (!drawingRef.current.active) return;
-        event.preventDefault();
-        draw(event);
+    const startDraw = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+        event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId);
+        drawingRef.current = { active: true, last: null }; draw(event);
     };
-
+    const moveDraw = (event: ReactPointerEvent<HTMLCanvasElement>) => { if (drawingRef.current.active) { event.preventDefault(); draw(event); } };
     const stopDraw = () => {
         drawingRef.current = { active: false, last: null };
-        const maskCanvas = maskCanvasRef.current;
-        if (maskCanvas) renderMaskPreview(maskCanvas, previewCanvasRef.current, canvasHasPaint(maskCanvas));
+        if (maskCanvasRef.current) renderMaskPreview(maskCanvasRef.current, previewCanvasRef.current, canvasHasPaint(maskCanvasRef.current));
     };
-
-    const resetMask = () => {
-        clearCanvas(maskCanvasRef.current);
-        clearCanvas(previewCanvasRef.current);
-        setError("");
-    };
-
-    const submit = () => {
-        const nextPrompt = prompt.trim();
-        const canvas = maskCanvasRef.current;
+    const resetMask = () => { clearCanvas(maskCanvasRef.current); clearCanvas(previewCanvasRef.current); setError(""); };
+    const submit = async () => {
+        const nextPrompt = prompt.trim(); const canvas = maskCanvasRef.current;
         if (!nextPrompt) return setError("请输入修改要求");
-        if (!canvas) return;
-        if (!canvasHasPaint(canvas)) return setError("请先涂抹局部区域");
-        onConfirm({ prompt: nextPrompt, maskDataUrl: buildEditMask(canvas), generationConfig: { model: generationConfig.model, imageModel: generationConfig.imageModel, size: generationConfig.size, quality: generationConfig.quality, count: generationConfig.count, transparentBackground: generationConfig.transparentBackground } });
+        if (!canvas || !canvasHasPaint(canvas)) return setError("请先涂抹局部区域");
+        if (isSubmitting) return;
+        setIsSubmitting(true);
+        try {
+            await onConfirm({ prompt: nextPrompt, maskDataUrl: buildEditMask(canvas), generationConfig: { model: generationConfig.model, imageModel: generationConfig.imageModel, size: generationConfig.size, quality: generationConfig.quality, count: generationConfig.count, transparentBackground: generationConfig.transparentBackground } });
+        } finally { setIsSubmitting(false); }
     };
+    const inverseScale = 1 / Math.max(scale, 0.01);
+    const screenTransform = `translateX(-50%) scale(var(--canvas-live-inverse-scale, ${inverseScale}))`;
 
-    return (
-        <Modal className="workspace-modal workspace-modal-wide" title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} centered destroyOnHidden>
-            <div className="grid gap-5 lg:grid-cols-[minmax(360px,1fr)_340px]">
-                <div className="flex min-h-[360px] items-center justify-center rounded-lg bg-surface-active p-0">
-                    <div className="relative inline-block max-w-full overflow-hidden rounded-lg bg-transparent select-none">
-                        <img src={dataUrl} alt="" className="relative z-0 block max-h-[68vh] max-w-full bg-transparent" draggable={false} />
-                        {image ? (
-                            <>
-                                <canvas ref={maskCanvasRef} width={image.width} height={image.height} className="hidden" />
-                                <canvas
-                                    ref={previewCanvasRef}
-                                    width={image.width}
-                                    height={image.height}
-                                    className="absolute inset-0 z-10 h-full w-full cursor-crosshair touch-none"
-                                    onPointerDown={startDraw}
-                                    onPointerMove={moveDraw}
-                                    onPointerUp={stopDraw}
-                                    onPointerCancel={stopDraw}
-                                />
-                            </>
-                        ) : null}
-                    </div>
-                </div>
+    return <div data-image-mask-edit-inline="true" className="absolute inset-0 z-[calc(var(--node-z-overlay)+3)] overflow-visible rounded-[inherit]" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+        <canvas ref={maskCanvasRef} width={imageDimensions.width} height={imageDimensions.height} className="hidden" />
+        <canvas ref={previewCanvasRef} width={imageDimensions.width} height={imageDimensions.height} aria-label="局部重绘蒙版" className="absolute inset-0 h-full w-full cursor-crosshair touch-none rounded-[inherit]" onPointerDown={startDraw} onPointerMove={moveDraw} onPointerUp={stopDraw} onPointerCancel={stopDraw} />
 
-                <div className="flex max-h-[68vh] min-h-[360px] flex-col overflow-hidden">
-                    <div className="thin-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
-                        <div>
-                            <h2 className="text-xl font-semibold">局部重绘</h2>
-                            <div className="mt-2 text-sm opacity-60">{image ? `${image.width} x ${image.height}px` : "读取中"}</div>
-                        </div>
+        <div data-canvas-no-zoom="true" className="absolute bottom-[calc(100%+14px)] left-1/2 flex h-14 items-center gap-1 rounded-2xl border border-white/10 bg-[#242424]/96 p-1.5 text-white shadow-2xl backdrop-blur-xl" style={{ transform: screenTransform, transformOrigin: "center bottom" }}>
+            <ToolButton title="关闭局部重绘" onClick={onCancel}><X /></ToolButton><Divider />
+            <ToolButton title="画笔" active={mode === "paint"} onClick={() => setMode("paint")}><Brush /></ToolButton>
+            <ToolButton title="擦除" active={mode === "erase"} onClick={() => setMode("erase")}><Eraser /></ToolButton>
+            <input aria-label="笔刷大小" type="range" min={8} max={160} step={2} value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} className="mx-2 w-24 accent-white" />
+            <span className="w-11 text-center text-xs tabular-nums text-white/65">{brushSize}px</span><Divider />
+            <ToolButton title="重置蒙版" onClick={resetMask}><RotateCcw /></ToolButton>
+        </div>
 
-                        <div className="grid grid-cols-2 gap-2">
-                            <Button type={mode === "paint" ? "primary" : "default"} aria-pressed={mode === "paint"} icon={<Brush className="size-4" />} onClick={() => setMode("paint")}>
-                                画笔
-                            </Button>
-                            <Button type={mode === "erase" ? "primary" : "default"} aria-pressed={mode === "erase"} icon={<Eraser className="size-4" />} onClick={() => setMode("erase")}>
-                                擦除
-                            </Button>
-                        </div>
-
-                        <div className="space-y-2">
-                            <div className="flex items-center justify-between text-sm">
-                                <span className="font-medium opacity-75">笔刷大小</span>
-                                <span className="font-semibold">{brushSize}px</span>
-                            </div>
-                            <Slider min={8} max={160} step={2} value={brushSize} onChange={setBrushSize} />
-                        </div>
-
-                        <div className="space-y-2">
-                            <div className="text-sm font-medium opacity-75">修改要求</div>
-                            <Input.TextArea
-                                rows={4}
-                                value={prompt}
-                                status={error && !prompt.trim() ? "error" : undefined}
-                                placeholder="例如：把选中区域改成金属材质，保持原图光影"
-                                onChange={(event) => {
-                                    setPrompt(event.target.value);
-                                    setError("");
-                                }}
-                            />
-                            {error ? <div className="text-xs font-medium text-destructive">{error}</div> : null}
-                        </div>
-
-                        <div className="rounded-xl border border-border/60">
-                            <button
-                                type="button"
-                                className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left text-sm font-medium"
-                                aria-expanded={advancedOpen}
-                                onClick={() => setAdvancedOpen((current) => !current)}
-                            >
-                                <span>高级生成设置</span>
-                                <ChevronDown className={`size-4 shrink-0 opacity-60 transition-transform ${advancedOpen ? "rotate-180" : ""}`} />
-                            </button>
-                            {advancedOpen ? (
-                                <div className="space-y-3 border-t border-border/60 px-3 pb-3 pt-3">
-                                    <div className="space-y-2">
-                                        <div className="text-sm font-medium opacity-75">生成模型</div>
-                                        <ModelPicker
-                                            config={generationConfig}
-                                            value={generationConfig.imageModel || generationConfig.model}
-                                            capability="image"
-                                            fullWidth
-
-                                            onChange={(model) => setGenerationConfig((current) => ({ ...current, model, imageModel: model, ...defaultImageParamsForModel(current, model) }))}
-                                        />
-                                    </div>
-                                    <ImageSettingsPanel
-                                        config={generationConfig}
-                                        showTitle={false}
-                                        showCount={false}
-                                        className="space-y-3"
-                                        theme={theme}
-                                        onConfigChange={(key, value) => setGenerationConfig((current) => ({ ...current, [key]: value }))}
-                                    />
-                                </div>
-                            ) : null}
-                        </div>
-                    </div>
-
-                    <div className="mt-3 flex shrink-0 items-center justify-between gap-2 border-t border-border/50 pt-3">
-                        <Button icon={<RotateCcw className="size-4" />} onClick={resetMask}>
-                            重置
-                        </Button>
-                        <div className="flex items-center gap-2">
-                            <Button icon={<X className="size-4" />} onClick={onClose}>
-                                取消
-                            </Button>
-                            <Button type="primary" icon={<WandSparkles className="size-4" />} onClick={submit}>
-                                AI 修改
-                            </Button>
-                        </div>
-                    </div>
-                </div>
+        <div data-canvas-no-zoom="true" className="absolute left-1/2 top-[calc(100%+14px)] flex w-[min(520px,90vw)] items-center gap-1.5 rounded-2xl border border-white/10 bg-[#242424]/96 p-1.5 text-white shadow-2xl backdrop-blur-xl" style={{ transform: screenTransform, transformOrigin: "center top" }}>
+            <div className="relative min-w-0 flex-1">
+                <input aria-label="局部重绘要求" type="text" value={prompt} placeholder="描述选中区域需要如何修改…" onChange={(event) => { setPrompt(event.target.value); setError(""); }} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") void submit(); }} className="block h-9 w-full rounded-xl border border-white/10 bg-white/[0.06] px-3 text-sm text-white outline-none placeholder:text-white/35 focus:border-white/25" />
+                {error ? <div className="absolute left-1 top-[calc(100%+8px)] whitespace-nowrap rounded-lg bg-[#242424]/96 px-2 py-1 text-xs font-medium text-red-400 shadow-lg">{error}</div> : null}
             </div>
-        </Modal>
-    );
+            <div className="relative">
+                <button type="button" aria-label="局部重绘设置" title="局部重绘设置" onClick={() => setSettingsOpen((value) => !value)} className={`grid size-9 place-items-center rounded-xl transition ${settingsOpen ? "bg-white/16 text-white" : "text-white/72 hover:bg-white/10 hover:text-white"}`}><Settings2 className="size-4" /></button>
+                {settingsOpen ? <div className="absolute bottom-11 right-0 w-80 space-y-3 rounded-2xl border border-white/10 bg-[#242424] p-3 text-white shadow-2xl" onPointerDown={(event) => event.stopPropagation()}>
+                    <ModelPicker config={generationConfig} value={generationConfig.imageModel || generationConfig.model} capability="image" fullWidth onChange={(model) => setGenerationConfig((current) => ({ ...current, model, imageModel: model, ...defaultImageParamsForModel(current, model) }))} />
+                    <ImageSettingsPanel config={generationConfig} showTitle={false} showCount={false} className="space-y-3" theme={theme} onConfigChange={(key, value) => setGenerationConfig((current) => ({ ...current, [key]: value }))} />
+                </div> : null}
+            </div>
+            <button type="button" aria-label={isSubmitting ? "正在修改" : "AI 修改"} title={isSubmitting ? "正在修改" : "AI 修改"} disabled={isSubmitting} onClick={() => void submit()} className="grid size-9 place-items-center rounded-xl bg-white text-neutral-900 transition hover:bg-white/90 disabled:cursor-wait disabled:opacity-60">{isSubmitting ? <LoaderCircle className="size-4 animate-spin text-neutral-900" /> : <WandSparkles className="size-4 text-neutral-900" />}</button>
+        </div>
+    </div>;
 }
 
-function readCanvasPoint(canvas: HTMLCanvasElement, clientX: number, clientY: number) {
-    const rect = canvas.getBoundingClientRect();
-    return {
-        x: ((clientX - rect.left) / Math.max(1, rect.width)) * canvas.width,
-        y: ((clientY - rect.top) / Math.max(1, rect.height)) * canvas.height,
-    };
-}
-
-function clearCanvas(canvas: HTMLCanvasElement | null) {
-    const context = canvas?.getContext("2d");
-    if (!canvas || !context) return;
-    context.clearRect(0, 0, canvas.width, canvas.height);
-}
-
-function drawMaskStroke(context: CanvasRenderingContext2D, from: { x: number; y: number }, to: { x: number; y: number }, size: number) {
-    if (from.x === to.x && from.y === to.y) {
-        context.beginPath();
-        context.arc(to.x, to.y, size / 2, 0, Math.PI * 2);
-        context.fill();
-        return;
-    }
-    context.beginPath();
-    context.moveTo(from.x, from.y);
-    context.lineTo(to.x, to.y);
-    context.stroke();
-}
-
-function canvasHasPaint(canvas: HTMLCanvasElement) {
-    const context = canvas.getContext("2d");
-    if (!context) return false;
-    const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
-    for (let index = 3; index < data.length; index += 4) {
-        if (data[index] > 0) return true;
-    }
-    return false;
-}
-
-function renderMaskPreview(maskCanvas: HTMLCanvasElement, previewCanvas: HTMLCanvasElement | null, withBorder = false) {
-    const context = previewCanvas?.getContext("2d");
-    if (!previewCanvas || !context) return;
-    context.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
-    context.fillStyle = maskFillColor;
-    context.fillRect(0, 0, previewCanvas.width, previewCanvas.height);
-    context.globalCompositeOperation = "destination-in";
-    context.drawImage(maskCanvas, 0, 0);
-    context.globalCompositeOperation = "source-over";
-    if (withBorder) drawDashedMaskBorder(context, maskCanvas);
-}
-
-function drawDashedMaskBorder(context: CanvasRenderingContext2D, maskCanvas: HTMLCanvasElement) {
-    const maskContext = maskCanvas.getContext("2d");
-    if (!maskContext) return;
-    const { width, height } = maskCanvas;
-    const data = maskContext.getImageData(0, 0, width, height).data;
-    const step = Math.max(1, Math.round(Math.max(width, height) / 1200));
-    const dash = step * 8;
-    const gap = step * 5;
-    const period = dash + gap;
-
-    context.save();
-    context.fillStyle = maskBorderColor;
-    context.shadowColor = "rgba(0, 0, 0, .24)";
-    context.shadowBlur = step * 1.5;
-    for (let y = step; y < height - step; y += step) {
-        for (let x = step; x < width - step; x += step) {
-            const offset = (y * width + x) * 4 + 3;
-            if (data[offset] === 0 || !isMaskEdge(data, width, x, y, step)) continue;
-            if ((x + y) % period > dash) continue;
-            context.fillRect(x - step / 2, y - step / 2, Math.max(1.5, step), Math.max(1.5, step));
-        }
-    }
-    context.restore();
-}
-
-function isMaskEdge(data: Uint8ClampedArray, width: number, x: number, y: number, step: number) {
-    return data[((y - step) * width + x) * 4 + 3] === 0 || data[((y + step) * width + x) * 4 + 3] === 0 || data[(y * width + x - step) * 4 + 3] === 0 || data[(y * width + x + step) * 4 + 3] === 0;
-}
-
-function buildEditMask(selectionCanvas: HTMLCanvasElement) {
-    const canvas = document.createElement("canvas");
-    canvas.width = selectionCanvas.width;
-    canvas.height = selectionCanvas.height;
-    const context = canvas.getContext("2d");
-    if (!context) return selectionCanvas.toDataURL("image/png");
-    const selectionContext = selectionCanvas.getContext("2d");
-    context.fillStyle = "#fff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    if (!selectionContext) return canvas.toDataURL("image/png");
-    const selection = selectionContext.getImageData(0, 0, canvas.width, canvas.height);
-    const mask = context.getImageData(0, 0, canvas.width, canvas.height);
-    for (let index = 3; index < mask.data.length; index += 4) {
-        if (selection.data[index] > 0) mask.data[index] = 0;
-    }
-    context.putImageData(mask, 0, 0);
-    return canvas.toDataURL("image/png");
-}
+function Divider() { return <span className="mx-1 h-7 w-px bg-white/12" />; }
+function ToolButton({ title, active, children, onClick }: { title: string; active?: boolean; children: ReactNode; onClick: () => void }) { return <Tooltip title={title}><button type="button" aria-label={title} className={`grid size-10 place-items-center rounded-xl transition ${active ? "bg-white/16 text-white" : "text-white/72 hover:bg-white/10 hover:text-white"}`} onClick={onClick}>{children}</button></Tooltip>; }
+function readCanvasPoint(canvas: HTMLCanvasElement, clientX: number, clientY: number) { const rect = canvas.getBoundingClientRect(); return { x: (clientX - rect.left) / Math.max(1, rect.width) * canvas.width, y: (clientY - rect.top) / Math.max(1, rect.height) * canvas.height }; }
+function clearCanvas(canvas: HTMLCanvasElement | null) { const context = canvas?.getContext("2d"); if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height); }
+function drawMaskStroke(context: CanvasRenderingContext2D, from: { x: number; y: number }, to: { x: number; y: number }, size: number) { context.beginPath(); if (from.x === to.x && from.y === to.y) { context.arc(to.x, to.y, size / 2, 0, Math.PI * 2); context.fill(); } else { context.moveTo(from.x, from.y); context.lineTo(to.x, to.y); context.stroke(); } }
+function canvasHasPaint(canvas: HTMLCanvasElement) { const data = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height).data; if (!data) return false; for (let index = 3; index < data.length; index += 4) if (data[index] > 0) return true; return false; }
+function renderMaskPreview(maskCanvas: HTMLCanvasElement, previewCanvas: HTMLCanvasElement | null, withBorder = false) { const context = previewCanvas?.getContext("2d"); if (!previewCanvas || !context) return; context.clearRect(0, 0, previewCanvas.width, previewCanvas.height); context.fillStyle = maskFillColor; context.fillRect(0, 0, previewCanvas.width, previewCanvas.height); context.globalCompositeOperation = "destination-in"; context.drawImage(maskCanvas, 0, 0); context.globalCompositeOperation = "source-over"; if (withBorder) drawDashedMaskBorder(context, maskCanvas); }
+function drawDashedMaskBorder(context: CanvasRenderingContext2D, maskCanvas: HTMLCanvasElement) { const maskContext = maskCanvas.getContext("2d"); if (!maskContext) return; const { width, height } = maskCanvas; const data = maskContext.getImageData(0, 0, width, height).data; const step = Math.max(1, Math.round(Math.max(width, height) / 1200)); const dash = step * 8; const period = dash + step * 5; context.save(); context.fillStyle = maskBorderColor; for (let y = step; y < height - step; y += step) for (let x = step; x < width - step; x += step) { const offset = (y * width + x) * 4 + 3; if (data[offset] === 0 || !isMaskEdge(data, width, x, y, step) || (x + y) % period > dash) continue; context.fillRect(x - step / 2, y - step / 2, Math.max(1.5, step), Math.max(1.5, step)); } context.restore(); }
+function isMaskEdge(data: Uint8ClampedArray, width: number, x: number, y: number, step: number) { return data[((y - step) * width + x) * 4 + 3] === 0 || data[((y + step) * width + x) * 4 + 3] === 0 || data[(y * width + x - step) * 4 + 3] === 0 || data[(y * width + x + step) * 4 + 3] === 0; }
+function buildEditMask(selectionCanvas: HTMLCanvasElement) { const canvas = document.createElement("canvas"); canvas.width = selectionCanvas.width; canvas.height = selectionCanvas.height; const context = canvas.getContext("2d"); if (!context) return selectionCanvas.toDataURL("image/png"); context.fillStyle = "#fff"; context.fillRect(0, 0, canvas.width, canvas.height); const selection = selectionCanvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height); if (!selection) return canvas.toDataURL("image/png"); const mask = context.getImageData(0, 0, canvas.width, canvas.height); for (let index = 3; index < mask.data.length; index += 4) if (selection.data[index] > 0) mask.data[index] = 0; context.putImageData(mask, 0, 0); return canvas.toDataURL("image/png"); }

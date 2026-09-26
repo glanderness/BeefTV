@@ -12,7 +12,7 @@ import { readZip } from "@/lib/zip";
 import { setMediaBlob } from "@/services/file-storage";
 import { setImageBlob } from "@/services/image-storage";
 import { CanvasFolderCard } from "@/components/canvas/canvas-folder-card";
-import { CanvasHistoryDrawer } from "@/components/canvas/canvas-history-drawer";
+import { RecycleBinDialog } from "@/components/canvas/recycle-bin-dialog";
 import { LibraryCardShell } from "@/components/canvas/library-card-shell";
 import type { CanvasExportFile } from "@/types/canvas-export";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -36,7 +36,7 @@ import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
 import { cn } from "@/lib/utils";
-import { canvasIdsForWorkspaceProjects, canvasWorkspaceProjectId, listCanvasWorkspaceProjectCanvases, listCanvasWorkspaceProjectRoots } from "@/lib/canvas/canvas-workspace-project";
+import { canvasIdsForWorkspaceProjects, canvasWorkspaceProjectId, listCanvasWorkspaceProjectCanvases, listCanvasWorkspaceProjectRoots, previewNodesForWorkspaceProject } from "@/lib/canvas/canvas-workspace-project";
 
 function isExpectedLocalOnlySyncError(error: unknown) {
     const message = error instanceof Error ? error.message : String(error || "");
@@ -98,7 +98,7 @@ export default function CanvasPage() {
     });
     const projects = useMemo<CanvasLibrarySummary[]>(() => remoteMode
         ? libraryQuery.data?.pages.flatMap((page) => page.projects) || []
-        : listCanvasWorkspaceProjectRoots(localProjects).map((project) => ({ ...project, nodeCount: project.nodes.length, previewNodes: project.nodes.slice(0, 4) })), [libraryQuery.data, localProjects, remoteMode]);
+        : listCanvasWorkspaceProjectRoots(localProjects).map((project) => ({ ...project, nodeCount: project.nodes.length, previewNodes: previewNodesForWorkspaceProject(localProjects, canvasWorkspaceProjectId(project)) })), [libraryQuery.data, localProjects, remoteMode]);
     const totalProjects = remoteMode ? libraryQuery.data?.pages[0]?.total || 0 : projects.length;
     const importProject = useCanvasStore((state) => state.importProject);
     const selectedIds = useCanvasUiStore((state) => state.selectedProjectIds);
@@ -114,7 +114,6 @@ export default function CanvasPage() {
     };
     const updateProject = useCanvasStore((state) => state.updateProject);
     const [historyOpen, setHistoryOpen] = useState(() => searchParams.get("history") === "all" || searchParams.get("history") === "deleted");
-    const [historyFilter, setHistoryFilter] = useState<"all" | "deleted">("all");
     const [associationOpen, setAssociationOpen] = useState(false);
     const [associationProjectId, setAssociationProjectId] = useState("");
     // 本地工作区的画布、文件夹与历史完全来自浏览器本地存储；项目关系查询只在远程工作区启用。
@@ -516,7 +515,7 @@ export default function CanvasPage() {
                 </div>
                 <div className="libtv-project-actions">
                     <Input prefix={<Search />} value={keyword} allowClear placeholder="搜索项目" aria-label="搜索项目" onChange={(event) => setKeyword(event.target.value)} />
-                    <Button icon={<Trash2 />} onClick={() => { setHistoryFilter("deleted"); setHistoryOpen(true); }}>回收站</Button>
+                    <Button icon={<Trash2 />} onClick={() => setHistoryOpen(true)}>回收站</Button>
                     <Button icon={<FolderPlus />} disabled={!hydrated} onClick={() => createFolder("未命名文件夹")}>新建文件夹</Button>
                 </div>
             </header>
@@ -662,7 +661,7 @@ export default function CanvasPage() {
                     onChange={setAssociationProjectId}
                 />
             </Modal>
-            <CanvasHistoryDrawer open={historyOpen} initialFilter={historyFilter} onClose={() => setHistoryOpen(false)} />
+            <RecycleBinDialog open={historyOpen} onClose={() => setHistoryOpen(false)} />
             {deleteDialogOpen ? <Suspense fallback={null}><CanvasDeleteProjectsDialog /></Suspense> : null}
         </WorkspacePage>
     );

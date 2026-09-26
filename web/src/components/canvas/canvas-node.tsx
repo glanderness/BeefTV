@@ -14,6 +14,10 @@ import { ART_CRITIQUE_NODE_TYPE } from "@/lib/art-critique/contracts";
 import { getNodeDefinition, getNodeMinSize, shouldKeepAspectRatio } from "@/lib/canvas/node-registry";
 import { CanvasNodeContent } from "./canvas-node-content";
 import { CanvasVideoCropEditor, type CanvasVideoCropRect } from "./canvas-video-crop-dialog";
+import { CanvasImageCropEditor, type CanvasImageCropRect } from "./canvas-node-crop-dialog";
+import { CanvasImageAnnotationEditor } from "./canvas-node-annotation-dialog";
+import { CanvasImageMaskEditor, type CanvasImageMaskEditPayload } from "./canvas-node-mask-edit-dialog";
+import type { AiConfig } from "@/stores/use-config-store";
 import { canvasMediaNodeOrigin, canvasMediaNodeRole } from "@/lib/canvas/canvas-node-semantics";
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
@@ -65,6 +69,16 @@ type CanvasNodeProps = {
     onOpenDirector?: (node: CanvasNodeData) => void;
     onOpenDrawing?: (node: CanvasNodeData) => void;
     onMediaPlayRequest?: (nodeId: string) => void;
+    imageCropActive?: boolean;
+    onCancelImageCrop?: () => void;
+    onConfirmImageCrop?: (node: CanvasNodeData, crop: CanvasImageCropRect) => void | Promise<void>;
+    annotationActive?: boolean;
+    onCancelAnnotation?: () => void;
+    onConfirmAnnotation?: (node: CanvasNodeData, dataUrl: string) => void | Promise<void>;
+    maskEditActive?: boolean;
+    maskEditConfig?: AiConfig;
+    onCancelMaskEdit?: () => void;
+    onConfirmMaskEdit?: (node: CanvasNodeData, payload: CanvasImageMaskEditPayload) => void | Promise<void>;
     videoCropActive?: boolean;
     onCancelVideoCrop?: () => void;
     onConfirmVideoCrop?: (node: CanvasNodeData, crop: CanvasVideoCropRect, sourceDimensions: { width: number; height: number }) => void | Promise<void>;
@@ -114,6 +128,16 @@ export const CanvasNode = React.memo(function CanvasNode({
     onOpenDirector,
     onOpenDrawing,
     onMediaPlayRequest,
+    imageCropActive = false,
+    onCancelImageCrop,
+    onConfirmImageCrop,
+    annotationActive = false,
+    onCancelAnnotation,
+    onConfirmAnnotation,
+    maskEditActive = false,
+    maskEditConfig,
+    onCancelMaskEdit,
+    onConfirmMaskEdit,
     videoCropActive = false,
     onCancelVideoCrop,
     onConfirmVideoCrop,
@@ -394,7 +418,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 }}
             >
                 <div
-                    className={`relative flex h-full w-full items-center justify-center rounded-[inherit] ${isBatchRoot || data.type === CanvasNodeType.Script || data.type === CanvasNodeType.BatchTable || isComposerNode ? "overflow-visible" : "overflow-hidden"}`}
+                    className={`relative flex h-full w-full items-center justify-center rounded-[inherit] ${annotationActive || maskEditActive || isBatchRoot || data.type === CanvasNodeType.Script || data.type === CanvasNodeType.BatchTable || isComposerNode ? "overflow-visible" : "overflow-hidden"}`}
                     style={
                         {
                             background: hasImageContent || hasVideoContent || hasAudioContent ? "transparent" : theme.node.fill,
@@ -435,6 +459,31 @@ export const CanvasNode = React.memo(function CanvasNode({
                         mediaActive={mediaActive}
                         onMediaPlayRequest={onMediaPlayRequest}
                     />
+                    {imageCropActive && hasImageContent ? (
+                        <CanvasImageCropEditor
+                            imageUrl={data.metadata?.content || ""}
+                            imageDimensions={{ width: Math.max(1, data.metadata?.naturalWidth || data.width), height: Math.max(1, data.metadata?.naturalHeight || data.height) }}
+                            onCancel={() => onCancelImageCrop?.()}
+                            onConfirm={(crop) => onConfirmImageCrop?.(data, crop)}
+                        />
+                    ) : null}
+                    {annotationActive && hasImageContent ? (
+                        <CanvasImageAnnotationEditor
+                            image={{ url: data.metadata?.content || "", storageKey: data.metadata?.storageKey }}
+                            scale={scale}
+                            onCancel={() => onCancelAnnotation?.()}
+                            onConfirm={(dataUrl) => onConfirmAnnotation?.(data, dataUrl)}
+                        />
+                    ) : null}
+                    {maskEditActive && maskEditConfig && hasImageContent ? (
+                        <CanvasImageMaskEditor
+                            imageDimensions={{ width: Math.max(1, data.metadata?.naturalWidth || data.width), height: Math.max(1, data.metadata?.naturalHeight || data.height) }}
+                            scale={scale}
+                            config={maskEditConfig}
+                            onCancel={() => onCancelMaskEdit?.()}
+                            onConfirm={(payload) => onConfirmMaskEdit?.(data, payload)}
+                        />
+                    ) : null}
                     {videoCropActive && hasVideoContent ? (
                         <CanvasVideoCropEditor
                             videoUrl={data.metadata?.content || ""}
@@ -586,6 +635,16 @@ function areCanvasNodePropsEqual(previous: CanvasNodeProps, next: CanvasNodeProp
         previous.onOpenTextEditor === next.onOpenTextEditor &&
         previous.onOpenDirector === next.onOpenDirector &&
         previous.onOpenDrawing === next.onOpenDrawing &&
+        previous.imageCropActive === next.imageCropActive &&
+        previous.onCancelImageCrop === next.onCancelImageCrop &&
+        previous.onConfirmImageCrop === next.onConfirmImageCrop &&
+        previous.annotationActive === next.annotationActive &&
+        previous.onCancelAnnotation === next.onCancelAnnotation &&
+        previous.onConfirmAnnotation === next.onConfirmAnnotation &&
+        previous.maskEditActive === next.maskEditActive &&
+        previous.maskEditConfig === next.maskEditConfig &&
+        previous.onCancelMaskEdit === next.onCancelMaskEdit &&
+        previous.onConfirmMaskEdit === next.onConfirmMaskEdit &&
         previous.videoCropActive === next.videoCropActive &&
         previous.onCancelVideoCrop === next.onCancelVideoCrop &&
         previous.onConfirmVideoCrop === next.onConfirmVideoCrop &&

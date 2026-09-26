@@ -1866,14 +1866,12 @@ function InfiniteCanvasPage() {
         angleNode,
         lightingNode,
         emotionNode,
-        annotationNode,
         batchChildCountById,
         batchMotionById,
         canvasImageNodes,
         configInputsById,
         connectionLayerBounds,
         contextMenuNode,
-        cropNode,
         displayConnections,
         frameChildrenById,
         imageAssets,
@@ -1907,7 +1905,6 @@ function InfiniteCanvasPage() {
         addedSkills,
         directorScenes: currentProject?.directorScenes,
         infoNodeId,
-        cropNodeId,
         maskEditNodeId,
         annotationNodeId,
         splitNodeId: null,
@@ -3145,6 +3142,16 @@ function InfiniteCanvasPage() {
                                                 onOpenDirector={editCanvasDirector}
                                                 onOpenDrawing={openDrawingNode}
                                                 onStartBatchConnection={startBatchConnection}
+                                                imageCropNodeId={cropNodeId}
+                                                onCancelImageCrop={() => setCropNodeId(null)}
+                                                onConfirmImageCrop={(node, crop) => cropImageNode(node, crop)}
+                                                annotationNodeId={annotationNodeId}
+                                                onCancelAnnotation={() => setAnnotationNodeId(null)}
+                                                onConfirmAnnotation={async (node, dataUrl) => { await saveAnnotatedImageNode(node, dataUrl); setAnnotationNodeId(null); }}
+                                                maskEditNodeId={maskEditNodeId}
+                                                maskEditConfig={maskEditNode ? { ...effectiveConfig, model: maskEditNode.metadata?.model || effectiveConfig.model, imageModel: maskEditNode.metadata?.model || effectiveConfig.imageModel, size: maskEditNode.metadata?.size || effectiveConfig.size, quality: maskEditNode.metadata?.quality || effectiveConfig.quality, count: String(maskEditNode.metadata?.count || effectiveConfig.count) } : effectiveConfig}
+                                                onCancelMaskEdit={() => setMaskEditNodeId(null)}
+                                                onConfirmMaskEdit={(node, payload) => maskEditImageNode(node, payload)}
                                                 videoCropNodeId={videoCropNodeId}
                                                 onCancelVideoCrop={() => setVideoCropNodeId(null)}
                                                 onConfirmVideoCrop={(node, crop, sourceDimensions) => cropVideoNode(node, crop, sourceDimensions)}
@@ -3286,6 +3293,7 @@ function InfiniteCanvasPage() {
                         ) : null}
 
                         {dialogNode &&
+                        !maskEditNodeId &&
                         !isCanvasImageSourceNode(dialogNode) &&
                         !dialogNode.metadata?.fileUpload &&
                         dialogNode.type !== CanvasNodeType.Script &&
@@ -3359,7 +3367,7 @@ function InfiniteCanvasPage() {
                         <CanvasNodeToolbar
                             // LibTV 的右侧 Agent 停靠态会收起节点悬浮工具栏，避免工具栏
                             // 与面板争夺画布空间；节点本身的快捷操作仍保留在节点菜单中。
-                            node={assistantOpen || isCanvasNodeMoving || nodeImageSettingsOpen || emotionNodeId || angleNodeId || (dialogNode && !isCanvasMediaResultNode(dialogNode)) || textEditorNodeId ? null : toolbarNode}
+                            node={assistantOpen || isCanvasNodeMoving || nodeImageSettingsOpen || annotationNodeId || maskEditNodeId || emotionNodeId || angleNodeId || (dialogNode && !isCanvasMediaResultNode(dialogNode)) || textEditorNodeId ? null : toolbarNode}
                             workspaceMode={workspaceMode}
                             viewport={viewport}
                             containerRef={containerRef}
@@ -3375,7 +3383,10 @@ function InfiniteCanvasPage() {
                             onDownload={downloadNodeImage}
                             onSaveAsset={(node) => void saveNodeAsset(node)}
                             onAnnotate={(node) => setAnnotationNodeId(node.id)}
-                            onMaskEdit={(node) => setMaskEditNodeId(node.id)}
+                            onMaskEdit={(node) => {
+                                setDialogNodeId(null);
+                                setMaskEditNodeId(node.id);
+                            }}
                             onEmotion={(node) => {
                                 setDialogNodeId(null);
                                 setEmotionNodeId((current) => (current === node.id ? null : node.id));
@@ -3708,17 +3719,8 @@ function InfiniteCanvasPage() {
                         />
 
                         <CanvasProjectMediaDialogs
-                            cropNode={cropNode}
-                            annotationNode={annotationNode}
-                            maskEditNode={maskEditNode}
                             upscaleNode={upscaleNode}
-                            onCloseCrop={() => setCropNodeId(null)}
-                            onCloseAnnotation={() => setAnnotationNodeId(null)}
-                            onCloseMaskEdit={() => setMaskEditNodeId(null)}
                             onCloseUpscale={() => setUpscaleNodeId(null)}
-                            onCrop={(node, crop) => void cropImageNode(node, crop)}
-                            onAnnotate={(node, dataUrl) => void saveAnnotatedImageNode(node, dataUrl)}
-                            onMaskEdit={(node, payload) => void maskEditImageNode(node, payload)}
                             onUpscale={(node, params) => void upscaleImageNode(node, params)}
                             config={effectiveConfig}
                         />

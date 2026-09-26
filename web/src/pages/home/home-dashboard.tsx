@@ -1,24 +1,8 @@
-import { ArrowRight, Box, Plus, RefreshCw } from "lucide-react";
+import { ArrowRight, Plus, RefreshCw } from "lucide-react";
 import { Link, useNavigate } from "react-router";
-import type { CanvasNodeData } from "@/types/canvas";
 import type { CanvasLibrarySummary } from "@/services/api/workspace-data";
-import { CachedResourceImage } from "@/components/cached-resource-image";
+import { ProjectPreview } from "@/components/canvas/canvas-project-card";
 import { beefTVCapabilityItems } from "./home-data";
-
-function previewMedia(nodes: CanvasNodeData[]) {
-    for (const node of nodes) {
-        const metadata = node.metadata as Record<string, unknown> | undefined;
-        const value = metadata?.previewContent || metadata?.content;
-        if (typeof value === "string" && /^(?:https?:|blob:|data:image)/.test(value)) {
-            return {
-                url: value,
-                storageKey: typeof metadata?.storageKey === "string" ? metadata.storageKey : undefined,
-                alt: node.title || "项目预览",
-            };
-        }
-    }
-    return undefined;
-}
 function formatDate(value: string) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return "刚刚更新";
@@ -62,9 +46,8 @@ export function HomeDashboard({ projects, loading, error, onRetry }: { projects:
                 ) : (
                     <div className="beeftv-recent-grid">
                         {loading ? Array.from({ length: 4 }, (_, index) => <div className="beeftv-recent-card is-loading" key={index} />) : projects.length ? projects.map((project) => {
-                            const preview = previewMedia(project.previewNodes);
                             return <Link to={`/canvas/${project.id}`} className="beeftv-recent-card" key={project.id}>
-                                <span className="beeftv-recent-preview">{preview ? <CachedResourceImage storageKey={preview.storageKey} src={preview.url} alt={preview.alt} loading="lazy" decoding="async" fallback={<Box />} loadingFallback={<Box />} /> : <Box />}</span>
+                                <span className="beeftv-recent-preview"><ProjectPreview project={{ id: project.id, nodes: project.previewNodes }} emptyVariant="libtv" /></span>
                                 <span className="beeftv-recent-copy"><strong>{project.title || "未命名"}</strong><small>{formatDate(project.updatedAt)}</small></span>
                                 <ArrowRight className="beeftv-recent-arrow" />
                             </Link>;

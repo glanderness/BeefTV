@@ -9,6 +9,13 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.5.2
+
+- Improved canvas node rendering and inline image cropping, annotation, and local redraw interactions.
+- Rebuilt the recycle bin with a fixed two-row viewport, selection, recovery, and confirmed permanent deletion.
+- Fixed project cover selection across media nodes and canvases, including fallbacks and centered empty placeholders.
+- Added a short product demo and updated the README branding.
+
 ## v1.5.1
 
 - Initial public BeefTV snapshot.
