@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/model"
@@ -65,6 +66,23 @@ func TestTaskClientContextPreservesCanvasNodeID(t *testing.T) {
 	context := taskClientContext(`{"mode":"image","metadata":{"nodeId":"canvas-node-1","source":"canvas"}}`)
 	if context == nil || context.NodeID != "canvas-node-1" {
 		t.Fatalf("canvas node context was not preserved: %+v", context)
+	}
+}
+
+func TestTaskSummaryProjectsClassifiedErrorWithoutRawBody(t *testing.T) {
+	summary := taskSummaryForOutput(model.Task{
+		ID:    "task-1",
+		Type:  "canvas_image",
+		Error: (providerHTTPError{StatusCode: 451, Body: "Your prompt or reference image was blocked by the content safety policy."}).Error(),
+	})
+	if summary.ErrorCode != "moderation_input" && summary.ErrorCode != "moderation_reference" {
+		t.Fatalf("errorCode = %q error=%q", summary.ErrorCode, summary.Error)
+	}
+	if !strings.Contains(summary.Error, "内容安全审核") {
+		t.Fatalf("summary error = %q", summary.Error)
+	}
+	if strings.Contains(summary.Error, "content safety policy") {
+		t.Fatalf("raw safety body leaked: %q", summary.Error)
 	}
 }
 

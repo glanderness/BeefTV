@@ -218,20 +218,30 @@ func doJSON(req *http.Request, target interface{}) error {
 		return providerResponseDecodeError{Err: err}
 	}
 	if payload, ok := target.(*imageResponse); ok {
-		if payload.Error != nil && payload.Error.Message != "" {
-			return errors.New(providerPayloadErrorMessage(payload.Error.Message))
+		if payload.Error != nil && (payload.Error.Message != "" || normalizedProviderErrorCode(payload.Error.Code) != "") {
+			encoded, _ := json.Marshal(payload.Error)
+			raw := string(encoded)
+			return providerPayloadError{raw: raw, message: providerPayloadErrorMessage(raw)}
 		}
-		if payload.Code != nil && *payload.Code != 0 {
-			return errors.New(providerPayloadErrorMessage(payload.Msg))
+		if payload.Code != nil && providerBusinessCodeFailed(*payload.Code) {
+			encoded, _ := json.Marshal(payload)
+			raw := string(encoded)
+			return providerPayloadError{raw: raw, message: providerPayloadErrorMessage(raw)}
 		}
 	}
 	if payload, ok := target.(*map[string]interface{}); ok {
 		if _, rawMessage, failed := providerPayloadBusinessFailure(*payload); failed {
-			return providerPayloadError{raw: rawMessage, message: providerPayloadErrorMessage(rawMessage)}
+			encoded, _ := json.Marshal(*payload)
+			raw := string(encoded)
+			if strings.TrimSpace(raw) == "" || raw == "null" {
+				raw = rawMessage
+			}
+			return providerPayloadError{raw: raw, message: providerPayloadErrorMessage(raw)}
 		}
 		if errValue, ok := (*payload)["error"].(map[string]interface{}); ok && stringField(errValue, "message") != "" {
-			rawMessage := stringField(errValue, "message")
-			return providerPayloadError{raw: rawMessage, message: providerPayloadErrorMessage(rawMessage)}
+			encoded, _ := json.Marshal(*payload)
+			raw := string(encoded)
+			return providerPayloadError{raw: raw, message: providerPayloadErrorMessage(raw)}
 		}
 	}
 	return nil
