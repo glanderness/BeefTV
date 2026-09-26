@@ -104,8 +104,8 @@ export function useCanvasGenerationRetry({
 
             const retryPromptSource = sourceNode.metadata?.composerContent || sourceNode.metadata?.prompt || node.metadata?.prompt || "";
             const retryContextPrompt = retryMode === "image" && sourceNode.metadata?.portraitTexture ? buildPortraitTexturePrompt(retryPromptSource, sourceNode.metadata.portraitTexture) : retryPromptSource;
-            if (unchangedModeratedPrompt(node.metadata, retryPromptSource)) {
-                message.warning("该提示词未通过内容审核，请先修改提示词再重新生成");
+            if (unchangedModeratedPrompt(node.metadata, retryPromptSource, sourceNodeReferenceImages(generationSourceNode))) {
+                message.warning("内容未通过安全审核，请修改提示词或参考图后再重新生成");
                 return;
             }
             let rawContext: Awaited<ReturnType<typeof hydrateNodeGenerationContext>> | null;
@@ -117,7 +117,7 @@ export function useCanvasGenerationRetry({
                         ? null
                         : await hydrateNodeGenerationContext(baseContext, projectId, domainProjectId, retryMode, retryMode === "video" && supportsVideoReferenceAudio(generationConfig), !promptOnly);
             } catch (error) {
-                const failure = generationFailureMetadata(error, retryPromptSource);
+                const failure = generationFailureMetadata(error, retryPromptSource, sourceNodeReferenceImages(generationSourceNode));
                 message.error(failure.errorDetails);
                 setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, ...failure } } : item)));
                 return;
@@ -397,7 +397,7 @@ export function useCanvasGenerationRetry({
                 });
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
-                const failure = generationFailureMetadata(error, retryPromptSource);
+                const failure = generationFailureMetadata(error, retryPromptSource, sourceNodeReferenceImages(generationSourceNode));
                 message.error(failure.errorDetails);
                 setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, ...failure } } : item)));
             } finally {

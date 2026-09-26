@@ -1,0 +1,66 @@
+---
+title: 生成失败归类
+description: 画布、任务中心和批量生成如何把上游失败变成可行动说明
+---
+
+# 生成失败归类
+
+生成失败要告诉使用者发生了什么、下一步做什么。不能把 HTTP 状态或原始 JSON 直接铺到画布上。
+
+学习过 OpenAI Python SDK 对 `status` / `code` / `param` / `request_id` 的保留方式、LiteLLM 把供应商错误映射成语义类目，以及 Bufflow 对不确定提交与失败原因的区分。这里没有复制它们的代码，也没有沿用 Bufflow 把 402 当成配额的假设。
+
+## 责任边界
+
+| 位置 | 职责 |
+| --- | --- |
+| `backend/internal/generation` | 唯一后端归类器。`HTTPError.Error()` 和任务持久化走这里，正文先归类再变成用户文案。 |
+| `web/src/lib/generation-error.ts` | 前端唯一归类器。覆盖同步渠道错误、轮询、下载，以及已经落库的任务文案。 |
+| 画布 / 任务中心 / 批量生成 | 只展示归类后的原因、下一步，以及可复制的排查信息。 |
+
+两端类目表必须保持同名。用户文案以各自实现为准，修改时两边一起改。
+
+## 类目矩阵
+
+结构化 `code` / `type` / `status` 优先于 HTTP 状态。正文里的数字或请求 ID 不会被当成 HTTP 状态。451 单独出现不代表安全审核。402 单独出现只表示计费或额度请求被拒绝，不表示本站用户余额，也不承诺退款。
+
+| 类目 | 典型信号 | 使用者下一步 | 自动重试 |
+| --- | --- | --- | --- |
+| `auth` | 401、invalid_api_key | 检查 API Key | 否 |
+| `permission` | 403、permission_denied | 检查渠道权限或换模型 | 否 |
+| `quota_unknown` | 402、insufficient_quota、余额/额度措辞 | 到渠道或供应商核对账单与额度 | 否 |
+| `quota_upstream` | arrearage、billing_hard_limit | 到供应商核对 | 否 |
+| `moderation_input` | content_policy、sensitive_words_detected、提示词被拒 | 修改提示词或参考图 | 原任务否；改输入后可新建 |
+| `moderation_reference` | 参考图/输入图安全、真人形象错误码 | 更换参考图或改提示词 | 原任务否；改参考图后可新建 |
+| `moderation_output` | 输出审核 | 调整输入后新建 | 原任务否 |
+| `invalid_params` | 400/422、invalid_request、尺寸/格式 | 检查模型与参数 | 否 |
+| `context_too_long` | context_length、长度超出 | 缩短输入 | 否 |
+| `input_inaccessible` | url error、素材无法读取 | 检查素材 | 否 |
+| `input_too_large` | 413、too large | 压缩或更换素材 | 否 |
+| `model_missing` | 404、model_not_found | 检查模型名和渠道 | 否 |
+| `throttled` | 429 且非额度码 | 稍后重试 | 可稍后 |
+| `concurrency` | 渠道并发槽位 | 等待已有任务 | 可稍后 |
+| `provider_unavailable` | 5xx、HTML 网关页 | 稍后重试 | 可稍后 |
+| `network` | 连接失败 | 检查网络 | 可稍后 |
+| `timeout` | 408/504；524 视为执行不确定 | 先查原任务 | 524/不确定时否 |
+| `submission_uncertain` | `submission_unknown` | 查询原任务，不要重交 | 否 |
+| `async_failed` | 上游任务失败 | 查看详情后决定 | 否 |
+| `cancelled` | 用户取消 | 可按原输入再提交 | 否 |
+| `partial_success` | 部分成功 | 查看已有结果 | 否 |
+| `download_failed` | 结果下载失败 | 重新加载，不要立刻重交 | 否 |
+| `results_missing` | 没有可用结果 | 查看详情 | 否 |
+| `malformed_response` | 非 JSON、HTML | 稍后重试 | 可稍后 |
+| `unknown` | 无法归类 | 查看详情后再决定 | 否 |
+
+仓库里已经出现过的码会映射到上表；未收录的码落到 `unknown`，不会把原文 JSON/HTML/密钥/签名 URL/提示词回显给使用者。
+
+## 排查信息
+
+复制排查信息只包含：原因、下一步、类目、已消毒的上游代码、任务 ID、请求 ID、模型、时间。这些字段必须真实存在，不能编造。复制失败时提示手动选择，不假装已复制。
+
+## 限制
+
+- 没有数据库新字段。类目在任务摘要的 `errorCode` 和用户文案里投影；旧任务只有泛化 HTTP 文案时，前端会按残留文本再归一次。
+- 自定义渠道若把 JSON 错误原样转给浏览器，由前端归类；非 JSON 由后端归类后再返回。
+- 响应拦截规则仍会改写最终用户文案。
+- 没有改路由、计费、调度重试间隔或表结构。
+- 无法从上游正文可靠区分“用户余额”和“供应商账单”时，一律使用 `quota_unknown`。

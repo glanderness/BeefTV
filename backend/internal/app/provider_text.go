@@ -1044,12 +1044,15 @@ func extractTextPayload(payload map[string]interface{}, protocol string) string 
 
 func validateTextPayload(payload map[string]interface{}) error {
 	if code, ok := payload["code"].(float64); ok && code != 0 {
-		rawMessage := defaultString(stringField(payload, "msg"), "请求失败")
-		return providerPayloadError{raw: rawMessage, message: providerPayloadErrorMessage(rawMessage)}
+		encoded, _ := json.Marshal(payload)
+		raw := string(encoded)
+		return providerPayloadError{raw: raw, message: providerPayloadErrorMessage(raw)}
 	}
 	if errValue, ok := payload["error"].(map[string]interface{}); ok {
 		if message := stringField(errValue, "message"); message != "" {
-			return providerPayloadError{raw: message, message: providerPayloadErrorMessage(message)}
+			encoded, _ := json.Marshal(payload)
+			raw := string(encoded)
+			return providerPayloadError{raw: raw, message: providerPayloadErrorMessage(raw)}
 		}
 	}
 	return nil

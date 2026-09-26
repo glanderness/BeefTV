@@ -179,6 +179,7 @@ export function resetGenerationTaskMetadata(metadata: CanvasNodeMetadata | undef
         generationErrorCode: undefined,
         resourceReloadAvailable: undefined,
         failedPromptFingerprint: undefined,
+        failedInputFingerprint: undefined,
     };
     delete next.taskId;
     delete next.taskClientOperationId;

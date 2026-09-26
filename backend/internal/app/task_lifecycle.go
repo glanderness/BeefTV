@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -52,6 +53,16 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 		return nil, BadAuthRequest(taskCancellationPendingRetryMessage())
 	}
 	if isContentModerationFailure(task.Error) {
+		return nil, BadAuthRequest(contentModerationRetryMessage)
+	}
+	if persistedFailureBlocksRetry(task.Error, task.Stage) {
+		failure := classifyTaskFailure(errors.New(task.Error))
+		if task.Stage == "submission_unknown" || failure.Category == generation.CategorySubmissionUncertain {
+			return nil, BadAuthRequest(submissionUncertainRetryMessage)
+		}
+		if failure.Category == generation.CategoryDownloadFailed || (failure.Category == generation.CategoryTimeout && failure.Uncertain) {
+			return nil, BadAuthRequest(downloadFailureRetryMessage)
+		}
 		return nil, BadAuthRequest(contentModerationRetryMessage)
 	}
 	decryptedInput, err := s.decryptTaskInputJSON(task.InputJSON)
