@@ -272,7 +272,11 @@ export function shouldBlockAutomaticRetry(error: unknown, stage?: string) {
     return explainGenerationError(error, { stage }).blockAutomaticRetry;
 }
 
-export function unchangedModeratedPrompt(metadata: { errorDetails?: string; generationErrorCode?: string; failedPromptFingerprint?: string; failedInputFingerprint?: string } | undefined, prompt: string, references: Array<string | { id?: string; storageKey?: string; url?: string }> = []) {
+export function unchangedModeratedPrompt(
+    metadata: { errorDetails?: string; generationErrorCode?: string; failedPromptFingerprint?: string; failedInputFingerprint?: string } | undefined,
+    prompt: string,
+    references: Array<string | { id?: string; storageKey?: string; url?: string }> = [],
+) {
     const moderationFailure = isModerationCategory(metadata?.generationErrorCode || "") || isContentModerationError(metadata?.errorDetails);
     if (!moderationFailure) return false;
     if (metadata?.failedInputFingerprint) return metadata.failedInputFingerprint === generationInputFingerprint(prompt, references);
@@ -292,7 +296,11 @@ export function generationPromptFingerprint(value: string) {
 }
 
 export function generationInputFingerprint(prompt: string, references: Array<string | { id?: string; storageKey?: string; url?: string }> = []) {
-    const referenceKeys = references.map((item) => (typeof item === "string" ? item : [item.id, item.storageKey, item.url].filter(Boolean).join("|"))).map((item) => item.trim()).filter(Boolean).sort();
+    const referenceKeys = references
+        .map((item) => (typeof item === "string" ? item : [item.id, item.storageKey, item.url].filter(Boolean).join("|")))
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .sort();
     return generationPromptFingerprint(`${prompt.trim()}\n${referenceKeys.join("\n")}`);
 }
 
@@ -336,7 +344,7 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
     if (!error) return { category: "unknown", retryable: false };
     if (typeof error === "object" && error) {
         const record = error as Record<string, unknown>;
-        const response = record.response && typeof record.response === "object" ? record.response as Record<string, unknown> : undefined;
+        const response = record.response && typeof record.response === "object" ? (record.response as Record<string, unknown>) : undefined;
         const status = numericStatus(record.status) ?? numericStatus(record.statusCode) ?? numericStatus(response?.status);
         const data = record.data ?? record.body ?? response?.data ?? record.response;
         if (status || data) {
@@ -518,9 +526,11 @@ function categoryFromProviderCode(...values: string[]): GenerationErrorCategory 
 function categoryFromProviderMessage(raw: string): GenerationErrorCategory | "" {
     const normalized = sanitizeProviderText(raw).toLowerCase();
     if (!normalized.trim()) return "";
-    if (((normalized.includes("thinking") || normalized.includes("reasoning")) && normalized.includes("tool_choice")) || (normalized.includes("tool_choice") && (normalized.includes("not support") || normalized.includes("unsupported")))) return "invalid_params";
+    if (((normalized.includes("thinking") || normalized.includes("reasoning")) && normalized.includes("tool_choice")) || (normalized.includes("tool_choice") && (normalized.includes("not support") || normalized.includes("unsupported"))))
+        return "invalid_params";
     if (containsContentSafety(normalized)) return moderationCategoryFromMessage(normalized);
-    if (normalized.includes("insufficient_quota") || ((normalized.includes("quota") || normalized.includes("balance") || normalized.includes("额度") || normalized.includes("余额") || normalized.includes("欠费")) && !normalized.includes("rate"))) return normalized.includes("arrearage") || normalized.includes("billing_hard_limit") ? "quota_upstream" : "quota_unknown";
+    if (normalized.includes("insufficient_quota") || ((normalized.includes("quota") || normalized.includes("balance") || normalized.includes("额度") || normalized.includes("余额") || normalized.includes("欠费")) && !normalized.includes("rate")))
+        return normalized.includes("arrearage") || normalized.includes("billing_hard_limit") ? "quota_upstream" : "quota_unknown";
     if (normalized.includes("rate limit") || normalized.includes("too many requests") || normalized.includes("throttl") || normalized.includes("频繁")) return "throttled";
     if (normalized.includes("context length") || normalized.includes("too many tokens") || normalized.includes("max_tokens") || (normalized.includes("长度") && (normalized.includes("最大") || normalized.includes("超出")))) return "context_too_long";
     if (normalized.includes("model_not_found") || normalized.includes("model not found") || normalized.includes("模型不存在") || normalized.includes("当前模型或接口不可用")) return "model_missing";
@@ -533,7 +543,18 @@ function categoryFromProviderMessage(raw: string): GenerationErrorCategory | "" 
 }
 
 function containsContentSafety(normalized: string) {
-    return normalized.includes("sensitive_words_detected") || normalized.includes("content policy") || normalized.includes("content safety") || normalized.includes("safety policy") || normalized.includes("data inspection") || normalized.includes("prohibited_content") || normalized.includes("内容安全审核") || normalized.includes("内容审核未通过") || (normalized.includes("blocked by") && (normalized.includes("safety") || normalized.includes("policy") || normalized.includes("content"))) || (normalized.includes("safety") && (normalized.includes("blocked") || normalized.includes("violat") || normalized.includes("filter")));
+    return (
+        normalized.includes("sensitive_words_detected") ||
+        normalized.includes("content policy") ||
+        normalized.includes("content safety") ||
+        normalized.includes("safety policy") ||
+        normalized.includes("data inspection") ||
+        normalized.includes("prohibited_content") ||
+        normalized.includes("内容安全审核") ||
+        normalized.includes("内容审核未通过") ||
+        (normalized.includes("blocked by") && (normalized.includes("safety") || normalized.includes("policy") || normalized.includes("content"))) ||
+        (normalized.includes("safety") && (normalized.includes("blocked") || normalized.includes("violat") || normalized.includes("filter")))
+    );
 }
 
 function moderationCategoryFromMessage(normalized: string): GenerationErrorCategory {

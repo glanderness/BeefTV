@@ -5,7 +5,9 @@ import { parseImagePayload, readAxiosError as readImageError } from "../src/serv
 import { unwrapEnvelope, assertVideoBlob, readAxiosError as readVideoError } from "../src/services/api/video-response";
 
 const adapter = axios.defaults.adapter;
-afterEach(() => { axios.defaults.adapter = adapter; });
+afterEach(() => {
+    axios.defaults.adapter = adapter;
+});
 const transport = () => createChannelTransport({ baseUrl: "https://example.invalid/v1", apiKey: "synthetic-only", apiFormat: "openai" }, "image");
 const rejectedPayload = { error: { code: "content_policy_violation", message: "blocked by content safety policy" }, request_id: "request-probe-123" };
 
@@ -59,7 +61,9 @@ test("non-2xx blob errors decode once within bound without retaining Axios secre
 
 test("malformed or oversized JSON and HTML never masquerade as media; reads bounded", async () => {
     class GuardedBlob extends Blob {
-        override text(): Promise<string> { throw new Error("unbounded read"); }
+        override text(): Promise<string> {
+            throw new Error("unbounded read");
+        }
         override slice(start?: number, end?: number, type?: string): Blob {
             expect(end! - (start || 0)).toBeLessThanOrEqual(16 * 1024);
             return super.slice(start, end, type);
@@ -79,8 +83,12 @@ test("cancellation identity survives transport normalization", async () => {
 });
 
 test("legacy image/video catch wrappers cannot flatten structured errors", () => {
-    for (const error of [new ChannelResponseError(rejectedPayload, 451), new DOMException("Aborted", "AbortError"), new axios.CanceledError("cancelled")]) for (const reader of [readImageError, readVideoError]) {
-        try { throw new Error(reader(error, "fallback")); }
-        catch (caught) { expect(caught).toBe(error); }
-    }
+    for (const error of [new ChannelResponseError(rejectedPayload, 451), new DOMException("Aborted", "AbortError"), new axios.CanceledError("cancelled")])
+        for (const reader of [readImageError, readVideoError]) {
+            try {
+                throw new Error(reader(error, "fallback"));
+            } catch (caught) {
+                expect(caught).toBe(error);
+            }
+        }
 });

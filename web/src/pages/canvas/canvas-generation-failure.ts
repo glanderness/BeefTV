@@ -32,7 +32,7 @@ export function canvasTaskFailureMetadata(task: GenerationTask, metadata?: Canva
     try {
         const stored = JSON.parse(task.inputJson || "{}");
         if (stored && typeof stored === "object") {
-            const references = (value: unknown): GenerationReference[] => Array.isArray(value) ? value.filter((item): item is GenerationReference => Boolean(item && typeof item === "object")) : [];
+            const references = (value: unknown): GenerationReference[] => (Array.isArray(value) ? value.filter((item): item is GenerationReference => Boolean(item && typeof item === "object")) : []);
             input = { ...input, referenceImages: references(stored.referenceImages), referenceVideos: references(stored.referenceVideos), referenceAudios: references(stored.referenceAudios), mask: references([stored.mask])[0] };
         }
     } catch {

@@ -43,7 +43,11 @@ export function assertChannelPayload(payload: unknown, status?: number): void {
 
 async function boundedBlobPayload(blob: Blob): Promise<unknown> {
     const text = await blob.slice(0, ERROR_BODY_LIMIT).text();
-    try { return JSON.parse(text); } catch { return text; }
+    try {
+        return JSON.parse(text);
+    } catch {
+        return text;
+    }
 }
 
 // JSON/HTML cannot be a successful media artifact, even with HTTP 200.
@@ -65,7 +69,7 @@ export async function normalizeChannelFailure(error: unknown): Promise<never> {
     if (isChannelCancellation(error)) throw error;
     if (!axios.isAxiosError(error)) throw error;
     const data = error.response?.data;
-    const payload = data instanceof Blob ? await boundedBlobPayload(data) : data ?? error.message;
+    const payload = data instanceof Blob ? await boundedBlobPayload(data) : (data ?? error.message);
     throw new ChannelResponseError(payload, error.response?.status);
 }
 
@@ -113,15 +117,17 @@ export function createChannelTransport(config: ChannelTransportConfig, scene?: C
 
     const send = async <T>(method: "get" | "post", upstreamUrl: string, body: unknown, options?: ChannelCallOptions & { contentType?: string; responseType?: "blob" }) => {
         const request = channelRequest(config, upstreamUrl, sceneHeaders(options?.contentType, options?.headers));
-        return channelResponse(axios.request<T>({
-            method,
-            url: request.url,
-            data: method === "get" ? undefined : body,
-            headers: request.headers,
-            withCredentials: request.credentials === "include",
-            signal: options?.signal,
-            responseType: options?.responseType,
-        }));
+        return channelResponse(
+            axios.request<T>({
+                method,
+                url: request.url,
+                data: method === "get" ? undefined : body,
+                headers: request.headers,
+                withCredentials: request.credentials === "include",
+                signal: options?.signal,
+                responseType: options?.responseType,
+            }),
+        );
     };
 
     return {

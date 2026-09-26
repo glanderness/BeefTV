@@ -808,7 +808,10 @@ export function CanvasNodeInfoModal({
                         {node.metadata?.errorDetails ? (
                             <section className="canvas-node-inspector-error">
                                 <GenerationFailureNotice
-                                    explanation={explainGenerationError({ code: node.metadata.generationErrorCode || node.metadata.taskErrorCode, message: node.metadata.errorDetails }, { taskId: node.metadata.taskId, model: node.metadata.model, createdAt: node.metadata.taskCreatedAt, stage: node.metadata.taskStage })}
+                                    explanation={explainGenerationError(
+                                        { code: node.metadata.generationErrorCode || node.metadata.taskErrorCode, message: node.metadata.errorDetails },
+                                        { taskId: node.metadata.taskId, model: node.metadata.model, createdAt: node.metadata.taskCreatedAt, stage: node.metadata.taskStage },
+                                    )}
                                     context={{ taskId: node.metadata.taskId, model: node.metadata.model, createdAt: node.metadata.taskCreatedAt, stage: node.metadata.taskStage }}
                                 />
                             </section>
