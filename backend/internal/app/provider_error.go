@@ -51,11 +51,18 @@ func providerResponseBusinessFailure(responseBody []byte) (string, string, bool)
 }
 
 func providerPayloadBusinessFailure(payload map[string]any) (string, string, bool) {
+	if message, ok := payload["error"].(string); ok && strings.TrimSpace(message) != "" {
+		return normalizedProviderErrorCode(payload["code"]), message, true
+	}
 	if errorValue, ok := payload["error"].(map[string]any); ok {
 		code, message := providerFailureDetails(map[string]any{"error": errorValue})
 		if code != "" || message != "" {
 			return code, message, true
 		}
+	}
+	if success, ok := payload["success"].(bool); ok && !success {
+		code, message := providerFailureDetails(payload)
+		return code, message, true
 	}
 	if !providerBusinessCodeFailed(payload["code"]) {
 		return "", "", false
@@ -67,7 +74,7 @@ func providerPayloadBusinessFailure(payload map[string]any) (string, string, boo
 func providerBusinessCodeFailed(value any) bool {
 	code := strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
 	switch code {
-	case "", "0", "success", "succeeded", "ok", "<nil>":
+	case "", "0", "200", "success", "succeeded", "ok", "<nil>":
 		return false
 	default:
 		return true

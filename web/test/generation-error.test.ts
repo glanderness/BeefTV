@@ -11,8 +11,77 @@ import {
     unchangedModeratedPrompt,
 } from "../src/lib/generation-error";
 import { readFetchError, readStatusError } from "../src/services/api/image-response";
+import gatewayCodes from "../../fixtures/generation-error-codes.json";
 
 describe("generation error classification", () => {
+    test("all declared gateway error codes match the shared backend contract", () => {
+        expect(Object.keys(gatewayCodes)).toHaveLength(42);
+        for (const [code, category] of Object.entries(gatewayCodes)) {
+            expect(explainGenerationError({ code, message: "opaque provider message" }).category).toBe(category);
+            expect(explainGenerationError({ status: 400, data: { error: { code } } }).category).toBe(category);
+        }
+    });
+    test("canonical categories survive persistence and structured codes without HTTP", () => {
+        for (const code of ["moderation_reference", "moderation_output", "quota_user", "invalid_params", "download_failed"] as const) {
+            const failure = explainGenerationError({ code, message: "opaque" });
+            expect(failure.category).toBe(code);
+            expect(explainGenerationError(failure.message).category).toBe(code);
+        }
+        expect(explainGenerationError({ code: "insufficient_user_quota" }).action).toContain("余额");
+        expect(explainGenerationError({ code: "no_available_channel" }).category).toBe("provider_unavailable");
+        expect(explainGenerationError({ code: "channel:invalid_key" }).category).toBe("provider_unavailable");
+    });
+
+    test("copy diagnostics validates context at the final boundary", () => {
+        const failure = explainGenerationError({ code: "invalid_api_key" });
+        expect(failure.providerCode).toBe("invalid_api_key");
+        const copied = formatGenerationDiagnostics(failure, {
+            taskId: "https://private.example/?token=PRIVATE",
+            providerRequestId: "secret-PRIVATE",
+            model: "Authorization: Bearer PRIVATE",
+            createdAt: "Cookie: session=PRIVATE",
+        });
+        expect(copied).not.toContain("PRIVATE");
+        expect(copied).not.toContain("https://");
+    });
+
+    test("ambiguous moderation and structured prompt echoes do not invent a cause", () => {
+        const text = "Your prompt or reference image was blocked by the content safety policy.";
+        expect(explainGenerationError(text).reason).toContain("提示词或参考素材");
+        expect(explainGenerationError({ error: { message: text } }).reason).toContain("提示词或参考素材");
+        expect(explainGenerationError({ error: { code: "novel_error" }, prompt: "blocked by content safety policy" }).moderation).toBe(false);
+        expect(explainGenerationError({ error: { message: "opaque prompt=blocked by content safety policy" } }).moderation).toBe(false);
+    });
+
+    test("HTTP fallback survives HTML and nested Axios responses", () => {
+        expect(explainGenerationError({ status: 402, data: "<html>private</html>" }).category).toBe("quota_unknown");
+        expect(explainGenerationError({ status: 429, data: "<html>private</html>" }).category).toBe("throttled");
+        expect(explainGenerationError({ response: { status: 429, data: { error: { code: "insufficient_user_quota" } } } }).category).toBe("quota_user");
+    });
+
+    test("spaced credentials and arbitrary prompt text are never echoed", () => {
+        for (const suffix of ["Authorization: Bearer PRIVATE VALUE", "Cookie: session=PRIVATE", "api_key = PRIVATE", "prompt = PRIVATE WORDS"]) {
+            expect(generationErrorMessage(`操作失败 ${suffix}`)).not.toContain("PRIVATE");
+        }
+    });
+
+    test("only proven parameter limits are quoted", () => {
+        expect(explainGenerationError({ code: "invalid_parameter", message: "duration must be between 2 and 10 seconds" }).action).toContain("2–10 秒");
+        expect(explainGenerationError({ code: "invalid_parameter", message: "duration invalid" }).action).not.toContain("秒");
+        expect(explainGenerationError({ code: "invalid_parameter", message: "prompt=duration must be between 2 and 10 seconds" }).action).not.toContain("2–10");
+    });
+
+    test("same reference identity with replaced content unlocks moderation retry", () => {
+        const metadata = generationFailureMetadata({ code: "prompt_blocked" }, "p", [{ id: "ref1", storageKey: "old.png" }]);
+        expect(unchangedModeratedPrompt(metadata, "p", [{ id: "ref1", storageKey: "new.png" }])).toBe(false);
+    });
+
+    test("unsafe same-input bulk retries are blocked", () => {
+        for (const code of ["invalid_params", "auth", "quota_user", "timeout", "submission_uncertain", "download_failed", "results_missing", "unknown"]) {
+            expect(shouldBlockAutomaticRetry({ code })).toBe(true);
+        }
+        expect(shouldBlockAutomaticRetry({ code: "throttled" })).toBe(false);
+    });
     test("openai json keeps structured invalid params", () => {
         const explained = explainGenerationError({
             status: 400,

@@ -8,6 +8,7 @@ import (
 	"html"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -78,10 +79,10 @@ type categoryCopy struct {
 var categoryCopies = map[FailureCategory]categoryCopy{
 	CategoryAuth:                {Reason: "模型服务鉴权失败", Action: "请检查 API Key 后重试"},
 	CategoryPermission:          {Reason: "当前渠道没有使用该模型的权限", Action: "请更换模型或检查渠道权限"},
-	CategoryQuotaUser:           {Reason: "当前工作区额度不足", Action: "请稍后再试或减少同时进行的任务"},
+	CategoryQuotaUser:           {Reason: "当前账号额度不足", Action: "请检查账号余额，或联系管理员调整额度后重试"},
 	CategoryQuotaUpstream:       {Reason: "模型供应商拒绝了计费或额度相关请求", Action: "请到供应商核对账单与额度后，再决定是否重试"},
 	CategoryQuotaUnknown:        {Reason: "模型服务拒绝了计费或额度相关请求", Action: "请到当前渠道或模型供应商核对账单与额度后，再决定是否重试"},
-	CategoryModerationInput:     {Reason: "提示词未通过内容安全审核", Action: "请修改提示词或参考图后重新生成"},
+	CategoryModerationInput:     {Reason: "提示词或参考素材未通过内容安全审核", Action: "请修改提示词或参考图后重新生成"},
 	CategoryModerationReference: {Reason: "参考图未通过内容安全审核", Action: "请更换参考图或调整提示词后重新生成"},
 	CategoryModerationOutput:    {Reason: "生成结果未通过内容安全审核", Action: "请调整提示词或参考图后重新生成"},
 	CategoryInvalidParams:       {Reason: "模型不接受当前参数", Action: "请检查模型、尺寸、时长、格式或数量后重试"},
@@ -92,7 +93,7 @@ var categoryCopies = map[FailureCategory]categoryCopy{
 	CategoryThrottled:           {Reason: "请求过于频繁", Action: "请稍后再试"},
 	CategoryConcurrency:         {Reason: "同时进行的生成过多", Action: "请等待已有任务完成后再试"},
 	CategoryProviderUnavailable: {Reason: "模型服务暂时不可用", Action: "请稍后重试"},
-	CategoryNetwork:             {Reason: "网络连接失败", Action: "请检查网络后重试"},
+	CategoryNetwork:             {Reason: "网络连接失败", Action: "请检查网络并核对原任务状态后，再决定是否重新生成"},
 	CategoryTimeout:             {Reason: "模型服务响应超时", Action: "请稍后查询原任务，不要立即重新提交"},
 	CategorySubmissionUncertain: {Reason: "提交结果尚未确认，上游任务可能仍在执行", Action: "请先查询原任务状态，不要立即重新提交"},
 	CategoryAsyncFailed:         {Reason: "生成任务没有完成", Action: "请查看详情后决定是否重试"},
@@ -100,7 +101,7 @@ var categoryCopies = map[FailureCategory]categoryCopy{
 	CategoryPartialSuccess:      {Reason: "部分结果已生成，其余失败", Action: "请查看已有结果后再决定是否补做"},
 	CategoryDownloadFailed:      {Reason: "生成结果下载失败", Action: "请稍后重新加载，不要立即重新提交"},
 	CategoryResultsMissing:      {Reason: "任务结束但没有可用结果", Action: "请查看详情后再决定是否重试"},
-	CategoryMalformedResponse:   {Reason: "模型服务返回了无法解析的内容", Action: "请稍后重试"},
+	CategoryMalformedResponse:   {Reason: "模型服务返回了无法解析的内容", Action: "请查看详情并核对原任务状态后，再决定是否重新生成"},
 	CategoryUnknown:             {Reason: "生成失败", Action: "请查看详情后再决定是否重试"},
 }
 
@@ -109,11 +110,14 @@ var (
 	httpStatusPattern        = regexp.MustCompile(`(?i)(?:HTTP\s+|status(?:\s+code)?\s*[:：]?\s*)(\d{3})\b`)
 	wrappedHTTPStatusPattern = regexp.MustCompile(`(?i)Request failed with status code\s+(\d{3})`)
 	urlPattern               = regexp.MustCompile(`(?i)(?:https?://|data:[a-z0-9.+-]+/[^;]+;base64,)[^\s"'<>]+`)
-	secretPattern            = regexp.MustCompile(`(?i)(?:api[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token|authorization|bearer|sk-[A-Za-z0-9_-]{8,}|eyJ[A-Za-z0-9_-]{20,})[^\s,;]*`)
-	promptEchoPattern        = regexp.MustCompile(`(?i)((?:prompt|input|query)\s*[=:：]\s*)(?:"[^"]{0,400}"|'[^']{0,400}'|\S{1,400})`)
+	secretPattern            = regexp.MustCompile(`(?i)(?:\b(?:api[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token|password)\b["']?\s*[=:：]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)|\bbearer\s+[^\s,;]+|\bsk-[A-Za-z0-9_-]+|\beyJ[A-Za-z0-9_.-]{20,})`)
+	credentialHeaderPattern  = regexp.MustCompile(`(?im)\b(?:authorization|proxy-authorization|cookie|set-cookie)["']?\s*[=:：][^\r\n]*`)
+	promptEchoPattern        = regexp.MustCompile(`(?is)(?:\b(?:prompt|input|query)|提示词|输入内容)["']?\s*[=:：].*`)
 	signedQueryPattern       = regexp.MustCompile(`(?i)(?:[?&](?:signature|x-amz-signature|x-oss-signature|token|key)=)[^\s&]+`)
 	safeIDPattern            = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{5,127}$`)
+	providerCodePattern      = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._:-]*$`)
 	unsafeIDPattern          = regexp.MustCompile(`(?i)secret|token|password|apikey|api-key|bearer|sk-`)
+	durationRangePattern     = regexp.MustCompile(`(?i)\bduration\s+(?:must\s+be|should\s+be|is\s+required\s+to\s+be)\s+(?:between\s+([0-9]+(?:\.[0-9]+)?)\s+and\s+([0-9]+(?:\.[0-9]+)?)|in\s+(?:the\s+)?range\s*\[?([0-9]+(?:\.[0-9]+)?)\s*[,–-]\s*([0-9]+(?:\.[0-9]+)?)\]?)\s*(?:seconds?|secs?|s)\b`)
 )
 
 var providerCodeCategories = map[string]FailureCategory{
@@ -190,6 +194,50 @@ var providerCodeCategories = map[string]FailureCategory{
 	"provider_query_failed":            CategoryAsyncFailed,
 	"provider_submission_unknown":      CategorySubmissionUncertain,
 	"provider_reference_invalid":       CategoryInputInaccessible,
+	"rate_limited":                     CategoryThrottled,
+	"bad_gateway":                      CategoryProviderUnavailable,
+	"internal":                         CategoryProviderUnavailable,
+	"failed_precondition":              CategoryInvalidParams,
+	// BeefAPI stable codes: internal failures without a reliable caller action
+	// stay explicitly unknown instead of inheriting a misleading HTTP 400.
+	"violation_fee.grok.csam":              CategoryModerationInput,
+	"count_token_failed":                   CategoryUnknown,
+	"model_price_error":                    CategoryUnknown,
+	"invalid_api_type":                     CategoryUnknown,
+	"json_marshal_failed":                  CategoryUnknown,
+	"do_request_failed":                    CategorySubmissionUncertain,
+	"get_channel_failed":                   CategoryProviderUnavailable,
+	"no_available_channel":                 CategoryProviderUnavailable,
+	"gen_relay_info_failed":                CategoryUnknown,
+	"channel:no_available_key":             CategoryProviderUnavailable,
+	"channel:param_override_invalid":       CategoryUnknown,
+	"channel:header_override_invalid":      CategoryUnknown,
+	"channel:model_mapped_error":           CategoryUnknown,
+	"channel:aws_client_error":             CategoryProviderUnavailable,
+	"channel:invalid_key":                  CategoryProviderUnavailable,
+	"channel:response_time_exceeded":       CategoryTimeout,
+	"read_request_body_failed":             CategoryUnknown,
+	"convert_request_failed":               CategoryUnknown,
+	"key_site_mismatch":                    CategoryAuth,
+	"bad_request_body":                     CategoryInvalidParams,
+	"context_media_limit_exceeded":         CategoryContextTooLong,
+	"media_request_capacity_exceeded":      CategoryConcurrency,
+	"read_response_body_failed":            CategorySubmissionUncertain,
+	"bad_response_status_code":             CategoryUnknown,
+	"bad_response":                         CategoryMalformedResponse,
+	"bad_response_body":                    CategoryMalformedResponse,
+	"empty_response":                       CategoryResultsMissing,
+	"aws_invoke_error":                     CategoryUnknown,
+	"prompt_blocked":                       CategoryModerationInput,
+	"responses_encrypted_context_mismatch": CategoryInvalidParams,
+	"query_data_error":                     CategoryUnknown,
+	"update_data_error":                    CategoryUnknown,
+	"insufficient_user_quota":              CategoryQuotaUser,
+	"pre_consume_token_quota_failed":       CategoryUnknown,
+	"upstream_crowded":                     CategoryThrottled,
+	"upstream_unavailable":                 CategoryProviderUnavailable,
+	"upstream_rejected":                    CategoryUnknown,
+	"upstream_error":                       CategoryUnknown,
 }
 
 func (f Failure) ErrorCode() string {
@@ -213,13 +261,15 @@ func (f Failure) IsModeration() bool {
 }
 
 func (f Failure) BlocksAutomaticRetry() bool {
-	if f.Uncertain || f.Category == CategorySubmissionUncertain || f.Category == CategoryDownloadFailed {
+	if f.Uncertain {
 		return true
 	}
-	if f.Category == CategoryTimeout && (f.HTTPStatus == 524 || f.Uncertain) {
+	switch f.Category {
+	case CategoryThrottled, CategoryConcurrency, CategoryProviderUnavailable, CategoryCancelled:
+		return false
+	default:
 		return true
 	}
-	return f.IsModeration()
 }
 
 func (f Failure) displayCopy() (string, string) {
@@ -291,12 +341,12 @@ func (e PayloadError) Error() string {
 func ClassifyHTTP(status int, statusText string, body string) Failure {
 	failure := ClassifyText(body)
 	failure.HTTPStatus = status
-	if failure.Category != CategoryUnknown && !failure.FromCode && !trustProviderMessageStatus(status) {
+	if failure.Category != CategoryUnknown && !failure.FromCode && ((status != 0 && !trustProviderMessageStatus(status)) || (htmlBodyPattern.MatchString(strings.TrimSpace(body)) && status >= 400)) {
 		failure.Category = CategoryUnknown
 		failure.Reason = ""
 		failure.Action = ""
 	}
-	if failure.Category == CategoryUnknown {
+	if failure.Category == CategoryUnknown && !failure.FromCode {
 		if category, ok := categoryFromHTTPStatus(status); ok {
 			failure.Category = category
 			failure.Reason = ""
@@ -387,14 +437,30 @@ func ClassifyText(raw string) Failure {
 			specializeModeration(&failure, fields)
 			specializeLikeness(&failure, fields)
 			specializeThinkingToolChoice(&failure, fields)
+			specializeDurationRange(&failure, fields)
 			return normalizeFailure(failure)
 		}
 		if category, ok := categoryFromProviderMessage(fields.Message + " " + fields.Type + " " + fields.Status); ok {
 			failure.Category = category
 			specializeModeration(&failure, fields)
 			specializeThinkingToolChoice(&failure, fields)
+			specializeDurationRange(&failure, fields)
 			return normalizeFailure(failure)
 		}
+		// JSON request echoes and debug fields are never classification input.
+		return normalizeFailure(failure)
+	}
+	if strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") {
+		failure.Structured = true
+		return normalizeFailure(failure)
+	}
+	if matched := matchPersistedCategory(text); matched != CategoryUnknown {
+		failure.Category = matched
+		failure.FromCode = true
+		if matched == CategoryTimeout || matched == CategoryDownloadFailed || matched == CategorySubmissionUncertain {
+			failure.Uncertain = true
+		}
+		return normalizeFailure(failure)
 	}
 	if isMalformedText(text) {
 		failure.Category = CategoryMalformedResponse
@@ -403,8 +469,9 @@ func ClassifyText(raw string) Failure {
 	if category, ok := categoryFromProviderMessage(text); ok {
 		failure.Category = category
 		failure.Structured = true
-		specializeModeration(&failure, fields)
+		specializeModeration(&failure, extractedFields{Message: text})
 		specializeThinkingToolChoice(&failure, extractedFields{Message: text})
+		specializeDurationRange(&failure, extractedFields{Message: text})
 		if status := extractExplicitHTTPStatus(text); status != 0 {
 			failure.HTTPStatus = status
 		}
@@ -427,16 +494,6 @@ func ClassifyText(raw string) Failure {
 		failure.Category = CategoryResultsMissing
 		return normalizeFailure(failure)
 	}
-	if matched := matchPersistedCategory(text); matched != CategoryUnknown {
-		failure.Category = matched
-		if matched == CategoryTimeout && (strings.Contains(text, "可能仍在") || strings.Contains(text, "不要立即重新提交")) {
-			failure.Uncertain = true
-		}
-		if matched == CategoryDownloadFailed || matched == CategorySubmissionUncertain {
-			failure.Uncertain = true
-		}
-		return normalizeFailure(failure)
-	}
 	if status := extractExplicitHTTPStatus(text); status != 0 {
 		return ClassifyHTTP(status, "", "")
 	}
@@ -448,39 +505,20 @@ func ClassifyText(raw string) Failure {
 }
 
 func ClassifyAppError(status int, code int, reason string, message string) Failure {
-	failure := ClassifyText(firstNonEmpty(message, reason))
-	if !failure.Structured {
-		switch strings.TrimSpace(reason) {
-		case "unauthorized":
-			failure.Category = CategoryAuth
-		case "forbidden":
-			failure.Category = CategoryPermission
-		case "quota_exceeded":
-			failure.Category = CategoryQuotaUnknown
-		case "rate_limited":
-			failure.Category = CategoryThrottled
-		case "not_found":
-			failure.Category = CategoryModelMissing
-		case "timeout":
-			failure.Category = CategoryTimeout
-		case "unavailable", "bad_gateway", "internal":
-			failure.Category = CategoryProviderUnavailable
-		case "invalid_argument", "failed_precondition":
-			failure.Category = CategoryInvalidParams
+	failure := ClassifyHTTP(status, "", firstNonEmpty(message, reason))
+	if !failure.Structured && !failure.FromCode {
+		category, matched := categoryFromProviderCode(reason)
+		switch code {
+		case 40301:
+			category, matched = CategoryQuotaUnknown, true
+		case 42901:
+			category, matched = CategoryThrottled, true
 		}
-	}
-	if status != 0 {
-		failure.HTTPStatus = status
-	}
-	if code == 40301 && !failure.Structured {
-		failure.Category = CategoryQuotaUnknown
-	}
-	if code == 42901 && !failure.Structured {
-		failure.Category = CategoryThrottled
-	}
-	if strings.TrimSpace(message) != "" && looksLikeUserFacingChinese(message) {
-		failure.Reason = sanitizeProviderText(message)
-		failure.Action = ""
+		if matched {
+			failure.Category = category
+			failure.FromCode = true
+			failure.Reason, failure.Action = "", ""
+		}
 	}
 	return normalizeFailure(failure)
 }
@@ -517,17 +555,18 @@ func CircuitOpenFailure() Failure {
 }
 
 type extractedFields struct {
-	Code      string
-	Type      string
-	Status    string
-	Message   string
-	Param     string
-	RequestID string
-	TaskID    string
+	ParsedJSON bool
+	Code       string
+	Type       string
+	Status     string
+	Message    string
+	Param      string
+	RequestID  string
+	TaskID     string
 }
 
 func (f extractedFields) hasStructured() bool {
-	return f.Code != "" || f.Type != "" || f.Message != "" || f.Status != "" || f.RequestID != "" || f.TaskID != ""
+	return f.ParsedJSON || f.Code != "" || f.Type != "" || f.Message != "" || f.Status != "" || f.RequestID != "" || f.TaskID != ""
 }
 
 func extractProviderFields(raw string) extractedFields {
@@ -562,7 +601,8 @@ func fieldsFromJSON(data []byte) (extractedFields, bool) {
 		return extractedFields{}, false
 	}
 	fields := walkProviderFields(payload, 0)
-	return fields, fields.hasStructured()
+	fields.ParsedJSON = true
+	return fields, true
 }
 
 func walkProviderFields(payload map[string]any, depth int) extractedFields {
@@ -658,6 +698,9 @@ func categoryFromProviderCode(values ...string) (FailureCategory, bool) {
 		if normalized == "" || normalized == "0" || normalized == "success" || normalized == "succeeded" || normalized == "ok" {
 			continue
 		}
+		if _, ok := categoryCopies[FailureCategory(normalized)]; ok {
+			return FailureCategory(normalized), true
+		}
 		if category, ok := providerCodeCategories[normalized]; ok {
 			return category, true
 		}
@@ -690,11 +733,13 @@ func categoryFromProviderCode(values ...string) (FailureCategory, bool) {
 }
 
 func categoryFromProviderMessage(raw string) (FailureCategory, bool) {
-	normalized := strings.ToLower(strings.TrimSpace(raw))
+	normalized := strings.ToLower(strings.TrimSpace(promptEchoPattern.ReplaceAllString(raw, "")))
 	if normalized == "" {
 		return "", false
 	}
 	switch {
+	case durationRangePattern.MatchString(normalized):
+		return CategoryInvalidParams, true
 	case strings.Contains(normalized, "thinking") && strings.Contains(normalized, "tool_choice"),
 		strings.Contains(normalized, "reasoning") && strings.Contains(normalized, "tool_choice"),
 		strings.Contains(normalized, "tool_choice") && (strings.Contains(normalized, "not support") || strings.Contains(normalized, "unsupported")):
@@ -740,11 +785,11 @@ func containsContentSafety(normalized string) bool {
 }
 
 func moderationCategoryFromMessage(normalized string) FailureCategory {
+	if strings.Contains(normalized, "output") && (strings.Contains(normalized, "image") || strings.Contains(normalized, "video") || strings.Contains(normalized, "result")) || strings.Contains(normalized, "生成结果") {
+		return CategoryModerationOutput
+	}
 	if strings.Contains(normalized, "reference image") || strings.Contains(normalized, "input image") || strings.Contains(normalized, "参考图") || strings.Contains(normalized, "参考图片") {
 		return CategoryModerationReference
-	}
-	if strings.Contains(normalized, "output") && (strings.Contains(normalized, "image") || strings.Contains(normalized, "video") || strings.Contains(normalized, "result")) {
-		return CategoryModerationOutput
 	}
 	return CategoryModerationInput
 }
@@ -753,11 +798,23 @@ func specializeModeration(failure *Failure, fields extractedFields) {
 	if !failure.IsModeration() {
 		return
 	}
+	for _, code := range []string{fields.Code, fields.Type, fields.Status} {
+		if _, ok := categoryCopies[FailureCategory(normalizeCode(code))]; ok {
+			return
+		}
+	}
 	normalized := strings.ToLower(fields.Message + " " + fields.Code)
-	failure.Category = moderationCategoryFromMessage(normalized)
 	if strings.Contains(normalizeCode(fields.Code), "privacyinformation") || strings.Contains(normalizeCode(fields.Code), "sensitivecontentdetected") {
 		failure.Category = CategoryModerationReference
+		return
 	}
+	if (strings.Contains(normalized, "prompt") || strings.Contains(normalized, "提示词")) && (strings.Contains(normalized, "reference image") || strings.Contains(normalized, "input image") || strings.Contains(normalized, "参考")) {
+		failure.Category = CategoryModerationInput
+		failure.Reason = "提示词或参考素材未通过内容安全审核"
+		failure.Action = "请修改提示词或参考图后重新生成"
+		return
+	}
+	failure.Category = moderationCategoryFromMessage(normalized)
 }
 
 func specializeLikeness(failure *Failure, fields extractedFields) {
@@ -782,12 +839,36 @@ func refineInvalidParams(failure *Failure, fields extractedFields) {
 }
 
 func specializeThinkingToolChoice(failure *Failure, fields extractedFields) {
+	if failure.Category != CategoryInvalidParams {
+		return
+	}
 	normalized := strings.ToLower(fields.Message + " " + fields.Code)
 	if ((strings.Contains(normalized, "thinking") || strings.Contains(normalized, "reasoning")) && strings.Contains(normalized, "tool_choice")) || (strings.Contains(normalized, "tool_choice") && (strings.Contains(normalized, "not support") || strings.Contains(normalized, "unsupported"))) {
 		failure.Category = CategoryInvalidParams
 		failure.Reason = "当前模型为思考或推理模式，不支持强制工具调用"
 		failure.Action = "请改用自动工具选择或更换非思考模式模型"
 	}
+}
+
+func specializeDurationRange(failure *Failure, fields extractedFields) {
+	if failure.Category != CategoryInvalidParams {
+		return
+	}
+	// Only a provider's explicit numeric range with units becomes advice. Prompt
+	// echoes are excluded so user input cannot invent a model constraint.
+	message := promptEchoPattern.ReplaceAllString(fields.Message, "")
+	match := durationRangePattern.FindStringSubmatch(message)
+	if len(match) != 5 {
+		return
+	}
+	minimum, maximum := firstNonEmpty(match[1], match[3]), firstNonEmpty(match[2], match[4])
+	minValue, minErr := strconv.ParseFloat(minimum, 64)
+	maxValue, maxErr := strconv.ParseFloat(maximum, 64)
+	if minErr != nil || maxErr != nil || minValue < 0 || minValue >= maxValue || maxValue > 86400 {
+		return
+	}
+	failure.Reason = "视频时长不符合模型要求"
+	failure.Action = fmt.Sprintf("请将时长调整为 %s–%s 秒后重试", minimum, maximum)
 }
 
 func trustProviderMessageStatus(status int) bool {
@@ -868,11 +949,17 @@ func isResultsMissingText(value string) bool {
 }
 
 func matchPersistedCategory(text string) FailureCategory {
+	if strings.HasPrefix(text, "提示词或参考素材未通过内容安全审核") {
+		return CategoryModerationInput
+	}
+	if strings.HasPrefix(text, "视频时长不符合模型要求") {
+		return CategoryInvalidParams
+	}
 	for category, copyText := range categoryCopies {
 		if category == CategoryUnknown {
 			continue
 		}
-		if strings.Contains(text, copyText.Reason) {
+		if strings.HasPrefix(text, copyText.Reason) {
 			return category
 		}
 	}
@@ -909,13 +996,20 @@ func sanitizeProviderCode(value string) string {
 	if value == "" {
 		return ""
 	}
-	value = urlPattern.ReplaceAllString(value, "")
-	value = secretPattern.ReplaceAllString(value, "")
-	value = strings.TrimSpace(value)
+	if !providerCodePattern.MatchString(value) || utf8.RuneCountInString(value) > maxProviderCodeRunes {
+		return ""
+	}
+	normalized := normalizeCode(value)
+	if _, ok := providerCodeCategories[normalized]; ok {
+		return value
+	}
+	if _, ok := categoryCopies[FailureCategory(normalized)]; ok {
+		return value
+	}
 	if unsafeIDPattern.MatchString(value) {
 		return ""
 	}
-	return truncateRunes(value, maxProviderCodeRunes)
+	return value
 }
 
 func sanitizeProviderText(value string) string {
@@ -928,8 +1022,9 @@ func sanitizeProviderText(value string) string {
 	}
 	value = urlPattern.ReplaceAllString(value, "")
 	value = signedQueryPattern.ReplaceAllString(value, "")
+	value = credentialHeaderPattern.ReplaceAllString(value, "[已隐藏]")
 	value = secretPattern.ReplaceAllString(value, "")
-	value = promptEchoPattern.ReplaceAllString(value, "${1}[已隐藏]")
+	value = promptEchoPattern.ReplaceAllString(value, "[已隐藏]")
 	value = strings.Join(strings.Fields(value), " ")
 	if strings.HasPrefix(value, "{") || strings.HasPrefix(value, "<") {
 		return ""
@@ -952,6 +1047,9 @@ func normalizeFailure(failure Failure) Failure {
 	}
 	if failure.IsModeration() {
 		failure.Retryable = false
+	}
+	if failure.Category == CategorySubmissionUncertain {
+		failure.Uncertain = true
 	}
 	applyRetryable(&failure)
 	reason, action := failure.displayCopy()

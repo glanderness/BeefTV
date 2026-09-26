@@ -127,7 +127,7 @@ type imageResponse struct {
 
 type providerError struct {
 	Message string `json:"message"`
-	Code    string `json:"code"`
+	Code    any    `json:"code"`
 	Type    string `json:"type"`
 	Param   string `json:"param"`
 }

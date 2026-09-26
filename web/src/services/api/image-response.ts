@@ -2,6 +2,7 @@ import axios from "axios";
 import { nanoid } from "nanoid";
 
 import { explainGenerationError } from "@/lib/generation-error";
+import { assertChannelPayload, ChannelResponseError } from "@/services/api/channel-transport";
 import type {
     ChatCompletionPayload,
     ChatCompletionStreamState,
@@ -23,7 +24,7 @@ function resolveImageDataUrl(item: Record<string, unknown>) {
 }
 
 export function parseImagePayload(payload: ImageApiResponse) {
-    if (typeof payload.code === "number" && payload.code !== 0) throw new Error(payload.msg || "请求失败");
+    assertChannelPayload(payload);
     const images =
         payload.data
             ?.map(resolveImageDataUrl)
@@ -34,7 +35,9 @@ export function parseImagePayload(payload: ImageApiResponse) {
 }
 
 export function readAxiosError(error: unknown, fallback: string) {
-    if (axios.isCancel(error) || (error instanceof DOMException && error.name === "AbortError")) return "请求已取消";
+    // Callers wrap legacy string errors; do not flatten structured channel errors.
+    if (error instanceof ChannelResponseError) throw error;
+    if (axios.isCancel(error) || (error instanceof DOMException && error.name === "AbortError")) throw error;
     if (axios.isAxiosError(error)) {
         return explainGenerationError({
             message: fallback,

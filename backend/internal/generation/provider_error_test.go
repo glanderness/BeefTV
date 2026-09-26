@@ -2,8 +2,11 @@ package generation_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 
@@ -214,5 +217,141 @@ func TestThinkingModeToolChoice(t *testing.T) {
 	failure := generation.ClassifyHTTP(400, "", `{"error":{"message":"Thinking mode does not support this tool_choice","request_id":"req_think1"}}`)
 	if !strings.Contains(failure.UserMessage(), "不支持强制工具调用") {
 		t.Fatalf("message = %q", failure.UserMessage())
+	}
+}
+
+func TestBeefAPIErrorCodeInventory(t *testing.T) {
+	data, err := os.ReadFile("../../../fixtures/generation-error-codes.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inventory map[string]generation.FailureCategory
+	if err := json.Unmarshal(data, &inventory); err != nil {
+		t.Fatal(err)
+	}
+	if len(inventory) != 42 {
+		t.Fatalf("BeefAPI error code inventory has %d entries, want 42", len(inventory))
+	}
+	for code, category := range inventory {
+		t.Run(code, func(t *testing.T) {
+			for _, status := range []int{200, 400, 402, 429, 503} {
+				body := fmt.Sprintf(`{"error":{"code":%q,"message":"opaque failure"}}`, code)
+				failure := generation.ClassifyHTTP(status, "", body)
+				if failure.Category != category || !failure.FromCode || failure.ProviderCode != code {
+					t.Errorf("HTTP %d code %s: got category=%s fromCode=%v code=%q; want %s", status, code, failure.Category, failure.FromCode, failure.ProviderCode, category)
+				}
+			}
+		})
+	}
+}
+
+func TestCanonicalCategoriesRoundTripAndRetryPolicy(t *testing.T) {
+	categories := []generation.FailureCategory{
+		generation.CategoryAuth, generation.CategoryPermission, generation.CategoryQuotaUser,
+		generation.CategoryQuotaUpstream, generation.CategoryQuotaUnknown,
+		generation.CategoryModerationInput, generation.CategoryModerationReference, generation.CategoryModerationOutput,
+		generation.CategoryInvalidParams, generation.CategoryContextTooLong,
+		generation.CategoryInputInaccessible, generation.CategoryInputTooLarge, generation.CategoryModelMissing,
+		generation.CategoryThrottled, generation.CategoryConcurrency, generation.CategoryProviderUnavailable,
+		generation.CategoryNetwork, generation.CategoryTimeout, generation.CategorySubmissionUncertain,
+		generation.CategoryAsyncFailed, generation.CategoryCancelled, generation.CategoryPartialSuccess,
+		generation.CategoryDownloadFailed, generation.CategoryResultsMissing,
+		generation.CategoryMalformedResponse, generation.CategoryUnknown,
+	}
+	for _, category := range categories {
+		t.Run(string(category), func(t *testing.T) {
+			body := fmt.Sprintf(`{"error":{"code":%q,"message":"opaque failure"}}`, category)
+			coded := generation.ClassifyHTTP(400, "", body)
+			if coded.Category != category || !coded.FromCode {
+				t.Fatalf("canonical code %s became %+v", category, coded)
+			}
+			persisted := generation.ClassifyText((generation.Failure{Category: category}).UserMessage())
+			if persisted.Category != category {
+				t.Errorf("persisted category = %s, want %s", persisted.Category, category)
+			}
+			allowAutomaticRetry := category == generation.CategoryThrottled || category == generation.CategoryConcurrency || category == generation.CategoryProviderUnavailable || category == generation.CategoryCancelled
+			if coded.BlocksAutomaticRetry() == allowAutomaticRetry {
+				t.Errorf("automatic retry block = %v, allowed = %v", coded.BlocksAutomaticRetry(), allowAutomaticRetry)
+			}
+			coded.Uncertain = true
+			if !coded.BlocksAutomaticRetry() {
+				t.Error("uncertain result allowed automatic resubmission")
+			}
+		})
+	}
+}
+
+func TestStructuredUnknownDoesNotReadRequestEchoes(t *testing.T) {
+	for _, body := range []string{
+		`{"prompt":"content safety policy"}`,
+		`{"error":{"message":"opaque"},"prompt":"invalid parameter"}`,
+		`{"error":{"mystery":true},"data":{"prompt":"invalid parameter"}}`,
+		`{"error":{"message":"opaque"},"request_id":"req_invalid_parameter_123"}`,
+		`{"error":{"message":"opaque prompt=content safety policy"}}`,
+		`[{"prompt":"content safety policy"}]`,
+		`{"padding":"` + strings.Repeat("x", 17<<10) + `","prompt":"content safety policy"}`,
+	} {
+		failure := generation.ClassifyHTTP(503, "", body)
+		if failure.Category != generation.CategoryProviderUnavailable {
+			t.Errorf("request echo classified as %s", failure.Category)
+		}
+	}
+}
+
+func TestSensitiveAssignmentsAreRemovedBeforeChineseFallback(t *testing.T) {
+	for _, message := range []string{
+		"请求失败 api_key = PROBE_PRIVATE_ALPHA",
+		`请求失败 "api_key" : "PROBE_PRIVATE_ALPHA with spaces"`,
+		"请求失败 Authorization: Bearer PROBE_PRIVATE_BETA",
+		"请求失败 Cookie : session=PROBE_PRIVATE_GAMMA; csrf=PROBE_PRIVATE_DELTA",
+		"请求失败 access_token : PROBE_PRIVATE_EPSILON",
+		"请求失败 prompt: PROBE_PRIVATE_ZETA more private words",
+		"请求失败 提示词: PROBE_PRIVATE_ZETA more private words",
+	} {
+		body, err := json.Marshal(map[string]any{"error": map[string]string{"message": message}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, failure := range []generation.Failure{
+			generation.ClassifyText(message),
+			generation.ClassifyText(string(body)),
+			generation.ClassifyAppError(400, 400, "invalid_argument", message),
+		} {
+			if strings.Contains(failure.UserMessage()+failure.ProviderMessage, "PROBE_PRIVATE_") || strings.Contains(failure.UserMessage()+failure.ProviderMessage, "more private words") {
+				t.Errorf("sensitive assignment was not fully removed")
+			}
+		}
+	}
+	keyFailure := generation.ClassifyText(`{"error":{"code":"invalid_api_key"}}`)
+	if keyFailure.ProviderCode != "invalid_api_key" {
+		t.Fatalf("machine code was truncated by credential sanitizer: %q", keyFailure.ProviderCode)
+	}
+}
+
+func TestDurationAdviceRequiresAnExplicitNumericRange(t *testing.T) {
+	for _, message := range []string{
+		"duration must be between 5 and 10 seconds",
+		"duration must be in range [5, 10] seconds",
+	} {
+		for _, raw := range []string{message, fmt.Sprintf(`{"error":{"code":"invalid_request","message":%q}}`, message)} {
+			failure := generation.ClassifyText(raw)
+			if failure.Category != generation.CategoryInvalidParams || !strings.Contains(failure.Action, "5–10 秒") {
+				t.Errorf("explicit range lost: category=%s action=%q", failure.Category, failure.Action)
+			}
+			if category := generation.ClassifyText(failure.UserMessage()).Category; category != generation.CategoryInvalidParams {
+				t.Errorf("persisted duration advice became %s", category)
+			}
+		}
+	}
+	for _, message := range []string{
+		"duration is invalid",
+		"duration must be between 10 and 5 seconds",
+		"invalid parameter prompt=duration must be between 5 and 10 seconds",
+		"duration must be between 5 and 10 frames",
+	} {
+		failure := generation.ClassifyText(fmt.Sprintf(`{"error":{"code":"invalid_request","message":%q}}`, message))
+		if strings.Contains(failure.Action, "5–10") || strings.Contains(failure.Action, "10–5") {
+			t.Errorf("invented duration limit from %q", message)
+		}
 	}
 }

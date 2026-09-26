@@ -1043,17 +1043,10 @@ func extractTextPayload(payload map[string]interface{}, protocol string) string 
 }
 
 func validateTextPayload(payload map[string]interface{}) error {
-	if code, ok := payload["code"].(float64); ok && code != 0 {
+	if _, _, failed := providerPayloadBusinessFailure(payload); failed {
 		encoded, _ := json.Marshal(payload)
 		raw := string(encoded)
 		return providerPayloadError{raw: raw, message: providerPayloadErrorMessage(raw)}
-	}
-	if errValue, ok := payload["error"].(map[string]interface{}); ok {
-		if message := stringField(errValue, "message"); message != "" {
-			encoded, _ := json.Marshal(payload)
-			raw := string(encoded)
-			return providerPayloadError{raw: raw, message: providerPayloadErrorMessage(raw)}
-		}
 	}
 	return nil
 }

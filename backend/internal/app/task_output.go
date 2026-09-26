@@ -50,7 +50,7 @@ func taskSummaryForOutput(task model.Task) TaskSummary {
 		ProviderCancelAttempts:    task.ProviderCancelAttempts,
 		ProviderCancelRequestedAt: task.ProviderCancelRequestedAt,
 		ProviderCancelledAt:       task.ProviderCancelledAt,
-		Error:                     task.Error,
+		Error:                     safePersistedFailureMessage(task.Error),
 		ErrorCode:                 errorCode,
 		PreviewURL:                previewURL,
 		PreviewKind:               previewKind,
@@ -227,7 +227,15 @@ func taskForOutput(task model.Task) *model.Task {
 	if task.ErrorCode == string(generation.CategoryUnknown) && !isContentModerationFailure(task.Error) {
 		task.ErrorCode = ""
 	}
+	task.Error = safePersistedFailureMessage(task.Error)
 	return &task
+}
+
+func safePersistedFailureMessage(message string) string {
+	if strings.TrimSpace(message) == "" {
+		return ""
+	}
+	return generation.ClassifyText(message).UserMessage()
 }
 
 func publicTaskInputJSON(raw string) string {

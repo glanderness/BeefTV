@@ -68,10 +68,10 @@ type CategoryCopy = { reason: string; action: string };
 const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
     auth: { reason: "模型服务鉴权失败", action: "请检查 API Key 后重试" },
     permission: { reason: "当前渠道没有使用该模型的权限", action: "请更换模型或检查渠道权限" },
-    quota_user: { reason: "当前工作区额度不足", action: "请稍后再试或减少同时进行的任务" },
+    quota_user: { reason: "当前账号额度不足", action: "请检查账号余额或联系管理员调整额度后重试" },
     quota_upstream: { reason: "模型供应商拒绝了计费或额度相关请求", action: "请到供应商核对账单与额度后，再决定是否重试" },
     quota_unknown: { reason: "模型服务拒绝了计费或额度相关请求", action: "请到当前渠道或模型供应商核对账单与额度后，再决定是否重试" },
-    moderation_input: { reason: "提示词未通过内容安全审核", action: "请修改提示词或参考图后重新生成" },
+    moderation_input: { reason: "提示词或参考素材未通过内容安全审核", action: "请调整提示词或参考素材后重新生成" },
     moderation_reference: { reason: "参考图未通过内容安全审核", action: "请更换参考图或调整提示词后重新生成" },
     moderation_output: { reason: "生成结果未通过内容安全审核", action: "请调整提示词或参考图后重新生成" },
     invalid_params: { reason: "模型不接受当前参数", action: "请检查模型、尺寸、时长、格式或数量后重试" },
@@ -82,7 +82,7 @@ const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
     throttled: { reason: "请求过于频繁", action: "请稍后再试" },
     concurrency: { reason: "同时进行的生成过多", action: "请等待已有任务完成后再试" },
     provider_unavailable: { reason: "模型服务暂时不可用", action: "请稍后重试" },
-    network: { reason: "网络连接失败", action: "请检查网络后重试" },
+    network: { reason: "网络连接失败", action: "请检查网络并核对原任务状态后，再决定是否重新生成" },
     timeout: { reason: "模型服务响应超时", action: "请稍后查询原任务，不要立即重新提交" },
     submission_uncertain: { reason: "提交结果尚未确认，上游任务可能仍在执行", action: "请先查询原任务状态，不要立即重新提交" },
     async_failed: { reason: "生成任务没有完成", action: "请查看详情后决定是否重试" },
@@ -90,11 +90,49 @@ const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
     partial_success: { reason: "部分结果已生成，其余失败", action: "请查看已有结果后再决定是否补做" },
     download_failed: { reason: "生成结果下载失败", action: "请稍后重新加载，不要立即重新提交" },
     results_missing: { reason: "任务结束但没有可用结果", action: "请查看详情后再决定是否重试" },
-    malformed_response: { reason: "模型服务返回了无法解析的内容", action: "请稍后重试" },
+    malformed_response: { reason: "模型服务返回了无法解析的内容", action: "请查看详情并核对原任务状态后，再决定是否重新生成" },
     unknown: { reason: "生成失败", action: "请查看详情后再决定是否重试" },
 };
 
 const PROVIDER_CODE_CATEGORIES: Record<string, GenerationErrorCategory> = {
+    insufficient_user_quota: "quota_user",
+    no_available_channel: "provider_unavailable",
+    "channel:invalid_key": "provider_unavailable",
+    "channel:no_available_key": "provider_unavailable",
+    "channel:param_override_invalid": "unknown",
+    "channel:header_override_invalid": "unknown",
+    "channel:model_mapped_error": "unknown",
+    "channel:aws_client_error": "provider_unavailable",
+    "channel:response_time_exceeded": "timeout",
+    "violation_fee.grok.csam": "moderation_input",
+    prompt_blocked: "moderation_input",
+    context_media_limit_exceeded: "context_too_long",
+    media_request_capacity_exceeded: "concurrency",
+    key_site_mismatch: "auth",
+    bad_request_body: "invalid_params",
+    invalid_api_type: "unknown",
+    responses_encrypted_context_mismatch: "invalid_params",
+    count_token_failed: "unknown",
+    model_price_error: "unknown",
+    json_marshal_failed: "unknown",
+    do_request_failed: "submission_uncertain",
+    get_channel_failed: "provider_unavailable",
+    gen_relay_info_failed: "unknown",
+    read_request_body_failed: "unknown",
+    convert_request_failed: "unknown",
+    read_response_body_failed: "submission_uncertain",
+    bad_response_status_code: "unknown",
+    bad_response: "malformed_response",
+    bad_response_body: "malformed_response",
+    empty_response: "results_missing",
+    aws_invoke_error: "unknown",
+    query_data_error: "unknown",
+    update_data_error: "unknown",
+    pre_consume_token_quota_failed: "unknown",
+    upstream_crowded: "throttled",
+    upstream_unavailable: "provider_unavailable",
+    upstream_rejected: "unknown",
+    upstream_error: "unknown",
     invalid_api_key: "auth",
     invalid_authentication: "auth",
     authentication_error: "auth",
@@ -154,7 +192,7 @@ const DEFAULT_GENERATION_ERROR_MESSAGE = "生成失败。请查看详情后再�
 export const CONTENT_MODERATION_MESSAGE = "提示词未通过内容安全审核。请修改提示词或参考图后重新生成。";
 
 const HTML_BODY = /^\s*(?:<!doctype|<html|<head|<body)/i;
-const HTTP_STATUS = /(?:HTTP\s+|status(?:\s+code)?\s*[:：]?\s*)(\d{3})\b/i;
+const HTTP_STATUS = /(?:HTTP\s+|status(?:[_\s]+code)?\s*[:：=]?\s*)(\d{3})\b/i;
 const WRAPPED_HTTP_STATUS = /Request failed with status code\s+(\d{3})/i;
 const URL_PATTERN = /(?:https?:\/\/|data:[a-z0-9.+-]+\/[^;]+;base64,)[^\s"'<>]+/gi;
 const SECRET_PATTERN = /(?:api[_-]?key|secret[_-]?key|access[_-]?token|authorization|bearer|sk-[A-Za-z0-9_-]{8,}|eyJ[A-Za-z0-9_-]{20,})[^\s,;]*/gi;
@@ -190,7 +228,7 @@ export function explainGenerationError(error: unknown, context: GenerationFailur
         taskId: sanitizeDebugId(classified.taskId || context.taskId) || undefined,
         retryable: Boolean(classified.retryable) && !uncertain && !moderation,
         uncertain,
-        blockAutomaticRetry: uncertain || moderation,
+        blockAutomaticRetry: uncertain || moderation || !["throttled", "concurrency", "provider_unavailable", "cancelled"].includes(classified.category),
         moderation,
     };
 }
@@ -254,20 +292,24 @@ export function generationPromptFingerprint(value: string) {
 }
 
 export function generationInputFingerprint(prompt: string, references: Array<string | { id?: string; storageKey?: string; url?: string }> = []) {
-    const referenceKeys = references.map((item) => (typeof item === "string" ? item : item.id || item.storageKey || item.url || "")).map((item) => item.trim()).filter(Boolean).sort();
+    const referenceKeys = references.map((item) => (typeof item === "string" ? item : [item.id, item.storageKey, item.url].filter(Boolean).join("|"))).map((item) => item.trim()).filter(Boolean).sort();
     return generationPromptFingerprint(`${prompt.trim()}\n${referenceKeys.join("\n")}`);
 }
 
 export function formatGenerationDiagnostics(explanation: GenerationFailureExplanation, context: GenerationFailureContext = {}) {
+    const taskId = sanitizeDebugId(context.taskId) || sanitizeDebugId(explanation.taskId);
+    const requestId = sanitizeDebugId(context.providerRequestId) || sanitizeDebugId(explanation.requestId);
+    const model = sanitizeProviderCode(context.model || "");
+    const createdAt = context.createdAt && /^\d{4}-\d{2}-\d{2}[T ][\d:.+Z-]{5,35}$/.test(context.createdAt) ? context.createdAt : "";
     const lines = [
-        `原因：${explanation.reason}`,
-        explanation.action ? `下一步：${explanation.action}` : "",
+        `原因：${sanitizeProviderText(explanation.reason)}`,
+        explanation.action ? `下一步：${sanitizeProviderText(explanation.action)}` : "",
         `类别：${explanation.category}`,
-        explanation.providerCode ? `上游代码：${explanation.providerCode}` : "",
-        context.taskId || explanation.taskId ? `任务 ID：${context.taskId || explanation.taskId}` : "",
-        context.providerRequestId || explanation.requestId ? `请求 ID：${context.providerRequestId || explanation.requestId}` : "",
-        context.model ? `模型：${context.model}` : "",
-        context.createdAt ? `时间：${context.createdAt}` : "",
+        sanitizeProviderCode(explanation.providerCode || "") ? `上游代码：${sanitizeProviderCode(explanation.providerCode || "")}` : "",
+        taskId ? `任务 ID：${taskId}` : "",
+        requestId ? `请求 ID：${requestId}` : "",
+        model ? `模型：${model}` : "",
+        createdAt ? `时间：${createdAt}` : "",
     ].filter(Boolean);
     return lines.join("\n");
 }
@@ -294,12 +336,15 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
     if (!error) return { category: "unknown", retryable: false };
     if (typeof error === "object" && error) {
         const record = error as Record<string, unknown>;
-        const status = numericStatus(record.status) ?? numericStatus(record.statusCode);
-        const data = record.data ?? record.body ?? record.response;
+        const response = record.response && typeof record.response === "object" ? record.response as Record<string, unknown> : undefined;
+        const status = numericStatus(record.status) ?? numericStatus(record.statusCode) ?? numericStatus(response?.status);
+        const data = record.data ?? record.body ?? response?.data ?? record.response;
         if (status || data) {
             const classified = classifyHttp(status, data ?? record);
             if (classified.category !== "unknown" || status) return classified;
         }
+        const structured = classifyText(stringifyAllowlisted(record));
+        if (structured.fromCode || structured.category !== "unknown") return structured;
         if (typeof record.reason === "string" && record.reason) {
             const fromReason = classifyText(record.reason);
             if (fromReason.category !== "unknown") return fromReason;
@@ -321,7 +366,7 @@ function classifyHttp(status: number | undefined, body: unknown): Classified {
     if (classified.category !== "unknown" && !classified.fromCode && !trustProviderMessageStatus(status)) {
         classified = { category: "unknown", retryable: false };
     }
-    if (classified.category === "unknown" && status) {
+    if (!classified.fromCode && (classified.category === "unknown" || classified.category === "malformed_response") && status) {
         classified = { category: categoryFromHttpStatus(status), status, retryable: false };
         if (status === 524) {
             classified.category = "timeout";
@@ -344,6 +389,8 @@ function classifyHttp(status: number | undefined, body: unknown): Classified {
 function classifyText(raw: string): Classified {
     const text = raw.trim();
     if (!text) return { category: "unknown", retryable: false };
+    const persisted = matchPersistedCategory(text);
+    if (persisted) return { category: persisted, uncertain: ["timeout", "download_failed", "submission_uncertain"].includes(persisted), retryable: false };
     if (HTML_BODY.test(text)) {
         const status = extractExplicitHttpStatus(text);
         if (status) return classifyHttp(status, "");
@@ -358,6 +405,7 @@ function classifyText(raw: string): Classified {
         const fromMessage = categoryFromProviderMessage(`${fields.message} ${fields.type} ${fields.status}`);
         if (fromMessage) return specialize({ category: fromMessage, providerCode: sanitizeProviderCode(fields.code), requestId: sanitizeDebugId(fields.requestId), taskId: sanitizeDebugId(fields.taskId) }, fields);
     }
+    if (/^[{[]/.test(text)) return { category: "unknown", providerCode: sanitizeProviderCode(fields.code), requestId: sanitizeDebugId(fields.requestId), taskId: sanitizeDebugId(fields.taskId), retryable: false };
     if (isMalformedText(text)) return { category: "malformed_response", retryable: false };
     const fromFull = categoryFromProviderMessage(text);
     if (fromFull) return specialize({ category: fromFull }, { ...emptyFields(), message: text });
@@ -365,11 +413,6 @@ function classifyText(raw: string): Classified {
     if (isDownloadText(text)) return { category: "download_failed", uncertain: true, retryable: false };
     if (isCancelledText(text)) return { category: "cancelled", retryable: false };
     if (isResultsMissingText(text)) return { category: "results_missing", retryable: false };
-    const persisted = matchPersistedCategory(text);
-    if (persisted) {
-        const uncertain = persisted === "timeout" && /可能仍在|不要立即重新提交/.test(text) || persisted === "download_failed" || persisted === "submission_uncertain";
-        return { category: persisted, uncertain, retryable: false };
-    }
     const status = extractExplicitHttpStatus(text);
     if (status) return classifyHttp(status, "");
     if (/[\u4e00-\u9fff]/.test(text) && !containsInfrastructureDetails(text)) return { category: "unknown", reason: sanitizeProviderText(text), action: "", retryable: false };
@@ -377,11 +420,12 @@ function classifyText(raw: string): Classified {
 }
 
 function specialize(classified: Classified, fields: ExtractedFields): Classified {
+    fields = { ...fields, message: sanitizeProviderText(fields.message) };
     if (classified.category === "invalid_params") {
         const refined = categoryFromProviderMessage(fields.message);
         if (refined === "context_too_long" || refined === "input_inaccessible" || refined === "input_too_large" || refined === "model_missing") classified.category = refined;
     }
-    if (isModerationCategory(classified.category)) classified.category = moderationCategoryFromMessage(`${fields.message} ${fields.code}`);
+    if (isModerationCategory(classified.category) && !["moderation_reference", "moderation_output"].includes(fields.code)) classified.category = moderationCategoryFromMessage(`${fields.message} ${fields.code}`.toLowerCase());
     const code = normalizeCode(fields.code);
     if (code.includes("privacyinformation") || code.includes("sensitivecontentdetected")) {
         classified.category = "moderation_reference";
@@ -389,6 +433,13 @@ function specialize(classified: Classified, fields: ExtractedFields): Classified
         classified.action = "请更换为非真人素材或改用其他模型";
     }
     const normalized = `${fields.message} ${fields.code}`.toLowerCase();
+    if (classified.category === "invalid_params") {
+        const duration = fields.message.match(/duration\s+(?:must|should)\s+be\s+between\s+(\d+(?:\.\d+)?)\s+and\s+(\d+(?:\.\d+)?)\s*(?:seconds|s)\b/i);
+        if (duration && Number(duration[1]) <= Number(duration[2])) {
+            classified.reason = "视频时长不符合模型要求";
+            classified.action = `请将时长调整为 ${duration[1]}–${duration[2]} 秒后重试`;
+        }
+    }
     if (((normalized.includes("thinking") || normalized.includes("reasoning")) && normalized.includes("tool_choice")) || (normalized.includes("tool_choice") && (normalized.includes("not support") || normalized.includes("unsupported")))) {
         classified.category = "invalid_params";
         classified.reason = "当前模型为思考或推理模式，不支持强制工具调用";
@@ -400,6 +451,7 @@ function specialize(classified: Classified, fields: ExtractedFields): Classified
 
 function extractProviderFields(raw: string): ExtractedFields {
     const fields = emptyFields();
+    if (raw.length > 16384) return fields;
     const tryParse = (value: string) => {
         try {
             const parsed = JSON.parse(value) as unknown;
@@ -430,10 +482,10 @@ function walkProviderFields(payload: Record<string, unknown>, depth: number): Ex
     const nested = [payload.error, payload.data, payload.output, payload.promptFeedback].filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)));
     for (const child of nested) {
         const walked = walkProviderFields(child, depth + 1);
-        if (!fields.code) fields.code = walked.code;
+        if (!fields.code || (child === payload.error && walked.code)) fields.code = walked.code;
         if (!fields.type) fields.type = walked.type;
         if (!fields.status) fields.status = walked.status;
-        if (!fields.message) fields.message = walked.message;
+        if (!fields.message || (child === payload.error && walked.message)) fields.message = walked.message;
         if (!fields.param) fields.param = walked.param;
         if (!fields.requestId) fields.requestId = walked.requestId;
         if (!fields.taskId) fields.taskId = walked.taskId;
@@ -449,6 +501,7 @@ function categoryFromProviderCode(...values: string[]): GenerationErrorCategory 
     for (const value of values) {
         const normalized = normalizeCode(value);
         if (!normalized || normalized === "0" || normalized === "success" || normalized === "ok") continue;
+        if ((GENERATION_ERROR_CATEGORIES as readonly string[]).includes(normalized)) return normalized as GenerationErrorCategory;
         if (PROVIDER_CODE_CATEGORIES[normalized]) return PROVIDER_CODE_CATEGORIES[normalized];
         if (normalized.includes("privacyinformation") || normalized.includes("sensitivecontentdetected")) return "moderation_reference";
         if (normalized.includes("content_filter") || normalized.includes("contentpolicy") || normalized.includes("sensitive_words")) return "moderation_input";
@@ -463,7 +516,7 @@ function categoryFromProviderCode(...values: string[]): GenerationErrorCategory 
 }
 
 function categoryFromProviderMessage(raw: string): GenerationErrorCategory | "" {
-    const normalized = raw.toLowerCase();
+    const normalized = sanitizeProviderText(raw).toLowerCase();
     if (!normalized.trim()) return "";
     if (((normalized.includes("thinking") || normalized.includes("reasoning")) && normalized.includes("tool_choice")) || (normalized.includes("tool_choice") && (normalized.includes("not support") || normalized.includes("unsupported")))) return "invalid_params";
     if (containsContentSafety(normalized)) return moderationCategoryFromMessage(normalized);
@@ -484,6 +537,7 @@ function containsContentSafety(normalized: string) {
 }
 
 function moderationCategoryFromMessage(normalized: string): GenerationErrorCategory {
+    if (/prompt\s+(?:or|and)\s+(?:reference|input)|提示词或参考/.test(normalized)) return "moderation_input";
     if (normalized.includes("reference image") || normalized.includes("input image") || normalized.includes("参考图")) return "moderation_reference";
     if (normalized.includes("output") && (normalized.includes("image") || normalized.includes("video") || normalized.includes("result"))) return "moderation_output";
     return "moderation_input";
@@ -539,13 +593,16 @@ function sanitizeDebugId(value?: string) {
 }
 
 function sanitizeProviderCode(value: string) {
-    const text = value.replace(URL_PATTERN, "").replace(SECRET_PATTERN, "").trim();
-    return !text || UNSAFE_ID.test(text) ? "" : text.slice(0, 80);
+    const text = value.trim();
+    return /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/.test(text) && !/^(?:sk-|eyJ)|secret|password|bearer/i.test(text) ? text : "";
 }
 
 function sanitizeProviderText(value: string) {
     let text = value.trim();
     if (!text || HTML_BODY.test(text)) return "";
+    // Unstructured messages may echo whole headers or prompts; discard the suffix,
+    // since a whitespace-based token matcher cannot know where a secret ends.
+    text = text.replace(/(?:authorization|cookie|set-cookie|api[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token|password|prompt|input|query)\s*[=:：][\s\S]*/i, "[已隐藏]");
     text = text.replace(URL_PATTERN, "").replace(SIGNED_QUERY, "").replace(SECRET_PATTERN, "").replace(PROMPT_ECHO, "$1[已隐藏]");
     text = text.replace(/\s+/g, " ").trim();
     if (text.startsWith("{") || text.startsWith("<")) return "";
@@ -614,10 +671,11 @@ function isResultsMissingText(value: string) {
 function matchPersistedCategory(text: string): GenerationErrorCategory | "" {
     for (const [category, copy] of Object.entries(CATEGORY_COPY) as Array<[GenerationErrorCategory, CategoryCopy]>) {
         if (category === "unknown") continue;
-        if (text.includes(copy.reason)) return category;
+        if (text.startsWith(copy.reason)) return category;
     }
     if (text.includes("真人形象")) return "moderation_reference";
     if (text.includes("不支持强制工具调用")) return "invalid_params";
+    if (text.startsWith("视频时长不符合模型要求")) return "invalid_params";
     if (text.includes("可能仍在服务端执行") || text.includes("请勿立即重试")) return "timeout";
     return "";
 }

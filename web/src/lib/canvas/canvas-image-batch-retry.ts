@@ -62,7 +62,6 @@ export function cancelIncompleteImageBatch(rootId: string, childIds: string[], n
                 delete metadata.generationErrorCode;
                 delete metadata.failedPromptFingerprint;
                 delete metadata.failedInputFingerprint;
-                delete metadata.failedInputFingerprint;
             }
             if (remaining.length <= 1) {
                 delete metadata.batchFailedCount;

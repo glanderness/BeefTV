@@ -218,12 +218,12 @@ func doJSON(req *http.Request, target interface{}) error {
 		return providerResponseDecodeError{Err: err}
 	}
 	if payload, ok := target.(*imageResponse); ok {
-		if payload.Error != nil && (payload.Error.Message != "" || payload.Error.Code != "") {
+		if payload.Error != nil && (payload.Error.Message != "" || normalizedProviderErrorCode(payload.Error.Code) != "") {
 			encoded, _ := json.Marshal(payload.Error)
 			raw := string(encoded)
 			return providerPayloadError{raw: raw, message: providerPayloadErrorMessage(raw)}
 		}
-		if payload.Code != nil && *payload.Code != 0 {
+		if payload.Code != nil && providerBusinessCodeFailed(*payload.Code) {
 			encoded, _ := json.Marshal(payload)
 			raw := string(encoded)
 			return providerPayloadError{raw: raw, message: providerPayloadErrorMessage(raw)}
