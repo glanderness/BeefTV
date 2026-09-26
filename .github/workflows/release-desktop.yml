@@ -167,7 +167,7 @@ jobs:
           - os: macos-latest
             platform: darwin-arm64
             wails_platform: darwin/arm64
-          - os: macos-latest
+          - os: macos-15-intel
             platform: darwin-amd64
             wails_platform: darwin/amd64
           - os: windows-2022
