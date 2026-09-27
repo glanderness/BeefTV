@@ -1,6 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import audioErrorContract from "../../fixtures/reference-audio-errors.json";
 
+test("whole request limits retain actionable copy after persistence", () => {
+    for (const body of ["", "<html>413 Request Entity Too Large</html>"]) expect(explainGenerationError({status:413,data:body}).reason).toContain("整次请求");
+    for (const raw of ["video request body is too large", "video request body exceeds the 64 MiB request limit; use public media URLs instead of inline base64", { error: { code: "video_request_body_too_large", message: "" } }]) {
+        const failure = explainGenerationError(raw);
+        for (const got of [failure, explainGenerationError(`${failure.reason}。${failure.action}。`)]) {
+            expect(got.category).toBe("input_too_large");
+            expect(got.reason).toContain("整次请求");
+            expect(got.action).toContain("素材链接");
+            expect(got.retryable).toBe(false);
+        }
+    }
+});
+
 test("actual persisted task output contract renders identically in the frontend", () => {
     for (const fixture of audioErrorContract) {
         // Backend app test writes the corresponding upstream failure through the
@@ -68,6 +81,24 @@ describe("measured reference audio API errors", () => {
     });
 });
 
+test("height, aspect, pixel and request-size errors stay human and never leak JSON", () => {
+    const height = '{"error":{"code":"400","message":"Height must be between 300px and 6000px","type":"api_error"}} (request id: 202609270829245377912978268d9d6USz1NP3R)';
+    const failure = explainGenerationError(height);
+    expect(failure.category).toBe("invalid_params");
+    expect(failure.action).toContain("300–6000 像素");
+    expect(failure.requestId).toBe("202609270829245377912978268d9d6USz1NP3R");
+    expect(failure.message).not.toContain("{");
+    expect(explainGenerationError(failure.message).action).toContain("300–6000 像素");
+    expect(explainGenerationError(failure.message).category).toBe("invalid_params");
+    expect(explainGenerationError({ code: "invalid_parameter", message: "aspect ratio must be between 0.4 and 2.5" }).action).toContain("0.4–2.5");
+    expect(explainGenerationError({ code: "invalid_parameter", message: "pixel count must be between 409600 and 8295044" }).reason).toContain("像素总量");
+    expect(explainGenerationError({ status: 413, data: { error: { message: "Request entity too large" } } }).reason).toContain("整次请求");
+    expect(explainGenerationError({ status: 413, data: { error: { message: "image file too large" } } }).reason).toContain("单个参考文件");
+    const persisted = explainGenerationError("第 1 张参考图高度为 200 像素，需要 300–6000 像素；请调整尺寸或更换后再提交");
+    expect(persisted.reason).toContain("第 1 张");
+    expect(persisted.category).toBe("invalid_params");
+});
+
 test("gateway JSON suffix retains reference duration advice and request id", () => {
     const raw = '{"error":{"code":"400","message":"素材转换失败: Duration must be between 1.8s and 30.2s.","type":"api_error"}} (request id: 202609270829245377912978268d9d6USz1NP3R)';
     const failure = explainGenerationError(raw);
@@ -94,7 +125,7 @@ import gatewayCodes from "../../fixtures/generation-error-codes.json";
 
 describe("generation error classification", () => {
     test("all declared gateway error codes match the shared backend contract", () => {
-        expect(Object.keys(gatewayCodes)).toHaveLength(42);
+        expect(Object.keys(gatewayCodes)).toHaveLength(43);
         for (const [code, category] of Object.entries(gatewayCodes)) {
             expect(explainGenerationError({ code, message: "opaque provider message" }).category).toBe(category);
             expect(explainGenerationError({ status: 400, data: { error: { code } } }).category).toBe(category);

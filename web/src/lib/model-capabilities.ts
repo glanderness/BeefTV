@@ -64,10 +64,27 @@ export type VideoCapabilityConfig = {
         minImages: number;
         maxImages: number;
         maxImageBytes: number;
+        minImageWidth?: number;
+        maxImageWidth?: number;
+        minImageHeight?: number;
+        maxImageHeight?: number;
+        minImageAspect?: number;
+        maxImageAspect?: number;
+        minImagePixels?: number;
+        maxImagePixels?: number;
         maxVideos: number;
         maxVideoBytes: number;
         maxVideoDurationSeconds: number;
         minVideoDurationSeconds?: number;
+        maxVideoTotalDurationSeconds?: number;
+        minVideoWidth?: number;
+        maxVideoWidth?: number;
+        minVideoHeight?: number;
+        maxVideoHeight?: number;
+        minVideoAspect?: number;
+        maxVideoAspect?: number;
+        minVideoPixels?: number;
+        maxVideoPixels?: number;
         maxAudios: number;
         maxAudioBytes: number;
         maxAudioDurationSeconds: number;
@@ -335,15 +352,19 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.references.maxAudioDurationSeconds = 15;
         video.generateAudio = { supported: true, default: true };
     }
+    if (protocol === "volcengine-ark-video" || protocol === "volcengine-ark-agent-plan-video") {
+        video.references.minVideoDurationSeconds = 2;
+        video.references.minAudioDurationSeconds = 2;
+    }
     if (protocol === "volcengine-ark-video" || protocol === "volcengine-ark-agent-plan-video" || protocol === "newapi-channel-1") video.resolutions = ["480p", "720p", "1080p"];
     if (protocol === "volcengine-ark-video" || protocol === "volcengine-ark-agent-plan-video") {
         video.watermark = { supported: true, default: false };
-        video.operations.push("reference_to_video", "audio_to_video");
+        video.operations.push("reference_to_video");
     }
     if (protocol === "newapi-channel-2") {
         // APIMart 的 Seedance 2.0 Video Generations 协议支持参考视频/音频，
         // 但不是火山方舟 Agent Plan，因此单独声明全模态参考能力。
-        video.operations.push("reference_to_video", "audio_to_video");
+        video.operations.push("reference_to_video");
     }
     if (protocol === "novita-video") {
         video.references.maxImages = 1;
@@ -381,6 +402,14 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.defaultResolution = "720P";
         video.operations.push("reference_to_video", "audio_to_video");
     }
+    if (isSeedance2Family(protocol, model)) {
+        video.references = overlayOfficialSeedance2References(video.references, isSeedance25Model(model));
+        if (protocol === "volcengine-ark-video" || protocol === "volcengine-ark-agent-plan-video") video.references.minAudioDurationSeconds = 2;
+        video.operations = Array.from(new Set([...video.operations, "reference_to_video", ...(isSeedance25Model(model) ? ["audio_to_video" as const] : [])]));
+        if (isSeedance25Model(model) && video.duration.selection === "range" && (video.duration.max || 0) < 30) {
+            video.duration = { ...video.duration, max: 30 };
+        }
+    }
     return { version: 1, text, image: defaultImageCapabilityConfig(protocol, model), video };
 }
 
@@ -415,12 +444,11 @@ export function modelCapabilityConfigFor(config: { channels: Array<{ id: string;
     const protocol = profile?.protocol || channel?.interfaceType;
     const fallback = defaultModelCapabilityConfig(protocol, modelName);
     if (!profile?.capabilityConfig) {
-        return { ...fallback, video: applySeedance2ReferenceCapability(fallback.video!, protocol, modelName) };
+        return fallback;
     }
     const capabilityConfig = normalizeModelCapabilityConfig(profile.capabilityConfig);
     const text = capabilityConfig.text ? { ...fallback.text!, ...capabilityConfig.text, references: { ...fallback.text!.references, ...capabilityConfig.text.references } } : fallback.text;
-    let video = (capabilityConfig.video ? { ...fallback.video!, ...capabilityConfig.video, references: { ...fallback.video!.references, ...capabilityConfig.video.references } } : fallback.video)!;
-    video = applySeedance2ReferenceCapability(video, protocol, modelName);
+    const video = (capabilityConfig.video ? { ...fallback.video!, ...capabilityConfig.video, references: { ...fallback.video!.references, ...capabilityConfig.video.references } } : fallback.video)!;
     const configuredImage = capabilityConfig.image;
     const image = configuredImage
         ? (() => {
@@ -447,28 +475,44 @@ export function modelCapabilityConfigFor(config: { channels: Array<{ id: string;
     return { ...fallback, ...capabilityConfig, text, image, video };
 }
 
-function applySeedance2ReferenceCapability(video: VideoCapabilityConfig, protocol: ModelProtocol | undefined, modelName: string): VideoCapabilityConfig {
-    // Match backend applyModelSpecificVideoCapability, including persisted
-    // OpenAI profiles and provider-prefixed model aliases.
-    const normalizedModel = String(modelName).trim().toLowerCase();
-    if (!(protocol === "openai" || protocol === "newapi" || protocol === "newapi-channel-2") || !normalizedModel.includes("seedance-2")) return video;
-    const is25 = /(?:^|\/)seedance-2\.5(?:-self-developed)?$/.test(normalizedModel);
+function isSeedance2Family(protocol: ModelProtocol | undefined, modelName: string) {
+    return Boolean(protocol && ["openai", "newapi", "newapi-channel-2", "volcengine-ark-video", "volcengine-ark-agent-plan-video"].includes(protocol) && String(modelName).toLowerCase().includes("seedance-2"));
+}
+
+function isSeedance25Model(modelName: string) {
+    const base = String(modelName).trim().toLowerCase().split("/").pop() || "";
+    return base === "seedance-2.5" || base === "seedance-2.5-self-developed" || /^doubao-seedance-2[.-]5(?:-|$)/.test(base);
+}
+
+function overlayOfficialSeedance2References(base: VideoCapabilityConfig["references"], is25: boolean): VideoCapabilityConfig["references"] {
     return {
-        ...video,
-        references: {
-            ...video.references,
-            maxImages: is25 ? 30 : 9,
-            maxVideos: is25 ? 10 : 3,
-            maxVideoBytes: 200 * 1024 * 1024,
-            maxVideoDurationSeconds: is25 ? 30 : 15,
-            minVideoDurationSeconds: 2,
-            maxAudios: is25 ? 10 : 3,
-            maxAudioBytes: 15 * 1024 * 1024,
-            maxAudioDurationSeconds: is25 ? 30 : 15,
-            minAudioDurationSeconds: 2,
-            maxAudioTotalDurationSeconds: is25 ? 30 : 15,
-        },
-        operations: Array.from(new Set([...video.operations, "reference_to_video", ...(is25 ? ["audio_to_video" as const] : [])])),
+        ...base,
+        maxImages: is25 ? 30 : 9,
+        maxVideos: is25 ? 10 : 3,
+        maxVideoBytes: 200 * 1024 * 1024,
+        maxVideoDurationSeconds: is25 ? 30 : 15,
+        minVideoDurationSeconds: 2,
+        maxVideoTotalDurationSeconds: is25 ? 30 : 15,
+        maxAudios: is25 ? 10 : 3,
+        maxAudioBytes: 15 * 1024 * 1024,
+        maxAudioDurationSeconds: is25 ? 30 : 15,
+        minAudioDurationSeconds: 1.8,
+        maxAudioTotalDurationSeconds: is25 ? 30 : 15,
+        maxImageBytes: base.maxImageBytes || 30 * 1024 * 1024,
+        minImageWidth: 300,
+        maxImageWidth: 6000,
+        minImageHeight: 300,
+        maxImageHeight: 6000,
+        minImageAspect: 0.4,
+        maxImageAspect: 2.5,
+        minVideoWidth: 300,
+        maxVideoWidth: 6000,
+        minVideoHeight: 300,
+        maxVideoHeight: 6000,
+        minVideoAspect: 0.4,
+        maxVideoAspect: 2.5,
+        minVideoPixels: 409600,
+        maxVideoPixels: 8295044,
     };
 }
 
@@ -1071,6 +1115,7 @@ export function videoDurationOptions(profile: VideoCapabilityConfig) {
 }
 
 export function videoDurationAllowed(profile: VideoCapabilityConfig, value: number) {
+    if (value === -1) return (profile.duration.values || []).includes(-1);
     if (profile.duration.selection === "enum") return (profile.duration.values || []).includes(value);
     const min = profile.duration.min || 1;
     const max = profile.duration.max || min;

@@ -9,6 +9,13 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.5.9
+
+- Validate reference image dimensions, aspect ratios, file sizes and audio/video duration using each model's configured capabilities before submitting.
+- Preserve supported reference counts, resolutions and durations instead of silently dropping media or downgrading requested settings.
+- Support local and inline reference audio for BeefAPI and native Ark channels, while retaining provider-specific audio-only rules.
+- Show actionable reference conversion and request-size errors in both canvas nodes and task history, with safe diagnostics and no unsafe unchanged retries.
+
 ## v1.5.8
 
 - Add a persistent light/dark switch to the workspace sidebar, with matching home, asset library, menus and settings surfaces.
