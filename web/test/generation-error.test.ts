@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import audioErrorContract from "../../fixtures/reference-audio-errors.json";
 
 test("whole request limits retain actionable copy after persistence", () => {
-    for (const body of ["", "<html>413 Request Entity Too Large</html>"]) expect(explainGenerationError({status:413,data:body}).reason).toContain("整次请求");
+    for (const body of ["", "<html>413 Request Entity Too Large</html>"]) expect(explainGenerationError({ status: 413, data: body }).reason).toContain("整次请求");
     for (const raw of ["video request body is too large", "video request body exceeds the 64 MiB request limit; use public media URLs instead of inline base64", { error: { code: "video_request_body_too_large", message: "" } }]) {
         const failure = explainGenerationError(raw);
         for (const got of [failure, explainGenerationError(`${failure.reason}。${failure.action}。`)]) {
