@@ -1,6 +1,6 @@
 import { AudioLines, Captions, Clapperboard, Download, FolderPlus, Images, Image as ImageIcon, Info, LoaderCircle, Lock, Maximize2, MessageSquare, Minus, Music2, Plus, RefreshCw, Scissors, Settings2, Trash2, Unlock, Upload, UserRound, Video, WandSparkles } from "lucide-react";
 
-import { explainGenerationError } from "@/lib/generation-error";
+import { CONTENT_MODERATION_ERROR_CODE, isContentModerationError } from "@/lib/generation-error";
 import { registerToolbarTools, type ToolContext, type ToolDefinition } from "@/lib/canvas/tool-registry";
 import { CanvasNodeType } from "@/types/canvas";
 import { canOpenCanvasNodePromptPanel } from "@/lib/canvas/canvas-node-semantics";
@@ -24,10 +24,9 @@ function simpleMode(ctx: ToolContext) { return ctx.workspaceMode === "simple"; }
 function isImageBatchRoot(ctx: ToolContext) { return isImage(ctx) && Boolean(ctx.nodeMetadata?.isBatchRoot && ctx.nodeMetadata.batchChildIds?.length); }
 function canRetry(ctx: ToolContext) {
     if (ctx.nodeMetadata?.fileUpload) return false;
-    const explanation = explainGenerationError(ctx.nodeMetadata?.errorDetails || ctx.nodeMetadata?.generationErrorCode, { stage: ctx.nodeMetadata?.taskStage });
-    const blocked = explanation.uncertain || explanation.category === "download_failed";
+    const requiresPromptChange = ctx.nodeMetadata?.generationErrorCode === CONTENT_MODERATION_ERROR_CODE || isContentModerationError(ctx.nodeMetadata?.errorDetails);
     const batchHasFailures = isImageBatchRoot(ctx) && (ctx.nodeMetadata?.batchFailedCount || (ctx.nodeMetadata?.status === "error" ? 1 : 0)) > 0;
-    return (ctx.nodeMetadata?.status === "error" || (batchHasFailures && ctx.nodeMetadata?.status !== "loading")) && !blocked;
+    return (ctx.nodeMetadata?.status === "error" || (batchHasFailures && ctx.nodeMetadata?.status !== "loading")) && !requiresPromptChange;
 }
 
 export const nodeHoverToolbarTools: ToolDefinition[] = [
@@ -132,6 +131,20 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
         applicable: (ctx) => hasVideo(ctx) && !simpleMode(ctx),
         disabled: (ctx) => ctx.trimmingVideo,
         run: (ctx) => ctx.handlers.onNodeCropVideo(ctx.node!),
+    },
+    {
+        id: "depthCapture",
+        toolbar: "node-hover",
+        category: "node-state",
+        label: "生成近白远黑的深度动作参考视频",
+        displayLabel: "深度动作捕捉",
+        icon: <WandSparkles className="size-3.5" />,
+        defaultVisible: true,
+        defaultOrder: 47,
+        nodeToolbar: { group: "more", order: 40, section: "视频处理", description: "生成时间连续的深度动作参考视频" },
+        applicable: (ctx) => hasVideo(ctx) && !simpleMode(ctx),
+        disabled: (ctx) => ctx.trimmingVideo,
+        run: (ctx) => ctx.handlers.onNodeDepthCapture(ctx.node!),
     },
     {
         id: "saveAsset",

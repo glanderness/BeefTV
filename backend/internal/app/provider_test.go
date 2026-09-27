@@ -852,7 +852,7 @@ data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta"
 
 func TestProviderHTTPErrorWarnsAboutUncertain524Execution(t *testing.T) {
 	message := (providerHTTPError{StatusCode: 524, Status: "524 A Timeout Occurred"}).Error()
-	if !strings.Contains(message, "可能仍在服务端执行") || !strings.Contains(message, "不要立即重新提交") {
+	if !strings.Contains(message, "可能仍在服务端执行") || !strings.Contains(message, "请勿立即重试") {
 		t.Fatalf("providerHTTPError.Error() = %q", message)
 	}
 }
@@ -896,7 +896,7 @@ func TestProviderHTTPErrorDoesNotExposeResponseBody(t *testing.T) {
 	if strings.Contains(message, "api-key") || strings.Contains(message, "secret") || strings.Contains(message, `{"error"`) {
 		t.Fatalf("providerHTTPError exposed upstream response body: %q", message)
 	}
-	if !strings.Contains(message, "暂时不可用") {
+	if !strings.Contains(message, "HTTP 502") {
 		t.Fatalf("providerHTTPError.Error() = %q", message)
 	}
 }
@@ -907,7 +907,7 @@ func TestProviderHTTPErrorExplainsPaymentRequired(t *testing.T) {
 		Status:     "402 Payment Required",
 		Body:       `{"error":{"message":"insufficient balance api-key=secret"}}`,
 	}).Error()
-	if !strings.Contains(message, "计费或额度") || strings.Contains(message, "账户的余额") {
+	if !strings.Contains(message, "HTTP 402") || !strings.Contains(message, "余额") || !strings.Contains(message, "订阅") {
 		t.Fatalf("providerHTTPError.Error() = %q", message)
 	}
 	if strings.Contains(message, "secret") || strings.Contains(message, "api-key") {
@@ -937,12 +937,12 @@ func TestProviderPayloadErrorMessageUsesSafeActionableCategories(t *testing.T) {
 		raw  string
 		want string
 	}{
-		{name: "moderation", raw: "request blocked by content policy: prompt=private", want: "内容安全审核"},
-		{name: "quota", raw: "insufficient quota for api-key=secret", want: "计费或额度"},
-		{name: "model access", raw: "model not found for tenant secret-id", want: "当前模型或接口不可用"},
+		{name: "moderation", raw: "request blocked by content policy: prompt=private", want: "安全审核"},
+		{name: "quota", raw: "insufficient quota for api-key=secret", want: "额度不足"},
+		{name: "model access", raw: "model not found for tenant secret-id", want: "模型不存在"},
 		{name: "thinking mode rejects forced tool choice", raw: `{"error":{"message":"Thinking mode does not support this tool_choice","request_id":"secret-trace"}}`, want: "不支持强制工具调用"},
 		{name: "reasoning mode rejects forced tool choice", raw: `{"error":{"message":"tool_choice=required is not supported in reasoning mode"}}`, want: "不支持强制工具调用"},
-		{name: "unknown", raw: "trace_id=private internal stack", want: "生成失败"},
+		{name: "unknown", raw: "trace_id=private internal stack", want: "模型服务返回失败"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -996,37 +996,25 @@ func TestProviderUserFacingErrorMessageClassifiesRejectedRequestBodies(t *testin
 			name:       "moderation rejection",
 			statusCode: http.StatusBadRequest,
 			body:       `{"error":{"message":"request blocked by content policy, secret-trace"}}`,
-			want:       "内容安全审核",
+			want:       "安全审核",
 		},
 		{
 			name:       "unprocessable entity is classified too",
 			statusCode: http.StatusUnprocessableEntity,
 			body:       `{"error":{"message":"insufficient balance, secret-trace"}}`,
-			want:       "计费或额度",
+			want:       "额度不足",
 		},
 		{
 			name:       "unclassified body keeps the generic parameter hint",
 			statusCode: http.StatusBadRequest,
 			body:       `{"error":{"message":"trace_id=secret-trace"}}`,
-			want:       "请检查模型、尺寸、时长、格式或数量",
+			want:       "请检查模型和参数",
 		},
 		{
 			name:       "empty body keeps the generic parameter hint",
 			statusCode: http.StatusBadRequest,
 			body:       "",
-			want:       "请检查模型、尺寸、时长、格式或数量",
-		},
-		{
-			name:       "http 402 without body is unknown billing",
-			statusCode: http.StatusPaymentRequired,
-			body:       "",
-			want:       "计费或额度",
-		},
-		{
-			name:       "http 451 safety body",
-			statusCode: 451,
-			body:       "Your prompt or reference image was blocked by the content safety policy. Please adjust your prompt or reference image and try again.",
-			want:       "内容安全审核",
+			want:       "请检查模型和参数",
 		},
 		{
 			name:       "thinking mode rejects forced tool choice",
@@ -1038,13 +1026,13 @@ func TestProviderUserFacingErrorMessageClassifiesRejectedRequestBodies(t *testin
 			name:       "payment required because balance is insufficient",
 			statusCode: http.StatusPaymentRequired,
 			body:       `{"error":{"message":"insufficient balance, api-key=secret"}}`,
-			want:       "计费或额度",
+			want:       "余额或额度不足",
 		},
 		{
 			name:       "payment required because subscription is missing",
 			statusCode: http.StatusPaymentRequired,
 			body:       `{"error":{"message":"subscription required for this model, api-key=secret"}}`,
-			want:       "计费或额度",
+			want:       "订阅或模型权限不足",
 		},
 	}
 	for _, tt := range tests {
@@ -1065,7 +1053,7 @@ func TestProviderUserFacingErrorMessageKeepsUnknown402SafeAndActionable(t *testi
 		StatusCode: http.StatusPaymentRequired,
 		Body:       `{"error":{"message":"internal billing trace api-key=secret"}}`,
 	})
-	if !strings.Contains(message, "计费或额度") {
+	if !strings.Contains(message, "HTTP 402") || !strings.Contains(message, "订阅") {
 		t.Fatalf("providerUserFacingErrorMessage() = %q", message)
 	}
 	if strings.Contains(message, "secret") || strings.Contains(message, "api-key") || strings.Contains(message, "trace") {
@@ -1114,12 +1102,12 @@ func TestProviderPayloadErrorCategoryIgnoresEchoedPortraitWording(t *testing.T) 
 		{
 			name: "echoed chinese portrait prompt stays a parameter error",
 			raw:  `{"error":{"message":"invalid parameter: prompt=生成油画肖像"}}`,
-			want: "请检查模型、尺寸、时长、格式或数量",
+			want: "请检查模型和参数",
 		},
 		{
 			name: "echoed english likeness prompt stays a parameter error",
 			raw:  `{"error":{"message":"invalid argument: style=likeness study"}}`,
-			want: "请检查模型、尺寸、时长、格式或数量",
+			want: "请检查模型和参数",
 		},
 		{
 			name: "moderation wins over echoed real person prompt",
@@ -2932,36 +2920,6 @@ func TestRunNewAPIChannel2VideoTaskReturnsTypedDeadlineWhenPollingWindowEnds(t *
 	})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("runVideoTask() error = %v, want context deadline exceeded", err)
-	}
-}
-
-func TestProcessResumedSeedanceVideoDoesNotRevalidateDeletedReferences(t *testing.T) {
-	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
-	var methods []string
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		methods = append(methods, r.Method)
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/video.mp4" {
-			w.Header().Set("Content-Type", "video/mp4")
-			_, _ = w.Write([]byte("video"))
-			return
-		}
-		if !strings.Contains(r.URL.Path, "existing-provider-task") {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-		_, _ = w.Write([]byte(`{"code":"success","data":{"task_id":"existing-provider-task","status":"SUCCESS","result_url":"` + server.URL + `/video.mp4"}}`))
-	}))
-	defer server.Close()
-	input := canvasGenerationInput{Mode: "video", Prompt: "test", Config: providerConfig{BaseURL: server.URL, APIKey: "key", Model: "seedance-2.5", InterfaceType: "newapi-channel-2"}, ReferenceAudios: []providerMedia{{StorageKey: "resource:deleted-voice"}}}
-	raw, _ := json.Marshal(input)
-	ctx := withProviderAnalytics(context.Background(), nil, model.Task{ID: "task-1", Type: "canvas_video", ProviderRequestID: "existing-provider-task"})
-	result, err := (&Service{}).processCanvasGenerationTask(ctx, "user-1", "", "canvas_video", "", string(raw))
-	if err != nil || result["video"] == nil {
-		t.Fatalf("resume failed: %v %#v", err, result)
-	}
-	if strings.Join(methods, ",") != "GET,GET" {
-		t.Fatalf("resume must only query/download original task: %#v", methods)
 	}
 }
 

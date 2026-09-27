@@ -11,8 +11,7 @@ import { subscribeCanvasGraphicsViewportPreview } from "@/lib/canvas/canvas-live
 import { canvasNodeAssetCategory } from "@/lib/canvas/canvas-node-asset";
 import type { ImageSplitParams } from "@/lib/canvas/canvas-image-data";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
-import { GenerationFailureNotice } from "@/components/generation/generation-failure-notice";
-import { explainGenerationError } from "@/lib/generation-error";
+import { generationErrorMessage } from "@/lib/generation-error";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode, type ViewportTransform } from "@/types/canvas";
@@ -49,6 +48,7 @@ type CanvasNodeToolbarProps = {
     onExtractVideoFrames: (node: CanvasNodeData, preset?: "current" | "first" | "last") => void;
     onExtractAudioFromVideo: (node: CanvasNodeData) => void;
     onTrimVideoSegments: (node: CanvasNodeData) => void;
+    onDepthCapture: (node: CanvasNodeData) => void;
     onSubtitles: (node: CanvasNodeData) => void;
     onTimeline: (node: CanvasNodeData) => void;
     extractingVideoFrames: boolean;
@@ -110,6 +110,7 @@ export function CanvasNodeToolbar({
     onExtractVideoFrames,
     onExtractAudioFromVideo,
     onTrimVideoSegments,
+    onDepthCapture,
     onSubtitles,
     onTimeline,
     extractingVideoFrames,
@@ -271,6 +272,7 @@ export function CanvasNodeToolbar({
         onNodeExtractAudioFromVideo: onExtractAudioFromVideo,
         onNodeTrimVideoSegments: onTrimVideoSegments,
         onNodeCropVideo: onCrop,
+        onNodeDepthCapture: onDepthCapture,
         onNodeReversePrompt: onReversePrompt,
         onNodeToggleFreeResize: onToggleFreeResize,
         onNodeSubtitles: onSubtitles,
@@ -340,7 +342,7 @@ export function CanvasNodeToolbar({
     const utilityTools = inGroup("utility");
     const imageSettingsTools = isImage ? allTools.filter((tool) => tool.id === "replace" || tool.id === "resize" || tool.id === "node-lock") : [];
     const processMenuLabel = compact ? "工具" : isVideo ? "提取素材" : isImage ? "图片工具" : isAudio ? "音频处理" : "文本调整";
-    const videoProcessingTools = registryToolbarTools.filter((tool) => tool.id === "trimRegenerate" || tool.id === "cropVideo");
+    const videoProcessingTools = registryToolbarTools.filter((tool) => tool.id === "trimRegenerate" || tool.id === "cropVideo" || tool.id === "depthCapture");
     const videoAudioTool = registryToolbarTools.find((tool) => tool.id === "extractAudio");
     const videoKeyframeTool = registryToolbarTools.find((tool) => tool.id === "extractFrames");
     const videoKeyframeTools: ToolbarTool[] = videoKeyframeTool
@@ -805,17 +807,7 @@ export function CanvasNodeInfoModal({
                             </section>
                         ) : null}
 
-                        {node.metadata?.errorDetails ? (
-                            <section className="canvas-node-inspector-error">
-                                <GenerationFailureNotice
-                                    explanation={explainGenerationError(
-                                        { code: node.metadata.generationErrorCode || node.metadata.taskErrorCode, message: node.metadata.errorDetails },
-                                        { taskId: node.metadata.taskId, model: node.metadata.model, createdAt: node.metadata.taskCreatedAt, stage: node.metadata.taskStage },
-                                    )}
-                                    context={{ taskId: node.metadata.taskId, model: node.metadata.model, createdAt: node.metadata.taskCreatedAt, stage: node.metadata.taskStage }}
-                                />
-                            </section>
-                        ) : null}
+                        {node.metadata?.errorDetails ? <section className="canvas-node-inspector-error">{generationErrorMessage(node.metadata.errorDetails)}</section> : null}
                     </div>
                 </div>
             ) : null}

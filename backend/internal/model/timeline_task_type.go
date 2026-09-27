@@ -6,4 +6,5 @@ package model
 const (
 	TaskTypeTimelineTranscription = "timeline_transcription"
 	TaskTypeTimelineRender        = "timeline_render"
+	TaskTypeDepthCapture          = "depth_capture"
 )

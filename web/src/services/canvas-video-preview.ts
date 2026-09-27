@@ -5,6 +5,8 @@ import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 
 type VideoPreview = NonNullable<CanvasNodeMetadata["videoPreview"]>;
 
+export const CANVAS_VIDEO_PREVIEW_VERSION = 2;
+
 const previewRequests = new Map<string, Promise<VideoPreview | null>>();
 
 export function hydrateCanvasVideoPreview(node: CanvasNodeData, signal?: AbortSignal) {
@@ -28,6 +30,13 @@ export function hydrateCanvasVideoPreview(node: CanvasNodeData, signal?: AbortSi
     return request;
 }
 
+export function canvasVideoPreviewNeedsHydration(node: CanvasNodeData) {
+    const sourceKey = canvasVideoPreviewSourceKey(node);
+    if (!sourceKey) return false;
+    const preview = node.metadata?.videoPreview;
+    return !preview?.content || preview.captureVersion !== CANVAS_VIDEO_PREVIEW_VERSION || preview.sourceKey !== sourceKey;
+}
+
 async function generateCanvasVideoPreview(node: CanvasNodeData, signal?: AbortSignal): Promise<VideoPreview | null> {
     await waitForBrowserIdle(signal);
     throwIfAborted(signal);
@@ -45,7 +54,14 @@ async function generateCanvasVideoPreview(node: CanvasNodeData, signal?: AbortSi
         height: preview.height,
         bytes: preview.bytes,
         mimeType: preview.mimeType,
+        captureVersion: CANVAS_VIDEO_PREVIEW_VERSION,
+        sourceKey: canvasVideoPreviewSourceKey(node),
+        capturedAtMs: captured.capturedAtMs,
     };
+}
+
+function canvasVideoPreviewSourceKey(node: CanvasNodeData) {
+    return node.metadata?.storageKey || node.metadata?.content || "";
 }
 
 function waitForBrowserIdle(signal?: AbortSignal) {

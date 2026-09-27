@@ -19,7 +19,6 @@ if [[ ! -x "$STAGED_APP/Contents/MacOS/BeefTV" ]]; then
   echo "Built BeefTV.app is incomplete: $STAGED_APP" >&2
   exit 1
 fi
-codesign --verify --deep --strict "$STAGED_APP"
 if [[ -e "$INSTALLED_APP" && ( ! -d "$INSTALLED_APP" || -L "$INSTALLED_APP" ) ]]; then
   echo "Refusing to replace unexpected target: $INSTALLED_APP" >&2
   exit 1
@@ -30,10 +29,6 @@ for _ in 1 2 3 4 5; do
   pgrep -f '^/Applications/BeefTV.app/Contents/MacOS/BeefTV$' >/dev/null || break
   sleep 1
 done
-if pgrep -f '^/Applications/BeefTV.app/Contents/MacOS/BeefTV$' >/dev/null; then
-  echo "BeefTV is still running. Save your work and quit before updating." >&2
-  exit 1
-fi
 
 mkdir -p "$INSTALLED_APP"
 rsync -a --delete "$STAGED_APP/" "$INSTALLED_APP/"

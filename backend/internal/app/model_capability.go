@@ -116,19 +116,16 @@ type VideoCapabilityConfig struct {
 }
 
 type VideoReferenceConfig struct {
-	PromptMaxChars        int   `json:"promptMaxChars"`
-	MinImages             int   `json:"minImages"`
-	MaxImages             int   `json:"maxImages"`
-	MaxImageBytes         int64 `json:"maxImageBytes"`
-	MaxVideos             int   `json:"maxVideos"`
-	MaxVideoBytes         int64 `json:"maxVideoBytes"`
-	MaxVideoDuration      int   `json:"maxVideoDurationSeconds"`
-	MinVideoDuration      int   `json:"minVideoDurationSeconds,omitempty"`
-	MaxAudios             int   `json:"maxAudios"`
-	MaxAudioBytes         int64 `json:"maxAudioBytes"`
-	MaxAudioDuration      int   `json:"maxAudioDurationSeconds"`
-	MinAudioDuration      int   `json:"minAudioDurationSeconds,omitempty"`
-	MaxAudioTotalDuration int   `json:"maxAudioTotalDurationSeconds,omitempty"`
+	PromptMaxChars   int   `json:"promptMaxChars"`
+	MinImages        int   `json:"minImages"`
+	MaxImages        int   `json:"maxImages"`
+	MaxImageBytes    int64 `json:"maxImageBytes"`
+	MaxVideos        int   `json:"maxVideos"`
+	MaxVideoBytes    int64 `json:"maxVideoBytes"`
+	MaxVideoDuration int   `json:"maxVideoDurationSeconds"`
+	MaxAudios        int   `json:"maxAudios"`
+	MaxAudioBytes    int64 `json:"maxAudioBytes"`
+	MaxAudioDuration int   `json:"maxAudioDurationSeconds"`
 }
 
 // DefaultVideoPromptMaxChars 是普通视频模型提示词字符数的默认上限。
@@ -391,26 +388,20 @@ func applyModelSpecificVideoCapability(profile *VideoCapabilityConfig, protocol 
 	if strings.Contains(normalizedModel, "seedance-2") && (normalizedProtocol == "newapi-channel-2" || normalizedProtocol == "newapi" || normalizedProtocol == "openai") {
 		value := *profile
 		value.References = profile.References
-		modelParts := strings.Split(normalizedModel, "/")
-		baseModel := modelParts[len(modelParts)-1]
-		is25 := baseModel == "seedance-2.5" || baseModel == "seedance-2.5-self-developed"
+		is25 := normalizedModel == "seedance-2.5"
 		value.References.MaxImages = 9
 		value.References.MaxVideos = 3
 		value.References.MaxVideoBytes = 200 * 1024 * 1024
 		value.References.MaxVideoDuration = 15
-		value.References.MinVideoDuration = 2
 		value.References.MaxAudios = 3
 		value.References.MaxAudioBytes = 15 * 1024 * 1024
 		value.References.MaxAudioDuration = 15
-		value.References.MinAudioDuration = 2
-		value.References.MaxAudioTotalDuration = 15
 		if is25 {
 			value.References.MaxImages = 30
 			value.References.MaxVideos = 10
 			value.References.MaxVideoDuration = 30
 			value.References.MaxAudios = 10
 			value.References.MaxAudioDuration = 30
-			value.References.MaxAudioTotalDuration = 30
 			value.Operations = appendUniqueString(value.Operations, "audio_to_video")
 		}
 		value.Operations = appendUniqueString(value.Operations, "reference_to_video")
@@ -715,11 +706,8 @@ func validateVideoCapabilityConfig(value *VideoCapabilityConfig) error {
 	if value.References.MinImages > value.References.MaxImages {
 		return BadAuthRequest("最少图片引用数不能超过最大图片引用数")
 	}
-	if value.References.MaxImageBytes < 0 || value.References.MaxVideoBytes < 0 || value.References.MaxAudioBytes < 0 || value.References.MaxVideoDuration < 0 || value.References.MaxAudioDuration < 0 || value.References.MinVideoDuration < 0 || value.References.MinAudioDuration < 0 || value.References.MaxAudioTotalDuration < 0 {
+	if value.References.MaxImageBytes < 0 || value.References.MaxVideoBytes < 0 || value.References.MaxAudioBytes < 0 || value.References.MaxVideoDuration < 0 || value.References.MaxAudioDuration < 0 {
 		return BadAuthRequest("引用素材限制不能小于 0")
-	}
-	if (value.References.MaxVideoDuration > 0 && value.References.MinVideoDuration > value.References.MaxVideoDuration) || (value.References.MaxAudioDuration > 0 && value.References.MinAudioDuration > value.References.MaxAudioDuration) {
-		return BadAuthRequest("引用素材最小时长不能超过最大时长")
 	}
 	if err := validateVideoDuration(value.Duration); err != nil {
 		return err
@@ -861,19 +849,6 @@ func applyFixedVideoResolution(input *canvasGenerationInput, profile *VideoCapab
 	}
 }
 
-func validateReferenceDuration(kind string, index int, durationMs int64, minimum, maximum int) error {
-	if minimum <= 0 {
-		return nil
-	}
-	if durationMs <= 0 {
-		return BadAuthRequest(fmt.Sprintf("第 %d 段参考%s的时长无法读取，请重新导入素材后再提交", index+1, kind))
-	}
-	if durationMs < int64(minimum)*1000 || (maximum > 0 && durationMs > int64(maximum)*1000) {
-		return BadAuthRequest(fmt.Sprintf("第 %d 段参考%s时长为 %.2f 秒，需要 %d–%d 秒；请裁剪或更换这段素材后再提交", index+1, kind, float64(durationMs)/1000, minimum, maximum))
-	}
-	return nil
-}
-
 func validateVideoTask(profile *VideoCapabilityConfig, input canvasGenerationInput) error {
 	if profile == nil {
 		return BadAuthRequest("当前视频模型能力参数无效")
@@ -895,10 +870,7 @@ func validateVideoTask(profile *VideoCapabilityConfig, input canvasGenerationInp
 			return BadAuthRequest("参考图片文件超过当前模型大小限制")
 		}
 	}
-	for index, media := range input.ReferenceVideos {
-		if err := validateReferenceDuration("视频", index, media.DurationMs, profile.References.MinVideoDuration, profile.References.MaxVideoDuration); err != nil {
-			return err
-		}
+	for _, media := range input.ReferenceVideos {
 		if profile.References.MaxVideoBytes > 0 && media.Bytes > profile.References.MaxVideoBytes {
 			return BadAuthRequest("参考视频文件超过当前模型大小限制")
 		}
@@ -906,21 +878,13 @@ func validateVideoTask(profile *VideoCapabilityConfig, input canvasGenerationInp
 			return BadAuthRequest("参考视频时长超过当前模型限制")
 		}
 	}
-	var totalAudioMs int64
-	for index, media := range input.ReferenceAudios {
-		if err := validateReferenceDuration("音频", index, media.DurationMs, profile.References.MinAudioDuration, profile.References.MaxAudioDuration); err != nil {
-			return err
-		}
+	for _, media := range input.ReferenceAudios {
 		if profile.References.MaxAudioBytes > 0 && media.Bytes > profile.References.MaxAudioBytes {
 			return BadAuthRequest("参考音频文件超过当前模型大小限制")
 		}
 		if profile.References.MaxAudioDuration > 0 && media.DurationMs > int64(profile.References.MaxAudioDuration)*1000 {
 			return BadAuthRequest("参考音频时长超过当前模型限制")
 		}
-		totalAudioMs += media.DurationMs
-	}
-	if maximum := profile.References.MaxAudioTotalDuration; maximum > 0 && totalAudioMs > int64(maximum)*1000 {
-		return BadAuthRequest(fmt.Sprintf("参考音频总时长为 %.2f 秒，当前模型最多支持 %d 秒；请裁剪或减少参考音频后再提交", float64(totalAudioMs)/1000, maximum))
 	}
 	seconds, err := strconv.Atoi(strings.TrimSpace(input.Config.VideoSeconds))
 	if err != nil || !videoDurationAllowed(profile.Duration, seconds) {

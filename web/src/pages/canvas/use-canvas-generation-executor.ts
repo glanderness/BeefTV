@@ -11,7 +11,7 @@ import { buildPortraitTexturePrompt } from "@/lib/canvas/canvas-portrait-texture
 import { buildCameraPrompt } from "@/lib/canvas/camera-prompt-library";
 import { buildTextRewritePrompt } from "@/lib/prompts";
 import { resolveCanvasStyleExecution } from "@/lib/canvas/canvas-style-execution";
-import { generationErrorMessage } from "@/lib/generation-error";
+import { generationErrorMessage, generationFailureMetadata } from "@/lib/generation-error";
 import { modelCompatibilityError, modelGroupReferenceLimits, modelPromptLengthError, modelRequestOptions, type ModelRequirements } from "@/lib/model-selection";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import type { Skill } from "@/services/api/skills";
@@ -24,7 +24,6 @@ import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/ty
 import { executeImageGeneration } from "./canvas-image-generation-executor";
 import { executeAudioGeneration, executeVideoGeneration } from "./canvas-media-generation-executors";
 import { executeTextGeneration } from "./canvas-text-generation-executor";
-import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked } from "./canvas-generation-failure";
 
 type UseCanvasGenerationExecutorOptions = {
     projectId: string;
@@ -205,10 +204,6 @@ export function useCanvasGenerationExecutor({
                         return;
                     }
                     const generationContext = { ...rawGenerationContext, prompt: effectivePrompt };
-                    if ((options?.retryContext || sourceNode?.metadata?.failedInputFingerprint || sourceNode?.metadata?.failedPromptFingerprint) && canvasGenerationRetryBlocked(sourceNode?.metadata, { ...generationContext, mode })) {
-                        message.warning(sourceNode?.metadata?.errorDetails || "请先查看失败原因并调整输入，再重新生成");
-                        return;
-                    }
                     if (mode === "audio" && generationContext.characterReferences.length) {
                         if (generationContext.characterReferences.length !== 1) {
                             message.error("角色配音一次只能引用一个角色卡");
@@ -274,7 +269,6 @@ export function useCanvasGenerationExecutor({
                                               generationErrorCode: undefined,
                                               resourceReloadAvailable: undefined,
                                               failedPromptFingerprint: undefined,
-                                              failedInputFingerprint: undefined,
                                           },
                                       }
                                     : node,
@@ -292,7 +286,7 @@ export function useCanvasGenerationExecutor({
                                 node.id === nodeId
                                     ? {
                                           ...node,
-                                          metadata: { ...node.metadata, ...canvasGenerationPromptMetadata(prompt, statusPrompt), status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, resourceReloadAvailable: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined },
+                                          metadata: { ...node.metadata, ...canvasGenerationPromptMetadata(prompt, statusPrompt), status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, resourceReloadAvailable: undefined, failedPromptFingerprint: undefined },
                                       }
                                     : node,
                             ),
@@ -345,7 +339,7 @@ export function useCanvasGenerationExecutor({
                         else await executeTextGeneration(execution);
                     } catch (error) {
                         if (isGenerationCanceled(error)) return;
-                        const failure = canvasGenerationFailureMetadata(error, { ...generationContext, mode });
+                        const failure = generationFailureMetadata(error, prompt);
                         if (options?.waitForTaskCapacity && isGenerationTaskCapacityError(error)) {
                             setNodes((current) =>
                                 current.map((node) => {
@@ -370,7 +364,7 @@ export function useCanvasGenerationExecutor({
                             current.map((node) => {
                                 if (node.id !== nodeId && !pendingNodeIds.includes(node.id)) return node;
                                 if (node.id === nodeId && hasPreviousResult) {
-                                    return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined } };
+                                    return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined } };
                                 }
                                 if (node.id === nodeId && !markSourceStatus) return node;
                                 return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, ...failure } };

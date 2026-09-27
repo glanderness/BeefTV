@@ -9,8 +9,7 @@ import { useNavigate, useSearchParams } from "react-router";
 import { MediaPreview } from "@/components/media-preview";
 import { PageHeader, PaginationBar, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceState } from "@/components/layout/workspace-state";
-import { GenerationFailureNotice } from "@/components/generation/generation-failure-notice";
-import { explainGenerationError } from "@/lib/generation-error";
+import { CONTENT_MODERATION_ERROR_CODE, generationErrorMessage, isContentModerationError } from "@/lib/generation-error";
 import { formatTaskKind, operationOptions, statusLabel } from "@/lib/generation-task-display";
 import { buildVideoOperationPrompt } from "@/lib/prompts";
 import { backendProviderConfig, logicalModelIDForConfig } from "@/services/api/generation-task";
@@ -24,7 +23,7 @@ import { listProjects, type ProjectSummary } from "@/services/api/projects";
 import { TaskGridCard } from "./task-grid-card";
 import { TaskGroupHeader, type TaskGroup } from "./task-group-header";
 import { TaskListRow } from "./task-list-row";
-import { formatModelName, getTaskCanvasContext, isTaskFailed, providerCancelStatusLabel, taskMediaKind, taskRetryBlocked } from "./task-shared";
+import { formatModelName, getTaskCanvasContext, isTaskFailed, providerCancelStatusLabel, taskMediaKind } from "./task-shared";
 import { TaskStatusFilterBar, type TaskStatusFilter } from "./task-status-filter";
 import { localTaskHistoryFromProjects } from "@/lib/local-task-history";
 import { workspaceCapabilities } from "@/services/workspace-mode";
@@ -154,7 +153,7 @@ export default function TasksPage() {
     };
 
     const retryGroupTasks = async (key: string, items: GenerationTask[]) => {
-        const retryable = items.filter((task) => isTaskFailed(task) && !taskRetryBlocked(task));
+        const retryable = items.filter((task) => isTaskFailed(task) && task.errorCode !== CONTENT_MODERATION_ERROR_CODE && !isContentModerationError(task.error));
         if (!retryable.length) return;
         setRetryingGroup(key);
         try {
@@ -321,10 +320,6 @@ export default function TasksPage() {
             return;
         }
         const currentTask = tasksRef.current.find((task) => task.id === id);
-        if (currentTask && taskRetryBlocked(currentTask)) {
-            message.warning("请先查看失败原因，不要立即重新提交");
-            return;
-        }
         setActingId(id);
         try {
             const next = await retryGenerationTask(id);
@@ -531,12 +526,7 @@ export default function TasksPage() {
                             {canQueryProviderTask(detailTask) ? <Button icon={<RefreshCw className="size-4" />} loading={actingId === detailTask.id} onClick={() => void queryProviderTask(detailTask)}>手动查询任务</Button> : null}
                             {isTaskFailed(detailTask) ? <Button icon={<Bug className="size-4" />} onClick={() => navigate(`/settings?section=diagnostics&taskId=${encodeURIComponent(detailTask.id)}${detailTask.projectId ? `&projectId=${encodeURIComponent(detailTask.projectId)}` : ""}`)}>导出诊断包</Button> : null}
                         </div>
-                        {detailTask.error || isTaskFailed(detailTask) ? (
-                            <GenerationFailureNotice
-                                explanation={explainGenerationError({ code: detailTask.errorCode, message: detailTask.error }, { taskId: detailTask.id, providerRequestId: detailTask.providerRequestId, model: detailTask.model, createdAt: detailTask.createdAt, stage: detailTask.stage })}
-                                context={{ taskId: detailTask.id, providerRequestId: detailTask.providerRequestId, model: detailTask.model, createdAt: detailTask.createdAt, stage: detailTask.stage }}
-                            />
-                        ) : null}
+                        {detailTask.error ? <pre className="task-detail-error max-h-28 overflow-auto whitespace-pre-wrap px-3 py-2 text-xs">{generationErrorMessage(detailTask.error)}</pre> : null}
                         <TaskResultMedia value={detailTask.resultJson} taskType={detailTask.type} />
                         <DetailBlock title="提示词" value={detailLoading ? "详情加载中..." : detailTask.prompt || "无"} tall />
                         <TaskParameters inputJson={detailLoading ? undefined : detailTask.inputJson} />

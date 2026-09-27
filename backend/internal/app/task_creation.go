@@ -40,6 +40,9 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	if err != nil {
 		return nil, err
 	}
+	if err := s.validateRetryTaskType(userID, taskType, normalizedInput); err != nil {
+		return nil, err
+	}
 	normalizedInput, err = s.resolveManagedBeefAPISecrets(normalizedInput)
 	if err != nil {
 		return nil, err
@@ -144,6 +147,22 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	s.recordActivity(userID, "task", 1)
 	_ = s.log(userID, task.ID, "info", "任务已进入队列", "")
 	return taskForOutput(task), nil
+}
+
+func (s *Service) validateRetryTaskType(userID string, taskType string, input map[string]any) error {
+	metadata, _ := input["metadata"].(map[string]any)
+	retryOf := strings.TrimSpace(stringValue(metadata["retryOf"]))
+	if retryOf == "" {
+		return nil
+	}
+	parent, err := s.repo.TaskForUser(userID, retryOf)
+	if err != nil {
+		return BadAuthRequest("找不到原始重试任务")
+	}
+	if parent.Type != taskType {
+		return BadAuthRequest(fmt.Sprintf("重试任务类型不一致：原任务为 %s，新任务为 %s", parent.Type, taskType))
+	}
+	return nil
 }
 
 // resolveTaskModelSelection 根据请求实际携带的模型选择决定路由方式。

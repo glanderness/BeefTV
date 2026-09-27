@@ -11,12 +11,15 @@ let visibility: (entries: { isIntersecting: boolean }[]) => void;
 const cleanups: (() => void)[] = [];
 class FakeVideo extends EventTarget {
     paused = true; currentTime = 0; src = ""; muted = false; playsInline = false; preload = "";
-    className = ""; dataset: Record<string, string> = {}; removed = false; loads = 0;
+    className = ""; dataset: Record<string, string> = {}; style = { opacity: "" }; removed = false; loads = 0;
+    frameCallback?: () => void;
     setAttribute() {}
     removeAttribute() { this.src = ""; }
     load() { this.loads++; }
     remove() { this.removed = true; }
     pause() { this.paused = true; }
+    requestVideoFrameCallback(callback: () => void) { this.frameCallback = callback; return 1; }
+    presentFrame() { this.frameCallback?.(); }
     async play() { this.paused = false; this.dispatchEvent(new Event("playing")); }
 }
 class FakeElement extends EventTarget {
@@ -68,6 +71,16 @@ test("hover is muted and capped at first three seconds; resources are released",
     expect(video.muted).toBe(true); expect(video.playsInline).toBe(true);
     video.currentTime = 3; video.dispatchEvent(new Event("timeupdate"));
     expect(video.paused).toBe(true); expect(video.src).toBe(""); expect(video.loads).toBe(1); expect(video.removed).toBe(true);
+});
+test("hover keeps the static poster visible until a video frame is presented", async () => {
+    const element = setup(); enter(element); await wait();
+    const video = videos[0];
+    expect(video.style.opacity).toBe("0");
+    video.presentFrame();
+    expect(video.style.opacity).toBe("1");
+    element.dispatchEvent(new Event("pointerleave"));
+    expect(video.style.opacity).toBe("0");
+    expect(video.removed).toBe(true);
 });
 test("new hover cancels previous decoder and ignores stale URL resolution", async () => {
     let resolve!: (value: string) => void;

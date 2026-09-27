@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { normalizeTheme, useThemeStore } from "../src/stores/use-theme-store";
+import { useThemeStore } from "../src/stores/use-theme-store";
 import { useCanvasThemeStore } from "../src/stores/canvas/use-canvas-theme-store";
 
 const workspaceBefore = useThemeStore.getState().theme;
@@ -24,13 +24,7 @@ describe("canvas theme ownership", () => {
         useThemeStore.getState().setTheme("dark");
         expect(useCanvasThemeStore.getState().theme).toBe("light");
     });
-    test("accepts explicit light while rejecting invalid persisted or requested values", () => {
-        useCanvasThemeStore.getState().setTheme("light");
-        expect(useCanvasThemeStore.getState().theme).toBe("light");
-        useThemeStore.getState().setTheme("light");
-        expect(useThemeStore.getState().theme).toBe("light");
-        expect(normalizeTheme("light")).toBe("light");
-        expect(normalizeTheme("bogus")).toBe("dark");
+    test("normalizes every canvas theme request to the supported dark theme", () => {
         useCanvasThemeStore.setState({ theme: "light", active: true });
         useCanvasThemeStore.getState().setTheme("invalid" as "light");
         expect(useCanvasThemeStore.getState().theme).toBe("dark");

@@ -1,7 +1,5 @@
 import axios from "axios";
 
-import { explainGenerationError } from "@/lib/generation-error";
-import { assertChannelBlob, assertChannelPayload, ChannelResponseError, normalizeChannelFailure } from "@/services/api/channel-transport";
 import type { ApiEnvelope, ApiVideoResponse, RequestOptions, SeedanceTask, VideoGenerationResult } from "./video-contracts";
 
 export function videoTaskId(payload: { id?: string; request_id?: string; task_id?: string }) {
@@ -18,8 +16,8 @@ export function unwrapSeedanceTask(payload: ApiEnvelope<SeedanceTask>) {
 
 export function unwrapEnvelope<T>(payload: ApiEnvelope<T>, emptyMessage: string): T {
     if (!payload) throw new Error(emptyMessage);
-    assertChannelPayload(payload);
     if (typeof payload === "object" && "code" in payload && typeof payload.code === "number") {
+        if (payload.code !== 0) throw new Error(payload.msg || "请求失败");
         if (!payload.data) throw new Error(emptyMessage);
         return payload.data;
     }
@@ -27,24 +25,31 @@ export function unwrapEnvelope<T>(payload: ApiEnvelope<T>, emptyMessage: string)
 }
 
 export function readAxiosError(error: unknown, fallback: string) {
-    if (error instanceof ChannelResponseError) throw error;
-    if (axios.isCancel(error) || (error instanceof DOMException && error.name === "AbortError")) throw error;
-    if (axios.isAxiosError(error)) {
-        return explainGenerationError({
-            message: fallback,
-            status: error.response?.status,
-            data: error.response?.data ?? error.message,
-        }).message;
+    if (axios.isCancel(error)) return "请求已取消";
+    if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number }>(error)) {
+        const responseData = error.response?.data;
+        return responseData?.msg || responseData?.error?.message || statusMessage(error.response?.status, fallback);
     }
-    return explainGenerationError(error).message || fallback;
+    if (error instanceof DOMException && error.name === "AbortError") return "请求已取消";
+    return error instanceof Error ? error.message : fallback;
 }
 
 export function statusMessage(status: number | undefined, fallback: string) {
-    return explainGenerationError({ message: fallback, status }).message || fallback;
+    if (status === 401 || status === 403) return "鉴权失败，请检查 API Key、套餐权限或模型权限";
+    if (status === 429) return "请求被限流或额度不足，请稍后重试";
+    return status ? `${fallback}（${status}）` : fallback;
 }
 
 export async function assertVideoBlob(blob: Blob) {
-    await assertChannelBlob(blob);
+    if (!blob.type.includes("json")) return;
+    let payload: { code?: number; msg?: string; error?: { message?: string } };
+    try {
+        payload = JSON.parse(await blob.text()) as { code?: number; msg?: string; error?: { message?: string } };
+    } catch {
+        return;
+    }
+    if (typeof payload.code === "number" && payload.code !== 0) throw new Error(payload.msg || "视频下载失败");
+    if (payload.error?.message) throw new Error(payload.error.message);
 }
 
 export function delay(ms: number, signal?: AbortSignal) {
@@ -81,8 +86,6 @@ export async function videoResultFromUrl(url: string, options?: RequestOptions):
         return { blob: response.data };
     } catch (error) {
         if (axios.isCancel(error) || options?.signal?.aborted) throw error;
-        if (error instanceof ChannelResponseError) throw error;
-        if (axios.isAxiosError(error) && error.response) return normalizeChannelFailure(error);
         return { url, mimeType: "video/mp4" };
     }
 }
@@ -101,7 +104,6 @@ export type VideoResponseTools = {
 };
 
 function unwrapEnvelopeRecord(value: ApiEnvelope<Record<string, unknown>>): Record<string, unknown> {
-    assertChannelPayload(value);
     if (value && typeof value === "object" && "data" in value && value.data && typeof value.data === "object") return value.data as Record<string, unknown>;
     return value as Record<string, unknown>;
 }

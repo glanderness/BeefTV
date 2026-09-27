@@ -93,7 +93,6 @@ describe("canvas toolbar mode switch", () => {
             "tool-add",
             CANVAS_MODE_TOOL_ID,
             "tool-assets",
-            "tool-appearance",
             "tool-generation-history",
             "tool-shortcuts",
         ]);

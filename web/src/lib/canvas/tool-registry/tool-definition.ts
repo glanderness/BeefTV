@@ -97,6 +97,7 @@ export type ToolbarHandlers = {
     onNodeExtractAudioFromVideo: (node: CanvasNodeData) => void;
     onNodeTrimVideoSegments: (node: CanvasNodeData) => void;
     onNodeCropVideo: (node: CanvasNodeData) => void;
+    onNodeDepthCapture: (node: CanvasNodeData) => void;
     onNodeSubtitles: (node: CanvasNodeData) => void;
     onNodeTimeline: (node: CanvasNodeData) => void;
     onNodeReversePrompt: (node: CanvasNodeData) => void;

@@ -95,7 +95,6 @@ import { CanvasLeaferGraphicsLayer } from "@/components/canvas/canvas-leafer-gra
 import { CanvasFreeformEmptyState, CanvasLinkedProjectEmptyState, CanvasShortDramaEmptyState, CanvasShortDramaGuide, CanvasStoryInputNodeContent, CanvasStylePlaceholderNodeContent } from "@/components/canvas/canvas-short-drama-entry";
 import { resolveCanvasEmptyStateKind } from "@/lib/canvas/canvas-starter";
 import { failedImageBatchChildren, markImageBatchRetrying, reconcileImageBatchRoot, restoreUnsubmittedImageBatchChild } from "@/lib/canvas/canvas-image-batch-retry";
-import { shouldBlockAutomaticRetry } from "@/lib/generation-error";
 import { createCanvasNode, getInputSummary, isHiddenBatchChild } from "@/lib/canvas/canvas-project-domain";
 import { canvasWorkspaceProjectId, listCanvasWorkspaceProjectCanvases } from "@/lib/canvas/canvas-workspace-project";
 import { deleteWorkspaceCanvasProjects } from "@/services/workspace-project-repository";
@@ -1243,6 +1242,8 @@ function InfiniteCanvasPage() {
         cropImageNode,
         cropNodeId,
         cropVideoNode,
+        depthCaptureNode,
+        retryDepthCaptureNode,
         videoCropNodeId,
         closeFrameDialog,
         extractAudioFromVideo,
@@ -2489,19 +2490,16 @@ function InfiniteCanvasPage() {
     );
     const retryImageBatchChildren = useCallback(
         (rootId: string, children: CanvasNodeData[]) => {
-            const retryableChildren = children.filter((child) => !shouldBlockAutomaticRetry({ code: child.metadata?.generationErrorCode || child.metadata?.taskErrorCode, message: child.metadata?.errorDetails }, child.metadata?.taskStage));
-            if (retryableChildren.length < children.length) message.warning("部分图片需要先处理失败原因，请打开对应节点查看");
-            if (!retryableChildren.length) return;
-            const childIds = retryableChildren.map((child) => child.id);
+            const childIds = children.map((child) => child.id);
             setNodes((current) => markImageBatchRetrying(rootId, childIds, current));
             void Promise.allSettled(
-                retryableChildren.map(async (child) => {
+                children.map(async (child) => {
                     await handleRetryNode(child);
                     setNodes((current) => current.map((item) => (item.id === child.id ? restoreUnsubmittedImageBatchChild(item, child) : item)));
                 }),
             ).finally(() => reconcileImageBatchRootNode(rootId));
         },
-        [handleRetryNode, message, reconcileImageBatchRootNode, setNodes],
+        [handleRetryNode, reconcileImageBatchRootNode, setNodes],
     );
 
     const generateImageFromTextNode = useCallback(
@@ -2796,6 +2794,10 @@ function InfiniteCanvasPage() {
     );
     const retryCanvasNode = useCallback(
         (node: CanvasNodeData) => {
+            if (node.metadata?.depthSourceNodeId) {
+                void retryDepthCaptureNode(node);
+                return;
+            }
             if (node.type === CanvasNodeType.Script) {
                 const prompt = (node.metadata?.composerContent || node.metadata?.prompt || "").trim();
                 if (!prompt) {
@@ -2816,13 +2818,12 @@ function InfiniteCanvasPage() {
                 return;
             }
             if (node.type === CanvasNodeType.Image && node.metadata?.batchRootId) {
-                const rootId = node.metadata.batchRootId;
-                void handleRetryNode(node).finally(() => reconcileImageBatchRootNode(rootId));
+                retryImageBatchChildren(node.metadata.batchRootId, [node]);
                 return;
             }
             void handleRetryNode(node);
         },
-        [generateScriptRows, handleRetryNode, message, nodesRef, reconcileImageBatchRootNode, retryImageBatchChildren],
+        [generateScriptRows, handleRetryNode, message, nodesRef, retryDepthCaptureNode, retryImageBatchChildren],
     );
     const openCanvasNodeTaskDetails = useCallback(
         (node: CanvasNodeData) => {
@@ -3420,6 +3421,7 @@ function InfiniteCanvasPage() {
                             onExtractAudioFromVideo={(node) => void extractAudioFromVideo(node)}
                             // 视频剪辑使用视频节点下方的内嵌时间轴，不再打开旧的片段重拍弹窗。
                             onTrimVideoSegments={openInlineVideoTrim}
+                            onDepthCapture={(node) => void depthCaptureNode(node)}
                             onSubtitles={(node) => setSubtitleNodeId(node.id)}
                             onTimeline={(node) => node.type === CanvasNodeType.Video ? openInlineVideoTrim(node) : setTimelineNodeId(node.id)}
                             extractingVideoFrames={toolbarNode?.id === extractingVideoFramesNodeId}

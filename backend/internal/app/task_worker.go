@@ -186,6 +186,12 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 	if task.Type == model.TaskTypeTimelineRender {
 		return w.processTimelineRender(task, ctx)
 	}
+	if task.Type == model.TaskTypeDepthCapture {
+		return w.processDepthCapture(task, ctx)
+	}
+	if task.Type == model.TaskTypeDepthCapture {
+		return w.processDepthCapture(task, ctx)
+	}
 
 	s.markAgentMemoryCompactRunning(*task)
 	task.Stage = "调用生成模型"
@@ -290,9 +296,9 @@ func taskUsesUpstreamReportedProgress(taskType string) bool {
 
 func taskFailureMessage(err error) string {
 	if err == nil {
-		return persistableTaskFailureMessage(err)
+		return "任务处理失败"
 	}
-	return truncateRunes(persistableTaskFailureMessage(err), 2_000)
+	return truncateRunes(err.Error(), 2_000)
 }
 
 func taskExecutionTimeoutWithPolicy(taskType string, policy RuntimeTaskPolicy) time.Duration {
@@ -311,6 +317,12 @@ func taskExecutionTimeoutWithPolicy(taskType string, policy RuntimeTaskPolicy) t
 	case taskType == model.TaskTypeTimelineRender:
 		// 渲染是整条时间线的重编码，耗时随长度线性增长。
 		return 60 * time.Minute
+	case taskType == model.TaskTypeDepthCapture:
+		// 首次运行可能包含 Runtime 和模型下载。
+		return 2 * time.Hour
+	case taskType == model.TaskTypeDepthCapture:
+		// 首次运行可能包含 Runtime 和模型下载。
+		return 2 * time.Hour
 	default:
 		return time.Duration(policy.DefaultTimeoutMinutes) * time.Minute
 	}
