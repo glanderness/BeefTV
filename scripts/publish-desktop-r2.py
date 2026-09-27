@@ -25,7 +25,7 @@ LATEST = f"{PREFIX}/desktop-update.json"
 IMMUTABLE = "public, max-age=31536000, immutable"
 REVALIDATE = "no-store, max-age=0"
 MAX_MANIFEST = 2 * 1024 * 1024
-PUBLIC_USER_AGENT = "BeefTV-Desktop-Updater/ReleaseVerifier"
+GITHUB_LATEST_FEED = "https://github.com/glanderness/BeefTV/releases/latest/download/desktop-update.json"
 
 
 class PublishError(Exception):
@@ -106,11 +106,12 @@ class PublicHTTP:
     def __init__(self, opener=urllib.request.urlopen):
         self.opener = opener
 
-    def check(self, url, expected_size, expected_hash):
+    def check(self, url, expected_size, expected_hash, *, version):
+        version_tuple(version)
         digest = hashlib.sha256()
         size = 0
         try:
-            request = urllib.request.Request(url, headers={"Cache-Control": "no-cache", "User-Agent": PUBLIC_USER_AGENT})
+            request = urllib.request.Request(url, headers={"Cache-Control": "no-cache", "User-Agent": f"BeefTV-Desktop-Updater/{version}"})
             with self.opener(request, timeout=60) as response:
                 if response.status != 200:
                     raise PublishError("Public object did not return HTTP 200")
@@ -125,7 +126,7 @@ class PublicHTTP:
             raise PublishError("Public object size/hash mismatch")
 
 
-def require_github_release(payload):
+def require_github_release(payload, manifest, public):
     result = run(["gh", "api", f"repos/glanderness/BeefTV/releases/tags/{payload['version']}"])
     if result.returncode:
         raise PublishError("Cannot verify published GitHub release")
@@ -139,6 +140,10 @@ def require_github_release(payload):
     uploaded = {asset.get("name") for asset in release.get("assets", []) if asset.get("state") == "uploaded"}
     if not expected.issubset(uploaded):
         raise PublishError("GitHub release assets are incomplete")
+    latest = run(["gh", "api", "repos/glanderness/BeefTV/releases/latest"])
+    if latest.returncode or json.loads(latest.stdout).get("tag_name") != payload["version"]:
+        raise PublishError("GitHub latest does not point to this version")
+    public.check(GITHUB_LATEST_FEED, *fingerprint(manifest), version=payload["version"])
 
 
 class Publisher:
@@ -175,9 +180,9 @@ class Publisher:
 
     def public_check(self, payload, manifest):
         for asset in payload["platforms"].values():
-            self.public.check(asset["url"], asset["size"], asset["sha256"])
+            self.public.check(asset["url"], asset["size"], asset["sha256"], version=payload["version"])
         size, sha = fingerprint(manifest)
-        self.public.check(f"{self.public_base}/{payload['version']}/desktop-update.json", size, sha)
+        self.public.check(f"{self.public_base}/{payload['version']}/desktop-update.json", size, sha, version=payload["version"])
 
     def stage(self, manifest, assets_dir):
         payload = self.load(manifest)
@@ -196,7 +201,7 @@ class Publisher:
 
     def activate(self, manifest):
         payload = self.load(manifest)
-        self.release_check(payload)
+        self.release_check(payload, manifest, self.public)
         self.public_check(payload, manifest)
         with tempfile.TemporaryDirectory(prefix="beeftv-r2-latest-") as directory:
             previous = Path(directory) / "previous.json"
@@ -208,7 +213,7 @@ class Publisher:
                 if version_tuple(old["version"]) == version_tuple(payload["version"]):
                     if fingerprint(previous) != fingerprint(manifest):
                         raise PublishError("Same latest version has different signed content")
-                    self.public.check(f"{self.public_base}/desktop-update.json", *fingerprint(manifest))
+                    self.public.check(f"{self.public_base}/desktop-update.json", *fingerprint(manifest), version=payload["version"])
                     return payload["version"]
                 backup = f"{PREFIX}/latest-backups/{old['version']}-{fingerprint(previous)[1]}.json"
                 self.immutable_put(backup, previous)
@@ -218,7 +223,7 @@ class Publisher:
             current = Path(directory) / "current.json"
             if self.store.get(LATEST, current) is None or fingerprint(current) != fingerprint(manifest):
                 raise PublishError("Latest storage readback mismatch")
-            self.public.check(f"{self.public_base}/desktop-update.json", *fingerprint(manifest))
+            self.public.check(f"{self.public_base}/desktop-update.json", *fingerprint(manifest), version=payload["version"])
         return payload["version"]
 
 

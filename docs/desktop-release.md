@@ -174,7 +174,7 @@ export BEEFTV_UPDATER_PUBLIC_KEY="$(tr -d '[:space:]' < /path/to/beeftv-updater.
 
 脚本会把下面两个链接期变量写进二进制：
 
-- `infinite-canvas/backend/internal/desktopupdate.FeedURL` = `https://github.com/glanderness/BeefTV/releases/latest/download/desktop-update.json`
+- `infinite-canvas/backend/internal/desktopupdate.FeedURL` = `https://updates.beefapi.com/beeftv/desktop-update.json`
 - `infinite-canvas/backend/internal/desktopupdate.PublicKey` = 公钥 Base64
 
 两个都为空时，应用里的更新器保持关闭，但仍显示当前版本。
@@ -221,7 +221,7 @@ v1.5.6 及以前的更新器仍内置 GitHub 清单地址。如果旧客户端�
 - Variable `BEEFTV_R2_ENDPOINT`：该账户的官方 HTTPS R2 S3 endpoint。
 - 原有 `BEEFTV_UPDATER_PRIVATE_KEY` 和 `BEEFTV_UPDATER_PUBLIC_KEY` 保持不变。
 
-`scripts/publish-desktop-r2.py` 复用 `update-release verify` 验签，使用 AWS CLI v2 上传；发布机必须支持 `put-object` 的 `IfMatch`、`IfNoneMatch` 条件写。`stage` 只准备版本对象；`activate` 确认 GitHub 已正式发布且全部公开对象可校验后，备份上一份清单，再通过 ETag 条件写切换。重复执行同一版本是幂等的，已有对象内容不同或试图降级会失败。
+`scripts/publish-desktop-r2.py` 复用 `update-release verify` 验签，使用 AWS CLI v2 上传；发布机必须支持 `put-object` 的 `IfMatch`、`IfNoneMatch` 条件写。`stage` 只准备版本对象；`activate` 确认 GitHub 最新正式版本及公开清单与本次签名清单一致、全部公开对象可校验后，备份上一份清单，再通过 ETag 条件写切换。公网检查使用该版本客户端的请求标识。重复执行同一版本是幂等的，已有对象内容不同或试图降级会失败。
 
 如果 GitHub 发布成功而 CF 激活失败，保留正式版本及所有不可变对象。核对失败原因后，用同一版本的原始清单重跑 `activate`；不要删除正式 tag 或重建不同内容的同版本包。切换前失败不会改变旧 CF 清单；条件写成功但最终回读失败时，新清单可能已经生效，必须先核对存储与公开入口，不能把它当作未发布。已经安装新版本的客户端不自动降级。
 

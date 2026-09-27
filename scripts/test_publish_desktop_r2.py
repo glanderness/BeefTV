@@ -4,6 +4,7 @@ import base64
 import hashlib
 import importlib.util
 import json
+import re
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import subprocess
@@ -54,10 +55,14 @@ class PublicationTests(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.store = FakeS3()
         store = self.store
+        self.public_requests = []
+        requests = self.public_requests
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
-                if self.headers.get("User-Agent") != "BeefTV-Desktop-Updater/ReleaseVerifier":
+                agent = self.headers.get("User-Agent", "")
+                requests.append((self.path, agent))
+                if not re.fullmatch(r"BeefTV-Desktop-Updater/v\d+\.\d+\.\d+", agent):
                     self.send_error(403)
                     return
                 content = store.objects.get(self.path.lstrip("/"))
@@ -87,7 +92,7 @@ class PublicationTests(unittest.TestCase):
         self.verify_command = self.verifier.start()
         self.addCleanup(self.verifier.stop)
         self.publisher = release.Publisher(self.store, release.PublicHTTP(opener), "/tmp/update-release",
-                                           "https://updates.beefapi.com/beeftv", lambda payload: None)
+                                           "https://updates.beefapi.com/beeftv", lambda *args: None)
 
     def manifest(self, version="v1.5.7", omit=None):
         platforms = {}
@@ -109,6 +114,7 @@ class PublicationTests(unittest.TestCase):
         self.publisher.stage(manifest, self.root)
         self.assertNotIn(release.LATEST, self.store.objects)
         self.assertEqual(len(self.store.writes), 4)
+        self.assertTrue(all(agent == "BeefTV-Desktop-Updater/v1.5.7" for _, agent in self.public_requests))
         self.publisher.stage(manifest, self.root)
         self.assertEqual(len(self.store.writes), 4)
         self.assertEqual(self.verify_command.call_args.args[0], ["/tmp/update-release", "verify", "--envelope", str(manifest)])
@@ -120,7 +126,8 @@ class PublicationTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as failure:
             urllib.request.urlopen(url)
         self.assertEqual(failure.exception.code, 403)
-        release.PublicHTTP().check(url, len(data), hashlib.sha256(data).hexdigest())
+        release.PublicHTTP().check(url, len(data), hashlib.sha256(data).hexdigest(), version="v1.5.8")
+        self.assertEqual(self.public_requests[-1][1], "BeefTV-Desktop-Updater/v1.5.8")
 
     def test_incomplete_platform_set_cannot_activate(self):
         manifest = self.manifest(omit="windows-amd64")
@@ -217,6 +224,40 @@ class PublicationTests(unittest.TestCase):
             with self.assertRaises(release.PublishError):
                 self.publisher.activate(manifest)
             self.assertNotIn(release.LATEST, self.store.objects)
+
+    def test_github_latest_version_and_public_bytes_gate_activation(self):
+        manifest = self.manifest()
+        self.publisher.stage(manifest, self.root)
+        self.publisher.release_check = release.require_github_release
+        payload = json.loads(base64.b64decode(json.loads(manifest.read_text())["payload"]))
+        metadata = {"draft": False, "prerelease": False, "published_at": "now", "tag_name": payload["version"],
+                    "target_commitish": payload["commit"], "assets": [{"name": name, "state": "uploaded"} for name in
+                    ["desktop-update.json"] + [f"BeefTV-{payload['version']}-{platform}.zip" for platform in release.PLATFORMS]]}
+        latest_tag = "v1.5.6"
+
+        def response(command):
+            if command[0] != "gh":
+                return subprocess.CompletedProcess(command, 0, "", "")
+            value = {"tag_name": latest_tag} if command[-1].endswith("/latest") else metadata
+            return subprocess.CompletedProcess(command, 0, json.dumps(value), "")
+
+        self.verify_command.side_effect = response
+        key = urlsplit(release.GITHUB_LATEST_FEED).path.lstrip("/")
+        self.store.objects[key] = manifest.read_bytes()
+        writes = list(self.store.writes)
+        with self.assertRaisesRegex(release.PublishError, "GitHub latest"):
+            self.publisher.activate(manifest)
+        self.assertEqual(self.store.writes, writes)
+        latest_tag = payload["version"]
+        self.store.objects[key] = b"x" * manifest.stat().st_size
+        with self.assertRaisesRegex(release.PublishError, "hash"):
+            self.publisher.activate(manifest)
+        self.assertEqual(self.store.writes, writes)
+        self.assertNotIn(release.LATEST, self.store.objects)
+        self.store.objects[key] = manifest.read_bytes()
+        self.publisher.activate(manifest)
+        self.assertEqual(self.store.objects[release.LATEST], manifest.read_bytes())
+        self.assertIn(("/" + key, "BeefTV-Desktop-Updater/v1.5.7"), self.public_requests)
 
 
 class S3AdapterTests(unittest.TestCase):
