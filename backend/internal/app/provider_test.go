@@ -2935,6 +2935,36 @@ func TestRunNewAPIChannel2VideoTaskReturnsTypedDeadlineWhenPollingWindowEnds(t *
 	}
 }
 
+func TestProcessResumedSeedanceVideoDoesNotRevalidateDeletedReferences(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	var methods []string
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/video.mp4" {
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write([]byte("video"))
+			return
+		}
+		if !strings.Contains(r.URL.Path, "existing-provider-task") {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"code":"success","data":{"task_id":"existing-provider-task","status":"SUCCESS","result_url":"` + server.URL + `/video.mp4"}}`))
+	}))
+	defer server.Close()
+	input := canvasGenerationInput{Mode: "video", Prompt: "test", Config: providerConfig{BaseURL: server.URL, APIKey: "key", Model: "seedance-2.5", InterfaceType: "newapi-channel-2"}, ReferenceAudios: []providerMedia{{StorageKey: "resource:deleted-voice"}}}
+	raw, _ := json.Marshal(input)
+	ctx := withProviderAnalytics(context.Background(), nil, model.Task{ID: "task-1", Type: "canvas_video", ProviderRequestID: "existing-provider-task"})
+	result, err := (&Service{}).processCanvasGenerationTask(ctx, "user-1", "", "canvas_video", "", string(raw))
+	if err != nil || result["video"] == nil {
+		t.Fatalf("resume failed: %v %#v", err, result)
+	}
+	if strings.Join(methods, ",") != "GET,GET" {
+		t.Fatalf("resume must only query/download original task: %#v", methods)
+	}
+}
+
 func TestRunGeminiVeoVideoTaskUsesLongRunningOperation(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	paths := make([]string, 0, 3)

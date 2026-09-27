@@ -36,6 +36,27 @@ func TestNormalizeSingleByteRange(t *testing.T) {
 	}
 }
 
+func TestVideoReferenceMetadataPreflightUsesOwnedResource(t *testing.T) {
+	svc := newResourceTestService(t)
+	resource := model.Resource{ID: "voice-preflight", UserID: "user-1", Kind: "audio", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "not-downloaded.mp3", MimeType: "audio/mpeg", DurationMs: 2500, Size: 1200}
+	if err := svc.repo.CreateResource(&resource); err != nil {
+		t.Fatal(err)
+	}
+	input := canvasGenerationInput{Prompt: "test", Config: providerConfig{InterfaceType: "newapi-channel-2", Model: "seedance-2.5", VideoSeconds: "5"}, ReferenceAudios: []providerMedia{{StorageKey: "resource:voice-preflight"}}}
+	if err := svc.hydrateVideoReferenceMetadata("user-1", &input); err != nil {
+		t.Fatal(err)
+	}
+	if input.ReferenceAudios[0].DurationMs != 2500 || input.ReferenceAudios[0].Bytes != 1200 {
+		t.Fatalf("resource metadata lost: %#v", input.ReferenceAudios[0])
+	}
+	if err := svc.validateResolvedVideoCapability(&input); err != nil {
+		t.Fatalf("valid stored voice rejected: %v", err)
+	}
+	if err := svc.hydrateVideoReferenceMetadata("another-user", &input); err == nil {
+		t.Fatal("foreign resource accepted")
+	}
+}
+
 func TestLocalHydrateRequiredURLRejectsLoopbackResourceURL(t *testing.T) {
 	svc := newResourceTestService(t)
 	svc.mode = serviceModeLocal

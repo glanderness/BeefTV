@@ -67,9 +67,11 @@ export type VideoCapabilityConfig = {
         maxVideos: number;
         maxVideoBytes: number;
         maxVideoDurationSeconds: number;
+        minVideoDurationSeconds?: number;
         maxAudios: number;
         maxAudioBytes: number;
         maxAudioDurationSeconds: number;
+        minAudioDurationSeconds?: number;
     };
     duration: {
         selection: "range" | "enum";
@@ -397,7 +399,7 @@ export function pluginWorkflowCapabilityConfig(protocol: ModelProtocol, workflow
     return { ...fallback, video: workflowVideoCapabilityConfig(fields, fallback.video!) };
 }
 
-export function modelCapabilityConfigFor(config: { channels: Array<{ id: string; models: string[]; baseUrl?: string; modelProfiles?: Array<{ model: string; capabilityConfig?: ModelCapabilityConfig; protocol?: ModelProtocol }> }> }, model: string) {
+export function modelCapabilityConfigFor(config: { channels: Array<{ id: string; models: string[]; baseUrl?: string; interfaceType?: ModelProtocol; modelProfiles?: Array<{ model: string; capabilityConfig?: ModelCapabilityConfig; protocol?: ModelProtocol }> }> }, model: string) {
     const separator = model.indexOf("::");
     const channelId = separator >= 0 ? model.slice(0, separator) : "";
     const modelName = separator >= 0 ? model.slice(separator + 2) : model;
@@ -409,14 +411,15 @@ export function modelCapabilityConfigFor(config: { channels: Array<{ id: string;
     // capability object while retaining the legacy entry as a fallback.
     const profile = channel?.modelProfiles?.find((item) => item.model === modelName && item.capabilityConfig && !Array.isArray(item.capabilityConfig))
         || channel?.modelProfiles?.find((item) => item.model === modelName);
-    const fallback = defaultModelCapabilityConfig(profile?.protocol, modelName);
+    const protocol = profile?.protocol || channel?.interfaceType;
+    const fallback = defaultModelCapabilityConfig(protocol, modelName);
     if (!profile?.capabilityConfig) {
-        return { ...fallback, video: applySeedance2ReferenceCapability(fallback.video!, profile?.protocol, modelName, channel?.baseUrl) };
+        return { ...fallback, video: applySeedance2ReferenceCapability(fallback.video!, protocol, modelName) };
     }
     const capabilityConfig = normalizeModelCapabilityConfig(profile.capabilityConfig);
     const text = capabilityConfig.text ? { ...fallback.text!, ...capabilityConfig.text, references: { ...fallback.text!.references, ...capabilityConfig.text.references } } : fallback.text;
     let video = (capabilityConfig.video ? { ...fallback.video!, ...capabilityConfig.video, references: { ...fallback.video!.references, ...capabilityConfig.video.references } } : fallback.video)!;
-    video = applySeedance2ReferenceCapability(video, profile?.protocol, modelName, channel?.baseUrl);
+    video = applySeedance2ReferenceCapability(video, protocol, modelName);
     const configuredImage = capabilityConfig.image;
     const image = configuredImage
         ? (() => {
@@ -443,13 +446,12 @@ export function modelCapabilityConfigFor(config: { channels: Array<{ id: string;
     return { ...fallback, ...capabilityConfig, text, image, video };
 }
 
-function applySeedance2ReferenceCapability(video: VideoCapabilityConfig, protocol: ModelProtocol | undefined, modelName: string, baseUrl = ""): VideoCapabilityConfig {
-    // BeefAPI moved its Seedance channel from the legacy `newapi` protocol id
-    // to `newapi-channel-2`. Both ids use the same multimodal endpoint. Keep
-    // the capability augmentation for either id so persisted profiles cannot
-    // accidentally disable reference video/audio generation after migration.
-    if (!(protocol === "newapi" || protocol === "newapi-channel-2") || !baseUrl.toLowerCase().includes("enterprise.beefapi.com") || !String(modelName).toLowerCase().startsWith("seedance-2")) return video;
-    const is25 = String(modelName).toLowerCase() === "seedance-2.5";
+function applySeedance2ReferenceCapability(video: VideoCapabilityConfig, protocol: ModelProtocol | undefined, modelName: string): VideoCapabilityConfig {
+    // Match backend applyModelSpecificVideoCapability, including persisted
+    // OpenAI profiles and provider-prefixed model aliases.
+    const normalizedModel = String(modelName).trim().toLowerCase();
+    if (!(protocol === "openai" || protocol === "newapi" || protocol === "newapi-channel-2") || !normalizedModel.includes("seedance-2")) return video;
+    const is25 = normalizedModel === "seedance-2.5";
     return {
         ...video,
         references: {
@@ -458,9 +460,11 @@ function applySeedance2ReferenceCapability(video: VideoCapabilityConfig, protoco
             maxVideos: is25 ? 10 : 3,
             maxVideoBytes: 200 * 1024 * 1024,
             maxVideoDurationSeconds: is25 ? 30 : 15,
+            minVideoDurationSeconds: 2,
             maxAudios: is25 ? 10 : 3,
             maxAudioBytes: 15 * 1024 * 1024,
             maxAudioDurationSeconds: is25 ? 30 : 15,
+            minAudioDurationSeconds: 2,
         },
         operations: Array.from(new Set([...video.operations, "reference_to_video", ...(is25 ? ["audio_to_video" as const] : [])])),
     };

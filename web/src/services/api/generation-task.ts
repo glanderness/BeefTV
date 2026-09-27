@@ -1,4 +1,5 @@
 import { getMediaBlob } from "@/services/file-storage";
+import { resolveReferenceMediaDuration } from "@/lib/reference-media-metadata";
 import { getImageBlob } from "@/services/image-storage";
 import { resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
 import { createGenerationTask, waitForGenerationTask, type GenerationTask, type CreateTaskInput } from "@/services/api/task-center";
@@ -331,6 +332,7 @@ function generationMetadata(config: AiConfig, metadata?: Record<string, unknown>
 }
 
 async function prepareBackendMediaReference(media: ReferenceVideo | ReferenceAudio) {
+    media = await resolveReferenceMediaDuration(media);
     if (resourceIdFromStorageKey(media.storageKey)) return backendMediaReference(media, { storageKey: media.storageKey });
     const url = media.url || "";
     if (/^https?:\/\//i.test(url)) return backendMediaReference(media, { url });

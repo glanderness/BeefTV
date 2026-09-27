@@ -19,7 +19,8 @@ func (s *Service) validateResolvedVideoCapability(input *canvasGenerationInput) 
 	if channelID == "" {
 		profile := input.Config.CapabilityConfig
 		if profile == nil || profile.Video == nil {
-			if input.Config.InterfaceType != string(model.ChannelInterfaceAgnesVideo) {
+			seedance2 := strings.Contains(strings.ToLower(input.Config.Model), "seedance-2") && (input.Config.InterfaceType == "openai" || input.Config.InterfaceType == "newapi" || input.Config.InterfaceType == "newapi-channel-2")
+			if input.Config.InterfaceType != string(model.ChannelInterfaceAgnesVideo) && !seedance2 {
 				return nil
 			}
 			profile = DefaultModelCapabilityConfigForModel(input.Config.InterfaceType, input.Config.Model)

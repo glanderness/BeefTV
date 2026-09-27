@@ -16,14 +16,23 @@ export function assertVideoCapability(
     if (references.length < profile.references.minImages) throw new Error(`当前视频模型至少需要 ${profile.references.minImages} 张参考图`);
     if (!videoDurationAllowed(profile, Number(seconds))) throw new Error("视频时长不在当前模型支持范围内");
     if (profile.references.maxImageBytes > 0 && references.some((image) => (image.bytes || 0) > profile.references.maxImageBytes)) throw new Error("参考图片文件超过当前模型大小限制");
-    for (const video of videoReferences) {
+    for (const [index, video] of videoReferences.entries()) {
+        assertReferenceDuration("视频", index, video.durationMs, profile.references.minVideoDurationSeconds, profile.references.maxVideoDurationSeconds);
         if (profile.references.maxVideoBytes > 0 && (video.bytes || 0) > profile.references.maxVideoBytes) throw new Error("参考视频文件超过当前模型大小限制");
         if (profile.references.maxVideoDurationSeconds > 0 && (video.durationMs || 0) > profile.references.maxVideoDurationSeconds * 1000) throw new Error("参考视频时长超过当前模型限制");
     }
-    for (const audio of audioReferences) {
+    for (const [index, audio] of audioReferences.entries()) {
+        assertReferenceDuration("音频", index, audio.durationMs, profile.references.minAudioDurationSeconds, profile.references.maxAudioDurationSeconds);
         if (profile.references.maxAudioBytes > 0 && (audio.bytes || 0) > profile.references.maxAudioBytes) throw new Error("参考音频文件超过当前模型大小限制");
         if (profile.references.maxAudioDurationSeconds > 0 && (audio.durationMs || 0) > profile.references.maxAudioDurationSeconds * 1000) throw new Error("参考音频时长超过当前模型限制");
     }
+}
+
+export function assertReferenceDuration(kind: string, index: number, durationMs: number | undefined, minimum = 0, maximum = 0) {
+    if (minimum <= 0) return;
+    const name = `第 ${index + 1} 段参考${kind}`;
+    if (!Number.isFinite(durationMs) || !durationMs || durationMs <= 0) throw new Error(`${name}的时长无法读取，请重新导入素材后再提交`);
+    if (durationMs < minimum * 1000 || (maximum > 0 && durationMs > maximum * 1000)) throw new Error(`${name}时长为 ${(durationMs / 1000).toFixed(2)} 秒，需要 ${minimum}–${maximum} 秒；请裁剪或更换这段素材后再提交`);
 }
 
 export function assertVideoConfig(config: ResolvedAiConfig, selectedModel: string) {

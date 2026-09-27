@@ -13,6 +13,17 @@ import (
 	"infinite-canvas/backend/internal/generation"
 )
 
+func TestGatewayReferenceDurationWithRequestSuffix(t *testing.T) {
+	raw := `{"error":{"code":"400","message":"素材转换失败: Duration must be between 1.8s and 30.2s.","type":"api_error"}} (request id: 202609270829245377912978268d9d6USz1NP3R)`
+	f := generation.ClassifyText(raw)
+	if f.Category != generation.CategoryInvalidParams || f.RequestID != "202609270829245377912978268d9d6USz1NP3R" || !strings.Contains(f.Action, "1.8–30.2 秒") || f.Reason != "参考素材时长不符合模型要求" {
+		t.Fatalf("unexpected failure: %+v", f)
+	}
+	if !f.BlocksAutomaticRetry() {
+		t.Fatal("unchanged invalid input must not retry")
+	}
+}
+
 func TestClassifyHTTPUsesStructuredCodeBeforeStatus(t *testing.T) {
 	failure := generation.ClassifyHTTP(http.StatusPaymentRequired, "402 Payment Required", `{"error":{"message":"Your prompt or reference image was blocked by the content safety policy. Please adjust your prompt or reference image and try again.","code":"content_policy_violation"}}`)
 	if failure.Category != generation.CategoryModerationInput && failure.Category != generation.CategoryModerationReference {
@@ -352,6 +363,19 @@ func TestDurationAdviceRequiresAnExplicitNumericRange(t *testing.T) {
 		failure := generation.ClassifyText(fmt.Sprintf(`{"error":{"code":"invalid_request","message":%q}}`, message))
 		if strings.Contains(failure.Action, "5–10") || strings.Contains(failure.Action, "10–5") {
 			t.Errorf("invented duration limit from %q", message)
+		}
+	}
+}
+
+func TestReferenceDurationAdviceSurvivesPersistence(t *testing.T) {
+	for _, text := range []string{
+		"第 2 段参考音频时长为 0.90 秒，需要 2–30 秒；请裁剪或更换这段素材后再提交",
+		"参考素材时长不符合模型要求。请检查每段参考音频和视频，将不符合要求的素材调整为 1.8–30.2 秒后重新提交。",
+	} {
+		failure := generation.ClassifyText(text)
+		reloaded := generation.ClassifyText(failure.UserMessage())
+		if reloaded.Category != generation.CategoryInvalidParams || reloaded.Reason != failure.Reason || reloaded.Action != failure.Action {
+			t.Fatalf("reference duration lost on reload: %#v -> %#v", failure, reloaded)
 		}
 	}
 }

@@ -8,7 +8,7 @@ import { buildApiUrl, modelOptionName, type AiConfig } from "@/stores/use-config
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
-import { isPublicMediaUrl } from "./video-validation";
+import { assertReferenceDuration, isPublicMediaUrl } from "./video-validation";
 import type { ApiEnvelope, RequestOptions, ResolvedAiConfig, SeedanceTask, VideoGenerationTask, VideoGenerationTaskState } from "./video-contracts";
 import type { VideoProviderDeps } from "./video-provider-deps";
 import { hasExplicitVideoFrames, resolveVideoImageReferences } from "./video-reference-roles";
@@ -59,20 +59,18 @@ function assertSeedanceVideoReferences(videoReferences: ReferenceVideo[]) {
     const error = seedanceVideoReferenceError(videoReferences);
     if (error) throw new Error(error);
     let total = 0;
-    for (const video of videoReferences) {
-        if (!video.durationMs) continue;
-        if (video.durationMs < 2000 || video.durationMs > 15000) throw new Error("Seedance 参考视频单个时长需要在 2-15 秒之间");
-        total += video.durationMs;
+    for (const [index, video] of videoReferences.entries()) {
+        assertReferenceDuration("视频", index, video.durationMs, 2, 15);
+        total += video.durationMs!;
     }
     if (total > 15000) throw new Error("Seedance 参考视频总时长不能超过 15 秒");
 }
 
 function assertSeedanceAudioReferences(audioReferences: ReferenceAudio[]) {
     let total = 0;
-    for (const audio of audioReferences) {
-        if (!audio.durationMs) continue;
-        if (audio.durationMs < 2000 || audio.durationMs > 15000) throw new Error("Seedance 参考音频单个时长需要在 2-15 秒之间");
-        total += audio.durationMs;
+    for (const [index, audio] of audioReferences.entries()) {
+        assertReferenceDuration("音频", index, audio.durationMs, 2, 15);
+        total += audio.durationMs!;
     }
     if (total > 15000) throw new Error("Seedance 参考音频总时长不能超过 15 秒");
 }

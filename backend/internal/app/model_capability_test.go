@@ -6,6 +6,35 @@ import (
 	"testing"
 )
 
+func TestSeedanceReferenceDurationRejectsShortAndUnknownBeforeSubmit(t *testing.T) {
+	for _, name := range []string{"seedance-2.0-fast", "seedance-2.5"} {
+		profile := applyModelSpecificVideoCapability(DefaultModelCapabilityConfigForModel("newapi-channel-2", name).Video, "newapi-channel-2", name)
+		input := canvasGenerationInput{Prompt: "test", Config: providerConfig{Model: name, VideoSeconds: "5"}, ReferenceAudios: []providerMedia{{DurationMs: 2500}, {DurationMs: 900}}}
+		if err := validateVideoTask(profile, input); err == nil || !strings.Contains(err.Error(), "第 2 段参考音频") || !strings.Contains(err.Error(), "0.90") {
+			t.Fatalf("short audio: %v", err)
+		}
+		input.ReferenceAudios[1].DurationMs = 0
+		if err := validateVideoTask(profile, input); err == nil || !strings.Contains(err.Error(), "时长无法读取") {
+			t.Fatalf("unknown duration: %v", err)
+		}
+		input.ReferenceAudios[1].DurationMs = 2000
+		if err := validateVideoTask(profile, input); err != nil {
+			t.Fatalf("valid duration: %v", err)
+		}
+	}
+}
+
+func TestSeedanceReferenceDurationWithoutPersistedCapability(t *testing.T) {
+	for _, protocol := range []string{"openai", "newapi", "newapi-channel-2"} {
+		for _, name := range []string{"seedance-2.5", "provider/seedance-2.0-fast"} {
+			input := canvasGenerationInput{Prompt: "test", Config: providerConfig{InterfaceType: protocol, Model: name, VideoSeconds: "5"}, ReferenceAudios: []providerMedia{{DurationMs: 900}}}
+			if err := (&Service{}).validateResolvedVideoCapability(&input); err == nil || !strings.Contains(err.Error(), "第 1 段参考音频") {
+				t.Fatalf("%s %s bypassed short audio validation: %v", protocol, name, err)
+			}
+		}
+	}
+}
+
 func TestValidateImageTaskRejectsOversizedGrokPromptByUTF8Bytes(t *testing.T) {
 	prompt := strings.Repeat("中", 4001)
 	input := canvasGenerationInput{

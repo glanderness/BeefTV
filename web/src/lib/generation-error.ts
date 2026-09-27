@@ -185,6 +185,7 @@ const PROVIDER_CODE_CATEGORIES: Record<string, GenerationErrorCategory> = {
     deadline_exceeded: "timeout",
     request_cancelled: "cancelled",
     provider_submission_unknown: "submission_uncertain",
+    video_submission_unknown: "submission_uncertain",
     provider_reference_invalid: "input_inaccessible",
 };
 
@@ -397,6 +398,8 @@ function classifyHttp(status: number | undefined, body: unknown): Classified {
 function classifyText(raw: string): Classified {
     const text = raw.trim();
     if (!text) return { category: "unknown", retryable: false };
+    const referenceCopy = referenceDurationCopy(text);
+    if (referenceCopy) return { category: "invalid_params", ...referenceCopy, retryable: false };
     const persisted = matchPersistedCategory(text);
     if (persisted) return { category: persisted, uncertain: ["timeout", "download_failed", "submission_uncertain"].includes(persisted), retryable: false };
     if (HTML_BODY.test(text)) {
@@ -429,6 +432,8 @@ function classifyText(raw: string): Classified {
 
 function specialize(classified: Classified, fields: ExtractedFields): Classified {
     fields = { ...fields, message: sanitizeProviderText(fields.message) };
+    const referenceCopy = referenceDurationCopy(fields.message);
+    if (referenceCopy) return { ...classified, category: "invalid_params", ...referenceCopy, retryable: false };
     if (classified.category === "invalid_params") {
         const refined = categoryFromProviderMessage(fields.message);
         if (refined === "context_too_long" || refined === "input_inaccessible" || refined === "input_too_large" || refined === "model_missing") classified.category = refined;
@@ -442,10 +447,11 @@ function specialize(classified: Classified, fields: ExtractedFields): Classified
     }
     const normalized = `${fields.message} ${fields.code}`.toLowerCase();
     if (classified.category === "invalid_params") {
-        const duration = fields.message.match(/duration\s+(?:must|should)\s+be\s+between\s+(\d+(?:\.\d+)?)\s+and\s+(\d+(?:\.\d+)?)\s*(?:seconds|s)\b/i);
+        const duration = fields.message.match(/duration\s+(?:must|should)\s+be\s+between\s+(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)?\s+and\s+(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b/i);
         if (duration && Number(duration[1]) <= Number(duration[2])) {
-            classified.reason = "视频时长不符合模型要求";
-            classified.action = `请将时长调整为 ${duration[1]}–${duration[2]} 秒后重试`;
+            const reference = fields.message.includes("素材") || /reference|audio/i.test(fields.message);
+            classified.reason = reference ? "参考素材时长不符合模型要求" : "视频时长不符合模型要求";
+            classified.action = reference ? `请检查每段参考音频和视频，将不符合要求的素材调整为 ${duration[1]}–${duration[2]} 秒后重新提交` : `请将时长调整为 ${duration[1]}–${duration[2]} 秒后重试`;
         }
     }
     if (((normalized.includes("thinking") || normalized.includes("reasoning")) && normalized.includes("tool_choice")) || (normalized.includes("tool_choice") && (normalized.includes("not support") || normalized.includes("unsupported")))) {
@@ -457,13 +463,27 @@ function specialize(classified: Classified, fields: ExtractedFields): Classified
     return classified;
 }
 
+function referenceDurationCopy(text: string): CategoryCopy | undefined {
+    const numbered = text.match(/^第 (\d+) 段参考(音频|视频)时长为 (\d+(?:\.\d+)?) 秒[，。]需要 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?) 秒/);
+    if (numbered) return { reason: `第 ${numbered[1]} 段参考${numbered[2]}时长为 ${numbered[3]} 秒`, action: `需要 ${numbered[4]}–${numbered[5]} 秒；请裁剪或更换这段素材后再提交` };
+    const missing = text.match(/^第 (\d+) 段参考(音频|视频)的时长无法读取/);
+    if (missing) return { reason: `第 ${missing[1]} 段参考${missing[2]}的时长无法读取`, action: "请重新导入素材后再提交" };
+    const persisted = text.match(/^参考素材时长不符合模型要求。请检查每段参考音频和视频，将不符合要求的素材调整为 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?) 秒/);
+    if (persisted) return { reason: "参考素材时长不符合模型要求", action: `请检查每段参考音频和视频，将不符合要求的素材调整为 ${persisted[1]}–${persisted[2]} 秒后重新提交` };
+}
+
 function extractProviderFields(raw: string): ExtractedFields {
     const fields = emptyFields();
     if (raw.length > 16384) return fields;
+    const suffix = raw.match(/\s*\(request id:\s*([A-Za-z0-9._:-]{6,127})\)\s*$/i);
+    if (suffix) raw = raw.slice(0, suffix.index);
     const tryParse = (value: string) => {
         try {
             const parsed = JSON.parse(value) as unknown;
-            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) Object.assign(fields, walkProviderFields(parsed as Record<string, unknown>, 0));
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                Object.assign(fields, walkProviderFields(parsed as Record<string, unknown>, 0));
+                fields.requestId ||= sanitizeDebugId(suffix?.[1]);
+            }
         } catch {
             return;
         }
@@ -526,6 +546,7 @@ function categoryFromProviderCode(...values: string[]): GenerationErrorCategory 
 function categoryFromProviderMessage(raw: string): GenerationErrorCategory | "" {
     const normalized = sanitizeProviderText(raw).toLowerCase();
     if (!normalized.trim()) return "";
+    if (/duration\s+(?:must|should)\s+be\s+between\s+\d/.test(normalized)) return "invalid_params";
     if (((normalized.includes("thinking") || normalized.includes("reasoning")) && normalized.includes("tool_choice")) || (normalized.includes("tool_choice") && (normalized.includes("not support") || normalized.includes("unsupported"))))
         return "invalid_params";
     if (containsContentSafety(normalized)) return moderationCategoryFromMessage(normalized);

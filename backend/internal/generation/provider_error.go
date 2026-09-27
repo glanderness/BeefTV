@@ -117,7 +117,7 @@ var (
 	safeIDPattern            = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{5,127}$`)
 	providerCodePattern      = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._:-]*$`)
 	unsafeIDPattern          = regexp.MustCompile(`(?i)secret|token|password|apikey|api-key|bearer|sk-`)
-	durationRangePattern     = regexp.MustCompile(`(?i)\bduration\s+(?:must\s+be|should\s+be|is\s+required\s+to\s+be)\s+(?:between\s+([0-9]+(?:\.[0-9]+)?)\s+and\s+([0-9]+(?:\.[0-9]+)?)|in\s+(?:the\s+)?range\s*\[?([0-9]+(?:\.[0-9]+)?)\s*[,–-]\s*([0-9]+(?:\.[0-9]+)?)\]?)\s*(?:seconds?|secs?|s)\b`)
+	durationRangePattern     = regexp.MustCompile(`(?i)\bduration\s+(?:must\s+be|should\s+be|is\s+required\s+to\s+be)\s+(?:between\s+([0-9]+(?:\.[0-9]+)?)\s*(?:seconds?|secs?|s)?\s+and\s+([0-9]+(?:\.[0-9]+)?)|in\s+(?:the\s+)?range\s*\[?([0-9]+(?:\.[0-9]+)?)\s*[,–-]\s*([0-9]+(?:\.[0-9]+)?)\]?)\s*(?:seconds?|secs?|s)\b`)
 )
 
 var providerCodeCategories = map[string]FailureCategory{
@@ -193,6 +193,7 @@ var providerCodeCategories = map[string]FailureCategory{
 	"task_failed":                      CategoryAsyncFailed,
 	"provider_query_failed":            CategoryAsyncFailed,
 	"provider_submission_unknown":      CategorySubmissionUncertain,
+	"video_submission_unknown":         CategorySubmissionUncertain,
 	"provider_reference_invalid":       CategoryInputInaccessible,
 	"rate_limited":                     CategoryThrottled,
 	"bad_gateway":                      CategoryProviderUnavailable,
@@ -416,6 +417,9 @@ func ClassifyText(raw string) Failure {
 	if text == "" {
 		return normalizeFailure(failure)
 	}
+	if copy, ok := referenceDurationCopy(text); ok {
+		return normalizeFailure(Failure{Category: CategoryInvalidParams, Reason: copy.Reason, Action: copy.Action})
+	}
 	if htmlBodyPattern.MatchString(text) {
 		if status := extractExplicitHTTPStatus(text); status != 0 {
 			return ClassifyHTTP(status, "", "")
@@ -424,6 +428,9 @@ func ClassifyText(raw string) Failure {
 	}
 	fields := extractProviderFields(text)
 	if fields.hasStructured() {
+		if copy, ok := referenceDurationCopy(fields.Message); ok {
+			return normalizeFailure(Failure{Category: CategoryInvalidParams, Reason: copy.Reason, Action: copy.Action, RequestID: fields.RequestID, TaskID: fields.TaskID})
+		}
 		failure.Structured = true
 		failure.ProviderCode = sanitizeProviderCode(fields.Code)
 		failure.ProviderMessage = sanitizeProviderText(fields.Message)
@@ -574,7 +581,18 @@ func extractProviderFields(raw string) extractedFields {
 	if raw == "" || len(raw) > maxJSONExtractBytes {
 		return extractedFields{}
 	}
+	// The gateway appends a public request ID outside its JSON error envelope.
+	// Strip only that exact suffix; arbitrary trailing text is not trusted JSON.
+	suffix := regexp.MustCompile(`(?i)\s*\(request id:\s*([A-Za-z0-9._:-]{6,127})\)\s*$`).FindStringSubmatchIndex(raw)
+	requestID := ""
+	if suffix != nil {
+		requestID = raw[suffix[2]:suffix[3]]
+		raw = strings.TrimSpace(raw[:suffix[0]])
+	}
 	if fields, ok := fieldsFromJSON([]byte(raw)); ok {
+		if fields.RequestID == "" {
+			fields.RequestID = requestID
+		}
 		return fields
 	}
 	for start := 0; start < len(raw); {
@@ -584,6 +602,9 @@ func extractProviderFields(raw string) extractedFields {
 		}
 		absolute := start + index
 		if fields, ok := fieldsFromJSON([]byte(raw[absolute:])); ok {
+			if fields.RequestID == "" {
+				fields.RequestID = requestID
+			}
 			return fields
 		}
 		start = absolute + 1
@@ -850,6 +871,19 @@ func specializeThinkingToolChoice(failure *Failure, fields extractedFields) {
 	}
 }
 
+func referenceDurationCopy(text string) (categoryCopy, bool) {
+	if m := regexp.MustCompile(`^第 (\d+) 段参考(音频|视频)时长为 (\d+(?:\.\d+)?) 秒[，。]需要 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?) 秒`).FindStringSubmatch(text); len(m) == 6 {
+		return categoryCopy{Reason: fmt.Sprintf("第 %s 段参考%s时长为 %s 秒", m[1], m[2], m[3]), Action: fmt.Sprintf("需要 %s–%s 秒；请裁剪或更换这段素材后再提交", m[4], m[5])}, true
+	}
+	if m := regexp.MustCompile(`^第 (\d+) 段参考(音频|视频)的时长无法读取`).FindStringSubmatch(text); len(m) == 3 {
+		return categoryCopy{Reason: fmt.Sprintf("第 %s 段参考%s的时长无法读取", m[1], m[2]), Action: "请重新导入素材后再提交"}, true
+	}
+	if m := regexp.MustCompile(`^参考素材时长不符合模型要求。请检查每段参考音频和视频，将不符合要求的素材调整为 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?) 秒`).FindStringSubmatch(text); len(m) == 3 {
+		return categoryCopy{Reason: "参考素材时长不符合模型要求", Action: fmt.Sprintf("请检查每段参考音频和视频，将不符合要求的素材调整为 %s–%s 秒后重新提交", m[1], m[2])}, true
+	}
+	return categoryCopy{}, false
+}
+
 func specializeDurationRange(failure *Failure, fields extractedFields) {
 	if failure.Category != CategoryInvalidParams {
 		return
@@ -869,6 +903,10 @@ func specializeDurationRange(failure *Failure, fields extractedFields) {
 	}
 	failure.Reason = "视频时长不符合模型要求"
 	failure.Action = fmt.Sprintf("请将时长调整为 %s–%s 秒后重试", minimum, maximum)
+	if strings.Contains(message, "素材") || strings.Contains(strings.ToLower(message), "reference") || strings.Contains(strings.ToLower(message), "audio") {
+		failure.Reason = "参考素材时长不符合模型要求"
+		failure.Action = fmt.Sprintf("请检查每段参考音频和视频，将不符合要求的素材调整为 %s–%s 秒后重新提交", minimum, maximum)
+	}
 }
 
 func trustProviderMessageStatus(status int) bool {

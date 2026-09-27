@@ -83,8 +83,8 @@ describe("Volcengine Ark full-modal references", () => {
             model,
             "保持主体一致",
             [{ id: "image-1", name: "image.png", type: "image/png", dataUrl: "", url: "https://cdn.example.com/image.png" }],
-            [{ id: "video-1", name: "video.mp4", type: "video/mp4", url: "https://cdn.example.com/video.mp4" }],
-            [{ id: "audio-1", name: "audio.mp3", type: "audio/mpeg", url: "https://cdn.example.com/audio.mp3" }],
+            [{ id: "video-1", name: "video.mp4", type: "video/mp4", url: "https://cdn.example.com/video.mp4", durationMs: 3000 }],
+            [{ id: "audio-1", name: "audio.mp3", type: "audio/mpeg", url: "https://cdn.example.com/audio.mp3", durationMs: 3000 }],
         );
 
         expect(requestUrl).toBe("https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks");
@@ -98,7 +98,14 @@ describe("Volcengine Ark full-modal references", () => {
 
     test("拒绝纯音频和文本加音频", async () => {
         const deps = { transport: {}, response: videoResponseTools } as unknown as VideoProviderDeps;
-        await expect(createSeedanceTask(deps, config as never, model, "跟随节奏", [], [], [{ id: "audio-1", name: "audio.mp3", type: "audio/mpeg", url: "https://cdn.example.com/audio.mp3" }])).rejects.toThrow("不支持纯音频或文本+音频");
+        await expect(createSeedanceTask(deps, config as never, model, "跟随节奏", [], [], [{ id: "audio-1", name: "audio.mp3", type: "audio/mpeg", url: "https://cdn.example.com/audio.mp3", durationMs: 3000 }])).rejects.toThrow("不支持纯音频或文本+音频");
+    });
+
+    test("时长未知时在网络提交之前拒绝参考素材", async () => {
+        let submitted = false;
+        const deps = { transport: { post: async () => { submitted = true; return { id: "unexpected" }; } }, response: videoResponseTools } as unknown as VideoProviderDeps;
+        await expect(createSeedanceTask(deps, config as never, model, "保持主体一致", [], [], [{ id: "audio", name: "audio.mp3", type: "audio/mpeg", url: "https://cdn.example.com/audio.mp3" }])).rejects.toThrow("第 1 段参考音频的时长无法读取");
+        expect(submitted).toBe(false);
     });
 
     test("显式首帧与项目角色参考图使用不同角色", async () => {

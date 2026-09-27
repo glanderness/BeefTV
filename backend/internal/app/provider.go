@@ -362,7 +362,10 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 			return nil, err
 		}
 	}
-	if input.Mode == "video" {
+	if input.Mode == "video" && resumedProviderRequestID(ctx) == "" {
+		if err := s.hydrateVideoReferenceMetadata(userID, &input); err != nil {
+			return nil, err
+		}
 		if err := s.validateResolvedVideoCapability(&input); err != nil {
 			return nil, err
 		}
@@ -376,7 +379,7 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 			return nil, err
 		}
 	}
-	if input.Mode == "video" && input.VideoCapability != nil {
+	if input.Mode == "video" && input.VideoCapability != nil && resumedProviderRequestID(ctx) == "" {
 		if err := validateVideoTask(input.VideoCapability, input); err != nil {
 			return nil, err
 		}
@@ -695,6 +698,31 @@ func metadataStringValues(value any) map[string]string {
 	return values
 }
 
+// Read owned resource metadata before preflight, without downloading media.
+// Character/workflow references may carry only a resource storage key.
+func (s *Service) hydrateVideoReferenceMetadata(userID string, input *canvasGenerationInput) error {
+	for _, group := range [][]providerMedia{input.ReferenceVideos, input.ReferenceAudios} {
+		for index := range group {
+			media := &group[index]
+			if !strings.HasPrefix(media.StorageKey, "resource:") {
+				continue
+			}
+			resource, err := s.repo.ResourceForUser(userID, strings.TrimPrefix(media.StorageKey, "resource:"))
+			if err != nil {
+				return fmt.Errorf("读取任务参考资源失败：%w", err)
+			}
+			if resource.Status != "ready" {
+				return errors.New("任务参考资源尚未上传完成")
+			}
+			if resource.DurationMs > 0 {
+				media.DurationMs = resource.DurationMs
+			}
+			media.Bytes = resource.Size
+		}
+	}
+	return nil
+}
+
 func (s *Service) hydrateGenerationMedia(userID string, input *canvasGenerationInput, policy providerMediaHydrationPolicy) error {
 	groups := [][]providerMedia{input.ReferenceImages, input.ReferenceVideos, input.ReferenceAudios}
 	for _, group := range groups {
@@ -749,7 +777,9 @@ func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, poli
 		media.Bytes = resource.Size
 		media.Width = resource.Width
 		media.Height = resource.Height
-		media.DurationMs = resource.DurationMs
+		if resource.DurationMs > 0 {
+			media.DurationMs = resource.DurationMs
+		}
 		return nil
 	}
 	if strings.HasPrefix(strings.TrimSpace(media.DataURL), "data:") {
@@ -778,7 +808,9 @@ func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, poli
 	media.Bytes = int64(len(data))
 	media.Width = resource.Width
 	media.Height = resource.Height
-	media.DurationMs = resource.DurationMs
+	if resource.DurationMs > 0 {
+		media.DurationMs = resource.DurationMs
+	}
 	return nil
 }
 

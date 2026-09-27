@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test";
 
+test("gateway JSON suffix retains reference duration advice and request id", () => {
+    const raw = '{"error":{"code":"400","message":"素材转换失败: Duration must be between 1.8s and 30.2s.","type":"api_error"}} (request id: 202609270829245377912978268d9d6USz1NP3R)';
+    const failure = explainGenerationError(raw);
+    expect(failure.category).toBe("invalid_params");
+    expect(failure.reason).toBe("参考素材时长不符合模型要求");
+    expect(failure.action).toContain("1.8–30.2 秒");
+    expect(failure.requestId).toBe("202609270829245377912978268d9d6USz1NP3R");
+    expect(failure.blockAutomaticRetry).toBe(true);
+    expect(explainGenerationError({code: "video_submission_unknown", task_id: "task-known-123"}).uncertain).toBe(true);
+});
+
 import {
     explainGenerationError,
     formatGenerationDiagnostics,
