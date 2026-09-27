@@ -33,7 +33,12 @@ test("legacy channel protocol without model profiles still applies Seedance dura
     expect(profile.references.maxAudioDurationSeconds).toBe(30);
 });
 
-for (const [model, maximum] of [["seedance-2.0", 15], ["seedance-2.5", 30], ["provider/seedance-2.5", 30], ["seedance-2.5-self-developed", 30]] as const) {
+for (const [model, maximum] of [
+    ["seedance-2.0", 15],
+    ["seedance-2.5", 30],
+    ["provider/seedance-2.5", 30],
+    ["seedance-2.5-self-developed", 30],
+] as const) {
     test(`${model}: total audio duration is checked before submission`, () => {
         const profile = modelCapabilityConfigFor({ channels: [{ id: "test", interfaceType: "openai", models: [model] }] }, `test::${model}`).video!;
         const audio = (duration: number) => ({ id: "audio", name: "声音", type: "audio/mpeg", url: "https://example.com/a.mp3", durationMs: duration * 1000 });
