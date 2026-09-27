@@ -9,6 +9,12 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.5.7
+
+- Desktop update checks and downloads now use Cloudflare-hosted files, preserving signed manifests and package integrity verification.
+- Publish immutable platform packages before switching the update feed, with verified downloads and protection against incomplete or older releases.
+- Check Seedance reference audio total duration and explain gateway media validation failures with the affected clip and actionable limits.
+
 ## v1.5.6
 
 - Validate Seedance reference audio/video duration before submission and preserve duration metadata for character voice samples.
