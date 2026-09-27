@@ -9,6 +9,12 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.5.8
+
+- Add a persistent light/dark switch to the workspace sidebar, with matching home, asset library, menus and settings surfaces.
+- Restore canvas appearance controls with light, dark and custom modes; keep each canvas appearance independent from the workspace theme.
+- New canvases follow the workspace theme unless an explicit default appearance is saved.
+
 ## v1.5.7
 
 - Desktop update checks and downloads now use Cloudflare-hosted files, preserving signed manifests and package integrity verification.
