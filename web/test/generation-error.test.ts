@@ -1,4 +1,72 @@
 import { describe, expect, test } from "bun:test";
+import audioErrorContract from "../../fixtures/reference-audio-errors.json";
+
+test("actual persisted task output contract renders identically in the frontend", () => {
+    for (const fixture of audioErrorContract) {
+        // Backend app test writes the corresponding upstream failure through the
+        // real terminal coordinator and DB, then asserts this exact list payload.
+        const error = `${fixture.display}。排查编号：请求 req_reference_audio_123。`;
+        const result = explainGenerationError(error);
+        expect(result.message).toBe(error);
+        expect(result.category).toBe("invalid_params");
+        expect(result.requestId).toBe("req_reference_audio_123");
+        expect(result.blockAutomaticRetry).toBe(true);
+    }
+});
+
+describe("measured reference audio API errors", () => {
+    const requestId = "202609270829245377912978268d9d6USz1NP3R";
+    const cases = [
+        ["reference audio 2 is 0.900 seconds; use audio between 2 and 15 seconds", ["第 2 段", "0.900 秒", "2–15 秒", "裁剪"]],
+        ["reference audio 1 is 31.250 seconds; use audio between 2 and 30 seconds", ["第 1 段", "31.250 秒", "2–30 秒", "更换"]],
+        ["reference audio is 35.500 seconds in total; this model accepts at most 30 seconds of reference audio", ["总时长", "35.500 秒", "30 秒", "减少"]],
+        ["reference audio 3: could not download reference audio within the allowed time and URL policy", ["第 3 段", "无法下载", "重新上传", "公开访问"]],
+        ["reference audio 2: reference audio duration could not be measured: invalid WAV audio", ["第 2 段", "格式或时长无法读取", "MP3", "WAV", "M4A"]],
+        ["reference audio 1: reference audio duration could not be measured: the media contains no readable audio track", ["第 1 段", "音轨", "重新导出"]],
+        ["reference audio 1 exceeds the model's 15728640 byte limit", ["第 1 段", "文件过大", "压缩"]],
+        ["reference audio 1 requires a public HTTPS URL", ["第 1 段", "无法下载", "公开访问"]],
+        ["reference audio 2: reference audio download returned HTTP 403", ["第 2 段", "无法下载", "重新上传"]],
+        ["reference audio 2: reference audio could not be downloaded completely within the allowed time", ["第 2 段", "无法下载", "重新上传"]],
+        ["reference audio 2: reference audio must be at most 15 MiB", ["第 2 段", "文件过大", "压缩"]],
+        ["reference audio 2: reference audio URL is not allowed", ["第 2 段", "无法下载", "公开访问"]],
+    ] as const;
+    for (const [message, fragments] of cases) {
+        test(`HTTP, gateway wrapper and persisted details: ${message}`, () => {
+            const body = { error: { code: "invalid_reference_audio", type: "invalid_request_error", message }, request_id: requestId };
+            for (const input of [{ response: { status: 400, data: body } }, `接口请求失败：${JSON.stringify(body)} (request id: ${requestId})`]) {
+                const first = explainGenerationError(input);
+                const metadata = generationFailureMetadata(input, "test prompt");
+                const persisted = explainGenerationError(metadata.errorDetails);
+                for (const failure of [first, persisted]) {
+                    expect(failure.category).toBe("invalid_params");
+                    expect(failure.retryable).toBe(false);
+                    expect(failure.blockAutomaticRetry).toBe(true);
+                    expect(failure.requestId).toBe(requestId);
+                    for (const fragment of fragments) expect(failure.message).toContain(fragment);
+                }
+            }
+        });
+    }
+    test("unknown validation detail is actionable without reflecting secrets", () => {
+        const failure = explainGenerationError({ status: 400, data: { error: { code: "invalid_reference_audio", message: "private detail https://secret.test/audio?token=abc prompt=private_words" }, request_id: requestId } });
+        expect(failure.message).toContain("检查参考音频");
+        expect(failure.message).not.toMatch(/secret|private|token/);
+        expect(failure.requestId).toBe(requestId);
+        expect(failure.blockAutomaticRetry).toBe(true);
+    });
+    test("local total limit and combined diagnostic IDs survive persistence", () => {
+        const raw = "参考音频总时长为 16.00 秒，当前模型最多支持 15 秒；请裁剪或减少参考音频后再提交";
+        const first = explainGenerationError(raw, { taskId: "task_existing_123", providerRequestId: requestId });
+        const second = explainGenerationError(first.message);
+        expect(second.message).toBe(first.message);
+        expect(second.requestId).toBe(requestId);
+        expect(second.taskId).toBe("task_existing_123");
+        expect(second.message).toContain("16.00 秒");
+        expect(second.message).toContain("15 秒");
+        expect(second.category).toBe("invalid_params");
+        expect(second.blockAutomaticRetry).toBe(true);
+    });
+});
 
 test("gateway JSON suffix retains reference duration advice and request id", () => {
     const raw = '{"error":{"code":"400","message":"素材转换失败: Duration must be between 1.8s and 30.2s.","type":"api_error"}} (request id: 202609270829245377912978268d9d6USz1NP3R)';

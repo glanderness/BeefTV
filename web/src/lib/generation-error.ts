@@ -95,6 +95,7 @@ const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
 };
 
 const PROVIDER_CODE_CATEGORIES: Record<string, GenerationErrorCategory> = {
+    invalid_reference_audio: "invalid_params",
     insufficient_user_quota: "quota_user",
     no_available_channel: "provider_unavailable",
     "channel:invalid_key": "provider_unavailable",
@@ -399,7 +400,16 @@ function classifyText(raw: string): Classified {
     const text = raw.trim();
     if (!text) return { category: "unknown", retryable: false };
     const referenceCopy = referenceDurationCopy(text);
-    if (referenceCopy) return { category: "invalid_params", ...referenceCopy, retryable: false };
+    if (referenceCopy) {
+        const debug = text.match(/。排查编号：([^。]+)。?$/)?.[1] || "";
+        return {
+            category: "invalid_params",
+            ...referenceCopy,
+            requestId: sanitizeDebugId(debug.match(/(?:^| · )请求 ([A-Za-z0-9._:-]{6,127})$/)?.[1]),
+            taskId: sanitizeDebugId(debug.match(/^任务 ([A-Za-z0-9._:-]{6,127})(?: · |$)/)?.[1]),
+            retryable: false,
+        };
+    }
     const persisted = matchPersistedCategory(text);
     if (persisted) return { category: persisted, uncertain: ["timeout", "download_failed", "submission_uncertain"].includes(persisted), retryable: false };
     if (HTML_BODY.test(text)) {
@@ -432,7 +442,7 @@ function classifyText(raw: string): Classified {
 
 function specialize(classified: Classified, fields: ExtractedFields): Classified {
     fields = { ...fields, message: sanitizeProviderText(fields.message) };
-    const referenceCopy = referenceDurationCopy(fields.message);
+    const referenceCopy = referenceAudioCopy(fields.message, normalizeCode(fields.code) === "invalid_reference_audio") || referenceDurationCopy(fields.message);
     if (referenceCopy) return { ...classified, category: "invalid_params", ...referenceCopy, retryable: false };
     if (classified.category === "invalid_params") {
         const refined = categoryFromProviderMessage(fields.message);
@@ -464,12 +474,44 @@ function specialize(classified: Classified, fields: ExtractedFields): Classified
 }
 
 function referenceDurationCopy(text: string): CategoryCopy | undefined {
+    const audio = referenceAudioCopy(text);
+    if (audio) return audio;
     const numbered = text.match(/^第 (\d+) 段参考(音频|视频)时长为 (\d+(?:\.\d+)?) 秒[，。]需要 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?) 秒/);
     if (numbered) return { reason: `第 ${numbered[1]} 段参考${numbered[2]}时长为 ${numbered[3]} 秒`, action: `需要 ${numbered[4]}–${numbered[5]} 秒；请裁剪或更换这段素材后再提交` };
     const missing = text.match(/^第 (\d+) 段参考(音频|视频)的时长无法读取/);
     if (missing) return { reason: `第 ${missing[1]} 段参考${missing[2]}的时长无法读取`, action: "请重新导入素材后再提交" };
     const persisted = text.match(/^参考素材时长不符合模型要求。请检查每段参考音频和视频，将不符合要求的素材调整为 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?) 秒/);
     if (persisted) return { reason: "参考素材时长不符合模型要求", action: `请检查每段参考音频和视频，将不符合要求的素材调整为 ${persisted[1]}–${persisted[2]} 秒后重新提交` };
+}
+
+function referenceAudioCopy(text: string, invalidAudio = false): CategoryCopy | undefined {
+    const duration = text.match(/^reference audio (\d+) is (\d+(?:\.\d+)?) seconds; use audio between (\d+(?:\.\d+)?) and (\d+(?:\.\d+)?) seconds/i);
+    if (duration) return { reason: `第 ${duration[1]} 段参考音频时长为 ${duration[2]} 秒`, action: `需要 ${duration[3]}–${duration[4]} 秒；请裁剪或更换这段素材后再提交` };
+    const total =
+        text.match(/^reference audio is (\d+(?:\.\d+)?) seconds in total; this model accepts at most (\d+(?:\.\d+)?) seconds of reference audio/i) || text.match(/^参考音频总时长为 (\d+(?:\.\d+)?) 秒[。，](?:该|当前)模型最多支持 (\d+(?:\.\d+)?) 秒/);
+    if (total) return { reason: `参考音频总时长为 ${total[1]} 秒`, action: `该模型最多支持 ${total[2]} 秒参考音频；请裁剪或减少参考音频后再提交` };
+    const numbered = text.match(/^reference audio (\d+)(?::| requires| exceeds)/i);
+    const label = numbered ? `第 ${numbered[1]} 段参考音频` : "参考音频";
+    const persisted = text.match(/^(第 \d+ 段参考音频|参考音频)(无法下载|的格式或时长无法读取|文件过大|不符合模型要求)。/);
+    const issue =
+        persisted?.[2] ||
+        (invalidAudio || numbered
+            ? /15 MiB|byte limit|at most.*MiB/i.test(text)
+                ? "文件过大"
+                : /duration could not be measured|invalid.*audio|unsupported|readable audio track/i.test(text)
+                  ? "的格式或时长无法读取"
+                  : /download|HTTPS URL|URL.*(?:policy|allowed)|redirect|readable within/i.test(text)
+                    ? "无法下载"
+                    : "不符合模型要求"
+            : "");
+    if (!issue) return;
+    const actions: Record<string, string> = {
+        无法下载: "请重新上传音频，确认素材链接可公开访问后再提交",
+        的格式或时长无法读取: "请将音频重新导出为 MP3、WAV 或 M4A，确认文件完整且含有音轨后再上传",
+        文件过大: "请压缩或更换音频，确保文件不超过模型的大小限制后再提交",
+        不符合模型要求: "请检查参考音频的时长、格式和大小，调整后再提交",
+    };
+    return { reason: `${persisted?.[1] || label}${issue}`, action: actions[issue] };
 }
 
 function extractProviderFields(raw: string): ExtractedFields {

@@ -72,6 +72,7 @@ export type VideoCapabilityConfig = {
         maxAudioBytes: number;
         maxAudioDurationSeconds: number;
         minAudioDurationSeconds?: number;
+        maxAudioTotalDurationSeconds?: number;
     };
     duration: {
         selection: "range" | "enum";
@@ -451,7 +452,7 @@ function applySeedance2ReferenceCapability(video: VideoCapabilityConfig, protoco
     // OpenAI profiles and provider-prefixed model aliases.
     const normalizedModel = String(modelName).trim().toLowerCase();
     if (!(protocol === "openai" || protocol === "newapi" || protocol === "newapi-channel-2") || !normalizedModel.includes("seedance-2")) return video;
-    const is25 = normalizedModel === "seedance-2.5";
+    const is25 = /(?:^|\/)seedance-2\.5(?:-self-developed)?$/.test(normalizedModel);
     return {
         ...video,
         references: {
@@ -465,6 +466,7 @@ function applySeedance2ReferenceCapability(video: VideoCapabilityConfig, protoco
             maxAudioBytes: 15 * 1024 * 1024,
             maxAudioDurationSeconds: is25 ? 30 : 15,
             minAudioDurationSeconds: 2,
+            maxAudioTotalDurationSeconds: is25 ? 30 : 15,
         },
         operations: Array.from(new Set([...video.operations, "reference_to_video", ...(is25 ? ["audio_to_video" as const] : [])])),
     };

@@ -26,6 +26,9 @@ export function assertVideoCapability(
         if (profile.references.maxAudioBytes > 0 && (audio.bytes || 0) > profile.references.maxAudioBytes) throw new Error("参考音频文件超过当前模型大小限制");
         if (profile.references.maxAudioDurationSeconds > 0 && (audio.durationMs || 0) > profile.references.maxAudioDurationSeconds * 1000) throw new Error("参考音频时长超过当前模型限制");
     }
+    const totalAudioSeconds = audioReferences.reduce((total, audio) => total + (audio.durationMs || 0), 0) / 1000;
+    const maxAudioTotal = profile.references.maxAudioTotalDurationSeconds || 0;
+    if (maxAudioTotal > 0 && totalAudioSeconds > maxAudioTotal) throw new Error(`参考音频总时长为 ${totalAudioSeconds.toFixed(2)} 秒，当前模型最多支持 ${maxAudioTotal} 秒；请裁剪或减少参考音频后再提交`);
 }
 
 export function assertReferenceDuration(kind: string, index: number, durationMs: number | undefined, minimum = 0, maximum = 0) {
