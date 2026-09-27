@@ -9,6 +9,12 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.5.6
+
+- Validate Seedance reference audio/video duration before submission and preserve duration metadata for character voice samples.
+- Explain material conversion failures with actionable duration limits and retain request identifiers for support.
+- Keep existing task polling available and prevent unsafe resubmission while provider acceptance is uncertain.
+
 ## v1.5.5
 
 - Desktop update checks and downloads now use the current user's static HTTP/HTTPS system proxy on macOS and Windows when no explicit environment proxy is configured.
