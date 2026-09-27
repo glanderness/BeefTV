@@ -18,7 +18,7 @@
 
 ## 产品演示
 
-<video src="https://github.com/glanderness/BeefTV/releases/download/v1.5.5/beeftv-demo.mp4" poster="assets/readme/beeftv-demo-poster.jpg" controls muted preload="metadata"></video>
+https://github.com/user-attachments/assets/7acc2ad6-5312-4e22-bf1c-96d05c7cd1e3
 
 [下载产品演示视频](https://github.com/glanderness/BeefTV/releases/download/v1.5.5/beeftv-demo.mp4)
 
