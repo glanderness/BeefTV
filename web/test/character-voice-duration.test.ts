@@ -12,7 +12,19 @@ test("stored character voice keeps duration through canvas hydration and preflig
     } as Awaited<ReturnType<typeof projects.getProjectCharacter>>);
     const resource = spyOn(resources, "getResource").mockResolvedValue({ id: "voice-1", mimeType: "audio/mpeg", objectKey: "voice.mp3", durationMs: 2500, size: 1234 } as resources.RemoteResource);
     try {
-        const context: NodeGenerationContext = { prompt: "test", referenceImages: [], referenceVideos: [], referenceAudios: [], characterReferences: [{ nodeId: "character-node", assetId: "character-1" }], resolvedCharacterVersions: [], resolvedCharacterVoices: [], textCount: 1, imageCount: 0, videoCount: 0, audioCount: 0 };
+        const context: NodeGenerationContext = {
+            prompt: "test",
+            referenceImages: [],
+            referenceVideos: [],
+            referenceAudios: [],
+            characterReferences: [{ nodeId: "character-node", assetId: "character-1" }],
+            resolvedCharacterVersions: [],
+            resolvedCharacterVoices: [],
+            textCount: 1,
+            imageCount: 0,
+            videoCount: 0,
+            audioCount: 0,
+        };
         const hydrated = await hydrateNodeGenerationContext(context, "canvas-1", "project-1", "video", true);
         expect(hydrated.referenceAudios[0]?.durationMs).toBe(2500);
         expect(hydrated.referenceAudios[0]?.bytes).toBe(1234);

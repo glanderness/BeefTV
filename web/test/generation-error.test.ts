@@ -8,7 +8,7 @@ test("gateway JSON suffix retains reference duration advice and request id", () 
     expect(failure.action).toContain("1.8–30.2 秒");
     expect(failure.requestId).toBe("202609270829245377912978268d9d6USz1NP3R");
     expect(failure.blockAutomaticRetry).toBe(true);
-    expect(explainGenerationError({code: "video_submission_unknown", task_id: "task-known-123"}).uncertain).toBe(true);
+    expect(explainGenerationError({ code: "video_submission_unknown", task_id: "task-known-123" }).uncertain).toBe(true);
 });
 
 import {

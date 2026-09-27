@@ -45,7 +45,10 @@ async function readDuration(media: ReferenceAudio | ReferenceVideo, resourceId: 
                 return probeMediaDurationMs(new File([blob], media.name, { type: /^audio\/|^video\//.test(blob.type) ? blob.type : media.type }));
             })(),
             new Promise<undefined>((resolve) => {
-                timer = setTimeout(() => { controller.abort(); resolve(undefined); }, METADATA_TIMEOUT_MS);
+                timer = setTimeout(() => {
+                    controller.abort();
+                    resolve(undefined);
+                }, METADATA_TIMEOUT_MS);
             }),
         ]);
     } catch {

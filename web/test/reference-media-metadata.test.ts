@@ -12,7 +12,15 @@ import { modelCapabilityConfigFor } from "../src/lib/model-capabilities";
 import { assertVideoCapability } from "../src/services/api/video-validation";
 import type { ReferenceAudio } from "../src/types/media";
 
-const channel = createModelChannel({ id: "metadata-test", name: "test", baseUrl: "https://example.com", apiKey: "test", interfaceType: "newapi-channel-2", models: ["seedance-2.5"], modelProfiles: [{ model: "seedance-2.5", protocol: "newapi-channel-2" }] });
+const channel = createModelChannel({
+    id: "metadata-test",
+    name: "test",
+    baseUrl: "https://example.com",
+    apiKey: "test",
+    interfaceType: "newapi-channel-2",
+    models: ["seedance-2.5"],
+    modelProfiles: [{ model: "seedance-2.5", protocol: "newapi-channel-2" }],
+});
 const config = { ...defaultConfig, channels: [channel], model: encodeChannelModel(channel.id, "seedance-2.5"), videoSeconds: "5" };
 const profile = modelCapabilityConfigFor(config, config.model).video!;
 const audio: ReferenceAudio = { id: "generated", name: "配音.mp3", type: "audio/mpeg", url: "/api/resources/generated/file", storageKey: "resource:generated" };
@@ -21,13 +29,34 @@ function mockGeneratedAudio(durationMs: number | undefined) {
     const resource = spyOn(resources, "getResource").mockResolvedValue({ id: "generated", durationMs: 0, mimeType: "audio/mpeg" } as resources.RemoteResource);
     const blob = spyOn(storage, "getMediaBlob").mockResolvedValue(new Blob(["audio"], { type: "audio/mpeg" }));
     const probe = spyOn(metadata, "probeMediaDurationMs").mockResolvedValue(durationMs);
-    return { resource, blob, probe, restore() { resource.mockRestore(); blob.mockRestore(); probe.mockRestore(); } };
+    return {
+        resource,
+        blob,
+        probe,
+        restore() {
+            resource.mockRestore();
+            blob.mockRestore();
+            probe.mockRestore();
+        },
+    };
 }
 
 test("unplayed generated audio is probed before canvas validation and its actual duration reaches the task", async () => {
     const mocks = mockGeneratedAudio(2500);
     try {
-        const context: NodeGenerationContext = { prompt: "test", referenceImages: [], referenceVideos: [], referenceAudios: [audio], characterReferences: [], resolvedCharacterVersions: [], resolvedCharacterVoices: [], textCount: 1, imageCount: 0, videoCount: 0, audioCount: 1 };
+        const context: NodeGenerationContext = {
+            prompt: "test",
+            referenceImages: [],
+            referenceVideos: [],
+            referenceAudios: [audio],
+            characterReferences: [],
+            resolvedCharacterVersions: [],
+            resolvedCharacterVoices: [],
+            textCount: 1,
+            imageCount: 0,
+            videoCount: 0,
+            audioCount: 1,
+        };
         const hydrated = await hydrateNodeGenerationContext(context, "canvas", undefined, "video");
         expect(hydrated.referenceAudios[0].durationMs).toBe(2500);
         expect(audio.durationMs).toBeUndefined();
@@ -36,7 +65,9 @@ test("unplayed generated audio is probed before canvas validation and its actual
         expect((task.input as { referenceAudios: ReferenceAudio[] }).referenceAudios[0].durationMs).toBe(2500);
         expect(mocks.probe).toHaveBeenCalledTimes(1);
         expect(mocks.blob).toHaveBeenCalledTimes(1);
-    } finally { mocks.restore(); }
+    } finally {
+        mocks.restore();
+    }
 });
 
 test("backend preparation also probes references without a canvas", async () => {
@@ -44,7 +75,9 @@ test("backend preparation also probes references without a canvas", async () => 
     try {
         const task = await prepareBackendGenerationTask({ config, mode: "video", prompt: "test", referenceAudios: [audio] });
         expect((task.input as { referenceAudios: ReferenceAudio[] }).referenceAudios[0].durationMs).toBe(2500);
-    } finally { mocks.restore(); }
+    } finally {
+        mocks.restore();
+    }
 });
 
 test("a generated character voice sample with zero resource duration is probed before canvas preflight", async () => {
@@ -54,21 +87,41 @@ test("a generated character voice sample with zero resource duration is probed b
         character: { versionId: "version", definition: {}, representations: [], voice: { profile: { sampleResourceId: "generated" }, instructions: "" } },
     } as Awaited<ReturnType<typeof projects.getProjectCharacter>>);
     try {
-        const context: NodeGenerationContext = { prompt: "test", referenceImages: [], referenceVideos: [], referenceAudios: [], characterReferences: [{ nodeId: "character-node", assetId: "character" }], resolvedCharacterVersions: [], resolvedCharacterVoices: [], textCount: 1, imageCount: 0, videoCount: 0, audioCount: 0 };
+        const context: NodeGenerationContext = {
+            prompt: "test",
+            referenceImages: [],
+            referenceVideos: [],
+            referenceAudios: [],
+            characterReferences: [{ nodeId: "character-node", assetId: "character" }],
+            resolvedCharacterVersions: [],
+            resolvedCharacterVoices: [],
+            textCount: 1,
+            imageCount: 0,
+            videoCount: 0,
+            audioCount: 0,
+        };
         const hydrated = await hydrateNodeGenerationContext(context, "canvas", "project", "video", true);
         expect(hydrated.referenceAudios[0].durationMs).toBe(2500);
         expect(() => assertVideoCapability(profile, [], [], hydrated.referenceAudios, "5")).not.toThrow();
         expect(mocks.probe).toHaveBeenCalledTimes(1);
-    } finally { character.mockRestore(); mocks.restore(); }
+    } finally {
+        character.mockRestore();
+        mocks.restore();
+    }
 });
 
-for (const [duration, message] of [[900, "0.90 秒"], [undefined, "时长无法读取"]] as const) {
+for (const [duration, message] of [
+    [900, "0.90 秒"],
+    [undefined, "时长无法读取"],
+] as const) {
     test(`direct submission uses real metadata and rejects ${String(duration)} before upstream submission`, async () => {
         const mocks = mockGeneratedAudio(duration);
         try {
             await expect(createVideoGenerationTask(config, "test", [], [], [audio])).rejects.toThrow(message);
             expect(mocks.probe).toHaveBeenCalledTimes(1);
-        } finally { mocks.restore(); }
+        } finally {
+            mocks.restore();
+        }
     });
 }
 
@@ -82,7 +135,9 @@ test("concurrent references share a probe, while known duration and remote URLs 
         const remote = await resolveReferenceMediaDuration({ ...audio, storageKey: undefined, url: "https://external.example/audio.mp3" });
         expect(remote.durationMs).toBeUndefined();
         expect(mocks.blob).toHaveBeenCalledTimes(1);
-    } finally { mocks.restore(); }
+    } finally {
+        mocks.restore();
+    }
 });
 
 test("resource metadata avoids downloading media and probe failures remain unknown", async () => {
@@ -94,5 +149,7 @@ test("resource metadata avoids downloading media and probe failures remain unkno
         mocks.blob.mockRejectedValueOnce(new Error("unreadable"));
         const unresolved = await resolveReferenceMediaDuration(audio);
         expect(() => assertVideoCapability(profile, [], [], [unresolved], "5")).toThrow("时长无法读取");
-    } finally { mocks.restore(); }
+    } finally {
+        mocks.restore();
+    }
 });

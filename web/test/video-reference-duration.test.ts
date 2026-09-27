@@ -4,19 +4,22 @@ import { assertVideoCapability } from "../src/services/api/video-validation";
 import { explainGenerationError } from "../src/lib/generation-error";
 
 for (const protocol of ["newapi-channel-2", "newapi", "openai"] as const) {
-for (const model of ["seedance-2.5", "provider/seedance-2.0-fast"]) {
-test(`${protocol} ${model}: real profiles reject short and unknown reference duration`, () => {
-    const profile = modelCapabilityConfigFor({ channels: [{ id: "test", models: [model], baseUrl: protocol === "openai" ? "https://legacy.example.com" : "https://enterprise.beefapi.com", modelProfiles: [{ model, protocol }] }] }, `test::${model}`).video!;
-    const audio = (durationMs: number) => ({ id: "audio", name: "声音", type: "audio/mpeg", url: "https://example.com/a.mp3", durationMs });
-    expect(() => assertVideoCapability(profile, [], [], [audio(2500), audio(900)], "5")).toThrow("第 2 段参考音频时长为 0.90 秒");
-    expect(() => assertVideoCapability(profile, [], [], [audio(0)], "5")).toThrow("时长无法读取");
-    expect(() => assertVideoCapability(profile, [], [], [audio(2000)], "5")).not.toThrow();
-    const failure = explainGenerationError("第 2 段参考音频时长为 0.90 秒，需要 2–30 秒；请裁剪或更换这段素材后再提交");
-    expect(failure.category).toBe("invalid_params");
-    expect(failure.reason).toContain("第 2 段");
-    expect(failure.action).toContain("2–30");
-});
-}
+    for (const model of ["seedance-2.5", "provider/seedance-2.0-fast"]) {
+        test(`${protocol} ${model}: real profiles reject short and unknown reference duration`, () => {
+            const profile = modelCapabilityConfigFor(
+                { channels: [{ id: "test", models: [model], baseUrl: protocol === "openai" ? "https://legacy.example.com" : "https://enterprise.beefapi.com", modelProfiles: [{ model, protocol }] }] },
+                `test::${model}`,
+            ).video!;
+            const audio = (durationMs: number) => ({ id: "audio", name: "声音", type: "audio/mpeg", url: "https://example.com/a.mp3", durationMs });
+            expect(() => assertVideoCapability(profile, [], [], [audio(2500), audio(900)], "5")).toThrow("第 2 段参考音频时长为 0.90 秒");
+            expect(() => assertVideoCapability(profile, [], [], [audio(0)], "5")).toThrow("时长无法读取");
+            expect(() => assertVideoCapability(profile, [], [], [audio(2000)], "5")).not.toThrow();
+            const failure = explainGenerationError("第 2 段参考音频时长为 0.90 秒，需要 2–30 秒；请裁剪或更换这段素材后再提交");
+            expect(failure.category).toBe("invalid_params");
+            expect(failure.reason).toContain("第 2 段");
+            expect(failure.action).toContain("2–30");
+        });
+    }
 }
 
 test("persisted material duration explanation keeps actionable limits", () => {
