@@ -42,6 +42,19 @@ func TestModerationContract(t *testing.T) {
 }
 
 func TestGenericWrapperRefinementPreservesAuthoritativeCodes(t *testing.T) {
+	persisted := "生成音频未通过上游版权审核。请调整音乐或音频相关提示词；如使用了参考音频，请检查并更换后重新生成。"
+	for typeCode, category := range map[string]generation.FailureCategory{"authentication_error": generation.CategoryAuth, "permission_denied": generation.CategoryPermission} {
+		for _, field := range []string{"type", "status"} {
+			raw, _ := json.Marshal(map[string]any{"error": map[string]string{field: typeCode, "message": persisted}})
+			if got := generation.ClassifyText(string(raw)); got.Category != category {
+				t.Fatalf("authoritative type %s: %+v", typeCode, got)
+			}
+		}
+	}
+	raw, _ := json.Marshal(map[string]any{"error": map[string]string{"code": "moderation_output", "message": persisted}, "request_id": "req_outer123", "task_id": "task_outer123"})
+	if got := generation.ClassifyText(string(raw)); got.RequestID != "req_outer123" || got.TaskID != "task_outer123" {
+		t.Fatalf("outer IDs lost: %+v", got)
+	}
 	if got := generation.ClassifyText("The request failed because the output may contain sensitive information."); got.Category != generation.CategoryModerationOutput {
 		t.Fatalf("untyped output: %+v", got)
 	}

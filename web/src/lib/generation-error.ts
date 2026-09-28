@@ -476,8 +476,9 @@ function specialize(classified: Classified, fields: ExtractedFields): Classified
     // Only broad wrappers may be refined by a more specific provider message.
     const genericCode = ["", "unknown", "failed", "badrequest", "api_error", "upstream_error", "upstream_rejected", "invalid_request", "invalid_request_error", "invalid_parameter", "invalidparameter", "invalid_argument"].includes(normalizeCode(fields.code)) || /^\d{3}$/.test(fields.code);
     const persistedCopy = persistedModerationCopy(fields.message);
-    if (persistedCopy && (classified.category === persistedCopy.category || genericCode)) {
-        return { ...classified, ...classifyText(fields.message), providerCode: classified.providerCode };
+    if (persistedCopy && (classified.category === persistedCopy.category || (genericCode && ["unknown", "invalid_params"].includes(classified.category)))) {
+        const persisted = classifyText(fields.message);
+        return { ...classified, ...persisted, providerCode: classified.providerCode, requestId: classified.requestId || persisted.requestId, taskId: classified.taskId || persisted.taskId };
     }
     if (genericCode && ["unknown", "invalid_params"].includes(classified.category)) {
         const refined = categoryFromProviderMessage(fields.message);

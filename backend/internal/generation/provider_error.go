@@ -867,7 +867,7 @@ func moderationCategoryFromMessage(normalized string) FailureCategory {
 }
 
 func specializeModeration(failure *Failure, fields extractedFields) {
-	if f, ok := persistedModerationCopy(fields.Message); ok && (failure.Category == f.Category || genericProviderCode(fields.Code)) {
+	if f, ok := persistedModerationCopy(fields.Message); ok && (failure.Category == f.Category || (genericProviderCode(fields.Code) && (failure.Category == CategoryUnknown || failure.Category == CategoryInvalidParams))) {
 		failure.Category, failure.Reason, failure.Action = f.Category, f.Reason, f.Action
 		requestID, taskID := persistedReferenceIDs(fields.Message)
 		failure.RequestID = firstNonEmpty(failure.RequestID, requestID)

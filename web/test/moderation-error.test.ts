@@ -34,6 +34,17 @@ for (const fixture of fixtures) {
 }
 
 test("specific provider codes outrank incidental safety text; request echoes are not evidence", () => {
+    const persisted = `${fixtures[0].reason}。${fixtures[0].action}。`;
+    for (const [type, category] of [["authentication_error", "auth"], ["permission_denied", "permission"]]) {
+        expect(explainGenerationError({error:{type, message:persisted}}).category).toBe(category);
+        expect(explainGenerationError({error:{status:type, message:persisted}}).category).toBe(category);
+    }
+    const wrapped = explainGenerationError({error:{code:"moderation_output",message:persisted},request_id:"req_outer123",task_id:"task_outer123"});
+    expect(wrapped.requestId).toBe("req_outer123");
+    expect(wrapped.taskId).toBe("task_outer123");
+    const conflicting = explainGenerationError({error:{code:"moderation_output",message:persisted+"排查编号：任务 task_inner123 · 请求 req_inner123。"},request_id:"req_outer123",task_id:"task_outer123"});
+    expect(conflicting.requestId).toBe("req_outer123");
+    expect(conflicting.taskId).toBe("task_outer123");
     expect(explainGenerationError("The request failed because the output may contain sensitive information.").category).toBe("moderation_output");
     expect(explainGenerationError({error:{code:"invalid_api_key",message:fixtures[0].message}}).category).toBe("auth");
     expect(explainGenerationError({error:{code:"invalid_request_error",message:"invalid parameter"},prompt:fixtures[0].message}).category).toBe("invalid_params");
