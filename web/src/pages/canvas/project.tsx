@@ -95,6 +95,7 @@ import { CanvasLeaferGraphicsLayer } from "@/components/canvas/canvas-leafer-gra
 import { CanvasFreeformEmptyState, CanvasLinkedProjectEmptyState, CanvasShortDramaEmptyState, CanvasShortDramaGuide, CanvasStoryInputNodeContent, CanvasStylePlaceholderNodeContent } from "@/components/canvas/canvas-short-drama-entry";
 import { resolveCanvasEmptyStateKind } from "@/lib/canvas/canvas-starter";
 import { failedImageBatchChildren, markImageBatchRetrying, reconcileImageBatchRoot, restoreUnsubmittedImageBatchChild } from "@/lib/canvas/canvas-image-batch-retry";
+import { shouldBlockAutomaticRetry } from "@/lib/generation-error";
 import { createCanvasNode, getInputSummary, isHiddenBatchChild } from "@/lib/canvas/canvas-project-domain";
 import { canvasWorkspaceProjectId, listCanvasWorkspaceProjectCanvases } from "@/lib/canvas/canvas-workspace-project";
 import { deleteWorkspaceCanvasProjects } from "@/services/workspace-project-repository";
@@ -1244,6 +1245,7 @@ function InfiniteCanvasPage() {
         cropVideoNode,
         depthCaptureNode,
         retryDepthCaptureNode,
+        recoverDepthCaptureNodes,
         videoCropNodeId,
         closeFrameDialog,
         extractAudioFromVideo,
@@ -1305,6 +1307,13 @@ function InfiniteCanvasPage() {
         finishGenerationRequest,
         bindGenerationTask,
     });
+
+    useEffect(() => {
+        if (!projectLoaded) return;
+        const controller = new AbortController();
+        recoverDepthCaptureNodes(controller.signal);
+        return () => controller.abort();
+    }, [projectId, projectLoaded, recoverDepthCaptureNodes]);
 
     const handleNodesDeleted = useCallback(
         (removedIds: Set<string>, nextNodes: CanvasNodeData[], removedNodes: CanvasNodeData[]) => {
@@ -2490,16 +2499,19 @@ function InfiniteCanvasPage() {
     );
     const retryImageBatchChildren = useCallback(
         (rootId: string, children: CanvasNodeData[]) => {
-            const childIds = children.map((child) => child.id);
+            const retryableChildren = children.filter((child) => !shouldBlockAutomaticRetry({ code: child.metadata?.generationErrorCode || child.metadata?.taskErrorCode, message: child.metadata?.errorDetails }, child.metadata?.taskStage));
+            if (retryableChildren.length < children.length) message.warning("部分图片需要先处理失败原因，请打开对应节点查看");
+            if (!retryableChildren.length) return;
+            const childIds = retryableChildren.map((child) => child.id);
             setNodes((current) => markImageBatchRetrying(rootId, childIds, current));
             void Promise.allSettled(
-                children.map(async (child) => {
+                retryableChildren.map(async (child) => {
                     await handleRetryNode(child);
                     setNodes((current) => current.map((item) => (item.id === child.id ? restoreUnsubmittedImageBatchChild(item, child) : item)));
                 }),
             ).finally(() => reconcileImageBatchRootNode(rootId));
         },
-        [handleRetryNode, reconcileImageBatchRootNode, setNodes],
+        [handleRetryNode, message, reconcileImageBatchRootNode, setNodes],
     );
 
     const generateImageFromTextNode = useCallback(
@@ -2818,12 +2830,13 @@ function InfiniteCanvasPage() {
                 return;
             }
             if (node.type === CanvasNodeType.Image && node.metadata?.batchRootId) {
-                retryImageBatchChildren(node.metadata.batchRootId, [node]);
+                const rootId = node.metadata.batchRootId;
+                void handleRetryNode(node).finally(() => reconcileImageBatchRootNode(rootId));
                 return;
             }
             void handleRetryNode(node);
         },
-        [generateScriptRows, handleRetryNode, message, nodesRef, retryDepthCaptureNode, retryImageBatchChildren],
+        [generateScriptRows, handleRetryNode, message, nodesRef, reconcileImageBatchRootNode, retryDepthCaptureNode, retryImageBatchChildren],
     );
     const openCanvasNodeTaskDetails = useCallback(
         (node: CanvasNodeData) => {

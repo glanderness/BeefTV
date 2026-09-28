@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
 	"io"
 	"net/http"
@@ -126,6 +127,9 @@ type imageResponse struct {
 
 type providerError struct {
 	Message string `json:"message"`
+	Code    any    `json:"code"`
+	Type    string `json:"type"`
+	Param   string `json:"param"`
 }
 
 // providerPayloadError 在进程内保留上游原始原因，供协议兼容分支做机器判断；
@@ -244,104 +248,28 @@ func withProviderRequestKind(ctx context.Context, requestKind string) context.Co
 }
 
 func (e providerHTTPError) Error() string {
-	switch e.StatusCode {
-	case 524:
-		return "上游网关超时（524）：模型请求可能仍在服务端执行，请勿立即重试，请先到供应商后台核对任务状态"
-	case http.StatusBadRequest, http.StatusUnprocessableEntity:
-		return "模型服务拒绝了请求，请检查模型和参数"
-	case http.StatusPaymentRequired:
-		return "上游模型服务返回 HTTP 402：当前 API Key 所属账户的余额、额度或订阅权限不足，请检查渠道计费状态和模型权限"
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return "模型服务鉴权失败，请检查 API Key 和模型权限"
-	case http.StatusNotFound:
-		return "模型或模型接口不存在，请检查渠道配置"
-	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
-		return "模型服务响应超时，请稍后重试"
-	case http.StatusTooManyRequests:
-		return "模型服务请求过于频繁或额度不足，请稍后重试"
-	}
-	if e.StatusCode >= http.StatusInternalServerError {
-		return fmt.Sprintf("模型服务暂时不可用（HTTP %d）", e.StatusCode)
-	}
-	return fmt.Sprintf("模型服务请求失败（HTTP %d）", e.StatusCode)
+	return classifyProviderHTTP(e).UserMessage()
 }
 
 func providerUserFacingErrorMessage(err error) string {
 	if err == nil {
-		return "模型服务请求失败"
+		return generation.ClassifyError(nil).UserMessage()
 	}
-	if errors.Is(err, context.Canceled) {
-		return "模型请求已取消"
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return "模型服务响应超时，请稍后重试"
-	}
-	var appErr *AppError
-	if errors.As(err, &appErr) && strings.TrimSpace(appErr.Message) != "" {
-		return appErr.Message
-	}
-	var httpErr providerHTTPError
-	if errors.As(err, &httpErr) {
-		// 仅对参数校验和计费拒绝解析正文，且只返回白名单分类。
-		// 其他状态码的正文可能是网关 HTML、鉴权诊断或含密钥的内部信息。
-		switch httpErr.StatusCode {
-		case http.StatusBadRequest, http.StatusPaymentRequired, http.StatusUnprocessableEntity:
-			if message, ok := providerPayloadErrorCategory(httpErr.Body); ok {
-				if httpErr.StatusCode == http.StatusPaymentRequired {
-					return "上游模型服务返回 HTTP 402：" + message
-				}
-				return message
-			}
-		}
-		return httpErr.Error()
-	}
-	return "连接模型服务失败，请检查渠道地址和网络"
+	return classifyTaskFailure(err).UserMessage()
 }
 
-// providerPayloadErrorCategory 把上游失败正文归类为固定的用户可见原因。
-// 第二个返回值为 false 表示正文无法归类，调用方应退回到更通用的提示，
-// 不要因为归类失败就把正文本身当作错误信息。
-// 正文可能包含密钥或内部诊断信息，只能参与归类，不得回传用户或写入日志。
+// providerPayloadErrorCategory 把上游失败正文交给 generation 归类。
+// 第二个返回值为 false 表示正文没有稳定类目，调用方应退回 HTTP 兜底，不要回传原文。
 func providerPayloadErrorCategory(raw string) (string, bool) {
-	normalized := strings.ToLower(strings.TrimSpace(raw))
-	if normalized == "" {
+	failure := generation.ClassifyText(raw)
+	if failure.Category == generation.CategoryUnknown {
 		return "", false
 	}
-	switch {
-	// 真人肖像类目只匹配供应商错误码里的稳定标识，不扫描自然语言。
-	// 正文常常回显用户提示词，"likeness"、"肖像"这类词单独出现并不能证明
-	// 上游是因为真人形象拒绝，按词判断会把普通参数错误误报成肖像问题。
-	// 该类目排在安全审核之前：错误码已经足够具体，比通用审核提示更可行动。
-	case strings.Contains(normalized, "privacyinformation"), strings.Contains(normalized, "sensitivecontentdetected"):
-		return "输入素材疑似包含真人形象，该模型拒绝生成，请更换为非真人素材或改用其他模型", true
-	case strings.Contains(normalized, "safety"), strings.Contains(normalized, "moderation"), strings.Contains(normalized, "content policy"), strings.Contains(normalized, "blocked"):
-		return "请求内容未通过模型服务安全审核，请调整后重试", true
-	case strings.Contains(normalized, "balance"), strings.Contains(normalized, "quota"), strings.Contains(normalized, "credit"),
-		strings.Contains(normalized, "insufficient funds"), strings.Contains(normalized, "insufficient balance"), strings.Contains(normalized, "insufficient quota"):
-		return "当前 API Key 所属账户的余额或额度不足，请检查渠道余额、充值状态和配额", true
-	case strings.Contains(normalized, "subscription"), strings.Contains(normalized, "payment required"), strings.Contains(normalized, "billing plan"), strings.Contains(normalized, "account tier"):
-		return "当前账户的订阅或模型权限不足，请检查模型套餐、计费状态和账号权限", true
-	case strings.Contains(normalized, "model") && (strings.Contains(normalized, "not found") || strings.Contains(normalized, "permission") || strings.Contains(normalized, "access")):
-		return "模型不存在或当前渠道未获得模型权限", true
-	// 推理/思考模式模型通常禁止强制指定工具调用：DeepSeek 思考模式返回
-	// "Thinking mode does not support this tool_choice"，其他 OpenAI 兼容
-	// 供应商措辞类似。归为固定可行动原因；显式思考模式会在出站前省略
-	// tool_choice，未声明但由上游隐式开启思考时再按兼容序列重试。排在
-	// 通用参数类目之前，避免稳定标识落回笼统的"请检查模型和参数"。
-	case (strings.Contains(normalized, "thinking") || strings.Contains(normalized, "reasoning")) && strings.Contains(normalized, "tool_choice"),
-		strings.Contains(normalized, "tool_choice") && (strings.Contains(normalized, "not support") || strings.Contains(normalized, "unsupported")):
-		return "当前模型为思考/推理模式，不支持强制工具调用（tool_choice=required），请改用自动工具选择或更换非思考模式模型", true
-	case strings.Contains(normalized, "invalid"), strings.Contains(normalized, "parameter"), strings.Contains(normalized, "argument"):
-		return "模型服务拒绝了请求，请检查模型和参数", true
-	}
-	return "", false
+	return failure.UserMessage(), true
 }
 
 func providerPayloadErrorMessage(raw string) string {
-	if message, ok := providerPayloadErrorCategory(raw); ok {
-		return message
-	}
-	return "模型服务返回失败，请检查请求内容或渠道配置"
+	return generation.ClassifyText(raw).UserMessage()
 }
 
 func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string, taskProjectID string, taskType string, fallbackPrompt string, rawInput string) (map[string]interface{}, error) {
@@ -434,7 +362,10 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 			return nil, err
 		}
 	}
-	if input.Mode == "video" {
+	if input.Mode == "video" && resumedProviderRequestID(ctx) == "" {
+		if err := s.hydrateVideoReferenceMetadata(userID, &input); err != nil {
+			return nil, err
+		}
 		if err := s.validateResolvedVideoCapability(&input); err != nil {
 			return nil, err
 		}
@@ -448,7 +379,7 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 			return nil, err
 		}
 	}
-	if input.Mode == "video" && input.VideoCapability != nil {
+	if input.Mode == "video" && input.VideoCapability != nil && resumedProviderRequestID(ctx) == "" {
 		if err := validateVideoTask(input.VideoCapability, input); err != nil {
 			return nil, err
 		}
@@ -479,19 +410,23 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 }
 
 type providerMediaHydrationPolicy struct {
-	requireURL bool
-	preferURL  bool
+	requireURL  bool
+	preferURL   bool
+	preferHTTPS bool
 }
 
 func providerMediaHydrationPolicyFor(ctx context.Context, input canvasGenerationInput) providerMediaHydrationPolicy {
 	policy := providerMediaHydrationPolicy{preferURL: providerPrefersMediaURLs(input.Config.InterfaceType, input)}
-	// BeefAPI Enterprise's Seedance /videos contract accepts self-contained
-	// media values inside its provider-specific content items. Desktop resources
-	// therefore stay local until the request adapter serializes them and must not
-	// be forced through a public callback URL or object storage first.
+	if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(input.Config.InterfaceType)) {
+		return providerMediaHydrationPolicy{preferHTTPS: true}
+	}
+	// Prefer an existing HTTPS resource address when the workspace already has
+	// a public base. Local desktop without CANVAS_PUBLIC_BASE_URL still falls
+	// through to a bounded data URL; asset:// references are preserved.
 	if isBeefAPIVideoConfig(input.Config) && isSeedanceVideoConfig(input.Config) {
 		policy.requireURL = false
 		policy.preferURL = false
+		policy.preferHTTPS = true
 		return policy
 	}
 	// The channel-1 NewAPI profile also accepts data URLs in its media field.
@@ -767,6 +702,51 @@ func metadataStringValues(value any) map[string]string {
 	return values
 }
 
+// Read owned resource metadata before preflight, without downloading media.
+// Character/workflow references may carry only a resource storage key.
+func (s *Service) hydrateVideoReferenceMetadata(userID string, input *canvasGenerationInput) error {
+	for _, group := range [][]providerMedia{input.ReferenceImages, input.ReferenceVideos, input.ReferenceAudios} {
+		for index := range group {
+			media := &group[index]
+			if !strings.HasPrefix(media.StorageKey, "resource:") {
+				continue
+			}
+			resource, err := s.repo.ResourceForUser(userID, strings.TrimPrefix(media.StorageKey, "resource:"))
+			if err != nil {
+				return fmt.Errorf("读取任务参考资源失败：%w", err)
+			}
+			if resource.Status != "ready" {
+				return errors.New("任务参考资源尚未上传完成")
+			}
+			if resource.DurationMs > 0 {
+				media.DurationMs = resource.DurationMs
+			}
+			if resource.Width > 0 {
+				media.Width = resource.Width
+			}
+			if resource.Height > 0 {
+				media.Height = resource.Height
+			}
+			media.Bytes = resource.Size
+			if (media.Width <= 0 || media.Height <= 0) && resourceLooksLikeImage(resource, media) {
+				if _, body, openErr := s.OpenResource(userID, resource.ID); openErr == nil {
+					width, height, decodeErr := imageHeaderDimensions(body)
+					_ = body.Close()
+					if decodeErr == nil {
+						if media.Width <= 0 {
+							media.Width = width
+						}
+						if media.Height <= 0 {
+							media.Height = height
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Service) hydrateGenerationMedia(userID string, input *canvasGenerationInput, policy providerMediaHydrationPolicy) error {
 	groups := [][]providerMedia{input.ReferenceImages, input.ReferenceVideos, input.ReferenceAudios}
 	for _, group := range groups {
@@ -803,6 +783,20 @@ func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, poli
 	if s.IsLocalMode() && resourceUsesObjectStorage(resource) {
 		return errors.New("本地工作区检测到旧的远程素材记录，请重新导入到本地资源目录")
 	}
+	if policy.preferHTTPS {
+		if httpsURL, err := s.signedHTTPSPublicResourceURL(resource, time.Now().Add(providerResourceURLTTL)); err == nil {
+			media.URL = httpsURL
+			media.DataURL = ""
+			media.MimeType = firstNonEmpty(media.MimeType, resource.MimeType)
+			media.Bytes = resource.Size
+			media.Width = resource.Width
+			media.Height = resource.Height
+			if resource.DurationMs > 0 {
+				media.DurationMs = resource.DurationMs
+			}
+			return nil
+		}
+	}
 	useObjectURL := policy.requireURL || (policy.preferURL && resourceUsesObjectStorage(resource))
 	if useObjectURL {
 		if s.IsLocalMode() && policy.requireURL {
@@ -821,7 +815,9 @@ func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, poli
 		media.Bytes = resource.Size
 		media.Width = resource.Width
 		media.Height = resource.Height
-		media.DurationMs = resource.DurationMs
+		if resource.DurationMs > 0 {
+			media.DurationMs = resource.DurationMs
+		}
 		return nil
 	}
 	if strings.HasPrefix(strings.TrimSpace(media.DataURL), "data:") {
@@ -850,8 +846,20 @@ func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, poli
 	media.Bytes = int64(len(data))
 	media.Width = resource.Width
 	media.Height = resource.Height
-	media.DurationMs = resource.DurationMs
+	if resource.DurationMs > 0 {
+		media.DurationMs = resource.DurationMs
+	}
 	return nil
+}
+
+func resourceLooksLikeImage(resource *model.Resource, media *providerMedia) bool {
+	if resource != nil && (strings.EqualFold(resource.Kind, "image") || strings.HasPrefix(strings.ToLower(resource.MimeType), "image/")) {
+		return true
+	}
+	if media == nil {
+		return false
+	}
+	return strings.HasPrefix(strings.ToLower(firstNonEmpty(media.MimeType, media.Type)), "image/")
 }
 
 func resourceUsesObjectStorage(resource *model.Resource) bool {

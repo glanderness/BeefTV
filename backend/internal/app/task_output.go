@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	localtask "infinite-canvas/backend/internal/task"
@@ -24,11 +25,12 @@ func taskSummariesForOutput(tasks []model.Task) []TaskSummary {
 }
 
 func taskSummaryForOutput(task model.Task) TaskSummary {
-	errorCode := ""
-	if isContentModerationFailure(task.Error) {
+	errorCode := persistedFailureErrorCode(task.Error, task.Stage)
+	if errorCode == string(generation.CategoryUnknown) && !isContentModerationFailure(task.Error) {
+		errorCode = ""
+	}
+	if isContentModerationFailure(task.Error) && errorCode == "" {
 		errorCode = contentModerationErrorCode
-	} else if isProviderPaymentRequiredFailure(task.Error) {
-		errorCode = "provider_payment_required"
 	}
 	previewURL, previewKind, previewPosterURL := taskMediaPreviewWithPoster(task.ResultJSON, task.Type)
 	return TaskSummary{
@@ -48,6 +50,7 @@ func taskSummaryForOutput(task model.Task) TaskSummary {
 		ProviderCancelAttempts:    task.ProviderCancelAttempts,
 		ProviderCancelRequestedAt: task.ProviderCancelRequestedAt,
 		ProviderCancelledAt:       task.ProviderCancelledAt,
+		Error:                     safePersistedFailureMessage(task.Error),
 		ErrorCode:                 errorCode,
 		PreviewURL:                previewURL,
 		PreviewKind:               previewKind,
@@ -59,11 +62,6 @@ func taskSummaryForOutput(task model.Task) TaskSummary {
 		UpdatedAt:                 task.UpdatedAt,
 		ClientContext:             taskClientContext(task.InputJSON),
 	}
-}
-
-func isProviderPaymentRequiredFailure(value string) bool {
-	normalized := strings.ToLower(value)
-	return strings.Contains(normalized, "http 402") || strings.Contains(normalized, "402 payment required")
 }
 
 // 列表只暴露页面恢复所需的非敏感关联 ID，不下发完整任务输入或其他 metadata。
@@ -225,7 +223,19 @@ func taskForOutput(task model.Task) *model.Task {
 	task.LogicalModelRevisionID = ""
 	task.RouteID = ""
 	task.ChannelModelID = ""
+	task.ErrorCode = persistedFailureErrorCode(task.Error, task.Stage)
+	if task.ErrorCode == string(generation.CategoryUnknown) && !isContentModerationFailure(task.Error) {
+		task.ErrorCode = ""
+	}
+	task.Error = safePersistedFailureMessage(task.Error)
 	return &task
+}
+
+func safePersistedFailureMessage(message string) string {
+	if strings.TrimSpace(message) == "" {
+		return ""
+	}
+	return generation.ClassifyText(message).UserMessage()
 }
 
 func publicTaskInputJSON(raw string) string {

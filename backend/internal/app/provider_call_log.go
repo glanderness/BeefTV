@@ -25,24 +25,13 @@ func (s *Service) EnrichAPICallLog(log *model.ApiCallLog, responseBody []byte) {
 }
 
 func (s *Service) enrichAPICallLogFailureSummary(log *model.ApiCallLog, responseBody []byte) {
-	if log.Status != model.ApiCallStatusFailed || log.StatusCode < 400 {
+	if log.Status != model.ApiCallStatusFailed {
 		return
 	}
-	userMessage := providerUserFacingErrorMessage(providerHTTPError{StatusCode: log.StatusCode, Body: string(responseBody)})
-	if log.StatusCode == 402 {
-		// 402 正文经常同时回显账户、Key 或请求详情；日志只保留稳定错误码和白名单归类。
-		log.ErrorCode = "provider_payment_required"
-		log.Error = userMessage
-		return
-	}
-	detail := strings.TrimSpace(log.Error)
-	if detail == "" || detail == userMessage {
-		log.Error = userMessage
-		return
-	}
-	if !strings.Contains(detail, userMessage) {
-		log.Error = truncateRunes(userMessage+"；上游："+detail, 2_000)
-	}
+	failure := classifyProviderHTTP(providerHTTPError{StatusCode: log.StatusCode, Body: string(responseBody)})
+	// Persist only normalized diagnostics; provider messages may echo credentials or input.
+	log.ErrorCode = firstNonEmpty(failure.ProviderCode, failure.ErrorCode())
+	log.Error = failure.UserMessage()
 }
 
 func (s *Service) enrichAPICallLogPayload(log *model.ApiCallLog, payload map[string]any) {

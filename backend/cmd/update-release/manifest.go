@@ -14,8 +14,8 @@ import (
 
 const (
 	payloadSchema       = 1
-	defaultFeedURL      = "https://github.com/glanderness/BeefTV/releases/latest/download/desktop-update.json"
-	defaultDownloadHost = "https://github.com/glanderness/BeefTV/releases/download"
+	defaultFeedURL      = "https://updates.beefapi.com/beeftv/desktop-update.json"
+	defaultDownloadHost = "https://updates.beefapi.com/beeftv"
 	updaterImportPath   = "infinite-canvas/backend/internal/desktopupdate"
 )
 
