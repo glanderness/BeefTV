@@ -61,7 +61,11 @@ description: 签名清单、打包布局、密钥、发布工作流、回滚和�
 
 平台键为 `darwin-arm64`、`darwin-amd64`、`windows-amd64`。版本只接受稳定的 `vMAJOR.MINOR.PATCH`。应用会拒绝相同或更低的版本。
 
-Apple ad hoc / Developer ID / 公证只影响 Gatekeeper。现有 macOS 发布脚本仍使用 ad hoc 签名。没有 Apple 证书也可以做自动更新。Windows 构建需要支持 DWARF 5 的 UCRT64 GCC（binutils 2.37 或更新），见 `scripts/assert-windows-dwarf5-cgo.ps1`。
+现有 macOS 发布脚本使用 ad hoc 签名，没有 Developer ID 身份或 Apple 公证。更新器可以独立验签，但这不保证首次下载的应用能通过 Gatekeeper。要让用户无需手动放行，需要 Developer ID Application 签名及 Apple 公证；此前用户可按 [Apple 的说明](https://support.apple.com/zh-cn/102445)，在确认应用来源后于「隐私与安全性」中选择「仍要打开」。不要关闭整个系统的安全检查。
+
+安装包哈希和 `codesign --verify --deep --strict` 只能验证完整性。发布验收还应记录 `spctl --assess --type execute --verbose=4`，并在没有历史放行记录的 Mac 上验证浏览器下载后的首次启动。更换下载托管服务不能代替 Apple 公证。
+
+Windows 构建需要支持 DWARF 5 的 UCRT64 GCC（binutils 2.37 或更新），见 `scripts/assert-windows-dwarf5-cgo.ps1`。
 
 ## 密钥
 

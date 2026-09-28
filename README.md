@@ -59,6 +59,8 @@ Agent + 模型 + 创作工具
 
 ## 开始使用
 
+下载桌面版及 Mac 首次打开说明见 [快速开始](QUICKSTART.md#下载与首次打开)。当前 Mac 安装包尚未完成 Apple 公证，首次打开可能需要在「隐私与安全性」中手动允许。
+
 ```bash
 git clone https://github.com/glanderness/BeefTV.git
 cd BeefTV

@@ -139,7 +139,9 @@ backend\cmd\desktop\build\bin\plugin-packages\*.beeftv-plugin
 这是两件独立的事。
 
 - **更新签名**：Ed25519 签的是 `desktop-update.json` 里的清单。清单写明每个系统包的下载地址、SHA-256 和大小。应用用编译进去的公钥验签，再核对 zip 哈希。不依赖 Apple 证书，也不走业务云接口。
-- **Apple 签名 / 公证**：只影响 Gatekeeper 对 `.app` 的信任。现有 macOS 脚本仍使用 ad hoc `codesign --sign -`。Developer ID 和公证是可选的，不是自动更新生效的前提。
+- **Apple 签名 / 公证**：决定下载后的 `.app` 能否通过 Gatekeeper 的默认信任检查。现有 macOS 脚本仍使用 ad hoc `codesign --sign -`，没有 Developer ID 身份或 Apple 公证；首次手动安装可能被拦截。更新器本身不依赖 Apple 证书，但要让用户无需手动放行，需要 Developer ID Application 签名及 Apple 公证。首次安装指引见 [快速开始](../QUICKSTART.md#下载与首次打开)。
+
+发布验收必须分别记录安装包哈希、`codesign --verify --deep --strict` 和 `spctl --assess --type execute --verbose=4` 的结果。前两项通过不代表 Gatekeeper 放行；还需在没有历史放行记录的 Mac 上，通过浏览器下载、解压并从 Finder 首次打开验收。GitHub 与 Cloudflare 提供相同字节的包时，不会改变 Apple 对应用签名的判断。
 
 Windows 目前也不做 Authenticode 签名。SmartScreen 可能拦截首次手动安装。
 
