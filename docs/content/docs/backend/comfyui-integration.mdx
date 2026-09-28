@@ -1,0 +1,96 @@
+---
+title: ComfyUI 工作流
+---
+
+# ComfyUI 工作流
+
+BeefTV 可以连接**用户自托管或可信网络内的原生 ComfyUI**，把 API 格式工作流接进画布工作流节点，用于文生图、图生图与文生视频。
+
+## 与云端 ComfyUI 包装的区别
+
+仓库里有两个名字相近的能力，接入目标不同：
+
+| 名称 | 上游 | 说明 |
+| --- | --- | --- |
+| `plugin-packages/autodl-comfyui` | AutoDL.Art | 云端服务把 ComfyUI 工作流**包装成异步 REST 接口**，走声明式协议插件 |
+| 本文档的原生 ComfyUI | 用户自己的 ComfyUI | 直接调用 `/prompt`、`/history/{prompt_id}`、`/view` 三个原生端点 |
+
+原生 ComfyUI 无法用声明式协议插件表达：`/history/{prompt_id}` 以 `prompt_id` 作为**动态顶层 key**，产物是 `{filename, subfolder, type}` 而非 URL，需要再拼 `/view` 查询参数。因此它的执行逻辑落在宿主 Go 代码（`backend/internal/app/comfyui_provider.go`），生命周期仍由插件运行时统一管理（`comfyui-workflow-provider`）。
+
+## 前置条件：放行本机上游
+
+后端默认拒绝本机、私网和链路本地上游。ComfyUI 通常部署在本机，必须显式放行：
+
+```bash
+cd backend
+CANVAS_BACKEND_DATA_DIR=../.local/project-workbench-debug \
+CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS=127.0.0.1 \
+go run ./cmd/server
+```
+
+白名单只按**主机名**精确匹配，**端口不参与判断**：填 `127.0.0.1` 即可覆盖任意端口。该变量支持逗号分隔的多个主机名，不支持通配符或 CIDR。
+
+不要把 `CANVAS_ALLOW_PRIVATE_UPSTREAMS` 当作常规做法——它是全局开关，会一次性放开所有私网上游。
+
+## 在设置中配置
+
+1. 打开设置页的 **ComfyUI** 分区（也可从插件页的「ComfyUI 工作流」进入）。
+2. 填写 ComfyUI 地址，默认 `http://127.0.0.1:8188`。
+3. 选择用途（图片或视频）。
+4. 在 ComfyUI 里使用「导出（API 格式）」得到工作流 JSON，粘贴到设置页并点击**解析并补全字段**。
+5. 检查字段映射与提示词槽位，保存为条目。
+6. 回到画布，在工作流节点的「生成来源」中选择 ComfyUI，并选中该条目。
+
+工作流**必须包含输出节点**（`SaveImage`、`PreviewImage` 等）：ComfyUI 只在存在输出节点时才把产物写入 `/history` 的 `outputs`，否则任务会以「完成但没有返回产物」结束。
+
+启用插件本身使用用户级入口 `PUT /api/plugins/comfyui-workflow-provider/activation`（`POST /api/plugins/:id/enable` 是平台管理员接口，在本地 profile 下不可用）。
+
+## 字段映射与枚举补全
+
+解析工作流时会读取引用的节点类型，并向后端请求 **`POST /api/comfyui/object-info`** 裁剪后的节点定义。原始 `/object_info` 包含全部节点（本机实测 969 个、约 1.9 MB），服务端只返回工作流实际引用的节点，避免整包回传。
+
+补全规则：
+
+- `[["euler", "dpmpp_2m"], {...}]` 形态的枚举写入字段 `options`，画布按真实枚举校验取值。
+- `["INT", {min, max, step, default}]` 形态的范围写入 `min/max/step`。
+- **连线输入不会进入字段映射**：`CLIP`、`MODEL`、`LATENT`、`CONDITIONING` 等类型只能由上游节点提供，写成字面量会断开工作流拓扑并让 `/prompt` 校验失败。
+- **参考图槽位**：`LoadImage` 节点的 `image` 字段类型是 `COMBO`（input 目录的文件名枚举）而不是 `IMAGE`，不会走通用的动态来源推断，因此按节点类型**显式识别为参考图槽位**，并按出现顺序分配槽位号。多个 `LoadImage` 依次成为首帧、尾帧等，可在字段面板中调整。生成时宿主先把参考图上传到 ComfyUI 的 `input` 目录，再把返回的文件名写入该字段。
+- 提示词槽位按节点类型打分自动推断，会排除负向提示词模板与空文本，可在字段面板中手动调整。
+
+ComfyUI 的 `/prompt` 会按节点声明校验输入类型，因此提交前宿主会把字段值还原为工作流声明的 `INT`/`FLOAT`/`BOOLEAN`/`STRING` 类型，而不是统一按字符串发送。
+
+## 任务取消
+
+取消 BeefTV 任务会把请求传播到 ComfyUI，两步都只影响目标任务：
+
+1. `POST /queue` 带 `{"delete": [prompt_id]}` 移除**仍排队**的任务，精确且立即生效。
+2. `POST /interrupt` 带 `{"prompt_id": ...}` 中断**正在执行**的任务。
+
+`/interrupt` 必须带 `prompt_id`：不带该字段时 ComfyUI 会**全局中断**，在共享实例上会误伤他人的任务，宿主只使用精确形式。取消结果由后台对账确认：既不在队列也不在 history 表示排队中被删除；history 的 `status.messages` 含 `execution_interrupted` 表示执行中被中断。两者都判为取消成功。
+
+ComfyUI 只在**节点边界**检查中断标志，因此单个长节点（如高步数采样）执行期间，取消要等该节点结束才生效。
+
+## 安全边界
+
+- 服务地址、工作流 JSON 与字段映射由宿主保存并提交，插件本身不接触密钥。
+- ComfyUI 默认没有鉴权：请只在个人设备或可信网络内暴露该服务，不要把它直接发布到公网。
+- 宿主对 ComfyUI 的出站请求统一走 SSRF 校验、大小上限、并发槽与审计；节点定义读取同样受这些策略约束。
+- 本地工作区不会把参考素材上传到云端；原生 ComfyUI 也不需要该上传路径。
+
+## 当前限制
+
+以下能力尚未接入：
+
+- 视频与音频参考素材、蒙版（inpaint）：需要 ComfyUI 侧对应的加载节点与 `/upload/mask`。传入这些素材会**明确报错**，不会被静默丢弃。
+- 音频生成。
+- WebSocket 进度推送：宿主通过轮询 `/history/{prompt_id}` 获取状态，未完成时上游返回空对象，该状态按「等待中」处理而不是失败。
+
+## 故障排查
+
+| 现象 | 原因与处理 |
+| --- | --- |
+| 拉取节点定义失败，提示地址被拒绝 | 后端未放行该主机名，按上文设置 `CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS` |
+| 提交后长时间不返回产物 | 检查 ComfyUI 队列；宿主按图片 2 秒、视频 5 秒间隔轮询。首次运行含 checkpoint 冷加载，明显慢于后续 |
+| 提示「任务完成但没有返回产物」 | 工作流缺少 `SaveImage` / `PreviewImage` 等输出节点 |
+| 提交报节点校验错误 | 错误信息会带节点 ID 与消息，通常是字段类型或枚举取值与实际节点不匹配 |
+| 画布提示「暂不支持音频生成」 | ComfyUI 第一期只支持图片与视频 |

@@ -176,7 +176,9 @@ func (s *Service) providerCancellationInput(task *model.Task) (canvasGenerationI
 }
 
 func supportsProviderCancellation(interfaceType string) bool {
-	return interfaceType == string(model.ChannelInterfaceGeminiVeo) || model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(interfaceType))
+	return interfaceType == string(model.ChannelInterfaceGeminiVeo) ||
+		model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(interfaceType)) ||
+		isComfyUIInterface(interfaceType)
 }
 
 func cancelProviderTask(ctx context.Context, config providerConfig, providerRequestID string) error {
@@ -187,6 +189,8 @@ func cancelProviderTask(ctx context.Context, config providerConfig, providerRequ
 	case model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(config.InterfaceType)):
 		path := "/contents/generations/tasks/" + url.PathEscape(providerRequestID)
 		return deleteProviderTask(ctx, config, path)
+	case isComfyUIInterface(config.InterfaceType):
+		return cancelComfyUITask(ctx, config, providerRequestID)
 	default:
 		return errors.New("当前上游协议不支持取消")
 	}
@@ -251,6 +255,8 @@ func queryProviderCancellation(ctx context.Context, config providerConfig, provi
 		default:
 			return providerCancellationPending, firstNonEmpty(status, "unknown"), nil
 		}
+	case isComfyUIInterface(config.InterfaceType):
+		return queryComfyUICancellation(ctx, config, providerRequestID)
 	default:
 		return "", "", errors.New("当前上游协议不支持取消状态查询")
 	}

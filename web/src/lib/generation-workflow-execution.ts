@@ -1,11 +1,11 @@
-import { normalizeRunningHubCapability, type AiConfig, type RunningHubCapability, type RunningHubWorkflowKind, type WorkflowFieldMapping } from "@/stores/use-config-store";
+import { normalizeComfyUICapability, normalizeRunningHubCapability, type AiConfig, type RunningHubCapability, type RunningHubWorkflowKind, type WorkflowFieldMapping } from "@/stores/use-config-store";
 import { workflowProviderPluginEnabled } from "@/lib/plugins/builtin/workflows";
 import { usePluginStore } from "@/stores/use-plugin-store";
 
 export type GenerationWorkflowMode = "text" | "image" | "video" | "audio";
 
 export type GenerationWorkflowExecution = {
-	provider: "runninghub";
+	provider: "runninghub" | "comfyui";
     kind: RunningHubWorkflowKind;
     capability: RunningHubCapability;
     interfaceType: string;
@@ -54,6 +54,37 @@ export function resolveGenerationWorkflowExecution(config: AiConfig, mode: Gener
 
 		};
 	}
+
+    if (workflowProvider === "comfyui") {
+        if (!workflowProviderPluginEnabled(usePluginStore.getState().runtimeStatuses, "comfyui")) throw new Error("ComfyUI 工作流插件未启用");
+        const comfyui = config.comfyui;
+        const workflowId = comfyui.workflowId.trim();
+        // ComfyUI 是自托管服务，默认部署没有鉴权，因此只校验地址与工作流。
+        if (!comfyui.enabled || !comfyui.baseUrl.trim() || !workflowId) {
+            throw new Error("ComfyUI 配置不完整，请填写服务地址并选择已保存的工作流");
+        }
+        const workflow = comfyui.workflows.find((item) => item.workflowId === workflowId);
+        if (!workflow) throw new Error("当前 ComfyUI 工作流条目不存在，请重新选择已保存条目");
+        const capability = normalizeComfyUICapability(workflow.capability, normalizeComfyUICapability(comfyui.capability));
+        assertWorkflowCapability("ComfyUI", capability, mode);
+        if (!workflow.workflowJson || Object.keys(workflow.workflowJson).length === 0) {
+            throw new Error("当前 ComfyUI 工作流缺少 API 格式 JSON，请在设置页重新粘贴");
+        }
+        const name = workflow.title?.trim() || workflowId;
+        return {
+            provider: "comfyui",
+            kind: "workflow",
+            capability,
+            interfaceType: `comfyui-workflow-${capability}`,
+            name,
+            taskModel: workflowTaskModel("ComfyUI · ", name),
+            providerModel: workflowId,
+            workflowId: "",
+            webappId: "",
+            workflowJson: workflow.workflowJson,
+            workflowFields: workflow.fields || [],
+        };
+    }
 
 	throw new Error("未知工作流提供方");
 }

@@ -1,5 +1,5 @@
 import { App, Button, Form, Input, Popconfirm, Segmented, Select, Tooltip } from "antd";
-import { Pencil, Plus, RefreshCw, Trash2, Workflow } from "lucide-react";
+import { Boxes, Pencil, Plus, RefreshCw, Trash2, Workflow } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { ModelEditorModal } from "@/components/model-editor-modal";
@@ -20,9 +20,10 @@ type UserChannelConnection = "openai" | "gemini";
 type ChannelSettingsPaneProps = {
     onOpenModels?: () => void;
     onOpenRunningHub?: () => void;
+    onOpenComfyUI?: () => void;
 };
 
-export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelSettingsPaneProps) {
+export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub, onOpenComfyUI }: ChannelSettingsPaneProps) {
     const { message } = App.useApp();
     const config = useConfigStore((state) => state.config);
     const replaceConfig = useConfigStore((state) => state.replaceConfig);
@@ -91,6 +92,8 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
     };
     const userChannels = config.channels.filter((channel) => channel.scope !== "system");
     const runningHubReady = Boolean(config.runningHub.enabled && config.runningHub.baseUrl.trim() && config.runningHub.apiKey.trim() && config.runningHub.workflowId.trim());
+    // ComfyUI 是自托管服务，默认部署不需要 API Key。
+    const comfyUIReady = Boolean(config.comfyui.enabled && config.comfyui.baseUrl.trim() && config.comfyui.workflowId.trim());
 
     const updateChannels = (channels: ModelChannel[], baseConfig = config) => {
         replaceConfig(withChannels(baseConfig, channels));
@@ -252,11 +255,11 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                     </Button>
                 </div>
             </div>
-            {onOpenRunningHub ? (
+            {onOpenRunningHub || onOpenComfyUI ? (
                 <section className="settings-section mb-3">
                     <div className="mb-3">
                         <h3 className="text-sm font-semibold">个人工作流渠道</h3>
-                        <p className="mt-1 text-xs text-foreground/55">RunningHub 使用独立的云端工作流参数与执行通道。</p>
+                        <p className="mt-1 text-xs text-foreground/55">工作流渠道使用独立的参数映射与执行通道。</p>
                     </div>
                     <div className="grid gap-2 lg:grid-cols-2">
                         {onOpenRunningHub ? (
@@ -267,6 +270,16 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                                 status={runningHubReady ? `${config.runningHub.workflows.length} 个工作流已配置` : config.runningHub.enabled ? "待完成连接和工作流配置" : "未启用"}
                                 ready={runningHubReady}
                                 onOpen={onOpenRunningHub}
+                            />
+                        ) : null}
+                        {onOpenComfyUI ? (
+                            <WorkflowChannelEntry
+                                icon={<Boxes className="size-4" />}
+                                title="ComfyUI"
+                                description="本地或可信网络内的原生 ComfyUI"
+                                status={comfyUIReady ? `${config.comfyui.workflows.length} 个工作流已配置` : config.comfyui.enabled ? "待完成地址和工作流配置" : "未启用"}
+                                ready={comfyUIReady}
+                                onOpen={onOpenComfyUI}
                             />
                         ) : null}
                     </div>

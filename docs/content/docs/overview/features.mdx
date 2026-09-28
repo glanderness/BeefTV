@@ -352,6 +352,28 @@ SEO 标题、描述、可选关键词会投影到浏览器 metadata、Open Graph
 
 - `web/src/pages/projects/detail/editor.tsx`、`web/src/pages/projects/detail.tsx`：编辑器页面与路由入口。
 - `web/src/pages/projects/detail/overview.tsx`：制作流程步骤卡与成片完成度展示。
+
+## 一键成片（交付阶段）
+
+项目的「交付与打包」阶段（`/projects/:id/workflow/:unitId/delivery`）提供**一键成片**：不打开编辑器，直接按镜头顺序把本章已就绪的视频拼成整集 MP4，并导出 SRT 字幕。它面向“镜头都已生成、只想快速出一版成片”的场景；需要转场、配乐或精细裁剪时仍走剪辑成片。
+
+### 使用入口
+
+- 项目详情“制作概览 → 制作流程 → 交付与打包”步骤卡。
+- 成片时长取各镜头产物的实际时长（优先产物登记的 `durationSeconds`，缺失时回退镜头时长）；字幕来自镜头当前修订版本的对白。
+
+### 当前能力
+
+- **按序拼接**：按镜头 `position` 顺序累积时间轴，不留空隙；输出单个 MP4。
+- **SRT 字幕**：逐镜对白生成与视频片段对齐的字幕条目，可单独下载；本章未填写对白时字幕按钮禁用。
+- **缺片门禁**：仍有镜头缺少已选中的就绪视频时，按钮禁用并列出缺片镜头名——补黑场会让成片时长与分镜对不上，且缺片容易被忽略。
+- **结果持久化**：渲染结果写入交付阶段的 `outputJson`，刷新或换设备后仍可预览与下载。
+
+### 相关实现
+
+- `web/src/lib/timeline/shot-sequence-timeline.ts`：把镜头序列编成渲染用的 `TimelineProject`（含字幕片段）。
+- `web/src/pages/projects/detail/workflow-delivery.tsx`、`use-delivery-render.ts`：交付面板与渲染提交、轮询。
+- `backend/internal/app/task_render.go`：本地 ffmpeg 渲染执行器，成功时把产物登记回交付阶段。
 - `web/src/lib/timeline/`：时间线命令状态机、历史记录、命令 schema 与摘要（`editor-commands.ts`、`editor-history.ts`、`ai-command-schema.ts`、`timeline-summary.ts`）。
 - `web/src/stores/editor/editor-store.ts`：编辑器状态与快照持久化。
 - `web/src/lib/plugins/editor-slot-registry.ts`、`web/src/lib/plugins/builtin/editor/`：插槽注册链与内置预设插件。

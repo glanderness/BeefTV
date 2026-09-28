@@ -56,6 +56,8 @@ bun run dev
 
 `web/` 只使用 `bun.lock`。不要用 pnpm 或 npm 往同一套 `node_modules` 里再装一遍。
 
+需要接入本机 ComfyUI 时，额外向启动命令传入 `CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS=127.0.0.1` 放行本机上游。该白名单只按主机名精确匹配，端口不参与判断，且不支持通配符；详见 [ComfyUI 工作流](./comfyui-integration)。
+
 前端默认监听 `0.0.0.0:3000`，Vite 将 `/api` 和 OAuth 回调代理到 `127.0.0.1:8080`。如需修改代理目标，可设置 `VITE_API_PROXY_TARGET`。
 
 ## 时间线字幕转写（whisper.cpp）

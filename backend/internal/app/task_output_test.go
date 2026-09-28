@@ -138,6 +138,17 @@ func TestTaskClientContextProjectsShotWorkflow(t *testing.T) {
 	}
 }
 
+// 成片是单元级产物，没有 shotId；仍要下发上下文，否则刷新后找不到在途渲染任务。
+func TestTaskClientContextProjectsUnitLevelWorkflowWithoutShot(t *testing.T) {
+	context := taskClientContext(`{"metadata":{"domainProjectId":"project-1","unitId":"unit-1","workflowStepId":"step-delivery","artifactType":"delivery"}}`)
+	if context == nil || context.DomainProjectID != "project-1" || context.WorkflowStepID != "step-delivery" || context.ArtifactType != "delivery" {
+		t.Fatalf("unit-level task context was not decoded: %+v", context)
+	}
+	if context.ShotID != "" {
+		t.Fatalf("成片不应带镜头归属：%+v", context)
+	}
+}
+
 func TestTaskOutputResourceReadsPersistedMedia(t *testing.T) {
 	id, mediaType := taskOutputResource(`{"mode":"video","video":{"resourceId":"resource-1","storageKey":"resource:resource-1"}}`, "canvas_video")
 	if id != "resource-1" || mediaType != "video" {

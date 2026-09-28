@@ -7,6 +7,7 @@
     "http-api",
     "code-map",
     "backend-database",
+    "comfyui-integration",
     "task-runtime-stability",
     "generation-errors",
     "system-update",
