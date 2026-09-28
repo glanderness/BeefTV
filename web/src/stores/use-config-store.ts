@@ -744,35 +744,31 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
 }
 
 function beefApiVideoProtocol(model: string): ModelProtocol {
-    // BeefAPI's current media gateway exposes the working multimodal contract
-    // at /v1/video/generations. The legacy /v1/videos wrapper accepts text but
-    // rejects reference media with "unsupported video parameter media".
+    if (/^seedance-2\.(?:0|5)(?:-|$)/i.test(model)) return "openai-videos";
+    // Other BeefAPI media models retain their existing channel-2 contract.
     return "newapi-channel-2";
 }
 
-function beefApiSeedanceCapabilityConfig(model: string): ModelCapabilityConfig | undefined {
-    if (!model.startsWith("seedance-")) return undefined;
-    const profile = defaultModelCapabilityConfig("newapi-channel-2", model);
-    // BeefAPI currently accepts text/image references for Seedance, while
-    // video_urls are only supported by its Grok video profile. Do not expose
-    // reference_to_video for Seedance and let the UI reject that combination
-    // before it reaches the upstream API.
-    profile.video = {
-        ...profile.video!,
-        operations: ["text_to_video", "image_to_video"],
-        references: {
-            ...profile.video!.references,
-            maxImages: 9,
-            maxVideos: 0,
-            maxVideoBytes: 200 * 1024 * 1024,
-            maxVideoDurationSeconds: 0,
-            maxAudios: 0,
-            maxAudioBytes: 15 * 1024 * 1024,
-            maxAudioDurationSeconds: 0,
-        },
-        generateAudio: { supported: true, default: true },
-    };
-    return profile;
+function beefApiSeedanceCapabilityConfig(model: string, current?: ModelCapabilityConfig): ModelCapabilityConfig | undefined {
+    if (!/^seedance-2\.(?:0|5)(?:-|$)/i.test(model)) return current;
+    const video = current?.video;
+    const refs = video?.references;
+    // Older built-in profiles disabled all video/audio references on every
+    // hydration. Match that complete signature, not a user's individual limit.
+    const legacy = video?.operations?.length === 2 && video.operations.includes("text_to_video") && video.operations.includes("image_to_video") &&
+        refs?.maxImages === 9 && refs.maxVideos === 0 && refs.maxAudios === 0 &&
+        refs.maxVideoBytes === 200 * 1024 * 1024 && refs.maxAudioBytes === 15 * 1024 * 1024 &&
+        refs.maxVideoDurationSeconds === 0 && refs.maxAudioDurationSeconds === 0;
+    const defaults = defaultModelCapabilityConfig("openai-videos", model);
+    if (!current) return defaults;
+    if (!legacy) return current;
+    const next = defaults.video!;
+    return { ...current, video: { ...video!, operations: next.operations, references: { ...refs!,
+        maxImages: next.references.maxImages,
+        maxVideos: next.references.maxVideos, maxAudios: next.references.maxAudios,
+        maxVideoDurationSeconds: next.references.maxVideoDurationSeconds,
+        maxAudioDurationSeconds: next.references.maxAudioDurationSeconds,
+    } } };
 }
 
 function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
@@ -826,7 +822,7 @@ function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
             model,
             capability: "video",
             protocol: beefApiVideoProtocol(model),
-            capabilityConfig: beefApiSeedanceCapabilityConfig(model) || current?.capabilityConfig,
+            capabilityConfig: beefApiSeedanceCapabilityConfig(model, current?.capabilityConfig),
         });
     }
     return { ...channel, models, modelProfiles: Array.from(existing.values()) };

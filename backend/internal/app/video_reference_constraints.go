@@ -28,7 +28,7 @@ const (
 
 func isSeedance2Family(protocol, modelName string) bool {
 	normalizedProtocol := strings.TrimSpace(protocol)
-	if normalizedProtocol != "newapi-channel-2" && normalizedProtocol != "newapi" && normalizedProtocol != "openai" && !model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(normalizedProtocol)) {
+	if normalizedProtocol != "newapi-channel-2" && normalizedProtocol != "newapi" && normalizedProtocol != "openai" && normalizedProtocol != "openai-videos" && !model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(normalizedProtocol)) {
 		return false
 	}
 	name := strings.ToLower(strings.TrimSpace(modelName))

@@ -9,6 +9,12 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.4
+
+- Restore Seedance image, video and audio references for built-in BeefAPI models after catalog import and configuration reload.
+- Migrate the old built-in zero-reference profile while preserving unrelated custom limits, and align Seedance submission with the Videos API.
+- Recognize Seedance capabilities for OpenAI Videos model profiles in both frontend and backend validation.
+
 ## v1.6.3
 
 - Preserve explicit first/last-frame roles and adaptive aspect ratios for Seedance 2.5, including official model aliases and BeefAPI Enterprise requests.
