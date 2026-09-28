@@ -17,6 +17,12 @@ All notable public changes to BeefTV are documented in this file.
 - Manual creation and generation keep their existing authorization, quoting, approval, idempotency and cancellation behaviour on the canvas and in the creation workspace; canvas editing and connections, projects, assets, local storage, model channels, the built-in BeefAPI connection and the v1.6.0 depth workflow are unchanged. The retired Agent approval and memory endpoints are removed together with the rest of `/agent/*`.
 - Remove the unused local `AgentPort` wiring, the test-only `generation.Engine`/`Deps` wrapper that had no production caller, and the unreferenced experimental `cmd/mcp` stdio entry.
 - Simplify the core CI gates to the checks that guard the local product surface.
+## v1.6.1
+
+- Explain input and output moderation failures by text, image, video and audio, including copyright, privacy and counterfeit-content restrictions.
+- Preserve specific failure guidance and request IDs when reloading task history; avoid attributing general moderation failures to real-person references.
+- Distinguish upstream billing problems, configured usage limits, concurrency limits and model permissions, including errors wrapped in generic request codes.
+- Keep uncertain submissions and unchanged moderation failures from automatically generating another request.
 
 ## v1.6.0
 

@@ -1,4 +1,5 @@
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
+import { moderationErrorCopy, persistedModerationCopy } from "./moderation-error";
 
 export const CONTENT_MODERATION_ERROR_CODE = "sensitive_words_detected";
 
@@ -8,6 +9,7 @@ export const GENERATION_ERROR_CATEGORIES = [
     "quota_user",
     "quota_upstream",
     "quota_unknown",
+    "quota_limit",
     "moderation_input",
     "moderation_reference",
     "moderation_output",
@@ -71,9 +73,10 @@ const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
     quota_user: { reason: "当前账号额度不足", action: "请检查账号余额或联系管理员调整额度后重试" },
     quota_upstream: { reason: "模型供应商拒绝了计费或额度相关请求", action: "请到供应商核对账单与额度后，再决定是否重试" },
     quota_unknown: { reason: "模型服务拒绝了计费或额度相关请求", action: "请到当前渠道或模型供应商核对账单与额度后，再决定是否重试" },
+    quota_limit: { reason: "模型调用已达到设置的用量上限", action: "请检查当前渠道的用量或预算限制，调整后再试" },
     moderation_input: { reason: "提示词或参考素材未通过内容安全审核", action: "请调整提示词或参考素材后重新生成" },
-    moderation_reference: { reason: "参考图未通过内容安全审核", action: "请更换参考图或调整提示词后重新生成" },
-    moderation_output: { reason: "生成结果未通过内容安全审核", action: "请调整提示词或参考图后重新生成" },
+    moderation_reference: { reason: "参考素材未通过内容安全审核", action: "请检查并更换参考素材后重新生成" },
+    moderation_output: { reason: "生成结果未通过内容安全审核", action: "请调整提示词或参考素材后重新生成" },
     invalid_params: { reason: "模型不接受当前参数", action: "请检查模型、尺寸、时长、格式或数量后重试" },
     context_too_long: { reason: "输入内容超出模型长度限制", action: "请缩短提示词或减少参考内容后重试" },
     input_inaccessible: { reason: "参考素材无法读取", action: "请检查素材后重试" },
@@ -95,6 +98,13 @@ const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
 };
 
 const PROVIDER_CODE_CATEGORIES: Record<string, GenerationErrorCategory> = {
+    accountoverdueerror: "quota_upstream",
+    "operationdenied.serviceoverdue": "quota_upstream",
+    setlimitexceeded: "quota_limit",
+    inflightbatchsizeexceeded: "concurrency",
+    modelnotopen: "permission",
+    "operationdenied.servicenotopen": "permission",
+    contentsecuritydetectionerror: "provider_unavailable",
     invalid_reference_audio: "invalid_params",
     insufficient_user_quota: "quota_user",
     no_available_channel: "provider_unavailable",
@@ -404,6 +414,10 @@ function classifyHttp(status: number | undefined, body: unknown): Classified {
 function classifyText(raw: string): Classified {
     const text = raw.trim();
     if (!text) return { category: "unknown", retryable: false };
+    const moderationCopy = persistedModerationCopy(text);
+    if (moderationCopy) {
+        return { ...moderationCopy, requestId: sanitizeDebugId(text.match(/请求 ([A-Za-z0-9._:-]{6,127})/)?.[1]), taskId: sanitizeDebugId(text.match(/任务 ([A-Za-z0-9._:-]{6,127})/)?.[1]), retryable: false };
+    }
     const durationCopy = referenceDurationCopy(text);
     if (durationCopy) {
         const debug = text.match(/。排查编号：([^。]+)。?$/)?.[1] || "";
@@ -426,8 +440,6 @@ function classifyText(raw: string): Classified {
             retryable: false,
         };
     }
-    const persisted = matchPersistedCategory(text);
-    if (persisted) return { category: persisted, uncertain: ["timeout", "download_failed", "submission_uncertain"].includes(persisted), retryable: false };
     if (HTML_BODY.test(text)) {
         const status = extractExplicitHttpStatus(text);
         if (status) return classifyHttp(status, "");
@@ -443,6 +455,8 @@ function classifyText(raw: string): Classified {
         if (fromMessage) return specialize({ category: fromMessage, providerCode: sanitizeProviderCode(fields.code), requestId: sanitizeDebugId(fields.requestId), taskId: sanitizeDebugId(fields.taskId) }, fields);
     }
     if (/^[{[]/.test(text)) return { category: "unknown", providerCode: sanitizeProviderCode(fields.code), requestId: sanitizeDebugId(fields.requestId), taskId: sanitizeDebugId(fields.taskId), retryable: false };
+    const persisted = matchPersistedCategory(text);
+    if (persisted) return { category: persisted, uncertain: ["timeout", "download_failed", "submission_uncertain"].includes(persisted), retryable: false };
     if (isMalformedText(text)) return { category: "malformed_response", retryable: false };
     const fromFull = categoryFromProviderMessage(text);
     if (fromFull) return specialize({ category: fromFull }, { ...emptyFields(), message: text });
@@ -458,6 +472,24 @@ function classifyText(raw: string): Classified {
 
 function specialize(classified: Classified, fields: ExtractedFields): Classified {
     fields = { ...fields, message: sanitizeProviderText(fields.message) };
+    classified.requestId ||= sanitizeDebugId(fields.message.match(/\brequest\s*id:\s*([A-Za-z0-9_-]{6,127})\b/i)?.[1]);
+    // Only broad wrappers may be refined by a more specific provider message.
+    const genericCode =
+        ["", "unknown", "failed", "badrequest", "api_error", "upstream_error", "upstream_rejected", "invalid_request", "invalid_request_error", "invalid_parameter", "invalidparameter", "invalid_argument"].includes(normalizeCode(fields.code)) ||
+        /^\d{3}$/.test(fields.code);
+    const persistedCopy = persistedModerationCopy(fields.message);
+    if (persistedCopy && (classified.category === persistedCopy.category || (genericCode && ["unknown", "invalid_params"].includes(classified.category)))) {
+        const persisted = classifyText(fields.message);
+        return { ...classified, ...persisted, providerCode: classified.providerCode, requestId: classified.requestId || persisted.requestId, taskId: classified.taskId || persisted.taskId };
+    }
+    if (genericCode && ["unknown", "invalid_params"].includes(classified.category)) {
+        const refined = categoryFromProviderMessage(fields.message);
+        if (refined) classified.category = refined;
+    }
+    if (isModerationCategory(classified.category) || (genericCode && ["unknown", "invalid_params"].includes(classified.category))) {
+        const moderationCopy = moderationErrorCopy(fields.code, fields.message);
+        if (moderationCopy) return { ...classified, ...moderationCopy, retryable: false };
+    }
     const audioOrDuration = referenceAudioCopy(fields.message, normalizeCode(fields.code) === "invalid_reference_audio") || referenceDurationCopy(fields.message);
     if (audioOrDuration) return { ...classified, category: "invalid_params", ...audioOrDuration, retryable: false };
     const mediaCopy = referenceMediaConstraintCopy(fields.message);
@@ -467,12 +499,6 @@ function specialize(classified: Classified, fields: ExtractedFields): Classified
         if (refined === "context_too_long" || refined === "input_inaccessible" || refined === "input_too_large" || refined === "model_missing") classified.category = refined;
     }
     if (isModerationCategory(classified.category) && !["moderation_reference", "moderation_output"].includes(fields.code)) classified.category = moderationCategoryFromMessage(`${fields.message} ${fields.code}`.toLowerCase());
-    const code = normalizeCode(fields.code);
-    if (code.includes("privacyinformation") || code.includes("sensitivecontentdetected")) {
-        classified.category = "moderation_reference";
-        classified.reason = "输入素材疑似包含真人形象，该模型拒绝生成";
-        classified.action = "请更换为非真人素材或改用其他模型";
-    }
     const normalized = `${fields.message} ${fields.code}`.toLowerCase();
     if (classified.category === "invalid_params") {
         const duration = fields.message.match(/duration\s+(?:must|should)\s+be\s+between\s+(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)?\s+and\s+(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b/i);
@@ -636,7 +662,9 @@ function categoryFromProviderCode(...values: string[]): GenerationErrorCategory 
         if (!normalized || normalized === "0" || normalized === "success" || normalized === "ok") continue;
         if ((GENERATION_ERROR_CATEGORIES as readonly string[]).includes(normalized)) return normalized as GenerationErrorCategory;
         if (PROVIDER_CODE_CATEGORIES[normalized]) return PROVIDER_CODE_CATEGORIES[normalized];
-        if (normalized.includes("privacyinformation") || normalized.includes("sensitivecontentdetected")) return "moderation_reference";
+        const moderationCopy = moderationErrorCopy(normalized, "");
+        if (moderationCopy) return moderationCopy.category;
+        if (/^sensitivecontentdetected(?:\.|$)/.test(normalized)) return "moderation_input";
         if (normalized.includes("content_filter") || normalized.includes("contentpolicy") || normalized.includes("sensitive_words")) return "moderation_input";
         if (normalized.includes("insufficient") && (normalized.includes("quota") || normalized.includes("balance"))) return "quota_unknown";
         if (normalized.includes("rate_limit") || normalized.includes("throttl")) return "throttled";
@@ -676,6 +704,8 @@ function categoryFromProviderMessage(raw: string): GenerationErrorCategory | "" 
         return "invalid_params";
     if (((normalized.includes("thinking") || normalized.includes("reasoning")) && normalized.includes("tool_choice")) || (normalized.includes("tool_choice") && (normalized.includes("not support") || normalized.includes("unsupported"))))
         return "invalid_params";
+    const moderationCopy = moderationErrorCopy("", normalized);
+    if (moderationCopy) return moderationCopy.category;
     if (containsContentSafety(normalized)) return moderationCategoryFromMessage(normalized);
     if (normalized.includes("insufficient_quota") || ((normalized.includes("quota") || normalized.includes("balance") || normalized.includes("额度") || normalized.includes("余额") || normalized.includes("欠费")) && !normalized.includes("rate")))
         return normalized.includes("arrearage") || normalized.includes("billing_hard_limit") ? "quota_upstream" : "quota_unknown";

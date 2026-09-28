@@ -5,12 +5,23 @@ import { taskAttentionReason, taskRetryBlocked } from "../src/pages/tasks/task-s
 import { resolveMetadataReferences } from "../src/lib/canvas/canvas-project-generation";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 import type { GenerationTask } from "../src/services/api/task-center";
+import moderationFixtures from "../../fixtures/moderation-errors.json";
 
 const rejection = { code: "content_policy_violation", message: "opaque" };
 const task: GenerationTask = { id: "task-failure", type: "canvas_image", status: "failed", prompt: "draw", attempts: 1, createdAt: "2026-09-26T00:00:00Z", updatedAt: "2026-09-26T00:00:00Z", errorCode: "content_policy_violation", error: "opaque" };
 const image = (id: string, storageKey: string): CanvasNodeData => ({ id, type: CanvasNodeType.Image, title: id, position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { content: `https://example.test/${id}.png`, storageKey } });
 
 describe("canvas generation failure consumers", () => {
+    test("task cards and restored canvas retain specific moderation guidance", () => {
+        for (const fixture of moderationFixtures) {
+            const error = `${fixture.reason}。${fixture.action}。排查编号：请求 req_moderation_123。`;
+            const failedTask = { ...task, error, errorCode: fixture.category };
+            expect(taskAttentionReason(failedTask)).toContain(fixture.reason);
+            expect(taskAttentionReason(failedTask)).toContain(fixture.action);
+            expect(canvasTaskFailureMetadata(failedTask).errorDetails).toBe(error);
+            expect(taskRetryBlocked(failedTask)).toBe(true);
+        }
+    });
     test("actual connected reference, rather than the source image itself, controls moderation retry", () => {
         const source = image("source", "resource:source");
         const first = image("reference-a", "resource:a");
@@ -83,7 +94,7 @@ describe("canvas generation failure consumers", () => {
     });
 
     test("task cards preserve a machine-readable failure code alongside an opaque message", () => {
-        expect(taskAttentionReason({ ...task, errorCode: "moderation_reference" })).toContain("参考图");
+        expect(taskAttentionReason({ ...task, errorCode: "moderation_reference" })).toContain("参考素材");
         expect(taskRetryBlocked({ ...task, errorCode: "download_failed" })).toBe(true);
         expect(taskRetryBlocked({ ...task, errorCode: "invalid_params" })).toBe(true);
         expect(taskRetryBlocked({ ...task, errorCode: "throttled" })).toBe(false);

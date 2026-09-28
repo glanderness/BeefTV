@@ -23,6 +23,7 @@ const (
 	CategoryQuotaUser           FailureCategory = "quota_user"
 	CategoryQuotaUpstream       FailureCategory = "quota_upstream"
 	CategoryQuotaUnknown        FailureCategory = "quota_unknown"
+	CategoryQuotaLimit          FailureCategory = "quota_limit"
 	CategoryModerationInput     FailureCategory = "moderation_input"
 	CategoryModerationReference FailureCategory = "moderation_reference"
 	CategoryModerationOutput    FailureCategory = "moderation_output"
@@ -82,9 +83,10 @@ var categoryCopies = map[FailureCategory]categoryCopy{
 	CategoryQuotaUser:           {Reason: "当前账号额度不足", Action: "请检查账号余额，或联系管理员调整额度后重试"},
 	CategoryQuotaUpstream:       {Reason: "模型供应商拒绝了计费或额度相关请求", Action: "请到供应商核对账单与额度后，再决定是否重试"},
 	CategoryQuotaUnknown:        {Reason: "模型服务拒绝了计费或额度相关请求", Action: "请到当前渠道或模型供应商核对账单与额度后，再决定是否重试"},
-	CategoryModerationInput:     {Reason: "提示词或参考素材未通过内容安全审核", Action: "请修改提示词或参考图后重新生成"},
-	CategoryModerationReference: {Reason: "参考图未通过内容安全审核", Action: "请更换参考图或调整提示词后重新生成"},
-	CategoryModerationOutput:    {Reason: "生成结果未通过内容安全审核", Action: "请调整提示词或参考图后重新生成"},
+	CategoryQuotaLimit:          {Reason: "模型调用已达到设置的用量上限", Action: "请检查当前渠道的用量或预算限制，调整后再试"},
+	CategoryModerationInput:     {Reason: "提示词或参考素材未通过内容安全审核", Action: "请调整提示词或参考素材后重新生成"},
+	CategoryModerationReference: {Reason: "参考素材未通过内容安全审核", Action: "请检查并更换参考素材后重新生成"},
+	CategoryModerationOutput:    {Reason: "生成结果未通过内容安全审核", Action: "请调整提示词或参考素材后重新生成"},
 	CategoryInvalidParams:       {Reason: "模型不接受当前参数", Action: "请检查模型、尺寸、时长、格式或数量后重试"},
 	CategoryContextTooLong:      {Reason: "输入内容超出模型长度限制", Action: "请缩短提示词或减少参考内容后重试"},
 	CategoryInputInaccessible:   {Reason: "参考素材无法读取", Action: "请检查素材后重试"},
@@ -127,6 +129,13 @@ var (
 )
 
 var providerCodeCategories = map[string]FailureCategory{
+	"contentsecuritydetectionerror":    CategoryProviderUnavailable,
+	"accountoverdueerror":              CategoryQuotaUpstream,
+	"operationdenied.serviceoverdue":   CategoryQuotaUpstream,
+	"setlimitexceeded":                 CategoryQuotaLimit,
+	"inflightbatchsizeexceeded":        CategoryConcurrency,
+	"modelnotopen":                     CategoryPermission,
+	"operationdenied.servicenotopen":   CategoryPermission,
 	"invalid_api_key":                  CategoryAuth,
 	"invalid_authentication":           CategoryAuth,
 	"authentication_error":             CategoryAuth,
@@ -428,6 +437,10 @@ func ClassifyText(raw string) Failure {
 	if text == "" {
 		return normalizeFailure(failure)
 	}
+	if f, ok := persistedModerationCopy(text); ok {
+		f.RequestID, f.TaskID = persistedReferenceIDs(text)
+		return normalizeFailure(f)
+	}
 	if copy, ok := referenceDurationCopy(text); ok {
 		requestID, taskID := persistedReferenceIDs(text)
 		return normalizeFailure(Failure{Category: CategoryInvalidParams, Reason: copy.Reason, Action: copy.Action, RequestID: requestID, TaskID: taskID})
@@ -466,7 +479,6 @@ func ClassifyText(raw string) Failure {
 			failure.FromCode = true
 			refineInvalidParams(&failure, fields)
 			specializeModeration(&failure, fields)
-			specializeLikeness(&failure, fields)
 			specializeThinkingToolChoice(&failure, fields)
 			specializeDurationRange(&failure, fields)
 			specializeMediaConstraints(&failure, fields)
@@ -752,8 +764,11 @@ func categoryFromProviderCode(values ...string) (FailureCategory, bool) {
 		if category, ok := providerCodeCategories[normalized]; ok {
 			return category, true
 		}
-		if strings.Contains(normalized, "privacyinformation") || strings.Contains(normalized, "sensitivecontentdetected") {
-			return CategoryModerationReference, true
+		if f, ok := moderationErrorCopy(normalized, ""); ok {
+			return f.Category, true
+		}
+		if normalized == "sensitivecontentdetected" || strings.HasPrefix(normalized, "sensitivecontentdetected.") {
+			return CategoryModerationInput, true
 		}
 		if strings.Contains(normalized, "content_filter") || strings.Contains(normalized, "contentpolicy") || strings.Contains(normalized, "datainspection") || strings.Contains(normalized, "sensitive_words") {
 			return CategoryModerationInput, true
@@ -784,6 +799,9 @@ func categoryFromProviderMessage(raw string) (FailureCategory, bool) {
 	normalized := strings.ToLower(strings.TrimSpace(promptEchoPattern.ReplaceAllString(raw, "")))
 	if normalized == "" {
 		return "", false
+	}
+	if f, ok := moderationErrorCopy("", normalized); ok {
+		return f.Category, true
 	}
 	switch {
 	case durationRangePattern.MatchString(normalized),
@@ -849,6 +867,24 @@ func moderationCategoryFromMessage(normalized string) FailureCategory {
 }
 
 func specializeModeration(failure *Failure, fields extractedFields) {
+	if f, ok := persistedModerationCopy(fields.Message); ok && (failure.Category == f.Category || (genericProviderCode(fields.Code) && (failure.Category == CategoryUnknown || failure.Category == CategoryInvalidParams))) {
+		failure.Category, failure.Reason, failure.Action = f.Category, f.Reason, f.Action
+		requestID, taskID := persistedReferenceIDs(fields.Message)
+		failure.RequestID = firstNonEmpty(failure.RequestID, requestID)
+		failure.TaskID = firstNonEmpty(failure.TaskID, taskID)
+		return
+	}
+	if failure.RequestID == "" {
+		if m := regexp.MustCompile(`(?i)\brequest\s*id:\s*([A-Za-z0-9_-]{6,127})\b`).FindStringSubmatch(sanitizeProviderText(fields.Message)); len(m) == 2 {
+			failure.RequestID = sanitizeDebugID(m[1])
+		}
+	}
+	if failure.IsModeration() || ((failure.Category == CategoryUnknown || failure.Category == CategoryInvalidParams) && genericProviderCode(fields.Code)) {
+		if f, ok := moderationErrorCopy(fields.Code, sanitizeProviderText(fields.Message)); ok {
+			failure.Category, failure.Reason, failure.Action = f.Category, f.Reason, f.Action
+			return
+		}
+	}
 	if !failure.IsModeration() {
 		return
 	}
@@ -858,29 +894,29 @@ func specializeModeration(failure *Failure, fields extractedFields) {
 		}
 	}
 	normalized := strings.ToLower(fields.Message + " " + fields.Code)
-	if strings.Contains(normalizeCode(fields.Code), "privacyinformation") || strings.Contains(normalizeCode(fields.Code), "sensitivecontentdetected") {
-		failure.Category = CategoryModerationReference
-		return
-	}
 	if (strings.Contains(normalized, "prompt") || strings.Contains(normalized, "提示词")) && (strings.Contains(normalized, "reference image") || strings.Contains(normalized, "input image") || strings.Contains(normalized, "参考")) {
 		failure.Category = CategoryModerationInput
 		failure.Reason = "提示词或参考素材未通过内容安全审核"
-		failure.Action = "请修改提示词或参考图后重新生成"
+		failure.Action = "请调整提示词或参考素材后重新生成"
 		return
 	}
 	failure.Category = moderationCategoryFromMessage(normalized)
 }
 
-func specializeLikeness(failure *Failure, fields extractedFields) {
-	code := normalizeCode(fields.Code)
-	if strings.Contains(code, "privacyinformation") || strings.Contains(code, "sensitivecontentdetected") {
-		failure.Reason = "输入素材疑似包含真人形象，该模型拒绝生成"
-		failure.Action = "请更换为非真人素材或改用其他模型"
-		failure.Category = CategoryModerationReference
+func genericProviderCode(code string) bool {
+	switch normalizeCode(code) {
+	case "", "unknown", "failed", "badrequest", "api_error", "upstream_error", "upstream_rejected", "invalid_request", "invalid_request_error", "invalid_parameter", "invalidparameter", "invalid_argument":
+		return true
 	}
+	return regexp.MustCompile(`^\d{3}$`).MatchString(code)
 }
 
 func refineInvalidParams(failure *Failure, fields extractedFields) {
+	if genericProviderCode(fields.Code) && (failure.Category == CategoryUnknown || failure.Category == CategoryInvalidParams) {
+		if category, ok := categoryFromProviderMessage(fields.Message); ok {
+			failure.Category = category
+		}
+	}
 	if failure.Category != CategoryInvalidParams {
 		return
 	}

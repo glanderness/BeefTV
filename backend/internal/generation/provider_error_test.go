@@ -88,7 +88,7 @@ func TestClassifyHTTP451SafetyBody(t *testing.T) {
 	if !failure.IsModeration() {
 		t.Fatalf("451 safety body category = %s", failure.Category)
 	}
-	if !strings.Contains(failure.UserMessage(), "请修改提示词或参考图") && !strings.Contains(failure.UserMessage(), "请更换参考图") {
+	if !strings.Contains(failure.UserMessage(), "请调整提示词或参考素材") {
 		t.Fatalf("user message = %q", failure.UserMessage())
 	}
 }
@@ -267,8 +267,8 @@ func TestBeefAPIErrorCodeInventory(t *testing.T) {
 	if err := json.Unmarshal(data, &inventory); err != nil {
 		t.Fatal(err)
 	}
-	if len(inventory) != 43 {
-		t.Fatalf("BeefAPI error code inventory has %d entries, want 43", len(inventory))
+	if len(inventory) != 50 {
+		t.Fatalf("BeefAPI error code inventory has %d entries, want 50", len(inventory))
 	}
 	for code, category := range inventory {
 		t.Run(code, func(t *testing.T) {
