@@ -474,7 +474,9 @@ function specialize(classified: Classified, fields: ExtractedFields): Classified
     fields = { ...fields, message: sanitizeProviderText(fields.message) };
     classified.requestId ||= sanitizeDebugId(fields.message.match(/\brequest\s*id:\s*([A-Za-z0-9_-]{6,127})\b/i)?.[1]);
     // Only broad wrappers may be refined by a more specific provider message.
-    const genericCode = ["", "unknown", "failed", "badrequest", "api_error", "upstream_error", "upstream_rejected", "invalid_request", "invalid_request_error", "invalid_parameter", "invalidparameter", "invalid_argument"].includes(normalizeCode(fields.code)) || /^\d{3}$/.test(fields.code);
+    const genericCode =
+        ["", "unknown", "failed", "badrequest", "api_error", "upstream_error", "upstream_rejected", "invalid_request", "invalid_request_error", "invalid_parameter", "invalidparameter", "invalid_argument"].includes(normalizeCode(fields.code)) ||
+        /^\d{3}$/.test(fields.code);
     const persistedCopy = persistedModerationCopy(fields.message);
     if (persistedCopy && (classified.category === persistedCopy.category || (genericCode && ["unknown", "invalid_params"].includes(classified.category)))) {
         const persisted = classifyText(fields.message);

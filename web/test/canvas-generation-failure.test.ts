@@ -15,7 +15,7 @@ describe("canvas generation failure consumers", () => {
     test("task cards and restored canvas retain specific moderation guidance", () => {
         for (const fixture of moderationFixtures) {
             const error = `${fixture.reason}。${fixture.action}。排查编号：请求 req_moderation_123。`;
-            const failedTask = {...task, error, errorCode: fixture.category};
+            const failedTask = { ...task, error, errorCode: fixture.category };
             expect(taskAttentionReason(failedTask)).toContain(fixture.reason);
             expect(taskAttentionReason(failedTask)).toContain(fixture.action);
             expect(canvasTaskFailureMetadata(failedTask).errorDetails).toBe(error);
