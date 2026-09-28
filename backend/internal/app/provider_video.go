@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/protocol"
 )
 
 func (s *Service) validateResolvedVideoCapability(input *canvasGenerationInput) error {
@@ -324,14 +325,15 @@ func seedancePollStatusAndURL(state map[string]interface{}) (string, string) {
 // beefAPIVideoRequestBody implements BeefAPI Enterprise's model-specific
 // /v1/videos contract. Seedance reference mode uses top-level content items;
 // image/reference_images are Grok fields and must not be reused for Seedance.
-// A single Seedance first frame intentionally keeps the proven image field.
+// 2.5 uses explicit roles even for one frame; legacy 2.0 retains its image field.
 func beefAPIVideoRequestBody(input canvasGenerationInput) (map[string]interface{}, error) {
+	options := seedanceTaskOptions(input)
 	resolution := videoResolutionNameRequest(input.VideoCapability, input.Config.VQuality)
 	if resolution == "" {
 		resolution = normalizeVideoResolution(input.Config.VQuality)
 	}
 	referenceMode := metadataString(input.Metadata, "videoEditOperation") == "reference_to_video" ||
-		len(input.ReferenceImages) > 1 || len(input.ReferenceVideos) > 0 || len(input.ReferenceAudios) > 0
+		len(input.ReferenceImages) > 1 || len(input.ReferenceVideos) > 0 || len(input.ReferenceAudios) > 0 || (isSeedance25Model(input.Config.Model) && len(input.ReferenceImages) > 0)
 	if referenceMode {
 		content := make([]map[string]interface{}, 0, len(input.ReferenceImages)+len(input.ReferenceVideos)+len(input.ReferenceAudios))
 		for _, image := range input.ReferenceImages {
@@ -340,7 +342,7 @@ func beefAPIVideoRequestBody(input canvasGenerationInput) (map[string]interface{
 				return nil, err
 			}
 			content = append(content, map[string]interface{}{
-				"type": "image_url", "image_url": map[string]interface{}{"url": url}, "role": videoImageRole(input, image),
+				"type": "image_url", "image_url": map[string]interface{}{"url": url}, "role": seedanceTaskImageRole(input, image),
 			})
 		}
 		for _, video := range input.ReferenceVideos {
@@ -362,7 +364,7 @@ func beefAPIVideoRequestBody(input canvasGenerationInput) (map[string]interface{
 			})
 		}
 		metadata := map[string]interface{}{
-			"ratio": normalizeSeedanceRatio(input.Config.Size),
+			"ratio": options.AspectRatio,
 		}
 		if videoCapabilitySupportsAudio(input) {
 			metadata["generate_audio"] = parseBool(input.Config.VideoGenerateAudio, true)
@@ -372,7 +374,7 @@ func beefAPIVideoRequestBody(input canvasGenerationInput) (map[string]interface{
 		}
 		return map[string]interface{}{
 			"model": input.Config.Model, "prompt": seedanceVideosPromptText(input),
-			"seconds":    strconv.Itoa(normalizeSeedanceVideosDuration(input.Config.VideoSeconds)),
+			"seconds":    strconv.Itoa(options.Duration),
 			"resolution": resolution, "content": content, "metadata": metadata,
 		}, nil
 	}
@@ -418,7 +420,7 @@ func runSeedanceAgentPlanVideoTask(ctx context.Context, input canvasGenerationIn
 		if err != nil {
 			return nil, err
 		}
-		if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(input.Config.InterfaceType)) {
+		if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(input.Config.InterfaceType)) && !isSeedance25Model(input.Config.Model) {
 			for _, item := range content {
 				if item["type"] == "image_url" {
 					item["role"] = "reference_image"
@@ -431,6 +433,10 @@ func runSeedanceAgentPlanVideoTask(ctx context.Context, input canvasGenerationIn
 			Ratio:      normalizeSeedanceRatio(input.Config.Size),
 			Resolution: normalizeSeedanceResolution(input.Config.VQuality, input.Config.Model),
 			Duration:   normalizeSeedanceDuration(input.Config.VideoSeconds),
+		}
+		if isSeedance25Model(input.Config.Model) {
+			options := seedanceTaskOptions(input)
+			body.Ratio, body.Duration = options.AspectRatio, options.Duration
 		}
 		if videoCapabilitySupportsAudio(input) {
 			value := parseBool(input.Config.VideoGenerateAudio, true)
@@ -496,7 +502,11 @@ func seedanceContent(input canvasGenerationInput) ([]map[string]interface{}, err
 		if err != nil {
 			return nil, err
 		}
-		content = append(content, map[string]interface{}{"type": "image_url", "image_url": map[string]interface{}{"url": url}, "role": videoImageRole(input, image)})
+		role := videoImageRole(input, image)
+		if isSeedance25Model(input.Config.Model) {
+			role = seedanceTaskImageRole(input, image)
+		}
+		content = append(content, map[string]interface{}{"type": "image_url", "image_url": map[string]interface{}{"url": url}, "role": role})
 	}
 	for _, video := range input.ReferenceVideos {
 		url, err := mediaReferenceURL(video)
@@ -548,6 +558,10 @@ func seedanceVideosRequestBody(input canvasGenerationInput) (seedanceVideosReque
 		Prompt:      seedanceVideosPromptText(input),
 		AspectRatio: normalizeSeedanceVideosRatio(input.Config.Size),
 		Duration:    normalizeSeedanceVideosDuration(input.Config.VideoSeconds),
+	}
+	options := seedanceTaskOptions(input)
+	if isSeedance25Model(input.Config.Model) {
+		body.AspectRatio, body.Duration = options.AspectRatio, options.Duration
 	}
 	if videoCapabilitySupportsAudio(input) {
 		value := parseBool(input.Config.VideoGenerateAudio, true)
@@ -619,6 +633,40 @@ func seedanceVideosPromptText(input canvasGenerationInput) string {
 
 func videoImageRole(input canvasGenerationInput, image providerMedia) string {
 	return videoImageRoleOrDefault(input, image, "reference_image")
+}
+
+func seedanceTaskImageRole(input canvasGenerationInput, image providerMedia) string {
+	role := videoImageRole(input, image)
+	if !isSeedance25Model(input.Config.Model) {
+		return role
+	}
+	if role == "reference_image" && metadataString(input.Metadata, "videoEditOperation") != "reference_to_video" &&
+		metadataString(input.Metadata, "videoStartFrameNodeId") == "" && metadataString(input.Metadata, "videoEndFrameNodeId") == "" &&
+		len(input.ReferenceVideos) == 0 && len(input.ReferenceAudios) == 0 {
+		for index, candidate := range input.ReferenceImages {
+			if candidate.ID == image.ID && candidate.DataURL == image.DataURL && candidate.URL == image.URL {
+				if index == 0 {
+					return "first_frame"
+				}
+				if index == 1 && len(input.ReferenceImages) == 2 {
+					return "last_frame"
+				}
+				break
+			}
+		}
+	}
+	return role
+}
+
+func seedanceTaskOptions(input canvasGenerationInput) protocol.GenerationRequest {
+	r := protocol.GenerationRequest{Model: input.Config.Model, AspectRatio: normalizeSeedanceRatio(input.Config.Size), Duration: normalizeSeedanceDuration(input.Config.VideoSeconds), Operation: metadataString(input.Metadata, "videoEditOperation")}
+	for _, image := range input.ReferenceImages {
+		r.Images = append(r.Images, protocol.MediaReference{Role: seedanceTaskImageRole(input, image)})
+	}
+	for range input.ReferenceVideos {
+		r.Videos = append(r.Videos, protocol.MediaReference{})
+	}
+	return protocol.NormalizeSeedanceTaskOptions(r)
 }
 
 func videoImageRoleOrDefault(input canvasGenerationInput, image providerMedia, fallback string) string {

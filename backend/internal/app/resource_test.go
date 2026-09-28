@@ -235,9 +235,13 @@ func TestBeefAPILocalVideoReferenceHydratesInlineForFlatRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	image, _ := body["image"].(map[string]interface{})
+	content := body["content"].([]map[string]interface{})
+	image, _ := content[0]["image_url"].(map[string]interface{})
 	if !strings.HasPrefix(fmt.Sprint(image["url"]), "data:image/png;base64,") {
-		t.Fatalf("image = %#v, want inline image data URL", body["image"])
+		t.Fatalf("image = %#v, want inline image data URL", image)
+	}
+	if content[0]["role"] != "first_frame" || body["metadata"].(map[string]interface{})["ratio"] != "adaptive" {
+		t.Fatal("hydration lost frame constraints")
 	}
 }
 

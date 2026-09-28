@@ -251,6 +251,9 @@ func protocolRequestFromInput(input canvasGenerationInput) protocol.GenerationRe
 			}
 		}
 	}
+	if input.Mode == "video" && isSeedanceVideoConfig(input.Config) {
+		request = protocol.NormalizeSeedanceTaskOptions(request)
+	}
 	return request
 }
 
@@ -303,6 +306,9 @@ func protocolVideoImageReferences(input canvasGenerationInput) []protocol.MediaR
 	for index, value := range input.ReferenceImages {
 		item := protocolMediaReference(value, "image", index)
 		item.Role = videoImageRoleOrDefault(input, value, fallbackRole)
+		if isSeedance25Model(input.Config.Model) && item.Role == "" {
+			item.Role = seedanceTaskImageRole(input, value)
+		}
 		if item.URL != "" || item.DataURL != "" {
 			result = append(result, item)
 		}

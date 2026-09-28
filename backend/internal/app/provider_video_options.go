@@ -249,11 +249,7 @@ func normalizeSeedanceRatio(value string) string {
 }
 
 func normalizeSeedanceVideosRatio(value string) string {
-	ratio := normalizeSeedanceRatio(value)
-	if ratio == "adaptive" {
-		return "16:9"
-	}
-	return ratio
+	return normalizeSeedanceRatio(value)
 }
 
 func normalizeSeedanceResolution(value string, _ string) string {

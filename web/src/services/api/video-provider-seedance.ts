@@ -1,4 +1,5 @@
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
+import { seedanceTaskOptions } from "@/lib/seedance-task-constraints";
 import { isVolcengineArkVideoProtocol } from "@/lib/model-protocols";
 import { boolConfig, buildSeedancePromptText, isArkPlanBaseUrl, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution } from "@/lib/seedance-video";
 import { getMediaBlob } from "@/services/file-storage";
@@ -16,13 +17,23 @@ export function isSeedanceConfig(config: ResolvedAiConfig) {
     return isVolcengineArkVideoProtocol(config.interfaceType) || isSeedanceVideoConfig(config);
 }
 
-export async function createSeedanceTask(deps: VideoProviderDeps, config: ResolvedAiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
+export async function createSeedanceTask(
+    deps: VideoProviderDeps,
+    config: ResolvedAiConfig,
+    model: string,
+    prompt: string,
+    references: ReferenceImage[],
+    videoReferences: ReferenceVideo[],
+    audioReferences: ReferenceAudio[],
+    options?: RequestOptions,
+): Promise<VideoGenerationTask> {
     const profile = modelCapabilityConfigFor(config, model).video;
     if (profile) assertVideoCapability(profile, references, videoReferences, audioReferences, String(config.videoSeconds || "5"));
     const isVolcengineArk = isVolcengineArkVideoProtocol(config.interfaceType);
-    const payload = isVolcengineArk || isArkPlanBaseUrl(config.baseUrl)
-        ? await buildSeedanceAgentPlanPayload(config, model, prompt, references, videoReferences, audioReferences, deps, options)
-        : await buildSeedanceVideosPayload(config, model, prompt, references, videoReferences, audioReferences, deps, options);
+    const payload =
+        isVolcengineArk || isArkPlanBaseUrl(config.baseUrl)
+            ? await buildSeedanceAgentPlanPayload(config, model, prompt, references, videoReferences, audioReferences, deps, options)
+            : await buildSeedanceVideosPayload(config, model, prompt, references, videoReferences, audioReferences, deps, options);
 
     try {
         const raw = await deps.transport.post<ApiEnvelope<SeedanceTask>>(seedanceApiUrl(config), payload, options);
@@ -68,12 +79,20 @@ async function buildSeedanceAgentPlanPayload(config: ResolvedAiConfig, model: st
         ? await buildVolcengineArkContent(prompt, references, videoReferences, audioReferences, deps, options)
         : await buildSeedanceContent(config, prompt, references, videoReferences, audioReferences, deps, options);
     if (!content.length) throw new Error("请输入视频提示词，或连接参考图片/视频/音频");
+    const taskOptions = seedanceTaskOptions(
+        model,
+        normalizeSeedanceRatio(config.size),
+        normalizeSeedanceDuration(config.videoSeconds),
+        content.map((item) => String(item.role || "")),
+        videoReferences.length,
+        options?.videoEditOperation,
+    );
     return {
         model: modelOptionName(model),
         content,
-        ratio: normalizeSeedanceRatio(config.size),
+        ratio: taskOptions.ratio,
         resolution: normalizeSeedanceResolution(config.vquality, modelOptionName(model)),
-        duration: normalizeSeedanceDuration(config.videoSeconds),
+        duration: taskOptions.duration,
         ...(profile.generateAudio.supported ? { generate_audio: boolConfig(config.videoGenerateAudio, profile.generateAudio.default) } : {}),
         ...(profile.watermark.supported ? { watermark: boolConfig(config.videoWatermark, profile.watermark.default) } : {}),
     };
@@ -104,13 +123,22 @@ async function buildSeedanceVideosPayload(config: AiConfig, model: string, promp
     const imagePlan = resolveVideoImageReferences(references, options, { videoCount: videoReferences.length, audioCount: audioReferences.length });
     const videoUrls = await Promise.all(videoReferences.map((media) => resolveSeedanceVideosMediaUrl(media, deps)));
     const audioUrls = await Promise.all(audioReferences.map((media) => resolveSeedanceVideosMediaUrl(media, deps, "audio")));
-    const ratio = normalizeSeedanceRatio(config.size);
-    const duration = normalizeSeedanceDuration(config.videoSeconds);
+    const { ratio, duration } = seedanceTaskOptions(
+        model,
+        normalizeSeedanceRatio(config.size),
+        normalizeSeedanceDuration(config.videoSeconds),
+        imagePlan.map(({ role }) => role),
+        videoReferences.length,
+        options?.videoEditOperation,
+    );
     const imagePayload: Record<string, unknown> = {};
     if (options?.videoEditOperation === "reference_to_video") {
         if (imageUrls.length) imagePayload.reference_image_urls = imageUrls;
     } else if (hasExplicitVideoFrames(options)) {
-        imagePayload.image_urls = orderedImageUrls(imageUrls, imagePlan.map(({ role }) => role));
+        imagePayload.image_urls = orderedImageUrls(
+            imageUrls,
+            imagePlan.map(({ role }) => role),
+        );
     } else if (imageUrls.length) {
         imagePayload.image_url = imageUrls[0];
         if (imageUrls.length > 1) imagePayload.reference_image_urls = imageUrls.slice(1);
@@ -118,7 +146,7 @@ async function buildSeedanceVideosPayload(config: AiConfig, model: string, promp
     return {
         model: modelOptionName(model),
         prompt: prompt.trim(),
-        aspect_ratio: ratio === "adaptive" ? "16:9" : ratio,
+        aspect_ratio: ratio,
         duration,
         ...(profile.generateAudio.supported ? { generate_audio: boolConfig(config.videoGenerateAudio, profile.generateAudio.default) } : {}),
         ...imagePayload,

@@ -432,6 +432,10 @@ func ClassifyError(err error) Failure {
 }
 
 func ClassifyText(raw string) Failure {
+	if copy, ok := persistedTaskConstraintCopy(raw); ok {
+		requestID, taskID := persistedReferenceIDs(raw)
+		return normalizeFailure(Failure{Category: CategoryInvalidParams, Reason: copy.Reason, Action: copy.Action, RequestID: requestID, TaskID: taskID})
+	}
 	failure := Failure{Category: CategoryUnknown}
 	text := strings.TrimSpace(raw)
 	if text == "" {
@@ -958,6 +962,23 @@ func referenceDurationCopy(text string) (categoryCopy, bool) {
 
 func specializeMediaConstraints(failure *Failure, fields extractedFields) {
 	message := promptEchoPattern.ReplaceAllString(fields.Message, "")
+	if failure.Category == CategoryInvalidParams || failure.Category == CategoryUnknown {
+		if copy, ok := persistedTaskConstraintCopy(message); ok {
+			failure.Category, failure.Reason, failure.Action = CategoryInvalidParams, copy.Reason, copy.Action
+			requestID, taskID := persistedReferenceIDs(message)
+			if failure.RequestID == "" {
+				failure.RequestID = requestID
+			}
+			if failure.TaskID == "" {
+				failure.TaskID = taskID
+			}
+			return
+		}
+		if copy, ok := taskConstraintCopy(fields.Code + " " + message); ok {
+			failure.Category, failure.Reason, failure.Action = CategoryInvalidParams, copy.Reason, copy.Action
+			return
+		}
+	}
 	if copy, ok := referenceMediaConstraintCopy(message); ok {
 		if strings.Contains(copy.Reason, "过大") {
 			failure.Category = CategoryInputTooLarge

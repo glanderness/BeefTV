@@ -1,5 +1,6 @@
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
 import { moderationErrorCopy, persistedModerationCopy } from "./moderation-error";
+import { taskConstraintCopy, persistedTaskConstraintCopy } from "./task-constraint-error";
 
 export const CONTENT_MODERATION_ERROR_CODE = "sensitive_words_detected";
 
@@ -414,6 +415,8 @@ function classifyHttp(status: number | undefined, body: unknown): Classified {
 function classifyText(raw: string): Classified {
     const text = raw.trim();
     if (!text) return { category: "unknown", retryable: false };
+    const taskCopy = persistedTaskConstraintCopy(text);
+    if (taskCopy) return { category: "invalid_params", ...taskCopy, requestId: sanitizeDebugId(text.match(/请求 ([A-Za-z0-9._:-]{6,127})/)?.[1]), taskId: sanitizeDebugId(text.match(/任务 ([A-Za-z0-9._:-]{6,127})/)?.[1]), retryable: false };
     const moderationCopy = persistedModerationCopy(text);
     if (moderationCopy) {
         return { ...moderationCopy, requestId: sanitizeDebugId(text.match(/请求 ([A-Za-z0-9._:-]{6,127})/)?.[1]), taskId: sanitizeDebugId(text.match(/任务 ([A-Za-z0-9._:-]{6,127})/)?.[1]), retryable: false };
@@ -473,6 +476,16 @@ function classifyText(raw: string): Classified {
 function specialize(classified: Classified, fields: ExtractedFields): Classified {
     fields = { ...fields, message: sanitizeProviderText(fields.message) };
     classified.requestId ||= sanitizeDebugId(fields.message.match(/\brequest\s*id:\s*([A-Za-z0-9_-]{6,127})\b/i)?.[1]);
+    const taskConstraint = persistedTaskConstraintCopy(fields.message) || taskConstraintCopy(`${fields.code} ${fields.message}`);
+    if (taskConstraint && ["unknown", "invalid_params"].includes(classified.category))
+        return {
+            ...classified,
+            category: "invalid_params",
+            ...taskConstraint,
+            requestId: classified.requestId || sanitizeDebugId(fields.message.match(/请求 ([A-Za-z0-9._:-]{6,127})/)?.[1]),
+            taskId: classified.taskId || sanitizeDebugId(fields.message.match(/任务 ([A-Za-z0-9._:-]{6,127})/)?.[1]),
+            retryable: false,
+        };
     // Only broad wrappers may be refined by a more specific provider message.
     const genericCode =
         ["", "unknown", "failed", "badrequest", "api_error", "upstream_error", "upstream_rejected", "invalid_request", "invalid_request_error", "invalid_parameter", "invalidparameter", "invalid_argument"].includes(normalizeCode(fields.code)) ||
