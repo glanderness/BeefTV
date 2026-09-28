@@ -132,7 +132,7 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 	taskService := localtask.New(localKernel)
 	localRoot, err := localapp.New(localapp.Options{
 		Workspace: localKernel, Projects: projectService, Assets: assetService, Tasks: taskService,
-		Generation: taskService, ProviderConfig: providerConfig, Agent: localKernel, Lifecycle: taskService,
+		Generation: taskService, ProviderConfig: providerConfig, Lifecycle: taskService,
 	})
 	if err != nil {
 		cleanupService()

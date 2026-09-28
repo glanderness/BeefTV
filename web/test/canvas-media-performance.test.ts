@@ -80,7 +80,8 @@ describe("large canvas media rendering", () => {
 
     test("keeps inactive video nodes on a viewport-gated static first frame", () => {
         const inactivePreviewSource = canvasNodeContentSource.match(/function InactiveVideoPreview[\s\S]*?\n}\n\nfunction VideoPreviewPlayButton/)?.[0] || "";
-        expect(canvasNodeContentSource).toContain("if (previewUrl || !nearViewport || (!node.metadata?.content && !node.metadata?.storageKey) || !updateMetadataRef.current)");
+        expect(canvasNodeContentSource).toContain("if (!previewNeedsHydration || !nearViewport || (!node.metadata?.content && !node.metadata?.storageKey) || !updateMetadataRef.current)");
+        expect(canvasNodeContentSource).toContain("canvasVideoPreviewNeedsHydration(node)");
         expect(canvasNodeContentSource).not.toContain("hydrateMediaPreview");
         expect(inactivePreviewSource).not.toContain("<video");
         expect(inactivePreviewSource).toContain("<VideoPreviewPlayButton");

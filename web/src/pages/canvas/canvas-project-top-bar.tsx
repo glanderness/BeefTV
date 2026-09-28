@@ -47,8 +47,6 @@ type CanvasTopBarProps = {
     mediaPerformanceMode: CanvasMediaPerformanceMode;
     onMediaPerformanceModeChange: (mode: CanvasMediaPerformanceMode) => void;
     onOpenSearch: () => void;
-    onOpenAgent?: () => void;
-    agentOpen?: boolean;
     projectContext?: CanvasContextSummary & { projectId: string; projectName: string };
     onEnterFocusMode: () => void;
     shortDramaGuide?: { progress: CanvasShortDramaProgress; collapsed: boolean; onToggle: () => void };
@@ -92,8 +90,6 @@ export function CanvasTopBar({
     mediaPerformanceMode,
     onMediaPerformanceModeChange,
     onOpenSearch,
-    onOpenAgent,
-    agentOpen = false,
     projectContext,
     onEnterFocusMode,
     shortDramaGuide,
@@ -171,7 +167,7 @@ export function CanvasTopBar({
 
     return (
         <>
-            <div data-agent-open={agentOpen ? "true" : "false"} className="canvas-topbar pointer-events-none absolute inset-x-0 top-0 z-[var(--z-toolbar)] flex h-[var(--canvas-topbar-h)] items-center justify-between px-2 sm:px-2" style={{ paddingRight: agentOpen ? 356 : undefined }}>
+            <div className="canvas-topbar pointer-events-none absolute inset-x-0 top-0 z-[var(--z-toolbar)] flex h-[var(--canvas-topbar-h)] items-center justify-between px-2 sm:px-2">
                 <div className="pointer-events-none flex items-center gap-2">
                 <div className="canvas-topbar-cluster canvas-topbar-project-cluster pointer-events-auto flex min-w-0 items-center gap-2" style={dockStyle}>
                     <Dropdown

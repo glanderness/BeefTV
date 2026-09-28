@@ -9,17 +9,19 @@ description: BeefTV后端核心持久化表与状态边界
 
 ## 结构迁移与版本
 
-### 云端 Agent 运行时
+### 旧内置 Agent 运行时（已退场，数据保留）
 
-每轮 Agent 存为 `tasks` 中 `operation = cloud_agent` 的 `canvas_text` 任务，任务 `input_json.cloudAgent` 保存版本 1 的已校验请求、父轮 ID、请求指纹和技能快照；历史从服务端父轮结果构造。任务 ID 由用户与幂等键确定，利用现有主键、任务 admission 和积分预留事务防止重复提交重复扣费。Agent 的模型循环、工具调用、审批、子任务和事件写入 `cloud_agent_executions.state_json`，任务 Worker 只负责推进状态，不依赖浏览器连接。公共任务创建与重试接口禁止绕过 Agent admission；删除任务会影响该轮继续对话与回放。
+旧内置 Agent 已从产品运行面退场：`/agent/*` 接口不再注册，通用任务创建、任务重试和任务执行都按产品边界拒绝 `cloud_agent`、`cloud_agent_step` 和 `agent_memory_compact`，Agent 轮次调度与记忆压缩调度也不再随 worker 启动。下面的结构与数据保持原样，不做破坏性迁移，便于后续替换内核复用或迁移。
+
+退场前的设计如下。每轮 Agent 存为 `tasks` 中 `operation = cloud_agent` 的 `canvas_text` 任务，任务 `input_json.cloudAgent` 保存版本 1 的已校验请求、父轮 ID、请求指纹和技能快照；历史从服务端父轮结果构造。任务 ID 由用户与幂等键确定，利用现有主键、任务 admission 和积分预留事务防止重复提交重复扣费。Agent 的模型循环、工具调用、审批、子任务和事件写入 `cloud_agent_executions.state_json`，任务 Worker 只负责推进状态，不依赖浏览器连接。公共任务创建与重试接口禁止绕过 Agent admission；删除任务会影响该轮继续对话与回放。这些约束现在由“退场即拒绝”的产品边界保证。
 
 | 表 | 用途 | 关键边界 |
 | --- | --- | --- |
 | `schema_migrations` | 保存已成功应用的结构版本、名称、校验和与时间 | 已应用版本的校验和发生变化时拒绝启动；数据库版本高于当前二进制支持版本时拒绝旧程序连接 |
-| `cloud_agent_executions` | 保存 Agent 每轮的持久化执行状态、修订号和运行状态 | `(id, user_id)` 归属受服务端校验；状态通过 revision CAS 更新；`state_json` 包含技能快照、工具调用、审批、活动子任务和事件，不保存浏览器密钥 |
-| `agent_profiles` | 保存用户、项目和画布层的 Agent 常驻偏好、哈希和独立 revision | `(user_id, scope, project_id, canvas_id)` 唯一；归属由 service 校验，写入使用 revision CAS；正文不能授权新能力 |
-| `agent_lessons` | 用户私有的 Agent 记忆。Agent 写入待审，用户自己批准后才会注入该用户的会话 | 按 `author_user_id` 隔离；写入机械脱敏；`steps_json` 存路线；`hits` 是主动查阅、`injected` 是自动注入；管理员可按用户查看和删除，不能代批 |
-| `agent_memory_settings` | 用户私有的记忆压缩周期、文本模型和最近一次压缩任务状态 | 主键 `user_id`；压缩结果只在 `compact_task_id` 匹配时应用到该用户已批准记忆 |
+| `cloud_agent_executions` | 保存旧内置 Agent 每轮的持久化执行状态、修订号和运行状态（保留，不再有新写入） | `(id, user_id)` 归属受服务端校验；状态通过 revision CAS 更新；`state_json` 包含技能快照、工具调用、审批、活动子任务和事件，不保存浏览器密钥 |
+| `agent_profiles` | 保存用户、项目和画布层的旧内置 Agent 常驻偏好、哈希和独立 revision（保留，不再有新写入） | `(user_id, scope, project_id, canvas_id)` 唯一；归属由 service 校验，写入使用 revision CAS；正文不能授权新能力 |
+| `agent_lessons` | 用户私有的旧内置 Agent 记忆（保留）。原设计中 Agent 写入待审、用户批准后才会注入该用户的会话 | 按 `author_user_id` 隔离；写入机械脱敏；`steps_json` 存路线；`hits` 是主动查阅、`injected` 是自动注入；管理员可按用户查看和删除，不能代批 |
+| `agent_memory_settings` | 用户私有的旧内置 Agent 记忆压缩周期、文本模型和最近一次压缩任务状态（保留，自动压缩已停止） | 主键 `user_id`；压缩结果只在 `compact_task_id` 匹配时应用到该用户已批准记忆 |
 
 公开镜像不附带独立迁移程序。`CANVAS_AUTO_MIGRATE=true` 时，Backend 在开始接受请求前完成迁移与兼容性检查；失败时进程直接退出，不会带着不兼容结构提供服务。后续迁移必须新增版本，不得修改已经发布迁移的实现或校验和。
 

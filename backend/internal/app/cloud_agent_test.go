@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"infinite-canvas/backend/internal/model"
@@ -333,7 +334,7 @@ func TestCloudAgentAdmissionAndContinuation(t *testing.T) {
 	if err := db.Model(&model.Task{}).Where("id = ?", run.ID).Update("status", model.TaskStatusFailed).Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.taskLifecycle().retryTask("user", run.ID); err == nil || !strings.Contains(err.Error(), "Agent 重试需要新的幂等键") {
+	if _, err := s.taskLifecycle().retryTask("user", run.ID); err == nil || !strings.Contains(err.Error(), "已下线") {
 		t.Fatalf("Agent task retry was not blocked: %v", err)
 	}
 }
@@ -352,20 +353,16 @@ func TestCloudAgentAdmissionNeedsNoCommerceSchema(t *testing.T) {
 	}
 }
 
-func TestCloudAgentWorkerPersistsRealResponse(t *testing.T) {
+// 旧内置 Agent 的 worker 执行路径已退场：历史 cloud_agent 轮次不再由通用任务 Worker
+// 执行，因此不会向上游发起模型调用。上游探针用来证明“确实没有被调用”。
+func TestCloudAgentWorkerRefusesLegacyRunWithoutCallingUpstream(t *testing.T) {
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
 	t.Setenv("REDIS_URL", "")
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-		}
-		encoded, _ := json.Marshal(body["tools"])
-		if strings.Contains(string(encoded), "canvas_apply_ops") || strings.Contains(string(encoded), "generate_media") {
-			t.Error("read-only request exposed write tools")
-		}
+	var hits atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"测试回复"}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"不应发生"}}]}`))
 	}))
 	defer upstream.Close()
 	s, db, _, _ := creationTestService(t)
@@ -381,15 +378,21 @@ func TestCloudAgentWorkerPersistsRealResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ProcessNextTask(); err != nil {
+	if err = s.ProcessNextTask(); err != nil {
 		t.Fatal(err)
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("退场 Agent 轮次仍然调用了上游 %d 次", hits.Load())
 	}
 	var task model.Task
-	if err := db.First(&task, "id = ?", run.ID).Error; err != nil {
-		t.Fatal(err)
+	if err = db.First(&task, "id = ?", run.ID).Error; err != nil {
+		t.Fatalf("历史 Agent 任务行被删除: %v", err)
 	}
-	if task.Status != model.TaskStatusSucceeded || taskResultText(task.ResultJSON) != "测试回复" {
-		t.Fatalf("worker result: status=%s result=%s error=%s", task.Status, task.ResultJSON, task.Error)
+	if task.Status != model.TaskStatusFailed || task.Stage != "功能已下线" {
+		t.Fatalf("worker result: status=%s stage=%s error=%s", task.Status, task.Stage, task.Error)
+	}
+	if !strings.Contains(task.Error, "已下线") {
+		t.Fatalf("task error = %q, want product boundary message", task.Error)
 	}
 }
 

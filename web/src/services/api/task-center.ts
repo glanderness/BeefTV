@@ -358,7 +358,6 @@ function safeTaskLogErrorCode(value: unknown) {
 }
 
 export type WaitForGenerationTaskOptions = {
-	textEventsSource?: "task" | "agent";
     signal?: AbortSignal;
     intervalMs?: number;
     timeoutMs?: number;
@@ -423,9 +422,8 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
     const intervalMs = options.intervalMs || 1000;
     let lastTask = options.initialTask;
     let lastEventId = 0;
-    // Agent subscriptions replay from cursor 0; an existing draft must not be
-    // prepended to the same persisted deltas when reopening a conversation.
-    let fullText = options.textEventsSource === "agent" ? "" : lastTask?.textDraft || "";
+    // 已有草稿先落到文本里，重开对话时同一批增量不会被当成新内容重复拼接。
+    let fullText = lastTask?.textDraft || "";
     let lastStreamError: unknown;
     if (!lastTask) {
         lastTask = await queryGenerationTask(id, { signal: options.signal });
@@ -438,7 +436,7 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
         try {
             const base = String(apiBaseURL).replace(/\/+$/, "");
             const cursor = lastEventId > 0 ? `?after=${encodeURIComponent(String(lastEventId))}` : "";
-            const path = options.textEventsSource === "agent" ? `/agent/runs/${encodeURIComponent(id)}/events` : `/tasks/${encodeURIComponent(id)}/text-events`;
+            const path = `/tasks/${encodeURIComponent(id)}/text-events`;
             const response = await fetch(`${base}${path}${cursor}`, {
                 headers: { Accept: "text/event-stream" },
                 credentials: "include",

@@ -1,4 +1,4 @@
-import { Bot, ChevronRight, Home, PanelLeftClose, PanelLeftOpen, Plus, Settings2, Sun, Moon } from "lucide-react";
+import { ChevronRight, Home, PanelLeftClose, PanelLeftOpen, Plus, Settings2, Sun, Moon } from "lucide-react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
@@ -42,7 +42,6 @@ function buildNav(features: FeatureAvailability): { groups: WorkspaceNavGroup[];
         {
             items: [
                 { id: "new", title: "新建项目", icon: Plus, to: "/canvas?mode=new" },
-                { id: "create", title: "BeefTV Agent", icon: Bot, to: "/create", disabled: true },
             ],
         },
         {

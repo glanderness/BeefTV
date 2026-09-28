@@ -38,10 +38,6 @@ type ProviderConfigPort interface {
 	SaveLocalModelConfig([]byte) error
 }
 
-type AgentPort interface {
-	CloudAgentRun(string, string) (*app.CloudAgentRun, error)
-}
-
 type Lifecycle interface {
 	StartWorker()
 	StopWorker(context.Context) error

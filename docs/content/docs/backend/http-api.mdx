@@ -23,7 +23,6 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 | `/resources/*` | 本地素材、分片上传和媒体读取 |
 | `/tasks/*` | 生成任务创建、查询、取消、恢复与事件流 |
 | `/ai/*` | 外部模型目录和自定义协议转发 |
-| `/agent/*` | 本地持久化 Agent 运行、审批和记忆 |
 | `/plugins/*`, `/skills/*` | 本地扩展包与技能 |
 | `/health/*`, `/system/version` | 启动、就绪与版本诊断 |
 
@@ -31,6 +30,6 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 
 `/auth/*`、`/admin/*`、`/payments/*`、`/wallet/*`、`/public/canvas-shares/*` 以及云存储配置端点不属于本地产品合同。
 
-Agent 的 `budget` 字段是本地运行上限（步数、生成次数、视频秒数），不代表积分、付费或扣费。
+旧内置 Agent 的 `/agent/*` 端点已随该功能退场，历史运行、偏好和记忆数据仍保留在本地数据库中。通用任务接口会按产品边界拒绝 `cloud_agent`、`cloud_agent_step` 和 `agent_memory_compact`，不会把它们当作普通生成任务执行。
 
-内置 BeefAPI 连接成功后，同一份企业凭证用于渠道请求、模型目录和本机 MCP 工具。MCP 工具名为 `beeftv_list_models`、`beeftv_submit_media`、`beeftv_get_task`；媒体提交必须经过本机审批与预算，不能把 `approved=true` 当作授权。
+内置 BeefAPI 连接成功后，同一份企业凭证用于渠道请求和模型目录。企业连接、模型目录、Provider/Protocol 与自定义渠道不受 Agent 退场影响。

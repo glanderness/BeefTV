@@ -67,6 +67,22 @@ describe("canvas node toolbar model", () => {
         expect(groups.get("node-lock")).toBe("more");
     });
 
+    test("offers depth capture as a video processing action and dispatches the source node", () => {
+        const node: CanvasNodeData = { id: "video", type: CanvasNodeType.Video, title: "视频", position: { x: 0, y: 0 }, width: 320, height: 180, metadata: { content: "video.mp4" } };
+        const received: CanvasNodeData[] = [];
+        const ctx = createNodeContext(node);
+        ctx.handlers = { onNodeDepthCapture: (target) => received.push(target) } as ToolbarHandlers;
+
+        const tool = resolveToolbarTools("node-hover", ctx, null).find((item) => item.id === "depthCapture");
+
+        expect(tool).toBeDefined();
+        expect(tool?.displayLabel).toBe("深度动作捕捉");
+        expect(resolveNodeToolbarPlacement(tool!, ctx).group).toBe("more");
+        expect(tool?.nodeToolbar?.section).toBe("视频处理");
+        tool?.run(ctx);
+        expect(received).toEqual([node]);
+    });
+
     test("uses the redesigned video terminology from the registry", () => {
         const ctx = createNodeContext({ id: "video", type: CanvasNodeType.Video, title: "视频", position: { x: 0, y: 0 }, width: 320, height: 180, metadata: { content: "video.mp4" } });
         const tools = new Map(resolveToolbarTools("node-hover", ctx, null).map((tool) => [tool.id, tool]));

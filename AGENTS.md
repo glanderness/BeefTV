@@ -51,7 +51,7 @@ BeefTV（`glanderness/BeefTV`）是面向 AI 影视与短剧创作的工作台�
 
 调用链应保持为：`HTTP -> handler -> localapp/domain port -> app/domain implementation -> repository/model`；需要模型上游时进入 `generation` / `provider` / `protocol` / `outbound`。
 
-### Agent、插件和文档
+### 插件和文档
 
 - 修改 `docs/` 前确认内容属于专题文档，而不是把长篇说明重新复制到根 README。目录索引见 `docs/index.md`。
 
@@ -123,7 +123,7 @@ BeefTV（`glanderness/BeefTV`）是面向 AI 影视与短剧创作的工作台�
 
 - 前端：`cd web && bun run build`；专项测试用 `bun test ...`。UI 退场规则用 `bun run lint`（只禁 antd Empty 和静态 `Modal.confirm`，不是风格检查）。
 - 后端：`cd backend && go test ./...`；涉及 PostgreSQL、资源、任务或权限时补对应集成/冒烟路径。
-- 云端 Agent：前端事件流和审批路径依赖后端 `/api/agent` 接口；在该接口实现后补充后端冒烟、Worker 运行和 SSE 断线重连验证。
+- 旧内置 Agent 已从产品运行面退场：`/agent/*` 路由不再注册，通用任务创建、任务重试和任务 Worker 都按产品边界拒绝 `cloud_agent`、`cloud_agent_step`、`agent_memory_compact`，并且不再启动 Agent 轮次调度与记忆压缩调度。历史运行、偏好、记忆和任务数据保留，不做破坏性迁移。替换内核落地前，不得恢复旧入口、旧调度或旧任务 operation；替换内核未选型，本文件不规定其运行时形态，只要求按该内核真实使用的接入路径补齐验证。
 - 文档站：`cd docs && bun run types:check` 或 `bun run build`。
 - UI 变更能浏览器验证时，检查关键路由、明暗主题、滚动、弹窗、空态和核心交互；不能验证时说明替代依据，不把静态阅读或 `git diff` 写成运行验证。
 

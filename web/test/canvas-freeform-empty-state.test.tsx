@@ -36,13 +36,6 @@ describe("BeefTV freeform canvas empty state", () => {
         expect(markup).not.toContain("音频生视频");
     });
 
-    test("constrains the empty-state hint when the Agent dock is open", () => {
-        const markup = renderToStaticMarkup(<CanvasFreeformEmptyState commands={commands} agentOpen />);
-        expect(markup).toContain('width:calc(100% - 340px)');
-        expect(markup).not.toContain("SD 2.5");
-        expect(markup).not.toContain("全能参考生视频");
-    });
-
     test("renders the minimal empty text node state", () => {
         const node: CanvasNodeData = { id: "text-1", type: CanvasNodeType.Text, title: "文本节点 1", position: { x: 0, y: 0 }, width: 350, height: 350, metadata: { content: "", status: "idle" } };
         const markup = renderToStaticMarkup(<CanvasNodeContent node={node} theme={canvasThemes.dark} isEditingContent={false} textareaRef={createRef<HTMLTextAreaElement>()} isBatchRoot={false} batchCount={0} batchExpanded={false} batchOpening={false} batchRecovering={false} onContentChange={() => {}} onStopEditing={() => {}} mentionReferences={[]} />);

@@ -29,7 +29,6 @@ const CANVAS_NODES_CLIPBOARD_STORAGE_KEY = "open-ai-canvas:nodes-clipboard";
 
 type UseCanvasNodeOperationsOptions = {
     projectId: string;
-    agentOpen?: boolean;
     viewportScale?: number;
     defaultDrawingEngine: CanvasDrawingEngine;
     nodesRef: { current: CanvasNodeData[] };
@@ -47,7 +46,6 @@ type UseCanvasNodeOperationsOptions = {
 
 export function useCanvasNodeOperations({
     projectId,
-    agentOpen = false,
     viewportScale = 1,
     defaultDrawingEngine,
     nodesRef,
@@ -154,12 +152,9 @@ export function useCanvasNodeOperations({
                     ? mediaGeneratorMetadata({ generationMode: type === CanvasNodeType.Image ? "image" : type === CanvasNodeType.Video ? "video" : "audio" })
                 : undefined;
         const center = position || getCanvasCenter();
-        // Only menu-created nodes use the implicit center. When the Agent dock is
-        // open LibTV biases that placement right/up; explicit canvas/connection
-        // coordinates remain untouched.
-        const creationPosition = position || !agentOpen
-            ? center
-            : { x: center.x + 43 / Math.max(viewportScale, 0.05), y: center.y - 24 / Math.max(viewportScale, 0.05) };
+        // Only menu-created nodes use the implicit canvas center; explicit
+        // canvas/connection coordinates remain untouched.
+        const creationPosition = position || center;
         const node = createCanvasNode(type, creationPosition, metadata);
         if (type === CanvasNodeType.Text) {
             const nextNumber = nodesRef.current.filter((item) => item.type === CanvasNodeType.Text).length + 1;
@@ -176,7 +171,7 @@ export function useCanvasNodeOperations({
         selectNodes(new Set([node.id]));
         if (type === CanvasNodeType.Script) setDialogNodeId(null);
         if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Script && type !== CanvasNodeType.BatchTable && type !== CanvasNodeType.Frame && type !== CanvasNodeType.Drawing && type !== CanvasNodeType.MediaConversion) setDialogNodeId(node.id);
-    }, [agentOpen, commitNodes, defaultDrawingEngine, effectiveConfig.runningHub.enabled, effectiveConfig.runningHub.workflows.length, getCanvasCenter, message, nodesRef, runtimeStatuses, selectNodes, setDialogNodeId, viewportScale]);
+    }, [commitNodes, defaultDrawingEngine, effectiveConfig.runningHub.enabled, effectiveConfig.runningHub.workflows.length, getCanvasCenter, message, nodesRef, runtimeStatuses, selectNodes, setDialogNodeId, viewportScale]);
 
     const createFolder = useCallback((position?: Position, linked?: { id: string; projectId: string; title: string; style: CanvasFolderStyle; theme: CanvasFolderTheme; createdAt: string }) => {
         const folder = createCanvasNode(CanvasNodeType.Frame, position || getCanvasCenter(), {

@@ -40,8 +40,9 @@ func registerDesktopCanvasAPI(api *gin.RouterGroup, svc *app.Service, dependenci
 	RegisterBeefAPIConnectionRoutes(api, svc)
 	RegisterDesktopAppearanceRoutes(api, svc)
 	RegisterDesktopFeatureAvailabilityRoutes(api, svc)
-	RegisterAgentRoutes(api, svc)
-	RegisterAgentMemoryRoutes(api, svc)
+	// 旧内置 Agent 已从产品运行面退场：这里不再注册 /agent/*，运行、审批和记忆入口
+	// 都不能由浏览器或直接 API 触发。历史执行、偏好和记忆数据保留在本地数据库，
+	// 不做破坏性迁移；替换内核落地时再设计新的入口契约。
 	RegisterCreationRoutes(api, svc)
 	RegisterChannelModelRoutes(api, svc)
 	RegisterCustomRelayRoutes(api, svc)

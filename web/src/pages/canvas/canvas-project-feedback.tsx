@@ -1,10 +1,9 @@
 import { motion } from "motion/react";
-import { CheckCircle2, CloudUpload, Eye, LoaderCircle, RotateCcw, TriangleAlert, X } from "lucide-react";
+import { CheckCircle2, CloudUpload, LoaderCircle, TriangleAlert } from "lucide-react";
 
 import type { GenerationTask } from "@/services/api/task-center";
 import type { MergeVideoProgress } from "@/lib/canvas/canvas-video-merge";
 import { canvasThemes } from "@/lib/canvas-theme";
-import type { CanvasOperationChange } from "./use-canvas-operation-history";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 
 export type CanvasUploadStatus = {
@@ -108,44 +107,6 @@ export function CanvasMergeStatusToast({ progress, theme }: { progress: MergeVid
             </div>
             <div className="mt-2 h-1 overflow-hidden rounded-full" style={{ background: theme.toolbar.itemHover }}>
                 <div className="h-full rounded-full transition-all duration-300" style={{ width: `${percent}%`, background: theme.node.activeStroke }} />
-            </div>
-        </div>
-    );
-}
-
-export function CanvasOperationChangeToast({ change, theme, onView, onUndo, onClose }: { change: CanvasOperationChange; theme: CanvasTheme; onView: () => void; onUndo: () => void; onClose: () => void }) {
-    return (
-        <div
-            data-canvas-no-zoom
-            aria-live="polite"
-            className="absolute bottom-20 right-4 z-[var(--z-panel-floating)] w-[var(--panel-width-compact)] rounded-lg border p-3 shadow-lg backdrop-blur-xl"
-            style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
-        >
-            <div className="flex items-start gap-2.5">
-                <span className="grid size-8 shrink-0 place-items-center rounded-md" style={{ background: theme.toolbar.itemHover, color: theme.node.activeStroke }}>
-                    <span className="size-2 rounded-full bg-current" />
-                </span>
-                <span className="min-w-0 flex-1">
-                    <span className="block text-xs font-semibold">Agent 已写回画布</span>
-                    <span className="mt-0.5 block truncate text-[var(--fs-label)]" style={{ color: theme.node.muted }}>
-                        {change.summary} · 可撤销最近 {change.undoCount} 批
-                    </span>
-                </span>
-                <button type="button" className="grid size-7 place-items-center rounded-md opacity-55 transition hover:opacity-100" onClick={onClose} aria-label="关闭">
-                    <X className="size-3.5" />
-                </button>
-            </div>
-            <div className="mt-3 flex items-center justify-end gap-1.5">
-                {change.nodeIds.length ? (
-                    <button type="button" className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition hover:bg-black/5 dark:hover:bg-white/10" onClick={onView}>
-                        <Eye className="size-3.5" />
-                        查看本次改动
-                    </button>
-                ) : null}
-                <button type="button" className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition hover:bg-black/5 dark:hover:bg-white/10" onClick={onUndo}>
-                    <RotateCcw className="size-3.5" />
-                    撤销本次操作
-                </button>
             </div>
         </div>
     );

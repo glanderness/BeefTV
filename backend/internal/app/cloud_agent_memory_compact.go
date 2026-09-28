@@ -197,6 +197,9 @@ func (s *Service) startUserAgentMemoryCompact(setting *model.AgentMemorySetting,
 	return s.repo.SaveAgentMemorySetting(setting)
 }
 
+// startAgentMemoryCompactScheduler 是旧内置 Agent 记忆的周期压缩调度。它已没有生产
+// 调用方：worker 不再启动它，/agent/memories 路由已移除。函数保留给仍被内部实现复用
+// 的部分及其行为测试，不得重新接回产品运行面——它会在后台自动调用用户的文本模型。
 func (s *Service) startAgentMemoryCompactScheduler() {
 	s.runWorkerLoop(func(ctx context.Context) {
 		s.dispatchDueAgentMemoryCompacts()

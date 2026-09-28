@@ -9,6 +9,7 @@ import { listGenerationTasks, listTaskLogs, queryGenerationTask, subscribeGenera
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
+import { isDepthCaptureResultNode } from "@/lib/canvas/canvas-depth-capture";
 import { cinematicStoryboardColumns, storyboardRowsFromTask } from "@/lib/canvas/canvas-project-domain";
 import { generationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 import { generationFailureMetadata } from "@/lib/generation-error";
@@ -385,6 +386,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
         async (startedProjectId: string, signal: AbortSignal, isCurrentProject: () => boolean) => {
             if (!isCurrentProject()) return;
             const recoveryNodes = nodesRef.current.filter((node) => {
+                if (isDepthCaptureResultNode(node)) return false;
                 const pendingAgentContinuation = node.metadata?.agentGenerationContinuation?.status === "pending";
                 const aggregateBatchRoot = node.metadata?.isBatchRoot && node.metadata.batchChildIds?.length && !node.metadata.taskId;
                 if (aggregateBatchRoot && !pendingAgentContinuation) return false;

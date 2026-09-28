@@ -16,14 +16,58 @@ type taskAdmission struct {
 	ID string
 }
 
+// 旧内置 Agent 已从产品运行面退场。产品边界必须在这里成立：任何外部任务入口
+// （HTTP /api/tasks、创作提交、直接 API 调用）都不能再创建旧 Agent 任务，否则通用
+// 任务 Worker 会把半成品 Agent 轮次当成普通文本生成执行，产生付费模型调用却永远
+// 推进不了 Agent 循环。只有携带内部 admission 的实现路径具备创建能力，而该路径已
+// 没有产品入口（/agent/* 路由已移除、Agent 调度器与记忆压缩调度器都不再启动）。
+const retiredAgentBoundaryMessage = "Agent 能力已下线，请在画布中手动创建节点并生成"
+
+// 旧内置 Agent 写入的任务 operation：cloud_agent 前缀覆盖轮次与步骤，
+// agent_memory_compact 是记忆压缩（它会自动调用用户的文本模型，同样属于退场范围）。
+func isRetiredAgentOperation(operation string) bool {
+	op := strings.TrimSpace(operation)
+	return strings.HasPrefix(op, cloudAgentOperation) || op == cloudAgentMemoryCompactOp
+}
+
+func isRetiredAgentTaskInput(operation string, input map[string]any) bool {
+	if isRetiredAgentOperation(operation) {
+		return true
+	}
+	return input != nil && input["cloudAgent"] != nil
+}
+
+// retiredAgentTask 按已落库记录判定是否属于退场的旧 Agent 流程。历史数据可能只带
+// input.cloudAgent 而没有 operation 标记，因此执行与重试边界必须同时看 InputJSON，
+// 否则这类记录会被通用任务 Worker 当成普通文本生成执行并产生付费调用。
+func retiredAgentTask(task *model.Task) bool {
+	if task == nil {
+		return false
+	}
+	if isRetiredAgentOperation(task.Operation) {
+		return true
+	}
+	if strings.TrimSpace(task.InputJSON) == "" {
+		return false
+	}
+	var probe struct {
+		CloudAgent json.RawMessage `json:"cloudAgent"`
+	}
+	if err := json.Unmarshal([]byte(task.InputJSON), &probe); err != nil {
+		return false
+	}
+	marker := strings.TrimSpace(string(probe.CloudAgent))
+	return marker != "" && marker != "null"
+}
+
 // CreateTask 收敛任务进入系统前的 admission 流程：输入标准化、逻辑模型路由、
 // 能力/并发与存储校验和持久化。执行阶段由 worker 与 provider 相关模块负责。
 // CreateTask 校验并创建一条生成任务。
 // 这是常规模型生成任务的写入口：客户端只提交创作意图，模型、渠道和协议信息必须由本地目录重新解析，
 // 以保证“可展示的模型”与“实际执行的模型”来自同一份有效配置。
 func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task, error) {
-	if req.admission == nil && (strings.HasPrefix(req.Operation, "cloud_agent") || req.Input["cloudAgent"] != nil) {
-		return nil, BadAuthRequest("Agent 任务必须通过 Agent 接口创建")
+	if req.admission == nil && isRetiredAgentTaskInput(req.Operation, req.Input) {
+		return nil, BadAuthRequest(retiredAgentBoundaryMessage)
 	}
 	if s.IsDraining() {
 		return nil, &AppError{Status: 503, Code: 503, Message: "服务正在维护，暂不接受新的生成任务", Retryable: true}
@@ -38,6 +82,9 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	}
 	normalizedInput, err := normalizeTaskInput(req.Input)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.validateRetryTaskType(userID, taskType, normalizedInput); err != nil {
 		return nil, err
 	}
 	normalizedInput, err = s.resolveManagedBeefAPISecrets(normalizedInput)
@@ -144,6 +191,22 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	s.recordActivity(userID, "task", 1)
 	_ = s.log(userID, task.ID, "info", "任务已进入队列", "")
 	return taskForOutput(task), nil
+}
+
+func (s *Service) validateRetryTaskType(userID string, taskType string, input map[string]any) error {
+	metadata, _ := input["metadata"].(map[string]any)
+	retryOf := strings.TrimSpace(stringValue(metadata["retryOf"]))
+	if retryOf == "" {
+		return nil
+	}
+	parent, err := s.repo.TaskForUser(userID, retryOf)
+	if err != nil {
+		return BadAuthRequest("找不到原始重试任务")
+	}
+	if parent.Type != taskType {
+		return BadAuthRequest(fmt.Sprintf("重试任务类型不一致：原任务为 %s，新任务为 %s", parent.Type, taskType))
+	}
+	return nil
 }
 
 // resolveTaskModelSelection 根据请求实际携带的模型选择决定路由方式。

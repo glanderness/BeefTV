@@ -33,7 +33,6 @@ import { creationAttachmentFromAsset, creationAttachmentFromAudio, creationAttac
 import { defaultCreationMode, modeLabels, type CreationConversation, type CreationMessage, type CreationMode, type CreationRetryContext, type CreationSettings, type CreationShotRailEntry, type CreationStatus } from "./creation-types";
 import { attachCreationTaskContexts, completedCreationGenerationTask, conversationTimestamp, creationShotRail, creationVideoShotOrdinal, isImageAttachment, isVideoAttachment, materializeCreationTaskResults, newConversation, newMessage, reconcileCreationTaskMessages } from "./creation-conversations";
 import { CreationComposer, CreationEmptySuggest, CreationFeaturedWorks, CreationHistoryDrawer, CreationMessageView, CreationModeTabs, CreationWorkspaceToolbar, creationAssetCategoryLabels } from "./creation-workspace";
-import { CreationAgentEntry } from "./creation-agent-entry";
 import { createDemoConversation } from "./creation-demo-data";
 
 const AssetLibraryPickerModal = lazy(() => import("@/components/assets/asset-library-picker-modal").then((module) => ({ default: module.AssetLibraryPickerModal })));
@@ -66,7 +65,6 @@ export default function CreatePage() {
     const requestedMode = requestedCreationMode(searchParams.get("mode"));
     const demoConversation = searchParams.get("demo") === "conversation";
     const marketplaceSkill = (searchParams.get("skill") || (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("skill") : ""))?.trim() || "";
-    const [agentMode, setAgentMode] = useState(searchParams.get("mode") === "agent");
     const { message: toast, modal } = App.useApp();
     const navigate = useNavigate();
     const [openingCanvas, setOpeningCanvas] = useState(false);
@@ -991,7 +989,7 @@ export default function CreatePage() {
                     <Tooltip title="历史对话"><button type="button" aria-label="查看历史对话" aria-expanded={historyOpen} className="creation-top-action" onClick={() => setHistoryOpen(true)}><History /></button></Tooltip>
                 </div>
                 <AnimatePresence>
-                    {launchpadCondensed && !agentMode ? <motion.div className="creation-floating-prompt" key="floating-prompt"
+                    {launchpadCondensed ? <motion.div className="creation-floating-prompt" key="floating-prompt"
                         style={{ x: "-50%" }}
                         initial={{ opacity: 0, y: -12, scale: .97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -8, scale: .98 }}
                         transition={reducedMotion ? { duration: 0 } : { type: "spring", stiffness: 360, damping: 32, mass: .8 }}>
@@ -1005,20 +1003,20 @@ export default function CreatePage() {
                 </AnimatePresence>
                 <main ref={threadScrollRef} onScroll={handleThreadScroll} className="creation-empty-workspace creation-scrollbar">
                 <div className="creation-home-heading">
-                    <h1>和 BeefTV Agent 一起创作</h1>
+                    <h1>和 {brandName} 一起创作</h1>
                 </div>
                 <section ref={launchpadRef} className="creation-launchpad" aria-label="开始创作">
-                    <div className={cn("creation-composer-stage is-home-mode", agentMode && "is-agent-mode")}>
-                        <CreationModeTabs mode={mode} agentActive={agentMode} onAgentSelect={() => setAgentMode(true)} onModeChange={(next) => { setAgentMode(false); selectMode(next); }} />
-                        {agentMode ? <CreationAgentEntry autoStart /> : <div className="creation-empty-composer"><CreationComposer {...composerProps} variant="empty" /></div>}
+                    <div className={cn("creation-composer-stage is-home-mode")}>
+                        <CreationModeTabs mode={mode} onModeChange={selectMode} />
+                        <div className="creation-empty-composer"><CreationComposer {...composerProps} variant="empty" /></div>
                     </div>
                     <CreationEmptySuggest
-                        onStartPrompt={(nextMode, prompt) => { setAgentMode(false); selectMode(nextMode); setPrompt(prompt); window.requestAnimationFrame(() => composerFocusRef.current?.focus()); }}
-                        onOpenLibrary={() => { setAgentMode(false); selectMode("image"); setLibraryOpen(true); }}
+                        onStartPrompt={(nextMode, prompt) => { selectMode(nextMode); setPrompt(prompt); window.requestAnimationFrame(() => composerFocusRef.current?.focus()); }}
+                        onOpenLibrary={() => { selectMode("image"); setLibraryOpen(true); }}
                     />
                 </section>
                 <CreationFeaturedWorks
-                    onStartPrompt={(nextMode, prompt) => { setAgentMode(false); selectMode(nextMode); setPrompt(prompt); window.requestAnimationFrame(() => composerFocusRef.current?.focus()); }}
+                    onStartPrompt={(nextMode, prompt) => { selectMode(nextMode); setPrompt(prompt); window.requestAnimationFrame(() => composerFocusRef.current?.focus()); }}
                 />
             </main>
             </> : <div className="creation-thread-workbench">

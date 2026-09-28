@@ -203,7 +203,7 @@ export default function ProjectsPage() {
     const hasInitialError = query.isError && !query.data;
     return (
         <WorkspacePage className="library-page project-library-page" grid>
-            <PageHeader title="短剧 Agent" description="你的故事、章节与镜头，都在这里。" meta={<span className="app-projects-header-meta">{totalProjectCount} 个项目</span>} />
+            <PageHeader title="短剧工作台" description="你的故事、章节与镜头，都在这里。" meta={<span className="app-projects-header-meta">{totalProjectCount} 个项目</span>} />
             <details className="story-launcher-panel" aria-label="开始一部新短剧">
                 <summary className="story-launcher-head">
                     <div className="story-launcher-title">

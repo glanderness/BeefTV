@@ -425,6 +425,11 @@ func (s *Service) advanceCloudAgentByID(userID, id string) error {
 	}
 	return s.advanceCloudAgent(run)
 }
+
+// advanceCloudAgents 是旧内置 Agent 的调度循环。它已没有生产调用方：worker 不再
+// 启动它，/agent/* 路由已移除，通用任务入口也会拒绝 cloud_agent 操作。函数与状态机
+// 暂时保留，仅供仍被内部实现（文本流、模型目录、画布能力）复用的部分及其行为测试使用，
+// 不得重新接回产品运行面。
 func (s *Service) advanceCloudAgents() {
 	s.agentSchedulerMu.Lock()
 	defer s.agentSchedulerMu.Unlock()

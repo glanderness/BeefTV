@@ -11,6 +11,7 @@ import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { loadCanvasDrawingPreview } from "@/lib/canvas/canvas-drawing-storage";
 import { canvasNodeVideoPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { bindCanvasVideoHoverPreview } from "@/lib/canvas/canvas-video-hover-preview";
+import { canvasVideoPresentationState } from "@/lib/canvas/canvas-video-presentation";
 import { buildLibTVImagePreviewUrl, buildLibTVVideoSourceUrl } from "@/lib/canvas/libtv-import";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { CanvasTheme } from "@/lib/canvas-theme";
@@ -20,7 +21,7 @@ import type { GenerationTask } from "@/services/api/task-center";
 import { cacheResourceObjectUrl, getCachedResourceObjectUrl, peekCachedResourceObjectUrl, scheduleResourceBlobCache } from "@/services/resource-blob-cache";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { resolveImageUrl } from "@/services/image-storage";
-import { hydrateCanvasVideoPreview } from "@/services/canvas-video-preview";
+import { canvasVideoPreviewNeedsHydration, hydrateCanvasVideoPreview } from "@/services/canvas-video-preview";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { ART_CRITIQUE_NODE_TYPE } from "@/lib/art-critique/contracts";
@@ -437,6 +438,11 @@ function VideoNodeContent({ node, theme, mediaActive = false, onMediaPlayRequest
     const subtitleStyle = node.metadata?.subtitleStyle || createDefaultSubtitleStyle();
     const [currentTimeMs, setCurrentTimeMs] = useState(0);
     const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
+    const [firstFramePresented, setFirstFramePresented] = useState(false);
+
+    useEffect(() => {
+        setFirstFramePresented(false);
+    }, [mediaActive, url]);
 
     useEffect(() => {
         const box = playerBoxRef.current;
@@ -461,21 +467,26 @@ function VideoNodeContent({ node, theme, mediaActive = false, onMediaPlayRequest
     }, [node.id, node.metadata?.naturalHeight, node.metadata?.naturalWidth, subtitleEntries.length, updateMediaNode, url]);
 
     if (!node.metadata?.content) return <EmptyVideoContent theme={theme} />;
-    if (!mediaActive) return <InactiveVideoPreview node={node} theme={theme} onPlay={() => onMediaPlayRequest?.(node.id)} />;
-    if (!url) return <MediaLoadingState icon={<LoaderCircle className="size-5 animate-spin" />} label={loading ? "正在加载视频" : "视频资源不可用"} />;
 
     const sourceRatio = (videoSize?.width || node.metadata?.naturalWidth || node.width) / Math.max(1, videoSize?.height || node.metadata?.naturalHeight || node.height);
     const fitHeight = Math.min(node.height, node.width / Math.max(0.01, sourceRatio));
     const fitWidth = Math.round(fitHeight * sourceRatio);
     const activeEntry = subtitleEntries.find((entry) => currentTimeMs >= entry.startMs && currentTimeMs < entry.endMs);
     const activeHighlight = activeEntry ? (node.metadata?.subtitleHighlights || []).find((item) => item.entryIndex === activeEntry.index) : undefined;
+    const presentation = canvasVideoPresentationState({ active: mediaActive, hasSource: Boolean(url), firstFramePresented });
 
     return (
         <div ref={playerBoxRef} className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-[var(--node-radius)] bg-black">
-            <div className="relative" style={{ width: fitWidth, height: Math.round(fitHeight) }}>
-                <VideoPlayer src={url} mimeType={node.metadata?.mimeType} title={node.title || "视频"} hasAudio={inferVideoHasAudio(node.metadata)} autoPlay preload="metadata" brandColor={theme.accent.primary} className="h-full w-full rounded-[var(--node-radius)] bg-black" dataCanvasNoZoom compactControls onPlay={() => scheduleResourceBlobCache(node.metadata?.storageKey || "")} />
-                {activeEntry && activeEntry.text.trim() ? <CanvasSubtitleOverlay text={activeEntry.text} highlight={activeHighlight} style={subtitleStyle} /> : null}
+            <div className={`absolute inset-0 ${presentation.showPoster ? "opacity-100" : "opacity-0"}`}>
+                <InactiveVideoPreview node={node} theme={theme} onPlay={() => onMediaPlayRequest?.(node.id)} hoverEnabled={!mediaActive} showPlayButton={!mediaActive} />
             </div>
+            {presentation.showLoading ? <div role="status" className="pointer-events-none absolute inset-0 z-[var(--node-z-overlay)] grid place-items-center bg-black/15 text-white/75"><LoaderCircle className="size-5 animate-spin" aria-label={loading ? "正在加载视频" : "视频资源不可用"} /></div> : null}
+            {mediaActive && url ? (
+                <div className={`absolute ${presentation.showVideo ? "opacity-100" : "pointer-events-none opacity-0"}`} style={{ width: fitWidth, height: Math.round(fitHeight) }}>
+                    <VideoPlayer src={url} mimeType={node.metadata?.mimeType} title={node.title || "视频"} hasAudio={inferVideoHasAudio(node.metadata)} autoPlay preload="metadata" brandColor={theme.accent.primary} className="h-full w-full rounded-[var(--node-radius)] bg-black" dataCanvasNoZoom compactControls onFirstFramePresented={() => setFirstFramePresented(true)} onPlay={() => scheduleResourceBlobCache(node.metadata?.storageKey || "")} />
+                    {activeEntry && activeEntry.text.trim() ? <CanvasSubtitleOverlay text={activeEntry.text} highlight={activeHighlight} style={subtitleStyle} /> : null}
+                </div>
+            ) : null}
         </div>
     );
 }
@@ -540,28 +551,30 @@ function AudioNodeContent({ node, theme }: CanvasNodeContentProps) {
     return <CanvasAudioPlayer node={node} theme={theme} />;
 }
 
-function InactiveVideoPreview({ node, theme, onPlay }: Pick<CanvasNodeContentProps, "node" | "theme"> & { onPlay: () => void }) {
+function InactiveVideoPreview({ node, theme, onPlay, hoverEnabled = true, showPlayButton = true }: Pick<CanvasNodeContentProps, "node" | "theme"> & { onPlay: () => void; hoverEnabled?: boolean; showPlayButton?: boolean }) {
     const previewRef = useRef<HTMLDivElement>(null);
     const nearViewport = useNearViewport(previewRef);
     const previewUrl = canvasNodeVideoPreviewUrl(node);
+    const previewNeedsHydration = canvasVideoPreviewNeedsHydration(node);
     const { updateMetadata } = useCanvasNodeActions();
     const updateMetadataRef = useRef(updateMetadata);
     const [hydrating, setHydrating] = useState(false);
 
     useEffect(() => {
+        if (!hoverEnabled) return;
         const element = previewRef.current;
         if (!element) return;
         const content = node.metadata?.content || "";
         const fallback = node.metadata?.importSource?.provider === "libtv" ? buildLibTVVideoSourceUrl(content) : content;
         return bindCanvasVideoHoverPreview(element, () => resolveMediaUrl(node.metadata?.storageKey, fallback));
-    }, [node.metadata?.content, node.metadata?.storageKey, node.metadata?.importSource?.provider]);
+    }, [hoverEnabled, node.metadata?.content, node.metadata?.storageKey, node.metadata?.importSource?.provider]);
 
     useEffect(() => {
         updateMetadataRef.current = updateMetadata;
     }, [updateMetadata]);
 
     useEffect(() => {
-        if (previewUrl || !nearViewport || (!node.metadata?.content && !node.metadata?.storageKey) || !updateMetadataRef.current) {
+        if (!previewNeedsHydration || !nearViewport || (!node.metadata?.content && !node.metadata?.storageKey) || !updateMetadataRef.current) {
             setHydrating(false);
             return;
         }
@@ -576,17 +589,17 @@ function InactiveVideoPreview({ node, theme, onPlay }: Pick<CanvasNodeContentPro
                 if (!controller.signal.aborted) setHydrating(false);
             });
         return () => controller.abort();
-    }, [nearViewport, node.id, node.metadata?.content, node.metadata?.storageKey, previewUrl]);
+    }, [nearViewport, node.id, node.metadata?.content, node.metadata?.storageKey, previewNeedsHydration]);
 
     if (previewUrl) {
         return <div ref={previewRef} className="group/video-preview relative size-full overflow-hidden rounded-[var(--node-radius)] bg-black">
             <CachedResourceImage storageKey={node.metadata?.videoPreview?.storageKey} src={previewUrl} alt={`${node.title || "视频"} 静态预览`} loading="lazy" decoding="async" draggable={false} className="pointer-events-none size-full select-none object-contain" fallback={<InactiveMediaCard icon={<Video className="size-7" />} title={node.title || "视频"} hint="首帧暂不可用，点击播放视频" theme={theme} />} loadingFallback={<InactiveMediaCard icon={<Video className="size-7" />} title={node.title || "视频"} hint="正在读取首帧" theme={theme} />} />
-            <VideoPreviewPlayButton title={node.title || "视频"} onPlay={onPlay} />
+            {showPlayButton ? <VideoPreviewPlayButton title={node.title || "视频"} onPlay={onPlay} /> : null}
         </div>;
     }
     return <div ref={previewRef} className="group/video-preview relative size-full">
         <InactiveMediaCard icon={<Video className="size-7" />} title={node.title || "视频"} hint={hydrating ? "正在生成首帧" : nearViewport ? "点击播放视频" : "进入视口后加载首帧"} theme={theme} />
-        <VideoPreviewPlayButton title={node.title || "视频"} onPlay={onPlay} />
+        {showPlayButton ? <VideoPreviewPlayButton title={node.title || "视频"} onPlay={onPlay} /> : null}
     </div>;
 }
 

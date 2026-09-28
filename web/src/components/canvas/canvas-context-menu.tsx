@@ -81,7 +81,6 @@ type CanvasNodeContextMenuProps = {
     onSpreadSelection?: () => void;
     onCopySelection?: () => void;
     onDeleteSelection?: () => void;
-    onSendToAgent?: () => void;
 };
 
 export function CanvasNodeContextMenu({
@@ -122,7 +121,6 @@ export function CanvasNodeContextMenu({
     onSpreadSelection,
     onCopySelection,
     onDeleteSelection,
-    onSendToAgent,
 }: CanvasNodeContextMenuProps) {
     const theme = canvasThemes[useActiveTheme()];
     const [addOpen, setAddOpen] = useState(false);
@@ -226,7 +224,6 @@ export function CanvasNodeContextMenu({
                             <MenuButton icon={<LayoutTemplate />} label="自适应整理画布" detail="保持相对布局并加大边距" disabled={!onSpreadSelection} onClick={() => onSpreadSelection && runAction(onSpreadSelection)} />
                             <MenuDivider />
                             <MenuButton icon={<Copy />} label={`复制 ${selectedCount} 个节点`} shortcut="⌘C" disabled={!onCopySelection} onClick={() => onCopySelection && runAction(onCopySelection)} />
-                            <MenuButton icon={<AtSign />} label="发送到 Agent" disabled={!onSendToAgent} onClick={() => onSendToAgent && runAction(onSendToAgent)} />
                             <MenuButton icon={<Trash2 />} label={`删除 ${selectedCount} 个节点`} danger disabled={!onDeleteSelection} onClick={() => onDeleteSelection && runAction(onDeleteSelection)} />
                         </>
                     ) : menu.type === "node" ? (
@@ -238,8 +235,7 @@ export function CanvasNodeContextMenu({
                                     <MenuButton icon={<UserRound />} label="查看角色详情" onClick={() => runAction(onEditText)} />
                                     <MenuDivider />
                                     <MenuSection label="节点" />
-                                    <MenuButton icon={<AtSign />} label="发送到 Agent" disabled={!onSendToAgent} onClick={() => onSendToAgent && runAction(onSendToAgent)} />
-                                    <MenuButton icon={<Copy />} label="复制角色引用" shortcut="⌘C" onClick={() => runAction(onCopyNode)} />
+                                            <MenuButton icon={<Copy />} label="复制角色引用" shortcut="⌘C" onClick={() => runAction(onCopyNode)} />
                                     <MenuButton icon={<Layers3 />} label="创建引用副本" shortcut="⌘D" onClick={() => runAction(onDuplicate)} />
                                     <MenuButton icon={<Trash2 />} label="删除节点" danger onClick={() => runAction(onDelete)} />
                                 </>
@@ -277,8 +273,7 @@ export function CanvasNodeContextMenu({
                                     {isText ? <MenuButton icon={<ImageIcon />} label="用文本生图" disabled={!canGenerateFromText} onClick={() => runAction(onGenerateImage)} /> : null}
                                     <MenuDivider />
                                     <MenuSection label="副本与内容" />
-                                    <MenuButton icon={<AtSign />} label="发送到 Agent" disabled={!onSendToAgent} onClick={() => onSendToAgent && runAction(onSendToAgent)} />
-                                    <MenuButton icon={<Copy />} label={isFrame ? `复制${isFolder ? "文件夹" : "背板"}及内容` : "复制节点"} shortcut="⌘C" onClick={() => runAction(onCopyNode)} />
+                                            <MenuButton icon={<Copy />} label={isFrame ? `复制${isFolder ? "文件夹" : "背板"}及内容` : "复制节点"} shortcut="⌘C" onClick={() => runAction(onCopyNode)} />
                                     {isText ? <MenuButton icon={<Clipboard />} label="复制文本" disabled={!hasNodeContent} onClick={() => runAction(onCopyContent)} /> : null}
                                     <MenuButton icon={<Copy />} label={isFrame ? `创建${isFolder ? "文件夹" : "背板"}副本` : "创建参数变体"} shortcut="⌘D" onClick={() => runAction(onDuplicate)} />
                                     <MenuButton icon={<Clipboard />} label="粘贴" shortcut="⌘V" disabled={!canPaste} onClick={() => runAction(onPaste)} />

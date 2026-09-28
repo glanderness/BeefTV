@@ -220,6 +220,11 @@ export type CanvasNodeMetadata = {
         height?: number;
         bytes?: number;
         mimeType?: string;
+        /** Poster capture contract version. Missing versions are regenerated lazily. */
+        captureVersion?: number;
+        /** Media identity used to prevent a poster surviving a source replacement. */
+        sourceKey?: string;
+        capturedAtMs?: number;
     };
     richText?: Record<string, unknown>;
     composerContent?: string;
@@ -358,6 +363,7 @@ export type CanvasNodeMetadata = {
     sessionId?: string;
     videoEditOperation?: CanvasVideoEditOperation;
     videoMergeSourceNodeIds?: string[];
+    depthSourceNodeId?: string;
     arkPrivateAssetUpload?: string;
     videoCameraMoveId?: string;
     videoCameraMovePrompt?: string;

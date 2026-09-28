@@ -1,4 +1,4 @@
-import { mergeAgentCanvasEditor } from "@/lib/canvas/agent-canvas-patch";
+import { mergeCanvasRefreshPatch } from "@/lib/canvas/canvas-patch-merge";
 import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { App } from "antd";
 import { useNavigate } from "react-router";
@@ -11,7 +11,7 @@ import { normalizeCanvasMediaNodeSemanticsList } from "@/lib/canvas/canvas-node-
 import { canvasWorkspaceProjectId, listCanvasWorkspaceProjectCanvases } from "@/lib/canvas/canvas-workspace-project";
 import { hydrateAssistantImages, resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
-import { forceOverwriteRemoteCanvasSync, hasRemoteUserDataSyncSession, loadCanvasProjectForEditing, saveRemoteUserDataNow, subscribeAgentCanvasRefresh } from "@/services/local-workspace-sync";
+import { forceOverwriteRemoteCanvasSync, hasRemoteUserDataSyncSession, loadCanvasProjectForEditing, saveRemoteUserDataNow, subscribeCanvasRefresh } from "@/services/local-workspace-sync";
 import { createWorkspaceCanvasProject, deleteWorkspaceCanvasProjects } from "@/services/workspace-project-repository";
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { scheduleLocalCanvasBackendSync, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
@@ -102,7 +102,6 @@ export function useCanvasProjectLifecycle({
     const [addedSkills, setAddedSkills] = useState<Skill[]>([]);
     const [loadError, setLoadError] = useState("");
     const [loadAttempt, setLoadAttempt] = useState(0);
-    const [agentCreatedNodes, setAgentCreatedNodes] = useState<{ projectId: string; nodes: CanvasNodeData[] } | null>(null);
     const viewportSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const observedContentRef = useRef<CanvasHistorySnapshot | null>(null);
@@ -255,25 +254,22 @@ export function useCanvasProjectLifecycle({
         };
     }, [localMode, projectLoaded]);
 
-    useEffect(() => subscribeAgentCanvasRefresh((project, previous) => {
+    useEffect(() => subscribeCanvasRefresh((project, previous) => {
         if (!projectLoaded || editorProjectIdRef.current !== projectId || project.id !== projectId) return;
         // Merge only server-changed fields so dragging/editing other nodes can
         // continue while Agent media tasks complete. Same-field conflicts fail.
-        const merged = previous ? mergeAgentCanvasEditor(previous, project, nodesRef.current, connectionsRef.current) : project;
+        const merged = previous ? mergeCanvasRefreshPatch(previous, project, nodesRef.current, connectionsRef.current) : project;
         if (observedContentRef.current) {
             const observed = observedContentRef.current;
             // Advance only the observed server fields; edits in live refs still
             // differ from this baseline and must be persisted by the effect below.
-            const baseline = previous ? mergeAgentCanvasEditor(previous, project, observed.nodes, observed.connections) : project;
+            const baseline = previous ? mergeCanvasRefreshPatch(previous, project, observed.nodes, observed.connections) : project;
             observedContentRef.current = { ...observed, nodes: baseline.nodes, connections: baseline.connections };
         }
         nodesRef.current = merged.nodes;
         connectionsRef.current = merged.connections;
         setNodes(merged.nodes);
         setConnections(merged.connections);
-        const previousIds = new Set(previous?.nodes.map((node) => node.id));
-        const created = project.nodes.filter((node) => !previousIds.has(node.id));
-        if (created.length) setAgentCreatedNodes({ projectId: project.id, nodes: created });
     }), [projectId, projectLoaded, nodesRef, connectionsRef, setNodes, setConnections]);
 
     useEffect(() => {
@@ -433,7 +429,6 @@ export function useCanvasProjectLifecycle({
         loadError,
         retryLoad: () => setLoadAttempt((attempt) => attempt + 1),
         addedSkills,
-        agentCreatedNodes: agentCreatedNodes?.projectId === projectId ? agentCreatedNodes.nodes : null,
         clearCanvasFiles,
         createAndOpenCanvas,
         currentProject,

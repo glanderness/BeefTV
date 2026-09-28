@@ -86,6 +86,29 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *app.Service, hostedProfile ...b
 		}
 		ok(c, task)
 	})
+	r.POST("/depth-captures", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		policy, available := loadRuntimePolicy(c, svc)
+		if !available || !enforceRateLimit(c, "depth-capture:"+user.ID, policy.Request.TaskCreatePerMinute, time.Minute) {
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+		var req app.DepthCaptureCreateRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		task, err := svc.CreateDepthCaptureTask(user.ID, req)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, task)
+	})
 	r.GET("/tasks", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

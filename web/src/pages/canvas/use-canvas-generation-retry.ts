@@ -22,6 +22,7 @@ import {
     supportsVideoReferenceAudio,
 } from "@/lib/canvas/canvas-project-generation";
 import { isCanvasWorkflowProvider } from "@/lib/canvas/canvas-workflow";
+import { isDepthCaptureResultNode } from "@/lib/canvas/canvas-depth-capture";
 import { buildPortraitTexturePrompt } from "@/lib/canvas/canvas-portrait-texture";
 import { resolveCanvasStyleExecution } from "@/lib/canvas/canvas-style-execution";
 import { generationFailureMetadata, shouldBlockAutomaticRetry } from "@/lib/generation-error";
@@ -75,6 +76,10 @@ export function useCanvasGenerationRetry({
 
     return useCallback(
         async (node: CanvasNodeData) => {
+            if (isDepthCaptureResultNode(node)) {
+                message.warning("深度动作捕捉节点必须使用本地深度任务重试");
+                return;
+            }
             const retryMode = retryModeForNode(node.type);
             if (!retryMode) {
                 message.warning("当前节点不能使用通用生成重试");

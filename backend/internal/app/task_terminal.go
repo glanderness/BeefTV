@@ -93,6 +93,17 @@ func (c *taskTerminalCoordinator) markPreparationFailure(task *model.Task, stage
 	return err
 }
 
+// refuse 把一条按产品边界不再支持的任务直接收尾为失败，并记录失败日志。
+// 与 markPreparationFailure 的差别：用户可见原因原样落库，不经过失败分类改写——
+// “按产品边界拒绝执行”本身就是正确的终态结果，不是 worker 执行失败。
+func (c *taskTerminalCoordinator) refuse(task *model.Task, stage string, message string) error {
+	c.ensureFailedAttemptLogged(task, errors.New(message))
+	task.Status = model.TaskStatusFailed
+	task.Stage = stage
+	task.Error = message
+	return c.markTerminalState(task)
+}
+
 // handleExecutionFailure 返回 nil 仅表示取消已被正常收尾；普通失败仍返回原始错误，
 // 让 worker 保留重试/监控所需的失败语义。
 func (c *taskTerminalCoordinator) handleExecutionFailure(task *model.Task, err error, providerSucceeded bool, channelSlotFailedBeforeRequest bool) error {

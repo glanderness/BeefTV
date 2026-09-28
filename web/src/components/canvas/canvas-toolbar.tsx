@@ -19,7 +19,6 @@ import type { CanvasNodeTypeId, CanvasToolMode, CanvasWorkspaceMode } from "@/ty
 
 export function CanvasToolbar({
     selectedCount,
-    agentOpen = false,
     libtvChrome = false,
     workspaceMode,
     canvasTool,
@@ -62,7 +61,6 @@ export function CanvasToolbar({
     onOpenShortcuts,
 }: {
     selectedCount: number;
-    agentOpen?: boolean;
     /** 兼容 LibTV 视觉基线时，仅显示原版底部 Dock 的核心入口。 */
     libtvChrome?: boolean;
     workspaceMode: CanvasWorkspaceMode;
@@ -199,11 +197,11 @@ export function CanvasToolbar({
         onToggleSettingsPanel: () => { setAddOpen(false); setAppearanceOpen(false); setModeMenuOpen(false); setSettingsOpen((value) => !value); },
         onDeleteSelected: onDelete,
         // 以下为多选/节点悬停工具栏回调，主工具栏不使用，用 no-op 占位
-        onAlign: () => {}, onArrange: () => {}, onCreateStoryboard: () => {}, onCreateReferenceGroup: () => {}, onBatchConnect: () => {}, onMergeVideos: () => {}, onSendSelectionToAgent: () => {},
+        onAlign: () => {}, onArrange: () => {}, onCreateStoryboard: () => {}, onCreateReferenceGroup: () => {}, onBatchConnect: () => {}, onMergeVideos: () => {},
         onNodeInfo: () => {}, onNodeDelete: () => {}, onNodeRetry: () => {}, onNodeEditText: () => {}, onNodeDecreaseFont: () => {}, onNodeIncreaseFont: () => {},
         onNodeToggleDialog: () => {}, onNodeAnnotate: () => {}, onNodeGenerateImage: () => {}, onNodeUpload: () => {}, onNodeDownload: () => {}, onNodeSaveAsset: () => {},
         onNodeMaskEdit: () => {}, onNodeEmotion: () => {}, onNodePortraitTexture: () => {}, onNodeCrop: () => {}, onNodeSplit: () => {}, onNodeUpscale: () => {},
-        onNodeSuperResolve: () => {}, onNodeAngle: () => {}, onNodeViewImage: () => {}, onNodeExtractVideoFrames: () => {}, onNodeExtractAudioFromVideo: () => {}, onNodeTrimVideoSegments: () => {}, onNodeCropVideo: () => {}, onNodeSubtitles: () => {}, onNodeTimeline: () => {}, onNodeReversePrompt: () => {},
+        onNodeSuperResolve: () => {}, onNodeAngle: () => {}, onNodeViewImage: () => {}, onNodeExtractVideoFrames: () => {}, onNodeExtractAudioFromVideo: () => {}, onNodeTrimVideoSegments: () => {}, onNodeCropVideo: () => {}, onNodeDepthCapture: () => {}, onNodeSubtitles: () => {}, onNodeTimeline: () => {}, onNodeReversePrompt: () => {},
         onNodeToggleFreeResize: () => {}, onNodeToggleLocked: () => {}, onNodeCopyPrompt: () => {},
     } as ToolbarHandlers;
 
@@ -253,7 +251,7 @@ export function CanvasToolbar({
     const createCommands = useCanvasCreateCommands(ctx, runAddAction);
 
     return (
-        <div ref={rootRef} data-canvas-no-zoom className={`canvas-main-toolbar pointer-events-none absolute inset-x-[var(--canvas-inset-x)] bottom-[var(--canvas-inset-y)] flex justify-center${libtvChrome ? " canvas-libtv-compat-toolbar" : ""}`} style={{ zIndex, paddingRight: agentOpen ? 340 : undefined }} onPointerDownCapture={bringToFront} onFocusCapture={bringToFront}>
+        <div ref={rootRef} data-canvas-no-zoom className={`canvas-main-toolbar pointer-events-none absolute inset-x-[var(--canvas-inset-x)] bottom-[var(--canvas-inset-y)] flex justify-center${libtvChrome ? " canvas-libtv-compat-toolbar" : ""}`} style={{ zIndex }} onPointerDownCapture={bringToFront} onFocusCapture={bringToFront}>
             <AnimatePresence>
                 {modeMenuOpen ? (
                     <CanvasModeMenu

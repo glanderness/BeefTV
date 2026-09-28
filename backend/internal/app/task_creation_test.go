@@ -36,6 +36,28 @@ func TestTaskInputUsesWorkflowProvider(t *testing.T) {
 	}
 }
 
+func TestCreateTaskRejectsCrossTypeRetryFromDepthCapture(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+newID()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Task{}); err != nil {
+		t.Fatal(err)
+	}
+	parent := model.Task{ID: "depth-task", UserID: "user", Type: model.TaskTypeDepthCapture, Status: model.TaskStatusFailed}
+	if err := db.Create(&parent).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{repo: repository.New(db)}
+	_, err = svc.CreateTask("user", CreateTaskRequest{
+		Type: "canvas_video", Prompt: "生成深度动作参考",
+		Input: map[string]any{"metadata": map[string]any{"retryOf": parent.ID}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "任务类型不一致") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestResolveTaskModelSelectionAllowsExplicitSystemChannelWhenFrontendModelsEnabled(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+newID()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {

@@ -1,4 +1,3 @@
-import { applyAgentCanvasPatch, type AgentCanvasPatch } from "@/lib/canvas/agent-canvas-patch";
 import { rebindInconsistentCanvasAssets, type CanvasAssetRebindResult } from "@/services/canvas-asset-repair";
 import { createLocalCanvasProject, deleteLocalCanvasProjects, openLocalCanvasProject, openLocalCanvasProjectFromBackend } from "@/services/local-workspace-repository";
 import { flushAssetStorePersistence, useAssetStore, type Asset } from "@/stores/use-asset-store";
@@ -10,7 +9,7 @@ type CanvasSaveSummary = Pick<CanvasProject, "id" | "title" | "createdAt" | "upd
 export { isLocalWorkspaceMode } from "@/services/workspace-mode";
 
 let operationTail: Promise<void> = Promise.resolve();
-const agentCanvasListeners = new Set<(project: CanvasProject, previous: CanvasProject | undefined) => void>();
+const canvasRefreshListeners = new Set<(project: CanvasProject, previous: CanvasProject | undefined) => void>();
 
 /**
  * Backward-compatible local persistence facade.
@@ -38,35 +37,20 @@ export async function loadCanvasProjectForEditing(
     return project || undefined;
 }
 
-export function subscribeAgentCanvasRefresh(listener: (project: CanvasProject, previous: CanvasProject | undefined) => void) {
-    agentCanvasListeners.add(listener);
-    return () => { agentCanvasListeners.delete(listener); };
-}
-
-export async function refreshCanvasAfterAgent(id: string) {
-    const project = openLocalCanvasProject(id);
-    if (!project) throw new Error("本地画布不存在");
-    return project;
-}
-
-/** Ensure the local canvas snapshot is visible to the co-packaged Go Agent.
- * Local editing intentionally avoids the hosted sync queue, but Agent tools
- * execute against the Go repository and still need the current snapshot. */
-export async function syncLocalCanvasForAgent(id: string) {
-    const project = openLocalCanvasProject(id);
-    if (!project) throw new Error("本地画布不存在");
-    await http.put(`/canvas-projects/${encodeURIComponent(id)}`, { project });
-    return project;
+// 画布内容被其他写入者（远端刷新、任务回写）替换后通知本地编辑器合并。
+export function subscribeCanvasRefresh(listener: (project: CanvasProject, previous: CanvasProject | undefined) => void) {
+    canvasRefreshListeners.add(listener);
+    return () => { canvasRefreshListeners.delete(listener); };
 }
 
 /**
  * Persist an editor snapshot to the co-packaged Go repository.  Local edits
- * normally stay in IndexedDB for instant UI feedback, but the Go repository
- * is also read by MCP/SSE.  Callers that mutate the canvas outside the normal
- * save flow (for example node deletion) must use this bridge or the next
+ * normally stay in IndexedDB for instant UI feedback, but the Go repository is
+ * also read by task/SSE paths.  Callers that mutate the canvas outside the
+ * normal save flow (for example node deletion) must use this bridge or the next
  * remote refresh can resurrect the stale server snapshot.
  */
-export async function syncLocalCanvasSnapshotForAgent(id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "appearance" | "backgroundMode" | "showImageInfo" | "viewport">>) {
+export async function syncLocalCanvasSnapshot(id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "appearance" | "backgroundMode" | "showImageInfo" | "viewport">>) {
     const current = openLocalCanvasProject(id);
     if (!current) throw new Error("本地画布不存在");
     const project = { ...current, ...patch };
@@ -74,20 +58,6 @@ export async function syncLocalCanvasSnapshotForAgent(id: string, patch: Partial
     const saved = { ...project, revision: response.project?.revision ?? project.revision, updatedAt: response.project?.updatedAt ?? project.updatedAt };
     useCanvasStore.setState((state) => ({ projects: state.projects.map((item) => item.id === id ? saved : item) }));
     return saved;
-}
-
-export async function applyAgentCanvasPatches(id: string, patches: AgentCanvasPatch[]) {
-    return withRemoteUserDataSyncExclusive(async () => {
-        const current = openLocalCanvasProject(id);
-        if (!current) throw new Error("本地画布不存在");
-        let projected = current;
-        for (const patch of patches) projected = applyAgentCanvasPatch(projected, patch);
-        if (projected === current) return current;
-        for (const listener of agentCanvasListeners) listener(projected, current);
-        useCanvasStore.setState((state) => ({ projects: state.projects.map((project) => project.id === id ? projected : project) }));
-        await flushCanvasStorePersistence();
-        return projected;
-    });
 }
 
 type LocalAssetPageOptions = {

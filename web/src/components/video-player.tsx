@@ -24,6 +24,7 @@ type VideoPlayerProps = {
     hasAudio?: boolean;
     onCanPlay?: MediaPlayerProps["onCanPlay"];
     onPlay?: MediaPlayerProps["onPlay"];
+    onFirstFramePresented?: () => void;
 };
 
 const zhCNTranslations = {
@@ -74,11 +75,26 @@ const supportedVideoMimeTypes = new Set<VideoMimeType>(["video/mp4", "video/webm
  * 统一视频播放表面，保留原生媒体 URL 契约，同时提供可访问的完整控件布局。
  * 画布节点需要隔离播放器手势，避免拖动进度条时被误判为拖动画布。
  */
-export function VideoPlayer({ src, mimeType, title = "视频", className, brandColor = "#f5f5f5", preload = "metadata", autoPlay = false, dataCanvasNoZoom = false, compactControls = false, hasAudio, onCanPlay, onPlay }: VideoPlayerProps) {
+export function VideoPlayer({
+    src,
+    mimeType,
+    title = "视频",
+    className,
+    brandColor = "#f5f5f5",
+    preload = "metadata",
+    autoPlay = false,
+    dataCanvasNoZoom = false,
+    compactControls = false,
+    hasAudio,
+    onCanPlay,
+    onPlay,
+    onFirstFramePresented,
+}: VideoPlayerProps) {
     const [detectedHasAudio, setDetectedHasAudio] = useState<boolean | undefined>(undefined);
     const autoPlayAttemptedRef = useRef(false);
     const audioProbeGenerationRef = useRef(0);
     const mediaPlayerRef = useRef<MediaPlayerInstance>(null);
+    const firstFrameRequestedRef = useRef(false);
     // Match LibTV's conservative rule: only explicit/container-confirmed
     // silence mutes the player. Runtime probes are used to confirm audio and
     // correct stale persisted `false`, but a negative/unknown probe never
@@ -107,6 +123,7 @@ export function VideoPlayer({ src, mimeType, title = "视频", className, brandC
         setDetectedHasAudio(undefined);
         autoPlayAttemptedRef.current = false;
         audioProbeGenerationRef.current += 1;
+        firstFrameRequestedRef.current = false;
     }, [src]);
 
     useEffect(() => {
@@ -156,7 +173,15 @@ export function VideoPlayer({ src, mimeType, title = "视频", className, brandC
     const mediaSource = useMemo(() => ({ src, type }), [src, type]);
     const handleCanPlay = (detail: Parameters<NonNullable<MediaPlayerProps["onCanPlay"]>>[0], event: Parameters<NonNullable<MediaPlayerProps["onCanPlay"]>>[1]) => {
         const provider = event.target.provider;
-        const media = isVideoProvider(provider) ? provider.media : undefined;
+        const media = isVideoProvider(provider) ? (provider.media as HTMLVideoElement) : undefined;
+        if (media && !firstFrameRequestedRef.current) {
+            firstFrameRequestedRef.current = true;
+            if (typeof media.requestVideoFrameCallback === "function") {
+                media.requestVideoFrameCallback(() => onFirstFramePresented?.());
+            } else {
+                requestAnimationFrame(() => requestAnimationFrame(() => onFirstFramePresented?.()));
+            }
+        }
         const detected = media ? detectVideoAudioTrack(media) : undefined;
         if (detected !== undefined) setDetectedHasAudio(detected);
         else probeRemoteAudioTrack();

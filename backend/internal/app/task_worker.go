@@ -38,26 +38,11 @@ func (w *taskWorkerCoordinator) start(ctx context.Context) {
 	s := w.service
 	s.startTextReplayCleanup(ctx)
 	s.startProviderCancellationReconciliation(ctx)
-	s.startAgentMemoryCompactScheduler()
-	if !s.IsLocalMode() {
-		s.runWorkerLoop(func(ctx context.Context) {
-			ticker := time.NewTicker(2 * time.Second)
-			defer ticker.Stop()
-			for {
-				if ctx.Err() != nil {
-					return
-				}
-				if !s.IsDraining() {
-					s.advanceCloudAgents()
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-				}
-			}
-		})
-	}
+	// 旧内置 Agent 的后台调度已整体从产品生命周期移出：
+	//   - 不再启动记忆自动压缩（它会按周期调用用户的文本模型）；
+	//   - 不再按运行模式启动 advanceCloudAgents 轮次调度。
+	// 两者都不会在 local/hosted 任何 profile 下重新驱动旧 Agent 的半成品流程。
+	// 历史任务、运行状态、偏好与记忆数据保留在本地数据库，不做破坏性迁移。
 	s.runWorkerLoop(func(ctx context.Context) {
 		slots := make(chan struct{}, maxChannelConcurrencyLimit)
 		dispatch := func() {
@@ -130,6 +115,13 @@ func (w *taskWorkerCoordinator) processNextTask() error {
 
 func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot *platform.SlotLease) error {
 	s := w.service
+	// 产品边界：旧内置 Agent 的 cloud_agent / cloud_agent_step 任务不再执行。历史遗留的
+	// 排队任务若被领走，会在这里以明确原因终止，而不是当成普通文本生成调用模型；
+	// 保留任务行本身（数据不删）以便追溯。
+	if retiredAgentTask(task) {
+		// 任务已被终态收尾（含失败日志），这不是 worker 执行失败，因此返回 nil。
+		return s.terminalCoordinator().refuse(task, "功能已下线", retiredAgentBoundaryMessage)
+	}
 	terminal := s.terminalCoordinator()
 	policyCtx, cancelPolicy := context.WithTimeout(context.Background(), 3*time.Second)
 	reader := &Service{repo: s.repo.WithContext(policyCtx)}
@@ -185,6 +177,9 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 	}
 	if task.Type == model.TaskTypeTimelineRender {
 		return w.processTimelineRender(task, ctx)
+	}
+	if task.Type == model.TaskTypeDepthCapture {
+		return w.processDepthCapture(task, ctx)
 	}
 
 	s.markAgentMemoryCompactRunning(*task)
@@ -311,6 +306,9 @@ func taskExecutionTimeoutWithPolicy(taskType string, policy RuntimeTaskPolicy) t
 	case taskType == model.TaskTypeTimelineRender:
 		// 渲染是整条时间线的重编码，耗时随长度线性增长。
 		return 60 * time.Minute
+	case taskType == model.TaskTypeDepthCapture:
+		// 首次执行包含可选 Runtime 和模型下载。
+		return 2 * time.Hour
 	default:
 		return time.Duration(policy.DefaultTimeoutMinutes) * time.Minute
 	}

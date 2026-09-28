@@ -6,39 +6,7 @@
 .creation-mode-button[aria-pressed="true"], .creation-mode-button:hover { color: var(--user-ink); }
 .creation-mode-button:active { transform: scale(.97); }
 .creation-mode-button:focus-visible { outline: 2px solid var(--user-accent); outline-offset: 2px; }
-.creation-mode-spark {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: #6366f1;
-    box-shadow: 0 0 8px rgba(99, 102, 241, 0.65);
-    animation: creation-mode-spark-pulse 2s ease-in-out infinite;
-}
 
-.dark .creation-mode-spark {
-    background: #818cf8;
-    box-shadow: 0 0 10px rgba(129, 140, 248, 0.85);
-}
-
-@keyframes creation-mode-spark-pulse {
-    0%, 100% {
-        transform: scale(0.85);
-        opacity: 0.45;
-        box-shadow: 0 0 4px rgba(99, 102, 241, 0.4);
-    }
-    50% {
-        transform: scale(1.3);
-        opacity: 1;
-        box-shadow: 0 0 10px rgba(99, 102, 241, 0.9), 0 0 16px rgba(99, 102, 241, 0.45);
-    }
-}
-.creation-agent-entry { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: center; gap: 16px 24px; padding: 28px; margin-bottom: 20px; border-radius: var(--user-radius-card); background: var(--user-surface); animation: product-card-enter var(--product-enter) var(--product-ease) backwards; }
-.creation-agent-orb { grid-row: span 2; }
-.creation-agent-eyebrow { font-size: 10px; font-weight: 650; letter-spacing: .14em; color: var(--user-accent); }
-.creation-agent-copy h2 { margin: 4px 0 8px; font-size: 21px; font-weight: 650; color: var(--user-ink); }
-.creation-agent-copy p { margin: 0; max-width: 62ch; font-size: 13px; line-height: 1.8; color: var(--user-ink-muted); }
-.creation-agent-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.creation-agent-error { grid-column: 1 / -1; color: var(--status-error); font-size: 12px; margin: 0; }
 .creation-home .creation-empty-composer[hidden] { display: none; }
 .creation-submit { margin-left: auto; flex: 0 0 auto; display: inline-flex; gap: 8px; }
 .app-product-workspace .creation-home .creation-reference-add-button.creation-chat-reference-add {
@@ -94,10 +62,6 @@
 .creation-inspiration-footer a { color: var(--user-accent); }
 @media (max-width: 620px) {
     .creation-mode-button { padding-inline: 6px; font-size: 12px; gap: 6px; }
-    .creation-agent-entry { grid-template-columns: 1fr; padding: 20px; gap: 12px; }
-    .creation-agent-orb { display: none; }
-    .creation-agent-copy h2 { font-size: 18px; }
-    .creation-agent-actions > .ant-btn { width: 100%; }
     .creation-inspiration-filters { gap: 4px; }
     .creation-inspiration-filters button { padding-inline: 10px; }
     .creation-inspiration-footer { align-items: flex-start; flex-direction: column; }
@@ -136,7 +100,6 @@
 @keyframes creation-submit-sheen { to { transform: translateX(120%); } }
 @media (prefers-reduced-motion: reduce) {
     .creation-mode-button:active { transform: none; }
-    .creation-agent-entry { animation: none; }
     .app-user-workspace .creation-chat-composer,
     .app-user-workspace .creation-chat-control,
     .app-user-workspace .creation-voice-trigger.ant-btn,
