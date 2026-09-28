@@ -46,3 +46,29 @@ func TestSeedanceTaskConstraints(t *testing.T) {
 		})
 	}
 }
+
+func TestInstalledSeedancePluginsPreserveExplicitTaskType(t *testing.T) {
+	for _, plugin := range []struct{ file, id string }{
+		{"volcengine-ark-seedance.beeftv-plugin", "volcengine-ark-video"},
+		{"volcengine-ark-agent-plan-seedance.beeftv-plugin", "volcengine-ark-agent-plan-video"},
+		{"seedance-videos-compatible.beeftv-plugin", "seedance-videos-compatible"},
+	} {
+		a := officialPackageAdapter(t, plugin.file, plugin.id)
+		for _, tc := range []struct{ model, op, want string }{
+			{"seedance-2.5", "reference_to_video", "reference"}, {"seedance-2.5", "inpaint", "edit"}, {"seedance-2.5", "extend", "extend"}, {"seedance-2.5", "", ""}, {"seedance-2.0", "reference_to_video", ""},
+		} {
+			spec, err := a.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{Capability: CapabilityVideo, Model: tc.model, Prompt: "test", Operation: tc.op, Duration: 5, AspectRatio: "16:9", Videos: []MediaReference{{URL: "https://example.com/a.mp4"}}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := manifestTestBody(t, spec)
+			if tc.want == "" {
+				if _, ok := body["omni_reference_task_type"]; ok {
+					t.Fatalf("unexpected field: %v", body)
+				}
+			} else if body["omni_reference_task_type"] != tc.want {
+				t.Fatalf("%s %s got %v", plugin.id, tc.op, body)
+			}
+		}
+	}
+}

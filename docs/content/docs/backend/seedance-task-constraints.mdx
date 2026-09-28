@@ -39,3 +39,8 @@ BeefTV 保留明确的素材角色和已选模式。2.5 首帧任务显式发送
 遇到 `InvalidParameter.TaskTypeConstraint` 时，核对最终发送的 `ratio`、`duration` 和每个素材的 `role`，包括省略字段。`fail_to_fetch_task` 等外层包装不能覆盖内部的具体参数原因。任务列表、画布及重启后的记录应保留同样的调整建议和排查编号。
 
 若发送体没有比例却收到比例错误，应继续核对中转的默认值和转换结果；不能仅凭这条报错判定客户端、网关或供应商中的某一方承担全部原因。失败任务不自动原样重提。
+
+显式选择全能参考时，Seedance 2.5 请求传入
+`omni_reference_task_type=reference`；视频编辑和延长分别传入 `edit` / `extend`。
+企业 Videos 请求使用 metadata，原生和兼容插件使用对应顶层字段；2.0 与未指定模式保留原行为。
+供应商 `model_temporarily_unavailable` 归类为模型暂不可用，不能解释成用户余额不足。

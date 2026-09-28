@@ -9,6 +9,11 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.5
+
+- Preserve explicit Seedance 2.5 reference/edit/extend task intent in provider requests.
+- Recognize temporary model route unavailability as an actionable provider error.
+
 ## v1.6.4
 
 - Restore Seedance image, video and audio references for built-in BeefAPI models after catalog import and configuration reload.

@@ -366,6 +366,9 @@ func beefAPIVideoRequestBody(input canvasGenerationInput) (map[string]interface{
 		metadata := map[string]interface{}{
 			"ratio": options.AspectRatio,
 		}
+		if kind := protocol.SeedanceOmniTaskType(options); kind != "" {
+			metadata["omni_reference_task_type"] = kind
+		}
 		if videoCapabilitySupportsAudio(input) {
 			metadata["generate_audio"] = parseBool(input.Config.VideoGenerateAudio, true)
 		}
@@ -437,6 +440,7 @@ func runSeedanceAgentPlanVideoTask(ctx context.Context, input canvasGenerationIn
 		if isSeedance25Model(input.Config.Model) {
 			options := seedanceTaskOptions(input)
 			body.Ratio, body.Duration = options.AspectRatio, options.Duration
+			body.OmniReferenceTaskType = protocol.SeedanceOmniTaskType(options)
 		}
 		if videoCapabilitySupportsAudio(input) {
 			value := parseBool(input.Config.VideoGenerateAudio, true)
@@ -562,6 +566,7 @@ func seedanceVideosRequestBody(input canvasGenerationInput) (seedanceVideosReque
 	options := seedanceTaskOptions(input)
 	if isSeedance25Model(input.Config.Model) {
 		body.AspectRatio, body.Duration = options.AspectRatio, options.Duration
+		body.OmniReferenceTaskType = protocol.SeedanceOmniTaskType(options)
 	}
 	if videoCapabilitySupportsAudio(input) {
 		value := parseBool(input.Config.VideoGenerateAudio, true)

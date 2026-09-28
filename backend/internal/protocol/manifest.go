@@ -427,6 +427,13 @@ func (a manifestAdapter) BuildCreate(_ context.Context, c RequestContext) (Reque
 	if err != nil {
 		return RequestSpec{}, err
 	}
+	if a.manifest.Metadata.ID == "volcengine-ark-seedance" || a.manifest.Metadata.ID == "volcengine-ark-video" || a.manifest.Metadata.ID == "volcengine-ark-agent-plan-video" || a.manifest.Metadata.ID == "seedance-videos-compatible" {
+		if kind := SeedanceOmniTaskType(c.Request); kind != "" {
+			if body, ok := spec.Body.(map[string]any); ok {
+				body["omni_reference_task_type"] = kind
+			}
+		}
+	}
 	// Some NewAPI-compatible gateways validate the prompt under input.content
 	// even though the historical channel-1 contract used input.prompt. Keep the
 	// legacy field and add the canonical content alias for that shipped profile.

@@ -28,3 +28,24 @@ func NormalizeSeedanceTaskOptions(r GenerationRequest) GenerationRequest {
 	r.Output.AspectRatio, r.Output.Duration = r.AspectRatio, r.Duration
 	return r
 }
+
+// SeedanceOmniTaskType preserves explicit operation intent at the wire boundary.
+func SeedanceOmniTaskType(r GenerationRequest) string {
+	m := strings.ToLower(r.Model)
+	if !(strings.HasSuffix(m, "seedance-2.5") || strings.Contains(m, "seedance-2.5-") || strings.HasSuffix(m, "seedance-2-5") || strings.Contains(m, "seedance-2-5-")) {
+		return ""
+	}
+	switch r.Operation {
+	case "reference_to_video":
+		return "reference"
+	case "extend":
+		if len(r.Videos) > 0 {
+			return "extend"
+		}
+	case "inpaint", "replace_element", "style_transfer":
+		if len(r.Videos) > 0 {
+			return "edit"
+		}
+	}
+	return ""
+}

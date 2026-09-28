@@ -36,6 +36,7 @@ test("frontend native and compatible requests retain the first-frame constraint"
         expect(body.duration).toBe(6);
         await createSeedanceTask(deps, config as never, model, "move", refs, [], [], { videoEditOperation: "reference_to_video" });
         expect(body.ratio || body.aspect_ratio).toBe("9:16");
+        expect(body.omni_reference_task_type).toBe("reference");
     }
 });
 
@@ -79,4 +80,9 @@ test("explicit reference and extension intent survives model selection", () => {
     expect(resolveVideoOperation(input, "reference_to_video")).toBe("reference_to_video");
     expect(resolveVideoOperation({ ...input, videoCount: 1 }, "extend")).toBe("extend");
     expect(resolveVideoOperation({ ...input, videoCount: 1 })).toBe("reference_to_video");
+});
+
+test("temporary unavailable error inside failed task is actionable", () => {
+ const e=explainGenerationError({error:{code:"model_temporarily_unavailable",message:"无可用线路：当前售价档位 standard 暂无可用线路"}});
+ expect(e.category).toBe("provider_unavailable"); expect(e.reason).toBe("模型服务暂时不可用");
 });

@@ -1,5 +1,5 @@
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
-import { seedanceTaskOptions } from "@/lib/seedance-task-constraints";
+import { seedanceTaskOptions, seedanceOmniTaskType } from "@/lib/seedance-task-constraints";
 import { isVolcengineArkVideoProtocol } from "@/lib/model-protocols";
 import { boolConfig, buildSeedancePromptText, isArkPlanBaseUrl, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution } from "@/lib/seedance-video";
 import { getMediaBlob } from "@/services/file-storage";
@@ -89,6 +89,7 @@ async function buildSeedanceAgentPlanPayload(config: ResolvedAiConfig, model: st
     );
     return {
         model: modelOptionName(model),
+        ...(seedanceOmniTaskType(model, options?.videoEditOperation, videoReferences.length) ? { omni_reference_task_type: seedanceOmniTaskType(model, options?.videoEditOperation, videoReferences.length) } : {}),
         content,
         ratio: taskOptions.ratio,
         resolution: normalizeSeedanceResolution(config.vquality, modelOptionName(model)),
@@ -145,6 +146,7 @@ async function buildSeedanceVideosPayload(config: AiConfig, model: string, promp
     }
     return {
         model: modelOptionName(model),
+        ...(seedanceOmniTaskType(model, options?.videoEditOperation, videoReferences.length) ? { omni_reference_task_type: seedanceOmniTaskType(model, options?.videoEditOperation, videoReferences.length) } : {}),
         prompt: prompt.trim(),
         aspect_ratio: ratio,
         duration,

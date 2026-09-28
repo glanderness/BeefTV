@@ -15,16 +15,17 @@ func requestAsMap(value interface{}) (map[string]interface{}, error) {
 }
 
 type seedanceVideosRequest struct {
-	Model              string   `json:"model"`
-	Prompt             string   `json:"prompt"`
-	AspectRatio        string   `json:"aspect_ratio"`
-	Duration           int      `json:"duration"`
-	GenerateAudio      *bool    `json:"generate_audio,omitempty"`
-	ImageURL           string   `json:"image_url,omitempty"`
-	ReferenceImageURLs []string `json:"reference_image_urls,omitempty"`
-	ImageURLs          []string `json:"image_urls,omitempty"`
-	ReferenceVideos    []string `json:"reference_videos,omitempty"`
-	ReferenceAudios    []string `json:"reference_audios,omitempty"`
+	OmniReferenceTaskType string   `json:"omni_reference_task_type,omitempty"`
+	Model                 string   `json:"model"`
+	Prompt                string   `json:"prompt"`
+	AspectRatio           string   `json:"aspect_ratio"`
+	Duration              int      `json:"duration"`
+	GenerateAudio         *bool    `json:"generate_audio,omitempty"`
+	ImageURL              string   `json:"image_url,omitempty"`
+	ReferenceImageURLs    []string `json:"reference_image_urls,omitempty"`
+	ImageURLs             []string `json:"image_urls,omitempty"`
+	ReferenceVideos       []string `json:"reference_videos,omitempty"`
+	ReferenceAudios       []string `json:"reference_audios,omitempty"`
 }
 
 type grokImageRequest struct {
@@ -74,11 +75,12 @@ type geminiImageConfig struct {
 }
 
 type seedanceAgentPlanRequest struct {
-	Model         string                   `json:"model"`
-	Content       []map[string]interface{} `json:"content"`
-	Ratio         string                   `json:"ratio"`
-	Resolution    string                   `json:"resolution"`
-	Duration      int                      `json:"duration"`
-	GenerateAudio *bool                    `json:"generate_audio,omitempty"`
-	Watermark     *bool                    `json:"watermark,omitempty"`
+	OmniReferenceTaskType string                   `json:"omni_reference_task_type,omitempty"`
+	Model                 string                   `json:"model"`
+	Content               []map[string]interface{} `json:"content"`
+	Ratio                 string                   `json:"ratio"`
+	Resolution            string                   `json:"resolution"`
+	Duration              int                      `json:"duration"`
+	GenerateAudio         *bool                    `json:"generate_audio,omitempty"`
+	Watermark             *bool                    `json:"watermark,omitempty"`
 }

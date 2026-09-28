@@ -188,6 +188,7 @@ var providerCodeCategories = map[string]FailureCategory{
 	"invalid_model":                    CategoryModelMissing,
 	"not_found":                        CategoryModelMissing,
 	"model_catalog_mismatch":           CategoryModelMissing,
+	"model_temporarily_unavailable":    CategoryProviderUnavailable,
 	"model_route_unavailable":          CategoryProviderUnavailable,
 	"rate_limit_exceeded":              CategoryThrottled,
 	"rate_limit_error":                 CategoryThrottled,
