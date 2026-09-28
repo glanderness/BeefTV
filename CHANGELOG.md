@@ -9,6 +9,13 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.1
+
+- Explain input and output moderation failures by text, image, video and audio, including copyright, privacy and counterfeit-content restrictions.
+- Preserve specific failure guidance and request IDs when reloading task history; avoid attributing general moderation failures to real-person references.
+- Distinguish upstream billing problems, configured usage limits, concurrency limits and model permissions, including errors wrapped in generic request codes.
+- Keep uncertain submissions and unchanged moderation failures from automatically generating another request.
+
 ## v1.6.0
 
 - Add depth action capture to the canvas video-processing menu on Apple Silicon Macs, with an optional local runtime and separately cached Small model weights.
