@@ -9,6 +9,13 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.0
+
+- Add depth action capture to the canvas video-processing menu on Apple Silicon Macs, with an optional local runtime and separately cached Small model weights.
+- Download and verify depth components from the BeefTV release, with a Hugging Face fallback for model weights and visible task progress.
+- Keep video first-frame posters visible until hover playback presents a decoded frame, preventing black flashes when playback starts or stops.
+- Preserve current generation, reference-media, desktop-update, and task-retry contracts while integrating the new workflow.
+
 ## v1.5.9
 
 - Validate reference image dimensions, aspect ratios, file sizes and audio/video duration using each model's configured capabilities before submitting.
