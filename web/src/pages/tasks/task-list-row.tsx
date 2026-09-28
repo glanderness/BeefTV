@@ -68,7 +68,7 @@ export function TaskListRow({
                     </div>
                 ) : null}
                 {isFailed ? (
-                    <p className="task-record-error" title={task.error ? generationErrorMessage(task.error) : undefined}>
+                    <p className="task-record-error" title={taskAttentionReason(task)}>
                         {taskAttentionReason(task)}
                     </p>
                 ) : null}

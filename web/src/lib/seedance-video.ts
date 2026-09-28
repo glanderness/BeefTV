@@ -1,5 +1,5 @@
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
-import { normalizeVideoDuration, VIDEO_DURATION_OPTIONS } from "@/lib/video-generation-options";
+import { VIDEO_DURATION_OPTIONS } from "@/lib/video-generation-options";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -72,31 +72,31 @@ export function isSeedanceVideoModel(model: string) {
     return value.includes("seedance") || value.includes("doubao-seedance");
 }
 
-export function isSeedanceFastModel(model: string) {
-    const value = model.toLowerCase();
-    return isSeedanceVideoModel(value) && value.includes("fast");
-}
-
 export function isArkPlanBaseUrl(baseUrl: string) {
     return baseUrl.toLowerCase().includes("ark.cn-beijing.volces.com/api/plan/v3") || baseUrl.toLowerCase().includes("/api/plan/v3");
 }
 
-export function normalizeSeedanceResolution(value: string, model = "") {
-    const normalized = normalizeResolutionToken(value);
-    if (isSeedanceFastModel(model) && (normalized === "1080p" || normalized === "2160p")) return "720p";
-    return normalized === "2160p" || seedanceResolutionOptions.some((item) => item.value === normalized) ? normalized : "720p";
+export function normalizeSeedanceResolution(value: string, _model = "") {
+    return normalizeResolutionToken(value);
 }
 
 export function normalizeResolutionToken(value: string) {
-    if (value === "low") return "480p";
-    if (value === "auto" || value === "high" || value === "medium") return "720p";
-    if (value.toLowerCase() === "4k") return "2160p";
-    const resolution = String(value || "").replace(/p$/i, "") || "720";
-    return `${resolution}p`;
+    const token = String(value || "").trim();
+    if (!token || token === "auto" || token === "high" || token === "medium") return "720p";
+    if (token === "low") return "480p";
+    if (token.toLowerCase() === "4k") return "2160p";
+    if (token.toLowerCase() === "2k") return "1440p";
+    const resolution = token.replace(/p$/i, "");
+    if (/^\d+$/.test(resolution)) return `${resolution}p`;
+    return token;
 }
 
 export function normalizeSeedanceDuration(value: string) {
-    return Number(normalizeVideoDuration(value));
+    const trimmed = String(value ?? "").trim();
+    if (trimmed === "-1") return -1;
+    const seconds = Number(trimmed);
+    if (!Number.isFinite(seconds) || seconds <= 0) return 5;
+    return Math.floor(seconds);
 }
 
 export function normalizeSeedanceRatio(value: string) {
@@ -123,7 +123,7 @@ export function seedancePixelLabel(resolution: string, ratio: string) {
     const normalizedResolution = normalizeSeedanceResolution(resolution) as keyof typeof seedancePixels;
     const normalizedRatio = normalizeSeedanceRatio(ratio) as keyof (typeof seedancePixels)[typeof normalizedResolution] | "adaptive";
     if (normalizedRatio === "adaptive") return "自动匹配";
-    return seedancePixels[normalizedResolution][normalizedRatio] || "";
+    return seedancePixels[normalizedResolution]?.[normalizedRatio] || "";
 }
 
 export function boolConfig(value: string | undefined, fallback: boolean) {
