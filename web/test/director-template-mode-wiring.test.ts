@@ -171,8 +171,8 @@ describe("模式接线", () => {
         expect(workbench).toContain("}, [message, modal, open, scene, writeDraft]);");
         expect(workbench).toContain("}, [mirrorDraft, stagedTransaction]);");
         expect(workbench).toContain("}, [mirrorDraft]);");
-        // 快捷键监听只随 open 装卸，不随 mode 反复重挂。
-        expect(workbench).toContain("}, [open]);");
+        // 弹窗开关需暂停快捷键；mode 切换仍不得反复重挂监听器。
+        expect(workbench).toContain("}, [open, panoramaAIOpen, panoramaHistoryOpen]);");
     });
 });
 
