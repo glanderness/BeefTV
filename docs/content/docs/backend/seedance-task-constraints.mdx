@@ -54,3 +54,20 @@ BeefTV 的 2.5 首帧设置显示“随首帧”，编辑/延长显示“随原�
 `omni_reference_task_type=reference`；视频编辑和延长分别传入 `edit` / `extend`。
 企业 Videos 请求使用 metadata，原生和兼容插件使用对应顶层字段；2.0 与未指定模式保留原行为。
 供应商 `model_temporarily_unavailable` 归类为模型暂不可用，不能解释成用户余额不足。
+
+## 参考视频像素与元数据校验
+
+视频时长已知不等于尺寸已知。前端会为本地视频和受管资源补读宽高；后端对本地资源及内嵌 MP4/MOV 读取真实容器尺寸，覆盖旧元数据。尺寸仍无法读取时停止提交，提示重新导入；`asset://` 是供应商持有的素材，保留标识交由供应商校验。
+
+像素限制针对每个参考视频的宽×高，与输出分辨率、文件体积、参考图片规则相互独立。错误提示应保留素材序号、实际尺寸、总像素及允许范围，并在任务历史再次读取时保留调整方法。不会自动放大、裁剪或重试用户素材。
+
+文档核对（2026-09-29）：
+
+|来源|适用范围|处理|
+|---|---|---|
+|[火山真人素材库](https://docs.volcengine.com/docs/ark/upload-real-person-portrait-assets?lang=zh)|视频总像素 407696–8295044，图片另列边长与宽高比|不能把视频像素规则套到图片|
+|[WhatsToken 原生接口](https://www.whatstoken.ai/api/v1/plugins/docs-api/public/docs/11?lang=zh)|原生任务提交和查询接口|维持原生协议，不套兼容接口的参数枚举|
+|[WhatsToken 素材库](https://www.whatstoken.ai/api/v1/plugins/docs-api/public/docs/27?lang=zh)|素材管理接口，引用火山素材库|已知 BeefAPI/WhatsToken 地址的旧默认视频像素下限对齐 407696；其他模型、自定义限制和原生 Ark 默认不迁移|
+|[WhatsToken 兼容视频接口](https://www.whatstoken.ai/api/v1/plugins/docs-api/public/docs/47?lang=zh)|兼容路由的 images/videos/role/type 等字段|不把其 5/10 秒简化表视作原生 Seedance 全部能力|
+
+已覆盖数量、文件大小、单段及合计时长、边长、宽高比、视频总像素与角色参数。仍不能宣称完整等价：远程/不透明素材的部分属性由供应商校验；帧率、全部编解码格式和各模型最新原生规格仍需独立核对。素材库允许入库不等于所有模型都能使用该素材。已知全能参考输出比例偏差与本节输入校验是不同问题。

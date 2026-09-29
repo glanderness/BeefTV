@@ -744,6 +744,41 @@ func (s *Service) hydrateVideoReferenceMetadata(userID string, input *canvasGene
 			}
 		}
 	}
+	// Probe actual local/inline videos even when callers supplied dimensions.
+	if isSeedance2Family(input.Config.InterfaceType, input.Config.Model) {
+		for i := range input.ReferenceVideos {
+			media := &input.ReferenceVideos[i]
+			var data []byte
+			var err error
+			if strings.HasPrefix(media.StorageKey, "resource:") {
+				_, body, openErr := s.OpenResource(userID, strings.TrimPrefix(media.StorageKey, "resource:"))
+				if openErr != nil {
+					return fmt.Errorf("第 %d 个参考视频无法读取，请重新导入", i+1)
+				}
+				data, err = io.ReadAll(io.LimitReader(body, (200<<20)+1))
+				_ = body.Close()
+			} else if raw := firstNonEmpty(media.DataURL, media.URL); strings.HasPrefix(raw, "data:") {
+				if len(raw) > base64.StdEncoding.EncodedLen(200<<20)+256 {
+					return BadAuthRequest(fmt.Sprintf("第 %d 个参考视频文件不能超过 200MB", i+1))
+				}
+				_, data, err = decodeProviderDataURL(raw)
+			} else {
+				continue
+			}
+			if err != nil || len(data) > 200<<20 {
+				return BadAuthRequest(fmt.Sprintf("第 %d 个参考视频无法读取或超过 200MB，请重新导入", i+1))
+			}
+			w, h, durationMs := probeGeneratedVideoMedia(data)
+			if w <= 0 || h <= 0 {
+				return BadAuthRequest(fmt.Sprintf("第 %d 个参考视频尺寸无法读取，请重新导出 MP4/MOV 后导入", i+1))
+			}
+			media.Width, media.Height, media.Bytes = w, h, int64(len(data))
+			if durationMs > 0 {
+				media.DurationMs = durationMs
+			}
+		}
+	}
+
 	return nil
 }
 

@@ -9,6 +9,12 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.8
+
+- Read missing reference-video dimensions even when duration is already known, and reject unreadable or out-of-range video before submission.
+- Validate local and inline video dimensions from the actual file instead of trusting stale metadata.
+- Explain pixel-limit failures with the affected reference, actual dimensions and allowed range.
+
 ## v1.6.7
 
 - Ask for confirmation before paid Seedance 2.0 standard and 2.5 reference-video generation on affected channels where the requested aspect ratio may not be honored.

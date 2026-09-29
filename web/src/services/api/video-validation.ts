@@ -29,6 +29,7 @@ export function assertVideoCapability(
         totalVideoMs += video.durationMs || 0;
         if (!referenceDurationIsOpaqueAsset(video) && !(options.deferResourceMetadataToBackend && video.storageKey?.startsWith("resource:") && !video.durationMs)) assertReferenceDuration("视频", index, video.durationMs, refs.minVideoDurationSeconds, refs.maxVideoDurationSeconds);
         assertReferenceFileBytes("视频", index, video.bytes, refs.maxVideoBytes);
+        if (refs.minVideoPixels && (!video.width || !video.height) && !/^asset:\/\/[A-Za-z0-9_-]+$/.test(video.url || "") && !(options.deferResourceMetadataToBackend && video.storageKey?.startsWith("resource:"))) throw new Error(`第 ${index + 1} 个参考视频尺寸无法读取，请重新导入素材后再提交`);
         assertReferenceGeometry("视频", index, video.width, video.height, refs.minVideoWidth, refs.maxVideoWidth, refs.minVideoHeight, refs.maxVideoHeight, refs.minVideoAspect, refs.maxVideoAspect, refs.minVideoPixels, refs.maxVideoPixels);
     }
     const maxVideoTotal = refs.maxVideoTotalDurationSeconds || 0;
@@ -89,7 +90,7 @@ function assertReferenceGeometry(
     const aspect = width / height;
     if ((minAspect && aspect < minAspect) || (maxAspect && aspect > maxAspect)) throw new Error(`${label}宽高比为 ${aspect.toFixed(2)}，需要 ${referenceBound(minAspect, maxAspect)}；请调整尺寸或更换后再提交`);
     const pixels = width * height;
-    if ((minPixels && pixels < minPixels) || (maxPixels && pixels > maxPixels)) throw new Error(`${label}像素总量为 ${pixels}，不符合当前模型要求；请调整尺寸或更换后再提交`);
+    if ((minPixels && pixels < minPixels) || (maxPixels && pixels > maxPixels)) throw new Error(`${label}像素总量为 ${pixels}（${width}×${height}），需要 ${referenceBound(minPixels, maxPixels)} 像素；请调整这份素材的尺寸或更换原文件，修改生成分辨率不会改变参考素材`);
 }
 
 function formatMediaByteLimit(bytes: number) {

@@ -430,3 +430,25 @@ func TestWholeRequestTooLargeIsNotASingleFileAdvice(t *testing.T) {
 		}
 	}
 }
+
+func TestGatewayVideoPreflightErrorFixture(t *testing.T) {
+	data, err := os.ReadFile("../../../web/test/fixtures/reference-video-errors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct{ Message, Reason, Action string }
+	if err = json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range cases {
+		body, _ := json.Marshal(map[string]any{"error": map[string]string{"code": "invalid_reference_video", "message": item.Message}})
+		failure := generation.ClassifyText(string(body))
+		if !strings.Contains(failure.Reason, item.Reason) || !strings.Contains(failure.Action, item.Action) {
+			t.Fatalf("lost guidance for %s: %+v", item.Message, failure)
+		}
+		persisted := generation.ClassifyText(failure.UserMessage())
+		if !strings.Contains(persisted.UserMessage(), item.Action) {
+			t.Fatalf("lost persisted guidance: %+v", persisted)
+		}
+	}
+}

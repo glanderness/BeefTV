@@ -1,3 +1,4 @@
+import referenceVideoErrors from "./fixtures/reference-video-errors.json";
 import { describe, expect, test } from "bun:test";
 import audioErrorContract from "../../fixtures/reference-audio-errors.json";
 
@@ -357,4 +358,22 @@ describe("image transport errors go through the classifier", () => {
         expect(htmlMessage).not.toContain("secret");
         expect(htmlMessage).not.toContain("<html");
     });
+});
+
+
+test("pixel failure explains actual input and upstream range", () => {
+    const raw = explainGenerationError({ error: { code: "400", message: "素材转换失败: Pixel count must be between 407696 and 8295044." } });
+    expect(raw.action).toContain("407696–8295044");
+    const measured = explainGenerationError("第 1 个参考视频像素总量为 331776（432×768），需要 407696–8295044 像素；请调整尺寸");
+    expect(measured.reason).toContain("432×768");
+    expect(measured.action).toContain("407696–8295044");
+});
+
+test("gateway video preflight failures preserve actionable details", () => {
+    for (const item of referenceVideoErrors) {
+        const failure = explainGenerationError({ error: { code: "invalid_reference_video", message: item.message }, status: 400 });
+        expect(failure.reason).toContain(item.reason);
+        expect(failure.action).toContain(item.action);
+        expect(explainGenerationError(`${failure.reason}。${failure.action}`).action).toContain(item.action);
+    }
 });

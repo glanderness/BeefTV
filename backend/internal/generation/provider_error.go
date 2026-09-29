@@ -164,6 +164,7 @@ var providerCodeCategories = map[string]FailureCategory{
 	"safety":                           CategoryModerationInput,
 	"blocked_reason_safety":            CategoryModerationInput,
 	"invalid_request":                  CategoryInvalidParams,
+	"invalid_reference_video":          CategoryInvalidParams,
 	"invalid_request_error":            CategoryInvalidParams,
 	"invalid_parameter":                CategoryInvalidParams,
 	"invalidparameter":                 CategoryInvalidParams,
@@ -1038,7 +1039,7 @@ func specializeMediaConstraints(failure *Failure, fields extractedFields) {
 	if match := pixelRangePattern.FindStringSubmatch(message); len(match) == 3 {
 		failure.Category = CategoryInvalidParams
 		failure.Reason = "参考素材像素总量不符合模型要求"
-		failure.Action = "请调整尺寸或更换后再提交"
+		failure.Action = fmt.Sprintf("请将参考素材的宽×高调整到 %s–%s 像素；修改生成分辨率不会改变参考素材", match[1], match[2])
 		return
 	}
 	if requestTooLargePattern.MatchString(message) || strings.EqualFold(fields.Code, "video_request_body_too_large") || strings.HasPrefix(message, "整次请求的数据量超过接口上限") {
@@ -1055,8 +1056,31 @@ func specializeMediaConstraints(failure *Failure, fields extractedFields) {
 }
 
 func referenceMediaConstraintCopy(text string) (categoryCopy, bool) {
+	if m := regexp.MustCompile(`^(参考素材像素总量不符合模型要求)。((?:请将参考素材的宽×高调整到) \d+–\d+ 像素[^{}]*)$`).FindStringSubmatch(text); len(m) == 3 {
+		return categoryCopy{Reason: m[1], Action: m[2]}, true
+	}
+
+	if m := regexp.MustCompile(`^(第 \d+ 个参考视频(?:无法读取|格式或地址不支持|文件过大|尺寸为 \d+×\d+|时长为 \d+(?:\.\d+)? 秒|像素总量为 \d+（\d+×\d+）))[。]([^{}]+)$`).FindStringSubmatch(text); len(m) == 3 {
+		return categoryCopy{Reason: m[1], Action: m[2]}, true
+	}
+
 	if m := regexp.MustCompile(`^参考素材(宽度|高度|宽高比)不符合模型要求。请将(?:宽度|高度|宽高比)调整为 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?)( 像素| )后重新提交`).FindStringSubmatch(text); len(m) == 5 {
 		return categoryCopy{Reason: "参考素材" + m[1] + "不符合模型要求", Action: "请将" + m[1] + "调整为 " + m[2] + "–" + m[3] + m[4] + "后重新提交"}, true
+	}
+	if m := regexp.MustCompile(`^(第 \d+ 个参考视频时长为 \d+(?:\.\d+)? 秒)，需要 (\d+)–(\d+) 秒`).FindStringSubmatch(text); len(m) == 4 {
+		return categoryCopy{Reason: m[1], Action: "请将这段参考视频裁剪或更换为 " + m[2] + "–" + m[3] + " 秒"}, true
+	}
+	if m := regexp.MustCompile(`^第 (\d+) 个参考视频[：:]?(?:参考视频)?(?:尺寸|时长)?(?:下载失败|无法读取|无法完整读取|数据无法读取|分段读取失败|在读取期间发生变化|时长无法读取|尺寸无法读取)`).FindStringSubmatch(text); len(m) == 2 {
+		return categoryCopy{Reason: "第 " + m[1] + " 个参考视频无法读取", Action: "请检查素材链接，或重新导出 MP4/MOV 文件后导入"}, true
+	}
+	if m := regexp.MustCompile(`^第 (\d+) 个参考视频[：:]?(?:参考视频)?需使用`).FindStringSubmatch(text); len(m) == 2 {
+		return categoryCopy{Reason: "第 " + m[1] + " 个参考视频格式或地址不支持", Action: "请导入 MP4/MOV 文件，或使用可公开访问的 HTTP/HTTPS 视频链接"}, true
+	}
+	if m := regexp.MustCompile(`^第 (\d+) 个参考视频[：:]?(?:参考视频)?文件不能超过 (\d+)MB`).FindStringSubmatch(text); len(m) == 3 {
+		return categoryCopy{Reason: "第 " + m[1] + " 个参考视频文件过大", Action: "请压缩至 " + m[2] + "MB 以内或更换素材"}, true
+	}
+	if m := regexp.MustCompile(`^(第 \d+ 个参考视频尺寸为 \d+×\d+)，需要宽高均在 (\d+)–(\d+) 像素之间`).FindStringSubmatch(text); len(m) == 4 {
+		return categoryCopy{Reason: m[1], Action: "请将这段参考视频的宽和高均调整到 " + m[2] + "–" + m[3] + " 像素"}, true
 	}
 	if m := regexp.MustCompile(`^(第 \d+ (?:张|个|段)参考(?:图|视频|音频)(?:宽度|高度|宽高比|时长)为 \d+(?:\.\d+)?(?: 像素| 秒)?)[，。]需要 ((?:至少|不超过) \d+(?:\.\d+)?(?: 像素| 秒)?)`).FindStringSubmatch(text); len(m) == 3 {
 		action := "请调整尺寸或更换后再提交"
@@ -1070,6 +1094,12 @@ func referenceMediaConstraintCopy(text string) (categoryCopy, bool) {
 	}
 	if m := regexp.MustCompile(`^第 (\d+) (张|个|段)参考(图|视频|音频)宽高比为 (\d+(?:\.\d+)?)[，。]需要 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?)`).FindStringSubmatch(text); len(m) == 7 {
 		return categoryCopy{Reason: fmt.Sprintf("第 %s %s参考%s宽高比为 %s", m[1], m[2], m[3], m[4]), Action: fmt.Sprintf("需要 %s–%s；请调整尺寸或更换后再提交", m[5], m[6])}, true
+	}
+	if m := regexp.MustCompile(`^(第 \d+ (?:张|个|段)参考(?:图|视频|音频)像素总量为 \d+（\d+×\d+）)，需要 ([^；]+) 像素`).FindStringSubmatch(text); len(m) == 3 {
+		return categoryCopy{Reason: m[1], Action: fmt.Sprintf("需要 %s 像素；请调整这份素材的尺寸或更换原文件，修改生成分辨率不会改变参考素材", m[2])}, true
+	}
+	if m := regexp.MustCompile(`^(第 \d+ 个参考视频尺寸无法读取)`).FindStringSubmatch(text); len(m) == 2 {
+		return categoryCopy{Reason: m[1], Action: "请重新导出 MP4/MOV 后导入"}, true
 	}
 	if m := regexp.MustCompile(`^第 (\d+) (张|个|段)参考(图|视频|音频)像素总量`).FindStringSubmatch(text); len(m) == 4 {
 		return categoryCopy{Reason: fmt.Sprintf("第 %s %s参考%s像素总量不符合当前模型要求", m[1], m[2], m[3]), Action: "请调整尺寸或更换后再提交"}, true

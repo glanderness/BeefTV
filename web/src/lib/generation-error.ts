@@ -539,7 +539,7 @@ function specialize(classified: Classified, fields: ExtractedFields): Classified
         const pixels = fields.message.match(/(?:pixel(?:s)?(?:\s+count)?|total\s+pixels)\s+(?:must|should)\s+be\s+between\s+(\d+)\s+and\s+(\d+)/i);
         if (pixels) {
             classified.reason = "参考素材像素总量不符合模型要求";
-            classified.action = "请调整尺寸或更换后再提交";
+            classified.action = `请将参考素材的宽×高调整到 ${pixels[1]}–${pixels[2]} 像素；修改生成分辨率不会改变参考素材`;
         }
     }
     if (classified.category === "input_too_large") {
@@ -691,6 +691,11 @@ function categoryFromProviderCode(...values: string[]): GenerationErrorCategory 
 }
 
 function referenceMediaConstraintCopy(text: string): CategoryCopy | undefined {
+    const pixelPersisted = text.match(/^(参考素材像素总量不符合模型要求)。((?:请将参考素材的宽×高调整到) \d+–\d+ 像素[^{}]*)$/);
+    if (pixelPersisted) return { reason: pixelPersisted[1], action: pixelPersisted[2] };
+    const videoPersisted = text.match(/^(第 \d+ 个参考视频(?:无法读取|格式或地址不支持|文件过大|尺寸为 \d+×\d+|时长为 \d+(?:\.\d+)? 秒|像素总量为 \d+（\d+×\d+）))[。]([^{}]+)$/);
+    if (videoPersisted) return { reason: videoPersisted[1], action: videoPersisted[2] };
+
     const persisted = text.match(/^参考素材(宽度|高度|宽高比)不符合模型要求。请将(?:宽度|高度|宽高比)调整为 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?)( 像素| )后重新提交/);
     if (persisted) return { reason: `参考素材${persisted[1]}不符合模型要求`, action: `请将${persisted[1]}调整为 ${persisted[2]}–${persisted[3]}${persisted[4]}后重新提交` };
     const single = text.match(/^(第 \d+ (?:张|个|段)参考(?:图|视频|音频)(?:宽度|高度|宽高比|时长)为 \d+(?:\.\d+)?(?: 像素| 秒)?)[，。]需要 ((?:至少|不超过) \d+(?:\.\d+)?(?: 像素| 秒)?)/);
@@ -699,6 +704,20 @@ function referenceMediaConstraintCopy(text: string): CategoryCopy | undefined {
     if (size) return { reason: `第 ${size[1]} ${size[2]}参考${size[3]}${size[4]}为 ${size[5]} 像素`, action: `需要 ${size[6]}–${size[7]} 像素；请调整尺寸或更换后再提交` };
     const aspect = text.match(/^第 (\d+) (张|个|段)参考(图|视频|音频)宽高比为 (\d+(?:\.\d+)?)[，。]需要 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?)/);
     if (aspect) return { reason: `第 ${aspect[1]} ${aspect[2]}参考${aspect[3]}宽高比为 ${aspect[4]}`, action: `需要 ${aspect[5]}–${aspect[6]}；请调整尺寸或更换后再提交` };
+    const videoDuration = text.match(/^(第 \d+ 个参考视频时长为 \d+(?:\.\d+)? 秒)，需要 (\d+)–(\d+) 秒/);
+    if (videoDuration) return { reason: videoDuration[1], action: `请将这段参考视频裁剪或更换为 ${videoDuration[2]}–${videoDuration[3]} 秒` };
+    const videoRead = text.match(/^第 (\d+) 个参考视频[：:]?(?:参考视频)?(?:尺寸|时长)?(?:下载失败|无法读取|无法完整读取|数据无法读取|分段读取失败|在读取期间发生变化|时长无法读取|尺寸无法读取)/);
+    if (videoRead) return { reason: `第 ${videoRead[1]} 个参考视频无法读取`, action: "请检查素材链接，或重新导出 MP4/MOV 文件后导入" };
+    const videoFormat = text.match(/^第 (\d+) 个参考视频[：:]?(?:参考视频)?需使用/);
+    if (videoFormat) return { reason: `第 ${videoFormat[1]} 个参考视频格式或地址不支持`, action: "请导入 MP4/MOV 文件，或使用可公开访问的 HTTP/HTTPS 视频链接" };
+    const videoBytes = text.match(/^第 (\d+) 个参考视频[：:]?(?:参考视频)?文件不能超过 (\d+)MB/);
+    if (videoBytes) return { reason: `第 ${videoBytes[1]} 个参考视频文件过大`, action: `请压缩至 ${videoBytes[2]}MB 以内或更换素材` };
+    const videoSize = text.match(/^(第 \d+ 个参考视频尺寸为 \d+×\d+)，需要宽高均在 (\d+)–(\d+) 像素之间/);
+    if (videoSize) return { reason: videoSize[1], action: `请将这段参考视频的宽和高均调整到 ${videoSize[2]}–${videoSize[3]} 像素` };
+    const pixelDetail = text.match(/^(第 \d+ (?:张|个|段)参考(?:图|视频|音频)像素总量为 \d+（\d+×\d+）)，需要 ([^；]+) 像素/);
+    if (pixelDetail) return { reason: pixelDetail[1], action: `需要 ${pixelDetail[2]} 像素；请调整这份素材的尺寸或更换原文件，修改生成分辨率不会改变参考素材` };
+    const unknownSize = text.match(/^(第 \d+ 个参考视频尺寸无法读取)/);
+    if (unknownSize) return { reason: unknownSize[1], action: "请重新导出 MP4/MOV 后导入" };
     const pixels = text.match(/^第 (\d+) (张|个|段)参考(图|视频|音频)像素总量/);
     if (pixels) return { reason: `第 ${pixels[1]} ${pixels[2]}参考${pixels[3]}像素总量不符合当前模型要求`, action: "请调整尺寸或更换后再提交" };
     const file = text.match(/^第 (\d+) (张|个|段)参考(图|视频|音频)文件过大[，。]当前模型单文件上限为 ([^；;]+)/);
