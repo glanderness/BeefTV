@@ -2,9 +2,25 @@
 // 三个端点的真实路径都在 /api/assistant/* 下；写错路径会让面板永远拿不到回复。
 import { ApiError, apiBaseURL, http } from "./request";
 
+/** 后端给出的不可用原因（穷举，见契约 A1）；未知值一律走兜底文案。 */
+export type AssistantUnavailableReason =
+    | "model_not_configured"
+    | "credential_missing"
+    | "model_protocol_unsupported"
+    | "host_starting"
+    | "host_start_failed"
+    | "host_unreachable";
+
+export type AssistantModelInfo = {
+    id: string;
+    channelId: string;
+    channelName: string;
+};
+
 export type AgentHostStatus = {
     available: boolean;
     reason?: string;
+    model?: AssistantModelInfo;
     url?: string;
     health?: { raw?: string };
 };
@@ -18,14 +34,66 @@ export type AgentToolCall = {
     replayed?: boolean;
 };
 
+/** 一个回合真正落到画布上的改动；没写任何东西时后端给 null。 */
+export type AssistantTurnChange = {
+    revisionBefore: number;
+    revisionAfter: number;
+    createdNodeIds: string[];
+    updatedNodeIds: string[];
+    createdEdgeIds: string[];
+};
+
+/** 付费生成提议：后端只登记，不生成、不扣费，执行发生在画布既有生成链路。 */
+export type AssistantGenerationProposal = {
+    proposalId: string;
+    kind: "image" | "video";
+    nodeIds: string[];
+    model: string;
+    modelKey: string;
+    note?: string;
+};
+
 export type AgentTurnEnd = {
     type: "turn_end";
+    turnId?: string;
     reply: string;
     toolCalls: AgentToolCall[];
+    change?: AssistantTurnChange | null;
+    proposals?: AssistantGenerationProposal[];
     error: string | null;
     cancelled: boolean;
     persistence?: string;
     metrics?: { firstTokenMs: number | null; totalMs: number };
+};
+
+export type AssistantTurn = {
+    turnId: string;
+    userText: string;
+    selectedNodeIds: string[];
+    reply: string;
+    toolCalls: AgentToolCall[];
+    change: AssistantTurnChange | null;
+    proposals: AssistantGenerationProposal[];
+    error: string | null;
+    cancelled: boolean;
+    createdAt: string;
+};
+
+export type AssistantSessionSummary = {
+    sessionId: string;
+    title: string;
+    updatedAt: string;
+    turnCount: number;
+};
+
+export type AssistantSessionList = {
+    currentSessionId: string | null;
+    sessions: AssistantSessionSummary[];
+};
+
+export type AssistantHistory = {
+    sessionId: string;
+    turns: AssistantTurn[];
 };
 
 // UI 会话凭据只保存在内存里：刷新页面即重新签发，不写入 localStorage。
@@ -49,6 +117,8 @@ export function agentAssistantFailureText(reason: string | undefined, fallback =
             return "当前页面无法使用创作助手，请重新打开画布";
         case "session_busy":
             return "上一条消息还在处理中，请等它结束";
+        case "session_not_current":
+            return "你已经换到别的对话了，请重新发送这条消息";
         default:
             return fallback;
     }
@@ -57,6 +127,90 @@ export function agentAssistantFailureText(reason: string | undefined, fallback =
 export async function getAgentHostStatus(): Promise<AgentHostStatus> {
     const data = await http.get<AgentHostStatus>("/assistant/status");
     return data;
+}
+
+/** UI 会话头由页面内存里的凭据提供；助手的每条路由都走同一套认证。 */
+async function uiSessionConfig() {
+    const token = await ensureAgentUiSession();
+    return { headers: { "X-Beeftv-Ui-Session": token } };
+}
+
+/** 重新拉起助手运行环境。失败必须抛出，界面才不会把「没启动」显示成「已就绪」。 */
+export async function restartAgentHost(): Promise<void> {
+    await http.post<{ restarted: boolean }>("/assistant/host/restart", {}, await uiSessionConfig());
+}
+
+/**
+ * 历史相关的读取一律可降级：后端还没提供这些路由时返回空列表，
+ * 面板照常可用（只是看不到以前的对话），不能整块崩掉。
+ */
+export async function listAssistantSessions(canvasId: string): Promise<AssistantSessionList> {
+    try {
+        return await http.get<AssistantSessionList>(`/assistant/sessions?canvasId=${encodeURIComponent(canvasId)}`, await uiSessionConfig());
+    } catch {
+        return { currentSessionId: null, sessions: [] };
+    }
+}
+
+export async function createAssistantSession(canvasId: string): Promise<string | null> {
+    try {
+        const data = await http.post<{ sessionId: string }>("/assistant/sessions", { canvasId }, await uiSessionConfig());
+        return data?.sessionId || null;
+    } catch {
+        return null;
+    }
+}
+
+export async function activateAssistantSession(canvasId: string, sessionId: string): Promise<string | null> {
+    try {
+        const data = await http.post<{ sessionId: string }>("/assistant/sessions/activate", { canvasId, sessionId }, await uiSessionConfig());
+        return data?.sessionId || sessionId;
+    } catch {
+        return null;
+    }
+}
+
+export async function getAssistantHistory(canvasId: string, sessionId?: string): Promise<AssistantHistory> {
+    const query = new URLSearchParams({ canvasId });
+    if (sessionId) query.set("sessionId", sessionId);
+    try {
+        const data = await http.get<AssistantHistory>(`/assistant/history?${query.toString()}`, await uiSessionConfig());
+        return { sessionId: data?.sessionId || sessionId || "", turns: Array.isArray(data?.turns) ? data.turns : [] };
+    } catch {
+        return { sessionId: sessionId || "", turns: [] };
+    }
+}
+
+/** 撤销失败的机器可读原因，映射到卡片里的一句话。 */
+export type AssistantUndoFailure = "canvas_changed" | "already_undone" | "no_change" | "unknown";
+
+export type AssistantUndoResult = { ok: true; revision: number } | { ok: false; failure: AssistantUndoFailure };
+
+/**
+ * 撤销一整回合的改动。后端以新修订号回滚，不倒退历史；
+ * 409 的三种原因必须区分，否则用户看不出「能不能再试」。
+ */
+export async function undoAssistantTurn(turnId: string, canvasId: string): Promise<AssistantUndoResult> {
+    try {
+        const data = await http.post<{ revision: number }>(`/assistant/turns/${encodeURIComponent(turnId)}/undo`, { canvasId }, await uiSessionConfig());
+        return { ok: true, revision: data?.revision ?? 0 };
+    } catch (error) {
+        return { ok: false, failure: assistantUndoFailure(error) };
+    }
+}
+
+export function assistantUndoFailure(error: unknown): AssistantUndoFailure {
+    const reason = error instanceof ApiError ? error.reason : undefined;
+    switch (reason) {
+        case "canvas_changed_since_turn":
+            return "canvas_changed";
+        case "turn_already_undone":
+            return "already_undone";
+        case "turn_has_no_change":
+            return "no_change";
+        default:
+            return "unknown";
+    }
 }
 
 export async function ensureAgentUiSession(): Promise<string> {
@@ -94,19 +248,26 @@ export type StreamHandlers = {
  */
 export const AGENT_STREAM_INCOMPLETE_MESSAGE = "创作助手的回复没有完整结束，请再试一次";
 
+export type AgentChatRequest = {
+    signal?: AbortSignal;
+    selectedNodeIds?: string[];
+    /** 只发当前会话；后端发现它已不是该画布的当前会话会整回合拒绝。 */
+    sessionId?: string;
+};
+
 // NDJSON 流式对话：http 客户端只做信封解包，流式必须用原生 fetch（同源）。
 export async function streamAgentChat(
     canvasId: string,
     message: string,
     handlers: StreamHandlers,
-    signal?: AbortSignal,
-    selectedNodeIds: string[] = [],
+    request: AgentChatRequest = {},
 ): Promise<void> {
+    const { signal, selectedNodeIds = [], sessionId } = request;
     const token = await ensureAgentUiSession();
     const response = await fetch(`${apiBaseURL}/assistant/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Beeftv-Ui-Session": token },
-        body: JSON.stringify({ canvasId, message, selectedNodeIds }),
+        body: JSON.stringify(sessionId ? { canvasId, message, selectedNodeIds, sessionId } : { canvasId, message, selectedNodeIds }),
         signal,
     });
     if (!response.ok || !response.body) {
