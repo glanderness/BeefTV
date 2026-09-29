@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import subprocess
+import sys
 
 from .cli import build_parser, run
+from .device_failure import CUDA_DEVICE_EXIT_CODE, is_cuda_device_failure
 from .pipeline import VideoMetadata, probe_video
 
 
@@ -52,7 +54,13 @@ def main() -> int:
             "--output-resolution", "1920x1080", "--max-seconds", "15",
         ]
     )
-    run(worker_args)
+    try:
+        run(worker_args)
+    except RuntimeError as error:
+        if args.device != "cuda" or not is_cuda_device_failure(error):
+            raise
+        print(f"CUDA 真实前向不可用：{error}", file=sys.stderr)
+        return CUDA_DEVICE_EXIT_CODE
     preview = output_dir / "probe-source_depth_preview.mp4"
     metadata = validate_preview_contract(source, preview)
     print(f"PROBE_OK device={args.device} frames={metadata.frames} duration={metadata.duration:.3f}")
