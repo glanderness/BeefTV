@@ -1,0 +1,16 @@
+[
+  {
+    "models": ["seedance-2.0", "seedance-2.5"],
+    "allowSuffix": true,
+    "protocol": "newapi",
+    "inlineMedia": true
+  },
+  {
+    "models": ["wan3.0-video"],
+    "allowSuffix": false,
+    "protocol": "newapi-channel-2",
+    "inlineMedia": true,
+    "maxReferences": {"image": 1, "video": 0, "audio": 0},
+    "operations": ["text_to_video", "image_to_video"]
+  }
+]
