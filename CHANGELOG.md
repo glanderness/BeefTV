@@ -9,6 +9,11 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.14
+
+- Keep canvas task details up to date with the desktop backend while a task is running, including progress, logs and start/completion times.
+- Stop detail polling after completion and cancel pending reads when closing or switching tasks; show a retry notice when details cannot be refreshed.
+
 ## v1.6.13
 
 - Accept Windows PowerShell ZIP path separators when installing signed depth components while retaining traversal and duplicate-file protection.

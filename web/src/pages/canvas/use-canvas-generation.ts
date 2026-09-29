@@ -5,7 +5,8 @@ import { App } from "antd";
 import { applyRecoveredGenerationTaskResultToNodes, generationTaskCanReloadResource, generationTaskNodeId } from "@/lib/canvas/canvas-generation-task-sync";
 import { applyCanvasGenerationTaskNodeEffect, isCanvasGenerationDurableAckError, persistCanvasGenerationEffect } from "@/services/canvas-generation-consumer";
 import { consumeGenerationTaskNode, ensureCanvasNodeAsset, retryCanvasAssetSyncAfterRateLimit } from "@/services/project-asset-sync";
-import { listGenerationTasks, listTaskLogs, queryGenerationTask, subscribeGenerationTasks, type GenerationTask, type TaskLog } from "@/services/api/task-center";
+import { listGenerationTasks, queryGenerationTask, subscribeGenerationTasks, type GenerationTask } from "@/services/api/task-center";
+import { useTaskDetails } from "@/hooks/use-task-details";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
@@ -207,9 +208,10 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
     if (!recoveryCoordinatorRef.current) recoveryCoordinatorRef.current = createCanvasGenerationRecoveryCoordinator();
     const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
     const [taskDetail, setTaskDetail] = useState<GenerationTask | null>(null);
-    const [taskDetailLogs, setTaskDetailLogs] = useState<TaskLog[]>([]);
-    const [taskDetailLoading, setTaskDetailLoading] = useState(false);
+    const taskDetailQuery = useTaskDetails(taskDetail?.id, projectId);
     const localMode = isLocalWorkspaceMode();
+
+    useEffect(() => setTaskDetail(null), [projectId]);
 
     const startGenerationRequest = useCallback((targetNodeId: string, originNodeId: string, runningId = originNodeId, controller = new AbortController()) => {
         const previous = generationRequestsRef.current.get(targetNodeId);
@@ -227,8 +229,6 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
         async (node: CanvasNodeData) => {
             const taskId = node.metadata?.taskId;
             if (!taskId) return;
-            setTaskDetailLoading(true);
-            setTaskDetailLogs([]);
             setTaskDetail({
                 id: taskId,
                 type: "",
@@ -240,21 +240,8 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                 createdAt: node.metadata?.taskCreatedAt || new Date().toISOString(),
                 updatedAt: node.metadata?.taskUpdatedAt || new Date().toISOString(),
             });
-            if (localMode) {
-                setTaskDetailLoading(false);
-                return;
-            }
-            try {
-                const [task, logs] = await Promise.all([queryGenerationTask(taskId), listTaskLogs(taskId)]);
-                setTaskDetail(task);
-                setTaskDetailLogs(logs);
-            } catch (error) {
-                message.error(error instanceof Error ? error.message : "任务详情加载失败");
-            } finally {
-                setTaskDetailLoading(false);
-            }
         },
-        [localMode, message],
+        [],
     );
 
     const bindGenerationTask = useCallback(
@@ -588,8 +575,9 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
         setRunningNodeId,
         setTaskDetail,
         startGenerationRequest,
-        taskDetail,
-        taskDetailLoading,
-        taskDetailLogs,
+        taskDetail: taskDetail ? taskDetailQuery.data?.task ?? taskDetail : null,
+        taskDetailLoading: taskDetailQuery.isLoading,
+        taskDetailError: taskDetailQuery.isError,
+        taskDetailLogs: taskDetailQuery.data?.logs ?? [],
     };
 }

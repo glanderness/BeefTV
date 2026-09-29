@@ -317,8 +317,8 @@ export function deleteGenerationTask(id: string) {
     return http.delete<void>(`/tasks/${encodeURIComponent(id)}`);
 }
 
-export async function listTaskLogs(id: string) {
-    const raw = await http.get<Array<{ level?: unknown; message?: unknown; payload?: unknown; createdAt?: unknown }>>(`/tasks/${encodeURIComponent(id)}/logs`);
+export async function listTaskLogs(id: string, options?: { signal?: AbortSignal }) {
+    const raw = await http.get<Array<{ level?: unknown; message?: unknown; payload?: unknown; createdAt?: unknown }>>(`/tasks/${encodeURIComponent(id)}/logs`, { signal: options?.signal });
     return raw.map((log, index) => projectBackendSafeTaskLog(id, log, index));
 }
 
