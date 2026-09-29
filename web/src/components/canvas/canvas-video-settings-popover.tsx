@@ -8,8 +8,10 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { modelCapabilityConfigFor, resolveVideoRatioValue, resolveVideoResolutionValue } from "@/lib/model-capabilities";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
+import type { SeedanceSettingsConstraints } from "@/lib/seedance-task-constraints";
 
 type CanvasVideoSettingsPopoverProps = {
+    taskConstraints?: SeedanceSettingsConstraints;
     config: AiConfig;
     onConfigChange: (key: keyof AiConfig, value: string) => void;
     buttonClassName?: string;
@@ -17,7 +19,7 @@ type CanvasVideoSettingsPopoverProps = {
     summaryOverride?: string;
 };
 
-export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClassName, placement = "topLeft", summaryOverride }: CanvasVideoSettingsPopoverProps) {
+export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClassName, placement = "topLeft", summaryOverride, taskConstraints }: CanvasVideoSettingsPopoverProps) {
     const theme = canvasThemes[useActiveTheme()];
     const buttonRef = useRef<HTMLSpanElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
@@ -30,8 +32,8 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClass
     const size = videoProfile ? resolveVideoRatioValue(videoProfile, config.size) : "";
     const summary = [
         ...(resolutionSupported ? [videoResolutionLabel(resolution)] : []),
-        ...(sizeSupported ? [videoSizeLabel(size)] : []),
-        videoSecondsLabel(config.videoSeconds),
+        ...(sizeSupported ? [taskConstraints?.ratioLabel || videoSizeLabel(size)] : []),
+        taskConstraints?.durationLocked ? "随原视频时长" : videoSecondsLabel(config.videoSeconds),
     ].join(" · ");
     const displaySummary = summaryOverride || summary;
 
@@ -56,7 +58,7 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClass
         };
     }, [open]);
 
-    const panel = open && buttonRect ? <VideoSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} onConfigChange={onConfigChange} /> : null;
+    const panel = open && buttonRect ? <VideoSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} onConfigChange={onConfigChange} taskConstraints={taskConstraints} /> : null;
 
     return (
         <>
@@ -77,7 +79,9 @@ function VideoSettingsPortal({
     theme,
     config,
     onConfigChange,
+    taskConstraints,
 }: {
+    taskConstraints?: SeedanceSettingsConstraints;
     buttonRect: DOMRect;
     panelRef: RefObject<HTMLDivElement | null>;
     placement: CanvasVideoSettingsPopoverProps["placement"];
@@ -120,7 +124,7 @@ function VideoSettingsPortal({
             onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
         >
-            <VideoSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-3" />
+            <VideoSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-3" taskConstraints={taskConstraints} />
         </div>,
         document.body,
     );

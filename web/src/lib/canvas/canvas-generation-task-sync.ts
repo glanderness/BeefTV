@@ -1,4 +1,5 @@
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
+import { seedanceOutputWarning } from "@/lib/seedance-output-warning";
 import { fitNodeSize, nodeSizeFromRatio, VIDEO_NODE_MAX_SIZE } from "@/lib/canvas/canvas-node-size";
 import { compositeEmotionImage } from "@/lib/canvas/canvas-emotion";
 import { storeGeneratedAudio } from "@/services/api/audio";
@@ -61,6 +62,7 @@ export function imageMetadata(image: UploadedImage): CanvasNodeMetadata {
 
 export function videoMetadata(video: UploadedFile): CanvasNodeMetadata {
     return {
+        outputParameterWarning: undefined,
         content: video.url,
         storageKey: video.storageKey,
         status: "success",
@@ -219,7 +221,7 @@ export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: 
             ...node,
             type: CanvasNodeType.Video,
             ...geometry,
-            metadata: applyGeneratedMediaResultMetadata(node, videoMetadata(video), { prompt, ...completedTaskMetadata(task) }),
+            metadata: applyGeneratedMediaResultMetadata(node, { ...videoMetadata(video), outputParameterWarning: seedanceOutputWarning(task.inputJson, video.width, video.height, task.model) }, { prompt, ...completedTaskMetadata(task) }),
         };
     }
 

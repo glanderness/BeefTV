@@ -3,7 +3,7 @@ package generation
 import "strings"
 
 func persistedTaskConstraintCopy(message string) (categoryCopy, bool) {
-	for _, input := range []string{"TaskTypeConstraint ratio first-frame", "TaskTypeConstraint duration", "TaskTypeConstraint ratio", "TaskTypeConstraint"} {
+	for _, input := range []string{"video_first_frame_ratio_unreadable", "video_first_frame_ratio_unsupported", "video_first_frame_ratio_mismatch", "视频画幅仅支持 当前传入 adaptive", "TaskTypeConstraint ratio first-frame", "TaskTypeConstraint duration", "TaskTypeConstraint ratio", "TaskTypeConstraint"} {
 		copy, _ := taskConstraintCopy(input)
 		if strings.HasPrefix(strings.TrimSpace(message), copy.Reason+"。"+copy.Action) {
 			return copy, true
@@ -14,6 +14,18 @@ func persistedTaskConstraintCopy(message string) (categoryCopy, bool) {
 
 func taskConstraintCopy(message string) (categoryCopy, bool) {
 	m := strings.ToLower(message)
+	if strings.Contains(m, "video_first_frame_ratio_unreadable") {
+		return categoryCopy{Reason: "无法读取首帧图片的尺寸", Action: "请重新上传 PNG、JPEG 或 WebP 图片后再生成"}, true
+	}
+	if strings.Contains(m, "video_first_frame_ratio_unsupported") {
+		return categoryCopy{Reason: "当前渠道无法保持这张首帧图的比例", Action: "请将首帧调整为 1:1、4:3、3:4、9:16、16:9 或 21:9，或更换模型"}, true
+	}
+	if strings.Contains(m, "video_first_frame_ratio_mismatch") {
+		return categoryCopy{Reason: "输出比例需要与首帧一致", Action: "请使用随首帧比例，或先调整首帧图片的尺寸"}, true
+	}
+	if strings.Contains(m, "视频画幅仅支持") && strings.Contains(m, "当前传入 adaptive") {
+		return categoryCopy{Reason: "当前渠道暂不支持自适应画幅", Action: "首帧生成请更换模型；文生视频请指定固定比例后再提交"}, true
+	}
 	if !strings.Contains(m, "tasktypeconstraint") {
 		return categoryCopy{}, false
 	}
