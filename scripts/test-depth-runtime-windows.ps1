@@ -27,6 +27,17 @@ if ($LASTEXITCODE -ne 0) { throw "深度运行包 Python 依赖加载失败" }
 if ($LASTEXITCODE -ne 0) { throw "FFmpeg 无法启动" }
 & (Join-Path $bin "ffprobe.exe") -version | Select-Object -First 1
 if ($LASTEXITCODE -ne 0) { throw "FFprobe 无法启动" }
+$mediaCheck = Join-Path ([System.IO.Path]::GetTempPath()) ("beeftv-ffmpeg-check-" + [guid]::NewGuid().ToString("N") + ".mp4")
+try {
+    & (Join-Path $bin "ffmpeg.exe") -y -hide_banner -loglevel error -f lavfi -i "color=black:size=64x48:rate=5:duration=0.4" -pix_fmt yuv420p $mediaCheck
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $mediaCheck -PathType Leaf) -or (Get-Item -LiteralPath $mediaCheck).Length -le 0) {
+        throw "搬移后的 FFmpeg 无法实际编码视频"
+    }
+    $dimensions = & (Join-Path $bin "ffprobe.exe") -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 $mediaCheck
+    if ($LASTEXITCODE -ne 0 -or $dimensions.Trim() -ne "64,48") { throw "搬移后的 FFprobe 无法读取视频" }
+} finally {
+    if (Test-Path -LiteralPath $mediaCheck) { Remove-Item -LiteralPath $mediaCheck -Force }
+}
 if ($Variant -eq "cpu") {
     & $python -c "import torch; assert torch.version.cuda is None, 'CPU 包包含 CUDA PyTorch'"
 } else {

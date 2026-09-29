@@ -27,7 +27,11 @@ jobs:
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       - name: Test installer on native Windows
         working-directory: backend
-        run: go test ./internal/depthruntime -count=1
+        run: |
+          go test ./internal/depthruntime -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test ./internal/app -run 'Test.*Depth|TestChooseDepthDevice' -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Find FFmpeg and FFprobe
         shell: pwsh
         run: |
@@ -37,10 +41,12 @@ jobs:
             Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
             refreshenv
           }
-          $ffmpeg = (Get-Command ffmpeg).Source
-          $ffprobe = (Get-Command ffprobe).Source
-          if ((Split-Path $ffmpeg) -ne (Split-Path $ffprobe)) { throw "FFmpeg 与 FFprobe 不在同一目录" }
-          "DEPTH_FFMPEG_DIR=$(Split-Path $ffmpeg)" >> $env:GITHUB_ENV
+          # Chocolatey's PATH commands are shims, not relocatable executables.
+          $binaryDir = Join-Path $env:ChocolateyInstall "lib\ffmpeg\tools\ffmpeg\bin"
+          if (-not (Test-Path (Join-Path $binaryDir "ffmpeg.exe")) -or -not (Test-Path (Join-Path $binaryDir "ffprobe.exe"))) {
+            throw "找不到 Chocolatey 安装的实际 FFmpeg/FFprobe 二进制文件"
+          }
+          "DEPTH_FFMPEG_DIR=$binaryDir" >> $env:GITHUB_ENV
       - name: Build and relocate CPU runtime
         shell: pwsh
         run: ./scripts/build-depth-runtime-windows.ps1 -Variant cpu -FFmpegDir $env:DEPTH_FFMPEG_DIR -OutputDir ./build/depth-runtime
@@ -54,4 +60,8 @@ jobs:
           $zip = Resolve-Path ./build/depth-runtime/beeftv-depth-runtime-v1-windows-amd64-cpu.zip
           $unpacked = Join-Path $env:RUNNER_TEMP "beeftv-depth-中文 path"
           Expand-Archive -LiteralPath $zip -DestinationPath $unpacked
+          $env:PYTHONPATH = (Resolve-Path ./tools/depth-capture).Path
+          $env:PATH = "$unpacked\bin;$env:PATH"
+          & (Join-Path $unpacked ".python\python.exe") -m unittest discover -s ./tools/depth-capture/tests -v
+          if ($LASTEXITCODE -ne 0) { throw "Windows Python 单元测试失败" }
           ./scripts/test-depth-runtime-windows.ps1 -Variant cpu -RuntimeRoot $unpacked -ModelRuntime (Split-Path $modelDir)
