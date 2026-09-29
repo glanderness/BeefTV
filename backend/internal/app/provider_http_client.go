@@ -266,6 +266,13 @@ func doJSON(req *http.Request, target interface{}) error {
 }
 
 func doBinary(req *http.Request) ([]byte, string, error) {
+	if s, row, handled, err := prepareImageSubmission(req); handled {
+		if err != nil {
+			return nil, "", imageRecoveryError{err}
+		}
+		task := req.Context().Value(imageTaskContext{}).(model.Task)
+		return s.sendImageSubmission(req.Context(), task, row)
+	}
 	return doBinaryWithConsumer(req, nil)
 }
 
@@ -370,7 +377,7 @@ func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]by
 		if runtimeService != nil {
 			_ = runtimeService.RecordChannelResult(req.Context(), channelID, resp.StatusCode >= 500)
 		}
-		httpErr := providerHTTPError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(data), RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
+		httpErr := providerHTTPError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(data), RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()), IdempotencyReplayed: strings.EqualFold(resp.Header.Get("Idempotency-Replayed"), "true")}
 		recordProviderRequest(req, startedAt, resp.StatusCode, data, httpErr)
 		return nil, "", httpErr
 	}
