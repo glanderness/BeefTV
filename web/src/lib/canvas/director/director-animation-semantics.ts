@@ -1,6 +1,6 @@
 import { Euler, Quaternion } from "three";
 
-import type { DirectorBoneKeyframe, DirectorCamera, DirectorKeyframe, DirectorQuat, DirectorTransform, DirectorVec3 } from "../../../types/director";
+import type { DirectorBoneKeyframe, DirectorCamera, DirectorKeyframe, DirectorObject, DirectorQuat, DirectorTransform, DirectorVec3 } from "../../../types/director";
 import { interpolateDirectorBoneRotation, interpolateDirectorTransform, upsertDirectorKeyframe } from "./director-scene";
 
 // 缩放为 0 时无法用比例表达增量，改用绝对偏移；阈值同时兼顾数值噪声。
@@ -67,6 +67,20 @@ export function resolveDirectorObjectTransformEdit(input: { base: DirectorTransf
         transform: applyDirectorTransformDelta(base, delta),
         keyframes: keyframes.map((keyframe) => ({ ...keyframe, transform: applyDirectorTransformDelta(keyframe.transform, delta) })),
     };
+}
+
+/** Apply the representative object's transform delta to a multi-selection while preserving layout. */
+export function resolveDirectorMultiObjectTransformEdit(input: { objects: DirectorObject[]; selectedIds: string[]; representativeId: string; from: DirectorTransform; to: DirectorTransform; autoKey: boolean; time: number }): DirectorObject[] {
+    const selected = new Set(input.selectedIds);
+    if (!selected.has(input.representativeId)) return input.objects;
+    const delta = directorTransformDelta(input.from, input.to);
+    return input.objects.map((object) => {
+        if (!selected.has(object.id)) return object;
+        const rendered = interpolateDirectorTransform(object.transform, object.keyframes, input.time);
+        const edited = applyDirectorTransformDelta(rendered, delta);
+        const result = resolveDirectorObjectTransformEdit({ base: object.transform, keyframes: object.keyframes, rendered, edited, autoKey: input.autoKey, time: input.time });
+        return { ...object, transform: result.transform, keyframes: result.keyframes };
+    });
 }
 
 export type DirectorBoneLayerInput = {

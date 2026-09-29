@@ -19,7 +19,7 @@ import { DirectorViewportDock } from "@/components/canvas/director/director-view
 import { DirectorSequencer } from "@/components/canvas/director/director-sequencer";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { compileDirectorPrompt } from "@/lib/canvas/director/director-prompt-compiler";
-import { advanceDirectorPlayhead, resolveDirectorCameraAlignment, resolveDirectorCameraMoveKeyframes, resolveDirectorKeyframeRecord, resolveDirectorObjectTransformEdit, snapDirectorTime } from "@/lib/canvas/director/director-animation-semantics";
+import { advanceDirectorPlayhead, resolveDirectorCameraAlignment, resolveDirectorCameraMoveKeyframes, resolveDirectorKeyframeRecord, resolveDirectorMultiObjectTransformEdit, resolveDirectorObjectTransformEdit, snapDirectorTime } from "@/lib/canvas/director/director-animation-semantics";
 import { createDirectorTransaction, installDirectorTerminalListeners, type DirectorTransaction } from "@/lib/canvas/director/director-gesture-transaction";
 import { recordDirectorDiagnostic } from "@/lib/canvas/director/director-diagnostics-recorder";
 import { DIRECTOR_MODES, directorModeCapabilities, type DirectorModeCapabilities } from "@/lib/canvas/director/director-modes";
@@ -248,6 +248,8 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     // 否则处在两个帧格之间时 AutoKey OFF 的增量会从错误起点计算而产生漂移。
     const snappedPlayhead = snapDirectorTime(playhead, activeShot?.fps || 24);
     const selectedObjectRendered = selectedObject ? interpolateDirectorTransform(selectedObject.transform, selectedObject.keyframes, playhead) : null;
+    const multiSelectionTransformObject = draft?.objects.find((item) => item.id === sceneSelection.at(-1)) || null;
+    const multiSelectionRendered = multiSelectionTransformObject ? interpolateDirectorTransform(multiSelectionTransformObject.transform, multiSelectionTransformObject.keyframes, playhead) : null;
 
     useEffect(() => {
         if (!playing || !activeShot) return;
@@ -821,6 +823,28 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
         }));
     }, [autoKey, commit, snappedPlayhead]);
 
+    const handleMultiObjectTransform = useCallback((id: string, from: DirectorTransform, to: DirectorTransform) => {
+        commit((current) => {
+            const movedOnGround = Math.abs(to.position[0] - from.position[0]) > 1e-6 || Math.abs(to.position[2] - from.position[2]) > 1e-6;
+            const edited = current.gridSnap && movedOnGround ? { ...to, position: snapDirectorGroundPosition(to.position, true) } : to;
+            return { ...current, objects: resolveDirectorMultiObjectTransformEdit({ objects: current.objects, selectedIds: sceneSelection, representativeId: id, from, to: edited, autoKey, time: snappedPlayhead }) };
+        });
+    }, [autoKey, commit, sceneSelection, snappedPlayhead]);
+
+    const updateSelectedObjects = useCallback((patch: Partial<DirectorObject>) => {
+        const selectedIds = new Set(sceneSelection);
+        commit((current) => ({ ...current, objects: current.objects.map((item) => selectedIds.has(item.id) ? { ...item, ...patch } : item) }));
+    }, [commit, sceneSelection]);
+
+    const handleMultiUniformScale = useCallback((value: number, baseValue: number, stage: boolean) => {
+        const selectedIds = new Set(sceneSelection);
+        const apply = stage ? stageGesture : commit;
+        apply((current) => {
+            const ratio = baseValue > 1e-6 ? value / baseValue : 1;
+            return { ...current, objects: current.objects.map((item) => selectedIds.has(item.id) ? applyDirectorUniformScale(item, (item.uniformScale ?? 1) * ratio) : item) };
+        });
+    }, [commit, sceneSelection, stageGesture]);
+
     const handleUniformScale = (id: string, value: number, stage: boolean) => {
         const write = stage ? stageGesture : commit;
         write((current) => ({ ...current, objects: current.objects.map((item) => item.id === id ? applyDirectorUniformScale(item, value) : item) }));
@@ -1095,7 +1119,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
 
                 <aside className="thin-scrollbar min-h-0 overflow-y-auto border-l max-lg:col-span-2 max-lg:max-h-[40vh] max-lg:border-l-0 max-lg:border-t" style={{ background: theme.node.panel, borderColor: theme.toolbar.border }}>
                     {/* 摄影机模式下右栏固定显示 shot/camera 检查器：对齐视图与运镜是这个模式的主入口。 */}
-                    {selectedGroup && !capabilities.cameraTools ? <Inspector title={selectedGroup.name} onTitleChange={(name) => commit((current) => ({ ...current, groups: current.groups?.map((group) => group.id === selectedGroup.id ? { ...group, name } : group) }))}><Field label="对象">{draft.objects.filter((object) => object.groupId === selectedGroup.id).length}</Field></Inspector> : sceneSelection.length > 1 && !capabilities.cameraTools ? <div className="space-y-3 p-3"><h3 className="text-sm font-medium">{selectedSceneObjects.length === sceneSelection.length && selectedSceneObjects.every((object) => object.kind === "actor" || object.primitive === "character") ? `角色 (${sceneSelection.length})` : `对象 (${sceneSelection.length})`}</h3><p className="text-xs opacity-65">已选中 {sceneSelection.length} 个对象</p></div> : selectedObject && !capabilities.cameraTools ? <ObjectInspector object={selectedObject} rendered={selectedObjectRendered || selectedObject.transform} playhead={snappedPlayhead} selectedBone={selectedBone} capabilities={capabilities} onSelectBone={setSelectedBone} onUpdate={(patch) => updateObject(selectedObject.id, patch)} onTransformEdit={(edited) => handleObjectTransform(selectedObject.id, selectedObjectRendered || selectedObject.transform, edited)} onUniformScaleChange={(value, stage) => handleUniformScale(selectedObject.id, value, stage)} onUniformScaleCommit={() => stagedTransaction.end("commit")} onBoneRotationStage={(rotation) => selectedBone && writeBoneRotation(selectedObject.id, selectedBone, rotation, "stage")} onBoneRotationCommit={() => stagedTransaction.end("commit")} onAddKeyframe={recordSelectedKeyframe} onDelete={() => removeObject(selectedObject.id)} /> : selectedLight && !capabilities.cameraTools ? <LightInspector light={selectedLight} onUpdate={(patch) => updateLight(selectedLight.id, patch)} onDelete={() => removeLight(selectedLight.id)} /> : sceneInspectorView === "scene" && !capabilities.cameraTools ? <DirectorSceneInspector scene={draft} onChange={(patch) => commit((current) => ({ ...current, ...patch }))} /> : capabilities.cameraTools ? <DirectorCameraScreenshotTabs scene={draft} tab={cameraInspectorTab} onTabChange={setCameraInspectorTab}><DirectorCameraProperties camera={activeCamera} cameras={draft.cameras} shot={activeShot} objects={draft.objects} onUpdateCamera={updateActiveCamera} onSelectCamera={(cameraId) => updateShot(activeShot.id, { cameraId })} onFollowObject={handleFollowObject}>{shotInspector}</DirectorCameraProperties></DirectorCameraScreenshotTabs> : shotInspector}
+                    {selectedGroup && !capabilities.cameraTools ? <Inspector title={selectedGroup.name} onTitleChange={(name) => commit((current) => ({ ...current, groups: current.groups?.map((group) => group.id === selectedGroup.id ? { ...group, name } : group) }))}><Field label="对象">{draft.objects.filter((object) => object.groupId === selectedGroup.id).length}</Field></Inspector> : sceneSelection.length > 1 && !capabilities.cameraTools && selectedSceneObjects.length === sceneSelection.length && multiSelectionTransformObject && multiSelectionRendered ? <MultiObjectInspector objects={selectedSceneObjects} representative={multiSelectionTransformObject} rendered={multiSelectionRendered} capabilities={capabilities} onTransformEdit={(edited) => handleMultiObjectTransform(multiSelectionTransformObject.id, multiSelectionRendered, edited)} onUniformScaleChange={handleMultiUniformScale} onUniformScaleCommit={() => stagedTransaction.end("commit")} onUpdate={updateSelectedObjects} /> : sceneSelection.length > 1 && !capabilities.cameraTools ? <div className="space-y-3 p-3"><h3 className="text-sm font-medium">对象 ({sceneSelection.length})</h3><p className="text-xs opacity-65">已选中 {sceneSelection.length} 个对象</p></div> : selectedObject && !capabilities.cameraTools ? <ObjectInspector object={selectedObject} rendered={selectedObjectRendered || selectedObject.transform} playhead={snappedPlayhead} selectedBone={selectedBone} capabilities={capabilities} onSelectBone={setSelectedBone} onUpdate={(patch) => updateObject(selectedObject.id, patch)} onTransformEdit={(edited) => handleObjectTransform(selectedObject.id, selectedObjectRendered || selectedObject.transform, edited)} onUniformScaleChange={(value, stage) => handleUniformScale(selectedObject.id, value, stage)} onUniformScaleCommit={() => stagedTransaction.end("commit")} onBoneRotationStage={(rotation) => selectedBone && writeBoneRotation(selectedObject.id, selectedBone, rotation, "stage")} onBoneRotationCommit={() => stagedTransaction.end("commit")} onAddKeyframe={recordSelectedKeyframe} onDelete={() => removeObject(selectedObject.id)} /> : selectedLight && !capabilities.cameraTools ? <LightInspector light={selectedLight} onUpdate={(patch) => updateLight(selectedLight.id, patch)} onDelete={() => removeLight(selectedLight.id)} /> : sceneInspectorView === "scene" && !capabilities.cameraTools ? <DirectorSceneInspector scene={draft} onChange={(patch) => commit((current) => ({ ...current, ...patch }))} /> : capabilities.cameraTools ? <DirectorCameraScreenshotTabs scene={draft} tab={cameraInspectorTab} onTabChange={setCameraInspectorTab}><DirectorCameraProperties camera={activeCamera} cameras={draft.cameras} shot={activeShot} objects={draft.objects} onUpdateCamera={updateActiveCamera} onSelectCamera={(cameraId) => updateShot(activeShot.id, { cameraId })} onFollowObject={handleFollowObject}>{shotInspector}</DirectorCameraProperties></DirectorCameraScreenshotTabs> : shotInspector}
                 </aside>
             </div>
 
@@ -1174,6 +1198,38 @@ function ObjectInspector({ object, rendered, playhead, selectedBone, capabilitie
             <div className="text-[var(--fs-tiny)] opacity-50">Transform {object.keyframes.length} 个 · 骨骼 {object.boneTracks?.reduce((sum, track) => sum + track.keyframes.length, 0) || 0} 个</div>
         </> : null}
     </Inspector>;
+}
+
+function MultiObjectInspector({ objects, representative, rendered, capabilities, onTransformEdit, onUniformScaleChange, onUniformScaleCommit, onUpdate }: { objects: DirectorObject[]; representative: DirectorObject; rendered: DirectorTransform; capabilities: DirectorModeCapabilities; onTransformEdit: (transform: DirectorTransform) => void; onUniformScaleChange: (value: number, baseValue: number, stage: boolean) => void; onUniformScaleCommit: () => void; onUpdate: (patch: Partial<DirectorObject>) => void }) {
+    const [tab, setTab] = useState<"properties" | "pose">("properties");
+    const isActorSelection = objects.every((object) => object.kind === "actor" || object.primitive === "character");
+    const allSamePose = objects.every((object) => object.pose === objects[0]?.pose && object.activeMotionClipId === objects[0]?.activeMotionClipId);
+    const representativeScale = representative.uniformScale ?? 1;
+    const title = isActorSelection ? `角色 (${objects.length})` : `对象 (${objects.length})`;
+    return <div className="space-y-3 p-3">
+        <h3 className="text-sm font-medium">{title}</h3>
+        <div className="grid grid-cols-2 rounded-lg bg-black/5 p-0.5 dark:bg-white/5" role="tablist" aria-label="多选属性">
+            <button type="button" role="tab" aria-selected={tab === "properties"} className={`rounded-md px-3 py-1.5 text-xs transition ${tab === "properties" ? "bg-white shadow-sm dark:bg-white/10" : "opacity-65 hover:opacity-100"}`} onClick={() => setTab("properties")}>属性</button>
+            <button type="button" role="tab" aria-selected={tab === "pose"} disabled={!isActorSelection} className={`rounded-md px-3 py-1.5 text-xs transition disabled:cursor-not-allowed disabled:opacity-30 ${tab === "pose" ? "bg-white shadow-sm dark:bg-white/10" : "opacity-65 hover:opacity-100"}`} onClick={() => setTab("pose")}>姿势</button>
+        </div>
+        <p className="text-xs leading-relaxed opacity-60">已选中 {objects.length} 个{isActorSelection ? "角色" : "对象"}，修改将同步应用到全部选中对象</p>
+        {tab === "properties" ? <>
+            <TransformFields transform={rendered} onChange={onTransformEdit} />
+            <Field label="统一缩放"><div className="flex items-center gap-2">
+                <input aria-label="多选统一缩放滑杆" type="range" min={0.1} max={10} step={0.05} value={representativeScale} className="min-w-0 flex-1 accent-cyan-400" onPointerDown={(event) => { (event.currentTarget as HTMLInputElement).dataset.initialScale = String(representativeScale); }} onChange={(event) => onUniformScaleChange(Number(event.target.value), Number(event.currentTarget.dataset.initialScale || representativeScale), true)} onPointerUp={onUniformScaleCommit} onKeyUp={onUniformScaleCommit} onBlur={onUniformScaleCommit} />
+                <InputNumber aria-label="多选统一缩放数值" size="small" controls={false} min={0.1} max={10} step={0.05} value={representativeScale} className="w-[72px] shrink-0" onChange={(value) => { if (value !== null) onUniformScaleChange(value, representativeScale, false); }} />
+            </div></Field>
+            <Field label="颜色"><ColorPicker value={representative.color} onChange={(_, color) => onUpdate({ color })} /></Field>
+        </> : isActorSelection ? <>
+            <section className="director-pose-section">
+                <div className="director-inspector-section-title"><span>姿势预设</span><span>{allSamePose ? directorPoseLabel(representative.pose || "stand") : "混合"}</span></div>
+                <div className="director-pose-grid">{poseOptions.map((option) => <button key={option.value} type="button" className={`director-pose-button ${allSamePose && representative.pose === option.value && !representative.activeMotionClipId ? "is-active" : ""}`} title={option.label} onClick={() => onUpdate({ pose: option.value, activeMotionClipId: undefined, boneOverrides: {} })}>{option.label}</button>)}</div>
+                <Button size="small" block onClick={() => onUpdate({ pose: "stand", activeMotionClipId: undefined, boneOverrides: {} })}>重置姿态</Button>
+            </section>
+            {!objects.every((object) => object.rig?.status === "ready") ? <p className="text-xs opacity-55">姿势预设已同步应用；精细骨骼调整会在角色模型绑定完成后开放。</p> : null}
+        </> : null}
+        {capabilities.keyframes ? <p className="text-xs opacity-50">Transform 关键帧将按相同相对变化同步写入全部选中对象。</p> : null}
+    </div>;
 }
 
 function LightInspector({ light, onUpdate, onDelete }: { light: DirectorLight; onUpdate: (patch: Partial<DirectorLight>) => void; onDelete: () => void }) {
