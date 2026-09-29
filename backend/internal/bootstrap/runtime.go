@@ -287,7 +287,7 @@ func (r *Runtime) Start() error {
 		if err := runtimeinfo.Write(r.cfg.DataDir, opsURL, buildinfo.Current().Version); err != nil {
 			log.Printf("未能写入运行时地址（外部 Agent 需手动指定 BEEFTV_BASE_URL）：%v", err)
 		}
-		if err := canvasHandler.StartProcessAgentHost(r.cfg.DataDir, opsURL, r.launchToken); err != nil {
+		if err := canvasHandler.StartProcessAgentHost(r.service, opsURL, r.launchToken); err != nil {
 			log.Printf("内置创作助手宿主未启动（不影响应用启动）：%v", err)
 		}
 	}
