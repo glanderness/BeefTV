@@ -1,4 +1,5 @@
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
+import { CanvasAgentAssistantPanel } from "./canvas-agent-assistant-panel";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, MouseEvent as ReactMouseEvent, SetStateAction } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -3268,6 +3269,9 @@ function InfiniteCanvasPage() {
                             </div>
                         ) : null}
 
+                        <div className="pointer-events-none absolute right-4 top-24 z-30">
+                            <CanvasAgentAssistantPanel canvasId={projectId} selectedCount={selectedNodeBounds?.count ?? 0} />
+                        </div>
                         {selectedNodeBounds && !selectionBox && !isCanvasNodeMoving ? (
                             <CanvasProjectSelectionToolbar
                                 anchorRef={selectionBoundsElementRef}

@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 
+	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/app"
 
 	"github.com/gin-gonic/gin"
@@ -50,6 +51,19 @@ func registerDesktopCanvasAPI(api *gin.RouterGroup, svc *app.Service, dependenci
 	RegisterRunningHubRoutes(api, svc, false)
 	RegisterDesktopSkillRoutes(api, svc)
 	RegisterDesktopUserDataRoutes(api, svc)
+	// 登记表在进程内单实例（避免每请求新建导致并发丢记录），owner 凭据在启动时确保存在。
+	clients := agentops.NewClientRegistry(svc.DataDir())
+	_, _ = agentops.EnsureOwnerToken(svc.DataDir())
+	// 统一操作层：CLI、MCP 与内置 pi 共用同一组操作与校验，连同一个运行中的工作区。
+	if db := svc.Database(); db != nil {
+		RegisterAgentOpsRoutes(api, svc, agentops.NewStore(db), clients)
+	}
+	// 内置创作助手：短期限 UI 会话凭据 + 可信代理；浏览器不接触 owner/宿主/模型凭据。
+	uiSessions := newUISessionStore()
+	RegisterAgentUISessionRoutes(api, svc, uiSessions)
+	RegisterAgentProxyRoutes(api, svc, clients, uiSessions)
+	// 宿主生命周期：配置当前文本模型与启动命令，显式启停；未配置时返回明确未就绪。
+	RegisterAgentHostLifecycleRoutes(api, svc, &agentHostSupervisor{})
 	RegisterChunkedUploadRoutes(api, svc, false)
 	RegisterDiagnosticsRoutes(api, svc)
 	RegisterPluginRoutes(api, svc, false)
