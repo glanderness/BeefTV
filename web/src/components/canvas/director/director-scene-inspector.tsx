@@ -19,6 +19,25 @@ export function DirectorSceneInspector({ scene, onChange }: { scene: DirectorSce
     return (
         <div className="text-sm">
             <h2 className="border-b px-4 py-4 text-base font-semibold" style={{ borderColor: "var(--border)" }}>3D场景</h2>
+            <section className="space-y-4 border-b px-4 py-5" style={{ borderColor: "var(--border)" }} aria-label="场景变换">
+                <h3 className="font-semibold">场景变换</h3>
+                <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs"><span className="opacity-65">场景缩放</span><span>{Math.round(stage.scale * 100)}%</span></div>
+                    <div className="flex items-center gap-3">
+                        <Slider ariaLabelForHandle="场景缩放" className="m-0 min-w-0 flex-1" min={0.1} max={10} step={0.1} value={stage.scale} onChangeComplete={(scale) => onChange({ stageTransform: { ...stage, scale } })} />
+                        <InputNumber aria-label="场景缩放百分比" className="w-[72px] shrink-0" size="small" min={10} max={1000} step={10} suffix="%" value={Math.round(stage.scale * 100)} onChange={(percent) => { if (percent !== null) onChange({ stageTransform: { ...stage, scale: percent / 100 } }); }} />
+                    </div>
+                </div>
+                {(["position", "rotation"] as const).map((field) => <div key={field} className="space-y-2">
+                    <div className="text-xs opacity-65">场景{field === "position" ? "平移" : "旋转"}</div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                        {(["X", "Y", "Z"] as const).map((axis, index) => <label key={axis} className="min-w-0">
+                            <span className="mb-1 block text-[10px] opacity-55">{axis}</span>
+                            <InputNumber aria-label={`场景${field === "position" ? "平移" : "旋转"}${axis}`} className="w-full" size="small" step={field === "position" ? 0.1 : 1} precision={field === "position" ? 1 : 0} value={stage[field][index]} onChange={(value) => { if (value !== null) updateAxis(field, index, value); }} />
+                        </label>)}
+                    </div>
+                </div>)}
+            </section>
             <section className="space-y-4 border-b px-4 py-5" style={{ borderColor: "var(--border)" }} aria-label="全景背景">
                 <h3 className="font-semibold">全景背景</h3>
                 <div className="space-y-2">
@@ -40,25 +59,6 @@ export function DirectorSceneInspector({ scene, onChange }: { scene: DirectorSce
                     <Slider aria-label="全景球水平旋转" className="m-0 min-w-0 flex-1" min={-180} max={180} step={1} disabled={!scene.panorama} value={scene.panorama?.rotation ?? 0} onChangeComplete={(rotation) => { if (scene.panorama) onChange({ panorama: { ...scene.panorama, rotation } }); }} />
                     <InputNumber aria-label="全景球旋转角度" className="w-[72px] shrink-0" size="small" min={-180} max={180} step={1} suffix="°" disabled={!scene.panorama} value={scene.panorama?.rotation ?? 0} onChange={(rotation) => { if (scene.panorama && rotation !== null) onChange({ panorama: { ...scene.panorama, rotation } }); }} />
                 </div>
-            </section>
-            <section className="space-y-4 border-b px-4 py-5" style={{ borderColor: "var(--border)" }} aria-label="场景变换">
-                <h3 className="font-semibold">场景变换</h3>
-                <div className="space-y-2">
-                    <div className="flex items-center justify-between text-xs"><span className="opacity-65">场景缩放</span><span>{Math.round(stage.scale * 100)}%</span></div>
-                    <div className="flex items-center gap-3">
-                        <Slider ariaLabelForHandle="场景缩放" className="m-0 min-w-0 flex-1" min={0.1} max={10} step={0.1} value={stage.scale} onChangeComplete={(scale) => onChange({ stageTransform: { ...stage, scale } })} />
-                        <InputNumber aria-label="场景缩放百分比" className="w-[72px] shrink-0" size="small" min={10} max={1000} step={10} suffix="%" value={Math.round(stage.scale * 100)} onChange={(percent) => { if (percent !== null) onChange({ stageTransform: { ...stage, scale: percent / 100 } }); }} />
-                    </div>
-                </div>
-                {(["position", "rotation"] as const).map((field) => <div key={field} className="space-y-2">
-                    <div className="text-xs opacity-65">场景{field === "position" ? "平移" : "旋转"}</div>
-                    <div className="grid grid-cols-3 gap-1.5">
-                        {(["X", "Y", "Z"] as const).map((axis, index) => <label key={axis} className="min-w-0">
-                            <span className="mb-1 block text-[10px] opacity-55">{axis}</span>
-                            <InputNumber aria-label={`场景${field === "position" ? "平移" : "旋转"}${axis}`} className="w-full" size="small" step={field === "position" ? 0.1 : 1} precision={field === "position" ? 1 : 0} value={stage[field][index]} onChange={(value) => { if (value !== null) updateAxis(field, index, value); }} />
-                        </label>)}
-                    </div>
-                </div>)}
             </section>
             <div className="space-y-5 px-4 py-5">
                 <div className="space-y-2">

@@ -20,5 +20,6 @@ describe("导演台场景属性", () => {
             expect(markup).toContain(`aria-label="场景平移${axis}"`);
             expect(markup).toContain(`aria-label="场景旋转${axis}"`);
         }
+        expect(markup.indexOf('aria-label="场景变换"')).toBeLessThan(markup.indexOf('aria-label="全景背景"'));
     });
 });
