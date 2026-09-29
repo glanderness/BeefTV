@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/providerpreset"
 )
 
 func isPublicMediaURL(value string) bool {
@@ -20,7 +21,7 @@ func isSeedanceVideoConfig(config providerConfig) bool {
 }
 
 func isBeefAPIVideoConfig(config providerConfig) bool {
-	return strings.Contains(strings.ToLower(strings.TrimSpace(config.BaseURL)), "enterprise.beefapi.com")
+	return providerpreset.IsBeefAPIEndpoint(config.BaseURL)
 }
 
 func isGrokVideoConfig(config providerConfig) bool {

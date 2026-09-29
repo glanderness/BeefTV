@@ -9,6 +9,25 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.11
+
+- Fix local reference images being rejected before submitting Wan 3.0 video tasks through BeefAPI.
+- Share verified enterprise video contracts across the model catalog, reference validation, and request preparation; preserve explicit protocols for other models.
+- Reject unsupported reference types and counts before submission, and retain actionable media guidance in task history.
+- Honor installed protocol media declarations and include the shared contracts in container builds.
+
+## v1.6.10
+
+- Check reference-video frame rates on WhatsToken material-conversion routes, including ordinary, fragmented and mixed MP4 files.
+- Explain frame-rate, unsupported-codec and asset-access errors with actionable guidance that survives task history reloads.
+- Preserve authentication errors and request identifiers when formatting media errors.
+
+## v1.6.9
+
+- Fix built-in BeefAPI Seedance profiles selecting a package name instead of the installed video provider ID, which caused false "interface not installed" failures before submission.
+- Repair existing enterprise profiles automatically and accept previously saved OpenAI Videos protocol aliases without bypassing disabled plugins.
+- Verify imported and restored Seedance profiles against the shipped provider catalog and test legacy aliases through the installed plugin runtime.
+
 ## v1.6.8
 
 - Read missing reference-video dimensions even when duration is already known, and reject unreadable or out-of-range video before submission.

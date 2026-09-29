@@ -227,6 +227,40 @@ func TestPluginRuntimeIsTheProtocolSourceOfTruth(t *testing.T) {
 	}
 }
 
+func TestSeedanceLegacyProtocolResolvesInstalledProvider(t *testing.T) {
+	dataDir := t.TempDir()
+	center, err := newPluginRuntime(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"newapi", "openai-video", "openai-videos"} {
+		adapter, ok := center.registrySnapshot().Resolve(id)
+		if !ok || adapter.Metadata().ID != "newapi" {
+			t.Fatalf("%s did not resolve installed newapi provider", id)
+		}
+		if err := validateGenerationInterfaceWithRegistry(center.registrySnapshot(), "video", id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := center.setEnabled("openai-videos", false); err != nil {
+		t.Fatal(err)
+	}
+	// Restart must preserve disabled state for the canonical ID and old profiles.
+	center, err = newPluginRuntime(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"newapi", "openai-video", "openai-videos"} {
+		adapter, ok := center.registrySnapshot().Resolve(id)
+		if !ok || adapter.Metadata().Enabled {
+			t.Fatalf("%s bypassed disabled plugin", id)
+		}
+		if err := validateGenerationInterfaceWithRegistry(center.registrySnapshot(), "video", id); err == nil {
+			t.Fatalf("%s accepted disabled plugin", id)
+		}
+	}
+}
+
 func TestPluginRuntimeDropsRemovedOfficialProtocol(t *testing.T) {
 	staleManifest := json.RawMessage(`{"apiVersion":"beeftv.plugin/v2","id":"removed-official-protocol","version":"1.0.0","name":"Removed Official Protocol","author":"Test","documentation":"# Removed\n\n## BeefTV运行时合同","contributes":{"providers":[{"id":"removed-official-protocol","label":"Removed","capabilities":["video"],"scopes":["canvas"],"create":{"method":"POST","path":"/tasks","body":{"prompt":{"$ref":"request.prompt"}}},"response":{"status":"pending"}}]}}`)
 	registryData, err := json.Marshal([]pluginRegistryRecord{{ID: "removed-official-protocol", Raw: staleManifest, Source: PluginOriginOfficial}})

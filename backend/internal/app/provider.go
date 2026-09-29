@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/providerpreset"
 
 	"gorm.io/gorm"
 )
@@ -423,11 +424,10 @@ func providerMediaHydrationPolicyFor(ctx context.Context, input canvasGeneration
 	// Prefer an existing HTTPS resource address when the workspace already has
 	// a public base. Local desktop without CANVAS_PUBLIC_BASE_URL still falls
 	// through to a bounded data URL; asset:// references are preserved.
-	if isBeefAPIVideoConfig(input.Config) && isSeedanceVideoConfig(input.Config) {
-		policy.requireURL = false
-		policy.preferURL = false
-		policy.preferHTTPS = true
-		return policy
+	if isBeefAPIVideoConfig(input.Config) {
+		if contract, ok := providerpreset.BeefAPIVideoContract(input.Config.Model); ok && contract.InlineMedia && (contract.Protocol == input.Config.InterfaceType || isSeedanceVideoConfig(input.Config)) {
+			return providerMediaHydrationPolicy{preferHTTPS: true}
+		}
 	}
 	// The channel-1 NewAPI profile also accepts data URLs in its media field.
 	// Keep desktop/local workspaces usable without requiring a public object URL;
@@ -442,9 +442,10 @@ func providerMediaHydrationPolicyFor(ctx context.Context, input canvasGeneration
 		policy.requireURL = true
 		policy.preferURL = true
 	}
-	if adapter, ok := protocolAdapterForContext(ctx, input.Config.InterfaceType); ok && adapter.Metadata().RequiresPublicMediaURLs {
-		policy.requireURL = true
-		policy.preferURL = true
+	if adapter, ok := protocolAdapterForContext(ctx, input.Config.InterfaceType); ok {
+		// Installed declarations override legacy protocol-name guesses.
+		policy.requireURL = adapter.Metadata().RequiresPublicMediaURLs
+		policy.preferURL = policy.preferURL || policy.requireURL
 	}
 	if input.Mask != nil {
 		policy.requireURL = false
@@ -773,6 +774,10 @@ func (s *Service) hydrateVideoReferenceMetadata(userID string, input *canvasGene
 				return BadAuthRequest(fmt.Sprintf("第 %d 个参考视频尺寸无法读取，请重新导出 MP4/MOV 后导入", i+1))
 			}
 			media.Width, media.Height, media.Bytes = w, h, int64(len(data))
+			_, fps := referenceVideoEncoding(data)
+			if err := referenceVideoFrameRateError(input.Config, i, fps); err != nil {
+				return err
+			}
 			if durationMs > 0 {
 				media.DurationMs = durationMs
 			}
@@ -799,11 +804,8 @@ func (s *Service) hydrateGenerationMedia(userID string, input *canvasGenerationI
 
 func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, policy providerMediaHydrationPolicy) error {
 	if !strings.HasPrefix(media.StorageKey, "resource:") {
-		if policy.requireURL && strings.HasPrefix(strings.TrimSpace(media.DataURL), "data:") {
-			if s.IsLocalMode() {
-				return errors.New("当前 JSON 视频协议的参考素材不能使用内嵌数据，请先上传到本地资源目录")
-			}
-			return errors.New("当前 JSON 视频协议的参考素材不能使用内嵌数据，请先上传到对象存储或提供公网素材地址")
+		if policy.requireURL && (strings.HasPrefix(strings.TrimSpace(media.DataURL), "data:") || strings.HasPrefix(strings.TrimSpace(media.URL), "data:")) {
+			return errors.New("当前渠道暂不支持直接使用本地素材，请使用可访问的 HTTPS 素材链接，或选择支持本地素材的渠道")
 		}
 		return nil
 	}
