@@ -17,6 +17,7 @@ import { DirectorWorkbenchRail, type DirectorWorkbenchTab } from "@/components/c
 import { DirectorViewport, type DirectorViewportHandle } from "@/components/canvas/director/director-viewport";
 import { DirectorViewportDock } from "@/components/canvas/director/director-viewport-dock";
 import { DirectorSequencer } from "@/components/canvas/director/director-sequencer";
+import { DirectorPreviewComposer } from "@/components/canvas/director/director-preview-composer";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { compileDirectorPrompt } from "@/lib/canvas/director/director-prompt-compiler";
 import { advanceDirectorPlayhead, resolveDirectorBoneRotation, resolveDirectorCameraAlignment, resolveDirectorCameraMoveKeyframes, resolveDirectorKeyframeRecord, resolveDirectorMultiObjectBoneRotationEdit, resolveDirectorMultiObjectGroupTransformEdit, resolveDirectorMultiObjectTransformEdit, resolveDirectorObjectTransformEdit, snapDirectorTime } from "@/lib/canvas/director/director-animation-semantics";
@@ -1136,12 +1137,15 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
                 </> : null}
 
                 <main className="relative min-h-0 overflow-hidden bg-neutral-900">
-                    <DirectorViewport ref={viewportRef} scene={draft} selectedObjectId={workspaceView === "scene" ? selectedObjectId : null} selectedObjectIds={workspaceView === "scene" ? viewportSelectedObjectIds : []} selectedBone={workspaceView === "scene" ? selectedBone : null} transformMode={transformMode} renderMode={renderMode} playhead={playhead} playing={playing} showMotionPaths={workspaceView === "scene" && sequencerVisible} viewMode={viewMode} onViewModeChange={setViewMode} onCaptureReadyChange={setCaptureReady} onSelectObject={(id) => { if (workspaceView !== "scene") return; setSelectedObjectId(id); setSceneSelection(id ? [id] : []); sceneSelectionAnchor.current = id; }} onSelectBone={(bone) => { if (workspaceView === "scene") setSelectedBone(bone); }} onObjectTransform={handleViewportObjectTransform} onMultiObjectTransform={handleMultiObjectGroupTransform} onBoneTransform={handleViewportBoneTransform} onActorRigReady={handleActorRigReady} />
+                    <DirectorViewport ref={viewportRef} scene={draft} selectedObjectId={workspaceView === "scene" ? selectedObjectId : null} selectedObjectIds={workspaceView === "scene" ? viewportSelectedObjectIds : []} selectedBone={workspaceView === "scene" ? selectedBone : null} transformMode={transformMode} renderMode={renderMode} playhead={playhead} playing={playing} showMotionPaths={workspaceView === "scene" && sequencerVisible} viewMode={viewMode} onViewModeChange={workspaceView === "scene" ? setViewMode : undefined} onCaptureReadyChange={setCaptureReady} onSelectObject={(id) => { if (workspaceView !== "scene") return; setSelectedObjectId(id); setSceneSelection(id ? [id] : []); sceneSelectionAnchor.current = id; }} onSelectBone={(bone) => { if (workspaceView === "scene") setSelectedBone(bone); }} onObjectTransform={handleViewportObjectTransform} onMultiObjectTransform={handleMultiObjectGroupTransform} onBoneTransform={handleViewportBoneTransform} onActorRigReady={handleActorRigReady} />
                     {workspaceView === "scene" ? <>
                         <div className="pointer-events-none absolute left-3 top-3 text-[var(--fs-tiny)] font-medium text-white/70">{activeShot.name} · {activeCamera?.name || "无摄影机"} · {activeShot.duration}s</div>
                         <CanvasDirectorOnboarding scope={onboardingScope} open={open} restartSignal={onboardingRestartSignal} className="absolute right-3 top-3 z-[var(--z-popover)] w-[min(360px,calc(100%-24px))]" />
                         <DirectorViewportDock transformMode={transformMode} renderMode={renderMode} renderModes={capabilities.renderModes} onTransformModeChange={setTransformMode} onRenderModeChange={setRenderMode} onAddActor={addActor} onAddBox={() => addPrimitive("box", "立方体")} onAddLight={addLight} onAddCamera={addCamera} onAlignCamera={alignCameraToView} timelineOpen={sequencerVisible} onToggleTimeline={() => setSequencerVisible(!sequencerVisible)} captureBusy={captureBusy} captureReady={captureReady} onCapture={() => void captureScreenshot()} />
-                    </> : <div className="pointer-events-none absolute left-4 top-4 rounded-md bg-black/45 px-3 py-2 text-xs text-white/80">{activeShot.name} · {activeCamera?.name || "无摄影机"} · {activeShot.duration}s 成片预演</div>}
+                    </> : <>
+                        <div className="pointer-events-none absolute left-4 top-4 rounded-md bg-black/45 px-3 py-2 text-xs text-white/80">{activeShot.name} · {activeCamera?.name || "无摄影机"} · {activeShot.duration}s 成片预演</div>
+                        <DirectorPreviewComposer prompt={activeShot.prompt} onPromptChange={(prompt) => replaceWithoutHistory((current) => ({ ...current, shots: current.shots.map((shot) => shot.id === activeShot.id ? { ...shot, prompt } : shot) }))} />
+                    </>}
                 </main>
 
                 {workspaceView === "scene" ? <>

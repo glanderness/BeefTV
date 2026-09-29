@@ -7,7 +7,7 @@
  * finally 只终止本脚本记录的 PID，只删除本脚本 mkdtemp 创建的 profile。
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
@@ -428,11 +428,18 @@ async function smokeWorkbench(cdp, baseUrl) {
         const grid = document.querySelector('[data-director-workbench="true"] > .grid');
         return tabs[1]?.getAttribute('aria-pressed') === 'true'
             && document.querySelectorAll('.director-sequencer').length === 1
+            && !!document.querySelector('textarea[aria-label="当前镜头意图"]')
+            && !document.querySelector('[aria-label="导演台取景模式"]')
+            && !document.querySelector('[aria-label="方向球"]')
             && document.querySelectorAll('nav[aria-label="导演台工作区"]').length === 0
             && document.querySelectorAll('nav[aria-label="导演台模式"]').length === 0
             && grid && getComputedStyle(grid).gridTemplateColumns.split(' ').length === 1;
     })()`, "cinema preview workspace", 20000);
     assert(previewReady, "A5a 成片预演聚焦单画布并显示时间线");
+    if (process.env.DIRECTOR_E2E_SCREENSHOT) {
+        const screenshot = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+        writeFileSync(process.env.DIRECTOR_E2E_SCREENSHOT, Buffer.from(screenshot.data, "base64"));
+    }
     const sceneView = await cdp.click('nav[aria-label="导演台工作区视图"] button:nth-child(1)');
     if (!sceneView) throw new Error("A: 场景调度工作区按钮 not clickable");
     const sceneRestored = await cdp.poll(`(() => {
@@ -463,12 +470,12 @@ async function smokeWorkbench(cdp, baseUrl) {
 
     const addedCube = await cdp.click('[aria-label="添加立方体"]');
     if (!addedCube) throw new Error("A: 添加立方体 button not clickable");
-    const cubeAppeared = await cdp.poll(`!!document.querySelector('[aria-label="删除立方体"]')`, "cube row", 20000);
+    const cubeAppeared = await cdp.poll(`[...document.querySelectorAll('[data-director-scene-row]')].some((row) => (row.innerText || '').trim() === '立方体')`, "cube row", 20000);
     assert(cubeAppeared, "A10 added cube appears in object list");
 
     const undone = await cdp.click('[aria-label="撤销"]');
     if (!undone) throw new Error("A: 撤销 button not clickable");
-    const cubeGone = await cdp.poll(`!document.querySelector('[aria-label="删除立方体"]')`, "cube removed by undo", 20000);
+    const cubeGone = await cdp.poll(`![...document.querySelectorAll('[data-director-scene-row]')].some((row) => (row.innerText || '').trim() === '立方体')`, "cube removed by undo", 20000);
     assert(cubeGone, "A11 Undo removes the added cube");
 
     // 场景结束前必须真实关闭：下一个场景要重新导航，不能靠忽略 beforeunload 绕过未保存态。
@@ -497,7 +504,10 @@ async function localModel(cdp, baseUrl) {
     const opened = await cdp.click('[data-testid="toggle-workbench"]');
     if (!opened) throw new Error("B: toggle-workbench not clickable");
 
-    const rowReady = await cdp.poll(`!!document.querySelector('[aria-label="删除本地模型 repro triangle"]')`, "model row", 30000);
+    const workbenchReady = await cdp.poll(`!!document.querySelector('[data-director-workbench="true"]')`, "workbench mounted", 20000);
+    assert(workbenchReady, "B1a workbench mounted before reading scene rows");
+
+    const rowReady = await cdp.poll(`[...document.querySelectorAll('[data-director-scene-row]')].some((row) => (row.innerText || '').includes('本地模型 repro triangle'))`, "model row", 30000);
     assert(rowReady, "B2 local model row present in object list");
     const hasCanvas = await cdp.poll(`(() => { const c = document.querySelector('.director-viewport-shell canvas'); return !!c && c.clientWidth > 0; })()`, "canvas", 40000);
     assert(hasCanvas, "B3 real canvas present");
@@ -593,11 +603,18 @@ async function deleteWhileLoading(cdp, baseUrl) {
         const opened = await cdp.click('[data-testid="toggle-workbench"]');
         if (!opened) throw new Error("D: toggle-workbench not clickable");
 
-        const rowReady = await cdp.poll(`!!document.querySelector('[aria-label="删除本地模型 repro triangle"]')`, "model row", 30000);
+        const workbenchReady = await cdp.poll(`!!document.querySelector('[data-director-workbench="true"]')`, "workbench mounted", 20000);
+        assert(workbenchReady, "D0a workbench mounted before reading scene rows");
+
+        const rowReady = await cdp.poll(`[...document.querySelectorAll('[data-director-scene-row]')].some((row) => (row.innerText || '').includes('本地模型 repro triangle'))`, "model row", 30000);
         assert(rowReady, "D1 model row present while load still in flight");
 
-        const deleted = await cdp.click('[aria-label="删除本地模型 repro triangle"]');
-        if (!deleted) throw new Error("D: delete button not clickable");
+        const selected = await cdp.clickText("本地模型 repro triangle");
+        if (!selected) throw new Error("D: model row not selectable");
+        const deleteReady = await cdp.poll(`!!document.querySelector('button[aria-label="删除"]')`, "selected model delete action", 10000);
+        assert(deleteReady, "D1a selecting model exposes inspector delete action");
+        const deleted = await cdp.click('button[aria-label="删除"]');
+        if (!deleted) throw new Error("D: inspector delete action not clickable");
         const gone = await cdp.poll(`!(document.body.innerText || "").includes('本地模型 repro triangle')`, "name removed", 20000);
         assert(gone, "D2 object removed while its load was in flight");
     } finally {
@@ -801,7 +818,11 @@ async function main() {
         cdp = await connectCdp(cdpPort);
         console.log("      CDP connected (Runtime, Page, Log, Network enabled)");
 
-        for (const scenario of [smokeWorkbench, localModel, missingRetry, deleteWhileLoading, webglLossRestore, saveFailureCloseGuard]) {
+        const allScenarios = [smokeWorkbench, localModel, missingRetry, deleteWhileLoading, webglLossRestore, saveFailureCloseGuard];
+        const selectedScenario = process.env.DIRECTOR_E2E_SCENARIO;
+        const scenarios = selectedScenario ? allScenarios.filter((scenario) => scenario.name === selectedScenario) : allScenarios;
+        if (selectedScenario && scenarios.length === 0) throw new Error(`Unknown DIRECTOR_E2E_SCENARIO: ${selectedScenario}`);
+        for (const scenario of scenarios) {
             try {
                 await scenario(cdp, baseUrl);
             } catch (error) {

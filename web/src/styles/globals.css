@@ -12260,6 +12260,40 @@ html:not(.dark) .creation-model-picker-heading strong { color: #20242a; }
     outline-offset: 1px;
 }
 
+.director-preview-composer {
+    position: absolute;
+    z-index: 20;
+    bottom: var(--space-3);
+    left: 50%;
+    display: flex;
+    width: min(500px, calc(100% - 32px));
+    min-height: 56px;
+    align-items: center;
+    padding: 9px 16px;
+    transform: translateX(-50%);
+    border: var(--stroke-1) solid var(--director-sequencer-border);
+    border-radius: 20px;
+    background: var(--director-dock-surface);
+    box-shadow: var(--shadow-xl);
+    backdrop-filter: blur(18px);
+}
+
+.director-preview-composer .ant-input {
+    min-height: 32px !important;
+    padding: 5px 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    color: var(--foreground) !important;
+    box-shadow: none !important;
+    font-size: var(--fs-caption);
+    line-height: 1.6;
+    resize: none;
+}
+
+.director-preview-composer .ant-input::placeholder {
+    color: color-mix(in srgb, var(--foreground) 43%, transparent);
+}
+
 /* 模板选择卡片。位于 Modal 内（跟随明暗主题），同样只用主题感知语义 token。 */
 .director-template-grid {
     display: grid;
