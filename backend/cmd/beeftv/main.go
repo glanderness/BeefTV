@@ -163,7 +163,7 @@ func mapEnvelopeError(status int, reason, msg string, details map[string]any) er
 }
 
 func (c *client) listOps(readOnly bool) ([]opDescriptor, error) {
-	path := "/agent-ops"
+	path := "/ops"
 	if readOnly {
 		path += "?readOnly=1"
 	}
@@ -186,7 +186,7 @@ func (c *client) callOp(opID, requestID string, params json.RawMessage) (json.Ra
 
 func (c *client) callOpCtx(ctx context.Context, opID, requestID string, params json.RawMessage) (json.RawMessage, error) {
 	body := map[string]any{"opId": requestID, "params": json.RawMessage(params)}
-	return c.do(ctx, http.MethodPost, "/agent-ops/"+opID, body)
+	return c.do(ctx, http.MethodPost, "/ops/"+opID, body)
 }
 
 func main() {
@@ -516,7 +516,7 @@ func runClient(c *client, args []string) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return &cliError{code: exitUsage, reason: "bad_flags", msg: err.Error()}
 	}
-	raw, err := c.do(context.Background(), http.MethodPost, "/agent-clients", map[string]any{"label": *label, "mode": *mode})
+	raw, err := c.do(context.Background(), http.MethodPost, "/ops/clients", map[string]any{"label": *label, "mode": *mode})
 	if err != nil {
 		return err
 	}

@@ -24,7 +24,7 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 	registry := agentops.NewRegistry(svc, store)
 	agentops.RegisterDefaultOps(registry)
 
-	r.GET("/agent-ops", func(c *gin.Context) {
+	r.GET("/ops", func(c *gin.Context) {
 		if !isLoopbackRequest(c.Request) {
 			fail(c, http.StatusForbidden, app.BadAuthRequest("操作层只接受本机请求"))
 			return
@@ -41,7 +41,7 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 		ok(c, gin.H{"ops": registry.List(readOnly), "readOnly": readOnly, "client": clientLabel})
 	})
 
-	r.POST("/agent-clients", func(c *gin.Context) {
+	r.POST("/ops/clients", func(c *gin.Context) {
 		if !isLoopbackRequest(c.Request) {
 			fail(c, http.StatusForbidden, app.BadAuthRequest("客户端登记只接受本机请求"))
 			return
@@ -72,7 +72,7 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 		ok(c, gin.H{"client": gin.H{"id": reg.ID, "label": reg.Label, "mode": reg.Mode}, "token": token})
 	})
 
-	r.GET("/agent-clients", func(c *gin.Context) {
+	r.GET("/ops/clients", func(c *gin.Context) {
 		if !isLoopbackRequest(c.Request) {
 			fail(c, http.StatusForbidden, app.BadAuthRequest("客户端登记只接受本机请求"))
 			return
@@ -84,7 +84,7 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 		ok(c, gin.H{"clients": clients.List()})
 	})
 
-	r.POST("/agent-ops/:op", func(c *gin.Context) {
+	r.POST("/ops/:op", func(c *gin.Context) {
 		// 本机入口：只接受 loopback 来源，避免被浏览器跨站或外部主机调用。
 		if !isLoopbackRequest(c.Request) {
 			fail(c, http.StatusForbidden, app.BadAuthRequest("操作层只接受本机请求"))
@@ -122,7 +122,8 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 		}
 		_ = clientLabel
 		result, execErr := registry.Execute(agentops.Request{
-			OpID: req.OpID, Op: c.Param("op"), UserID: user.ID, ReadOnly: readOnly, Params: req.Params,
+			Context: c.Request.Context(),
+			OpID:    req.OpID, Op: c.Param("op"), UserID: user.ID, ReadOnly: readOnly, Params: req.Params,
 		})
 		if execErr != nil {
 			opErr := agentops.AsError(execErr)

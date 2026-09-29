@@ -96,7 +96,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, agentHostBaseURL()+"/health", nil)
 			if err == nil {
 				req.Header.Set("X-Beeftv-Agent-Token", token)
-				if resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(req); err == nil {
+				if resp, err := agentHostClient(3 * time.Second).Do(req); err == nil {
 					defer resp.Body.Close()
 					if resp.StatusCode == http.StatusOK {
 						body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
@@ -119,10 +119,10 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		}
 		status(c)
 	}
-	r.GET("/agent/status", guardedStatus)
-	r.GET("/agent/health", guardedStatus)
+	r.GET("/assistant/status", guardedStatus)
+	r.GET("/assistant/health", guardedStatus)
 
-	r.POST("/agent/chat", func(c *gin.Context) {
+	r.POST("/assistant/chat", func(c *gin.Context) {
 		if !guard(c, true) {
 			return
 		}
@@ -183,7 +183,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		})
 	})
 
-	r.POST("/agent/cancel", func(c *gin.Context) {
+	r.POST("/assistant/cancel", func(c *gin.Context) {
 		if !guard(c, false) {
 			return
 		}

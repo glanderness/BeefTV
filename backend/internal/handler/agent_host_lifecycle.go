@@ -124,7 +124,7 @@ func RegisterAgentHostLifecycleRoutes(r gin.IRouter, svc *app.Service, superviso
 		return true
 	}
 
-	r.GET("/agent/host/config", func(c *gin.Context) {
+	r.GET("/assistant/host/config", func(c *gin.Context) {
 		if !ownerGuard(c) {
 			return
 		}
@@ -132,7 +132,7 @@ func RegisterAgentHostLifecycleRoutes(r gin.IRouter, svc *app.Service, superviso
 		ok(c, gin.H{"config": config, "configured": configured, "supervisorRunning": supervisor.running()})
 	})
 
-	r.PUT("/agent/host/config", func(c *gin.Context) {
+	r.PUT("/assistant/host/config", func(c *gin.Context) {
 		if !ownerGuard(c) {
 			return
 		}
@@ -148,7 +148,7 @@ func RegisterAgentHostLifecycleRoutes(r gin.IRouter, svc *app.Service, superviso
 		ok(c, gin.H{"config": request})
 	})
 
-	r.POST("/agent/host/start", func(c *gin.Context) {
+	r.POST("/assistant/host/start", func(c *gin.Context) {
 		if !ownerGuard(c) {
 			return
 		}
@@ -166,7 +166,7 @@ func RegisterAgentHostLifecycleRoutes(r gin.IRouter, svc *app.Service, superviso
 		ok(c, gin.H{"started": true, "pid": strconv.Itoa(supervisorPid(supervisor))})
 	})
 
-	r.POST("/agent/host/stop", func(c *gin.Context) {
+	r.POST("/assistant/host/stop", func(c *gin.Context) {
 		if !ownerGuard(c) {
 			return
 		}

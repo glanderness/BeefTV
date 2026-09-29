@@ -30,13 +30,13 @@ export type AgentTurnEnd = {
 let uiSessionToken: string | null = null;
 
 export async function getAgentHostStatus(): Promise<AgentHostStatus> {
-    const data = await http.get<AgentHostStatus>("/agent/status");
+    const data = await http.get<AgentHostStatus>("/assistant/status");
     return data;
 }
 
 export async function ensureAgentUiSession(): Promise<string> {
     if (uiSessionToken) return uiSessionToken;
-    const data = await http.post<{ token: string }>("/agent/ui-session", {});
+    const data = await http.post<{ token: string }>("/assistant/ui-session", {});
     if (!data?.token) throw new Error("内置助手会话签发失败：宿主未就绪");
     uiSessionToken = data.token;
     return data.token;

@@ -53,6 +53,7 @@ type Descriptor struct {
 
 // Request 是一次操作调用的入参。
 type Request struct {
+	Context  context.Context
 	OpID     string
 	Op       string
 	UserID   string
@@ -165,14 +166,27 @@ func (r *Registry) Execute(req Request) (Result, error) {
 	if !op.ReadOnly && strings.TrimSpace(req.OpID) == "" {
 		return Result{}, InvalidArg("missing_op_id", "写操作必须提供 opId 作为幂等键")
 	}
+	// 只读操作不接受幂等键：否则会在单连接池上为读操作开启事务并自等死锁，
+	// 而且读操作本来就不需要回放语义。
+	if op.ReadOnly && strings.TrimSpace(req.OpID) != "" {
+		return Result{}, InvalidArg("unexpected_op_id", "只读操作不支持 opId")
+	}
+	opID := req.OpID
+	if op.ReadOnly {
+		opID = ""
+	}
 	params := req.Params
 	if len(params) == 0 {
 		params = json.RawMessage("{}")
 	}
+	runCtx := req.Context
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
 	hash := PayloadHash(op.ID, params)
 	baseCtx := req.UserID
-	outcome, err := r.store.Run(req.UserID, req.OpID, op.ID, hash, func(tx *gorm.DB) ([]byte, error) {
-		execCtx := &Context{Context: context.Background(), UserID: baseCtx, ReadOnly: req.ReadOnly, Tx: tx, Services: r.services}
+	outcome, err := r.store.Run(req.UserID, opID, op.ID, hash, func(tx *gorm.DB) ([]byte, error) {
+		execCtx := &Context{Context: runCtx, UserID: baseCtx, ReadOnly: req.ReadOnly, Tx: tx, Services: r.services}
 		value, runErr := op.Handler(execCtx, params)
 		if runErr != nil {
 			return nil, AsError(runErr)
@@ -192,5 +206,5 @@ func (r *Registry) Execute(req Request) (Result, error) {
 			return Result{}, AsError(err)
 		}
 	}
-	return Result{Op: op.ID, OpID: req.OpID, Replayed: outcome.Replayed, Result: decoded}, nil
+	return Result{Op: op.ID, OpID: opID, Replayed: outcome.Replayed, Result: decoded}, nil
 }

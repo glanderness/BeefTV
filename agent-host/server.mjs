@@ -120,7 +120,7 @@ async function opsRequest(method, apiPath, body, signal) {
 // 工具描述来自已鉴权的能力发现；内置侧只做 scope 注入与动作身份，不重写业务规则。
 const descriptors = new Map();
 async function loadDescriptors() {
-  const data = await opsRequest('GET', `/agent-ops${READ_ONLY_MODE ? '?readOnly=1' : ''}`);
+  const data = await opsRequest('GET', `/ops${READ_ONLY_MODE ? '?readOnly=1' : ''}`);
   for (const descriptor of data.ops || []) descriptors.set(descriptor.id.replace(/\./g, '_'), descriptor);
   console.error(`agent-host: 载入 ${descriptors.size} 个操作（readOnly=${READ_ONLY_MODE}）`);
 }
@@ -155,7 +155,7 @@ function buildTools(canvasId, log, generation, turn) {
       }
       const started = Date.now();
       try {
-        const data = await opsRequest('POST', `/agent-ops/${descriptor.id}`, { opId, params }, signal);
+        const data = await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal);
         log.push({ tool: descriptor.id, args: params, isError: false, ms: Date.now() - started, replayed: !!data?.replayed });
         return { content: [{ type: 'text', text: JSON.stringify(data) }] };
       } catch (error) {

@@ -27,6 +27,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"infinite-canvas/backend/internal/agentops"
 )
 
 type Runtime struct {
@@ -158,6 +159,8 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 		router.Use(desktopCORSMiddleware())
 	}
 	router.Use(canvasHandler.WorkspaceMiddleware(scope))
+	// 本机可信凭据在组合根生成：owner 凭据与宿主凭据只在本机数据目录，0600。
+	agentops.EnsureAgentCredentials(svc.DataDir())
 	api := router.Group("/api")
 	status := newSystemStatus(db, svc, true)
 	registerSystemStatusRoutes(api, status)

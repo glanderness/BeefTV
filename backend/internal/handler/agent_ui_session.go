@@ -88,7 +88,7 @@ func resolveAgentCapability(c *gin.Context, svc *app.Service, clients *agentops.
 
 // RegisterAgentUISessionRoutes 只在本机同源且能出示 owner 凭据（或显式开发引导）时签发 UI 会话。
 func RegisterAgentUISessionRoutes(r gin.IRouter, svc *app.Service, ui *uiSessionStore) {
-	r.POST("/agent/ui-session", func(c *gin.Context) {
+	r.POST("/assistant/ui-session", func(c *gin.Context) {
 		if !isLoopbackRequest(c.Request) {
 			fail(c, http.StatusForbidden, app.BadAuthRequest("只接受本机同源请求"))
 			return

@@ -51,9 +51,9 @@ func registerDesktopCanvasAPI(api *gin.RouterGroup, svc *app.Service, dependenci
 	RegisterRunningHubRoutes(api, svc, false)
 	RegisterDesktopSkillRoutes(api, svc)
 	RegisterDesktopUserDataRoutes(api, svc)
-	// 登记表在进程内单实例（避免每请求新建导致并发丢记录），owner 凭据在启动时确保存在。
+	// 登记表在进程内单实例（避免每请求新建导致并发丢记录）。
+	// 凭据落盘属于组合根职责：路由注册不产生文件副作用。
 	clients := agentops.NewClientRegistry(svc.DataDir())
-	_, _ = agentops.EnsureOwnerToken(svc.DataDir())
 	// 统一操作层：CLI、MCP 与内置 pi 共用同一组操作与校验，连同一个运行中的工作区。
 	if db := svc.Database(); db != nil {
 		RegisterAgentOpsRoutes(api, svc, agentops.NewStore(db), clients)

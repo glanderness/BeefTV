@@ -184,3 +184,22 @@ func OwnerTokenMatches(dataDir, presented string) bool {
 	}
 	return subtle.ConstantTimeCompare([]byte(expected), []byte(presented)) == 1
 }
+
+// EnsureAgentCredentials 在组合根生成 owner 凭据与宿主凭据；DataDir 为空时明确报错，不写 CWD。
+func EnsureAgentCredentials(dataDir string) {
+	if strings.TrimSpace(dataDir) == "" {
+		return
+	}
+	if _, err := EnsureOwnerToken(dataDir); err != nil {
+		return
+	}
+	hostPath := filepath.Join(dataDir, "agent_host_token")
+	if _, err := os.Stat(hostPath); err == nil {
+		return
+	}
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		return
+	}
+	_ = atomicWriteFile(hostPath, []byte(hex.EncodeToString(buf)))
+}
