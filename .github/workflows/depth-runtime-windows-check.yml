@@ -16,9 +16,14 @@ permissions:
   contents: read
 
 jobs:
-  windows-cpu:
+  windows-runtime:
+    name: windows-${{ matrix.variant }}
     runs-on: windows-2022
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [cpu, cuda]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -47,10 +52,11 @@ jobs:
             throw "找不到 Chocolatey 安装的实际 FFmpeg/FFprobe 二进制文件"
           }
           "DEPTH_FFMPEG_DIR=$binaryDir" >> $env:GITHUB_ENV
-      - name: Build and relocate CPU runtime
+      - name: Build and relocate ${{ matrix.variant }} runtime
         shell: pwsh
-        run: ./scripts/build-depth-runtime-windows.ps1 -Variant cpu -FFmpegDir $env:DEPTH_FFMPEG_DIR -OutputDir ./build/depth-runtime
+        run: ./scripts/build-depth-runtime-windows.ps1 -Variant ${{ matrix.variant }} -FFmpegDir $env:DEPTH_FFMPEG_DIR -OutputDir ./build/depth-runtime
       - name: Probe pinned Small model on Windows CPU
+        if: matrix.variant == 'cpu'
         shell: pwsh
         run: |
           $modelDir = Join-Path $env:RUNNER_TEMP "beeftv-depth-model\checkpoints"
