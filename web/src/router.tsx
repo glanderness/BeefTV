@@ -2,11 +2,12 @@ import { lazy, Suspense, type ReactNode } from "react";
 import { createBrowserRouter, Navigate, Outlet, useLocation, useParams } from "react-router";
 
 import { FullScreenLoader, WorkspaceRouteLoader } from "@/components/ui/aceternity/full-screen-loader";
-import { loadAssetsPage, loadCanvasPage, loadCanvasProjectPage, loadCreatePage, loadHomePage, loadProjectDetailPage } from "@/lib/workspace-route-modules";
+import { loadAgentsPage, loadAssetsPage, loadCanvasPage, loadCanvasProjectPage, loadCreatePage, loadHomePage, loadProjectDetailPage } from "@/lib/workspace-route-modules";
 import { CanvasRefreshShell } from "@/pages/canvas/canvas-refresh-shell";
 import RouteErrorPage from "@/pages/route-error";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 
+const AgentsPage = lazy(loadAgentsPage);
 const AssetsPage = lazy(loadAssetsPage);
 const HomePage = lazy(loadHomePage);
 const CanvasPage = lazy(loadCanvasPage);
@@ -93,6 +94,7 @@ export const router = createBrowserRouter([
                 element: <RequireFeature feature="pluginCenterEnabled">{deferred(<EagleLibraryPage />)}</RequireFeature>,
             },
             { path: "/settings", element: deferred(<SettingsPage />) },
+            { path: "/agents", element: deferred(<AgentsPage />) },
             { path: "/test-voice-recording", element: deferred(<TestVoiceRecording />) },
             {
                 path: "/projects",

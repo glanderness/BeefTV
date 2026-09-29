@@ -1,4 +1,4 @@
-import { ChevronRight, Home, PanelLeftClose, PanelLeftOpen, Plus, Settings2, Sun, Moon } from "lucide-react";
+import { ChevronRight, Home, PanelLeftClose, PanelLeftOpen, Plug, Plus, Settings2, Sun, Moon } from "lucide-react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
@@ -50,6 +50,7 @@ function buildNav(features: FeatureAvailability): { groups: WorkspaceNavGroup[];
                 { ...toolItem("canvas", "/project"), title: "项目" },
                 { ...toolItem("assets", "/assets"), title: "资产" },
                 { id: "settings:channels", title: "模型配置", icon: Settings2, to: "/settings?section=channels" },
+                { id: "agents", title: "外部 Agent", icon: Plug, to: "/agents" },
             ],
         },
     ];
