@@ -24,7 +24,7 @@ func TestHostEnvOpsURLKeepsAPIPrefix(t *testing.T) {
 	t.Setenv("CANVAS_BACKEND_ADDR", "127.0.0.1:18090")
 	t.Setenv("CANVAS_BACKEND_PORT", "")
 
-	env := hostEnv(dataDir, "gpt-5.5", "https://beefapi.com/v1")
+	env := hostEnv(dataDir, "gpt-5.5", "https://beefapi.com/v1", "test-key", "http://127.0.0.1:18090/api", "desktop-shell-token")
 	value := func(key string) string {
 		prefix := key + "="
 		for _, entry := range env {
@@ -36,7 +36,7 @@ func TestHostEnvOpsURLKeepsAPIPrefix(t *testing.T) {
 	}
 
 	if got := value("BEEFTV_OPS_URL"); got != "http://127.0.0.1:18090/api" {
-		t.Fatalf("BEEFTV_OPS_URL = %q", got)
+		t.Fatalf("BEEFTV_OPS_URL 应使用显式地址，得到 %q", got)
 	}
 	if got := value("BEEFTV_AGENT_HOST_TOKEN"); got != "host-token" {
 		t.Fatalf("BEEFTV_AGENT_HOST_TOKEN = %q", got)
@@ -46,6 +46,12 @@ func TestHostEnvOpsURLKeepsAPIPrefix(t *testing.T) {
 	}
 	if got := value("BEEFTV_AGENT_DATA_DIR"); got != dataDir {
 		t.Fatalf("BEEFTV_AGENT_DATA_DIR = %q", got)
+	}
+	if got := value("BEEFTV_AGENT_API_KEY"); got != "test-key" {
+		t.Fatalf("BEEFTV_AGENT_API_KEY 应由调用方注入，得到 %q", got)
+	}
+	if got := value("BEEFTV_AGENT_DESKTOP_TOKEN"); got != "desktop-shell-token" {
+		t.Fatalf("桌面形态应把启动令牌交给宿主，得到 %q", got)
 	}
 }
 
@@ -67,7 +73,7 @@ func TestStopProcessAgentHostReapsOwnChildOnShutdown(t *testing.T) {
 	outsiderAlive := func() bool { return outsider.Process.Signal(syscall.Signal(0)) == nil }
 
 	supervisor := &agentHostSupervisor{}
-	if err := supervisor.start(dataDir, agentHostConfig{Model: "test", HostCommand: script}); err != nil {
+	if err := supervisor.start(dataDir, agentHostConfig{Model: "test", HostCommand: script}, "http://127.0.0.1:18090/api", "desktop-shell-token"); err != nil {
 		t.Fatalf("启动测试宿主失败: %v", err)
 	}
 	childPid := supervisorPid(supervisor)
@@ -105,5 +111,94 @@ func TestStopProcessAgentHostReapsOwnChildOnShutdown(t *testing.T) {
 	// 再次调用必须是 no-op（未启动状态），不能报错。
 	if err := StopProcessAgentHost(context.Background()); err != nil {
 		t.Fatalf("无自有宿主时钩子应为 no-op，实际 %v", err)
+	}
+}
+
+// 内置助手的模型连接信息复用应用已有的本地模型配置，不再要求一个只存在于进程环境里的密钥。
+func TestResolveAssistantProviderUsesLocalModelConfig(t *testing.T) {
+	dataDir := t.TempDir()
+	config := `{"schemaVersion":1,"revision":1,"config":{"apiKey":"local-config-key","baseUrl":"https://beefapi.com/v1","textModel":"gpt-5.5","model":"fallback-model"}}`
+	if err := os.WriteFile(filepath.Join(dataDir, "local-model-config.json"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"BEEFTV_AGENT_API_KEY", "BEEFTV_AGENT_BASE_URL", "BEEFTV_AGENT_MODEL"} {
+		t.Setenv(key, "")
+	}
+
+	provider := resolveAssistantProvider(dataDir)
+
+	if provider.APIKey != "local-config-key" || provider.BaseURL != "https://beefapi.com/v1" || provider.Model != "gpt-5.5" {
+		t.Fatalf("应从本地模型配置解析出三元组，得到 %#v", provider)
+	}
+}
+
+// 显式注入的环境变量优先于本地配置（开发与受控测试路径）。
+func TestResolveAssistantProviderPrefersExplicitEnv(t *testing.T) {
+	dataDir := t.TempDir()
+	config := `{"config":{"apiKey":"local-config-key","baseUrl":"https://local.example/v1","textModel":"local-model"}}`
+	if err := os.WriteFile(filepath.Join(dataDir, "local-model-config.json"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BEEFTV_AGENT_API_KEY", "env-key")
+	t.Setenv("BEEFTV_AGENT_BASE_URL", "https://env.example/v1")
+	t.Setenv("BEEFTV_AGENT_MODEL", "env-model")
+
+	provider := resolveAssistantProvider(dataDir)
+
+	if provider.APIKey != "env-key" || provider.BaseURL != "https://env.example/v1" || provider.Model != "env-model" {
+		t.Fatalf("显式注入应优先，得到 %#v", provider)
+	}
+}
+
+// 未配置启动命令时，启动链上的自动拉起必须是 no-op，不能让应用启动失败。
+func TestStartProcessAgentHostIsNoopWithoutConfig(t *testing.T) {
+	previous := processAgentHostSupervisor
+	processAgentHostSupervisor = &agentHostSupervisor{}
+	t.Cleanup(func() { processAgentHostSupervisor = previous })
+
+	if err := StartProcessAgentHost(t.TempDir(), "http://127.0.0.1:18090/api", ""); err != nil {
+		t.Fatalf("未配置宿主时应用启动不应失败: %v", err)
+	}
+	if processAgentHostSupervisor.running() {
+		t.Fatal("未配置时不应有宿主进程")
+	}
+}
+
+// 打包布局：能从 Contents/MacOS/<exe> 推导出 Contents/Resources/agent-host/run-agent-host.sh，
+// 不需要用户配置任何开发路径。
+func TestBundledAgentHostCommandFollowsAppLayout(t *testing.T) {
+	root := t.TempDir()
+	launcher := filepath.Join(root, "Contents", "Resources", "agent-host", "run-agent-host.sh")
+	if err := os.MkdirAll(filepath.Dir(launcher), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	executable := filepath.Join(root, "Contents", "MacOS", "BeefTV")
+
+	if got := bundledAgentHostCommandFor(executable); got != launcher {
+		t.Fatalf("应推导出包内启动脚本，得到 %q", got)
+	}
+	// 没有随包脚本时返回空字符串，调用方据此走「未配置」分支而不是拿一个坏路径去启动。
+	if got := bundledAgentHostCommandFor(filepath.Join(t.TempDir(), "BeefTV")); got != "" {
+		t.Fatalf("无随包脚本时应返回空，得到 %q", got)
+	}
+}
+
+// 操作层基址必须来自真实运行中的后端：桌面形态监听随机回环端口，
+// 用环境变量猜端口会把宿主的探测指向错误位置（表现为「助手不可用」）。
+func TestOpsBaseURLPrefersExplicitAddress(t *testing.T) {
+	t.Setenv("CANVAS_BACKEND_ADDR", "127.0.0.1:9999")
+
+	if got := opsBaseURL("http://127.0.0.1:54321"); got != "http://127.0.0.1:54321/api" {
+		t.Fatalf("显式地址应被采用并补 /api，得到 %q", got)
+	}
+	if got := opsBaseURL("http://127.0.0.1:54321/api"); got != "http://127.0.0.1:54321/api" {
+		t.Fatalf("已带 /api 不应重复拼接，得到 %q", got)
+	}
+	// 没有显式地址时才退回环境变量推导，既有部署方式不受影响。
+	if got := opsBaseURL(""); got != "http://127.0.0.1:9999/api" {
+		t.Fatalf("无显式地址时应退回环境变量，得到 %q", got)
 	}
 }

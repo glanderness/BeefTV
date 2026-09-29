@@ -56,11 +56,12 @@ func (e *cliError) machineError() map[string]any {
 }
 
 type client struct {
-	baseURL    string
-	clientID   string
-	token      string
-	ownerToken string
-	http       *http.Client
+	baseURL      string
+	clientID     string
+	token        string
+	ownerToken   string
+	desktopToken string
+	http         *http.Client
 }
 
 type opDescriptor struct {
@@ -92,6 +93,9 @@ func newClient() (*client, error) {
 		clientID:   strings.TrimSpace(os.Getenv("BEEFTV_CLIENT_ID")),
 		token:      strings.TrimSpace(os.Getenv("BEEFTV_CLIENT_TOKEN")),
 		ownerToken: strings.TrimSpace(os.Getenv("BEEFTV_OWNER_TOKEN")),
+		// 桌面形态整个 API 由桌面启动令牌把关：CLI/MCP 要接同一个桌面工作区就必须出示它。
+		// 它只是通过守卫，不改变能力模式——能力仍由 owner/已登记客户端凭据决定。
+		desktopToken: strings.TrimSpace(os.Getenv("BEEFTV_DESKTOP_TOKEN")),
 		// 凭据头是自定义敏感头，不能依赖标准库只保护 Authorization 的行为：一律不跟随重定向。
 		http: &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -119,6 +123,9 @@ func (c *client) do(ctx context.Context, method, path string, body any) (json.Ra
 	}
 	if c.ownerToken != "" {
 		req.Header.Set("X-Beeftv-Owner", c.ownerToken)
+	}
+	if c.desktopToken != "" {
+		req.Header.Set("X-Desktop-Token", c.desktopToken)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

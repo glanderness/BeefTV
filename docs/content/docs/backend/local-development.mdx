@@ -107,6 +107,24 @@ curl -s -X POST http://127.0.0.1:8082/inference \
   -F 'file=@sample.wav' -F 'response_format=verbose_json'
 ```
 
+## 外部客户端连接本机工作区
+
+`beeftv` CLI 与 `beeftv mcp serve` 连接的是同一个本机工作区，凭据从环境变量读取：
+
+| 变量 | 用途 |
+| --- | --- |
+| `BEEFTV_BASE_URL` | 本机工作区地址，默认 `http://127.0.0.1:8080/api`；只接受回环主机 |
+| `BEEFTV_OWNER_TOKEN` | owner 凭据：可执行写操作、登记客户端；运行时会把它写到数据目录下 0600 的文件 |
+| `BEEFTV_CLIENT_ID` / `BEEFTV_CLIENT_TOKEN` | 已登记客户端凭据：能力模式由服务端登记决定，不能自我提升 |
+| `BEEFTV_DESKTOP_TOKEN` | 仅桌面形态需要：桌面运行时会把整个 API 交由桌面启动令牌把关，外部客户端要接**同一个**桌面工作区就必须出示它 |
+
+两条边界：
+
+- 桌面令牌只用于通过入口守卫，不改变能力模式；读/写仍然由 owner 或已登记客户端的权限决定。
+- 客户端登记（`beeftv client register`）按合同需要 owner 凭据；桌面形态下同时需要桌面启动令牌。令牌值只在本机进程环境与本机 0600 文件里流转，不写入日志、不写进文档示例。
+
+桌面形态没有全局 Node 也能运行内置助手：发行包把 `agent-host` 与随包 Node 运行时放在 `BeefTV.app/Contents/Resources/agent-host/`，启动器优先使用包内运行时。
+
 ## Docker 开发
 
 需要容器化热更新时，在仓库根目录执行：

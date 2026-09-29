@@ -2,8 +2,10 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -147,6 +149,20 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 	}
 	scope := workspace.Context{ID: owner.ID, DataDir: cfg.DataDir}
 
+	// 桌面启动令牌在构建路由前解析：它既是整个 API 的入口凭据，也是「本机受信任 UI」
+	// 的判据（内置助手签发 UI 会话时使用）。服务端形态没有它，DesktopTrust 为 nil。
+	launchToken := ""
+	if cfg.Profile == ProfileDesktop {
+		launchToken = strings.TrimSpace(cfg.LaunchToken)
+		if launchToken == "" {
+			launchToken, err = httptransport.NewLaunchToken()
+			if err != nil {
+				cleanupService()
+				return nil, err
+			}
+		}
+	}
+
 	router := gin.New()
 	router.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
 		return fmt.Sprintf("%s - [%s] \"%s %s\" %d %s %s\n", param.ClientIP, param.TimeStamp.Format(time.RFC3339), param.Method, param.Path, param.StatusCode, param.Latency, param.ErrorMessage)
@@ -172,22 +188,14 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 		Tasks:              localRoot.Tasks,
 		Generation:         localRoot.Generation,
 		BeefAPI:            beefAPIConnection,
+		DesktopTrust:       desktopTrust(launchToken),
 	})
 	router.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"code": http.StatusNotFound, "msg": "请求不存在"})
 	})
 
 	rootHandler := http.Handler(router)
-	launchToken := ""
-	if cfg.Profile == ProfileDesktop {
-		launchToken = strings.TrimSpace(cfg.LaunchToken)
-		if launchToken == "" {
-			launchToken, err = httptransport.NewLaunchToken()
-			if err != nil {
-				cleanupService()
-				return nil, err
-			}
-		}
+	if launchToken != "" {
 		rootHandler = httptransport.RequireLaunchToken(launchToken)(rootHandler)
 	}
 	return &Runtime{
@@ -248,6 +256,14 @@ func (r *Runtime) Start() error {
 		r.service.BackfillPlaybackTranscodes()
 	}()
 	r.status.markStarted()
+	// 桌面形态：按本机配置拉起内置创作助手宿主（未配置时 no-op），
+	// 关闭时由 Runtime.Close 收尾，保证「应用启动链」而不是手工点按钮。
+	if r.cfg.Profile == ProfileDesktop {
+		opsURL := "http://" + r.listener.Addr().String() + "/api"
+		if err := canvasHandler.StartProcessAgentHost(r.cfg.DataDir, opsURL, r.launchToken); err != nil {
+			log.Printf("内置创作助手宿主未启动（不影响应用启动）：%v", err)
+		}
+	}
 	if r.beefAPI != nil {
 		_ = r.beefAPI.Recover(context.Background())
 	}
@@ -368,5 +384,18 @@ func desktopCORSMiddleware() gin.HandlerFunc {
 			return
 		}
 		c.Next()
+	}
+}
+
+// desktopTrust 用桌面启动令牌判定请求是否来自受信任的桌面壳。
+// 令牌为空（服务端形态）时返回 nil，表示没有这条信任路径。
+func desktopTrust(launchToken string) func(*http.Request) bool {
+	want := []byte(strings.TrimSpace(launchToken))
+	if len(want) == 0 {
+		return nil
+	}
+	return func(r *http.Request) bool {
+		got := []byte(r.Header.Get(httptransport.LaunchTokenHeader))
+		return len(got) == len(want) && subtle.ConstantTimeCompare(got, want) == 1
 	}
 }

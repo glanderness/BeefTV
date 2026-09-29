@@ -60,7 +60,7 @@ func registerDesktopCanvasAPI(api *gin.RouterGroup, svc *app.Service, dependenci
 	}
 	// 内置创作助手：短期限 UI 会话凭据 + 可信代理；浏览器不接触 owner/宿主/模型凭据。
 	uiSessions := newUISessionStore()
-	RegisterAgentUISessionRoutes(api, svc, uiSessions)
+	RegisterAgentUISessionRoutes(api, svc, uiSessions, dependencies.DesktopTrust)
 	RegisterAgentProxyRoutes(api, svc, clients, uiSessions)
 	// 宿主生命周期：配置当前文本模型与启动命令，显式启停；未配置时返回明确未就绪。
 	RegisterAgentHostLifecycleRoutes(api, svc)

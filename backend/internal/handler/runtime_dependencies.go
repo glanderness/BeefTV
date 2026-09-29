@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"mime/multipart"
+	"net/http"
 	"time"
 
 	"infinite-canvas/backend/internal/app"
@@ -42,6 +43,9 @@ type RuntimeDependencies struct {
 	Tasks              localapp.TaskPort
 	Generation         localapp.GenerationPort
 	BeefAPI            *beefapi.Service
+	// DesktopTrust 判定请求是否来自受信任的桌面壳（已出示桌面启动令牌）。
+	// 桌面形态用它代替开发引导开关签发 UI 会话；服务端形态为 nil。
+	DesktopTrust func(*http.Request) bool
 }
 
 type serviceRuntimeAdapter struct {

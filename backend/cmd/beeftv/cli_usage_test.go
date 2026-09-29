@@ -136,3 +136,43 @@ func TestReadOnlyTightensOperationSetLocally(t *testing.T) {
 		}
 	}
 }
+
+// 桌面形态的 API 由桌面启动令牌把关：CLI/MCP 要接同一个桌面工作区就必须出示它，
+// 否则只能连独立 server 形态的工作区。令牌只用于通过守卫，不改变能力模式。
+func TestDesktopTokenHeaderIsSentWhenConfigured(t *testing.T) {
+	var seen string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Get("X-Desktop-Token")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"data":{"ops":[]},"msg":"ok"}`))
+	}))
+	defer server.Close()
+	t.Setenv("BEEFTV_BASE_URL", server.URL)
+	t.Setenv("BEEFTV_OWNER_TOKEN", "owner-token-for-test")
+	t.Setenv("BEEFTV_DESKTOP_TOKEN", "desktop-shell-token")
+
+	c, err := newClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.listOps(true); err != nil {
+		t.Fatal(err)
+	}
+	if seen != "desktop-shell-token" {
+		t.Fatalf("应发送桌面启动令牌头，得到 %q", seen)
+	}
+
+	// 未配置时不发送该头，独立 server 形态不受影响。
+	seen = ""
+	t.Setenv("BEEFTV_DESKTOP_TOKEN", "")
+	c2, err := newClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c2.listOps(true); err != nil {
+		t.Fatal(err)
+	}
+	if seen != "" {
+		t.Fatalf("未配置时不应发送桌面启动令牌头，得到 %q", seen)
+	}
+}

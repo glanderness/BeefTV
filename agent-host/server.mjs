@@ -12,6 +12,8 @@ import { sessionActionIdentity, toolOperationId } from './session-identity.mjs';
 const OPS_URL = (process.env.BEEFTV_OPS_URL || 'http://127.0.0.1:18090/api').replace(/\/+$/, '');
 const OWNER_TOKEN = process.env.BEEFTV_OWNER_TOKEN || '';
 const HOST_TOKEN = process.env.BEEFTV_AGENT_HOST_TOKEN || '';
+// 桌面形态：整个 API 由桌面启动令牌把关，宿主必须像页面一样出示它。
+const DESKTOP_TOKEN = process.env.BEEFTV_AGENT_DESKTOP_TOKEN || '';
 const ALLOWED_ORIGIN = process.env.BEEFTV_AGENT_ALLOWED_ORIGIN || '';
 const DATA_DIR = process.env.BEEFTV_AGENT_DATA_DIR || '';
 const PORT = Number(process.env.BEEFTV_AGENT_PORT || 18500);
@@ -102,7 +104,8 @@ globalThis.fetch = async (input, options = {}) => {
 async function opsRequest(method, apiPath, body, signal) {
   const response = await fetch(`${OPS_URL}${apiPath}`, {
     method,
-    headers: { 'Content-Type': 'application/json', 'X-Beeftv-Owner': OWNER_TOKEN },
+    headers: { 'Content-Type': 'application/json', 'X-Beeftv-Owner': OWNER_TOKEN,
+      ...(DESKTOP_TOKEN ? { 'X-Desktop-Token': DESKTOP_TOKEN } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
   });
