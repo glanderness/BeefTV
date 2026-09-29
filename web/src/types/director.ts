@@ -148,6 +148,9 @@ export type DirectorScene = {
     aspectRatio?: DirectorAspectRatio;
     /** Optional equirectangular backdrop; older scenes keep their solid color. */
     panorama?: { url: string; storageKey?: string; name?: string; rotation: number };
+    /** Sphere controls remain available even before a panorama image is connected. */
+    panoramaRotation?: number;
+    panoramaRadius?: number;
     objects: DirectorObject[];
     cameras: DirectorCamera[];
     lights: DirectorLight[];

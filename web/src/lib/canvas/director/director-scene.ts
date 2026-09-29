@@ -21,6 +21,8 @@ export function createDirectorScene(title = "未命名场景"): DirectorScene {
         background: "#060608",
         environmentIntensity: 0.7,
         gridVisible: true,
+        panoramaRotation: 0,
+        panoramaRadius: 60,
         ground: { ...DIRECTOR_DEFAULT_GROUND },
         stageTransform: { ...DIRECTOR_DEFAULT_STAGE_TRANSFORM, position: [...DIRECTOR_DEFAULT_STAGE_TRANSFORM.position], rotation: [...DIRECTOR_DEFAULT_STAGE_TRANSFORM.rotation] },
         labelsVisible: true,

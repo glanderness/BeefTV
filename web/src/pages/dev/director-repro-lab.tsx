@@ -13,13 +13,15 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import type { DirectorScene, DirectorSceneOutput } from "@/types/director";
 
 type DirectorOutputSummary = { beauty: string; clayVideo: string };
+const panoramaFixtureSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400"><rect width="800" height="400" fill="#e33"/><rect x="400" width="400" height="400" fill="#38f"/></svg>';
+const panoramaFixtureUrl = `data:image/svg+xml;base64,${btoa(panoramaFixtureSvg)}`;
 
 /** The repro page must never submit a paid model task; production keeps the real task service. */
 const generatePanoramaFixture: typeof generateDirectorPanorama = async ({ file, sceneId, onTaskUpdate }) => {
     onTaskUpdate?.({ id: "director-repro-panorama", status: "running", progress: 50 } as never);
     await new Promise((resolve) => window.setTimeout(resolve, 300));
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400"><rect width="800" height="400" fill="#e33"/><rect x="400" width="400" height="400" fill="#38f"/></svg>';
-    const url = `data:image/svg+xml;base64,${btoa(svg)}`;
+    const svg = panoramaFixtureSvg;
+    const url = panoramaFixtureUrl;
     const name = `AI 全景图 · ${file.name}`;
     const id = useAssetStore.getState().addAsset({ kind: "image", title: name, coverUrl: url, tags: ["全景图", "AI生成"], source: "导演台复现台", data: { dataUrl: url, width: 800, height: 400, bytes: svg.length, mimeType: "image/svg+xml" }, metadata: { source: "director-panorama-fixture", sceneId } });
     return { id, name, url, storageKey: "", width: 800, height: 400 };
@@ -117,6 +119,9 @@ export default function DirectorReproLab() {
                     </Button>
                     <Button size="small" data-testid="inject-missing-model" onClick={() => injectModel("missing")}>
                         注入缺失模型
+                    </Button>
+                    <Button size="small" data-testid="inject-panorama" onClick={() => setScene((current) => ({ ...current, panorama: { url: panoramaFixtureUrl, name: "本地双色全景", rotation: current.panoramaRotation ?? 0 } }))}>
+                        注入本地全景
                     </Button>
                     <span className="text-[var(--fs-tiny)] opacity-70">强制保存失败</span>
                     <Switch checked={forceSaveFailure} onChange={setForceSaveFailure} data-testid="force-save-failure" />

@@ -2,14 +2,16 @@ import { ColorPicker, InputNumber, Slider } from "antd";
 
 import { Switch } from "@/components/ui/base/switch";
 import { directorGroundSettings } from "@/lib/canvas/director/director-ground";
+import { directorPanoramaSphere } from "@/lib/canvas/director/director-panorama-sphere";
 import { directorStageTransform } from "@/lib/canvas/director/director-stage-transform";
 import type { DirectorScene, DirectorVec3 } from "@/types/director";
 
-type SceneEnvironmentPatch = Partial<Pick<DirectorScene, "background" | "environmentIntensity" | "gridVisible" | "panorama" | "ground" | "stageTransform" | "labelsVisible">>;
+type SceneEnvironmentPatch = Partial<Pick<DirectorScene, "background" | "environmentIntensity" | "gridVisible" | "panorama" | "panoramaRotation" | "panoramaRadius" | "ground" | "stageTransform" | "labelsVisible">>;
 
 export function DirectorSceneInspector({ scene, onChange }: { scene: DirectorScene; onChange: (patch: SceneEnvironmentPatch) => void }) {
     const ground = directorGroundSettings(scene);
     const stage = directorStageTransform(scene);
+    const sphere = directorPanoramaSphere(scene);
     const updateGround = (patch: Partial<typeof ground>) => onChange({ ground: { ...ground, ...patch } });
     const updateAxis = (field: "position" | "rotation", axis: number, value: number) => {
         const next = [...stage[field]] as DirectorVec3;
@@ -56,8 +58,13 @@ export function DirectorSceneInspector({ scene, onChange }: { scene: DirectorSce
                 <h3 className="font-semibold">全景球</h3>
                 <div className="text-xs opacity-65">水平旋转</div>
                 <div className="flex items-center gap-3">
-                    <Slider aria-label="全景球水平旋转" className="m-0 min-w-0 flex-1" min={-180} max={180} step={1} disabled={!scene.panorama} value={scene.panorama?.rotation ?? 0} onChangeComplete={(rotation) => { if (scene.panorama) onChange({ panorama: { ...scene.panorama, rotation } }); }} />
-                    <InputNumber aria-label="全景球旋转角度" className="w-[72px] shrink-0" size="small" min={-180} max={180} step={1} suffix="°" disabled={!scene.panorama} value={scene.panorama?.rotation ?? 0} onChange={(rotation) => { if (scene.panorama && rotation !== null) onChange({ panorama: { ...scene.panorama, rotation } }); }} />
+                    <Slider aria-label="全景球水平旋转" className="m-0 min-w-0 flex-1" min={0} max={360} step={1} value={sphere.rotation} onChangeComplete={(panoramaRotation) => onChange({ panoramaRotation })} />
+                    <InputNumber aria-label="全景球旋转角度" className="w-[72px] shrink-0" size="small" min={0} max={360} step={1} suffix="°" value={sphere.rotation} onChange={(panoramaRotation) => { if (panoramaRotation !== null) onChange({ panoramaRotation }); }} />
+                </div>
+                <div className="text-xs opacity-65">球形半径</div>
+                <div className="flex items-center gap-3">
+                    <Slider aria-label="全景球半径" className="m-0 min-w-0 flex-1" min={10} max={500} step={10} value={sphere.radius} onChangeComplete={(panoramaRadius) => onChange({ panoramaRadius })} />
+                    <InputNumber aria-label="全景球半径数值" className="w-[72px] shrink-0" size="small" min={10} max={500} step={10} value={sphere.radius} onChange={(panoramaRadius) => { if (panoramaRadius !== null) onChange({ panoramaRadius }); }} />
                 </div>
             </section>
             <div className="flex items-center justify-between gap-3 border-b px-4 py-4 text-xs" style={{ borderColor: "var(--border)" }}>

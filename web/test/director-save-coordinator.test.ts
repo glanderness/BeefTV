@@ -475,6 +475,18 @@ describe("DirectorSaveCoordinator", () => {
             expect(h.coord.restoreCandidate()).toBeNull();
         });
 
+        it("restores sphere settings and rejects out-of-range values without breaking legacy scenes", () => {
+            const h = createHarness();
+            h.writeRaw(JSON.stringify(makeEnvelope({ scene: makeScene() })));
+            expect(h.coord.restoreCandidate()?.scene.panoramaRadius).toBeUndefined();
+            h.writeRaw(JSON.stringify(makeEnvelope({ scene: makeScene({ panoramaRadius: 500, panoramaRotation: 360 }) })));
+            expect(h.coord.restoreCandidate()?.scene).toMatchObject({ panoramaRadius: 500, panoramaRotation: 360 });
+            h.writeRaw(corruptEnvelope((envelope) => { envelope.scene = { ...makeScene(), panoramaRadius: 501 }; }));
+            expect(h.coord.restoreCandidate()).toBeNull();
+            h.writeRaw(corruptEnvelope((envelope) => { envelope.scene = { ...makeScene(), panoramaRotation: Number.NaN }; }));
+            expect(h.coord.restoreCandidate()).toBeNull();
+        });
+
         it("restores ground settings without rejecting older scenes, but rejects invalid ranges", () => {
             const h = createHarness();
             h.writeRaw(JSON.stringify(makeEnvelope({ scene: makeScene() })));

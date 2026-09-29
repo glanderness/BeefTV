@@ -85,6 +85,8 @@ const isDirectorScene = (value: unknown, expectedSceneId: string): value is Dire
         (value.labelsVisible === undefined || typeof value.labelsVisible === "boolean") &&
         (value.aspectRatio === undefined || isDirectorAspectRatio(value.aspectRatio)) &&
         (value.panorama === undefined || (isRecord(value.panorama) && typeof value.panorama.url === "string" && (value.panorama.storageKey === undefined || typeof value.panorama.storageKey === "string") && (value.panorama.name === undefined || typeof value.panorama.name === "string") && typeof value.panorama.rotation === "number" && Number.isFinite(value.panorama.rotation))) &&
+        (value.panoramaRotation === undefined || (typeof value.panoramaRotation === "number" && Number.isFinite(value.panoramaRotation) && value.panoramaRotation >= 0 && value.panoramaRotation <= 360)) &&
+        (value.panoramaRadius === undefined || (typeof value.panoramaRadius === "number" && Number.isFinite(value.panoramaRadius) && value.panoramaRadius >= 10 && value.panoramaRadius <= 500)) &&
         Array.isArray(value.objects) &&
         Array.isArray(value.cameras) &&
         Array.isArray(value.lights) &&

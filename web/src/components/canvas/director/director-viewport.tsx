@@ -2,7 +2,7 @@ import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber"
 import { Grid, Html, Line, OrbitControls, TransformControls } from "@react-three/drei";
 import { Video as VideoIcon } from "lucide-react";
 import { Component, forwardRef, memo, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState, type ComponentRef, type ReactNode } from "react";
-import { AnimationClip, AnimationMixer, Box3, Bone, Camera, Color, EquirectangularReflectionMapping, Euler, Group, LoopOnce, LoopRepeat, Matrix4, Mesh, MeshBasicMaterial, MeshDepthMaterial, MeshNormalMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Quaternion, Raycaster, Scene, SkeletonHelper, SRGBColorSpace, Texture, TextureLoader, Vector2, Vector3, WebGLRenderer } from "three";
+import { AnimationClip, AnimationMixer, BackSide, Box3, Bone, Camera, Color, EquirectangularReflectionMapping, Euler, Group, LoopOnce, LoopRepeat, Matrix4, Mesh, MeshBasicMaterial, MeshDepthMaterial, MeshNormalMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Quaternion, Raycaster, Scene, SkeletonHelper, SphereGeometry, SRGBColorSpace, Texture, TextureLoader, Vector2, Vector3, WebGLRenderer } from "three";
 import type { Material } from "three";
 import { GLTFLoader, SkeletonUtils } from "three-stdlib";
 
@@ -10,6 +10,7 @@ import { resolveDirectorBoneRotation } from "@/lib/canvas/director/director-anim
 import { cropDirectorCanvas, resolveDirectorFrameRect, resolveDirectorPixelCrop, type DirectorAspectRatio } from "@/lib/canvas/director/director-aspect-ratio";
 import { directorStagePalette } from "@/lib/canvas/director/director-stage-palette";
 import { directorGroundSettings } from "@/lib/canvas/director/director-ground";
+import { directorPanoramaSphere, suspendDirectorPanoramaSphere } from "@/lib/canvas/director/director-panorama-sphere";
 import { directorStageLocalCamera, directorStageLocalPoint, directorStageMatrix, directorStagePoint, directorStageTransform } from "@/lib/canvas/director/director-stage-transform";
 import { suspendDirectorEditorOverlays } from "@/lib/canvas/director/director-editor-overlays";
 import type { DirectorOrientation } from "@/lib/canvas/director/director-orientation-gizmo";
@@ -68,7 +69,7 @@ const emptyRestRotations: Partial<Record<DirectorHumanoidBone, DirectorQuat>> = 
 // context lost 的 dispatch 触发重渲染后 R3F 会 configure 并在失效 context 上
 // 重建 WebGLRenderer，抛 getMaxPrecision / autoReset。稳定后 lost 只显示 notice。
 const directorCanvasGl = { antialias: true, preserveDrawingBuffer: true, alpha: false } as const;
-const directorCanvasCamera = { position: [7.1, 3.8, 9.2] as [number, number, number], fov: 50, near: 0.05, far: 500 } as const;
+const directorCanvasCamera = { position: [7.1, 3.8, 9.2] as [number, number, number], fov: 50, near: 0.05, far: 1200 } as const;
 const directorCanvasDpr: [number, number] = [1, 1.5];
 // 自由视角固定环绕焦点：free 是独立观察相机，不跟随 shot 摄影机的 target 走，
 // 否则切换镜头/摄影机会连带把用户正在环绕的焦点也悄悄挪走。
@@ -343,6 +344,10 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
     const stageMatrix = useMemo(() => directorStageMatrix(stage), [stage]);
     const [transforming, setTransforming] = useState(false);
     const displayClayRestoreRef = useRef<(() => void) | null>(null);
+    const panoramaSphereRef = useRef<Mesh | null>(null);
+    const panoramaSettings = directorPanoramaSphere(scene);
+    const panoramaDisplayRef = useRef({ ...panoramaSettings, renderMode });
+    panoramaDisplayRef.current = { ...panoramaSettings, renderMode };
     // 三台相机各司其职、互不共享：free 只由 OrbitControls 驱动，CAM/正交只在各自模式下
     // 由取景数据接管。切换 viewMode 只挪动「谁是活动相机」这个指针，任何一台的内部状态
     // 都不会因为切换而被读写——这是「切换不丢失/不污染任一相机状态」的唯一来源。
@@ -443,6 +448,7 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
     useEffect(() => {
         let cancelled = false;
         let texture: Texture | null = null;
+        let sphere: Mesh | null = null;
         threeScene.background = new Color(scene.background);
         invalidate();
         if (scene.panorama?.url) {
@@ -454,12 +460,28 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
                     loaded.colorSpace = SRGBColorSpace;
                     texture = loaded;
                     threeScene.background = loaded;
+                    const backdrop = new Mesh(new SphereGeometry(1, 64, 32), new MeshBasicMaterial({ map: loaded, side: BackSide, depthWrite: false, toneMapped: false }));
+                    backdrop.userData.directorPanoramaSphere = true;
+                    backdrop.raycast = () => {};
+                    backdrop.renderOrder = -1000;
+                    backdrop.scale.setScalar(panoramaDisplayRef.current.radius);
+                    backdrop.rotation.y = panoramaDisplayRef.current.rotation * Math.PI / 180;
+                    backdrop.visible = panoramaDisplayRef.current.renderMode === "beauty";
+                    sphere = backdrop;
+                    panoramaSphereRef.current = backdrop;
+                    threeScene.add(backdrop);
                     invalidate();
                 });
             });
         }
         return () => {
             cancelled = true;
+            if (sphere) {
+                threeScene.remove(sphere);
+                if (panoramaSphereRef.current === sphere) panoramaSphereRef.current = null;
+                sphere.geometry.dispose();
+                (sphere.material as MeshBasicMaterial).dispose();
+            }
             if (texture) {
                 if (threeScene.background === texture) threeScene.background = new Color(scene.background);
                 texture.dispose();
@@ -468,9 +490,14 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
     }, [invalidate, scene.background, scene.panorama?.storageKey, scene.panorama?.url, threeScene]);
 
     useEffect(() => {
-        threeScene.backgroundRotation.y = ((scene.panorama?.rotation ?? 0) * Math.PI) / 180;
+        threeScene.backgroundRotation.y = panoramaSettings.rotation * Math.PI / 180;
+        if (panoramaSphereRef.current) {
+            panoramaSphereRef.current.rotation.y = panoramaSettings.rotation * Math.PI / 180;
+            panoramaSphereRef.current.scale.setScalar(panoramaSettings.radius);
+            panoramaSphereRef.current.visible = renderMode === "beauty";
+        }
         invalidate();
-    }, [invalidate, scene.panorama?.rotation, threeScene]);
+    }, [invalidate, panoramaSettings.radius, panoramaSettings.rotation, renderMode, threeScene]);
 
     useEffect(() => {
         const material = renderMode === "depth" ? new MeshDepthMaterial() : renderMode === "normal" ? new MeshNormalMaterial() : renderMode === "pose" ? new MeshBasicMaterial({ color: "#ffffff", wireframe: true }) : null;
@@ -1238,6 +1265,7 @@ async function captureFrame(context: CaptureContext | null, mode: DirectorRender
     const override = mode === "depth" ? new MeshDepthMaterial() : mode === "normal" ? new MeshNormalMaterial() : mode === "pose" ? new MeshBasicMaterial({ color: "#ffffff", wireframe: true }) : null;
     const restoreClayMaterials = mode === "clay" ? applyClaySceneMaterials(scene) : null;
     const resumeEditorOverlays = suspendDirectorEditorOverlays(scene);
+    const resumePanoramaSphere = mode === "beauty" ? null : suspendDirectorPanoramaSphere(scene);
     try {
         scene.overrideMaterial = override;
         gl.render(scene, camera);
@@ -1248,6 +1276,7 @@ async function captureFrame(context: CaptureContext | null, mode: DirectorRender
         override?.dispose();
         resumeDisplayMaterialOverride();
         resumeEditorOverlays();
+        resumePanoramaSphere?.();
         gl.render(scene, camera);
     }
 }
@@ -1263,6 +1292,7 @@ async function recordCanvas(context: CaptureContext | null, duration: number, fp
     let stopTimer: number | null = null;
     let onRenderError: (() => void) | null = null;
     const resumeEditorOverlays = suspendDirectorEditorOverlays(context.scene);
+    const resumePanoramaSphere = suspendDirectorPanoramaSphere(context.scene);
     try {
         context.scene.overrideMaterial = null;
         context.gl.render(context.scene, context.camera);
@@ -1309,6 +1339,7 @@ async function recordCanvas(context: CaptureContext | null, duration: number, fp
         context.scene.overrideMaterial = previousMaterial;
         resumeDisplayMaterialOverride();
         resumeEditorOverlays();
+        resumePanoramaSphere();
         context.gl.render(context.scene, context.camera);
     }
 }
