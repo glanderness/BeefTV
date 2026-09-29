@@ -405,7 +405,7 @@ func flagError(err error) error {
 	if errors.Is(err, flag.ErrHelp) {
 		return nil
 	}
-	return &cliError{code: exitUsage, reason: "bad_flags", msg: err.Error()}
+	return flagError(err)
 }
 
 func runCanvasNodeUpdate(c *client, args []string) error {
@@ -419,7 +419,7 @@ func runCanvasNodeUpdate(c *client, args []string) error {
 	opID := fs.String("op-id", "", "幂等键（必填）")
 	jsonOut := fs.Bool("json", false, "输出 JSON")
 	if err := fs.Parse(args); err != nil {
-		return &cliError{code: exitUsage, reason: "bad_flags", msg: err.Error()}
+		return flagError(err)
 	}
 	if *canvasID == "" || *nodeID == "" || *opID == "" || *revision <= 0 {
 		return &cliError{code: exitUsage, reason: "missing_flag", msg: "--canvas/--node/--op-id/--expected-revision 均为必填"}
@@ -456,7 +456,7 @@ func runCanvasNodesCreate(c *client, args []string) error {
 	var specs stringList
 	fs.Var(&specs, "node", "节点，格式 title:type[:prompt]，可重复")
 	if err := fs.Parse(args); err != nil {
-		return &cliError{code: exitUsage, reason: "bad_flags", msg: err.Error()}
+		return flagError(err)
 	}
 	if *canvasID == "" || *opID == "" || *revision <= 0 || len(specs) == 0 {
 		return &cliError{code: exitUsage, reason: "missing_flag", msg: "--canvas/--op-id/--expected-revision/--node 必填"}
@@ -490,7 +490,7 @@ func runCanvasEdgeCreate(c *client, args []string) error {
 	opID := fs.String("op-id", "", "幂等键（必填）")
 	jsonOut := fs.Bool("json", false, "输出 JSON")
 	if err := fs.Parse(args); err != nil {
-		return &cliError{code: exitUsage, reason: "bad_flags", msg: err.Error()}
+		return flagError(err)
 	}
 	if *canvasID == "" || *from == "" || *to == "" || *opID == "" || *revision <= 0 {
 		return &cliError{code: exitUsage, reason: "missing_flag", msg: "--canvas/--from/--to/--op-id/--expected-revision 必填"}
@@ -551,7 +551,7 @@ func runTask(c *client, args []string) error {
 	taskID := fs.String("task", "", "任务 ID")
 	jsonOut := fs.Bool("json", false, "输出 JSON")
 	if err := fs.Parse(args[1:]); err != nil {
-		return &cliError{code: exitUsage, reason: "bad_flags", msg: err.Error()}
+		return flagError(err)
 	}
 	if *taskID == "" {
 		return &cliError{code: exitUsage, reason: "missing_flag", msg: "--task 必填"}
@@ -572,7 +572,7 @@ func runClient(c *client, args []string) error {
 	mode := fs.String("mode", "read-only", "read-only 或 read-write")
 	jsonOut := fs.Bool("json", false, "输出 JSON")
 	if err := fs.Parse(args[1:]); err != nil {
-		return &cliError{code: exitUsage, reason: "bad_flags", msg: err.Error()}
+		return flagError(err)
 	}
 	raw, err := c.do(context.Background(), http.MethodPost, "/ops/clients", map[string]any{"label": *label, "mode": *mode})
 	if err != nil {
@@ -588,7 +588,7 @@ func runMCP(c *client, args []string) error {
 	fs := flag.NewFlagSet("mcp serve", flag.ContinueOnError)
 	readOnly := fs.Bool("read-only", false, "只暴露只读工具")
 	if err := fs.Parse(args[1:]); err != nil {
-		return &cliError{code: exitUsage, reason: "bad_flags", msg: err.Error()}
+		return flagError(err)
 	}
 	ops, err := c.listOps(*readOnly)
 	if err != nil {
