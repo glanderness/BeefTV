@@ -54,6 +54,8 @@ export type GenerationTask = {
     createdAt: string;
     updatedAt: string;
     clientContext?: {
+        source?: string;
+        sceneId?: string;
         conversationId?: string;
         messageId?: string;
         nodeId?: string;

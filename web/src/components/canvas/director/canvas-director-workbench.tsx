@@ -22,7 +22,7 @@ import { recordDirectorDiagnostic } from "@/lib/canvas/director/director-diagnos
 import { DIRECTOR_MODES, directorModeCapabilities, type DirectorModeCapabilities } from "@/lib/canvas/director/director-modes";
 import { resolveDirectorPlacement, resolveDirectorPlacementAnchor } from "@/lib/canvas/director/director-placement";
 import { DIRECTOR_ASPECT_RATIOS } from "@/lib/canvas/director/director-aspect-ratio";
-import { generateDirectorPanorama } from "@/lib/canvas/director/director-panorama-generation";
+import { generateDirectorPanorama, recoverDirectorPanoramaTasks } from "@/lib/canvas/director/director-panorama-generation";
 import { createDirectorCameraFromPreset, DIRECTOR_CAMERA_PRESETS, type DirectorCameraPresetId } from "@/lib/canvas/director/director-camera-presets";
 import { isDirectorOutputSnapshotCurrent, shouldReinitializeDirectorSession } from "@/lib/canvas/director/director-session";
 import { blocksDirectorShortcut, releaseDirectorFocusAfterPointer, resolveDirectorShortcut, type DirectorShortcutAction } from "@/lib/canvas/director/director-shortcuts";
@@ -53,6 +53,14 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     const [panoramaAIOpen, setPanoramaAIOpen] = useState(false);
     const [panoramaAIBusy, setPanoramaAIBusy] = useState(false);
     const [panoramaAIStatus, setPanoramaAIStatus] = useState("");
+    useEffect(() => {
+        if (!open || !scene?.id || !projectId) return;
+        const controller = new AbortController();
+        void recoverDirectorPanoramaTasks(projectId, scene.id, controller.signal).catch((error) => {
+            if (!controller.signal.aborted) console.warn("导演台全景图历史恢复失败", error);
+        });
+        return () => controller.abort();
+    }, [open, projectId, scene?.id]);
     const [draft, setDraft] = useState<DirectorScene | null>(null);
     const [history, setHistory] = useState<DirectorScene[]>([]);
     const [future, setFuture] = useState<DirectorScene[]>([]);
