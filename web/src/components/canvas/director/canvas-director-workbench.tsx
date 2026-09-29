@@ -714,9 +714,12 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
 
     return (
         <div data-canvas-no-zoom data-director-workbench="true" className="fixed inset-0 z-[var(--z-toast)] flex min-h-0 flex-col overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
-            <header className="thin-scrollbar flex h-12 shrink-0 items-center gap-2 overflow-x-auto overflow-y-hidden border-b px-2" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }}>
-                <IconButton label="关闭导演台" onClick={closeWorkbench}><X className="size-4" /></IconButton>
-                <Input variant="borderless" value={draft.title} className="max-w-56 font-medium" onChange={(event) => replaceWithoutHistory((current) => ({ ...current, title: event.target.value }))} />
+            <header className="thin-scrollbar flex h-12 shrink-0 items-center gap-2 overflow-x-auto overflow-y-hidden border-b pr-2" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }}>
+                <div className="flex h-full w-[268px] shrink-0 items-center gap-2 border-r px-2 max-lg:w-[220px]" style={{ borderColor: theme.toolbar.border }}>
+                    <IconButton label="关闭导演台" onClick={closeWorkbench}><X className="size-4" /></IconButton>
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium">3D导演台</span>
+                </div>
+                <Input aria-label="场景名称" variant="borderless" value={draft.title} className="max-w-36 font-medium" onChange={(event) => replaceWithoutHistory((current) => ({ ...current, title: event.target.value }))} />
                 <span className="h-5 w-px" style={{ background: theme.toolbar.border }} />
                 <IconButton label="撤销" disabled={!history.length} onClick={undo}><Undo2 className="size-4" /></IconButton>
                 <IconButton label="重做" disabled={!future.length} onClick={redo}><Redo2 className="size-4" /></IconButton>
