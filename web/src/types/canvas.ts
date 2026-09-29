@@ -415,6 +415,9 @@ export type CanvasNodeMetadata = {
     directorSceneId?: string;
     directorShotId?: string;
     directorPreviewNodeId?: string;
+    directorCoverStorageKey?: string;
+    directorCoverUrl?: string;
+    directorCoverSceneUpdatedAt?: string;
     directorDepthNodeId?: string;
     directorNormalNodeId?: string;
     directorClayVideoNodeId?: string;

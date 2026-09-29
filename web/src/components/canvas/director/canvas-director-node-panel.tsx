@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Move3d } from "lucide-react";
 
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
-import { gateDirectorPreviewFailure, resolveDirectorActiveShot, resolveDirectorPreviewSource, type DirectorNodeContentReader } from "@/lib/canvas/director/director-preview";
+import { resolveDirectorActiveShot, resolveDirectorPreviewSource, type DirectorNodeContentReader } from "@/lib/canvas/director/director-preview";
+import { resolveImageUrl } from "@/services/image-storage";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { DirectorScene } from "@/types/director";
@@ -12,10 +13,18 @@ export function CanvasDirectorNodePanel({ node, scene, readNodeContent, onOpen, 
     const shot = resolveDirectorActiveShot(scene, node.metadata?.directorShotId);
     // 记录「失败的那个 URL」而非布尔量：同一个坏 URL 不再反复渲染，换成另一个 URL 时自动重试。
     const [failedUrl, setFailedUrl] = useState<string | null>(null);
-    const preview = gateDirectorPreviewFailure(
-        resolveDirectorPreviewSource({ scene, shot, previewNodeId: node.metadata?.directorPreviewNodeId, readNodeContent }),
-        failedUrl,
-    );
+    const coverStorageKey = node.metadata?.directorCoverStorageKey;
+    const [resolvedCover, setResolvedCover] = useState<{ key: string; url: string } | null>(null);
+    useEffect(() => {
+        if (!coverStorageKey) return;
+        let live = true;
+        void resolveImageUrl(coverStorageKey, node.metadata?.directorCoverUrl || "", { cacheMiss: true })
+            .then((url) => { if (live && url) setResolvedCover({ key: coverStorageKey, url }); })
+            .catch(() => { /* 旧预览或空态仍可使用。 */ });
+        return () => { live = false; };
+    }, [coverStorageKey, node.metadata?.directorCoverUrl]);
+    const coverUrl = resolvedCover && resolvedCover.key === coverStorageKey ? resolvedCover.url : node.metadata?.directorCoverUrl;
+    const preview = resolveDirectorPreviewSource({ scene, shot, coverUrl, failedUrl, previewNodeId: node.metadata?.directorPreviewNodeId, readNodeContent });
 
     return (
         <div className="flex h-full w-full min-h-0 flex-col gap-3 px-2 py-2" style={{ color: theme.node.text }}>

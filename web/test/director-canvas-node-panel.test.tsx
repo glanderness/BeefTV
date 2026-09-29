@@ -40,6 +40,13 @@ describe("导演台画布节点", () => {
         expect(markup).toContain("打开导演台");
     });
 
+    test("持久封面优先于旧预览且仍保留旧项目回落", () => {
+        const withCover = { ...node, metadata: { ...node.metadata, directorCoverUrl: "https://assets.example/cover.png", directorPreviewNodeId: "legacy" } };
+        const markup = renderToStaticMarkup(<CanvasDirectorNodePanel node={withCover} scene={scene} readNodeContent={() => "https://assets.example/legacy.png"} onOpen={() => {}} onPromptChange={() => {}} />);
+        expect(markup).toContain('src="https://assets.example/cover.png"');
+        expect(markup).not.toContain('src="https://assets.example/legacy.png"');
+    });
+
     test("导演节点不被通用视频节点外壳包成第二张灰色卡片", () => {
         const markup = renderToStaticMarkup(<CanvasNode
             data={node} scale={1} isSelected={false} isRelated={false} isFocusRelated={false}
