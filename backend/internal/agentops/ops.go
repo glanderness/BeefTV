@@ -219,22 +219,12 @@ func requireRevision(expected int64) error {
 	return nil
 }
 
-// checkRevision 校验调用方观察到的版本；不一致就停写，绝不用旧观察覆盖用户新编辑。
-func checkRevision(doc map[string]any, expected int64) error {
-	if expected <= 0 {
-		return nil
-	}
-	current := canvasRevision(doc)
-	if current != expected {
-		return PreconditionFailed("stale_revision",
-			"画布在读取之后已被修改，已停止写入",
-			map[string]any{"observedRevision": expected, "currentRevision": current})
-	}
-	return nil
-}
-
-func writeCanvasDoc(ctx *Context, canvasID string, doc map[string]any) (int64, error) {
+// writeCanvasDoc 把调用方观察到的 revision 原样放进 payload：
+// 唯一裁决者是仓储的原子谓词（UPDATE ... WHERE revision = ?），
+// 操作层不再自建第二套 CAS，也不把「刚读到的 revision」当作观察值（那会让 CAS 形同虚设）。
+func writeCanvasDoc(ctx *Context, canvasID string, doc map[string]any, expectedRevision int64) (int64, error) {
 	doc["id"] = canvasID
+	doc["revision"] = expectedRevision
 	encoded, err := json.Marshal(doc)
 	if err != nil {
 		return 0, AsError(err)
@@ -273,9 +263,6 @@ func opCanvasNodeUpdate(ctx *Context, params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkRevision(doc, args.ExpectedRevision); err != nil {
-		return nil, err
-	}
 	nodes := canvasNodes(doc)
 	targetIdx := -1
 	for i, rawNode := range nodes {
@@ -310,7 +297,7 @@ func opCanvasNodeUpdate(ctx *Context, params json.RawMessage) (any, error) {
 		target["metadata"] = metadata
 	}
 	doc["nodes"] = nodes
-	revision, err := writeCanvasDoc(ctx, args.CanvasID, doc)
+	revision, err := writeCanvasDoc(ctx, args.CanvasID, doc, args.ExpectedRevision)
 	if err != nil {
 		return nil, err
 	}
@@ -358,9 +345,6 @@ func opCanvasNodesCreate(ctx *Context, params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkRevision(doc, args.ExpectedRevision); err != nil {
-		return nil, err
-	}
 	nodes := canvasNodes(doc)
 	existing := map[string]bool{}
 	for _, rawNode := range nodes {
@@ -401,7 +385,7 @@ func opCanvasNodesCreate(ctx *Context, params json.RawMessage) (any, error) {
 		created = append(created, map[string]any{"id": id, "title": node.Title})
 	}
 	doc["nodes"] = nodes
-	revision, err := writeCanvasDoc(ctx, args.CanvasID, doc)
+	revision, err := writeCanvasDoc(ctx, args.CanvasID, doc, args.ExpectedRevision)
 	if err != nil {
 		return nil, err
 	}
@@ -448,9 +432,6 @@ func opCanvasEdgeCreate(ctx *Context, params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkRevision(doc, args.ExpectedRevision); err != nil {
-		return nil, err
-	}
 	nodes := canvasNodes(doc)
 	exists := map[string]bool{}
 	for _, rawNode := range nodes {
@@ -488,7 +469,7 @@ func opCanvasEdgeCreate(ctx *Context, params json.RawMessage) (any, error) {
 		"id": "edge-" + strconv.FormatInt(time.Now().UnixNano(), 36), "fromNodeId": args.FromNodeID, "toNodeId": args.ToNodeID,
 	})
 	doc["connections"] = connections
-	revision, err := writeCanvasDoc(ctx, args.CanvasID, doc)
+	revision, err := writeCanvasDoc(ctx, args.CanvasID, doc, args.ExpectedRevision)
 	if err != nil {
 		return nil, err
 	}

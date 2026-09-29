@@ -3273,7 +3273,7 @@ function InfiniteCanvasPage() {
                             <CanvasAgentAssistantPanel
                                 canvasId={projectId}
                                 selectedCount={selectedNodeBounds?.count ?? 0}
-                                selectedNodeIds={selectedNodeIds}
+                                selectedNodeIds={Array.from(selectedNodeIds)}
                             />
                         </div>
                         {selectedNodeBounds && !selectionBox && !isCanvasNodeMoving ? (

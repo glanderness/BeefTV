@@ -33,6 +33,14 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatalf("打开临时库失败: %v", err)
 	}
+	// 与生产一致：SQLite 单连接池。任何"事务内再去根连接取数"的写法都会在这里自等死锁，
+	// 从而让这类缺陷在 go test 中直接暴露，而不是只在运行时。
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("取底层连接失败: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
 	if err := database.MigrateLocalSchema(db); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
@@ -177,13 +185,34 @@ func TestLocalUpdateKeepsNonTargetDataAndBlocksStaleRevision(t *testing.T) {
 	// 陈旧 revision：必须停写，且画布保持上一次成功写入的内容
 	_, err := h.run(t, "canvas.node.update", "op-stale", map[string]any{"canvasId": h.canvasID,
 		"nodeId": "n1", "expectedRevision": h.revision, "patch": map[string]any{"prompt": "不应写入"}}, false)
-	if code := opCode(t, err); code != agentops.CodePreconditionFailed {
-		t.Fatalf("陈旧 revision 应为前置条件失败，得到 %v", code)
+	// 陈旧 revision 由仓储原子谓词裁决，统一映射为 conflict + reason=stale_revision
+	if code := opCode(t, err); code != agentops.CodeConflict {
+		t.Fatalf("陈旧 revision 应为 conflict，得到 %v", code)
+	}
+	var staleErr *agentops.Error
+	if errors.As(err, &staleErr) && staleErr.Reason != "stale_revision" {
+		t.Fatalf("陈旧 revision 的 reason 应为 stale_revision，得到 %q", staleErr.Reason)
 	}
 	final := h.canvas(t)
 	finalPrompt := final["nodes"].([]any)[0].(map[string]any)["metadata"].(map[string]any)["prompt"]
 	if finalPrompt != "改成夜景" {
 		t.Fatalf("陈旧写入不应覆盖，得到 %v", finalPrompt)
+	}
+}
+
+// 只读操作不接受幂等键：否则读也会开事务，在单连接池上自等死锁。
+func TestReadOperationRejectsOperationID(t *testing.T) {
+	h := newHarness(t)
+	_, err := h.run(t, "canvas.get", "read-with-op-id", map[string]any{"canvasId": h.canvasID}, false)
+	if code := opCode(t, err); code != agentops.CodeInvalidArgument {
+		t.Fatalf("只读操作带 opId 应被拒，得到 %v", code)
+	}
+	result, err := h.run(t, "canvas.get", "", map[string]any{"canvasId": h.canvasID}, false)
+	if err != nil {
+		t.Fatalf("只读操作应可用: %v", err)
+	}
+	if result.Replayed {
+		t.Fatal("只读操作不应有回放标记")
 	}
 }
 
