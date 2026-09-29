@@ -138,6 +138,8 @@ export type DirectorScene = {
     background: string;
     environmentIntensity: number;
     gridVisible: boolean;
+    /** Optional for scenes saved before ground controls existed. */
+    ground?: { visible: boolean; opacity: number; height: number };
     /** Missing in older saved scenes; treated as adaptive. */
     aspectRatio?: DirectorAspectRatio;
     /** Optional equirectangular backdrop; older scenes keep their solid color. */

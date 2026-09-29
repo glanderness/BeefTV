@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 import { Color, Euler, Quaternion } from "three";
 
 import type { DirectorBoneKeyframe, DirectorBoneTrack, DirectorCamera, DirectorHumanoidBone, DirectorKeyframe, DirectorKeyframeDeleteTarget, DirectorKeyframeEasing, DirectorLight, DirectorObject, DirectorPose, DirectorQuat, DirectorScene, DirectorTransform, DirectorVec3 } from "@/types/director";
+import { DIRECTOR_DEFAULT_GROUND } from "@/lib/canvas/director/director-ground";
 
 export const DIRECTOR_DEFAULT_ACTOR_URL = "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r185/examples/models/gltf/Xbot.glb";
 export const DIRECTOR_ACTOR_COLORS = ["#f1f3f5", "#202329", "#2f7de1", "#d84949", "#dfae3f", "#34a276"] as const;
@@ -19,6 +20,7 @@ export function createDirectorScene(title = "未命名场景"): DirectorScene {
         background: "#060608",
         environmentIntensity: 0.7,
         gridVisible: true,
+        ground: { ...DIRECTOR_DEFAULT_GROUND },
         aspectRatio: "adaptive",
         objects: [createDirectorActor("演员 1", [0, 0, 0])],
         cameras: [camera],

@@ -475,6 +475,19 @@ describe("DirectorSaveCoordinator", () => {
             expect(h.coord.restoreCandidate()).toBeNull();
         });
 
+        it("restores ground settings without rejecting older scenes, but rejects invalid ranges", () => {
+            const h = createHarness();
+            h.writeRaw(JSON.stringify(makeEnvelope({ scene: makeScene() })));
+            expect(h.coord.restoreCandidate()?.scene.ground).toBeUndefined();
+            const ground = { visible: false, opacity: 0.4, height: -1.25 };
+            h.writeRaw(JSON.stringify(makeEnvelope({ scene: makeScene({ ground }) })));
+            expect(h.coord.restoreCandidate()?.scene.ground).toEqual(ground);
+            h.writeRaw(corruptEnvelope((envelope) => {
+                envelope.scene = { ...makeScene(), ground: { ...ground, opacity: 2 } };
+            }));
+            expect(h.coord.restoreCandidate()).toBeNull();
+        });
+
         it("should reject a candidate whose scene fails DirectorScene validation", () => {
             const h = createHarness();
 

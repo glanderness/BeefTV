@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid";
 
 import { createDirectorActor, createDirectorCamera, createDirectorLight, createDirectorObject, directorFocalLengthToFov, DIRECTOR_ACTOR_COLORS } from "@/lib/canvas/director/director-scene";
+import { DIRECTOR_DEFAULT_GROUND } from "@/lib/canvas/director/director-ground";
 import type { DirectorCamera, DirectorLight, DirectorObject, DirectorScene, DirectorShot } from "@/types/director";
 
 /**
@@ -12,7 +13,7 @@ import type { DirectorCamera, DirectorLight, DirectorObject, DirectorScene, Dire
  * 硬约束：
  * - 纯函数 + 确定性布局。同一模板每次生成的结构完全一致，只有 id 与时间戳不同。
  * - 每次调用都产生独立 id（工厂内部 nanoid），两个实例不会共享对象身份。
- * - 不改 DirectorScene schema/version：模板只是预填内容，不引入新字段。
+ * - 不改变 DirectorScene 版本：模板只预填已有场景字段。
  * - 对象之间 XZ 占位不重叠，判据与 resolveDirectorPlacement 完全一致。
  */
 
@@ -133,6 +134,7 @@ export function createDirectorSceneFromTemplate(templateId: DirectorTemplateId, 
         background: "#060608",
         environmentIntensity: 0.7,
         gridVisible: true,
+        ground: { ...DIRECTOR_DEFAULT_GROUND },
         aspectRatio: "adaptive",
         objects: blueprint.objects,
         cameras: [blueprint.camera],

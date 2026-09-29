@@ -80,6 +80,7 @@ const isDirectorScene = (value: unknown, expectedSceneId: string): value is Dire
         typeof value.environmentIntensity === "number" &&
         Number.isFinite(value.environmentIntensity) &&
         typeof value.gridVisible === "boolean" &&
+        (value.ground === undefined || (isRecord(value.ground) && typeof value.ground.visible === "boolean" && typeof value.ground.opacity === "number" && Number.isFinite(value.ground.opacity) && value.ground.opacity >= 0 && value.ground.opacity <= 1 && typeof value.ground.height === "number" && Number.isFinite(value.ground.height) && value.ground.height >= -2 && value.ground.height <= 2)) &&
         (value.aspectRatio === undefined || isDirectorAspectRatio(value.aspectRatio)) &&
         (value.panorama === undefined || (isRecord(value.panorama) && typeof value.panorama.url === "string" && (value.panorama.storageKey === undefined || typeof value.panorama.storageKey === "string") && (value.panorama.name === undefined || typeof value.panorama.name === "string") && typeof value.panorama.rotation === "number" && Number.isFinite(value.panorama.rotation))) &&
         Array.isArray(value.objects) &&

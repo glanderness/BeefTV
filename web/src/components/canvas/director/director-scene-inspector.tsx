@@ -1,11 +1,14 @@
 import { ColorPicker, InputNumber, Slider } from "antd";
 
 import { Switch } from "@/components/ui/base/switch";
+import { directorGroundSettings } from "@/lib/canvas/director/director-ground";
 import type { DirectorScene } from "@/types/director";
 
-type SceneEnvironmentPatch = Partial<Pick<DirectorScene, "background" | "environmentIntensity" | "gridVisible" | "panorama">>;
+type SceneEnvironmentPatch = Partial<Pick<DirectorScene, "background" | "environmentIntensity" | "gridVisible" | "panorama" | "ground">>;
 
 export function DirectorSceneInspector({ scene, onChange }: { scene: DirectorScene; onChange: (patch: SceneEnvironmentPatch) => void }) {
+    const ground = directorGroundSettings(scene);
+    const updateGround = (patch: Partial<typeof ground>) => onChange({ ground: { ...ground, ...patch } });
     return (
         <div className="text-sm">
             <h2 className="border-b px-4 py-4 text-base font-semibold" style={{ borderColor: "var(--border)" }}>3D场景</h2>
@@ -41,6 +44,26 @@ export function DirectorSceneInspector({ scene, onChange }: { scene: DirectorSce
                     <Switch size="sm" aria-label="显示网格" checked={scene.gridVisible} onChange={(gridVisible) => onChange({ gridVisible })} />
                 </div>
             </div>
+            <section className="space-y-4 border-t px-4 py-5" style={{ borderColor: "var(--border)" }} aria-label="地面设置">
+                <div className="flex items-center justify-between gap-3">
+                    <h3 className="font-semibold">地面</h3>
+                    <Switch size="sm" aria-label="显示地面" checked={ground.visible} onChange={(visible) => updateGround({ visible })} />
+                </div>
+                <div className="space-y-1.5">
+                    <div className="text-xs opacity-65">透明度</div>
+                    <div className="flex items-center gap-3">
+                        <Slider ariaLabelForHandle="地面透明度" className="m-0 min-w-0 flex-1" min={0} max={1} step={0.05} disabled={!ground.visible} value={ground.opacity} onChangeComplete={(opacity) => updateGround({ opacity })} />
+                        <InputNumber aria-label="地面透明度数值" className="w-[72px] shrink-0" size="small" min={0} max={1} step={0.05} precision={2} disabled={!ground.visible} value={ground.opacity} onChange={(opacity) => { if (opacity !== null) updateGround({ opacity }); }} />
+                    </div>
+                </div>
+                <div className="space-y-1.5">
+                    <div className="text-xs opacity-65">高度</div>
+                    <div className="flex items-center gap-3">
+                        <Slider ariaLabelForHandle="地面高度" className="m-0 min-w-0 flex-1" min={-2} max={2} step={0.05} disabled={!ground.visible} value={ground.height} onChangeComplete={(height) => updateGround({ height })} />
+                        <InputNumber aria-label="地面高度数值" className="w-[72px] shrink-0" size="small" min={-2} max={2} step={0.05} precision={1} disabled={!ground.visible} value={ground.height} onChange={(height) => { if (height !== null) updateGround({ height }); }} />
+                    </div>
+                </div>
+            </section>
         </div>
     );
 }

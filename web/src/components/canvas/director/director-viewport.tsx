@@ -8,6 +8,7 @@ import { GLTFLoader, SkeletonUtils } from "three-stdlib";
 import { resolveDirectorBoneRotation } from "@/lib/canvas/director/director-animation-semantics";
 import { cropDirectorCanvas, resolveDirectorFrameRect, resolveDirectorPixelCrop, type DirectorAspectRatio } from "@/lib/canvas/director/director-aspect-ratio";
 import { directorStagePalette } from "@/lib/canvas/director/director-stage-palette";
+import { directorGroundSettings } from "@/lib/canvas/director/director-ground";
 import type { DirectorOrientation } from "@/lib/canvas/director/director-orientation-gizmo";
 import { applyClaySceneMaterials } from "@/lib/canvas/director/director-clay-materials";
 import { createDirectorTransaction, installDirectorTerminalListeners } from "@/lib/canvas/director/director-gesture-transaction";
@@ -496,6 +497,7 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
     }, [camCamera, effectiveViewport.camera, freeCamera, invalidate, orthoCamera, set]);
 
     const stagePalette = directorStagePalette(scene.background);
+    const ground = directorGroundSettings(scene);
     return (
         <>
             {/* CAM 与正交轴向的取景各自独立同步到专属相机对象，互不干扰；free 完全交给
@@ -505,10 +507,10 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
             <ambientLight intensity={scene.environmentIntensity * 0.35} />
             {scene.lights.map((light) => <DirectorLightView key={light.id} light={light} />)}
             {scene.gridVisible ? <Grid position={[0, 0, 0]} infiniteGrid fadeDistance={40} fadeStrength={5} cellSize={0.5} sectionSize={5} cellColor={stagePalette.cell} sectionColor={stagePalette.section} /> : null}
-            <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, -0.012, 0]}>
+            {ground.visible ? <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, ground.height - 0.012, 0]}>
                 <planeGeometry args={[120, 120]} />
-                <meshStandardMaterial color={stagePalette.ground} roughness={0.92} />
-            </mesh>
+                <meshStandardMaterial color={stagePalette.ground} roughness={0.92} transparent={ground.opacity < 1} opacity={ground.opacity} depthWrite={ground.opacity >= 1} />
+            </mesh> : null}
             {actorMotionPaths.map((object) => <DirectorTransformPath key={`actor-path-${object.id}`} keyframes={object.keyframes} playhead={playhead} color="#61d2ad" />)}
             {cameraMotionPaths.map((item) => <DirectorTransformPath key={`camera-path-${item.id}`} keyframes={item.keyframes} playhead={playhead} color="#78a9ff" />)}
             {scene.objects.filter((item) => item.visible).map((object) => (

@@ -12,5 +12,8 @@ describe("导演台场景属性", () => {
         expect(markup).toContain("环境亮度");
         expect(markup).toContain("显示网格");
         expect(markup).toContain('aria-label="显示网格"');
+        expect(markup).toContain('aria-label="显示地面"');
+        expect(markup).toContain('aria-label="地面透明度"');
+        expect(markup).toContain('aria-label="地面高度"');
     });
 });
