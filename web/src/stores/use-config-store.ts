@@ -756,7 +756,7 @@ function beefApiVideoCapabilityConfig(model: string, protocol: ModelProtocol, cu
     const resolved = profile || defaultModelCapabilityConfig(protocol, model);
     if (!resolved.video) return resolved;
     return { ...resolved, video: { ...resolved.video,
-        references: { ...resolved.video.references, maxImages: Math.min(resolved.video.references.maxImages, limits.image), maxVideos: Math.min(resolved.video.references.maxVideos, limits.video), maxAudios: Math.min(resolved.video.references.maxAudios, limits.audio) },
+        references: { ...resolved.video.references, maxImages: Math.min(resolved.video.references.maxImages, limits.image ?? Infinity), maxVideos: Math.min(resolved.video.references.maxVideos, limits.video ?? Infinity), maxAudios: Math.min(resolved.video.references.maxAudios, limits.audio ?? Infinity) },
         operations: contract.operations || resolved.video.operations,
         defaultOperation: contract.operations?.includes(resolved.video.defaultOperation) ? resolved.video.defaultOperation : contract.operations?.[0] || resolved.video.defaultOperation,
     } };

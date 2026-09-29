@@ -445,7 +445,7 @@ func providerMediaHydrationPolicyFor(ctx context.Context, input canvasGeneration
 	if adapter, ok := protocolAdapterForContext(ctx, input.Config.InterfaceType); ok {
 		// Installed declarations override legacy protocol-name guesses.
 		policy.requireURL = adapter.Metadata().RequiresPublicMediaURLs
-		policy.preferURL = policy.requireURL
+		policy.preferURL = policy.preferURL || policy.requireURL
 	}
 	if input.Mask != nil {
 		policy.requireURL = false

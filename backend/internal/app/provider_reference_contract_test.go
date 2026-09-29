@@ -64,6 +64,12 @@ func TestWanLocalReferencesUseVerifiedInlineContract(t *testing.T) {
 
 func TestInstalledMediaContractOverridesLegacyGuess(t *testing.T) {
 	ctx := withProtocolRegistry(context.Background(), loadOfficialFallbackRegistry())
+	for _, protocol := range []string{"grok-image", "chat-completion", "openai-response", "claude-api"} {
+		policy := providerMediaHydrationPolicyFor(ctx, canvasGenerationInput{Config: providerConfig{InterfaceType: protocol}})
+		if policy.requireURL || !policy.preferURL {
+			t.Fatalf("%s lost optional object-storage URL transport: %#v", protocol, policy)
+		}
+	}
 	inline := providerMediaHydrationPolicyFor(ctx, canvasGenerationInput{Config: providerConfig{InterfaceType: "newapi", Model: "future-model"}})
 	if inline.requireURL {
 		t.Fatal("installed multipart contract ignored")

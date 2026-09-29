@@ -16,10 +16,10 @@ export async function createVideoGenerationsTask(deps: VideoProviderDeps, config
     const contract = isBeefAPIEndpoint(config.baseUrl) ? beefAPIVideoContract(modelOptionName(model)) : undefined;
     if (contract?.maxReferences) {
         for (const [label, count, limit] of [["图片", references.length, contract.maxReferences.image], ["视频", videoReferences.length, contract.maxReferences.video], ["音频", audioReferences.length, contract.maxReferences.audio]] as const) {
-            if (count > limit) throw new Error(limit === 0 ? `当前模型暂不支持参考${label}，请移除此素材或选择支持该素材的模型` : `当前模型最多支持 ${limit} 个参考${label}，请移除多余素材后重新生成`);
+            if (limit !== undefined && count > limit) throw new Error(limit === 0 ? `当前模型暂不支持参考${label}，请移除此素材或选择支持该素材的模型` : `当前模型最多支持 ${limit} 个参考${label}，请移除多余素材后重新生成`);
         }
     }
-    const inline = contract?.protocol === "newapi-channel-2" && contract.inlineMedia;
+    const inline = contract?.inlineMedia === true && contract.protocol === config.interfaceType;
     if (references.length > profile.references.maxImages) throw new Error(`当前视频模型最多支持 ${profile.references.maxImages} 张参考图`);
     if (videoReferences.length > profile.references.maxVideos) throw new Error(`当前视频模型最多支持 ${profile.references.maxVideos} 个参考视频`);
     if (audioReferences.length > profile.references.maxAudios) throw new Error(`当前视频模型最多支持 ${profile.references.maxAudios} 段参考音频`);
