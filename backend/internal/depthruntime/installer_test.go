@@ -12,10 +12,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
 func TestEnsureInstallsRuntimeAndFallsBackForModel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the legacy macOS runtime requires POSIX executable bits")
+	}
 	var runtimeArchive bytes.Buffer
 	writer := zip.NewWriter(&runtimeArchive)
 	entry, _ := writer.Create(".venv/bin/python")
@@ -258,6 +262,9 @@ func TestValidateArchiveShapeRejectsManifestMismatchAndAbsoluteLimit(t *testing.
 }
 
 func TestExtractRuntimeArchivePreservesTrustedExecutableBit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose POSIX executable permissions")
+	}
 	var archive bytes.Buffer
 	writer := zip.NewWriter(&archive)
 	header := &zip.FileHeader{Name: ".python/bin/python3.11", Method: zip.Deflate}
