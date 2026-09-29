@@ -1,0 +1,244 @@
+package canvas
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"infinite-canvas/backend/internal/canvas/capability"
+	"infinite-canvas/backend/internal/kernel"
+)
+
+// 内置 Agent 与外部入口（CLI/MCP）的写入统一走这里：
+// 规格来自真实 capability，revision 前置条件由仓储原子谓词裁决，调用方不自行拼文档形状。
+
+// NodeDraft 是创建节点所需的最小输入；尺寸与 metadata 由 capability 描述符决定。
+type NodeDraft struct {
+	Title  string
+	Type   string
+	Prompt string
+}
+
+var canvasCapabilityRegistry = capability.BuiltinRegistry()
+
+func canvasDocNodes(doc map[string]any) []any {
+	if nodes, ok := doc["nodes"].([]any); ok {
+		return nodes
+	}
+	return []any{}
+}
+
+func findCanvasNode(doc map[string]any, nodeID string) map[string]any {
+	for _, rawNode := range canvasDocNodes(doc) {
+		node, ok := rawNode.(map[string]any)
+		if !ok {
+			continue
+		}
+		if id, _ := node["id"].(string); id == nodeID {
+			return node
+		}
+	}
+	return nil
+}
+
+func canvasNodeType(node map[string]any) string {
+	if node == nil {
+		return "text"
+	}
+	if kind, _ := node["type"].(string); strings.TrimSpace(kind) != "" {
+		return kind
+	}
+	return "text"
+}
+
+func newCanvasNodeID() string {
+	buf := make([]byte, 5)
+	if _, err := rand.Read(buf); err != nil {
+		return "node-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return "node-" + strconv.FormatInt(time.Now().UnixNano(), 36) + "-" + hex.EncodeToString(buf)
+}
+
+// loadCanvasDoc 读取画布文档（走本服务绑定的事务/连接）。
+func (s *Service) loadCanvasDoc(userID, canvasID string) (map[string]any, error) {
+	raw, err := s.UserCanvasProject(userID, canvasID)
+	if err != nil {
+		return nil, err
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+	return doc, nil
+}
+
+// saveCanvasDocWithRevision 用调用方观察到的 revision 保存：唯一裁决者是仓储原子谓词。
+func (s *Service) saveCanvasDocWithRevision(userID, canvasID string, doc map[string]any, expectedRevision int64) (UserDataSummary, error) {
+	doc["id"] = canvasID
+	doc["revision"] = expectedRevision
+	encoded, err := json.Marshal(doc)
+	if err != nil {
+		return UserDataSummary{}, err
+	}
+	return s.UpsertUserCanvasProject(userID, encoded)
+}
+
+func requireExpectedRevision(expectedRevision int64) error {
+	if expectedRevision <= 0 {
+		return kernel.NewAppError(http.StatusBadRequest, "写操作必须带上读取时的 expectedRevision")
+	}
+	return nil
+}
+
+// CreateUserCanvasNodes 整批校验后一次写入；节点规格来自 capability 描述符。
+func (s *Service) CreateUserCanvasNodes(userID, canvasID string, drafts []NodeDraft, expectedRevision int64) (UserDataSummary, error) {
+	if err := requireExpectedRevision(expectedRevision); err != nil {
+		return UserDataSummary{}, err
+	}
+	if len(drafts) == 0 {
+		return UserDataSummary{}, kernel.NewAppError(http.StatusBadRequest, "至少需要一个节点")
+	}
+	doc, err := s.loadCanvasDoc(userID, canvasID)
+	if err != nil {
+		return UserDataSummary{}, err
+	}
+	nodes := canvasDocNodes(doc)
+	existingTitles := map[string]bool{}
+	for _, rawNode := range nodes {
+		if node, ok := rawNode.(map[string]any); ok {
+			if title, _ := node["title"].(string); title != "" {
+				existingTitles[title] = true
+			}
+		}
+	}
+	seen := map[string]bool{}
+	for _, draft := range drafts {
+		title := strings.TrimSpace(draft.Title)
+		if title == "" {
+			return UserDataSummary{}, kernel.NewAppError(http.StatusBadRequest, "每个节点都需要标题")
+		}
+		if seen[title] {
+			return UserDataSummary{}, kernel.NewAppError(http.StatusBadRequest, "同一批次内标题重复: "+title)
+		}
+		seen[title] = true
+		if existingTitles[title] {
+			return UserDataSummary{}, kernel.NewAppError(http.StatusConflict, "标题已存在: "+title)
+		}
+		if _, ok := canvasCapabilityRegistry.Resolve(draft.Type); !ok {
+			return UserDataSummary{}, kernel.NewAppError(http.StatusBadRequest,
+				"不支持的节点类型: "+draft.Type+"（可用: "+strings.Join(canvasCapabilityRegistry.Types(), "|")+"）")
+		}
+	}
+	for _, draft := range drafts {
+		descriptor, _ := canvasCapabilityRegistry.Resolve(draft.Type)
+		width, height := descriptor.DefaultWidth, descriptor.DefaultHeight
+		if width <= 0 {
+			width = 320
+		}
+		if height <= 0 {
+			height = 220
+		}
+		metadata := descriptor.Metadata(draft.Prompt)
+		if strings.TrimSpace(draft.Prompt) != "" {
+			metadata["prompt"] = draft.Prompt
+		}
+		nodes = append(nodes, map[string]any{
+			"id": newCanvasNodeID(), "type": draft.Type, "title": draft.Title,
+			"position": map[string]any{"x": 120 + len(nodes)*int(width), "y": 160},
+			"width":    width, "height": height, "metadata": metadata,
+		})
+	}
+	doc["nodes"] = nodes
+	return s.saveCanvasDocWithRevision(userID, canvasID, doc, expectedRevision)
+}
+
+// UpdateUserCanvasNodeFields 局部更新：只覆盖 patch 给出的字段，其余数据逐字保留。
+func (s *Service) UpdateUserCanvasNodeFields(userID, canvasID, nodeID string, patch map[string]any, expectedRevision int64) (UserDataSummary, error) {
+	if err := requireExpectedRevision(expectedRevision); err != nil {
+		return UserDataSummary{}, err
+	}
+	if len(patch) == 0 {
+		return UserDataSummary{}, kernel.NewAppError(http.StatusBadRequest, "patch 至少要有一个字段")
+	}
+	doc, err := s.loadCanvasDoc(userID, canvasID)
+	if err != nil {
+		return UserDataSummary{}, err
+	}
+	node := findCanvasNode(doc, nodeID)
+	if node == nil {
+		return UserDataSummary{}, kernel.NewAppError(http.StatusNotFound, "目标节点不存在: "+nodeID)
+	}
+	metadata, _ := node["metadata"].(map[string]any)
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	if title, ok := patch["title"].(string); ok {
+		node["title"] = title
+	}
+	if prompt, ok := patch["prompt"].(string); ok {
+		metadata["prompt"] = prompt
+	}
+	if content, ok := patch["content"].(string); ok {
+		metadata["content"] = content
+	}
+	node["metadata"] = metadata
+	return s.saveCanvasDocWithRevision(userID, canvasID, doc, expectedRevision)
+}
+
+// ConnectUserCanvasNodesAtRevision 连线：按来源描述符的连接策略校验；重复连线幂等返回既有摘要。
+func (s *Service) ConnectUserCanvasNodesAtRevision(userID, canvasID, fromNodeID, toNodeID string, expectedRevision int64) (UserDataSummary, error) {
+	if err := requireExpectedRevision(expectedRevision); err != nil {
+		return UserDataSummary{}, err
+	}
+	doc, err := s.loadCanvasDoc(userID, canvasID)
+	if err != nil {
+		return UserDataSummary{}, err
+	}
+	fromNode := findCanvasNode(doc, fromNodeID)
+	if fromNode == nil {
+		return UserDataSummary{}, kernel.NewAppError(http.StatusNotFound, "起点节点不存在: "+fromNodeID)
+	}
+	toNode := findCanvasNode(doc, toNodeID)
+	if toNode == nil {
+		return UserDataSummary{}, kernel.NewAppError(http.StatusNotFound, "终点节点不存在: "+toNodeID)
+	}
+	if descriptor, ok := canvasCapabilityRegistry.Resolve(canvasNodeType(fromNode)); ok {
+		if err := descriptor.ValidateConnection(canvasNodeType(toNode)); err != nil {
+			return UserDataSummary{}, kernel.NewAppError(http.StatusBadRequest, err.Error())
+		}
+	}
+	connections, _ := doc["connections"].([]any)
+	for _, rawEdge := range connections {
+		edge, ok := rawEdge.(map[string]any)
+		if !ok {
+			continue
+		}
+		from, _ := edge["fromNodeId"].(string)
+		to, _ := edge["toNodeId"].(string)
+		if from == fromNodeID && to == toNodeID {
+			return s.canvasSummary(userID, canvasID)
+		}
+	}
+	doc["connections"] = append(connections, map[string]any{
+		"id": "edge-" + strconv.FormatInt(time.Now().UnixNano(), 36), "fromNodeId": fromNodeID, "toNodeId": toNodeID,
+	})
+	return s.saveCanvasDocWithRevision(userID, canvasID, doc, expectedRevision)
+}
+
+// canvasSummary 取回指定画布摘要（幂等情形返回既有状态）。
+func (s *Service) canvasSummary(userID, canvasID string) (UserDataSummary, error) {
+	summaries, err := s.UserCanvasProjectSummaries(userID)
+	if err != nil {
+		return UserDataSummary{}, err
+	}
+	for _, summary := range summaries {
+		if summary.ID == canvasID {
+			return summary, nil
+		}
+	}
+	return UserDataSummary{}, kernel.NewAppError(http.StatusNotFound, "画布不存在: "+canvasID)
+}

@@ -323,3 +323,18 @@ func (s *Service) UserCanvasProjectWithTx(tx *gorm.DB, userID string, id string)
 func (s *Service) UserAssetWithTx(tx *gorm.DB, userID string, id string) (json.RawMessage, error) {
 	return s.canvasDomainWithTx(tx).UserAsset(userID, id)
 }
+
+
+// 以下是内置 Agent/CLI/MCP 的统一写入口：领域实现拥有规格与连接规则，
+// 操作层只做参数与幂等，写入与操作记录共用同一事务（tx 绑定仓储与 host）。
+func (s *Service) CreateUserCanvasNodesWithTx(tx *gorm.DB, userID, canvasID string, drafts []canvas.NodeDraft, expectedRevision int64) (UserDataSummary, error) {
+	return s.canvasDomainWithTx(tx).CreateUserCanvasNodes(userID, canvasID, drafts, expectedRevision)
+}
+
+func (s *Service) UpdateUserCanvasNodeFieldsWithTx(tx *gorm.DB, userID, canvasID, nodeID string, patch map[string]any, expectedRevision int64) (UserDataSummary, error) {
+	return s.canvasDomainWithTx(tx).UpdateUserCanvasNodeFields(userID, canvasID, nodeID, patch, expectedRevision)
+}
+
+func (s *Service) ConnectUserCanvasNodesWithTx(tx *gorm.DB, userID, canvasID, fromNodeID, toNodeID string, expectedRevision int64) (UserDataSummary, error) {
+	return s.canvasDomainWithTx(tx).ConnectUserCanvasNodesAtRevision(userID, canvasID, fromNodeID, toNodeID, expectedRevision)
+}

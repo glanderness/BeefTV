@@ -10,13 +10,13 @@ import (
 	"infinite-canvas/backend/internal/canvas/capability"
 	"net/http"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
 
 	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/kernel"
 )
 
@@ -253,57 +253,27 @@ func opCanvasNodeUpdate(ctx *Context, params json.RawMessage) (any, error) {
 	if strings.TrimSpace(args.CanvasID) == "" || strings.TrimSpace(args.NodeID) == "" {
 		return nil, InvalidArg("invalid_params", "canvasId 与 nodeId 必填")
 	}
-	if args.Patch.Title == nil && args.Patch.Prompt == nil && args.Patch.Content == nil {
+	patch := map[string]any{}
+	if args.Patch.Title != nil {
+		patch["title"] = *args.Patch.Title
+	}
+	if args.Patch.Prompt != nil {
+		patch["prompt"] = *args.Patch.Prompt
+	}
+	if args.Patch.Content != nil {
+		patch["content"] = *args.Patch.Content
+	}
+	if len(patch) == 0 {
 		return nil, InvalidArg("empty_patch", "patch 至少要有一个字段")
 	}
-	if err := requireRevision(args.ExpectedRevision); err != nil {
-		return nil, err
+	// 领域实现拥有写入规则；操作层只转接，写入与操作记录同事务。
+	if _, err := ctx.Services.UpdateUserCanvasNodeFieldsWithTx(ctx.Tx, ctx.UserID, args.CanvasID, args.NodeID, patch, args.ExpectedRevision); err != nil {
+		return nil, mapDomainError(err)
 	}
-	doc, err := readCanvasDoc(ctx, args.CanvasID)
-	if err != nil {
-		return nil, err
-	}
-	nodes := canvasNodes(doc)
-	targetIdx := -1
-	for i, rawNode := range nodes {
-		node, ok := rawNode.(map[string]any)
-		if !ok {
-			continue
-		}
-		if id, _ := node["id"].(string); id == args.NodeID {
-			targetIdx = i
-			break
-		}
-	}
-	if targetIdx < 0 {
-		return nil, NotFound("node_not_found", "目标节点不存在: "+args.NodeID)
-	}
-	target, _ := nodes[targetIdx].(map[string]any)
-	// 只覆盖 patch 明确给出的字段；metadata 里其他键保持原值。
-	if args.Patch.Title != nil {
-		target["title"] = *args.Patch.Title
-	}
-	if args.Patch.Prompt != nil || args.Patch.Content != nil {
-		metadata, _ := target["metadata"].(map[string]any)
-		if metadata == nil {
-			metadata = map[string]any{}
-		}
-		if args.Patch.Prompt != nil {
-			metadata["prompt"] = *args.Patch.Prompt
-		}
-		if args.Patch.Content != nil {
-			metadata["content"] = *args.Patch.Content
-		}
-		target["metadata"] = metadata
-	}
-	doc["nodes"] = nodes
-	revision, err := writeCanvasDoc(ctx, args.CanvasID, doc, args.ExpectedRevision)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"canvasId": args.CanvasID, "nodeId": args.NodeID, "revision": revision, "node": target}, nil
+	return canvasWriteResult(ctx, args.CanvasID, func(doc map[string]any) map[string]any {
+		return map[string]any{"canvasId": args.CanvasID, "nodeId": args.NodeID, "node": findDocNode(doc, args.NodeID)}
+	})
 }
-
 func opCanvasNodesCreate(ctx *Context, params json.RawMessage) (any, error) {
 	var args struct {
 		CanvasID         string `json:"canvasId"`
@@ -323,76 +293,25 @@ func opCanvasNodesCreate(ctx *Context, params json.RawMessage) (any, error) {
 	if len(args.Nodes) == 0 || len(args.Nodes) > 8 {
 		return nil, InvalidArg("invalid_batch", "nodes 必须是 1..8 项的数组")
 	}
-	if err := requireRevision(args.ExpectedRevision); err != nil {
-		return nil, err
-	}
-	seen := map[string]bool{}
+	drafts := make([]canvas.NodeDraft, 0, len(args.Nodes))
+	titles := make([]string, 0, len(args.Nodes))
 	for _, node := range args.Nodes {
-		title := strings.TrimSpace(node.Title)
-		if title == "" {
-			return nil, InvalidArg("missing_title", "每个节点都需要标题")
-		}
-		if _, ok := canvasCapabilities.Resolve(node.Type); !ok {
-			return nil, InvalidArg("unsupported_node_type",
-				"不支持的节点类型: "+node.Type+"（可用: "+strings.Join(canvasCapabilities.Types(), "|")+"）")
-		}
-		if seen[title] {
-			return nil, InvalidArg("duplicate_title_in_batch", "同一批次内标题重复: "+title)
-		}
-		seen[title] = true
+		drafts = append(drafts, canvas.NodeDraft{Title: node.Title, Type: node.Type, Prompt: node.Prompt})
+		titles = append(titles, strings.TrimSpace(node.Title))
 	}
-	doc, err := readCanvasDoc(ctx, args.CanvasID)
-	if err != nil {
-		return nil, err
+	if _, err := ctx.Services.CreateUserCanvasNodesWithTx(ctx.Tx, ctx.UserID, args.CanvasID, drafts, args.ExpectedRevision); err != nil {
+		return nil, mapDomainError(err)
 	}
-	nodes := canvasNodes(doc)
-	existing := map[string]bool{}
-	for _, rawNode := range nodes {
-		if node, ok := rawNode.(map[string]any); ok {
-			if title, _ := node["title"].(string); title != "" {
-				existing[title] = true
+	return canvasWriteResult(ctx, args.CanvasID, func(doc map[string]any) map[string]any {
+		created := make([]map[string]any, 0, len(titles))
+		for _, title := range titles {
+			if node := findDocNodeByTitle(doc, title); node != nil {
+				created = append(created, map[string]any{"id": node["id"], "title": node["title"]})
 			}
 		}
-	}
-	for title := range seen {
-		if existing[title] {
-			return nil, Conflict("title_already_exists", "标题已存在: "+title,
-				map[string]any{"title": title})
-		}
-	}
-	created := make([]map[string]any, 0, len(args.Nodes))
-	for _, node := range args.Nodes {
-		descriptor, _ := canvasCapabilities.Resolve(node.Type)
-		id := newNodeID()
-		width, height := descriptor.DefaultWidth, descriptor.DefaultHeight
-		if width <= 0 {
-			width = 320
-		}
-		if height <= 0 {
-			height = 220
-		}
-		metadata := descriptor.Metadata(node.Prompt)
-		if node.Prompt != "" {
-			// 生成类节点的提示词落在 metadata.prompt；其余类型由描述符自身决定字段。
-			metadata["prompt"] = node.Prompt
-		}
-		nodes = append(nodes, map[string]any{
-			"id": id, "type": node.Type, "title": node.Title,
-			"position": map[string]any{"x": 120 + len(nodes)*int(width), "y": 160},
-			"width":    width, "height": height,
-			"metadata": metadata,
-		})
-		created = append(created, map[string]any{"id": id, "title": node.Title})
-	}
-	doc["nodes"] = nodes
-	revision, err := writeCanvasDoc(ctx, args.CanvasID, doc, args.ExpectedRevision)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"canvasId": args.CanvasID, "created": created, "revision": revision}, nil
+		return map[string]any{"canvasId": args.CanvasID, "created": created}
+	})
 }
-
-// nodeTypeOf 读取节点类型，用于连线策略判定。
 func nodeTypeOf(nodes []any, nodeID string) string {
 	for _, rawNode := range nodes {
 		if node, ok := rawNode.(map[string]any); ok {
@@ -425,60 +344,68 @@ func opCanvasEdgeCreate(ctx *Context, params json.RawMessage) (any, error) {
 	if args.FromNodeID == args.ToNodeID {
 		return nil, InvalidArg("self_loop", "不能把节点连接到自身")
 	}
-	if err := requireRevision(args.ExpectedRevision); err != nil {
-		return nil, err
+	if _, err := ctx.Services.ConnectUserCanvasNodesWithTx(ctx.Tx, ctx.UserID, args.CanvasID, args.FromNodeID, args.ToNodeID, args.ExpectedRevision); err != nil {
+		return nil, mapDomainError(err)
 	}
-	doc, err := readCanvasDoc(ctx, args.CanvasID)
+	return canvasWriteResult(ctx, args.CanvasID, func(doc map[string]any) map[string]any {
+		duplicate := false
+		if connections, ok := doc["connections"].([]any); ok {
+			for _, rawEdge := range connections {
+				if edge, ok := rawEdge.(map[string]any); ok {
+					if edge["fromNodeId"] == args.FromNodeID && edge["toNodeId"] == args.ToNodeID {
+						duplicate = true
+					}
+				}
+			}
+		}
+		return map[string]any{"canvasId": args.CanvasID, "duplicate": duplicate}
+	})
+}
+
+// canvasWriteResult 写后在同一事务连接上回读，并补齐 revision。
+func canvasWriteResult(ctx *Context, canvasID string, build func(doc map[string]any) map[string]any) (any, error) {
+	after, err := ctx.Services.UserCanvasProjectWithTx(ctx.Tx, ctx.UserID, canvasID)
 	if err != nil {
-		return nil, err
+		return nil, mapDomainError(err)
 	}
-	nodes := canvasNodes(doc)
-	exists := map[string]bool{}
-	for _, rawNode := range nodes {
-		if node, ok := rawNode.(map[string]any); ok {
-			if id, _ := node["id"].(string); id != "" {
-				exists[id] = true
+	var doc map[string]any
+	if err := json.Unmarshal(after, &doc); err != nil {
+		return nil, AsError(err)
+	}
+	payload := build(doc)
+	payload["revision"] = canvasRevision(doc)
+	return payload, nil
+}
+
+func findDocNode(doc map[string]any, nodeID string) map[string]any {
+	if nodes, ok := doc["nodes"].([]any); ok {
+		for _, rawNode := range nodes {
+			if node, ok := rawNode.(map[string]any); ok {
+				if id, _ := node["id"].(string); id == nodeID {
+					return node
+				}
 			}
 		}
 	}
-	if !exists[args.FromNodeID] {
-		return nil, NotFound("from_node_not_found", "起点节点不存在: "+args.FromNodeID)
-	}
-	if !exists[args.ToNodeID] {
-		return nil, NotFound("to_node_not_found", "终点节点不存在: "+args.ToNodeID)
-	}
-	fromKind, toKind := nodeTypeOf(nodes, args.FromNodeID), nodeTypeOf(nodes, args.ToNodeID)
-	if descriptor, ok := canvasCapabilities.Resolve(fromKind); ok {
-		if err := descriptor.ValidateConnection(toKind); err != nil {
-			return nil, InvalidArg("connection_not_allowed", err.Error())
-		}
-	}
-	connections, _ := doc["connections"].([]any)
-	for _, rawEdge := range connections {
-		edge, ok := rawEdge.(map[string]any)
-		if !ok {
-			continue
-		}
-		from, _ := edge["fromNodeId"].(string)
-		to, _ := edge["toNodeId"].(string)
-		if from == args.FromNodeID && to == args.ToNodeID {
-			return map[string]any{"canvasId": args.CanvasID, "duplicate": true, "revision": canvasRevision(doc)}, nil
-		}
-	}
-	connections = append(connections, map[string]any{
-		"id": "edge-" + strconv.FormatInt(time.Now().UnixNano(), 36), "fromNodeId": args.FromNodeID, "toNodeId": args.ToNodeID,
-	})
-	doc["connections"] = connections
-	revision, err := writeCanvasDoc(ctx, args.CanvasID, doc, args.ExpectedRevision)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"canvasId": args.CanvasID, "duplicate": false, "revision": revision}, nil
+	return nil
 }
 
+func findDocNodeByTitle(doc map[string]any, title string) map[string]any {
+	if nodes, ok := doc["nodes"].([]any); ok {
+		for _, rawNode := range nodes {
+			if node, ok := rawNode.(map[string]any); ok {
+				if value, _ := node["title"].(string); value == title {
+					return node
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// secretKeyPattern 命中凭据类字段名；读取结果统一脱敏后再外发。
 var secretKeyPattern = regexp.MustCompile(`(?i)(api[_-]?key|secret|token|authorization|password|credential|private[_-]?key)`)
 
-// sanitizeForClient 去掉读取结果里的凭据类字段，读范围不等于可以带走密钥。
 func sanitizeForClient(value any) any {
 	switch typed := value.(type) {
 	case map[string]any:
