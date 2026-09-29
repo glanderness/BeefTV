@@ -20,6 +20,7 @@ import { createDirectorTransaction, installDirectorTerminalListeners, type Direc
 import { recordDirectorDiagnostic } from "@/lib/canvas/director/director-diagnostics-recorder";
 import { DIRECTOR_MODES, directorModeCapabilities, type DirectorModeCapabilities } from "@/lib/canvas/director/director-modes";
 import { resolveDirectorPlacement, resolveDirectorPlacementAnchor } from "@/lib/canvas/director/director-placement";
+import { createDirectorCameraFromPreset, DIRECTOR_CAMERA_PRESETS, type DirectorCameraPresetId } from "@/lib/canvas/director/director-camera-presets";
 import { isDirectorOutputSnapshotCurrent, shouldReinitializeDirectorSession } from "@/lib/canvas/director/director-session";
 import { blocksDirectorShortcut, releaseDirectorFocusAfterPointer, resolveDirectorShortcut, type DirectorShortcutAction } from "@/lib/canvas/director/director-shortcuts";
 import { createDirectorActor, createDirectorBillboard, createDirectorCamera, createDirectorLight, createDirectorModel, createDirectorObject, DIRECTOR_ACTOR_COLORS, directorBoneLabel, directorFocalLengthToFov, directorPoseLabel, interpolateDirectorTransform, removeDirectorSceneKeyframe, setDirectorSceneKeyframeEasing, touchDirectorScene, upsertDirectorBoneKeyframe } from "@/lib/canvas/director/director-scene";
@@ -460,15 +461,27 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
         if (activeShot) updateShot(activeShot.id, { cameraId: camera.id });
     };
 
+    const addPresetCamera = (presetId: DirectorCameraPresetId) => {
+        const name = `机位 ${draft?.cameras.length ? draft.cameras.length + 1 : 1}`;
+        const subject = draft?.objects.find((item) => item.id === selectedObjectId && (item.kind === "actor" || item.primitive === "character"))
+            || draft?.objects.find((item) => item.kind === "actor" || item.primitive === "character");
+        const target: DirectorVec3 = subject
+            ? [subject.transform.position[0], subject.transform.position[1] + 1.2, subject.transform.position[2]]
+            : activeCamera?.target || [0, 1, 0];
+        const camera = createDirectorCameraFromPreset({ presetId, name, target, currentView: viewportRef.current?.readCameraTransform() });
+        commit((current) => ({ ...current, cameras: [...current.cameras, camera], shots: current.shots.map((shot) => shot.id === current.activeShotId ? { ...shot, cameraId: camera.id } : shot) }));
+        setSelectedObjectId(null);
+        setSelectedLightId(null);
+        setSceneInspectorView("shot");
+        setViewMode("camera");
+    };
+
     const addLight = (type: DirectorLight["type"] = "point", label = "灯光", position: DirectorVec3 = [2, 3, 2], intensity = 1.5) => {
         const light = createDirectorLight(type, `${label} ${draft?.lights.length ? draft.lights.length + 1 : 1}`, position, intensity);
         commit((current) => ({ ...current, lights: [...current.lights, light] }));
         setSelectedLightId(light.id);
     };
 
-    const addCameraMenuItems: MenuProps["items"] = [
-        { key: "camera", icon: <Camera className="size-3.5" />, label: "添加摄影机", onClick: addCamera },
-    ];
     const addLightMenuItems: MenuProps["items"] = [
         { key: "directional", icon: <Lightbulb className="size-3.5" />, label: "方向光", onClick: () => addLight("directional", "方向光", [4, 6, 4], 2.4) },
         { key: "point", icon: <Lightbulb className="size-3.5" />, label: "点光源", onClick: () => addLight("point", "点光源") },
@@ -789,13 +802,15 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
                     </div>
                     </> : null}
                     {navigationTab === "actors" ? <>
-                        <PanelTitle title="角色" />
+                        <PanelTitle title="添加角色" />
                         <div className="px-2 pb-2">{draft.objects.filter((object) => object.kind === "actor" || object.primitive === "character").map((object) => <SceneRow key={object.id} active={selectedObjectId === object.id} icon={<UserRound />} label={object.name} onClick={() => setSelectedObjectId(object.id)} onDelete={() => removeObject(object.id)} />)}</div>
                         <div className="px-2"><QuickAdd label="添加演员" icon={<UserRound />} onClick={addActor} /></div>
                     </> : null}
                     {navigationTab === "cameras" ? <>
-                        <PanelTitle title="摄影机" action={<AddMenuButton label="添加摄影机" items={addCameraMenuItems} />} />
-                        <div className="px-2 pb-2">{draft.cameras.map((camera) => <SceneRow key={camera.id} active={activeShot.cameraId === camera.id && !selectedObjectId && !selectedLightId} icon={<Camera />} label={camera.name} onClick={() => { setSelectedObjectId(null); setSelectedLightId(null); updateShot(activeShot.id, { cameraId: camera.id }); }} onDelete={() => removeCamera(camera.id)} />)}</div>
+                        <PanelTitle title="添加机位" />
+                        <div className="grid grid-cols-2 gap-2 px-2 pb-3">
+                            {DIRECTOR_CAMERA_PRESETS.map((preset) => <button key={preset.id} type="button" aria-label={preset.label} className="flex h-[72px] flex-col items-center justify-center gap-1 rounded-xl border text-xs transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2" style={{ borderColor: theme.toolbar.border }} onClick={(event) => { addPresetCamera(preset.id); releaseDirectorFocusAfterPointer(event); }}><Camera className="size-5" aria-hidden /><span>{preset.label}</span></button>)}
+                        </div>
                     </> : null}
                     {navigationTab === "assets" ? <>
                         <PanelTitle title="3D 素材" />

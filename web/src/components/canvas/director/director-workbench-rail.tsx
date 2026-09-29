@@ -7,8 +7,8 @@ export type DirectorWorkbenchTab = "scene" | "actors" | "cameras" | "assets";
 
 const tabs = [
     { id: "scene", label: "场景", icon: Layers3 },
-    { id: "actors", label: "角色", icon: UserRound },
-    { id: "cameras", label: "摄影机", icon: Camera },
+    { id: "actors", label: "添加角色", icon: UserRound },
+    { id: "cameras", label: "添加机位", icon: Camera },
     { id: "assets", label: "素材", icon: Boxes },
 ] as const;
 
