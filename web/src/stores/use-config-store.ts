@@ -744,7 +744,7 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
 }
 
 function beefApiVideoProtocol(model: string): ModelProtocol {
-    if (/^seedance-2\.(?:0|5)(?:-|$)/i.test(model)) return "openai-videos";
+    if (/^seedance-2\.(?:0|5)(?:-|$)/i.test(model)) return "newapi";
     // Other BeefAPI media models retain their existing channel-2 contract.
     return "newapi-channel-2";
 }
@@ -759,7 +759,7 @@ function beefApiSeedanceCapabilityConfig(model: string, current?: ModelCapabilit
         refs?.maxImages === 9 && refs.maxVideos === 0 && refs.maxAudios === 0 &&
         refs.maxVideoBytes === 200 * 1024 * 1024 && refs.maxAudioBytes === 15 * 1024 * 1024 &&
         refs.maxVideoDurationSeconds === 0 && refs.maxAudioDurationSeconds === 0;
-    const defaults = defaultModelCapabilityConfig("openai-videos", model);
+    const defaults = defaultModelCapabilityConfig("newapi", model);
     if (!current) return defaults;
     if (!legacy) return current;
     const next = defaults.video!;
