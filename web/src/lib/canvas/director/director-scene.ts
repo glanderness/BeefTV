@@ -62,6 +62,23 @@ export function toggleDirectorCameraLock(scene: DirectorScene, id: string): Dire
     return { ...scene, cameras: scene.cameras.map((camera) => camera.id === id ? { ...camera, locked: !camera.locked } : camera) };
 }
 
+/** 副本保留媒体与动画内容，但所有可编辑记录均有独立标识与引用。 */
+export function duplicateDirectorObject(source: DirectorObject): DirectorObject {
+    const copy = structuredClone(source);
+    return {
+        ...copy,
+        id: nanoid(),
+        name: `${source.name}副本`,
+        keyframes: copy.keyframes.map((frame) => ({ ...frame, id: nanoid() })),
+        boneTracks: copy.boneTracks?.map((track) => ({ ...track, keyframes: track.keyframes.map((frame) => ({ ...frame, id: nanoid() })) })),
+    };
+}
+
+export function duplicateDirectorCamera(source: DirectorCamera): DirectorCamera {
+    const copy = structuredClone(source);
+    return { ...copy, id: nanoid(), name: `${source.name}副本`, keyframes: copy.keyframes.map((frame) => ({ ...frame, id: nanoid() })) };
+}
+
 export function createDirectorObject(primitive: DirectorObject["primitive"] = "box", name = "新对象", position: DirectorVec3 = [0, 0.5, 0], color = "#8795a5"): DirectorObject {
     return {
         id: nanoid(),
