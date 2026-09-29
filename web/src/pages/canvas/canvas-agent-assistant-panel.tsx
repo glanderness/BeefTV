@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Bot, ChevronRight, Loader2, Send, Square } from "lucide-react";
 import { Button, Tooltip } from "antd";
 
+import { acceptExternalCanvasRevision, pendingExternalCanvasRevision } from "@/services/local-workspace-repository";
+import { canvasExternalRevisionVersion, subscribeCanvasExternalRevision } from "@/stores/canvas/use-canvas-store";
 import {
     cancelAgentChat,
     getAgentHostStatus,
@@ -28,6 +30,8 @@ type Props = {
     canvasId: string;
     selectedCount: number;
     selectedNodeIds?: string[];
+    /** 一次对话回合落地后通知画布拉取最新内容（助手可能已改动画布）。 */
+    onTurnSettled?: (canvasId: string) => void;
 };
 
 const createRun = (): RunState => ({
@@ -39,7 +43,7 @@ const createRun = (): RunState => ({
 });
 
 // 画布内创作助手：会话与运行句柄按画布各持一份，异步结果只写回发送时的画布。
-export function CanvasAgentAssistantPanel({ canvasId, selectedCount, selectedNodeIds = [] }: Props) {
+export function CanvasAgentAssistantPanel({ canvasId, selectedCount, selectedNodeIds = [], onTurnSettled }: Props) {
     const [collapsed, setCollapsed] = useState(false);
     const [status, setStatus] = useState<AgentHostStatus | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -47,6 +51,9 @@ export function CanvasAgentAssistantPanel({ canvasId, selectedCount, selectedNod
     // 单一事实来源：每个画布一条运行状态；UI 只是当前画布的投影。
     const runsRef = useRef<Map<string, RunState>>(new Map());
     const activeCanvasRef = useRef(canvasId);
+    // 回调用 ref 持有：发送时冻结的 run 只认当时的画布归属，不受之后重渲染影响。
+    const onTurnSettledRef = useRef(onTurnSettled);
+    onTurnSettledRef.current = onTurnSettled;
     const [, forceRender] = useState(0);
     const logRef = useRef<HTMLDivElement | null>(null);
 
@@ -95,7 +102,7 @@ export function CanvasAgentAssistantPanel({ canvasId, selectedCount, selectedNod
         const run = runFor(targetCanvas);
         if (run.streaming) return;
         if (!status?.available) {
-            setError("助手尚未启动，请在设置中启动创作助手");
+            setError("创作助手暂时不可用，请稍后再试");
             return;
         }
         setDraft("");
@@ -120,14 +127,6 @@ export function CanvasAgentAssistantPanel({ canvasId, selectedCount, selectedNod
                     }
                     rerenderIfActive(targetCanvas);
                 },
-                onToolCall: (call) => {
-                    const current = runFor(targetCanvas);
-                    const key = call.toolCallId || `${call.tool}:${current.toolCalls.length}`;
-                    if (current.seenToolCallIds.has(key)) return;   // 同一工具调用只显示一次
-                    current.seenToolCallIds.add(key);
-                    current.toolCalls = [...current.toolCalls, { ...call, toolCallId: key }];
-                    rerenderIfActive(targetCanvas);
-                },
                 onTurnEnd: (end) => {
                     const current = runFor(targetCanvas);
                     for (const call of end.toolCalls || []) {
@@ -140,12 +139,16 @@ export function CanvasAgentAssistantPanel({ canvasId, selectedCount, selectedNod
                         ...current.messages.filter((item) => item.id !== `${runId}-stream`),
                         { id: `${runId}-assistant`, role: "assistant", text: end.reply || streamed || "（无回复）" },
                     ];
+                    // 助手这一回合可能已经改动画布；立刻让画布拉取，而不是等下一次轮询。
+                    onTurnSettledRef.current?.(targetCanvas);
                     rerenderIfActive(targetCanvas);
                 },
             }, controller.signal, selectedSnapshot);
         } catch (streamError) {
-            const text = streamError instanceof Error ? streamError.message : String(streamError);
-            if (activeCanvasRef.current === targetCanvas) setError(text);
+            // 用户点「停止」会以 AbortError 结束这次请求：这是预期结果，不该显示浏览器原话。
+            const aborted = streamError instanceof DOMException && streamError.name === "AbortError";
+            const text = aborted ? "已停止这次生成" : streamError instanceof Error ? streamError.message : String(streamError);
+            if (!aborted && activeCanvasRef.current === targetCanvas) setError(text);
             const current = runFor(targetCanvas);
             current.messages = [...current.messages, { id: `${runId}-notice`, role: "notice", text }];
             rerenderIfActive(targetCanvas);
@@ -172,6 +175,9 @@ export function CanvasAgentAssistantPanel({ canvasId, selectedCount, selectedNod
     const run = runsRef.current.get(canvasId) ?? createRun();
     const streaming = run.streaming;
     const toolCalls = run.toolCalls;
+    // 外部写入被本地编辑挡住时给出明确出路：保留用户内容，并提供采用最新版本的入口。
+    const externalRevision = useSyncExternalStore(subscribeCanvasExternalRevision, canvasExternalRevisionVersion);
+    const externalConflict = pendingExternalCanvasRevision(canvasId);
 
     if (collapsed) {
         return (
@@ -180,6 +186,10 @@ export function CanvasAgentAssistantPanel({ canvasId, selectedCount, selectedNod
                     size="small"
                     shape="circle"
                     data-canvas-no-zoom
+                    // 外层挂载容器是 pointer-events-none（避免遮挡画布），因此收起后的
+                    // 这个小按钮必须自己恢复指针事件，否则用户点不开面板。
+                    className="pointer-events-auto"
+                    aria-label="展开创作助手"
                     onClick={() => setCollapsed(false)}
                     icon={<Bot className="size-4" />}
                 />
@@ -210,7 +220,24 @@ export function CanvasAgentAssistantPanel({ canvasId, selectedCount, selectedNod
 
             {status && !status.available ? (
                 <div className="border-b border-[var(--border-color)] px-3 py-1.5 text-[10px] text-[var(--text-secondary)]">
-                    助手尚未启动，请在设置中启动创作助手
+                    创作助手暂时不可用，你仍可以继续手工编辑画布
+                </div>
+            ) : null}
+
+            {externalConflict ? (
+                <div
+                    data-canvas-assistant-external-revision={externalRevision}
+                    className="flex flex-col gap-1 border-b border-[var(--border-color)] px-3 py-1.5 text-[10px] text-[var(--text-secondary)]"
+                >
+                    <span>画布已在其他入口更新，你正在编辑的内容仍保留在这里。</span>
+                    <Button
+                        size="small"
+                        onClick={() => {
+                            void acceptExternalCanvasRevision(canvasId).catch(() => setError("加载最新版本失败，请稍后再试"));
+                        }}
+                    >
+                        使用最新版本
+                    </Button>
                 </div>
             ) : null}
 
@@ -236,7 +263,7 @@ export function CanvasAgentAssistantPanel({ canvasId, selectedCount, selectedNod
                     <div className="space-y-1">
                         {toolCalls.map((call) => (
                             <div key={call.toolCallId} className="rounded border-l-2 border-[var(--border-color)] px-2 py-1 text-[10px] text-[var(--text-secondary)]">
-                                {call.isError ? "此操作未完成" : "此操作已完成，未重复执行"}
+                                {call.isError ? "有一项改动没有完成" : "已按你的要求改动画布"}
                                 {call.error ? ` · ${call.error}` : ""}
                             </div>
                         ))}

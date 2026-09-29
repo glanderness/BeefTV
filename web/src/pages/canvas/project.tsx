@@ -316,13 +316,12 @@ function InfiniteCanvasPage() {
         let disposed = false;
         const check = () => {
             if (disposed) return;
-            void refreshLocalCanvasProjectIfChanged(projectId).then((project) => {
-                if (!disposed && project) {
-                    setNodes(project.nodes || []);
-                    setConnections(project.connections || []);
-                }
-            });
+            // 应用到本地后由本地工作区同步层通知编辑器（subscribeCanvasRefresh），
+            // 这里不再重复写节点状态，避免两套投影互相覆盖。
+            void refreshLocalCanvasProjectIfChanged(projectId);
         };
+        // 助手回合结束与外部改动画布都要立刻可见：助手回合回调会直接调 check，
+        // 这里的定时器只作为外部客户端改动的兜底。
         const timer = window.setInterval(check, 4000);
         return () => { disposed = true; window.clearInterval(timer); };
     }, [projectId, setNodes]);
@@ -346,6 +345,12 @@ function InfiniteCanvasPage() {
     const [size, setSize] = useState({ width: 1200, height: 720 });
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
     const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
+    // 选中项保存的是节点 id，切到另一个画布后这些 id 并不属于新画布：
+    // 不清空会同时污染选中高亮和创作助手请求的归属校验（后端按画布校验选中对象）。
+    useEffect(() => {
+        setSelectedNodeIds(new Set());
+        setSelectedConnectionId(null);
+    }, [projectId]);
     const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     const [isMiniMapOpen, setIsMiniMapOpen] = useState(() => scopedLocalStorage.getItem("canvas:minimap") === "1");
@@ -854,6 +859,12 @@ function InfiniteCanvasPage() {
         setNodes((current) => refreshCanvasCharacterReferenceNodes(current, linkedProjectQuery.data.assets));
     }, [linkedProjectQuery.data, projectLoaded, setNodes]);
     const canvasContext = useMemo(() => summarizeCanvasContext(nodes, selectedNodeIds, linkedProjectQuery.data?.units), [linkedProjectQuery.data?.units, nodes, selectedNodeIds]);
+    // 助手只接受属于当前画布的选中项：切画布那一帧仍可能残留旧 id，这里做硬约束，
+    // 不让跨画布的 id 进入请求（后端会按画布校验并拒绝整个回合）。
+    const assistantSelectedNodeIds = useMemo(() => {
+        const available = new Set(nodes.map((node) => node.id));
+        return Array.from(selectedNodeIds).filter((id) => available.has(id));
+    }, [nodes, selectedNodeIds]);
     // 扩展节点（对比/图表/调色）要读自己的上游才能渲染，经 Context 下发；
     // 取上游复用 canvas-resource-references 的实现，别在这里另写一份。必须 memo——
     // 每帧新对象会让所有节点跟着重渲染，错题本里多条崩溃都出在画布高频更新。
@@ -3273,7 +3284,12 @@ function InfiniteCanvasPage() {
                             <CanvasAgentAssistantPanel
                                 canvasId={projectId}
                                 selectedCount={selectedNodeBounds?.count ?? 0}
-                                selectedNodeIds={Array.from(selectedNodeIds)}
+                                selectedNodeIds={assistantSelectedNodeIds}
+                                onTurnSettled={(canvasId) => {
+                                    // 助手这一回合可能已改动画布；立即拉取，不依赖轮询间隔。
+                                    if (canvasId !== projectId) return;
+                                    void refreshLocalCanvasProjectIfChanged(canvasId);
+                                }}
                             />
                         </div>
                         {selectedNodeBounds && !selectionBox && !isCanvasNodeMoving ? (

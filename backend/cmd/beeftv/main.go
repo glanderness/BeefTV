@@ -183,12 +183,13 @@ func mapEnvelopeError(status int, reason, msg string, details map[string]any) er
 	return &cliError{code: code, reason: reason, msg: msg, details: details}
 }
 
+// listOps 拉取操作清单。
+//
+// 服务端已经按调用者身份（登记客户端权限/owner）返回基础集合；`--read-only` 在这里
+// 只做本地收紧：即使服务端因为任何原因返回了写操作，只读模式也绝不把它们交给
+// MCP 或调用方。查询参数不能用于放宽权限，所以客户端不再发送它。
 func (c *client) listOps(readOnly bool) ([]opDescriptor, error) {
-	path := "/ops"
-	if readOnly {
-		path += "?readOnly=1"
-	}
-	raw, err := c.do(context.Background(), http.MethodGet, path, nil)
+	raw, err := c.do(context.Background(), http.MethodGet, "/ops", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +199,16 @@ func (c *client) listOps(readOnly bool) ([]opDescriptor, error) {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return nil, &cliError{code: exitInternal, reason: "invalid_ops_payload", msg: err.Error()}
 	}
-	return payload.Ops, nil
+	if !readOnly {
+		return payload.Ops, nil
+	}
+	tightened := make([]opDescriptor, 0, len(payload.Ops))
+	for _, op := range payload.Ops {
+		if op.ReadOnly {
+			tightened = append(tightened, op)
+		}
+	}
+	return tightened, nil
 }
 
 func (c *client) callOp(opID, requestID string, params json.RawMessage) (json.RawMessage, error) {
@@ -401,11 +411,12 @@ func requireVerb(group string, args []string, verb string) error {
 }
 
 // flagError 把 -h/--help 视为正常退出，其余解析失败按用法错误。
+// 这里绝不能递归调用自己：非法 flag 会直接打爆栈，而不是给用户一条错误。
 func flagError(err error) error {
 	if errors.Is(err, flag.ErrHelp) {
 		return nil
 	}
-	return flagError(err)
+	return &cliError{code: exitUsage, reason: "bad_flags", msg: err.Error()}
 }
 
 func runCanvasNodeUpdate(c *client, args []string) error {

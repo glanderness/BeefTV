@@ -185,7 +185,7 @@ func (r *Registry) Execute(req Request) (Result, error) {
 	}
 	hash := PayloadHash(op.ID, params)
 	baseCtx := req.UserID
-	outcome, err := r.store.Run(req.UserID, opID, op.ID, hash, func(tx *gorm.DB) ([]byte, error) {
+	outcome, err := r.store.Run(runCtx, req.UserID, opID, op.ID, hash, func(tx *gorm.DB) ([]byte, error) {
 		execCtx := &Context{Context: runCtx, UserID: baseCtx, ReadOnly: req.ReadOnly, Tx: tx, Services: r.services}
 		value, runErr := op.Handler(execCtx, params)
 		if runErr != nil {

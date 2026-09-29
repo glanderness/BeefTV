@@ -1,6 +1,7 @@
 package agentops
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -35,16 +36,20 @@ type RunOutcome struct {
 
 // Run 在一个事务里执行 fn，并用 opId 做持久化去重。
 // opId 为空表示调用方不需要幂等保证（只读操作）。
-func (s *Store) Run(userID, opID, op, payloadHash string, fn func(tx *gorm.DB) ([]byte, error)) (RunOutcome, error) {
+func (s *Store) Run(ctx context.Context, userID, opID, op, payloadHash string, fn func(tx *gorm.DB) ([]byte, error)) (RunOutcome, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	db := s.db.WithContext(ctx)
 	if strings.TrimSpace(opID) == "" {
-		out, err := fn(s.db)
+		out, err := fn(db)
 		return RunOutcome{Result: out}, err
 	}
 	if !s.Available() {
 		return RunOutcome{}, newError(CodeInternal, "op_store_unavailable", "操作记录存储不可用", nil)
 	}
 	var outcome RunOutcome
-	err := s.db.Transaction(func(tx *gorm.DB) error {
+	err := db.Transaction(func(tx *gorm.DB) error {
 		record := model.AgentOpRecord{OpID: opID, UserID: userID, Op: op, PayloadHash: payloadHash, Status: "running"}
 		if err := tx.Create(&record).Error; err != nil {
 			if !isDuplicateKey(err) {

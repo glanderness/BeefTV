@@ -87,7 +87,9 @@ func opCanvasSearch(ctx *Context, params json.RawMessage) (any, error) {
 		CanvasID string `json:"canvasId"`
 		Sort     string `json:"sort"`
 	}
-	_ = json.Unmarshal(params, &args)
+	if err := json.Unmarshal(params, &args); err != nil {
+		return nil, InvalidArg("invalid_params", err.Error())
+	}
 	page := args.Page
 	if page <= 0 {
 		page = 1
@@ -114,7 +116,9 @@ func opAssetList(ctx *Context, params json.RawMessage) (any, error) {
 		Kind     string `json:"kind"`
 		Category string `json:"category"`
 	}
-	_ = json.Unmarshal(params, &args)
+	if err := json.Unmarshal(params, &args); err != nil {
+		return nil, InvalidArg("invalid_params", err.Error())
+	}
 	page := args.Page
 	if page <= 0 {
 		page = 1
@@ -344,21 +348,15 @@ func opCanvasEdgeCreate(ctx *Context, params json.RawMessage) (any, error) {
 	if args.FromNodeID == args.ToNodeID {
 		return nil, InvalidArg("self_loop", "不能把节点连接到自身")
 	}
-	if _, err := ctx.Services.ConnectUserCanvasNodesWithTx(ctx.Tx, ctx.UserID, args.CanvasID, args.FromNodeID, args.ToNodeID, args.ExpectedRevision); err != nil {
+	summary, err := ctx.Services.ConnectUserCanvasNodesWithTx(ctx.Tx, ctx.UserID, args.CanvasID, args.FromNodeID, args.ToNodeID, args.ExpectedRevision)
+	if err != nil {
 		return nil, mapDomainError(err)
 	}
+	// 领域层遇到已存在的连线会原样返回（revision 不变），真正新建才推进 revision。
+	// 写后扫描连线永远能扫到这条边，因此必须按领域结果判定，而不是按写后状态判定。
+	created := summary.Revision != args.ExpectedRevision
 	return canvasWriteResult(ctx, args.CanvasID, func(doc map[string]any) map[string]any {
-		duplicate := false
-		if connections, ok := doc["connections"].([]any); ok {
-			for _, rawEdge := range connections {
-				if edge, ok := rawEdge.(map[string]any); ok {
-					if edge["fromNodeId"] == args.FromNodeID && edge["toNodeId"] == args.ToNodeID {
-						duplicate = true
-					}
-				}
-			}
-		}
-		return map[string]any{"canvasId": args.CanvasID, "duplicate": duplicate}
+		return map[string]any{"canvasId": args.CanvasID, "duplicate": !created, "revision": summary.Revision}
 	})
 }
 

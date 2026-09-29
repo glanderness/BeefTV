@@ -102,10 +102,11 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 			fail(c, http.StatusRequestEntityTooLarge, app.BadAuthRequest("请求体超过 1MB 限制"))
 			return
 		}
+		// 只读能力只由客户端身份（登记模式）决定：请求体不接受 readOnly，
+		// 免得调用方误以为声明一个字段就能改能力模式。
 		var req struct {
-			OpID     string          `json:"opId"`
-			Params   json.RawMessage `json:"params"`
-			ReadOnly bool            `json:"readOnly"`
+			OpID   string          `json:"opId"`
+			Params json.RawMessage `json:"params"`
 		}
 		if len(strings.TrimSpace(string(body))) > 0 {
 			if err := json.Unmarshal(body, &req); err != nil {

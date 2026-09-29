@@ -25,6 +25,9 @@ type NodeDraft struct {
 
 var canvasCapabilityRegistry = capability.BuiltinRegistry()
 
+// nodePlacementGap 是自动排布时相邻节点的水平间距。
+const nodePlacementGap = 60.0
+
 func canvasDocNodes(doc map[string]any) []any {
 	if nodes, ok := doc["nodes"].([]any); ok {
 		return nodes
@@ -133,6 +136,8 @@ func (s *Service) CreateUserCanvasNodes(userID, canvasID string, drafts []NodeDr
 				"不支持的节点类型: "+draft.Type+"（可用: "+strings.Join(canvasCapabilityRegistry.Types(), "|")+"）")
 		}
 	}
+	// 排布按已放置节点的累计宽度推进：不同类型宽度不同，用序号乘自身宽度会互相压住。
+	cursorX := 120.0
 	for _, draft := range drafts {
 		descriptor, _ := canvasCapabilityRegistry.Resolve(draft.Type)
 		width, height := descriptor.DefaultWidth, descriptor.DefaultHeight
@@ -148,15 +153,21 @@ func (s *Service) CreateUserCanvasNodes(userID, canvasID string, drafts []NodeDr
 		}
 		nodes = append(nodes, map[string]any{
 			"id": newCanvasNodeID(), "type": draft.Type, "title": draft.Title,
-			"position": map[string]any{"x": 120 + len(nodes)*int(width), "y": 160},
+			"position": map[string]any{"x": cursorX, "y": 160},
 			"width":    width, "height": height, "metadata": metadata,
 		})
+		cursorX += width + nodePlacementGap
 	}
 	doc["nodes"] = nodes
 	return s.saveCanvasDocWithRevision(userID, canvasID, doc, expectedRevision)
 }
 
 // UpdateUserCanvasNodeFields 局部更新：只覆盖 patch 给出的字段，其余数据逐字保留。
+//
+// 字段落点由能力描述符决定，操作层不再自造映射：生成类节点声明 content ->
+// metadata.composerContent（画布编辑器读的正是这个字段），文本类节点声明
+// content -> metadata.content。曾经直接写 metadata.content 会把生成节点的
+// 媒体结果槽位当成提示词覆盖掉，而写出的值编辑器又看不到。
 func (s *Service) UpdateUserCanvasNodeFields(userID, canvasID, nodeID string, patch map[string]any, expectedRevision int64) (UserDataSummary, error) {
 	if err := requireExpectedRevision(expectedRevision); err != nil {
 		return UserDataSummary{}, err
@@ -176,14 +187,40 @@ func (s *Service) UpdateUserCanvasNodeFields(userID, canvasID, nodeID string, pa
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
-	if title, ok := patch["title"].(string); ok {
-		node["title"] = title
+	descriptor, hasDescriptor := canvasCapabilityRegistry.Resolve(canvasNodeType(node))
+	declared := map[string]any{}
+	for key, value := range patch {
+		if !hasDescriptor {
+			continue
+		}
+		if _, ok := descriptor.PatchFields[key]; ok {
+			declared[key] = value
+			continue
+		}
+		// prompt 是生成结果字段（已提交提示词），不在可编辑字段表里：
+		// 保留直接写入语义，避免既有 CLI/MCP 入口失效。
+		if key == "prompt" {
+			if prompt, ok := value.(string); ok {
+				metadata["prompt"] = prompt
+			}
+		}
 	}
-	if prompt, ok := patch["prompt"].(string); ok {
-		metadata["prompt"] = prompt
+	if len(declared) > 0 {
+		if err := descriptor.ApplyPatch(node, declared); err != nil {
+			return UserDataSummary{}, kernel.NewAppError(http.StatusBadRequest, err.Error())
+		}
 	}
-	if content, ok := patch["content"].(string); ok {
-		metadata["content"] = content
+	if !hasDescriptor {
+		// 未知类型没有描述符可用，沿用最小直写行为。
+		if title, ok := patch["title"].(string); ok {
+			node["title"] = title
+		}
+		if prompt, ok := patch["prompt"].(string); ok {
+			metadata["prompt"] = prompt
+		}
+		if content, ok := patch["content"].(string); ok {
+			metadata["content"] = content
+		}
 	}
 	node["metadata"] = metadata
 	return s.saveCanvasDocWithRevision(userID, canvasID, doc, expectedRevision)
@@ -206,10 +243,9 @@ func (s *Service) ConnectUserCanvasNodesAtRevision(userID, canvasID, fromNodeID,
 	if toNode == nil {
 		return UserDataSummary{}, kernel.NewAppError(http.StatusNotFound, "终点节点不存在: "+toNodeID)
 	}
-	if descriptor, ok := canvasCapabilityRegistry.Resolve(canvasNodeType(fromNode)); ok {
-		if err := descriptor.ValidateConnection(canvasNodeType(toNode)); err != nil {
-			return UserDataSummary{}, kernel.NewAppError(http.StatusBadRequest, err.Error())
-		}
+	// 方向判定交给共享能力校验：来源可作输入、目标可接收、类型被目标放行。
+	if err := canvasCapabilityRegistry.ValidateReferenceConnection(canvasNodeType(fromNode), canvasNodeType(toNode)); err != nil {
+		return UserDataSummary{}, kernel.NewAppError(http.StatusBadRequest, err.Error())
 	}
 	connections, _ := doc["connections"].([]any)
 	for _, rawEdge := range connections {
@@ -221,6 +257,25 @@ func (s *Service) ConnectUserCanvasNodesAtRevision(userID, canvasID, fromNodeID,
 		to, _ := edge["toNodeId"].(string)
 		if from == fromNodeID && to == toNodeID {
 			return s.canvasSummary(userID, canvasID)
+		}
+	}
+	if maxInputs := canvasCapabilityRegistry.MaxReferenceInputCount(canvasNodeType(toNode)); maxInputs > 0 {
+		inputs := map[string]bool{}
+		for _, rawEdge := range connections {
+			edge, ok := rawEdge.(map[string]any)
+			if !ok {
+				continue
+			}
+			if target, _ := edge["toNodeId"].(string); target == toNodeID {
+				source, _ := edge["fromNodeId"].(string)
+				inputs[source] = true
+			}
+		}
+		inputs[fromNodeID] = true
+		if len(inputs) > maxInputs {
+			label := canvasCapabilityRegistry.LabelFor(canvasNodeType(toNode))
+			return UserDataSummary{}, kernel.NewAppError(http.StatusBadRequest,
+				label+"最多连接 "+strconv.Itoa(maxInputs)+" 个输入")
 		}
 	}
 	doc["connections"] = append(connections, map[string]any{

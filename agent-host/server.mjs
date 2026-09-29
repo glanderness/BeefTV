@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { createAgentSession, createExtensionRuntime, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { createModels } from '@earendil-works/pi-ai';
 import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
+import { sessionActionIdentity, toolOperationId } from './session-identity.mjs';
 
 const OPS_URL = (process.env.BEEFTV_OPS_URL || 'http://127.0.0.1:18090/api').replace(/\/+$/, '');
 const OWNER_TOKEN = process.env.BEEFTV_OWNER_TOKEN || '';
@@ -134,7 +135,7 @@ function scopedSchema(params) {
   return clone;
 }
 
-function buildTools(canvasId, log, generation, turn) {
+function buildTools(canvasId, log, generation, turn, identityPrefix) {
   return [...descriptors.entries()].map(([toolName, descriptor]) => ({
     name: toolName,
     label: descriptor.id,
@@ -150,8 +151,9 @@ function buildTools(canvasId, log, generation, turn) {
       params.canvasId = canvasId;                       // 会话 scope 由宿主注入
       let opId = '';
       if (!descriptor.readOnly) {
-        // 动作身份 = 宿主运行 id + SDK 工具调用 id：同一次工具调用被重试时复用，跨重启不会与历史动作撞号。
-        opId = `${sessionIdentity}:${toolCallId || `${turn.seq}-${descriptor.id}`}`;
+        // 动作身份 = 本会话身份 + SDK 工具调用 id：同一次工具调用重试时复用，
+        // 不同会话之间不会互相覆盖或撞号（identityPrefix 来自本会话，不是进程全局）。
+        opId = toolOperationId(identityPrefix, toolCallId, `${turn.seq}-${descriptor.id}`);
       }
       const started = Date.now();
       try {
@@ -166,9 +168,7 @@ function buildTools(canvasId, log, generation, turn) {
   }));
 }
 
-const sessions = new Map();   // canvasId → { session, log, busy, generation, turn }
-let sessionIdentity = `run:${RUN_ID}`;
-let persistenceState = 'ok';
+const sessions = new Map();   // canvasId → { session, log, busy, generation, turn, identity, persistence }
 
 async function ensureSession(canvasId) {
   const existing = sessions.get(canvasId);
@@ -182,28 +182,29 @@ async function ensureSession(canvasId) {
   const sessionDir = path.join(SESSION_ROOT, path.basename(cwd));
   fs.mkdirSync(sessionDir, { recursive: true });
   let sessionManager;
+  let persistence = 'ok';
   try {
     const known = await SessionManager.list(cwd, sessionDir);
     if (known.length > 0) {
       const target = [...known].sort((a, b) => String(b.modified ?? '').localeCompare(String(a.modified ?? '')))[0];
       const file = target.path || SessionManager.findById(cwd, target.id, sessionDir);
       sessionManager = file ? SessionManager.open(file, sessionDir, cwd) : SessionManager.continueRecent(cwd, sessionDir);
-      persistenceState = `restored:${target.id || path.basename(String(file))}`;
+      persistence = `restored:${target.id || path.basename(String(file))}`;
     } else {
       sessionManager = SessionManager.create(cwd, sessionDir);
-      persistenceState = 'created';
+      persistence = 'created';
     }
   } catch (error) {
-    persistenceState = 'unavailable';
+    persistence = 'unavailable';
     throw new Error(`会话持久化不可用（SessionManager 恢复失败）：${error.message}`);
   }
   // 动作身份优先用官方持久会话 id：同一未确认工具调用在重启后仍映射到同一 operationId，
   // 不会因新进程换 RUN_ID 而重复执行。SDK 未暴露 id 时回退 RUN_ID（此时不静默重放）。
   const persistedId = (typeof sessionManager.getSessionId === 'function' && sessionManager.getSessionId()) ||
     (typeof sessionManager.getSessionFile === 'function' && sessionManager.getSessionFile() ? path.basename(String(sessionManager.getSessionFile())) : '') || '';
-  sessionIdentity = persistedId || `run:${RUN_ID}`;
-  console.error(`agent-host: 会话 ${canvasId} 的动作身份来源 = ${persistedId ? 'persistent-session-id' : 'run-id'}`);
-  const tools = buildTools(canvasId, log, generation, turn);
+  const identity = sessionActionIdentity({ persistedId, runId: RUN_ID });
+  console.error(`agent-host: 会话 ${canvasId} 的动作身份来源 = ${identity.source}（persistence=${persistence}）`);
+  const tools = buildTools(canvasId, log, generation, turn, identity.prefix);
   const { session } = await createAgentSession({
     cwd,
     agentDir: AGENT_DIR,
@@ -215,7 +216,7 @@ async function ensureSession(canvasId) {
     settingsManager: SettingsManager.inMemory(),
     sessionManager,
   });
-  const entry = { session, log, busy: false, generation, turn };
+  const entry = { session, log, busy: false, generation, turn, identity, persistence };
   sessions.set(canvasId, entry);
   return entry;
 }
@@ -253,9 +254,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (req.method === 'GET' && url.pathname === '/health') {
+    // 持久化状态属于每个会话，不再是进程级单值：这里汇总当前活动会话的状态。
+    const persistenceSummary = sessions.size === 0 ? 'ok' : [...new Set([...sessions.values()].map((entry) => entry.persistence))].join(',');
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, sessions: sessions.size, model: MODEL.id, baseUrl: MODEL.baseUrl,
-      persistence: persistenceState, runId: RUN_ID, requests: { dispatched, cap: MAX_MODEL_REQUESTS },
+      persistence: persistenceSummary, runId: RUN_ID, requests: { dispatched, cap: MAX_MODEL_REQUESTS },
       operations: descriptors.size, readOnly: READ_ONLY_MODE, lastOutbound: outbound.at(-1) || null }));
     return;
   }
@@ -310,7 +313,7 @@ const server = http.createServer(async (req, res) => {
         finally { clearTimeout(timer); unsubscribe(); }
         const reply = entry.session.getLastAssistantText?.() || '';
         sendLine(res, { type: 'turn_end', reply, toolCalls: entry.log.slice(before), error,
-          cancelled: entry.generation.aborted, persistence: persistenceState,
+          cancelled: entry.generation.aborted, persistence: entry.persistence,
           metrics: { firstTokenMs, totalMs: Date.now() - started } });
         res.end();
         return;

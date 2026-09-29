@@ -91,7 +91,9 @@ func hostEnv(dataDir, model, baseURL string) []string {
 	appendIf("BEEFTV_AGENT_DATA_DIR", dataDir)
 	appendIf("BEEFTV_AGENT_MODEL", model)
 	appendIf("BEEFTV_AGENT_BASE_URL", baseURL)
-	appendIf("BEEFTV_OPS_URL", "http://127.0.0.1:"+strconv.Itoa(backendPort()))
+	// 宿主把 BEEFTV_OPS_URL 当基址再拼 /ops；少了 /api 前缀时操作层探测只会拿到 404，
+	// 宿主随即退出（表现为「助手不可用」）。
+	appendIf("BEEFTV_OPS_URL", "http://127.0.0.1:"+strconv.Itoa(backendPort())+"/api")
 	appendIf("BEEFTV_AGENT_HOST_TOKEN", readAgentHostToken(dataDir))
 	appendIf("BEEFTV_OWNER_TOKEN", ownerTokenFromFile(dataDir))
 	return env
