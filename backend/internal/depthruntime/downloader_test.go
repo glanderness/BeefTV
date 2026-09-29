@@ -147,3 +147,14 @@ func TestDownloadRejectsAssembledArchiveWithBadHash(t *testing.T) {
 		t.Fatalf("bad complete archive hash was accepted: %v", err)
 	}
 }
+
+func TestDownloadRejectsReleasePartsWhoseSizesDoNotAddUp(t *testing.T) {
+	hash := sha256.Sum256([]byte("whole"))
+	err := Download(context.Background(), Artifact{
+		Size: 5, SHA256: hex.EncodeToString(hash[:]),
+		Parts: []ArtifactPart{{URLs: []string{"https://example.invalid/part"}, Size: 4, SHA256: hex.EncodeToString(hash[:])}},
+	}, filepath.Join(t.TempDir(), "runtime.zip"), nil)
+	if err == nil {
+		t.Fatal("mismatched release part total was accepted")
+	}
+}
