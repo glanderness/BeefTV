@@ -129,6 +129,17 @@ export type DirectorShot = {
     previewNodeId?: string;
     depthNodeId?: string;
     normalNodeId?: string;
+    screenshots?: DirectorScreenshot[];
+};
+
+export type DirectorScreenshot = {
+    id: string;
+    name: string;
+    storageKey: string;
+    url: string;
+    width: number;
+    height: number;
+    createdAt: string;
 };
 
 export type DirectorScene = {

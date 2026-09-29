@@ -1,4 +1,4 @@
-import type { DirectorScene } from "../../../types/director";
+import type { DirectorScene, DirectorScreenshot } from "../../../types/director";
 
 /**
  * 打开期间本地 draft 是唯一权威：只有 scene id 变化（或首次挂载）才重建会话。
@@ -25,6 +25,19 @@ export function mergeDirectorOutputPreview(scene: DirectorScene, input: { sceneI
         ...scene,
         shots: scene.shots.map((shot) => (shot.id === input.shotId ? { ...shot, previewNodeId: input.previewNodeId, depthNodeId: undefined, normalNodeId: undefined } : shot)),
     };
+}
+
+/** 截图上传完成后合入最新场景，避免旧快照覆盖期间的其他编辑。 */
+export function appendDirectorScreenshot(scene: DirectorScene, input: { sceneId: string; shotId: string; screenshot: DirectorScreenshot }): DirectorScene {
+    if (scene.id !== input.sceneId || !scene.shots.some((shot) => shot.id === input.shotId)) return scene;
+    return {
+        ...scene,
+        shots: scene.shots.map((shot) => shot.id === input.shotId ? { ...shot, screenshots: [...(shot.screenshots || []), input.screenshot] } : shot),
+    };
+}
+
+export function nextDirectorScreenshotName(cameraName: string, existingCount: number): string {
+    return `${cameraName}-shot-${String(existingCount + 1).padStart(2, "0")}`;
 }
 
 /** 长截图/录制结束前，场景引用与活动镜头必须仍是操作开始时的快照。 */

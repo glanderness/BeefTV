@@ -52,6 +52,7 @@ type DirectorViewportProps = {
     viewMode?: DirectorViewMode;
     /** 提供该回调即在视口内渲染 3D/CAM 切换器；不提供则不显示，视口仍按 viewMode 取景。 */
     onViewModeChange?: (mode: DirectorViewMode) => void;
+    onCaptureReadyChange?: (ready: boolean) => void;
     onSelectObject: (id: string | null) => void;
     onSelectBone: (bone: string | null) => void;
     onObjectTransform: (id: string, from: DirectorTransform, to: DirectorTransform) => void;
@@ -78,7 +79,7 @@ const DIRECTOR_FREE_ORBIT_TARGET: DirectorVec3 = [0, 1, 0];
 export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewportProps>(function DirectorViewport(props, ref) {
     // onViewModeChange 只服务 DOM 层的切换器，绝不进 Canvas 子树：它的身份每次父级
     // render 都可能变化，穿透到 memo 化的 Canvas 会触发 configure 重建 renderer。
-    const { onViewModeChange, ...sceneProps } = props;
+    const { onViewModeChange, onCaptureReadyChange, ...sceneProps } = props;
     const captureContext = useRef<CaptureContext | null>(null);
     const shellRef = useRef<HTMLDivElement>(null);
     const [shellSize, setShellSize] = useState({ width: 0, height: 0 });
@@ -133,6 +134,11 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
     const [retryKey, setRetryKey] = useState(0);
     // capture 可用性：上下文丢失期间不得再使用失效 renderer；恢复后需重新登记。
     const [capture, dispatchCapture] = useReducer(reduceDirectorCapture, directorCaptureInitial);
+    const captureReady = directorCaptureUsable(capture);
+    useEffect(() => {
+        onCaptureReadyChange?.(captureReady);
+    }, [captureReady, onCaptureReadyChange]);
+    useEffect(() => () => onCaptureReadyChange?.(false), [onCaptureReadyChange]);
     const captureRef = useRef(capture);
     captureRef.current = capture;
     // 加载失败的对象 id -> 该对象自己的 retry；Canvas 内部无法呈现可操作提示，统一提到 DOM 层。
@@ -245,7 +251,7 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
 });
 
 // onViewModeChange 被显式排除：切换器活在 DOM 层，Canvas 子树只需要 viewMode 取值。
-type DirectorCanvasSurfaceProps = Omit<DirectorViewportProps, "onViewModeChange"> & {
+type DirectorCanvasSurfaceProps = Omit<DirectorViewportProps, "onViewModeChange" | "onCaptureReadyChange"> & {
     onCaptureContext: (context: CaptureContext) => void;
     onRelease: () => void;
     onContextLost: () => void;

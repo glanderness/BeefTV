@@ -20,6 +20,9 @@ describe("导演台视口变换菜单", () => {
                 onAlignCamera: () => {},
                 timelineOpen: false,
                 onToggleTimeline: () => {},
+                captureBusy: false,
+                captureReady: true,
+                onCapture: () => {},
             }));
             expect(html).toContain(`aria-label="${label}"`);
             expect(html).toContain('aria-haspopup="menu"');
@@ -36,9 +39,23 @@ describe("导演台视口变换菜单", () => {
                 transformMode: "translate", renderMode: "beauty", renderModes: ["beauty"],
                 onTransformModeChange: () => {}, onRenderModeChange: () => {},
                 onAddActor: () => {}, onAddBox: () => {}, onAddLight: () => {}, onAddCamera: () => {}, onAlignCamera: () => {},
-                timelineOpen, onToggleTimeline: () => {},
+                timelineOpen, onToggleTimeline: () => {}, captureBusy: false, captureReady: true, onCapture: () => {},
             }));
             expect(html).toContain(`aria-label="动画时间轴" aria-pressed="${timelineOpen}"`);
         }
+    });
+
+    test("截图入口在捕获期间禁用，避免重复上传", () => {
+        const render = (captureBusy: boolean, captureReady = true) => renderToStaticMarkup(createElement(DirectorViewportDock, {
+            transformMode: "translate", renderMode: "beauty", renderModes: ["beauty"],
+            onTransformModeChange: () => {}, onRenderModeChange: () => {},
+            onAddActor: () => {}, onAddBox: () => {}, onAddLight: () => {}, onAddCamera: () => {}, onAlignCamera: () => {},
+            timelineOpen: false, onToggleTimeline: () => {}, captureBusy, captureReady, onCapture: () => {},
+        }));
+        expect(render(false)).toContain('aria-label="截图"');
+        expect(render(false)).not.toMatch(/aria-label="截图"[^>]*disabled/);
+        expect(render(true)).toMatch(/aria-label="截图"[^>]*disabled/);
+        expect(render(false, false)).toMatch(/aria-label="截图"[^>]*disabled/);
+        expect(render(false, false)).toContain('title="视口加载中"');
     });
 });

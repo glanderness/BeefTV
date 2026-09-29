@@ -9,6 +9,7 @@ import type { AnimationClip } from "three";
 
 import { CanvasDirectorOnboarding } from "@/components/canvas/director/canvas-director-onboarding";
 import { DirectorSceneInspector } from "@/components/canvas/director/director-scene-inspector";
+import { DirectorScreenshotGallery } from "@/components/canvas/director/director-screenshot-gallery";
 import { DirectorPanoramaAIModal } from "@/components/canvas/director/director-panorama-ai-modal";
 import { DirectorWorkbenchRail, type DirectorWorkbenchTab } from "@/components/canvas/director/director-workbench-rail";
 import { DirectorViewport, type DirectorViewportHandle } from "@/components/canvas/director/director-viewport";
@@ -24,7 +25,7 @@ import { resolveDirectorPlacement, resolveDirectorPlacementAnchor, snapDirectorG
 import { DIRECTOR_ASPECT_RATIOS } from "@/lib/canvas/director/director-aspect-ratio";
 import { generateDirectorPanorama, recoverDirectorPanoramaTasks } from "@/lib/canvas/director/director-panorama-generation";
 import { createDirectorCameraFromPreset, DIRECTOR_CAMERA_PRESETS, type DirectorCameraPresetId } from "@/lib/canvas/director/director-camera-presets";
-import { isDirectorOutputSnapshotCurrent, shouldReinitializeDirectorSession } from "@/lib/canvas/director/director-session";
+import { appendDirectorScreenshot, isDirectorOutputSnapshotCurrent, nextDirectorScreenshotName, shouldReinitializeDirectorSession } from "@/lib/canvas/director/director-session";
 import { blocksDirectorShortcut, releaseDirectorFocusAfterPointer, resolveDirectorShortcut, type DirectorShortcutAction } from "@/lib/canvas/director/director-shortcuts";
 import { createDirectorActor, createDirectorBillboard, createDirectorCamera, createDirectorLight, createDirectorModel, createDirectorObject, DIRECTOR_ACTOR_COLORS, directorBoneLabel, directorFocalLengthToFov, directorPoseLabel, interpolateDirectorTransform, removeDirectorSceneKeyframe, setDirectorSceneKeyframeEasing, touchDirectorScene, upsertDirectorBoneKeyframe } from "@/lib/canvas/director/director-scene";
 import { searchDirectorSceneItems } from "@/lib/canvas/director/director-scene-search";
@@ -65,6 +66,8 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     const [history, setHistory] = useState<DirectorScene[]>([]);
     const [future, setFuture] = useState<DirectorScene[]>([]);
     const [saving, setSaving] = useState(false);
+    const [captureBusy, setCaptureBusy] = useState(false);
+    const [captureReady, setCaptureReady] = useState(false);
     const [recording, setRecording] = useState(false);
     const [onboardingRestartSignal, setOnboardingRestartSignal] = useState(0);
     const [navigationTab, setNavigationTab] = useState<DirectorWorkbenchTab>("scene");
@@ -105,6 +108,8 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     const renderModeOptions = useMemo(() => DIRECTOR_RENDER_MODE_LABELS.filter((option) => capabilities.renderModes.includes(option.value)), [capabilities.renderModes]);
 
     const draftRef = useRef<DirectorScene | null>(null);
+    const openRef = useRef(open);
+    openRef.current = open;
     const stagedRef = useRef<DirectorTransaction | null>(null);
     const initializedSceneIdRef = useRef<string | null>(null);
     const onChangeRef = useRef(onChange);
@@ -765,6 +770,33 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
         }
     };
 
+    const captureScreenshot = async () => {
+        const current = draftRef.current;
+        const shot = current?.shots.find((item) => item.id === current.activeShotId) || current?.shots[0];
+        if (captureBusy || !captureReady || !current || !shot || !viewportRef.current) return;
+        setCaptureBusy(true);
+        try {
+            const beauty = await viewportRef.current.capture("beauty");
+            if (!openRef.current || draftRef.current?.id !== current.id) throw new Error("截图期间场景已切换，请重试");
+            const uploaded = await uploadImage(beauty);
+            const latest = draftRef.current;
+            const latestShot = latest?.shots.find((item) => item.id === shot.id);
+            if (!openRef.current || !latest || latest.id !== current.id || !latestShot) throw new Error("截图期间场景或镜头已切换，请重试");
+            const name = nextDirectorScreenshotName(latest.cameras.find((item) => item.id === latestShot.cameraId)?.name || "机位", latestShot.screenshots?.length || 0);
+            const screenshot = { id: nanoid(), name, url: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, createdAt: new Date().toISOString() };
+            addAsset({ kind: "image", title: name, coverUrl: uploaded.url, tags: ["导演台截图"], source: "导演台", data: { dataUrl: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType }, metadata: { source: "director-screenshot", sceneId: latest.id, shotId: shot.id } });
+            commit((scene) => appendDirectorScreenshot(scene, { sceneId: current.id, shotId: shot.id, screenshot }));
+            setSelectedObjectId(null);
+            setSelectedLightId(null);
+            setSceneInspectorView("shot");
+            message.success(uploaded.pendingRemoteUpload ? "截图已保存在本机，资源服务暂不可用" : "截图已保存到资源库");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "截图失败，请重试");
+        } finally {
+            setCaptureBusy(false);
+        }
+    };
+
     const exportClayVideo = async () => {
         stagedTransaction.end("commit");
         const current = draftRef.current;
@@ -909,10 +941,10 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
                 </aside>
 
                 <main className="relative min-h-0 overflow-hidden bg-neutral-900">
-                    <DirectorViewport ref={viewportRef} scene={draft} selectedObjectId={selectedObjectId} selectedBone={selectedBone} transformMode={transformMode} renderMode={renderMode} playhead={playhead} playing={playing} showMotionPaths={sequencerVisible} viewMode={viewMode} onViewModeChange={setViewMode} onSelectObject={setSelectedObjectId} onSelectBone={setSelectedBone} onObjectTransform={handleObjectTransform} onBoneTransform={handleBoneTransform} onActorRigReady={handleActorRigReady} />
+                    <DirectorViewport ref={viewportRef} scene={draft} selectedObjectId={selectedObjectId} selectedBone={selectedBone} transformMode={transformMode} renderMode={renderMode} playhead={playhead} playing={playing} showMotionPaths={sequencerVisible} viewMode={viewMode} onViewModeChange={setViewMode} onCaptureReadyChange={setCaptureReady} onSelectObject={setSelectedObjectId} onSelectBone={setSelectedBone} onObjectTransform={handleObjectTransform} onBoneTransform={handleBoneTransform} onActorRigReady={handleActorRigReady} />
                     <div className="pointer-events-none absolute left-3 top-3 text-[var(--fs-tiny)] font-medium text-white/70">{activeShot.name} · {activeCamera?.name || "无摄影机"} · {activeShot.duration}s</div>
                     <CanvasDirectorOnboarding scope={onboardingScope} open={open} restartSignal={onboardingRestartSignal} className="absolute right-3 top-3 z-[var(--z-popover)] w-[min(360px,calc(100%-24px))]" />
-                    <DirectorViewportDock transformMode={transformMode} renderMode={renderMode} renderModes={capabilities.renderModes} onTransformModeChange={setTransformMode} onRenderModeChange={setRenderMode} onAddActor={addActor} onAddBox={() => addPrimitive("box", "立方体")} onAddLight={addLight} onAddCamera={addCamera} onAlignCamera={alignCameraToView} timelineOpen={sequencerVisible} onToggleTimeline={() => setSequencerVisible(!sequencerVisible)} />
+                    <DirectorViewportDock transformMode={transformMode} renderMode={renderMode} renderModes={capabilities.renderModes} onTransformModeChange={setTransformMode} onRenderModeChange={setRenderMode} onAddActor={addActor} onAddBox={() => addPrimitive("box", "立方体")} onAddLight={addLight} onAddCamera={addCamera} onAlignCamera={alignCameraToView} timelineOpen={sequencerVisible} onToggleTimeline={() => setSequencerVisible(!sequencerVisible)} captureBusy={captureBusy} captureReady={captureReady} onCapture={() => void captureScreenshot()} />
                 </main>
 
                 <aside className="thin-scrollbar min-h-0 overflow-y-auto border-l max-lg:col-span-2 max-lg:max-h-[40vh] max-lg:border-l-0 max-lg:border-t" style={{ background: theme.node.panel, borderColor: theme.toolbar.border }}>
@@ -1006,6 +1038,7 @@ function ShotInspector({ shot, camera, cameras, capabilities, onUpdateShot, onUp
         <Field label="时长"><InputNumber className="w-full" min={0.5} max={60} step={0.5} value={shot.duration} addonAfter="秒" onChange={(value) => onUpdateShot({ duration: value || 5 })} /></Field>
         <Field label="镜头意图"><Input.TextArea autoSize={{ minRows: 3, maxRows: 7 }} value={shot.prompt} placeholder="人物表演、动作、叙事目标…" onChange={(event) => onUpdateShot({ prompt: event.target.value })} /></Field>
         {camera ? <><Vec3Field label="摄影机位置" value={camera.transform.position} onChange={(position) => onUpdateCamera({ transform: { ...camera.transform, position } })} /><Vec3Field label="焦点" value={camera.target} onChange={(target) => onUpdateCamera({ target })} /><Field label="焦距"><InputNumber className="w-full" min={12} max={200} value={camera.focalLength} addonAfter="mm" onChange={(focalLength) => onUpdateCamera({ focalLength: focalLength || 35, fov: directorFocalLengthToFov(focalLength || 35) })} /></Field><div className="grid grid-cols-2 gap-2"><Field label="光圈"><InputNumber className="w-full" min={0.7} max={32} step={0.1} value={camera.aperture} addonBefore="f/" onChange={(aperture) => onUpdateCamera({ aperture: aperture || 2.8 })} /></Field><Field label="焦点距离"><InputNumber className="w-full" min={0.1} max={200} step={0.1} value={camera.focusDistance} addonAfter="m" onChange={(focusDistance) => onUpdateCamera({ focusDistance: focusDistance || 5 })} /></Field></div><Button block icon={<Camera className="size-3.5" />} onClick={onAlignCameraToView}>摄影机对齐当前视图</Button><Button block icon={<Video className="size-3.5" />} onClick={onApplyCameraMove}>按运镜生成轨迹</Button>{capabilities.keyframes ? <Button block icon={<Focus className="size-3.5" />} onClick={onAddCameraKeyframe}>记录摄影机关键帧</Button> : null}<Button block type="primary" ghost icon={<Video className="size-3.5" />} loading={recording} onClick={onExportClay}>导出白膜视频</Button></> : null}
+        <DirectorScreenshotGallery screenshots={shot.screenshots || []} />
     </Inspector>;
 }
 
