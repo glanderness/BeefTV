@@ -487,6 +487,14 @@ describe("DirectorSaveCoordinator", () => {
             expect(h.coord.restoreCandidate()).toBeNull();
         });
 
+        it("restores grid snapping and rejects malformed switch values", () => {
+            const h = createHarness();
+            h.writeRaw(JSON.stringify(makeEnvelope({ scene: makeScene({ gridSnap: true }) })));
+            expect(h.coord.restoreCandidate()?.scene.gridSnap).toBe(true);
+            h.writeRaw(corruptEnvelope((envelope) => { envelope.scene = { ...makeScene(), gridSnap: "on" }; }));
+            expect(h.coord.restoreCandidate()).toBeNull();
+        });
+
         it("restores ground settings without rejecting older scenes, but rejects invalid ranges", () => {
             const h = createHarness();
             h.writeRaw(JSON.stringify(makeEnvelope({ scene: makeScene() })));

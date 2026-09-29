@@ -6,7 +6,7 @@ import { directorPanoramaSphere } from "@/lib/canvas/director/director-panorama-
 import { directorStageTransform } from "@/lib/canvas/director/director-stage-transform";
 import type { DirectorScene, DirectorVec3 } from "@/types/director";
 
-type SceneEnvironmentPatch = Partial<Pick<DirectorScene, "background" | "environmentIntensity" | "gridVisible" | "panorama" | "panoramaRotation" | "panoramaRadius" | "ground" | "stageTransform" | "labelsVisible">>;
+type SceneEnvironmentPatch = Partial<Pick<DirectorScene, "background" | "environmentIntensity" | "gridVisible" | "gridSnap" | "panorama" | "panoramaRotation" | "panoramaRadius" | "ground" | "stageTransform" | "labelsVisible">>;
 
 export function DirectorSceneInspector({ scene, onChange }: { scene: DirectorScene; onChange: (patch: SceneEnvironmentPatch) => void }) {
     const ground = directorGroundSettings(scene);
@@ -70,6 +70,10 @@ export function DirectorSceneInspector({ scene, onChange }: { scene: DirectorSce
             <div className="flex items-center justify-between gap-3 border-b px-4 py-4 text-xs" style={{ borderColor: "var(--border)" }}>
                 <span>角色标签</span>
                 <Switch size="sm" aria-label="角色标签" checked={scene.labelsVisible !== false} onChange={(labelsVisible) => onChange({ labelsVisible })} />
+            </div>
+            <div className="flex items-center justify-between gap-3 border-b px-4 py-4 text-xs" style={{ borderColor: "var(--border)" }}>
+                <span>网格吸附</span>
+                <Switch size="sm" aria-label="网格吸附" checked={scene.gridSnap === true} onChange={(gridSnap) => onChange({ gridSnap })} />
             </div>
             <div className="space-y-5 px-4 py-5">
                 <div className="space-y-2">

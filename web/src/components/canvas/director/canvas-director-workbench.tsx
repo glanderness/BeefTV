@@ -20,7 +20,7 @@ import { advanceDirectorPlayhead, resolveDirectorCameraAlignment, resolveDirecto
 import { createDirectorTransaction, installDirectorTerminalListeners, type DirectorTransaction } from "@/lib/canvas/director/director-gesture-transaction";
 import { recordDirectorDiagnostic } from "@/lib/canvas/director/director-diagnostics-recorder";
 import { DIRECTOR_MODES, directorModeCapabilities, type DirectorModeCapabilities } from "@/lib/canvas/director/director-modes";
-import { resolveDirectorPlacement, resolveDirectorPlacementAnchor } from "@/lib/canvas/director/director-placement";
+import { resolveDirectorPlacement, resolveDirectorPlacementAnchor, snapDirectorGroundPosition } from "@/lib/canvas/director/director-placement";
 import { DIRECTOR_ASPECT_RATIOS } from "@/lib/canvas/director/director-aspect-ratio";
 import { generateDirectorPanorama, recoverDirectorPanoramaTasks } from "@/lib/canvas/director/director-panorama-generation";
 import { createDirectorCameraFromPreset, DIRECTOR_CAMERA_PRESETS, type DirectorCameraPresetId } from "@/lib/canvas/director/director-camera-presets";
@@ -443,7 +443,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
                 intent: viewportRef.current?.readPlacementIntent() ?? null,
                 fallback: object.transform.position,
             });
-            const position = resolveDirectorPlacement({ object: { ...object, transform: { ...object.transform, position: anchored } }, existing: current.objects });
+            const position = resolveDirectorPlacement({ object: { ...object, transform: { ...object.transform, position: anchored } }, existing: current.objects, gridSnap: current.gridSnap });
             return { ...current, objects: [...current.objects, { ...object, transform: { ...object.transform, position } }] };
         });
         setSelectedObjectId(object.id);
@@ -691,7 +691,9 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
             ...current,
             objects: current.objects.map((item) => {
                 if (item.id !== id) return item;
-                const edit = resolveDirectorObjectTransformEdit({ base: item.transform, keyframes: item.keyframes, rendered: from, edited: to, autoKey, time: snappedPlayhead });
+                const movedOnGround = Math.abs(to.position[0] - from.position[0]) > 1e-6 || Math.abs(to.position[2] - from.position[2]) > 1e-6;
+                const edited = current.gridSnap && movedOnGround ? { ...to, position: snapDirectorGroundPosition(to.position, true) } : to;
+                const edit = resolveDirectorObjectTransformEdit({ base: item.transform, keyframes: item.keyframes, rendered: from, edited, autoKey, time: snappedPlayhead });
                 return { ...item, transform: edit.transform, keyframes: edit.keyframes };
             }),
         }));

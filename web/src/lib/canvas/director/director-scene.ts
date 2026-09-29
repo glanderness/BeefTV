@@ -21,6 +21,7 @@ export function createDirectorScene(title = "未命名场景"): DirectorScene {
         background: "#060608",
         environmentIntensity: 0.7,
         gridVisible: true,
+        gridSnap: false,
         panoramaRotation: 0,
         panoramaRadius: 60,
         ground: { ...DIRECTOR_DEFAULT_GROUND },

@@ -138,6 +138,8 @@ export type DirectorScene = {
     background: string;
     environmentIntensity: number;
     gridVisible: boolean;
+    /** Snap new placement and XZ moves to the half-unit ground grid; absent means off. */
+    gridSnap?: boolean;
     /** Optional for scenes saved before ground controls existed. */
     ground?: { visible: boolean; opacity: number; height: number };
     /** Whole stage transform; absent in older scenes means identity. Rotation is in degrees. */
