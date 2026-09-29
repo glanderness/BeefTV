@@ -96,7 +96,42 @@ try {
         files = $count
         expandedSize = $expandedSize
     }
-    $artifact | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $destination "$name.json") -Encoding UTF8
+    if ($artifact.size -ge 2GB) {
+        # GitHub Release assets must each be smaller than 2 GiB. Keep the complete
+        # archive locally for self-test; publish only these verified parts.
+        $partLimit = [long](1536MB)
+        $parts = @()
+        $inputStream = [System.IO.File]::OpenRead($archivePath)
+        try {
+            $index = 0
+            $buffer = New-Object byte[] (1MB)
+            while ($inputStream.Position -lt $inputStream.Length) {
+                $index++
+                $partName = "$name.part-{0:D3}" -f $index
+                $partPath = Join-Path $destination $partName
+                $outputStream = [System.IO.File]::Create($partPath)
+                try {
+                    $remaining = [Math]::Min($partLimit, $inputStream.Length - $inputStream.Position)
+                    while ($remaining -gt 0) {
+                        $count = $inputStream.Read($buffer, 0, [int][Math]::Min($buffer.Length, $remaining))
+                        if ($count -le 0) { throw "分割 CUDA 运行包时过早到达文件结尾" }
+                        $outputStream.Write($buffer, 0, $count)
+                        $remaining -= $count
+                    }
+                } finally { $outputStream.Dispose() }
+                $parts += [ordered]@{
+                    name = $partName
+                    size = (Get-Item -LiteralPath $partPath).Length
+                    sha256 = (Get-FileHash -LiteralPath $partPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                }
+            }
+        } finally { $inputStream.Dispose() }
+        $artifact["parts"] = $parts
+        # The full ZIP is reconstructable from the verified parts and cannot be
+        # uploaded as one GitHub asset; avoid retaining another 3+ GiB copy.
+        Remove-Item -LiteralPath $archivePath -Force
+    }
+    $artifact | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $destination "$name.json") -Encoding UTF8
     Write-Output $artifact
 } finally {
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }

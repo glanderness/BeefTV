@@ -36,6 +36,8 @@ CPU 提示应在实际运行 CPU 推理前可见，不能在用户等候很久�
 
 发布相互独立的 `windows-amd64-cpu` 与 `windows-amd64-cuda` Runtime，保留 `darwin-arm64` Runtime。发行清单按 `platform + variant` 标识版本、下载地址、大小、SHA-256、解压预算与模型兼容版本。客户端仅选择被内置可信签名验证通过的清单条目；下载后的文件仍验证大小与哈希，禁止执行不可信包。
 
+CUDA ZIP 的 CI 实测体积为 3,736,173,977 字节，超过 [GitHub Release 单附件小于 2 GiB 的上限](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)。构建器须将超限包切成小于 2 GiB 的有序分片；签名清单分别记录每片 URL、大小、SHA-256，以及重组后完整 ZIP 的大小、SHA-256、文件数和解压体积。客户端逐片校验、断点恢复、重组后再次校验完整哈希，然后按现有安装路径解压；CPU 与 Mac 单文件包不受影响。CI 必须验证分片尺寸/哈希，且不能将未分片的 CUDA ZIP 作为一个 Release 附件上传。
+
 Windows 包在 Windows 构建环境中生成，包含可重定位的 Python、固定依赖、Video Depth Anything Small 固定源码、BeefTV Worker，以及可执行的 FFmpeg/ffprobe。安装器按平台和 variant 定位 Windows Python `.exe`，使用版本化独立目录、临时解压、自检后切换，并处理 Windows 文件占用和中断恢复。CPU 包不依赖 NVIDIA 驱动；CUDA 包随固定 PyTorch CUDA 构建携带其所需组件，但仍要求适配的系统驱动。首次使用的下载量、磁盘需求和进度在界面可见。
 
 模型权重继续单独缓存并共用。运行包和权重仍遵守现有许可证、固定来源与发布声明。Windows 进程取消须终止 Python 和 FFmpeg 子进程树，清理任务专属临时文件；不得误删源视频或已完成素材。
