@@ -93,7 +93,6 @@ export function useCanvasDirector({
         node.width = 384;
         node.height = 360;
         const nextNodes = [...nodesRef.current, node];
-        nodesRef.current = nextNodes;
         setNodes(nextNodes);
         setSelectedNodeIds(new Set([node.id]));
         setSelectedConnectionId(null);
@@ -153,7 +152,7 @@ export function useCanvasDirector({
         const nextNodes = nodesRef.current.map((item) => item.id === sourceNodeId
             ? { ...item, metadata: { ...item.metadata, ...directorCoverMetadata(image, scene.updatedAt) } }
             : item);
-        nodesRef.current = nextNodes;
+        // setNodes stamps changes against the previous ref before updating it.
         setNodes(nextNodes);
     }, [directorNodeId, nodesRef, projectId, setNodes, shouldCaptureCover]);
 
@@ -246,7 +245,6 @@ export function useCanvasDirector({
             if (assetId) return { ...item, metadata: { ...item.metadata, assetId } };
             return item.id === sourceNode.id ? { ...item, metadata: { ...item.metadata, ...directorMetadata } } : item;
         });
-        nodesRef.current = finalizedNodes;
         connectionsRef.current = nextConnections;
         setNodes(finalizedNodes);
         setConnections(nextConnections);
