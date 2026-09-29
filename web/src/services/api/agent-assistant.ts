@@ -9,6 +9,7 @@ export type AgentHostStatus = {
 };
 
 export type AgentToolCall = {
+    toolCallId?: string;
     tool: string;
     args?: Record<string, unknown>;
     isError?: boolean;

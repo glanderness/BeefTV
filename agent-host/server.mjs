@@ -156,10 +156,10 @@ function buildTools(canvasId, log, generation, turn) {
       const started = Date.now();
       try {
         const data = await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal);
-        log.push({ tool: descriptor.id, args: params, isError: false, ms: Date.now() - started, replayed: !!data?.replayed });
+        log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: false, ms: Date.now() - started, replayed: !!data?.replayed });
         return { content: [{ type: 'text', text: JSON.stringify(data) }] };
       } catch (error) {
-        log.push({ tool: descriptor.id, args: params, isError: true, error: error.message, ms: Date.now() - started });
+        log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: true, error: error.message, ms: Date.now() - started });
         throw error;
       }
     },
