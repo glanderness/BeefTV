@@ -12,8 +12,8 @@ const node: CanvasNodeData = {
     type: CanvasNodeType.Video,
     title: "镜头 1",
     position: { x: 0, y: 0 },
-    width: 384,
-    height: 360,
+    width: 768,
+    height: 704,
     metadata: { workflowKind: "shot", directorSceneId: scene.id, directorShotId: scene.shots[0].id, composerContent: "夜晚的街道" },
 };
 
@@ -28,6 +28,8 @@ describe("导演台画布节点", () => {
         expect(markup).toContain("打开导演台");
         expect(markup).toContain("在3D空间中搭建场景并进行多视角截图");
         expect(markup).toContain('aria-label="场景描述"');
+        expect(markup).toContain("flex-col gap-4");
+        expect(markup).toContain("relative h-52");
         expect(markup).toContain("夜晚的街道</textarea>");
         expect(markup).not.toContain("对象</span>");
     });
@@ -67,6 +69,6 @@ describe("导演台画布节点", () => {
         expect(shell).toContain("border:0");
         expect(shell).toContain("box-shadow:none");
         const header = markup.match(/class="canvas-node-external-header[^\"]*"[^>]*style="([^"]*)"/)?.[1];
-        expect(header).toContain("left:74px");
+        expect(header).toContain("left:144px");
     });
 });

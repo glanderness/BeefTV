@@ -7,7 +7,7 @@ import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { createDirectorSceneFromTemplate, type DirectorTemplateId } from "@/lib/canvas/director/director-templates";
 import { directorCoverMetadata, shouldCaptureDirectorCover, shouldCommitDirectorCover } from "@/lib/canvas/director/director-cover-write";
-import { mergeDirectorOutputPreview, upsertDirectorSceneById } from "@/lib/canvas/director/director-session";
+import { mergeDirectorOutputPreview, updateDirectorShotPrompt, upsertDirectorSceneById } from "@/lib/canvas/director/director-session";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
@@ -90,8 +90,9 @@ export function useCanvasDirector({
             directorShotId: shot.id,
         });
         node.title = `镜头 ${shotIndex}`;
-        node.width = 384;
-        node.height = 360;
+        // Match LibTV's square preview + full-width prompt composer proportions.
+        node.width = 768;
+        node.height = 704;
         const nextNodes = [...nodesRef.current, node];
         nodesRef.current = nextNodes;
         setNodes(nextNodes);
@@ -117,16 +118,10 @@ export function useCanvasDirector({
             setNodes((current) => current.map((item) => item.id === nodeId ? { ...item, metadata: { ...item.metadata, directorSceneId, directorShotId } } : item));
             sceneNeedsPersistence = true;
         }
-        const existingShots = scene.shots;
-        const prompt = initialPrompt.trim();
-        if (prompt) {
-            const requestedShotId = node.metadata?.directorShotId;
-            const shotId = requestedShotId && scene.shots.some((shot) => shot.id === requestedShotId) ? requestedShotId : scene.activeShotId;
-            const shots = scene.shots.map((shot) => shot.id === shotId ? { ...shot, prompt } : shot);
-            if (shots.some((shot, index) => shot !== existingShots[index])) {
-                scene = { ...scene, shots };
-                sceneNeedsPersistence = true;
-            }
+        const promptedScene = updateDirectorShotPrompt(scene, node.metadata?.directorShotId, initialPrompt);
+        if (promptedScene !== scene) {
+            scene = promptedScene;
+            sceneNeedsPersistence = true;
         }
         if (sceneNeedsPersistence) updateProject(projectId, { directorScenes: upsertDirectorSceneById(currentDirectorScenes(projectId, directorScenes), scene) });
         setDirectorNodeId(nodeId);

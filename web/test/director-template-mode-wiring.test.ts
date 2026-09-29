@@ -49,6 +49,11 @@ describe("新建场景必须显式选模板", () => {
         expect(element).toContain("onSelect={(templateId) => createDirectorShot(templateId, directorTemplateRequest?.position)}");
     });
 
+    test("新建导演台节点采用 LibTV 的大预览与宽描述框比例", () => {
+        expect(hook).toContain("node.width = 768;");
+        expect(hook).toContain("node.height = 704;");
+    });
+
     test("模板弹窗把 5 个模板全列出来，没有「默认」快捷项", () => {
         expect(modal).toContain("DIRECTOR_TEMPLATES.map");
         expect(modal).toContain("onSelect(template.id)");
@@ -67,9 +72,7 @@ describe("已有场景不触发模板选择", () => {
 
     test("导演节点提交描述时写入对应镜头并在缺少镜头引用时回退当前镜头", () => {
         const opener = slice(hook, "const openDirectorWorkbench = useCallback", "/** 每次保存都基于 store");
-        expect(opener).toContain("initialPrompt.trim()");
-        expect(opener).toContain("scene.shots.some((shot) => shot.id === requestedShotId)");
-        expect(opener).toContain("requestedShotId : scene.activeShotId");
+        expect(opener).toContain("updateDirectorShotPrompt(scene, node.metadata?.directorShotId, initialPrompt)");
         expect(project).toContain("onSubmit={() => openDirectorWorkbench(contentNode.id, contentNode.metadata?.composerContent || \"\")}");
     });
 

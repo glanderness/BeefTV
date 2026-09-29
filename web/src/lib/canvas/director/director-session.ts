@@ -15,6 +15,18 @@ export function upsertDirectorSceneById(scenes: DirectorScene[], scene: Director
     return scenes.some((item) => item.id === scene.id) ? scenes.map((item) => (item.id === scene.id ? scene : item)) : [...scenes, scene];
 }
 
+/** Commit a canvas director-node description to its shot prompt; stale shot ids fall back safely. */
+export function updateDirectorShotPrompt(scene: DirectorScene, requestedShotId: string | undefined, input: string): DirectorScene {
+    const prompt = input.trim();
+    if (!prompt || scene.shots.length === 0) return scene;
+    const shotId = requestedShotId && scene.shots.some((shot) => shot.id === requestedShotId)
+        ? requestedShotId
+        : scene.shots.some((shot) => shot.id === scene.activeShotId) ? scene.activeShotId : scene.shots[0].id;
+    const current = scene.shots.find((shot) => shot.id === shotId)!;
+    if (current.prompt === prompt) return scene;
+    return { ...scene, shots: scene.shots.map((shot) => shot.id === shotId ? { ...shot, prompt } : shot) };
+}
+
 /**
  * 输出上传可能跨越数秒。只把生成出的预览引用合并到最新场景，绝不拿输出开始时的
  * scene 快照覆盖期间发生的标题、对象、关键帧或镜头编辑。

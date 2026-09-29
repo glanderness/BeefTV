@@ -27,12 +27,12 @@ export function CanvasDirectorNodePanel({ node, scene, readNodeContent, onOpen, 
     const preview = resolveDirectorPreviewSource({ scene, shot, coverUrl, failedUrl, previewNodeId: node.metadata?.directorPreviewNodeId, readNodeContent });
 
     return (
-        <div className="flex h-full w-full min-h-0 flex-col gap-3 px-2 py-2" style={{ color: theme.node.text }}>
+        <div className="flex h-full w-full min-h-0 flex-col gap-4" style={{ color: theme.node.text }}>
             <div className="flex min-h-0 flex-1 items-center justify-center">
                 <button
                     type="button"
                     data-canvas-no-zoom
-                    className="group relative aspect-square h-full max-w-full cursor-pointer overflow-hidden rounded-xl border focus-visible:outline-none focus-visible:ring-2 disabled:cursor-default"
+                    className="group relative aspect-square h-full max-w-full cursor-pointer overflow-hidden rounded-2xl border focus-visible:outline-none focus-visible:ring-2 disabled:cursor-default"
                     style={{ background: theme.node.fill, borderColor: theme.node.stroke }}
                     aria-label={professional ? "打开导演台" : "切换到专业模式后编辑导演台"}
                     disabled={!professional}
@@ -46,7 +46,7 @@ export function CanvasDirectorNodePanel({ node, scene, readNodeContent, onOpen, 
                     {preview.kind === "image" ? <span className={`absolute inset-0 flex items-center justify-center text-sm font-medium transition-opacity ${professional ? "opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" : "opacity-100"}`} style={{ background: `${theme.toolbar.panel}dd`, color: theme.node.text }}>{professional ? "打开导演台" : "专业模式可编辑"}</span> : null}
                 </button>
             </div>
-            <div className="relative h-24 shrink-0 overflow-hidden rounded-2xl border px-3 py-2" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }}>
+            <div className="relative h-52 shrink-0 overflow-hidden rounded-2xl border px-4 py-3" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }}>
                 <textarea
                     data-canvas-no-zoom
                     aria-label="场景描述"
