@@ -30,7 +30,7 @@ import { createDirectorCameraFromPreset, DIRECTOR_CAMERA_PRESETS, type DirectorC
 import { appendDirectorScreenshot, isDirectorOutputSnapshotCurrent, nextDirectorScreenshotName, shouldReinitializeDirectorSession } from "@/lib/canvas/director/director-session";
 import { bindDirectorCameraFollow, removeDirectorCameraBindingsForObject, unbindDirectorCameraFollow } from "@/lib/canvas/director/director-camera-binding";
 import { blocksDirectorShortcut, releaseDirectorFocusAfterPointer, resolveDirectorShortcut, type DirectorShortcutAction } from "@/lib/canvas/director/director-shortcuts";
-import { createDirectorActor, createDirectorBillboard, createDirectorCamera, createDirectorLight, createDirectorModel, createDirectorObject, DIRECTOR_ACTOR_COLORS, directorBoneLabel, directorFocalLengthToFov, directorPoseLabel, interpolateDirectorTransform, removeDirectorSceneKeyframe, setDirectorSceneKeyframeEasing, touchDirectorScene, upsertDirectorBoneKeyframe } from "@/lib/canvas/director/director-scene";
+import { applyDirectorUniformScale, createDirectorActor, createDirectorBillboard, createDirectorCamera, createDirectorLight, createDirectorModel, createDirectorObject, DIRECTOR_ACTOR_COLORS, directorBoneLabel, directorFocalLengthToFov, directorPoseLabel, interpolateDirectorTransform, removeDirectorSceneKeyframe, setDirectorSceneKeyframeEasing, touchDirectorScene, upsertDirectorBoneKeyframe } from "@/lib/canvas/director/director-scene";
 import { searchDirectorSceneItems } from "@/lib/canvas/director/director-scene-search";
 import { describeDirectorSaveStatus, resolveDirectorCloseOutcome, shouldBlockDirectorUnload, shouldOfferDirectorDraftRecovery } from "@/lib/canvas/director/director-save-wiring";
 import { useDirectorSaveCoordinator } from "@/components/canvas/director/use-director-save-coordinator";
@@ -708,6 +708,11 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
         }));
     }, [autoKey, commit, snappedPlayhead]);
 
+    const handleUniformScale = (id: string, value: number, stage: boolean) => {
+        const write = stage ? stageGesture : commit;
+        write((current) => ({ ...current, objects: current.objects.map((item) => item.id === id ? applyDirectorUniformScale(item, value) : item) }));
+    };
+
     /** 骨骼写入语义：静态覆盖 + autoKey 时在吸附播放头补关键帧。gizmo 与数值编辑器共用。 */
     const writeBoneRotation = useCallback((id: string, bone: string, rotation: DirectorQuat, mode: "stage" | "commit") => {
         const write = mode === "stage" ? stageGesture : commit;
@@ -963,7 +968,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
 
                 <aside className="thin-scrollbar min-h-0 overflow-y-auto border-l max-lg:col-span-2 max-lg:max-h-[40vh] max-lg:border-l-0 max-lg:border-t" style={{ background: theme.node.panel, borderColor: theme.toolbar.border }}>
                     {/* 摄影机模式下右栏固定显示 shot/camera 检查器：对齐视图与运镜是这个模式的主入口。 */}
-                    {selectedObject && !capabilities.cameraTools ? <ObjectInspector object={selectedObject} rendered={selectedObjectRendered || selectedObject.transform} playhead={snappedPlayhead} selectedBone={selectedBone} capabilities={capabilities} onSelectBone={setSelectedBone} onUpdate={(patch) => updateObject(selectedObject.id, patch)} onTransformEdit={(edited) => handleObjectTransform(selectedObject.id, selectedObjectRendered || selectedObject.transform, edited)} onBoneRotationStage={(rotation) => selectedBone && writeBoneRotation(selectedObject.id, selectedBone, rotation, "stage")} onBoneRotationCommit={() => stagedTransaction.end("commit")} onAddKeyframe={recordSelectedKeyframe} onDelete={() => removeObject(selectedObject.id)} /> : selectedLight && !capabilities.cameraTools ? <LightInspector light={selectedLight} onUpdate={(patch) => updateLight(selectedLight.id, patch)} onDelete={() => removeLight(selectedLight.id)} /> : sceneInspectorView === "scene" && !capabilities.cameraTools ? <DirectorSceneInspector scene={draft} onChange={(patch) => commit((current) => ({ ...current, ...patch }))} /> : capabilities.cameraTools ? <DirectorCameraScreenshotTabs scene={draft} tab={cameraInspectorTab} onTabChange={setCameraInspectorTab}><DirectorCameraProperties camera={activeCamera} cameras={draft.cameras} shot={activeShot} objects={draft.objects} onUpdateCamera={updateActiveCamera} onSelectCamera={(cameraId) => updateShot(activeShot.id, { cameraId })} onFollowObject={handleFollowObject}>{shotInspector}</DirectorCameraProperties></DirectorCameraScreenshotTabs> : shotInspector}
+                    {selectedObject && !capabilities.cameraTools ? <ObjectInspector object={selectedObject} rendered={selectedObjectRendered || selectedObject.transform} playhead={snappedPlayhead} selectedBone={selectedBone} capabilities={capabilities} onSelectBone={setSelectedBone} onUpdate={(patch) => updateObject(selectedObject.id, patch)} onTransformEdit={(edited) => handleObjectTransform(selectedObject.id, selectedObjectRendered || selectedObject.transform, edited)} onUniformScaleChange={(value, stage) => handleUniformScale(selectedObject.id, value, stage)} onUniformScaleCommit={() => stagedTransaction.end("commit")} onBoneRotationStage={(rotation) => selectedBone && writeBoneRotation(selectedObject.id, selectedBone, rotation, "stage")} onBoneRotationCommit={() => stagedTransaction.end("commit")} onAddKeyframe={recordSelectedKeyframe} onDelete={() => removeObject(selectedObject.id)} /> : selectedLight && !capabilities.cameraTools ? <LightInspector light={selectedLight} onUpdate={(patch) => updateLight(selectedLight.id, patch)} onDelete={() => removeLight(selectedLight.id)} /> : sceneInspectorView === "scene" && !capabilities.cameraTools ? <DirectorSceneInspector scene={draft} onChange={(patch) => commit((current) => ({ ...current, ...patch }))} /> : capabilities.cameraTools ? <DirectorCameraScreenshotTabs scene={draft} tab={cameraInspectorTab} onTabChange={setCameraInspectorTab}><DirectorCameraProperties camera={activeCamera} cameras={draft.cameras} shot={activeShot} objects={draft.objects} onUpdateCamera={updateActiveCamera} onSelectCamera={(cameraId) => updateShot(activeShot.id, { cameraId })} onFollowObject={handleFollowObject}>{shotInspector}</DirectorCameraProperties></DirectorCameraScreenshotTabs> : shotInspector}
                 </aside>
             </div>
 
@@ -992,7 +997,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     );
 }
 
-function ObjectInspector({ object, rendered, playhead, selectedBone, capabilities, onSelectBone, onUpdate, onTransformEdit, onBoneRotationStage, onBoneRotationCommit, onAddKeyframe, onDelete }: { object: DirectorObject; rendered: DirectorTransform; playhead: number; selectedBone: string | null; capabilities: DirectorModeCapabilities; onSelectBone: (bone: string | null) => void; onUpdate: (patch: Partial<DirectorObject>) => void; onTransformEdit: (transform: DirectorTransform) => void; onBoneRotationStage: (rotation: DirectorQuat) => void; onBoneRotationCommit: () => void; onAddKeyframe: () => void; onDelete: () => void }) {
+function ObjectInspector({ object, rendered, playhead, selectedBone, capabilities, onSelectBone, onUpdate, onTransformEdit, onUniformScaleChange, onUniformScaleCommit, onBoneRotationStage, onBoneRotationCommit, onAddKeyframe, onDelete }: { object: DirectorObject; rendered: DirectorTransform; playhead: number; selectedBone: string | null; capabilities: DirectorModeCapabilities; onSelectBone: (bone: string | null) => void; onUpdate: (patch: Partial<DirectorObject>) => void; onTransformEdit: (transform: DirectorTransform) => void; onUniformScaleChange: (value: number, stage: boolean) => void; onUniformScaleCommit: () => void; onBoneRotationStage: (rotation: DirectorQuat) => void; onBoneRotationCommit: () => void; onAddKeyframe: () => void; onDelete: () => void }) {
     const motionClips = object.motionClips || [];
     const activeMotionClip = motionClips.find((clip) => clip.id === object.activeMotionClipId);
     const mappedBones = Object.keys(object.rig?.boneMap || {}) as DirectorHumanoidBone[];
@@ -1008,6 +1013,10 @@ function ObjectInspector({ object, rendered, playhead, selectedBone, capabilitie
     };
     return <Inspector title={object.name} onTitleChange={(name) => onUpdate({ name })} onDelete={onDelete}>
         <TransformFields transform={rendered} onChange={onTransformEdit} />
+        <Field label="统一缩放"><div className="flex items-center gap-2">
+            <input aria-label="统一缩放滑杆" type="range" min={0.1} max={10} step={0.05} value={object.uniformScale ?? 1} className="min-w-0 flex-1 accent-cyan-400" onChange={(event) => onUniformScaleChange(Number(event.target.value), true)} onPointerUp={onUniformScaleCommit} onKeyUp={onUniformScaleCommit} onBlur={onUniformScaleCommit} />
+            <InputNumber aria-label="统一缩放数值" size="small" controls={false} min={0.1} max={10} step={0.05} value={object.uniformScale ?? 1} className="w-[72px] shrink-0" onChange={(value) => { if (value !== null) onUniformScaleChange(value, false); }} />
+        </div></Field>
         {object.kind === "actor" || object.primitive === "character"
             ? <Field label="角色颜色"><div className="director-actor-colors">{DIRECTOR_ACTOR_COLORS.map((color) => <button key={color} type="button" className={`director-actor-color ${object.color.toLowerCase() === color ? "is-active" : ""}`} style={{ background: color }} aria-label={`设置颜色 ${color}`} onClick={() => onUpdate({ color })} />)}<ColorPicker value={object.color} size="small" onChange={(_, color) => onUpdate({ color })} /></div></Field>
             : <Field label="颜色"><ColorPicker value={object.color} onChange={(_, color) => onUpdate({ color })} /></Field>}

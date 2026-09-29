@@ -54,6 +54,22 @@ export function createDirectorObject(primitive: DirectorObject["primitive"] = "b
     };
 }
 
+/** 统一倍率按比例作用于基础值和所有关键帧；轴向不等比缩放仍保留。 */
+export function applyDirectorUniformScale(object: DirectorObject, input: number): DirectorObject {
+    if (!Number.isFinite(input)) return object;
+    const next = Math.max(0.1, Math.min(10, input));
+    const previous = object.uniformScale && Number.isFinite(object.uniformScale) && object.uniformScale > 0 ? object.uniformScale : 1;
+    if (next === previous) return object;
+    const ratio = next / previous;
+    const scale = (values: DirectorVec3): DirectorVec3 => values.map((value) => value * ratio) as DirectorVec3;
+    return {
+        ...object,
+        uniformScale: next,
+        transform: { ...object.transform, scale: scale(object.transform.scale) },
+        keyframes: object.keyframes.map((frame) => ({ ...frame, transform: { ...frame.transform, scale: scale(frame.transform.scale) } })),
+    };
+}
+
 export function createDirectorActor(name = "演员", position: DirectorVec3 = [0, 0, 0], color: string = DIRECTOR_ACTOR_COLORS[0]): DirectorObject {
     return {
         ...createDirectorObject("box", name, position, color),

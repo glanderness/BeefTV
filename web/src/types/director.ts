@@ -74,6 +74,8 @@ export type DirectorObject = {
     primitive?: DirectorPrimitiveKind;
     transform: DirectorTransform;
     color: string;
+    /** 独立的统一缩放倍率；旧场景缺省为 1，不抹平各轴比例。 */
+    uniformScale?: number;
     visible: boolean;
     castShadow: boolean;
     receiveShadow: boolean;
