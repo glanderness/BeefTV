@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
 import { seedanceOutputWarning } from "../src/lib/seedance-output-warning";
+import publicInput from "./fixtures/seedance-public-input.json";
+import { seedanceTaskRetryWarning } from "../src/lib/seedance-channel-warning";
+
+test("public task output preserves comparison and paid retry confirmation without secrets", () => {
+    expect(seedanceOutputWarning(JSON.stringify(publicInput),960,960)).toContain("要求 16:9");
+    expect(seedanceTaskRetryWarning(JSON.stringify(publicInput))?.okText).toBe("接受风险并生成");
+    expect(seedanceTaskRetryWarning(JSON.stringify({...publicInput,videoParameters:{...publicInput.videoParameters,affectedChannel:false}}))).toBeUndefined();
+});
 
 const input = {config:{model:"seedance-2.5",size:"16:9"},metadata:{videoEditOperation:"reference_to_video"},referenceVideos:[{id:"v"}]};
 test("output mismatch is visible without converting success into a retry", () => {

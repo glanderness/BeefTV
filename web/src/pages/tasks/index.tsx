@@ -11,6 +11,7 @@ import { PageHeader, PaginationBar, WorkspacePage } from "@/components/layout/wo
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { GenerationFailureNotice } from "@/components/generation/generation-failure-notice";
 import { explainGenerationError } from "@/lib/generation-error";
+import { seedanceTaskRetryWarning } from "@/lib/seedance-channel-warning";
 import { formatTaskKind, operationOptions, statusLabel } from "@/lib/generation-task-display";
 import { buildVideoOperationPrompt } from "@/lib/prompts";
 import { backendProviderConfig, logicalModelIDForConfig } from "@/services/api/generation-task";
@@ -327,6 +328,17 @@ export default function TasksPage() {
         }
         setActingId(id);
         try {
+            // List summaries intentionally omit inputJson. Read the sanitized
+            // detail before any paid retry rather than treating absent input as consent.
+            const detail = await queryGenerationTask(id);
+            if (taskRetryBlocked(detail)) {
+                message.warning("请先查看失败原因，不要立即重新提交");
+                return;
+            }
+            const warning = seedanceTaskRetryWarning(detail.inputJson, detail.model);
+            if (warning && !(await new Promise<boolean>((resolve) => {
+                modal.confirm({ ...warning, centered: true, onOk: () => resolve(true), onCancel: () => resolve(false), afterClose: () => resolve(false) });
+            }))) return;
             const next = await retryGenerationTask(id);
             setTasks((items) => items.map((item) => (item.id === id ? next : item)));
             setDetailTask((current) => (current?.id === id ? { ...current, ...next } : current));

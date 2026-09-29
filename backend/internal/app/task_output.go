@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
 
 	"infinite-canvas/backend/internal/generation"
@@ -247,6 +248,26 @@ func publicTaskInputJSON(raw string) string {
 		return ""
 	}
 	public := map[string]any{}
+	// Only expose the parameters needed for result comparison and paid retry
+	// confirmation. Never expose credentials, headers, media URLs or bytes.
+	if input["mode"] == "video" {
+		config, _ := input["config"].(map[string]any)
+		counts := func(key string) int { items, _ := input[key].([]any); return len(items) }
+		parameters := map[string]any{"imageCount": counts("referenceImages"), "videoCount": counts("referenceVideos"), "audioCount": counts("referenceAudios")}
+		for _, key := range []string{"model", "size"} {
+			if value, ok := config[key].(string); ok {
+				parameters[key] = value
+			}
+		}
+		base, _ := config["baseUrl"].(string)
+		u, _ := url.Parse(base)
+		host := ""
+		if u != nil {
+			host = strings.ToLower(u.Hostname())
+		}
+		parameters["affectedChannel"] = config["credentialRef"] == "beefapi-enterprise" || host == "enterprise.beefapi.com" || host == "whatstoken.ai" || host == "www.whatstoken.ai"
+		public["videoParameters"] = parameters
+	}
 	// 任务完成后仍需依靠这些非敏感 ID 恢复项目产物归属；密钥等配置继续被过滤。
 	for _, key := range []string{"mode", "metadata", "workflowStepId", "domainProjectId", "assetVersionId", "resourceId", "mediaType", "role"} {
 		if value, ok := input[key]; ok {
