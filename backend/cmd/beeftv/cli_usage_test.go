@@ -3,8 +3,12 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
+
+	"infinite-canvas/backend/internal/runtimeinfo"
 )
 
 // 二级子命令必须被校验：缺失/未知不能 panic，也不能被当成 update/create 发出去。
@@ -174,5 +178,81 @@ func TestDesktopTokenHeaderIsSentWhenConfigured(t *testing.T) {
 	}
 	if seen != "" {
 		t.Fatalf("未配置时不应发送桌面启动令牌头，得到 %q", seen)
+	}
+}
+
+// 运行时发现：没有 BEEFTV_BASE_URL 时，CLI 要从数据目录里的 runtime.json 找到
+// 正在运行的桌面工作区，而不是去猜一个固定端口。外部 Agent 靠这条路径接入，
+// 手里只有自己的客户端凭据，没有桌面启动令牌。
+func TestBaseURLComesFromRuntimeDiscovery(t *testing.T) {
+	var seenClient, seenAuth, seenDesktop string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenClient = r.Header.Get("X-Beeftv-Client")
+		seenAuth = r.Header.Get("Authorization")
+		seenDesktop = r.Header.Get("X-Desktop-Token")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"data":{"ops":[]},"msg":"ok"}`))
+	}))
+	defer server.Close()
+
+	dataDir := t.TempDir()
+	if err := runtimeinfo.Write(dataDir, server.URL, "v-test"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BEEFTV_BASE_URL", "")
+	t.Setenv("BEEFTV_DATA_DIR", dataDir)
+	t.Setenv("BEEFTV_OWNER_TOKEN", "")
+	t.Setenv("BEEFTV_DESKTOP_TOKEN", "")
+	t.Setenv("BEEFTV_CLIENT_ID", "client-test")
+	t.Setenv("BEEFTV_CLIENT_TOKEN", "client-token-test")
+
+	base, source := resolveBaseURL()
+	if base != server.URL {
+		t.Fatalf("应连上发现到的地址，得到 %q", base)
+	}
+	if source == "" {
+		t.Fatal("应说明地址来源")
+	}
+	c, err := newClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.listOps(true); err != nil {
+		t.Fatal(err)
+	}
+	if seenClient != "client-test" || seenAuth != "Bearer client-token-test" {
+		t.Fatalf("应只带客户端自己的凭据，得到 %q / %q", seenClient, seenAuth)
+	}
+	if seenDesktop != "" {
+		t.Fatalf("外部客户端不该带桌面启动令牌，得到 %q", seenDesktop)
+	}
+}
+
+// 运行时文件里的进程已经退出：视为过期，回落到默认地址，绝不拿这个端口去连别的进程。
+func TestStaleRuntimeFileIsIgnored(t *testing.T) {
+	dataDir := t.TempDir()
+	stale := `{"baseUrl":"http://127.0.0.1:59999/api","pid":987654321,"version":"v-old"}`
+	if err := os.WriteFile(filepath.Join(dataDir, runtimeinfo.FileName), []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BEEFTV_BASE_URL", "")
+	t.Setenv("BEEFTV_DATA_DIR", dataDir)
+	base, _ := resolveBaseURL()
+	if base != defaultBaseURL {
+		t.Fatalf("过期运行时文件应被忽略，得到 %q", base)
+	}
+}
+
+// 显式 BEEFTV_BASE_URL 优先于自动发现。
+func TestExplicitBaseURLWinsOverDiscovery(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := runtimeinfo.Write(dataDir, "http://127.0.0.1:53999/api", "v-test"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BEEFTV_DATA_DIR", dataDir)
+	t.Setenv("BEEFTV_BASE_URL", "http://127.0.0.1:8080/api")
+	base, source := resolveBaseURL()
+	if base != "http://127.0.0.1:8080/api" || source != "BEEFTV_BASE_URL" {
+		t.Fatalf("显式地址应优先，得到 %q（%s）", base, source)
 	}
 }

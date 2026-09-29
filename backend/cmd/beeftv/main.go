@@ -19,9 +19,26 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"infinite-canvas/backend/internal/runtimeinfo"
 )
 
 const defaultBaseURL = "http://127.0.0.1:8080/api"
+
+// resolveBaseURL 决定连哪个工作区，并说明来源（诊断输出用，不含任何凭据）。
+//
+// 桌面应用监听的是动态端口，所以没有显式 BEEFTV_BASE_URL 时不去猜端口，而是读数据
+// 目录里的 runtime.json：那是正在运行的桌面后端自己写下的地址。文件里的进程已经退出
+// 就当它不存在，绝不拿一个过期端口去连别的进程。
+func resolveBaseURL() (string, string) {
+	if base := strings.TrimSpace(os.Getenv("BEEFTV_BASE_URL")); base != "" {
+		return base, "BEEFTV_BASE_URL"
+	}
+	if info, found := runtimeinfo.Discover(""); found {
+		return info.BaseURL, "运行中的桌面工作区"
+	}
+	return defaultBaseURL, "默认地址"
+}
 
 // 退出码：机器可读的失败分类，stderr 输出诊断，stdout 只放业务结果。
 const (
@@ -73,10 +90,7 @@ type opDescriptor struct {
 }
 
 func newClient() (*client, error) {
-	base := strings.TrimSpace(os.Getenv("BEEFTV_BASE_URL"))
-	if base == "" {
-		base = defaultBaseURL
-	}
+	base, _ := resolveBaseURL()
 	parsedBase, parseErr := url.Parse(base)
 	if parseErr != nil || (parsedBase.Scheme != "http" && parsedBase.Scheme != "https") {
 		return nil, &cliError{code: exitUsage, reason: "invalid_base_url", msg: "BEEFTV_BASE_URL 不是合法 URL"}
@@ -333,10 +347,19 @@ func usage() {
   beeftv asset list [--query <q>] [--kind <kind>] [--json]
   beeftv asset get --asset <id> [--json]
   beeftv task get --task <id> [--json]
-  beeftv client register --label <label> --mode read-only|read-write
+  beeftv client register --label <label> --mode read-only|read-write [--kind codex|claude|cursor|other]
   beeftv mcp serve [--read-only]
 
-环境变量：BEEFTV_BASE_URL、BEEFTV_OWNER_TOKEN（owner 可信通道）、BEEFTV_CLIENT_ID、BEEFTV_CLIENT_TOKEN（已登记客户端）
+连接哪个工作区：不设 BEEFTV_BASE_URL 时自动连正在运行的 BeefTV 桌面应用（读数据目录里的
+runtime.json，端口是动态的）。BEEFTV_DATA_DIR 可以指向非默认数据目录。
+
+凭据：在 BeefTV 的设置里新建一个客户端，把它给出的 BEEFTV_CLIENT_ID 与 BEEFTV_CLIENT_TOKEN
+填进环境变量即可，不需要桌面令牌。读写权限在新建时就定下来，客户端自己改不了。
+
+写操作必须带幂等键（CLI 的 --op-id，MCP 工具参数里的 operationId）：重试同一操作要复用同一个值。
+
+环境变量：BEEFTV_BASE_URL、BEEFTV_DATA_DIR、BEEFTV_CLIENT_ID、BEEFTV_CLIENT_TOKEN、
+BEEFTV_OWNER_TOKEN（owner 可信通道）、BEEFTV_DESKTOP_TOKEN（桌面自身调用）
 退出码：0 成功；2 用法；3 未找到；4 冲突；5 前置条件；6 只读/未授权；7 不支持；8 参数；9 连接失败；1 内部
 `)
 }
@@ -588,11 +611,12 @@ func runClient(c *client, args []string) error {
 	fs := flag.NewFlagSet("client register", flag.ContinueOnError)
 	label := fs.String("label", "", "客户端名称")
 	mode := fs.String("mode", "read-only", "read-only 或 read-write")
+	kind := fs.String("kind", "other", "codex、claude、cursor 或 other")
 	jsonOut := fs.Bool("json", false, "输出 JSON")
 	if err := fs.Parse(args[1:]); err != nil {
 		return flagError(err)
 	}
-	raw, err := c.do(context.Background(), http.MethodPost, "/ops/clients", map[string]any{"label": *label, "mode": *mode})
+	raw, err := c.do(context.Background(), http.MethodPost, "/ops/clients", map[string]any{"label": *label, "mode": *mode, "kind": *kind})
 	if err != nil {
 		return err
 	}
@@ -651,7 +675,8 @@ func runMCP(c *client, args []string) error {
 				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(result)}}}, nil
 			})
 	}
-	fmt.Fprintf(os.Stderr, "beeftv mcp serve: %d 个工具，base=%s，client=%s\n", len(ops), c.baseURL, orNone(c.clientID))
+	_, baseSource := resolveBaseURL()
+	fmt.Fprintf(os.Stderr, "beeftv mcp serve: %d 个工具，base=%s（%s），client=%s\n", len(ops), c.baseURL, baseSource, orNone(c.clientID))
 	return server.Run(context.Background(), &mcp.StdioTransport{})
 }
 

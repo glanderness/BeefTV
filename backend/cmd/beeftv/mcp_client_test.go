@@ -74,6 +74,26 @@ func TestMCPClientLoop(t *testing.T) {
 	if !bytes.Contains(schema, []byte("operationId")) {
 		t.Fatalf("写工具 schema 未暴露稳定 operationId: %s", string(schema))
 	}
+	// 只出现在 properties 里不够：必须标成必填，MCP 客户端才知道非发不可。
+	var declared struct {
+		Properties map[string]any `json:"properties"`
+		Required   []string       `json:"required"`
+	}
+	if err := json.Unmarshal(schema, &declared); err != nil {
+		t.Fatalf("写工具 schema 不是合法 JSON Schema: %v", err)
+	}
+	if _, ok := declared.Properties["operationId"]; !ok {
+		t.Fatalf("写工具 schema 的 properties 缺少 operationId: %s", string(schema))
+	}
+	requiresOperationID := false
+	for _, name := range declared.Required {
+		if name == "operationId" {
+			requiresOperationID = true
+		}
+	}
+	if !requiresOperationID {
+		t.Fatalf("写工具 schema 未把 operationId 标为必填: %s", string(schema))
+	}
 
 	// 1) 写工具缺 operationId：必须结构化失败，而不是随机补一个键
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "canvas.nodes.create",
