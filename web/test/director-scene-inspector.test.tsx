@@ -33,4 +33,13 @@ describe("导演台场景属性", () => {
         const hidden = renderToStaticMarkup(<DirectorSceneInspector scene={{ ...scene, labelsVisible: false }} onChange={() => {}} />);
         expect(hidden).toMatch(/<button(?=[^>]*aria-label="角色标签")(?=[^>]*aria-checked="false")[^>]*>/);
     });
+
+    test("场景标题后直接是变换控件，天空颜色可从色块或十六进制输入", () => {
+        const scene = createDirectorSceneFromTemplate("empty");
+        scene.background = "#060608";
+        const markup = renderToStaticMarkup(<DirectorSceneInspector scene={scene} onChange={() => {}} />);
+        expect(markup).not.toMatch(/<h3[^>]*>场景变换<\/h3>/);
+        expect(markup).toMatch(/<input[^>]*type="color"[^>]*value="#060608"/);
+        expect(markup).toMatch(/<input[^>]*aria-label="天空颜色色值"[^>]*value="060608"/);
+    });
 });

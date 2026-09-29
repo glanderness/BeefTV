@@ -1,4 +1,5 @@
-import { ColorPicker, InputNumber, Slider } from "antd";
+import { InputNumber, Slider } from "antd";
+import { useEffect, useState } from "react";
 
 import { Switch } from "@/components/ui/base/switch";
 import { directorGroundSettings } from "@/lib/canvas/director/director-ground";
@@ -12,6 +13,17 @@ export function DirectorSceneInspector({ scene, onChange }: { scene: DirectorSce
     const ground = directorGroundSettings(scene);
     const stage = directorStageTransform(scene);
     const sphere = directorPanoramaSphere(scene);
+    const [skyHex, setSkyHex] = useState(() => scene.background.replace(/^#/, "").toUpperCase());
+    useEffect(() => setSkyHex(scene.background.replace(/^#/, "").toUpperCase()), [scene.background]);
+    const commitSkyHex = () => {
+        if (!/^[0-9A-Fa-f]{6}$/.test(skyHex)) {
+            setSkyHex(scene.background.replace(/^#/, "").toUpperCase());
+            return;
+        }
+        const color = `#${skyHex.toUpperCase()}`;
+        if (color.toLowerCase() !== scene.background.toLowerCase()) onChange({ background: color });
+        setSkyHex(color.slice(1));
+    };
     const updateGround = (patch: Partial<typeof ground>) => onChange({ ground: { ...ground, ...patch } });
     const updateAxis = (field: "position" | "rotation", axis: number, value: number) => {
         const next = [...stage[field]] as DirectorVec3;
@@ -21,26 +33,25 @@ export function DirectorSceneInspector({ scene, onChange }: { scene: DirectorSce
     return (
         <div className="text-sm">
             <h2 className="border-b px-4 py-4 text-base font-semibold" style={{ borderColor: "var(--border)" }}>3D场景</h2>
-            <section className="space-y-4 border-b px-4 py-5" style={{ borderColor: "var(--border)" }} aria-label="场景变换">
-                <h3 className="font-semibold">场景变换</h3>
+            <section className="space-y-3 border-b px-4 py-4" style={{ borderColor: "var(--border)" }} aria-label="场景变换">
                 <div className="space-y-2">
-                    <div className="flex items-center justify-between text-xs"><span className="opacity-65">场景缩放</span><span>{Math.round(stage.scale * 100)}%</span></div>
+                    <div className="text-[13px] opacity-50">场景缩放</div>
                     <div className="flex items-center gap-3">
                         <Slider ariaLabelForHandle="场景缩放" className="m-0 min-w-0 flex-1" min={0.1} max={10} step={0.1} value={stage.scale} onChangeComplete={(scale) => onChange({ stageTransform: { ...stage, scale } })} />
                         <InputNumber aria-label="场景缩放百分比" className="w-[72px] shrink-0" size="small" min={10} max={1000} step={10} suffix="%" value={Math.round(stage.scale * 100)} onChange={(percent) => { if (percent !== null) onChange({ stageTransform: { ...stage, scale: percent / 100 } }); }} />
                     </div>
                 </div>
                 {(["position", "rotation"] as const).map((field) => <div key={field} className="space-y-2">
-                    <div className="text-xs opacity-65">场景{field === "position" ? "平移" : "旋转"}</div>
+                    <div className="text-[13px] opacity-50">场景{field === "position" ? "平移" : "旋转"}</div>
                     <div className="grid grid-cols-3 gap-1.5">
-                        {(["X", "Y", "Z"] as const).map((axis, index) => <label key={axis} className="min-w-0">
-                            <span className="mb-1 block text-[10px] opacity-55">{axis}</span>
-                            <InputNumber aria-label={`场景${field === "position" ? "平移" : "旋转"}${axis}`} className="w-full" size="small" step={field === "position" ? 0.1 : 1} precision={field === "position" ? 1 : 0} value={stage[field][index]} onChange={(value) => { if (value !== null) updateAxis(field, index, value); }} />
+                        {(["X", "Y", "Z"] as const).map((axis, index) => <label key={axis} className="flex min-w-0 items-center gap-1 rounded-lg px-2" style={{ background: "var(--director-dock-active-surface)" }}>
+                            <span className="text-[11px] opacity-50">{axis}</span>
+                            <InputNumber aria-label={`场景${field === "position" ? "平移" : "旋转"}${axis}`} className="min-w-0 flex-1" size="small" variant="borderless" controls={false} step={field === "position" ? 0.1 : 1} precision={field === "position" ? 1 : 0} value={stage[field][index]} onChange={(value) => { if (value !== null) updateAxis(field, index, value); }} />
                         </label>)}
                     </div>
                 </div>)}
             </section>
-            <section className="space-y-4 border-b px-4 py-5" style={{ borderColor: "var(--border)" }} aria-label="全景背景">
+            <section className="space-y-4 border-b px-4 py-4" style={{ borderColor: "var(--border)" }} aria-label="全景背景">
                 <h3 className="font-semibold">全景背景</h3>
                 <div className="space-y-2">
                     <span className="text-xs opacity-65">已连接全景图</span>
@@ -51,7 +62,15 @@ export function DirectorSceneInspector({ scene, onChange }: { scene: DirectorSce
                 </div>
                 <div className="space-y-2">
                     <div className="text-xs opacity-65">天空颜色</div>
-                    <ColorPicker showText value={scene.background} onChangeComplete={(color) => onChange({ background: color.toHexString() })} />
+                    <div className="flex items-center gap-2">
+                        <label className="relative size-7 shrink-0 cursor-pointer overflow-hidden rounded-lg" style={{ background: scene.background }}>
+                            <input type="color" aria-label="选择天空颜色" className="absolute inset-0 size-full cursor-pointer opacity-0" value={scene.background} onChange={(event) => onChange({ background: event.target.value })} />
+                        </label>
+                        <div className="flex h-7 min-w-0 flex-1 items-center gap-0.5 rounded-lg px-2 text-xs" style={{ background: "var(--director-dock-active-surface)" }}>
+                            <span className="opacity-50">#</span>
+                            <input type="text" aria-label="天空颜色色值" className="h-full min-w-0 flex-1 bg-transparent font-mono text-xs uppercase outline-none" maxLength={6} spellCheck={false} value={skyHex} onChange={(event) => setSkyHex(event.target.value.toUpperCase())} onBlur={commitSkyHex} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { setSkyHex(scene.background.replace(/^#/, "").toUpperCase()); event.currentTarget.blur(); } }} />
+                        </div>
+                    </div>
                 </div>
             </section>
             <section className="space-y-4 border-b px-4 py-5" style={{ borderColor: "var(--border)" }} aria-label="全景球">
