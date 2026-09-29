@@ -80,7 +80,9 @@ func (h retiredAgentHarness) do(t *testing.T, method, path string, body any) *ht
 func TestRetiredAgentEndpointsAreAbsentFromProductRouteGraph(t *testing.T) {
 	harness := newRetiredAgentHarness(t)
 	for _, route := range harness.router.Routes() {
-		if strings.Contains(route.Path, "/agent") {
+		// 退场的是旧内置 Agent 的 /api/agent/* 运行面。
+		// /api/agent-clients 是另一回事：外部 Agent 的凭据签发与吊销，只对受信任的桌面界面开放。
+		if route.Path == "/api/agent" || strings.HasPrefix(route.Path, "/api/agent/") {
 			t.Fatalf("旧 Agent 入口仍在产品路由图中: %s %s", route.Method, route.Path)
 		}
 	}

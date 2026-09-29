@@ -21,14 +21,48 @@ const (
 	ClientReadOnly  ClientMode = "read-only"
 )
 
-// ClientRegistration 记录一个被本机用户登记过的非交互客户端。
-type ClientRegistration struct {
-	ID        string     `json:"id"`
-	Label     string     `json:"label"`
-	Mode      ClientMode `json:"mode"`
-	TokenHash string     `json:"tokenHash"`
-	CreatedAt time.Time  `json:"createdAt"`
+// ClientKind 只是登记来源的展示分类（codex/claude/cursor/other），不参与任何鉴权判断。
+type ClientKind string
+
+const (
+	ClientKindCodex  ClientKind = "codex"
+	ClientKindClaude ClientKind = "claude"
+	ClientKindCursor ClientKind = "cursor"
+	ClientKindOther  ClientKind = "other"
+)
+
+// NormalizeClientKind 把未知或历史空值统一收敛成 other：老的登记文件没有 kind 字段。
+func NormalizeClientKind(kind string) ClientKind {
+	switch ClientKind(strings.TrimSpace(strings.ToLower(kind))) {
+	case ClientKindCodex:
+		return ClientKindCodex
+	case ClientKindClaude:
+		return ClientKindClaude
+	case ClientKindCursor:
+		return ClientKindCursor
+	default:
+		return ClientKindOther
+	}
 }
+
+// ClientRegistration 记录一个被本机用户登记过的非交互客户端。
+// Kind/LastUsedAt/RevokedAt 是后加字段：历史文件里缺失时按零值解析，读出后统一补默认。
+type ClientRegistration struct {
+	ID         string     `json:"id"`
+	Label      string     `json:"label"`
+	Kind       ClientKind `json:"kind,omitempty"`
+	Mode       ClientMode `json:"mode"`
+	TokenHash  string     `json:"tokenHash"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
+	RevokedAt  *time.Time `json:"revokedAt,omitempty"`
+}
+
+// Revoked 判断该登记是否已被本机用户吊销：吊销后凭据立即失效，且不再出现在列表里。
+func (c ClientRegistration) Revoked() bool { return c.RevokedAt != nil }
+
+// lastUsedThrottle 控制 lastUsedAt 的落盘频率：每次读操作都写文件会让登记表成为热点。
+const lastUsedThrottle = time.Minute
 
 // ClientRegistry 把登记信息持久化在数据目录里（0600），由本机用户维护。
 type ClientRegistry struct {
@@ -57,16 +91,26 @@ func (r *ClientRegistry) load() ([]ClientRegistration, error) {
 	if err := json.Unmarshal(raw, &items); err != nil {
 		return nil, err
 	}
+	// 老版本文件没有 kind：补成 other，后续读写都按同一形状处理。
+	for index := range items {
+		items[index].Kind = NormalizeClientKind(string(items[index].Kind))
+	}
 	return items, nil
 }
 
 // Register 生成一次性展示的 token，并在服务端保存其哈希与模式。
 func (r *ClientRegistry) Register(label string, mode ClientMode) (ClientRegistration, string, error) {
+	return r.RegisterKind("", label, mode)
+}
+
+// RegisterKind 与 Register 相同，额外记录来源分类（仅用于展示与生成接入说明）。
+func (r *ClientRegistry) RegisterKind(kind, label string, mode ClientMode) (ClientRegistration, string, error) {
 	if mode != ClientReadOnly && mode != ClientReadWrite {
 		return ClientRegistration{}, "", InvalidArg("invalid_mode", "mode 必须是 read-only 或 read-write")
 	}
+	normalizedKind := NormalizeClientKind(kind)
 	if strings.TrimSpace(label) == "" {
-		label = "client"
+		label = string(normalizedKind)
 	}
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
@@ -77,7 +121,7 @@ func (r *ClientRegistry) Register(label string, mode ClientMode) (ClientRegistra
 		return ClientRegistration{}, "", AsError(err)
 	}
 	token := hex.EncodeToString(buf)
-	reg := ClientRegistration{ID: "client-" + hex.EncodeToString(idBuf), Label: label, Mode: mode,
+	reg := ClientRegistration{ID: "client-" + hex.EncodeToString(idBuf), Label: label, Kind: normalizedKind, Mode: mode,
 		TokenHash: hashToken(token), CreatedAt: time.Now().UTC()}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -86,17 +130,24 @@ func (r *ClientRegistry) Register(label string, mode ClientMode) (ClientRegistra
 		return ClientRegistration{}, "", AsError(err)
 	}
 	items = append(items, reg)
-	encoded, err := json.MarshalIndent(items, "", "  ")
-	if err != nil {
-		return ClientRegistration{}, "", AsError(err)
-	}
-	if err := atomicWriteFile(r.path, encoded); err != nil {
+	if err := r.save(items); err != nil {
 		return ClientRegistration{}, "", AsError(err)
 	}
 	return reg, token, nil
 }
 
+// save 必须在持有锁时调用。
+func (r *ClientRegistry) save(items []ClientRegistration) error {
+	encoded, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWriteFile(r.path, encoded)
+}
+
 // Lookup 按 (clientID, token) 解析身份；返回的是服务端登记的模式。
+// 已吊销的登记一律解析失败——吊销后凭据立即失效，不留宽限期。
+// 命中时顺带记录最近使用时间，但按节流写盘：读操作不该每次都改文件。
 func (r *ClientRegistry) Lookup(clientID, token string) (ClientRegistration, bool) {
 	if strings.TrimSpace(clientID) == "" || strings.TrimSpace(token) == "" {
 		return ClientRegistration{}, false
@@ -108,15 +159,26 @@ func (r *ClientRegistry) Lookup(clientID, token string) (ClientRegistration, boo
 		return ClientRegistration{}, false
 	}
 	want := hashToken(token)
-	for _, item := range items {
-		if item.ID == clientID && item.TokenHash == want {
-			return item, true
+	for index, item := range items {
+		if item.ID != clientID || item.Revoked() {
+			continue
 		}
+		// 哈希比较用常量时间，避免按前缀逐字节试探已登记客户端的 token。
+		if subtle.ConstantTimeCompare([]byte(item.TokenHash), []byte(want)) != 1 {
+			continue
+		}
+		now := time.Now().UTC()
+		if item.LastUsedAt == nil || now.Sub(*item.LastUsedAt) >= lastUsedThrottle {
+			items[index].LastUsedAt = &now
+			// 写失败不影响本次鉴权：lastUsedAt 只是展示信息。
+			_ = r.save(items)
+		}
+		return items[index], true
 	}
 	return ClientRegistration{}, false
 }
 
-// List 返回登记信息（不含 token 本身）。
+// List 返回未吊销的登记信息（不含 token 本身）。
 func (r *ClientRegistry) List() []ClientRegistration {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -124,9 +186,41 @@ func (r *ClientRegistry) List() []ClientRegistration {
 	if err != nil {
 		return nil
 	}
-	return items
+	live := make([]ClientRegistration, 0, len(items))
+	for _, item := range items {
+		if !item.Revoked() {
+			live = append(live, item)
+		}
+	}
+	return live
 }
 
+// Revoke 吊销一个登记：保留记录（带吊销时间）而不是删行，这样凭据不会被后续登记复用，
+// 也留下可审计的痕迹。未找到或已吊销都按未找到处理，避免把存在性变成探测手段。
+func (r *ClientRegistry) Revoke(clientID string) error {
+	clientID = strings.TrimSpace(clientID)
+	if clientID == "" {
+		return InvalidArg("missing_client_id", "缺少客户端 ID")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	items, err := r.load()
+	if err != nil {
+		return AsError(err)
+	}
+	for index, item := range items {
+		if item.ID != clientID || item.Revoked() {
+			continue
+		}
+		now := time.Now().UTC()
+		items[index].RevokedAt = &now
+		if err := r.save(items); err != nil {
+			return AsError(err)
+		}
+		return nil
+	}
+	return NotFound("client_not_found", "没有这个客户端登记")
+}
 
 // atomicWriteFile 先写临时文件再改名，避免并发登记时留下半截文件丢记录。
 func atomicWriteFile(path string, data []byte) error {

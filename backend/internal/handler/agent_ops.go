@@ -57,19 +57,20 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 		var req struct {
 			Label string `json:"label"`
 			Mode  string `json:"mode"`
+			Kind  string `json:"kind"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("请求体无效"))
 			return
 		}
-		reg, token, err := clients.Register(req.Label, agentops.ClientMode(req.Mode))
+		reg, token, err := clients.RegisterKind(req.Kind, req.Label, agentops.ClientMode(req.Mode))
 		if err != nil {
 			opErr := agentops.AsError(err)
 			c.JSON(agentops.HTTPStatus(opErr.Code), gin.H{"code": agentops.HTTPStatus(opErr.Code), "reason": opErr.Reason, "msg": opErr.Message})
 			return
 		}
 		// token 只在本次响应返回一次，服务端只保存哈希。
-		ok(c, gin.H{"client": gin.H{"id": reg.ID, "label": reg.Label, "mode": reg.Mode}, "token": token})
+		ok(c, gin.H{"client": gin.H{"id": reg.ID, "label": reg.Label, "kind": reg.Kind, "mode": reg.Mode}, "token": token})
 	})
 
 	r.GET("/ops/clients", func(c *gin.Context) {

@@ -23,6 +23,7 @@ import (
 	"infinite-canvas/backend/internal/localapp"
 	localproject "infinite-canvas/backend/internal/project"
 	"infinite-canvas/backend/internal/repository"
+	"infinite-canvas/backend/internal/runtimeinfo"
 	localtask "infinite-canvas/backend/internal/task"
 	httptransport "infinite-canvas/backend/internal/transport/http"
 	"infinite-canvas/backend/internal/workspace"
@@ -207,9 +208,9 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 		clients := agentops.NewClientRegistry(svc.DataDir())
 		rootHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// External clients receive only their own capability token, never shell credentials.
-			path := r.URL.Path
-			opEntry := (r.Method == http.MethodGet && path == "/api/ops") || (r.Method == http.MethodPost && strings.HasPrefix(path, "/api/ops/") && !strings.Contains(strings.TrimPrefix(path, "/api/ops/"), "/") && path != "/api/ops/clients")
-			if opEntry {
+			// 唯一的启动令牌豁免：本机来源 + 操作层入口 + 登记表认可的客户端凭据。
+			// 其他任何路径（包括凭据的签发与吊销）都还要桌面启动令牌。
+			if isOpsEntryPath(r) && isLoopbackRemote(r.RemoteAddr) {
 				if _, ok := clients.Lookup(r.Header.Get("X-Beeftv-Client"), strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))); ok {
 					router.ServeHTTP(w, r)
 					return
@@ -281,6 +282,11 @@ func (r *Runtime) Start() error {
 	// 关闭时由 Runtime.Close 收尾，保证「应用启动链」而不是手工点按钮。
 	if r.cfg.Profile == ProfileDesktop {
 		opsURL := "http://" + r.listener.Addr().String() + "/api"
+		// 运行时发现：端口是动态的，外部客户端靠数据目录里的 runtime.json 找到当前地址，
+		// 而不是靠猜端口或拿到桌面启动令牌。写失败不影响应用启动。
+		if err := runtimeinfo.Write(r.cfg.DataDir, opsURL, buildinfo.Current().Version); err != nil {
+			log.Printf("未能写入运行时地址（外部 Agent 需手动指定 BEEFTV_BASE_URL）：%v", err)
+		}
 		if err := canvasHandler.StartProcessAgentHost(r.cfg.DataDir, opsURL, r.launchToken); err != nil {
 			log.Printf("内置创作助手宿主未启动（不影响应用启动）：%v", err)
 		}
@@ -338,6 +344,12 @@ func (r *Runtime) Close(ctx context.Context) error {
 			r.beefAPI.Close()
 		}
 		var failures []error
+		// 干净退出先撤掉运行时地址：留着会让下一次发现连到一个已经不在的端口。
+		if r.cfg.Profile == ProfileDesktop {
+			if err := runtimeinfo.Remove(r.cfg.DataDir); err != nil {
+				failures = append(failures, fmt.Errorf("清理运行时地址：%w", err))
+			}
+		}
 		if r.httpServer != nil {
 			httpCtx, cancel := context.WithTimeout(ctx, min(30*time.Second, r.cfg.ShutdownTimeout))
 			if err := r.httpServer.Shutdown(httpCtx); err != nil {
@@ -408,6 +420,30 @@ func desktopCORSMiddleware() gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+// isOpsEntryPath 只认操作层的两个入口：GET /api/ops 与 POST /api/ops/<op>。
+// /api/ops/clients 是凭据签发，不在豁免范围；带子路径的形态也一律不算。
+func isOpsEntryPath(r *http.Request) bool {
+	path := r.URL.Path
+	if r.Method == http.MethodGet && path == "/api/ops" {
+		return true
+	}
+	if r.Method != http.MethodPost || !strings.HasPrefix(path, "/api/ops/") {
+		return false
+	}
+	op := strings.TrimPrefix(path, "/api/ops/")
+	return op != "" && op != "clients" && !strings.Contains(op, "/")
+}
+
+// isLoopbackRemote 保证豁免只对本机连接生效。
+func isLoopbackRemote(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	parsed := net.ParseIP(strings.Trim(host, "[]"))
+	return parsed != nil && parsed.IsLoopback()
 }
 
 // desktopTrust 用桌面启动令牌判定请求是否来自受信任的桌面壳。
