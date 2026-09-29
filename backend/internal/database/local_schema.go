@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 3
+const CurrentSchemaVersion int64 = 7
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -46,6 +46,7 @@ func LocalModels() []any {
 		&model.Workspace{}, &model.IDSequence{}, &model.SystemSetting{}, &model.UserDailyActivity{},
 		&model.ModelChannel{}, &model.ChannelModel{}, &model.ChannelModelVariant{}, &model.ApiCallLog{},
 		&model.LogicalModel{}, &model.LogicalModelRevision{}, &model.LogicalModelRoute{}, &model.RouteAttempt{},
+		&model.ImageSubmission{},
 		&model.CloudAgentExecution{}, &model.CloudAgentCanvasMutation{}, &model.AgentProfile{}, &model.AgentLesson{}, &model.AgentMemorySetting{},
 		&model.PluginPlatformState{}, &model.UserPluginState{},
 		&model.Skill{}, &model.SkillVersion{}, &model.SkillFile{}, &model.UserSkillState{},
@@ -78,6 +79,16 @@ func migrateLocalSchema(db *gorm.DB, beforeApply func(int64) error) error {
 				return nil
 			}
 			return tx.Migrator().AddColumn(&model.Task{}, "FailureDiagnostics")
+		}},
+		// Versions 3-6 were also used by the experimental Agent branch. Reconcile
+		// product additions without rewriting that branch's ledger or task table.
+		{version: 7, name: "product-image-recovery-and-diagnostics", apply: func(tx *gorm.DB) error {
+			if !tx.Migrator().HasColumn(&model.Task{}, "FailureDiagnostics") {
+				if err := tx.Migrator().AddColumn(&model.Task{}, "FailureDiagnostics"); err != nil {
+					return err
+				}
+			}
+			return tx.AutoMigrate(&model.ImageSubmission{})
 		}},
 	}
 	current, err := currentSchemaVersion(db)

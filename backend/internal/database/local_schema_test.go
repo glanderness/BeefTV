@@ -58,7 +58,7 @@ func TestLocalSchemaRecordsVersionAndIsIdempotent(t *testing.T) {
 	if err := db.Table("local_schema_migrations").Order("version").Pluck("version", &versions).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(versions) != int(CurrentSchemaVersion) || versions[len(versions)-1] != CurrentSchemaVersion {
+	if len(versions) != 4 || versions[len(versions)-1] != CurrentSchemaVersion {
 		t.Fatalf("recorded versions = %v, current = %d", versions, CurrentSchemaVersion)
 	}
 }
@@ -77,7 +77,7 @@ func TestTaskDiagnosticsMigrationPreservesExistingTasks(t *testing.T) {
 	if err = db.Migrator().DropColumn(&model.Task{}, "FailureDiagnostics"); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.Delete(&localSchemaMigration{}, "version = ?", 3).Error; err != nil {
+	if err = db.Delete(&localSchemaMigration{}, "version >= ?", 3).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err = MigrateLocalSchema(db); err != nil {
@@ -89,6 +89,35 @@ func TestTaskDiagnosticsMigrationPreservesExistingTasks(t *testing.T) {
 	}
 	if task.Error != "历史错误" || task.FailureDiagnostics != nil {
 		t.Fatalf("task changed: %+v", task)
+	}
+}
+
+func TestImageRecoveryMigrationUpgradesExistingWorkspace(t *testing.T) {
+	db, err := Open(Config{Driver: "sqlite", DSN: "file:image-schema-upgrade?mode=memory&cache=shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&localSchemaMigration{}, &model.Task{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&localSchemaMigration{Version: 2, Name: "retire-hosted-schema", AppliedAt: time.Now()}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Task{ID: "existing-image", UserID: "user", Type: "canvas_image", Status: model.TaskStatusFailed, InputJSON: `{"original":true}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if !db.Migrator().HasTable(&model.ImageSubmission{}) {
+		t.Fatal("image submission table missing")
+	}
+	var task model.Task
+	if err := db.First(&task, "id = ?", "existing-image").Error; err != nil {
+		t.Fatal(err)
+	}
+	if task.InputJSON != `{"original":true}` || task.Status != model.TaskStatusFailed {
+		t.Fatal("migration rewrote old task")
 	}
 }
 
