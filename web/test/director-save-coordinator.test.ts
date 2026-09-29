@@ -466,7 +466,7 @@ describe("DirectorSaveCoordinator", () => {
 
         it("restores a persisted panorama and rejects malformed panorama metadata", () => {
             const h = createHarness();
-            const panorama = { url: "blob:test-panorama", storageKey: "image:local:test", rotation: 35 };
+            const panorama = { url: "blob:test-panorama", storageKey: "image:local:test", name: "测试全景.png", rotation: 35 };
             h.writeRaw(JSON.stringify(makeEnvelope({ scene: makeScene({ panorama }) })));
             expect(h.coord.restoreCandidate()?.scene.panorama).toEqual(panorama);
             h.writeRaw(corruptEnvelope((envelope) => {
