@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -178,7 +179,7 @@ func TestEnsureRejectsSignedWindowsArtifactWithoutExpandedBudget(t *testing.T) {
 }
 
 func TestExtractRuntimeArchiveRejectsWindowsTraversalOnEveryHost(t *testing.T) {
-	for _, name := range []string{`..\\escape`, `C:/escape`, `worker/../../escape`} {
+	for _, name := range []string{`..\\escape`, `C:/escape`, `worker/../../escape`, `\absolute`, `\\server\share`, `worker\../../escape`, `/absolute`, `worker/C:escape`} {
 		t.Run(name, func(t *testing.T) {
 			var archive bytes.Buffer
 			writer := zip.NewWriter(&archive)
@@ -196,6 +197,52 @@ func TestExtractRuntimeArchiveRejectsWindowsTraversalOnEveryHost(t *testing.T) {
 			}
 			if err := extractRuntimeArchive(path, t.TempDir(), Artifact{}, 3<<30); err == nil {
 				t.Fatal("unsafe archive path accepted")
+			}
+		})
+	}
+}
+
+func TestExtractRuntimeArchiveWindowsSeparators(t *testing.T) {
+	for _, collision := range []bool{false, true} {
+		t.Run(fmt.Sprint(collision), func(t *testing.T) {
+			var archive bytes.Buffer
+			writer := zip.NewWriter(&archive)
+			names := []string{`.python\python.exe`, `worker\depth_capture\__init__.py`}
+			if collision {
+				names = append(names, ".python/python.exe")
+			}
+			for _, name := range names {
+				entry, err := writer.Create(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := entry.Write([]byte("content")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "runtime.zip")
+			if err := os.WriteFile(path, archive.Bytes(), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			destination := t.TempDir()
+			err := extractRuntimeArchive(path, destination, Artifact{}, 3<<30)
+			if collision {
+				if err == nil {
+					t.Fatal("normalized duplicate was accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range names {
+				contents, err := os.ReadFile(filepath.Join(destination, filepath.FromSlash(strings.ReplaceAll(name, `\`, "/"))))
+				if err != nil || string(contents) != "content" {
+					t.Fatalf("%s: %q %v", name, contents, err)
+				}
 			}
 		})
 	}

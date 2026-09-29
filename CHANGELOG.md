@@ -11,6 +11,8 @@ All notable public changes to BeefTV are documented in this file.
 
 ## v1.6.13
 
+- Accept Windows PowerShell ZIP path separators when installing signed depth components while retaining traversal and duplicate-file protection.
+- Use the configured Windows/macOS system proxy for optional depth-component downloads, matching the desktop updater and preserving explicit environment proxy/bypass settings.
 - Include Windows x64 depth-video processing from v1.6.12 with signed optional runtimes. CPU inference is tested; NVIDIA CUDA support is a community testing preview with a one-time CPU fallback for device failures. First use downloads components, and CPU processing can be slow and memory intensive.
 - Expand the director workspace with scene controls, camera following, aspect frames, screenshots and panorama generation history.
 - Preserve director scene covers and task recovery context, and improve canvas crop and trim controls at low zoom.

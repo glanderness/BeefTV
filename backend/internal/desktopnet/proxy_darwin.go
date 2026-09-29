@@ -1,4 +1,4 @@
-package desktopupdate
+package desktopnet
 
 import (
 	"context"

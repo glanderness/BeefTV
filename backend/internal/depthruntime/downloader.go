@@ -175,7 +175,7 @@ func downloadSource(ctx context.Context, source string, temporary string, total 
 	if offset > 0 {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 	}
-	response, err := http.DefaultClient.Do(req)
+	response, err := downloadClient.Do(req)
 	if err != nil {
 		return err
 	}

@@ -1,4 +1,4 @@
-package desktopupdate
+package desktopnet
 
 import (
 	"net"
@@ -18,7 +18,7 @@ type systemProxySettings struct {
 
 // Desktop launchers do not inherit shell proxy variables. Read system settings
 // on each request so retry also works after the user changes their proxy.
-func desktopProxy(req *http.Request) (*url.URL, error) {
+func Proxy(req *http.Request) (*url.URL, error) {
 	config := httpproxy.FromEnvironment()
 	for _, name := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"} {
 		if _, explicit := os.LookupEnv(name); explicit {

@@ -217,7 +217,7 @@ func fetchManifest(ctx context.Context, rawURL string, signed bool, public ed255
 			cancel()
 			return Manifest{}, err
 		}
-		response, err := http.DefaultClient.Do(req)
+		response, err := downloadClient.Do(req)
 		if err != nil {
 			cancel()
 			lastErr = err
@@ -276,15 +276,16 @@ func extractRuntimeArchiveContext(ctx context.Context, path string, destination 
 	}
 	var expanded int64
 	for _, entry := range reader.File {
-		// ZIP paths must be portable; a backslash or drive colon can escape on Windows
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		// even when this archive is inspected on a Unix test runner.
-		if strings.ContainsAny(entry.Name, `\\:`) {
+		// .NET Framework ZIPs use Windows separators. Normalize before all
+		// containment checks so traversal stays forbidden on every host.
+		portableName := strings.ReplaceAll(entry.Name, `\`, "/")
+		if strings.Contains(portableName, ":") || strings.HasPrefix(portableName, "/") {
 			return errors.New("深度组件压缩包包含非安全路径")
 		}
-		clean := filepath.Clean(filepath.FromSlash(entry.Name))
+		clean := filepath.Clean(filepath.FromSlash(portableName))
 		if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 			return errors.New("深度组件压缩包包含越界路径")
 		}
