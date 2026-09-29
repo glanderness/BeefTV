@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -255,6 +256,11 @@ func run(args []string) error {
 		usage()
 		return &cliError{code: exitUsage, reason: "missing_command", msg: "需要一个子命令"}
 	}
+	// 顶层 --help/-h 与各子命令一致：打印用法后正常退出。
+	if args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
+		usage()
+		return nil
+	}
 	c, err := newClient()
 	if err != nil {
 		return err
@@ -265,7 +271,7 @@ func run(args []string) error {
 		readOnly := fs.Bool("read-only", false, "只列出只读操作")
 		jsonOut := fs.Bool("json", false, "输出 JSON")
 		if err := fs.Parse(args[1:]); err != nil {
-			return &cliError{code: exitUsage, reason: "bad_flags", msg: err.Error()}
+			return flagError(err)
 		}
 		ops, err := c.listOps(*readOnly)
 		if err != nil {
@@ -337,7 +343,7 @@ func runCanvas(c *client, args []string) error {
 		canvasID := fs.String("canvas", "", "画布 ID")
 		jsonOut := fs.Bool("json", false, "输出 JSON")
 		if err := fs.Parse(args[1:]); err != nil {
-			return &cliError{code: exitUsage, reason: "bad_flags", msg: err.Error()}
+			return flagError(err)
 		}
 		if *canvasID == "" {
 			return &cliError{code: exitUsage, reason: "missing_flag", msg: "--canvas 必填"}
@@ -354,7 +360,7 @@ func runCanvas(c *client, args []string) error {
 		pageSize := fs.Int("page-size", 20, "每页数量")
 		jsonOut := fs.Bool("json", false, "输出 JSON")
 		if err := fs.Parse(args[1:]); err != nil {
-			return &cliError{code: exitUsage, reason: "bad_flags", msg: err.Error()}
+			return flagError(err)
 		}
 		raw, err := c.callOp("canvas.search", "", mustJSON(map[string]any{"query": *query, "page": *page, "pageSize": *pageSize}))
 		if err != nil {
@@ -362,14 +368,44 @@ func runCanvas(c *client, args []string) error {
 		}
 		return printResult(raw, *jsonOut)
 	case "node":
+		if err := requireVerb("node", args, "update"); err != nil {
+			return err
+		}
 		return runCanvasNodeUpdate(c, args[2:])
 	case "nodes":
+		if err := requireVerb("nodes", args, "create"); err != nil {
+			return err
+		}
 		return runCanvasNodesCreate(c, args[2:])
 	case "edge":
+		if err := requireVerb("edge", args, "create"); err != nil {
+			return err
+		}
 		return runCanvasEdgeCreate(c, args[2:])
 	default:
 		return &cliError{code: exitUsage, reason: "unknown_subcommand", msg: "未知 canvas 子命令: " + args[0]}
 	}
+}
+
+// requireVerb 校验二级子命令：缺失或未知动词直接按用法错误退出，绝不发 HTTP 请求。
+func requireVerb(group string, args []string, verb string) error {
+	if len(args) < 2 {
+		return &cliError{code: exitUsage, reason: "missing_subcommand",
+			msg: fmt.Sprintf("canvas %s 需要子命令 %s", group, verb)}
+	}
+	if args[1] != verb {
+		return &cliError{code: exitUsage, reason: "unknown_subcommand",
+			msg: fmt.Sprintf("未知的 canvas %s 子命令 %q（只支持 %s）", group, args[1], verb)}
+	}
+	return nil
+}
+
+// flagError 把 -h/--help 视为正常退出，其余解析失败按用法错误。
+func flagError(err error) error {
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
+	return &cliError{code: exitUsage, reason: "bad_flags", msg: err.Error()}
 }
 
 func runCanvasNodeUpdate(c *client, args []string) error {
@@ -389,15 +425,17 @@ func runCanvasNodeUpdate(c *client, args []string) error {
 		return &cliError{code: exitUsage, reason: "missing_flag", msg: "--canvas/--node/--op-id/--expected-revision 均为必填"}
 	}
 	patch := map[string]any{}
-	if *title != "" {
-		patch["title"] = *title
-	}
-	if *prompt != "" {
-		patch["prompt"] = *prompt
-	}
-	if *content != "" {
-		patch["content"] = *content
-	}
+	// 用「flags 是否出现」判断是否传参：显式传空串是清空语义，不允许用非空值猜测。
+	fs.Visit(func(flagValue *flag.Flag) {
+		switch flagValue.Name {
+		case "title":
+			patch["title"] = *title
+		case "prompt":
+			patch["prompt"] = *prompt
+		case "content":
+			patch["content"] = *content
+		}
+	})
 	if len(patch) == 0 {
 		return &cliError{code: exitUsage, reason: "empty_patch", msg: "至少要给出 --title/--prompt/--content 之一"}
 	}
@@ -478,7 +516,7 @@ func runAsset(c *client, args []string) error {
 		pageSize := fs.Int("page-size", 40, "每页数量")
 		jsonOut := fs.Bool("json", false, "输出 JSON")
 		if err := fs.Parse(args[1:]); err != nil {
-			return &cliError{code: exitUsage, reason: "bad_flags", msg: err.Error()}
+			return flagError(err)
 		}
 		raw, err := c.callOp("asset.list", "", mustJSON(map[string]any{"query": *query, "kind": *kind, "page": *page, "pageSize": *pageSize}))
 		if err != nil {
@@ -490,7 +528,7 @@ func runAsset(c *client, args []string) error {
 		assetID := fs.String("asset", "", "素材 ID")
 		jsonOut := fs.Bool("json", false, "输出 JSON")
 		if err := fs.Parse(args[1:]); err != nil {
-			return &cliError{code: exitUsage, reason: "bad_flags", msg: err.Error()}
+			return flagError(err)
 		}
 		if *assetID == "" {
 			return &cliError{code: exitUsage, reason: "missing_flag", msg: "--asset 必填"}
