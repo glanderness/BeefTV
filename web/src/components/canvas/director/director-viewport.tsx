@@ -1,7 +1,8 @@
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { Grid, Html, Line, OrbitControls, TransformControls } from "@react-three/drei";
+import { Video as VideoIcon } from "lucide-react";
 import { Component, forwardRef, memo, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState, type ComponentRef, type ReactNode } from "react";
-import { AnimationClip, AnimationMixer, Box3, Bone, Camera, Color, EquirectangularReflectionMapping, Group, LoopOnce, LoopRepeat, Mesh, MeshBasicMaterial, MeshDepthMaterial, MeshNormalMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Quaternion, Raycaster, Scene, SkeletonHelper, SRGBColorSpace, Texture, TextureLoader, Vector2, Vector3, WebGLRenderer } from "three";
+import { AnimationClip, AnimationMixer, Box3, Bone, Camera, Color, EquirectangularReflectionMapping, Euler, Group, LoopOnce, LoopRepeat, Matrix4, Mesh, MeshBasicMaterial, MeshDepthMaterial, MeshNormalMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Quaternion, Raycaster, Scene, SkeletonHelper, SRGBColorSpace, Texture, TextureLoader, Vector2, Vector3, WebGLRenderer } from "three";
 import type { Material } from "three";
 import { GLTFLoader, SkeletonUtils } from "three-stdlib";
 
@@ -9,7 +10,8 @@ import { resolveDirectorBoneRotation } from "@/lib/canvas/director/director-anim
 import { cropDirectorCanvas, resolveDirectorFrameRect, resolveDirectorPixelCrop, type DirectorAspectRatio } from "@/lib/canvas/director/director-aspect-ratio";
 import { directorStagePalette } from "@/lib/canvas/director/director-stage-palette";
 import { directorGroundSettings } from "@/lib/canvas/director/director-ground";
-import { directorStageLocalCamera, directorStageLocalPoint, directorStageMatrix, directorStageTransform } from "@/lib/canvas/director/director-stage-transform";
+import { directorStageLocalCamera, directorStageLocalPoint, directorStageMatrix, directorStagePoint, directorStageTransform } from "@/lib/canvas/director/director-stage-transform";
+import { suspendDirectorEditorOverlays } from "@/lib/canvas/director/director-editor-overlays";
 import type { DirectorOrientation } from "@/lib/canvas/director/director-orientation-gizmo";
 import { applyClaySceneMaterials } from "@/lib/canvas/director/director-clay-materials";
 import { createDirectorTransaction, installDirectorTerminalListeners } from "@/lib/canvas/director/director-gesture-transaction";
@@ -19,7 +21,7 @@ import { recordDirectorDiagnostic } from "@/lib/canvas/director/director-diagnos
 import { directorCaptureInitial, directorCaptureUsable, directorLoadIdentity, directorLoadInitial, installDirectorContextListeners, reduceDirectorCapture, reduceDirectorLoad, releaseDirectorCapture, resolveDirectorDisplay, restoreDirectorCapture, upsertDirectorFailedLoad, type DirectorFailedLoads, type DirectorLoadSignal } from "@/lib/canvas/director/director-recovery";
 import { disposeDirectorAdoptionFailure, disposeDirectorHelper, disposeDirectorMaterials, disposeDirectorModelResources, disposeDirectorObject3D, resolveDirectorLoadOwnership } from "@/lib/canvas/director/director-resources";
 import { DIRECTOR_DEFAULT_ACTOR_URL, directorPoseBoneDeltas, directorTransformPathLength, finiteDirectorTransformKeyframes, interpolateDirectorTransform } from "@/lib/canvas/director/director-scene";
-import { DIRECTOR_DEFAULT_VIEW_MODE, directorViewFramingKey, resolveDirectorEffectiveViewport, resolveDirectorOrthographicFraming, resolveDirectorOrthographicFrustum, resolveDirectorViewFraming, type DirectorOrthographicFraming, type DirectorViewFraming, type DirectorViewMode } from "@/lib/canvas/director/director-view-modes";
+import { DIRECTOR_DEFAULT_VIEW_MODE, directorViewFramingKey, resolveDirectorActiveCamera, resolveDirectorEffectiveViewport, resolveDirectorOrthographicFraming, resolveDirectorOrthographicFrustum, resolveDirectorViewFraming, resolveDirectorViewUp, type DirectorOrthographicFraming, type DirectorViewFraming, type DirectorViewMode } from "@/lib/canvas/director/director-view-modes";
 import { DirectorViewToolbar } from "@/components/canvas/director/director-view-toolbar";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { resolveImageUrl } from "@/services/image-storage";
@@ -66,7 +68,7 @@ const emptyRestRotations: Partial<Record<DirectorHumanoidBone, DirectorQuat>> = 
 // context lost 的 dispatch 触发重渲染后 R3F 会 configure 并在失效 context 上
 // 重建 WebGLRenderer，抛 getMaxPrecision / autoReset。稳定后 lost 只显示 notice。
 const directorCanvasGl = { antialias: true, preserveDrawingBuffer: true, alpha: false } as const;
-const directorCanvasCamera = { position: [4.8, 2.7, 6.8] as [number, number, number], fov: 50, near: 0.05, far: 500 } as const;
+const directorCanvasCamera = { position: [7.1, 3.8, 9.2] as [number, number, number], fov: 50, near: 0.05, far: 500 } as const;
 const directorCanvasDpr: [number, number] = [1, 1.5];
 // 自由视角固定环绕焦点：free 是独立观察相机，不跟随 shot 摄影机的 target 走，
 // 否则切换镜头/摄影机会连带把用户正在环绕的焦点也悄悄挪走。
@@ -514,6 +516,7 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
             <ambientLight intensity={scene.environmentIntensity * 0.35} />
             <group position={stage.position} rotation={stage.rotation.map((degrees) => degrees * Math.PI / 180) as DirectorVec3} scale={stage.scale}>
             {scene.lights.map((light) => <DirectorLightView key={light.id} light={light} />)}
+            {viewMode === "free" && renderMode === "beauty" ? scene.cameras.map((item) => <DirectorCameraAid key={item.id} item={item} playhead={playhead} stage={stage} active={item.id === resolveDirectorActiveCamera(scene)?.id} labelsVisible={scene.labelsVisible !== false} />) : null}
             {scene.gridVisible ? <Grid position={[0, 0, 0]} infiniteGrid fadeDistance={40} fadeStrength={5} cellSize={0.5} sectionSize={5} cellColor={stagePalette.cell} sectionColor={stagePalette.section} /> : null}
             {ground.visible ? <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, ground.height - 0.012, 0]}>
                 <planeGeometry args={[120, 120]} />
@@ -547,6 +550,38 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
             <OrbitControls ref={orbitRef} makeDefault camera={freeCamera} enabled={!transforming && effectiveViewport.orbit} target={DIRECTOR_FREE_ORBIT_TARGET} minDistance={0.6} maxDistance={80} />
         </>
     );
+}
+
+/** Editor-only camera position and frustum, deliberately excluded from captures. */
+function DirectorCameraAid({ item, playhead, stage, active, labelsVisible }: { item: DirectorScene["cameras"][number]; playhead: number; stage: NonNullable<DirectorScene["stageTransform"]>; active: boolean; labelsVisible: boolean }) {
+    const transform = interpolateDirectorTransform(item.transform, item.keyframes, playhead);
+    const position = new Vector3(...transform.position);
+    const target = new Vector3(...item.target);
+    const direction = target.clone().sub(position);
+    if (direction.lengthSq() < 1e-8) direction.set(0, 0, -1).applyEuler(new Euler(...transform.rotation));
+    const up = resolveDirectorViewUp(transform.rotation, direction.toArray() as DirectorVec3);
+    const orientation = new Quaternion().setFromRotationMatrix(new Matrix4().lookAt(position, position.clone().add(direction), new Vector3(...up)));
+    const distance = Math.min(2.5, Math.max(1.2, direction.length() * 0.3));
+    const halfHeight = Math.tan((Math.min(120, Math.max(10, item.fov || 50)) * Math.PI) / 360) * distance;
+    const halfWidth = halfHeight * 16 / 9;
+    const corners: DirectorVec3[] = [[-halfWidth, halfHeight, -distance], [halfWidth, halfHeight, -distance], [halfWidth, -halfHeight, -distance], [-halfWidth, -halfHeight, -distance]];
+    const segments: DirectorVec3[] = corners.flatMap((corner, index) => [[0, 0, 0] as DirectorVec3, corner, corner, corners[(index + 1) % 4]]);
+    const worldPosition = new Vector3(...directorStagePoint(stage, transform.position));
+    const [nearViewer, setNearViewer] = useState(false);
+    useFrame(({ camera }) => {
+        const next = camera.position.distanceTo(worldPosition) < 0.5;
+        setNearViewer((current) => current === next ? current : next);
+    });
+    if (nearViewer) return null;
+    return <group userData={{ directorEditorOnly: true }} position={transform.position} quaternion={orientation}>
+        <Line segments points={segments} color={active ? "#5b9dc7" : "#3f6f8b"} lineWidth={1} transparent opacity={active ? 0.5 : 0.3} raycast={() => {}} />
+        <Html center style={{ pointerEvents: "none" }}>
+            <div className="flex flex-col items-center gap-0.5 whitespace-nowrap" style={{ color: "#fff", textShadow: "0 1px 3px #000, 0 0 5px #000" }}>
+                {labelsVisible ? <span data-director-camera-label={item.id} style={{ fontSize: 12, fontWeight: 600 }}>{item.name}</span> : null}
+                <VideoIcon size={25} color={active ? "#f7a815" : "#8ba5b6"} strokeWidth={2.8} aria-hidden />
+            </div>
+        </Html>
+    </group>;
 }
 
 /** 起点、终点、路径点、方向与当前进度共用一条 Transform 关键帧路径。 */
@@ -1202,6 +1237,7 @@ async function captureFrame(context: CaptureContext | null, mode: DirectorRender
     const previous = scene.overrideMaterial;
     const override = mode === "depth" ? new MeshDepthMaterial() : mode === "normal" ? new MeshNormalMaterial() : mode === "pose" ? new MeshBasicMaterial({ color: "#ffffff", wireframe: true }) : null;
     const restoreClayMaterials = mode === "clay" ? applyClaySceneMaterials(scene) : null;
+    const resumeEditorOverlays = suspendDirectorEditorOverlays(scene);
     try {
         scene.overrideMaterial = override;
         gl.render(scene, camera);
@@ -1211,6 +1247,7 @@ async function captureFrame(context: CaptureContext | null, mode: DirectorRender
         restoreClayMaterials?.();
         override?.dispose();
         resumeDisplayMaterialOverride();
+        resumeEditorOverlays();
         gl.render(scene, camera);
     }
 }
@@ -1225,6 +1262,7 @@ async function recordCanvas(context: CaptureContext | null, duration: number, fp
     let stream: MediaStream | null = null;
     let stopTimer: number | null = null;
     let onRenderError: (() => void) | null = null;
+    const resumeEditorOverlays = suspendDirectorEditorOverlays(context.scene);
     try {
         context.scene.overrideMaterial = null;
         context.gl.render(context.scene, context.camera);
@@ -1270,6 +1308,7 @@ async function recordCanvas(context: CaptureContext | null, duration: number, fp
         restoreClayMaterials();
         context.scene.overrideMaterial = previousMaterial;
         resumeDisplayMaterialOverride();
+        resumeEditorOverlays();
         context.gl.render(context.scene, context.camera);
     }
 }
