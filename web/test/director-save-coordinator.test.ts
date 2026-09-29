@@ -464,6 +464,17 @@ describe("DirectorSaveCoordinator", () => {
             expect(h.coord.restoreCandidate()).toBeNull();
         });
 
+        it("restores a persisted panorama and rejects malformed panorama metadata", () => {
+            const h = createHarness();
+            const panorama = { url: "blob:test-panorama", storageKey: "image:local:test", rotation: 35 };
+            h.writeRaw(JSON.stringify(makeEnvelope({ scene: makeScene({ panorama }) })));
+            expect(h.coord.restoreCandidate()?.scene.panorama).toEqual(panorama);
+            h.writeRaw(corruptEnvelope((envelope) => {
+                envelope.scene = { ...makeScene(), panorama: { ...panorama, rotation: "bad" } };
+            }));
+            expect(h.coord.restoreCandidate()).toBeNull();
+        });
+
         it("should reject a candidate whose scene fails DirectorScene validation", () => {
             const h = createHarness();
 

@@ -8,7 +8,27 @@ import { readDirectorReproSnapshot, type DirectorReproSnapshot } from "@/lib/can
 import { resetDirectorDiagnosticDedupe } from "@/lib/canvas/director/director-diagnostics-recorder";
 import { getClientDiagnosticEvents } from "@/services/diagnostics/client-diagnostics";
 import { StatusBadge } from "@/components/ui/base/badges";
-import type { DirectorScene } from "@/types/director";
+import type { DirectorScene, DirectorSceneOutput } from "@/types/director";
+
+type DirectorOutputSummary = { beauty: string; clayVideo: string };
+
+async function readDirectorVideoSize(blob: Blob): Promise<string> {
+    const url = URL.createObjectURL(blob);
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    try {
+        video.src = url;
+        return await new Promise<string>((resolve, reject) => {
+            const timeout = window.setTimeout(() => reject(new Error("白膜视频元数据读取超时")), 4000);
+            video.onloadedmetadata = () => { window.clearTimeout(timeout); resolve(`${video.videoWidth}×${video.videoHeight} · ${blob.size} B`); };
+            video.onerror = () => { window.clearTimeout(timeout); reject(new Error("白膜视频无法解码")); };
+        });
+    } finally {
+        video.removeAttribute("src");
+        video.load();
+        URL.revokeObjectURL(url);
+    }
+}
 
 /**
  * P0 手工复现入口（仅 DEV 注册）。
@@ -29,6 +49,7 @@ export default function DirectorReproLab() {
     const [workbenchOpen, setWorkbenchOpen] = useState(false);
     const [forceSaveFailure, setForceSaveFailure] = useState(false);
     const [appliedCount, setAppliedCount] = useState(0);
+    const [lastOutput, setLastOutput] = useState<DirectorOutputSummary | null>(null);
     const [flushCount, setFlushCount] = useState(0);
     const [events, setEvents] = useState(() => readDirectorEvents());
     const snapshot = useMemo(() => readDirectorReproSnapshot(), []);
@@ -44,7 +65,12 @@ export default function DirectorReproLab() {
         if (forceSaveFailure) throw new Error("repro forced flush failure");
     }, [forceSaveFailure]);
 
-    const onApply = useCallback(async () => {
+    const onApply = useCallback(async (output: DirectorSceneOutput) => {
+        const bitmap = await createImageBitmap(output.beauty);
+        const beauty = `${bitmap.width}×${bitmap.height} · ${output.beauty.size} B`;
+        bitmap.close();
+        const clayVideo = output.clayVideo ? await readDirectorVideoSize(output.clayVideo) : "无";
+        setLastOutput({ beauty, clayVideo });
         setAppliedCount((count) => count + 1);
     }, []);
 
@@ -53,6 +79,7 @@ export default function DirectorReproLab() {
         setScene(createDirectorReproScene());
         setForceSaveFailure(false);
         setAppliedCount(0);
+        setLastOutput(null);
         setFlushCount(0);
         setWorkbenchOpen(false);
         refreshEvents();
@@ -92,7 +119,7 @@ export default function DirectorReproLab() {
                 </span>
             </header>
 
-            <EnvironmentSnapshot snapshot={snapshot} appliedCount={appliedCount} flushCount={flushCount} sceneRevisionHint={scene.updatedAt} />
+            <EnvironmentSnapshot snapshot={snapshot} appliedCount={appliedCount} lastOutput={lastOutput} flushCount={flushCount} sceneRevisionHint={scene.updatedAt} />
             <DiagnosticEventList events={events} />
             <ReproMatrix />
 
@@ -113,7 +140,7 @@ function readDirectorEvents(): DirectorEventRow[] {
         .reverse();
 }
 
-function EnvironmentSnapshot({ snapshot, appliedCount, flushCount, sceneRevisionHint }: { snapshot: DirectorReproSnapshot; appliedCount: number; flushCount: number; sceneRevisionHint: string }) {
+function EnvironmentSnapshot({ snapshot, appliedCount, lastOutput, flushCount, sceneRevisionHint }: { snapshot: DirectorReproSnapshot; appliedCount: number; lastOutput: DirectorOutputSummary | null; flushCount: number; sceneRevisionHint: string }) {
     const { runtime, webgl } = snapshot;
     const rows: Array<[string, string]> = [
         ["应用版本", runtime.appVersion],
@@ -123,6 +150,8 @@ function EnvironmentSnapshot({ snapshot, appliedCount, flushCount, sceneRevision
         ["时区", runtime.timezone || "(不可用)"],
         ["DPR", String(runtime.devicePixelRatio)],
         ["本地 onApply 次数", String(appliedCount)],
+        ["最近构图 PNG", lastOutput?.beauty || "无"],
+        ["最近白膜视频", lastOutput?.clayVideo || "无"],
         ["本地 onFlush 次数", String(flushCount)],
         ["场景 updatedAt", sceneRevisionHint],
     ];

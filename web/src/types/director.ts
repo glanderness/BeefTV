@@ -140,6 +140,8 @@ export type DirectorScene = {
     gridVisible: boolean;
     /** Missing in older saved scenes; treated as adaptive. */
     aspectRatio?: DirectorAspectRatio;
+    /** Optional equirectangular backdrop; older scenes keep their solid color. */
+    panorama?: { url: string; storageKey?: string; rotation: number };
     objects: DirectorObject[];
     cameras: DirectorCamera[];
     lights: DirectorLight[];

@@ -1,7 +1,7 @@
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { Grid, Line, OrbitControls, TransformControls } from "@react-three/drei";
 import { Component, forwardRef, memo, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState, type ComponentRef, type ReactNode } from "react";
-import { AnimationClip, AnimationMixer, Box3, Bone, Camera, Color, Group, LoopOnce, LoopRepeat, Mesh, MeshBasicMaterial, MeshDepthMaterial, MeshNormalMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Quaternion, Raycaster, Scene, SkeletonHelper, Texture, TextureLoader, Vector2, Vector3, WebGLRenderer } from "three";
+import { AnimationClip, AnimationMixer, Box3, Bone, Camera, Color, EquirectangularReflectionMapping, Group, LoopOnce, LoopRepeat, Mesh, MeshBasicMaterial, MeshDepthMaterial, MeshNormalMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Quaternion, Raycaster, Scene, SkeletonHelper, SRGBColorSpace, Texture, TextureLoader, Vector2, Vector3, WebGLRenderer } from "three";
 import type { Material } from "three";
 import { GLTFLoader, SkeletonUtils } from "three-stdlib";
 
@@ -19,6 +19,7 @@ import { DIRECTOR_DEFAULT_ACTOR_URL, directorPoseBoneDeltas, directorTransformPa
 import { DIRECTOR_DEFAULT_VIEW_MODE, directorViewFramingKey, resolveDirectorEffectiveViewport, resolveDirectorOrthographicFraming, resolveDirectorOrthographicFrustum, resolveDirectorViewFraming, type DirectorOrthographicFraming, type DirectorViewFraming, type DirectorViewMode } from "@/lib/canvas/director/director-view-modes";
 import { DirectorViewToolbar } from "@/components/canvas/director/director-view-toolbar";
 import { resolveMediaUrl } from "@/services/file-storage";
+import { resolveImageUrl } from "@/services/image-storage";
 import type { DirectorHumanoidBone, DirectorLight, DirectorObject, DirectorQuat, DirectorRenderMode, DirectorRig, DirectorScene, DirectorTransform, DirectorVec3 } from "@/types/director";
 
 export type DirectorOrbitControls = ComponentRef<typeof OrbitControls>;
@@ -399,9 +400,36 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
     }, [onOrbitControls]);
 
     useEffect(() => {
+        let cancelled = false;
+        let texture: Texture | null = null;
         threeScene.background = new Color(scene.background);
         invalidate();
-    }, [invalidate, scene.background, threeScene]);
+        if (scene.panorama?.url) {
+            void resolveImageUrl(scene.panorama.storageKey, scene.panorama.url, { cacheMiss: true }).then((url) => {
+                if (cancelled) return;
+                new TextureLoader().load(url, (loaded) => {
+                    if (cancelled) { loaded.dispose(); return; }
+                    loaded.mapping = EquirectangularReflectionMapping;
+                    loaded.colorSpace = SRGBColorSpace;
+                    texture = loaded;
+                    threeScene.background = loaded;
+                    invalidate();
+                });
+            });
+        }
+        return () => {
+            cancelled = true;
+            if (texture) {
+                if (threeScene.background === texture) threeScene.background = new Color(scene.background);
+                texture.dispose();
+            }
+        };
+    }, [invalidate, scene.background, scene.panorama?.storageKey, scene.panorama?.url, threeScene]);
+
+    useEffect(() => {
+        threeScene.backgroundRotation.y = ((scene.panorama?.rotation ?? 0) * Math.PI) / 180;
+        invalidate();
+    }, [invalidate, scene.panorama?.rotation, threeScene]);
 
     useEffect(() => {
         const material = renderMode === "depth" ? new MeshDepthMaterial() : renderMode === "normal" ? new MeshNormalMaterial() : renderMode === "pose" ? new MeshBasicMaterial({ color: "#ffffff", wireframe: true }) : null;

@@ -1,4 +1,4 @@
-import { App, Button, ColorPicker, Dropdown, Input, InputNumber, Select, Slider } from "antd";
+import { App, Button, ColorPicker, Dropdown, Input, InputNumber, Modal, Select, Slider } from "antd";
 import { Switch } from "@/components/ui/base/switch";
 import type { MenuProps } from "antd";
 import { Box, BoxSelect, Camera, Circle, Cuboid, FileUp, Focus, Image as ImageIcon, LampDesk, Lightbulb, Plus, Redo2, RotateCcw, Save, Search, Trash2, Undo2, UserRound, Video, X } from "lucide-react";
@@ -29,8 +29,9 @@ import { searchDirectorSceneItems } from "@/lib/canvas/director/director-scene-s
 import { describeDirectorSaveStatus, resolveDirectorCloseOutcome, shouldBlockDirectorUnload, shouldOfferDirectorDraftRecovery } from "@/lib/canvas/director/director-save-wiring";
 import { useDirectorSaveCoordinator } from "@/components/canvas/director/use-director-save-coordinator";
 import { uploadMediaFile } from "@/services/file-storage";
+import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { hasRemoteUserDataSyncSession, localSavedRemotePendingMessage, saveRemoteUserDataNow } from "@/services/local-workspace-sync";
-import { useAssetStore, type ModelAsset } from "@/stores/use-asset-store";
+import { useAssetStore, type ImageAsset, type ModelAsset } from "@/stores/use-asset-store";
 import { useDirectorWorkbenchStore } from "@/stores/canvas/use-director-workbench-store";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { CanvasNodeData } from "@/types/canvas";
@@ -41,6 +42,9 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
     const theme = canvasThemes[useActiveTheme()];
     const viewportRef = useRef<DirectorViewportHandle>(null);
     const modelInputRef = useRef<HTMLInputElement>(null);
+    const panoramaInputRef = useRef<HTMLInputElement>(null);
+    const [panoramaUploading, setPanoramaUploading] = useState(false);
+    const [panoramaHistoryOpen, setPanoramaHistoryOpen] = useState(false);
     const [draft, setDraft] = useState<DirectorScene | null>(null);
     const [history, setHistory] = useState<DirectorScene[]>([]);
     const [future, setFuture] = useState<DirectorScene[]>([]);
@@ -78,6 +82,7 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
     const assets = useAssetStore((state) => state.assets);
     const addAsset = useAssetStore((state) => state.addAsset);
     const modelAssets = useMemo(() => assets.filter((asset): asset is ModelAsset => asset.kind === "model"), [assets]);
+    const imageAssets = useMemo(() => assets.filter((asset): asset is ImageAsset => asset.kind === "image"), [assets]);
 
     // 模式决定显示什么：时间轴、关键帧、骨骼、摄影机工具与可选渲染视图都从这里派生。
     const capabilities = directorModeCapabilities(mode);
@@ -437,6 +442,28 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
 
     const addModelAsset = (asset: ModelAsset) => addObject(createDirectorModel({ name: asset.title, assetId: asset.id, storageKey: asset.data.storageKey, url: asset.data.url, mimeType: asset.data.mimeType }));
 
+    const setPanorama = (url: string, storageKey?: string) => {
+        commit((current) => ({ ...current, panorama: { url, storageKey, rotation: current.panorama?.rotation ?? 0 } }));
+        setPanoramaHistoryOpen(false);
+        setNavigationTab("panorama");
+    };
+
+    const uploadPanorama = async (file?: File) => {
+        if (!file) return;
+        if (!file.type.startsWith("image/")) { message.error("请选择图片文件"); return; }
+        setPanoramaUploading(true);
+        try {
+            const uploaded = await uploadImage(file);
+            addAsset({ kind: "image", title: file.name, coverUrl: uploaded.url, tags: ["全景图"], source: "导演台", data: { dataUrl: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType }, metadata: { source: "director-panorama" } });
+            setPanorama(uploaded.url, uploaded.storageKey);
+            message[uploaded.pendingRemoteUpload ? "warning" : "success"](uploaded.pendingRemoteUpload ? "全景图已保存在本机；资源服务恢复后请检查同步" : "全景图已加入场景和素材库");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "全景图上传失败");
+        } finally {
+            setPanoramaUploading(false);
+        }
+    };
+
     const uploadModel = async (file?: File) => {
         if (!file || !/\.(glb|gltf)$/i.test(file.name)) return;
         const uploaded = await uploadMediaFile(file, "model");
@@ -780,7 +807,7 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
                 <aside className="flex min-h-0 overflow-hidden border-r" style={{ background: theme.node.panel, borderColor: theme.toolbar.border }}>
                     <DirectorWorkbenchRail active={navigationTab} onChange={(tab) => {
                         setNavigationTab(tab);
-                        if (tab === "scene" || tab === "aspect") {
+                        if (tab === "scene" || tab === "aspect" || tab === "panorama") {
                             setSelectedObjectId(null);
                             setSelectedLightId(null);
                             setSceneInspectorView("scene");
@@ -813,6 +840,14 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
                             {DIRECTOR_CAMERA_PRESETS.map((preset) => <button key={preset.id} type="button" aria-label={preset.label} className="flex h-[72px] flex-col items-center justify-center gap-1 rounded-xl border text-xs transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2" style={{ borderColor: theme.toolbar.border }} onClick={(event) => { addPresetCamera(preset.id); releaseDirectorFocusAfterPointer(event); }}><Camera className="size-5" aria-hidden /><span>{preset.label}</span></button>)}
                         </div>
                     </> : null}
+                    {navigationTab === "panorama" ? <>
+                        <PanelTitle title="全景图" />
+                        <div className="space-y-2 px-2 pb-3">
+                            <QuickAdd label={panoramaUploading ? "正在上传…" : "本地上传"} icon={<FileUp />} onClick={() => { if (!panoramaUploading) panoramaInputRef.current?.click(); }} />
+                            <QuickAdd label="历史记录" icon={<ImageIcon />} onClick={() => setPanoramaHistoryOpen(true)} />
+                            <p className="px-1 text-xs opacity-60">建议使用 2:1 等距柱状全景图片，上传后可在场景设置中旋转。</p>
+                        </div>
+                    </> : null}
                     {navigationTab === "aspect" ? <>
                         <PanelTitle title="选择画幅比例" />
                         <div className="grid grid-cols-2 gap-2 px-2 pb-3">
@@ -826,6 +861,7 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
                         <div className="px-2 pb-3">{imageNodes.slice(0, 20).map((node) => <SceneRow key={node.id} icon={<ImageIcon />} label={node.title} onClick={() => addBillboard(node)} onDelete={() => onDeleteImageNode(node.id)} />)}</div>
                     </> : null}
                     <input ref={modelInputRef} type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" className="hidden" onChange={(event) => { void uploadModel(event.target.files?.[0]); event.currentTarget.value = ""; }} />
+                    <input ref={panoramaInputRef} type="file" accept={"image/" + "*"} className="hidden" onChange={(event) => { void uploadPanorama(event.target.files?.[0]); event.currentTarget.value = ""; }} />
                     </div>
                 </aside>
 
@@ -841,6 +877,21 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
                     {selectedObject && !capabilities.cameraTools ? <ObjectInspector object={selectedObject} rendered={selectedObjectRendered || selectedObject.transform} playhead={snappedPlayhead} selectedBone={selectedBone} capabilities={capabilities} onSelectBone={setSelectedBone} onUpdate={(patch) => updateObject(selectedObject.id, patch)} onTransformEdit={(edited) => handleObjectTransform(selectedObject.id, selectedObjectRendered || selectedObject.transform, edited)} onBoneRotationStage={(rotation) => selectedBone && writeBoneRotation(selectedObject.id, selectedBone, rotation, "stage")} onBoneRotationCommit={() => stagedTransaction.end("commit")} onAddKeyframe={recordSelectedKeyframe} onDelete={() => removeObject(selectedObject.id)} /> : selectedLight && !capabilities.cameraTools ? <LightInspector light={selectedLight} onUpdate={(patch) => updateLight(selectedLight.id, patch)} onDelete={() => removeLight(selectedLight.id)} /> : sceneInspectorView === "scene" && !capabilities.cameraTools ? <DirectorSceneInspector scene={draft} onChange={(patch) => commit((current) => ({ ...current, ...patch }))} /> : <ShotInspector shot={activeShot} camera={activeCamera} cameras={draft.cameras} capabilities={capabilities} onUpdateShot={(patch) => updateShot(activeShot.id, patch)} onUpdateCamera={(patch) => activeCamera && commit((current) => ({ ...current, cameras: current.cameras.map((item) => item.id === activeCamera.id ? { ...item, ...patch } : item) }))} onAddCameraKeyframe={addCameraKeyframe} onApplyCameraMove={applyCameraMove} onAlignCameraToView={alignCameraToView} onExportClay={() => void exportClayVideo()} recording={recording} />}
                 </aside>
             </div>
+
+            <Modal title="生成历史" open={panoramaHistoryOpen} onCancel={() => setPanoramaHistoryOpen(false)} footer={null} destroyOnHidden width={680}>
+                <p className="mb-3 text-xs opacity-60">选择一张已有图片作为场景全景图</p>
+                <div className="grid max-h-[55vh] grid-cols-3 gap-2 overflow-y-auto">
+                    {imageAssets.map((asset) => <button key={asset.id} type="button" className="overflow-hidden rounded-lg border text-left transition hover:border-blue-400" onClick={() => setPanorama(asset.data.dataUrl, asset.data.storageKey)}>
+                        <PanoramaHistoryThumbnail storageKey={asset.data.storageKey} fallback={asset.coverUrl || asset.data.dataUrl} />
+                        <span className="block truncate p-2 text-xs">{asset.title}</span>
+                    </button>)}
+                    {imageNodes.filter((node) => Boolean(node.metadata?.content)).map((node) => <button key={node.id} type="button" className="overflow-hidden rounded-lg border text-left transition hover:border-blue-400" onClick={() => setPanorama(node.metadata!.content!, node.metadata?.storageKey)}>
+                        <PanoramaHistoryThumbnail storageKey={node.metadata?.storageKey} fallback={node.metadata!.content!} />
+                        <span className="block truncate p-2 text-xs">{node.title}</span>
+                    </button>)}
+                </div>
+                {imageAssets.length === 0 && imageNodes.every((node) => !node.metadata?.content) ? <p className="py-8 text-center text-xs opacity-60">暂无图片，可先本地上传</p> : null}
+            </Modal>
 
             {/* 时间轴只属于动画模式：其他模式下它不渲染，Auto Key 与录制入口一并消失。 */}
             {capabilities.timeline ? <DirectorSequencer scene={draft} shot={activeShot} camera={activeCamera} objects={draft.objects} selectedObjectId={selectedObjectId} selectedBone={selectedBone} playhead={playhead} playing={playing} autoKey={autoKey} height={sequencerHeight} visible={sequencerVisible} onPlayToggle={() => setPlaying(!playing)} onPlayheadChange={setPlayhead} onAutoKeyChange={setAutoKey} onHeightChange={setSequencerHeight} onVisibilityChange={setSequencerVisible} onSelectObject={setSelectedObjectId} onSelectBone={setSelectedBone} onRecordKeyframe={recordSelectedKeyframe} onAddShot={addShot} onDeleteKeyframe={deleteKeyframe} onSetKeyframeEasing={setKeyframeEasing} onSelectShot={(id) => { commit((current) => ({ ...current, activeShotId: id })); setPlayhead(0); }} /> : null}
@@ -980,6 +1031,15 @@ function AddMenuButton({ label, items }: { label: string; items: MenuProps["item
     return <Dropdown trigger={["click"]} placement="bottomRight" menu={{ items }}><button type="button" aria-label={label} title={label} className="grid size-8 shrink-0 place-items-center rounded-md transition hover:bg-black/5 dark:hover:bg-white/10"><Plus className="size-3.5" /></button></Dropdown>;
 }
 function QuickAdd({ label, icon, onClick }: { label: string; icon: ReactElement; onClick: () => void }) { return <button type="button" className="flex h-8 items-center gap-1.5 border px-2 text-[var(--fs-tiny)] transition hover:bg-black/5 dark:hover:bg-white/5" onClick={(event) => { onClick(); releaseDirectorFocusAfterPointer(event); }}><span className="[&>svg]:size-3.5">{icon}</span><span className="truncate">{label}</span></button>; }
+function PanoramaHistoryThumbnail({ storageKey, fallback }: { storageKey?: string; fallback: string }) {
+    const [url, setUrl] = useState(fallback);
+    useEffect(() => {
+        let active = true;
+        void resolveImageUrl(storageKey, fallback, { cacheMiss: true }).then((resolved) => { if (active) setUrl(resolved); });
+        return () => { active = false; };
+    }, [storageKey, fallback]);
+    return <img src={url} alt="" className="aspect-video w-full object-cover" />;
+}
 function IconButton({ label, disabled, children, onClick }: { label: string; disabled?: boolean; children: ReactNode; onClick: () => void }) { return <button type="button" aria-label={label} title={label} disabled={disabled} className="grid size-8 shrink-0 place-items-center rounded-md transition hover:bg-black/5 disabled:opacity-30 dark:hover:bg-white/10" onClick={(event) => { onClick(); releaseDirectorFocusAfterPointer(event); }}>{children}</button>; }
 const poseOptions: Array<{ label: string; value: DirectorPose }> = [
     { label: "站立", value: "stand" }, { label: "T 型", value: "t_pose" }, { label: "行走", value: "walk" }, { label: "跑步", value: "run" },

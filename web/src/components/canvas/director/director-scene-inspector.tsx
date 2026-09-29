@@ -3,12 +3,17 @@ import { ColorPicker, Slider } from "antd";
 import { Switch } from "@/components/ui/base/switch";
 import type { DirectorScene } from "@/types/director";
 
-type SceneEnvironmentPatch = Partial<Pick<DirectorScene, "background" | "environmentIntensity" | "gridVisible">>;
+type SceneEnvironmentPatch = Partial<Pick<DirectorScene, "background" | "environmentIntensity" | "gridVisible" | "panorama">>;
 
 export function DirectorSceneInspector({ scene, onChange }: { scene: DirectorScene; onChange: (patch: SceneEnvironmentPatch) => void }) {
     return (
         <div className="space-y-5 p-3">
             <h2 className="text-sm font-semibold">3D场景</h2>
+            {scene.panorama ? <div className="space-y-2 rounded-lg border p-2 text-xs">
+                <div className="flex items-center justify-between"><span>已连接全景图</span><button type="button" aria-label="移除全景图" onClick={() => onChange({ panorama: undefined })}>移除</button></div>
+                <div className="flex items-center justify-between"><span>旋转角度</span><span>{Math.round(scene.panorama.rotation)}°</span></div>
+                <Slider min={-180} max={180} step={1} value={scene.panorama.rotation} onChangeComplete={(rotation) => onChange({ panorama: { ...scene.panorama!, rotation } })} />
+            </div> : null}
             <div className="space-y-2">
                 <div className="text-xs opacity-65">天空颜色</div>
                 <ColorPicker showText value={scene.background} onChangeComplete={(color) => onChange({ background: color.toHexString() })} />
