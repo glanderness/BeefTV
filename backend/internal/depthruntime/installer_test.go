@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -161,6 +162,21 @@ func TestEnsureRejectsUnsignedWindowsManifestWithoutFallback(t *testing.T) {
 	}
 }
 
+func TestEnsureRejectsSignedWindowsArtifactWithoutExpandedBudget(t *testing.T) {
+	manifest := Manifest{Version: 2, Runtimes: map[string]Artifact{
+		"windows-amd64/cpu": {URLs: []string{"https://example.invalid/runtime.zip"}, Size: 1, SHA256: strings.Repeat("a", 64)},
+	}}
+	envelope, public := signedTestManifest(t, manifest)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(envelope)
+	}))
+	defer server.Close()
+	_, err := Ensure(context.Background(), EnsureOptions{ManifestURL: server.URL, DataDir: t.TempDir(), Platform: "windows-amd64", Variant: "cpu", TrustedPublicKey: public})
+	if err == nil || !strings.Contains(err.Error(), "解压体积") {
+		t.Fatalf("missing signed shape was accepted: %v", err)
+	}
+}
+
 func TestExtractRuntimeArchiveRejectsWindowsTraversalOnEveryHost(t *testing.T) {
 	for _, name := range []string{`..\\escape`, `C:/escape`, `worker/../../escape`} {
 		t.Run(name, func(t *testing.T) {
@@ -265,6 +281,42 @@ func TestWindowsArchiveLimitAcceptsMeasuredCPUPackageWithoutRelaxingMac(t *testi
 	}
 	if err := validateArchiveShape(25_000, 12<<30+1, Artifact{}, 12<<30); err == nil {
 		t.Fatal("Windows absolute archive limit was ignored")
+	}
+}
+
+func TestPublishWindowsRuntimePreservesPreviousInstallIfStageFails(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime")
+	if err := os.Mkdir(root, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sentinel"), []byte("previous"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishWindowsRuntime(filepath.Join(t.TempDir(), "missing-stage"), root); err == nil {
+		t.Fatal("missing stage was accepted")
+	}
+	data, err := os.ReadFile(filepath.Join(root, "sentinel"))
+	if err != nil || string(data) != "previous" {
+		t.Fatalf("previous installation was lost: %q %v", data, err)
+	}
+}
+
+func TestPublishWindowsRuntimeReplacesOnlyAfterCompleteStage(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "runtime")
+	stage := filepath.Join(parent, "stage")
+	for _, dir := range []string{root, stage} {
+		if err := os.Mkdir(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = os.WriteFile(filepath.Join(root, "old"), []byte("old"), 0o600)
+	_ = os.WriteFile(filepath.Join(stage, "new"), []byte("new"), 0o600)
+	if err := publishWindowsRuntime(stage, root); err != nil {
+		t.Fatal(err)
+	}
+	if !pathExists(filepath.Join(root, "new")) || pathExists(filepath.Join(root, "old")) {
+		t.Fatal("Windows runtime was not replaced cleanly")
 	}
 }
 

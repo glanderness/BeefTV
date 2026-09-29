@@ -143,9 +143,15 @@ func Ensure(ctx context.Context, options EnsureOptions) (Installation, error) {
 				return Installation{}, errors.New("深度组件内置 Python 不可执行")
 			}
 		}
-		_ = os.RemoveAll(runtimeRoot)
-		if err := os.Rename(stage, runtimeRoot); err != nil {
-			return Installation{}, fmt.Errorf("发布深度组件失败: %w", err)
+		if windows {
+			if err := publishWindowsRuntime(stage, runtimeRoot); err != nil {
+				return Installation{}, err
+			}
+		} else {
+			_ = os.RemoveAll(runtimeRoot)
+			if err := os.Rename(stage, runtimeRoot); err != nil {
+				return Installation{}, fmt.Errorf("发布深度组件失败: %w", err)
+			}
 		}
 	}
 	if !fileMatches(modelPath, manifest.Model) {
@@ -154,6 +160,32 @@ func Ensure(ctx context.Context, options EnsureOptions) (Installation, error) {
 		}
 	}
 	return Installation{Python: python, ToolDir: toolDir, ModelRuntime: modelRuntime}, nil
+}
+
+func publishWindowsRuntime(stage, root string) error {
+	if _, err := os.Stat(root); errors.Is(err, os.ErrNotExist) {
+		return os.Rename(stage, root)
+	} else if err != nil {
+		return err
+	}
+	backupDir, err := os.MkdirTemp(filepath.Dir(root), ".depth-runtime-backup-*")
+	if err != nil {
+		return err
+	}
+	backup := filepath.Join(backupDir, "previous")
+	if err := os.Rename(root, backup); err != nil {
+		_ = os.Remove(backupDir)
+		return fmt.Errorf("旧版深度组件仍被占用，无法安全替换: %w", err)
+	}
+	if err := os.Rename(stage, root); err != nil {
+		if restoreErr := os.Rename(backup, root); restoreErr != nil {
+			return fmt.Errorf("发布深度组件失败: %w；旧版保留在 %s，自动恢复失败: %v", err, backup, restoreErr)
+		}
+		_ = os.Remove(backupDir)
+		return fmt.Errorf("发布深度组件失败，旧版已恢复: %w", err)
+	}
+	_ = os.RemoveAll(backupDir)
+	return nil
 }
 
 func fetchManifest(ctx context.Context, rawURL string, signed bool, public ed25519.PublicKey) (Manifest, error) {
