@@ -16,7 +16,7 @@ export function createDirectorScene(title = "未命名场景"): DirectorScene {
         id: nanoid(),
         version: 1,
         title,
-        background: "#d8dde3",
+        background: "#060608",
         environmentIntensity: 0.7,
         gridVisible: true,
         objects: [createDirectorActor("演员 1", [0, 0, 0])],
