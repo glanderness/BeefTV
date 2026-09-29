@@ -61,6 +61,10 @@ var officialApplicationPolicies = map[string]PluginManagementView{
 		Origin: PluginOriginOfficial, Kind: PluginKindApplication,
 		ActivationScope: PluginScopeUser, ConfigurationScope: PluginConfigurationUser,
 	},
+	WorkflowPluginComfyUI: {
+		Origin: PluginOriginOfficial, Kind: PluginKindApplication,
+		ActivationScope: PluginScopeUser, ConfigurationScope: PluginConfigurationUser,
+	},
 	PluginEagleAssetConnector: {
 		Origin: PluginOriginOfficial, Kind: PluginKindApplication,
 		ActivationScope: PluginScopeUser, ConfigurationScope: PluginConfigurationUser,

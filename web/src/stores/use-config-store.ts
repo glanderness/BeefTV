@@ -53,6 +53,11 @@ export function normalizeRunningHubWorkflowKind(value: unknown): RunningHubWorkf
     return value === "app" ? "app" : "workflow";
 }
 
+/** 原生 ComfyUI 目前只支持图片与视频，音频尚未接入。 */
+export function normalizeComfyUICapability(value: unknown, fallback: ComfyUICapability = "image"): ComfyUICapability {
+    return value === "image" || value === "video" ? value : fallback;
+}
+
 function normalizeWorkflowFieldSourceName(value: unknown, capability?: RunningHubCapability) {
     const source = String(value || "").trim();
     const normalized = source.toLowerCase().replace(/[\s_-]/g, "");
@@ -335,6 +340,26 @@ export type RunningHubConfig = {
     workflows: RunningHubWorkflow[];
 };
 
+export type ComfyUICapability = "image" | "video";
+
+export type ComfyUIWorkflow = {
+    /** BeefTV 内的条目标识；原生 ComfyUI 没有云端 workflowId。 */
+    workflowId: string;
+    title?: string;
+    capability?: ComfyUICapability;
+    fields?: WorkflowFieldMapping[];
+    workflowJson?: Record<string, unknown>;
+};
+
+export type ComfyUIConfig = {
+    enabled: boolean;
+    /** 原生 ComfyUI 地址，默认指向本机 8188。 */
+    baseUrl: string;
+    capability: ComfyUICapability;
+    workflowId: string;
+    workflows: ComfyUIWorkflow[];
+};
+
 export type WorkflowGraphPreview = {
     nodes: Array<{ id: string; title?: string; classType?: string }>;
     edges: Array<{ from: string; to: string }>;
@@ -387,8 +412,9 @@ export type AiConfig = {
     apiFormat: ApiCallFormat;
     channels: ModelChannel[];
     runningHub: RunningHubConfig;
+    comfyui: ComfyUIConfig;
     /** 仅用于单次生成任务路由，不属于全局渠道启用状态。 */
-    taskWorkflowProvider?: "model" | "runninghub";
+    taskWorkflowProvider?: "model" | "runninghub" | "comfyui";
     model: string;
     imageModel: string;
     videoModel: string;
@@ -433,6 +459,7 @@ export const defaultConfig: AiConfig = {
     // 创作端模型目录只能来自后台公开逻辑模型和用户自定义渠道，不能内置供应商模型。
     channels: [],
     runningHub: { enabled: false, baseUrl: "https://www.runninghub.cn", apiKey: "", walletApiKey: "", uploadApiKey: "", useWallet: false, capability: "image", selectedKind: "workflow", workflowId: "", workflows: [] },
+    comfyui: { enabled: false, baseUrl: "http://127.0.0.1:8188", capability: "image", workflowId: "", workflows: [] },
     taskWorkflowProvider: "model",
     model: "",
     imageModel: "",
@@ -612,6 +639,10 @@ function isAiConfigReady(config: AiConfig, model: string) {
         const key = config.runningHub.apiKey;
         return Boolean(config.runningHub.enabled && config.runningHub.baseUrl.trim() && key.trim() && config.runningHub.workflowId.trim());
     }
+    if (config.taskWorkflowProvider === "comfyui") {
+        // ComfyUI 是自托管服务，默认部署不需要 API Key。
+        return Boolean(config.comfyui.enabled && config.comfyui.baseUrl.trim() && config.comfyui.workflowId.trim());
+    }
     const channel = resolveModelChannel(config, model);
     return Boolean(model.trim() && channel.baseUrl.trim() && channelHasGenerationCredential(channel));
 }
@@ -680,6 +711,22 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
         : [];
     const runningHubWorkflowID = String(persistedRunningHub?.workflowId || "").trim();
     const runningHubSelectedKind = persistedRunningHub?.selectedKind ? normalizeRunningHubWorkflowKind(persistedRunningHub.selectedKind) : normalizeRunningHubWorkflowKind(runningHubWorkflows.find((item) => item.workflowId === runningHubWorkflowID)?.kind);
+    const persistedComfyUI = persistedConfig.comfyui;
+    const comfyUICapability = normalizeComfyUICapability(persistedComfyUI?.capability, defaultConfig.comfyui.capability);
+    const comfyUIWorkflows = Array.isArray(persistedComfyUI?.workflows)
+        ? persistedComfyUI.workflows
+              .filter((item): item is ComfyUIWorkflow => Boolean(item && typeof item === "object" && String(item.workflowId || "").trim()))
+              .map((item) => {
+                  const capability = normalizeComfyUICapability(item.capability, comfyUICapability);
+                  return {
+                      ...item,
+                      workflowId: String(item.workflowId || "").trim(),
+                      capability,
+                      fields: normalizeSavedWorkflowFields(item, capability),
+                  };
+              })
+        : [];
+    const comfyUIWorkflowID = String(persistedComfyUI?.workflowId || "").trim();
     const config = {
         ...defaultConfig,
         ...persistedConfig,
@@ -697,6 +744,15 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
             selectedKind: runningHubSelectedKind,
             workflowId: runningHubWorkflowID,
             workflows: runningHubWorkflows,
+        },
+        comfyui: {
+            ...defaultConfig.comfyui,
+            ...(persistedComfyUI || {}),
+            // 本机 ComfyUI 的默认地址必须保留，否则空快照会让配置界面丢掉地址。
+            baseUrl: typeof persistedComfyUI?.baseUrl === "string" && persistedComfyUI.baseUrl.trim() ? persistedComfyUI.baseUrl : defaultConfig.comfyui.baseUrl,
+            capability: comfyUICapability,
+            workflowId: comfyUIWorkflowID,
+            workflows: comfyUIWorkflows,
         },
     };
     const hasPersistedChannels = Array.isArray(persistedConfig.channels);

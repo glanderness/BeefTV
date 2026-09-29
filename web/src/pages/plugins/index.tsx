@@ -11,7 +11,7 @@ import { listRegisteredPlugins } from "@/lib/plugins/plugin-registry";
 import "@/lib/plugins/builtin";
 import { EAGLE_PLUGIN_ID } from "@/lib/plugins/builtin/eagle";
 import { PROMPT_OPTIMIZER_PLUGIN_ID } from "@/lib/plugins/builtin/prompt-optimizer";
-import { RUNNINGHUB_PLUGIN_ID } from "@/lib/plugins/builtin/workflows";
+import { COMFYUI_PLUGIN_ID, RUNNINGHUB_PLUGIN_ID } from "@/lib/plugins/builtin/workflows";
 import { isOfficialApplicationPluginId } from "@/lib/plugins/official-applications";
 import type { PluginManifest, PluginManifestV2, RegisteredPlugin } from "@/lib/plugins/plugin-types";
 import { getEagleLibrary, type EagleFolder } from "@/services/api/eagle";
@@ -570,6 +570,20 @@ export default function PluginsPage() {
                                         <div className="rounded-[var(--r-md)] border border-border/60 bg-muted/25 px-3 py-3 text-[var(--fs-body)] leading-6 text-foreground/70">
                                             <p>在创作页或图片、视频节点的提示词编辑器中使用“优化”按钮，即可让当前文本模型整理提示词。</p>
                                             <p className="mt-2 text-[var(--fs-micro)] text-foreground/50">插件不会自动覆盖原提示词，只有点击“采用”后才会回填到当前输入框。</p>
+                                        </div>
+                                    ) : settingsPlugin.manifest.id === COMFYUI_PLUGIN_ID ? (
+                                        <div className="plugin-settings-empty">
+                                            <p>ComfyUI 的服务地址、工作流与字段映射在宿主设置页维护。</p>
+                                            <Button
+                                                type="primary"
+                                                icon={<ExternalLink className="size-4" />}
+                                                onClick={() => {
+                                                    setSettingsPluginId(null);
+                                                    navigate("/settings?section=comfyui");
+                                                }}
+                                            >
+                                                打开 ComfyUI 设置
+                                            </Button>
                                         </div>
                                     ) : settingsPlugin.manifest.id === RUNNINGHUB_PLUGIN_ID ? (
                                         <div className="plugin-settings-empty">

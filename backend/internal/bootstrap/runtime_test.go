@@ -196,6 +196,10 @@ func TestRuntimeOpenStartClose(t *testing.T) {
 		t.Fatalf("desktop unknown proxy path status = %d, want %d", unknownProxyResponse.StatusCode, http.StatusNotFound)
 	}
 
+	// http.DefaultClient 会把完成的请求连接留在 keep-alive 连接池里。这些连接从服务端
+	// 视角可能仍处于「刚响应完」的状态窗口，Shutdown 会一直等到超时后强制关闭。
+	// 测试结束时主动释放它们，让关闭路径只反映 runtime 自身的行为。
+	http.DefaultClient.CloseIdleConnections()
 	if err := runtime.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}

@@ -22,9 +22,46 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 | `/canvas-projects/*`, `/projects/*` | 画布、项目、章节、分镜与快照 |
 | `/resources/*` | 本地素材、分片上传和媒体读取 |
 | `/tasks/*` | 生成任务创建、查询、取消、恢复与事件流 |
+| `/timeline/*` | 本地 ffmpeg 字幕转写与成片渲染，不经模型路由 |
 | `/ai/*` | 外部模型目录和自定义协议转发 |
+| `/comfyui/*` | 原生 ComfyUI 节点定义代理，只读取工作流引用的节点 |
 | `/plugins/*`, `/skills/*` | 本地扩展包与技能 |
 | `/health/*`, `/system/version` | 启动、就绪与版本诊断 |
+
+## 成片渲染
+
+`POST /timeline/renders` 创建 `timeline_render` 任务，用宿主 ffmpeg 把时间线快照按片段顺序重编码成单个 MP4，并从 `subtitle` 片段生成 SRT。它不经模型路由，因此**不校验渠道配置**。
+
+请求体：
+
+| 字段 | 说明 |
+| --- | --- |
+| `projectId` | 领域项目 ID |
+| `timeline` | `TimelineProject` v2 快照：`version`、`tracks`、`clips`、`durationMs` |
+| `metadata` | 可选。产物登记信息，见下 |
+
+片段通过 `directMedia.storageKey = "resource:<资源ID>"` 引用后端资源；不含有效引用的片段渲染为黑场，整条时间线没有任何有效媒体时创建即被拒绝。
+
+任务终态 `resultJson` 为：
+
+```json
+{ "resourceId": "...", "fileName": "timeline-render-20260927-162439.mp4", "size": 4373561, "durationMs": 10332, "subtitleSrt": "1\n00:00:00,000 --> ...\n" }
+```
+
+### 产物登记
+
+`timeline_render` 自行写终态，不经过通用任务终止流程，因此在成功路径上显式调用产物登记。若请求带 `metadata`，成功后会按它与通用任务相同的字段回填交付阶段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `workflowStepId` | 目标工作流阶段。**缺失时整个登记是空操作**。 |
+| `domainProjectId` / `unitId` | 归属项目与章节 |
+| `artifactType` | 短剧成片传 `delivery` |
+| `role` / `mediaType` | 产物用途与媒体类型 |
+
+短剧的「一键成片」正是这样把结果写回交付阶段：**不带 `shotId`**，因此渲染结果只落 `WorkflowStepInstance.outputJson` 与 `ProductionTaskLink`，不写镜头级的 `ShotArtifact`。前端从阶段 `outputJson` 读取成片与字幕——任务列表不下发 `resultJson`。
+
+渲染依赖宿主 `ffmpeg` 与 `ffprobe`，可用 `CANVAS_FFMPEG_PATH` 指定二进制；缺失时任务以「渲染依赖未安装」失败。
 
 ## 明确不存在的端点
 

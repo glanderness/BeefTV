@@ -37,6 +37,11 @@ export async function createTimelineTranscriptionTask(
 export type TimelineRenderCreateRequest = {
     projectId: string;
     timeline: TimelineProject;
+    /**
+     * 产物登记元数据。短剧成片用它把结果写回对应工作流阶段（workflowStepId / unitId /
+     * artifactType），由后端 RegisterTaskOutputFromTask 读取。时间线编辑器不传该字段。
+     */
+    metadata?: Record<string, unknown>;
 };
 
 export type TimelineRenderResult = {

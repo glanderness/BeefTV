@@ -94,7 +94,9 @@ func taskClientContext(raw string) *TaskClientContext {
 		context.BatchCount = metadata.BatchCount
 		return context
 	}
-	if metadata.ShotID != "" && metadata.WorkflowStepID != "" {
+	// 成片属于单元级产物，没有 ShotID，但同样需要 workflowStepId 才能定位阶段；
+	// 只要求 workflowStepId 存在，避免刷新后读不到在途任务的进度。
+	if metadata.WorkflowStepID != "" {
 		context.DomainProjectID = metadata.DomainProjectID
 		context.ShotID = metadata.ShotID
 		context.WorkflowStepID = metadata.WorkflowStepID
