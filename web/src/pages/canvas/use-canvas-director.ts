@@ -101,10 +101,11 @@ export function useCanvasDirector({
         message.success("已创建导演台节点，点击缩略图进入编辑");
     }, [directorScenes, getCanvasCenter, message, nodesRef, projectId, setNodes, setSelectedConnectionId, setSelectedNodeIds, updateProject]);
 
-    const openDirectorWorkbench = useCallback((nodeId: string) => {
+    const openDirectorWorkbench = useCallback((nodeId: string, initialPrompt = "") => {
         const node = nodesRef.current.find((item) => item.id === nodeId);
         if (!node || node.metadata?.workflowKind !== "shot") return;
         let scene = currentDirectorScenes(projectId, directorScenes).find((item) => item.id === node.metadata?.directorSceneId);
+        let sceneNeedsPersistence = false;
         if (!scene) {
             // 孤儿节点修复路径：节点存在但场景丢了。这不是「新建」，不弹模板选择，
             // 用空场景兜底 —— 绝不在用户没选过的情况下塞演员进去。
@@ -114,8 +115,20 @@ export function useCanvasDirector({
             const directorSceneId = scene.id;
             const directorShotId = shot.id;
             setNodes((current) => current.map((item) => item.id === nodeId ? { ...item, metadata: { ...item.metadata, directorSceneId, directorShotId } } : item));
-            updateProject(projectId, { directorScenes: upsertDirectorSceneById(currentDirectorScenes(projectId, directorScenes), scene) });
+            sceneNeedsPersistence = true;
         }
+        const existingShots = scene.shots;
+        const prompt = initialPrompt.trim();
+        if (prompt) {
+            const requestedShotId = node.metadata?.directorShotId;
+            const shotId = requestedShotId && scene.shots.some((shot) => shot.id === requestedShotId) ? requestedShotId : scene.activeShotId;
+            const shots = scene.shots.map((shot) => shot.id === shotId ? { ...shot, prompt } : shot);
+            if (shots.some((shot, index) => shot !== existingShots[index])) {
+                scene = { ...scene, shots };
+                sceneNeedsPersistence = true;
+            }
+        }
+        if (sceneNeedsPersistence) updateProject(projectId, { directorScenes: upsertDirectorSceneById(currentDirectorScenes(projectId, directorScenes), scene) });
         setDirectorNodeId(nodeId);
     }, [directorScenes, nodesRef, projectId, setDirectorNodeId, setNodes, updateProject]);
 

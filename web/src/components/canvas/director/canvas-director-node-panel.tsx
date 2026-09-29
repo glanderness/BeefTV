@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Move3d } from "lucide-react";
+import { ArrowUp, Move3d, Plus } from "lucide-react";
 
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { resolveDirectorActiveShot, resolveDirectorPreviewSource, type DirectorNodeContentReader } from "@/lib/canvas/director/director-preview";
@@ -8,7 +8,7 @@ import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { DirectorScene } from "@/types/director";
 
-export function CanvasDirectorNodePanel({ node, scene, readNodeContent, onOpen, onPromptChange, professional = true }: { node: CanvasNodeData; scene: DirectorScene | null; readNodeContent: DirectorNodeContentReader; onOpen: () => void; onPromptChange: (value: string) => void; professional?: boolean }) {
+export function CanvasDirectorNodePanel({ node, scene, readNodeContent, onOpen, onAddReference, onSubmit, onPromptChange, professional = true }: { node: CanvasNodeData; scene: DirectorScene | null; readNodeContent: DirectorNodeContentReader; onOpen: () => void; onAddReference: () => void; onSubmit: () => void; onPromptChange: (value: string) => void; professional?: boolean }) {
     const theme = canvasThemes[useActiveTheme()];
     const shot = resolveDirectorActiveShot(scene, node.metadata?.directorShotId);
     // 记录「失败的那个 URL」而非布尔量：同一个坏 URL 不再反复渲染，换成另一个 URL 时自动重试。
@@ -46,7 +46,7 @@ export function CanvasDirectorNodePanel({ node, scene, readNodeContent, onOpen, 
                     {preview.kind === "image" ? <span className={`absolute inset-0 flex items-center justify-center text-sm font-medium transition-opacity ${professional ? "opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" : "opacity-100"}`} style={{ background: `${theme.toolbar.panel}dd`, color: theme.node.text }}>{professional ? "打开导演台" : "专业模式可编辑"}</span> : null}
                 </button>
             </div>
-            <div className="h-24 shrink-0 overflow-hidden rounded-2xl border px-3 py-2" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }}>
+            <div className="relative h-24 shrink-0 overflow-hidden rounded-2xl border px-3 py-2" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }}>
                 <textarea
                     data-canvas-no-zoom
                     aria-label="场景描述"
@@ -55,11 +55,25 @@ export function CanvasDirectorNodePanel({ node, scene, readNodeContent, onOpen, 
                     onChange={(event) => onPromptChange(event.target.value)}
                     onMouseDown={(event) => event.stopPropagation()}
                     onPointerDown={(event) => event.stopPropagation()}
-                    onKeyDown={(event) => event.stopPropagation()}
+                    onKeyDown={(event) => {
+                        event.stopPropagation();
+                        if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                            event.preventDefault();
+                            onSubmit();
+                        }
+                    }}
                     onWheel={(event) => event.stopPropagation()}
-                    className="h-full w-full resize-none bg-transparent text-sm leading-5 outline-none placeholder:opacity-60"
+                    className="h-full w-full resize-none bg-transparent pb-8 text-sm leading-5 outline-none placeholder:opacity-60"
                     style={{ color: theme.node.text }}
                 />
+                <div className="pointer-events-none absolute inset-x-2 bottom-2 flex items-center justify-between">
+                    <button type="button" data-canvas-no-zoom aria-label="添加参考素材节点" title="上传参考素材到画布" className="pointer-events-auto grid size-8 place-items-center rounded-full transition hover:bg-black/10 dark:hover:bg-white/10" style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onAddReference(); }}>
+                        <Plus className="size-6" aria-hidden />
+                    </button>
+                    <button type="button" data-canvas-no-zoom aria-label="在导演台中使用描述" title="在导演台中使用描述" className="pointer-events-auto grid size-9 place-items-center rounded-full transition hover:brightness-110" style={{ background: theme.node.text, color: theme.toolbar.panel }} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onSubmit(); }}>
+                        <ArrowUp className="size-5" aria-hidden />
+                    </button>
+                </div>
             </div>
         </div>
     );

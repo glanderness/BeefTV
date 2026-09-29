@@ -2640,6 +2640,8 @@ function InfiniteCanvasPage() {
                         readNodeContent={(nodeId) => (nodeId ? nodesRef.current.find((item) => item.id === nodeId)?.metadata?.content : undefined)}
                         professional={workspaceMode === "professional"}
                         onOpen={() => openDirectorWorkbench(contentNode.id)}
+                        onAddReference={() => handleUploadRequest(undefined, { x: contentNode.position.x + contentNode.width + 180, y: contentNode.position.y })}
+                        onSubmit={() => openDirectorWorkbench(contentNode.id, contentNode.metadata?.composerContent || "")}
                         onPromptChange={(composerContent) => handleConfigNodeChange(contentNode.id, { composerContent })}
                     />
                 );

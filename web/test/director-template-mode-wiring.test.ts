@@ -65,6 +65,14 @@ describe("已有场景不触发模板选择", () => {
         expect(opener).not.toContain("setDirectorTemplateRequest");
     });
 
+    test("导演节点提交描述时写入对应镜头并在缺少镜头引用时回退当前镜头", () => {
+        const opener = slice(hook, "const openDirectorWorkbench = useCallback", "/** 每次保存都基于 store");
+        expect(opener).toContain("initialPrompt.trim()");
+        expect(opener).toContain("scene.shots.some((shot) => shot.id === requestedShotId)");
+        expect(opener).toContain("requestedShotId : scene.activeShotId");
+        expect(project).toContain("onSubmit={() => openDirectorWorkbench(contentNode.id, contentNode.metadata?.composerContent || \"\")}");
+    });
+
     test("孤儿修复用空场景兜底：用户没选过就不许塞演员", () => {
         const opener = slice(hook, "const openDirectorWorkbench = useCallback", "/** 每次保存都基于 store");
         expect(opener).not.toContain('createDirectorSceneFromTemplate("monologue"');

@@ -18,7 +18,7 @@ const node: CanvasNodeData = {
 };
 
 function render(readNodeContent: (id: string | undefined) => string | undefined = () => undefined) {
-    return renderToStaticMarkup(<CanvasDirectorNodePanel node={node} scene={scene} readNodeContent={readNodeContent} onOpen={() => {}} onPromptChange={() => {}} />);
+    return renderToStaticMarkup(<CanvasDirectorNodePanel node={node} scene={scene} readNodeContent={readNodeContent} onOpen={() => {}} onAddReference={() => {}} onSubmit={() => {}} onPromptChange={() => {}} />);
 }
 
 describe("导演台画布节点", () => {
@@ -34,15 +34,21 @@ describe("导演台画布节点", () => {
 
     test("已有封面保持完整比例且仍可悬停打开", () => {
         const withPreview = { ...node, metadata: { ...node.metadata, directorPreviewNodeId: "image-1" } };
-        const markup = renderToStaticMarkup(<CanvasDirectorNodePanel node={withPreview} scene={scene} readNodeContent={() => "https://example.test/cover.png"} onOpen={() => {}} onPromptChange={() => {}} />);
+        const markup = renderToStaticMarkup(<CanvasDirectorNodePanel node={withPreview} scene={scene} readNodeContent={() => "https://example.test/cover.png"} onOpen={() => {}} onAddReference={() => {}} onSubmit={() => {}} onPromptChange={() => {}} />);
         expect(markup).toContain('src="https://example.test/cover.png"');
         expect(markup).toContain("object-contain");
         expect(markup).toContain("打开导演台");
     });
 
+    test("描述输入保留添加参考素材与提交入口", () => {
+        const markup = render();
+        expect(markup).toContain('aria-label="添加参考素材节点"');
+        expect(markup).toContain('aria-label="在导演台中使用描述"');
+    });
+
     test("持久封面优先于旧预览且仍保留旧项目回落", () => {
         const withCover = { ...node, metadata: { ...node.metadata, directorCoverUrl: "https://assets.example/cover.png", directorPreviewNodeId: "legacy" } };
-        const markup = renderToStaticMarkup(<CanvasDirectorNodePanel node={withCover} scene={scene} readNodeContent={() => "https://assets.example/legacy.png"} onOpen={() => {}} onPromptChange={() => {}} />);
+        const markup = renderToStaticMarkup(<CanvasDirectorNodePanel node={withCover} scene={scene} readNodeContent={() => "https://assets.example/legacy.png"} onOpen={() => {}} onAddReference={() => {}} onSubmit={() => {}} onPromptChange={() => {}} />);
         expect(markup).toContain('src="https://assets.example/cover.png"');
         expect(markup).not.toContain('src="https://assets.example/legacy.png"');
     });
@@ -53,7 +59,7 @@ describe("导演台画布节点", () => {
             isConnectionTarget={false} showImageInfo={false}
             onMouseDown={() => {}} onHoverStart={() => {}} onHoverEnd={() => {}}
             onConnectStart={() => {}} onResize={() => {}} onContentChange={() => {}}
-            onContextMenu={() => {}} renderNodeContent={() => <CanvasDirectorNodePanel node={node} scene={scene} readNodeContent={() => undefined} onOpen={() => {}} onPromptChange={() => {}} />}
+            onContextMenu={() => {}} renderNodeContent={() => <CanvasDirectorNodePanel node={node} scene={scene} readNodeContent={() => undefined} onOpen={() => {}} onAddReference={() => {}} onSubmit={() => {}} onPromptChange={() => {}} />}
         />);
         const shell = markup.match(/class="canvas-node-shell[^\"]*"[^>]*style="([^"]*)"/)?.[1];
         expect(shell).toBeDefined();
