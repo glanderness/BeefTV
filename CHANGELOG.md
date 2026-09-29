@@ -9,6 +9,13 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.12
+
+- Expand the director workspace with scene controls, camera following, aspect frames, screenshots and panorama generation history.
+- Preserve director scene covers and task recovery context, and improve canvas crop and trim controls at low zoom.
+- Check for desktop updates periodically and support downloading and installing from one action while saving work first.
+- Install the matching Chromium browser in CI and tolerate subpixel rounding in model-picker layout checks.
+
 ## v1.6.11
 
 - Fix local reference images being rejected before submitting Wan 3.0 video tasks through BeefAPI.

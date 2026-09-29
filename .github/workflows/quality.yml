@@ -64,4 +64,8 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
       - name: Run tests
-        run: bun run test
+        # Component browser tests use the Playwright version pinned by bun.lock.
+        # Install its matching browser instead of relying on a runner cache.
+        run: |
+          bunx playwright install --with-deps chromium
+          bun run test
