@@ -38,6 +38,11 @@ export function createDirectorScene(title = "未命名场景"): DirectorScene {
     };
 }
 
+export function toggleDirectorObjectVisibility(scene: DirectorScene, id: string): DirectorScene {
+    if (!scene.objects.some((object) => object.id === id)) return scene;
+    return { ...scene, objects: scene.objects.map((object) => object.id === id ? { ...object, visible: !object.visible } : object) };
+}
+
 export function createDirectorObject(primitive: DirectorObject["primitive"] = "box", name = "新对象", position: DirectorVec3 = [0, 0.5, 0], color = "#8795a5"): DirectorObject {
     return {
         id: nanoid(),

@@ -1,7 +1,7 @@
 import { App, Button, ColorPicker, Dropdown, Input, InputNumber, Modal, Select, Slider } from "antd";
 import { Switch } from "@/components/ui/base/switch";
 import type { MenuProps } from "antd";
-import { Box, BoxSelect, Camera, Circle, Clock3, Cuboid, FileUp, Focus, Image as ImageIcon, LampDesk, Lightbulb, Plus, Redo2, RotateCcw, Save, Search, Sparkles, Trash2, Undo2, UserRound, Video, X } from "lucide-react";
+import { Box, BoxSelect, Camera, Circle, Clock3, Cuboid, Eye, EyeOff, FileUp, Focus, Image as ImageIcon, LampDesk, Lightbulb, Plus, Redo2, RotateCcw, Save, Search, Sparkles, Trash2, Undo2, UserRound, Video, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { nanoid } from "nanoid";
 import { Euler, Quaternion } from "three";
@@ -30,7 +30,7 @@ import { createDirectorCameraFromPreset, DIRECTOR_CAMERA_PRESETS, type DirectorC
 import { appendDirectorScreenshot, isDirectorOutputSnapshotCurrent, nextDirectorScreenshotName, shouldReinitializeDirectorSession } from "@/lib/canvas/director/director-session";
 import { bindDirectorCameraFollow, removeDirectorCameraBindingsForObject, unbindDirectorCameraFollow } from "@/lib/canvas/director/director-camera-binding";
 import { blocksDirectorShortcut, releaseDirectorFocusAfterPointer, resolveDirectorShortcut, type DirectorShortcutAction } from "@/lib/canvas/director/director-shortcuts";
-import { applyDirectorUniformScale, createDirectorActor, createDirectorBillboard, createDirectorCamera, createDirectorLight, createDirectorModel, createDirectorObject, DIRECTOR_ACTOR_COLORS, directorBoneLabel, directorFocalLengthToFov, directorPoseLabel, interpolateDirectorTransform, removeDirectorSceneKeyframe, setDirectorSceneKeyframeEasing, touchDirectorScene, upsertDirectorBoneKeyframe } from "@/lib/canvas/director/director-scene";
+import { applyDirectorUniformScale, createDirectorActor, createDirectorBillboard, createDirectorCamera, createDirectorLight, createDirectorModel, createDirectorObject, DIRECTOR_ACTOR_COLORS, directorBoneLabel, directorFocalLengthToFov, directorPoseLabel, interpolateDirectorTransform, removeDirectorSceneKeyframe, setDirectorSceneKeyframeEasing, toggleDirectorObjectVisibility, touchDirectorScene, upsertDirectorBoneKeyframe } from "@/lib/canvas/director/director-scene";
 import { searchDirectorSceneItems } from "@/lib/canvas/director/director-scene-search";
 import { describeDirectorSaveStatus, resolveDirectorCloseOutcome, shouldBlockDirectorUnload, shouldOfferDirectorDraftRecovery } from "@/lib/canvas/director/director-save-wiring";
 import { useDirectorSaveCoordinator } from "@/components/canvas/director/use-director-save-coordinator";
@@ -918,14 +918,14 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
                         {visibleSceneItems.map((item) => item.kind === "camera"
                             ? <SceneRow key={`camera-${item.id}`} active={sceneInspectorView === "shot" && activeShot.cameraId === item.id && !selectedObjectId && !selectedLightId} icon={<Camera />} label={item.name} onClick={() => { setSceneInspectorView("shot"); setSelectedObjectId(null); setSelectedLightId(null); updateShot(activeShot.id, { cameraId: item.id }); }} onDelete={() => removeCamera(item.id)} />
                             : item.kind === "object"
-                                ? <SceneRow key={`object-${item.id}`} active={selectedObjectId === item.id} icon={item.object.kind === "actor" || item.object.primitive === "character" ? <UserRound /> : item.object.kind === "model" ? <BoxSelect /> : item.object.kind === "billboard" ? <ImageIcon /> : <Cuboid />} label={item.name} onClick={() => { setSelectedLightId(null); setSelectedObjectId(item.id); }} onDelete={() => removeObject(item.id)} />
+                                ? <SceneRow key={`object-${item.id}`} active={selectedObjectId === item.id} icon={item.object.kind === "actor" || item.object.primitive === "character" ? <UserRound /> : item.object.kind === "model" ? <BoxSelect /> : item.object.kind === "billboard" ? <ImageIcon /> : <Cuboid />} label={item.name} visible={item.object.visible} onVisibilityChange={() => commit((current) => toggleDirectorObjectVisibility(current, item.id))} onClick={() => { setSelectedLightId(null); setSelectedObjectId(item.id); }} onDelete={() => removeObject(item.id)} />
                                 : <SceneRow key={`light-${item.id}`} active={selectedLightId === item.id} icon={<Lightbulb />} label={item.name} onClick={() => { setSelectedObjectId(null); setSelectedLightId(item.id); }} onDelete={() => removeLight(item.id)} />)}
                         {visibleSceneItems.length === 0 ? <p className="px-2 py-4 text-center text-xs opacity-55">未找到匹配的场景对象</p> : null}
                     </div>
                     </> : null}
                     {navigationTab === "actors" ? <>
                         <PanelTitle title="添加角色" />
-                        <div className="px-2 pb-2">{draft.objects.filter((object) => object.kind === "actor" || object.primitive === "character").map((object) => <SceneRow key={object.id} active={selectedObjectId === object.id} icon={<UserRound />} label={object.name} onClick={() => setSelectedObjectId(object.id)} onDelete={() => removeObject(object.id)} />)}</div>
+                        <div className="px-2 pb-2">{draft.objects.filter((object) => object.kind === "actor" || object.primitive === "character").map((object) => <SceneRow key={object.id} active={selectedObjectId === object.id} icon={<UserRound />} label={object.name} visible={object.visible} onVisibilityChange={() => commit((current) => toggleDirectorObjectVisibility(current, object.id))} onClick={() => setSelectedObjectId(object.id)} onDelete={() => removeObject(object.id)} />)}</div>
                         <div className="px-2"><QuickAdd label="添加演员" icon={<UserRound />} onClick={addActor} /></div>
                     </> : null}
                     {navigationTab === "cameras" ? <>
@@ -1121,12 +1121,13 @@ function PanelTitle({ title, action }: { title: string; action?: ReactNode }) { 
  *「点选对象 -> 按 Delete」是 delete-selected 快捷键的主流程，
  * 焦点留在按钮上会让守卫把 Delete 吃掉。
  */
-function SceneRow({ active, icon, label, onClick, onDelete }: { active?: boolean; icon: ReactElement; label: string; onClick: () => void; onDelete?: () => void }) {
-    return <div data-director-scene-row="true" className={`flex h-8 w-full items-center gap-1 px-1 text-left text-xs transition ${active ? "bg-black/10 dark:bg-white/10" : "hover:bg-black/5 dark:hover:bg-white/5"}`}>
+function SceneRow({ active, icon, label, visible, onVisibilityChange, onClick, onDelete }: { active?: boolean; icon: ReactElement; label: string; visible?: boolean; onVisibilityChange?: () => void; onClick: () => void; onDelete?: () => void }) {
+    return <div data-director-scene-row="true" className={`group flex h-8 w-full items-center gap-1 px-1 text-left text-xs transition ${active ? "bg-black/10 dark:bg-white/10" : "hover:bg-black/5 dark:hover:bg-white/5"}`}>
         <button type="button" className="flex min-w-0 flex-1 items-center gap-2 px-1 text-left" onClick={(event) => { onClick(); releaseDirectorFocusAfterPointer(event); }}>
             <span className="[&>svg]:size-3.5">{icon}</span>
-            <span className="truncate">{label}</span>
+            <span className={`truncate ${visible === false ? "opacity-45" : ""}`}>{label}</span>
         </button>
+        {onVisibilityChange ? <button type="button" aria-label={`${visible ? "隐藏" : "显示"}${label}`} aria-pressed={!visible} title={visible ? "隐藏" : "显示"} className={`grid size-6 shrink-0 place-items-center rounded transition hover:bg-black/5 dark:hover:bg-white/10 ${visible ? "opacity-45 group-hover:opacity-100 focus-visible:opacity-100" : "opacity-75"}`} onClick={(event) => { event.stopPropagation(); onVisibilityChange(); releaseDirectorFocusAfterPointer(event); }}>{visible ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}</button> : null}
         {onDelete ? <button type="button" aria-label={`删除${label}`} title={`删除${label}`} className="grid size-6 shrink-0 place-items-center rounded opacity-60 transition hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10" onClick={(event) => { event.stopPropagation(); onDelete(); releaseDirectorFocusAfterPointer(event); }}><Trash2 className="size-3.5" /></button> : null}
     </div>;
 }
