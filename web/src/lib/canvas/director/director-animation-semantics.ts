@@ -1,7 +1,7 @@
 import { Euler, Quaternion, Vector3 } from "three";
 
-import type { DirectorBoneKeyframe, DirectorCamera, DirectorKeyframe, DirectorObject, DirectorQuat, DirectorTransform, DirectorVec3 } from "../../../types/director";
-import { interpolateDirectorBoneRotation, interpolateDirectorTransform, upsertDirectorKeyframe } from "./director-scene";
+import type { DirectorBoneKeyframe, DirectorCamera, DirectorHumanoidBone, DirectorKeyframe, DirectorObject, DirectorQuat, DirectorTransform, DirectorVec3 } from "../../../types/director";
+import { interpolateDirectorBoneRotation, interpolateDirectorTransform, upsertDirectorBoneKeyframe, upsertDirectorKeyframe } from "./director-scene";
 
 // 缩放为 0 时无法用比例表达增量，改用绝对偏移；阈值同时兼顾数值噪声。
 const SCALE_EPSILON = 1e-6;
@@ -138,6 +138,36 @@ export function resolveDirectorBoneRotation(input: DirectorBoneLayerInput): Dire
     if (!keyframes.length) return input.override || null;
     if (!staged) return interpolateDirectorBoneRotation([0, 0, 0, 1], keyframes, input.time);
     return interpolateDirectorBoneRotation(staged, keyframes, input.time);
+}
+
+/** Apply the representative bone-rotation delta across selected actors without flattening their relative poses. */
+export function resolveDirectorMultiObjectBoneRotationEdit(input: { objects: DirectorObject[]; selectedIds: string[]; representativeId: string; bone: DirectorHumanoidBone; from: DirectorQuat; to: DirectorQuat; autoKey: boolean; time: number }): DirectorObject[] {
+    const selected = new Set(input.selectedIds);
+    if (!selected.has(input.representativeId)) return input.objects;
+    const delta = new Quaternion(...input.to).multiply(new Quaternion(...input.from).invert());
+    const identity: DirectorQuat = [0, 0, 0, 1];
+    return input.objects.map((object) => {
+        if (!selected.has(object.id)) return object;
+        const boneTrack = object.boneTracks?.find((track) => track.bone === input.bone);
+        const current = resolveDirectorBoneRotation({ override: object.boneOverrides?.[input.bone], keyframes: boneTrack?.keyframes, time: input.time }) || identity;
+        const edited = delta.clone().multiply(new Quaternion(...current)).toArray() as DirectorQuat;
+        if (input.autoKey) {
+            return {
+                ...object,
+                boneOverrides: { ...object.boneOverrides, [input.bone]: edited },
+                boneTracks: upsertDirectorBoneKeyframe(object.boneTracks || [], input.bone, input.time, edited),
+            };
+        }
+        const baseOverride = object.boneOverrides?.[input.bone] || identity;
+        return {
+            ...object,
+            boneOverrides: { ...object.boneOverrides, [input.bone]: delta.clone().multiply(new Quaternion(...baseOverride)).toArray() as DirectorQuat },
+            boneTracks: (object.boneTracks || []).map((track) => track.bone === input.bone ? {
+                ...track,
+                keyframes: track.keyframes.map((keyframe) => ({ ...keyframe, rotation: delta.clone().multiply(new Quaternion(...keyframe.rotation)).toArray() as DirectorQuat })),
+            } : track),
+        };
+    });
 }
 
 export type DirectorGestureState = { active: boolean; committed: boolean; transforming: boolean };

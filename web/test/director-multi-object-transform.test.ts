@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { resolveDirectorMultiObjectGroupTransformEdit, resolveDirectorMultiObjectTransformEdit } from "@/lib/canvas/director/director-animation-semantics";
+import { Quaternion, Vector3 } from "three";
+import { resolveDirectorMultiObjectBoneRotationEdit, resolveDirectorMultiObjectGroupTransformEdit, resolveDirectorMultiObjectTransformEdit } from "@/lib/canvas/director/director-animation-semantics";
 import { createDirectorActor } from "@/lib/canvas/director/director-scene";
 
 describe("导演台多对象变换", () => {
@@ -72,5 +73,41 @@ describe("导演台多对象变换", () => {
         expect(next[1].transform.position[0]).toBeCloseTo(-2);
         expect(next[0].transform.scale).toEqual([2, 2, 2]);
         expect(next[2]).toBe(outsider);
+    });
+
+    test("多选骨骼姿态以代表角色的旋转增量同步应用并保留角色间相对姿势", () => {
+        const first = createDirectorActor("角色 A", [0, 0, 0]);
+        const second = createDirectorActor("角色 B", [2, 0, 0]);
+        const outsider = createDirectorActor("角色 C", [4, 0, 0]);
+        const from = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), 0.4);
+        const other = new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), -0.2);
+        const delta = new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), 0.5);
+        first.boneOverrides = { head: from.toArray() as [number, number, number, number] };
+        second.boneOverrides = { head: other.toArray() as [number, number, number, number] };
+        const next = resolveDirectorMultiObjectBoneRotationEdit({
+            objects: [first, second, outsider], selectedIds: [first.id, second.id], representativeId: first.id, bone: "head",
+            from: from.toArray() as [number, number, number, number],
+            to: delta.clone().multiply(from).toArray() as [number, number, number, number],
+            autoKey: false, time: 0,
+        });
+        expect(new Quaternion(...(next[0].boneOverrides!.head!)).angleTo(delta.clone().multiply(from))).toBeCloseTo(0);
+        expect(new Quaternion(...(next[1].boneOverrides!.head!)).angleTo(delta.clone().multiply(other))).toBeCloseTo(0);
+        expect(next[2]).toBe(outsider);
+    });
+
+    test("多选骨骼姿态在 Auto Key 时为每个角色写入当前帧关键帧", () => {
+        const first = createDirectorActor("角色 A", [0, 0, 0]);
+        const second = createDirectorActor("角色 B", [2, 0, 0]);
+        const from = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), 0.4);
+        const delta = new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), 0.5);
+        first.boneOverrides = { head: from.toArray() as [number, number, number, number] };
+        const next = resolveDirectorMultiObjectBoneRotationEdit({
+            objects: [first, second], selectedIds: [first.id, second.id], representativeId: first.id, bone: "head",
+            from: from.toArray() as [number, number, number, number],
+            to: delta.clone().multiply(from).toArray() as [number, number, number, number],
+            autoKey: true, time: 1.25,
+        });
+        expect(next.map((object) => object.boneTracks?.[0].keyframes[0].time)).toEqual([1.25, 1.25]);
+        expect(new Quaternion(...next[1].boneTracks![0].keyframes[0].rotation).angleTo(delta)).toBeCloseTo(0);
     });
 });
