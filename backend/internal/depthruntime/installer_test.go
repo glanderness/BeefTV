@@ -70,6 +70,117 @@ func TestEnsureInstallsRuntimeAndFallsBackForModel(t *testing.T) {
 	}
 }
 
+func TestRuntimeLayoutKeepsMacPathsAndSeparatesWindowsVariants(t *testing.T) {
+	root := t.TempDir()
+	mac, err := runtimeLayout(root, "darwin-arm64", "mps")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mac.Python != filepath.Join(root, "runtimes", "depth", "v1", "darwin-arm64", ".venv", "bin", "python") {
+		t.Fatalf("Mac Python path changed: %s", mac.Python)
+	}
+	if mac.Archive != filepath.Join(root, "downloads", "depth-runtime-v1-darwin-arm64.zip") {
+		t.Fatalf("Mac archive path changed: %s", mac.Archive)
+	}
+	for _, variant := range []string{"cpu", "cuda"} {
+		windows, err := runtimeLayout(root, "windows-amd64", variant)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if windows.Python != filepath.Join(root, "runtimes", "depth", "v1", "windows-amd64", variant, ".python", "python.exe") {
+			t.Fatalf("Windows %s Python path = %s", variant, windows.Python)
+		}
+		if windows.Archive != filepath.Join(root, "downloads", "depth-runtime-v1-windows-amd64-"+variant+".zip") {
+			t.Fatalf("Windows %s archive path = %s", variant, windows.Archive)
+		}
+	}
+	if _, err := runtimeLayout(root, "windows-amd64", "mps"); err == nil {
+		t.Fatal("MPS must not select a Windows runtime")
+	}
+}
+
+func TestEnsureInstallsSignedWindowsCPURuntime(t *testing.T) {
+	var archive bytes.Buffer
+	writer := zip.NewWriter(&archive)
+	entry, _ := writer.Create(".python/python.exe")
+	_, _ = entry.Write([]byte("windows-python"))
+	entry, _ = writer.Create("worker/depth_capture/__init__.py")
+	_, _ = entry.Write([]byte("# worker"))
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	model := []byte("model-weights")
+	runtimeHash := sha256.Sum256(archive.Bytes())
+	modelHash := sha256.Sum256(model)
+	var baseURL string
+	var envelope []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/manifest.json":
+			_, _ = w.Write(envelope)
+		case "/runtime.zip":
+			_, _ = w.Write(archive.Bytes())
+		case "/model":
+			_, _ = w.Write(model)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+	manifest := Manifest{Version: 2, Runtimes: map[string]Artifact{
+		"windows-amd64/cpu": {URLs: []string{baseURL + "/runtime.zip"}, Size: int64(archive.Len()), SHA256: hex.EncodeToString(runtimeHash[:])},
+	}, Model: Artifact{URLs: []string{baseURL + "/model"}, Size: int64(len(model)), SHA256: hex.EncodeToString(modelHash[:])}}
+	var public []byte
+	envelope, public = signedTestManifest(t, manifest)
+	root := filepath.Join(t.TempDir(), "中文 path")
+	installed, err := Ensure(context.Background(), EnsureOptions{ManifestURL: baseURL + "/manifest.json", DataDir: root, Platform: "windows-amd64", Variant: "cpu", TrustedPublicKey: public})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if installed.Python != filepath.Join(root, "runtimes", "depth", "v1", "windows-amd64", "cpu", ".python", "python.exe") {
+		t.Fatalf("python path = %s", installed.Python)
+	}
+	if !pathExists(installed.Python) || !pathExists(filepath.Join(installed.ToolDir, "depth_capture", "__init__.py")) {
+		t.Fatal("runtime incomplete")
+	}
+}
+
+func TestEnsureRejectsUnsignedWindowsManifestWithoutFallback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(Manifest{Version: 2, Runtimes: map[string]Artifact{"windows-amd64/cpu": {}}})
+	}))
+	defer server.Close()
+	_, err := Ensure(context.Background(), EnsureOptions{ManifestURL: server.URL, DataDir: t.TempDir(), Platform: "windows-amd64", Variant: "cpu", TrustedPublicKey: make([]byte, 32), FallbackManifest: &Manifest{Version: 2}})
+	if err == nil {
+		t.Fatal("unsigned Windows manifest was accepted")
+	}
+}
+
+func TestExtractRuntimeArchiveRejectsWindowsTraversalOnEveryHost(t *testing.T) {
+	for _, name := range []string{`..\\escape`, `C:/escape`, `worker/../../escape`} {
+		t.Run(name, func(t *testing.T) {
+			var archive bytes.Buffer
+			writer := zip.NewWriter(&archive)
+			entry, err := writer.Create(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = entry.Write([]byte("bad"))
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "runtime.zip")
+			if err := os.WriteFile(path, archive.Bytes(), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := extractRuntimeArchive(path, t.TempDir(), Artifact{}); err == nil {
+				t.Fatal("unsafe archive path accepted")
+			}
+		})
+	}
+}
+
 func TestEnsureRejectsRuntimeArchiveTraversal(t *testing.T) {
 	var archive bytes.Buffer
 	writer := zip.NewWriter(&archive)
