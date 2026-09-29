@@ -131,3 +131,19 @@ func TestDownloadRejectsReleasePartWithBadHash(t *testing.T) {
 		t.Fatal("corrupt assembled archive was published")
 	}
 }
+
+func TestDownloadRejectsAssembledArchiveWithBadHash(t *testing.T) {
+	part := []byte("valid-part")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(part) }))
+	defer server.Close()
+	partHash := sha256.Sum256(part)
+	wrongWholeHash := sha256.Sum256([]byte("different archive"))
+	target := filepath.Join(t.TempDir(), "runtime.zip")
+	err := Download(context.Background(), Artifact{
+		Size: int64(len(part)), SHA256: hex.EncodeToString(wrongWholeHash[:]),
+		Parts: []ArtifactPart{{URLs: []string{server.URL}, Size: int64(len(part)), SHA256: hex.EncodeToString(partHash[:])}},
+	}, target, nil)
+	if err == nil || pathExists(target) {
+		t.Fatalf("bad complete archive hash was accepted: %v", err)
+	}
+}
