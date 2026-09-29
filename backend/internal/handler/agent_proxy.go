@@ -1,7 +1,11 @@
 package handler
 
 import (
+	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -14,6 +18,7 @@ import (
 
 	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/app"
+	httptransport "infinite-canvas/backend/internal/transport/http"
 )
 
 // agentHostTokenPath 是内置 agent-host 的宿主凭据：只由后端读取并注入到宿主请求，
@@ -22,6 +27,9 @@ const agentHostTokenPath = "agent_host_token"
 
 // agentProxyMaxBody 限制转发体积；解析失败或超限都按真实失败返回。
 const agentProxyMaxBody = 64 << 10
+
+// hostStartGrace 是宿主从拉起到健康的宽限期：这段时间里状态是「正在启动」而不是「不可达」。
+const hostStartGrace = 20 * time.Second
 
 // agentHostBaseURL 只接受本机目标：即使配置被写坏也不允许把宿主凭据发往外部主机。
 func agentHostBaseURL() string {
@@ -57,6 +65,54 @@ func readAgentHostToken(dataDir string) string {
 	return strings.TrimSpace(string(raw))
 }
 
+// hostHealth 是宿主 /health 的可公开事实（不含凭据）。
+type hostHealth struct {
+	OK      bool
+	Busy    bool
+	Model   string
+	Reason  string
+	Payload map[string]any
+}
+
+func probeAgentHost(token string) hostHealth {
+	if token == "" {
+		return hostHealth{}
+	}
+	req, err := http.NewRequest(http.MethodGet, agentHostBaseURL()+"/health", nil)
+	if err != nil {
+		return hostHealth{}
+	}
+	req.Header.Set("X-Beeftv-Agent-Token", token)
+	resp, err := agentHostClient(3 * time.Second).Do(req)
+	if err != nil {
+		return hostHealth{}
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
+	var payload map[string]any
+	_ = json.Unmarshal(body, &payload)
+	health := hostHealth{Payload: payload}
+	if payload != nil {
+		health.Busy, _ = payload["busy"].(bool)
+		health.Model, _ = payload["model"].(string)
+		health.Reason, _ = payload["reason"].(string)
+	}
+	health.OK = resp.StatusCode == http.StatusOK
+	if ready, found := payload["ok"].(bool); found && !ready {
+		health.OK = false
+	}
+	return health
+}
+
+// newTurnID 是一轮对话的稳定标识：按轮撤销与历史都用它对齐。
+func newTurnID() string {
+	buf := make([]byte, 12)
+	if _, err := rand.Read(buf); err != nil {
+		return hex.EncodeToString([]byte(time.Now().UTC().Format("20060102150405.000000000")))
+	}
+	return hex.EncodeToString(buf)
+}
+
 // RegisterAgentProxyRoutes 让浏览器通过同源后端使用内置创作助手：
 // 页面只发业务消息，宿主凭据由后端注入；宿主不可用时返回明确状态而不是空回复。
 func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops.ClientRegistry, ui *uiSessionStore) {
@@ -89,27 +145,47 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		return true
 	}
 
+	// hostOpsURL 用请求自身的 Host 推导操作层基址：桌面形态监听随机端口，猜端口会指向别处。
+	hostOpsURL := func(c *gin.Context) string { return "http://" + c.Request.Host + "/api" }
+	launchToken := func(c *gin.Context) string { return strings.TrimSpace(c.GetHeader(httptransport.LaunchTokenHeader)) }
+
+	unavailable := func(c *gin.Context, reason string) {
+		ok(c, gin.H{"available": false, "reason": reason})
+	}
+
 	status := func(c *gin.Context) {
-		token := readAgentHostToken(svc.DataDir())
-		state := gin.H{"available": false, "reason": "host_token_missing", "url": agentHostBaseURL()}
-		if token != "" {
-			req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, agentHostBaseURL()+"/health", nil)
-			if err == nil {
-				req.Header.Set("X-Beeftv-Agent-Token", token)
-				if resp, err := agentHostClient(3 * time.Second).Do(req); err == nil {
-					defer resp.Body.Close()
-					if resp.StatusCode == http.StatusOK {
-						body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
-						state = gin.H{"available": true, "url": agentHostBaseURL(), "health": jsonOrString(body)}
-					} else {
-						state = gin.H{"available": false, "reason": "host_unhealthy", "status": resp.StatusCode, "url": agentHostBaseURL()}
-					}
-				} else {
-					state = gin.H{"available": false, "reason": "host_unreachable", "url": agentHostBaseURL()}
-				}
-			}
+		provider, reason := resolveAssistantProvider(svc)
+		if reason != "" {
+			unavailable(c, reason)
+			return
 		}
-		ok(c, state)
+		modelInfo := gin.H{"id": provider.Model, "channelId": provider.ChannelID, "channelName": provider.ChannelName}
+		token := readAgentHostToken(svc.DataDir())
+		health := probeAgentHost(token)
+		state := processAgentHostSupervisor.state()
+		if health.OK {
+			// 配置换过模型/渠道/密钥后，空闲时把宿主重启到新配置；正在生成时不打断。
+			if state.Running && state.Fingerprint != provider.Fingerprint() && !health.Busy {
+				if err := restartAgentHost(svc, provider, hostOpsURL(c), launchToken(c)); err != nil {
+					unavailable(c, "host_start_failed")
+					return
+				}
+				ok(c, gin.H{"available": false, "reason": "host_starting", "model": modelInfo})
+				return
+			}
+			ok(c, gin.H{"available": true, "model": modelInfo})
+			return
+		}
+		launched, err := ensureAgentHost(svc, provider, hostOpsURL(c), launchToken(c), !health.Busy)
+		if err != nil {
+			ok(c, gin.H{"available": false, "reason": "host_start_failed", "model": modelInfo})
+			return
+		}
+		if launched || (state.Running && time.Since(state.LaunchedAt) < hostStartGrace) {
+			ok(c, gin.H{"available": false, "reason": "host_starting", "model": modelInfo})
+			return
+		}
+		ok(c, gin.H{"available": false, "reason": "host_unreachable", "model": modelInfo})
 	}
 	guardedStatus := func(c *gin.Context) {
 		// 状态查询不含任何凭据，只做本机同源校验：面板需要它在未签发会话时也能显示"未就绪"。
@@ -121,6 +197,171 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 	}
 	r.GET("/assistant/status", guardedStatus)
 	r.GET("/assistant/health", guardedStatus)
+
+	r.POST("/assistant/host/restart", func(c *gin.Context) {
+		if !guard(c, true) {
+			return
+		}
+		provider, reason := resolveAssistantProvider(svc)
+		if reason != "" {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": reason,
+				"msg": "助手模型或凭据还没准备好"})
+			return
+		}
+		if err := restartAgentHost(svc, provider, hostOpsURL(c), launchToken(c)); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_start_failed", "msg": err.Error()})
+			return
+		}
+		ok(c, gin.H{"restarted": true})
+	})
+
+	// hostJSON 把一次 JSON 请求转给宿主并原样回传业务结果；宿主凭据只在这里注入。
+	hostJSON := func(c *gin.Context, method, path string, body []byte) {
+		token := readAgentHostToken(svc.DataDir())
+		if token == "" {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_unreachable",
+				"msg": "内置创作助手宿主未运行"})
+			return
+		}
+		var reader io.Reader
+		if body != nil {
+			reader = strings.NewReader(string(body))
+		}
+		upstream, err := http.NewRequestWithContext(c.Request.Context(), method, agentHostBaseURL()+path, reader)
+		if err != nil {
+			fail(c, http.StatusInternalServerError, app.BadAuthRequest("无法构造宿主请求"))
+			return
+		}
+		upstream.Header.Set("Content-Type", "application/json")
+		upstream.Header.Set("X-Beeftv-Agent-Token", token)
+		resp, err := agentHostClient(30 * time.Second).Do(upstream)
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_unreachable",
+				"msg": "内置创作助手宿主未运行"})
+			return
+		}
+		defer resp.Body.Close()
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		var decoded any
+		if err := json.Unmarshal(payload, &decoded); err != nil {
+			fail(c, http.StatusBadGateway, app.BadAuthRequest("宿主返回的不是合法 JSON"))
+			return
+		}
+		if resp.StatusCode/100 != 2 {
+			reason := "host_unreachable"
+			if body, isObject := decoded.(map[string]any); isObject {
+				if value, found := body["reason"].(string); found && value != "" {
+					reason = value
+				}
+			}
+			c.JSON(resp.StatusCode, gin.H{"code": resp.StatusCode, "reason": reason, "msg": "内置创作助手宿主拒绝了该请求"})
+			return
+		}
+		ok(c, decoded)
+	}
+
+	// requireOwnedCanvas 先验证 scope：只能操作当前用户确实拥有的画布，再转发给宿主。
+	requireOwnedCanvas := func(c *gin.Context, canvasID string) (json.RawMessage, bool) {
+		if strings.TrimSpace(canvasID) == "" {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("canvasId 必填"))
+			return nil, false
+		}
+		raw, err := svc.UserCanvasProject(c.GetString("agentUserId"), canvasID)
+		if err != nil {
+			fail(c, http.StatusNotFound, app.BadAuthRequest("画布不存在或不属于当前工作区"))
+			return nil, false
+		}
+		return raw, true
+	}
+
+	r.GET("/assistant/sessions", func(c *gin.Context) {
+		if !guard(c, false) {
+			return
+		}
+		canvasID := strings.TrimSpace(c.Query("canvasId"))
+		if _, allowed := requireOwnedCanvas(c, canvasID); !allowed {
+			return
+		}
+		hostJSON(c, http.MethodGet, "/sessions?canvasId="+url.QueryEscape(canvasID), nil)
+	})
+
+	r.POST("/assistant/sessions", func(c *gin.Context) {
+		if !guard(c, true) {
+			return
+		}
+		body, payload, valid := readAssistantBody(c, struct {
+			CanvasID string `json:"canvasId"`
+		}{})
+		if !valid {
+			return
+		}
+		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
+			return
+		}
+		hostJSON(c, http.MethodPost, "/sessions", body)
+	})
+
+	r.POST("/assistant/sessions/activate", func(c *gin.Context) {
+		if !guard(c, true) {
+			return
+		}
+		body, payload, valid := readAssistantBody(c, struct {
+			CanvasID  string `json:"canvasId"`
+			SessionID string `json:"sessionId"`
+		}{})
+		if !valid {
+			return
+		}
+		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
+			return
+		}
+		hostJSON(c, http.MethodPost, "/sessions/activate", body)
+	})
+
+	r.GET("/assistant/history", func(c *gin.Context) {
+		if !guard(c, false) {
+			return
+		}
+		canvasID := strings.TrimSpace(c.Query("canvasId"))
+		if _, allowed := requireOwnedCanvas(c, canvasID); !allowed {
+			return
+		}
+		query := "/history?canvasId=" + url.QueryEscape(canvasID)
+		if sessionID := strings.TrimSpace(c.Query("sessionId")); sessionID != "" {
+			query += "&sessionId=" + url.QueryEscape(sessionID)
+		}
+		hostJSON(c, http.MethodGet, query, nil)
+	})
+
+	r.POST("/assistant/turns/:turnId/undo", func(c *gin.Context) {
+		if !guard(c, true) {
+			return
+		}
+		_, payload, valid := readAssistantBody(c, struct {
+			CanvasID string `json:"canvasId"`
+		}{})
+		if !valid {
+			return
+		}
+		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
+			return
+		}
+		revision, err := svc.UndoAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, c.Param("turnId"))
+		if err != nil {
+			var turnErr *app.AssistantTurnError
+			if errors.As(err, &turnErr) {
+				status := http.StatusConflict
+				if turnErr.Reason == app.AssistantTurnReasonNotFound {
+					status = http.StatusNotFound
+				}
+				c.JSON(status, gin.H{"code": status, "reason": turnErr.Reason, "msg": turnErr.Error()})
+				return
+			}
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"revision": revision})
+	})
 
 	r.POST("/assistant/chat", func(c *gin.Context) {
 		if !guard(c, true) {
@@ -145,15 +386,14 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			CanvasID        string   `json:"canvasId"`
 			Message         string   `json:"message"`
 			SelectedNodeIDs []string `json:"selectedNodeIds"`
+			SessionID       string   `json:"sessionId"`
 		}
 		if err := json.Unmarshal(body, &payload); err != nil || strings.TrimSpace(payload.CanvasID) == "" || strings.TrimSpace(payload.Message) == "" {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("canvasId 与 message 必填"))
 			return
 		}
-		// scope 先验证：只能操作当前用户确实拥有的画布，再转发给宿主。
-		canvasRaw, err := svc.UserCanvasProject(c.GetString("agentUserId"), payload.CanvasID)
-		if err != nil {
-			fail(c, http.StatusNotFound, app.BadAuthRequest("画布不存在或不属于当前工作区"))
+		canvasRaw, allowed := requireOwnedCanvas(c, payload.CanvasID)
+		if !allowed {
 			return
 		}
 		// 选中对象必须真的属于该画布，否则拒绝（不能借选中绕过 scope）。
@@ -178,8 +418,21 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 				}
 			}
 		}
+		// 轮前快照在转发之前就落盘：宿主没有画布持久化通道，这个前提只能由后端建立，
+		// 否则撤销会拿不到「这轮开始之前」的文档。
+		turnID := newTurnID()
+		revisionBefore, snapshotErr := svc.BeginAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, turnID)
+		if snapshotErr != nil {
+			failService(c, snapshotErr)
+			return
+		}
+		forwarded, err := withTurnEnvelope(body, turnID, revisionBefore)
+		if err != nil {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("请求体不是合法 JSON"))
+			return
+		}
 		upstream, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost,
-			agentHostBaseURL()+"/chat", strings.NewReader(string(body)))
+			agentHostBaseURL()+"/chat", strings.NewReader(string(forwarded)))
 		if err != nil {
 			fail(c, http.StatusInternalServerError, app.BadAuthRequest("无法构造宿主请求"))
 			return
@@ -193,27 +446,42 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			return
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode/100 != 2 {
+			// 宿主拒绝这次对话时没有流可转：按统一失败信封回，reason 保持宿主给的机器可读原因。
+			payload, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+			var rejection struct {
+				Reason string `json:"reason"`
+			}
+			_ = json.Unmarshal(payload, &rejection)
+			reason := strings.TrimSpace(rejection.Reason)
+			if reason == "" {
+				reason = "host_unreachable"
+			}
+			c.JSON(resp.StatusCode, gin.H{"code": resp.StatusCode, "reason": reason, "msg": "内置创作助手宿主拒绝了这次对话"})
+			return
+		}
 		c.Status(resp.StatusCode)
 		c.Header("Content-Type", resp.Header.Get("Content-Type"))
-		c.Stream(func(w io.Writer) bool {
-			buf := make([]byte, 4096)
-			n, readErr := resp.Body.Read(buf)
-			if n > 0 {
-				if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-					return false
+		c.Writer.WriteHeaderNow()
+		// 按行转发：既保持 NDJSON 的即时性，也能在 turn_end 上把这轮变更记到轮记录里。
+		reader := bufio.NewReaderSize(resp.Body, 32<<10)
+		for {
+			line, readErr := reader.ReadBytes('\n')
+			if len(line) > 0 {
+				if _, writeErr := c.Writer.Write(line); writeErr != nil {
+					return
 				}
+				c.Writer.Flush()
+				recordTurnEndChange(svc, turnID, line)
 			}
-			return readErr == nil
-		})
+			if readErr != nil {
+				return
+			}
+		}
 	})
 
 	r.POST("/assistant/cancel", func(c *gin.Context) {
 		if !guard(c, false) {
-			return
-		}
-		token := readAgentHostToken(svc.DataDir())
-		if token == "" {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_token_missing"})
 			return
 		}
 		body, err := io.ReadAll(io.LimitReader(c.Request.Body, agentProxyMaxBody+1))
@@ -225,29 +493,55 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			fail(c, http.StatusRequestEntityTooLarge, app.BadAuthRequest("请求体超过限制"))
 			return
 		}
-		upstream, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost,
-			agentHostBaseURL()+"/cancel", strings.NewReader(string(body)))
-		if err != nil {
-			fail(c, http.StatusInternalServerError, app.BadAuthRequest("无法构造宿主请求"))
-			return
-		}
-		upstream.Header.Set("Content-Type", "application/json")
-		upstream.Header.Set("X-Beeftv-Agent-Token", token)
-		resp, err := client.Do(upstream)
-		if err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_unreachable"})
-			return
-		}
-		defer resp.Body.Close()
-		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
-		c.Data(resp.StatusCode, "application/json", payload)
+		hostJSON(c, http.MethodPost, "/cancel", body)
 	})
 }
 
-func jsonOrString(raw []byte) any {
-	trimmed := strings.TrimSpace(string(raw))
-	if strings.HasPrefix(trimmed, "{") {
-		return gin.H{"raw": trimmed}
+// readAssistantBody 读取并解析小型 JSON 请求体，返回原文与解析结果（原文用于原样转给宿主）。
+func readAssistantBody[T any](c *gin.Context, shape T) ([]byte, T, bool) {
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, agentProxyMaxBody+1))
+	if err != nil {
+		fail(c, http.StatusBadRequest, app.BadAuthRequest("请求体读取失败"))
+		return nil, shape, false
 	}
-	return trimmed
+	if int64(len(body)) > agentProxyMaxBody {
+		fail(c, http.StatusRequestEntityTooLarge, app.BadAuthRequest("请求体超过限制"))
+		return nil, shape, false
+	}
+	if len(strings.TrimSpace(string(body))) == 0 {
+		body = []byte("{}")
+	}
+	if err := json.Unmarshal(body, &shape); err != nil {
+		fail(c, http.StatusBadRequest, app.BadAuthRequest("请求体不是合法 JSON"))
+		return nil, shape, false
+	}
+	return body, shape, true
+}
+
+// withTurnEnvelope 把后端决定的轮次标识与轮前版本补进转发体：
+// 这两个值必须由后端生成，宿主不能自报轮次身份。
+func withTurnEnvelope(body []byte, turnID string, revisionBefore int64) ([]byte, error) {
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	payload["turnId"] = turnID
+	payload["revisionBefore"] = revisionBefore
+	return json.Marshal(payload)
+}
+
+// recordTurnEndChange 只看 turn_end 行：把这轮的画布变更记到轮记录上，供按轮撤销使用。
+func recordTurnEndChange(svc *app.Service, turnID string, line []byte) {
+	trimmed := strings.TrimSpace(string(line))
+	if !strings.HasPrefix(trimmed, "{") || !strings.Contains(trimmed, `"turn_end"`) {
+		return
+	}
+	var event struct {
+		Type   string                   `json:"type"`
+		Change *app.AssistantTurnChange `json:"change"`
+	}
+	if json.Unmarshal([]byte(trimmed), &event) != nil || event.Type != "turn_end" {
+		return
+	}
+	_ = svc.RecordAssistantTurnChange(turnID, event.Change)
 }

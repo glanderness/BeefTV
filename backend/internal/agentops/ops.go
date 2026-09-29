@@ -59,6 +59,82 @@ func RegisterDefaultOps(r *Registry) {
 	r.Register(Op{ID: "canvas.edge.create", Summary: "连接两个节点（重复连接幂等返回）", Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"fromNodeId":{"type":"string"},"toNodeId":{"type":"string"},"expectedRevision":{"type":"integer"}},"required":["canvasId","fromNodeId","toNodeId","expectedRevision"]}`),
 		Handler: opCanvasEdgeCreate})
+	// 付费生成只提议不执行：这里校验目标并给出用户要确认的模型，真正的生成由界面在用户确认后发起。
+	r.Register(Op{ID: "canvas.generation.propose", Summary: "提议对选中节点做付费图片/视频生成（只登记提议，不生成、不扣费）", ReadOnly: true, Scope: ScopeCanvas,
+		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":8},"kind":{"type":"string","enum":["image","video"]},"note":{"type":"string"}},"required":["canvasId","nodeIds","kind"]}`),
+		Handler: opCanvasGenerationPropose})
+}
+
+func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error) {
+	var args struct {
+		CanvasID string   `json:"canvasId"`
+		NodeIDs  []string `json:"nodeIds"`
+		Kind     string   `json:"kind"`
+		Note     string   `json:"note"`
+	}
+	if err := json.Unmarshal(params, &args); err != nil {
+		return nil, InvalidArg("invalid_params", err.Error())
+	}
+	if strings.TrimSpace(args.CanvasID) == "" {
+		return nil, InvalidArg("invalid_params", "canvasId 必填")
+	}
+	if args.Kind != "image" && args.Kind != "video" {
+		return nil, InvalidArg("invalid_kind", "kind 只能是 image 或 video")
+	}
+	if len(args.NodeIDs) == 0 || len(args.NodeIDs) > 8 {
+		return nil, InvalidArg("invalid_batch", "nodeIds 必须是 1..8 项的数组")
+	}
+	raw, err := ctx.Services.UserCanvasProject(ctx.UserID, args.CanvasID)
+	if err != nil {
+		return nil, mapDomainError(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, AsError(err)
+	}
+	owned := map[string]bool{}
+	for _, rawNode := range canvasNodes(doc) {
+		if node, ok := rawNode.(map[string]any); ok {
+			if id, _ := node["id"].(string); id != "" {
+				owned[id] = true
+			}
+		}
+	}
+	seen := make(map[string]bool, len(args.NodeIDs))
+	nodeIDs := make([]string, 0, len(args.NodeIDs))
+	for _, id := range args.NodeIDs {
+		if !owned[id] {
+			return nil, InvalidArg("node_not_in_canvas", "节点不属于当前画布: "+id)
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		nodeIDs = append(nodeIDs, id)
+	}
+	display, modelKey := ctx.Services.AssistantGenerationModel(args.Kind)
+	if display == "" {
+		return nil, PreconditionFailed("generation_model_not_configured", "还没有设置默认的"+generationKindLabel(args.Kind)+"模型", nil)
+	}
+	return map[string]any{
+		"proposalId": newProposalID(), "kind": args.Kind, "nodeIds": nodeIDs,
+		"model": display, "modelKey": modelKey, "note": strings.TrimSpace(args.Note),
+	}, nil
+}
+
+func generationKindLabel(kind string) string {
+	if kind == "video" {
+		return "视频"
+	}
+	return "图片"
+}
+
+func newProposalID() string {
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		return fmt.Sprintf("gp-%d", time.Now().UnixNano())
+	}
+	return "gp-" + hex.EncodeToString(buf)
 }
 
 func opCanvasGet(ctx *Context, params json.RawMessage) (any, error) {
@@ -356,7 +432,9 @@ func opCanvasEdgeCreate(ctx *Context, params json.RawMessage) (any, error) {
 	// 写后扫描连线永远能扫到这条边，因此必须按领域结果判定，而不是按写后状态判定。
 	created := summary.Revision != args.ExpectedRevision
 	return canvasWriteResult(ctx, args.CanvasID, func(doc map[string]any) map[string]any {
-		return map[string]any{"canvasId": args.CanvasID, "duplicate": !created, "revision": summary.Revision}
+		// 连线 id 要回给调用方：按轮撤销与变更摘要需要知道这一轮新增了哪些连线。
+		return map[string]any{"canvasId": args.CanvasID, "duplicate": !created, "revision": summary.Revision,
+			"edgeId": findDocEdgeID(doc, args.FromNodeID, args.ToNodeID), "created": created}
 	})
 }
 
@@ -386,6 +464,23 @@ func findDocNode(doc map[string]any, nodeID string) map[string]any {
 		}
 	}
 	return nil
+}
+
+func findDocEdgeID(doc map[string]any, fromNodeID, toNodeID string) string {
+	connections, _ := doc["connections"].([]any)
+	for _, rawEdge := range connections {
+		edge, ok := rawEdge.(map[string]any)
+		if !ok {
+			continue
+		}
+		from, _ := edge["fromNodeId"].(string)
+		to, _ := edge["toNodeId"].(string)
+		if from == fromNodeID && to == toNodeID {
+			id, _ := edge["id"].(string)
+			return id
+		}
+	}
+	return ""
 }
 
 func findDocNodeByTitle(doc map[string]any, title string) map[string]any {

@@ -24,6 +24,8 @@ type harness struct {
 	userID   string
 	canvasID string
 	revision int64
+	dataDir  string
+	service  *app.Service
 }
 
 func newHarness(t *testing.T) *harness {
@@ -47,7 +49,8 @@ func newHarness(t *testing.T) *harness {
 	if err := db.Create(&model.Workspace{ID: "local", Name: "本地工作区"}).Error; err != nil {
 		t.Fatalf("创建工作区失败: %v", err)
 	}
-	service := app.NewLocal(repository.New(db), t.TempDir())
+	dataDir := t.TempDir()
+	service := app.NewLocal(repository.New(db), dataDir)
 	registry := agentops.NewRegistry(service, agentops.NewStore(db))
 	agentops.RegisterDefaultOps(registry)
 
@@ -78,7 +81,7 @@ func newHarness(t *testing.T) *harness {
 		t.Fatalf("解析初始画布失败: %v", err)
 	}
 	revision := int64(stored["revision"].(float64))
-	return &harness{registry: registry, userID: "local", canvasID: canvasID, revision: revision}
+	return &harness{registry: registry, userID: "local", canvasID: canvasID, revision: revision, dataDir: dataDir, service: service}
 }
 
 func (h *harness) run(t *testing.T, op, opID string, params map[string]any, readOnly bool) (agentops.Result, error) {
@@ -229,8 +232,8 @@ func TestReadOnlyClientCannotWriteAndCapabilityListIsFiltered(t *testing.T) {
 			t.Fatalf("只读能力列表混入写操作: %s", descriptor.ID)
 		}
 	}
-	if len(readOnly) != 5 {
-		t.Fatalf("只读操作应为 5 个，得到 %d", len(readOnly))
+	if len(readOnly) != 6 {
+		t.Fatalf("只读操作应为 6 个，得到 %d", len(readOnly))
 	}
 	if _, err := h.run(t, "canvas.get", "", map[string]any{"canvasId": h.canvasID}, true); err != nil {
 		t.Fatalf("只读客户端读操作应可用: %v", err)
