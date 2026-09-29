@@ -8,12 +8,15 @@ import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { DirectorScene } from "@/types/director";
 
-export function CanvasDirectorNodePanel({ node, scene, readNodeContent, onOpen, onPromptChange, professional = true }: { node: CanvasNodeData; scene: DirectorScene | null; readNodeContent: DirectorNodeContentReader; onOpen: () => void; onPromptChange: (value: string) => void; professional?: boolean }) {
+export function CanvasDirectorNodePanel({ node, scene, readNodeContent, readNodeStorageKey, onOpen, onPromptChange, professional = true }: { node: CanvasNodeData; scene: DirectorScene | null; readNodeContent: DirectorNodeContentReader; readNodeStorageKey?: DirectorNodeContentReader; onOpen: () => void; onPromptChange: (value: string) => void; professional?: boolean }) {
     const theme = canvasThemes[useActiveTheme()];
     const shot = resolveDirectorActiveShot(scene, node.metadata?.directorShotId);
     // 记录「失败的那个 URL」而非布尔量：同一个坏 URL 不再反复渲染，换成另一个 URL 时自动重试。
     const [failedUrl, setFailedUrl] = useState<string | null>(null);
-    const coverStorageKey = node.metadata?.directorCoverStorageKey;
+    // Older scenes refer to an image node whose blob URL expires on reload.
+    const coverStorageKey = node.metadata?.directorCoverStorageKey || (!node.metadata?.directorCoverUrl
+        ? readNodeStorageKey?.(node.metadata?.directorPreviewNodeId) || readNodeStorageKey?.(shot?.previewNodeId)
+        : undefined);
     const [resolvedCover, setResolvedCover] = useState<{ key: string; url: string } | null>(null);
     useEffect(() => {
         if (!coverStorageKey) return;

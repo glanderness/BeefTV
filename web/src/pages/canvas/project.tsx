@@ -2638,6 +2638,7 @@ function InfiniteCanvasPage() {
                         node={contentNode}
                         scene={currentProject?.directorScenes?.find((scene) => scene.id === contentNode.metadata?.directorSceneId) || null}
                         readNodeContent={(nodeId) => (nodeId ? nodesRef.current.find((item) => item.id === nodeId)?.metadata?.content : undefined)}
+                        readNodeStorageKey={(nodeId) => (nodeId ? nodesRef.current.find((item) => item.id === nodeId)?.metadata?.storageKey : undefined)}
                         professional={workspaceMode === "professional"}
                         onOpen={() => openDirectorWorkbench(contentNode.id)}
                         onPromptChange={(composerContent) => handleConfigNodeChange(contentNode.id, { composerContent })}
