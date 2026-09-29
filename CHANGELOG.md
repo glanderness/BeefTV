@@ -9,6 +9,13 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.11
+
+- Fix local reference images being rejected before submitting Wan 3.0 video tasks through BeefAPI.
+- Share verified enterprise video contracts across the model catalog, reference validation, and request preparation; preserve explicit protocols for other models.
+- Reject unsupported reference types and counts before submission, and retain actionable media guidance in task history.
+- Honor installed protocol media declarations and include the shared contracts in container builds.
+
 ## v1.6.10
 
 - Check reference-video frame rates on WhatsToken material-conversion routes, including ordinary, fragmented and mixed MP4 files.

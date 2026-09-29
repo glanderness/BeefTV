@@ -14,9 +14,27 @@ import (
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/protocol"
+	"infinite-canvas/backend/internal/providerpreset"
 )
 
 func (s *Service) validateResolvedVideoCapability(input *canvasGenerationInput) error {
+	if isBeefAPIVideoConfig(input.Config) {
+		if contract, ok := providerpreset.BeefAPIVideoContract(input.Config.Model); ok {
+			for _, ref := range []struct {
+				kind, label string
+				count       int
+			}{
+				{"image", "图片", len(input.ReferenceImages)}, {"video", "视频", len(input.ReferenceVideos)}, {"audio", "音频", len(input.ReferenceAudios)},
+			} {
+				if limit, bounded := contract.MaxReferences[ref.kind]; bounded && ref.count > limit {
+					if limit == 0 {
+						return BadAuthRequest(fmt.Sprintf("当前模型暂不支持参考%s，请移除此素材或选择支持该素材的模型", ref.label))
+					}
+					return BadAuthRequest(fmt.Sprintf("当前模型最多支持 %d 个参考%s，请移除多余素材后重新生成", limit, ref.label))
+				}
+			}
+		}
+	}
 	channelID := strings.TrimSpace(input.Config.ChannelID)
 	if channelID == "" {
 		profile := input.Config.CapabilityConfig

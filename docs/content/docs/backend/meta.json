@@ -10,6 +10,7 @@
     "task-runtime-stability",
     "generation-errors",
     "seedance-task-constraints",
+    "video-model-contracts",
     "system-update",
     "desktop-updater"
   ]

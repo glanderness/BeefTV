@@ -4,6 +4,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
 import { scopedLocalStorage } from "@/lib/user-scope";
+import { beefAPIVideoContract, isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
 import { defaultProtocolForCapability, defaultProtocolForModel, modelProtocolCapability, normalizeModelProtocol, usesOpenAICompatibleProtocolDefault, type ModelProtocol } from "@/lib/model-protocols";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { defaultModelCapabilityConfig, workflowFieldRole, workflowFieldSafeToOverride, workflowVideoFieldsFromJson, type ModelCapabilityConfig } from "@/lib/model-capabilities";
@@ -743,10 +744,22 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
     };
 }
 
-function beefApiVideoProtocol(model: string): ModelProtocol {
-    if (/^seedance-2\.(?:0|5)(?:-|$)/i.test(model)) return "newapi";
-    // Other BeefAPI media models retain their existing channel-2 contract.
-    return "newapi-channel-2";
+function beefApiVideoProtocol(model: string, current?: ModelProtocol): ModelProtocol {
+    return (beefAPIVideoContract(model)?.protocol as ModelProtocol | undefined) || current || "newapi-channel-2";
+}
+
+function beefApiVideoCapabilityConfig(model: string, protocol: ModelProtocol, current?: ModelCapabilityConfig): ModelCapabilityConfig | undefined {
+    const profile = beefApiSeedanceCapabilityConfig(model, current);
+    const contract = beefAPIVideoContract(model);
+    const limits = contract?.maxReferences;
+    if (!limits) return profile;
+    const resolved = profile || defaultModelCapabilityConfig(protocol, model);
+    if (!resolved.video) return resolved;
+    return { ...resolved, video: { ...resolved.video,
+        references: { ...resolved.video.references, maxImages: Math.min(resolved.video.references.maxImages, limits.image ?? Infinity), maxVideos: Math.min(resolved.video.references.maxVideos, limits.video ?? Infinity), maxAudios: Math.min(resolved.video.references.maxAudios, limits.audio ?? Infinity) },
+        operations: contract.operations || resolved.video.operations,
+        defaultOperation: contract.operations?.includes(resolved.video.defaultOperation) ? resolved.video.defaultOperation : contract.operations?.[0] || resolved.video.defaultOperation,
+    } };
 }
 
 function beefApiSeedanceCapabilityConfig(model: string, current?: ModelCapabilityConfig): ModelCapabilityConfig | undefined {
@@ -772,7 +785,7 @@ function beefApiSeedanceCapabilityConfig(model: string, current?: ModelCapabilit
 }
 
 function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
-    if (!channel.baseUrl.toLowerCase().includes("enterprise.beefapi.com")) return channel;
+    if (!isBeefAPIEndpoint(channel.baseUrl)) return channel;
     const models = channel.models;
     const existing = new Map((channel.modelProfiles || []).map((item) => [item.model, item]));
     for (const model of models.filter(isImageModelName)) {
@@ -814,15 +827,15 @@ function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
     }
     for (const model of models.filter(isVideoModelName)) {
         const current = existing.get(model);
-        // Always normalize the built-in BeefAPI media models. This also
-        // repairs persisted profiles created by the previous channel-1
-        // mapping, which otherwise keep sending unsupported input/parameters.
+        // Repair known routes using the shared contract; preserve catalog and
+        // custom protocols for models whose wire contract is not declared here.
+        const protocol = beefApiVideoProtocol(model, current?.protocol);
         existing.set(model, {
             ...(current || {}),
             model,
             capability: "video",
-            protocol: beefApiVideoProtocol(model),
-            capabilityConfig: beefApiSeedanceCapabilityConfig(model, current?.capabilityConfig),
+            protocol,
+            capabilityConfig: beefApiVideoCapabilityConfig(model, protocol, current?.capabilityConfig),
         });
     }
     return { ...channel, models, modelProfiles: Array.from(existing.values()) };

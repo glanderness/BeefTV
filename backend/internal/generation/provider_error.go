@@ -1059,6 +1059,15 @@ func specializeMediaConstraints(failure *Failure, fields extractedFields) {
 }
 
 func referenceMediaConstraintCopy(text string) (categoryCopy, bool) {
+	if strings.Contains(text, "当前模型协议要求公网素材地址") || strings.Contains(text, "当前 JSON 视频协议的参考素材不能使用内嵌数据") {
+		return categoryCopy{Reason: "当前渠道暂不支持直接使用本地素材", Action: "请使用可访问的 HTTPS 素材链接，或选择支持本地素材的渠道"}, true
+	}
+	if strings.HasPrefix(text, "当前渠道暂不支持直接使用本地素材") {
+		return categoryCopy{Reason: "当前渠道暂不支持直接使用本地素材", Action: "请使用可访问的 HTTPS 素材链接，或选择支持本地素材的渠道"}, true
+	}
+	if m := regexp.MustCompile(`^(当前模型(?:暂不支持参考(?:图片|视频|音频)|最多支持 \d+ 个参考(?:图片|视频|音频)))[，。](请[^\n]+)`).FindStringSubmatch(text); len(m) == 3 {
+		return categoryCopy{Reason: m[1], Action: m[2]}, true
+	}
 	text = strings.SplitN(text, "。排查编号：", 2)[0]
 	if m := regexp.MustCompile(`^(第 \d+ 个参考视频帧率无法读取)`).FindStringSubmatch(text); len(m) == 2 {
 		return categoryCopy{Reason: m[1], Action: "请重新导出 MP4/MOV 视频后上传，确保文件完整且包含有效的视频轨"}, true

@@ -362,11 +362,13 @@ func TestLegacyMediaMigrationSkipsInvalidDataURL(t *testing.T) {
 	}
 }
 
-func TestLocalProviderMediaUsesLocalStorageGuidance(t *testing.T) {
+func TestLocalProviderMediaUsesReachableReferenceGuidance(t *testing.T) {
 	svc := &Service{mode: serviceModeLocal, localResourceStorage: true}
-	err := svc.hydrateProviderMedia("user-1", &providerMedia{DataURL: "data:video/mp4;base64,AAAA"}, providerMediaHydrationPolicy{requireURL: true})
-	if err == nil || !strings.Contains(err.Error(), "本地资源目录") || strings.Contains(err.Error(), "对象存储") {
-		t.Fatalf("local inline reference error = %v", err)
+	for _, media := range []providerMedia{{DataURL: "data:video/mp4;base64,AAAA"}, {URL: "data:video/mp4;base64,AAAA"}} {
+		err := svc.hydrateProviderMedia("user-1", &media, providerMediaHydrationPolicy{requireURL: true})
+		if err == nil || !strings.Contains(err.Error(), "HTTPS") || strings.Contains(err.Error(), "本地资源目录") {
+			t.Fatalf("local inline reference error = %v", err)
+		}
 	}
 }
 
