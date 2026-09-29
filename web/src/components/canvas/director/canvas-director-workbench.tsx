@@ -1,7 +1,7 @@
 import { App, Button, ColorPicker, Dropdown, Input, InputNumber, Select, Slider } from "antd";
 import { Switch } from "@/components/ui/base/switch";
 import type { MenuProps } from "antd";
-import { Box, BoxSelect, Camera, Circle, Cuboid, FileUp, Focus, Image as ImageIcon, LampDesk, Lightbulb, Plus, Redo2, RotateCcw, Save, Trash2, Undo2, UserRound, Video, X } from "lucide-react";
+import { Box, BoxSelect, Camera, Circle, Cuboid, FileUp, Focus, Image as ImageIcon, LampDesk, Lightbulb, Plus, Redo2, RotateCcw, Save, Search, Trash2, Undo2, UserRound, Video, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { nanoid } from "nanoid";
 import { Euler, Quaternion } from "three";
@@ -23,6 +23,7 @@ import { resolveDirectorPlacement, resolveDirectorPlacementAnchor } from "@/lib/
 import { isDirectorOutputSnapshotCurrent, shouldReinitializeDirectorSession } from "@/lib/canvas/director/director-session";
 import { blocksDirectorShortcut, releaseDirectorFocusAfterPointer, resolveDirectorShortcut, type DirectorShortcutAction } from "@/lib/canvas/director/director-shortcuts";
 import { createDirectorActor, createDirectorBillboard, createDirectorCamera, createDirectorLight, createDirectorModel, createDirectorObject, DIRECTOR_ACTOR_COLORS, directorBoneLabel, directorFocalLengthToFov, directorPoseLabel, interpolateDirectorTransform, removeDirectorSceneKeyframe, setDirectorSceneKeyframeEasing, touchDirectorScene, upsertDirectorBoneKeyframe } from "@/lib/canvas/director/director-scene";
+import { searchDirectorSceneItems } from "@/lib/canvas/director/director-scene-search";
 import { describeDirectorSaveStatus, resolveDirectorCloseOutcome, shouldBlockDirectorUnload, shouldOfferDirectorDraftRecovery } from "@/lib/canvas/director/director-save-wiring";
 import { useDirectorSaveCoordinator } from "@/components/canvas/director/use-director-save-coordinator";
 import { uploadMediaFile } from "@/services/file-storage";
@@ -45,6 +46,8 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
     const [recording, setRecording] = useState(false);
     const [onboardingRestartSignal, setOnboardingRestartSignal] = useState(0);
     const [navigationTab, setNavigationTab] = useState<DirectorWorkbenchTab>("scene");
+    const [sceneSearch, setSceneSearch] = useState("");
+    const [sceneInspectorView, setSceneInspectorView] = useState<"scene" | "shot">("scene");
     const mode = useDirectorWorkbenchStore((state) => state.mode);
     const viewMode = useDirectorWorkbenchStore((state) => state.viewMode);
     const setViewMode = useDirectorWorkbenchStore((state) => state.setViewMode);
@@ -197,6 +200,7 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
     }, [message, modal, open, scene, writeDraft]);
 
     const activeShot = draft?.shots?.find((item) => item.id === draft.activeShotId) || draft?.shots?.[0] || null;
+    const visibleSceneItems = useMemo(() => draft ? searchDirectorSceneItems(draft, sceneSearch) : [], [draft, sceneSearch]);
     const activeCamera = draft?.cameras?.find((item) => item.id === activeShot?.cameraId) || draft?.cameras?.[0] || null;
     const selectedObject = draft?.objects?.find((item) => item.id === selectedObjectId) || null;
     const selectedLight = draft?.lights?.find((item) => item.id === selectedLightId) || null;
@@ -757,25 +761,28 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
 
             <div className="grid min-h-0 flex-1 grid-cols-[268px_minmax(0,1fr)_292px] max-lg:grid-cols-[220px_minmax(0,1fr)]">
                 <aside className="flex min-h-0 overflow-hidden border-r" style={{ background: theme.node.panel, borderColor: theme.toolbar.border }}>
-                    <DirectorWorkbenchRail active={navigationTab} onChange={setNavigationTab} />
+                    <DirectorWorkbenchRail active={navigationTab} onChange={(tab) => {
+                        setNavigationTab(tab);
+                        if (tab === "scene") {
+                            setSelectedObjectId(null);
+                            setSelectedLightId(null);
+                            setSceneInspectorView("scene");
+                        }
+                    }} />
                     <div className="thin-scrollbar min-h-0 min-w-0 flex-1 overflow-y-auto">
                     {navigationTab === "scene" ? <>
-                    <PanelTitle title="场景对象" action={<AddMenuButton label="添加场景对象" items={addObjectMenuItems} />} />
-                    <div className="px-2 pb-2">
-                        {draft.objects.map((object) => <SceneRow key={object.id} active={selectedObjectId === object.id} icon={object.kind === "actor" || object.primitive === "character" ? <UserRound /> : object.kind === "model" ? <BoxSelect /> : object.kind === "billboard" ? <ImageIcon /> : <Cuboid />} label={object.name} onClick={() => setSelectedObjectId(object.id)} onDelete={() => removeObject(object.id)} />)}
+                    <PanelTitle title="场景" action={<AddMenuButton label="添加场景对象" items={addObjectMenuItems} />} />
+                    <div className="relative mx-2 mb-3">
+                        <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 opacity-55" aria-hidden />
+                        <input type="search" data-canvas-no-zoom aria-label="搜索场景对象" placeholder="请输入搜索内容" value={sceneSearch} onChange={(event) => setSceneSearch(event.target.value)} onKeyDown={(event) => event.stopPropagation()} className="h-8 w-full rounded-lg border pl-8 pr-2 text-xs outline-none focus-visible:ring-2" style={{ background: theme.toolbar.itemHover, borderColor: theme.toolbar.border, color: theme.node.text }} />
                     </div>
-                    <PanelTitle title="摄影机" action={<AddMenuButton label="添加摄影机" items={addCameraMenuItems} />} />
-                    <div className="px-2 pb-2">{draft.cameras.map((camera) => <SceneRow key={camera.id} active={activeShot.cameraId === camera.id && !selectedObjectId && !selectedLightId} icon={<Camera />} label={camera.name} onClick={() => { setSelectedObjectId(null); setSelectedLightId(null); updateShot(activeShot.id, { cameraId: camera.id }); }} onDelete={() => removeCamera(camera.id)} />)}</div>
-                    <PanelTitle title="灯光" action={<AddMenuButton label="添加灯光" items={addLightMenuItems} />} />
-                    <div className="px-2 pb-2">{draft.lights.map((light) => <SceneRow key={light.id} active={selectedLightId === light.id} icon={<Lightbulb />} label={light.name} onClick={() => setSelectedLightId(light.id)} onDelete={() => removeLight(light.id)} />)}</div>
-                    <PanelTitle title="快速添加" />
-                    <div className="grid grid-cols-2 gap-1.5 px-2 pb-3">
-                        <QuickAdd label="演员" icon={<UserRound />} onClick={addActor} />
-                        <QuickAdd label="立方体" icon={<Box />} onClick={() => addPrimitive("box", "立方体")} />
-                        <QuickAdd label="球体" icon={<Circle />} onClick={() => addPrimitive("sphere", "球体")} />
-                        <QuickAdd label="圆柱" icon={<Cuboid />} onClick={() => addPrimitive("cylinder", "圆柱")} />
-                        <QuickAdd label="上传模型" icon={<FileUp />} onClick={() => modelInputRef.current?.click()} />
-                        <QuickAdd label="添加灯光" icon={<LampDesk />} onClick={addLight} />
+                    <div className="px-2 pb-2">
+                        {visibleSceneItems.map((item) => item.kind === "camera"
+                            ? <SceneRow key={`camera-${item.id}`} active={sceneInspectorView === "shot" && activeShot.cameraId === item.id && !selectedObjectId && !selectedLightId} icon={<Camera />} label={item.name} onClick={() => { setSceneInspectorView("shot"); setSelectedObjectId(null); setSelectedLightId(null); updateShot(activeShot.id, { cameraId: item.id }); }} onDelete={() => removeCamera(item.id)} />
+                            : item.kind === "object"
+                                ? <SceneRow key={`object-${item.id}`} active={selectedObjectId === item.id} icon={item.object.kind === "actor" || item.object.primitive === "character" ? <UserRound /> : item.object.kind === "model" ? <BoxSelect /> : item.object.kind === "billboard" ? <ImageIcon /> : <Cuboid />} label={item.name} onClick={() => { setSelectedLightId(null); setSelectedObjectId(item.id); }} onDelete={() => removeObject(item.id)} />
+                                : <SceneRow key={`light-${item.id}`} active={selectedLightId === item.id} icon={<Lightbulb />} label={item.name} onClick={() => { setSelectedObjectId(null); setSelectedLightId(item.id); }} onDelete={() => removeLight(item.id)} />)}
+                        {visibleSceneItems.length === 0 ? <p className="px-2 py-4 text-center text-xs opacity-55">未找到匹配的场景对象</p> : null}
                     </div>
                     </> : null}
                     {navigationTab === "actors" ? <>
@@ -806,7 +813,7 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
 
                 <aside className="thin-scrollbar min-h-0 overflow-y-auto border-l max-lg:col-span-2 max-lg:max-h-[40vh] max-lg:border-l-0 max-lg:border-t" style={{ background: theme.node.panel, borderColor: theme.toolbar.border }}>
                     {/* 摄影机模式下右栏固定显示 shot/camera 检查器：对齐视图与运镜是这个模式的主入口。 */}
-                    {selectedObject && !capabilities.cameraTools ? <ObjectInspector object={selectedObject} rendered={selectedObjectRendered || selectedObject.transform} playhead={snappedPlayhead} selectedBone={selectedBone} capabilities={capabilities} onSelectBone={setSelectedBone} onUpdate={(patch) => updateObject(selectedObject.id, patch)} onTransformEdit={(edited) => handleObjectTransform(selectedObject.id, selectedObjectRendered || selectedObject.transform, edited)} onBoneRotationStage={(rotation) => selectedBone && writeBoneRotation(selectedObject.id, selectedBone, rotation, "stage")} onBoneRotationCommit={() => stagedTransaction.end("commit")} onAddKeyframe={recordSelectedKeyframe} onDelete={() => removeObject(selectedObject.id)} /> : selectedLight && !capabilities.cameraTools ? <LightInspector light={selectedLight} onUpdate={(patch) => updateLight(selectedLight.id, patch)} onDelete={() => removeLight(selectedLight.id)} /> : navigationTab === "scene" && !capabilities.cameraTools ? <DirectorSceneInspector scene={draft} onChange={(patch) => commit((current) => ({ ...current, ...patch }))} /> : <ShotInspector shot={activeShot} camera={activeCamera} cameras={draft.cameras} capabilities={capabilities} onUpdateShot={(patch) => updateShot(activeShot.id, patch)} onUpdateCamera={(patch) => activeCamera && commit((current) => ({ ...current, cameras: current.cameras.map((item) => item.id === activeCamera.id ? { ...item, ...patch } : item) }))} onAddCameraKeyframe={addCameraKeyframe} onApplyCameraMove={applyCameraMove} onAlignCameraToView={alignCameraToView} onExportClay={() => void exportClayVideo()} recording={recording} />}
+                    {selectedObject && !capabilities.cameraTools ? <ObjectInspector object={selectedObject} rendered={selectedObjectRendered || selectedObject.transform} playhead={snappedPlayhead} selectedBone={selectedBone} capabilities={capabilities} onSelectBone={setSelectedBone} onUpdate={(patch) => updateObject(selectedObject.id, patch)} onTransformEdit={(edited) => handleObjectTransform(selectedObject.id, selectedObjectRendered || selectedObject.transform, edited)} onBoneRotationStage={(rotation) => selectedBone && writeBoneRotation(selectedObject.id, selectedBone, rotation, "stage")} onBoneRotationCommit={() => stagedTransaction.end("commit")} onAddKeyframe={recordSelectedKeyframe} onDelete={() => removeObject(selectedObject.id)} /> : selectedLight && !capabilities.cameraTools ? <LightInspector light={selectedLight} onUpdate={(patch) => updateLight(selectedLight.id, patch)} onDelete={() => removeLight(selectedLight.id)} /> : navigationTab === "scene" && sceneInspectorView === "scene" && !capabilities.cameraTools ? <DirectorSceneInspector scene={draft} onChange={(patch) => commit((current) => ({ ...current, ...patch }))} /> : <ShotInspector shot={activeShot} camera={activeCamera} cameras={draft.cameras} capabilities={capabilities} onUpdateShot={(patch) => updateShot(activeShot.id, patch)} onUpdateCamera={(patch) => activeCamera && commit((current) => ({ ...current, cameras: current.cameras.map((item) => item.id === activeCamera.id ? { ...item, ...patch } : item) }))} onAddCameraKeyframe={addCameraKeyframe} onApplyCameraMove={applyCameraMove} onAlignCameraToView={alignCameraToView} onExportClay={() => void exportClayVideo()} recording={recording} />}
                 </aside>
             </div>
 
