@@ -1,3 +1,5 @@
+import type { DirectorAspectRatio } from "@/lib/canvas/director/director-aspect-ratio";
+
 export type DirectorVec3 = [number, number, number];
 export type DirectorQuat = [number, number, number, number];
 
@@ -136,6 +138,8 @@ export type DirectorScene = {
     background: string;
     environmentIntensity: number;
     gridVisible: boolean;
+    /** Missing in older saved scenes; treated as adaptive. */
+    aspectRatio?: DirectorAspectRatio;
     objects: DirectorObject[];
     cameras: DirectorCamera[];
     lights: DirectorLight[];

@@ -1,4 +1,5 @@
 import { scopedStorageKey } from "@/lib/user-scope";
+import { isDirectorAspectRatio } from "@/lib/canvas/director/director-aspect-ratio";
 import type { DirectorScene } from "@/types/director";
 
 export type DirectorSaveStatus = "dirty" | "saving" | "saved" | "error";
@@ -79,6 +80,7 @@ const isDirectorScene = (value: unknown, expectedSceneId: string): value is Dire
         typeof value.environmentIntensity === "number" &&
         Number.isFinite(value.environmentIntensity) &&
         typeof value.gridVisible === "boolean" &&
+        (value.aspectRatio === undefined || isDirectorAspectRatio(value.aspectRatio)) &&
         Array.isArray(value.objects) &&
         Array.isArray(value.cameras) &&
         Array.isArray(value.lights) &&

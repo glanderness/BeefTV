@@ -452,6 +452,18 @@ describe("DirectorSaveCoordinator", () => {
     });
 
     describe("17 invalid scene shape", () => {
+        it("accepts old adaptive scenes and valid saved aspect ratios, but rejects unknown ratios", () => {
+            const h = createHarness();
+            h.writeRaw(JSON.stringify(makeEnvelope({ scene: makeScene() })));
+            expect(h.coord.restoreCandidate()?.scene.aspectRatio).toBeUndefined();
+            h.writeRaw(JSON.stringify(makeEnvelope({ scene: makeScene({ aspectRatio: "9:16" }) })));
+            expect(h.coord.restoreCandidate()?.scene.aspectRatio).toBe("9:16");
+            h.writeRaw(corruptEnvelope((envelope) => {
+                envelope.scene = { ...makeScene(), aspectRatio: "0:0" };
+            }));
+            expect(h.coord.restoreCandidate()).toBeNull();
+        });
+
         it("should reject a candidate whose scene fails DirectorScene validation", () => {
             const h = createHarness();
 

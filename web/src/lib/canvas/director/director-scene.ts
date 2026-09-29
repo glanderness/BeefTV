@@ -19,6 +19,7 @@ export function createDirectorScene(title = "未命名场景"): DirectorScene {
         background: "#060608",
         environmentIntensity: 0.7,
         gridVisible: true,
+        aspectRatio: "adaptive",
         objects: [createDirectorActor("演员 1", [0, 0, 0])],
         cameras: [camera],
         lights: [createDirectorLight("directional", "主光", [4, 6, 4], 2.4), createDirectorLight("directional", "轮廓光", [-4, 3, -2], 1.1), createDirectorLight("ambient", "环境光", [0, 0, 0], 0.65)],

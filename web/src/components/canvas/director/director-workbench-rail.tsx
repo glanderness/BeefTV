@@ -1,14 +1,15 @@
-import { Boxes, Camera, Layers3, UserRound } from "lucide-react";
+import { Boxes, Camera, Layers3, RectangleHorizontal, UserRound } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 
-export type DirectorWorkbenchTab = "scene" | "actors" | "cameras" | "assets";
+export type DirectorWorkbenchTab = "scene" | "actors" | "cameras" | "aspect" | "assets";
 
 const tabs = [
     { id: "scene", label: "场景", icon: Layers3 },
     { id: "actors", label: "添加角色", icon: UserRound },
     { id: "cameras", label: "添加机位", icon: Camera },
+    { id: "aspect", label: "选择画幅比例", icon: RectangleHorizontal },
     { id: "assets", label: "素材", icon: Boxes },
 ] as const;
 

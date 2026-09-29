@@ -6,6 +6,7 @@ import type { Material } from "three";
 import { GLTFLoader, SkeletonUtils } from "three-stdlib";
 
 import { resolveDirectorBoneRotation } from "@/lib/canvas/director/director-animation-semantics";
+import { cropDirectorCanvas, resolveDirectorFrameRect, resolveDirectorPixelCrop, type DirectorAspectRatio } from "@/lib/canvas/director/director-aspect-ratio";
 import { directorStagePalette } from "@/lib/canvas/director/director-stage-palette";
 import { applyClaySceneMaterials } from "@/lib/canvas/director/director-clay-materials";
 import { createDirectorTransaction, installDirectorTerminalListeners } from "@/lib/canvas/director/director-gesture-transaction";
@@ -72,6 +73,19 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
     // render 都可能变化，穿透到 memo 化的 Canvas 会触发 configure 重建 renderer。
     const { onViewModeChange, ...sceneProps } = props;
     const captureContext = useRef<CaptureContext | null>(null);
+    const shellRef = useRef<HTMLDivElement>(null);
+    const [shellSize, setShellSize] = useState({ width: 0, height: 0 });
+    useEffect(() => {
+        const shell = shellRef.current;
+        if (!shell) return;
+        const observer = new ResizeObserver(([entry]) => {
+            if (entry) setShellSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+        });
+        observer.observe(shell);
+        return () => observer.disconnect();
+    }, []);
+    const aspectRatio = props.scene.aspectRatio || "adaptive";
+    const frame = resolveDirectorFrameRect(shellSize.width, shellSize.height, aspectRatio);
     // 地面点连同 owner canvas 一起记录：owner 不是当前 renderer 的 canvas 就是陈旧值。
     const groundRef = useRef<{ owner: HTMLCanvasElement; point: DirectorGroundPoint } | null>(null);
     const orbitControlsRef = useRef<DirectorOrbitControls | null>(null);
@@ -136,8 +150,8 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
         return captureContext.current;
     };
     useImperativeHandle(ref, () => ({
-        capture: (mode) => captureFrame(usableContext(), mode),
-        recordVideo: (duration, fps) => recordCanvas(usableContext(), duration, fps),
+        capture: (mode) => captureFrame(usableContext(), mode, aspectRatio),
+        recordVideo: (duration, fps) => recordCanvas(usableContext(), duration, fps, aspectRatio),
         readCameraTransform: () => {
             const camera = usableContext()?.camera;
             return camera ? { position: camera.position.toArray() as DirectorTransform["position"], rotation: [camera.rotation.x, camera.rotation.y, camera.rotation.z], scale: [1, 1, 1] } : null;
@@ -152,12 +166,12 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
             const target = orbitControlsRef.current?.target;
             return { pointer, orbitTarget: finiteDirectorGroundPoint(target?.x, target?.z) };
         },
-    }), []);
+    }), [aspectRatio]);
 
     return (
         // data-renderer-ready 直接来自 directorCaptureUsable：capture context 已登记且未 lost。
         // 这是真实就绪信号，供 E2E 在触发 context loss 前确定监听器已安装。
-        <div className="director-viewport-shell" data-renderer-ready={directorCaptureUsable(capture) ? "true" : "false"}>
+        <div ref={shellRef} className="director-viewport-shell" data-renderer-ready={directorCaptureUsable(capture) ? "true" : "false"}>
             <DirectorViewportErrorBoundary key={`boundary-${retryKey}`} onRelease={releaseCapture} onRetry={retry}>
                 <DirectorCanvasSurface
                     key={`canvas-${retryKey}`}
@@ -171,6 +185,7 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
                     onOrbitControls={onOrbitControls}
                 />
             </DirectorViewportErrorBoundary>
+            {aspectRatio !== "adaptive" && frame.width > 0 ? <div data-director-aspect-frame={aspectRatio} aria-label={`${aspectRatio} 画幅取景框`} className="pointer-events-none absolute rounded-xl border border-white/35" style={{ zIndex: 1, left: frame.x, top: frame.y, width: frame.width, height: frame.height, boxShadow: "0 0 0 100vmax rgba(0, 0, 0, 0.68)" }} /> : null}
             {/* 取景切换是纯视口状态：放在 DOM 层，不随 Canvas 重建而丢失。 */}
             {onViewModeChange ? <DirectorViewToolbar viewMode={props.viewMode ?? DIRECTOR_DEFAULT_VIEW_MODE} onViewModeChange={onViewModeChange} /> : null}
             {capture.contextLost ? (
@@ -1106,7 +1121,7 @@ function DirectorLightView({ light }: { light: DirectorLight }) {
     return <directionalLight position={position} color={light.color} intensity={light.intensity} castShadow={light.castShadow} shadow-mapSize-width={1024} shadow-mapSize-height={1024} />;
 }
 
-async function captureFrame(context: CaptureContext | null, mode: DirectorRenderMode) {
+async function captureFrame(context: CaptureContext | null, mode: DirectorRenderMode, aspectRatio: DirectorAspectRatio) {
     if (!context) throw new Error("3D 视口尚未就绪");
     const { gl, scene, camera } = context;
     const resumeDisplayMaterialOverride = context.suspendDisplayMaterialOverride();
@@ -1116,7 +1131,7 @@ async function captureFrame(context: CaptureContext | null, mode: DirectorRender
     try {
         scene.overrideMaterial = override;
         gl.render(scene, camera);
-        return await canvasToBlob(gl.domElement);
+        return await canvasToBlob(cropDirectorCanvas(gl.domElement, aspectRatio));
     } finally {
         scene.overrideMaterial = previous;
         restoreClayMaterials?.();
@@ -1126,43 +1141,58 @@ async function captureFrame(context: CaptureContext | null, mode: DirectorRender
     }
 }
 
-async function recordCanvas(context: CaptureContext | null, duration: number, fps: number) {
+async function recordCanvas(context: CaptureContext | null, duration: number, fps: number, aspectRatio: DirectorAspectRatio) {
     if (!context) throw new Error("3D 视口尚未就绪");
     if (!context.gl.domElement.captureStream || typeof MediaRecorder === "undefined") throw new Error("当前浏览器不支持视频录制，请导出帧序列");
     const resumeDisplayMaterialOverride = context.suspendDisplayMaterialOverride();
     const previousMaterial = context.scene.overrideMaterial;
     const restoreClayMaterials = applyClaySceneMaterials(context.scene);
-    context.scene.overrideMaterial = null;
-    context.gl.render(context.scene, context.camera);
-    const stream = context.gl.domElement.captureStream(fps);
-    const mimeType = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find((type) => MediaRecorder.isTypeSupported(type)) || "";
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-    const chunks: Blob[] = [];
-    // captureStream 依赖渲染循环持续产出新帧；循环里任何未捕获异常都会让剩余录制变成空帧，
-    // 与其 5 秒后静默产出残缺视频回写画布，不如捕获到首个错误就立刻中止并报错。
-    let renderError: Error | null = null;
-    const onRenderError = () => {
-        renderError ??= new Error("白膜视频录制期间发生渲染错误，请重试");
-        if (recorder.state !== "inactive") recorder.stop();
-    };
-    window.addEventListener("error", onRenderError);
-    const result = new Promise<Blob>((resolve, reject) => {
-        recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
-        recorder.onerror = () => reject(new Error("白膜视频录制失败"));
-        recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || "video/webm" }));
-    });
-    recorder.start(250);
-    const stopTimer = window.setTimeout(() => { if (recorder.state !== "inactive") recorder.stop(); }, Math.max(250, duration * 1000 + 120));
+    let cropFrame = 0;
+    let stream: MediaStream | null = null;
+    let stopTimer: number | null = null;
+    let onRenderError: (() => void) | null = null;
     try {
+        context.scene.overrideMaterial = null;
+        context.gl.render(context.scene, context.camera);
+        const sourceCanvas = context.gl.domElement;
+        const outputCanvas = aspectRatio === "adaptive" ? sourceCanvas : cropDirectorCanvas(sourceCanvas, aspectRatio);
+        const crop = aspectRatio === "adaptive" ? null : resolveDirectorPixelCrop(sourceCanvas.width, sourceCanvas.height, aspectRatio);
+        const outputContext = crop ? outputCanvas.getContext("2d") : null;
+        if (crop && outputContext) {
+            const draw = () => {
+                outputContext.drawImage(sourceCanvas, crop.x, crop.y, crop.width, crop.height, 0, 0, outputCanvas.width, outputCanvas.height);
+                cropFrame = window.requestAnimationFrame(draw);
+            };
+            cropFrame = window.requestAnimationFrame(draw);
+        }
+        stream = outputCanvas.captureStream(fps);
+        const mimeType = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find((type) => MediaRecorder.isTypeSupported(type)) || "";
+        const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+        const chunks: Blob[] = [];
+        // captureStream 依赖渲染循环持续产出新帧；异常立即停止，避免静默回写残缺视频。
+        let renderError: Error | null = null;
+        onRenderError = () => {
+            renderError ??= new Error("白膜视频录制期间发生渲染错误，请重试");
+            if (recorder.state !== "inactive") recorder.stop();
+        };
+        window.addEventListener("error", onRenderError);
+        const result = new Promise<Blob>((resolve, reject) => {
+            recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+            recorder.onerror = () => reject(new Error("白膜视频录制失败"));
+            recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || "video/webm" }));
+        });
+        recorder.start(250);
+        stopTimer = window.setTimeout(() => { if (recorder.state !== "inactive") recorder.stop(); }, Math.max(250, duration * 1000 + 120));
         const blob = await result;
         if (renderError) throw renderError;
         const recorded = await probeRecordedDuration(blob);
         if (!Number.isFinite(recorded) || recorded < Math.max(0.25, duration * 0.5)) throw new Error("白膜视频时长异常，录制可能不完整，请重试");
         return blob;
     } finally {
-        window.clearTimeout(stopTimer);
-        window.removeEventListener("error", onRenderError);
-        stream.getTracks().forEach((track) => track.stop());
+        if (stopTimer !== null) window.clearTimeout(stopTimer);
+        if (cropFrame) window.cancelAnimationFrame(cropFrame);
+        if (onRenderError) window.removeEventListener("error", onRenderError);
+        stream?.getTracks().forEach((track) => track.stop());
         restoreClayMaterials();
         context.scene.overrideMaterial = previousMaterial;
         resumeDisplayMaterialOverride();
