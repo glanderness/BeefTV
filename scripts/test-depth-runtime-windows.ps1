@@ -23,10 +23,12 @@ $env:BEEFTV_VDA_SOURCE = $source
 $env:PATH = "$bin;$env:PATH"
 & $python -c "import torch, torchvision, cv2, numpy, depth_capture; print(torch.__version__); print(torch.version.cuda or 'cpu')"
 if ($LASTEXITCODE -ne 0) { throw "深度运行包 Python 依赖加载失败" }
-& (Join-Path $bin "ffmpeg.exe") -version | Select-Object -First 1
+$ffmpegVersion = & (Join-Path $bin "ffmpeg.exe") -version
 if ($LASTEXITCODE -ne 0) { throw "FFmpeg 无法启动" }
-& (Join-Path $bin "ffprobe.exe") -version | Select-Object -First 1
+Write-Output ($ffmpegVersion | Select-Object -First 1)
+$ffprobeVersion = & (Join-Path $bin "ffprobe.exe") -version
 if ($LASTEXITCODE -ne 0) { throw "FFprobe 无法启动" }
+Write-Output ($ffprobeVersion | Select-Object -First 1)
 $mediaCheck = Join-Path ([System.IO.Path]::GetTempPath()) ("beeftv-ffmpeg-check-" + [guid]::NewGuid().ToString("N") + ".mp4")
 try {
     & (Join-Path $bin "ffmpeg.exe") -y -hide_banner -loglevel error -f lavfi -i "color=black:size=64x48:rate=5:duration=0.4" -pix_fmt yuv420p $mediaCheck
