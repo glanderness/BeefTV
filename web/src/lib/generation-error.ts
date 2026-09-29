@@ -691,6 +691,7 @@ function categoryFromProviderCode(...values: string[]): GenerationErrorCategory 
 }
 
 function referenceMediaConstraintCopy(text: string): CategoryCopy | undefined {
+    text = text.split("。排查编号：", 1)[0];
     const pixelPersisted = text.match(/^(参考素材像素总量不符合模型要求)。((?:请将参考素材的宽×高调整到) \d+–\d+ 像素[^{}]*)$/);
     if (pixelPersisted) return { reason: pixelPersisted[1], action: pixelPersisted[2] };
     const videoPersisted = text.match(/^(第 \d+ 个参考视频(?:无法读取|格式或地址不支持|文件过大|尺寸为 \d+×\d+|时长为 \d+(?:\.\d+)? 秒|像素总量为 \d+（\d+×\d+）))[。]([^{}]+)$/);

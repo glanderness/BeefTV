@@ -452,3 +452,11 @@ func TestGatewayVideoPreflightErrorFixture(t *testing.T) {
 		}
 	}
 }
+
+func TestReferencePixelDiagnosticIDIsNotDuplicated(t *testing.T) {
+	input := "第 1 个参考视频像素总量为 331776（432×768）。需要 407696–8295044 像素；请调整尺寸。排查编号：请求 202609290516575609492488268d9d6HqaXq7bq。"
+	failure := generation.ClassifyText(input)
+	if strings.Count(failure.UserMessage(), "202609290516575609492488268d9d6HqaXq7bq") != 1 {
+		t.Fatalf("duplicate ID: %s", failure.UserMessage())
+	}
+}

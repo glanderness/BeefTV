@@ -377,3 +377,11 @@ test("gateway video preflight failures preserve actionable details", () => {
         expect(explainGenerationError(`${failure.reason}。${failure.action}`).action).toContain(item.action);
     }
 });
+
+test("reference pixel diagnostic ID is not duplicated", () => {
+    const id = "202609290516575609492488268d9d6HqaXq7bq";
+    const input = `第 1 个参考视频像素总量为 331776（432×768）。需要 407696–8295044 像素；请调整尺寸。排查编号：请求 ${id}。`;
+    const failure = explainGenerationError(input);
+    expect(failure.message.split(id).length - 1).toBe(1);
+    expect(failure.action).not.toContain(id);
+});

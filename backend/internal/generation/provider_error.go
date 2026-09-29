@@ -1056,6 +1056,7 @@ func specializeMediaConstraints(failure *Failure, fields extractedFields) {
 }
 
 func referenceMediaConstraintCopy(text string) (categoryCopy, bool) {
+	text = strings.SplitN(text, "。排查编号：", 2)[0]
 	if m := regexp.MustCompile(`^(参考素材像素总量不符合模型要求)。((?:请将参考素材的宽×高调整到) \d+–\d+ 像素[^{}]*)$`).FindStringSubmatch(text); len(m) == 3 {
 		return categoryCopy{Reason: m[1], Action: m[2]}, true
 	}
