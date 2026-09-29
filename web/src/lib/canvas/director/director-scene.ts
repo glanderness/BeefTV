@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 import { Color, Euler, Quaternion } from "three";
 
-import type { DirectorBoneKeyframe, DirectorBoneTrack, DirectorCamera, DirectorHumanoidBone, DirectorKeyframe, DirectorKeyframeDeleteTarget, DirectorKeyframeEasing, DirectorLight, DirectorObject, DirectorPose, DirectorQuat, DirectorScene, DirectorTransform, DirectorVec3 } from "@/types/director";
+import type { DirectorBoneKeyframe, DirectorBoneTrack, DirectorCamera, DirectorGroup, DirectorHumanoidBone, DirectorKeyframe, DirectorKeyframeDeleteTarget, DirectorKeyframeEasing, DirectorLight, DirectorObject, DirectorPose, DirectorQuat, DirectorScene, DirectorTransform, DirectorVec3 } from "@/types/director";
 import { DIRECTOR_DEFAULT_GROUND } from "@/lib/canvas/director/director-ground";
 import { DIRECTOR_DEFAULT_STAGE_TRANSFORM } from "@/lib/canvas/director/director-stage-transform";
 
@@ -77,6 +77,54 @@ export function duplicateDirectorObject(source: DirectorObject): DirectorObject 
 export function duplicateDirectorCamera(source: DirectorCamera): DirectorCamera {
     const copy = structuredClone(source);
     return { ...copy, id: nanoid(), name: `${source.name}副本`, keyframes: copy.keyframes.map((frame) => ({ ...frame, id: nanoid() })) };
+}
+
+export function groupDirectorObjects(scene: DirectorScene, ids: string[]): DirectorScene {
+    const selected = new Set(ids);
+    const members = scene.objects.filter((object) => selected.has(object.id));
+    if (members.length < 2) return scene;
+    const groups = scene.groups || [];
+    let index = 1;
+    while (groups.some((group) => group.name === `分组${index}`)) index += 1;
+    const group: DirectorGroup = { id: nanoid(), name: `分组${index}`, collapsed: false };
+    const objects = scene.objects.map((object) => selected.has(object.id) ? { ...object, groupId: group.id } : object);
+    const remainingGroups = groups.filter((entry) => objects.some((object) => object.groupId === entry.id));
+    return { ...scene, groups: [...remainingGroups, group], objects };
+}
+
+export function toggleDirectorGroupVisibility(scene: DirectorScene, id: string): DirectorScene {
+    const members = scene.objects.filter((object) => object.groupId === id);
+    if (!members.length) return scene;
+    const visible = members.some((object) => !object.visible);
+    return { ...scene, objects: scene.objects.map((object) => object.groupId === id ? { ...object, visible } : object) };
+}
+
+export function toggleDirectorGroupLock(scene: DirectorScene, id: string): DirectorScene {
+    const members = scene.objects.filter((object) => object.groupId === id);
+    if (!members.length) return scene;
+    const locked = members.some((object) => !object.locked);
+    return { ...scene, objects: scene.objects.map((object) => object.groupId === id ? { ...object, locked } : object) };
+}
+
+export function duplicateDirectorGroup(scene: DirectorScene, id: string): DirectorScene {
+    const group = scene.groups?.find((entry) => entry.id === id);
+    const members = scene.objects.filter((object) => object.groupId === id);
+    if (!group || members.length === 0) return scene;
+    const copyId = nanoid();
+    const duplicate: DirectorGroup = { id: copyId, name: `${group.name}副本`, collapsed: false };
+    const objects = members.map((object) => ({ ...duplicateDirectorObject(object), groupId: copyId }));
+    return { ...scene, groups: [...(scene.groups || []), duplicate], objects: [...scene.objects, ...objects] };
+}
+
+export function toggleDirectorGroupCollapsed(scene: DirectorScene, id: string): DirectorScene {
+    if (!scene.groups?.some((group) => group.id === id)) return scene;
+    return { ...scene, groups: scene.groups.map((group) => group.id === id ? { ...group, collapsed: !group.collapsed } : group) };
+}
+
+export function ungroupDirectorObjects(scene: DirectorScene, id: string): DirectorScene {
+    if (!scene.groups?.some((group) => group.id === id)) return scene;
+    const groups = scene.groups.filter((group) => group.id !== id);
+    return { ...scene, groups: groups.length ? groups : undefined, objects: scene.objects.map((object) => object.groupId === id ? { ...object, groupId: undefined } : object) };
 }
 
 export function createDirectorObject(primitive: DirectorObject["primitive"] = "box", name = "新对象", position: DirectorVec3 = [0, 0.5, 0], color = "#8795a5"): DirectorObject {

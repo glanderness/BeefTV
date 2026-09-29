@@ -69,6 +69,8 @@ export type DirectorMotionClip = {
 
 export type DirectorObject = {
     id: string;
+    /** Optional logical scene-list group membership. */
+    groupId?: string;
     name: string;
     kind: DirectorObjectKind;
     primitive?: DirectorPrimitiveKind;
@@ -131,6 +133,12 @@ export type DirectorLight = {
     castShadow: boolean;
 };
 
+export type DirectorGroup = {
+    id: string;
+    name: string;
+    collapsed?: boolean;
+};
+
 export type DirectorShot = {
     id: string;
     name: string;
@@ -179,6 +187,8 @@ export type DirectorScene = {
     panoramaRotation?: number;
     panoramaRadius?: number;
     objects: DirectorObject[];
+    /** Optional to keep previously saved scenes fully backward compatible. */
+    groups?: DirectorGroup[];
     cameras: DirectorCamera[];
     lights: DirectorLight[];
     shots: DirectorShot[];

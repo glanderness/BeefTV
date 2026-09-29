@@ -19,4 +19,11 @@ describe("导演台场景行右键操作", () => {
         expect(row).toContain("onClick: onDelete");
         expect(row).not.toContain("disabled: locked");
     });
+
+    test("单行右键保留禁用的打组入口，多选后启用打组，分组行提供解组", () => {
+        expect(row).toContain('label: "打组"');
+        expect(row).toContain("disabled: true");
+        expect(row).toContain('label: "解组"');
+        expect(row).toContain('label: "创建副本"');
+    });
 });
