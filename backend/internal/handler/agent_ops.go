@@ -50,8 +50,7 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 			failService(c, err)
 			return
 		}
-		if !agentops.OwnerTokenMatches(svc.DataDir(), strings.TrimSpace(c.GetHeader("X-Beeftv-Owner"))) {
-			fail(c, http.StatusForbidden, app.BadAuthRequest("登记 Agent 客户端需要 owner 凭据；外部客户端不能自行授权"))
+		if !requireOwner(c, svc) {
 			return
 		}
 		var req struct {
@@ -77,8 +76,7 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 			fail(c, http.StatusForbidden, app.BadAuthRequest("客户端登记只接受本机请求"))
 			return
 		}
-		if !agentops.OwnerTokenMatches(svc.DataDir(), strings.TrimSpace(c.GetHeader("X-Beeftv-Owner"))) {
-			fail(c, http.StatusForbidden, app.BadAuthRequest("查看已登记客户端需要 owner 凭据"))
+		if !requireOwner(c, svc) {
 			return
 		}
 		ok(c, gin.H{"clients": clients.List()})

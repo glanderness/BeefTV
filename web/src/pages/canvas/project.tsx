@@ -3270,7 +3270,11 @@ function InfiniteCanvasPage() {
                         ) : null}
 
                         <div className="pointer-events-none absolute right-4 top-24 z-30">
-                            <CanvasAgentAssistantPanel canvasId={projectId} selectedCount={selectedNodeBounds?.count ?? 0} />
+                            <CanvasAgentAssistantPanel
+                                canvasId={projectId}
+                                selectedCount={selectedNodeBounds?.count ?? 0}
+                                selectedNodeIds={selectedNodeIds}
+                            />
                         </div>
                         {selectedNodeBounds && !selectionBox && !isCanvasNodeMoving ? (
                             <CanvasProjectSelectionToolbar

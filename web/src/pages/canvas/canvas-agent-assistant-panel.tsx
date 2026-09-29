@@ -19,12 +19,13 @@ type PanelMessage = {
 type Props = {
     canvasId: string;
     selectedCount: number;
-    selectedTitles?: string[];
+    /** 真实选中的节点 ID；有值时作为本次请求的固定上下文发送。 */
+    selectedNodeIds?: string[];
 };
 
 // 画布内创作助手侧栏：可收起、显示当前画布与选中对象、流式展示工具进度与错误。
 // 会话按画布归属（切画布即切换上下文），收起不取消正在进行的回合。
-export function CanvasAgentAssistantPanel({ canvasId, selectedCount, selectedTitles = [] }: Props) {
+export function CanvasAgentAssistantPanel({ canvasId, selectedCount, selectedNodeIds = [] }: Props) {
     const [collapsed, setCollapsed] = useState(false);
     const [status, setStatus] = useState<AgentHostStatus | null>(null);
     const [messages, setMessages] = useState<PanelMessage[]>([]);
@@ -110,7 +111,7 @@ export function CanvasAgentAssistantPanel({ canvasId, selectedCount, selectedTit
                         setToolCalls((prev) => [...prev, ...end.toolCalls]);
                     }
                 },
-            }, controller.signal);
+            }, controller.signal, selectedNodeIds);
         } catch (streamError) {
             const text = streamError instanceof Error ? streamError.message : String(streamError);
             setError(text);
@@ -119,7 +120,7 @@ export function CanvasAgentAssistantPanel({ canvasId, selectedCount, selectedTit
             setStreaming(false);
             abortRef.current = null;
         }
-    }, [append, canvasId, draft, status, streaming]);
+    }, [append, canvasId, draft, selectedNodeIds, status, streaming]);
 
     const stop = useCallback(async () => {
         abortRef.current?.abort();
@@ -165,7 +166,7 @@ export function CanvasAgentAssistantPanel({ canvasId, selectedCount, selectedTit
 
             <div className="border-b border-white/10 px-3 py-1.5 text-[10px] text-zinc-400">
                 {selectedCount > 0
-                    ? `已选 ${selectedCount} 个对象${selectedTitles.length > 0 ? `：${selectedTitles.slice(0, 3).join("、")}` : ""}（将作为固定上下文）`
+                    ? `已选 ${selectedCount} 个对象${selectedNodeIds.length > 0 ? "（随本次请求作为固定上下文发送）" : "（尚未接入选中 ID，仅作提示）"}`
                     : "未选中对象：默认作用于当前画布"}
                 {status && !status.available ? <span className="ml-1 text-amber-400">· 宿主未就绪（{status.reason}）</span> : null}
             </div>

@@ -58,12 +58,13 @@ export async function streamAgentChat(
     message: string,
     handlers: StreamHandlers,
     signal?: AbortSignal,
+    selectedNodeIds: string[] = [],
 ): Promise<void> {
     const token = await ensureAgentUiSession();
     const response = await fetch("/api/agent/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Beeftv-Ui-Session": token },
-        body: JSON.stringify({ canvasId, message }),
+        body: JSON.stringify({ canvasId, message, selectedNodeIds }),
         signal,
     });
     if (!response.ok || !response.body) {

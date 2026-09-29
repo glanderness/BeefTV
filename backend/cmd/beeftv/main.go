@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -74,12 +75,26 @@ func newClient() (*client, error) {
 	if base == "" {
 		base = defaultBaseURL
 	}
+	parsedBase, parseErr := url.Parse(base)
+	if parseErr != nil || (parsedBase.Scheme != "http" && parsedBase.Scheme != "https") {
+		return nil, &cliError{code: exitUsage, reason: "invalid_base_url", msg: "BEEFTV_BASE_URL 不是合法 URL"}
+	}
+	if parsedBase.User != nil {
+		return nil, &cliError{code: exitUsage, reason: "credentials_in_url", msg: "拒绝对带凭据的 URL 发请求"}
+	}
+	host := parsedBase.Hostname()
+	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+		return nil, &cliError{code: exitUsage, reason: "base_url_not_local", msg: "首版仅支持连接本机工作区，拒绝 " + host}
+	}
 	return &client{
 		baseURL:    strings.TrimRight(base, "/"),
 		clientID:   strings.TrimSpace(os.Getenv("BEEFTV_CLIENT_ID")),
 		token:      strings.TrimSpace(os.Getenv("BEEFTV_CLIENT_TOKEN")),
 		ownerToken: strings.TrimSpace(os.Getenv("BEEFTV_OWNER_TOKEN")),
-		http:       &http.Client{Timeout: 60 * time.Second},
+		// 凭据头是自定义敏感头，不能依赖标准库只保护 Authorization 的行为：一律不跟随重定向。
+		http: &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}},
 	}, nil
 }
 
@@ -109,18 +124,23 @@ func (c *client) do(ctx context.Context, method, path string, body any) (json.Ra
 		return nil, &cliError{code: exitTransportFailure, reason: "transport_failed", msg: fmt.Sprintf("无法连接本地工作区 %s：%v", c.baseURL, err)}
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if readErr != nil {
+		return nil, &cliError{code: exitTransportFailure, reason: "read_failed", msg: readErr.Error()}
+	}
 	if resp.StatusCode == http.StatusOK {
 		var envelope struct {
-			Code int             `json:"code"`
-			Data json.RawMessage `json:"data"`
-			Msg  string          `json:"msg"`
+			Code    int             `json:"code"`
+			Data    json.RawMessage `json:"data"`
+			Reason  string          `json:"reason"`
+			Msg     string          `json:"msg"`
+			Details map[string]any  `json:"details"`
 		}
-		if err := json.Unmarshal(raw, &envelope); err != nil {
-			return nil, &cliError{code: exitInternal, reason: "invalid_envelope", msg: string(raw[:min(len(raw), 200)])}
+		if err := json.Unmarshal(raw, &envelope); err != nil || len(envelope.Data) == 0 {
+			return nil, &cliError{code: exitInternal, reason: "invalid_envelope", msg: strings.TrimSpace(string(raw[:min(len(raw), 200)]))}
 		}
 		if envelope.Code != 0 {
-			return nil, mapEnvelopeError(envelope.Code, "", envelope.Msg, nil)
+			return nil, mapEnvelopeError(envelope.Code, envelope.Reason, envelope.Msg, envelope.Details)
 		}
 		return envelope.Data, nil
 	}

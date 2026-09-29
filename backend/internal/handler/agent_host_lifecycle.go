@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -78,18 +80,54 @@ func (s *agentHostSupervisor) running() bool {
 	return s.cmd.Process.Signal(syscall.Signal(0)) == nil
 }
 
-func (s *agentHostSupervisor) start(command string) error {
+// hostEnv 构造宿主子进程环境：凭据与数据目录由后端注入，宿主不从用户全局环境取。
+func hostEnv(dataDir, model, baseURL string) []string {
+	env := os.Environ()
+	appendIf := func(key, value string) {
+		if strings.TrimSpace(value) != "" {
+			env = append(env, key+"="+value)
+		}
+	}
+	appendIf("BEEFTV_AGENT_DATA_DIR", dataDir)
+	appendIf("BEEFTV_AGENT_MODEL", model)
+	appendIf("BEEFTV_AGENT_BASE_URL", baseURL)
+	appendIf("BEEFTV_OPS_URL", "http://127.0.0.1:"+strconv.Itoa(backendPort()))
+	appendIf("BEEFTV_AGENT_HOST_TOKEN", readAgentHostToken(dataDir))
+	appendIf("BEEFTV_OWNER_TOKEN", ownerTokenFromFile(dataDir))
+	return env
+}
+
+func backendPort() int {
+	if value := strings.TrimSpace(os.Getenv("CANVAS_BACKEND_ADDR")); value != "" {
+		if idx := strings.LastIndex(value, ":"); idx >= 0 {
+			if port, err := strconv.Atoi(value[idx+1:]); err == nil {
+				return port
+			}
+		}
+	}
+	return 8080
+}
+
+func ownerTokenFromFile(dataDir string) string {
+	raw, err := os.ReadFile(filepath.Join(dataDir, "agent_owner_token"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+func (s *agentHostSupervisor) start(dataDir string, config agentHostConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.cmd != nil && s.cmd.Process != nil && s.cmd.Process.Signal(syscall.Signal(0)) == nil {
 		return nil
 	}
-	parts := strings.Fields(command)
+	parts := strings.Fields(config.HostCommand)
 	if len(parts) == 0 {
 		return agentops.InvalidArg("empty_host_command", "未配置宿主启动命令")
 	}
 	cmd := exec.Command(parts[0], parts[1:]...)
-	cmd.Env = os.Environ()
+	cmd.Env = hostEnv(dataDir, config.Model, os.Getenv("BEEFTV_AGENT_BASE_URL"))
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -99,30 +137,36 @@ func (s *agentHostSupervisor) start(command string) error {
 	return nil
 }
 
+// stop 发送 SIGTERM 并等待真实退出；未在超时内退出则试 SIGKILL，仍失败则如实报错。
 func (s *agentHostSupervisor) stop() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.cmd == nil || s.cmd.Process == nil {
+	cmd := s.cmd
+	s.mu.Unlock()
+	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
-	_ = s.cmd.Process.Signal(syscall.SIGTERM)
+	_ = cmd.Process.Signal(syscall.SIGTERM)
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		_ = cmd.Process.Signal(syscall.SIGKILL)
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			return errors.New("宿主进程未在超时内退出")
+		}
+	}
+	s.mu.Lock()
 	s.cmd = nil
+	s.mu.Unlock()
 	return nil
 }
 
 // RegisterAgentHostLifecycleRoutes 暴露宿主配置与启停：全部需要 owner 凭据 + 本机同源。
 func RegisterAgentHostLifecycleRoutes(r gin.IRouter, svc *app.Service, supervisor *agentHostSupervisor) {
-	ownerGuard := func(c *gin.Context) bool {
-		if !isLoopbackRequest(c.Request) {
-			fail(c, http.StatusForbidden, app.BadAuthRequest("只接受本机同源请求"))
-			return false
-		}
-		if !agentops.OwnerTokenMatches(svc.DataDir(), strings.TrimSpace(c.GetHeader("X-Beeftv-Owner"))) {
-			fail(c, http.StatusForbidden, app.BadAuthRequest("宿主启停需要 owner 凭据"))
-			return false
-		}
-		return true
-	}
+	ownerGuard := func(c *gin.Context) bool { return requireOwner(c, svc) }
 
 	r.GET("/assistant/host/config", func(c *gin.Context) {
 		if !ownerGuard(c) {
@@ -159,7 +203,7 @@ func RegisterAgentHostLifecycleRoutes(r gin.IRouter, svc *app.Service, superviso
 				"msg": "未配置 agent-host 启动命令：请先在设置的创作助手中配置（发行形态下由产品启动链提供）"})
 			return
 		}
-		if err := supervisor.start(config.HostCommand); err != nil {
+		if err := supervisor.start(svc.DataDir(), config); err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_start_failed", "msg": err.Error()})
 			return
 		}

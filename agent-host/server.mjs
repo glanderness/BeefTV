@@ -151,7 +151,7 @@ function buildTools(canvasId, log, generation, turn) {
       let opId = '';
       if (!descriptor.readOnly) {
         // 动作身份 = 宿主运行 id + SDK 工具调用 id：同一次工具调用被重试时复用，跨重启不会与历史动作撞号。
-        opId = `${RUN_ID}:${toolCallId || `${turn.seq}-${descriptor.id}`}`;
+        opId = `${sessionIdentity}:${toolCallId || `${turn.seq}-${descriptor.id}`}`;
       }
       const started = Date.now();
       try {
@@ -166,7 +166,8 @@ function buildTools(canvasId, log, generation, turn) {
   }));
 }
 
-const sessions = new Map();   // canvasId → { session, log, busy, generation, turnSeq }
+const sessions = new Map();   // canvasId → { session, log, busy, generation, turn }
+let sessionIdentity = `run:${RUN_ID}`;
 let persistenceState = 'ok';
 
 async function ensureSession(canvasId) {
@@ -196,6 +197,12 @@ async function ensureSession(canvasId) {
     persistenceState = 'unavailable';
     throw new Error(`会话持久化不可用（SessionManager 恢复失败）：${error.message}`);
   }
+  // 动作身份优先用官方持久会话 id：同一未确认工具调用在重启后仍映射到同一 operationId，
+  // 不会因新进程换 RUN_ID 而重复执行。SDK 未暴露 id 时回退 RUN_ID（此时不静默重放）。
+  const persistedId = (typeof sessionManager.getSessionId === 'function' && sessionManager.getSessionId()) ||
+    (typeof sessionManager.getSessionFile === 'function' && sessionManager.getSessionFile() ? path.basename(String(sessionManager.getSessionFile())) : '') || '';
+  sessionIdentity = persistedId || `run:${RUN_ID}`;
+  console.error(`agent-host: 会话 ${canvasId} 的动作身份来源 = ${persistedId ? 'persistent-session-id' : 'run-id'}`);
   const tools = buildTools(canvasId, log, generation, turn);
   const { session } = await createAgentSession({
     cwd,
@@ -273,7 +280,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/chat') {
       const body = JSON.parse((await readBody(req)) || '{}');
       const canvasId = String(body.canvasId || '').trim();
-      const message = String(body.message || '').trim();
+      let message = String(body.message || '').trim();
+      const selected = Array.isArray(body.selectedNodeIds) ? body.selectedNodeIds.map((v) => String(v)) : [];
+      if (selected.length > 0) {
+        // 选中对象作为本次请求的固定上下文（由后端校验过归属）。
+        message = `[当前画布 ${canvasId}｜选中对象: ${selected.join(', ')}]\n${message}`;
+      }
       if (!canvasId || !message) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ code: 400, reason: 'invalid_request' })); return; }
       const entry = await ensureSession(canvasId);
       if (entry.busy) { res.writeHead(409, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ code: 409, reason: 'session_busy' })); return; }

@@ -142,17 +142,41 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			return
 		}
 		var payload struct {
-			CanvasID string `json:"canvasId"`
-			Message  string `json:"message"`
+			CanvasID        string   `json:"canvasId"`
+			Message         string   `json:"message"`
+			SelectedNodeIDs []string `json:"selectedNodeIds"`
 		}
 		if err := json.Unmarshal(body, &payload); err != nil || strings.TrimSpace(payload.CanvasID) == "" || strings.TrimSpace(payload.Message) == "" {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("canvasId 与 message 必填"))
 			return
 		}
 		// scope 先验证：只能操作当前用户确实拥有的画布，再转发给宿主。
-		if _, err := svc.UserCanvasProject(c.GetString("agentUserId"), payload.CanvasID); err != nil {
+		canvasRaw, err := svc.UserCanvasProject(c.GetString("agentUserId"), payload.CanvasID)
+		if err != nil {
 			fail(c, http.StatusNotFound, app.BadAuthRequest("画布不存在或不属于当前工作区"))
 			return
+		}
+		// 选中对象必须真的属于该画布，否则拒绝（不能借选中绕过 scope）。
+		if len(payload.SelectedNodeIDs) > 0 {
+			var canvasDoc struct {
+				Nodes []struct {
+					ID string `json:"id"`
+				} `json:"nodes"`
+			}
+			if err := json.Unmarshal(canvasRaw, &canvasDoc); err != nil {
+				fail(c, http.StatusInternalServerError, app.BadAuthRequest("画布内容无法解析"))
+				return
+			}
+			owned := make(map[string]bool, len(canvasDoc.Nodes))
+			for _, node := range canvasDoc.Nodes {
+				owned[node.ID] = true
+			}
+			for _, id := range payload.SelectedNodeIDs {
+				if !owned[id] {
+					fail(c, http.StatusBadRequest, app.BadAuthRequest("选中的对象不属于当前画布: "+id))
+					return
+				}
+			}
 		}
 		upstream, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost,
 			agentHostBaseURL()+"/chat", strings.NewReader(string(body)))
