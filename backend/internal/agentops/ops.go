@@ -2,11 +2,13 @@ package agentops
 
 import (
 	"crypto/rand"
-	"net/http"
+
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"infinite-canvas/backend/internal/canvas/capability"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,10 +20,9 @@ import (
 	"infinite-canvas/backend/internal/kernel"
 )
 
-// allowedNodeTypes 与画布领域支持的节点类型保持一致；整批校验后再写入。
-var allowedNodeTypes = map[string]bool{
-	"text": true, "image": true, "video": true, "audio": true, "script": true, "batch-table": true,
-}
+// canvasCapabilities 是画布领域的真实能力描述注册表：
+// 节点尺寸/metadata/连线策略都来自它，操作层不再自建第二套规格。
+var canvasCapabilities = capability.BuiltinRegistry()
 
 func newNodeID() string {
 	buf := make([]byte, 5)
@@ -35,28 +36,28 @@ func newNodeID() string {
 // 未经参数与费用风险验收的能力明确不注册，而不是提供 stub 伪成功。
 func RegisterDefaultOps(r *Registry) {
 	r.Register(Op{ID: "canvas.get", Summary: "读取指定画布的完整内容（节点与连线）", ReadOnly: true, Scope: ScopeCanvas,
-		Params: json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"}},"required":["canvasId"]}`),
+		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"}},"required":["canvasId"]}`),
 		Handler: opCanvasGet})
 	r.Register(Op{ID: "canvas.search", Summary: "按关键字分页搜索工作区内的画布", ReadOnly: true, Scope: ScopeWorkspaceRead,
-		Params: json.RawMessage(`{"type":"object","properties":{"page":{"type":"integer"},"pageSize":{"type":"integer"},"query":{"type":"string"},"canvasId":{"type":"string"},"sort":{"type":"string"}}}`),
+		Params:  json.RawMessage(`{"type":"object","properties":{"page":{"type":"integer"},"pageSize":{"type":"integer"},"query":{"type":"string"},"canvasId":{"type":"string"},"sort":{"type":"string"}}}`),
 		Handler: opCanvasSearch})
 	r.Register(Op{ID: "asset.list", Summary: "分页列出用户素材库中的素材", ReadOnly: true, Scope: ScopeWorkspaceRead,
-		Params: json.RawMessage(`{"type":"object","properties":{"page":{"type":"integer"},"pageSize":{"type":"integer"},"query":{"type":"string"},"kind":{"type":"string"},"category":{"type":"string"}}}`),
+		Params:  json.RawMessage(`{"type":"object","properties":{"page":{"type":"integer"},"pageSize":{"type":"integer"},"query":{"type":"string"},"kind":{"type":"string"},"category":{"type":"string"}}}`),
 		Handler: opAssetList})
 	r.Register(Op{ID: "asset.get", Summary: "按 ID 读取单个素材", ReadOnly: true, Scope: ScopeWorkspaceRead,
-		Params: json.RawMessage(`{"type":"object","properties":{"assetId":{"type":"string"}},"required":["assetId"]}`),
+		Params:  json.RawMessage(`{"type":"object","properties":{"assetId":{"type":"string"}},"required":["assetId"]}`),
 		Handler: opAssetGet})
 	r.Register(Op{ID: "task.get", Summary: "按 ID 查询任务状态与产物引用", ReadOnly: true, Scope: ScopeWorkspaceRead,
-		Params: json.RawMessage(`{"type":"object","properties":{"taskId":{"type":"string"}},"required":["taskId"]}`),
+		Params:  json.RawMessage(`{"type":"object","properties":{"taskId":{"type":"string"}},"required":["taskId"]}`),
 		Handler: opTaskGet})
 	r.Register(Op{ID: "canvas.node.update", Summary: "局部修改一个节点（只提交目标字段，其余数据保持原样，带 revision CAS）", Scope: ScopeCanvas,
-		Params: json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeId":{"type":"string"},"expectedRevision":{"type":"integer"},"patch":{"type":"object","properties":{"title":{"type":"string"},"prompt":{"type":"string"},"content":{"type":"string"}}}},"required":["canvasId","nodeId","patch","expectedRevision"]}`),
+		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeId":{"type":"string"},"expectedRevision":{"type":"integer"},"patch":{"type":"object","properties":{"title":{"type":"string"},"prompt":{"type":"string"},"content":{"type":"string"}}}},"required":["canvasId","nodeId","patch","expectedRevision"]}`),
 		Handler: opCanvasNodeUpdate})
 	r.Register(Op{ID: "canvas.nodes.create", Summary: "在画布上批量创建节点（整批校验，带 revision CAS）", Scope: ScopeCanvas,
-		Params: json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"expectedRevision":{"type":"integer"},"nodes":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"type":{"type":"string"},"prompt":{"type":"string"}},"required":["title","type"]}}},"required":["canvasId","nodes","expectedRevision"]}`),
+		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"expectedRevision":{"type":"integer"},"nodes":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"type":{"type":"string"},"prompt":{"type":"string"}},"required":["title","type"]}}},"required":["canvasId","nodes","expectedRevision"]}`),
 		Handler: opCanvasNodesCreate})
 	r.Register(Op{ID: "canvas.edge.create", Summary: "连接两个节点（重复连接幂等返回）", Scope: ScopeCanvas,
-		Params: json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"fromNodeId":{"type":"string"},"toNodeId":{"type":"string"},"expectedRevision":{"type":"integer"}},"required":["canvasId","fromNodeId","toNodeId","expectedRevision"]}`),
+		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"fromNodeId":{"type":"string"},"toNodeId":{"type":"string"},"expectedRevision":{"type":"integer"}},"required":["canvasId","fromNodeId","toNodeId","expectedRevision"]}`),
 		Handler: opCanvasEdgeCreate})
 }
 
@@ -344,8 +345,9 @@ func opCanvasNodesCreate(ctx *Context, params json.RawMessage) (any, error) {
 		if title == "" {
 			return nil, InvalidArg("missing_title", "每个节点都需要标题")
 		}
-		if !allowedNodeTypes[strings.TrimSpace(node.Type)] {
-			return nil, InvalidArg("unsupported_node_type", "不支持的节点类型: "+node.Type)
+		if _, ok := canvasCapabilities.Resolve(node.Type); !ok {
+			return nil, InvalidArg("unsupported_node_type",
+				"不支持的节点类型: "+node.Type+"（可用: "+strings.Join(canvasCapabilities.Types(), "|")+"）")
 		}
 		if seen[title] {
 			return nil, InvalidArg("duplicate_title_in_batch", "同一批次内标题重复: "+title)
@@ -376,12 +378,25 @@ func opCanvasNodesCreate(ctx *Context, params json.RawMessage) (any, error) {
 	}
 	created := make([]map[string]any, 0, len(args.Nodes))
 	for _, node := range args.Nodes {
+		descriptor, _ := canvasCapabilities.Resolve(node.Type)
 		id := newNodeID()
+		width, height := descriptor.DefaultWidth, descriptor.DefaultHeight
+		if width <= 0 {
+			width = 320
+		}
+		if height <= 0 {
+			height = 220
+		}
+		metadata := descriptor.Metadata(node.Prompt)
+		if node.Prompt != "" {
+			// 生成类节点的提示词落在 metadata.prompt；其余类型由描述符自身决定字段。
+			metadata["prompt"] = node.Prompt
+		}
 		nodes = append(nodes, map[string]any{
 			"id": id, "type": node.Type, "title": node.Title,
-			"position": map[string]any{"x": 120 + len(nodes)*320, "y": 160},
-			"width":    320, "height": 220,
-			"metadata": map[string]any{"content": "", "prompt": node.Prompt, "status": "idle"},
+			"position": map[string]any{"x": 120 + len(nodes)*int(width), "y": 160},
+			"width":    width, "height": height,
+			"metadata": metadata,
 		})
 		created = append(created, map[string]any{"id": id, "title": node.Title})
 	}
@@ -391,6 +406,23 @@ func opCanvasNodesCreate(ctx *Context, params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return map[string]any{"canvasId": args.CanvasID, "created": created, "revision": revision}, nil
+}
+
+// nodeTypeOf 读取节点类型，用于连线策略判定。
+func nodeTypeOf(nodes []any, nodeID string) string {
+	for _, rawNode := range nodes {
+		if node, ok := rawNode.(map[string]any); ok {
+			if id, _ := node["id"].(string); id == nodeID {
+				kind, _ := node["type"].(string)
+				kind = strings.TrimSpace(kind)
+				if kind == "" {
+					kind = "text"
+				}
+				return kind
+			}
+		}
+	}
+	return "text"
 }
 
 func opCanvasEdgeCreate(ctx *Context, params json.RawMessage) (any, error) {
@@ -433,6 +465,12 @@ func opCanvasEdgeCreate(ctx *Context, params json.RawMessage) (any, error) {
 	}
 	if !exists[args.ToNodeID] {
 		return nil, NotFound("to_node_not_found", "终点节点不存在: "+args.ToNodeID)
+	}
+	fromKind, toKind := nodeTypeOf(nodes, args.FromNodeID), nodeTypeOf(nodes, args.ToNodeID)
+	if descriptor, ok := canvasCapabilities.Resolve(fromKind); ok {
+		if err := descriptor.ValidateConnection(toKind); err != nil {
+			return nil, InvalidArg("connection_not_allowed", err.Error())
+		}
 	}
 	connections, _ := doc["connections"].([]any)
 	for _, rawEdge := range connections {
@@ -504,7 +542,7 @@ func mapDomainError(err error) error {
 		case http.StatusNotFound:
 			return NotFound("not_found", appErr.Message)
 		case http.StatusConflict:
-			return Conflict("stale_write", appErr.Message, nil)
+			return Conflict("stale_revision", appErr.Message, nil)
 		case http.StatusPreconditionFailed:
 			return PreconditionFailed("precondition_failed", appErr.Message, nil)
 		case http.StatusBadRequest:
