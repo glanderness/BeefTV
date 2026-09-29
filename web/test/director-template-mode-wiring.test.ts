@@ -11,6 +11,7 @@ const workbench = readFileSync(resolve(import.meta.dir, "../src/components/canva
 const dock = readFileSync(resolve(import.meta.dir, "../src/components/canvas/director/director-viewport-dock.tsx"), "utf8");
 const viewport = readFileSync(resolve(import.meta.dir, "../src/components/canvas/director/director-viewport.tsx"), "utf8");
 const hook = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/use-canvas-director.ts"), "utf8");
+const uploadHook = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/use-canvas-upload.ts"), "utf8");
 const project = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/project.tsx"), "utf8");
 const modal = readFileSync(resolve(import.meta.dir, "../src/components/canvas/director/canvas-director-template-modal.tsx"), "utf8");
 const store = readFileSync(resolve(import.meta.dir, "../src/stores/canvas/use-director-workbench-store.ts"), "utf8");
@@ -85,6 +86,16 @@ describe("已有场景不触发模板选择", () => {
     test("workbench 自身不含模板选择逻辑：打开已保存场景不改写内容", () => {
         expect(workbench).not.toContain("DIRECTOR_TEMPLATES");
         expect(workbench).not.toContain("createDirectorSceneFromTemplate");
+    });
+});
+
+describe("导演节点参考图入口", () => {
+    test("加号走图片专用上传，并把上传结果连到对应导演镜头", () => {
+        expect(project).toContain("onAddReference={() => handleUploadReferenceRequest(contentNode.id");
+        expect(uploadHook).toContain('imageInputRef.current.accept = "image/*";');
+        expect(uploadHook).toContain("uploadNodeType(file) === CanvasNodeType.Image");
+        expect(uploadHook).toContain("connectDirectorReferenceNodes(nodesRef.current, connectionsRef.current, createdIds, uploadTarget.referenceToNodeId");
+        expect(uploadHook).toContain("setConnections(linked.connections)");
     });
 });
 

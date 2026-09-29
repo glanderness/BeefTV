@@ -1080,6 +1080,7 @@ function InfiniteCanvasPage() {
         handleProjectChapterInsert,
         handleUploadFiles,
         handleUploadRequest,
+        handleUploadReferenceRequest,
         imageInputRef,
         openAssetsAtPosition,
         pasteAssistantImage,
@@ -1092,10 +1093,12 @@ function InfiniteCanvasPage() {
         canvasId: projectId,
         domainProjectId: linkedProjectId,
         nodesRef,
+        connectionsRef,
         selectedNodeIdsRef,
         getCanvasCenter,
         screenToCanvas,
         setNodes,
+        setConnections,
         setSelectedNodeIds,
         setSelectedConnectionId,
         setContextMenu,
@@ -2640,7 +2643,7 @@ function InfiniteCanvasPage() {
                         readNodeContent={(nodeId) => (nodeId ? nodesRef.current.find((item) => item.id === nodeId)?.metadata?.content : undefined)}
                         professional={workspaceMode === "professional"}
                         onOpen={() => openDirectorWorkbench(contentNode.id)}
-                        onAddReference={() => handleUploadRequest(undefined, { x: contentNode.position.x + contentNode.width + 180, y: contentNode.position.y })}
+                        onAddReference={() => handleUploadReferenceRequest(contentNode.id, { x: contentNode.position.x + contentNode.width + 180, y: contentNode.position.y })}
                         onSubmit={() => openDirectorWorkbench(contentNode.id, contentNode.metadata?.composerContent || "")}
                         onPromptChange={(composerContent) => handleConfigNodeChange(contentNode.id, { composerContent })}
                     />
@@ -2683,6 +2686,7 @@ function InfiniteCanvasPage() {
             handleConnectStart,
             handleGenerateNode,
             handleNodeResize,
+            handleUploadReferenceRequest,
             mentionReferencesByNodeId,
             mergeVideosByIds,
             openDirectorWorkbench,

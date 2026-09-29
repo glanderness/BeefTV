@@ -44,7 +44,7 @@ describe("导演台画布节点", () => {
 
     test("描述输入保留添加参考素材与提交入口", () => {
         const markup = render();
-        expect(markup).toContain('aria-label="添加参考素材节点"');
+        expect(markup).toContain('aria-label="添加并连接参考图片"');
         expect(markup).toContain('aria-label="在导演台中使用描述"');
     });
 

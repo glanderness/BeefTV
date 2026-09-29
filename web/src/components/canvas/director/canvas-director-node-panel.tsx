@@ -67,7 +67,7 @@ export function CanvasDirectorNodePanel({ node, scene, readNodeContent, onOpen, 
                     style={{ color: theme.node.text }}
                 />
                 <div className="pointer-events-none absolute inset-x-2 bottom-2 flex items-center justify-between">
-                    <button type="button" data-canvas-no-zoom aria-label="添加参考素材节点" title="上传参考素材到画布" className="pointer-events-auto grid size-8 place-items-center rounded-full transition hover:bg-black/10 dark:hover:bg-white/10" style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onAddReference(); }}>
+                    <button type="button" data-canvas-no-zoom aria-label="添加并连接参考图片" title="上传参考图片并连接到导演台" className="pointer-events-auto grid size-8 place-items-center rounded-full transition hover:bg-black/10 dark:hover:bg-white/10" style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onAddReference(); }}>
                         <Plus className="size-6" aria-hidden />
                     </button>
                     <button type="button" data-canvas-no-zoom aria-label="在导演台中使用描述" title="在导演台中使用描述" className="pointer-events-auto grid size-9 place-items-center rounded-full transition hover:brightness-110" style={{ background: theme.node.text, color: theme.toolbar.panel }} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onSubmit(); }}>
