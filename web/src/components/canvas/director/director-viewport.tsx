@@ -22,7 +22,7 @@ import { recordDirectorDiagnostic } from "@/lib/canvas/director/director-diagnos
 import { directorCaptureInitial, directorCaptureUsable, directorLoadIdentity, directorLoadInitial, installDirectorContextListeners, reduceDirectorCapture, reduceDirectorLoad, releaseDirectorCapture, resolveDirectorDisplay, restoreDirectorCapture, upsertDirectorFailedLoad, type DirectorFailedLoads, type DirectorLoadSignal } from "@/lib/canvas/director/director-recovery";
 import { disposeDirectorAdoptionFailure, disposeDirectorHelper, disposeDirectorMaterials, disposeDirectorModelResources, disposeDirectorObject3D, resolveDirectorLoadOwnership } from "@/lib/canvas/director/director-resources";
 import { DIRECTOR_DEFAULT_ACTOR_URL, directorPoseBoneDeltas, directorTransformPathLength, finiteDirectorTransformKeyframes, interpolateDirectorTransform } from "@/lib/canvas/director/director-scene";
-import { DIRECTOR_DEFAULT_VIEW_MODE, directorViewFramingKey, resolveDirectorActiveCamera, resolveDirectorEffectiveViewport, resolveDirectorOrthographicFraming, resolveDirectorOrthographicFrustum, resolveDirectorViewFraming, resolveDirectorViewUp, type DirectorOrthographicFraming, type DirectorViewFraming, type DirectorViewMode } from "@/lib/canvas/director/director-view-modes";
+import { DIRECTOR_DEFAULT_VIEW_MODE, directorViewFramingKey, resolveDirectorActiveCamera, resolveDirectorCameraLocalFraming, resolveDirectorEffectiveViewport, resolveDirectorOrthographicFraming, resolveDirectorOrthographicFrustum, resolveDirectorViewFraming, resolveDirectorViewUp, type DirectorOrthographicFraming, type DirectorViewFraming, type DirectorViewMode } from "@/lib/canvas/director/director-view-modes";
 import { DirectorViewToolbar } from "@/components/canvas/director/director-view-toolbar";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { resolveImageUrl } from "@/services/image-storage";
@@ -549,7 +549,7 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
             <ambientLight intensity={scene.environmentIntensity * 0.35} />
             <group position={stage.position} rotation={stage.rotation.map((degrees) => degrees * Math.PI / 180) as DirectorVec3} scale={stage.scale}>
             {scene.lights.map((light) => <DirectorLightView key={light.id} light={light} />)}
-            {viewMode === "free" && renderMode === "beauty" ? scene.cameras.map((item) => <DirectorCameraAid key={item.id} item={item} playhead={playhead} stage={stage} active={item.id === resolveDirectorActiveCamera(scene)?.id} labelsVisible={scene.labelsVisible !== false} />) : null}
+            {viewMode === "free" && renderMode === "beauty" ? scene.cameras.map((item) => <DirectorCameraAid key={item.id} item={item} scene={scene} playhead={playhead} stage={stage} active={item.id === resolveDirectorActiveCamera(scene)?.id} labelsVisible={scene.labelsVisible !== false} />) : null}
             {scene.gridVisible ? <Grid position={[0, 0, 0]} infiniteGrid fadeDistance={40} fadeStrength={5} cellSize={0.5} sectionSize={5} cellColor={stagePalette.cell} sectionColor={stagePalette.section} /> : null}
             {ground.visible ? <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, ground.height - 0.012, 0]}>
                 <planeGeometry args={[120, 120]} />
@@ -586,27 +586,29 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
 }
 
 /** Editor-only camera position and frustum, deliberately excluded from captures. */
-function DirectorCameraAid({ item, playhead, stage, active, labelsVisible }: { item: DirectorScene["cameras"][number]; playhead: number; stage: NonNullable<DirectorScene["stageTransform"]>; active: boolean; labelsVisible: boolean }) {
+function DirectorCameraAid({ item, scene, playhead, stage, active, labelsVisible }: { item: DirectorScene["cameras"][number]; scene: DirectorScene; playhead: number; stage: NonNullable<DirectorScene["stageTransform"]>; active: boolean; labelsVisible: boolean }) {
+    const framing = resolveDirectorCameraLocalFraming(scene, item, playhead);
     const transform = interpolateDirectorTransform(item.transform, item.keyframes, playhead);
-    const position = new Vector3(...transform.position);
-    const target = new Vector3(...item.target);
+    const localPosition = framing?.position ?? transform.position;
+    const position = new Vector3(...localPosition);
+    const target = new Vector3(...(framing?.target ?? item.target));
     const direction = target.clone().sub(position);
     if (direction.lengthSq() < 1e-8) direction.set(0, 0, -1).applyEuler(new Euler(...transform.rotation));
-    const up = resolveDirectorViewUp(transform.rotation, direction.toArray() as DirectorVec3);
+    const up = framing?.up ?? resolveDirectorViewUp(transform.rotation, direction.toArray() as DirectorVec3);
     const orientation = new Quaternion().setFromRotationMatrix(new Matrix4().lookAt(position, position.clone().add(direction), new Vector3(...up)));
     const distance = Math.min(2.5, Math.max(1.2, direction.length() * 0.3));
     const halfHeight = Math.tan((Math.min(120, Math.max(10, item.fov || 50)) * Math.PI) / 360) * distance;
     const halfWidth = halfHeight * 16 / 9;
     const corners: DirectorVec3[] = [[-halfWidth, halfHeight, -distance], [halfWidth, halfHeight, -distance], [halfWidth, -halfHeight, -distance], [-halfWidth, -halfHeight, -distance]];
     const segments: DirectorVec3[] = corners.flatMap((corner, index) => [[0, 0, 0] as DirectorVec3, corner, corner, corners[(index + 1) % 4]]);
-    const worldPosition = new Vector3(...directorStagePoint(stage, transform.position));
+    const worldPosition = new Vector3(...directorStagePoint(stage, localPosition));
     const [nearViewer, setNearViewer] = useState(false);
     useFrame(({ camera }) => {
         const next = camera.position.distanceTo(worldPosition) < 0.5;
         setNearViewer((current) => current === next ? current : next);
     });
-    if (nearViewer) return null;
-    return <group userData={{ directorEditorOnly: true }} position={transform.position} quaternion={orientation}>
+    if (nearViewer || !framing) return null;
+    return <group userData={{ directorEditorOnly: true }} position={localPosition} quaternion={orientation}>
         <Line segments points={segments} color={active ? "#5b9dc7" : "#3f6f8b"} lineWidth={1} transparent opacity={active ? 0.5 : 0.3} raycast={() => {}} />
         <Html center style={{ pointerEvents: "none" }}>
             <div className="flex flex-col items-center gap-0.5 whitespace-nowrap" style={{ color: "#fff", textShadow: "0 1px 3px #000, 0 0 5px #000" }}>

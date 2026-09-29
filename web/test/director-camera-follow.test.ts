@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { createDirectorReproScene } from "../src/lib/canvas/director/director-repro-fixture";
-import { resolveDirectorViewFraming } from "../src/lib/canvas/director/director-view-modes";
+import { resolveDirectorCameraLocalFraming, resolveDirectorViewFraming } from "../src/lib/canvas/director/director-view-modes";
 import { bindDirectorCameraFollow, removeDirectorCameraBindingsForObject } from "../src/lib/canvas/director/director-camera-binding";
 import type { DirectorCamera, DirectorVec3 } from "../src/types/director";
 
@@ -58,5 +58,15 @@ describe("导演台摄影机跟随与注视", () => {
         const withoutLookAt = removeDirectorCameraBindingsForObject(withoutFollow, "target-b");
         expect(withoutLookAt).toEqual({ ...withoutFollow, lookAtMode: "coordinates", lookAtObjectId: undefined });
         expect(removeDirectorCameraBindingsForObject(camera, "other")).toBe(camera);
+    });
+
+    test("自由视角机位辅助图形与 CAM 共用当前帧取景，且能解算非活动机位", () => {
+        const scene = movedScene();
+        const first = bindDirectorCameraFollow(scene.cameras[0], scene, scene.objects[0].id, 0);
+        const second: DirectorCamera = { ...first, id: "other-camera", transform: { ...first.transform, position: [0, 2, 8] } };
+        const withCameras = { ...scene, cameras: [first, second] };
+        expect(resolveDirectorCameraLocalFraming(withCameras, first, 1)?.position).toEqual([5.8, 2.7, 6.8]);
+        expect(resolveDirectorCameraLocalFraming(withCameras, second, 1)?.position).toEqual([1, 2, 8]);
+        expect(resolveDirectorCameraLocalFraming(withCameras, first, 1)?.target).toEqual(resolveDirectorViewFraming({ scene: withCameras, mode: "camera", playhead: 1 })?.target);
     });
 });
