@@ -416,7 +416,6 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     const updateLight = (id: string, patch: Partial<DirectorLight>) => commit((current) => ({ ...current, lights: current.lights.map((item) => (item.id === id ? { ...item, ...patch } : item)) }));
     const updateShot = (id: string, patch: Partial<DirectorShot>) => commit((current) => ({ ...current, shots: current.shots.map((item) => (item.id === id ? { ...item, ...patch } : item)) }));
     const removeObject = (id: string) => {
-        if (draftRef.current?.objects.find((item) => item.id === id)?.locked) return;
         commit((current) => ({ ...current, objects: current.objects.filter((item) => item.id !== id), cameras: current.cameras.map((camera) => removeDirectorCameraBindingsForObject(camera, id, current, playhead)) }));
         if (selectedObjectId === id) {
             setSelectedObjectId(null);
@@ -428,7 +427,6 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
         if (selectedLightId === id) setSelectedLightId(null);
     };
     const removeCamera = (id: string) => {
-        if (draftRef.current?.cameras.find((item) => item.id === id)?.locked) return;
         if (!draft || draft.cameras.length <= 1) {
             message.warning("至少保留一台摄影机");
             return;
@@ -1134,15 +1132,23 @@ function PanelTitle({ title, action }: { title: string; action?: ReactNode }) { 
  * 焦点留在按钮上会让守卫把 Delete 吃掉。
  */
 function SceneRow({ active, icon, label, visible, locked, onVisibilityChange, onLockChange, onClick, onDelete }: { active?: boolean; icon: ReactElement; label: string; visible?: boolean; locked?: boolean; onVisibilityChange?: () => void; onLockChange?: () => void; onClick: () => void; onDelete?: () => void }) {
-    return <div data-director-scene-row="true" className={`group flex h-8 w-full items-center gap-1 px-1 text-left text-xs transition ${active ? "bg-black/10 dark:bg-white/10" : "hover:bg-black/5 dark:hover:bg-white/5"}`}>
+    const sceneActions = Boolean(onVisibilityChange || onLockChange);
+    const row = <div data-director-scene-row="true" className={`group flex h-8 w-full items-center gap-1 px-1 text-left text-xs transition ${active ? "bg-black/10 dark:bg-white/10" : "hover:bg-black/5 dark:hover:bg-white/5"}`}>
         <button type="button" className="flex min-w-0 flex-1 items-center gap-2 px-1 text-left" onClick={(event) => { onClick(); releaseDirectorFocusAfterPointer(event); }}>
             <span className="[&>svg]:size-3.5">{icon}</span>
             <span className={`truncate ${visible === false ? "opacity-45" : ""}`}>{label}</span>
         </button>
         {onVisibilityChange ? <button type="button" aria-label={`${visible ? "隐藏" : "显示"}${label}`} aria-pressed={!visible} title={visible ? "隐藏" : "显示"} className={`grid size-6 shrink-0 place-items-center rounded transition hover:bg-black/5 dark:hover:bg-white/10 ${visible ? "opacity-45 group-hover:opacity-100 focus-visible:opacity-100" : "opacity-75"}`} onClick={(event) => { event.stopPropagation(); onVisibilityChange(); releaseDirectorFocusAfterPointer(event); }}>{visible ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}</button> : null}
         {onLockChange ? <button type="button" aria-label={`${locked ? "解锁" : "锁定"}${label}`} aria-pressed={Boolean(locked)} title={locked ? "解锁" : "锁定"} className={`grid size-6 shrink-0 place-items-center rounded transition hover:bg-black/5 dark:hover:bg-white/10 ${locked ? "opacity-85" : "opacity-45 group-hover:opacity-100 focus-visible:opacity-100"}`} onClick={(event) => { event.stopPropagation(); onLockChange(); releaseDirectorFocusAfterPointer(event); }}>{locked ? <LockKeyhole className="size-3.5" /> : <LockKeyholeOpen className="size-3.5" />}</button> : null}
-        {onDelete && !locked ? <button type="button" aria-label={`删除${label}`} title={`删除${label}`} className="grid size-6 shrink-0 place-items-center rounded opacity-60 transition hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10" onClick={(event) => { event.stopPropagation(); onDelete(); releaseDirectorFocusAfterPointer(event); }}><Trash2 className="size-3.5" /></button> : null}
+        {onDelete && !sceneActions && !locked ? <button type="button" aria-label={`删除${label}`} title={`删除${label}`} className="grid size-6 shrink-0 place-items-center rounded opacity-60 transition hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10" onClick={(event) => { event.stopPropagation(); onDelete(); releaseDirectorFocusAfterPointer(event); }}><Trash2 className="size-3.5" /></button> : null}
     </div>;
+    if (!sceneActions) return row;
+    const items: MenuProps["items"] = [
+        ...(onVisibilityChange ? [{ key: "visibility", icon: visible ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />, label: "显示/隐藏", onClick: onVisibilityChange }] : []),
+        ...(onLockChange ? [{ key: "lock", icon: locked ? <LockKeyhole className="size-3.5" /> : <LockKeyholeOpen className="size-3.5" />, label: "锁定/解锁", onClick: onLockChange }] : []),
+        ...(onDelete ? [{ key: "delete", icon: <Trash2 className="size-3.5" />, label: "删除", onClick: onDelete, danger: true }] : []),
+    ];
+    return <Dropdown trigger={["contextMenu"]} menu={{ items, style: { minWidth: 144 } }}>{row}</Dropdown>;
 }
 function AddMenuButton({ label, items }: { label: string; items: MenuProps["items"] }) {
     return <Dropdown trigger={["click"]} placement="bottomRight" menu={{ items }}><button type="button" aria-label={label} title={label} className="grid size-8 shrink-0 place-items-center rounded-md transition hover:bg-black/5 dark:hover:bg-white/10"><Plus className="size-3.5" /></button></Dropdown>;
