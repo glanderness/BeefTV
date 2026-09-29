@@ -58,6 +58,9 @@ func WriteZip(path string, files map[string][]byte, executable map[string]bool) 
 }
 
 func WriteDarwinLayout(root, marker string) error {
+	if err := writeAgentLayout(filepath.Join(root, appBundleName, "Contents", "Resources", "agent-host"), "runtime/bin/node", marker); err != nil {
+		return err
+	}
 	exe := filepath.Join(root, appBundleName, "Contents", "MacOS", "BeefTV")
 	plist := filepath.Join(root, appBundleName, "Contents", "Info.plist")
 	plugin := filepath.Join(root, appBundleName, "Contents", "Resources", pluginDirName, "official.beeftv-plugin")
@@ -78,6 +81,9 @@ func WriteDarwinLayout(root, marker string) error {
 }
 
 func WriteWindowsLayout(root, marker string) error {
+	if err := writeAgentLayout(filepath.Join(root, "agent-host"), "runtime/node.exe", marker); err != nil {
+		return err
+	}
 	exe := filepath.Join(root, windowsExeName)
 	plugin := filepath.Join(root, pluginDirName, "official.beeftv-plugin")
 	if err := os.MkdirAll(filepath.Dir(plugin), 0o755); err != nil {
@@ -96,6 +102,10 @@ func DarwinZipFiles(marker string) (map[string][]byte, map[string]bool) {
 		"BeefTV.app/Contents/Resources/plugin-packages/official.beeftv-plugin": []byte("official-" + marker),
 	}
 	execFiles := map[string]bool{"BeefTV.app/Contents/MacOS/BeefTV": true}
+	for name, body := range agentFiles("runtime/bin/node", marker) {
+		files["BeefTV.app/Contents/Resources/agent-host/"+name] = body
+	}
+	execFiles["BeefTV.app/Contents/Resources/agent-host/runtime/bin/node"] = true
 	return files, execFiles
 }
 
@@ -104,7 +114,31 @@ func WindowsZipFiles(marker string) (map[string][]byte, map[string]bool) {
 		"BeefTV.exe":                             []byte("MZ-" + marker),
 		"plugin-packages/official.beeftv-plugin": []byte("official-" + marker),
 	}
+	for name, body := range agentFiles("runtime/node.exe", marker) {
+		files["agent-host/"+name] = body
+	}
 	return files, map[string]bool{}
+}
+
+func agentFiles(node, marker string) map[string][]byte {
+	files := map[string][]byte{}
+	for _, name := range []string{"server.mjs", "session-identity.mjs", "package.json", node, "node_modules/@earendil-works/pi-coding-agent/package.json"} {
+		files[name] = []byte(marker)
+	}
+	return files
+}
+
+func writeAgentLayout(root, node, marker string) error {
+	for name, body := range agentFiles(node, marker) {
+		file := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(file, body, 0o755); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func testPayload(version, platform, artifactURL, sha256 string, size int64, notes string) Payload {

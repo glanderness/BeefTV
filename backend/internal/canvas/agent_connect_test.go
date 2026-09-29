@@ -119,3 +119,38 @@ func TestCreateUserCanvasNodesLayoutDoesNotOverlap(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateUserCanvasNodesStartsAfterExistingRightEdge(t *testing.T) {
+	svc := newCanvasHistoryTestService(t)
+	created, err := svc.UpsertUserCanvasProject("owner", json.RawMessage(`{"id":"canvas-existing-layout","revision":0,"title":"已有画布","nodes":[
+		{"id":"wide","type":"image","title":"宽节点","position":{"x":600,"y":160},"width":900,"height":220},
+		{"id":"left","type":"text","title":"左侧节点","position":{"x":10,"y":160},"width":320,"height":220}
+	],"connections":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := svc.CreateUserCanvasNodes("owner", created.ID, []NodeDraft{{Title: "新图片", Type: "image"}, {Title: "新文本", Type: "text"}}, created.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateUserCanvasNodes("owner", created.ID, []NodeDraft{{Title: "下一批", Type: "text"}}, first.Revision); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := svc.loadCanvasDoc("owner", created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := canvasDocNodes(doc)
+	if len(nodes) != 5 {
+		t.Fatalf("node count = %d", len(nodes))
+	}
+	right := 1500.0
+	for _, raw := range nodes[2:] {
+		node := raw.(map[string]any)
+		x := node["position"].(map[string]any)["x"].(float64)
+		if x < right+nodePlacementGap {
+			t.Fatalf("node %s at %v overlaps existing edge %v", node["title"], x, right)
+		}
+		right = x + node["width"].(float64)
+	}
+}

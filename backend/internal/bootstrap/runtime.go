@@ -33,22 +33,23 @@ import (
 )
 
 type Runtime struct {
-	cfg         Config
-	db          *gorm.DB
-	service     *app.Service
-	localApp    *localapp.App
-	handler     http.Handler
-	status      *systemStatus
-	launchToken string
-	beefAPI     *beefapi.Service
-	listener    net.Listener
-	httpServer  *http.Server
-	serveErr    chan error
-	started     atomic.Bool
-	closed      atomic.Bool
-	closeOnce   sync.Once
-	background  sync.WaitGroup
-	closeErr    error
+	cfg              Config
+	db               *gorm.DB
+	service          *app.Service
+	localApp         *localapp.App
+	handler          http.Handler
+	status           *systemStatus
+	launchToken      string
+	uiBootstrapToken string
+	beefAPI          *beefapi.Service
+	listener         net.Listener
+	httpServer       *http.Server
+	serveErr         chan error
+	started          atomic.Bool
+	closed           atomic.Bool
+	closeOnce        sync.Once
+	background       sync.WaitGroup
+	closeErr         error
 }
 
 func Open(_ context.Context, raw Config) (*Runtime, error) {
@@ -152,7 +153,13 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 	// 桌面启动令牌在构建路由前解析：它既是整个 API 的入口凭据，也是「本机受信任 UI」
 	// 的判据（内置助手签发 UI 会话时使用）。服务端形态没有它，DesktopTrust 为 nil。
 	launchToken := ""
+	uiBootstrapToken := ""
 	if cfg.Profile == ProfileDesktop {
+		uiBootstrapToken, err = httptransport.NewLaunchToken()
+		if err != nil {
+			cleanupService()
+			return nil, err
+		}
 		launchToken = strings.TrimSpace(cfg.LaunchToken)
 		if launchToken == "" {
 			launchToken, err = httptransport.NewLaunchToken()
@@ -188,7 +195,7 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 		Tasks:              localRoot.Tasks,
 		Generation:         localRoot.Generation,
 		BeefAPI:            beefAPIConnection,
-		DesktopTrust:       desktopTrust(launchToken),
+		DesktopTrust:       desktopTrust(launchToken, uiBootstrapToken),
 	})
 	router.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"code": http.StatusNotFound, "msg": "请求不存在"})
@@ -196,18 +203,32 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 
 	rootHandler := http.Handler(router)
 	if launchToken != "" {
-		rootHandler = httptransport.RequireLaunchToken(launchToken)(rootHandler)
+		protected := httptransport.RequireLaunchToken(launchToken)(rootHandler)
+		clients := agentops.NewClientRegistry(svc.DataDir())
+		rootHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// External clients receive only their own capability token, never shell credentials.
+			path := r.URL.Path
+			opEntry := (r.Method == http.MethodGet && path == "/api/ops") || (r.Method == http.MethodPost && strings.HasPrefix(path, "/api/ops/") && !strings.Contains(strings.TrimPrefix(path, "/api/ops/"), "/") && path != "/api/ops/clients")
+			if opEntry {
+				if _, ok := clients.Lookup(r.Header.Get("X-Beeftv-Client"), strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))); ok {
+					router.ServeHTTP(w, r)
+					return
+				}
+			}
+			protected.ServeHTTP(w, r)
+		})
 	}
 	return &Runtime{
-		cfg:         cfg,
-		db:          db,
-		service:     svc,
-		localApp:    localRoot,
-		handler:     rootHandler,
-		status:      status,
-		launchToken: launchToken,
-		beefAPI:     beefAPIConnection,
-		serveErr:    make(chan error, 1),
+		cfg:              cfg,
+		db:               db,
+		service:          svc,
+		localApp:         localRoot,
+		handler:          rootHandler,
+		status:           status,
+		launchToken:      launchToken,
+		uiBootstrapToken: uiBootstrapToken,
+		beefAPI:          beefAPIConnection,
+		serveErr:         make(chan error, 1),
 	}, nil
 }
 
@@ -295,6 +316,8 @@ func (r *Runtime) LaunchToken() string {
 	return r.launchToken
 }
 
+func (r *Runtime) UIBootstrapToken() string { return r.uiBootstrapToken }
+
 func (r *Runtime) Errors() <-chan error {
 	if r == nil {
 		closed := make(chan error)
@@ -376,7 +399,7 @@ func desktopCORSMiddleware() gin.HandlerFunc {
 			c.Header("Access-Control-Allow-Credentials", "true")
 			c.Header("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers")
 		}
-		c.Header("Access-Control-Allow-Headers", "Accept, Content-Type, X-Desktop-Token, X-Canvas-Trace-ID, X-Idempotency-Key, X-Canvas-Scene, X-Canvas-Upstream-URL, X-Canvas-Upstream-Format, X-Canvas-Upstream-Base-URL")
+		c.Header("Access-Control-Allow-Headers", "Accept, Content-Type, X-Desktop-Token, X-Beeftv-UI-Bootstrap, X-Beeftv-Ui-Session, X-Canvas-Trace-ID, X-Idempotency-Key, X-Canvas-Scene, X-Canvas-Upstream-URL, X-Canvas-Upstream-Format, X-Canvas-Upstream-Base-URL")
 		c.Header("Access-Control-Expose-Headers", "X-Request-ID, X-Canvas-Trace-ID, X-Diagnostic-Bundle-ID, X-Diagnostic-Schema-Version")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		if c.Request.Method == http.MethodOptions {
@@ -389,13 +412,14 @@ func desktopCORSMiddleware() gin.HandlerFunc {
 
 // desktopTrust 用桌面启动令牌判定请求是否来自受信任的桌面壳。
 // 令牌为空（服务端形态）时返回 nil，表示没有这条信任路径。
-func desktopTrust(launchToken string) func(*http.Request) bool {
+func desktopTrust(launchToken, uiToken string) func(*http.Request) bool {
 	want := []byte(strings.TrimSpace(launchToken))
 	if len(want) == 0 {
 		return nil
 	}
 	return func(r *http.Request) bool {
 		got := []byte(r.Header.Get(httptransport.LaunchTokenHeader))
-		return len(got) == len(want) && subtle.ConstantTimeCompare(got, want) == 1
+		ui := []byte(r.Header.Get("X-Beeftv-UI-Bootstrap"))
+		return len(got) == len(want) && subtle.ConstantTimeCompare(got, want) == 1 && len(uiToken) > 0 && subtle.ConstantTimeCompare(ui, []byte(uiToken)) == 1
 	}
 }

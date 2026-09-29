@@ -112,10 +112,23 @@ func (s *Service) CreateUserCanvasNodes(userID, canvasID string, drafts []NodeDr
 	}
 	nodes := canvasDocNodes(doc)
 	existingTitles := map[string]bool{}
+	cursorX := 120.0
 	for _, rawNode := range nodes {
 		if node, ok := rawNode.(map[string]any); ok {
 			if title, _ := node["title"].(string); title != "" {
 				existingTitles[title] = true
+			}
+			position, _ := node["position"].(map[string]any)
+			x, _ := position["x"].(float64)
+			width, _ := node["width"].(float64)
+			if width <= 0 {
+				width = 320
+				if descriptor, ok := canvasCapabilityRegistry.Resolve(canvasNodeType(node)); ok && descriptor.DefaultWidth > 0 {
+					width = descriptor.DefaultWidth
+				}
+			}
+			if right := x + width + nodePlacementGap; right > cursorX {
+				cursorX = right
 			}
 		}
 	}
@@ -137,8 +150,7 @@ func (s *Service) CreateUserCanvasNodes(userID, canvasID string, drafts []NodeDr
 				"不支持的节点类型: "+draft.Type+"（可用: "+strings.Join(canvasCapabilityRegistry.Types(), "|")+"）")
 		}
 	}
-	// 排布按已放置节点的累计宽度推进：不同类型宽度不同，用序号乘自身宽度会互相压住。
-	cursorX := 120.0
+	// 从既有节点最右边缘开始，再按本批节点的累计宽度推进。
 	for _, draft := range drafts {
 		descriptor, _ := canvasCapabilityRegistry.Resolve(draft.Type)
 		width, height := descriptor.DefaultWidth, descriptor.DefaultHeight

@@ -25,8 +25,10 @@ description: BeefTV后端核心持久化表与状态边界
 
 ### 本地工作区结构（桌面形态）
 
-桌面形态使用由 `local_schema_migrations` 管理的本地结构版本（当前为 2，见 `backend/internal/database/local_schema.go`），
+桌面形态使用由 `local_schema_migrations` 管理的本地结构版本（当前为 3，见 `backend/internal/database/local_schema.go`），
 与上面的托管版本序列相互独立。
+
+版本 3 `agent-operation-records` 为既有版本 2 工作区创建 `agent_op_records` 及用户、操作 ID 联合主键。迁移只新增操作记录结构，不重写画布、项目或任务数据；结构创建与迁移记录在同一事务中提交。重复启动不会重复迁移，已成功操作的幂等结果在重启后继续回放。
 
 | 表 | 用途 | 关键边界 |
 | --- | --- | --- |

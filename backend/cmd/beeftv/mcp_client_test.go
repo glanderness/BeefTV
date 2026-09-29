@@ -57,7 +57,13 @@ func TestMCPClientLoop(t *testing.T) {
 	}
 	var create *mcp.Tool
 	for _, tool := range tools.Tools {
+		if tool.Name == "canvas.get" && (tool.Annotations == nil || !tool.Annotations.ReadOnlyHint) {
+			t.Fatal("read-only canvas.get must advertise readOnlyHint")
+		}
 		if tool.Name == "canvas.nodes.create" {
+			if tool.Annotations != nil && tool.Annotations.ReadOnlyHint {
+				t.Fatal("write tool advertised read-only")
+			}
 			create = tool
 		}
 	}

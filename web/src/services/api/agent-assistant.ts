@@ -1,6 +1,6 @@
 // 内置创作助手：浏览器只与同源 Go 代理通信，宿主/owner/模型凭据都不进入页面。
 // 三个端点的真实路径都在 /api/assistant/* 下；写错路径会让面板永远拿不到回复。
-import { ApiError, http } from "./request";
+import { ApiError, apiBaseURL, http } from "./request";
 
 export type AgentHostStatus = {
     available: boolean;
@@ -103,7 +103,7 @@ export async function streamAgentChat(
     selectedNodeIds: string[] = [],
 ): Promise<void> {
     const token = await ensureAgentUiSession();
-    const response = await fetch("/api/assistant/chat", {
+    const response = await fetch(`${apiBaseURL}/assistant/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Beeftv-Ui-Session": token },
         body: JSON.stringify({ canvasId, message, selectedNodeIds }),
@@ -196,7 +196,7 @@ async function readAgentTurnStream(
  */
 export async function cancelAgentChat(canvasId: string): Promise<void> {
     const token = await ensureAgentUiSession();
-    const response = await fetch("/api/assistant/cancel", {
+    const response = await fetch(`${apiBaseURL}/assistant/cancel`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Beeftv-Ui-Session": token },
         body: JSON.stringify({ canvasId }),

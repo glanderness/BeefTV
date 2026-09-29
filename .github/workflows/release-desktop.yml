@@ -193,6 +193,19 @@ jobs:
         with:
           bun-version: 1.3.9
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+
+      - name: Select bundled Node runtime
+        shell: bash
+        run: |
+          node -e 'const fs=require("fs"),p=require("path"); const bin=p.dirname(process.execPath); fs.appendFileSync(process.env.GITHUB_ENV, `BEEFTV_NODE_RUNTIME=${process.platform==="win32"?bin:p.dirname(bin)}\n`);'
+
+      - name: Verify agent host packaging contract
+        shell: bash
+        run: bun test scripts/package-agent-host.test.mjs
+
       - name: Install MSYS2 UCRT64 GCC
         id: msys2
         if: runner.os == 'Windows'

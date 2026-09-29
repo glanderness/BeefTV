@@ -13,6 +13,7 @@ import (
 
 	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/app"
+	httptransport "infinite-canvas/backend/internal/transport/http"
 )
 
 // agentOpsMaxBody 限制操作请求体积，避免本机入口被大 payload 拖垮。
@@ -193,6 +194,9 @@ func isLoopbackRequest(r *http.Request) bool {
 		return false
 	}
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if httptransport.DesktopAuthenticated(r) && (origin == "wails://wails" || origin == "http://wails.localhost" || origin == "https://wails.localhost") {
+		return true
+	}
 	if origin == "" {
 		return true
 	}

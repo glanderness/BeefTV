@@ -10,6 +10,7 @@ let chatResponse: (() => Response) | null = null;
 let sessionResponse: (() => Response) | null = null;
 
 mock.module("@/services/api/request", () => ({
+	apiBaseURL: "http://127.0.0.1:54321/api",
     ApiError: class ApiError extends Error {
         status?: number;
         constructor(message: string, options: { status?: number } = {}) {
@@ -79,6 +80,15 @@ afterEach(() => {
 const TURN_END = JSON.stringify({ type: "turn_end", reply: "完成", toolCalls: [], error: null, cancelled: false });
 
 describe("创作助手回合流边界", () => {
+	 test("对话和取消连接当前桌面运行时地址", async () => {
+		chatResponse = () => chatResponseOf([TURN_END + "\n"]);
+		await streamAgentChat("canvas-1", "test", {});
+		await cancelAgentChat("canvas-1");
+		expect(requests.map((request) => request.url)).toEqual([
+			"http://127.0.0.1:54321/api/assistant/chat",
+			"http://127.0.0.1:54321/api/assistant/cancel",
+		]);
+	 });
     test("分片切割（含跨行与多字节中文）仍能完整取回增量与最终回合", async () => {
         const line = JSON.stringify({ type: "text_delta", delta: "雨夜巷口" }) + "\n";
         const bytes = new TextEncoder().encode(line + TURN_END + "\n");

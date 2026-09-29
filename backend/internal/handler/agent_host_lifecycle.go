@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,44 +26,50 @@ import (
 
 // agentHostConfig 记录当前使用的文本模型与宿主启动命令；由本机用户在设置里配置。
 type agentHostConfig struct {
-	Model       string `json:"model"`
-	HostCommand string `json:"hostCommand"`
-	UpdatedAt   string `json:"updatedAt,omitempty"`
+	Model       string   `json:"model"`
+	HostCommand string   `json:"hostCommand"`
+	HostArgs    []string `json:"hostArgs,omitempty"`
+	UpdatedAt   string   `json:"updatedAt,omitempty"`
 }
 
 const agentHostConfigFile = "agent_config.json"
 
-// bundledAgentHostCommand 返回应用包内自带的宿主启动脚本路径。
-//
-// 发行形态把 agent-host 与（可选的）Node 运行时放在 BeefTV.app/Contents/Resources/agent-host/，
-// 二进制位于 Contents/MacOS/，因此相对可执行文件推导 Resources，不依赖调用方 cwd。
-func bundledAgentHostCommand() string {
+// Resolve the packaged runtime relative to the executable, independently of cwd or PATH.
+func bundledAgentHostConfig() agentHostConfig {
 	executable, err := os.Executable()
 	if err != nil || strings.TrimSpace(executable) == "" {
-		return ""
+		return agentHostConfig{}
 	}
-	return bundledAgentHostCommandFor(executable)
+	return bundledAgentHostConfigFor(executable, runtime.GOOS)
 }
 
-// bundledAgentHostCommandFor 从可执行文件位置推导包内启动脚本；独立出来便于对打包布局做确定性测试。
-func bundledAgentHostCommandFor(executable string) string {
+// Both desktop layouts execute Node directly; Windows must not require a POSIX shell.
+func bundledAgentHostConfigFor(executable, goos string) agentHostConfig {
 	if strings.TrimSpace(executable) == "" {
-		return ""
+		return agentHostConfig{}
 	}
-	launcher := filepath.Join(filepath.Dir(executable), "..", "Resources", "agent-host", "run-agent-host.sh")
-	if info, statErr := os.Stat(launcher); statErr != nil || info.IsDir() {
-		return ""
+	root := filepath.Join(filepath.Dir(executable), "..", "Resources", "agent-host")
+	node := filepath.Join(root, "runtime", "bin", "node")
+	if goos == "windows" {
+		root = filepath.Join(filepath.Dir(executable), "agent-host")
+		node = filepath.Join(root, "runtime", "node.exe")
 	}
-	return launcher
+	entry := filepath.Join(root, "server.mjs")
+	for _, file := range []string{node, entry} {
+		if info, err := os.Stat(file); err != nil || info.IsDir() {
+			return agentHostConfig{}
+		}
+	}
+	return agentHostConfig{HostCommand: node, HostArgs: []string{entry}}
 }
 
-// effectiveAgentHostConfig 合并「本机配置」与「应用自带启动脚本」：
-// 用户配置优先；没有配置时用包内脚本，让发行形态开箱即可用。
+// Explicit local configuration takes precedence over the packaged runtime.
 func effectiveAgentHostConfig(dataDir string) (agentHostConfig, bool) {
 	config, configured := readAgentHostConfig(dataDir)
 	if strings.TrimSpace(config.HostCommand) == "" {
-		if bundled := bundledAgentHostCommand(); bundled != "" {
-			config.HostCommand = bundled
+		if bundled := bundledAgentHostConfig(); bundled.HostCommand != "" {
+			config.HostCommand = bundled.HostCommand
+			config.HostArgs = bundled.HostArgs
 			configured = true
 		}
 	}
@@ -108,8 +115,9 @@ func writeAgentHostConfig(dataDir string, config agentHostConfig) error {
 
 // agentHostSupervisor 只在被显式要求时启动宿主，并持有其 PID 以便停止与状态查询。
 type agentHostSupervisor struct {
-	mu  sync.Mutex
-	cmd *exec.Cmd
+	mu   sync.Mutex
+	cmd  *exec.Cmd
+	done chan struct{}
 }
 
 // processAgentHostSupervisor 是进程内唯一实例：路由（启停/状态）与应用关闭钩子
@@ -144,7 +152,12 @@ func (s *agentHostSupervisor) running() bool {
 	if s.cmd == nil || s.cmd.Process == nil {
 		return false
 	}
-	return s.cmd.Process.Signal(syscall.Signal(0)) == nil
+	select {
+	case <-s.done:
+		return false
+	default:
+		return true
+	}
 }
 
 // hostEnv 构造宿主子进程环境：凭据与数据目录由后端注入，宿主不从用户全局环境取。
@@ -287,10 +300,20 @@ func ownerTokenFromFile(dataDir string) string {
 func (s *agentHostSupervisor) start(dataDir string, config agentHostConfig, opsURL string, desktopToken string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.cmd != nil && s.cmd.Process != nil && s.cmd.Process.Signal(syscall.Signal(0)) == nil {
-		return nil
+	if s.cmd != nil && s.cmd.Process != nil {
+		select {
+		case <-s.done:
+		default:
+			return nil
+		}
 	}
 	parts := strings.Fields(config.HostCommand)
+	// Packaged paths (including Program Files) are executable names, never shell text.
+	if config.HostArgs != nil {
+		parts = append([]string{config.HostCommand}, config.HostArgs...)
+	} else if info, err := os.Stat(config.HostCommand); err == nil && !info.IsDir() {
+		parts = []string{config.HostCommand}
+	}
 	if len(parts) == 0 {
 		return agentops.InvalidArg("empty_host_command", "未配置宿主启动命令")
 	}
@@ -307,33 +330,38 @@ func (s *agentHostSupervisor) start(dataDir string, config agentHostConfig, opsU
 		return err
 	}
 	s.cmd = cmd
+	s.done = make(chan struct{})
+	done := s.done
+	go func() { _ = cmd.Wait(); close(done) }()
 	return nil
 }
 
-// stop 发送 SIGTERM 并等待真实退出；未在超时内退出则试 SIGKILL，仍失败则如实报错。
+// Serialize stop/start and let the sole Wait goroutine confirm exit on every platform.
 func (s *agentHostSupervisor) stop() error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	cmd := s.cmd
-	s.mu.Unlock()
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
-	_ = cmd.Process.Signal(syscall.SIGTERM)
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	if runtime.GOOS == "windows" {
+		_ = cmd.Process.Kill()
+	} else {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+	}
+	done := s.done
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		_ = cmd.Process.Signal(syscall.SIGKILL)
+		_ = cmd.Process.Kill()
 		select {
 		case <-done:
 		case <-time.After(3 * time.Second):
 			return errors.New("宿主进程未在超时内退出")
 		}
 	}
-	s.mu.Lock()
 	s.cmd = nil
-	s.mu.Unlock()
+	s.done = nil
 	return nil
 }
 

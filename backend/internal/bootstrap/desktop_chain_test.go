@@ -115,7 +115,7 @@ func TestDesktopProfileStartupChain(t *testing.T) {
 	}
 
 	// 仅出示桌面令牌签发 UI 会话：不需要 owner 凭据，也不需要开发引导开关。
-	code, body := desktopRequest(t, baseURL+"/assistant/ui-session", http.MethodPost, launchToken, true)
+	code, body := desktopRequest(t, baseURL+"/assistant/ui-session", http.MethodPost, launchToken, true, runtime.UIBootstrapToken())
 	if code != http.StatusOK {
 		t.Fatalf("凭桌面令牌签发 UI 会话失败：%d %s", code, body)
 	}
@@ -199,7 +199,7 @@ func TestDesktopProfileStartupChain(t *testing.T) {
 			command := exec.Command(cliBinary, args...)
 			command.Env = append(os.Environ(),
 				"BEEFTV_BASE_URL="+baseURL,
-				"BEEFTV_DESKTOP_TOKEN="+launchToken,
+				"BEEFTV_DESKTOP_TOKEN=",
 				"BEEFTV_CLIENT_ID="+registered.Data.Client.ID,
 				"BEEFTV_CLIENT_TOKEN="+registered.Data.Token,
 			)
@@ -218,12 +218,12 @@ func TestDesktopProfileStartupChain(t *testing.T) {
 		if exitCode != 0 || !strings.Contains(output, "canvas.get") {
 			t.Fatalf("CLI 应能通过桌面令牌读取同一实例的能力列表：exit=%d %s", exitCode, truncate(output, 300))
 		}
-		// 未带桌面令牌时连不上：证明这条接线是必要的，而不是把守卫关掉。
+		// 没有登记凭据时拒绝；外部客户端不持有桌面壳的令牌。
 		command := exec.Command(cliBinary, "ops", "list", "--read-only", "--json")
 		command.Env = append(os.Environ(), "BEEFTV_BASE_URL="+baseURL,
-			"BEEFTV_CLIENT_ID="+registered.Data.Client.ID, "BEEFTV_CLIENT_TOKEN="+registered.Data.Token)
+			"BEEFTV_DESKTOP_TOKEN=", "BEEFTV_CLIENT_ID="+registered.Data.Client.ID, "BEEFTV_CLIENT_TOKEN=invalid")
 		if err := command.Run(); err == nil {
-			t.Fatal("没有桌面启动令牌时不应能访问桌面实例")
+			t.Fatal("无效客户端凭据不应能访问桌面实例")
 		}
 		// 只读客户端写操作仍被能力层拒绝。
 		exitCode, output = runCli("canvas", "node", "update", "--canvas", "any", "--node", "n1",
@@ -399,13 +399,16 @@ func desktopRequestWith(t *testing.T, url, method, token string, withToken bool,
 	return response.StatusCode, string(body)
 }
 
-func desktopRequest(t *testing.T, url, method, token string, withToken bool) (int, string) {
+func desktopRequest(t *testing.T, url, method, token string, withToken bool, uiToken ...string) (int, string) {
 	t.Helper()
 	request, err := http.NewRequest(method, url, strings.NewReader("{}"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	request.Header.Set("Content-Type", "application/json")
+	if len(uiToken) > 0 {
+		request.Header.Set("X-Beeftv-UI-Bootstrap", uiToken[0])
+	}
 	if withToken {
 		request.Header.Set("X-Desktop-Token", token)
 	}

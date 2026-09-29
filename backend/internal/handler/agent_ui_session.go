@@ -89,6 +89,10 @@ func resolveAgentCapability(c *gin.Context, svc *app.Service, clients *agentops.
 // RegisterAgentUISessionRoutes 只在本机同源且能出示 owner 凭据（或显式开发引导）时签发 UI 会话。
 func RegisterAgentUISessionRoutes(r gin.IRouter, svc *app.Service, ui *uiSessionStore, desktopTrust func(*http.Request) bool) {
 	r.POST("/assistant/ui-session", func(c *gin.Context) {
+		if strings.TrimSpace(c.GetHeader("X-Beeftv-Client")) != "" {
+			fail(c, http.StatusForbidden, app.BadAuthRequest("外部客户端不能签发界面会话"))
+			return
+		}
 		if !isLoopbackRequest(c.Request) {
 			fail(c, http.StatusForbidden, app.BadAuthRequest("只接受本机同源请求"))
 			return
@@ -100,8 +104,7 @@ func RegisterAgentUISessionRoutes(r gin.IRouter, svc *app.Service, ui *uiSession
 		}
 		ownerOK := agentops.OwnerTokenMatches(svc.DataDir(), strings.TrimSpace(c.GetHeader("X-Beeftv-Owner")))
 		devBootstrap := strings.TrimSpace(os.Getenv("BEEFTV_UI_BOOTSTRAP")) == "1"
-		// 桌面形态：整个 API 已经由桌面启动令牌把关，能出示令牌就等价于「本机受信任 UI」，
-		// 因此打包应用不需要开发者引导开关，也不需要把 owner 凭据交给页面。
+		// The UI bootstrap secret comes through the Wails binding, separately from entry credentials.
 		desktopShell := desktopTrust != nil && desktopTrust(c.Request)
 		if !ownerOK && !devBootstrap && !desktopShell {
 			fail(c, http.StatusForbidden, app.BadAuthRequest("签发内置 UI 会话需要 owner 凭据或显式本地引导"))

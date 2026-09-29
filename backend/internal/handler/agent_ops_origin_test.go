@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	httptransport "infinite-canvas/backend/internal/transport/http"
 )
 
 func TestIsLoopbackRequestOriginRules(t *testing.T) {
@@ -36,5 +38,27 @@ func TestIsLoopbackRequestOriginRules(t *testing.T) {
 				t.Fatalf("isLoopbackRequest=%v want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestWailsOriginRequiresAuthenticatedDesktopTransport(t *testing.T) {
+	for _, origin := range []string{"wails://wails", "http://wails.localhost", "https://wails.localhost", "wails://attacker", "https://evil.example"} {
+		for _, token := range []string{"", "wrong", "test-desktop-token"} {
+			req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:54321/api/assistant/ui-session", nil)
+			req.RemoteAddr = "127.0.0.1:12345"
+			req.Header.Set("Origin", origin)
+			req.Header.Set(httptransport.LaunchTokenHeader, token)
+			if isLoopbackRequest(req) {
+				t.Fatal("unverified header must not authorize Wails origin")
+			}
+			accepted := false
+			httptransport.RequireLaunchToken("test-desktop-token")(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				accepted = isLoopbackRequest(r)
+			})).ServeHTTP(httptest.NewRecorder(), req)
+			want := token == "test-desktop-token" && (origin == "wails://wails" || origin == "http://wails.localhost" || origin == "https://wails.localhost")
+			if accepted != want {
+				t.Fatalf("origin=%s token-present=%v accepted=%v want=%v", origin, token != "", accepted, want)
+			}
+		}
 	}
 }

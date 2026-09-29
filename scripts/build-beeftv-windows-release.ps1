@@ -46,6 +46,9 @@ $pluginResourceDir = Join-Path $binDir "plugin-packages"
 $versionFile = Join-Path $repoRoot "VERSION"
 $wailsModule = "github.com/wailsapp/wails/v2/cmd/wails@v2.16.0"
 
+& bun (Join-Path $repoRoot "scripts\package-agent-host.mjs") "windows/amd64" "--verify-runtime"
+if ($LASTEXITCODE -ne 0) { throw "Bundled agent-host Node runtime validation failed" }
+
 function Write-Step([string]$Message) {
     Write-Host $Message
 }
@@ -423,6 +426,8 @@ $copied = @(Get-OfficialPluginPackages $pluginResourceDir)
 if ($copied.Count -eq 0) {
     throw "Failed to copy official plugin packages next to $exePath"
 }
+
+Invoke-NativeExecutable -FilePath "bun" -ArgumentList @((Join-Path $repoRoot "scripts\package-agent-host.mjs"), "windows/amd64", (Join-Path $binDir "agent-host")) -FailureMessage "Agent host packaging failed" | Out-Null
 
 Write-Host "Release executable: $exePath"
 Write-Host "Official plugins: $pluginResourceDir ($($copied.Count) packages)"

@@ -148,7 +148,10 @@ func addWindowsLayout(zw *zip.Writer, root string, visited map[string]struct{}) 
 	if !st.IsDir() {
 		return fmt.Errorf("Windows bundle %s is not a directory", pluginDirName)
 	}
-	return addTree(zw, root, pluginDir, pluginDirName, visited)
+	if err := addTree(zw, root, pluginDir, pluginDirName, visited); err != nil {
+		return err
+	}
+	return addTree(zw, root, filepath.Join(root, "agent-host"), "agent-host", visited)
 }
 
 func addTree(zw *zip.Writer, bundleParent, absPath, zipName string, visited map[string]struct{}) error {
@@ -272,8 +275,23 @@ func validateArchive(platform, zipPath string) error {
 	hasMacExec := false
 	hasWinExec := false
 	pluginCount := 0
+	agentPrefix := "agent-host/"
+	nodeRelative := "runtime/node.exe"
+	if strings.HasPrefix(platform, "darwin-") {
+		agentPrefix = "BeefTV.app/Contents/Resources/agent-host/"
+		nodeRelative = "runtime/bin/node"
+	}
+	requiredAgent := map[string]bool{"server.mjs": false, "session-identity.mjs": false, "package.json": false, nodeRelative: false, "node_modules/@earendil-works/pi-coding-agent/package.json": false}
 	for _, file := range reader.File {
 		name := filepath.ToSlash(file.Name)
+		if rel, ok := strings.CutPrefix(name, agentPrefix); ok {
+			if _, required := requiredAgent[rel]; required && file.Mode().IsRegular() && file.UncompressedSize64 > 0 {
+				requiredAgent[rel] = true
+				if rel == nodeRelative && strings.HasPrefix(platform, "darwin-") && file.Mode()&0o111 == 0 {
+					return fmt.Errorf("bundled Node must retain executable mode")
+				}
+			}
+		}
 		if err := rejectUnsafeZipName(strings.TrimSuffix(name, "/")); err != nil {
 			return err
 		}
@@ -299,6 +317,11 @@ func validateArchive(platform, zipPath string) error {
 			pluginCount++
 		case strings.HasPrefix(name, "BeefTV.app/Contents/Resources/"+pluginDirName+"/") && strings.HasSuffix(name, pluginSuffix) && file.Mode().IsRegular():
 			pluginCount++
+		}
+	}
+	for name, found := range requiredAgent {
+		if !found {
+			return fmt.Errorf("archive missing agent-host resource: %s%s", agentPrefix, name)
 		}
 	}
 	switch platform {

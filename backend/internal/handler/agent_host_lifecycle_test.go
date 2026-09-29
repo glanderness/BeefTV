@@ -167,22 +167,65 @@ func TestStartProcessAgentHostIsNoopWithoutConfig(t *testing.T) {
 // 打包布局：能从 Contents/MacOS/<exe> 推导出 Contents/Resources/agent-host/run-agent-host.sh，
 // 不需要用户配置任何开发路径。
 func TestBundledAgentHostCommandFollowsAppLayout(t *testing.T) {
-	root := t.TempDir()
-	launcher := filepath.Join(root, "Contents", "Resources", "agent-host", "run-agent-host.sh")
-	if err := os.MkdirAll(filepath.Dir(launcher), 0o755); err != nil {
-		t.Fatal(err)
+	for _, goos := range []string{"darwin", "windows"} {
+		t.Run(goos, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "Program Files", "BeefTV")
+			executable := filepath.Join(root, "Contents", "MacOS", "BeefTV")
+			host := filepath.Join(root, "Contents", "Resources", "agent-host")
+			node := filepath.Join(host, "runtime", "bin", "node")
+			if goos == "windows" {
+				executable = filepath.Join(root, "BeefTV.exe")
+				host = filepath.Join(root, "agent-host")
+				node = filepath.Join(host, "runtime", "node.exe")
+			}
+			if err := os.MkdirAll(filepath.Dir(node), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			entry := filepath.Join(host, "server.mjs")
+			for _, file := range []string{node, entry} {
+				if err := os.WriteFile(file, []byte("fixture"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := bundledAgentHostConfigFor(executable, goos)
+			if got.HostCommand != node || len(got.HostArgs) != 1 || got.HostArgs[0] != entry {
+				t.Fatalf("invalid bundled command: %#v", got)
+			}
+			if err := os.Remove(node); err != nil {
+				t.Fatal(err)
+			}
+			if got := bundledAgentHostConfigFor(executable, goos); got.HostCommand != "" {
+				t.Fatalf("missing runtime must not fall back to PATH: %#v", got)
+			}
+		})
 	}
-	if err := os.WriteFile(launcher, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	executable := filepath.Join(root, "Contents", "MacOS", "BeefTV")
+}
 
-	if got := bundledAgentHostCommandFor(executable); got != launcher {
-		t.Fatalf("应推导出包内启动脚本，得到 %q", got)
+func TestAgentHostReapsExitAndRestartsWithSpacedPath(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "directory with spaces")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	// 没有随包脚本时返回空字符串，调用方据此走「未配置」分支而不是拿一个坏路径去启动。
-	if got := bundledAgentHostCommandFor(filepath.Join(t.TempDir(), "BeefTV")); got != "" {
-		t.Fatalf("无随包脚本时应返回空，得到 %q", got)
+	script := filepath.Join(dir, "host.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := &agentHostSupervisor{}
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := s.start(dir, agentHostConfig{HostCommand: script}, "http://127.0.0.1:18090/api", ""); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-s.done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("exited child was not reaped")
+		}
+		if s.running() {
+			t.Fatal("exited child reported running")
+		}
+	}
+	if err := s.stop(); err != nil {
+		t.Fatal(err)
 	}
 }
 

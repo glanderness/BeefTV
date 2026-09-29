@@ -615,7 +615,8 @@ func runMCP(c *client, args []string) error {
 	server := mcp.NewServer(&mcp.Implementation{Name: "beeftv", Version: "1.0.0"}, nil)
 	for _, op := range ops {
 		descriptor := op
-		server.AddTool(&mcp.Tool{Name: descriptor.ID, Description: descriptor.Summary, InputSchema: descriptor.Params},
+		server.AddTool(&mcp.Tool{Name: descriptor.ID, Description: descriptor.Summary, InputSchema: descriptor.Params,
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: descriptor.ReadOnly}},
 			func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				args := map[string]any{}
 				if req.Params != nil && req.Params.Arguments != nil {

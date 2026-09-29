@@ -33,6 +33,9 @@ func validateDarwinLayout(root string) error {
 	if err := requireRegularFile(exe, true); err != nil {
 		return err
 	}
+	if err := validateAgentHost(filepath.Join(bundle, "Contents", "Resources", "agent-host"), "runtime/bin/node", true); err != nil {
+		return err
+	}
 	return walkAllowed(root, func(rel string, entry fs.DirEntry) error {
 		if rel == "." {
 			return nil
@@ -45,6 +48,9 @@ func validateDarwinLayout(root string) error {
 }
 
 func validateWindowsLayout(root string) error {
+	if err := validateAgentHost(filepath.Join(root, "agent-host"), "runtime/node.exe", false); err != nil {
+		return err
+	}
 	exe := filepath.Join(root, windowsExeName)
 	if err := requireRegularFile(exe, false); err != nil {
 		return fmt.Errorf("更新包缺少 BeefTV.exe")
@@ -80,8 +86,20 @@ func validateWindowsLayout(root string) error {
 		if rel == pluginDirName || strings.HasPrefix(rel, pluginDirName+string(filepath.Separator)) {
 			return nil
 		}
+		if rel == "agent-host" || strings.HasPrefix(rel, "agent-host"+string(filepath.Separator)) {
+			return nil
+		}
 		return fmt.Errorf("更新包包含额外文件")
 	})
+}
+
+func validateAgentHost(root, node string, executable bool) error {
+	for _, name := range []string{"server.mjs", "session-identity.mjs", "package.json", "node_modules/@earendil-works/pi-coding-agent/package.json", node} {
+		if err := requireRegularFile(filepath.Join(root, filepath.FromSlash(name)), name == node && executable); err != nil {
+			return fmt.Errorf("更新包内置助手资源不完整: %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func requireRegularFile(path string, executable bool) error {
