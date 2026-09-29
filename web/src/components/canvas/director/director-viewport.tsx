@@ -1,11 +1,19 @@
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
-import { Grid, Line, OrbitControls, TransformControls } from "@react-three/drei";
+import { Grid, Html, Line, OrbitControls, TransformControls } from "@react-three/drei";
+import { Video as VideoIcon } from "lucide-react";
 import { Component, forwardRef, memo, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState, type ComponentRef, type ReactNode } from "react";
-import { AnimationClip, AnimationMixer, Box3, Bone, Camera, Color, Group, LoopOnce, LoopRepeat, Mesh, MeshBasicMaterial, MeshDepthMaterial, MeshNormalMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Quaternion, Raycaster, Scene, SkeletonHelper, Texture, TextureLoader, Vector2, Vector3, WebGLRenderer } from "three";
+import { AnimationClip, AnimationMixer, BackSide, Box3, Bone, Camera, Color, EquirectangularReflectionMapping, Euler, Group, LoopOnce, LoopRepeat, Matrix4, Mesh, MeshBasicMaterial, MeshDepthMaterial, MeshNormalMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Quaternion, Raycaster, Scene, SkeletonHelper, SphereGeometry, SRGBColorSpace, Texture, TextureLoader, Vector2, Vector3, WebGLRenderer } from "three";
 import type { Material } from "three";
 import { GLTFLoader, SkeletonUtils } from "three-stdlib";
 
 import { resolveDirectorBoneRotation } from "@/lib/canvas/director/director-animation-semantics";
+import { cropDirectorCanvas, resolveDirectorFrameRect, resolveDirectorPixelCrop, type DirectorAspectRatio } from "@/lib/canvas/director/director-aspect-ratio";
+import { directorStagePalette } from "@/lib/canvas/director/director-stage-palette";
+import { directorGroundSettings } from "@/lib/canvas/director/director-ground";
+import { directorPanoramaSphere, suspendDirectorPanoramaSphere } from "@/lib/canvas/director/director-panorama-sphere";
+import { directorStageLocalCamera, directorStageLocalPoint, directorStageMatrix, directorStagePoint, directorStageTransform } from "@/lib/canvas/director/director-stage-transform";
+import { suspendDirectorEditorOverlays } from "@/lib/canvas/director/director-editor-overlays";
+import type { DirectorOrientation } from "@/lib/canvas/director/director-orientation-gizmo";
 import { applyClaySceneMaterials } from "@/lib/canvas/director/director-clay-materials";
 import { createDirectorTransaction, installDirectorTerminalListeners } from "@/lib/canvas/director/director-gesture-transaction";
 import { emptyDirectorPlacementIntent, finiteDirectorGroundPoint, type DirectorGroundPoint, type DirectorPlacementIntent } from "@/lib/canvas/director/director-placement";
@@ -14,9 +22,10 @@ import { recordDirectorDiagnostic } from "@/lib/canvas/director/director-diagnos
 import { directorCaptureInitial, directorCaptureUsable, directorLoadIdentity, directorLoadInitial, installDirectorContextListeners, reduceDirectorCapture, reduceDirectorLoad, releaseDirectorCapture, resolveDirectorDisplay, restoreDirectorCapture, upsertDirectorFailedLoad, type DirectorFailedLoads, type DirectorLoadSignal } from "@/lib/canvas/director/director-recovery";
 import { disposeDirectorAdoptionFailure, disposeDirectorHelper, disposeDirectorMaterials, disposeDirectorModelResources, disposeDirectorObject3D, resolveDirectorLoadOwnership } from "@/lib/canvas/director/director-resources";
 import { DIRECTOR_DEFAULT_ACTOR_URL, directorPoseBoneDeltas, directorTransformPathLength, finiteDirectorTransformKeyframes, interpolateDirectorTransform } from "@/lib/canvas/director/director-scene";
-import { DIRECTOR_DEFAULT_VIEW_MODE, directorViewFramingKey, resolveDirectorEffectiveViewport, resolveDirectorOrthographicFraming, resolveDirectorOrthographicFrustum, resolveDirectorViewFraming, type DirectorOrthographicFraming, type DirectorViewFraming, type DirectorViewMode } from "@/lib/canvas/director/director-view-modes";
+import { DIRECTOR_DEFAULT_VIEW_MODE, directorViewFramingKey, resolveDirectorActiveCamera, resolveDirectorCameraLocalFraming, resolveDirectorEffectiveViewport, resolveDirectorOrthographicFraming, resolveDirectorOrthographicFrustum, resolveDirectorViewFraming, resolveDirectorViewUp, type DirectorOrthographicFraming, type DirectorViewFraming, type DirectorViewMode } from "@/lib/canvas/director/director-view-modes";
 import { DirectorViewToolbar } from "@/components/canvas/director/director-view-toolbar";
 import { resolveMediaUrl } from "@/services/file-storage";
+import { resolveImageUrl } from "@/services/image-storage";
 import type { DirectorHumanoidBone, DirectorLight, DirectorObject, DirectorQuat, DirectorRenderMode, DirectorRig, DirectorScene, DirectorTransform, DirectorVec3 } from "@/types/director";
 
 export type DirectorOrbitControls = ComponentRef<typeof OrbitControls>;
@@ -43,6 +52,7 @@ type DirectorViewportProps = {
     viewMode?: DirectorViewMode;
     /** 提供该回调即在视口内渲染 3D/CAM 切换器；不提供则不显示，视口仍按 viewMode 取景。 */
     onViewModeChange?: (mode: DirectorViewMode) => void;
+    onCaptureReadyChange?: (ready: boolean) => void;
     onSelectObject: (id: string | null) => void;
     onSelectBone: (bone: string | null) => void;
     onObjectTransform: (id: string, from: DirectorTransform, to: DirectorTransform) => void;
@@ -60,7 +70,7 @@ const emptyRestRotations: Partial<Record<DirectorHumanoidBone, DirectorQuat>> = 
 // context lost 的 dispatch 触发重渲染后 R3F 会 configure 并在失效 context 上
 // 重建 WebGLRenderer，抛 getMaxPrecision / autoReset。稳定后 lost 只显示 notice。
 const directorCanvasGl = { antialias: true, preserveDrawingBuffer: true, alpha: false } as const;
-const directorCanvasCamera = { position: [4.8, 2.7, 6.8] as [number, number, number], fov: 50, near: 0.05, far: 500 } as const;
+const directorCanvasCamera = { position: [7.1, 3.8, 9.2] as [number, number, number], fov: 50, near: 0.05, far: 1200 } as const;
 const directorCanvasDpr: [number, number] = [1, 1.5];
 // 自由视角固定环绕焦点：free 是独立观察相机，不跟随 shot 摄影机的 target 走，
 // 否则切换镜头/摄影机会连带把用户正在环绕的焦点也悄悄挪走。
@@ -69,11 +79,30 @@ const DIRECTOR_FREE_ORBIT_TARGET: DirectorVec3 = [0, 1, 0];
 export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewportProps>(function DirectorViewport(props, ref) {
     // onViewModeChange 只服务 DOM 层的切换器，绝不进 Canvas 子树：它的身份每次父级
     // render 都可能变化，穿透到 memo 化的 Canvas 会触发 configure 重建 renderer。
-    const { onViewModeChange, ...sceneProps } = props;
+    const { onViewModeChange, onCaptureReadyChange, ...sceneProps } = props;
     const captureContext = useRef<CaptureContext | null>(null);
+    const shellRef = useRef<HTMLDivElement>(null);
+    const [shellSize, setShellSize] = useState({ width: 0, height: 0 });
+    useEffect(() => {
+        const shell = shellRef.current;
+        if (!shell) return;
+        const observer = new ResizeObserver(([entry]) => {
+            if (entry) setShellSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+        });
+        observer.observe(shell);
+        return () => observer.disconnect();
+    }, []);
+    const aspectRatio = props.scene.aspectRatio || "adaptive";
+    const frame = resolveDirectorFrameRect(shellSize.width, shellSize.height, aspectRatio);
     // 地面点连同 owner canvas 一起记录：owner 不是当前 renderer 的 canvas 就是陈旧值。
     const groundRef = useRef<{ owner: HTMLCanvasElement; point: DirectorGroundPoint } | null>(null);
     const orbitControlsRef = useRef<DirectorOrbitControls | null>(null);
+    const orbitOrientationListenerRef = useRef<(() => void) | null>(null);
+    const [freeOrientation, setFreeOrientation] = useState<DirectorOrientation>([0, 0, 0, 1]);
+    const [cameraOrientation, setCameraOrientation] = useState<DirectorOrientation>([0, 0, 0, 1]);
+    const onCameraOrientation = useCallback((next: DirectorOrientation) => {
+        setCameraOrientation((current) => current.every((value, index) => Math.abs(value - next[index]) < 0.002) ? current : next);
+    }, []);
     /** pointermove 高频路径只写 ref，不触发 render；清空只允许由该点的 owner 发起。 */
     const onGroundPoint = useCallback((owner: HTMLCanvasElement, point: DirectorGroundPoint | null) => {
         if (point) {
@@ -83,12 +112,33 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
         if (groundRef.current?.owner === owner) groundRef.current = null;
     }, []);
     const onOrbitControls = useCallback((controls: DirectorOrbitControls | null) => {
+        orbitOrientationListenerRef.current?.();
+        orbitOrientationListenerRef.current = null;
         orbitControlsRef.current = controls;
+        if (!controls) return;
+        const readOrientation = () => {
+            const { x, y, z, w } = controls.object.quaternion;
+            const next: DirectorOrientation = [x, y, z, w];
+            setFreeOrientation((current) => current.every((value, index) => Math.abs(value - next[index]) < 0.002) ? current : next);
+        };
+        controls.addEventListener("change", readOrientation);
+        orbitOrientationListenerRef.current = () => controls.removeEventListener("change", readOrientation);
+        readOrientation();
     }, []);
+    useEffect(() => () => orbitOrientationListenerRef.current?.(), []);
+    const resetView = useCallback(() => {
+        onViewModeChange?.("free");
+        orbitControlsRef.current?.reset();
+    }, [onViewModeChange]);
     // retryKey 变化会真正重建 Canvas 与 ErrorBoundary，而不是只换文案。
     const [retryKey, setRetryKey] = useState(0);
     // capture 可用性：上下文丢失期间不得再使用失效 renderer；恢复后需重新登记。
     const [capture, dispatchCapture] = useReducer(reduceDirectorCapture, directorCaptureInitial);
+    const captureReady = directorCaptureUsable(capture);
+    useEffect(() => {
+        onCaptureReadyChange?.(captureReady);
+    }, [captureReady, onCaptureReadyChange]);
+    useEffect(() => () => onCaptureReadyChange?.(false), [onCaptureReadyChange]);
     const captureRef = useRef(capture);
     captureRef.current = capture;
     // 加载失败的对象 id -> 该对象自己的 retry；Canvas 内部无法呈现可操作提示，统一提到 DOM 层。
@@ -135,11 +185,11 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
         return captureContext.current;
     };
     useImperativeHandle(ref, () => ({
-        capture: (mode) => captureFrame(usableContext(), mode),
-        recordVideo: (duration, fps) => recordCanvas(usableContext(), duration, fps),
+        capture: (mode) => captureFrame(usableContext(), mode, aspectRatio),
+        recordVideo: (duration, fps) => recordCanvas(usableContext(), duration, fps, aspectRatio),
         readCameraTransform: () => {
             const camera = usableContext()?.camera;
-            return camera ? { position: camera.position.toArray() as DirectorTransform["position"], rotation: [camera.rotation.x, camera.rotation.y, camera.rotation.z], scale: [1, 1, 1] } : null;
+            return camera ? directorStageLocalCamera(directorStageTransform(props.scene), { position: camera.position.toArray() as DirectorTransform["position"], rotation: [camera.rotation.x, camera.rotation.y, camera.rotation.z], scale: [1, 1, 1] }) : null;
         },
         readPlacementIntent: () => {
             const context = usableContext();
@@ -147,16 +197,17 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
             // owner 校验：上下文重建后，旧 renderer canvas 记录的点一律不采用。
             const tracked = groundRef.current;
             const pointer = tracked && tracked.owner === context.gl.domElement ? tracked.point : null;
-            // 读实例当前 target，而不是 activeCamera.target prop；投影到 y=0 即取 x/z。
+            // 读实例当前世界系 target，再转回场景局部 XZ；平移/旋转/缩放后仍能按原坐标放置。
             const target = orbitControlsRef.current?.target;
-            return { pointer, orbitTarget: finiteDirectorGroundPoint(target?.x, target?.z) };
+            const localTarget = target ? directorStageLocalPoint(directorStageTransform(props.scene), target.toArray() as DirectorVec3) : null;
+            return { pointer, orbitTarget: finiteDirectorGroundPoint(localTarget?.[0], localTarget?.[2]) };
         },
-    }), []);
+    }), [aspectRatio, props.scene]);
 
     return (
         // data-renderer-ready 直接来自 directorCaptureUsable：capture context 已登记且未 lost。
         // 这是真实就绪信号，供 E2E 在触发 context loss 前确定监听器已安装。
-        <div className="director-viewport-shell" data-renderer-ready={directorCaptureUsable(capture) ? "true" : "false"}>
+        <div ref={shellRef} className="director-viewport-shell" data-renderer-ready={directorCaptureUsable(capture) ? "true" : "false"}>
             <DirectorViewportErrorBoundary key={`boundary-${retryKey}`} onRelease={releaseCapture} onRetry={retry}>
                 <DirectorCanvasSurface
                     key={`canvas-${retryKey}`}
@@ -168,10 +219,12 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
                     onLoadStateChange={onLoadStateChange}
                     onGroundPoint={onGroundPoint}
                     onOrbitControls={onOrbitControls}
+                    onCameraOrientation={onCameraOrientation}
                 />
             </DirectorViewportErrorBoundary>
+            {aspectRatio !== "adaptive" && frame.width > 0 ? <div data-director-aspect-frame={aspectRatio} aria-label={`${aspectRatio} 画幅取景框`} className="pointer-events-none absolute rounded-xl border border-white/35" style={{ zIndex: 1, left: frame.x, top: frame.y, width: frame.width, height: frame.height, boxShadow: "0 0 0 100vmax rgba(0, 0, 0, 0.68)" }} /> : null}
             {/* 取景切换是纯视口状态：放在 DOM 层，不随 Canvas 重建而丢失。 */}
-            {onViewModeChange ? <DirectorViewToolbar viewMode={props.viewMode ?? DIRECTOR_DEFAULT_VIEW_MODE} onViewModeChange={onViewModeChange} /> : null}
+            {onViewModeChange ? <DirectorViewToolbar viewMode={props.viewMode ?? DIRECTOR_DEFAULT_VIEW_MODE} orientation={props.viewMode === "camera" ? cameraOrientation : freeOrientation} onViewModeChange={onViewModeChange} onResetView={resetView} /> : null}
             {capture.contextLost ? (
                 <DirectorViewportNotice
                     title="3D 显示上下文已丢失"
@@ -198,7 +251,7 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
 });
 
 // onViewModeChange 被显式排除：切换器活在 DOM 层，Canvas 子树只需要 viewMode 取值。
-type DirectorCanvasSurfaceProps = Omit<DirectorViewportProps, "onViewModeChange"> & {
+type DirectorCanvasSurfaceProps = Omit<DirectorViewportProps, "onViewModeChange" | "onCaptureReadyChange"> & {
     onCaptureContext: (context: CaptureContext) => void;
     onRelease: () => void;
     onContextLost: () => void;
@@ -206,6 +259,7 @@ type DirectorCanvasSurfaceProps = Omit<DirectorViewportProps, "onViewModeChange"
     onLoadStateChange: (id: string, signal: DirectorLoadSignal, retry: () => void) => void;
     onGroundPoint: (owner: HTMLCanvasElement, point: DirectorGroundPoint | null) => void;
     onOrbitControls: (controls: DirectorOrbitControls | null) => void;
+    onCameraOrientation: (orientation: DirectorOrientation) => void;
 };
 
 /**
@@ -218,7 +272,7 @@ type DirectorCanvasSurfaceProps = Omit<DirectorViewportProps, "onViewModeChange"
  * 只有 props 真的变化才重渲染，retryKey 变化仍由外层 key 触发真正 remount。
  */
 const DirectorCanvasSurface = memo(function DirectorCanvasSurface(props: DirectorCanvasSurfaceProps) {
-    const { onCaptureContext, onRelease, onContextLost, onContextRestored, onLoadStateChange, onGroundPoint, onOrbitControls, ...sceneProps } = props;
+    const { onCaptureContext, onRelease, onContextLost, onContextRestored, onLoadStateChange, onGroundPoint, onOrbitControls, onCameraOrientation, ...sceneProps } = props;
     const onSelectObject = sceneProps.onSelectObject;
     const onPointerMissed = useCallback(() => onSelectObject(null), [onSelectObject]);
 
@@ -241,6 +295,7 @@ const DirectorCanvasSurface = memo(function DirectorCanvasSurface(props: Directo
                     onLoadStateChange={onLoadStateChange}
                     onGroundPoint={onGroundPoint}
                     onOrbitControls={onOrbitControls}
+                    onCameraOrientation={onCameraOrientation}
                 />
             </Suspense>
         </Canvas>
@@ -288,11 +343,17 @@ function DirectorViewportNotice({ title, description, actionLabel, onAction, var
     );
 }
 
-function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transformMode, renderMode, playhead, playing, showMotionPaths = false, viewMode = DIRECTOR_DEFAULT_VIEW_MODE, onSelectObject, onSelectBone, onObjectTransform, onBoneTransform, onActorRigReady, onCaptureContext, onRelease, onContextLost, onContextRestored, onLoadStateChange, onGroundPoint, onOrbitControls }: DirectorCanvasSurfaceProps) {
+function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transformMode, renderMode, playhead, playing, showMotionPaths = false, viewMode = DIRECTOR_DEFAULT_VIEW_MODE, onSelectObject, onSelectBone, onObjectTransform, onBoneTransform, onActorRigReady, onCaptureContext, onRelease, onContextLost, onContextRestored, onLoadStateChange, onGroundPoint, onOrbitControls, onCameraOrientation }: DirectorCanvasSurfaceProps) {
     const { gl, camera, scene: threeScene, invalidate, set, size } = useThree();
     const orbitRef = useRef<DirectorOrbitControls>(null);
+    const stage = directorStageTransform(scene);
+    const stageMatrix = useMemo(() => directorStageMatrix(stage), [stage]);
     const [transforming, setTransforming] = useState(false);
     const displayClayRestoreRef = useRef<(() => void) | null>(null);
+    const panoramaSphereRef = useRef<Mesh | null>(null);
+    const panoramaSettings = directorPanoramaSphere(scene);
+    const panoramaDisplayRef = useRef({ ...panoramaSettings, renderMode });
+    panoramaDisplayRef.current = { ...panoramaSettings, renderMode };
     // 三台相机各司其职、互不共享：free 只由 OrbitControls 驱动，CAM/正交只在各自模式下
     // 由取景数据接管。切换 viewMode 只挪动「谁是活动相机」这个指针，任何一台的内部状态
     // 都不会因为切换而被读写——这是「切换不丢失/不污染任一相机状态」的唯一来源。
@@ -308,6 +369,11 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
     const camFraming = resolveDirectorViewFraming({ scene, mode: viewMode, playhead });
     const orthoFraming = resolveDirectorOrthographicFraming({ scene, mode: viewMode });
     const effectiveViewport = resolveDirectorEffectiveViewport({ mode: viewMode, framing: camFraming });
+    useFrame(() => {
+        if (viewMode !== "camera" || effectiveViewport.camera !== "camera") return;
+        const { x, y, z, w } = camCamera.quaternion;
+        onCameraOrientation([x, y, z, w]);
+    });
     const actorMotionPaths = useMemo(() => showMotionPaths ? scene.objects.filter((object) => object.visible && (object.kind === "actor" || object.primitive === "character") && directorTransformPathLength(object.keyframes) > 0.001) : [], [scene.objects, showMotionPaths]);
     const cameraMotionPaths = useMemo(() => showMotionPaths ? scene.cameras.filter((item) => directorTransformPathLength(item.keyframes) > 0.001) : [], [scene.cameras, showMotionPaths]);
     const suspendDisplayMaterialOverride = useCallback(() => {
@@ -345,15 +411,17 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
 
     /**
      * 地面拾取：renderer 自己的 canvas 上做 pointer 监听，再用真实 Raycaster 与
-     * 世界 y=0 Plane 求交。不走 mesh onPointerMove（会被物体 stopPropagation 截断），
+     * 变换后的场景局部 y=0 Plane 求交。不走 mesh onPointerMove（会被物体 stopPropagation 截断），
      * 也不做 DOM 像素伪换算；因此 pointer 悬停在物体上方时射线仍与地面相交。
      * 高频路径只写 ref，绝不 setState。
      */
     useEffect(() => {
         const canvasElement = gl.domElement;
         const raycaster = new Raycaster();
-        const groundPlane = new Plane(new Vector3(0, 1, 0), 0);
+        const groundPlane = new Plane(new Vector3(0, 1, 0), 0).applyMatrix4(stageMatrix);
+        const inverseStageMatrix = stageMatrix.clone().invert();
         const hit = new Vector3();
+        const localHit = new Vector3();
         const ndc = new Vector2();
 
         const onPointerMove = (event: PointerEvent) => {
@@ -363,7 +431,8 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
             raycaster.setFromCamera(ndc, camera);
             // 射线与地面平行或背离时 intersectPlane 返回 null：保留上一个合法点，不写非法值。
             if (!raycaster.ray.intersectPlane(groundPlane, hit)) return;
-            const point = finiteDirectorGroundPoint(hit.x, hit.z);
+            localHit.copy(hit).applyMatrix4(inverseStageMatrix);
+            const point = finiteDirectorGroundPoint(localHit.x, localHit.z);
             if (point) onGroundPoint(canvasElement, point);
         };
 
@@ -373,7 +442,7 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
             // 这个 renderer 的 canvas 卸载后，它记录的地面点不得再被读到。
             onGroundPoint(canvasElement, null);
         };
-    }, [camera, gl, onGroundPoint]);
+    }, [camera, gl, onGroundPoint, stageMatrix]);
 
     // OrbitControls 的真实 target 只能从实例读；activeCamera.target 只是初始 prop。
     // 挂载期登记一次即可：drei 重建实例会连带重跑本 effect。
@@ -383,9 +452,58 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
     }, [onOrbitControls]);
 
     useEffect(() => {
+        let cancelled = false;
+        let texture: Texture | null = null;
+        let sphere: Mesh | null = null;
         threeScene.background = new Color(scene.background);
         invalidate();
-    }, [invalidate, scene.background, threeScene]);
+        if (scene.panorama?.url) {
+            void resolveImageUrl(scene.panorama.storageKey, scene.panorama.url, { cacheMiss: true }).then((url) => {
+                if (cancelled) return;
+                new TextureLoader().load(url, (loaded) => {
+                    if (cancelled) { loaded.dispose(); return; }
+                    loaded.mapping = EquirectangularReflectionMapping;
+                    loaded.colorSpace = SRGBColorSpace;
+                    texture = loaded;
+                    threeScene.background = loaded;
+                    const backdrop = new Mesh(new SphereGeometry(1, 64, 32), new MeshBasicMaterial({ map: loaded, side: BackSide, depthWrite: false, toneMapped: false }));
+                    backdrop.userData.directorPanoramaSphere = true;
+                    backdrop.raycast = () => {};
+                    backdrop.renderOrder = -1000;
+                    backdrop.scale.setScalar(panoramaDisplayRef.current.radius);
+                    backdrop.rotation.y = panoramaDisplayRef.current.rotation * Math.PI / 180;
+                    backdrop.visible = panoramaDisplayRef.current.renderMode === "beauty";
+                    sphere = backdrop;
+                    panoramaSphereRef.current = backdrop;
+                    threeScene.add(backdrop);
+                    invalidate();
+                });
+            });
+        }
+        return () => {
+            cancelled = true;
+            if (sphere) {
+                threeScene.remove(sphere);
+                if (panoramaSphereRef.current === sphere) panoramaSphereRef.current = null;
+                sphere.geometry.dispose();
+                (sphere.material as MeshBasicMaterial).dispose();
+            }
+            if (texture) {
+                if (threeScene.background === texture) threeScene.background = new Color(scene.background);
+                texture.dispose();
+            }
+        };
+    }, [invalidate, scene.background, scene.panorama?.storageKey, scene.panorama?.url, threeScene]);
+
+    useEffect(() => {
+        threeScene.backgroundRotation.y = panoramaSettings.rotation * Math.PI / 180;
+        if (panoramaSphereRef.current) {
+            panoramaSphereRef.current.rotation.y = panoramaSettings.rotation * Math.PI / 180;
+            panoramaSphereRef.current.scale.setScalar(panoramaSettings.radius);
+            panoramaSphereRef.current.visible = renderMode === "beauty";
+        }
+        invalidate();
+    }, [invalidate, panoramaSettings.radius, panoramaSettings.rotation, renderMode, threeScene]);
 
     useEffect(() => {
         const material = renderMode === "depth" ? new MeshDepthMaterial() : renderMode === "normal" ? new MeshNormalMaterial() : renderMode === "pose" ? new MeshBasicMaterial({ color: "#ffffff", wireframe: true }) : null;
@@ -420,6 +538,8 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
         invalidate();
     }, [camCamera, effectiveViewport.camera, freeCamera, invalidate, orthoCamera, set]);
 
+    const stagePalette = directorStagePalette(scene.background);
+    const ground = directorGroundSettings(scene);
     return (
         <>
             {/* CAM 与正交轴向的取景各自独立同步到专属相机对象，互不干扰；free 完全交给
@@ -427,12 +547,14 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
             <DirectorShotCameraSync camera={camCamera} framing={camFraming} />
             <DirectorOrthoCameraSync camera={orthoCamera} framing={orthoFraming} aspect={size.width / Math.max(size.height, 1)} />
             <ambientLight intensity={scene.environmentIntensity * 0.35} />
+            <group position={stage.position} rotation={stage.rotation.map((degrees) => degrees * Math.PI / 180) as DirectorVec3} scale={stage.scale}>
             {scene.lights.map((light) => <DirectorLightView key={light.id} light={light} />)}
-            {scene.gridVisible ? <Grid position={[0, 0, 0]} infiniteGrid fadeDistance={40} fadeStrength={5} cellSize={0.5} sectionSize={5} cellColor="#8f99a3" sectionColor="#626d77" /> : null}
-            <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, -0.012, 0]}>
+            {viewMode === "free" && renderMode === "beauty" ? scene.cameras.map((item) => <DirectorCameraAid key={item.id} item={item} scene={scene} playhead={playhead} stage={stage} active={item.id === resolveDirectorActiveCamera(scene)?.id} labelsVisible={scene.labelsVisible !== false} />) : null}
+            {scene.gridVisible ? <Grid position={[0, 0, 0]} infiniteGrid fadeDistance={40} fadeStrength={5} cellSize={0.5} sectionSize={5} cellColor={stagePalette.cell} sectionColor={stagePalette.section} /> : null}
+            {ground.visible ? <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, ground.height - 0.012, 0]}>
                 <planeGeometry args={[120, 120]} />
-                <meshStandardMaterial color="#aeb7bf" roughness={0.92} />
-            </mesh>
+                <meshStandardMaterial color={stagePalette.ground} roughness={0.92} transparent={ground.opacity < 1} opacity={ground.opacity} depthWrite={ground.opacity >= 1} />
+            </mesh> : null}
             {actorMotionPaths.map((object) => <DirectorTransformPath key={`actor-path-${object.id}`} keyframes={object.keyframes} playhead={playhead} color="#61d2ad" />)}
             {cameraMotionPaths.map((item) => <DirectorTransformPath key={`camera-path-${item.id}`} keyframes={item.keyframes} playhead={playhead} color="#78a9ff" />)}
             {scene.objects.filter((item) => item.visible).map((object) => (
@@ -441,6 +563,7 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
                     object={object}
                     selected={selectedObjectId === object.id}
                     selectedBone={selectedObjectId === object.id ? selectedBone : null}
+                    showLabel={scene.labelsVisible !== false && (object.kind === "actor" || object.primitive === "character")}
                     transformMode={transformMode}
                     playhead={playhead}
                     onSelect={() => onSelectObject(object.id)}
@@ -452,6 +575,7 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
                     onLoadStateChange={onLoadStateChange}
                 />
             ))}
+            </group>
             {/* 只有有效 free 回落允许环绕：drei 只在 enabled 时调 controls.update()，CAM/正交下这是
                 真正的锁定，不会有 controls 每帧把相机拽回自己 target 的回写竞争。
                 camera 显式绑定 freeCamera：即使 state.camera 当前指向别的相机，也绝不会
@@ -459,6 +583,40 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
             <OrbitControls ref={orbitRef} makeDefault camera={freeCamera} enabled={!transforming && effectiveViewport.orbit} target={DIRECTOR_FREE_ORBIT_TARGET} minDistance={0.6} maxDistance={80} />
         </>
     );
+}
+
+/** Editor-only camera position and frustum, deliberately excluded from captures. */
+function DirectorCameraAid({ item, scene, playhead, stage, active, labelsVisible }: { item: DirectorScene["cameras"][number]; scene: DirectorScene; playhead: number; stage: NonNullable<DirectorScene["stageTransform"]>; active: boolean; labelsVisible: boolean }) {
+    const framing = resolveDirectorCameraLocalFraming(scene, item, playhead);
+    const transform = interpolateDirectorTransform(item.transform, item.keyframes, playhead);
+    const localPosition = framing?.position ?? transform.position;
+    const position = new Vector3(...localPosition);
+    const target = new Vector3(...(framing?.target ?? item.target));
+    const direction = target.clone().sub(position);
+    if (direction.lengthSq() < 1e-8) direction.set(0, 0, -1).applyEuler(new Euler(...transform.rotation));
+    const up = framing?.up ?? resolveDirectorViewUp(transform.rotation, direction.toArray() as DirectorVec3);
+    const orientation = new Quaternion().setFromRotationMatrix(new Matrix4().lookAt(position, position.clone().add(direction), new Vector3(...up)));
+    const distance = Math.min(2.5, Math.max(1.2, direction.length() * 0.3));
+    const halfHeight = Math.tan((Math.min(120, Math.max(10, item.fov || 50)) * Math.PI) / 360) * distance;
+    const halfWidth = halfHeight * 16 / 9;
+    const corners: DirectorVec3[] = [[-halfWidth, halfHeight, -distance], [halfWidth, halfHeight, -distance], [halfWidth, -halfHeight, -distance], [-halfWidth, -halfHeight, -distance]];
+    const segments: DirectorVec3[] = corners.flatMap((corner, index) => [[0, 0, 0] as DirectorVec3, corner, corner, corners[(index + 1) % 4]]);
+    const worldPosition = new Vector3(...directorStagePoint(stage, localPosition));
+    const [nearViewer, setNearViewer] = useState(false);
+    useFrame(({ camera }) => {
+        const next = camera.position.distanceTo(worldPosition) < 0.5;
+        setNearViewer((current) => current === next ? current : next);
+    });
+    if (nearViewer || !framing) return null;
+    return <group userData={{ directorEditorOnly: true }} position={localPosition} quaternion={orientation}>
+        <Line segments points={segments} color={active ? "#5b9dc7" : "#3f6f8b"} lineWidth={1} transparent opacity={active ? 0.5 : 0.3} raycast={() => {}} />
+        <Html center style={{ pointerEvents: "none" }}>
+            <div className="flex flex-col items-center gap-0.5 whitespace-nowrap" style={{ color: "#fff", textShadow: "0 1px 3px #000, 0 0 5px #000" }}>
+                {labelsVisible ? <span data-director-camera-label={item.id} style={{ fontSize: 12, fontWeight: 600 }}>{item.name}</span> : null}
+                <VideoIcon size={25} color={active ? "#f7a815" : "#8ba5b6"} strokeWidth={2.8} aria-hidden />
+            </div>
+        </Html>
+    </group>;
 }
 
 /** 起点、终点、路径点、方向与当前进度共用一条 Transform 关键帧路径。 */
@@ -549,7 +707,7 @@ function DirectorOrthoCameraSync({ camera, framing, aspect }: { camera: Orthogra
     return null;
 }
 
-function DirectorObjectView({ object, selected, selectedBone, transformMode, playhead, onSelect, onSelectBone, onTransforming, onTransform, onBoneTransform, onActorRigReady, onLoadStateChange }: { object: DirectorObject; selected: boolean; selectedBone: string | null; transformMode: DirectorViewportProps["transformMode"]; playhead: number; onSelect: () => void; onSelectBone: (bone: string | null) => void; onTransforming: (value: boolean) => void; onTransform: (from: DirectorTransform, to: DirectorTransform) => void; onBoneTransform: (bone: string, rotation: DirectorQuat) => void; onActorRigReady: (rig: DirectorRig, animations: AnimationClip[]) => void; onLoadStateChange: (id: string, signal: DirectorLoadSignal, retry: () => void) => void }) {
+function DirectorObjectView({ object, selected, selectedBone, showLabel, transformMode, playhead, onSelect, onSelectBone, onTransforming, onTransform, onBoneTransform, onActorRigReady, onLoadStateChange }: { object: DirectorObject; selected: boolean; selectedBone: string | null; showLabel: boolean; transformMode: DirectorViewportProps["transformMode"]; playhead: number; onSelect: () => void; onSelectBone: (bone: string | null) => void; onTransforming: (value: boolean) => void; onTransform: (from: DirectorTransform, to: DirectorTransform) => void; onBoneTransform: (bone: string, rotation: DirectorQuat) => void; onActorRigReady: (rig: DirectorRig, animations: AnimationClip[]) => void; onLoadStateChange: (id: string, signal: DirectorLoadSignal, retry: () => void) => void }) {
     const [target, setTarget] = useState<Group | null>(null);
     const resolved = interpolateDirectorTransform(object.transform, object.keyframes, playhead);
     // 手势进行中冻结声明式 transform，交由 gizmo 直接改写 Object3D；终态后再由场景状态接管。
@@ -568,6 +726,9 @@ function DirectorObjectView({ object, selected, selectedBone, transformMode, pla
                 }}
             >
                 <DirectorObjectVisual object={object} selected={selected} selectedBone={selectedBone} playhead={playhead} onSelectBone={onSelectBone} onBoneTransform={onBoneTransform} onActorRigReady={onActorRigReady} onLoadStateChange={onLoadStateChange} />
+                {showLabel ? <Html position={[0, 2.04, 0]} center style={{ pointerEvents: "none" }}>
+                    <span data-director-actor-label={object.id} role="note" aria-label={`角色 ${object.name}`} style={{ color: "#fff", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", textShadow: "0 1px 3px #000, 0 0 5px #000" }}>{object.name}</span>
+                </Html> : null}
             </group>
             {selected && target ? (
                 <DirectorObjectGizmo
@@ -1104,66 +1265,89 @@ function DirectorLightView({ light }: { light: DirectorLight }) {
     return <directionalLight position={position} color={light.color} intensity={light.intensity} castShadow={light.castShadow} shadow-mapSize-width={1024} shadow-mapSize-height={1024} />;
 }
 
-async function captureFrame(context: CaptureContext | null, mode: DirectorRenderMode) {
+async function captureFrame(context: CaptureContext | null, mode: DirectorRenderMode, aspectRatio: DirectorAspectRatio) {
     if (!context) throw new Error("3D 视口尚未就绪");
     const { gl, scene, camera } = context;
     const resumeDisplayMaterialOverride = context.suspendDisplayMaterialOverride();
     const previous = scene.overrideMaterial;
     const override = mode === "depth" ? new MeshDepthMaterial() : mode === "normal" ? new MeshNormalMaterial() : mode === "pose" ? new MeshBasicMaterial({ color: "#ffffff", wireframe: true }) : null;
     const restoreClayMaterials = mode === "clay" ? applyClaySceneMaterials(scene) : null;
+    const resumeEditorOverlays = suspendDirectorEditorOverlays(scene);
+    const resumePanoramaSphere = mode === "beauty" ? null : suspendDirectorPanoramaSphere(scene);
     try {
         scene.overrideMaterial = override;
         gl.render(scene, camera);
-        return await canvasToBlob(gl.domElement);
+        return await canvasToBlob(cropDirectorCanvas(gl.domElement, aspectRatio));
     } finally {
         scene.overrideMaterial = previous;
         restoreClayMaterials?.();
         override?.dispose();
         resumeDisplayMaterialOverride();
+        resumeEditorOverlays();
+        resumePanoramaSphere?.();
         gl.render(scene, camera);
     }
 }
 
-async function recordCanvas(context: CaptureContext | null, duration: number, fps: number) {
+async function recordCanvas(context: CaptureContext | null, duration: number, fps: number, aspectRatio: DirectorAspectRatio) {
     if (!context) throw new Error("3D 视口尚未就绪");
     if (!context.gl.domElement.captureStream || typeof MediaRecorder === "undefined") throw new Error("当前浏览器不支持视频录制，请导出帧序列");
     const resumeDisplayMaterialOverride = context.suspendDisplayMaterialOverride();
     const previousMaterial = context.scene.overrideMaterial;
     const restoreClayMaterials = applyClaySceneMaterials(context.scene);
-    context.scene.overrideMaterial = null;
-    context.gl.render(context.scene, context.camera);
-    const stream = context.gl.domElement.captureStream(fps);
-    const mimeType = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find((type) => MediaRecorder.isTypeSupported(type)) || "";
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-    const chunks: Blob[] = [];
-    // captureStream 依赖渲染循环持续产出新帧；循环里任何未捕获异常都会让剩余录制变成空帧，
-    // 与其 5 秒后静默产出残缺视频回写画布，不如捕获到首个错误就立刻中止并报错。
-    let renderError: Error | null = null;
-    const onRenderError = () => {
-        renderError ??= new Error("白膜视频录制期间发生渲染错误，请重试");
-        if (recorder.state !== "inactive") recorder.stop();
-    };
-    window.addEventListener("error", onRenderError);
-    const result = new Promise<Blob>((resolve, reject) => {
-        recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
-        recorder.onerror = () => reject(new Error("白膜视频录制失败"));
-        recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || "video/webm" }));
-    });
-    recorder.start(250);
-    const stopTimer = window.setTimeout(() => { if (recorder.state !== "inactive") recorder.stop(); }, Math.max(250, duration * 1000 + 120));
+    let cropFrame = 0;
+    let stream: MediaStream | null = null;
+    let stopTimer: number | null = null;
+    let onRenderError: (() => void) | null = null;
+    const resumeEditorOverlays = suspendDirectorEditorOverlays(context.scene);
+    const resumePanoramaSphere = suspendDirectorPanoramaSphere(context.scene);
     try {
+        context.scene.overrideMaterial = null;
+        context.gl.render(context.scene, context.camera);
+        const sourceCanvas = context.gl.domElement;
+        const outputCanvas = aspectRatio === "adaptive" ? sourceCanvas : cropDirectorCanvas(sourceCanvas, aspectRatio);
+        const crop = aspectRatio === "adaptive" ? null : resolveDirectorPixelCrop(sourceCanvas.width, sourceCanvas.height, aspectRatio);
+        const outputContext = crop ? outputCanvas.getContext("2d") : null;
+        if (crop && outputContext) {
+            const draw = () => {
+                outputContext.drawImage(sourceCanvas, crop.x, crop.y, crop.width, crop.height, 0, 0, outputCanvas.width, outputCanvas.height);
+                cropFrame = window.requestAnimationFrame(draw);
+            };
+            cropFrame = window.requestAnimationFrame(draw);
+        }
+        stream = outputCanvas.captureStream(fps);
+        const mimeType = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find((type) => MediaRecorder.isTypeSupported(type)) || "";
+        const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+        const chunks: Blob[] = [];
+        // captureStream 依赖渲染循环持续产出新帧；异常立即停止，避免静默回写残缺视频。
+        let renderError: Error | null = null;
+        onRenderError = () => {
+            renderError ??= new Error("白膜视频录制期间发生渲染错误，请重试");
+            if (recorder.state !== "inactive") recorder.stop();
+        };
+        window.addEventListener("error", onRenderError);
+        const result = new Promise<Blob>((resolve, reject) => {
+            recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+            recorder.onerror = () => reject(new Error("白膜视频录制失败"));
+            recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || "video/webm" }));
+        });
+        recorder.start(250);
+        stopTimer = window.setTimeout(() => { if (recorder.state !== "inactive") recorder.stop(); }, Math.max(250, duration * 1000 + 120));
         const blob = await result;
         if (renderError) throw renderError;
         const recorded = await probeRecordedDuration(blob);
         if (!Number.isFinite(recorded) || recorded < Math.max(0.25, duration * 0.5)) throw new Error("白膜视频时长异常，录制可能不完整，请重试");
         return blob;
     } finally {
-        window.clearTimeout(stopTimer);
-        window.removeEventListener("error", onRenderError);
-        stream.getTracks().forEach((track) => track.stop());
+        if (stopTimer !== null) window.clearTimeout(stopTimer);
+        if (cropFrame) window.cancelAnimationFrame(cropFrame);
+        if (onRenderError) window.removeEventListener("error", onRenderError);
+        stream?.getTracks().forEach((track) => track.stop());
         restoreClayMaterials();
         context.scene.overrideMaterial = previousMaterial;
         resumeDisplayMaterialOverride();
+        resumeEditorOverlays();
+        resumePanoramaSphere();
         context.gl.render(context.scene, context.camera);
     }
 }

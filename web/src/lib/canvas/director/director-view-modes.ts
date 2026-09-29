@@ -1,6 +1,7 @@
 import { Euler, Vector3 } from "three";
 
 import { interpolateDirectorTransform } from "@/lib/canvas/director/director-scene";
+import { directorStageDirection, directorStageMatrix, directorStagePoint, directorStageTransform } from "@/lib/canvas/director/director-stage-transform";
 import type { DirectorCamera, DirectorScene, DirectorShot, DirectorTransform, DirectorVec3 } from "@/types/director";
 
 /**
@@ -158,16 +159,41 @@ export function resolveDirectorViewFraming(input: { scene: DirectorScene; mode: 
     if (!directorViewModeCapabilities(input.mode).framed) return null;
     const camera = resolveDirectorActiveCamera(input.scene);
     if (!camera) return null;
-    const time = Number.isFinite(input.playhead) ? input.playhead : 0;
+    const local = resolveDirectorCameraLocalFraming(input.scene, camera, input.playhead);
+    if (!local) return null;
+    const stage = directorStageTransform(input.scene);
+    return { ...local, position: directorStagePoint(stage, local.position), target: directorStagePoint(stage, local.target), up: directorStageDirection(stage, local.up), near: local.near * stage.scale, far: local.far * stage.scale };
+}
+
+/** CAM 画面与自由视角机位辅助图形共用的场景局部取景；也支持非活动机位。 */
+export function resolveDirectorCameraLocalFraming(scene: DirectorScene, camera: DirectorCamera, playhead: number): DirectorViewFraming | null {
+    const time = Number.isFinite(playhead) ? playhead : 0;
     const transform: DirectorTransform = interpolateDirectorTransform(camera.transform, camera.keyframes, time);
-    if (![...transform.position, ...transform.rotation, ...camera.target].every(Number.isFinite)) return null;
+    if (![...transform.position, ...transform.rotation].every(Number.isFinite)) return null;
     if (!directorUsablePerspectiveProjection({ fov: camera.fov, near: camera.near, far: camera.far })) return null;
-    const position = transform.position;
-    const raw = new Vector3(camera.target[0] - position[0], camera.target[1] - position[1], camera.target[2] - position[2]);
+    const followed = scene.objects.find((item) => item.id === camera.followObjectId);
+    const followedPosition = followed ? interpolateDirectorTransform(followed.transform, followed.keyframes, time).position : null;
+    const followAnchor = camera.followAnchor;
+    const followDelta = followedPosition && followAnchor && [...followedPosition, ...followAnchor].every(Number.isFinite)
+        ? followedPosition.map((value, index) => value - followAnchor[index]) as DirectorVec3 : null;
+    const position: DirectorVec3 = followDelta ? transform.position.map((value, index) => value + followDelta[index]) as DirectorVec3 : transform.position;
+    let requestedTarget = camera.target;
+    if (camera.lookAtMode === "rotation") {
+        const forward = new Vector3(0, 0, -1).applyEuler(new Euler(...transform.rotation));
+        requestedTarget = [position[0] + forward.x, position[1] + forward.y, position[2] + forward.z];
+    } else if (camera.lookAtMode !== "coordinates" && camera.lookAtObjectId) {
+        const object = scene.objects.find((item) => item.id === camera.lookAtObjectId);
+        if (object) {
+            const objectPosition = interpolateDirectorTransform(object.transform, object.keyframes, time).position;
+            if (objectPosition.every(Number.isFinite)) requestedTarget = [objectPosition[0], objectPosition[1] + (object.kind === "actor" || object.primitive === "character" ? 1.2 : 0), objectPosition[2]];
+        }
+    }
+    if (![...position, ...requestedTarget].every(Number.isFinite)) return null;
+    const raw = new Vector3(requestedTarget[0] - position[0], requestedTarget[1] - position[1], requestedTarget[2] - position[2]);
     const degenerate = raw.lengthSq() <= DIRECTOR_VIEW_COLLINEAR_EPSILON;
     // 位置与焦点重合时视线为零向量，lookAt 无解：沿摄影机自身 -Z 造一个 1m 外的焦点。
     const view = degenerate ? new Vector3(0, 0, -1).applyEuler(new Euler(...transform.rotation)) : raw;
-    const target: DirectorVec3 = degenerate ? [position[0] + view.x, position[1] + view.y, position[2] + view.z] : camera.target;
+    const target: DirectorVec3 = degenerate ? [position[0] + view.x, position[1] + view.y, position[2] + view.z] : requestedTarget;
     return { cameraId: camera.id, position, target, up: resolveDirectorViewUp(transform.rotation, view.toArray() as DirectorVec3), fov: camera.fov, near: camera.near, far: camera.far };
 }
 
@@ -345,7 +371,9 @@ export function resolveDirectorOrthographicFrustum(input: { horizontalSpan: numb
 export function resolveDirectorOrthographicFraming(input: { scene: DirectorScene; mode: DirectorViewMode }): DirectorOrthographicFraming | null {
     if (!isDirectorOrthographicAxis(input.mode)) return null;
     const axis = DIRECTOR_ORTHOGRAPHIC_AXES[input.mode];
-    const bounds = resolveDirectorFramingBounds(collectDirectorFramingPoints(input.scene));
+    const stage = directorStageTransform(input.scene);
+    const stageMatrix = directorStageMatrix(stage);
+    const bounds = resolveDirectorFramingBounds(collectDirectorFramingPoints(input.scene).map((point) => new Vector3(...point).applyMatrix4(stageMatrix).toArray() as DirectorVec3));
     const radius = Math.max(...bounds.extent) / 2;
     const distance = Math.max(radius * DIRECTOR_ORTHOGRAPHIC_DISTANCE_FACTOR, DIRECTOR_ORTHOGRAPHIC_MIN_EXTENT);
     const target = bounds.center;

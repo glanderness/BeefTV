@@ -263,7 +263,18 @@ function ErrorContent({ node, theme, onRetry, onReloadResource, onOpenTaskDetail
     };
     const submissionUncertain = isGenerationTaskSubmissionUncertain(errorDisplayTask) || explanation.uncertain;
     return (
-        <div className="flex max-w-[260px] flex-col items-center gap-3 px-5 text-center">
+        <div
+            data-canvas-no-zoom
+            data-canvas-wheel-scroll
+            className="canvas-node-error-content flex max-w-[260px] flex-col items-center gap-3 overflow-y-auto px-3 py-2 text-center"
+            style={{
+                boxSizing: "border-box",
+                width: `min(260px, calc(${Math.max(1, node.width)}px * var(--canvas-live-scale, 1)))`,
+                maxHeight: `calc(${Math.max(1, node.height)}px * var(--canvas-live-scale, 1))`,
+                transform: "scale(var(--canvas-live-inverse-scale, 1))",
+                transformOrigin: "center center",
+            }}
+        >
             <div className="w-full" style={{ color: submissionUncertain ? theme.node.text : theme.accent.danger }}>
                 <GenerationFailureNotice
                     compact

@@ -301,11 +301,12 @@ export function WorkspaceSidebarNav({ collapsed, onNavigate, onOpenSearch, onExp
                         ))}
                     </div>
                 ) : null}
-                <WorkspaceSidebarUpdate collapsed={collapsed} />
-                <AnimatedThemeToggler theme={theme} onThemeChange={setTheme} aria-label={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"} title={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"} className="flex min-h-9 items-center justify-center gap-2 rounded-lg text-foreground/65 hover:bg-foreground/5 hover:text-foreground focus-visible:outline focus-visible:outline-2">
-                    {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
-                    {!collapsed && <span className="text-sm">{theme === "dark" ? "浅色模式" : "深色模式"}</span>}
-                </AnimatedThemeToggler>
+                <div className={cn("app-workspace-sidebar-utility-row", collapsed && "is-collapsed")}>
+                    <WorkspaceSidebarUpdate collapsed={collapsed} />
+                    <AnimatedThemeToggler theme={theme} onThemeChange={setTheme} aria-label={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"} title={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"} className="app-workspace-theme-action">
+                        {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
+                    </AnimatedThemeToggler>
+                </div>
             </div>
         </div>
     );

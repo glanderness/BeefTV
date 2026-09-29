@@ -1,3 +1,5 @@
+import type { DirectorAspectRatio } from "@/lib/canvas/director/director-aspect-ratio";
+
 export type DirectorVec3 = [number, number, number];
 export type DirectorQuat = [number, number, number, number];
 
@@ -72,6 +74,8 @@ export type DirectorObject = {
     primitive?: DirectorPrimitiveKind;
     transform: DirectorTransform;
     color: string;
+    /** 独立的统一缩放倍率；旧场景缺省为 1，不抹平各轴比例。 */
+    uniformScale?: number;
     visible: boolean;
     castShadow: boolean;
     receiveShadow: boolean;
@@ -94,6 +98,12 @@ export type DirectorCamera = {
     name: string;
     transform: DirectorTransform;
     target: DirectorVec3;
+    /** 角色跟随以绑定帧的位置为锚；相机原有关键帧仍可叠加角色位移。 */
+    followObjectId?: string;
+    followAnchor?: DirectorVec3;
+    /** 旧场景缺省为坐标注视。 */
+    lookAtMode?: "coordinates" | "rotation" | "object";
+    lookAtObjectId?: string;
     focalLength: number;
     fov: number;
     aperture: number;
@@ -127,6 +137,17 @@ export type DirectorShot = {
     previewNodeId?: string;
     depthNodeId?: string;
     normalNodeId?: string;
+    screenshots?: DirectorScreenshot[];
+};
+
+export type DirectorScreenshot = {
+    id: string;
+    name: string;
+    storageKey: string;
+    url: string;
+    width: number;
+    height: number;
+    createdAt: string;
 };
 
 export type DirectorScene = {
@@ -136,6 +157,21 @@ export type DirectorScene = {
     background: string;
     environmentIntensity: number;
     gridVisible: boolean;
+    /** Snap new placement and XZ moves to the half-unit ground grid; absent means off. */
+    gridSnap?: boolean;
+    /** Optional for scenes saved before ground controls existed. */
+    ground?: { visible: boolean; opacity: number; height: number };
+    /** Whole stage transform; absent in older scenes means identity. Rotation is in degrees. */
+    stageTransform?: { scale: number; position: DirectorVec3; rotation: DirectorVec3 };
+    /** Editor overlays only; older scenes keep labels visible. */
+    labelsVisible?: boolean;
+    /** Missing in older saved scenes; treated as adaptive. */
+    aspectRatio?: DirectorAspectRatio;
+    /** Optional equirectangular backdrop; older scenes keep their solid color. */
+    panorama?: { url: string; storageKey?: string; name?: string; rotation: number };
+    /** Sphere controls remain available even before a panorama image is connected. */
+    panoramaRotation?: number;
+    panoramaRadius?: number;
     objects: DirectorObject[];
     cameras: DirectorCamera[];
     lights: DirectorLight[];

@@ -62,6 +62,8 @@ type Summary struct {
 
 type ClientContext struct {
 	NodeID           string `json:"nodeId,omitempty"`
+	Source           string `json:"source,omitempty"`
+	SceneID          string `json:"sceneId,omitempty"`
 	ConversationID   string `json:"conversationId,omitempty"`
 	MessageID        string `json:"messageId,omitempty"`
 	BatchIndex       int    `json:"batchIndex,omitempty"`

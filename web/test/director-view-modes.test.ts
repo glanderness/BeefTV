@@ -684,8 +684,11 @@ describe("切换器可发现、可键盘、无新增全局样式", () => {
         expect(toolbar).toContain('aria-label="导演台取景模式"');
     });
 
-    test("每个按钮都有 aria-label 与 title，图标化文字也能被读出", () => {
-        expect(toolbar).toContain("aria-label={`${item.label} ${item.hint}`}");
+    test("主视角与方向球轴向都有可读名称", () => {
+        expect(toolbar).toContain("aria-label={label}");
+        expect(toolbar).toContain('aria-label="方向球"');
+        expect(toolbar).toContain('aria-label={head.label}');
+        expect(toolbar).toContain('aria-label="重置视角"');
         expect(toolbar).toContain("title={item.hint}");
     });
 
@@ -711,10 +714,10 @@ describe("切换器可发现、可键盘、无新增全局样式", () => {
         expect(classNames).not.toContain("director-viewport-dock");
     });
 
-    test("对 DIRECTOR_VIEW_MODES 做整体 map，不写死具体模式或数量：新增/删减模式无需改这个文件", () => {
-        expect(toolbar).toContain("DIRECTOR_VIEW_MODES.map((item) => {");
-        expect(toolbar).not.toMatch(/item\.mode\s*===\s*"/);
-        expect(toolbar).not.toMatch(/DIRECTOR_VIEW_MODES\[\d/);
+    test("主视角从能力列表渲染，正交五轴由方向球提供", () => {
+        expect(toolbar).toContain("DIRECTOR_VIEW_MODES.filter((item) => primaryModes.has(item.mode))");
+        expect(toolbar).toContain("primary.map((item) => {");
+        expect(toolbar).toContain("heads.map((head) => {");
     });
 
     test("七个模式全部渲染：DIRECTOR_VIEW_MODES 有几项，toolbar 就自动出几个按钮", () => {

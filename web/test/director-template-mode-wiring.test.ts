@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { useDirectorWorkbenchStore } from "../src/stores/canvas/use-director-workbench-store";
 
 /**
  * 生产接线回归：模板与模式的领域函数正确，不代表真实入口用上了。
- * 这里锁住「新建必须选模板」「已有场景不弹模板」「时间轴只在动画模式」三条链路。
+ * 这里锁住「新建必须选模板」「已有场景不弹模板」「模式切换安全清理」三条链路。
  */
 const workbench = readFileSync(resolve(import.meta.dir, "../src/components/canvas/director/canvas-director-workbench.tsx"), "utf8");
 const dock = readFileSync(resolve(import.meta.dir, "../src/components/canvas/director/director-viewport-dock.tsx"), "utf8");
@@ -82,12 +83,8 @@ describe("模式接线", () => {
         expect(workbench).toContain("const capabilities = directorModeCapabilities(mode);");
     });
 
-    test("时间轴只在 capabilities.timeline 为真时渲染", () => {
-        expect(workbench).toContain("{capabilities.timeline ? <DirectorSequencer");
-    });
-
     test("动画模式把 Transform 轨迹接入视口，隐藏演员和零长度轨迹不显示", () => {
-        expect(workbench).toContain("showMotionPaths={capabilities.timeline}");
+        expect(workbench).toContain("showMotionPaths={sequencerVisible}");
         expect(viewport).toContain('object.visible && (object.kind === "actor" || object.primitive === "character")');
         expect(viewport).toContain("directorTransformPathLength(object.keyframes) > 0.001");
         expect(viewport).toContain("<Line points={points}");
@@ -149,8 +146,18 @@ describe("模式接线", () => {
         expect(workbench).not.toContain("border-l max-lg:hidden");
     });
 
-    test("store 的 setMode 走 resolveDirectorModeTransition，清理不靠组件自觉", () => {
-        expect(store).toContain("setMode: (mode) => set((state) => resolveDirectorModeTransition({ mode, playing: state.playing, autoKey: state.autoKey, renderMode: state.renderMode })),");
+    test("store 切离动画模式时停止播放、关闭 Auto Key，并夹回允许的渲染视图", () => {
+        const directorStore = useDirectorWorkbenchStore;
+        directorStore.getState().reset();
+        directorStore.getState().setMode("animate");
+        directorStore.getState().setRenderMode("pose");
+        directorStore.getState().setPlaying(true);
+        directorStore.getState().setAutoKey(true);
+        directorStore.getState().setMode("layout");
+        expect(directorStore.getState().playing).toBe(false);
+        expect(directorStore.getState().autoKey).toBe(false);
+        expect(directorStore.getState().renderMode).toBe("beauty");
+        directorStore.getState().reset();
     });
 
     test("mode 不写进 DirectorScene：类型文件里没有 mode 字段", () => {
@@ -171,8 +178,8 @@ describe("模式接线", () => {
         expect(workbench).toContain("}, [message, modal, open, scene, writeDraft]);");
         expect(workbench).toContain("}, [mirrorDraft, stagedTransaction]);");
         expect(workbench).toContain("}, [mirrorDraft]);");
-        // 快捷键监听只随 open 装卸，不随 mode 反复重挂。
-        expect(workbench).toContain("}, [open]);");
+        // 弹窗开关需暂停快捷键；mode 切换仍不得反复重挂监听器。
+        expect(workbench).toContain("}, [open, panoramaAIOpen, panoramaHistoryOpen]);");
     });
 });
 

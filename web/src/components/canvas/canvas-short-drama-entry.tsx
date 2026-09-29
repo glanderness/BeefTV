@@ -109,7 +109,7 @@ export function CanvasFreeformEmptyState({ commands }: { commands: CanvasCreateC
     const showQuickStarts = false;
     return (
         <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center px-4 pb-20 pt-24">
-            <div className="pointer-events-auto flex w-full max-w-[984px] flex-col items-center justify-center text-center" style={{ color: theme.node.text }}>
+            <div className="pointer-events-none select-none flex w-full max-w-[984px] flex-col items-center justify-center text-center" style={{ color: theme.node.text }}>
                 <div className="relative -top-2 flex items-center justify-center gap-1.5 text-sm font-medium tracking-tight">
                     <span className="relative inline-grid size-5 place-items-center" aria-hidden="true">
                         <PlusCircle className="size-[18px] opacity-80" />

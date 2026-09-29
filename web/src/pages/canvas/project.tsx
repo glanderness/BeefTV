@@ -2003,7 +2003,7 @@ function InfiniteCanvasPage() {
         setStylePickerOpen,
     });
 
-    const { applyDirectorOutput, createDirectorShot, openDirectorWorkbench, saveDirectorScene } = useCanvasDirector({
+    const { applyDirectorOutput, captureDirectorCover, createDirectorShot, openDirectorWorkbench, saveDirectorScene, shouldCaptureCover } = useCanvasDirector({
         projectId,
         domainProjectId: currentProject?.projectId,
         directorNodeId,
@@ -2640,6 +2640,7 @@ function InfiniteCanvasPage() {
                         readNodeContent={(nodeId) => (nodeId ? nodesRef.current.find((item) => item.id === nodeId)?.metadata?.content : undefined)}
                         professional={workspaceMode === "professional"}
                         onOpen={() => openDirectorWorkbench(contentNode.id)}
+                        onPromptChange={(composerContent) => handleConfigNodeChange(contentNode.id, { composerContent })}
                     />
                 );
             }
@@ -3614,10 +3615,13 @@ function InfiniteCanvasPage() {
                                 <CanvasDirectorWorkbench
                                     open
                                     scene={activeDirectorScene}
+                                    projectId={projectId}
                                     imageNodes={nodes.filter((node) => node.type === CanvasNodeType.Image && Boolean(node.metadata?.content))}
                                     onClose={() => setDirectorNodeId(null)}
                                     onChange={saveDirectorScene}
                                     onApply={applyDirectorOutput}
+                                    onShouldCaptureCover={shouldCaptureCover}
+                                    onCaptureCover={captureDirectorCover}
                                     onDeleteImageNode={(nodeId) => deleteNodes(new Set([nodeId]))}
                                     onFlush={() => flushCanvasStorePersistence()}
                                     onboardingScope={directorOnboardingScope}

@@ -4,6 +4,7 @@ import { prepareDesktopEditorsForUpdate } from "@/services/desktop-update-prepar
 export type { DesktopUpdateState, DesktopUpdateStatus };
 
 export const DESKTOP_UPDATE_POLL_INTERVAL_MS = 400;
+export const DESKTOP_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 const POLLED_STATUSES = new Set<DesktopUpdateStatus>(["checking", "downloading", "installing"]);
 
@@ -33,8 +34,10 @@ export type DesktopUpdateController = {
     getSnapshot: () => DesktopUpdateSnapshot;
     subscribe: (listener: (snapshot: DesktopUpdateSnapshot) => void) => () => void;
     start: () => Promise<void>;
+    check: () => Promise<void>;
     download: () => Promise<void>;
     install: () => Promise<void>;
+    downloadAndInstall: () => Promise<void>;
     retry: () => Promise<void>;
     dispose: () => void;
 };
@@ -160,7 +163,8 @@ export function userFacingDesktopUpdateError(error: string): string {
 
 export function shouldShowDesktopUpdaterControls(snapshot: DesktopUpdateSnapshot): boolean {
     if (snapshot.runtime !== "desktop") return false;
-    return snapshot.state.status !== "disabled";
+    if (["available", "downloading", "ready", "installing"].includes(snapshot.state.status)) return true;
+    return snapshot.state.status === "error" && Boolean(snapshot.state.latestVersion) && formatDesktopVersionLabel(snapshot.state.latestVersion) !== formatDesktopVersionLabel(snapshot.state.currentVersion);
 }
 
 function bindingErrorMessage(error: unknown): string {
@@ -302,8 +306,6 @@ export function createDesktopUpdateController(options: DesktopUpdateControllerOp
         } catch {
             if (disposed) return;
             apply({ ...emptyDesktopUpdateState(fallbackVersion), status: "error", error: "无法检查更新，请重试。" });
-        } finally {
-            lastAction = lastAction === "check" ? "none" : lastAction;
         }
     };
 
@@ -389,6 +391,24 @@ export function createDesktopUpdateController(options: DesktopUpdateControllerOp
         await start();
     };
 
+    const check = async () => {
+        if (actionBusy || persistBusy || !(
+            state.status === "idle" ||
+            state.status === "available" ||
+            (state.status === "error" && (lastAction === "check" || lastAction === "none"))
+        )) return;
+        startPromise = null;
+        lastAction = "check";
+        await start();
+    };
+
+    const downloadAndInstall = async () => {
+        if (actionBusy || persistBusy) return;
+        if (state.status === "error" && lastAction === "check") await check();
+        if (state.status === "available" || (state.status === "error" && lastAction === "download" && !stagedReady)) await download();
+        if (state.status === "ready" || (state.status === "error" && stagedReady)) await install();
+    };
+
     return {
         getSnapshot,
         subscribe: (listener) => {
@@ -402,8 +422,10 @@ export function createDesktopUpdateController(options: DesktopUpdateControllerOp
             };
         },
         start,
+        check,
         download,
         install,
+        downloadAndInstall,
         retry,
         dispose: () => {
             disposed = true;

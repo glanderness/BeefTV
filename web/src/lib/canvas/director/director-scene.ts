@@ -2,6 +2,8 @@ import { nanoid } from "nanoid";
 import { Color, Euler, Quaternion } from "three";
 
 import type { DirectorBoneKeyframe, DirectorBoneTrack, DirectorCamera, DirectorHumanoidBone, DirectorKeyframe, DirectorKeyframeDeleteTarget, DirectorKeyframeEasing, DirectorLight, DirectorObject, DirectorPose, DirectorQuat, DirectorScene, DirectorTransform, DirectorVec3 } from "@/types/director";
+import { DIRECTOR_DEFAULT_GROUND } from "@/lib/canvas/director/director-ground";
+import { DIRECTOR_DEFAULT_STAGE_TRANSFORM } from "@/lib/canvas/director/director-stage-transform";
 
 export const DIRECTOR_DEFAULT_ACTOR_URL = "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r185/examples/models/gltf/Xbot.glb";
 export const DIRECTOR_ACTOR_COLORS = ["#f1f3f5", "#202329", "#2f7de1", "#d84949", "#dfae3f", "#34a276"] as const;
@@ -16,9 +18,16 @@ export function createDirectorScene(title = "未命名场景"): DirectorScene {
         id: nanoid(),
         version: 1,
         title,
-        background: "#d8dde3",
+        background: "#060608",
         environmentIntensity: 0.7,
         gridVisible: true,
+        gridSnap: false,
+        panoramaRotation: 0,
+        panoramaRadius: 60,
+        ground: { ...DIRECTOR_DEFAULT_GROUND },
+        stageTransform: { ...DIRECTOR_DEFAULT_STAGE_TRANSFORM, position: [...DIRECTOR_DEFAULT_STAGE_TRANSFORM.position], rotation: [...DIRECTOR_DEFAULT_STAGE_TRANSFORM.rotation] },
+        labelsVisible: true,
+        aspectRatio: "adaptive",
         objects: [createDirectorActor("演员 1", [0, 0, 0])],
         cameras: [camera],
         lights: [createDirectorLight("directional", "主光", [4, 6, 4], 2.4), createDirectorLight("directional", "轮廓光", [-4, 3, -2], 1.1), createDirectorLight("ambient", "环境光", [0, 0, 0], 0.65)],
@@ -27,6 +36,11 @@ export function createDirectorScene(title = "未命名场景"): DirectorScene {
         createdAt: now,
         updatedAt: now,
     };
+}
+
+export function toggleDirectorObjectVisibility(scene: DirectorScene, id: string): DirectorScene {
+    if (!scene.objects.some((object) => object.id === id)) return scene;
+    return { ...scene, objects: scene.objects.map((object) => object.id === id ? { ...object, visible: !object.visible } : object) };
 }
 
 export function createDirectorObject(primitive: DirectorObject["primitive"] = "box", name = "新对象", position: DirectorVec3 = [0, 0.5, 0], color = "#8795a5"): DirectorObject {
@@ -42,6 +56,22 @@ export function createDirectorObject(primitive: DirectorObject["primitive"] = "b
         receiveShadow: true,
         pose: primitive === "character" ? "stand" : undefined,
         keyframes: [],
+    };
+}
+
+/** 统一倍率按比例作用于基础值和所有关键帧；轴向不等比缩放仍保留。 */
+export function applyDirectorUniformScale(object: DirectorObject, input: number): DirectorObject {
+    if (!Number.isFinite(input)) return object;
+    const next = Math.max(0.1, Math.min(10, input));
+    const previous = object.uniformScale && Number.isFinite(object.uniformScale) && object.uniformScale > 0 ? object.uniformScale : 1;
+    if (next === previous) return object;
+    const ratio = next / previous;
+    const scale = (values: DirectorVec3): DirectorVec3 => values.map((value) => value * ratio) as DirectorVec3;
+    return {
+        ...object,
+        uniformScale: next,
+        transform: { ...object.transform, scale: scale(object.transform.scale) },
+        keyframes: object.keyframes.map((frame) => ({ ...frame, transform: { ...frame.transform, scale: scale(frame.transform.scale) } })),
     };
 }
 
@@ -75,6 +105,11 @@ export function createDirectorCamera(name = "主摄影机"): DirectorCamera {
 /** 35mm 全画幅水平视角换算。摄影机检查器与场景模板共用，避免两处各写一份光学。 */
 export function directorFocalLengthToFov(focalLength: number) {
     return (2 * Math.atan(36 / (2 * Math.max(1, focalLength))) * 180) / Math.PI;
+}
+
+/** 与焦距编辑使用同一 35mm 全画幅模型，FOV 调整后两项保持同步。 */
+export function directorFovToFocalLength(fov: number) {
+    return 18 / Math.tan((Math.max(1, Math.min(179, fov)) * Math.PI) / 360);
 }
 
 export function createDirectorLight(type: DirectorLight["type"], name: string, position: DirectorVec3, intensity = 1): DirectorLight {

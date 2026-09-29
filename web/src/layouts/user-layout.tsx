@@ -31,7 +31,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
 
     return (
         <ConfigProvider theme={productWorkspace ? workspaceTheme : undefined}>
-            <div className={cn("app-user-workspace h-dvh overflow-hidden text-foreground", spatialWorkbench && "app-spatial-workspace", productWorkspace && "app-product-workspace")}>
+            <div className={cn("app-user-workspace h-dvh overflow-hidden text-foreground", spatialWorkbench && "app-spatial-workspace", productWorkspace && "app-product-workspace", pathname === "/" && "app-home-route")}>
                 <AppWorkspaceShell>{children}</AppWorkspaceShell>
             </div>
         </ConfigProvider>
