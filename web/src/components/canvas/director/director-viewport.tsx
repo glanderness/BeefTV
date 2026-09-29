@@ -562,12 +562,12 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
                     key={object.id}
                     object={object}
                     selected={selectedObjectId === object.id}
-                    selectedBone={selectedObjectId === object.id ? selectedBone : null}
+                    selectedBone={selectedObjectId === object.id && !object.locked ? selectedBone : null}
                     showLabel={scene.labelsVisible !== false && (object.kind === "actor" || object.primitive === "character")}
                     transformMode={transformMode}
                     playhead={playhead}
                     onSelect={() => onSelectObject(object.id)}
-                    onSelectBone={(bone) => { onSelectObject(object.id); onSelectBone(bone); }}
+                    onSelectBone={(bone) => { if (!object.locked) { onSelectObject(object.id); onSelectBone(bone); } }}
                     onTransforming={setTransforming}
                     onTransform={(from, to) => onObjectTransform(object.id, from, to)}
                     onBoneTransform={(bone, rotation) => onBoneTransform(object.id, bone, rotation)}
@@ -730,7 +730,7 @@ function DirectorObjectView({ object, selected, selectedBone, showLabel, transfo
                     <span data-director-actor-label={object.id} role="note" aria-label={`角色 ${object.name}`} style={{ color: "#fff", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", textShadow: "0 1px 3px #000, 0 0 5px #000" }}>{object.name}</span>
                 </Html> : null}
             </group>
-            {selected && target ? (
+            {selected && !object.locked && target ? (
                 <DirectorObjectGizmo
                     target={target}
                     transformMode={transformMode}

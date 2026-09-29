@@ -76,6 +76,8 @@ export type DirectorObject = {
     color: string;
     /** 独立的统一缩放倍率；旧场景缺省为 1，不抹平各轴比例。 */
     uniformScale?: number;
+    /** 场景列表锁定：保留选择与属性编辑，但禁止视口操控及误删。 */
+    locked?: boolean;
     visible: boolean;
     castShadow: boolean;
     receiveShadow: boolean;
