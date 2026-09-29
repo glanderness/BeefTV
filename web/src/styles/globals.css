@@ -12224,12 +12224,14 @@ html:not(.dark) .creation-model-picker-heading strong { color: #20242a; }
    选中态用 control-selected 角色，而不是主操作色：它表达「当前视图」而非主要命令。 */
 .director-mode-switch {
     display: flex;
-    min-width: 0;
+    flex: none;
     align-items: center;
     gap: var(--space-half);
+    white-space: nowrap;
 }
 
 .director-mode-switch-button {
+    flex: none;
     height: var(--space-6);
     padding: 0 var(--space-2);
     border: var(--stroke-1) solid transparent;

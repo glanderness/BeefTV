@@ -1,0 +1,35 @@
+import { Boxes, Camera, Layers3, UserRound } from "lucide-react";
+
+import { canvasThemes } from "@/lib/canvas-theme";
+import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
+
+export type DirectorWorkbenchTab = "scene" | "actors" | "cameras" | "assets";
+
+const tabs = [
+    { id: "scene", label: "场景", icon: Layers3 },
+    { id: "actors", label: "角色", icon: UserRound },
+    { id: "cameras", label: "摄影机", icon: Camera },
+    { id: "assets", label: "素材", icon: Boxes },
+] as const;
+
+export function DirectorWorkbenchRail({ active, onChange }: { active: DirectorWorkbenchTab; onChange: (tab: DirectorWorkbenchTab) => void }) {
+    const theme = canvasThemes[useActiveTheme()];
+    return (
+        <nav aria-label="导演台工作区" className="flex w-12 shrink-0 flex-col items-center gap-2 border-r px-1.5 py-3" style={{ borderColor: theme.toolbar.border }}>
+            {tabs.map(({ id, label, icon: Icon }) => (
+                <button
+                    key={id}
+                    type="button"
+                    aria-label={label}
+                    aria-pressed={active === id}
+                    title={label}
+                    onClick={() => onChange(id)}
+                    className="flex size-9 items-center justify-center rounded-lg outline-none transition-colors focus-visible:ring-2"
+                    style={{ background: active === id ? theme.toolbar.itemHover : "transparent", color: active === id ? theme.node.text : theme.node.muted }}
+                >
+                    <Icon className="size-4" aria-hidden />
+                </button>
+            ))}
+        </nav>
+    );
+}
