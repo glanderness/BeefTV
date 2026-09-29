@@ -1,0 +1,44 @@
+#Requires -Version 5.1
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)][ValidateSet("cpu", "cuda")][string]$Variant,
+    [Parameter(Mandatory = $true)][string]$RuntimeRoot,
+    [string]$ModelRuntime
+)
+
+$ErrorActionPreference = "Stop"
+if ($env:OS -ne "Windows_NT" -or -not [Environment]::Is64BitProcess) {
+    throw "深度运行包自检需要 64 位 Windows"
+}
+$root = (Resolve-Path -LiteralPath $RuntimeRoot).Path
+$python = Join-Path $root ".python\python.exe"
+$worker = Join-Path $root "worker"
+$source = Join-Path $root "vda"
+$bin = Join-Path $root "bin"
+foreach ($required in @($python, (Join-Path $worker "depth_capture\__main__.py"), (Join-Path $source "video_depth_anything\video_depth.py"), (Join-Path $bin "ffmpeg.exe"), (Join-Path $bin "ffprobe.exe"))) {
+    if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "深度运行包缺少文件: $required" }
+}
+$env:PYTHONPATH = $worker
+$env:BEEFTV_VDA_SOURCE = $source
+$env:PATH = "$bin;$env:PATH"
+& $python -c "import torch, torchvision, cv2, numpy, depth_capture; print(torch.__version__); print(torch.version.cuda or 'cpu')"
+if ($LASTEXITCODE -ne 0) { throw "深度运行包 Python 依赖加载失败" }
+& (Join-Path $bin "ffmpeg.exe") -version | Select-Object -First 1
+if ($LASTEXITCODE -ne 0) { throw "FFmpeg 无法启动" }
+& (Join-Path $bin "ffprobe.exe") -version | Select-Object -First 1
+if ($LASTEXITCODE -ne 0) { throw "FFprobe 无法启动" }
+if ($Variant -eq "cpu") {
+    & $python -c "import torch; assert torch.version.cuda is None, 'CPU 包包含 CUDA PyTorch'"
+} else {
+    & $python -c "import torch; assert torch.version.cuda is not None, 'CUDA 包缺少 CUDA PyTorch'"
+}
+if ($LASTEXITCODE -ne 0) { throw "运行包设备变体与 PyTorch 不一致" }
+if ($ModelRuntime) {
+    $work = Join-Path ([System.IO.Path]::GetTempPath()) ("beeftv-depth-probe-" + [guid]::NewGuid().ToString("N"))
+    try {
+        & (Join-Path $PSScriptRoot "probe-depth-runtime-windows.ps1") -Device $Variant -PythonPath $python -RuntimeDir $ModelRuntime -SourceDir $source -WorkDir $work -ToolDir $worker
+        if ($LASTEXITCODE -ne 0) { throw "真实模型短片推理失败" }
+    } finally {
+        if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
+    }
+}

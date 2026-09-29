@@ -1,0 +1,57 @@
+name: Windows depth runtime checks (not a release)
+
+on:
+  push:
+    branches:
+      - codex/windows-depth-runtime
+    paths:
+      - "backend/internal/depthruntime/**"
+      - "scripts/*depth-runtime-windows.ps1"
+      - "scripts/probe-depth-runtime-windows.ps1"
+      - "tools/depth-capture/**"
+      - ".github/workflows/depth-runtime-windows-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-cpu:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      - name: Test installer on native Windows
+        working-directory: backend
+        run: go test ./internal/depthruntime -count=1
+      - name: Find FFmpeg and FFprobe
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue) -or -not (Get-Command ffprobe -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "无法安装 FFmpeg 测试依赖" }
+            Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
+            refreshenv
+          }
+          $ffmpeg = (Get-Command ffmpeg).Source
+          $ffprobe = (Get-Command ffprobe).Source
+          if ((Split-Path $ffmpeg) -ne (Split-Path $ffprobe)) { throw "FFmpeg 与 FFprobe 不在同一目录" }
+          "DEPTH_FFMPEG_DIR=$(Split-Path $ffmpeg)" >> $env:GITHUB_ENV
+      - name: Build and relocate CPU runtime
+        shell: pwsh
+        run: ./scripts/build-depth-runtime-windows.ps1 -Variant cpu -FFmpegDir $env:DEPTH_FFMPEG_DIR -OutputDir ./build/depth-runtime
+      - name: Probe pinned Small model on Windows CPU
+        shell: pwsh
+        run: |
+          $modelDir = Join-Path $env:RUNNER_TEMP "beeftv-depth-model\checkpoints"
+          New-Item -ItemType Directory -Path $modelDir -Force | Out-Null
+          $model = Join-Path $modelDir "video_depth_anything_vits.pth"
+          Invoke-WebRequest -Uri "https://github.com/glanderness/BeefTV/releases/download/v1.5.5/video_depth_anything_vits.pth" -OutFile $model
+          $zip = Resolve-Path ./build/depth-runtime/beeftv-depth-runtime-v1-windows-amd64-cpu.zip
+          $unpacked = Join-Path $env:RUNNER_TEMP "beeftv-depth-中文 path"
+          Expand-Archive -LiteralPath $zip -DestinationPath $unpacked
+          ./scripts/test-depth-runtime-windows.ps1 -Variant cpu -RuntimeRoot $unpacked -ModelRuntime (Split-Path $modelDir)
