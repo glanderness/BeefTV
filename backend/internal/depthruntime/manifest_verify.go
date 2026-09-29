@@ -50,3 +50,8 @@ func verifySignedManifest(raw []byte, public ed25519.PublicKey) (Manifest, error
 	}
 	return manifest, nil
 }
+
+// VerifyManifest uses the same trust contract in the release gate and installer.
+func VerifyManifest(raw []byte, public ed25519.PublicKey) (Manifest, error) {
+	return verifySignedManifest(raw, public)
+}

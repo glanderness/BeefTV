@@ -12,6 +12,7 @@
     "seedance-task-constraints",
     "video-model-contracts",
     "system-update",
-    "desktop-updater"
+    "desktop-updater",
+    "depth-video-runtime"
   ]
 }

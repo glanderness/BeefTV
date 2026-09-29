@@ -11,6 +11,11 @@ on:
       - "tools/depth-capture/**"
       - ".github/workflows/depth-runtime-windows-check.yml"
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      store_packages:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -53,7 +58,7 @@ jobs:
           }
           "DEPTH_FFMPEG_DIR=$binaryDir" >> $env:GITHUB_ENV
       - name: Build and relocate ${{ matrix.variant }} runtime
-        shell: pwsh
+        shell: powershell
         run: ./scripts/build-depth-runtime-windows.ps1 -Variant ${{ matrix.variant }} -FFmpegDir $env:DEPTH_FFMPEG_DIR -OutputDir ./build/depth-runtime
       - name: Verify CUDA Release parts fit GitHub limits
         if: matrix.variant == 'cuda'
@@ -86,3 +91,12 @@ jobs:
           & (Join-Path $unpacked ".python\python.exe") -m unittest discover -s ./tools/depth-capture/tests -v
           if ($LASTEXITCODE -ne 0) { throw "Windows Python 单元测试失败" }
           ./scripts/test-depth-runtime-windows.ps1 -Variant cpu -RuntimeRoot $unpacked -ModelRuntime (Split-Path $modelDir)
+      - name: Store verified runtime packages
+        if: inputs.store_packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: depth-runtime-${{ matrix.variant }}
+          path: build/depth-runtime/*
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error

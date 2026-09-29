@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][ValidateSet("cpu", "cuda")][string]$Variant,

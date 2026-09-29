@@ -9,6 +9,14 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.12
+
+- Add Windows x64 depth-video processing with the fixed Small model, signed optional CPU/CUDA runtimes, resumable verified downloads, and process-tree cancellation.
+- Validate CUDA with a real model probe and fall back once to CPU for device failures. CUDA hardware support is a community testing preview; CPU inference has been tested on Windows with 2-second and 15-second clips.
+- Fix Windows PowerShell 5.1 runtime-builder encoding and align the worker's video-duration limit with the app.
+- Serialize component installation and stop download verification and extraction when cancelled.
+- First use downloads optional components; CPU processing can be slow and memory intensive. Apple Silicon Mac processing remains unchanged.
+
 ## v1.6.11
 
 - Fix local reference images being rejected before submitting Wan 3.0 video tasks through BeefAPI.

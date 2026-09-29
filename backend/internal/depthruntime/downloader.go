@@ -36,6 +36,9 @@ type Progress struct {
 }
 
 func Download(ctx context.Context, artifact Artifact, target string, report func(Progress)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if artifact.Size <= 0 || len(strings.TrimSpace(artifact.SHA256)) != 64 || (len(artifact.URLs) == 0 && len(artifact.Parts) == 0) {
 		return errors.New("深度组件下载描述无效")
 	}
@@ -53,13 +56,19 @@ func Download(ctx context.Context, artifact Artifact, target string, report func
 				lastErr = err
 				continue
 			}
-			if err := verifyFile(temporary, artifact); err != nil {
+			if err := verifyFileContext(ctx, temporary, artifact); err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				lastErr = err
 				if info, statErr := os.Stat(temporary); statErr == nil && info.Size() < artifact.Size {
 					continue
 				}
 				_ = os.Rename(temporary, target+".corrupt")
 				break
+			}
+			if err := ctx.Err(); err != nil {
+				return err
 			}
 			if err := publishVerifiedDownload(temporary, target); err != nil {
 				return fmt.Errorf("发布深度组件失败: %w", err)
@@ -91,7 +100,7 @@ func downloadParts(ctx context.Context, artifact Artifact, target string, report
 		}
 		partPath := fmt.Sprintf("%s.part-%03d", target, index+1)
 		partArtifact := Artifact{URLs: part.URLs, Size: part.Size, SHA256: part.SHA256}
-		if verifyFile(partPath, partArtifact) != nil {
+		if verifyFileContext(ctx, partPath, partArtifact) != nil {
 			err := Download(ctx, partArtifact, partPath, func(progress Progress) {
 				if report != nil {
 					report(Progress{Downloaded: downloaded + progress.Downloaded, Total: artifact.Size, Source: progress.Source})
@@ -119,7 +128,7 @@ func downloadParts(ctx context.Context, artifact Artifact, target string, report
 			_ = output.Close()
 			return openErr
 		}
-		_, copyErr := io.Copy(output, part)
+		_, copyErr := io.Copy(output, contextReader{ctx, part})
 		_ = part.Close()
 		if copyErr != nil {
 			_ = output.Close()
@@ -129,8 +138,11 @@ func downloadParts(ctx context.Context, artifact Artifact, target string, report
 	if err := output.Close(); err != nil {
 		return err
 	}
-	if err := verifyFile(assembled, artifact); err != nil {
+	if err := verifyFileContext(ctx, assembled, artifact); err != nil {
 		return fmt.Errorf("重组深度组件校验失败: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := publishVerifiedDownload(assembled, target); err != nil {
 		return fmt.Errorf("发布完整深度组件失败: %w", err)
@@ -207,6 +219,13 @@ func downloadSource(ctx context.Context, source string, temporary string, total 
 }
 
 func verifyFile(path string, artifact Artifact) error {
+	return verifyFileContext(context.Background(), path, artifact)
+}
+
+func verifyFileContext(ctx context.Context, path string, artifact Artifact) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return err
@@ -220,11 +239,23 @@ func verifyFile(path string, artifact Artifact) error {
 		return fmt.Errorf("下载大小不匹配: got %d want %d", info.Size(), artifact.Size)
 	}
 	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
+	if _, err := io.Copy(hash, contextReader{ctx, file}); err != nil {
 		return err
 	}
 	if !strings.EqualFold(hex.EncodeToString(hash.Sum(nil)), artifact.SHA256) {
 		return errors.New("SHA-256 校验失败")
 	}
 	return nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
 }

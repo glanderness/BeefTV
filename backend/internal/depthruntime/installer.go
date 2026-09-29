@@ -46,6 +46,10 @@ type runtimePaths struct {
 	Archive       string
 }
 
+// The desktop has one installer; variants share both downloads and model files.
+// Serialize installation (not inference), and allow queued tasks to cancel.
+var installationSlot = make(chan struct{}, 1)
+
 func runtimeLayout(dataDir, platform, variant string) (runtimePaths, error) {
 	if platform == "" {
 		platform = "darwin-arm64"
@@ -73,6 +77,15 @@ func runtimeLayout(dataDir, platform, variant string) (runtimePaths, error) {
 }
 
 func Ensure(ctx context.Context, options EnsureOptions) (Installation, error) {
+	select {
+	case installationSlot <- struct{}{}:
+		defer func() { <-installationSlot }()
+	case <-ctx.Done():
+		return Installation{}, ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return Installation{}, err
+	}
 	paths, err := runtimeLayout(options.DataDir, options.Platform, options.Variant)
 	if err != nil {
 		return Installation{}, err
@@ -110,8 +123,9 @@ func Ensure(ctx context.Context, options EnsureOptions) (Installation, error) {
 	if windows {
 		pythonReady = pathRegular(python)
 	}
-	if !fileMatches(archivePath, runtimeArtifact) || !pythonReady || !pathExists(filepath.Join(toolDir, "depth_capture")) {
-		if !fileMatches(archivePath, runtimeArtifact) {
+	archiveReady := verifyFileContext(ctx, archivePath, runtimeArtifact) == nil
+	if !archiveReady || !pythonReady || !pathExists(filepath.Join(toolDir, "depth_capture")) {
+		if !archiveReady {
 			if err := Download(ctx, runtimeArtifact, archivePath, componentProgress(options.Progress, "runtime")); err != nil {
 				return Installation{}, err
 			}
@@ -128,7 +142,7 @@ func Ensure(ctx context.Context, options EnsureOptions) (Installation, error) {
 		if windows {
 			maxExpanded = 12 << 30
 		}
-		if err := extractRuntimeArchive(archivePath, stage, runtimeArtifact, maxExpanded); err != nil {
+		if err := extractRuntimeArchiveContext(ctx, archivePath, stage, runtimeArtifact, maxExpanded); err != nil {
 			return Installation{}, err
 		}
 		if windows {
@@ -143,6 +157,9 @@ func Ensure(ctx context.Context, options EnsureOptions) (Installation, error) {
 				return Installation{}, errors.New("深度组件内置 Python 不可执行")
 			}
 		}
+		if err := ctx.Err(); err != nil {
+			return Installation{}, err
+		}
 		if windows {
 			if err := publishWindowsRuntime(stage, runtimeRoot); err != nil {
 				return Installation{}, err
@@ -154,7 +171,7 @@ func Ensure(ctx context.Context, options EnsureOptions) (Installation, error) {
 			}
 		}
 	}
-	if !fileMatches(modelPath, manifest.Model) {
+	if verifyFileContext(ctx, modelPath, manifest.Model) != nil {
 		if err := Download(ctx, manifest.Model, modelPath, componentProgress(options.Progress, "model")); err != nil {
 			return Installation{}, err
 		}
@@ -238,6 +255,13 @@ func fetchManifest(ctx context.Context, rawURL string, signed bool, public ed255
 }
 
 func extractRuntimeArchive(path string, destination string, artifact Artifact, maxExpanded int64) error {
+	return extractRuntimeArchiveContext(context.Background(), path, destination, artifact, maxExpanded)
+}
+
+func extractRuntimeArchiveContext(ctx context.Context, path string, destination string, artifact Artifact, maxExpanded int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	reader, err := zip.OpenReader(path)
 	if err != nil {
 		return fmt.Errorf("打开深度组件压缩包失败: %w", err)
@@ -253,6 +277,9 @@ func extractRuntimeArchive(path string, destination string, artifact Artifact, m
 	var expanded int64
 	for _, entry := range reader.File {
 		// ZIP paths must be portable; a backslash or drive colon can escape on Windows
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		// even when this archive is inspected on a Unix test runner.
 		if strings.ContainsAny(entry.Name, `\\:`) {
 			return errors.New("深度组件压缩包包含非安全路径")
@@ -287,7 +314,7 @@ func extractRuntimeArchive(path string, destination string, artifact Artifact, m
 			source.Close()
 			return err
 		}
-		_, copyErr := io.Copy(output, source)
+		_, copyErr := io.Copy(output, contextReader{ctx, source})
 		closeErr := output.Close()
 		source.Close()
 		if copyErr != nil {
