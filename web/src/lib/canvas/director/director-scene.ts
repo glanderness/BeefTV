@@ -48,6 +48,20 @@ export function toggleDirectorObjectLock(scene: DirectorScene, id: string): Dire
     return { ...scene, objects: scene.objects.map((object) => object.id === id ? { ...object, locked: !object.locked } : object) };
 }
 
+export function visibleDirectorCameras(scene: DirectorScene): DirectorCamera[] {
+    return scene.cameras.filter((camera) => camera.visible !== false);
+}
+
+export function toggleDirectorCameraVisibility(scene: DirectorScene, id: string): DirectorScene {
+    if (!scene.cameras.some((camera) => camera.id === id)) return scene;
+    return { ...scene, cameras: scene.cameras.map((camera) => camera.id === id ? { ...camera, visible: camera.visible === false } : camera) };
+}
+
+export function toggleDirectorCameraLock(scene: DirectorScene, id: string): DirectorScene {
+    if (!scene.cameras.some((camera) => camera.id === id)) return scene;
+    return { ...scene, cameras: scene.cameras.map((camera) => camera.id === id ? { ...camera, locked: !camera.locked } : camera) };
+}
+
 export function createDirectorObject(primitive: DirectorObject["primitive"] = "box", name = "新对象", position: DirectorVec3 = [0, 0.5, 0], color = "#8795a5"): DirectorObject {
     return {
         id: nanoid(),

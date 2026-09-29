@@ -98,6 +98,10 @@ export type DirectorObject = {
 export type DirectorCamera = {
     id: string;
     name: string;
+    /** 编辑器机位辅助图形；旧场景缺省显示，不影响该机位取景。 */
+    visible?: boolean;
+    /** 场景列表锁定；保留机位选择和属性查看。 */
+    locked?: boolean;
     transform: DirectorTransform;
     target: DirectorVec3;
     /** 角色跟随以绑定帧的位置为锚；相机原有关键帧仍可叠加角色位移。 */
