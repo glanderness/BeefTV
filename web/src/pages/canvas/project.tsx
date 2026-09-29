@@ -2003,7 +2003,7 @@ function InfiniteCanvasPage() {
         setStylePickerOpen,
     });
 
-    const { applyDirectorOutput, createDirectorShot, openDirectorWorkbench, saveDirectorScene } = useCanvasDirector({
+    const { applyDirectorOutput, captureDirectorCover, createDirectorShot, openDirectorWorkbench, saveDirectorScene, shouldCaptureCover } = useCanvasDirector({
         projectId,
         domainProjectId: currentProject?.projectId,
         directorNodeId,
@@ -3619,6 +3619,8 @@ function InfiniteCanvasPage() {
                                     onClose={() => setDirectorNodeId(null)}
                                     onChange={saveDirectorScene}
                                     onApply={applyDirectorOutput}
+                                    onShouldCaptureCover={shouldCaptureCover}
+                                    onCaptureCover={captureDirectorCover}
                                     onDeleteImageNode={(nodeId) => deleteNodes(new Set([nodeId]))}
                                     onFlush={() => flushCanvasStorePersistence()}
                                     onboardingScope={directorOnboardingScope}

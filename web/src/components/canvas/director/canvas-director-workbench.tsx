@@ -31,7 +31,7 @@ import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { DirectorCamera, DirectorCameraMove, DirectorHumanoidBone, DirectorKeyframeDeleteTarget, DirectorKeyframeEasing, DirectorLight, DirectorObject, DirectorPose, DirectorQuat, DirectorRenderMode, DirectorRig, DirectorScene, DirectorSceneOutput, DirectorShot, DirectorShotSize, DirectorTransform, DirectorVec3 } from "@/types/director";
 
-export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingScope, onClose, onChange, onApply, onDeleteImageNode, onFlush }: { open: boolean; scene: DirectorScene | null; imageNodes: CanvasNodeData[]; onboardingScope: string; onClose: () => void; onChange: (scene: DirectorScene) => void; onApply: (output: DirectorSceneOutput) => Promise<void>; onDeleteImageNode: (nodeId: string) => void; onFlush?: () => void | Promise<void> }) {
+export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingScope, onClose, onChange, onApply, onDeleteImageNode, onFlush, onShouldCaptureCover, onCaptureCover }: { open: boolean; scene: DirectorScene | null; imageNodes: CanvasNodeData[]; onboardingScope: string; onClose: () => void; onChange: (scene: DirectorScene) => void; onApply: (output: DirectorSceneOutput) => Promise<void>; onDeleteImageNode: (nodeId: string) => void; onFlush?: () => void | Promise<void>; onShouldCaptureCover?: (scene: DirectorScene, shotId: string) => boolean; onCaptureCover?: (input: { scene: DirectorScene; shotId: string; beauty: Blob }) => Promise<void> }) {
     const { message, modal } = App.useApp();
     const theme = canvasThemes[useActiveTheme()];
     const viewportRef = useRef<DirectorViewportHandle>(null);
@@ -334,6 +334,18 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
             }
 
             if (decision.kind === "close") {
+                const current = draftRef.current;
+                const shot = current?.shots.find((item) => item.id === current.activeShotId) || current?.shots[0];
+                if (current && shot && onCaptureCover && onShouldCaptureCover?.(current, shot.id) && viewportRef.current) {
+                    try {
+                        const beauty = await viewportRef.current.capture("beauty");
+                        void onCaptureCover({ scene: current, shotId: shot.id, beauty }).catch(() => {
+                            message.warning("导演台封面保存失败，下次打开镜头后可重试");
+                        });
+                    } catch {
+                        message.warning("导演台截图失败，下次打开镜头后可重试");
+                    }
+                }
                 onClose();
                 return;
             }
