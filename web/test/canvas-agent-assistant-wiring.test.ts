@@ -15,8 +15,10 @@ describe("创作助手前端接线", () => {
     test("流式对话与停止打到后端真实注册的 /api/assistant/* 路由", () => {
         // 后端 registerAgentProxyRoutes 注册的是 /assistant/chat 与 /assistant/cancel；
         // 曾经写成 /api/agent/* 时每一次发送都只拿到 404，面板永远没有回复。
-        expect(source).toContain('fetch("/api/assistant/chat"');
-        expect(source).toContain('fetch("/api/assistant/cancel"');
+        // 原生 Wails 的页面 origin 不是后端地址，必须使用当前运行时的 API base。
+        // stream 测试另外实际调用两条路径，核对最终绝对 URL。
+        expect(source).toContain('fetch(`${apiBaseURL}/assistant/chat`');
+        expect(source).toContain('fetch(`${apiBaseURL}/assistant/cancel`');
         expect(source).not.toContain("/api/agent/chat");
         expect(source).not.toContain("/api/agent/cancel");
         expect(source).toContain('http.post<{ token: string }>("/assistant/ui-session"');
