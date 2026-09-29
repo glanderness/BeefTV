@@ -23,7 +23,7 @@ const modeLabels: Record<AgentClientMode, string> = {
 
 const modeSummaries: Record<AgentClientMode, string> = {
     "read-only": "能看画布上的内容，不会改动。",
-    "read-write": "能新建、修改和删除画布上的内容。",
+    "read-write": "能新建和修改画布上的内容。",
 };
 
 export function agentClientKindLabel(kind: AgentClientKind | string) {

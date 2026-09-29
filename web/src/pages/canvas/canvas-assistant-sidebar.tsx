@@ -128,7 +128,7 @@ export function CanvasAssistantSidebar(props: Props) {
                 {assistant.pendingUserText ? (
                     <div className="canvas-assistant-turn">
                         <CanvasAssistantUserMessage text={assistant.pendingUserText} selectedCount={assistant.pendingSelectedNodeIds.length} />
-                        {assistantVisibleReply(assistant.streamed || "") ? <CanvasAssistantReply text={assistant.streamed} /> : <p className="canvas-assistant-meta">助手正在处理…</p>}
+                        {assistantVisibleReply(assistant.streamed || "") ? <CanvasAssistantReply text={assistant.streamed} /> : assistant.streaming ? <p className="canvas-assistant-meta">助手正在处理…</p> : null}
                     </div>
                 ) : null}
 

@@ -121,3 +121,40 @@ export function assistantVisibleReply(text: string): string {
         .replace(/<think>[\s\S]*$/i, "")
         .trim();
 }
+
+/** 同一件事的身份：修改看节点，连线看两端，新建看有没有再次成功；读操作失败不影响画布，不单独提示。 */
+function assistantActionTarget(call: AgentToolCall): string | null {
+    const args = call.args || {};
+    switch (call.tool) {
+        case "canvas.node.update":
+            return `update:${String(args.nodeId ?? "")}`;
+        case "canvas.edge.create":
+            return `edge:${String(args.fromNodeId ?? "")}>${String(args.toNodeId ?? "")}`;
+        case "canvas.nodes.create":
+            // 模型重试新建时常会调整标题或数量：之后任何一次新建成功都算这一步已完成。
+            return "create";
+        case "canvas.generation.propose":
+            return `propose:${Array.isArray(args.nodeIds) ? args.nodeIds.join("|") : ""}`;
+        default:
+            return null;
+    }
+}
+
+/**
+ * 这一轮里最后仍没做成的事：失败后又重试成功的步骤不再提示，
+ * 同类失败合并成一句，避免把助手的中间重试当成错误摆给用户。
+ */
+export function assistantUnresolvedFailures(calls: AgentToolCall[] | undefined): string[] {
+    const list = calls || [];
+    const counts = new Map<string, number>();
+    list.forEach((call, index) => {
+        if (!call.isError) return;
+        const target = assistantActionTarget(call);
+        if (!target) return;
+        const resolved = list.slice(index + 1).some((later) => !later.isError && later.tool === call.tool && assistantActionTarget(later) === target);
+        if (resolved) return;
+        const label = assistantActionLabel(call.tool);
+        counts.set(label, (counts.get(label) ?? 0) + 1);
+    });
+    return [...counts.entries()].map(([label, count]) => (count > 1 ? `${label}没有成功（${count} 处）` : `${label}没有成功`));
+}

@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import type { AgentToolCall, AssistantGenerationProposal, AssistantTurn } from "@/services/api/agent-assistant";
-import { assistantChangeSummary, assistantChangedNodeIds, assistantFailedActionText, assistantProposalText, assistantUndoFailureText, assistantVisibleReply } from "./canvas-assistant-copy";
+import { assistantChangeSummary, assistantChangedNodeIds, assistantProposalText, assistantUnresolvedFailures, assistantUndoFailureText, assistantVisibleReply } from "./canvas-assistant-copy";
 import { dismissedProposalKey, type AssistantTurnStatus } from "./use-canvas-assistant";
 
 type Props = {
@@ -40,7 +40,7 @@ export function CanvasAssistantUserMessage({ text, selectedCount }: { text: stri
 export function CanvasAssistantTurnView({ turn, status, handledProposals, onLocate, onUndo, onRunProposal, onDismissProposal }: Props) {
     const summary = assistantChangeSummary(turn.change);
     const changedNodeIds = assistantChangedNodeIds(turn.change);
-    const failedCalls = (turn.toolCalls || []).filter((call: AgentToolCall) => call.isError);
+    const failedActions = assistantUnresolvedFailures(turn.toolCalls);
     const undone = Boolean(status?.undone);
 
     return (
@@ -49,11 +49,11 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, onLoca
             {turn.reply ? <CanvasAssistantReply text={turn.reply} /> : null}
             {turn.cancelled ? <p className="canvas-assistant-meta">这一条已经停下了。</p> : null}
 
-            {failedCalls.length > 0 ? (
+            {failedActions.length > 0 ? (
                 <div className="canvas-assistant-card">
-                    {failedCalls.map((call, index) => (
-                        <span key={call.toolCallId || `${call.tool}-${index}`} className="canvas-assistant-failed">
-                            {assistantFailedActionText(call)}
+                    {failedActions.map((text) => (
+                        <span key={text} className="canvas-assistant-failed">
+                            {text}
                         </span>
                     ))}
                 </div>

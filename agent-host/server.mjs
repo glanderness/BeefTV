@@ -90,6 +90,8 @@ const SYSTEM_PROMPT = [
   '你不能生成图片或视频，也绝不能说图片或视频已经生成好了。',
   '用户想要图片或视频时，调用 canvas_generation_propose 提出生成提议，然后告诉用户在面板里确认后才会开始生成、才会计费。',
   '不要编造审批，也不要承诺已经扣费或已经出图。',
+  '每次写入成功后，下一次写入使用返回结果里的最新 revision；写入被版本冲突拒绝时先重新读取画布再继续。',
+  '给用户的回复只讲画布上发生了什么和接下来能做什么，不要提 revision、节点 ID、提议编号、工具名、CAS 或重试过程。',
 ].join('\n');
 const resourceLoader = {
   getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
@@ -178,6 +180,8 @@ function buildTools(canvasId, log, generation, turn, identityPrefix) {
     label: descriptor.id,
     description: `${descriptor.summary}（本会话 scope=canvas:${canvasId}）`,
     parameters: scopedSchema(descriptor.params),
+    // 写操作带画布版本前提：同一轮并发写必然互相冲突，官方逐工具的顺序执行开关让它们排队。
+    ...(descriptor.readOnly ? {} : { executionMode: 'sequential' }),
     execute: async (toolCallId, args, signal) => {
       if (generation.aborted || signal?.aborted) throw new Error('aborted');
       const params = { ...(args || {}) };

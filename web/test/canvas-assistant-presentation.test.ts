@@ -178,3 +178,19 @@ describe("assistantVisibleReply", () => {
         expect(assistantVisibleReply("<think>只有草稿")).toBe("");
     });
 });
+
+describe("assistantUnresolvedFailures", () => {
+    test("重试成功的步骤不提示，仍失败的同类合并计数", async () => {
+        const { assistantUnresolvedFailures } = await import("@/pages/canvas/canvas-assistant-copy");
+        const calls = [
+            { tool: "canvas.node.update", args: { nodeId: "a" }, isError: true },
+            { tool: "canvas.node.update", args: { nodeId: "b" }, isError: true },
+            { tool: "canvas.node.update", args: { nodeId: "a" }, isError: false },
+            { tool: "canvas.edge.create", args: { fromNodeId: "a", toNodeId: "c" }, isError: true },
+            { tool: "canvas.edge.create", args: { fromNodeId: "b", toNodeId: "c" }, isError: true },
+            { tool: "canvas.get", args: {}, isError: true },
+        ];
+        expect(assistantUnresolvedFailures(calls)).toEqual(["修改节点没有成功", "连线没有成功（2 处）"]);
+        expect(assistantUnresolvedFailures([])).toEqual([]);
+    });
+});
