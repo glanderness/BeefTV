@@ -26,6 +26,9 @@ function run(files) {
 
 const files = [...collectTestFiles(join(root, "test")), ...collectTestFiles(join(root, "src"))].sort();
 const isolated = files.filter((file) => {
+    // Browser suites own subprocesses and should not share a Bun worker with
+    // shell-script tests or modules that replace browser globals.
+    if (/\.browser\.test\.[jt]sx?$/.test(file)) return true;
     const source = readFileSync(join(root, file), "utf8");
     return source.includes("globalThis") && browserGlobalName.test(source);
 });

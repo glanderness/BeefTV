@@ -14,6 +14,7 @@ All notable public changes to BeefTV are documented in this file.
 - Expand the director workspace with scene controls, camera following, aspect frames, screenshots and panorama generation history.
 - Preserve director scene covers and task recovery context, and improve canvas crop and trim controls at low zoom.
 - Check for desktop updates periodically and support downloading and installing from one action while saving work first.
+- Prevent late uploads and screenshots from overwriting reopened director scenes; drain panorama result writers before switching workspaces.
 - Install the matching Chromium browser in CI and tolerate subpixel rounding in model-picker layout checks.
 
 ## v1.6.11

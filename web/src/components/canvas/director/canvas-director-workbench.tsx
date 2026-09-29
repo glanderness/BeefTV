@@ -114,6 +114,20 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     const draftRef = useRef<DirectorScene | null>(null);
     const openRef = useRef(open);
     openRef.current = open;
+    const sessionRef = useRef(new AbortController());
+    useEffect(() => {
+        const session = new AbortController();
+        sessionRef.current = session;
+        openRef.current = open;
+        setPanoramaUploading(false);
+        setPanoramaAIBusy(false);
+        setCaptureBusy(false);
+        if (!open) session.abort();
+        return () => {
+            openRef.current = false;
+            session.abort();
+        };
+    }, [open, scene?.id, projectId]);
     const stagedRef = useRef<DirectorTransaction | null>(null);
     const initializedSceneIdRef = useRef<string | null>(null);
     const onChangeRef = useRef(onChange);
@@ -476,22 +490,26 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     const uploadPanorama = async (file?: File) => {
         if (!file) return;
         if (!file.type.startsWith("image/")) { message.error("请选择图片文件"); return; }
+        const signal = sessionRef.current.signal;
         setPanoramaUploading(true);
         try {
             const uploaded = await uploadImage(file);
+            if (signal.aborted) return;
             addAsset({ kind: "image", title: file.name, coverUrl: uploaded.url, tags: ["全景图"], source: "导演台", data: { dataUrl: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType }, metadata: { source: "director-panorama" } });
             setPanorama(uploaded.url, uploaded.storageKey, file.name);
             message[uploaded.pendingRemoteUpload ? "warning" : "success"](uploaded.pendingRemoteUpload ? "全景图已保存在本机；资源服务恢复后请检查同步" : "全景图已加入场景和素材库");
         } catch (error) {
+            if (signal.aborted) return;
             message.error(error instanceof Error ? error.message : "全景图上传失败");
         } finally {
-            setPanoramaUploading(false);
+            if (!signal.aborted) setPanoramaUploading(false);
         }
     };
 
     const startPanoramaGeneration = (file: File) => {
         const sceneId = draftRef.current?.id;
         if (!sceneId || panoramaAIBusy) return;
+        const signal = sessionRef.current.signal;
         setPanoramaAIBusy(true);
         setPanoramaAIStatus("正在提交生成任务…");
         void generatePanorama({
@@ -499,17 +517,20 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
             config: effectiveConfig,
             sceneId,
             projectId,
-            onTaskUpdate: (task) => setPanoramaAIStatus(task.progress != null ? `正在生成 · ${Math.round(task.progress)}%` : "正在生成…"),
+            signal,
+            onTaskUpdate: (task) => { if (!signal.aborted) setPanoramaAIStatus(task.progress != null ? `正在生成 · ${Math.round(task.progress)}%` : "正在生成…"); },
         }).then((result) => {
+            if (signal.aborted) return;
             const ratio = result.height > 0 ? result.width / result.height : 0;
             if (Math.abs(ratio - 2) > 0.08) message.warning("图片已生成，但不是 2:1 全景比例；在历史记录中选用前请检查效果");
             else message.success("全景图已生成，可在历史记录中选用");
             setPanoramaAIOpen(false);
         }).catch((error) => {
+            if (signal.aborted) return;
             const text = error instanceof Error ? error.message : "全景图生成失败";
             setPanoramaAIStatus(text);
             message.error(text);
-        }).finally(() => setPanoramaAIBusy(false));
+        }).finally(() => { if (!signal.aborted) setPanoramaAIBusy(false); });
     };
 
     const uploadModel = async (file?: File) => {
@@ -780,17 +801,18 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     };
 
     const captureScreenshot = async () => {
+        const signal = sessionRef.current.signal;
         const current = draftRef.current;
         const shot = current?.shots.find((item) => item.id === current.activeShotId) || current?.shots[0];
         if (captureBusy || !captureReady || !current || !shot || !viewportRef.current) return;
         setCaptureBusy(true);
         try {
             const beauty = await viewportRef.current.capture("beauty");
-            if (!openRef.current || draftRef.current?.id !== current.id) throw new Error("截图期间场景已切换，请重试");
+            if (signal.aborted || !openRef.current || draftRef.current?.id !== current.id) return;
             const uploaded = await uploadImage(beauty);
             const latest = draftRef.current;
             const latestShot = latest?.shots.find((item) => item.id === shot.id);
-            if (!openRef.current || !latest || latest.id !== current.id || !latestShot) throw new Error("截图期间场景或镜头已切换，请重试");
+            if (signal.aborted || !openRef.current || !latest || latest.id !== current.id || !latestShot) return;
             const name = nextDirectorScreenshotName(latest.cameras.find((item) => item.id === latestShot.cameraId)?.name || "机位", latestShot.screenshots?.length || 0);
             const screenshot = { id: nanoid(), name, url: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, createdAt: new Date().toISOString() };
             addAsset({ kind: "image", title: name, coverUrl: uploaded.url, tags: ["导演台截图"], source: "导演台", data: { dataUrl: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType }, metadata: { source: "director-screenshot", sceneId: latest.id, shotId: shot.id } });
@@ -801,9 +823,10 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
             setCameraInspectorTab("screenshots");
             message.success(uploaded.pendingRemoteUpload ? "截图已保存在本机，资源服务暂不可用" : "截图已保存到资源库");
         } catch (error) {
+            if (signal.aborted) return;
             message.error(error instanceof Error ? error.message : "截图失败，请重试");
         } finally {
-            setCaptureBusy(false);
+            if (!signal.aborted) setCaptureBusy(false);
         }
     };
 

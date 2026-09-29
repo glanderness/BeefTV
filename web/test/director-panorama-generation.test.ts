@@ -11,6 +11,56 @@ const task = (patch: Partial<GenerationTask> = {}): GenerationTask => ({ id: "ta
 const asset = (): ImageAsset => ({ id: "asset-1", kind: "image", title: "生成图片", coverUrl: "blob:output", tags: ["生成"], source: "生成任务", createdAt: "2026-01-01", updatedAt: "2026-01-01", metadata: { source: "generation-task" }, data: { dataUrl: "blob:output", storageKey: "image:output", width: 800, height: 400, bytes: 100, mimeType: "image/png" } });
 
 describe("导演台 AI 全景图", () => {
+    test("上传期间关闭会话后不再提交付费任务", async () => {
+        const controller = new AbortController();
+        let submits = 0;
+        await expect(generateDirectorPanorama({ ...input(), signal: controller.signal }, {
+            selectModel: () => "image-model",
+            upload: async () => { controller.abort(); return uploaded("blob:source", "image:source"); },
+            submit: async () => { submits++; return task(); }, wait: async () => task(),
+            materialize: async (value) => value, findAsset: asset, updateAsset: () => {},
+        })).rejects.toThrow("生成会话已结束");
+        expect(submits).toBe(0);
+    });
+
+    test("已接单任务关闭观察者后不物化结果且传递取消信号", async () => {
+        const controller = new AbortController();
+        let materializations = 0;
+        await expect(generateDirectorPanorama({ ...input(), signal: controller.signal }, {
+            selectModel: () => "image-model", upload: async () => uploaded("blob:source", "image:source"),
+            submit: async () => task({ status: "running" }),
+            wait: async (_id, options) => { controller.abort(); expect(options?.signal?.aborted).toBe(true); return task(); },
+            materialize: async (value) => { materializations++; return value; }, findAsset: asset, updateAsset: () => {},
+        })).rejects.toThrow("生成会话已结束");
+        expect(materializations).toBe(0);
+    });
+
+    test("上传和生成等待期间切换账号都不会写入新账号", async () => {
+        const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+        let scope = "owner-a";
+        Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: { getItem: () => scope } } });
+        try {
+            for (const changeAt of ["upload", "wait", "materialize"]) {
+                scope = "owner-a";
+                let submits = 0, materializations = 0, patches = 0;
+                await expect(generateDirectorPanorama(input(), {
+                    selectModel: () => "image-model",
+                    upload: async () => { if (changeAt === "upload") scope = "owner-b"; return uploaded("blob:source", "image:source"); },
+                    submit: async () => { submits++; return task(); },
+                    wait: async () => { if (changeAt === "wait") scope = "owner-b"; return task(); },
+                    materialize: async (value) => { materializations++; if (changeAt === "materialize") scope = "owner-b"; return value; },
+                    findAsset: asset, updateAsset: () => { patches++; },
+                })).rejects.toThrow("生成会话已结束");
+                expect(submits).toBe(changeAt === "upload" ? 0 : 1);
+                expect(materializations).toBe(changeAt === "materialize" ? 1 : 0);
+                expect(patches).toBe(0);
+            }
+        } finally {
+            if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+            else Reflect.deleteProperty(globalThis, "window");
+        }
+    });
+
     test("没有图片模型时不上传也不创建付费任务", async () => {
         let uploads = 0;
         await expect(generateDirectorPanorama(input(), {
