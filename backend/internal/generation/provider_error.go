@@ -990,6 +990,9 @@ func referenceDurationCopy(text string) (categoryCopy, bool) {
 }
 
 func specializeMediaConstraints(failure *Failure, fields extractedFields) {
+	if failure.Category != CategoryUnknown && failure.Category != CategoryInvalidParams && failure.Category != CategoryInputTooLarge && failure.Category != CategoryInputInaccessible {
+		return
+	}
 	message := promptEchoPattern.ReplaceAllString(fields.Message, "")
 	if failure.Category == CategoryInvalidParams || failure.Category == CategoryUnknown {
 		if copy, ok := persistedTaskConstraintCopy(message); ok {
@@ -1057,6 +1060,28 @@ func specializeMediaConstraints(failure *Failure, fields extractedFields) {
 
 func referenceMediaConstraintCopy(text string) (categoryCopy, bool) {
 	text = strings.SplitN(text, "。排查编号：", 2)[0]
+	if m := regexp.MustCompile(`^(第 \d+ 个参考视频帧率无法读取)`).FindStringSubmatch(text); len(m) == 2 {
+		return categoryCopy{Reason: m[1], Action: "请重新导出 MP4/MOV 视频后上传，确保文件完整且包含有效的视频轨"}, true
+	}
+	if m := regexp.MustCompile(`^(第 \d+ 个参考视频平均帧率为 \d+(?:\.\d+)? FPS)[，。](?:需要 |请将参考视频重新导出为 )(\d+)–(\d+) FPS`).FindStringSubmatch(text); len(m) == 4 {
+		return categoryCopy{Reason: m[1], Action: "请将参考视频重新导出为 " + m[2] + "–" + m[3] + " FPS 后再提交"}, true
+	}
+	if m := regexp.MustCompile(`(?i)^(?:素材转换失败:\s*)?(?:frame rate|framerate|fps) must be between (\d+(?:\.\d+)?)\s*(?:fps)? and (\d+(?:\.\d+)?)[.\s]*$`).FindStringSubmatch(text); len(m) == 3 {
+		return categoryCopy{Reason: "参考视频帧率不符合要求", Action: "请将参考视频重新导出为 " + m[1] + "–" + m[2] + " FPS 后再提交"}, true
+	}
+	if strings.HasPrefix(text, "参考视频帧率不符合要求。请将参考视频重新导出为 ") {
+		parts := strings.SplitN(text, "。", 2)
+		return categoryCopy{Reason: parts[0], Action: parts[1]}, true
+	}
+	if regexp.MustCompile(`(?i)^(?:(?:素材转换失败:\s*)?(?:unsupported (?:video |audio )?codec|(?:video |audio )?codec (?:is )?not supported)[.\s]*$|参考素材编码不受当前模型支持。)`).MatchString(text) {
+		return categoryCopy{Reason: "参考素材编码不受当前模型支持", Action: "请将视频重新导出为常见的 H.264 MP4，音频重新导出为 MP3 或 WAV 后替换素材；只修改文件后缀无效"}, true
+	}
+	if regexp.MustCompile(`(?i)^(?:asset (?:is )?(?:not ready|still processing)[.\s]*$|参考素材仍在处理中。)`).MatchString(text) {
+		return categoryCopy{Reason: "参考素材仍在处理中", Action: "请在素材库确认处理完成后再生成，不要重复上传或反复提交"}, true
+	}
+	if regexp.MustCompile(`(?i)^(?:asset (?:access denied|permission denied|forbidden)[.\s]*$|无权访问参考素材。)`).MatchString(text) {
+		return categoryCopy{Reason: "无权访问参考素材", Action: "请使用上传该素材的账号与渠道，或重新上传原文件；检查素材权限，无需修改提示词"}, true
+	}
 	if m := regexp.MustCompile(`^(参考素材像素总量不符合模型要求)。((?:请将参考素材的宽×高调整到) \d+–\d+ 像素[^{}]*)$`).FindStringSubmatch(text); len(m) == 3 {
 		return categoryCopy{Reason: m[1], Action: m[2]}, true
 	}

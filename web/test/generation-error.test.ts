@@ -385,3 +385,12 @@ test("reference pixel diagnostic ID is not duplicated", () => {
     expect(failure.message.split(id).length - 1).toBe(1);
     expect(failure.action).not.toContain(id);
 });
+
+test("media details preserve authentication and ignore prompt echoes", () => {
+    for (const message of ["asset access denied", "unsupported video codec", "Frame rate must be between 24 and 60."]) {
+        const failure = explainGenerationError({error: {code: "invalid_api_key", message}, request_id: "req_media_auth_123"});
+        expect(failure.category).toBe("auth");
+        expect(failure.requestId).toBe("req_media_auth_123");
+    }
+    expect(explainGenerationError({error: {code: "unknown", message: "Failure"}, prompt: "unsupported video codec"}).category).toBe("unknown");
+});

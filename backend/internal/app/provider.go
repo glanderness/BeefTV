@@ -773,6 +773,10 @@ func (s *Service) hydrateVideoReferenceMetadata(userID string, input *canvasGene
 				return BadAuthRequest(fmt.Sprintf("第 %d 个参考视频尺寸无法读取，请重新导出 MP4/MOV 后导入", i+1))
 			}
 			media.Width, media.Height, media.Bytes = w, h, int64(len(data))
+			_, fps := referenceVideoEncoding(data)
+			if err := referenceVideoFrameRateError(input.Config, i, fps); err != nil {
+				return err
+			}
 			if durationMs > 0 {
 				media.DurationMs = durationMs
 			}

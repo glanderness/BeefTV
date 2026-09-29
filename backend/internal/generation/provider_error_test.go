@@ -460,3 +460,17 @@ func TestReferencePixelDiagnosticIDIsNotDuplicated(t *testing.T) {
 		t.Fatalf("duplicate ID: %s", failure.UserMessage())
 	}
 }
+
+func TestMediaCopyPreservesAuthenticationAndIgnoresRequestEcho(t *testing.T) {
+	for _, message := range []string{"asset access denied", "unsupported video codec", "Frame rate must be between 24 and 60."} {
+		body, _ := json.Marshal(map[string]any{"error": map[string]string{"code": "invalid_api_key", "message": message}, "request_id": "req_media_auth_123"})
+		failure := generation.ClassifyText(string(body))
+		if failure.Category != generation.CategoryAuth || failure.RequestID != "req_media_auth_123" {
+			t.Fatalf("auth overwritten: %+v", failure)
+		}
+	}
+	failure := generation.ClassifyText(`{"error":{"code":"unknown","message":"Failure"},"prompt":"unsupported video codec"}`)
+	if failure.Category != generation.CategoryUnknown {
+		t.Fatalf("request echo classified: %+v", failure)
+	}
+}
