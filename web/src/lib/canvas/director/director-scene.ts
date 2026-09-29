@@ -86,6 +86,11 @@ export function directorFocalLengthToFov(focalLength: number) {
     return (2 * Math.atan(36 / (2 * Math.max(1, focalLength))) * 180) / Math.PI;
 }
 
+/** 与焦距编辑使用同一 35mm 全画幅模型，FOV 调整后两项保持同步。 */
+export function directorFovToFocalLength(fov: number) {
+    return 18 / Math.tan((Math.max(1, Math.min(179, fov)) * Math.PI) / 360);
+}
+
 export function createDirectorLight(type: DirectorLight["type"], name: string, position: DirectorVec3, intensity = 1): DirectorLight {
     return { id: nanoid(), name, type, transform: directorIdentityTransform(position), color: "#ffffff", intensity, angle: Math.PI / 4, penumbra: 0.35, castShadow: type !== "ambient" };
 }
