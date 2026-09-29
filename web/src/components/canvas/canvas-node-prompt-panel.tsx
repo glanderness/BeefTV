@@ -19,6 +19,7 @@ import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
+import { seedanceSettingsConstraints } from "@/lib/seedance-task-constraints";
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import { CanvasPortraitTexturePopover } from "./canvas-portrait-texture-popover";
@@ -414,6 +415,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                             />
                             <CanvasVideoSettingsPopover
                                 config={config}
+                                taskConstraints={seedanceSettingsConstraints(modelOptionName(config.model), requirements.input?.imageCount || 0, requirements.input?.videoCount || 0, requirements.input?.audioCount || 0, node.metadata?.videoEditOperation, Boolean(node.metadata?.videoStartFrameNodeId || node.metadata?.videoEndFrameNodeId))}
                                 buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
                                 onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))}
                             />

@@ -1,4 +1,5 @@
 import { type ReactNode } from "react";
+import type { SeedanceSettingsConstraints } from "@/lib/seedance-task-constraints";
 import { Switch } from "@/components/ui/base/switch";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
@@ -19,6 +20,7 @@ const sizeOptions = [
 ];
 
 type VideoSettingsPanelProps = {
+    taskConstraints?: SeedanceSettingsConstraints;
     config: AiConfig;
     onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoArkPrivateAssetUpload", value: string) => void;
     theme: CanvasTheme;
@@ -26,13 +28,13 @@ type VideoSettingsPanelProps = {
     className?: string;
 };
 
-export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[292px] space-y-3" }: VideoSettingsPanelProps) {
+export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[292px] space-y-3", taskConstraints }: VideoSettingsPanelProps) {
     const profile = modelCapabilityConfigFor(config, config.model).video!;
     if (resolveModelRequestConfig(config, config.model).interfaceType === "volcengine-jimeng-video") {
         return <JiMengVideoSettingsPanel config={config} profile={profile} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
     if (isSeedanceVideoConfig(config)) {
-        return <SeedanceVideoSettingsPanel config={config} profile={profile} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+        return <SeedanceVideoSettingsPanel config={config} profile={profile} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} taskConstraints={taskConstraints} />;
     }
 
     const seconds = normalizeVideoDuration(config.videoSeconds);
@@ -124,10 +126,10 @@ function JiMengVideoSettingsPanel({ config, profile, onConfigChange, theme, show
     );
 }
 
-function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps & { profile: VideoCapabilityConfig }) {
+function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, showTitle, className, taskConstraints }: VideoSettingsPanelProps & { profile: VideoCapabilityConfig }) {
     const model = modelOptionName(config.model || config.videoModel);
     const resolution = normalizeSeedanceResolution(config.vquality, model);
-    const ratio = normalizeSeedanceRatio(config.size);
+    const ratio = taskConstraints?.ratioLabel ? "adaptive" : normalizeSeedanceRatio(config.size);
     const duration = normalizeSeedanceDuration(config.videoSeconds);
     const generateAudio = boolConfig(config.videoGenerateAudio, profile.generateAudio.default);
     const watermark = boolConfig(config.videoWatermark, profile.watermark.default);
@@ -157,12 +159,13 @@ function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, sh
                 </SettingGroup>
                 <SettingGroup title="比例" color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-1.5">
-                        {profile.ratios.map((value) => {
-                            const item = { value, label: value };
+                        {(taskConstraints?.ratioLabel ? ["adaptive"] : profile.ratios).map((value) => {
+                            const item = { value, label: taskConstraints?.ratioLabel || value };
                             return (
                                 <button
                                     key={item.value}
                                     type="button"
+                                    disabled={Boolean(taskConstraints?.ratioLabel)}
                                     className="flex h-11 min-w-0 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-md px-1 text-[var(--fs-tiny)] font-medium leading-none transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1"
                                     style={{ background: ratio === item.value ? theme.toolbar.activeBg : "transparent", color: theme.node.text, outlineColor: theme.node.muted }}
                                     onMouseDown={(event) => event.stopPropagation()}
@@ -178,7 +181,7 @@ function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, sh
                     </div>
                 </SettingGroup>
                 <SettingGroup title="时长" color={theme.node.muted}>
-                    <VideoDurationControl profile={profile} value={duration} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} />
+                    {taskConstraints?.durationLocked ? <p className="text-sm">随原视频</p> : <VideoDurationControl profile={profile} value={duration} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} />}
                 </SettingGroup>
                 <SettingGroup title="输出" color={theme.node.muted}>
                     <div className="grid grid-cols-2 gap-3 rounded-md px-2" style={{ background: theme.toolbar.itemHover }}>

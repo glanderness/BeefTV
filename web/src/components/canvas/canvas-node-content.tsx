@@ -477,6 +477,7 @@ function VideoNodeContent({ node, theme, mediaActive = false, onMediaPlayRequest
 
     return (
         <div ref={playerBoxRef} className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-[var(--node-radius)] bg-black">
+            {node.metadata?.outputParameterWarning ? <div role="status" className="absolute left-2 right-2 top-2 z-[var(--node-z-overlay)] rounded-md px-3 py-2 text-xs leading-relaxed" style={{ background: theme.node.panel, color: theme.node.text }}>{node.metadata.outputParameterWarning}</div> : null}
             <div className={`absolute inset-0 ${presentation.showPoster ? "opacity-100" : "opacity-0"}`}>
                 <InactiveVideoPreview node={node} theme={theme} onPlay={() => onMediaPlayRequest?.(node.id)} hoverEnabled={!mediaActive} showPlayButton={!mediaActive} />
             </div>

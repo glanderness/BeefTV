@@ -9,6 +9,24 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.9
+
+- Fix built-in BeefAPI Seedance profiles selecting a package name instead of the installed video provider ID, which caused false "interface not installed" failures before submission.
+- Repair existing enterprise profiles automatically and accept previously saved OpenAI Videos protocol aliases without bypassing disabled plugins.
+- Verify imported and restored Seedance profiles against the shipped provider catalog and test legacy aliases through the installed plugin runtime.
+
+## v1.6.8
+
+- Read missing reference-video dimensions even when duration is already known, and reject unreadable or out-of-range video before submission.
+- Validate local and inline video dimensions from the actual file instead of trusting stale metadata.
+- Explain pixel-limit failures with the affected reference, actual dimensions and allowed range.
+
+## v1.6.7
+
+- Ask for confirmation before paid Seedance 2.0 standard and 2.5 reference-video generation on affected channels where the requested aspect ratio may not be honored.
+- Show frame, edit and extension settings that follow the source media, and explain first-frame compatibility errors with actionable guidance.
+- Preserve generated videos and show a notice when their measured aspect ratio differs from the submitted request.
+
 ## v1.6.6
 
 - Preserve structured provider error codes when polling Seedance tasks, so temporary route outages do not ask users to change model settings.

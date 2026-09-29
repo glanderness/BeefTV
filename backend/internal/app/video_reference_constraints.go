@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"math"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -82,6 +83,13 @@ func validateVideoReferenceMedia(profile *VideoCapabilityConfig, input canvasGen
 		return BadAuthRequest("当前视频模型能力参数无效")
 	}
 	refs := profile.References
+	if u, err := url.Parse(input.Config.BaseURL); err == nil && isSeedance2Family(input.Config.InterfaceType, input.Config.Model) && refs.MinVideoPixels == 409600 && refs.MaxVideoPixels == 8295044 {
+		switch strings.ToLower(u.Hostname()) {
+		case "enterprise.beefapi.com", "beefapi.com", "www.whatstoken.ai", "whatstoken.ai":
+			refs.MinVideoPixels = 407696
+		}
+	}
+
 	if len(input.ReferenceImages) > refs.MaxImages {
 		return BadAuthRequest(fmt.Sprintf("当前视频模型最多支持 %d 张参考图", refs.MaxImages))
 	}
@@ -113,6 +121,9 @@ func validateVideoReferenceMedia(profile *VideoCapabilityConfig, input canvasGen
 		}
 		if err := validateReferenceFileBytes("视频", index, media.Bytes, refs.MaxVideoBytes); err != nil {
 			return err
+		}
+		if refs.MinVideoPixels > 0 && (media.Width <= 0 || media.Height <= 0) && !opaqueVideoAssetPattern.MatchString(strings.TrimSpace(media.URL)) {
+			return BadAuthRequest(fmt.Sprintf("第 %d 个参考视频尺寸无法读取，请重新导入素材后再提交", index+1))
 		}
 		if err := validateReferenceGeometry("视频", index, media.Width, media.Height, refs.MinVideoWidth, refs.MaxVideoWidth, refs.MinVideoHeight, refs.MaxVideoHeight, refs.MinVideoAspect, refs.MaxVideoAspect, refs.MinVideoPixels, refs.MaxVideoPixels); err != nil {
 			return err
@@ -179,7 +190,7 @@ func validateReferenceGeometry(kind string, index, width, height, minWidth, maxW
 	}
 	pixels := int64(width) * int64(height)
 	if minPixels > 0 && pixels < minPixels || maxPixels > 0 && pixels > maxPixels {
-		return BadAuthRequest(fmt.Sprintf("%s像素总量为 %d，不符合当前模型要求；请调整尺寸或更换后再提交", label, pixels))
+		return BadAuthRequest(fmt.Sprintf("%s像素总量为 %d（%d×%d），需要 %s 像素；请调整这份素材的尺寸或更换原文件，修改生成分辨率不会改变参考素材", label, pixels, width, height, referenceBound(float64(minPixels), float64(maxPixels))))
 	}
 	return nil
 }

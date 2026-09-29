@@ -56,6 +56,7 @@ export async function executeVideoGeneration({
             status: NODE_STATUS_LOADING,
             errorDetails: undefined,
             generationErrorCode: undefined,
+            outputParameterWarning: undefined,
             resourceReloadAvailable: undefined,
             failedPromptFingerprint: undefined,
             model: generationConfig.model,

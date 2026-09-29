@@ -449,12 +449,20 @@ export function modelCapabilityConfigFor(
     const profile = channel?.modelProfiles?.find((item) => item.model === modelName && item.capabilityConfig && !Array.isArray(item.capabilityConfig)) || channel?.modelProfiles?.find((item) => item.model === modelName);
     const protocol = profile?.protocol || channel?.interfaceType;
     const fallback = defaultModelCapabilityConfig(protocol, modelName);
+    const alignMaterialPixels = (video: VideoCapabilityConfig | undefined) => {
+        let host = "";
+        try { host = new URL(channel?.baseUrl || "").hostname.toLowerCase(); } catch { /* no public URL */ }
+        if (video && isSeedance2Family(protocol, modelName) && ["enterprise.beefapi.com", "beefapi.com", "whatstoken.ai", "www.whatstoken.ai"].includes(host) && video.references.minVideoPixels === 409600 && video.references.maxVideoPixels === 8295044) video.references.minVideoPixels = 407696;
+    };
+
     if (!profile?.capabilityConfig) {
+        alignMaterialPixels(fallback.video);
         return fallback;
     }
     const capabilityConfig = normalizeModelCapabilityConfig(profile.capabilityConfig);
     const text = capabilityConfig.text ? { ...fallback.text!, ...capabilityConfig.text, references: { ...fallback.text!.references, ...capabilityConfig.text.references } } : fallback.text;
     const video = (capabilityConfig.video ? { ...fallback.video!, ...capabilityConfig.video, references: { ...fallback.video!.references, ...capabilityConfig.video.references } } : fallback.video)!;
+    alignMaterialPixels(video);
     const configuredImage = capabilityConfig.image;
     const image = configuredImage
         ? (() => {

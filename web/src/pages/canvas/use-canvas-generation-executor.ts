@@ -17,7 +17,8 @@ import { navigateToSettings } from "@/lib/settings-navigation";
 import type { Skill } from "@/services/api/skills";
 import { skillRuntime } from "@/services/skill-runtime";
 import type { GenerationTask } from "@/services/api/task-center";
-import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { useConfigStore, useEffectiveConfig, resolveModelRequestConfig } from "@/stores/use-config-store";
+import { seedanceReferenceRatioWarning } from "@/lib/seedance-channel-warning";
 import type { Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
@@ -249,6 +250,19 @@ export function useCanvasGenerationExecutor({
                     const duplicateConfirmationRequired = !options?.skipDuplicateConfirmation && !options?.retryContext && sourceNode?.metadata?.lastGenerationRequestFingerprint === requestFingerprint;
                     if (duplicateConfirmationRequired && !(await confirmDuplicateSubmission())) return;
 
+                    const ratioWarning = mode === "video" && !usesWorkflowProvider ? seedanceReferenceRatioWarning({
+                        ...resolveModelRequestConfig(generationConfig, generationConfig.model),
+                        videoCount: generationContext.referenceVideos.length,
+                        ratio: generationConfig.size,
+                        operation: sourceNode?.metadata?.videoEditOperation,
+                    }) : undefined;
+                    if (ratioWarning) {
+                        const accepted = await new Promise<boolean>((resolve) => {
+                            modal.confirm({ ...ratioWarning, centered: true, onOk: () => resolve(true), onCancel: () => resolve(false), afterClose: () => resolve(false) });
+                        });
+                        if (!accepted || options?.controller?.signal.aborted) return;
+                    }
+
                     setRunningNodeId(nodeId);
                     const controller = startGenerationRequest(nodeId, nodeId, nodeId, options?.controller);
                     if (controller.signal.aborted) {
@@ -393,6 +407,7 @@ export function useCanvasGenerationExecutor({
             finishGenerationRequest,
             isAiConfigReady,
             message,
+            modal,
             nodesRef,
             connectionsRef,
             projectId,

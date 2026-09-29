@@ -430,3 +430,33 @@ func TestWholeRequestTooLargeIsNotASingleFileAdvice(t *testing.T) {
 		}
 	}
 }
+
+func TestGatewayVideoPreflightErrorFixture(t *testing.T) {
+	data, err := os.ReadFile("../../../web/test/fixtures/reference-video-errors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct{ Message, Reason, Action string }
+	if err = json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range cases {
+		body, _ := json.Marshal(map[string]any{"error": map[string]string{"code": "invalid_reference_video", "message": item.Message}})
+		failure := generation.ClassifyText(string(body))
+		if !strings.Contains(failure.Reason, item.Reason) || !strings.Contains(failure.Action, item.Action) {
+			t.Fatalf("lost guidance for %s: %+v", item.Message, failure)
+		}
+		persisted := generation.ClassifyText(failure.UserMessage())
+		if !strings.Contains(persisted.UserMessage(), item.Action) {
+			t.Fatalf("lost persisted guidance: %+v", persisted)
+		}
+	}
+}
+
+func TestReferencePixelDiagnosticIDIsNotDuplicated(t *testing.T) {
+	input := "第 1 个参考视频像素总量为 331776（432×768）。需要 407696–8295044 像素；请调整尺寸。排查编号：请求 202609290516575609492488268d9d6HqaXq7bq。"
+	failure := generation.ClassifyText(input)
+	if strings.Count(failure.UserMessage(), "202609290516575609492488268d9d6HqaXq7bq") != 1 {
+		t.Fatalf("duplicate ID: %s", failure.UserMessage())
+	}
+}
