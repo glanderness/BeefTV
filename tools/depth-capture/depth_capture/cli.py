@@ -3,11 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 import time
 
 import numpy as np
 
 from .model import default_runtime_dir, infer_relative_depth, select_device
+from .device_failure import CUDA_DEVICE_EXIT_CODE, is_cuda_device_failure
 from .pipeline import (
     build_output_paths,
     encode_depth_preview,
@@ -107,7 +109,13 @@ def run(args: argparse.Namespace) -> dict[str, object]:
 
 def main() -> int:
     args = build_parser().parse_args()
-    run(args)
+    try:
+        run(args)
+    except RuntimeError as error:
+        if args.device != "cuda" or not is_cuda_device_failure(error):
+            raise
+        print(f"CUDA 设备故障：{error}", file=sys.stderr)
+        return CUDA_DEVICE_EXIT_CODE
     return 0
 
 

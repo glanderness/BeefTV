@@ -142,7 +142,7 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
         icon: <WandSparkles className="size-3.5" />,
         defaultVisible: true,
         defaultOrder: 47,
-        nodeToolbar: { group: "more", order: 40, section: "视频处理", description: "生成时间连续的深度动作参考视频" },
+        nodeToolbar: { group: "more", order: 40, section: "视频处理", description: "本地生成深度参考视频；首次需下载组件，CPU 处理可能较慢" },
         applicable: (ctx) => hasVideo(ctx) && !simpleMode(ctx),
         disabled: (ctx) => ctx.trimmingVideo,
         run: (ctx) => ctx.handlers.onNodeDepthCapture(ctx.node!),

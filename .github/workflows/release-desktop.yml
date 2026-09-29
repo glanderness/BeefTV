@@ -99,6 +99,11 @@ jobs:
           commit="$(git -C .. rev-parse HEAD)"
           go test ./cmd/update-release
 
+          curl --fail --location --retry 3 --max-time 60 \
+            https://github.com/glanderness/BeefTV/releases/download/depth-runtime-v2/depth-runtime-manifest.v2.json \
+            --output "$RUNNER_TEMP/depth-manifest.json"
+          go run ./cmd/update-release verify-depth --input "$RUNNER_TEMP/depth-manifest.json"
+
           greater_args=()
           latest=""
           release_tags="$(gh release list --exclude-drafts --exclude-pre-releases --limit 100 --json tagName --jq '.[].tagName')"
@@ -227,6 +232,7 @@ jobs:
         if: runner.os == 'Windows'
         env:
           BEEFTV_UPDATER_PUBLIC_KEY: ${{ vars.BEEFTV_UPDATER_PUBLIC_KEY }}
+          BEEFTV_EXTRA_LDFLAGS: -X infinite-canvas/backend/internal/app.depthWindowsManifestPublicKeyBase64=${{ vars.BEEFTV_UPDATER_PUBLIC_KEY }}
           CGO_ENABLED: "1"
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-beeftv-windows-release.ps1

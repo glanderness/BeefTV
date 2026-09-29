@@ -59,10 +59,17 @@ class InputContractTests(unittest.TestCase):
         self.assertEqual(standard_target_fps(24.0), 24.0)
 
     def test_rejects_a_video_longer_than_the_mvp_limit(self) -> None:
-        metadata = VideoMetadata(width=1280, height=720, fps=30.0, frames=451, duration=15.034)
+        metadata = VideoMetadata(width=1280, height=720, fps=30.0, frames=454, duration=15.134)
 
         with self.assertRaisesRegex(ValueError, "15"):
             validate_input(metadata, max_seconds=15.0)
+
+    def test_duration_tolerance_does_not_expand_at_low_frame_rates(self) -> None:
+        for fps in (1.0, 24.0, 30.0, 60.0):
+            with self.subTest(fps=fps):
+                validate_input(VideoMetadata(1280, 720, fps, round(15 * fps), 15.1), 15.0)
+                with self.assertRaisesRegex(ValueError, "15"):
+                    validate_input(VideoMetadata(1280, 720, fps, round(16 * fps), 16.0), 15.0)
 
     def test_builds_preview_and_raw_depth_paths(self) -> None:
         preview, raw = build_output_paths(Path("/tmp/out"), Path("dance.mp4"))
