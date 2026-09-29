@@ -169,3 +169,12 @@ describe("生成提议的两种结果不会互相冒充", () => {
         expect(decided.has(dismissedProposalKey("p2"))).toBe(true);
     });
 });
+
+describe("assistantVisibleReply", () => {
+    test("去掉闭合与未闭合的思考片段", async () => {
+        const { assistantVisibleReply } = await import("@/pages/canvas/canvas-assistant-copy");
+        expect(assistantVisibleReply("<think>先想想</think>\n已经建好三个镜头。")).toBe("已经建好三个镜头。");
+        expect(assistantVisibleReply("已完成<think>还在写")).toBe("已完成");
+        expect(assistantVisibleReply("<think>只有草稿")).toBe("");
+    });
+});

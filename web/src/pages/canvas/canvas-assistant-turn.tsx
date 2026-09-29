@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import type { AgentToolCall, AssistantGenerationProposal, AssistantTurn } from "@/services/api/agent-assistant";
-import { assistantChangeSummary, assistantChangedNodeIds, assistantFailedActionText, assistantProposalText, assistantUndoFailureText } from "./canvas-assistant-copy";
+import { assistantChangeSummary, assistantChangedNodeIds, assistantFailedActionText, assistantProposalText, assistantUndoFailureText, assistantVisibleReply } from "./canvas-assistant-copy";
 import { dismissedProposalKey, type AssistantTurnStatus } from "./use-canvas-assistant";
 
 type Props = {
@@ -19,9 +19,11 @@ type Props = {
 
 /** 助手回复用 Markdown 渲染，只走 react-markdown 的安全默认值，不放开原始 HTML。 */
 export function CanvasAssistantReply({ text }: { text: string }) {
+    const visible = assistantVisibleReply(text);
+    if (!visible) return null;
     return (
         <div className="canvas-assistant-reply">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{visible}</ReactMarkdown>
         </div>
     );
 }

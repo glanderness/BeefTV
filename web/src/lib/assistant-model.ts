@@ -5,7 +5,7 @@ import { decodeChannelModel, encodeChannelModel, normalizeModelOptionValue, type
  * 画布助手只能走这三种对话协议：它需要多轮工具调用，
  * 生图/视频/音频协议和单轮补全协议都无法承载这个回路。
  */
-export const ASSISTANT_MODEL_PROTOCOLS: ModelProtocol[] = ["chat-completion", "claude-api", "responses"];
+export const ASSISTANT_MODEL_PROTOCOLS: ModelProtocol[] = ["chat-completion", "claude-api", "openai-response", "responses"];
 
 /** 文本能力未显式声明协议时，渠道层按 chat-completion 发起请求，因此同样可选。 */
 const DEFAULT_TEXT_PROTOCOL: ModelProtocol = "chat-completion";

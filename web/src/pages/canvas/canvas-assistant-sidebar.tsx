@@ -5,7 +5,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { AppDrawer } from "@/components/ui/product/app-drawer";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { AssistantGenerationProposal } from "@/services/api/agent-assistant";
-import { ASSISTANT_STARTER_PROMPTS, assistantStatusNotice } from "./canvas-assistant-copy";
+import { ASSISTANT_STARTER_PROMPTS, assistantStatusNotice, assistantVisibleReply } from "./canvas-assistant-copy";
 import { CanvasAssistantComposer } from "./canvas-assistant-composer";
 import { CanvasAssistantReply, CanvasAssistantTurnView, CanvasAssistantUserMessage } from "./canvas-assistant-turn";
 import { ASSISTANT_MAX_WIDTH, ASSISTANT_MIN_WIDTH, type CanvasAssistantController } from "./use-canvas-assistant";
@@ -128,7 +128,7 @@ export function CanvasAssistantSidebar(props: Props) {
                 {assistant.pendingUserText ? (
                     <div className="canvas-assistant-turn">
                         <CanvasAssistantUserMessage text={assistant.pendingUserText} selectedCount={assistant.pendingSelectedNodeIds.length} />
-                        {assistant.streamed ? <CanvasAssistantReply text={assistant.streamed} /> : <p className="canvas-assistant-meta">助手正在处理…</p>}
+                        {assistantVisibleReply(assistant.streamed || "") ? <CanvasAssistantReply text={assistant.streamed} /> : <p className="canvas-assistant-meta">助手正在处理…</p>}
                     </div>
                 ) : null}
 

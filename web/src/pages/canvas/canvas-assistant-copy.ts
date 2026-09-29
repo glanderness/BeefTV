@@ -110,3 +110,14 @@ export const ASSISTANT_STARTER_PROMPTS = [
     "整理画布并按顺序连线",
     "检查哪些镜头还缺参考图",
 ];
+
+/**
+ * 部分模型把推理过程以 <think>…</think> 夹在回复正文里；那是模型的草稿，不是给用户的话。
+ * 流式输出时结束标签可能还没到，未闭合的 <think> 之后的内容一并隐藏。
+ */
+export function assistantVisibleReply(text: string): string {
+    return text
+        .replace(/<think>[\s\S]*?<\/think>/gi, "")
+        .replace(/<think>[\s\S]*$/i, "")
+        .trim();
+}
