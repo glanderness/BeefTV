@@ -10,6 +10,7 @@ import type { AnimationClip } from "three";
 import { CanvasDirectorOnboarding } from "@/components/canvas/director/canvas-director-onboarding";
 import { DirectorSceneInspector } from "@/components/canvas/director/director-scene-inspector";
 import { DirectorScreenshotGallery } from "@/components/canvas/director/director-screenshot-gallery";
+import { DirectorCameraScreenshotTabs, type DirectorCameraInspectorTab } from "@/components/canvas/director/director-camera-screenshot-tabs";
 import { DirectorPanoramaAIModal } from "@/components/canvas/director/director-panorama-ai-modal";
 import { DirectorWorkbenchRail, type DirectorWorkbenchTab } from "@/components/canvas/director/director-workbench-rail";
 import { DirectorViewport, type DirectorViewportHandle } from "@/components/canvas/director/director-viewport";
@@ -73,6 +74,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     const [navigationTab, setNavigationTab] = useState<DirectorWorkbenchTab>("scene");
     const [sceneSearch, setSceneSearch] = useState("");
     const [sceneInspectorView, setSceneInspectorView] = useState<"scene" | "shot">("scene");
+    const [cameraInspectorTab, setCameraInspectorTab] = useState<DirectorCameraInspectorTab>("properties");
     const mode = useDirectorWorkbenchStore((state) => state.mode);
     const viewMode = useDirectorWorkbenchStore((state) => state.viewMode);
     const setViewMode = useDirectorWorkbenchStore((state) => state.setViewMode);
@@ -789,6 +791,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
             setSelectedObjectId(null);
             setSelectedLightId(null);
             setSceneInspectorView("shot");
+            setCameraInspectorTab("screenshots");
             message.success(uploaded.pendingRemoteUpload ? "截图已保存在本机，资源服务暂不可用" : "截图已保存到资源库");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "截图失败，请重试");
@@ -827,6 +830,8 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     };
 
     if (!open || !draft || !activeShot) return null;
+
+    const shotInspector = <ShotInspector shot={activeShot} camera={activeCamera} cameras={draft.cameras} capabilities={capabilities} onUpdateShot={(patch) => updateShot(activeShot.id, patch)} onUpdateCamera={(patch) => activeCamera && commit((current) => ({ ...current, cameras: current.cameras.map((item) => item.id === activeCamera.id ? { ...item, ...patch } : item) }))} onAddCameraKeyframe={addCameraKeyframe} onApplyCameraMove={applyCameraMove} onAlignCameraToView={alignCameraToView} onExportClay={() => void exportClayVideo()} recording={recording} showScreenshots={!capabilities.cameraTools} />;
 
     return (
         <div data-canvas-no-zoom data-director-workbench="true" className="fixed inset-0 z-[var(--z-toast)] flex min-h-0 flex-col overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
@@ -949,7 +954,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
 
                 <aside className="thin-scrollbar min-h-0 overflow-y-auto border-l max-lg:col-span-2 max-lg:max-h-[40vh] max-lg:border-l-0 max-lg:border-t" style={{ background: theme.node.panel, borderColor: theme.toolbar.border }}>
                     {/* 摄影机模式下右栏固定显示 shot/camera 检查器：对齐视图与运镜是这个模式的主入口。 */}
-                    {selectedObject && !capabilities.cameraTools ? <ObjectInspector object={selectedObject} rendered={selectedObjectRendered || selectedObject.transform} playhead={snappedPlayhead} selectedBone={selectedBone} capabilities={capabilities} onSelectBone={setSelectedBone} onUpdate={(patch) => updateObject(selectedObject.id, patch)} onTransformEdit={(edited) => handleObjectTransform(selectedObject.id, selectedObjectRendered || selectedObject.transform, edited)} onBoneRotationStage={(rotation) => selectedBone && writeBoneRotation(selectedObject.id, selectedBone, rotation, "stage")} onBoneRotationCommit={() => stagedTransaction.end("commit")} onAddKeyframe={recordSelectedKeyframe} onDelete={() => removeObject(selectedObject.id)} /> : selectedLight && !capabilities.cameraTools ? <LightInspector light={selectedLight} onUpdate={(patch) => updateLight(selectedLight.id, patch)} onDelete={() => removeLight(selectedLight.id)} /> : sceneInspectorView === "scene" && !capabilities.cameraTools ? <DirectorSceneInspector scene={draft} onChange={(patch) => commit((current) => ({ ...current, ...patch }))} /> : <ShotInspector shot={activeShot} camera={activeCamera} cameras={draft.cameras} capabilities={capabilities} onUpdateShot={(patch) => updateShot(activeShot.id, patch)} onUpdateCamera={(patch) => activeCamera && commit((current) => ({ ...current, cameras: current.cameras.map((item) => item.id === activeCamera.id ? { ...item, ...patch } : item) }))} onAddCameraKeyframe={addCameraKeyframe} onApplyCameraMove={applyCameraMove} onAlignCameraToView={alignCameraToView} onExportClay={() => void exportClayVideo()} recording={recording} />}
+                    {selectedObject && !capabilities.cameraTools ? <ObjectInspector object={selectedObject} rendered={selectedObjectRendered || selectedObject.transform} playhead={snappedPlayhead} selectedBone={selectedBone} capabilities={capabilities} onSelectBone={setSelectedBone} onUpdate={(patch) => updateObject(selectedObject.id, patch)} onTransformEdit={(edited) => handleObjectTransform(selectedObject.id, selectedObjectRendered || selectedObject.transform, edited)} onBoneRotationStage={(rotation) => selectedBone && writeBoneRotation(selectedObject.id, selectedBone, rotation, "stage")} onBoneRotationCommit={() => stagedTransaction.end("commit")} onAddKeyframe={recordSelectedKeyframe} onDelete={() => removeObject(selectedObject.id)} /> : selectedLight && !capabilities.cameraTools ? <LightInspector light={selectedLight} onUpdate={(patch) => updateLight(selectedLight.id, patch)} onDelete={() => removeLight(selectedLight.id)} /> : sceneInspectorView === "scene" && !capabilities.cameraTools ? <DirectorSceneInspector scene={draft} onChange={(patch) => commit((current) => ({ ...current, ...patch }))} /> : capabilities.cameraTools ? <DirectorCameraScreenshotTabs scene={draft} tab={cameraInspectorTab} onTabChange={setCameraInspectorTab}>{shotInspector}</DirectorCameraScreenshotTabs> : shotInspector}
                 </aside>
             </div>
 
@@ -1030,7 +1035,7 @@ function LightInspector({ light, onUpdate, onDelete }: { light: DirectorLight; o
     return <Inspector title={light.name} onTitleChange={(name) => onUpdate({ name })} onDelete={onDelete}><Field label="类型"><Select className="w-full" value={light.type} options={[{ label: "方向光", value: "directional" }, { label: "点光源", value: "point" }, { label: "聚光灯", value: "spot" }, { label: "环境光", value: "ambient" }]} onChange={(type) => onUpdate({ type })} /></Field><Vec3Field label="位置" value={light.transform.position} onChange={(position) => onUpdate({ transform: { ...light.transform, position } })} /><Field label="颜色"><ColorPicker value={light.color} onChange={(_, color) => onUpdate({ color })} /></Field><Field label="强度"><InputNumber className="w-full" min={0} max={20} step={0.1} value={light.intensity} onChange={(value) => onUpdate({ intensity: value || 0 })} /></Field><Field label="投射阴影"><Switch checked={light.castShadow} onChange={(castShadow) => onUpdate({ castShadow })} /></Field></Inspector>;
 }
 
-function ShotInspector({ shot, camera, cameras, capabilities, onUpdateShot, onUpdateCamera, onAddCameraKeyframe, onApplyCameraMove, onAlignCameraToView, onExportClay, recording }: { shot: DirectorShot; camera: DirectorCamera | null; cameras: DirectorScene["cameras"]; capabilities: DirectorModeCapabilities; onUpdateShot: (patch: Partial<DirectorShot>) => void; onUpdateCamera: (patch: Partial<DirectorCamera>) => void; onAddCameraKeyframe: () => void; onApplyCameraMove: () => void; onAlignCameraToView: () => void; onExportClay: () => void; recording: boolean }) {
+function ShotInspector({ shot, camera, cameras, capabilities, onUpdateShot, onUpdateCamera, onAddCameraKeyframe, onApplyCameraMove, onAlignCameraToView, onExportClay, recording, showScreenshots = true }: { shot: DirectorShot; camera: DirectorCamera | null; cameras: DirectorScene["cameras"]; capabilities: DirectorModeCapabilities; onUpdateShot: (patch: Partial<DirectorShot>) => void; onUpdateCamera: (patch: Partial<DirectorCamera>) => void; onAddCameraKeyframe: () => void; onApplyCameraMove: () => void; onAlignCameraToView: () => void; onExportClay: () => void; recording: boolean; showScreenshots?: boolean }) {
     return <Inspector title={shot.name} onTitleChange={(name) => onUpdateShot({ name })}>
         <Field label="摄影机"><Select className="w-full" value={shot.cameraId} options={cameras.map((item) => ({ label: item.name, value: item.id }))} onChange={(cameraId) => onUpdateShot({ cameraId })} /></Field>
         <div className="grid grid-cols-2 gap-2"><Field label="景别"><Select className="w-full" value={shot.shotSize} options={shotSizeOptions} onChange={(shotSize: DirectorShotSize) => onUpdateShot({ shotSize })} /></Field><Field label="帧率"><Select className="w-full" value={shot.fps} options={[24, 25, 30].map((fps) => ({ label: `${fps} fps`, value: fps }))} onChange={(fps: 24 | 25 | 30) => onUpdateShot({ fps })} /></Field></div>
@@ -1038,7 +1043,7 @@ function ShotInspector({ shot, camera, cameras, capabilities, onUpdateShot, onUp
         <Field label="时长"><InputNumber className="w-full" min={0.5} max={60} step={0.5} value={shot.duration} addonAfter="秒" onChange={(value) => onUpdateShot({ duration: value || 5 })} /></Field>
         <Field label="镜头意图"><Input.TextArea autoSize={{ minRows: 3, maxRows: 7 }} value={shot.prompt} placeholder="人物表演、动作、叙事目标…" onChange={(event) => onUpdateShot({ prompt: event.target.value })} /></Field>
         {camera ? <><Vec3Field label="摄影机位置" value={camera.transform.position} onChange={(position) => onUpdateCamera({ transform: { ...camera.transform, position } })} /><Vec3Field label="焦点" value={camera.target} onChange={(target) => onUpdateCamera({ target })} /><Field label="焦距"><InputNumber className="w-full" min={12} max={200} value={camera.focalLength} addonAfter="mm" onChange={(focalLength) => onUpdateCamera({ focalLength: focalLength || 35, fov: directorFocalLengthToFov(focalLength || 35) })} /></Field><div className="grid grid-cols-2 gap-2"><Field label="光圈"><InputNumber className="w-full" min={0.7} max={32} step={0.1} value={camera.aperture} addonBefore="f/" onChange={(aperture) => onUpdateCamera({ aperture: aperture || 2.8 })} /></Field><Field label="焦点距离"><InputNumber className="w-full" min={0.1} max={200} step={0.1} value={camera.focusDistance} addonAfter="m" onChange={(focusDistance) => onUpdateCamera({ focusDistance: focusDistance || 5 })} /></Field></div><Button block icon={<Camera className="size-3.5" />} onClick={onAlignCameraToView}>摄影机对齐当前视图</Button><Button block icon={<Video className="size-3.5" />} onClick={onApplyCameraMove}>按运镜生成轨迹</Button>{capabilities.keyframes ? <Button block icon={<Focus className="size-3.5" />} onClick={onAddCameraKeyframe}>记录摄影机关键帧</Button> : null}<Button block type="primary" ghost icon={<Video className="size-3.5" />} loading={recording} onClick={onExportClay}>导出白膜视频</Button></> : null}
-        <DirectorScreenshotGallery screenshots={shot.screenshots || []} />
+        {showScreenshots ? <DirectorScreenshotGallery screenshots={shot.screenshots || []} /> : null}
     </Inspector>;
 }
 
