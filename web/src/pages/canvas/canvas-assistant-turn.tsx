@@ -92,7 +92,7 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, onLoca
                             <span className="canvas-assistant-meta">这次没有生成</span>
                         ) : (
                             <div className="canvas-assistant-card-actions">
-                                <Button size="small" type="primary" onClick={() => onRunProposal(proposal)}>生成</Button>
+                                <Button size="small" type="primary" autoInsertSpace={false} onClick={() => onRunProposal(proposal)}>生成</Button>
                                 <Button size="small" onClick={() => onDismissProposal(proposal.proposalId)}>先不用</Button>
                             </div>
                         )}
