@@ -16,7 +16,7 @@ describe("导演台摄影机属性", () => {
         const scene = createDirectorReproScene();
         const html = renderToStaticMarkup(createElement(DirectorCameraProperties, {
             camera: scene.cameras[0], cameras: scene.cameras, shot: scene.shots[0],
-            onUpdateCamera: () => {}, onSelectCamera: () => {}, children: createElement("span", null, "镜头参数仍在"),
+            objects: scene.objects, onUpdateCamera: () => {}, onSelectCamera: () => {}, onFollowObject: () => {}, children: createElement("span", null, "镜头参数仍在"),
         }));
         expect(html).toContain("名称");
         expect(html).toContain("切换机位");
@@ -26,8 +26,23 @@ describe("导演台摄影机属性", () => {
         expect(html).toMatch(/>Y<|>Y<\/span>/);
         expect(html).toMatch(/>Z<|>Z<\/span>/);
         expect(html).toContain("视野角度 (FOV)");
+        expect(html).toContain("跟随目标");
+        expect(html).toContain("不跟随");
+        expect(html).toContain("注视目标");
+        expect(html).toContain("手动坐标");
         expect(html).toContain('min="15"');
         expect(html).toContain('max="90"');
         expect(html).toContain("镜头参数仍在");
+    });
+
+    test("手动旋转模式展示角度输入而不是坐标输入", () => {
+        const scene = createDirectorReproScene();
+        const html = renderToStaticMarkup(createElement(DirectorCameraProperties, {
+            camera: { ...scene.cameras[0], lookAtMode: "rotation" }, cameras: scene.cameras, shot: scene.shots[0], objects: scene.objects,
+            onUpdateCamera: () => {}, onSelectCamera: () => {}, onFollowObject: () => {}, children: null,
+        }));
+        expect(html).toContain("手动旋转");
+        expect(html).toContain("旋转 X");
+        expect(html).not.toContain("注视坐标 X");
     });
 });

@@ -96,6 +96,12 @@ export type DirectorCamera = {
     name: string;
     transform: DirectorTransform;
     target: DirectorVec3;
+    /** 角色跟随以绑定帧的位置为锚；相机原有关键帧仍可叠加角色位移。 */
+    followObjectId?: string;
+    followAnchor?: DirectorVec3;
+    /** 旧场景缺省为坐标注视。 */
+    lookAtMode?: "coordinates" | "rotation" | "object";
+    lookAtObjectId?: string;
     focalLength: number;
     fov: number;
     aperture: number;
