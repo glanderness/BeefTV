@@ -1,5 +1,8 @@
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
-import { CanvasAgentAssistantPanel } from "./canvas-agent-assistant-panel";
+import type { AssistantGenerationProposal } from "@/services/api/agent-assistant";
+import { CanvasAssistantSidebar } from "./canvas-assistant-sidebar";
+import { highlightAssistantNodes } from "./canvas-assistant-highlight";
+import { resolveCanvasRightPanel, useCanvasAssistant, useCanvasAssistantDockable } from "./use-canvas-assistant";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, MouseEvent as ReactMouseEvent, SetStateAction } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -79,6 +82,7 @@ import { connectCanvasTextMention } from "@/lib/canvas/canvas-text-mention";
 import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
 import {
     applyCanvasConnectionPromptSync,
+    buildCanvasAgentMentionReferences,
     buildCanvasNodeMentionReferenceMap,
     buildCanvasResourceReferences,
     getContextResourceNodes,
@@ -157,6 +161,7 @@ import {
     type CanvasConnection,
     type CanvasFolderStyle,
     type CanvasFolderTheme,
+    type CanvasGenerationMode,
     type CanvasNodeData,
     type CanvasNodeMetadata,
     type CanvasMediaPerformanceMode,
@@ -776,7 +781,32 @@ function InfiniteCanvasPage() {
     }, [canvasProjects, deleteCurrentProject, message, modal, projectId]);
 
     const versions = useCanvasVersionHistory(projectId, restoreCanvasProjectVersion, currentProject);
-    const openVersions = () => { setVersionCompareRootId(null); versions.show(); };
+    // 画布右侧只有一个栏位：助手和版本记录互斥，谁被打开另一个就让位。
+    const assistant = useCanvasAssistant({
+        canvasId: projectId,
+        onCanvasChanged: (canvasId, changedNodeIds) => {
+            if (canvasId !== projectId) return;
+            void refreshLocalCanvasProjectIfChanged(canvasId).then(() => highlightAssistantNodes(containerRef.current, changedNodeIds));
+        },
+    });
+    const canvasMainRef = useRef<HTMLElement>(null);
+    const assistantDockable = useCanvasAssistantDockable(canvasMainRef);
+    const rightPanel = resolveCanvasRightPanel(assistant.open, versions.open);
+    const openVersions = () => { assistant.setOpen(false); setVersionCompareRootId(null); versions.show(); };
+    const toggleVersions = () => {
+        if (!versions.open) assistant.setOpen(false);
+        setVersionCompareRootId(null);
+        versions.toggle();
+    };
+    const toggleAssistant = useCallback(() => {
+        const next = !assistant.open;
+        if (next) versions.close();
+        assistant.setOpen(next);
+    }, [assistant, versions]);
+    const openAssistant = useCallback(() => {
+        versions.close();
+        assistant.setOpen(true);
+    }, [assistant, versions]);
     // 修复素材关联仍遵守当前画布版本，不能替用户确认覆盖云端的新内容。
     const confirmForceSaveCanvas = useCallback(() => {
         modal.confirm({
@@ -866,6 +896,8 @@ function InfiniteCanvasPage() {
         const available = new Set(nodes.map((node) => node.id));
         return Array.from(selectedNodeIds).filter((id) => available.has(id));
     }, [nodes, selectedNodeIds]);
+    // 助手的 @ 菜单覆盖整张画布，而不是只覆盖能当生成输入的资源节点。
+    const assistantMentionReferences = useMemo(() => buildCanvasAgentMentionReferences(nodes), [nodes]);
     // 扩展节点（对比/图表/调色）要读自己的上游才能渲染，经 Context 下发；
     // 取上游复用 canvas-resource-references 的实现，别在这里另写一份。必须 memo——
     // 每帧新对象会让所有节点跟着重渲染，错题本里多条崩溃都出在画布高频更新。
@@ -939,6 +971,18 @@ function InfiniteCanvasPage() {
         selectedNodeIdsRef.current = selectedNodeIds;
         viewportRef.current = viewport;
     }, [activeChatId, chatSessions, nodes, connections, selectedNodeIds, viewport]);
+
+    // 停靠栏挤压画布时补偿一半位移：用户正在看的那块内容留在原处，视野不跳。
+    const dockedAssistantWidth = rightPanel === "assistant" && assistantDockable ? assistant.width : 0;
+    const previousDockedAssistantWidth = useRef(dockedAssistantWidth);
+    useEffect(() => {
+        const delta = dockedAssistantWidth - previousDockedAssistantWidth.current;
+        previousDockedAssistantWidth.current = dockedAssistantWidth;
+        if (!delta) return;
+        const next = { ...viewportRef.current, x: viewportRef.current.x - delta / 2 };
+        viewportRef.current = next;
+        setViewport(next);
+    }, [dockedAssistantWidth]);
 
     useEffect(() => {
         if (!projectLoaded) return;
@@ -2086,6 +2130,7 @@ function InfiniteCanvasPage() {
 
     useCanvasKeyboard({
         enabled: projectLoaded && !versions.preview,
+        onToggleAssistant: focusMode ? undefined : toggleAssistant,
         nodesRef,
         selectedNodeIdsRef,
         selectedConnectionId,
@@ -2761,6 +2806,44 @@ function InfiniteCanvasPage() {
         },
         [generateScriptRows, handleRetryNode, message, nodesRef, reconcileImageBatchRootNode, retryDepthCaptureNode, retryImageBatchChildren],
     );
+
+    // 改动卡片的「在画布上查看」：选中这些节点并把视野带过去，再点亮一下。
+    const locateAssistantNodes = useCallback(
+        (nodeIds: string[]) => {
+            const available = new Set(nodesRef.current.map((node) => node.id));
+            const targets = nodeIds.filter((id) => available.has(id));
+            if (!targets.length) {
+                message.info("这些节点已经不在画布上了");
+                return;
+            }
+            const selection = new Set(targets);
+            selectedNodeIdsRef.current = selection;
+            setSelectedNodeIds(selection);
+            setSelectedConnectionId(null);
+            fitCanvasSelection();
+            highlightAssistantNodes(containerRef.current, targets);
+        },
+        [fitCanvasSelection, message, nodesRef, selectedNodeIdsRef, setSelectedConnectionId, setSelectedNodeIds],
+    );
+
+    // 付费生成的确认在助手面板里，真正的生成仍走画布本来的那条链路。
+    const runAssistantProposal = useCallback(
+        (proposal: AssistantGenerationProposal) => {
+            const available = new Set(nodesRef.current.map((node) => node.id));
+            const targets = proposal.nodeIds.filter((id) => available.has(id));
+            if (!targets.length) {
+                message.info("这些节点已经不在画布上了");
+                return;
+            }
+            assistant.markProposalHandled(proposal.proposalId);
+            const mode: CanvasGenerationMode = proposal.kind === "video" ? "video" : "image";
+            for (const nodeId of targets) {
+                const node = nodesRef.current.find((item) => item.id === nodeId);
+                void handleGenerateNode(nodeId, mode, node?.metadata?.composerContent ?? node?.metadata?.prompt ?? "");
+            }
+        },
+        [assistant, handleGenerateNode, message, nodesRef],
+    );
     const openCanvasNodeTaskDetails = useCallback(
         (node: CanvasNodeData) => {
             void openNodeTaskDetails(node);
@@ -2816,7 +2899,7 @@ function InfiniteCanvasPage() {
     });
     const emptyCanvasState =
         emptyStateKind === "freeform" ? (
-            <CanvasFreeformEmptyState commands={freeformCreateCommands} />
+            <CanvasFreeformEmptyState commands={freeformCreateCommands} onOpenAssistant={openAssistant} />
         ) : emptyStateKind === "linked" ? (
             <CanvasLinkedProjectEmptyState
                 projectName={linkedProjectQuery.data?.project.name || workspaceProject?.title || "项目画布"}
@@ -2855,7 +2938,7 @@ function InfiniteCanvasPage() {
             >
                 跳转到画布主内容
             </a>
-            <main id="canvas-main" data-canvas-readonly={readOnly ? "true" : "false"} data-libtv-readonly-dense={searchParams.get("fixture") === "libtv-readonly-dense" ? "true" : "false"} tabIndex={-1} className="flex h-full min-h-0 overflow-hidden outline-none" style={{ background: resolvedCanvasAppearance.background, color: theme.node.text }}>
+            <main ref={canvasMainRef} id="canvas-main" data-canvas-readonly={readOnly ? "true" : "false"} data-libtv-readonly-dense={searchParams.get("fixture") === "libtv-readonly-dense" ? "true" : "false"} tabIndex={-1} className="flex h-full min-h-0 overflow-hidden outline-none" style={{ background: resolvedCanvasAppearance.background, color: theme.node.text }}>
                 {!focusMode && !versions.preview && shortDramaEnabled && currentProject?.projectId ? (
                     <CanvasProjectSidebar projectId={currentProject.projectId} detail={linkedProjectQuery.data} onAddChapter={handleProjectChapterInsert} onLocateStyle={locateProjectStyleNode} onOpenAssets={() => openProjectAssets()} />
                 ) : null}
@@ -2884,7 +2967,9 @@ function InfiniteCanvasPage() {
                                 readOnly={readOnly}
                                 onDuplicateProject={duplicateCurrentProject}
                                 versionsOpen={versions.open}
-                                onToggleVersions={() => { setVersionCompareRootId(null); versions.toggle(); }}
+                                onToggleVersions={toggleVersions}
+                                assistantOpen={rightPanel === "assistant"}
+                                onToggleAssistant={toggleAssistant}
                                 // LibTV 的画布工作区使用“未命名工作区”作为首屏默认标题；
                                 // 项目库仍保留“未命名项目”，因此只在画布顶栏做显示层映射。
                                 title={workspaceProject?.title === "未命名项目" || !workspaceProject?.title ? "未命名工作区" : workspaceProject.title}
@@ -3107,7 +3192,7 @@ function InfiniteCanvasPage() {
                                     <CanvasFocusModeBar
                                         syncStatus={<CanvasSyncStatus projectId={projectId} onLoadLatest={reloadLatestCanvasProject} onOpenVersions={openVersions} />}
                                         versionsOpen={versions.open}
-                                        onToggleVersions={() => { versions.toggle(); }}
+                                        onToggleVersions={toggleVersions}
                                         dockRevealed={focusDockRevealed}
                                         zoomPercent={viewport.k}
                                         onToggleDock={() => setFocusDockRevealed((value) => !value)}
@@ -3281,18 +3366,6 @@ function InfiniteCanvasPage() {
                             </div>
                         ) : null}
 
-                        <div className="pointer-events-none absolute right-4 top-24 z-30">
-                            <CanvasAgentAssistantPanel
-                                canvasId={projectId}
-                                selectedCount={selectedNodeBounds?.count ?? 0}
-                                selectedNodeIds={assistantSelectedNodeIds}
-                                onTurnSettled={(canvasId) => {
-                                    // 助手这一回合可能已改动画布；立即拉取，不依赖轮询间隔。
-                                    if (canvasId !== projectId) return;
-                                    void refreshLocalCanvasProjectIfChanged(canvasId);
-                                }}
-                            />
-                        </div>
                         {selectedNodeBounds && !selectionBox && !isCanvasNodeMoving ? (
                             <CanvasProjectSelectionToolbar
                                 anchorRef={selectionBoundsElementRef}
@@ -3306,6 +3379,7 @@ function InfiniteCanvasPage() {
                                 onCreateReferenceGroup={createReferenceGroup}
                                 onBatchConnect={() => beginBatchConnectionMode(Array.from(selectedNodeIds))}
                                 onMergeVideos={() => void mergeSelectedVideos()}
+                                onAskAssistant={openAssistant}
                             />
                         ) : null}
 
@@ -3702,6 +3776,19 @@ function InfiniteCanvasPage() {
                     {versions.preview ? <CanvasVersionPreview key={versions.preview.key} preview={versions.preview} onReturn={versions.returnToCurrent} onShowVersions={versions.show} /> : null}
                     </div>
                 </CanvasOverlayLayerProvider>
+                {rightPanel === "assistant" && !focusMode && !versions.preview ? (
+                    <CanvasAssistantSidebar
+                        assistant={assistant}
+                        canvasTitle={workspaceProject?.title === "未命名项目" || !workspaceProject?.title ? "未命名工作区" : workspaceProject.title}
+                        dockable={assistantDockable}
+                        readOnly={readOnly}
+                        selectedNodeIds={assistantSelectedNodeIds}
+                        references={assistantMentionReferences}
+                        onLocateNodes={locateAssistantNodes}
+                        onRunProposal={runAssistantProposal}
+                        onOpenModelSettings={() => navigate("/settings?section=channels")}
+                    />
+                ) : null}
                 <CanvasVersionHistory history={versions} />
             </main>
         </>
