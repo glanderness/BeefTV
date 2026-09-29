@@ -133,7 +133,7 @@ func TestEnsureInstallsSignedWindowsCPURuntime(t *testing.T) {
 	defer server.Close()
 	baseURL = server.URL
 	manifest := Manifest{Version: 2, Runtimes: map[string]Artifact{
-		"windows-amd64/cpu": {URLs: []string{baseURL + "/runtime.zip"}, Size: int64(archive.Len()), SHA256: hex.EncodeToString(runtimeHash[:])},
+		"windows-amd64/cpu": {URLs: []string{baseURL + "/runtime.zip"}, Size: int64(archive.Len()), SHA256: hex.EncodeToString(runtimeHash[:]), Files: 2, ExpandedSize: int64(len("windows-python") + len("# worker"))},
 	}, Model: Artifact{URLs: []string{baseURL + "/model"}, Size: int64(len(model)), SHA256: hex.EncodeToString(modelHash[:])}}
 	var public []byte
 	envelope, public = signedTestManifest(t, manifest)
@@ -178,7 +178,7 @@ func TestExtractRuntimeArchiveRejectsWindowsTraversalOnEveryHost(t *testing.T) {
 			if err := os.WriteFile(path, archive.Bytes(), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if err := extractRuntimeArchive(path, t.TempDir(), Artifact{}); err == nil {
+			if err := extractRuntimeArchive(path, t.TempDir(), Artifact{}, 3<<30); err == nil {
 				t.Fatal("unsafe archive path accepted")
 			}
 		})
@@ -246,17 +246,34 @@ func TestEnsureUsesTrustedFallbackManifestWhenRemoteIsUnavailable(t *testing.T) 
 
 func TestValidateArchiveShapeAcceptsTheVerifiedOfficialRuntime(t *testing.T) {
 	artifact := Artifact{Files: 23_481, ExpandedSize: 955_790_953}
-	if err := validateArchiveShape(23_481, 955_790_953, artifact); err != nil {
+	if err := validateArchiveShape(23_481, 955_790_953, artifact, 3<<30); err != nil {
 		t.Fatalf("official runtime rejected: %v", err)
+	}
+}
+
+func TestWindowsArchiveLimitAcceptsMeasuredCPUPackageWithoutRelaxingMac(t *testing.T) {
+	const expanded = int64(3_801_320_647)
+	artifact := Artifact{Files: 25_000, ExpandedSize: expanded}
+	if err := validateArchiveShape(25_000, expanded, artifact, 3<<30); err == nil {
+		t.Fatal("Mac archive limit unexpectedly accepted the Windows package")
+	}
+	if err := validateArchiveShape(25_000, expanded, artifact, 12<<30); err != nil {
+		t.Fatalf("measured Windows CPU package was rejected: %v", err)
+	}
+	if err := validateArchiveShape(25_000, expanded+1, artifact, 12<<30); err == nil {
+		t.Fatal("signed Windows expanded size was ignored")
+	}
+	if err := validateArchiveShape(25_000, 12<<30+1, Artifact{}, 12<<30); err == nil {
+		t.Fatal("Windows absolute archive limit was ignored")
 	}
 }
 
 func TestValidateArchiveShapeRejectsManifestMismatchAndAbsoluteLimit(t *testing.T) {
 	artifact := Artifact{Files: 23_481, ExpandedSize: 955_790_953}
-	if err := validateArchiveShape(23_480, 955_790_953, artifact); err == nil {
+	if err := validateArchiveShape(23_480, 955_790_953, artifact, 3<<30); err == nil {
 		t.Fatal("expected manifest file-count mismatch")
 	}
-	if err := validateArchiveShape(50_001, 1, Artifact{}); err == nil {
+	if err := validateArchiveShape(50_001, 1, Artifact{}, 3<<30); err == nil {
 		t.Fatal("expected absolute file-count rejection")
 	}
 }
@@ -282,7 +299,7 @@ func TestExtractRuntimeArchivePreservesTrustedExecutableBit(t *testing.T) {
 		t.Fatal(err)
 	}
 	artifact := Artifact{Files: 1, ExpandedSize: 6}
-	if err := extractRuntimeArchive(filepath.Join(destination, "runtime.zip"), filepath.Join(destination, "out"), artifact); err != nil {
+	if err := extractRuntimeArchive(filepath.Join(destination, "runtime.zip"), filepath.Join(destination, "out"), artifact, 3<<30); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(filepath.Join(destination, "out", ".python", "bin", "python3.11"))

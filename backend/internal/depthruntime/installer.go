@@ -95,6 +95,9 @@ func Ensure(ctx context.Context, options EnsureOptions) (Installation, error) {
 		if !ok {
 			return Installation{}, errors.New("深度组件清单缺少对应的 Windows 运行包")
 		}
+		if runtimeArtifact.Files <= 0 || runtimeArtifact.ExpandedSize <= 0 {
+			return Installation{}, errors.New("Windows 深度组件清单缺少解压体积或文件数")
+		}
 	}
 	runtimeRoot := paths.Root
 	modelRuntime := filepath.Join(options.DataDir, "models", "video-depth-anything-small", "v1")
@@ -121,7 +124,11 @@ func Ensure(ctx context.Context, options EnsureOptions) (Installation, error) {
 			return Installation{}, err
 		}
 		defer os.RemoveAll(stage)
-		if err := extractRuntimeArchive(archivePath, stage, runtimeArtifact); err != nil {
+		maxExpanded := int64(3 << 30)
+		if windows {
+			maxExpanded = 12 << 30
+		}
+		if err := extractRuntimeArchive(archivePath, stage, runtimeArtifact, maxExpanded); err != nil {
 			return Installation{}, err
 		}
 		if windows {
@@ -198,7 +205,7 @@ func fetchManifest(ctx context.Context, rawURL string, signed bool, public ed255
 	return Manifest{}, fmt.Errorf("获取深度组件清单失败: %w", lastErr)
 }
 
-func extractRuntimeArchive(path string, destination string, artifact Artifact) error {
+func extractRuntimeArchive(path string, destination string, artifact Artifact, maxExpanded int64) error {
 	reader, err := zip.OpenReader(path)
 	if err != nil {
 		return fmt.Errorf("打开深度组件压缩包失败: %w", err)
@@ -208,7 +215,7 @@ func extractRuntimeArchive(path string, destination string, artifact Artifact) e
 	for _, entry := range reader.File {
 		declaredExpanded += int64(entry.UncompressedSize64)
 	}
-	if err := validateArchiveShape(len(reader.File), declaredExpanded, artifact); err != nil {
+	if err := validateArchiveShape(len(reader.File), declaredExpanded, artifact, maxExpanded); err != nil {
 		return err
 	}
 	var expanded int64
@@ -226,7 +233,7 @@ func extractRuntimeArchive(path string, destination string, artifact Artifact) e
 			return errors.New("深度组件压缩包不允许符号链接")
 		}
 		expanded += int64(entry.UncompressedSize64)
-		if expanded > 3<<30 {
+		if expanded > maxExpanded {
 			return errors.New("深度组件解压体积超过限制")
 		}
 		target := filepath.Join(destination, clean)
@@ -266,11 +273,11 @@ func extractRuntimeArchive(path string, destination string, artifact Artifact) e
 	return nil
 }
 
-func validateArchiveShape(files int, expandedSize int64, artifact Artifact) error {
+func validateArchiveShape(files int, expandedSize int64, artifact Artifact, maxExpanded int64) error {
 	if files > 50_000 {
 		return errors.New("深度组件压缩包文件数量超过安全上限")
 	}
-	if expandedSize > 3<<30 {
+	if expandedSize > maxExpanded {
 		return errors.New("深度组件解压体积超过安全上限")
 	}
 	if artifact.Files > 0 && files != artifact.Files {
