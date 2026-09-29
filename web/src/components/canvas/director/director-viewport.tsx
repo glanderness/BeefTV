@@ -8,6 +8,7 @@ import { GLTFLoader, SkeletonUtils } from "three-stdlib";
 import { resolveDirectorBoneRotation } from "@/lib/canvas/director/director-animation-semantics";
 import { cropDirectorCanvas, resolveDirectorFrameRect, resolveDirectorPixelCrop, type DirectorAspectRatio } from "@/lib/canvas/director/director-aspect-ratio";
 import { directorStagePalette } from "@/lib/canvas/director/director-stage-palette";
+import type { DirectorOrientation } from "@/lib/canvas/director/director-orientation-gizmo";
 import { applyClaySceneMaterials } from "@/lib/canvas/director/director-clay-materials";
 import { createDirectorTransaction, installDirectorTerminalListeners } from "@/lib/canvas/director/director-gesture-transaction";
 import { emptyDirectorPlacementIntent, finiteDirectorGroundPoint, type DirectorGroundPoint, type DirectorPlacementIntent } from "@/lib/canvas/director/director-placement";
@@ -90,6 +91,12 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
     // 地面点连同 owner canvas 一起记录：owner 不是当前 renderer 的 canvas 就是陈旧值。
     const groundRef = useRef<{ owner: HTMLCanvasElement; point: DirectorGroundPoint } | null>(null);
     const orbitControlsRef = useRef<DirectorOrbitControls | null>(null);
+    const orbitOrientationListenerRef = useRef<(() => void) | null>(null);
+    const [freeOrientation, setFreeOrientation] = useState<DirectorOrientation>([0, 0, 0, 1]);
+    const [cameraOrientation, setCameraOrientation] = useState<DirectorOrientation>([0, 0, 0, 1]);
+    const onCameraOrientation = useCallback((next: DirectorOrientation) => {
+        setCameraOrientation((current) => current.every((value, index) => Math.abs(value - next[index]) < 0.002) ? current : next);
+    }, []);
     /** pointermove 高频路径只写 ref，不触发 render；清空只允许由该点的 owner 发起。 */
     const onGroundPoint = useCallback((owner: HTMLCanvasElement, point: DirectorGroundPoint | null) => {
         if (point) {
@@ -99,8 +106,24 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
         if (groundRef.current?.owner === owner) groundRef.current = null;
     }, []);
     const onOrbitControls = useCallback((controls: DirectorOrbitControls | null) => {
+        orbitOrientationListenerRef.current?.();
+        orbitOrientationListenerRef.current = null;
         orbitControlsRef.current = controls;
+        if (!controls) return;
+        const readOrientation = () => {
+            const { x, y, z, w } = controls.object.quaternion;
+            const next: DirectorOrientation = [x, y, z, w];
+            setFreeOrientation((current) => current.every((value, index) => Math.abs(value - next[index]) < 0.002) ? current : next);
+        };
+        controls.addEventListener("change", readOrientation);
+        orbitOrientationListenerRef.current = () => controls.removeEventListener("change", readOrientation);
+        readOrientation();
     }, []);
+    useEffect(() => () => orbitOrientationListenerRef.current?.(), []);
+    const resetView = useCallback(() => {
+        onViewModeChange?.("free");
+        orbitControlsRef.current?.reset();
+    }, [onViewModeChange]);
     // retryKey 变化会真正重建 Canvas 与 ErrorBoundary，而不是只换文案。
     const [retryKey, setRetryKey] = useState(0);
     // capture 可用性：上下文丢失期间不得再使用失效 renderer；恢复后需重新登记。
@@ -184,11 +207,12 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
                     onLoadStateChange={onLoadStateChange}
                     onGroundPoint={onGroundPoint}
                     onOrbitControls={onOrbitControls}
+                    onCameraOrientation={onCameraOrientation}
                 />
             </DirectorViewportErrorBoundary>
             {aspectRatio !== "adaptive" && frame.width > 0 ? <div data-director-aspect-frame={aspectRatio} aria-label={`${aspectRatio} 画幅取景框`} className="pointer-events-none absolute rounded-xl border border-white/35" style={{ zIndex: 1, left: frame.x, top: frame.y, width: frame.width, height: frame.height, boxShadow: "0 0 0 100vmax rgba(0, 0, 0, 0.68)" }} /> : null}
             {/* 取景切换是纯视口状态：放在 DOM 层，不随 Canvas 重建而丢失。 */}
-            {onViewModeChange ? <DirectorViewToolbar viewMode={props.viewMode ?? DIRECTOR_DEFAULT_VIEW_MODE} onViewModeChange={onViewModeChange} /> : null}
+            {onViewModeChange ? <DirectorViewToolbar viewMode={props.viewMode ?? DIRECTOR_DEFAULT_VIEW_MODE} orientation={props.viewMode === "camera" ? cameraOrientation : freeOrientation} onViewModeChange={onViewModeChange} onResetView={resetView} /> : null}
             {capture.contextLost ? (
                 <DirectorViewportNotice
                     title="3D 显示上下文已丢失"
@@ -223,6 +247,7 @@ type DirectorCanvasSurfaceProps = Omit<DirectorViewportProps, "onViewModeChange"
     onLoadStateChange: (id: string, signal: DirectorLoadSignal, retry: () => void) => void;
     onGroundPoint: (owner: HTMLCanvasElement, point: DirectorGroundPoint | null) => void;
     onOrbitControls: (controls: DirectorOrbitControls | null) => void;
+    onCameraOrientation: (orientation: DirectorOrientation) => void;
 };
 
 /**
@@ -235,7 +260,7 @@ type DirectorCanvasSurfaceProps = Omit<DirectorViewportProps, "onViewModeChange"
  * 只有 props 真的变化才重渲染，retryKey 变化仍由外层 key 触发真正 remount。
  */
 const DirectorCanvasSurface = memo(function DirectorCanvasSurface(props: DirectorCanvasSurfaceProps) {
-    const { onCaptureContext, onRelease, onContextLost, onContextRestored, onLoadStateChange, onGroundPoint, onOrbitControls, ...sceneProps } = props;
+    const { onCaptureContext, onRelease, onContextLost, onContextRestored, onLoadStateChange, onGroundPoint, onOrbitControls, onCameraOrientation, ...sceneProps } = props;
     const onSelectObject = sceneProps.onSelectObject;
     const onPointerMissed = useCallback(() => onSelectObject(null), [onSelectObject]);
 
@@ -258,6 +283,7 @@ const DirectorCanvasSurface = memo(function DirectorCanvasSurface(props: Directo
                     onLoadStateChange={onLoadStateChange}
                     onGroundPoint={onGroundPoint}
                     onOrbitControls={onOrbitControls}
+                    onCameraOrientation={onCameraOrientation}
                 />
             </Suspense>
         </Canvas>
@@ -305,7 +331,7 @@ function DirectorViewportNotice({ title, description, actionLabel, onAction, var
     );
 }
 
-function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transformMode, renderMode, playhead, playing, showMotionPaths = false, viewMode = DIRECTOR_DEFAULT_VIEW_MODE, onSelectObject, onSelectBone, onObjectTransform, onBoneTransform, onActorRigReady, onCaptureContext, onRelease, onContextLost, onContextRestored, onLoadStateChange, onGroundPoint, onOrbitControls }: DirectorCanvasSurfaceProps) {
+function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transformMode, renderMode, playhead, playing, showMotionPaths = false, viewMode = DIRECTOR_DEFAULT_VIEW_MODE, onSelectObject, onSelectBone, onObjectTransform, onBoneTransform, onActorRigReady, onCaptureContext, onRelease, onContextLost, onContextRestored, onLoadStateChange, onGroundPoint, onOrbitControls, onCameraOrientation }: DirectorCanvasSurfaceProps) {
     const { gl, camera, scene: threeScene, invalidate, set, size } = useThree();
     const orbitRef = useRef<DirectorOrbitControls>(null);
     const [transforming, setTransforming] = useState(false);
@@ -325,6 +351,11 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
     const camFraming = resolveDirectorViewFraming({ scene, mode: viewMode, playhead });
     const orthoFraming = resolveDirectorOrthographicFraming({ scene, mode: viewMode });
     const effectiveViewport = resolveDirectorEffectiveViewport({ mode: viewMode, framing: camFraming });
+    useFrame(() => {
+        if (viewMode !== "camera" || effectiveViewport.camera !== "camera") return;
+        const { x, y, z, w } = camCamera.quaternion;
+        onCameraOrientation([x, y, z, w]);
+    });
     const actorMotionPaths = useMemo(() => showMotionPaths ? scene.objects.filter((object) => object.visible && (object.kind === "actor" || object.primitive === "character") && directorTransformPathLength(object.keyframes) > 0.001) : [], [scene.objects, showMotionPaths]);
     const cameraMotionPaths = useMemo(() => showMotionPaths ? scene.cameras.filter((item) => directorTransformPathLength(item.keyframes) > 0.001) : [], [scene.cameras, showMotionPaths]);
     const suspendDisplayMaterialOverride = useCallback(() => {
