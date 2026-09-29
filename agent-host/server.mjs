@@ -121,9 +121,12 @@ async function opsRequest(method, apiPath, body, signal) {
 // 工具描述来自已鉴权的能力发现；内置侧只做 scope 注入与动作身份，不重写业务规则。
 const descriptors = new Map();
 async function loadDescriptors() {
-  const data = await opsRequest('GET', `/ops${READ_ONLY_MODE ? '?readOnly=1' : ''}`);
-  for (const descriptor of data.ops || []) descriptors.set(descriptor.id.replace(/\./g, '_'), descriptor);
-  console.error(`agent-host: 载入 ${descriptors.size} 个操作（readOnly=${READ_ONLY_MODE}）`);
+  const data = await opsRequest('GET', '/ops');
+  // 服务端按调用者身份返回基础集合；只读模式只能在这里进一步收紧，
+  // 绝不能靠一个可以不放宽的查询参数来决定是否暴露写工具。
+  const ops = (data.ops || []).filter((descriptor) => !READ_ONLY_MODE || descriptor.readOnly);
+  for (const descriptor of ops) descriptors.set(descriptor.id.replace(/\./g, '_'), descriptor);
+  console.error(`agent-host: 载入 ${descriptors.size} 个操作（readOnly=${READ_ONLY_MODE}，服务端返回 ${(data.ops || []).length}）`);
 }
 
 function scopedSchema(params) {
@@ -144,6 +147,10 @@ function buildTools(canvasId, log, generation, turn, identityPrefix) {
     execute: async (toolCallId, args, signal) => {
       if (generation.aborted || signal?.aborted) throw new Error('aborted');
       const params = { ...(args || {}) };
+      // 动作身份只有宿主一个来源：模型传进来的 operationId/opId 一律剔除，
+      // 避免出现「模型自报身份」和「宿主稳定身份」两套东西。
+      delete params.operationId;
+      delete params.opId;
       // 显式不匹配必须拒绝：不能把未授权的 canvasId 静默改成当前画布再执行。
       if (params.canvasId !== undefined && params.canvasId !== canvasId) {
         throw new Error(`scope_denied: 画布参数与当前会话不一致（${params.canvasId} ≠ ${canvasId}）`);
@@ -153,7 +160,12 @@ function buildTools(canvasId, log, generation, turn, identityPrefix) {
       if (!descriptor.readOnly) {
         // 动作身份 = 本会话身份 + SDK 工具调用 id：同一次工具调用重试时复用，
         // 不同会话之间不会互相覆盖或撞号（identityPrefix 来自本会话，不是进程全局）。
-        opId = toolOperationId(identityPrefix, toolCallId, `${turn.seq}-${descriptor.id}`);
+        // 官方没有给出 toolCallId 时明确拒绝，而不是合成一个「同轮同工具都相同」的
+        // 临时 ID——那会把第二次调用当成第一次的回放。
+        if (!toolCallId) {
+          throw new Error(`missing_tool_call_id: ${descriptor.id} 写入缺少工具调用标识，已拒绝以免重复写入`);
+        }
+        opId = toolOperationId(identityPrefix, toolCallId);
       }
       const started = Date.now();
       try {

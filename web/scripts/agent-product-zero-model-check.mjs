@@ -10,7 +10,7 @@
  * 产物：.local/agent-product/results-zero-model-<stamp>.json 与截图。
  */
 import { spawn, spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
@@ -100,7 +100,91 @@ check("手工新增/撤销节点数正确", afterAdd === beforeAdd + 1 && afterU
 check("撤销未倒退 CLI 写入的目标字段", t?.metadata?.composerContent === "夜景：雨夜巷口对峙", String(t?.metadata?.composerContent));
 check("撤销未改动连线", afterDoc.connections.length === 2, String(afterDoc.connections.length));
 
-await browser.close(); vite.kill("SIGTERM");
+// 5) Ctrl+Z 历史归属：外部写入不是用户手工编辑，撤销不能倒退外部新值
+{
+  await page.keyboard.press("Escape");
+  await selectNode("n2"); await sleep(1200);
+  const baselineCount = await domCount();
+
+  // 用户自己新增一个节点：这是一次真实的手工编辑，应该可撤销
+  await page.getByRole("button", { name: "添加节点", exact: true }).first().click().catch(() => {});
+  await sleep(1200);
+  await page.getByRole("button", { name: "文本", exact: true }).first().click().catch(() => {});
+  await sleep(2500);
+  const afterManualAdd = await domCount();
+  check("用户手工新增节点（撤销用例前置）", afterManualAdd === baselineCount + 1, `${baselineCount} -> ${afterManualAdd}`);
+
+  // 外部（CLI）写入目标字段：这不是用户编辑，不能变成一条可撤销记录
+  const current = (await api("GET", `/canvas-projects/${A}`)).data.project;
+  const cli2 = spawnSync(CLI, ["canvas", "node", "update", "--canvas", A, "--node", "n2", "--expected-revision", String(current.revision), "--content", "外部第二次写入", "--op-id", `hc-cli2-${s}`, "--json"], { env: { ...process.env, BEEFTV_BASE_URL: API, BEEFTV_OWNER_TOKEN: OWNER }, encoding: "utf8" });
+  check("外部第二次写入成功（零模型）", cli2.status === 0, `exit=${cli2.status}`);
+  await sleep(6000);
+
+  // 外部写入要么已被界面应用，要么因为存在未确认编辑而保留为冲突候选；两者都不算丢失。
+  const backendAfterExternal = (await api("GET", `/canvas-projects/${A}`)).data.project;
+  const backendValue = backendAfterExternal.nodes.find((n) => n.id === "n2")?.metadata?.composerContent;
+  const conflictNotice = await page.evaluate(() => (document.querySelector("aside")?.innerText || "").includes("画布已在其他入口更新"));
+  check("外部写入没有丢失（已应用或保留为冲突候选）", backendValue === "外部第二次写入" || conflictNotice, `backend=${backendValue} conflictNotice=${conflictNotice}`);
+
+  // 第一次撤销：只应撤掉用户自己新增的节点
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Meta+z");
+  await sleep(2500);
+  const afterFirstUndo = await domCount();
+  const backendAfterFirstUndo = (await api("GET", `/canvas-projects/${A}`)).data.project;
+  const valueAfterFirstUndo = backendAfterFirstUndo.nodes.find((n) => n.id === "n2")?.metadata?.composerContent;
+  check("Ctrl+Z 只撤销用户自己的手工编辑", afterFirstUndo === baselineCount, `${baselineCount} -> ${afterManualAdd} -> ${afterFirstUndo}`);
+  check("Ctrl+Z 之后外部新值没有被倒退", valueAfterFirstUndo === "外部第二次写入" || conflictNotice, `composerContent=${valueAfterFirstUndo}`);
+
+  // 第二次撤销：没有本地操作可撤销，外部新值依旧不能被倒退
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Meta+z");
+  await sleep(2000);
+  const afterSecondUndo = await domCount();
+  const backendAfterSecond = (await api("GET", `/canvas-projects/${A}`)).data.project;
+  const valueAfterSecondUndo = backendAfterSecond.nodes.find((n) => n.id === "n2")?.metadata?.composerContent;
+  check("没有本地操作可撤销时 Ctrl+Z 不倒退外部新值", afterSecondUndo === baselineCount && (valueAfterSecondUndo === "外部第二次写入" || conflictNotice), `count=${afterSecondUndo} composerContent=${valueAfterSecondUndo}`);
+  await page.screenshot({ path: join(APD, "screenshots", `zero-model-history-${s}.png`) });
+}
+
+// 6) 证据链读回：真实目录做自洽检查；写入/读回用自检文件证明追加路径可用
+{
+  const latestPath = join(APD, "results-react-cross-entry.json");
+  const attemptsPath = join(APD, "results-react-cross-entry-attempts.jsonl");
+  const versionedRaw = readdirSync(APD).filter((name) => /^results-react-cross-entry-.*\.json$/.test(name));
+  // 版本化原始结果由真实浏览器验收脚本每次运行写一份；这里如实记录当前已有份数，
+  // 不把「还没跑过」当成失败，也不用自检冒充真实运行产物。
+  let pointerOk = false;
+  try {
+    const parsed = JSON.parse(readFileSync(latestPath, "utf8"));
+    pointerOk = typeof parsed.stamp === "string" && Array.isArray(parsed.checks);
+  } catch { pointerOk = false; }
+  check("latest 指针存在且可解析", existsSync(latestPath) && pointerOk, `versionedRaw=${versionedRaw.length}`);
+  if (existsSync(attemptsPath)) {
+    const parsed = readFileSync(attemptsPath, "utf8").split("\n").filter((line) => line.trim())
+      .map((line) => { try { return JSON.parse(line); } catch { return null; } });
+    check("attempt 索引每行都是合法 JSON 且带标识", parsed.length > 0 && parsed.every((item) => item && (item.stamp || item.attempt)), `${parsed.length} 行`);
+  } else {
+    check("attempt 索引存在", false, attemptsPath);
+  }
+
+  // 版本化写入 + latest 指针 + attempt 追加的自检：与验收脚本同一套命名与写入方式。
+  const selftestDir = join(APD, "logs", `evidence-selftest-${s}`);
+  mkdirSync(selftestDir, { recursive: true });
+  const payload = JSON.stringify({ stamp: `selftest-${s}`, ok: true, checks: [{ name: "self", ok: true, detail: "" }] }, null, 2);
+  const versionedPath = join(selftestDir, `results-react-cross-entry-selftest-${s}.json`);
+  const pointerPath = join(selftestDir, "results-react-cross-entry.json");
+  const indexPath = join(selftestDir, "results-react-cross-entry-attempts.jsonl");
+  writeFileSync(versionedPath, payload);
+  writeFileSync(pointerPath, payload);
+  appendFileSync(indexPath, `${JSON.stringify({ stamp: `selftest-${s}`, ok: true, passed: 1, total: 1, failed: [], rawResultPath: versionedPath })}\n`);
+  const pointerRead = JSON.parse(readFileSync(pointerPath, "utf8"));
+  const versionedRead = readFileSync(versionedPath, "utf8");
+  const indexRead = readFileSync(indexPath, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  check("版本化原始结果 + latest 指针 + attempt 索引可写入并读回", pointerRead.stamp === `selftest-${s}` && versionedRead === payload && indexRead.length === 1 && indexRead[0].rawResultPath === versionedPath, JSON.stringify(indexRead));
+  rmSync(selftestDir, { recursive: true, force: true });
+}
+
 const summary = { ok: checks.every((c) => c.ok), checks, script: "web/scripts/agent-product-browser-e2e.mjs", modelCalls: 0 };
 const out = join(APD, `results-zero-model-${s}.json`);
 (await import("node:fs")).writeFileSync(out, JSON.stringify(summary, null, 2));

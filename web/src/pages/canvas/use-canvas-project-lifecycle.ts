@@ -56,6 +56,7 @@ type UseCanvasProjectLifecycleOptions = {
     setViewport: Dispatch<SetStateAction<ViewportTransform>>;
     setProjectLoaded: Dispatch<SetStateAction<boolean>>;
     resetHistory: (snapshot: CanvasHistorySnapshot) => void;
+    adoptExternalSnapshot: (overrides: Pick<CanvasHistorySnapshot, "nodes" | "connections">) => void;
     cleanupAssetImages: (options?: unknown) => void;
     cleanupCanvasFiles: (extra?: unknown) => void;
 };
@@ -87,6 +88,7 @@ export function useCanvasProjectLifecycle({
     setViewport,
     setProjectLoaded,
     resetHistory,
+    adoptExternalSnapshot,
     cleanupAssetImages,
     cleanupCanvasFiles,
 }: UseCanvasProjectLifecycleOptions) {
@@ -270,7 +272,9 @@ export function useCanvasProjectLifecycle({
         connectionsRef.current = merged.connections;
         setNodes(merged.nodes);
         setConnections(merged.connections);
-    }), [projectId, projectLoaded, nodesRef, connectionsRef, setNodes, setConnections]);
+        // 外部投影不是用户手工编辑：采用为历史基线，Ctrl+Z 不会倒退外部新值。
+        adoptExternalSnapshot({ nodes: merged.nodes, connections: merged.connections });
+    }), [adoptExternalSnapshot, projectId, projectLoaded, nodesRef, connectionsRef, setNodes, setConnections]);
 
     useEffect(() => {
         if (!projectLoaded || editorProjectIdRef.current !== projectId || historyPausedRef.current) return;

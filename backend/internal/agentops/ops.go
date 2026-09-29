@@ -452,6 +452,11 @@ func mapDomainError(err error) error {
 		case http.StatusPreconditionFailed:
 			return PreconditionFailed("precondition_failed", appErr.Message, nil)
 		case http.StatusBadRequest:
+			// 领域层给出的稳定原因优先（例如 unsupported_field）：调用方要能区分
+			// 「字段不被该节点类型支持」和普通参数错误，而不是只能解析文案。
+			if appErr.Reason == kernel.ReasonUnsupportedField {
+				return InvalidArg(string(kernel.ReasonUnsupportedField), appErr.Message)
+			}
 			return InvalidArg("invalid_request", appErr.Message)
 		}
 	}

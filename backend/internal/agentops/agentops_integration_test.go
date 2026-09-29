@@ -268,3 +268,64 @@ func contains(haystack, needle string) bool {
 		return false
 	})()
 }
+
+// 节点类型没有声明的可编辑字段必须给出稳定 reason unsupported_field，
+// 并且不能推进 revision（整批不写）。结构节点（script/frame）的名称仍可改。
+func TestUnsupportedNodeFieldIsMachineReadableAndDoesNotWrite(t *testing.T) {
+	h := newHarness(t)
+	_, err := h.run(t, "canvas.nodes.create", "op-structure", map[string]any{
+		"canvasId": h.canvasID, "expectedRevision": h.revision,
+		"nodes": []any{map[string]any{"title": "脚本节点", "type": "script"}},
+	}, false)
+	if err != nil {
+		t.Fatalf("创建脚本节点失败: %v", err)
+	}
+	canvas := h.canvas(t)
+	revision := int64(canvas["revision"].(float64))
+	var scriptID string
+	for _, raw := range canvas["nodes"].([]any) {
+		node := raw.(map[string]any)
+		if node["type"] == "script" {
+			scriptID = node["id"].(string)
+		}
+	}
+	if scriptID == "" {
+		t.Fatal("未找到脚本节点")
+	}
+
+	opErr := func(err error) *agentops.Error {
+		var typed *agentops.Error
+		if !errors.As(err, &typed) {
+			t.Fatalf("期望结构化操作错误，得到 %v", err)
+		}
+		return typed
+	}
+
+	// title 是通用字段：结构节点改名必须成功。
+	if _, err := h.run(t, "canvas.node.update", "op-title", map[string]any{
+		"canvasId": h.canvasID, "nodeId": scriptID, "expectedRevision": revision,
+		"patch": map[string]any{"title": "脚本节点改名"},
+	}, false); err != nil {
+		t.Fatalf("结构节点改名应成功: %v", err)
+	}
+	afterTitle := h.canvas(t)
+	if afterTitle["revision"].(float64) != float64(revision+1) {
+		t.Fatalf("改名应推进 revision: %#v", afterTitle["revision"])
+	}
+
+	// 未声明字段：reason=unsupported_field，且 revision 不推进。
+	_, err = h.run(t, "canvas.node.update", "op-unsupported", map[string]any{
+		"canvasId": h.canvasID, "nodeId": scriptID, "expectedRevision": revision + 1,
+		"patch": map[string]any{"content": "不该写入"},
+	}, false)
+	if err == nil {
+		t.Fatal("未声明字段应被拒绝")
+	}
+	if reason := opErr(err).Reason; reason != "unsupported_field" {
+		t.Fatalf("reason 应为 unsupported_field，实际 %q", reason)
+	}
+	final := h.canvas(t)
+	if final["revision"].(float64) != float64(revision+1) {
+		t.Fatalf("被拒绝的更新不应推进 revision: %#v", final["revision"])
+	}
+}

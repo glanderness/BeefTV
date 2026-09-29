@@ -32,6 +32,8 @@ const CLI = process.env.BEEFTV_CLI || join(AGENT_PRODUCT_DIR, "beeftv");
 const OWNER = readFileSync(join(AGENT_PRODUCT_DIR, "data/agent_owner_token"), "utf8").trim();
 const STAMP = new Date().toISOString().replace(/[:.]/g, "-");
 const RESULT_PATH = process.env.AGENT_E2E_RESULT || join(AGENT_PRODUCT_DIR, "results-react-cross-entry.json");
+// 每次运行的原始结果单独落一份（不覆盖），latest 指针只用于方便打开。
+const RAW_RESULT_PATH = join(AGENT_PRODUCT_DIR, `results-react-cross-entry-${STAMP}.json`);
 const TURN_TIMEOUT_MS = Number(process.env.AGENT_E2E_TURN_TIMEOUT_MS || 300_000);
 const COMPOSER = 'textarea[placeholder="用自然语言描述创作需求…"]';
 
@@ -39,18 +41,29 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const checks = [];
 const steps = {};
 
-/** 失败与通过都追加保留：一次运行不能覆盖上一次的真实结果。 */
+/**
+ * 失败与通过都追加保留：一次运行不能覆盖上一次的真实结果。
+ *
+ * 返回落盘结果而不是吞掉异常——证据链写入失败必须让本次验收显式失败，
+ * 否则会出现「JSON 说通过、attempt 索引其实没写」的假证据。
+ */
 function appendAttempt(summary) {
+    const line = JSON.stringify({
+        stamp: summary.stamp,
+        ok: summary.ok,
+        passed: summary.checks.filter((item) => item.ok).length,
+        total: summary.checks.length,
+        failed: summary.checks.filter((item) => !item.ok).map((item) => item.name),
+        rawResultPath: summary.rawResultPath,
+    });
     try {
-        appendFileSync(join(HERE, "results-react-cross-entry-attempts.jsonl"), `${JSON.stringify({
-            stamp: summary.stamp,
-            ok: summary.ok,
-            passed: summary.checks.filter((item) => item.ok).length,
-            total: summary.checks.length,
-            failed: summary.checks.filter((item) => !item.ok).map((item) => item.name),
-        })}\n`);
-    } catch { /* 证据日志写入失败不影响验收结果 */ }
+        appendFileSync(join(AGENT_PRODUCT_DIR, "results-react-cross-entry-attempts.jsonl"), `${line}\n`);
+        return { written: true, error: null };
+    } catch (error) {
+        return { written: false, error: error instanceof Error ? error.message : String(error) };
+    }
 }
+
 
 function check(name, ok, detail = "") {
     checks.push({ name, ok: Boolean(ok), detail: String(detail).slice(0, 600) });
@@ -561,12 +574,25 @@ const summary = {
     stamp: STAMP,
     api: API,
     webPort: WEB_PORT,
-    evidence: { chatResponses, cancelledRequests, consoleErrors, failedRequests, stopClicks: stopClicks.count },
+    workspaceRoot: WORKSPACE_ROOT,
+    gitHead: spawnSync("git", ["rev-parse", "HEAD"], { cwd: WORKSPACE_ROOT, encoding: "utf8" }).stdout?.trim() || null,
+    evidence: { chatResponses, cancelledRequests, consoleErrors, failedRequests, stopClicks: stopClicks.count, expectedDuringDirtyHold: steps.expectedDuringDirtyHold || [] },
     checks,
     steps,
 };
-appendAttempt(summary);
-writeFileSync(RESULT_PATH, JSON.stringify(summary, null, 2));
-console.log(`\n结果已写入 ${RESULT_PATH}`);
+summary.rawResultPath = RAW_RESULT_PATH;
+const attemptLog = appendAttempt(summary);
+summary.attemptLog = attemptLog;
+if (!attemptLog.written) {
+    // 证据链写入失败必须显式失败：不能让「通过」建立在没落盘的记录上。
+    checks.push({ name: "尝试记录落盘", ok: false, detail: attemptLog.error });
+    summary.ok = false;
+}
+const serialized = JSON.stringify(summary, null, 2);
+writeFileSync(RAW_RESULT_PATH, serialized);
+writeFileSync(RESULT_PATH, serialized);
+console.log(`\n本次原始结果 ${RAW_RESULT_PATH}`);
+console.log(`结果已写入 ${RESULT_PATH}`);
+console.log(`尝试记录 ${attemptLog.written ? "已追加" : `写入失败：${attemptLog.error}`}`);
 console.log(`总计 ${checks.filter((item) => item.ok).length}/${checks.length} 通过`);
 process.exit(summary.ok ? 0 : 1);

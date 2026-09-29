@@ -451,7 +451,7 @@ function InfiniteCanvasPage() {
         [backgroundMode, message],
     );
 
-    const { getHistoryCleanupContext, historyPausedRef, historyState, redoCanvas, resetHistory, undoCanvas } = useCanvasHistory({
+    const { adoptExternalSnapshot, getHistoryCleanupContext, historyPausedRef, historyState, redoCanvas, resetHistory, undoCanvas } = useCanvasHistory({
         projectLoaded,
         nodes,
         connections,
@@ -506,6 +506,7 @@ function InfiniteCanvasPage() {
         setViewport,
         setProjectLoaded,
         resetHistory,
+        adoptExternalSnapshot,
         cleanupAssetImages,
         cleanupCanvasFiles,
     });

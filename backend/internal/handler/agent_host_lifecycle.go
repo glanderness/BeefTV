@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -69,6 +71,32 @@ func writeAgentHostConfig(dataDir string, config agentHostConfig) error {
 type agentHostSupervisor struct {
 	mu  sync.Mutex
 	cmd *exec.Cmd
+}
+
+// processAgentHostSupervisor 是进程内唯一实例：路由（启停/状态）与应用关闭钩子
+// 必须操作同一个对象，否则关闭时找不到本进程启动过的宿主子进程。
+var processAgentHostSupervisor = &agentHostSupervisor{}
+
+// StopProcessAgentHost 在应用关闭时停止**本进程启动的**内置宿主子进程。
+//
+// 只对它自己启动过的进程生效（未启动时是 no-op），不会去清理外接宿主或别人的 PID；
+// 宿主不可达/已退出时返回 nil，避免把关闭流程拖成失败。
+func StopProcessAgentHost(ctx context.Context) error {
+	supervisor := processAgentHostSupervisor
+	if !supervisor.running() {
+		return nil
+	}
+	done := make(chan error, 1)
+	go func() { done <- supervisor.stop() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("停止内置创作助手宿主：%w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("停止内置创作助手宿主超时：%w", ctx.Err())
+	}
 }
 
 func (s *agentHostSupervisor) running() bool {
@@ -167,7 +195,8 @@ func (s *agentHostSupervisor) stop() error {
 }
 
 // RegisterAgentHostLifecycleRoutes 暴露宿主配置与启停：全部需要 owner 凭据 + 本机同源。
-func RegisterAgentHostLifecycleRoutes(r gin.IRouter, svc *app.Service, supervisor *agentHostSupervisor) {
+func RegisterAgentHostLifecycleRoutes(r gin.IRouter, svc *app.Service) {
+	supervisor := processAgentHostSupervisor
 	ownerGuard := func(c *gin.Context) bool { return requireOwner(c, svc) }
 
 	r.GET("/assistant/host/config", func(c *gin.Context) {

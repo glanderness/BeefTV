@@ -198,6 +198,21 @@ describe("画布刷新接缝（服务端基线）", () => {
         expect(server.puts.length).toBe(1);
     });
 
+    test("本地编辑的是旧白名单之外的字段时，外部刷新同样不得静默覆盖", async () => {
+        await establishConfirmedBaseline();
+        // folderId 不在旧的七字段白名单里：编辑它曾会被判成「本地干净」而直接被外部内容覆盖。
+        useCanvasStore.getState().updateProject("c1", { folderId: "folder-keep-me" });
+        replaceServerDocument(canvas(5, { title: "外部改名", folderId: "folder-from-external" }));
+
+        const applied = await refreshLocalCanvasProjectIfChanged("c1");
+
+        expect(applied).toBeUndefined();
+        const live = useCanvasStore.getState().projects[0];
+        expect(live.folderId).toBe("folder-keep-me");
+        expect(live.title).toBe("画布");
+        expect(canvasExternalRevisionConflict(scope, "c1")?.remoteRevision).toBe(5);
+    });
+
     test("提交被服务端按 revision 拒绝：暂停自动提交，且不改写本地内容", async () => {
         await establishConfirmedBaseline();
         useCanvasStore.getState().updateProject("c1", { title: "本地新标题" });

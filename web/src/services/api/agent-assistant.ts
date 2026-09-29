@@ -49,8 +49,6 @@ export function agentAssistantFailureText(reason: string | undefined, fallback =
             return "当前页面无法使用创作助手，请重新打开画布";
         case "session_busy":
             return "上一条消息还在处理中，请等它结束";
-        case "update_rerun":
-            return "这次修改没有提交，画布已保留你现在的编辑";
         default:
             return fallback;
     }

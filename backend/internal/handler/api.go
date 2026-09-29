@@ -63,7 +63,7 @@ func registerDesktopCanvasAPI(api *gin.RouterGroup, svc *app.Service, dependenci
 	RegisterAgentUISessionRoutes(api, svc, uiSessions)
 	RegisterAgentProxyRoutes(api, svc, clients, uiSessions)
 	// 宿主生命周期：配置当前文本模型与启动命令，显式启停；未配置时返回明确未就绪。
-	RegisterAgentHostLifecycleRoutes(api, svc, &agentHostSupervisor{})
+	RegisterAgentHostLifecycleRoutes(api, svc)
 	RegisterChunkedUploadRoutes(api, svc, false)
 	RegisterDiagnosticsRoutes(api, svc)
 	RegisterPluginRoutes(api, svc, false)

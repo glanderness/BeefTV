@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -168,6 +169,12 @@ func (s *Service) CreateUserCanvasNodes(userID, canvasID string, drafts []NodeDr
 // metadata.composerContent（画布编辑器读的正是这个字段），文本类节点声明
 // content -> metadata.content。曾经直接写 metadata.content 会把生成节点的
 // 媒体结果槽位当成提示词覆盖掉，而写出的值编辑器又看不到。
+//
+// 两条硬约束：
+//  1. title 是所有节点类型通用的「名称」字段，不依赖描述符是否声明 PatchFields，
+//     否则 script/frame 这类没有字段表的结构节点会出现「改名成功但没改」。
+//  2. 描述符没有声明的字段必须明确拒绝并整批不写：静默忽略却推进 revision、
+//     历史和幂等记录，会让调用方以为写入生效。
 func (s *Service) UpdateUserCanvasNodeFields(userID, canvasID, nodeID string, patch map[string]any, expectedRevision int64) (UserDataSummary, error) {
 	if err := requireExpectedRevision(expectedRevision); err != nil {
 		return UserDataSummary{}, err
@@ -183,47 +190,83 @@ func (s *Service) UpdateUserCanvasNodeFields(userID, canvasID, nodeID string, pa
 	if node == nil {
 		return UserDataSummary{}, kernel.NewAppError(http.StatusNotFound, "目标节点不存在: "+nodeID)
 	}
+	nodeType := canvasNodeType(node)
+	descriptor, hasDescriptor := canvasCapabilityRegistry.Resolve(nodeType)
+	label := canvasCapabilityRegistry.LabelFor(nodeType)
+	// metadata 必须先绑定到节点上：ApplyPatch 写的是 node["metadata"]，
+	// 若之后再拿一个新建的空 map 覆盖，没有 metadata 的历史节点会丢掉这次修改。
 	metadata, _ := node["metadata"].(map[string]any)
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
-	descriptor, hasDescriptor := canvasCapabilityRegistry.Resolve(canvasNodeType(node))
+	node["metadata"] = metadata
+
+	if title, present := patch["title"]; present {
+		text, isString := title.(string)
+		if !isString {
+			return UserDataSummary{}, kernel.NewAppError(http.StatusBadRequest, "title 必须是字符串")
+		}
+		node["title"] = text
+	}
+
 	declared := map[string]any{}
 	for key, value := range patch {
-		if !hasDescriptor {
-			continue
-		}
-		if _, ok := descriptor.PatchFields[key]; ok {
-			declared[key] = value
-			continue
-		}
-		// prompt 是生成结果字段（已提交提示词），不在可编辑字段表里：
-		// 保留直接写入语义，避免既有 CLI/MCP 入口失效。
-		if key == "prompt" {
-			if prompt, ok := value.(string); ok {
-				metadata["prompt"] = prompt
+		switch key {
+		case "title":
+			continue // 已按通用字段处理
+		case "prompt":
+			// prompt 是生成结果字段（已提交提示词），不在可编辑字段表里：
+			// 保留直接写入语义，避免既有 CLI/MCP 入口失效。
+			text, isString := value.(string)
+			if !isString {
+				return UserDataSummary{}, kernel.NewAppError(http.StatusBadRequest, "prompt 必须是字符串")
 			}
+			metadata["prompt"] = text
+		case "content":
+			if hasDescriptor {
+				if _, ok := descriptor.PatchFields[key]; ok {
+					declared[key] = value
+					continue
+				}
+				return UserDataSummary{}, unsupportedNodeField(label, nodeType, key)
+			}
+			// 未知类型没有描述符可用：沿用最小直写行为。
+			text, isString := value.(string)
+			if !isString {
+				return UserDataSummary{}, kernel.NewAppError(http.StatusBadRequest, "content 必须是字符串")
+			}
+			metadata["content"] = text
+		default:
+			if !hasDescriptor {
+				return UserDataSummary{}, unsupportedNodeField(label, nodeType, key)
+			}
+			if _, ok := descriptor.PatchFields[key]; ok {
+				declared[key] = value
+				continue
+			}
+			return UserDataSummary{}, unsupportedNodeField(label, nodeType, key)
 		}
 	}
 	if len(declared) > 0 {
 		if err := descriptor.ApplyPatch(node, declared); err != nil {
 			return UserDataSummary{}, kernel.NewAppError(http.StatusBadRequest, err.Error())
 		}
+		// ApplyPatch 只写声明过的路径（形如 metadata.xxx），不会替换整个 metadata 对象；
+		// 这里把同一个 map 回写一次，保证节点上挂的就是刚改过的那个。
+		node["metadata"] = metadata
 	}
-	if !hasDescriptor {
-		// 未知类型没有描述符可用，沿用最小直写行为。
-		if title, ok := patch["title"].(string); ok {
-			node["title"] = title
-		}
-		if prompt, ok := patch["prompt"].(string); ok {
-			metadata["prompt"] = prompt
-		}
-		if content, ok := patch["content"].(string); ok {
-			metadata["content"] = content
-		}
-	}
-	node["metadata"] = metadata
 	return s.saveCanvasDocWithRevision(userID, canvasID, doc, expectedRevision)
+}
+
+// unsupportedNodeField 是「该节点类型没有这个可编辑字段」的结构化错误：
+// 机器可读 reason 为 unsupported_field，调用方据此换字段或换节点。
+func unsupportedNodeField(label, nodeType, field string) error {
+	return &kernel.AppError{
+		Status:  http.StatusBadRequest,
+		Code:    http.StatusBadRequest,
+		Reason:  kernel.ReasonUnsupportedField,
+		Message: fmt.Sprintf("%s 节点不支持更新字段 %s", label, field),
+	}
 }
 
 // ConnectUserCanvasNodesAtRevision 连线：按来源描述符的连接策略校验；重复连线幂等返回既有摘要。
