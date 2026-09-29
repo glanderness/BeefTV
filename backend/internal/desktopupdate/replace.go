@@ -56,7 +56,7 @@ func swapWindows(req HelperRequest) error {
 	if err := retryIO(func() error { return renamePath(req.TargetPath, backupExe) }); err != nil {
 		return err
 	}
-	for _, name := range []string{pluginDirName, "agent-host"} {
+	for _, name := range windowsSidecarEntries {
 		target := filepath.Join(targetDir, name)
 		if pathExists(target) {
 			if err := retryIO(func() error { return renamePath(target, filepath.Join(req.BackupPath, name)) }); err != nil {
@@ -72,13 +72,16 @@ func swapWindows(req HelperRequest) error {
 	if err := retryIO(func() error { return renamePath(stagedExe, req.TargetPath) }); err != nil {
 		return errors.Join(err, restoreWindows(req))
 	}
-	for _, name := range []string{pluginDirName, "agent-host"} {
+	for _, name := range windowsSidecarEntries {
 		if err := retryIO(func() error { return renamePath(filepath.Join(req.StagedPath, name), filepath.Join(targetDir, name)) }); err != nil {
 			return errors.Join(err, restoreWindows(req))
 		}
 	}
 	return nil
 }
+
+// windowsSidecarEntries 是 BeefTV.exe 旁边随包发行的资源：升级要整组换，回滚要整组还原。
+var windowsSidecarEntries = []string{pluginDirName, "agent-host", cliDirName}
 
 func restoreWindows(req HelperRequest) error {
 	targetDir := filepath.Dir(req.TargetPath)
@@ -96,7 +99,7 @@ func restoreWindows(req HelperRequest) error {
 	} else if !pathExists(req.TargetPath) {
 		failures = append(failures, fmt.Errorf("没有可还原的程序备份"))
 	}
-	for _, name := range []string{pluginDirName, "agent-host"} {
+	for _, name := range windowsSidecarEntries {
 		backup := filepath.Join(req.BackupPath, name)
 		absent := filepath.Join(req.BackupPath, "."+name+"-absent")
 		if !pathExists(backup) && !pathExists(absent) {

@@ -33,6 +33,10 @@ func validateDarwinLayout(root string) error {
 	if err := requireRegularFile(exe, true); err != nil {
 		return err
 	}
+	// 随包 CLI 在主程序旁的 cli 目录里：外部 Agent 靠它接入，缺了就不是完整的安装版。
+	if err := requireRegularFile(filepath.Join(bundle, "Contents", "MacOS", cliDirName, darwinCLIName), true); err != nil {
+		return fmt.Errorf("更新包缺少随包 beeftv CLI: %w", err)
+	}
 	if err := validateAgentHost(filepath.Join(bundle, "Contents", "Resources", "agent-host"), "runtime/bin/node", true); err != nil {
 		return err
 	}
@@ -54,6 +58,9 @@ func validateWindowsLayout(root string) error {
 	exe := filepath.Join(root, windowsExeName)
 	if err := requireRegularFile(exe, false); err != nil {
 		return fmt.Errorf("更新包缺少 BeefTV.exe")
+	}
+	if err := requireRegularFile(filepath.Join(root, cliDirName, windowsCLIName), false); err != nil {
+		return fmt.Errorf("更新包缺少随包 beeftv CLI: %w", err)
 	}
 	plugins := filepath.Join(root, pluginDirName)
 	info, err := os.Lstat(plugins)
@@ -81,6 +88,9 @@ func validateWindowsLayout(root string) error {
 	}
 	return walkAllowed(root, func(rel string, entry fs.DirEntry) error {
 		if rel == "." || rel == windowsExeName {
+			return nil
+		}
+		if rel == cliDirName || strings.HasPrefix(rel, cliDirName+string(filepath.Separator)) {
 			return nil
 		}
 		if rel == pluginDirName || strings.HasPrefix(rel, pluginDirName+string(filepath.Separator)) {

@@ -429,7 +429,28 @@ if ($copied.Count -eq 0) {
 
 Invoke-NativeExecutable -FilePath "bun" -ArgumentList @((Join-Path $repoRoot "scripts\package-agent-host.mjs"), "windows/amd64", (Join-Path $binDir "agent-host")) -FailureMessage "Agent host packaging failed" | Out-Null
 
+# The beeftv CLI ships with the app. External agents (Codex, Claude Code,
+# Cursor) connect through it with their own client credential, so the installed
+# app must carry it; it is not expected on the user PATH.
+#
+# It goes in a cli subdirectory, not directly next to BeefTV.exe: Windows file
+# names are case-insensitive, so beeftv.exe beside BeefTV.exe is the same name.
+$cliDir = Join-Path $binDir "cli"
+New-Item -ItemType Directory -Force -Path $cliDir | Out-Null
+$cliPath = Join-Path $cliDir "beeftv.exe"
+Push-Location (Join-Path $repoRoot "backend")
+try {
+    [void](Invoke-NativeExecutable -FilePath "go" -ArgumentList @("build", "-trimpath", "-ldflags", $ldflags, "-o", $cliPath, "./cmd/beeftv") -FailureMessage "beeftv CLI build failed")
+}
+finally {
+    Pop-Location
+}
+if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {
+    throw "beeftv CLI was not built next to $exePath"
+}
+
 Write-Host "Release executable: $exePath"
+Write-Host "Bundled agent CLI: $cliPath"
 Write-Host "Official plugins: $pluginResourceDir ($($copied.Count) packages)"
 Write-Host "Launch data directory (unless CANVAS_DESKTOP_DATA_DIR is set): %AppData%\BeefTV"
 Write-Host "Official plugins are loaded from the executable directory, not from the process working directory."

@@ -74,6 +74,13 @@ func WriteDarwinLayout(root, marker string) error {
 	if err := os.WriteFile(exe, []byte(script), 0o755); err != nil {
 		return err
 	}
+	cli := filepath.Join(root, appBundleName, "Contents", "MacOS", cliDirName, darwinCLIName)
+	if err := os.MkdirAll(filepath.Dir(cli), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(cli, []byte(script), 0o755); err != nil {
+		return err
+	}
 	if err := os.WriteFile(plist, []byte(`<plist><dict><key>CFBundleIdentifier</key><string>app.beeftv.desktop</string></dict></plist>`), 0o644); err != nil {
 		return err
 	}
@@ -92,6 +99,13 @@ func WriteWindowsLayout(root, marker string) error {
 	if err := os.WriteFile(exe, []byte("MZ-"+marker), 0o644); err != nil {
 		return err
 	}
+	cli := filepath.Join(root, cliDirName, windowsCLIName)
+	if err := os.MkdirAll(filepath.Dir(cli), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(cli, []byte("MZ-cli-"+marker), 0o644); err != nil {
+		return err
+	}
 	return os.WriteFile(plugin, []byte("official-"+marker), 0o644)
 }
 
@@ -101,7 +115,8 @@ func DarwinZipFiles(marker string) (map[string][]byte, map[string]bool) {
 		"BeefTV.app/Contents/Info.plist":                                       []byte("<plist></plist>"),
 		"BeefTV.app/Contents/Resources/plugin-packages/official.beeftv-plugin": []byte("official-" + marker),
 	}
-	execFiles := map[string]bool{"BeefTV.app/Contents/MacOS/BeefTV": true}
+	files["BeefTV.app/Contents/MacOS/cli/beeftv"] = []byte("#!/bin/sh\necho cli-" + marker + "\n")
+	execFiles := map[string]bool{"BeefTV.app/Contents/MacOS/BeefTV": true, "BeefTV.app/Contents/MacOS/cli/beeftv": true}
 	for name, body := range agentFiles("runtime/bin/node", marker) {
 		files["BeefTV.app/Contents/Resources/agent-host/"+name] = body
 	}
@@ -112,6 +127,7 @@ func DarwinZipFiles(marker string) (map[string][]byte, map[string]bool) {
 func WindowsZipFiles(marker string) (map[string][]byte, map[string]bool) {
 	files := map[string][]byte{
 		"BeefTV.exe":                             []byte("MZ-" + marker),
+		"cli/beeftv.exe":                         []byte("MZ-cli-" + marker),
 		"plugin-packages/official.beeftv-plugin": []byte("official-" + marker),
 	}
 	for name, body := range agentFiles("runtime/node.exe", marker) {
