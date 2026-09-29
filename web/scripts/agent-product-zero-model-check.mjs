@@ -63,7 +63,7 @@ async function selectNode(nodeId) {
 }
 async function readComposer() {
   return page.evaluate(() => {
-    const composers = Array.from(document.querySelectorAll("textarea")).filter((t) => t.placeholder !== "用自然语言描述创作需求…");
+    const composers = Array.from(document.querySelectorAll("textarea")).filter((t) => !t.closest(".canvas-assistant-panel"));
     const composer = composers[0];
     if (!composer) return { value: "", dragHandles: 0, composerCount: 0 };
     let panel = composer;

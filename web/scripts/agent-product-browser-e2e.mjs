@@ -35,7 +35,8 @@ const RESULT_PATH = process.env.AGENT_E2E_RESULT || join(AGENT_PRODUCT_DIR, "res
 // 每次运行的原始结果单独落一份（不覆盖），latest 指针只用于方便打开。
 const RAW_RESULT_PATH = join(AGENT_PRODUCT_DIR, `results-react-cross-entry-${STAMP}.json`);
 const TURN_TIMEOUT_MS = Number(process.env.AGENT_E2E_TURN_TIMEOUT_MS || 300_000);
-const COMPOSER = 'textarea[placeholder="用自然语言描述创作需求…"]';
+// 助手输入框在有节点的画布上是富文本编辑器，空画布上是 textarea：用 aria-label 两种都命中。
+const COMPOSER = '[aria-label="给助手的消息"]';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const checks = [];
@@ -100,12 +101,12 @@ function runCli(args) {
 
 async function panelMessages(page) {
     return page.evaluate(() => {
-        const aside = document.querySelector("aside");
-        if (!aside) return { user: [], assistant: [], notices: [] };
+        const panel = document.querySelector(".canvas-assistant-panel");
+        if (!panel) return { user: [], assistant: [], notices: [] };
         return {
-            user: Array.from(aside.querySelectorAll("div.ml-6")).map((n) => n.textContent || ""),
-            assistant: Array.from(aside.querySelectorAll("div.mr-6")).map((n) => n.textContent || ""),
-            notices: Array.from(aside.querySelectorAll("div.rounded.border")).map((n) => n.textContent || ""),
+            user: Array.from(panel.querySelectorAll(".canvas-assistant-user")).map((n) => n.textContent || ""),
+            assistant: Array.from(panel.querySelectorAll(".canvas-assistant-reply")).map((n) => n.textContent || ""),
+            notices: Array.from(panel.querySelectorAll(".canvas-assistant-card, .canvas-assistant-notice")).map((n) => n.textContent || ""),
         };
     });
 }
@@ -116,7 +117,7 @@ async function waitForAssistantReply(page, expectedCount = 1, timeoutMs = TURN_T
     while (Date.now() < deadline) {
         const messages = await panelMessages(page);
         last = { ready: messages.assistant.length >= expectedCount, ...messages };
-        if (last.ready && !(await page.locator("aside").getByRole("button", { name: "停止" }).count())) return last;
+        if (last.ready && !(await page.locator(".canvas-assistant-panel").getByRole("button", { name: "停止" }).count())) return last;
         await sleep(1500);
     }
     return last;
@@ -206,9 +207,9 @@ async function readPromptInUi(page, nodeId, expected, timeoutMs = 45_000) {
     let evidence = { value: "", dragHandles: 0, composerCount: 0 };
     while (Date.now() < deadline) {
         if (await selectNode(page, nodeId)) {
-            evidence = await page.evaluate((composerPlaceholder) => {
+            evidence = await page.evaluate(() => {
                 const composers = Array.from(document.querySelectorAll("textarea"))
-                    .filter((node) => node.placeholder !== composerPlaceholder);
+                    .filter((node) => !node.closest(".canvas-assistant-panel"));
                 const composer = composers[0];
                 if (!composer) return { value: "", dragHandles: 0, composerCount: 0 };
                 let panel = composer;
@@ -312,7 +313,7 @@ async function main() {
         await page.goto(`http://127.0.0.1:${WEB_PORT}/canvas/${canvasA}`, { waitUntil: "domcontentloaded" });
         await page.locator(COMPOSER).waitFor({ timeout: 60_000 });
         await sleep(4000);
-        check("画布页与创作助手面板加载", await page.locator("aside").count() > 0, await page.title());
+        check("画布页与助手面板加载", await page.locator(".canvas-assistant-panel").count() > 0, await page.title());
 
         // ---- 1. UI 对话建三镜头并连成链 ----
         await page.locator(COMPOSER).fill("在当前画布创建三个 image 节点：镜头1-开场、镜头2-冲突、镜头3-收尾，并连成一条链；不要改动已有的旁支节点。");
@@ -418,14 +419,14 @@ async function main() {
 
         // ---- 5. 收起面板再打开：会话不中断、历史正确 ----
         const beforeCollapse = await panelMessages(page);
-        await page.locator('button[aria-label="收起创作助手"]').click();
+        await page.locator('button[aria-label="关闭助手"]').click();
         await sleep(1300);
-        const collapsed = await page.locator("aside").count() === 0;
-        await page.locator('button[aria-label="展开创作助手"]').click();
+        const collapsed = await page.locator(".canvas-assistant-panel").count() === 0;
+        await page.locator('button[aria-label="助手"]').first().click();
         await sleep(1500);
         const afterExpand = await panelMessages(page);
         steps.collapse = { collapsed, before: beforeCollapse.assistant.length, after: afterExpand.assistant.length };
-        check("收起后助手面板消失", collapsed, String(collapsed));
+        check("关闭后助手面板消失", collapsed, String(collapsed));
         check("重新打开后历史完整保留", JSON.stringify(beforeCollapse) === JSON.stringify(afterExpand), JSON.stringify(steps.collapse));
         await page.screenshot({ path: join(SHOTS, `03-collapse-reopen-history-${STAMP}.png`) });
 

@@ -13,9 +13,11 @@ mock.module("@/services/api/request", () => ({
 	apiBaseURL: "http://127.0.0.1:54321/api",
     ApiError: class ApiError extends Error {
         status?: number;
-        constructor(message: string, options: { status?: number } = {}) {
+        reason?: string;
+        constructor(message: string, options: { status?: number; reason?: string } = {}) {
             super(message);
             this.status = options.status;
+            this.reason = options.reason;
         }
     },
     http: {
@@ -29,8 +31,10 @@ mock.module("@/services/api/request", () => ({
     },
 }));
 
+const { ApiError } = await import("@/services/api/request");
 const {
     AGENT_STREAM_INCOMPLETE_MESSAGE,
+    assistantUndoFailure,
     cancelAgentChat,
     resetAgentUiSession,
     streamAgentChat,
@@ -170,5 +174,64 @@ describe("创作助手回合流边界", () => {
 
     test("停止成功时不抛错", async () => {
         await expect(cancelAgentChat("c1")).resolves.toBeUndefined();
+    });
+
+    test("最终回合带回 turnId、改动清单与生成提议", async () => {
+        const end = {
+            type: "turn_end",
+            turnId: "turn-7",
+            reply: "已经建好三个镜头",
+            toolCalls: [{ toolCallId: "t1", tool: "canvas.nodes.create" }],
+            change: { revisionBefore: 4, revisionAfter: 5, createdNodeIds: ["n1", "n2", "n3"], updatedNodeIds: [], createdEdgeIds: ["e1", "e2"] },
+            proposals: [{ proposalId: "p1", kind: "image", nodeIds: ["n1"], model: "seedream-4", modelKey: "ch::seedream-4" }],
+            error: null,
+            cancelled: false,
+        };
+        chatResponse = () => chatResponseOf([`${JSON.stringify(end)}\n`]);
+
+        let received: Record<string, unknown> | null = null;
+        await streamAgentChat("c1", "hi", { onTurnEnd: (value) => { received = value as unknown as Record<string, unknown>; } });
+
+        expect(received).not.toBeNull();
+        expect(received!.turnId).toBe("turn-7");
+        expect(received!.change).toEqual(end.change);
+        expect(received!.proposals).toEqual(end.proposals);
+    });
+
+    test("旧格式（没有 turnId / change / proposals）仍然按成功结束", async () => {
+        chatResponse = () => chatResponseOf([`${TURN_END}\n`]);
+        let received: Record<string, unknown> | null = null;
+        await streamAgentChat("c1", "hi", { onTurnEnd: (value) => { received = value as unknown as Record<string, unknown>; } });
+        expect(received!.turnId).toBeUndefined();
+        expect(received!.change).toBeUndefined();
+    });
+
+    test("会话不是当前会话时给出可操作的一句话", async () => {
+        chatResponse = () => new Response(JSON.stringify({ code: 409, reason: "session_not_current" }), { status: 409 });
+        await expect(streamAgentChat("c1", "hi", {}, { sessionId: "stale" })).rejects.toThrow("你已经换到别的对话了，请重新发送这条消息");
+    });
+
+    test("指定会话时才把 sessionId 放进请求体", async () => {
+        chatResponse = () => chatResponseOf([`${TURN_END}\n`]);
+        await streamAgentChat("c1", "hi", {}, { sessionId: "s-1", selectedNodeIds: ["n1"] });
+        const chat = requests.find((item) => item.url.includes("/assistant/chat"));
+        expect(JSON.parse(chat!.body)).toEqual({ canvasId: "c1", message: "hi", selectedNodeIds: ["n1"], sessionId: "s-1" });
+
+        requests.length = 0;
+        await streamAgentChat("c1", "hi", {});
+        const plain = requests.find((item) => item.url.includes("/assistant/chat"));
+        expect(JSON.parse(plain!.body)).toEqual({ canvasId: "c1", message: "hi", selectedNodeIds: [] });
+    });
+});
+
+describe("撤销失败原因", () => {
+    test("三种 409 各自可分辨，未知原因归到 unknown", () => {
+        // 必须用同一个 ApiError 类，instanceof 才会命中（这里是被替换掉的那个）。
+        const failure = (reason?: string) => new ApiError("failed", { status: 409, reason });
+        expect(assistantUndoFailure(failure("canvas_changed_since_turn"))).toBe("canvas_changed");
+        expect(assistantUndoFailure(failure("turn_already_undone"))).toBe("already_undone");
+        expect(assistantUndoFailure(failure("turn_has_no_change"))).toBe("no_change");
+        expect(assistantUndoFailure(failure("brand_new_reason"))).toBe("unknown");
+        expect(assistantUndoFailure(new Error("boom"))).toBe("unknown");
     });
 });
