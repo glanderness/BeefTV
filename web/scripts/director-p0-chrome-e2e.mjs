@@ -421,6 +421,28 @@ async function smokeWorkbench(cdp, baseUrl) {
     const hasCanvas = await cdp.poll(`(() => { const c = document.querySelector('.director-viewport-shell canvas'); return !!c && c.clientWidth > 0; })()`, "canvas", 40000);
     assert(hasCanvas, "A5 real canvas present in viewport shell");
 
+    const preview = await cdp.click('nav[aria-label="导演台工作区视图"] button:nth-child(2)');
+    if (!preview) throw new Error("A: 成片预演工作区按钮 not clickable");
+    const previewReady = await cdp.poll(`(() => {
+        const tabs = document.querySelectorAll('nav[aria-label="导演台工作区视图"] button');
+        const grid = document.querySelector('[data-director-workbench="true"] > .grid');
+        return tabs[1]?.getAttribute('aria-pressed') === 'true'
+            && document.querySelectorAll('.director-sequencer').length === 1
+            && document.querySelectorAll('nav[aria-label="导演台工作区"]').length === 0
+            && document.querySelectorAll('nav[aria-label="导演台模式"]').length === 0
+            && grid && getComputedStyle(grid).gridTemplateColumns.split(' ').length === 1;
+    })()`, "cinema preview workspace", 20000);
+    assert(previewReady, "A5a 成片预演聚焦单画布并显示时间线");
+    const sceneView = await cdp.click('nav[aria-label="导演台工作区视图"] button:nth-child(1)');
+    if (!sceneView) throw new Error("A: 场景调度工作区按钮 not clickable");
+    const sceneRestored = await cdp.poll(`(() => {
+        const tabs = document.querySelectorAll('nav[aria-label="导演台工作区视图"] button');
+        return tabs[0]?.getAttribute('aria-pressed') === 'true'
+            && document.querySelectorAll('nav[aria-label="导演台工作区"]').length === 1
+            && document.querySelectorAll('.director-sequencer').length === 0;
+    })()`, "scene workspace restored", 20000);
+    assert(sceneRestored, "A5b 返回场景调度后恢复编辑栏和时间线状态");
+
     // P1-A 起 AutoKey/时间轴归属动画模式：默认摆场模式下它们必须不存在。
     const layoutGating = await cdp.evaluate(`(() => ({
         mode: document.querySelector('button[data-mode="layout"]')?.getAttribute('aria-pressed') ?? null,

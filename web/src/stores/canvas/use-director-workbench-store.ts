@@ -5,6 +5,8 @@ import { DIRECTOR_DEFAULT_VIEW_MODE, type DirectorViewMode } from "@/lib/canvas/
 import type { DirectorRenderMode } from "@/types/director";
 
 type DirectorWorkbenchStore = {
+    workspaceView: "scene" | "preview";
+    workspaceViewRestore: { viewMode: DirectorViewMode; sequencerVisible: boolean; renderMode: DirectorRenderMode } | null;
     selectedObjectId: string | null;
     selectedBone: string | null;
     selectedLightId: string | null;
@@ -25,6 +27,8 @@ type DirectorWorkbenchStore = {
     setMode: (mode: DirectorMode) => void;
     /** 切换取景模式。UI-only：不写入 DirectorScene，不产生 undo/history。 */
     setViewMode: (mode: DirectorViewMode) => void;
+    /** 顶层工作区切换只影响视口与时间线显示，不写入场景数据。 */
+    setWorkspaceView: (view: "scene" | "preview") => void;
     setTransformMode: (mode: DirectorWorkbenchStore["transformMode"]) => void;
     /** 切换渲染视图。当前模式不允许的视图一律忽略，不做静默降级。 */
     setRenderMode: (mode: DirectorRenderMode) => void;
@@ -37,6 +41,8 @@ type DirectorWorkbenchStore = {
 };
 
 const initialState = {
+    workspaceView: "scene" as const,
+    workspaceViewRestore: null,
     mode: DIRECTOR_DEFAULT_MODE,
     viewMode: DIRECTOR_DEFAULT_VIEW_MODE,
     selectedObjectId: null,
@@ -61,6 +67,25 @@ export const useDirectorWorkbenchStore = create<DirectorWorkbenchStore>((set) =>
         sequencerVisible: mode === "animate" ? true : state.sequencerVisible,
     })),
     setViewMode: (viewMode) => set({ viewMode }),
+    setWorkspaceView: (workspaceView) => set((state) => {
+        if (workspaceView === state.workspaceView) return {};
+        if (workspaceView === "preview") {
+            return {
+                workspaceView,
+                workspaceViewRestore: { viewMode: state.viewMode, sequencerVisible: state.sequencerVisible, renderMode: state.renderMode },
+                viewMode: "camera",
+                sequencerVisible: true,
+                renderMode: "beauty",
+            };
+        }
+        return {
+            workspaceView,
+            viewMode: state.workspaceViewRestore?.viewMode || state.viewMode,
+            sequencerVisible: state.workspaceViewRestore?.sequencerVisible ?? state.sequencerVisible,
+            renderMode: state.workspaceViewRestore?.renderMode || state.renderMode,
+            workspaceViewRestore: null,
+        };
+    }),
     setTransformMode: (transformMode) => set({ transformMode }),
     // 夹在 store 层而不是只在 UI 层过滤：dock 与顶栏是两条路径，
     // 只挡其中一条迟早会漏（本轮就漏过一次：dock 的「骨骼视图」在摆场模式仍可点）。

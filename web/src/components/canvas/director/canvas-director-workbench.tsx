@@ -80,6 +80,8 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     const sceneSelectionAnchor = useRef<string | null>(null);
     const [sceneInspectorView, setSceneInspectorView] = useState<"scene" | "shot">("scene");
     const [cameraInspectorTab, setCameraInspectorTab] = useState<DirectorCameraInspectorTab>("properties");
+    const workspaceView = useDirectorWorkbenchStore((state) => state.workspaceView);
+    const setWorkspaceView = useDirectorWorkbenchStore((state) => state.setWorkspaceView);
     const mode = useDirectorWorkbenchStore((state) => state.mode);
     const viewMode = useDirectorWorkbenchStore((state) => state.viewMode);
     const setViewMode = useDirectorWorkbenchStore((state) => state.setViewMode);
@@ -1018,8 +1020,8 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
                 <IconButton label="撤销" disabled={!history.length} onClick={undo}><Undo2 className="size-4" /></IconButton>
                 <IconButton label="重做" disabled={!future.length} onClick={redo}><Redo2 className="size-4" /></IconButton>
                 <span className="h-5 w-px" style={{ background: theme.toolbar.border }} />
-                {/* 一级模式切换：小屏也必须可达，因此不加 max-lg:hidden。 */}
-                <nav className="director-mode-switch" aria-label="导演台模式">
+                {/* 一级编辑模式只在场景调度中显示；预演保持镜头与时间线为中心。 */}
+                {workspaceView === "scene" ? <nav className="director-mode-switch" aria-label="导演台模式">
                     {DIRECTOR_MODES.map((item) => (
                         <button
                             key={item.mode}
@@ -1037,6 +1039,14 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
                             {item.label}
                         </button>
                     ))}
+                </nav> : null}
+                <nav className="director-mode-switch" aria-label="导演台工作区视图">
+                    {([{ view: "scene", label: "场景调度" }, { view: "preview", label: "成片预演" }] as const).map((item) => (
+                        <button key={item.view} type="button" className={`director-mode-switch-button ${workspaceView === item.view ? "is-active" : ""}`} aria-pressed={workspaceView === item.view} onClick={(event) => {
+                            setWorkspaceView(item.view);
+                            releaseDirectorFocusAfterPointer(event);
+                        }}>{item.label}</button>
+                    ))}
                 </nav>
                 <div className="ml-auto flex shrink-0 items-center gap-2">
                     <span
@@ -1050,13 +1060,14 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
                     {onboardingScope ? <IconButton label="重新开始引导" onClick={() => setOnboardingRestartSignal((value) => value + 1)}><Lightbulb className="size-4" /></IconButton> : null}
-                    <Select size="small" value={renderMode} className="w-24" options={renderModeOptions} onChange={setRenderMode} />
-                    <Button size="small" icon={<Video className="size-3.5" />} loading={recording} onClick={() => void exportClayVideo()}>导出白膜</Button>
+                    {workspaceView === "scene" ? <Select size="small" value={renderMode} className="w-24" options={renderModeOptions} onChange={setRenderMode} /> : null}
+                    {workspaceView === "scene" ? <Button size="small" icon={<Video className="size-3.5" />} loading={recording} onClick={() => void exportClayVideo()}>导出白膜</Button> : null}
                     <Button size="small" type="primary" icon={<Save className="size-3.5" />} loading={saving} onClick={() => void applyToCanvas()}>应用到镜头</Button>
                 </div>
             </header>
 
-            <div className="grid min-h-0 flex-1 grid-cols-[268px_minmax(0,1fr)_292px] max-lg:grid-cols-[220px_minmax(0,1fr)]">
+            <div className={`grid min-h-0 flex-1 ${workspaceView === "preview" ? "grid-cols-1" : "grid-cols-[268px_minmax(0,1fr)_292px] max-lg:grid-cols-[220px_minmax(0,1fr)]"}`}>
+                {workspaceView === "scene" ? <>
                 <aside className="flex min-h-0 overflow-hidden border-r" style={{ background: theme.node.panel, borderColor: theme.toolbar.border }}>
                     <DirectorWorkbenchRail active={navigationTab} onChange={(tab) => {
                         setNavigationTab(tab);
@@ -1122,18 +1133,23 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
                     <input ref={panoramaInputRef} type="file" accept={"image/" + "*"} className="hidden" onChange={(event) => { void uploadPanorama(event.target.files?.[0]); event.currentTarget.value = ""; }} />
                     </div>
                 </aside>
+                </> : null}
 
                 <main className="relative min-h-0 overflow-hidden bg-neutral-900">
-                    <DirectorViewport ref={viewportRef} scene={draft} selectedObjectId={selectedObjectId} selectedObjectIds={viewportSelectedObjectIds} selectedBone={selectedBone} transformMode={transformMode} renderMode={renderMode} playhead={playhead} playing={playing} showMotionPaths={sequencerVisible} viewMode={viewMode} onViewModeChange={setViewMode} onCaptureReadyChange={setCaptureReady} onSelectObject={(id) => { setSelectedObjectId(id); setSceneSelection(id ? [id] : []); sceneSelectionAnchor.current = id; }} onSelectBone={setSelectedBone} onObjectTransform={handleViewportObjectTransform} onMultiObjectTransform={handleMultiObjectGroupTransform} onBoneTransform={handleViewportBoneTransform} onActorRigReady={handleActorRigReady} />
-                    <div className="pointer-events-none absolute left-3 top-3 text-[var(--fs-tiny)] font-medium text-white/70">{activeShot.name} · {activeCamera?.name || "无摄影机"} · {activeShot.duration}s</div>
-                    <CanvasDirectorOnboarding scope={onboardingScope} open={open} restartSignal={onboardingRestartSignal} className="absolute right-3 top-3 z-[var(--z-popover)] w-[min(360px,calc(100%-24px))]" />
-                    <DirectorViewportDock transformMode={transformMode} renderMode={renderMode} renderModes={capabilities.renderModes} onTransformModeChange={setTransformMode} onRenderModeChange={setRenderMode} onAddActor={addActor} onAddBox={() => addPrimitive("box", "立方体")} onAddLight={addLight} onAddCamera={addCamera} onAlignCamera={alignCameraToView} timelineOpen={sequencerVisible} onToggleTimeline={() => setSequencerVisible(!sequencerVisible)} captureBusy={captureBusy} captureReady={captureReady} onCapture={() => void captureScreenshot()} />
+                    <DirectorViewport ref={viewportRef} scene={draft} selectedObjectId={workspaceView === "scene" ? selectedObjectId : null} selectedObjectIds={workspaceView === "scene" ? viewportSelectedObjectIds : []} selectedBone={workspaceView === "scene" ? selectedBone : null} transformMode={transformMode} renderMode={renderMode} playhead={playhead} playing={playing} showMotionPaths={workspaceView === "scene" && sequencerVisible} viewMode={viewMode} onViewModeChange={setViewMode} onCaptureReadyChange={setCaptureReady} onSelectObject={(id) => { if (workspaceView !== "scene") return; setSelectedObjectId(id); setSceneSelection(id ? [id] : []); sceneSelectionAnchor.current = id; }} onSelectBone={(bone) => { if (workspaceView === "scene") setSelectedBone(bone); }} onObjectTransform={handleViewportObjectTransform} onMultiObjectTransform={handleMultiObjectGroupTransform} onBoneTransform={handleViewportBoneTransform} onActorRigReady={handleActorRigReady} />
+                    {workspaceView === "scene" ? <>
+                        <div className="pointer-events-none absolute left-3 top-3 text-[var(--fs-tiny)] font-medium text-white/70">{activeShot.name} · {activeCamera?.name || "无摄影机"} · {activeShot.duration}s</div>
+                        <CanvasDirectorOnboarding scope={onboardingScope} open={open} restartSignal={onboardingRestartSignal} className="absolute right-3 top-3 z-[var(--z-popover)] w-[min(360px,calc(100%-24px))]" />
+                        <DirectorViewportDock transformMode={transformMode} renderMode={renderMode} renderModes={capabilities.renderModes} onTransformModeChange={setTransformMode} onRenderModeChange={setRenderMode} onAddActor={addActor} onAddBox={() => addPrimitive("box", "立方体")} onAddLight={addLight} onAddCamera={addCamera} onAlignCamera={alignCameraToView} timelineOpen={sequencerVisible} onToggleTimeline={() => setSequencerVisible(!sequencerVisible)} captureBusy={captureBusy} captureReady={captureReady} onCapture={() => void captureScreenshot()} />
+                    </> : <div className="pointer-events-none absolute left-4 top-4 rounded-md bg-black/45 px-3 py-2 text-xs text-white/80">{activeShot.name} · {activeCamera?.name || "无摄影机"} · {activeShot.duration}s 成片预演</div>}
                 </main>
 
+                {workspaceView === "scene" ? <>
                 <aside className="thin-scrollbar min-h-0 overflow-y-auto border-l max-lg:col-span-2 max-lg:max-h-[40vh] max-lg:border-l-0 max-lg:border-t" style={{ background: theme.node.panel, borderColor: theme.toolbar.border }}>
                     {/* 摄影机模式下右栏固定显示 shot/camera 检查器：对齐视图与运镜是这个模式的主入口。 */}
                     {selectedGroup && !capabilities.cameraTools ? <Inspector title={selectedGroup.name} onTitleChange={(name) => commit((current) => ({ ...current, groups: current.groups?.map((group) => group.id === selectedGroup.id ? { ...group, name } : group) }))}><Field label="对象">{draft.objects.filter((object) => object.groupId === selectedGroup.id).length}</Field></Inspector> : sceneSelection.length > 1 && !capabilities.cameraTools && selectedSceneObjects.length === sceneSelection.length && multiSelectionTransformObject && multiSelectionRendered ? <MultiObjectInspector objects={selectedSceneObjects} representative={multiSelectionTransformObject} rendered={multiSelectionRendered} playhead={playhead} capabilities={capabilities} onTransformEdit={(edited) => handleMultiObjectTransform(multiSelectionTransformObject.id, multiSelectionRendered, edited)} onUniformScaleChange={handleMultiUniformScale} onUniformScaleCommit={() => stagedTransaction.end("commit")} onBoneRotationStage={handleMultiBoneRotation} onBoneRotationCommit={() => stagedTransaction.end("commit")} onUpdate={updateSelectedObjects} /> : sceneSelection.length > 1 && !capabilities.cameraTools ? <div className="space-y-3 p-3"><h3 className="text-sm font-medium">对象 ({sceneSelection.length})</h3><p className="text-xs opacity-65">已选中 {sceneSelection.length} 个对象</p></div> : selectedObject && !capabilities.cameraTools ? <ObjectInspector object={selectedObject} rendered={selectedObjectRendered || selectedObject.transform} playhead={snappedPlayhead} selectedBone={selectedBone} capabilities={capabilities} onSelectBone={setSelectedBone} onUpdate={(patch) => updateObject(selectedObject.id, patch)} onTransformEdit={(edited) => handleObjectTransform(selectedObject.id, selectedObjectRendered || selectedObject.transform, edited)} onUniformScaleChange={(value, stage) => handleUniformScale(selectedObject.id, value, stage)} onUniformScaleCommit={() => stagedTransaction.end("commit")} onBoneRotationStage={(rotation) => selectedBone && writeBoneRotation(selectedObject.id, selectedBone, rotation, "stage")} onBoneRotationCommit={() => stagedTransaction.end("commit")} onAddKeyframe={recordSelectedKeyframe} onDelete={() => removeObject(selectedObject.id)} /> : selectedLight && !capabilities.cameraTools ? <LightInspector light={selectedLight} onUpdate={(patch) => updateLight(selectedLight.id, patch)} onDelete={() => removeLight(selectedLight.id)} /> : sceneInspectorView === "scene" && !capabilities.cameraTools ? <DirectorSceneInspector scene={draft} onChange={(patch) => commit((current) => ({ ...current, ...patch }))} /> : capabilities.cameraTools ? <DirectorCameraScreenshotTabs scene={draft} tab={cameraInspectorTab} onTabChange={setCameraInspectorTab}><DirectorCameraProperties camera={activeCamera} cameras={draft.cameras} shot={activeShot} objects={draft.objects} onUpdateCamera={updateActiveCamera} onSelectCamera={(cameraId) => updateShot(activeShot.id, { cameraId })} onFollowObject={handleFollowObject}>{shotInspector}</DirectorCameraProperties></DirectorCameraScreenshotTabs> : shotInspector}
                 </aside>
+                </> : null}
             </div>
 
             <Modal title="生成历史" open={panoramaHistoryOpen} onCancel={() => setPanoramaHistoryOpen(false)} footer={null} destroyOnHidden width={680}>
