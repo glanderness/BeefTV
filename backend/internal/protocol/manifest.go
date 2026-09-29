@@ -342,6 +342,11 @@ func normalizeManifestForProvider(manifest *Manifest, index int) error {
 		return fmt.Errorf("plugin provider contribution is missing")
 	}
 	provider := manifest.Contributes.Providers[index]
+	// Released enterprise profiles used the package name as the protocol ID.
+	// Keep those profiles on this installed adapter, including its disabled state.
+	if manifest.Metadata.ID == "openai-videos" && provider.ID == "newapi" {
+		manifest.Metadata.LegacyAliases = []string{"openai-video", "openai-videos"}
+	}
 	manifest.Metadata.ID = provider.ID
 	manifest.Metadata.Categories = provider.Capabilities
 	manifest.Metadata.Scopes = provider.Scopes

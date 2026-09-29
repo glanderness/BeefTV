@@ -1,11 +1,17 @@
 import { expect, test } from "bun:test";
 import { defaultModelCapabilityConfig, modelCapabilityConfigFor } from "../src/lib/model-capabilities";
 import { modelCompatibilityError } from "../src/lib/model-selection";
-import { createModelChannel, defaultConfig, normalizeConfigSnapshot } from "../src/stores/use-config-store";
+import { createModelChannel, defaultConfig, normalizeConfigSnapshot, resolveModelRequestConfig } from "../src/stores/use-config-store";
 
 for (const model of ["seedance-2.0", "seedance-2.0-fast", "seedance-2.0-mini", "seedance-2.5", "seedance-2.5-official"]) {
+    test(`${model} enterprise catalog needs no manual protocol selection`, () => {
+        const channel = createModelChannel({ id: "beefapi", baseUrl: "https://enterprise.beefapi.com", models: [model] });
+        const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [channel] } }).config;
+        expect(resolveModelRequestConfig(config, `beefapi::${model}`).interfaceType).toBe("newapi");
+    });
     for (const legacy of [false, true]) {
-        test(`${model} supports mixed references after ${legacy ? "legacy restore" : "catalog import"} and reload`, () => {
+        test(`${model} supports mixed references after ${legacy ? "legacy restore" : "catalog import"} and reload`, async () => {
+            const manifest = await Bun.file(new URL("../../plugin-packages/openai-videos/manifest.json", import.meta.url)).json();
             const capabilityConfig = defaultModelCapabilityConfig("newapi-channel-2", model);
             capabilityConfig.video!.operations = ["text_to_video", "image_to_video"];
             Object.assign(capabilityConfig.video!.references, { maxImages: 9, maxVideos: 0, maxAudios: 0, maxVideoDurationSeconds: 0, maxAudioDurationSeconds: 0 });
@@ -14,7 +20,9 @@ for (const model of ["seedance-2.0", "seedance-2.0-fast", "seedance-2.0-mini", "
             for (let reload = 0; reload < 2; reload++) {
                 config = normalizeConfigSnapshot({ config }).config;
                 const selected = `beefapi::${model}`;
-                expect(config.channels[0].modelProfiles?.find((item) => item.model === model)?.protocol).toBe("openai-videos");
+                expect(config.channels[0].modelProfiles?.find((item) => item.model === model)?.protocol).toBe("newapi");
+                const request = resolveModelRequestConfig(config, selected);
+                expect(manifest.contributes.providers.map((provider: { id: string }) => provider.id)).toContain(request.interfaceType);
                 const profile = modelCapabilityConfigFor(config, selected).video!;
                 expect(profile.references.maxVideos).toBe(model.startsWith("seedance-2.5") ? 10 : 3);
                 expect(profile.references.maxAudios).toBeGreaterThan(0);
