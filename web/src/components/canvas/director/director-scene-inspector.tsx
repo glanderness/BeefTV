@@ -5,7 +5,7 @@ import { directorGroundSettings } from "@/lib/canvas/director/director-ground";
 import { directorStageTransform } from "@/lib/canvas/director/director-stage-transform";
 import type { DirectorScene, DirectorVec3 } from "@/types/director";
 
-type SceneEnvironmentPatch = Partial<Pick<DirectorScene, "background" | "environmentIntensity" | "gridVisible" | "panorama" | "ground" | "stageTransform">>;
+type SceneEnvironmentPatch = Partial<Pick<DirectorScene, "background" | "environmentIntensity" | "gridVisible" | "panorama" | "ground" | "stageTransform" | "labelsVisible">>;
 
 export function DirectorSceneInspector({ scene, onChange }: { scene: DirectorScene; onChange: (patch: SceneEnvironmentPatch) => void }) {
     const ground = directorGroundSettings(scene);
@@ -60,6 +60,10 @@ export function DirectorSceneInspector({ scene, onChange }: { scene: DirectorSce
                     <InputNumber aria-label="全景球旋转角度" className="w-[72px] shrink-0" size="small" min={-180} max={180} step={1} suffix="°" disabled={!scene.panorama} value={scene.panorama?.rotation ?? 0} onChange={(rotation) => { if (scene.panorama && rotation !== null) onChange({ panorama: { ...scene.panorama, rotation } }); }} />
                 </div>
             </section>
+            <div className="flex items-center justify-between gap-3 border-b px-4 py-4 text-xs" style={{ borderColor: "var(--border)" }}>
+                <span>角色标签</span>
+                <Switch size="sm" aria-label="角色标签" checked={scene.labelsVisible !== false} onChange={(labelsVisible) => onChange({ labelsVisible })} />
+            </div>
             <div className="space-y-5 px-4 py-5">
                 <div className="space-y-2">
                     <div className="flex items-center justify-between text-xs"><span className="opacity-65">环境亮度</span><span>{Math.round(scene.environmentIntensity * 100)}%</span></div>

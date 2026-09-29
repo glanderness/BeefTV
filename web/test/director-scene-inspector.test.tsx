@@ -21,5 +21,16 @@ describe("导演台场景属性", () => {
             expect(markup).toContain(`aria-label="场景旋转${axis}"`);
         }
         expect(markup.indexOf('aria-label="场景变换"')).toBeLessThan(markup.indexOf('aria-label="全景背景"'));
+        expect(markup).toContain('aria-label="角色标签"');
+        expect(markup.indexOf('aria-label="角色标签"')).toBeGreaterThan(markup.indexOf('aria-label="全景球"'));
+    });
+
+    test("旧场景默认显示角色标签，新场景可显式关闭", () => {
+        const scene = createDirectorSceneFromTemplate("empty");
+        delete scene.labelsVisible;
+        const legacy = renderToStaticMarkup(<DirectorSceneInspector scene={scene} onChange={() => {}} />);
+        expect(legacy).toMatch(/<button(?=[^>]*aria-label="角色标签")(?=[^>]*aria-checked="true")[^>]*>/);
+        const hidden = renderToStaticMarkup(<DirectorSceneInspector scene={{ ...scene, labelsVisible: false }} onChange={() => {}} />);
+        expect(hidden).toMatch(/<button(?=[^>]*aria-label="角色标签")(?=[^>]*aria-checked="false")[^>]*>/);
     });
 });

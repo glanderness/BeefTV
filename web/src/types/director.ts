@@ -142,6 +142,8 @@ export type DirectorScene = {
     ground?: { visible: boolean; opacity: number; height: number };
     /** Whole stage transform; absent in older scenes means identity. Rotation is in degrees. */
     stageTransform?: { scale: number; position: DirectorVec3; rotation: DirectorVec3 };
+    /** Editor overlays only; older scenes keep labels visible. */
+    labelsVisible?: boolean;
     /** Missing in older saved scenes; treated as adaptive. */
     aspectRatio?: DirectorAspectRatio;
     /** Optional equirectangular backdrop; older scenes keep their solid color. */

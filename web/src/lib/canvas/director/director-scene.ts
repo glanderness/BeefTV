@@ -23,6 +23,7 @@ export function createDirectorScene(title = "未命名场景"): DirectorScene {
         gridVisible: true,
         ground: { ...DIRECTOR_DEFAULT_GROUND },
         stageTransform: { ...DIRECTOR_DEFAULT_STAGE_TRANSFORM, position: [...DIRECTOR_DEFAULT_STAGE_TRANSFORM.position], rotation: [...DIRECTOR_DEFAULT_STAGE_TRANSFORM.rotation] },
+        labelsVisible: true,
         aspectRatio: "adaptive",
         objects: [createDirectorActor("演员 1", [0, 0, 0])],
         cameras: [camera],

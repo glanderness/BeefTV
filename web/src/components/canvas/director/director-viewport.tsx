@@ -1,5 +1,5 @@
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
-import { Grid, Line, OrbitControls, TransformControls } from "@react-three/drei";
+import { Grid, Html, Line, OrbitControls, TransformControls } from "@react-three/drei";
 import { Component, forwardRef, memo, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState, type ComponentRef, type ReactNode } from "react";
 import { AnimationClip, AnimationMixer, Box3, Bone, Camera, Color, EquirectangularReflectionMapping, Group, LoopOnce, LoopRepeat, Mesh, MeshBasicMaterial, MeshDepthMaterial, MeshNormalMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Quaternion, Raycaster, Scene, SkeletonHelper, SRGBColorSpace, Texture, TextureLoader, Vector2, Vector3, WebGLRenderer } from "three";
 import type { Material } from "three";
@@ -527,6 +527,7 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
                     object={object}
                     selected={selectedObjectId === object.id}
                     selectedBone={selectedObjectId === object.id ? selectedBone : null}
+                    showLabel={scene.labelsVisible !== false && (object.kind === "actor" || object.primitive === "character")}
                     transformMode={transformMode}
                     playhead={playhead}
                     onSelect={() => onSelectObject(object.id)}
@@ -636,7 +637,7 @@ function DirectorOrthoCameraSync({ camera, framing, aspect }: { camera: Orthogra
     return null;
 }
 
-function DirectorObjectView({ object, selected, selectedBone, transformMode, playhead, onSelect, onSelectBone, onTransforming, onTransform, onBoneTransform, onActorRigReady, onLoadStateChange }: { object: DirectorObject; selected: boolean; selectedBone: string | null; transformMode: DirectorViewportProps["transformMode"]; playhead: number; onSelect: () => void; onSelectBone: (bone: string | null) => void; onTransforming: (value: boolean) => void; onTransform: (from: DirectorTransform, to: DirectorTransform) => void; onBoneTransform: (bone: string, rotation: DirectorQuat) => void; onActorRigReady: (rig: DirectorRig, animations: AnimationClip[]) => void; onLoadStateChange: (id: string, signal: DirectorLoadSignal, retry: () => void) => void }) {
+function DirectorObjectView({ object, selected, selectedBone, showLabel, transformMode, playhead, onSelect, onSelectBone, onTransforming, onTransform, onBoneTransform, onActorRigReady, onLoadStateChange }: { object: DirectorObject; selected: boolean; selectedBone: string | null; showLabel: boolean; transformMode: DirectorViewportProps["transformMode"]; playhead: number; onSelect: () => void; onSelectBone: (bone: string | null) => void; onTransforming: (value: boolean) => void; onTransform: (from: DirectorTransform, to: DirectorTransform) => void; onBoneTransform: (bone: string, rotation: DirectorQuat) => void; onActorRigReady: (rig: DirectorRig, animations: AnimationClip[]) => void; onLoadStateChange: (id: string, signal: DirectorLoadSignal, retry: () => void) => void }) {
     const [target, setTarget] = useState<Group | null>(null);
     const resolved = interpolateDirectorTransform(object.transform, object.keyframes, playhead);
     // 手势进行中冻结声明式 transform，交由 gizmo 直接改写 Object3D；终态后再由场景状态接管。
@@ -655,6 +656,9 @@ function DirectorObjectView({ object, selected, selectedBone, transformMode, pla
                 }}
             >
                 <DirectorObjectVisual object={object} selected={selected} selectedBone={selectedBone} playhead={playhead} onSelectBone={onSelectBone} onBoneTransform={onBoneTransform} onActorRigReady={onActorRigReady} onLoadStateChange={onLoadStateChange} />
+                {showLabel ? <Html position={[0, 2.04, 0]} center style={{ pointerEvents: "none" }}>
+                    <span data-director-actor-label={object.id} role="note" aria-label={`角色 ${object.name}`} style={{ color: "#fff", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", textShadow: "0 1px 3px #000, 0 0 5px #000" }}>{object.name}</span>
+                </Html> : null}
             </group>
             {selected && target ? (
                 <DirectorObjectGizmo
