@@ -28,7 +28,7 @@ import { DIRECTOR_ASPECT_RATIOS } from "@/lib/canvas/director/director-aspect-ra
 import { generateDirectorPanorama, recoverDirectorPanoramaTasks } from "@/lib/canvas/director/director-panorama-generation";
 import { createDirectorCameraFromPreset, DIRECTOR_CAMERA_PRESETS, type DirectorCameraPresetId } from "@/lib/canvas/director/director-camera-presets";
 import { appendDirectorScreenshot, isDirectorOutputSnapshotCurrent, nextDirectorScreenshotName, shouldReinitializeDirectorSession } from "@/lib/canvas/director/director-session";
-import { bindDirectorCameraFollow, removeDirectorCameraBindingsForObject } from "@/lib/canvas/director/director-camera-binding";
+import { bindDirectorCameraFollow, removeDirectorCameraBindingsForObject, unbindDirectorCameraFollow } from "@/lib/canvas/director/director-camera-binding";
 import { blocksDirectorShortcut, releaseDirectorFocusAfterPointer, resolveDirectorShortcut, type DirectorShortcutAction } from "@/lib/canvas/director/director-shortcuts";
 import { createDirectorActor, createDirectorBillboard, createDirectorCamera, createDirectorLight, createDirectorModel, createDirectorObject, DIRECTOR_ACTOR_COLORS, directorBoneLabel, directorFocalLengthToFov, directorPoseLabel, interpolateDirectorTransform, removeDirectorSceneKeyframe, setDirectorSceneKeyframeEasing, touchDirectorScene, upsertDirectorBoneKeyframe } from "@/lib/canvas/director/director-scene";
 import { searchDirectorSceneItems } from "@/lib/canvas/director/director-scene-search";
@@ -416,7 +416,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     const updateLight = (id: string, patch: Partial<DirectorLight>) => commit((current) => ({ ...current, lights: current.lights.map((item) => (item.id === id ? { ...item, ...patch } : item)) }));
     const updateShot = (id: string, patch: Partial<DirectorShot>) => commit((current) => ({ ...current, shots: current.shots.map((item) => (item.id === id ? { ...item, ...patch } : item)) }));
     const removeObject = (id: string) => {
-        commit((current) => ({ ...current, objects: current.objects.filter((item) => item.id !== id), cameras: current.cameras.map((camera) => removeDirectorCameraBindingsForObject(camera, id)) }));
+        commit((current) => ({ ...current, objects: current.objects.filter((item) => item.id !== id), cameras: current.cameras.map((camera) => removeDirectorCameraBindingsForObject(camera, id, current, playhead)) }));
         if (selectedObjectId === id) {
             setSelectedObjectId(null);
             setSelectedBone(null);
@@ -834,6 +834,12 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     if (!open || !draft || !activeShot) return null;
 
     const updateActiveCamera = (patch: Partial<DirectorCamera>) => activeCamera && commit((current) => ({ ...current, cameras: current.cameras.map((item) => item.id === activeCamera.id ? { ...item, ...patch } : item) }));
+    const handleFollowObject = (objectId: string) => {
+        if (!activeCamera) return;
+        commit((current) => ({ ...current, cameras: current.cameras.map((item) => item.id === activeCamera.id
+            ? objectId ? bindDirectorCameraFollow(item, current, objectId, playhead) : unbindDirectorCameraFollow(item, current, playhead)
+            : item) }));
+    };
     const shotInspector = <ShotInspector shot={activeShot} camera={activeCamera} cameras={draft.cameras} capabilities={capabilities} onUpdateShot={(patch) => updateShot(activeShot.id, patch)} onUpdateCamera={updateActiveCamera} onAddCameraKeyframe={addCameraKeyframe} onApplyCameraMove={applyCameraMove} onAlignCameraToView={alignCameraToView} onExportClay={() => void exportClayVideo()} recording={recording} showScreenshots={!capabilities.cameraTools} showCameraPosition={!capabilities.cameraTools} showCameraSelection={!capabilities.cameraTools} />;
 
     return (
@@ -957,7 +963,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
 
                 <aside className="thin-scrollbar min-h-0 overflow-y-auto border-l max-lg:col-span-2 max-lg:max-h-[40vh] max-lg:border-l-0 max-lg:border-t" style={{ background: theme.node.panel, borderColor: theme.toolbar.border }}>
                     {/* 摄影机模式下右栏固定显示 shot/camera 检查器：对齐视图与运镜是这个模式的主入口。 */}
-                    {selectedObject && !capabilities.cameraTools ? <ObjectInspector object={selectedObject} rendered={selectedObjectRendered || selectedObject.transform} playhead={snappedPlayhead} selectedBone={selectedBone} capabilities={capabilities} onSelectBone={setSelectedBone} onUpdate={(patch) => updateObject(selectedObject.id, patch)} onTransformEdit={(edited) => handleObjectTransform(selectedObject.id, selectedObjectRendered || selectedObject.transform, edited)} onBoneRotationStage={(rotation) => selectedBone && writeBoneRotation(selectedObject.id, selectedBone, rotation, "stage")} onBoneRotationCommit={() => stagedTransaction.end("commit")} onAddKeyframe={recordSelectedKeyframe} onDelete={() => removeObject(selectedObject.id)} /> : selectedLight && !capabilities.cameraTools ? <LightInspector light={selectedLight} onUpdate={(patch) => updateLight(selectedLight.id, patch)} onDelete={() => removeLight(selectedLight.id)} /> : sceneInspectorView === "scene" && !capabilities.cameraTools ? <DirectorSceneInspector scene={draft} onChange={(patch) => commit((current) => ({ ...current, ...patch }))} /> : capabilities.cameraTools ? <DirectorCameraScreenshotTabs scene={draft} tab={cameraInspectorTab} onTabChange={setCameraInspectorTab}><DirectorCameraProperties camera={activeCamera} cameras={draft.cameras} shot={activeShot} objects={draft.objects} onUpdateCamera={updateActiveCamera} onSelectCamera={(cameraId) => updateShot(activeShot.id, { cameraId })} onFollowObject={(objectId) => { if (!activeCamera) return; const bound = objectId ? bindDirectorCameraFollow(activeCamera, draft, objectId, playhead) : null; updateActiveCamera({ followObjectId: bound?.followObjectId, followAnchor: bound?.followAnchor }); }}>{shotInspector}</DirectorCameraProperties></DirectorCameraScreenshotTabs> : shotInspector}
+                    {selectedObject && !capabilities.cameraTools ? <ObjectInspector object={selectedObject} rendered={selectedObjectRendered || selectedObject.transform} playhead={snappedPlayhead} selectedBone={selectedBone} capabilities={capabilities} onSelectBone={setSelectedBone} onUpdate={(patch) => updateObject(selectedObject.id, patch)} onTransformEdit={(edited) => handleObjectTransform(selectedObject.id, selectedObjectRendered || selectedObject.transform, edited)} onBoneRotationStage={(rotation) => selectedBone && writeBoneRotation(selectedObject.id, selectedBone, rotation, "stage")} onBoneRotationCommit={() => stagedTransaction.end("commit")} onAddKeyframe={recordSelectedKeyframe} onDelete={() => removeObject(selectedObject.id)} /> : selectedLight && !capabilities.cameraTools ? <LightInspector light={selectedLight} onUpdate={(patch) => updateLight(selectedLight.id, patch)} onDelete={() => removeLight(selectedLight.id)} /> : sceneInspectorView === "scene" && !capabilities.cameraTools ? <DirectorSceneInspector scene={draft} onChange={(patch) => commit((current) => ({ ...current, ...patch }))} /> : capabilities.cameraTools ? <DirectorCameraScreenshotTabs scene={draft} tab={cameraInspectorTab} onTabChange={setCameraInspectorTab}><DirectorCameraProperties camera={activeCamera} cameras={draft.cameras} shot={activeShot} objects={draft.objects} onUpdateCamera={updateActiveCamera} onSelectCamera={(cameraId) => updateShot(activeShot.id, { cameraId })} onFollowObject={handleFollowObject}>{shotInspector}</DirectorCameraProperties></DirectorCameraScreenshotTabs> : shotInspector}
                 </aside>
             </div>
 

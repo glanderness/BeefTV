@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { createDirectorReproScene } from "../src/lib/canvas/director/director-repro-fixture";
 import { resolveDirectorCameraLocalFraming, resolveDirectorViewFraming } from "../src/lib/canvas/director/director-view-modes";
-import { bindDirectorCameraFollow, removeDirectorCameraBindingsForObject } from "../src/lib/canvas/director/director-camera-binding";
+import { bindDirectorCameraFollow, removeDirectorCameraBindingsForObject, unbindDirectorCameraFollow } from "../src/lib/canvas/director/director-camera-binding";
 import type { DirectorCamera, DirectorVec3 } from "../src/types/director";
 
 const movedScene = () => {
@@ -53,11 +53,11 @@ describe("导演台摄影机跟随与注视", () => {
             lookAtMode: "object",
             lookAtObjectId: "target-b",
         };
-        const withoutFollow = removeDirectorCameraBindingsForObject(camera, "target-a");
+        const withoutFollow = removeDirectorCameraBindingsForObject(camera, "target-a", scene, 0);
         expect(withoutFollow).toEqual({ ...camera, followObjectId: undefined, followAnchor: undefined });
-        const withoutLookAt = removeDirectorCameraBindingsForObject(withoutFollow, "target-b");
+        const withoutLookAt = removeDirectorCameraBindingsForObject(withoutFollow, "target-b", scene, 0);
         expect(withoutLookAt).toEqual({ ...withoutFollow, lookAtMode: "coordinates", lookAtObjectId: undefined });
-        expect(removeDirectorCameraBindingsForObject(camera, "other")).toBe(camera);
+        expect(removeDirectorCameraBindingsForObject(camera, "other", scene, 0)).toBe(camera);
     });
 
     test("自由视角机位辅助图形与 CAM 共用当前帧取景，且能解算非活动机位", () => {
@@ -68,5 +68,52 @@ describe("导演台摄影机跟随与注视", () => {
         expect(resolveDirectorCameraLocalFraming(withCameras, first, 1)?.position).toEqual([5.8, 2.7, 6.8]);
         expect(resolveDirectorCameraLocalFraming(withCameras, second, 1)?.position).toEqual([1, 2, 8]);
         expect(resolveDirectorCameraLocalFraming(withCameras, first, 1)?.target).toEqual(resolveDirectorViewFraming({ scene: withCameras, mode: "camera", playhead: 1 })?.target);
+    });
+
+    test("解除跟随保留当前构图，并把位移叠加到已有机位关键帧", () => {
+        const scene = movedScene();
+        const base = scene.cameras[0];
+        const camera: DirectorCamera = {
+            ...base,
+            keyframes: [
+                { id: "c0", time: 0, transform: base.transform },
+                { id: "c2", time: 2, transform: { ...base.transform, position: [6.8, 2.7, 6.8] } },
+            ],
+        };
+        const bound = bindDirectorCameraFollow(camera, scene, scene.objects[0].id, 0);
+        const before = resolveDirectorCameraLocalFraming(scene, bound, 1);
+        const detached = unbindDirectorCameraFollow(bound, scene, 1);
+        const after = resolveDirectorCameraLocalFraming(scene, detached, 1);
+        expect(after?.position).toEqual(before?.position);
+        expect(after?.target).toEqual(before?.target);
+        expect(detached.followObjectId).toBeUndefined();
+        expect(detached.followAnchor).toBeUndefined();
+        expect(detached.keyframes.map((frame) => frame.transform.position[0])).toEqual([5.8, 7.8]);
+        expect(detached.transform.position[0]).toBe(5.8);
+    });
+
+    test("删除被跟随兼注视的对象时保留删除瞬间的机位构图", () => {
+        const scene = movedScene();
+        const targetId = scene.objects[0].id;
+        const followed = bindDirectorCameraFollow(scene.cameras[0], scene, targetId, 0);
+        const camera: DirectorCamera = { ...followed, lookAtMode: "object", lookAtObjectId: targetId };
+        const before = resolveDirectorCameraLocalFraming(scene, camera, 1);
+        const detached = removeDirectorCameraBindingsForObject(camera, targetId, scene, 1);
+        const after = resolveDirectorCameraLocalFraming({ ...scene, objects: scene.objects.filter((object) => object.id !== targetId) }, detached, 1);
+        expect(after?.position).toEqual(before?.position);
+        expect(after?.target).toEqual(before?.target);
+        expect(detached.followObjectId).toBeUndefined();
+        expect(detached.lookAtMode).toBe("coordinates");
+    });
+
+    test("从一个跟随目标切换到另一个目标时当前帧不跳变", () => {
+        const scene = movedScene();
+        const first = bindDirectorCameraFollow(scene.cameras[0], scene, scene.objects[0].id, 0);
+        const before = resolveDirectorCameraLocalFraming(scene, first, 1);
+        const switched = bindDirectorCameraFollow(first, scene, scene.objects[1].id, 1);
+        const after = resolveDirectorCameraLocalFraming(scene, switched, 1);
+        expect(after?.position).toEqual(before?.position);
+        expect(after?.target).toEqual(before?.target);
+        expect(switched.followObjectId).toBe(scene.objects[1].id);
     });
 });
