@@ -88,7 +88,8 @@ export function useCanvasDirector({
             directorShotId: shot.id,
         });
         node.title = `镜头 ${shotIndex}`;
-        node.height = 300;
+        node.width = 384;
+        node.height = 360;
         const nextNodes = [...nodesRef.current, node];
         nodesRef.current = nextNodes;
         setNodes(nextNodes);
