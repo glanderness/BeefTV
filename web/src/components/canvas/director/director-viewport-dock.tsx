@@ -1,4 +1,5 @@
 import { Tooltip } from "@/components/ui/base/tooltip";
+import { Dropdown } from "antd";
 
 import { Bone, Box, Camera, Compass, Crosshair, Layers, Lightbulb, Move3D, Palette, Rotate3D, Scaling, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
@@ -29,12 +30,37 @@ const RENDER_VIEW_BUTTONS: Array<{ mode: DirectorRenderMode; label: string; icon
     { mode: "normal", label: "法线视图", icon: <Compass /> },
 ];
 
+const TRANSFORM_BUTTONS = [
+    { mode: "translate", label: "移动", shortcut: "V", icon: <Move3D /> },
+    { mode: "rotate", label: "旋转", shortcut: "R", icon: <Rotate3D /> },
+    { mode: "scale", label: "缩放", shortcut: "F", icon: <Scaling /> },
+] as const;
+
 export function DirectorViewportDock({ transformMode, renderMode, renderModes, onTransformModeChange, onRenderModeChange, onAddActor, onAddBox, onAddLight, onAddCamera, onAlignCamera }: DirectorViewportDockProps) {
+    const activeTransform = TRANSFORM_BUTTONS.find((item) => item.mode === transformMode) ?? TRANSFORM_BUTTONS[0];
     return (
         <nav className="director-viewport-dock" aria-label="导演台视口工具">
-            <DockButton label="移动对象" active={transformMode === "translate"} onClick={() => onTransformModeChange("translate")}><Move3D /></DockButton>
-            <DockButton label="旋转对象" active={transformMode === "rotate"} onClick={() => onTransformModeChange("rotate")}><Rotate3D /></DockButton>
-            <DockButton label="缩放对象" active={transformMode === "scale"} onClick={() => onTransformModeChange("scale")}><Scaling /></DockButton>
+            <Dropdown
+                trigger={["click"]}
+                placement="topLeft"
+                menu={{
+                    selectable: true,
+                    selectedKeys: [transformMode],
+                    items: TRANSFORM_BUTTONS.map((item) => ({
+                        key: item.mode,
+                        icon: item.icon,
+                        label: <span className="flex min-w-24 items-center justify-between gap-5"><span>{item.label}</span><span className="text-xs opacity-60">{item.shortcut}</span></span>,
+                        onClick: ({ domEvent }) => {
+                            onTransformModeChange(item.mode);
+                            releaseDirectorFocusAfterPointer({ detail: domEvent.detail, currentTarget: document.activeElement as HTMLElement });
+                        },
+                    })),
+                }}
+            >
+                <button type="button" className="director-viewport-dock-button is-active" aria-label={activeTransform.label} aria-haspopup="menu" title={`${activeTransform.label} (${activeTransform.shortcut})`}>
+                    {activeTransform.icon}
+                </button>
+            </Dropdown>
             <DockDivider />
             <DockButton label="添加演员" onClick={onAddActor}><UserRound /></DockButton>
             <DockButton label="添加立方体" onClick={onAddBox}><Box /></DockButton>
@@ -52,7 +78,7 @@ export function DirectorViewportDock({ transformMode, renderMode, renderModes, o
 /**
  * Dock 按钮。
  *
- * 鼠标点完后释放焦点：这个 dock 承载 W/E/R 变换工具，焦点留在按钮上会让
+ * 鼠标点完后释放焦点：这个 dock 承载 V/R/F 变换工具，焦点留在按钮上会让
  * 交互控件守卫吃掉这三个键。规则集中在 releaseDirectorFocusAfterPointer。
  */
 function DockButton({ label, active, children, onClick }: { label: string; active?: boolean; children: ReactNode; onClick: () => void }) {
