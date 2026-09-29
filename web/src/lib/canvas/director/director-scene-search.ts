@@ -15,3 +15,12 @@ export function searchDirectorSceneItems(scene: DirectorScene, query: string): D
     const normalized = query.trim().toLocaleLowerCase();
     return normalized ? items.filter((item) => item.name.toLocaleLowerCase().includes(normalized)) : items;
 }
+
+/** 场景行的 Shift 连续多选。筛选使锚点不在当前列表时退化为单选。 */
+export function resolveDirectorSceneSelection(order: string[], current: string[], anchor: string | null, target: string, shift: boolean): string[] {
+    const targetIndex = order.indexOf(target);
+    if (targetIndex < 0) return current.filter((id) => order.includes(id));
+    const anchorIndex = anchor ? order.indexOf(anchor) : -1;
+    if (!shift || anchorIndex < 0) return [target];
+    return order.slice(Math.min(anchorIndex, targetIndex), Math.max(anchorIndex, targetIndex) + 1);
+}
