@@ -3615,6 +3615,7 @@ function InfiniteCanvasPage() {
                                 <CanvasDirectorWorkbench
                                     open
                                     scene={activeDirectorScene}
+                                    projectId={projectId}
                                     imageNodes={nodes.filter((node) => node.type === CanvasNodeType.Image && Boolean(node.metadata?.content))}
                                     onClose={() => setDirectorNodeId(null)}
                                     onChange={saveDirectorScene}

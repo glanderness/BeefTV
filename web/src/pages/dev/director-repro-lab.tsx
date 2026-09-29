@@ -3,14 +3,27 @@ import { Button, Table } from "antd";
 import { Switch } from "@/components/ui/base/switch";
 
 import { CanvasDirectorWorkbench } from "@/components/canvas/director/canvas-director-workbench";
+import { generateDirectorPanorama } from "@/lib/canvas/director/director-panorama-generation";
 import { DIRECTOR_REPRO_MATRIX, createDirectorReproScene, directorReproSceneIsOffline, injectDirectorReproModel, type DirectorReproModelVariant } from "@/lib/canvas/director/director-repro-fixture";
 import { readDirectorReproSnapshot, type DirectorReproSnapshot } from "@/lib/canvas/director/director-repro-runtime";
 import { resetDirectorDiagnosticDedupe } from "@/lib/canvas/director/director-diagnostics-recorder";
 import { getClientDiagnosticEvents } from "@/services/diagnostics/client-diagnostics";
 import { StatusBadge } from "@/components/ui/base/badges";
+import { useAssetStore } from "@/stores/use-asset-store";
 import type { DirectorScene, DirectorSceneOutput } from "@/types/director";
 
 type DirectorOutputSummary = { beauty: string; clayVideo: string };
+
+/** The repro page must never submit a paid model task; production keeps the real task service. */
+const generatePanoramaFixture: typeof generateDirectorPanorama = async ({ file, sceneId, onTaskUpdate }) => {
+    onTaskUpdate?.({ id: "director-repro-panorama", status: "running", progress: 50 } as never);
+    await new Promise((resolve) => window.setTimeout(resolve, 300));
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400"><rect width="800" height="400" fill="#e33"/><rect x="400" width="400" height="400" fill="#38f"/></svg>';
+    const url = `data:image/svg+xml;base64,${btoa(svg)}`;
+    const name = `AI 全景图 · ${file.name}`;
+    const id = useAssetStore.getState().addAsset({ kind: "image", title: name, coverUrl: url, tags: ["全景图", "AI生成"], source: "导演台复现台", data: { dataUrl: url, width: 800, height: 400, bytes: svg.length, mimeType: "image/svg+xml" }, metadata: { source: "director-panorama-fixture", sceneId } });
+    return { id, name, url, storageKey: "", width: 800, height: 400 };
+};
 
 async function readDirectorVideoSize(blob: Blob): Promise<string> {
     const url = URL.createObjectURL(blob);
@@ -124,7 +137,7 @@ export default function DirectorReproLab() {
             <ReproMatrix />
 
             {workbenchOpen ? (
-                <CanvasDirectorWorkbench open scene={scene} imageNodes={[]} onboardingScope="director-repro-lab" onClose={() => setWorkbenchOpen(false)} onChange={onChange} onApply={onApply} onDeleteImageNode={() => undefined} onFlush={onFlush} />
+                <CanvasDirectorWorkbench open scene={scene} imageNodes={[]} onboardingScope="director-repro-lab" onClose={() => setWorkbenchOpen(false)} onChange={onChange} onApply={onApply} onDeleteImageNode={() => undefined} onFlush={onFlush} generatePanorama={generatePanoramaFixture} />
             ) : null}
         </div>
     );

@@ -1,7 +1,7 @@
 import { App, Button, ColorPicker, Dropdown, Input, InputNumber, Modal, Select, Slider } from "antd";
 import { Switch } from "@/components/ui/base/switch";
 import type { MenuProps } from "antd";
-import { Box, BoxSelect, Camera, Circle, Clock3, Cuboid, FileUp, Focus, Image as ImageIcon, LampDesk, Lightbulb, Plus, Redo2, RotateCcw, Save, Search, Trash2, Undo2, UserRound, Video, X } from "lucide-react";
+import { Box, BoxSelect, Camera, Circle, Clock3, Cuboid, FileUp, Focus, Image as ImageIcon, LampDesk, Lightbulb, Plus, Redo2, RotateCcw, Save, Search, Sparkles, Trash2, Undo2, UserRound, Video, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { nanoid } from "nanoid";
 import { Euler, Quaternion } from "three";
@@ -9,6 +9,7 @@ import type { AnimationClip } from "three";
 
 import { CanvasDirectorOnboarding } from "@/components/canvas/director/canvas-director-onboarding";
 import { DirectorSceneInspector } from "@/components/canvas/director/director-scene-inspector";
+import { DirectorPanoramaAIModal } from "@/components/canvas/director/director-panorama-ai-modal";
 import { DirectorWorkbenchRail, type DirectorWorkbenchTab } from "@/components/canvas/director/director-workbench-rail";
 import { DirectorViewport, type DirectorViewportHandle } from "@/components/canvas/director/director-viewport";
 import { DirectorViewportDock } from "@/components/canvas/director/director-viewport-dock";
@@ -21,6 +22,7 @@ import { recordDirectorDiagnostic } from "@/lib/canvas/director/director-diagnos
 import { DIRECTOR_MODES, directorModeCapabilities, type DirectorModeCapabilities } from "@/lib/canvas/director/director-modes";
 import { resolveDirectorPlacement, resolveDirectorPlacementAnchor } from "@/lib/canvas/director/director-placement";
 import { DIRECTOR_ASPECT_RATIOS } from "@/lib/canvas/director/director-aspect-ratio";
+import { generateDirectorPanorama } from "@/lib/canvas/director/director-panorama-generation";
 import { createDirectorCameraFromPreset, DIRECTOR_CAMERA_PRESETS, type DirectorCameraPresetId } from "@/lib/canvas/director/director-camera-presets";
 import { isDirectorOutputSnapshotCurrent, shouldReinitializeDirectorSession } from "@/lib/canvas/director/director-session";
 import { blocksDirectorShortcut, releaseDirectorFocusAfterPointer, resolveDirectorShortcut, type DirectorShortcutAction } from "@/lib/canvas/director/director-shortcuts";
@@ -32,20 +34,25 @@ import { uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { hasRemoteUserDataSyncSession, localSavedRemotePendingMessage, saveRemoteUserDataNow } from "@/services/local-workspace-sync";
 import { useAssetStore, type ImageAsset, type ModelAsset } from "@/stores/use-asset-store";
+import { useEffectiveConfig } from "@/stores/use-config-store";
 import { useDirectorWorkbenchStore } from "@/stores/canvas/use-director-workbench-store";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { DirectorCamera, DirectorCameraMove, DirectorHumanoidBone, DirectorKeyframeDeleteTarget, DirectorKeyframeEasing, DirectorLight, DirectorObject, DirectorPose, DirectorQuat, DirectorRenderMode, DirectorRig, DirectorScene, DirectorSceneOutput, DirectorShot, DirectorShotSize, DirectorTransform, DirectorVec3 } from "@/types/director";
 
-export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingScope, onClose, onChange, onApply, onDeleteImageNode, onFlush, onShouldCaptureCover, onCaptureCover }: { open: boolean; scene: DirectorScene | null; imageNodes: CanvasNodeData[]; onboardingScope: string; onClose: () => void; onChange: (scene: DirectorScene) => void; onApply: (output: DirectorSceneOutput) => Promise<void>; onDeleteImageNode: (nodeId: string) => void; onFlush?: () => void | Promise<void>; onShouldCaptureCover?: (scene: DirectorScene, shotId: string) => boolean; onCaptureCover?: (input: { scene: DirectorScene; shotId: string; beauty: Blob }) => Promise<void> }) {
+export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, onboardingScope, onClose, onChange, onApply, onDeleteImageNode, onFlush, onShouldCaptureCover, onCaptureCover, generatePanorama = generateDirectorPanorama }: { open: boolean; scene: DirectorScene | null; projectId?: string; imageNodes: CanvasNodeData[]; onboardingScope: string; onClose: () => void; onChange: (scene: DirectorScene) => void; onApply: (output: DirectorSceneOutput) => Promise<void>; onDeleteImageNode: (nodeId: string) => void; onFlush?: () => void | Promise<void>; onShouldCaptureCover?: (scene: DirectorScene, shotId: string) => boolean; onCaptureCover?: (input: { scene: DirectorScene; shotId: string; beauty: Blob }) => Promise<void>; generatePanorama?: typeof generateDirectorPanorama }) {
     const { message, modal } = App.useApp();
     const theme = canvasThemes[useActiveTheme()];
+    const effectiveConfig = useEffectiveConfig();
     const viewportRef = useRef<DirectorViewportHandle>(null);
     const modelInputRef = useRef<HTMLInputElement>(null);
     const panoramaInputRef = useRef<HTMLInputElement>(null);
     const [panoramaUploading, setPanoramaUploading] = useState(false);
     const [panoramaHistoryOpen, setPanoramaHistoryOpen] = useState(false);
     const [panoramaHistoryScope, setPanoramaHistoryScope] = useState<"all" | "canvas">("all");
+    const [panoramaAIOpen, setPanoramaAIOpen] = useState(false);
+    const [panoramaAIBusy, setPanoramaAIBusy] = useState(false);
+    const [panoramaAIStatus, setPanoramaAIStatus] = useState("");
     const [draft, setDraft] = useState<DirectorScene | null>(null);
     const [history, setHistory] = useState<DirectorScene[]>([]);
     const [future, setFuture] = useState<DirectorScene[]>([]);
@@ -465,6 +472,29 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
         }
     };
 
+    const startPanoramaGeneration = (file: File) => {
+        const sceneId = draftRef.current?.id;
+        if (!sceneId || panoramaAIBusy) return;
+        setPanoramaAIBusy(true);
+        setPanoramaAIStatus("正在提交生成任务…");
+        void generatePanorama({
+            file,
+            config: effectiveConfig,
+            sceneId,
+            projectId,
+            onTaskUpdate: (task) => setPanoramaAIStatus(task.progress != null ? `正在生成 · ${Math.round(task.progress)}%` : "正在生成…"),
+        }).then((result) => {
+            const ratio = result.height > 0 ? result.width / result.height : 0;
+            if (Math.abs(ratio - 2) > 0.08) message.warning("图片已生成，但不是 2:1 全景比例；在历史记录中选用前请检查效果");
+            else message.success("全景图已生成，可在历史记录中选用");
+            setPanoramaAIOpen(false);
+        }).catch((error) => {
+            const text = error instanceof Error ? error.message : "全景图生成失败";
+            setPanoramaAIStatus(text);
+            message.error(text);
+        }).finally(() => setPanoramaAIBusy(false));
+    };
+
     const uploadModel = async (file?: File) => {
         if (!file || !/\.(glb|gltf)$/i.test(file.name)) return;
         const uploaded = await uploadMediaFile(file, "model");
@@ -630,6 +660,8 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
     useEffect(() => {
         if (!open) return;
         const onKeyDown = (event: KeyboardEvent) => {
+            // Modal owns Escape and text-entry shortcuts while either panorama dialog is open.
+            if (panoramaAIOpen || panoramaHistoryOpen) return;
             const action = resolveDirectorShortcut({
                 key: event.key,
                 ctrlKey: event.ctrlKey,
@@ -643,7 +675,7 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
         };
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
-    }, [open]);
+    }, [open, panoramaAIOpen, panoramaHistoryOpen]);
 
     /** 对象 transform 编辑的唯一入口：gizmo 与检查器共用同一套静态/动画语义。 */
     const handleObjectTransform = useCallback((id: string, from: DirectorTransform, to: DirectorTransform) => {
@@ -846,6 +878,7 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
                         <div className="space-y-0.5 px-2 pb-3">
                             <PanoramaAction label={panoramaUploading ? "正在上传…" : "本地上传"} icon={<FileUp />} disabled={panoramaUploading} onClick={() => panoramaInputRef.current?.click()} />
                             <PanoramaAction label="历史记录" icon={<Clock3 />} onClick={() => setPanoramaHistoryOpen(true)} />
+                            <PanoramaAction label={panoramaAIBusy ? "AI生成中…" : "AI生成"} icon={<Sparkles />} onClick={() => setPanoramaAIOpen(true)} />
                         </div>
                     </> : null}
                     {navigationTab === "aspect" ? <>
@@ -895,6 +928,7 @@ export function CanvasDirectorWorkbench({ open, scene, imageNodes, onboardingSco
                 </div>
                 {(panoramaHistoryScope === "canvas" || imageAssets.length === 0) && imageNodes.every((node) => !node.metadata?.content) ? <p className="py-8 text-center text-xs opacity-60">暂无图片，可先本地上传</p> : null}
             </Modal>
+            <DirectorPanoramaAIModal open={panoramaAIOpen} busy={panoramaAIBusy} status={panoramaAIStatus} onClose={() => setPanoramaAIOpen(false)} onGenerate={startPanoramaGeneration} />
 
             {/* 时间轴只属于动画模式：其他模式下它不渲染，Auto Key 与录制入口一并消失。 */}
             {capabilities.timeline ? <DirectorSequencer scene={draft} shot={activeShot} camera={activeCamera} objects={draft.objects} selectedObjectId={selectedObjectId} selectedBone={selectedBone} playhead={playhead} playing={playing} autoKey={autoKey} height={sequencerHeight} visible={sequencerVisible} onPlayToggle={() => setPlaying(!playing)} onPlayheadChange={setPlayhead} onAutoKeyChange={setAutoKey} onHeightChange={setSequencerHeight} onVisibilityChange={setSequencerVisible} onSelectObject={setSelectedObjectId} onSelectBone={setSelectedBone} onRecordKeyframe={recordSelectedKeyframe} onAddShot={addShot} onDeleteKeyframe={deleteKeyframe} onSetKeyframeEasing={setKeyframeEasing} onSelectShot={(id) => { commit((current) => ({ ...current, activeShotId: id })); setPlayhead(0); }} /> : null}
