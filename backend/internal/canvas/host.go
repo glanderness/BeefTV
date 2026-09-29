@@ -45,6 +45,22 @@ type Service struct {
 	host Host
 }
 
+// WithHost 返回使用指定 host 的服务副本；host 提供配额、存储锁与资源访问等真实校验。
+func (s *Service) WithHost(host Host) *Service {
+	if s == nil {
+		return New(nil, host)
+	}
+	return &Service{repo: s.repo, host: host}
+}
+
+// WithRepository 返回绑定到指定仓储（可为事务）的服务副本。
+func (s *Service) WithRepository(repo *repository.Repository) *Service {
+	if s == nil {
+		return New(repo, nil)
+	}
+	return &Service{repo: repo, host: s.host}
+}
+
 func New(repo *repository.Repository, host Host) *Service {
 	if host == nil {
 		host = nopHost{}

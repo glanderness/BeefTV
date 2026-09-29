@@ -1,15 +1,55 @@
-import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
+import { acceptCanvasExternalRevisionCandidate, applyExternalCanvasRevision, canvasDurableSnapshot, canvasExternalRevisionConflict, flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { http } from "@/services/api/request";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
+import { notifyCanvasRefresh } from "@/services/local-workspace-sync";
+import { canvasBackendSubmitPaused, handleRejectedCanvasBackendSave, resumeCanvasBackendSubmit } from "@/services/canvas-revision-conflict";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
+import { getActiveUserScope } from "@/lib/user-scope";
+import { sameCanvasDocument } from "@/lib/canvas/canvas-content";
 
 type LocalCanvasContent = Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId">>;
 type CanvasSaveSummary = Pick<CanvasProject, "id" | "title" | "createdAt" | "updatedAt" | "revision">;
 
 const backendSaveTails = new Map<string, Promise<void>>();
 const backendSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/**
+ * 每画布最后一次被服务端确认的文档快照：成功 PUT 的入参，或从服务端读回并被
+ * 采纳的内容。它是判断「本地是否有服务端尚未确认的编辑」的唯一权威基线——
+ * 浏览器存储队列只说明有没有写进 IndexedDB，不代表服务端已经收到。
+ */
+const serverConfirmedCanvasSnapshots = new Map<string, CanvasProject>();
+
+function recordServerConfirmedCanvas(project: CanvasProject | undefined) {
+    if (!project) return;
+    serverConfirmedCanvasSnapshots.set(project.id, project);
+}
+
+/** HTTP 层是否还有该画布未落地的提交（已排队或正在发送）。 */
+function canvasBackendSubmitPending(id: string) {
+    return backendSaveTails.has(id) || backendSaveTimers.has(id);
+}
+
+/**
+ * 本地是否有服务端尚未确认的编辑。
+ *
+ * 依次检查三个真实状态的证据，任何一项不成立都按「有未确认编辑」处理，
+ * 因为这里判错的代价是覆盖用户正在编辑的内容：
+ * 1. HTTP 待提交/正在提交，或上一次提交被拒；
+ * 2. 与服务端确认快照的文档内容不同；
+ * 3. 没有服务端确认基线时，退回本机已落盘快照；两者都没有则保守判为有编辑。
+ */
+export function hasUnconfirmedCanvasEdits(id: string) {
+    const live = openLocalCanvasProject(id);
+    if (!live) return false;
+    if (canvasBackendSubmitPending(id) || canvasBackendSubmitPaused(id)) return true;
+    const confirmed = serverConfirmedCanvasSnapshots.get(id);
+    if (confirmed) return !sameCanvasDocument(confirmed, live);
+    const durable = canvasDurableSnapshot(getActiveUserScope(), id);
+    if (durable) return !sameCanvasDocument(durable, live);
+    return true;
+}
 
 function resourceIdFromLocator(value?: string) {
     const storageID = resourceIdFromStorageKey(value);
@@ -107,9 +147,10 @@ function syncLocalCanvasProject(id: string, includeGeneratedAssets: boolean): Pr
         const assets = includeGeneratedAssets ? canvasGenerationCommitAssets(project, useAssetStore.getState().assets) : [];
         const projectForSave = includeGeneratedAssets ? bindCanvasGenerationCommitAssets(project, assets) : project;
         const endpoint = includeGeneratedAssets ? `/canvas-projects/${encodeURIComponent(id)}/generated-assets` : `/canvas-projects/${encodeURIComponent(id)}`;
-        const response = await http.put<{ project: CanvasSaveSummary }>(endpoint, includeGeneratedAssets ? { project: projectForSave, assets } : { project: projectForSave });
-        const saved = response.project;
+        const saved = await submitCanvasProjectToBackend(id, project, endpoint, projectForSave, assets, includeGeneratedAssets);
         if (!saved) return;
+        // 服务端已确认这次提交：记下被接受的那一份内容，作为后续刷新的基线。
+        recordServerConfirmedCanvas(projectForSave);
         useCanvasStore.setState((state) => ({
             projects: state.projects.map((current) => current.id === id
                 // Preserve edits made while the request was in flight; only the
@@ -121,6 +162,7 @@ function syncLocalCanvasProject(id: string, includeGeneratedAssets: boolean): Pr
                 }
                 : current),
         }));
+        resumeCanvasBackendSubmit(id);
         void flushCanvasStorePersistence().catch((error) => {
             console.error("画布本地缓存写入失败，已保存到桌面数据库", { id, error });
         });
@@ -130,6 +172,22 @@ function syncLocalCanvasProject(id: string, includeGeneratedAssets: boolean): Pr
     });
     backendSaveTails.set(id, tail);
     return tail;
+}
+
+/**
+ * 发送一次画布提交并返回服务端摘要。
+ *
+ * 失败时先按「陈旧提交」收尾（保留本地草稿并暂停自动提交），再把错误抛出，
+ * 让调用方看到真实失败，而不是被包装成成功。
+ */
+async function submitCanvasProjectToBackend(id: string, project: CanvasProject, endpoint: string, projectForSave: CanvasProject, assets: Asset[], includeGeneratedAssets: boolean) {
+    try {
+        const response = await http.put<{ project: CanvasSaveSummary }>(endpoint, includeGeneratedAssets ? { project: projectForSave, assets } : { project: projectForSave });
+        return response.project;
+    } catch (error) {
+        await handleRejectedCanvasBackendSave(id, project, error);
+        throw error;
+    }
 }
 
 export function syncLocalCanvasProjectToBackend(id: string): Promise<void> {
@@ -276,6 +334,9 @@ export async function openLocalCanvasProjectFromBackend(id: string) {
         const backendProject = response.project;
         if (!backendProject) return openLocalCanvasProject(id);
         const project = selectPreferredCanvasProject(openLocalCanvasProject(id), backendProject);
+        // 服务端这一版就是它当前的确认内容；即使最终采用较新的本地内容，
+        // 这份快照仍然是「服务端确认到哪一版」的基线。
+        recordServerConfirmedCanvas(backendProject);
         useCanvasStore.setState((state) => ({
             projects: state.projects.some((item) => item.id === id)
                 ? state.projects.map((item) => item.id === id ? project : item)
@@ -288,22 +349,59 @@ export async function openLocalCanvasProjectFromBackend(id: string) {
     }
 }
 
+/**
+ * 外部写入（内置助手回合、CLI/MCP 操作）后把服务端内容投影到本地编辑器。
+ *
+ * 与 `openLocalCanvasProjectFromBackend` 的区别：这里不假设本地一定服从服务端。
+ * 有服务端尚未确认的编辑时保留本地内容、把远端留作候选并记录冲突；只有确认
+ * 本地没有这类编辑时才应用外部 revision。
+ *
+ * 「是否有未确认编辑」在 GET 返回之后、应用之前同步重算一次：等待网络期间用户
+ * 仍可能继续编辑，用请求发出时的判断会漏掉这些新编辑。
+ */
 export async function refreshLocalCanvasProjectIfChanged(id: string) {
-    const current = openLocalCanvasProject(id);
+    const before = openLocalCanvasProject(id);
     try {
         const response = await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(id)}`);
         const remote = response.project;
-        if (!remote || selectPreferredCanvasProject(current, remote) !== remote) return false;
-        useCanvasStore.setState((state) => ({
-            projects: state.projects.some((item) => item.id === id)
-                ? state.projects.map((item) => item.id === id ? remote : item)
-                : [...state.projects, remote],
-        }));
+        if (!remote) return undefined;
+        if (before && remote.revision === before.revision && !hasUnconfirmedCanvasEdits(id)) return undefined;
+        const decision = applyExternalCanvasRevision(remote, {
+            hasUnsyncedEdits: hasUnconfirmedCanvasEdits(id),
+            onApplied: (project, previous) => {
+                recordServerConfirmedCanvas(project);
+                notifyCanvasRefresh(project, previous);
+            },
+        });
+        if (decision.kind === "keep-local") return undefined;
         await flushCanvasStorePersistence();
-        return remote;
+        return decision.project;
     } catch {
         return undefined;
     }
+}
+
+/**
+ * 用户显式选择以最新内容为准：用冲突时保留的远端候选替换本地文档。
+ *
+ * 候选本身就是服务端已确认的内容，因此这里只把它落到本地并更新基线，
+ * 不再回写一次服务端（回写只会平白推进 revision，甚至在服务端又变化时被拒）。
+ */
+export async function acceptExternalCanvasRevision(id: string) {
+    const decision = acceptCanvasExternalRevisionCandidate(id, {
+        onApplied: (project, previous) => {
+            recordServerConfirmedCanvas(project);
+            notifyCanvasRefresh(project, previous);
+        },
+    });
+    if (!decision || decision.kind !== "apply") return undefined;
+    await flushCanvasStorePersistence();
+    return decision.project;
+}
+
+/** 该画布是否存在被本地编辑挡住的外部改动。 */
+export function pendingExternalCanvasRevision(id: string) {
+    return canvasExternalRevisionConflict(getActiveUserScope(), id);
 }
 
 export async function flushLocalWorkspace() {

@@ -210,9 +210,14 @@ func packageNamed(t *testing.T, dir, platform, version string) string {
 		}
 		writer := zip.NewWriter(file)
 		for name, body := range map[string]string{
-			"BeefTV.app/Contents/MacOS/BeefTV":                                 "binary",
-			"BeefTV.app/Contents/Info.plist":                                   "<plist></plist>",
-			"BeefTV.app/Contents/Resources/plugin-packages/core.beeftv-plugin": "plugin",
+			"BeefTV.app/Contents/MacOS/BeefTV":                                                                   "binary",
+			"BeefTV.app/Contents/Info.plist":                                                                     "<plist></plist>",
+			"BeefTV.app/Contents/Resources/plugin-packages/core.beeftv-plugin":                                   "plugin",
+			"BeefTV.app/Contents/Resources/agent-host/server.mjs":                                                "host",
+			"BeefTV.app/Contents/Resources/agent-host/session-identity.mjs":                                      "identity",
+			"BeefTV.app/Contents/Resources/agent-host/package.json":                                              "{}",
+			"BeefTV.app/Contents/Resources/agent-host/runtime/bin/node":                                          "node",
+			"BeefTV.app/Contents/Resources/agent-host/node_modules/@earendil-works/pi-coding-agent/package.json": "{}",
 		} {
 			header := &zip.FileHeader{Name: name, Method: zip.Deflate}
 			header.SetMode(0o755)

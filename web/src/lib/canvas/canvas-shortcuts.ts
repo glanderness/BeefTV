@@ -42,6 +42,14 @@ export const CANVAS_SHORTCUTS: CanvasShortcutItem[] = [
         keywords: ["帮助", "说明", "help"],
     },
     {
+        id: "assistant",
+        category: "common",
+        title: "打开或关闭助手",
+        description: "在右侧和助手对话，让它直接改这张画布",
+        keys: [[CANVAS_MODIFIER_KEY, "J"]],
+        keywords: ["助手", "对话", "assistant"],
+    },
+    {
         id: "save",
         category: "common",
         title: "保存画布",

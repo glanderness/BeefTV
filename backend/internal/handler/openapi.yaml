@@ -24,6 +24,8 @@ tags:
   - name: assets
   - name: admin
   - name: beefapi
+  - name: agent-ops
+  - name: assistant
 paths:
   /beefapi/connection:
     get:
@@ -201,6 +203,135 @@ paths:
           description: 当前版本或素材状态已变化，恢复未执行
         "428":
           description: 缺少当前 revision
+  /ops:
+    get:
+      tags: [agent-ops]
+      summary: 列出调用者身份可用的操作描述（含 JSON Schema）
+      description: |
+        能力模式只由调用者身份决定：已登记客户端的模式来自服务端登记，请求体或查询参数都不能提升权限。
+        只读客户端只会拿到 readOnly 操作；写操作在 /ops/{op} 上仍按登记权限强制拒绝。
+      responses:
+        "200":
+          description: 信封 data.ops 为操作描述数组，data.readOnly 表示本次调用的能力模式
+        "403":
+          description: 非本机同源，或身份不足（缺少已登记客户端凭据与 owner 凭据）
+  /ops/{op}:
+    post:
+      tags: [agent-ops]
+      summary: 执行单个操作（CLI、MCP 与内置 pi 会话共用）
+      description: |
+        写操作必须提供 opId 作为幂等键：同一 opId 同参数回读原结果，不同参数返回冲突。
+        写操作还必须在 params 里带上读取时的 expectedRevision：缺少或已过期都会被拒绝，
+        不会覆盖别人刚写入的内容。字段落点由画布能力描述符声明（例如生成类节点的可编辑
+        提示词落在 metadata.composerContent），操作层不自行拼文档形状。
+      parameters:
+        - name: op
+          in: path
+          required: true
+          schema:
+            type: string
+          description: 操作 ID，例如 canvas.get、canvas.nodes.create、canvas.node.update
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                opId:
+                  type: string
+                  description: 写操作的幂等键；只读操作不接受该字段
+                params:
+                  type: object
+                  description: 操作参数，形状以 GET /ops 返回的 JSON Schema 为准
+      responses:
+        "200":
+          description: 信封 data 为操作结果；data.replayed=true 表示命中了幂等回放
+        "400":
+          description: 参数错误；reason=unsupported_field 表示该节点类型没有这个可编辑字段（整批不写）
+        "409":
+          description: 同一 opId 用于不同请求内容，或 revision 已过期（reason=stale_revision）
+        "412":
+          description: 缺少读取时的 expectedRevision
+        "403":
+          description: 只读客户端尝试写操作（reason=read_only_client），或身份不足
+  /assistant/status:
+    get:
+      tags: [assistant]
+      security: []
+      summary: 内置创作助手宿主状态（免身份、不含凭据）
+      responses:
+        "200":
+          description: 信封 data 为 { available, reason?, url?, health? }；未就绪时给出明确原因
+  /assistant/ui-session:
+    post:
+      tags: [assistant]
+      summary: 签发短期限 UI 会话凭据
+      description: 需本机同源，并出示 owner 凭据（或本机显式的开发引导开关）。
+      responses:
+        "200":
+          description: 信封 data.token 为短期限凭据；只应保存在内存里
+        "403":
+          description: 非本机同源，或既没有 owner 凭据也没有显式本地引导
+  /assistant/chat:
+    post:
+      tags: [assistant]
+      summary: 流式对话（NDJSON）
+      description: |
+        请求头 X-Beeftv-Ui-Session 由 /assistant/ui-session 签发。响应为 NDJSON：
+        若干 text_delta 增量，最后恰好一条 turn_end 结算（含 reply、toolCalls、error、cancelled）。
+        宿主凭据与模型密钥由后端注入，浏览器不接触。
+      responses:
+        "200":
+          description: application/x-ndjson 事件流
+        "403":
+          description: 缺少或过期的 UI 会话凭据
+        "503":
+          description: 宿主未配置或不可达（reason=host_token_missing / host_unreachable）
+  /assistant/cancel:
+    post:
+      tags: [assistant]
+      summary: 取消指定画布正在进行的回合
+      responses:
+        "202":
+          description: 已受理取消
+        "404":
+          description: 该画布没有正在进行的会话
+  /assistant/host/config:
+    get:
+      tags: [assistant]
+      summary: 读取宿主配置（需 owner 凭据 + 本机同源）
+      responses:
+        "200":
+          description: 信封 data 为 { config, configured, supervisorRunning }
+        "403":
+          description: 缺少 owner 凭据
+    put:
+      tags: [assistant]
+      summary: 写入宿主配置（当前文本模型与宿主启动命令）
+      description: 只写入本机配置文件；启动命令永远不来自请求体。
+      responses:
+        "200":
+          description: 信封 data.config 为写入后的配置
+        "403":
+          description: 缺少 owner 凭据
+  /assistant/host/start:
+    post:
+      tags: [assistant]
+      summary: 启动内置宿主（需 owner 凭据 + 本机同源）
+      responses:
+        "200":
+          description: 信封 data.pid 为本进程启动的宿主进程号
+        "503":
+          description: 未配置启动命令（reason=host_command_missing）或启动失败
+  /assistant/host/stop:
+    post:
+      tags: [assistant]
+      summary: 停止本进程启动的内置宿主
+      description: 只停止本进程启动过的子进程；应用关闭时会自动执行同样的清理。
+      responses:
+        "200":
+          description: 信封 data.stopped=true
   /openapi.yaml:
     get:
       tags: [meta]

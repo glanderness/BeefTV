@@ -8,7 +8,9 @@
     container-type: inline-size;
 }
 @container (max-width: 1050px) {
-    .canvas-topbar-tools-cluster > :not(:has(.canvas-topbar-version-button)):not(.canvas-topbar-agent-button) {
+    /* 窄容器只保留版本记录和助手两个入口；两者都被 Tooltip 包一层 span，
+       所以既要匹配元素自身，也要匹配包着它的那层。 */
+    .canvas-topbar-tools-cluster > :not(:has(.canvas-topbar-version-button)):not(:has(.canvas-topbar-agent-button)):not(.canvas-topbar-agent-button) {
         display: none !important;
     }
 }

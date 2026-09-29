@@ -61,6 +61,10 @@ backend/tmp_*
 # local verification scripts and must not become part of an open-source patch.
 web/.libtv-*
 web/test/.agent-reliability-*/
+# Scratch trees built by tests that materialize a rewritten module graph; a run
+# killed mid-flight must not leave them inside a patch.
+web/test/.local-workspace-stale-*/
+web/test/.timeline-persist-http-*/
 web/package.json.md5
 web/.playwright/
 # Generated screenshot, probe, and browser-audit workspaces.
