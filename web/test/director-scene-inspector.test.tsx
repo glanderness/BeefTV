@@ -15,5 +15,10 @@ describe("导演台场景属性", () => {
         expect(markup).toContain('aria-label="显示地面"');
         expect(markup).toContain('aria-label="地面透明度"');
         expect(markup).toContain('aria-label="地面高度"');
+        expect(markup).toContain('aria-label="场景缩放"');
+        for (const axis of ["X", "Y", "Z"]) {
+            expect(markup).toContain(`aria-label="场景平移${axis}"`);
+            expect(markup).toContain(`aria-label="场景旋转${axis}"`);
+        }
     });
 });

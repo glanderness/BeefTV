@@ -9,6 +9,7 @@ import { resolveDirectorBoneRotation } from "@/lib/canvas/director/director-anim
 import { cropDirectorCanvas, resolveDirectorFrameRect, resolveDirectorPixelCrop, type DirectorAspectRatio } from "@/lib/canvas/director/director-aspect-ratio";
 import { directorStagePalette } from "@/lib/canvas/director/director-stage-palette";
 import { directorGroundSettings } from "@/lib/canvas/director/director-ground";
+import { directorStageLocalCamera, directorStageLocalPoint, directorStageMatrix, directorStageTransform } from "@/lib/canvas/director/director-stage-transform";
 import type { DirectorOrientation } from "@/lib/canvas/director/director-orientation-gizmo";
 import { applyClaySceneMaterials } from "@/lib/canvas/director/director-clay-materials";
 import { createDirectorTransaction, installDirectorTerminalListeners } from "@/lib/canvas/director/director-gesture-transaction";
@@ -179,7 +180,7 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
         recordVideo: (duration, fps) => recordCanvas(usableContext(), duration, fps, aspectRatio),
         readCameraTransform: () => {
             const camera = usableContext()?.camera;
-            return camera ? { position: camera.position.toArray() as DirectorTransform["position"], rotation: [camera.rotation.x, camera.rotation.y, camera.rotation.z], scale: [1, 1, 1] } : null;
+            return camera ? directorStageLocalCamera(directorStageTransform(props.scene), { position: camera.position.toArray() as DirectorTransform["position"], rotation: [camera.rotation.x, camera.rotation.y, camera.rotation.z], scale: [1, 1, 1] }) : null;
         },
         readPlacementIntent: () => {
             const context = usableContext();
@@ -187,11 +188,12 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
             // owner 校验：上下文重建后，旧 renderer canvas 记录的点一律不采用。
             const tracked = groundRef.current;
             const pointer = tracked && tracked.owner === context.gl.domElement ? tracked.point : null;
-            // 读实例当前 target，而不是 activeCamera.target prop；投影到 y=0 即取 x/z。
+            // 读实例当前世界系 target，再转回场景局部 XZ；平移/旋转/缩放后仍能按原坐标放置。
             const target = orbitControlsRef.current?.target;
-            return { pointer, orbitTarget: finiteDirectorGroundPoint(target?.x, target?.z) };
+            const localTarget = target ? directorStageLocalPoint(directorStageTransform(props.scene), target.toArray() as DirectorVec3) : null;
+            return { pointer, orbitTarget: finiteDirectorGroundPoint(localTarget?.[0], localTarget?.[2]) };
         },
-    }), [aspectRatio]);
+    }), [aspectRatio, props.scene]);
 
     return (
         // data-renderer-ready 直接来自 directorCaptureUsable：capture context 已登记且未 lost。
@@ -335,6 +337,8 @@ function DirectorViewportNotice({ title, description, actionLabel, onAction, var
 function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transformMode, renderMode, playhead, playing, showMotionPaths = false, viewMode = DIRECTOR_DEFAULT_VIEW_MODE, onSelectObject, onSelectBone, onObjectTransform, onBoneTransform, onActorRigReady, onCaptureContext, onRelease, onContextLost, onContextRestored, onLoadStateChange, onGroundPoint, onOrbitControls, onCameraOrientation }: DirectorCanvasSurfaceProps) {
     const { gl, camera, scene: threeScene, invalidate, set, size } = useThree();
     const orbitRef = useRef<DirectorOrbitControls>(null);
+    const stage = directorStageTransform(scene);
+    const stageMatrix = useMemo(() => directorStageMatrix(stage), [stage]);
     const [transforming, setTransforming] = useState(false);
     const displayClayRestoreRef = useRef<(() => void) | null>(null);
     // 三台相机各司其职、互不共享：free 只由 OrbitControls 驱动，CAM/正交只在各自模式下
@@ -394,15 +398,17 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
 
     /**
      * 地面拾取：renderer 自己的 canvas 上做 pointer 监听，再用真实 Raycaster 与
-     * 世界 y=0 Plane 求交。不走 mesh onPointerMove（会被物体 stopPropagation 截断），
+     * 变换后的场景局部 y=0 Plane 求交。不走 mesh onPointerMove（会被物体 stopPropagation 截断），
      * 也不做 DOM 像素伪换算；因此 pointer 悬停在物体上方时射线仍与地面相交。
      * 高频路径只写 ref，绝不 setState。
      */
     useEffect(() => {
         const canvasElement = gl.domElement;
         const raycaster = new Raycaster();
-        const groundPlane = new Plane(new Vector3(0, 1, 0), 0);
+        const groundPlane = new Plane(new Vector3(0, 1, 0), 0).applyMatrix4(stageMatrix);
+        const inverseStageMatrix = stageMatrix.clone().invert();
         const hit = new Vector3();
+        const localHit = new Vector3();
         const ndc = new Vector2();
 
         const onPointerMove = (event: PointerEvent) => {
@@ -412,7 +418,8 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
             raycaster.setFromCamera(ndc, camera);
             // 射线与地面平行或背离时 intersectPlane 返回 null：保留上一个合法点，不写非法值。
             if (!raycaster.ray.intersectPlane(groundPlane, hit)) return;
-            const point = finiteDirectorGroundPoint(hit.x, hit.z);
+            localHit.copy(hit).applyMatrix4(inverseStageMatrix);
+            const point = finiteDirectorGroundPoint(localHit.x, localHit.z);
             if (point) onGroundPoint(canvasElement, point);
         };
 
@@ -422,7 +429,7 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
             // 这个 renderer 的 canvas 卸载后，它记录的地面点不得再被读到。
             onGroundPoint(canvasElement, null);
         };
-    }, [camera, gl, onGroundPoint]);
+    }, [camera, gl, onGroundPoint, stageMatrix]);
 
     // OrbitControls 的真实 target 只能从实例读；activeCamera.target 只是初始 prop。
     // 挂载期登记一次即可：drei 重建实例会连带重跑本 effect。
@@ -505,6 +512,7 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
             <DirectorShotCameraSync camera={camCamera} framing={camFraming} />
             <DirectorOrthoCameraSync camera={orthoCamera} framing={orthoFraming} aspect={size.width / Math.max(size.height, 1)} />
             <ambientLight intensity={scene.environmentIntensity * 0.35} />
+            <group position={stage.position} rotation={stage.rotation.map((degrees) => degrees * Math.PI / 180) as DirectorVec3} scale={stage.scale}>
             {scene.lights.map((light) => <DirectorLightView key={light.id} light={light} />)}
             {scene.gridVisible ? <Grid position={[0, 0, 0]} infiniteGrid fadeDistance={40} fadeStrength={5} cellSize={0.5} sectionSize={5} cellColor={stagePalette.cell} sectionColor={stagePalette.section} /> : null}
             {ground.visible ? <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, ground.height - 0.012, 0]}>
@@ -530,6 +538,7 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
                     onLoadStateChange={onLoadStateChange}
                 />
             ))}
+            </group>
             {/* 只有有效 free 回落允许环绕：drei 只在 enabled 时调 controls.update()，CAM/正交下这是
                 真正的锁定，不会有 controls 每帧把相机拽回自己 target 的回写竞争。
                 camera 显式绑定 freeCamera：即使 state.camera 当前指向别的相机，也绝不会

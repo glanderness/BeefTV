@@ -1,6 +1,7 @@
 import { Euler, Vector3 } from "three";
 
 import { interpolateDirectorTransform } from "@/lib/canvas/director/director-scene";
+import { directorStageDirection, directorStageMatrix, directorStagePoint, directorStageTransform } from "@/lib/canvas/director/director-stage-transform";
 import type { DirectorCamera, DirectorScene, DirectorShot, DirectorTransform, DirectorVec3 } from "@/types/director";
 
 /**
@@ -168,7 +169,8 @@ export function resolveDirectorViewFraming(input: { scene: DirectorScene; mode: 
     // 位置与焦点重合时视线为零向量，lookAt 无解：沿摄影机自身 -Z 造一个 1m 外的焦点。
     const view = degenerate ? new Vector3(0, 0, -1).applyEuler(new Euler(...transform.rotation)) : raw;
     const target: DirectorVec3 = degenerate ? [position[0] + view.x, position[1] + view.y, position[2] + view.z] : camera.target;
-    return { cameraId: camera.id, position, target, up: resolveDirectorViewUp(transform.rotation, view.toArray() as DirectorVec3), fov: camera.fov, near: camera.near, far: camera.far };
+    const stage = directorStageTransform(input.scene);
+    return { cameraId: camera.id, position: directorStagePoint(stage, position), target: directorStagePoint(stage, target), up: directorStageDirection(stage, resolveDirectorViewUp(transform.rotation, view.toArray() as DirectorVec3)), fov: camera.fov, near: camera.near * stage.scale, far: camera.far * stage.scale };
 }
 
 /**
@@ -345,7 +347,9 @@ export function resolveDirectorOrthographicFrustum(input: { horizontalSpan: numb
 export function resolveDirectorOrthographicFraming(input: { scene: DirectorScene; mode: DirectorViewMode }): DirectorOrthographicFraming | null {
     if (!isDirectorOrthographicAxis(input.mode)) return null;
     const axis = DIRECTOR_ORTHOGRAPHIC_AXES[input.mode];
-    const bounds = resolveDirectorFramingBounds(collectDirectorFramingPoints(input.scene));
+    const stage = directorStageTransform(input.scene);
+    const stageMatrix = directorStageMatrix(stage);
+    const bounds = resolveDirectorFramingBounds(collectDirectorFramingPoints(input.scene).map((point) => new Vector3(...point).applyMatrix4(stageMatrix).toArray() as DirectorVec3));
     const radius = Math.max(...bounds.extent) / 2;
     const distance = Math.max(radius * DIRECTOR_ORTHOGRAPHIC_DISTANCE_FACTOR, DIRECTOR_ORTHOGRAPHIC_MIN_EXTENT);
     const target = bounds.center;
