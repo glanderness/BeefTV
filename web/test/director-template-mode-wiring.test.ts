@@ -96,6 +96,8 @@ describe("导演节点参考图入口", () => {
         expect(uploadHook).toContain("uploadNodeType(file) === CanvasNodeType.Image");
         expect(uploadHook).toContain("connectDirectorReferenceNodes(nodesRef.current, connectionsRef.current, createdIds, uploadTarget.referenceToNodeId");
         expect(uploadHook).toContain("setConnections(linked.connections)");
+        expect(project).toContain("references={mentionReferencesByNodeId.get(contentNode.id) || EMPTY_RESOURCE_REFERENCES}");
+        expect(project).toContain("onRemoveReference={(reference) => handleRemoveNodeReference(contentNode.id, reference)}");
     });
 });
 

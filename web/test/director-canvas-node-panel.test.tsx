@@ -5,6 +5,7 @@ import { CanvasDirectorNodePanel } from "@/components/canvas/director/canvas-dir
 import { CanvasNode } from "@/components/canvas/canvas-node";
 import { createDirectorScene } from "@/lib/canvas/director/director-scene";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
 const scene = createDirectorScene("镜头 1");
 const node: CanvasNodeData = {
@@ -20,6 +21,11 @@ const node: CanvasNodeData = {
 function render(readNodeContent: (id: string | undefined) => string | undefined = () => undefined) {
     return renderToStaticMarkup(<CanvasDirectorNodePanel node={node} scene={scene} readNodeContent={readNodeContent} onOpen={() => {}} onAddReference={() => {}} onSubmit={() => {}} onPromptChange={() => {}} />);
 }
+
+const linkedReference: CanvasResourceReference = {
+    id: "image-1", nodeId: "image-1", kind: "image", label: "图片1", title: "屋顶参考图",
+    previewUrl: "https://example.test/reference.png", active: true, sourceType: CanvasNodeType.Image,
+};
 
 describe("导演台画布节点", () => {
     test("外置标题不在卡片内重复，空态可打开且场景描述独立回显", () => {
@@ -46,6 +52,14 @@ describe("导演台画布节点", () => {
         const markup = render();
         expect(markup).toContain('aria-label="添加并连接参考图片"');
         expect(markup).toContain('aria-label="在导演台中使用描述"');
+    });
+
+    test("已连接参考图在描述框内可见，并提供无障碍移除入口", () => {
+        const markup = renderToStaticMarkup(<CanvasDirectorNodePanel node={node} scene={scene} readNodeContent={() => undefined} projectId="project-1" references={[linkedReference]} onOpen={() => {}} onAddReference={() => {}} onRemoveReference={() => {}} onSubmit={() => {}} onPromptChange={() => {}} />);
+        expect(markup).toContain('role="group" aria-label="已连接参考素材"');
+        expect(markup).toContain("屋顶参考图");
+        expect(markup).toContain('src="https://example.test/reference.png"');
+        expect(markup).toContain('aria-label="移除参考 图片1"');
     });
 
     test("持久封面优先于旧预览且仍保留旧项目回落", () => {

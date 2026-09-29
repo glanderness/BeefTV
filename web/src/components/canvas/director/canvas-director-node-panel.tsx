@@ -1,15 +1,21 @@
 import { useEffect, useState } from "react";
-import { ArrowUp, Move3d, Plus } from "lucide-react";
+import { ArrowUp, FileText, Move3d, Plus, X } from "lucide-react";
 
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { resolveDirectorActiveShot, resolveDirectorPreviewSource, type DirectorNodeContentReader } from "@/lib/canvas/director/director-preview";
 import { resolveImageUrl } from "@/services/image-storage";
+import { useResolvedCanvasResourceReferences } from "@/components/canvas/use-resolved-canvas-resource-references";
+import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { DirectorScene } from "@/types/director";
 
-export function CanvasDirectorNodePanel({ node, scene, readNodeContent, onOpen, onAddReference, onSubmit, onPromptChange, professional = true }: { node: CanvasNodeData; scene: DirectorScene | null; readNodeContent: DirectorNodeContentReader; onOpen: () => void; onAddReference: () => void; onSubmit: () => void; onPromptChange: (value: string) => void; professional?: boolean }) {
+const EMPTY_REFERENCES: CanvasResourceReference[] = [];
+
+export function CanvasDirectorNodePanel({ node, scene, readNodeContent, onOpen, onAddReference, onRemoveReference, references = EMPTY_REFERENCES, projectId, onSubmit, onPromptChange, professional = true }: { node: CanvasNodeData; scene: DirectorScene | null; readNodeContent: DirectorNodeContentReader; onOpen: () => void; onAddReference: () => void; onRemoveReference?: (reference: CanvasResourceReference) => void; references?: CanvasResourceReference[]; projectId?: string; onSubmit: () => void; onPromptChange: (value: string) => void; professional?: boolean }) {
     const theme = canvasThemes[useActiveTheme()];
+    const resolvedReferences = useResolvedCanvasResourceReferences(references, { projectId });
+    const activeReferences = resolvedReferences.filter((reference) => reference.active && reference.kind !== "skill");
     const shot = resolveDirectorActiveShot(scene, node.metadata?.directorShotId);
     // 记录「失败的那个 URL」而非布尔量：同一个坏 URL 不再反复渲染，换成另一个 URL 时自动重试。
     const [failedUrl, setFailedUrl] = useState<string | null>(null);
@@ -47,6 +53,25 @@ export function CanvasDirectorNodePanel({ node, scene, readNodeContent, onOpen, 
                 </button>
             </div>
             <div className="relative h-52 shrink-0 overflow-hidden rounded-2xl border px-4 py-3" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }}>
+                {activeReferences.length ? (
+                    <div className="absolute inset-x-3 top-3 z-10 flex max-w-[calc(100%-1.5rem)] gap-2 overflow-x-auto pb-1 thin-scrollbar" role="group" aria-label="已连接参考素材">
+                        {activeReferences.map((reference) => (
+                            <span key={reference.id} className="flex h-10 max-w-44 shrink-0 items-center gap-1.5 rounded-xl border px-1.5" style={{ background: theme.toolbar.itemHover, borderColor: theme.toolbar.border }}>
+                                <span className="grid size-7 shrink-0 place-items-center overflow-hidden rounded-md" style={{ background: theme.node.fill, color: theme.node.muted }}>
+                                    {reference.previewUrl && ["image", "character", "video"].includes(reference.kind)
+                                        ? <img src={reference.previewUrl} alt="" className="size-full object-cover" draggable={false} />
+                                        : <FileText className="size-4" aria-hidden />}
+                                </span>
+                                <span className="min-w-0 truncate text-xs" title={reference.title || reference.label}><span className="opacity-55">@</span>{reference.label}</span>
+                                {onRemoveReference ? (
+                                    <button type="button" data-canvas-no-zoom aria-label={`移除参考 ${reference.label}`} title={`移除参考 ${reference.label}`} className="grid size-6 shrink-0 place-items-center rounded-full transition hover:bg-black/10 dark:hover:bg-white/10" onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onRemoveReference(reference); }}>
+                                        <X className="size-3.5" aria-hidden />
+                                    </button>
+                                ) : null}
+                            </span>
+                        ))}
+                    </div>
+                ) : null}
                 <textarea
                     data-canvas-no-zoom
                     aria-label="场景描述"
@@ -63,7 +88,7 @@ export function CanvasDirectorNodePanel({ node, scene, readNodeContent, onOpen, 
                         }
                     }}
                     onWheel={(event) => event.stopPropagation()}
-                    className="h-full w-full resize-none bg-transparent pb-8 text-sm leading-5 outline-none placeholder:opacity-60"
+                    className={`h-full w-full resize-none bg-transparent pb-8 text-sm leading-5 outline-none placeholder:opacity-60 ${activeReferences.length ? "pt-10" : ""}`}
                     style={{ color: theme.node.text }}
                 />
                 <div className="pointer-events-none absolute inset-x-2 bottom-2 flex items-center justify-between">

@@ -1707,7 +1707,12 @@ function InfiniteCanvasPage() {
             const removedConnectionIds = new Set(previousConnections.filter((connection) => connection.fromNodeId === referenceNodeId && (connection.toNodeId === targetNodeId || connection.toNodeId === configNodeId)).map((connection) => connection.id));
             if (!removedConnectionIds.size) return;
             const nextConnections = previousConnections.filter((connection) => !removedConnectionIds.has(connection.id));
-            const nextNodes = applyCanvasConnectionPromptSync(previousNodes, previousConnections, previousNodes, nextConnections);
+            const promptSyncedNodes = applyCanvasConnectionPromptSync(previousNodes, previousConnections, previousNodes, nextConnections);
+            const targetNode = promptSyncedNodes.find((node) => node.id === targetNodeId);
+            const referenceAssetNodeIds = targetNode?.metadata?.referenceAssetNodeIds;
+            const nextNodes = targetNode?.metadata?.workflowKind === "shot" && referenceAssetNodeIds?.includes(referenceNodeId)
+                ? promptSyncedNodes.map((node) => node.id === targetNodeId ? { ...node, metadata: { ...node.metadata, referenceAssetNodeIds: referenceAssetNodeIds.filter((id) => id !== referenceNodeId) } } : node)
+                : promptSyncedNodes;
             if (nextNodes !== previousNodes) {
                 nodesRef.current = nextNodes;
                 setNodes(nextNodes);
@@ -2640,10 +2645,13 @@ function InfiniteCanvasPage() {
                     <CanvasDirectorNodePanel
                         node={contentNode}
                         scene={currentProject?.directorScenes?.find((scene) => scene.id === contentNode.metadata?.directorSceneId) || null}
+                        projectId={projectId}
+                        references={mentionReferencesByNodeId.get(contentNode.id) || EMPTY_RESOURCE_REFERENCES}
                         readNodeContent={(nodeId) => (nodeId ? nodesRef.current.find((item) => item.id === nodeId)?.metadata?.content : undefined)}
                         professional={workspaceMode === "professional"}
                         onOpen={() => openDirectorWorkbench(contentNode.id)}
                         onAddReference={() => handleUploadReferenceRequest(contentNode.id, { x: contentNode.position.x + contentNode.width + 180, y: contentNode.position.y })}
+                        onRemoveReference={(reference) => handleRemoveNodeReference(contentNode.id, reference)}
                         onSubmit={() => openDirectorWorkbench(contentNode.id, contentNode.metadata?.composerContent || "")}
                         onPromptChange={(composerContent) => handleConfigNodeChange(contentNode.id, { composerContent })}
                     />
@@ -2685,6 +2693,7 @@ function InfiniteCanvasPage() {
             handleConnectDrop,
             handleConnectStart,
             handleGenerateNode,
+            handleRemoveNodeReference,
             handleNodeResize,
             handleUploadReferenceRequest,
             mentionReferencesByNodeId,
