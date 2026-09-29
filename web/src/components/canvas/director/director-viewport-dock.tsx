@@ -1,7 +1,7 @@
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { Dropdown } from "antd";
 
-import { Bone, Box, Camera, Compass, Crosshair, Layers, Lightbulb, Move3D, Palette, Rotate3D, Scaling, UserRound } from "lucide-react";
+import { Bone, Box, Camera, Clapperboard, Compass, Crosshair, Layers, Lightbulb, Move3D, Palette, Rotate3D, Scaling, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { releaseDirectorFocusAfterPointer } from "@/lib/canvas/director/director-shortcuts";
@@ -19,6 +19,8 @@ type DirectorViewportDockProps = {
     onAddLight: () => void;
     onAddCamera: () => void;
     onAlignCamera: () => void;
+    timelineOpen: boolean;
+    onToggleTimeline: () => void;
 };
 
 /** 渲染视图按钮的展示顺序与图标。实际可见项由 renderModes 过滤。 */
@@ -36,7 +38,7 @@ const TRANSFORM_BUTTONS = [
     { mode: "scale", label: "缩放", shortcut: "F", icon: <Scaling /> },
 ] as const;
 
-export function DirectorViewportDock({ transformMode, renderMode, renderModes, onTransformModeChange, onRenderModeChange, onAddActor, onAddBox, onAddLight, onAddCamera, onAlignCamera }: DirectorViewportDockProps) {
+export function DirectorViewportDock({ transformMode, renderMode, renderModes, onTransformModeChange, onRenderModeChange, onAddActor, onAddBox, onAddLight, onAddCamera, onAlignCamera, timelineOpen, onToggleTimeline }: DirectorViewportDockProps) {
     const activeTransform = TRANSFORM_BUTTONS.find((item) => item.mode === transformMode) ?? TRANSFORM_BUTTONS[0];
     return (
         <nav className="director-viewport-dock" aria-label="导演台视口工具">
@@ -61,6 +63,7 @@ export function DirectorViewportDock({ transformMode, renderMode, renderModes, o
                     {activeTransform.icon}
                 </button>
             </Dropdown>
+            <button type="button" className={`director-viewport-dock-button ${timelineOpen ? "is-active" : ""}`} aria-label="动画时间轴" aria-pressed={timelineOpen} onClick={(event) => { onToggleTimeline(); releaseDirectorFocusAfterPointer(event); }}><Clapperboard /></button>
             <DockDivider />
             <DockButton label="添加演员" onClick={onAddActor}><UserRound /></DockButton>
             <DockButton label="添加立方体" onClick={onAddBox}><Box /></DockButton>

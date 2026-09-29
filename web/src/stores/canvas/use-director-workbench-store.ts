@@ -48,7 +48,7 @@ const initialState = {
     playing: false,
     autoKey: false,
     sequencerHeight: 300,
-    sequencerVisible: true,
+    sequencerVisible: false,
 };
 
 export const useDirectorWorkbenchStore = create<DirectorWorkbenchStore>((set) => ({
@@ -56,7 +56,10 @@ export const useDirectorWorkbenchStore = create<DirectorWorkbenchStore>((set) =>
     setSelectedObjectId: (selectedObjectId) => set({ selectedObjectId, selectedBone: null, selectedLightId: null }),
     setSelectedBone: (selectedBone) => set({ selectedBone }),
     setSelectedLightId: (selectedLightId) => set({ selectedLightId, selectedObjectId: null, selectedBone: null }),
-    setMode: (mode) => set((state) => resolveDirectorModeTransition({ mode, playing: state.playing, autoKey: state.autoKey, renderMode: state.renderMode })),
+    setMode: (mode) => set((state) => ({
+        ...resolveDirectorModeTransition({ mode, playing: state.playing, autoKey: state.autoKey, renderMode: state.renderMode }),
+        sequencerVisible: mode === "animate" ? true : state.sequencerVisible,
+    })),
     setViewMode: (viewMode) => set({ viewMode }),
     setTransformMode: (transformMode) => set({ transformMode }),
     // 夹在 store 层而不是只在 UI 层过滤：dock 与顶栏是两条路径，
