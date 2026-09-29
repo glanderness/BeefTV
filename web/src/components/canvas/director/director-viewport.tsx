@@ -1,12 +1,12 @@
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { Grid, Html, Line, OrbitControls, TransformControls } from "@react-three/drei";
 import { Video as VideoIcon } from "lucide-react";
-import { Component, forwardRef, memo, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState, type ComponentRef, type ReactNode } from "react";
+import { Component, forwardRef, memo, Suspense, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useReducer, useRef, useState, type ComponentRef, type ReactNode } from "react";
 import { AnimationClip, AnimationMixer, BackSide, Box3, Bone, Camera, Color, EquirectangularReflectionMapping, Euler, Group, LoopOnce, LoopRepeat, Matrix4, Mesh, MeshBasicMaterial, MeshDepthMaterial, MeshNormalMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Quaternion, Raycaster, Scene, SkeletonHelper, SphereGeometry, SRGBColorSpace, Texture, TextureLoader, Vector2, Vector3, WebGLRenderer } from "three";
 import type { Material } from "three";
 import { GLTFLoader, SkeletonUtils } from "three-stdlib";
 
-import { resolveDirectorBoneRotation } from "@/lib/canvas/director/director-animation-semantics";
+import { resolveDirectorBoneRotation, resolveDirectorMultiObjectGroupTransformEdit } from "@/lib/canvas/director/director-animation-semantics";
 import { cropDirectorCanvas, resolveDirectorFrameRect, resolveDirectorPixelCrop, type DirectorAspectRatio } from "@/lib/canvas/director/director-aspect-ratio";
 import { directorStagePalette } from "@/lib/canvas/director/director-stage-palette";
 import { directorGroundSettings } from "@/lib/canvas/director/director-ground";
@@ -41,6 +41,7 @@ export type DirectorViewportHandle = {
 type DirectorViewportProps = {
     scene: DirectorScene;
     selectedObjectId: string | null;
+    selectedObjectIds?: string[];
     selectedBone: string | null;
     transformMode: "translate" | "rotate" | "scale";
     renderMode: DirectorRenderMode;
@@ -56,6 +57,7 @@ type DirectorViewportProps = {
     onSelectObject: (id: string | null) => void;
     onSelectBone: (bone: string | null) => void;
     onObjectTransform: (id: string, from: DirectorTransform, to: DirectorTransform) => void;
+    onMultiObjectTransform: (ids: string[], from: DirectorTransform, to: DirectorTransform) => void;
     onBoneTransform: (id: string, bone: string, rotation: DirectorQuat) => void;
     onActorRigReady: (id: string, rig: DirectorRig, animations: AnimationClip[]) => void;
 };
@@ -343,12 +345,27 @@ function DirectorViewportNotice({ title, description, actionLabel, onAction, var
     );
 }
 
-function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transformMode, renderMode, playhead, playing, showMotionPaths = false, viewMode = DIRECTOR_DEFAULT_VIEW_MODE, onSelectObject, onSelectBone, onObjectTransform, onBoneTransform, onActorRigReady, onCaptureContext, onRelease, onContextLost, onContextRestored, onLoadStateChange, onGroundPoint, onOrbitControls, onCameraOrientation }: DirectorCanvasSurfaceProps) {
+function DirectorSceneContent({ scene, selectedObjectId, selectedObjectIds = [], selectedBone, transformMode, renderMode, playhead, playing, showMotionPaths = false, viewMode = DIRECTOR_DEFAULT_VIEW_MODE, onSelectObject, onSelectBone, onObjectTransform, onMultiObjectTransform, onBoneTransform, onActorRigReady, onCaptureContext, onRelease, onContextLost, onContextRestored, onLoadStateChange, onGroundPoint, onOrbitControls, onCameraOrientation }: DirectorCanvasSurfaceProps) {
     const { gl, camera, scene: threeScene, invalidate, set, size } = useThree();
     const orbitRef = useRef<DirectorOrbitControls>(null);
     const stage = directorStageTransform(scene);
     const stageMatrix = useMemo(() => directorStageMatrix(stage), [stage]);
     const [transforming, setTransforming] = useState(false);
+    const transformingRef = useRef(false);
+    const transformClaimRef = useRef(false);
+    const setTransformingState = useCallback((value: boolean) => {
+        transformingRef.current = value;
+        if (value) transformClaimRef.current = true;
+        else requestAnimationFrame(() => { transformClaimRef.current = false; });
+        setTransforming(value);
+    }, []);
+    const [multiFrozenTransforms, setMultiFrozenTransforms] = useState<Record<string, DirectorTransform> | null>(null);
+    const objectTargetsRef = useRef(new Map<string, Group>());
+    const registerObjectTarget = useCallback((id: string, target: Group | null) => {
+        if (target) objectTargetsRef.current.set(id, target);
+        else objectTargetsRef.current.delete(id);
+    }, []);
+    const freezeMultiObjects = useCallback((transforms: Record<string, DirectorTransform> | null) => setMultiFrozenTransforms(transforms), []);
     const displayClayRestoreRef = useRef<(() => void) | null>(null);
     const panoramaSphereRef = useRef<Mesh | null>(null);
     const panoramaSettings = directorPanoramaSphere(scene);
@@ -540,6 +557,9 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
 
     const stagePalette = directorStagePalette(scene.background);
     const ground = directorGroundSettings(scene);
+    const multiSelectedObjects = useMemo(() => scene.objects.filter((item) => selectedObjectIds.includes(item.id)), [scene.objects, selectedObjectIds]);
+    const showMultiGizmo = multiSelectedObjects.length > 1 && multiSelectedObjects.every((item) => !item.locked && item.visible);
+    const hasMultiSelection = multiSelectedObjects.length > 1;
     return (
         <>
             {/* CAM 与正交轴向的取景各自独立同步到专属相机对象，互不干扰；free 完全交给
@@ -561,20 +581,27 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedBone, transform
                 <DirectorObjectView
                     key={object.id}
                     object={object}
-                    selected={selectedObjectId === object.id}
+                    selected={selectedObjectId === object.id || selectedObjectIds.includes(object.id)}
+                    showGizmo={!hasMultiSelection}
+                    isMultiSelection={hasMultiSelection}
+                    externalFrozenTransform={multiFrozenTransforms?.[object.id] || null}
+                    onTargetReady={registerObjectTarget}
+                    transformClaimRef={transformClaimRef}
                     selectedBone={selectedObjectId === object.id && !object.locked ? selectedBone : null}
                     showLabel={scene.labelsVisible !== false && (object.kind === "actor" || object.primitive === "character")}
                     transformMode={transformMode}
                     playhead={playhead}
                     onSelect={() => onSelectObject(object.id)}
                     onSelectBone={(bone) => { if (!object.locked) { onSelectObject(object.id); onSelectBone(bone); } }}
-                    onTransforming={setTransforming}
+                    onTransforming={setTransformingState}
+                    isTransformingRef={transformingRef}
                     onTransform={(from, to) => onObjectTransform(object.id, from, to)}
                     onBoneTransform={(bone, rotation) => onBoneTransform(object.id, bone, rotation)}
                     onActorRigReady={(rig, animations) => onActorRigReady(object.id, rig, animations)}
                     onLoadStateChange={onLoadStateChange}
                 />
             ))}
+            {showMultiGizmo ? <DirectorMultiObjectGizmo objects={multiSelectedObjects} targets={objectTargetsRef.current} playhead={playhead} transformMode={transformMode} onFreeze={freezeMultiObjects} onTransforming={setTransformingState} onTransform={(from, to) => onMultiObjectTransform(multiSelectedObjects.map((item) => item.id), from.group, to.group)} /> : null}
             </group>
             {/* 只有有效 free 回落允许环绕：drei 只在 enabled 时调 controls.update()，CAM/正交下这是
                 真正的锁定，不会有 controls 每帧把相机拽回自己 target 的回写竞争。
@@ -707,21 +734,32 @@ function DirectorOrthoCameraSync({ camera, framing, aspect }: { camera: Orthogra
     return null;
 }
 
-function DirectorObjectView({ object, selected, selectedBone, showLabel, transformMode, playhead, onSelect, onSelectBone, onTransforming, onTransform, onBoneTransform, onActorRigReady, onLoadStateChange }: { object: DirectorObject; selected: boolean; selectedBone: string | null; showLabel: boolean; transformMode: DirectorViewportProps["transformMode"]; playhead: number; onSelect: () => void; onSelectBone: (bone: string | null) => void; onTransforming: (value: boolean) => void; onTransform: (from: DirectorTransform, to: DirectorTransform) => void; onBoneTransform: (bone: string, rotation: DirectorQuat) => void; onActorRigReady: (rig: DirectorRig, animations: AnimationClip[]) => void; onLoadStateChange: (id: string, signal: DirectorLoadSignal, retry: () => void) => void }) {
+function DirectorObjectView({ object, selected, selectedBone, showLabel, showGizmo = true, isMultiSelection = false, externalFrozenTransform, onTargetReady, isTransformingRef, transformClaimRef, transformMode, playhead, onSelect, onSelectBone, onTransforming, onTransform, onBoneTransform, onActorRigReady, onLoadStateChange }: { object: DirectorObject; selected: boolean; selectedBone: string | null; showLabel: boolean; showGizmo?: boolean; isMultiSelection?: boolean; externalFrozenTransform?: DirectorTransform | null; onTargetReady?: (id: string, target: Group | null) => void; isTransformingRef?: { current: boolean }; transformClaimRef?: { current: boolean }; transformMode: DirectorViewportProps["transformMode"]; playhead: number; onSelect: () => void; onSelectBone: (bone: string | null) => void; onTransforming: (value: boolean) => void; onTransform: (from: DirectorTransform, to: DirectorTransform) => void; onBoneTransform: (bone: string, rotation: DirectorQuat) => void; onActorRigReady: (rig: DirectorRig, animations: AnimationClip[]) => void; onLoadStateChange: (id: string, signal: DirectorLoadSignal, retry: () => void) => void }) {
     const [target, setTarget] = useState<Group | null>(null);
     const resolved = interpolateDirectorTransform(object.transform, object.keyframes, playhead);
     // 手势进行中冻结声明式 transform，交由 gizmo 直接改写 Object3D；终态后再由场景状态接管。
     const [frozen, setFrozen] = useState<DirectorTransform | null>(null);
-    const transform = frozen || resolved;
+    const transform = frozen || externalFrozenTransform || resolved;
+    const bindTarget = useCallback((instance: Group | null) => {
+        setTarget(instance);
+        onTargetReady?.(object.id, instance);
+    }, [object.id, onTargetReady]);
     return (
         <>
             <group
-                ref={setTarget}
+                ref={bindTarget}
                 position={transform.position}
                 rotation={transform.rotation}
                 scale={transform.scale}
                 onPointerDown={(event) => {
                     event.stopPropagation();
+                    if (isTransformingRef?.current) return;
+                    if (isMultiSelection) {
+                        // TransformControls listens on the canvas DOM node after R3F raycasting.
+                        // Defer selection until that listener has had a chance to claim a group-gizmo drag.
+                        requestAnimationFrame(() => { if (!isTransformingRef?.current && !transformClaimRef?.current) onSelect(); });
+                        return;
+                    }
                     onSelect();
                 }}
             >
@@ -730,7 +768,7 @@ function DirectorObjectView({ object, selected, selectedBone, showLabel, transfo
                     <span data-director-actor-label={object.id} role="note" aria-label={`角色 ${object.name}`} style={{ color: "#fff", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", textShadow: "0 1px 3px #000, 0 0 5px #000" }}>{object.name}</span>
                 </Html> : null}
             </group>
-            {selected && !object.locked && target ? (
+            {selected && showGizmo && !object.locked && target ? (
                 <DirectorObjectGizmo
                     target={target}
                     transformMode={transformMode}
@@ -762,6 +800,72 @@ function DirectorObjectGizmo({ target, transformMode, onFreeze, onTransforming, 
             onMouseUp={() => transaction.end("commit")}
         />
     );
+}
+
+type DirectorMultiObjectSnapshot = { group: DirectorTransform; objects: Record<string, DirectorTransform> };
+
+function DirectorMultiObjectGizmo({ objects, targets, playhead, transformMode, onFreeze, onTransforming, onTransform }: { objects: DirectorObject[]; targets: Map<string, Group>; playhead: number; transformMode: DirectorViewportProps["transformMode"]; onFreeze: (transforms: Record<string, DirectorTransform> | null) => void; onTransforming: (value: boolean) => void; onTransform: (from: DirectorMultiObjectSnapshot, to: DirectorMultiObjectSnapshot) => void }) {
+    const [target, setTarget] = useState<Group | null>(null);
+    const baselineRef = useRef<DirectorMultiObjectSnapshot | null>(null);
+    const pivot = useMemo(() => {
+        const position = new Vector3();
+        objects.forEach((object) => position.add(new Vector3(...interpolateDirectorTransform(object.transform, object.keyframes, playhead).position)));
+        if (objects.length) position.multiplyScalar(1 / objects.length);
+        return position.toArray() as DirectorVec3;
+    }, [objects, playhead]);
+    const bindTarget = useCallback((instance: Group | null) => setTarget(instance), []);
+    useLayoutEffect(() => {
+        if (!target) return;
+        target.position.set(...pivot);
+        target.rotation.set(0, 0, 0);
+        target.scale.set(1, 1, 1);
+        target.updateMatrixWorld(true);
+    }, [pivot, target]);
+
+    const read = useCallback((): DirectorMultiObjectSnapshot | null => {
+        if (!target) return null;
+        const transforms: Record<string, DirectorTransform> = {};
+        for (const object of objects) {
+            const objectTarget = targets.get(object.id);
+            if (!objectTarget) return null;
+            transforms[object.id] = readObject3DTransform(objectTarget);
+        }
+        return { group: readObject3DTransform(target), objects: transforms };
+    }, [objects, target, targets]);
+    const transaction = useDirectorGizmoTransaction<DirectorMultiObjectSnapshot>({
+        read,
+        restore: (snapshot) => {
+            if (target) applyObject3DTransform(target, snapshot.group);
+            for (const [id, transform] of Object.entries(snapshot.objects)) {
+                const objectTarget = targets.get(id);
+                if (objectTarget) applyObject3DTransform(objectTarget, transform);
+            }
+        },
+        commit: onTransform,
+        onActive: (active, snapshot) => {
+            onFreeze(active && snapshot ? snapshot.objects : null);
+            onTransforming(active);
+            if (!active) baselineRef.current = null;
+        },
+    });
+    const begin = () => {
+        baselineRef.current = read();
+        transaction.begin();
+    };
+    const preview = () => {
+        const baseline = baselineRef.current;
+        const current = read();
+        if (!baseline || !current) return;
+        const transformed = resolveDirectorMultiObjectGroupTransformEdit({ objects, selectedIds: objects.map((item) => item.id), from: baseline.group, to: current.group, autoKey: false, time: playhead });
+        transformed.forEach((object) => {
+            const objectTarget = targets.get(object.id);
+            if (objectTarget) applyObject3DTransform(objectTarget, interpolateDirectorTransform(object.transform, object.keyframes, playhead));
+        });
+    };
+    return <>
+        <group ref={bindTarget} position={pivot} />
+        {target ? <TransformControls object={target} mode={transformMode} size={0.8} onMouseDown={begin} onObjectChange={preview} onMouseUp={() => transaction.end("commit")} /> : null}
+    </>;
 }
 
 /**

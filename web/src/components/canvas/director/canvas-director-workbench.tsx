@@ -19,7 +19,7 @@ import { DirectorViewportDock } from "@/components/canvas/director/director-view
 import { DirectorSequencer } from "@/components/canvas/director/director-sequencer";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { compileDirectorPrompt } from "@/lib/canvas/director/director-prompt-compiler";
-import { advanceDirectorPlayhead, resolveDirectorCameraAlignment, resolveDirectorCameraMoveKeyframes, resolveDirectorKeyframeRecord, resolveDirectorMultiObjectTransformEdit, resolveDirectorObjectTransformEdit, snapDirectorTime } from "@/lib/canvas/director/director-animation-semantics";
+import { advanceDirectorPlayhead, resolveDirectorCameraAlignment, resolveDirectorCameraMoveKeyframes, resolveDirectorKeyframeRecord, resolveDirectorMultiObjectGroupTransformEdit, resolveDirectorMultiObjectTransformEdit, resolveDirectorObjectTransformEdit, snapDirectorTime } from "@/lib/canvas/director/director-animation-semantics";
 import { createDirectorTransaction, installDirectorTerminalListeners, type DirectorTransaction } from "@/lib/canvas/director/director-gesture-transaction";
 import { recordDirectorDiagnostic } from "@/lib/canvas/director/director-diagnostics-recorder";
 import { DIRECTOR_MODES, directorModeCapabilities, type DirectorModeCapabilities } from "@/lib/canvas/director/director-modes";
@@ -240,6 +240,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     const activeShot = draft?.shots?.find((item) => item.id === draft.activeShotId) || draft?.shots?.[0] || null;
     const visibleSceneItems = useMemo(() => draft ? searchDirectorSceneItems(draft, sceneSearch) : [], [draft, sceneSearch]);
     const selectedSceneObjects = useMemo(() => draft?.objects.filter((object) => sceneSelection.includes(object.id)) || [], [draft, sceneSelection]);
+    const viewportSelectedObjectIds = useMemo(() => sceneSelection.length === selectedSceneObjects.length ? sceneSelection : selectedObjectId ? [selectedObjectId] : [], [sceneSelection, selectedObjectId, selectedSceneObjects.length]);
     const activeCamera = draft?.cameras?.find((item) => item.id === activeShot?.cameraId) || draft?.cameras?.[0] || null;
     const selectedObject = draft?.objects?.find((item) => item.id === selectedObjectId) || null;
     const selectedGroup = draft?.groups?.find((item) => item.id === selectedGroupId) || null;
@@ -831,6 +832,14 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
         });
     }, [autoKey, commit, sceneSelection, snappedPlayhead]);
 
+    const handleMultiObjectGroupTransform = useCallback((ids: string[], from: DirectorTransform, to: DirectorTransform) => {
+        commit((current) => {
+            const movedOnGround = Math.abs(to.position[0] - from.position[0]) > 1e-6 || Math.abs(to.position[2] - from.position[2]) > 1e-6;
+            const edited = current.gridSnap && movedOnGround ? { ...to, position: snapDirectorGroundPosition(to.position, true) } : to;
+            return { ...current, objects: resolveDirectorMultiObjectGroupTransformEdit({ objects: current.objects, selectedIds: ids, from, to: edited, autoKey, time: snappedPlayhead }) };
+        });
+    }, [autoKey, commit, snappedPlayhead]);
+
     const updateSelectedObjects = useCallback((patch: Partial<DirectorObject>) => {
         const selectedIds = new Set(sceneSelection);
         commit((current) => ({ ...current, objects: current.objects.map((item) => selectedIds.has(item.id) ? { ...item, ...patch } : item) }));
@@ -1111,7 +1120,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
                 </aside>
 
                 <main className="relative min-h-0 overflow-hidden bg-neutral-900">
-                    <DirectorViewport ref={viewportRef} scene={draft} selectedObjectId={selectedObjectId} selectedBone={selectedBone} transformMode={transformMode} renderMode={renderMode} playhead={playhead} playing={playing} showMotionPaths={sequencerVisible} viewMode={viewMode} onViewModeChange={setViewMode} onCaptureReadyChange={setCaptureReady} onSelectObject={(id) => { setSelectedObjectId(id); setSceneSelection(id ? [id] : []); sceneSelectionAnchor.current = id; }} onSelectBone={setSelectedBone} onObjectTransform={handleViewportObjectTransform} onBoneTransform={handleViewportBoneTransform} onActorRigReady={handleActorRigReady} />
+                    <DirectorViewport ref={viewportRef} scene={draft} selectedObjectId={selectedObjectId} selectedObjectIds={viewportSelectedObjectIds} selectedBone={selectedBone} transformMode={transformMode} renderMode={renderMode} playhead={playhead} playing={playing} showMotionPaths={sequencerVisible} viewMode={viewMode} onViewModeChange={setViewMode} onCaptureReadyChange={setCaptureReady} onSelectObject={(id) => { setSelectedObjectId(id); setSceneSelection(id ? [id] : []); sceneSelectionAnchor.current = id; }} onSelectBone={setSelectedBone} onObjectTransform={handleViewportObjectTransform} onMultiObjectTransform={handleMultiObjectGroupTransform} onBoneTransform={handleViewportBoneTransform} onActorRigReady={handleActorRigReady} />
                     <div className="pointer-events-none absolute left-3 top-3 text-[var(--fs-tiny)] font-medium text-white/70">{activeShot.name} · {activeCamera?.name || "无摄影机"} · {activeShot.duration}s</div>
                     <CanvasDirectorOnboarding scope={onboardingScope} open={open} restartSignal={onboardingRestartSignal} className="absolute right-3 top-3 z-[var(--z-popover)] w-[min(360px,calc(100%-24px))]" />
                     <DirectorViewportDock transformMode={transformMode} renderMode={renderMode} renderModes={capabilities.renderModes} onTransformModeChange={setTransformMode} onRenderModeChange={setRenderMode} onAddActor={addActor} onAddBox={() => addPrimitive("box", "立方体")} onAddLight={addLight} onAddCamera={addCamera} onAlignCamera={alignCameraToView} timelineOpen={sequencerVisible} onToggleTimeline={() => setSequencerVisible(!sequencerVisible)} captureBusy={captureBusy} captureReady={captureReady} onCapture={() => void captureScreenshot()} />

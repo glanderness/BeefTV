@@ -1,4 +1,4 @@
-import { Euler, Quaternion } from "three";
+import { Euler, Quaternion, Vector3 } from "three";
 
 import type { DirectorBoneKeyframe, DirectorCamera, DirectorKeyframe, DirectorObject, DirectorQuat, DirectorTransform, DirectorVec3 } from "../../../types/director";
 import { interpolateDirectorBoneRotation, interpolateDirectorTransform, upsertDirectorKeyframe } from "./director-scene";
@@ -78,6 +78,36 @@ export function resolveDirectorMultiObjectTransformEdit(input: { objects: Direct
         if (!selected.has(object.id)) return object;
         const rendered = interpolateDirectorTransform(object.transform, object.keyframes, input.time);
         const edited = applyDirectorTransformDelta(rendered, delta);
+        const result = resolveDirectorObjectTransformEdit({ base: object.transform, keyframes: object.keyframes, rendered, edited, autoKey: input.autoKey, time: input.time });
+        return { ...object, transform: result.transform, keyframes: result.keyframes };
+    });
+}
+
+/** Apply a viewport group-gizmo transform around the selection pivot. */
+export function resolveDirectorMultiObjectGroupTransformEdit(input: { objects: DirectorObject[]; selectedIds: string[]; from: DirectorTransform; to: DirectorTransform; autoKey: boolean; time: number }): DirectorObject[] {
+    const selected = new Set(input.selectedIds);
+    const fromRotation = new Quaternion().setFromEuler(new Euler(...input.from.rotation));
+    const toRotation = new Quaternion().setFromEuler(new Euler(...input.to.rotation));
+    const inverseFromRotation = fromRotation.clone().invert();
+    const deltaRotation = toRotation.clone().multiply(inverseFromRotation);
+    const ratios = input.from.scale.map((value, index) => Math.abs(value) > SCALE_EPSILON ? input.to.scale[index] / value : 1) as DirectorVec3;
+    const scaleDelta = new Vector3(...ratios);
+    return input.objects.map((object) => {
+        if (!selected.has(object.id)) return object;
+        const rendered = interpolateDirectorTransform(object.transform, object.keyframes, input.time);
+        const relativePosition = new Vector3(...rendered.position)
+            .sub(new Vector3(...input.from.position))
+            .applyQuaternion(inverseFromRotation)
+            .multiply(scaleDelta)
+            .applyQuaternion(toRotation)
+            .add(new Vector3(...input.to.position));
+        const renderedRotation = new Quaternion().setFromEuler(new Euler(...rendered.rotation));
+        const editedRotation = deltaRotation.clone().multiply(renderedRotation);
+        const edited: DirectorTransform = {
+            position: relativePosition.toArray() as DirectorVec3,
+            rotation: new Euler().setFromQuaternion(editedRotation).toArray().slice(0, 3) as DirectorVec3,
+            scale: rendered.scale.map((value, index) => value * ratios[index]) as DirectorVec3,
+        };
         const result = resolveDirectorObjectTransformEdit({ base: object.transform, keyframes: object.keyframes, rendered, edited, autoKey: input.autoKey, time: input.time });
         return { ...object, transform: result.transform, keyframes: result.keyframes };
     });
