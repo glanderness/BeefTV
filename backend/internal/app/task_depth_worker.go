@@ -183,9 +183,13 @@ func (w *taskWorkerCoordinator) processDepthCapture(task *model.Task, ctx contex
 }
 
 func depthWorkerEnv(toolDir string) []string {
+	return depthWorkerEnvForPlatform(toolDir, runtime.GOOS)
+}
+
+func depthWorkerEnvForPlatform(toolDir, platform string) []string {
 	env := append(os.Environ(), "PYTORCH_ENABLE_MPS_FALLBACK=1", "BEEFTV_VDA_SOURCE="+filepath.Join(filepath.Dir(toolDir), "vda"))
-	if runtime.GOOS == "windows" {
-		env = append(env, "PATH="+filepath.Join(filepath.Dir(toolDir), "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if platform == "windows" {
+		env = append(env, "PYTHONIOENCODING=utf-8", "PATH="+filepath.Join(filepath.Dir(toolDir), "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
 	return env
 }

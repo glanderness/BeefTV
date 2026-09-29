@@ -16,6 +16,7 @@ class CUDAFailureTests(unittest.TestCase):
             "CUDA out of memory",
             "Found no NVIDIA driver on your system",
             "Torch not compiled with CUDA enabled",
+            "当前环境没有可用的 CUDA GPU",
         ):
             with self.subTest(message=message):
                 self.assertTrue(is_cuda_device_failure(RuntimeError(message)))

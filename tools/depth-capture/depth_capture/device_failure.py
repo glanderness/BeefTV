@@ -8,6 +8,7 @@ _CUDA_DEVICE_MARKERS = (
     "cuda error",
     "cuda out of memory",
     "no cuda gpu",
+    "没有可用的 cuda gpu",
     "no nvidia driver",
     "cuda driver version is insufficient",
     "not compiled with cuda enabled",

@@ -3,8 +3,16 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
+
+func TestWindowsDepthWorkerUsesUTF8ForChineseProgress(t *testing.T) {
+	env := depthWorkerEnvForPlatform("C:/depth/worker", "windows")
+	if !strings.Contains(strings.Join(env, "\n"), "PYTHONIOENCODING=utf-8") {
+		t.Fatal("Windows worker does not force UTF-8 for its progress output")
+	}
+}
 
 func TestChooseDepthDeviceKeepsMacMPSAndSkipsWindowsCUDAWithoutCandidate(t *testing.T) {
 	probed := false
