@@ -95,6 +95,10 @@
     line-height: 1.8;
     overflow-wrap: anywhere;
 }
+.canvas-assistant-reply p,
+.canvas-assistant-reply li {
+    text-wrap: balance;
+}
 .canvas-assistant-reply > :first-child {
     margin-top: 0;
 }
