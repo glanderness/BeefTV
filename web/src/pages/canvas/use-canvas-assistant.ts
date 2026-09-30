@@ -18,6 +18,7 @@ import {
     type AssistantUndoFailure,
 } from "@/services/api/agent-assistant";
 import { assistantChangedNodeIds } from "./canvas-assistant-copy";
+import { waitForAssistant } from "./assistant-readiness";
 
 export const ASSISTANT_MIN_WIDTH = 320;
 export const ASSISTANT_MAX_WIDTH = 560;
@@ -62,6 +63,10 @@ type CanvasRun = {
     sessions: AssistantSessionSummary[];
     turns: AssistantTurn[];
     historyLoaded: boolean;
+    historyError: string | null;
+    historyRequest: number;
+    sessionBusy: boolean;
+    dispatched: boolean;
     pendingUserText: string | null;
     pendingSelectedNodeIds: string[];
     streamed: string;
@@ -77,6 +82,10 @@ const createRun = (): CanvasRun => ({
     sessions: [],
     turns: [],
     historyLoaded: false,
+    historyError: null,
+    historyRequest: 0,
+    sessionBusy: false,
+    dispatched: false,
     pendingUserText: null,
     pendingSelectedNodeIds: [],
     streamed: "",
@@ -120,8 +129,6 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     const runsRef = useRef<Map<string, CanvasRun>>(new Map());
     const activeCanvasRef = useRef(canvasId);
     activeCanvasRef.current = canvasId;
-    const statusRef = useRef<AgentHostStatus | null>(null);
-    statusRef.current = status;
     const onCanvasChangedRef = useRef(onCanvasChanged);
     onCanvasChangedRef.current = onCanvasChanged;
 
@@ -164,27 +171,38 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     }, [open, starting]);
 
     const loadHistory = useCallback(async (targetCanvas: string, sessionId?: string) => {
-        const [sessionList, history] = await Promise.all([
-            listAssistantSessions(targetCanvas),
-            getAssistantHistory(targetCanvas, sessionId),
-        ]);
         const run = runFor(targetCanvas);
-        run.sessions = sessionList.sessions;
-        run.sessionId = sessionId || history.sessionId || sessionList.currentSessionId || null;
-        // 流式刚落地的回合可能还没进历史：按 turnId 合并，不让它闪一下消失。
-        const known = new Set(history.turns.map((turn) => turn.turnId));
-        run.turns = [...history.turns, ...run.turns.filter((turn) => !known.has(turn.turnId))];
-        run.historyLoaded = true;
-        rerenderIfActive(targetCanvas);
+        const request = ++run.historyRequest;
+        try {
+            const [sessionList, history] = await Promise.all([
+                listAssistantSessions(targetCanvas),
+                getAssistantHistory(targetCanvas, sessionId),
+            ]);
+            if (request !== run.historyRequest) return false;
+            const nextSession = sessionId || history.sessionId || sessionList.currentSessionId || null;
+            const known = new Set(history.turns.map((turn) => turn.turnId));
+            const recent = nextSession === run.sessionId ? run.turns.filter((turn) => !known.has(turn.turnId)) : [];
+            run.sessions = sessionList.sessions;
+            run.sessionId = nextSession;
+            run.turns = [...history.turns, ...recent];
+            run.historyLoaded = true;
+            run.historyError = null;
+            return true;
+        } catch {
+            if (request === run.historyRequest) run.historyError = "没能读取对话，已有内容仍然保留。请重新读取。";
+            return false;
+        } finally {
+            rerenderIfActive(targetCanvas);
+        }
     }, [rerenderIfActive, runFor]);
 
     // 打开面板或切画布时补齐这条画布的历史；已经载入过就不重复拉。
     useEffect(() => {
         if (!open) return;
         const run = runFor(canvasId);
-        if (run.historyLoaded) return;
+        if (run.historyLoaded || run.streaming || run.sessionBusy) return;
         void loadHistory(canvasId);
-    }, [canvasId, loadHistory, open, runFor]);
+    }, [canvasId, loadHistory, open, runFor, status?.available]);
 
     const send = useCallback(async (text: string, selectedNodeIds: string[]) => {
         const message = text.trim();
@@ -193,8 +211,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         const targetCanvas = activeCanvasRef.current;
         const selectedSnapshot = [...selectedNodeIds];
         const run = runFor(targetCanvas);
-        if (run.streaming) return;
-        if (!statusRef.current?.available) return;
+        if (run.streaming || run.sessionBusy) return;
         const controller = new AbortController();
         run.pendingUserText = message;
         run.pendingSelectedNodeIds = selectedSnapshot;
@@ -202,9 +219,15 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         run.streaming = true;
         run.controller = controller;
         run.error = null;
+        run.dispatched = false;
         run.lastSent = { text: message, selectedNodeIds: selectedSnapshot };
         rerenderIfActive(targetCanvas);
         try {
+            const ready = await waitForAssistant(controller.signal);
+            setStatus(ready);
+            if (!run.historyLoaded && !await loadHistory(targetCanvas)) throw new Error("对话还没读回来，请重新读取后再发送");
+            controller.signal.throwIfAborted();
+            run.dispatched = true;
             await streamAgentChat(targetCanvas, message, {
                 onDelta: (delta) => {
                     const current = runFor(targetCanvas);
@@ -221,11 +244,12 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                         toolCalls: end.toolCalls || [],
                         change: end.change ?? null,
                         proposals: end.proposals || [],
-                        error: null,
+                        error: end.error ? "这一轮没有全部完成，请核对已经落地的改动。" : null,
                         cancelled: Boolean(end.cancelled),
                         createdAt: new Date().toISOString(),
                     };
                     current.turns = [...current.turns, turn];
+                    current.historyError = null;
                     current.pendingUserText = null;
                     current.pendingSelectedNodeIds = [];
                     current.streamed = "";
@@ -243,7 +267,13 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                 current.pendingSelectedNodeIds = [];
             }
             current.streamed = "";
-            current.error = aborted ? null : streamError instanceof Error ? streamError.message : String(streamError);
+            current.error = aborted ? null : current.dispatched
+                ? "这一轮未能确认完成，可能已有改动。请先查看画布并重新读取对话，再决定下一步。"
+                : streamError instanceof Error ? streamError.message : String(streamError);
+            if (current.dispatched) {
+                onCanvasChangedRef.current?.(targetCanvas, []);
+                void loadHistory(targetCanvas);
+            }
             rerenderIfActive(targetCanvas);
         } finally {
             const current = runFor(targetCanvas);
@@ -255,15 +285,16 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                 latest.sessions = list.sessions;
                 if (!latest.sessionId) latest.sessionId = list.currentSessionId;
                 rerenderIfActive(targetCanvas);
-            });
+            }).catch(() => { /* 会话列表读取失败不覆盖本轮结果；重新读取入口仍可用。 */ });
         }
-    }, [rerenderIfActive, runFor]);
+    }, [loadHistory, rerenderIfActive, runFor]);
 
     // 停止只作用于当前正在查看的画布，不会取消别的画布。
     const stop = useCallback(async () => {
         const targetCanvas = activeCanvasRef.current;
         const run = runFor(targetCanvas);
         run.controller?.abort();
+        if (!run.dispatched) return;
         try {
             await cancelAgentChat(targetCanvas);
         } catch (cancelError) {
@@ -274,7 +305,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
 
     const retryLast = useCallback(() => {
         const run = runFor(activeCanvasRef.current);
-        if (!run.lastSent) return;
+        if (!run.lastSent || run.dispatched) return;
         void send(run.lastSent.text, run.lastSent.selectedNodeIds);
     }, [runFor, send]);
 
@@ -289,34 +320,54 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     const startNewSession = useCallback(async () => {
         const targetCanvas = activeCanvasRef.current;
         const run = runFor(targetCanvas);
-        if (run.streaming) return;
-        const sessionId = await createAssistantSession(targetCanvas);
-        const next = runFor(targetCanvas);
-        next.sessionId = sessionId;
-        next.turns = [];
-        next.error = null;
-        next.turnStatus = {};
-        next.historyLoaded = true;
+        if (run.streaming || run.sessionBusy) return;
+        run.sessionBusy = true;
+        ++run.historyRequest;
         rerenderIfActive(targetCanvas);
-        void listAssistantSessions(targetCanvas).then((list) => {
-            const latest = runFor(targetCanvas);
-            latest.sessions = list.sessions;
+        try {
+            const sessionId = await createAssistantSession(targetCanvas);
+            run.sessionId = sessionId;
+            run.turns = [];
+            run.error = null;
+            run.pendingUserText = null;
+            run.lastSent = null;
+            run.turnStatus = {};
+            run.historyLoaded = true;
+            run.historyError = null;
+            void loadHistory(targetCanvas);
+        } catch {
+            run.error = "没能新建对话，当前对话仍然保留。请重试。";
+        } finally {
+            run.sessionBusy = false;
             rerenderIfActive(targetCanvas);
-        });
-    }, [rerenderIfActive, runFor]);
+        }
+    }, [loadHistory, rerenderIfActive, runFor]);
 
     const activateSession = useCallback(async (sessionId: string) => {
         const targetCanvas = activeCanvasRef.current;
         const run = runFor(targetCanvas);
-        if (run.streaming) return;
-        const activated = await activateAssistantSession(targetCanvas, sessionId);
-        if (!activated) return;
-        const next = runFor(targetCanvas);
-        next.turns = [];
-        next.turnStatus = {};
-        next.error = null;
-        await loadHistory(targetCanvas, activated);
-    }, [loadHistory, runFor]);
+        if (run.streaming || run.sessionBusy) return;
+        run.sessionBusy = true;
+        ++run.historyRequest;
+        rerenderIfActive(targetCanvas);
+        try {
+            const activated = await activateAssistantSession(targetCanvas, sessionId);
+            if (!activated) return;
+            // 激活成功但读取失败时阻止把旧显示当作新对话继续发送。
+            run.historyLoaded = false;
+            if (await loadHistory(targetCanvas, activated)) {
+                run.turnStatus = {};
+                run.error = null;
+                run.lastSent = null;
+                run.pendingUserText = null;
+            }
+        } catch {
+            run.error = "没能切换对话，当前对话仍然保留。请重试。";
+        } finally {
+            run.sessionBusy = false;
+            rerenderIfActive(targetCanvas);
+        }
+    }, [loadHistory, rerenderIfActive, runFor]);
 
     const undoTurn = useCallback(async (turnId: string) => {
         const targetCanvas = activeCanvasRef.current;
@@ -368,12 +419,15 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         sessionId: run.sessionId,
         turns: run.turns,
         historyLoaded: run.historyLoaded,
+        historyError: run.historyError,
+        sessionBusy: run.sessionBusy,
+        reloadHistory: () => loadHistory(canvasId),
         pendingUserText: run.pendingUserText,
         pendingSelectedNodeIds: run.pendingSelectedNodeIds,
         streamed: run.streamed,
         streaming: run.streaming,
         error: run.error,
-        canRetry: Boolean(run.lastSent),
+        canRetry: Boolean(run.lastSent) && !run.dispatched,
         turnStatus: run.turnStatus,
         handledProposals,
         markProposalHandled,

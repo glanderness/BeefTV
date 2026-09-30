@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 import { collectTurnEffects, newTurnAccumulator, providerRegistration, providerUnavailableReason,
-  resetTurnAccumulator, sessionTitle, turnChange } from "./canvas-turn.mjs";
+  resetTurnAccumulator, sessionTitle, turnChange, unflushedSessionHistory } from "./canvas-turn.mjs";
 
 const serverSource = readFileSync(new URL("./server.mjs", import.meta.url), "utf8");
 
@@ -19,6 +19,20 @@ describe("本轮画布变更", () => {
             revisionBefore: 7, revisionAfter: 10,
             createdNodeIds: ["a", "b"], updatedNodeIds: ["a"], createdEdgeIds: ["e1"],
         });
+    });
+
+    test("未落盘的当前会话按空历史读取，别的会话仍然缺失", () => {
+        expect(unflushedSessionHistory("s1", "s1")).toEqual({ sessionId: "s1", turns: [] });
+        expect(unflushedSessionHistory("", "s1")).toEqual({ sessionId: null, turns: [] });
+        expect(unflushedSessionHistory("old", "s1")).toBeNull();
+    });
+
+    test("推进版本的写入带上操作回执，重复版本不重复记", () => {
+        const turn = resetTurnAccumulator(newTurnAccumulator(), 4);
+        collectTurnEffects(turn, "canvas.nodes.create", { revision: 5, created: [{ id: "a" }] }, "op-1");
+        collectTurnEffects(turn, "canvas.node.update", { revision: 5, nodeId: "a" }, "op-stale");
+        collectTurnEffects(turn, "canvas.node.update", { revision: 6, nodeId: "a" }, "op-2");
+        expect(turnChange(turn).operationIds).toEqual(["op-1", "op-2"]);
     });
 
     test("重复连线幂等返回时不算新建连线", () => {

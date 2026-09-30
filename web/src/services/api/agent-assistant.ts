@@ -140,45 +140,29 @@ export async function restartAgentHost(): Promise<void> {
     await http.post<{ restarted: boolean }>("/assistant/host/restart", {}, await uiSessionConfig());
 }
 
-/**
- * 历史相关的读取一律可降级：后端还没提供这些路由时返回空列表，
- * 面板照常可用（只是看不到以前的对话），不能整块崩掉。
- */
+/** 读取失败必须与空历史区分，由界面保留原内容并提供重新读取。 */
 export async function listAssistantSessions(canvasId: string): Promise<AssistantSessionList> {
-    try {
-        return await http.get<AssistantSessionList>(`/assistant/sessions?canvasId=${encodeURIComponent(canvasId)}`, await uiSessionConfig());
-    } catch {
-        return { currentSessionId: null, sessions: [] };
-    }
+    return http.get<AssistantSessionList>(`/assistant/sessions?canvasId=${encodeURIComponent(canvasId)}`, await uiSessionConfig());
 }
 
 export async function createAssistantSession(canvasId: string): Promise<string | null> {
-    try {
-        const data = await http.post<{ sessionId: string }>("/assistant/sessions", { canvasId }, await uiSessionConfig());
-        return data?.sessionId || null;
-    } catch {
-        return null;
-    }
+    const data = await http.post<{ sessionId: string }>("/assistant/sessions", { canvasId }, await uiSessionConfig());
+    if (!data?.sessionId) throw new Error("没能新建对话，请重试");
+    return data.sessionId;
 }
 
 export async function activateAssistantSession(canvasId: string, sessionId: string): Promise<string | null> {
-    try {
-        const data = await http.post<{ sessionId: string }>("/assistant/sessions/activate", { canvasId, sessionId }, await uiSessionConfig());
-        return data?.sessionId || sessionId;
-    } catch {
-        return null;
-    }
+    const data = await http.post<{ sessionId: string }>("/assistant/sessions/activate", { canvasId, sessionId }, await uiSessionConfig());
+    if (!data?.sessionId) throw new Error("没能切换对话，请重试");
+    return data.sessionId;
 }
 
 export async function getAssistantHistory(canvasId: string, sessionId?: string): Promise<AssistantHistory> {
     const query = new URLSearchParams({ canvasId });
     if (sessionId) query.set("sessionId", sessionId);
-    try {
-        const data = await http.get<AssistantHistory>(`/assistant/history?${query.toString()}`, await uiSessionConfig());
-        return { sessionId: data?.sessionId || sessionId || "", turns: Array.isArray(data?.turns) ? data.turns : [] };
-    } catch {
-        return { sessionId: sessionId || "", turns: [] };
-    }
+    const data = await http.get<AssistantHistory>(`/assistant/history?${query.toString()}`, await uiSessionConfig());
+    if (!data || !Array.isArray(data.turns)) throw new Error("没能读取对话，请重试");
+    return { sessionId: data.sessionId || sessionId || "", turns: data.turns };
 }
 
 /** 撤销失败的机器可读原因，映射到卡片里的一句话。 */
@@ -280,8 +264,8 @@ export async function streamAgentChat(
     const result = await readAgentTurnStream(response.body, handlers, signal);
     if (!result.settled) throw new Error(AGENT_STREAM_INCOMPLETE_MESSAGE);
     if (result.turnEnd && !result.turnEnd.cancelled && result.turnEnd.error) {
-        // 原始错误只进控制台；用户看到的是可操作的一句话。
-        console.error("创作助手回合失败", { canvasId, error: result.turnEnd.error });
+        // 上游错误可能包含请求细节，控制台同样不记录原文。
+        console.error("创作助手回合失败", { canvasId });
         throw new Error(agentAssistantFailureText(undefined, "这一回合没有完成，请再试一次"));
     }
 }

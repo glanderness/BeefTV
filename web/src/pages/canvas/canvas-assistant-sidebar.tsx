@@ -1,5 +1,5 @@
 import { Button, Dropdown, Tooltip } from "antd";
-import { History, MessageSquarePlus, X } from "lucide-react";
+import { History, MessageSquarePlus, X, Clapperboard, ArrowUpRight } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { AppDrawer } from "@/components/ui/product/app-drawer";
@@ -29,6 +29,7 @@ export function CanvasAssistantSidebar(props: Props) {
     const [selectionAttached, setSelectionAttached] = useState(true);
     const logRef = useRef<HTMLDivElement | null>(null);
     const sidebarRef = useRef<HTMLDivElement | null>(null);
+    const followLatestRef = useRef(true);
 
     // 新的一条选择又可以被带上：用户移除只对当前这条消息生效。
     useEffect(() => {
@@ -38,20 +39,21 @@ export function CanvasAssistantSidebar(props: Props) {
     const turnCount = assistant.turns.length;
     useLayoutEffect(() => {
         const node = logRef.current;
-        if (node) node.scrollTop = node.scrollHeight;
+        if (node && followLatestRef.current) node.scrollTop = node.scrollHeight;
     }, [turnCount, assistant.streamed, assistant.pendingUserText]);
 
-    const notice = assistant.status && !assistant.status.available ? assistantStatusNotice(assistant.status.reason) : null;
-    const available = Boolean(assistant.status?.available);
-    const composerDisabled = readOnly || !available || assistant.streaming;
+    const notice = assistant.status && !assistant.status.available && assistant.status.reason !== "host_starting" ? assistantStatusNotice(assistant.status.reason) : null;
+    const composerDisabled = readOnly;
     const composerReason = readOnly ? "这个画布是只读的，不能让助手改动。" : undefined;
     const attachedIds = selectionAttached ? selectedNodeIds : [];
 
     const send = useCallback(() => {
         const text = draft;
+        if (!text.trim() || readOnly || assistant.streaming || assistant.sessionBusy) return;
+        followLatestRef.current = true;
         setDraft("");
         void assistant.send(text, attachedIds);
-    }, [assistant, attachedIds, draft]);
+    }, [assistant, attachedIds, draft, readOnly]);
 
     const startResize = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
         event.preventDefault();
@@ -77,12 +79,12 @@ export function CanvasAssistantSidebar(props: Props) {
     const content = (
         <div className="canvas-assistant-panel" data-canvas-no-zoom>
             <header className="canvas-assistant-header">
-                <h2 title={`助手 · ${canvasTitle}`}>助手 · {canvasTitle}</h2>
+                <div className="canvas-assistant-heading"><h2>创作助手</h2><span title={canvasTitle}>{canvasTitle}</span></div>
                 <Tooltip title="新对话">
-                    <Button type="text" size="small" aria-label="新对话" disabled={assistant.streaming} icon={<MessageSquarePlus className="size-4" />} onClick={() => void assistant.startNewSession()} />
+                    <Button type="text" size="small" aria-label="新对话" disabled={assistant.streaming || assistant.sessionBusy} icon={<MessageSquarePlus className="size-4" />} onClick={() => void assistant.startNewSession()} />
                 </Tooltip>
                 <Dropdown trigger={["click"]} placement="bottomRight" menu={{ items: sessionItems, selectedKeys: assistant.sessionId ? [assistant.sessionId] : [] }}>
-                    <Button type="text" size="small" aria-label="历史对话" icon={<History className="size-4" />} />
+                    <Button type="text" size="small" aria-label="历史对话" disabled={assistant.streaming || assistant.sessionBusy} icon={<History className="size-4" />} />
                 </Dropdown>
                 <Tooltip title="关闭助手">
                     <Button type="text" size="small" aria-label="关闭助手" icon={<X className="size-4" />} onClick={() => assistant.setOpen(false)} />
@@ -100,13 +102,16 @@ export function CanvasAssistantSidebar(props: Props) {
                 </div>
             ) : null}
 
-            <div ref={logRef} className="canvas-assistant-log">
-                {turnCount === 0 && !assistant.pendingUserText ? (
+            <div ref={logRef} className="canvas-assistant-log" onScroll={() => { const node = logRef.current; if (node) followLatestRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48; }}>
+                {assistant.historyError ? <div className="canvas-assistant-notice" role="status"><span>{assistant.historyError}</span><Button size="small" onClick={() => void assistant.reloadHistory()}>重新读取</Button></div> : !assistant.historyLoaded ? <p className="canvas-assistant-meta" role="status">正在读取对话…</p> : null}
+                {assistant.historyLoaded && turnCount === 0 && !assistant.pendingUserText ? (
                     <div className="canvas-assistant-empty">
-                        <p>说一句你想要的结果，助手会直接在这张画布上动手。</p>
+                        <Clapperboard className="canvas-assistant-empty-icon" aria-hidden="true" />
+                        <h3>让想法成为画面</h3>
+                        <p>从一句灵感开始，一起完善这张画布。</p>
                         {ASSISTANT_STARTER_PROMPTS.map((prompt) => (
                             <button key={prompt} type="button" className="canvas-assistant-starter" onClick={() => setDraft(prompt)}>
-                                {prompt}
+                                <span>{prompt}</span><ArrowUpRight size={14} aria-hidden="true" />
                             </button>
                         ))}
                     </div>
@@ -137,6 +142,7 @@ export function CanvasAssistantSidebar(props: Props) {
                         <span className="canvas-assistant-failed">{assistant.error}</span>
                         <div className="canvas-assistant-card-actions">
                             {assistant.canRetry ? <Button size="small" onClick={assistant.retryLast}>重试</Button> : null}
+                            {!assistant.canRetry && !assistant.historyError ? <Button size="small" onClick={() => void assistant.reloadHistory()}>重新读取</Button> : null}
                             <Button size="small" type="text" onClick={assistant.dismissError}>知道了</Button>
                         </div>
                     </div>

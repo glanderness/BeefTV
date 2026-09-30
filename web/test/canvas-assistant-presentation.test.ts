@@ -117,14 +117,14 @@ describe("撤销失败原因映射", () => {
 describe("付费生成确认", () => {
     test("说清数量、用哪个模型、谁扣款", () => {
         const text = assistantProposalText({ proposalId: "p1", kind: "image", nodeIds: ["a", "b"], model: "seedream-4", modelKey: "ch::seedream-4", note: "" });
-        expect(text).toBe("要为这 2 个节点生成图片吗？将使用 seedream-4，费用从你的 BeefAPI 账户扣除。");
+        expect(text).toBe("生成 2 张参考图片 · seedream-4\n确认后开始，按所选渠道计费。");
         // 不能把带渠道前缀的内部值显示出来。
         expect(text).not.toContain("ch::");
     });
 
     test("视频提议说的是视频", () => {
         const text = assistantProposalText({ proposalId: "p2", kind: "video", nodeIds: ["a"], model: "seedance-1", modelKey: "ch::seedance-1" });
-        expect(text).toContain("生成视频");
+        expect(text).toContain("生成 1 段视频");
     });
 });
 

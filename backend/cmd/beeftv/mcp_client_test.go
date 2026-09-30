@@ -52,11 +52,18 @@ func TestMCPClientLoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tools/list 失败: %v", err)
 	}
-	if len(tools.Tools) != 8 {
-		t.Fatalf("工具数量 = %d，期望 8", len(tools.Tools))
+	if len(tools.Tools) != 9 {
+		t.Fatalf("工具数量 = %d，期望 9", len(tools.Tools))
 	}
 	var create *mcp.Tool
+	var sawPropose bool
 	for _, tool := range tools.Tools {
+		if tool.Name == "canvas.generation.propose" {
+			sawPropose = true
+			if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+				t.Fatal("generation propose must advertise readOnlyHint")
+			}
+		}
 		if tool.Name == "canvas.get" && (tool.Annotations == nil || !tool.Annotations.ReadOnlyHint) {
 			t.Fatal("read-only canvas.get must advertise readOnlyHint")
 		}
@@ -67,8 +74,8 @@ func TestMCPClientLoop(t *testing.T) {
 			create = tool
 		}
 	}
-	if create == nil {
-		t.Fatal("缺少 canvas.nodes.create 工具")
+	if create == nil || !sawPropose {
+		t.Fatal("缺少 canvas.nodes.create 或 canvas.generation.propose")
 	}
 	schema, _ := json.Marshal(create.InputSchema)
 	if !bytes.Contains(schema, []byte("operationId")) {

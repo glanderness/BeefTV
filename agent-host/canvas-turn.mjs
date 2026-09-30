@@ -8,7 +8,7 @@ export const SUPPORTED_APIS = ['openai-completions', 'openai-responses', 'anthro
 
 export function newTurnAccumulator() {
   return { seq: 0, toolSeq: 0, revisionBefore: 0, revisionAfter: 0,
-    createdNodeIds: [], updatedNodeIds: [], createdEdgeIds: [], proposals: [] };
+    createdNodeIds: [], updatedNodeIds: [], createdEdgeIds: [], operationIds: [], proposals: [] };
 }
 
 export function resetTurnAccumulator(turn, revisionBefore) {
@@ -19,6 +19,7 @@ export function resetTurnAccumulator(turn, revisionBefore) {
   turn.createdNodeIds.length = 0;
   turn.updatedNodeIds.length = 0;
   turn.createdEdgeIds.length = 0;
+  turn.operationIds.length = 0;
   turn.proposals.length = 0;
   return turn;
 }
@@ -27,10 +28,11 @@ function asStringList(value) {
   return Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
 }
 
-export function collectTurnEffects(turn, opID, result) {
+export function collectTurnEffects(turn, opID, result, operationId) {
   if (!turn || !result || typeof result !== 'object') return turn;
   if (typeof result.revision === 'number' && result.revision > turn.revisionAfter) {
     turn.revisionAfter = result.revision;
+    if (operationId) turn.operationIds.push(String(operationId));
   }
   switch (opID) {
     case 'canvas.nodes.create':
@@ -58,12 +60,22 @@ export function collectTurnEffects(turn, opID, result) {
   return turn;
 }
 
+// 刚创建、官方会话文件还没落盘的当前会话，历史应是空对话，而不是 404。
+// 不是当前会话又找不到文件时返回 null，调用方必须保持 session_not_found。
+export function unflushedSessionHistory(sessionId, activeSessionId) {
+  if (!sessionId) return { sessionId: null, turns: [] };
+  if (activeSessionId && sessionId === activeSessionId) return { sessionId, turns: [] };
+  return null;
+}
+
 // turnChange 只在这一轮真的推进了画布版本时给出变更摘要；没写过画布时是 null。
 export function turnChange(turn) {
   if (!turn || turn.revisionAfter <= turn.revisionBefore) return null;
-  return { revisionBefore: turn.revisionBefore, revisionAfter: turn.revisionAfter,
+  const change = { revisionBefore: turn.revisionBefore, revisionAfter: turn.revisionAfter,
     createdNodeIds: [...turn.createdNodeIds], updatedNodeIds: [...turn.updatedNodeIds],
     createdEdgeIds: [...turn.createdEdgeIds] };
+  if (turn.operationIds.length) change.operationIds = [...turn.operationIds];
+  return change;
 }
 
 // sessionTitle 用第一条用户原文当标题（截到 40 字），而不是加过画布前缀的那份。

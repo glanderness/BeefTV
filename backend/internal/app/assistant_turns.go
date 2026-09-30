@@ -4,14 +4,18 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"infinite-canvas/backend/internal/model"
 )
 
-// 按轮撤销：助手一轮对话可能写多次画布，用户要能一次性回到「这轮开始之前」。
-// 因此在转发对话之前先存一份轮前文档，轮结束时把这轮的变更记在同一条记录上。
+// 按轮撤销：转发对话之前先存轮前文档，轮结束时记录变更。
+// 只写了一次时，用文档差异核对摘要；写了多次时，必须用这轮自己的操作回执证明
+// 中间每个版本都属于这一轮，否则拒绝撤销，避免抹掉轮中的外部编辑。
 // 撤销是把旧文档作为**新 revision** 写回（绝不回退版本号），画布的外部版本刷新才能接住。
 
 const (
@@ -45,6 +49,7 @@ type AssistantTurnChange struct {
 	CreatedNodeIDs []string `json:"createdNodeIds"`
 	UpdatedNodeIDs []string `json:"updatedNodeIds"`
 	CreatedEdgeIDs []string `json:"createdEdgeIds"`
+	OperationIDs   []string `json:"operationIds,omitempty"`
 }
 
 type assistantTurnRecord struct {
@@ -164,12 +169,20 @@ func (s *Service) UndoAssistantTurn(userID, canvasID, turnID string) (int64, err
 		return 0, err
 	}
 	currentRevision := assistantDocRevision(currentDoc)
-	if currentRevision != record.Change.RevisionAfter {
+	if currentRevision != record.Change.RevisionAfter || record.Change.RevisionBefore != record.RevisionBefore {
 		return 0, &AssistantTurnError{Reason: AssistantTurnReasonCanvasChanged, Message: "画布在这一轮之后又被改过，已停止撤销"}
 	}
 	var restored map[string]any
 	if err := json.Unmarshal(record.Document, &restored); err != nil {
 		return 0, err
+	}
+	singleWrite := currentRevision == record.RevisionBefore+1
+	if singleWrite {
+		if !assistantTurnMatchesChange(restored, currentDoc, record.Change) {
+			return 0, &AssistantTurnError{Reason: AssistantTurnReasonCanvasChanged, Message: "无法安全撤销这一轮，画布内容已保留"}
+		}
+	} else if !s.assistantOperationsCoverSpan(record.UserID, record.CanvasID, record.Change.OperationIDs, record.RevisionBefore, currentRevision) {
+		return 0, &AssistantTurnError{Reason: AssistantTurnReasonCanvasChanged, Message: "无法安全撤销这一轮，画布内容已保留"}
 	}
 	restored["id"] = canvasID
 	// 观察值是当前版本：撤销走和助手写入相同的 CAS 写入口，产生一个新版本。
@@ -187,6 +200,141 @@ func (s *Service) UndoAssistantTurn(userID, canvasID, turnID string) (int64, err
 		return summary.Revision, nil
 	}
 	return summary.Revision, nil
+}
+
+// assistantOperationsCoverSpan 要求这轮列出的成功操作正好覆盖 before 与 after 之间的每个版本，
+// 并且这些回执都属于同一张画布。缺一版就说明中间有无法归属的写入。
+func (s *Service) assistantOperationsCoverSpan(userID, canvasID string, ids []string, before, after int64) bool {
+	if s == nil || after <= before || len(ids) == 0 || s.Database() == nil {
+		return false
+	}
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" || seen[id] {
+			return false
+		}
+		seen[id] = true
+	}
+	var records []model.AgentOpRecord
+	if err := s.Database().Where("user_id = ? AND op_id IN ?", userID, ids).Find(&records).Error; err != nil || len(records) != len(ids) {
+		return false
+	}
+	covered := make(map[int64]bool, len(records))
+	for _, record := range records {
+		if record.Status != "succeeded" {
+			return false
+		}
+		var payload map[string]any
+		if json.Unmarshal([]byte(record.ResultJSON), &payload) != nil {
+			return false
+		}
+		gotCanvas, _ := payload["canvasId"].(string)
+		revision, ok := jsonWholeNumber(payload["revision"])
+		if gotCanvas != canvasID || !ok || revision <= before || revision > after || covered[revision] {
+			return false
+		}
+		covered[revision] = true
+	}
+	for revision := before + 1; revision <= after; revision++ {
+		if !covered[revision] {
+			return false
+		}
+	}
+	return true
+}
+
+func jsonWholeNumber(value any) (int64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		if typed != float64(int64(typed)) {
+			return 0, false
+		}
+		return int64(typed), true
+	case int64:
+		return typed, true
+	case json.Number:
+		parsed, err := typed.Int64()
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
+
+// assistantTurnMatchesChange 核对单次写入的文档差异是否和变更摘要一致。
+// 它只能证明范围，不能证明多次写入里谁改了同一个节点。
+func assistantTurnMatchesChange(before, after map[string]any, change *AssistantTurnChange) bool {
+	if change == nil {
+		return false
+	}
+	remaining := make(map[string]any, len(after))
+	for key, value := range after {
+		remaining[key] = value
+	}
+	for _, field := range []struct {
+		name             string
+		created, updated []string
+	}{
+		{"nodes", change.CreatedNodeIDs, change.UpdatedNodeIDs},
+		{"connections", change.CreatedEdgeIDs, nil},
+	} {
+		oldItems, oldOK := before[field.name].([]any)
+		newItems, newOK := after[field.name].([]any)
+		if !oldOK || !newOK {
+			return false
+		}
+		oldByID := make(map[string]any, len(oldItems))
+		for _, item := range oldItems {
+			obj, ok := item.(map[string]any)
+			id, _ := obj["id"].(string)
+			if !ok || id == "" || oldByID[id] != nil {
+				return false
+			}
+			oldByID[id] = item
+		}
+		declared := make(map[string]bool)
+		for _, id := range field.created {
+			if declared[id] || id == "" || oldByID[id] != nil {
+				return false
+			}
+			declared[id] = true
+		}
+		for _, id := range field.updated {
+			if _, exists := declared[id]; exists || oldByID[id] == nil {
+				return false
+			}
+			declared[id] = false
+		}
+		projected := make([]any, 0, len(newItems))
+		seen := make(map[string]bool)
+		for _, item := range newItems {
+			obj, ok := item.(map[string]any)
+			id, _ := obj["id"].(string)
+			if !ok || id == "" || seen[id] {
+				return false
+			}
+			seen[id] = true
+			if created, exists := declared[id]; exists {
+				delete(declared, id)
+				if created {
+					continue
+				}
+				item = oldByID[id]
+			}
+			projected = append(projected, item)
+		}
+		if len(declared) != 0 || !reflect.DeepEqual(oldItems, projected) {
+			return false
+		}
+		remaining[field.name] = before[field.name]
+	}
+	for _, key := range []string{"revision", "updatedAt", "remoteContentHash"} {
+		if value, exists := before[key]; exists {
+			remaining[key] = value
+		} else {
+			delete(remaining, key)
+		}
+	}
+	return reflect.DeepEqual(before, remaining)
 }
 
 func (s *Service) writeAssistantTurn(path string, record assistantTurnRecord) error {

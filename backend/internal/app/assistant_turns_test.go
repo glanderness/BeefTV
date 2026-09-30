@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"gorm.io/driver/sqlite"
@@ -157,6 +158,113 @@ func TestUndoAssistantTurnRejectsLaterCanvasChanges(t *testing.T) {
 	turnErr, isTurnErr := err.(*AssistantTurnError)
 	if !isTurnErr || turnErr.Reason != AssistantTurnReasonCanvasChanged {
 		t.Fatalf("原因应为 %s，得到 %v", AssistantTurnReasonCanvasChanged, err)
+	}
+}
+
+func TestUndoAssistantTurnPreservesExternalWriteDuringTurn(t *testing.T) {
+	service, canvasID, _ := newAssistantTurnService(t)
+	turnID := "e030001122334455"
+	before, err := service.BeginAssistantTurn("local", canvasID, turnID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendNode(t, service, canvasID, "S")
+	after := appendNode(t, service, canvasID, "T")
+	if err := service.RecordAssistantTurnChange(turnID, &AssistantTurnChange{
+		RevisionBefore: before, RevisionAfter: after, CreatedNodeIDs: []string{"T"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.UndoAssistantTurn("local", canvasID, turnID)
+	if got := nodeIDs(t, service, canvasID); !reflect.DeepEqual(got, []string{"n1", "S", "T"}) {
+		t.Fatalf("unsafe undo erased external S: nodes=%v err=%v", got, err)
+	}
+	turnErr, ok := err.(*AssistantTurnError)
+	if !ok || turnErr.Reason != AssistantTurnReasonCanvasChanged {
+		t.Fatalf("unsafe undo must be rejected: %v", err)
+	}
+}
+
+func TestUndoAssistantTurnRejectsSameNodeExternalEdit(t *testing.T) {
+	service, canvasID, _ := newAssistantTurnService(t)
+	turnID := "e030001122334457"
+	before, err := service.BeginAssistantTurn("local", canvasID, turnID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	external, err := service.UpdateUserCanvasNodeFieldsWithTx(service.Database(), "local", canvasID, "n1", map[string]any{"title": "external S"}, before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := service.UpdateUserCanvasNodeFieldsWithTx(service.Database(), "local", canvasID, "n1", map[string]any{"content": "assistant T"}, external.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RecordAssistantTurnChange(turnID, &AssistantTurnChange{
+		RevisionBefore: before, RevisionAfter: after.Revision, UpdatedNodeIDs: []string{"n1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want, err := service.UserCanvasProject("local", canvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.UndoAssistantTurn("local", canvasID, turnID); err == nil {
+		t.Fatal("same-node external edit must block undo")
+	}
+	got, err := service.UserCanvasProject("local", canvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Fatal("external edit was not preserved")
+	}
+}
+
+func TestUndoAssistantTurnRejectsUnreportedSingleWrite(t *testing.T) {
+	service, canvasID, _ := newAssistantTurnService(t)
+	turnID := "e030001122334456"
+	before, err := service.BeginAssistantTurn("local", canvasID, turnID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := service.UserCanvasProject("local", canvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	nodes := doc["nodes"].([]any)
+	nodes[0].(map[string]any)["title"] = "unreported S"
+	doc["nodes"] = append(nodes, map[string]any{"id": "T", "type": "text", "title": "T"})
+	encoded, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err := service.UpsertUserCanvasProject("local", encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RecordAssistantTurnChange(turnID, &AssistantTurnChange{
+		RevisionBefore: before, RevisionAfter: summary.Revision, CreatedNodeIDs: []string{"T"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want, err := service.UserCanvasProject("local", canvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.UndoAssistantTurn("local", canvasID, turnID); err == nil {
+		t.Fatal("unreported node edit must block undo")
+	}
+	got, err := service.UserCanvasProject("local", canvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("rejected undo changed document: %s", got)
 	}
 }
 

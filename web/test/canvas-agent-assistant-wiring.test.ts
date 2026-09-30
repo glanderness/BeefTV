@@ -81,7 +81,7 @@ describe("助手前端接线", () => {
             expect(css).not.toContain(missing);
             expect(sidebar).not.toContain(missing);
         }
-        expect(css).toContain("var(--sidebar)");
+        expect(css).toContain("var(--background)");
         expect(css).toContain("var(--border)");
         expect(css).toContain("var(--muted-foreground)");
     });

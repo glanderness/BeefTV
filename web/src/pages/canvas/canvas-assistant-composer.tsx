@@ -1,12 +1,12 @@
 import { Button, Tooltip } from "antd";
-import { Send, Square, X } from "lucide-react";
+import { ArrowUp, Square, X } from "lucide-react";
 import { useState } from "react";
 
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
 const LINE_HEIGHT = 21;
-const MIN_LINES = 1;
+const MIN_LINES = 3;
 const MAX_LINES = 8;
 
 type Props = {
@@ -40,7 +40,7 @@ export function CanvasAssistantComposer({
 }: Props) {
     const [contentHeight, setContentHeight] = useState(LINE_HEIGHT);
     const height = Math.min(MAX_LINES * LINE_HEIGHT, Math.max(MIN_LINES * LINE_HEIGHT, contentHeight));
-    const canSend = !disabled && Boolean(value.trim());
+    const canSend = !disabled && !streaming && Boolean(value.trim());
 
     return (
         <footer className="canvas-assistant-composer">
@@ -67,7 +67,7 @@ export function CanvasAssistantComposer({
                     className="thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent px-3 py-1.5 text-[var(--fs-caption)] leading-[21px] !shadow-none !outline-none !ring-0 focus:!shadow-none focus:!outline-none focus:!ring-0 placeholder:text-[var(--muted-foreground)]"
                     onContentSizeChange={setContentHeight}
                     disabled={disabled}
-                    placeholder={disabled ? "" : "说说你想让画布变成什么样，用 @ 指定节点"}
+                    placeholder="描述你的想法，或用 @ 引用素材"
                     aria-label="给助手的消息"
                 />
             </div>
@@ -80,9 +80,7 @@ export function CanvasAssistantComposer({
                     <Button size="small" icon={<Square className="size-3" />} onClick={onStop}>停止</Button>
                 ) : (
                     <Tooltip title="Enter 发送 · Shift + Enter 换行" placement="topRight">
-                        <Button size="small" type="primary" disabled={!canSend} icon={<Send className="size-3" />} onClick={onSend}>
-                            发送
-                        </Button>
+                        <Button className="canvas-assistant-send" shape="circle" type="primary" aria-label="发送" disabled={!canSend} icon={<ArrowUp className="size-4" />} onClick={onSend} />
                     </Tooltip>
                 )}
             </div>

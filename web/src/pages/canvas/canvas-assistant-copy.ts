@@ -97,11 +97,11 @@ export function assistantUndoFailureText(failure: AssistantUndoFailure): string 
     }
 }
 
-/** 付费确认必须说清花谁的钱：金额由账户结算，这里只讲后果。 */
+/** 提议可能来自自建渠道，不能把所有费用都归到 BeefAPI。 */
 export function assistantProposalText(proposal: AssistantGenerationProposal): string {
     const count = proposal.nodeIds?.length ?? 0;
     const target = proposal.kind === "video" ? "视频" : "图片";
-    return `要为这 ${count} 个节点生成${target}吗？将使用 ${proposal.model}，费用从你的 BeefAPI 账户扣除。`;
+    return `生成 ${count} ${target === "视频" ? "段视频" : "张参考图片"} · ${proposal.model}\n确认后开始，按所选渠道计费。`;
 }
 
 export const ASSISTANT_STARTER_PROMPTS = [

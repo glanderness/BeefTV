@@ -1,0 +1,193 @@
+import { expect, test } from "bun:test";
+import { buildConfirmedGenerationConfig, executeAssistantProposal } from "@/pages/canvas/canvas-assistant-proposal-execution";
+import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+import { defaultConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
+import { buildGenerationConfig, runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
+import type { GenerationTask } from "@/services/api/task-center";
+
+const node: CanvasNodeData = { id: "node-1", title: "Image", type: CanvasNodeType.Image, position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { prompt: "test image" } };
+const proposal = { proposalId: "proposal-1", kind: "image" as const, nodeIds: [node.id], model: "Confirmed", modelKey: "channel::confirmed" };
+function input(overrides: Partial<Parameters<typeof executeAssistantProposal>[0]> = {}) {
+    return { proposal, nodes: [node], claims: new Set<string>(), isHandled: false, generate: async () => {}, markHandled: () => {}, notify: () => {}, ...overrides };
+}
+
+test("F02: confirmed proposal model reaches the generation execution boundary", async () => {
+    let options: unknown;
+    await executeAssistantProposal(input({ generate: async (_id, _mode, _prompt, received) => { options = received; } }));
+    expect(options).toMatchObject({ confirmedModelKey: proposal.modelKey, clientOperationId: `proposal:${proposal.proposalId}:${node.id}` });
+});
+
+test("F04: a validation early return does not claim generation started", async () => {
+    const handled: string[] = [];
+    await executeAssistantProposal(input({ markHandled: (id) => { handled.push(id); } }));
+    expect(handled).toEqual([]);
+});
+
+const task: GenerationTask = { id: "task-1", type: "canvas_image", status: "queued", prompt: "test image", createdAt: "2026-09-30T00:00:00Z", updatedAt: "2026-09-30T00:00:00Z" };
+
+test("F04: only an accepted task receipt marks handled, before completion and only once", async () => {
+    const events: string[] = [];
+    await executeAssistantProposal(input({
+        markHandled: () => { events.push("handled"); },
+        generate: async (_id, _mode, _prompt, options) => {
+            expect(events).toEqual([]);
+            await runCanvasGenerationTaskToConsumer({ projectId: "test", nodeId: node.id, mode: "image", prompt: "test", config: defaultConfig }, {
+                bindTask: (receipt) => options?.onTaskUpdate?.(receipt),
+                consumeTask: async () => { events.push("consumed"); },
+                runTask: async ({ onTaskCreated }) => {
+                    onTaskCreated?.(task);
+                    expect(events).toEqual(["handled"]);
+                    onTaskCreated?.({ ...task, status: "succeeded" });
+                    return { images: [] };
+                },
+            });
+        },
+    }));
+    expect(events).toEqual(["handled", "consumed"]);
+});
+
+test("F04: submission rejection is reported without handled state or an unhandled rejection", async () => {
+    const handled: string[] = [];
+    const notices: string[] = [];
+    const args = input({ generate: async () => { throw new Error("create task rejected"); }, markHandled: (id) => { handled.push(id); }, notify: (text) => { notices.push(text); } });
+    await executeAssistantProposal(args);
+    expect(handled).toEqual([]);
+    expect(args.claims.size).toBe(0);
+    expect(notices).toHaveLength(1);
+});
+
+test("same-window rapid clicks and stale renders cannot resubmit an accepted proposal", async () => {
+    let submissions = 0;
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const args = input({ generate: async (_id, _mode, _prompt, options) => {
+        submissions++;
+        await pending;
+        options?.onTaskUpdate?.(task);
+    } });
+    const first = executeAssistantProposal(args);
+    await executeAssistantProposal(args);
+    expect(submissions).toBe(1);
+    release();
+    await first;
+    await executeAssistantProposal(args);
+    expect(submissions).toBe(1);
+});
+
+test("a persisted handled proposal does not submit again", async () => {
+    let submissions = 0;
+    await executeAssistantProposal(input({ isHandled: true, generate: async () => { submissions++; } }));
+    expect(submissions).toBe(0);
+});
+
+test("runtime proposals with missing, null or non-string modelKey fail closed without throwing", async () => {
+    let submissions = 0;
+    let handled = 0;
+    const notices: string[] = [];
+    for (const modelKey of [undefined, null, 42, {}]) {
+        await executeAssistantProposal(input({
+            proposal: { ...proposal, modelKey } as unknown as typeof proposal,
+            generate: async () => { submissions++; },
+            markHandled: () => { handled++; },
+            notify: (text) => { notices.push(text); },
+        }));
+    }
+    expect(submissions).toBe(0);
+    expect(handled).toBe(0);
+    expect(notices).toHaveLength(4);
+});
+
+test("missing nodes or blank model reject the whole proposal before submitting", async () => {
+    let submissions = 0;
+    for (const invalid of [{ ...proposal, nodeIds: [node.id, "deleted"] }, { ...proposal, nodeIds: [] }, { ...proposal, modelKey: " " }]) {
+        await executeAssistantProposal(input({ proposal: invalid, generate: async () => { submissions++; } }));
+    }
+    expect(submissions).toBe(0);
+});
+
+test("duplicate node IDs submit once; a failed receipt does not claim started or allow replay", async () => {
+    let submissions = 0;
+    const handled: string[] = [];
+    const args = input({ proposal: { ...proposal, nodeIds: [node.id, node.id] }, markHandled: (id) => { handled.push(id); }, generate: async (_id, _mode, _prompt, options) => {
+        submissions++;
+        options?.onTaskUpdate?.({ ...task, status: "failed" });
+    } });
+    await executeAssistantProposal(args);
+    await executeAssistantProposal(args);
+    expect(submissions).toBe(1);
+    expect(handled).toEqual([]);
+});
+
+test("partial acceptance is reported and never replays the accepted targets", async () => {
+    const notices: string[] = [];
+    const submissions: string[] = [];
+    const args = input({
+        nodes: [node, { ...node, id: "node-2" }],
+        proposal: { ...proposal, nodeIds: [node.id, "node-2"] },
+        notify: (text) => { notices.push(text); },
+        generate: async (id, _mode, _prompt, options) => {
+            submissions.push(id);
+            if (id === node.id) options?.onTaskUpdate?.(task);
+            else throw new Error("submission failed");
+        },
+    });
+    await executeAssistantProposal(args);
+    expect(notices[0]).toContain("1/2");
+    await executeAssistantProposal(args);
+    expect(submissions).toEqual([node.id, "node-2"]);
+});
+
+function modelConfig(): AiConfig {
+    const models = ["channel::image-a", "channel::image-b"];
+    return {
+        ...defaultConfig, model: models[0], imageModel: models[0], imageModels: models, models,
+        channels: [{ id: "channel", name: "Test", baseUrl: "https://example.invalid", apiKey: "", apiFormat: "openai", models: ["image-a", "image-b"], modelProfiles: ["image-a", "image-b"].map((model) => ({ model, displayName: model, capability: "image", billingMode: "fixed_request", unitPriceMicrocredits: 1 })) }],
+    };
+}
+
+test("F02: changed defaults or node model stop before the paid execution boundary", async () => {
+    const config = modelConfig();
+    const confirmedModelKey = config.imageModel;
+    expect(buildConfirmedGenerationConfig(config, node, "image", undefined, confirmedModelKey).model).toBe(confirmedModelKey);
+    let paidExecutions = 0;
+    for (const [currentConfig, currentNode] of [
+        [{ ...config, imageModel: "channel::image-b" }, node],
+        [config, { ...node, metadata: { ...node.metadata, model: "channel::image-b" } }],
+    ] as const) {
+        await executeAssistantProposal(input({
+            proposal: { ...proposal, modelKey: confirmedModelKey },
+            nodes: [currentNode],
+            generate: async (_id, mode, _prompt, options) => {
+                buildConfirmedGenerationConfig(currentConfig, currentNode, mode, undefined, options?.confirmedModelKey);
+                paidExecutions++;
+            },
+        }));
+    }
+    expect(paidExecutions).toBe(0);
+});
+
+test("F02: reference-driven compatibility fallback is rejected after re-resolution", () => {
+    const models = ["channel::cinema-text", "channel::cinema-image"];
+    const config: AiConfig = {
+        ...defaultConfig, model: models[0], videoModel: models[0], videoModels: models, models,
+        channels: [{ id: "channel", name: "Test", baseUrl: "https://example.invalid", apiKey: "", apiFormat: "openai", models: ["cinema-text", "cinema-image"], modelProfiles: ["cinema-text", "cinema-image"].map((model, index) => {
+            const capabilityConfig = defaultModelCapabilityConfig(undefined, model);
+            capabilityConfig.video!.operations = [index ? "image_to_video" : "text_to_video"];
+            capabilityConfig.video!.references.maxImages = index;
+            return { model, displayName: "Cinema", capability: "video", billingMode: "per_second", unitPriceMicrocredits: 1, capabilityConfig };
+        }) }],
+    };
+    const videoNode = { ...node, type: CanvasNodeType.Video };
+    const requirements = { capability: "video" as const, input: { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 0, characterCount: 0 } };
+    expect(buildGenerationConfig(config, videoNode, "video", requirements).model).toBe(models[1]);
+    expect(() => buildConfirmedGenerationConfig(config, videoNode, "video", requirements, models[0])).toThrow("请让助手重新提出生成方案");
+    expect(buildConfirmedGenerationConfig(config, videoNode, "video", requirements).model).toBe(models[1]);
+});
+
+test("F02: workflow substitution and blank confirmation keys fail closed", () => {
+    const config = modelConfig();
+    expect(() => buildConfirmedGenerationConfig(config, node, "image", undefined, "")).toThrow();
+    const workflow = { ...node, type: CanvasNodeType.Config, metadata: { workflowProvider: "runninghub" as const } };
+    expect(() => buildConfirmedGenerationConfig(config, workflow, "image", undefined, config.imageModel)).toThrow();
+});

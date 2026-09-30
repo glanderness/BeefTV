@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { createAgentSession, createExtensionRuntime, ModelRuntime, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { sessionActionIdentity, toolOperationId } from './session-identity.mjs';
 import { collectTurnEffects, newTurnAccumulator, providerRegistration, providerUnavailableReason,
+  unflushedSessionHistory,
   resetTurnAccumulator, sessionTitle, turnChange } from './canvas-turn.mjs';
 
 const OPS_URL = (process.env.BEEFTV_OPS_URL || 'http://127.0.0.1:18090/api').replace(/\/+$/, '');
@@ -209,7 +210,7 @@ function buildTools(canvasId, log, generation, turn, identityPrefix) {
       try {
         const data = await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal);
         log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: false, ms: Date.now() - started, replayed: !!data?.replayed });
-        collectTurnEffects(turn, descriptor.id, data?.result);
+        collectTurnEffects(turn, descriptor.id, data?.result, opId);
         return { content: [{ type: 'text', text: JSON.stringify(data) }] };
       } catch (error) {
         log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: true, error: error.message, ms: Date.now() - started });
@@ -440,7 +441,12 @@ const server = http.createServer(async (req, res) => {
       }
       if (!sessionId) { respond(res, 200, { sessionId: null, turns: [] }); return; }
       const file = SessionManager.findById(cwd, sessionId, sessionDir);
-      if (!file) { respond(res, 404, { code: 404, reason: 'session_not_found' }); return; }
+      if (!file) {
+        const active = sessions.get(canvasId)?.sessionId || readCurrentSessionId(canvasId) || '';
+        const empty = unflushedSessionHistory(sessionId, active);
+        if (empty) { respond(res, 200, empty); return; }
+        respond(res, 404, { code: 404, reason: 'session_not_found' }); return;
+      }
       respond(res, 200, { sessionId, turns: turnEntries(SessionManager.open(file, sessionDir, cwd)) });
       return;
     }

@@ -1,5 +1,6 @@
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
 import type { AssistantGenerationProposal } from "@/services/api/agent-assistant";
+import { executeAssistantProposal } from "./canvas-assistant-proposal-execution";
 import { CanvasAssistantSidebar } from "./canvas-assistant-sidebar";
 import { highlightAssistantNodes } from "./canvas-assistant-highlight";
 import { resolveCanvasRightPanel, useCanvasAssistant, useCanvasAssistantDockable } from "./use-canvas-assistant";
@@ -2827,20 +2828,18 @@ function InfiniteCanvasPage() {
     );
 
     // 付费生成的确认在助手面板里，真正的生成仍走画布本来的那条链路。
+    const assistantProposalClaimsRef = useRef(new Set<string>());
     const runAssistantProposal = useCallback(
         (proposal: AssistantGenerationProposal) => {
-            const available = new Set(nodesRef.current.map((node) => node.id));
-            const targets = proposal.nodeIds.filter((id) => available.has(id));
-            if (!targets.length) {
-                message.info("这些节点已经不在画布上了");
-                return;
-            }
-            assistant.markProposalHandled(proposal.proposalId);
-            const mode: CanvasGenerationMode = proposal.kind === "video" ? "video" : "image";
-            for (const nodeId of targets) {
-                const node = nodesRef.current.find((item) => item.id === nodeId);
-                void handleGenerateNode(nodeId, mode, node?.metadata?.composerContent ?? node?.metadata?.prompt ?? "");
-            }
+            void executeAssistantProposal({
+                proposal,
+                nodes: nodesRef.current,
+                claims: assistantProposalClaimsRef.current,
+                isHandled: assistant.handledProposals.has(proposal.proposalId),
+                generate: (nodeId, mode, prompt, options) => handleGenerateNode(nodeId, mode, prompt, options),
+                markHandled: assistant.markProposalHandled,
+                notify: (content) => { message.warning(content); },
+            });
         },
         [assistant, handleGenerateNode, message, nodesRef],
     );

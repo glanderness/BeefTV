@@ -48,9 +48,10 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, onLoca
             <CanvasAssistantUserMessage text={turn.userText} selectedCount={turn.selectedNodeIds?.length ?? 0} />
             {turn.reply ? <CanvasAssistantReply text={turn.reply} /> : null}
             {turn.cancelled ? <p className="canvas-assistant-meta">这一条已经停下了。</p> : null}
+            {turn.error ? <p className="canvas-assistant-failed" role="status">这一轮没有全部完成，请核对已经落地的改动。</p> : null}
 
             {failedActions.length > 0 ? (
-                <div className="canvas-assistant-card">
+                <div className="canvas-assistant-feedback" role="status">
                     {failedActions.map((text) => (
                         <span key={text} className="canvas-assistant-failed">
                             {text}
@@ -60,7 +61,7 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, onLoca
             ) : null}
 
             {summary ? (
-                <div className="canvas-assistant-card">
+                <div className="canvas-assistant-change">
                     <strong>{summary}</strong>
                     {undone ? (
                         <span className="canvas-assistant-meta">已撤销</span>
@@ -68,11 +69,11 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, onLoca
                         <>
                             <div className="canvas-assistant-card-actions">
                                 {changedNodeIds.length > 0 ? (
-                                    <Button size="small" icon={<Crosshair className="size-3.5" />} onClick={() => onLocate(changedNodeIds)}>
+                                    <Button type="text" size="small" icon={<Crosshair className="size-3.5" />} onClick={() => onLocate(changedNodeIds)}>
                                         在画布上查看
                                     </Button>
                                 ) : null}
-                                <Button size="small" icon={<Undo2 className="size-3.5" />} loading={status?.undoing} onClick={() => onUndo(turn.turnId)}>
+                                <Button type="text" size="small" icon={<Undo2 className="size-3.5" />} loading={status?.undoing} onClick={() => onUndo(turn.turnId)}>
                                     撤销这一轮
                                 </Button>
                             </div>
@@ -87,7 +88,7 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, onLoca
                 const skipped = handledProposals.has(dismissedProposalKey(proposal.proposalId));
                 return (
                     <div key={proposal.proposalId} className="canvas-assistant-card">
-                        <span>{assistantProposalText(proposal)}</span>
+                        <span style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{assistantProposalText(proposal)}</span>
                         {started ? (
                             <span className="canvas-assistant-meta">已开始生成</span>
                         ) : skipped ? (

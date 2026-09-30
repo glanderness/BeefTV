@@ -35,6 +35,7 @@ export async function executeVideoGeneration({
     skillMetadata,
     taskContext,
     retryContext,
+    clientOperationId,
 }: CanvasGenerationExecution) {
     const spec = nodeSizeFromRatio(generationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
     const reuseSourceNode = canGenerateMediaInPlace(sourceNode, CanvasNodeType.Video);
@@ -103,6 +104,7 @@ export async function executeVideoGeneration({
                 projectId,
                 nodeId: videoId,
                 ...retryContext,
+                ...(clientOperationId ? { clientOperationId } : {}),
                 mode: "video",
                 prompt: effectivePrompt,
                 config: generationConfig,
@@ -151,6 +153,7 @@ export async function executeAudioGeneration({
     taskContext,
     skillMetadata,
     retryContext,
+    clientOperationId,
 }: CanvasGenerationExecution) {
     const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
     const reuseSourceNode = canGenerateMediaInPlace(sourceNode, CanvasNodeType.Audio);
@@ -179,6 +182,7 @@ export async function executeAudioGeneration({
                 projectId,
                 nodeId: audioId,
                 ...retryContext,
+                ...(clientOperationId ? { clientOperationId } : {}),
                 mode: "audio",
                 prompt: effectivePrompt,
                 config: generationConfig,
