@@ -13,6 +13,15 @@ const task: GenerationTask = { id: "task-failure", type: "canvas_image", status:
 const image = (id: string, storageKey: string): CanvasNodeData => ({ id, type: CanvasNodeType.Image, title: id, position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { content: `https://example.test/${id}.png`, storageKey } });
 
 describe("canvas generation failure consumers", () => {
+    test("copied diagnostics hide mounted and UNC paths and label configuration honestly", () => {
+        for (const path of ["/Volumes/PrivateDrive/customer-A/image.png", "/mnt/PrivateDrive/customer-A/image.png", String.raw`\\PrivateServer\PrivateShare\customer-A\image.png`]) {
+            const copied = formatGenerationDiagnostics(explainGenerationError(new Error(`open ${path}: permission denied`)), { failureDiagnostics: { source: "local_result", summary: `open ${path}: permission denied`, input: { size: "auto", quality: "2k", count: "3", promptChars: 1, imageCount: 0, videoCount: 0, audioCount: 0 } } });
+            expect(copied).not.toContain("Private");
+            expect(copied).not.toContain("customer-A");
+            expect(copied).toContain("任务配置（协议可能转换或省略）");
+            expect(copied).not.toContain("提交参数");
+        }
+    });
     test("completed generation evidence survives a later canvas application failure", () => {
         const completed: GenerationTask = { ...task, status: "succeeded", failureDiagnostics: { source: "unknown", version: "1.5.9", platform: "windows/amd64", executionResult: "completed", requests: [{ operation: "image_edit", method: "POST", dispatched: true, outcome: "response_received", httpStatus: 200, requestId: "req-success-123", startedAt: "2026-09-30T15:39:23+08:00", durationMs: 48000, receivedBytes: 5672372 }], input: { size: "2048x2048", count: "1", promptChars: 20, imageCount: 3, videoCount: 0, audioCount: 0, maxImages: 2 } } };
         const metadata = canvasTaskFailureMetadata(completed, undefined, new Error("cannot apply result /Users/PRIVATE/image.png"));

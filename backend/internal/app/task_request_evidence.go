@@ -23,8 +23,12 @@ type taskRequestEvidenceRecorder struct {
 	diagnostics model.TaskFailureDiagnostics
 }
 
-func withTaskRequestEvidence(ctx context.Context) (context.Context, *taskRequestEvidenceRecorder) {
+func withTaskRequestEvidence(ctx context.Context, previous ...*model.TaskFailureDiagnostics) (context.Context, *taskRequestEvidenceRecorder) {
 	r := &taskRequestEvidenceRecorder{diagnostics: model.TaskFailureDiagnostics{Source: "unknown", Version: buildinfo.Current().Version, Platform: runtime.GOOS + "/" + runtime.GOARCH}}
+	if len(previous) > 0 && previous[0] != nil {
+		prior := generation.SanitizeTaskDiagnostics(previous[0])
+		r.diagnostics.Requests, r.diagnostics.OmittedRequests, r.diagnostics.Input = prior.Requests, prior.OmittedRequests, prior.Input
+	}
 	return context.WithValue(ctx, taskRequestEvidenceKey{}, r), r
 }
 

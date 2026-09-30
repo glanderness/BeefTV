@@ -120,6 +120,22 @@ func TestTaskRequestEvidenceCancellationAndBound(t *testing.T) {
 	}
 }
 
+func TestTaskRequestEvidenceResumesOriginalSubmission(t *testing.T) {
+	prior := &model.TaskFailureDiagnostics{ExecutionResult: "pending", Requests: []model.TaskRequestEvidence{{Operation: "submit", RequestID: "req-original-submit", Outcome: "response_received", HTTPStatus: 200}}}
+	ctx, recorder := withTaskRequestEvidence(context.Background(), prior)
+	req, _ := http.NewRequestWithContext(ctx, "GET", "https://example.com/poll", nil)
+	for i := 0; i < 12; i++ {
+		recordTaskRequestEvidence(req, model.TaskRequestEvidence{HTTPStatus: 200, RequestID: "req-poll", Dispatched: true}, nil, nil)
+	}
+	d := recorder.snapshot(false)
+	if len(d.Requests) != 8 || d.OmittedRequests != 5 || d.Requests[0].RequestID != "req-original-submit" || d.Requests[7].RequestID != "req-poll" {
+		t.Fatalf("resumed trace %+v", d)
+	}
+	if len(prior.Requests) != 1 {
+		t.Fatal("mutated persisted snapshot")
+	}
+}
+
 func TestTaskRequestEvidenceLocalInputConstraint(t *testing.T) {
 	ctx, recorder := withTaskRequestEvidence(context.Background())
 	input := canvasGenerationInput{Prompt: "PRIVATE prompt", Config: providerConfig{Model: "gpt-image-2", Size: "2048x2048", Quality: "medium", Count: "1"}, ReferenceImages: []providerMedia{{Bytes: 1234, Width: 1024, Height: 1024}, {}, {}}, ImageCapability: &ImageCapabilityConfig{References: ImageReferenceConfig{MaxImages: 2, MaxImageBytes: 5000}}}

@@ -274,14 +274,19 @@ func (r *Repository) UpdateTaskProviderState(id string, providerRequestID string
 	return r.db.Model(&model.Task{}).Where("id = ?", id).Updates(updates).Error
 }
 
-func (r *Repository) DeferRunningTaskForProviderPoll(id string, owner string, stage string, delay time.Duration) error {
+func (r *Repository) DeferRunningTaskForProviderPoll(id string, owner string, stage string, delay time.Duration, diagnostics ...*model.TaskFailureDiagnostics) error {
 	now := time.Now()
+	updates := map[string]any{"stage": stage, "error": "", "completed_at": nil, "next_poll_at": now.Add(delay), "lease_owner": "", "lease_expires_at": nil, "updated_at": now}
+	if len(diagnostics) > 0 && diagnostics[0] != nil {
+		data, err := json.Marshal(diagnostics[0])
+		if err != nil {
+			return err
+		}
+		updates["failure_diagnostics"] = string(data)
+	}
 	result := taskLeaseWriter(r.db.Model(&model.Task{}), owner).
 		Where("id = ? AND status = ?", id, model.TaskStatusRunning).
-		Updates(map[string]any{
-			"stage": stage, "error": "", "completed_at": nil, "next_poll_at": now.Add(delay),
-			"lease_owner": "", "lease_expires_at": nil, "updated_at": now,
-		})
+		Updates(updates)
 	if result.Error != nil {
 		return result.Error
 	}

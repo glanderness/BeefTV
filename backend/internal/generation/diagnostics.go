@@ -8,7 +8,7 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
-var diagnosticLocalPath = regexp.MustCompile(`(?i)(?:[a-z]:[\\/]|/(?:Users|home|private|tmp|var)/)[^\s"'<>]+`)
+var diagnosticLocalPath = regexp.MustCompile(`(?i)(?:[a-z]:[\\/]|\\\\|/(?:Users|home|private|tmp|var|Volumes|mnt|media|run|root|opt|srv|etc)/)[^\s"'<>]+`)
 var diagnosticTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$`)
 
 func diagnosticToken(value string) string {
@@ -33,7 +33,7 @@ func SanitizeTaskDiagnostics(input *model.TaskFailureDiagnostics) *model.TaskFai
 	d := *input
 	d.Version = diagnosticToken(d.Version)
 	d.Platform = diagnosticToken(d.Platform)
-	if d.ExecutionResult != "completed" && d.ExecutionResult != "failed" {
+	if d.ExecutionResult != "completed" && d.ExecutionResult != "failed" && d.ExecutionResult != "pending" {
 		d.ExecutionResult = ""
 	}
 	d.Requests = append([]model.TaskRequestEvidence(nil), input.Requests...)

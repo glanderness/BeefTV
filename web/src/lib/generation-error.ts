@@ -367,7 +367,7 @@ export function formatGenerationDiagnostics(explanation: GenerationFailureExplan
         sanitizeDebugId(context.providerRequestId) ? `服务端关联 ID：${sanitizeDebugId(context.providerRequestId)}` : "",
         model ? `模型：${model}` : "",
         evidence?.version ? `运行版本：${diagnosticToken(evidence.version)} (${diagnosticToken(evidence.platform || "")})` : "",
-        evidence?.executionResult ? `生成执行：${evidence.executionResult === "completed" ? "完成" : evidence.executionResult === "failed" ? "未完成" : "未知"}` : "",
+        evidence?.executionResult ? `生成执行：${evidence.executionResult === "completed" ? "完成" : evidence.executionResult === "pending" ? "等待回查" : evidence.executionResult === "failed" ? "未完成" : "未知"}` : "",
         ...formatExecutionEvidence(evidence),
         createdAt ? `任务创建时间：${createdAt}` : "",
         ...[["错误记录时间", evidence?.capturedAt], ["任务结束时间", context.completedAt], ["任务更新时间", context.updatedAt]].flatMap(([label, value]) => value && /^\d{4}-\d{2}-\d{2}[T ][\d:.+Z-]{5,35}$/.test(value) ? [`${label}：${value}`] : []),
@@ -380,7 +380,7 @@ function formatExecutionEvidence(evidence?: GenerationFailureDiagnostics): strin
     const number = (n: number | undefined) => Number.isSafeInteger(n) && n! >= 0 ? String(n) : "未知";
     const input = evidence?.input;
     if (input) {
-        lines.push(`提交参数：协议=${diagnosticToken(input.protocol)}，模型=${diagnosticToken(input.model)}，尺寸=${diagnosticToken(input.size)}，质量=${diagnosticToken(input.quality)}，数量=${diagnosticToken(input.count)}`);
+        lines.push(`任务配置（协议可能转换或省略）：协议=${diagnosticToken(input.protocol)}，模型=${diagnosticToken(input.model)}，尺寸=${diagnosticToken(input.size)}，质量=${diagnosticToken(input.quality)}，数量=${diagnosticToken(input.count)}`);
         lines.push(`输入统计：提示词 ${number(input.promptChars)} 字；图片/视频/音频 ${number(input.imageCount)}/${number(input.videoCount)}/${number(input.audioCount)}`);
         if (input.imageLimitsRecorded) lines.push(`本地参考图限制：最多 ${number(input.maxImages)} 张，单图字节上限=${number(input.maxImageBytes)}（字节上限为 0 表示未设置大小限制）`);
         input.images?.slice(0, 16).forEach((media, i) => lines.push(`参考图 ${i + 1}：${number(media.width)}×${number(media.height)}，${number(media.bytes)} 字节`));
@@ -398,7 +398,7 @@ function formatExecutionEvidence(evidence?: GenerationFailureDiagnostics): strin
 }
 
 function diagnosticToken(value?: string): string {
-    return value && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(value) && !value.includes("://") && !/(?:bearer|api[_-]?key|secret|token|sk-|^[a-z]:[\\/]|\/(?:Users|home|private|tmp|var)\/)/i.test(value) ? value : "未记录";
+    return value && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(value) && !value.includes("://") && !/(?:bearer|api[_-]?key|secret|token|sk-|^[a-z]:[\\/]|\/(?:Users|home|private|tmp|var|Volumes|mnt|media|run|root|opt|srv|etc)\/)/i.test(value) ? value : "未记录";
 }
 
 export function isGenerationErrorCode(code: string) {
@@ -907,7 +907,7 @@ function sanitizeProviderCode(value: string) {
 
 function sanitizeProviderText(value: string) {
     let text = value.trim();
-    text = text.replace(/(?:[a-z]:[\\/]|\/(?:Users|home|private|tmp|var)\/)[^\s"'<>]+/gi, "[路径已隐藏]");
+    text = text.replace(/(?:[a-z]:[\\/]|\\\\|\/(?:Users|home|private|tmp|var|Volumes|mnt|media|run|root|opt|srv|etc)\/)[^\s"'<>]+/gi, "[路径已隐藏]");
     if (!text || HTML_BODY.test(text)) return "";
     // Unstructured messages may echo whole headers or prompts; discard the suffix,
     // since a whitespace-based token matcher cannot know where a secret ends.
