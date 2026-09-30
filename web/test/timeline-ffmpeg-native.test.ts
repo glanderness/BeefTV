@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -61,7 +61,8 @@ test.skipIf(process.env.BEEFTV_NATIVE_FFMPEG_TEST !== "1")("native FFmpeg: three
         expect(withText.some((value, index) => Math.abs(value - withoutText[index]) > 80)).toBe(true);
         // Actual headless Chrome fonts and Canvas2D, then the same overlay plan used by wasm.
         const { chromium } = await import("playwright");
-        const browser = await chromium.launch({ channel: "chrome", headless: true });
+        const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((path): path is string => Boolean(path && existsSync(path)));
+        const browser = await chromium.launch({ executablePath, headless: true });
         try {
             const page = await browser.newPage();
             await page.addScriptTag({ content: `window.rasterize = ${rasterizeTimelineSubtitle.toString()}` });
