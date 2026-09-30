@@ -434,6 +434,9 @@ func ClassifyError(err error) Failure {
 }
 
 func ClassifyText(raw string) Failure {
+	if copy, ok := outboundPolicyCopy(raw); ok {
+		return normalizeFailure(Failure{Category: CategoryNetwork, Reason: copy.Reason, Action: copy.Action, Structured: true})
+	}
 	if copy, ok := persistedTaskConstraintCopy(raw); ok {
 		requestID, taskID := persistedReferenceIDs(raw)
 		return normalizeFailure(Failure{Category: CategoryInvalidParams, Reason: copy.Reason, Action: copy.Action, RequestID: requestID, TaskID: taskID})
@@ -557,6 +560,9 @@ func ClassifyText(raw string) Failure {
 }
 
 func ClassifyAppError(status int, code int, reason string, message string) Failure {
+	if copy, ok := outboundPolicyCopy(firstNonEmpty(message, reason)); ok {
+		return normalizeFailure(Failure{Category: CategoryNetwork, Reason: copy.Reason, Action: copy.Action, Structured: true})
+	}
 	failure := ClassifyHTTP(status, "", firstNonEmpty(message, reason))
 	if !failure.Structured && !failure.FromCode {
 		category, matched := categoryFromProviderCode(reason)
@@ -1232,6 +1238,25 @@ func extractExplicitHTTPStatus(raw string) int {
 
 func isNetworkText(value string) bool {
 	return regexp.MustCompile(`(?i)\b(?:dial tcp|connection refused|connection reset|no such host|i/o timeout|network error|failed to fetch|fetch failed|socket hang up|econnrefused|econnreset|etimedout|连接模型服务失败)\b`).MatchString(value)
+}
+
+// outboundPolicyCopy 识别宿主出站安全策略（SSRF 防护）的拦截文案。这类失败由本地
+// 拦截产生、请求从未到达上游，与模型参数无关；若按 400 AppError 兜底会被归为
+// invalid_params，把排查方向误导成“模型不接受当前参数”。
+func outboundPolicyCopy(message string) (categoryCopy, bool) {
+	switch {
+	case strings.Contains(message, "不允许访问本机"), strings.Contains(message, "不允许访问保留地址"):
+		return categoryCopy{
+			Reason: "出站安全策略已拦截模型服务地址",
+			Action: "本地或内网模型服务默认禁止访问；请将服务地址加入 CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS 环境变量（或设置 CANVAS_ALLOW_PRIVATE_UPSTREAMS=1）后重启服务",
+		}, true
+	case strings.Contains(message, "外部服务域名解析失败"):
+		return categoryCopy{
+			Reason: "模型服务域名解析失败",
+			Action: "请检查渠道 Base URL 的域名是否正确，以及本机 DNS 是否可用",
+		}, true
+	}
+	return categoryCopy{}, false
 }
 
 func isMalformedText(value string) bool {

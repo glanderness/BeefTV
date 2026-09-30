@@ -474,3 +474,28 @@ func TestMediaCopyPreservesAuthenticationAndIgnoresRequestEcho(t *testing.T) {
 		t.Fatalf("request echo classified: %+v", failure)
 	}
 }
+
+func TestOutboundPolicyBlockedIsNetworkNotInvalidParams(t *testing.T) {
+	for _, message := range []string{
+		"不允许访问本机或内网地址",
+		"不允许访问本机、内网或链路本地地址",
+		"不允许访问保留地址或特殊用途地址",
+	} {
+		failure := generation.ClassifyText(message)
+		if failure.Category != generation.CategoryNetwork {
+			t.Fatalf("ClassifyText(%q) category = %s, want network", message, failure.Category)
+		}
+		if !strings.Contains(failure.Action, "CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS") {
+			t.Fatalf("ClassifyText(%q) action = %q, want private-upstream guidance", message, failure.Action)
+		}
+	}
+	// BadAuthRequest 是 400 AppError；若不先识别出站文案，会被状态码兜底成 invalid_params。
+	failure := generation.ClassifyAppError(400, 400, "invalid_argument", "不允许访问本机、内网或链路本地地址")
+	if failure.Category != generation.CategoryNetwork || !strings.Contains(failure.Action, "CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS") {
+		t.Fatalf("ClassifyAppError outbound block = %+v", failure)
+	}
+	dns := generation.ClassifyText("外部服务域名解析失败")
+	if dns.Category != generation.CategoryNetwork || !strings.Contains(dns.Reason, "域名解析失败") {
+		t.Fatalf("dns failure = %+v", dns)
+	}
+}
