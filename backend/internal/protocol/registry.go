@@ -70,12 +70,14 @@ func (r *Registry) Get(id string) (Adapter, bool) {
 }
 
 func (r *Registry) Resolve(id string) (Adapter, bool) {
-	// Older BeefAPI catalogs stored the package name instead of its provider ID.
-	if strings.TrimSpace(id) == "google-gemini-generate-content" {
-		id = "gemini-generate-content"
-	}
 	if adapter, ok := r.Get(id); ok {
 		return adapter, true
+	}
+	// Older BeefAPI catalogs stored the package name instead of its provider ID.
+	if strings.TrimSpace(id) == "google-gemini-generate-content" {
+		if adapter, ok := r.Get("gemini-generate-content"); ok {
+			return adapter, true
+		}
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
