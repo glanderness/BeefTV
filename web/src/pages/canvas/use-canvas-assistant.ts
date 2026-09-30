@@ -19,6 +19,7 @@ import {
 } from "@/services/api/agent-assistant";
 import { assistantChangedNodeIds } from "./canvas-assistant-copy";
 import { waitForAssistant } from "./assistant-readiness";
+import { findRecoveredAssistantTurn, type PendingAssistantRecovery } from "./canvas-assistant-recovery";
 
 export const ASSISTANT_MIN_WIDTH = 320;
 export const ASSISTANT_MAX_WIDTH = 560;
@@ -67,6 +68,7 @@ type CanvasRun = {
     historyRequest: number;
     sessionBusy: boolean;
     dispatched: boolean;
+    recovery: PendingAssistantRecovery | null;
     pendingUserText: string | null;
     pendingSelectedNodeIds: string[];
     streamed: string;
@@ -86,6 +88,7 @@ const createRun = (): CanvasRun => ({
     historyRequest: 0,
     sessionBusy: false,
     dispatched: false,
+    recovery: null,
     pendingUserText: null,
     pendingSelectedNodeIds: [],
     streamed: "",
@@ -182,6 +185,12 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             const nextSession = sessionId || history.sessionId || sessionList.currentSessionId || null;
             const known = new Set(history.turns.map((turn) => turn.turnId));
             const recent = nextSession === run.sessionId ? run.turns.filter((turn) => !known.has(turn.turnId)) : [];
+            if (run.error && findRecoveredAssistantTurn(run.recovery, history)) {
+                run.pendingUserText = null;
+                run.pendingSelectedNodeIds = [];
+                run.error = null;
+                run.recovery = null;
+            }
             run.sessions = sessionList.sessions;
             run.sessionId = nextSession;
             run.turns = [...history.turns, ...recent];
@@ -223,6 +232,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         run.controller = controller;
         run.error = null;
         run.dispatched = false;
+        run.recovery = null;
         run.lastSent = { text: message, selectedNodeIds: selectedSnapshot };
         rerenderIfActive(targetCanvas);
         try {
@@ -230,6 +240,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             setStatus(ready);
             if (!run.historyLoaded && !await loadHistory(targetCanvas)) throw new Error("对话还没读回来，请重新读取后再发送");
             controller.signal.throwIfAborted();
+            run.recovery = { sessionId: run.sessionId, knownTurnIds: run.turns.map((turn) => turn.turnId), text: message, selectedNodeIds: selectedSnapshot };
             run.dispatched = true;
             await streamAgentChat(targetCanvas, message, {
                 onDelta: (delta) => {
@@ -252,6 +263,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                         createdAt: new Date().toISOString(),
                     };
                     current.turns = [...current.turns, turn];
+                    current.recovery = null;
                     current.historyError = null;
                     current.pendingUserText = null;
                     current.pendingSelectedNodeIds = [];
@@ -330,6 +342,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         try {
             const sessionId = await createAssistantSession(targetCanvas);
             run.sessionId = sessionId;
+            run.recovery = null;
             run.turns = [];
             run.error = null;
             run.pendingUserText = null;
@@ -359,6 +372,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             // 激活成功但读取失败时阻止把旧显示当作新对话继续发送。
             run.historyLoaded = false;
             if (await loadHistory(targetCanvas, activated)) {
+                run.recovery = null;
                 run.turnStatus = {};
                 run.error = null;
                 run.lastSent = null;
