@@ -273,19 +273,19 @@ func runSeedanceVideosTask(ctx context.Context, input canvasGenerationInput, pol
 			post = postJSONWithSubmissionKey
 		}
 		if err := post(ctx, input.Config, "/videos", body, &created); err != nil {
-			return nil, err
+			return nil, uncertainVideoSubmission(ctx, err)
 		}
 		if data, ok := created["data"].(map[string]interface{}); ok {
 			created = data
 		}
 		extracted, err := firstJSONString(created, "id", "task_id")
 		if err != nil {
-			return nil, fmt.Errorf("Seedance 接口任务 ID 无效：%w", err)
+			return nil, providerSubmissionUnknownError{Cause: fmt.Errorf("Seedance 接口任务 ID 无效：%w", err)}
 		}
 		id = extracted
 	}
 	if id == "" {
-		return nil, errors.New("Seedance 接口没有返回任务 ID")
+		return nil, providerSubmissionUnknownError{Cause: errors.New("Seedance 接口没有返回任务 ID")}
 	}
 	return runVideoPollLoop(ctx, id, pollPolicy, func(ctx context.Context) (videoPollOutcome, error) {
 		var state map[string]interface{}

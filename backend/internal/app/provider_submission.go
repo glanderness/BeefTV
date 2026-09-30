@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -9,6 +11,29 @@ import (
 )
 
 type providerSubmissionKeyContext struct{}
+
+// A lost receipt is not a rejected generation. Only gateways with a verified
+// idempotency contract may replay creation with the SAME durable attempt key.
+type providerSubmissionUnknownError struct{ Cause error }
+
+func (e providerSubmissionUnknownError) Error() string {
+	return fmt.Sprintf("提交结果尚未确认：%v", e.Cause)
+}
+func (e providerSubmissionUnknownError) Unwrap() error { return e.Cause }
+
+func uncertainVideoSubmission(ctx context.Context, err error) error {
+	if err == nil || errors.Is(err, context.Canceled) || safeRouteRejection(err) {
+		return err
+	}
+	var circuit providerCircuitOpenError
+	if errors.As(err, &circuit) {
+		return err
+	}
+	if retry, _ := retryableVideoPollError(context.Background(), err); retry {
+		return providerSubmissionUnknownError{Cause: err}
+	}
+	return err
+}
 
 func withProviderSubmissionKey(ctx context.Context, attempt *model.RouteAttempt) context.Context {
 	if attempt == nil {

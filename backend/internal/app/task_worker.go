@@ -230,6 +230,11 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 		if decryptErr == nil && s.shouldDeferVideoProviderTask(*task, decryptedInput, err) {
 			stage := "后台仍在生成"
 			message := "前台等待结束，上游视频仍在生成，将继续回查原任务"
+			var downloadErr videoDownloadError
+			if errors.As(err, &downloadErr) {
+				stage = "正在取回生成结果"
+				message = "视频已生成，下载暂时中断，将继续取回原任务结果"
+			}
 			var pendingErr providerStatePendingError
 			if errors.As(err, &pendingErr) {
 				stage = "等待上游任务同步"
@@ -323,6 +328,14 @@ func (s *Service) shouldDeferVideoProviderTask(task model.Task, decryptedInput s
 		return false
 	}
 	deferSignal := errors.Is(err, context.DeadlineExceeded)
+	var downloadErr videoDownloadError
+	if errors.As(err, &downloadErr) {
+		deferSignal, _ = retryableVideoPollError(context.Background(), downloadErr.Cause)
+	}
+	// Bound automatic recovery; keep the original ID for manual retrieval later.
+	if task.StartedAt != nil && time.Since(*task.StartedAt) >= 24*time.Hour {
+		return false
+	}
 	var pendingErr providerStatePendingError
 	if errors.As(err, &pendingErr) {
 		deferSignal = strings.TrimSpace(pendingErr.TaskID) == providerRequestID && !newAPIChannel2TaskSyncExpired(task, err, time.Now())
@@ -335,7 +348,7 @@ func (s *Service) shouldDeferVideoProviderTask(task model.Task, decryptedInput s
 		return false
 	}
 	resolved, resolveErr := s.resolveProviderConfig(input.Config)
-	return resolveErr == nil && resolved.InterfaceType == string(model.ChannelInterfaceNewAPIChannel2)
+	return resolveErr == nil && (resolved.InterfaceType == string(model.ChannelInterfaceNewAPIChannel2) || isBeefAPIVideoConfig(resolved))
 }
 
 func newAPIChannel2TaskSyncExpired(task model.Task, err error, now time.Time) bool {

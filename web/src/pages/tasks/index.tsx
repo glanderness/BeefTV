@@ -92,6 +92,8 @@ export default function TasksPage() {
     const [groupEnabled, setGroupEnabled] = useState<boolean>(() => readTaskPreference(groupPreferenceKey, "0") === "1");
     const [retryingGroup, setRetryingGroup] = useState("");
     const [detailTask, setDetailTask] = useState<GenerationTask | null>(null);
+    const detailRequestRef = useRef(0);
+    useEffect(() => () => { detailRequestRef.current += 1; }, []);
     const [detailLoading, setDetailLoading] = useState(false);
     const [taskLogs, setTaskLogs] = useState<TaskLog[]>([]);
     const [logsLoading, setLogsLoading] = useState(false);
@@ -265,9 +267,10 @@ export default function TasksPage() {
 
     const openTaskDetail = useCallback(
         async (task: GenerationTask) => {
+            const request = ++detailRequestRef.current;
             setDetailTask(task);
             setTaskLogs([]);
-            if (localMode) {
+            if (task.id.startsWith("local:")) {
                 setDetailLoading(false);
                 setLogsLoading(false);
                 return;
@@ -276,13 +279,16 @@ export default function TasksPage() {
             setLogsLoading(true);
             try {
                 const [detail, logs] = await Promise.all([queryGenerationTask(task.id), listTaskLogs(task.id)]);
+                if (request !== detailRequestRef.current) return;
                 setDetailTask(detail);
                 setTaskLogs(logs);
             } catch (error) {
-                message.error(error instanceof Error ? error.message : "任务详情加载失败");
+                if (request === detailRequestRef.current) message.error(error instanceof Error ? error.message : "任务详情加载失败");
             } finally {
-                setDetailLoading(false);
-                setLogsLoading(false);
+                if (request === detailRequestRef.current) {
+                    setDetailLoading(false);
+                    setLogsLoading(false);
+                }
             }
         },
         [localMode, message],
@@ -353,27 +359,28 @@ export default function TasksPage() {
     };
 
     const queryProviderTask = async (task: GenerationTask) => {
-        if (localMode) {
-            message.info("本地任务不支持上游任务查询，请回到对应画布查看结果");
-            return;
-        }
+        const request = detailRequestRef.current;
         setActingId(task.id);
         try {
             const result = await queryFailedVideoProviderTask(task.id);
             if (!result.recovered) {
-                setTaskLogs(await listTaskLogs(task.id));
-                message.info(`上游任务仍在处理中${result.providerStatus ? `（${result.providerStatus}）` : ""}`);
+                const logs = await listTaskLogs(task.id);
+                if (request === detailRequestRef.current) {
+                    setTaskLogs(logs);
+                    message.info("原任务仍在处理中，请稍后再取回结果");
+                }
                 return;
             }
-            setDetailTask(result.task);
+            if (request === detailRequestRef.current) setDetailTask(result.task);
             setTasks((items) => items.map((item) => (item.id === task.id ? { ...item, ...result.task } : item)));
-            setTaskLogs(await listTaskLogs(task.id));
+            const logs = await listTaskLogs(task.id);
+            if (request === detailRequestRef.current) setTaskLogs(logs);
             await syncGenerationTaskToCanvasStore(result.task);
             if (!localMode) window.dispatchEvent(new CustomEvent("wallet:updated"));
             void loadTasks(false);
-            message.success("已获取上游视频，任务已恢复");
+            if (request === detailRequestRef.current) message.success("视频已取回，未重新生成");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "查询上游任务失败");
+            if (request === detailRequestRef.current) message.error(error instanceof Error ? error.message : "查询上游任务失败");
         } finally {
             setActingId("");
         }
@@ -523,7 +530,7 @@ export default function TasksPage() {
                     </Form.Item>
                 </Form>
             </Modal>
-            <Drawer className="library-drawer" title="任务详情" open={Boolean(detailTask)} onClose={() => setDetailTask(null)} size="large" destroyOnHidden>
+            <Drawer className="library-drawer" title="任务详情" open={Boolean(detailTask)} onClose={() => { detailRequestRef.current += 1; setDetailTask(null); }} size="large" destroyOnHidden>
                 {detailTask ? (
                     <div className="space-y-5">
                         <div className="task-detail-facts grid text-sm sm:grid-cols-2">
@@ -540,7 +547,7 @@ export default function TasksPage() {
                             {detailTask.providerCancelRequestedAt ? <InfoItem label="请求取消时间" value={formatDate(detailTask.providerCancelRequestedAt)} /> : null}
                         </div>
                         <div className="flex flex-wrap justify-end gap-2">
-                            {canQueryProviderTask(detailTask) ? <Button icon={<RefreshCw className="size-4" />} loading={actingId === detailTask.id} onClick={() => void queryProviderTask(detailTask)}>手动查询任务</Button> : null}
+                            {canQueryProviderTask(detailTask) ? <Button icon={<RefreshCw className="size-4" />} loading={actingId === detailTask.id} onClick={() => void queryProviderTask(detailTask)}>取回结果</Button> : null}
                             {isTaskFailed(detailTask) ? <Button icon={<Bug className="size-4" />} onClick={() => navigate(`/settings?section=diagnostics&taskId=${encodeURIComponent(detailTask.id)}${detailTask.projectId ? `&projectId=${encodeURIComponent(detailTask.projectId)}` : ""}`)}>导出诊断包</Button> : null}
                         </div>
                         {detailTask.error || isTaskFailed(detailTask) ? (

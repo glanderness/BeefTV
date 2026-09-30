@@ -12,6 +12,7 @@ import (
 
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/canvas"
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/mcp"
 	"infinite-canvas/backend/internal/model"
@@ -245,7 +246,16 @@ func (s *Service) CancelTask(ctx context.Context, userID string, id string) (*mo
 }
 
 func (s *Service) TaskLogs(userID string, id string) ([]model.TaskLog, error) {
-	return s.repo.TaskLogs(userID, id)
+	logs, err := s.repo.TaskLogs(userID, id)
+	for i := range logs {
+		logs[i].Summary = generation.DiagnosticSummary(logs[i].Message)
+		if logs[i].Level == "error" && logs[i].Payload != "" {
+			logs[i].Summary += "：" + generation.ClassifyText(logs[i].Payload).UserMessage()
+		}
+		// Raw payloads can contain credentials, prompts and private media URLs.
+		logs[i].Message, logs[i].Payload = "", ""
+	}
+	return logs, err
 }
 
 func (s *Service) ProcessNextTask() error {

@@ -42,6 +42,13 @@ func classifyTaskFailure(err error) generation.Failure {
 }
 
 func applyAppFailureWrappers(err error, failure generation.Failure) generation.Failure {
+	var unknown providerSubmissionUnknownError
+	if errors.As(err, &unknown) {
+		failure.Category = generation.CategorySubmissionUncertain
+		failure.Uncertain, failure.Retryable = true, false
+		failure.Reason, failure.Action = "", ""
+		return failure
+	}
 	var download videoDownloadError
 	if errors.As(err, &download) {
 		failure = generation.WithDownloadFailure(failure, download.TaskID)

@@ -9,6 +9,13 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.16
+
+- Recover transient video download disconnects using the original provider task, with bounded background recovery for supported video protocols.
+- Add “取回结果” to failed video task details on the canvas and in desktop task history; query and download the original result without creating another paid generation.
+- Treat lost submission receipts as unconfirmed instead of silently resubmitting; keep explicit rate limits and pre-dispatch rejections retryable.
+- Show readable, sanitized task log summaries and prevent late task detail responses from reopening or replacing a different task.
+
 ## v1.6.15
 
 - Preserve specific generation errors, request IDs, timings and bounded request history in copied diagnostics, including after reopening a task.

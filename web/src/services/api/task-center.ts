@@ -101,6 +101,7 @@ export type TaskTextReplay = {
 };
 
 export type TaskLog = {
+    summary?: string;
     id: string;
     taskId: string;
     level: "info" | "warn" | "error";
@@ -310,6 +311,10 @@ export function queryFailedVideoProviderTask(id: string) {
     return http.post<ProviderTaskQueryResult>(`/tasks/${encodeURIComponent(id)}/query-provider`);
 }
 
+export function canRetrieveVideoResult(task: GenerationTask) {
+    return task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_")) && Boolean(task.providerRequestId);
+}
+
 export function refreshGenerationTaskStatus(id: string, options?: { signal?: AbortSignal }) {
     return http.get<GenerationTask>(`/tasks/${encodeURIComponent(id)}`, { signal: options?.signal });
 }
@@ -319,21 +324,23 @@ export function deleteGenerationTask(id: string) {
 }
 
 export async function listTaskLogs(id: string, options?: { signal?: AbortSignal }) {
-    const raw = await http.get<Array<{ level?: unknown; message?: unknown; payload?: unknown; createdAt?: unknown }>>(`/tasks/${encodeURIComponent(id)}/logs`, { signal: options?.signal });
+    const raw = await http.get<Array<{ summary?: unknown; level?: unknown; message?: unknown; payload?: unknown; createdAt?: unknown }>>(`/tasks/${encodeURIComponent(id)}/logs`, { signal: options?.signal });
     return raw.map((log, index) => projectBackendSafeTaskLog(id, log, index));
 }
 
 export function formatTaskLog(log: TaskLog) {
+    if (log.summary) return log.summary;
     return [`stage=${log.stage}`, ...(log.errorCode ? [`error=${log.errorCode}`] : []), `provenance=${log.provenance}`, ...(log.observedAt ? [`observedAt=${log.observedAt}`] : [])].join(" ");
 }
 
-export function projectBackendSafeTaskLog(taskId: string, raw: { level?: unknown; message?: unknown; payload?: unknown; createdAt?: unknown }, index: number): TaskLog {
+export function projectBackendSafeTaskLog(taskId: string, raw: { summary?: unknown; level?: unknown; message?: unknown; payload?: unknown; createdAt?: unknown }, index: number): TaskLog {
     const text = [raw.message, raw.payload].filter((value): value is string => typeof value === "string").join(" ");
     const stage = safeTaskLogStage(text) || "backend_event";
     const errorCode = safeTaskLogErrorCode(text);
     const createdAt = typeof raw.createdAt === "string" && Number.isFinite(Date.parse(raw.createdAt)) ? raw.createdAt : "1970-01-01T00:00:00.000Z";
     return {
         id: `safe:${taskId}:${index}`,
+        ...(typeof raw.summary === "string" ? { summary: raw.summary } : {}),
         taskId,
         level: raw.level === "error" ? "error" : raw.level === "warn" ? "warn" : "info",
         stage,
