@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="48" viewBox="0 0 180 48" role="img" aria-labelledby="title desc">
+  <title id="title">访问官网</title>
+  <desc id="desc">前往 BeefTV 官方网站</desc>
+  <rect x="0.5" y="0.5" width="179" height="47" rx="7" fill="#F2F2F2" stroke="#D4D4D4"/>
+  <path d="M17 17h14v14H17zM23 14h11v11M34 14 22 26" fill="none" stroke="#161616" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="50" y="30" fill="#161616" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif" font-size="17" font-weight="700">访问官网</text>
+</svg>
