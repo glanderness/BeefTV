@@ -7,7 +7,7 @@ export function getTaskCanvasContext(task: GenerationTask, canvasById: Map<strin
     const canvas = canvasById.get(task.projectId);
     if (canvas) return { canvasName: canvas.title || "未命名画布", projectName: canvas.projectId ? projectNameById.get(canvas.projectId) || "" : "" };
     const projectName = projectNameById.get(task.projectId);
-    return projectName ? { canvasName: "项目级任务", projectName } : { canvasName: "画布已移除", projectName: "" };
+    return projectName ? { canvasName: "项目级任务", projectName } : { canvasName: `未加载或已移除的画布 · ${task.projectId}`, projectName: "" };
 }
 
 export function isTaskFailed(task: GenerationTask) {
