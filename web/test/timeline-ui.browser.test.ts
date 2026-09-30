@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chromium, type Browser, type Page } from "playwright";
 import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 
 let browser: Browser;
 let server: ReturnType<typeof Bun.serve>;
@@ -10,6 +11,8 @@ beforeAll(async () => {
         define: { "import.meta.env": "{}", "process.env.NODE_ENV": '"production"' },
         plugins: [{ name: "encoder-task-failure-boundaries", setup(build) {
             build.onResolve({ filter: /^(?:@\/lib\/timeline\/timeline-export|@\/services\/api\/(?:task-center|timeline-tasks)|file-saver)$/ }, () => ({ path: import.meta.dir + "/fixtures/timeline-ui-runtime.ts" }));
+            // Resolve remaining source aliases explicitly on the CI-pinned Bun 1.3.9.
+            build.onResolve({ filter: /^@\// }, (args) => ({ path: Bun.resolveSync(resolve(import.meta.dir, "../src", args.path.slice(2)), import.meta.dir) }));
         } }],
     });
     if (!build.success) throw new Error(build.logs.join("\n"));
