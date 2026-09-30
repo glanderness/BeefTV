@@ -17,6 +17,10 @@ description: BeefTV后端核心持久化表与状态边界
 
 实验 Agent 的 v3–v6 与正式版本使用过重叠编号，迁移执行器按最大已应用版本推进。产品 v7 只补产品结构，不创建 Agent 运行时结构。未来合入 Agent 必须使用高于 v7 的追加迁移，显式补齐 `agent_op_records`（包含 `turn_id` 及其索引）、`tasks.client_operation_id`、`tasks.client_operation_hash` 和 `(user_id, client_operation_id)` 唯一索引；不得依赖旧 v3–v6 再次执行。历史 Agent v6 程序不能直接连接升级后的 v7 数据库。
 
+**发布阻断：在产品与 Agent 的追加迁移及运行合同完成整合验收前，不得把本分支安装到共用工作区或作为整合版本发布。** 独立 `codex/product-agent-migration-check-20260930` 分支提供 v8 迁移实验和合成数据库升级/回滚测试，仅证明结构方案可行；不代表 Agent 运行、CLI/MCP 和任务恢复已完成整体验收。Lucas 的 v6 候选与数据目录必须独立保留。
+
+同为 v7 但缺少 `image_submissions` 或 `tasks.failure_diagnostics` 时，迁移和 Ready 检查都明确失败；版本号本身不构成结构完备证明。修复必须追加迁移，不能改历史记录伪造兼容。回滚只能停止所有写入者后，恢复升级前完整工作区备份到独立目录，再用匹配该备份的旧二进制打开；禁止旧程序直接打开新数据库。
+
 ### 桌面图片请求恢复
 
 本地工作区使用 `local_schema_migrations`；版本 7 新增 `image_submissions`。每条记录绑定用户、任务和路由尝试，保存经工作区密钥加密的完整 HTTP 请求（包括素材、请求头和幂等键）、首次保存时间、已发送次数及网关已返回成功的标记。任务 API 不返回这些字段。恢复前校验任务归属、运行状态和有效租约；保存失败时不发出请求。
