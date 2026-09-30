@@ -6,6 +6,11 @@ type ZipFile = {
 };
 
 export async function createZip(files: ZipFile[]) {
+    const names = new Set<string>();
+    for (const file of files) {
+        if (names.has(file.name)) throw new Error(`导出包存在重名文件，未保存：${file.name}`);
+        names.add(file.name);
+    }
     const entries = await Promise.all(
         files.map(async (file) => {
             const data = new Uint8Array(await new Blob([file.data]).arrayBuffer());
