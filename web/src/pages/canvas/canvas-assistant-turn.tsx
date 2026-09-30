@@ -11,6 +11,7 @@ type Props = {
     turn: AssistantTurn;
     status?: AssistantTurnStatus;
     handledProposals: Set<string>;
+    proposalFeedback?: Record<string, string>;
     onLocate: (nodeIds: string[]) => void;
     onUndo: (turnId: string) => void;
     onRunProposal: (proposal: AssistantGenerationProposal) => void;
@@ -37,7 +38,7 @@ export function CanvasAssistantUserMessage({ text, selectedCount }: { text: stri
     );
 }
 
-export function CanvasAssistantTurnView({ turn, status, handledProposals, onLocate, onUndo, onRunProposal, onDismissProposal }: Props) {
+export function CanvasAssistantTurnView({ turn, status, handledProposals, proposalFeedback, onLocate, onUndo, onRunProposal, onDismissProposal }: Props) {
     const summary = assistantChangeSummary(turn.change);
     const changedNodeIds = assistantChangedNodeIds(turn.change);
     const failedActions = assistantUnresolvedFailures(turn.toolCalls);
@@ -89,6 +90,7 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, onLoca
                 return (
                     <div key={proposal.proposalId} className="canvas-assistant-card">
                         <span style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{assistantProposalText(proposal)}</span>
+                        {!skipped && proposalFeedback?.[proposal.proposalId] ? <span className="canvas-assistant-meta" role="status">{proposalFeedback[proposal.proposalId]}</span> : null}
                         {started ? (
                             <span className="canvas-assistant-meta">已开始生成</span>
                         ) : skipped ? (

@@ -2832,8 +2832,10 @@ function InfiniteCanvasPage() {
 
     // 付费生成的确认在助手面板里，真正的生成仍走画布本来的那条链路。
     const assistantProposalClaimsRef = useRef(new Set<string>());
+    const [assistantProposalFeedback, setAssistantProposalFeedback] = useState<Record<string, string>>({});
     const runAssistantProposal = useCallback(
         (proposal: AssistantGenerationProposal) => {
+            setAssistantProposalFeedback((current) => ({ ...current, [proposal.proposalId]: "" }));
             void executeAssistantProposal({
                 proposal,
                 nodes: nodesRef.current,
@@ -2858,7 +2860,7 @@ function InfiniteCanvasPage() {
                 }),
                 generate: (nodeId, mode, prompt, options) => handleGenerateNode(nodeId, mode, prompt, options),
                 markHandled: assistant.markProposalHandled,
-                notify: (content) => { message.warning(content); },
+                notify: (content) => { setAssistantProposalFeedback((current) => ({ ...current, [proposal.proposalId]: content })); },
             });
         },
         [assistant, handleGenerateNode, message, nodesRef, connectionsRef, projectId, addedSkills],
@@ -3797,6 +3799,7 @@ function InfiniteCanvasPage() {
                 </CanvasOverlayLayerProvider>
                 {rightPanel === "assistant" && !focusMode && !versions.preview ? (
                     <CanvasAssistantSidebar
+                        proposalFeedback={assistantProposalFeedback}
                         assistant={assistant}
                         canvasTitle={workspaceProject?.title === "未命名项目" || !workspaceProject?.title ? "未命名工作区" : workspaceProject.title}
                         dockable={assistantDockable}

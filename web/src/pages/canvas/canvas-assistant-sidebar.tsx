@@ -21,6 +21,7 @@ type Props = {
     onLocateNodes: (nodeIds: string[]) => void;
     onRunProposal: (proposal: AssistantGenerationProposal) => void;
     onOpenModelSettings: () => void;
+    proposalFeedback?: Record<string, string>;
 };
 
 export function CanvasAssistantSidebar(props: Props) {
@@ -40,7 +41,7 @@ export function CanvasAssistantSidebar(props: Props) {
     useLayoutEffect(() => {
         const node = logRef.current;
         if (node && followLatestRef.current) node.scrollTop = node.scrollHeight;
-    }, [turnCount, assistant.streamed, assistant.pendingUserText]);
+    }, [turnCount, assistant.streamed, assistant.pendingUserText, props.proposalFeedback]);
 
     const notice = assistant.status && !assistant.status.available && assistant.status.reason !== "host_starting" ? assistantStatusNotice(assistant.status.reason) : null;
     const composerDisabled = readOnly;
@@ -123,6 +124,7 @@ export function CanvasAssistantSidebar(props: Props) {
                         turn={turn}
                         status={assistant.turnStatus[turn.turnId]}
                         handledProposals={assistant.handledProposals}
+                        proposalFeedback={props.proposalFeedback}
                         onLocate={onLocateNodes}
                         onUndo={(turnId) => void assistant.undoTurn(turnId)}
                         onRunProposal={onRunProposal}
