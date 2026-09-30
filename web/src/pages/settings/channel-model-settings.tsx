@@ -49,8 +49,8 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
     const testModel = async (model: string, capability: ModelProfile["capability"], protocol: ModelProtocol) => {
         setTestingModel(model);
         try {
-            const detail = await testChannelModelConnection(channel, model, capability, protocol);
-            message.success(`模型测试通过：${detail}`);
+            const result = await testChannelModelConnection(channel, model, capability, protocol);
+            message.info(result.detail);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "模型测试失败");
         } finally {

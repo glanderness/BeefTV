@@ -145,7 +145,7 @@ func catalogCapabilityAndProtocol(model CatalogModel) (capability, protocol stri
 		{capability: "audio", protocol: "openai-audio", endpoints: []string{"audio.speech", "audio-speech"}},
 		{capability: "text", protocol: "openai-response", endpoints: []string{"openai-response", "openai-response-compact", "responses"}},
 		{capability: "text", protocol: "claude-api", endpoints: []string{"anthropic", "messages"}},
-		{capability: "text", protocol: "google-gemini-generate-content", endpoints: []string{"gemini"}},
+		{capability: "text", protocol: "gemini-generate-content", endpoints: []string{"gemini"}},
 	} {
 		if !containsAnyString(endpoints, item.endpoints) {
 			continue

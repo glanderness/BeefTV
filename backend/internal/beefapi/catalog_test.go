@@ -1,10 +1,65 @@
 package beefapi
 
 import (
+	"archive/zip"
+	"bytes"
+	"os"
 	"testing"
 
+	"infinite-canvas/backend/internal/protocol"
 	"infinite-canvas/backend/internal/workspace"
 )
+
+func TestGeminiAppliedCatalogResolvesBundledProvider(t *testing.T) {
+	store, err := workspace.NewProviderConfig(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := applyCatalog(store, []CatalogModel{{ID: "gemini-test", SupportedEndpointTypes: []string{"gemini"}}}, "", "test-account"); err != nil {
+		t.Fatal(err)
+	}
+	effective, _, err := store.LoadEffectiveModelConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel := findChannel(effective.Config["channels"].([]any), ChannelID)
+	profiles := channel["modelProfiles"].([]any)
+	id := profiles[0].(map[string]any)["protocol"].(string)
+	manifest, err := os.ReadFile("../../../plugin-packages/google-gemini-generate-content/manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var archive bytes.Buffer
+	writer := zip.NewWriter(&archive)
+	entry, err := writer.Create("manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := entry.Write(manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := protocol.ParsePluginPackage(archive.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapters, err := protocol.LoadInstalledProviders(pkg.ManifestRaw, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := protocol.NewRegistry(adapters...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, persisted := range []string{id, "google-gemini-generate-content"} {
+		adapter, ok := registry.Resolve(persisted)
+		if !ok || adapter.Metadata().ID != "gemini-generate-content" {
+			t.Fatalf("persisted catalog protocol %q did not resolve bundled provider", persisted)
+		}
+	}
+}
 
 func TestCatalogCapabilityMapsBeefAPIEndpointTypes(t *testing.T) {
 	cases := []struct {
@@ -18,7 +73,7 @@ func TestCatalogCapabilityMapsBeefAPIEndpointTypes(t *testing.T) {
 		{endpoints: []string{"openai-response"}, wantCap: "text", wantProto: "openai-response"},
 		{endpoints: []string{"openai-response-compact"}, wantCap: "text", wantProto: "openai-response"},
 		{endpoints: []string{"anthropic"}, wantCap: "text", wantProto: "claude-api"},
-		{endpoints: []string{"gemini"}, wantCap: "text", wantProto: "google-gemini-generate-content"},
+		{endpoints: []string{"gemini"}, wantCap: "text", wantProto: "gemini-generate-content"},
 		{endpoints: []string{"image-generation"}, wantCap: "image", wantProto: "openai-image"},
 		{endpoints: []string{"openai-video"}, wantCap: "video", wantProto: "openai-videos"},
 		{endpoints: []string{"openai", "image-generation"}, wantCap: "image", wantProto: "openai-image"},
