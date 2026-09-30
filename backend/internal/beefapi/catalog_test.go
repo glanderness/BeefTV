@@ -3,6 +3,7 @@ package beefapi
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"os"
 	"testing"
 
@@ -11,18 +12,41 @@ import (
 )
 
 func TestGeminiAppliedCatalogResolvesBundledProvider(t *testing.T) {
-	store, err := workspace.NewProviderConfig(t.TempDir())
+	// Connect only to the existing loopback fixture. Its catalog runs through
+	// finalizeSavedCredential -> applyCatalog, then both stores are reopened.
+	svc, _, dir := testService(t, &fakeEnterprise{models: []map[string]any{
+		{"id": "gemini-test", "supported_endpoint_types": []string{"gemini"}},
+	}})
+	if _, err := svc.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, svc, StateConnected)
+	svc.Close()
+	store, err := workspace.NewProviderConfig(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := applyCatalog(store, []CatalogModel{{ID: "gemini-test", SupportedEndpointTypes: []string{"gemini"}}}, "", "test-account"); err != nil {
+	restarted, err := New(Options{DataDir: dir, Origin: svc.Origin(), Provider: store})
+	if err != nil {
 		t.Fatal(err)
+	}
+	defer restarted.Close()
+	credential, err := restarted.Resolve()
+	if err != nil || credential.APIKey == "" || credential.AccountID != "42" {
+		t.Fatal("persisted managed credential did not resolve after restart")
 	}
 	effective, _, err := store.LoadEffectiveModelConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
-	channel := findChannel(effective.Config["channels"].([]any), ChannelID)
+	// The public config projection adds the managed credential reference; the
+	// canonical built-in channel deliberately does not persist that UI marker.
+	presented := restarted.RedactConfig(effective.Config)
+	channel := findChannel(presented["channels"].([]any), ChannelID)
+	plainKey, _ := channel["apiKey"].(string)
+	if channel["credentialRef"] != CredentialRef || plainKey != "" {
+		t.Fatal("catalog did not preserve the managed credential reference")
+	}
 	profiles := channel["modelProfiles"].([]any)
 	id := profiles[0].(map[string]any)["protocol"].(string)
 	manifest, err := os.ReadFile("../../../plugin-packages/google-gemini-generate-content/manifest.json")
@@ -57,6 +81,16 @@ func TestGeminiAppliedCatalogResolvesBundledProvider(t *testing.T) {
 		adapter, ok := registry.Resolve(persisted)
 		if !ok || adapter.Metadata().ID != "gemini-generate-content" {
 			t.Fatalf("persisted catalog protocol %q did not resolve bundled provider", persisted)
+		}
+		native, ok := adapter.(protocol.AgentAdapter)
+		if !ok {
+			t.Fatal("bundled provider has no native text adapter")
+		}
+		spec, err := native.BuildAgent(context.Background(), protocol.AgentRequestContext{
+			BaseURL: credential.BaseURL, Model: profiles[0].(map[string]any)["model"].(string),
+		})
+		if err != nil || spec.Path != "/v1beta/models/gemini-test:generateContent" {
+			t.Fatalf("persisted catalog and credential did not build a native request: %v", err)
 		}
 	}
 }
