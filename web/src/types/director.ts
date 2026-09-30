@@ -9,8 +9,9 @@ export type DirectorTransform = {
     scale: DirectorVec3;
 };
 
-export type DirectorPrimitiveKind = "box" | "sphere" | "cylinder" | "plane" | "character";
+export type DirectorPrimitiveKind = "box" | "sphere" | "cylinder" | "torus" | "cone" | "pyramid" | "empty" | "plane" | "character";
 export type DirectorObjectKind = "primitive" | "model" | "actor" | "billboard";
+export type DirectorActorPresetId = "standard_male" | "standard_female" | "athletic" | "slim" | "teen" | "child" | "broad" | "chibi" | "geometric";
 export type DirectorPose = "neutral" | "stand" | "t_pose" | "walk" | "run" | "sit" | "squat" | "kneel_single" | "kneel_double" | "hands_hips" | "lean" | "bow" | "think" | "fight" | "kick" | "throw" | "push" | "wave" | "reach" | "arms_crossed" | "phone";
 export type DirectorCameraMove = "static" | "push_in" | "pull_out" | "pan_left" | "pan_right" | "tilt_up" | "tilt_down" | "orbit_left" | "orbit_right" | "handheld";
 export type DirectorShotSize = "extreme_wide" | "wide" | "full" | "medium" | "close_up" | "extreme_close_up";
@@ -84,6 +85,8 @@ export type DirectorObject = {
     castShadow: boolean;
     receiveShadow: boolean;
     pose?: DirectorPose;
+    /** Local, lightweight procedural actor silhouette preset. */
+    actorPreset?: DirectorActorPresetId;
     rig?: DirectorRig;
     motionClips?: DirectorMotionClip[];
     activeMotionClipId?: string;

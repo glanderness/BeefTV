@@ -17,6 +17,7 @@ type DirectorSequencerProps = {
     autoKey: boolean;
     height: number;
     visible: boolean;
+    presentation?: "editor" | "preview";
     onPlayToggle: () => void;
     onPlayheadChange: (time: number) => void;
     onAutoKeyChange: (value: boolean) => void;
@@ -39,7 +40,7 @@ type DirectorSequencerProps = {
  */
 type TrackKey = { id: string; time: number; color?: string; label?: string; easing?: DirectorKeyframeEasing; target?: DirectorKeyframeDeleteTarget };
 
-export function DirectorSequencer({ scene, shot, camera, objects, selectedObjectId, selectedBone, playhead, playing, autoKey, height, visible, onPlayToggle, onPlayheadChange, onAutoKeyChange, onHeightChange, onVisibilityChange, onSelectObject, onSelectBone, onRecordKeyframe, onAddShot, onDeleteKeyframe, onSetKeyframeEasing, onSelectShot }: DirectorSequencerProps) {
+export function DirectorSequencer({ scene, shot, camera, objects, selectedObjectId, selectedBone, playhead, playing, autoKey, height, visible, presentation = "editor", onPlayToggle, onPlayheadChange, onAutoKeyChange, onHeightChange, onVisibilityChange, onSelectObject, onSelectBone, onRecordKeyframe, onAddShot, onDeleteKeyframe, onSetKeyframeEasing, onSelectShot }: DirectorSequencerProps) {
     const [expanded, setExpanded] = useState<Record<string, boolean>>({});
     const [snapEnabled, setSnapEnabled] = useState(true);
     const [showDetails, setShowDetails] = useState(true);
@@ -51,6 +52,7 @@ export function DirectorSequencer({ scene, shot, camera, objects, selectedObject
     const ticks = useMemo(() => Array.from({ length: Math.ceil(duration) + 1 }, (_, index) => index), [duration]);
     const actorObjects = objects.filter((object) => object.kind === "actor" || object.primitive === "character");
     const activeSelectedKey = selectedKey?.target && directorKeyframeTargetExists(selectedKey.target, camera, objects) ? selectedKey : null;
+    const isPreview = presentation === "preview";
 
     // 选择只对当前可见轨道有效。切换镜头/摄影机或外部删帧后立即废弃旧 target，
     // 避免顶部缓动与删除控件继续修改已经不可见的轨道。
@@ -107,9 +109,17 @@ export function DirectorSequencer({ scene, shot, camera, objects, selectedObject
     }
 
     return (
-        <section ref={rootRef} className="director-sequencer shrink-0 border-t" style={{ height, minHeight: "var(--director-sequencer-min-height)", maxHeight: "32vh", background: "var(--director-sequencer-surface)", borderColor: "var(--director-sequencer-border)" }}>
-            <div className="director-sequencer-resizer" onPointerDown={startResize} role="separator" aria-label="调整时间轴高度" />
-            <header className="flex h-10 shrink-0 items-center gap-2 border-b px-3" style={{ borderColor: "var(--director-sequencer-border)" }}>
+        <section ref={rootRef} data-presentation={presentation} className={`director-sequencer shrink-0 border-t ${isPreview ? "is-preview" : ""}`} style={isPreview ? { height: "min(150px, 22vh)", minHeight: 118, maxHeight: "25vh", background: "var(--director-sequencer-surface)", borderColor: "var(--director-sequencer-border)" } : { height, minHeight: "var(--director-sequencer-min-height)", maxHeight: "32vh", background: "var(--director-sequencer-surface)", borderColor: "var(--director-sequencer-border)" }}>
+            {!isPreview ? <div className="director-sequencer-resizer" onPointerDown={startResize} role="separator" aria-label="调整时间轴高度" /> : null}
+            {isPreview ? <header className="director-sequencer-preview-header" style={{ borderColor: "var(--director-sequencer-border)" }}>
+                <button type="button" className="director-sequencer-transport" onClick={onPlayToggle} aria-label={playing ? "暂停" : "播放"} title={playing ? "暂停" : "播放"}>{playing ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}</button>
+                <span className="director-sequencer-preview-time" aria-live="off">{formatClockTime(playhead)} / {formatClockTime(duration)}</span>
+                <span className="director-sequencer-preview-actions">
+                    <button type="button" className="director-sequencer-icon" title="新增镜头" aria-label="新增镜头" onClick={onAddShot}><Plus className="size-3.5" /></button>
+                    <input type="range" min="0.75" max="2.5" step="0.25" value={timelineScale} aria-label="时间线缩放" title={`时间线缩放 ${Math.round(timelineScale * 100)}%`} onChange={(event) => setTimelineScale(Number(event.target.value))} />
+                    <button type="button" className="director-sequencer-icon" title="收起时间轴" aria-label="收起时间轴" onClick={() => onVisibilityChange(false)}><ChevronDown className="size-3.5" /></button>
+                </span>
+            </header> : <header className="flex h-10 shrink-0 items-center gap-2 border-b px-3" style={{ borderColor: "var(--director-sequencer-border)" }}>
                 <button type="button" className="director-sequencer-transport" onClick={onPlayToggle} aria-label={playing ? "暂停" : "播放"} title={playing ? "暂停" : "播放"}>{playing ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}</button>
                 <span className="w-14 text-right text-[var(--fs-caption)] font-medium tabular-nums text-white/75">{formatTime(playhead)}</span>
                 <span className="text-[var(--fs-micro)] text-white/35">/ {formatTime(duration)} · {fps}fps</span>
@@ -145,9 +155,25 @@ export function DirectorSequencer({ scene, shot, camera, objects, selectedObject
                     <button type="button" className="director-sequencer-icon" title="新增镜头" aria-label="新增镜头" onClick={onAddShot}><Plus className="size-3.5" /></button>
                     <button type="button" className="director-sequencer-icon" title="隐藏时间轴" aria-label="隐藏时间轴" onClick={() => onVisibilityChange(false)}><ChevronDown className="size-3.5" /></button>
                 </span>
-            </header>
+            </header>}
 
-            <div className="director-sequencer-body thin-scrollbar overflow-auto">
+            {isPreview ? <div className="director-sequencer-preview-body thin-scrollbar overflow-auto">
+                <div className="director-sequencer-preview-grid" style={{ "--director-sequencer-track-scale": timelineScale } as CSSProperties}>
+                    <div className="director-sequencer-preview-ruler" aria-hidden="true" onPointerDown={setTimeFromPointer}>
+                        {ticks.map((tick) => <span key={tick} className="director-sequencer-tick" style={{ left: `${(tick / duration) * 100}%` }}>{tick}s</span>)}
+                        <span className="director-sequencer-playhead" style={{ left: `${(playhead / duration) * 100}%` }} />
+                    </div>
+                    <div className="director-sequencer-preview-track" role="slider" aria-label="预演时间线" aria-valuemin={0} aria-valuemax={duration} aria-valuenow={playhead} aria-valuetext={`${formatClockTime(playhead)} / ${formatClockTime(duration)}`} tabIndex={0} onPointerDown={setTimeFromPointer} onKeyDown={(event) => {
+                        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+                        event.preventDefault();
+                        const step = snapEnabled ? 1 / fps : 0.1;
+                        onPlayheadChange(Math.max(0, Math.min(duration, playhead + (event.key === "ArrowRight" ? step : -step))));
+                    }}>
+                        <span className="director-sequencer-preview-clip">{shot.name} · {formatClockTime(duration)}</span>
+                        <span className="director-sequencer-preview-playhead" style={{ left: `${(playhead / duration) * 100}%` }} />
+                    </div>
+                </div>
+            </div> : <div className="director-sequencer-body thin-scrollbar overflow-auto">
                 <div className="director-sequencer-grid" style={{ "--director-sequencer-duration": duration, "--director-sequencer-track-scale": timelineScale } as CSSProperties}>
                     <span className="director-sequencer-global-playhead"><i style={{ left: `${(playhead / duration) * 100}%` }} /></span>
                     <div className="director-sequencer-label director-sequencer-ruler-label">轨道</div>
@@ -196,7 +222,7 @@ export function DirectorSequencer({ scene, shot, camera, objects, selectedObject
                         return <SequencerRow key={object.id} label={object.name} icon="□" selected={selectedObjectId === object.id} onClick={() => { onSelectObject(object.id); onSelectBone(null); }}><TrackKeys duration={duration} keys={keys} selectedTarget={activeSelectedKey?.target} onSelectKey={selectTrackKey} onDeleteKey={deleteTrackKey} /></SequencerRow>;
                     })}
                 </div>
-            </div>
+            </div>}
         </section>
     );
 }
@@ -278,4 +304,10 @@ function TrackBar({ duration, color, label, start = 0, clipDuration }: { duratio
 
 function formatTime(time: number) {
     return `${time.toFixed(2)}s`;
+}
+
+function formatClockTime(time: number) {
+    const safeTime = Number.isFinite(time) ? Math.max(0, time) : 0;
+    const seconds = Math.floor(safeTime);
+    return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }

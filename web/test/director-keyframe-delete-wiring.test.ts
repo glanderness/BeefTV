@@ -88,19 +88,18 @@ describe("workbench 快捷键接线", () => {
         expect(runner).toContain("if (!selectedObjectId && !selectedLightId && !selectedBone) return false;");
     });
 
-    test("dock 与场景列表点选后释放焦点：否则点完就再按不动 W/E/R/Delete", () => {
-        // 全局快捷键是本轮新增的，交互控件守卫会吃掉聚焦按钮上的按键。
-        // dock 承载 W/E/R 变换工具；场景列表承载「点选对象 -> 按 Delete」主流程。
-        const dockButton = slice(dock, "function DockButton(", "function DockDivider(");
-        expect(dockButton).toContain("releaseDirectorFocusAfterPointer(event)");
-        const sceneRow = slice(workbench, "function SceneRow(", "function AddMenuButton(");
+    test("扩展菜单各操作与场景列表点选后释放焦点，保留 W/E/R/Delete 快捷键", () => {
+        // 场景对象添加统一从场景面板进入；dock 菜单承载视图与工作台操作。
+        const toolMenu = slice(dock, "const toolMenuItems:", "return (");
+        expect((toolMenu.match(/releaseMenuFocus\(domEvent\.detail\)/g) || []).length).toBe(10);
+        const sceneRow = slice(workbench, "function SceneRow(", "function QuickAdd(");
         expect(sceneRow).toContain("releaseDirectorFocusAfterPointer(event)");
     });
 
     test("焦点释放规则集中在共享 helper，各按钮不自写 blur", () => {
         // 判据（keyboard detail === 0 保留焦点）必须只有一处，否则迟早走偏。
-        const dockButton = slice(dock, "function DockButton(", "function DockDivider(");
-        expect(dockButton).not.toContain("event.currentTarget.blur()");
+        expect(dock).toContain("releaseDirectorFocusAfterPointer({ detail, currentTarget: document.activeElement as HTMLElement })");
+        expect(dock).not.toContain("event.currentTarget.blur()");
         expect(workbench).not.toContain("if (event.detail !== 0) event.currentTarget.blur();");
     });
 

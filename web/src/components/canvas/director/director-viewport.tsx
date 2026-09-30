@@ -2,7 +2,7 @@ import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber"
 import { Grid, Html, Line, OrbitControls, TransformControls } from "@react-three/drei";
 import { Video as VideoIcon } from "lucide-react";
 import { Component, forwardRef, memo, Suspense, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useReducer, useRef, useState, type ComponentRef, type ReactNode } from "react";
-import { AnimationClip, AnimationMixer, BackSide, Box3, Bone, Camera, Color, EquirectangularReflectionMapping, Euler, Group, LoopOnce, LoopRepeat, Matrix4, Mesh, MeshBasicMaterial, MeshDepthMaterial, MeshNormalMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Quaternion, Raycaster, Scene, SkeletonHelper, SphereGeometry, SRGBColorSpace, Texture, TextureLoader, Vector2, Vector3, WebGLRenderer } from "three";
+import { AnimationClip, AnimationMixer, BackSide, Box3, Bone, Camera, Color, EquirectangularReflectionMapping, Euler, Group, LoopOnce, LoopRepeat, Matrix4, Mesh, MeshBasicMaterial, MeshDepthMaterial, MeshNormalMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Quaternion, Raycaster, Scene, SkeletonHelper, SphereGeometry, SRGBColorSpace, Texture, TextureLoader, Vector2, Vector3, Vector4, WebGLRenderTarget, WebGLRenderer } from "three";
 import type { Material } from "three";
 import { GLTFLoader, SkeletonUtils } from "three-stdlib";
 
@@ -19,6 +19,7 @@ import { createDirectorTransaction, installDirectorTerminalListeners } from "@/l
 import { emptyDirectorPlacementIntent, finiteDirectorGroundPoint, type DirectorGroundPoint, type DirectorPlacementIntent } from "@/lib/canvas/director/director-placement";
 import { directorDiagnosticObjectKind } from "@/lib/canvas/director/director-diagnostics";
 import { recordDirectorDiagnostic } from "@/lib/canvas/director/director-diagnostics-recorder";
+import { resolveDirectorCapsuleShape } from "@/lib/canvas/director/director-actor-presets";
 import { directorCaptureInitial, directorCaptureUsable, directorLoadIdentity, directorLoadInitial, installDirectorContextListeners, reduceDirectorCapture, reduceDirectorLoad, releaseDirectorCapture, resolveDirectorDisplay, restoreDirectorCapture, upsertDirectorFailedLoad, type DirectorFailedLoads, type DirectorLoadSignal } from "@/lib/canvas/director/director-recovery";
 import { disposeDirectorAdoptionFailure, disposeDirectorHelper, disposeDirectorMaterials, disposeDirectorModelResources, disposeDirectorObject3D, resolveDirectorLoadOwnership } from "@/lib/canvas/director/director-resources";
 import { DIRECTOR_DEFAULT_ACTOR_URL, directorPoseBoneDeltas, directorTransformPathLength, finiteDirectorTransformKeyframes, interpolateDirectorTransform, visibleDirectorCameras } from "@/lib/canvas/director/director-scene";
@@ -32,6 +33,7 @@ export type DirectorOrbitControls = ComponentRef<typeof OrbitControls>;
 
 export type DirectorViewportHandle = {
     capture: (mode: DirectorRenderMode) => Promise<Blob>;
+    captureCameraPreview: (playhead: number) => Promise<Blob>;
     recordVideo: (duration: number, fps: number) => Promise<Blob>;
     readCameraTransform: () => DirectorTransform | null;
     /** 只读放置意图。上下文不可用或从未产生合法点时返回空意图，绝不抛异常。 */
@@ -188,6 +190,7 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
     };
     useImperativeHandle(ref, () => ({
         capture: (mode) => captureFrame(usableContext(), mode, aspectRatio),
+        captureCameraPreview: (playhead) => captureCameraPreviewFrame(usableContext(), props.scene, playhead),
         recordVideo: (duration, fps) => recordCanvas(usableContext(), duration, fps, aspectRatio),
         readCameraTransform: () => {
             const camera = usableContext()?.camera;
@@ -912,13 +915,23 @@ function applyObject3DTransform(target: Object3D, transform: DirectorTransform) 
 }
 
 function DirectorObjectVisual({ object, selected, selectedBone, playhead, onSelectBone, onBoneTransform, onActorRigReady, onLoadStateChange }: { object: DirectorObject; selected: boolean; selectedBone: string | null; playhead: number; onSelectBone: (bone: string | null) => void; onBoneTransform: (bone: string, rotation: DirectorQuat) => void; onActorRigReady: (rig: DirectorRig, animations: AnimationClip[]) => void; onLoadStateChange: (id: string, signal: DirectorLoadSignal, retry: () => void) => void }) {
+    // URL-less actor is an intentional local mannequin fixture. Do not resolve the
+    // production default actor URL here: this keeps the repro scene deterministic/offline.
+    if (object.kind === "actor" && !object.url) return <DirectorProceduralActor color={object.color} selected={selected} preset={object.actorPreset ?? "standard_male"} />;
     if ((object.kind === "model" || object.kind === "actor" || object.primitive === "character") && (object.url || object.primitive === "character")) return <DirectorModel object={object} selected={selected} selectedBone={selectedBone} playhead={playhead} onSelectBone={onSelectBone} onBoneTransform={onBoneTransform} onActorRigReady={onActorRigReady} onLoadStateChange={onLoadStateChange} />;
     if (object.kind === "billboard" && object.url) return <DirectorBillboard object={object} selected={selected} />;
     const material = <meshStandardMaterial color={selected ? "#2f8cff" : object.color} roughness={0.68} metalness={0.05} />;
     return (
         <mesh castShadow={object.castShadow} receiveShadow={object.receiveShadow}>
-            {object.primitive === "sphere" ? <sphereGeometry args={[0.6, 32, 24]} /> : object.primitive === "cylinder" ? <cylinderGeometry args={[0.5, 0.5, 1.2, 32]} /> : object.primitive === "plane" ? <planeGeometry args={[1.6, 1]} /> : <boxGeometry args={[1, 1, 1]} />}
-            {material}
+            {object.primitive === "sphere" ? <sphereGeometry args={[0.6, 32, 24]} />
+                : object.primitive === "cylinder" ? <cylinderGeometry args={[0.5, 0.5, 1.2, 32]} />
+                    : object.primitive === "plane" ? <planeGeometry args={[1.6, 1]} />
+                        : object.primitive === "torus" ? <torusGeometry args={[0.42, 0.16, 16, 36]} />
+                            : object.primitive === "cone" ? <coneGeometry args={[0.55, 1.2, 32]} />
+                                : object.primitive === "pyramid" ? <coneGeometry args={[0.65, 1.2, 4]} />
+                                    : object.primitive === "empty" ? <octahedronGeometry args={[0.12, 0]} />
+                                        : <boxGeometry args={[1, 1, 1]} />}
+            {object.primitive === "empty" ? <meshBasicMaterial color={selected ? "#2f8cff" : object.color} wireframe transparent opacity={0.78} /> : material}
         </mesh>
     );
 }
@@ -1153,6 +1166,68 @@ function DirectorMannequin({ color, selected }: { color: string; selected: boole
         {bones.map(([from, to], index) => <LoadingBone key={`bone-${index}`} from={from} to={to} color={resolvedColor} />)}
         {joints.map((position, index) => <mesh key={`joint-${index}`} position={position}><sphereGeometry args={[index === 0 ? 0.11 : 0.04, 12, 8]} /><meshBasicMaterial color={resolvedColor} transparent opacity={0.72} /></mesh>)}
     </group>;
+}
+
+/** Offline, filled humanoid used by the visual-parity fixture (no GLB/network dependency). */
+function DirectorProceduralActor({ color, selected, preset }: { color: string; selected: boolean; preset: NonNullable<DirectorObject["actorPreset"]> }) {
+    const resolvedColor = selected ? new Color(color).lerp(new Color("#78a9ff"), 0.18).getStyle() : color;
+    const shape = {
+        standard_male: { scale: [1, 1, 1] as DirectorVec3, shoulders: 1, waist: 1, hips: 1, head: 1, limbs: 1 },
+        standard_female: { scale: [0.96, 1, 0.96] as DirectorVec3, shoulders: 0.9, waist: 0.83, hips: 1.12, head: 1.04, limbs: 0.9 },
+        athletic: { scale: [1.04, 1.02, 1] as DirectorVec3, shoulders: 1.24, waist: 1.08, hips: 1.05, head: 0.98, limbs: 1.12 },
+        slim: { scale: [0.88, 1, 0.9] as DirectorVec3, shoulders: 0.86, waist: 0.78, hips: 0.88, head: 1, limbs: 0.78 },
+        teen: { scale: [0.91, 0.9, 0.92] as DirectorVec3, shoulders: 0.92, waist: 0.91, hips: 0.94, head: 1.12, limbs: 0.88 },
+        child: { scale: [0.78, 0.76, 0.8] as DirectorVec3, shoulders: 0.92, waist: 0.94, hips: 1, head: 1.3, limbs: 0.96 },
+        broad: { scale: [1.12, 1, 1.04] as DirectorVec3, shoulders: 1.26, waist: 1.2, hips: 1.28, head: 1.05, limbs: 1.14 },
+        chibi: { scale: [1.02, 0.76, 1] as DirectorVec3, shoulders: 1.12, waist: 1.05, hips: 1.14, head: 1.56, limbs: 1.05 },
+        geometric: { scale: [1, 1, 1] as DirectorVec3, shoulders: 1, waist: 1, hips: 1, head: 1, limbs: 1 },
+    }[preset];
+    const lowPoly = preset === "geometric";
+    const segments: Array<{ from: DirectorVec3; to: DirectorVec3; radius: number }> = [
+        { from: [0, 1.43, 0], to: [0, 1.27, 0], radius: 0.09 },
+        { from: [-0.2, 1.38, 0], to: [-0.31, 1.08, 0.01], radius: 0.075 },
+        { from: [-0.31, 1.08, 0.01], to: [-0.29, 0.76, 0.02], radius: 0.06 },
+        { from: [0.2, 1.38, 0], to: [0.31, 1.08, 0.01], radius: 0.075 },
+        { from: [0.31, 1.08, 0.01], to: [0.29, 0.76, 0.02], radius: 0.06 },
+        { from: [-0.11, 0.78, 0], to: [-0.14, 0.43, 0], radius: 0.09 },
+        { from: [-0.14, 0.43, 0], to: [-0.14, 0.08, 0.02], radius: 0.065 },
+        { from: [0.11, 0.78, 0], to: [0.14, 0.43, 0], radius: 0.09 },
+        { from: [0.14, 0.43, 0], to: [0.14, 0.08, 0.02], radius: 0.065 },
+    ];
+    return <group scale={shape.scale}>
+        <mesh position={[0, 1.13, 0]} scale={[0.25 * shape.shoulders, 0.34, 0.15]} castShadow>
+            <sphereGeometry args={[1, lowPoly ? 8 : 20, lowPoly ? 6 : 16]} /><meshStandardMaterial color={resolvedColor} roughness={0.84} flatShading={lowPoly} />
+        </mesh>
+        <mesh position={[0, 1.02, 0]} scale={[0.2 * shape.waist, 0.23, 0.14]} castShadow>
+            <sphereGeometry args={[1, lowPoly ? 8 : 16, lowPoly ? 6 : 12]} /><meshStandardMaterial color={resolvedColor} roughness={0.84} flatShading={lowPoly} />
+        </mesh>
+        <mesh position={[0, 0.79, 0]} scale={[0.2 * shape.hips, 0.18, 0.14]} castShadow>
+            <sphereGeometry args={[1, lowPoly ? 8 : 16, lowPoly ? 6 : 12]} /><meshStandardMaterial color={resolvedColor} roughness={0.84} flatShading={lowPoly} />
+        </mesh>
+        <mesh position={[0, 1.68, 0]} scale={[0.13 * shape.head, 0.17 * shape.head, 0.12 * shape.head]} castShadow>
+            <sphereGeometry args={[1, lowPoly ? 8 : 20, lowPoly ? 6 : 16]} /><meshStandardMaterial color={resolvedColor} roughness={0.78} flatShading={lowPoly} />
+        </mesh>
+        {segments.map((segment, index) => <SolidActorLimb key={index} {...segment} radius={segment.radius * shape.limbs} color={resolvedColor} radialSegments={lowPoly ? 6 : 12} />)}
+        {([-1, 1] as const).map((side) => <mesh key={`hand-${side}`} position={[side * 0.29, 0.7, 0.02]} scale={[0.055, 0.085, 0.045]} castShadow>
+            <sphereGeometry args={[1, lowPoly ? 6 : 12, lowPoly ? 4 : 8]} /><meshStandardMaterial color={resolvedColor} roughness={0.84} flatShading={lowPoly} />
+        </mesh>)}
+        {([-1, 1] as const).map((side) => <mesh key={`foot-${side}`} position={[side * 0.14, 0.035, 0.08]} scale={[0.075, 0.05, 0.13]} castShadow>
+            <sphereGeometry args={[1, lowPoly ? 6 : 12, lowPoly ? 4 : 8]} /><meshStandardMaterial color={resolvedColor} roughness={0.84} flatShading={lowPoly} />
+        </mesh>)}
+    </group>;
+}
+
+function SolidActorLimb({ from, to, radius, color, radialSegments = 12 }: { from: DirectorVec3; to: DirectorVec3; radius: number; color: string; radialSegments?: number }) {
+    const start = useMemo(() => new Vector3(...from), [from]);
+    const end = useMemo(() => new Vector3(...to), [to]);
+    const direction = useMemo(() => end.clone().sub(start), [end, start]);
+    const midpoint = useMemo(() => start.clone().add(end).multiplyScalar(0.5), [end, start]);
+    const rotation = useMemo(() => new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), direction.clone().normalize()), [direction]);
+    const capsule = useMemo(() => resolveDirectorCapsuleShape(direction.length(), radius), [direction, radius]);
+    return <mesh position={midpoint} quaternion={rotation} castShadow>
+        <capsuleGeometry args={[capsule.radius, capsule.cylinderHeight, 4, radialSegments]} />
+        <meshStandardMaterial color={color} roughness={0.84} flatShading={radialSegments < 12} />
+    </mesh>;
 }
 
 function LoadingBone({ from, to, color }: { from: DirectorVec3; to: DirectorVec3; color: string }) {
@@ -1391,6 +1466,73 @@ async function captureFrame(context: CaptureContext | null, mode: DirectorRender
         resumePanoramaSphere?.();
         gl.render(scene, camera);
     }
+}
+
+/**
+ * 摄像机检查器缩略预览：在现有 renderer 的小型离屏 target 渲染，不创建第二个 WebGL context，
+ * 且在同步读回像素后立刻恢复主视口 target / viewport / overlay 状态，避免污染用户当前取景。
+ */
+function captureCameraPreviewFrame(context: CaptureContext | null, directorScene: DirectorScene, playhead: number) {
+    if (!context) throw new Error("3D 视口尚未就绪");
+    const framing = resolveDirectorViewFraming({ scene: directorScene, mode: "camera", playhead });
+    if (!framing) throw new Error("当前场景没有可用机位");
+
+    const width = 384;
+    const height = 216;
+    const { gl, scene, camera: activeCamera } = context;
+    const target = new WebGLRenderTarget(width, height, { depthBuffer: true, stencilBuffer: false });
+    target.texture.colorSpace = SRGBColorSpace;
+    const previewCamera = new PerspectiveCamera(framing.fov, width / height, framing.near, framing.far);
+    previewCamera.position.fromArray(framing.position);
+    previewCamera.up.fromArray(framing.up);
+    previewCamera.lookAt(...framing.target);
+    previewCamera.updateProjectionMatrix();
+    previewCamera.updateMatrixWorld(true);
+
+    const previousTarget = gl.getRenderTarget();
+    const previousViewport = gl.getViewport(new Vector4());
+    const previousScissor = gl.getScissor(new Vector4());
+    const previousScissorTest = gl.getScissorTest();
+    const previousClearColor = gl.getClearColor(new Color()).clone();
+    const previousClearAlpha = gl.getClearAlpha();
+    const resumeDisplayMaterialOverride = context.suspendDisplayMaterialOverride();
+    const resumeEditorOverlays = suspendDirectorEditorOverlays(scene);
+    const pixels = new Uint8Array(width * height * 4);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    try {
+        gl.setRenderTarget(target);
+        gl.setViewport(0, 0, width, height);
+        gl.setScissorTest(false);
+        gl.setClearColor("#060608", 1);
+        gl.clear(true, true, true);
+        gl.render(scene, previewCamera);
+        gl.readRenderTargetPixels(target, 0, 0, width, height, pixels);
+
+        const canvasContext = canvas.getContext("2d");
+        if (!canvasContext) throw new Error("无法初始化摄影机预览画布");
+        const imageData = canvasContext.createImageData(width, height);
+        for (let row = 0; row < height; row += 1) {
+            const sourceStart = (height - row - 1) * width * 4;
+            const targetStart = row * width * 4;
+            imageData.data.set(pixels.subarray(sourceStart, sourceStart + width * 4), targetStart);
+        }
+        canvasContext.putImageData(imageData, 0, 0);
+    } finally {
+        gl.setRenderTarget(previousTarget);
+        gl.setViewport(previousViewport);
+        gl.setScissor(previousScissor);
+        gl.setScissorTest(previousScissorTest);
+        gl.setClearColor(previousClearColor, previousClearAlpha);
+        target.dispose();
+        resumeDisplayMaterialOverride();
+        resumeEditorOverlays();
+        gl.render(scene, activeCamera);
+    }
+
+    return canvasToBlob(canvas);
 }
 
 async function recordCanvas(context: CaptureContext | null, duration: number, fps: number, aspectRatio: DirectorAspectRatio) {

@@ -3,11 +3,12 @@ import { describe, expect, test } from "bun:test";
 import { useDirectorWorkbenchStore } from "../src/stores/canvas/use-director-workbench-store";
 
 describe("导演台时间轴显示状态", () => {
-    test("新会话默认收起，且摆场模式也可独立展开与收起", () => {
+    test("新会话默认摄影机工作区且时间轴收起；摆场模式也可独立展开与收起", () => {
         const store = useDirectorWorkbenchStore;
         store.getState().reset();
-        expect(store.getState().mode).toBe("layout");
+        expect(store.getState().mode).toBe("camera");
         expect(store.getState().sequencerVisible).toBe(false);
+        store.getState().setMode("layout");
         store.getState().setSequencerVisible(true);
         expect(store.getState().sequencerVisible).toBe(true);
         expect(store.getState().mode).toBe("layout");

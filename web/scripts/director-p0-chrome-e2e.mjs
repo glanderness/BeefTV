@@ -53,6 +53,32 @@ function assert(condition, name, detail = "") {
     return Boolean(condition);
 }
 
+async function openDirectorTools(cdp) {
+    const transformMenu = await cdp.click('.director-viewport-dock > button[aria-haspopup="menu"]');
+    return transformMenu && await cdp.clickText("更多导演台工具", '[role="menuitem"]');
+}
+
+async function openDirectorNavigation(cdp) {
+    const toolsMenu = await openDirectorTools(cdp);
+    return toolsMenu && await cdp.clickText("导演台导航", '[role="menuitem"]');
+}
+
+async function openSceneTree(cdp) {
+    return cdp.click('[data-director-left-dock] nav[aria-label="导演台工作区"] button[aria-label="场景"]');
+}
+
+/** Reset fixture-dependent loading scenarios explicitly; the page now opens on the actor parity scene. */
+async function prepareP0Fixture(cdp, scenario) {
+    const clicked = await cdp.click('[data-testid="load-p0-repro-scene"]');
+    if (!clicked) throw new Error(`${scenario}: P0 fixture button not clickable`);
+    const ready = await cdp.poll(`(() => {
+        const count = document.querySelector('[data-testid="object-count"]')?.textContent || '';
+        const offline = document.querySelector('[data-testid="offline-tag"]')?.textContent || '';
+        return count.includes('3') && offline.includes('fixture 无网络资产');
+    })()`, `${scenario} P0 fixture`, 10000);
+    if (!ready) throw new Error(`${scenario}: P0 fixture did not restore`);
+}
+
 function resolveChrome() {
     for (const candidate of CHROME_CANDIDATES) {
         if (candidate && existsSync(candidate)) return candidate;
@@ -409,25 +435,470 @@ async function smokeWorkbench(cdp, baseUrl) {
             injectLocal: !!document.querySelector('[data-testid="inject-local-model"]'),
             injectMissing: !!document.querySelector('[data-testid="inject-missing-model"]'),
             shellCount: document.querySelectorAll('.director-viewport-shell').length,
+            offline: document.querySelector('[data-testid="offline-tag"]')?.textContent?.includes('fixture 无网络资产') === true,
+            objectCount: document.querySelector('[data-testid="object-count"]')?.textContent || '',
+            p0SceneButton: !!document.querySelector('[data-testid="load-p0-repro-scene"]'),
         };
     })()`);
     assert(initial.snapshot, "A1 环境快照 rendered");
     assert(initial.matrix15, "A2 P0 手工复现矩阵（15）rendered");
     assert(initial.injectLocal && initial.injectMissing, "A3 both inject buttons present");
+    assert(initial.offline && initial.objectCount.includes("1") && initial.p0SceneButton, "A3a 默认打开人物对照场景，且保留显式 P0 测试场景入口", JSON.stringify(initial));
+    await cdp.click('[data-testid="toggle-workbench"]');
+    const actorCanvas = await cdp.poll(`(() => {
+        const canvas = document.querySelector('.director-viewport-shell canvas');
+        return !!canvas && canvas.clientWidth > 0 && document.body.innerText.includes('演员 1');
+    })()`, "offline actor rendered in director viewport", 40000);
+    assert(actorCanvas, "A3b 默认人物场景在真实导演台画布可见");
+    const actorRequests = await cdp.evaluate(`performance.getEntriesByType('resource').map((entry) => entry.name).filter((name) => /Xbot\\.glb|director-default-actor/i.test(name))`);
+    assert(actorRequests.length === 0, "A3c 人物视觉对照不请求默认远程 GLB", JSON.stringify(actorRequests));
+    const actorClosed = await cdp.click('[aria-label="关闭导演台"]');
+    if (!actorClosed) throw new Error("A: close control not clickable after default actor render");
+    const p0Loaded = await cdp.click('[data-testid="load-p0-repro-scene"]');
+    if (!p0Loaded) throw new Error("A: P0 fixture button not clickable after closing actor workbench");
+    const p0Fixture = await cdp.evaluate(`(() => ({
+        offline: document.querySelector('[data-testid="offline-tag"]')?.textContent?.includes('fixture 无网络资产') === true,
+        objectCount: document.querySelector('[data-testid="object-count"]')?.textContent || '',
+    }))()`);
+    assert(p0Fixture.offline && p0Fixture.objectCount.includes("3"), "A3d P0 测试场景可一键恢复确定性几何体 fixture", JSON.stringify(p0Fixture));
+
     assert(initial.shellCount === 0, "A4 workbench closed initially", `shellCount=${initial.shellCount}`);
 
     const opened = await cdp.click('[data-testid="toggle-workbench"]');
     if (!opened) throw new Error("A: toggle-workbench not clickable");
     const hasCanvas = await cdp.poll(`(() => { const c = document.querySelector('.director-viewport-shell canvas'); return !!c && c.clientWidth > 0; })()`, "canvas", 40000);
     assert(hasCanvas, "A5 real canvas present in viewport shell");
+    const entryState = await cdp.evaluate(`(() => ({
+        mode: document.querySelector('[aria-label="导演台视口工具"]')?.getAttribute('data-director-mode'),
+        cameraTab: document.querySelector('[aria-label="添加机位"]')?.getAttribute('aria-pressed'),
+        inspector: document.querySelector('[data-director-property-inspector="true"]')?.innerText.slice(0, 80) || '',
+    }))()`);
+    assert(entryState.mode === "camera" && entryState.cameraTab === "true" && entryState.inspector.includes("摄像机"), "A5-entry 首次进入默认呈现机位预设与当前摄影机属性", JSON.stringify(entryState));
+    const rendererReady = await cdp.poll(`document.querySelector('.director-viewport-shell[data-renderer-ready="true"]') !== null`, "live WebGL renderer", 20000);
+    assert(rendererReady, "A5-render 3D 视口在捕获布局前完成首帧渲染");
+    const cameraMenu = await openDirectorNavigation(cdp);
+    const cameraMode = cameraMenu && await cdp.clickText("摄影机", '[role="menuitem"]');
+    if (!cameraMode) throw new Error("A: 更多视口工具中的摄影机模式不可点击");
+    const cameraPreviewReady = await cdp.poll(`(() => {
+        const card = document.querySelector('[aria-label="摄影机预览"]');
+        const image = card?.querySelector('img');
+        return !!card && !!image && image.complete && image.naturalWidth === 384 && image.naturalHeight === 216;
+    })()`, "camera preview image", 20000);
+    assert(cameraPreviewReady, "A5-camera 当前机位生成真实 384×216 离屏预览");
+    const cameraPreviewPixels = await cdp.evaluate(`(() => {
+        const image = document.querySelector('[aria-label="摄影机预览"] img');
+        if (!image || !image.complete || !image.naturalWidth) return { coloredPixels: 0, brightnessRange: 0 };
+        const canvas = document.createElement('canvas');
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        context.drawImage(image, 0, 0);
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+        let coloredPixels = 0;
+        let min = 255;
+        let max = 0;
+        for (let offset = 0; offset < pixels.length; offset += 4) {
+            const luminance = Math.round((pixels[offset] + pixels[offset + 1] + pixels[offset + 2]) / 3);
+            if (luminance > 20) coloredPixels += 1;
+            min = Math.min(min, luminance);
+            max = Math.max(max, luminance);
+        }
+        return { coloredPixels, brightnessRange: max - min };
+    })()`);
+    assert(cameraPreviewPixels.coloredPixels > 3000 && cameraPreviewPixels.brightnessRange > 80, "A5-camera 缩略图确实渲染出场景画面而非纯黑帧", JSON.stringify(cameraPreviewPixels));
+    if (process.env.DIRECTOR_E2E_CAMERA_SCREENSHOT) {
+        const screenshot = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+        writeFileSync(process.env.DIRECTOR_E2E_CAMERA_SCREENSHOT, Buffer.from(screenshot.data, "base64"));
+    }
+    const cameraPreviewState = await cdp.evaluate(`(() => {
+        const canvas = document.querySelector('.director-viewport-shell canvas');
+        const image = document.querySelector('[aria-label="摄影机预览"] img');
+        return { canvasCount: document.querySelectorAll('.director-viewport-shell canvas').length, previewSrc: image?.getAttribute('src') || '', ready: document.querySelector('.director-viewport-shell[data-renderer-ready="true"]') !== null };
+    })()`);
+    assert(cameraPreviewState.canvasCount === 1 && cameraPreviewState.previewSrc.startsWith('blob:') && cameraPreviewState.ready, "A5-camera 离屏预览复用唯一 WebGL renderer，主视口仍就绪", JSON.stringify(cameraPreviewState));
+    const cameraPreviewExpanded = await cdp.click('[aria-label="放大摄影机预览"]');
+    const cameraPreviewModal = cameraPreviewExpanded && await cdp.poll(`!![...document.querySelectorAll('[role="dialog"]')].find((dialog) => (dialog.innerText || '').includes('主摄影机') && dialog.querySelector('img'))`, "expanded camera preview", 10000);
+    assert(cameraPreviewModal, "A5-camera 放大按钮打开同一机位画面预览");
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    const cameraPreviewClosed = await cdp.poll(`![...document.querySelectorAll('[role="dialog"]')].some((dialog) => (dialog.innerText || '').includes('主摄影机') && dialog.querySelector('img'))`, "expanded camera preview closed", 5000);
+    assert(cameraPreviewClosed, "A5-camera 预览放大层可通过 Escape 关闭");
+    const cameraPresetsOpened = await cdp.click('[data-director-left-dock] nav[aria-label="导演台工作区"] button[aria-label="添加机位"]');
+    if (!cameraPresetsOpened) throw new Error("A: 添加机位 rail button not clickable");
+    const cameraPresetGeometry = await cdp.evaluate(`(() => {
+        const button=[...document.querySelectorAll('[data-director-left-dock] button')].find((item)=>(item.innerText||'').trim()==='当前视角');
+        const r=button?.getBoundingClientRect();
+        return r?{x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width),height:Math.round(r.height)}:null;
+    })()`);
+    assert(cameraPresetGeometry?.x === 56 && cameraPresetGeometry.y === 100 && cameraPresetGeometry.width === 104 && cameraPresetGeometry.height === 72, "A5-camera 左侧预设网格卡片尺寸与 LibTV 一致", JSON.stringify(cameraPresetGeometry));
+    const addedPreset = await cdp.clickText("当前视角");
+    if (!addedPreset) throw new Error("A: current-view camera preset not clickable");
+    const presetActivated = await cdp.poll(`(() => {
+        const cameraView=document.querySelector('[aria-label="机位视角"]')?.getAttribute('aria-pressed');
+        const name=document.querySelector('[data-director-property-inspector] input')?.value;
+        return cameraView==='true' && name==='机位 2';
+    })()`, "preset camera becomes active", 10000);
+    assert(presetActivated, "A5-camera 选择预设后创建机位、切换为机位视角并同步属性面板");
+    const undoPresetMenu = await openDirectorNavigation(cdp);
+    const undoPreset = undoPresetMenu && await cdp.clickText("撤销", '[role="menuitem"]');
+    const presetUndone = undoPreset && await cdp.poll(`(() => {
+        return document.querySelector('[data-director-property-inspector] input')?.value==='主摄影机';
+    })()`, "preset camera undo", 10000);
+    assert(presetUndone, "A5-camera 创建预设机位可由工作台撤销完整回退");
+    const sceneRailRestored = await cdp.click('[data-director-left-dock] nav[aria-label="导演台工作区"] button[aria-label="场景"]');
+    if (!sceneRailRestored) throw new Error("A: 场景 rail button not clickable after camera preset comparison");
+    const layoutModeRestored = await cdp.poll(`document.querySelector('[aria-label="导演台视口工具"]')?.getAttribute('data-director-mode') === 'layout'`, "layout mode restored by scene rail", 5000);
+    if (!layoutModeRestored) throw new Error("A: 场景 rail 未切回摆场模式");
+    const cameraInspectorClosed = await cdp.poll(`!document.querySelector('[aria-label="摄影机预览"]')`, "camera inspector hidden outside camera mode", 5000);
+    assert(cameraInspectorClosed, "A5-camera 离开摄影机模式后预览检查器正确收起");
+    const viewToolbarLayout = await cdp.evaluate(`(() => {
+        const root = document.querySelector('[data-director-workbench="true"]');
+        const modeButton = root?.querySelector('[aria-label="导演台取景模式"] button');
+        const modeGroup = root?.querySelector('[aria-label="导演台取景模式"]');
+        const axisWidget = root?.querySelector('[aria-label="方向球"] > div');
+        const modeButtonRect = modeButton?.getBoundingClientRect();
+        const modeGroupRect = modeGroup?.getBoundingClientRect();
+        return {
+            modeButtonTop: Math.round(modeButtonRect?.top ?? -1),
+            axisWidgetTop: Math.round(axisWidget?.getBoundingClientRect().top ?? -1),
+            modeGroupLeft: Math.round(modeGroupRect?.left ?? -1),
+            legacyTopbarTools: !!root?.querySelector('[data-director-topbar-group="tools"]'),
+        };
+    })()`);
+    assert(Math.abs(viewToolbarLayout.modeButtonTop - 10) <= 1 && viewToolbarLayout.axisWidgetTop === 18 && !viewToolbarLayout.legacyTopbarTools, "A5-view-toolbar 取景控件对齐 LibTV 且顶栏不再显示冗余模式切换", JSON.stringify(viewToolbarLayout));
+    const assetDock = await cdp.evaluate(`(() => {
+        const root = document.querySelector('[data-director-workbench="true"]');
+        const tree = root?.querySelector('[data-director-scene-tree="true"]');
+        const viewport = root?.querySelector('main');
+        const rail = root?.querySelector('nav[aria-label="导演台工作区"]');
+        const leftDock = root?.querySelector('[data-director-left-dock="true"]');
+        const rightDock = root?.querySelector('[data-director-right-dock="true"]');
+        const props = root?.querySelector('[data-director-property-inspector="true"]');
+        const titleInput = root?.querySelector('input[aria-label="场景名称"]');
+        const topbarActions = root?.querySelector('[data-director-topbar-group="actions"]');
+        const saveStatus = root?.querySelector('[aria-label="导演台保存状态"]');
+        const topbarTools = root?.querySelector('[data-director-topbar-group="tools"]');
+        const projectTitle = root?.querySelector('[data-director-topbar-group="project"]')?.innerText || '';
+        const projectHeaderRect = root?.querySelector('[data-director-topbar-group="project"]')?.getBoundingClientRect();
+        const railRect = rail?.getBoundingClientRect();
+        const railButton = (label) => rail?.querySelector('[aria-label="' + label + '"]')?.getBoundingClientRect();
+        const sceneRailButton = railButton('场景');
+        const actorRailButton = railButton('添加角色');
+        const cameraRailButton = railButton('添加机位');
+        const helpRailElement = rail?.querySelector('[aria-label="帮助与快捷键"]');
+        const helpRailButton = helpRailElement?.getBoundingClientRect();
+        const leftDockRect = leftDock?.getBoundingClientRect();
+        const rightDockRect = rightDock?.getBoundingClientRect();
+        const treeRect = tree?.getBoundingClientRect();
+        const viewportRect = viewport?.getBoundingClientRect();
+        const propsRect = props?.getBoundingClientRect();
+        return {
+            treeInLeftDock: !!treeRect && !!viewportRect && !!railRect && treeRect.left >= railRect.right && treeRect.right <= viewportRect.left,
+            rightDockInspectorOnly: !!rightDockRect && !!viewportRect && !!props && rightDockRect.left >= viewportRect.right && !rightDock?.querySelector('[data-director-scene-tree="true"]'),
+            topbarActionsMovedOutOfViewportHeader: !topbarActions,
+            saveStatusInProjectHeader: !!saveStatus && saveStatus.closest('[data-director-topbar-group="project"]') !== null,
+            leftDockWidthMatchesLibTv: !!leftDockRect && Math.round(leftDockRect.width) === 280,
+            rightDockWidthMatchesLibTv: !!rightDockRect && Math.round(rightDockRect.width) === 280,
+            leftDockHasRailAndTree: !!leftDockRect && !!rail && leftDockRect.width >= 260,
+            propertyInspectorPresent: !!props,
+            compactBrandTitle: !titleInput && projectTitle.includes('3D导演台'),
+            noLegacyTopbarTools: !topbarTools,
+            projectHeaderAligned: !!leftDockRect && !!projectHeaderRect && Math.abs(projectHeaderRect.left) <= 1 && Math.abs(projectHeaderRect.top) <= 1 && Math.abs(projectHeaderRect.right - leftDockRect.right) <= 1 && Math.abs(projectHeaderRect.height - 52) <= 1,
+            leftRailStartsBelowLibTvHeader: !!railRect && Math.abs(railRect.top - 52) <= 1,
+            railButtonsMatchLibTvGeometry: !!sceneRailButton && !!actorRailButton && !!cameraRailButton
+                && Math.abs(sceneRailButton.x - 7.5) < 1 && Math.abs(sceneRailButton.y - 60) < 1 && sceneRailButton.width === 32 && sceneRailButton.height === 32
+                && Math.abs(actorRailButton.y - 116) < 1 && Math.abs(cameraRailButton.y - 156) < 1,
+            railHelpPinnedToBottom: !!railRect && !!helpRailButton && Math.abs(railRect.bottom - helpRailButton.bottom - 8) < 1,
+            propertyInspectorStartsAtTop: !!propsRect && Math.abs(propsRect.top) <= 1,
+            treeStartsBelowBrand: !!treeRect && treeRect.top >= 52,
+        };
+    })()`);
+    assert(assetDock.treeInLeftDock && assetDock.rightDockInspectorOnly && assetDock.topbarActionsMovedOutOfViewportHeader && assetDock.saveStatusInProjectHeader && assetDock.leftDockWidthMatchesLibTv && assetDock.rightDockWidthMatchesLibTv && assetDock.leftDockHasRailAndTree && assetDock.propertyInspectorPresent && assetDock.compactBrandTitle && assetDock.noLegacyTopbarTools && assetDock.projectHeaderAligned && assetDock.leftRailStartsBelowLibTvHeader && assetDock.railButtonsMatchLibTvGeometry && assetDock.railHelpPinnedToBottom && assetDock.propertyInspectorStartsAtTop && assetDock.treeStartsBelowBrand, "A5-assets 侧栏与工具轨道贴合 LibTV", JSON.stringify(assetDock));
+    const sceneComposerLayout = await cdp.evaluate(`(() => {
+        const composer = document.querySelector('[role="group"][aria-label="场景描述"]');
+        const input = composer?.querySelector('textarea[aria-label="场景描述"]');
+        const guide = document.querySelector('[aria-label="导演台上手引导"]');
+        const dock = document.querySelector('.director-viewport-dock');
+        const controlBar = document.querySelector('.director-scene-control-bar');
+        const rect = (element) => element?.getBoundingClientRect();
+        const a = rect(composer), b = rect(guide), c = rect(dock);
+        const overlaps = (x, y) => !!x && !!y && x.left < y.right && x.right > y.left && x.top < y.bottom && x.bottom > y.top;
+        const viewport = document.querySelector('[data-director-workbench="true"] main')?.getBoundingClientRect();
+        const rowAligned = !!a && !!c && Math.abs((a.top + a.bottom) / 2 - (c.top + c.bottom) / 2) <= 12;
+        const composerSize = a && [Math.round(a.width), Math.round(a.height)];
+        const dockSize = c && [Math.round(c.width), Math.round(c.height)];
+        const matchesLibTvSize = !!composerSize && Math.abs(composerSize[0] - 224) <= 2 && Math.abs(composerSize[1] - 48) <= 2 && !!dockSize && Math.abs(dockSize[0] - 130) <= 3 && Math.abs(dockSize[1] - 48) <= 2;
+        return { present: !!input && input.getAttribute('placeholder') === '描述想搭建的场景', clearOfGuide: !overlaps(a, b), clearOfDock: !overlaps(a, c), input: !!input, rowAligned: !!controlBar && getComputedStyle(controlBar).flexDirection === 'row' && rowAligned, fitsViewport: !!controlBar && !!viewport && controlBar.getBoundingClientRect().right <= viewport.right && controlBar.getBoundingClientRect().left >= viewport.left, matchesLibTvSize, composerSize, dockSize };
+    })()`);
+    assert(sceneComposerLayout.present && sceneComposerLayout.clearOfGuide && sceneComposerLayout.clearOfDock && sceneComposerLayout.rowAligned && sceneComposerLayout.fitsViewport && sceneComposerLayout.matchesLibTvSize, "A5-scene-composer LibTV 紧凑尺寸下的场景描述条同排且不遮挡/溢出", JSON.stringify(sceneComposerLayout));
+    const sceneComposerFocused = await cdp.click('[role="group"][aria-label="场景描述"] textarea');
+    if (sceneComposerFocused) await cdp.send("Input.insertText", { text: "E2E 场景描述" });
+    const sceneComposerEdited = sceneComposerFocused && await cdp.poll(`document.querySelector('[role="group"][aria-label="场景描述"] textarea')?.value === 'E2E 场景描述'`, "scene description input", 5000);
+    assert(sceneComposerEdited, "A5-scene-composer-i 输入内容进入当前镜头描述，不触发生成操作");
+    const initialViewportWidth = await cdp.evaluate(`Math.round(document.querySelector('[data-director-workbench="true"] main')?.getBoundingClientRect().width || 0)`);
+    const collapseSidebar = await cdp.click('[aria-label="折叠场景面板"]');
+    assert(collapseSidebar, "A5-assets-collapse LibTV 式场景面板折叠入口可用");
+    if (collapseSidebar) {
+        const collapsedState = await cdp.poll(`(() => {
+            const tree = document.querySelector('[data-director-scene-tree="true"]');
+            const rail = document.querySelector('[data-director-workbench="true"] nav[aria-label="导演台工作区"]');
+            const viewport = document.querySelector('[data-director-workbench="true"] main');
+            const reopen = document.querySelector('[aria-label="展开场景面板"]');
+            const project = document.querySelector('[data-director-topbar-group="project"]');
+            const root = document.querySelector('[data-director-workbench="true"]');
+            return !!tree && tree.getClientRects().length === 0 && Math.round(rail?.getBoundingClientRect().width || 0) === 48 && reopen?.getAttribute('aria-expanded') === 'false' && root?.getAttribute('data-left-dock-collapsed') === 'true' && Math.round(project?.getBoundingClientRect().width || 0) === 48 && !!viewport && Math.round(viewport.getBoundingClientRect().width) >= ${initialViewportWidth} + 220;
+        })()`, "collapsed scene panel and expanded viewport", 5000);
+        assert(collapsedState, "A5-assets-collapse-i 折叠后保留工具轨道且主视口获得宽度", `initial=${initialViewportWidth}`);
+        if (process.env.DIRECTOR_E2E_COLLAPSED_SCREENSHOT) {
+            const screenshot = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+            writeFileSync(process.env.DIRECTOR_E2E_COLLAPSED_SCREENSHOT, Buffer.from(screenshot.data, "base64"));
+        }
+        const expandSidebar = await cdp.click('[aria-label="展开场景面板"]');
+        assert(expandSidebar, "A5-assets-collapse-ii 可从收起态重新展开场景面板");
+        const expandedState = await cdp.poll(`document.querySelector('[data-director-scene-tree="true"]')?.getClientRects().length > 0 && document.querySelector('[aria-label="折叠场景面板"]')?.getAttribute('aria-expanded') === 'true' && !!document.querySelector('[data-director-property-inspector="true"]')`, "scene tree restored after expansion", 5000);
+        assert(expandedState, "A5-assets-collapse-iii 展开后场景树与右侧检查器恢复");
+    }
+    const lightRowPoint = await cdp.evaluate(`(() => { const row = document.querySelector('[data-director-scene-tree="true"] [data-director-row-label="球体 B"]'); if (!row) return null; const r = row.getBoundingClientRect(); return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)}; })()`);
+    const viewportPoint = await cdp.evaluate(`(() => { const r = document.querySelector('[data-director-workbench="true"] main')?.getBoundingClientRect(); return r ? {x:Math.round(r.left + r.width / 2),y:Math.round(r.top + r.height / 2)} : null; })()`);
+    if (viewportPoint) await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...viewportPoint, buttons: 0 });
+    await sleep(250);
+    const idleRowControls = await cdp.evaluate(`(() => { const row = document.querySelector('[data-director-scene-tree="true"] [data-director-row-label="球体 B"]'); const button = row?.querySelector('button[aria-label="隐藏球体 B"]'); return {opacity: button ? Number(getComputedStyle(button).opacity) : null, pointerEvents: button ? getComputedStyle(button).pointerEvents : null}; })()`);
+    if (lightRowPoint) await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...lightRowPoint, buttons: 0 });
+    await sleep(250);
+    const rowControlsRevealed = await cdp.poll(`(() => { const row = document.querySelector('[data-director-scene-tree="true"] [data-director-row-label="球体 B"]'); const button = row?.querySelector('button[aria-label="隐藏球体 B"]'); return !!button && Number(getComputedStyle(button).opacity) >= 0.95 && getComputedStyle(button).pointerEvents !== 'none'; })()`, "hover row controls fade in", 1200);
+    const hoverRowControls = await cdp.evaluate(`(() => { const row = document.querySelector('[data-director-scene-tree="true"] [data-director-row-label="球体 B"]'); const button = row?.querySelector('button[aria-label="隐藏球体 B"]'); return {opacity: button ? Number(getComputedStyle(button).opacity) : null, pointerEvents: button ? getComputedStyle(button).pointerEvents : null}; })()`);
+    assert(idleRowControls.opacity === 0 && idleRowControls.pointerEvents === "none" && rowControlsRevealed && hoverRowControls.opacity >= 0.95 && hoverRowControls.pointerEvents !== "none", "A5-assets-row 次级显隐操作默认收起，悬浮后出现并可点击", JSON.stringify({ idleRowControls, hoverRowControls }));
+    const selectSceneObject = await cdp.click('[data-director-scene-tree="true"] [data-director-row-label="立方体 A"] > button:first-child');
+    assert(selectSceneObject, "A5-assets-i 从左侧场景树选择对象");
+    const inspectorTracksSelection = await cdp.poll(`(() => {
+        const tree = document.querySelector('[data-director-scene-tree="true"]');
+        const row = tree?.querySelector('[data-director-row-label="立方体 A"]');
+        const inspector = document.querySelector('[data-director-property-inspector="true"]');
+        const title = inspector?.querySelector('input');
+        return row?.getAttribute('data-active') === 'true' && title?.value === '立方体 A';
+    })()`, "selected object inspector", 5000);
+    const selectionState = await cdp.evaluate(`(() => {
+        const row = document.querySelector('[data-director-scene-tree="true"] [data-director-row-label="立方体 A"]');
+        const title = document.querySelector('[data-director-property-inspector="true"] input');
+        return { rowActive: row?.getAttribute('data-active'), inspectorTitle: title?.value || null };
+    })()`);
+    assert(inspectorTracksSelection, "A5-assets-ii 选择左侧树项后右侧检查器同步显示对象属性", JSON.stringify(selectionState));
+    const switchedNavigation = await cdp.click('[data-director-workbench="true"] nav[aria-label="导演台工作区"] button[aria-label="添加角色"]');
+    assert(switchedNavigation, "A5-assets-iii 场景资产栏可切换至角色导航");
+    const onboardingPlacement = await cdp.evaluate(`(() => {
+        const onboarding = document.querySelector('[aria-label="导演台上手引导"]');
+        const actorButton = document.querySelector('[data-director-workbench="true"] nav[aria-label="导演台工作区"] button[aria-label="添加角色"]');
+        const onboardingRect = onboarding?.getBoundingClientRect();
+        const actorRect = actorButton?.getBoundingClientRect();
+        return { visible: !!onboardingRect && onboardingRect.width > 0, clearOfRail: !!onboardingRect && !!actorRect && (onboardingRect.right <= actorRect.left || onboardingRect.left >= actorRect.right || onboardingRect.bottom <= actorRect.top || onboardingRect.top >= actorRect.bottom) };
+    })()`);
+    assert(onboardingPlacement.visible && onboardingPlacement.clearOfRail, "A5-assets-iii-a 新手引导浮层不再覆盖左侧工具轨道", JSON.stringify(onboardingPlacement));
+    const dismissOnboarding = await cdp.click('[aria-label="导演台上手引导"] button:first-of-type');
+    const onboardingDismissed = await cdp.poll(`!document.querySelector('[aria-label="导演台上手引导"]')`, "onboarding dismissed", 3000);
+    const helpButton = await cdp.click('[data-director-rail-help="true"]');
+    const onboardingReopened = await cdp.poll(`document.querySelector('[aria-label="导演台上手引导"] p')?.textContent === '添加并选中演员'`, "help reopens onboarding at first step", 5000);
+    assert(dismissOnboarding && onboardingDismissed && helpButton && onboardingReopened, "A5-assets-iii-b 左侧帮助入口可重新打开并从首步启动引导");
+    const navRestored = await cdp.poll(`(() => {
+        const root = document.querySelector('[data-director-workbench="true"]');
+        const tree = root?.querySelector('[data-director-scene-tree="true"]');
+        const actors = (root?.innerText || '').includes('添加角色');
+        return !tree && actors;
+    })()`, "actor navigation content", 5000);
+    assert(navRestored, "A5-assets-iv 切换工具栏后资产树收起且既有角色面板正常显示");
+    const actorPresetPanel = await cdp.evaluate(`(() => {
+        const panel = document.querySelector('[data-director-left-dock="true"]');
+        const wanted = ['本地上传', '标准男性', '标准女性', '健硕', '纤细', '少年', '儿童', '宽厚', '二头身', '群众 (3x3)', '几何模型'];
+        const labels = [...(panel?.querySelectorAll('button') || [])].map((button) => button.getAttribute('aria-label') || (button.innerText || '').trim());
+        return { present: wanted.filter((label) => labels.includes(label)), boxes: [...(panel?.querySelectorAll('[data-testid^="director-actor-preset-"]') || [])].slice(0, 2).map((button) => { const r=button.getBoundingClientRect(); return [Math.round(r.width),Math.round(r.height)]; }) };
+    })()`);
+    assert(actorPresetPanel.present.length === 11 && actorPresetPanel.boxes.every(([width, height]) => width > 200 && height === 32), "A5-assets-iv-a 角色面板复刻 LibTV 的本地上传/人物体型/群众/几何预设纵向列表", JSON.stringify(actorPresetPanel));
+    const geometryOpened = await cdp.click('[data-testid="director-actor-preset-geometric"]');
+    const geometryItems = geometryOpened && await cdp.evaluate(`(() => { const menu = document.querySelector('[data-testid="director-geometry-submenu"]'); const labels = [...(menu?.querySelectorAll('button') || [])].map((button) => button.innerText.trim()); return ['上传文件','立方体','球体','圆柱体','环状体','圆锥','棱锥','添加空对象'].every((label) => labels.includes(label)); })()`);
+    assert(geometryItems, "A5-assets-iv-a-i 几何模型展开 LibTV 对照中的完整子菜单");
+    for (const [id, label] of [['torus', '环状体'], ['cone', '圆锥'], ['pyramid', '棱锥'], ['empty', '添加空对象']]) {
+        await cdp.evaluate(`(() => { const item=document.querySelector('[data-testid="director-geometry-${id}"]'); item?.scrollIntoView({block:'nearest'}); return !!item; })()`);
+        const added = await cdp.click(`[data-testid="director-geometry-${id}"]`);
+        const sceneTab = added && await openSceneTree(cdp);
+        const visible = sceneTab && await cdp.poll(`(() => [...document.querySelectorAll('[data-director-scene-tree="true"] [data-director-scene-row]')].some((row) => (row.innerText || '').includes(${JSON.stringify(label)})))()`, `${label} scene row`, 5000);
+        assert(visible, `A5-assets-iv-a-ii ${label}从几何子菜单创建并加入场景`);
+        await cdp.click('[data-director-workbench="true"] nav[aria-label="导演台工作区"] button[aria-label="添加角色"]');
+    }
+    for (let index = 0; index < 4; index += 1) {
+        const undoMenu = await openDirectorNavigation(cdp);
+        await cdp.evaluate(`document.querySelector('[role="menuitem"]')?.scrollIntoView({block:'nearest'})`);
+        const undo = undoMenu && await cdp.clickText("撤销", '[role="menuitem"]');
+        if (!undo) throw new Error(`A5-assets-iv-a-iii 几何模型 ${index + 1} 撤销失败`);
+    }
+    await cdp.click('[data-testid="director-actor-preset-geometric"]');
+    const addLocalPreset = await cdp.click('[data-testid="director-actor-preset-standard_female"]');
+    const localPresetAdded = addLocalPreset && await cdp.poll(`(() => {
+        const rows = [...document.querySelectorAll('[data-director-scene-row]')];
+        return rows.some((row) => (row.innerText || '').includes('标准女性 1'));
+    })()`, "local female preset row", 5000);
+    assert(localPresetAdded, "A5-assets-iv-b 选择角色预设后立即新增离线可编辑人物");
+    const presetColor = await cdp.evaluate(`(() => document.querySelector('[data-director-property-inspector] [aria-label="设置颜色 #2f7de1"]')?.classList.contains('is-active'))()`);
+    assert(presetColor, "A5-assets-iv-b-i 内置角色默认使用 LibTV 蓝色材质");
+    const presetRequests = await cdp.evaluate(`performance.getEntriesByType('resource').map((entry) => entry.name).filter((name) => /Xbot\\.glb|director-default-actor/i.test(name))`);
+    assert(presetRequests.length === 0, "A5-assets-iv-c 添加角色预设不下载远程模型", JSON.stringify(presetRequests));
+    const crowdClicked = await cdp.click('[data-testid="director-actor-crowd-3x3"]');
+    const crowdConfigOpened = crowdClicked && await cdp.poll(`!!document.querySelector('[data-testid="director-crowd-dialog"]')`, "crowd configuration popover", 3000);
+    assert(crowdConfigOpened, "A5-assets-iv-d 群众入口先打开阵列配置，不立即创建角色");
+    const crowdBeforeCancel = await cdp.evaluate(`document.querySelectorAll('[data-director-left-dock="true"] [data-director-scene-row]').length`);
+    const crowdCancel = await cdp.click('[data-testid="director-crowd-cancel"]');
+    const crowdCancelUnchanged = crowdCancel && await cdp.poll(`!document.querySelector('[data-testid="director-crowd-dialog"]') && document.querySelectorAll('[data-director-left-dock="true"] [data-director-scene-row]').length === ${crowdBeforeCancel}`, "crowd cancel leaves scene unchanged", 3000);
+    assert(crowdCancelUnchanged, "A5-assets-iv-d-i 取消群众配置关闭浮层且不改场景");
+    const crowdReopen = await cdp.click('[data-testid="director-actor-crowd-3x3"]');
+    const crowdInputs = crowdReopen && await cdp.poll(`!!document.querySelector('[data-testid="director-crowd-rows"]')`, "crowd fields available", 3000);
+    if (crowdInputs) {
+        for (const [selector, value] of [['[data-testid="director-crowd-rows"]', '2'], ['[data-testid="director-crowd-columns"]', '2'], ['[data-testid="director-crowd-spacing"]', '2']]) {
+            await cdp.evaluate(`(() => { const input=document.querySelector(${JSON.stringify(selector)}); input?.focus(); input?.select(); return document.activeElement===input; })()`);
+            await cdp.send("Input.insertText", { text: value });
+        }
+    }
+    const crowdConfigured = crowdInputs && await cdp.poll(`Number(document.querySelector('[data-testid="director-crowd-rows"]')?.value) === 2 && Number(document.querySelector('[data-testid="director-crowd-columns"]')?.value) === 2 && Number(document.querySelector('[data-testid="director-crowd-spacing"]')?.value) === 2 && document.querySelector('[data-testid="director-crowd-count"]')?.innerText.includes('共 4 人')`, "crowd configuration reflects user input", 2000);
+    assert(crowdConfigured, "A5-assets-iv-d-ii 配置输入与人数摘要同步为 2×2 / 4 人");
+    const crowdAdd = crowdInputs && await cdp.click('[data-testid="director-crowd-add"]');
+    const crowdReady = crowdAdd && await cdp.poll(`document.querySelectorAll('[data-director-left-dock="true"] [data-director-scene-row]').length === 5`, "four-member configured crowd rows", 7000);
+    assert(crowdReady, "A5-assets-iv-d 配置 2×2 后创建四个群众角色");
+    const crowdUndoMenu = await openDirectorNavigation(cdp);
+    const crowdUndo = crowdUndoMenu && await cdp.clickText("撤销", '[role="menuitem"]');
+    const crowdUndone = crowdUndo && await cdp.poll(`document.querySelectorAll('[data-director-left-dock="true"] [data-director-scene-row]').length === 1`, "crowd one-step undo", 5000);
+    assert(crowdUndone, "A5-assets-iv-e 群众创建为单个可撤销历史步骤");
+    const sceneImportOpened = await cdp.click('[data-director-workbench="true"] nav[aria-label="导演台工作区"] button[aria-label="AI 识图导入"]');
+    const sceneImportPanel = sceneImportOpened && await cdp.poll(`!!document.querySelector('[role="dialog"] [data-testid="director-reference-dropzone"]') && !!document.querySelector('[role="dialog"] [data-testid="director-scene-history-tab"]')`, "scene image import modal", 4000);
+    assert(sceneImportPanel, "A5-assets-iv-f AI 识图导入入口打开本地上传/历史记录弹窗");
+    const recognitionFlowReady = await cdp.evaluate(`(() => { const root=document.querySelector('[role="dialog"]'); const generate=[...root?.querySelectorAll('button') || []].find(button => button.textContent?.includes('生成站位参考')); return !!generate && generate.disabled && !!root?.querySelector('[data-testid="director-layout-insert"]') && !!root?.querySelector('[data-testid="director-layout-replace"]') && (root.innerText || '').includes('作为站位参考层插入') && (root.innerText || '').includes('关闭不会中断识图任务'); })()`);
+    assert(recognitionFlowReady, "A5-assets-iv-g 无参考图时禁用识图，并说明插入/覆盖语义及关闭后任务持续");
+    const historyTab = await cdp.click('[data-testid="director-scene-history-tab"]');
+    const historyVisible = historyTab && await cdp.poll(`document.querySelector('[role="dialog"]')?.innerText.includes('暂无图片历史') || !!document.querySelector('[role="dialog"] img')`, "image history tab", 4000);
+    assert(historyVisible, "A5-assets-iv-h 识图历史可切换且保留素材入口");
+    const assetsTab = await cdp.click('[data-testid="director-scene-assets-tab-modal"]');
+    const oldAssetsVisible = assetsTab && await cdp.poll(`(document.querySelector('[role="dialog"]')?.innerText || '').includes('画布图片立牌') && (document.querySelector('[role="dialog"]')?.innerText || '').includes('图片素材历史')`, "preserved director assets", 4000);
+    assert(oldAssetsVisible, "A5-assets-iv-i 旧 3D 模型与画布图片素材入口仍可用");
+    const closeImportModal = await cdp.click('.ant-modal-close');
+    const importModalClosed = closeImportModal && await cdp.poll(`!Array.from(document.querySelectorAll('.ant-modal-wrap')).some(node => { const rect=node.getBoundingClientRect(); return rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== 'hidden'; }) && document.querySelector('[data-director-workbench="true"] nav[aria-label="导演台工作区"] button[aria-label="场景"]')?.getAttribute('aria-pressed') === 'true'`, "image import modal closed and scene panel restored", 4000);
+    assert(importModalClosed, "A5-assets-iv-j 关闭识图弹窗后返回导演台场景面板");
+    const sceneButtonBox = await cdp.evaluate(`(() => { const button = document.querySelector('[data-director-workbench="true"] nav[aria-label="导演台工作区"] button[aria-label="场景"]'); if (!button) return null; const r = button.getBoundingClientRect(); return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)}; })()`);
+    if (sceneButtonBox) {
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...sceneButtonBox, button: "left", buttons: 0 });
+        await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...sceneButtonBox, button: "left", buttons: 1, clickCount: 1 });
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...sceneButtonBox, button: "left", buttons: 0, clickCount: 1 });
+    }
+    const backToSceneAssets = await cdp.poll(`document.querySelector('[data-director-workbench="true"] nav[aria-label="导演台工作区"] button[aria-label="场景"]')?.getAttribute('aria-pressed') === 'true'`, "scene rail selection", 5000);
+    assert(backToSceneAssets, "A5-assets-v 从角色导航可信点击返回项目资产栏", JSON.stringify(sceneButtonBox));
+    const treeRestored = await cdp.poll(`!!document.querySelector('[data-director-scene-tree="true"]') && !!document.querySelector('[data-director-property-inspector="true"]')`, "scene assets navigation restored", 5000);
+    assert(treeRestored, "A5-assets-vi 返回场景后资产树和属性检查器恢复");
+    // Test the actual responsive CSS viewport; mobile emulation without a viewport meta tag
+    // expands the layout viewport to 980px and makes the 390px assertions meaningless.
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
+    const narrowDock = await cdp.evaluate(`(() => {
+        const root = document.querySelector('[data-director-workbench="true"]');
+        const viewport = root?.querySelector('main');
+        const tree = root?.querySelector('[data-director-scene-tree="true"]');
+        const rail = root?.querySelector('nav[aria-label="导演台工作区"]');
+        const rootRect = root?.getBoundingClientRect();
+        const viewportRect = viewport?.getBoundingClientRect();
+        const treeRect = tree?.getBoundingClientRect();
+        return {
+            viewportFits: !!rootRect && !!viewportRect && viewportRect.width > 0 && viewportRect.left >= 0 && viewportRect.right <= rootRect.right,
+            noHorizontalOverflow: !!rootRect && rootRect.width <= 390 && root.scrollWidth <= root.clientWidth,
+            treeScrollable: !!tree && tree.scrollHeight >= tree.clientHeight,
+            treeInLeftDock: !!treeRect && !!viewportRect && !!rail && treeRect.left >= rail.getBoundingClientRect().right && treeRect.right <= viewportRect.left,
+            railWidth: Math.round(rail?.getBoundingClientRect().width || 0),
+            viewportWidth: Math.round(viewportRect?.width || 0),
+            rootWidth: Math.round(rootRect?.width || 0),
+            rootClientWidth: root?.clientWidth || 0,
+            rootScrollWidth: root?.scrollWidth || 0,
+            windowWidth: window.innerWidth,
+            visualViewportWidth: Math.round(window.visualViewport?.width || 0),
+            gridColumns: root?.querySelector('.grid') ? getComputedStyle(root.querySelector('.grid')).gridTemplateColumns : '',
+            treeHeight: Math.round(treeRect?.height || 0),
+        };
+    })()`);
+    assert(narrowDock.viewportFits && narrowDock.noHorizontalOverflow && narrowDock.treeInLeftDock && narrowDock.railWidth <= 64, "A5-assets-vii 手机宽度下场景树仍位于左侧轨道旁且无横向溢出", JSON.stringify(narrowDock));
+    const narrowControlBar = await cdp.evaluate(`(() => {
+        const root = document.querySelector('[data-director-workbench="true"]');
+        const viewport = root?.querySelector('main');
+        const bar = root?.querySelector('.director-scene-control-bar');
+        const dock = bar?.querySelector('.director-viewport-dock');
+        const composer = bar?.querySelector('[role="group"][aria-label="场景描述"]');
+        const rect = (element) => element?.getBoundingClientRect();
+        const r = rect(bar), v = rect(viewport), d = rect(dock), c = rect(composer);
+        return {
+            stacked: !!bar && getComputedStyle(bar).flexDirection === 'column-reverse',
+            visible: !!d && !!c && d.width > 0 && c.width > 0,
+            fitsViewport: !!r && !!v && r.left >= v.left && r.right <= v.right,
+            noHorizontalOverflow: !!root && root.scrollWidth <= root.clientWidth,
+        };
+    })()`);
+    assert(narrowControlBar.stacked && narrowControlBar.visible && narrowControlBar.fitsViewport && narrowControlBar.noHorizontalOverflow, "A5-assets-vii-a 手机宽度下场景描述与工具栏纵向排列且完整可见", JSON.stringify(narrowControlBar));
+    const narrowViewportWidth = narrowDock.viewportWidth;
+    const narrowCollapse = await cdp.click('[aria-label="折叠场景面板"]');
+    assert(narrowCollapse, "A5-assets-viii 窄屏顶部滚动栏中的折叠按钮可触达");
+    if (narrowCollapse) {
+        const narrowCollapsed = await cdp.poll(`(() => {
+            const tree = document.querySelector('[data-director-scene-tree="true"]');
+            const viewport = document.querySelector('[data-director-workbench="true"] main');
+            const root = document.querySelector('[data-director-workbench="true"]');
+            return !!tree && tree.getClientRects().length === 0 && !!root && root.scrollWidth <= root.clientWidth && Math.round(viewport?.getBoundingClientRect().width || 0) >= ${narrowViewportWidth} + 100;
+        })()`, "narrow collapsed scene panel", 5000);
+        assert(narrowCollapsed, "A5-assets-viii-a 窄屏折叠后场景树收起、视口扩展且无横向溢出", `initial=${narrowViewportWidth}`);
+        const narrowExpand = await cdp.click('[aria-label="展开场景面板"]');
+        assert(narrowExpand, "A5-assets-viii-b 窄屏可重新展开场景面板");
+        const narrowRestored = await cdp.poll(`document.querySelector('[data-director-scene-tree="true"]')?.getClientRects().length > 0`, "narrow scene panel restored", 5000);
+        assert(narrowRestored, "A5-assets-viii-c 窄屏展开后场景树恢复");
+    }
+    await cdp.send("Emulation.clearDeviceMetricsOverride");
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    await cdp.poll(`window.innerWidth >= 1280`, "desktop viewport restored", 5000);
+    await cdp.poll(`window.innerWidth > 390`, "desktop viewport restored", 5000);
+    const floatingHeader = await cdp.evaluate(`(() => {
+        const header = document.querySelector('[data-director-topbar="true"]');
+        const viewport = document.querySelector('[data-director-workbench="true"] main');
+        const actions = header?.querySelector('[data-director-topbar-group="actions"]');
+        const actionRect = actions?.getBoundingClientRect();
+        return {
+            floating: !!header && getComputedStyle(header).position === 'absolute',
+            groups: header?.querySelectorAll('[data-director-topbar-group]').length || 0,
+            viewportStartsAtTop: !!viewport && Math.round(viewport.getBoundingClientRect().top) === 0,
+            actionsMovedOut: !actions,
+            saveStatusVisible: !!header?.querySelector('[aria-label="导演台保存状态"]'),
+            actionWidth: Math.round(actionRect?.width || 0),
+        };
+    })()`);
+    assert(floatingHeader.floating && floatingHeader.groups === 1 && floatingHeader.viewportStartsAtTop && floatingHeader.actionsMovedOut && floatingHeader.saveStatusVisible, "A5-top 顶栏收敛为项目标题，保存状态保留", JSON.stringify(floatingHeader));
+    const toolsMenuOpened = await openDirectorTools(cdp);
+    assert(toolsMenuOpened, "A5-tools 三工具 dock 的扩展工具子菜单可达");
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    const sceneAddOpened = await cdp.click('[aria-label="添加场景对象"]');
+    const sceneAddInventory = sceneAddOpened && await cdp.evaluate(`(() => {
+        const text = document.body.innerText || '';
+        return ["演员", "立方体", "球体", "上传模型"].every((label) => text.includes(label));
+    })()`);
+    assert(sceneAddInventory, "A5-tools-i 场景对象添加统一位于场景树标题菜单");
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    if (process.env.DIRECTOR_E2E_SCENE_SCREENSHOT) {
+        const screenshot = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+        writeFileSync(process.env.DIRECTOR_E2E_SCENE_SCREENSHOT, Buffer.from(screenshot.data, "base64"));
+    }
 
-    const preview = await cdp.click('nav[aria-label="导演台工作区视图"] button:nth-child(2)');
+    const previewMenu = await openDirectorNavigation(cdp);
+    const preview = previewMenu && await cdp.clickText("成片预演", '[role="menuitem"]');
     if (!preview) throw new Error("A: 成片预演工作区按钮 not clickable");
     const previewReady = await cdp.poll(`(() => {
-        const tabs = document.querySelectorAll('nav[aria-label="导演台工作区视图"] button');
         const grid = document.querySelector('[data-director-workbench="true"] > .grid');
-        return tabs[1]?.getAttribute('aria-pressed') === 'true'
+        return document.querySelector('[data-director-workbench="true"]')?.getAttribute('data-workspace-view') === 'preview'
             && document.querySelectorAll('.director-sequencer').length === 1
+            && document.querySelector('.director-sequencer[data-presentation="preview"]')
+            && !!document.querySelector('input[type="range"][aria-label="时间线缩放"]')
+            && !!document.querySelector('[role="slider"][aria-label="预演时间线"]')
+            && !!document.querySelector('button[aria-label="新增镜头"]')
+            && !document.querySelector('button[title="自动关键帧"]')
+            && !document.querySelector('button[title="吸附到帧"]')
+            && !document.querySelector('button[title="记录当前关键帧"]')
+            && !document.querySelector('.director-sequencer-resizer')
             && !!document.querySelector('textarea[aria-label="当前镜头意图"]')
             && !document.querySelector('[aria-label="导演台取景模式"]')
             && !document.querySelector('[aria-label="方向球"]')
@@ -436,15 +907,28 @@ async function smokeWorkbench(cdp, baseUrl) {
             && grid && getComputedStyle(grid).gridTemplateColumns.split(' ').length === 1;
     })()`, "cinema preview workspace", 20000);
     assert(previewReady, "A5a 成片预演聚焦单画布并显示时间线");
+    const scrubbed = await cdp.click('[role="slider"][aria-label="预演时间线"]');
+    if (!scrubbed) throw new Error("A: preview timeline not clickable");
+    const scrubReady = await cdp.poll(`Number(document.querySelector('[role="slider"][aria-label="预演时间线"]')?.getAttribute('aria-valuenow') || 0) > 0`, "preview playhead scrub", 5000);
+    assert(scrubReady, "A5a-i 预演时间线点击可定位播放头");
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    const narrowReady = await cdp.poll(`(() => {
+        const sequencer = document.querySelector('.director-sequencer[data-presentation="preview"]');
+        const rect = sequencer?.getBoundingClientRect();
+        return !!rect && rect.width <= 390 && !!document.querySelector('input[aria-label="时间线缩放"]') && !!document.querySelector('button[aria-label="收起时间轴"]');
+    })()`, "narrow preview timeline", 5000);
+    assert(narrowReady, "A5a-ii 窄屏预演控件仍可见且不溢出视口");
+    await cdp.send("Emulation.clearDeviceMetricsOverride");
     if (process.env.DIRECTOR_E2E_SCREENSHOT) {
         const screenshot = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
         writeFileSync(process.env.DIRECTOR_E2E_SCREENSHOT, Buffer.from(screenshot.data, "base64"));
     }
-    const sceneView = await cdp.click('nav[aria-label="导演台工作区视图"] button:nth-child(1)');
+    const sceneMenu = await openDirectorNavigation(cdp);
+    const sceneMenuVisible = sceneMenu && await cdp.poll(`!![...document.querySelectorAll('[role="menuitem"]')].find((item) => (item.textContent || '').trim() === '场景调度')`, "scene menu item visible", 5000);
+    const sceneView = sceneMenuVisible && await cdp.clickText("场景调度", '[role="menuitem"]');
     if (!sceneView) throw new Error("A: 场景调度工作区按钮 not clickable");
     const sceneRestored = await cdp.poll(`(() => {
-        const tabs = document.querySelectorAll('nav[aria-label="导演台工作区视图"] button');
-        return tabs[0]?.getAttribute('aria-pressed') === 'true'
+        return document.querySelector('[data-director-workbench="true"]')?.getAttribute('data-workspace-view') === 'scene'
             && document.querySelectorAll('nav[aria-label="导演台工作区"]').length === 1
             && document.querySelectorAll('.director-sequencer').length === 0;
     })()`, "scene workspace restored", 20000);
@@ -452,28 +936,43 @@ async function smokeWorkbench(cdp, baseUrl) {
 
     // P1-A 起 AutoKey/时间轴归属动画模式：默认摆场模式下它们必须不存在。
     const layoutGating = await cdp.evaluate(`(() => ({
-        mode: document.querySelector('button[data-mode="layout"]')?.getAttribute('aria-pressed') ?? null,
+        mode: document.querySelector('[aria-label="导演台视口工具"]')?.getAttribute('data-director-mode') ?? null,
         sequencer: document.querySelectorAll('.director-sequencer').length,
         autoKey: document.querySelectorAll('button[title="自动关键帧"]').length,
     }))()`);
-    assert(layoutGating.mode === "true", "A6 默认进入摆场模式", `got ${JSON.stringify(layoutGating.mode)}`);
+    assert(layoutGating.mode === "layout", "A6 默认进入摆场模式", `got ${JSON.stringify(layoutGating.mode)}`);
     assert(layoutGating.sequencer === 0 && layoutGating.autoKey === 0, "A7 摆场模式不显示时间轴与 AutoKey", JSON.stringify(layoutGating));
 
     // 原 A6 的断言意图（AutoKey 默认不开启）在它真正存在的模式里继续守住。
-    const switched = await cdp.click('button[data-mode="animate"]');
-    if (!switched) throw new Error("A: 动画模式按钮 not clickable");
+    const animateMenu = await openDirectorNavigation(cdp);
+    const switched = animateMenu && await cdp.clickText("动画", '[role="menuitem"]');
+    if (!switched) throw new Error("A: 更多视口工具中的动画模式不可点击");
     const sequencerShown = await cdp.poll(`document.querySelectorAll('.director-sequencer').length === 1`, "sequencer in animate mode", 20000);
     assert(sequencerShown, "A8 动画模式显示时间轴");
 
     const autoKey = await cdp.evaluate(`document.querySelector('button[title="自动关键帧"]')?.getAttribute('aria-pressed') ?? null`);
     assert(autoKey === "false", "A9 AutoKey defaults to aria-pressed=false", `got ${JSON.stringify(autoKey)}`);
 
-    const addedCube = await cdp.click('[aria-label="添加立方体"]');
-    if (!addedCube) throw new Error("A: 添加立方体 button not clickable");
+    const sceneAdd = await cdp.click('[aria-label="添加场景对象"]');
+    if (!sceneAdd) throw new Error("A: 添加场景对象 button not clickable");
+    const cubeMenuItemVisible = await cdp.poll(`!![...document.querySelectorAll('[role="menuitem"]')].find((item) => (item.textContent || '').trim() === '立方体')`, "add cube menu item visible", 5000);
+    if (!cubeMenuItemVisible) throw new Error("A: 场景面板立方体 menu item 未渲染");
+    const addedCube = await cdp.clickText("立方体", '[role="menuitem"]');
+    if (!addedCube) throw new Error("A: 场景面板立方体 menu item not clickable");
     const cubeAppeared = await cdp.poll(`[...document.querySelectorAll('[data-director-scene-row]')].some((row) => (row.innerText || '').trim() === '立方体')`, "cube row", 20000);
     assert(cubeAppeared, "A10 added cube appears in object list");
 
-    const undone = await cdp.click('[aria-label="撤销"]');
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "r", code: "KeyR", text: "r", windowsVirtualKeyCode: 82 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "r", code: "KeyR", windowsVirtualKeyCode: 82 });
+    const rotateShortcutWorks = await cdp.poll(`document.querySelector('[aria-label="导演台视口工具"] button[aria-label="旋转"]') !== null`, "rotate shortcut after menu selection", 5000);
+    assert(rotateShortcutWorks, "A10-hotkey 菜单添加对象后 R 变换快捷键仍可触发");
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "w", code: "KeyW", text: "w", windowsVirtualKeyCode: 87 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "w", code: "KeyW", windowsVirtualKeyCode: 87 });
+    const translateShortcutRestored = await cdp.poll(`document.querySelector('[aria-label="导演台视口工具"] button[aria-label="移动"]') !== null`, "translate shortcut restored", 5000);
+    assert(translateShortcutRestored, "A10-hotkey-i W 变换快捷键可从菜单操作后恢复移动模式");
+
+    const undoMenu = await openDirectorNavigation(cdp);
+    const undone = undoMenu && await cdp.clickText("撤销", '[role="menuitem"]');
     if (!undone) throw new Error("A: 撤销 button not clickable");
     const cubeGone = await cdp.poll(`![...document.querySelectorAll('[data-director-scene-row]')].some((row) => (row.innerText || '').trim() === '立方体')`, "cube removed by undo", 20000);
     assert(cubeGone, "A11 Undo removes the added cube");
@@ -495,6 +994,7 @@ async function smokeWorkbench(cdp, baseUrl) {
 async function localModel(cdp, baseUrl) {
     console.log("\n=== B. local triangle model ===");
     await cdp.navigateFresh(`${baseUrl}/dev/director-repro`);
+    await prepareP0Fixture(cdp, "B");
 
     const injected = await cdp.click('[data-testid="inject-local-model"]');
     if (!injected) throw new Error("B: inject-local-model not clickable");
@@ -506,6 +1006,8 @@ async function localModel(cdp, baseUrl) {
 
     const workbenchReady = await cdp.poll(`!!document.querySelector('[data-director-workbench="true"]')`, "workbench mounted", 20000);
     assert(workbenchReady, "B1a workbench mounted before reading scene rows");
+    const sceneTreeOpened = await openSceneTree(cdp);
+    assert(sceneTreeOpened, "B1b 场景树从默认机位工作区可达");
 
     const rowReady = await cdp.poll(`[...document.querySelectorAll('[data-director-scene-row]')].some((row) => (row.innerText || '').includes('本地模型 repro triangle'))`, "model row", 30000);
     assert(rowReady, "B2 local model row present in object list");
@@ -541,6 +1043,7 @@ async function localModel(cdp, baseUrl) {
 async function missingRetry(cdp, baseUrl) {
     console.log("\n=== C. missing model failure and retry ===");
     await cdp.navigateFresh(`${baseUrl}/dev/director-repro`);
+    await prepareP0Fixture(cdp, "C");
 
     const injected = await cdp.click('[data-testid="inject-missing-model"]');
     if (!injected) throw new Error("C: inject-missing-model not clickable");
@@ -588,6 +1091,7 @@ async function missingRetry(cdp, baseUrl) {
 async function deleteWhileLoading(cdp, baseUrl) {
     console.log("\n=== D. delete while loading (throttled) ===");
     await cdp.navigateFresh(`${baseUrl}/dev/director-repro`);
+    await prepareP0Fixture(cdp, "D");
 
     try {
         await cdp.send("Network.emulateNetworkConditions", {
@@ -605,15 +1109,25 @@ async function deleteWhileLoading(cdp, baseUrl) {
 
         const workbenchReady = await cdp.poll(`!!document.querySelector('[data-director-workbench="true"]')`, "workbench mounted", 20000);
         assert(workbenchReady, "D0a workbench mounted before reading scene rows");
+        const sceneTreeOpened = await openSceneTree(cdp);
+        assert(sceneTreeOpened, "D0b 加载中删除用例可切入场景树");
 
         const rowReady = await cdp.poll(`[...document.querySelectorAll('[data-director-scene-row]')].some((row) => (row.innerText || '').includes('本地模型 repro triangle'))`, "model row", 30000);
         assert(rowReady, "D1 model row present while load still in flight");
 
         const selected = await cdp.clickText("本地模型 repro triangle");
         if (!selected) throw new Error("D: model row not selectable");
-        const deleteReady = await cdp.poll(`!!document.querySelector('button[aria-label="删除"]')`, "selected model delete action", 10000);
+        const deleteReady = await cdp.poll(`!!document.querySelector('[data-director-property-inspector] button[aria-label="删除"]')`, "selected model delete action", 10000);
         assert(deleteReady, "D1a selecting model exposes inspector delete action");
-        const deleted = await cdp.click('button[aria-label="删除"]');
+        const deleteButtonRect = await cdp.evaluate(`(() => {
+            const button=document.querySelector('[data-director-property-inspector] button[aria-label="删除"]');
+            const r=button?.getBoundingClientRect();
+            if (!button || !r) return null;
+            const x=r.left+r.width/2, y=r.top+r.height/2, hit=document.elementFromPoint(x,y);
+            return {top:Math.round(r.top),bottom:Math.round(r.bottom),hitTarget:hit===button||button.contains(hit),visible:r.width>0&&r.height>0};
+        })()`);
+        assert(deleteButtonRect && deleteButtonRect.visible && deleteButtonRect.hitTarget, "D1b inspector delete control remains independently clickable outside the floating topbar hit region", JSON.stringify(deleteButtonRect));
+        const deleted = await cdp.click('[data-director-property-inspector] button[aria-label="删除"]');
         if (!deleted) throw new Error("D: inspector delete action not clickable");
         const gone = await cdp.poll(`!(document.body.innerText || "").includes('本地模型 repro triangle')`, "name removed", 20000);
         assert(gone, "D2 object removed while its load was in flight");
@@ -735,15 +1249,22 @@ async function saveFailureCloseGuard(cdp, baseUrl) {
     if (!opened) throw new Error("F: toggle-workbench not clickable");
     const hasCanvas = await cdp.poll(`(() => { const c = document.querySelector('.director-viewport-shell canvas'); return !!c && c.clientWidth > 0; })()`, "canvas", 40000);
     assert(hasCanvas, "F2 workbench open with real canvas");
+    const sceneTreeOpened = await openSceneTree(cdp);
+    assert(sceneTreeOpened, "F2a 保存失败用例可切入场景树");
 
-    // canonical 改动：dock 新增立方体会走 commit → coordinator.edit → flush（被强制失败）。
-    const addedCube = await cdp.click('[aria-label="添加立方体"]');
-    if (!addedCube) throw new Error("F: 添加立方体 button not clickable");
+    // canonical 改动：场景树新增立方体会走 commit → coordinator.edit → flush（被强制失败）。
+    const sceneAdd = await cdp.click('[aria-label="添加场景对象"]');
+    if (!sceneAdd) throw new Error("F: 添加场景对象 button not clickable");
+    const addedCube = await cdp.clickText("立方体", '[role="menuitem"]');
+    if (!addedCube) throw new Error("F: 场景面板立方体 menu item not clickable");
 
     const errorState = await cdp.poll(`(document.body.innerText || "").includes('保存失败')`, "save failure header", 40000);
     assert(errorState, "F3 header surfaces 保存失败 after forced flush failure");
-    const retryVisible = await cdp.poll(`[...document.querySelectorAll('button')].some((b) => (b.textContent || "").includes('重试保存'))`, "retry save affordance", 20000);
-    assert(retryVisible, "F4 actionable 重试保存 affordance present");
+    const toolsMenuOpened = await openDirectorTools(cdp);
+    const retryVisible = toolsMenuOpened && await cdp.poll(`!![...document.querySelectorAll('[role="menu"] li')].find((item) => (item.textContent || "").includes('重试保存'))`, "retry save affordance in viewport tools", 20000);
+    assert(retryVisible, "F4 actionable 重试保存 affordance present in the viewport tools menu");
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
 
     const closeClicked = await cdp.click('[aria-label="关闭导演台"]');
     if (!closeClicked) throw new Error("F: 关闭导演台 button not clickable");

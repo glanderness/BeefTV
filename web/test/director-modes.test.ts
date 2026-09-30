@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import { DIRECTOR_DEFAULT_MODE, DIRECTOR_MODES, directorModeCapabilities, resolveDirectorModeTransition, type DirectorMode } from "../src/lib/canvas/director/director-modes";
+import { DIRECTOR_DEFAULT_MODE, DIRECTOR_ENTRY_MODE, DIRECTOR_MODES, directorModeCapabilities, resolveDirectorModeTransition, type DirectorMode } from "../src/lib/canvas/director/director-modes";
 import { createDirectorScene } from "../src/lib/canvas/director/director-scene";
 import { createDirectorSceneFromTemplate } from "../src/lib/canvas/director/director-templates";
 import { useDirectorWorkbenchStore } from "../src/stores/canvas/use-director-workbench-store";
@@ -13,9 +13,10 @@ describe("四模式骨架", () => {
         expect(DIRECTOR_MODES.map((item) => item.label)).toEqual(["摆场", "姿态", "动画", "摄影机"]);
     });
 
-    test("默认模式是摆场", () => {
+    test("能力回退模式仍为摆场；新导演台会话默认进入摄影机工作区", () => {
         expect(DIRECTOR_DEFAULT_MODE).toBe("layout");
-        expect(useDirectorWorkbenchStore.getState().mode).toBe("layout");
+        expect(DIRECTOR_ENTRY_MODE).toBe("camera");
+        expect(useDirectorWorkbenchStore.getState().mode).toBe("camera");
     });
 
     test("每个模式都有可读标签与提示，保证可发现", () => {
@@ -127,15 +128,16 @@ describe("store 的 setMode", () => {
         expect(store.getState().playhead).toBe(2.5);
     });
 
-    test("reset 回到默认摆场", () => {
+    test("reset 回到摄影机工作区入口", () => {
         const store = useDirectorWorkbenchStore;
         store.getState().setMode("animate");
         store.getState().reset();
-        expect(store.getState().mode).toBe("layout");
+        expect(store.getState().mode).toBe("camera");
     });
 
     test("摆场模式拒绝 pose/depth/normal，只接受 beauty/clay", () => {
         const store = useDirectorWorkbenchStore;
+        store.getState().setMode("layout");
         expect(store.getState().mode).toBe("layout");
 
         store.getState().setRenderMode("clay");

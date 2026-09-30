@@ -4,7 +4,7 @@ import { Switch } from "@/components/ui/base/switch";
 
 import { CanvasDirectorWorkbench } from "@/components/canvas/director/canvas-director-workbench";
 import { generateDirectorPanorama } from "@/lib/canvas/director/director-panorama-generation";
-import { DIRECTOR_REPRO_MATRIX, createDirectorReproScene, directorReproSceneIsOffline, injectDirectorReproModel, type DirectorReproModelVariant } from "@/lib/canvas/director/director-repro-fixture";
+import { DIRECTOR_REPRO_MATRIX, createDirectorReproActorScene, createDirectorReproScene, directorReproSceneIsOffline, injectDirectorReproModel, type DirectorReproModelVariant } from "@/lib/canvas/director/director-repro-fixture";
 import { readDirectorReproSnapshot, type DirectorReproSnapshot } from "@/lib/canvas/director/director-repro-runtime";
 import { resetDirectorDiagnosticDedupe } from "@/lib/canvas/director/director-diagnostics-recorder";
 import { getClientDiagnosticEvents } from "@/services/diagnostics/client-diagnostics";
@@ -58,7 +58,7 @@ async function readDirectorVideoSize(blob: Blob): Promise<string> {
  * 仍可能联网，这是刻意保留的真实行为 —— 不要据此宣称整个工作台永不发网。
  */
 export default function DirectorReproLab() {
-    const [scene, setScene] = useState<DirectorScene>(() => createDirectorReproScene());
+    const [scene, setScene] = useState<DirectorScene>(() => createDirectorReproActorScene());
     // workbench 是 fixed inset-0 全屏浮层，会完全遮住本页。默认关闭，
     // 让环境快照 / 事件列表 / 复现矩阵先可读，再由用户显式打开进入复现。
     const [workbenchOpen, setWorkbenchOpen] = useState(false);
@@ -91,7 +91,7 @@ export default function DirectorReproLab() {
 
     const reset = useCallback(() => {
         resetDirectorDiagnosticDedupe();
-        setScene(createDirectorReproScene());
+        setScene(createDirectorReproActorScene());
         setForceSaveFailure(false);
         setAppliedCount(0);
         setLastOutput(null);
@@ -122,6 +122,12 @@ export default function DirectorReproLab() {
                     </Button>
                     <Button size="small" data-testid="inject-panorama" onClick={() => setScene((current) => ({ ...current, panorama: { url: panoramaFixtureUrl, name: "本地双色全景", rotation: current.panoramaRotation ?? 0 } }))}>
                         注入本地全景
+                    </Button>
+                    <Button size="small" data-testid="load-actor-visual-scene" onClick={() => setScene(createDirectorReproActorScene())}>
+                        人物视觉对照场景
+                    </Button>
+                    <Button size="small" data-testid="load-p0-repro-scene" onClick={() => setScene(createDirectorReproScene())}>
+                        P0 测试场景
                     </Button>
                     <span className="text-[var(--fs-tiny)] opacity-70">强制保存失败</span>
                     <Switch checked={forceSaveFailure} onChange={setForceSaveFailure} data-testid="force-save-failure" />

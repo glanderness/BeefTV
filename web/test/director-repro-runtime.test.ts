@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { projectDirectorWebgl, readDirectorReproRuntime, releaseProbeContext, safeReproText } from "../src/lib/canvas/director/director-repro-runtime";
-import { DIRECTOR_REPRO_LOCAL_MODEL_URL, DIRECTOR_REPRO_MATRIX, DIRECTOR_REPRO_MISSING_MODEL_URL, createDirectorReproScene, directorReproSceneIsOffline, injectDirectorReproModel } from "../src/lib/canvas/director/director-repro-fixture";
+import { DIRECTOR_REPRO_LOCAL_MODEL_URL, DIRECTOR_REPRO_MATRIX, DIRECTOR_REPRO_MISSING_MODEL_URL, createDirectorReproActorScene, createDirectorReproScene, directorReproSceneIsOffline, injectDirectorReproModel } from "../src/lib/canvas/director/director-repro-fixture";
 import { DIRECTOR_PLACEMENT_MARGIN, directorObjectFootprint } from "../src/lib/canvas/director/director-placement";
 import type { DirectorObject } from "../src/types/director";
 
@@ -274,6 +274,7 @@ describe("fixture 确定性与离线性", () => {
         const second = createDirectorReproScene();
         expect(second.objects[0].transform.position[0]).toBe(0);
         expect(second.title).toBe("P0 复现场景");
+        expect(second.background).toBe("#060608");
     });
 
     test("不含任何远端资产：无 url / storageKey / assetId", () => {
@@ -294,6 +295,17 @@ describe("fixture 确定性与离线性", () => {
         expect(scene.shots.some((shot) => shot.id === scene.activeShotId)).toBe(true);
         expect(scene.shots.every((shot) => scene.cameras.some((camera) => camera.id === shot.cameraId))).toBe(true);
         expect(scene.objects.every((object) => object.transform.position.every((value) => Number.isFinite(value)))).toBe(true);
+    });
+
+    test("人物视觉对照场景以离线人偶为主视觉且不引入网络模型", () => {
+        const scene = createDirectorReproActorScene();
+        expect(scene).toEqual(createDirectorReproActorScene());
+        expect(directorReproSceneIsOffline(scene)).toBe(true);
+        expect(scene.objects).toHaveLength(1);
+        expect(scene.objects[0]).toMatchObject({ id: "repro-actor-1", kind: "actor", name: "演员 1", visible: true, pose: "stand" });
+        expect(scene.objects[0].url).toBeUndefined();
+        expect(scene.objects[0].rig).toEqual({ status: "unmapped", boneMap: {}, animationNames: [] });
+        expect(scene.shots.some((shot) => shot.id === scene.activeShotId)).toBe(true);
     });
 
     test("对象初始不重叠，便于复现连续新增语义", () => {

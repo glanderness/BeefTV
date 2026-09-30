@@ -94,6 +94,7 @@ import { resolveCanvasEmptyStateKind } from "@/lib/canvas/canvas-starter";
 import { failedImageBatchChildren, markImageBatchRetrying, reconcileImageBatchRoot, restoreUnsubmittedImageBatchChild } from "@/lib/canvas/canvas-image-batch-retry";
 import { shouldBlockAutomaticRetry } from "@/lib/generation-error";
 import { createCanvasNode, getInputSummary, isHiddenBatchChild } from "@/lib/canvas/canvas-project-domain";
+import { connectDirectorReferenceNodes } from "@/lib/canvas/director/director-reference-assets";
 import { canvasWorkspaceProjectId, listCanvasWorkspaceProjectCanvases } from "@/lib/canvas/canvas-workspace-project";
 import { deleteWorkspaceCanvasProjects } from "@/services/workspace-project-repository";
 import { createLibTvAudioFixture, createLibTvEmptyTextFixture, createLibTvGeneratingFixture, createLibTvReadonlyDenseFixture, createLibTvStoryboardFixture, createLibTvTextFixture, createLibTvVideoConversionFixture, createLibTvVideoFixture, createLibTvVideoMergeFixture, createLibTvVideoSubtitleFixture } from "@/lib/canvas/canvas-libtv-fixture";
@@ -1105,6 +1106,23 @@ function InfiniteCanvasPage() {
         setDialogNodeId,
     });
     const replaceCanvasNodeMedia = useCallback((node: CanvasNodeData) => handleUploadRequest(node.id), [handleUploadRequest]);
+    const addDirectorReferenceToCanvas = useCallback(async (image: Awaited<ReturnType<typeof uploadImage>>, title: string) => {
+        const node = createCanvasNode(CanvasNodeType.Image, getCanvasCenter(), imageMetadata(image));
+        node.title = title;
+        const linked = connectDirectorReferenceNodes([...nodesRef.current, node], connectionsRef.current, [node.id], directorNodeId || "", () => nanoid(), "replace");
+        nodesRef.current = linked.nodes;
+        connectionsRef.current = linked.connections;
+        setNodes(linked.nodes);
+        setConnections(linked.connections);
+        setSelectedNodeIds(new Set([node.id]));
+        setSelectedConnectionId(null);
+        try {
+            const result = await ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId: currentProject?.projectId, node, source: "canvas-upload" });
+            setNodes((current) => current.map((item) => item.id === node.id ? { ...item, metadata: { ...item.metadata, assetId: result.assetId } } : item));
+        } catch (error) {
+            message.warning(error instanceof Error ? `图片已加入画布，但素材同步失败：${error.message}` : "图片已加入画布，但素材同步失败");
+        }
+    }, [connectionsRef, currentProject?.projectId, directorNodeId, getCanvasCenter, message, nodesRef, projectId, setConnections, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
     const {
         timelineAddNodeRef,
         timelineMediaAddRef,
@@ -3638,6 +3656,7 @@ function InfiniteCanvasPage() {
                                     onShouldCaptureCover={shouldCaptureCover}
                                     onCaptureCover={captureDirectorCover}
                                     onDeleteImageNode={(nodeId) => deleteNodes(new Set([nodeId]))}
+                                    onAddCanvasImage={addDirectorReferenceToCanvas}
                                     onFlush={() => flushCanvasStorePersistence()}
                                     onboardingScope={directorOnboardingScope}
                                 />

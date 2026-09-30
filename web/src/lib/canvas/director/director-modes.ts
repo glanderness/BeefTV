@@ -42,6 +42,9 @@ export const DIRECTOR_MODES: Array<{ mode: DirectorMode; label: string; hint: st
 
 export const DIRECTOR_DEFAULT_MODE: DirectorMode = "layout";
 
+/** New director sessions open on the camera workspace, matching the reference product entry. */
+export const DIRECTOR_ENTRY_MODE: DirectorMode = "camera";
+
 export function directorModeCapabilities(mode: DirectorMode): DirectorModeCapabilities {
     return CAPABILITIES[mode] ?? CAPABILITIES[DIRECTOR_DEFAULT_MODE];
 }

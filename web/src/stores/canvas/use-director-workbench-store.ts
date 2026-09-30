@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { DIRECTOR_DEFAULT_MODE, directorModeCapabilities, resolveDirectorModeTransition, type DirectorMode } from "@/lib/canvas/director/director-modes";
+import { DIRECTOR_DEFAULT_MODE, DIRECTOR_ENTRY_MODE, directorModeCapabilities, resolveDirectorModeTransition, type DirectorMode } from "@/lib/canvas/director/director-modes";
 import { DIRECTOR_DEFAULT_VIEW_MODE, type DirectorViewMode } from "@/lib/canvas/director/director-view-modes";
 import type { DirectorRenderMode } from "@/types/director";
 
@@ -43,7 +43,7 @@ type DirectorWorkbenchStore = {
 const initialState = {
     workspaceView: "scene" as const,
     workspaceViewRestore: null,
-    mode: DIRECTOR_DEFAULT_MODE,
+    mode: DIRECTOR_ENTRY_MODE,
     viewMode: DIRECTOR_DEFAULT_VIEW_MODE,
     selectedObjectId: null,
     selectedBone: null,

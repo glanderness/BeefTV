@@ -39,4 +39,20 @@ describe("导演台参考图片接入画布资源图", () => {
         expect(orphan.nodes).toBe(input);
         expect(rejected.connections).toEqual([]);
     });
+
+    test("替换图源只解除导演台已连接的旧图片，不删除素材或其他节点连接", () => {
+        const target = { ...createCanvasNode(CanvasNodeType.Video, { x: 0, y: 0 }, { workflowKind: "shot", referenceAssetNodeIds: ["old-image", "old-video"] }), id: "director" };
+        const oldImage = image("old-image", "旧参考图");
+        const nextImage = image("new-image", "新参考图");
+        const video = { ...createCanvasNode(CanvasNodeType.Video, { x: 0, y: 0 }), id: "old-video" };
+        const unrelatedEdge = { id: "video-edge", fromNodeId: video.id, toNodeId: target.id };
+        const imageEdge = { id: "image-edge", fromNodeId: oldImage.id, toNodeId: target.id };
+        const input = [target, oldImage, nextImage, video];
+
+        const result = connectDirectorReferenceNodes(input, [imageEdge, unrelatedEdge], [nextImage.id], target.id, () => "new-edge", "replace");
+
+        expect(result.connections.map(({ fromNodeId, toNodeId }) => [fromNodeId, toNodeId])).toEqual([["old-video", "director"], ["new-image", "director"]]);
+        expect(result.nodes.find((node) => node.id === target.id)?.metadata?.referenceAssetNodeIds).toEqual(["old-video", "new-image"]);
+        expect(result.nodes.some((node) => node.id === oldImage.id)).toBe(true);
+    });
 });

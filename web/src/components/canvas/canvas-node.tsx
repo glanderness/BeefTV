@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { AlertCircle, BookOpenCheck, CheckCircle2, ChevronRight, Clapperboard, Copy, Download, FileText, GripVertical, Image as ImageIcon, Lock, Maximize2, Music2, Pencil, RefreshCw, ScanSearch, Settings2, Star, Trash2, Video, WandSparkles } from "lucide-react";
+import { AlertCircle, BookOpenCheck, CheckCircle2, ChevronRight, Clapperboard, Copy, Download, FileText, GripVertical, Image as ImageIcon, Lock, Maximize2, Move3d, Music2, Pencil, RefreshCw, ScanSearch, Settings2, Star, Trash2, Video, WandSparkles } from "lucide-react";
 
 import { useCanvasNodeActions } from "./canvas-node-action-context";
 import { shouldBlockAutomaticRetry } from "@/lib/generation-error";
@@ -726,7 +726,8 @@ function NodeExternalHeader({ node, scale, dimensionLabel, active, editable, edi
     // 标题保持屏幕尺寸只适用于近景；远景继续反向缩放会遮住节点和连线。
     if (scale < NODE_EXTERNAL_HEADER_MIN_SCALE && !editing && node.metadata?.fixture !== "libtv-readonly-dense") return null;
     const inverseScale = 1 / Math.max(scale, 0.05);
-    const Icon = nodeTypeIcon(node.type);
+    const isDirectorNode = Boolean(node.metadata?.directorSceneId);
+    const Icon = isDirectorNode ? Move3d : nodeTypeIcon(node.type);
     const maxHeaderWidth = Math.min(240, node.width * scale);
     // Director node reserves a square 3D cover plus a 208px prompt composer and 16px gap.
     const directorCardWidth = Math.min(node.width, node.height - 224);
@@ -779,7 +780,7 @@ function NodeExternalHeader({ node, scale, dimensionLabel, active, editable, edi
                 >
                     {node.metadata?.locked ? <Lock className="size-3" /> : <GripVertical className="size-3" strokeWidth={1.8} />}
                 </button>
-                <Icon className="size-3 shrink-0" strokeWidth={1.8} />
+                <Icon className="size-3 shrink-0" strokeWidth={1.8} data-node-header-icon={isDirectorNode ? "director" : undefined} />
                 {editing ? (
                     <input
                         autoFocus

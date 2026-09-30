@@ -46,6 +46,16 @@ describe("导演台画布节点", () => {
         expect(markup).toContain('src="https://example.test/cover.png"');
         expect(markup).toContain("object-contain");
         expect(markup).toContain("打开导演台");
+        expect(markup).toContain('data-director-open="preview"');
+        expect(markup).toContain("group-hover:opacity-100");
+        expect(markup).toContain("group-focus-visible:opacity-100");
+    });
+
+    test("空态打开入口可用键盘聚焦且提供按钮语义", () => {
+        const markup = render();
+        expect(markup).toContain('data-director-open="empty"');
+        expect(markup).toContain("focus-visible:ring-2");
+        expect(markup).toContain('aria-label="打开导演台"');
     });
 
     test("描述输入保留添加参考素材与提交入口", () => {
@@ -84,5 +94,6 @@ describe("导演台画布节点", () => {
         expect(shell).toContain("box-shadow:none");
         const header = markup.match(/class="canvas-node-external-header[^\"]*"[^>]*style="([^"]*)"/)?.[1];
         expect(header).toContain("left:144px");
+        expect(markup).toContain('data-node-header-icon="director"');
     });
 });

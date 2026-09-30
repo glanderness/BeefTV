@@ -38,6 +38,7 @@ export function CanvasDirectorNodePanel({ node, scene, readNodeContent, onOpen, 
                 <button
                     type="button"
                     data-canvas-no-zoom
+                    data-director-open={preview.kind === "image" ? "preview" : "empty"}
                     className="group relative aspect-square h-full max-w-full cursor-pointer overflow-hidden rounded-2xl border focus-visible:outline-none focus-visible:ring-2 disabled:cursor-default"
                     style={{ background: theme.node.fill, borderColor: theme.node.stroke }}
                     aria-label={professional ? "打开导演台" : "切换到专业模式后编辑导演台"}

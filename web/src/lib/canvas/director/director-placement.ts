@@ -25,6 +25,9 @@ function baseFootprint(object: Pick<DirectorObject, "kind" | "primitive">): Dire
     if (object.kind === "billboard" || object.primitive === "plane") return { width: 1.6, depth: 0.3 };
     if (object.primitive === "sphere") return { width: 1.2, depth: 1.2 };
     if (object.primitive === "cylinder") return { width: 1, depth: 1 };
+    if (object.primitive === "torus") return { width: 1.16, depth: 1.16 };
+    if (object.primitive === "cone" || object.primitive === "pyramid") return { width: 1.1, depth: 1.1 };
+    if (object.primitive === "empty") return { width: 0.24, depth: 0.24 };
     return { width: 1, depth: 1 };
 }
 

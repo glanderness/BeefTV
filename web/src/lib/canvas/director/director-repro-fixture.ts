@@ -44,7 +44,7 @@ export function createDirectorReproScene(): DirectorScene {
         id: FIXTURE_SCENE_ID,
         version: 1,
         title: "P0 复现场景",
-        background: "#d8dde3",
+        background: "#060608",
         environmentIntensity: 0.7,
         gridVisible: true,
         objects: [
@@ -94,6 +94,31 @@ export function createDirectorReproScene(): DirectorScene {
         createdAt: FIXTURE_CREATED_AT,
         updatedAt: FIXTURE_CREATED_AT,
     };
+}
+
+/**
+ * 离线人物视觉对照场景：复用视口内置程序化人偶，不触发默认远端 Xbot GLB。
+ * 原始 P0 fixture 保持不变，避免影响已有的交互与回归用例。
+ */
+export function createDirectorReproActorScene(): DirectorScene {
+    const scene = createDirectorReproScene();
+    const actor: DirectorObject = {
+        id: "repro-actor-1",
+        name: "演员 1",
+        kind: "actor",
+        transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        color: "#2f7de1",
+        visible: true,
+        castShadow: true,
+        receiveShadow: true,
+        pose: "stand",
+        rig: { status: "unmapped", boneMap: {}, animationNames: [] },
+        motionClips: [],
+        boneOverrides: {},
+        boneTracks: [],
+        keyframes: [],
+    };
+    return { ...scene, title: "人物视觉对照场景", objects: [actor] };
 }
 
 /** fixture 是否完全不依赖网络资产：任何 url/storageKey/assetId 都算违约。 */
