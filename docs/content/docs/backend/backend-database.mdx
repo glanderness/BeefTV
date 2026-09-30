@@ -9,7 +9,26 @@ description: BeefTV后端核心持久化表与状态边界
 
 ## 结构迁移与版本
 
-本地桌面数据库使用 `local_schema_migrations`，当前版本为 5：版本 3 保存外部 Agent 操作回执；版本 4 增加任务确认编号及用户维度唯一索引；版本 5 增加完整原始请求摘要。以下旧托管数据库的 `schema_migrations` 版本历史与本地版本分开维护，不共用版本号。
+本分支仅用于产品与 Agent 数据库迁移验收，不能安装或发布。实验结构版本为 v8，原 Agent 候选为 v6；产品 v7 与 Agent v6 不能直接互开。以下旧托管数据库的 `schema_migrations` 版本历史与本地版本分开维护，不共用版本号。
+
+实验 v8 `reconcile-product-agent-schema` 在一个事务中补齐 `tasks.failure_diagnostics`（可空 TEXT）、图片恢复表 `image_submissions`、Agent 操作表（包括 `turn_id` 索引）、任务 `client_operation_id`/`client_operation_hash` 和用户维度操作编号唯一索引。已有数据和原迁移名称保持不变；不通过重建 `tasks` 来删除产品字段。相同版本号但缺表、列或必要索引时拒绝 Ready；未来更高版本拒绝迁移。唯一索引遇到重复身份时整步回滚，不自动删除或合并任务。
+
+### 迁移实验的隔离验收与回滚
+
+在本分支仓库根目录执行以下命令，仅创建 `t.TempDir()` 内的合成 SQLite 数据库；不打开应用、不读取真实工作区、不连接上游。
+
+```sh
+cd backend
+go test ./internal/database -count=1
+go test ./internal/database -run 'TestAgentProductReconcile' -count=1 -v
+go test ./internal/database -run 'TestAgentProductReconcileBackupRestoreUsesOldSchemaCopy' -count=1 -v
+```
+
+验收覆盖正式 v3、Agent v3/v6、图片恢复 v3、产品 v7、同为 v7 但迁移名不同且缺表的数据库；分别检查任务结果、失败诊断、资源记录、Agent 回执、恢复发送计数、原 ledger 和唯一索引。注入 v8 ledger 写入故障验证 DDL 与 ledger 同时回滚；重复操作身份阻止升级且保留所有行。备份用 SQLite `VACUUM INTO` 生成一致副本，迁移后从未修改的备份重新打开并验证旧版本及输出引用。
+
+未来 Agent owner 的发布门槛：先整合产品功能与模型合同，再在隔离的完整工作区副本上验收上述迁移、任务读取、恢复行为和 CLI/MCP；本补丁仅证明结构迁移，未证明 Agent 运行兼容。任何真实升级都必须先停止所有工作区写入者，创建完整工作区备份（包括 SQLite、资源文件和设置加密密钥），验证备份可读取，再只对独立副本升级并核验结果。上线还需用户单独授权。
+
+回滚只允许停止新程序后，将升级前完整备份恢复到新的隔离目录，由与该备份版本匹配的二进制打开；不得把旧程序指向已升级数据库，不得删除 v8 ledger、降低版本号或删列模拟回滚。升级后产生的新数据不在旧备份中，应保留升级后目录并由 owner 决定如何迁回。本实验没有执行任何真实数据备份、升级、回滚或应用安装。
 
 ### 旧内置 Agent 运行时（已退场，数据保留）
 
@@ -27,7 +46,7 @@ description: BeefTV后端核心持久化表与状态边界
 
 ### 本地工作区结构（桌面形态）
 
-桌面形态使用由 `local_schema_migrations` 管理的本地结构版本（当前为 6，见 `backend/internal/database/local_schema.go`），
+桌面形态使用由 `local_schema_migrations` 管理的本地结构版本（本实验为 8，见 `backend/internal/database/local_schema.go`），
 与上面的托管版本序列相互独立。
 
 版本 3 `agent-operation-records` 为既有版本 2 工作区创建 `agent_op_records` 及用户、操作 ID 联合主键；版本 4/5 为任务的客户端操作编号补充结构；版本 6 `agent-operation-turn-attribution` 为 `agent_op_records` 增加可空的 `turn_id` 与索引，用于把内置助手一轮对话的写入回执归到该轮上。迁移只新增结构，不重写画布、项目或任务数据；结构创建与迁移记录在同一事务中提交。重复启动不会重复迁移，已成功操作的幂等结果在重启后继续回放。
