@@ -119,6 +119,13 @@ func migrateLocalSchema(db *gorm.DB, beforeApply func(int64) error) error {
 		}
 		current = migration.version
 	}
+	return requireProductRecoverySchema(db)
+}
+
+func requireProductRecoverySchema(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&model.ImageSubmission{}) || !db.Migrator().HasColumn(&model.Task{}, "FailureDiagnostics") {
+		return fmt.Errorf("本地图片恢复或任务诊断结构缺失，版本记录不能替代结构校验；请从备份恢复或使用修复迁移")
+	}
 	return nil
 }
 
@@ -294,7 +301,7 @@ func RequireLocalSchema(db *gorm.DB) error {
 	if version != CurrentSchemaVersion {
 		return fmt.Errorf("本地工作区数据库版本为 %d，期望 %d，请启用自动迁移", version, CurrentSchemaVersion)
 	}
-	return nil
+	return requireProductRecoverySchema(db)
 }
 
 func ReadSchemaStatus(db *gorm.DB) (SchemaStatus, error) {

@@ -8,6 +8,47 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+func TestProductRecoverySameVersionMissingStructureFailsClosed(t *testing.T) {
+	for _, missing := range []string{"image_submissions", "failure_diagnostics"} {
+		t.Run(missing, func(t *testing.T) {
+			db, err := Open(Config{Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "workspace.db")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			connection, _ := db.DB()
+			defer connection.Close()
+			if err := MigrateLocalSchema(db); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Model(&localSchemaMigration{}).Where("version = ?", 7).Update("name", "different-branch-v7").Error; err != nil {
+				t.Fatal(err)
+			}
+			if missing == "image_submissions" {
+				err = db.Migrator().DropTable(&model.ImageSubmission{})
+			} else {
+				err = db.Migrator().DropColumn(&model.Task{}, "FailureDiagnostics")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := RequireLocalSchema(db); err == nil {
+				t.Fatal("same-version damaged schema passed readiness")
+			}
+			status, err := ReadSchemaStatus(db)
+			if err != nil || status.Ready {
+				t.Fatalf("status=%+v err=%v", status, err)
+			}
+			if err := MigrateLocalSchema(db); err == nil {
+				t.Fatal("same-version missing structure silently accepted")
+			}
+			version, err := currentSchemaVersion(db)
+			if err != nil || version != 7 {
+				t.Fatalf("ledger changed: %d %v", version, err)
+			}
+		})
+	}
+}
+
 // The branch-specific ledger names and extension columns match Agent 2d1ce6b.
 // Keep this fixture independent of Agent runtime models: product migration must
 // preserve unknown extensions without importing the experimental runtime.
