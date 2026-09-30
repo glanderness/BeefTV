@@ -59,7 +59,7 @@ func TestDesktopProfileStartupChain(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(agentDir, "runtime", "bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"server.mjs", "session-identity.mjs", "canvas-turn.mjs", "package.json", "run-agent-host.sh"} {
+	for _, name := range []string{"server.mjs", "session-identity.mjs", "canvas-turn.mjs", "request-budget.mjs", "package.json", "run-agent-host.sh"} {
 		copyFile(t, filepath.Join(hostSource, name), filepath.Join(agentDir, name))
 	}
 	if err := os.Chmod(filepath.Join(agentDir, "run-agent-host.sh"), 0o755); err != nil {
@@ -71,7 +71,11 @@ func TestDesktopProfileStartupChain(t *testing.T) {
 	}
 	// 与发行脚本一致地真实复制依赖目录：符号链接会让 ESM 解析走到源目录之外，
 	// 验收就失去「随包资源自洽」的意义。
-	if output, err := exec.Command("cp", "-R", filepath.Join(hostSource, "node_modules"), filepath.Join(agentDir, "node_modules")).CombinedOutput(); err != nil {
+	dependencies, err := filepath.EvalSymlinks(filepath.Join(hostSource, "node_modules"))
+	if err != nil {
+		t.Fatalf("定位 agent-host 依赖目录失败: %v", err)
+	}
+	if output, err := exec.Command("cp", "-R", dependencies, filepath.Join(agentDir, "node_modules")).CombinedOutput(); err != nil {
 		t.Fatalf("复制 node_modules 失败: %v %s", err, output)
 	}
 
