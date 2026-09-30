@@ -482,8 +482,8 @@ export default function TasksPage() {
                 </div>
 
                 <div className="collection-content task-collection-content">
-                    <Typography.Paragraph type="secondary">显示最近 100 条持久任务、最多 100 条运行任务及已加载画布的本地记录。</Typography.Paragraph>
-                    {tasksIncomplete ? <Alert type="warning" showIcon title="任务状态未完整同步" description="部分任务查询失败。当前展示已读取任务和本地或上次快照，任务数量与状态可能不完整，请刷新重试。" /> : null}
+                    <Typography.Paragraph type="secondary">显示最近 100 条任务、最多 100 条进行中任务及当前画布历史。</Typography.Paragraph>
+                    {tasksIncomplete ? <Alert type="warning" showIcon title="任务状态未完整同步" description="部分任务查询失败。当前显示的任务数量与状态可能不完整，请刷新重试。" /> : null}
                     {loading && !tasks.length ? <div className="library-loading-grid" aria-label="正在加载任务">{Array.from({ length: 8 }, (_, index) => <div key={index} className="library-skeleton" />)}</div> : null}
                     {!loading || tasks.length ? (
                         visibleTasks.length ? (
@@ -509,7 +509,7 @@ export default function TasksPage() {
                             <WorkspaceState
                                 compact
                                 title={tasksIncomplete ? "暂时无法确认任务状态" : taskEmptyState(statusFilter).title}
-                                description={tasksIncomplete ? "后端查询失败，当前没有匹配的缓存记录。请刷新重试。" : taskEmptyState(statusFilter).description}
+                                description={tasksIncomplete ? "任务查询失败，暂时没有可显示的记录。请刷新重试。" : taskEmptyState(statusFilter).description}
                                 action={<Button className="library-primary-action" type="primary" icon={<Plus className="size-3.5" />} onClick={() => localMode ? navigate("/create") : setCreateOpen(true)}>{localMode ? "开始创作" : "新建任务"}</Button>}
                             />
                         )
