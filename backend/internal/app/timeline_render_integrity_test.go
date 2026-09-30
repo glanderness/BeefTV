@@ -185,3 +185,75 @@ func TestRenderFFmpegSixSecondAudioAndChineseSubtitles(t *testing.T) {
 		t.Fatal("missing subtitle accepted")
 	}
 }
+
+func TestRenderSubtitleFontFailureWithSuccessfulExit(t *testing.T) {
+	for _, message := range []string{
+		"can't find selected font provider", "fontselect: failed to find any fallback with glyph 0x4E2D",
+		"couldn't find font family", "missing glyph 0x4E2D", "no fonts found",
+	} {
+		t.Run(message, func(t *testing.T) {
+			// Model a libass command which reports failure only in stderr and exits zero.
+			cmd := exec.Command("/bin/sh", "-c", `printf '%s\n' "$1" >&2; exit 0`, "font-fixture", message)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("fixture must exit zero: %v", err)
+			}
+			if !renderSubtitleFontFailure(string(output)) {
+				t.Fatalf("successful exit masked missing subtitles: %s", output)
+			}
+		})
+	}
+	for _, normal := range []string{
+		"Glyph 0x4E2D not found, selecting one more font for (Arial, 400, 0)",
+		"fontselect: (Arial, 400, 0) -> NotoSansCJK, 0, NotoSansCJK",
+	} {
+		if renderSubtitleFontFailure(normal) {
+			t.Fatalf("normal fallback rejected: %s", normal)
+		}
+	}
+}
+
+func TestRenderFFmpegShortVideoHoldsLastFrame(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	dir := t.TempDir()
+	run := func(args ...string) []byte {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, ffmpeg, args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("ffmpeg: %v: %s", err, out)
+		}
+		return out
+	}
+	for _, color := range []string{"red", "blue"} {
+		run("-v", "error", "-y", "-f", "lavfi", "-i", "color=c="+color+":s=320x180:r=30:d=1", "-c:v", "libx264", color+".mp4")
+	}
+	plan := renderPlan{Segments: []renderSegment{
+		{Kind: "video", DurationMs: 2000, Clip: renderClip{DurationMs: 2000, Volume: 1}, Source: &renderSource{Path: "red.mp4"}},
+		{Kind: "video", DurationMs: 1000, Clip: renderClip{DurationMs: 1000, Volume: 1}, Source: &renderSource{Path: "blue.mp4"}},
+	}}
+	run(buildRenderFFmpegArgs(plan, "output.mp4")...)
+	cmd := exec.CommandContext(ctx, ffmpeg, "-v", "error", "-i", filepath.Join(dir, "output.mp4"), "-an", "-vf", "scale=1:1", "-pix_fmt", "rgb24", "-f", "rawvideo", "-")
+	pixels, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pixels) != 90*3 {
+		t.Fatalf("short source changed plan duration: %d frames", len(pixels)/3)
+	}
+	for i := 0; i < 90; i++ {
+		r, b := pixels[i*3], pixels[i*3+2]
+		if i < 60 && (r < 180 || b > 40) {
+			t.Fatalf("red last frame not held at frame %d", i)
+		}
+		if i >= 60 && (b < 180 || r > 40) {
+			t.Fatalf("blue boundary shifted at frame %d", i)
+		}
+	}
+}

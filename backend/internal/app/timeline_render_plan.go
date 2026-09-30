@@ -234,7 +234,7 @@ func buildRenderFFmpegArgs(plan renderPlan, target string) []string {
 		} else {
 			args = append(args, "-f", "lavfi", "-t", seconds, "-i", fmt.Sprintf("anullsrc=r=%d:cl=stereo", renderSampleRate))
 		}
-		filters = append(filters, fmt.Sprintf("[%d:v]setpts=PTS-STARTPTS,fps=%d,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,setsar=1,trim=duration=%.3f[v%d]", 2*i, renderFPS, renderWidth, renderHeight, renderWidth, renderHeight, duration, i))
+		filters = append(filters, fmt.Sprintf("[%d:v]setpts=PTS-STARTPTS,fps=%d,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,setsar=1,tpad=stop_mode=clone:stop_duration=%.3f,trim=duration=%.3f[v%d]", 2*i, renderFPS, renderWidth, renderHeight, renderWidth, renderHeight, duration, duration, i))
 		filters = append(filters, fmt.Sprintf("[%d:a]aformat=sample_fmts=fltp:sample_rates=%d:channel_layouts=stereo,asetpts=PTS-STARTPTS,volume=%.3f,apad,atrim=duration=%.3f%s[a%d]", 2*i+1, renderSampleRate, seg.Clip.Volume, duration, renderAudioFades(seg.Clip), i))
 		labels += fmt.Sprintf("[v%d][a%d]", i, i)
 	}

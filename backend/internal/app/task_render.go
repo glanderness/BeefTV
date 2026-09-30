@@ -225,5 +225,15 @@ func probeHasAudioStream(ctx context.Context, path string) (bool, error) {
 // libass can exit successfully even when no font can render the subtitle glyphs.
 func renderSubtitleFontFailure(output string) bool {
 	text := strings.ToLower(output)
-	return strings.Contains(text, "failed to find any fallback") || strings.Contains(text, "no usable fontconfig") || strings.Contains(text, "fontselect: failed")
+	for _, failure := range []string{
+		"failed to find any fallback", "no usable fontconfig", "fontselect: failed",
+		"can't find selected font provider", "couldn't find font family",
+		"failed to find font", "no fonts found", "missing glyph",
+	} {
+		if strings.Contains(text, failure) {
+			return true
+		}
+	}
+	// "Glyph ... not found, selecting one more font" is a normal fallback attempt.
+	return false
 }

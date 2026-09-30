@@ -120,8 +120,8 @@ Docker 开发编排也使用 `.local/project-workbench-debug`，并默认暴露�
 
 ### 时间线成片完整性
 
-服务端时间线渲染需要 `ffmpeg`、`ffprobe`，字幕烧录另需 FFmpeg 的 `subtitles`（libass）滤镜和覆盖字幕字符的字体。可见的视频/图片按时间顺序拼接，真实时间空隙补黑场；独立配音和 BGM 按 `startMs` 混入，源内裁剪使用 `sourceStartMs`。音量缺省为 1，显式 0 与轨道静音必须保持静音，淡入淡出在片段时间内应用。
+服务端时间线渲染需要 `ffmpeg`、`ffprobe`，字幕烧录另需 FFmpeg 的 `subtitles`（libass）滤镜和覆盖字幕字符的字体。可见的视频/图片按时间顺序拼接，真实时间空隙补黑场；独立配音和 BGM 按 `startMs` 混入，源内裁剪使用 `sourceStartMs`。视频源短于片段计划时长时保持最后一帧，音频补静音，后续片段仍按计划时间开始。音量缺省为 1，显式 0 与轨道静音必须保持静音，淡入淡出在片段时间内应用。
 
 可见字幕烧录进 MP4，同时保留结果中的 `subtitleSrt`。缺失引用、资源不可读、音轨探测失败、独立音频无音轨、字幕滤镜或字体失败都使任务失败，不以黑场、静音或无字幕产物冒充成功。当前服务端不支持重叠的视频/图片合成，会明确拒绝；独立音轨可以重叠。
 
-无需数据库或外部请求的本地成片验收：在 `backend/` 运行 `go test ./internal/app -run 'TestBuildRender|TestMediaResource|TestRenderContracts|TestRenderFFmpegSix' -count=1 -v`。FFmpeg 集成测试生成三段共六秒素材，解码验证原声、定时配音、低音量 BGM、静音与中文字幕像素，并覆盖损坏媒体和缺字幕失败。未安装 FFmpeg/ffprobe 时该集成测试会跳过。
+无需数据库或外部请求的本地成片验收：在 `backend/` 运行 `go test ./internal/app -run 'TestBuildRender|TestMediaResource|TestRenderContracts|TestRenderFFmpeg|TestRenderSubtitleFontFailure' -count=1 -v`。FFmpeg 集成测试生成三段共六秒素材，解码验证原声、定时配音、低音量 BGM、静音与中文字幕像素，并覆盖损坏媒体和缺字幕失败。未安装 FFmpeg/ffprobe 时该集成测试会跳过。
