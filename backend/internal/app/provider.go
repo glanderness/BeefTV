@@ -144,10 +144,11 @@ type providerPayloadError struct {
 func (e providerPayloadError) Error() string { return e.message }
 
 type providerHTTPError struct {
-	StatusCode int
-	Status     string
-	Body       string
-	RetryAfter time.Duration
+	StatusCode          int
+	Status              string
+	Body                string
+	RetryAfter          time.Duration
+	IdempotencyReplayed bool
 }
 
 type providerResponseDecodeError struct {

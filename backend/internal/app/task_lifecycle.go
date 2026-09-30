@@ -48,6 +48,11 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	if task.Status != model.TaskStatusFailed && task.Status != model.TaskStatusCancelled {
 		return nil, errors.New("only failed or cancelled tasks can be retried")
 	}
+	// Cancellation stops local recovery, but cannot undo a synchronous generation
+	// already accepted by the gateway. Never mint a new key for that attempt.
+	if err := s.validateImageTaskRetry(task); err != nil {
+		return nil, err
+	}
 	if task.ProviderCancelStatus == model.ProviderCancelStatusRequested {
 		return nil, BadAuthRequest(taskCancellationPendingRetryMessage())
 	}

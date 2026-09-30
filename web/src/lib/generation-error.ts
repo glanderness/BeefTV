@@ -200,6 +200,11 @@ const PROVIDER_CODE_CATEGORIES: Record<string, GenerationErrorCategory> = {
     request_cancelled: "cancelled",
     provider_submission_unknown: "submission_uncertain",
     video_submission_unknown: "submission_uncertain",
+    image_result_unknown: "submission_uncertain",
+    image_submission_pending: "submission_uncertain",
+    image_result_expired: "submission_uncertain",
+    image_result_unavailable: "submission_uncertain",
+    idempotency_conflict: "submission_uncertain",
     provider_reference_invalid: "input_inaccessible",
 };
 

@@ -42,6 +42,14 @@ func classifyTaskFailure(err error) generation.Failure {
 }
 
 func applyAppFailureWrappers(err error, failure generation.Failure) generation.Failure {
+	var imageRecovery imageRecoveryError
+	if errors.As(err, &imageRecovery) {
+		failure.Category = generation.CategorySubmissionUncertain
+		failure.Uncertain = true
+		failure.Reason = "图片结果尚未确认，自动恢复已停止"
+		failure.Action = "请保留任务记录并联系支持查询结果，不要重复提交"
+		return failure
+	}
 	var download videoDownloadError
 	if errors.As(err, &download) {
 		failure = generation.WithDownloadFailure(failure, download.TaskID)
