@@ -1,33 +1,37 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chromium, type Browser } from "playwright";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve, sep } from "node:path";
+import { build } from "vite";
 
 let server: ReturnType<typeof Bun.serve>;
 let browser: Browser;
+let directory: string;
 
 beforeAll(async () => {
-    const build = await Bun.build({
-        entrypoints: [import.meta.dir + "/fixtures/export-integrity-harness.tsx"], target: "browser",
-        define: { "import.meta.env": "{}", "process.env.NODE_ENV": '"production"' },
-        // CanvasPage imports lazy editors; their Vite-only assets are unrelated to ZIP import.
-        plugins: [{ name: "unused-editor-assets", setup(build) {
-            build.onResolve({ filter: /(?:\.css|\?url)$/ }, (args) => ({ path: args.path, namespace: "unused-assets" }));
-            build.onLoad({ filter: /.*/, namespace: "unused-assets" }, () => ({ contents: 'export default "";', loader: "js" }));
-        } }],
+    directory = mkdtempSync(join(tmpdir(), "beeftv-zip-browser-"));
+    const dist = join(directory, "dist");
+    // Use the application's bundler, including real lazy-editor assets. Bun.build
+    // resolved this graph differently between local Bun 1.4 and CI Bun 1.3.9.
+    await build({
+        configFile: false, root: resolve(import.meta.dir, ".."), publicDir: false,
+        cacheDir: join(directory, "cache"), logLevel: "error",
+        define: { __BEEFTV_HEAVY_MEDIA_ENABLED__: "true", __APP_VERSION__: '"test"', __APP_CHANGELOG__: '""' },
+        resolve: { alias: { "@": resolve(import.meta.dir, "../src") } },
+        build: { outDir: dist, emptyOutDir: true, rolldownOptions: { input: resolve(import.meta.dir, "fixtures/export-integrity-harness.html") } },
     });
-    if (!build.success) throw new Error(build.logs.join("\n"));
-    const script = await build.outputs.find((output) => output.path.endsWith(".js"))!.text();
     server = Bun.serve({ port: 0, async fetch(request) {
         const path = new URL(request.url).pathname;
-        if (path === "/harness.js") return new Response(script, { headers: { "Content-Type": "text/javascript" } });
         if (path.startsWith("/api/")) return Response.json({ code: 0, data: { projects: [], assets: [], folders: [] } });
-        return new Response('<div id="root"></div><script type="module" src="/harness.js"></script>', { headers: { "Content-Type": "text/html" } });
+        const file = path === "/" ? join(dist, "test/fixtures/export-integrity-harness.html") : resolve(dist, "." + path);
+        return file.startsWith(dist + sep) && existsSync(file) ? new Response(Bun.file(file)) : new Response("Not found", { status: 404 });
     } });
     const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((path): path is string => Boolean(path && existsSync(path)));
     browser = await chromium.launch({ executablePath, headless: true });
 }, 60_000);
 
-afterAll(async () => { await browser?.close(); server?.stop(true); });
+afterAll(async () => { await browser?.close(); server?.stop(true); if (directory) rmSync(directory, { recursive: true, force: true }); });
 
 test("ZIP from real browser storage imports through CanvasPage into a fresh browser workspace", async () => {
     const source = await browser.newContext();
