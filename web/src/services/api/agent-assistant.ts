@@ -93,7 +93,7 @@ export type AssistantSessionList = {
 
 export type AssistantHistory = {
     sessionId: string;
-    turns: AssistantTurn[];
+    turns: (AssistantTurn & { undone?: boolean })[];
 };
 
 // UI 会话凭据只保存在内存里：刷新页面即重新签发，不写入 localStorage。

@@ -332,7 +332,7 @@ export function CanvasTopBar({
                             <span>{currentCanvasLabel}</span>{canvasMenuOpen ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
                         </button>
                     </Dropdown>
-                    {!libtvChrome ? <span className="canvas-topbar-sync-status">{syncStatus}</span> : null}
+                    <span className="canvas-topbar-sync-status">{syncStatus}</span>
                 </div>
                 </div>
 

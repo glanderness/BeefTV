@@ -257,6 +257,17 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			c.JSON(resp.StatusCode, gin.H{"code": resp.StatusCode, "reason": reason, "msg": "内置创作助手宿主拒绝了该请求"})
 			return
 		}
+		if strings.HasPrefix(path, "/history?") {
+			if history, ok := decoded.(map[string]any); ok {
+				turns, _ := history["turns"].([]any)
+				for _, value := range turns {
+					if turn, ok := value.(map[string]any); ok {
+						turnID, _ := turn["turnId"].(string)
+						turn["undone"] = svc.AssistantTurnUndone(c.GetString("agentUserId"), strings.TrimSpace(c.Query("canvasId")), turnID)
+					}
+				}
+			}
+		}
 		ok(c, decoded)
 	}
 

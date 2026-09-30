@@ -1,6 +1,7 @@
 package app
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -69,6 +70,13 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	operationKey, err := clientOperationID(req.Input)
 	if err != nil {
 		return nil, err
+	}
+	var operationHash string
+	if operationKey != "" {
+		operationHash, err = clientOperationHash(req)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if operationKey != "" {
 		existing, lookupErr := s.repo.TaskByClientOperation(userID, operationKey)
@@ -162,6 +170,7 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	task := model.Task{ID: newID(), UserID: userID, TraceID: req.TraceID, RequestID: req.RequestID, ProjectID: req.ProjectID, Type: taskType, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
 	if operationKey != "" {
 		task.ClientOperationID = &operationKey
+		task.ClientOperationHash = operationHash
 	}
 	if req.admission != nil {
 		task.ID = req.admission.ID
@@ -217,13 +226,27 @@ func admitExistingClientOperation(existing *model.Task, req CreateTaskRequest) (
 	if existing == nil {
 		return nil, errors.New("missing client operation task")
 	}
-	prompt := strings.TrimSpace(req.Prompt)
-	taskType := strings.TrimSpace(req.Type)
-	projectID := strings.TrimSpace(req.ProjectID)
-	if existing.Prompt != prompt || existing.Type != taskType || existing.ProjectID != projectID {
+	fingerprint, err := clientOperationHash(req)
+	if err != nil {
+		return nil, err
+	}
+	if existing.ClientOperationHash == "" || existing.ClientOperationHash != fingerprint {
 		return nil, NewAppError(409, "同一生成确认已用于不同内容，没有新建任务")
 	}
 	return taskForOutput(*existing), nil
+}
+
+// Hash the original intent before routing and secret protection mutate input.
+// Trace/request IDs are excluded by their JSON tags; no raw credential is stored here.
+func clientOperationHash(req CreateTaskRequest) (string, error) {
+	req.Prompt = strings.TrimSpace(req.Prompt)
+	req.Type = strings.TrimSpace(req.Type)
+	req.ProjectID = strings.TrimSpace(req.ProjectID)
+	encoded, err := json.Marshal(req)
+	if err != nil {
+		return "", BadAuthRequest("任务输入格式无效")
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(encoded)), nil
 }
 
 func clientOperationID(input map[string]any) (string, error) {

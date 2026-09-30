@@ -142,6 +142,14 @@ func (s *Service) RecordAssistantTurnChange(turnID string, change *AssistantTurn
 	return s.writeAssistantTurn(path, record)
 }
 
+// AssistantTurnUndone reads the same scoped durable receipt used by undo.
+func (s *Service) AssistantTurnUndone(userID, canvasID, turnID string) bool {
+	assistantTurnMu.Lock()
+	defer assistantTurnMu.Unlock()
+	record, err := readAssistantTurn(s.assistantTurnPath(turnID))
+	return err == nil && record.UserID == userID && record.CanvasID == canvasID && record.Undone
+}
+
 // UndoAssistantTurn 把轮前文档作为新版本写回，并把该轮标记为已撤销。
 func (s *Service) UndoAssistantTurn(userID, canvasID, turnID string) (int64, error) {
 	path := s.assistantTurnPath(turnID)

@@ -127,6 +127,13 @@ func TestUndoAssistantTurnRestoresPreTurnDocumentAsNewRevision(t *testing.T) {
 	if restored <= after {
 		t.Fatalf("撤销必须产生新版本（> %d），得到 %d", after, restored)
 	}
+	reopened := &Service{dataDir: service.dataDir}
+	if !reopened.AssistantTurnUndone("local", canvasID, turnID) {
+		t.Fatal("reopened service lost durable undo receipt")
+	}
+	if reopened.AssistantTurnUndone("other-user", canvasID, turnID) || reopened.AssistantTurnUndone("local", "other-canvas", turnID) || reopened.AssistantTurnUndone("local", canvasID, "../../elsewhere") {
+		t.Fatal("undo receipt leaked across scope")
+	}
 	ids := nodeIDs(t, service, canvasID)
 	if len(ids) != 1 || ids[0] != "n1" {
 		t.Fatalf("撤销后应回到轮前节点集合，得到 %v", ids)

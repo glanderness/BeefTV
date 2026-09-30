@@ -315,6 +315,9 @@ function applyCanvasExternalDecision(
         return decision;
     }
     const applied = decision.project;
+    // Validate/project into the live editor before advancing the stored revision.
+    // A merge conflict must not leave the store ahead of the visible editor.
+    onApplied?.(applied, previous);
     withCanvasStorePersistenceSuppressed(() => {
         useCanvasStore.setState((state) => ({
             projects: state.projects.some((project) => project.id === applied.id)
@@ -324,7 +327,6 @@ function applyCanvasExternalDecision(
     });
     canvasMemoryStates.set(scope, { projects: useCanvasStore.getState().projects });
     clearCanvasExternalRevisionConflict(scope, applied.id);
-    onApplied?.(applied, previous);
     return decision;
 }
 

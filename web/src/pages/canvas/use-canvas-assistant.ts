@@ -185,6 +185,9 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             run.sessions = sessionList.sessions;
             run.sessionId = nextSession;
             run.turns = [...history.turns, ...recent];
+            for (const turn of history.turns) {
+                if (turn.undone) run.turnStatus[turn.turnId] = { undone: true };
+            }
             run.historyLoaded = true;
             run.historyError = null;
             return true;

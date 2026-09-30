@@ -8,6 +8,14 @@ import type { GenerationTask } from "../src/services/api/task-center";
 import moderationFixtures from "../../fixtures/moderation-errors.json";
 
 const rejection = { code: "content_policy_violation", message: "opaque" };
+
+test("completed media with a canvas commit conflict offers reload without another paid generation", () => {
+    const failure = canvasGenerationFailureMetadata({ code: "canvas_conflict" }, { prompt: "red square", mode: "video" });
+    expect(failure.errorDetails).toContain("生成结果已保留");
+    expect(failure.errorDetails).not.toContain("模型不接受");
+    expect(failure.resourceReloadAvailable).toBe(true);
+    expect(canvasGenerationRetryBlocked(failure, { prompt: "red square", mode: "video" })).toBe(true);
+});
 const task: GenerationTask = { id: "task-failure", type: "canvas_image", status: "failed", prompt: "draw", attempts: 1, createdAt: "2026-09-26T00:00:00Z", updatedAt: "2026-09-26T00:00:00Z", errorCode: "content_policy_violation", error: "opaque" };
 const image = (id: string, storageKey: string): CanvasNodeData => ({ id, type: CanvasNodeType.Image, title: id, position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { content: `https://example.test/${id}.png`, storageKey } });
 

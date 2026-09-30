@@ -24,7 +24,8 @@ function submittedReferences(input: CanvasGenerationFailureInput) {
 }
 
 export function canvasGenerationFailureMetadata(error: unknown, input: CanvasGenerationFailureInput) {
-    return generationFailureMetadata(error, input.prompt, submittedReferences(input));
+    const failure = generationFailureMetadata(error, input.prompt, submittedReferences(input));
+    return { ...failure, ...(failure.generationErrorCode === "canvas_conflict" ? { resourceReloadAvailable: true } : {}) };
 }
 
 export function canvasTaskFailureMetadata(task: GenerationTask, metadata?: CanvasNodeMetadata, error: unknown = { code: task.errorCode, message: task.error || (task.status === "cancelled" ? "任务已取消" : "任务失败") }) {
@@ -54,6 +55,6 @@ export function canvasGenerationRetryBlocked(metadata: CanvasNodeMetadata | unde
         if (!metadata?.failedInputFingerprint) return !metadata?.failedPromptFingerprint || metadata.failedPromptFingerprint === generationPromptFingerprint(input.prompt);
         return unchangedModeratedPrompt(metadata, input.prompt, submittedReferences(input));
     }
-    if (input) return metadata?.taskStage === "submission_unknown" || ["submission_uncertain", "timeout", "download_failed", "results_missing", "partial_success"].includes(explainGenerationError(error).category);
+    if (input) return metadata?.taskStage === "submission_unknown" || ["submission_uncertain", "timeout", "download_failed", "results_missing", "partial_success", "canvas_conflict"].includes(explainGenerationError(error).category);
     return true;
 }

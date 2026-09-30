@@ -1996,7 +1996,7 @@
         }
 
         .canvas-topbar-sync-status {
-            display: none;
+            display: inline-flex;
         }
 
         .canvas-topbar-project-cluster .canvas-topbar-utility-button {

@@ -190,6 +190,10 @@ func TestAssistantChatRecordsTurnChangeAndUndoRestoresDocument(t *testing.T) {
 				_, _ = w.Write([]byte(`{"ok":true,"busy":false}`))
 				return
 			}
+			if r.URL.Path == "/history" {
+				_ = json.NewEncoder(w).Encode(map[string]any{"sessionId": "session", "turns": []any{map[string]any{"turnId": captured.TurnID}}})
+				return
+			}
 			if r.URL.Path != "/chat" {
 				w.WriteHeader(http.StatusNotFound)
 				return
@@ -252,6 +256,11 @@ func TestAssistantChatRecordsTurnChangeAndUndoRestoresDocument(t *testing.T) {
 	}
 	if after := canvasNodeIDs(t, env.service, owner.ID, env.canvasID); len(after) != 1 || after[0] != "n1" {
 		t.Fatalf("撤销后应回到轮前节点集合，得到 %v", after)
+	}
+	history := decodeEnvelope(t, env.call(t, http.MethodGet, "/assistant/history?canvasId="+env.canvasID, ""))
+	turns, _ := history["turns"].([]any)
+	if len(turns) != 1 || turns[0].(map[string]any)["undone"] != true {
+		t.Fatalf("history did not include durable undo state: %v", history)
 	}
 
 	// 已撤销的轮次不能再撤一次。

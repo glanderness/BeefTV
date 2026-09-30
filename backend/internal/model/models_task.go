@@ -11,6 +11,7 @@ type Task struct {
 	ProjectID            string  `json:"projectId" gorm:"index;size:80;index:idx_tasks_user_project_created,priority:2"`
 	// ClientOperationID 是一次用户确认的稳定身份。空值不参与去重；同一个用户重复提交同一确认时回读原任务。
 	ClientOperationID      *string    `json:"clientOperationId,omitempty" gorm:"size:128;uniqueIndex:idx_tasks_user_client_op,priority:2"`
+	ClientOperationHash    string     `json:"-" gorm:"size:64"`
 	Type                   string     `json:"type" gorm:"index;size:64"`
 	Status                 TaskStatus `json:"status" gorm:"index;size:24;index:idx_tasks_status_created,priority:1;index:idx_tasks_claim,priority:1;index:idx_tasks_provider_cancel,priority:1"`
 	Stage                  string     `json:"stage" gorm:"size:80"`

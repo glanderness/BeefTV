@@ -185,7 +185,10 @@ async function submitCanvasProjectToBackend(id: string, project: CanvasProject, 
         const response = await http.put<{ project: CanvasSaveSummary }>(endpoint, includeGeneratedAssets ? { project: projectForSave, assets } : { project: projectForSave });
         return response.project;
     } catch (error) {
-        await handleRejectedCanvasBackendSave(id, project, error);
+        const conflict = await handleRejectedCanvasBackendSave(id, project, error);
+        if (includeGeneratedAssets && conflict) {
+            throw Object.assign(new Error("生成结果已保留，但画布有版本冲突。请先使用画布最新版本，再重新加载资源，不要重新生成。"), { code: "canvas_conflict" });
+        }
         throw error;
     }
 }
@@ -366,13 +369,21 @@ export async function refreshLocalCanvasProjectIfChanged(id: string) {
         const remote = response.project;
         if (!remote) return undefined;
         if (before && remote.revision === before.revision && !hasUnconfirmedCanvasEdits(id)) return undefined;
-        const decision = applyExternalCanvasRevision(remote, {
-            hasUnsyncedEdits: hasUnconfirmedCanvasEdits(id),
-            onApplied: (project, previous) => {
-                recordServerConfirmedCanvas(project);
-                notifyCanvasRefresh(project, previous);
-            },
-        });
+        let decision;
+        try {
+            decision = applyExternalCanvasRevision(remote, {
+                hasUnsyncedEdits: hasUnconfirmedCanvasEdits(id),
+                onApplied: (project, previous) => {
+                    notifyCanvasRefresh(project, previous);
+                    recordServerConfirmedCanvas(project);
+                },
+            });
+        } catch {
+            // The live editor may have edits not yet projected into the store.
+            // Keep both versions and expose the same explicit resolution action.
+            applyExternalCanvasRevision(remote, { hasUnsyncedEdits: true });
+            return undefined;
+        }
         if (decision.kind === "keep-local") return undefined;
         await flushCanvasStorePersistence();
         return decision.project;
@@ -389,12 +400,15 @@ export async function refreshLocalCanvasProjectIfChanged(id: string) {
  */
 export async function acceptExternalCanvasRevision(id: string) {
     const decision = acceptCanvasExternalRevisionCandidate(id, {
-        onApplied: (project, previous) => {
+        onApplied: (project) => {
+            // Explicitly choosing the latest version replaces the old editor
+            // snapshot; re-merging it can resurrect the conflict or drop nodes.
+            notifyCanvasRefresh(project, undefined);
             recordServerConfirmedCanvas(project);
-            notifyCanvasRefresh(project, previous);
         },
     });
     if (!decision || decision.kind !== "apply") return undefined;
+    resumeCanvasBackendSubmit(id);
     await flushCanvasStorePersistence();
     return decision.project;
 }

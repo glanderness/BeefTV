@@ -15,6 +15,7 @@ type ServerState = {
 
 const server: ServerState = { document: null, revision: 0, gets: 0, puts: [], releaseGet: null, rejectNextPut: null };
 const notifications: Array<{ id: string; revision: number }> = [];
+let rejectEditorMerge = false;
 
 class ApiError extends Error {
     status?: number;
@@ -65,7 +66,10 @@ mock.module("@/services/api/request", () => ({
 }));
 
 mock.module("@/services/local-workspace-sync", () => ({
-    notifyCanvasRefresh: (project: { id: string; revision?: number }) => { notifications.push({ id: project.id, revision: project.revision ?? 0 }); },
+    notifyCanvasRefresh: (project: { id: string; revision?: number }, previous: unknown) => {
+        if (previous && rejectEditorMerge) throw new Error("live editor conflict");
+        notifications.push({ id: project.id, revision: project.revision ?? 0 });
+    },
     isLocalWorkspaceMode: () => true,
 }));
 
@@ -133,6 +137,7 @@ async function establishConfirmedBaseline() {
 beforeEach(() => {
     stored.clear();
     notifications.length = 0;
+    rejectEditorMerge = false;
     server.gets = 0;
     server.puts = [];
     server.releaseGet = null;
@@ -142,6 +147,21 @@ beforeEach(() => {
 });
 
 describe("画布刷新接缝（服务端基线）", () => {
+    test("live editor merge conflict cannot advance stored revision; choosing latest replaces the conflicting editor", async () => {
+        await establishConfirmedBaseline();
+        const before = useCanvasStore.getState().projects[0];
+        replaceServerDocument(canvas(4, { title: "外部新增内容" }));
+        rejectEditorMerge = true;
+        expect(await refreshLocalCanvasProjectIfChanged("c1")).toBeUndefined();
+        expect(useCanvasStore.getState().projects[0]).toBe(before);
+        expect(canvasExternalRevisionConflict(scope, "c1")?.remoteRevision).toBe(4);
+        // Explicit replacement must not call the failing three-way merge again.
+        const accepted = await acceptExternalCanvasRevision("c1");
+        expect(accepted?.title).toBe("外部新增内容");
+        expect(useCanvasStore.getState().projects[0].revision).toBe(4);
+        expect(hasUnconfirmedCanvasEdits("c1")).toBe(false);
+        expect(server.puts.length).toBe(1);
+    });
     test("本地内容与服务端确认内容一致时，外部新 revision 立即可见", async () => {
         await establishConfirmedBaseline();
         expect(hasUnconfirmedCanvasEdits("c1")).toBe(false);
@@ -186,6 +206,7 @@ describe("画布刷新接缝（服务端基线）", () => {
         await establishConfirmedBaseline();
         useCanvasStore.getState().updateProject("c1", { title: "本地新标题" });
         replaceServerDocument(canvas(4, { title: "外部改名" }));
+        useSyncProgressStore.getState().setProjectProgress("c1", { phase: "conflict", message: "旧提交已暂停" });
         await refreshLocalCanvasProjectIfChanged("c1");
         expect(canvasExternalRevisionConflict(scope, "c1")?.candidate.title).toBe("外部改名");
 
