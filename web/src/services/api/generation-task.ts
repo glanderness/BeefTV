@@ -450,7 +450,8 @@ function workflowProviderConfig(config: AiConfig, requestConfig: ReturnType<type
         channelId: "",
         apiFormat: requestConfig.apiFormat,
         interfaceType: workflow.interfaceType,
-        baseUrl: config.runningHub.baseUrl,
+        // 工作流是独立 Provider，地址与密钥不能互相继承：ComfyUI 是自托管服务，没有密钥。
+        baseUrl: runningHubActive ? config.runningHub.baseUrl : config.comfyui.baseUrl,
         apiKey: runningHubActive ? config.runningHub.apiKey : "",
         // 工作流是独立 Provider，不能继承普通模型渠道的密钥和自定义头。
         secretKey: "",

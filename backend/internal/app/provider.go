@@ -931,6 +931,9 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 	if isRunningHubInterface(config.InterfaceType) && strings.TrimSpace(config.BaseURL) == "" {
 		config.BaseURL = "https://www.runninghub.cn"
 	}
+	if isComfyUIInterface(config.InterfaceType) && strings.TrimSpace(config.BaseURL) == "" {
+		config.BaseURL = defaultComfyUIRootURL
+	}
 	channelID := strings.TrimSpace(config.ChannelID)
 	if channelID == "" {
 		channelID = systemChannelIDFromBaseURL(config.BaseURL)

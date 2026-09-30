@@ -113,6 +113,11 @@ func (w *taskWorkerCoordinator) processTimelineRender(task *model.Task, ctx cont
 	if err := s.repo.SaveTaskCompletion(task, model.TaskStatusRunning, nil); err != nil {
 		return fmt.Errorf("写入渲染完成态失败: %w", err)
 	}
+	// 渲染由独立执行器自行写终态，不经过 taskTerminalCoordinator，因此这里必须显式登记产物：
+	// 短剧成片依赖它把结果写回交付阶段。登记失败不影响任务终态，项目页可幂等补登记。
+	if registerErr := s.RegisterTaskOutputFromTask(*task); registerErr != nil {
+		_ = s.log(task.UserID, task.ID, "error", "任务成功但项目产物登记失败", registerErr.Error())
+	}
 	s.logInfo(task.UserID, task.ID, fmt.Sprintf("时间线渲染完成，时长 %.1fs", float64(durationMs)/1000), "")
 	return nil
 }

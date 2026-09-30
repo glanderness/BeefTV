@@ -64,6 +64,7 @@ export function currentArtifact(detail: ProjectDetail, shotId: string, type: str
 }
 
 export function artifactTypeForStage(stage: ShortDramaWorkflowStage) {
+    if (stage === "delivery") return "delivery";
     if (stage === "video") return "video";
     if (stage === "previz") return "action_board";
     return "storyboard";

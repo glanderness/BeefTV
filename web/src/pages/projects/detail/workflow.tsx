@@ -7,7 +7,8 @@ import { Link } from "react-router";
 import { formatShotOrdinal } from "@/lib/shot-label";
 import { saveProjectShot, type ProjectDetail } from "@/services/api/projects";
 
-import { AssetsStage, DeliveryStage, StoryStage } from "./workflow-stage-views";
+import { AssetsStage, StoryStage } from "./workflow-stage-views";
+import { WorkflowDeliveryPanel } from "./workflow-delivery";
 import { type ShortDramaWorkflowStage, workflowStages } from "./workflow-shared";
 import "./workflow.css";
 
@@ -76,7 +77,7 @@ export default function ProjectWorkflowView({ detail, projectId, unitId, stage }
                 {activeStage === "story" ? <div className="workflow-overview-scroll thin-scrollbar"><StoryStage detail={detail} projectId={projectId} unitId={unit.id} /></div> : null}
                 {activeStage === "assets" ? <div className="workflow-overview-scroll thin-scrollbar"><AssetsStage detail={detail} projectId={projectId} unitId={unit.id} /></div> : null}
                 {productionStage ? <Suspense fallback={<div className="workflow-workbench-loading">正在准备分镜工作台…</div>}><WorkflowProductionWorkbench activeStage={activeStage} detail={detail} projectId={projectId} unitId={unit.id} workflowStep={activeStep} selectedShot={selectedShot} onSelectShot={setSelectedShotId} onRefresh={refresh} onAddShot={() => addShot.mutate()} addingShot={addShot.isPending} /></Suspense> : null}
-                {activeStage === "delivery" ? <div className="workflow-overview-scroll thin-scrollbar"><DeliveryStage detail={detail} unitId={unit.id} /></div> : null}
+                {activeStage === "delivery" ? <div className="workflow-overview-scroll thin-scrollbar"><WorkflowDeliveryPanel detail={detail} projectId={projectId} unitId={unit.id} onRefresh={refresh} /></div> : null}
             </main>
         </div>
     );

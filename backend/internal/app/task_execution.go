@@ -61,6 +61,12 @@ func hasExecutableProviderVideoConfig(input map[string]any) bool {
 		}
 		return stringValue(config["baseUrl"]) != "" && stringValue(config["apiKey"]) != ""
 	}
+	if isComfyUIInterface(interfaceType) {
+		// ComfyUI 是自托管服务，默认没有鉴权，因此不要求 API Key；
+		// 地址与工作流 JSON 都存在才算可执行。
+		workflow, _ := config["workflowJson"].(map[string]any)
+		return stringValue(config["baseUrl"]) != "" && len(workflow) > 0
+	}
 	if stringValue(config["model"]) == "" {
 		return false
 	}

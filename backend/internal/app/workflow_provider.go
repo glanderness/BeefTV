@@ -301,7 +301,7 @@ func isRunningHubInterface(value string) bool {
 }
 
 func isWorkflowProviderInterface(value string) bool {
-	return isRunningHubInterface(value)
+	return isRunningHubInterface(value) || isComfyUIInterface(value)
 }
 
 func validateWorkflowProviderConfig(mode string, config providerConfig) error {
@@ -324,15 +324,28 @@ func validateWorkflowProviderConfig(mode string, config providerConfig) error {
 		}
 		return nil
 	}
+	if isComfyUIInterface(config.InterfaceType) {
+		// ComfyUI 是本地或可信网络内的自托管服务，默认部署不配置鉴权，
+		// 因此不像 RunningHub 那样强制要求 API Key，只校验地址与工作流声明。
+		if _, err := ValidateOutboundURL(comfyUIRootURL(config.BaseURL)); err != nil {
+			return err
+		}
+		if len(config.WorkflowJSON) == 0 {
+			return errors.New("ComfyUI 缺少工作流 JSON")
+		}
+		return nil
+	}
 	return errors.New("未知工作流协议")
 }
 
 func workflowInterfaceSupportsMode(interfaceType string, mode string) bool {
 	switch mode {
 	case "image":
-		return interfaceType == string(model.ChannelInterfaceRunningHubImage)
+		return interfaceType == string(model.ChannelInterfaceRunningHubImage) ||
+			interfaceType == string(model.ChannelInterfaceComfyUIImage)
 	case "video":
-		return interfaceType == string(model.ChannelInterfaceRunningHubVideo)
+		return interfaceType == string(model.ChannelInterfaceRunningHubVideo) ||
+			interfaceType == string(model.ChannelInterfaceComfyUIVideo)
 	case "audio":
 		return interfaceType == string(model.ChannelInterfaceRunningHubAudio)
 	default:
@@ -341,8 +354,11 @@ func workflowInterfaceSupportsMode(interfaceType string, mode string) bool {
 }
 
 func (s *Service) runWorkflowProviderTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
-	if isRunningHubInterface(input.Config.InterfaceType) {
+	switch {
+	case isRunningHubInterface(input.Config.InterfaceType):
 		return s.runRunningHubWorkflow(ctx, input)
+	case isComfyUIInterface(input.Config.InterfaceType):
+		return s.runComfyUIWorkflow(ctx, input)
 	}
 	return nil, errors.New("未知工作流协议")
 }
@@ -976,17 +992,24 @@ func resolveWorkflowFieldValue(field WorkflowField, files map[string]string, inp
 	}
 	if field.RandomEnabled {
 		randomMax := field.Max
-		if isRunningHubInterface(input.Config.InterfaceType) && isWorkflowSeedField(field.FieldName) {
-			// RunningHub 的随机 Seed 按 uint32 传输，不能沿用 JavaScript 安全整数上限。
-			const runningHubSeedMax int64 = 1<<32 - 1
-			maxValue, err := workflowIntegerBound(field.Max, runningHubSeedMax)
-			if err != nil {
-				return nil, false, err
+		if isWorkflowSeedField(field.FieldName) {
+			switch {
+			case isRunningHubInterface(input.Config.InterfaceType):
+				// RunningHub 的随机 Seed 按 uint32 传输，不能沿用 JavaScript 安全整数上限。
+				const runningHubSeedMax int64 = 1<<32 - 1
+				maxValue, err := workflowIntegerBound(field.Max, runningHubSeedMax)
+				if err != nil {
+					return nil, false, err
+				}
+				if maxValue > runningHubSeedMax {
+					maxValue = runningHubSeedMax
+				}
+				randomMax = maxValue
+			case isComfyUIInterface(input.Config.InterfaceType):
+				// ComfyUI 把 seed 声明到 uint64 上限（18446744073709551615），既超出
+				// ParseInt 也超出 JavaScript 安全整数范围，改用安全整数上限。
+				randomMax = comfyUISeedRandomMax
 			}
-			if maxValue > runningHubSeedMax {
-				maxValue = runningHubSeedMax
-			}
-			randomMax = maxValue
 		}
 		value, err := randomWorkflowInteger(field.Min, randomMax)
 		return value, err == nil, err
@@ -1743,14 +1766,20 @@ func runningHubAPIKey(config providerConfig) string {
 }
 
 func (s *Service) downloadWorkflowOutputs(ctx context.Context, urls []string) (map[string]interface{}, error) {
-	return s.downloadWorkflowOutputsWithPolicy(ctx, urls, "", nil)
+	return s.downloadWorkflowOutputsWithPolicy(ctx, urls, "", nil, "RunningHub")
 }
 
 func (s *Service) downloadWorkflowVideoOutputs(ctx context.Context, urls []string, taskID string, policy videoPollPolicy) (map[string]interface{}, error) {
-	return s.downloadWorkflowOutputsWithPolicy(ctx, urls, taskID, &policy)
+	return s.downloadWorkflowOutputsWithPolicy(ctx, urls, taskID, &policy, "RunningHub")
 }
 
-func (s *Service) downloadWorkflowOutputsWithPolicy(ctx context.Context, urls []string, taskID string, policy *videoPollPolicy) (map[string]interface{}, error) {
+func (s *Service) downloadComfyUIOutputs(ctx context.Context, urls []string, taskID string, policy videoPollPolicy) (map[string]interface{}, error) {
+	return s.downloadWorkflowOutputsWithPolicy(ctx, urls, taskID, &policy, "ComfyUI")
+}
+
+// downloadWorkflowOutputsWithPolicy 下载产物并按 MIME 归类。providerLabel 只用于
+// 错误文案，让本地 ComfyUI 与云端 RunningHub 的失败信息能区分来源。
+func (s *Service) downloadWorkflowOutputsWithPolicy(ctx context.Context, urls []string, taskID string, policy *videoPollPolicy, providerLabel string) (map[string]interface{}, error) {
 	images := make([]map[string]interface{}, 0)
 	var video, audio map[string]interface{}
 	for _, rawURL := range urls {
@@ -1787,7 +1816,7 @@ func (s *Service) downloadWorkflowOutputsWithPolicy(ctx context.Context, urls []
 			})
 		}
 		if err != nil {
-			return nil, fmt.Errorf("下载 RunningHub 产物失败：%w", err)
+			return nil, fmt.Errorf("下载 %s 产物失败：%w", providerLabel, err)
 		}
 		mimeType = runningHubOutputMimeType(rawURL, mimeType)
 		item := workflowOutputValue(mimeType, data)
@@ -1817,7 +1846,7 @@ func (s *Service) downloadWorkflowOutputsWithPolicy(ctx context.Context, urls []
 		result["audio"] = audio
 	}
 	if len(images) == 0 && video == nil && audio == nil {
-		return nil, errors.New("RunningHub 返回的产物类型不受支持")
+		return nil, fmt.Errorf("%s 返回的产物类型不受支持", providerLabel)
 	}
 	return result, nil
 }

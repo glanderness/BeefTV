@@ -242,14 +242,17 @@ func (s *Service) CreateTimelineTranscriptionTask(userID string, req TimelineTra
 // TimelineRenderCreateRequest 是画布提交时间线渲染任务的入参；
 // Timeline 为前端 TimelineProject 快照（v2：tracks/clips 平铺）。
 // 片段通过 directMedia.storageKey=resource:<id> 引用后端资源。
+// Metadata 承载产物登记信息（短剧成片把结果写回对应工作流阶段）。
 type TimelineRenderCreateRequest struct {
-	ProjectID string        `json:"projectId"`
-	Timeline  renderProject `json:"timeline"`
+	ProjectID string         `json:"projectId"`
+	Timeline  renderProject  `json:"timeline"`
+	Metadata  map[string]any `json:"metadata"`
 }
 
 type timelineRenderInput struct {
-	ProjectID string        `json:"projectId"`
-	Timeline  renderProject `json:"timeline"`
+	ProjectID string         `json:"projectId"`
+	Timeline  renderProject  `json:"timeline"`
+	Metadata  map[string]any `json:"metadata"`
 }
 
 type timelineRenderResult struct {
@@ -274,7 +277,7 @@ func (s *Service) CreateTimelineRenderTask(userID string, req TimelineRenderCrea
 	if err != nil {
 		return nil, err
 	}
-	input := timelineRenderInput{ProjectID: strings.TrimSpace(req.ProjectID), Timeline: req.Timeline}
+	input := timelineRenderInput{ProjectID: strings.TrimSpace(req.ProjectID), Timeline: req.Timeline, Metadata: req.Metadata}
 	inputJSON, _ := json.Marshal(input)
 	task := model.Task{
 		ID: newID(), UserID: userID, ProjectID: strings.TrimSpace(req.ProjectID),
