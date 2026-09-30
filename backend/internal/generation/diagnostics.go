@@ -8,7 +8,9 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
-var diagnosticLocalPath = regexp.MustCompile(`(?i)(?:[a-z]:[\\/]|\\\\|/(?:Users|home|private|tmp|var|Volumes|mnt|media|run|root|opt|srv|etc)/)[^\s"'<>]+`)
+// PathError separates the path and cause with a colon; spaces are legal in paths.
+// Without a reliable delimiter, conservatively hide the remaining suffix too.
+var diagnosticLocalPath = regexp.MustCompile(`(?i)(?:[a-z]:[\\/]|\\\\|/(?:Users|home|private|tmp|var|Volumes|mnt|media|run|root|opt|srv|etc)/)[^\r\n:"'<>]+`)
 var diagnosticTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$`)
 
 func diagnosticToken(value string) string {

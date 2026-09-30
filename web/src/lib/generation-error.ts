@@ -907,7 +907,7 @@ function sanitizeProviderCode(value: string) {
 
 function sanitizeProviderText(value: string) {
     let text = value.trim();
-    text = text.replace(/(?:[a-z]:[\\/]|\\\\|\/(?:Users|home|private|tmp|var|Volumes|mnt|media|run|root|opt|srv|etc)\/)[^\s"'<>]+/gi, "[路径已隐藏]");
+    text = text.replace(/(?:[a-z]:[\\/]|\\\\|\/(?:Users|home|private|tmp|var|Volumes|mnt|media|run|root|opt|srv|etc)\/)[^\r\n:"'<>]+/gi, "[路径已隐藏]");
     if (!text || HTML_BODY.test(text)) return "";
     // Unstructured messages may echo whole headers or prompts; discard the suffix,
     // since a whitespace-based token matcher cannot know where a secret ends.

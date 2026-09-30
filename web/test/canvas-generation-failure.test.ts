@@ -14,7 +14,7 @@ const image = (id: string, storageKey: string): CanvasNodeData => ({ id, type: C
 
 describe("canvas generation failure consumers", () => {
     test("copied diagnostics hide mounted and UNC paths and label configuration honestly", () => {
-        for (const path of ["/Volumes/PrivateDrive/customer-A/image.png", "/mnt/PrivateDrive/customer-A/image.png", String.raw`\\PrivateServer\PrivateShare\customer-A\image.png`]) {
+        for (const path of ["/Volumes/PrivateDrive/customer-A/image.png", "/Volumes/External Work/customer-A/image.png", String.raw`C:\Private User\customer-A\image.png`, String.raw`\\Private Server\Private Share\customer-A\image.png`, "/mnt/PrivateDrive/customer-A/image.png", String.raw`\\PrivateServer\PrivateShare\customer-A\image.png`]) {
             const copied = formatGenerationDiagnostics(explainGenerationError(new Error(`open ${path}: permission denied`)), { failureDiagnostics: { source: "local_result", summary: `open ${path}: permission denied`, input: { size: "auto", quality: "2k", count: "3", promptChars: 1, imageCount: 0, videoCount: 0, audioCount: 0 } } });
             expect(copied).not.toContain("Private");
             expect(copied).not.toContain("customer-A");
