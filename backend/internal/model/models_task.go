@@ -118,6 +118,7 @@ type TaskTextDelta struct {
 }
 
 type TaskLog struct {
+	Summary   string    `json:"summary,omitempty" gorm:"-"`
 	ID        string    `json:"id" gorm:"primaryKey;size:36"`
 	UserID    string    `json:"userId" gorm:"index;size:36"`
 	TaskID    string    `json:"taskId" gorm:"index;size:36"`

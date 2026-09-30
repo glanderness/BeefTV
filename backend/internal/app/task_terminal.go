@@ -133,6 +133,10 @@ func (c *taskTerminalCoordinator) handleExecutionFailure(task *model.Task, err e
 	task.Status = model.TaskStatusFailed
 	c.ensureFailedAttemptLogged(task, err)
 	task.Stage = "任务失败"
+	var unknown providerSubmissionUnknownError
+	if errors.As(err, &unknown) {
+		task.Stage = "submission_unknown"
+	}
 	task.Error = c.userFacingMessage(err)
 	if terminalErr := c.markTerminalState(task); terminalErr != nil {
 		return errors.Join(err, terminalErr)

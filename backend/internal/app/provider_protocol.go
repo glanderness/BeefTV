@@ -76,10 +76,16 @@ func runProtocolAdapterTaskWithPolicy(ctx context.Context, input canvasGeneratio
 		}
 		body, err := executeProtocolRequest(withProviderRequestKind(ctx, "create"), input.Config, spec)
 		if err != nil {
+			if input.Mode == "video" {
+				return nil, uncertainVideoSubmission(ctx, err)
+			}
 			return nil, err
 		}
 		created, err = adapter.ParseCreate(ctx, body)
 		if err != nil {
+			if input.Mode == "video" {
+				return nil, providerSubmissionUnknownError{Cause: err}
+			}
 			return nil, err
 		}
 		taskID = created.TaskID
@@ -97,7 +103,7 @@ func runProtocolAdapterTaskWithPolicy(ctx context.Context, input canvasGeneratio
 			return finishProtocolAdapterResult(ctx, input, adapter, request, taskID, created.Result, policy)
 		}
 		if taskID == "" {
-			return nil, errors.New("声明式协议创建请求没有返回任务 ID")
+			return nil, providerSubmissionUnknownError{Cause: errors.New("创建请求未返回可查询的任务 ID，请核对供应商任务记录")}
 		}
 	}
 
