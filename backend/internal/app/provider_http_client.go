@@ -108,7 +108,12 @@ func postJSONWithSubmissionKey(ctx context.Context, config providerConfig, path 
 	if key, _ := ctx.Value(providerSubmissionKeyContext{}).(string); strings.TrimSpace(key) != "" {
 		req.Header.Set("Idempotency-Key", strings.TrimSpace(key))
 	}
-	return doJSON(req, target)
+	// A configured endpoint alone cannot prove that its idempotency guard is
+	// enabled. Keep the durable key, but never replay an ambiguous POST here.
+	// net/http otherwise treats Idempotency-Key as permission to replay on a
+	// stale pooled connection when GetBody is available.
+	req.GetBody = nil
+	return uncertainVideoSubmission(ctx, doJSON(req, target))
 }
 
 func applyProviderAuth(req *http.Request, config providerConfig) {

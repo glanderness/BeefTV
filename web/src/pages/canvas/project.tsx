@@ -908,7 +908,7 @@ function InfiniteCanvasPage() {
     // 每帧新对象会让所有节点跟着重渲染，错题本里多条崩溃都出在画布高频更新。
     const nodeGraphContext = useMemo<CanvasNodeGraphContextValue>(() => ({ getUpstreamNodes: (nodeId: string) => getContextResourceNodes(nodeId, nodes, connections) }), [connections, nodes]);
 
-    const { applyGenerationTaskResult, bindGenerationTask, finishGenerationRequest, openNodeTaskDetails, runningNodeId, setRunningNodeId, setTaskDetail, startGenerationRequest, taskDetail, taskDetailLoading, taskDetailLogs, taskDetailError } = useCanvasGeneration({
+    const { applyGenerationTaskResult, bindGenerationTask, finishGenerationRequest, openNodeTaskDetails, retrieveTaskResult, retrievingTaskId, runningNodeId, setRunningNodeId, setTaskDetail, startGenerationRequest, taskDetail, taskDetailLoading, taskDetailLogs, taskDetailError } = useCanvasGeneration({
         projectId,
         domainProjectId: linkedProjectId,
         projectLoaded,
@@ -3777,6 +3777,8 @@ function InfiniteCanvasPage() {
                             taskError={taskDetailError}
                             onCloseTask={() => setTaskDetail(null)}
                             onCancelTask={cancelCanvasTask}
+                            onRetrieveTask={(task) => void retrieveTaskResult(task)}
+                            retrievingTaskId={retrievingTaskId}
                             superResolveNode={superResolveNode}
                             onCloseSuperResolve={() => setSuperResolveNodeId(null)}
                             onUseLocalUpscale={() => {

@@ -50,6 +50,13 @@ func applyAppFailureWrappers(err error, failure generation.Failure) generation.F
 		failure.Action = "请保留任务记录并联系支持查询结果，不要重复提交"
 		return failure
 	}
+	var unknown providerSubmissionUnknownError
+	if errors.As(err, &unknown) {
+		failure.Category = generation.CategorySubmissionUncertain
+		failure.Uncertain, failure.Retryable = true, false
+		failure.Reason, failure.Action = "", ""
+		return failure
+	}
 	var download videoDownloadError
 	if errors.As(err, &download) {
 		failure = generation.WithDownloadFailure(failure, download.TaskID)

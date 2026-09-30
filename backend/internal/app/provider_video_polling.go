@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -191,7 +192,7 @@ func retryableVideoPollError(ctx context.Context, err error) (retry bool, notFou
 	if isTransientResponseDecodeError(err) {
 		return true, false
 	}
-	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.ErrClosedPipe) {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.ErrClosedPipe) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
 		return true, false
 	}
 	if errors.Is(err, context.DeadlineExceeded) {

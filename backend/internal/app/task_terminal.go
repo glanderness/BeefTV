@@ -134,7 +134,8 @@ func (c *taskTerminalCoordinator) handleExecutionFailure(task *model.Task, err e
 	c.ensureFailedAttemptLogged(task, err)
 	task.Stage = "任务失败"
 	var imageRecovery imageRecoveryError
-	if errors.As(err, &imageRecovery) {
+	var unknown providerSubmissionUnknownError
+	if errors.As(err, &imageRecovery) || errors.As(err, &unknown) {
 		task.Stage = "submission_unknown"
 	}
 	task.Error = c.userFacingMessage(err)
