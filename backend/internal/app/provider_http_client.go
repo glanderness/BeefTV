@@ -272,8 +272,10 @@ func doBinary(req *http.Request) ([]byte, string, error) {
 // doBinaryWithConsumer 是 Provider 出站响应的统一安全边界。JSON、SSE 和媒体下载最终都在这里执行
 // 渠道并发/熔断、SSRF、超时、响应大小、HTTP 状态和审计检查；onChunk 仅观察已读取的流片段，
 // 不会绕过完整响应的大小上限或错误判定。
-func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]byte, string, error) {
+func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (responseData []byte, responseMime string, resultErr error) {
 	startedAt := time.Now()
+	evidence := model.TaskRequestEvidence{StartedAt: startedAt.Format(time.RFC3339Nano), ResponseLimitBytes: maxProviderResponseBytes}
+	defer func() { recordTaskRequestEvidence(req, evidence, responseData, resultErr) }()
 	requestTimeout := providerHTTPTimeout
 	if deadline, ok := req.Context().Deadline(); ok {
 		if remaining := time.Until(deadline); remaining > 0 {
@@ -294,6 +296,7 @@ func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]by
 			return nil, "", fmt.Errorf("读取生成资源限制失败：%w", err)
 		}
 		responseLimit = megabytes(policy.Resource.GeneratedFileMB)
+		evidence.ResponseLimitBytes = responseLimit
 		open, err := coordinator.CircuitOpen(req.Context(), channelID)
 		if err != nil {
 			return nil, "", fmt.Errorf("读取渠道熔断状态失败：%w", err)
@@ -321,6 +324,7 @@ func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]by
 	}
 	ApplyDefaultOutboundHeaders(req)
 	client := OutboundHTTPClient(requestTimeout)
+	evidence.Dispatched = true
 	resp, err := client.Do(req)
 	if err != nil {
 		if runtimeService != nil {
@@ -330,7 +334,11 @@ func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]by
 		return nil, "", err
 	}
 	defer resp.Body.Close()
+	evidence.HTTPStatus = resp.StatusCode
+	evidence.DeclaredResponseBytes = resp.ContentLength
+	evidence.RequestID = firstNonEmpty(resp.Header.Get("X-Request-Id"), resp.Header.Get("Request-Id"))
 	if resp.ContentLength > responseLimit {
+		evidence.Outcome = "response_limit"
 		err = fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
 		recordProviderRequest(req, startedAt, resp.StatusCode, nil, err)
 		return nil, "", err
@@ -341,8 +349,10 @@ func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]by
 	chunk := make([]byte, 32<<10)
 	for {
 		readCount, readErr := reader.Read(chunk)
+		evidence.ReceivedBytes += int64(readCount)
 		if readCount > 0 {
 			if int64(buffered.Len()+readCount) > responseLimit {
+				evidence.Outcome = "response_limit"
 				err = fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
 				recordProviderRequest(req, startedAt, resp.StatusCode, buffered.Bytes(), err)
 				return nil, "", err
@@ -370,7 +380,7 @@ func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]by
 		if runtimeService != nil {
 			_ = runtimeService.RecordChannelResult(req.Context(), channelID, resp.StatusCode >= 500)
 		}
-		httpErr := providerHTTPError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(data), RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
+		httpErr := providerHTTPError{RequestID: firstNonEmpty(resp.Header.Get("X-Request-Id"), resp.Header.Get("Request-Id")), StatusCode: resp.StatusCode, Status: resp.Status, Body: string(data), RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
 		recordProviderRequest(req, startedAt, resp.StatusCode, data, httpErr)
 		return nil, "", httpErr
 	}

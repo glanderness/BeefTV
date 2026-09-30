@@ -235,7 +235,10 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 				stage = "等待上游任务同步"
 				message = "上游任务状态暂未同步，将继续回查原任务"
 			}
-			if deferErr := s.repo.DeferRunningTaskForProviderPoll(task.ID, task.LeaseOwner, stage, 15*time.Second); deferErr != nil {
+			if task.FailureDiagnostics != nil {
+				task.FailureDiagnostics.ExecutionResult = "pending"
+			}
+			if deferErr := s.repo.DeferRunningTaskForProviderPoll(task.ID, task.LeaseOwner, stage, 15*time.Second, task.FailureDiagnostics); deferErr != nil {
 				return deferErr
 			}
 			_ = s.log(task.UserID, task.ID, "info", message, task.PollStage)

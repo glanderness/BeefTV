@@ -25,7 +25,7 @@ type taskTerminalCoordinator struct {
 
 type taskTerminalRepository interface {
 	Task(id string) (*model.Task, error)
-	UpdateTaskTerminalState(id string, owner string, expected model.TaskStatus, status model.TaskStatus, stage string, errorText string, completedAt time.Time) (bool, error)
+	UpdateTaskTerminalState(id string, owner string, expected model.TaskStatus, status model.TaskStatus, stage string, errorText string, completedAt time.Time, diagnostics ...*model.TaskFailureDiagnostics) (bool, error)
 }
 
 type taskReplayLifecycle interface {
@@ -83,6 +83,7 @@ func (s *Service) terminalCoordinator() *taskTerminalCoordinator {
 }
 
 func (c *taskTerminalCoordinator) markPreparationFailure(task *model.Task, stage string, err error, _ bool, _ string) error {
+	captureTaskFailureDiagnostics(task, err, "unknown")
 	c.ensureFailedAttemptLogged(task, err)
 	task.Status = model.TaskStatusFailed
 	task.Stage = stage
@@ -124,6 +125,11 @@ func (c *taskTerminalCoordinator) handleExecutionFailure(task *model.Task, err e
 		return nil
 	}
 
+	source := "unknown"
+	if providerSucceeded {
+		source = "local_result"
+	}
+	captureTaskFailureDiagnostics(task, err, source)
 	task.Status = model.TaskStatusFailed
 	c.ensureFailedAttemptLogged(task, err)
 	task.Stage = "任务失败"
@@ -162,6 +168,7 @@ func (c *taskTerminalCoordinator) handleResultPersistenceFailure(task *model.Tas
 	}
 
 	task.Status = model.TaskStatusFailed
+	captureTaskFailureDiagnostics(task, saveErr, "local_result")
 	task.Stage = "任务结果保存失败"
 	task.Error = c.userFacingMessage(saveErr)
 	if terminalErr := c.markTerminalState(task); terminalErr != nil {
@@ -200,7 +207,7 @@ func (c *taskTerminalCoordinator) handleSuccess(task *model.Task) error {
 func (c *taskTerminalCoordinator) markTerminalState(task *model.Task) error {
 	completedAt := time.Now()
 	task.CompletedAt = &completedAt
-	updated, err := c.repo.UpdateTaskTerminalState(task.ID, task.LeaseOwner, model.TaskStatusRunning, task.Status, task.Stage, task.Error, completedAt)
+	updated, err := c.repo.UpdateTaskTerminalState(task.ID, task.LeaseOwner, model.TaskStatusRunning, task.Status, task.Stage, task.Error, completedAt, task.FailureDiagnostics)
 	if err != nil {
 		return fmt.Errorf("写入任务终态失败：%w", err)
 	}

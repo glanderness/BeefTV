@@ -17,6 +17,7 @@ export type GenerationTaskOutput = {
 };
 
 export type GenerationTask = {
+    failureDiagnostics?: import("@/lib/generation-error").GenerationFailureDiagnostics;
     id: string;
     clientOperationId?: string;
     retryOf?: string;

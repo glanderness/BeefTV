@@ -338,6 +338,33 @@ describe("generation error classification", () => {
         expect(text).not.toContain("api-key");
     });
 
+    test("persisted category is never advertised as an upstream code", () => {
+        const explanation = explainGenerationError({ code: "invalid_params", message: "模型不接受当前参数" });
+        const text = formatGenerationDiagnostics(explanation, { taskId: "local-task-123", createdAt: "2026-09-30T15:39:21+08:00" });
+        expect(text).not.toContain("上游代码：invalid_params");
+        expect(text).toContain("错误来源：未记录");
+        expect(text).toContain("请求 ID：未记录");
+        expect(text).toContain("任务创建时间：2026-09-30T15:39:21+08:00");
+    });
+
+    test("diagnostics preserve constraint, request and distinct failure time", () => {
+        const text = formatGenerationDiagnostics(explainGenerationError({ code: "invalid_params" }), {
+            taskId: "local-task-123", createdAt: "2026-09-30T15:39:21+08:00", completedAt: "2026-09-30T15:40:11+08:00",
+            failureDiagnostics: { source: "upstream_http", summary: "size must be 1024x1024", providerCode: "invalid_size", httpStatus: 400, requestId: "req-123456", param: "size", stage: "正在生成", capturedAt: "2026-09-30T15:40:10+08:00" },
+        });
+        for (const expected of ["上游代码：invalid_size", "HTTP 状态：400", "请求 ID：req-123456", "参数：size", "错误摘要：size must be 1024x1024", "错误记录时间：2026-09-30T15:40:10+08:00", "任务结束时间：2026-09-30T15:40:11+08:00"]) expect(text).toContain(expected);
+    });
+
+    test("copied diagnostic evidence is sanitized again", () => {
+        const text = formatGenerationDiagnostics(explainGenerationError("failed"), { failureDiagnostics: {
+            source: "local_validation", summary: "cannot read C:\\Users\\PRIVATE\\image.png https://host/file?token=PRIVATE Authorization: Bearer PRIVATE multi word",
+            providerCode: "invalid_params", requestId: "secret-PRIVATE", stage: "prompt=PRIVATE", capturedAt: "Cookie: PRIVATE",
+        } });
+        expect(text).toContain("错误来源：本地参数校验");
+        expect(text).not.toContain("PRIVATE");
+        expect(text).not.toContain("上游代码");
+    });
+
     test("content moderation helper recognizes new categories", () => {
         expect(isContentModerationError("提示词未通过内容安全审核")).toBe(true);
         expect(isContentModerationError("上游 HTTP 400")).toBe(false);

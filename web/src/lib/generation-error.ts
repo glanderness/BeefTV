@@ -37,6 +37,7 @@ export const GENERATION_ERROR_CATEGORIES = [
 export type GenerationErrorCategory = (typeof GENERATION_ERROR_CATEGORIES)[number];
 
 export type GenerationFailureExplanation = {
+    summary?: string;
     category: GenerationErrorCategory;
     reason: string;
     action: string;
@@ -52,6 +53,7 @@ export type GenerationFailureExplanation = {
 };
 
 export type GenerationFailureMetadata = {
+    generationErrorSummary?: string;
     errorDetails: string;
     generationErrorCode?: string;
     failedPromptFingerprint?: string;
@@ -59,11 +61,33 @@ export type GenerationFailureMetadata = {
 };
 
 export type GenerationFailureContext = {
+    errorSummary?: string;
+    failureDiagnostics?: GenerationFailureDiagnostics;
+    completedAt?: string;
+    updatedAt?: string;
     taskId?: string;
     providerRequestId?: string;
     model?: string;
     createdAt?: string;
     stage?: string;
+};
+
+export type GenerationFailureDiagnostics = {
+    source: "local_validation" | "upstream_http" | "upstream_response" | "local_result" | "local_response" | "client_result" | "unknown";
+    version?: string;
+    platform?: string;
+    executionResult?: string;
+    omittedRequests?: number;
+    requests?: { operation: string; method: string; dispatched: boolean; outcome: string; httpStatus?: number; requestId?: string; providerCode?: string; summary?: string; startedAt: string; durationMs: number; requestBytes?: number; receivedBytes?: number; declaredResponseBytes?: number; responseLimitBytes?: number }[];
+    input?: { protocol?: string; model?: string; size?: string; quality?: string; count?: string; promptChars: number; imageCount: number; videoCount: number; audioCount: number; images?: { bytes: number; width: number; height: number }[]; imageLimitsRecorded?: boolean; maxImages?: number; maxImageBytes?: number };
+    summary?: string;
+    providerCode?: string;
+    httpStatus?: number;
+    requestId?: string;
+    providerTaskId?: string;
+    param?: string;
+    stage?: string;
+    capturedAt?: string;
 };
 
 type CategoryCopy = { reason: string; action: string };
@@ -234,6 +258,7 @@ export function explainGenerationError(error: unknown, context: GenerationFailur
     const uncertain = classified.uncertain || classified.category === "submission_uncertain" || classified.category === "download_failed" || (classified.category === "timeout" && classified.status === 524);
     return {
         category: classified.category,
+        summary: sanitizeProviderText(error instanceof Error ? error.message : typeof error === "string" ? error : providerPayloadMessage(error)),
         reason: copy.reason,
         action: copy.action,
         message: message || DEFAULT_GENERATION_ERROR_MESSAGE,
@@ -264,7 +289,7 @@ export function generationErrorCode(error: unknown) {
 export function generationFailureMetadata(error: unknown, prompt: string, references: Array<string | { id?: string; storageKey?: string; url?: string }> = []): GenerationFailureMetadata {
     const explained = explainGenerationError(error);
     const inputFingerprint = generationInputFingerprint(prompt, references);
-    if (!explained.moderation) return { errorDetails: explained.message, generationErrorCode: explained.category === "unknown" ? undefined : explained.errorCode };
+    if (!explained.moderation) return { errorDetails: explained.message, generationErrorSummary: explained.summary, generationErrorCode: explained.category === "unknown" ? undefined : explained.errorCode };
     return {
         errorDetails: explained.message,
         generationErrorCode: explained.errorCode,
@@ -320,21 +345,60 @@ export function generationInputFingerprint(prompt: string, references: Array<str
 }
 
 export function formatGenerationDiagnostics(explanation: GenerationFailureExplanation, context: GenerationFailureContext = {}) {
+    const evidence = context.failureDiagnostics;
     const taskId = sanitizeDebugId(context.taskId) || sanitizeDebugId(explanation.taskId);
-    const requestId = sanitizeDebugId(context.providerRequestId) || sanitizeDebugId(explanation.requestId);
+    const requestId = sanitizeDebugId(evidence?.requestId) || sanitizeDebugId(explanation.requestId);
     const model = sanitizeProviderCode(context.model || "");
     const createdAt = context.createdAt && /^\d{4}-\d{2}-\d{2}[T ][\d:.+Z-]{5,35}$/.test(context.createdAt) ? context.createdAt : "";
     const lines = [
+        "排查信息版本：2",
         `原因：${sanitizeProviderText(explanation.reason)}`,
         explanation.action ? `下一步：${sanitizeProviderText(explanation.action)}` : "",
         `类别：${explanation.category}`,
-        sanitizeProviderCode(explanation.providerCode || "") ? `上游代码：${sanitizeProviderCode(explanation.providerCode || "")}` : "",
+        `错误来源：${({ local_validation: "本地参数校验", upstream_http: "上游 HTTP 响应", upstream_response: "上游业务响应", local_result: "本地结果处理", local_response: "本地响应大小限制", client_result: "画布应用结果", unknown: "未记录" } as Record<string, string>)[evidence?.source || "unknown"] || "未记录"}`,
+        `错误摘要：${sanitizeProviderText(evidence?.summary || context.errorSummary || explanation.summary || "") || "未记录"}`,
+        evidence && ["upstream_http", "upstream_response"].includes(evidence.source) && sanitizeProviderCode(evidence.providerCode || "") ? `上游代码：${sanitizeProviderCode(evidence.providerCode || "")}` : "",
+        evidence?.httpStatus && Number.isInteger(evidence.httpStatus) && evidence.httpStatus >= 100 && evidence.httpStatus <= 599 ? `HTTP 状态：${evidence.httpStatus}` : "",
+        sanitizeProviderCode(evidence?.param || "") ? `参数：${sanitizeProviderCode(evidence?.param || "")}` : "",
+        sanitizeProviderText(evidence?.stage || context.stage || "") ? `失败阶段：${sanitizeProviderText(evidence?.stage || context.stage || "")}` : "",
         taskId ? `任务 ID：${taskId}` : "",
-        requestId ? `请求 ID：${requestId}` : "",
+        `请求 ID：${requestId || "未记录"}`,
+        sanitizeDebugId(evidence?.providerTaskId) ? `上游任务 ID：${sanitizeDebugId(evidence?.providerTaskId)}` : "",
+        sanitizeDebugId(context.providerRequestId) ? `服务端关联 ID：${sanitizeDebugId(context.providerRequestId)}` : "",
         model ? `模型：${model}` : "",
-        createdAt ? `时间：${createdAt}` : "",
+        evidence?.version ? `运行版本：${diagnosticToken(evidence.version)} (${diagnosticToken(evidence.platform || "")})` : "",
+        evidence?.executionResult ? `生成执行：${evidence.executionResult === "completed" ? "完成" : evidence.executionResult === "pending" ? "等待回查" : evidence.executionResult === "failed" ? "未完成" : "未知"}` : "",
+        ...formatExecutionEvidence(evidence),
+        createdAt ? `任务创建时间：${createdAt}` : "",
+        ...[["错误记录时间", evidence?.capturedAt], ["任务结束时间", context.completedAt], ["任务更新时间", context.updatedAt]].flatMap(([label, value]) => value && /^\d{4}-\d{2}-\d{2}[T ][\d:.+Z-]{5,35}$/.test(value) ? [`${label}：${value}`] : []),
     ].filter(Boolean);
     return lines.join("\n");
+}
+
+function formatExecutionEvidence(evidence?: GenerationFailureDiagnostics): string[] {
+    const lines: string[] = [];
+    const number = (n: number | undefined) => Number.isSafeInteger(n) && n! >= 0 ? String(n) : "未知";
+    const input = evidence?.input;
+    if (input) {
+        lines.push(`任务配置（协议可能转换或省略）：协议=${diagnosticToken(input.protocol)}，模型=${diagnosticToken(input.model)}，尺寸=${diagnosticToken(input.size)}，质量=${diagnosticToken(input.quality)}，数量=${diagnosticToken(input.count)}`);
+        lines.push(`输入统计：提示词 ${number(input.promptChars)} 字；图片/视频/音频 ${number(input.imageCount)}/${number(input.videoCount)}/${number(input.audioCount)}`);
+        if (input.imageLimitsRecorded) lines.push(`本地参考图限制：最多 ${number(input.maxImages)} 张，单图字节上限=${number(input.maxImageBytes)}（字节上限为 0 表示未设置大小限制）`);
+        input.images?.slice(0, 16).forEach((media, i) => lines.push(`参考图 ${i + 1}：${number(media.width)}×${number(media.height)}，${number(media.bytes)} 字节`));
+    }
+    const outcomes: Record<string, string> = { response_received: "收到响应（业务结果另判）", transport_error: "传输或读取失败", not_dispatched: "本地拦截，未发送", http_error: "HTTP 错误", cancelled: "取消", timeout: "超时", business_error: "业务错误", response_limit: "本地响应大小限制" };
+    evidence?.requests?.slice(0, 8).forEach((request, i) => {
+        lines.push(`请求 ${i + 1}：${sanitizeProviderCode(request.operation)}；${outcomes[request.outcome] || "未知"}；已发起=${request.dispatched === true ? "是" : "否"}；HTTP=${number(request.httpStatus)}；ID=${sanitizeDebugId(request.requestId) || "未记录"}；耗时=${number(request.durationMs)}ms`);
+        lines.push(`请求 ${i + 1} 字节：提交=${number(request.requestBytes)}；响应声明=${number(request.declaredResponseBytes)}；已读=${number(request.receivedBytes)}；响应上限=${number(request.responseLimitBytes)}`);
+        if (/^\d{4}-\d{2}-\d{2}[T ][\d:.+Z-]{5,35}$/.test(request.startedAt)) lines.push(`请求 ${i + 1} 时间：${request.startedAt}`);
+        if (sanitizeProviderCode(request.providerCode || "")) lines.push(`请求 ${i + 1} 上游代码：${sanitizeProviderCode(request.providerCode || "")}`);
+        if (request.summary) lines.push(`请求 ${i + 1} 摘要：${sanitizeProviderText(request.summary)}`);
+    });
+    if (evidence?.omittedRequests) lines.push(`中间请求省略：${number(evidence.omittedRequests)}`);
+    return lines;
+}
+
+function diagnosticToken(value?: string): string {
+    return value && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(value) && !value.includes("://") && !/(?:bearer|api[_-]?key|secret|token|sk-|^[a-z]:[\\/]|\/(?:Users|home|private|tmp|var|Volumes|mnt|media|run|root|opt|srv|etc)\/)/i.test(value) ? value : "未记录";
 }
 
 export function isGenerationErrorCode(code: string) {
@@ -843,13 +907,14 @@ function sanitizeProviderCode(value: string) {
 
 function sanitizeProviderText(value: string) {
     let text = value.trim();
+    text = text.replace(/(?:[a-z]:[\\/]|\\\\|\/(?:Users|home|private|tmp|var|Volumes|mnt|media|run|root|opt|srv|etc)\/)[^\r\n:"'<>]+/gi, "[路径已隐藏]");
     if (!text || HTML_BODY.test(text)) return "";
     // Unstructured messages may echo whole headers or prompts; discard the suffix,
     // since a whitespace-based token matcher cannot know where a secret ends.
     text = text.replace(/(?:authorization|cookie|set-cookie|api[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token|password|prompt|input|query)\s*[=:：][\s\S]*/i, "[已隐藏]");
     text = text.replace(URL_PATTERN, "").replace(SIGNED_QUERY, "").replace(SECRET_PATTERN, "").replace(PROMPT_ECHO, "$1[已隐藏]");
     text = text.replace(/\s+/g, " ").trim();
-    if (text.startsWith("{") || text.startsWith("<")) return "";
+    if (text.startsWith("{") || text.startsWith("[") || text.startsWith("<")) return "";
     return text.slice(0, 240);
 }
 

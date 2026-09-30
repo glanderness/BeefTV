@@ -79,6 +79,8 @@ func (s *Service) routeExecutor() *taskRouteExecutor {
 
 func (e *taskRouteExecutor) execute(ctx context.Context, task *model.Task, attempt *model.RouteAttempt) (taskRouteExecutionResult, error) {
 	var execution taskRouteExecutionResult
+	ctx, recorder := withTaskRequestEvidence(ctx, task.FailureDiagnostics)
+	defer func() { task.FailureDiagnostics = recorder.snapshot(execution.providerSucceeded) }()
 	for {
 		if dispatchErr := e.port.markRouteAttemptDispatching(attempt); dispatchErr != nil {
 			execution.err = dispatchErr

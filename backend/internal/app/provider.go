@@ -144,6 +144,7 @@ type providerPayloadError struct {
 func (e providerPayloadError) Error() string { return e.message }
 
 type providerHTTPError struct {
+	RequestID  string
 	StatusCode int
 	Status     string
 	Body       string
@@ -276,6 +277,7 @@ func providerPayloadErrorMessage(raw string) string {
 func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string, taskProjectID string, taskType string, fallbackPrompt string, rawInput string) (map[string]interface{}, error) {
 	ctx = withProtocolRegistry(ctx, s.protocolRegistry())
 	var input canvasGenerationInput
+	defer func() { recordTaskDiagnosticInput(ctx, input) }()
 	if err := json.Unmarshal([]byte(rawInput), &input); err != nil {
 		return nil, fmt.Errorf("任务输入解析失败：%w", err)
 	}

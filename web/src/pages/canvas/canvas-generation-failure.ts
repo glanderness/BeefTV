@@ -43,7 +43,8 @@ export function canvasTaskFailureMetadata(task: GenerationTask, metadata?: Canva
         failure.failedInputFingerprint = metadata.failedInputFingerprint;
         failure.failedPromptFingerprint = metadata.failedPromptFingerprint;
     }
-    return failure;
+    const diagnostics = task.status === "succeeded" ? { ...task.failureDiagnostics, source: "client_result" as const, summary: failure.generationErrorSummary, stage: "画布应用结果", capturedAt: new Date().toISOString() } : task.failureDiagnostics;
+    return { ...failure, taskFailureDiagnostics: diagnostics, taskProviderRequestId: task.providerRequestId };
 }
 
 export function canvasGenerationRetryBlocked(metadata: CanvasNodeMetadata | undefined, input?: CanvasGenerationFailureInput) {

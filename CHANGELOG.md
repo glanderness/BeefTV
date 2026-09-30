@@ -9,6 +9,12 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.15
+
+- Preserve specific generation errors, request IDs, timings and bounded request history in copied diagnostics, including after reopening a task.
+- Distinguish local input and response-size limits, provider failures, and errors while saving or applying generated results.
+- Include task image settings, reference counts and limits without copying prompts, credentials or media addresses; preserve request evidence during background polling and clear it when retrying.
+
 ## v1.6.14
 
 - Keep canvas task details up to date with the desktop backend while a task is running, including progress, logs and start/completion times.
