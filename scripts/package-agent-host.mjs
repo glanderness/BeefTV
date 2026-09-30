@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 export const NODE_VERSION = '24.15.0';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const targets = { 'darwin/arm64': ['darwin', 'arm64'], 'darwin/amd64': ['darwin', 'x64'], 'windows/amd64': ['win32', 'x64'] };
+const sourceFiles = ['server.mjs', 'session-identity.mjs', 'canvas-turn.mjs', 'package.json', 'bun.lock'];
 
 function run(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, encoding: 'utf8', timeout: 180000 });
@@ -32,12 +33,12 @@ export function verifyRuntime(runtime, target) {
 export function packageAgentHost({ runtime, target, destination, source = path.join(root, 'agent-host') }) {
   const node = verifyRuntime(runtime, target);
   if (!destination) throw new Error('agent-host destination is required');
-  for (const name of ['server.mjs', 'session-identity.mjs', 'package.json', 'bun.lock']) {
+  for (const name of sourceFiles) {
     if (!existsSync(path.join(source, name))) throw new Error(`Missing agent-host source: ${name}`);
   }
   const stage = mkdtempSync(path.join(tmpdir(), 'beeftv agent host '));
   try {
-    for (const name of ['server.mjs', 'session-identity.mjs', 'package.json', 'bun.lock']) cpSync(path.join(source, name), path.join(stage, name));
+    for (const name of sourceFiles) cpSync(path.join(source, name), path.join(stage, name));
     // Install from the committed lock into a clean tree, never from developer node_modules.
     run(process.execPath, ['install', '--production', '--frozen-lockfile', '--backend', 'copyfile', '--os', targets[target][0], '--cpu', targets[target][1]], stage);
     const nodeRelative = target.startsWith('windows/') ? 'runtime/node.exe' : 'runtime/bin/node';
@@ -46,7 +47,7 @@ export function packageAgentHost({ runtime, target, destination, source = path.j
     cpSync(node, bundledNode, { dereference: true });
     chmodSync(bundledNode, 0o755);
     // Resolve precisely the host imports under the shipped Node and shipped dependency tree.
-    run(bundledNode, ['--input-type=module', '-e', "await import('@earendil-works/pi-coding-agent'); await import('@earendil-works/pi-ai'); await import('@earendil-works/pi-ai/providers/openai'); await import('./session-identity.mjs');"], stage);
+    run(bundledNode, ['--input-type=module', '-e', "await import('@earendil-works/pi-coding-agent'); await import('@earendil-works/pi-ai'); await import('@earendil-works/pi-ai/providers/openai'); await import('./session-identity.mjs'); await import('./canvas-turn.mjs');"], stage);
     run(bundledNode, ['--check', 'server.mjs'], stage);
     if (existsSync(destination)) throw new Error(`Refusing to overwrite existing agent-host: ${destination}`);
     cpSync(stage, destination, { recursive: true, dereference: true });
