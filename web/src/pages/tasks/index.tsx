@@ -373,9 +373,9 @@ export default function TasksPage() {
             }
             if (request === detailRequestRef.current) setDetailTask(result.task);
             setTasks((items) => items.map((item) => (item.id === task.id ? { ...item, ...result.task } : item)));
-            const logs = await listTaskLogs(task.id);
-            if (request === detailRequestRef.current) setTaskLogs(logs);
             await syncGenerationTaskToCanvasStore(result.task);
+            const logs = await listTaskLogs(task.id).catch(() => undefined);
+            if (logs && request === detailRequestRef.current) setTaskLogs(logs);
             if (!localMode) window.dispatchEvent(new CustomEvent("wallet:updated"));
             void loadTasks(false);
             if (request === detailRequestRef.current) message.success("视频已取回，未重新生成");
