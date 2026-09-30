@@ -63,6 +63,35 @@ func TestLocalSchemaRecordsVersionAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestTaskDiagnosticsMigrationPreservesExistingTasks(t *testing.T) {
+	db, err := Open(Config{Driver: "sqlite", DSN: "file:task-diagnostics-migration?mode=memory&cache=shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = MigrateLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Create(&model.Task{ID: "existing-task", Error: "历史错误"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Migrator().DropColumn(&model.Task{}, "FailureDiagnostics"); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Delete(&localSchemaMigration{}, "version = ?", 3).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = MigrateLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	var task model.Task
+	if err = db.First(&task, "id = ?", "existing-task").Error; err != nil {
+		t.Fatal(err)
+	}
+	if task.Error != "历史错误" || task.FailureDiagnostics != nil {
+		t.Fatalf("task changed: %+v", task)
+	}
+}
+
 func TestHostedCleanupCreatesRecoverableSQLiteBackup(t *testing.T) {
 	dataDir := t.TempDir()
 	databasePath := filepath.Join(dataDir, "canvas.db")

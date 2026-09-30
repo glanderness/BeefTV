@@ -29,7 +29,7 @@ func (r *taskTerminalRepositoryStub) Task(string) (*model.Task, error) {
 	return &copy, nil
 }
 
-func (r *taskTerminalRepositoryStub) UpdateTaskTerminalState(_ string, _ string, _ model.TaskStatus, status model.TaskStatus, stage string, errorText string, completedAt time.Time) (bool, error) {
+func (r *taskTerminalRepositoryStub) UpdateTaskTerminalState(_ string, _ string, _ model.TaskStatus, status model.TaskStatus, stage string, errorText string, completedAt time.Time, diagnostics ...*model.TaskFailureDiagnostics) (bool, error) {
 	r.terminalCalls++
 	if r.terminalConflict {
 		return false, nil
@@ -38,6 +38,9 @@ func (r *taskTerminalRepositoryStub) UpdateTaskTerminalState(_ string, _ string,
 		return false, r.terminalError
 	}
 	if r.task != nil {
+		if len(diagnostics) > 0 {
+			r.task.FailureDiagnostics = diagnostics[0]
+		}
 		r.task.Status, r.task.Stage, r.task.Error, r.task.CompletedAt = status, stage, errorText, &completedAt
 	}
 	return true, nil

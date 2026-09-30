@@ -546,7 +546,7 @@ export default function TasksPage() {
                         {detailTask.error || isTaskFailed(detailTask) ? (
                             <GenerationFailureNotice
                                 explanation={explainGenerationError({ code: detailTask.errorCode, message: detailTask.error }, { taskId: detailTask.id, providerRequestId: detailTask.providerRequestId, model: detailTask.model, createdAt: detailTask.createdAt, stage: detailTask.stage })}
-                                context={{ taskId: detailTask.id, providerRequestId: detailTask.providerRequestId, model: detailTask.model, createdAt: detailTask.createdAt, stage: detailTask.stage }}
+                                context={{ taskId: detailTask.id, providerRequestId: detailTask.providerRequestId, model: detailTask.model, createdAt: detailTask.createdAt, stage: detailTask.stage, failureDiagnostics: detailTask.failureDiagnostics, completedAt: detailTask.completedAt, updatedAt: detailTask.updatedAt }}
                             />
                         ) : null}
                         <TaskResultMedia value={detailTask.resultJson} taskType={detailTask.type} />
