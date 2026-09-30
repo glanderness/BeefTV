@@ -104,7 +104,7 @@ func validateWindowsLayout(root string) error {
 }
 
 func validateAgentHost(root, node string, executable bool) error {
-	for _, name := range []string{"server.mjs", "session-identity.mjs", "package.json", "node_modules/@earendil-works/pi-coding-agent/package.json", node} {
+	for _, name := range []string{"server.mjs", "session-identity.mjs", "canvas-turn.mjs", "request-budget.mjs", "package.json", "node_modules/@earendil-works/pi-coding-agent/package.json", node} {
 		if err := requireRegularFile(filepath.Join(root, filepath.FromSlash(name)), name == node && executable); err != nil {
 			return fmt.Errorf("更新包内置助手资源不完整: %s: %w", name, err)
 		}

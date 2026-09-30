@@ -138,7 +138,7 @@ func WindowsZipFiles(marker string) (map[string][]byte, map[string]bool) {
 
 func agentFiles(node, marker string) map[string][]byte {
 	files := map[string][]byte{}
-	for _, name := range []string{"server.mjs", "session-identity.mjs", "package.json", node, "node_modules/@earendil-works/pi-coding-agent/package.json"} {
+	for _, name := range []string{"server.mjs", "session-identity.mjs", "canvas-turn.mjs", "request-budget.mjs", "package.json", node, "node_modules/@earendil-works/pi-coding-agent/package.json"} {
 		files[name] = []byte(marker)
 	}
 	return files
