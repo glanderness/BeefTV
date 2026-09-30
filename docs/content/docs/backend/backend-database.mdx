@@ -26,7 +26,15 @@ go test ./internal/database -run 'TestAgentProductReconcileBackupRestoreUsesOldS
 
 验收覆盖正式 v3、Agent v3/v6、图片恢复 v3、产品 v7、同为 v7 但迁移名不同且缺表的数据库；分别检查任务结果、失败诊断、资源记录、Agent 回执、恢复发送计数、原 ledger 和唯一索引。注入 v8 ledger 写入故障验证 DDL 与 ledger 同时回滚；重复操作身份阻止升级且保留所有行。备份用 SQLite `VACUUM INTO` 生成一致副本，迁移后从未修改的备份重新打开并验证旧版本及输出引用。
 
-未来 Agent owner 的发布门槛：先整合产品功能与模型合同，再在隔离的完整工作区副本上验收上述迁移、任务读取、恢复行为和 CLI/MCP；本补丁仅证明结构迁移，未证明 Agent 运行兼容。任何真实升级都必须先停止所有工作区写入者，创建完整工作区备份（包括 SQLite、资源文件和设置加密密钥），验证备份可读取，再只对独立副本升级并核验结果。上线还需用户单独授权。
+本整合分支已包含产品功能与 Agent 合同；数据库迁移测试仍不能替代运行验收。真实 CLI/MCP 服务与重启回放使用下列独立测试：它构建 CLI，在临时 SQLite 工作区启动本机 HTTP 服务，写入后关闭并重开服务，再以相同操作编号验证仅一次写入，并运行官方 MCP 客户端握手、工具调用、幂等冲突及只读检查。测试不配置模型、不调用付费上游。
+
+```sh
+cd backend
+go test ./cmd/beeftv -run TestCLIAndMCPAgainstIsolatedIntegratedRuntime -count=1 -v
+go test -race ./internal/app -run 'TestImageSubmission|TestCreateTaskReplaysSameClientOperation|TestMCPApprovedFrozenArgsPersistOneTaskAcrossDuplicateAndRestart' -count=1
+```
+
+Agent 宿主在安装仓库锁定的依赖后，可从仓库根目录执行 `bun test agent-host/*.test.mjs`；其中运行探针使用真实 Node/pi SDK 和本机模型、操作端点替身。该结果不代表真实供应商、用户工作区或桌面安装链已经验收。任何真实升级都必须先停止所有工作区写入者，创建完整工作区备份（包括 SQLite、资源文件和设置加密密钥），验证备份可读取，再只对独立副本升级并核验结果。正式安装、发布及真实数据库迁移还需用户单独授权。
 
 回滚只允许停止新程序后，将升级前完整备份恢复到新的隔离目录，由与该备份版本匹配的二进制打开；不得把旧程序指向已升级数据库，不得删除 v8 ledger、降低版本号或删列模拟回滚。升级后产生的新数据不在旧备份中，应保留升级后目录并由 owner 决定如何迁回。本实验没有执行任何真实数据备份、升级、回滚或应用安装。
 
