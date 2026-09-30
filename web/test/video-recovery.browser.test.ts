@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
+import type { BunPlugin } from "bun";
 import { existsSync } from "node:fs";
 import { chromium, type Browser, type Page } from "playwright";
 
@@ -10,10 +11,15 @@ let recovered = false;
 let requests: string[] = [];
 
 beforeAll(async () => {
-    const build = await Bun.build({ entrypoints: [import.meta.dir + "/fixtures/video-recovery-harness.tsx"], target: "browser", define: { "import.meta.env": "{}", "process.env.NODE_ENV": '"production"' } });
+    // CI pins Bun 1.3.9, whose build API does not resolve every tsconfig path
+    // alias transitively. Resolve the repository's one alias explicitly.
+    const plugins: BunPlugin[] = [{ name: "test-source-alias", setup(builder) {
+        builder.onResolve({ filter: /^@\// }, (args) => ({ path: Bun.resolveSync("../src/" + args.path.slice(2), import.meta.dir) }));
+    } }];
+    const build = await Bun.build({ entrypoints: [import.meta.dir + "/fixtures/video-recovery-harness.tsx"], plugins, target: "browser", define: { "import.meta.env": "{}", "process.env.NODE_ENV": '"production"' } });
     if (!build.success) throw new Error(build.logs.join("\n"));
     const script = await build.outputs[0].text();
-    const historyBuild = await Bun.build({ entrypoints: [import.meta.dir + "/fixtures/task-history-recovery-harness.tsx"], target: "browser", define: { "import.meta.env": "{}", "process.env.NODE_ENV": '\"production\"' } });
+    const historyBuild = await Bun.build({ entrypoints: [import.meta.dir + "/fixtures/task-history-recovery-harness.tsx"], plugins, target: "browser", define: { "import.meta.env": "{}", "process.env.NODE_ENV": '\"production\"' } });
     if (!historyBuild.success) throw new Error(historyBuild.logs.join("\n"));
     const historyScript = await historyBuild.outputs[0].text();
     server = Bun.serve({ port: 0, async fetch(request) {
