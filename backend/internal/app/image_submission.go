@@ -44,6 +44,9 @@ func (s *Service) validateImageTaskRetry(task *model.Task) error {
 	}
 	row, err := s.repo.ImageSubmission(attempt.ID, task.ID, task.UserID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
+		if attempt.DispatchState == "submission_unknown" || attempt.DispatchState == "accepted" {
+			return BadAuthRequest("图片请求可能已经生成，请保留任务记录并联系支持查询结果，不要重复提交")
+		}
 		return nil
 	}
 	if err != nil {
@@ -144,7 +147,10 @@ func (s *Service) deferImageRecovery(task model.Task) error {
 		stage = "图片已生成，保存失败，将稍后重试"
 		delay = min(15*time.Minute, time.Minute*time.Duration(1<<min(max(row.SendCount-1, 0), 4)))
 	}
-	return s.repo.DeferRunningTaskForProviderPoll(task.ID, task.LeaseOwner, stage, delay)
+	if task.FailureDiagnostics != nil {
+		task.FailureDiagnostics.ExecutionResult = "pending"
+	}
+	return s.repo.DeferRunningTaskForProviderPoll(task.ID, task.LeaseOwner, stage, delay, task.FailureDiagnostics)
 }
 
 type imageRecoveryError struct{ cause error }

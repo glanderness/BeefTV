@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
@@ -68,6 +69,178 @@ func imageSubmissionFixture(t *testing.T, multipartBody bool) (*Service, *gorm.D
 }
 
 func noImageWait(context.Context, time.Duration) error { return nil }
+
+func TestImageSubmissionUnknownProviderCannotReplayOrRetryLostResponse(t *testing.T) {
+	s, db, task, row, _ := imageSubmissionFixture(t, false)
+	if err := db.Delete(row).Error; err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := s.repo.LatestRouteAttempt(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt.DispatchState = "not_sent"
+	if err := s.repo.SaveRouteAttempt(attempt); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	executor := newTaskRouteExecutor(s)
+	adapter := executor.port.(taskRouteServiceAdapter)
+	adapter.process = func(ctx context.Context, current model.Task) (map[string]interface{}, []map[string]interface{}, error) {
+		ctx = context.WithValue(withProviderAnalytics(ctx, s, current), imageTaskContext{}, current)
+		req, _ := http.NewRequestWithContext(ctx, "POST", "https://unverified.example/v1/images/generations", strings.NewReader(`{}`))
+		_, _, handled, err := prepareImageSubmission(req)
+		if handled || err != nil {
+			t.Fatalf("unknown provider recovery enabled: %v %v", handled, err)
+		}
+		calls++
+		return nil, nil, io.ErrUnexpectedEOF
+	}
+	executor.port = adapter
+	result, err := executor.execute(context.Background(), &task, attempt)
+	if err != nil || calls != 1 || !isImageRecoveryError(result.err) {
+		t.Fatalf("calls=%d result=%+v err=%v", calls, result, err)
+	}
+	if s.shouldDeferImageRecovery(task, result.err, false) {
+		t.Fatal("unknown provider scheduled replay")
+	}
+	if _, err := s.beginTaskRouteAttempt(&task); !isRouteDispatchUncertain(err) {
+		t.Fatalf("restart allowed dispatch: %v", err)
+	}
+	if err := s.validateImageTaskRetry(&task); err == nil {
+		t.Fatal("new key retry allowed")
+	}
+	if err := s.terminalCoordinator().handleExecutionFailure(&task, result.err, false, false); err == nil {
+		t.Fatal("missing terminal failure")
+	}
+	stored, err := s.repo.Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.TaskStatusFailed || stored.Stage != "submission_unknown" || !persistedFailureBlocksRetry(stored.Error, stored.Stage) {
+		t.Fatalf("unsafe terminal state: %+v", stored)
+	}
+}
+
+func TestImageSubmissionDeferPreservesDiagnosticsForRestart(t *testing.T) {
+	s, _, task, _, _ := imageSubmissionFixture(t, false)
+	task.FailureDiagnostics = &model.TaskFailureDiagnostics{ExecutionResult: "unknown", Requests: []model.TaskRequestEvidence{{Operation: "submit", RequestID: "request-before-restart"}}}
+	if err := s.deferImageRecovery(task); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := s.repo.Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.FailureDiagnostics == nil || loaded.FailureDiagnostics.ExecutionResult != "pending" || len(loaded.FailureDiagnostics.Requests) != 1 || loaded.FailureDiagnostics.Requests[0].RequestID != "request-before-restart" {
+		t.Fatalf("recovery lost diagnostics: %+v", loaded.FailureDiagnostics)
+	}
+}
+
+func TestImageSubmissionDiskRestartReplaysOneGenerationAndCompletesOnce(t *testing.T) {
+	s, db, task, row, body := imageSubmissionFixture(t, false)
+	var wireCalls, generations int
+	key := ""
+	send := func(req *http.Request) ([]byte, string, error) {
+		wireCalls++
+		got, _ := io.ReadAll(req.Body)
+		if !bytes.Equal(got, body) {
+			t.Fatal("replay changed request bytes")
+		}
+		if key == "" {
+			key = req.Header.Get("Idempotency-Key")
+			generations++
+		}
+		if key == "" || req.Header.Get("Idempotency-Key") != key {
+			t.Fatal("replay created new generation identity")
+		}
+		if wireCalls == 1 {
+			return nil, "", io.ErrUnexpectedEOF
+		}
+		return []byte(`{"data":[{"b64_json":"` + strings.SplitN(testReferenceImageDataURL, ",", 2)[1] + `"}]}`), "application/json", nil
+	}
+	_, _, err := s.sendImageSubmissionWith(context.Background(), task, row, send, func(context.Context, time.Duration) error { return context.DeadlineExceeded })
+	if !s.shouldDeferImageRecovery(task, err, false) {
+		t.Fatalf("lost response not deferred: %v", err)
+	}
+	if err := s.deferImageRecovery(task); err != nil {
+		t.Fatal(err)
+	}
+	var databasePath string
+	if err := db.Raw("SELECT file FROM pragma_database_list WHERE name = 'main'").Scan(&databasePath).Error; err != nil {
+		t.Fatal(err)
+	}
+	connection, _ := db.DB()
+	if err := connection.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := database.Open(database.Config{Driver: "sqlite", DSN: databasePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, _ = reopened.DB()
+	defer connection.Close()
+	restarted := &Service{repo: repository.New(reopened), dataDir: s.dataDir, mode: serviceModeLocal}
+	if err := reopened.Model(&model.Task{}).Where("id = ?", task.ID).Update("next_poll_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := restarted.repo.ClaimNextTask("restarted-worker", time.Minute)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim: %+v %v", claimed, err)
+	}
+	attempt, err := restarted.beginTaskRouteAttempt(claimed)
+	if err != nil || attempt.ID != row.AttemptID {
+		t.Fatalf("restart created attempt: %+v %v", attempt, err)
+	}
+	loaded, err := restarted.repo.ImageSubmission(attempt.ID, task.ID, task.UserID)
+	if err != nil || loaded.SendCount != 1 {
+		t.Fatalf("restart budget: %+v %v", loaded, err)
+	}
+	data, _, err := restarted.sendImageSubmissionWith(context.Background(), *claimed, loaded, send, noImageWait)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload imageResponse
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	images, err := imageDataURLs(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := restarted.persistGeneratedMediaResult(task.UserID, map[string]interface{}{"mode": "image", "images": images})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := *claimed
+	if err := restarted.saveTaskCompletionWithinStorageQuota(claimed, resultJSON, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.saveTaskCompletionWithinStorageQuota(&stale, resultJSON, nil, false); !errors.Is(err, repository.ErrTaskStateConflict) {
+		t.Fatalf("duplicate completion accepted: %v", err)
+	}
+	if _, _, err := restarted.sendImageSubmissionWith(context.Background(), stale, loaded, send, noImageWait); err == nil {
+		t.Fatal("terminal task resent")
+	}
+	var resources, submissions int64
+	if err := reopened.Model(&model.Resource{}).Where("user_id = ?", task.UserID).Count(&resources).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.Model(&model.ImageSubmission{}).Where("task_id = ?", task.ID).Count(&submissions).Error; err != nil {
+		t.Fatal(err)
+	}
+	completed, err := restarted.repo.Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wireCalls != 2 || generations != 1 || resources != 1 || submissions != 1 || completed.Status != model.TaskStatusSucceeded || completed.ResultJSON == "" {
+		t.Fatalf("wire=%d generations=%d resources=%d submissions=%d task=%+v", wireCalls, generations, resources, submissions, completed)
+	}
+}
 
 func TestImageSubmissionConfirmedThrottleRetriesFrozenRequestOnlyThreeTimes(t *testing.T) {
 	s, db, task, row, _ := imageSubmissionFixture(t, true)

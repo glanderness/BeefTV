@@ -96,6 +96,9 @@ func (e *taskRouteExecutor) execute(ctx context.Context, task *model.Task, attem
 		if execution.err == nil {
 			break
 		}
+		if task.Type == "canvas_image" && attempt != nil && attempt.DispatchState == "submission_unknown" && !isImageRecoveryError(execution.err) {
+			execution.err = imageRecoveryError{execution.err}
+		}
 		var upstream providerHTTPError
 		if task.Type == "canvas_image" && attempt != nil && attempt.AttemptNumber < 3 && definiteImageThrottle(execution.err) && errors.As(execution.err, &upstream) {
 			delay := time.Duration(1<<attempt.AttemptNumber) * time.Second
