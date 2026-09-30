@@ -1,6 +1,9 @@
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
 import type { AssistantGenerationProposal } from "@/services/api/agent-assistant";
 import { executeAssistantProposal } from "./canvas-assistant-proposal-execution";
+import { prepareAssistantProposalSnapshot } from "./canvas-assistant-proposal-snapshot";
+import { getModelConfigPersistenceState } from "@/services/model-config-repository";
+import { getLocalModelConfig } from "@/services/api/workspace";
 import { CanvasAssistantSidebar } from "./canvas-assistant-sidebar";
 import { highlightAssistantNodes } from "./canvas-assistant-highlight";
 import { resolveCanvasRightPanel, useCanvasAssistant, useCanvasAssistantDockable } from "./use-canvas-assistant";
@@ -11,7 +14,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { loadAssetsForUse } from "@/services/local-workspace-sync";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { canvasAssetHandoffIds } from "@/lib/canvas/canvas-asset-handoff";
-import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { effectiveConfigForCustomChannels, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { uploadMediaFile } from "@/services/file-storage";
 import { createCanvasGenerationLiveProjectAdapter, registerCanvasGenerationLiveProject } from "@/services/canvas-generation-consumer";
 import { getActiveUserScope, scopedLocalStorage } from "@/lib/user-scope";
@@ -131,7 +134,7 @@ import { queryGenerationTask } from "@/services/api/task-center";
 import type { CanvasImageEmotionPayload } from "@/components/canvas/canvas-node-emotion-panel";
 import { CanvasEmotionWorkspace } from "@/components/canvas/canvas-emotion-workspace";
 import { removeCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
-import { persistCanvasDocument, persistCanvasTimeline, refreshLocalCanvasProjectIfChanged } from "@/services/local-workspace-repository";
+import { hasUnconfirmedCanvasEdits, readLocalCanvasProjectFromBackend, persistCanvasDocument, persistCanvasTimeline, refreshLocalCanvasProjectIfChanged } from "@/services/local-workspace-repository";
 import { bindMissingCanvasResourceAssets, canvasNodesMissingResourceAssetBinding } from "@/lib/canvas/canvas-node-asset";
 import { syncLocalCanvasSnapshot } from "@/services/local-workspace-sync";
 import { useCanvasConnectionController } from "./use-canvas-connection-controller";
@@ -2836,12 +2839,29 @@ function InfiniteCanvasPage() {
                 nodes: nodesRef.current,
                 claims: assistantProposalClaimsRef.current,
                 isHandled: assistant.handledProposals.has(proposal.proposalId),
+                prepare: () => prepareAssistantProposalSnapshot(proposal, () => {
+                    const project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
+                    const persistence = getModelConfigPersistenceState();
+                    return {
+                        canvasId: projectId, canvasRevision: project?.revision ?? -1, modelConfigRevision: persistence.revision,
+                        hasUnconfirmedEdits: hasUnconfirmedCanvasEdits(projectId) || persistence.dirty || !["idle", "saved"].includes(persistence.status),
+                        nodes: nodesRef.current, connections: connectionsRef.current,
+                        config: effectiveConfigForCustomChannels(useConfigStore.getState().config, useUserStore.getState().features.customChannelsEnabled),
+                        assets: useAssetStore.getState().assets, skills: addedSkills,
+                    };
+                }, async () => {
+                    const [canvas, config] = await Promise.all([
+                        readLocalCanvasProjectFromBackend(projectId), getLocalModelConfig(),
+                    ]);
+                    return { canvasId: canvas.id, canvasRevision: canvas.revision ?? -1, modelConfigRevision: config.revision,
+                        nodes: canvas.nodes, connections: canvas.connections };
+                }),
                 generate: (nodeId, mode, prompt, options) => handleGenerateNode(nodeId, mode, prompt, options),
                 markHandled: assistant.markProposalHandled,
                 notify: (content) => { message.warning(content); },
             });
         },
-        [assistant, handleGenerateNode, message, nodesRef],
+        [assistant, handleGenerateNode, message, nodesRef, connectionsRef, projectId, addedSkills],
     );
     const openCanvasNodeTaskDetails = useCallback(
         (node: CanvasNodeData) => {

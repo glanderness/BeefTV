@@ -51,6 +51,7 @@ export type AssistantGenerationProposal = {
     model: string;
     modelKey: string;
     note?: string;
+    source?: { canvasId: string; canvasRevision: number; modelConfigRevision: number };
 };
 
 export type AgentTurnEnd = {

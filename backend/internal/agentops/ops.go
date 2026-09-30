@@ -112,13 +112,17 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 		seen[id] = true
 		nodeIDs = append(nodeIDs, id)
 	}
-	display, modelKey := ctx.Services.AssistantGenerationModel(args.Kind)
+	display, modelKey, configRevision, err := ctx.Services.AssistantGenerationModelSnapshot(args.Kind)
+	if err != nil {
+		return nil, AsError(err)
+	}
 	if display == "" {
 		return nil, PreconditionFailed("generation_model_not_configured", "还没有设置默认的"+generationKindLabel(args.Kind)+"模型", nil)
 	}
 	return map[string]any{
 		"proposalId": newProposalID(), "kind": args.Kind, "nodeIds": nodeIDs,
 		"model": display, "modelKey": modelKey, "note": strings.TrimSpace(args.Note),
+		"source": map[string]any{"canvasId": args.CanvasID, "canvasRevision": doc["revision"], "modelConfigRevision": configRevision},
 	}, nil
 }
 

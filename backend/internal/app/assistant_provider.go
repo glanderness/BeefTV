@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/beefapi"
+	"infinite-canvas/backend/internal/workspace"
 )
 
 // 内置创作助手的模型解析：用户在设置里选的是「渠道内的某个模型」，
@@ -85,6 +86,7 @@ type assistantChannel struct {
 }
 
 type assistantConfigSnapshot struct {
+	Revision       int64              `json:"-"`
 	AssistantModel string             `json:"assistantModel"`
 	TextModel      string             `json:"textModel"`
 	ImageModel     string             `json:"imageModel"`
@@ -95,9 +97,17 @@ type assistantConfigSnapshot struct {
 
 func (s *Service) assistantConfig() (assistantConfigSnapshot, error) {
 	var snapshot assistantConfigSnapshot
-	body, err := s.ReadLocalModelConfig()
+	store, err := workspace.NewProviderConfig(s.dataDir)
+	if err != nil {
+		return snapshot, err
+	}
+	effective, _, err := store.LoadEffectiveModelConfig()
 	if err != nil {
 		return snapshot, assistantUnavailable(AssistantReasonModelNotConfigured, "本地模型配置不可读")
+	}
+	body, err := json.Marshal(effective.Config)
+	if err != nil {
+		return snapshot, err
 	}
 	if len(body) == 0 {
 		return snapshot, assistantUnavailable(AssistantReasonModelNotConfigured, "本地模型配置为空")
@@ -105,6 +115,7 @@ func (s *Service) assistantConfig() (assistantConfigSnapshot, error) {
 	if err := json.Unmarshal(body, &snapshot); err != nil {
 		return snapshot, assistantUnavailable(AssistantReasonModelNotConfigured, "本地模型配置无法解析")
 	}
+	snapshot.Revision = effective.Revision
 	return snapshot, nil
 }
 
@@ -255,9 +266,15 @@ func assistantChannelName(channel assistantChannel) string {
 // AssistantGenerationModel 返回画布默认的图片/视频模型：付费生成提议要把它原样告诉用户。
 // modelKey 保留 "channel::model" 原值，display 去掉渠道前缀。
 func (s *Service) AssistantGenerationModel(kind string) (display string, modelKey string) {
+	display, modelKey, _, _ = s.AssistantGenerationModelSnapshot(kind)
+	return display, modelKey
+}
+
+// Model selection and revision must come from the same persisted configuration read.
+func (s *Service) AssistantGenerationModelSnapshot(kind string) (display string, modelKey string, revision int64, err error) {
 	snapshot, err := s.assistantConfig()
 	if err != nil {
-		return "", ""
+		return "", "", 0, err
 	}
 	switch kind {
 	case "image":
@@ -265,8 +282,8 @@ func (s *Service) AssistantGenerationModel(kind string) (display string, modelKe
 	case "video":
 		modelKey = strings.TrimSpace(snapshot.VideoModel)
 	default:
-		return "", ""
+		return "", "", snapshot.Revision, nil
 	}
 	_, display = splitModelKey(modelKey)
-	return display, modelKey
+	return display, modelKey, snapshot.Revision, nil
 }

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"infinite-canvas/backend/internal/agentops"
+	"infinite-canvas/backend/internal/workspace"
 )
 
 // 付费生成只提议不执行：这个操作必须是只读的（不碰画布、不扣费），
@@ -42,6 +43,10 @@ func TestGenerationProposeIsReadOnlyAndReportsCanvasDefaultModel(t *testing.T) {
 	if payload["model"] != "gpt-image-2" || payload["modelKey"] != "beefapi::gpt-image-2" {
 		t.Fatalf("应回画布默认图片模型: %#v", payload)
 	}
+	source := payload["source"].(map[string]any)
+	if source["canvasId"] != h.canvasID || source["canvasRevision"] != float64(h.revision) || source["modelConfigRevision"] != float64(1) {
+		t.Fatalf("提案必须绑定原始画布和全局配置版本: %#v", source)
+	}
 	if payload["kind"] != "image" || payload["note"] != "做两张分镜图" {
 		t.Fatalf("提议内容异常: %#v", payload)
 	}
@@ -60,6 +65,55 @@ func TestGenerationProposeIsReadOnlyAndReportsCanvasDefaultModel(t *testing.T) {
 	canvas, _ := after.Result.(map[string]any)["canvas"].(map[string]any)
 	if got, _ := canvas["revision"].(float64); int64(got) != h.revision {
 		t.Fatalf("提议不应推进画布版本：%d → %v", h.revision, canvas["revision"])
+	}
+}
+
+func TestGenerationProposeGlobalParameterChangeAdvancesSourceWithoutChangingModel(t *testing.T) {
+	h := newHarness(t)
+	writeGenerationModels(t, h.dataDir)
+	config, err := workspace.NewProviderConfig(h.dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, count := range []string{"2", "4"} {
+		if err := config.SaveLocalModelConfig([]byte(`{"imageModel":"beefapi::gpt-image-2","canvasImageCount":"` + count + `"}`)); err != nil {
+			t.Fatal(err)
+		}
+		state, _, err := config.LoadEffectiveModelConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := h.run(t, "canvas.generation.propose", "", map[string]any{"canvasId": h.canvasID, "nodeIds": []any{"n1"}, "kind": "image"}, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload := result.Result.(map[string]any)
+		source := payload["source"].(map[string]any)
+		if payload["modelKey"] != "beefapi::gpt-image-2" || source["modelConfigRevision"] != float64(state.Revision) || state.Revision <= 1 || source["canvasRevision"] != float64(h.revision) {
+			t.Fatalf("参数修改应只推进配置版本: %#v", payload)
+		}
+	}
+}
+
+func TestGenerationProposeBindsCurrentCanvasRevision(t *testing.T) {
+	h := newHarness(t)
+	writeGenerationModels(t, h.dataDir)
+	params := map[string]any{"canvasId": h.canvasID, "nodeIds": []any{"n1"}, "kind": "image"}
+	before, err := h.run(t, "canvas.generation.propose", "", params, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.run(t, "canvas.node.update", "f02-prompt-edit", map[string]any{"canvasId": h.canvasID, "nodeId": "n1", "expectedRevision": h.revision, "patch": map[string]any{"prompt": "changed"}}, false); err != nil {
+		t.Fatal(err)
+	}
+	after, err := h.run(t, "canvas.generation.propose", "", params, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSource := before.Result.(map[string]any)["source"].(map[string]any)
+	newSource := after.Result.(map[string]any)["source"].(map[string]any)
+	if oldSource["canvasRevision"] != float64(h.revision) || newSource["canvasRevision"] != float64(h.revision+1) || newSource["modelConfigRevision"] != oldSource["modelConfigRevision"] {
+		t.Fatalf("提案来源版本错误: before=%#v after=%#v", oldSource, newSource)
 	}
 }
 

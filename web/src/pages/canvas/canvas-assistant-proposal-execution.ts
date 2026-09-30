@@ -2,12 +2,14 @@ import type { AssistantGenerationProposal } from "@/services/api/agent-assistant
 import type { CanvasNodeData } from "@/types/canvas";
 import type { CanvasNodeGenerationOptions } from "./use-canvas-generation-executor";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-project-generation";
+import { STALE_PROPOSAL_MESSAGE, type ConfirmedGenerationInputs } from "./canvas-assistant-proposal-snapshot";
 
 type ProposalExecution = {
     proposal: AssistantGenerationProposal;
     nodes: CanvasNodeData[];
     claims: Set<string>;
     isHandled: boolean;
+    prepare: () => Promise<ConfirmedGenerationInputs>;
     generate: (nodeId: string, mode: "image" | "video", prompt: string, options?: CanvasNodeGenerationOptions) => Promise<unknown>;
     markHandled: (proposalId: string) => void;
     notify: (content: string) => void;
@@ -32,7 +34,7 @@ export function buildConfirmedGenerationConfig(
     return result;
 }
 
-export async function executeAssistantProposal({ proposal, nodes, claims, isHandled, generate, markHandled, notify }: ProposalExecution) {
+export async function executeAssistantProposal({ proposal, nodes, claims, isHandled, prepare, generate, markHandled, notify }: ProposalExecution) {
     if (isHandled || claims.has(proposal.proposalId)) {
         notify("这项提案已提交或正在提交，请在任务列表查看进度。");
         return;
@@ -52,10 +54,23 @@ export async function executeAssistantProposal({ proposal, nodes, claims, isHand
     let receivedTask = false;
     const started = new Set<string>();
     try {
-        await Promise.allSettled(targets.map(async (node) => {
+        let confirmedInputs: ConfirmedGenerationInputs;
+        try {
+            confirmedInputs = await prepare();
+        } catch (error) {
+            notify(error instanceof Error && error.message === STALE_PROPOSAL_MESSAGE ? error.message : "无法核对提案的最新内容，请检查连接后重试。");
+            return;
+        }
+        const confirmedTargets = [...new Set(proposal.nodeIds)].map((id) => confirmedInputs.nodes.find((node) => node.id === id));
+        if (confirmedTargets.some((node) => !node)) {
+            notify(STALE_PROPOSAL_MESSAGE);
+            return;
+        }
+        await Promise.allSettled(confirmedTargets.map(async (node) => {
             if (!node) return;
             await generate(node.id, proposal.kind, node.metadata?.composerContent ?? node.metadata?.prompt ?? "", {
                 confirmedModelKey: modelKey,
+                confirmedInputs,
                 clientOperationId: `proposal:${proposal.proposalId}:${node.id}`,
                 onTaskUpdate: (task) => {
                     if (!task.id) return;

@@ -66,6 +66,15 @@ describe("本轮画布变更", () => {
 });
 
 describe("付费生成提议", () => {
+    test("服务端来源版本透传，不从当前状态补造，也不透传额外字段", () => {
+        const turn = resetTurnAccumulator(newTurnAccumulator(), 4);
+        collectTurnEffects(turn, "canvas.generation.propose", {
+            proposalId: "gp-source", kind: "image", nodeIds: ["n1"], model: "m", modelKey: "c::m",
+            source: { canvasId: "canvas", canvasRevision: 7, modelConfigRevision: 3, privateField: "omit" },
+        });
+        expect(turn.proposals[0].source).toEqual({ canvasId: "canvas", canvasRevision: 7, modelConfigRevision: 3 });
+        expect(turnChange(turn)).toBeNull();
+    });
     test("提议只被记录，不进变更摘要（它不写画布、不扣费）", () => {
         const turn = resetTurnAccumulator(newTurnAccumulator(), 4);
 

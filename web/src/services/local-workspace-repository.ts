@@ -331,10 +331,16 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
     }
 }
 
+/** Read the durable document without adopting it or hiding errors behind local state. */
+export async function readLocalCanvasProjectFromBackend(id: string): Promise<CanvasProject> {
+    const response = await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(id)}`);
+    if (!response.project) throw new Error("画布读取失败，请重试");
+    return response.project;
+}
+
 export async function openLocalCanvasProjectFromBackend(id: string) {
     try {
-        const response = await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(id)}`);
-        const backendProject = response.project;
+        const backendProject = await readLocalCanvasProjectFromBackend(id);
         if (!backendProject) return openLocalCanvasProject(id);
         const project = selectPreferredCanvasProject(openLocalCanvasProject(id), backendProject);
         // 服务端这一版就是它当前的确认内容；即使最终采用较新的本地内容，

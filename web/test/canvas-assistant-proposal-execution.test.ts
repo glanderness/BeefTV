@@ -9,7 +9,9 @@ import type { GenerationTask } from "@/services/api/task-center";
 const node: CanvasNodeData = { id: "node-1", title: "Image", type: CanvasNodeType.Image, position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { prompt: "test image" } };
 const proposal = { proposalId: "proposal-1", kind: "image" as const, nodeIds: [node.id], model: "Confirmed", modelKey: "channel::confirmed" };
 function input(overrides: Partial<Parameters<typeof executeAssistantProposal>[0]> = {}) {
-    return { proposal, nodes: [node], claims: new Set<string>(), isHandled: false, generate: async () => {}, markHandled: () => {}, notify: () => {}, ...overrides };
+    return { proposal, nodes: [node], claims: new Set<string>(), isHandled: false,
+        prepare: async () => structuredClone({ nodes: overrides.nodes ?? [node], connections: [], config: defaultConfig, assets: [], skills: [] }),
+        generate: async () => {}, markHandled: () => {}, notify: () => {}, ...overrides };
 }
 
 test("F02: confirmed proposal model reaches the generation execution boundary", async () => {
@@ -22,6 +24,16 @@ test("F04: a validation early return does not claim generation started", async (
     const handled: string[] = [];
     await executeAssistantProposal(input({ markHandled: (id) => { handled.push(id); } }));
     expect(handled).toEqual([]);
+});
+
+test("proposal read failures are not reported as proven input drift", async () => {
+    const notices: string[] = [];
+    let submissions = 0;
+    const args = input({ prepare: async () => { throw new Error("offline"); }, generate: async () => { submissions++; }, notify: text => { notices.push(text); } });
+    await executeAssistantProposal(args);
+    expect(submissions).toBe(0);
+    expect(args.claims.size).toBe(0);
+    expect(notices).toEqual(["无法核对提案的最新内容，请检查连接后重试。"]);
 });
 
 const task: GenerationTask = { id: "task-1", type: "canvas_image", status: "queued", prompt: "test image", createdAt: "2026-09-30T00:00:00Z", updatedAt: "2026-09-30T00:00:00Z" };
