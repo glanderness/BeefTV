@@ -30,7 +30,10 @@ const isolated = files.filter((file) => {
     // shell-script tests or modules that replace browser globals.
     if (/\.browser\.test\.[jt]sx?$/.test(file)) return true;
     const source = readFileSync(join(root, file), "utf8");
-    return source.includes("globalThis") && browserGlobalName.test(source);
+    if (source.includes("globalThis") && browserGlobalName.test(source)) return true;
+    // mock.module 是进程级依赖替换：与其他文件共享进程会静默改变它们的依赖，
+    // 因此这类文件必须单独运行，失败才会落在真正做替换的那个文件上。
+    return source.includes("mock.module(");
 });
 const shared = files.filter((file) => !isolated.includes(file));
 

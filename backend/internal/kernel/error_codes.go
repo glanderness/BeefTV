@@ -34,9 +34,12 @@ const (
 	ReasonQuotaExceeded      ErrorReason = "quota_exceeded"
 	ReasonRateLimited        ErrorReason = "rate_limited"
 	ReasonUnavailable        ErrorReason = "unavailable"
-	ReasonTimeout            ErrorReason = "timeout"
-	ReasonInternal           ErrorReason = "internal"
-	ReasonBadGateway         ErrorReason = "bad_gateway"
+	// ReasonUnsupportedField 表示目标节点类型没有声明这个可编辑字段：
+	// 调用方必须换字段或换节点，而不是重试。
+	ReasonUnsupportedField ErrorReason = "unsupported_field"
+	ReasonTimeout          ErrorReason = "timeout"
+	ReasonInternal         ErrorReason = "internal"
+	ReasonBadGateway       ErrorReason = "bad_gateway"
 )
 
 func ReasonForStatus(status int) ErrorReason {

@@ -9,6 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"infinite-canvas/backend/internal/canvas/capability"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -593,13 +594,6 @@ func validateCloudAgentConnection(nodes []map[string]any, fromID, toID string, e
 	if !fromKnown || !toKnown {
 		return BadAuthRequest("连线包含当前 Agent 不支持的节点类型")
 	}
-	fromKind := fromCapability.InputKind
-	if fromKind == "" || !fromCapability.Connection.CanSource {
-		return BadAuthRequest(fmt.Sprintf("来源节点类型 %s 不能作为生成输入；引用连线不能用于普通节点关联", fromCapability.Type))
-	}
-	if !toCapability.Connection.CanTarget {
-		return BadAuthRequest(fmt.Sprintf("目标节点类型 %s 不能接收生成输入；无需为文档归档建立引用连线", toCapability.Type))
-	}
 	connections := []map[string]any{}
 	if len(existingConnections) > 0 {
 		connections = existingConnections[0]
@@ -609,7 +603,8 @@ func validateCloudAgentConnection(nodes []map[string]any, fromID, toID string, e
 			return BadAuthRequest("连线重复")
 		}
 	}
-	if err := toCapability.ValidateConnection(fromKind); err != nil {
+	// 方向判定复用共享能力规则，避免这里再维护一份会走偏的副本。
+	if err := capability.ValidateReferenceConnectionBetween(fromCapability, toCapability); err != nil {
 		return BadAuthRequest(err.Error())
 	}
 	if maxInputs := toCapability.Connection.MaxInputCount; maxInputs > 0 {

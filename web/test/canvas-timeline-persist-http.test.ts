@@ -40,6 +40,11 @@ export let flushImpl = async () => {};
 export const setFlushImpl = (next) => { flushImpl = next; };
 export const flushCanvasStorePersistence = async () => { flushCalls += 1; return flushImpl(); };
 export const resetFlush = () => { flushCalls = 0; flushImpl = async () => {}; };
+// 画布刷新接缝：这个用例只关心 timeline 落库，因此把外部 revision 相关入口做成最薄替身。
+export const applyExternalCanvasRevision = () => ({ kind: "keep-local", projectId: "", candidate: {}, localRevision: 0, remoteRevision: 0 });
+export const acceptCanvasExternalRevisionCandidate = () => undefined;
+export const canvasDurableSnapshot = () => undefined;
+export const canvasExternalRevisionConflict = () => undefined;
 `,
 );
 writeFileSync(historyPath, "export const useCanvasHistoryStore = { getState: () => ({ recordDeletedProjects: () => {} }) };\n");

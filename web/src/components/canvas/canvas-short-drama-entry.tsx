@@ -83,7 +83,7 @@ export function CanvasShortDramaEmptyState({ onCreatePipeline, onStartFreeform, 
     );
 }
 
-export function CanvasFreeformEmptyState({ commands }: { commands: CanvasCreateCommand[] }) {
+export function CanvasFreeformEmptyState({ commands, onOpenAssistant }: { commands: CanvasCreateCommand[]; onOpenAssistant?: () => void }) {
     const theme = canvasThemes[useActiveTheme()];
     const [connectionsHintOpen, setConnectionsHintOpen] = useState(true);
     useEffect(() => {
@@ -117,6 +117,17 @@ export function CanvasFreeformEmptyState({ commands }: { commands: CanvasCreateC
                     </span>
                     <span>双击画布 <span className="mx-1 opacity-45">·</span> 自由生成节点</span>
                 </div>
+                {onOpenAssistant ? (
+                    <button
+                        type="button"
+                        className="mt-1.5 rounded-md px-2.5 py-1 text-xs opacity-70 transition-opacity hover:opacity-100"
+                        style={{ color: theme.node.muted }}
+                        onDoubleClick={(event) => event.stopPropagation()}
+                        onClick={onOpenAssistant}
+                    >
+                        或让助手搭个草案 <span className="ml-1 opacity-70">⌘J</span>
+                    </button>
+                ) : null}
                 {showQuickStarts ? <div className="mt-6 grid w-full max-w-[984px] grid-cols-2 gap-2 sm:grid-cols-4">
                     {quickStarts.map((item) => {
                         const command = commandById.get(item.commandId);

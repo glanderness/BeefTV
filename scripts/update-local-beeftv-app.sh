@@ -19,6 +19,12 @@ if [[ ! -x "$STAGED_APP/Contents/MacOS/BeefTV" ]]; then
   echo "Built BeefTV.app is incomplete: $STAGED_APP" >&2
   exit 1
 fi
+# External agents connect through the bundled CLI, so an install without it is
+# incomplete even though the GUI would start.
+if [[ ! -x "$STAGED_APP/Contents/MacOS/cli/beeftv" ]]; then
+  echo "Built BeefTV.app has no bundled beeftv CLI: $STAGED_APP/Contents/MacOS/cli/beeftv" >&2
+  exit 1
+fi
 codesign --verify --deep --strict "$STAGED_APP"
 if [[ -e "$INSTALLED_APP" && ( ! -d "$INSTALLED_APP" || -L "$INSTALLED_APP" ) ]]; then
   echo "Refusing to replace unexpected target: $INSTALLED_APP" >&2

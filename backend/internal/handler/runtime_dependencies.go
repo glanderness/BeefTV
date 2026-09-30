@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"mime/multipart"
+	"net/http"
 	"time"
 
 	"infinite-canvas/backend/internal/app"
@@ -42,6 +43,9 @@ type RuntimeDependencies struct {
 	Tasks              localapp.TaskPort
 	Generation         localapp.GenerationPort
 	BeefAPI            *beefapi.Service
+	// DesktopTrust verifies both the launch token and the separate Wails UI bootstrap credential.
+	// 桌面形态用它代替开发引导开关签发 UI 会话；服务端形态为 nil。
+	DesktopTrust func(*http.Request) bool
 }
 
 type serviceRuntimeAdapter struct {

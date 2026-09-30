@@ -40,6 +40,23 @@ type Repository struct {
 	db *gorm.DB
 }
 
+// DB 暴露底层连接，供同一进程内的操作层复用同一个数据库（不新建第二个库）。
+func (r *Repository) DB() *gorm.DB {
+	if r == nil {
+		return nil
+	}
+	return r.db
+}
+
+// WithTx 返回绑定到同一事务的仓储，使领域写入与操作记录一起提交。
+// 这是操作层幂等能成立的前提：不做内存去重，也不用第二个数据库假装满足。
+func (r *Repository) WithTx(tx *gorm.DB) *Repository {
+	if r == nil {
+		return &Repository{db: tx}
+	}
+	return &Repository{db: tx}
+}
+
 type UserStorageUsage struct {
 	AssetCount   int64 `json:"assetCount"`
 	AssetBytes   int64 `json:"assetBytes"`

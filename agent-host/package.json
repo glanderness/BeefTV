@@ -1,0 +1,10 @@
+{
+  "name": "beeftv-agent-host",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "BeefTV 内置 pi 会话宿主：官方 pi SDK 会话层 + 通过同一业务操作层读写真实画布",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.87.1"
+  }
+}

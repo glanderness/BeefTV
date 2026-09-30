@@ -6,6 +6,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DESKTOP_DIR="$ROOT_DIR/backend/cmd/desktop"
 GO_DIR="${BEEFTV_GO_DIR:-/tmp/beeftv-go.rpIfVN/go}"
 
+AGENT_TARGET="${BEEFTV_WAILS_PLATFORM:-darwin/$(uname -m)}"
+[[ "$AGENT_TARGET" != "darwin/x86_64" ]] || AGENT_TARGET="darwin/amd64"
+bun "$ROOT_DIR/scripts/package-agent-host.mjs" "$AGENT_TARGET" --verify-runtime
+
 if [[ ! -f "$ROOT_DIR/VERSION" ]]; then
   echo "VERSION file is required" >&2
   exit 1
@@ -95,13 +99,49 @@ PLUGIN_RESOURCE_DIR="$APP_BUNDLE/Contents/Resources/plugin-packages"
 mkdir -p "$PLUGIN_RESOURCE_DIR"
 cp "$ROOT_DIR/plugin-packages/"*.beeftv-plugin "$PLUGIN_RESOURCE_DIR/"
 
+bun "$ROOT_DIR/scripts/package-agent-host.mjs" "$AGENT_TARGET" \
+  "$APP_BUNDLE/Contents/Resources/agent-host"
+
+# The beeftv CLI ships inside the bundle. External agents (Codex, Claude Code,
+# Cursor) connect through it with their own client credential, so the installed
+# app must carry it -- PATH is not a prerequisite.
+#
+# It goes in Contents/MacOS/cli, not directly next to the app binary: macOS
+# volumes are case-insensitive by default, so a file named beeftv beside BeefTV
+# is the same file and would overwrite the app binary.
+CLI_BINARY="$APP_BUNDLE/Contents/MacOS/cli/beeftv"
+mkdir -p "$(dirname "$CLI_BINARY")"
+(
+  cd "$ROOT_DIR/backend"
+  if [[ -n "${BEEFTV_WAILS_PLATFORM:-}" ]]; then
+    GOOS="${BEEFTV_WAILS_PLATFORM%%/*}" GOARCH="${BEEFTV_WAILS_PLATFORM##*/}" \
+      go build -trimpath -ldflags "$LDFLAGS" -o "$CLI_BINARY" ./cmd/beeftv
+  else
+    go build -trimpath -ldflags "$LDFLAGS" -o "$CLI_BINARY" ./cmd/beeftv
+  fi
+)
+if [[ ! -x "$CLI_BINARY" ]]; then
+  echo "beeftv CLI was not built into the bundle: $CLI_BINARY" >&2
+  exit 1
+fi
+# Adding a Mach-O binary to Contents/MacOS invalidates the bundle signature.
+# Sign the CLI the same ad-hoc way the bundle is signed; the --deep bundle
+# signature below then covers it too.
+if command -v codesign >/dev/null 2>&1; then
+  codesign --force --sign - "$CLI_BINARY"
+fi
+
 # Keep the generated macOS bundle metadata aligned with the repository version.
 APP_PLIST="$APP_BUNDLE/Contents/Info.plist"
 if [[ -f "$APP_PLIST" ]] && command -v plutil >/dev/null 2>&1; then
   MACOS_VERSION="${VERSION_VALUE#v}"
   plutil -replace CFBundleShortVersionString -string "$MACOS_VERSION" "$APP_PLIST"
   plutil -replace CFBundleVersion -string "$MACOS_VERSION" "$APP_PLIST"
-  # The plist edit invalidates Wails' ad-hoc signature; sign the final bundle.
+fi
+
+# The plist edit and the bundled CLI both invalidate Wails' ad-hoc signature;
+# sign the final bundle so the local install gate can verify it.
+if command -v codesign >/dev/null 2>&1; then
   codesign --force --deep --sign - "$APP_BUNDLE"
 fi
 
