@@ -808,9 +808,10 @@ function InfiniteCanvasPage() {
         assistant.setOpen(next);
     }, [assistant, versions]);
     const openAssistant = useCallback(() => {
+        exitFocusMode();
         versions.close();
         assistant.setOpen(true);
-    }, [assistant, versions]);
+    }, [assistant, exitFocusMode, versions]);
     // 修复素材关联仍遵守当前画布版本，不能替用户确认覆盖云端的新内容。
     const confirmForceSaveCanvas = useCallback(() => {
         modal.confirm({

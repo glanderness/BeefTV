@@ -4,14 +4,19 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createAgentSession, createExtensionRuntime, ModelRuntime, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { sessionActionIdentity, toolOperationId } from './session-identity.mjs';
 import { collectTurnEffects, newTurnAccumulator, providerRegistration, providerUnavailableReason,
+  turnContextPrefix, modelTurnCompletion, projectTurnHistory,
   unflushedSessionHistory,
   resetTurnAccumulator, sessionTitle, turnChange } from './canvas-turn.mjs';
+import { budgetError, createLifetimeBudget, createTurnBudget, spendLifetimeRequest, spendModelRequest,
+  spendToolStep } from './request-budget.mjs';
 
 const OPS_URL = (process.env.BEEFTV_OPS_URL || 'http://127.0.0.1:18090/api').replace(/\/+$/, '');
-const OWNER_TOKEN = process.env.BEEFTV_OWNER_TOKEN || '';
+// 宿主凭据：只由后端注入宿主进程。操作层用它识别「这是内置助手」并读取回合范围；
+// owner 凭据不再是宿主调用 ops 的身份。
 const HOST_TOKEN = process.env.BEEFTV_AGENT_HOST_TOKEN || '';
 // 桌面形态：整个 API 由桌面启动令牌把关，宿主必须像页面一样出示它。
 const DESKTOP_TOKEN = process.env.BEEFTV_AGENT_DESKTOP_TOKEN || '';
@@ -26,6 +31,11 @@ const API_KEY = process.env.BEEFTV_AGENT_API_KEY || '';
 const MAX_OUTPUT_TOKENS = Number(process.env.BEEFTV_AGENT_MAX_TOKENS || 4096);
 const CONTEXT_WINDOW = Number(process.env.BEEFTV_AGENT_CONTEXT_WINDOW || 200000);
 const TURN_TIMEOUT_MS = Number(process.env.BEEFTV_AGENT_TURN_TIMEOUT_MS || 180000);
+// 单轮上限：每轮独立计数，按轮重置；0 表示该层不限制。
+const MAX_REQUESTS_PER_TURN = Number(process.env.BEEFTV_AGENT_MAX_REQUESTS_PER_TURN || 40);
+const MAX_TOOL_STEPS_PER_TURN = Number(process.env.BEEFTV_AGENT_MAX_TOOL_STEPS_PER_TURN || 40);
+// 总预算默认关闭；只有显式配置才启用，且计数独立存放，不拿历史日志行数当额度。
+const LIFETIME_REQUEST_BUDGET = Number(process.env.BEEFTV_AGENT_TOTAL_REQUEST_BUDGET || 0);
 const MAX_BODY_BYTES = 64 * 1024;
 const READ_ONLY_MODE = process.env.BEEFTV_AGENT_READ_ONLY === '1';
 const PROVIDER_ID = 'beeftv';
@@ -35,8 +45,8 @@ const TURN_ENTRY_TYPE = 'beeftv.canvas.turn';
 // 宿主自身无法工作的前提（凭据通道、数据目录）仍然直接退出：它们由产品启动链保证。
 // 模型与密钥属于用户配置，缺失时宿主照常监听并在 /health 里说明原因，
 // 而不是静默退出把界面留在「助手不可用」。
-for (const [name, value] of Object.entries({ BEEFTV_OWNER_TOKEN: OWNER_TOKEN,
-  BEEFTV_AGENT_HOST_TOKEN: HOST_TOKEN, BEEFTV_AGENT_DATA_DIR: DATA_DIR })) {
+for (const [name, value] of Object.entries({ BEEFTV_AGENT_HOST_TOKEN: HOST_TOKEN,
+  BEEFTV_AGENT_DATA_DIR: DATA_DIR })) {
   if (!value) { console.error(`agent-host: 缺少 ${name}（由产品启动链注入）`); process.exit(2); }
 }
 const SESSION_ROOT = path.join(DATA_DIR, 'sessions');
@@ -110,10 +120,33 @@ const resourceLoader = {
 
 
 // 出站请求记账：记录真实 body 的 model 与 baseUrl，避免只凭 health 标签判断路由。
+// 它只是诊断日志，绝不参与额度判定。
 const outbound = [];
 const ledgerPath = path.join(DATA_DIR, 'agent-requests.jsonl');
-const MAX_MODEL_REQUESTS = Number(process.env.BEEFTV_AGENT_MAX_REQUESTS || 250);
-let dispatched = fs.existsSync(ledgerPath) ? fs.readFileSync(ledgerPath, 'utf8').split('\n').filter(Boolean).length : 0;
+let dispatched = 0;
+
+// 总预算计数单独存放：与请求日志隔离，避免重启后按日志行数把产品锁死。
+const lifetimeBudgetPath = path.join(DATA_DIR, 'agent-request-budget.json');
+function readLifetimeBudgetUsed() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(lifetimeBudgetPath, 'utf8'));
+    return Number(raw?.used || 0);
+  } catch { return 0; }
+}
+const lifetimeBudget = createLifetimeBudget({ limit: LIFETIME_REQUEST_BUDGET, used: readLifetimeBudgetUsed() });
+function persistLifetimeBudget() {
+  if (lifetimeBudget.limit <= 0) return;
+  try {
+    fs.writeFileSync(lifetimeBudgetPath, JSON.stringify({ limit: lifetimeBudget.limit, used: lifetimeBudget.used }), { mode: 0o600 });
+  } catch (error) {
+    console.error(`agent-host: 总预算计数写入失败 ${error?.message || error}`);
+  }
+}
+
+// turnBudgetContext 把「这一轮」的身份挂到异步链上：并发的另一张画布有自己的上下文，
+// 两边不会互相计数（之前用进程级计数器，先跑的会话会把后跑的额度吃掉）。
+const turnBudgetContext = new AsyncLocalStorage();
+
 const BASE_ORIGIN = BASE_URL ? new URL(BASE_URL).origin : '';
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (input, options = {}) => {
@@ -121,10 +154,18 @@ globalThis.fetch = async (input, options = {}) => {
   let parsed = null;
   try { parsed = new URL(raw); } catch { parsed = null; }
   const isModelCall = !!BASE_ORIGIN && parsed && parsed.origin === BASE_ORIGIN;
-  if (isModelCall && dispatched >= MAX_MODEL_REQUESTS) {
-    throw new Error(`模型请求预算耗尽（${MAX_MODEL_REQUESTS}）`);
-  }
   if (isModelCall) {
+    const budget = turnBudgetContext.getStore();
+    const turn = spendModelRequest(budget);
+    if (!turn.allowed) {
+      if (budget) budget.failure = turn;
+      throw budgetError(turn);
+    }
+    const lifetime = spendLifetimeRequest(lifetimeBudget);
+    if (!lifetime.allowed) {
+      if (budget) { budget.requests -= 1; budget.failure = lifetime; }
+      throw budgetError(lifetime);
+    }
     dispatched += 1;
     let bodyModel = null;
     try { bodyModel = JSON.parse(options.body || '{}').model || null; } catch { /* 非 JSON body */ }
@@ -135,10 +176,13 @@ globalThis.fetch = async (input, options = {}) => {
   return realFetch(input, options);
 };
 
-async function opsRequest(method, apiPath, body, signal) {
+// opsRequest 以「内置宿主 + 当前回合」的身份调用共享操作层：
+// 后端据此读取这一轮被验证过的范围；范围本身不在这里生成，宿主也没有可自报的授权字段。
+async function opsRequest(method, apiPath, body, signal, turnId) {
   const response = await fetch(`${OPS_URL}${apiPath}`, {
     method,
-    headers: { 'Content-Type': 'application/json', 'X-Beeftv-Owner': OWNER_TOKEN,
+    headers: { 'Content-Type': 'application/json', 'X-Beeftv-Agent-Token': HOST_TOKEN,
+      ...(turnId ? { 'X-Beeftv-Agent-Turn': turnId } : {}),
       ...(DESKTOP_TOKEN ? { 'X-Desktop-Token': DESKTOP_TOKEN } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
@@ -166,12 +210,17 @@ async function loadDescriptors() {
   console.error(`agent-host: 载入 ${descriptors.size} 个操作（readOnly=${READ_ONLY_MODE}，服务端返回 ${(data.ops || []).length}）`);
 }
 
-function scopedSchema(params) {
+function scopedSchema(params, allowReferencedCanvasRead = false) {
   // 内置会话的 canvasId 由宿主注入：从 schema 删掉，避免模型自选画布。
+  // operationId 也一样：幂等键由宿主按「会话身份 + 工具调用 id」生成，模型既不该看见也不必填写
+  // （外部 MCP/CLI 的能力描述仍然保留它，两者语义在这里明确分开）。
   if (!params || typeof params !== 'object') return params;
   const clone = JSON.parse(JSON.stringify(params));
-  if (clone.properties) delete clone.properties.canvasId;
-  if (Array.isArray(clone.required)) clone.required = clone.required.filter((name) => name !== 'canvasId');
+  if (clone.properties) {
+    if (!allowReferencedCanvasRead) delete clone.properties.canvasId;
+    delete clone.properties.operationId;
+  }
+  if (Array.isArray(clone.required)) clone.required = clone.required.filter((name) => name !== 'canvasId' && name !== 'operationId');
   return clone;
 }
 
@@ -180,21 +229,32 @@ function buildTools(canvasId, log, generation, turn, identityPrefix) {
     name: toolName,
     label: descriptor.id,
     description: `${descriptor.summary}（本会话 scope=canvas:${canvasId}）`,
-    parameters: scopedSchema(descriptor.params),
+    parameters: scopedSchema(descriptor.params, descriptor.id === 'canvas.get'),
     // 写操作带画布版本前提：同一轮并发写必然互相冲突，官方逐工具的顺序执行开关让它们排队。
     ...(descriptor.readOnly ? {} : { executionMode: 'sequential' }),
     execute: async (toolCallId, args, signal) => {
       if (generation.aborted || signal?.aborted) throw new Error('aborted');
+      // 工具步骤按轮计数：另一张画布的并发回合有自己的上下文，不会互相计数。
+      const budget = turnBudgetContext.getStore();
+      const step = spendToolStep(budget);
+      if (!step.allowed) {
+        if (budget) budget.failure = step;
+        log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: args || {}, isError: true, error: step.message });
+        throw budgetError(step);
+      }
       const params = { ...(args || {}) };
       // 动作身份只有宿主一个来源：模型传进来的 operationId/opId 一律剔除，
       // 避免出现「模型自报身份」和「宿主稳定身份」两套东西。
       delete params.operationId;
       delete params.opId;
-      // 显式不匹配必须拒绝：不能把未授权的 canvasId 静默改成当前画布再执行。
-      if (params.canvasId !== undefined && params.canvasId !== canvasId) {
-        throw new Error(`scope_denied: 画布参数与当前会话不一致（${params.canvasId} ≠ ${canvasId}）`);
+      // 只有声明 canvasId 的操作才注入画布；素材/任务接口保持其严格参数合同。
+      // canvas.get 可表达显式引用的只读画布，由后端的可信回合范围裁决。
+      if (Object.hasOwn(descriptor.params?.properties || {}, 'canvasId')) {
+        if (descriptor.id !== 'canvas.get' && params.canvasId !== undefined && params.canvasId !== canvasId) {
+          throw new Error(`scope_denied: 画布参数与当前会话不一致（${params.canvasId} ≠ ${canvasId}）`);
+        }
+        if (params.canvasId === undefined) params.canvasId = canvasId;
       }
-      params.canvasId = canvasId;                       // 会话 scope 由宿主注入
       let opId = '';
       if (!descriptor.readOnly) {
         // 动作身份 = 本会话身份 + SDK 工具调用 id：同一次工具调用重试时复用，
@@ -208,7 +268,8 @@ function buildTools(canvasId, log, generation, turn, identityPrefix) {
       }
       const started = Date.now();
       try {
-        const data = await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal);
+        // 带本轮 turnId：后端按自己的回合记录裁决范围，并把回执挂到这一轮上供撤销。
+        const data = await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal, turn.turnId);
         log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: false, ms: Date.now() - started, replayed: !!data?.replayed });
         collectTurnEffects(turn, descriptor.id, data?.result, opId);
         return { content: [{ type: 'text', text: JSON.stringify(data) }] };
@@ -245,10 +306,8 @@ function writeCurrentSessionId(canvasId, sessionId) {
 
 // turnEntries 读取一条会话里的每轮记录：官方 custom entry，不参与模型上下文。
 function turnEntries(manager) {
-  return manager.getEntries()
-    .filter((entry) => entry.type === 'custom' && entry.customType === TURN_ENTRY_TYPE)
-    .map((entry) => entry.data)
-    .filter((data) => data && typeof data === 'object');
+  const active = [...sessions.values()].find((entry) => entry.busy && entry.sessionId === manager.getSessionId());
+  return projectTurnHistory(manager.getEntries(), TURN_ENTRY_TYPE, active?.turn.turnId || '');
 }
 
 async function listCanvasSessions(canvasId) {
@@ -380,7 +439,8 @@ const server = http.createServer(async (req, res) => {
     respond(res, 200, { ok: !providerReason, reason: providerReason || undefined,
       sessions: sessions.size, busy: anySessionBusy(), model: MODEL?.id || MODEL_ID, api: MODEL_API,
       baseUrl: MODEL?.baseUrl || BASE_URL, persistence: persistenceSummary, runId: RUN_ID,
-      requests: { dispatched, cap: MAX_MODEL_REQUESTS },
+      requests: { dispatched, perTurnRequests: MAX_REQUESTS_PER_TURN, perTurnToolSteps: MAX_TOOL_STEPS_PER_TURN,
+        lifetimeBudget: lifetimeBudget.limit, lifetimeUsed: lifetimeBudget.used },
       operations: descriptors.size, readOnly: READ_ONLY_MODE, lastOutbound: outbound.at(-1) || null });
     return;
   }
@@ -469,9 +529,14 @@ const server = http.createServer(async (req, res) => {
       const requestedSessionId = String(body.sessionId || '').trim();
       let message = userText;
       const selected = Array.isArray(body.selectedNodeIds) ? body.selectedNodeIds.map((v) => String(v)) : [];
-      if (selected.length > 0) {
-        // 选中对象作为本次请求的固定上下文（由后端校验过归属）。
-        message = `[当前画布 ${canvasId}｜选中对象: ${selected.join(', ')}]\n${userText}`;
+      // 后端已验证归属的额外引用（素材/画布）随信封下发：只作为模型可见的上下文，
+      // 真正的读取授权仍在后端按这一回合的记录裁决，模型编造 ID 也越不过去。
+      const references = Array.isArray(body.references)
+        ? body.references.filter((item) => item && typeof item === 'object' && item.id)
+          .map((item) => ({ kind: String(item.kind || ''), id: String(item.id) }))
+        : [];
+      if (selected.length > 0 || references.length > 0) {
+        message = `${turnContextPrefix({ canvasId, selectedNodeIds: selected, references })}\n${userText}`;
       }
       if (!canvasId || !message) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
       if (providerReason) { respond(res, 503, { code: 503, reason: providerReason }); return; }
@@ -483,40 +548,60 @@ const server = http.createServer(async (req, res) => {
       if (entry.busy) { respond(res, 409, { code: 409, reason: 'session_busy' }); return; }
       entry.busy = true;
       entry.generation.aborted = false;
-      resetTurnAccumulator(entry.turn, revisionBefore);
+      resetTurnAccumulator(entry.turn, revisionBefore, turnId);
+      // 每轮预算独立：这一轮用完不会影响下一轮，也不会与并发画布互相计数。
+      const budget = createTurnBudget({ maxRequests: MAX_REQUESTS_PER_TURN, maxToolSteps: MAX_TOOL_STEPS_PER_TURN });
       try {
+        // 开始标记与模型历史共用官方会话文件；进程突然退出后仍能找回这一轮原话。
+        // 已执行的业务影响由 Go 原子回执投影，不能由缺失的结束事件推断为无改动。
+        entry.manager.appendCustomEntry(`${TURN_ENTRY_TYPE}.started`, {
+          turnId, userText, selectedNodeIds: selected, references, createdAt: new Date().toISOString(),
+        });
         res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
         const before = entry.log.length;
         const started = Date.now();
         let firstTokenMs = null;
+        let lastAssistantMessage = null;
         const unsubscribe = entry.session.subscribe((event) => {
+          if (event.type === 'message_end' && event.message?.role === 'assistant') lastAssistantMessage = event.message;
           if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta') {
             if (firstTokenMs === null) firstTokenMs = Date.now() - started;
             sendLine(res, { type: 'text_delta', delta: event.assistantMessageEvent.delta });
           }
         });
-        const timer = setTimeout(() => { entry.generation.aborted = true; entry.session.abort().catch(() => {}); }, TURN_TIMEOUT_MS);
+        let timedOut = false;
+        const timer = setTimeout(() => { timedOut = true; entry.generation.aborted = true; entry.session.abort().catch(() => {}); }, TURN_TIMEOUT_MS);
         let error = null;
-        try { await entry.session.prompt(message); }
+        try {
+          // 整轮跑在它自己的预算上下文里：fetch 包装器与工具都从这里读计数。
+          await turnBudgetContext.run(budget, async () => { await entry.session.prompt(message); });
+        }
         catch (promptError) { error = `${promptError?.name || 'Error'}: ${promptError?.message || promptError}`; }
         finally { clearTimeout(timer); unsubscribe(); }
-        const reply = entry.session.getLastAssistantText?.() || '';
+        // pi 的 prompt() 可以正常 resolve，但最后的模型消息仍是 stopReason=error。
+        // 只投影本轮终态，不借用上一轮回复，也不把预算拒绝当空回复成功。
+        const completion = modelTurnCompletion(lastAssistantMessage, error, budget.failure, { cancelled: entry.generation.aborted, timedOut });
+        const reply = completion.reply;
+        error = completion.error;
+        const errorReason = completion.errorReason;
         const toolCalls = entry.log.slice(before);
         const change = turnChange(entry.turn);
         const proposals = [...entry.turn.proposals];
-        const record = { turnId, userText, selectedNodeIds: selected, reply, toolCalls, change, proposals,
-          error, cancelled: entry.generation.aborted, createdAt: new Date().toISOString() };
+        const record = { turnId, userText, selectedNodeIds: selected, references, reply, toolCalls, change, proposals,
+          error, errorReason, cancelled: entry.generation.aborted, createdAt: new Date().toISOString() };
         // 历史存进官方会话文件（custom entry 不参与模型上下文）：
         // 面板读到的 userText 是用户原文，而不是给模型加过画布前缀的那份。
         try { entry.manager.appendCustomEntry(TURN_ENTRY_TYPE, record); }
         catch (persistError) { console.error(`agent-host: 轮次记录写入失败 ${persistError?.message || persistError}`); }
-        sendLine(res, { type: 'turn_end', turnId, reply, toolCalls, change, proposals, error,
+        sendLine(res, { type: 'turn_end', turnId, reply, toolCalls, change, proposals, error, errorReason,
           cancelled: entry.generation.aborted, persistence: entry.persistence,
-          sessionId: entry.sessionId, metrics: { firstTokenMs, totalMs: Date.now() - started } });
+          sessionId: entry.sessionId, metrics: { firstTokenMs, totalMs: Date.now() - started,
+            requests: budget.requests, toolSteps: budget.toolSteps } });
         res.end();
         return;
       } finally {
         entry.busy = false;   // 任何路径都释放，避免会话永久 busy
+        persistLifetimeBudget();
       }
     }
     respond(res, 404, { code: 404, reason: 'not_found' });

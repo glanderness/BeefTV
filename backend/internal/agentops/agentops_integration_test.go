@@ -226,7 +226,7 @@ func TestReadOnlyClientCannotWriteAndCapabilityListIsFiltered(t *testing.T) {
 	if code := opCode(t, err); code != agentops.CodeReadOnly {
 		t.Fatalf("只读客户端写操作应被拒，得到 %v", code)
 	}
-	readOnly := h.registry.List(true)
+	readOnly := h.registry.List(agentops.Caller{ReadOnly: true})
 	for _, descriptor := range readOnly {
 		if !descriptor.ReadOnly {
 			t.Fatalf("只读能力列表混入写操作: %s", descriptor.ID)
@@ -242,7 +242,7 @@ func TestReadOnlyClientCannotWriteAndCapabilityListIsFiltered(t *testing.T) {
 
 func TestWriteOperationsExposeStableOperationIDInSchema(t *testing.T) {
 	h := newHarness(t)
-	for _, descriptor := range h.registry.List(false) {
+	for _, descriptor := range h.registry.List(agentops.Caller{}) {
 		if descriptor.ReadOnly {
 			continue
 		}

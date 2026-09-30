@@ -17,6 +17,7 @@ const (
 	CodeConflict           Code = "conflict"
 	CodePreconditionFailed Code = "precondition_failed"
 	CodeReadOnly           Code = "read_only"
+	CodePermissionDenied   Code = "permission_denied"
 	CodeUnsupported        Code = "unsupported"
 	CodeInternal           Code = "internal"
 )
@@ -82,6 +83,8 @@ func HTTPStatus(code Code) int {
 	case CodePreconditionFailed:
 		return http.StatusPreconditionFailed
 	case CodeReadOnly, CodeUnsupported:
+		return http.StatusForbidden
+	case CodePermissionDenied:
 		return http.StatusForbidden
 	default:
 		return http.StatusInternalServerError

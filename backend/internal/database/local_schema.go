@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 5
+const CurrentSchemaVersion int64 = 6
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -76,6 +76,7 @@ func migrateLocalSchema(db *gorm.DB, beforeApply func(int64) error) error {
 		{version: 3, name: "agent-operation-records", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.AgentOpRecord{}) }},
 		{version: 4, name: "task-client-operation", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.Task{}) }},
 		{version: 5, name: "task-client-operation-hash", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.Task{}) }},
+		{version: 6, name: "agent-operation-turn-attribution", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.AgentOpRecord{}) }},
 	}
 	current, err := currentSchemaVersion(db)
 	if err != nil {

@@ -84,7 +84,7 @@ func TestCreateUserCanvasNodesLayoutDoesNotOverlap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.CreateUserCanvasNodes("owner", "canvas-layout", []NodeDraft{
+	if _, _, err := svc.CreateUserCanvasNodes("owner", "canvas-layout", []NodeDraft{
 		{Title: "文本", Type: "text"},
 		{Title: "图片", Type: "image"},
 		{Title: "音频", Type: "audio"},
@@ -129,11 +129,11 @@ func TestCreateUserCanvasNodesStartsAfterExistingRightEdge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := svc.CreateUserCanvasNodes("owner", created.ID, []NodeDraft{{Title: "新图片", Type: "image"}, {Title: "新文本", Type: "text"}}, created.Revision)
+	first, _, err := svc.CreateUserCanvasNodes("owner", created.ID, []NodeDraft{{Title: "新图片", Type: "image"}, {Title: "新文本", Type: "text"}}, created.Revision)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.CreateUserCanvasNodes("owner", created.ID, []NodeDraft{{Title: "下一批", Type: "text"}}, first.Revision); err != nil {
+	if _, _, err := svc.CreateUserCanvasNodes("owner", created.ID, []NodeDraft{{Title: "下一批", Type: "text"}}, first.Revision); err != nil {
 		t.Fatal(err)
 	}
 	doc, err := svc.loadCanvasDoc("owner", created.ID)

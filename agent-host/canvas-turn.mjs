@@ -7,13 +7,14 @@
 export const SUPPORTED_APIS = ['openai-completions', 'openai-responses', 'anthropic-messages'];
 
 export function newTurnAccumulator() {
-  return { seq: 0, toolSeq: 0, revisionBefore: 0, revisionAfter: 0,
+  return { turnId: '', seq: 0, toolSeq: 0, revisionBefore: 0, revisionAfter: 0,
     createdNodeIds: [], updatedNodeIds: [], createdEdgeIds: [], operationIds: [], proposals: [] };
 }
 
-export function resetTurnAccumulator(turn, revisionBefore) {
+export function resetTurnAccumulator(turn, revisionBefore, turnId = '') {
   turn.seq += 1;
   turn.toolSeq = 0;
+  turn.turnId = String(turnId || '');
   turn.revisionBefore = Number(revisionBefore || 0);
   turn.revisionAfter = 0;
   turn.createdNodeIds.length = 0;
@@ -87,6 +88,20 @@ export function sessionTitle(turns) {
   return text.length > 40 ? text.slice(0, 40) : text;
 }
 
+// turnContextPrefix 把后端验证过、随 Chat 信封下发的范围交给模型当固定上下文。
+// 这里只是「告诉模型可以引用什么」，真正的授权仍在后端按回合记录裁决：
+// 模型即使编造别的 assetId/canvasId，工具调用也会在共享操作层被 scope_denied 拒绝。
+export function turnContextPrefix({ canvasId, selectedNodeIds = [], references = [] }) {
+  const parts = [`当前画布 ${canvasId}`];
+  const selected = selectedNodeIds.map((id) => String(id)).filter(Boolean);
+  if (selected.length > 0) parts.push(`选中对象: ${selected.join(', ')}`);
+  const assets = references.filter((item) => item?.kind === 'asset' && item.id).map((item) => String(item.id));
+  const canvases = references.filter((item) => item?.kind === 'canvas' && item.id).map((item) => String(item.id));
+  if (assets.length > 0) parts.push(`已引用素材: ${assets.join(', ')}`);
+  if (canvases.length > 0) parts.push(`已引用画布（只读）: ${canvases.join(', ')}`);
+  return `[${parts.join('｜')}]`;
+}
+
 // providerRegistration 构造要登记给 pi 的供应商：
 // 密钥以环境变量引用形式传入，宿主进程内解析，不写进 auth.json。
 export function providerRegistration({ api, baseUrl, modelId, maxTokens, contextWindow }) {
@@ -103,4 +118,40 @@ export function providerUnavailableReason({ modelId, baseUrl, apiKey, api }) {
   if (!modelId || !baseUrl || !apiKey) return 'model_not_configured';
   if (!SUPPORTED_APIS.includes(api)) return 'model_protocol_unsupported';
   return '';
+}
+
+// SDK 终态消息而不是 Promise 是否 reject 决定模型调用是否成功。
+export function modelTurnCompletion(lastAssistantMessage, promptError = null, budgetFailure = null, { cancelled = false, timedOut = false } = {}) {
+  const reply = (lastAssistantMessage?.content || [])
+    .filter((part) => part?.type === 'text' && typeof part.text === 'string')
+    .map((part) => part.text).join('');
+  if (budgetFailure) return { reply, error: budgetFailure.message, errorReason: budgetFailure.reason };
+  if (timedOut) return { reply, error: '这一轮处理超时，已停止继续执行。', errorReason: 'turn_timeout' };
+  if (cancelled) return { reply, error: null, errorReason: null };
+  if (promptError) return { reply, error: String(promptError), errorReason: 'model_request_failed' };
+  if (lastAssistantMessage?.stopReason === 'error') {
+    return { reply, error: lastAssistantMessage.errorMessage || '模型调用没有完成', errorReason: 'model_request_failed' };
+  }
+  return { reply, error: null, errorReason: null };
+}
+
+// Starts and completions share the official SessionManager journal; no second chat database.
+// A missing completion after restart is an interrupted turn, not an empty history.
+export function projectTurnHistory(entries, turnType, activeTurnId = '') {
+  const turns = new Map();
+  for (const entry of entries) {
+    if (entry.type !== 'custom' || !entry.data?.turnId) continue;
+    const data = entry.data;
+    if (entry.customType === turnType) {
+      turns.set(data.turnId, { finished: true, data });
+    } else if (entry.customType === `${turnType}.started` && !turns.has(data.turnId)) {
+      turns.set(data.turnId, { finished: false, data: {
+        ...data, reply: '', toolCalls: [], change: null, proposals: [], cancelled: false,
+        error: '上一轮执行中断，请核对已落地的改动。', errorReason: 'turn_interrupted',
+      } });
+    }
+  }
+  return [...turns.values()]
+    .filter((entry) => entry.finished || entry.data.turnId !== activeTurnId)
+    .map((entry) => entry.data);
 }

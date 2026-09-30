@@ -3,6 +3,7 @@ package app_test
 import (
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gorm.io/driver/sqlite"
@@ -63,7 +64,7 @@ func (h *turnOperations) document(t *testing.T) map[string]any {
 	return doc
 }
 
-func (h *turnOperations) run(t *testing.T, op, id string, params map[string]any) agentops.Result {
+func (h *turnOperations) run(t *testing.T, op, id string, turnID string, params map[string]any) agentops.Result {
 	t.Helper()
 	params["canvasId"] = "c"
 	params["expectedRevision"] = h.document(t)["revision"]
@@ -71,39 +72,27 @@ func (h *turnOperations) run(t *testing.T, op, id string, params map[string]any)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := h.r.Execute(agentops.Request{UserID: "local", Op: op, OpID: id, Params: raw})
+	// 回合归属走真实入口：回执在业务写入的同一个事务里落库。
+	result, err := h.r.Execute(agentops.Request{UserID: "local", Op: op, OpID: id, TurnID: turnID, Params: raw})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return result
 }
 
-func (h *turnOperations) record(t *testing.T, before int64, ids []string) {
-	t.Helper()
-	// JSON matches the host envelope; host node assertions are deliberately absent.
-	raw, err := json.Marshal(map[string]any{"revisionBefore": before, "revisionAfter": h.document(t)["revision"], "operationIds": ids})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var change app.AssistantTurnChange
-	if err := json.Unmarshal(raw, &change); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.s.RecordAssistantTurnChange("aabbcc", &change); err != nil {
-		t.Fatal(err)
-	}
-}
-
+// 多写回合：轮前快照 + 两次真实写入 + 只靠回执结算，撤销必须覆盖中间每个版本。
 func TestUndoAssistantTurnVerifiedSequentialOperations(t *testing.T) {
 	h := newTurnOperations(t)
-	before, err := h.s.BeginAssistantTurn("local", "c", "aabbcc")
+	before, err := h.s.BeginAssistantTurn("local", "c", "aabbcc", app.AssistantTurnInput{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"first", "second"} {
-		h.run(t, "canvas.nodes.create", id, map[string]any{"nodes": []any{map[string]any{"title": id, "type": "text"}}})
+		h.run(t, "canvas.nodes.create", id, "aabbcc", map[string]any{"nodes": []any{map[string]any{"title": id, "type": "text"}}})
 	}
-	h.record(t, before, []string{"first", "second"})
+	if err := h.s.FinalizeAssistantTurn("aabbcc"); err != nil {
+		t.Fatal(err)
+	}
 	revision, err := h.s.UndoAssistantTurn("local", "c", "aabbcc")
 	if err != nil {
 		t.Fatalf("two committed assistant writes must undo: %v", err)
@@ -111,5 +100,31 @@ func TestUndoAssistantTurnVerifiedSequentialOperations(t *testing.T) {
 	doc := h.document(t)
 	if revision != before+3 || len(doc["nodes"].([]any)) != 1 {
 		t.Fatalf("restore failed: %v", doc)
+	}
+}
+
+// 没有结算也要能撤销：模拟后端在回合中途退出，只在磁盘上留下轮前快照与回执。
+func TestUndoAssistantTurnRecoversWhenSettlementNeverRan(t *testing.T) {
+	h := newTurnOperations(t)
+	before, err := h.s.BeginAssistantTurn("local", "c", "00112233aabbccdd", app.AssistantTurnInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.run(t, "canvas.nodes.create", "recovered", "00112233aabbccdd",
+		map[string]any{"nodes": []any{map[string]any{"title": "恢复", "type": "text"}}})
+	// 刻意不调用 FinalizeAssistantTurn：撤销必须自己从回执重建这一轮的改动。
+	restored, err := h.s.UndoAssistantTurn("local", "c", "00112233aabbccdd")
+	if err != nil {
+		t.Fatalf("unsettled turn must still undo from receipts: %v", err)
+	}
+	if restored <= before {
+		t.Fatalf("undo must produce a new revision: %d <= %d", restored, before)
+	}
+	doc := h.document(t)
+	if len(doc["nodes"].([]any)) != 1 {
+		t.Fatalf("restore failed: %v", doc)
+	}
+	if raw, err := h.s.UserCanvasProject("local", "c"); err != nil || !strings.Contains(string(raw), "original") {
+		t.Fatalf("pre-turn document not restored: %s %v", raw, err)
 	}
 }

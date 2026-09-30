@@ -22,6 +22,16 @@ func NewStore(db *gorm.DB) *Store { return &Store{db: db} }
 
 func (s *Store) Available() bool { return s != nil && s.db != nil }
 
+// RunRequest 是一次幂等执行的全部输入。
+// TurnID 为空表示这次写入不属于助手回合（CLI/MCP/owner 直连）。
+type RunRequest struct {
+	UserID      string
+	OpID        string
+	Op          string
+	PayloadHash string
+	TurnID      string
+}
+
 // PayloadHash 是幂等键的组成部分：同 opId 同 payload 才允许回读原结果。
 func PayloadHash(op string, payload []byte) string {
 	sum := sha256.Sum256(append([]byte(op+"\x00"), payload...))
@@ -36,12 +46,12 @@ type RunOutcome struct {
 
 // Run 在一个事务里执行 fn，并用 opId 做持久化去重。
 // opId 为空表示调用方不需要幂等保证（只读操作）。
-func (s *Store) Run(ctx context.Context, userID, opID, op, payloadHash string, fn func(tx *gorm.DB) ([]byte, error)) (RunOutcome, error) {
+func (s *Store) Run(ctx context.Context, req RunRequest, fn func(tx *gorm.DB) ([]byte, error)) (RunOutcome, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	db := s.db.WithContext(ctx)
-	if strings.TrimSpace(opID) == "" {
+	if strings.TrimSpace(req.OpID) == "" {
 		out, err := fn(db)
 		return RunOutcome{Result: out}, err
 	}
@@ -50,24 +60,25 @@ func (s *Store) Run(ctx context.Context, userID, opID, op, payloadHash string, f
 	}
 	var outcome RunOutcome
 	err := db.Transaction(func(tx *gorm.DB) error {
-		record := model.AgentOpRecord{OpID: opID, UserID: userID, Op: op, PayloadHash: payloadHash, Status: "running"}
+		record := model.AgentOpRecord{OpID: req.OpID, UserID: req.UserID, Op: req.Op,
+			PayloadHash: req.PayloadHash, Status: "running", TurnID: strings.TrimSpace(req.TurnID)}
 		if err := tx.Create(&record).Error; err != nil {
 			if !isDuplicateKey(err) {
 				return AsError(err) // 其他数据库错误不能被当成“重复”而回放
 			}
 			var existing model.AgentOpRecord
 			// 命名空间：只在本用户自己的操作记录里回放，绝不跨用户/越权读取他人结果
-			if findErr := tx.Where("user_id = ? AND op_id = ?", userID, opID).First(&existing).Error; findErr != nil {
+			if findErr := tx.Where("user_id = ? AND op_id = ?", req.UserID, req.OpID).First(&existing).Error; findErr != nil {
 				return AsError(err)
 			}
 			if existing.Status != "succeeded" {
 				return Conflict("operation_in_progress",
-					"同一操作正在执行或上次未成功，未回放结果", map[string]any{"opId": opID, "status": existing.Status})
+					"同一操作正在执行或上次未成功，未回放结果", map[string]any{"opId": req.OpID, "status": existing.Status})
 			}
-			if existing.PayloadHash != payloadHash || existing.Op != op {
+			if existing.PayloadHash != req.PayloadHash || existing.Op != req.Op {
 				return Conflict("operation_id_reused_with_different_payload",
 					"同一操作 ID 已用于不同的请求内容；请换用新的操作 ID",
-					map[string]any{"opId": opID, "existingOp": existing.Op})
+					map[string]any{"opId": req.OpID, "existingOp": existing.Op})
 			}
 			outcome = RunOutcome{Result: []byte(existing.ResultJSON), Replayed: true}
 			return nil
@@ -76,8 +87,8 @@ func (s *Store) Run(ctx context.Context, userID, opID, op, payloadHash string, f
 		if runErr != nil {
 			return runErr // 回滚：失败的操作不留下幂等记录
 		}
-		if err := tx.Model(&model.AgentOpRecord{}).Where("user_id = ? AND op_id = ?", userID, opID).
-			Updates(map[string]any{"status": "succeeded", "result_json": string(out)}).Error; err != nil {
+		if err := tx.Model(&model.AgentOpRecord{}).Where("user_id = ? AND op_id = ?", req.UserID, req.OpID).
+			Updates(map[string]any{"status": "succeeded", "result_json": string(out), "turn_id": strings.TrimSpace(req.TurnID)}).Error; err != nil {
 			return AsError(err)
 		}
 		outcome = RunOutcome{Result: out}

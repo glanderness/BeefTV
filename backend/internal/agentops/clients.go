@@ -279,6 +279,35 @@ func OwnerTokenMatches(dataDir, presented string) bool {
 	return subtle.ConstantTimeCompare([]byte(expected), []byte(presented)) == 1
 }
 
+// HostTokenPath 是内置助手宿主的专属凭据：只由后端注入宿主进程，页面与普通客户端拿不到。
+func HostTokenPath(dataDir string) string { return filepath.Join(dataDir, "agent_host_token") }
+
+// HostTokenMatches 判断请求是否来自已鉴权的内置助手宿主。
+// 回合归属只认这个身份：owner/已登记客户端即使拿到 turnId，也不能自报归属。
+// 取值顺序与 handler.readAgentHostToken 完全一致（显式环境变量优先，其次数据目录文件），
+// 否则宿主拿到的是环境变量、这里读的是文件，两边会悄悄对不上。
+func HostTokenMatches(dataDir, presented string) bool {
+	presented = strings.TrimSpace(presented)
+	if presented == "" {
+		return false
+	}
+	expected := strings.TrimSpace(os.Getenv("BEEFTV_AGENT_HOST_TOKEN"))
+	if expected == "" {
+		if strings.TrimSpace(dataDir) == "" {
+			return false
+		}
+		raw, err := os.ReadFile(HostTokenPath(dataDir))
+		if err != nil {
+			return false
+		}
+		expected = strings.TrimSpace(string(raw))
+	}
+	if expected == "" || len(expected) != len(presented) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(presented)) == 1
+}
+
 // EnsureAgentCredentials 在组合根生成 owner 凭据与宿主凭据；DataDir 为空时明确报错，不写 CWD。
 func EnsureAgentCredentials(dataDir string) {
 	if strings.TrimSpace(dataDir) == "" {

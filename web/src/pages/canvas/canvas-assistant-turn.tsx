@@ -49,7 +49,7 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
             <CanvasAssistantUserMessage text={turn.userText} selectedCount={turn.selectedNodeIds?.length ?? 0} />
             {turn.reply ? <CanvasAssistantReply text={turn.reply} /> : null}
             {turn.cancelled ? <p className="canvas-assistant-meta">这一条已经停下了。</p> : null}
-            {turn.error ? <p className="canvas-assistant-failed" role="status">这一轮没有全部完成，请核对已经落地的改动。</p> : null}
+            {turn.error ? <p className="canvas-assistant-failed" role="status">{turn.errorReason === "turn_timeout" ? "这一轮处理超时，已落地的改动会保留。可以缩小要求后继续。" : "这一轮没有全部完成，请核对已经落地的改动。"}</p> : null}
 
             {failedActions.length > 0 ? (
                 <div className="canvas-assistant-feedback" role="status">

@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -52,15 +54,46 @@ type AssistantTurnChange struct {
 	OperationIDs   []string `json:"operationIds,omitempty"`
 }
 
+// AssistantTurnInput 是一轮对话开始时后端已经验证过的显式输入。
+// 额外引用只能由界面请求、经后端校验归属后落在这里，模型无法自授。
+type AssistantTurnInput struct {
+	SelectedNodeIDs []string
+	AssetIDs        []string
+	CanvasIDs       []string
+}
+
+// AssistantTurnScope 是一轮对话被后端验证过的可读写范围。
+// 写入时后端只从这个记录读取范围，不接受调用方自报的列表。
+type AssistantTurnScope struct {
+	CanvasID  string
+	AssetIDs  []string
+	CanvasIDs []string
+	TaskIDs   []string
+}
+
+// 回合状态：open 期间的写入才会被记到这一轮上，settled 之后不再接受归属，
+// 撤销（undone）也不清空已确认的证据。
+const (
+	assistantTurnStateOpen    = "open"
+	assistantTurnStateSettled = "settled"
+)
+
 type assistantTurnRecord struct {
-	TurnID         string               `json:"turnId"`
-	UserID         string               `json:"userId"`
-	CanvasID       string               `json:"canvasId"`
-	RevisionBefore int64                `json:"revisionBefore"`
-	CreatedAt      string               `json:"createdAt"`
-	Undone         bool                 `json:"undone"`
-	Change         *AssistantTurnChange `json:"change,omitempty"`
-	Document       json.RawMessage      `json:"document"`
+	TurnID         string `json:"turnId"`
+	UserID         string `json:"userId"`
+	CanvasID       string `json:"canvasId"`
+	RevisionBefore int64  `json:"revisionBefore"`
+	CreatedAt      string `json:"createdAt"`
+	// State 为空表示旧记录：按已结算处理，只允许按回执补算，不接受新的写入归属。
+	State               string               `json:"state,omitempty"`
+	SelectedNodeIDs     []string             `json:"selectedNodeIds,omitempty"`
+	ReferencedAssetIDs  []string             `json:"referencedAssetIds,omitempty"`
+	ReferencedCanvasIDs []string             `json:"referencedCanvasIds,omitempty"`
+	AssociatedAssetIDs  []string             `json:"associatedAssetIds,omitempty"`
+	AssociatedTaskIDs   []string             `json:"associatedTaskIds,omitempty"`
+	Undone              bool                 `json:"undone"`
+	Change              *AssistantTurnChange `json:"change,omitempty"`
+	Document            json.RawMessage      `json:"document"`
 }
 
 // assistantTurnMu 串行化同一数据目录上的快照读改写，避免并发轮次互相覆盖记录。
@@ -85,6 +118,12 @@ func safeTurnID(turnID string) string {
 	return trimmed
 }
 
+// ValidAssistantTurnID 判断标识形状是否可能是本进程生成的轮次标识。
+// 形状只是第一道过滤：真正的归属还要读回合记录并校验用户、画布与状态。
+func ValidAssistantTurnID(turnID string) bool {
+	return safeTurnID(turnID) != ""
+}
+
 func (s *Service) assistantTurnPath(turnID string) string {
 	safe := safeTurnID(turnID)
 	if safe == "" {
@@ -94,7 +133,9 @@ func (s *Service) assistantTurnPath(turnID string) string {
 }
 
 // BeginAssistantTurn 在一轮对话开始前保存轮前画布文档，并返回轮前 revision。
-func (s *Service) BeginAssistantTurn(userID, canvasID, turnID string) (int64, error) {
+// 同时把后端验证过的引用与从画布解析出的关联素材/任务一起持久化：
+// 之后的操作入口只按这个记录读范围，不再信任任何调用方自报的 header。
+func (s *Service) BeginAssistantTurn(userID, canvasID, turnID string, input AssistantTurnInput) (int64, error) {
 	path := s.assistantTurnPath(turnID)
 	if path == "" {
 		return 0, &AssistantTurnError{Reason: AssistantTurnReasonNotFound, Message: "轮次标识无效"}
@@ -108,8 +149,15 @@ func (s *Service) BeginAssistantTurn(userID, canvasID, turnID string) (int64, er
 		return 0, err
 	}
 	revision := assistantDocRevision(doc)
+	associatedAssets, associatedTasks := canvasAssociatedReferences(raw)
 	record := assistantTurnRecord{TurnID: safeTurnID(turnID), UserID: userID, CanvasID: canvasID,
-		RevisionBefore: revision, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Document: raw}
+		RevisionBefore: revision, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		State: assistantTurnStateOpen, Document: raw,
+		SelectedNodeIDs:     uniqueSorted(input.SelectedNodeIDs),
+		ReferencedAssetIDs:  uniqueSorted(input.AssetIDs),
+		ReferencedCanvasIDs: uniqueSorted(input.CanvasIDs),
+		AssociatedAssetIDs:  associatedAssets,
+		AssociatedTaskIDs:   associatedTasks}
 	assistantTurnMu.Lock()
 	defer assistantTurnMu.Unlock()
 	if err := s.writeAssistantTurn(path, record); err != nil {
@@ -119,8 +167,93 @@ func (s *Service) BeginAssistantTurn(userID, canvasID, turnID string) (int64, er
 	return revision, nil
 }
 
-// RecordAssistantTurnChange 把这轮的实际变更记到轮记录上；没写过画布时直接丢弃快照。
-func (s *Service) RecordAssistantTurnChange(turnID string, change *AssistantTurnChange) error {
+// AssistantTurnScopeForHost 读取一轮对话被后端验证过的范围。
+// 只有内置助手宿主会调用它：外部客户端拿不到这样的记录，也无法自报归属。
+// 第二个返回值是 false 时表示这一轮不存在、不属于该用户，或已经结算/撤销。
+func (s *Service) AssistantTurnScopeForHost(userID, turnID string) (AssistantTurnScope, bool, error) {
+	path := s.assistantTurnPath(turnID)
+	if path == "" {
+		return AssistantTurnScope{}, false, nil
+	}
+	assistantTurnMu.Lock()
+	defer assistantTurnMu.Unlock()
+	record, err := readAssistantTurn(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return AssistantTurnScope{}, false, nil
+		}
+		return AssistantTurnScope{}, false, err
+	}
+	if record.UserID != userID || record.Undone || record.State != assistantTurnStateOpen {
+		return AssistantTurnScope{}, false, nil
+	}
+	return AssistantTurnScope{
+		CanvasID:  record.CanvasID,
+		AssetIDs:  uniqueSorted(append(append([]string{}, record.ReferencedAssetIDs...), record.AssociatedAssetIDs...)),
+		CanvasIDs: uniqueSorted(record.ReferencedCanvasIDs),
+		TaskIDs:   uniqueSorted(record.AssociatedTaskIDs),
+	}, true, nil
+}
+
+// canvasAssociatedReferences 从真实画布文档解析「当前画布关联的素材与任务」。
+// 素材沿用画布既有的媒体引用解析（节点与时间线），任务取节点上已登记生成批次的 taskId，
+// 不新造第二套引用结构。
+func canvasAssociatedReferences(raw json.RawMessage) ([]string, []string) {
+	assets := []string{}
+	if references, err := canvas.MediaAssetReferences(raw); err == nil {
+		for _, reference := range references {
+			if id := strings.TrimSpace(reference.AssetID); id != "" {
+				assets = append(assets, id)
+			}
+		}
+	}
+	tasks := []string{}
+	var payload struct {
+		Nodes []struct {
+			Metadata struct {
+				GenerationBatch struct {
+					TaskID       string `json:"taskId"`
+					Continuation struct {
+						TaskID string `json:"taskId"`
+					} `json:"agentGenerationContinuation"`
+				} `json:"generationBatch"`
+			} `json:"metadata"`
+		} `json:"nodes"`
+	}
+	if json.Unmarshal(raw, &payload) == nil {
+		for _, node := range payload.Nodes {
+			if id := strings.TrimSpace(node.Metadata.GenerationBatch.TaskID); id != "" {
+				tasks = append(tasks, id)
+			}
+			if id := strings.TrimSpace(node.Metadata.GenerationBatch.Continuation.TaskID); id != "" {
+				tasks = append(tasks, id)
+			}
+		}
+	}
+	return uniqueSorted(assets), uniqueSorted(tasks)
+}
+
+func uniqueSorted(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" || seen[trimmed] {
+			continue
+		}
+		seen[trimmed] = true
+		out = append(out, trimmed)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// FinalizeAssistantTurn 结算一轮对话：从本轮自己的写操作回执重建变更摘要并落盘。
+//
+// 这一步刻意不依赖浏览器流和宿主最终消息：回执与业务写入在同一个事务里提交，
+// 所以中途断开、用户取消、宿主重启之后，已经落地的操作依然可追溯、可撤销。
+// 本轮没有推进画布版本时保留轮记录但不留轮前文档（撤销要能回答「这一轮没有改动」）。
+func (s *Service) FinalizeAssistantTurn(turnID string) error {
 	path := s.assistantTurnPath(turnID)
 	if path == "" {
 		return nil
@@ -129,17 +262,112 @@ func (s *Service) RecordAssistantTurnChange(turnID string, change *AssistantTurn
 	defer assistantTurnMu.Unlock()
 	record, err := readAssistantTurn(path)
 	if err != nil {
-		return nil // 轮前快照不存在（例如画布读失败）时不需要补记
+		if errors.Is(err, os.ErrNotExist) {
+			return nil // 轮前快照不存在（例如画布读失败）时不需要补记
+		}
+		return err // 记录损坏/不可读：保留现场并如实上报，绝不覆盖成「没有改动」
 	}
-	if change == nil || change.RevisionAfter <= change.RevisionBefore {
-		// 这一轮没改画布：轮记录要留下（撤销才能回答「这一轮没有改动」而不是「轮次不存在」），
-		// 但轮前文档可以丢掉，避免为没有撤销价值的轮次占着整份画布。
-		record.Change = nil
-		record.Document = nil
-		return s.writeAssistantTurn(path, record)
+	if record.Undone || record.State == assistantTurnStateSettled {
+		// 已撤销或已结算的回合不能被重复结算清空：撤销证据和变更摘要都要留着。
+		return nil
 	}
+	change, err := s.assistantTurnChangeFromReceipts(record)
+	if err != nil {
+		// 查询失败时保留快照：把未知错误当成「没有改动」会让轮前文档被清空、撤销失效。
+		return err
+	}
+	record.State = assistantTurnStateSettled
 	record.Change = change
+	if change == nil {
+		record.Document = nil
+	}
 	return s.writeAssistantTurn(path, record)
+}
+
+// assistantTurnChangeFromReceipts 只用带本轮标识、且确实推进了画布版本的写操作回执
+// 组成变更摘要。回执里的 canvasId 必须与轮记录一致，因此伪造的轮标识无法把别的画布写进来。
+// 查询失败必须返回错误，调用方要保留轮前快照，不能把未知错误当成「这一轮没有改动」。
+func (s *Service) assistantTurnChangeFromReceipts(record assistantTurnRecord) (*AssistantTurnChange, error) {
+	if s == nil || s.Database() == nil || strings.TrimSpace(record.TurnID) == "" {
+		return nil, errors.New("助手操作回执不可用，已保留撤销快照")
+	}
+	var receipts []model.AgentOpRecord
+	if err := s.Database().Where("user_id = ? AND turn_id = ? AND status = ?", record.UserID, record.TurnID, "succeeded").
+		Find(&receipts).Error; err != nil {
+		return nil, err
+	}
+	type step struct {
+		revision int64
+		opID     string
+		op       string
+		payload  map[string]any
+	}
+	steps := make([]step, 0, len(receipts))
+	for _, receipt := range receipts {
+		var payload map[string]any
+		if json.Unmarshal([]byte(receipt.ResultJSON), &payload) != nil {
+			return nil, errors.New("助手操作回执损坏，已保留撤销快照")
+		}
+		if got, _ := payload["canvasId"].(string); got != record.CanvasID {
+			return nil, errors.New("助手操作回执的画布归属不一致，已保留撤销快照")
+		}
+		if receipt.Op == "canvas.edge.create" && payload["created"] != true {
+			continue // 重复边的回执不是写入，绝不能替外部修改认领版本。
+		}
+		revision, ok := jsonWholeNumber(payload["revision"])
+		if !ok || revision <= record.RevisionBefore {
+			continue // 没有推进版本（例如重复连线幂等返回）不算本轮改动
+		}
+		steps = append(steps, step{revision: revision, opID: receipt.OpID, op: receipt.Op, payload: payload})
+	}
+	if len(steps) == 0 {
+		return nil, nil
+	}
+	sort.Slice(steps, func(i, j int) bool { return steps[i].revision < steps[j].revision })
+	change := &AssistantTurnChange{RevisionBefore: record.RevisionBefore}
+	for _, item := range steps {
+		// 每个版本只认一次：同一版本上的幂等重放（例如重复连线原样返回）
+		// 不推进 revision，也不能被记成第二个「本轮改动」——否则按轮撤销会因为
+		// 同一版本出现两条回执而判定「中间有无法归属的写入」并拒绝撤销。
+		if item.revision <= change.RevisionAfter {
+			continue
+		}
+		change.RevisionAfter = item.revision
+		change.OperationIDs = append(change.OperationIDs, item.opID)
+		switch item.op {
+		case "canvas.nodes.create":
+			for _, raw := range docItems(item.payload["created"]) {
+				if id, _ := raw["id"].(string); id != "" {
+					change.CreatedNodeIDs = append(change.CreatedNodeIDs, id)
+				}
+			}
+		case "canvas.node.update":
+			if id, _ := item.payload["nodeId"].(string); id != "" {
+				change.UpdatedNodeIDs = append(change.UpdatedNodeIDs, id)
+			}
+		case "canvas.edge.create":
+			if created, _ := item.payload["created"].(bool); created {
+				if id, _ := item.payload["edgeId"].(string); id != "" {
+					change.CreatedEdgeIDs = append(change.CreatedEdgeIDs, id)
+				}
+			}
+		}
+	}
+	if change.RevisionAfter <= change.RevisionBefore {
+		return nil, nil
+	}
+	return change, nil
+}
+
+func docItems(value any) []map[string]any {
+	items, _ := value.([]any)
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if object, ok := item.(map[string]any); ok {
+			out = append(out, object)
+		}
+	}
+	return out
 }
 
 // AssistantTurnUndone reads the same scoped durable receipt used by undo.
@@ -164,6 +392,20 @@ func (s *Service) UndoAssistantTurn(userID, canvasID, turnID string) (int64, err
 	}
 	if record.Undone {
 		return 0, &AssistantTurnError{Reason: AssistantTurnReasonAlreadyUndone, Message: "这一轮已经撤销过了"}
+	}
+	if record.Change == nil {
+		// 结算没有跑完（例如后端在回合中途重启）：用回执补算一次，
+		// 不让「已经落地的写入」因为一次进程退出变成不可撤销。
+		change, receiptErr := s.assistantTurnChangeFromReceipts(record)
+		if receiptErr != nil {
+			return 0, receiptErr // 保留快照：未知错误不能当成「没有改动」
+		}
+		if change != nil {
+			record.Change = change
+			if err := s.writeAssistantTurn(path, record); err != nil {
+				return 0, err
+			}
+		}
 	}
 	if record.Change == nil {
 		return 0, &AssistantTurnError{Reason: AssistantTurnReasonNoChange, Message: "这一轮没有改动画布"}

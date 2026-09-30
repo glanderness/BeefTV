@@ -1,13 +1,14 @@
 package agentops
 
 import (
+	"bytes"
 	"crypto/rand"
 
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"infinite-canvas/backend/internal/canvas/capability"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -20,16 +21,47 @@ import (
 	"infinite-canvas/backend/internal/kernel"
 )
 
-// canvasCapabilities 是画布领域的真实能力描述注册表：
-// 节点尺寸/metadata/连线策略都来自它，操作层不再自建第二套规格。
-var canvasCapabilities = capability.BuiltinRegistry()
-
-func newNodeID() string {
-	buf := make([]byte, 5)
-	if _, err := rand.Read(buf); err != nil {
-		return fmt.Sprintf("agent-%d", time.Now().UnixNano())
+// decodeParams 是全部操作参数的唯一解析入口：未知字段整批拒绝。
+//
+// encoding/json 默认丢弃未知字段，于是「title + temperature」这样的请求会部分执行并
+// 推进 revision，调用方却以为整个请求生效了。这里必须让未知字段变成稳定失败，
+// 而不是让操作层各自记得加 DisallowUnknownFields。
+// DisallowUnknownFields 对嵌套结构体同样生效，所以 patch/nodes 里的未知字段也会在
+// 写之前被拒；所有操作都必须在调用领域写入之前先走这里。
+func decodeParams(params json.RawMessage, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(params))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		var typeErr *json.UnmarshalTypeError
+		if errors.As(err, &typeErr) {
+			return InvalidArg("invalid_params", "参数类型不正确: 字段 "+typeErr.Field)
+		}
+		if field, ok := unknownField(err); ok {
+			return newError(CodeInvalidArgument, "unknown_field", "参数包含未知字段: "+field,
+				map[string]any{"field": field})
+		}
+		return InvalidArg("invalid_params", err.Error())
 	}
-	return fmt.Sprintf("agent-%d-%s", time.Now().UnixNano(), hex.EncodeToString(buf))
+	// 顶层后面的多余内容（例如 "{}{}" 或尾随垃圾）同样整批拒绝。
+	if err := decoder.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
+		return InvalidArg("invalid_params", "参数包含多余内容")
+	}
+	return nil
+}
+
+// unknownField 从 encoding/json 的未知字段错误里取出字段名。
+// 报错文案是标准库固定格式（json: unknown field "x"），取不到时退化为通用失败。
+func unknownField(err error) (string, bool) {
+	const prefix = `json: unknown field `
+	message := err.Error()
+	if !strings.HasPrefix(message, prefix) {
+		return "", false
+	}
+	name := strings.Trim(strings.TrimPrefix(message, prefix), `"`)
+	if name == "" {
+		return "", false
+	}
+	return name, true
 }
 
 // RegisterDefaultOps 注册首版全部操作。生成/付费入口不在本轮暴露：
@@ -72,8 +104,8 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 		Kind     string   `json:"kind"`
 		Note     string   `json:"note"`
 	}
-	if err := json.Unmarshal(params, &args); err != nil {
-		return nil, InvalidArg("invalid_params", err.Error())
+	if err := decodeParams(params, &args); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(args.CanvasID) == "" {
 		return nil, InvalidArg("invalid_params", "canvasId 必填")
@@ -145,7 +177,10 @@ func opCanvasGet(ctx *Context, params json.RawMessage) (any, error) {
 	var args struct {
 		CanvasID string `json:"canvasId"`
 	}
-	if err := json.Unmarshal(params, &args); err != nil || strings.TrimSpace(args.CanvasID) == "" {
+	if err := decodeParams(params, &args); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(args.CanvasID) == "" {
 		return nil, InvalidArg("invalid_params", "canvasId 必填")
 	}
 	raw, err := ctx.Services.UserCanvasProject(ctx.UserID, args.CanvasID)
@@ -167,8 +202,8 @@ func opCanvasSearch(ctx *Context, params json.RawMessage) (any, error) {
 		CanvasID string `json:"canvasId"`
 		Sort     string `json:"sort"`
 	}
-	if err := json.Unmarshal(params, &args); err != nil {
-		return nil, InvalidArg("invalid_params", err.Error())
+	if err := decodeParams(params, &args); err != nil {
+		return nil, err
 	}
 	page := args.Page
 	if page <= 0 {
@@ -196,8 +231,8 @@ func opAssetList(ctx *Context, params json.RawMessage) (any, error) {
 		Kind     string `json:"kind"`
 		Category string `json:"category"`
 	}
-	if err := json.Unmarshal(params, &args); err != nil {
-		return nil, InvalidArg("invalid_params", err.Error())
+	if err := decodeParams(params, &args); err != nil {
+		return nil, err
 	}
 	page := args.Page
 	if page <= 0 {
@@ -223,7 +258,10 @@ func opAssetGet(ctx *Context, params json.RawMessage) (any, error) {
 	var args struct {
 		AssetID string `json:"assetId"`
 	}
-	if err := json.Unmarshal(params, &args); err != nil || strings.TrimSpace(args.AssetID) == "" {
+	if err := decodeParams(params, &args); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(args.AssetID) == "" {
 		return nil, InvalidArg("invalid_params", "assetId 必填")
 	}
 	raw, err := ctx.Services.UserAssetWithTx(ctx.Tx, ctx.UserID, args.AssetID)
@@ -241,7 +279,10 @@ func opTaskGet(ctx *Context, params json.RawMessage) (any, error) {
 	var args struct {
 		TaskID string `json:"taskId"`
 	}
-	if err := json.Unmarshal(params, &args); err != nil || strings.TrimSpace(args.TaskID) == "" {
+	if err := decodeParams(params, &args); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(args.TaskID) == "" {
 		return nil, InvalidArg("invalid_params", "taskId 必填")
 	}
 	task, err := ctx.Services.Task(ctx.UserID, args.TaskID)
@@ -258,19 +299,6 @@ func opTaskGet(ctx *Context, params json.RawMessage) (any, error) {
 }
 
 // canvasDoc 以 map 承载整份文档，保证未触碰的字段在写回时逐字保持原样。
-func readCanvasDoc(ctx *Context, canvasID string) (map[string]any, error) {
-	// 事务内读写共用同一条连接：避免单连接 SQLite 上自己等自己。
-	raw, err := ctx.Services.UserCanvasProjectWithTx(ctx.Tx, ctx.UserID, canvasID)
-	if err != nil {
-		return nil, mapDomainError(err)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return nil, AsError(err)
-	}
-	return doc, nil
-}
-
 func canvasRevision(doc map[string]any) int64 {
 	switch v := doc["revision"].(type) {
 	case float64:
@@ -294,32 +322,6 @@ func canvasNodes(doc map[string]any) []any {
 	return []any{}
 }
 
-// requireRevision 要求写操作带上读取时的版本；没有观察前提就不允许写。
-func requireRevision(expected int64) error {
-	if expected <= 0 {
-		return InvalidArg("missing_expected_revision",
-			"写操作必须带上读取时的 expectedRevision：没有观察前提的写入会覆盖用户新编辑")
-	}
-	return nil
-}
-
-// writeCanvasDoc 把调用方观察到的 revision 原样放进 payload：
-// 唯一裁决者是仓储的原子谓词（UPDATE ... WHERE revision = ?），
-// 操作层不再自建第二套 CAS，也不把「刚读到的 revision」当作观察值（那会让 CAS 形同虚设）。
-func writeCanvasDoc(ctx *Context, canvasID string, doc map[string]any, expectedRevision int64) (int64, error) {
-	doc["id"] = canvasID
-	doc["revision"] = expectedRevision
-	encoded, err := json.Marshal(doc)
-	if err != nil {
-		return 0, AsError(err)
-	}
-	summary, err := ctx.Services.UpsertUserCanvasProjectWithTx(ctx.Tx, ctx.UserID, encoded)
-	if err != nil {
-		return 0, mapDomainError(err)
-	}
-	return summary.Revision, nil
-}
-
 func opCanvasNodeUpdate(ctx *Context, params json.RawMessage) (any, error) {
 	var args struct {
 		CanvasID         string `json:"canvasId"`
@@ -331,8 +333,8 @@ func opCanvasNodeUpdate(ctx *Context, params json.RawMessage) (any, error) {
 			Content *string `json:"content"`
 		} `json:"patch"`
 	}
-	if err := json.Unmarshal(params, &args); err != nil {
-		return nil, InvalidArg("invalid_params", err.Error())
+	if err := decodeParams(params, &args); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(args.CanvasID) == "" || strings.TrimSpace(args.NodeID) == "" {
 		return nil, InvalidArg("invalid_params", "canvasId 与 nodeId 必填")
@@ -368,8 +370,8 @@ func opCanvasNodesCreate(ctx *Context, params json.RawMessage) (any, error) {
 			Prompt string `json:"prompt"`
 		} `json:"nodes"`
 	}
-	if err := json.Unmarshal(params, &args); err != nil {
-		return nil, InvalidArg("invalid_params", err.Error())
+	if err := decodeParams(params, &args); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(args.CanvasID) == "" {
 		return nil, InvalidArg("invalid_params", "canvasId 必填")
@@ -378,38 +380,21 @@ func opCanvasNodesCreate(ctx *Context, params json.RawMessage) (any, error) {
 		return nil, InvalidArg("invalid_batch", "nodes 必须是 1..8 项的数组")
 	}
 	drafts := make([]canvas.NodeDraft, 0, len(args.Nodes))
-	titles := make([]string, 0, len(args.Nodes))
 	for _, node := range args.Nodes {
 		drafts = append(drafts, canvas.NodeDraft{Title: node.Title, Type: node.Type, Prompt: node.Prompt})
-		titles = append(titles, strings.TrimSpace(node.Title))
 	}
-	if _, err := ctx.Services.CreateUserCanvasNodesWithTx(ctx.Tx, ctx.UserID, args.CanvasID, drafts, args.ExpectedRevision); err != nil {
+	// 新节点身份由领域返回：标题是用户内容，不是身份，不能用它回找。
+	_, createdNodes, err := ctx.Services.CreateUserCanvasNodesWithTx(ctx.Tx, ctx.UserID, args.CanvasID, drafts, args.ExpectedRevision)
+	if err != nil {
 		return nil, mapDomainError(err)
 	}
 	return canvasWriteResult(ctx, args.CanvasID, func(doc map[string]any) map[string]any {
-		created := make([]map[string]any, 0, len(titles))
-		for _, title := range titles {
-			if node := findDocNodeByTitle(doc, title); node != nil {
-				created = append(created, map[string]any{"id": node["id"], "title": node["title"]})
-			}
+		created := make([]map[string]any, 0, len(createdNodes))
+		for _, node := range createdNodes {
+			created = append(created, map[string]any{"id": node.ID, "title": node.Title, "type": node.Type})
 		}
 		return map[string]any{"canvasId": args.CanvasID, "created": created}
 	})
-}
-func nodeTypeOf(nodes []any, nodeID string) string {
-	for _, rawNode := range nodes {
-		if node, ok := rawNode.(map[string]any); ok {
-			if id, _ := node["id"].(string); id == nodeID {
-				kind, _ := node["type"].(string)
-				kind = strings.TrimSpace(kind)
-				if kind == "" {
-					kind = "text"
-				}
-				return kind
-			}
-		}
-	}
-	return "text"
 }
 
 func opCanvasEdgeCreate(ctx *Context, params json.RawMessage) (any, error) {
@@ -419,8 +404,8 @@ func opCanvasEdgeCreate(ctx *Context, params json.RawMessage) (any, error) {
 		ToNodeID         string `json:"toNodeId"`
 		ExpectedRevision int64  `json:"expectedRevision"`
 	}
-	if err := json.Unmarshal(params, &args); err != nil {
-		return nil, InvalidArg("invalid_params", err.Error())
+	if err := decodeParams(params, &args); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(args.CanvasID) == "" || strings.TrimSpace(args.FromNodeID) == "" || strings.TrimSpace(args.ToNodeID) == "" {
 		return nil, InvalidArg("invalid_params", "canvasId、fromNodeId、toNodeId 必填")
@@ -485,19 +470,6 @@ func findDocEdgeID(doc map[string]any, fromNodeID, toNodeID string) string {
 		}
 	}
 	return ""
-}
-
-func findDocNodeByTitle(doc map[string]any, title string) map[string]any {
-	if nodes, ok := doc["nodes"].([]any); ok {
-		for _, rawNode := range nodes {
-			if node, ok := rawNode.(map[string]any); ok {
-				if value, _ := node["title"].(string); value == title {
-					return node
-				}
-			}
-		}
-	}
-	return nil
 }
 
 // secretKeyPattern 命中凭据类字段名；读取结果统一脱敏后再外发。

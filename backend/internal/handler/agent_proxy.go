@@ -2,11 +2,13 @@ package handler
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -263,7 +265,15 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 				for _, value := range turns {
 					if turn, ok := value.(map[string]any); ok {
 						turnID, _ := turn["turnId"].(string)
-						turn["undone"] = svc.AssistantTurnUndone(c.GetString("agentUserId"), strings.TrimSpace(c.Query("canvasId")), turnID)
+						state, err := svc.ReadAssistantTurnHistoryState(c.GetString("agentUserId"), strings.TrimSpace(c.Query("canvasId")), turnID)
+						if err != nil {
+							failService(c, err)
+							return
+						}
+						if state != nil {
+							turn["undone"] = state.Undone
+							turn["change"] = state.Change
+						}
 					}
 				}
 			}
@@ -394,10 +404,11 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			return
 		}
 		var payload struct {
-			CanvasID        string   `json:"canvasId"`
-			Message         string   `json:"message"`
-			SelectedNodeIDs []string `json:"selectedNodeIds"`
-			SessionID       string   `json:"sessionId"`
+			CanvasID        string               `json:"canvasId"`
+			Message         string               `json:"message"`
+			SelectedNodeIDs []string             `json:"selectedNodeIds"`
+			SessionID       string               `json:"sessionId"`
+			References      []assistantReference `json:"references"`
 		}
 		if err := json.Unmarshal(body, &payload); err != nil || strings.TrimSpace(payload.CanvasID) == "" || strings.TrimSpace(payload.Message) == "" {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("canvasId 与 message 必填"))
@@ -405,6 +416,13 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		}
 		canvasRaw, allowed := requireOwnedCanvas(c, payload.CanvasID)
 		if !allowed {
+			return
+		}
+		// 额外素材/画布引用必须由界面明确请求：这里校验归属，校验不过就整轮拒绝，
+		// 不把「模型说可以读」当成授权。
+		references, refErr := normalizeAssistantReferences(svc, c.GetString("agentUserId"), payload.References)
+		if refErr != nil {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest(refErr.Error()))
 			return
 		}
 		// 选中对象必须真的属于该画布，否则拒绝（不能借选中绕过 scope）。
@@ -430,19 +448,25 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			}
 		}
 		// 轮前快照在转发之前就落盘：宿主没有画布持久化通道，这个前提只能由后端建立，
-		// 否则撤销会拿不到「这轮开始之前」的文档。
+		// 否则撤销会拿不到「这轮开始之前」的文档。范围也只在这里验证并持久化：
+		// 之后的操作入口按这条记录读授权，宿主与模型都无法自报。
 		turnID := newTurnID()
-		revisionBefore, snapshotErr := svc.BeginAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, turnID)
+		revisionBefore, snapshotErr := svc.BeginAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, turnID,
+			assistantTurnInput(payload.SelectedNodeIDs, references))
 		if snapshotErr != nil {
 			failService(c, snapshotErr)
 			return
 		}
-		forwarded, err := withTurnEnvelope(body, turnID, revisionBefore)
+		// 回合状态由自己的回执结算，和浏览器流是两件事：无论下面走哪条返回路径
+		// （宿主不可达、宿主拒绝、浏览器中途断开、正常结束），都已经落地的操作都要可追溯。
+		defer settleAssistantTurn(turnID, svc)
+		forwarded, err := withTurnEnvelope(body, turnID, revisionBefore, references)
 		if err != nil {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("请求体不是合法 JSON"))
 			return
 		}
-		upstream, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost,
+		// 上游请求与浏览器连接解耦：用户中途关页面/点停止不能让已经落地的写入丢掉回合归属。
+		upstream, err := http.NewRequestWithContext(context.WithoutCancel(c.Request.Context()), http.MethodPost,
 			agentHostBaseURL()+"/chat", strings.NewReader(string(forwarded)))
 		if err != nil {
 			fail(c, http.StatusInternalServerError, app.BadAuthRequest("无法构造宿主请求"))
@@ -474,16 +498,17 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		c.Status(resp.StatusCode)
 		c.Header("Content-Type", resp.Header.Get("Content-Type"))
 		c.Writer.WriteHeaderNow()
-		// 按行转发：既保持 NDJSON 的即时性，也能在 turn_end 上把这轮变更记到轮记录里。
+		// 按行转发 NDJSON：写不回浏览器只停止转发，不停止读取与回合结算。
 		reader := bufio.NewReaderSize(resp.Body, 32<<10)
+		clientGone := false
 		for {
 			line, readErr := reader.ReadBytes('\n')
-			if len(line) > 0 {
+			if len(line) > 0 && !clientGone {
 				if _, writeErr := c.Writer.Write(line); writeErr != nil {
-					return
+					clientGone = true
+				} else {
+					c.Writer.Flush()
 				}
-				c.Writer.Flush()
-				recordTurnEndChange(svc, turnID, line)
 			}
 			if readErr != nil {
 				return
@@ -529,30 +554,27 @@ func readAssistantBody[T any](c *gin.Context, shape T) ([]byte, T, bool) {
 	return body, shape, true
 }
 
-// withTurnEnvelope 把后端决定的轮次标识与轮前版本补进转发体：
-// 这两个值必须由后端生成，宿主不能自报轮次身份。
-func withTurnEnvelope(body []byte, turnID string, revisionBefore int64) ([]byte, error) {
+// withTurnEnvelope 把后端决定的轮次标识、轮前版本与已校验的额外引用补进转发体：
+// 这三个值必须由后端生成/校验，宿主不能自报轮次身份，模型也不能自授引用。
+func withTurnEnvelope(body []byte, turnID string, revisionBefore int64, references []assistantReference) ([]byte, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, err
 	}
 	payload["turnId"] = turnID
 	payload["revisionBefore"] = revisionBefore
+	if len(references) > 0 {
+		payload["references"] = references
+	} else {
+		delete(payload, "references")
+	}
 	return json.Marshal(payload)
 }
 
-// recordTurnEndChange 只看 turn_end 行：把这轮的画布变更记到轮记录上，供按轮撤销使用。
-func recordTurnEndChange(svc *app.Service, turnID string, line []byte) {
-	trimmed := strings.TrimSpace(string(line))
-	if !strings.HasPrefix(trimmed, "{") || !strings.Contains(trimmed, `"turn_end"`) {
-		return
+// settleAssistantTurn 结算一轮对话：回合状态完全由后端自己的操作回执重建，
+// 因此不依赖浏览器是否还连着、也不依赖宿主最后一条消息是否读到。
+func settleAssistantTurn(turnID string, svc *app.Service) {
+	if err := svc.FinalizeAssistantTurn(turnID); err != nil {
+		log.Printf("assistant_turn_settle_failed turn=%q error_type=%T", turnID, err)
 	}
-	var event struct {
-		Type   string                   `json:"type"`
-		Change *app.AssistantTurnChange `json:"change"`
-	}
-	if json.Unmarshal([]byte(trimmed), &event) != nil || event.Type != "turn_end" {
-		return
-	}
-	_ = svc.RecordAssistantTurnChange(turnID, event.Change)
 }

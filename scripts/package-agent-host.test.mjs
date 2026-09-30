@@ -52,9 +52,9 @@ test('packaged server starts with local imports and makes zero model requests', 
     response.writeHead(500).end('No model requests allowed in packaging tests');
   });
   const ops = createServer((request, response) => {
-    requests.push({ method: request.method, path: request.url, owner: request.headers['x-beeftv-owner'] });
+    requests.push({ method: request.method, path: request.url, host: request.headers['x-beeftv-agent-token'] });
     response.setHeader('Content-Type', 'application/json');
-    if (request.method !== 'GET' || request.url !== '/api/ops' || request.headers['x-beeftv-owner'] !== 'test-owner') {
+    if (request.method !== 'GET' || request.url !== '/api/ops' || request.headers['x-beeftv-agent-token'] !== 'test-host') {
       response.writeHead(403).end(JSON.stringify({ code: 403 }));
       return;
     }
@@ -82,7 +82,7 @@ test('packaged server starts with local imports and makes zero model requests', 
       BEEFTV_OPS_URL: `${opsURL}/api`, BEEFTV_OWNER_TOKEN: 'test-owner', BEEFTV_AGENT_HOST_TOKEN: 'test-host',
       BEEFTV_AGENT_DATA_DIR: path.join(scratch, 'data'), BEEFTV_AGENT_PORT: String(port),
       BEEFTV_AGENT_MODEL: 'packaging-test-model', BEEFTV_AGENT_API: 'openai-completions',
-      BEEFTV_AGENT_BASE_URL: providerURL, BEEFTV_AGENT_API_KEY: 'test-placeholder', BEEFTV_AGENT_MAX_REQUESTS: '0',
+      BEEFTV_AGENT_BASE_URL: providerURL, BEEFTV_AGENT_API_KEY: 'test-placeholder', BEEFTV_AGENT_TOTAL_REQUEST_BUDGET: '0',
     } });
     child.stdout.on('data', (chunk) => { output += chunk; });
     child.stderr.on('data', (chunk) => { output += chunk; });
@@ -108,9 +108,9 @@ test('packaged server starts with local imports and makes zero model requests', 
     expect(health.api).toBe('openai-completions');
     expect(health.baseUrl).toBe(providerURL);
     expect(health.operations).toBe(1);
-    expect(health.requests).toEqual({ dispatched: 0, cap: 0 });
+    expect(health.requests).toEqual({ dispatched: 0, perTurnRequests: 40, perTurnToolSteps: 40, lifetimeBudget: 0, lifetimeUsed: 0 });
     expect(modelRequests).toBe(0);
-    expect(requests).toEqual([{ method: 'GET', path: '/api/ops', owner: 'test-owner' }]);
+    expect(requests).toEqual([{ method: 'GET', path: '/api/ops', host: 'test-host' }]);
   } finally {
     if (child) {
       if (child.exitCode === null && child.signalCode === null) child.kill();

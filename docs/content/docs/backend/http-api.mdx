@@ -40,15 +40,38 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 字段落点由画布能力描述符声明（例如生成类节点的可编辑提示词落在 `metadata.composerContent`，也就是画布编辑器
 读取的字段），操作层不自行拼文档形状。
 
+参数解析在所有层上都严格：顶层以及 `patch`、`nodes` 等嵌套对象出现未知字段时整批拒绝（`unknown_field`），
+不会部分执行却推进 revision。schema 声明的 `params.operationId` 与请求信封的 `opId` 同时出现而又不一致时返回
+`operation_id_conflict`，不会自行挑选其中一个身份。外部 MCP/CLI 的能力描述保留 `operationId` 作为稳定幂等键；
+内置助手宿主自己生成幂等键，因此它看到的能力描述不含该字段。
+
+### 助手回合归属
+
+内置助手宿主调用 `/ops/:op` 时出示自己的宿主凭据 `X-Beeftv-Agent-Token`（由后端注入宿主进程，页面与
+外部客户端拿不到），并带上后端在 `/assistant/chat` 中签发、随转发体下发的 `X-Beeftv-Agent-Turn`。
+后端按该回合记录读取这一轮被验证过的范围，而不是信任任何调用方自报的列表：
+
+- 会话默认范围是当前画布，加上当前画布文档里真实关联的素材与生成任务（沿用画布既有的媒体引用解析）。
+- 界面上明确 @ 引用或附加的素材、画布在对话入口逐项校验归属后写入回合记录；额外画布只读。
+- 跨画布写、读取与当前画布无关的素材/任务都返回 `scope_denied`；工作区级列举（`asset.list`、`canvas.search`）不暴露给助手。
+- 已登记读写客户端与 owner 直连保持原有工作区读写能力；它们即使拿到 `turnId` 也不能出示归属，带上回合头会被拒绝。
+- 回合只在开启期间接受归属；结算或撤销之后不再接受新写入，模型侧也无法自己生成授权。
+
 内置创作助手的浏览器侧只使用同源代理：
 
 | 端点 | 说明 |
 | --- | --- |
 | `GET /assistant/status` | 免身份的宿主状态查询（不含任何凭据）；未就绪时返回明确原因而不是空回复 |
 | `POST /assistant/ui-session` | 签发短期限 UI 会话凭据；需本机同源，并且能出示 owner 凭据（或显式本地引导开关） |
-| `POST /assistant/chat` | NDJSON 流式对话：`text_delta` 增量 + 一次 `turn_end` 结算；宿主凭据与模型密钥由后端注入，页面不接触 |
+| `POST /assistant/chat` | NDJSON 流式对话：`text_delta` 增量 + 一次 `turn_end` 结算；可带 `references: [{kind,id}]` 追加已校验的素材/画布引用；宿主凭据与模型密钥由后端注入，页面不接触 |
 | `POST /assistant/cancel` | 取消指定画布正在进行的回合 |
 | `GET/PUT /assistant/host/config`、`POST /assistant/host/start|stop` | 宿主生命周期：需 owner 凭据 + 本机同源；启动命令只取本机配置，绝不接受请求体传入的可执行命令 |
+
+按轮撤销不依赖浏览器流或宿主的最后一条消息：轮前文档由后端在转发前落盘，变更摘要由该轮自己的写入回执重建，
+因此浏览器断流（没有 `turn_end`）、用户取消或后端在回合中途重启之后，已经落地的助手写入仍然可以撤销。
+宿主对模型请求与工具步骤各自有单轮上限（`BEEFTV_AGENT_MAX_REQUESTS_PER_TURN`、
+`BEEFTV_AGENT_MAX_TOOL_STEPS_PER_TURN`），按轮独立计数、下一轮从零开始；总预算
+`BEEFTV_AGENT_TOTAL_REQUEST_BUDGET` 默认关闭，只有显式配置才启用。
 
 ### 只读边界
 

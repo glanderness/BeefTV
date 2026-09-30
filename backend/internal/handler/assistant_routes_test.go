@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -23,11 +24,15 @@ import (
 
 // 内置助手对外只有这一条链路：页面 → 同源后端 → 宿主。
 // 这里用真实的路由、真实的 SQLite 画布与一个替身宿主验证契约，
-// 特别是「轮前快照由后端建立、撤销写回新版本」这条只能在后端成立的前提。
+// 特别是「轮前快照由后端建立、写入带回合归属、撤销写回新版本」这几条只能在后端成立的前提。
+
+// assistantTestHostToken 是替身宿主出示的宿主凭据；真实注入路径见 hostEnv。
+const assistantTestHostToken = "test-host-token"
 
 type assistantTestEnv struct {
 	router   *gin.Engine
 	service  *app.Service
+	clients  *agentops.ClientRegistry
 	uiToken  string
 	canvasID string
 	hostHits map[string]int
@@ -72,15 +77,36 @@ func newAssistantTestEnv(t *testing.T, host func(env *assistantTestEnv) http.Han
 	} else {
 		t.Setenv("BEEFTV_AGENT_HOST_URL", "http://127.0.0.1:1")
 	}
-	t.Setenv("BEEFTV_AGENT_HOST_TOKEN", "test-host-token")
+	t.Setenv("BEEFTV_AGENT_HOST_TOKEN", assistantTestHostToken)
 
 	ui := newUISessionStore()
 	env.uiToken = ui.issue(owner.ID).Token
 	router := gin.New()
 	api := router.Group("/api")
-	RegisterAgentProxyRoutes(api, service, agentops.NewClientRegistry(dataDir), ui)
+	clients := agentops.NewClientRegistry(dataDir)
+	env.clients = clients
+	RegisterAgentProxyRoutes(api, service, clients, ui)
+	// 操作层与生产走同一条注册路径：替身宿主通过真实 HTTP 入口写画布，
+	// 「回执与业务写入同事务」这条前提才有意义。
+	RegisterAgentOpsRoutes(api, service, agentops.NewStore(db), clients)
 	env.router = router
 	return env
+}
+
+// opsRaw 走真实的 /api/ops/:op HTTP 入口，用来验证归属、严格解码与 scope 边界。
+func (e *assistantTestEnv) opsRaw(op, opID, turnID, params string) (int, string) {
+	body := `{"opId":` + strconv.Quote(opID) + `,"params":` + params + `}`
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:18090/api/ops/"+op, strings.NewReader(body))
+	request.Host = "127.0.0.1:18090"
+	request.RemoteAddr = "127.0.0.1:12345"
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Beeftv-Agent-Token", assistantTestHostToken)
+	if turnID != "" {
+		request.Header.Set("X-Beeftv-Agent-Turn", turnID)
+	}
+	recorder := httptest.NewRecorder()
+	e.router.ServeHTTP(recorder, request)
+	return recorder.Code, recorder.Body.String()
 }
 
 // 显式注入的供应商：让状态解析不依赖真实渠道配置，测试只验证路由与契约。
@@ -202,26 +228,46 @@ func TestAssistantChatRecordsTurnChangeAndUndoRestoresDocument(t *testing.T) {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
-			// 替身宿主用与内置会话相同的入口写画布，让 turn_end 里的版本是真的。
+			// 替身宿主用与内置宿主相同的入口写画布：宿主凭据 + 后端签发的 turnId，
+			// 让回执与业务写入落在同一个事务里，撤销才能只靠回执重建这一轮。
 			owner, _ := env.service.LocalWorkspaceOwner()
 			raw, _ := env.service.UserCanvasProject(owner.ID, env.canvasID)
 			var doc map[string]any
 			_ = json.Unmarshal(raw, &doc)
-			nodes, _ := doc["nodes"].([]any)
-			doc["nodes"] = append(nodes, map[string]any{"id": "n2", "type": "text", "title": "助手节点",
-				"position": map[string]any{"x": 10, "y": 10}})
-			encoded, _ := json.Marshal(doc)
-			summary, err := env.service.UpsertUserCanvasProject(owner.ID, encoded)
-			if err != nil {
+			revision, _ := doc["revision"].(float64)
+			params, _ := json.Marshal(map[string]any{
+				"canvasId": env.canvasID, "expectedRevision": int64(revision),
+				"nodes": []any{map[string]any{"title": "助手节点", "type": "text"}}})
+			status, opBody := env.opsRaw("canvas.nodes.create", "host-turn-op-1", captured.TurnID, string(params))
+			if status != http.StatusOK {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(opBody))
+				return
+			}
+			var opResult struct {
+				Data struct {
+					Result struct {
+						Revision int64 `json:"revision"`
+						Created  []struct {
+							ID string `json:"id"`
+						} `json:"created"`
+					} `json:"result"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal([]byte(opBody), &opResult); err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				return
+			}
+			createdIDs := make([]string, 0, len(opResult.Data.Result.Created))
+			for _, node := range opResult.Data.Result.Created {
+				createdIDs = append(createdIDs, node.ID)
 			}
 			w.Header().Set("Content-Type", "application/x-ndjson")
 			_, _ = w.Write([]byte(`{"type":"text_delta","delta":"好"}` + "\n"))
 			line, _ := json.Marshal(map[string]any{"type": "turn_end", "turnId": captured.TurnID, "reply": "好",
 				"toolCalls": []any{}, "proposals": []any{},
-				"change": map[string]any{"revisionBefore": captured.RevisionBefore, "revisionAfter": summary.Revision,
-					"createdNodeIds": []string{"n2"}, "updatedNodeIds": []string{}, "createdEdgeIds": []string{}}})
+				"change": map[string]any{"revisionBefore": captured.RevisionBefore, "revisionAfter": opResult.Data.Result.Revision,
+					"createdNodeIds": createdIDs, "updatedNodeIds": []string{}, "createdEdgeIds": []string{}}})
 			_, _ = w.Write(append(line, '\n'))
 		})
 	})

@@ -3,8 +3,8 @@ package app
 import (
 	"encoding/json"
 
-	"gorm.io/gorm"
 	"errors"
+	"gorm.io/gorm"
 	"time"
 
 	"infinite-canvas/backend/internal/assets"
@@ -324,10 +324,9 @@ func (s *Service) UserAssetWithTx(tx *gorm.DB, userID string, id string) (json.R
 	return s.canvasDomainWithTx(tx).UserAsset(userID, id)
 }
 
-
 // 以下是内置 Agent/CLI/MCP 的统一写入口：领域实现拥有规格与连接规则，
 // 操作层只做参数与幂等，写入与操作记录共用同一事务（tx 绑定仓储与 host）。
-func (s *Service) CreateUserCanvasNodesWithTx(tx *gorm.DB, userID, canvasID string, drafts []canvas.NodeDraft, expectedRevision int64) (UserDataSummary, error) {
+func (s *Service) CreateUserCanvasNodesWithTx(tx *gorm.DB, userID, canvasID string, drafts []canvas.NodeDraft, expectedRevision int64) (UserDataSummary, []canvas.CreatedNode, error) {
 	return s.canvasDomainWithTx(tx).CreateUserCanvasNodes(userID, canvasID, drafts, expectedRevision)
 }
 

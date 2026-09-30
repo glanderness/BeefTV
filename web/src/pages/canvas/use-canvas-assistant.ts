@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { scopedLocalStorage } from "@/lib/user-scope";
 import {
     activateAssistantSession,
+    agentAssistantFailureText,
+    AgentTurnFailedError,
     cancelAgentChat,
     createAssistantSession,
     getAgentHostStatus,
@@ -12,6 +14,7 @@ import {
     restartAgentHost,
     streamAgentChat,
     undoAssistantTurn,
+    type AgentChatReference,
     type AgentHostStatus,
     type AssistantSessionSummary,
     type AssistantTurn,
@@ -75,7 +78,7 @@ type CanvasRun = {
     streaming: boolean;
     controller: AbortController | null;
     error: string | null;
-    lastSent: { text: string; selectedNodeIds: string[] } | null;
+    lastSent: { text: string; selectedNodeIds: string[]; references: AgentChatReference[] } | null;
     turnStatus: Record<string, AssistantTurnStatus>;
 };
 
@@ -216,12 +219,13 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         void loadHistory(canvasId);
     }, [canvasId, loadHistory, open, runFor, status?.available]);
 
-    const send = useCallback(async (text: string, selectedNodeIds: string[]) => {
+    const send = useCallback(async (text: string, selectedNodeIds: string[], references: AgentChatReference[] = []) => {
         const message = text.trim();
         if (!message) return;
         // 发送时冻结归属：此后即使用户切到别的画布，结果也只写回这条记录。
         const targetCanvas = activeCanvasRef.current;
         const selectedSnapshot = [...selectedNodeIds];
+        const referenceSnapshot = references.map((reference) => ({ ...reference }));
         const run = runFor(targetCanvas);
         if (run.streaming || run.sessionBusy) return;
         const controller = new AbortController();
@@ -233,7 +237,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         run.error = null;
         run.dispatched = false;
         run.recovery = null;
-        run.lastSent = { text: message, selectedNodeIds: selectedSnapshot };
+        run.lastSent = { text: message, selectedNodeIds: selectedSnapshot, references: referenceSnapshot };
         rerenderIfActive(targetCanvas);
         try {
             const ready = await waitForAssistant(controller.signal);
@@ -258,7 +262,8 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                         toolCalls: end.toolCalls || [],
                         change: end.change ?? null,
                         proposals: end.proposals || [],
-                        error: end.error ? "这一轮没有全部完成，请核对已经落地的改动。" : null,
+                        error: end.error ? agentAssistantFailureText(end.errorReason ?? undefined, "这一轮没有全部完成，请核对已经落地的改动。") : null,
+                        errorReason: end.errorReason,
                         cancelled: Boolean(end.cancelled),
                         createdAt: new Date().toISOString(),
                     };
@@ -271,8 +276,14 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                     onCanvasChangedRef.current?.(targetCanvas, assistantChangedNodeIds(turn.change));
                     rerenderIfActive(targetCanvas);
                 },
-            }, { signal: controller.signal, selectedNodeIds: selectedSnapshot, sessionId: run.sessionId ?? undefined });
+            }, { signal: controller.signal, selectedNodeIds: selectedSnapshot, references: referenceSnapshot, sessionId: run.sessionId ?? undefined });
         } catch (streamError) {
+            if (streamError instanceof AgentTurnFailedError) {
+                // onTurnEnd 已保存真实失败及画布变化，不再额外显示「结果未知」或触发重放。
+                runFor(targetCanvas).error = null;
+                rerenderIfActive(targetCanvas);
+                return;
+            }
             // 用户点「停止」会以 AbortError 结束这次请求：这是预期结果，不当成失败。
             const aborted = streamError instanceof DOMException && streamError.name === "AbortError";
             const current = runFor(targetCanvas);
@@ -321,7 +332,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     const retryLast = useCallback(() => {
         const run = runFor(activeCanvasRef.current);
         if (!run.lastSent || run.dispatched) return;
-        void send(run.lastSent.text, run.lastSent.selectedNodeIds);
+        void send(run.lastSent.text, run.lastSent.selectedNodeIds, run.lastSent.references);
     }, [runFor, send]);
 
     const dismissError = useCallback(() => {

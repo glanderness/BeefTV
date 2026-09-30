@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 import { collectTurnEffects, newTurnAccumulator, providerRegistration, providerUnavailableReason,
-  resetTurnAccumulator, sessionTitle, turnChange, unflushedSessionHistory } from "./canvas-turn.mjs";
+  resetTurnAccumulator, sessionTitle, turnChange, turnContextPrefix, unflushedSessionHistory } from "./canvas-turn.mjs";
 
 const serverSource = readFileSync(new URL("./server.mjs", import.meta.url), "utf8");
 
@@ -139,4 +139,51 @@ describe("供应商定义", () => {
         expect(serverSource).not.toContain("BEEFTV_AGENT_API_KEY: API_KEY");
         expect(serverSource).toContain("ok: !providerReason");
     });
+});
+
+describe("回合上下文", () => {
+    test("重置时带上后端签发的 turnId；未给时清空，不沿用上一轮", () => {
+        const turn = newTurnAccumulator();
+        resetTurnAccumulator(turn, 3, "aabbcc");
+        expect(turn.turnId).toBe("aabbcc");
+        resetTurnAccumulator(turn, 4);
+        expect(turn.turnId).toBe("");
+    });
+
+    test("引用只作为模型可见上下文，素材与额外画布分别标注", () => {
+        expect(turnContextPrefix({ canvasId: "c1" })).toBe("[当前画布 c1]");
+        expect(turnContextPrefix({ canvasId: "c1", selectedNodeIds: ["n1", "n2"] }))
+            .toBe("[当前画布 c1｜选中对象: n1, n2]");
+        expect(turnContextPrefix({ canvasId: "c1", references: [
+            { kind: "asset", id: "a1" }, { kind: "canvas", id: "c2" }, { kind: "asset", id: "a2" }, { kind: "unknown", id: "x" },
+        ] })).toBe("[当前画布 c1｜已引用素材: a1, a2｜已引用画布（只读）: c2]");
+    });
+});
+
+import { modelTurnCompletion } from './canvas-turn.mjs';
+
+describe('模型终态投影', () => {
+  test('用户停止不变成模型失败，超时保留独立原因', () => {
+    const message = { content: [{ type: 'text', text: '已完成的部分' }], stopReason: 'aborted' };
+    expect(modelTurnCompletion(message, 'AbortError', null, { cancelled: true }))
+      .toEqual({ reply: '已完成的部分', error: null, errorReason: null });
+    expect(modelTurnCompletion(message, 'AbortError', null, { cancelled: true, timedOut: true }).errorReason)
+      .toBe('turn_timeout');
+    expect(modelTurnCompletion(message, 'AbortError', { reason: 'turn_request_budget_exhausted', message: '预算耗尽' }, { cancelled: true }).errorReason)
+      .toBe('turn_request_budget_exhausted');
+  });
+  test('SDK 正常 resolve 但终态为 error 仍然报告失败', () => {
+    const result = modelTurnCompletion({ role: 'assistant', content: [], stopReason: 'error', errorMessage: 'provider failed' });
+    expect(result.error).toBe('provider failed');
+    expect(result.errorReason).toBe('model_request_failed');
+  });
+  test('预算拒绝的稳定原因优先于 SDK 重试包装', () => {
+    const result = modelTurnCompletion(null, 'Connection error', { reason: 'turn_request_budget_exhausted', message: '单轮预算耗尽' });
+    expect(result.errorReason).toBe('turn_request_budget_exhausted');
+    expect(result.error).toBe('单轮预算耗尽');
+  });
+  test('只使用本轮终态，不引用历史助手回复', () => {
+    expect(modelTurnCompletion(null).reply).toBe('');
+    expect(modelTurnCompletion({ content: [{ type: 'text', text: '当前回复' }], stopReason: 'stop' })).toEqual({ reply: '当前回复', error: null, errorReason: null });
+  });
 });

@@ -48,6 +48,16 @@ export function canvasResourceMentionToken(reference: CanvasResourceReference) {
     return `@${reference.label}`;
 }
 
+/**
+ * 消息里显式插入的素材库 token。素材菜单自己加载库数据，不在画布节点列表里。
+ *
+ * 后端只把这里列出的素材授予内置助手只读权限，所以必须由界面按用户原文推导，
+ * 不能让模型自己声明「我要读哪些素材」。
+ */
+export function referencedAssetIdsInPrompt(prompt: string): string[] {
+    return [...new Set(Array.from(prompt.matchAll(/@\[asset:([^\]\s]+)\]/g), (match) => match[1]))];
+}
+
 export function normalizeCanvasNodeMentionTokens(prompt: string, references: CanvasResourceReference[]) {
     return references.reduce((value, reference) => {
         if (!reference.nodeId || reference.assetId || reference.kind === "skill") return value;

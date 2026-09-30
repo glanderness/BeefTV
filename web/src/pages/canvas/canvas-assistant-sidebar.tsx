@@ -3,7 +3,7 @@ import { History, MessageSquarePlus, X, Clapperboard, ArrowUpRight } from "lucid
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { AppDrawer } from "@/components/ui/product/app-drawer";
-import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { referencedAssetIdsInPrompt, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { AssistantGenerationProposal } from "@/services/api/agent-assistant";
 import { ASSISTANT_STARTER_PROMPTS, assistantStatusNotice, assistantVisibleReply } from "./canvas-assistant-copy";
 import { CanvasAssistantComposer } from "./canvas-assistant-composer";
@@ -53,7 +53,11 @@ export function CanvasAssistantSidebar(props: Props) {
         if (!text.trim() || readOnly || assistant.streaming || assistant.sessionBusy) return;
         followLatestRef.current = true;
         setDraft("");
-        void assistant.send(text, attachedIds);
+        // @ 引用到的素材库素材由界面按用户原文推导后交给后端校验归属：
+        // 模型不能自己声明要读哪些素材。
+        const assetReferences = referencedAssetIdsInPrompt(text)
+            .map((id) => ({ kind: "asset" as const, id }));
+        void assistant.send(text, attachedIds, assetReferences);
     }, [assistant, attachedIds, draft, readOnly]);
 
     const startResize = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {

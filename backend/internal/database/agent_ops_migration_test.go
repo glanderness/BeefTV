@@ -53,7 +53,7 @@ func TestVersionTwoWorkspaceAddsDurableAgentOperations(t *testing.T) {
 		}
 		return []byte(`{"id":"created-once"}`), nil
 	}
-	first, err := agentops.NewStore(db).Run(context.Background(), "owner", "operation-1", "project.create", "hash", fn)
+	first, err := agentops.NewStore(db).Run(context.Background(), agentops.RunRequest{UserID: "owner", OpID: "operation-1", Op: "project.create", PayloadHash: "hash"}, fn)
 	if err != nil || first.Replayed {
 		t.Fatalf("first write: %+v, %v", first, err)
 	}
@@ -76,7 +76,7 @@ func TestVersionTwoWorkspaceAddsDurableAgentOperations(t *testing.T) {
 	if err := database.MigrateLocalSchema(db); err != nil {
 		t.Fatal(err)
 	}
-	replay, err := agentops.NewStore(db).Run(context.Background(), "owner", "operation-1", "project.create", "hash", fn)
+	replay, err := agentops.NewStore(db).Run(context.Background(), agentops.RunRequest{UserID: "owner", OpID: "operation-1", Op: "project.create", PayloadHash: "hash"}, fn)
 	if err != nil || !replay.Replayed || string(replay.Result) != string(first.Result) {
 		t.Fatalf("durable replay: %+v, %v", replay, err)
 	}

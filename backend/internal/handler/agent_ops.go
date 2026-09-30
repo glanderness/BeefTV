@@ -30,7 +30,8 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 			fail(c, http.StatusForbidden, app.BadAuthRequest("操作层只接受本机请求"))
 			return
 		}
-		if _, err := currentUser(c, svc); err != nil {
+		user, err := currentUser(c, svc)
+		if err != nil {
 			failService(c, err)
 			return
 		}
@@ -39,7 +40,14 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 			fail(c, http.StatusForbidden, app.BadAuthRequest(authErr.Error()))
 			return
 		}
-		ok(c, gin.H{"ops": registry.List(readOnly), "readOnly": readOnly, "client": clientLabel})
+		// 能力发现只按调用者身份过滤可见集合；内置宿主在回合之外没有画布范围。
+		scope, _, scopeErr := assistantScopeForRequest(c, svc, user.ID, isAssistantHostRequest(c, svc))
+		if scopeErr != nil {
+			fail(c, http.StatusForbidden, app.BadAuthRequest(scopeErr.Error()))
+			return
+		}
+		caller := agentops.Caller{ReadOnly: readOnly, Assistant: scope}
+		ok(c, gin.H{"ops": registry.List(caller), "readOnly": readOnly, "client": clientLabel})
 	})
 
 	r.POST("/ops/clients", func(c *gin.Context) {
@@ -122,9 +130,17 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 			return
 		}
 		_ = clientLabel
+		// 回合归属只认内置宿主：外部客户端出示 turn 头会被明确拒绝，而不是静默忽略后
+		// 让一次外部写入被误当成助手的改动（撤销会因此抹掉外部修改）。
+		scope, turnID, scopeErr := assistantScopeForRequest(c, svc, user.ID, isAssistantHostRequest(c, svc))
+		if scopeErr != nil {
+			fail(c, http.StatusForbidden, app.BadAuthRequest(scopeErr.Error()))
+			return
+		}
 		result, execErr := registry.Execute(agentops.Request{
 			Context: c.Request.Context(),
 			OpID:    req.OpID, Op: c.Param("op"), UserID: user.ID, ReadOnly: readOnly, Params: req.Params,
+			TurnID: turnID, Assistant: scope,
 		})
 		if execErr != nil {
 			opErr := agentops.AsError(execErr)
@@ -141,8 +157,13 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 
 // resolveClientMode 决定本次调用的能力模式。
 // 已登记的客户端：模式完全由服务端登记决定，请求体/请求头都不能自行提升或改变。
+// 内置助手宿主：凭自己那份后端注入的宿主凭据拿到读写；页面的 UI 会话凭据不在这里。
 // 未登记的本机调用（桌面/开发）：允许用请求声明的只读标志，但绝不能借它提权成写。
 func resolveClientMode(c *gin.Context, svc *app.Service, clients *agentops.ClientRegistry) (bool, string, error) {
+	// 宿主凭据优先：它只由后端注入宿主进程，普通客户端与页面都拿不到。
+	if isAssistantHostRequest(c, svc) {
+		return false, "assistant-host", nil
+	}
 	clientID := strings.TrimSpace(c.GetHeader("X-Beeftv-Client"))
 	if clientID != "" {
 		token := strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "))

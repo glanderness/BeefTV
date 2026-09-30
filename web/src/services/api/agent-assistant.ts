@@ -62,6 +62,7 @@ export type AgentTurnEnd = {
     change?: AssistantTurnChange | null;
     proposals?: AssistantGenerationProposal[];
     error: string | null;
+    errorReason?: string | null;
     cancelled: boolean;
     persistence?: string;
     metrics?: { firstTokenMs: number | null; totalMs: number };
@@ -76,6 +77,7 @@ export type AssistantTurn = {
     change: AssistantTurnChange | null;
     proposals: AssistantGenerationProposal[];
     error: string | null;
+    errorReason?: string | null;
     cancelled: boolean;
     createdAt: string;
 };
@@ -106,6 +108,17 @@ let uiSessionToken: string | null = null;
  */
 export function agentAssistantFailureText(reason: string | undefined, fallback = "创作助手暂时不可用，请稍后再试") {
     switch (reason) {
+        case "turn_timeout":
+            return "这一轮处理超时，已停止继续执行。已落地的改动会保留，可以缩小要求后继续。";
+        case "turn_interrupted":
+            return "上一轮执行中断，已经落地的改动已保留。请查看画布和改动记录后再继续。";
+        case "turn_request_budget_exhausted":
+        case "turn_tool_step_budget_exhausted":
+            return "这一轮已达到调用上限，已停止继续执行。可以发送新消息继续，已落地的改动会保留。";
+        case "request_budget_exhausted":
+            return "当前配置的总调用预算已用完，请检查助手运行配置。已落地的改动会保留。";
+        case "model_request_failed":
+            return "这一轮的模型调用失败，请核对已经落地的改动后再继续。";
         case "host_unreachable":
         case "host_unhealthy":
         case "host_token_missing":
@@ -163,7 +176,10 @@ export async function getAssistantHistory(canvasId: string, sessionId?: string):
     if (sessionId) query.set("sessionId", sessionId);
     const data = await http.get<AssistantHistory>(`/assistant/history?${query.toString()}`, await uiSessionConfig());
     if (!data || !Array.isArray(data.turns)) throw new Error("没能读取对话，请重试");
-    return { sessionId: data.sessionId || sessionId || "", turns: data.turns };
+    return { sessionId: data.sessionId || sessionId || "", turns: data.turns.map((turn) => ({
+        ...turn,
+        error: turn.error ? agentAssistantFailureText(turn.errorReason ?? undefined, "这一轮没有全部完成，请核对已经落地的改动。") : null,
+    })) };
 }
 
 /** 撤销失败的机器可读原因，映射到卡片里的一句话。 */
@@ -233,12 +249,31 @@ export type StreamHandlers = {
  */
 export const AGENT_STREAM_INCOMPLETE_MESSAGE = "创作助手的回复没有完整结束，请再试一次";
 
+/**
+ * 界面明确引用、且后端会再校验归属的额外资源。
+ * 内置助手默认能读当前画布与画布关联的素材/任务；额外画布只读，素材只读。
+ */
+export type AgentChatReference = {
+    kind: "asset" | "canvas";
+    id: string;
+};
+
 export type AgentChatRequest = {
     signal?: AbortSignal;
     selectedNodeIds?: string[];
+    /** 当前消息里 @ 引用到的资源；后端逐项校验归属，任何一项非法都整轮拒绝。 */
+    references?: AgentChatReference[];
     /** 只发当前会话；后端发现它已不是该画布的当前会话会整回合拒绝。 */
     sessionId?: string;
 };
+
+/** 已收到回合终态的业务失败，不等同于断流后的「执行结果未知」。 */
+export class AgentTurnFailedError extends Error {
+    constructor(readonly reason?: string | null) {
+        super(agentAssistantFailureText(reason ?? undefined, "这一回合没有完成，请再试一次"));
+        this.name = "AgentTurnFailedError";
+    }
+}
 
 // NDJSON 流式对话：http 客户端只做信封解包，流式必须用原生 fetch（同源）。
 export async function streamAgentChat(
@@ -247,12 +282,15 @@ export async function streamAgentChat(
     handlers: StreamHandlers,
     request: AgentChatRequest = {},
 ): Promise<void> {
-    const { signal, selectedNodeIds = [], sessionId } = request;
+    const { signal, selectedNodeIds = [], references = [], sessionId } = request;
     const token = await ensureAgentUiSession();
+    const body: Record<string, unknown> = { canvasId, message, selectedNodeIds };
+    if (references.length) body.references = references;
+    if (sessionId) body.sessionId = sessionId;
     const response = await fetch(`${apiBaseURL}/assistant/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Beeftv-Ui-Session": token },
-        body: JSON.stringify(sessionId ? { canvasId, message, selectedNodeIds, sessionId } : { canvasId, message, selectedNodeIds }),
+        body: JSON.stringify(body),
         signal,
     });
     if (!response.ok || !response.body) {
@@ -267,7 +305,7 @@ export async function streamAgentChat(
     if (result.turnEnd && !result.turnEnd.cancelled && result.turnEnd.error) {
         // 上游错误可能包含请求细节，控制台同样不记录原文。
         console.error("创作助手回合失败", { canvasId });
-        throw new Error(agentAssistantFailureText(undefined, "这一回合没有完成，请再试一次"));
+        throw new AgentTurnFailedError(result.turnEnd.errorReason);
     }
 }
 
