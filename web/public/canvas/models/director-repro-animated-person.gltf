@@ -1,0 +1,46 @@
+{
+  "asset": { "version": "2.0", "generator": "director-repro-fixture (offline animated person)" },
+  "scene": 0,
+  "scenes": [{ "name": "AnimatedPersonScene", "nodes": [0] }],
+  "nodes": [
+    { "name": "AnimatedPerson", "children": [1, 2, 3, 5, 7, 8] },
+    { "name": "Torso", "mesh": 0, "translation": [0, 1.2, 0], "scale": [0.6, 0.9, 0.35] },
+    { "name": "Head", "mesh": 0, "translation": [0, 2, 0], "scale": [0.36, 0.36, 0.36] },
+    { "name": "LeftArmPivot", "translation": [-0.42, 1.62, 0], "children": [4] },
+    { "name": "LeftArm", "mesh": 0, "translation": [0, -0.32, 0], "scale": [0.18, 0.64, 0.18] },
+    { "name": "RightArmPivot", "translation": [0.42, 1.62, 0], "children": [6] },
+    { "name": "RightArm", "mesh": 0, "translation": [0, -0.32, 0], "scale": [0.18, 0.64, 0.18] },
+    { "name": "LeftLeg", "mesh": 0, "translation": [-0.2, 0.42, 0], "scale": [0.23, 0.76, 0.28] },
+    { "name": "RightLeg", "mesh": 0, "translation": [0.2, 0.42, 0], "scale": [0.23, 0.76, 0.28] }
+  ],
+  "meshes": [{ "name": "PersonPart", "primitives": [{ "attributes": { "POSITION": 0, "NORMAL": 1 }, "indices": 2, "material": 0, "mode": 4 }] }],
+  "materials": [{ "name": "PersonMaterial", "doubleSided": true, "pbrMetallicRoughness": { "baseColorFactor": [0.2, 0.48, 0.86, 1], "metallicFactor": 0, "roughnessFactor": 0.82 } }],
+  "animations": [{
+    "name": "手臂摆动",
+    "samplers": [
+      { "input": 3, "output": 4, "interpolation": "LINEAR" },
+      { "input": 3, "output": 5, "interpolation": "LINEAR" }
+    ],
+    "channels": [
+      { "sampler": 0, "target": { "node": 3, "path": "rotation" } },
+      { "sampler": 1, "target": { "node": 5, "path": "rotation" } }
+    ]
+  }],
+  "accessors": [
+    { "name": "cubePositions", "bufferView": 0, "componentType": 5126, "count": 24, "type": "VEC3", "min": [-0.5, -0.5, -0.5], "max": [0.5, 0.5, 0.5] },
+    { "name": "cubeNormals", "bufferView": 1, "componentType": 5126, "count": 24, "type": "VEC3" },
+    { "name": "cubeIndices", "bufferView": 2, "componentType": 5123, "count": 36, "type": "SCALAR" },
+    { "name": "keyTimes", "bufferView": 3, "componentType": 5126, "count": 3, "type": "SCALAR", "min": [0], "max": [1.5] },
+    { "name": "leftArmRotations", "bufferView": 4, "componentType": 5126, "count": 3, "type": "VEC4" },
+    { "name": "rightArmRotations", "bufferView": 5, "componentType": 5126, "count": 3, "type": "VEC4" }
+  ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 288, "target": 34962 },
+    { "buffer": 0, "byteOffset": 288, "byteLength": 288, "target": 34962 },
+    { "buffer": 0, "byteOffset": 576, "byteLength": 72, "target": 34963 },
+    { "buffer": 0, "byteOffset": 648, "byteLength": 12 },
+    { "buffer": 0, "byteOffset": 660, "byteLength": 48 },
+    { "buffer": 0, "byteOffset": 708, "byteLength": 48 }
+  ],
+  "buffers": [{ "byteLength": 756, "uri": "data:application/octet-stream;base64,AAAAPwAAAL8AAAC/AAAAPwAAAD8AAAC/AAAAPwAAAD8AAAA/AAAAPwAAAL8AAAA/AAAAvwAAAL8AAAA/AAAAvwAAAD8AAAA/AAAAvwAAAD8AAAC/AAAAvwAAAL8AAAC/AAAAvwAAAD8AAAC/AAAAvwAAAD8AAAA/AAAAPwAAAD8AAAA/AAAAPwAAAD8AAAC/AAAAvwAAAL8AAAA/AAAAvwAAAL8AAAC/AAAAPwAAAL8AAAC/AAAAPwAAAL8AAAA/AAAAPwAAAL8AAAA/AAAAPwAAAD8AAAA/AAAAvwAAAD8AAAA/AAAAvwAAAL8AAAA/AAAAvwAAAL8AAAC/AAAAvwAAAD8AAAC/AAAAPwAAAD8AAAC/AAAAPwAAAL8AAAC/AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcAAAAAAAAAQD8AAMA/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAA12HHvqfKaz8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAA12HHPqfKaz8AAAAAAAAAAAAAAAAAAIA/" }]
+}

@@ -1,6 +1,6 @@
 import { Euler, Quaternion, Vector3 } from "three";
 
-import type { DirectorBoneKeyframe, DirectorCamera, DirectorHumanoidBone, DirectorKeyframe, DirectorObject, DirectorQuat, DirectorTransform, DirectorVec3 } from "../../../types/director";
+import type { DirectorBoneKeyframe, DirectorCamera, DirectorCameraMove, DirectorHumanoidBone, DirectorKeyframe, DirectorObject, DirectorQuat, DirectorTransform, DirectorVec3 } from "../../../types/director";
 import { interpolateDirectorBoneRotation, interpolateDirectorTransform, upsertDirectorBoneKeyframe, upsertDirectorKeyframe } from "./director-scene";
 
 // 缩放为 0 时无法用比例表达增量，改用绝对偏移；阈值同时兼顾数值噪声。
@@ -12,6 +12,43 @@ export type DirectorTransformDelta = {
     scaleRatio: DirectorVec3;
     scaleOffset: DirectorVec3;
 };
+
+/** Resolve a camera-move preset relative to the camera's aim, not world axes. */
+export function resolveDirectorCameraMoveTransform(start: DirectorTransform, target: DirectorVec3, move: DirectorCameraMove): DirectorTransform {
+    const position = new Vector3(...start.position);
+    const aim = new Vector3(...target);
+    const forward = aim.clone().sub(position);
+    if (forward.lengthSq() < SCALE_EPSILON) forward.set(0, 0, -1);
+    forward.normalize();
+    const up = new Vector3(0, 1, 0);
+    const right = forward.clone().cross(up).normalize();
+    if (right.lengthSq() < SCALE_EPSILON) right.set(1, 0, 0);
+    const distance = Math.max(0.1, position.distanceTo(aim));
+    const next = position.clone();
+    const orientation = new Quaternion().setFromEuler(new Euler(...start.rotation));
+    let nextRotation: DirectorVec3 | null = null;
+
+    switch (move) {
+        case "push_in": next.addScaledVector(forward, Math.min(2, distance * 0.45)); break;
+        case "pull_out": next.addScaledVector(forward, -2); break;
+        // Pan/tilt are rotations from a fixed camera position, not a truck/dolly.
+        case "pan_left": orientation.premultiply(new Quaternion().setFromAxisAngle(up, Math.PI / 9)); nextRotation = new Euler().setFromQuaternion(orientation).toArray().slice(0, 3) as DirectorVec3; break;
+        case "pan_right": orientation.premultiply(new Quaternion().setFromAxisAngle(up, -Math.PI / 9)); nextRotation = new Euler().setFromQuaternion(orientation).toArray().slice(0, 3) as DirectorVec3; break;
+        case "tilt_up": orientation.multiply(new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), Math.PI / 12)); nextRotation = new Euler().setFromQuaternion(orientation).toArray().slice(0, 3) as DirectorVec3; break;
+        case "tilt_down": orientation.multiply(new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), -Math.PI / 15)); nextRotation = new Euler().setFromQuaternion(orientation).toArray().slice(0, 3) as DirectorVec3; break;
+        case "orbit_left": next.sub(aim).applyAxisAngle(up, Math.PI / 6).add(aim); break;
+        case "orbit_right": next.sub(aim).applyAxisAngle(up, -Math.PI / 6).add(aim); break;
+        case "handheld": next.addScaledVector(right, 0.18).add(new Vector3(0, 0.08, 0)).addScaledVector(forward, 0.15); break;
+        case "static": break;
+    }
+
+    return { ...start, position: next.toArray() as DirectorVec3, rotation: nextRotation || start.rotation };
+}
+
+/** Pan/tilt keyframes define aim through orientation; positional moves keep their existing aim mode. */
+export function resolveDirectorCameraMoveLookAtMode(current: DirectorCamera["lookAtMode"], move: DirectorCameraMove): DirectorCamera["lookAtMode"] {
+    return move === "pan_left" || move === "pan_right" || move === "tilt_up" || move === "tilt_down" ? "rotation" : current;
+}
 
 export function directorTransformDelta(from: DirectorTransform, to: DirectorTransform): DirectorTransformDelta {
     const fromQuaternion = new Quaternion().setFromEuler(new Euler(...from.rotation));
@@ -204,6 +241,17 @@ export function resolveDirectorKeyframeRecord(input: { base: DirectorTransform; 
 export function resolveDirectorCameraAlignment(camera: DirectorCamera, transform: DirectorTransform, time: number): DirectorCamera {
     if (!camera.keyframes.length) return { ...camera, transform };
     return { ...camera, keyframes: upsertDirectorKeyframe(camera.keyframes, time, transform) };
+}
+
+/** Apply a viewport gizmo edit relative to the rendered camera pose at the playhead. */
+export function resolveDirectorCameraGizmoEdit(input: { camera: DirectorCamera; from: DirectorTransform; edited: DirectorTransform; rawTime: number; snappedTime: number }): DirectorCamera {
+    const { camera, from, edited } = input;
+    const rendered = interpolateDirectorTransform(camera.transform, camera.keyframes, input.rawTime);
+    const position = rendered.position.map((value, axis) => value + edited.position[axis] - from.position[axis]) as DirectorVec3;
+    const transform: DirectorTransform = { ...rendered, position, rotation: edited.rotation, scale: edited.scale };
+    const rotationChanged = new Quaternion().setFromEuler(new Euler(...from.rotation)).angleTo(new Quaternion().setFromEuler(new Euler(...edited.rotation))) > 1e-4;
+    const aligned = resolveDirectorCameraAlignment(camera, transform, input.snappedTime);
+    return rotationChanged ? { ...aligned, lookAtMode: "rotation", lookAtObjectId: undefined } : aligned;
 }
 
 /** 生成运镜只更新首尾帧；保留用户手工添加的中间帧、帧 id 与 easing。 */

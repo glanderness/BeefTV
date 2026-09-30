@@ -89,6 +89,35 @@ describe("已有场景不触发模板选择", () => {
     });
 });
 
+describe("导演台场景菜单的相机与灯光操作", () => {
+    test("添加菜单提供 LibTV 同类的机位、太阳光、点光源、聚光灯并接入真实创建逻辑", () => {
+        const menu = slice(workbench, "const addObjectMenuItems:", "const addShot =");
+        expect(menu).toContain('key: "camera"');
+        expect(menu).toContain('addPresetCamera("current")');
+        expect(menu).toContain('key: "sun"');
+        expect(menu).toContain('addLight("directional", "太阳光"');
+        expect(menu).toContain('key: "point-light"');
+        expect(menu).toContain('addLight("point", "点光源"');
+        expect(menu).toContain('key: "spotlight"');
+        expect(menu).toContain('addLight("spot", "聚光灯"');
+        expect(slice(workbench, "const addObject = (object:", "const addPrimitive =")).toContain('setMode(object.kind === "actor" ? "pose" : "layout")');
+        expect(slice(workbench, "const addPresetCamera =", "const addLight =")).toContain('setMode("camera")');
+        expect(slice(workbench, "const addLight =", "const addLightMenuItems:")).toContain('setMode("layout")');
+    });
+});
+
+describe("LibTV 场景资产聚焦交互", () => {
+    test("机位、对象、灯光场景树行都提供聚焦动作并调用视口取景控制", () => {
+        expect(workbench).toContain("onFocus={() => focusSceneCamera(item.camera)}");
+        expect(workbench).toContain("onFocus={() => focusSceneObject(item.object)}");
+        expect(workbench).toContain("onFocus={() => focusSceneLight(item.light)}");
+        expect(workbench).toContain("aria-label={`聚焦${label}`}");
+        expect(viewport).toContain("focusOnPoint: (point: DirectorVec3, radius: number) => boolean");
+        expect(viewport).toContain("controls.target.fromArray(frame.target)");
+        expect(viewport).toContain('onViewModeChange?.("free")');
+    });
+});
+
 describe("导演节点参考图入口", () => {
     test("加号走图片专用上传，并把上传结果连到对应导演镜头", () => {
         expect(project).toContain("onAddReference={() => handleUploadReferenceRequest(contentNode.id");
@@ -116,21 +145,27 @@ describe("模式接线", () => {
     });
 
     test("骨骼/姿势入口只对演员开放，且由 bones 把关", () => {
-        expect(workbench).toContain('{capabilities.bones && (object.kind === "actor" || object.primitive === "character") ? <>');
+        const inspector = slice(workbench, "function ObjectInspector(", "function LightInspector(");
+        expect(inspector).toContain("isActor && capabilities.bones ? <>");
+        expect(inspector).toContain('role="tablist" aria-label="角色属性"');
         // motionClips 不得再作为放行条件：带动画的普通模型不是演员。
         expect(workbench).not.toContain('object.primitive === "character" || motionClips.length) ? <>');
     });
 
-    test("姿态模式提供全身与当前骨骼重置，不删除动画轨道", () => {
+    test("姿态模式提供全身与逐骨骼重置，不删除动画轨道", () => {
         const inspector = slice(workbench, "function ObjectInspector(", "function LightInspector(");
         expect(inspector).toContain('onClick={() => applyPose("stand")}>重置姿态</Button>');
-        expect(inspector).toContain("delete boneOverrides[selectedBoneId]");
-        expect(inspector).toContain(">重置当前骨骼</Button>");
+        expect(inspector).toContain("delete boneOverrides[bone]");
+        expect(inspector).toContain('aria-label={`重置骨骼 ${directorBoneLabel(bone)}`}');
         expect(inspector).not.toContain("boneTracks: []");
     });
 
     test("动作片段与骨骼入口解耦：任何带 Clip 的对象都能调播放速度/循环", () => {
         expect(workbench).toContain('{motionClips.length ? <><Field label="动作片段">');
+        const inspector = slice(workbench, "function ObjectInspector(", "function LightInspector(");
+        expect(inspector).toContain('aria-label="动作开始时间"');
+        expect(inspector).toContain("snapDirectorTime(value ?? 0, fps)");
+        expect(workbench).toContain("fps={activeShot?.fps || 24} shotDuration={activeShot?.duration || 15}");
     });
 
     test("关键帧入口由 keyframes 把关", () => {

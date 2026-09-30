@@ -28,6 +28,7 @@ export function createDirectorCameraFromPreset(input: {
     name: string;
     target: DirectorVec3;
     currentView?: DirectorTransform | null;
+    followTarget?: { objectId: string; position: DirectorVec3 };
 }): DirectorCamera {
     const preset = DIRECTOR_CAMERA_PRESETS.find((item) => item.id === input.presetId) ?? DIRECTOR_CAMERA_PRESETS[0];
     const camera = createDirectorCamera(input.name);
@@ -48,5 +49,11 @@ export function createDirectorCameraFromPreset(input: {
         target: [...input.target],
         focalLength: preset.focalLength,
         fov: directorFocalLengthToFov(preset.focalLength),
+        ...(preset.id === "side-follow" && input.followTarget ? {
+            followObjectId: input.followTarget.objectId,
+            followAnchor: [...input.followTarget.position],
+            lookAtMode: "object" as const,
+            lookAtObjectId: input.followTarget.objectId,
+        } : {}),
     };
 }

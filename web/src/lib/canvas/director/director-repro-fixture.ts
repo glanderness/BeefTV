@@ -168,6 +168,8 @@ export const DIRECTOR_REPRO_MODEL_IDS: Record<DirectorReproModelVariant, string>
 export const DIRECTOR_REPRO_LOCAL_MODEL_URL = "/canvas/models/director-repro-triangle.gltf";
 /** 同源但确定不存在：稳定触发加载失败路径，不依赖外网可达性。 */
 export const DIRECTOR_REPRO_MISSING_MODEL_URL = "/__director-repro-missing.glb";
+/** 轻量离线人形 GLTF，含真实手臂旋转动画，用于动作时间轴交互验收。 */
+export const DIRECTOR_REPRO_ANIMATED_PERSON_URL = "/canvas/models/director-repro-animated-person.gltf";
 
 const MODEL_URLS: Record<DirectorReproModelVariant, string> = {
     local: DIRECTOR_REPRO_LOCAL_MODEL_URL,
@@ -212,5 +214,23 @@ export function injectDirectorReproModel(scene: DirectorScene, variant: Director
     return touchDirectorScene({
         ...scene,
         objects: [...others, { ...model, transform: { ...model.transform, position } }],
+    });
+}
+
+/** Add/replace a same-origin animated character fixture without touching the production actor asset path. */
+export function injectDirectorReproAnimatedPerson(scene: DirectorScene): DirectorScene {
+    const id = "repro-animated-person";
+    const model = createDirectorModel({
+        name: "离线动画人物",
+        assetId: id,
+        storageKey: undefined,
+        url: DIRECTOR_REPRO_ANIMATED_PERSON_URL,
+        mimeType: "model/gltf+json",
+    });
+    const others = scene.objects.filter((object) => object.id !== id);
+    const position = resolveDirectorPlacement({ object: model, existing: others });
+    return touchDirectorScene({
+        ...scene,
+        objects: [...others, { ...model, id, transform: { ...model.transform, position } }],
     });
 }

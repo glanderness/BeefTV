@@ -7,11 +7,13 @@ import type { Material } from "three";
 import { GLTFLoader, SkeletonUtils } from "three-stdlib";
 
 import { resolveDirectorBoneRotation, resolveDirectorMultiObjectGroupTransformEdit } from "@/lib/canvas/director/director-animation-semantics";
+import { DIRECTOR_PROCEDURAL_ACTOR_SKELETON_EDGES, resolveDirectorProceduralActorPose } from "@/lib/canvas/director/director-procedural-pose";
 import { cropDirectorCanvas, resolveDirectorFrameRect, resolveDirectorPixelCrop, type DirectorAspectRatio } from "@/lib/canvas/director/director-aspect-ratio";
 import { directorStagePalette } from "@/lib/canvas/director/director-stage-palette";
 import { directorGroundSettings } from "@/lib/canvas/director/director-ground";
 import { directorPanoramaSphere, suspendDirectorPanoramaSphere } from "@/lib/canvas/director/director-panorama-sphere";
 import { directorStageLocalCamera, directorStageLocalPoint, directorStageMatrix, directorStagePoint, directorStageTransform } from "@/lib/canvas/director/director-stage-transform";
+import { resolveDirectorFocusFrame } from "@/lib/canvas/director/director-focus";
 import { suspendDirectorEditorOverlays } from "@/lib/canvas/director/director-editor-overlays";
 import type { DirectorOrientation } from "@/lib/canvas/director/director-orientation-gizmo";
 import { applyClaySceneMaterials } from "@/lib/canvas/director/director-clay-materials";
@@ -36,14 +38,18 @@ export type DirectorViewportHandle = {
     captureCameraPreview: (playhead: number) => Promise<Blob>;
     recordVideo: (duration: number, fps: number) => Promise<Blob>;
     readCameraTransform: () => DirectorTransform | null;
+    focusOnPoint: (point: DirectorVec3, radius: number) => boolean;
     /** 只读放置意图。上下文不可用或从未产生合法点时返回空意图，绝不抛异常。 */
     readPlacementIntent: () => DirectorPlacementIntent;
 };
 
 type DirectorViewportProps = {
     scene: DirectorScene;
+    /** Preview workspace may impose a delivery frame without mutating the saved scene ratio. */
+    aspectRatioOverride?: DirectorAspectRatio;
     selectedObjectId: string | null;
     selectedObjectIds?: string[];
+    selectedCameraId?: string | null;
     selectedBone: string | null;
     transformMode: "translate" | "rotate" | "scale";
     renderMode: DirectorRenderMode;
@@ -59,6 +65,8 @@ type DirectorViewportProps = {
     onSelectObject: (id: string | null) => void;
     onSelectBone: (bone: string | null) => void;
     onObjectTransform: (id: string, from: DirectorTransform, to: DirectorTransform) => void;
+    onSelectCamera: (id: string) => void;
+    onCameraTransform: (id: string, from: DirectorTransform, to: DirectorTransform) => void;
     onMultiObjectTransform: (ids: string[], from: DirectorTransform, to: DirectorTransform) => void;
     onBoneTransform: (id: string, bone: string, rotation: DirectorQuat) => void;
     onActorRigReady: (id: string, rig: DirectorRig, animations: AnimationClip[]) => void;
@@ -96,7 +104,7 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
         observer.observe(shell);
         return () => observer.disconnect();
     }, []);
-    const aspectRatio = props.scene.aspectRatio || "adaptive";
+    const aspectRatio = props.aspectRatioOverride ?? props.scene.aspectRatio ?? "adaptive";
     const frame = resolveDirectorFrameRect(shellSize.width, shellSize.height, aspectRatio);
     // 地面点连同 owner canvas 一起记录：owner 不是当前 renderer 的 canvas 就是陈旧值。
     const groundRef = useRef<{ owner: HTMLCanvasElement; point: DirectorGroundPoint } | null>(null);
@@ -196,6 +204,25 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
             const camera = usableContext()?.camera;
             return camera ? directorStageLocalCamera(directorStageTransform(props.scene), { position: camera.position.toArray() as DirectorTransform["position"], rotation: [camera.rotation.x, camera.rotation.y, camera.rotation.z], scale: [1, 1, 1] }) : null;
         },
+        focusOnPoint: (point, radius) => {
+            const controls = orbitControlsRef.current;
+            if (!controls || !point.every(Number.isFinite) || !Number.isFinite(radius)) return false;
+            const stage = directorStageTransform(props.scene);
+            const worldTarget = directorStagePoint(stage, point);
+            const frame = resolveDirectorFocusFrame({
+                cameraPosition: controls.object.position.toArray() as DirectorVec3,
+                cameraTarget: controls.target.toArray() as DirectorVec3,
+                focusTarget: worldTarget,
+                radius: Math.abs(radius) * stage.scale,
+                fov: controls.object instanceof PerspectiveCamera ? controls.object.fov : 50,
+            });
+            if (!frame) return false;
+            controls.target.fromArray(frame.target);
+            controls.object.position.fromArray(frame.position);
+            controls.update();
+            onViewModeChange?.("free");
+            return true;
+        },
         readPlacementIntent: () => {
             const context = usableContext();
             if (!context) return emptyDirectorPlacementIntent;
@@ -207,7 +234,7 @@ export const DirectorViewport = forwardRef<DirectorViewportHandle, DirectorViewp
             const localTarget = target ? directorStageLocalPoint(directorStageTransform(props.scene), target.toArray() as DirectorVec3) : null;
             return { pointer, orbitTarget: finiteDirectorGroundPoint(localTarget?.[0], localTarget?.[2]) };
         },
-    }), [aspectRatio, props.scene]);
+    }), [aspectRatio, onViewModeChange, props.scene]);
 
     return (
         // data-renderer-ready 直接来自 directorCaptureUsable：capture context 已登记且未 lost。
@@ -348,7 +375,7 @@ function DirectorViewportNotice({ title, description, actionLabel, onAction, var
     );
 }
 
-function DirectorSceneContent({ scene, selectedObjectId, selectedObjectIds = [], selectedBone, transformMode, renderMode, playhead, playing, showMotionPaths = false, viewMode = DIRECTOR_DEFAULT_VIEW_MODE, onSelectObject, onSelectBone, onObjectTransform, onMultiObjectTransform, onBoneTransform, onActorRigReady, onCaptureContext, onRelease, onContextLost, onContextRestored, onLoadStateChange, onGroundPoint, onOrbitControls, onCameraOrientation }: DirectorCanvasSurfaceProps) {
+function DirectorSceneContent({ scene, selectedObjectId, selectedObjectIds = [], selectedCameraId = null, selectedBone, transformMode, renderMode, playhead, playing, showMotionPaths = false, viewMode = DIRECTOR_DEFAULT_VIEW_MODE, onSelectObject, onSelectCamera, onCameraTransform, onSelectBone, onObjectTransform, onMultiObjectTransform, onBoneTransform, onActorRigReady, onCaptureContext, onRelease, onContextLost, onContextRestored, onLoadStateChange, onGroundPoint, onOrbitControls, onCameraOrientation }: DirectorCanvasSurfaceProps) {
     const { gl, camera, scene: threeScene, invalidate, set, size } = useThree();
     const orbitRef = useRef<DirectorOrbitControls>(null);
     const stage = directorStageTransform(scene);
@@ -572,7 +599,7 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedObjectIds = [],
             <ambientLight intensity={scene.environmentIntensity * 0.35} />
             <group position={stage.position} rotation={stage.rotation.map((degrees) => degrees * Math.PI / 180) as DirectorVec3} scale={stage.scale}>
             {scene.lights.map((light) => <DirectorLightView key={light.id} light={light} />)}
-            {viewMode === "free" && renderMode === "beauty" ? visibleDirectorCameras(scene).map((item) => <DirectorCameraAid key={item.id} item={item} scene={scene} playhead={playhead} stage={stage} active={item.id === resolveDirectorActiveCamera(scene)?.id} labelsVisible={scene.labelsVisible !== false} />) : null}
+            {viewMode === "free" && renderMode === "beauty" ? visibleDirectorCameras(scene).map((item) => <DirectorCameraAid key={item.id} item={item} scene={scene} playhead={playhead} stage={stage} active={item.id === resolveDirectorActiveCamera(scene)?.id} selected={item.id === selectedCameraId} labelsVisible={scene.labelsVisible !== false} transformMode={transformMode} onSelect={() => onSelectCamera(item.id)} onTransforming={setTransformingState} onTransform={(from, to) => onCameraTransform(item.id, from, to)} />) : null}
             {scene.gridVisible ? <Grid position={[0, 0, 0]} infiniteGrid fadeDistance={40} fadeStrength={5} cellSize={0.5} sectionSize={5} cellColor={stagePalette.cell} sectionColor={stagePalette.section} /> : null}
             {ground.visible ? <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, ground.height - 0.012, 0]}>
                 <planeGeometry args={[120, 120]} />
@@ -615,14 +642,14 @@ function DirectorSceneContent({ scene, selectedObjectId, selectedObjectIds = [],
     );
 }
 
-/** Editor-only camera position and frustum, deliberately excluded from captures. */
-function DirectorCameraAid({ item, scene, playhead, stage, active, labelsVisible }: { item: DirectorScene["cameras"][number]; scene: DirectorScene; playhead: number; stage: NonNullable<DirectorScene["stageTransform"]>; active: boolean; labelsVisible: boolean }) {
+/** Editor-only camera model/frustum; selected cameras use the same transactional gizmo as scene objects. */
+function DirectorCameraAid({ item, scene, playhead, stage, active, selected, labelsVisible, transformMode, onSelect, onTransforming, onTransform }: { item: DirectorScene["cameras"][number]; scene: DirectorScene; playhead: number; stage: NonNullable<DirectorScene["stageTransform"]>; active: boolean; selected: boolean; labelsVisible: boolean; transformMode: DirectorViewportProps["transformMode"]; onSelect: () => void; onTransforming: (value: boolean) => void; onTransform: (from: DirectorTransform, to: DirectorTransform) => void }) {
     const framing = resolveDirectorCameraLocalFraming(scene, item, playhead);
     const transform = interpolateDirectorTransform(item.transform, item.keyframes, playhead);
     const localPosition = framing?.position ?? transform.position;
     const position = new Vector3(...localPosition);
-    const target = new Vector3(...(framing?.target ?? item.target));
-    const direction = target.clone().sub(position);
+    const lookTarget = new Vector3(...(framing?.target ?? item.target));
+    const direction = lookTarget.clone().sub(position);
     if (direction.lengthSq() < 1e-8) direction.set(0, 0, -1).applyEuler(new Euler(...transform.rotation));
     const up = framing?.up ?? resolveDirectorViewUp(transform.rotation, direction.toArray() as DirectorVec3);
     const orientation = new Quaternion().setFromRotationMatrix(new Matrix4().lookAt(position, position.clone().add(direction), new Vector3(...up)));
@@ -633,20 +660,63 @@ function DirectorCameraAid({ item, scene, playhead, stage, active, labelsVisible
     const segments: DirectorVec3[] = corners.flatMap((corner, index) => [[0, 0, 0] as DirectorVec3, corner, corner, corners[(index + 1) % 4]]);
     const worldPosition = new Vector3(...directorStagePoint(stage, localPosition));
     const [nearViewer, setNearViewer] = useState(false);
+    const [frozen, setFrozen] = useState<DirectorTransform | null>(null);
+    const aidTransform = frozen || transform;
+    const aidPosition = selected ? frozen?.position || localPosition : transform.position;
+    const aidRotation = new Quaternion().setFromEuler(new Euler(...aidTransform.rotation));
+    const inverseAidRotation = aidRotation.clone().invert();
+    const framingOffset = new Vector3(...localPosition).sub(new Vector3(...aidPosition)).applyQuaternion(inverseAidRotation);
+    const framingOrientation = inverseAidRotation.multiply(orientation);
     useFrame(({ camera }) => {
         const next = camera.position.distanceTo(worldPosition) < 0.5;
         setNearViewer((current) => current === next ? current : next);
     });
+    const [gizmoTarget, setTarget] = useState<Group | null>(null);
+    const bindTarget = useCallback((instance: Group | null) => setTarget(instance), []);
     if (nearViewer || !framing) return null;
-    return <group userData={{ directorEditorOnly: true }} position={localPosition} quaternion={orientation}>
-        <Line segments points={segments} color={active ? "#5b9dc7" : "#3f6f8b"} lineWidth={1} transparent opacity={active ? 0.5 : 0.3} raycast={() => {}} />
-        <Html center style={{ pointerEvents: "none" }}>
-            <div className="flex flex-col items-center gap-0.5 whitespace-nowrap" style={{ color: "#fff", textShadow: "0 1px 3px #000, 0 0 5px #000" }}>
-                {labelsVisible ? <span data-director-camera-label={item.id} style={{ fontSize: 12, fontWeight: 600 }}>{item.name}</span> : null}
-                <VideoIcon size={25} color={active ? "#f7a815" : "#8ba5b6"} strokeWidth={2.8} aria-hidden />
-            </div>
-        </Html>
-    </group>;
+    return <>
+        <group ref={bindTarget} userData={{ directorEditorOnly: true }} position={aidPosition} rotation={aidTransform.rotation}>
+            <mesh onPointerDown={(event) => { event.stopPropagation(); onSelect(); }}>
+                <boxGeometry args={[0.34, 0.28, 0.28]} />
+                <meshBasicMaterial transparent opacity={0} colorWrite={false} depthWrite={false} />
+            </mesh>
+            <mesh onPointerDown={(event) => { event.stopPropagation(); onSelect(); }}>
+                <boxGeometry args={[0.15, 0.1, 0.12]} />
+                <meshBasicMaterial color={selected ? "#f7a815" : active ? "#8ba5b6" : "#718391"} />
+            </mesh>
+            <mesh position={[0, 0, -0.09]} rotation={[Math.PI / 2, 0, 0]} onPointerDown={(event) => { event.stopPropagation(); onSelect(); }}>
+                <cylinderGeometry args={[0.045, 0.045, 0.07, 16]} />
+                <meshBasicMaterial color={selected ? "#ffd16b" : "#344858"} />
+            </mesh>
+            <mesh position={[0.015, 0.065, 0]} onPointerDown={(event) => { event.stopPropagation(); onSelect(); }}>
+                <boxGeometry args={[0.055, 0.025, 0.045]} />
+                <meshBasicMaterial color={selected ? "#ffd16b" : "#718391"} />
+            </mesh>
+            <group userData={{ directorEditorOnly: true }} position={framingOffset} quaternion={framingOrientation}>
+                <Line segments points={segments} color={selected ? "#f7a815" : active ? "#5b9dc7" : "#3f6f8b"} lineWidth={selected ? 1.5 : 1} transparent opacity={selected ? 0.85 : active ? 0.5 : 0.3} raycast={() => {}} />
+                <Html center style={{ pointerEvents: "none" }}>
+                    <div className="flex flex-col items-center gap-0.5 whitespace-nowrap" style={{ color: "#fff", textShadow: "0 1px 3px #000, 0 0 5px #000" }}>
+                        {labelsVisible || selected ? <span data-director-camera-label={item.id} data-director-camera-gizmo-target={selected ? item.id : undefined} data-director-camera-look-at-mode={item.lookAtMode === "rotation" ? "rotation" : item.lookAtMode === "object" && item.lookAtObjectId ? "object" : "coordinates"} style={{ fontSize: 12, fontWeight: 600 }}>{item.name}</span> : null}
+                        <VideoIcon size={25} color={selected ? "#f7a815" : active ? "#f7a815" : "#8ba5b6"} strokeWidth={2.8} aria-hidden />
+                    </div>
+                </Html>
+            </group>
+        </group>
+        {selected && !item.locked && gizmoTarget ? <DirectorCameraGizmo target={gizmoTarget} transformMode={transformMode} onFreeze={setFrozen} onTransforming={onTransforming} onTransform={onTransform} /> : null}
+    </>;
+}
+
+function DirectorCameraGizmo({ target, transformMode, onFreeze, onTransforming, onTransform }: { target: Group; transformMode: DirectorViewportProps["transformMode"]; onFreeze: (transform: DirectorTransform | null) => void; onTransforming: (value: boolean) => void; onTransform: (from: DirectorTransform, to: DirectorTransform) => void }) {
+    const transaction = useDirectorGizmoTransaction<DirectorTransform>({
+        read: () => readObject3DTransform(target),
+        restore: (snapshot) => applyObject3DTransform(target, snapshot),
+        commit: onTransform,
+        onActive: (active, snapshot) => {
+            onFreeze(active ? snapshot : null);
+            onTransforming(active);
+        },
+    });
+    return <TransformControls object={target} mode={transformMode} size={0.8} onMouseDown={() => transaction.begin()} onMouseUp={() => transaction.end("commit")} />;
 }
 
 /** 起点、终点、路径点、方向与当前进度共用一条 Transform 关键帧路径。 */
@@ -768,10 +838,10 @@ function DirectorObjectView({ object, selected, selectedBone, showLabel, showGiz
             >
                 <DirectorObjectVisual object={object} selected={selected} selectedBone={selectedBone} playhead={playhead} onSelectBone={onSelectBone} onBoneTransform={onBoneTransform} onActorRigReady={onActorRigReady} onLoadStateChange={onLoadStateChange} />
                 {showLabel ? <Html position={[0, 2.04, 0]} center style={{ pointerEvents: "none" }}>
-                    <span data-director-actor-label={object.id} role="note" aria-label={`角色 ${object.name}`} style={{ color: "#fff", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", textShadow: "0 1px 3px #000, 0 0 5px #000" }}>{object.name}</span>
+                    <span data-director-actor-label={object.id} data-director-bone-gizmo-target={selectedBone || undefined} role="note" aria-label={`角色 ${object.name}`} style={{ color: "#fff", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", textShadow: "0 1px 3px #000, 0 0 5px #000" }}>{object.name}</span>
                 </Html> : null}
             </group>
-            {selected && showGizmo && !object.locked && target ? (
+            {selected && showGizmo && !object.locked && !selectedBone && target ? (
                 <DirectorObjectGizmo
                     target={target}
                     transformMode={transformMode}
@@ -917,7 +987,7 @@ function applyObject3DTransform(target: Object3D, transform: DirectorTransform) 
 function DirectorObjectVisual({ object, selected, selectedBone, playhead, onSelectBone, onBoneTransform, onActorRigReady, onLoadStateChange }: { object: DirectorObject; selected: boolean; selectedBone: string | null; playhead: number; onSelectBone: (bone: string | null) => void; onBoneTransform: (bone: string, rotation: DirectorQuat) => void; onActorRigReady: (rig: DirectorRig, animations: AnimationClip[]) => void; onLoadStateChange: (id: string, signal: DirectorLoadSignal, retry: () => void) => void }) {
     // URL-less actor is an intentional local mannequin fixture. Do not resolve the
     // production default actor URL here: this keeps the repro scene deterministic/offline.
-    if (object.kind === "actor" && !object.url) return <DirectorProceduralActor color={object.color} selected={selected} preset={object.actorPreset ?? "standard_male"} />;
+    if (object.kind === "actor" && !object.url) return <DirectorProceduralActor object={object} selected={selected} selectedBone={selectedBone} onSelectBone={onSelectBone} onBoneTransform={onBoneTransform} preset={object.actorPreset ?? "standard_male"} />;
     if ((object.kind === "model" || object.kind === "actor" || object.primitive === "character") && (object.url || object.primitive === "character")) return <DirectorModel object={object} selected={selected} selectedBone={selectedBone} playhead={playhead} onSelectBone={onSelectBone} onBoneTransform={onBoneTransform} onActorRigReady={onActorRigReady} onLoadStateChange={onLoadStateChange} />;
     if (object.kind === "billboard" && object.url) return <DirectorBillboard object={object} selected={selected} />;
     const material = <meshStandardMaterial color={selected ? "#2f8cff" : object.color} roughness={0.68} metalness={0.05} />;
@@ -1168,9 +1238,16 @@ function DirectorMannequin({ color, selected }: { color: string; selected: boole
     </group>;
 }
 
-/** Offline, filled humanoid used by the visual-parity fixture (no GLB/network dependency). */
-function DirectorProceduralActor({ color, selected, preset }: { color: string; selected: boolean; preset: NonNullable<DirectorObject["actorPreset"]> }) {
-    const resolvedColor = selected ? new Color(color).lerp(new Color("#78a9ff"), 0.18).getStyle() : color;
+/** Offline, filled humanoid driven by the same pose/bone-override values as imported rigs. */
+function DirectorProceduralActor({ object, selected, selectedBone, onSelectBone, onBoneTransform, preset }: { object: DirectorObject; selected: boolean; selectedBone: string | null; onSelectBone: (bone: string | null) => void; onBoneTransform: (bone: string, rotation: DirectorQuat) => void; preset: NonNullable<DirectorObject["actorPreset"]> }) {
+    const resolvedColor = selected ? new Color(object.color).lerp(new Color("#78a9ff"), 0.18).getStyle() : object.color;
+    const [stagedBoneRotation, setStagedBoneRotation] = useState<{ bone: string; rotation: DirectorQuat } | null>(null);
+    useEffect(() => setStagedBoneRotation(null), [object.id, object.pose, selectedBone]);
+    const poseOverrides = useMemo(() => stagedBoneRotation && stagedBoneRotation.bone === selectedBone
+        ? { ...(object.boneOverrides || {}), [stagedBoneRotation.bone]: stagedBoneRotation.rotation }
+        : object.boneOverrides,
+    [object.boneOverrides, selectedBone, stagedBoneRotation]);
+    const frame = useMemo(() => resolveDirectorProceduralActorPose(object.pose || "stand", poseOverrides), [object.pose, poseOverrides]);
     const shape = {
         standard_male: { scale: [1, 1, 1] as DirectorVec3, shoulders: 1, waist: 1, hips: 1, head: 1, limbs: 1 },
         standard_female: { scale: [0.96, 1, 0.96] as DirectorVec3, shoulders: 0.9, waist: 0.83, hips: 1.12, head: 1.04, limbs: 0.9 },
@@ -1183,38 +1260,90 @@ function DirectorProceduralActor({ color, selected, preset }: { color: string; s
         geometric: { scale: [1, 1, 1] as DirectorVec3, shoulders: 1, waist: 1, hips: 1, head: 1, limbs: 1 },
     }[preset];
     const lowPoly = preset === "geometric";
+    const joints = frame.joints;
+    const midpoint = (left: DirectorVec3, right: DirectorVec3): DirectorVec3 => left.map((value, index) => (value + right[index]) / 2) as DirectorVec3;
     const segments: Array<{ from: DirectorVec3; to: DirectorVec3; radius: number }> = [
-        { from: [0, 1.43, 0], to: [0, 1.27, 0], radius: 0.09 },
-        { from: [-0.2, 1.38, 0], to: [-0.31, 1.08, 0.01], radius: 0.075 },
-        { from: [-0.31, 1.08, 0.01], to: [-0.29, 0.76, 0.02], radius: 0.06 },
-        { from: [0.2, 1.38, 0], to: [0.31, 1.08, 0.01], radius: 0.075 },
-        { from: [0.31, 1.08, 0.01], to: [0.29, 0.76, 0.02], radius: 0.06 },
-        { from: [-0.11, 0.78, 0], to: [-0.14, 0.43, 0], radius: 0.09 },
-        { from: [-0.14, 0.43, 0], to: [-0.14, 0.08, 0.02], radius: 0.065 },
-        { from: [0.11, 0.78, 0], to: [0.14, 0.43, 0], radius: 0.09 },
-        { from: [0.14, 0.43, 0], to: [0.14, 0.08, 0.02], radius: 0.065 },
+        { from: joints.leftUpperArm, to: joints.leftLowerArm, radius: 0.075 }, { from: joints.leftLowerArm, to: joints.leftHand, radius: 0.06 },
+        { from: joints.rightUpperArm, to: joints.rightLowerArm, radius: 0.075 }, { from: joints.rightLowerArm, to: joints.rightHand, radius: 0.06 },
+        { from: joints.leftUpperLeg, to: joints.leftLowerLeg, radius: 0.09 }, { from: joints.leftLowerLeg, to: joints.leftFoot, radius: 0.065 },
+        { from: joints.rightUpperLeg, to: joints.rightLowerLeg, radius: 0.09 }, { from: joints.rightLowerLeg, to: joints.rightFoot, radius: 0.065 },
     ];
-    return <group scale={shape.scale}>
-        <mesh position={[0, 1.13, 0]} scale={[0.25 * shape.shoulders, 0.34, 0.15]} castShadow>
+    const interactiveBones: DirectorHumanoidBone[] = ["hips", "spine", "chest", "neck", "head", "leftShoulder", "leftUpperArm", "leftLowerArm", "leftHand", "rightShoulder", "rightUpperArm", "rightLowerArm", "rightHand", "leftUpperLeg", "leftLowerLeg", "leftFoot", "rightUpperLeg", "rightLowerLeg", "rightFoot"];
+    return <group scale={shape.scale} onPointerDown={(event) => {
+        // TransformControls listens on the canvas independently; stop the actor root's click
+        // handler from clearing the selected bone before the rotation drag claims the pointer.
+        if (selected && selectedBone) {
+            event.stopPropagation();
+            onSelectBone(selectedBone);
+        }
+    }}>
+        <mesh position={midpoint(joints.spine, joints.chest)} quaternion={new Quaternion(...frame.rotations.chest)} scale={[0.25 * shape.shoulders, 0.34, 0.15]} castShadow>
             <sphereGeometry args={[1, lowPoly ? 8 : 20, lowPoly ? 6 : 16]} /><meshStandardMaterial color={resolvedColor} roughness={0.84} flatShading={lowPoly} />
         </mesh>
-        <mesh position={[0, 1.02, 0]} scale={[0.2 * shape.waist, 0.23, 0.14]} castShadow>
+        <mesh position={midpoint(joints.hips, joints.spine)} quaternion={new Quaternion(...frame.rotations.spine)} scale={[0.2 * shape.waist, 0.23, 0.14]} castShadow>
             <sphereGeometry args={[1, lowPoly ? 8 : 16, lowPoly ? 6 : 12]} /><meshStandardMaterial color={resolvedColor} roughness={0.84} flatShading={lowPoly} />
         </mesh>
-        <mesh position={[0, 0.79, 0]} scale={[0.2 * shape.hips, 0.18, 0.14]} castShadow>
+        <mesh position={joints.hips} quaternion={new Quaternion(...frame.rotations.hips)} scale={[0.2 * shape.hips, 0.18, 0.14]} castShadow>
             <sphereGeometry args={[1, lowPoly ? 8 : 16, lowPoly ? 6 : 12]} /><meshStandardMaterial color={resolvedColor} roughness={0.84} flatShading={lowPoly} />
         </mesh>
-        <mesh position={[0, 1.68, 0]} scale={[0.13 * shape.head, 0.17 * shape.head, 0.12 * shape.head]} castShadow>
+        <mesh position={joints.head} quaternion={new Quaternion(...frame.rotations.head)} scale={[0.13 * shape.head, 0.17 * shape.head, 0.12 * shape.head]} castShadow>
             <sphereGeometry args={[1, lowPoly ? 8 : 20, lowPoly ? 6 : 16]} /><meshStandardMaterial color={resolvedColor} roughness={0.78} flatShading={lowPoly} />
         </mesh>
         {segments.map((segment, index) => <SolidActorLimb key={index} {...segment} radius={segment.radius * shape.limbs} color={resolvedColor} radialSegments={lowPoly ? 6 : 12} />)}
-        {([-1, 1] as const).map((side) => <mesh key={`hand-${side}`} position={[side * 0.29, 0.7, 0.02]} scale={[0.055, 0.085, 0.045]} castShadow>
+        {(["leftHand", "rightHand"] as const).map((bone) => <mesh key={bone} position={joints[bone]} scale={[0.055, 0.085, 0.045]} castShadow>
             <sphereGeometry args={[1, lowPoly ? 6 : 12, lowPoly ? 4 : 8]} /><meshStandardMaterial color={resolvedColor} roughness={0.84} flatShading={lowPoly} />
         </mesh>)}
-        {([-1, 1] as const).map((side) => <mesh key={`foot-${side}`} position={[side * 0.14, 0.035, 0.08]} scale={[0.075, 0.05, 0.13]} castShadow>
+        {(["leftFoot", "rightFoot"] as const).map((bone) => <mesh key={bone} position={joints[bone]} scale={[0.075, 0.05, 0.13]} castShadow>
             <sphereGeometry args={[1, lowPoly ? 6 : 12, lowPoly ? 4 : 8]} /><meshStandardMaterial color={resolvedColor} roughness={0.84} flatShading={lowPoly} />
         </mesh>)}
+        {selected ? DIRECTOR_PROCEDURAL_ACTOR_SKELETON_EDGES.map(([from, to]) => <Line key={`skeleton-${from}-${to}`} points={[joints[from], joints[to]]} color="#78a9ff" lineWidth={1.1} transparent opacity={0.52} depthTest={false} raycast={() => null} />) : null}
+        {selected ? interactiveBones.map((bone) => <mesh key={`joint-${bone}`} position={joints[bone]} onPointerDown={(event) => { event.stopPropagation(); onSelectBone(bone); }} frustumCulled={false}>
+            <sphereGeometry args={[selectedBone === bone ? 0.065 : 0.035, 10, 8]} />
+            <meshBasicMaterial color={selectedBone === bone ? "#f0b36a" : "#78a9ff"} depthTest={false} transparent opacity={selectedBone === bone ? 1 : 0.55} />
+        </mesh>) : null}
+        {selected && selectedBone && selectedBone in joints ? <DirectorProceduralBoneGizmo
+            bone={selectedBone as DirectorHumanoidBone}
+            position={joints[selectedBone as DirectorHumanoidBone]}
+            rotation={frame.rotations[selectedBone as DirectorHumanoidBone]}
+            onPreview={(rotation) => setStagedBoneRotation({ bone: selectedBone, rotation })}
+            onCommit={(rotation) => onBoneTransform(selectedBone, rotation)}
+        /> : null}
     </group>;
+}
+
+/** Rotation gizmo for the offline mannequin. Dragging previews through React state; the shared gesture transaction commits or restores once. */
+function DirectorProceduralBoneGizmo({ bone, position, rotation, onPreview, onCommit }: { bone: DirectorHumanoidBone; position: DirectorVec3; rotation: DirectorQuat; onPreview: (rotation: DirectorQuat) => void; onCommit: (rotation: DirectorQuat) => void }) {
+    const target = useMemo(() => new Object3D(), []);
+    const draggingRef = useRef(false);
+    useLayoutEffect(() => {
+        target.position.fromArray(position);
+        if (!draggingRef.current) target.quaternion.fromArray(rotation);
+        target.updateMatrixWorld(true);
+    }, [position, rotation, target]);
+    const transaction = useDirectorGizmoTransaction<DirectorQuat>({
+        read: () => target.quaternion.toArray() as DirectorQuat,
+        restore: (snapshot) => {
+            target.quaternion.fromArray(snapshot);
+            target.updateMatrixWorld(true);
+            onPreview(snapshot);
+        },
+        commit: (_from, to) => onCommit(to),
+        onActive: (active, snapshot) => {
+            draggingRef.current = active;
+            if (active && snapshot) onPreview(snapshot);
+        },
+    });
+    return <>
+        <primitive object={target} />
+        <TransformControls
+            object={target}
+            mode="rotate"
+            size={0.55}
+            onMouseDown={() => transaction.begin()}
+            onObjectChange={() => onPreview(target.quaternion.toArray() as DirectorQuat)}
+            onMouseUp={() => transaction.end("commit")}
+        />
+    </>;
 }
 
 function SolidActorLimb({ from, to, radius, color, radialSegments = 12 }: { from: DirectorVec3; to: DirectorVec3; radius: number; color: string; radialSegments?: number }) {

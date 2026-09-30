@@ -452,6 +452,22 @@ async function smokeWorkbench(cdp, baseUrl) {
     assert(actorCanvas, "A3b 默认人物场景在真实导演台画布可见");
     const actorRequests = await cdp.evaluate(`performance.getEntriesByType('resource').map((entry) => entry.name).filter((name) => /Xbot\\.glb|director-default-actor/i.test(name))`);
     assert(actorRequests.length === 0, "A3c 人物视觉对照不请求默认远程 GLB", JSON.stringify(actorRequests));
+    const actorSceneTab = await cdp.click('[data-director-left-dock] nav[aria-label="导演台工作区"] button[aria-label="场景"]');
+    const actorCameraTab = actorSceneTab && await cdp.click('[data-director-left-dock] nav[aria-label="导演台工作区"] button[aria-label="添加机位"]');
+    const sideFollowPreset = actorCameraTab && await cdp.click('[data-director-left-dock] button[aria-label="侧面跟拍"]');
+    const sideFollowWired = sideFollowPreset && await cdp.poll(`(() => {
+        const inspector = document.querySelector('[data-director-property-inspector="true"]');
+        const lines = (inspector?.innerText || '').split('\\n').map((line) => line.trim());
+        const followIndex = lines.indexOf('跟随目标');
+        const lookAtIndex = lines.indexOf('注视目标');
+        return followIndex >= 0 && lookAtIndex >= 0 && lines[followIndex + 1] === '演员 1' && lines[lookAtIndex + 1] === '演员 1';
+    })()`, "side-follow binds actor for follow and look-at", 5000);
+    const sideFollowState = await cdp.evaluate(`(() => ({
+        created: ${JSON.stringify(sideFollowPreset)},
+        selectedFollowAndLookAt: (() => { const lines = (document.querySelector('[data-director-property-inspector="true"]')?.innerText || '').split('\\n').map((line) => line.trim()); const followIndex = lines.indexOf('跟随目标'); const lookAtIndex = lines.indexOf('注视目标'); return { follow: followIndex >= 0 ? lines[followIndex + 1] : null, lookAt: lookAtIndex >= 0 ? lines[lookAtIndex + 1] : null }; })(),
+        inspector: document.querySelector('[data-director-property-inspector="true"]')?.innerText.slice(0, 400) || '',
+    }))()`);
+    assert(sideFollowWired, "A3c-i 侧面跟拍预设自动绑定演员跟随与注视目标", JSON.stringify(sideFollowState));
     const actorClosed = await cdp.click('[aria-label="关闭导演台"]');
     if (!actorClosed) throw new Error("A: close control not clickable after default actor render");
     const p0Loaded = await cdp.click('[data-testid="load-p0-repro-scene"]');
@@ -683,6 +699,43 @@ async function smokeWorkbench(cdp, baseUrl) {
         return { rowActive: row?.getAttribute('data-active'), inspectorTitle: title?.value || null };
     })()`);
     assert(inspectorTracksSelection, "A5-assets-ii 选择左侧树项后右侧检查器同步显示对象属性", JSON.stringify(selectionState));
+    const cameraModeForFocus = await cdp.click('[data-director-left-dock] nav[aria-label="导演台工作区"] button[aria-label="添加机位"]');
+    if (!cameraModeForFocus) throw new Error("A: camera mode unavailable before asset-focus regression");
+    const cameraModeReadyForFocus = await cdp.poll(`document.querySelector('[aria-label="导演台视口工具"]')?.getAttribute('data-director-mode') === 'camera'`, "camera mode before asset focus", 5000);
+    if (!cameraModeReadyForFocus) throw new Error("A: camera mode did not activate before asset-focus regression");
+    const sceneTreeForFocus = await openSceneTree(cdp);
+    if (!sceneTreeForFocus) throw new Error("A: scene tree unavailable before asset-focus regression");
+    const sceneRevisionBeforeFocus = await cdp.evaluate(`(() => [...document.querySelectorAll('section span')].find((item) => item.textContent === '场景 updatedAt')?.nextElementSibling?.textContent || '')()`);
+    const focusRowPoint = await cdp.evaluate(`(() => {
+        const row = [...document.querySelectorAll('[data-director-scene-row]')].find((candidate) => candidate.getAttribute('data-director-row-label') === '立方体 A');
+        const rect = row?.getBoundingClientRect();
+        return rect && rect.width > 0 && rect.height > 0 ? { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) } : null;
+    })()`);
+    if (focusRowPoint) {
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...focusRowPoint, buttons: 0 });
+        await sleep(250);
+    }
+    const focusCube = await cdp.click('[data-director-scene-row][data-director-row-label="立方体 A"] button[aria-label="聚焦立方体 A"]');
+    const focusedCube = focusCube && await cdp.poll(`(() => document.querySelector('[aria-label="导演视角"]')?.getAttribute('aria-pressed') === 'true' && document.querySelector('[aria-label="导演台视口工具"]')?.getAttribute('data-director-mode') === 'layout' && document.querySelector('[data-director-scene-row][data-director-row-label="立方体 A"]')?.getAttribute('data-active') === 'true')()`, "asset focus recenters free camera without losing inspector target", 5000);
+    const sceneRevisionAfterFocus = await cdp.evaluate(`(() => [...document.querySelectorAll('section span')].find((item) => item.textContent === '场景 updatedAt')?.nextElementSibling?.textContent || '')()`);
+    assert(focusedCube && sceneRevisionBeforeFocus === sceneRevisionAfterFocus, "A5-assets-focus 从摄影机模式聚焦资产后切换导演视角、保留属性选择且不改场景数据", JSON.stringify({ focusCube, focusedCube, sceneRevisionBeforeFocus, sceneRevisionAfterFocus }));
+    const addSecondaryCameraTab = await cdp.click('[data-director-left-dock] nav[aria-label="导演台工作区"] button[aria-label="添加机位"]');
+    const addSecondaryCamera = addSecondaryCameraTab && await cdp.click('[data-director-left-dock] button[aria-label="当前视角"]');
+    if (!addSecondaryCamera) throw new Error("A: unable to prepare a non-active camera focus regression");
+    const returnToTreeForCameraFocus = await openSceneTree(cdp);
+    if (!returnToTreeForCameraFocus) throw new Error("A: unable to restore scene tree for camera focus regression");
+    const sceneRevisionBeforeCameraFocus = await cdp.evaluate(`(() => [...document.querySelectorAll('section span')].find((item) => item.textContent === '场景 updatedAt')?.nextElementSibling?.textContent || '')()`);
+    const cameraRowPoint = await cdp.evaluate(`(() => { const row = [...document.querySelectorAll('[data-director-scene-row]')].find((item) => item.getAttribute('data-director-row-label') === '主摄影机'); const rect = row?.getBoundingClientRect(); return rect && rect.width > 0 && rect.height > 0 ? { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) } : null; })()`);
+    if (cameraRowPoint) {
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...cameraRowPoint, buttons: 0 });
+        await sleep(250);
+    }
+    const focusNonActiveCamera = await cdp.click('[data-director-scene-row][data-director-row-label="主摄影机"] button[aria-label="聚焦主摄影机"]');
+    const cameraFocusSettled = focusNonActiveCamera && await cdp.poll(`document.querySelector('[aria-label="导演视角"]')?.getAttribute('aria-pressed') === 'true'`, "focus non-active camera without selecting it for active shot", 5000);
+    const sceneRevisionAfterCameraFocus = await cdp.evaluate(`(() => [...document.querySelectorAll('section span')].find((item) => item.textContent === '场景 updatedAt')?.nextElementSibling?.textContent || '')()`);
+    assert(cameraFocusSettled && sceneRevisionBeforeCameraFocus === sceneRevisionAfterCameraFocus, "A5-assets-focus-camera 聚焦非当前机位只移动编辑视角，不替换镜头机位或写入场景", JSON.stringify({ focusNonActiveCamera, cameraFocusSettled, sceneRevisionBeforeCameraFocus, sceneRevisionAfterCameraFocus }));
+    const backToLayoutForNavigation = await cdp.click('[data-director-left-dock] nav[aria-label="导演台工作区"] button[aria-label="场景"]');
+    if (!backToLayoutForNavigation) throw new Error("A: could not restore scene workspace after focus test");
     const switchedNavigation = await cdp.click('[data-director-workbench="true"] nav[aria-label="导演台工作区"] button[aria-label="添加角色"]');
     assert(switchedNavigation, "A5-assets-iii 场景资产栏可切换至角色导航");
     const onboardingPlacement = await cdp.evaluate(`(() => {
@@ -900,6 +953,7 @@ async function smokeWorkbench(cdp, baseUrl) {
             && !document.querySelector('button[title="记录当前关键帧"]')
             && !document.querySelector('.director-sequencer-resizer')
             && !!document.querySelector('textarea[aria-label="当前镜头意图"]')
+            && !!document.querySelector('[data-director-aspect-frame="16:9"]')
             && !document.querySelector('[aria-label="导演台取景模式"]')
             && !document.querySelector('[aria-label="方向球"]')
             && document.querySelectorAll('nav[aria-label="导演台工作区"]').length === 0
@@ -986,6 +1040,192 @@ async function smokeWorkbench(cdp, baseUrl) {
     assert(cdp.problems.length === 0, "A13 no browser problems in scenario A", JSON.stringify(cdp.problems));
 }
 
+/** Isolated, fast browser regression for the actual side-follow preset interaction. */
+async function sideFollowPreset(cdp, baseUrl) {
+    console.log("\n=== G. actor side-follow camera preset ===");
+    await cdp.navigateFresh(`${baseUrl}/dev/director-repro`);
+    const opened = await cdp.click('[data-testid="toggle-workbench"]');
+    if (!opened) throw new Error("G: director workbench could not open");
+    const canvasReady = await cdp.poll(`!!document.querySelector('.director-viewport-shell canvas')`, "actor scene canvas", 30000);
+    if (!canvasReady) throw new Error("G: actor scene did not mount");
+    const sceneTab = await openSceneTree(cdp);
+    const camerasTab = sceneTab && await cdp.click('[data-director-left-dock] nav[aria-label="导演台工作区"] button[aria-label="添加机位"]');
+    const presetClicked = camerasTab && await cdp.click('[data-director-left-dock] button[aria-label="侧面跟拍"]');
+    if (!presetClicked) throw new Error("G: side-follow preset could not be selected");
+    const bound = await cdp.poll(`(() => {
+        const lines = (document.querySelector('[data-director-property-inspector="true"]')?.innerText || '').split('\\n').map((line) => line.trim());
+        const follow = lines.indexOf('跟随目标');
+        const lookAt = lines.indexOf('注视目标');
+        return follow >= 0 && lookAt >= 0 && lines[follow + 1] === '演员 1' && lines[lookAt + 1] === '演员 1';
+    })()`, "side-follow fields bind to actor", 5000);
+    const visibleValues = await cdp.evaluate(`(() => {
+        const lines = (document.querySelector('[data-director-property-inspector="true"]')?.innerText || '').split('\\n').map((line) => line.trim());
+        const follow = lines.indexOf('跟随目标');
+        const lookAt = lines.indexOf('注视目标');
+        return { follow: follow >= 0 ? lines[follow + 1] : null, lookAt: lookAt >= 0 ? lines[lookAt + 1] : null };
+    })()`);
+    assert(bound, "G1 侧面跟拍真实预设自动绑定当前演员的位置跟随和注视", JSON.stringify(visibleValues));
+    const actorRequests = await cdp.evaluate(`performance.getEntriesByType('resource').map((entry) => entry.name).filter((name) => /Xbot\\.glb|director-default-actor/i.test(name))`);
+    assert(actorRequests.length === 0, "G2 侧面跟拍保持本地人物场景离线", JSON.stringify(actorRequests));
+}
+
+/** The selected actor inspector keeps staging properties separate from pose and rig controls. */
+async function actorPoseInspector(cdp, baseUrl) {
+    console.log("\n=== H. actor property/pose inspector ===");
+    await cdp.navigateFresh(`${baseUrl}/dev/director-repro`);
+    const opened = await cdp.click('[data-testid="toggle-workbench"]');
+    if (!opened) throw new Error("H: director workbench could not open");
+    const canvasReady = await cdp.poll(`!!document.querySelector('.director-viewport-shell canvas')`, "actor scene canvas", 30000);
+    if (!canvasReady) throw new Error("H: actor scene did not mount");
+    const sceneTab = await openSceneTree(cdp);
+    if (!sceneTab) throw new Error("H: scene tree could not open");
+    const actorRow = '[data-director-scene-row][data-director-row-label="演员 1"] button:first-child';
+    const actorReady = await cdp.poll(`!!document.querySelector(${JSON.stringify(actorRow)})`, "actor scene row", 10000);
+    assert(actorReady, "H1 default scene exposes selectable actor");
+    await cdp.click(actorRow);
+    const navigation = await openDirectorNavigation(cdp);
+    const poseMode = navigation && await cdp.clickText("姿态", '[role="menuitem"]');
+    if (!poseMode) throw new Error("H: pose mode menu item not clickable");
+    const tabsReady = await cdp.poll(`!!document.querySelector('[role="tablist"][aria-label="角色属性"]')`, "actor property/pose tabs", 5000);
+    assert(tabsReady, "H2 selected actor exposes distinct 属性 / 姿势 tabs");
+    const propertiesVisible = await cdp.evaluate(`(() => {
+        const panel = document.querySelector('[data-director-property-inspector="true"]');
+        const tabs = panel?.querySelector('[role="tablist"][aria-label="角色属性"]');
+        return tabs?.querySelector('[role="tab"]')?.getAttribute('aria-selected') === 'true'
+            && (panel?.innerText || '').includes('统一缩放')
+            && !panel?.querySelector('.director-pose-grid');
+    })()`);
+    assert(propertiesVisible, "H3 属性 tab shows transform controls without duplicating pose controls");
+    await cdp.click('[role="tablist"][aria-label="角色属性"] [role="tab"]:last-child');
+    const poseVisible = await cdp.poll(`(() => {
+        const panel = document.querySelector('[data-director-property-inspector="true"]');
+        const tabs = panel?.querySelector('[role="tablist"][aria-label="角色属性"]');
+        return tabs?.querySelector('[role="tab"]:last-child')?.getAttribute('aria-selected') === 'true'
+            && panel?.querySelectorAll('.director-pose-button').length === 20
+            && ![...panel.querySelectorAll('input')].some((input) => input.getAttribute('aria-label') === '统一缩放滑杆');
+    })()`, "pose tab shows presets only", 5000);
+    assert(poseVisible, "H4 姿势 tab contains all 20 pose presets and hides staging controls");
+    await cdp.click('.director-pose-button[title="招手"]');
+    const poseApplied = await cdp.poll(`document.querySelector('.director-pose-button[title="招手"]')?.classList.contains('is-active')`, "wave pose applies", 5000);
+    assert(poseApplied, "H5 choosing a pose updates the active actor pose");
+    const headChoiceReady = await cdp.poll(`!!document.querySelector('[aria-label="选择骨骼 头部"]')`, "quick head-bone selection", 30000);
+    assert(headChoiceReady, "H6 rig-ready actor exposes body-grouped bone shortcuts");
+    if (headChoiceReady) await cdp.click('[aria-label="选择骨骼 头部"]');
+    const headSelected = headChoiceReady && await cdp.poll(`document.querySelector('[aria-label="选择骨骼 头部"]')?.getAttribute('aria-pressed') === 'true'`, "head bone selected", 5000);
+    assert(headSelected, "H7 selecting head shortcut targets the head for existing gizmo/rotation controls");
+    const detailedBonesReady = await cdp.poll(`(() => {
+        const rows = document.querySelectorAll('[data-director-bone-row]');
+        const headAngle = document.querySelector('[aria-label="头部 X 角度"]');
+        return rows.length >= 15 && !!headAngle;
+    })()`, "all bone angle controls", 5000);
+    assert(detailedBonesReady, "H8 pose inspector exposes per-bone angle controls instead of requiring one-at-a-time selection");
+
+    await cdp.navigateFresh(`${baseUrl}/dev/director-repro`);
+    const offlineFixture = await cdp.clickText("人物视觉对照场景", "button");
+    const offlineWorkbench = offlineFixture && await cdp.click('[data-testid="toggle-workbench"]');
+    if (!offlineWorkbench) throw new Error("H: offline procedural actor fixture could not open");
+    await cdp.click('[data-director-left-dock] nav[aria-label="导演台工作区"] button[aria-label="场景"]');
+    const offlineActorRow = '[data-director-scene-row][data-director-row-label="演员 1"] button:first-child';
+    const offlineActorReady = await cdp.poll(`!!document.querySelector(${JSON.stringify(offlineActorRow)})`, "offline actor scene row", 10000);
+    assert(offlineActorReady, "H9 offline parity fixture exposes a selectable procedural actor");
+    if (offlineActorReady) await cdp.click(offlineActorRow);
+    const offlineNavigation = await openDirectorNavigation(cdp);
+    const offlinePoseMode = offlineNavigation && await cdp.clickText("姿态", '[role="menuitem"]');
+    if (!offlinePoseMode) throw new Error("H: offline pose mode menu item not clickable");
+    await cdp.click('[role="tablist"][aria-label="角色属性"] [role="tab"]:last-child');
+    const offlineHeadReady = await cdp.poll(`!!document.querySelector('[aria-label="选择骨骼 头部"]')`, "offline actor head joint", 5000);
+    assert(offlineHeadReady, "H10 offline procedural actor exposes directly selectable bones");
+    if (offlineHeadReady) await cdp.click('[aria-label="选择骨骼 头部"]');
+    const offlineGizmoReady = offlineHeadReady && await cdp.poll(`document.querySelector('[data-director-actor-label]')?.getAttribute('data-director-bone-gizmo-target') === 'head'`, "offline head rotation gizmo target", 5000);
+    assert(offlineGizmoReady, "H11 selecting an offline bone activates its direct viewport rotation gizmo");
+    if (offlineGizmoReady) {
+        const gizmoPoint = await cdp.evaluate(`(() => {
+            const label = document.querySelector('[data-director-actor-label]')?.getBoundingClientRect();
+            return label ? { x: Math.round(label.left + label.width / 2 + 40), y: Math.round(label.bottom + 26) } : null;
+        })()`);
+        if (!gizmoPoint) throw new Error("H: selected offline actor label missing before gizmo drag");
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...gizmoPoint, buttons: 0 });
+        await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...gizmoPoint, button: "left", buttons: 1, clickCount: 1 });
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: gizmoPoint.x, y: gizmoPoint.y + 24, button: "left", buttons: 1, clickCount: 1, deltaX: 0, deltaY: 24 });
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: gizmoPoint.x, y: gizmoPoint.y + 24, button: "left", buttons: 0, clickCount: 1 });
+        const directRotation = await cdp.poll(`(() => {
+            const target = document.querySelector('[data-director-actor-label]')?.getAttribute('data-director-bone-gizmo-target');
+            const values = [...document.querySelectorAll('[data-director-bone-row="head"] input')].map((input) => Number(input.value));
+            return target === 'head' && values.some((value) => Math.abs(value) > 0.1);
+        })()`, "drag updates offline head rotation without losing selection", 5000);
+        assert(directRotation, "H12 dragging the offline bone gizmo previews and commits a visible joint rotation");
+    }
+}
+
+/** Camera aids are selectable in the viewport and expose the same transform gizmo as actors. */
+async function cameraDirectManipulation(cdp, baseUrl) {
+    console.log("\n=== I. direct camera selection/manipulation ===");
+    await cdp.navigateFresh(`${baseUrl}/dev/director-repro`);
+    const opened = await cdp.click('[data-testid="toggle-workbench"]');
+    if (!opened) throw new Error("I: director workbench could not open");
+    const sceneTab = await openSceneTree(cdp);
+    if (!sceneTab) throw new Error("I: scene tree could not open");
+    const marker = await cdp.poll(`!!document.querySelector('[data-director-camera-label]')`, "camera viewport marker", 15000);
+    assert(marker, "I1 scene renders a camera aid that can be directly selected");
+    if (marker) {
+        const point = await cdp.evaluate(`(() => {
+            const label = document.querySelector('[data-director-camera-label]')?.getBoundingClientRect();
+            return label ? { x: Math.round(label.left + label.width / 2), y: Math.round(label.bottom + 20) } : null;
+        })()`);
+        if (!point) throw new Error("I: camera aid label missing before selection");
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...point, buttons: 0 });
+        await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...point, button: "left", buttons: 1, clickCount: 1 });
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...point, button: "left", buttons: 0, clickCount: 1 });
+        const selected = await cdp.poll(`!!document.querySelector('[data-director-camera-gizmo-target]')`, "camera selected from viewport", 5000);
+        assert(selected, "I2 clicking the visible camera aid selects it and shows its gizmo");
+        if (selected) {
+            const initialX = await cdp.evaluate(`(() => {
+                const field = [...document.querySelectorAll('[data-director-property-inspector] label')].find((label) => (label.innerText || '').trim() === '摄影机位置');
+                return Number(field?.querySelector('input')?.value);
+            })()`);
+            const axisPoint = await cdp.evaluate(`(() => {
+                const label = document.querySelector('[data-director-camera-gizmo-target]')?.getBoundingClientRect();
+                return label ? { x: Math.round(label.left + label.width / 2 + 65), y: Math.round(label.bottom + 29) } : null;
+            })()`);
+            const initialLabelX = await cdp.evaluate(`document.querySelector('[data-director-camera-gizmo-target]')?.getBoundingClientRect().left ?? NaN`);
+            if (!axisPoint || !Number.isFinite(initialX)) throw new Error(`I: camera gizmo or position field missing before drag (point=${JSON.stringify(axisPoint)}, x=${initialX})`);
+            await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...axisPoint, buttons: 0 });
+            await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...axisPoint, button: "left", buttons: 1, clickCount: 1 });
+            await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: axisPoint.x + 36, y: axisPoint.y, button: "left", buttons: 1, clickCount: 1, deltaX: 36, deltaY: 0 });
+            await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: axisPoint.x + 36, y: axisPoint.y, button: "left", buttons: 0, clickCount: 1 });
+            const moved = await cdp.poll(`(() => {
+                const field = [...document.querySelectorAll('[data-director-property-inspector] label')].find((label) => (label.innerText || '').trim() === '摄影机位置');
+                return Math.abs(Number(field?.querySelector('input')?.value) - ${initialX}) > 0.05;
+            })()`, "camera drag updates position field", 5000);
+            assert(moved, "I3 dragging the camera X gizmo commits a matching inspector position");
+            const aidFollowed = await cdp.poll(`Math.abs((document.querySelector('[data-director-camera-gizmo-target]')?.getBoundingClientRect().left ?? ${initialLabelX}) - ${initialLabelX}) > 1`, "camera frustum/label follows live transform", 5000);
+            assert(aidFollowed, "I4 camera label and frustum follow the dragged camera body");
+            const stillSelected = await cdp.evaluate(`!!document.querySelector('[data-director-camera-gizmo-target]')`);
+            assert(stillSelected, "I5 camera remains selected after its transform commits");
+            await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "r", code: "KeyR", text: "r", windowsVirtualKeyCode: 82 });
+            await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "r", code: "KeyR", windowsVirtualKeyCode: 82 });
+            const rotateMode = await cdp.poll(`!!document.querySelector('[aria-label="导演台视口工具"] button[aria-label="旋转"]')`, "camera rotation transform mode", 5000);
+            if (!rotateMode) throw new Error("I: rotate transform mode could not be selected");
+            const rotationPoint = await cdp.evaluate(`(() => {
+                const label = document.querySelector('[data-director-camera-gizmo-target]')?.getBoundingClientRect();
+                return label ? { x: Math.round(label.left + label.width / 2 + 90), y: Math.round(label.bottom + 20) } : null;
+            })()`);
+            if (!rotationPoint) throw new Error("I: camera rotation ring not available");
+            await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...rotationPoint, buttons: 0 });
+            await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...rotationPoint, button: "left", buttons: 1, clickCount: 1 });
+            await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: rotationPoint.x + 2, y: rotationPoint.y + 28, button: "left", buttons: 1, clickCount: 1, deltaX: 2, deltaY: 28 });
+            await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: rotationPoint.x + 2, y: rotationPoint.y + 28, button: "left", buttons: 0, clickCount: 1 });
+            const rotationAffectsFraming = await cdp.poll(`document.querySelector('[data-director-camera-gizmo-target]')?.getAttribute('data-director-camera-look-at-mode') === 'rotation'`, "camera rotation changes the active look-at semantics", 5000);
+            assert(rotationAffectsFraming, "I6 rotating the camera updates the actual view direction mode");
+        }
+        if (process.env.DIRECTOR_E2E_CAMERA_SCREENSHOT) {
+            const screenshot = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+            writeFileSync(process.env.DIRECTOR_E2E_CAMERA_SCREENSHOT, Buffer.from(screenshot.data, "base64"));
+        }
+    }
+    assert(cdp.problems.length === 0, "I6 no browser problems in camera manipulation scenario", JSON.stringify(cdp.problems));
+}
+
 /**
  * 场景 B：本地 triangle glTF。
  * 判据是集成层面的稳定窗口：5s 内不出现任何失败态且 canvas 持续可用。
@@ -1034,6 +1274,88 @@ async function localModel(cdp, baseUrl) {
     assert(stable.canvasUsable, "B8 5s 稳定窗口内无失败且 canvas 持续可用");
 
     assert(cdp.problems.length === 0, "B9 no browser problems in scenario B", JSON.stringify(cdp.problems));
+}
+
+/** Offline real GLTF animation: exercise clip selection, FPS-snapped start time, timeline placement and rendered motion. */
+async function animatedPersonMotionClip(cdp, baseUrl) {
+    console.log("\n=== G. animated person motion clip ===");
+    await cdp.navigateFresh(`${baseUrl}/dev/director-repro`);
+    await prepareP0Fixture(cdp, "G");
+    const injected = await cdp.click('[data-testid="inject-animated-person"]');
+    assert(injected, "G1 offline animated person injection control works");
+    const objectReady = await cdp.poll(`(document.querySelector('[data-testid="object-count"]')?.textContent || '').includes('4')`, "animated person injected", 10000);
+    assert(objectReady, "G2 same-origin animated person added once");
+    const opened = await cdp.click('[data-testid="toggle-workbench"]');
+    if (!opened) throw new Error("G: workbench not opened");
+    const workbenchReady = await cdp.poll(`!!document.querySelector('[data-director-workbench="true"]')`, "animated workbench mounted", 20000);
+    assert(workbenchReady, "G3 real workbench opened for animated person");
+    const tree = await openSceneTree(cdp);
+    assert(tree, "G4 scene tree opened");
+    const rowSelector = '[data-director-scene-row][data-director-row-label="离线动画人物"] button:first-child';
+    const rowReady = await cdp.poll(`!!document.querySelector(${JSON.stringify(rowSelector)})`, "animated person scene row", 10000);
+    assert(rowReady, "G5 animated person is selectable in scene tree");
+    await cdp.click(rowSelector);
+
+    const navigation = await openDirectorNavigation(cdp);
+    const poseMode = navigation && await cdp.clickText("姿态", '[role="menuitem"]');
+    if (!poseMode) throw new Error("G: pose mode menu item not clickable");
+    const clipSelectorReady = await cdp.poll(`!!document.querySelector('[aria-label="动作片段"]')`, "loaded motion clip inspector", 30000);
+    assert(clipSelectorReady, "G6 GLTFLoader exposed its real animation clip to the inspector");
+    const selectClicked = await cdp.click('[aria-label="动作片段"]');
+    assert(selectClicked, "G6a action clip selector opens from its accessible name");
+    const optionReady = await cdp.poll(`!![...document.querySelectorAll('.ant-select-item-option-content')].find((item) => (item.textContent || '').trim() === '手臂摆动')`, "motion clip option", 5000);
+    const selectorDebug = optionReady ? null : await cdp.evaluate(`(() => ({
+        controls: [...document.querySelectorAll('[aria-label="动作片段"]')].map((item) => ({ tag: item.tagName, role: item.getAttribute('role'), html: item.outerHTML.slice(0, 700) })),
+        options: [...document.querySelectorAll('[role="option"]')].map((item) => item.textContent?.trim()),
+        menus: [...document.querySelectorAll('.ant-select-dropdown')].map((item) => ({ text: item.innerText, display: getComputedStyle(item).display, visibility: getComputedStyle(item).visibility })),
+    }))()`);
+    assert(optionReady, "G7 animated asset offers 手臂摆动 clip", JSON.stringify(selectorDebug));
+    const optionDebug = await cdp.evaluate(`(() => ({ contents: [...document.querySelectorAll('.ant-select-dropdown *')].filter((item) => item.childElementCount === 0 && (item.textContent || '').trim() === '手臂摆动').map((item) => ({ tag: item.tagName, cls: item.className, role: item.getAttribute('role'), html: item.outerHTML.slice(0, 500), rect: (() => { const r = item.getBoundingClientRect(); return { x:r.x,y:r.y,w:r.width,h:r.height }; })(), hit: (() => { const r=item.getBoundingClientRect(); return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.outerHTML.slice(0,250) })() })) }))()`);
+    const selected = await cdp.clickOptionContent("手臂摆动");
+    if (!selected) console.log(`      motion option DOM: ${JSON.stringify(optionDebug)}`);
+    if (!selected) throw new Error("G: motion clip option not clickable");
+    const selectedClip = await cdp.poll(`[...document.querySelectorAll('.ant-select-selection-item')].some((item) => item.textContent?.trim() === '手臂摆动')`, "selected motion clip", 5000);
+    assert(selectedClip, "G7 animated asset offers and selects 手臂摆动 clip");
+    const startInputReady = await cdp.poll(`!!document.querySelector('input[aria-label="动作开始时间"]')`, "motion start control", 5000);
+    assert(startInputReady, "G8 selecting a clip reveals its start-time control");
+    const startInput = await cdp.click('input[aria-label="动作开始时间"]');
+    if (!startInput) throw new Error("G: motion start input not clickable");
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Meta", code: "MetaLeft", modifiers: 4 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "a", code: "KeyA", modifiers: 4 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "a", code: "KeyA", modifiers: 4 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Meta", code: "MetaLeft", modifiers: 0 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "1", code: "Digit1", text: "1", unmodifiedText: "1" });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "1", code: "Digit1" });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: ".", code: "Period", text: ".", unmodifiedText: "." });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: ".", code: "Period" });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "2", code: "Digit2", text: "2", unmodifiedText: "2" });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "2", code: "Digit2" });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "5", code: "Digit5", text: "5", unmodifiedText: "5" });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "5", code: "Digit5" });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    const snapped = await cdp.poll(`document.querySelector('input[aria-label="动作开始时间"]')?.value === '1.25'`, "motion start snapped to frame", 5000);
+    const inputDebug = snapped ? null : await cdp.evaluate(`(() => ({ value: document.querySelector('input[aria-label="动作开始时间"]')?.value, html: document.querySelector('input[aria-label="动作开始时间"]')?.outerHTML, timeline: document.querySelector('.director-sequencer')?.outerHTML.slice(0, 500) }))()`);
+    assert(snapped, "G9 start time is editable and retained on the 24fps frame grid", JSON.stringify(inputDebug));
+    const timelinePlacement = await cdp.evaluate(`(() => {
+        const row = [...document.querySelectorAll('.director-sequencer-row')].find((item) => item.querySelector('.director-sequencer-label')?.textContent?.trim() === '动作片段');
+        const clip = row?.querySelector('.director-sequencer-clip');
+        return { left: clip?.style.left || '', width: clip?.style.width || '', label: clip?.textContent?.trim() || '' };
+    })()`);
+    assert(timelinePlacement.left === "31.25%" && timelinePlacement.label.includes("手臂摆动"), "G10 action clip position follows its start time on the timeline", JSON.stringify(timelinePlacement));
+
+    const canvasRect = await cdp.evaluate(`(() => { const rect = document.querySelector('.director-viewport-shell canvas')?.getBoundingClientRect(); return rect && { x: rect.x, y: rect.y, width: rect.width, height: rect.height }; })()`);
+    if (!canvasRect) throw new Error("G: rendered canvas unavailable for motion comparison");
+    const before = await cdp.send("Page.captureScreenshot", { format: "png", clip: { ...canvasRect, scale: 1 } });
+    const trackClicked = await cdp.click('.director-sequencer-ruler');
+    if (!trackClicked) throw new Error("G: preview timeline not clickable");
+    const moved = await cdp.poll(`document.querySelector('.director-sequencer-playhead')?.style.left === '50%'`, "timeline playhead advanced to two seconds", 5000);
+    const afterRect = await cdp.evaluate(`(() => { const rect = document.querySelector('.director-viewport-shell canvas')?.getBoundingClientRect(); return rect && { x: rect.x, y: rect.y, width: rect.width, height: rect.height }; })()`);
+    const after = afterRect && await cdp.send("Page.captureScreenshot", { format: "png", clip: { ...afterRect, scale: 1 } });
+    assert(trackClicked && moved && Boolean(after) && before.data !== after.data, "G11 scrubbing the timeline visibly changes the animated GLTF render");
+    assert(cdp.problems.length === 0, "G12 no browser errors while playing an offline GLTF animation", JSON.stringify(cdp.problems));
+    const closed = await cdp.click('[aria-label="关闭导演台"]');
+    if (!closed) throw new Error("G: close workbench failed");
 }
 
 /**
@@ -1339,7 +1661,7 @@ async function main() {
         cdp = await connectCdp(cdpPort);
         console.log("      CDP connected (Runtime, Page, Log, Network enabled)");
 
-        const allScenarios = [smokeWorkbench, localModel, missingRetry, deleteWhileLoading, webglLossRestore, saveFailureCloseGuard];
+        const allScenarios = [smokeWorkbench, sideFollowPreset, actorPoseInspector, cameraDirectManipulation, localModel, missingRetry, deleteWhileLoading, webglLossRestore, saveFailureCloseGuard];
         const selectedScenario = process.env.DIRECTOR_E2E_SCENARIO;
         const scenarios = selectedScenario ? allScenarios.filter((scenario) => scenario.name === selectedScenario) : allScenarios;
         if (selectedScenario && scenarios.length === 0) throw new Error(`Unknown DIRECTOR_E2E_SCENARIO: ${selectedScenario}`);

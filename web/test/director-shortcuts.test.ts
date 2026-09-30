@@ -29,6 +29,12 @@ describe("变换模式快捷键", () => {
 });
 
 describe("对象操作快捷键", () => {
+    test("Shift+A 打开添加到场景菜单，普通 A 不触发", () => {
+        expect(resolveDirectorShortcut(press({ key: "A", shiftKey: true }))).toEqual({ kind: "open-add-menu" });
+        expect(resolveDirectorShortcut(press({ key: "a" }))).toBeNull();
+        expect(resolveDirectorShortcut(press({ key: "A", shiftKey: true, isInteractiveTarget: true }))).toBeNull();
+    });
+
     test("Delete 与 Backspace 都删除选中对象", () => {
         expect(resolveDirectorShortcut(press({ key: "Delete" }))).toEqual({ kind: "delete-selected" });
         expect(resolveDirectorShortcut(press({ key: "Backspace" }))).toEqual({ kind: "delete-selected" });

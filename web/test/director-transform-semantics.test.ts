@@ -7,6 +7,8 @@ import {
     directorTransformDelta,
     resolveDirectorCameraAlignment,
     resolveDirectorCameraMoveKeyframes,
+    resolveDirectorCameraMoveLookAtMode,
+    resolveDirectorCameraMoveTransform,
     resolveDirectorKeyframeRecord,
     resolveDirectorObjectTransformEdit,
     snapDirectorTime,
@@ -55,6 +57,27 @@ describe("摄影机对齐当前视图", () => {
 });
 
 describe("生成摄影机运镜首尾帧", () => {
+    test("推进、拉远和环绕相对当前焦点计算；摇镜与俯仰旋转摄影机而不平移", () => {
+        const start = transform([0, 2, 0]);
+        const target: [number, number, number] = [10, 2, 0];
+        const pushed = resolveDirectorCameraMoveTransform(start, target, "push_in");
+        const pulled = resolveDirectorCameraMoveTransform(start, target, "pull_out");
+        const panned = resolveDirectorCameraMoveTransform(start, target, "pan_right");
+        const tilted = resolveDirectorCameraMoveTransform(start, target, "tilt_up");
+        const orbited = resolveDirectorCameraMoveTransform(start, target, "orbit_left");
+
+        expect(pushed.position).toEqual([2, 2, 0]);
+        expect(pulled.position).toEqual([-2, 2, 0]);
+        expect(panned.position).toEqual(start.position);
+        expect(panned.rotation[1]).toBeLessThan(0);
+        expect(tilted.position).toEqual(start.position);
+        expect(tilted.rotation[0]).toBeGreaterThan(0);
+        expect(resolveDirectorCameraMoveLookAtMode("coordinates", "pan_left")).toBe("rotation");
+        expect(resolveDirectorCameraMoveLookAtMode("object", "orbit_left")).toBe("object");
+        expect(new Vector3(...orbited.position).distanceTo(new Vector3(...target))).toBeCloseTo(10);
+        expect(orbited.position[2]).toBeGreaterThan(0);
+    });
+
     test("保留手工中间帧、已有 id 与 easing，只更新首尾 transform", () => {
         const existing: DirectorKeyframe[] = [{ ...keyframe("start", 0, transform([9, 0, 0])), easing: "step" }, { ...keyframe("manual", 1, transform([4, 2, 0])), easing: "smooth" }, keyframe("end", 2, transform([8, 0, 0]))];
         const next = resolveDirectorCameraMoveKeyframes(existing, transform([0, 0, 0]), transform([2, 0, 0]), 2);

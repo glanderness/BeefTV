@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { projectDirectorWebgl, readDirectorReproRuntime, releaseProbeContext, safeReproText } from "../src/lib/canvas/director/director-repro-runtime";
-import { DIRECTOR_REPRO_LOCAL_MODEL_URL, DIRECTOR_REPRO_MATRIX, DIRECTOR_REPRO_MISSING_MODEL_URL, createDirectorReproActorScene, createDirectorReproScene, directorReproSceneIsOffline, injectDirectorReproModel } from "../src/lib/canvas/director/director-repro-fixture";
+import { DIRECTOR_REPRO_ANIMATED_PERSON_URL, DIRECTOR_REPRO_LOCAL_MODEL_URL, DIRECTOR_REPRO_MATRIX, DIRECTOR_REPRO_MISSING_MODEL_URL, createDirectorReproActorScene, createDirectorReproScene, directorReproSceneIsOffline, injectDirectorReproAnimatedPerson, injectDirectorReproModel } from "../src/lib/canvas/director/director-repro-fixture";
 import { DIRECTOR_PLACEMENT_MARGIN, directorObjectFootprint } from "../src/lib/canvas/director/director-placement";
 import type { DirectorObject } from "../src/types/director";
 
@@ -306,6 +306,16 @@ describe("fixture 确定性与离线性", () => {
         expect(scene.objects[0].url).toBeUndefined();
         expect(scene.objects[0].rig).toEqual({ status: "unmapped", boneMap: {}, animationNames: [] });
         expect(scene.shots.some((shot) => shot.id === scene.activeShotId)).toBe(true);
+    });
+
+    test("动画人物复现夹具使用可重复注入的同源 GLTF 资源", () => {
+        const base = createDirectorReproScene();
+        const scene = injectDirectorReproAnimatedPerson(base);
+        const actor = scene.objects.find((object) => object.id === "repro-animated-person");
+        expect(actor).toMatchObject({ name: "离线动画人物", kind: "model", url: DIRECTOR_REPRO_ANIMATED_PERSON_URL, mimeType: "model/gltf+json" });
+        expect(DIRECTOR_REPRO_ANIMATED_PERSON_URL.startsWith("/")).toBe(true);
+        expect(injectDirectorReproAnimatedPerson(scene).objects.filter((object) => object.id === "repro-animated-person")).toHaveLength(1);
+        expect(base.objects.some((object) => object.id === "repro-animated-person")).toBe(false);
     });
 
     test("对象初始不重叠，便于复现连续新增语义", () => {
