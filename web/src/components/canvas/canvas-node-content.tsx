@@ -263,12 +263,23 @@ function ErrorContent({ node, theme, onRetry, onReloadResource, onOpenTaskDetail
     };
     const submissionUncertain = isGenerationTaskSubmissionUncertain(errorDisplayTask) || explanation.uncertain;
     return (
-        <div className="flex max-w-[260px] flex-col items-center gap-3 px-5 text-center">
+        <div
+            data-canvas-no-zoom
+            data-canvas-wheel-scroll
+            className="canvas-node-error-content flex max-w-[260px] flex-col items-center gap-3 overflow-y-auto px-3 py-2 text-center"
+            style={{
+                boxSizing: "border-box",
+                width: `min(260px, calc(${Math.max(1, node.width)}px * var(--canvas-live-scale, 1)))`,
+                maxHeight: `calc(${Math.max(1, node.height)}px * var(--canvas-live-scale, 1))`,
+                transform: "scale(var(--canvas-live-inverse-scale, 1))",
+                transformOrigin: "center center",
+            }}
+        >
             <div className="w-full" style={{ color: submissionUncertain ? theme.node.text : theme.accent.danger }}>
                 <GenerationFailureNotice
                     compact
                     explanation={explanation}
-                    context={{ taskId: node.metadata?.taskId, model: node.metadata?.model, createdAt: node.metadata?.taskCreatedAt, stage: node.metadata?.taskStage }}
+                    context={{ taskId: node.metadata?.taskId, model: node.metadata?.model, createdAt: node.metadata?.taskCreatedAt, stage: node.metadata?.taskStage, providerRequestId: node.metadata?.taskProviderRequestId, failureDiagnostics: node.metadata?.taskFailureDiagnostics, errorSummary: node.metadata?.generationErrorSummary, completedAt: node.metadata?.taskCompletedAt, updatedAt: node.metadata?.taskUpdatedAt }}
                     onOpenDetails={node.metadata?.taskId && onOpenTaskDetails ? () => onOpenTaskDetails(node) : undefined}
                     onRetry={submissionUncertain || explanation.uncertain || explanation.category === "download_failed" ? undefined : onRetry ? () => onRetry(node) : undefined}
                     retryLabel={node.metadata?.isBatchRoot ? "重新生成失败项" : "重新生成"}

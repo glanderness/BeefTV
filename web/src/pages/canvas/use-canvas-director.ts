@@ -6,6 +6,7 @@ import { imageMetadata, videoMetadata } from "@/lib/canvas/canvas-generation-tas
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { createDirectorSceneFromTemplate, type DirectorTemplateId } from "@/lib/canvas/director/director-templates";
+import { directorCoverMetadata, shouldCaptureDirectorCover, shouldCommitDirectorCover } from "@/lib/canvas/director/director-cover-write";
 import { mergeDirectorOutputPreview, upsertDirectorSceneById } from "@/lib/canvas/director/director-session";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
@@ -57,6 +58,7 @@ export function useCanvasDirector({
 }: UseCanvasDirectorOptions) {
     const { message } = App.useApp();
     const projectIdRef = useRef<string | null>(projectId);
+    const coverRequestIdRef = useRef<string | null>(null);
     projectIdRef.current = projectId;
 
     useEffect(() => {
@@ -88,9 +90,9 @@ export function useCanvasDirector({
             directorShotId: shot.id,
         });
         node.title = `镜头 ${shotIndex}`;
-        node.height = 300;
+        node.width = 384;
+        node.height = 360;
         const nextNodes = [...nodesRef.current, node];
-        nodesRef.current = nextNodes;
         setNodes(nextNodes);
         setSelectedNodeIds(new Set([node.id]));
         setSelectedConnectionId(null);
@@ -120,6 +122,39 @@ export function useCanvasDirector({
     const saveDirectorScene = useCallback((scene: DirectorScene) => {
         updateProject(projectId, { directorScenes: upsertDirectorSceneById(currentDirectorScenes(projectId, directorScenes), scene) });
     }, [directorScenes, projectId, updateProject]);
+
+    const shouldCaptureCover = useCallback((scene: DirectorScene, shotId: string) => {
+        const node = nodesRef.current.find((item) => item.id === directorNodeId);
+        return Boolean(node && node.metadata?.directorShotId === shotId && shouldCaptureDirectorCover(node, scene));
+    }, [directorNodeId, nodesRef]);
+
+    const captureDirectorCover = useCallback(async ({ scene, shotId, beauty }: { scene: DirectorScene; shotId: string; beauty: Blob }) => {
+        const sourceNodeId = directorNodeId;
+        if (!sourceNodeId || !shouldCaptureCover(scene, shotId)) return;
+        const requestId = nanoid();
+        coverRequestIdRef.current = requestId;
+        const stillCurrent = () => {
+            const project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
+            return shouldCommitDirectorCover({
+                projectId,
+                currentProjectId: projectIdRef.current,
+                node: nodesRef.current.find((item) => item.id === sourceNodeId),
+                scene: project?.directorScenes.find((item) => item.id === scene.id),
+                shotId,
+                expectedSceneUpdatedAt: scene.updatedAt,
+                requestId,
+                latestRequestId: coverRequestIdRef.current || "",
+            });
+        };
+        if (!stillCurrent()) return;
+        const image = await uploadImage(beauty);
+        if (!stillCurrent()) return;
+        const nextNodes = nodesRef.current.map((item) => item.id === sourceNodeId
+            ? { ...item, metadata: { ...item.metadata, ...directorCoverMetadata(image, scene.updatedAt) } }
+            : item);
+        // setNodes stamps changes against the previous ref before updating it.
+        setNodes(nextNodes);
+    }, [directorNodeId, nodesRef, projectId, setNodes, shouldCaptureCover]);
 
     const applyDirectorOutput = useCallback(async (output: DirectorSceneOutput) => {
         const outputProjectId = projectId;
@@ -210,12 +245,11 @@ export function useCanvasDirector({
             if (assetId) return { ...item, metadata: { ...item.metadata, assetId } };
             return item.id === sourceNode.id ? { ...item, metadata: { ...item.metadata, ...directorMetadata } } : item;
         });
-        nodesRef.current = finalizedNodes;
         connectionsRef.current = nextConnections;
         setNodes(finalizedNodes);
         setConnections(nextConnections);
         saveDirectorScene(mergedScene);
     }, [connectionsRef, directorNodeId, domainProjectId, nodesRef, projectId, saveDirectorScene, setConnections, setNodes]);
 
-    return { applyDirectorOutput, createDirectorShot, openDirectorWorkbench, saveDirectorScene };
+    return { applyDirectorOutput, captureDirectorCover, createDirectorShot, openDirectorWorkbench, saveDirectorScene, shouldCaptureCover };
 }

@@ -177,6 +177,8 @@ export function generationTaskMetadata(task: GenerationTask): CanvasNodeMetadata
         taskCompletedAt: task.completedAt,
         taskDurationMs: task.startedAt && task.completedAt ? Math.max(0, Date.parse(task.completedAt) - Date.parse(task.startedAt)) : undefined,
         taskErrorCode: task.errorCode,
+        taskFailureDiagnostics: task.failureDiagnostics,
+        taskProviderRequestId: task.providerRequestId,
         taskOfficialStatus: task.officialStatus,
         taskReceiptRecorded: task.receiptRecorded,
         taskCreatedAt: task.createdAt || task.created_at,
@@ -191,6 +193,7 @@ export function resetGenerationTaskMetadata(metadata: CanvasNodeMetadata | undef
         status,
         errorDetails: undefined,
         generationErrorCode: undefined,
+        generationErrorSummary: undefined,
         resourceReloadAvailable: undefined,
         failedPromptFingerprint: undefined,
         failedInputFingerprint: undefined,
@@ -207,6 +210,8 @@ export function resetGenerationTaskMetadata(metadata: CanvasNodeMetadata | undef
     delete next.taskCompletedAt;
     delete next.taskDurationMs;
     delete next.taskErrorCode;
+    delete next.taskFailureDiagnostics;
+    delete next.taskProviderRequestId;
     delete next.taskOfficialStatus;
     delete next.taskReceiptRecorded;
     delete next.taskCreatedAt;

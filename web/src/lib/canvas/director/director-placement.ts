@@ -10,6 +10,14 @@ const MAX_RINGS = 24;
 const SAMPLES_PER_RING = 12;
 // 模型导入后被 normalizeModel 缩放到最大边 2，未知尺寸时按此保守占位。
 const MODEL_FOOTPRINT = 2;
+const GRID_STEP = 0.5;
+
+/** Ground grid is XZ-only: object height stays under its constructor/inspector's control. */
+export function snapDirectorGroundPosition(position: DirectorVec3, enabled: boolean): DirectorVec3 {
+    if (!enabled) return position;
+    const snap = (value: number) => Math.round(value / GRID_STEP) * GRID_STEP || 0;
+    return [snap(position[0]), position[1], snap(position[2])];
+}
 
 function baseFootprint(object: Pick<DirectorObject, "kind" | "primitive">): DirectorFootprint {
     if (object.kind === "actor" || object.primitive === "character") return { width: 0.8, depth: 0.8 };
@@ -56,7 +64,7 @@ function candidateOffsets() {
  * 隐藏对象同样占位；ring 采样耗尽时回退到「所有占位最右边界之外」的确定性位置，
  * 该位置在有限 existing 集合下必然不与任何 AABB 相交。
  */
-export function resolveDirectorPlacement(input: { object: Pick<DirectorObject, "kind" | "primitive" | "transform">; existing: Array<Pick<DirectorObject, "kind" | "primitive" | "transform">>; margin?: number }): DirectorVec3 {
+export function resolveDirectorPlacement(input: { object: Pick<DirectorObject, "kind" | "primitive" | "transform">; existing: Array<Pick<DirectorObject, "kind" | "primitive" | "transform">>; margin?: number; gridSnap?: boolean }): DirectorVec3 {
     const { object, existing } = input;
     const margin = input.margin ?? DIRECTOR_PLACEMENT_MARGIN;
     const desired = object.transform?.position ?? [0, 0, 0];
@@ -71,10 +79,11 @@ export function resolveDirectorPlacement(input: { object: Pick<DirectorObject, "
         return [{ footprint: directorObjectFootprint(item), position: [x, safeY, z] as DirectorVec3 }];
     });
     for (const [offsetX, offsetZ] of candidateOffsets()) {
-        const position: DirectorVec3 = [originX + offsetX, safeY, originZ + offsetZ];
+        const position = snapDirectorGroundPosition([originX + offsetX, safeY, originZ + offsetZ], input.gridSnap === true);
         if (!occupied.some((item) => overlaps({ footprint, position }, item, margin))) return position;
     }
-    return [clearRightOfAll(occupied, footprint, margin, originX), safeY, originZ];
+    const right = clearRightOfAll(occupied, footprint, margin, originX);
+    return [input.gridSnap ? Math.ceil(right / GRID_STEP) * GRID_STEP : right, safeY, input.gridSnap ? snapDirectorGroundPosition([0, safeY, originZ], true)[2] : originZ];
 }
 
 /**

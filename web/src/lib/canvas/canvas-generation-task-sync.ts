@@ -346,6 +346,8 @@ function findGenerationTaskNode(nodes: CanvasNodeData[], task: GenerationTask, t
 
 function completedTaskMetadata(task: GenerationTask): CanvasNodeMetadata {
     return {
+        taskFailureDiagnostics: task.failureDiagnostics,
+        taskProviderRequestId: task.providerRequestId,
         taskId: task.id,
         taskStatus: task.status,
         taskProgress: typeof task.progress === "number" && Number.isFinite(task.progress) ? Math.max(0, Math.min(100, Math.round(task.progress))) : 100,

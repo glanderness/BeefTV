@@ -19,6 +19,7 @@ type CanvasProjectStatusDialogsProps = {
     task: GenerationTask | null;
     taskLogs: TaskLog[];
     taskLoading: boolean;
+    taskError?: boolean;
     onCloseTask: () => void;
     onCancelTask?: (task: GenerationTask) => void;
     superResolveNode: CanvasNodeData | null;
@@ -31,7 +32,7 @@ type CanvasProjectStatusDialogsProps = {
     onConfirmClear: () => void;
 };
 
-export function CanvasProjectStatusDialogs({ theme, task, taskLogs, taskLoading, superResolveNode, previewNode, clearConfirmOpen, onCloseTask, onCancelTask, onCloseSuperResolve, onUseLocalUpscale, onClosePreview, onCancelClear, onConfirmClear }: CanvasProjectStatusDialogsProps) {
+export function CanvasProjectStatusDialogs({ theme, task, taskLogs, taskLoading, taskError, superResolveNode, previewNode, clearConfirmOpen, onCloseTask, onCancelTask, onCloseSuperResolve, onUseLocalUpscale, onClosePreview, onCancelClear, onConfirmClear }: CanvasProjectStatusDialogsProps) {
     const config = useEffectiveConfig();
     const previewSource = useResolvedPreviewSource(previewNode);
     return (
@@ -39,6 +40,7 @@ export function CanvasProjectStatusDialogs({ theme, task, taskLogs, taskLoading,
             <Modal title="任务详情" open={Boolean(task)} footer={null} width="min(920px, calc(100vw - 32px))" onCancel={onCloseTask}>
                 {task ? (
                     <div className="space-y-4 text-sm">
+                        {taskError ? <p role="status">任务详情暂时无法刷新，正在重试。</p> : null}
                         <div className="grid grid-cols-2 gap-3 rounded-lg border p-3" style={{ borderColor: theme.node.stroke, background: theme.node.panel }}>
                             <TaskDetailItem label="当前阶段" value={generationTaskStageLabel(task)} />
                             {generationTaskShowsProgress(task) ? <TaskDetailItem label="进度" value={`${task.progress ?? 0}%`} /> : null}

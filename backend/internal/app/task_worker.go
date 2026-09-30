@@ -227,6 +227,9 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 		default:
 		}
 		decryptedInput, decryptErr := s.decryptTaskInputJSON(task.InputJSON)
+		if s.shouldDeferImageRecovery(*task, err, providerSucceeded) {
+			return s.deferImageRecovery(*task)
+		}
 		if decryptErr == nil && s.shouldDeferVideoProviderTask(*task, decryptedInput, err) {
 			stage := "后台仍在生成"
 			message := "前台等待结束，上游视频仍在生成，将继续回查原任务"
@@ -235,7 +238,10 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 				stage = "等待上游任务同步"
 				message = "上游任务状态暂未同步，将继续回查原任务"
 			}
-			if deferErr := s.repo.DeferRunningTaskForProviderPoll(task.ID, task.LeaseOwner, stage, 15*time.Second); deferErr != nil {
+			if task.FailureDiagnostics != nil {
+				task.FailureDiagnostics.ExecutionResult = "pending"
+			}
+			if deferErr := s.repo.DeferRunningTaskForProviderPoll(task.ID, task.LeaseOwner, stage, 15*time.Second, task.FailureDiagnostics); deferErr != nil {
 				return deferErr
 			}
 			_ = s.log(task.UserID, task.ID, "info", message, task.PollStage)
@@ -244,7 +250,8 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 		if newAPIChannel2TaskSyncExpired(*task, err, time.Now()) {
 			err = errors.New("上游任务长时间未同步，已停止自动查询，请确认渠道任务状态后重试。")
 		}
-		if errors.Is(err, context.DeadlineExceeded) {
+		var imageRecovery imageRecoveryError
+		if errors.Is(err, context.DeadlineExceeded) && !errors.As(err, &imageRecovery) {
 			err = errors.New(taskTimeoutMessage(task.Type))
 		}
 		s.noteAgentMemoryCompactTask(*task, nil, err)
@@ -271,6 +278,9 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 		return terminalErr
 	}
 	if err := s.saveTaskCompletionWithinStorageQuota(task, resultJSON, opsJSON, len(canvasOps) > 0); err != nil {
+		if s.shouldDeferImageRecovery(*task, err, true) {
+			return s.deferImageRecovery(*task)
+		}
 		s.noteAgentMemoryCompactTask(*task, nil, err)
 		_, terminalErr := terminal.handleResultPersistenceFailure(task, err)
 		return terminalErr

@@ -347,6 +347,9 @@ export type CanvasNodeMetadata = {
     taskCompletedAt?: string;
     taskDurationMs?: number;
     taskErrorCode?: string;
+    generationErrorSummary?: string;
+    taskFailureDiagnostics?: import("@/lib/generation-error").GenerationFailureDiagnostics;
+    taskProviderRequestId?: string;
     taskOfficialStatus?: "pending" | "processing" | "completed" | "failed" | "cancelled";
     taskReceiptRecorded?: boolean;
     taskCreatedAt?: string;
@@ -415,6 +418,9 @@ export type CanvasNodeMetadata = {
     directorSceneId?: string;
     directorShotId?: string;
     directorPreviewNodeId?: string;
+    directorCoverStorageKey?: string;
+    directorCoverUrl?: string;
+    directorCoverSceneUpdatedAt?: string;
     directorDepthNodeId?: string;
     directorNormalNodeId?: string;
     directorClayVideoNodeId?: string;

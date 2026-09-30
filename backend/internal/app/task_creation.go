@@ -287,6 +287,9 @@ func (s *Service) validateRetryTaskType(userID string, taskType string, input ma
 	if parent.Type != taskType {
 		return BadAuthRequest(fmt.Sprintf("重试任务类型不一致：原任务为 %s，新任务为 %s", parent.Type, taskType))
 	}
+	if err := s.validateImageTaskRetry(parent); err != nil {
+		return err
+	}
 	return nil
 }
 

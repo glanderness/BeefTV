@@ -429,7 +429,7 @@ describe("desktop update controller", () => {
         third.stop();
     });
 
-    test("startup check failures keep the installed version and expose a working retry", async () => {
+    test("startup check failures keep the installed version and retry in the background", async () => {
         const mock = mockBinding(state({ status: "idle", currentVersion: "v1.5.1" }));
         mock.binding.CheckForUpdate = async () => {
             mock.calls.check += 1;
@@ -447,37 +447,91 @@ describe("desktop update controller", () => {
         expect(view.latest().state.status).toBe("error");
         expect(userFacingDesktopUpdateError(view.latest().state.error)).toBe("更新没有完成，请再试一次。");
         expect(view.latest().state.currentVersion).toBe("v1.5.1");
-        expect(shouldShowDesktopUpdaterControls(view.latest()!)).toBe(true);
+        expect(shouldShowDesktopUpdaterControls(view.latest()!)).toBe(false);
         mock.binding.CheckForUpdate = async () => {
             mock.calls.check += 1;
             return state({ status: "available", latestVersion: "v1.5.5" });
         };
-        await controller.retry();
+        await controller.check();
         expect(mock.calls.check).toBe(2);
         expect(view.latest().state.status).toBe("available");
         view.stop();
     });
 
-    test("an up-to-date desktop can manually check again after a new release", async () => {
+    test("an up-to-date desktop checks again in the background after a new release", async () => {
         const mock = mockBinding(state({ status: "idle", currentVersion: "v1.5.4", latestVersion: "v1.5.4" }));
         const controller = createDesktopUpdateController({ getBinding: () => mock.binding, isDesktopRuntime: () => true, scheduler: { interval: () => () => {} } });
         await controller.start();
-        expect(shouldShowDesktopUpdaterControls(controller.getSnapshot())).toBe(true);
-        expect(desktopUpdateActionLabel("idle")).toBe("检查更新");
+        expect(shouldShowDesktopUpdaterControls(controller.getSnapshot())).toBe(false);
         const successfulCheck = mock.binding.CheckForUpdate!;
         mock.binding.CheckForUpdate = async () => {
             mock.calls.check += 1;
             throw new Error("无法检查更新");
         };
-        await controller.retry();
+        await controller.check();
         expect(controller.getSnapshot().state.status).toBe("error");
         expect(controller.getSnapshot().state.latestVersion).toBe("v1.5.4");
         mock.binding.CheckForUpdate = successfulCheck;
         mock.setState(state({ status: "available", latestVersion: "v1.5.5" }));
-        await controller.retry();
+        await controller.check();
         expect(mock.calls.check).toBe(3);
         expect(mock.calls.download).toBe(0);
         expect(controller.getSnapshot().state.status).toBe("available");
+        expect(shouldShowDesktopUpdaterControls(controller.getSnapshot())).toBe(true);
+        controller.dispose();
+    });
+
+    test("background check refreshes an available release before download", async () => {
+        const mock = mockBinding(state({ status: "available", latestVersion: "v1.5.2" }));
+        const controller = createDesktopUpdateController({ getBinding: () => mock.binding, isDesktopRuntime: () => true, scheduler: { interval: () => () => {} } });
+        await controller.start();
+        mock.setState(state({ status: "available", latestVersion: "v1.5.3" }));
+        await controller.check();
+        expect(mock.calls.check).toBe(2);
+        expect(controller.getSnapshot().state.latestVersion).toBe("v1.5.3");
+        controller.dispose();
+    });
+
+    test("one click downloads a verified update then installs only after saving", async () => {
+        const mock = mockBinding(state({ status: "available", latestVersion: "v1.5.2" }));
+        mock.holdDownload();
+        let persistCalls = 0;
+        const controller = createDesktopUpdateController({
+            getBinding: () => mock.binding,
+            isDesktopRuntime: () => true,
+            persistWorkspace: async () => { persistCalls += 1; },
+            scheduler: { interval: () => () => {} },
+        });
+        await controller.start();
+        const update = controller.downloadAndInstall();
+        expect(mock.calls.download).toBe(1);
+        expect(mock.calls.install).toBe(0);
+        mock.finishDownload(state({ status: "ready", latestVersion: "v1.5.2" }));
+        await update;
+        expect(persistCalls).toBe(1);
+        expect(mock.calls.install).toBe(1);
+        controller.dispose();
+    });
+
+    test("one click does not install if download fails and can retry", async () => {
+        const mock = mockBinding(state({ status: "available", latestVersion: "v1.5.2" }));
+        mock.holdDownload();
+        const controller = createDesktopUpdateController({
+            getBinding: () => mock.binding,
+            isDesktopRuntime: () => true,
+            persistWorkspace: async () => undefined,
+            scheduler: { interval: () => () => {} },
+        });
+        await controller.start();
+        const first = controller.downloadAndInstall();
+        mock.failDownload(new Error("network failed"));
+        await first;
+        expect(controller.getSnapshot().state.status).toBe("error");
+        expect(mock.calls.install).toBe(0);
+        mock.setState(state({ status: "ready", latestVersion: "v1.5.2" }));
+        await controller.downloadAndInstall();
+        expect(mock.calls.download).toBe(2);
+        expect(mock.calls.install).toBe(1);
         controller.dispose();
     });
 });

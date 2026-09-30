@@ -22,10 +22,11 @@ describe("desktop update UI contract", () => {
         expect(account).toContain("showVersion");
         expect(changelog).toContain("查看更新日志");
         expect(shell).toContain("useDesktopUpdateBootstrap");
-        expect(update).toContain("AppModal");
-        expect(update).toContain("保存并安装");
-        expect(update).toContain("安装后应用会关闭再打开。");
-        expect(update).toContain("请先把画布保存到本机，避免未完成的内容丢失。");
+        expect(update).toContain("AppChangelogButton");
+        expect(update).toContain("showVersion");
+        expect(update).toContain("updater.downloadAndInstall()");
+        expect(update).not.toContain("AppModal");
+        expect(update).not.toContain("检查更新");
         expect(update).toContain('aria-live="polite"');
         expect(update).toContain("useReducedMotion");
         expect(update).not.toContain("Modal.confirm");
@@ -49,6 +50,8 @@ describe("desktop update UI contract", () => {
         expect(service).toContain("CheckForUpdate");
         expect(service).toContain("DownloadUpdate");
         expect(service).toContain("InstallUpdate");
+        expect(hook).toContain("DESKTOP_UPDATE_CHECK_INTERVAL_MS");
+        expect(hook).toContain("controller.check()");
         expect(service).toContain("flushCanvasStorePersistence");
         expect(runtime).toContain("UpdateStatus");
         expect(runtime).toContain("currentVersion");

@@ -68,73 +68,28 @@ describe("buildTimelineRenderPlan 片段与黑场对齐", () => {
         expect(concatStartOffsetsMs(plan)).toEqual([0, 15_000, 25_000]);
     });
 
-    test("中间片段无源素材（节点已删除）：该片段跨度补黑场，顺序与总长保持时间线语义", () => {
-        const project = timeline([videoClip("a", "node-a", 0, 15_000), videoClip("b", "node-b", 15_000, 4_000), videoClip("c", "node-c", 19_000, 15_000)]);
-        const plan = buildTimelineRenderPlan(project, [source("node-a"), source("node-c")], { width: 1280, height: 720, fps: 30, outputName: "out.mp4" });
-        // 黑场 4s 顶替无源的 B，插在 A 与 C 之间：修复前为 [trim-0,trim-2,gap-2]（黑场跑到了片尾）。
-        expect(plan.concatEntries).toEqual(["trim-0.mp4", "gap-2.mp4", "trim-2.mp4"]);
-        const gaps = plan.steps.filter((step) => step.kind === "gap");
-        expect(gaps).toHaveLength(1);
-        expect(gaps[0].args.join(" ")).toContain("d=4");
-        expect(concatTotalSeconds(plan)).toBe(34);
-        // C 的起点 = 15s + 4s 黑场 = 19s，与时间线一致，后续字幕不漂移。
-        expect(concatStartOffsetsMs(plan)).toEqual([0, 15_000, 19_000]);
+    test("缺少任何媒体源必须明确失败", () => {
+        const project = timeline([videoClip("a", "node-a", 0, 1000), videoClip("b", "node-b", 1000, 1000)]);
+        expect(() => buildTimelineRenderPlan(project, [source("node-a")])).toThrow("找不到素材");
     });
 
-    test("无源片段前有空隙：只补一个 gap，黑场不重复、成片不超长", () => {
-        // a(0-15s 有源)、b(20-24s 无源)、c(24-39s 有源)：b 前有 5s 空隙。
-        // 修复前 b 会先产出 gap(d=5)，c 又按全跨度产出 gap(d=9)，黑场重复计长、成片 44s≠39s。
-        const project = timeline([videoClip("a", "node-a", 0, 15_000), videoClip("b", "node-b", 20_000, 4_000), videoClip("c", "node-c", 24_000, 15_000)]);
-        const plan = buildTimelineRenderPlan(project, [source("node-a"), source("node-c")], { width: 1280, height: 720, fps: 30, outputName: "out.mp4" });
-        const gaps = plan.steps.filter((step) => step.kind === "gap");
-        expect(gaps).toHaveLength(1);
-        // 单个 gap 覆盖 b 的跨度 + 空隙 = 24s - 15s = 9s。
-        expect(gaps[0].args.join(" ")).toContain("d=9");
-        expect(plan.concatEntries).toEqual(["trim-0.mp4", "gap-2.mp4", "trim-2.mp4"]);
-        expect(concatTotalSeconds(plan)).toBe(39);
-        expect(concatStartOffsetsMs(plan)).toEqual([0, 15_000, 24_000]);
+    test("重叠视频必须明确失败", () => {
+        expect(() => buildTimelineRenderPlan(timeline([videoClip("a", "a", 0, 2000), videoClip("b", "b", 1000, 1000)]), [source("a"), source("b")])).toThrow("重叠");
     });
 
-    test("连续两个无源片段：合并为一个黑场，跨度等于两段之和", () => {
-        // a(0-15s 有源)、b(15-19s 无源)、c(19-27s 无源)、d(27-42s 有源)。
-        const project = timeline([videoClip("a", "node-a", 0, 15_000), videoClip("b", "node-b", 15_000, 4_000), videoClip("c", "node-c", 19_000, 8_000), videoClip("d", "node-d", 27_000, 15_000)]);
-        const plan = buildTimelineRenderPlan(project, [source("node-a"), source("node-d")], { width: 1280, height: 720, fps: 30, outputName: "out.mp4" });
-        const gaps = plan.steps.filter((step) => step.kind === "gap");
-        expect(gaps).toHaveLength(1);
-        // 15s→27s 之间（b+c）只补一个黑场 d=12。
-        expect(gaps[0].args.join(" ")).toContain("d=12");
-        expect(plan.concatEntries).toEqual(["trim-0.mp4", "gap-3.mp4", "trim-3.mp4"]);
-        expect(concatTotalSeconds(plan)).toBe(42);
-        expect(concatStartOffsetsMs(plan)).toEqual([0, 15_000, 27_000]);
+    test("独立配音与BGM包含裁剪、延迟、音量和淡入淡出", () => {
+        const project = timeline([videoClip("v", "v", 0, 3000), { ...videoClip("voice", "voice", 500, 1500), kind: "audio", sourceStartMs: 100, volume: 0, fadeInMs: 100, fadeOutMs: 200 }, { ...videoClip("bgm", "bgm", 0, 3000), kind: "audio" }]);
+        const plan = buildTimelineRenderPlan(project, [source("v"), source("voice"), source("bgm")]);
+        const mix = plan.steps.find((step) => step.kind === "mix")!;
+        expect(mix.args.join(" ")).toContain("atrim=start=0.1:duration=1.5");
+        expect(mix.args.join(" ")).toContain("volume=0,afade=t=in:d=0.1,afade=t=out:st=1.3:d=0.2,adelay=500:all=1");
+        expect(mix.args.join(" ")).toContain("amix=inputs=3:normalize=0");
     });
 
-    test("开头无源且起点非零：单个 gap 从 0 补到首个有源片段起点", () => {
-        // x(5-9s 无源)、a(9-24s 有源)：开头到 a 之间应只有一个 d=9 的黑场。
-        const project = timeline([videoClip("x", "node-x", 5_000, 4_000), videoClip("a", "node-a", 9_000, 15_000)]);
-        const plan = buildTimelineRenderPlan(project, [source("node-a")], { width: 1280, height: 720, fps: 30, outputName: "out.mp4" });
-        const gaps = plan.steps.filter((step) => step.kind === "gap");
-        expect(gaps).toHaveLength(1);
-        expect(gaps[0].args.join(" ")).toContain("d=9");
-        expect(plan.concatEntries).toEqual(["gap-1.mp4", "trim-1.mp4"]);
-        expect(concatTotalSeconds(plan)).toBe(24);
-        expect(concatStartOffsetsMs(plan)).toEqual([0, 9_000]);
-    });
-
-    test("首个片段无源素材：开头补黑场，后续片段位置保持", () => {
-        const project = timeline([videoClip("b", "node-b", 0, 4_000), videoClip("c", "node-c", 4_000, 15_000)]);
-        const plan = buildTimelineRenderPlan(project, [source("node-c")], { width: 1280, height: 720, fps: 30, outputName: "out.mp4" });
-        expect(plan.concatEntries).toEqual(["gap-1.mp4", "trim-1.mp4"]);
-        const gaps = plan.steps.filter((step) => step.kind === "gap");
-        expect(gaps).toHaveLength(1);
-        expect(gaps[0].args.join(" ")).toContain("d=4");
-        expect(concatTotalSeconds(plan)).toBe(19);
-    });
-
-    test("无任何源素材：不产出 concat 与最终输出步骤", () => {
-        const project = timeline([videoClip("a", "node-a", 0, 15_000)]);
-        const plan = buildTimelineRenderPlan(project, [], { width: 1280, height: 720, fps: 30, outputName: "out.mp4" });
-        expect(plan.concatEntries).toEqual([]);
-        expect(plan.steps.some((step) => step.output === "out.mp4")).toBe(false);
+    test("隐藏与静音音轨无需加载源", () => {
+        const project = timeline([videoClip("v", "v", 0, 1000), { ...videoClip("a", "a", 0, 1000), kind: "audio", trackId: "muted" }]);
+        project.tracks = [{ id: "muted", kind: "audio", label: "BGM", order: 1, muted: true }];
+        expect(buildTimelineRenderPlan(project, [source("v")]).steps.some((step) => step.kind === "mix")).toBe(false);
     });
 });
 

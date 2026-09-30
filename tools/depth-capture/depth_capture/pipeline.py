@@ -88,8 +88,10 @@ def encode_depth_preview(
 def validate_input(metadata: VideoMetadata, max_seconds: float) -> None:
     if metadata.duration <= 0 or metadata.frames <= 0 or metadata.fps <= 0:
         raise ValueError("输入视频缺少有效的视频帧或时间信息")
-    if metadata.duration > max_seconds + (1 / metadata.fps):
-        raise ValueError(f"输入视频超过 MVP 的 {max_seconds:g} 秒限制")
+    # Match the application's 100 ms container-metadata tolerance, including
+    # low-frame-rate inputs where a whole-frame tolerance could add seconds.
+    if metadata.duration > max_seconds + 0.1:
+        raise ValueError(f"视频超过 {max_seconds:g} 秒，请先剪辑缩短")
 
 
 def build_output_paths(output_dir: Path, input_path: Path) -> tuple[Path, Path]:

@@ -5,10 +5,15 @@ import { DIRECTOR_INTERACTIVE_SELECTOR, blocksDirectorShortcut, isDirectorIntera
 const press = (overrides: Partial<DirectorKeyEvent> & { key: string }): DirectorKeyEvent => ({ ...overrides });
 
 describe("变换模式快捷键", () => {
-    test("W/E/R 映射到平移/旋转/缩放", () => {
+    test("与 LibTV 一致：V/R/F 映射到平移/旋转/缩放", () => {
+        expect(resolveDirectorShortcut(press({ key: "v" }))).toEqual({ kind: "transform-mode", mode: "translate" });
+        expect(resolveDirectorShortcut(press({ key: "r" }))).toEqual({ kind: "transform-mode", mode: "rotate" });
+        expect(resolveDirectorShortcut(press({ key: "f" }))).toEqual({ kind: "transform-mode", mode: "scale" });
+    });
+
+    test("保留不冲突的旧快捷键 W/E", () => {
         expect(resolveDirectorShortcut(press({ key: "w" }))).toEqual({ kind: "transform-mode", mode: "translate" });
         expect(resolveDirectorShortcut(press({ key: "e" }))).toEqual({ kind: "transform-mode", mode: "rotate" });
-        expect(resolveDirectorShortcut(press({ key: "r" }))).toEqual({ kind: "transform-mode", mode: "scale" });
     });
 
     test("大写与 Shift 组合仍然生效", () => {
@@ -17,7 +22,7 @@ describe("变换模式快捷键", () => {
     });
 
     test("带 Ctrl/Cmd 时不再当作变换模式", () => {
-        // Ctrl+R 是刷新，绝不能被解析成 scale。
+        // Ctrl+R 是刷新，绝不能被解析成旋转。
         expect(resolveDirectorShortcut(press({ key: "r", ctrlKey: true }))).toBeNull();
         expect(resolveDirectorShortcut(press({ key: "w", metaKey: true }))).toBeNull();
     });
@@ -34,8 +39,7 @@ describe("对象操作快捷键", () => {
         expect(resolveDirectorShortcut(press({ key: "Escape" }))).toEqual({ kind: "deselect" });
     });
 
-    test("没有执行路径的键不解析：F 聚焦、F2 重命名、Ctrl+D 复制", () => {
-        expect(resolveDirectorShortcut(press({ key: "f" }))).toBeNull();
+    test("没有执行路径的键不解析：F2 重命名、Ctrl+D 复制", () => {
         expect(resolveDirectorShortcut(press({ key: "F2" }))).toBeNull();
         expect(resolveDirectorShortcut(press({ key: "d", ctrlKey: true }))).toBeNull();
         expect(resolveDirectorShortcut(press({ key: "d", metaKey: true }))).toBeNull();

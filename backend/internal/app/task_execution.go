@@ -22,6 +22,10 @@ func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]
 	task.InputJSON = decryptedInput
 	ctx = withTaskExecutionID(ctx, task.ID)
 	ctx = withProviderAnalytics(ctx, s, task)
+	ctx = context.WithValue(ctx, imageTaskContext{}, task)
+	if result, recovered, err := s.recoverImageSubmission(ctx, task); recovered {
+		return result, nil, err
+	}
 
 	if task.Type == "canvas_text" || task.Type == "canvas_image" || task.Type == "canvas_video" || task.Type == "canvas_audio" {
 		result, err := s.processCanvasGenerationTask(ctx, task.UserID, task.ProjectID, task.Type, task.Prompt, task.InputJSON)

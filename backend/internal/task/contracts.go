@@ -31,37 +31,40 @@ type ListOptions struct {
 // Summary is the stable local read model. It deliberately excludes protected
 // provider input and credentials while retaining recovery and preview fields.
 type Summary struct {
-	ID                        string                     `json:"id"`
-	ProjectID                 string                     `json:"projectId,omitempty"`
-	Type                      string                     `json:"type"`
-	Status                    model.TaskStatus           `json:"status"`
-	Stage                     string                     `json:"stage"`
-	Progress                  int                        `json:"progress"`
-	Prompt                    string                     `json:"prompt"`
-	Operation                 string                     `json:"operation,omitempty"`
-	Provider                  string                     `json:"provider,omitempty"`
-	Model                     string                     `json:"model,omitempty"`
-	ProviderRequestID         string                     `json:"providerRequestId,omitempty"`
-	ProviderCancelStatus      model.ProviderCancelStatus `json:"providerCancelStatus,omitempty"`
-	ProviderCancelError       string                     `json:"providerCancelError,omitempty"`
-	ProviderCancelAttempts    int                        `json:"providerCancelAttempts,omitempty"`
-	ProviderCancelRequestedAt *time.Time                 `json:"providerCancelRequestedAt,omitempty"`
-	ProviderCancelledAt       *time.Time                 `json:"providerCancelledAt,omitempty"`
-	Error                     string                     `json:"error,omitempty"`
-	ErrorCode                 string                     `json:"errorCode,omitempty"`
-	PreviewURL                string                     `json:"previewUrl,omitempty"`
-	PreviewKind               string                     `json:"previewKind,omitempty"`
-	PreviewPosterURL          string                     `json:"previewPosterUrl,omitempty"`
-	Attempts                  int                        `json:"attempts"`
-	StartedAt                 *time.Time                 `json:"startedAt"`
-	CompletedAt               *time.Time                 `json:"completedAt"`
-	CreatedAt                 time.Time                  `json:"createdAt"`
-	UpdatedAt                 time.Time                  `json:"updatedAt"`
-	ClientContext             *ClientContext             `json:"clientContext,omitempty"`
+	ID                        string                        `json:"id"`
+	ProjectID                 string                        `json:"projectId,omitempty"`
+	Type                      string                        `json:"type"`
+	Status                    model.TaskStatus              `json:"status"`
+	Stage                     string                        `json:"stage"`
+	Progress                  int                           `json:"progress"`
+	Prompt                    string                        `json:"prompt"`
+	Operation                 string                        `json:"operation,omitempty"`
+	Provider                  string                        `json:"provider,omitempty"`
+	Model                     string                        `json:"model,omitempty"`
+	ProviderRequestID         string                        `json:"providerRequestId,omitempty"`
+	ProviderCancelStatus      model.ProviderCancelStatus    `json:"providerCancelStatus,omitempty"`
+	ProviderCancelError       string                        `json:"providerCancelError,omitempty"`
+	ProviderCancelAttempts    int                           `json:"providerCancelAttempts,omitempty"`
+	ProviderCancelRequestedAt *time.Time                    `json:"providerCancelRequestedAt,omitempty"`
+	ProviderCancelledAt       *time.Time                    `json:"providerCancelledAt,omitempty"`
+	Error                     string                        `json:"error,omitempty"`
+	ErrorCode                 string                        `json:"errorCode,omitempty"`
+	FailureDiagnostics        *model.TaskFailureDiagnostics `json:"failureDiagnostics,omitempty"`
+	PreviewURL                string                        `json:"previewUrl,omitempty"`
+	PreviewKind               string                        `json:"previewKind,omitempty"`
+	PreviewPosterURL          string                        `json:"previewPosterUrl,omitempty"`
+	Attempts                  int                           `json:"attempts"`
+	StartedAt                 *time.Time                    `json:"startedAt"`
+	CompletedAt               *time.Time                    `json:"completedAt"`
+	CreatedAt                 time.Time                     `json:"createdAt"`
+	UpdatedAt                 time.Time                     `json:"updatedAt"`
+	ClientContext             *ClientContext                `json:"clientContext,omitempty"`
 }
 
 type ClientContext struct {
 	NodeID           string `json:"nodeId,omitempty"`
+	Source           string `json:"source,omitempty"`
+	SceneID          string `json:"sceneId,omitempty"`
 	ConversationID   string `json:"conversationId,omitempty"`
 	MessageID        string `json:"messageId,omitempty"`
 	BatchIndex       int    `json:"batchIndex,omitempty"`

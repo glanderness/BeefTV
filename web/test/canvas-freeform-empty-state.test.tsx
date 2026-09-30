@@ -68,8 +68,29 @@ describe("BeefTV freeform canvas empty state", () => {
         const labels = resolveAddNodeMenuCommands(context).filter((command) => command.section === "node").slice(0, 8).map((command) => command.label);
         expect(labels).toEqual(["文本", "图片", "视频", "音频", "智能剪辑", "导演台", "逐帧拉片", "脚本"]);
         const commandsByLabel = new Map(resolveAddNodeMenuCommands(context).map((command) => [command.label, command]));
-        for (const label of ["智能剪辑", "导演台", "逐帧拉片", "脚本"]) {
+        for (const label of ["智能剪辑", "逐帧拉片", "脚本"]) {
             expect(commandsByLabel.get(label)?.disabledReason).toBe("正在开发");
         }
+    });
+
+    test("opens the existing director templates from the professional add-node menu", () => {
+        let opened = false;
+        const noop = () => {};
+        const context: AddNodeMenuContext = {
+            workspaceMode: "professional",
+            isProjectLinked: false,
+            handlers: {
+                onAddText: noop, onAddImage: noop, onAddVideo: noop, onAddAudio: noop, onAddScript: noop,
+                onAddFrame: noop, onAddFolder: noop, onAddDrawing: noop, onAddWorkflow: noop, onAddExtensionNode: noop,
+                onChooseStyle: noop, onOpenDirector: () => { opened = true; }, onUpload: noop, onOpenMyAssets: noop, onOpenProjectCharacters: noop,
+            },
+        };
+        const director = resolveAddNodeMenuCommands(context).find((command) => command.id === "director");
+        expect(director).toBeDefined();
+        expect(director?.disabledReason).toBeUndefined();
+        expect(director?.badge).toBeUndefined();
+        director?.run(context);
+        expect(opened).toBe(true);
+        expect(resolveAddNodeMenuCommands({ ...context, workspaceMode: "simple" }).some((command) => command.id === "director")).toBe(false);
     });
 });

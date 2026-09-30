@@ -908,7 +908,7 @@ function InfiniteCanvasPage() {
     // 每帧新对象会让所有节点跟着重渲染，错题本里多条崩溃都出在画布高频更新。
     const nodeGraphContext = useMemo<CanvasNodeGraphContextValue>(() => ({ getUpstreamNodes: (nodeId: string) => getContextResourceNodes(nodeId, nodes, connections) }), [connections, nodes]);
 
-    const { applyGenerationTaskResult, bindGenerationTask, finishGenerationRequest, openNodeTaskDetails, runningNodeId, setRunningNodeId, setTaskDetail, startGenerationRequest, taskDetail, taskDetailLoading, taskDetailLogs } = useCanvasGeneration({
+    const { applyGenerationTaskResult, bindGenerationTask, finishGenerationRequest, openNodeTaskDetails, runningNodeId, setRunningNodeId, setTaskDetail, startGenerationRequest, taskDetail, taskDetailLoading, taskDetailLogs, taskDetailError } = useCanvasGeneration({
         projectId,
         domainProjectId: linkedProjectId,
         projectLoaded,
@@ -2065,7 +2065,7 @@ function InfiniteCanvasPage() {
         setStylePickerOpen,
     });
 
-    const { applyDirectorOutput, createDirectorShot, openDirectorWorkbench, saveDirectorScene } = useCanvasDirector({
+    const { applyDirectorOutput, captureDirectorCover, createDirectorShot, openDirectorWorkbench, saveDirectorScene, shouldCaptureCover } = useCanvasDirector({
         projectId,
         domainProjectId: currentProject?.projectId,
         directorNodeId,
@@ -2701,8 +2701,10 @@ function InfiniteCanvasPage() {
                         node={contentNode}
                         scene={currentProject?.directorScenes?.find((scene) => scene.id === contentNode.metadata?.directorSceneId) || null}
                         readNodeContent={(nodeId) => (nodeId ? nodesRef.current.find((item) => item.id === nodeId)?.metadata?.content : undefined)}
+                        readNodeStorageKey={(nodeId) => (nodeId ? nodesRef.current.find((item) => item.id === nodeId)?.metadata?.storageKey : undefined)}
                         professional={workspaceMode === "professional"}
                         onOpen={() => openDirectorWorkbench(contentNode.id)}
+                        onPromptChange={(composerContent) => handleConfigNodeChange(contentNode.id, { composerContent })}
                     />
                 );
             }
@@ -3735,10 +3737,13 @@ function InfiniteCanvasPage() {
                                 <CanvasDirectorWorkbench
                                     open
                                     scene={activeDirectorScene}
+                                    projectId={projectId}
                                     imageNodes={nodes.filter((node) => node.type === CanvasNodeType.Image && Boolean(node.metadata?.content))}
                                     onClose={() => setDirectorNodeId(null)}
                                     onChange={saveDirectorScene}
                                     onApply={applyDirectorOutput}
+                                    onShouldCaptureCover={shouldCaptureCover}
+                                    onCaptureCover={captureDirectorCover}
                                     onDeleteImageNode={(nodeId) => deleteNodes(new Set([nodeId]))}
                                     onFlush={() => flushCanvasStorePersistence()}
                                     onboardingScope={directorOnboardingScope}
@@ -3769,6 +3774,7 @@ function InfiniteCanvasPage() {
                             task={taskDetail}
                             taskLogs={taskDetailLogs}
                             taskLoading={taskDetailLoading}
+                            taskError={taskDetailError}
                             onCloseTask={() => setTaskDetail(null)}
                             onCancelTask={cancelCanvasTask}
                             superResolveNode={superResolveNode}

@@ -2,8 +2,8 @@ package model
 
 import "time"
 
-// Persistence contract copied from product recovery; this migration experiment
-// does not install or run the image recovery worker.
+// ImageSubmission keeps the exact encrypted wire request separate from mutable
+// task input. It is never exposed by the task API.
 type ImageSubmission struct {
 	AttemptID        string    `gorm:"primaryKey;size:36" json:"-"`
 	TaskID           string    `gorm:"size:36;index" json:"-"`

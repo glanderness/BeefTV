@@ -26,11 +26,13 @@ function run(files) {
 
 const files = [...collectTestFiles(join(root, "test")), ...collectTestFiles(join(root, "src"))].sort();
 const isolated = files.filter((file) => {
+    // Browser suites own subprocesses and should not share a Bun worker with
+    // shell-script tests or modules that replace browser globals.
+    if (/\.browser\.test\.[jt]sx?$/.test(file)) return true;
     const source = readFileSync(join(root, file), "utf8");
-    if (source.includes("globalThis") && browserGlobalName.test(source)) return true;
-    // mock.module 是进程级依赖替换：与其他文件共享进程会静默改变它们的依赖，
-    // 因此这类文件必须单独运行，失败才会落在真正做替换的那个文件上。
-    return source.includes("mock.module(");
+    // Bun module replacements persist beyond mock.restore(); isolate their import graphs.
+    if (source.includes("mock.module(")) return true;
+    return source.includes("globalThis") && browserGlobalName.test(source);
 });
 const shared = files.filter((file) => !isolated.includes(file));
 

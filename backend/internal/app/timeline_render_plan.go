@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -9,7 +10,7 @@ import (
 // 时间线渲染：把前端 TimelineProject 快照（tracks/clips 平铺，见
 // web/src/types/timeline.ts TimelineProject v2）展开为可执行的 ffmpeg 步骤。
 // 与前端 timeline-to-ffmpeg.ts 保持同一数据流：trim（按 sourceStartMs 裁切）
-// → 空隙补黑场静音 → concat。字幕不烧录（依赖 libass），单独产出 SRT。
+// → 空隙补黑场静音 → concat → 混合独立音轨 → 烧录字幕（需要 libass）。
 //
 // 输入布局统一为「每个片段两个输入：视频源 + 音频源」，空隙展开为独立
 // 黑场片段，因此第 i 个片段的视频输入为 2i、音频输入为 2i+1。
@@ -23,12 +24,25 @@ type renderClip struct {
 	SourceStartMs    int64   `json:"sourceStartMs"`
 	SourceDurationMs int64   `json:"sourceDurationMs"`
 	Volume           float64 `json:"volume"`
+	FadeInMs         int64   `json:"fadeInMs"`
+	FadeOutMs        int64   `json:"fadeOutMs"`
 	Text             string  `json:"text"`
 	DirectMedia      *struct {
 		ID         string `json:"id"`
 		Kind       string `json:"kind"`
 		StorageKey string `json:"storageKey"`
 	} `json:"directMedia"`
+}
+
+// volume 缺省为 1；显式的 0 必须保留为静音。
+func (clip *renderClip) UnmarshalJSON(data []byte) error {
+	type plain renderClip
+	value := plain{Volume: 1}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*clip = renderClip(value)
+	return nil
 }
 
 type renderTrack struct {
@@ -61,11 +75,14 @@ type renderSegment struct {
 	DurationMs int64
 	GapMs      int64
 	Clip       renderClip
+	Muted      bool
 	Source     *renderSource
 }
 
 type renderPlan struct {
 	Segments    []renderSegment
+	Audio       []renderSegment
+	Error       error
 	SubtitleSRT string
 	HasMedia    bool
 }
@@ -74,12 +91,28 @@ type renderPlan struct {
 // 空隙展开为黑场段，使渲染序列在时间轴上连续。
 func buildRenderPlan(project renderProject) renderPlan {
 	visible := map[string]bool{}
+	muted := map[string]bool{}
 	for _, track := range project.Tracks {
 		visible[track.ID] = track.Visible == nil || *track.Visible
+		muted[track.ID] = track.Muted
 	}
+	plan := renderPlan{SubtitleSRT: buildRenderSubtitleSRT(project)}
+	end := project.DurationMs
 	clips := make([]renderClip, 0, len(project.Clips))
 	for _, clip := range project.Clips {
 		if !visible[clip.TrackID] {
+			continue
+		}
+		if clip.StartMs < 0 || clip.SourceStartMs < 0 {
+			plan.Error = fmt.Errorf("片段时间不能为负数")
+			return plan
+		}
+		if clip.DurationMs > 0 && clip.StartMs+clip.DurationMs > end {
+			end = clip.StartMs + clip.DurationMs
+		}
+		if clip.Kind == "audio" && clip.DurationMs > 0 {
+			plan.Audio = append(plan.Audio, renderSegment{Kind: "audio", Clip: clip, DurationMs: clip.DurationMs, Muted: muted[clip.TrackID]})
+			plan.HasMedia = true
 			continue
 		}
 		if clip.Kind != "video" && clip.Kind != "image" {
@@ -97,20 +130,23 @@ func buildRenderPlan(project renderProject) renderPlan {
 		return clips[i].StartMs < clips[j].StartMs
 	})
 
-	plan := renderPlan{SubtitleSRT: buildRenderSubtitleSRT(project)}
 	cursor := int64(0)
 	for _, clip := range clips {
+		if clip.StartMs < cursor {
+			plan.Error = fmt.Errorf("服务端渲染暂不支持重叠的视频或图片片段")
+			return plan
+		}
 		if gap := clip.StartMs - cursor; gap > 0 {
 			plan.Segments = append(plan.Segments, renderSegment{Kind: "gap", DurationMs: gap, GapMs: gap})
 		}
-		plan.Segments = append(plan.Segments, renderSegment{Kind: clip.Kind, DurationMs: clip.DurationMs, Clip: clip})
+		plan.Segments = append(plan.Segments, renderSegment{Kind: clip.Kind, DurationMs: clip.DurationMs, Clip: clip, Muted: muted[clip.TrackID]})
 		cursor = clip.StartMs + clip.DurationMs
 	}
-	for _, seg := range plan.Segments {
-		if _, ok := mediaResourceID(seg.Clip); ok {
-			plan.HasMedia = true
-			break
-		}
+	if end > cursor {
+		plan.Segments = append(plan.Segments, renderSegment{Kind: "gap", DurationMs: end - cursor})
+	}
+	if len(clips) > 0 {
+		plan.HasMedia = true
 	}
 	return plan
 }
@@ -129,8 +165,15 @@ func mediaResourceID(clip renderClip) (string, bool) {
 }
 
 func buildRenderSubtitleSRT(project renderProject) string {
+	visible := map[string]bool{}
+	for _, track := range project.Tracks {
+		visible[track.ID] = track.Visible == nil || *track.Visible
+	}
 	subtitle := make([]renderClip, 0, len(project.Clips))
 	for _, clip := range project.Clips {
+		if len(project.Tracks) > 0 && !visible[clip.TrackID] {
+			continue
+		}
 		if clip.Kind != "subtitle" || strings.TrimSpace(clip.Text) == "" || clip.DurationMs <= 0 {
 			continue
 		}
@@ -166,104 +209,57 @@ const (
 // buildRenderFFmpegArgs 依据渲染计划生成 ffmpeg 参数（工作目录内相对路径）。
 // 每段固定两个输入：视频源与音频源，末尾 concat 为单路输出。
 func buildRenderFFmpegArgs(plan renderPlan, target string) []string {
-	if len(plan.Segments) == 0 {
+	if len(plan.Segments) == 0 || plan.Error != nil {
 		return nil
 	}
-	scale := fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2",
-		renderWidth, renderHeight, renderWidth, renderHeight)
 	args := []string{"-nostdin", "-y"}
-	for _, seg := range plan.Segments {
-		seconds := fmt.Sprintf("%.3f", float64(seg.DurationMs)/1000)
+	filters := []string{}
+	labels := ""
+	for i, seg := range plan.Segments {
+		duration := float64(seg.DurationMs) / 1000
+		seconds := fmt.Sprintf("%.3f", duration)
+		if seg.Kind != "gap" && (seg.Source == nil || seg.Source.Path == "") {
+			return nil
+		}
 		switch seg.Kind {
 		case "gap":
-			args = append(args,
-				"-f", "lavfi", "-t", seconds,
-				"-i", fmt.Sprintf("color=c=black:s=%dx%d:r=%d", renderWidth, renderHeight, renderFPS),
-				"-f", "lavfi", "-t", seconds,
-				"-i", fmt.Sprintf("anullsrc=r=%d:cl=stereo", renderSampleRate),
-			)
+			args = append(args, "-f", "lavfi", "-t", seconds, "-i", fmt.Sprintf("color=c=black:s=%dx%d:r=%d", renderWidth, renderHeight, renderFPS))
 		case "image":
-			if seg.Source == nil {
-				args = append(args,
-					"-f", "lavfi", "-t", seconds,
-					"-i", fmt.Sprintf("color=c=black:s=%dx%d:r=%d", renderWidth, renderHeight, renderFPS),
-					"-f", "lavfi", "-t", seconds,
-					"-i", fmt.Sprintf("anullsrc=r=%d:cl=stereo", renderSampleRate),
-				)
-				continue
-			}
-			args = append(args,
-				"-loop", "1", "-t", seconds, "-i", seg.Source.Path,
-				"-f", "lavfi", "-t", seconds,
-				"-i", fmt.Sprintf("anullsrc=r=%d:cl=stereo", renderSampleRate),
-			)
+			args = append(args, "-loop", "1", "-t", seconds, "-i", seg.Source.Path)
 		default:
-			if seg.Source == nil {
-				args = append(args,
-					"-f", "lavfi", "-t", seconds,
-					"-i", fmt.Sprintf("color=c=black:s=%dx%d:r=%d", renderWidth, renderHeight, renderFPS),
-					"-f", "lavfi", "-t", seconds,
-					"-i", fmt.Sprintf("anullsrc=r=%d:cl=stereo", renderSampleRate),
-				)
-				continue
-			}
-			if seg.Clip.SourceStartMs > 0 {
-				args = append(args, "-ss", fmt.Sprintf("%.3f", float64(seg.Clip.SourceStartMs)/1000))
-			}
-			args = append(args, "-t", seconds, "-i", seg.Source.Path)
-			// 音频输入复用同一媒体文件；无音轨时 ffmpeg 会因 map 失败，
-			// 由调用方探测后回退为静音源（见 renderAudioFallback）。
-			if seg.Clip.SourceStartMs > 0 {
-				args = append(args, "-ss", fmt.Sprintf("%.3f", float64(seg.Clip.SourceStartMs)/1000))
-			}
-			args = append(args, "-t", seconds, "-i", seg.Source.Path)
+			args = append(args, "-ss", fmt.Sprintf("%.3f", float64(seg.Clip.SourceStartMs)/1000), "-t", seconds, "-i", seg.Source.Path)
 		}
-	}
-
-	filters := make([]string, 0, len(plan.Segments)*2+1)
-	labels := make([]string, 0, len(plan.Segments)*2)
-	for i, seg := range plan.Segments {
-		videoIn := 2 * i
-		audioIn := 2*i + 1
-		videoLabel := fmt.Sprintf("v%d", i)
-		audioLabel := fmt.Sprintf("a%d", i)
-		if seg.Source != nil && seg.Kind != "image" && !seg.Source.HasAudio {
-			// 无音轨媒体：改用静音源，避免 map 失败。
-			audioIn = videoIn
-			filters = append(filters,
-				fmt.Sprintf("[%d:v]fps=%d,%s,setsar=1[%s]", videoIn, renderFPS, scale, videoLabel))
-			silentLabel := fmt.Sprintf("silent%d", i)
-			filters = append(filters,
-				fmt.Sprintf("anullsrc=r=%d:cl=stereo[%s]", renderSampleRate, silentLabel))
-			filters = append(filters,
-				fmt.Sprintf("[%s]atrim=0:%.3f,asetpts=N/SR/TB[%s]", silentLabel, float64(seg.DurationMs)/1000, audioLabel))
+		if seg.Kind == "video" && seg.Source.HasAudio && !seg.Muted {
+			args = append(args, "-ss", fmt.Sprintf("%.3f", float64(seg.Clip.SourceStartMs)/1000), "-t", seconds, "-i", seg.Source.Path)
 		} else {
-			volume := 1.0
-			if seg.Clip.Volume > 0 {
-				volume = seg.Clip.Volume
-			}
-			filters = append(filters,
-				fmt.Sprintf("[%d:v]fps=%d,%s,setsar=1[%s]", videoIn, renderFPS, scale, videoLabel))
-			filters = append(filters,
-				fmt.Sprintf("[%d:a]aformat=sample_fmts=fltp:sample_rates=%d:channel_layouts=stereo,volume=%.3f,apad[%s]",
-					audioIn, renderSampleRate, volume, audioLabel))
+			args = append(args, "-f", "lavfi", "-t", seconds, "-i", fmt.Sprintf("anullsrc=r=%d:cl=stereo", renderSampleRate))
 		}
-		labels = append(labels, videoLabel, audioLabel)
+		filters = append(filters, fmt.Sprintf("[%d:v]setpts=PTS-STARTPTS,fps=%d,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,setsar=1,tpad=stop_mode=clone:stop_duration=%.3f,trim=duration=%.3f[v%d]", 2*i, renderFPS, renderWidth, renderHeight, renderWidth, renderHeight, duration, duration, i))
+		filters = append(filters, fmt.Sprintf("[%d:a]aformat=sample_fmts=fltp:sample_rates=%d:channel_layouts=stereo,asetpts=PTS-STARTPTS,volume=%.3f,apad,atrim=duration=%.3f%s[a%d]", 2*i+1, renderSampleRate, seg.Clip.Volume, duration, renderAudioFades(seg.Clip), i))
+		labels += fmt.Sprintf("[v%d][a%d]", i, i)
 	}
-	var concatInputs strings.Builder
-	for _, label := range labels {
-		fmt.Fprintf(&concatInputs, "[%s]", label)
+	filters = append(filters, fmt.Sprintf("%sconcat=n=%d:v=1:a=1[vbase][abase]", labels, len(plan.Segments)))
+	mix := "[abase]"
+	for i, seg := range plan.Audio {
+		if seg.Source == nil || seg.Source.Path == "" || !seg.Source.HasAudio {
+			return nil
+		}
+		args = append(args, "-ss", fmt.Sprintf("%.3f", float64(seg.Clip.SourceStartMs)/1000), "-t", fmt.Sprintf("%.3f", float64(seg.DurationMs)/1000), "-i", seg.Source.Path)
+		volume := seg.Clip.Volume
+		if seg.Muted {
+			volume = 0
+		}
+		filters = append(filters, fmt.Sprintf("[%d:a]aformat=sample_fmts=fltp:sample_rates=%d:channel_layouts=stereo,asetpts=PTS-STARTPTS,volume=%.3f,apad,atrim=duration=%.3f%s,adelay=%d:all=1[extra%d]", 2*len(plan.Segments)+i, renderSampleRate, volume, float64(seg.DurationMs)/1000, renderAudioFades(seg.Clip), seg.Clip.StartMs, i))
+		mix += fmt.Sprintf("[extra%d]", i)
 	}
-	filters = append(filters, fmt.Sprintf("%sconcat=n=%d:v=1:a=1[vout][aout]", concatInputs.String(), len(plan.Segments)))
-
-	args = append(args,
-		"-filter_complex", strings.Join(filters, ";"),
-		"-map", "[vout]", "-map", "[aout]",
-		"-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
-		"-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
-		"-t", fmt.Sprintf("%.3f", planTotalSeconds(plan)),
-		target,
-	)
+	filters = append(filters, fmt.Sprintf("%samix=inputs=%d:duration=first:normalize=0,atrim=duration=%.3f[aout]", mix, len(plan.Audio)+1, planTotalSeconds(plan)))
+	if plan.SubtitleSRT != "" {
+		// 固定相对文件名避免工作目录/字幕文本进入滤镜表达式。
+		filters = append(filters, "[vbase]subtitles=filename=render-subtitles.srt[vout]")
+	} else {
+		filters = append(filters, "[vbase]null[vout]")
+	}
+	args = append(args, "-filter_complex", strings.Join(filters, ";"), "-map", "[vout]", "-map", "[aout]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "-t", fmt.Sprintf("%.3f", planTotalSeconds(plan)), target)
 	return args
 }
 
@@ -273,4 +269,15 @@ func planTotalSeconds(plan renderPlan) float64 {
 		total += seg.DurationMs
 	}
 	return float64(total) / 1000
+}
+
+func renderAudioFades(clip renderClip) string {
+	filters := ""
+	if duration := min(clip.FadeInMs, clip.DurationMs); duration > 0 {
+		filters += fmt.Sprintf(",afade=t=in:st=0:d=%.3f", float64(duration)/1000)
+	}
+	if duration := min(clip.FadeOutMs, clip.DurationMs); duration > 0 {
+		filters += fmt.Sprintf(",afade=t=out:st=%.3f:d=%.3f", float64(clip.DurationMs-duration)/1000, float64(duration)/1000)
+	}
+	return filters
 }

@@ -9,6 +9,37 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.15
+
+- Preserve specific generation errors, request IDs, timings and bounded request history in copied diagnostics, including after reopening a task.
+- Distinguish local input and response-size limits, provider failures, and errors while saving or applying generated results.
+- Include task image settings, reference counts and limits without copying prompts, credentials or media addresses; preserve request evidence during background polling and clear it when retrying.
+
+## v1.6.14
+
+- Keep canvas task details up to date with the desktop backend while a task is running, including progress, logs and start/completion times.
+- Stop detail polling after completion and cancel pending reads when closing or switching tasks; show a retry notice when details cannot be refreshed.
+
+## v1.6.13
+
+- Accept Windows PowerShell ZIP path separators when installing signed depth components while retaining traversal and duplicate-file protection.
+- Use the configured Windows/macOS system proxy for optional depth-component downloads, matching the desktop updater and preserving explicit environment proxy/bypass settings.
+- Include Windows x64 depth-video processing from v1.6.12 with signed optional runtimes. CPU inference is tested; NVIDIA CUDA support is a community testing preview with a one-time CPU fallback for device failures. First use downloads components, and CPU processing can be slow and memory intensive.
+- Expand the director workspace with scene controls, camera following, aspect frames, screenshots and panorama generation history.
+- Preserve director scene covers and task recovery context, and improve canvas crop and trim controls at low zoom.
+- Check for desktop updates periodically and support downloading and installing from one action while saving work first.
+- Prevent late uploads and screenshots from overwriting reopened director scenes; drain panorama result writers before switching workspaces.
+- Stamp director cover and output edits before persistence so refreshed canvases retain their previews.
+- Install the matching Chromium browser in CI and tolerate subpixel rounding in model-picker layout checks.
+
+## v1.6.12
+
+- Add Windows x64 depth-video processing with the fixed Small model, signed optional CPU/CUDA runtimes, resumable verified downloads, and process-tree cancellation.
+- Validate CUDA with a real model probe and fall back once to CPU for device failures. CUDA hardware support is a community testing preview; CPU inference has been tested on Windows with 2-second and 15-second clips.
+- Fix Windows PowerShell 5.1 runtime-builder encoding and align the worker's video-duration limit with the app.
+- Serialize component installation and stop download verification and extraction when cancelled.
+- First use downloads optional components; CPU processing can be slow and memory intensive. Apple Silicon Mac processing remains unchanged.
+
 ## v1.6.11
 
 - Fix local reference images being rejected before submitting Wan 3.0 video tasks through BeefAPI.

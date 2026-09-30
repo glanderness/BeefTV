@@ -11,11 +11,13 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"infinite-canvas/backend/internal/desktopnet"
 )
 
 func newHTTPClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = desktopProxy
+	transport.Proxy = desktopnet.Proxy
 	transport.TLSHandshakeTimeout = 15 * time.Second
 	transport.ResponseHeaderTimeout = 30 * time.Second
 	return &http.Client{

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -290,14 +291,19 @@ func (r *Repository) UpdateTaskProviderState(id string, providerRequestID string
 	return r.db.Model(&model.Task{}).Where("id = ?", id).Updates(updates).Error
 }
 
-func (r *Repository) DeferRunningTaskForProviderPoll(id string, owner string, stage string, delay time.Duration) error {
+func (r *Repository) DeferRunningTaskForProviderPoll(id string, owner string, stage string, delay time.Duration, diagnostics ...*model.TaskFailureDiagnostics) error {
 	now := time.Now()
+	updates := map[string]any{"stage": stage, "error": "", "completed_at": nil, "next_poll_at": now.Add(delay), "lease_owner": "", "lease_expires_at": nil, "updated_at": now}
+	if len(diagnostics) > 0 && diagnostics[0] != nil {
+		data, err := json.Marshal(diagnostics[0])
+		if err != nil {
+			return err
+		}
+		updates["failure_diagnostics"] = string(data)
+	}
 	result := taskLeaseWriter(r.db.Model(&model.Task{}), owner).
 		Where("id = ? AND status = ?", id, model.TaskStatusRunning).
-		Updates(map[string]any{
-			"stage": stage, "error": "", "completed_at": nil, "next_poll_at": now.Add(delay),
-			"lease_owner": "", "lease_expires_at": nil, "updated_at": now,
-		})
+		Updates(updates)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -395,12 +401,21 @@ func (r *Repository) SaveTaskCompletion(task *model.Task, expected model.TaskSta
 	})
 }
 
-func (r *Repository) UpdateTaskTerminalState(id string, owner string, expected model.TaskStatus, status model.TaskStatus, stage string, errorText string, completedAt time.Time) (bool, error) {
+func (r *Repository) UpdateTaskTerminalState(id string, owner string, expected model.TaskStatus, status model.TaskStatus, stage string, errorText string, completedAt time.Time, diagnostics ...*model.TaskFailureDiagnostics) (bool, error) {
+	var diagnosticJSON any
+	if len(diagnostics) > 0 && diagnostics[0] != nil {
+		data, err := json.Marshal(diagnostics[0])
+		if err != nil {
+			return false, err
+		}
+		diagnosticJSON = string(data)
+	}
 	result := taskLeaseWriter(r.db.Model(&model.Task{}), owner).
 		Where("id = ? AND status = ?", id, expected).
 		Updates(map[string]any{
 			"status": status, "stage": stage, "error": errorText, "completed_at": &completedAt,
-			"lease_owner": "", "lease_expires_at": nil, "updated_at": completedAt,
+			"failure_diagnostics": diagnosticJSON,
+			"lease_owner":         "", "lease_expires_at": nil, "updated_at": completedAt,
 		})
 	return result.RowsAffected == 1, result.Error
 }
@@ -497,7 +512,7 @@ func (r *Repository) Tasks(userID string, limit int, projectID string, activeOnl
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	query := r.db.Select("id", "project_id", "type", "status", "stage", "progress", "prompt", "operation", "provider", "model", "input_json", "result_json", "error", "provider_request_id", "provider_cancel_status", "provider_cancel_error", "provider_cancel_attempts", "provider_cancel_requested_at", "provider_cancelled_at", "provider_cancel_next_check_at", "attempts", "started_at", "completed_at", "created_at", "updated_at").
+	query := r.db.Select("id", "project_id", "type", "status", "stage", "progress", "prompt", "operation", "provider", "model", "input_json", "result_json", "error", "failure_diagnostics", "provider_request_id", "provider_cancel_status", "provider_cancel_error", "provider_cancel_attempts", "provider_cancel_requested_at", "provider_cancelled_at", "provider_cancel_next_check_at", "attempts", "started_at", "completed_at", "created_at", "updated_at").
 		Where("user_id = ?", userID)
 	if strings.TrimSpace(projectID) != "" {
 		query = query.Where("project_id = ?", strings.TrimSpace(projectID))

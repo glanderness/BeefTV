@@ -327,7 +327,7 @@ func (r *Repository) RetryTask(userID string, prepared *model.Task, limit int) (
 			return err
 		}
 		updates := map[string]any{
-			"status": model.TaskStatusQueued, "stage": "等待队列调度", "progress": 5, "error": "", "result_json": "", "text_draft": "", "started_at": nil, "completed_at": nil,
+			"status": model.TaskStatusQueued, "stage": "等待队列调度", "progress": 5, "error": "", "failure_diagnostics": nil, "result_json": "", "text_draft": "", "started_at": nil, "completed_at": nil,
 			"provider_request_id": "", "poll_stage": "", "next_poll_at": nil, "provider_cancel_status": "", "provider_cancel_error": "", "provider_cancel_attempts": 0,
 			"provider_cancel_requested_at": nil, "provider_cancelled_at": nil, "provider_cancel_next_check_at": nil, "route_run": gorm.Expr("route_run + ?", 1),
 			"logical_model_revision_id": prepared.LogicalModelRevisionID, "route_id": prepared.RouteID, "channel_model_id": prepared.ChannelModelID, "input_json": prepared.InputJSON,

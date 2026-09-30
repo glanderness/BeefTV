@@ -574,16 +574,12 @@
     background: var(--user-surface-hover);
     color: var(--user-ink);
 }
-.app-user-workspace.app-product-workspace .app-workspace-update-copy {
-    color: var(--user-ink-muted);
-}
 .app-user-workspace.app-product-workspace .app-workspace-update-action {
-    background: color-mix(in srgb, #22cbed 16%, transparent);
-    color: var(--user-accent);
+    background: transparent;
 }
 .app-user-workspace.app-product-workspace .app-workspace-update-action:hover,
 .app-user-workspace.app-product-workspace .app-workspace-update-action:focus-visible {
-    background: color-mix(in srgb, #22cbed 26%, transparent);
+    background: var(--user-surface-hover);
 }
 .app-user-workspace.app-product-workspace .app-workspace-update-progress-bar {
     background: var(--user-border);

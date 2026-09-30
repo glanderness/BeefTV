@@ -1,11 +1,11 @@
 // 默认由后端 ffmpeg 渲染并把产物写入资源存储；浏览器 ffmpeg.wasm 只承担离线降级。
-// 构建渲染计划时跳过已失去媒体来源的片段，避免悬空 nodeId 阻断其余有效片段导出。
+// 缺源阻止完整成片导出；规划错误在面板呈现，不中断编辑器。
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, Loader2, PackageOpen, Server } from "lucide-react";
 
 import { useEditorHostContext, useEditorStoreContext } from "@/components/editor/editor-context";
-import { buildTimelineRenderPlan, type TimelineRenderSource } from "@/lib/timeline/timeline-to-ffmpeg";
+import { buildTimelineRenderPlan, getExportClips, type TimelineRenderSource } from "@/lib/timeline/timeline-to-ffmpeg";
 import { exportTimelineToMp4, type TimelineExportProgress } from "@/lib/timeline/timeline-export";
 import { resourceFileUrl } from "@/services/api/resources";
 import { waitForGenerationTask } from "@/services/api/task-center";
@@ -24,8 +24,8 @@ type ExportState = {
 function collectRenderSources(project: TimelineProject): TimelineRenderSource[] {
     const seen = new Set<string>();
     const sources: TimelineRenderSource[] = [];
-    for (const clip of project.clips) {
-        if (clip.kind !== "video" && clip.kind !== "image") continue;
+    for (const clip of getExportClips(project)) {
+        if (clip.kind !== "video" && clip.kind !== "image" && clip.kind !== "audio") continue;
         const direct = clip.directMedia;
         if (!direct) continue;
         if (seen.has(clip.nodeId)) continue;
@@ -35,7 +35,7 @@ function collectRenderSources(project: TimelineProject): TimelineRenderSource[] 
             fileName: `input-${sources.length}.mp4`,
             durationMs: clip.durationMs,
             storageKey: direct.storageKey,
-            url: direct.url,
+            url: direct.url || direct.dataUrl || direct.content,
         });
     }
     return sources;
@@ -45,13 +45,20 @@ export function EditorExport() {
     const { project } = useEditorStoreContext();
     const { projectId } = useEditorHostContext();
     const [state, setState] = useState<ExportState>({ phase: "idle", mode: null, percent: 0, detail: "", result: null });
+    const runningRef = useRef(false);
+    const localControllerRef = useRef<AbortController | null>(null);
+    useEffect(() => () => localControllerRef.current?.abort(), []);
 
     const sources = useMemo(() => (project ? collectRenderSources(project) : []), [project]);
-    const plan = useMemo(() => (project ? buildTimelineRenderPlan(project, sources) : null), [project, sources]);
+    const { plan, planError } = useMemo(() => {
+        try { return { plan: project ? buildTimelineRenderPlan(project, sources) : null, planError: "" }; }
+        catch (error) { return { plan: null, planError: error instanceof Error ? error.message : "无法生成导出计划" }; }
+    }, [project, sources]);
 
     // 主路径：提交后端渲染任务并轮询（服务端任务上限 60 分钟，前端多留余量）。
     const renderRemote = async () => {
-        if (!project || sources.length === 0 || state.phase === "running") return;
+        if (!project || sources.length === 0 || runningRef.current) return;
+        runningRef.current = true;
         setState({ phase: "running", mode: "remote", percent: 0, detail: "提交渲染任务…", result: null });
         try {
             const created = await createTimelineRenderTask({ projectId, timeline: project });
@@ -86,15 +93,19 @@ export function EditorExport() {
                 detail: error instanceof Error ? error.message : "渲染失败",
                 result: null,
             });
-        }
+        } finally { runningRef.current = false; }
     };
 
     // 降级路径：ffmpeg.wasm 浏览器本地合成（无后端/离线时可用）。
     const exportLocalMp4 = async () => {
-        if (!project || sources.length === 0 || state.phase === "running") return;
+        if (!project || sources.length === 0 || runningRef.current) return;
+        runningRef.current = true;
+        const controller = new AbortController();
+        localControllerRef.current = controller;
         setState({ phase: "running", mode: "local", percent: 0, detail: "准备导出", result: null });
         try {
             const blob = await exportTimelineToMp4(project, sources, {
+                signal: controller.signal,
                 onProgress: (p: TimelineExportProgress) =>
                     setState({ phase: "running", mode: "local", percent: p.percent, detail: p.detail, result: null }),
             });
@@ -113,7 +124,7 @@ export function EditorExport() {
                 detail: error instanceof Error ? error.message : "导出失败",
                 result: null,
             });
-        }
+        } finally { runningRef.current = false; localControllerRef.current = null; }
     };
 
     if (!project) return null;
@@ -141,7 +152,7 @@ export function EditorExport() {
                             )}
                         </ul>
                     ) : (
-                        <p className="mt-2 text-[11px] text-[var(--director-dock-fg)]/55">时间线没有可渲染的视频片段。</p>
+                        <p className="mt-2 text-[11px] text-[var(--director-dock-fg)]/55">{planError || "时间线没有可渲染的视频片段。"}</p>
                     )}
                 </div>
 
@@ -170,7 +181,7 @@ export function EditorExport() {
                 <button
                     type="button"
                     onClick={exportLocalMp4}
-                    disabled={sources.length === 0 || state.phase === "running"}
+                    disabled={sources.length === 0 || Boolean(planError) || state.phase === "running"}
                     className="mt-1.5 flex w-full items-center justify-center gap-2 rounded-md border border-[var(--director-sequencer-border)] px-2 py-1.5 text-xs text-[var(--director-dock-fg)]/80 hover:bg-[var(--director-control-hover)] disabled:opacity-40"
                 >
                     {state.phase === "running" && state.mode === "local" ? (
@@ -183,6 +194,7 @@ export function EditorExport() {
 
                 {state.phase === "running" && (
                     <div className="mt-3">
+                        {state.mode === "local" && <button type="button" onClick={() => localControllerRef.current?.abort()}>取消导出</button>}
                         <div className="mb-1 flex justify-between text-[10px] text-[var(--director-dock-fg)]/70">
                             <span>{state.detail}</span>
                             <span className="tabular-nums">{state.percent}%</span>
@@ -221,7 +233,7 @@ export function EditorExport() {
                     默认提交服务端渲染任务（异步，产物可直接预览/下载）；本地 ffmpeg.wasm 导出保留为离线兜底。
                 </p>
                 {sources.length === 0 && (
-                    <p className="mt-1 text-[11px] text-[var(--director-dock-fg)]/55">悬空引用片段（节点已删除）按计划跳过，不影响其余片段导出。</p>
+                    <p className="mt-1 text-[11px] text-[var(--director-dock-fg)]/55">请补齐缺失媒体后再导出完整成片。</p>
                 )}
             </div>
         </div>

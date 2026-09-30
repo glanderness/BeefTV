@@ -1,5 +1,5 @@
 import { CollectionToolbar } from "@/components/layout/collection-toolbar";
-import { App, Button, Drawer, Form, Input, Modal, Select, Typography } from "antd";
+import { Alert, App, Button, Drawer, Form, Input, Modal, Select, Typography } from "antd";
 import { Switch } from "@/components/ui/base/switch";
 import { SegmentedControl } from "@/components/ui/base/segmented-control";
 import { Bug, LayoutGrid, List, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
@@ -29,6 +29,7 @@ import { formatModelName, getTaskCanvasContext, isTaskFailed, providerCancelStat
 import { TaskStatusFilterBar, type TaskStatusFilter } from "./task-status-filter";
 import { localTaskHistoryFromProjects } from "@/lib/local-task-history";
 import { workspaceCapabilities } from "@/services/workspace-mode";
+import { discoverBackendTasks, mergeTaskHistory } from "./task-discovery";
 
 type TaskKindFilter = "all" | "text" | "image" | "video";
 type TaskViewMode = "list" | "grid";
@@ -95,8 +96,12 @@ export default function TasksPage() {
     const [detailLoading, setDetailLoading] = useState(false);
     const [taskLogs, setTaskLogs] = useState<TaskLog[]>([]);
     const [logsLoading, setLogsLoading] = useState(false);
+    const [detailIncomplete, setDetailIncomplete] = useState(false);
+    const detailRequestRef = useRef(0);
     const [mediaPreview, setMediaPreview] = useState<{ url: string; kind: "image" | "video"; title: string } | null>(null);
     const [tasks, setTasks] = useState<GenerationTask[]>([]);
+    const [tasksIncomplete, setTasksIncomplete] = useState(false);
+    const backendTasksRef = useRef<GenerationTask[]>([]);
     const syncedCanvasTaskIdsRef = useRef(new Set<string>());
     const tasksRef = useRef<GenerationTask[]>([]);
     const canvasById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
@@ -244,18 +249,17 @@ export default function TasksPage() {
     }, []);
 
     const loadTasks = useCallback(async (showLoading = false) => {
-        if (localMode) {
-            setTasks(localTaskHistoryFromProjects(useCanvasStore.getState().projects));
-            setLoading(false);
-            return localTaskHistoryFromProjects(useCanvasStore.getState().projects);
-        }
         if (showLoading) setLoading(true);
         try {
-            const next = await listGenerationTasks();
-            setTasks((current) => reconcileTaskSummaries(current, next));
-            void syncCompletedCanvasTasks(next);
+            const result = await discoverBackendTasks(listGenerationTasks, backendTasksRef.current);
+            backendTasksRef.current = result.tasks;
+            const next = mergeTaskHistory(localMode ? localTaskHistoryFromProjects(useCanvasStore.getState().projects) : [], result.tasks);
+            setTasks(next);
+            setTasksIncomplete(result.incomplete);
+            if (!result.incomplete) void syncCompletedCanvasTasks(result.tasks);
             return next;
         } catch (error) {
+            setTasksIncomplete(true);
             if (showLoading) message.error(error instanceof Error ? error.message : "任务加载失败");
             return undefined;
         } finally {
@@ -265,9 +269,11 @@ export default function TasksPage() {
 
     const openTaskDetail = useCallback(
         async (task: GenerationTask) => {
+            const request = ++detailRequestRef.current;
             setDetailTask(task);
             setTaskLogs([]);
-            if (localMode) {
+            setDetailIncomplete(false);
+            if (task.id.startsWith("local:")) {
                 setDetailLoading(false);
                 setLogsLoading(false);
                 return;
@@ -275,17 +281,19 @@ export default function TasksPage() {
             setDetailLoading(true);
             setLogsLoading(true);
             try {
-                const [detail, logs] = await Promise.all([queryGenerationTask(task.id), listTaskLogs(task.id)]);
-                setDetailTask(detail);
-                setTaskLogs(logs);
-            } catch (error) {
-                message.error(error instanceof Error ? error.message : "任务详情加载失败");
+                const [detail, logs] = await Promise.allSettled([queryGenerationTask(task.id), listTaskLogs(task.id)]);
+                if (request !== detailRequestRef.current) return;
+                if (detail.status === "fulfilled") setDetailTask(detail.value);
+                if (logs.status === "fulfilled") setTaskLogs(logs.value);
+                setDetailIncomplete(detail.status === "rejected" || logs.status === "rejected");
             } finally {
-                setDetailLoading(false);
-                setLogsLoading(false);
+                if (request === detailRequestRef.current) {
+                    setDetailLoading(false);
+                    setLogsLoading(false);
+                }
             }
         },
-        [localMode, message],
+        [],
     );
 
     useEffect(() => {
@@ -474,6 +482,8 @@ export default function TasksPage() {
                 </div>
 
                 <div className="collection-content task-collection-content">
+                    <Typography.Paragraph type="secondary">显示最近 100 条任务、最多 100 条进行中任务及当前画布历史。</Typography.Paragraph>
+                    {tasksIncomplete ? <Alert type="warning" showIcon title="任务状态未完整同步" description="部分任务查询失败。当前显示的任务数量与状态可能不完整，请刷新重试。" /> : null}
                     {loading && !tasks.length ? <div className="library-loading-grid" aria-label="正在加载任务">{Array.from({ length: 8 }, (_, index) => <div key={index} className="library-skeleton" />)}</div> : null}
                     {!loading || tasks.length ? (
                         visibleTasks.length ? (
@@ -498,8 +508,8 @@ export default function TasksPage() {
                         ) : (
                             <WorkspaceState
                                 compact
-                                title={taskEmptyState(statusFilter).title}
-                                description={taskEmptyState(statusFilter).description}
+                                title={tasksIncomplete ? "暂时无法确认任务状态" : taskEmptyState(statusFilter).title}
+                                description={tasksIncomplete ? "任务查询失败，暂时没有可显示的记录。请刷新重试。" : taskEmptyState(statusFilter).description}
                                 action={<Button className="library-primary-action" type="primary" icon={<Plus className="size-3.5" />} onClick={() => localMode ? navigate("/create") : setCreateOpen(true)}>{localMode ? "开始创作" : "新建任务"}</Button>}
                             />
                         )
@@ -523,9 +533,10 @@ export default function TasksPage() {
                     </Form.Item>
                 </Form>
             </Modal>
-            <Drawer className="library-drawer" title="任务详情" open={Boolean(detailTask)} onClose={() => setDetailTask(null)} size="large" destroyOnHidden>
+            <Drawer className="library-drawer" title="任务详情" open={Boolean(detailTask)} onClose={() => { detailRequestRef.current += 1; setDetailTask(null); }} size="large" destroyOnHidden>
                 {detailTask ? (
                     <div className="space-y-5">
+                        {detailIncomplete ? <Alert type="warning" showIcon title="部分详情或日志读取失败" description="保留已读取的记录，当前状态可能未更新。请关闭详情后重新打开重试。" /> : null}
                         <div className="task-detail-facts grid text-sm sm:grid-cols-2">
                             <InfoItem label="状态" value={statusLabel[detailTask.status]} />
                             <InfoItem label="画布名称" value={getTaskCanvasContext(detailTask, canvasById, domainProjectNameById).canvasName} />
@@ -546,7 +557,7 @@ export default function TasksPage() {
                         {detailTask.error || isTaskFailed(detailTask) ? (
                             <GenerationFailureNotice
                                 explanation={explainGenerationError({ code: detailTask.errorCode, message: detailTask.error }, { taskId: detailTask.id, providerRequestId: detailTask.providerRequestId, model: detailTask.model, createdAt: detailTask.createdAt, stage: detailTask.stage })}
-                                context={{ taskId: detailTask.id, providerRequestId: detailTask.providerRequestId, model: detailTask.model, createdAt: detailTask.createdAt, stage: detailTask.stage }}
+                                context={{ taskId: detailTask.id, providerRequestId: detailTask.providerRequestId, model: detailTask.model, createdAt: detailTask.createdAt, stage: detailTask.stage, failureDiagnostics: detailTask.failureDiagnostics, completedAt: detailTask.completedAt, updatedAt: detailTask.updatedAt }}
                             />
                         ) : null}
                         <TaskResultMedia value={detailTask.resultJson} taskType={detailTask.type} />
@@ -556,7 +567,7 @@ export default function TasksPage() {
                         <div>
                             <Typography.Text strong>日志</Typography.Text>
                             <div className="mt-2 max-h-60 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-100">
-                                {logsLoading ? "日志加载中..." : taskLogs.length ? taskLogs.map((log) => `[${new Date(log.createdAt).toLocaleString()}] ${log.level.toUpperCase()} ${formatTaskLog(log)}`).join("\n\n") : "暂无日志"}
+                                {logsLoading ? "日志加载中..." : taskLogs.length ? taskLogs.map((log) => `[${new Date(log.createdAt).toLocaleString()}] ${log.level.toUpperCase()} ${formatTaskLog(log)}`).join("\n\n") : detailIncomplete ? "日志未完整读取" : "暂无日志"}
                             </div>
                         </div>
                     </div>
@@ -589,19 +600,6 @@ export default function TasksPage() {
 
 function canQueryProviderTask(task: GenerationTask) {
     return task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_")) && Boolean(task.providerRequestId);
-}
-
-function reconcileTaskSummaries(current: GenerationTask[], next: GenerationTask[]) {
-    if (current.length === 0) return next;
-    const currentById = new Map(current.map((task) => [task.id, task]));
-    let changed = false;
-    const reconciled = next.map((task) => {
-        const previous = currentById.get(task.id);
-        if (previous?.updatedAt === task.updatedAt && previous.previewUrl === task.previewUrl && previous.previewPosterUrl === task.previewPosterUrl) return previous;
-        changed = true;
-        return task;
-    });
-    return changed ? reconciled : current;
 }
 
 function TaskResultMedia({ value, taskType }: { value?: string; taskType: string }) {

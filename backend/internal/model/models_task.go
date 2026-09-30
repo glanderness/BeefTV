@@ -25,28 +25,87 @@ type Task struct {
 	RouteID                string     `json:"routeId,omitempty" gorm:"size:36;index"`
 	ChannelModelID         string     `json:"channelModelId,omitempty" gorm:"size:36;index"`
 	// RouteRun 只在用户主动重试时递增；worker 租约恢复不应创建新的路由选择世代。
-	RouteRun                  int                  `json:"-" gorm:"index"`
-	ProviderRequestID         string               `json:"providerRequestId,omitempty" gorm:"index;size:160"`
-	ProviderCancelStatus      ProviderCancelStatus `json:"providerCancelStatus,omitempty" gorm:"index;size:24;index:idx_tasks_provider_cancel,priority:2"`
-	ProviderCancelError       string               `json:"providerCancelError,omitempty" gorm:"type:text"`
-	ProviderCancelAttempts    int                  `json:"providerCancelAttempts,omitempty"`
-	ProviderCancelRequestedAt *time.Time           `json:"providerCancelRequestedAt,omitempty"`
-	ProviderCancelledAt       *time.Time           `json:"providerCancelledAt,omitempty"`
-	ProviderCancelNextCheckAt *time.Time           `json:"providerCancelNextCheckAt,omitempty" gorm:"index:idx_tasks_provider_cancel,priority:3"`
-	PollStage                 string               `json:"pollStage,omitempty" gorm:"size:32"`
-	NextPollAt                *time.Time           `json:"nextPollAt,omitempty" gorm:"index"`
-	LeaseOwner                string               `json:"-" gorm:"index;size:120"`
-	LeaseExpiresAt            *time.Time           `json:"-" gorm:"index;index:idx_tasks_claim,priority:2"`
-	InputJSON                 string               `json:"inputJson" gorm:"type:text"`
-	ResultJSON                string               `json:"resultJson" gorm:"type:text"`
-	TextDraft                 string               `json:"textDraft,omitempty" gorm:"type:text"`
-	Error                     string               `json:"error"`
-	ErrorCode                 string               `json:"errorCode,omitempty" gorm:"-"`
-	Attempts                  int                  `json:"attempts"`
-	StartedAt                 *time.Time           `json:"startedAt"`
-	CompletedAt               *time.Time           `json:"completedAt"`
-	CreatedAt                 time.Time            `json:"createdAt" gorm:"index:idx_tasks_user_created,priority:2;index:idx_tasks_status_created,priority:2;index:idx_tasks_claim,priority:3;index:idx_tasks_user_project_created,priority:3"`
-	UpdatedAt                 time.Time            `json:"updatedAt"`
+	RouteRun                  int                     `json:"-" gorm:"index"`
+	ProviderRequestID         string                  `json:"providerRequestId,omitempty" gorm:"index;size:160"`
+	ProviderCancelStatus      ProviderCancelStatus    `json:"providerCancelStatus,omitempty" gorm:"index;size:24;index:idx_tasks_provider_cancel,priority:2"`
+	ProviderCancelError       string                  `json:"providerCancelError,omitempty" gorm:"type:text"`
+	ProviderCancelAttempts    int                     `json:"providerCancelAttempts,omitempty"`
+	ProviderCancelRequestedAt *time.Time              `json:"providerCancelRequestedAt,omitempty"`
+	ProviderCancelledAt       *time.Time              `json:"providerCancelledAt,omitempty"`
+	ProviderCancelNextCheckAt *time.Time              `json:"providerCancelNextCheckAt,omitempty" gorm:"index:idx_tasks_provider_cancel,priority:3"`
+	PollStage                 string                  `json:"pollStage,omitempty" gorm:"size:32"`
+	NextPollAt                *time.Time              `json:"nextPollAt,omitempty" gorm:"index"`
+	LeaseOwner                string                  `json:"-" gorm:"index;size:120"`
+	LeaseExpiresAt            *time.Time              `json:"-" gorm:"index;index:idx_tasks_claim,priority:2"`
+	InputJSON                 string                  `json:"inputJson" gorm:"type:text"`
+	ResultJSON                string                  `json:"resultJson" gorm:"type:text"`
+	TextDraft                 string                  `json:"textDraft,omitempty" gorm:"type:text"`
+	Error                     string                  `json:"error"`
+	ErrorCode                 string                  `json:"errorCode,omitempty" gorm:"-"`
+	FailureDiagnostics        *TaskFailureDiagnostics `json:"failureDiagnostics,omitempty" gorm:"serializer:json;type:text"`
+	Attempts                  int                     `json:"attempts"`
+	StartedAt                 *time.Time              `json:"startedAt"`
+	CompletedAt               *time.Time              `json:"completedAt"`
+	CreatedAt                 time.Time               `json:"createdAt" gorm:"index:idx_tasks_user_created,priority:2;index:idx_tasks_status_created,priority:2;index:idx_tasks_claim,priority:3;index:idx_tasks_user_project_created,priority:3"`
+	UpdatedAt                 time.Time               `json:"updatedAt"`
+}
+
+// TaskFailureDiagnostics contains bounded, redacted evidence, never request bodies.
+type TaskFailureDiagnostics struct {
+	Version         string                `json:"version,omitempty"`
+	Platform        string                `json:"platform,omitempty"`
+	ExecutionResult string                `json:"executionResult,omitempty"`
+	Requests        []TaskRequestEvidence `json:"requests,omitempty"`
+	OmittedRequests int                   `json:"omittedRequests,omitempty"`
+	Input           *TaskDiagnosticInput  `json:"input,omitempty"`
+	Source          string                `json:"source"`
+	Summary         string                `json:"summary,omitempty"`
+	ProviderCode    string                `json:"providerCode,omitempty"`
+	HTTPStatus      int                   `json:"httpStatus,omitempty"`
+	RequestID       string                `json:"requestId,omitempty"`
+	ProviderTaskID  string                `json:"providerTaskId,omitempty"`
+	Param           string                `json:"param,omitempty"`
+	Stage           string                `json:"stage,omitempty"`
+	CapturedAt      string                `json:"capturedAt,omitempty"`
+}
+
+type TaskRequestEvidence struct {
+	Operation             string `json:"operation"`
+	Method                string `json:"method"`
+	Dispatched            bool   `json:"dispatched"`
+	Outcome               string `json:"outcome"`
+	HTTPStatus            int    `json:"httpStatus,omitempty"`
+	RequestID             string `json:"requestId,omitempty"`
+	ProviderCode          string `json:"providerCode,omitempty"`
+	Summary               string `json:"summary,omitempty"`
+	StartedAt             string `json:"startedAt"`
+	DurationMS            int64  `json:"durationMs"`
+	RequestBytes          int64  `json:"requestBytes,omitempty"`
+	ReceivedBytes         int64  `json:"receivedBytes,omitempty"`
+	DeclaredResponseBytes int64  `json:"declaredResponseBytes,omitempty"`
+	ResponseLimitBytes    int64  `json:"responseLimitBytes,omitempty"`
+}
+
+type TaskDiagnosticInput struct {
+	Protocol            string                `json:"protocol,omitempty"`
+	Model               string                `json:"model,omitempty"`
+	Size                string                `json:"size,omitempty"`
+	Quality             string                `json:"quality,omitempty"`
+	Count               string                `json:"count,omitempty"`
+	PromptChars         int                   `json:"promptChars"`
+	ImageCount          int                   `json:"imageCount"`
+	VideoCount          int                   `json:"videoCount"`
+	AudioCount          int                   `json:"audioCount"`
+	Images              []TaskDiagnosticMedia `json:"images,omitempty"`
+	ImageLimitsRecorded bool                  `json:"imageLimitsRecorded"`
+	MaxImages           int                   `json:"maxImages"`
+	MaxImageBytes       int64                 `json:"maxImageBytes"`
+}
+
+type TaskDiagnosticMedia struct {
+	Bytes  int64 `json:"bytes,omitempty"`
+	Width  int   `json:"width,omitempty"`
+	Height int   `json:"height,omitempty"`
 }
 
 // TaskTextDelta 只保存可回放窗口内的文本增量；最终正文和失败草稿分别归并到 Task.ResultJSON 与 Task.TextDraft。

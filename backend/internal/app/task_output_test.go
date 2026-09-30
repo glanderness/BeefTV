@@ -76,6 +76,25 @@ func TestTaskClientContextPreservesCanvasNodeID(t *testing.T) {
 	}
 }
 
+func TestTaskSummaryExposesDirectorPanoramaRecoveryIdentityOnly(t *testing.T) {
+	summary := taskSummaryForOutput(model.Task{
+		ID: "task-1", ProjectID: "project-1", Type: "canvas_image",
+		InputJSON: `{"metadata":{"source":"director-panorama","sceneId":"scene-1","providerOptions":{"secret":"hidden"}},"config":{"apiKey":"private-test-value"}}`,
+	})
+	if summary.ClientContext == nil || summary.ClientContext.Source != "director-panorama" || summary.ClientContext.SceneID != "scene-1" {
+		t.Fatalf("director panorama recovery identity missing: %+v", summary.ClientContext)
+	}
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"private-test-value", "hidden", "providerOptions", "inputJson"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("summary leaked %s: %s", secret, encoded)
+		}
+	}
+}
+
 func TestTaskSummaryProjectsClassifiedErrorWithoutRawBody(t *testing.T) {
 	summary := taskSummaryForOutput(model.Task{
 		ID:    "task-1",

@@ -751,6 +751,51 @@ async function saveFailureCloseGuard(cdp, baseUrl) {
     assert(cdp.problems.length === 0, "F8 no browser problems in scenario F", JSON.stringify(cdp.problems));
 }
 
+/** A delayed image decode exercises the real upload and screenshot callbacks after unmount. */
+async function delayedMediaAfterClose(cdp, baseUrl) {
+    console.log("\n=== G. delayed media must not overwrite a reopened scene ===");
+    for (const kind of ["panorama", "screenshot"]) {
+        await cdp.navigateFresh(`${baseUrl}/dev/director-repro`);
+        await cdp.click('[data-testid="toggle-workbench"]');
+        await cdp.poll(`document.querySelector('.director-viewport-shell')?.dataset.rendererReady === 'true'`, "renderer ready", 40000);
+        await cdp.evaluate(`(() => {
+            const Original = window.Image;
+            const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+            window.__delayedMedia = [];
+            window.__restoreMedia = () => { window.Image = Original; };
+            window.Image = function(...args) {
+                const image = new Original(...args);
+                Object.defineProperty(image, 'src', {
+                    get() { return descriptor.get.call(image); },
+                    set(url) { window.__delayedMedia.push(() => descriptor.set.call(image, url)); }
+                });
+                return image;
+            };
+        })()`);
+        if (kind === "screenshot") await cdp.click('[aria-label="截图"]');
+        else await cdp.evaluate(`(() => {
+            const canvas = document.createElement('canvas'); canvas.width = canvas.height = 8;
+            canvas.toBlob((blob) => {
+                const transfer = new DataTransfer(); transfer.items.add(new File([blob], 'delayed.png', {type:'image/png'}));
+                const input = document.querySelector('input[accept="image/*"]');
+                input.files = transfer.files; input.dispatchEvent(new Event('change', {bubbles:true}));
+            });
+        })()`);
+        assert(await cdp.poll(`window.__delayedMedia.length === 1`, "upload waiting", 10000), `G ${kind}: upload is in flight`);
+        await cdp.click('[aria-label="关闭导演台"]');
+        await cdp.poll(`!document.querySelector('.director-viewport-shell')`, "closed", 15000);
+        await cdp.click('[data-testid="toggle-workbench"]');
+        await cdp.poll(`document.querySelector('.director-viewport-shell')?.dataset.rendererReady === 'true'`, "reopened", 40000);
+        await cdp.click('[aria-label="添加立方体"]');
+        const count = `document.querySelector('[data-testid="object-count"]')?.textContent.replace(/\\s/g,'')`;
+        assert(await cdp.poll(`${count} === '对象数4'`, "new edit", 10000), `G ${kind}: reopened scene has new edit`);
+        await cdp.evaluate(`window.__restoreMedia(); window.__delayedMedia.forEach(release => release());`);
+        await sleep(1500);
+        assert(await cdp.evaluate(`${count} === '对象数4'`), `G ${kind}: late completion preserves canonical scene`);
+        assert(cdp.problems.length === 0, `G ${kind}: no browser problems`, JSON.stringify(cdp.problems));
+    }
+}
+
 async function main() {
     const chromePath = resolveChrome();
     console.log(`Chrome binary: ${chromePath}`);
@@ -779,7 +824,7 @@ async function main() {
         cdp = await connectCdp(cdpPort);
         console.log("      CDP connected (Runtime, Page, Log, Network enabled)");
 
-        for (const scenario of [smokeWorkbench, localModel, missingRetry, deleteWhileLoading, webglLossRestore, saveFailureCloseGuard]) {
+        for (const scenario of [smokeWorkbench, localModel, missingRetry, deleteWhileLoading, webglLossRestore, delayedMediaAfterClose, saveFailureCloseGuard]) {
             try {
                 await scenario(cdp, baseUrl);
             } catch (error) {

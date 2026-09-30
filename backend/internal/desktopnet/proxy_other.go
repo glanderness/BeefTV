@@ -1,5 +1,5 @@
 //go:build !darwin && !windows
 
-package desktopupdate
+package desktopnet
 
 func readSystemProxy() systemProxySettings { return systemProxySettings{} }

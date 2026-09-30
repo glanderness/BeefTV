@@ -85,3 +85,76 @@ func TestDownloadRetriesAnInterruptedSourceAndResumes(t *testing.T) {
 		t.Fatalf("requests = %d", requests)
 	}
 }
+
+func TestDownloadAssemblesVerifiedReleaseParts(t *testing.T) {
+	whole := []byte("three signed release chunks")
+	chunks := [][]byte{whole[:8], whole[8:17], whole[17:]}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for index, part := range chunks {
+			if r.URL.Path == fmt.Sprintf("/part-%d", index) {
+				_, _ = w.Write(part)
+				return
+			}
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	parts := make([]ArtifactPart, 0, len(chunks))
+	for index, part := range chunks {
+		hash := sha256.Sum256(part)
+		parts = append(parts, ArtifactPart{URLs: []string{fmt.Sprintf("%s/part-%d", server.URL, index)}, Size: int64(len(part)), SHA256: hex.EncodeToString(hash[:])})
+	}
+	wholeHash := sha256.Sum256(whole)
+	target := filepath.Join(t.TempDir(), "runtime.zip")
+	if err := os.WriteFile(target, []byte("stale corrupt cache"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Download(context.Background(), Artifact{Size: int64(len(whole)), SHA256: hex.EncodeToString(wholeHash[:]), Parts: parts}, target, nil); err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != string(whole) {
+		t.Fatalf("assembled archive = %q, %v", got, err)
+	}
+}
+
+func TestDownloadRejectsReleasePartWithBadHash(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("bad")) }))
+	defer server.Close()
+	target := filepath.Join(t.TempDir(), "runtime.zip")
+	wholeHash := sha256.Sum256([]byte("good"))
+	err := Download(context.Background(), Artifact{Size: 3, SHA256: hex.EncodeToString(wholeHash[:]), Parts: []ArtifactPart{{URLs: []string{server.URL}, Size: 3, SHA256: hex.EncodeToString(wholeHash[:])}}}, target, nil)
+	if err == nil {
+		t.Fatal("corrupt release part was accepted")
+	}
+	if pathExists(target) {
+		t.Fatal("corrupt assembled archive was published")
+	}
+}
+
+func TestDownloadRejectsAssembledArchiveWithBadHash(t *testing.T) {
+	part := []byte("valid-part")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(part) }))
+	defer server.Close()
+	partHash := sha256.Sum256(part)
+	wrongWholeHash := sha256.Sum256([]byte("different archive"))
+	target := filepath.Join(t.TempDir(), "runtime.zip")
+	err := Download(context.Background(), Artifact{
+		Size: int64(len(part)), SHA256: hex.EncodeToString(wrongWholeHash[:]),
+		Parts: []ArtifactPart{{URLs: []string{server.URL}, Size: int64(len(part)), SHA256: hex.EncodeToString(partHash[:])}},
+	}, target, nil)
+	if err == nil || pathExists(target) {
+		t.Fatalf("bad complete archive hash was accepted: %v", err)
+	}
+}
+
+func TestDownloadRejectsReleasePartsWhoseSizesDoNotAddUp(t *testing.T) {
+	hash := sha256.Sum256([]byte("whole"))
+	err := Download(context.Background(), Artifact{
+		Size: 5, SHA256: hex.EncodeToString(hash[:]),
+		Parts: []ArtifactPart{{URLs: []string{"https://example.invalid/part"}, Size: 4, SHA256: hex.EncodeToString(hash[:])}},
+	}, filepath.Join(t.TempDir(), "runtime.zip"), nil)
+	if err == nil {
+		t.Fatal("mismatched release part total was accepted")
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"gorm.io/gorm"
 	"log"
 	"math"
 	"sort"
@@ -907,6 +908,11 @@ func (s *Service) beginTaskRouteAttempt(task *model.Task) (*model.RouteAttempt, 
 	}
 	if len(attempts) > 0 {
 		existing := &attempts[len(attempts)-1]
+		if task.Type == "canvas_image" && (existing.DispatchState == "submission_unknown" || existing.DispatchState == "accepted") {
+			if _, err := s.repo.ImageSubmission(existing.ID, task.ID, task.UserID); err == nil {
+				return existing, nil
+			}
+		}
 		switch existing.DispatchState {
 		case "not_sent":
 			return existing, nil
@@ -937,6 +943,14 @@ func (s *Service) beginTaskRouteAttempt(task *model.Task) (*model.RouteAttempt, 
 			}
 			return nil, routeDispatchUncertainError{"上一次提交结果不明确，为避免重复创建上游任务已停止自动重发"}
 		case "rejected_no_job":
+			if task.Type == "canvas_image" && existing.FailureCode == "image_throttled" && existing.AttemptNumber < 3 {
+				if next, err := s.retryRejectedImageAttempt(task, existing, providerHTTPError{StatusCode: 429, Body: `{"error":{"code":"rate_limit_exceeded"}}`}); next != nil || err != nil {
+					return next, err
+				}
+			}
+			if task.Type == "canvas_image" {
+				return nil, errors.New("上游已拒绝本次图片请求，请查看失败原因")
+			}
 			if task.LogicalModelID == "" {
 				return nil, errors.New("上游已拒绝本次请求，请检查渠道配置后再试")
 			}
@@ -1128,6 +1142,15 @@ func (s *Service) switchTaskToNextRoute(task *model.Task, attempts []model.Route
 }
 
 func (s *Service) nextRouteAttemptAfterFailure(task *model.Task, attempt *model.RouteAttempt, taskErr error) (*model.RouteAttempt, error) {
+	if task != nil && task.Type == "canvas_image" && attempt != nil {
+		if attempt.AttemptNumber >= 3 || !definiteImageThrottle(taskErr) {
+			return nil, nil
+		}
+		if _, err := s.repo.ImageSubmission(attempt.ID, task.ID, task.UserID); err != nil {
+			return nil, nil
+		}
+		return s.retryRejectedImageAttempt(task, attempt, taskErr)
+	}
 	if task == nil || task.LogicalModelID == "" || attempt == nil || attempt.DispatchState != "rejected_no_job" {
 		return nil, nil
 	}
@@ -1271,12 +1294,23 @@ func (s *Service) finishTaskRouteAttempt(attempt *model.RouteAttempt, task *mode
 		attempt.Status = "failed"
 		attempt.FailureMessage = truncateRunes(taskFailureMessage(taskErr), 1000)
 		attempt.FailureCode = routeFailureCode(taskErr)
+		if task != nil && task.Type == "canvas_image" && definiteImageThrottle(taskErr) {
+			attempt.FailureCode = "image_throttled"
+		}
 		if attempt.ProviderRequestID != "" {
 			attempt.DispatchState = "accepted"
 		} else if safeRouteRejection(taskErr) {
 			attempt.DispatchState = "rejected_no_job"
 		} else {
 			attempt.DispatchState = "submission_unknown"
+		}
+		if task != nil && task.Type == "canvas_image" {
+			row, err := s.repo.ImageSubmission(attempt.ID, task.ID, task.UserID)
+			if err == nil && row.ResponseAccepted {
+				attempt.DispatchState = "accepted"
+			} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				attempt.DispatchState = "submission_unknown"
+			}
 		}
 	}
 	if err := s.repo.SaveRouteAttempt(attempt); err != nil {
@@ -1297,6 +1331,10 @@ func routeFailureCode(err error) string {
 
 func safeRouteRejection(err error) bool {
 	if err == nil {
+		return false
+	}
+	var imageRecovery imageRecoveryError
+	if errors.As(err, &imageRecovery) {
 		return false
 	}
 	if code, _ := ChannelSlotFailureDetails(err); code != "" {

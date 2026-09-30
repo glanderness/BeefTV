@@ -7,6 +7,19 @@ body .app-user-workspace .app-workspace-sidebar {
 }
 body .app-user-workspace .app-workspace-sidebar-nav { background: var(--user-page-bg); }
 
+.dark .app-user-workspace.app-product-workspace.app-home-route {
+    --user-page-bg: #101010;
+    --user-surface: #161616;
+    --user-surface-muted: #202020;
+    --user-surface-hover: #242424;
+}
+
+.dark .app-user-workspace.app-product-workspace.app-home-route .app-workspace-sidebar,
+.dark .app-user-workspace.app-product-workspace.app-home-route .app-workspace-sidebar-nav,
+.dark .app-user-workspace.app-product-workspace.app-home-route .app-workspace-sidebar-footer {
+    background: #161616 !important;
+}
+
 .beeftv-home {
     --home-border: var(--user-border);
     --home-card: var(--user-surface);

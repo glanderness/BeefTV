@@ -23,7 +23,10 @@ export function protocolForModelCatalog(_endpointTypes: string[] = []): ModelPro
     return undefined;
 }
 export function modelProtocolSummary(value: string | undefined, definitions: ModelProtocolDefinition[] = []) { const protocol = modelProtocolDefinition(value, definitions); return protocol ? [protocol.create, protocol.contentType, protocol.poll, protocol.media].filter(Boolean).join(" · ") : "当前协议未安装或尚未选择。"; }
-export function normalizeModelProtocol(value: unknown): ModelProtocol | undefined { return typeof value === "string" && value.trim() ? value.trim() : undefined; }
+export function normalizeModelProtocol(value: unknown): ModelProtocol | undefined {
+    const protocol = typeof value === "string" && value.trim() ? value.trim() : undefined;
+    return protocol === "google-gemini-generate-content" ? "gemini-generate-content" : protocol;
+}
 
 const STANDARD_PROTOCOLS: Record<ProtocolCapability, ModelProtocol[]> = {
     text: ["chat-completion", "openai-response"],

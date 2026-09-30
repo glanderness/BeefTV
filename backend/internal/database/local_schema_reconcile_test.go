@@ -24,6 +24,9 @@ func reconciliationFixture(t *testing.T, history string) *gorm.DB {
 	if err := migrateLocalCoreSchema(db); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Exec("ALTER TABLE tasks DROP COLUMN failure_diagnostics").Error; err != nil {
+		t.Fatal(err)
+	}
 	exec := func(sql string) {
 		t.Helper()
 		if err := db.Exec(sql).Error; err != nil {

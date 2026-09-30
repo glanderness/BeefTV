@@ -30,6 +30,9 @@ func (w *taskWorkerCoordinator) processTimelineRender(task *model.Task, ctx cont
 		return w.failTimelineTask(task, "渲染失败", "任务缺少有效的时间线快照")
 	}
 	plan := buildRenderPlan(input.Timeline)
+	if plan.Error != nil {
+		return w.failTimelineTask(task, "渲染失败", plan.Error.Error())
+	}
 	if !plan.HasMedia {
 		return w.failTimelineTask(task, "渲染失败", "时间线没有可渲染的媒体片段")
 	}
@@ -44,7 +47,7 @@ func (w *taskWorkerCoordinator) processTimelineRender(task *model.Task, ctx cont
 	if err != nil {
 		return w.failTimelineTask(task, "渲染失败", err.Error())
 	}
-	for _, seg := range plan.Segments {
+	for _, seg := range append(append([]renderSegment{}, plan.Segments...), plan.Audio...) {
 		if seg.Source == nil || seg.Kind == "image" {
 			continue
 		}
@@ -52,9 +55,17 @@ func (w *taskWorkerCoordinator) processTimelineRender(task *model.Task, ctx cont
 		if probeErr != nil {
 			return w.failTimelineTask(task, "渲染失败", probeErr.Error())
 		}
+		if seg.Kind == "audio" && !hasAudio {
+			return w.failTimelineTask(task, "渲染失败", "独立音频素材没有可用音轨")
+		}
 		seg.Source.HasAudio = hasAudio
 	}
 
+	if plan.SubtitleSRT != "" {
+		if err := os.WriteFile(filepath.Join(workDir, "render-subtitles.srt"), []byte(plan.SubtitleSRT), 0600); err != nil {
+			return w.failTimelineTask(task, "渲染失败", "写入字幕文件失败")
+		}
+	}
 	args := buildRenderFFmpegArgs(plan, filepath.Join(workDir, "render-output.mp4"))
 	if len(args) == 0 {
 		return w.failTimelineTask(task, "渲染失败", "无法生成渲染命令")
@@ -65,7 +76,7 @@ func (w *taskWorkerCoordinator) processTimelineRender(task *model.Task, ctx cont
 	cmd := exec.CommandContext(ctx, ffmpegBin, args...)
 	cmd.Dir = workDir
 	output, runErr := cmd.CombinedOutput()
-	if runErr != nil {
+	if runErr != nil || (plan.SubtitleSRT != "" && renderSubtitleFontFailure(string(output))) {
 		detail := strings.TrimSpace(string(output))
 		if len(detail) > 400 {
 			detail = detail[len(detail)-400:]
@@ -145,12 +156,25 @@ func materializeRenderSources(ctx context.Context, s *Service, userID string, pl
 	}
 	cleanup := func() { _ = os.RemoveAll(tmpDir) }
 	cache := map[string]string{}
+	segments := make([]*renderSegment, 0, len(plan.Segments)+len(plan.Audio))
 	for i := range plan.Segments {
-		seg := &plan.Segments[i]
+		segments = append(segments, &plan.Segments[i])
+	}
+	for i := range plan.Audio {
+		segments = append(segments, &plan.Audio[i])
+	}
+	for _, seg := range segments {
+		if seg.Kind == "gap" {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			cleanup()
+			return "", nil, err
+		}
 		resourceID, ok := mediaResourceID(seg.Clip)
 		if !ok {
-			// 无可用媒体引用时渲染为黑场段，保证时间轴连续。
-			continue
+			cleanup()
+			return "", nil, fmt.Errorf("片段 %s 缺少有效媒体引用", seg.Clip.ID)
 		}
 		path, cached := cache[resourceID]
 		if !cached {
@@ -193,8 +217,23 @@ func probeHasAudioStream(ctx context.Context, path string) (bool, error) {
 		"-of", "csv=p=0", path)
 	output, runErr := cmd.Output()
 	if runErr != nil {
-		// 探测失败按无音轨处理，渲染仍可产出静音视频。
-		return false, nil
+		return false, fmt.Errorf("媒体音轨探测失败: %w", runErr)
 	}
 	return strings.TrimSpace(string(output)) != "", nil
+}
+
+// libass can exit successfully even when no font can render the subtitle glyphs.
+func renderSubtitleFontFailure(output string) bool {
+	text := strings.ToLower(output)
+	for _, failure := range []string{
+		"failed to find any fallback", "no usable fontconfig", "fontselect: failed",
+		"can't find selected font provider", "couldn't find font family",
+		"failed to find font", "no fonts found", "missing glyph",
+	} {
+		if strings.Contains(text, failure) {
+			return true
+		}
+	}
+	// "Glyph ... not found, selecting one more font" is a normal fallback attempt.
+	return false
 }

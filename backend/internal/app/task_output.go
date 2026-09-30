@@ -53,6 +53,7 @@ func taskSummaryForOutput(task model.Task) TaskSummary {
 		ProviderCancelledAt:       task.ProviderCancelledAt,
 		Error:                     safePersistedFailureMessage(task.Error),
 		ErrorCode:                 errorCode,
+		FailureDiagnostics:        generation.SanitizeTaskDiagnostics(task.FailureDiagnostics),
 		PreviewURL:                previewURL,
 		PreviewKind:               previewKind,
 		PreviewPosterURL:          previewPosterURL,
@@ -70,6 +71,7 @@ func taskClientContext(raw string) *TaskClientContext {
 	var input struct {
 		Metadata struct {
 			Source          string `json:"source"`
+			SceneID         string `json:"sceneId"`
 			NodeID          string `json:"nodeId"`
 			ConversationID  string `json:"conversationId"`
 			MessageID       string `json:"messageId"`
@@ -88,6 +90,11 @@ func taskClientContext(raw string) *TaskClientContext {
 	}
 	metadata := input.Metadata
 	context := &TaskClientContext{NodeID: metadata.NodeID}
+	if metadata.Source == "director-panorama" && metadata.SceneID != "" {
+		context.Source = metadata.Source
+		context.SceneID = metadata.SceneID
+		return context
+	}
 	if metadata.Source == "create-page" && metadata.ConversationID != "" && metadata.MessageID != "" {
 		context.ConversationID = metadata.ConversationID
 		context.MessageID = metadata.MessageID
@@ -219,6 +226,7 @@ func truncateRunes(value string, limit int) string {
 }
 
 func taskForOutput(task model.Task) *model.Task {
+	task.FailureDiagnostics = generation.SanitizeTaskDiagnostics(task.FailureDiagnostics)
 	task.InputJSON = publicTaskInputJSON(task.InputJSON)
 	// 普通任务接口只暴露前台模型身份；渠道模型和供应线路属于管理员内部信息。
 	task.LogicalModelRevisionID = ""
