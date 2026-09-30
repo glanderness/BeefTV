@@ -35,7 +35,7 @@ function collectRenderSources(project: TimelineProject): TimelineRenderSource[] 
             fileName: `input-${sources.length}.mp4`,
             durationMs: clip.durationMs,
             storageKey: direct.storageKey,
-            url: direct.url || direct.dataUrl,
+            url: direct.url || direct.dataUrl || direct.content,
         });
     }
     return sources;

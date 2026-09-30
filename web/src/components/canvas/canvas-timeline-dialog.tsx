@@ -520,7 +520,7 @@ export function CanvasTimelineDialog({
                 fileName: "input-" + sources.length + ".mp4",
                 durationMs: clip.sourceDurationMs || clip.durationMs,
                 storageKey: media ? media.storageKey : sourceNode?.metadata?.storageKey,
-                url: media ? media.url || media.dataUrl : sourceNode?.metadata?.content || undefined,
+                url: media ? media.url || media.dataUrl || media.content : sourceNode?.metadata?.content || undefined,
             });
         }
         if (!sources.length) throw new Error("找不到可导出的视频素材，请确认视频节点包含媒体");
