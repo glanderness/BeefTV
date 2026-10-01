@@ -23,7 +23,6 @@ import (
 	"infinite-canvas/backend/internal/localapp"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/runtimeinfo"
-	localtask "infinite-canvas/backend/internal/task"
 	httptransport "infinite-canvas/backend/internal/transport/http"
 	"infinite-canvas/backend/internal/workspace"
 
@@ -140,10 +139,10 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 	localKernel := app.NewLocalKernel(svc)
 	assetService := svc.ResourceService()
 	projectService := svc.ProjectService()
-	taskService := localtask.New(localKernel)
+	taskService := svc.TaskService()
 	localRoot, err := localapp.New(localapp.Options{
 		Workspace: workspace.NewService(repo), Projects: projectService, Assets: assetService, Tasks: taskService,
-		Generation: taskService, ProviderConfig: providerConfig, Lifecycle: taskService,
+		Generation: taskService, ProviderConfig: providerConfig, Lifecycle: localKernel,
 	})
 	if err != nil {
 		cleanupService()

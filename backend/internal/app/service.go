@@ -138,7 +138,6 @@ func newService(repo *repository.Repository, dataDir string, options serviceOpti
 	service.projects = localproject.New(repo, localproject.Dependencies{Workflows: projectWorkflowHost{service: service}})
 	service.canvas = canvas.New(service.repo, newCanvasHost(service))
 	service.assistantTurns = assistantturns.New(assistantturns.NewStore(service.repo), assistantCanvasFactory{service}, filepath.Join(dataDir, "assistant-turns"))
-<<<<<<< HEAD
 	service.assets = localasset.NewService(localasset.Dependencies{
 		Repository:   localasset.NewRepository(repo),
 		Blobs:        localasset.NewFileStore(dataDir),
@@ -146,9 +145,7 @@ func newService(repo *repository.Repository, dataDir string, options serviceOpti
 		Lifecycle:    resourceLifecycle{svc: service},
 		LocalStorage: localResourceStorage,
 	})
-=======
 	service.tasks = localtask.NewService(localtask.NewStore(service.repo), service.taskDependencies())
->>>>>>> 25ddcbf (refactor(task): 任务准入 - 抽出 admission 与生命周期领域服务)
 	if service.IsLocalMode() {
 		service.platform = platform.NewLocal(service.repo, coordinator, newPlatformHost(service))
 	} else {
@@ -198,35 +195,11 @@ func (s *Service) Tasks(userID string, limit int) ([]TaskSummary, error) {
 }
 
 func (s *Service) TasksWithOptions(userID string, options TaskListOptions) ([]TaskSummary, error) {
-<<<<<<< HEAD
-	tasks, err := s.repo.Tasks(userID, options.Limit, options.ProjectID, options.ActiveOnly)
-	if err != nil {
-		return nil, err
-	}
-	summaries := taskSummariesForOutput(tasks)
-	s.attachTaskSummaryDeliveries(tasks, summaries)
-	return summaries, nil
-}
-
-func (s *Service) Task(userID string, id string) (*model.Task, error) {
-	task, err := s.repo.TaskForUser(userID, id)
-	if err != nil {
-		return nil, err
-	}
-	s.hydrateTaskProviderRequestID(task)
-	if deliverErr := s.ensureSucceededTaskDelivery(task); deliverErr != nil {
-		_ = s.log(task.UserID, task.ID, "error", "读取任务时补齐结果交付失败", deliverErr.Error())
-	}
-	projected := taskForOutput(*task)
-	s.attachTaskDelivery(projected)
-	return projected, nil
-=======
 	return s.taskDomain().TasksWithOptions(userID, options)
 }
 
 func (s *Service) Task(userID string, id string) (*model.Task, error) {
 	return s.taskDomain().Get(userID, id)
->>>>>>> 25ddcbf (refactor(task): 任务准入 - 抽出 admission 与生命周期领域服务)
 }
 
 func (s *Service) hydrateTaskProviderRequestID(task *model.Task) {

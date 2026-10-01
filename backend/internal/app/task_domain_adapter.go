@@ -23,6 +23,9 @@ func (s *Service) taskDomain() *localtask.Service {
 	return s.tasks
 }
 
+// TaskService exposes the same domain owner used by internal orchestration.
+func (s *Service) TaskService() *localtask.Service { return s.taskDomain() }
+
 func (s *Service) taskDependencies() localtask.Dependencies {
 	return localtask.Dependencies{
 		Catalog:    taskCatalogAdapter{s},
@@ -36,7 +39,7 @@ func (s *Service) taskDependencies() localtask.Dependencies {
 		Failures:   taskFailuresAdapter{},
 		TextReplay: taskTextReplayAdapter{s},
 		Provider:   taskProviderAdapter{s},
-		Present:    taskPresenterAdapter{},
+		Present:    taskPresenterAdapter{s},
 		Logs:       taskLogAdapter{s},
 		Activity:   taskActivityAdapter{s},
 		NewID:      newID,
@@ -210,12 +213,21 @@ func (a taskProviderAdapter) RequestCancel(ctx context.Context, task *model.Task
 	return a.s.requestProviderCancellation(ctx, task)
 }
 
-type taskPresenterAdapter struct{}
+type taskPresenterAdapter struct{ s *Service }
 
-func (taskPresenterAdapter) Task(task model.Task) *model.Task { return taskForOutput(task) }
+func (a taskPresenterAdapter) Task(task model.Task) *model.Task {
+	if err := a.s.ensureSucceededTaskDelivery(&task); err != nil {
+		_ = a.s.log(task.UserID, task.ID, "error", "读取任务时补齐结果交付失败", err.Error())
+	}
+	projected := taskForOutput(task)
+	a.s.attachTaskDelivery(projected)
+	return projected
+}
 
-func (taskPresenterAdapter) Summaries(tasks []model.Task) []localtask.Summary {
-	return taskSummariesForOutput(tasks)
+func (a taskPresenterAdapter) Summaries(tasks []model.Task) []localtask.Summary {
+	summaries := taskSummariesForOutput(tasks)
+	a.s.attachTaskSummaryDeliveries(tasks, summaries)
+	return summaries
 }
 
 func (taskPresenterAdapter) Logs(logs []model.TaskLog) []model.TaskLog {

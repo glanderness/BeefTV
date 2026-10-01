@@ -134,14 +134,6 @@ func compactPersistedValue(value interface{}) interface{} {
 	}
 }
 
-func stringValue(value any) string {
-	text := strings.TrimSpace(fmt.Sprint(value))
-	if text == "<nil>" {
-		return ""
-	}
-	return text
-}
-
 func (s *Service) validateRetryType(userID, taskType string, input map[string]any) error {
 	metadata, _ := input["metadata"].(map[string]any)
 	retryOf := strings.TrimSpace(stringValue(metadata["retryOf"]))
