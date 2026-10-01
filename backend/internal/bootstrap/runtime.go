@@ -289,6 +289,15 @@ func (r *Runtime) Start() error {
 		r.service.BackfillPlaybackTranscodes()
 	}()
 	r.status.markStarted()
+	// The assistant loads its operation catalog from this server before becoming
+	// healthy. Accept requests before synchronously waiting for child readiness.
+	go func() {
+		err := r.httpServer.Serve(listener)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			r.serveErr <- fmt.Errorf("HTTP 服务异常退出：%w", err)
+		}
+		close(r.serveErr)
+	}()
 	// 桌面形态：按本机配置拉起内置创作助手宿主（未配置时 no-op），
 	// 关闭时由 Runtime.Close 收尾，保证「应用启动链」而不是手工点按钮。
 	if r.cfg.Profile == ProfileDesktop {
@@ -307,13 +316,6 @@ func (r *Runtime) Start() error {
 	if r.beefAPI != nil {
 		_ = r.beefAPI.Recover(context.Background())
 	}
-	go func() {
-		err := r.httpServer.Serve(listener)
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			r.serveErr <- fmt.Errorf("HTTP 服务异常退出：%w", err)
-		}
-		close(r.serveErr)
-	}()
 	return nil
 }
 
