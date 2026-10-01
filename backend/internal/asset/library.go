@@ -12,38 +12,16 @@ import (
 	"gorm.io/gorm"
 )
 
-// Host supplies encryption, quota, storage locking and physical resource
-// deletion. Canvas reference guards stay on this port so Library does not
-// import canvas. Callers must not implement a second deletion path.
+// Host supplies quota, storage locking and physical resource deletion.
+// Canvas reference guards run against the bound repository, not this port.
+// Callers must not implement a second deletion path. Mutations fail closed
+// when Host is missing; reads may omit it.
 type Host interface {
-	EncryptSecret(value string) (string, error)
-	DecryptSecret(value string) (string, error)
 	WithStorageLock(fn func() error) error
-	StructuredQuota(userID, kind string, creating bool, deltaBytes int64) error
+	StructuredBatchQuota(userID, kind string, createdCount int, deltaBytes int64) error
 	StructuredReplacementQuota(userID, kind string, count int, bytes int64) error
 	DeleteUserAssetWithResources(userID, assetID string) error
 	RecordActivity(userID, event string, count int)
-	GuardAssetCanvasReferences(userID string, asset model.Asset) error
-	GuardReplacementCanvasReferences(userID string, assets []model.Asset) error
-}
-
-type nopHost struct{}
-
-func (nopHost) EncryptSecret(value string) (string, error) { return value, nil }
-func (nopHost) DecryptSecret(value string) (string, error) { return value, nil }
-func (nopHost) WithStorageLock(fn func() error) error {
-	if fn == nil {
-		return nil
-	}
-	return fn()
-}
-func (nopHost) StructuredQuota(string, string, bool, int64) error           { return nil }
-func (nopHost) StructuredReplacementQuota(string, string, int, int64) error { return nil }
-func (nopHost) DeleteUserAssetWithResources(string, string) error           { return nil }
-func (nopHost) RecordActivity(string, string, int)                          {}
-func (nopHost) GuardAssetCanvasReferences(string, model.Asset) error        { return nil }
-func (nopHost) GuardReplacementCanvasReferences(string, []model.Asset) error {
-	return nil
 }
 
 // Library owns user asset-library metadata: documents, folders, paging and
@@ -54,9 +32,6 @@ type Library struct {
 }
 
 func NewLibrary(repo *repository.Repository, host Host) *Library {
-	if host == nil {
-		host = nopHost{}
-	}
 	return &Library{repo: repo, host: host}
 }
 
@@ -71,10 +46,14 @@ func (l *Library) WithHost(host Host) *Library {
 	if l == nil {
 		return NewLibrary(nil, host)
 	}
-	if host == nil {
-		host = nopHost{}
-	}
 	return &Library{repo: l.repo, host: host}
+}
+
+func (l *Library) requireHost() error {
+	if l == nil || l.host == nil {
+		return kernel.NewAppError(kernel.CodeInternal, "素材库暂不可用，请稍后重试")
+	}
+	return nil
 }
 
 func (l *Library) UserAssetSummaries(userID string) ([]Summary, error) {

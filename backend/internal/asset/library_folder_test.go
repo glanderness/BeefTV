@@ -13,20 +13,8 @@ import (
 	"gorm.io/gorm"
 )
 
-type serialHost struct {
-	nopHost
-	mu sync.Mutex
-}
-
-func (h *serialHost) WithStorageLock(fn func() error) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return fn()
-}
-
 func TestCreateAssetFolderRejectsConcurrentDuplicateName(t *testing.T) {
 	lib, _ := newLibraryFixture(t)
-	lib = lib.WithHost(&serialHost{})
 	start := make(chan struct{})
 	errorsCh := make(chan error, 2)
 	var wg sync.WaitGroup

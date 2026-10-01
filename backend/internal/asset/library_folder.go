@@ -21,6 +21,9 @@ func (l *Library) AssetFolders(userID string) ([]model.AssetFolder, error) {
 }
 
 func (l *Library) CreateAssetFolder(userID string, req CreateAssetFolderRequest) (model.AssetFolder, error) {
+	if err := l.requireHost(); err != nil {
+		return model.AssetFolder{}, err
+	}
 	name, nameKey, err := normalizeAssetFolderName(req.Name)
 	if err != nil {
 		return model.AssetFolder{}, err
@@ -57,6 +60,9 @@ func (l *Library) CreateAssetFolder(userID string, req CreateAssetFolderRequest)
 }
 
 func (l *Library) UpdateAssetFolder(userID string, folderID string, req UpdateAssetFolderRequest) (model.AssetFolder, error) {
+	if err := l.requireHost(); err != nil {
+		return model.AssetFolder{}, err
+	}
 	name, nameKey, err := normalizeAssetFolderName(req.Name)
 	if err != nil {
 		return model.AssetFolder{}, err
@@ -102,6 +108,9 @@ func (l *Library) UpdateAssetFolder(userID string, folderID string, req UpdateAs
 }
 
 func (l *Library) DeleteAssetFolder(userID string, folderID string) error {
+	if err := l.requireHost(); err != nil {
+		return err
+	}
 	return l.host.WithStorageLock(func() error {
 		err := l.repo.DeleteAssetFolder(userID, strings.TrimSpace(folderID))
 		if isNotFound(err) {
@@ -115,6 +124,9 @@ func (l *Library) DeleteAssetFolder(userID string, folderID string) error {
 }
 
 func (l *Library) MoveUserAssetsToFolder(userID string, req MoveUserAssetsRequest) error {
+	if err := l.requireHost(); err != nil {
+		return err
+	}
 	ids := kernel.UniqueNonEmpty(req.AssetIDs)
 	if len(ids) == 0 {
 		return kernel.BadAuthRequest("请选择要移动的素材")

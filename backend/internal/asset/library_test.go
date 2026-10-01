@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +17,41 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+type testHost struct {
+	mu               sync.Mutex
+	batchQuota       func(userID, kind string, createdCount int, deltaBytes int64) error
+	replacementQuota func(userID, kind string, count int, bytes int64) error
+	deleteAsset      func(userID, assetID string) error
+}
+
+func (h *testHost) WithStorageLock(fn func() error) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if fn == nil {
+		return nil
+	}
+	return fn()
+}
+func (h *testHost) StructuredBatchQuota(userID, kind string, createdCount int, deltaBytes int64) error {
+	if h.batchQuota != nil {
+		return h.batchQuota(userID, kind, createdCount, deltaBytes)
+	}
+	return nil
+}
+func (h *testHost) StructuredReplacementQuota(userID, kind string, count int, bytes int64) error {
+	if h.replacementQuota != nil {
+		return h.replacementQuota(userID, kind, count, bytes)
+	}
+	return nil
+}
+func (h *testHost) DeleteUserAssetWithResources(userID, assetID string) error {
+	if h.deleteAsset != nil {
+		return h.deleteAsset(userID, assetID)
+	}
+	return nil
+}
+func (h *testHost) RecordActivity(string, string, int) {}
 
 func newLibraryFixture(t *testing.T) (*Library, *gorm.DB) {
 	t.Helper()
@@ -31,7 +67,7 @@ func newLibraryFixture(t *testing.T) (*Library, *gorm.DB) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	return NewLibrary(repository.New(db), nil), db
+	return NewLibrary(repository.New(db), &testHost{}), db
 }
 
 func testLibraryAssetPayload(kind string, extra map[string]any) map[string]any {
@@ -228,4 +264,155 @@ func TestUpsertRejectsMissingFolderInsideTransaction(t *testing.T) {
 	if !errors.As(err, &appErr) || !strings.Contains(err.Error(), "素材分类不存在") {
 		t.Fatalf("error = %v", err)
 	}
+}
+
+func TestMutationsFailClosedWithoutHost(t *testing.T) {
+	_, db := newLibraryFixture(t)
+	lib := NewLibrary(repository.New(db), nil)
+	raw, err := json.Marshal(testLibraryAssetPayload("image", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lib.UpsertUserAsset("owner", raw); err == nil {
+		t.Fatal("upsert without host succeeded")
+	}
+	if err := lib.DeleteUserAsset("owner", "asset-1"); err == nil {
+		t.Fatal("delete without host reported success")
+	}
+	if _, err := lib.WithHost(nil).CreateAssetFolder("owner", CreateAssetFolderRequest{Name: "灵感"}); err == nil {
+		t.Fatal("folder create without host succeeded")
+	}
+	if _, err := lib.UserAssets("owner"); err != nil {
+		t.Fatalf("read without host = %v", err)
+	}
+}
+
+func TestPrepareAssetWritesRejectsDuplicateIDs(t *testing.T) {
+	lib, _ := newLibraryFixture(t)
+	raw, err := json.Marshal(testLibraryAssetPayload("image", map[string]any{"id": "asset-dup"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := AssetFromJSON("owner", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = lib.PrepareAssetWrites("owner", []model.Asset{item, item})
+	if err == nil || !strings.Contains(err.Error(), "重复 ID") {
+		t.Fatalf("duplicate error = %v", err)
+	}
+}
+
+func TestPrepareAssetWritesRejectsBatchOverCountLimit(t *testing.T) {
+	lib, db := newLibraryFixture(t)
+	now := time.Now().UTC()
+	if err := db.Create(&model.Asset{ID: "existing", UserID: "owner", Kind: "image", Title: "已有", PayloadJSON: `{"id":"existing"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	lib = lib.WithHost(&testHost{
+		batchQuota: func(userID, kind string, createdCount int, deltaBytes int64) error {
+			var count int64
+			if err := db.Model(&model.Asset{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
+				return err
+			}
+			if count+int64(createdCount) > 2 {
+				return kernel.QuotaExceeded("账号素材数量已达到 2 个上限")
+			}
+			return nil
+		},
+	})
+	first, err := AssetFromJSON("owner", mustLibraryAssetJSON(t, "asset-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := AssetFromJSON("owner", mustLibraryAssetJSON(t, "asset-b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lib.PrepareAssetWrites("owner", []model.Asset{first}); err != nil {
+		t.Fatalf("single create within limit = %v", err)
+	}
+	_, err = lib.PrepareAssetWrites("owner", []model.Asset{first, second})
+	if err == nil || !strings.Contains(err.Error(), "上限") {
+		t.Fatalf("batch quota error = %v", err)
+	}
+	if _, err := lib.repo.AssetForUser("owner", "asset-a"); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("quota failure persisted asset: %v", err)
+	}
+}
+
+func TestPersistPreparedAssetsRejectsResourceSwapAfterCanvasReference(t *testing.T) {
+	lib, db := newLibraryFixture(t)
+	now := time.Now().UTC()
+	oldRes := model.Resource{ID: "res-old", UserID: "owner", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "old.png", CreatedAt: now, UpdatedAt: now}
+	newRes := model.Resource{ID: "res-new", UserID: "owner", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "new.png", CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&oldRes).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&newRes).Error; err != nil {
+		t.Fatal(err)
+	}
+	oldRaw := mustLibraryResourceAssetJSON(t, "shared-asset", "res-old")
+	newRaw := mustLibraryResourceAssetJSON(t, "shared-asset", "res-new")
+	oldItem, err := AssetFromJSON("owner", oldRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newItem, err := AssetFromJSON("owner", newRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lib.UpsertUserAsset("owner", oldRaw); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lib.PrepareAssetWrites("owner", []model.Asset{newItem}); err != nil {
+		t.Fatalf("prepare before canvas = %v", err)
+	}
+	canvas := model.CanvasProject{
+		ID: "canvas-1", UserID: "owner", Title: "画布", Revision: 1,
+		PayloadJSON: `{"nodes":[{"id":"node","type":"image","metadata":{"assetId":"shared-asset","storageKey":"resource:res-old"}}]}`,
+		CreatedAt:   now, UpdatedAt: now,
+	}
+	if err := db.Create(&canvas).Error; err != nil {
+		t.Fatal(err)
+	}
+	err = lib.repo.Transaction(func(tx *repository.Repository) error {
+		_, persistErr := lib.WithRepository(tx).PersistPreparedAssets("owner", []model.Asset{newItem})
+		return persistErr
+	})
+	if err == nil || !strings.Contains(err.Error(), "不能替换为其他资源") {
+		t.Fatalf("persist error = %v", err)
+	}
+	stored, err := lib.repo.AssetForUser("owner", "shared-asset")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.PayloadJSON != oldItem.PayloadJSON {
+		t.Fatalf("asset bytes swapped under live canvas: %s", stored.PayloadJSON)
+	}
+}
+
+func mustLibraryAssetJSON(t *testing.T, id string) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(testLibraryAssetPayload("image", map[string]any{"id": id}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func mustLibraryResourceAssetJSON(t *testing.T, id, resourceID string) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(testLibraryAssetPayload("image", map[string]any{
+		"id":       id,
+		"coverUrl": "/api/resources/" + resourceID + "/file",
+		"data": map[string]any{
+			"dataUrl": "/api/resources/" + resourceID + "/file", "storageKey": "resource:" + resourceID,
+			"width": 1, "height": 1, "bytes": 1, "mimeType": "image/png",
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }

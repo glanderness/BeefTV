@@ -32,6 +32,7 @@ type canvasHost struct {
 	prepareResourceDelivery    func(string, *model.Resource, assets.ResourceDeliveryOptions) (*assets.ResourceDelivery, error)
 	withStorageLock            func(func() error) error
 	structuredQuota            func(string, string, bool, int64) error
+	structuredBatchQuota       func(string, string, int, int64) error
 	structuredReplacementQuota func(string, string, int, int64) error
 	deleteAsset                func(string, string) error
 	recordActivity             func(string, string, int)
@@ -80,6 +81,13 @@ func (h canvasHost) StructuredQuota(userID, kind string, creating bool, deltaByt
 		return nil
 	}
 	return h.structuredQuota(userID, kind, creating, deltaBytes)
+}
+
+func (h canvasHost) StructuredBatchQuota(userID, kind string, createdCount int, deltaBytes int64) error {
+	if h.structuredBatchQuota == nil {
+		return nil
+	}
+	return h.structuredBatchQuota(userID, kind, createdCount, deltaBytes)
 }
 
 func (h canvasHost) StructuredReplacementQuota(userID, kind string, count int, bytes int64) error {
@@ -136,6 +144,17 @@ func newCanvasHostWithRepo(service *Service, repo *repository.Repository) canvas
 				return err
 			}
 			return validateStructuredStorageQuotaWithPolicy(usage, kind, creating, deltaBytes, policy.Resource)
+		},
+		structuredBatchQuota: func(userID, kind string, createdCount int, deltaBytes int64) error {
+			policy, err := service.RuntimePolicy()
+			if err != nil {
+				return err
+			}
+			usage, err := repo.UserStorageUsage(userID)
+			if err != nil {
+				return err
+			}
+			return validateStructuredCountQuotaWithPolicy(usage, kind, createdCount, deltaBytes, policy.Resource)
 		},
 		structuredReplacementQuota: func(userID, kind string, count int, bytes int64) error {
 			policy, err := service.RuntimePolicy()

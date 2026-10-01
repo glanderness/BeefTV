@@ -15,6 +15,7 @@ type Host interface {
 	PrepareResourceDelivery(userID string, resource *model.Resource, options assets.ResourceDeliveryOptions) (*assets.ResourceDelivery, error)
 	WithStorageLock(fn func() error) error
 	StructuredQuota(userID, kind string, creating bool, deltaBytes int64) error
+	StructuredBatchQuota(userID, kind string, createdCount int, deltaBytes int64) error
 	StructuredReplacementQuota(userID, kind string, count int, bytes int64) error
 	DeleteUserAssetWithResources(userID, assetID string) error
 	RecordActivity(userID, event string, count int)
@@ -37,6 +38,7 @@ func (nopHost) WithStorageLock(fn func() error) error {
 	return fn()
 }
 func (nopHost) StructuredQuota(string, string, bool, int64) error           { return nil }
+func (nopHost) StructuredBatchQuota(string, string, int, int64) error       { return nil }
 func (nopHost) StructuredReplacementQuota(string, string, int, int64) error { return nil }
 func (nopHost) DeleteUserAssetWithResources(string, string) error           { return nil }
 func (nopHost) RecordActivity(string, string, int)                          {}
@@ -51,17 +53,11 @@ type canvasLibraryHost struct {
 	service *Service
 }
 
-func (h *canvasLibraryHost) EncryptSecret(value string) (string, error) {
-	return h.service.host.EncryptSecret(value)
-}
-func (h *canvasLibraryHost) DecryptSecret(value string) (string, error) {
-	return h.service.host.DecryptSecret(value)
-}
 func (h *canvasLibraryHost) WithStorageLock(fn func() error) error {
 	return h.service.host.WithStorageLock(fn)
 }
-func (h *canvasLibraryHost) StructuredQuota(userID, kind string, creating bool, deltaBytes int64) error {
-	return h.service.host.StructuredQuota(userID, kind, creating, deltaBytes)
+func (h *canvasLibraryHost) StructuredBatchQuota(userID, kind string, createdCount int, deltaBytes int64) error {
+	return h.service.host.StructuredBatchQuota(userID, kind, createdCount, deltaBytes)
 }
 func (h *canvasLibraryHost) StructuredReplacementQuota(userID, kind string, count int, bytes int64) error {
 	return h.service.host.StructuredReplacementQuota(userID, kind, count, bytes)
@@ -71,12 +67,6 @@ func (h *canvasLibraryHost) DeleteUserAssetWithResources(userID, assetID string)
 }
 func (h *canvasLibraryHost) RecordActivity(userID, event string, count int) {
 	h.service.host.RecordActivity(userID, event, count)
-}
-func (h *canvasLibraryHost) GuardAssetCanvasReferences(userID string, item model.Asset) error {
-	return h.service.ValidateAssetCanvasReferences(userID, item)
-}
-func (h *canvasLibraryHost) GuardReplacementCanvasReferences(userID string, items []model.Asset) error {
-	return h.service.ValidateAssetReplacementCanvasReferences(userID, items)
 }
 
 var _ asset.Host = (*canvasLibraryHost)(nil)

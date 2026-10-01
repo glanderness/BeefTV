@@ -2,6 +2,7 @@ package asset
 
 import (
 	"encoding/json"
+	"strings"
 
 	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/kernel"
@@ -10,6 +11,9 @@ import (
 )
 
 func (l *Library) UpsertUserAsset(userID string, raw json.RawMessage) (Summary, error) {
+	if err := l.requireHost(); err != nil {
+		return Summary{}, err
+	}
 	item, err := AssetFromJSON(userID, raw)
 	if err != nil {
 		return Summary{}, err
@@ -36,12 +40,18 @@ func (l *Library) UpsertUserAsset(userID string, raw json.RawMessage) (Summary, 
 }
 
 func (l *Library) DeleteUserAsset(userID string, id string) error {
+	if err := l.requireHost(); err != nil {
+		return err
+	}
 	return l.host.WithStorageLock(func() error {
 		return l.host.DeleteUserAssetWithResources(userID, id)
 	})
 }
 
 func (l *Library) ReplaceUserAssets(userID string, req AssetsSyncRequest) ([]json.RawMessage, error) {
+	if err := l.requireHost(); err != nil {
+		return nil, err
+	}
 	items := make([]model.Asset, 0, len(req.Assets))
 	var totalBytes int64
 	for _, raw := range req.Assets {
@@ -52,8 +62,11 @@ func (l *Library) ReplaceUserAssets(userID string, req AssetsSyncRequest) ([]jso
 		items = append(items, item)
 		totalBytes += int64(len(raw))
 	}
+	if _, err := uniquePreparedAssets(items); err != nil {
+		return nil, err
+	}
 	err := l.host.WithStorageLock(func() error {
-		if err := l.host.GuardReplacementCanvasReferences(userID, items); err != nil {
+		if err := l.GuardReplacementCanvasReferences(userID, items); err != nil {
 			return err
 		}
 		if err := l.host.StructuredReplacementQuota(userID, "asset", len(items), totalBytes); err != nil {
@@ -61,6 +74,9 @@ func (l *Library) ReplaceUserAssets(userID string, req AssetsSyncRequest) ([]jso
 		}
 		if err := l.repo.Transaction(func(tx *repository.Repository) error {
 			scoped := l.WithRepository(tx)
+			if err := scoped.GuardReplacementCanvasReferences(userID, items); err != nil {
+				return err
+			}
 			for index := range items {
 				if err := scoped.validateOwnedResources(userID, items[index].PayloadJSON); err != nil {
 					return err
@@ -85,31 +101,49 @@ func (l *Library) ReplaceUserAssets(userID string, req AssetsSyncRequest) ([]jso
 }
 
 // PrepareAssetWrites validates folder ownership, resource ownership and canvas
-// reference guards, then charges quota. Callers must already hold the storage
-// lock. PersistPreparedAssets still has to run inside the caller's transaction.
+// reference guards, then checks aggregate quota once. Quota is check-only.
+// Callers must already hold the storage lock. PersistPreparedAssets still has
+// to run inside the caller's transaction.
 func (l *Library) PrepareAssetWrites(userID string, items []model.Asset) (int, error) {
+	if err := l.requireHost(); err != nil {
+		return 0, err
+	}
+	items, err := uniquePreparedAssets(items)
+	if err != nil {
+		return 0, err
+	}
 	created := 0
+	var deltaBytes int64
 	for index := range items {
 		item := items[index]
 		existingBytes, creating, err := l.prepareOwnedAssetWrite(userID, item)
 		if err != nil {
 			return 0, err
 		}
-		if err := l.host.StructuredQuota(userID, "asset", creating, int64(len([]byte(item.PayloadJSON)))-existingBytes); err != nil {
-			return 0, err
-		}
+		deltaBytes += int64(len([]byte(item.PayloadJSON))) - existingBytes
 		if creating {
 			created++
 		}
+	}
+	if err := l.host.StructuredBatchQuota(userID, "asset", created, deltaBytes); err != nil {
+		return 0, err
 	}
 	return created, nil
 }
 
 // PersistPreparedAssets writes already-parsed assets through the bound
-// repository without opening a nested transaction, taking the storage lock, or
-// querying canvases through Host. Canvas generated commits must call this on
-// Library.WithRepository(tx) after PrepareAssetWrites.
+// repository without opening a nested transaction or taking the storage lock.
+// Canvas generated commits must call this on Library.WithRepository(tx) after
+// PrepareAssetWrites so folder, resource and canvas-reference checks share
+// that transaction.
 func (l *Library) PersistPreparedAssets(userID string, items []model.Asset) (int, error) {
+	if err := l.requireHost(); err != nil {
+		return 0, err
+	}
+	items, err := uniquePreparedAssets(items)
+	if err != nil {
+		return 0, err
+	}
 	created := 0
 	for index := range items {
 		item := &items[index]
@@ -127,6 +161,21 @@ func (l *Library) PersistPreparedAssets(userID string, items []model.Asset) (int
 	return created, nil
 }
 
+func uniquePreparedAssets(items []model.Asset) ([]model.Asset, error) {
+	seen := make(map[string]struct{}, len(items))
+	for index := range items {
+		id := strings.TrimSpace(items[index].ID)
+		if id == "" {
+			return nil, kernel.BadAuthRequest("素材 ID 无效")
+		}
+		if _, exists := seen[id]; exists {
+			return nil, kernel.BadAuthRequest("素材列表包含重复 ID")
+		}
+		seen[id] = struct{}{}
+	}
+	return items, nil
+}
+
 func (l *Library) prepareOwnedAssetWrite(userID string, item model.Asset) (existingBytes int64, creating bool, err error) {
 	if err := l.requireOwnedFolder(userID, item.FolderID); err != nil {
 		return 0, false, err
@@ -137,7 +186,7 @@ func (l *Library) prepareOwnedAssetWrite(userID string, item model.Asset) (exist
 	}
 	creating = isNotFound(existingErr)
 	if existing != nil && existing.PayloadJSON != item.PayloadJSON {
-		if err := l.host.GuardAssetCanvasReferences(userID, item); err != nil {
+		if err := l.GuardCanvasReferences(userID, item); err != nil {
 			return 0, false, err
 		}
 	}
@@ -156,6 +205,15 @@ func (l *Library) persistPreparedAsset(userID string, item *model.Asset) error {
 	}
 	if err := l.validateOwnedResources(userID, item.PayloadJSON); err != nil {
 		return err
+	}
+	existing, existingErr := l.repo.AssetForUser(userID, item.ID)
+	if existingErr != nil && !isNotFound(existingErr) {
+		return existingErr
+	}
+	if existing != nil && existing.PayloadJSON != item.PayloadJSON {
+		if err := l.GuardCanvasReferences(userID, *item); err != nil {
+			return err
+		}
 	}
 	return l.repo.UpsertAsset(item)
 }
