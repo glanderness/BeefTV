@@ -13,3 +13,5 @@
 这只覆盖内存中的数据处理。React 帧时间、媒体解码、SQLite 保存、任务恢复和启动耗时尚未测量，不能据此声称完整重构改善了性能。
 
 最终候选需用相同脚本和硬件、相近系统负载复测，保存带 sourceCommit 的原始 JSON。单项中位数超过基线 1.5 倍且增加超过 2ms 时，需要复核并解释；该阈值用于发现退化，不替代端到端 UI 验收。
+
+可执行检查：`bun scripts/refactor-performance.ts /path/to/performance-baseline.json`。输入必须匹配 fixture、Bun 版本、平台、节点数量及序列化字节数；否则拒绝比较。结果包含 `regressions`，达到上述退化阈值时进程退出 1。
