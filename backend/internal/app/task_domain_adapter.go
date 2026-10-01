@@ -58,10 +58,6 @@ func toTaskCreateRequest(req CreateTaskRequest) localtask.CreateRequest {
 		Input:          req.Input,
 		TraceID:        req.TraceID,
 		RequestID:      req.RequestID,
-		PrepareOnly:    req.creationPrepare != nil,
-	}
-	if req.admission != nil {
-		out.AdmissionID = req.admission.ID
 	}
 	return out
 }

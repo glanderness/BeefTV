@@ -56,32 +56,6 @@ func toCreationTaskRequest(req CreateTaskRequest) creation.TaskRequest {
 		Input:          req.Input,
 		TraceID:        req.TraceID,
 		RequestID:      req.RequestID,
-		PrepareOnly:    req.creationPrepare != nil,
-	}
-	if req.admission != nil {
-		out.AdmissionID = req.admission.ID
-	}
-	return out
-}
-
-func fromCreationTaskRequest(req creation.TaskRequest) CreateTaskRequest {
-	out := CreateTaskRequest{
-		ProjectID:      req.ProjectID,
-		Type:           req.Type,
-		Operation:      req.Operation,
-		Prompt:         req.Prompt,
-		Provider:       req.Provider,
-		Model:          req.Model,
-		LogicalModelID: req.LogicalModelID,
-		Input:          req.Input,
-		TraceID:        req.TraceID,
-		RequestID:      req.RequestID,
-	}
-	if req.PrepareOnly {
-		out.creationPrepare = &creationTaskPreparation{}
-	}
-	if req.AdmissionID != "" {
-		out.admission = &taskAdmission{ID: req.AdmissionID}
 	}
 	return out
 }

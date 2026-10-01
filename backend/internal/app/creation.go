@@ -35,10 +35,6 @@ type CreationRequest struct {
 	Document             json.RawMessage    `json:"document"`
 }
 
-// creationTaskPreparation remains the in-process quote marker on
-// CreateTaskRequest until the admission worker's PrepareOnly field lands.
-type creationTaskPreparation struct{}
-
 func creationConflict(message string) error {
 	return creation.Conflict(message)
 }

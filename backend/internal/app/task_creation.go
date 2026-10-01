@@ -8,12 +8,6 @@ import (
 	localtask "infinite-canvas/backend/internal/task"
 )
 
-// Internal admission constraints are not JSON fields. Callers cannot select a
-// task ID or bypass the quoted-charge ceiling through the public tasks API.
-type taskAdmission struct {
-	ID string
-}
-
 const retiredAgentBoundaryMessage = localtask.RetiredAgentBoundaryMessage
 
 // CreateTask 把应用层请求交给任务域。模型目录、密钥和配额仍通过 typed ports 留在 app。
