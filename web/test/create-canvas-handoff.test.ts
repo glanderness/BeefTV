@@ -380,8 +380,10 @@ test("Create forwards owned result assets through one new canvas and the project
     expect(createPage.indexOf("await saveCreationConversations(next, scope)")).toBeLessThan(createPage.indexOf("navigate(`/canvas/${result.id}?${params.toString()}`)"));
     expect(createPage).toContain("await deleteCreationConversation(conversation.id, scope)");
     expect(createPage).toContain("toastRef.current.error(error instanceof Error ? error.message : \"对话保存失败\")");
-    expect(createPage).toContain("const loadScope = getActiveUserScope()");
-    expect(createPage).toContain("loadLocalCreationConversationDrafts<CreationConversation>(loadScope)");
+    expect(createPage).toContain("const loadEpoch = captureUserScopeEpoch()");
+    expect(createPage).toContain("loadLocalCreationConversationDrafts<CreationConversation>(loadEpoch.scope)");
+    expect(createPage).toContain("CreationConflictBanner");
+    expect(createPage).toContain("userScopeEpochMatches(epoch)");
     expect(canvasIndex).toContain('const handoffMode = mode === "handoff"');
     expect(canvasIndex).toContain('mode !== "new" && mode !== "recent" && mode !== "handoff"');
     expect(canvasIndex).toContain('if (remoteMode && syncError && !isExpectedLocalOnlySyncError(syncError))');

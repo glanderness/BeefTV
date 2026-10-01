@@ -32,7 +32,19 @@ export type CreationMessage = {
     generationStage?: string;
     generationEffectKeys?: string[];
 };
-export type CreationConversation = { id: string; title: string; updatedAt: string; canvasId?: string; messages: CreationMessage[] };
+export type CreationConversationConflict = {
+    revision: number;
+    document: CreationConversation;
+};
+
+export type CreationConversation = {
+    id: string;
+    title: string;
+    updatedAt: string;
+    canvasId?: string;
+    messages: CreationMessage[];
+    conflictRemote?: CreationConversationConflict;
+};
 
 export const modeLabels: Record<CreationMode, string> = { text: "文本", image: "图片", video: "视频" };
 // LibTV 的创作入口以“镜头/视频”作为首次进入的主路径；用户切换后的模式

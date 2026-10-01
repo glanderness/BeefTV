@@ -4,6 +4,21 @@ import { ApiError } from "@/services/api/request";
 type Stored = Map<string, string>;
 const stored: Stored = new Map();
 let activeScope = "guest";
+let scopeGeneration = 1;
+let storageHold: Promise<void> | null = null;
+let releaseStorage: (() => void) | null = null;
+let storageEntered = 0;
+
+function switchScope(next: string) {
+    if (next !== activeScope) scopeGeneration += 1;
+    activeScope = next;
+}
+
+function holdLegacyWrites() {
+    storageHold = new Promise((resolve) => {
+        releaseStorage = resolve;
+    });
+}
 
 type RecordShape = {
     id: string;
@@ -17,7 +32,7 @@ const server = {
     conversations: new Map<string, RecordShape>(),
     deleted: new Set<string>(),
     failNext: null as { status: number; reason?: string; message?: string } | null,
-    puts: [] as Array<{ id: string; expectedRevision: number; title?: string }>,
+    puts: [] as Array<{ id: string; expectedRevision: number; title?: string; messageCount: number }>,
     imports: [] as string[],
     putHold: null as Promise<void> | null,
     releasePut: null as (() => void) | null,
@@ -40,7 +55,13 @@ function holdPuts() {
 mock.module("@/lib/localforage-storage", () => ({
     localForageStorageForScope: (scope?: string) => ({
         getItem: async (name: string) => stored.get(`${scope ?? activeScope}:${name}`) ?? null,
-        setItem: async (name: string, value: string) => { stored.set(`${scope ?? activeScope}:${name}`, value); },
+        setItem: async (name: string, value: string) => {
+            if (storageHold && name === "creation-conversations-v1") {
+                storageEntered += 1;
+                await storageHold;
+            }
+            stored.set(`${scope ?? activeScope}:${name}`, value);
+        },
         removeItem: async (name: string) => { stored.delete(`${scope ?? activeScope}:${name}`); },
     }),
     localForageStorage: {
@@ -52,6 +73,14 @@ mock.module("@/lib/localforage-storage", () => ({
 
 mock.module("@/lib/user-scope", () => ({
     getActiveUserScope: () => activeScope,
+    getUserScopeGeneration: () => scopeGeneration,
+    captureUserScopeEpoch: (scope = activeScope) => ({ scope, generation: scopeGeneration }),
+    userScopeEpochMatches: (epoch: { scope: string; generation: number }, live?: { scope: string; generation: number }) => {
+        const current = live || { scope: activeScope, generation: scopeGeneration };
+        return epoch.scope === current.scope && epoch.generation === current.generation;
+    },
+    setActiveUserScope: (userId?: string | null) => switchScope(userId || "guest"),
+    subscribeUserScope: () => () => undefined,
     scopedStorageKey: (name: string, scope = activeScope) => `${name}:user:${scope}`,
     scopedLocalStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
 }));
@@ -75,23 +104,25 @@ mock.module("@/services/api/creation-conversations", () => ({
             server.putEntered += 1;
             if (server.putHold) await server.putHold;
             failIfNeeded();
-            server.puts.push({ id, expectedRevision: input.expectedRevision, title: input.document.title });
+            const title = typeof input.document.title === "string" && input.document.title.trim() ? input.document.title.trim() : "新创作";
+            server.puts.push({ id, expectedRevision: input.expectedRevision, title, messageCount: input.document.messages?.length ?? 0 });
             const existing = server.conversations.get(id);
             if (!existing && input.expectedRevision !== 0) throw new ApiError("对话已更新，当前草稿未覆盖已保存内容", { status: 409, reason: "conflict" });
             if (existing?.deleted) throw new ApiError("对话已删除，无法再写入", { status: 409, reason: "conflict" });
+            const normalizedDocument = {
+                messages: input.document.messages,
+                title,
+                id: input.document.id,
+            };
             if (existing && existing.revision !== input.expectedRevision) {
-                if (existing.revision === input.expectedRevision + 1 && JSON.stringify(existing.document) === JSON.stringify(input.document)) return existing;
+                if (existing.revision === input.expectedRevision + 1 && JSON.stringify(existing.document) === JSON.stringify(normalizedDocument)) return existing;
                 throw new ApiError("对话已更新，当前草稿未覆盖已保存内容", { status: 409, reason: "conflict" });
             }
             const record: RecordShape = {
                 id,
                 revision: (existing?.revision ?? 0) + 1,
                 updatedAt: "2026-10-02T00:00:00.000Z",
-                document: {
-                    messages: input.document.messages,
-                    title: input.document.title,
-                    id: input.document.id,
-                },
+                document: normalizedDocument,
             };
             server.conversations.set(id, record);
             return record;
@@ -132,6 +163,9 @@ const {
     saveCreationConversations,
     deleteCreationConversation,
     resetCreationConversationStoreForTests,
+    acceptSavedCreationConversation,
+    restoreParkedCreationConversation,
+    hasParkedCreationConversationDraft,
 } = await import("@/services/creation-conversation-store");
 
 beforeEach(() => {
@@ -145,6 +179,10 @@ beforeEach(() => {
     server.releasePut = null;
     server.putEntered = 0;
     activeScope = "guest";
+    scopeGeneration = 1;
+    storageHold = null;
+    releaseStorage = null;
+    storageEntered = 0;
     resetCreationConversationStoreForTests();
 });
 
@@ -159,7 +197,8 @@ test("load imports IndexedDB only when backend has no record or tombstone", asyn
     const loaded = await loadCreationConversations();
     expect(server.imports).toEqual(["creation-conversations-v1:fresh"]);
     expect(loaded?.map((item) => item.id).sort()).toEqual(["fresh", "kept"]);
-    expect(loaded?.find((item) => item.id === "kept")).toMatchObject({ title: "后端" });
+    expect(loaded?.find((item) => item.id === "kept")).toMatchObject({ title: "本地旧稿" });
+    expect(loaded?.find((item) => item.id === "kept")?.conflictRemote).toMatchObject({ revision: 4, document: { title: "后端" } });
     const leftover = JSON.parse(stored.get(`guest:${CREATION_CONVERSATIONS_KEY}`) || "[]") as Array<{ id: string }>;
     expect(leftover.map((item) => item.id)).toEqual(["gone"]);
 });
@@ -174,7 +213,7 @@ test("save failure keeps visible draft and does not mark server success", async 
     expect(local?.find((item) => item.id === "draft-1")).toMatchObject({ title: "未发出" });
     server.failNext = null;
     await saveCreationConversations([draft]);
-    expect(server.puts).toEqual([{ id: "draft-1", expectedRevision: 0, title: "未发出" }]);
+    expect(server.puts).toEqual([{ id: "draft-1", expectedRevision: 0, title: "未发出", messageCount: 1 }]);
     expect(server.conversations.get("draft-1")?.revision).toBe(1);
     server.puts = [];
     await saveCreationConversations([draft]);
@@ -184,8 +223,8 @@ test("save failure keeps visible draft and does not mark server success", async 
 test("scope switch rejects outstanding save", async () => {
     const draft = { id: "scope-1", title: "原工作区", messages: [] };
     const pending = saveCreationConversations([draft]);
-    activeScope = "other-workspace";
-    await expect(pending).rejects.toThrow("工作区已切换，已忽略过期对话结果");
+    switchScope("other-workspace");
+    await expect(pending).rejects.toThrow("工作区已更换，这次操作没有继续。");
     expect(server.puts).toHaveLength(0);
 });
 
@@ -238,9 +277,14 @@ test("conflicting local draft stays visible and does not overwrite remote", asyn
     const loaded = await loadCreationConversations();
     expect(loaded?.find((item) => item.id === "live")).toMatchObject({ title: "本地编辑" });
     expect(loaded?.find((item) => item.id === "live")?.conflictRemote).toMatchObject({ revision: 5, document: { title: "后端" } });
-    await expect(saveCreationConversations(loaded || [])).rejects.toThrow("对话已更新，当前草稿未覆盖已保存内容");
+    await saveCreationConversations(loaded || []);
+    expect(server.puts).toHaveLength(0);
     expect(server.conversations.get("live")?.document?.title).toBe("后端");
     expect(server.conversations.get("live")?.revision).toBe(5);
+    await saveCreationConversations(loaded || [], "guest", { resolveConflictIds: ["live"] });
+    expect(server.puts).toEqual([{ id: "live", expectedRevision: 5, title: "本地编辑", messageCount: 1 }]);
+    expect(server.conversations.get("live")?.revision).toBe(6);
+    expect(server.conversations.get("live")?.document?.title).toBe("本地编辑");
 });
 
 test("fallback after remote reject keeps original scope and skips cached tombstones", async () => {
@@ -288,4 +332,105 @@ test("blob-only attachment is a recoverable persist failure", async () => {
     expect(server.puts).toHaveLength(0);
     const local = await loadLocalCreationConversationDrafts();
     expect(local?.find((item) => item.id === "blob-only")).toMatchObject({ title: "附件" });
+});
+
+test("caller mutation during delayed PUT cannot change in-flight payload", async () => {
+    holdPuts();
+    const draft = { id: "mut", title: "原", messages: [{ id: "m1", role: "user" as const, content: "one" }] };
+    const pending = saveCreationConversations([draft]);
+    while (server.putEntered === 0) await Promise.resolve();
+    draft.messages.push({ id: "m2", role: "user" as const, content: "two" });
+    draft.title = "changed";
+    server.releasePut?.();
+    await pending;
+    expect(server.puts[0]).toMatchObject({ id: "mut", title: "原", messageCount: 1 });
+    expect(server.conversations.get("mut")?.document?.title).toBe("原");
+    expect(server.conversations.get("mut")?.document?.messages).toHaveLength(1);
+});
+
+test("delayed first cleanup does not import after account switch including A-B-A", async () => {
+    server.conversations.set("kept", { id: "kept", revision: 1, updatedAt: "2026-10-02T00:00:00.000Z", document: { id: "kept", title: "后端", messages: [] } });
+    stored.set(`guest:${CREATION_CONVERSATIONS_KEY}`, JSON.stringify([
+        { id: "kept", title: "后端", messages: [] },
+        { id: "fresh", title: "待导入", messages: [{ id: "m1", role: "user", content: "hi" }] },
+    ]));
+    holdLegacyWrites();
+    const pending = loadCreationConversations("guest");
+    for (let turn = 0; turn < 50 && storageEntered === 0; turn += 1) await Promise.resolve();
+    expect(storageEntered).toBeGreaterThan(0);
+    switchScope("other-workspace");
+    switchScope("guest");
+    releaseStorage?.();
+    await expect(pending).rejects.toThrow("工作区已更换，这次操作没有继续。");
+    expect(server.imports).toEqual([]);
+    expect(server.conversations.has("fresh")).toBe(false);
+});
+
+test("canonical untitled ack skips a second PUT", async () => {
+    await saveCreationConversations([{ id: "untitled", messages: [] }]);
+    expect(server.puts).toEqual([{ id: "untitled", expectedRevision: 0, title: "新创作", messageCount: 0 }]);
+    expect(server.conversations.get("untitled")?.document?.title).toBe("新创作");
+    server.puts = [];
+    await saveCreationConversations([{ id: "untitled", messages: [] }]);
+    expect(server.puts).toHaveLength(0);
+    const loaded = await loadCreationConversations();
+    expect(loaded?.find((item) => item.id === "untitled")).toMatchObject({ title: "新创作" });
+});
+
+test("accepting saved version parks local draft and restore brings conflict back", async () => {
+    server.conversations.set("live", { id: "live", revision: 5, updatedAt: "2026-10-02T00:00:00.000Z", document: { id: "live", title: "后端", messages: [] } });
+    stored.set("guest:creation-conversation-drafts-v1:live", JSON.stringify({
+        baseRevision: 4,
+        document: { id: "live", title: "本地编辑", messages: [{ id: "m1", role: "user", content: "未提交" }] },
+    }));
+    stored.set("guest:creation-conversation-drafts-v1:index", JSON.stringify(["live"]));
+    const loaded = await loadCreationConversations();
+    const live = loaded?.find((item) => item.id === "live");
+    expect(live?.conflictRemote?.revision).toBe(5);
+    await acceptSavedCreationConversation("live", live!, live!.conflictRemote!);
+    expect(await hasParkedCreationConversationDraft("live")).toBe(true);
+    server.puts = [];
+    await saveCreationConversations([{ id: "live", title: "后端", messages: [] }]);
+    expect(server.puts).toHaveLength(0);
+    resetCreationConversationStoreForTests();
+    const afterAccept = await loadCreationConversations();
+    expect(afterAccept?.find((item) => item.id === "live")).toMatchObject({ title: "后端" });
+    expect(afterAccept?.find((item) => item.id === "live")?.conflictRemote).toBeUndefined();
+    const restored = await restoreParkedCreationConversation("live");
+    expect(restored).toMatchObject({ title: "本地编辑" });
+    expect(restored?.conflictRemote).toMatchObject({ revision: 5, document: { title: "后端" } });
+    resetCreationConversationStoreForTests();
+    const afterRestore = await loadCreationConversations();
+    expect(afterRestore?.find((item) => item.id === "live")).toMatchObject({ title: "本地编辑" });
+    expect(afterRestore?.find((item) => item.id === "live")?.conflictRemote?.revision).toBe(5);
+});
+
+test("matching legacy of an existing server record is cleared without conflict", async () => {
+    server.conversations.set("same", { id: "same", revision: 2, updatedAt: "2026-10-02T00:00:00.000Z", document: { id: "same", title: "一样", messages: [] } });
+    stored.set(`guest:${CREATION_CONVERSATIONS_KEY}`, JSON.stringify([{ id: "same", title: "一样", messages: [] }]));
+    const loaded = await loadCreationConversations();
+    expect(loaded?.find((item) => item.id === "same")).toMatchObject({ title: "一样" });
+    expect(loaded?.find((item) => item.id === "same")?.conflictRemote).toBeUndefined();
+    expect(server.imports).toEqual([]);
+    const leftover = JSON.parse(stored.get(`guest:${CREATION_CONVERSATIONS_KEY}`) || "[]") as Array<{ id: string }>;
+    expect(leftover).toEqual([]);
+});
+
+test("later generation is projected onto the canonical untitled ack", async () => {
+    holdPuts();
+    const first = saveCreationConversations([{ id: "proj", messages: [{ id: "m1", role: "user" as const, content: "a" }] }]);
+    while (server.putEntered === 0) await Promise.resolve();
+    const second = saveCreationConversations([{
+        id: "proj",
+        messages: [
+            { id: "m1", role: "user" as const, content: "a" },
+            { id: "m2", role: "user" as const, content: "b" },
+        ],
+    }]);
+    server.releasePut?.();
+    await Promise.all([first, second]);
+    expect(server.puts.map((item) => item.title)).toEqual(["新创作", "新创作"]);
+    expect(server.puts.map((item) => item.messageCount)).toEqual([1, 2]);
+    expect(server.conversations.get("proj")?.document?.title).toBe("新创作");
+    expect(server.conversations.get("proj")?.document?.messages).toHaveLength(2);
 });

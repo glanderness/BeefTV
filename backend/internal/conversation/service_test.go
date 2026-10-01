@@ -356,6 +356,31 @@ func TestPutReplayAfterLostAckIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestPutFillsMissingTitle(t *testing.T) {
+	_, _, svc := openConversationFixture(t)
+	saved, err := svc.Put("local", "conversation-title", 0, json.RawMessage(`{"id":"conversation-title","messages":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(saved.Document, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc["title"] != "新创作" {
+		t.Fatalf("missing title = %s", saved.Document)
+	}
+	blank, err := svc.Put("local", "conversation-blank", 0, json.RawMessage(`{"id":"conversation-blank","title":"  ","messages":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(blank.Document, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc["title"] != "新创作" {
+		t.Fatalf("blank title = %s", blank.Document)
+	}
+}
+
 func TestNormalizeKeepsPromptTextAndRejectsNumericIDs(t *testing.T) {
 	_, _, svc := openConversationFixture(t)
 	raw := json.RawMessage(`{"id":"conversation-text","title":"保留","messages":[{"id":"m1","role":"user","mode":"video","content":"data: this is a URI scheme note","unknownLocator":"resource:keep"}]}`)

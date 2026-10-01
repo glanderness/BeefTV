@@ -8,7 +8,7 @@ import { useNavigate, useSearchParams } from "react-router";
 import type { AssetLibraryPickerItem } from "@/components/assets/asset-library-picker-modal";
 import { generationErrorCode, generationErrorMessage } from "@/lib/generation-error";
 import { creationResultAssetIds } from "@/lib/canvas/canvas-asset-handoff";
-import { getActiveUserScope } from "@/lib/user-scope";
+import { captureUserScopeEpoch, userScopeEpochMatches } from "@/lib/user-scope";
 import { continueCreationConversationOnCanvas } from "@/services/creation-canvas-conversation";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { useExternalAssetSources } from "@/hooks/use-external-asset-sources";
@@ -17,7 +17,7 @@ import { inferVideoOperation, resolveCompatibleModel, mergedImageCapabilityConfi
 import type { BackendGenerationResult } from "@/services/api/generation-task";
 import type { Skill } from "@/services/api/skills";
 import type { GenerationTask } from "@/services/api/task-center";
-import { deleteCreationConversation, loadCreationConversations, loadLocalCreationConversationDrafts, pendingCreationTaskIds, removeCreationConversationSnapshot, saveCreationConversations, updateCreationConversationSnapshot } from "@/services/creation-conversation-store";
+import { acceptSavedCreationConversation, conversationHasConflict, deleteCreationConversation, hasParkedCreationConversationDraft, loadCreationConversations, loadLocalCreationConversationDrafts, pendingCreationTaskIds, removeCreationConversationSnapshot, restoreParkedCreationConversation, saveCreationConversations, updateCreationConversationSnapshot } from "@/services/creation-conversation-store";
 import { resolveModelChannel, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
@@ -34,6 +34,7 @@ import { defaultCreationMode, modeLabels, type CreationConversation, type Creati
 import { attachCreationTaskContexts, completedCreationGenerationTask, conversationTimestamp, creationShotRail, creationVideoShotOrdinal, isImageAttachment, isVideoAttachment, materializeCreationTaskResults, newConversation, newMessage, reconcileCreationTaskMessages } from "./creation-conversations";
 import { CreationComposer, CreationEmptySuggest, CreationFeaturedWorks, CreationHistoryDrawer, CreationMessageView, CreationModeTabs, CreationWorkspaceToolbar, creationAssetCategoryLabels } from "./creation-workspace";
 import { createDemoConversation } from "./creation-demo-data";
+import { CreationConflictBanner, CreationConflictDialog } from "./creation-conflict";
 
 const AssetLibraryPickerModal = lazy(() => import("@/components/assets/asset-library-picker-modal").then((module) => ({ default: module.AssetLibraryPickerModal })));
 const loadCreationRuntime = () => import("./creation-runtime");
@@ -95,6 +96,8 @@ export default function CreatePage() {
     const activeIdRef = useRef("");
     const [hydrated, setHydrated] = useState(false);
     const skipPersistRef = useRef(true);
+    const [conflictOpen, setConflictOpen] = useState(false);
+    const [parkedDraftId, setParkedDraftId] = useState("");
     const [mode, setMode] = useState<CreationMode>(() => requestedMode || initialComposerPreferences.mode || defaultCreationMode);
     const [prompt, setPrompt] = useState(() => marketplaceSkill ? `@${marketplaceSkill} ` : "");
     const [attachments, setAttachments] = useState<CreationAttachment[]>([]);
@@ -259,25 +262,28 @@ export default function CreatePage() {
             setHydrated(true);
             return () => { cancelled = true; };
         }
-        const loadScope = getActiveUserScope();
-        void loadCreationConversations<CreationConversation>(loadScope).then((stored) => {
-            if (cancelled || getActiveUserScope() !== loadScope) return;
+        const loadEpoch = captureUserScopeEpoch();
+        void loadCreationConversations<CreationConversation>(loadEpoch.scope).then(async (stored) => {
+            if (cancelled || !userScopeEpochMatches(loadEpoch)) return;
             skipPersistRef.current = true;
             const next = stored?.length ? stored : [newConversation()];
             conversationsRef.current = next;
             setConversations(next);
             setActiveId(next[0].id);
             setHydrated(true);
+            const parked = next[0]?.id ? await hasParkedCreationConversationDraft(next[0].id, loadEpoch.scope) : false;
+            if (cancelled || !userScopeEpochMatches(loadEpoch)) return;
+            setParkedDraftId(parked && next[0] ? next[0].id : "");
         }).catch(async (error) => {
-            if (cancelled || getActiveUserScope() !== loadScope) return;
+            if (cancelled || !userScopeEpochMatches(loadEpoch)) return;
             toastRef.current.error(error instanceof Error ? error.message : "对话加载失败");
             let local: CreationConversation[] | null = null;
             try {
-                local = await loadLocalCreationConversationDrafts<CreationConversation>(loadScope);
+                local = await loadLocalCreationConversationDrafts<CreationConversation>(loadEpoch.scope);
             } catch {
                 local = null;
             }
-            if (cancelled || getActiveUserScope() !== loadScope) return;
+            if (cancelled || !userScopeEpochMatches(loadEpoch)) return;
             skipPersistRef.current = true;
             const next = local?.length ? local : [newConversation()];
             conversationsRef.current = next;
@@ -304,9 +310,27 @@ export default function CreatePage() {
             skipPersistRef.current = false;
             return;
         }
-        const persistScope = getActiveUserScope();
-        void saveCreationConversations(conversations, persistScope).catch((error) => {
+        const persistEpoch = captureUserScopeEpoch();
+        void saveCreationConversations(conversations, persistEpoch.scope).catch(async (error) => {
+            if (!userScopeEpochMatches(persistEpoch)) return;
             toastRef.current.error(error instanceof Error ? error.message : "对话保存失败");
+            try {
+                const local = await loadLocalCreationConversationDrafts<CreationConversation>(persistEpoch.scope);
+                if (!userScopeEpochMatches(persistEpoch) || !local?.length) return;
+                const remotes = new Map(local.flatMap((item) => item.conflictRemote ? [[item.id, item.conflictRemote] as const] : []));
+                if (!remotes.size) return;
+                skipPersistRef.current = true;
+                setConversations((current) => {
+                    const next = current.map((item) => {
+                        const remote = remotes.get(item.id);
+                        return remote && !item.conflictRemote ? { ...item, conflictRemote: remote } : item;
+                    });
+                    conversationsRef.current = next;
+                    return next;
+                });
+            } catch {
+                // 保存失败已经提示；冲突标记读不到时仍保留当前草稿。
+            }
         });
     }, [conversations, demoConversation, hydrated]);
 
@@ -396,7 +420,13 @@ export default function CreatePage() {
         }));
         conversationsRef.current = next;
         setConversations(next);
-        await saveCreationConversations(next, getActiveUserScope());
+        const epoch = captureUserScopeEpoch();
+        try {
+            await saveCreationConversations(next, epoch.scope);
+        } catch (error) {
+            if (!userScopeEpochMatches(epoch)) return;
+            toastRef.current.error(error instanceof Error ? error.message : "对话保存失败");
+        }
     }, []);
 
     const selectMode = (next: CreationMode) => {
@@ -802,7 +832,8 @@ export default function CreatePage() {
         if (!activeConversation || openingCanvasRef.current) return;
         openingCanvasRef.current = true;
         setOpeningCanvas(true);
-        const scope = getActiveUserScope();
+        const epoch = captureUserScopeEpoch();
+        const scope = epoch.scope;
         const source = activeConversation;
         try {
             const assets = useAssetStore.getState().assets;
@@ -816,12 +847,12 @@ export default function CreatePage() {
             const referenceAssetIds = assets.filter((asset) => (asset.kind === "image" || asset.kind === "video") && asset.data.storageKey && referenceKeys.has(asset.data.storageKey)).map((asset) => asset.id);
             const assetIds = [...generatedAssetIds, ...referenceAssetIds];
             const result = await continueCreationConversationOnCanvas(source);
-            if (scope !== getActiveUserScope()) return;
+            if (!userScopeEpochMatches(epoch)) return;
             const next = updateCreationConversationSnapshot(conversationsRef.current, source.id, (item) => ({ ...item, canvasId: result.id }));
             conversationsRef.current = next;
             setConversations(next);
             await saveCreationConversations(next, scope);
-            if (scope !== getActiveUserScope()) return;
+            if (!userScopeEpochMatches(epoch)) return;
             if (result.syncError && !localMode) toastRef.current.warning("会话已保存在本机，云端同步尚未完成。");
             const params = new URLSearchParams({ conversation: result.sessionId });
             if (assetIds.length) {
@@ -830,7 +861,7 @@ export default function CreatePage() {
             }
             navigate(`/canvas/${result.id}?${params.toString()}`);
         } catch (cause) {
-            if (scope === getActiveUserScope()) toastRef.current.error(cause instanceof Error ? cause.message : "转入画布失败，原会话已保留");
+            if (userScopeEpochMatches(epoch)) toastRef.current.error(cause instanceof Error ? cause.message : "转入画布失败，原会话已保留");
         } finally { openingCanvasRef.current = false; setOpeningCanvas(false); }
     };
 
@@ -841,6 +872,65 @@ export default function CreatePage() {
         setAttachments([]);
         setDraftReferences([]);
         setHistoryOpen(false);
+        setConflictOpen(false);
+        const epoch = captureUserScopeEpoch();
+        void hasParkedCreationConversationDraft(conversation.id, epoch.scope).then((parked) => {
+            if (!userScopeEpochMatches(epoch)) return;
+            setParkedDraftId(parked ? conversation.id : "");
+        });
+    };
+
+    const useSavedConflictVersion = async (conversation: CreationConversation) => {
+        const remote = conversation.conflictRemote;
+        if (!remote) return;
+        const epoch = captureUserScopeEpoch();
+        try {
+            await acceptSavedCreationConversation(conversation.id, conversation, remote, epoch.scope);
+            if (!userScopeEpochMatches(epoch)) return;
+            const saved = { ...remote.document, id: conversation.id } as CreationConversation;
+            const next = updateCreationConversationSnapshot(conversationsRef.current, conversation.id, () => saved);
+            skipPersistRef.current = true;
+            conversationsRef.current = next;
+            setConversations(next);
+            setConflictOpen(false);
+            setParkedDraftId(conversation.id);
+        } catch (error) {
+            if (!userScopeEpochMatches(epoch)) return;
+            toastRef.current.error(error instanceof Error ? error.message : "无法换成已保存的版本");
+        }
+    };
+
+    const restoreParkedDraft = async (conversationId: string) => {
+        const epoch = captureUserScopeEpoch();
+        try {
+            const parked = await restoreParkedCreationConversation<CreationConversation>(conversationId, epoch.scope);
+            if (!userScopeEpochMatches(epoch) || !parked) return;
+            const next = updateCreationConversationSnapshot(conversationsRef.current, conversationId, () => parked);
+            skipPersistRef.current = true;
+            conversationsRef.current = next;
+            setConversations(next);
+            setParkedDraftId("");
+        } catch (error) {
+            if (!userScopeEpochMatches(epoch)) return;
+            toastRef.current.error(error instanceof Error ? error.message : "无法恢复刚才的草稿");
+        }
+    };
+
+    const overwriteSavedWithDraft = async (conversation: CreationConversation) => {
+        const epoch = captureUserScopeEpoch();
+        try {
+            await saveCreationConversations([conversation], epoch.scope, { resolveConflictIds: [conversation.id] });
+            if (!userScopeEpochMatches(epoch)) return;
+            const { conflictRemote: _conflictRemote, ...resolved } = conversation;
+            const next = updateCreationConversationSnapshot(conversationsRef.current, conversation.id, () => resolved as CreationConversation);
+            skipPersistRef.current = true;
+            conversationsRef.current = next;
+            setConversations(next);
+            setConflictOpen(false);
+        } catch (error) {
+            if (!userScopeEpochMatches(epoch)) return;
+            toastRef.current.error(error instanceof Error ? error.message : "这份草稿没有保存成功，原来的版本还在");
+        }
     };
 
     const confirmDeleteConversation = (conversation: CreationConversation) => {
@@ -854,9 +944,11 @@ export default function CreatePage() {
             okButtonProps: { danger: true },
             cancelText: "保留",
             onOk: async () => {
-                const scope = getActiveUserScope();
+                const epoch = captureUserScopeEpoch();
+                const scope = epoch.scope;
                 try {
                     await deleteCreationConversation(conversation.id, scope);
+                    if (!userScopeEpochMatches(epoch)) return;
                     const remaining = removeCreationConversationSnapshot(conversationsRef.current, conversation.id);
                     const sortedRemaining = [...remaining].sort((left, right) => conversationTimestamp(right.updatedAt) - conversationTimestamp(left.updatedAt));
                     const fallback = sortedRemaining.find((item) => item.messages.length > 0) || sortedRemaining[0] || newConversation();
@@ -873,6 +965,7 @@ export default function CreatePage() {
                     }
                     toastRef.current.success("历史对话已删除，素材仍保留");
                 } catch (error) {
+                    if (!userScopeEpochMatches(epoch)) throw error;
                     toastRef.current.error(error instanceof Error ? error.message : "历史对话删除失败");
                     throw error;
                 }
@@ -886,8 +979,11 @@ export default function CreatePage() {
         const next = updateCreationConversationSnapshot(conversationsRef.current, conversation.id, (item) => ({ ...item, title: nextTitle }));
         conversationsRef.current = next;
         setConversations(next);
-        const scope = getActiveUserScope();
-        void saveCreationConversations(next, scope).catch((error) => toastRef.current.error(error instanceof Error ? error.message : "对话重命名保存失败"));
+        const epoch = captureUserScopeEpoch();
+        void saveCreationConversations(next, epoch.scope).catch((error) => {
+            if (!userScopeEpochMatches(epoch)) return;
+            toastRef.current.error(error instanceof Error ? error.message : "对话重命名保存失败");
+        });
     };
 
     const restoreMessageDraft = (item: CreationMessage) => {
@@ -1013,6 +1109,20 @@ export default function CreatePage() {
         onSubmit: () => void submit(),
     };
 
+    const conflictBanner = conversationHasConflict(activeConversation) ? (
+        <CreationConflictBanner
+            onReview={() => setConflictOpen(true)}
+            onUseSaved={() => void useSavedConflictVersion(activeConversation)}
+        />
+    ) : parkedDraftId === activeConversation.id ? (
+        <CreationConflictBanner
+            parked
+            onReview={() => setConflictOpen(true)}
+            onUseSaved={() => undefined}
+            onRestoreParked={() => void restoreParkedDraft(activeConversation.id)}
+        />
+    ) : null;
+
 
     return <>
         <div className="creation-home relative flex h-full min-h-0 flex-col overflow-hidden">
@@ -1020,6 +1130,7 @@ export default function CreatePage() {
                 <div className="creation-top-actions">
                     <Tooltip title="历史对话"><button type="button" aria-label="查看历史对话" aria-expanded={historyOpen} className="creation-top-action" onClick={() => setHistoryOpen(true)}><History /></button></Tooltip>
                 </div>
+                {conflictBanner}
                 <AnimatePresence>
                     {launchpadCondensed ? <motion.div className="creation-floating-prompt" key="floating-prompt"
                         style={{ x: "-50%" }}
@@ -1053,6 +1164,7 @@ export default function CreatePage() {
             </main>
             </> : <div className="creation-thread-workbench">
                 {demoConversation ? <div className="creation-demo-banner" role="status"><Sparkles />模拟对话流 · 固定数据演示，不会调用真实生成接口</div> : null}
+                {conflictBanner}
                 <CreationWorkspaceToolbar onNewConversation={startNewConversation} onOpenHistory={() => setHistoryOpen(true)} shots={videoShots} onJumpToShot={jumpToShot} onContinueCanvas={() => void continueOnCanvas()} openingCanvas={openingCanvas} />
                 <main ref={threadScrollRef} onScroll={handleThreadScroll} className="creation-thread-scroll creation-scrollbar">
                     <section className="creation-thread-stage"><div className="creation-results">{activeConversation.messages.map((item, index) => <div key={item.id} id={`creation-shot-${item.id}`} className="creation-thread-message"><CreationMessageView
@@ -1069,6 +1181,14 @@ export default function CreatePage() {
             </div>}
         </div>
         <CreationHistoryDrawer open={historyOpen} conversations={historyConversations} activeId={activeConversation.id} onNew={startNewConversation} onClose={() => setHistoryOpen(false)} onSelect={selectConversation} onDelete={confirmDeleteConversation} onRename={renameConversationTitle} />
+        <CreationConflictDialog
+            open={conflictOpen && conversationHasConflict(activeConversation)}
+            local={activeConversation}
+            remote={activeConversation.conflictRemote?.document}
+            onClose={() => setConflictOpen(false)}
+            onUseSaved={() => void useSavedConflictVersion(activeConversation)}
+            onUseLocal={() => void overwriteSavedWithDraft(activeConversation)}
+        />
         {libraryOpen ? <Suspense fallback={null}><AssetLibraryPickerModal
             remoteLibrary
             open={libraryOpen}
