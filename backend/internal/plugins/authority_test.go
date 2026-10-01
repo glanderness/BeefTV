@@ -1,8 +1,10 @@
 package plugins
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/protocol"
 	"infinite-canvas/backend/internal/repository"
 
 	"gorm.io/driver/sqlite"
@@ -352,5 +355,317 @@ func TestMalformedAuthoritativeDBFailsClosedAndIgnoresDisk(t *testing.T) {
 	}
 	if _, err := NewRuntimeWithStore(dataDir, store); err == nil || !strings.Contains(err.Error(), "读取插件 registry") {
 		t.Fatalf("malformed db error = %v", err)
+	}
+}
+
+func TestInvalidLegacyImportFailsClosedPreservesBytesAndSkipsAuthority(t *testing.T) {
+	cases := []struct {
+		name string
+		body []byte
+	}{
+		{name: "duplicate-id", body: marshalRegistryForTest(t, []RegistryRecord{
+			{ID: "dup-id", Raw: testManifest("dup-id", "1.0.0"), Source: OriginUploaded},
+			{ID: "dup-id", Raw: testManifest("dup-id", "2.0.0"), Source: OriginUploaded},
+		})},
+		{name: "id-mismatch", body: marshalRegistryForTest(t, []RegistryRecord{
+			{ID: "alpha", Raw: testManifest("beta", "1.0.0"), Source: OriginUploaded},
+		})},
+		{name: "malformed-manifest", body: marshalRegistryForTest(t, []RegistryRecord{
+			{ID: "bad-json", Raw: json.RawMessage(`{"id":1}`), Source: OriginUploaded},
+		})},
+		{name: "path-escape", body: marshalRegistryForTest(t, []RegistryRecord{
+			{ID: "path-escape", Raw: testManifest("path-escape", "1.0.0"), Source: OriginUploaded, PackagePath: "../evil.beeftv-plugin", PackageSHA256: strings.Repeat("ab", 32)},
+		})},
+		{name: "path-hash-mismatch", body: marshalRegistryForTest(t, []RegistryRecord{
+			{ID: "path-hash", Raw: testManifest("path-hash", "1.0.0"), Source: OriginUploaded, PackagePath: strings.Repeat("ab", 32) + protocol.PluginPackageExtension, PackageSHA256: strings.Repeat("cd", 32)},
+		})},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dataDir, store, repo := newSQLitePluginEnv(t)
+			legacyPath := filepath.Join(dataDir, "plugin_registry.json")
+			if err := os.WriteFile(legacyPath, tc.body, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := NewRuntimeWithStore(dataDir, store); err == nil || !strings.Contains(err.Error(), "遗留插件 registry") {
+				t.Fatalf("invalid legacy error = %v", err)
+			}
+			got, err := os.ReadFile(legacyPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, tc.body) {
+				t.Fatalf("legacy bytes rewritten:\n got %s\nwant %s", got, tc.body)
+			}
+			assertNoAuthorityRow(t, repo)
+		})
+	}
+}
+
+func TestInvalidAuthoritativeDBFailsClosedAndPreservesBytes(t *testing.T) {
+	dataDir, store, repo := newSQLitePluginEnv(t)
+	runtime, err := NewRuntimeWithStore(dataDir, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(runtime, store)
+	pkg := testPluginPackage(t, testManifest("db-struct", "1.0.0"))
+	if _, err := svc.InstallUploaded("admin-1", pkg, "db-struct.beeftv-plugin"); err != nil {
+		t.Fatal(err)
+	}
+	var officialID string
+	for _, item := range runtime.List() {
+		if item.Source == OriginOfficial && strings.HasSuffix(item.FileName, protocol.PluginPackageExtension) {
+			officialID = item.Manifest.ID
+			break
+		}
+	}
+	if officialID == "" {
+		t.Fatal("no official packaged plugin; run plugin-packages/build-packages.sh")
+	}
+	cases := []struct {
+		name string
+		body []byte
+	}{
+		{name: "duplicate-id", body: marshalRegistryForTest(t, []RegistryRecord{
+			{ID: "dup-db", Raw: testManifest("dup-db", "1.0.0"), Source: OriginUploaded},
+			{ID: "dup-db", Raw: testManifest("dup-db", "2.0.0"), Source: OriginUploaded},
+		})},
+		{name: "id-mismatch", body: marshalRegistryForTest(t, []RegistryRecord{
+			{ID: officialID, Raw: testManifest("not-"+officialID, "9.0.0"), Source: OriginOfficial},
+		})},
+		{name: "malformed-manifest", body: marshalRegistryForTest(t, []RegistryRecord{
+			{ID: "bad-db", Raw: json.RawMessage(`{"id":1}`), Source: OriginUploaded},
+		})},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := repo.SaveSystemSetting(&model.SystemSetting{Key: RegistrySettingKey, ValueJSON: string(tc.body)}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := NewRuntimeWithStore(dataDir, store); err == nil || !strings.Contains(err.Error(), "读取插件 registry") {
+				t.Fatalf("invalid db error = %v", err)
+			}
+			assertAuthorityBytes(t, repo, tc.body)
+		})
+	}
+}
+
+func TestUnavailableAdapterStartsAndKeepsStructurallyValidAuthority(t *testing.T) {
+	dataDir, store, repo := newSQLitePluginEnv(t)
+	runtime, err := NewRuntimeWithStore(dataDir, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(runtime, store)
+	pkg := testPluginPackage(t, testManifest("host-missing", "1.0.0"))
+	if _, err := svc.InstallUploaded("admin-1", pkg, "host-missing.beeftv-plugin"); err != nil {
+		t.Fatal(err)
+	}
+	records, found, err := store.LoadPluginRegistry()
+	if err != nil || !found {
+		t.Fatalf("load registry found=%v err=%v", found, err)
+	}
+	replaced := false
+	for index := range records {
+		if records[index].ID == "host-missing" {
+			records[index].Raw = hostUnavailableManifest("host-missing")
+			replaced = true
+		}
+	}
+	if !replaced {
+		t.Fatal("uploaded record missing from authority")
+	}
+	body := marshalRegistryForTest(t, records)
+	if err := repo.SaveSystemSetting(&model.SystemSetting{Key: RegistrySettingKey, ValueJSON: string(body)}); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := NewRuntimeWithStore(dataDir, store)
+	if err != nil {
+		t.Fatalf("unavailable adapter should start: %v", err)
+	}
+	item, ok := ByID(restarted.List(), "host-missing")
+	if !ok || item.Status != StatusInvalid || item.Error == "" {
+		t.Fatalf("unavailable plugin = %#v ok=%v", item, ok)
+	}
+	if restarted.Registry().IsCapability("host-missing", protocol.CapabilityVideo) {
+		t.Fatal("unavailable adapter was selectable")
+	}
+}
+
+func TestSameHashInstallReusesVerifiedBlob(t *testing.T) {
+	dataDir, store, _ := newSQLitePluginEnv(t)
+	runtime, err := NewRuntimeWithStore(dataDir, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(runtime, store)
+	pkg := testPluginPackage(t, testManifest("reuse-blob", "1.0.0"))
+	if _, err := svc.InstallUploaded("admin-1", pkg, "reuse-blob.beeftv-plugin"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(runtime.packageDir, blobFileName(pluginHash(pkg)))
+	stale := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(path, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.InstallUploaded("admin-1", pkg, "reuse-blob.beeftv-plugin"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !before.ModTime().Equal(after.ModTime()) {
+		t.Fatal("verified same-hash blob was rewritten")
+	}
+	assertImmediatePlugin(t, runtime, "reuse-blob", "1.0.0", StatusEnabled, pkg)
+}
+
+func TestSameHashInstallDoesNotRewriteCorruptExistingBlob(t *testing.T) {
+	dataDir, store, _ := newSQLitePluginEnv(t)
+	runtime, err := NewRuntimeWithStore(dataDir, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(runtime, store)
+	pkg := testPluginPackage(t, testManifest("corrupt-blob", "1.0.0"))
+	if _, err := svc.InstallUploaded("admin-1", pkg, "corrupt-blob.beeftv-plugin"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(runtime.packageDir, blobFileName(pluginHash(pkg)))
+	garbage := []byte("not-the-registered-plugin")
+	if err := os.WriteFile(path, garbage, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.InstallUploaded("admin-1", pkg, "corrupt-blob.beeftv-plugin"); err == nil || !strings.Contains(err.Error(), "内容与哈希不一致") {
+		t.Fatalf("corrupt blob reinstall error = %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, garbage) {
+		t.Fatal("corrupt blob was rewritten")
+	}
+	item, ok := ByID(runtime.List(), "corrupt-blob")
+	if !ok || item.Manifest.Version != "1.0.0" || item.Status != StatusEnabled {
+		t.Fatalf("live plugin after failed reinstall = %#v ok=%v", item, ok)
+	}
+}
+
+func TestPackageRejectsCorruptBlob(t *testing.T) {
+	dataDir, store, _ := newSQLitePluginEnv(t)
+	runtime, err := NewRuntimeWithStore(dataDir, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(runtime, store)
+	pkg := testPluginPackage(t, testManifest("export-corrupt", "1.0.0"))
+	if _, err := svc.InstallUploaded("admin-1", pkg, "export-corrupt.beeftv-plugin"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(runtime.packageDir, blobFileName(pluginHash(pkg)))
+	if err := os.WriteFile(path, []byte("corrupt-export"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, name, err := runtime.Package("export-corrupt")
+	if err == nil || data != nil || name != "" {
+		t.Fatalf("exported untrusted package name=%q err=%v", name, err)
+	}
+	if !strings.Contains(err.Error(), "哈希不一致") {
+		t.Fatalf("corrupt export error = %v", err)
+	}
+	item, ok := ByID(runtime.List(), "export-corrupt")
+	if !ok || item.Status != StatusEnabled {
+		t.Fatalf("execution still uses Raw; list = %#v ok=%v", item, ok)
+	}
+}
+
+func TestPackageSerializesWithUninstall(t *testing.T) {
+	dataDir, store, _ := newSQLitePluginEnv(t)
+	runtime, err := NewRuntimeWithStore(dataDir, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(runtime, store)
+	pkg := testPluginPackage(t, testManifest("export-race", "1.0.0"))
+	if _, err := svc.InstallUploaded("admin-1", pkg, "export-race.beeftv-plugin"); err != nil {
+		t.Fatal(err)
+	}
+	wantHash := pluginHash(pkg)
+	var start sync.WaitGroup
+	var work sync.WaitGroup
+	start.Add(1)
+	errorsCh := make(chan error, 16)
+	for i := 0; i < 8; i++ {
+		work.Add(1)
+		go func() {
+			defer work.Done()
+			start.Wait()
+			data, _, err := runtime.Package("export-race")
+			if err != nil {
+				return
+			}
+			if pluginHash(data) != wantHash {
+				errorsCh <- fmt.Errorf("exported untrusted package bytes")
+			}
+		}()
+	}
+	work.Add(1)
+	go func() {
+		defer work.Done()
+		start.Wait()
+		if err := svc.UninstallUploaded("export-race"); err != nil {
+			errorsCh <- err
+		}
+	}()
+	start.Done()
+	work.Wait()
+	close(errorsCh)
+	for err := range errorsCh {
+		t.Fatal(err)
+	}
+}
+
+func marshalRegistryForTest(t *testing.T, records []RegistryRecord) []byte {
+	t.Helper()
+	data, err := json.Marshal(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func hostUnavailableManifest(id string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{"apiVersion":"beeftv.plugin/v1","id":%q,"version":"1.0.0","name":%q,"author":"Test","documentation":"# %s","runtime":{"backend":"host:missing-engine"},"contributes":{"providers":[{"id":%q,"label":%q,"capabilities":["video"],"scopes":["canvas"],"create":{"method":"POST","path":"/tasks","fields":{"prompt":"request.prompt"}},"response":{"statusPaths":["status"]}}]}}`, id, id, id, id, id))
+}
+
+func assertNoAuthorityRow(t *testing.T, repo *repository.Repository) {
+	t.Helper()
+	setting, err := repo.LookupSystemSetting(RegistrySettingKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if setting != nil {
+		t.Fatalf("authority row written: %q", setting.ValueJSON)
+	}
+}
+
+func assertAuthorityBytes(t *testing.T, repo *repository.Repository, want []byte) {
+	t.Helper()
+	setting, err := repo.LookupSystemSetting(RegistrySettingKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if setting == nil {
+		t.Fatal("authority row missing")
+	}
+	if setting.ValueJSON != string(want) {
+		t.Fatalf("authority bytes changed:\n got %s\nwant %s", setting.ValueJSON, want)
 	}
 }

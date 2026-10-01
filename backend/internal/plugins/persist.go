@@ -108,6 +108,9 @@ func (c *Runtime) persistRecords(records []RegistryRecord, extras persistExtras)
 			return err
 		}
 	}
+	if err := validateAuthorityRecords(records); err != nil {
+		return fmt.Errorf("插件 registry 候选无效：%w", err)
+	}
 	if c.store != nil {
 		return c.store.CommitPluginRegistry(RegistryCommit{
 			Records:        records,
@@ -203,6 +206,9 @@ func materializeRecords(stored []RegistryRecord) (map[string]Record, *protocol.R
 		if strings.TrimSpace(metadata.ID) == "" {
 			return nil, nil, fmt.Errorf("plugin %s has no metadata id", storedRecord.ID)
 		}
+		if strings.TrimSpace(storedRecord.ID) != strings.TrimSpace(metadata.ID) {
+			return nil, nil, fmt.Errorf("插件 %s 清单 ID 与记录 ID 不一致", storedRecord.ID)
+		}
 		if _, exists := plugins[metadata.ID]; exists {
 			return nil, nil, fmt.Errorf("duplicate installed protocol %q", metadata.ID)
 		}
@@ -260,7 +266,8 @@ func materializeRecords(stored []RegistryRecord) (map[string]Record, *protocol.R
 }
 
 func writePluginFile(path string, data []byte) error {
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".plugin-*.tmp")
+	directory := filepath.Dir(path)
+	temporary, err := os.CreateTemp(directory, ".plugin-*.tmp")
 	if err != nil {
 		return err
 	}
@@ -281,7 +288,128 @@ func writePluginFile(path string, data []byte) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temporaryPath, path)
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return err
+	}
+	return syncDirectory(directory)
+}
+
+func ensurePluginBlob(path string, data []byte) (bool, error) {
+	hash := pluginHash(data)
+	if filepath.Base(path) != blobFileName(hash) {
+		return false, fmt.Errorf("插件包路径与内容哈希不一致")
+	}
+	existing, err := os.ReadFile(path)
+	if err == nil {
+		if pluginHash(existing) != hash {
+			return false, fmt.Errorf("插件包 %s 已存在但内容与哈希不一致", filepath.Base(path))
+		}
+		return false, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if err := writePluginFile(path, data); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func validateAuthorityRecords(records []RegistryRecord) error {
+	seen := make(map[string]struct{}, len(records))
+	for _, record := range records {
+		id := strings.TrimSpace(record.ID)
+		if id == "" {
+			return fmt.Errorf("插件 registry 记录缺少 ID")
+		}
+		if _, exists := seen[id]; exists {
+			return fmt.Errorf("插件 registry 记录 ID %q 重复", id)
+		}
+		seen[id] = struct{}{}
+		if err := validateAuthorityRecord(record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateAuthorityRecord(record RegistryRecord) error {
+	id := strings.TrimSpace(record.ID)
+	if len(record.Raw) == 0 {
+		return fmt.Errorf("插件 %s 缺少清单", id)
+	}
+	if !json.Valid(record.Raw) {
+		return fmt.Errorf("插件 %s 清单不是合法 JSON", id)
+	}
+	var manifest protocol.Manifest
+	if err := json.Unmarshal(record.Raw, &manifest); err != nil {
+		return fmt.Errorf("decode plugin %s: %w", id, err)
+	}
+	metadataID := strings.TrimSpace(manifest.Metadata.ID)
+	if metadataID == "" {
+		return fmt.Errorf("plugin %s has no metadata id", id)
+	}
+	if metadataID != id {
+		return fmt.Errorf("插件 %s 清单 ID 与记录 ID 不一致", id)
+	}
+	if err := validateRecordSource(record.Source); err != nil {
+		return fmt.Errorf("插件 %s：%w", id, err)
+	}
+	if err := validateRecordPackageIdentity(record); err != nil {
+		return fmt.Errorf("插件 %s：%w", id, err)
+	}
+	return nil
+}
+
+func validateRecordSource(source string) error {
+	switch strings.TrimSpace(source) {
+	case OriginOfficial, OriginSystem, OriginUploaded, "bundled":
+		return nil
+	case "":
+		return fmt.Errorf("缺少来源")
+	default:
+		return fmt.Errorf("未知来源 %q", strings.TrimSpace(source))
+	}
+}
+
+func validateRecordPackageIdentity(record RegistryRecord) error {
+	path := strings.TrimSpace(record.PackagePath)
+	hash := strings.TrimSpace(record.PackageSHA256)
+	if name := strings.TrimSpace(record.FileName); name != "" {
+		if err := validateRecordBaseName(name); err != nil {
+			return fmt.Errorf("文件名无效")
+		}
+	}
+	if path != "" {
+		if err := validateRecordBaseName(path); err != nil {
+			return err
+		}
+	}
+	if path == "" || hash == "" {
+		return nil
+	}
+	if !validPackageSHA256(hash) {
+		return fmt.Errorf("包哈希无效")
+	}
+	if blobFileName(hash) != path {
+		return fmt.Errorf("包路径与哈希不一致")
+	}
+	return nil
+}
+
+func validateRecordBaseName(name string) error {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) || filepath.Base(name) != name {
+		return fmt.Errorf("路径无效")
+	}
+	return nil
+}
+
+func validPackageSHA256(hash string) bool {
+	if len(hash) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(hash)
+	return err == nil
 }
 
 func pluginHash(data []byte) string {

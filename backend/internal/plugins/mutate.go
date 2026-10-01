@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -89,9 +88,8 @@ func (c *Runtime) stageInstallLocked(data []byte, fileName string) (stagedMutati
 	}
 	blobName := blobFileName(hash)
 	packagePath := filepath.Join(c.packageDir, blobName)
-	_, statErr := os.Stat(packagePath)
-	createdBlob := errors.Is(statErr, os.ErrNotExist)
-	if err := writePluginFile(packagePath, data); err != nil {
+	createdBlob, err := ensurePluginBlob(packagePath, data)
+	if err != nil {
 		return stagedMutation{}, fmt.Errorf("保存插件包失败：%w", err)
 	}
 	stored, err := c.currentRecords()

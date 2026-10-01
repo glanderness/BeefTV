@@ -43,6 +43,9 @@ func parseOfficialPluginPackage(data []byte) (protocol.PluginPackage, error) {
 func (c *Runtime) reconcileBuiltIns(stored []RegistryRecord) ([]RegistryRecord, error) {
 	byID := make(map[string]RegistryRecord, len(stored))
 	for _, record := range stored {
+		if _, exists := byID[record.ID]; exists {
+			return nil, fmt.Errorf("插件 registry 记录 ID %q 重复", record.ID)
+		}
 		byID[record.ID] = record
 	}
 	officialDir, err := officialPluginPackageDir()
@@ -91,7 +94,7 @@ func (c *Runtime) reconcileBuiltIns(stored []RegistryRecord) ([]RegistryRecord, 
 		}
 		hash := pluginHash(packageData)
 		packageName := hash + protocol.PluginPackageExtension
-		if err := writePluginFile(filepath.Join(c.packageDir, packageName), packageData); err != nil {
+		if _, err := ensurePluginBlob(filepath.Join(c.packageDir, packageName), packageData); err != nil {
 			return nil, fmt.Errorf("缓存官方插件 %q：%w", id, err)
 		}
 		now := time.Now().UTC()
