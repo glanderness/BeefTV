@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 9
+const CurrentSchemaVersion int64 = 10
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -58,6 +58,7 @@ func LocalModels() []any {
 		&model.Shot{}, &model.ShotRevision{}, &model.ShotArtifact{}, &model.ShotAssetReference{},
 		&model.WorkflowTemplateVersion{}, &model.WorkflowInstance{}, &model.WorkflowStepInstance{}, &model.WorkflowStepTask{}, &model.ProductionTaskLink{},
 		&model.CanvasProject{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{}, &model.AgentOpRecord{},
+		&model.AssistantTurn{},
 		&model.PromptTemplate{}, &model.UserPromptCustomization{},
 		&model.Task{}, &model.CreationRun{}, &model.CreationSubmission{}, &model.TaskTextDelta{}, &model.TaskLog{}, &model.Result{},
 	}
@@ -80,6 +81,7 @@ func canonicalLocalMigrations() []localMigration {
 		{version: 6, name: "agent-operation-turn-attribution", apply: ensureAgentOperationTurnAttribution},
 		{version: 8, name: "reconcile-product-agent-schema", apply: migrateProductAgentSchema},
 		{version: 9, name: "repair-product-agent-contracts", apply: repairProductAgentContracts},
+		{version: 10, name: "assistant-business-turns", apply: migrateAssistantBusinessTurns},
 	}
 }
 
@@ -362,7 +364,7 @@ func migrateLegacyCreationSubmissions(db *gorm.DB) error {
 }
 
 func RequireLocalSchema(db *gorm.DB) error {
-	for _, table := range []any{&model.Workspace{}, &model.Resource{}, &model.Project{}, &model.CanvasProject{}, &model.Task{}, &model.AgentOpRecord{}, &model.ImageSubmission{}} {
+	for _, table := range []any{&model.Workspace{}, &model.Resource{}, &model.Project{}, &model.CanvasProject{}, &model.Task{}, &model.AgentOpRecord{}, &model.ImageSubmission{}, &model.AssistantTurn{}} {
 		if !db.Migrator().HasTable(table) {
 			return fmt.Errorf("本地工作区数据库结构缺失，请启用自动迁移")
 		}
@@ -426,6 +428,13 @@ func requireReconciledSchema(db *gorm.DB) error {
 		if !valid {
 			return fmt.Errorf("本地数据库索引 %s 定义不完整", index.name)
 		}
+	}
+	version, err := currentSchemaVersion(db)
+	if err != nil {
+		return err
+	}
+	if version >= 10 {
+		return requireAssistantTurnsSchema(db)
 	}
 	return nil
 }

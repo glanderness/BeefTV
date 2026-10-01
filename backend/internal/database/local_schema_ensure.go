@@ -182,3 +182,94 @@ func ensureImageSubmissionsTable(tx *gorm.DB) error {
 	return ensureSQLiteIndex(tx, "image_submissions", "idx_image_submissions_user_id",
 		"CREATE INDEX idx_image_submissions_user_id ON image_submissions(user_id)")
 }
+
+func migrateAssistantBusinessTurns(tx *gorm.DB) error {
+	if err := ensureAssistantTurnsTable(tx); err != nil {
+		return err
+	}
+	return requireAssistantTurnsSchema(tx)
+}
+
+func ensureAssistantTurnsTable(tx *gorm.DB) error {
+	if tx.Migrator().HasTable("assistant_turns") {
+		for _, column := range []struct{ name, definition string }{
+			{"user_id", "TEXT"},
+			{"canvas_id", "TEXT"},
+			{"revision_before", "INTEGER"},
+			{"created_at", "DATETIME"},
+			{"updated_at", "DATETIME"},
+			{"state", "TEXT"},
+			{"selected_node_ids", "TEXT"},
+			{"referenced_asset_ids", "TEXT"},
+			{"referenced_canvas_ids", "TEXT"},
+			{"associated_asset_ids", "TEXT"},
+			{"associated_task_ids", "TEXT"},
+			{"undone", "NUMERIC"},
+			{"change_json", "TEXT"},
+			{"document", "TEXT"},
+		} {
+			if err := ensureSQLiteColumn(tx, "assistant_turns", column.name, column.definition); err != nil {
+				return err
+			}
+		}
+		return ensureAssistantTurnsUserCanvasIndex(tx)
+	}
+	if err := tx.Exec(`CREATE TABLE assistant_turns (
+		turn_id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL,
+		canvas_id TEXT NOT NULL,
+		revision_before INTEGER NOT NULL DEFAULT 0,
+		created_at DATETIME,
+		updated_at DATETIME,
+		state TEXT NOT NULL,
+		selected_node_ids TEXT,
+		referenced_asset_ids TEXT,
+		referenced_canvas_ids TEXT,
+		associated_asset_ids TEXT,
+		associated_task_ids TEXT,
+		undone NUMERIC NOT NULL DEFAULT 0,
+		change_json TEXT,
+		document TEXT
+	)`).Error; err != nil {
+		return fmt.Errorf("创建助手业务回合表: %w", err)
+	}
+	return ensureAssistantTurnsUserCanvasIndex(tx)
+}
+
+func ensureAssistantTurnsUserCanvasIndex(tx *gorm.DB) error {
+	return ensureSQLiteIndex(tx, "assistant_turns", "idx_assistant_turns_user_canvas",
+		"CREATE INDEX idx_assistant_turns_user_canvas ON assistant_turns(user_id, canvas_id)")
+}
+
+func requireAssistantTurnsSchema(db *gorm.DB) error {
+	if !db.Migrator().HasTable("assistant_turns") {
+		return fmt.Errorf("本地助手业务回合表缺失，请启用自动迁移")
+	}
+	for _, column := range []string{
+		"turn_id", "user_id", "canvas_id", "revision_before", "created_at", "updated_at",
+		"state", "selected_node_ids", "referenced_asset_ids", "referenced_canvas_ids",
+		"associated_asset_ids", "associated_task_ids", "undone", "change_json", "document",
+	} {
+		has, err := sqliteHasColumn(db, "assistant_turns", column)
+		if err != nil {
+			return err
+		}
+		if !has {
+			return fmt.Errorf("本地助手业务回合表缺失列 %s", column)
+		}
+	}
+	if err := requireSQLitePrimaryKey(db, "assistant_turns", []string{"turn_id"}); err != nil {
+		return err
+	}
+	valid, err := matchesSQLiteIndex(db, sqliteIndexContract{
+		table: "assistant_turns", name: "idx_assistant_turns_user_canvas",
+		columns: []string{"user_id", "canvas_id"}, unique: false,
+	})
+	if err != nil {
+		return err
+	}
+	if !valid {
+		return fmt.Errorf("本地数据库索引 idx_assistant_turns_user_canvas 定义不完整")
+	}
+	return nil
+}

@@ -2,7 +2,16 @@ package app
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"testing"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
+	"infinite-canvas/backend/internal/database"
+	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 )
 
 // 结算与归属的边界回归：
@@ -12,7 +21,30 @@ import (
 // 4. 只有 open 且属于同一用户的回合才能被内置宿主读取范围。
 
 func TestFinalizeKeepsSnapshotWhenReceiptQueryFails(t *testing.T) {
-	service, canvasID, _ := newAssistantTurnService(t)
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "turns.db")
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.MigrateLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Workspace{ID: "local", Name: "本地工作区"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	service := NewLocal(repository.New(db), dir)
+	doc := map[string]any{"id": "canvas-1", "title": "撤销回归", "revision": 0,
+		"nodes":       []any{map[string]any{"id": "n1", "type": "text", "title": "原节点", "position": map[string]any{"x": 0, "y": 0}}},
+		"connections": []any{}}
+	encoded, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.UpsertUserCanvasProject("local", encoded); err != nil {
+		t.Fatal(err)
+	}
+	canvasID := "canvas-1"
 	turnID := "1100110011001100"
 	if _, err := service.BeginAssistantTurn("local", canvasID, turnID, AssistantTurnInput{}); err != nil {
 		t.Fatal(err)
@@ -21,7 +53,6 @@ func TestFinalizeKeepsSnapshotWhenReceiptQueryFails(t *testing.T) {
 	recordTurnReceipt(t, service, turnID, "op-create-n2", "canvas.nodes.create",
 		map[string]any{"canvasId": canvasID, "revision": after, "created": []any{map[string]any{"id": "n2", "title": "n2"}}})
 
-	// 查询回执的数据库不可用：结算必须报错并保留现场。
 	sqlDB, err := service.Database().DB()
 	if err != nil {
 		t.Fatal(err)
@@ -32,7 +63,12 @@ func TestFinalizeKeepsSnapshotWhenReceiptQueryFails(t *testing.T) {
 	if err := service.FinalizeAssistantTurn(turnID); err == nil {
 		t.Fatal("回执查询失败时结算必须返回错误，而不是静默当成没有改动")
 	}
-	record, readErr := readAssistantTurn(service.assistantTurnPath(turnID))
+	reopenedDB, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened := NewLocal(repository.New(reopenedDB), dir)
+	record, readErr := reopened.loadAssistantTurn(turnID)
 	if readErr != nil {
 		t.Fatalf("轮记录必须保留: %v", readErr)
 	}
@@ -57,7 +93,7 @@ func TestFinalizeKeepsSnapshotWithoutReceiptDatabase(t *testing.T) {
 	if err := withoutRepository.FinalizeAssistantTurn(turnID); err == nil {
 		t.Fatal("missing receipt database must fail settlement")
 	}
-	record, err := readAssistantTurn(service.assistantTurnPath(turnID))
+	record, err := service.loadAssistantTurn(turnID)
 	if err != nil || record.State != assistantTurnStateOpen || len(record.Document) == 0 {
 		t.Fatalf("unavailable receipts must preserve open snapshot: %+v, %v", record, err)
 	}
@@ -77,7 +113,7 @@ func TestFinalizeIsIdempotentAndPreservesEvidence(t *testing.T) {
 		map[string]any{"canvasId": canvasID, "revision": after, "created": []any{map[string]any{"id": "n2", "title": "n2"}}})
 	settleTurn(t, service, turnID)
 
-	first, err := readAssistantTurn(service.assistantTurnPath(turnID))
+	first, err := service.loadAssistantTurn(turnID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +122,7 @@ func TestFinalizeIsIdempotentAndPreservesEvidence(t *testing.T) {
 	}
 	// 重复结算必须幂等：不能把已经确认的变更摘要或轮前文档清掉。
 	settleTurn(t, service, turnID)
-	second, err := readAssistantTurn(service.assistantTurnPath(turnID))
+	second, err := service.loadAssistantTurn(turnID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +135,7 @@ func TestFinalizeIsIdempotentAndPreservesEvidence(t *testing.T) {
 	}
 	// 撤销之后再结算一次也不能抹掉「已撤销」这件事。
 	settleTurn(t, service, turnID)
-	third, err := readAssistantTurn(service.assistantTurnPath(turnID))
+	third, err := service.loadAssistantTurn(turnID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +155,7 @@ func TestFinalizeIgnoresIdempotentWriteThatDidNotAdvanceRevision(t *testing.T) {
 		map[string]any{"canvasId": canvasID, "revision": before, "created": false, "edgeId": "e-existing"})
 	settleTurn(t, service, turnID)
 
-	record, err := readAssistantTurn(service.assistantTurnPath(turnID))
+	record, err := service.loadAssistantTurn(turnID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +186,7 @@ func TestFinalizeDeduplicatesIdempotentReplayOnSameRevision(t *testing.T) {
 		map[string]any{"canvasId": canvasID, "revision": second, "created": false, "edgeId": "e-existing"})
 	settleTurn(t, service, turnID)
 
-	record, err := readAssistantTurn(service.assistantTurnPath(turnID))
+	record, err := service.loadAssistantTurn(turnID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,6 +205,26 @@ func TestFinalizeDeduplicatesIdempotentReplayOnSameRevision(t *testing.T) {
 	}
 	if ids := nodeIDs(t, service, canvasID); len(ids) != 1 || ids[0] != "n1" {
 		t.Fatalf("撤销后应回到轮前节点集合，得到 %v", ids)
+	}
+}
+
+func TestVerifyOpenAssistantTurnInTxRejectsSettledRound(t *testing.T) {
+	service, canvasID, _ := newAssistantTurnService(t)
+	turnID := "aabbccddeeff0011"
+	if _, err := service.BeginAssistantTurn("local", canvasID, turnID, AssistantTurnInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Database().Transaction(func(tx *gorm.DB) error {
+		return service.VerifyOpenAssistantTurnInTx(tx, "local", turnID, canvasID)
+	}); err != nil {
+		t.Fatalf("open turn must verify inside tx: %v", err)
+	}
+	settleTurn(t, service, turnID)
+	err := service.Database().Transaction(func(tx *gorm.DB) error {
+		return service.VerifyOpenAssistantTurnInTx(tx, "local", turnID, canvasID)
+	})
+	if err == nil {
+		t.Fatal("settled turn must not verify as open inside operation tx")
 	}
 }
 

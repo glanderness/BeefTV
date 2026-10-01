@@ -397,3 +397,43 @@ func TestTaskDiagnosticsRepairWithOccupiedMigrationVersions(t *testing.T) {
 		})
 	}
 }
+
+func TestAssistantTurnsMigrationFromPreviewV9(t *testing.T) {
+	db := openHistorical(t, "preview-v9")
+	var before []localSchemaMigration
+	if err := db.Order("version").Find(&before).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if !db.Migrator().HasTable(&model.AssistantTurn{}) {
+		t.Fatal("v10 did not create assistant_turns")
+	}
+	mustColumn(t, db, "tasks", "preview_marker", "keep")
+	var ledger []localSchemaMigration
+	if err := db.Order("version").Find(&ledger).Error; err != nil {
+		t.Fatal(err)
+	}
+	if ledger[len(ledger)-1].Version != 10 || ledger[len(ledger)-1].Name != "assistant-business-turns" {
+		t.Fatalf("v10 identity: %+v", ledger[len(ledger)-1])
+	}
+	for i, row := range before {
+		if ledger[i].Name != row.Name || !ledger[i].AppliedAt.Equal(row.AppliedAt) {
+			t.Fatalf("historical ledger overwritten: %+v", ledger)
+		}
+	}
+	if err := MigrateLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	var again []localSchemaMigration
+	if err := db.Order("version").Find(&again).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != len(ledger) {
+		t.Fatalf("idempotent v10 rewrote ledger: %d -> %d", len(ledger), len(again))
+	}
+}

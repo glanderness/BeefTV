@@ -151,7 +151,7 @@ func TestUndoAssistantTurnRestoresPreTurnDocumentAsNewRevision(t *testing.T) {
 	if restored <= after {
 		t.Fatalf("撤销必须产生新版本（> %d），得到 %d", after, restored)
 	}
-	reopened := &Service{dataDir: service.dataDir}
+	reopened := NewLocal(repository.New(service.Database()), service.dataDir)
 	if !reopened.AssistantTurnUndone("local", canvasID, turnID) {
 		t.Fatal("reopened service lost durable undo receipt")
 	}

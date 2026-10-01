@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
+	"infinite-canvas/backend/internal/assistantturns"
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/generation"
@@ -63,6 +65,7 @@ type Service struct {
 	prompts                  *prompts.Service
 	projects                 *localproject.Service
 	canvas                   *canvas.Service
+	assistantTurns           *assistantturns.Service
 	beefAPI                  *beefapi.Service
 }
 
@@ -130,6 +133,7 @@ func newService(repo *repository.Repository, dataDir string, options serviceOpti
 	service.prompts = prompts.New(service.repo, newPromptAdminGate(service))
 	service.projects = localproject.New(repo, localproject.Dependencies{Workflows: projectWorkflowHost{service: service}})
 	service.canvas = canvas.New(service.repo, newCanvasHost(service))
+	service.assistantTurns = assistantturns.New(assistantturns.NewStore(service.repo), assistantCanvasFactory{service}, filepath.Join(dataDir, "assistant-turns"))
 	if service.IsLocalMode() {
 		service.platform = platform.NewLocal(service.repo, coordinator, newPlatformHost(service))
 	} else {
