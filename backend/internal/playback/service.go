@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"infinite-canvas/backend/internal/assets"
@@ -16,12 +17,15 @@ import (
 // Service owns probe, claim, ffmpeg, persist, range, and backfill for
 // local playback copies.
 type Service struct {
-	dataDir   string
-	store     Store
-	runner    Runner
-	ctx       context.Context
-	lookPath  func(file string) (string, error)
-	transcode func(ctx context.Context, src string, dst string) error
+	dataDir        string
+	store          Store
+	runner         Runner
+	ctx            context.Context
+	runtimeContext func() context.Context
+	recoveryOnce   sync.Once
+	recoveryErr    error
+	lookPath       func(file string) (string, error)
+	transcode      func(ctx context.Context, src string, dst string) error
 }
 
 func New(deps Deps) *Service {
@@ -38,18 +42,27 @@ func New(deps Deps) *Service {
 		ctx = context.Background()
 	}
 	return &Service{
-		dataDir:   deps.DataDir,
-		store:     deps.Store,
-		runner:    deps.Runner,
-		ctx:       ctx,
-		lookPath:  lookPath,
-		transcode: transcode,
+		dataDir:        deps.DataDir,
+		store:          deps.Store,
+		runner:         deps.Runner,
+		ctx:            ctx,
+		runtimeContext: deps.RuntimeContext,
+		lookPath:       lookPath,
+		transcode:      transcode,
 	}
 }
 
 func (s *Service) runContext(ctx context.Context) context.Context {
 	if ctx != nil {
 		return ctx
+	}
+	if s != nil && s.runtimeContext != nil {
+		if owned := s.runtimeContext(); owned != nil {
+			return owned
+		}
+		stopped, cancel := context.WithCancel(context.Background())
+		cancel()
+		return stopped
 	}
 	if s != nil && s.ctx != nil {
 		return s.ctx
@@ -65,7 +78,10 @@ func (s *Service) MaybeStart(resource *model.Resource) {
 	if s == nil || resource == nil || resource.Kind != "video" {
 		return
 	}
-	if s.ctx != nil && s.ctx.Err() != nil {
+	if s.runContext(nil).Err() != nil {
+		return
+	}
+	if s.Recover() != nil {
 		return
 	}
 	if resource.Provider != "local" || resource.Status != model.ResourceStatusReady {
@@ -103,7 +119,7 @@ func (s *Service) MaybeStart(resource *model.Resource) {
 }
 
 func (s *Service) launch(resourceID, src string) {
-	if s.runner == nil || (s.ctx != nil && s.ctx.Err() != nil) {
+	if s.runner == nil || s.runContext(nil).Err() != nil {
 		releaseClaim(s.store, resourceID)
 		return
 	}
@@ -238,13 +254,23 @@ func (s *Service) Backfill(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := s.store.ResetStuckPlaybackTranscodes(); err != nil {
+	if err := s.Recover(); err != nil {
 		return err
 	}
 	if err := s.backfillScan(ctx, s.store.PlaybackPendingVideos); err != nil {
 		return err
 	}
 	return s.backfillScan(ctx, s.store.PlaybackNoneVideos)
+}
+
+// Recover clears claims left by the previous process exactly once, before any
+// new claims from this runtime. Repeated scans must not reset live transcodes.
+func (s *Service) Recover() error {
+	if s == nil || s.store == nil {
+		return nil
+	}
+	s.recoveryOnce.Do(func() { s.recoveryErr = s.store.ResetStuckPlaybackTranscodes() })
+	return s.recoveryErr
 }
 
 func (s *Service) backfillScan(ctx context.Context, page func(time.Time, string, int) ([]model.Resource, error)) error {

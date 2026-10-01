@@ -17,6 +17,39 @@ import (
 
 type syncRunner struct{}
 
+func TestBackfillDoesNotResetClaimStartedByThisRuntime(t *testing.T) {
+	store := &memStore{}
+	svc := New(Deps{Store: store})
+	if err := svc.Recover(); err != nil {
+		t.Fatal(err)
+	}
+	store.put(model.Resource{ID: "in-flight", UserID: "user-1", Status: model.ResourceStatusReady, Kind: "video", Provider: "local", PlaybackStatus: model.PlaybackStatusProcessing})
+	if err := svc.Backfill(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	row, _ := store.ResourceForUser("user-1", "in-flight")
+	if row.PlaybackStatus != model.PlaybackStatusProcessing {
+		t.Fatalf("live claim reset: %s", row.PlaybackStatus)
+	}
+}
+
+func TestRuntimeContextRefusesWorkBeforeStartAndAfterStop(t *testing.T) {
+	store := &memStore{}
+	var owned context.Context
+	svc := New(Deps{Store: store, RuntimeContext: func() context.Context { return owned }})
+	if !errors.Is(svc.Backfill(nil), context.Canceled) {
+		t.Fatal("work accepted before start")
+	}
+	owned = context.Background()
+	if err := svc.Backfill(nil); err != nil {
+		t.Fatal(err)
+	}
+	owned = nil
+	if !errors.Is(svc.Backfill(nil), context.Canceled) {
+		t.Fatal("work accepted after stop")
+	}
+}
+
 func (syncRunner) Go(fn func(context.Context)) bool {
 	if fn != nil {
 		fn(context.Background())

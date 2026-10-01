@@ -47,10 +47,11 @@ type Runner interface {
 // Context is the runtime-owned cancellation scope for Backfill and for
 // refusing new claims during Stop. Lead injects worker.Context().
 type Deps struct {
-	DataDir   string
-	Store     Store
-	Runner    Runner
-	Context   context.Context
-	LookPath  func(file string) (string, error)
-	Transcode func(ctx context.Context, src, dst string) error
+	DataDir        string
+	Store          Store
+	Runner         Runner
+	Context        context.Context
+	RuntimeContext func() context.Context
+	LookPath       func(file string) (string, error)
+	Transcode      func(ctx context.Context, src, dst string) error
 }

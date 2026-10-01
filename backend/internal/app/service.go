@@ -15,12 +15,14 @@ import (
 	"infinite-canvas/backend/internal/assistantturns"
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/canvas"
+	"infinite-canvas/backend/internal/depthcapture"
 	"infinite-canvas/backend/internal/diagnostics"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/operations"
 	"infinite-canvas/backend/internal/platform"
+	"infinite-canvas/backend/internal/playback"
 	"infinite-canvas/backend/internal/plugins"
 	localproject "infinite-canvas/backend/internal/project"
 	"infinite-canvas/backend/internal/prompts"
@@ -73,6 +75,10 @@ type Service struct {
 	appearanceOnce           sync.Once
 	diagnostics              *diagnostics.Service
 	diagnosticsOnce          sync.Once
+	playback                 *playback.Service
+	playbackOnce             sync.Once
+	depthCapture             *depthcapture.Service
+	depthCaptureOnce         sync.Once
 	beefAPI                  *beefapi.Service
 	generationDeliveryMedia  taskdelivery.Media
 	generationDelivery       *taskdelivery.Deliverer

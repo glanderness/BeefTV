@@ -10,19 +10,20 @@ import (
 	"infinite-canvas/backend/internal/repository"
 )
 
-// playbackRuntime is a lazy constructor until Lead wires playback.Service
-// on the composition root. Do not add a Service field here.
 func (s *Service) playbackRuntime() *playback.Service {
 	if s == nil {
 		return playback.New(playback.Deps{})
 	}
-	runner := playbackRunner{svc: s}
-	return playback.New(playback.Deps{
-		DataDir: s.dataDir,
-		Store:   playbackStore{repo: s.repo},
-		Runner:  runner,
-		Context: runner.Context(),
+	s.playbackOnce.Do(func() {
+		runner := playbackRunner{svc: s}
+		s.playback = playback.New(playback.Deps{
+			DataDir:        s.dataDir,
+			Store:          playbackStore{repo: s.repo},
+			Runner:         runner,
+			RuntimeContext: runner.Context,
+		})
 	})
+	return s.playback
 }
 
 type playbackStore struct {

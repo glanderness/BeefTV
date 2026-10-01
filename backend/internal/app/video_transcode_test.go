@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/binary"
 	"io"
 	"os"
@@ -168,8 +169,20 @@ func TestOpenResourcePlaybackRangeUsesPlaybackDomain(t *testing.T) {
 	}
 }
 
+func TestMediaDomainsAreRuntimeOwned(t *testing.T) {
+	service, _ := newProjectAssetLinkTestService(t)
+	if service.playbackRuntime() != service.playbackRuntime() {
+		t.Fatal("playback instance replaced")
+	}
+	if service.depthCaptureRuntime() != service.depthCaptureRuntime() {
+		t.Fatal("depth instance replaced")
+	}
+}
+
 func TestBackfillResetsStuckProcessingThroughService(t *testing.T) {
 	service, db := newProjectAssetLinkTestService(t)
+	service.backgroundWorkers().Start()
+	t.Cleanup(func() { _ = service.StopWorker(context.Background()) })
 	dataDir := t.TempDir()
 	service.dataDir = dataDir
 	rel := filepath.Join("clips", "stuck.mp4")

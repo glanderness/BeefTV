@@ -16,32 +16,26 @@ import (
 // ldflags must remain on this package: internal/app.depthWindowsManifestPublicKeyBase64.
 var depthWindowsManifestPublicKeyBase64 string
 
-// depthCaptureRuntime is a lazy constructor until Lead wires depthcapture.Service
-// on the composition root. Do not add a Service field here.
 func (s *Service) depthCaptureRuntime() *depthcapture.Service {
 	if s == nil {
 		return depthcapture.New(depthcapture.Deps{})
 	}
-	return s.depthCaptureRuntimeWith(s.taskWorker())
-}
-
-func (s *Service) depthCaptureRuntimeWith(w *taskWorkerCoordinator) *depthcapture.Service {
-	if s == nil {
-		return depthcapture.New(depthcapture.Deps{})
-	}
-	return depthcapture.New(depthcapture.Deps{
-		DataDir:                        s.dataDir,
-		Media:                          depthMedia{svc: s},
-		Tasks:                          depthTasks{w: w},
-		WindowsManifestPublicKeyBase64: depthWindowsManifestPublicKeyBase64,
+	s.depthCaptureOnce.Do(func() {
+		s.depthCapture = depthcapture.New(depthcapture.Deps{
+			DataDir:                        s.dataDir,
+			Media:                          depthMedia{svc: s},
+			Tasks:                          depthTasks{w: s.taskWorker()},
+			WindowsManifestPublicKeyBase64: depthWindowsManifestPublicKeyBase64,
+		})
 	})
+	return s.depthCapture
 }
 
 func (w *taskWorkerCoordinator) processDepthCapture(task *model.Task, ctx context.Context) error {
 	if w == nil || w.service == nil {
 		return depthcapture.ErrBadInput
 	}
-	return w.service.depthCaptureRuntimeWith(w).Process(ctx, task)
+	return w.service.depthCaptureRuntime().Process(ctx, task)
 }
 
 type depthMedia struct {
