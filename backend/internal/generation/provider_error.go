@@ -28,6 +28,7 @@ const (
 	CategoryModerationReference FailureCategory = "moderation_reference"
 	CategoryModerationOutput    FailureCategory = "moderation_output"
 	CategoryInvalidParams       FailureCategory = "invalid_params"
+	CategoryLocalStorage        FailureCategory = "local_storage"
 	CategoryContextTooLong      FailureCategory = "context_too_long"
 	CategoryInputInaccessible   FailureCategory = "input_inaccessible"
 	CategoryInputTooLarge       FailureCategory = "input_too_large"
@@ -88,6 +89,7 @@ var categoryCopies = map[FailureCategory]categoryCopy{
 	CategoryModerationReference: {Reason: "参考素材未通过内容安全审核", Action: "请检查并更换参考素材后重新生成"},
 	CategoryModerationOutput:    {Reason: "生成结果未通过内容安全审核", Action: "请调整提示词或参考素材后重新生成"},
 	CategoryInvalidParams:       {Reason: "模型不接受当前参数", Action: "请检查模型、尺寸、时长、格式或数量后重试"},
+	CategoryLocalStorage:        {Reason: "本地任务保存失败，尚未提交生成", Action: "请重启 BeefTV 后重试；若仍失败，请更新应用并联系支持"},
 	CategoryContextTooLong:      {Reason: "输入内容超出模型长度限制", Action: "请缩短提示词或减少参考内容后重试"},
 	CategoryInputInaccessible:   {Reason: "参考素材无法读取", Action: "请检查素材后重试"},
 	CategoryInputTooLarge:       {Reason: "参考素材过大", Action: "请压缩或更换素材后重试"},
@@ -129,6 +131,7 @@ var (
 )
 
 var providerCodeCategories = map[string]FailureCategory{
+	"local_storage_failed":             CategoryLocalStorage,
 	"contentsecuritydetectionerror":    CategoryProviderUnavailable,
 	"accountoverdueerror":              CategoryQuotaUpstream,
 	"operationdenied.serviceoverdue":   CategoryQuotaUpstream,

@@ -10,6 +10,19 @@ test("local task persistence errors keep their cause through API and saved detai
     expect(result.message).not.toContain("模型不接受");
     expect(result.blockAutomaticRetry).toBe(true);
     expect(explainGenerationError(result.message).category).toBe("local_storage");
+    const diagnostics = formatGenerationDiagnostics(result);
+    expect(diagnostics).toContain("类别：local_storage");
+    expect(diagnostics).toContain("错误来源：本地任务存储");
+    expect(diagnostics).toContain("尚未提交生成");
+});
+
+test("local API quota keeps the actual capacity error instead of channel permissions", () => {
+    const result = explainGenerationError(new ApiError("账号任务历史已达到 100 条上限", {status: 403, code: 40301, reason: "quota_exceeded"}));
+    expect(result.category).toBe("quota_limit");
+    expect(result.reason).toContain("100 条上限");
+    expect(result.action).toContain("清理");
+    expect(result.message).not.toMatch(/权限|供应商|账单/);
+    expect(result.blockAutomaticRetry).toBe(true);
 });
 import audioErrorContract from "../../fixtures/reference-audio-errors.json";
 
@@ -137,7 +150,7 @@ import gatewayCodes from "../../fixtures/generation-error-codes.json";
 
 describe("generation error classification", () => {
     test("all declared gateway error codes match the shared backend contract", () => {
-        expect(Object.keys(gatewayCodes)).toHaveLength(50);
+        expect(Object.keys(gatewayCodes)).toHaveLength(51);
         for (const [code, category] of Object.entries(gatewayCodes)) {
             expect(explainGenerationError({ code, message: "opaque provider message" }).category).toBe(category);
             expect(explainGenerationError({ status: 400, data: { error: { code } } }).category).toBe(category);

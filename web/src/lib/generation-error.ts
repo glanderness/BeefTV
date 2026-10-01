@@ -427,6 +427,9 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
     if (typeof error === "object" && error) {
     const record = error as Record<string, unknown>;
         if (record.reason === "local_storage_failed") return { category: "local_storage", fromCode: true, retryable: false };
+        if (record.name === "ApiError" && record.reason === "quota_exceeded") {
+            return { category: "quota_limit", reason: sanitizeProviderText(String(record.message || "工作区用量已达到上限")), action: "请清理不需要的任务记录或素材后重试", fromCode: true, retryable: false };
+        }
         const response = record.response && typeof record.response === "object" ? (record.response as Record<string, unknown>) : undefined;
         const status = numericStatus(record.status) ?? numericStatus(record.statusCode) ?? numericStatus(response?.status);
         const data = record.data ?? record.body ?? response?.data ?? record.response;

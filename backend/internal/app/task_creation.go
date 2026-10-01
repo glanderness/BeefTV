@@ -141,7 +141,7 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	}
 	activeTasks, err := s.repo.ActiveTaskCountForUser(userID)
 	if err != nil {
-		return nil, err
+		return nil, taskStorageError(err)
 	}
 	if activeTasks >= int64(policy.Task.ActiveTaskLimit) {
 		return nil, BadAuthRequest(fmt.Sprintf("同时排队或运行的任务最多 %d 个，请等待已有任务完成", policy.Task.ActiveTaskLimit))
@@ -316,7 +316,7 @@ func (s *Service) createTextReplayTask(userID string, req CreateTaskRequest, nor
 		prompt = strings.TrimSpace(fmt.Sprint(normalizedInput["prompt"]))
 	}
 	if prompt == "" {
-		return nil, errors.New("prompt is required")
+		return nil, BadAuthRequest("请填写提示词")
 	}
 	taskType := strings.TrimSpace(req.Type)
 	if err := validateTaskType(taskType); err != nil {

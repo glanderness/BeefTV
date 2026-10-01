@@ -45,6 +45,7 @@ description: 画布、任务中心和批量生成如何把上游失败变成可�
 | `moderation_reference` | 输入图片、视频、音频审核 | 检查并更换对应参考素材 | 原任务否；改素材后可新建 |
 | `moderation_output` | 输出审核 | 调整输入后新建 | 原任务否 |
 | `invalid_params` | 400/422、invalid_request、尺寸/格式 | 检查模型与参数 | 否 |
+| `local_storage` | 500 + `reason=local_storage_failed`，本地入队前读写失败 | 尚未提交生成；重启应用，仍失败则更新并联系支持 | 否 |
 | `context_too_long` | context_length、长度超出 | 缩短输入 | 否 |
 | `input_inaccessible` | url error、素材无法读取 | 检查素材 | 否 |
 | `input_too_large` | 413、too large | 压缩或更换素材 | 否 |
