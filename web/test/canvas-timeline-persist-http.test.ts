@@ -14,6 +14,8 @@ const requestPath = join(dir, "request.ts");
 const assetsPath = join(dir, "assets.ts");
 const resourcesPath = join(dir, "resources.ts");
 const modePath = join(dir, "mode.ts");
+const userScopePath = join(dir, "user-scope.ts");
+const userScopeGuardPath = join(dir, "user-scope-guard.ts");
 
 writeFileSync(
     storePath,
@@ -167,6 +169,13 @@ export const resetCanvasOperationJournalMemory = () => { memory.clear(); };
 writeFileSync(assetsPath, "export const useAssetStore = { getState: () => ({ assets: [] }) };\n");
 writeFileSync(resourcesPath, 'export const resourceIdFromStorageKey = () => "";\n');
 writeFileSync(modePath, "export let localMode = true; export const setLocalMode = (next: boolean) => { localMode = next; }; export const isLocalWorkspaceMode = () => localMode;\n");
+writeFileSync(userScopePath, "export const getActiveUserScope = () => 'guest';\nexport const getActiveUserScopeEpoch = () => 1;\n");
+writeFileSync(userScopeGuardPath, `
+export function captureUserScope(userScope = "guest", epoch = 1) { return { userScope, epoch }; }
+export function userScopeMatches() { return true; }
+export function assertUserScope() {}
+export function isUserScopeAbandonedError() { return false; }
+`);
 const rebasePath = join(dir, "canvas-document-rebase.ts");
 writeFileSync(rebasePath, `
 export const rebaseCanvasDocumentThreeWay = ({ local, remote }) => ({
@@ -185,6 +194,8 @@ writeFileSync(
         .replace('"@/services/api/resources"', JSON.stringify(pathToFileURL(resourcesPath).href))
         .replace('"@/stores/use-asset-store"', JSON.stringify(pathToFileURL(assetsPath).href))
         .replace('"@/services/workspace-mode"', JSON.stringify(pathToFileURL(modePath).href))
+        .replaceAll('"@/lib/user-scope"', JSON.stringify(pathToFileURL(userScopePath).href))
+        .replaceAll('"@/lib/user-scope-guard"', JSON.stringify(pathToFileURL(userScopeGuardPath).href))
         .replace('"@/lib/canvas/canvas-document-rebase"', JSON.stringify(pathToFileURL(rebasePath).href)),
 );
 

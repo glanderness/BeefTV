@@ -12,6 +12,7 @@ import {
     resolveCanvasGridColor,
     writeCanvasAppearanceDefault,
 } from "../src/lib/canvas/canvas-appearance";
+import { setActiveUserScope } from "../src/lib/user-scope";
 
 const values = new Map<string, string>();
 let originalWindow: PropertyDescriptor | undefined;
@@ -155,14 +156,14 @@ describe("canvas custom appearance", () => {
     });
 
     test("stores defaults locally with the active account scope", () => {
-        window.localStorage.setItem("infinite-canvas:active-user-scope", "account-A");
+        setActiveUserScope("account-A");
         const value = { appearance: customCanvasAppearanceFromTheme("dark"), backgroundMode: "lines" as const };
         writeCanvasAppearanceDefault(value);
 
         expect(values.has("infinite-canvas:canvas-appearance-default:v2:user:account-A")).toBe(true);
         expect(readCanvasAppearanceDefault()).toEqual(value);
 
-        window.localStorage.setItem("infinite-canvas:active-user-scope", "account-B");
+        setActiveUserScope("account-B");
         expect(readCanvasAppearanceDefault()).toBeNull();
     });
 });

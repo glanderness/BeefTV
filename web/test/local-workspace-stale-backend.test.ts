@@ -32,6 +32,7 @@ const assetStubPath = join(dir, "use-asset-store.ts");
 const modeStubPath = join(dir, "workspace-mode.ts");
 const resourcesStubPath = join(dir, "api-resources.ts");
 const userScopeStubPath = join(dir, "user-scope.ts");
+const userScopeGuardStubPath = join(dir, "user-scope-guard.ts");
 const canvasContentStubPath = join(dir, "canvas-content.ts");
 const rebaseStubPath = join(dir, "canvas-document-rebase.ts");
 
@@ -93,7 +94,13 @@ export const handleRejectedCanvasBackendSave = async () => false;
 writeFileSync(assetStubPath, "export const useAssetStore = { getState: () => ({ assets: [] }) };\n");
 writeFileSync(modeStubPath, "export const isLocalWorkspaceMode = () => true;\n");
 writeFileSync(resourcesStubPath, "export const resourceIdFromStorageKey = () => '';\n");
-writeFileSync(userScopeStubPath, "export const getActiveUserScope = () => 'guest';\n");
+writeFileSync(userScopeStubPath, "export const getActiveUserScope = () => 'guest';\nexport const getActiveUserScopeEpoch = () => 1;\n");
+writeFileSync(userScopeGuardStubPath, `
+export function captureUserScope(userScope = "guest", epoch = 1) { return { userScope, epoch }; }
+export function userScopeMatches() { return true; }
+export function assertUserScope() {}
+export function isUserScopeAbandonedError() { return false; }
+`);
 writeFileSync(canvasContentStubPath, `
 export const sameCanvasDocument = (left, right) => {
   if (left === right) return true;
@@ -169,7 +176,8 @@ writeFileSync(join(dir, "repository.ts"), repositorySource
     .replace('"@/services/canvas-revision-conflict"', JSON.stringify(pathToFileURL(conflictStubPath).href))
     .replace('"@/stores/use-asset-store"', JSON.stringify(pathToFileURL(assetStubPath).href))
     .replace('"@/services/workspace-mode"', JSON.stringify(pathToFileURL(modeStubPath).href))
-    .replace('"@/lib/user-scope"', JSON.stringify(pathToFileURL(userScopeStubPath).href))
+    .replaceAll('"@/lib/user-scope"', JSON.stringify(pathToFileURL(userScopeStubPath).href))
+    .replaceAll('"@/lib/user-scope-guard"', JSON.stringify(pathToFileURL(userScopeGuardStubPath).href))
     .replace('"@/lib/canvas/canvas-content"', JSON.stringify(pathToFileURL(canvasContentStubPath).href))
     .replace('"@/lib/canvas/canvas-document-rebase"', JSON.stringify(pathToFileURL(rebaseStubPath).href))
     .replace('"@/services/api/resources"', JSON.stringify(pathToFileURL(resourcesStubPath).href)));

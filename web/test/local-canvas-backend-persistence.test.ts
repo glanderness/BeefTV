@@ -6,7 +6,7 @@ const repository = readFileSync(resolve(import.meta.dir, "../src/services/local-
 const lifecycle = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/use-canvas-project-lifecycle.ts"), "utf8");
 
 test("desktop local canvas creation is durable in the Go repository before navigation", () => {
-    const sync = repository.indexOf("await syncLocalCanvasProject(id, false, scope);");
+    const sync = repository.indexOf("await syncLocalCanvasProject(id, false, expected);");
     const returned = repository.indexOf("return { id };");
     expect(sync).toBeGreaterThan(-1);
     expect(returned).toBeGreaterThan(sync);
@@ -27,5 +27,5 @@ test("canvas save summary never replaces the full node document", () => {
 });
 
 test("local canvas deletion removes the canonical backend record", () => {
-    expect(repository).toContain("await http.delete(`/canvas-projects/${encodeURIComponent(id)}`)");
+    expect(repository).toContain("await http.delete(`/canvas-projects/${encodeURIComponent(id)}`, { expectedScope: expected })");
 });

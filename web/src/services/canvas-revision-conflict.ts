@@ -2,6 +2,7 @@ import { ApiError } from "@/services/api/request";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { projectSyncProgress, useSyncProgressStore } from "@/stores/use-sync-progress-store";
 import { getActiveUserScope } from "@/lib/user-scope";
+import { isUserScopeAbandonedError } from "@/lib/user-scope-guard";
 
 export class CanvasBackendSubmitPausedError extends Error {
     constructor(message = "画布有未处理的外部改动，本次未提交") {
@@ -23,7 +24,7 @@ export function isCanvasRevisionConflict(error: unknown) {
 }
 
 export function isCanvasSubmitControlError(error: unknown) {
-    return error instanceof CanvasBackendSubmitPausedError || error instanceof CanvasStaleScopeError;
+    return error instanceof CanvasBackendSubmitPausedError || error instanceof CanvasStaleScopeError || isUserScopeAbandonedError(error);
 }
 
 /**
