@@ -20,7 +20,7 @@ import {
     type AssistantTurn,
     type AssistantUndoFailure,
 } from "@/services/api/agent-assistant";
-import { assistantChangedNodeIds } from "./canvas-assistant-copy";
+import { assistantChangedNodeIds, assistantLifecycleText } from "./canvas-assistant-copy";
 import { waitForAssistant } from "./assistant-readiness";
 import { findRecoveredAssistantTurn, type PendingAssistantRecovery } from "./canvas-assistant-recovery";
 
@@ -76,6 +76,7 @@ type CanvasRun = {
     pendingSelectedNodeIds: string[];
     streamed: string;
     streaming: boolean;
+    lifecycleNotice: string | null;
     controller: AbortController | null;
     error: string | null;
     lastSent: { text: string; selectedNodeIds: string[]; references: AgentChatReference[] } | null;
@@ -96,6 +97,7 @@ const createRun = (): CanvasRun => ({
     pendingSelectedNodeIds: [],
     streamed: "",
     streaming: false,
+    lifecycleNotice: null,
     controller: null,
     error: null,
     lastSent: null,
@@ -233,6 +235,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         run.pendingSelectedNodeIds = selectedSnapshot;
         run.streamed = "";
         run.streaming = true;
+        run.lifecycleNotice = null;
         run.controller = controller;
         run.error = null;
         run.dispatched = false;
@@ -250,6 +253,11 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                 onDelta: (delta) => {
                     const current = runFor(targetCanvas);
                     current.streamed += delta;
+                    rerenderIfActive(targetCanvas);
+                },
+                onLifecycle: (event) => {
+                    const current = runFor(targetCanvas);
+                    current.lifecycleNotice = assistantLifecycleText(event);
                     rerenderIfActive(targetCanvas);
                 },
                 onTurnEnd: (end) => {
@@ -273,6 +281,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                     current.pendingUserText = null;
                     current.pendingSelectedNodeIds = [];
                     current.streamed = "";
+                    current.lifecycleNotice = null;
                     onCanvasChangedRef.current?.(targetCanvas, assistantChangedNodeIds(turn.change));
                     rerenderIfActive(targetCanvas);
                 },
@@ -293,6 +302,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                 current.pendingSelectedNodeIds = [];
             }
             current.streamed = "";
+            current.lifecycleNotice = null;
             current.error = aborted ? null : current.dispatched
                 ? "这一轮未能确认完成，可能已有改动。请先查看画布并重新读取对话，再决定下一步。"
                 : streamError instanceof Error ? streamError.message : String(streamError);
@@ -304,6 +314,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         } finally {
             const current = runFor(targetCanvas);
             current.streaming = false;
+            current.lifecycleNotice = null;
             current.controller = null;
             rerenderIfActive(targetCanvas);
             void listAssistantSessions(targetCanvas).then((list) => {
@@ -454,6 +465,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         pendingSelectedNodeIds: run.pendingSelectedNodeIds,
         streamed: run.streamed,
         streaming: run.streaming,
+        lifecycleNotice: run.lifecycleNotice,
         error: run.error,
         canRetry: Boolean(run.lastSent) && !run.dispatched,
         turnStatus: run.turnStatus,

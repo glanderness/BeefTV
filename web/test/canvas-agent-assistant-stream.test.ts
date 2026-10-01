@@ -151,6 +151,17 @@ describe("创作助手回合流边界", () => {
         await expect(streamAgentChat("c1", "hi", {})).rejects.toThrow("这一回合没有完成，请再试一次");
     });
 
+    test("lifecycle 事件不会把回合当成结束，agent_end 也不结算", async () => {
+        const lifecycle = JSON.stringify({ type: "lifecycle", phase: "compaction", reason: "threshold" });
+        const agentEnd = JSON.stringify({ type: "agent_end", willRetry: false, messages: [] });
+        chatResponse = () => chatResponseOf([`${lifecycle}\n`, `${agentEnd}\n`]);
+        const phases: string[] = [];
+        await expect(streamAgentChat("c1", "hi", {
+            onLifecycle: (event) => { phases.push(event.phase); },
+        })).rejects.toThrow(AGENT_STREAM_INCOMPLETE_MESSAGE);
+        expect(phases).toEqual(["compaction"]);
+    });
+
     test("cancelled 回合按正常结束处理", async () => {
         chatResponse = () => chatResponseOf([`${JSON.stringify({ type: "turn_end", reply: "已停止", toolCalls: [], error: null, cancelled: true })}\n`]);
 

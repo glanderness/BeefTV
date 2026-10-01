@@ -10,6 +10,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { sessionActionIdentity, toolOperationId } from "./session-identity.mjs";
 
 const serverSource = readFileSync(new URL("./server.mjs", import.meta.url), "utf8");
+const ownerSource = readFileSync(new URL("./session-owner.mjs", import.meta.url), "utf8");
 
 describe("会话动作身份", () => {
     test("优先使用官方持久会话 id，没有时退回进程运行 id", () => {
@@ -46,7 +47,8 @@ describe("会话动作身份", () => {
     test("宿主不再用进程级全局保存会话身份与持久化状态", () => {
         expect(serverSource).not.toContain("let sessionIdentity");
         expect(serverSource).not.toContain("let persistenceState");
-        expect(serverSource).toContain("buildTools(canvasId, log, generation, turn, identity.prefix)");
+        expect(ownerSource).not.toContain("let sessionIdentity");
+        expect(ownerSource).toContain("buildTools(canvasId, log, generation, turn, identity.prefix)");
         expect(serverSource).toContain("persistence: entry.persistence");
     });
 });

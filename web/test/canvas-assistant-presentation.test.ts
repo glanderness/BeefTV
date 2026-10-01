@@ -6,6 +6,7 @@ import {
     assistantActionLabel,
     assistantChangeSummary,
     assistantChangedNodeIds,
+    assistantLifecycleText,
     assistantFailedActionText,
     assistantProposalText,
     assistantStatusNotice,
@@ -137,6 +138,17 @@ describe("右侧栏位互斥", () => {
     test("只开助手时是助手，两个都没开时栏位是空的", () => {
         expect(resolveCanvasRightPanel(true, false)).toBe("assistant");
         expect(resolveCanvasRightPanel(false, false)).toBeNull();
+    });
+});
+
+describe("官方生命周期进度", () => {
+    test("压缩和重试各用一句完整的话，结束事件不再显示进度", () => {
+        expect(assistantLifecycleText({ phase: "compaction" })).toBe("正在整理对话内容，方便继续。");
+        expect(assistantLifecycleText({ phase: "retry" })).toBe("模型暂时没响应，正在再试一次。");
+        expect(assistantLifecycleText({ phase: "compaction_end" })).toBeNull();
+        expect(assistantLifecycleText({ phase: "retry_end" })).toBeNull();
+        expect(assistantLifecycleText({ phase: "compaction" })).not.toContain("compaction");
+        expect(assistantLifecycleText({ phase: "retry" })).not.toContain("retry");
     });
 });
 

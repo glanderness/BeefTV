@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 import { collectTurnEffects, newTurnAccumulator, providerRegistration, providerUnavailableReason,
   resetTurnAccumulator, sessionTitle, turnChange, turnContextPrefix, unflushedSessionHistory } from "./canvas-turn.mjs";
+import { SYSTEM_PROMPT } from "./full-control-loader.mjs";
 
 const serverSource = readFileSync(new URL("./server.mjs", import.meta.url), "utf8");
 
@@ -89,8 +90,8 @@ describe("付费生成提议", () => {
     });
 
     test("系统提示词必须禁止宣称已生成，并指向提议工具", () => {
-        expect(serverSource).toContain("canvas_generation_propose");
-        expect(serverSource).toContain("你不能生成图片或视频");
+        expect(SYSTEM_PROMPT).toContain("canvas_generation_propose");
+        expect(SYSTEM_PROMPT).toContain("你不能生成图片或视频");
     });
 });
 

@@ -236,9 +236,21 @@ export function resetAgentUiSession() {
     uiSessionToken = null;
 }
 
+export type AgentLifecycleEvent = {
+    type: "lifecycle";
+    phase: "compaction" | "compaction_end" | "retry" | "retry_end";
+    reason?: string;
+    aborted?: boolean;
+    willRetry?: boolean;
+    attempt?: number;
+    maxAttempts?: number;
+    success?: boolean;
+};
+
 export type StreamHandlers = {
     onDelta?: (delta: string) => void;
     onTurnEnd?: (end: AgentTurnEnd) => void;
+    onLifecycle?: (event: AgentLifecycleEvent) => void;
 };
 
 /**
@@ -341,6 +353,13 @@ async function readAgentTurnStream(
         }
         if (payload.type === "text_delta" && typeof payload.delta === "string") {
             handlers.onDelta?.(payload.delta);
+            return;
+        }
+        if (payload.type === "lifecycle") {
+            handlers.onLifecycle?.(payload as unknown as AgentLifecycleEvent);
+            return;
+        }
+        if (payload.type === "agent_end") {
             return;
         }
         if (payload.type === "turn_end") {

@@ -1,6 +1,6 @@
 // 助手面板里所有用户可见文案的唯一来源：机器可读原因、操作名和改动摘要都在这里
 // 翻译成用户语。组件只负责排版，不自己拼文案，避免同一种状态在两处写出两句话。
-import type { AgentToolCall, AssistantGenerationProposal, AssistantTurnChange, AssistantUndoFailure } from "@/services/api/agent-assistant";
+import type { AgentLifecycleEvent, AgentToolCall, AssistantGenerationProposal, AssistantTurnChange, AssistantUndoFailure } from "@/services/api/agent-assistant";
 
 export type AssistantStatusAction = "model-settings" | "retry";
 
@@ -110,6 +110,19 @@ export const ASSISTANT_STARTER_PROMPTS = [
     "整理画布并按顺序连线",
     "检查哪些镜头还缺参考图",
 ];
+
+/** 官方压缩/重试进度：只说现在在做什么，不提内部事件名。 */
+export function assistantLifecycleText(event: Pick<AgentLifecycleEvent, "phase"> | string | null | undefined): string | null {
+    const phase = typeof event === "string" ? event : event?.phase;
+    switch (phase) {
+        case "compaction":
+            return "正在整理对话内容，方便继续。";
+        case "retry":
+            return "模型暂时没响应，正在再试一次。";
+        default:
+            return null;
+    }
+}
 
 /**
  * 部分模型把推理过程以 <think>…</think> 夹在回复正文里；那是模型的草稿，不是给用户的话。

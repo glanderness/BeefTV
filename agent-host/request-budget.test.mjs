@@ -6,6 +6,7 @@ import { budgetError, createLifetimeBudget, createTurnBudget, lifetimeBudgetEnab
   spendModelRequest, spendToolStep } from "./request-budget.mjs";
 
 const serverSource = readFileSync(new URL("./server.mjs", import.meta.url), "utf8");
+const bridgeSource = readFileSync(new URL("./operation-bridge.mjs", import.meta.url), "utf8");
 
 describe("单轮预算", () => {
     test("达到上限后拒绝并把原因说清楚；同一轮内计数累加", () => {
@@ -72,9 +73,10 @@ describe("总预算", () => {
 
 describe("server 接线", () => {
     test("ops 调用带宿主凭据与当前回合，不再用 owner 凭据自报身份", () => {
-        expect(serverSource).toContain("'X-Beeftv-Agent-Token': HOST_TOKEN");
-        expect(serverSource).toContain("'X-Beeftv-Agent-Turn': turnId");
+        expect(bridgeSource).toContain("'X-Beeftv-Agent-Token': hostToken");
+        expect(bridgeSource).toContain("'X-Beeftv-Agent-Turn': turnId");
         expect(serverSource).not.toContain("X-Beeftv-Owner");
+        expect(bridgeSource).not.toContain("X-Beeftv-Owner");
     });
 
     test("预算按轮构造并跑在独立的异步上下文里", () => {
@@ -85,8 +87,8 @@ describe("server 接线", () => {
     });
 
     test("模型能力描述里不再有 operationId，幂等键只由宿主生成", () => {
-        expect(serverSource).toContain("delete clone.properties.operationId");
-        expect(serverSource).toContain("' && name !== 'operationId'");
+        expect(bridgeSource).toContain("delete clone.properties.operationId");
+        expect(bridgeSource).toContain("name !== 'canvasId' && name !== 'operationId'");
     });
 
     test("Chat 信封里的引用进入模型上下文", () => {
