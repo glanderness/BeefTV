@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"log"
+	"sync"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
@@ -10,6 +11,8 @@ import (
 )
 
 type TextReplayResult = textreplay.Result
+
+var textReplayOwners sync.Map
 
 func isTextReplayTaskRequest(input map[string]any) bool {
 	return textreplay.IsRequest(input)
@@ -19,9 +22,29 @@ func (s *Service) textReplayOrInit() *textreplay.Service {
 	if s == nil {
 		return nil
 	}
-	return textreplay.New(textreplay.NewStore(s.repo), textreplay.Dependencies{
+	if existing, ok := textReplayOwners.Load(s); ok {
+		return existing.(*textreplay.Service)
+	}
+	created := textreplay.New(textreplay.NewStore(s.repo), textreplay.Dependencies{
 		Logger: taskLogAdapter{s},
 	})
+	actual, _ := textReplayOwners.LoadOrStore(s, created)
+	return actual.(*textreplay.Service)
+}
+
+// TextReplayLogger is the composition-root log port. Lead can pass it into
+// textreplay.New without importing unexported app adapters.
+func (s *Service) TextReplayLogger() textreplay.Logger {
+	if s == nil {
+		return nil
+	}
+	return taskLogAdapter{s}
+}
+
+// TextReplay is the lazy domain handle until Lead stores a long-lived
+// *textreplay.Service on the composition root and Service.
+func (s *Service) TextReplay() *textreplay.Service {
+	return s.textReplayOrInit()
 }
 
 func (s *Service) CompleteTextReplayTask(userID string, taskID string, text string) (*model.Task, error) {

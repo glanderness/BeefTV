@@ -63,7 +63,7 @@ func TestCachedTextReplayIsolatesUsersCursorsAndCopies(t *testing.T) {
 	if err != nil || len(result.Deltas) != 1 || result.Deltas[0].Sequence != 2 {
 		t.Fatalf("cursor isolation: %#v %v", result, err)
 	}
-	svc.textReplayReadCache.Clear()
+	svc.TextReplay().ClearCache()
 	if err := db.Model(&model.Task{}).Where("id = ?", "task").Update("status", model.TaskStatusSucceeded).Error; err != nil {
 		t.Fatal(err)
 	}
