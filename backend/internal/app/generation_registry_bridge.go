@@ -7,6 +7,12 @@ import (
 	"infinite-canvas/backend/internal/protocol"
 )
 
+func init() {
+	generation.ApplySeedance2VideoProbe = applySeedance2VideoProbe
+	generation.BeefAPIVideoBaseURLForTestHook = func() string { return beefAPIVideoBaseURLForTest }
+	generation.ArkPrivateAssetAPIBaseURLOverrideHook = func() string { return arkPrivateAssetAPIBaseURLOverride }
+}
+
 // 协议注册表运行时已迁到 internal/generation；此处保留未导出包装以兼容 service 内大量调用点。
 
 // emptyProtocolRegistry 供单测显式注入「插件未安装」路径。

@@ -1,8 +1,8 @@
-package app
+package generation
 
 import "encoding/json"
 
-func requestAsMap(value interface{}) (map[string]interface{}, error) {
+func RequestAsMap(value interface{}) (map[string]interface{}, error) {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return nil, err
@@ -14,7 +14,7 @@ func requestAsMap(value interface{}) (map[string]interface{}, error) {
 	return result, nil
 }
 
-type seedanceVideosRequest struct {
+type SeedanceVideosRequest struct {
 	OmniReferenceTaskType string   `json:"omni_reference_task_type,omitempty"`
 	Model                 string   `json:"model"`
 	Prompt                string   `json:"prompt"`
@@ -28,10 +28,10 @@ type seedanceVideosRequest struct {
 	ReferenceAudios       []string `json:"reference_audios,omitempty"`
 }
 
-type grokImageRequest struct {
+type GrokImageRequest struct {
 	Model          string          `json:"model"`
 	Prompt         string          `json:"prompt"`
-	Image          *grokImageInput `json:"image,omitempty"`
+	Image          *GrokImageInput `json:"image,omitempty"`
 	N              int             `json:"n"`
 	ResponseFormat string          `json:"response_format"`
 	AspectRatio    string          `json:"aspect_ratio,omitempty"`
@@ -39,42 +39,42 @@ type grokImageRequest struct {
 	Resolution string `json:"resolution,omitempty"`
 }
 
-type grokImageInput struct {
+type GrokImageInput struct {
 	URL string `json:"url"`
 }
 
-type geminiImageRequest struct {
-	Contents          []geminiImageContent        `json:"contents"`
-	SystemInstruction *geminiImageContent         `json:"systemInstruction,omitempty"`
-	GenerationConfig  geminiImageGenerationConfig `json:"generationConfig"`
+type GeminiImageRequest struct {
+	Contents          []GeminiImageContent        `json:"contents"`
+	SystemInstruction *GeminiImageContent         `json:"systemInstruction,omitempty"`
+	GenerationConfig  GeminiImageGenerationConfig `json:"generationConfig"`
 }
 
-type geminiImageContent struct {
+type GeminiImageContent struct {
 	Role  string                   `json:"role,omitempty"`
-	Parts []geminiImageContentPart `json:"parts"`
+	Parts []GeminiImageContentPart `json:"parts"`
 }
 
-type geminiImageContentPart struct {
+type GeminiImageContentPart struct {
 	Text       string                 `json:"text,omitempty"`
-	InlineData *geminiImageInlineData `json:"inlineData,omitempty"`
+	InlineData *GeminiImageInlineData `json:"inlineData,omitempty"`
 }
 
-type geminiImageInlineData struct {
+type GeminiImageInlineData struct {
 	MIMEType string `json:"mimeType"`
 	Data     string `json:"data"`
 }
 
-type geminiImageGenerationConfig struct {
+type GeminiImageGenerationConfig struct {
 	ResponseModalities []string           `json:"responseModalities"`
-	ImageConfig        *geminiImageConfig `json:"imageConfig,omitempty"`
+	ImageConfig        *GeminiImageConfig `json:"imageConfig,omitempty"`
 }
 
-type geminiImageConfig struct {
+type GeminiImageConfig struct {
 	AspectRatio string `json:"aspectRatio,omitempty"`
 	ImageSize   string `json:"imageSize,omitempty"`
 }
 
-type seedanceAgentPlanRequest struct {
+type SeedanceAgentPlanRequest struct {
 	OmniReferenceTaskType string                   `json:"omni_reference_task_type,omitempty"`
 	Model                 string                   `json:"model"`
 	Content               []map[string]interface{} `json:"content"`

@@ -1,12 +1,9 @@
 package app
 
-// Provider 出站 HTTP、multipart 与媒体字节读取。
+// Provider 出站 HTTP、multipart 与媒体字节读取。实际传输在 generation。
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,417 +11,199 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
-	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/platform"
 )
 
+func attachHTTPRuntime(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	runtime, _ := generation.RuntimeFromContext(ctx)
+	if runtime.Receipts == nil {
+		var service *Service
+		if metadata, ok := ctx.Value(providerAnalyticsKey{}).(providerAnalyticsContext); ok {
+			service = providerService(metadata)
+			if runtime.Call.TaskID == "" && runtime.Call.UserID == "" {
+				runtime.Call = generationCallMeta(metadata)
+			}
+		}
+		runtime.Receipts = appReceiptPort{service: service}
+	}
+	return generation.WithRuntime(ctx, runtime)
+}
+
+func withHTTPRequestRuntime(req *http.Request) *http.Request {
+	if req == nil {
+		return req
+	}
+	return req.WithContext(attachHTTPRuntime(req.Context()))
+}
+
 func postGeminiJSON(ctx context.Context, config providerConfig, path string, body interface{}, target interface{}) error {
-	data, err := json.Marshal(body)
-	if err != nil {
-		return fmt.Errorf("序列化上游请求失败：%w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, geminiVeoURL(config.BaseURL, path), bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("x-goog-api-key", config.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-	ApplyOutboundHeaders(req, config.Headers)
-	return doJSON(req, target)
+	return generation.PostGeminiJSON(attachHTTPRuntime(ctx), config, path, body, target)
 }
 
 func getGeminiJSON(ctx context.Context, config providerConfig, path string, target interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, geminiVeoURL(config.BaseURL, path), nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("x-goog-api-key", config.APIKey)
-	ApplyOutboundHeaders(req, config.Headers)
-	return doJSON(req, target)
+	return generation.GetGeminiJSON(attachHTTPRuntime(ctx), config, path, target)
 }
 
 func getGeminiBinary(ctx context.Context, config providerConfig, rawURL string) ([]byte, string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, "", err
-	}
-	req.Header.Set("x-goog-api-key", config.APIKey)
-	ApplyOutboundHeaders(req, config.Headers)
-	return doBinary(req)
+	return generation.GetGeminiBinary(attachHTTPRuntime(ctx), config, rawURL)
 }
 
 func geminiVeoURL(baseURL string, path string) string {
-	return apiURLWithDefaultPrefix(baseURL, path, "/v1beta")
+	return generation.GeminiURL(baseURL, path)
 }
 
 func postStreamingBinary(ctx context.Context, config providerConfig, path string, body interface{}, onChunk func(string, []byte)) ([]byte, string, error) {
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, "", fmt.Errorf("序列化上游请求失败：%w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL(config.BaseURL, path), bytes.NewReader(data))
-	if err != nil {
-		return nil, "", err
-	}
-	applyProviderAuth(req, config)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	ApplyOutboundHeaders(req, config.Headers)
-	return doBinaryWithConsumer(req, onChunk)
+	return generation.PostStreamingBinary(attachHTTPRuntime(ctx), config, path, body, onChunk)
 }
 
 func postJSON(ctx context.Context, config providerConfig, path string, body interface{}, target interface{}) error {
-	data, err := json.Marshal(body)
-	if err != nil {
-		return fmt.Errorf("序列化上游请求失败：%w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL(config.BaseURL, path), bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	applyProviderAuth(req, config)
-	req.Header.Set("Content-Type", "application/json")
-	ApplyOutboundHeaders(req, config.Headers)
-	return doJSON(req, target)
+	return generation.PostJSON(attachHTTPRuntime(ctx), config, path, body, target)
 }
 
 func postJSONWithSubmissionKey(ctx context.Context, config providerConfig, path string, body interface{}, target interface{}) error {
-	data, err := json.Marshal(body)
-	if err != nil {
-		return fmt.Errorf("序列化上游请求失败：%w", err)
+	ctx = attachHTTPRuntime(ctx)
+	if generation.SubmissionKeyFromContext(ctx) == "" {
+		if key, ok := ctx.Value(providerSubmissionKeyContext{}).(string); ok {
+			ctx = generation.WithSubmissionKey(ctx, key)
+		}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL(config.BaseURL, path), bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	applyProviderAuth(req, config)
-	req.Header.Set("Content-Type", "application/json")
-	ApplyOutboundHeaders(req, config.Headers)
-	if key, _ := ctx.Value(providerSubmissionKeyContext{}).(string); strings.TrimSpace(key) != "" {
-		req.Header.Set("Idempotency-Key", strings.TrimSpace(key))
-	}
-	// A configured endpoint alone cannot prove that its idempotency guard is
-	// enabled. Keep the durable key, but never replay an ambiguous POST here.
-	// net/http otherwise treats Idempotency-Key as permission to replay on a
-	// stale pooled connection when GetBody is available.
-	req.GetBody = nil
-	return uncertainVideoSubmission(ctx, doJSON(req, target))
+	return generation.PostJSONWithSubmissionKey(ctx, config, path, body, target)
 }
 
 func applyProviderAuth(req *http.Request, config providerConfig) {
-	if config.APIFormat == "claude" {
-		req.Header.Set("x-api-key", config.APIKey)
-		req.Header.Set("anthropic-version", "2023-06-01")
-		return
-	}
-	if config.APIFormat == "gemini" {
-		req.Header.Set("x-goog-api-key", config.APIKey)
-		return
-	}
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
+	generation.ApplyAuth(req, config)
 }
 
 func postForm(ctx context.Context, config providerConfig, path string, contentType string, body io.Reader, target interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL(config.BaseURL, path), body)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
-	req.Header.Set("Content-Type", contentType)
-	ApplyOutboundHeaders(req, config.Headers)
-	return doJSON(req, target)
+	return generation.PostForm(attachHTTPRuntime(ctx), config, path, contentType, body, target)
 }
 
 func getJSON(ctx context.Context, config providerConfig, path string, target interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL(config.BaseURL, path), nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
-	ApplyOutboundHeaders(req, config.Headers)
-	return doJSON(req, target)
+	return generation.GetJSON(attachHTTPRuntime(ctx), config, path, target)
 }
 
 func postBinary(ctx context.Context, config providerConfig, path string, body interface{}) ([]byte, string, error) {
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, "", fmt.Errorf("序列化上游请求失败：%w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL(config.BaseURL, path), bytes.NewReader(data))
-	if err != nil {
-		return nil, "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-	ApplyOutboundHeaders(req, config.Headers)
-	return doBinary(req)
+	return generation.PostBinary(attachHTTPRuntime(ctx), config, path, body)
 }
 
 func getBinary(ctx context.Context, config providerConfig, path string) ([]byte, string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL(config.BaseURL, path), nil)
-	if err != nil {
-		return nil, "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
-	ApplyOutboundHeaders(req, config.Headers)
-	return doBinary(req)
+	return generation.GetBinary(attachHTTPRuntime(ctx), config, path)
 }
 
 func getExternalBinary(ctx context.Context, rawURL string) ([]byte, string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, "", err
-	}
-	return doBinary(req)
+	return generation.GetExternalBinary(attachHTTPRuntime(ctx), rawURL)
 }
 
 func getProviderExternalBinary(ctx context.Context, config providerConfig, rawURL string) ([]byte, string, error) {
-	downloadURL := providerDownloadURL(config.BaseURL, rawURL)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
-	if err != nil {
-		return nil, "", err
-	}
-	if sameProviderOrigin(config.BaseURL, downloadURL) {
-		applyProviderAuth(req, config)
-		ApplyOutboundHeaders(req, config.Headers)
-	}
-	return doBinary(req)
+	return generation.GetProviderExternalBinary(attachHTTPRuntime(ctx), config, rawURL)
 }
 
 func providerDownloadURL(baseURL string, rawURL string) string {
-	base, baseErr := url.Parse(strings.TrimSpace(baseURL))
-	target, targetErr := url.Parse(strings.TrimSpace(rawURL))
-	if baseErr != nil || targetErr != nil || !strings.EqualFold(base.Scheme, "https") || !strings.EqualFold(target.Scheme, "https") {
-		return rawURL
-	}
-	// BeefAPI Enterprise creates and polls tasks on enterprise.beefapi.com, but
-	// completed metadata currently returns the equivalent content path on
-	// beefapi.com. Enterprise keys are origin-bound and the canonical-host URL
-	// rejects them. Preserve path/query while routing the download back through
-	// the configured BeefAPI origin; unrelated and lookalike hosts stay external.
-	if isBeefAPIHost(base.Hostname()) && isBeefAPIHost(target.Hostname()) {
-		target.Scheme = base.Scheme
-		target.Host = base.Host
-		return target.String()
-	}
-	return rawURL
+	return generation.ProviderDownloadURL(baseURL, rawURL)
 }
 
 func isBeefAPIHost(host string) bool {
-	host = strings.ToLower(strings.TrimSpace(host))
-	return host == "beefapi.com" || strings.HasSuffix(host, ".beefapi.com")
+	return generation.IsBeefAPIHost(host)
 }
 
 func sameProviderOrigin(baseURL string, rawURL string) bool {
-	base, baseErr := url.Parse(strings.TrimSpace(baseURL))
-	target, targetErr := url.Parse(strings.TrimSpace(rawURL))
-	if baseErr != nil || targetErr != nil || base.Scheme == "" || base.Host == "" || target.Scheme == "" || target.Host == "" {
-		return false
-	}
-	return strings.EqualFold(base.Scheme, target.Scheme) && strings.EqualFold(base.Host, target.Host)
+	return generation.SameProviderOrigin(baseURL, rawURL)
 }
 
 func doJSON(req *http.Request, target interface{}) error {
-	data, mimeType, err := doBinary(req)
-	if err != nil {
-		return err
-	}
-	if !strings.Contains(mimeType, "json") && !json.Valid(data) {
-		return providerResponseDecodeError{Err: fmt.Errorf("接口返回非 JSON 内容：%s", mimeType)}
-	}
-	if err := json.Unmarshal(data, target); err != nil {
-		return providerResponseDecodeError{Err: err}
-	}
-	if payload, ok := target.(*imageResponse); ok {
-		if payload.Error != nil && (payload.Error.Message != "" || normalizedProviderErrorCode(payload.Error.Code) != "") {
-			encoded, _ := json.Marshal(payload.Error)
-			raw := string(encoded)
-			return providerPayloadError{raw: raw, message: providerPayloadErrorMessage(raw)}
-		}
-		if payload.Code != nil && providerBusinessCodeFailed(*payload.Code) {
-			encoded, _ := json.Marshal(payload)
-			raw := string(encoded)
-			return providerPayloadError{raw: raw, message: providerPayloadErrorMessage(raw)}
-		}
-	}
-	if payload, ok := target.(*map[string]interface{}); ok {
-		if _, rawMessage, failed := providerPayloadBusinessFailure(*payload); failed {
-			encoded, _ := json.Marshal(*payload)
-			raw := string(encoded)
-			if strings.TrimSpace(raw) == "" || raw == "null" {
-				raw = rawMessage
-			}
-			return providerPayloadError{raw: raw, message: providerPayloadErrorMessage(raw)}
-		}
-		if errValue, ok := (*payload)["error"].(map[string]interface{}); ok && stringField(errValue, "message") != "" {
-			encoded, _ := json.Marshal(*payload)
-			raw := string(encoded)
-			return providerPayloadError{raw: raw, message: providerPayloadErrorMessage(raw)}
-		}
-	}
-	return nil
+	return generation.DoJSON(withHTTPRequestRuntime(req), target)
 }
 
 func doBinary(req *http.Request) ([]byte, string, error) {
-	if s, row, handled, err := prepareImageSubmission(req); handled {
-		if err != nil {
-			return nil, "", imageRecoveryError{err}
-		}
-		task := req.Context().Value(imageTaskContext{}).(model.Task)
-		return s.sendImageSubmission(req.Context(), task, row)
-	}
-	return doBinaryWithConsumer(req, nil)
+	return generation.DoBinary(withHTTPRequestRuntime(req))
 }
 
-// doBinaryWithConsumer 是 Provider 出站响应的统一安全边界。JSON、SSE 和媒体下载最终都在这里执行
-// 渠道并发/熔断、SSRF、超时、响应大小、HTTP 状态和审计检查；onChunk 仅观察已读取的流片段，
-// 不会绕过完整响应的大小上限或错误判定。
-func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (responseData []byte, responseMime string, resultErr error) {
-	startedAt := time.Now()
-	evidence := model.TaskRequestEvidence{StartedAt: startedAt.Format(time.RFC3339Nano), ResponseLimitBytes: maxProviderResponseBytes}
-	defer func() { recordTaskRequestEvidence(req, evidence, responseData, resultErr) }()
-	requestTimeout := providerHTTPTimeout
-	if deadline, ok := req.Context().Deadline(); ok {
-		if remaining := time.Until(deadline); remaining > 0 {
-			requestTimeout = remaining
-		}
-	}
-	var release func()
-	var coordinator *platform.Coordinator
-	var runtimeService *Service
-	responseLimit := maxProviderResponseBytes
-	channelID := ""
-	if metadata, ok := req.Context().Value(providerAnalyticsKey{}).(providerAnalyticsContext); ok && providerService(metadata) != nil {
-		runtimeService = providerService(metadata)
-		coordinator = runtimeService.coordinator
-		channelID = metadata.ChannelID
-		policy, err := runtimeService.RuntimePolicy()
-		if err != nil {
-			return nil, "", fmt.Errorf("读取生成资源限制失败：%w", err)
-		}
-		responseLimit = megabytes(policy.Resource.GeneratedFileMB)
-		evidence.ResponseLimitBytes = responseLimit
-		open, err := coordinator.CircuitOpen(req.Context(), channelID)
-		if err != nil {
-			return nil, "", fmt.Errorf("读取渠道熔断状态失败：%w", err)
-		}
-		if open {
-			return nil, "", providerCircuitOpenError{}
-		}
-		slotID := channelID
-		if slotID == "" {
-			slotID = "custom:" + strings.ToLower(req.URL.Host)
-		}
-		var concurrencyLimit int
-		release, concurrencyLimit, err = runtimeService.AcquireChannelSlot(req.Context(), channelID, slotID, requestTimeout+time.Minute)
-		metadata.ConcurrencyLimit = concurrencyLimit
-		req = req.WithContext(context.WithValue(req.Context(), providerAnalyticsKey{}, metadata))
-		if err != nil {
-			recordProviderRequest(req, startedAt, 0, nil, err)
-			return nil, "", err
-		}
-		defer release()
-	}
-	if _, err := ValidateOutboundURL(req.URL.String()); err != nil {
-		recordProviderRequest(req, startedAt, 0, nil, err)
-		return nil, "", err
-	}
-	ApplyDefaultOutboundHeaders(req)
-	client := OutboundHTTPClient(requestTimeout)
-	evidence.Dispatched = true
-	resp, err := client.Do(req)
-	if err != nil {
-		if runtimeService != nil {
-			_ = runtimeService.RecordChannelResult(req.Context(), channelID, !errors.Is(err, context.Canceled))
-		}
-		recordProviderRequest(req, startedAt, 0, nil, err)
-		return nil, "", err
-	}
-	defer resp.Body.Close()
-	evidence.HTTPStatus = resp.StatusCode
-	evidence.DeclaredResponseBytes = resp.ContentLength
-	evidence.RequestID = firstNonEmpty(resp.Header.Get("X-Request-Id"), resp.Header.Get("Request-Id"))
-	if resp.ContentLength > responseLimit {
-		evidence.Outcome = "response_limit"
-		err = fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
-		recordProviderRequest(req, startedAt, resp.StatusCode, nil, err)
-		return nil, "", err
-	}
-	mimeType := resp.Header.Get("Content-Type")
-	var buffered bytes.Buffer
-	reader := io.LimitReader(resp.Body, responseLimit+1)
-	chunk := make([]byte, 32<<10)
-	for {
-		readCount, readErr := reader.Read(chunk)
-		evidence.ReceivedBytes += int64(readCount)
-		if readCount > 0 {
-			if int64(buffered.Len()+readCount) > responseLimit {
-				evidence.Outcome = "response_limit"
-				err = fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
-				recordProviderRequest(req, startedAt, resp.StatusCode, buffered.Bytes(), err)
-				return nil, "", err
-			}
-			_, _ = buffered.Write(chunk[:readCount])
-			if onChunk != nil {
-				onChunk(mimeType, chunk[:readCount])
-			}
-		}
-		if errors.Is(readErr, io.EOF) {
-			break
-		}
-		if readErr != nil {
-			recordProviderRequest(req, startedAt, resp.StatusCode, buffered.Bytes(), readErr)
-			return nil, "", readErr
-		}
-	}
-	data := buffered.Bytes()
-	if int64(len(data)) > responseLimit {
-		err = fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
-		recordProviderRequest(req, startedAt, resp.StatusCode, nil, err)
-		return nil, "", err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if runtimeService != nil {
-			_ = runtimeService.RecordChannelResult(req.Context(), channelID, resp.StatusCode >= 500)
-		}
-		httpErr := providerHTTPError{RequestID: firstNonEmpty(resp.Header.Get("X-Request-Id"), resp.Header.Get("Request-Id")), StatusCode: resp.StatusCode, Status: resp.Status, Body: string(data), RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()), IdempotencyReplayed: strings.EqualFold(resp.Header.Get("Idempotency-Replayed"), "true")}
-		recordProviderRequest(req, startedAt, resp.StatusCode, data, httpErr)
-		return nil, "", httpErr
-	}
-	recordProviderRequest(req, startedAt, resp.StatusCode, data, nil)
-	if runtimeService != nil {
-		_ = runtimeService.RecordChannelResult(req.Context(), channelID, false)
-	}
-	return data, mimeType, nil
+func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]byte, string, error) {
+	return generation.DoBinaryWithConsumer(withHTTPRequestRuntime(req), onChunk)
 }
 
 func parseRetryAfter(value string, now time.Time) time.Duration {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 0
-	}
-	if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
-		return time.Duration(seconds) * time.Second
-	}
-	if at, err := http.ParseTime(value); err == nil && at.After(now) {
-		return at.Sub(now)
-	}
-	return 0
+	return generation.ParseRetryAfter(value, now)
 }
 
 func providerPollingDeadline(ctx context.Context) time.Time {
-	if deadline, ok := ctx.Deadline(); ok {
-		return deadline
+	return generation.PollingDeadline(ctx)
+}
+
+func apiURL(baseURL string, path string) string {
+	return generation.APIURL(baseURL, path)
+}
+
+func ChannelAPIURL(baseURL string, path string) string {
+	return generation.ChannelAPIURL(baseURL, path)
+}
+
+func ChannelAPIURLForProtocol(baseURL string, path string, interfaceType model.ChannelInterfaceType) string {
+	return generation.ChannelAPIURLForProtocol(baseURL, path, interfaceType)
+}
+
+func writeField(writer *multipart.Writer, key string, value string) {
+	_ = writer.WriteField(key, value)
+}
+
+func writeMediaPart(writer *multipart.Writer, field string, media providerMedia) error {
+	raw, mimeType, err := mediaBytes(media)
+	if err != nil {
+		return err
 	}
-	return time.Now().Add(videoPollTimeout)
+	filename := providerMediaFilename(media, mimeType)
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": field, "filename": filename}))
+	header.Set("Content-Type", mimeType)
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		return err
+	}
+	_, err = part.Write(raw)
+	return err
+}
+
+func providerMediaFilename(media providerMedia, mimeType string) string {
+	base := strings.TrimSpace(media.ID)
+	if base == "" {
+		base = "reference"
+	}
+	var builder strings.Builder
+	for _, char := range base {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '-' || char == '_' {
+			builder.WriteRune(char)
+			if builder.Len() >= 64 {
+				break
+			}
+		}
+	}
+	base = builder.String()
+	if base == "" {
+		base = "reference"
+	}
+	extensions, _ := mime.ExtensionsByType(strings.TrimSpace(strings.Split(mimeType, ";")[0]))
+	extension := ".bin"
+	if len(extensions) > 0 {
+		extension = extensions[0]
+	}
+	return "reference-" + base + extension
+}
+
+func mediaBytes(media providerMedia) ([]byte, string, error) {
+	return generation.MediaBytes(media)
 }
 
 func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode int, responseBody []byte, requestErr error) {
+	if req == nil {
+		return
+	}
 	metadata, ok := req.Context().Value(providerAnalyticsKey{}).(providerAnalyticsContext)
 	service := providerService(metadata)
 	if !ok || service == nil {
@@ -511,149 +290,4 @@ func providerRequestKind(method string, path string) string {
 		return "repair"
 	}
 	return "create"
-}
-
-func apiURL(baseURL string, path string) string {
-	return apiURLWithDefaultPrefix(baseURL, path, "/v1")
-}
-
-// ChannelAPIURL 是 Provider 请求拼接 URL 的唯一公共入口。
-// 渠道地址可配置为 host、host/、host/v1 或 host/v1/；调用方应传协议路径，避免重复硬编码版本前缀。
-func ChannelAPIURL(baseURL string, path string) string {
-	return apiURL(baseURL, path)
-}
-
-// ChannelAPIURLForProtocol 把协议默认版本收敛在传输边界：Gemini 默认 v1beta，
-// OpenAI 兼容协议默认 v1；baseURL 或 path 中显式出现的版本始终优先。
-func ChannelAPIURLForProtocol(baseURL string, path string, interfaceType model.ChannelInterfaceType) string {
-	if interfaceType == model.ChannelInterfaceAgnesVideo && strings.HasPrefix(strings.TrimSpace(path), "/agnesapi") {
-		base, err := url.Parse(strings.TrimSpace(baseURL))
-		requestPath, pathErr := url.Parse(strings.TrimSpace(path))
-		if err == nil && pathErr == nil && base.Scheme != "" && base.Host != "" && strings.HasPrefix(requestPath.Path, "/") {
-			base.Path = requestPath.Path
-			base.RawPath = requestPath.RawPath
-			base.RawQuery = requestPath.RawQuery
-			base.Fragment = ""
-			return base.String()
-		}
-	}
-	defaultPrefix := "/v1"
-	if interfaceType == model.ChannelInterfaceGeminiVeo || interfaceType == model.ChannelInterfaceGeminiImage {
-		defaultPrefix = "/v1beta"
-	}
-	return apiURLWithDefaultPrefix(baseURL, path, defaultPrefix)
-}
-
-var channelAPIPrefixes = []string{"/api/plan/v3", "/api/v3", "/api/v1", "/v1beta", "/v1", "/v2", "/v3"}
-
-func apiURLWithDefaultPrefix(baseURL string, path string, defaultPrefix string) string {
-	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	requestPath := strings.TrimSpace(path)
-	if requestPath == "" {
-		return base
-	}
-	if !strings.HasPrefix(requestPath, "/") {
-		requestPath = "/" + requestPath
-	}
-
-	requestPrefix := requestAPIPathPrefix(requestPath)
-	basePrefix := baseAPIPathPrefix(base)
-	if requestPrefix != "" {
-		if basePrefix == requestPrefix {
-			return base + strings.TrimPrefix(requestPath, requestPrefix)
-		}
-		// 请求路径显式版本优先于 baseURL 残留版本，例如 base=/v1、path=/v2/... 时必须切到 /v2。
-		return strings.TrimSuffix(base, basePrefix) + requestPath
-	}
-	if basePrefix != "" {
-		return base + requestPath
-	}
-	return base + defaultPrefix + requestPath
-}
-
-func requestAPIPathPrefix(value string) string {
-	lower := strings.ToLower(value)
-	for _, prefix := range channelAPIPrefixes {
-		if lower == prefix || strings.HasPrefix(lower, prefix+"/") || strings.HasPrefix(lower, prefix+"?") || strings.HasPrefix(lower, prefix+"#") {
-			return prefix
-		}
-	}
-	return ""
-}
-
-func baseAPIPathPrefix(value string) string {
-	lower := strings.ToLower(strings.TrimRight(value, "/"))
-	for _, prefix := range channelAPIPrefixes {
-		if lower == prefix || strings.HasSuffix(lower, prefix) {
-			return prefix
-		}
-	}
-	return ""
-}
-
-func writeField(writer *multipart.Writer, key string, value string) {
-	_ = writer.WriteField(key, value)
-}
-
-func writeMediaPart(writer *multipart.Writer, field string, media providerMedia) error {
-	raw, mimeType, err := mediaBytes(media)
-	if err != nil {
-		return err
-	}
-	filename := providerMediaFilename(media, mimeType)
-	header := make(textproto.MIMEHeader)
-	header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": field, "filename": filename}))
-	header.Set("Content-Type", mimeType)
-	part, err := writer.CreatePart(header)
-	if err != nil {
-		return err
-	}
-	_, err = part.Write(raw)
-	return err
-}
-
-func providerMediaFilename(media providerMedia, mimeType string) string {
-	base := strings.TrimSpace(media.ID)
-	if base == "" {
-		base = "reference"
-	}
-	var builder strings.Builder
-	for _, char := range base {
-		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '-' || char == '_' {
-			builder.WriteRune(char)
-			if builder.Len() >= 64 {
-				break
-			}
-		}
-	}
-	base = builder.String()
-	if base == "" {
-		base = "reference"
-	}
-	extensions, _ := mime.ExtensionsByType(strings.TrimSpace(strings.Split(mimeType, ";")[0]))
-	extension := ".bin"
-	if len(extensions) > 0 {
-		extension = extensions[0]
-	}
-	return "reference-" + base + extension
-}
-
-func mediaBytes(media providerMedia) ([]byte, string, error) {
-	value := media.DataURL
-	if value == "" {
-		value = media.URL
-	}
-	if !strings.HasPrefix(value, "data:") {
-		return nil, "", errors.New("后端任务队列需要 data URL 形式的本地参考素材")
-	}
-	header, encoded, ok := strings.Cut(value, ",")
-	if !ok {
-		return nil, "", errors.New("data URL 格式错误")
-	}
-	mimeType := strings.TrimPrefix(strings.Split(strings.TrimPrefix(header, "data:"), ";")[0], " ")
-	raw, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		return nil, "", err
-	}
-	return raw, normalizedMediaMimeType(defaultString(mimeType, media.Type), raw), nil
 }

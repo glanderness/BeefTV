@@ -1,4 +1,4 @@
-package app
+package generation
 
 import (
 	"context"
@@ -12,11 +12,12 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/outbound"
+	"infinite-canvas/backend/internal/platform"
 )
 
-const defaultVideoPollInterval = 30 * time.Second
+const DefaultVideoPollInterval = 30 * time.Second
 
-type videoPollPolicy struct {
+type VideoPollPolicy struct {
 	InitialDelay          time.Duration
 	Interval              time.Duration
 	MaxNotFoundMisses     int
@@ -24,51 +25,51 @@ type videoPollPolicy struct {
 	MaxDownloadTries      int
 	RetryTransient        bool
 	Sleep                 func(context.Context, time.Duration) error
-	Notify                func(context.Context, string, videoPollEvent, error)
+	Notify                func(context.Context, string, VideoPollEvent, error)
 }
 
-type videoPollEvent string
+type VideoPollEvent string
 
 const (
-	videoPollEventRetrying  videoPollEvent = "retrying"
-	videoPollEventRecovered videoPollEvent = "recovered"
+	VideoPollEventRetrying  VideoPollEvent = "retrying"
+	VideoPollEventRecovered VideoPollEvent = "recovered"
 )
 
-type videoPollOutcome struct {
+type VideoPollOutcome struct {
 	Done   bool
 	Result map[string]interface{}
 }
 
-type videoDownloadError struct {
+type VideoDownloadError struct {
 	TaskID string
 	Cause  error
 }
 
-func (e videoDownloadError) Error() string {
+func (e VideoDownloadError) Error() string {
 	if strings.TrimSpace(e.TaskID) == "" {
 		return fmt.Sprintf("视频结果下载失败：%v", e.Cause)
 	}
 	return fmt.Sprintf("视频结果下载失败（任务 %s）：%v", e.TaskID, e.Cause)
 }
 
-func (e videoDownloadError) Unwrap() error { return e.Cause }
+func (e VideoDownloadError) Unwrap() error { return e.Cause }
 
-func defaultVideoPollPolicy() videoPollPolicy {
-	return videoPollPolicy{
-		InitialDelay:          defaultVideoPollInterval,
-		Interval:              defaultVideoPollInterval,
+func DefaultVideoPollPolicy() VideoPollPolicy {
+	return VideoPollPolicy{
+		InitialDelay:          DefaultVideoPollInterval,
+		Interval:              DefaultVideoPollInterval,
 		MaxNotFoundMisses:     3,
 		MaxMalformedResponses: 3,
 		MaxDownloadTries:      3,
 		RetryTransient:        true,
-		Sleep:                 sleepContext,
-		Notify:                notifyTaskVideoPollEvent,
+		Sleep:                 SleepContext,
+		Notify:                NotifyPollEvent,
 	}
 }
 
-func runVideoPollLoop(ctx context.Context, taskID string, policy videoPollPolicy, query func(context.Context) (videoPollOutcome, error)) (map[string]interface{}, error) {
-	policy = normalizeVideoPollPolicy(policy)
-	deadline := providerPollingDeadline(ctx)
+func RunVideoPollLoop(ctx context.Context, taskID string, policy VideoPollPolicy, query func(context.Context) (VideoPollOutcome, error)) (map[string]interface{}, error) {
+	policy = NormalizeVideoPollPolicy(policy)
+	deadline := PollingDeadline(ctx)
 	pollContext, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	ctx = pollContext
@@ -87,11 +88,11 @@ func runVideoPollLoop(ctx context.Context, taskID string, policy videoPollPolicy
 			if !policy.RetryTransient {
 				return nil, err
 			}
-			retry, notFound := retryableVideoPollError(ctx, err)
+			retry, notFound := RetryableVideoPollError(ctx, err)
 			if !retry {
 				return nil, err
 			}
-			malformed := isTransientResponseDecodeError(err)
+			malformed := IsTransientResponseDecodeError(err)
 			if malformed {
 				malformedResponses++
 				notFoundMisses = 0
@@ -110,9 +111,9 @@ func runVideoPollLoop(ctx context.Context, taskID string, policy videoPollPolicy
 			}
 			if !retrying {
 				retrying = true
-				policy.Notify(ctx, taskID, videoPollEventRetrying, err)
+				policy.Notify(ctx, taskID, VideoPollEventRetrying, err)
 			}
-			nextDelay = max(policy.Interval, providerRetryAfter(err))
+			nextDelay = max(policy.Interval, ProviderRetryAfter(err))
 			continue
 		}
 		notFoundMisses = 0
@@ -120,7 +121,7 @@ func runVideoPollLoop(ctx context.Context, taskID string, policy videoPollPolicy
 		nextDelay = policy.Interval
 		if retrying {
 			retrying = false
-			policy.Notify(ctx, taskID, videoPollEventRecovered, nil)
+			policy.Notify(ctx, taskID, VideoPollEventRecovered, nil)
 		}
 		if outcome.Done {
 			return outcome.Result, nil
@@ -132,9 +133,9 @@ func runVideoPollLoop(ctx context.Context, taskID string, policy videoPollPolicy
 	return nil, context.DeadlineExceeded
 }
 
-func normalizeVideoPollPolicy(policy videoPollPolicy) videoPollPolicy {
+func NormalizeVideoPollPolicy(policy VideoPollPolicy) VideoPollPolicy {
 	if policy.Interval <= 0 {
-		policy.Interval = defaultVideoPollInterval
+		policy.Interval = DefaultVideoPollInterval
 	}
 	if policy.MaxNotFoundMisses <= 0 {
 		policy.MaxNotFoundMisses = 3
@@ -146,16 +147,16 @@ func normalizeVideoPollPolicy(policy videoPollPolicy) videoPollPolicy {
 		policy.MaxDownloadTries = 3
 	}
 	if policy.Sleep == nil {
-		policy.Sleep = sleepContext
+		policy.Sleep = SleepContext
 	}
 	if policy.Notify == nil {
-		policy.Notify = func(context.Context, string, videoPollEvent, error) {}
+		policy.Notify = func(context.Context, string, VideoPollEvent, error) {}
 	}
 	return policy
 }
 
-func runVideoDownload(ctx context.Context, taskID string, policy videoPollPolicy, download func(context.Context) ([]byte, string, error)) ([]byte, string, error) {
-	policy = normalizeVideoPollPolicy(policy)
+func RunVideoDownload(ctx context.Context, taskID string, policy VideoPollPolicy, download func(context.Context) ([]byte, string, error)) ([]byte, string, error) {
+	policy = NormalizeVideoPollPolicy(policy)
 	var lastErr error
 	for attempt := 1; attempt <= policy.MaxDownloadTries; attempt++ {
 		data, mimeType, err := download(ctx)
@@ -163,34 +164,34 @@ func runVideoDownload(ctx context.Context, taskID string, policy videoPollPolicy
 			return data, mimeType, nil
 		}
 		lastErr = err
-		retry, _ := retryableVideoPollError(ctx, err)
+		retry, _ := RetryableVideoPollError(ctx, err)
 		if !retry || attempt == policy.MaxDownloadTries {
-			return nil, "", videoDownloadError{TaskID: taskID, Cause: err}
+			return nil, "", VideoDownloadError{TaskID: taskID, Cause: err}
 		}
-		delay := max(policy.Interval, providerRetryAfter(err))
+		delay := max(policy.Interval, ProviderRetryAfter(err))
 		if err := policy.Sleep(ctx, delay); err != nil {
 			return nil, "", err
 		}
 	}
-	return nil, "", videoDownloadError{TaskID: taskID, Cause: lastErr}
+	return nil, "", VideoDownloadError{TaskID: taskID, Cause: lastErr}
 }
 
-func retryableVideoPollError(ctx context.Context, err error) (retry bool, notFound bool) {
+func RetryableVideoPollError(ctx context.Context, err error) (retry bool, notFound bool) {
 	if err == nil || ctx.Err() != nil || errors.Is(err, context.Canceled) {
 		return false, false
 	}
-	var downloadError videoDownloadError
+	var downloadError VideoDownloadError
 	if errors.As(err, &downloadError) {
 		return false, false
 	}
-	if code, _ := ChannelSlotFailureDetails(err); code != "" {
+	if code, _ := platform.ChannelSlotFailureDetails(err); code != "" {
 		return true, false
 	}
-	var circuitOpen providerCircuitOpenError
+	var circuitOpen CircuitOpenError
 	if errors.As(err, &circuitOpen) {
 		return true, false
 	}
-	if isTransientResponseDecodeError(err) {
+	if IsTransientResponseDecodeError(err) {
 		return true, false
 	}
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.ErrClosedPipe) || outbound.IsConnectionInterrupted(err) {
@@ -199,9 +200,9 @@ func retryableVideoPollError(ctx context.Context, err error) (retry bool, notFou
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true, false
 	}
-	var httpErr providerHTTPError
+	var httpErr HTTPError
 	if errors.As(err, &httpErr) {
-		if isProviderTaskNotReadyError(httpErr) {
+		if IsProviderTaskNotReadyError(httpErr) {
 			return true, true
 		}
 		if httpErr.StatusCode == http.StatusNotFound {
@@ -221,8 +222,8 @@ func retryableVideoPollError(ctx context.Context, err error) (retry bool, notFou
 	return false, false
 }
 
-func isTransientResponseDecodeError(err error) bool {
-	var decodeError providerResponseDecodeError
+func IsTransientResponseDecodeError(err error) bool {
+	var decodeError ResponseDecodeError
 	if errors.As(err, &decodeError) {
 		return true
 	}
@@ -230,26 +231,15 @@ func isTransientResponseDecodeError(err error) bool {
 	return errors.As(err, &syntaxError)
 }
 
-func notifyTaskVideoPollEvent(ctx context.Context, _ string, event videoPollEvent, eventErr error) {
-	metadata, ok := ctx.Value(providerAnalyticsKey{}).(providerAnalyticsContext)
-	service := providerService(metadata)
-	if !ok || service == nil || service.repo == nil || metadata.TaskID == "" {
+func NotifyPollEvent(ctx context.Context, _ string, event VideoPollEvent, eventErr error) {
+	runtime, ok := RuntimeFromContext(ctx)
+	if !ok || runtime.Receipts == nil {
 		return
 	}
-	message := "上游视频查询暂时异常，将继续轮询原任务"
-	level := "warn"
-	payload := ""
-	if eventErr != nil {
-		payload = eventErr.Error()
-	}
-	if event == videoPollEventRecovered {
-		message = "上游视频查询已恢复"
-		level = "info"
-	}
-	_ = service.log(metadata.UserID, metadata.TaskID, level, message, payload)
+	runtime.Receipts.NotifyPoll(ctx, string(event), eventErr)
 }
 
-func isProviderTaskNotReadyError(httpErr providerHTTPError) bool {
+func IsProviderTaskNotReadyError(httpErr HTTPError) bool {
 	if httpErr.StatusCode != http.StatusBadRequest && httpErr.StatusCode != http.StatusNotFound {
 		return false
 	}
@@ -257,7 +247,7 @@ func isProviderTaskNotReadyError(httpErr providerHTTPError) bool {
 	if json.Unmarshal([]byte(httpErr.Body), &payload) != nil {
 		return false
 	}
-	code, message := providerFailureDetails(payload)
+	code, message := FailureDetails(payload)
 	for _, value := range []string{code, message} {
 		switch strings.ToLower(strings.TrimSpace(value)) {
 		case "task_not_exist", "task_not_found", "task not exist", "task not found":
@@ -267,8 +257,8 @@ func isProviderTaskNotReadyError(httpErr providerHTTPError) bool {
 	return false
 }
 
-func providerRetryAfter(err error) time.Duration {
-	var httpErr providerHTTPError
+func ProviderRetryAfter(err error) time.Duration {
+	var httpErr HTTPError
 	if errors.As(err, &httpErr) && httpErr.RetryAfter > 0 {
 		return httpErr.RetryAfter
 	}

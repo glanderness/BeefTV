@@ -11,10 +11,10 @@ func TestProtocolResultErrorKeepsDeliveryCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload, ok := err.(providerPayloadError)
-	if !ok || !strings.Contains(payload.raw, "video_delivery_failed") {
+	if !ok || !strings.Contains(payload.Raw(), "video_delivery_failed") {
 		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "request-original-123") || !strings.Contains(payload.raw, "api_error") {
+	if !strings.Contains(err.Error(), "request-original-123") || !strings.Contains(payload.Raw(), "api_error") {
 		t.Fatal(err)
 	}
 }

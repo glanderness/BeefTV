@@ -1,4 +1,4 @@
-package app
+package generation
 
 import (
 	"encoding/json"
@@ -8,17 +8,7 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
-// The browser sends one protocol-neutral conversation. Only the selected
-// provider body is materialized; declarative plugins retain their request paths.
-type canonicalAgentRequest struct {
-	Messages       []map[string]interface{} `json:"messages"`
-	Tools          []map[string]interface{} `json:"tools"`
-	ToolChoice     interface{}              `json:"toolChoice"`
-	SystemPrompt   string                   `json:"systemPrompt"`
-	PromptCacheKey string                   `json:"promptCacheKey,omitempty"`
-}
-
-func expandCanonicalAgentRequest(source *canonicalAgentRequest, config providerConfig, declarative bool) (*agentToolRequests, error) {
+func ExpandCanonicalAgentRequest(source *CanonicalAgentRequest, config Config, declarative bool) (*AgentToolRequests, error) {
 	if len(source.Messages) == 0 {
 		return nil, errors.New("画布 Agent 请求缺少会话内容")
 	}
@@ -47,7 +37,7 @@ func expandCanonicalAgentRequest(source *canonicalAgentRequest, config providerC
 		default:
 			return nil, errors.New("画布 Agent 会话角色无效")
 		}
-		if err := validateCanonicalAgentContent(message["content"]); err != nil {
+		if err := ValidateCanonicalAgentContent(message["content"]); err != nil {
 			return nil, err
 		}
 	}
@@ -84,27 +74,27 @@ func expandCanonicalAgentRequest(source *canonicalAgentRequest, config providerC
 	}
 	request := *source
 	request.Messages = messages
-	result := &agentToolRequests{}
+	result := &AgentToolRequests{}
 	if declarative {
-		result.ChatCompletion = canonicalAgentChatBody(&request, false)
-		result.Responses = canonicalAgentResponsesBody(&request)
-		result.Claude = claudeAgentBody(canonicalAgentChatBody(&request, true))
+		result.ChatCompletion = CanonicalAgentChatBody(&request, false)
+		result.Responses = CanonicalAgentResponsesBody(&request)
+		result.Claude = ClaudeAgentBody(CanonicalAgentChatBody(&request, true))
 		result.Claude["model"] = config.Model
-		result.Gemini = canonicalAgentGeminiBody(&request)
+		result.Gemini = CanonicalAgentGeminiBody(&request)
 		return result, nil
 	}
 	switch config.InterfaceType {
 	case string(model.ChannelInterfaceOpenAIResponse):
-		result.Responses = canonicalAgentResponsesBody(&request)
+		result.Responses = CanonicalAgentResponsesBody(&request)
 	case string(model.ChannelInterfaceClaudeAPI):
-		result.Claude = claudeAgentBody(canonicalAgentChatBody(&request, true))
+		result.Claude = ClaudeAgentBody(CanonicalAgentChatBody(&request, true))
 	default:
-		result.ChatCompletion = canonicalAgentChatBody(&request, false)
+		result.ChatCompletion = CanonicalAgentChatBody(&request, false)
 	}
 	return result, nil
 }
 
-func canonicalAgentChatBody(source *canonicalAgentRequest, claude bool) map[string]interface{} {
+func CanonicalAgentChatBody(source *CanonicalAgentRequest, claude bool) map[string]interface{} {
 	messages := make([]interface{}, 0, len(source.Messages))
 	format := "chat"
 	if claude {
@@ -118,7 +108,7 @@ func canonicalAgentChatBody(source *canonicalAgentRequest, claude bool) map[stri
 				call := source.Messages[index]
 				arguments := call["arguments"]
 				if claude {
-					arguments = canonicalAgentJSONObject(arguments)
+					arguments = CanonicalAgentJSONObject(arguments)
 				}
 				calls = append(calls, map[string]interface{}{
 					"id": call["call_id"], "type": "function",
@@ -129,8 +119,8 @@ func canonicalAgentChatBody(source *canonicalAgentRequest, claude bool) map[stri
 			messages = append(messages, map[string]interface{}{"role": "assistant", "content": nil, "tool_calls": calls})
 			continue
 		}
-		converted := map[string]interface{}{"role": message["role"], "content": canonicalAgentContent(message["content"], format)}
-		if calls := canonicalAgentToolCalls(message["tool_calls"]); len(calls) > 0 {
+		converted := map[string]interface{}{"role": message["role"], "content": CanonicalAgentContent(message["content"], format)}
+		if calls := CanonicalAgentToolCalls(message["tool_calls"]); len(calls) > 0 {
 			// Runtime calls are protocol-neutral; materialize the wire discriminator here.
 			wireCalls := make([]interface{}, 0, len(calls))
 			for _, call := range calls {
@@ -140,7 +130,7 @@ func canonicalAgentChatBody(source *canonicalAgentRequest, claude bool) map[stri
 			converted["tool_calls"] = wireCalls
 		}
 		if claude && stringField(message, "role") == "system" {
-			converted["content"] = canonicalAgentText(message["content"])
+			converted["content"] = CanonicalAgentText(message["content"])
 		}
 		if stringField(message, "role") == "tool" {
 			converted["tool_call_id"] = message["tool_call_id"]
@@ -163,7 +153,7 @@ func canonicalAgentChatBody(source *canonicalAgentRequest, claude bool) map[stri
 	return body
 }
 
-func canonicalAgentResponsesBody(source *canonicalAgentRequest) map[string]interface{} {
+func CanonicalAgentResponsesBody(source *CanonicalAgentRequest) map[string]interface{} {
 	messages := make([]interface{}, 0, len(source.Messages))
 	for _, message := range source.Messages {
 		switch {
@@ -174,8 +164,8 @@ func canonicalAgentResponsesBody(source *canonicalAgentRequest) map[string]inter
 		case stringField(message, "role") == "tool":
 			messages = append(messages, map[string]interface{}{"type": "function_call_output", "call_id": message["tool_call_id"], "output": message["content"]})
 		default:
-			messages = append(messages, map[string]interface{}{"role": message["role"], "content": canonicalAgentContent(message["content"], "responses")})
-			for _, call := range canonicalAgentToolCalls(message["tool_calls"]) {
+			messages = append(messages, map[string]interface{}{"role": message["role"], "content": CanonicalAgentContent(message["content"], "responses")})
+			for _, call := range CanonicalAgentToolCalls(message["tool_calls"]) {
 				function, _ := call["function"].(map[string]interface{})
 				messages = append(messages, map[string]interface{}{"type": "function_call", "call_id": call["id"], "name": function["name"], "arguments": function["arguments"]})
 			}
@@ -184,7 +174,7 @@ func canonicalAgentResponsesBody(source *canonicalAgentRequest) map[string]inter
 	tools := make([]interface{}, 0, len(source.Tools))
 	for _, tool := range source.Tools {
 		function, _ := tool["function"].(map[string]interface{})
-		converted := cloneStringAnyMap(function)
+		converted := CloneStringAnyMap(function)
 		converted["type"] = "function"
 		tools = append(tools, converted)
 	}
@@ -195,7 +185,7 @@ func canonicalAgentResponsesBody(source *canonicalAgentRequest) map[string]inter
 	return body
 }
 
-func canonicalAgentGeminiBody(source *canonicalAgentRequest) map[string]interface{} {
+func CanonicalAgentGeminiBody(source *CanonicalAgentRequest) map[string]interface{} {
 	contents := make([]interface{}, 0, len(source.Messages))
 	var system []string
 	callNames := map[string]string{}
@@ -206,13 +196,13 @@ func canonicalAgentGeminiBody(source *canonicalAgentRequest) map[string]interfac
 		case stringField(message, "type") == "function_call":
 			id, name := stringField(message, "call_id"), stringField(message, "name")
 			callNames[id] = name
-			part := map[string]interface{}{"functionCall": map[string]interface{}{"id": id, "name": name, "args": canonicalAgentJSONObject(message["arguments"])}}
+			part := map[string]interface{}{"functionCall": map[string]interface{}{"id": id, "name": name, "args": CanonicalAgentJSONObject(message["arguments"])}}
 			if signature := stringField(message, "thoughtSignature"); signature != "" {
 				part["thoughtSignature"] = signature
 			}
 			role, parts = "model", []interface{}{part}
 		case stringField(message, "role") == "system":
-			if text := canonicalAgentText(message["content"]); text != "" {
+			if text := CanonicalAgentText(message["content"]); text != "" {
 				system = append(system, text)
 			}
 			continue
@@ -223,13 +213,13 @@ func canonicalAgentGeminiBody(source *canonicalAgentRequest) map[string]interfac
 				name = "tool_result"
 			}
 			parts = []interface{}{map[string]interface{}{"functionResponse": map[string]interface{}{
-				"id": id, "name": name, "response": map[string]interface{}{"result": canonicalAgentJSONValue(message["content"])},
+				"id": id, "name": name, "response": map[string]interface{}{"result": CanonicalAgentJSONValue(message["content"])},
 			}}}
 		default:
 			if stringField(message, "role") == "assistant" {
 				role = "model"
 			}
-			parts = canonicalAgentContent(message["content"], "gemini")
+			parts = CanonicalAgentContent(message["content"], "gemini")
 		}
 		contents = append(contents, map[string]interface{}{"role": role, "parts": parts})
 	}
@@ -241,7 +231,7 @@ func canonicalAgentGeminiBody(source *canonicalAgentRequest) map[string]interfac
 		declarations := make([]interface{}, 0, len(source.Tools))
 		for _, tool := range source.Tools {
 			function, _ := tool["function"].(map[string]interface{})
-			declaration := cloneStringAnyMap(function)
+			declaration := CloneStringAnyMap(function)
 			delete(declaration, "strict")
 			declarations = append(declarations, declaration)
 		}
@@ -257,7 +247,7 @@ func canonicalAgentGeminiBody(source *canonicalAgentRequest) map[string]interfac
 	return body
 }
 
-func canonicalAgentContent(content interface{}, format string) interface{} {
+func CanonicalAgentContent(content interface{}, format string) interface{} {
 	items, array := content.([]interface{})
 	if !array {
 		if content == nil {
@@ -289,7 +279,7 @@ func canonicalAgentContent(content interface{}, format string) interface{} {
 		if kind == "image_url" {
 			mimeType = "image/png"
 		}
-		inlineMIME, inlineData, inline := canonicalAgentDataURL(url)
+		inlineMIME, inlineData, inline := CanonicalAgentDataURL(url)
 		var part map[string]interface{}
 		switch format {
 		case "responses":
@@ -337,7 +327,7 @@ func canonicalAgentContent(content interface{}, format string) interface{} {
 	return result
 }
 
-func canonicalAgentDataURL(value string) (string, string, bool) {
+func CanonicalAgentDataURL(value string) (string, string, bool) {
 	if !strings.HasPrefix(value, "data:") {
 		return "", "", false
 	}
@@ -345,7 +335,7 @@ func canonicalAgentDataURL(value string) (string, string, bool) {
 	return mimeType, data, ok && mimeType != "" && data != ""
 }
 
-func validateCanonicalAgentContent(content interface{}) error {
+func ValidateCanonicalAgentContent(content interface{}) error {
 	if _, ok := content.(string); ok {
 		return nil
 	}
@@ -375,7 +365,7 @@ func validateCanonicalAgentContent(content interface{}) error {
 	return nil
 }
 
-func canonicalAgentJSONValue(value interface{}) interface{} {
+func CanonicalAgentJSONValue(value interface{}) interface{} {
 	if raw, ok := value.(string); ok {
 		var parsed interface{}
 		if json.Unmarshal([]byte(raw), &parsed) == nil {
@@ -385,7 +375,7 @@ func canonicalAgentJSONValue(value interface{}) interface{} {
 	return value
 }
 
-func canonicalAgentToolCalls(value interface{}) []map[string]interface{} {
+func CanonicalAgentToolCalls(value interface{}) []map[string]interface{} {
 	raw, err := json.Marshal(value)
 	if err != nil {
 		return nil
@@ -397,14 +387,14 @@ func canonicalAgentToolCalls(value interface{}) []map[string]interface{} {
 	return calls
 }
 
-func canonicalAgentJSONObject(value interface{}) map[string]interface{} {
-	if parsed, ok := canonicalAgentJSONValue(value).(map[string]interface{}); ok {
+func CanonicalAgentJSONObject(value interface{}) map[string]interface{} {
+	if parsed, ok := CanonicalAgentJSONValue(value).(map[string]interface{}); ok {
 		return parsed
 	}
 	return map[string]interface{}{}
 }
 
-func canonicalAgentText(content interface{}) string {
+func CanonicalAgentText(content interface{}) string {
 	if text, ok := content.(string); ok {
 		return text
 	}

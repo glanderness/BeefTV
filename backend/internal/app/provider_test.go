@@ -27,7 +27,7 @@ func TestNativeArkPluginPreservesInlineAssetsCountsAndAutomaticDuration(t *testi
 	for _, name := range []string{"volcengine-ark-video", "volcengine-ark-agent-plan-video"} {
 		input := canvasGenerationInput{Config: providerConfig{InterfaceType: name, Model: "doubao-seedance-2-5-260528", VideoSeconds: "-1"}, Prompt: "test"}
 		policy := providerMediaHydrationPolicyFor(context.Background(), input)
-		if policy.requireURL {
+		if policy.RequireURL {
 			t.Fatalf("%s requires public URL", name)
 		}
 		input.ReferenceAudios = []providerMedia{{URL: "data:audio/wav;base64,AAAA", DurationMs: 2000}, {URL: "asset://voice", DurationMs: 2000}}
@@ -74,19 +74,19 @@ func officialVideoCreateBody(t *testing.T, input canvasGenerationInput) map[stri
 
 func TestProviderMediaHydrationPolicyPrefersObjectURLs(t *testing.T) {
 	prefer := providerMediaHydrationPolicyFor(context.Background(), canvasGenerationInput{Config: providerConfig{InterfaceType: string(model.ChannelInterfaceGrokImage)}})
-	if prefer.requireURL || !prefer.preferURL {
+	if prefer.RequireURL || !prefer.PreferURL {
 		t.Fatalf("grok image policy = %#v", prefer)
 	}
 	required := providerMediaHydrationPolicyFor(context.Background(), canvasGenerationInput{Config: providerConfig{InterfaceType: string(model.ChannelInterfaceMiniMaxVideo)}})
-	if !required.requireURL || !required.preferURL {
+	if !required.RequireURL || !required.PreferURL {
 		t.Fatalf("minimax policy = %#v", required)
 	}
 	bytesOnly := providerMediaHydrationPolicyFor(context.Background(), canvasGenerationInput{Config: providerConfig{InterfaceType: string(model.ChannelInterfaceGeminiImage)}})
-	if bytesOnly.requireURL || bytesOnly.preferURL {
+	if bytesOnly.RequireURL || bytesOnly.PreferURL {
 		t.Fatalf("gemini image policy = %#v", bytesOnly)
 	}
 	masked := providerMediaHydrationPolicyFor(context.Background(), canvasGenerationInput{Config: providerConfig{InterfaceType: string(model.ChannelInterfaceOpenAIImage)}, Mask: &providerMedia{ID: "mask"}})
-	if masked.requireURL || masked.preferURL {
+	if masked.RequireURL || masked.PreferURL {
 		t.Fatalf("openai mask policy = %#v", masked)
 	}
 	if resourceUsesObjectStorage(&model.Resource{Provider: "aliyun"}) != true {
@@ -819,12 +819,12 @@ data: {"choices":[{"delta":{"content":"执行","tool_calls":[{"index":0,"functio
 data: [DONE]
 
 `
-	parser.consume("text/event-stream", []byte(stream[:47]))
-	parser.consume("text/event-stream", []byte(stream[47:]))
-	parser.flush()
-	result, err := parser.result()
+	parser.Consume("text/event-stream", []byte(stream[:47]))
+	parser.Consume("text/event-stream", []byte(stream[47:]))
+	parser.Flush()
+	result, err := parser.Result()
 	if err != nil {
-		t.Fatalf("streamingAgentParser.result() error = %v", err)
+		t.Fatalf("streamingAgentParser.Result() error = %v", err)
 	}
 	if result["text"] != "准备执行" || deltas.String() != "准备执行" {
 		t.Fatalf("text = %v, deltas = %q", result["text"], deltas.String())
@@ -842,7 +842,7 @@ func TestStreamingAgentParserSeparatesResponsesReasoningFromVisibleText(t *testi
 	parser := newStreamingAgentParser("responses", func(delta string) {
 		deltas.WriteString(delta)
 	})
-	parser.consume("text/event-stream", []byte(`event: response.reasoning_summary_text.delta
+	parser.Consume("text/event-stream", []byte(`event: response.reasoning_summary_text.delta
 data: {"type":"response.reasoning_summary_text.delta","delta":"内部分析"}
 
 event: response.output_text.delta
@@ -852,10 +852,10 @@ event: response.completed
 data: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":"可见回答"}]}]}}
 
 `))
-	parser.flush()
-	result, err := parser.result()
+	parser.Flush()
+	result, err := parser.Result()
 	if err != nil {
-		t.Fatalf("streamingAgentParser.result() error = %v", err)
+		t.Fatalf("streamingAgentParser.Result() error = %v", err)
 	}
 	if result["text"] != "可见回答" || result["reasoning"] != "内部分析" || deltas.String() != "可见回答" {
 		t.Fatalf("result = %#v, deltas = %q", result, deltas.String())
@@ -864,15 +864,15 @@ data: {"type":"response.completed","response":{"output":[{"type":"message","cont
 
 func TestStreamingAgentParserWaitsForCompleteClaudeToolJSON(t *testing.T) {
 	parser := newStreamingAgentParser("claude-api", nil)
-	parser.consume("text/event-stream", []byte(`event: content_block_start
+	parser.Consume("text/event-stream", []byte(`event: content_block_start
 data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call-2","name":"canvas_get_state","input":{}}}
 
 event: content_block_delta
 data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"include\":"}}
 
 `))
-	parser.flush()
-	if _, err := parser.result(); err == nil || !strings.Contains(err.Error(), "完整 JSON") {
+	parser.Flush()
+	if _, err := parser.Result(); err == nil || !strings.Contains(err.Error(), "完整 JSON") {
 		t.Fatalf("incomplete tool arguments error = %v", err)
 	}
 }

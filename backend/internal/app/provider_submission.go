@@ -2,37 +2,17 @@ package app
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 )
 
 type providerSubmissionKeyContext struct{}
 
-// A lost receipt is not a rejected generation. Only gateways with a verified
-// idempotency contract may replay creation with the SAME durable attempt key.
-type providerSubmissionUnknownError struct{ Cause error }
-
-func (e providerSubmissionUnknownError) Error() string {
-	return fmt.Sprintf("提交结果尚未确认：%v", e.Cause)
-}
-func (e providerSubmissionUnknownError) Unwrap() error { return e.Cause }
-
 func uncertainVideoSubmission(ctx context.Context, err error) error {
-	if err == nil || errors.Is(err, context.Canceled) || safeRouteRejection(err) {
-		return err
-	}
-	var circuit providerCircuitOpenError
-	if errors.As(err, &circuit) {
-		return err
-	}
-	if retry, _ := retryableVideoPollError(context.Background(), err); retry {
-		return providerSubmissionUnknownError{Cause: err}
-	}
-	return err
+	return generation.UncertainVideoSubmission(ctx, err)
 }
 
 func withProviderSubmissionKey(ctx context.Context, attempt *model.RouteAttempt) context.Context {
@@ -43,7 +23,8 @@ func withProviderSubmissionKey(ctx context.Context, attempt *model.RouteAttempt)
 	// explicitly new user retry or a safely rejected route gets a new attempt.
 	key := uuid.NewSHA1(uuid.NameSpaceOID, []byte(attempt.TaskID+":"+attempt.ID)).String()
 	ctx = context.WithValue(ctx, imageAttemptContext{}, attempt.ID)
-	return context.WithValue(ctx, providerSubmissionKeyContext{}, key)
+	ctx = context.WithValue(ctx, providerSubmissionKeyContext{}, key)
+	return generation.WithSubmissionKey(ctx, key)
 }
 
 func (s *Service) createDirectTaskAttempt(task *model.Task) (*model.RouteAttempt, error) {

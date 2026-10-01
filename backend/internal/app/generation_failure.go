@@ -15,29 +15,6 @@ func classifyTaskFailure(err error) generation.Failure {
 	if err == nil {
 		return generation.ClassifyError(nil)
 	}
-	var httpErr providerHTTPError
-	if errors.As(err, &httpErr) {
-		failure := classifyProviderHTTP(httpErr)
-		return applyAppFailureWrappers(err, failure)
-	}
-	var payload providerPayloadError
-	if errors.As(err, &payload) {
-		failure := generation.ClassifyText(firstNonEmpty(payload.raw, payload.message))
-		return applyAppFailureWrappers(err, failure)
-	}
-	var decode providerResponseDecodeError
-	if errors.As(err, &decode) {
-		failure := generation.ClassifyError(decode.Err)
-		if failure.Category == generation.CategoryUnknown {
-			failure = generation.ClassifyText(decode.Error())
-		}
-		if failure.Category == generation.CategoryUnknown {
-			failure.Category = generation.CategoryMalformedResponse
-			failure.Reason = ""
-			failure.Action = ""
-		}
-		return applyAppFailureWrappers(err, failure)
-	}
 	return applyAppFailureWrappers(err, generation.ClassifyError(err))
 }
 

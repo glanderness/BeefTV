@@ -1,4 +1,4 @@
-package app
+package generation
 
 import (
 	"context"
@@ -11,18 +11,34 @@ import (
 	"infinite-canvas/backend/internal/providerpreset"
 )
 
-func isPublicMediaURL(value string) bool {
+// BeefAPIVideoBaseURLForTest lets httptest exercise the built-in BeefAPI
+// Seedance path without spoofing enterprise.beefapi.com.
+var BeefAPIVideoBaseURLForTest string
+
+// BeefAPIVideoBaseURLForTestHook lets the app test helper share its local override.
+var BeefAPIVideoBaseURLForTestHook func() string
+
+func beefAPITestBaseURL() string {
+	if BeefAPIVideoBaseURLForTestHook != nil {
+		if value := strings.TrimSpace(BeefAPIVideoBaseURLForTestHook()); value != "" {
+			return value
+		}
+	}
+	return strings.TrimSpace(BeefAPIVideoBaseURLForTest)
+}
+
+func IsPublicMediaURL(value string) bool {
 	lower := strings.ToLower(value)
 	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
 }
 
-func isSeedanceVideoConfig(config providerConfig) bool {
+func IsSeedanceVideoConfig(config Config) bool {
 	modelName := strings.ToLower(config.Model)
-	return strings.Contains(modelName, "seedance") || strings.Contains(modelName, "doubao-seedance") || isArkPlanVideoConfig(config)
+	return strings.Contains(modelName, "seedance") || strings.Contains(modelName, "doubao-seedance") || IsArkPlanVideoConfig(config)
 }
 
-func isBeefAPIVideoConfig(config providerConfig) bool {
-	if testBase := strings.TrimSpace(beefAPIVideoBaseURLForTest); testBase != "" {
+func IsBeefAPIVideoConfig(config Config) bool {
+	if testBase := beefAPITestBaseURL(); testBase != "" {
 		got := strings.TrimRight(strings.TrimSpace(config.BaseURL), "/")
 		want := strings.TrimRight(testBase, "/")
 		return got == want || strings.HasPrefix(got, want+"/")
@@ -30,15 +46,15 @@ func isBeefAPIVideoConfig(config providerConfig) bool {
 	return providerpreset.IsBeefAPIEndpoint(config.BaseURL)
 }
 
-func isBeefAPISeedancePreuploadConfig(config providerConfig) bool {
-	return isBeefAPIVideoConfig(config) && isSeedanceVideoConfig(config)
+func IsBeefAPISeedancePreuploadConfig(config Config) bool {
+	return IsBeefAPIVideoConfig(config) && IsSeedanceVideoConfig(config)
 }
 
-func isGrokVideoConfig(config providerConfig) bool {
+func IsGrokVideoConfig(config Config) bool {
 	return strings.Contains(strings.ToLower(strings.TrimSpace(config.Model)), "grok")
 }
 
-func isArkPlanVideoConfig(config providerConfig) bool {
+func IsArkPlanVideoConfig(config Config) bool {
 	if !strings.Contains(strings.ToLower(config.BaseURL), "/api/plan/v3") {
 		return false
 	}
@@ -50,7 +66,7 @@ func isArkPlanVideoConfig(config providerConfig) bool {
 	return true
 }
 
-func normalizeImageQuality(value string) string {
+func NormalizeImageQuality(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "1k":
 		return "low"
@@ -63,7 +79,7 @@ func normalizeImageQuality(value string) string {
 	}
 }
 
-func imageParameterSupported(profile *ImageCapabilityConfig, parameter string) bool {
+func ImageParameterSupported(profile *ImageCapabilityConfig, parameter string) bool {
 	if profile == nil {
 		return true
 	}
@@ -73,17 +89,17 @@ func imageParameterSupported(profile *ImageCapabilityConfig, parameter string) b
 	return profile.OutputFormat.Supported
 }
 
-func imageQualitySupported(profile *ImageCapabilityConfig) bool {
+func ImageQualitySupported(profile *ImageCapabilityConfig) bool {
 	return profile == nil || profile.Quality.Supported
 }
 
-func imageTransparentBackgroundSupported(profile *ImageCapabilityConfig) bool {
+func ImageTransparentBackgroundSupported(profile *ImageCapabilityConfig) bool {
 	return profile == nil || profile.TransparentBackground.Supported
 }
 
-func imageSizeParameter(profile *ImageCapabilityConfig, value string) (string, string) {
+func ImageSizeParameter(profile *ImageCapabilityConfig, value string) (string, string) {
 	if profile == nil {
-		return "size", normalizePixelSize(value)
+		return "size", NormalizePixelSize(value)
 	}
 	value = strings.TrimSpace(value)
 	if strings.EqualFold(value, "auto") {
@@ -94,15 +110,15 @@ func imageSizeParameter(profile *ImageCapabilityConfig, value string) (string, s
 	}
 	switch profile.Size.Parameter {
 	case "size":
-		return "size", normalizePixelSize(value)
+		return "size", NormalizePixelSize(value)
 	case "aspect_ratio":
-		return "aspect_ratio", normalizeImageAspectRatio(value)
+		return "aspect_ratio", NormalizeImageAspectRatio(value)
 	default:
 		return "", ""
 	}
 }
 
-func normalizeImageAspectRatio(value string) string {
+func NormalizeImageAspectRatio(value string) string {
 	value = strings.TrimSpace(strings.ToLower(strings.ReplaceAll(value, "×", "x")))
 	if strings.Contains(value, ":") {
 		return value
@@ -116,11 +132,11 @@ func normalizeImageAspectRatio(value string) string {
 	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
 		return ""
 	}
-	divisor := imageDimensionGCD(width, height)
+	divisor := ImageDimensionGCD(width, height)
 	return strconv.Itoa(width/divisor) + ":" + strconv.Itoa(height/divisor)
 }
 
-func imageDimensionGCD(left int, right int) int {
+func ImageDimensionGCD(left int, right int) int {
 	for right != 0 {
 		left, right = right, left%right
 	}
@@ -130,7 +146,7 @@ func imageDimensionGCD(left int, right int) int {
 	return left
 }
 
-func normalizePixelSize(value string) string {
+func NormalizePixelSize(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" || value == "auto" {
 		return ""
@@ -160,7 +176,7 @@ func normalizePixelSize(value string) string {
 	return ""
 }
 
-func normalizeVideoSize(value string) string {
+func NormalizeVideoSize(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" || value == "auto" {
 		return ""
@@ -174,11 +190,11 @@ func normalizeVideoSize(value string) string {
 	return "1280x720"
 }
 
-func normalizeVideoResolution(value string) string {
+func NormalizeVideoResolution(value string) string {
 	return modelcatalog.NormalizeVideoResolution(value)
 }
 
-func normalizeSeedanceDuration(value string) int {
+func NormalizeSeedanceDuration(value string) int {
 	if strings.TrimSpace(value) == "-1" {
 		return -1
 	}
@@ -189,11 +205,11 @@ func normalizeSeedanceDuration(value string) int {
 	return seconds
 }
 
-func normalizeSeedanceVideosDuration(value string) int {
-	return normalizeSeedanceDuration(value)
+func NormalizeSeedanceVideosDuration(value string) int {
+	return NormalizeSeedanceDuration(value)
 }
 
-func normalizeSeedanceRatio(value string) string {
+func NormalizeSeedanceRatio(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" || value == "auto" || value == "adaptive" {
 		return "adaptive"
@@ -206,11 +222,11 @@ func normalizeSeedanceRatio(value string) string {
 	}
 }
 
-func normalizeSeedanceVideosRatio(value string) string {
-	return normalizeSeedanceRatio(value)
+func NormalizeSeedanceVideosRatio(value string) string {
+	return NormalizeSeedanceRatio(value)
 }
 
-func normalizeSeedanceResolution(value string, _ string) string {
+func NormalizeSeedanceResolution(value string, _ string) string {
 	trimmed := strings.TrimSpace(value)
 	lower := strings.ToLower(trimmed)
 	if isAutomaticVideoResolution(trimmed) {
@@ -232,7 +248,7 @@ func normalizeSeedanceResolution(value string, _ string) string {
 	return trimmed
 }
 
-func parseBool(value string, fallback bool) bool {
+func ParseBool(value string, fallback bool) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "true":
 		return true
@@ -243,7 +259,7 @@ func parseBool(value string, fallback bool) bool {
 	}
 }
 
-func parseFloat(value string, fallback float64) float64 {
+func ParseFloat(value string, fallback float64) float64 {
 	number, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
 	if err != nil || number == 0 {
 		return fallback
@@ -251,7 +267,7 @@ func parseFloat(value string, fallback float64) float64 {
 	return number
 }
 
-func sleepContext(ctx context.Context, duration time.Duration) error {
+func SleepContext(ctx context.Context, duration time.Duration) error {
 	timer := time.NewTimer(duration)
 	defer timer.Stop()
 	select {

@@ -425,6 +425,27 @@ func ClassifyError(err error) Failure {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return normalizeFailure(Failure{Category: CategoryTimeout, Uncertain: true, Reason: "模型服务响应超时，请求可能仍在执行", Action: "请先查询原任务，不要立即重新提交"})
 	}
+	var circuit CircuitOpenError
+	if errors.As(err, &circuit) {
+		return CircuitOpenFailure()
+	}
+	var decode ResponseDecodeError
+	if errors.As(err, &decode) {
+		failure := ClassifyError(decode.Err)
+		if failure.Category == CategoryUnknown {
+			failure = ClassifyText(decode.Error())
+		}
+		if failure.Category == CategoryUnknown {
+			failure.Category = CategoryMalformedResponse
+			failure.Reason = ""
+			failure.Action = ""
+		}
+		return normalizeFailure(failure)
+	}
+	var unknown SubmissionUnknownError
+	if errors.As(err, &unknown) {
+		return normalizeFailure(Failure{Category: CategorySubmissionUncertain, Uncertain: true, Retryable: false})
+	}
 	var pending StatePendingError
 	if errors.As(err, &pending) {
 		failure := classifyHTTPErrorCause(pending.Cause)

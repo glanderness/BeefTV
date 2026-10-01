@@ -1,4 +1,4 @@
-package app
+package generation
 
 // 音频生成。
 
@@ -16,9 +16,9 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
-func runAudioTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
-	if _, ok := declarativeProtocolAdapterForContext(ctx, input.Config.InterfaceType); ok {
-		return runDeclarativeProtocolTask(ctx, input)
+func RunAudioTask(ctx context.Context, input Input) (map[string]interface{}, error) {
+	if _, ok := DeclarativeProtocolAdapterForContext(ctx, input.Config.InterfaceType); ok {
+		return RunDeclarativeProtocolTask(ctx, input)
 	}
 	if resolved, ok := input.Metadata["resolvedCharacterVersions"].([]interface{}); ok && len(resolved) > 0 {
 		voiceKey := metadataString(input.Metadata, "resolvedCharacterVoiceKey")
@@ -33,37 +33,37 @@ func runAudioTask(ctx context.Context, input canvasGenerationInput) (map[string]
 		"response_format": format,
 		"speed":           1,
 	}
-	if voice := resolvedAudioSpeechVoice(input.Config.Model, input.Config.AudioVoice); voice != "" {
+	if voice := ResolvedAudioSpeechVoice(input.Config.Model, input.Config.AudioVoice); voice != "" {
 		body["voice"] = voice
 	}
 	if input.Config.AudioSpeed != "" {
-		body["speed"] = parseFloat(input.Config.AudioSpeed, 1)
+		body["speed"] = ParseFloat(input.Config.AudioSpeed, 1)
 	}
 	if input.Config.AudioInstructions != "" {
 		body["instructions"] = input.Config.AudioInstructions
 	}
 	if input.Config.InterfaceType == string(model.ChannelInterfaceAsyncAudio) {
-		return runAsyncAudioTask(ctx, input, body, format)
+		return RunAsyncAudioTask(ctx, input, body, format)
 	}
-	data, mimeType, err := postBinary(ctx, input.Config, "/audio/speech", body)
+	data, mimeType, err := PostBinary(ctx, input.Config, "/audio/speech", body)
 	if err != nil {
 		return nil, err
 	}
-	mimeType, err = validateGeneratedAudio(mimeType, data, format)
+	mimeType, err = ValidateGeneratedAudio(mimeType, data, format)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{"mode": "audio", "audio": map[string]interface{}{"dataUrl": dataURL(mimeType, data), "mimeType": mimeType, "format": format}}, nil
+	return map[string]interface{}{"mode": "audio", "audio": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType, "format": format}}, nil
 }
 
-func runAsyncAudioTask(ctx context.Context, input canvasGenerationInput, body map[string]interface{}, format string) (map[string]interface{}, error) {
-	id := resumedProviderRequestID(ctx)
+func RunAsyncAudioTask(ctx context.Context, input Input, body map[string]interface{}, format string) (map[string]interface{}, error) {
+	id := ResumedProviderRequestID(ctx)
 	var state map[string]interface{}
 	if id == "" {
-		if err := postJSON(ctx, input.Config, "/audio/tasks", body, &state); err != nil {
+		if err := PostJSON(ctx, input.Config, "/audio/tasks", body, &state); err != nil {
 			return nil, err
 		}
-		state = asyncAudioPayload(state)
+		state = AsyncAudioPayload(state)
 		extracted, err := firstJSONString(state, "id", "task_id", "request_id")
 		if err != nil {
 			return nil, fmt.Errorf("异步音频接口任务 ID 无效：%w", err)
@@ -72,32 +72,32 @@ func runAsyncAudioTask(ctx context.Context, input canvasGenerationInput, body ma
 		if id == "" {
 			return nil, errors.New("异步音频接口没有返回任务 ID")
 		}
-		if asyncAudioSucceeded(state) {
-			return asyncAudioResult(ctx, input.Config, id, state, format)
+		if AsyncAudioSucceeded(state) {
+			return AsyncAudioResult(ctx, input.Config, id, state, format)
 		}
 	}
-	for deadline := providerPollingDeadline(ctx); time.Now().Before(deadline); {
+	for deadline := PollingDeadline(ctx); time.Now().Before(deadline); {
 		state = map[string]interface{}{}
-		pollCtx := withProviderRequestKind(ctx, "poll")
-		if err := getJSON(pollCtx, input.Config, "/audio/tasks/"+url.PathEscape(id), &state); err != nil {
+		pollCtx := WithRequestKind(ctx, "poll")
+		if err := GetJSON(pollCtx, input.Config, "/audio/tasks/"+url.PathEscape(id), &state); err != nil {
 			return nil, err
 		}
-		state = asyncAudioPayload(state)
-		if asyncAudioSucceeded(state) {
-			return asyncAudioResult(ctx, input.Config, id, state, format)
+		state = AsyncAudioPayload(state)
+		if AsyncAudioSucceeded(state) {
+			return AsyncAudioResult(ctx, input.Config, id, state, format)
 		}
 		status := strings.ToLower(strings.TrimSpace(stringField(state, "status")))
 		if status == "failed" || status == "cancelled" || status == "canceled" || status == "expired" || status == "error" {
-			return nil, fmt.Errorf("异步音频生成失败（任务 %s）：%s", id, asyncAudioErrorMessage(state))
+			return nil, fmt.Errorf("异步音频生成失败（任务 %s）：%s", id, AsyncAudioErrorMessage(state))
 		}
-		if err := sleepContext(ctx, 2500*time.Millisecond); err != nil {
+		if err := SleepContext(ctx, 2500*time.Millisecond); err != nil {
 			return nil, err
 		}
 	}
 	return nil, fmt.Errorf("异步音频生成超时（任务 %s）", id)
 }
 
-func asyncAudioPayload(payload map[string]interface{}) map[string]interface{} {
+func AsyncAudioPayload(payload map[string]interface{}) map[string]interface{} {
 	for _, key := range []string{"data", "result", "output"} {
 		if nested, ok := payload[key].(map[string]interface{}); ok {
 			for parentKey, parentValue := range payload {
@@ -114,51 +114,51 @@ func asyncAudioPayload(payload map[string]interface{}) map[string]interface{} {
 	return payload
 }
 
-func asyncAudioSucceeded(state map[string]interface{}) bool {
+func AsyncAudioSucceeded(state map[string]interface{}) bool {
 	status := strings.ToLower(strings.TrimSpace(stringField(state, "status")))
 	done, _ := state["done"].(bool)
-	return done || status == "completed" || status == "succeeded" || status == "success" || status == "done" || (status == "" && asyncAudioResultURL(state) != "")
+	return done || status == "completed" || status == "succeeded" || status == "success" || status == "done" || (status == "" && AsyncAudioResultURL(state) != "")
 }
 
-func asyncAudioResult(ctx context.Context, config providerConfig, id string, state map[string]interface{}, format string) (map[string]interface{}, error) {
-	resultURL := asyncAudioResultURL(state)
+func AsyncAudioResult(ctx context.Context, config Config, id string, state map[string]interface{}, format string) (map[string]interface{}, error) {
+	resultURL := AsyncAudioResultURL(state)
 	var data []byte
 	var mimeType string
 	var err error
 	if strings.HasPrefix(resultURL, "data:") {
-		mimeType, data, err = decodeProviderDataURL(resultURL)
+		mimeType, data, err = DecodeProviderDataURL(resultURL)
 		if err == nil {
-			limit, limitErr := providerGeneratedFileLimit(ctx)
+			limit, limitErr := GeneratedFileLimit(ctx)
 			if limitErr != nil {
 				err = limitErr
 			} else if int64(len(data)) > limit {
 				err = fmt.Errorf("异步音频结果超过 %s 限制", formatStorageLimit(limit))
 			}
 		}
-	} else if isPublicMediaURL(resultURL) {
-		data, mimeType, err = getExternalBinary(withProviderRequestKind(ctx, "download"), resultURL)
+	} else if IsPublicMediaURL(resultURL) {
+		data, mimeType, err = GetExternalBinary(WithRequestKind(ctx, "download"), resultURL)
 	} else {
-		data, mimeType, err = getBinary(withProviderRequestKind(ctx, "download"), config, "/audio/tasks/"+url.PathEscape(id)+"/content")
+		data, mimeType, err = GetBinary(WithRequestKind(ctx, "download"), config, "/audio/tasks/"+url.PathEscape(id)+"/content")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("异步音频结果下载失败（任务 %s）：%w", id, err)
 	}
-	mimeType, err = validateGeneratedAudio(mimeType, data, format)
+	mimeType, err = ValidateGeneratedAudio(mimeType, data, format)
 	if err != nil {
 		return nil, fmt.Errorf("异步音频结果无效（任务 %s）：%w", id, err)
 	}
-	return map[string]interface{}{"mode": "audio", "audio": map[string]interface{}{"dataUrl": dataURL(mimeType, data), "mimeType": mimeType, "format": format}}, nil
+	return map[string]interface{}{"mode": "audio", "audio": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType, "format": format}}, nil
 }
 
-func asyncAudioResultURL(state map[string]interface{}) string {
+func AsyncAudioResultURL(state map[string]interface{}) string {
 	for _, key := range []string{"audio_url", "audioUrl", "result_url", "resultUrl", "output_url", "outputUrl", "url", "data"} {
-		if value := strings.TrimSpace(stringField(state, key)); strings.HasPrefix(value, "data:") || isPublicMediaURL(value) {
+		if value := strings.TrimSpace(stringField(state, key)); strings.HasPrefix(value, "data:") || IsPublicMediaURL(value) {
 			return value
 		}
 	}
 	for _, key := range []string{"audio", "data", "result", "output"} {
 		if nested, ok := state[key].(map[string]interface{}); ok {
-			if value := asyncAudioResultURL(nested); value != "" {
+			if value := AsyncAudioResultURL(nested); value != "" {
 				return value
 			}
 		}
@@ -166,12 +166,12 @@ func asyncAudioResultURL(state map[string]interface{}) string {
 	return ""
 }
 
-func asyncAudioErrorMessage(state map[string]interface{}) string {
-	_, message := providerFailureDetails(state)
-	return defaultString(message, firstNonEmptyString(stringField(state, "message"), "上游返回失败状态"))
+func AsyncAudioErrorMessage(state map[string]interface{}) string {
+	_, message := FailureDetails(state)
+	return defaultString(message, firstNonEmpty(stringField(state, "message"), "上游返回失败状态"))
 }
 
-func decodeProviderDataURL(value string) (string, []byte, error) {
+func DecodeProviderDataURL(value string) (string, []byte, error) {
 	header, encoded, ok := strings.Cut(value, ",")
 	if !ok || !strings.HasPrefix(header, "data:") || !strings.HasSuffix(strings.ToLower(header), ";base64") {
 		return "", nil, errors.New("data URL 格式无效")
@@ -181,20 +181,7 @@ func decodeProviderDataURL(value string) (string, []byte, error) {
 	return mimeType, data, err
 }
 
-func providerGeneratedFileLimit(ctx context.Context) (int64, error) {
-	metadata, ok := ctx.Value(providerAnalyticsKey{}).(providerAnalyticsContext)
-	service := providerService(metadata)
-	if !ok || service == nil {
-		return maxProviderResponseBytes, nil
-	}
-	policy, err := service.RuntimePolicy()
-	if err != nil {
-		return 0, fmt.Errorf("读取生成资源限制失败：%w", err)
-	}
-	return megabytes(policy.Resource.GeneratedFileMB), nil
-}
-
-func validateGeneratedAudio(declared string, data []byte, format string) (string, error) {
+func ValidateGeneratedAudio(declared string, data []byte, format string) (string, error) {
 	if len(data) == 0 {
 		return "", errors.New("音频内容为空")
 	}
@@ -208,19 +195,19 @@ func validateGeneratedAudio(declared string, data []byte, format string) (string
 		resolved = mimeType
 	} else if strings.HasPrefix(detected, "audio/") {
 		resolved = detected
-	} else if fallback := audioFormatMimeType(format); fallback != "" && (mimeType == "" || mimeType == "application/octet-stream") {
+	} else if fallback := AudioFormatMimeType(format); fallback != "" && (mimeType == "" || mimeType == "application/octet-stream") {
 		resolved = fallback
 	}
 	if resolved == "" {
 		return "", fmt.Errorf("上游响应类型不是音频：%s", defaultString(mimeType, detected))
 	}
-	if !audioSignatureMatches(resolved, data) {
+	if !AudioSignatureMatches(resolved, data) {
 		return "", fmt.Errorf("音频内容与格式不匹配：%s", resolved)
 	}
 	return resolved, nil
 }
 
-func audioSignatureMatches(mimeType string, data []byte) bool {
+func AudioSignatureMatches(mimeType string, data []byte) bool {
 	if strings.Contains(mimeType, "pcm") || mimeType == "audio/l16" {
 		return len(data) > 0
 	}
@@ -242,7 +229,7 @@ func audioSignatureMatches(mimeType string, data []byte) bool {
 	return false
 }
 
-func resolvedAudioSpeechVoice(model, voice string) string {
+func ResolvedAudioSpeechVoice(model, voice string) string {
 	id := strings.ToLower(strings.TrimSpace(model))
 	if index := strings.LastIndex(id, "::"); index >= 0 {
 		id = id[index+2:]
@@ -252,7 +239,7 @@ func resolvedAudioSpeechVoice(model, voice string) string {
 		return ""
 	}
 	if strings.Contains(id, "minimax-speech") {
-		if trimmed == "" || isOpenAISpeechVoice(trimmed) || trimmed == "中文" {
+		if trimmed == "" || IsOpenAISpeechVoice(trimmed) || trimmed == "中文" {
 			return "male-qn-qingse"
 		}
 		return trimmed
@@ -263,7 +250,7 @@ func resolvedAudioSpeechVoice(model, voice string) string {
 	return trimmed
 }
 
-func isOpenAISpeechVoice(voice string) bool {
+func IsOpenAISpeechVoice(voice string) bool {
 	switch strings.ToLower(strings.TrimSpace(voice)) {
 	case "alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer", "verse", "marin", "cedar":
 		return true
@@ -272,7 +259,7 @@ func isOpenAISpeechVoice(voice string) bool {
 	}
 }
 
-func audioFormatMimeType(format string) string {
+func AudioFormatMimeType(format string) string {
 	switch strings.ToLower(strings.TrimSpace(format)) {
 	case "wav":
 		return "audio/wav"

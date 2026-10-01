@@ -9,9 +9,6 @@ import (
 	"infinite-canvas/backend/internal/provider/workflow"
 )
 
-// WorkflowField 是云端工作流字段描述。实现位于 provider/workflow。
-type WorkflowField = workflow.Field
-
 // RunningHubWorkflowFetchRequest 只用于独立工作流设置页，不进入 ModelChannel。
 type RunningHubWorkflowFetchRequest = workflow.FetchRequest
 

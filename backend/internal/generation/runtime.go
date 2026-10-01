@@ -1,0 +1,72 @@
+package generation
+
+import (
+	"context"
+	"strings"
+)
+
+type runtimeKey struct{}
+
+func WithRuntime(ctx context.Context, runtime Runtime) context.Context {
+	return context.WithValue(ctx, runtimeKey{}, runtime)
+}
+
+func RuntimeFromContext(ctx context.Context) (Runtime, bool) {
+	if ctx == nil {
+		return Runtime{}, false
+	}
+	runtime, ok := ctx.Value(runtimeKey{}).(Runtime)
+	return runtime, ok
+}
+
+func WithCallMeta(ctx context.Context, meta CallMeta) context.Context {
+	runtime, _ := RuntimeFromContext(ctx)
+	runtime.Call = meta
+	return WithRuntime(ctx, runtime)
+}
+
+func CallMetaFromContext(ctx context.Context) (CallMeta, bool) {
+	runtime, ok := RuntimeFromContext(ctx)
+	if !ok {
+		return CallMeta{}, false
+	}
+	return runtime.Call, true
+}
+
+func WithRequestKind(ctx context.Context, requestKind string) context.Context {
+	runtime, ok := RuntimeFromContext(ctx)
+	if !ok {
+		return ctx
+	}
+	runtime.Call.RequestKind = requestKind
+	return WithRuntime(ctx, runtime)
+}
+
+func ResumedProviderRequestID(ctx context.Context) string {
+	meta, _ := CallMetaFromContext(ctx)
+	return strings.TrimSpace(meta.ProviderRequestID)
+}
+
+func TaskExecutionID(ctx context.Context) string {
+	meta, _ := CallMetaFromContext(ctx)
+	return strings.TrimSpace(meta.TaskID)
+}
+
+func WithTaskExecutionID(ctx context.Context, taskID string) context.Context {
+	runtime, _ := RuntimeFromContext(ctx)
+	runtime.Call.TaskID = strings.TrimSpace(taskID)
+	return WithRuntime(ctx, runtime)
+}
+
+// WithoutCallAccounting drops circuit, slot, and receipt accounting so nested
+// control-plane calls do not inherit the parent generation request's channel.
+func WithoutCallAccounting(ctx context.Context) context.Context {
+	runtime, ok := RuntimeFromContext(ctx)
+	if !ok {
+		return ctx
+	}
+	runtime.Limits = nil
+	runtime.Receipts = nil
+	runtime.Call = CallMeta{UserID: runtime.Call.UserID, TaskID: runtime.Call.TaskID}
+	return WithRuntime(ctx, runtime)
+}

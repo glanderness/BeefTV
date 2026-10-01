@@ -68,7 +68,7 @@ func TestLocalHydrateRequiredURLRejectsLoopbackResourceURL(t *testing.T) {
 	if err := svc.repo.CreateResource(&resource); err != nil {
 		t.Fatal(err)
 	}
-	err := svc.hydrateProviderMedia("user-1", &providerMedia{StorageKey: "resource:resource-local-url-only"}, providerMediaHydrationPolicy{requireURL: true})
+	err := svc.hydrateProviderMedia("user-1", &providerMedia{StorageKey: "resource:resource-local-url-only"}, providerMediaHydrationPolicy{RequireURL: true})
 	if err == nil || !strings.Contains(err.Error(), "支持内嵌素材") || strings.Contains(err.Error(), "127.0.0.1") {
 		t.Fatalf("local URL-only media error = %v, want a clear local capability error", err)
 	}
@@ -85,7 +85,7 @@ func TestLocalHydrateRejectsLegacyRemoteResourceMetadata(t *testing.T) {
 	if err := svc.repo.CreateResource(&resource); err != nil {
 		t.Fatal(err)
 	}
-	err := svc.hydrateProviderMedia("user-1", &providerMedia{StorageKey: "resource:resource-legacy-oss"}, providerMediaHydrationPolicy{preferURL: true})
+	err := svc.hydrateProviderMedia("user-1", &providerMedia{StorageKey: "resource:resource-legacy-oss"}, providerMediaHydrationPolicy{PreferURL: true})
 	if err == nil || !strings.Contains(err.Error(), "本地工作区") || strings.Contains(err.Error(), "对象存储") {
 		t.Fatalf("legacy remote resource error = %v, want local-only guidance", err)
 	}
@@ -145,7 +145,7 @@ func TestBeefAPILocalAudioWithoutPublicHTTPSUsesDataURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	media := &providerMedia{StorageKey: "resource:beefapi-local-audio", MimeType: "audio/mpeg"}
-	if err := svc.hydrateProviderMedia("user-1", media, providerMediaHydrationPolicy{preferHTTPS: true}); err != nil {
+	if err := svc.hydrateProviderMedia("user-1", media, providerMediaHydrationPolicy{PreferHTTPS: true}); err != nil {
 		t.Fatalf("local audio hydrate error = %v", err)
 	}
 	if !strings.HasPrefix(media.DataURL, "data:audio/mpeg;base64,") {
@@ -414,7 +414,7 @@ func TestLegacyMediaMigrationSkipsInvalidDataURL(t *testing.T) {
 func TestLocalProviderMediaUsesReachableReferenceGuidance(t *testing.T) {
 	svc := &Service{mode: serviceModeLocal, localResourceStorage: true}
 	for _, media := range []providerMedia{{DataURL: "data:video/mp4;base64,AAAA"}, {URL: "data:video/mp4;base64,AAAA"}} {
-		err := svc.hydrateProviderMedia("user-1", &media, providerMediaHydrationPolicy{requireURL: true})
+		err := svc.hydrateProviderMedia("user-1", &media, providerMediaHydrationPolicy{RequireURL: true})
 		if err == nil || !strings.Contains(err.Error(), "HTTPS") || strings.Contains(err.Error(), "本地资源目录") {
 			t.Fatalf("local inline reference error = %v", err)
 		}

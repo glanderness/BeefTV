@@ -12,12 +12,9 @@ import (
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
 	"io"
-	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/providerpreset"
@@ -25,164 +22,9 @@ import (
 	"gorm.io/gorm"
 )
 
-var sseFrameBoundaryPattern = regexp.MustCompile(`\r?\n\r?\n`)
-
-type canvasGenerationInput struct {
-	Mode             string                 `json:"mode"`
-	Prompt           string                 `json:"prompt"`
-	Config           providerConfig         `json:"config"`
-	ReferenceImages  []providerMedia        `json:"referenceImages"`
-	ReferenceVideos  []providerMedia        `json:"referenceVideos"`
-	ReferenceAudios  []providerMedia        `json:"referenceAudios"`
-	TextHistory      []providerTextMessage  `json:"textHistory"`
-	Mask             *providerMedia         `json:"mask"`
-	Metadata         map[string]interface{} `json:"metadata"`
-	AgentRequests    *agentToolRequests     `json:"agentRequests"`
-	TextOptions      canvasTextOptions      `json:"textOptions"`
-	ImageCapability  *ImageCapabilityConfig `json:"-"`
-	StreamText       bool                   `json:"-"` // 分镜请求使用上游 SSE 保活；最终结构仍在流结束后统一校验。
-	MaxOutputTokens  int                    `json:"-"`
-	OnTextDelta      func(string)           `json:"-"`
-	OnReasoningDelta func(string)           `json:"-"`
-	VideoCapability  *VideoCapabilityConfig `json:"-"`
-}
-
-type canvasTextOptions struct {
-	Stream   *bool `json:"stream"`
-	Thinking bool  `json:"thinking"`
-}
-
-type agentToolRequests struct {
-	Canonical      *canonicalAgentRequest `json:"canonical,omitempty"`
-	Responses      map[string]interface{} `json:"responses"`
-	ChatCompletion map[string]interface{} `json:"chatCompletion"`
-	Claude         map[string]interface{} `json:"claude"`
-	Gemini         map[string]interface{} `json:"gemini"`
-}
-
-type providerTextMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type providerConfig struct {
-	ChannelID                string                 `json:"channelId"`
-	ChannelModelKey          string                 `json:"channelModelKey,omitempty"`
-	VariantID                string                 `json:"variantId,omitempty"`
-	ProviderModelKey         string                 `json:"providerModelKey,omitempty"`
-	APIFormat                string                 `json:"apiFormat"`
-	InterfaceType            string                 `json:"interfaceType"`
-	BaseURL                  string                 `json:"baseUrl"`
-	APIKey                   string                 `json:"apiKey"`
-	SecretKey                string                 `json:"secretKey"`
-	Headers                  []OutboundHeader       `json:"headers"`
-	Model                    string                 `json:"model"`
-	Size                     string                 `json:"size"`
-	Quality                  string                 `json:"quality"`
-	TransparentBackground    string                 `json:"transparentBackground"`
-	Count                    string                 `json:"count"`
-	VideoSeconds             string                 `json:"videoSeconds"`
-	VQuality                 string                 `json:"vquality"`
-	VideoGenerateAudio       string                 `json:"videoGenerateAudio"`
-	VideoWatermark           string                 `json:"videoWatermark"`
-	ArkPrivateAssetUpload    string                 `json:"videoArkPrivateAssetUpload"`
-	AudioVoice               string                 `json:"audioVoice"`
-	AudioFormat              string                 `json:"audioFormat"`
-	AudioSpeed               string                 `json:"audioSpeed"`
-	AudioInstructions        string                 `json:"audioInstructions"`
-	SystemPrompt             string                 `json:"systemPrompt"`
-	CapabilityConfig         *ModelCapabilityConfig `json:"capabilityConfig"`
-	VideoCapabilitiesVersion *string                `json:"videoCapabilitiesVersion,omitempty"`
-	WorkflowID               string                 `json:"workflowId"`
-	WebappID                 string                 `json:"webappId"`
-	WorkflowJSON             map[string]interface{} `json:"workflowJson"`
-	WorkflowFields           []WorkflowField        `json:"workflowFields"`
-	RunningHubUseWallet      bool                   `json:"runningHubUseWallet"`
-	RunningHubWalletKey      string                 `json:"runningHubWalletApiKey"`
-	RunningHubUploadKey      string                 `json:"runningHubUploadApiKey"`
-}
-
-const providerHTTPTimeout = 5 * time.Minute
-const videoPollTimeout = time.Hour
-const maxProviderResponseBytes int64 = 64 << 20
-const videoJSONRequestLimitBytes int64 = 64 << 20
-
-var errVideoJSONRequestTooLarge = errors.New("video request body exceeds the 64 MiB request limit; use public media URLs instead of inline base64")
-
 // beefAPIVideoBaseURLForTest lets httptest exercise the built-in BeefAPI
 // Seedance path without spoofing enterprise.beefapi.com.
 var beefAPIVideoBaseURLForTest string
-
-type providerMedia struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	DataURL    string `json:"dataUrl"`
-	URL        string `json:"url"`
-	StorageKey string `json:"storageKey"`
-	MimeType   string `json:"mimeType"`
-	Bytes      int64  `json:"bytes"`
-	Width      int    `json:"width"`
-	Height     int    `json:"height"`
-	DurationMs int64  `json:"durationMs"`
-}
-
-type imageResponse struct {
-	Data  []map[string]interface{} `json:"data"`
-	Error *providerError           `json:"error"`
-	Code  *int                     `json:"code"`
-	Msg   string                   `json:"msg"`
-}
-
-type providerError struct {
-	Message string `json:"message"`
-	Code    any    `json:"code"`
-	Type    string `json:"type"`
-	Param   string `json:"param"`
-}
-
-// providerPayloadError 在进程内保留上游原始原因，供协议兼容分支做机器判断；
-// 对调用方只暴露归类后的稳定文案。Provider 正文可能包含密钥或内部诊断，
-// 禁止原样进入用户错误和日志。
-type providerPayloadError struct {
-	raw     string
-	message string
-}
-
-func (e providerPayloadError) Error() string { return e.message }
-
-type providerHTTPError struct {
-	RequestID           string
-	StatusCode          int
-	Status              string
-	Body                string
-	RetryAfter          time.Duration
-	IdempotencyReplayed bool
-}
-
-type providerResponseDecodeError struct {
-	Err error
-}
-
-func (e providerResponseDecodeError) Error() string { return e.Err.Error() }
-func (e providerResponseDecodeError) Unwrap() error { return e.Err }
-
-type providerCircuitOpenError struct{}
-
-func (providerCircuitOpenError) Error() string {
-	return "当前渠道连续失败，已暂时熔断，请稍后重试"
-}
-
-type providerStatePendingError struct {
-	TaskID string
-	Cause  error
-}
-
-func (e providerStatePendingError) Error() string {
-	return fmt.Sprintf("上游任务状态尚未同步，将继续查询原任务（任务 %s）", e.TaskID)
-}
-
-func (e providerStatePendingError) Unwrap() error { return e.Cause }
 
 type providerAnalyticsKey struct{}
 
@@ -222,7 +64,13 @@ func withProviderAnalytics(ctx context.Context, service *Service, task model.Tas
 			metadata.Capability = normalized
 		}
 	}
-	return context.WithValue(ctx, providerAnalyticsKey{}, metadata)
+	ctx = context.WithValue(ctx, providerAnalyticsKey{}, metadata)
+	if service != nil {
+		ctx = service.bindGenerationRuntime(ctx, generationCallMeta(metadata))
+	} else {
+		ctx = generation.WithRuntime(ctx, generation.Runtime{Call: generationCallMeta(metadata)})
+	}
+	return ctx
 }
 
 func registerProviderService(service *Service) string {
@@ -245,6 +93,9 @@ func providerService(metadata providerAnalyticsContext) *Service {
 }
 
 func resumedProviderRequestID(ctx context.Context) string {
+	if id := generation.ResumedProviderRequestID(ctx); id != "" {
+		return id
+	}
 	metadata, _ := ctx.Value(providerAnalyticsKey{}).(providerAnalyticsContext)
 	return strings.TrimSpace(metadata.ProviderRequestID)
 }
@@ -255,11 +106,12 @@ func withProviderRequestKind(ctx context.Context, requestKind string) context.Co
 		return ctx
 	}
 	metadata.RequestKind = requestKind
-	return context.WithValue(ctx, providerAnalyticsKey{}, metadata)
+	ctx = context.WithValue(ctx, providerAnalyticsKey{}, metadata)
+	return generation.WithRequestKind(ctx, requestKind)
 }
 
-func (e providerHTTPError) Error() string {
-	return classifyProviderHTTP(e).UserMessage()
+func newProviderPayloadError(raw string) providerPayloadError {
+	return generation.NewPayloadError(raw, providerPayloadErrorMessage(raw))
 }
 
 func providerUserFacingErrorMessage(err error) string {
@@ -290,6 +142,7 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 	if err := json.Unmarshal([]byte(rawInput), &input); err != nil {
 		return nil, fmt.Errorf("任务输入解析失败：%w", err)
 	}
+	ctx = s.bindGenerationRuntime(ctx, generation.CallMeta{UserID: userID, TaskID: taskExecutionID(ctx)})
 	if strings.TrimSpace(input.Prompt) == "" {
 		input.Prompt = fallbackPrompt
 	}
@@ -343,7 +196,7 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		}
 		// 工作流参数由工作流字段定义校验，普通模型能力配置不能覆盖它们。
 		if resumedProviderRequestID(ctx) == "" {
-			if err := s.hydrateGenerationMedia(userID, &input, providerMediaHydrationPolicy{}); err != nil {
+			if err := s.hydrateGenerationMediaWithContext(ctx, userID, &input, providerMediaHydrationPolicy{}); err != nil {
 				return nil, err
 			}
 		}
@@ -393,7 +246,7 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 	}
 	if resumedProviderRequestID(ctx) == "" {
 		mediaPolicy := providerMediaHydrationPolicyFor(ctx, input)
-		if err := s.hydrateGenerationMedia(userID, &input, mediaPolicy); err != nil {
+		if err := s.hydrateGenerationMediaWithContext(ctx, userID, &input, mediaPolicy); err != nil {
 			return nil, err
 		}
 		if err := s.prepareArkPrivateAssetReferences(ctx, userID, &input); err != nil {
@@ -408,72 +261,53 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 			return nil, err
 		}
 	}
-	switch input.Mode {
-	case "image":
-		return runImageTask(ctx, input)
-	case "text":
-		if input.AgentRequests != nil {
-			input, err = resolveAgentResourcePlaceholders(input, true)
-			if err != nil {
-				return nil, err
-			}
-			return runAgentToolTask(ctx, input)
+	if input.Mode == "text" && input.AgentRequests != nil {
+		input, err = resolveAgentResourcePlaceholders(input, true)
+		if err != nil {
+			return nil, err
 		}
-		result, taskErr := runTextTask(ctx, input)
-		if taskErr == nil && promptTemplateOperation != "" {
-			taskErr = validatePromptTemplateResult(promptTemplateOperation, result)
-		}
-		return result, taskErr
-	case "video":
-		return runVideoTask(ctx, input)
-	case "audio":
-		return runAudioTask(ctx, input)
-	default:
-		return nil, fmt.Errorf("不支持的生成模式：%s", input.Mode)
 	}
-}
-
-type providerMediaHydrationPolicy struct {
-	requireURL  bool
-	preferURL   bool
-	preferHTTPS bool
-	keepLocal   bool
+	result, taskErr := generation.Execute(ctx, input)
+	if taskErr == nil && input.Mode == "text" && promptTemplateOperation != "" {
+		taskErr = validatePromptTemplateResult(promptTemplateOperation, result)
+	}
+	return result, taskErr
 }
 
 func providerMediaHydrationPolicyFor(ctx context.Context, input canvasGenerationInput) providerMediaHydrationPolicy {
-	policy := providerMediaHydrationPolicy{preferURL: providerPrefersMediaURLs(input.Config.InterfaceType, input)}
+	policy := providerMediaHydrationPolicy{PreferURL: providerPrefersMediaURLs(input.Config.InterfaceType, input)}
 	if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(input.Config.InterfaceType)) {
-		return providerMediaHydrationPolicy{preferHTTPS: true}
+		return providerMediaHydrationPolicy{PreferHTTPS: true}
 	}
 	// Prefer an existing HTTPS resource address when the workspace already has
 	// a public base. Built-in BeefAPI Seedance keeps local files on disk until
 	// the shared preupload path rewrites them to short-lived HTTPS URLs.
 	if isBeefAPIVideoConfig(input.Config) {
 		if contract, ok := providerpreset.BeefAPIVideoContract(input.Config.Model); ok && contract.InlineMedia && (contract.Protocol == input.Config.InterfaceType || isSeedanceVideoConfig(input.Config)) {
-			return providerMediaHydrationPolicy{preferHTTPS: true, keepLocal: isBeefAPISeedancePreuploadConfig(input.Config)}
+			return providerMediaHydrationPolicy{PreferHTTPS: true, KeepLocal: isBeefAPISeedancePreuploadConfig(input.Config)}
 		}
 	}
 	// The channel-1 NewAPI profile also accepts data URLs in its media field.
 	// Keep desktop/local workspaces usable without requiring a public object URL;
 	// remote-resource channels remain URL-only below.
 	if strings.TrimSpace(input.Config.InterfaceType) == string(model.ChannelInterfaceNewAPIChannel1) {
-		policy.requireURL = false
-		policy.preferURL = false
+		policy.RequireURL = false
+		policy.PreferURL = false
 		return policy
 	}
 	switch strings.TrimSpace(input.Config.InterfaceType) {
 	case string(model.ChannelInterfaceNewAPIVideo), string(model.ChannelInterfaceNewAPIChannel1), string(model.ChannelInterfaceNewAPIChannel2), string(model.ChannelInterfaceVolcengineArkVideo), string(model.ChannelInterfaceVolcengineArkAgentPlanVideo), string(model.ChannelInterfaceMiniMaxVideo):
-		policy.requireURL = true
-		policy.preferURL = true
+		policy.RequireURL = true
+		policy.PreferURL = true
 	}
 	if adapter, ok := protocolAdapterForContext(ctx, input.Config.InterfaceType); ok {
 		// Installed declarations override legacy protocol-name guesses.
-		policy.requireURL = adapter.Metadata().RequiresPublicMediaURLs
-		policy.preferURL = policy.preferURL || policy.requireURL
+		policy.RequireURL = adapter.Metadata().RequiresPublicMediaURLs
+		policy.PreferURL = policy.PreferURL || policy.RequireURL
 	}
 	if input.Mask != nil {
-		policy.requireURL = false
-		policy.preferURL = false
+		policy.RequireURL = false
+		policy.PreferURL = false
 	}
 	return policy
 }
@@ -822,121 +656,17 @@ func applySeedance2VideoProbe(config providerConfig, index int, media *providerM
 }
 
 func (s *Service) hydrateGenerationMedia(userID string, input *canvasGenerationInput, policy providerMediaHydrationPolicy) error {
-	groups := [][]providerMedia{input.ReferenceImages, input.ReferenceVideos, input.ReferenceAudios}
-	for _, group := range groups {
-		for index := range group {
-			if err := s.hydrateProviderMedia(userID, &group[index], policy); err != nil {
-				return err
-			}
-		}
-	}
-	if input.Mask != nil {
-		return s.hydrateProviderMedia(userID, input.Mask, policy)
-	}
-	return nil
+	return s.hydrateGenerationMediaWithContext(context.Background(), userID, input, policy)
+}
+
+func (s *Service) hydrateGenerationMediaWithContext(ctx context.Context, userID string, input *canvasGenerationInput, policy providerMediaHydrationPolicy) error {
+	ctx = s.bindGenerationRuntime(ctx, generation.CallMeta{UserID: userID})
+	return generation.HydrateMedia(ctx, userID, input, policy)
 }
 
 func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, policy providerMediaHydrationPolicy) error {
-	if !strings.HasPrefix(media.StorageKey, "resource:") {
-		if policy.requireURL && (strings.HasPrefix(strings.TrimSpace(media.DataURL), "data:") || strings.HasPrefix(strings.TrimSpace(media.URL), "data:")) {
-			return errors.New("当前渠道暂不支持直接使用本地素材，请使用可访问的 HTTPS 素材链接，或选择支持本地素材的渠道")
-		}
-		return nil
-	}
-	resourceID := strings.TrimPrefix(media.StorageKey, "resource:")
-	resource, err := s.repo.ResourceForUser(userID, resourceID)
-	if err != nil {
-		return fmt.Errorf("读取任务参考资源失败：%w", err)
-	}
-	if resource.Status != "ready" {
-		return errors.New("任务参考资源尚未上传完成")
-	}
-	if s.IsLocalMode() && resourceUsesObjectStorage(resource) {
-		return errors.New("本地工作区检测到旧的远程素材记录，请重新导入到本地资源目录")
-	}
-	if policy.keepLocal {
-		media.URL = ""
-		media.DataURL = ""
-		media.MimeType = firstNonEmpty(media.MimeType, resource.MimeType)
-		media.Bytes = resource.Size
-		if resource.Width > 0 {
-			media.Width = resource.Width
-		}
-		if resource.Height > 0 {
-			media.Height = resource.Height
-		}
-		if resource.DurationMs > 0 {
-			media.DurationMs = resource.DurationMs
-		}
-		return nil
-	}
-	if policy.preferHTTPS {
-		if httpsURL, err := s.signedHTTPSPublicResourceURL(resource, time.Now().Add(providerResourceURLTTL)); err == nil {
-			media.URL = httpsURL
-			media.DataURL = ""
-			media.MimeType = firstNonEmpty(media.MimeType, resource.MimeType)
-			media.Bytes = resource.Size
-			media.Width = resource.Width
-			media.Height = resource.Height
-			if resource.DurationMs > 0 {
-				media.DurationMs = resource.DurationMs
-			}
-			return nil
-		}
-	}
-	useObjectURL := policy.requireURL || (policy.preferURL && resourceUsesObjectStorage(resource))
-	if useObjectURL {
-		if s.IsLocalMode() && policy.requireURL {
-			// A loopback URL is not reachable by an external model provider. Do
-			// not turn a local-only resource into a misleading public-resource
-			// request; require a protocol that accepts inline media instead.
-			return errors.New("当前模型协议要求公网素材地址，本地工作区请改用支持内嵌素材的模型")
-		}
-		signedURL, err := s.directResourceURL(resource, time.Now().Add(providerResourceURLTTL))
-		if err != nil {
-			return fmt.Errorf("生成参考素材地址失败：%w", err)
-		}
-		media.URL = signedURL
-		media.DataURL = ""
-		media.MimeType = firstNonEmpty(media.MimeType, resource.MimeType)
-		media.Bytes = resource.Size
-		media.Width = resource.Width
-		media.Height = resource.Height
-		if resource.DurationMs > 0 {
-			media.DurationMs = resource.DurationMs
-		}
-		return nil
-	}
-	if strings.HasPrefix(strings.TrimSpace(media.DataURL), "data:") {
-		return nil
-	}
-	resource, body, err := s.OpenResource(userID, resourceID)
-	if err != nil {
-		return fmt.Errorf("读取任务参考资源失败：%w", err)
-	}
-	defer body.Close()
-	runtimePolicy, err := s.RuntimePolicy()
-	if err != nil {
-		return err
-	}
-	resourceLimit := megabytes(runtimePolicy.Resource.ResourceUploadMB)
-	data, err := io.ReadAll(io.LimitReader(body, resourceLimit+1))
-	if err != nil {
-		return err
-	}
-	if int64(len(data)) > resourceLimit {
-		return fmt.Errorf("任务参考资源超过 %dMB", runtimePolicy.Resource.ResourceUploadMB)
-	}
-	mimeType := normalizedMediaMimeType(firstNonEmpty(media.MimeType, resource.MimeType), data)
-	media.DataURL = dataURL(mimeType, data)
-	media.MimeType = mimeType
-	media.Bytes = int64(len(data))
-	media.Width = resource.Width
-	media.Height = resource.Height
-	if resource.DurationMs > 0 {
-		media.DurationMs = resource.DurationMs
-	}
-	return nil
+	ctx := s.bindGenerationRuntime(context.Background(), generation.CallMeta{UserID: userID})
+	return generation.HydrateOne(ctx, userID, media, policy)
 }
 
 func resourceLooksLikeImage(resource *model.Resource, media *providerMedia) bool {
@@ -958,12 +688,7 @@ func resourceUsesObjectStorage(resource *model.Resource) bool {
 }
 
 func normalizedMediaMimeType(declared string, data []byte) string {
-	declared = strings.TrimSpace(strings.Split(declared, ";")[0])
-	if declared != "" && declared != "application/octet-stream" {
-		return declared
-	}
-	detected := strings.TrimSpace(strings.Split(http.DetectContentType(data), ";")[0])
-	return defaultString(detected, "application/octet-stream")
+	return generation.NormalizedMediaMIMEType(declared, data)
 }
 
 func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, error) {
@@ -1109,39 +834,11 @@ func systemChannelIDFromBaseURL(baseURL string) string {
 }
 
 func openAIImageInputURL(media providerMedia) (string, error) {
-	value := strings.TrimSpace(media.DataURL)
-	if strings.HasPrefix(value, "data:image/") {
-		return value, nil
-	}
-	if strings.HasPrefix(value, "data:") {
-		return "", errors.New("参考图片 MIME 类型无效，请重新读取或上传图片")
-	}
-	value = strings.TrimSpace(media.URL)
-	if strings.HasPrefix(value, "data:image/") || isPublicMediaURL(value) {
-		return value, nil
-	}
-	if strings.HasPrefix(value, "data:") {
-		return "", errors.New("参考图片 MIME 类型无效，请重新读取或上传图片")
-	}
-	return "", errors.New("OpenAI 文本多模态参考图片需要公网 URL 或 base64 data URL")
+	return generation.OpenAIImageInputURL(media)
 }
 
 func openAIVideoInputURL(media providerMedia) (string, error) {
-	value := strings.TrimSpace(media.DataURL)
-	if strings.HasPrefix(value, "data:video/") {
-		return value, nil
-	}
-	if strings.HasPrefix(value, "data:") {
-		return "", errors.New("参考视频 MIME 类型无效，请重新读取或上传视频")
-	}
-	value = strings.TrimSpace(media.URL)
-	if strings.HasPrefix(value, "data:video/") || isPublicMediaURL(value) {
-		return value, nil
-	}
-	if strings.HasPrefix(value, "data:") {
-		return "", errors.New("参考视频 MIME 类型无效，请重新读取或上传视频")
-	}
-	return "", errors.New("文本多模态参考视频需要公网 URL 或 base64 data URL")
+	return generation.OpenAIVideoInputURL(media)
 }
 
 func firstNonEmptyString(values ...string) string {
@@ -1149,10 +846,7 @@ func firstNonEmptyString(values ...string) string {
 }
 
 func dataURL(mimeType string, data []byte) string {
-	if mimeType == "" {
-		mimeType = "application/octet-stream"
-	}
-	return "data:" + strings.Split(mimeType, ";")[0] + ";base64," + base64.StdEncoding.EncodeToString(data)
+	return generation.DataURL(mimeType, data)
 }
 
 // stringField 只读取异构上游 JSON 中的可选字符串：缺失或 null 返回空串，存在但类型错误也不强制转换。
@@ -1166,11 +860,7 @@ func stringField(payload map[string]interface{}, key string) string {
 }
 
 func withSystemPrompt(config providerConfig, prompt string) string {
-	systemPrompt := strings.TrimSpace(config.SystemPrompt)
-	if systemPrompt == "" {
-		return prompt
-	}
-	return systemPrompt + "\n\n" + prompt
+	return generation.WithSystemPrompt(config, prompt)
 }
 
 func metadataString(metadata map[string]interface{}, key string) string {

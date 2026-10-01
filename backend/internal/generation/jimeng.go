@@ -1,4 +1,4 @@
-package app
+package generation
 
 import (
 	"bytes"
@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/outbound"
+
 	"github.com/volcengine/volc-sdk-golang/base"
 )
 
@@ -22,7 +24,12 @@ const (
 	jiMengAPIVersion   = "2022-08-31"
 )
 
-type jiMengResponse struct {
+const (
+	JiMengSubmitAction = jiMengSubmitAction
+	JiMengResultAction = jiMengResultAction
+)
+
+type JiMengResponse struct {
 	Code      int    `json:"code"`
 	Message   string `json:"message"`
 	RequestID string `json:"request_id"`
@@ -35,20 +42,20 @@ type jiMengResponse struct {
 	} `json:"data"`
 }
 
-func isVolcengineJiMengProtocol(protocol string) bool {
+func IsVolcengineJiMengProtocol(protocol string) bool {
 	return protocol == "volcengine-jimeng-image" || protocol == "volcengine-jimeng-video"
 }
 
-func runVolcengineJiMengImageTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
+func RunVolcengineJiMengImageTask(ctx context.Context, input Input) (map[string]interface{}, error) {
 	if input.Mask != nil {
 		return nil, errors.New("即梦图片协议不支持蒙版编辑，请移除蒙版后重试")
 	}
 	body := map[string]interface{}{
 		"req_key":      input.Config.Model,
-		"prompt":       withSystemPrompt(input.Config, input.Prompt),
+		"prompt":       WithSystemPrompt(input.Config, input.Prompt),
 		"force_single": true,
 	}
-	if width, height := jiMengImageDimensions(input.Config.Size); width > 0 && height > 0 {
+	if width, height := JiMengImageDimensions(input.Config.Size); width > 0 && height > 0 {
 		body["width"] = width
 		body["height"] = height
 	}
@@ -58,7 +65,7 @@ func runVolcengineJiMengImageTask(ctx context.Context, input canvasGenerationInp
 	if len(input.ReferenceImages) > 0 {
 		images := make([]string, 0, len(input.ReferenceImages))
 		for _, image := range input.ReferenceImages {
-			raw, _, err := mediaBytes(image)
+			raw, _, err := MediaBytes(image)
 			if err != nil {
 				return nil, fmt.Errorf("读取即梦参考图失败：%w", err)
 			}
@@ -67,18 +74,18 @@ func runVolcengineJiMengImageTask(ctx context.Context, input canvasGenerationInp
 		body["binary_data_base64"] = images
 	}
 
-	taskID, err := submitJiMengTask(ctx, input.Config, body)
+	taskID, err := SubmitJiMengTask(ctx, input.Config, body)
 	if err != nil {
 		return nil, err
 	}
-	for deadline := providerPollingDeadline(ctx); time.Now().Before(deadline); {
-		result, err := pollJiMengTask(ctx, input.Config, taskID, `{"return_url":true}`)
+	for deadline := PollingDeadline(ctx); time.Now().Before(deadline); {
+		result, err := PollJiMengTask(ctx, input.Config, taskID, `{"return_url":true}`)
 		if err != nil {
 			return nil, err
 		}
 		switch strings.ToLower(strings.TrimSpace(result.Data.Status)) {
 		case "done":
-			images, err := jiMengImageDataURLs(ctx, result)
+			images, err := JiMengImageDataURLs(ctx, result)
 			if err != nil {
 				return nil, fmt.Errorf("即梦图片任务 %s 结果读取失败：%w", taskID, err)
 			}
@@ -86,22 +93,22 @@ func runVolcengineJiMengImageTask(ctx context.Context, input canvasGenerationInp
 		case "not_found", "expired":
 			return nil, fmt.Errorf("即梦图片任务 %s 已失效，请重新生成", taskID)
 		}
-		if err := sleepContext(ctx, 3*time.Second); err != nil {
+		if err := SleepContext(ctx, 3*time.Second); err != nil {
 			return nil, err
 		}
 	}
 	return nil, fmt.Errorf("即梦图片生成超时（任务 %s）", taskID)
 }
 
-func submitJiMengTask(ctx context.Context, config providerConfig, body map[string]interface{}) (string, error) {
-	if resumed := resumedProviderRequestID(ctx); resumed != "" {
+func SubmitJiMengTask(ctx context.Context, config Config, body map[string]interface{}) (string, error) {
+	if resumed := ResumedProviderRequestID(ctx); resumed != "" {
 		return resumed, nil
 	}
-	var payload jiMengResponse
-	if err := postJiMengJSON(withProviderRequestKind(ctx, "create"), config, jiMengSubmitAction, body, &payload); err != nil {
+	var payload JiMengResponse
+	if err := PostJiMengJSON(WithRequestKind(ctx, "create"), config, jiMengSubmitAction, body, &payload); err != nil {
 		return "", err
 	}
-	if err := validateJiMengResponse(payload); err != nil {
+	if err := ValidateJiMengResponse(payload); err != nil {
 		return "", err
 	}
 	taskID := strings.TrimSpace(payload.Data.TaskID)
@@ -111,19 +118,19 @@ func submitJiMengTask(ctx context.Context, config providerConfig, body map[strin
 	return taskID, nil
 }
 
-func pollJiMengTask(ctx context.Context, config providerConfig, taskID string, reqJSON string) (jiMengResponse, error) {
+func PollJiMengTask(ctx context.Context, config Config, taskID string, reqJSON string) (JiMengResponse, error) {
 	body := map[string]interface{}{"req_key": config.Model, "task_id": taskID}
 	if reqJSON != "" {
 		body["req_json"] = reqJSON
 	}
-	var payload jiMengResponse
-	if err := postJiMengJSON(withProviderRequestKind(ctx, "poll"), config, jiMengResultAction, body, &payload); err != nil {
+	var payload JiMengResponse
+	if err := PostJiMengJSON(WithRequestKind(ctx, "poll"), config, jiMengResultAction, body, &payload); err != nil {
 		return payload, err
 	}
-	return payload, validateJiMengResponse(payload)
+	return payload, ValidateJiMengResponse(payload)
 }
 
-func postJiMengJSON(ctx context.Context, config providerConfig, action string, body interface{}, target interface{}) error {
+func PostJiMengJSON(ctx context.Context, config Config, action string, body interface{}, target interface{}) error {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -142,18 +149,18 @@ func postJiMengJSON(ctx context.Context, config providerConfig, action string, b
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	ApplyOutboundHeaders(req, config.Headers)
-	ApplyDefaultOutboundHeaders(req)
+	outbound.ApplyOutboundHeaders(req, config.Headers)
+	outbound.ApplyDefaultOutboundHeaders(req)
 	credentials := base.Credentials{
 		AccessKeyID:     strings.TrimSpace(config.APIKey),
 		SecretAccessKey: strings.TrimSpace(config.SecretKey),
 		Region:          "cn-north-1",
 		Service:         "cv",
 	}
-	return doJSON(credentials.Sign(req), target)
+	return DoJSON(credentials.Sign(req), target)
 }
 
-func validateJiMengResponse(payload jiMengResponse) error {
+func ValidateJiMengResponse(payload JiMengResponse) error {
 	if payload.Code == 10000 {
 		return nil
 	}
@@ -167,21 +174,21 @@ func validateJiMengResponse(payload jiMengResponse) error {
 	return fmt.Errorf("即梦接口返回错误 %d：%s", payload.Code, message)
 }
 
-func jiMengImageDataURLs(ctx context.Context, payload jiMengResponse) ([]string, error) {
+func JiMengImageDataURLs(ctx context.Context, payload JiMengResponse) ([]string, error) {
 	images := make([]string, 0, len(payload.Data.ImageURLs)+len(payload.Data.BinaryDataBase64))
 	for _, rawURL := range payload.Data.ImageURLs {
-		data, mimeType, err := getExternalBinary(withProviderRequestKind(ctx, "download"), rawURL)
+		data, mimeType, err := GetExternalBinary(WithRequestKind(ctx, "download"), rawURL)
 		if err != nil {
 			return nil, err
 		}
-		images = append(images, dataURL(normalizedMediaMimeType(mimeType, data), data))
+		images = append(images, DataURL(NormalizedMediaMIMEType(mimeType, data), data))
 	}
 	for _, encoded := range payload.Data.BinaryDataBase64 {
 		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
 		if err != nil {
 			return nil, err
 		}
-		images = append(images, dataURL(normalizedMediaMimeType("image/png", data), data))
+		images = append(images, DataURL(NormalizedMediaMIMEType("image/png", data), data))
 	}
 	if len(images) == 0 {
 		return nil, errors.New("任务已完成但没有返回图片")
@@ -189,8 +196,8 @@ func jiMengImageDataURLs(ctx context.Context, payload jiMengResponse) ([]string,
 	return images, nil
 }
 
-func jiMengImageDimensions(value string) (int, int) {
-	parts := strings.Split(strings.ToLower(normalizePixelSize(value)), "x")
+func JiMengImageDimensions(value string) (int, int) {
+	parts := strings.Split(strings.ToLower(NormalizePixelSize(value)), "x")
 	if len(parts) != 2 {
 		return 0, 0
 	}
