@@ -10,7 +10,7 @@
   "liveTestWaiver": {
     "approvedBy": "Ender",
     "instruction": "没事 这轮就不用实测了",
-    "approvedAt": "2026-10-01T15:36:00+08:00",
+    "approvedDate": "2026-10-01",
     "scope": "Only v1.6.18 real-generation matrix; no further paid requests. Prior authorization to review and publish remains in force."
   },
   "cases": [
