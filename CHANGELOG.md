@@ -9,6 +9,12 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.17
+
+- Repair missing task diagnostics columns when upgrading from preview databases that reused migration numbers, preserving existing projects and tasks.
+- Distinguish local task storage failures from model parameter errors and explain when generation has not been submitted.
+- Require two complete rounds of real generation acceptance across six image and video paths before publishing desktop updates.
+
 ## v1.6.16
 
 - Recover transient video download disconnects using the original provider task, with bounded background recovery for supported video protocols.

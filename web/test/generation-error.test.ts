@@ -1,5 +1,16 @@
 import referenceVideoErrors from "./fixtures/reference-video-errors.json";
 import { describe, expect, test } from "bun:test";
+import { ApiError } from "../src/services/api/request";
+
+test("local task persistence errors keep their cause through API and saved details", () => {
+    const error = new ApiError("本地任务保存失败，尚未提交生成", { status: 500, reason: "local_storage_failed" });
+    const result = explainGenerationError(error);
+    expect(result.category).toBe("local_storage");
+    expect(result.message).toContain("尚未提交生成");
+    expect(result.message).not.toContain("模型不接受");
+    expect(result.blockAutomaticRetry).toBe(true);
+    expect(explainGenerationError(result.message).category).toBe("local_storage");
+});
 import audioErrorContract from "../../fixtures/reference-audio-errors.json";
 
 test("whole request limits retain actionable copy after persistence", () => {

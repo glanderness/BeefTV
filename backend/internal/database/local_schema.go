@@ -73,12 +73,7 @@ func migrateLocalSchema(db *gorm.DB, beforeApply func(int64) error) error {
 	migrations := []localMigration{
 		{version: 1, name: "local-core-schema", apply: migrateLocalCoreSchema},
 		{version: 2, name: "retire-hosted-schema", destructive: true, apply: migrateRetiredHostedSchema},
-		{version: 3, name: "task-failure-diagnostics", apply: func(tx *gorm.DB) error {
-			if tx.Migrator().HasColumn(&model.Task{}, "FailureDiagnostics") {
-				return nil
-			}
-			return tx.Migrator().AddColumn(&model.Task{}, "FailureDiagnostics")
-		}},
+		{version: 3, name: "task-failure-diagnostics", apply: ensureTaskFailureDiagnostics},
 	}
 	current, err := currentSchemaVersion(db)
 	if err != nil {
@@ -108,7 +103,20 @@ func migrateLocalSchema(db *gorm.DB, beforeApply func(int64) error) error {
 		}
 		current = migration.version
 	}
+	// Preview builds used the same version numbers for unrelated migrations.
+	// Repair this additive requirement from the actual structure without changing
+	// their migration records or removing preview data.
+	if err := db.Transaction(ensureTaskFailureDiagnostics); err != nil {
+		return fmt.Errorf("补齐本地任务诊断字段: %w", err)
+	}
 	return nil
+}
+
+func ensureTaskFailureDiagnostics(db *gorm.DB) error {
+	if db.Migrator().HasColumn(&model.Task{}, "FailureDiagnostics") {
+		return nil
+	}
+	return db.Migrator().AddColumn(&model.Task{}, "FailureDiagnostics")
 }
 
 func migrateLocalCoreSchema(tx *gorm.DB) error {
@@ -280,8 +288,11 @@ func RequireLocalSchema(db *gorm.DB) error {
 	if err != nil {
 		return err
 	}
-	if version != CurrentSchemaVersion {
+	if version < CurrentSchemaVersion {
 		return fmt.Errorf("本地工作区数据库版本为 %d，期望 %d，请启用自动迁移", version, CurrentSchemaVersion)
+	}
+	if !db.Migrator().HasColumn(&model.Task{}, "FailureDiagnostics") {
+		return fmt.Errorf("本地任务诊断字段缺失，请启用自动迁移")
 	}
 	return nil
 }
@@ -292,7 +303,7 @@ func ReadSchemaStatus(db *gorm.DB) (SchemaStatus, error) {
 		return status, nil
 	}
 	status.Current, _ = currentSchemaVersion(db)
-	status.Ready = status.Current == CurrentSchemaVersion
+	status.Ready = true
 	return status, nil
 }
 

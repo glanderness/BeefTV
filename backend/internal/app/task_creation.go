@@ -74,11 +74,11 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	}
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
-		return nil, errors.New("prompt is required")
+		return nil, BadAuthRequest("请填写提示词")
 	}
 	taskType := strings.TrimSpace(req.Type)
 	if err := validateTaskType(taskType); err != nil {
-		return nil, err
+		return nil, BadAuthRequest(err.Error())
 	}
 	normalizedInput, err := normalizeTaskInput(req.Input)
 	if err != nil {
@@ -118,9 +118,9 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 
 	if strings.HasPrefix(taskType, "video_") && !hasExecutableProviderVideoConfig(normalizedInput) {
 		if mode, _ := normalizedInput["mode"].(string); mode != "video" {
-			return nil, errors.New("视频任务必须使用 video 模式")
+			return nil, BadAuthRequest("视频任务必须使用 video 模式")
 		}
-		return nil, errors.New("视频任务缺少可执行的模型配置")
+		return nil, BadAuthRequest("视频任务缺少可执行的模型配置")
 	}
 	// 前端自管的文本持久化任务：直连模型生成、增量上报 text-deltas，不排入 worker 队列生成。
 	if isTextReplayTaskRequest(normalizedInput) {
