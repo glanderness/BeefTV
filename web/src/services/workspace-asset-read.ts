@@ -46,6 +46,7 @@ export type WorkspaceAssetLibraryPageOptions = {
     favorite?: boolean;
     recent?: boolean;
     project?: string;
+    generated?: boolean;
     signal?: AbortSignal;
     expectedScope?: CapturedUserScope;
 };
@@ -58,10 +59,14 @@ export type WorkspaceAssetLibraryPage = {
     favoriteTotal: number;
     recentTotal: number;
     projectCounts: Record<string, number>;
+    generatedTotal: number;
+    generatedKindCounts: Record<string, number>;
     page: number;
     pageSize: number;
     total: number;
+    canonicalTotal: number;
     hasMore: boolean;
+    canonicalHasMore: boolean;
 };
 
 export function usesWorkspaceAssetLibraryApi() {
@@ -99,6 +104,7 @@ export async function loadWorkspaceAssetLibraryPage(options: WorkspaceAssetLibra
             favorite: options.favorite,
             recent: options.recent,
             project: options.project,
+            generated: options.generated,
         },
         { signal: options.signal, expectedScope: expected },
     );
@@ -190,19 +196,27 @@ function loadBrowserLocalAssetPage(options: WorkspaceAssetLibraryPageOptions): W
     const catalog = useAssetStore.getState().assets;
     const filtered = catalog.filter((asset) => matchesLibraryFilters(asset, options, query));
     const start = Math.max(0, options.page - 1) * options.pageSize;
+    const scoped = catalog.filter((asset) => isStatusScopedLibraryAsset(asset, options.status));
     const active = catalog.filter(isActiveLibraryAsset);
+    const generated = active.filter(isWorkspaceGeneratedHistoryAsset);
+    const total = filtered.length;
+    const hasMore = start + options.pageSize < filtered.length;
     return {
         assets: filtered.slice(start, start + options.pageSize),
-        kindCounts: countMap(filtered, (asset) => asset.kind),
-        categoryCounts: countMap(filtered, (asset) => asset.category || "other"),
-        folderCounts: countMap(filtered, (asset) => asset.folderId || ""),
+        kindCounts: countMap(scoped, (asset) => asset.kind),
+        categoryCounts: countMap(scoped, (asset) => asset.category || "other"),
+        folderCounts: countMap(scoped, (asset) => asset.folderId || ""),
         favoriteTotal: active.filter((asset) => asset.metadata?.favorite === true).length,
         recentTotal: active.filter(isRecentAsset).length,
         projectCounts: countMap(active, workspaceAssetProjectLabel),
+        generatedTotal: generated.length,
+        generatedKindCounts: countMap(generated, (asset) => asset.kind),
         page: options.page,
         pageSize: options.pageSize,
-        total: filtered.length,
-        hasMore: start + options.pageSize < filtered.length,
+        total,
+        canonicalTotal: total,
+        hasMore,
+        canonicalHasMore: hasMore,
     };
 }
 
@@ -252,13 +266,23 @@ async function overlayAssetDrafts(page: WorkspaceAssetLibraryPage, options: Work
     let total = page.total;
     let favoriteTotal = page.favoriteTotal;
     let recentTotal = page.recentTotal;
+    let generatedTotal = page.generatedTotal;
     const projectCounts = { ...page.projectCounts };
+    const kindCounts = { ...page.kindCounts };
+    const categoryCounts = { ...page.categoryCounts };
+    const folderCounts = { ...page.folderCounts };
+    const generatedKindCounts = { ...page.generatedKindCounts };
     for (const id of affectedIds) {
         const before = canonical.get(id);
         const after = draftAfterState(id, deleted, upsertById, storeById, before);
         total += matchDelta(after, before, (asset) => matchesLibraryFilters(asset, options, query));
         favoriteTotal += matchDelta(after, before, isActiveFavoriteAsset);
         recentTotal += matchDelta(after, before, isActiveRecentAsset);
+        generatedTotal += matchDelta(after, before, isActiveGeneratedHistoryAsset);
+        applyFacetDelta(kindCounts, facetKindKey(before, options.status), facetKindKey(after, options.status));
+        applyFacetDelta(categoryCounts, facetCategoryKey(before, options.status), facetCategoryKey(after, options.status));
+        applyFacetDelta(folderCounts, facetFolderKey(before, options.status), facetFolderKey(after, options.status));
+        applyFacetDelta(generatedKindCounts, generatedKindKey(before), generatedKindKey(after));
         const beforeLabel = before && isActiveLibraryAsset(before) ? workspaceAssetProjectLabel(before) : undefined;
         const afterLabel = after && isActiveLibraryAsset(after) ? workspaceAssetProjectLabel(after) : undefined;
         if (beforeLabel === afterLabel) continue;
@@ -269,11 +293,16 @@ async function overlayAssetDrafts(page: WorkspaceAssetLibraryPage, options: Work
     return {
         ...page,
         assets,
+        kindCounts,
+        categoryCounts,
+        folderCounts,
         total: Math.max(0, total),
         hasMore: page.hasMore,
         favoriteTotal: Math.max(0, favoriteTotal),
         recentTotal: Math.max(0, recentTotal),
         projectCounts,
+        generatedTotal: Math.max(0, generatedTotal),
+        generatedKindCounts,
     };
 }
 
@@ -319,10 +348,14 @@ function parseWorkspaceAssetPage(remote: WorkspaceAssetPageResponse): WorkspaceA
         favoriteTotal: Number(remote.favoriteTotal) || 0,
         recentTotal: Number(remote.recentTotal) || 0,
         projectCounts: numberMap(remote.projectCounts),
+        generatedTotal: Number(remote.generatedTotal) || 0,
+        generatedKindCounts: numberMap(remote.generatedKindCounts),
         page: Number(remote.page) || 1,
         pageSize: Number(remote.pageSize) || 40,
         total: Number(remote.total) || 0,
+        canonicalTotal: Number(remote.total) || 0,
         hasMore: Boolean(remote.hasMore),
+        canonicalHasMore: Boolean(remote.hasMore),
     };
 }
 
@@ -439,6 +472,39 @@ function isActiveRecentAsset(asset: Asset) {
     return isActiveLibraryAsset(asset) && isRecentAsset(asset);
 }
 
+function isActiveGeneratedHistoryAsset(asset: Asset) {
+    return isActiveLibraryAsset(asset) && isWorkspaceGeneratedHistoryAsset(asset);
+}
+
+function isStatusScopedLibraryAsset(asset: Asset, status?: string) {
+    if (asset.kind === "entity") return false;
+    if (status === "archived") return asset.status === "archived";
+    if (!status || status === "active") return asset.status !== "archived";
+    return asset.status === status;
+}
+
+function facetKindKey(asset: Asset | undefined, status?: string) {
+    return asset && isStatusScopedLibraryAsset(asset, status) ? asset.kind : undefined;
+}
+
+function facetCategoryKey(asset: Asset | undefined, status?: string) {
+    return asset && isStatusScopedLibraryAsset(asset, status) ? asset.category || "other" : undefined;
+}
+
+function facetFolderKey(asset: Asset | undefined, status?: string) {
+    return asset && isStatusScopedLibraryAsset(asset, status) ? asset.folderId || "" : undefined;
+}
+
+function generatedKindKey(asset: Asset | undefined) {
+    return asset && isActiveGeneratedHistoryAsset(asset) ? asset.kind : undefined;
+}
+
+function applyFacetDelta(counts: Record<string, number>, beforeKey: string | undefined, afterKey: string | undefined) {
+    if (beforeKey === afterKey) return;
+    if (beforeKey !== undefined) bumpCount(counts, beforeKey, -1);
+    if (afterKey !== undefined) bumpCount(counts, afterKey, 1);
+}
+
 function bumpCount(counts: Record<string, number>, key: string, delta: number) {
     const next = (counts[key] || 0) + delta;
     if (next <= 0) delete counts[key];
@@ -468,7 +534,13 @@ function matchesExtraClientFilters(asset: Asset, options: WorkspaceAssetLibraryP
     if (options.favorite && asset.metadata?.favorite !== true) return false;
     if (options.recent && !isRecentAsset(asset)) return false;
     if (options.project && workspaceAssetProjectLabel(asset) !== options.project) return false;
+    if (options.generated && !isWorkspaceGeneratedHistoryAsset(asset)) return false;
     return true;
+}
+
+export function isWorkspaceGeneratedHistoryAsset(asset: Pick<Asset, "kind" | "source" | "metadata">) {
+    if (asset.kind !== "image" && asset.kind !== "video" && asset.kind !== "audio") return false;
+    return asset.source === "生成任务" || typeof asset.metadata?.generationEffectKey === "string";
 }
 
 export function workspaceAssetProjectLabel(asset: Pick<Asset, "metadata">) {
@@ -483,8 +555,18 @@ export function workspaceAssetProjectOptions(counts: Record<string, number>) {
         .sort((left, right) => left.localeCompare(right, "zh-CN"));
 }
 
+export function workspaceAssetCountSum(counts: Record<string, number> | undefined) {
+    return Object.values(counts || {}).reduce((sum, count) => sum + (Number(count) || 0), 0);
+}
+
 export function workspaceAssetAllProjectsCount(counts: Record<string, number>) {
-    return Object.values(counts).reduce((sum, count) => sum + (Number(count) || 0), 0);
+    return workspaceAssetCountSum(counts);
+}
+
+export function workspaceAssetTraversalTotal(page: Pick<WorkspaceAssetLibraryPage, "page" | "pageSize" | "canonicalTotal" | "canonicalHasMore">) {
+    const total = Math.max(0, page.canonicalTotal);
+    if (page.canonicalHasMore || page.page > 1) return total;
+    return Math.min(total, Math.max(0, page.pageSize));
 }
 
 function markUnsavedCopy(asset: Asset): Asset {

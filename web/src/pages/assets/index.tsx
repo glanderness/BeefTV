@@ -27,8 +27,8 @@ import { flushAssetStorePersistence, useAssetStore, type Asset, type AssetCatego
 import { exportAssets, readAssetPackage } from "./asset-transfer";
 import { assetStorageUsageQueryKey } from "./asset-storage-usage";
 import { loadAssetLibraryPage, localSavedRemotePendingMessage } from "@/services/local-workspace-sync";
-import { isUnsavedWorkspaceAsset, usesWorkspaceAssetLibraryApi, WORKSPACE_ASSET_UNLINKED_PROJECT, workspaceAssetAllProjectsCount, workspaceAssetProjectLabel, workspaceAssetProjectOptions } from "@/services/workspace-asset-read";
-import { deleteWorkspaceAsset, persistWorkspaceAssetChanges } from "@/services/workspace-asset-repository";
+import { isUnsavedWorkspaceAsset, isWorkspaceGeneratedHistoryAsset, usesWorkspaceAssetLibraryApi, WORKSPACE_ASSET_UNLINKED_PROJECT, workspaceAssetAllProjectsCount, workspaceAssetCountSum, workspaceAssetProjectLabel, workspaceAssetProjectOptions, workspaceAssetTraversalTotal } from "@/services/workspace-asset-read";
+import { clearWorkspaceArchivedAssets, deleteWorkspaceAsset, persistWorkspaceAssetChanges, workspaceClearTrashMessage } from "@/services/workspace-asset-repository";
 import {
     assignWorkspaceAssetsFolder,
     createWorkspaceAssetFolder,
@@ -76,6 +76,8 @@ const categoryOptions = [{ label: "全部分类", value: "all" }, ...ASSET_CATEG
 const ASSET_LIBRARY_QUERY_KEY = ["asset-library"] as const;
 const ASSET_FOLDER_QUERY_KEY = ["asset-folders"] as const;
 const ASSET_VIEW_MODE_KEY = "infinite-canvas:asset-view-mode";
+const ASSET_HISTORY_PAGE_SIZE = 40;
+type GenerationHistoryKind = "all" | "image" | "video" | "audio";
 type AssetFolderFilter = "all" | "uncategorized" | string;
 type AssetSortOrder = "updated_desc" | "updated_asc" | "name_asc";
 
@@ -120,6 +122,9 @@ export default function AssetsPage() {
     const [projectFilter, setProjectFilter] = useState("all");
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(40);
+    const [historyKind, setHistoryKind] = useState<GenerationHistoryKind>("all");
+    const [historyPage, setHistoryPage] = useState(1);
+    const [historyAssets, setHistoryAssets] = useState<LibraryAsset[]>([]);
     const [assetViewMode, setAssetViewMode] = useState<"grid" | "list">(readAssetViewMode);
     const [filtersOpen, setFiltersOpen] = useState(false);
     const [searchOpen, setSearchOpen] = useState(false);
@@ -179,10 +184,7 @@ export default function AssetsPage() {
     const allLibraryAssets = useMemo(() => assets.filter((asset): asset is LibraryAsset => asset.kind !== "entity"), [assets]);
     const activeAssets = useMemo(() => allLibraryAssets.filter((asset) => asset.status !== "archived"), [allLibraryAssets]);
     const trashAssets = useMemo(() => allLibraryAssets.filter((asset) => asset.status === "archived"), [allLibraryAssets]);
-    // The source rail is also used as a compact local generation-history
-    // counter. Keep it derived from the same media set that the history page
-    // renders so the badge never stays at a misleading hard-coded zero.
-    const generationHistoryCount = useMemo(() => activeAssets.filter(isGeneratedHistoryAsset).length, [activeAssets]);
+    const localGenerationHistoryCount = useMemo(() => activeAssets.filter(isWorkspaceGeneratedHistoryAsset).length, [activeAssets]);
     const validAssets = viewMode === "trash" ? trashAssets : activeAssets;
     const selectedAssets = useMemo(() => validAssets.filter((asset) => selectedIds.includes(asset.id)), [selectedIds, validAssets]);
     const localProjectOptions = useMemo(() => {
@@ -234,10 +236,33 @@ export default function AssetsPage() {
         enabled: canonicalReads && sessionHydrated && viewMode === "library",
     });
     const historyQuery = useQuery({
-        queryKey: [...ASSET_LIBRARY_QUERY_KEY, "history"],
-        queryFn: ({ signal }) => loadAssetLibraryPage({ page: 1, pageSize: 120, status: "active", signal }),
+        queryKey: [...ASSET_LIBRARY_QUERY_KEY, "history", historyPage, historyKind],
+        queryFn: ({ signal }) => loadAssetLibraryPage({
+            page: historyPage,
+            pageSize: ASSET_HISTORY_PAGE_SIZE,
+            status: "active",
+            generated: true,
+            kind: historyKind === "all" ? undefined : historyKind,
+            signal,
+        }),
         enabled: canonicalReads && sessionHydrated && sourceTab === "history",
+        placeholderData: keepPreviousData,
     });
+    useEffect(() => {
+        if (sourceTab !== "history") {
+            setHistoryKind("all");
+            setHistoryPage(1);
+            setHistoryAssets([]);
+        }
+    }, [sourceTab]);
+    useEffect(() => {
+        if (!canonicalReads || sourceTab !== "history" || !historyQuery.data || historyQuery.isPlaceholderData) return;
+        const next = (historyQuery.data.assets || []).filter((asset): asset is LibraryAsset => asset.kind !== "entity" && asset.status !== "archived");
+        setHistoryAssets((current) => {
+            const merged = historyPage <= 1 ? next : [...current, ...next.filter((asset) => !current.some((item) => item.id === asset.id))];
+            return merged.filter((asset) => asset.status !== "archived");
+        });
+    }, [canonicalReads, historyPage, historyQuery.data, historyQuery.isPlaceholderData, sourceTab]);
 
     const localVisibleAssets = useMemo(() => {
         const start = (page - 1) * pageSize;
@@ -271,20 +296,25 @@ export default function AssetsPage() {
     const folderCounts = remoteReady
         ? assetPageQuery.data?.folderCounts || {}
         : Object.fromEntries([...new Set(activeAssets.map((asset) => asset.folderId).filter((id): id is string => Boolean(id)))].map((folderId) => [folderId, activeAssets.filter((asset) => asset.folderId === folderId).length]));
+    const allFoldersCount = remoteReady ? workspaceAssetCountSum(folderCounts) : activeAssets.length;
     const trashCount = viewMode === "trash"
         ? (remoteReady ? totalAssets : trashAssets.length)
         : (canonicalReads && trashCountQuery.isSuccess ? trashCountQuery.data?.total ?? 0 : trashAssets.length);
+    const trashCanonicalTotal = viewMode === "trash"
+        ? (remoteReady ? assetPageQuery.data?.canonicalTotal ?? trashCount : trashCount)
+        : (canonicalReads && trashCountQuery.isSuccess ? trashCountQuery.data?.canonicalTotal ?? trashCount : trashCount);
     const favoriteCount = remoteReady ? assetPageQuery.data?.favoriteTotal ?? 0 : activeAssets.filter((asset) => asset.metadata?.favorite === true).length;
     const recentCount = remoteReady ? assetPageQuery.data?.recentTotal ?? 0 : activeAssets.filter((asset) => Number.isFinite(new Date(asset.updatedAt).getTime()) && Date.now() - new Date(asset.updatedAt).getTime() <= 30 * 24 * 60 * 60 * 1000).length;
+    const generationHistoryCount = remoteReady ? assetPageQuery.data?.generatedTotal ?? 0 : localGenerationHistoryCount;
     const remoteProjectCounts = remoteReady ? assetPageQuery.data?.projectCounts : undefined;
     const projectOptions = remoteProjectCounts ? workspaceAssetProjectOptions(remoteProjectCounts) : localProjectOptions;
     const allProjectsCount = remoteProjectCounts ? workspaceAssetAllProjectsCount(remoteProjectCounts) : activeAssets.length;
-    const paginationTotal = remoteReady && !assetPageQuery.data?.hasMore && page <= 1 ? Math.min(totalAssets, pageSize) : totalAssets;
+    const traversalTotal = remoteReady && assetPageQuery.data ? workspaceAssetTraversalTotal(assetPageQuery.data) : filteredAssets.length;
 
     useEffect(() => {
-        const maxPage = Math.max(1, Math.ceil(paginationTotal / pageSize));
+        const maxPage = Math.max(1, Math.ceil(traversalTotal / pageSize));
         setPage((value) => Math.min(value, maxPage));
-    }, [pageSize, paginationTotal]);
+    }, [pageSize, traversalTotal]);
 
     useEffect(() => {
         window.localStorage.setItem(ASSET_VIEW_MODE_KEY, assetViewMode);
@@ -605,6 +635,7 @@ export default function AssetsPage() {
         updateAsset(asset.id, { status: "archived" });
         try {
             await persistWorkspaceAssetChanges();
+            await invalidateAssetLibrary();
             message.success(`已将「${asset.title}」移入回收站`);
         } catch (error) {
             message.warning(localSavedRemotePendingMessage("已移入回收站", error));
@@ -627,16 +658,14 @@ export default function AssetsPage() {
     };
 
     const emptyTrash = async () => {
-        const toDelete = canonicalReads ? visibleAssets : trashAssets;
-        const count = toDelete.length;
-        if (!count) return;
+        if (!trashCanonicalTotal && !trashCount) return;
         try {
-            for (const asset of toDelete) {
-                await deleteWorkspaceAsset(asset.id);
-            }
+            const result = await clearWorkspaceArchivedAssets();
             setSelectedIds([]);
             await invalidateAssetLibrary();
-            message.success(canonicalReads ? `已删除当前页 ${count} 个素材` : `已彻底清空回收站 ${count} 个素材`);
+            const feedback = workspaceClearTrashMessage(result);
+            if (feedback.type === "success") message.success(feedback.text);
+            else message.error(feedback.text);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "清空回收站失败");
         }
@@ -671,22 +700,62 @@ export default function AssetsPage() {
     };
 
     if (sourceTab === "history") {
-        const historyAssets = (canonicalReads ? historyQuery.data?.assets || [] : activeAssets).filter((asset): asset is LibraryAsset => asset.kind !== "entity");
-        if (canonicalReads && historyQuery.isError) {
+        const localHistoryAssets = activeAssets;
+        const localGenerated = localHistoryAssets.filter(isWorkspaceGeneratedHistoryAsset);
+        const visibleHistoryAssets = canonicalReads ? historyAssets : localHistoryAssets;
+        const generatedKindCounts = canonicalReads
+            ? historyQuery.data?.generatedKindCounts || {}
+            : localGenerated.reduce<Record<string, number>>((counts, asset) => {
+                counts[asset.kind] = (counts[asset.kind] || 0) + 1;
+                return counts;
+            }, {});
+        const generatedTotal = canonicalReads ? historyQuery.data?.generatedTotal ?? 0 : localGenerated.length;
+        if (canonicalReads && historyQuery.isError && historyPage <= 1 && !historyAssets.length) {
             return (
                 <WorkspacePage grid className="library-page assets-library-page canvas-library-page generation-history-page">
                     <WorkspaceErrorState title="生成历史读取失败" description="请稍后重试。" actionLabel="重试" onRetry={() => void historyQuery.refetch()} />
                 </WorkspacePage>
             );
         }
-        if (canonicalReads && !historyQuery.isSuccess) {
+        if (canonicalReads && !historyQuery.isSuccess && historyPage <= 1 && !historyAssets.length) {
             return (
                 <WorkspacePage grid className="library-page assets-library-page canvas-library-page generation-history-page">
                     <WorkspaceLoadingState label="正在读取生成历史" detail="按页读取已保存的素材。" />
                 </WorkspacePage>
             );
         }
-        return <GenerationHistorySurface assets={historyAssets} onSelectPersonal={() => navigate("/assets?tab=personal")} onDownload={downloadImage} onArchive={(asset) => void archiveAsset(asset)} />;
+        return (
+            <GenerationHistorySurface
+                assets={visibleHistoryAssets}
+                generatedTotal={generatedTotal}
+                generatedKindCounts={generatedKindCounts}
+                libraryTotal={totalAssets}
+                kind={canonicalReads ? historyKind : undefined}
+                hasMore={canonicalReads ? Boolean(historyQuery.data?.canonicalHasMore ?? historyQuery.data?.hasMore) : false}
+                loadingMore={canonicalReads && historyQuery.isFetching}
+                loadMoreError={Boolean(canonicalReads && historyQuery.isError && historyPage > 1)}
+                onKindChange={canonicalReads ? (next) => {
+                    setHistoryKind(next);
+                    setHistoryPage(1);
+                    setHistoryAssets([]);
+                } : undefined}
+                onLoadMore={canonicalReads ? () => {
+                    if (historyQuery.isFetching) return;
+                    if (historyQuery.isError) {
+                        void historyQuery.refetch();
+                        return;
+                    }
+                    if (historyQuery.isPlaceholderData) return;
+                    setHistoryPage((current) => current + 1);
+                } : undefined}
+                onSelectPersonal={() => navigate("/assets?tab=personal")}
+                onDownload={downloadImage}
+                onArchive={(asset) => {
+                    setHistoryAssets((current) => current.filter((item) => item.id !== asset.id));
+                    void archiveAsset(asset);
+                }}
+            />
+        );
     }
 
     return (
@@ -721,17 +790,17 @@ export default function AssetsPage() {
                                     </div>
                                     {viewMode === "trash" ? (
                                         <>
-                                            {(canonicalReads ? visibleAssets.length : trashAssets.length) > 0 ? (
+                                            {trashCanonicalTotal > 0 ? (
                                                 <Popconfirm
-                                                    title={canonicalReads ? "确认删除当前页回收站素材？" : "确定清空回收站吗？"}
-                                                    description={canonicalReads ? "仅删除当前列表中的素材；仍被引用的素材会提示无法删除。删除不可恢复。" : "清空后所有回收站素材及其文件将被彻底永久删除，不可恢复。"}
+                                                    title="确定清空回收站吗？"
+                                                    description="清空后所有回收站素材及其文件将被彻底永久删除，不可恢复。"
                                                     onConfirm={() => void emptyTrash()}
-                                                    okText={canonicalReads ? "删除" : "清空"}
+                                                    okText="清空"
                                                     okButtonProps={{ danger: true }}
                                                     cancelText="取消"
                                                 >
                                                     <Button danger icon={<Trash2 className="size-3.5" />}>
-                                                        {canonicalReads ? "删除当前页" : "清空回收站"}
+                                                        清空回收站
                                                     </Button>
                                                 </Popconfirm>
                                             ) : null}
@@ -845,15 +914,15 @@ export default function AssetsPage() {
                                 </div>
                                 <div className="collection-folder-list">
                                     <button type="button" aria-pressed={folderFilter === "all"} className={`assets-filter-item ${folderFilter === "all" ? "is-active" : ""}`} onClick={() => { setFolderFilter("all"); setPage(1); }}>
-                                        <span className="assets-filter-item-label">全部</span><span className="assets-filter-count">{activeAssets.length}</span>
+                                        <span className="assets-filter-item-label">全部</span><span className="assets-filter-count">{allFoldersCount}</span>
                                     </button>
                                     <button type="button" aria-pressed={folderFilter === "uncategorized"} className={`assets-filter-item ${folderFilter === "uncategorized" ? "is-active" : ""}`} onClick={() => { setFolderFilter("uncategorized"); setPage(1); }}>
-                                        <span className="assets-filter-item-label">未分类</span><span className="assets-filter-count">{folderCounts[""] ?? activeAssets.filter((asset) => !asset.folderId).length}</span>
+                                        <span className="assets-filter-item-label">未分类</span><span className="assets-filter-count">{remoteReady ? folderCounts[""] ?? 0 : activeAssets.filter((asset) => !asset.folderId).length}</span>
                                     </button>
                                     {folders.map((folder) => (
                                         <div key={folder.id} className="assets-folder-row">
                                             <button type="button" aria-pressed={folderFilter === folder.id} className={`assets-filter-item min-w-0 flex-1 ${folderFilter === folder.id ? "is-active" : ""}`} onClick={() => { setFolderFilter(folder.id); setPage(1); }}>
-                                                <span className="assets-filter-item-label min-w-0 truncate">{folder.name}</span><span className="assets-filter-count">{folderCounts[folder.id] ?? activeAssets.filter((asset) => asset.folderId === folder.id).length}</span>
+                                                <span className="assets-filter-item-label min-w-0 truncate">{folder.name}</span><span className="assets-filter-count">{remoteReady ? folderCounts[folder.id] ?? 0 : activeAssets.filter((asset) => asset.folderId === folder.id).length}</span>
                                             </button>
                                             <button type="button" className="product-icon-button" aria-label={`重命名分类 ${folder.name}`} onClick={() => { setFolderName(folder.name); setFolderEditor(folder); }}><PencilLine /></button>
                                             <DeleteButton label={`删除分类 ${folder.name}`} description="分类删除后，其中的素材会移至未分类，素材文件会保留。" onConfirm={() => removeFolder(folder)} />
@@ -981,7 +1050,7 @@ export default function AssetsPage() {
                                     <PaginationBar
                                         current={page}
                                         pageSize={pageSize}
-                                        total={paginationTotal}
+                                        total={traversalTotal}
                                         pageSizeOptions={[40, 80, 120]}
                                         onChange={(nextPage, nextPageSize) => {
                                             setPage(nextPageSize !== pageSize ? 1 : nextPage);
@@ -1515,21 +1584,55 @@ function AssetsBatchBar({
     );
 }
 
-function GenerationHistorySurface({ assets, onSelectPersonal, onDownload, onArchive }: { assets: LibraryAsset[]; onSelectPersonal: () => void; onDownload: (asset: LibraryAsset) => void; onArchive: (asset: LibraryAsset) => void }) {
-    const [activeType, setActiveType] = useState<"all" | "image" | "video" | "audio">("all");
+function GenerationHistorySurface({
+    assets,
+    generatedTotal,
+    generatedKindCounts,
+    libraryTotal,
+    kind,
+    hasMore = false,
+    loadingMore = false,
+    loadMoreError = false,
+    onKindChange,
+    onLoadMore,
+    onSelectPersonal,
+    onDownload,
+    onArchive,
+}: {
+    assets: LibraryAsset[];
+    generatedTotal: number;
+    generatedKindCounts: Record<string, number>;
+    libraryTotal: number;
+    kind?: GenerationHistoryKind;
+    hasMore?: boolean;
+    loadingMore?: boolean;
+    loadMoreError?: boolean;
+    onKindChange?: (kind: GenerationHistoryKind) => void;
+    onLoadMore?: () => void;
+    onSelectPersonal: () => void;
+    onDownload: (asset: LibraryAsset) => void;
+    onArchive: (asset: LibraryAsset) => void;
+}) {
+    const [localKind, setLocalKind] = useState<GenerationHistoryKind>("all");
     const [sortDescending, setSortDescending] = useState(true);
     const [previewAsset, setPreviewAsset] = useState<LibraryAsset | null>(null);
     const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
+    const activeType = kind ?? localKind;
+    const setActiveType = onKindChange ?? setLocalKind;
     const historyAssets = assets
-        .filter(isGeneratedHistoryAsset)
+        .filter(isWorkspaceGeneratedHistoryAsset)
         .sort((left, right) => {
             const delta = new Date(left.updatedAt).getTime() - new Date(right.updatedAt).getTime();
             return sortDescending ? -delta : delta;
         });
-    const groups = [...new Set(historyAssets.map((asset) => historyDay(asset.updatedAt)))];
-    const counts = { all: historyAssets.length, image: historyAssets.filter((asset) => asset.kind === "image").length, video: historyAssets.filter((asset) => asset.kind === "video").length, audio: historyAssets.filter((asset) => asset.kind === "audio").length };
-    const typeTabs: Array<["all" | "image" | "video" | "audio", string, number]> = [["all", "全部", counts.all], ["image", "图片", counts.image], ["video", "视频", counts.video], ["audio", "音频", counts.audio]];
-    const typeFilteredHistory = activeType === "all" ? historyAssets : historyAssets.filter((asset) => asset.kind === activeType);
+    const counts = {
+        all: generatedTotal,
+        image: generatedKindCounts.image || 0,
+        video: generatedKindCounts.video || 0,
+        audio: generatedKindCounts.audio || 0,
+    };
+    const typeTabs: Array<[GenerationHistoryKind, string, number]> = [["all", "全部", counts.all], ["image", "图片", counts.image], ["video", "视频", counts.video], ["audio", "音频", counts.audio]];
+    const typeFilteredHistory = kind != null ? historyAssets : (activeType === "all" ? historyAssets : historyAssets.filter((asset) => asset.kind === activeType));
     const visibleHistoryAssets = typeFilteredHistory;
     const visibleGroups = [...new Set(visibleHistoryAssets.map((asset) => historyDay(asset.updatedAt)))];
     const selectedHistoryAssets = visibleHistoryAssets.filter((asset) => selectedHistoryIds.has(asset.id));
@@ -1588,7 +1691,17 @@ function GenerationHistorySurface({ assets, onSelectPersonal, onDownload, onArch
                         </div>
                     </section>
                 )) : <WorkspaceState icon="assets" compact title={historyAssets.length ? "没有匹配的生成结果" : "暂无生成历史"} description={historyAssets.length ? "切换类型后再试。" : "本地生成结果会自动出现在这里。"} />}
-                {visibleGroups.length ? <p className="generation-history-end">没有更多了</p> : null}
+                {visibleGroups.length ? (
+                    hasMore ? (
+                        <div className="generation-history-more">
+                            <button type="button" onClick={onLoadMore} disabled={loadingMore || !onLoadMore}>
+                                {loadingMore ? "正在加载" : loadMoreError ? "加载失败，点击重试" : "加载更多"}
+                            </button>
+                        </div>
+                    ) : (
+                        <p className="generation-history-end">没有更多了</p>
+                    )
+                ) : null}
             </div>
             <aside className="assets-library-source-rail" aria-label="资产来源导航">
                 <div className="assets-library-source-rail-inner">
@@ -1598,7 +1711,7 @@ function GenerationHistorySurface({ assets, onSelectPersonal, onDownload, onArch
                     </button>
                     <button type="button" className="assets-library-source-rail-item" onClick={onSelectPersonal}>
                         <span className="assets-library-source-rail-icon"><FolderOpen className="size-3.5" /></span>
-                        <span>个人资产库</span><span className="assets-filter-count">{assets.length}</span>
+                        <span>个人资产库</span><span className="assets-filter-count">{libraryTotal}</span>
                     </button>
                 </div>
             </aside>
@@ -1608,11 +1721,6 @@ function GenerationHistorySurface({ assets, onSelectPersonal, onDownload, onArch
         </Drawer>
         </>
     );
-}
-
-function isGeneratedHistoryAsset(asset: LibraryAsset) {
-    if (asset.kind !== "image" && asset.kind !== "video" && asset.kind !== "audio") return false;
-    return asset.source === "生成任务" || typeof asset.metadata?.generationEffectKey === "string";
 }
 
 function GenerationHistoryMissingPreview({ asset }: { asset: LibraryAsset }) {

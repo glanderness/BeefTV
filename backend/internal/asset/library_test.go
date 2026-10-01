@@ -440,3 +440,27 @@ func TestUserAssetsPageAppliesFavoriteFilterAndSidebarCounts(t *testing.T) {
 		t.Fatalf("project counts = %#v", page.ProjectCounts)
 	}
 }
+
+func TestUserAssetsPageAppliesGeneratedFilterAndSidebarCounts(t *testing.T) {
+	lib, db := newLibraryFixture(t)
+	now := time.Now().UTC()
+	for _, asset := range []model.Asset{
+		{ID: "gen-1", UserID: "owner", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed, Title: "生成图", PayloadJSON: `{"id":"gen-1","kind":"image","title":"生成图","coverUrl":"","tags":[],"source":"生成任务","data":{"dataUrl":"https://example.com/a.png","width":1,"height":1,"bytes":1,"mimeType":"image/png"}}`, CreatedAt: now, UpdatedAt: now.Add(time.Second)},
+		{ID: "gen-2", UserID: "owner", Kind: "audio", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed, Title: "生成音", PayloadJSON: `{"id":"gen-2","kind":"audio","title":"生成音","coverUrl":"","tags":[],"metadata":{"generationEffectKey":"voice"},"data":{"url":"https://example.com/a.mp3","bytes":1,"mimeType":"audio/mpeg"}}`, CreatedAt: now, UpdatedAt: now},
+		{ID: "plain-1", UserID: "owner", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed, Title: "普通", PayloadJSON: `{"id":"plain-1","kind":"image","title":"普通","coverUrl":"","tags":[],"data":{"dataUrl":"https://example.com/a.png","width":1,"height":1,"bytes":1,"mimeType":"image/png"}}`, CreatedAt: now, UpdatedAt: now},
+	} {
+		if err := db.Create(&asset).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := lib.UserAssetsPage("owner", 1, 40, UserAssetPageFilter{Status: "active", Generated: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 2 || len(page.Assets) != 2 || page.GeneratedTotal != 2 || page.HasMore {
+		t.Fatalf("generated page = %#v", page)
+	}
+	if page.GeneratedKindCounts["image"] != 1 || page.GeneratedKindCounts["audio"] != 1 {
+		t.Fatalf("generated kind counts = %#v", page.GeneratedKindCounts)
+	}
+}

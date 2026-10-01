@@ -1,5 +1,6 @@
 import { linkProjectAsset, moveProjectAsset, updateProjectAssetCategory } from "@/services/api/projects";
 import { ApiError } from "@/services/api/request";
+import { listWorkspaceAssetsPage } from "@/services/api/workspace-assets";
 import { deleteWorkspaceAssetRecord, putWorkspaceAsset } from "@/services/api/workspace-data";
 import { normalizeAssetCategory } from "@/lib/asset-category";
 import { assertUserScope, captureUserScope, userScopeMatches, UserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
@@ -269,6 +270,95 @@ export async function deleteWorkspaceAsset(id: string, expectedScope?: CapturedU
             await runAssetStoreProjection(() => useAssetStore.getState().removeAsset(assetId));
         }
     });
+}
+
+export const WORKSPACE_ASSET_CLEAR_TRASH_PAGE_SIZE = 40;
+
+export type ClearWorkspaceArchivedAssetsResult = {
+    deleted: number;
+    remaining: number;
+    error?: Error;
+};
+
+export async function clearWorkspaceArchivedAssets(options?: {
+    expectedScope?: CapturedUserScope;
+    signal?: AbortSignal;
+    pageSize?: number;
+}): Promise<ClearWorkspaceArchivedAssetsResult> {
+    const expected = options?.expectedScope ?? captureUserScope();
+    const pageSize = Math.min(120, Math.max(1, options?.pageSize ?? WORKSPACE_ASSET_CLEAR_TRASH_PAGE_SIZE));
+    throwIfAborted(options?.signal);
+    assertUserScope(expected);
+
+    if (usesBrowserLocalResourceStore()) {
+        const trash = useAssetStore.getState().assets.filter((asset) => asset.kind !== "entity" && asset.status === "archived");
+        for (const asset of trash) {
+            throwIfAborted(options?.signal);
+            assertUserScope(expected);
+            await deleteWorkspaceAsset(asset.id, expected);
+        }
+        const remaining = useAssetStore.getState().assets.filter((asset) => asset.kind !== "entity" && asset.status === "archived").length;
+        return { deleted: trash.length - remaining, remaining };
+    }
+
+    let deleted = 0;
+    const attempted = new Set<string>();
+    while (true) {
+        throwIfAborted(options?.signal);
+        assertUserScope(expected);
+        const page = await loadCanonicalArchivedPage(1, pageSize, expected, options?.signal);
+        const batch = page.ids.filter((id) => !attempted.has(id));
+        if (!batch.length) {
+            return { deleted, remaining: page.total };
+        }
+        for (const id of batch) {
+            throwIfAborted(options?.signal);
+            assertUserScope(expected);
+            attempted.add(id);
+            try {
+                await deleteWorkspaceAsset(id, expected);
+                deleted += 1;
+            } catch (error) {
+                if (error instanceof UserScopeAbandonedError || (error instanceof DOMException && error.name === "AbortError")) throw error;
+                const failed = peekAssetStoreDraft(expected.userScope, id);
+                if (failed?.kind === "delete") ackAssetStoreDraft(expected, id, failed.version);
+                const remainingPage = await loadCanonicalArchivedPage(1, 1, expected, options?.signal);
+                return {
+                    deleted,
+                    remaining: remainingPage.total,
+                    error: error instanceof Error ? error : new Error(String(error)),
+                };
+            }
+        }
+    }
+}
+
+export function workspaceClearTrashMessage(result: ClearWorkspaceArchivedAssetsResult) {
+    if (!result.error && result.remaining <= 0) {
+        return { type: "success" as const, text: `已彻底清空回收站 ${result.deleted} 个素材` };
+    }
+    const remaining = `已删除 ${result.deleted} 个素材，回收站还剩 ${result.remaining} 个。`;
+    const detail = result.error?.message?.trim();
+    return { type: "error" as const, text: detail ? `${remaining}${detail}` : remaining };
+}
+
+async function loadCanonicalArchivedPage(page: number, pageSize: number, expected: CapturedUserScope, signal?: AbortSignal) {
+    const remote = await listWorkspaceAssetsPage({ page, pageSize, status: "archived" }, { signal, expectedScope: expected });
+    assertUserScope(expected);
+    if (!remote || !Array.isArray(remote.assets)) throw new Error("素材列表无效");
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    for (const item of remote.assets) {
+        if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+        const record = item as Record<string, unknown>;
+        const id = typeof record.id === "string" ? record.id.trim() : "";
+        const kind = typeof record.kind === "string" ? record.kind : "";
+        const status = typeof record.status === "string" ? record.status : "";
+        if (!id || seen.has(id) || kind === "entity" || status !== "archived") continue;
+        seen.add(id);
+        ids.push(id);
+    }
+    return { ids, total: Math.max(0, Number(remote.total) || 0) };
 }
 
 export async function persistWorkspaceAssetChanges(expectedScope?: CapturedUserScope) {

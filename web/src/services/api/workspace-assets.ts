@@ -13,6 +13,7 @@ export type WorkspaceAssetPageFilter = {
     favorite?: boolean;
     recent?: boolean;
     project?: string;
+    generated?: boolean;
 };
 
 export type WorkspaceAssetPageResponse = {
@@ -23,6 +24,8 @@ export type WorkspaceAssetPageResponse = {
     favoriteTotal?: number;
     recentTotal?: number;
     projectCounts?: Record<string, number>;
+    generatedTotal?: number;
+    generatedKindCounts?: Record<string, number>;
     page: number;
     pageSize: number;
     total: number;
@@ -45,6 +48,7 @@ export function listWorkspaceAssetsPage(filter: WorkspaceAssetPageFilter, config
             favorite: filter.favorite ? 1 : undefined,
             recent: filter.recent ? 1 : undefined,
             project: filter.project,
+            generated: filter.generated ? 1 : undefined,
         }),
     });
 }

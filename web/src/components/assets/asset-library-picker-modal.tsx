@@ -14,8 +14,8 @@ import { cn } from "@/lib/utils";
 import type { ExternalAssetPickerReference } from "@/lib/plugins/plugin-types";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { loadAssetLibraryPage, localSavedRemotePendingMessage } from "@/services/local-workspace-sync";
-import { isUnsavedWorkspaceAsset, usesWorkspaceAssetLibraryApi } from "@/services/workspace-asset-read";
-import { deleteWorkspaceAsset, persistWorkspaceAssetChanges } from "@/services/workspace-asset-repository";
+import { isUnsavedWorkspaceAsset, usesWorkspaceAssetLibraryApi, workspaceAssetTraversalTotal } from "@/services/workspace-asset-read";
+import { clearWorkspaceArchivedAssets, deleteWorkspaceAsset, persistWorkspaceAssetChanges, workspaceClearTrashMessage } from "@/services/workspace-asset-repository";
 
 export type AssetPickerMediaKind = "image" | "video" | "audio" | "text";
 
@@ -171,7 +171,13 @@ export function AssetLibraryPickerModal({
     const remoteTotal = remoteQuery.data?.total ?? 0;
     const remoteReady = remoteEnabled && remoteQuery.isSuccess;
     const useRemoteItems = Boolean(remoteReady);
-    const effectivePagination = useRemoteItems ? { current: remotePage, pageSize: remotePageSize, total: remoteTotal, onChange: (page: number, pageSize: number) => { setRemotePage(page); setRemotePageSize(pageSize); } } : pagination;
+    const traversalTotal = remoteReady && remoteQuery.data ? workspaceAssetTraversalTotal(remoteQuery.data) : (pagination?.total ?? 0);
+    const effectivePagination = useRemoteItems ? { current: remotePage, pageSize: remotePageSize, total: traversalTotal, onChange: (page: number, pageSize: number) => { setRemotePage(page); setRemotePageSize(pageSize); } } : pagination;
+    useEffect(() => {
+        if (!remoteEnabled) return;
+        const maxPage = Math.max(1, Math.ceil(traversalTotal / remotePageSize));
+        setRemotePage((value) => Math.min(value, maxPage));
+    }, [remoteEnabled, remotePageSize, traversalTotal]);
     const pluginItems = useMemo(() => allItems.filter((item) => Boolean(item.external)), [allItems]);
     const hasPluginSource = useMemo(() => Object.keys(categoryLabels).some((value) => value.startsWith("external:")) || pluginItems.some((item) => item.category.startsWith("external:")), [categoryLabels, pluginItems]);
     // 媒体类型在分类之前收窄数据源，让左侧分类计数、网格和分页始终描述同一批素材。
@@ -186,8 +192,8 @@ export function AssetLibraryPickerModal({
     const sourceFolders = source === "plugin" ? folders : [];
     const showCategories = source === "local" || !sourceFolders.length;
     const normalCategories = useMemo(() => useRemoteItems ? Object.keys(categoryLabels).filter((value) => value !== "archived" && !value.startsWith("external:")) : ["all", ...Array.from(new Set(activeSourceItems.map((item) => item.category || "other"))).filter((value) => value !== "all")], [activeSourceItems, categoryLabels, useRemoteItems]);
-    const archivedCount = archivedItems.length;
     const isRecycleBin = category === "archived";
+    const archivedCount = useRemoteItems && isRecycleBin ? (remoteQuery.data?.canonicalTotal ?? remoteTotal) : archivedItems.length;
 
     const visibleItems = useMemo(() => {
         const query = keyword.trim().toLowerCase();
@@ -313,14 +319,18 @@ export function AssetLibraryPickerModal({
     };
 
     const handleEmptyRecycleBin = async () => {
-        const toDelete = archivedItems;
-        if (!toDelete.length) return;
+        if (!archivedCount) return;
         setWorking(true);
         try {
-            for (const item of toDelete) await deleteWorkspaceAsset(item.id);
+            const result = await clearWorkspaceArchivedAssets();
             setSelected(new Set());
-            message.success(`已删除${remoteEnabled ? "当前页" : "回收站"} ${toDelete.length} 个素材`);
-            setCategory("all");
+            const feedback = workspaceClearTrashMessage(result);
+            if (feedback.type === "success") {
+                message.success(feedback.text);
+                setCategory("all");
+            } else {
+                message.error(feedback.text);
+            }
         } catch (err) {
             message.error(err instanceof Error ? err.message : "清空回收站失败");
         } finally {
@@ -548,9 +558,9 @@ export function AssetLibraryPickerModal({
                     <div className="asset-picker-actions">
                         {isRecycleBin ? (
                             <>
-                                <Popconfirm title={remoteEnabled ? "确认删除当前页回收站素材？" : "确认清空回收站？"} description="仅删除当前列表中的素材；仍被引用的素材由服务端拒绝删除。删除不可恢复。" onConfirm={handleEmptyRecycleBin} okText="删除" okButtonProps={{ danger: true }} cancelText="取消">
+                                <Popconfirm title="确定清空回收站吗？" description="清空后所有回收站素材及其文件将被彻底永久删除，不可恢复。" onConfirm={handleEmptyRecycleBin} okText="清空" okButtonProps={{ danger: true }} cancelText="取消">
                                     <Button type="text" danger disabled={working || !archivedCount}>
-                                        {remoteEnabled ? "删除当前页" : "清空回收站"}
+                                        清空回收站
                                     </Button>
                                 </Popconfirm>
                                 <Popconfirm title="确认彻底删除已选素材？" onConfirm={handleDeleteSelected} okText="删除" okButtonProps={{ danger: true }} cancelText="取消">

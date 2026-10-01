@@ -30,6 +30,7 @@ type UserAssetPageFilter struct {
 	Favorite      bool
 	Recent        bool
 	Project       string
+	Generated     bool
 }
 
 type UserAssetFacetRow struct {
@@ -93,6 +94,23 @@ func (r *Repository) UserAssetProjectCounts(userID string) ([]UserAssetFacetRow,
 	return rows, err
 }
 
+func (r *Repository) UserAssetGeneratedCounts(userID string) (total int64, kindRows []UserAssetFacetRow, err error) {
+	base := func() *gorm.DB {
+		return userAssetFilteredQuery(
+			r.db.Model(&model.Asset{}).Where("user_id = ? AND kind <> ?", userID, "entity"),
+			UserAssetPageFilter{Status: "active", Generated: true},
+			false,
+		)
+	}
+	if err := base().Count(&total).Error; err != nil {
+		return 0, nil, err
+	}
+	if err := base().Select("kind AS key, COUNT(*) AS count").Group("kind").Scan(&kindRows).Error; err != nil {
+		return 0, nil, err
+	}
+	return total, kindRows, nil
+}
+
 func userAssetFilteredQuery(query *gorm.DB, filter UserAssetPageFilter, includeSearch bool) *gorm.DB {
 	if value := strings.TrimSpace(filter.Kind); value != "" {
 		query = query.Where("kind = ?", value)
@@ -129,7 +147,17 @@ func userAssetFilteredQuery(query *gorm.DB, filter UserAssetPageFilter, includeS
 	if value := strings.TrimSpace(filter.Project); value != "" {
 		query = query.Where(userAssetProjectLabelSQL()+" = ?", value)
 	}
+	if filter.Generated {
+		query = query.Where(userAssetGeneratedSQL())
+	}
 	return query
+}
+
+func userAssetGeneratedSQL() string {
+	return `(kind IN ('image','video','audio') AND (
+		json_extract(payload_json, '$.source') = '生成任务'
+		OR json_type(payload_json, '$.metadata.generationEffectKey') = 'text'
+	))`
 }
 
 func userAssetProjectLabelSQL() string {

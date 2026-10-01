@@ -112,7 +112,7 @@ func (l *Library) UserAssetsPage(userID string, page int, pageSize int, filter U
 	repoFilter := repository.UserAssetPageFilter{
 		Kind: filter.Kind, Category: filter.Category, FolderID: filter.FolderID,
 		Uncategorized: filter.Uncategorized, Status: filter.Status, Query: filter.Query,
-		Favorite: filter.Favorite, Recent: filter.Recent, Project: filter.Project,
+		Favorite: filter.Favorite, Recent: filter.Recent, Project: filter.Project, Generated: filter.Generated,
 	}
 	assets, total, err := l.repo.UserAssetsPage(userID, page, pageSize, repoFilter)
 	if err != nil {
@@ -130,9 +130,14 @@ func (l *Library) UserAssetsPage(userID string, page int, pageSize int, filter U
 	if err != nil {
 		return UserAssetPage{}, err
 	}
+	generatedTotal, generatedKindRows, err := l.repo.UserAssetGeneratedCounts(userID)
+	if err != nil {
+		return UserAssetPage{}, err
+	}
 	return UserAssetPage{
 		Assets: clientPayloads(assets), KindCounts: assetFacetMap(kindRows), CategoryCounts: assetFacetMap(categoryRows), FolderCounts: assetFacetMap(folderRows),
 		FavoriteTotal: favoriteTotal, RecentTotal: recentTotal, ProjectCounts: assetFacetMap(projectRows),
+		GeneratedTotal: generatedTotal, GeneratedKindCounts: assetFacetMap(generatedKindRows),
 		Page: page, PageSize: pageSize, Total: total, HasMore: int64(page*pageSize) < total,
 	}, nil
 }

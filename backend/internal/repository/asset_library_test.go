@@ -282,6 +282,134 @@ func TestUserAssetsPageFiltersFavoriteRecentProjectBeforePagination(t *testing.T
 	}
 }
 
+func TestUserAssetsPageFiltersGeneratedBeforePagination(t *testing.T) {
+	repo, db := newAssetLibraryTestRepository(t)
+	now := time.Now().UTC()
+	create := func(asset model.Asset) {
+		t.Helper()
+		if err := db.Create(&asset).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index := 1; index <= 80; index++ {
+		id := fmt.Sprintf("plain-%03d", index)
+		create(model.Asset{
+			ID: id, UserID: "user-1", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed,
+			Title: id, PayloadJSON: fmt.Sprintf(`{"id":%q,"title":%q,"source":"Canvas"}`, id, id),
+			CreatedAt: now, UpdatedAt: now.Add(time.Duration(200+index) * time.Second),
+		})
+	}
+	for index := 1; index <= 110; index++ {
+		id := fmt.Sprintf("gen-img-%03d", index)
+		create(model.Asset{
+			ID: id, UserID: "user-1", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed,
+			Title: id, PayloadJSON: fmt.Sprintf(`{"id":%q,"title":%q,"source":"生成任务"}`, id, id),
+			CreatedAt: now, UpdatedAt: now.Add(time.Duration(index) * time.Second),
+		})
+	}
+	for index := 1; index <= 10; index++ {
+		id := fmt.Sprintf("gen-key-%03d", index)
+		create(model.Asset{
+			ID: id, UserID: "user-1", Kind: "video", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed,
+			Title: id, PayloadJSON: fmt.Sprintf(`{"id":%q,"title":%q,"metadata":{"generationEffectKey":"seedance"}}`, id, id),
+			CreatedAt: now, UpdatedAt: now.Add(time.Duration(110+index) * time.Second),
+		})
+	}
+	for index := 1; index <= 5; index++ {
+		id := fmt.Sprintf("gen-audio-%03d", index)
+		create(model.Asset{
+			ID: id, UserID: "user-1", Kind: "audio", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed,
+			Title: id, PayloadJSON: fmt.Sprintf(`{"id":%q,"title":%q,"source":"生成任务"}`, id, id),
+			CreatedAt: now, UpdatedAt: now.Add(time.Duration(120+index) * time.Second),
+		})
+	}
+	create(model.Asset{
+		ID: "gen-text", UserID: "user-1", Kind: "text", Category: model.AssetCategoryOther, Status: model.AssetVersionStatusConfirmed,
+		Title: "生成文本", PayloadJSON: `{"id":"gen-text","source":"生成任务"}`, CreatedAt: now, UpdatedAt: now.Add(400 * time.Second),
+	})
+	create(model.Asset{
+		ID: "gen-archived", UserID: "user-1", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusArchived,
+		Title: "归档生成", PayloadJSON: `{"id":"gen-archived","source":"生成任务"}`, CreatedAt: now, UpdatedAt: now.Add(401 * time.Second),
+	})
+	create(model.Asset{
+		ID: "gen-entity", UserID: "user-1", Kind: "entity", Category: model.AssetCategoryOther, Status: model.AssetVersionStatusConfirmed,
+		Title: "角色", PayloadJSON: `{"id":"gen-entity","source":"生成任务"}`, CreatedAt: now, UpdatedAt: now.Add(402 * time.Second),
+	})
+	create(model.Asset{
+		ID: "gen-other", UserID: "user-2", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed,
+		Title: "他人生成", PayloadJSON: `{"id":"gen-other","source":"生成任务"}`, CreatedAt: now, UpdatedAt: now,
+	})
+
+	unfiltered, unfilteredTotal, err := repo.UserAssetsPage("user-1", 1, 120, UserAssetPageFilter{Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unfilteredTotal != 206 || len(unfiltered) != 120 {
+		t.Fatalf("unfiltered page1 = total %d count %d", unfilteredTotal, len(unfiltered))
+	}
+
+	page1, total, err := repo.UserAssetsPage("user-1", 1, 40, UserAssetPageFilter{Status: "active", Generated: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 125 || len(page1) != 40 {
+		t.Fatalf("generated page1 = total %d count %d ids %s", total, len(page1), assetIDs(page1))
+	}
+	if page1[0].ID != "gen-audio-005" {
+		t.Fatalf("generated page1 newest = %s", page1[0].ID)
+	}
+	for _, item := range page1 {
+		if strings.HasPrefix(item.ID, "plain-") || item.ID == "gen-text" || item.ID == "gen-archived" {
+			t.Fatalf("generated page included %s", item.ID)
+		}
+	}
+
+	page2, total, err := repo.UserAssetsPage("user-1", 2, 40, UserAssetPageFilter{Status: "active", Generated: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 125 || len(page2) != 40 || page2[0].ID != "gen-img-085" {
+		t.Fatalf("generated page2 = total %d ids %s", total, assetIDs(page2))
+	}
+	page4, total, err := repo.UserAssetsPage("user-1", 4, 40, UserAssetPageFilter{Status: "active", Generated: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 125 || len(page4) != 5 || page4[4].ID != "gen-img-001" {
+		t.Fatalf("generated page4 = total %d ids %s", total, assetIDs(page4))
+	}
+	seen := map[string]bool{}
+	for _, item := range append(append(append([]model.Asset{}, page1...), page2...), page4...) {
+		if seen[item.ID] {
+			t.Fatalf("generated pages overlap on %s", item.ID)
+		}
+		seen[item.ID] = true
+	}
+	if !seen["gen-img-001"] {
+		t.Fatal("generated records beyond the first unfiltered page were missing")
+	}
+
+	images, imageTotal, err := repo.UserAssetsPage("user-1", 1, 40, UserAssetPageFilter{Status: "active", Generated: true, Kind: "image"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if imageTotal != 110 || len(images) != 40 || images[0].Kind != "image" {
+		t.Fatalf("generated images = total %d count %d", imageTotal, len(images))
+	}
+
+	generatedTotal, kindRows, err := repo.UserAssetGeneratedCounts("user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generatedTotal != 125 {
+		t.Fatalf("generated total = %d", generatedTotal)
+	}
+	kindCounts := facetCountMap(kindRows)
+	if kindCounts["image"] != 110 || kindCounts["video"] != 10 || kindCounts["audio"] != 5 || kindCounts["text"] != 0 || len(kindCounts) != 3 {
+		t.Fatalf("generated kind counts = %#v", kindCounts)
+	}
+}
+
 func TestUserAssetProjectCountsUsesActiveNonEntitySemantics(t *testing.T) {
 	repo, db := newAssetLibraryTestRepository(t)
 	now := time.Now().UTC()

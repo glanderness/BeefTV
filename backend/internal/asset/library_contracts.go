@@ -34,17 +34,19 @@ type Summary struct {
 }
 
 type UserAssetPage struct {
-	Assets         []json.RawMessage `json:"assets"`
-	KindCounts     map[string]int64  `json:"kindCounts"`
-	CategoryCounts map[string]int64  `json:"categoryCounts"`
-	FolderCounts   map[string]int64  `json:"folderCounts"`
-	FavoriteTotal  int64             `json:"favoriteTotal"`
-	RecentTotal    int64             `json:"recentTotal"`
-	ProjectCounts  map[string]int64  `json:"projectCounts"`
-	Page           int               `json:"page"`
-	PageSize       int               `json:"pageSize"`
-	Total          int64             `json:"total"`
-	HasMore        bool              `json:"hasMore"`
+	Assets              []json.RawMessage `json:"assets"`
+	KindCounts          map[string]int64  `json:"kindCounts"`
+	CategoryCounts      map[string]int64  `json:"categoryCounts"`
+	FolderCounts        map[string]int64  `json:"folderCounts"`
+	FavoriteTotal       int64             `json:"favoriteTotal"`
+	RecentTotal         int64             `json:"recentTotal"`
+	ProjectCounts       map[string]int64  `json:"projectCounts"`
+	GeneratedTotal      int64             `json:"generatedTotal"`
+	GeneratedKindCounts map[string]int64  `json:"generatedKindCounts"`
+	Page                int               `json:"page"`
+	PageSize            int               `json:"pageSize"`
+	Total               int64             `json:"total"`
+	HasMore             bool              `json:"hasMore"`
 }
 
 type UserAssetPageFilter struct {
@@ -57,4 +59,5 @@ type UserAssetPageFilter struct {
 	Favorite      bool
 	Recent        bool
 	Project       string
+	Generated     bool
 }

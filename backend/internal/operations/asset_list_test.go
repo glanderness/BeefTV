@@ -79,7 +79,7 @@ func TestOpAssetListForwardsFavoriteRecentProject(t *testing.T) {
 	if probe.userID != "owner" || probe.page != 2 || probe.size != 20 {
 		t.Fatalf("paging = user %s page %d size %d", probe.userID, probe.page, probe.size)
 	}
-	if !probe.filter.Favorite || !probe.filter.Recent || probe.filter.Project != "海边剧" || probe.filter.Kind != "image" || probe.filter.Category != "material" || probe.filter.Query != "海边" {
+	if !probe.filter.Favorite || !probe.filter.Recent || probe.filter.Project != "海边剧" || probe.filter.Kind != "image" || probe.filter.Category != "material" || probe.filter.Query != "海边" || probe.filter.Generated {
 		t.Fatalf("filter = %#v", probe.filter)
 	}
 	page, ok := result.(canvas.UserAssetPage)
@@ -96,7 +96,17 @@ func TestOpAssetListKeepsLegacyArgsWithoutExtraFilters(t *testing.T) {
 	if _, err := opAssetList(&Context{UserID: "owner", Domain: probe}, json.RawMessage(`{"query":"x","kind":"image"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if probe.filter.Favorite || probe.filter.Recent || probe.filter.Project != "" || probe.filter.Kind != "image" || probe.filter.Query != "x" {
+	if probe.filter.Favorite || probe.filter.Recent || probe.filter.Project != "" || probe.filter.Generated || probe.filter.Kind != "image" || probe.filter.Query != "x" {
 		t.Fatalf("legacy filter = %#v", probe.filter)
+	}
+}
+
+func TestOpAssetListForwardsGenerated(t *testing.T) {
+	probe := &assetListProbe{}
+	if _, err := opAssetList(&Context{UserID: "owner", Domain: probe}, json.RawMessage(`{"generated":true,"kind":"video","page":3,"pageSize":20}`)); err != nil {
+		t.Fatal(err)
+	}
+	if !probe.filter.Generated || probe.filter.Kind != "video" || probe.page != 3 || probe.size != 20 {
+		t.Fatalf("generated filter = %#v page %d size %d", probe.filter, probe.page, probe.size)
 	}
 }
