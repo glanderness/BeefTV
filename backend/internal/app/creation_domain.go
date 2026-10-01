@@ -3,10 +3,12 @@ package app
 import (
 	"encoding/json"
 
+	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/creation"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
+	localtask "infinite-canvas/backend/internal/task"
 )
 
 func (s *Service) creationDomain() *creation.Service {
@@ -87,9 +89,20 @@ func fromCreationTaskRequest(req creation.TaskRequest) CreateTaskRequest {
 type creationTasksAdapter struct{ s *Service }
 
 func (a creationTasksAdapter) Prepare(userID string, req creation.TaskRequest) (*creation.PreparedTask, error) {
-	taskReq := fromCreationTaskRequest(req)
-	taskReq.creationPrepare = &creationTaskPreparation{}
-	task, err := a.s.CreateTask(userID, taskReq)
+	task, err := a.s.CreateLocalTask(userID, localtask.CreateRequest{
+		ProjectID:      req.ProjectID,
+		Type:           req.Type,
+		Operation:      req.Operation,
+		Prompt:         req.Prompt,
+		Provider:       req.Provider,
+		Model:          req.Model,
+		LogicalModelID: req.LogicalModelID,
+		Input:          req.Input,
+		TraceID:        req.TraceID,
+		RequestID:      req.RequestID,
+		AdmissionID:    req.AdmissionID,
+		PrepareOnly:    true,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -138,8 +151,11 @@ func (a creationQuotaAdapter) ValidateCanvas(userID string, repo *repository.Rep
 
 type creationMediaAdapter struct{ s *Service }
 
-func (a creationMediaAdapter) ValidateDocument(userID string, raw json.RawMessage) error {
-	return a.s.validateCanvasMediaAssets(userID, raw)
+func (a creationMediaAdapter) ValidateDocument(userID string, repo *repository.Repository, raw json.RawMessage) error {
+	if repo == nil {
+		return kernel.NewAppError(kernel.CodeInternal, "画布媒体校验缺少事务仓储")
+	}
+	return canvas.New(repo, newCanvasHostWithRepo(a.s, repo)).ValidateCanvasMediaAssets(userID, raw)
 }
 
 type creationKindsAdapter struct{}

@@ -95,12 +95,19 @@ func TestCreationExpiredLeaseRejectsConfirmAndSubmit(t *testing.T) {
 }
 
 func TestCreationModelCannotSelfConfirm(t *testing.T) {
-	s, _, id, _ := creationTestService(t)
-	if _, err := s.ChangeCreationRun("user", id, "claim", CreationRequest{ExpectedEpoch: 1, CreationGuard: CreationGuard{Owner: "assistant"}}); err == nil {
-		t.Fatal("assistant claimed confirmation")
+	s, _, id, guard := creationTestService(t)
+	if _, err := s.ChangeCreationRun("user", id, "release", CreationRequest{CreationGuard: guard}); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := s.ChangeCreationRun("user", id, "claim", CreationRequest{ExpectedEpoch: 1, CreationGuard: CreationGuard{Owner: "model"}}); err == nil {
-		t.Fatal("model claimed confirmation")
+	if _, err := s.ChangeCreationRun("user", id, "claim", CreationRequest{ExpectedEpoch: 1, CreationGuard: CreationGuard{Owner: "assistant"}}); err != nil {
+		t.Fatal(err)
+	}
+	run, err := s.GetCreationRun("user", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Run.ExecutionOwner != "assistant" {
+		t.Fatalf("lease owner is identity, got %q", run.Run.ExecutionOwner)
 	}
 }
 
@@ -118,14 +125,21 @@ func TestCreationRunOwnershipCASAndFence(t *testing.T) {
 	if _, err := s.CreateRunCanvas("user", id, CreationRequest{CreationGuard: guard}); err == nil {
 		t.Fatal("untrusted state approved canvas")
 	}
-	if _, err := s.ChangeCreationRun("user", id, "claim", CreationRequest{ExpectedEpoch: 1, CreationGuard: CreationGuard{Owner: "new-page"}}); err != nil {
+	if _, err := s.ChangeCreationRun("user", id, "claim", CreationRequest{ExpectedEpoch: 1, CreationGuard: CreationGuard{Owner: "new-page"}}); err == nil {
+		t.Fatal("foreign owner stole a live lease")
+	}
+	if _, err := s.ChangeCreationRun("user", id, "claim", CreationRequest{ExpectedEpoch: 1, CreationGuard: CreationGuard{Owner: "page"}}); err != nil {
 		t.Fatal(err)
 	}
+	renewed := CreationGuard{ExecutionEpoch: 2, Owner: "page"}
 	if _, err := s.ChangeCreationRun("user", id, "heartbeat", CreationRequest{CreationGuard: guard}); err == nil {
-		t.Fatal("old owner renewed lease")
+		t.Fatal("stale epoch renewed lease")
 	}
-	if _, err := s.ChangeCreationRun("user", id, "release", CreationRequest{CreationGuard: guard}); err == nil {
-		t.Fatal("old owner released new lease")
+	if _, err := s.ChangeCreationRun("user", id, "release", CreationRequest{CreationGuard: renewed}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ChangeCreationRun("user", id, "claim", CreationRequest{ExpectedEpoch: 2, CreationGuard: CreationGuard{Owner: "new-page"}}); err != nil {
+		t.Fatal(err)
 	}
 }
 

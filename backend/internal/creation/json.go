@@ -117,28 +117,10 @@ func documentObjects(value any) (map[string]map[string]any, error) {
 	return out, nil
 }
 
-func executionJSON(execution Execution, unknown bool) (string, error) {
+func executionJSON(execution Execution) (string, error) {
 	raw, err := json.Marshal(execution)
 	if err != nil {
 		return "", err
 	}
-	if !unknown {
-		return string(raw), nil
-	}
-	var obj map[string]any
-	if err = json.Unmarshal(raw, &obj); err != nil {
-		return "", err
-	}
-	obj[unknownReceiptFlag] = true
-	b, err := json.Marshal(obj)
-	return string(b), err
-}
-
-func hasUnknownReceipt(raw string) bool {
-	var obj map[string]any
-	if err := json.Unmarshal([]byte(raw), &obj); err != nil {
-		return false
-	}
-	flag, _ := obj[unknownReceiptFlag].(bool)
-	return flag
+	return string(raw), nil
 }

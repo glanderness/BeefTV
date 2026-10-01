@@ -1,18 +1,12 @@
 package creation
 
 import (
-	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
 )
 
 const leaseTTL = 45 * time.Second
-
-var reservedConfirmOwners = map[string]struct{}{
-	"model": {}, "assistant": {}, "agent": {}, "system": {},
-	"pi": {}, "cloud_agent": {}, "cloud-agent": {},
-}
 
 func validateGuard(run *model.CreationRun, guard Guard, now time.Time) error {
 	if guard.Owner == "" || run.ExecutionOwner != guard.Owner || run.ExecutionEpoch != guard.ExecutionEpoch || run.LeaseExpiresAt == nil || !run.LeaseExpiresAt.After(now) {
@@ -21,17 +15,24 @@ func validateGuard(run *model.CreationRun, guard Guard, now time.Time) error {
 	return nil
 }
 
-func validateConfirmOwner(owner string) error {
-	key := strings.ToLower(strings.TrimSpace(owner))
-	if key == "" {
-		return Conflict(msgModelSelfConfirm)
+func leaseHeldByOther(run *model.CreationRun, owner string, now time.Time) bool {
+	if run.LeaseExpiresAt == nil || !run.LeaseExpiresAt.After(now) {
+		return false
 	}
-	if _, reserved := reservedConfirmOwners[key]; reserved {
-		return Conflict(msgModelSelfConfirm)
+	return run.ExecutionOwner != "" && run.ExecutionOwner != owner
+}
+
+func claimLease(run *model.CreationRun, owner string, expectedEpoch int64, now time.Time) error {
+	if owner == "" || len(owner) > 120 || expectedEpoch != run.ExecutionEpoch {
+		return Conflict(msgEpochChanged)
 	}
-	if strings.HasPrefix(key, "model:") || strings.HasPrefix(key, "assistant:") || strings.HasPrefix(key, "agent:") {
-		return Conflict(msgModelSelfConfirm)
+	if leaseHeldByOther(run, owner, now) {
+		return Conflict(msgLeaseHeld)
 	}
+	run.ExecutionEpoch++
+	run.ExecutionOwner = owner
+	until := now.Add(leaseTTL)
+	run.LeaseExpiresAt = &until
 	return nil
 }
 

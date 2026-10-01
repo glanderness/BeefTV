@@ -2,7 +2,6 @@ package creation
 
 import (
 	"encoding/json"
-	"errors"
 
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
@@ -74,7 +73,7 @@ func (s *Service) buildSubmission(userID string, repo *repository.Repository, ru
 		return model.CreationSubmission{}, normalized, err
 	}
 	execution := executionFor(prepared.Task, signature)
-	executionRaw, err := executionJSON(execution, false)
+	executionRaw, err := executionJSON(execution)
 	if err != nil {
 		return model.CreationSubmission{}, normalized, err
 	}
@@ -131,9 +130,6 @@ func (s *Service) Approve(userID, id string, cmd Command) (map[string]any, error
 	if len(cmd.SubmissionIDs) == 0 || len(cmd.SubmissionIDs) > 20 {
 		return nil, kernel.BadAuthRequest("请选择 1 到 20 项生成任务")
 	}
-	if err := validateConfirmOwner(cmd.Owner); err != nil {
-		return nil, err
-	}
 	prepared := map[string]*model.Task{}
 	signatures := map[string]string{}
 	for _, sid := range cmd.SubmissionIDs {
@@ -162,9 +158,6 @@ func (s *Service) Approve(userID, id string, cmd Command) (map[string]any, error
 	out := []SubmissionOutput{}
 	err := s.repo.MutateCreationRun(userID, id, func(run *model.CreationRun, repo *repository.Repository) error {
 		if e := validateGuard(run, cmd.Guard, s.deps.now()); e != nil {
-			return e
-		}
-		if e := validateConfirmOwner(cmd.Owner); e != nil {
 			return e
 		}
 		now := s.deps.now()
@@ -214,9 +207,6 @@ func (s *Service) Execute(userID, id string, cmd Command) (*model.Task, error) {
 	if err != nil {
 		return nil, MapError(err)
 	}
-	if hasUnknownReceipt(item.ExecutionJSON) {
-		return nil, ErrUnknownReceipt
-	}
 	if item.TaskID != nil {
 		task, e := s.repo.TaskForUser(userID, *item.TaskID)
 		if e != nil {
@@ -235,6 +225,9 @@ func (s *Service) Execute(userID, id string, cmd Command) (*model.Task, error) {
 	if err != nil {
 		return nil, err
 	}
+	if quoted == nil || quoted.Task == nil {
+		return nil, kernel.NewAppError(kernel.CodeInternal, msgAdmitNilTask)
+	}
 	signature, err := s.repo.CreationConfigSignature(quoted.Task, stringValue(quoted.Config["channelId"]), stringValue(quoted.Config["model"]))
 	if err != nil {
 		return nil, err
@@ -244,7 +237,9 @@ func (s *Service) Execute(userID, id string, cmd Command) (*model.Task, error) {
 	}
 	input := quoted.Input
 	if input == nil {
-		_ = json.Unmarshal([]byte(quoted.Task.InputJSON), &input)
+		if e := json.Unmarshal([]byte(quoted.Task.InputJSON), &input); e != nil {
+			return nil, e
+		}
 	}
 	if s.deps.Secrets == nil {
 		return nil, kernel.NewAppError(kernel.CodeInternal, "任务密钥保护不可用")
@@ -252,14 +247,16 @@ func (s *Service) Execute(userID, id string, cmd Command) (*model.Task, error) {
 	if err = s.deps.Secrets.Protect(input); err != nil {
 		return nil, err
 	}
-	raw, _ := json.Marshal(input)
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return nil, kernel.NewAppError(kernel.CodeInternal, msgProtectedInput)
+	}
 	quoted.Task.InputJSON = string(raw)
 	quoted.Task.CreationSubmissionID = &item.ID
 	if s.deps.Tasks == nil {
 		return nil, kernel.NewAppError(kernel.CodeInternal, "任务准入端口不可用")
 	}
 	var admitted *model.Task
-	var unknown bool
 	err = s.repo.MutateCreationRun(userID, id, func(current *model.CreationRun, repo *repository.Repository) error {
 		if e := validateGuard(current, cmd.Guard, s.deps.now()); e != nil {
 			return e
@@ -267,10 +264,6 @@ func (s *Service) Execute(userID, id string, cmd Command) (*model.Task, error) {
 		fresh, e := repo.CreationSubmission(userID, id, item.ID)
 		if e != nil {
 			return e
-		}
-		if hasUnknownReceipt(fresh.ExecutionJSON) {
-			unknown = true
-			return nil
 		}
 		if fresh.TaskID != nil {
 			existing, e := repo.TaskForUser(userID, *fresh.TaskID)
@@ -293,34 +286,18 @@ func (s *Service) Execute(userID, id string, cmd Command) (*model.Task, error) {
 			return e
 		}
 		task, e := s.deps.Tasks.Admit(userID, repo, quoted.Task)
-		if errors.Is(e, ErrUnknownReceipt) {
-			marked, markErr := executionJSON(SubmissionView(*fresh).Execution, true)
-			if markErr != nil {
-				return markErr
-			}
-			fresh.ExecutionJSON = marked
-			if task != nil && task.ID != "" {
-				fresh.TaskID = &task.ID
-				admitted = task
-			}
-			if markErr = repo.SaveCreationSubmission(fresh); markErr != nil {
-				return markErr
-			}
-			unknown = true
-			return nil
-		}
 		if e != nil {
 			return e
+		}
+		if task == nil || task.ID == "" {
+			return kernel.NewAppError(kernel.CodeInternal, msgAdmitNilTask)
 		}
 		admitted = task
 		fresh.TaskID = &task.ID
 		return repo.SaveCreationSubmission(fresh)
 	})
 	if err != nil {
-		return admitted, MapError(err)
-	}
-	if unknown {
-		return admitted, ErrUnknownReceipt
+		return nil, MapError(err)
 	}
 	return admitted, nil
 }

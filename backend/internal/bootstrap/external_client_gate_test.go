@@ -154,6 +154,10 @@ func TestClientCredentialsOnOtherRoutesStillNeedLaunchToken(t *testing.T) {
 		{"POST", "/assistant/ui-session"},
 		{"POST", "/assistant/chat"},
 		{"GET", "/canvas-projects"},
+		{"POST", "/creation-runs"},
+		{"POST", "/creation-runs/run-1/claim"},
+		{"POST", "/creation-runs/run-1/submissions/approve"},
+		{"POST", "/creation-runs/run-1/execute"},
 	} {
 		recorder := harness.call(requestOptions{method: item.method, path: item.path, clientID: registration.ID, clientToken: token})
 		if recorder.Code != http.StatusForbidden {

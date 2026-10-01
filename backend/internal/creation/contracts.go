@@ -56,11 +56,6 @@ type Command struct {
 
 // TaskRequest is the creation-owned quote/submit intent. PrepareOnly and
 // AdmissionID are in-process only; JSON transports cannot set them.
-//
-// Lead integration: map PrepareOnly onto task.CreateRequest.PrepareOnly and
-// AdmissionID onto task.CreateRequest.AdmissionID when the admission worker's
-// 25ddcbf seam is present. Until then the app adapter uses the current
-// CreateTaskRequest.creationPrepare marker.
 type TaskRequest struct {
 	ProjectID      string         `json:"projectId"`
 	Type           string         `json:"type"`

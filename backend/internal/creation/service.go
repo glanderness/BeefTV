@@ -88,16 +88,9 @@ func (s *Service) Change(userID, id, action string, cmd Command) (any, error) {
 		previousBytes := len(run.StateJSON) + len(run.ApprovedOperationsJSON) + len(run.ApprovedCanvasJSON)
 		now := s.deps.now()
 		if action == "claim" {
-			if cmd.Owner == "" || len(cmd.Owner) > 120 || cmd.ExpectedEpoch != run.ExecutionEpoch {
-				return Conflict(msgEpochChanged)
-			}
-			if err := validateConfirmOwner(cmd.Owner); err != nil {
+			if err := claimLease(run, cmd.Owner, cmd.ExpectedEpoch, now); err != nil {
 				return err
 			}
-			run.ExecutionEpoch++
-			run.ExecutionOwner = cmd.Owner
-			until := now.Add(leaseTTL)
-			run.LeaseExpiresAt = &until
 		} else {
 			if err := validateGuard(run, cmd.Guard, now); err != nil {
 				return err

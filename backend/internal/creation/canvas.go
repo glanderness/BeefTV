@@ -83,15 +83,15 @@ func (s *Service) CommitCanvas(userID, id string, cmd Command) (map[string]any, 
 	if s.deps.Media == nil {
 		return nil, kernel.NewAppError(kernel.CodeInternal, "画布媒体校验不可用")
 	}
-	if err := s.deps.Media.ValidateDocument(userID, cmd.Document); err != nil {
-		return nil, err
-	}
 	doc, err := parseDocument(string(cmd.Document))
 	if err != nil {
 		return nil, err
 	}
 	var out map[string]any
 	err = s.repo.MutateCreationRun(userID, id, func(run *model.CreationRun, repo *repository.Repository) error {
+		if err := s.deps.Media.ValidateDocument(userID, repo, cmd.Document); err != nil {
+			return err
+		}
 		if err := validateGuard(run, cmd.Guard, s.deps.now()); err != nil {
 			return err
 		}

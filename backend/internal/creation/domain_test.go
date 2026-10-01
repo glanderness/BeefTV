@@ -11,6 +11,7 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
@@ -37,7 +38,37 @@ func (testSecrets) Protect(map[string]any) error { return nil }
 
 type testMedia struct{}
 
-func (testMedia) ValidateDocument(string, json.RawMessage) error { return nil }
+func (testMedia) ValidateDocument(string, *repository.Repository, json.RawMessage) error {
+	return nil
+}
+
+type txMedia struct{}
+
+func (txMedia) ValidateDocument(userID string, repo *repository.Repository, raw json.RawMessage) error {
+	if repo == nil {
+		return Conflict("media validation missing transaction repository")
+	}
+	return canvas.New(repo, nil).ValidateCanvasMediaAssets(userID, raw)
+}
+
+type recordingMedia struct {
+	repo *repository.Repository
+}
+
+func (m *recordingMedia) ValidateDocument(_ string, repo *repository.Repository, _ json.RawMessage) error {
+	m.repo = repo
+	if repo == nil {
+		return Conflict("media validation missing transaction repository")
+	}
+	return nil
+}
+
+type failingSecrets struct{}
+
+func (failingSecrets) Protect(input map[string]any) error {
+	input["bad"] = make(chan int)
+	return nil
+}
 
 type testKinds struct{}
 
@@ -48,7 +79,7 @@ type testTasks struct {
 	repo      *repository.Repository
 	prepareN  atomic.Int32
 	admitN    atomic.Int32
-	unknown   bool
+	nilTask   bool
 	failAdmit error
 }
 
@@ -70,11 +101,11 @@ func (t *testTasks) Prepare(userID string, req TaskRequest) (*PreparedTask, erro
 
 func (t *testTasks) Admit(userID string, repo *repository.Repository, task *model.Task) (*model.Task, error) {
 	t.admitN.Add(1)
-	if t.unknown {
-		return nil, ErrUnknownReceipt
-	}
 	if t.failAdmit != nil {
 		return nil, t.failAdmit
+	}
+	if t.nilTask {
+		return nil, nil
 	}
 	if task.ID == "" {
 		task.ID = kernel.NewID()
@@ -216,11 +247,15 @@ func TestConfirmScopeAndOwnerProtected(t *testing.T) {
 	if _, err := h.svc.Change(h.user, h.runID, "claim", Command{ExpectedEpoch: 0, Guard: Guard{Owner: "new-page"}}); err == nil {
 		t.Fatal("stale epoch claim accepted")
 	}
-	if _, err := h.svc.Change(h.user, h.runID, "claim", Command{ExpectedEpoch: 1, Guard: Guard{Owner: "new-page"}}); err != nil {
+	if _, err := h.svc.Change(h.user, h.runID, "claim", Command{ExpectedEpoch: 1, Guard: Guard{Owner: "new-page"}}); err == nil {
+		t.Fatal("foreign owner stole a live lease")
+	}
+	if _, err := h.svc.Change(h.user, h.runID, "claim", Command{ExpectedEpoch: 1, Guard: Guard{Owner: "page"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.svc.Change(h.user, h.runID, "heartbeat", h.cmd()); err == nil {
-		t.Fatal("old owner renewed new lease")
+	h.guard = Guard{ExecutionEpoch: 2, Owner: "page"}
+	if _, err := h.svc.Change(h.user, h.runID, "heartbeat", h.cmd()); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -276,18 +311,23 @@ func TestCanvasCommitRollbackRetainsRevision(t *testing.T) {
 	}
 }
 
-func TestModelCannotSelfConfirm(t *testing.T) {
+func TestProposalConfirmationIsNotStateFlag(t *testing.T) {
 	h := newHarness(t)
-	if _, err := h.svc.Change(h.user, h.runID, "claim", Command{ExpectedEpoch: 1, Guard: Guard{Owner: "assistant"}}); err == nil {
-		t.Fatal("model owner claimed execution")
-	}
-	if _, err := h.svc.Change(h.user, h.runID, "claim", Command{ExpectedEpoch: 1, Guard: Guard{Owner: "model"}}); err == nil {
-		t.Fatal("model identity claimed execution")
-	}
-	if _, err := h.svc.Change(h.user, h.runID, "save", Command{Guard: h.guard, Revision: 2, Status: "running", State: map[string]any{"approved": true}}); err != nil {
+	if _, err := h.svc.Change(h.user, h.runID, "release", h.cmd()); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := h.svc.Change(h.user, h.runID, "claim", Command{ExpectedEpoch: 1, Guard: Guard{Owner: "assistant"}}); err != nil {
+		t.Fatal(err)
+	}
+	h.guard = Guard{ExecutionEpoch: 2, Owner: "assistant"}
 	run, err := h.repo.CreationRun(h.user, h.runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = h.svc.Change(h.user, h.runID, "save", Command{Guard: h.guard, Revision: run.Revision, Status: "running", State: map[string]any{"approved": true}}); err != nil {
+		t.Fatal(err)
+	}
+	run, err = h.repo.CreationRun(h.user, h.runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,29 +339,159 @@ func TestModelCannotSelfConfirm(t *testing.T) {
 	}
 }
 
-func TestUnknownReceiptNeverStartsNewPaidAttempt(t *testing.T) {
+func TestLiveLeaseRejectsForeignOwnerUntilExpiry(t *testing.T) {
 	h := newHarness(t)
-	h.tasks.unknown = true
-	item, err := h.svc.Prepare(h.user, h.runID, Command{Guard: h.guard, ItemKey: "paid", Task: textTask()})
+	if _, err := h.svc.Change(h.user, h.runID, "claim", Command{ExpectedEpoch: 1, Guard: Guard{Owner: "other-page"}}); err == nil {
+		t.Fatal("foreign owner stole a live lease")
+	}
+	run, err := h.repo.CreationRun(h.user, h.runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.ExecutionOwner != "page" || run.ExecutionEpoch != 1 {
+		t.Fatalf("live lease mutated: owner=%q epoch=%d", run.ExecutionOwner, run.ExecutionEpoch)
+	}
+	if _, err = h.svc.Change(h.user, h.runID, "claim", Command{ExpectedEpoch: 1, Guard: Guard{Owner: "page"}}); err != nil {
+		t.Fatal(err)
+	}
+	h.guard = Guard{ExecutionEpoch: 2, Owner: "page"}
+	if _, err = h.svc.Change(h.user, h.runID, "release", h.cmd()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = h.svc.Change(h.user, h.runID, "claim", Command{ExpectedEpoch: 2, Guard: Guard{Owner: "other-page"}}); err != nil {
+		t.Fatal(err)
+	}
+	h2 := newHarness(t)
+	h2.clock = h2.clock.Add(time.Minute)
+	if _, err = h2.svc.Change(h2.user, h2.runID, "claim", Command{ExpectedEpoch: 1, Guard: Guard{Owner: "later-page"}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConcurrentOwnersCannotStealLiveLease(t *testing.T) {
+	h := newHarness(t)
+	if _, err := h.svc.Change(h.user, h.runID, "release", h.cmd()); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	owners := []string{"page-a", "page-b"}
+	results := make(chan string, 2)
+	errs := make(chan error, 2)
+	for _, owner := range owners {
+		wg.Add(1)
+		go func(owner string) {
+			defer wg.Done()
+			_, err := h.svc.Change(h.user, h.runID, "claim", Command{ExpectedEpoch: 1, Guard: Guard{Owner: owner}})
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- owner
+		}(owner)
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+	winner := ""
+	for owner := range results {
+		if winner != "" {
+			t.Fatal("both owners claimed the same live lease")
+		}
+		winner = owner
+	}
+	if winner == "" {
+		t.Fatal("neither owner claimed the released lease")
+	}
+	run, err := h.repo.CreationRun(h.user, h.runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.ExecutionOwner != winner {
+		t.Fatalf("lease owner %q != winner %q", run.ExecutionOwner, winner)
+	}
+	loser := "page-a"
+	if winner == "page-a" {
+		loser = "page-b"
+	}
+	if _, err = h.svc.Change(h.user, h.runID, "claim", Command{ExpectedEpoch: run.ExecutionEpoch, Guard: Guard{Owner: loser}}); err == nil {
+		t.Fatal("loser stole the live lease after reading the run")
+	}
+}
+
+func TestExecuteFailsClosedOnProtectedInputAndNilTask(t *testing.T) {
+	h := newHarness(t)
+	item, err := h.svc.Prepare(h.user, h.runID, Command{Guard: h.guard, ItemKey: "text-1", Task: textTask()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err = h.svc.Approve(h.user, h.runID, Command{Guard: h.guard, SubmissionIDs: []string{item.ID}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = h.svc.Execute(h.user, h.runID, Command{Guard: h.guard, SubmissionID: item.ID}); !IsUnknownReceipt(err) {
-		t.Fatalf("first unknown receipt: %v", err)
+	h.svc.deps.Secrets = failingSecrets{}
+	if _, err = h.svc.Execute(h.user, h.runID, Command{Guard: h.guard, SubmissionID: item.ID}); err == nil {
+		t.Fatal("invalid protected input admitted")
 	}
-	if _, err = h.svc.Execute(h.user, h.runID, Command{Guard: h.guard, SubmissionID: item.ID}); !IsUnknownReceipt(err) {
-		t.Fatalf("replay unknown receipt: %v", err)
+	assertNoTaskRow(t, h, item.ID)
+	if h.tasks.admitN.Load() != 0 {
+		t.Fatalf("admit ran on invalid input: %d", h.tasks.admitN.Load())
 	}
-	if h.tasks.admitN.Load() != 1 {
-		t.Fatalf("unknown receipt retried paid admit: %d", h.tasks.admitN.Load())
+	h.svc.deps.Secrets = testSecrets{}
+	h.tasks.nilTask = true
+	if _, err = h.svc.Execute(h.user, h.runID, Command{Guard: h.guard, SubmissionID: item.ID}); err == nil {
+		t.Fatal("nil admit task persisted")
+	}
+	assertNoTaskRow(t, h, item.ID)
+}
+
+func TestExecuteCommitLossRestartsToOneRow(t *testing.T) {
+	h := newHarness(t)
+	item, err := h.svc.Prepare(h.user, h.runID, Command{Guard: h.guard, ItemKey: "text-1", Task: textTask()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = h.svc.Approve(h.user, h.runID, Command{Guard: h.guard, SubmissionIDs: []string{item.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = h.db.Callback().Create().Before("gorm:create").Register("creation_force_task_failure", func(tx *gorm.DB) {
+		if tx.Statement.Schema != nil && tx.Statement.Schema.Name == "Task" {
+			tx.AddError(Conflict("injected task write failure"))
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = h.svc.Execute(h.user, h.runID, Command{Guard: h.guard, SubmissionID: item.ID}); err == nil {
+		t.Fatal("injected failure not propagated")
+	}
+	assertNoTaskRow(t, h, item.ID)
+	if err = h.db.Callback().Create().Remove("creation_force_task_failure"); err != nil {
+		t.Fatal(err)
+	}
+	first, err := h.svc.Execute(h.user, h.runID, Command{Guard: h.guard, SubmissionID: item.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := h.svc.Execute(h.user, h.runID, Command{Guard: h.guard, SubmissionID: item.ID})
+	if err != nil || second.ID != first.ID {
+		t.Fatalf("restart created a second task: %v %v", second, err)
 	}
 	var count int64
-	h.db.Model(&model.Task{}).Count(&count)
-	if count != 0 {
-		t.Fatalf("unknown receipt created task: %d", count)
+	if err = h.db.Model(&model.Task{}).Count(&count).Error; err != nil || count != 1 {
+		t.Fatalf("expected one task, got %d: %v", count, err)
+	}
+}
+
+func assertNoTaskRow(t *testing.T, h *harness, submissionID string) {
+	t.Helper()
+	var count int64
+	if err := h.db.Model(&model.Task{}).Count(&count).Error; err != nil || count != 0 {
+		t.Fatalf("expected no task row, got %d: %v", count, err)
+	}
+	var item model.CreationSubmission
+	if err := h.db.First(&item, "id = ?", submissionID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if item.TaskID != nil {
+		t.Fatal("failed execute bound a task id")
 	}
 }
 
@@ -368,4 +538,100 @@ func TestConcurrentExecuteCreatesOneTask(t *testing.T) {
 	if err = h.db.Model(&model.Task{}).Count(&count).Error; err != nil || count != 1 {
 		t.Fatalf("expected one task, got %d: %v", count, err)
 	}
+}
+
+func TestCommitCanvasMediaUsesTransactionRepository(t *testing.T) {
+	h := newHarness(t)
+	media := &recordingMedia{}
+	h.svc.deps.Media = media
+	canvasID, hash, raw := seedApprovedCanvas(t, h)
+	if _, err := h.svc.CommitCanvas(h.user, h.runID, Command{Guard: h.guard, ExpectedSnapshotHash: hash, Document: raw}); err != nil {
+		t.Fatal(err)
+	}
+	if media.repo == nil || media.repo == h.repo {
+		t.Fatal("media validation used the root repository")
+	}
+	before, err := h.repo.CanvasProjectForUser(h.user, canvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.svc.deps.Media = txMedia{}
+	if err = h.db.Create(&model.Resource{ID: "res-1", UserID: h.user, Status: model.ResourceStatusReady, Kind: "media", MimeType: "image/png", Size: 12}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = h.db.Create(&model.Asset{ID: "asset-1", UserID: h.user, Kind: "image", PayloadJSON: `{"storageKey":"resource:res-1"}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	doc, err := parseDocument(before.PayloadJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc["nodes"] = []any{map[string]any{"id": "img", "type": "image", "title": "图", "metadata": map[string]any{
+		"assetId": "asset-1", "storageKey": "resource:res-1", "content": "/api/resources/res-1/file",
+	}}}
+	injected, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before.PayloadJSON = string(injected)
+	if err = h.db.Save(before).Error; err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := h.svc.CanvasSnapshot(h.user, h.runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = h.svc.CommitCanvas(h.user, h.runID, Command{Guard: h.guard, ExpectedSnapshotHash: snapshot["snapshotHash"].(string), Document: injected}); err != nil {
+		t.Fatal(err)
+	}
+	if err = h.db.Delete(&model.Asset{}, "id = ?", "asset-1").Error; err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = h.svc.CanvasSnapshot(h.user, h.runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc = snapshot["document"].(map[string]any)
+	doc["updatedAt"] = time.Now().Format(time.RFC3339Nano)
+	stale, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = h.svc.CommitCanvas(h.user, h.runID, Command{Guard: h.guard, ExpectedSnapshotHash: snapshot["snapshotHash"].(string), Document: stale}); err == nil {
+		t.Fatal("commit accepted a document after its asset was deleted")
+	}
+	after, err := h.repo.CanvasProjectForUser(h.user, canvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PayloadJSON != string(injected) {
+		t.Fatal("failed media validation mutated canvas")
+	}
+}
+
+func seedApprovedCanvas(t *testing.T, h *harness) (string, string, json.RawMessage) {
+	t.Helper()
+	run, err := h.repo.CreationRun(h.user, h.runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops := []CanvasOp{{Type: "add_node", ID: "node", NodeType: "text", Title: "计划", Position: map[string]any{"x": float64(0), "y": float64(0)}, Metadata: map[string]any{"content": "已批准"}}}
+	if _, err = h.svc.Change(h.user, h.runID, "proposal-approve", Command{Guard: h.guard, Revision: run.Revision, ProposalVersion: 1, Proposal: json.RawMessage(`{"title":"计划"}`), Ops: ops}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := h.svc.CreateCanvas(h.user, h.runID, h.cmd())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := h.svc.CanvasSnapshot(h.user, h.runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := snapshot["document"].(map[string]any)
+	doc["nodes"] = []any{AddedNode(ops[0])}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return created["canvasId"].(string), snapshot["snapshotHash"].(string), raw
 }

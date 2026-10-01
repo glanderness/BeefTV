@@ -9,6 +9,5 @@
 //
 // The package must not import internal/app. Cross-domain work (task quoting,
 // secret protection, quota, canvas media guards) enters through typed ports so
-// the lead can map TaskRequest.PrepareOnly onto task.CreateRequest after the
-// admission worker lands.
+// the adapter can map TaskRequest.PrepareOnly onto task.CreateRequest.
 package creation

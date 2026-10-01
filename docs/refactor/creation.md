@@ -23,11 +23,11 @@ internal/creation.Service
   ├─ modelcatalog.DecodeModelCapabilityConfig（文本参考图容量）
   ├─ assets.DocumentReferences（结果回写素材归属）
   └─ typed ports（app 适配，无 Service 回调方法袋）
-        ├─ Tasks.Prepare  当前 CreateTask + creationPrepare 标记
-        ├─ Tasks.Admit    createTaskWithStorageQuotaRepository
+        ├─ Tasks.Prepare  CreateLocalTask(task.CreateRequest{PrepareOnly:true})
+        ├─ Tasks.Admit    同一 MutateCreationRun 事务内的本地 SQLite 插入
         ├─ Secrets.Protect
         ├─ Quota.ValidateRun / ValidateCanvas
-        ├─ Media.ValidateDocument
+        ├─ Media.ValidateDocument(tx repo)
         └─ TaskKinds.UsesWorkflow / UsesTextReplay
 ```
 
@@ -36,28 +36,19 @@ internal/creation.Service
 ## 领域已拥有的行为
 
 - 按 `clientKey` 幂等创建 CreationRun，内容 hash 冲突拒绝
-- claim / heartbeat / release：45 秒租约，epoch CAS，旧 owner 不能续约或释放新租约
+- claim / heartbeat / release：45 秒租约，epoch CAS。活跃租约上其他 owner 不能接管；同一 owner 可续约（升 epoch 并延长 TTL）；过期或释放后才能被其他 owner 接管。JSON `owner` 是租约身份，不是调用方角色
 - save：revision CAS；`state.approved` 不能当作方案确认
 - proposal-approve / invalidate：方案 hash、操作白名单、画布基线快照；同版本同 hash 重放不升 revision
-- 确认 owner 拒绝 `model` / `assistant` / `agent` 等模型身份，确认不可由模型自授
+- HTTP 写路径：外层启动令牌仍覆盖 `/creation-runs`（Agent 凭据只豁免 `/api/ops`）。handler 再拒绝 `X-Beeftv-Client`，并在组合根提供 DesktopTrust 时要求桌面 UI 引导密钥
 - Prepare（quote）：创作任务约束、受管模型、协议占位校验；不落生成任务
 - Approve：确认前再次核对执行配置指纹；lease + 方案 hash 保护
-- Execute：同一 submission 回放同一 task；未知准入回执写入 ExecutionJSON 后不再发起新的付费准入
-- 画布创建稳定幂等；提交按 snapshot hash 与批准 diff 校验；手工后续编辑不被批准补丁覆盖
+- Execute：同一 submission 回放同一 task。Protect 后序列化失败或 Admit 返回空任务时失败关闭，事务回滚，不留 task 行。未知上游回执属于任务提交账本，创作层不再复制一份
+- 画布创建稳定幂等；提交按 snapshot hash 与批准 diff 校验；媒体校验在 MutateCreationRun 事务仓储上执行（含 asset identity）；手工后续编辑不被批准补丁覆盖
 - 结果回写只允许绑定到本 run 已成功任务的真实资源
 
-## 任务准备缝（Lead 后续接线）
+## 任务准备缝
 
-本工作树的 `task.CreateRequest` 尚无 `PrepareOnly` / `AdmissionID`。25ddcbf 已在任务准入切片加入这两个 `json:"-"` 字段，并计划替换 `CreateTaskRequest.creationPrepare`。
-
-当前 adapter：
-
-```go
-taskReq.creationPrepare = &creationTaskPreparation{}
-task, err := s.CreateTask(userID, taskReq)
-```
-
-领域 `TaskRequest.PrepareOnly` / `AdmissionID` 已预留。合入准入切片时只改 `creation_domain.go` 的 `fromCreationTaskRequest` / `Prepare`，把标记映射到 `task.CreateRequest.PrepareOnly`。不要从本切片 cherry-pick `task_creation.go` / `task/lifecycle.go` / `task/service.go`。
+`creation_domain.go` Prepare 已改为直接构造 `task.CreateRequest{PrepareOnly: true}` 并调用 `CreateLocalTask`。本树的 `CreateLocalTask` 仍把 `PrepareOnly` / `AdmissionID` 映射到现存 `creationPrepare` / `admission` 兼容字段，因为 `task_creation.go` 不在本切片写入范围。Lead 删除这些字段后只改 bridge。
 
 ## 仍留在 app 的残余
 
@@ -72,11 +63,11 @@ task, err := s.CreateTask(userID, taskReq)
 ## 未改
 
 - schema / 数据历史
-- handler / bootstrap / runtime / local_kernel / `app/service.go`
-- `task_creation.go` 及任务准入/生命周期
+- bootstrap / runtime / local_kernel / `app/service.go` / `task_creation.go`
+- handler 只窄改 `creation.go`：绑定已有 DesktopTrust / 拒绝 Agent 客户端头
 - canvas service 与 operations 公共协议（只调用既有 `SaveDocumentWithHistory`）
 - 前端、`ApprovedToolExecution`、分镜 UI
 
 ## 验证
 
-领域与 app 创作测试使用临时 SQLite，不打真实上游。未知回执路径用 Tasks.Admit mock。完整重构未完成。
+领域与 app 创作测试使用临时 SQLite，不打真实上游。Execute 失败关闭与租约互斥用真实事务证明。完整重构未完成。

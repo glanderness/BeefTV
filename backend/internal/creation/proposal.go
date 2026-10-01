@@ -11,9 +11,6 @@ import (
 )
 
 func (s *Service) approveProposal(userID string, run *model.CreationRun, repo *repository.Repository, cmd Command, now time.Time) (replayed bool, err error) {
-	if err := validateConfirmOwner(cmd.Owner); err != nil {
-		return false, err
-	}
 	if cmd.Revision != run.Revision || cmd.ProposalVersion <= 0 {
 		return false, repository.ErrCreationConflict
 	}

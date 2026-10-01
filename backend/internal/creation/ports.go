@@ -10,8 +10,8 @@ import (
 )
 
 // Tasks is the typed task-admission seam. Creation never imports internal/app
-// or calls Service.CreateTask; the lead adapter supplies quoting (PrepareOnly)
-// and the actual persist that can become a paid generation.
+// or calls Service.CreateTask. Prepare quotes without persisting. Admit is a
+// local SQLite insert on the MutateCreationRun transaction repository.
 type Tasks interface {
 	Prepare(userID string, req TaskRequest) (*PreparedTask, error)
 	Admit(userID string, repo *repository.Repository, task *model.Task) (*model.Task, error)
@@ -30,8 +30,10 @@ type Quota interface {
 }
 
 // Media rejects canvas documents that point at unowned or unreadied assets.
+// The repository must be the MutateCreationRun transaction, not the root
+// connection, so concurrent asset/resource deletion is visible to the write.
 type Media interface {
-	ValidateDocument(userID string, raw json.RawMessage) error
+	ValidateDocument(userID string, repo *repository.Repository, raw json.RawMessage) error
 }
 
 // TaskKinds identifies generation modes that creation refuses to quote.
