@@ -825,11 +825,38 @@ func (r *Repository) ResourceByUploadKey(userID string, uploadKey string) (*mode
 	return &resource, nil
 }
 
+var errFailedUploadClaimLost = errors.New("failed upload claim lost")
+
 func (r *Repository) ClaimFailedResourceUpload(userID string, id string) (bool, error) {
-	result := r.db.Model(&model.Resource{}).
-		Where("id = ? AND user_id = ? AND status = ?", id, userID, model.ResourceStatusFailed).
-		Updates(map[string]any{"status": model.ResourceStatusPending, "error": "", "updated_at": time.Now()})
-	return result.RowsAffected == 1, result.Error
+	var claimed bool
+	err := withImmediateTransaction(r.db, func(tx *gorm.DB) error {
+		var resource model.Resource
+		findErr := tx.Where("id = ? AND user_id = ? AND status = ?", id, userID, model.ResourceStatusFailed).First(&resource).Error
+		if errors.Is(findErr, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if findErr != nil {
+			return findErr
+		}
+		if err := releaseIdentifiedDailyUploadTx(tx, resource.UserID, "", resourceUploadIdentity(&resource), 0); err != nil {
+			return err
+		}
+		result := tx.Model(&model.Resource{}).
+			Where("id = ? AND user_id = ? AND status = ?", id, userID, model.ResourceStatusFailed).
+			Updates(map[string]any{"status": model.ResourceStatusPending, "error": "", "updated_at": time.Now()})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errFailedUploadClaimLost
+		}
+		claimed = true
+		return nil
+	})
+	if errors.Is(err, errFailedUploadClaimLost) {
+		return false, nil
+	}
+	return claimed, err
 }
 
 func (r *Repository) DeleteResource(userID string, id string) error {

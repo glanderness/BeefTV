@@ -121,6 +121,100 @@ func TestDeleteReadyResourceDoesNotRefundDaily(t *testing.T) {
 	}
 }
 
+func TestClaimFailedResourceUploadReleasesStaleReservation(t *testing.T) {
+	repo := newUploadReservationRepo(t)
+	identity := "failed-retry"
+	if err := repo.ReserveIdentifiedDailyUpload("user-1", "2026-10-02", identity, 7, 1000); err != nil {
+		t.Fatal(err)
+	}
+	resource := &model.Resource{
+		ID: "res-failed-retry", UserID: "user-1", Kind: "image", Status: model.ResourceStatusFailed,
+		Provider: "local", ObjectKey: "users/user-1/image/d.png", Size: 7, UploadKey: &identity,
+	}
+	if err := repo.CreateResource(resource); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := repo.ClaimFailedResourceUpload("user-1", resource.ID)
+	if err != nil || !claimed {
+		t.Fatalf("claim leftover FAILED claimed=%v err=%v", claimed, err)
+	}
+	row, err := repo.UploadReservation("user-1", identity)
+	if err != nil || row != nil {
+		t.Fatalf("stale FAILED witness %#v err=%v", row, err)
+	}
+	usage, err := repo.DailyUploadBytes("user-1", "2026-10-02")
+	if err != nil || usage != 0 {
+		t.Fatalf("claim daily=%d err=%v", usage, err)
+	}
+	if err := repo.ReserveIdentifiedDailyUpload("user-1", "2026-10-02", identity, 7, 1000); err != nil {
+		t.Fatalf("first retry reserve after claim: %v", err)
+	}
+}
+
+func TestDeleteResourceWithoutReservationTableFails(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "no-witness.db")+"?_busy_timeout=5000&_foreign_keys=on"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Resource{}); err != nil {
+		t.Fatal(err)
+	}
+	repo := New(db)
+	resource := &model.Resource{
+		ID: "res-no-table", UserID: "user-1", Kind: "image", Status: model.ResourceStatusReady,
+		Provider: "local", ObjectKey: "users/user-1/image/e.png", Size: 7,
+	}
+	if err := repo.CreateResource(resource); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteResource("user-1", resource.ID); err == nil {
+		t.Fatal("missing user_upload_reservations succeeded")
+	}
+}
+
+func TestClaimFailedThenReserveAfterReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reopen.db")
+	open := func() *Repository {
+		t.Helper()
+		db, err := gorm.Open(sqlite.Open(path+"?_busy_timeout=5000&_foreign_keys=on"), &gorm.Config{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.AutoMigrate(&model.Resource{}, &model.UserDailyUploadUsage{}, &model.UserUploadReservation{}); err != nil {
+			t.Fatal(err)
+		}
+		return New(db)
+	}
+	repo := open()
+	identity := "reopen-failed"
+	if err := repo.ReserveIdentifiedDailyUpload("user-1", "2026-10-02", identity, 7, 1000); err != nil {
+		t.Fatal(err)
+	}
+	resource := &model.Resource{
+		ID: "res-reopen-failed", UserID: "user-1", Kind: "image", Status: model.ResourceStatusFailed,
+		Provider: "local", ObjectKey: "users/user-1/image/f.png", Size: 7, UploadKey: &identity,
+	}
+	if err := repo.CreateResource(resource); err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := repo.DB().DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	repo = open()
+	claimed, err := repo.ClaimFailedResourceUpload("user-1", resource.ID)
+	if err != nil || !claimed {
+		t.Fatalf("reopen claim claimed=%v err=%v", claimed, err)
+	}
+	if err := repo.ReserveIdentifiedDailyUpload("user-1", "2026-10-02", identity, 7, 1000); err != nil {
+		t.Fatalf("reopen first retry reserve: %v", err)
+	}
+}
+
 func TestReleaseIdentifiedDailyUploadMissingRowIsNoop(t *testing.T) {
 	repo := newUploadReservationRepo(t)
 	if err := repo.ReserveIdentifiedDailyUpload("user-1", "2026-10-02", "held", 11, 1000); err != nil {

@@ -2,6 +2,7 @@ package asset
 
 import (
 	"bytes"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -169,6 +170,149 @@ func TestLeftoverFailedRestartRetrySucceeds(t *testing.T) {
 	usage, err = repo.DailyUploadBytes("user-1", day)
 	if err != nil || usage != 7 {
 		t.Fatalf("retry daily=%d err=%v", usage, err)
+	}
+}
+
+func TestLeftoverFailedFirstRetrySucceedsWithoutRestart(t *testing.T) {
+	svc, repo, _ := newRepoQuotaDomain(t)
+	uploadKey := NormalizedUploadKey([]string{"failed-first-retry"})
+	day := plantReservation(t, repo, "user-1", *uploadKey, 7)
+	failed := model.Resource{
+		ID: "res-failed-first-retry", UserID: "user-1", Kind: "image", Status: model.ResourceStatusFailed,
+		Provider: "local", ObjectKey: "users/user-1/image/failed-first-retry.png", MimeType: "image/png", Size: 7,
+		UploadKey: uploadKey, Error: "write failed",
+	}
+	if err := repo.CreateResource(&failed); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.RetryOwned("user-1", failed.ID, "image", "image/png", 7, bytes.NewReader([]byte("payload")))
+	if err != nil || got == nil || got.Status != model.ResourceStatusReady {
+		t.Fatalf("first retry leftover FAILED = %#v err=%v", got, err)
+	}
+	usage, err := repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 7 {
+		t.Fatalf("first retry daily=%d err=%v", usage, err)
+	}
+	row, err := repo.UploadReservation("user-1", *uploadKey)
+	if err != nil || row != nil {
+		t.Fatalf("first retry witness %#v err=%v", row, err)
+	}
+}
+
+func TestLeftoverFailedConcurrentRetrySettlesOnce(t *testing.T) {
+	svc, repo, _ := newRepoQuotaDomain(t)
+	uploadKey := NormalizedUploadKey([]string{"failed-concurrent"})
+	day := plantReservation(t, repo, "user-1", *uploadKey, 7)
+	failed := model.Resource{
+		ID: "res-failed-concurrent", UserID: "user-1", Kind: "image", Status: model.ResourceStatusFailed,
+		Provider: "local", ObjectKey: "users/user-1/image/failed-concurrent.png", MimeType: "image/png", Size: 7,
+		UploadKey: uploadKey, Error: "write failed",
+	}
+	if err := repo.CreateResource(&failed); err != nil {
+		t.Fatal(err)
+	}
+
+	var first, second *model.Resource
+	var firstErr, secondErr error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		first, firstErr = svc.RetryOwned("user-1", failed.ID, "image", "image/png", 7, bytes.NewReader([]byte("payload")))
+	}()
+	go func() {
+		defer wg.Done()
+		second, secondErr = svc.RetryOwned("user-1", failed.ID, "image", "image/png", 7, bytes.NewReader([]byte("payload")))
+	}()
+	wg.Wait()
+	if firstErr != nil && !isAppError(firstErr, UploadInProgress()) {
+		t.Fatalf("first concurrent retry err=%v", firstErr)
+	}
+	if secondErr != nil && !isAppError(secondErr, UploadInProgress()) {
+		t.Fatalf("second concurrent retry err=%v", secondErr)
+	}
+	ready := 0
+	for _, got := range []*model.Resource{first, second} {
+		if got != nil && got.Status == model.ResourceStatusReady {
+			ready++
+		}
+	}
+	if ready == 0 {
+		t.Fatalf("no READY retry first=%#v err=%v second=%#v err=%v", first, firstErr, second, secondErr)
+	}
+	usage, err := repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 7 {
+		t.Fatalf("concurrent retry daily=%d err=%v", usage, err)
+	}
+}
+
+func TestPendingConcurrentRetryKeepsSingleWitness(t *testing.T) {
+	svc, repo, _ := newRepoQuotaDomain(t)
+	uploadKey := NormalizedUploadKey([]string{"pending-concurrent"})
+	day := plantReservation(t, repo, "user-1", *uploadKey, 7)
+	pending := model.Resource{
+		ID: "res-pending-concurrent", UserID: "user-1", Kind: "image", Status: model.ResourceStatusPending,
+		Provider: "local", ObjectKey: "users/user-1/image/pending-concurrent.png", MimeType: "image/png", Size: 7,
+		UploadKey: uploadKey,
+	}
+	if err := repo.CreateResource(&pending); err != nil {
+		t.Fatal(err)
+	}
+
+	var first, second *model.Resource
+	var firstErr, secondErr error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		first, firstErr = svc.RetryOwned("user-1", pending.ID, "image", "image/png", 7, bytes.NewReader([]byte("payload")))
+	}()
+	go func() {
+		defer wg.Done()
+		second, secondErr = svc.RetryOwned("user-1", pending.ID, "image", "image/png", 7, bytes.NewReader([]byte("payload")))
+	}()
+	wg.Wait()
+	if firstErr != nil {
+		t.Fatalf("first pending retry err=%v", firstErr)
+	}
+	if secondErr != nil {
+		t.Fatalf("second pending retry err=%v", secondErr)
+	}
+	if first == nil || first.Status != model.ResourceStatusReady || second == nil || second.Status != model.ResourceStatusReady {
+		t.Fatalf("pending concurrent first=%#v second=%#v", first, second)
+	}
+	usage, err := repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 7 {
+		t.Fatalf("pending concurrent daily=%d err=%v", usage, err)
+	}
+}
+
+func TestUploadFileWithoutClientKeyMintsWitnessIdentity(t *testing.T) {
+	svc, repo, _ := newRepoQuotaDomain(t)
+	got, err := svc.UploadFile("user-1", "a.png", 7, "image", 1, 1, 0, bytes.NewReader([]byte("payload")))
+	if err != nil || got == nil || got.UploadKey == nil || strings.TrimSpace(*got.UploadKey) == "" {
+		t.Fatalf("unkeyed UploadFile = %#v err=%v", got, err)
+	}
+	row, err := repo.UploadReservation("user-1", *got.UploadKey)
+	if err != nil || row != nil {
+		t.Fatalf("minted READY witness %#v err=%v", row, err)
+	}
+	day := time.Now().UTC().Format("2006-01-02")
+	usage, err := repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 7 {
+		t.Fatalf("minted daily=%d err=%v", usage, err)
+	}
+}
+
+func TestStoreGeneratedMintsWitnessIdentity(t *testing.T) {
+	svc, repo, _ := newRepoQuotaDomain(t)
+	got, err := svc.StoreGenerated("user-1", "image", "a.png", "image/png", 7, 1, 1, 0, bytes.NewReader([]byte("payload")))
+	if err != nil || got == nil || got.UploadKey == nil || strings.TrimSpace(*got.UploadKey) == "" {
+		t.Fatalf("StoreGenerated = %#v err=%v", got, err)
+	}
+	row, err := repo.UploadReservation("user-1", *got.UploadKey)
+	if err != nil || row != nil {
+		t.Fatalf("generated READY witness %#v err=%v", row, err)
 	}
 }
 

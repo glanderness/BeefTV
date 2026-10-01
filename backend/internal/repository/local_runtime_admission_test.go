@@ -52,7 +52,8 @@ func newAdmissionRepo(t *testing.T) (*Repository, *gorm.DB) {
 	}
 	if err := db.AutoMigrate(
 		&model.Task{}, &model.TaskLog{}, &model.Result{}, &model.TaskTextDelta{},
-		&model.Resource{}, &model.Asset{}, &model.CanvasProject{},
+		&model.Resource{}, &model.UserDailyUploadUsage{}, &model.UserUploadReservation{},
+		&model.Asset{}, &model.CanvasProject{},
 		&model.AssetRepresentation{}, &model.VoiceProfile{}, &model.ShotArtifact{},
 		&model.ArkPrivateAssetBinding{}, &model.ResourceDeletionJob{},
 	); err != nil {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -430,6 +431,23 @@ func TestChunkedUploadAbandonFailsClosedOnLookupError(t *testing.T) {
 	entries, _ := os.ReadDir(filepath.Join(dataDir, chunkSessionDirName))
 	if len(entries) == 0 {
 		t.Fatal("recovery evidence was deleted after lookup error")
+	}
+}
+
+func TestNewServiceLogsReservationRecoveryFailure(t *testing.T) {
+	_, repo, dataDir := newTestDomain(t)
+	var captured bytes.Buffer
+	log.SetOutput(&captured)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	NewService(Dependencies{
+		Repository: lookupErrorRepo{Repository: NewRepository(repo)},
+		Blobs:      NewFileStore(dataDir),
+		Quota:      nopQuota{},
+		Lifecycle:  nopLifecycle{},
+		DataDir:    dataDir,
+	})
+	if !strings.Contains(captured.String(), "upload reservation recovery failed") {
+		t.Fatalf("recovery error not logged: %q", captured.String())
 	}
 }
 

@@ -59,24 +59,12 @@ func settleDeletedResourceReservation(tx *gorm.DB, resource *model.Resource) err
 	}
 }
 
-func reservationTableMissing(err error) bool {
-	if err == nil {
-		return false
-	}
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "no such table") && strings.Contains(message, "user_upload_reservations")
-}
-
 func clearUploadReservationTx(tx *gorm.DB, userID string, identity string) error {
 	identity = strings.TrimSpace(identity)
 	if strings.TrimSpace(userID) == "" || identity == "" {
 		return nil
 	}
-	err := tx.Where("user_id = ? AND identity = ?", userID, identity).Delete(&model.UserUploadReservation{}).Error
-	if reservationTableMissing(err) {
-		return nil
-	}
-	return err
+	return tx.Where("user_id = ? AND identity = ?", userID, identity).Delete(&model.UserUploadReservation{}).Error
 }
 
 func releaseIdentifiedDailyUploadTx(tx *gorm.DB, userID string, day string, identity string, size int64) error {
@@ -84,7 +72,7 @@ func releaseIdentifiedDailyUploadTx(tx *gorm.DB, userID string, day string, iden
 	if identity != "" {
 		var held model.UserUploadReservation
 		err := tx.Where("user_id = ? AND identity = ?", userID, identity).First(&held).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) || reservationTableMissing(err) {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}
 		if err != nil {

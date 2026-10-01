@@ -84,6 +84,7 @@ func (s *Service) recoverExisting(resource *model.Resource, restore ArtifactRest
 	}
 	retryQuota := resource.Status == model.ResourceStatusFailed
 	if resource.Status == model.ResourceStatusFailed {
+		// Same admission as RetryOwned: release a leftover FAILED witness first.
 		claimed, claimErr := s.repo.ClaimFailedResourceUpload(resource.UserID, resource.ID)
 		if claimErr != nil {
 			return nil, claimErr

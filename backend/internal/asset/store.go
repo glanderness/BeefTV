@@ -181,6 +181,8 @@ func (s *Service) RetryOwned(userID string, resourceID string, kind string, mime
 	}
 	released := resource.Status == model.ResourceStatusFailed
 	if released {
+		// ClaimFailed releases a leftover identified witness in the same
+		// transaction as FAILED->PENDING so the first retry can reserve.
 		claimed, claimErr := s.repo.ClaimFailedResourceUpload(userID, resource.ID)
 		if claimErr != nil {
 			return nil, claimErr

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -673,7 +674,9 @@ func (s *Service) releaseAbandonedSessionHeld(sess *chunkedUploadSession) error 
 func (s *Service) abandonStaleSessions() {
 	s.sessionMu.Lock()
 	defer s.sessionMu.Unlock()
-	_ = s.abandonStaleSessionsLocked()
+	if err := s.abandonStaleSessionsLocked(); err != nil {
+		log.Printf("upload reservation recovery failed: %v", err)
+	}
 }
 
 func (s *Service) abandonStaleSessionsLocked() error {
