@@ -217,20 +217,15 @@ func inlineIdentity(opts IngestOptions, path string) string {
 		return ""
 	}
 	if path == "" {
-		path = "root"
+		return prefix + ":root"
 	}
 	return prefix + ":" + path
 }
 
 func joinIngestPath(parent, child string) string {
-	parent = strings.TrimSpace(parent)
-	child = strings.TrimSpace(child)
-	if parent == "" {
-		return child
-	}
-	if child == "" {
-		return parent
-	}
+	// Escape JSON pointer segments so a key containing '/' cannot alias a
+	// nested field. Leading/trailing whitespace is part of the JSON key.
+	child = strings.ReplaceAll(strings.ReplaceAll(child, "~", "~0"), "/", "~1")
 	return parent + "/" + child
 }
 

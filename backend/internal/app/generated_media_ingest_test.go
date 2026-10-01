@@ -8,7 +8,6 @@ import (
 
 	"infinite-canvas/backend/internal/model"
 	localtask "infinite-canvas/backend/internal/task"
-	"infinite-canvas/backend/internal/taskdelivery"
 )
 
 func TestGeneratedMediaIngestFailureDoesNotCompleteBindOrPost(t *testing.T) {
@@ -90,19 +89,21 @@ func TestGeneratedMediaIngestSuccessLeavesTaskUnbound(t *testing.T) {
 	}
 }
 
-func TestGeneratedMediaIngestPortRecoversSameIdentity(t *testing.T) {
+func TestGeneratedMediaIngestTaskRecoversSameIdentityAfterRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ingest-identity.db")
 	dataDir := t.TempDir()
 	svc, db := newGenerationDeliveryMediaService(t, path, dataDir)
-	defer closeDB(t, db)
 	input := map[string]interface{}{"image": map[string]interface{}{"dataUrl": tinyPNGDataURL}}
-	opts := taskdelivery.IngestOptions{EnforceQuota: true, IdentityPrefix: "task-identity"}
-	first, err := svc.generatedMediaIngestor().IngestResult("user-1", input, opts)
+	task := model.Task{ID: "task-identity", UserID: "user-1"}
+	first, err := svc.persistTaskGeneratedMediaResult(task, input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	firstID := stringField(first["image"].(map[string]interface{}), "resourceId")
-	second, err := svc.generatedMediaIngestor().IngestResult("user-1", input, opts)
+	closeDB(t, db)
+	svc, db = newGenerationDeliveryMediaService(t, path, dataDir)
+	defer closeDB(t, db)
+	second, err := svc.persistTaskGeneratedMediaResult(task, input)
 	if err != nil {
 		t.Fatal(err)
 	}

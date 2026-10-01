@@ -23,6 +23,30 @@ import (
 
 const tinyPNGDataURL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 
+func TestIngestIdentityDoesNotAliasJSONKeys(t *testing.T) {
+	ingestor, _, repo, _, _ := newIngestHarness(t, ingestNopQuota{})
+	image := func() map[string]interface{} { return map[string]interface{}{"dataUrl": tinyPNGDataURL} }
+	input := map[string]interface{}{
+		"a/b": image(), "a": map[string]interface{}{"b": image()},
+		" b ": image(), "b": image(), "": image(),
+	}
+	first, err := ingestor.IngestResult("user-1", input, IngestOptions{EnforceQuota: true, IdentityPrefix: "task-key-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ingestor.IngestResult("user-1", input, IngestOptions{EnforceQuota: true, IdentityPrefix: "task-key-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resources, err := repo.Resources("user-1", 20)
+	if err != nil || len(resources) != 5 {
+		t.Fatalf("resources=%d err=%v", len(resources), err)
+	}
+	if stringField(nestedMap(t, first, "a/b"), "resourceId") == stringField(nestedMap(t, first, "a", "b"), "resourceId") {
+		t.Fatal("literal slash key aliased a nested resource")
+	}
+}
+
 func TestIngestNestedImageVideoAudioResult(t *testing.T) {
 	ingestor, assets, repo, _, dataDir := newIngestHarness(t, ingestNopQuota{})
 	clip := syntheticVideoMP4(1280, 720, 5042)

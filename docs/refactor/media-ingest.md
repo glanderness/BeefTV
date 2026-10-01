@@ -25,8 +25,8 @@ executeClaimed / QueryFailedVideoTask
 
 ## 身份与额度
 
-- 现行 facade 不带任务 ID，走 `StoreGenerated`，并发 inline 仍各自身份。
-- `IngestOptions.IdentityPrefix`（通常为 task ID）走 `RecoverOwned`，路径为 `prefix:images/0` 这类稳定键；重启与同身份重放复用 READY 行。
+- Worker 和人工视频回查通过 `persistTaskGeneratedMediaResult` 传入稳定任务身份；`taskId:inline` 加转义 JSON 路径走 `RecoverOwned`，重启与同身份重放复用 READY 行。JSON 键内的斜线和空白不会与其他字段碰撞。
+- 没有任务身份的独立调用仍走 `StoreGenerated`；旧迁移不伪造任务身份。
 - 现行严格路径执行 GeneratedFileMB 与账号存储额度；旧迁移 `SkipInvalidDataURL + EnforceQuota=false` 跳过坏 dataURL 且不预留生成额度。
 - 上传见证 READY/FAILED 结算仍由 asset 域拥有（基线已含 `359e835` / `d480a1e`），入库只调用 Store / StoreGenerated / RecoverOwned。
 
@@ -36,11 +36,10 @@ executeClaimed / QueryFailedVideoTask
 | --- | --- | --- |
 | `persistGeneratedMediaResult` | `app/generated_media_ingest.go` | `task_worker` / 人工视频恢复仍调用现有方法名 |
 | `decodeDataURL` | 同上 | 第二段 `PersistRemoteArtifact` 仍解码 data URL |
-| `IdentityPrefix` 未接入 executeClaimed | `task_worker.go` / `provider_task_recovery.go` | 本切片约定不改这些文件；Lead 可把 task ID 传入 ingest 端口 |
 
 ## 未改
 
-- `task_worker.go`、`provider_task_recovery.go`、`provider.go`
+- `provider.go`
 - Seedance 视频回查、完成排序、绑定投影
 - schema / 插件包 / 真实上游
 

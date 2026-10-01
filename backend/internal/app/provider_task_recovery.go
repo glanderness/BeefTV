@@ -139,7 +139,7 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 		return &ProviderTaskQueryResult{Task: taskForOutput(*task), ProviderStatus: providerStatus, Recovered: false}, nil
 	}
 
-	result, err = s.persistGeneratedMediaResult(task.UserID, result)
+	result, err = s.persistTaskGeneratedMediaResult(*task, result)
 	if err != nil {
 		_ = s.log(task.UserID, task.ID, "error", "人工查询已取得视频，但结果保存失败", err.Error())
 		return nil, err

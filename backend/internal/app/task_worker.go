@@ -130,7 +130,7 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 	providerSucceeded := routeResult.providerSucceeded
 	providerAccepted := providerSucceeded || strings.TrimSpace(task.ProviderRequestID) != ""
 	if err == nil {
-		result, err = s.persistGeneratedMediaResult(task.UserID, result)
+		result, err = s.persistTaskGeneratedMediaResult(*task, result)
 	}
 	if err == nil {
 		_, err = s.finalizeCharacterTurnaroundTask(*task, result)
