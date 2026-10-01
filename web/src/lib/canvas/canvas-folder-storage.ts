@@ -1,6 +1,6 @@
-import localforage from "localforage";
 import { nanoid } from "nanoid";
 
+import { CANVAS_FOLDER_PENDING_STORE_NAME, localForageInstance } from "@/lib/localforage-storage";
 import { scopedStorageKey } from "@/lib/user-scope";
 import { assertUserScope, captureUserScope, isUserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { ApiError } from "@/services/api/request";
@@ -40,10 +40,7 @@ type FolderPendingStore = {
     removeItem(key: string): Promise<void>;
 };
 
-const defaultFolderPendingStore: FolderPendingStore = localforage.createInstance({
-    name: "infinite-canvas",
-    storeName: "canvas_folder_pending",
-});
+const defaultFolderPendingStore: FolderPendingStore = localForageInstance(CANVAS_FOLDER_PENDING_STORE_NAME) as FolderPendingStore;
 
 let folderPendingStore: FolderPendingStore = defaultFolderPendingStore;
 const folderCommitChains = new Map<string, Promise<unknown>>();

@@ -148,8 +148,22 @@ test("automatic canvas creation failure leaves the opening screen and shows a re
         url.search = "?new=1";
         await page.goto(url.toString());
         await page.getByText("测试保存失败", { exact: true }).waitFor({ timeout: 5000 }).catch(async () => { throw new Error(JSON.stringify({ text: await page.locator("body").innerText(), requests, pageErrors, consoleErrors, messages: await page.evaluate(() => (window as any).creationMessages) })); });
+        expect(requests.some((entry) => entry.startsWith("PUT ") && entry.includes("/api/canvas-projects/"))).toBe(true);
         expect(await page.getByText("正在打开画布...", { exact: true }).count()).toBe(0);
         expect(await page.getByRole("button", { name: "开始创作", exact: true }).count()).toBe(1);
         expect(pageErrors).toEqual([]);
+    } finally { await context.close(); }
+}, 15_000);
+
+test("fresh IndexedDB can initialize app_state and folder pending together", async () => {
+    const context = await browser.newContext();
+    try {
+        const page = await context.newPage();
+        await page.goto(server.url.toString());
+        await page.getByRole("button", { name: "测试缺失导出" }).waitFor();
+        const result = await page.evaluate(async () => (window as any).exportFixture.probeSharedStores());
+        expect(result.error).toBeUndefined();
+        expect(result.journal).toBe("{\"ok\":true}");
+        expect(result.pending).toEqual({ version: 1, intents: {}, highWater: {} });
     } finally { await context.close(); }
 }, 15_000);
