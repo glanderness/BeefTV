@@ -14,6 +14,7 @@ import (
 	"infinite-canvas/backend/internal/model"
 	localproject "infinite-canvas/backend/internal/project"
 	localtask "infinite-canvas/backend/internal/task"
+	"infinite-canvas/backend/internal/textreplay"
 	"infinite-canvas/backend/internal/workspace"
 
 	"github.com/gin-gonic/gin"
@@ -46,7 +47,10 @@ type RuntimeDependencies struct {
 	Tasks              localapp.TaskPort
 	Generation         localapp.GenerationPort
 	Conversations      *conversation.Service
-	BeefAPI            *beefapi.Service
+	// TextReplay is the composition-root text archive. Nil falls back to the
+	// app facade until Lead stores one long-lived textreplay.Service.
+	TextReplay textreplay.API
+	BeefAPI    *beefapi.Service
 	// AssistantHost is the per-runtime supervisor for the built-in agent-host child.
 	// Separate runtimes must not share this value.
 	AssistantHost *assistantruntime.Host
@@ -145,6 +149,13 @@ func requestProviderConfig(c *gin.Context, fallback *app.Service) ProviderConfig
 		return dependencies.ProviderConfig
 	}
 	return newServiceRuntimeAdapter(fallback)
+}
+
+func requestTextReplay(c *gin.Context, fallback *app.Service) textReplayAPI {
+	if dependencies, ok := runtimeDependencies(c); ok && dependencies.TextReplay != nil {
+		return dependencies.TextReplay
+	}
+	return appTextReplayAPI{fallback}
 }
 
 const runtimeDependenciesKey = "canvas.runtime-dependencies"

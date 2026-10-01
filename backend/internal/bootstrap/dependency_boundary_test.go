@@ -24,6 +24,10 @@ func TestTaskDomainDoesNotDependOnApplicationService(t *testing.T) {
 	assertDomainDoesNotImportApp(t, "./internal/task")
 }
 
+func TestTextReplayDomainDoesNotDependOnApplicationService(t *testing.T) {
+	assertDomainDoesNotImportApp(t, "./internal/textreplay")
+}
+
 func TestEditingDomainDoesNotDependOnApplicationService(t *testing.T) {
 	assertDomainDoesNotImportApp(t, "./internal/editing")
 }
