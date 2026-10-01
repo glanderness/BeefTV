@@ -138,7 +138,7 @@ func newCanvasHostWithRepo(service *Service, repo *repository.Repository) canvas
 			return fn()
 		},
 		structuredQuota: func(userID, kind string, creating bool, deltaBytes int64) error {
-			policy, err := service.RuntimePolicy()
+			policy, err := service.runtimePolicyWithRepo(repo)
 			if err != nil {
 				return err
 			}
@@ -149,7 +149,7 @@ func newCanvasHostWithRepo(service *Service, repo *repository.Repository) canvas
 			return validateStructuredStorageQuotaWithPolicy(usage, kind, creating, deltaBytes, policy.Resource)
 		},
 		structuredBatchQuota: func(userID, kind string, createdCount int, deltaBytes int64) error {
-			policy, err := service.RuntimePolicy()
+			policy, err := service.runtimePolicyWithRepo(repo)
 			if err != nil {
 				return err
 			}
@@ -160,7 +160,7 @@ func newCanvasHostWithRepo(service *Service, repo *repository.Repository) canvas
 			return validateStructuredCountQuotaWithPolicy(usage, kind, createdCount, deltaBytes, policy.Resource)
 		},
 		structuredReplacementQuota: func(userID, kind string, count int, bytes int64) error {
-			policy, err := service.RuntimePolicy()
+			policy, err := service.runtimePolicyWithRepo(repo)
 			if err != nil {
 				return err
 			}

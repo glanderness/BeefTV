@@ -89,7 +89,7 @@ func (a creationTasksAdapter) Prepare(userID string, req creation.TaskRequest) (
 }
 
 func (a creationTasksAdapter) Admit(userID string, repo *repository.Repository, task *model.Task) (*model.Task, error) {
-	policy, err := a.s.RuntimePolicy()
+	policy, err := a.s.runtimePolicyWithRepo(repo)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func (a creationQuotaAdapter) ValidateRun(userID string, repo *repository.Reposi
 }
 
 func (a creationQuotaAdapter) ValidateCanvas(userID string, repo *repository.Repository, creating bool, delta int64) error {
-	policy, err := a.s.RuntimePolicy()
+	policy, err := a.s.runtimePolicyWithRepo(repo)
 	if err != nil {
 		return err
 	}
@@ -151,7 +151,7 @@ func (s *Service) validateCreationStorage(repo *repository.Repository, userID st
 	if err != nil {
 		return err
 	}
-	policy, err := s.RuntimePolicy()
+	policy, err := s.runtimePolicyWithRepo(repo)
 	if err != nil {
 		return err
 	}
