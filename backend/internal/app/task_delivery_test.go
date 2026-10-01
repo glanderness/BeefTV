@@ -958,6 +958,61 @@ func TestGenerationDeliveryConcurrentFailedRetryKeepsOneResource(t *testing.T) {
 	}
 }
 
+func TestPersistRemoteArtifactIsolatesForeignCaller(t *testing.T) {
+	svc, db := newGenerationDeliveryMediaService(t, filepath.Join(t.TempDir(), "generation-foreign.db"), t.TempDir())
+	defer closeDB(t, db)
+	adapter := generationDeliveryMediaAdapter{service: svc}
+	identity := "task-foreign:0"
+	first, err := adapter.PersistRemoteArtifact("user-1", "image", tinyPNGDataURL, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := adapter.PersistRemoteArtifact("user-2", "image", tinyPNGDataURL, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID == second.ID || first.UserID != "user-1" || second.UserID != "user-2" {
+		t.Fatalf("foreign persist shared row: %#v %#v", first, second)
+	}
+	owned, err := svc.repo.Resource(first.ID)
+	if err != nil || owned.UserID != "user-1" || owned.Status != model.ResourceStatusReady {
+		t.Fatalf("owner row mutated: %#v err=%v", owned, err)
+	}
+}
+
+func TestPersistRemoteArtifactConcurrentFirstPersistKeepsOneResource(t *testing.T) {
+	svc, db := newGenerationDeliveryMediaService(t, filepath.Join(t.TempDir(), "generation-first-concurrent.db"), t.TempDir())
+	defer closeDB(t, db)
+	adapter := generationDeliveryMediaAdapter{service: svc}
+	identity := "task-first-concurrent:0"
+	var wg sync.WaitGroup
+	results := make([]*model.Resource, 2)
+	errs := make([]error, 2)
+	wg.Add(2)
+	for i := 0; i < 2; i++ {
+		go func(index int) {
+			defer wg.Done()
+			results[index], errs[index] = adapter.PersistRemoteArtifact("user-1", "image", tinyPNGDataURL, identity)
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("caller %d: %v", i, err)
+		}
+	}
+	if results[0] == nil || results[1] == nil || results[0].ID != results[1].ID {
+		t.Fatalf("concurrent persist = %#v %#v", results[0], results[1])
+	}
+	var resources int64
+	if err := db.Model(&model.Resource{}).Count(&resources).Error; err != nil || resources != 1 {
+		t.Fatalf("resources = %d err=%v", resources, err)
+	}
+	if !generationArtifactPresent(t, svc, results[0]) {
+		t.Fatal("concurrent persist missing local file")
+	}
+}
+
 func TestCanonicalOutputJSONRoundTripMatchesFrontendContract(t *testing.T) {
 	output := localtask.BindOutput(localtask.CanonicalOutput{OutputIndex: 0, MediaType: "image", ResourceID: "res-1"}, "task-1", localtask.TargetBinding{NodeID: "node-1"})
 	output.MaterializedAssetID = localtask.MaterializedAssetID("task-1", 0)

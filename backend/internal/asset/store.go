@@ -13,32 +13,36 @@ import (
 	"gorm.io/gorm"
 )
 
-// Write serialization (Store / RetryOwned)
+// Write serialization (Store / RetryOwned / RecoverOwned)
 //
-// Canonical ownership and locking live here, not on Upload*. Upload and
-// generated storage call Store or RetryOwned without holding a second lock.
+// Canonical ownership and locking live here, not on Upload* or delivery
+// adapters. Upload calls Store or RetryOwned; generation recovery calls
+// RecoverOwned. Callers must not hold a second write lock.
 //
-// The write lock is process-wide and keyed by the cleaned FileStore root plus
-// userID plus uploadKey (when present) and resourceID (RetryOwned). Two
-// Service handles that share a blob root share the lock table. Multiple keys
-// are acquired in sorted order so Store(upload) and RetryOwned(upload+id)
-// cannot deadlock.
+// The write lock is process-wide and keyed by the canonical FileStore root
+// plus userID plus uploadKey (when present) and resourceID. Two Service
+// handles that share a blob root share the lock table. Multiple keys are
+// acquired in sorted order so Store(upload) and RetryOwned(upload+id)
+// cannot deadlock. Idle keys are dropped when the last owner unlocks.
 //
-// An in-flight Store/RetryOwned holds the lock across pending create, byte
-// write, and metadata finalize. A concurrent Store on any handle waits, then
-// returns the persisted READY row or UploadInProgress for leftover
-// FAILED/PENDING. A concurrent RetryOwned waits, then returns READY or
+// An in-flight write holds the lock across pending create, byte write, and
+// metadata finalize. A concurrent Store on any handle waits, then returns
+// the persisted READY row or UploadInProgress for leftover FAILED/PENDING.
+// A concurrent RetryOwned or RecoverOwned waits, then returns READY or
 // continues the leftover row. An active write is never overwritten by a
 // second handle.
 //
 // Leftover PENDING is reclaimed only when no live owner holds the lock
 // (process restart or the writer finished). A fresh Service is not treated as
 // restart while another handle is still writing. Store does not reclaim
-// non-READY rows. Generation adapters should call RetryOwned.
+// non-READY rows. Generation adapters should call RecoverOwned so READY
+// rows with missing bytes can restore from the original provider result.
 //
 // Quota: callers of Store reserve upload/chunked quota. RetryOwned reserves
 // via ReserveRetry only after owner and identity checks, and releases on
-// write or finalize failure. READY replay does not consume retry quota.
+// write or finalize failure. RecoverOwned reserves after it decides create
+// versus retry versus replay. READY replay and PENDING/FAILED promote of
+// existing bytes do not consume quota.
 
 // Store creates a pending row, publishes bytes through FileStore, then marks
 // READY. A failed READY write leaves FAILED (or PENDING if status cannot be

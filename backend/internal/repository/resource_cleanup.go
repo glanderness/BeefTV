@@ -15,7 +15,9 @@ var ErrResourceNotReadyForAdmission = errors.New("resource is not ready for admi
 
 // DeleteDetachedResources removes Resource rows and enqueues physical deletion in one transaction.
 // JSON references are checked by the service before this call; direct foreign-key-like references
-// are checked again while the candidate rows are locked to avoid deleting a newly attached object.
+// and live task documents (including completed outputs) are checked again under BEGIN IMMEDIATE
+// so a newly admitted task cannot lose its material. User asset delete may skip completed
+// outputs; orphan cleanup must keep generation history.
 func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletionJobs []model.ResourceDeletionJob) error {
 	if len(resources) == 0 {
 		return nil
@@ -24,7 +26,7 @@ func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletio
 	for _, resource := range resources {
 		resourceIDs = append(resourceIDs, resource.ID)
 	}
-	return r.db.Transaction(func(tx *gorm.DB) error {
+	return withImmediateTransaction(r.db, func(tx *gorm.DB) error {
 		var current []model.Resource
 		query := tx.Where("id IN ?", resourceIDs)
 		if err := query.Find(&current).Error; err != nil {
@@ -37,7 +39,9 @@ func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletio
 		// This conservative second check closes the common race where an Asset or
 		// canvas is attached after that snapshot but before Resource deletion.
 		documentsByUser := map[string][]string{}
+		idsByUser := map[string][]string{}
 		for _, resource := range current {
+			idsByUser[resource.UserID] = append(idsByUser[resource.UserID], resource.ID)
 			if _, loaded := documentsByUser[resource.UserID]; loaded {
 				continue
 			}
@@ -74,6 +78,11 @@ func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletio
 			}
 			if count > 0 {
 				return ErrResourceCleanupStillReferenced
+			}
+		}
+		for userID, ids := range idsByUser {
+			if err := guardTaskResourceReferences(tx, userID, ids, false); err != nil {
+				return err
 			}
 		}
 		if err := tx.Where("resource_id IN ?", resourceIDs).Delete(&model.ArkPrivateAssetBinding{}).Error; err != nil {

@@ -298,62 +298,17 @@ func (a generationDeliveryMediaAdapter) PersistRemoteArtifact(userID, mediaType,
 	if userID == "" || artifactURL == "" || identity == "" {
 		return nil, fmt.Errorf("generation artifact identity is incomplete")
 	}
-	unlock := a.service.lockGenerationArtifact(identity)
-	defer unlock()
-
-	uploadKey := normalizedResourceUploadKey([]string{identity})
-	existing, err := a.service.resourceForUploadKey(userID, uploadKey)
-	if err != nil {
-		return nil, err
-	}
-	if existing != nil {
-		present := a.service.generationLocalArtifactPresent(existing)
-		if existing.Status == model.ResourceStatusReady && present {
-			return existing, nil
+	return a.service.resourceDomain().RecoverOwned(userID, identity, func() (localasset.RecoveredArtifact, error) {
+		kind, data, mimeType, fileName, width, height, durationMs, err := a.decodeGenerationArtifact(mediaType, artifactURL)
+		if err != nil {
+			return localasset.RecoveredArtifact{}, err
 		}
-		if existing.Status == model.ResourceStatusPending && present {
-			existing.Status = model.ResourceStatusReady
-			existing.Error = ""
-			existing.UpdatedAt = time.Now()
-			if err := a.service.repo.SaveResource(existing); err != nil {
-				return nil, err
-			}
-			return existing, nil
-		}
-	}
-
-	kind, data, mimeType, fileName, width, height, durationMs, err := a.decodeGenerationArtifact(mediaType, artifactURL)
-	if err != nil {
-		return nil, err
-	}
-	if existing != nil {
-		if existing.Status != model.ResourceStatusFailed {
-			existing.Status = model.ResourceStatusFailed
-			existing.Error = "generation artifact missing local file"
-			existing.UpdatedAt = time.Now()
-			if err := a.service.repo.SaveResource(existing); err != nil {
-				return nil, err
-			}
-		}
-		return a.service.retryStoredResource(userID, existing, kind, mimeType, int64(len(data)), bytes.NewReader(data), a.service.localResourceStorage)
-	}
-
-	size := int64(len(data))
-	quotaDay, err := a.service.reserveGeneratedResourceQuota(userID, size)
-	if err != nil {
-		return nil, err
-	}
-	resource, stored, err := a.service.storeResource(userID, kind, fileName, mimeType, size, width, height, durationMs, bytes.NewReader(data), uploadKey, a.service.localResourceStorage)
-	if err != nil {
-		a.service.releaseUserUploadQuota(userID, quotaDay, size)
-		return nil, err
-	}
-	if stored {
-		a.service.commitUserUploadQuota(userID, size)
-	} else {
-		a.service.releaseUserUploadQuota(userID, quotaDay, size)
-	}
-	return resource, nil
+		return localasset.RecoveredArtifact{
+			Kind: kind, FileName: fileName, MimeType: mimeType,
+			Size: int64(len(data)), Width: width, Height: height, DurationMs: durationMs,
+			Body: bytes.NewReader(data),
+		}, nil
+	})
 }
 
 func (a generationDeliveryMediaAdapter) decodeGenerationArtifact(mediaType, artifactURL string) (kind string, data []byte, mimeType, fileName string, width, height int, durationMs int64, err error) {

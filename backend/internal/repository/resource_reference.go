@@ -413,10 +413,14 @@ func guardAssetDeletionReferences(tx *gorm.DB, userID string, assetID string, re
 			return ErrResourceCleanupStillReferenced
 		}
 	}
-	return guardActiveTaskResourceReferences(tx, userID, resourceIDs)
+	return guardTaskResourceReferences(tx, userID, resourceIDs, true)
 }
 
 func guardActiveTaskResourceReferences(tx *gorm.DB, userID string, resourceIDs []string) error {
+	return guardTaskResourceReferences(tx, userID, resourceIDs, true)
+}
+
+func guardTaskResourceReferences(tx *gorm.DB, userID string, resourceIDs []string, skipCompletedOutput bool) error {
 	if len(resourceIDs) == 0 {
 		return nil
 	}
@@ -432,9 +436,11 @@ func guardActiveTaskResourceReferences(tx *gorm.DB, userID string, resourceIDs [
 	for _, task := range tasks {
 		statuses[task.ID] = task.Status
 		primary, secondary := task.InputJSON, task.ResultJSON
-		switch task.Status {
-		case model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled:
-			secondary = ""
+		if skipCompletedOutput {
+			switch task.Status {
+			case model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled:
+				secondary = ""
+			}
 		}
 		if len(assets.DocumentReferencedIDs(primary, owned)) > 0 || len(assets.DocumentReferencedIDs(secondary, owned)) > 0 {
 			return ErrResourceCleanupStillReferenced
@@ -445,9 +451,11 @@ func guardActiveTaskResourceReferences(tx *gorm.DB, userID string, resourceIDs [
 		return err
 	}
 	for _, log := range logs {
-		switch statuses[log.TaskID] {
-		case model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled:
-			continue
+		if skipCompletedOutput {
+			switch statuses[log.TaskID] {
+			case model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled:
+				continue
+			}
 		}
 		if len(assets.DocumentReferencedIDs(log.Payload, owned)) > 0 {
 			return ErrResourceCleanupStillReferenced
@@ -458,9 +466,11 @@ func guardActiveTaskResourceReferences(tx *gorm.DB, userID string, resourceIDs [
 		return err
 	}
 	for _, result := range results {
-		switch statuses[result.TaskID] {
-		case model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled:
-			continue
+		if skipCompletedOutput {
+			switch statuses[result.TaskID] {
+			case model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled:
+				continue
+			}
 		}
 		if len(assets.DocumentReferencedIDs(result.URL, owned)) > 0 || len(assets.DocumentReferencedIDs(result.Payload, owned)) > 0 {
 			return ErrResourceCleanupStillReferenced
@@ -496,9 +506,9 @@ func withImmediateTransaction(db *gorm.DB, fn func(*gorm.DB) error) error {
 }
 
 // RequireReadyOwnedResourcesTx is the admission-side counterpart of
-// DeleteAssetAndResources. Lead must call it inside CreateTaskWithActiveLimit
-// (and RetryTask when input JSON is rewritten) after resolving input resource
-// IDs and before Create/Updates, in the same transaction as the task write.
+// DeleteAssetAndResources. CreateTaskWithActiveLimit and RetryTask call it
+// after resolving input resource IDs and before Create/Updates, in the same
+// transaction as the task write.
 //
 // The no-op UPDATE takes SQLite's writer lock so WAL cannot commit a delete
 // between the readiness check and the task insert. A plain SELECT is not

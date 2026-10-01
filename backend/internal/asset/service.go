@@ -16,7 +16,65 @@ import (
 	"gorm.io/gorm"
 )
 
-var workspaceWriteLocks sync.Map
+type countedWriteLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+type writeLockRegistry struct {
+	mu    sync.Mutex
+	locks map[string]*countedWriteLock
+}
+
+var workspaceWriteLocks writeLockRegistry
+
+func (r *writeLockRegistry) acquire(keys []string) func() {
+	if len(keys) == 0 {
+		return func() {}
+	}
+	sort.Strings(keys)
+	type held struct {
+		key  string
+		lock *countedWriteLock
+	}
+	heldLocks := make([]held, 0, len(keys))
+	r.mu.Lock()
+	if r.locks == nil {
+		r.locks = map[string]*countedWriteLock{}
+	}
+	for _, key := range keys {
+		lock := r.locks[key]
+		if lock == nil {
+			lock = &countedWriteLock{}
+			r.locks[key] = lock
+		}
+		lock.refs++
+		heldLocks = append(heldLocks, held{key: key, lock: lock})
+	}
+	r.mu.Unlock()
+	for _, item := range heldLocks {
+		item.lock.mu.Lock()
+	}
+	return func() {
+		for index := len(heldLocks) - 1; index >= 0; index-- {
+			heldLocks[index].lock.mu.Unlock()
+		}
+		r.mu.Lock()
+		for _, item := range heldLocks {
+			item.lock.refs--
+			if item.lock.refs == 0 {
+				delete(r.locks, item.key)
+			}
+		}
+		r.mu.Unlock()
+	}
+}
+
+func (r *writeLockRegistry) len() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.locks)
+}
 
 type ResourceStream = assets.ResourceStream
 type ResourceDeliveryOptions = assets.ResourceDeliveryOptions
@@ -52,11 +110,13 @@ func (s *Service) writeSpace() string {
 	return fmt.Sprintf("service:%p", s)
 }
 
-// lockWrite serializes Store/RetryOwned for every Service that shares the
-// same FileStore root. Keys include the user so identical client upload keys
-// cannot cross owners. Multiple keys are taken in sorted order to avoid
-// nested deadlock. A second handle cannot reclaim an in-flight PENDING write;
-// leftover PENDING is reclaimable only when no live owner holds the lock.
+// lockWrite serializes Store/RetryOwned/RecoverOwned for every Service that
+// shares the same canonical FileStore root. Keys include the user so identical
+// client upload keys cannot cross owners. Multiple keys are taken in sorted
+// order to avoid nested deadlock. Entries are released when the last owner
+// unlocks so the table cannot grow without bound. A second handle cannot
+// reclaim an in-flight PENDING write; leftover PENDING is reclaimable only
+// when no live owner holds the lock.
 func (s *Service) lockWrite(userID string, uploadKey *string, resourceID string) func() {
 	if s == nil {
 		return func() {}
@@ -73,22 +133,7 @@ func (s *Service) lockWrite(userID string, uploadKey *string, resourceID string)
 	if userID != "" && resourceID != "" {
 		keys = append(keys, space+"\x00resource\x00"+userID+"\x00"+resourceID)
 	}
-	if len(keys) == 0 {
-		return func() {}
-	}
-	sort.Strings(keys)
-	held := make([]*sync.Mutex, 0, len(keys))
-	for _, key := range keys {
-		value, _ := workspaceWriteLocks.LoadOrStore(key, &sync.Mutex{})
-		lock := value.(*sync.Mutex)
-		lock.Lock()
-		held = append(held, lock)
-	}
-	return func() {
-		for index := len(held) - 1; index >= 0; index-- {
-			held[index].Unlock()
-		}
-	}
+	return workspaceWriteLocks.acquire(keys)
 }
 
 func (s *Service) Resources(userID string, limit int) ([]model.Resource, error) {

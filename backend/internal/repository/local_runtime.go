@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/gorm"
@@ -290,7 +291,7 @@ func (r *Repository) TaskByClientOperation(userID, key string) (*model.Task, err
 }
 
 func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, limit int) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+	return withImmediateTransaction(r.db, func(tx *gorm.DB) error {
 		if task.ClientOperationID != nil && strings.TrimSpace(*task.ClientOperationID) != "" {
 			var existing model.Task
 			err := tx.Where("user_id = ? AND client_operation_id = ?", task.UserID, *task.ClientOperationID).First(&existing).Error
@@ -305,6 +306,9 @@ func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, limit int) erro
 			return err
 		}
 		if err := RequireTaskScopeActiveTx(tx, task.UserID, task.ProjectID); err != nil {
+			return err
+		}
+		if err := RequireReadyOwnedResourcesTx(tx, task.UserID, taskInputResourceIDs(task.InputJSON)); err != nil {
 			return err
 		}
 		if err := enforceActiveTaskLimit(tx, task.UserID, limit); err != nil {
@@ -325,8 +329,11 @@ func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, limit int) erro
 
 func (r *Repository) RetryTask(userID string, prepared *model.Task, limit int) (*model.Task, error) {
 	var task model.Task
-	err := r.db.Transaction(func(tx *gorm.DB) error {
+	err := withImmediateTransaction(r.db, func(tx *gorm.DB) error {
 		if err := RequireTaskScopeActiveTx(tx, userID, prepared.ProjectID); err != nil {
+			return err
+		}
+		if err := RequireReadyOwnedResourcesTx(tx, userID, taskInputResourceIDs(prepared.InputJSON)); err != nil {
 			return err
 		}
 		if err := enforceActiveTaskLimit(tx, userID, limit); err != nil {
@@ -353,6 +360,22 @@ func (r *Repository) RetryTask(userID string, prepared *model.Task, limit int) (
 	})
 	return &task, err
 }
+
+func taskInputResourceIDs(inputJSON string) []string {
+	found := map[string]struct{}{}
+	raw := strings.TrimSpace(inputJSON)
+	if raw == "" {
+		return nil
+	}
+	if err := assets.CollectOwnedDocumentReferences(raw, found); err != nil {
+		if id := assets.ResourceID(raw); id != "" {
+			return []string{id}
+		}
+		return nil
+	}
+	return assets.SortedIDs(found)
+}
+
 func enforceActiveTaskLimit(tx *gorm.DB, userID string, limit int) error {
 	var count int64
 	if err := tx.Model(&model.Task{}).Where("user_id = ? AND status IN ?", userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).Count(&count).Error; err != nil {

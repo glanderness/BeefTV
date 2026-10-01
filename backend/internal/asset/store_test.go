@@ -529,6 +529,81 @@ func TestTwoHandlesCannotReclaimInFlightPending(t *testing.T) {
 	}
 }
 
+func TestWriteLockRegistryReleasesEntries(t *testing.T) {
+	svc, _, _ := newTestDomain(t)
+	before := workspaceWriteLocks.len()
+	unlock := svc.lockWrite("user-1", NormalizedUploadKey([]string{"lock-leak"}), "res-lock")
+	if workspaceWriteLocks.len() <= before {
+		t.Fatal("lock registry did not retain live keys")
+	}
+	unlock()
+	if workspaceWriteLocks.len() != before {
+		t.Fatalf("lock registry leaked: before=%d after=%d", before, workspaceWriteLocks.len())
+	}
+}
+
+func TestAliasedFileStoresShareWriteLock(t *testing.T) {
+	first, repo, dataDir := newTestDomain(t)
+	alias := filepath.Join(t.TempDir(), "alias-data")
+	if err := os.Symlink(dataDir, alias); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	second := NewService(Dependencies{
+		Repository: NewRepository(repo),
+		Blobs:      NewFileStore(alias),
+		Quota:      nopQuota{},
+		Lifecycle:  nopLifecycle{},
+	})
+	if first.writeSpace() != second.writeSpace() {
+		t.Fatalf("aliased lock spaces diverged: %q vs %q", first.writeSpace(), second.writeSpace())
+	}
+	uploadKey := NormalizedUploadKey([]string{"alias-lock"})
+	announced := make(chan struct{})
+	hold := make(chan struct{})
+	var stored *model.Resource
+	var storeErr error
+	var storeWG sync.WaitGroup
+	storeWG.Add(1)
+	go func() {
+		defer storeWG.Done()
+		stored, _, storeErr = first.Store("user-1", "image", "a.png", "text/plain", 12, 1, 1, 0, &holdFirstRead{
+			announced: announced,
+			hold:      hold,
+			rest:      bytes.NewReader([]byte("first-writer")),
+		}, uploadKey)
+	}()
+	<-announced
+	var retried *model.Resource
+	var retryErr error
+	var retryWG sync.WaitGroup
+	retryWG.Add(1)
+	go func() {
+		defer retryWG.Done()
+		pending, err := repo.ResourceByUploadKey("user-1", *uploadKey)
+		if err != nil {
+			retryErr = err
+			return
+		}
+		retried, retryErr = second.RetryOwned("user-1", pending.ID, "image", "text/plain", 12, bytes.NewReader([]byte("second-handle")))
+	}()
+	close(hold)
+	storeWG.Wait()
+	retryWG.Wait()
+	if storeErr != nil {
+		t.Fatalf("store: %v", storeErr)
+	}
+	if retryErr != nil {
+		t.Fatalf("retry: %v", retryErr)
+	}
+	if stored == nil || retried == nil || stored.ID != retried.ID {
+		t.Fatalf("store=%v retry=%v", stored, retried)
+	}
+	body, err := os.ReadFile(filepath.Join(dataDir, "resources", filepath.FromSlash(stored.ObjectKey)))
+	if err != nil || string(body) != "first-writer" {
+		t.Fatalf("body = %q err=%v", body, err)
+	}
+}
+
 func TestFileExtensionMapsWaveMIMEAliasesToWav(t *testing.T) {
 	for _, mimeType := range []string{"audio/wave", "audio/wav", "audio/x-wav", "audio/vnd.wave"} {
 		if got := FileExtension("", mimeType, "audio"); got != ".wav" {
