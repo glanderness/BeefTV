@@ -35,7 +35,13 @@ func (c *Client) jsonRequest(method string, baseURL *url.URL, endpoint string, p
 	if payload != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	client := &http.Client{Timeout: 2 * time.Minute, Transport: c.roundTripper()}
+	trusted := *request.URL
+	trusted.User = nil
+	client := &http.Client{
+		Timeout:       2 * time.Minute,
+		Transport:     pinnedRoundTripper{base: c.roundTripper(), trusted: &trusted},
+		CheckRedirect: denyRedirects,
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		return errors.New("无法连接 Eagle，请确认 Eagle 已启动并打开素材库")
@@ -67,4 +73,54 @@ func loopbackTransport() http.RoundTripper {
 		return transport
 	}
 	return &http.Transport{Proxy: nil}
+}
+
+func denyRedirects(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
+type pinnedRoundTripper struct {
+	base    http.RoundTripper
+	trusted *url.URL
+}
+
+func (p pinnedRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if p.trusted == nil || req == nil || req.URL == nil || req.URL.User != nil || !sameTrustedDestination(p.trusted, req.URL) {
+		return nil, errors.New("Eagle 只允许连接已校验的本机地址")
+	}
+	base := p.base
+	if base == nil {
+		base = loopbackTransport()
+	}
+	return base.RoundTrip(req)
+}
+
+func sameTrustedDestination(trusted, got *url.URL) bool {
+	if trusted == nil || got == nil {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(trusted.Scheme), strings.TrimSpace(got.Scheme)) {
+		return false
+	}
+	if strings.ToLower(trusted.Hostname()) != strings.ToLower(got.Hostname()) {
+		return false
+	}
+	return effectivePort(trusted) == effectivePort(got)
+}
+
+func effectivePort(value *url.URL) string {
+	if value == nil {
+		return ""
+	}
+	if port := value.Port(); port != "" {
+		return port
+	}
+	switch strings.ToLower(value.Scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
 }

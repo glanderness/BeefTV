@@ -49,10 +49,10 @@ func TestIsMediaDataURL(t *testing.T) {
 }
 
 func TestValidItemID(t *testing.T) {
-	if !validItemID("abc123") {
+	if !validItemID("abc123") || !validItemID("item-1") {
 		t.Fatal("plain item id rejected")
 	}
-	for _, id := range []string{"", " ", "a/b", `a\b`, "a?b", "a&b"} {
+	for _, id := range []string{"", " ", " abc123", "abc123 ", ".", "..", "../x", "..\\x", "a/b", `a\b`, "a?b", "a&b", "a:b", "a\nb"} {
 		if validItemID(id) {
 			t.Fatalf("item id %q accepted", id)
 		}

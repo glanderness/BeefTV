@@ -2,6 +2,7 @@ package eagle
 
 import (
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	"infinite-canvas/backend/internal/kernel"
@@ -45,5 +46,22 @@ func isMediaDataURL(value string) bool {
 }
 
 func validItemID(itemID string) bool {
-	return strings.TrimSpace(itemID) != "" && !strings.ContainsAny(itemID, "/\\?&")
+	if itemID == "" || itemID != strings.TrimSpace(itemID) {
+		return false
+	}
+	if itemID == "." || itemID == ".." {
+		return false
+	}
+	if strings.ContainsAny(itemID, `/\:?*&<>|`) {
+		return false
+	}
+	if filepath.Base(itemID) != itemID || filepath.Clean(itemID) != itemID {
+		return false
+	}
+	for _, char := range itemID {
+		if char < 32 || char == 127 {
+			return false
+		}
+	}
+	return true
 }
