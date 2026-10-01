@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/repository"
@@ -309,8 +310,12 @@ func (s *Service) TestAdminChannelModel(ctx context.Context, actor *model.User, 
 
 	testCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
+	testCtx = s.bindGenerationRuntime(testCtx, generation.CallMeta{
+		UserID: actor.ID, ChannelID: channel.ID, Capability: capability,
+		Operation: "admin_model_test", Model: modelKey, VideoSeconds: videoSecondsValue,
+	})
 	testCtx = context.WithValue(testCtx, providerAnalyticsKey{}, providerAnalyticsContext{
-		ServiceID: registerProviderService(s), UserID: actor.ID, ChannelID: channel.ID, Capability: capability,
+		UserID: actor.ID, ChannelID: channel.ID, Capability: capability,
 		Operation: "admin_model_test", Model: modelKey, VideoSeconds: videoSecondsValue,
 	})
 	testCtx = withProtocolRegistry(testCtx, s.protocolRegistry())

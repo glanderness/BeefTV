@@ -5,34 +5,26 @@ package app
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
-	"io"
 	"strconv"
 	"strings"
-	"sync"
 
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/providerpreset"
 
 	"gorm.io/gorm"
 )
 
 type providerAnalyticsKey struct{}
 
-var providerAnalyticsServices = struct {
-	sync.RWMutex
-	services map[string]*Service
-}{services: make(map[string]*Service)}
-
 type providerAnalyticsContext struct {
-	ServiceID         string
 	UserID            string
 	TaskID            string
+	ProjectID         string
+	TaskType          string
 	TraceID           string
 	RequestID         string
 	Capability        string
@@ -46,8 +38,7 @@ type providerAnalyticsContext struct {
 }
 
 func withProviderAnalytics(ctx context.Context, service *Service, task model.Task) context.Context {
-	serviceID := registerProviderService(service)
-	metadata := providerAnalyticsContext{ServiceID: serviceID, UserID: task.UserID, TaskID: task.ID, TraceID: task.TraceID, RequestID: task.RequestID, Capability: capabilityFromTaskType(task.Type), Operation: task.Operation, Model: task.Model, ProviderRequestID: task.ProviderRequestID}
+	metadata := providerAnalyticsContext{UserID: task.UserID, TaskID: task.ID, ProjectID: task.ProjectID, TaskType: task.Type, TraceID: task.TraceID, RequestID: task.RequestID, Capability: capabilityFromTaskType(task.Type), Operation: task.Operation, Model: task.Model, ProviderRequestID: task.ProviderRequestID}
 	var input struct {
 		Mode   string         `json:"mode"`
 		Config providerConfig `json:"config"`
@@ -67,25 +58,6 @@ func withProviderAnalytics(ctx context.Context, service *Service, task model.Tas
 		ctx = generation.WithRuntime(ctx, generation.Runtime{Call: generationCallMeta(metadata)})
 	}
 	return ctx
-}
-
-func registerProviderService(service *Service) string {
-	if service == nil || service.workerID == "" {
-		return ""
-	}
-	providerAnalyticsServices.Lock()
-	providerAnalyticsServices.services[service.workerID] = service
-	providerAnalyticsServices.Unlock()
-	return service.workerID
-}
-
-func providerService(metadata providerAnalyticsContext) *Service {
-	if metadata.ServiceID == "" {
-		return nil
-	}
-	providerAnalyticsServices.RLock()
-	defer providerAnalyticsServices.RUnlock()
-	return providerAnalyticsServices.services[metadata.ServiceID]
 }
 
 func resumedProviderRequestID(ctx context.Context) string {
@@ -148,196 +120,40 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 	if err := json.Unmarshal([]byte(rawInput), &input); err != nil {
 		return nil, fmt.Errorf("任务输入解析失败：%w", err)
 	}
-	ctx = s.enrichGenerationRuntime(ctx, generation.CallMeta{UserID: userID, TaskID: taskExecutionID(ctx)})
+	ctx = s.enrichGenerationRuntime(ctx, generation.CallMeta{UserID: userID, TaskID: taskExecutionID(ctx), ProjectID: taskProjectID, TaskType: taskType})
 	if strings.TrimSpace(input.Prompt) == "" {
 		input.Prompt = fallbackPrompt
 	}
 	if input.Mode == "" && strings.HasPrefix(taskType, "video_") {
 		input.Mode = "video"
 	}
-	promptTemplateOperation := metadataString(input.Metadata, "promptTemplateOperation")
-	// 视频节点的最终 Prompt 只取输入框内容，不能被分镜模板替换；图片和文本仍沿用模板能力。
-	if input.Mode != "video" && promptTemplateOperation != "" {
-		values := metadataStringValues(input.Metadata["promptTemplateVariables"])
-		compiled, compileErr := s.compilePrompt(userID, promptTemplateOperation, values)
-		if compileErr != nil {
-			return nil, fmt.Errorf("编译用户提示词失败：%w", compileErr)
-		}
-		input.Prompt = compiled.Content
-	}
-	if strings.TrimSpace(input.Prompt) == "" {
-		return nil, errors.New("prompt is required")
-	}
 	config, err := s.resolveProviderConfig(input.Config)
 	if err != nil {
 		return nil, err
 	}
 	input.Config = config
-	var textPublisher *taskTextStreamPublisher
 	if input.Mode == "text" && strings.HasPrefix(taskType, "canvas_text") {
 		requestedStream := input.TextOptions.Stream == nil || *input.TextOptions.Stream
 		supportsStream := input.Config.CapabilityConfig == nil || input.Config.CapabilityConfig.Text == nil || input.Config.CapabilityConfig.Text.Streaming == nil || *input.Config.CapabilityConfig.Text.Streaming
 		input.StreamText = requestedStream && supportsStream
 	}
 	if input.Mode == "text" && strings.HasPrefix(taskType, "canvas_text") && input.StreamText {
-		textPublisher = newTaskTextStreamPublisher(s, userID, taskExecutionID(ctx))
-		if input.AgentRequests != nil {
-			textPublisher = newCloudAgentStreamPublisher(s, userID, taskExecutionID(ctx), "assistant_delta")
-			reasoningPublisher := newCloudAgentStreamPublisher(s, userID, taskExecutionID(ctx), "reasoning_delta")
-			input.OnReasoningDelta = reasoningPublisher.Publish
-			defer reasoningPublisher.Close()
-		}
+		textPublisher := newTaskTextStreamPublisher(s, userID, taskExecutionID(ctx))
 		input.OnTextDelta = textPublisher.Publish
+		if input.AgentRequests != nil {
+			input.OnReasoningDelta = textPublisher.Publish
+		}
 		defer textPublisher.Close()
 	}
-	if isWorkflowProviderInterface(input.Config.InterfaceType) {
-		if err := s.RequireWorkflowPluginForInterface(input.Config.InterfaceType); err != nil {
-			return nil, err
-		}
-		if err := validateWorkflowProviderPromptLength(input); err != nil {
-			return nil, err
-		}
-		if err := validateWorkflowProviderConfig(input.Mode, input.Config); err != nil {
-			return nil, err
-		}
-		// 工作流参数由工作流字段定义校验，普通模型能力配置不能覆盖它们。
-		if resumedProviderRequestID(ctx) == "" {
-			if err := s.hydrateGenerationMediaWithContext(ctx, userID, &input, providerMediaHydrationPolicy{}); err != nil {
-				return nil, err
-			}
-		}
-		return s.runWorkflowProviderTask(ctx, input)
-	}
-	if input.Mode == "image" && input.Metadata != nil {
-		if err := s.applyGenerationStyleProfile(userID, taskProjectID, &input); err != nil {
-			return nil, err
-		}
-	}
-	if input.Config.APIFormat == "gemini" && input.Config.InterfaceType != string(model.ChannelInterfaceGeminiVeo) && input.Config.InterfaceType != string(model.ChannelInterfaceGeminiImage) {
-		_, hasDeclarativeAgent := agentProtocolAdapterForContext(ctx, input.Config.InterfaceType)
-		if input.AgentRequests == nil || !hasDeclarativeAgent {
-			return nil, errors.New("后端任务队列暂不支持该 Gemini 调用格式，请选择已安装的 Gemini 协议插件")
-		}
-	}
-	if strings.TrimSpace(input.Config.BaseURL) == "" || strings.TrimSpace(input.Config.APIKey) == "" || strings.TrimSpace(input.Config.Model) == "" {
-		return nil, errors.New("后端生成任务缺少 Base URL、API Key 或模型名")
-	}
-	if err := s.validateGenerationInterface(input.Mode, input.Config.InterfaceType); err != nil {
-		return nil, err
-	}
-	if isVolcengineJiMengProtocol(input.Config.InterfaceType) && strings.TrimSpace(input.Config.SecretKey) == "" {
-		return nil, errors.New("即梦官方 API 缺少 Secret Key")
-	}
-	if input.Mode == "image" {
-		if err := s.validateResolvedImageCapability(&input); err != nil {
-			return nil, err
-		}
-	}
-	if input.Mode == "video" && resumedProviderRequestID(ctx) == "" {
-		if err := s.hydrateVideoReferenceMetadata(ctx, userID, &input); err != nil {
-			return nil, err
-		}
-		if isBeefAPISeedancePreuploadConfig(ctx, input.Config) {
-			if err := s.resolveVideoCapability(ctx, &input); err != nil {
-				return nil, err
-			}
-			if input.VideoCapability != nil {
-				if err := validateVideoTaskParameters(input.VideoCapability, input); err != nil {
-					return nil, err
-				}
-			}
-		} else if err := s.validateResolvedVideoCapabilityContext(ctx, &input); err != nil {
-			return nil, err
-		}
-	}
-	if resumedProviderRequestID(ctx) == "" {
-		mediaPolicy := providerMediaHydrationPolicyFor(ctx, input)
-		if err := s.hydrateGenerationMediaWithContext(ctx, userID, &input, mediaPolicy); err != nil {
-			return nil, err
-		}
-		if err := s.prepareArkPrivateAssetReferences(ctx, userID, &input); err != nil {
-			return nil, err
-		}
-		if err := s.prepareBeefAPISeedanceReferences(ctx, userID, &input); err != nil {
-			return nil, err
-		}
-	}
-	if input.Mode == "video" && input.VideoCapability != nil && resumedProviderRequestID(ctx) == "" {
-		if err := validateVideoTask(input.VideoCapability, input); err != nil {
-			return nil, err
-		}
-	}
-	if input.Mode == "text" && input.AgentRequests != nil {
-		input, err = resolveAgentResourcePlaceholders(input, true)
-		if err != nil {
-			return nil, err
-		}
-	}
-	result, taskErr := generation.Execute(ctx, input)
-	if taskErr == nil && input.Mode == "text" && promptTemplateOperation != "" {
-		taskErr = validatePromptTemplateResult(promptTemplateOperation, result)
-	}
-	return result, taskErr
+	return generation.Execute(ctx, input)
 }
 
 func providerMediaHydrationPolicyFor(ctx context.Context, input canvasGenerationInput) providerMediaHydrationPolicy {
-	policy := providerMediaHydrationPolicy{PreferURL: providerPrefersMediaURLs(input.Config.InterfaceType, input)}
-	if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(input.Config.InterfaceType)) {
-		return providerMediaHydrationPolicy{PreferHTTPS: true}
-	}
-	// Prefer an existing HTTPS resource address when the workspace already has
-	// a public base. Built-in BeefAPI Seedance keeps local files on disk until
-	// the shared preupload path rewrites them to short-lived HTTPS URLs.
-	if isBeefAPIVideoConfig(ctx, input.Config) {
-		if contract, ok := providerpreset.BeefAPIVideoContract(input.Config.Model); ok && contract.InlineMedia && (contract.Protocol == input.Config.InterfaceType || isSeedanceVideoConfig(input.Config)) {
-			return providerMediaHydrationPolicy{PreferHTTPS: true, KeepLocal: isBeefAPISeedancePreuploadConfig(ctx, input.Config)}
-		}
-	}
-	// The channel-1 NewAPI profile also accepts data URLs in its media field.
-	// Keep desktop/local workspaces usable without requiring a public object URL;
-	// remote-resource channels remain URL-only below.
-	if strings.TrimSpace(input.Config.InterfaceType) == string(model.ChannelInterfaceNewAPIChannel1) {
-		policy.RequireURL = false
-		policy.PreferURL = false
-		return policy
-	}
-	switch strings.TrimSpace(input.Config.InterfaceType) {
-	case string(model.ChannelInterfaceNewAPIVideo), string(model.ChannelInterfaceNewAPIChannel1), string(model.ChannelInterfaceNewAPIChannel2), string(model.ChannelInterfaceVolcengineArkVideo), string(model.ChannelInterfaceVolcengineArkAgentPlanVideo), string(model.ChannelInterfaceMiniMaxVideo):
-		policy.RequireURL = true
-		policy.PreferURL = true
-	}
-	if adapter, ok := protocolAdapterForContext(ctx, input.Config.InterfaceType); ok {
-		// Installed declarations override legacy protocol-name guesses.
-		policy.RequireURL = adapter.Metadata().RequiresPublicMediaURLs
-		policy.PreferURL = policy.PreferURL || policy.RequireURL
-	}
-	if input.Mask != nil {
-		policy.RequireURL = false
-		policy.PreferURL = false
-	}
-	return policy
+	return generation.MediaHydrationPolicyFor(ctx, input)
 }
 
-// providerPrefersMediaURLs 只列出明确接受远程 URL 的协议。
-// 需要 multipart/原始字节的协议继续走字节路径，不能为了减少下载而擅自改变请求合同。
 func providerPrefersMediaURLs(interfaceType string, input canvasGenerationInput) bool {
-	if input.Mask != nil {
-		// OpenAI 图片编辑等 multipart 请求需要真实文件字节，遮罩场景不能改发 URL。
-		return false
-	}
-	switch strings.TrimSpace(interfaceType) {
-	case string(model.ChannelInterfaceChatCompletion), string(model.ChannelInterfaceOpenAIResponse), string(model.ChannelInterfaceClaudeAPI),
-		string(model.ChannelInterfaceGrokImage), string(model.ChannelInterfaceVolcengineArkImage), string(model.ChannelInterfaceVolcengineArkAgentPlanImage),
-		string(model.ChannelInterfaceXAIVideo), string(model.ChannelInterfaceNovitaVideo),
-		string(model.ChannelInterfaceMiniMaxVideo), string(model.ChannelInterfaceNewAPIVideo),
-		string(model.ChannelInterfaceNewAPIChannel1), string(model.ChannelInterfaceNewAPIChannel2),
-		string(model.ChannelInterfaceVolcengineArkVideo), string(model.ChannelInterfaceVolcengineArkAgentPlanVideo):
-		return true
-	}
-	if isGrokVideoConfig(input.Config) || isSeedanceVideoConfig(input.Config) || isArkPlanVideoConfig(input.Config) {
-		return true
-	}
-	return false
+	return generation.PrefersMediaURLs(interfaceType, input)
 }
 
 type styleExecutionPlanDocument struct {
@@ -570,79 +386,8 @@ func metadataStringValues(value any) map[string]string {
 // Read owned resource metadata before preflight, without downloading media.
 // Character/workflow references may carry only a resource storage key.
 func (s *Service) hydrateVideoReferenceMetadata(ctx context.Context, userID string, input *canvasGenerationInput) error {
-	for _, group := range [][]providerMedia{input.ReferenceImages, input.ReferenceVideos, input.ReferenceAudios} {
-		for index := range group {
-			media := &group[index]
-			if !strings.HasPrefix(media.StorageKey, "resource:") {
-				continue
-			}
-			resource, err := s.repo.ResourceForUser(userID, strings.TrimPrefix(media.StorageKey, "resource:"))
-			if err != nil {
-				return fmt.Errorf("读取任务参考资源失败：%w", err)
-			}
-			if resource.Status != "ready" {
-				return errors.New("任务参考资源尚未上传完成")
-			}
-			if resource.DurationMs > 0 {
-				media.DurationMs = resource.DurationMs
-			}
-			if resource.Width > 0 {
-				media.Width = resource.Width
-			}
-			if resource.Height > 0 {
-				media.Height = resource.Height
-			}
-			media.Bytes = resource.Size
-			if (media.Width <= 0 || media.Height <= 0) && resourceLooksLikeImage(resource, media) {
-				if _, body, openErr := s.OpenResource(userID, resource.ID); openErr == nil {
-					width, height, decodeErr := imageHeaderDimensions(body)
-					_ = body.Close()
-					if decodeErr == nil {
-						if media.Width <= 0 {
-							media.Width = width
-						}
-						if media.Height <= 0 {
-							media.Height = height
-						}
-					}
-				}
-			}
-		}
-	}
-	// Probe actual local/inline videos even when callers supplied dimensions.
-	// Built-in BeefAPI Seedance keeps that probe on the sequential preupload
-	// buffer so a 200MiB file is not read twice before PUT.
-	if isSeedance2Family(input.Config.InterfaceType, input.Config.Model) && !isBeefAPISeedancePreuploadConfig(ctx, input.Config) {
-		for i := range input.ReferenceVideos {
-			media := &input.ReferenceVideos[i]
-			var data []byte
-			var err error
-			if strings.HasPrefix(media.StorageKey, "resource:") {
-				_, body, openErr := s.OpenResource(userID, strings.TrimPrefix(media.StorageKey, "resource:"))
-				if openErr != nil {
-					return fmt.Errorf("第 %d 个参考视频无法读取，请重新导入", i+1)
-				}
-				data, err = io.ReadAll(io.LimitReader(body, (200<<20)+1))
-				_ = body.Close()
-			} else if raw := firstNonEmpty(media.DataURL, media.URL); strings.HasPrefix(raw, "data:") {
-				if len(raw) > base64.StdEncoding.EncodedLen(200<<20)+256 {
-					return BadAuthRequest(fmt.Sprintf("第 %d 个参考视频文件不能超过 200MB", i+1))
-				}
-				_, data, err = decodeProviderDataURL(raw)
-			} else {
-				continue
-			}
-			if err != nil || len(data) > 200<<20 {
-				return BadAuthRequest(fmt.Sprintf("第 %d 个参考视频无法读取或超过 200MB，请重新导入", i+1))
-			}
-			if err := applySeedance2VideoProbe(input.Config, i, media, data); err != nil {
-				return err
-			}
-			media.Bytes = int64(len(data))
-		}
-	}
-
-	return nil
+	ctx = s.enrichGenerationRuntime(ctx, generation.CallMeta{UserID: userID})
+	return generation.HydrateVideoReferenceMetadata(ctx, userID, input)
 }
 
 func applySeedance2VideoProbe(config providerConfig, index int, media *providerMedia, data []byte) error {

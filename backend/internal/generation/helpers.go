@@ -3,6 +3,7 @@ package generation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"mime"
 	"mime/multipart"
 	"net/textproto"
@@ -27,6 +28,18 @@ func firstJSONString(payload map[string]any, keys ...string) (string, error) {
 
 func metadataString(metadata map[string]interface{}, key string) string {
 	return strings.TrimSpace(stringField(metadata, key))
+}
+
+func metadataStringValues(value any) map[string]string {
+	values := map[string]string{}
+	raw, ok := value.(map[string]interface{})
+	if !ok {
+		return values
+	}
+	for key, item := range raw {
+		values[key] = strings.TrimSpace(fmt.Sprint(item))
+	}
+	return values
 }
 
 func writeField(writer *multipart.Writer, key string, value string) {

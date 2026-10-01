@@ -225,6 +225,17 @@ func DoJSON(req *http.Request, target interface{}) error {
 }
 
 func DoBinary(req *http.Request) ([]byte, string, error) {
+	if RecoverableImageEndpoint(req) {
+		runtime, ok := RuntimeFromContext(req.Context())
+		if !ok || runtime.Images == nil {
+			return nil, "", ErrImageOwnerMissing
+		}
+		handled, data, mimeType, err := runtime.Images.Intercept(req)
+		if !handled {
+			return nil, "", ErrImageOwnerMissing
+		}
+		return data, mimeType, err
+	}
 	if runtime, ok := RuntimeFromContext(req.Context()); ok && runtime.Images != nil {
 		handled, data, mimeType, err := runtime.Images.Intercept(req)
 		if handled {

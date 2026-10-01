@@ -85,6 +85,27 @@ type WorkflowPort interface {
 	Execute(ctx context.Context, input Input) (map[string]interface{}, error)
 }
 
+// PromptPort compiles user prompt templates and checks their structured result.
+// Video tasks never call Compile: the node prompt is the final prompt.
+type PromptPort interface {
+	Compile(userID, operation string, values map[string]string) (string, error)
+	ValidateResult(operation string, result map[string]any) error
+}
+
+// ConfigPort resolves channel secrets, loads image/video capability, and
+// performs provider-specific private-asset sync. It is not an app.Service bag.
+type ConfigPort interface {
+	Resolve(config Config) (Config, error)
+	ApplyCapabilities(ctx context.Context, input *Input) error
+	RequireWorkflow(interfaceType string) error
+	SyncArkPrivateAssets(ctx context.Context, userID string, input *Input) error
+}
+
+// StylePort applies the project's style profile to an image generation prompt.
+type StylePort interface {
+	Apply(userID, projectID string, input *Input) error
+}
+
 // MediaProbePort inspects local/inline Seedance 2 reference videos for the
 // current execution. A missing port fails closed when a referenced video
 // must be probed; it is not a package-level callback.
@@ -102,6 +123,8 @@ type Endpoints struct {
 type CallMeta struct {
 	UserID            string
 	TaskID            string
+	ProjectID         string
+	TaskType          string
 	TraceID           string
 	RequestID         string
 	Capability        string
@@ -120,6 +143,9 @@ type Runtime struct {
 	Receipts  ReceiptPort
 	Images    ImageSubmissionPort
 	Workflow  WorkflowPort
+	Prompt    PromptPort
+	Config    ConfigPort
+	Style     StylePort
 	Probe     MediaProbePort
 	Call      CallMeta
 	Endpoints Endpoints

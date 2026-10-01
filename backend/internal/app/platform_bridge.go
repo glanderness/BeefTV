@@ -193,11 +193,6 @@ func (s *Service) RecordChannelResult(ctx context.Context, channelID string, fai
 }
 
 func (s *Service) Close() error {
-	if s != nil && s.workerID != "" {
-		providerAnalyticsServices.Lock()
-		delete(providerAnalyticsServices.services, s.workerID)
-		providerAnalyticsServices.Unlock()
-	}
 	return nil
 }
 

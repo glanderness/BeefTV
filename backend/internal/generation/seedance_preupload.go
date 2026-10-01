@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -213,6 +214,41 @@ func ReadBeefAPISeedanceInlineMedia(_ string, media Media) ([]byte, string, bool
 		return nil, "", false, errors.New("参考素材未能读取，请重新提交")
 	}
 	return nil, "", true, nil
+}
+
+func ownedSeedanceMediaReader(ctx context.Context, userID string) BeefAPISeedanceMediaReader {
+	return func(kind string, media Media) ([]byte, string, bool, error) {
+		if SkipBeefAPISeedanceMedia(media) {
+			return nil, "", true, nil
+		}
+		if raw := firstNonEmpty(media.DataURL, media.URL); strings.HasPrefix(strings.TrimSpace(raw), "data:") {
+			return ReadBeefAPISeedanceInlineMedia(kind, media)
+		}
+		if !strings.HasPrefix(media.StorageKey, "resource:") {
+			return nil, "", true, nil
+		}
+		if media.Bytes > 0 {
+			if err := ValidateBeefAPISeedanceMediaSize(kind, media.Bytes); err != nil {
+				return nil, "", false, err
+			}
+		}
+		runtime, ok := RuntimeFromContext(ctx)
+		if !ok || runtime.Resources == nil {
+			return nil, "", false, errors.New("读取任务参考资源失败：资源端口未接入")
+		}
+		resourceID := strings.TrimPrefix(media.StorageKey, "resource:")
+		resource, body, err := runtime.Resources.Open(userID, resourceID)
+		if err != nil {
+			return nil, "", false, fmt.Errorf("读取任务参考资源失败：%w", err)
+		}
+		defer body.Close()
+		max := BeefAPISeedanceKindMaxBytes(kind)
+		data, err := io.ReadAll(io.LimitReader(body, max+1))
+		if err != nil {
+			return nil, "", false, fmt.Errorf("读取任务参考资源失败：%w", err)
+		}
+		return data, firstNonEmpty(media.MimeType, resource.MimeType), false, nil
+	}
 }
 
 func FallbackBeefAPISeedanceInline(ctx context.Context, input *Input, read BeefAPISeedanceMediaReader) error {

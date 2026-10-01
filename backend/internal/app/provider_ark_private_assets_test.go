@@ -95,10 +95,10 @@ func TestCallArkPrivateAssetAPIUsesIDForGetAsset(t *testing.T) {
 }
 
 func TestArkPrivateAssetControlPlaneDisablesGenerationAnalytics(t *testing.T) {
-	ctx := context.WithValue(context.Background(), providerAnalyticsKey{}, providerAnalyticsContext{ServiceID: "service", Capability: "video"})
+	ctx := context.WithValue(context.Background(), providerAnalyticsKey{}, providerAnalyticsContext{Capability: "video"})
 	ctx = withoutProviderAnalytics(ctx)
 	metadata, ok := ctx.Value(providerAnalyticsKey{}).(providerAnalyticsContext)
-	if !ok || metadata.ServiceID != "" || metadata.Capability != "" {
+	if !ok || metadata.Capability != "" {
 		t.Fatalf("provider analytics = %#v, %v", metadata, ok)
 	}
 }

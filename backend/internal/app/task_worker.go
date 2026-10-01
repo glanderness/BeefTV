@@ -93,7 +93,6 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 		return w.specialTaskOutcome(session, w.processDepthCapture)
 	}
 
-	s.markAgentMemoryCompactRunning(*task)
 	task.Stage = "调用生成模型"
 	task.Progress = 35
 	if taskUsesUpstreamReportedProgress(task.Type) {
@@ -178,7 +177,6 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 		if errors.Is(err, context.DeadlineExceeded) && !errors.As(err, &imageRecovery) {
 			err = errors.New(taskTimeoutMessage(task.Type))
 		}
-		s.noteAgentMemoryCompactTask(*task, nil, err)
 		return executionFailureOutcome(terminal, task, err, providerSucceeded, providerAccepted, channelSlotFailedBeforeRequest)
 	}
 	latest, err := s.repo.Task(task.ID)
@@ -186,18 +184,15 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 		return taskruntime.Outcome{Kind: taskruntime.KindFailed, Err: err, ProviderAccepted: providerAccepted}
 	}
 	if latest.Status == model.TaskStatusCancelled {
-		s.noteAgentMemoryCompactTask(*task, nil, errors.New("压缩任务已取消"))
 		termErr := terminal.handleCancelledResult(*latest)
 		return taskruntime.Outcome{Kind: taskruntime.KindCancelled, Err: termErr, Applied: true, ProviderAccepted: providerAccepted}
 	}
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
-		s.noteAgentMemoryCompactTask(*task, nil, err)
 		return persistenceFailureOutcome(terminal, task, fmt.Errorf("序列化任务结果失败：%w", err), providerAccepted)
 	}
 	opsJSON, err := json.Marshal(canvasOps)
 	if err != nil {
-		s.noteAgentMemoryCompactTask(*task, nil, err)
 		return persistenceFailureOutcome(terminal, task, fmt.Errorf("序列化画布操作失败：%w", err), providerAccepted)
 	}
 	if session.Lost() {
@@ -208,10 +203,8 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 			deferErr := s.deferImageRecovery(*task)
 			return taskruntime.Outcome{Kind: taskruntime.KindSuspended, Err: deferErr, Applied: deferErr == nil, ProviderAccepted: true}
 		}
-		s.noteAgentMemoryCompactTask(*task, nil, err)
 		return persistenceFailureOutcome(terminal, task, err, true)
 	}
-	s.noteAgentMemoryCompactTask(*task, result, nil)
 	termErr := terminal.handleSuccess(task)
 	return taskruntime.Outcome{Kind: taskruntime.KindCompleted, Err: termErr, Applied: true, ProviderAccepted: true}
 }

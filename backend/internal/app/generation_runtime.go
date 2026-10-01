@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -99,7 +100,7 @@ func (p appReceiptPort) Observe(observation generation.TransportObservation) {
 		Outcome:               observation.Outcome,
 	}
 	recordTaskRequestEvidence(observation.Request, evidence, observation.Body, observation.Err)
-	recordProviderRequest(observation.Request, observation.StartedAt, observation.StatusCode, observation.Body, observation.Err)
+	recordProviderRequest(p.service, observation.Request, observation.StartedAt, observation.StatusCode, observation.Body, observation.Err)
 }
 
 func (p appReceiptPort) NotifyPoll(ctx context.Context, event string, err error) {
@@ -133,16 +134,95 @@ func (p appReceiptPort) SyncProgress(taskID string, body []byte) {
 type appImagePort struct{ service *Service }
 
 func (p appImagePort) Intercept(req *http.Request) (bool, []byte, string, error) {
-	s, row, handled, err := prepareImageSubmission(req)
-	if !handled {
+	if !generation.RecoverableImageEndpoint(req) {
 		return false, nil, "", nil
 	}
+	if p.service == nil {
+		return true, nil, "", imageRecoveryError{generation.ErrImageOwnerMissing}
+	}
+	row, handled, err := prepareImageSubmission(p.service, req)
 	if err != nil {
 		return true, nil, "", imageRecoveryError{err}
 	}
+	if !handled {
+		data, mimeType, sendErr := generation.DoBinaryWithConsumer(req, nil)
+		return true, data, mimeType, sendErr
+	}
 	task := req.Context().Value(imageTaskContext{}).(model.Task)
-	data, mimeType, sendErr := s.sendImageSubmission(req.Context(), task, row)
+	data, mimeType, sendErr := p.service.sendImageSubmission(req.Context(), task, row)
 	return true, data, mimeType, sendErr
+}
+
+type appPromptPort struct{ service *Service }
+
+func (p appPromptPort) Compile(userID, operation string, values map[string]string) (string, error) {
+	if p.service == nil {
+		return "", errors.New("编译用户提示词失败：提示词端口未接入")
+	}
+	compiled, err := p.service.compilePrompt(userID, operation, values)
+	if err != nil {
+		return "", err
+	}
+	return compiled.Content, nil
+}
+
+func (p appPromptPort) ValidateResult(operation string, result map[string]any) error {
+	return validatePromptTemplateResult(operation, result)
+}
+
+type appConfigPort struct{ service *Service }
+
+func (p appConfigPort) Resolve(config generation.Config) (generation.Config, error) {
+	if p.service == nil {
+		return generation.Config{}, errors.New("无法解析系统渠道配置")
+	}
+	return p.service.resolveProviderConfig(config)
+}
+
+func (p appConfigPort) ApplyCapabilities(ctx context.Context, input *generation.Input) error {
+	if p.service == nil || input == nil {
+		return nil
+	}
+	switch input.Mode {
+	case "image":
+		return p.service.validateResolvedImageCapability(input)
+	case "video":
+		if isBeefAPISeedancePreuploadConfig(ctx, input.Config) {
+			if err := p.service.resolveVideoCapability(ctx, input); err != nil {
+				return err
+			}
+			if input.VideoCapability != nil {
+				return validateVideoTaskParameters(input.VideoCapability, *input)
+			}
+			return nil
+		}
+		return p.service.validateResolvedVideoCapabilityContext(ctx, input)
+	default:
+		return nil
+	}
+}
+
+func (p appConfigPort) RequireWorkflow(interfaceType string) error {
+	if p.service == nil {
+		return errors.New("无法执行工作流任务，请重试")
+	}
+	return p.service.RequireWorkflowPluginForInterface(interfaceType)
+}
+
+func (p appConfigPort) SyncArkPrivateAssets(ctx context.Context, userID string, input *generation.Input) error {
+	if p.service == nil || input == nil {
+		return nil
+	}
+	return p.service.prepareArkPrivateAssetReferences(ctx, userID, input)
+}
+
+type appStylePort struct{ service *Service }
+
+func (p appStylePort) Apply(userID, projectID string, input *generation.Input) error {
+	if p.service == nil {
+		return errors.New("项目画风执行配置无效：画风端口未接入")
+	}
+	return p.service.applyGenerationStyleProfile(userID, projectID, input)
 }
 
 type appWorkflowPort struct{ service *Service }
@@ -192,22 +272,20 @@ func (s *Service) applyGenerationRuntime(ctx context.Context, meta generation.Ca
 	}
 	runtime := generation.Runtime{
 		Resources: appResourcePort{service: s},
+		Limits:    appLimitsPort{service: s},
 		Receipts:  appReceiptPort{service: s},
 		Images:    appImagePort{service: s},
 		Workflow:  appWorkflowPort{service: s},
+		Prompt:    appPromptPort{service: s},
+		Config:    appConfigPort{service: s},
+		Style:     appStylePort{service: s},
 		Probe:     appMediaProbe{},
 		Call:      meta,
-	}
-	if s.repo != nil {
-		runtime.Limits = appLimitsPort{service: s}
 	}
 	if existing, ok := generation.RuntimeFromContext(ctx); ok {
 		runtime.Endpoints = existing.Endpoints
 		if !replaceCall {
 			runtime.Call = generation.IdentityCallMeta(existing.Call, meta)
-		}
-		if runtime.Limits == nil {
-			runtime.Limits = existing.Limits
 		}
 	}
 	return generation.WithRuntime(ctx, runtime)
@@ -217,6 +295,8 @@ func generationCallMeta(metadata providerAnalyticsContext) generation.CallMeta {
 	return generation.CallMeta{
 		UserID:            metadata.UserID,
 		TaskID:            metadata.TaskID,
+		ProjectID:         metadata.ProjectID,
+		TaskType:          metadata.TaskType,
 		TraceID:           metadata.TraceID,
 		RequestID:         metadata.RequestID,
 		Capability:        metadata.Capability,

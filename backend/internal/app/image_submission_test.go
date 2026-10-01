@@ -53,18 +53,13 @@ func imageSubmissionFixture(t *testing.T, multipartBody bool) (*Service, *gorm.D
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Authorization", "Bearer private-test-key")
 	req.Header.Set("X-Idempotency-Key", "must-not-override-owner")
-	_, row, handled, err := prepareImageSubmission(req)
+	row, handled, err := prepareImageSubmission(s, req)
 	if err != nil || !handled {
 		t.Fatalf("prepare: handled=%v err=%v", handled, err)
 	}
 	if strings.Contains(row.RequestCipher, "private-test-key") || strings.Contains(row.RequestCipher, "boat") {
 		t.Fatal("plaintext persisted")
 	}
-	t.Cleanup(func() {
-		providerAnalyticsServices.Lock()
-		delete(providerAnalyticsServices.services, s.workerID)
-		providerAnalyticsServices.Unlock()
-	})
 	return s, db, task, row, body
 }
 
@@ -89,7 +84,7 @@ func TestImageSubmissionUnknownProviderCannotReplayOrRetryLostResponse(t *testin
 	adapter.process = func(ctx context.Context, current model.Task) (map[string]interface{}, []map[string]interface{}, error) {
 		ctx = context.WithValue(withProviderAnalytics(ctx, s, current), imageTaskContext{}, current)
 		req, _ := http.NewRequestWithContext(ctx, "POST", "https://unverified.example/v1/images/generations", strings.NewReader(`{}`))
-		_, _, handled, err := prepareImageSubmission(req)
+		_, handled, err := prepareImageSubmission(s, req)
 		if handled || err != nil {
 			t.Fatalf("unknown provider recovery enabled: %v %v", handled, err)
 		}
@@ -452,7 +447,7 @@ func TestImageSubmissionPersistenceRequiredAndScopeAllowlist(t *testing.T) {
 	ctx := withProviderSubmissionKey(withProviderAnalytics(context.Background(), s, task), &model.RouteAttempt{ID: row.AttemptID, TaskID: task.ID})
 	ctx = context.WithValue(ctx, imageTaskContext{}, task)
 	req, _ := http.NewRequestWithContext(ctx, "POST", "https://enterprise.beefapi.com/v1/images/generations", strings.NewReader(`{}`))
-	_, _, handled, err := prepareImageSubmission(req)
+	_, handled, err := prepareImageSubmission(s, req)
 	if !handled || err == nil {
 		t.Fatal("storage failure did not fail closed")
 	}
@@ -717,4 +712,79 @@ func TestImageSubmissionDownloadThrottleCannotBecomeNewPaidAttempt(t *testing.T)
 	if s.shouldDeferImageRecovery(task, providerHTTPError{StatusCode: 403}, false) {
 		t.Fatal("permanent download rejection retried forever")
 	}
+}
+
+func TestRecoverableImageMissingOwnerSendsZeroUpstream(t *testing.T) {
+	s, _, task, row, _ := imageSubmissionFixture(t, false)
+	ctx := withProviderAnalytics(context.Background(), s, task)
+	runtime, ok := generation.RuntimeFromContext(ctx)
+	if !ok {
+		t.Fatal("analytics did not bind runtime")
+	}
+	runtime.Images = appImagePort{}
+	ctx = generation.WithRuntime(ctx, runtime)
+	ctx = context.WithValue(ctx, imageTaskContext{}, task)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://beefapi.com/v1/images/generations", strings.NewReader(`{"prompt":"draw"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = generation.DoBinary(req)
+	if !errors.Is(err, generation.ErrImageOwnerMissing) {
+		t.Fatalf("missing owner error = %v", err)
+	}
+
+	ctx = withProviderAnalytics(context.Background(), s, task)
+	ctx = context.WithValue(ctx, imageTaskContext{}, task)
+	req, _ = http.NewRequestWithContext(ctx, http.MethodPost, "https://enterprise.beefapi.com/v1/images/generations", strings.NewReader(`{}`))
+	_, handled, err := prepareImageSubmission(s, req)
+	if !handled || !errors.Is(err, generation.ErrImageOwnerMissing) {
+		t.Fatalf("missing attempt: handled=%v err=%v", handled, err)
+	}
+	_, handled, err = prepareImageSubmission(nil, req)
+	if !handled || !errors.Is(err, generation.ErrImageOwnerMissing) {
+		t.Fatalf("nil service: handled=%v err=%v", handled, err)
+	}
+	_ = row
+}
+
+func TestTwoImagePortsCannotStealOwner(t *testing.T) {
+	s1, db1, task1, row1, _ := imageSubmissionFixture(t, false)
+	s2, db2, task2, row2, _ := imageSubmissionFixture(t, false)
+	port1 := appImagePort{service: s1}
+	port2 := appImagePort{service: s2}
+	if port1.service == port2.service {
+		t.Fatal("image ports shared a service pointer")
+	}
+
+	ctx1 := withProviderSubmissionKey(withProviderAnalytics(context.Background(), s1, task1), &model.RouteAttempt{ID: row1.AttemptID, TaskID: task1.ID})
+	ctx1 = context.WithValue(ctx1, imageTaskContext{}, task1)
+	req1, _ := http.NewRequestWithContext(ctx1, http.MethodPost, "https://enterprise.beefapi.com/v1/images/generations", strings.NewReader(`{"prompt":"owner-one"}`))
+	got, handled, err := prepareImageSubmission(port2.service, req1)
+	if err != nil || !handled || got == nil {
+		t.Fatalf("cross prepare: handled=%v err=%v", handled, err)
+	}
+	plain1, err := s1.decryptSettingSecret(row1.RequestCipher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain1, "owner-one") {
+		t.Fatal("second runtime mutated the first owner's frozen request")
+	}
+	plain2, err := s2.decryptSettingSecret(row2.RequestCipher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain2, "owner-one") && got.AttemptID == row2.AttemptID {
+		t.Fatal("second runtime stored the first request as its own frozen body")
+	}
+
+	var count1 int64
+	if err := db1.Model(&model.ImageSubmission{}).Count(&count1).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count1 != 1 {
+		t.Fatalf("first owner submissions = %d", count1)
+	}
+	_ = db2
+	_ = task2
 }

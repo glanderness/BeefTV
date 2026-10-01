@@ -44,6 +44,12 @@ func enrichCallMeta(base, patch CallMeta) CallMeta {
 	if value := strings.TrimSpace(patch.TaskID); value != "" {
 		base.TaskID = value
 	}
+	if value := strings.TrimSpace(patch.ProjectID); value != "" {
+		base.ProjectID = value
+	}
+	if value := strings.TrimSpace(patch.TaskType); value != "" {
+		base.TaskType = value
+	}
 	if value := strings.TrimSpace(patch.RequestKind); value != "" {
 		base.RequestKind = value
 	}

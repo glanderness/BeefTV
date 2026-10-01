@@ -161,67 +161,70 @@ func (e imageRecoveryError) Error() string {
 func (e imageRecoveryError) Unwrap() error { return e.cause }
 
 func recoverableImageEndpoint(req *http.Request) bool {
-	if req.Method != http.MethodPost || req.URL.Scheme != "https" || req.URL.User != nil || req.URL.RawQuery != "" || (req.URL.Port() != "" && req.URL.Port() != "443") {
-		return false
-	}
-	switch strings.ToLower(req.URL.Hostname()) {
-	case "beefapi.com", "enterprise.beefapi.com", "global.beefapi.com":
-	default:
-		return false
-	}
-	return req.URL.Path == "/v1/images/generations" || req.URL.Path == "/v1/images/edits"
+	return generation.RecoverableImageEndpoint(req)
 }
 
 // prepareImageSubmission runs before the first network write. The request is
 // encrypted with the existing workspace key, including credentials and media.
-func prepareImageSubmission(req *http.Request) (*Service, *model.ImageSubmission, bool, error) {
-	metadata, ok := req.Context().Value(providerAnalyticsKey{}).(providerAnalyticsContext)
+// Recoverable BeefAPI canvas_image routes fail closed when the bound owner or
+// attempt identity is missing; other hosts decline so the normal POST proceeds.
+func prepareImageSubmission(s *Service, req *http.Request) (*model.ImageSubmission, bool, error) {
+	if req == nil || !recoverableImageEndpoint(req) {
+		return nil, false, nil
+	}
+	if s == nil {
+		return nil, true, generation.ErrImageOwnerMissing
+	}
 	task, taskOK := req.Context().Value(imageTaskContext{}).(model.Task)
 	attemptID, _ := req.Context().Value(imageAttemptContext{}).(string)
-	s := providerService(metadata)
-	if !ok || !taskOK || s == nil || task.Type != "canvas_image" || attemptID == "" || !recoverableImageEndpoint(req) {
-		return nil, nil, false, nil
+	call, _ := generation.CallMetaFromContext(req.Context())
+	canvasImage := (taskOK && task.Type == "canvas_image") || strings.HasPrefix(strings.TrimSpace(call.TaskType), "canvas_image")
+	if !canvasImage {
+		return nil, false, nil
+	}
+	if !taskOK || attemptID == "" {
+		return nil, true, generation.ErrImageOwnerMissing
 	}
 	key, _ := req.Context().Value(providerSubmissionKeyContext{}).(string)
 	if key == "" {
-		return s, nil, true, errors.New("图片请求缺少持久化提交标识")
+		return nil, true, errors.New("图片请求缺少持久化提交标识")
 	}
 	row, err := s.repo.ImageSubmission(attemptID, task.ID, task.UserID)
 	if err == nil {
-		return s, row, true, nil
+		return row, true, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return s, nil, true, err
+		return nil, true, err
 	}
 	if req.Body == nil {
-		return s, nil, true, errors.New("图片请求内容为空")
+		return nil, true, errors.New("图片请求内容为空")
 	}
 	body, err := io.ReadAll(io.LimitReader(req.Body, imageRequestMaxBytes+1))
 	_ = req.Body.Close()
 	if err != nil {
-		return s, nil, true, err
+		return nil, true, err
 	}
 	if len(body) > imageRequestMaxBytes {
-		return s, nil, true, errors.New("图片请求超过 64 MiB，暂未提交")
+		return nil, true, errors.New("图片请求超过 64 MiB，暂未提交")
 	}
 	header := req.Header.Clone()
 	header.Del("X-Idempotency-Key")
 	header.Set("Idempotency-Key", key)
 	raw, err := json.Marshal(imageWireRequest{URL: req.URL.String(), Header: header, Body: body})
 	if err != nil {
-		return s, nil, true, err
+		return nil, true, err
 	}
 	cipher, err := s.encryptSettingSecret(string(raw))
 	if err != nil {
-		return s, nil, true, err
+		return nil, true, err
 	}
 	row = &model.ImageSubmission{AttemptID: attemptID, TaskID: task.ID, UserID: task.UserID, RequestCipher: cipher, CreatedAt: time.Now()}
 	if err := s.repo.CreateImageSubmission(row); err != nil {
-		return s, nil, true, err
+		return nil, true, err
 	}
 	// A concurrent claimant can only use the first committed request.
 	row, err = s.repo.ImageSubmission(attemptID, task.ID, task.UserID)
-	return s, row, true, err
+	return row, true, err
 }
 
 func (s *Service) sendImageSubmission(ctx context.Context, task model.Task, row *model.ImageSubmission) ([]byte, string, error) {
