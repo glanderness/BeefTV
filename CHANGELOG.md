@@ -14,6 +14,7 @@ All notable public changes to BeefTV are documented in this file.
 - Add a director workbench for staging objects, cameras, motion paths, and shot previews.
 - Keep director references and exported previews attached to the correct scene when switching or closing the workbench.
 - Preserve shot prompts, camera motion, and independent paths when editing or duplicating scenes.
+- Restore the canvas archive import entry in the project library.
 
 ## v1.6.21
 
