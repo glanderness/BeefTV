@@ -10,17 +10,15 @@ import (
 )
 
 type session struct {
-	ctx       context.Context
-	task      *model.Task
-	results   ResultWriter
-	mu        sync.Mutex
-	lost      bool
-	lostErr   error
-	committed bool
+	ctx     context.Context
+	task    *model.Task
+	mu      sync.Mutex
+	lost    bool
+	lostErr error
 }
 
-func newSession(ctx context.Context, task *model.Task, results ResultWriter) *session {
-	return &session{ctx: ctx, task: task, results: results}
+func newSession(ctx context.Context, task *model.Task) *session {
+	return &session{ctx: ctx, task: task}
 }
 
 func (s *session) Context() context.Context { return s.ctx }
@@ -52,28 +50,4 @@ func (s *session) markLost(err error) {
 		err = fmt.Errorf("%w: %s", ErrLeaseLost, err.Error())
 	}
 	s.lostErr = err
-}
-
-func (s *session) DidCommit() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.committed
-}
-
-func (s *session) Commit(outcome Outcome) error {
-	s.mu.Lock()
-	if s.lost {
-		err := s.lostErr
-		s.mu.Unlock()
-		if err == nil {
-			err = ErrLeaseLost
-		}
-		return err
-	}
-	s.committed = true
-	s.mu.Unlock()
-	if s.results == nil {
-		return nil
-	}
-	return s.results.Write(s.ctx, s.task, outcome)
 }

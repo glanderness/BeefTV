@@ -113,7 +113,7 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 		if uncertain {
 			kind = taskruntime.KindUncertain
 		}
-		return taskruntime.Outcome{Kind: kind, Err: termErr, Applied: true}
+		return taskruntime.Outcome{Kind: kind, Err: termErr, Applied: terminalWriteApplied(termErr, err)}
 	}
 	routeResult, stateErr := s.routeExecutor().execute(ctx, task, routeAttempt)
 	if stateErr != nil {
@@ -225,9 +225,9 @@ func (w *taskWorkerCoordinator) specialTaskOutcome(session taskruntime.Session, 
 		return taskruntime.Outcome{Kind: taskruntime.KindCompleted, Applied: true}
 	}
 	if errors.Is(err, context.Canceled) {
-		return taskruntime.Outcome{Kind: taskruntime.KindCancelled, Err: err, Applied: true}
+		return taskruntime.Outcome{Kind: taskruntime.KindCancelled, Err: err}
 	}
-	return taskruntime.Outcome{Kind: taskruntime.KindFailed, Err: err, Applied: true}
+	return taskruntime.Outcome{Kind: taskruntime.KindFailed, Err: err}
 }
 
 func leaseLostOutcome(session taskruntime.Session, providerAccepted bool) taskruntime.Outcome {
@@ -257,15 +257,26 @@ func executionFailureOutcome(terminal *taskTerminalCoordinator, task *model.Task
 	if errors.As(err, &imageRecovery) || errors.As(err, &unknown) {
 		kind = taskruntime.KindUncertain
 	}
-	return taskruntime.Outcome{Kind: kind, Err: termErr, Applied: true, ProviderAccepted: providerAccepted}
+	return taskruntime.Outcome{Kind: kind, Err: termErr, Applied: terminalWriteApplied(termErr, err), ProviderAccepted: providerAccepted}
 }
 
 func persistenceFailureOutcome(terminal *taskTerminalCoordinator, task *model.Task, err error, providerAccepted bool) taskruntime.Outcome {
 	handled, termErr := terminal.handleResultPersistenceFailure(task, err)
-	if handled && termErr == nil {
-		return taskruntime.Outcome{Kind: taskruntime.KindCancelled, Applied: true, ProviderAccepted: providerAccepted}
+	if handled {
+		return taskruntime.Outcome{Kind: taskruntime.KindCancelled, Err: termErr, Applied: termErr == nil, ProviderAccepted: providerAccepted}
 	}
-	return taskruntime.Outcome{Kind: taskruntime.KindFailed, Err: termErr, Applied: true, ProviderAccepted: providerAccepted}
+	return taskruntime.Outcome{Kind: taskruntime.KindFailed, Err: termErr, Applied: terminalWriteApplied(termErr, err), ProviderAccepted: providerAccepted}
+}
+
+func terminalWriteApplied(termErr, cause error) bool {
+	if termErr == nil {
+		return true
+	}
+	var joined interface{ Unwrap() []error }
+	if errors.As(termErr, &joined) {
+		return false
+	}
+	return cause != nil && errors.Is(termErr, cause)
 }
 
 func taskUsesUpstreamReportedProgress(taskType string) bool {

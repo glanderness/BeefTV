@@ -15,19 +15,19 @@ import (
 )
 
 // Runtime 拥有任务领取循环、槽位/任务租约续期、有界并发、排空和已领取任务的执行窗口。
-// 供应商协议与终态业务策略不进入本包。
+// 供应商协议与终态业务策略不进入本包。终态写入由执行适配器负责，运行时不会把 Applied 改成 true。
 type Runtime struct {
 	worker      WorkerHost
 	repo        Repository
 	coordinator Coordinator
 	policy      Policy
 	executor    Executor
-	results     ResultWriter
 	cancels     CancelRegistry
 	logf        func(string, ...any)
 	onExecError func(*model.Task, error)
 	cfg         Config
 	closed      atomic.Bool
+	looping     atomic.Bool
 }
 
 // Deps 是运行时端口。Worker 必须是进程里那一个 platform.Worker，不能再造一套生命周期。
@@ -37,7 +37,6 @@ type Deps struct {
 	Coordinator Coordinator
 	Policy      Policy
 	Executor    Executor
-	Results     ResultWriter
 	Cancels     CancelRegistry
 	Logger      func(string, ...any)
 	OnExecError func(*model.Task, error)
@@ -54,7 +53,6 @@ func New(deps Deps) *Runtime {
 		coordinator: deps.Coordinator,
 		policy:      deps.Policy,
 		executor:    deps.Executor,
-		results:     deps.Results,
 		cancels:     deps.Cancels,
 		logf:        deps.Logger,
 		onExecError: deps.OnExecError,
@@ -97,6 +95,16 @@ func (c Config) withDefaults() Config {
 	return c
 }
 
+func (r *Runtime) slotLimit(concurrency int) int {
+	if concurrency < 1 {
+		return 0
+	}
+	if r.cfg.MaxSlots > 0 && concurrency > r.cfg.MaxSlots {
+		return r.cfg.MaxSlots
+	}
+	return concurrency
+}
+
 // Start 启动共享 Worker 并挂上领取循环。重复调用是幂等的。
 func (r *Runtime) Start() (context.Context, bool) {
 	if r == nil || r.closed.Load() || r.worker == nil {
@@ -106,18 +114,26 @@ func (r *Runtime) Start() (context.Context, bool) {
 	if !started {
 		return ctx, false
 	}
-	if !r.worker.GoLoop(r.dispatchLoop) {
+	if !r.StartLoop() {
 		return ctx, false
 	}
 	return ctx, true
 }
 
 // StartLoop 在调用方已经 Start 共享 Worker 之后挂上领取循环。
+// 并发重复调用只启动一条循环；dispatchLoop 退出后（Stop 等待 wg 之后）可以再次启动。
 func (r *Runtime) StartLoop() bool {
 	if r == nil || r.closed.Load() || r.worker == nil {
 		return false
 	}
-	return r.worker.GoLoop(r.dispatchLoop)
+	if !r.looping.CompareAndSwap(false, true) {
+		return false
+	}
+	if !r.worker.GoLoop(r.dispatchLoop) {
+		r.looping.Store(false)
+		return false
+	}
+	return true
 }
 
 // Close 禁止再领取或派发新任务。进行中的执行仍由共享 Worker.Stop 等待。
@@ -140,7 +156,9 @@ func (r *Runtime) Dispatch(ctx context.Context) {
 	r.dispatch(ctx, make(chan struct{}, r.cfg.MaxSlots))
 }
 
-// ProcessOne 领取并执行一条任务，不占用全局槽位。兼容现有 ProcessNextTask 测试入口。
+// ProcessOne 领取并执行一条任务，不占用全局槽位。调用方取消会取消这次执行窗口。
+// 生产领取循环把执行挂在 Background 上：BeginDrain 停发新任务并取消循环，
+// 进行中的执行仍跑完，由 platform.Worker.Stop 先排空再有界等待。
 func (r *Runtime) ProcessOne(ctx context.Context) Outcome {
 	if r == nil || r.closed.Load() {
 		return Outcome{Kind: KindFailed, Err: errors.New("任务运行时已关闭")}
@@ -153,10 +171,11 @@ func (r *Runtime) ProcessOne(ctx context.Context) Outcome {
 	if err != nil || task == nil {
 		return Outcome{Err: err}
 	}
-	return r.runClaimed(task, nil)
+	return r.runClaimed(ctx, task, nil)
 }
 
 func (r *Runtime) dispatchLoop(ctx context.Context) {
+	defer r.looping.Store(false)
 	slots := make(chan struct{}, r.cfg.MaxSlots)
 	r.dispatch(ctx, slots)
 	ticker := time.NewTicker(r.cfg.DispatchInterval)
@@ -184,6 +203,10 @@ func (r *Runtime) dispatch(ctx context.Context, slots chan struct{}) {
 		r.logf("task dispatch paused: stage=runtime_policy worker_id=%s error=%v", r.cfg.WorkerID, err)
 		return
 	}
+	concurrency = r.slotLimit(concurrency)
+	if concurrency < 1 {
+		return
+	}
 	for len(slots) < concurrency {
 		if r.closed.Load() || ctx.Err() != nil || r.worker.IsDraining() {
 			return
@@ -209,10 +232,15 @@ func (r *Runtime) dispatch(ctx context.Context, slots chan struct{}) {
 			}
 			return
 		}
-		slots <- struct{}{}
+		if !r.reserveSlot(ctx, slots) {
+			slot.Release()
+			_ = r.repo.ReleaseLease(task.ID, task.LeaseOwner)
+			return
+		}
 		started := r.worker.GoTask(func() {
 			defer func() { <-slots; slot.Release() }()
-			outcome := r.runClaimed(task, slot)
+			// 生产执行不绑定 worker 循环 ctx：BeginDrain 取消循环，但不取消进行中的执行。
+			outcome := r.runClaimed(context.Background(), task, slot)
 			if outcome.Err != nil && r.onExecError != nil {
 				r.onExecError(task, outcome.Err)
 			}
@@ -226,13 +254,26 @@ func (r *Runtime) dispatch(ctx context.Context, slots chan struct{}) {
 	}
 }
 
-func (r *Runtime) runClaimed(task *model.Task, slot SlotLease) Outcome {
+func (r *Runtime) reserveSlot(ctx context.Context, slots chan struct{}) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	select {
+	case slots <- struct{}{}:
+		if ctx.Err() != nil {
+			<-slots
+			return false
+		}
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (r *Runtime) runClaimed(parent context.Context, task *model.Task, slot SlotLease) Outcome {
 	if r.closed.Load() {
 		if r.repo != nil && task != nil {
 			_ = r.repo.ReleaseLease(task.ID, task.LeaseOwner)
-		}
-		if slot != nil {
-			slot.Release()
 		}
 		return Outcome{Kind: KindFailed, Err: errors.New("任务运行时已关闭")}
 	}
@@ -240,13 +281,19 @@ func (r *Runtime) runClaimed(task *model.Task, slot SlotLease) Outcome {
 	if r.policy != nil {
 		value, err := r.policy.ExecutionTimeout(context.Background(), task.Type)
 		if err != nil {
+			if r.repo != nil && task != nil {
+				_ = r.repo.ReleaseLease(task.ID, task.LeaseOwner)
+			}
 			return Outcome{Kind: KindFailed, Err: err}
 		}
 		timeout = value
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
-	session := newSession(ctx, task, r.results)
+	session := newSession(ctx, task)
 	if r.cancels != nil {
 		r.cancels.Register(task.ID, cancel)
 		defer r.cancels.Unregister(task.ID)
@@ -262,8 +309,11 @@ func (r *Runtime) runClaimed(task *model.Task, slot SlotLease) Outcome {
 		close(stopRenew)
 		renewers.Wait()
 	}()
+	if r.executor == nil {
+		return Outcome{Kind: KindFailed, Err: errors.New("任务执行器未初始化")}
+	}
 	outcome := r.executor.Execute(session)
-	return r.finish(ctx, session, outcome)
+	return r.finish(session, outcome)
 }
 
 func (r *Runtime) renewLoop(ctx context.Context, cancel context.CancelFunc, task *model.Task, slot SlotLease, session *session, stop <-chan struct{}) {
@@ -295,31 +345,18 @@ func (r *Runtime) renewLoop(ctx context.Context, cancel context.CancelFunc, task
 	}
 }
 
-func (r *Runtime) finish(ctx context.Context, session *session, outcome Outcome) Outcome {
+func (r *Runtime) finish(session *session, outcome Outcome) Outcome {
 	if lost := session.LostErr(); lost != nil {
 		if outcome.Applied {
 			return outcome
 		}
 		if outcome.Kind == KindCompleted {
 			if outcome.ProviderAccepted {
-				outcome = Outcome{Kind: KindUncertain, Err: fmt.Errorf("任务租约失效，停止保存上游结果：%w", lost), ProviderAccepted: true}
-			} else {
-				outcome = Outcome{Kind: KindLeaseLost, Err: fmt.Errorf("任务租约失效，停止保存上游结果：%w", lost)}
+				return Outcome{Kind: KindUncertain, Err: fmt.Errorf("任务租约失效，停止保存上游结果：%w", lost), ProviderAccepted: true}
 			}
-		}
-		if r.results != nil && !session.DidCommit() {
-			if writeErr := r.results.Write(ctx, session.Task(), outcome); writeErr == nil {
-				outcome.Applied = true
-			}
+			return Outcome{Kind: KindLeaseLost, Err: fmt.Errorf("任务租约失效，停止保存上游结果：%w", lost)}
 		}
 		return outcome
-	}
-	if !outcome.Applied && r.results != nil && !session.DidCommit() {
-		if writeErr := r.results.Write(ctx, session.Task(), outcome); writeErr == nil {
-			outcome.Applied = true
-		} else if outcome.Err == nil {
-			outcome.Err = writeErr
-		}
 	}
 	return outcome
 }

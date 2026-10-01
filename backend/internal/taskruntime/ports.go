@@ -25,7 +25,7 @@ const (
 	KindLeaseLost Kind = "lease_lost"
 )
 
-// Outcome 是执行适配器返回的类型化结果。Applied 表示适配器已经按租约写入了持久化结局。
+// Outcome 是执行适配器返回的类型化结果。Applied 只表示适配器已经按租约写入了持久化结局。
 type Outcome struct {
 	Kind             Kind
 	Err              error
@@ -33,8 +33,8 @@ type Outcome struct {
 	ProviderAccepted bool
 }
 
-// Resubmittable 为 true 时，任务在租约释放后可以由其他执行者当作新的上游提交。
-// 未知接单、已接单后的租约丢失和明确的不确定结局都不能重新提交。
+// Resubmittable 只是结局分类：未知接单、租约丢失和挂起都不能当成新的上游提交。
+// 它不写入仓库，也不代替路由回执围栏；生产安全由执行适配器的落库和路由 receipt 负责。
 func (o Outcome) Resubmittable() bool {
 	if o.ProviderAccepted {
 		return false
@@ -47,7 +47,7 @@ func (o Outcome) Resubmittable() bool {
 	}
 }
 
-// Repository 只覆盖领取与租约。终态写入由执行适配器或 ResultWriter 负责。
+// Repository 只覆盖领取与租约。终态写入由执行适配器负责。
 type Repository interface {
 	ClaimNext(ctx context.Context, owner string, ttl time.Duration) (*model.Task, error)
 	RenewLease(ctx context.Context, taskID, owner string, ttl time.Duration) error
@@ -73,13 +73,9 @@ type Policy interface {
 }
 
 // Executor 是一次已领取任务的执行适配器。协议、供应商和结果落库留在适配器内。
+// Applied 必须在适配器自己的持久化成功之后才为 true。
 type Executor interface {
 	Execute(session Session) Outcome
-}
-
-// ResultWriter 在执行器未自行落库时记录结局。不确定结局必须让任务不再被当成新提交领取。
-type ResultWriter interface {
-	Write(ctx context.Context, task *model.Task, outcome Outcome) error
 }
 
 // CancelRegistry 把执行取消函数交给生命周期协调器（用户取消仍走现有 cancelActiveTask）。
@@ -104,7 +100,6 @@ type Session interface {
 	Task() *model.Task
 	Lost() bool
 	LostErr() error
-	Commit(Outcome) error
 }
 
 // Config 是运行时调度参数。零值由 New 填成与现网 worker 相同的租约和轮询间隔。

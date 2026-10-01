@@ -90,10 +90,6 @@ func (e appTaskExecutor) Execute(session taskruntime.Session) taskruntime.Outcom
 	return e.coordinator.executeClaimed(session)
 }
 
-type appTaskResults struct{}
-
-func (appTaskResults) Write(context.Context, *model.Task, taskruntime.Outcome) error { return nil }
-
 type appCancelRegistry struct{ service *Service }
 
 func (c appCancelRegistry) Register(taskID string, cancel context.CancelFunc) {
@@ -112,7 +108,6 @@ func newAppTaskRuntime(w *taskWorkerCoordinator) *taskruntime.Runtime {
 		Coordinator: appSlotCoordinator{service: s},
 		Policy:      appTaskPolicy{service: s},
 		Executor:    appTaskExecutor{coordinator: w},
-		Results:     appTaskResults{},
 		Cancels:     appCancelRegistry{service: s},
 		Logger:      log.Printf,
 		OnExecError: func(task *model.Task, err error) {
