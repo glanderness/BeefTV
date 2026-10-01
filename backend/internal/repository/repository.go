@@ -31,6 +31,8 @@ var ErrTextReplayClosed = errors.New("text replay task is closed")
 
 var ErrProjectAssetFolderNotEmpty = errors.New("project asset folder is not empty")
 
+var ErrAssetOwnedByAnotherUser = errors.New("asset belongs to another user")
+
 var ErrProjectHasActiveTasks = errors.New("project has active tasks")
 
 var ErrProjectUnitShotsChanged = errors.New("project unit shots changed")
@@ -74,6 +76,15 @@ func New(db *gorm.DB) *Repository {
 
 func (r *Repository) WithContext(ctx context.Context) *Repository {
 	return &Repository{db: r.db.WithContext(ctx)}
+}
+
+func (r *Repository) Transaction(fn func(*Repository) error) error {
+	if r == nil || r.db == nil {
+		return errors.New("repository is not initialized")
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		return fn(r.WithTx(tx))
+	})
 }
 
 func (r *Repository) Dialect() string {
@@ -861,6 +872,14 @@ func (r *Repository) AssetSummaries(userID string) ([]model.Asset, error) {
 	var assets []model.Asset
 	err := r.db.Select("id", "folder_id", "kind", "category", "status", "primary_version_id", "title", "created_at", "updated_at").Order("updated_at desc").Find(&assets, "user_id = ?", userID).Error
 	return assets, err
+}
+
+func (r *Repository) Asset(id string) (*model.Asset, error) {
+	var asset model.Asset
+	if err := r.db.First(&asset, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &asset, nil
 }
 
 func (r *Repository) AssetForUser(userID string, id string) (*model.Asset, error) {

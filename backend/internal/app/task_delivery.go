@@ -1,55 +1,43 @@
 package app
 
 import (
-	"encoding/json"
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 	localtask "infinite-canvas/backend/internal/task"
+	"infinite-canvas/backend/internal/taskdelivery"
 
 	"gorm.io/gorm"
 )
 
+const generationDeliveryRecoveryInterval = 5 * time.Second
+
 func (s *Service) DeliverSucceededTask(task model.Task) error {
-	if strings.TrimSpace(task.ID) == "" || task.Status != model.TaskStatusSucceeded {
-		return nil
-	}
-	outputs := localtask.CanonicalOutputs(task.ResultJSON)
-	if len(outputs) == 0 {
-		return nil
-	}
-	binding := localtask.TargetBindingFromInput(task.InputJSON)
-	existing, err := s.repo.AssetRepresentationsForTask(task.ID)
-	if err != nil {
-		return err
-	}
-	existingByRole := map[string]model.AssetRepresentation{}
-	for _, representation := range existing {
-		existingByRole[representation.Role] = representation
-	}
-	now := time.Now()
-	items := make([]repository.GenerationDeliveryItem, 0, len(outputs))
-	for _, output := range outputs {
-		output = localtask.BindOutput(output, task.ID, binding)
-		item, itemErr := s.generationDeliveryItem(task, output, existingByRole[localtask.OutputRole(output.OutputIndex)], now)
-		if itemErr != nil {
-			return itemErr
-		}
-		items = append(items, item)
-	}
-	return s.repo.UpsertGenerationDelivery(items)
+	return s.generationDeliverer().Deliver(task)
+}
+
+func (s *Service) RecoverIncompleteGenerationDeliveries(limit int) error {
+	return s.generationDeliverer().RecoverIncomplete(limit)
+}
+
+func (s *Service) CanvasBindingIntents(task model.Task) []localtask.CanvasBindingIntent {
+	stored, loadErr := s.generationDeliverer().LoadedOutputs(task.ID)
+	proj := taskdelivery.Project(task, stored, loadErr, persistedFailureBlocksRetry(task.Error, task.Stage))
+	return localtask.CanvasBindingIntents(task.ID, proj.Outputs)
 }
 
 func (s *Service) ensureSucceededTaskDelivery(task *model.Task) error {
 	if task == nil || task.Status != model.TaskStatusSucceeded {
 		return nil
 	}
-	stored, err := s.loadedCanonicalOutputs(task.ID)
+	stored, err := s.generationDeliverer().LoadedOutputs(task.ID)
 	if err != nil {
 		return err
 	}
@@ -59,21 +47,14 @@ func (s *Service) ensureSucceededTaskDelivery(task *model.Task) error {
 	return s.DeliverSucceededTask(*task)
 }
 
-func (s *Service) loadedCanonicalOutputs(taskID string) ([]localtask.CanonicalOutput, error) {
-	results, err := s.repo.GenerationOutputResults(taskID)
-	if err != nil {
-		return nil, err
-	}
-	return decodeGenerationOutputs(results), nil
-}
-
 func (s *Service) attachTaskDelivery(task *model.Task) {
 	if task == nil {
 		return
 	}
-	outputs := s.projectedCanonicalOutputs(*task)
-	task.Outputs = modelTaskOutputs(outputs)
-	task.ResultState = localtask.ResultState(task.Status, outputs, persistedFailureBlocksRetry(task.Error, task.Stage))
+	stored, loadErr := s.generationDeliverer().LoadedOutputs(task.ID)
+	proj := taskdelivery.Project(*task, stored, loadErr, persistedFailureBlocksRetry(task.Error, task.Stage))
+	task.Outputs = modelTaskOutputs(proj.Outputs)
+	task.ResultState = proj.ResultState
 }
 
 func (s *Service) attachTaskSummaryDeliveries(tasks []model.Task, summaries []TaskSummary) {
@@ -86,70 +67,70 @@ func (s *Service) attachTaskSummaryDeliveries(tasks []model.Task, summaries []Ta
 		ids = append(ids, task.ID)
 		taskByID[task.ID] = task
 	}
-	results, err := s.repo.GenerationOutputResultsForTasks(ids)
-	if err != nil {
-		return
-	}
-	byTask := map[string][]localtask.CanonicalOutput{}
-	for _, result := range results {
-		output, decodeErr := localtask.DecodeOutputPayload(result.Payload)
-		if decodeErr != nil {
-			continue
-		}
-		byTask[result.TaskID] = append(byTask[result.TaskID], output)
-	}
+	byTask, decodeErrs, loadErr := s.generationDeliverer().LoadedOutputsForTasks(ids)
 	for index := range summaries {
 		task, ok := taskByID[summaries[index].ID]
 		if !ok {
 			continue
 		}
-		outputs := mergeCanonicalOutputs(task, byTask[task.ID])
-		summaries[index].Outputs = outputs
-		summaries[index].ResultState = localtask.ResultState(task.Status, outputs, persistedFailureBlocksRetry(task.Error, task.Stage))
+		taskLoadErr := loadErr
+		if taskLoadErr == nil {
+			taskLoadErr = decodeErrs[task.ID]
+		}
+		proj := taskdelivery.Project(task, byTask[task.ID], taskLoadErr, persistedFailureBlocksRetry(task.Error, task.Stage))
+		summaries[index].Outputs = proj.Outputs
+		summaries[index].ResultState = proj.ResultState
 	}
 }
 
-func (s *Service) projectedCanonicalOutputs(task model.Task) []localtask.CanonicalOutput {
-	stored, err := s.loadedCanonicalOutputs(task.ID)
-	if err != nil {
-		stored = nil
+func (s *Service) attachRecoveredProviderTask(task *model.Task) *model.Task {
+	if task == nil {
+		return nil
 	}
-	return mergeCanonicalOutputs(task, stored)
+	if err := s.DeliverSucceededTask(*task); err != nil {
+		_ = s.log(task.UserID, task.ID, "error", "任务恢复成功但结果交付失败", err.Error())
+	}
+	projected := taskForOutput(*task)
+	s.attachTaskDelivery(projected)
+	return projected
 }
 
-func mergeCanonicalOutputs(task model.Task, stored []localtask.CanonicalOutput) []localtask.CanonicalOutput {
-	parsed := localtask.CanonicalOutputs(task.ResultJSON)
-	binding := localtask.TargetBindingFromInput(task.InputJSON)
-	if len(parsed) == 0 {
-		if len(stored) == 0 {
-			return nil
+func (s *Service) startGenerationDeliveryRecovery(context.Context) {
+	s.runWorkerLoop(func(ctx context.Context) {
+		recoverOnce := func() {
+			if ctx.Err() != nil || s.IsDraining() {
+				return
+			}
+			if err := s.RecoverIncompleteGenerationDeliveries(0); err != nil {
+				log.Printf("generation delivery recovery paused: worker_id=%s error=%v", s.workerID, err)
+			}
 		}
-		parsed = stored
-	}
-	byIndex := map[int]localtask.CanonicalOutput{}
-	for _, output := range stored {
-		byIndex[output.OutputIndex] = output
-	}
-	merged := make([]localtask.CanonicalOutput, 0, len(parsed))
-	for _, output := range parsed {
-		if got, ok := byIndex[output.OutputIndex]; ok {
-			output = got
+		recoverOnce()
+		ticker := time.NewTicker(generationDeliveryRecoveryInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				recoverOnce()
+			}
 		}
-		merged = append(merged, localtask.BindOutput(output, task.ID, binding))
-	}
-	return merged
+	})
 }
 
-func decodeGenerationOutputs(results []model.Result) []localtask.CanonicalOutput {
-	outputs := make([]localtask.CanonicalOutput, 0, len(results))
-	for _, result := range results {
-		output, err := localtask.DecodeOutputPayload(result.Payload)
-		if err != nil {
-			continue
-		}
-		outputs = append(outputs, output)
+func (s *Service) generationDeliverer() *taskdelivery.Deliverer {
+	return taskdelivery.New(generationDeliveryStore{repo: s.repo}, s.deliveryMedia())
+}
+
+func (s *Service) deliveryMedia() taskdelivery.Media {
+	if s != nil && s.generationDeliveryMedia != nil {
+		return s.generationDeliveryMedia
 	}
-	return outputs
+	if s == nil || (s.platform == nil && strings.TrimSpace(s.dataDir) == "") {
+		return nil
+	}
+	return generationDeliveryMediaAdapter{service: s}
 }
 
 func modelTaskOutputs(outputs []localtask.CanonicalOutput) []model.TaskOutput {
@@ -180,233 +161,166 @@ func modelTaskOutputs(outputs []localtask.CanonicalOutput) []model.TaskOutput {
 	return result
 }
 
-func (s *Service) generationDeliveryItem(task model.Task, output localtask.CanonicalOutput, existing model.AssetRepresentation, now time.Time) (repository.GenerationDeliveryItem, error) {
-	payload, err := localtask.EncodeOutputPayload(output)
-	if err != nil {
-		return repository.GenerationDeliveryItem{}, err
-	}
-	item := repository.GenerationDeliveryItem{
-		Result: model.Result{
-			ID:        localtask.OutputResultID(task.ID, output.OutputIndex),
-			UserID:    task.UserID,
-			TaskID:    task.ID,
-			Kind:      localtask.ResultKindGenerationOutput,
-			Payload:   payload,
-			CreatedAt: now,
-		},
-	}
-	if output.ResourceID != "" {
-		item.Result.URL = assets.FileURL(output.ResourceID)
-	}
-	if strings.TrimSpace(output.ResourceID) == "" {
-		return item, nil
-	}
-	if existing.ID != "" {
-		return s.bindExistingGenerationOutput(task, output, existing, item)
-	}
-	resource, resourceErr := s.generationOutputResource(task.UserID, output.ResourceID)
-	if resource == nil {
-		if resourceErr != nil && !knownGenerationResourceError(resourceErr) {
-			return repository.GenerationDeliveryItem{}, resourceErr
-		}
-		output.MaterializationErrorCode = materializationErrorCode(resourceErr)
-		encoded, encodeErr := localtask.EncodeOutputPayload(output)
-		if encodeErr != nil {
-			return repository.GenerationDeliveryItem{}, encodeErr
-		}
-		item.Result.Payload = encoded
-		return item, nil
-	}
-	if localtask.HasWorkflowOutputIntent(task.InputJSON) {
-		return item, nil
-	}
-
-	assetID := localtask.MaterializedAssetID(task.ID, output.OutputIndex)
-	versionID := localtask.OutputVersionID(task.ID, output.OutputIndex)
-	representationID := localtask.OutputRepresentationID(task.ID, output.OutputIndex)
-
-	output.MaterializedAssetID = assetID
-	output.MaterializationErrorCode = ""
-	encoded, err := localtask.EncodeOutputPayload(output)
-	if err != nil {
-		return repository.GenerationDeliveryItem{}, err
-	}
-	item.Result.Payload = encoded
-	assetPayload, err := generationAssetPayload(task, output, *resource, assetID, versionID, now)
-	if err != nil {
-		return repository.GenerationDeliveryItem{}, err
-	}
-	metadata, err := json.Marshal(output)
-	if err != nil {
-		return repository.GenerationDeliveryItem{}, err
-	}
-	item.Asset = &model.Asset{
-		ID:               assetID,
-		UserID:           task.UserID,
-		Kind:             output.MediaType,
-		Category:         model.AssetCategoryMaterial,
-		Status:           model.AssetVersionStatusConfirmed,
-		PrimaryVersionID: versionID,
-		Title:            generationAssetTitle(output.MediaType),
-		PayloadJSON:      assetPayload,
-		CreatedAt:        now,
-		UpdatedAt:        now,
-	}
-	item.Version = &model.AssetVersion{
-		ID:             versionID,
-		AssetID:        assetID,
-		Version:        1,
-		Status:         model.AssetVersionStatusConfirmed,
-		DefinitionJSON: "{}",
-		Prompt:         task.Prompt,
-		Note:           "生成任务产物",
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	}
-	item.Representation = &model.AssetRepresentation{
-		ID:             representationID,
-		TaskID:         task.ID,
-		AssetVersionID: versionID,
-		ResourceID:     resource.ID,
-		MediaType:      output.MediaType,
-		Role:           localtask.OutputRole(output.OutputIndex),
-		MetadataJSON:   string(metadata),
-		CreatedAt:      now,
-	}
-	return item, nil
+type generationDeliveryStore struct {
+	repo *repository.Repository
 }
 
-func (s *Service) bindExistingGenerationOutput(task model.Task, output localtask.CanonicalOutput, existing model.AssetRepresentation, item repository.GenerationDeliveryItem) (repository.GenerationDeliveryItem, error) {
-	if existing.AssetVersionID != "" {
-		if version, versionErr := s.repo.AssetVersion(existing.AssetVersionID); versionErr == nil && version != nil {
-			if asset, assetErr := s.repo.AssetForUser(task.UserID, version.AssetID); assetErr == nil && asset != nil {
-				output.MaterializedAssetID = asset.ID
-				output.MaterializationErrorCode = ""
+func (s generationDeliveryStore) WithTx(fn func(taskdelivery.Store) error) error {
+	if s.repo == nil {
+		return errors.New("generation delivery store is not initialized")
+	}
+	return s.repo.Transaction(func(tx *repository.Repository) error {
+		return fn(generationDeliveryStore{repo: tx})
+	})
+}
+
+func (s generationDeliveryStore) GenerationOutputResults(taskID string) ([]model.Result, error) {
+	return s.repo.GenerationOutputResults(taskID)
+}
+
+func (s generationDeliveryStore) GenerationOutputResultsForTasks(taskIDs []string) ([]model.Result, error) {
+	return s.repo.GenerationOutputResultsForTasks(taskIDs)
+}
+
+func (s generationDeliveryStore) AssetRepresentationsForTask(taskID string) ([]model.AssetRepresentation, error) {
+	return s.repo.AssetRepresentationsForTask(taskID)
+}
+
+func (s generationDeliveryStore) ResourceForUser(userID, id string) (*model.Resource, error) {
+	resource, err := s.repo.ResourceForUser(userID, id)
+	return resource, mapDeliveryStoreErr(err)
+}
+
+func (s generationDeliveryStore) Resource(id string) (*model.Resource, error) {
+	resource, err := s.repo.Resource(id)
+	return resource, mapDeliveryStoreErr(err)
+}
+
+func (s generationDeliveryStore) Asset(id string) (*model.Asset, error) {
+	asset, err := s.repo.Asset(id)
+	return asset, mapDeliveryStoreErr(err)
+}
+
+func (s generationDeliveryStore) AssetVersion(id string) (*model.AssetVersion, error) {
+	version, err := s.repo.AssetVersion(id)
+	return version, mapDeliveryStoreErr(err)
+}
+
+func (s generationDeliveryStore) CommitOwned(item taskdelivery.OwnedDelivery) error {
+	return mapDeliveryStoreErr(s.repo.CommitOwnedGenerationDelivery(repository.GenerationDeliveryItem{
+		Result:         item.Result,
+		Asset:          item.Asset,
+		Version:        item.Version,
+		Representation: item.Representation,
+	}))
+}
+
+func (s generationDeliveryStore) SucceededTasksForDelivery(limit int) ([]model.Task, error) {
+	return s.repo.SucceededTasksForDelivery(limit)
+}
+
+func mapDeliveryStoreErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return taskdelivery.ErrNotFound
+	}
+	if errors.Is(err, repository.ErrAssetOwnedByAnotherUser) {
+		return taskdelivery.ErrForeignAsset
+	}
+	return err
+}
+
+type generationDeliveryMediaAdapter struct {
+	service *Service
+}
+
+func (a generationDeliveryMediaAdapter) PersistRemoteArtifact(userID, mediaType, artifactURL, identity string) (*model.Resource, error) {
+	if a.service == nil {
+		return nil, errors.New("generation media adapter is not initialized")
+	}
+	userID = strings.TrimSpace(userID)
+	artifactURL = strings.TrimSpace(artifactURL)
+	identity = strings.TrimSpace(identity)
+	if userID == "" || artifactURL == "" || identity == "" {
+		return nil, fmt.Errorf("generation artifact identity is incomplete")
+	}
+	uploadKey := normalizedResourceUploadKey([]string{identity})
+	if existing, err := a.service.resourceForUploadKey(userID, uploadKey); err != nil {
+		return nil, err
+	} else if existing != nil && existing.Status == model.ResourceStatusReady {
+		return existing, nil
+	} else if existing != nil {
+		return nil, resourceUploadInProgress()
+	}
+
+	kind := strings.TrimSpace(mediaType)
+	var data []byte
+	var mimeType string
+	var fileName string
+	var width, height int
+	var durationMs int64
+	switch {
+	case strings.HasPrefix(artifactURL, "data:"):
+		decodedType, decoded, err := a.service.decodeDataURL(artifactURL)
+		if err != nil {
+			return nil, err
+		}
+		mimeType, data = decodedType, decoded
+		kind = normalizeResourceKind(kind, mimeType)
+		fileName = "generated." + extensionFromMimeType(mimeType)
+		if kind == "image" {
+			width, height = imageDimensions(data)
+		}
+		if kind == "video" {
+			width, height, durationMs = probeGeneratedVideoMedia(data)
+		}
+	case strings.HasPrefix(artifactURL, "http://") || strings.HasPrefix(artifactURL, "https://"):
+		policy, err := a.service.RuntimePolicy()
+		if err != nil {
+			return nil, err
+		}
+		payload, err := downloadRemoteResource(artifactURL, megabytes(policy.Resource.GeneratedFileMB)+1)
+		if err != nil {
+			return nil, err
+		}
+		mimeType, data = payload.mimeType, payload.data
+		kind = normalizeResourceKind(kind, mimeType)
+		fileName = payload.fileName
+		if kind == "image" {
+			width, height = imageDimensions(data)
+		}
+		if kind == "video" {
+			probedWidth, probedHeight, probedDurationMs := probeGeneratedVideoMedia(data)
+			if width <= 0 {
+				width = probedWidth
+			}
+			if height <= 0 {
+				height = probedHeight
+			}
+			if durationMs <= 0 {
+				durationMs = probedDurationMs
 			}
 		}
+	default:
+		return nil, fmt.Errorf("unsupported generation artifact %q", artifactURL)
 	}
-	encoded, err := localtask.EncodeOutputPayload(output)
-	if err != nil {
-		return repository.GenerationDeliveryItem{}, err
-	}
-	item.Result.Payload = encoded
-	return item, nil
-}
 
-func (s *Service) generationOutputResource(userID, resourceID string) (*model.Resource, error) {
-	resourceID = strings.TrimSpace(resourceID)
-	if resourceID == "" {
-		return nil, errGenerationResourceMissing
-	}
-	resource, err := s.repo.ResourceForUser(userID, resourceID)
-	if err == nil {
-		if resource.Status != model.ResourceStatusReady {
-			return nil, errGenerationResourceNotReady
-		}
-		return resource, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
+	size := int64(len(data))
+	quotaDay, err := a.service.reserveGeneratedResourceQuota(userID, size)
+	if err != nil {
 		return nil, err
 	}
-	if _, lookupErr := s.repo.Resource(resourceID); lookupErr == nil {
-		return nil, errGenerationResourceForeign
-	}
-	return nil, errGenerationResourceMissing
-}
-
-func knownGenerationResourceError(err error) bool {
-	return errors.Is(err, errGenerationResourceMissing) || errors.Is(err, errGenerationResourceNotReady) || errors.Is(err, errGenerationResourceForeign)
-}
-
-func materializationErrorCode(err error) string {
-	switch {
-	case errors.Is(err, errGenerationResourceForeign):
-		return localtask.MaterializeErrorResourceForeign
-	case errors.Is(err, errGenerationResourceNotReady):
-		return localtask.MaterializeErrorResourceNotReady
-	case errors.Is(err, errGenerationResourceMissing):
-		return localtask.MaterializeErrorResourceMissing
-	default:
-		return localtask.MaterializeErrorPersistFailed
-	}
-}
-
-func generationAssetTitle(mediaType string) string {
-	switch mediaType {
-	case "video":
-		return "生成视频"
-	case "audio":
-		return "生成音频"
-	default:
-		return "生成图片"
-	}
-}
-
-func generationAssetPayload(task model.Task, output localtask.CanonicalOutput, resource model.Resource, assetID, versionID string, now time.Time) (string, error) {
-	resourceURL := assets.FileURL(resource.ID)
-	width := resource.Width
-	height := resource.Height
-	if width <= 0 {
-		width = 1
-	}
-	if height <= 0 {
-		height = 1
-	}
-	data := map[string]any{
-		"storageKey": "resource:" + resource.ID,
-		"mimeType":   resource.MimeType,
-		"bytes":      resource.Size,
-		"width":      width,
-		"height":     height,
-	}
-	if output.MediaType == "image" {
-		data["dataUrl"] = resourceURL
-	} else {
-		data["url"] = resourceURL
-		if resource.DurationMs > 0 {
-			data["durationMs"] = resource.DurationMs
-		}
-	}
-	metadata := map[string]any{
-		"source":              "generation-task",
-		"generationEffectKey": output.EffectKey,
-		"taskId":              task.ID,
-		"outputIndex":         output.OutputIndex,
-	}
-	if output.TargetBinding != nil {
-		if output.TargetBinding.ConversationID != "" {
-			metadata["conversationId"] = output.TargetBinding.ConversationID
-		}
-		if output.TargetBinding.MessageID != "" {
-			metadata["messageId"] = output.TargetBinding.MessageID
-		}
-		if output.TargetBinding.NodeID != "" {
-			metadata["nodeId"] = output.TargetBinding.NodeID
-		}
-	}
-	payload, err := json.Marshal(map[string]any{
-		"id":               assetID,
-		"kind":             output.MediaType,
-		"category":         model.AssetCategoryMaterial,
-		"status":           model.AssetVersionStatusConfirmed,
-		"primaryVersionId": versionID,
-		"title":            generationAssetTitle(output.MediaType),
-		"coverUrl":         resourceURL,
-		"tags":             []string{"生成"},
-		"source":           "生成任务",
-		"createdAt":        now.UTC().Format(time.RFC3339Nano),
-		"updatedAt":        now.UTC().Format(time.RFC3339Nano),
-		"data":             data,
-		"metadata":         metadata,
-	})
+	resource, stored, err := a.service.storeResource(userID, kind, fileName, mimeType, size, width, height, durationMs, bytes.NewReader(data), uploadKey, a.service.localResourceStorage)
 	if err != nil {
-		return "", fmt.Errorf("序列化生成素材失败：%w", err)
+		a.service.releaseUserUploadQuota(userID, quotaDay, size)
+		return nil, err
 	}
-	return string(payload), nil
+	if stored {
+		a.service.commitUserUploadQuota(userID, size)
+	} else {
+		a.service.releaseUserUploadQuota(userID, quotaDay, size)
+	}
+	return resource, nil
 }
-
-var (
-	errGenerationResourceMissing  = errors.New("generation resource missing")
-	errGenerationResourceNotReady = errors.New("generation resource not ready")
-	errGenerationResourceForeign  = errors.New("generation resource belongs to another user")
-)

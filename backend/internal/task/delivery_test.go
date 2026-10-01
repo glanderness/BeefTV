@@ -105,7 +105,48 @@ func TestResultStateAndDeliveryComplete(t *testing.T) {
 	if !DeliveryComplete(`{"images":[{"resourceId":"r1"}]}`, foreign) {
 		t.Fatal("foreign resource should not keep rewriting")
 	}
-	if !DeliveryComplete(`{"images":[{"url":"https://upstream.example/a.png"}]}`, []CanonicalOutput{{OutputIndex: 0, MediaType: "image", ProviderArtifactRef: "https://upstream.example/a.png"}}) {
-		t.Fatal("leftover remote URL is not a backend download job")
+	failedPersist := []CanonicalOutput{{OutputIndex: 0, MediaType: "image", ResourceID: "r1", MaterializationErrorCode: MaterializeErrorPersistFailed}}
+	if DeliveryComplete(`{"images":[{"resourceId":"r1"}]}`, failedPersist) {
+		t.Fatal("transient persist_failed reported complete")
+	}
+	if DeliveryComplete(`{"images":[{"url":"https://upstream.example/a.png"}]}`, []CanonicalOutput{{OutputIndex: 0, MediaType: "image", ProviderArtifactRef: "https://upstream.example/a.png"}}) {
+		t.Fatal("leftover remote URL still needs persistence")
+	}
+	unsupported := []CanonicalOutput{{OutputIndex: 0, MediaType: "image", ProviderArtifactRef: "blob:local", MaterializationErrorCode: MaterializeErrorUnsupportedShape}}
+	if !DeliveryComplete(`{"images":[{"url":"blob:local"}]}`, unsupported) {
+		t.Fatal("recorded unsupported shape should stop rewriting")
+	}
+}
+
+func TestInspectResultJSONAndUnsupportedShapes(t *testing.T) {
+	outputs, unusable := InspectResultJSON(`{"images":[{"resourceId":"r1"}]}`)
+	if len(outputs) != 1 || unusable != "" || outputs[0].ResourceID != "r1" {
+		t.Fatalf("usable images = %#v %q", outputs, unusable)
+	}
+	if _, unusable := InspectResultJSON(`{"images":[1]}`); unusable != "unusable_images" {
+		t.Fatalf("unusable images = %q", unusable)
+	}
+	if _, unusable := InspectResultJSON(`{`); unusable != "invalid_result_json" {
+		t.Fatalf("invalid json = %q", unusable)
+	}
+	if shape := UnsupportedResultShape(CanonicalOutput{ProviderArtifactRef: "blob:local"}); shape != "blob_url" {
+		t.Fatalf("blob shape = %q", shape)
+	}
+	if shape := UnsupportedResultShape(CanonicalOutput{ProviderArtifactRef: "ftp://x"}); shape != "unrecognized_artifact" {
+		t.Fatalf("unrecognized shape = %q", shape)
+	}
+	if !PersistableArtifactURL("https://upstream.example/a.png") || PersistableArtifactURL("blob:local") {
+		t.Fatal("persistable URL classification drifted")
+	}
+}
+
+func TestCanvasBindingIntentsStayIntentOnly(t *testing.T) {
+	outputs := []CanonicalOutput{
+		BindOutput(CanonicalOutput{OutputIndex: 0, MediaType: "image", ResourceID: "r1", MaterializedAssetID: "asset-1"}, "task-1", TargetBinding{NodeID: "node-1", MessageID: "m1"}),
+		BindOutput(CanonicalOutput{OutputIndex: 1, MediaType: "image", ResourceID: "r2"}, "task-1", TargetBinding{}),
+	}
+	intents := CanvasBindingIntents("task-1", outputs)
+	if len(intents) != 1 || intents[0].AssetID != "asset-1" || intents[0].AttachNodeEffectKey != AttachNodeEffectKey("task-1", "node-1", 0) {
+		t.Fatalf("intents = %#v", intents)
 	}
 }

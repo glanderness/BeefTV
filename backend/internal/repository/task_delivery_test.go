@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -65,6 +66,71 @@ func TestUpsertGenerationDeliverySurvivesSQLiteReopen(t *testing.T) {
 	}
 	if err := reopened.Model(&model.AssetRepresentation{}).Count(&representations).Error; err != nil || representations != 1 {
 		t.Fatalf("representations = %d err=%v", representations, err)
+	}
+}
+
+func TestCommitOwnedGenerationDeliveryPreservesEditedMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "delivery-preserve.db")
+	db, err := gorm.Open(sqlite.Open(path+"?_journal_mode=WAL&_busy_timeout=5000"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Task{}, &model.Result{}, &model.Asset{}, &model.AssetVersion{}, &model.AssetRepresentation{}, &model.Resource{}); err != nil {
+		t.Fatal(err)
+	}
+	repo := New(db)
+	now := time.Now()
+	item := sampleDeliveryItem(now)
+	if err := repo.CommitOwnedGenerationDelivery(item); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Asset{}).Where("id = ?", item.Asset.ID).Updates(map[string]any{
+		"title":        "用户改过的标题",
+		"folder_id":    "folder-user",
+		"payload_json": `{"id":"generation_asset_1","title":"用户改过的标题"}`,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	item.Asset.Title = "生成图片"
+	item.Asset.FolderID = ""
+	item.Asset.PayloadJSON = `{"id":"generation_asset_1"}`
+	if err := repo.CommitOwnedGenerationDelivery(item); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.Asset
+	if err := db.First(&stored, "id = ?", item.Asset.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Title != "用户改过的标题" || stored.FolderID != "folder-user" || stored.PayloadJSON != `{"id":"generation_asset_1","title":"用户改过的标题"}` {
+		t.Fatalf("user metadata overwritten: %#v", stored)
+	}
+}
+
+func TestCommitOwnedGenerationDeliveryRejectsForeignAsset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "delivery-foreign.db")
+	db, err := gorm.Open(sqlite.Open(path+"?_journal_mode=WAL&_busy_timeout=5000"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Task{}, &model.Result{}, &model.Asset{}, &model.AssetVersion{}, &model.AssetRepresentation{}, &model.Resource{}); err != nil {
+		t.Fatal(err)
+	}
+	repo := New(db)
+	now := time.Now()
+	item := sampleDeliveryItem(now)
+	item.Asset.UserID = "other-user"
+	item.Asset.Title = "别人的素材"
+	if err := db.Create(item.Asset).Error; err != nil {
+		t.Fatal(err)
+	}
+	item.Asset.UserID = "user-1"
+	item.Asset.Title = "生成图片"
+	if err := repo.CommitOwnedGenerationDelivery(item); !errors.Is(err, ErrAssetOwnedByAnotherUser) {
+		t.Fatalf("foreign collision = %v", err)
+	}
+	var stored model.Asset
+	if err := db.First(&stored, "id = ?", item.Asset.ID).Error; err != nil || stored.UserID != "other-user" || stored.Title != "别人的素材" {
+		t.Fatalf("foreign asset mutated: %#v err=%v", stored, err)
 	}
 }
 

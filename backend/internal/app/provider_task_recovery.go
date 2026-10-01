@@ -159,8 +159,9 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 		_ = s.log(task.UserID, task.ID, "error", "任务恢复成功但项目产物登记失败", err.Error())
 		return nil, fmt.Errorf("任务已恢复，但项目素材登记失败：%w", err)
 	}
+	projected := s.attachRecoveredProviderTask(task)
 	_ = s.log(task.UserID, task.ID, "info", "人工查询确认生成成功，任务已恢复并登记项目产物", providerStatus)
-	return &ProviderTaskQueryResult{Task: taskForOutput(*task), ProviderStatus: providerStatus, Recovered: true}, nil
+	return &ProviderTaskQueryResult{Task: projected, ProviderStatus: providerStatus, Recovered: true}, nil
 }
 
 // Query-only: never route recovery through create, even when the original

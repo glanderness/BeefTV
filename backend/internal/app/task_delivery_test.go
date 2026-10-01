@@ -3,6 +3,8 @@ package app
 import (
 	"encoding/json"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -288,12 +290,44 @@ func TestGenerationDeliveryLeavesWorkflowSlotForProjectRegistration(t *testing.T
 	}
 }
 
-func TestGenerationDeliveryDoesNotDownloadLeftoverRemoteURL(t *testing.T) {
+func TestGenerationDeliveryPersistsLeftoverRemoteURLThroughMedia(t *testing.T) {
 	svc, db := newGenerationDeliveryService(t, filepath.Join(t.TempDir(), "generation-remote.db"))
 	defer closeDB(t, db)
 	now := time.Now()
+	resource := model.Resource{ID: "res-remote-1", UserID: "user-1", Kind: "image", Status: model.ResourceStatusReady, MimeType: "image/png", Size: 8, Width: 16, Height: 16, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&resource).Error; err != nil {
+		t.Fatal(err)
+	}
+	media := &deliveryMediaStub{resource: &resource}
+	svc.generationDeliveryMedia = media
 	task := model.Task{
 		ID: "task-remote", UserID: "user-1", Type: "canvas_image", Status: model.TaskStatusSucceeded,
+		ResultJSON: `{"images":[{"url":"https://upstream.example/a.png"}]}`, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeliverSucceededTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if media.persists.Load() != 1 || media.lastURL != "https://upstream.example/a.png" || media.lastIdentity != "task-remote:0" {
+		t.Fatalf("media persist = calls:%d url:%q identity:%q", media.persists.Load(), media.lastURL, media.lastIdentity)
+	}
+	got, err := svc.Task("user-1", task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ResultState != localtask.ResultStateReady || got.Outputs[0].ResourceID != resource.ID || got.Outputs[0].MaterializedAssetID == "" {
+		t.Fatalf("persisted leftover = %#v", got)
+	}
+}
+
+func TestGenerationDeliveryLeftoverURLWithoutMediaIsRetryable(t *testing.T) {
+	svc, db := newGenerationDeliveryService(t, filepath.Join(t.TempDir(), "generation-remote-retry.db"))
+	defer closeDB(t, db)
+	now := time.Now()
+	task := model.Task{
+		ID: "task-remote-retry", UserID: "user-1", Type: "canvas_image", Status: model.TaskStatusSucceeded,
 		ResultJSON: `{"images":[{"url":"https://upstream.example/a.png"}]}`, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&task).Error; err != nil {
@@ -306,12 +340,31 @@ func TestGenerationDeliveryDoesNotDownloadLeftoverRemoteURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ResultState != localtask.ResultStatePendingMaterialization || got.Outputs[0].ResourceID != "" || got.Outputs[0].MaterializedAssetID != "" {
-		t.Fatalf("remote leftover = %#v", got)
+	if got.ResultState != localtask.ResultStateFailedRetryable || got.Outputs[0].MaterializationErrorCode != localtask.MaterializeErrorPersistFailed || got.Outputs[0].MaterializedAssetID != "" {
+		t.Fatalf("leftover without media = %#v", got)
 	}
-	var assets int64
-	if err := db.Model(&model.Asset{}).Count(&assets).Error; err != nil || assets != 0 {
-		t.Fatalf("remote leftover downloaded into assets = %d err=%v", assets, err)
+}
+
+func TestGenerationDeliveryRecordsUnsupportedBlobShape(t *testing.T) {
+	svc, db := newGenerationDeliveryService(t, filepath.Join(t.TempDir(), "generation-blob.db"))
+	defer closeDB(t, db)
+	now := time.Now()
+	task := model.Task{
+		ID: "task-blob", UserID: "user-1", Type: "canvas_image", Status: model.TaskStatusSucceeded,
+		ResultJSON: `{"images":[{"url":"blob:https://local/abc"}]}`, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeliverSucceededTask(task); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.Task("user-1", task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ResultState != localtask.ResultStateFailedPermanent || got.Outputs[0].MaterializationErrorCode != localtask.MaterializeErrorUnsupportedShape {
+		t.Fatalf("blob shape = %#v", got)
 	}
 }
 
@@ -341,6 +394,241 @@ func TestGenerationDeliveryKeepsClientOperationIdentity(t *testing.T) {
 	}
 }
 
+func TestGenerationDeliveryConcurrentReplayPreservesEditedMetadata(t *testing.T) {
+	svc, db := newGenerationDeliveryService(t, filepath.Join(t.TempDir(), "generation-concurrent.db"))
+	defer closeDB(t, db)
+	now := time.Now()
+	if err := db.Create(&model.Resource{ID: "res-edit", UserID: "user-1", Kind: "image", Status: model.ResourceStatusReady, MimeType: "image/png", Size: 8, Width: 32, Height: 32, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{
+		ID: "task-edit", UserID: "user-1", Type: "canvas_image", Status: model.TaskStatusSucceeded,
+		ResultJSON: `{"images":[{"resourceId":"res-edit"}]}`, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeliverSucceededTask(task); err != nil {
+		t.Fatal(err)
+	}
+	assetID := localtask.MaterializedAssetID(task.ID, 0)
+	if err := db.Model(&model.Asset{}).Where("id = ?", assetID).Updates(map[string]any{
+		"title":        "用户改过的标题",
+		"folder_id":    "folder-user",
+		"payload_json": `{"id":"` + assetID + `","title":"用户改过的标题"}`,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- svc.DeliverSucceededTask(task)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var stored model.Asset
+	if err := db.First(&stored, "id = ?", assetID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Title != "用户改过的标题" || stored.FolderID != "folder-user" {
+		t.Fatalf("concurrent replay reset metadata: %#v", stored)
+	}
+	got, err := svc.Task("user-1", task.ID)
+	if err != nil || got.ResultState != localtask.ResultStateReady || got.Outputs[0].MaterializedAssetID != assetID {
+		t.Fatalf("concurrent replay = %#v err=%v", got, err)
+	}
+}
+
+func TestGenerationDeliveryRejectsForeignStableAssetID(t *testing.T) {
+	svc, db := newGenerationDeliveryService(t, filepath.Join(t.TempDir(), "generation-foreign-asset.db"))
+	defer closeDB(t, db)
+	now := time.Now()
+	if err := db.Create(&model.Resource{ID: "res-owned", UserID: "user-1", Kind: "image", Status: model.ResourceStatusReady, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{
+		ID: "task-collision", UserID: "user-1", Type: "canvas_image", Status: model.TaskStatusSucceeded,
+		ResultJSON: `{"images":[{"resourceId":"res-owned"}]}`, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	assetID := localtask.MaterializedAssetID(task.ID, 0)
+	if err := db.Create(&model.Asset{ID: assetID, UserID: "other-user", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed, Title: "别人的素材", PayloadJSON: `{"id":"` + assetID + `"}`, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeliverSucceededTask(task); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.Task("user-1", task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ResultState != localtask.ResultStateFailedPermanent || got.Outputs[0].MaterializationErrorCode != localtask.MaterializeErrorAssetForeign || got.Outputs[0].MaterializedAssetID != "" {
+		t.Fatalf("foreign collision = %#v", got)
+	}
+	var stored model.Asset
+	if err := db.First(&stored, "id = ?", assetID).Error; err != nil || stored.UserID != "other-user" || stored.Title != "别人的素材" {
+		t.Fatalf("foreign asset mutated: %#v err=%v", stored, err)
+	}
+}
+
+func TestGenerationDeliveryUnreadableRecordsAreObservable(t *testing.T) {
+	svc, db := newGenerationDeliveryService(t, filepath.Join(t.TempDir(), "generation-unreadable.db"))
+	defer closeDB(t, db)
+	now := time.Now()
+	if err := db.Create(&model.Resource{ID: "res-unreadable", UserID: "user-1", Kind: "image", Status: model.ResourceStatusReady, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	task := seedSucceededImageTask(t, db, "task-unreadable", `{"metadata":{"nodeId":"node-1"}}`)
+	task.ResultJSON = `{"images":[{"resourceId":"res-unreadable"}]}`
+	if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Update("result_json", task.ResultJSON).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeliverSucceededTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Result{}).Where("task_id = ? AND kind = ?", task.ID, localtask.ResultKindGenerationOutput).Update("payload", "{").Error; err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.Task("user-1", task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ResultState == localtask.ResultStateReady || len(got.Outputs) == 0 || got.Outputs[0].MaterializationErrorCode != localtask.MaterializeErrorDeliveryUnreadable || got.Outputs[0].MaterializedAssetID != "" {
+		t.Fatalf("unreadable get = %#v", got)
+	}
+	summaries, err := svc.TasksWithOptions("user-1", TaskListOptions{Limit: 10})
+	if err != nil || len(summaries) != 1 || summaries[0].ResultState == localtask.ResultStateReady || len(summaries[0].Outputs) == 0 || summaries[0].Outputs[0].MaterializationErrorCode != localtask.MaterializeErrorDeliveryUnreadable {
+		t.Fatalf("unreadable list = %#v err=%v", summaries, err)
+	}
+}
+
+func TestGenerationDeliveryRestartRecoversWithoutGetOrList(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "generation-restart.db")
+	_, db := newGenerationDeliveryService(t, path)
+	now := time.Now()
+	if err := db.Create(&model.Resource{ID: "res-restart", UserID: "user-1", Kind: "image", Status: model.ResourceStatusReady, MimeType: "image/png", Size: 8, Width: 32, Height: 32, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{
+		ID: "task-restart", UserID: "user-1", Type: "canvas_image", Status: model.TaskStatusSucceeded,
+		InputJSON: `{"metadata":{"nodeId":"node-restart"}}`, ResultJSON: `{"images":[{"resourceId":"res-restart"}]}`,
+		CreatedAt: now, UpdatedAt: now, CompletedAt: &now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	closeDB(t, db)
+
+	reopened, db := newGenerationDeliveryService(t, path)
+	defer closeDB(t, db)
+	if err := reopened.RecoverIncompleteGenerationDeliveries(8); err != nil {
+		t.Fatal(err)
+	}
+	results, err := reopened.repo.GenerationOutputResults(task.ID)
+	if err != nil || len(results) != 1 {
+		t.Fatalf("recovered results = %#v err=%v", results, err)
+	}
+	output, err := localtask.DecodeOutputPayload(results[0].Payload)
+	if err != nil || output.MaterializedAssetID != localtask.MaterializedAssetID(task.ID, 0) || output.ResourceID != "res-restart" {
+		t.Fatalf("recovered payload = %#v err=%v", output, err)
+	}
+	var assets int64
+	if err := db.Model(&model.Asset{}).Count(&assets).Error; err != nil || assets != 1 {
+		t.Fatalf("recovered assets = %d err=%v", assets, err)
+	}
+	intents := reopened.CanvasBindingIntents(task)
+	if len(intents) != 1 || intents[0].TargetBinding == nil || intents[0].TargetBinding.NodeID != "node-restart" || intents[0].AssetID != output.MaterializedAssetID {
+		t.Fatalf("binding intents = %#v", intents)
+	}
+}
+
+func TestGenerationDeliveryMultipleOutputsAndNoDuplicatePersist(t *testing.T) {
+	svc, db := newGenerationDeliveryService(t, filepath.Join(t.TempDir(), "generation-multi.db"))
+	defer closeDB(t, db)
+	now := time.Now()
+	if err := db.Create(&model.Resource{ID: "res-a", UserID: "user-1", Kind: "image", Status: model.ResourceStatusReady, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Resource{ID: "res-b", UserID: "user-1", Kind: "image", Status: model.ResourceStatusReady, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	media := &deliveryMediaStub{resource: &model.Resource{ID: "should-not-persist"}}
+	svc.generationDeliveryMedia = media
+	task := model.Task{
+		ID: "task-multi", UserID: "user-1", Type: "canvas_image", Status: model.TaskStatusSucceeded,
+		ResultJSON: `{"images":[{"resourceId":"res-a"},{"resourceId":"res-b"}]}`, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeliverSucceededTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeliverSucceededTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if media.persists.Load() != 0 {
+		t.Fatalf("resource-backed delivery called persist %d times", media.persists.Load())
+	}
+	got, err := svc.Task("user-1", task.ID)
+	if err != nil || got.ResultState != localtask.ResultStateReady || len(got.Outputs) != 2 {
+		t.Fatalf("multioutput = %#v err=%v", got, err)
+	}
+	if got.Outputs[0].ResourceID != "res-a" || got.Outputs[1].ResourceID != "res-b" {
+		t.Fatalf("multioutput resources = %#v", got.Outputs)
+	}
+	if got.Outputs[0].MaterializedAssetID == got.Outputs[1].MaterializedAssetID {
+		t.Fatal("multioutput shared asset identity")
+	}
+	var assets, results int64
+	if err := db.Model(&model.Asset{}).Count(&assets).Error; err != nil || assets != 2 {
+		t.Fatalf("multioutput assets = %d err=%v", assets, err)
+	}
+	if err := db.Model(&model.Result{}).Where("kind = ?", localtask.ResultKindGenerationOutput).Count(&results).Error; err != nil || results != 2 {
+		t.Fatalf("multioutput results = %d err=%v", results, err)
+	}
+}
+
+func TestProviderTaskRecoveryAttachesDeliveryWithoutGet(t *testing.T) {
+	svc, db := newGenerationDeliveryService(t, filepath.Join(t.TempDir(), "generation-provider-recovery.db"))
+	defer closeDB(t, db)
+	now := time.Now()
+	if err := db.Create(&model.Resource{ID: "res-recovered", UserID: "user-1", Kind: "video", Status: model.ResourceStatusReady, MimeType: "video/mp4", Size: 16, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{
+		ID: "task-recovered", UserID: "user-1", Type: "canvas_video", Status: model.TaskStatusSucceeded,
+		InputJSON:  `{"metadata":{"source":"create-page","messageId":"msg-recovered"}}`,
+		ResultJSON: `{"mode":"video","video":{"resourceId":"res-recovered"}}`,
+		CreatedAt:  now, UpdatedAt: now, CompletedAt: &now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	projected := svc.attachRecoveredProviderTask(&task)
+	if projected == nil || projected.ResultState != localtask.ResultStateReady || len(projected.Outputs) != 1 || projected.Outputs[0].MaterializedAssetID == "" {
+		t.Fatalf("provider recovery projection = %#v", projected)
+	}
+	if projected.Outputs[0].TargetBinding == nil || projected.Outputs[0].TargetBinding.MessageID != "msg-recovered" {
+		t.Fatalf("provider recovery binding = %#v", projected.Outputs[0])
+	}
+	var assets int64
+	if err := db.Model(&model.Asset{}).Count(&assets).Error; err != nil || assets != 1 {
+		t.Fatalf("provider recovery assets = %d err=%v", assets, err)
+	}
+}
+
 func TestCanonicalOutputJSONRoundTripMatchesFrontendContract(t *testing.T) {
 	output := localtask.BindOutput(localtask.CanonicalOutput{OutputIndex: 0, MediaType: "image", ResourceID: "res-1"}, "task-1", localtask.TargetBinding{NodeID: "node-1"})
 	output.MaterializedAssetID = localtask.MaterializedAssetID("task-1", 0)
@@ -355,6 +643,28 @@ func TestCanonicalOutputJSONRoundTripMatchesFrontendContract(t *testing.T) {
 	if len(decoded) != 1 || decoded[0]["outputIndex"] != float64(0) || decoded[0]["materializedAssetId"] != output.MaterializedAssetID {
 		t.Fatalf("json = %s", raw)
 	}
+}
+
+type deliveryMediaStub struct {
+	resource     *model.Resource
+	err          error
+	persists     atomic.Int64
+	lastURL      string
+	lastIdentity string
+}
+
+func (m *deliveryMediaStub) PersistRemoteArtifact(_, _, artifactURL, identity string) (*model.Resource, error) {
+	m.persists.Add(1)
+	m.lastURL = artifactURL
+	m.lastIdentity = identity
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.resource, nil
+}
+
+func (m *deliveryMediaStub) Generate(string) (*model.Resource, error) {
+	panic("generation/provider submit must not run during delivery")
 }
 
 func newGenerationDeliveryService(t *testing.T, path string) (*Service, *gorm.DB) {

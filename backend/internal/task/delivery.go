@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -21,10 +22,13 @@ const (
 	ResultStateFailedRetryable        = "FAILED_RETRYABLE"
 	ResultStateFailedPermanent        = "FAILED_PERMANENT"
 
-	MaterializeErrorResourceMissing  = "resource_missing"
-	MaterializeErrorResourceNotReady = "resource_not_ready"
-	MaterializeErrorResourceForeign  = "resource_foreign"
-	MaterializeErrorPersistFailed    = "persist_failed"
+	MaterializeErrorResourceMissing    = "resource_missing"
+	MaterializeErrorResourceNotReady   = "resource_not_ready"
+	MaterializeErrorResourceForeign    = "resource_foreign"
+	MaterializeErrorPersistFailed      = "persist_failed"
+	MaterializeErrorDeliveryUnreadable = "delivery_unreadable"
+	MaterializeErrorUnsupportedShape   = "unsupported_result_shape"
+	MaterializeErrorAssetForeign       = "asset_foreign"
 )
 
 // CanonicalOutput is the durable generation product identity the backend owns
@@ -218,9 +222,9 @@ func ResultState(status model.TaskStatus, outputs []CanonicalOutput, failedRetry
 			}
 			ready = false
 			switch output.MaterializationErrorCode {
-			case MaterializeErrorResourceForeign, MaterializeErrorPersistFailed:
+			case MaterializeErrorResourceForeign, MaterializeErrorAssetForeign, MaterializeErrorUnsupportedShape:
 				permanent = true
-			case MaterializeErrorResourceNotReady, MaterializeErrorResourceMissing:
+			case MaterializeErrorResourceNotReady, MaterializeErrorResourceMissing, MaterializeErrorPersistFailed, MaterializeErrorDeliveryUnreadable:
 				retryable = true
 			default:
 				if output.MaterializationErrorCode != "" {
@@ -262,10 +266,7 @@ func DeliveryComplete(resultJSON string, stored []CanonicalOutput) bool {
 		if !ok {
 			return false
 		}
-		if strings.TrimSpace(output.ResourceID) == "" {
-			continue
-		}
-		if got.MaterializedAssetID != "" || permanentMaterializeError(got.MaterializationErrorCode) {
+		if got.MaterializedAssetID != "" || terminalMaterializeError(got.MaterializationErrorCode) {
 			continue
 		}
 		return false
@@ -273,13 +274,109 @@ func DeliveryComplete(resultJSON string, stored []CanonicalOutput) bool {
 	return true
 }
 
-func permanentMaterializeError(code string) bool {
+func terminalMaterializeError(code string) bool {
 	switch code {
-	case MaterializeErrorResourceForeign, MaterializeErrorPersistFailed:
+	case MaterializeErrorResourceForeign, MaterializeErrorAssetForeign, MaterializeErrorUnsupportedShape:
 		return true
 	default:
 		return false
 	}
+}
+
+func PersistableArtifactURL(ref string) bool {
+	ref = strings.TrimSpace(ref)
+	return strings.HasPrefix(ref, "data:") || strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://")
+}
+
+func UnsupportedResultShape(output CanonicalOutput) string {
+	if strings.TrimSpace(output.ResourceID) != "" {
+		return ""
+	}
+	ref := strings.TrimSpace(output.ProviderArtifactRef)
+	if PersistableArtifactURL(ref) {
+		return ""
+	}
+	if ref == "" {
+		return "empty_media_ref"
+	}
+	if strings.HasPrefix(ref, "blob:") {
+		return "blob_url"
+	}
+	return "unrecognized_artifact"
+}
+
+func InspectResultJSON(resultJSON string) (outputs []CanonicalOutput, unusable string) {
+	outputs = CanonicalOutputs(resultJSON)
+	if len(outputs) > 0 {
+		return outputs, ""
+	}
+	if strings.TrimSpace(resultJSON) == "" {
+		return nil, ""
+	}
+	var payload map[string]any
+	if json.Unmarshal([]byte(resultJSON), &payload) != nil {
+		return nil, "invalid_result_json"
+	}
+	for _, key := range []string{"images", "image", "video", "audio"} {
+		if _, ok := payload[key]; ok {
+			return nil, "unusable_" + key
+		}
+	}
+	return nil, ""
+}
+
+// CanvasBindingIntent is durable attach intent only. Canvas/operations workers
+// apply it; this slice does not write canvas documents. Schema version 10 is
+// owned by assistantturns; do not add a delivery migration for apply-ack.
+type CanvasBindingIntent struct {
+	TaskID                 string         `json:"taskId"`
+	OutputIndex            int            `json:"outputIndex"`
+	AssetID                string         `json:"assetId,omitempty"`
+	ResourceID             string         `json:"resourceId,omitempty"`
+	TargetBinding          *TargetBinding `json:"targetBinding,omitempty"`
+	MaterializeEffectKey   string         `json:"materializeEffectKey"`
+	AttachNodeEffectKey    string         `json:"attachNodeEffectKey,omitempty"`
+	AttachMessageEffectKey string         `json:"attachMessageEffectKey,omitempty"`
+}
+
+func CanvasBindingIntents(taskID string, outputs []CanonicalOutput) []CanvasBindingIntent {
+	intents := make([]CanvasBindingIntent, 0, len(outputs))
+	for _, output := range outputs {
+		if output.TargetBinding == nil || output.TargetBinding.Empty() {
+			continue
+		}
+		intent := CanvasBindingIntent{
+			TaskID:               strings.TrimSpace(taskID),
+			OutputIndex:          output.OutputIndex,
+			AssetID:              output.MaterializedAssetID,
+			ResourceID:           output.ResourceID,
+			TargetBinding:        output.TargetBinding,
+			MaterializeEffectKey: MaterializeEffectKey(taskID, output.OutputIndex),
+		}
+		if output.TargetBinding.NodeID != "" {
+			intent.AttachNodeEffectKey = AttachNodeEffectKey(taskID, output.TargetBinding.NodeID, output.OutputIndex)
+		}
+		if output.TargetBinding.MessageID != "" {
+			intent.AttachMessageEffectKey = AttachMessageEffectKey(taskID, output.TargetBinding.MessageID, output.OutputIndex)
+		}
+		intents = append(intents, intent)
+	}
+	if len(intents) == 0 {
+		return nil
+	}
+	return intents
+}
+
+func DecodeOutputResults(results []model.Result) ([]CanonicalOutput, error) {
+	outputs := make([]CanonicalOutput, 0, len(results))
+	for _, result := range results {
+		output, err := DecodeOutputPayload(result.Payload)
+		if err != nil {
+			return nil, fmt.Errorf("generation_output %s: %w", result.ID, err)
+		}
+		outputs = append(outputs, output)
+	}
+	return outputs, nil
 }
 
 func outputsFromList(value any, mediaType string) []CanonicalOutput {

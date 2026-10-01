@@ -23,6 +23,7 @@ import (
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/skills"
 	localtask "infinite-canvas/backend/internal/task"
+	"infinite-canvas/backend/internal/taskdelivery"
 )
 
 type Service struct {
@@ -67,6 +68,7 @@ type Service struct {
 	canvas                   *canvas.Service
 	assistantTurns           *assistantturns.Service
 	beefAPI                  *beefapi.Service
+	generationDeliveryMedia  taskdelivery.Media
 }
 
 const taskWorkerConcurrency = 3
