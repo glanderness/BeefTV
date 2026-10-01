@@ -5,12 +5,22 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, Loader2, PackageOpen, Server } from "lucide-react";
 
 import { useEditorHostContext, useEditorStoreContext } from "@/components/editor/editor-context";
+import {
+    attachLocalExecutorResult,
+    beginLocalExecutorSession,
+    isLocalExecutorSessionStop,
+    localExecutorIntentAfterError,
+    localExecutorIntentAfterSubmit,
+    nextLocalExecutorClientOperationId,
+    runOwnedTimelineRender,
+    type LocalExecutorIntentState,
+} from "@/lib/plugins/builtin/editor/local-executor-session";
 import { lowerCanonicalPlan, getVisibleMediaClips, type TimelineRenderPlan, type TimelineRenderSource } from "@/lib/timeline/timeline-to-ffmpeg";
 import { exportTimelineToMp4, type TimelineExportProgress } from "@/lib/timeline/timeline-export";
 import { resourceFileUrl } from "@/services/api/resources";
-import { waitForGenerationTask } from "@/services/api/task-center";
-import { compileTimelineRenderPlan, createTimelineRenderTask, type TimelineRenderResult } from "@/services/api/timeline-tasks";
+import { compileTimelineRenderPlan, type TimelineRenderResult } from "@/services/api/timeline-tasks";
 import { isIgnorablePlanPreviewError, RENDER_PLAN_PREVIEW_DEBOUNCE_MS } from "@/lib/timeline/timeline-plan-preview";
+import { captureUserScope } from "@/lib/user-scope-guard";
 import type { TimelineProject } from "@/types/timeline";
 
 type ExportState = {
@@ -41,13 +51,28 @@ function collectRenderSources(project: TimelineProject): TimelineRenderSource[] 
     return sources;
 }
 
+const IDLE_EXPORT_STATE: ExportState = { phase: "idle", mode: null, percent: 0, detail: "", result: null };
+
 export function EditorExport() {
     const { project } = useEditorStoreContext();
     const { projectId } = useEditorHostContext();
-    const [state, setState] = useState<ExportState>({ phase: "idle", mode: null, percent: 0, detail: "", result: null });
+    const [state, setState] = useState<ExportState>(IDLE_EXPORT_STATE);
     const runningRef = useRef(false);
+    const mountedRef = useRef(true);
+    const projectIdRef = useRef(projectId);
     const localControllerRef = useRef<AbortController | null>(null);
-    useEffect(() => () => localControllerRef.current?.abort(), []);
+    const remoteObservationRef = useRef<AbortController | null>(null);
+    const submitIntentRef = useRef<LocalExecutorIntentState | null>(null);
+    projectIdRef.current = projectId;
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+            localControllerRef.current?.abort();
+            remoteObservationRef.current?.abort();
+        };
+    }, []);
+    useEffect(() => () => remoteObservationRef.current?.abort(), [projectId]);
 
     const sources = useMemo(() => (project ? collectRenderSources(project) : []), [project]);
     const [preview, setPreview] = useState<{ plan: TimelineRenderPlan | null; planError: string; loading: boolean }>({
@@ -95,33 +120,56 @@ export function EditorExport() {
     const renderRemote = async () => {
         if (!project || sources.length === 0 || runningRef.current) return;
         runningRef.current = true;
+        const expectedScope = captureUserScope();
+        const originalProjectId = projectId;
+        const originalTimeline = project;
+        const observer = new AbortController();
+        remoteObservationRef.current?.abort();
+        remoteObservationRef.current = observer;
+        const clientOperationId = nextLocalExecutorClientOperationId(submitIntentRef.current);
+        submitIntentRef.current = { clientOperationId };
         setState({ phase: "running", mode: "remote", percent: 0, detail: "提交渲染任务…", result: null });
         try {
-            const created = await createTimelineRenderTask({ projectId, timeline: project });
-            const done = await waitForGenerationTask(created.id, {
-                timeoutMs: 62 * 60 * 1000,
-                intervalMs: 3000,
-                onTaskUpdate: (task) =>
+            const session = beginLocalExecutorSession(originalProjectId, {
+                controller: observer,
+                getLiveProjectId: () => projectIdRef.current,
+                expectedScope,
+            });
+            const { task, result } = await runOwnedTimelineRender({
+                session,
+                projectId: originalProjectId,
+                timeline: originalTimeline,
+                clientOperationId,
+                onCreated: (created) => {
+                    submitIntentRef.current = localExecutorIntentAfterSubmit(clientOperationId, created);
+                },
+                onTaskUpdate: (next) =>
                     setState({
                         phase: "running",
                         mode: "remote",
-                        percent: task.progress ?? 0,
-                        detail: task.stage
-                            ? `${task.stage}${task.progress ? ` · ${task.progress}%` : ""}`
+                        percent: next.progress ?? 0,
+                        detail: next.stage
+                            ? `${next.stage}${next.progress ? ` · ${next.progress}%` : ""}`
                             : "渲染中…",
                         result: null,
                     }),
             });
-            const parsed = JSON.parse(done.resultJson ?? "{}") as TimelineRenderResult;
-            if (!parsed.resourceId) throw new Error("渲染任务未返回产物");
-            setState({
-                phase: "done",
-                mode: "remote",
-                percent: 100,
-                detail: `渲染完成：${parsed.fileName ?? "timeline.mp4"}`,
-                result: parsed,
+            submitIntentRef.current = localExecutorIntentAfterSubmit(clientOperationId, task);
+            await attachLocalExecutorResult(session, () => {
+                setState({
+                    phase: "done",
+                    mode: "remote",
+                    percent: 100,
+                    detail: `渲染完成：${result.fileName ?? "timeline.mp4"}`,
+                    result,
+                });
             });
         } catch (error) {
+            if (isLocalExecutorSessionStop(error)) {
+                if (mountedRef.current) setState(IDLE_EXPORT_STATE);
+                return;
+            }
+            submitIntentRef.current = localExecutorIntentAfterError({ clientOperationId, submittedTaskId: submitIntentRef.current?.submittedTaskId }, error);
             setState({
                 phase: "error",
                 mode: "remote",

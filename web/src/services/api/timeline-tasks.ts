@@ -1,5 +1,5 @@
 import { assertCanonicalPlan, type CanonicalPlanOptions, type CanonicalSourceMeta, type CanonicalTimelinePlan } from "@/lib/timeline/timeline-canonical-plan";
-import { http } from "@/services/api/request";
+import { http, type HttpRequestConfig } from "@/services/api/request";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { TimelineProject } from "@/types/timeline";
 
@@ -10,6 +10,7 @@ export type TimelineTranscriptionCreateRequest = {
     resourceId: string;
     language?: string;
     projectId?: string;
+    clientOperationId?: string;
 };
 
 export type TimelineTranscriptionResult = {
@@ -26,9 +27,9 @@ export type TimelineTranscriptionSegment = {
 
 export async function createTimelineTranscriptionTask(
     payload: TimelineTranscriptionCreateRequest,
-    signal?: AbortSignal,
+    config?: HttpRequestConfig,
 ): Promise<GenerationTask> {
-    return http.post<GenerationTask>("/timeline/transcriptions", payload, { signal });
+    return http.post<GenerationTask>("/timeline/transcriptions", payload, config);
 }
 
 // 时间线成片渲染任务 API。
@@ -39,6 +40,7 @@ export type TimelineRenderCreateRequest = {
     projectId: string;
     timeline: TimelineProject;
     options?: CanonicalPlanOptions;
+    clientOperationId?: string;
 };
 
 export type TimelineRenderResult = {
@@ -51,9 +53,9 @@ export type TimelineRenderResult = {
 
 export async function createTimelineRenderTask(
     payload: TimelineRenderCreateRequest,
-    signal?: AbortSignal,
+    config?: HttpRequestConfig,
 ): Promise<GenerationTask> {
-    return http.post<GenerationTask>("/timeline/renders", payload, { signal });
+    return http.post<GenerationTask>("/timeline/renders", payload, config);
 }
 
 export type TimelineRenderPlanCompileRequest = {
