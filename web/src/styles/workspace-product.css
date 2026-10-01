@@ -222,6 +222,10 @@
 .app-user-workspace .lib-tv-project-page .canvas-collection-preview-content,
 .app-user-workspace .lib-tv-project-page .canvas-collection-preview-content > * { width: 100%; height: 100%; }
 .app-user-workspace .lib-tv-project-page .libtv-folder-cover-art { position: absolute; inset: 0; background: linear-gradient(180deg, #414141 0%, #252525 48%, #151515 100%); }
+.dark .app-user-workspace .libtv-folder-card-cover,
+.dark .app-user-workspace .lib-tv-project-page .libtv-folder-cover-art {
+    background: linear-gradient(180deg, var(--user-surface-hover) 0%, var(--user-surface-raised) 48%, var(--user-page-bg) 100%);
+}
 .app-user-workspace .lib-tv-project-page .libtv-folder-cover-art::before { position: absolute; inset: 0; content: ""; background: linear-gradient(180deg, rgba(255,255,255,.1), rgba(255,255,255,0) 42%); clip-path: polygon(0 0, 26% 0, 32% 13%, 100% 13%, 100% 100%, 0 100%); pointer-events: none; }
 .app-user-workspace .lib-tv-project-page .libtv-folder-cover-art.has-custom-cover::before { display: none; }
 .app-user-workspace .lib-tv-project-page .libtv-library-card .canvas-collection-actions,
@@ -372,6 +376,7 @@
     box-shadow: none !important;
     color: #ededed;
 }
+.dark .app-user-workspace .assets-inline-search { background: var(--user-surface-muted) !important; }
 .assets-inline-search:focus-within { outline: 2px solid rgba(255,255,255,.12); }
 .assets-inline-search .ant-input { color: #ededed; font-size: 13px; }
 .assets-inline-search .ant-input::placeholder { color: #858585; }
@@ -1268,6 +1273,11 @@
     border-top-color: var(--user-border) !important;
     background: var(--user-surface-muted) !important;
     box-shadow: none !important;
+}
+.dark .app-user-workspace.app-product-workspace .app-workspace-sidebar,
+.dark .app-user-workspace.app-product-workspace .app-workspace-sidebar-nav,
+.dark .app-user-workspace.app-product-workspace .app-workspace-sidebar-footer {
+    background: var(--user-surface) !important;
 }
 .app-user-workspace.app-product-workspace .app-workspace-brand-tagline {
     color: var(--user-ink-soft) !important;
