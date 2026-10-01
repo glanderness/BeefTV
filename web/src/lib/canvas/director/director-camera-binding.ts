@@ -1,6 +1,14 @@
 import { interpolateDirectorTransform } from "@/lib/canvas/director/director-scene";
 import { resolveDirectorCameraLocalFraming } from "@/lib/canvas/director/director-view-modes";
-import type { DirectorCamera, DirectorScene, DirectorVec3 } from "@/types/director";
+import type { DirectorCamera, DirectorObject, DirectorScene, DirectorVec3 } from "@/types/director";
+
+/** Freeze framing against the original scene before removing all layout objects. */
+export function replaceDirectorSceneObjects(scene: DirectorScene, objects: DirectorObject[], time: number): DirectorScene {
+    const retained = new Set(objects.map((object) => object.id));
+    const removed = scene.objects.filter((object) => !retained.has(object.id));
+    const cameras = scene.cameras.map((camera) => removed.reduce((current, object) => removeDirectorCameraBindingsForObject(current, object.id, scene, time), camera));
+    return { ...scene, objects, cameras, groups: undefined };
+}
 
 /** 当前帧作为新目标锚点；切换目标先烘焙旧位移，绑定瞬间构图不跳。 */
 export function bindDirectorCameraFollow(camera: DirectorCamera, scene: DirectorScene, objectId: string, time: number): DirectorCamera {

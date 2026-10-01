@@ -66,18 +66,21 @@ export function toggleDirectorCameraLock(scene: DirectorScene, id: string): Dire
 /** 副本保留媒体与动画内容，但所有可编辑记录均有独立标识与引用。 */
 export function duplicateDirectorObject(source: DirectorObject): DirectorObject {
     const copy = structuredClone(source);
+    const ids = new Map(copy.keyframes.map((frame) => [frame.id, nanoid()]));
     return {
         ...copy,
         id: nanoid(),
         name: `${source.name}副本`,
-        keyframes: copy.keyframes.map((frame) => ({ ...frame, id: nanoid() })),
+        keyframes: copy.keyframes.map((frame) => ({ ...frame, id: ids.get(frame.id)! })),
+        motionPath: copy.motionPath && { ...copy.motionPath, controlKeyframeIds: copy.motionPath.controlKeyframeIds?.flatMap((id) => ids.has(id) ? [ids.get(id)!] : []), originalKeyframes: copy.motionPath.originalKeyframes.map((frame) => ({ ...frame, id: nanoid() })) },
         boneTracks: copy.boneTracks?.map((track) => ({ ...track, keyframes: track.keyframes.map((frame) => ({ ...frame, id: nanoid() })) })),
     };
 }
 
 export function duplicateDirectorCamera(source: DirectorCamera): DirectorCamera {
     const copy = structuredClone(source);
-    return { ...copy, id: nanoid(), name: `${source.name}副本`, keyframes: copy.keyframes.map((frame) => ({ ...frame, id: nanoid() })) };
+    const ids = new Map(copy.keyframes.map((frame) => [frame.id, nanoid()]));
+    return { ...copy, id: nanoid(), name: `${source.name}副本`, keyframes: copy.keyframes.map((frame) => ({ ...frame, id: ids.get(frame.id)! })), drawnPath: copy.drawnPath && { ...copy.drawnPath, sampleKeyframeIds: copy.drawnPath.sampleKeyframeIds.flatMap((id) => ids.has(id) ? [ids.get(id)!] : []), originalKeyframes: copy.drawnPath.originalKeyframes?.map((frame) => ({ ...frame, id: nanoid() })) } };
 }
 
 export function groupDirectorObjects(scene: DirectorScene, ids: string[]): DirectorScene {

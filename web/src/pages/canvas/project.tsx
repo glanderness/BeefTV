@@ -1103,7 +1103,17 @@ function InfiniteCanvasPage() {
         setDialogNodeId,
     });
     const replaceCanvasNodeMedia = useCallback((node: CanvasNodeData) => handleUploadRequest(node.id), [handleUploadRequest]);
-    const addDirectorReferenceToCanvas = useCallback(async (image: Awaited<ReturnType<typeof uploadImage>>, title: string) => {
+    const directorReferenceTargetRef = useRef<{ projectId: string; nodeId: string | null; scope: string } | null>(null);
+    directorReferenceTargetRef.current = { projectId, nodeId: directorNodeId, scope: canvasStorageScope };
+    useEffect(() => {
+        directorReferenceTargetRef.current = { projectId, nodeId: directorNodeId, scope: canvasStorageScope };
+        return () => { directorReferenceTargetRef.current = null; };
+    }, [projectId, directorNodeId, canvasStorageScope]);
+    const addDirectorReferenceToCanvas = useCallback(async (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal) => {
+        const current = () => !signal.aborted && directorReferenceTargetRef.current?.projectId === projectId
+            && directorReferenceTargetRef.current?.nodeId === directorNodeId && getActiveUserScope() === canvasStorageScope
+            && nodesRef.current.some((item) => item.id === directorNodeId);
+        if (!current()) throw new DOMException("导演台会话已结束", "AbortError");
         const node = createCanvasNode(CanvasNodeType.Image, getCanvasCenter(), imageMetadata(image));
         node.title = title;
         const linked = connectDirectorReferenceNodes([...nodesRef.current, node], connectionsRef.current, [node.id], directorNodeId || "", () => nanoid(), "replace");
@@ -1115,11 +1125,13 @@ function InfiniteCanvasPage() {
         setSelectedConnectionId(null);
         try {
             const result = await ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId: currentProject?.projectId, node, source: "canvas-upload" });
+            if (!current()) throw new DOMException("导演台会话已结束", "AbortError");
             setNodes((current) => current.map((item) => item.id === node.id ? { ...item, metadata: { ...item.metadata, assetId: result.assetId } } : item));
         } catch (error) {
+            if (!current()) throw new DOMException("导演台会话已结束", "AbortError");
             message.warning(error instanceof Error ? `图片已加入画布，但素材同步失败：${error.message}` : "图片已加入画布，但素材同步失败");
         }
-    }, [connectionsRef, currentProject?.projectId, directorNodeId, getCanvasCenter, message, nodesRef, projectId, setConnections, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
+    }, [canvasStorageScope, connectionsRef, currentProject?.projectId, directorNodeId, getCanvasCenter, message, nodesRef, projectId, setConnections, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
     const {
         timelineAddNodeRef,
         timelineMediaAddRef,
@@ -2664,6 +2676,7 @@ function InfiniteCanvasPage() {
                         node={contentNode}
                         scene={currentProject?.directorScenes?.find((scene) => scene.id === contentNode.metadata?.directorSceneId) || null}
                         readNodeContent={(nodeId) => (nodeId ? nodesRef.current.find((item) => item.id === nodeId)?.metadata?.content : undefined)}
+                        readNodeStorageKey={(nodeId) => (nodeId ? nodesRef.current.find((item) => item.id === nodeId)?.metadata?.storageKey : undefined)}
                         professional={workspaceMode === "professional"}
                         onOpen={() => openDirectorWorkbench(contentNode.id)}
                     />

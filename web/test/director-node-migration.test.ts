@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
-import { normalizeDirectorCanvasNode } from "../src/lib/canvas/director/director-node-migration";
+import { migrateDirectorCanvas, normalizeDirectorCanvasNode } from "../src/lib/canvas/director/director-node-migration";
+import { createDirectorScene } from "../src/lib/canvas/director/director-scene";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
 test("legacy director video nodes become named director nodes without generation prompt metadata", () => {
@@ -23,7 +24,18 @@ test("legacy director video nodes become named director nodes without generation
         },
     };
 
-    const migrated = normalizeDirectorCanvasNode(node);
+    const scene = createDirectorScene();
+    scene.id = "scene-4";
+    scene.shots[0].id = "shot-4";
+    scene.shots[0].prompt = "已有镜头描述";
+    const result = migrateDirectorCanvas([node], [scene]);
+    const migrated = result.nodes[0];
+    expect(result.directorScenes[0].shots[0].prompt).toBe("已有镜头描述\n\n旧的节点级提示词\n\n旧的模型提示词");
+    const again = migrateDirectorCanvas(result.nodes, result.directorScenes);
+    expect(again.nodes[0]).toBe(migrated);
+    expect(again.directorScenes).toBe(result.directorScenes);
+    expect(scene.shots[0].prompt).toBe("已有镜头描述");
+    expect(migrateDirectorCanvas([node], []).nodes[0].metadata?.composerContent).toBe("旧的节点级提示词");
 
     expect(migrated.type).toBe("director");
     expect(migrated.title).toBe("导演台");
@@ -61,6 +73,10 @@ test("already migrated director nodes retain a user-edited title", () => {
     };
 
     expect(normalizeDirectorCanvasNode(node)).toBe(node);
+    const scene = createDirectorScene();
+    scene.id = "scene-1";
+    scene.shots[0].prompt = "  保留已有镜头的排版\n";
+    expect(migrateDirectorCanvas([node], [scene]).directorScenes[0]).toBe(scene);
 });
 
 test("legacy default-size director cards are enlarged while user-sized cards remain unchanged", () => {

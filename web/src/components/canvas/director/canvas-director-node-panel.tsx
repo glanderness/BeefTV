@@ -8,12 +8,12 @@ import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { DirectorScene } from "@/types/director";
 
-export function CanvasDirectorNodePanel({ node, scene, readNodeContent, onOpen, professional = true }: { node: CanvasNodeData; scene: DirectorScene | null; readNodeContent: DirectorNodeContentReader; onOpen: () => void; professional?: boolean }) {
+export function CanvasDirectorNodePanel({ node, scene, readNodeContent, readNodeStorageKey, onOpen, professional = true }: { node: CanvasNodeData; scene: DirectorScene | null; readNodeContent: DirectorNodeContentReader; readNodeStorageKey?: DirectorNodeContentReader; onOpen: () => void; professional?: boolean }) {
     const theme = canvasThemes[useActiveTheme()];
     const shot = resolveDirectorActiveShot(scene, node.metadata?.directorShotId);
     // 记录「失败的那个 URL」而非布尔量：同一个坏 URL 不再反复渲染，换成另一个 URL 时自动重试。
     const [failedUrl, setFailedUrl] = useState<string | null>(null);
-    const coverStorageKey = node.metadata?.directorCoverStorageKey;
+    const coverStorageKey = node.metadata?.directorCoverStorageKey || (!node.metadata?.directorCoverUrl ? readNodeStorageKey?.(node.metadata?.directorPreviewNodeId) || readNodeStorageKey?.(shot?.previewNodeId) : undefined);
     const [resolvedCover, setResolvedCover] = useState<{ key: string; url: string } | null>(null);
     useEffect(() => {
         if (!coverStorageKey) return;

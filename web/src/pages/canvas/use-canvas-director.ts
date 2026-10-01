@@ -245,8 +245,6 @@ export function useCanvasDirector({
             directorDepthNodeId: undefined,
             directorNormalNodeId: undefined,
             directorClayVideoNodeId: clayVideoId,
-            composerContent: output.prompt,
-            prompt: output.prompt,
             videoCameraMoveId: output.shot.cameraMove,
             videoCameraMovePrompt: output.prompt,
             referenceAssetNodeIds,

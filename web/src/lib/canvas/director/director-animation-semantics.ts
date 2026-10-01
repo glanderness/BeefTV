@@ -158,7 +158,9 @@ export function resolveDirectorMultiObjectTransformEdit(input: { objects: Direct
         const rendered = interpolateDirectorTransform(object.transform, object.keyframes, input.time);
         const edited = applyDirectorTransformDelta(rendered, delta);
         const result = resolveDirectorObjectTransformEdit({ base: object.transform, keyframes: object.keyframes, rendered, edited, autoKey: input.autoKey, time: input.time });
-        return { ...object, transform: result.transform, keyframes: result.keyframes };
+        // Inspector edits resize/rotate the model, while only translation moves its path.
+        const motionPath = object.motionPath && !input.autoKey ? { ...object.motionPath, transform: { ...object.motionPath.transform, position: object.motionPath.transform.position.map((value, axis) => value + delta.position[axis]) as DirectorVec3 } } : object.motionPath;
+        return { ...object, transform: result.transform, keyframes: result.keyframes, motionPath };
     });
 }
 
@@ -174,21 +176,25 @@ export function resolveDirectorMultiObjectGroupTransformEdit(input: { objects: D
     return input.objects.map((object) => {
         if (!selected.has(object.id)) return object;
         const rendered = interpolateDirectorTransform(object.transform, object.keyframes, input.time);
-        const relativePosition = new Vector3(...rendered.position)
+        const transformPosition = (position: DirectorVec3) => new Vector3(...position)
             .sub(new Vector3(...input.from.position))
             .applyQuaternion(inverseFromRotation)
             .multiply(scaleDelta)
             .applyQuaternion(toRotation)
-            .add(new Vector3(...input.to.position));
+            .add(new Vector3(...input.to.position)).toArray() as DirectorVec3;
         const renderedRotation = new Quaternion().setFromEuler(new Euler(...rendered.rotation));
         const editedRotation = deltaRotation.clone().multiply(renderedRotation);
         const edited: DirectorTransform = {
-            position: relativePosition.toArray() as DirectorVec3,
+            position: transformPosition(rendered.position),
             rotation: new Euler().setFromQuaternion(editedRotation).toArray().slice(0, 3) as DirectorVec3,
             scale: rendered.scale.map((value, index) => value * ratios[index]) as DirectorVec3,
         };
         const result = resolveDirectorObjectTransformEdit({ base: object.transform, keyframes: object.keyframes, rendered, edited, autoKey: input.autoKey, time: input.time });
-        return { ...object, transform: result.transform, keyframes: result.keyframes };
+        if (!object.motionPath || input.autoKey) return { ...object, transform: result.transform, keyframes: result.keyframes };
+        // A path is one spatial object: apply the group matrix to every sample and its pivot.
+        const delta = directorTransformDelta(rendered, edited);
+        const transformWholePath = (transform: DirectorTransform): DirectorTransform => ({ ...applyDirectorTransformDelta(transform, delta), position: transformPosition(transform.position) });
+        return { ...object, transform: transformWholePath(object.transform), keyframes: object.keyframes.map((key) => ({ ...key, transform: transformWholePath(key.transform) })), motionPath: { ...object.motionPath, transform: transformWholePath(object.motionPath.transform) } };
     });
 }
 
@@ -312,7 +318,7 @@ export function resolveDirectorCameraGizmoEdit(input: { camera: DirectorCamera; 
     const transform: DirectorTransform = { ...rendered, position, rotation: edited.rotation, scale: edited.scale };
     const rotationChanged = new Quaternion().setFromEuler(new Euler(...from.rotation)).angleTo(new Quaternion().setFromEuler(new Euler(...edited.rotation))) > 1e-4;
     const aligned = resolveDirectorCameraAlignment(camera, transform, input.snappedTime);
-    return rotationChanged ? { ...aligned, lookAtMode: "rotation", lookAtObjectId: undefined } : aligned;
+    return rotationChanged ? { ...aligned, lookAtMode: "rotation", lookAtObjectId: undefined, keyframes: aligned.keyframes.map((key) => Math.abs(key.time - input.snappedTime) < DIRECTOR_KEYFRAME_EPSILON ? { ...key, rotationKeyed: true } : key) } : aligned;
 }
 
 /** 生成运镜只更新首尾帧；保留用户手工添加的中间帧、帧 id 与 easing。 */

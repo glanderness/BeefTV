@@ -8,7 +8,7 @@ import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { removeCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
 import { normalizeCanvasNodeTimestamps } from "@/lib/canvas/canvas-node-timestamps";
 import { normalizeCanvasMediaNodeSemanticsList } from "@/lib/canvas/canvas-node-semantics";
-import { normalizeDirectorCanvasNode } from "@/lib/canvas/director/director-node-migration";
+import { migrateDirectorCanvas } from "@/lib/canvas/director/director-node-migration";
 import { canvasWorkspaceProjectId, listCanvasWorkspaceProjectCanvases } from "@/lib/canvas/canvas-workspace-project";
 import { hydrateAssistantImages, resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
@@ -142,8 +142,11 @@ export function useCanvasProjectLifecycle({
                 ? normalizeCanvasAppearance(targetProject.appearance, fallbackTheme)
                 : canvasAppearanceForTheme(fallbackTheme);
             const sourceNodes = resetInterruptedGeneration(targetProject.nodes);
-            const normalizedDirectorNodes = sourceNodes.map(normalizeDirectorCanvasNode);
-            const hasDirectorMigration = normalizedDirectorNodes.some((node, index) => node !== sourceNodes[index]);
+            const sourceScenes = targetProject.directorScenes || [];
+            const migration = migrateDirectorCanvas(sourceNodes, sourceScenes);
+            const normalizedDirectorNodes = migration.nodes;
+            const hasDirectorMigration = normalizedDirectorNodes.some((node, index) => node !== sourceNodes[index]) || migration.directorScenes !== sourceScenes;
+            if (hasDirectorMigration) updateProject(targetProject.id, migration);
             const initialNodes = normalizeCanvasMediaNodeSemanticsList(normalizeCanvasNodeTimestamps(normalizedDirectorNodes, {
                 createdAt: targetProject.createdAt,
                 updatedAt: targetProject.updatedAt,
