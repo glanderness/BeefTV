@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -132,24 +133,36 @@ func useLifecycleProvider(t *testing.T) {
 	t.Setenv("BEEFTV_AGENT_PROTOCOL", "chat-completion")
 }
 
-func sleepHostConfig(t *testing.T, dir string) (assistantruntime.HostConfig, string) {
+func ownedListenerNode(t *testing.T) string {
+	t.Helper()
+	if path := strings.TrimSpace(os.Getenv("BEEFTV_TEST_NODE")); path != "" {
+		return path
+	}
+	path, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal("需要 node 运行 owned-listener 夹具")
+	}
+	return path
+}
+
+func ownedListenerScript(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("无法定位测试文件")
+	}
+	script := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "..", "agent-host", "test-support", "owned-listener.mjs"))
+	if _, err := os.Stat(script); err != nil {
+		t.Fatalf("owned-listener 不存在: %v", err)
+	}
+	return script
+}
+
+func ownedListenerConfig(t *testing.T, dir string) (assistantruntime.HostConfig, string) {
 	t.Helper()
 	marker := filepath.Join(dir, "spawned.marker")
 	t.Cleanup(func() { killMarkerProcess(marker) })
-	if runtime.GOOS == "windows" {
-		command := filepath.Join(dir, "host.cmd")
-		body := "@echo off\r\necho spawned>\"" + marker + "\"\r\nping -n 120 127.0.0.1 >nul\r\n"
-		if err := os.WriteFile(command, []byte(body), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		return assistantruntime.HostConfig{HostCommand: "cmd.exe", HostArgs: []string{"/c", command}}, marker
-	}
-	command := filepath.Join(dir, "host.sh")
-	body := "#!/bin/sh\necho $$ > \"" + marker + "\"\nexec sleep 120\n"
-	if err := os.WriteFile(command, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return assistantruntime.HostConfig{HostCommand: command}, marker
+	return assistantruntime.HostConfig{HostCommand: ownedListenerNode(t), HostArgs: []string{ownedListenerScript(t)}}, marker
 }
 
 func killMarkerProcess(marker string) {
@@ -194,13 +207,15 @@ func TestRepeatedStatusStartStopShareHostOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	useLifecycleProvider(t)
-	config, _ := sleepHostConfig(t, dataDir)
+	config, _ := ownedListenerConfig(t, dataDir)
 	encoded, err := json.Marshal(config)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	host := assistantruntime.New(assistantruntime.OptionsFromService(svc))
+	opts := assistantruntime.OptionsFromService(svc)
+	opts.ReadyTimeout = 8 * time.Second
+	host := assistantruntime.New(opts)
 	t.Cleanup(func() { _ = host.Stop() })
 	router := gin.New()
 	api := router.Group("/api")
@@ -272,7 +287,7 @@ func TestMissingHostFailsWithoutSpawning(t *testing.T) {
 		t.Fatal(err)
 	}
 	useLifecycleProvider(t)
-	config, marker := sleepHostConfig(t, dataDir)
+	config, marker := ownedListenerConfig(t, dataDir)
 	encoded, err := json.Marshal(config)
 	if err != nil {
 		t.Fatal(err)

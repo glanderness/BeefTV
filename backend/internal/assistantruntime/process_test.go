@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -36,10 +40,108 @@ func runProcessFixture(mode string) int {
 		return 0
 	case "crash":
 		return 2
+	case "fail-listen":
+		return 2
+	case "http":
+		return runHTTPFixture()
+	case "supervisor":
+		return runSupervisorFixture()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown fixture %q\n", mode)
 		return 1
 	}
+}
+
+func runHTTPFixture() int {
+	nonce := os.Getenv("BEEFTV_AGENT_INSTANCE_NONCE")
+	if dataDir := os.Getenv("BEEFTV_AGENT_DATA_DIR"); dataDir != "" {
+		_ = os.WriteFile(filepath.Join(dataDir, "child-env.txt"), []byte(strings.Join(os.Environ(), "\n")), 0o600)
+		_ = os.WriteFile(filepath.Join(dataDir, "child-pid.txt"), []byte(strconv.Itoa(os.Getpid())), 0o600)
+	}
+	go func() {
+		buf := make([]byte, 1)
+		for {
+			if _, err := os.Stdin.Read(buf); err != nil {
+				os.Exit(0)
+			}
+		}
+	}()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		if nonce != "" && r.Header.Get(InstanceHeader) != nonce {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"ok":false,"reason":"instance_mismatch"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		busy := os.Getenv("BEEFTV_AGENT_BUSY") == "1"
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true, "busy": busy, "model": os.Getenv("BEEFTV_AGENT_MODEL"),
+			"instance": InstanceProof(nonce),
+		})
+	})
+	if fdRaw := strings.TrimSpace(os.Getenv("BEEFTV_AGENT_LISTEN_FD")); fdRaw != "" {
+		fd, err := strconv.Atoi(fdRaw)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		listener, err := net.FileListener(os.NewFile(uintptr(fd), "listen"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		if err := http.Serve(listener, mux); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	}
+	port := strings.TrimSpace(os.Getenv("BEEFTV_AGENT_PORT"))
+	if port == "" {
+		fmt.Fprintln(os.Stderr, "missing BEEFTV_AGENT_PORT")
+		return 2
+	}
+	if err := http.ListenAndServe("127.0.0.1:"+port, mux); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return 0
+}
+
+func runSupervisorFixture() int {
+	dataDir := os.Getenv("BEEFTV_SUPERVISOR_DATA")
+	config := HostConfig{HostCommand: os.Args[0], HostArgs: []string{}}
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, hostConfigFile), encoded, 0o600); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	host := New(Options{
+		DataDir:      dataDir,
+		ReadyTimeout: 8 * time.Second,
+		Environ: func() []string {
+			out := make([]string, 0)
+			for _, entry := range os.Environ() {
+				if strings.HasPrefix(entry, fixtureEnv+"=") {
+					continue
+				}
+				out = append(out, entry)
+			}
+			return append(out, fixtureEnv+"=http")
+		},
+	})
+	if err := host.Launch(fixtureProvider(), "http://127.0.0.1:18090/api", ""); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	_ = os.WriteFile(filepath.Join(dataDir, "endpoint.txt"), []byte(host.Endpoint()), 0o600)
+	_ = os.WriteFile(filepath.Join(dataDir, "child-pid.txt"), []byte(strconv.Itoa(host.PID())), 0o600)
+	select {}
 }
 
 func fixtureProvider() assistant.Provider {
@@ -64,7 +166,8 @@ func fixtureHost(t *testing.T, mode string) *Host {
 		t.Fatal(err)
 	}
 	host := New(Options{
-		DataDir: dataDir,
+		DataDir:      dataDir,
+		ReadyTimeout: 8 * time.Second,
 		Environ: func() []string {
 			return append(os.Environ(), fixtureEnv+"="+mode)
 		},
@@ -85,7 +188,7 @@ func waitUntil(timeout time.Duration, ok func() bool) bool {
 }
 
 func TestHostStopReapsOwnChild(t *testing.T) {
-	host := fixtureHost(t, "sleep")
+	host := fixtureHost(t, "http")
 	if err := host.Launch(fixtureProvider(), "http://127.0.0.1:18090/api", "desktop-shell-token"); err != nil {
 		t.Fatalf("启动测试宿主失败: %v", err)
 	}
@@ -106,7 +209,7 @@ func TestHostStopReapsOwnChild(t *testing.T) {
 }
 
 func TestHostRestartReplacesChild(t *testing.T) {
-	host := fixtureHost(t, "sleep")
+	host := fixtureHost(t, "http")
 	provider := fixtureProvider()
 	if err := host.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
 		t.Fatal(err)
@@ -131,18 +234,18 @@ func TestHostCrashIsReapedAndCanRelaunch(t *testing.T) {
 	host := fixtureHost(t, "crash")
 	provider := fixtureProvider()
 	for attempt := 0; attempt < 2; attempt++ {
-		if err := host.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
-			t.Fatal(err)
+		if err := host.Launch(provider, "http://127.0.0.1:18090/api", ""); err == nil {
+			t.Fatal("崩溃子进程不得被报告为已就绪")
 		}
-		if !waitUntil(5*time.Second, func() bool { return !host.Running() }) {
-			t.Fatal("崩溃子进程应被唯一的 Wait 回收")
+		if host.Running() || host.Endpoint() != "" {
+			t.Fatal("崩溃子进程应被回收且不得留下可复用端点")
 		}
 	}
 }
 
 func TestSeparateHostsDoNotShareProcessOwnership(t *testing.T) {
-	first := fixtureHost(t, "sleep")
-	second := fixtureHost(t, "sleep")
+	first := fixtureHost(t, "http")
+	second := fixtureHost(t, "http")
 	provider := fixtureProvider()
 	if err := first.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
 		t.Fatal(err)
@@ -166,7 +269,7 @@ func TestSeparateHostsDoNotShareProcessOwnership(t *testing.T) {
 }
 
 func TestEnsureRestartsWhenFingerprintChangesAndIdle(t *testing.T) {
-	host := fixtureHost(t, "sleep")
+	host := fixtureHost(t, "http")
 	original := fixtureProvider()
 	if err := host.Launch(original, "http://127.0.0.1:18090/api", ""); err != nil {
 		t.Fatal(err)
@@ -191,7 +294,7 @@ func TestEnsureRestartsWhenFingerprintChangesAndIdle(t *testing.T) {
 }
 
 func TestConcurrentLifecycleLeavesSingleOwnedChild(t *testing.T) {
-	host := fixtureHost(t, "sleep")
+	host := fixtureHost(t, "http")
 	provider := fixtureProvider()
 	if err := host.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
 		t.Fatal(err)
@@ -230,7 +333,7 @@ func TestConcurrentLifecycleLeavesSingleOwnedChild(t *testing.T) {
 }
 
 func TestEnsureDoesNotRestartBusyHostOnFingerprintChange(t *testing.T) {
-	host := fixtureHost(t, "sleep")
+	host := fixtureHost(t, "http")
 	original := fixtureProvider()
 	if err := host.Launch(original, "http://127.0.0.1:18090/api", ""); err != nil {
 		t.Fatal(err)
@@ -250,20 +353,6 @@ func TestEnsureDoesNotRestartBusyHostOnFingerprintChange(t *testing.T) {
 	}
 }
 
-func fixtureExitName() string {
-	if runtime.GOOS == "windows" {
-		return "host.cmd"
-	}
-	return "host.sh"
-}
-
-func fixtureExitSource() string {
-	if runtime.GOOS == "windows" {
-		return "@echo off\r\nexit 0\r\n"
-	}
-	return "#!/bin/sh\nexit 0\n"
-}
-
 func startOutsider(t *testing.T) *exec.Cmd {
 	t.Helper()
 	var cmd *exec.Cmd
@@ -277,4 +366,207 @@ func startOutsider(t *testing.T) *exec.Cmd {
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
 	return cmd
+}
+
+func startForeignHealth(t *testing.T) (addr string, hits *int32) {
+	t.Helper()
+	var n int32
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"busy":false,"model":"foreign","instance":"not-ours"}`))
+	})}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+	return "http://" + listener.Addr().String(), &n
+}
+
+func TestFreshHostDoesNotAdoptForeignHealthyListener(t *testing.T) {
+	foreign, hits := startForeignHealth(t)
+	t.Setenv("BEEFTV_AGENT_HOST_URL", foreign)
+	t.Setenv("BEEFTV_AGENT_PORT", "18500")
+	host := New(Options{DataDir: t.TempDir()})
+	if host.Endpoint() != "" || host.Running() {
+		t.Fatal("新构造的 Host 不得认领已有监听器")
+	}
+	health := host.Probe(context.Background())
+	if health.OK {
+		t.Fatal("Probe 不得把外部 /health 当成自有子进程")
+	}
+	if err := host.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if *hits != 0 {
+		t.Fatalf("Stop/Probe 不得打到外部监听器，hits=%d", *hits)
+	}
+	req, err := http.NewRequest(http.MethodGet, foreign+"/health", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatal("外部监听器必须仍在运行")
+	}
+}
+
+func TestLaunchPinsPortAndDropsSpoofedOwnerOpenAI(t *testing.T) {
+	host := fixtureHost(t, "http")
+	host.opts.Environ = func() []string {
+		return []string{
+			"PATH=" + os.Getenv("PATH"),
+			"HOME=" + os.Getenv("HOME"),
+			fixtureEnv + "=http",
+			"BEEFTV_AGENT_PORT=18500",
+			"BEEFTV_OWNER_TOKEN=stolen-owner",
+			"BEEFTV_AGENT_HOST_TOKEN=stolen-host",
+			"OPENAI_API_KEY=sk-openai",
+			"ANTHROPIC_API_KEY=sk-ant",
+		}
+	}
+	host.opts.HostToken = func() string { return "pinned-host" }
+	if err := host.Launch(fixtureProvider(), "http://127.0.0.1:18090/api", ""); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(host.dataDir(), "child-env.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	childEnv := strings.Split(string(raw), "\n")
+	if port := envValue(childEnv, "BEEFTV_AGENT_PORT"); port == "" || port == "18500" {
+		t.Fatalf("子进程 PORT 必须是监督器钉死的实例端口，得到 %q", port)
+	}
+	if envValue(childEnv, "BEEFTV_OWNER_TOKEN") != "" {
+		t.Fatal("子进程不得看到 OWNER_TOKEN")
+	}
+	if envValue(childEnv, "BEEFTV_AGENT_HOST_TOKEN") != "pinned-host" {
+		t.Fatalf("子进程宿主凭据应被覆盖，得到 %q", envValue(childEnv, "BEEFTV_AGENT_HOST_TOKEN"))
+	}
+	if envHasKey(childEnv, "OPENAI_API_KEY") || envHasKey(childEnv, "ANTHROPIC_API_KEY") {
+		t.Fatal("子进程不得继承 OPENAI/ANTHROPIC 密钥")
+	}
+	if host.Endpoint() == "http://127.0.0.1:18500" {
+		t.Fatal("端点不得落在继承的 18500")
+	}
+}
+
+func TestRestartFailureDoesNotReportSuccessOrKeepEndpoint(t *testing.T) {
+	host := fixtureHost(t, "http")
+	provider := fixtureProvider()
+	if err := host.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
+		t.Fatal(err)
+	}
+	if host.Endpoint() == "" {
+		t.Fatal("启动成功后必须暴露自有端点")
+	}
+	host.opts.Environ = func() []string {
+		return append(os.Environ(), fixtureEnv+"=fail-listen")
+	}
+	if err := host.Restart(provider, "http://127.0.0.1:18090/api", ""); err == nil {
+		t.Fatal("就绪失败的重启不得报告成功")
+	}
+	if host.Running() || host.Endpoint() != "" {
+		t.Fatal("重启失败后不得留下可复用端点")
+	}
+}
+
+func TestRelaunchDoesNotTalkToOldChild(t *testing.T) {
+	host := fixtureHost(t, "http")
+	provider := fixtureProvider()
+	if err := host.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
+		t.Fatal(err)
+	}
+	firstPID := host.PID()
+	firstURL := host.Endpoint()
+	if firstPID == 0 || firstURL == "" {
+		t.Fatal("需要已就绪的第一代子进程")
+	}
+	if err := host.Restart(provider, "http://127.0.0.1:18090/api", ""); err != nil {
+		t.Fatal(err)
+	}
+	if host.PID() == firstPID || host.Endpoint() == firstURL {
+		t.Fatalf("重启必须换新实例 pid=%d/%d url=%s/%s", firstPID, host.PID(), firstURL, host.Endpoint())
+	}
+	resp, err := http.Get(firstURL + "/health")
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("旧子进程不得继续响应")
+	}
+}
+
+func TestNewHostCannotAdoptPreviousEndpoint(t *testing.T) {
+	first := fixtureHost(t, "http")
+	provider := fixtureProvider()
+	if err := first.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
+		t.Fatal(err)
+	}
+	owned := first.Endpoint()
+	second := New(Options{DataDir: t.TempDir()})
+	t.Cleanup(func() { _ = second.Stop() })
+	if second.Endpoint() != "" || second.Probe(context.Background()).OK {
+		t.Fatal("另一个 Host 不得认领前一个实例的端点")
+	}
+	if err := first.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := http.Get(owned + "/health"); err == nil {
+		t.Fatal("停止后旧端点不得仍可访问")
+	}
+}
+
+func TestProbeRejectsHealthyListenerWithoutMatchingInstance(t *testing.T) {
+	foreign, hits := startForeignHealth(t)
+	host := New(Options{DataDir: t.TempDir()})
+	host.TestingUseOwnedEndpoint(foreign, "owned-nonce-value", "fp")
+	health := host.Probe(context.Background())
+	if health.OK {
+		t.Fatal("实例证明不匹配时不得把外部 /health 当成自有子进程")
+	}
+	if *hits == 0 {
+		t.Fatal("Probe 应打到注入的测试端点并拒绝证明")
+	}
+	if strings.Contains(fmt.Sprintf("%#v", health), "owned-nonce-value") {
+		t.Fatal("Probe 结果不得包含实例 nonce")
+	}
+}
+
+func TestOwnedHealthJSONOmitsNonce(t *testing.T) {
+	host := fixtureHost(t, "http")
+	if err := host.Launch(fixtureProvider(), "http://127.0.0.1:18090/api", ""); err != nil {
+		t.Fatal(err)
+	}
+	health := host.Probe(context.Background())
+	if !health.OK || health.Instance == "" {
+		t.Fatalf("自有子进程应通过实例证明: %#v", health)
+	}
+	req, err := host.NewChildRequest(context.Background(), http.MethodGet, "/health", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := req.Header.Get(InstanceHeader)
+	if nonce == "" {
+		t.Fatal("子进程请求必须带实例 nonce 头")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), nonce) || strings.Contains(fmt.Sprintf("%#v", health), nonce) {
+		t.Fatalf("health JSON 或探测结果含 nonce: %s", body)
+	}
+	if health.Instance == nonce {
+		t.Fatal("公开 instance 字段必须是证明而不是 nonce")
+	}
 }

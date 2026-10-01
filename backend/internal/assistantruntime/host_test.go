@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 
@@ -15,15 +14,8 @@ func testProvider() assistant.Provider {
 	return assistant.Provider{Model: "gpt-5.5", BaseURL: "https://beefapi.com/v1", APIKey: "test-key", Protocol: "chat-completion"}
 }
 
-func envValue(env []string, key string) string {
-	prefix := key + "="
-	got := ""
-	for _, entry := range env {
-		if strings.HasPrefix(entry, prefix) {
-			got = strings.TrimPrefix(entry, prefix)
-		}
-	}
-	return got
+func testPin(opsURL, desktop string) childPin {
+	return childPin{OpsURL: opsURL, DesktopTok: desktop}
 }
 
 // 宿主把 BEEFTV_OPS_URL 当基址再拼 /ops，因此这里必须带 /api 前缀；
@@ -39,15 +31,15 @@ func TestHostEnvOpsURLKeepsAPIPrefix(t *testing.T) {
 	t.Setenv("CANVAS_BACKEND_ADDR", "127.0.0.1:18090")
 	t.Setenv("CANVAS_BACKEND_PORT", "")
 
-	env := New(Options{DataDir: dataDir}).buildEnv(testProvider(), "http://127.0.0.1:18090/api", "desktop-shell-token")
+	env := New(Options{DataDir: dataDir}).buildEnv(testProvider(), testPin("http://127.0.0.1:18090/api", "desktop-shell-token"))
 	if got := envValue(env, "BEEFTV_OPS_URL"); got != "http://127.0.0.1:18090/api" {
 		t.Fatalf("BEEFTV_OPS_URL 应使用显式地址，得到 %q", got)
 	}
 	if got := envValue(env, "BEEFTV_AGENT_HOST_TOKEN"); got != "host-token" {
 		t.Fatalf("BEEFTV_AGENT_HOST_TOKEN = %q", got)
 	}
-	if got := envValue(env, "BEEFTV_OWNER_TOKEN"); got != "owner-token" {
-		t.Fatalf("BEEFTV_OWNER_TOKEN = %q", got)
+	if got := envValue(env, "BEEFTV_OWNER_TOKEN"); got != "" {
+		t.Fatalf("不得向子进程注入 BEEFTV_OWNER_TOKEN，得到 %q", got)
 	}
 	if got := envValue(env, "BEEFTV_AGENT_DATA_DIR"); got != dataDir {
 		t.Fatalf("BEEFTV_AGENT_DATA_DIR = %q", got)
@@ -95,7 +87,7 @@ func TestAssistantHostEnvCarriesProtocolAndBaseURLShape(t *testing.T) {
 	}
 	for _, item := range cases {
 		env := host.buildEnv(assistant.Provider{Model: "m", BaseURL: item.baseURL, APIKey: "k", Protocol: item.protocol},
-			"http://127.0.0.1:18090/api", "")
+			testPin("http://127.0.0.1:18090/api", ""))
 		if got := envValue(env, "BEEFTV_AGENT_API"); got != item.wantAPI {
 			t.Fatalf("协议 %s 应映射到 %s，得到 %q", item.protocol, item.wantAPI, got)
 		}
@@ -158,25 +150,36 @@ func TestAgentHostReapsExitAndRestartsWithSpacedPath(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	script := filepath.Join(dir, fixtureExitName())
-	if err := os.WriteFile(script, []byte(fixtureExitSource()), 0o755); err != nil {
+	helper := filepath.Join(dir, "host-helper")
+	src, err := os.ReadFile(os.Args[0])
+	if err != nil {
 		t.Fatal(err)
 	}
-	host := New(Options{DataDir: dir})
-	if err := host.WriteConfig(HostConfig{HostCommand: script}); err != nil {
+	if err := os.WriteFile(helper, src, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	provider := assistant.Provider{Model: "m", BaseURL: "https://example.invalid/v1", APIKey: "k", Protocol: "chat-completion"}
-	for attempt := 0; attempt < 2; attempt++ {
-		if err := host.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
-			t.Fatal(err)
-		}
-		if !waitUntil(5*time.Second, func() bool { return !host.Running() }) {
-			t.Fatal("exited child was not reaped")
-		}
-	}
-	if err := host.Stop(); err != nil {
+	host := New(Options{
+		DataDir:      dir,
+		ReadyTimeout: 8 * time.Second,
+		Environ:      func() []string { return append(os.Environ(), fixtureEnv+"=http") },
+	})
+	t.Cleanup(func() { _ = host.Stop() })
+	if err := host.WriteConfig(HostConfig{HostCommand: helper}); err != nil {
 		t.Fatal(err)
+	}
+	provider := fixtureProvider()
+	if err := host.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
+		t.Fatal(err)
+	}
+	first := host.Endpoint()
+	if first == "" || !host.Running() {
+		t.Fatal("spaced host command should own a ready endpoint")
+	}
+	if err := host.Restart(provider, "http://127.0.0.1:18090/api", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !host.Running() || host.Endpoint() == "" {
+		t.Fatal("restart after spaced path must still own a ready child")
 	}
 }
 
@@ -191,6 +194,69 @@ func TestOpsBaseURLPrefersExplicitAddress(t *testing.T) {
 	}
 	if got := opsBaseURL("", "127.0.0.1:9999"); got != "http://127.0.0.1:9999/api" {
 		t.Fatalf("无显式地址时应退回环境变量，得到 %q", got)
+	}
+}
+
+func TestBuildEnvStripsInheritedSecretsAndClearsBlankAuthority(t *testing.T) {
+	dataDir := t.TempDir()
+	host := New(Options{
+		DataDir:   dataDir,
+		HostToken: func() string { return "pinned-host" },
+		Environ: func() []string {
+			return []string{
+				"PATH=/usr/bin:/opt/homebrew/bin",
+				"HOME=/tmp",
+				"BEEFTV_AGENT_PORT=18500",
+				"BEEFTV_OWNER_TOKEN=stolen-owner",
+				"BEEFTV_AGENT_HOST_TOKEN=stolen-host",
+				"BEEFTV_OPS_URL=http://evil.example/api",
+				"BEEFTV_AGENT_API_KEY=inherited-key",
+				"OPENAI_API_KEY=sk-openai",
+				"ANTHROPIC_API_KEY=sk-ant",
+				"GEMINI_API_KEY=stolen-gemini",
+				"BEEFTV_AGENT_MAX_TOKENS=1234",
+			}
+		},
+	})
+	env := host.buildEnv(assistant.Provider{Model: "m", BaseURL: "https://example.invalid/v1", Protocol: "chat-completion"}, childPin{
+		Port: 54321, Nonce: "nonce-value", ListenFD: "3", Lifetime: true,
+		OpsURL: "http://127.0.0.1:18090/api", DesktopTok: "desk",
+	})
+	if got := envValue(env, "PATH"); got != "/usr/bin:/opt/homebrew/bin" {
+		t.Fatalf("PATH 必须保留，得到 %q", got)
+	}
+	if got := envValue(env, "BEEFTV_AGENT_PORT"); got != "54321" {
+		t.Fatalf("PORT 必须由监督器钉死，得到 %q", got)
+	}
+	if got := envValue(env, "BEEFTV_AGENT_HOST_TOKEN"); got != "pinned-host" {
+		t.Fatalf("宿主凭据必须覆盖继承值，得到 %q", got)
+	}
+	if got := envValue(env, "BEEFTV_OWNER_TOKEN"); got != "" {
+		t.Fatalf("OWNER_TOKEN 不得进入子进程，得到 %q", got)
+	}
+	if got := envValue(env, "BEEFTV_OPS_URL"); got != "http://127.0.0.1:18090/api" {
+		t.Fatalf("OPS_URL 必须钉死，得到 %q", got)
+	}
+	if got := envValue(env, "BEEFTV_AGENT_API_KEY"); got != "" {
+		t.Fatalf("空白权威密钥必须清掉继承值，得到 %q", got)
+	}
+	if !envHasKey(env, "BEEFTV_AGENT_API_KEY") {
+		t.Fatal("空白权威密钥必须以空值写出，不能省略")
+	}
+	if envValue(env, "OPENAI_API_KEY") != "" || envHasKey(env, "OPENAI_API_KEY") {
+		t.Fatal("不得把环境里的 OPENAI_API_KEY 带进 SDK")
+	}
+	if envValue(env, "ANTHROPIC_API_KEY") != "" || envHasKey(env, "ANTHROPIC_API_KEY") {
+		t.Fatal("不得把环境里的 ANTHROPIC_API_KEY 带进 SDK")
+	}
+	if envValue(env, "BEEFTV_AGENT_INSTANCE_NONCE") != "nonce-value" {
+		t.Fatal("实例 nonce 必须钉死")
+	}
+	if envValue(env, "BEEFTV_AGENT_LIFETIME_STDIN") != "1" {
+		t.Fatal("生命周期管道标记必须钉死")
+	}
+	if envValue(env, "BEEFTV_AGENT_MAX_TOKENS") != "1234" {
+		t.Fatalf("非权威可调参数应保留，得到 %q", envValue(env, "BEEFTV_AGENT_MAX_TOKENS"))
 	}
 }
 

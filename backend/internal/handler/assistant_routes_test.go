@@ -17,6 +17,7 @@ import (
 
 	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/assistant"
 	"infinite-canvas/backend/internal/assistantruntime"
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/model"
@@ -29,6 +30,11 @@ import (
 
 // assistantTestHostToken 是替身宿主出示的宿主凭据；真实注入路径见 hostEnv。
 const assistantTestHostToken = "test-host-token"
+const assistantTestNonce = "assistant-test-instance-nonce"
+
+func assistantInstanceProof() string {
+	return assistantruntime.InstanceProof(assistantTestNonce)
+}
 
 type assistantTestEnv struct {
 	router        *gin.Engine
@@ -72,20 +78,27 @@ func newAssistantTestEnv(t *testing.T, host func(env *assistantTestEnv) http.Han
 		t.Fatal(err)
 	}
 	env := &assistantTestEnv{service: service, canvasID: canvasID, hostHits: map[string]int{}}
-	if host != nil {
-		server := httptest.NewServer(host(env))
-		t.Cleanup(server.Close)
-		t.Setenv("BEEFTV_AGENT_HOST_URL", server.URL)
-	} else {
-		t.Setenv("BEEFTV_AGENT_HOST_URL", "http://127.0.0.1:1")
-	}
 	t.Setenv("BEEFTV_AGENT_HOST_TOKEN", assistantTestHostToken)
+	t.Setenv("BEEFTV_AGENT_HOST_URL", "http://127.0.0.1:18500")
 
 	ui := newUISessionStore()
 	env.uiToken = ui.issue(owner.ID).Token
 	assistantHost := assistantruntime.New(assistantruntime.OptionsFromService(service))
 	t.Cleanup(func() { _ = assistantHost.Stop() })
 	env.assistantHost = assistantHost
+	if host != nil {
+		inner := host(env)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get(assistantruntime.InstanceHeader) != assistantTestNonce {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"ok":false,"reason":"instance_mismatch"}`))
+				return
+			}
+			inner.ServeHTTP(w, r)
+		}))
+		t.Cleanup(server.Close)
+		assistantHost.TestingUseOwnedEndpoint(server.URL, assistantTestNonce, "")
+	}
 	router := gin.New()
 	router.Use(RuntimeDependenciesMiddleware(RuntimeDependencies{AssistantHost: assistantHost}))
 	api := router.Group("/api")
@@ -126,6 +139,11 @@ func useEnvProvider(t *testing.T, protocol string) {
 
 func (e *assistantTestEnv) call(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	return e.callWithHeaders(t, method, path, body, map[string]string{"X-Beeftv-Ui-Session": e.uiToken})
+}
+
+func (e *assistantTestEnv) callWithHeaders(t *testing.T, method, path, body string, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
 	var reader *strings.Reader
 	if body == "" {
 		reader = strings.NewReader("")
@@ -136,7 +154,13 @@ func (e *assistantTestEnv) call(t *testing.T, method, path, body string) *httpte
 	request.Host = "127.0.0.1:18090"
 	request.RemoteAddr = "127.0.0.1:12345"
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-Beeftv-Ui-Session", e.uiToken)
+	for key, value := range headers {
+		if value == "" {
+			request.Header.Del(key)
+			continue
+		}
+		request.Header.Set(key, value)
+	}
 	recorder := httptest.NewRecorder()
 	e.router.ServeHTTP(recorder, request)
 	return recorder
@@ -166,7 +190,7 @@ func TestAssistantStatusReportsResolvedModelAndReasons(t *testing.T) {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			env.hostHits[r.URL.Path]++
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"ok":true,"busy":false,"model":"MiniMax-M3"}`))
+			_, _ = w.Write([]byte(`{"ok":true,"busy":false,"model":"MiniMax-M3","instance":"` + assistantInstanceProof() + `"}`))
 		})
 	})
 
@@ -219,7 +243,7 @@ func TestAssistantChatRecordsTurnChangeAndUndoRestoresDocument(t *testing.T) {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			env.hostHits[r.URL.Path]++
 			if r.URL.Path == "/health" {
-				_, _ = w.Write([]byte(`{"ok":true,"busy":false}`))
+				_, _ = w.Write([]byte(`{"ok":true,"busy":false,"instance":"` + assistantInstanceProof() + `"}`))
 				return
 			}
 			if r.URL.Path == "/history" {
@@ -391,6 +415,116 @@ func TestAssistantSessionsAndHistoryAreProxiedWithScopeCheck(t *testing.T) {
 	}
 	if env.hostHits["/sessions"] != 2 {
 		t.Fatalf("scope 未通过时不应转发给宿主，命中 %d 次", env.hostHits["/sessions"])
+	}
+}
+
+func TestAssistantStatusBusyOldModelAfterProviderChange(t *testing.T) {
+	running := assistant.Provider{
+		ChannelID: "env", Model: "old-model", BaseURL: "https://relay.example.com/v1",
+		Protocol: "chat-completion", APIKey: "old-key",
+	}
+	env := newAssistantTestEnv(t, func(env *assistantTestEnv) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			env.hostHits[r.URL.Path]++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"busy":true,"model":"old-model","instance":"` + assistantInstanceProof() + `"}`))
+		})
+	})
+	env.assistantHost.TestingUseOwnedEndpoint(env.assistantHost.Endpoint(), assistantTestNonce, running.Fingerprint())
+	useEnvProvider(t, "chat-completion")
+	t.Setenv("BEEFTV_AGENT_MODEL", "MiniMax-M3")
+
+	data := decodeEnvelope(t, env.call(t, http.MethodGet, "/assistant/status", ""))
+	if available, _ := data["available"].(bool); available {
+		t.Fatalf("忙碌的旧模型不得标成新模型已就绪: %#v", data)
+	}
+	if data["reason"] != "host_busy" {
+		t.Fatalf("reason 应为 host_busy，得到 %#v", data)
+	}
+	modelInfo, _ := data["model"].(map[string]any)
+	if modelInfo["id"] != "old-model" {
+		t.Fatalf("忙碌时应报告正在跑的旧模型，得到 %#v", data["model"])
+	}
+}
+
+func TestAssistantCancelRequiresWriteAndOwnedCanvas(t *testing.T) {
+	env := newAssistantTestEnv(t, func(env *assistantTestEnv) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			env.hostHits[r.URL.Path]++
+			if r.URL.Path == "/health" {
+				_, _ = w.Write([]byte(`{"ok":true,"busy":false,"instance":"` + assistantInstanceProof() + `"}`))
+				return
+			}
+			if r.URL.Path == "/cancel" && r.Method == http.MethodPost {
+				w.WriteHeader(http.StatusAccepted)
+				_, _ = w.Write([]byte(`{"accepted":true}`))
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		})
+	})
+
+	owned := env.call(t, http.MethodPost, "/assistant/cancel", `{"canvasId":"`+env.canvasID+`"}`)
+	if owned.Code != http.StatusOK {
+		t.Fatalf("拥有的画布取消应转发宿主: %d %s", owned.Code, owned.Body.String())
+	}
+	if env.hostHits["/cancel"] != 1 {
+		t.Fatalf("拥有的画布应命中宿主一次，得到 %d", env.hostHits["/cancel"])
+	}
+
+	foreign := env.call(t, http.MethodPost, "/assistant/cancel", `{"canvasId":"not-mine"}`)
+	if foreign.Code != http.StatusNotFound {
+		t.Fatalf("外部画布应是 404，得到 %d %s", foreign.Code, foreign.Body.String())
+	}
+	if env.hostHits["/cancel"] != 1 {
+		t.Fatalf("外部画布不得转发给宿主，命中 %d", env.hostHits["/cancel"])
+	}
+
+	reg, token, err := env.clients.Register("readonly", agentops.ClientReadOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readOnly := env.callWithHeaders(t, http.MethodPost, "/assistant/cancel", `{"canvasId":"`+env.canvasID+`"}`, map[string]string{
+		"X-Beeftv-Client": reg.ID, "Authorization": "Bearer " + token,
+	})
+	if readOnly.Code != http.StatusForbidden {
+		t.Fatalf("只读客户端应是 403，得到 %d %s", readOnly.Code, readOnly.Body.String())
+	}
+	if reason := decodeEnvelope(t, readOnly)["__reason"]; reason != "read_only_client" {
+		t.Fatalf("reason 应为 read_only_client，得到 %v", reason)
+	}
+	if env.hostHits["/cancel"] != 1 {
+		t.Fatalf("只读客户端不得转发给宿主，命中 %d", env.hostHits["/cancel"])
+	}
+}
+
+func TestAssistantStatusAndProxyIgnoreForeignHostURL(t *testing.T) {
+	hits := 0
+	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"busy":false,"model":"foreign","instance":"not-ours"}`))
+	}))
+	t.Cleanup(foreign.Close)
+
+	env := newAssistantTestEnv(t, nil)
+	t.Setenv("BEEFTV_AGENT_HOST_URL", foreign.URL)
+	useEnvProvider(t, "chat-completion")
+
+	status := decodeEnvelope(t, env.call(t, http.MethodGet, "/assistant/status", ""))
+	if available, _ := status["available"].(bool); available {
+		t.Fatalf("不得把环境变量 HOST_URL 当成自有宿主: %#v", status)
+	}
+	chat := env.call(t, http.MethodPost, "/assistant/chat", `{"canvasId":"`+env.canvasID+`","message":"x"}`)
+	if chat.Code != http.StatusServiceUnavailable {
+		t.Fatalf("无自有子进程时对话应 503，得到 %d %s", chat.Code, chat.Body.String())
+	}
+	cancel := env.call(t, http.MethodPost, "/assistant/cancel", `{"canvasId":"`+env.canvasID+`"}`)
+	if cancel.Code != http.StatusServiceUnavailable {
+		t.Fatalf("无自有子进程时取消应 503，得到 %d %s", cancel.Code, cancel.Body.String())
+	}
+	if hits != 0 {
+		t.Fatalf("status/chat/cancel 不得打到外部 HOST_URL，hits=%d", hits)
 	}
 }
 

@@ -19,7 +19,15 @@ const HOST_TOKEN = process.env.BEEFTV_AGENT_HOST_TOKEN || '';
 const DESKTOP_TOKEN = process.env.BEEFTV_AGENT_DESKTOP_TOKEN || '';
 const ALLOWED_ORIGIN = process.env.BEEFTV_AGENT_ALLOWED_ORIGIN || '';
 const DATA_DIR = process.env.BEEFTV_AGENT_DATA_DIR || '';
-const PORT = Number(process.env.BEEFTV_AGENT_PORT || 18500);
+const LISTEN_FD = Number(process.env.BEEFTV_AGENT_LISTEN_FD || 0);
+const PORT_RAW = String(process.env.BEEFTV_AGENT_PORT || '').trim();
+const INSTANCE_NONCE = process.env.BEEFTV_AGENT_INSTANCE_NONCE || '';
+const LIFETIME_STDIN = process.env.BEEFTV_AGENT_LIFETIME_STDIN === '1';
+if (!LISTEN_FD && !PORT_RAW) {
+  console.error('agent-host: 缺少 BEEFTV_AGENT_PORT 或 BEEFTV_AGENT_LISTEN_FD（由产品启动链注入）');
+  process.exit(2);
+}
+const PORT = Number(PORT_RAW || 0);
 const MODEL_ID = (process.env.BEEFTV_AGENT_MODEL || '').trim();
 const MODEL_API = (process.env.BEEFTV_AGENT_API || 'openai-completions').trim();
 const BASE_URL = (process.env.BEEFTV_AGENT_BASE_URL || '').replace(/\/+$/, '');
@@ -141,7 +149,20 @@ const store = createSessionStore({
 
 function sendLine(res, payload) { res.write(JSON.stringify(payload) + '\n'); }
 
+function instanceProof() {
+  if (!INSTANCE_NONCE) return '';
+  return crypto.createHash('sha256').update(INSTANCE_NONCE).digest('hex').slice(0, 16);
+}
+
+function instanceOK(req) {
+  if (!INSTANCE_NONCE) return true;
+  const got = String(req.headers['x-beeftv-instance-nonce'] || '');
+  if (got.length !== INSTANCE_NONCE.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(got), Buffer.from(INSTANCE_NONCE));
+}
+
 function authorized(req) {
+  if (!instanceOK(req)) return { ok: false, reason: 'instance_mismatch' };
   const token = String(req.headers['x-beeftv-agent-token'] || '');
   if (token.length !== HOST_TOKEN.length) return { ok: false, reason: 'unauthorized' };
   if (!crypto.timingSafeEqual(Buffer.from(token), Buffer.from(HOST_TOKEN))) return { ok: false, reason: 'unauthorized' };
@@ -195,10 +216,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (req.method === 'GET' && url.pathname === '/health') {
+    if (!instanceOK(req)) { respond(res, 403, { code: 403, reason: 'instance_mismatch' }); return; }
     const persistenceSummary = store.sessions.size === 0 ? 'ok' : [...new Set([...store.sessions.values()].map((entry) => entry.persistence))].join(',');
+    const proof = instanceProof();
     respond(res, 200, { ok: !providerReason, reason: providerReason || undefined,
       sessions: store.sessions.size, busy: anySessionBusy(), model: MODEL?.id || MODEL_ID, api: MODEL_API,
       baseUrl: MODEL?.baseUrl || BASE_URL, persistence: persistenceSummary, runId: RUN_ID,
+      instance: proof || undefined,
       requests: { dispatched, perTurnRequests: MAX_REQUESTS_PER_TURN, perTurnToolSteps: MAX_TOOL_STEPS_PER_TURN,
         lifetimeBudget: lifetimeBudget.limit, lifetimeUsed: lifetimeBudget.used },
       operations: ops.descriptors.size, readOnly: READ_ONLY_MODE, lastOutbound: outbound.at(-1) || null });
@@ -350,9 +374,13 @@ try {
   console.error(`agent-host: 载入 ${count} 个操作（readOnly=${READ_ONLY_MODE}）`);
 }
 catch (error) { console.error(`agent-host: 能力发现失败（稍后可重试）：${error?.message || error}`); }
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`agent-host 已启动 http://127.0.0.1:${PORT} model=${MODEL?.id || MODEL_ID} api=${MODEL_API} baseUrl=${MODEL?.baseUrl || BASE_URL} ops=${OPS_URL} readOnly=${READ_ONLY_MODE} reason=${providerReason || 'ok'}`);
-});
+function onListen() {
+  const bound = server.address();
+  const port = bound && typeof bound === 'object' ? bound.port : PORT;
+  console.log(`agent-host 已启动 http://127.0.0.1:${port} model=${MODEL?.id || MODEL_ID} api=${MODEL_API} baseUrl=${MODEL?.baseUrl || BASE_URL} ops=${OPS_URL} readOnly=${READ_ONLY_MODE} reason=${providerReason || 'ok'}`);
+}
+if (LISTEN_FD > 0) server.listen({ fd: LISTEN_FD }, onListen);
+else server.listen(PORT, '127.0.0.1', onListen);
 
 let shuttingDown = false;
 async function shutdown() {
@@ -369,3 +397,8 @@ async function shutdown() {
 }
 process.once('SIGTERM', () => { void shutdown(); });
 process.once('SIGINT', () => { void shutdown(); });
+if (LIFETIME_STDIN) {
+  process.stdin.resume();
+  process.stdin.on('end', () => { void shutdown(); });
+  process.stdin.on('error', () => { void shutdown(); });
+}

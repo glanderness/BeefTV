@@ -8,31 +8,131 @@ import (
 	"infinite-canvas/backend/internal/assistant"
 )
 
-func (h *Host) buildEnv(provider assistant.Provider, opsURL, desktopToken string) []string {
-	env := h.environ()
-	appendIf := func(key, value string) {
-		if strings.TrimSpace(value) != "" {
-			env = append(env, key+"="+value)
+type childPin struct {
+	Port       int
+	Nonce      string
+	ListenFD   string
+	Lifetime   bool
+	OpsURL     string
+	DesktopTok string
+}
+
+func (h *Host) buildEnv(provider assistant.Provider, pin childPin) []string {
+	env := filterInheritedEnv(h.environ())
+	set := func(key, value string) {
+		env = setEnvValue(env, key, value)
+	}
+	set("BEEFTV_AGENT_DATA_DIR", h.dataDir())
+	set("BEEFTV_AGENT_MODEL", provider.Model)
+	set("BEEFTV_AGENT_BASE_URL", hostBaseURL(provider.BaseURL, provider.Protocol))
+	set("BEEFTV_AGENT_API", hostAPI(provider.Protocol))
+	set("BEEFTV_OPS_URL", opsBaseURL(pin.OpsURL, h.backendAddr()))
+	set("BEEFTV_AGENT_HOST_TOKEN", h.hostToken())
+	set("BEEFTV_AGENT_DESKTOP_TOKEN", pin.DesktopTok)
+	set("BEEFTV_AGENT_API_KEY", provider.APIKey)
+	if pin.Port > 0 {
+		set("BEEFTV_AGENT_PORT", strconv.Itoa(pin.Port))
+	} else {
+		set("BEEFTV_AGENT_PORT", "")
+	}
+	set("BEEFTV_AGENT_INSTANCE_NONCE", pin.Nonce)
+	set("BEEFTV_AGENT_LISTEN_FD", pin.ListenFD)
+	if pin.Lifetime {
+		set("BEEFTV_AGENT_LIFETIME_STDIN", "1")
+	} else {
+		set("BEEFTV_AGENT_LIFETIME_STDIN", "")
+	}
+	set("BEEFTV_OWNER_TOKEN", "")
+	set("BEEFTV_AGENT_HOST_URL", "")
+	return env
+}
+
+func filterInheritedEnv(inherited []string) []string {
+	out := make([]string, 0, len(inherited))
+	for _, entry := range inherited {
+		key, _, found := strings.Cut(entry, "=")
+		if !found {
+			continue
+		}
+		if stripInheritedKey(key) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func stripInheritedKey(key string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(key))
+	switch upper {
+	case "BEEFTV_OWNER_TOKEN", "BEEFTV_OPS_URL", "BEEFTV_AGENT_HOST_URL":
+		return true
+	case "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_API_BASE", "OPENAI_ORG_ID", "OPENAI_ORGANIZATION":
+		return true
+	case "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN":
+		return true
+	case "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY":
+		return true
+	case "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT":
+		return true
+	case "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN":
+		return true
+	case "XAI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "TOGETHER_API_KEY",
+		"FIREWORKS_API_KEY", "DEEPSEEK_API_KEY", "COHERE_API_KEY", "PERPLEXITY_API_KEY",
+		"CLAUDE_API_KEY", "NPM_TOKEN", "NODE_AUTH_TOKEN":
+		return true
+	}
+	if strings.HasPrefix(upper, "BEEFTV_AGENT_") {
+		return !agentTunableKey(upper)
+	}
+	return false
+}
+
+// agentTunableKey is a non-authority child setting (timeouts, budgets, origin).
+// Credentials, listen identity, model, and ops URL are never tunables.
+func agentTunableKey(upper string) bool {
+	switch upper {
+	case "BEEFTV_AGENT_MAX_TOKENS", "BEEFTV_AGENT_CONTEXT_WINDOW",
+		"BEEFTV_AGENT_TURN_TIMEOUT_MS", "BEEFTV_AGENT_MAX_REQUESTS_PER_TURN",
+		"BEEFTV_AGENT_MAX_TOOL_STEPS_PER_TURN", "BEEFTV_AGENT_TOTAL_REQUEST_BUDGET",
+		"BEEFTV_AGENT_ALLOWED_ORIGIN", "BEEFTV_AGENT_READ_ONLY",
+		"BEEFTV_AGENT_MAX_REQUESTS":
+		return true
+	}
+	return false
+}
+
+func setEnvValue(env []string, key, value string) []string {
+	prefix := key + "="
+	kept := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return append(kept, key+"="+value)
+}
+
+func envValue(env []string, key string) string {
+	prefix := key + "="
+	got := ""
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			got = strings.TrimPrefix(entry, prefix)
 		}
 	}
-	dataDir := h.dataDir()
-	appendIf("BEEFTV_AGENT_DATA_DIR", dataDir)
-	appendIf("BEEFTV_AGENT_MODEL", provider.Model)
-	appendIf("BEEFTV_AGENT_BASE_URL", hostBaseURL(provider.BaseURL, provider.Protocol))
-	// 协议随环境下发：宿主不再假设一切都是 OpenAI 兼容接口。
-	appendIf("BEEFTV_AGENT_API", hostAPI(provider.Protocol))
-	// 宿主把 BEEFTV_OPS_URL 当基址再拼 /ops；少了 /api 前缀时操作层探测只会拿到 404，
-	// 宿主随即退出（表现为「助手不可用」）。
-	// 地址必须来自真实运行中的后端：桌面形态监听随机回环端口，凭环境变量猜端口会指向错误位置。
-	appendIf("BEEFTV_OPS_URL", opsBaseURL(opsURL, h.backendAddr()))
-	appendIf("BEEFTV_AGENT_HOST_TOKEN", h.hostToken())
-	appendIf("BEEFTV_OWNER_TOKEN", h.ownerToken())
-	// 桌面形态整个 API 由启动令牌把关：宿主是桌面壳的一部分，像页面一样出示同一个令牌，
-	// 而不是让操作层为它开一条豁免路径。
-	appendIf("BEEFTV_AGENT_DESKTOP_TOKEN", desktopToken)
-	// 模型密钥来自应用已有配置（或显式注入），只在进程内传给子进程。
-	appendIf("BEEFTV_AGENT_API_KEY", provider.APIKey)
-	return env
+	return got
+}
+
+func envHasKey(env []string, key string) bool {
+	prefix := key + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // hostAPI 把渠道协议映射成 pi-ai 的 API 适配器名；宿主按它构造模型定义。
@@ -111,11 +211,4 @@ func (h *Host) hostToken() string {
 		return strings.TrimSpace(h.opts.HostToken())
 	}
 	return ReadHostToken(h.dataDir())
-}
-
-func (h *Host) ownerToken() string {
-	if h != nil && h.opts.OwnerToken != nil {
-		return strings.TrimSpace(h.opts.OwnerToken())
-	}
-	return ReadOwnerToken(h.dataDir())
 }

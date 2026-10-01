@@ -3,12 +3,10 @@ package bootstrap_test
 import (
 	"encoding/json"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -34,20 +32,11 @@ func TestDesktopProfileStartupChain(t *testing.T) {
 		t.Skip("未设置 BEEFTV_TEST_NODE（自包含 node 二进制路径），跳过随包运行时的集成验收")
 	}
 	// Exercise persisted channel configuration, never inherited provider overrides.
-	for _, key := range []string{"BEEFTV_AGENT_API_KEY", "BEEFTV_AGENT_BASE_URL", "BEEFTV_AGENT_MODEL", "BEEFTV_AGENT_PROTOCOL", "BEEFTV_AGENT_HOST_TOKEN", "BEEFTV_UI_BOOTSTRAP"} {
+	// Inherited PORT / HOST_URL are not runtime authority; the supervisor binds a
+	// fresh loopback endpoint after launch.
+	for _, key := range []string{"BEEFTV_AGENT_API_KEY", "BEEFTV_AGENT_BASE_URL", "BEEFTV_AGENT_MODEL", "BEEFTV_AGENT_PROTOCOL", "BEEFTV_AGENT_HOST_TOKEN", "BEEFTV_UI_BOOTSTRAP", "BEEFTV_AGENT_PORT", "BEEFTV_AGENT_HOST_URL"} {
 		t.Setenv(key, "")
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	hostAddr := listener.Addr().String()
-	hostPort := listener.Addr().(*net.TCPAddr).Port
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("BEEFTV_AGENT_PORT", strconv.Itoa(hostPort))
-	t.Setenv("BEEFTV_AGENT_HOST_URL", "http://"+hostAddr)
 	if os.Getenv("BEEFTV_TEST_REAL_TURN") != "1" {
 		t.Setenv("BEEFTV_AGENT_MAX_REQUESTS", "0")
 	}
@@ -59,7 +48,11 @@ func TestDesktopProfileStartupChain(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(agentDir, "runtime", "bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"server.mjs", "session-identity.mjs", "canvas-turn.mjs", "request-budget.mjs", "package.json", "run-agent-host.sh"} {
+	for _, name := range []string{
+		"server.mjs", "session-identity.mjs", "canvas-turn.mjs", "request-budget.mjs",
+		"operation-bridge.mjs", "session-owner.mjs", "full-control-loader.mjs",
+		"session-settings.mjs", "lifecycle-events.mjs", "package.json", "run-agent-host.sh",
+	} {
 		copyFile(t, filepath.Join(hostSource, name), filepath.Join(agentDir, name))
 	}
 	if err := os.Chmod(filepath.Join(agentDir, "run-agent-host.sh"), 0o755); err != nil {
@@ -170,10 +163,8 @@ func TestDesktopProfileStartupChain(t *testing.T) {
 		t.Fatal("该用例必须在没有 BEEFTV_UI_BOOTSTRAP 的前提下运行")
 	}
 
-	// 模型连接信息必须来自应用已有的本地模型配置：进程内没有 BEEFTV_AGENT_API_KEY，
-	// 宿主启动时会强制校验密钥、端口与模型；因此「宿主能起来并通过 /health」本身就证明
-	// 密钥与 baseUrl 来自配置。/assistant/host/config 是 owner 专用端点，页面与这里都不应依赖它。
-	// 启动链是否真的按随包启动器拉起了宿主（真实子进程），且模型信息来自本地配置。
+	// 模型连接信息必须来自应用已有的本地模型配置：进程内没有 BEEFTV_AGENT_API_KEY。
+	// 启动链拉起自有子进程后，/assistant/status 在实例证明通过时才报 available。
 	deadline := time.Now().Add(90 * time.Second)
 	available := false
 	health := ""
@@ -203,31 +194,8 @@ func TestDesktopProfileStartupChain(t *testing.T) {
 	if status.Data.Model.ID != modelID || status.Data.Model.ChannelID != "desktop-fixture" {
 		t.Fatalf("助手状态没有投影选中的渠道模型：%s", health)
 	}
-	// /assistant/status exposes model identity; host /health verifies the actual child configuration.
-	response, err := (&http.Client{Timeout: 5 * time.Second}).Get("http://" + hostAddr + "/health")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	var hostHealth struct {
-		OK         bool   `json:"ok"`
-		Model      string `json:"model"`
-		BaseURL    string `json:"baseUrl"`
-		API        string `json:"api"`
-		Operations int    `json:"operations"`
-		Requests   struct {
-			Dispatched int `json:"dispatched"`
-		} `json:"requests"`
-	}
-	if err := json.NewDecoder(response.Body).Decode(&hostHealth); err != nil {
-		t.Fatal(err)
-	}
-	wantURL := strings.TrimRight(modelURL, "/")
-	if !strings.HasSuffix(wantURL, "/v1") {
-		wantURL += "/v1"
-	}
-	if response.StatusCode != http.StatusOK || !hostHealth.OK || hostHealth.Model != modelID || hostHealth.BaseURL != wantURL || hostHealth.API != "openai-completions" || hostHealth.Operations == 0 || hostHealth.Requests.Dispatched != 0 {
-		t.Fatalf("宿主配置/操作层接线/零模型请求不符合预期：%+v", hostHealth)
+	if raw, err := os.ReadFile(filepath.Join(dataDir, "agent-requests.jsonl")); err == nil && len(strings.TrimSpace(string(raw))) > 0 {
+		t.Fatalf("启动链验收不得产生模型请求：%s", raw)
 	}
 
 	// 外部客户端（CLI/MCP）接同一个桌面实例：桌面形态的 API 由启动令牌把关，
@@ -367,18 +335,20 @@ func TestDesktopProfileStartupChain(t *testing.T) {
 		t.Logf("最小文字读写通过：reply=%q tools=%v", truncate(turnEnd, 120), toolCalls)
 	}
 
-	// 关闭运行时：本进程启动的宿主必须随之退出。
+	// 关闭运行时：本进程启动的宿主必须随之退出（生命周期管道 EOF）。
 	if err := runtime.Close(t.Context()); err != nil {
 		t.Fatalf("关闭运行时失败: %v", err)
 	}
-	deadline = time.Now().Add(20 * time.Second)
+	deadline = time.Now().Add(5 * time.Second)
+	closedClient := &http.Client{Timeout: time.Second}
 	for time.Now().Before(deadline) {
-		if !hostPortInUse(hostAddr) {
+		_, err := closedClient.Get(baseURL + "/assistant/status")
+		if err != nil {
 			return
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("关闭运行时后宿主仍在监听 %s", hostAddr)
+	t.Fatal("关闭运行时后后端仍在响应")
 }
 
 func TestBundledAgentHostCommandForAppLayout(t *testing.T) {
@@ -484,13 +454,4 @@ func desktopRequest(t *testing.T, url, method, token string, withToken bool, uiT
 	defer response.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(response.Body, 8<<10))
 	return response.StatusCode, string(body)
-}
-
-func hostPortInUse(address string) bool {
-	conn, err := net.DialTimeout("tcp", address, time.Second)
-	if err != nil {
-		return false
-	}
-	_ = conn.Close()
-	return true
 }

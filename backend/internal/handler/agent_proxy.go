@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -29,67 +28,11 @@ const agentProxyMaxBody = 64 << 10
 // hostStartGrace 是宿主从拉起到健康的宽限期：这段时间里状态是「正在启动」而不是「不可达」。
 const hostStartGrace = 20 * time.Second
 
-// agentHostBaseURL 只接受本机目标：即使配置被写坏也不允许把宿主凭据发往外部主机。
-func agentHostBaseURL() string {
-	value := strings.TrimRight(strings.TrimSpace(os.Getenv("BEEFTV_AGENT_HOST_URL")), "/")
-	if value == "" {
-		return "http://127.0.0.1:18500"
-	}
-	parsed, err := url.Parse(value)
-	if err != nil || !isLoopbackHost(parsed.Host) {
-		return "http://127.0.0.1:18500"
-	}
-	return value
-}
-
 // agentHostClient 不跟随重定向：避免宿主凭据被转发到其他地址。
 func agentHostClient(timeout time.Duration) *http.Client {
 	return &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
-}
-
-func readAgentHostToken(dataDir string) string {
-	return assistantruntime.ReadHostToken(dataDir)
-}
-
-// hostHealth 是宿主 /health 的可公开事实（不含凭据）。
-type hostHealth struct {
-	OK      bool
-	Busy    bool
-	Model   string
-	Reason  string
-	Payload map[string]any
-}
-
-func probeAgentHost(token string) hostHealth {
-	if token == "" {
-		return hostHealth{}
-	}
-	req, err := http.NewRequest(http.MethodGet, agentHostBaseURL()+"/health", nil)
-	if err != nil {
-		return hostHealth{}
-	}
-	req.Header.Set("X-Beeftv-Agent-Token", token)
-	resp, err := agentHostClient(3 * time.Second).Do(req)
-	if err != nil {
-		return hostHealth{}
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
-	var payload map[string]any
-	_ = json.Unmarshal(body, &payload)
-	health := hostHealth{Payload: payload}
-	if payload != nil {
-		health.Busy, _ = payload["busy"].(bool)
-		health.Model, _ = payload["model"].(string)
-		health.Reason, _ = payload["reason"].(string)
-	}
-	health.OK = resp.StatusCode == http.StatusOK
-	if ready, found := payload["ok"].(bool); found && !ready {
-		health.OK = false
-	}
-	return health
 }
 
 // newTurnID 是一轮对话的稳定标识：按轮撤销与历史都用它对齐。
@@ -152,12 +95,14 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			return
 		}
 		modelInfo := gin.H{"id": provider.Model, "channelId": provider.ChannelID, "channelName": provider.ChannelName}
-		token := readAgentHostToken(svc.DataDir())
-		health := probeAgentHost(token)
+		health := host.Probe(c.Request.Context())
 		state := host.State()
 		if health.OK {
-			// 配置换过模型/渠道/密钥后，空闲时把宿主重启到新配置；正在生成时不打断。
-			if state.Running && state.Fingerprint != provider.Fingerprint() && !health.Busy {
+			if state.Fingerprint != "" && state.Fingerprint != provider.Fingerprint() {
+				if health.Busy {
+					ok(c, gin.H{"available": false, "reason": "host_busy", "model": gin.H{"id": health.Model}})
+					return
+				}
 				if err := host.Restart(provider, hostOpsURL(c), launchToken(c)); err != nil {
 					unavailable(c, "host_start_failed")
 					return
@@ -168,7 +113,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			ok(c, gin.H{"available": true, "model": modelInfo})
 			return
 		}
-		launched, err := host.Ensure(provider, hostOpsURL(c), launchToken(c), !health.Busy)
+		launched, err := host.Ensure(provider, hostOpsURL(c), launchToken(c), true)
 		if err != nil {
 			ok(c, gin.H{"available": false, "reason": "host_start_failed", "model": modelInfo})
 			return
@@ -212,8 +157,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 
 	// hostJSON 把一次 JSON 请求转给宿主并原样回传业务结果；宿主凭据只在这里注入。
 	hostJSON := func(c *gin.Context, method, path string, body []byte) {
-		token := readAgentHostToken(svc.DataDir())
-		if token == "" {
+		if host == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_unreachable",
 				"msg": "内置创作助手宿主未运行"})
 			return
@@ -222,13 +166,13 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		if body != nil {
 			reader = strings.NewReader(string(body))
 		}
-		upstream, err := http.NewRequestWithContext(c.Request.Context(), method, agentHostBaseURL()+path, reader)
+		upstream, err := host.NewChildRequest(c.Request.Context(), method, path, reader)
 		if err != nil {
-			fail(c, http.StatusInternalServerError, app.BadAuthRequest("无法构造宿主请求"))
+			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_unreachable",
+				"msg": "内置创作助手宿主未运行"})
 			return
 		}
 		upstream.Header.Set("Content-Type", "application/json")
-		upstream.Header.Set("X-Beeftv-Agent-Token", token)
 		resp, err := agentHostClient(30 * time.Second).Do(upstream)
 		if err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_unreachable",
@@ -381,10 +325,9 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		if !guard(c, true) {
 			return
 		}
-		token := readAgentHostToken(svc.DataDir())
-		if token == "" {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_token_missing",
-				"msg": "内置创作助手宿主未配置：请由产品启动链启动 agent-host 并提供宿主凭据"})
+		if host == nil || host.Endpoint() == "" {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_unreachable",
+				"msg": "内置创作助手宿主未运行"})
 			return
 		}
 		body, err := io.ReadAll(io.LimitReader(c.Request.Body, agentProxyMaxBody+1))
@@ -459,14 +402,14 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			return
 		}
 		// 上游请求与浏览器连接解耦：用户中途关页面/点停止不能让已经落地的写入丢掉回合归属。
-		upstream, err := http.NewRequestWithContext(context.WithoutCancel(c.Request.Context()), http.MethodPost,
-			agentHostBaseURL()+"/chat", strings.NewReader(string(forwarded)))
+		upstream, err := host.NewChildRequest(context.WithoutCancel(c.Request.Context()), http.MethodPost, "/chat",
+			strings.NewReader(string(forwarded)))
 		if err != nil {
-			fail(c, http.StatusInternalServerError, app.BadAuthRequest("无法构造宿主请求"))
+			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_unreachable",
+				"msg": "内置创作助手宿主未运行"})
 			return
 		}
 		upstream.Header.Set("Content-Type", "application/json")
-		upstream.Header.Set("X-Beeftv-Agent-Token", token)
 		resp, err := client.Do(upstream)
 		if err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_unreachable",
@@ -510,16 +453,16 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 	})
 
 	r.POST("/assistant/cancel", func(c *gin.Context) {
-		if !guard(c, false) {
+		if !guard(c, true) {
 			return
 		}
-		body, err := io.ReadAll(io.LimitReader(c.Request.Body, agentProxyMaxBody+1))
-		if err != nil {
-			fail(c, http.StatusBadRequest, app.BadAuthRequest("请求体读取失败"))
+		body, payload, valid := readAssistantBody(c, struct {
+			CanvasID string `json:"canvasId"`
+		}{})
+		if !valid {
 			return
 		}
-		if int64(len(body)) > agentProxyMaxBody {
-			fail(c, http.StatusRequestEntityTooLarge, app.BadAuthRequest("请求体超过限制"))
+		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
 			return
 		}
 		hostJSON(c, http.MethodPost, "/cancel", body)

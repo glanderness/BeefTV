@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"infinite-canvas/backend/internal/assistant"
 )
@@ -24,6 +25,7 @@ type Options struct {
 	BackendAddr     func() string
 	Executable      func() (string, error)
 	GOOS            string
+	ReadyTimeout    time.Duration
 }
 
 // Host 是一个助手宿主监督器实例。bootstrap 为每个运行时持有一个；
@@ -99,6 +101,32 @@ func (h *Host) PID() int {
 	return h.proc.pid()
 }
 
+// Endpoint is the supervisor-owned loopback URL. Empty until this Host has
+// launched a child and health has proved the instance nonce.
+func (h *Host) Endpoint() string {
+	if h == nil {
+		return ""
+	}
+	endpoint, _ := h.proc.identity()
+	return endpoint
+}
+
+func (h *Host) readyTimeout() time.Duration {
+	if h != nil && h.opts.ReadyTimeout > 0 {
+		return h.opts.ReadyTimeout
+	}
+	return defaultReadyTimeout
+}
+
+// TestingUseOwnedEndpoint injects a loopback child for handler tests. Production
+// never reads BEEFTV_AGENT_HOST_URL or :18500 as a fallback.
+func (h *Host) TestingUseOwnedEndpoint(baseURL, nonce, fingerprint string) {
+	if h == nil {
+		return
+	}
+	h.proc.testingUseEndpoint(baseURL, nonce, fingerprint)
+}
+
 // Start 在应用启动时按本机配置拉起内置宿主。
 // 未配置启动命令或模型/凭据还没解析出来时是 no-op（用户没配好助手不应该让应用启动失败）；
 // 之后界面查询 /assistant/status 会按当时的配置补上这次启动。
@@ -116,7 +144,7 @@ func (h *Host) Start(opsURL, desktopToken string) error {
 	if reason != "" {
 		return nil
 	}
-	return h.proc.start(config, h.buildEnv(provider, opsURL, desktopToken), provider.Fingerprint())
+	return h.startOwned(config, provider, opsURL, desktopToken)
 }
 
 // Launch 按已解析的供应商启动；已在跑则是 no-op。调用方负责先检查配置是否存在。
@@ -134,7 +162,7 @@ func (h *Host) launchLocked(provider assistant.Provider, opsURL, desktopToken st
 	if !configured || strings.TrimSpace(config.HostCommand) == "" {
 		return invalidArg("host_command_missing", "未配置宿主启动命令")
 	}
-	return h.proc.start(config, h.buildEnv(provider, opsURL, desktopToken), provider.Fingerprint())
+	return h.startOwned(config, provider, opsURL, desktopToken)
 }
 
 func (h *Host) Stop() error {
@@ -193,17 +221,30 @@ func (h *Host) Ensure(provider assistant.Provider, opsURL, desktopToken string, 
 	state := h.proc.state()
 	fingerprint := provider.Fingerprint()
 	if state.Running {
-		if state.Fingerprint == fingerprint || !idle {
+		if state.Fingerprint == "" || state.Fingerprint == fingerprint || !idle {
 			return false, nil
 		}
 		if stopErr := h.proc.stop(); stopErr != nil {
 			return false, stopErr
 		}
 	}
-	if startErr := h.proc.start(config, h.buildEnv(provider, opsURL, desktopToken), fingerprint); startErr != nil {
+	if startErr := h.startOwned(config, provider, opsURL, desktopToken); startErr != nil {
 		return false, startErr
 	}
 	return true, nil
+}
+
+func (h *Host) startOwned(config HostConfig, provider assistant.Provider, opsURL, desktopToken string) error {
+	return h.proc.startOwned(config, provider.Fingerprint(), h.readyTimeout(), func(port int, nonce, listenFD string) []string {
+		return h.buildEnv(provider, childPin{
+			Port:       port,
+			Nonce:      nonce,
+			ListenFD:   listenFD,
+			Lifetime:   true,
+			OpsURL:     opsURL,
+			DesktopTok: desktopToken,
+		})
+	}, h.hostToken())
 }
 
 // Restart 是「重试」按钮的真实动作：停掉旧进程再按当前配置启动。
@@ -220,5 +261,5 @@ func (h *Host) Restart(provider assistant.Provider, opsURL, desktopToken string)
 	if err := h.proc.stop(); err != nil {
 		return err
 	}
-	return h.proc.start(config, h.buildEnv(provider, opsURL, desktopToken), provider.Fingerprint())
+	return h.startOwned(config, provider, opsURL, desktopToken)
 }

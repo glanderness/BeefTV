@@ -353,11 +353,14 @@ paths:
     post:
       tags: [assistant]
       summary: 取消指定画布正在进行的回合
+      description: 需要写权限，并且 canvasId 必须属于当前工作区。只读客户端不能取消。
       responses:
         "202":
           description: 已受理取消
+        "403":
+          description: 只读客户端，或缺少写权限
         "404":
-          description: 该画布没有正在进行的会话
+          description: 画布不存在或不属于当前工作区，或该画布没有正在进行的会话
   /assistant/host/config:
     get:
       tags: [assistant]
