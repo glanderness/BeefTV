@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/provider/workflow"
@@ -43,15 +44,59 @@ func (s *Service) updateWorkflowProviderState(ctx context.Context, requestID str
 }
 
 func (s *Service) recordWorkflowProviderRequest(ctx context.Context, requestID string, stage string, nextPollAt *time.Time) error {
+	if s == nil || s.repo == nil {
+		return errors.New("工作流缺少本地任务回执上下文")
+	}
 	metadata, ok := ctx.Value(providerAnalyticsKey{}).(providerAnalyticsContext)
-	if !ok || metadata.TaskID == "" {
-		return nil
+	if !ok || strings.TrimSpace(metadata.TaskID) == "" {
+		return errors.New("工作流缺少本地任务回执上下文")
 	}
 	return s.repo.UpdateTaskProviderState(metadata.TaskID, requestID, stage, nextPollAt)
 }
 
 func (s *Service) runRunningHubWorkflow(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
-	return s.workflowClient(nil).Run(ctx, s.workflowInputFromCanvas(ctx, input))
+	converted := s.workflowInputFromCanvas(ctx, input)
+	result, err := s.workflowClient(nil).Run(ctx, converted)
+	if err != nil {
+		return nil, s.fenceWorkflowSubmission(ctx, converted, err)
+	}
+	return result, nil
+}
+
+// fenceWorkflowSubmission maps domain create-path uncertainty onto the current
+// app providerSubmissionUnknownError contract. That type may move with the
+// provider worker; keep this alias boundary.
+func (s *Service) fenceWorkflowSubmission(ctx context.Context, input workflow.Input, err error) error {
+	if err == nil {
+		return nil
+	}
+	var accepted workflow.AcceptedNotRecorded
+	if errors.As(err, &accepted) {
+		if requestID := strings.TrimSpace(accepted.RequestID); requestID != "" {
+			_ = s.recordWorkflowProviderRequest(ctx, requestID, firstNonEmpty(strings.TrimSpace(accepted.Stage), "submitted"), nil)
+		}
+		return providerSubmissionUnknownError{Cause: err}
+	}
+	if strings.TrimSpace(input.ResumedRequestID) != "" {
+		return err
+	}
+	var uncertain workflow.CreateUncertain
+	if !errors.As(err, &uncertain) {
+		return err
+	}
+	mapped := uncertainVideoSubmission(ctx, err)
+	var unknown providerSubmissionUnknownError
+	if errors.As(mapped, &unknown) {
+		return mapped
+	}
+	if errors.Is(mapped, context.Canceled) || safeRouteRejection(mapped) {
+		return mapped
+	}
+	var circuit providerCircuitOpenError
+	if errors.As(mapped, &circuit) {
+		return mapped
+	}
+	return providerSubmissionUnknownError{Cause: err}
 }
 
 func (s *Service) fetchRunningHubWorkflowJSON(ctx context.Context, root string, config providerConfig, workflowID string) (map[string]interface{}, error) {

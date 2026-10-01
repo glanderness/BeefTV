@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/provider/workflow"
@@ -146,6 +147,20 @@ func (workflowMediaLoader) LocalBytes(media workflow.Media) ([]byte, string, err
 }
 
 type workflowReceipt struct{ service *Service }
+
+func (r workflowReceipt) Ready(ctx context.Context) error {
+	if r.service == nil {
+		return errors.New("工作流缺少受理回执端口")
+	}
+	if r.service.repo == nil {
+		return errors.New("工作流缺少本地任务回执上下文")
+	}
+	metadata, ok := ctx.Value(providerAnalyticsKey{}).(providerAnalyticsContext)
+	if !ok || strings.TrimSpace(metadata.TaskID) == "" {
+		return errors.New("工作流缺少本地任务回执上下文")
+	}
+	return nil
+}
 
 func (r workflowReceipt) RecordAccepted(ctx context.Context, requestID, stage string, nextPollAt *time.Time) error {
 	if r.service == nil {

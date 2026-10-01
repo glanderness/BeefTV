@@ -34,6 +34,7 @@ type MediaLoader interface {
 // Receipt records the original upstream task identity after acceptance and
 // later poll stages. A failed first write must not create a new upstream task.
 type Receipt interface {
+	Ready(ctx context.Context) error
 	RecordAccepted(ctx context.Context, requestID, stage string, nextPollAt *time.Time) error
 	UpdateStage(ctx context.Context, requestID, stage string, nextPollAt *time.Time) error
 }
@@ -129,6 +130,21 @@ func (e AcceptedNotRecorded) Error() string {
 }
 
 func (e AcceptedNotRecorded) Unwrap() error { return e.Err }
+
+// CreateUncertain is a create-path transport, decode, or missing-taskId failure.
+// The upstream task may already exist; callers must not start a new paid create.
+type CreateUncertain struct {
+	Err error
+}
+
+func (e CreateUncertain) Error() string {
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return "提交结果尚未确认"
+}
+
+func (e CreateUncertain) Unwrap() error { return e.Err }
 
 type noopProgress struct{}
 

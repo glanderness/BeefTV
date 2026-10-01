@@ -48,14 +48,14 @@ func (c *Client) requireActor(ctx context.Context, interfaceType string) error {
 	return c.Plugins.EnsureEnabled(ctx, interfaceType)
 }
 
-func (c *Client) requirePaidCreate() error {
+func (c *Client) requirePaidCreate(ctx context.Context) error {
 	if c.Requests == nil {
 		return errors.New("工作流缺少受保护的请求执行端口")
 	}
 	if c.Receipt == nil {
 		return errors.New("工作流缺少受理回执端口")
 	}
-	return nil
+	return c.Receipt.Ready(ctx)
 }
 
 // Run is the workflow-provider entry. Plugin authorization is required.
@@ -90,7 +90,7 @@ func (c *Client) runRunningHub(ctx context.Context, input Input) (map[string]int
 		}
 		return c.Poll(ctx, input.Config, root, resumed, input.Mode)
 	}
-	if err := c.requirePaidCreate(); err != nil {
+	if err := c.requirePaidCreate(ctx); err != nil {
 		return nil, err
 	}
 	workflowID := strings.TrimSpace(input.Config.WorkflowID)
@@ -151,7 +151,7 @@ func (c *Client) runRunningHub(ctx context.Context, input Input) (map[string]int
 	}
 	submitted, err := c.PostJSON(ctx, input.Config, endpoint, "", body)
 	if err != nil {
-		return nil, fmt.Errorf("RunningHub 工作流提交失败：%w", err)
+		return nil, CreateUncertain{Err: fmt.Errorf("RunningHub 工作流提交失败：%w", err)}
 	}
 	code, validCode := runningHubPayloadCode(submitted)
 	if !validCode {
@@ -163,7 +163,7 @@ func (c *Client) runRunningHub(ctx context.Context, input Input) (map[string]int
 	}
 	taskID := runningHubTaskID(submitted)
 	if taskID == "" {
-		return nil, errors.New("RunningHub 未返回 taskId")
+		return nil, CreateUncertain{Err: errors.New("RunningHub 未返回 taskId")}
 	}
 	if err := c.Receipt.RecordAccepted(ctx, taskID, "submitted", nil); err != nil {
 		c.Progress.Log(ctx, "error", "RunningHub 请求状态保存失败", taskID+"："+err.Error())

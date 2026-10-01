@@ -86,6 +86,13 @@ type memoryReceipt struct {
 	mu           sync.Mutex
 	accepted     []string
 	failAccepted error
+	failReady    error
+}
+
+func (m *memoryReceipt) Ready(context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.failReady
 }
 
 func (m *memoryReceipt) RecordAccepted(_ context.Context, requestID, _ string, _ *time.Time) error {
@@ -237,6 +244,68 @@ func TestCreateProtocolErrorIsReturned(t *testing.T) {
 	_, err := client.RunRunningHub(context.Background(), imageCreateInput())
 	if err == nil || !strings.Contains(err.Error(), "重新选择该 App") {
 		t.Fatalf("error = %v, want actionable protocol message", err)
+	}
+	var uncertain CreateUncertain
+	if errors.As(err, &uncertain) {
+		t.Fatalf("protocol 805 wrapped as CreateUncertain: %v", err)
+	}
+}
+
+func TestReadyFailureDoesNotCreate(t *testing.T) {
+	exec := &scriptedExecutor{handler: func(Request) ([]byte, string, error) {
+		t.Fatal("Ready failure must not call upstream")
+		return nil, "", nil
+	}}
+	client := productionClient(exec, &memoryReceipt{failReady: errors.New("receipt not ready")})
+	_, err := client.Run(context.Background(), imageCreateInput())
+	if err == nil || !strings.Contains(err.Error(), "receipt not ready") {
+		t.Fatalf("error = %v, want Ready failure", err)
+	}
+}
+
+func TestCreateTransportIsCreateUncertain(t *testing.T) {
+	transport := errors.New("connection reset")
+	exec := &scriptedExecutor{handler: func(req Request) ([]byte, string, error) {
+		if strings.Contains(req.URL, "/task/openapi/create") {
+			return nil, "", transport
+		}
+		t.Fatalf("unexpected URL %s", req.URL)
+		return nil, "", nil
+	}}
+	_, err := productionClient(exec).Run(context.Background(), imageCreateInput())
+	var uncertain CreateUncertain
+	if !errors.As(err, &uncertain) || !errors.Is(err, transport) {
+		t.Fatalf("error = %v, want CreateUncertain wrapping transport", err)
+	}
+}
+
+func TestCreateMalformedJSONIsCreateUncertain(t *testing.T) {
+	exec := &scriptedExecutor{handler: func(req Request) ([]byte, string, error) {
+		if strings.Contains(req.URL, "/task/openapi/create") {
+			return []byte(`{"code":0,`), "application/json", nil
+		}
+		t.Fatalf("unexpected URL %s", req.URL)
+		return nil, "", nil
+	}}
+	_, err := productionClient(exec).Run(context.Background(), imageCreateInput())
+	var uncertain CreateUncertain
+	if !errors.As(err, &uncertain) {
+		t.Fatalf("error = %v, want CreateUncertain", err)
+	}
+}
+
+func TestCreateMissingTaskIDIsCreateUncertain(t *testing.T) {
+	exec := &scriptedExecutor{handler: func(req Request) ([]byte, string, error) {
+		if strings.Contains(req.URL, "/task/openapi/create") {
+			return []byte(`{"code":0,"data":{}}`), "application/json", nil
+		}
+		t.Fatalf("unexpected URL %s", req.URL)
+		return nil, "", nil
+	}}
+	_, err := productionClient(exec).Run(context.Background(), imageCreateInput())
+	var uncertain CreateUncertain
+	if !errors.As(err, &uncertain) || !strings.Contains(err.Error(), "未返回 taskId") {
+		t.Fatalf("error = %v, want missing taskId CreateUncertain", err)
 	}
 }
 
