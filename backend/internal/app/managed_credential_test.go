@@ -1,10 +1,57 @@
 package app
 
 import (
+	"context"
+	"os"
 	"testing"
 
 	"infinite-canvas/backend/internal/beefapi"
+	"infinite-canvas/backend/internal/protocol"
 )
+
+func TestManagedGeminiCatalogCredentialProviderChain(t *testing.T) {
+	s, _, _, _ := creationTestService(t)
+	if err := s.SaveLocalModelConfig([]byte(`{"channels":[{"id":"beefapi","baseUrl":"https://enterprise.beefapi.com","apiKey":"test-only-key"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := os.ReadFile("../../../plugin-packages/google-gemini-generate-content/manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapters, err := protocol.LoadInstalledProviders(manifest, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := protocol.NewRegistry(adapters...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"gemini-generate-content", "google-gemini-generate-content"} {
+		resolved, err := s.resolveManagedBeefAPISecrets(map[string]any{"config": map[string]any{"channelId": "beefapi", "credentialRef": beefapi.CredentialRef, "interfaceType": id}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		config := resolved["config"].(map[string]any)
+		if config["apiKey"] != "test-only-key" || config["baseUrl"] != "https://enterprise.beefapi.com" {
+			t.Fatal("managed credential did not resolve")
+		}
+		adapter, ok := registry.Resolve(config["interfaceType"].(string))
+		if !ok || adapter.Metadata().ID != "gemini-generate-content" {
+			t.Fatalf("provider %q did not resolve", id)
+		}
+		agent, ok := adapter.(protocol.AgentAdapter)
+		if !ok {
+			t.Fatal("Gemini text adapter unavailable")
+		}
+		spec, err := agent.BuildAgent(context.Background(), protocol.AgentRequestContext{Model: "gemini-test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if spec.Path != "/v1beta/models/gemini-test:generateContent" {
+			t.Fatalf("unexpected native path %q", spec.Path)
+		}
+	}
+}
 
 func TestCustomRelayOnlyInjectsBeefAPIKeyForExactConfiguredOrigin(t *testing.T) {
 	s, _, _, _ := creationTestService(t)

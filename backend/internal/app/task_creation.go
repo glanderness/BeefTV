@@ -1,6 +1,7 @@
 package app
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -66,6 +67,26 @@ func retiredAgentTask(task *model.Task) bool {
 // 这是常规模型生成任务的写入口：客户端只提交创作意图，模型、渠道和协议信息必须由本地目录重新解析，
 // 以保证“可展示的模型”与“实际执行的模型”来自同一份有效配置。
 func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task, error) {
+	operationKey, err := clientOperationID(req.Input)
+	if err != nil {
+		return nil, err
+	}
+	var operationHash string
+	if operationKey != "" {
+		operationHash, err = clientOperationHash(req)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if operationKey != "" {
+		existing, lookupErr := s.repo.TaskByClientOperation(userID, operationKey)
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if existing != nil {
+			return admitExistingClientOperation(existing, req)
+		}
+	}
 	if req.admission == nil && isRetiredAgentTaskInput(req.Operation, req.Input) {
 		return nil, BadAuthRequest(retiredAgentBoundaryMessage)
 	}
@@ -147,6 +168,10 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 		return nil, BadAuthRequest(fmt.Sprintf("同时排队或运行的任务最多 %d 个，请等待已有任务完成", policy.Task.ActiveTaskLimit))
 	}
 	task := model.Task{ID: newID(), UserID: userID, TraceID: req.TraceID, RequestID: req.RequestID, ProjectID: req.ProjectID, Type: taskType, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
+	if operationKey != "" {
+		task.ClientOperationID = &operationKey
+		task.ClientOperationHash = operationHash
+	}
 	if req.admission != nil {
 		task.ID = req.admission.ID
 	}
@@ -179,6 +204,10 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	}
 	task.InputJSON = string(inputJSON)
 	err = s.createTaskWithinStorageQuota(&task, policy)
+	var replay *repository.ClientOperationReplay
+	if errors.As(err, &replay) {
+		return admitExistingClientOperation(&replay.Task, req)
+	}
 	if errors.Is(err, repository.ErrActiveTaskLimit) {
 		return nil, BadAuthRequest(fmt.Sprintf("同时排队或运行的任务最多 %d 个，请等待已有任务完成", policy.Task.ActiveTaskLimit))
 	}
@@ -193,6 +222,58 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	return taskForOutput(task), nil
 }
 
+func admitExistingClientOperation(existing *model.Task, req CreateTaskRequest) (*model.Task, error) {
+	if existing == nil {
+		return nil, errors.New("missing client operation task")
+	}
+	fingerprint, err := clientOperationHash(req)
+	if err != nil {
+		return nil, err
+	}
+	if existing.ClientOperationHash == "" || existing.ClientOperationHash != fingerprint {
+		return nil, NewAppError(409, "同一生成确认已用于不同内容，没有新建任务")
+	}
+	return taskForOutput(*existing), nil
+}
+
+// Hash the original intent before routing and secret protection mutate input.
+// Trace/request IDs are excluded by their JSON tags; no raw credential is stored here.
+func clientOperationHash(req CreateTaskRequest) (string, error) {
+	req.Prompt = strings.TrimSpace(req.Prompt)
+	req.Type = strings.TrimSpace(req.Type)
+	req.ProjectID = strings.TrimSpace(req.ProjectID)
+	encoded, err := json.Marshal(req)
+	if err != nil {
+		return "", BadAuthRequest("任务输入格式无效")
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(encoded)), nil
+}
+
+func clientOperationID(input map[string]any) (string, error) {
+	metadata, _ := input["metadata"].(map[string]any)
+	if metadata == nil {
+		return "", nil
+	}
+	raw, ok := metadata["clientOperationId"]
+	if !ok || raw == nil {
+		return "", nil
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return "", BadAuthRequest("clientOperationId 必须是字符串")
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+	if len(value) < 8 || len(value) > 128 || strings.ContainsFunc(value, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == ':' || r == '_' || r == '-')
+	}) {
+		return "", BadAuthRequest("clientOperationId 格式无效")
+	}
+	return value, nil
+}
+
 func (s *Service) validateRetryTaskType(userID string, taskType string, input map[string]any) error {
 	metadata, _ := input["metadata"].(map[string]any)
 	retryOf := strings.TrimSpace(stringValue(metadata["retryOf"]))
@@ -205,6 +286,9 @@ func (s *Service) validateRetryTaskType(userID string, taskType string, input ma
 	}
 	if parent.Type != taskType {
 		return BadAuthRequest(fmt.Sprintf("重试任务类型不一致：原任务为 %s，新任务为 %s", parent.Type, taskType))
+	}
+	if err := s.validateImageTaskRetry(parent); err != nil {
+		return err
 	}
 	return nil
 }

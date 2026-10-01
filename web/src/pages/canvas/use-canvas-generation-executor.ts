@@ -4,7 +4,9 @@ import { App } from "antd";
 
 import { buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
-import { buildGenerationConfig, isGenerationCanceled } from "@/lib/canvas/canvas-project-generation";
+import { isGenerationCanceled } from "@/lib/canvas/canvas-project-generation";
+import { buildConfirmedGenerationConfig } from "./canvas-assistant-proposal-execution";
+import type { ConfirmedGenerationInputs } from "./canvas-assistant-proposal-snapshot";
 import { canvasGenerationPromptMetadata, canvasGenerationRequestFingerprint, runCanvasGenerationSubmissionOnce } from "@/lib/canvas/canvas-generation-submission";
 import { isGenerationTaskCapacityError } from "@/lib/canvas/canvas-generation-batch";
 import { buildPortraitTexturePrompt } from "@/lib/canvas/canvas-portrait-texture";
@@ -52,6 +54,10 @@ const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
 
 export type CanvasNodeGenerationOptions = {
+    confirmedModelKey?: string;
+    confirmedInputs?: ConfirmedGenerationInputs;
+    /** 一次确认的稳定身份。重复提交必须复用，服务端据此回读原任务。 */
+    clientOperationId?: string;
     controller?: AbortController;
     waitForTaskCapacity?: boolean;
     context?: { conversationId?: string; messageId?: string };
@@ -104,8 +110,13 @@ export function useCanvasGenerationExecutor({
                 submissionLocksRef.current,
                 nodeId,
                 async () => {
-                    const sourceNode = nodesRef.current.find((node) => node.id === nodeId);
-                    if (isCanvasNodeGenerating(sourceNode)) {
+                    const inputNodes = options?.confirmedInputs?.nodes ?? nodesRef.current;
+                    const inputConnections = options?.confirmedInputs?.connections ?? connectionsRef.current;
+                    const inputConfig = options?.confirmedInputs?.config ?? effectiveConfig;
+                    const inputAssets = options?.confirmedInputs?.assets ?? assets;
+                    const inputSkills = options?.confirmedInputs?.skills ?? addedSkills;
+                    const sourceNode = inputNodes.find((node) => node.id === nodeId);
+                    if (isCanvasNodeGenerating(nodesRef.current.find((node) => node.id === nodeId))) {
                         message.info("该节点的生成任务仍在进行中，请等待完成后再生成");
                         return;
                     }
@@ -113,9 +124,15 @@ export function useCanvasGenerationExecutor({
                         message.info("合并成片节点不直接重新生成，请重新选择源视频合并");
                         return;
                     }
-                    let generationConfig = buildGenerationConfig(effectiveConfig, sourceNode, mode);
+                    let generationConfig: ReturnType<typeof buildConfirmedGenerationConfig>;
+                    try {
+                        generationConfig = buildConfirmedGenerationConfig(inputConfig, sourceNode, mode, undefined, options?.confirmedModelKey);
+                    } catch (error) {
+                        message.error(generationErrorMessage(error));
+                        return;
+                    }
                     const hasLiveBatchChildren =
-                        sourceNode?.type === CanvasNodeType.Image && (sourceNode.metadata?.batchChildIds || []).some((childId) => nodesRef.current.some((node) => node.id === childId && node.metadata?.batchRootId === sourceNode.id));
+                        sourceNode?.type === CanvasNodeType.Image && (sourceNode.metadata?.batchChildIds || []).some((childId) => inputNodes.some((node) => node.id === childId && node.metadata?.batchRootId === sourceNode.id));
                     const hasStaleImageBatchState =
                         mode === "image" && sourceNode?.type === CanvasNodeType.Image && !sourceNode.metadata?.content && Boolean(sourceNode.metadata?.isBatchRoot || sourceNode.metadata?.batchChildIds?.length) && !hasLiveBatchChildren;
                     if (hasStaleImageBatchState) {
@@ -156,20 +173,20 @@ export function useCanvasGenerationExecutor({
                     try {
                         const baseContext = buildNodeGenerationContext(
                             nodeId,
-                            nodesRef.current,
-                            connectionsRef.current,
+                            inputNodes,
+                            inputConnections,
                             editingTextNode ? buildTextRewritePrompt(sourceTextContent, prompt) : generationPrompt,
-                            assets,
+                            inputAssets,
                             promptOnly,
                         );
                         const requirements = generationModelRequirements(mode, baseContext, sourceNode, generationConfig, true);
-                        generationConfig = buildGenerationConfig(effectiveConfig, sourceNode, mode, requirements);
+                        generationConfig = buildConfirmedGenerationConfig(inputConfig, sourceNode, mode, requirements, options?.confirmedModelKey);
                         const compatibilityError = usesWorkflowProvider ? "" : modelCompatibilityError(generationConfig, generationConfig.model, requirements);
                         if (compatibilityError) throw new Error(`当前模型无法支持这组输入和参数：${compatibilityError}`);
-                        const referenceLimits = usesWorkflowProvider ? undefined : modelGroupReferenceLimits(effectiveConfig, generationConfig.model, mode, requirements);
+                        const referenceLimits = usesWorkflowProvider ? undefined : modelGroupReferenceLimits(inputConfig, generationConfig.model, mode, requirements);
                         rawGenerationContext = await hydrateNodeGenerationContext(baseContext, projectId, domainProjectId, mode, mode === "video" && Boolean(referenceLimits?.maxAudios), !promptOnly, referenceLimits);
                         const hydratedRequirements = generationModelRequirements(mode, rawGenerationContext, sourceNode, generationConfig);
-                        generationConfig = buildGenerationConfig(effectiveConfig, sourceNode, mode, hydratedRequirements);
+                        generationConfig = buildConfirmedGenerationConfig(inputConfig, sourceNode, mode, hydratedRequirements, options?.confirmedModelKey);
                         const hydratedCompatibilityError = usesWorkflowProvider ? "" : modelCompatibilityError(generationConfig, generationConfig.model, hydratedRequirements);
                         if (hydratedCompatibilityError) throw new Error(`当前模型无法支持这组输入和参数：${hydratedCompatibilityError}`);
                     } catch (error) {
@@ -180,7 +197,7 @@ export function useCanvasGenerationExecutor({
 
                     let skillExecution: Awaited<ReturnType<typeof skillRuntime.prepare<"canvas">>>;
                     try {
-                        skillExecution = await skillRuntime.prepare({ profile: "canvas", prompt: rawGenerationContext.prompt, skills: addedSkills });
+                        skillExecution = await skillRuntime.prepare({ profile: "canvas", prompt: rawGenerationContext.prompt, skills: inputSkills });
                     } catch (error) {
                         message.error(error instanceof Error ? error.message : "技能上下文加载失败");
                         return;
@@ -189,7 +206,7 @@ export function useCanvasGenerationExecutor({
                     let styleMetadata = {};
                     if (mode === "image") {
                         try {
-                            const styleRuntime = resolveCanvasStyleExecution(nodesRef.current, sourceNode, effectivePrompt, generationConfig, mode);
+                            const styleRuntime = resolveCanvasStyleExecution(inputNodes, sourceNode, effectivePrompt, generationConfig, mode);
                             if (styleRuntime) {
                                 effectivePrompt = styleRuntime.prompt;
                                 styleMetadata = { styleProfileJson: styleRuntime.profileJson, styleExecutionPlan: styleRuntime.plan };
@@ -317,8 +334,8 @@ export function useCanvasGenerationExecutor({
                         projectId,
                         nodeId,
                         sourceNode,
-                        canvasNodes: nodesRef.current,
-                        canvasConnections: connectionsRef.current,
+                        canvasNodes: inputNodes,
+                        canvasConnections: inputConnections,
                         prompt,
                         effectivePrompt,
                         generationConfig,
@@ -329,6 +346,7 @@ export function useCanvasGenerationExecutor({
                         skillMetadata: skillExecution.metadata,
                         taskContext: options?.context,
                         retryContext: options?.retryContext,
+                        clientOperationId: options?.clientOperationId,
                         setNodes,
                         setConnections,
                         setSelectedNodeIds,

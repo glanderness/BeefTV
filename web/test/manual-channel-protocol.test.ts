@@ -4,6 +4,18 @@ import { defaultProtocolForModel, ensureModelProfilesWithUiDefaults, inferProtoc
 import { createModelChannel, defaultConfig, resolveModelRequestConfig } from "@/stores/use-config-store";
 
 describe("manual channel protocol defaults", () => {
+    test.each(["gemini-generate-content", "google-gemini-generate-content"])("managed Gemini protocol %s preserves credentials and selects native transport", (protocol) => {
+        const channel = createModelChannel({
+            id: "beefapi", pinned: true, credentialRef: "beefapi-enterprise", hasApiKey: true,
+            baseUrl: "https://example.invalid", apiKey: "must-not-forward", apiFormat: "openai",
+            models: ["gemini-test"], modelProfiles: [{ model: "gemini-test", capability: "text", protocol }],
+        });
+        const resolved = resolveModelRequestConfig({ ...defaultConfig, channels: [channel] }, "beefapi::gemini-test");
+        expect(resolved.interfaceType).toBe("gemini-generate-content");
+        expect(resolved.apiFormat).toBe("gemini");
+        expect(resolved.apiKey).toBe("");
+        expect(resolved.credentialRef).toBe("beefapi-enterprise");
+    });
     test("typed gpt-4.1-mini uses the same Chat Completions default the settings radio shows", () => {
         expect(inferProtocolCapabilityFromModel("gpt-4.1-mini")).toBe("text");
         expect(defaultProtocolForModel("gpt-4.1-mini")).toBe("chat-completion");

@@ -36,5 +36,6 @@ export type CanvasGenerationExecution = CanvasGenerationExecutorDependencies & {
     skillMetadata: SkillRuntimeMetadata;
     taskContext?: { conversationId?: string; messageId?: string };
     retryContext?: { retryOf: string; attemptGroupId: string; clientOperationId: string };
+    clientOperationId?: string;
     registerPendingNodeIds: (nodeIds: string[]) => void;
 };

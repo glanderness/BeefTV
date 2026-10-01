@@ -8,17 +8,28 @@ import { loadCanvasDrawing, loadCanvasDrawingPreview, loadCanvasDrawingRender } 
 import type { CanvasDrawingExport } from "@/types/canvas-export";
 import { normalizeLocalCanvasProject } from "@/lib/local-workspace-migration";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
+import { ExportIntegrityError, type MissingExportFile } from "@/lib/export-integrity";
 
 export async function exportCanvasProjects(projects: CanvasProject[], fileName = "画布", options: { includeLocalDrawings?: boolean; folders?: CanvasFolder[] } = {}): Promise<OwnedMediaSaveResult> {
     const zipFiles: { name: string; data: BlobPart }[] = [];
+    const missingFiles: MissingExportFile[] = [];
     const exportedProjects = await Promise.all(
         projects.map(async (project) => {
             const files: CanvasExportAsset[] = [];
             await Promise.all(
                 collectStorageKeys(project).map(async (storageKey) => {
-                    const blob = storageKey.startsWith("image:") ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
-                    if (!blob) return;
-                    const path = `projects/${project.id}/files/${safeFileName(storageKey)}.${fileExtension(blob.type, storageKey)}`;
+                    let blob: Blob | null | undefined;
+                    try {
+                        blob = storageKey.startsWith("image:") ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
+                    } catch {
+                        missingFiles.push({ owner: project.title || project.id, reference: `${storageKey}（读取失败）` });
+                        return;
+                    }
+                    if (!blob || blob.size === 0) {
+                        missingFiles.push({ owner: project.title || project.id, reference: storageKey });
+                        return;
+                    }
+                    const path = `projects/${encodeURIComponent(project.id)}/files/${encodeURIComponent(storageKey)}.${fileExtension(blob.type, storageKey)}`;
                     files.push({ storageKey, path, mimeType: blob.type || "application/octet-stream", bytes: blob.size });
                     zipFiles.push({ name: path, data: blob });
                 }),
@@ -31,7 +42,10 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
                     loadCanvasDrawingPreview(project.id, drawingId),
                     loadCanvasDrawingRender(project.id, drawingId),
                 ]);
-                if (!saved) return null;
+                if (!saved) {
+                    missingFiles.push({ owner: project.title || project.id, reference: `画板 ${node.title || drawingId}` });
+                    return null;
+                }
                 const previewPath = preview ? `projects/${project.id}/drawings/${safeFileName(drawingId)}.png` : undefined;
                 if (preview && previewPath) zipFiles.push({ name: previewPath, data: preview });
                 const generationRenderPath = render ? `projects/${project.id}/drawings/${safeFileName(drawingId)}.generation.png` : undefined;
@@ -49,6 +63,8 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
             return { project: isLocalWorkspaceMode() ? normalizeLocalCanvasProject(project) : project, files, drawingDocuments };
         }),
     );
+
+    if (missingFiles.length) throw new ExportIntegrityError(missingFiles);
 
     const projectFolderIds = new Set(projects.map((project) => project.folderId).filter((id): id is string => Boolean(id)));
     const folders = options.folders?.filter((folder) => projectFolderIds.has(folder.id));

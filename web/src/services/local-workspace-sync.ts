@@ -43,6 +43,11 @@ export function subscribeCanvasRefresh(listener: (project: CanvasProject, previo
     return () => { canvasRefreshListeners.delete(listener); };
 }
 
+/** 外部写入已投影到本地存储后，把这次替换交给正在编辑的页面。 */
+export function notifyCanvasRefresh(project: CanvasProject, previous: CanvasProject | undefined) {
+    for (const listener of [...canvasRefreshListeners]) listener(project, previous);
+}
+
 /**
  * Persist an editor snapshot to the co-packaged Go repository.  Local edits
  * normally stay in IndexedDB for instant UI feedback, but the Go repository is

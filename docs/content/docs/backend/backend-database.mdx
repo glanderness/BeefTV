@@ -9,13 +9,76 @@ description: BeefTV后端核心持久化表与状态边界
 
 ## 结构迁移与版本
 
+本分支用于产品与 Agent 的独立整合验收，尚未授权安装或发布。整合结构版本为 v9，原 Agent 候选为 v6；产品 v7 与 Agent v6 不能直接互开。以下旧托管数据库的 `schema_migrations` 版本历史与本地版本分开维护，不共用版本号。
+
+实验 v8 `reconcile-product-agent-schema` 在一个事务中补齐 `tasks.failure_diagnostics`（可空 TEXT）、图片恢复表 `image_submissions`、Agent 操作表（包括 `turn_id` 索引）、任务 `client_operation_id`/`client_operation_hash` 和用户维度操作编号唯一索引。已有数据和原迁移名称保持不变；不通过重建 `tasks` 来删除产品字段。相同版本号但缺表、列或必要索引时拒绝 Ready；未来更高版本拒绝迁移。唯一索引遇到重复身份时整步回滚，不自动删除或合并任务。
+
+### 迁移实验的隔离验收与回滚
+
+v9 `repair-product-agent-contracts` 为已经标记 v8 但缺少诊断列、恢复表或恢复字段的合成历史结构提供显式修复；不重写历史 ledger。Ready 同时检查图片恢复与 Agent 操作表的完整字段、主键，以及任务操作编号唯一索引的列顺序、唯一性和非部分索引属性。已有表缺主键时拒绝自动重建；重复操作身份无法建立唯一索引时保留全部行并回滚。结构校验在 v9 事务内完成后才写入版本；同为 v9 但缺结构仍阻断，未来版本拒绝迁移。状态接口在结构损坏时保留实际版本，不能用 Ready=false、current=0 掩盖已经存在的 ledger。
+
+在本分支仓库根目录执行以下命令，仅创建 `t.TempDir()` 内的合成 SQLite 数据库；不打开应用、不读取真实工作区、不连接上游。
+
+```sh
+cd backend
+go test ./internal/database -count=1
+go test ./internal/database -run 'TestAgentProductReconcile' -count=1 -v
+go test ./internal/database -run 'TestAgentProductReconcileBackupRestoreUsesOldSchemaCopy' -count=1 -v
+go test ./internal/database -run 'TestSchemaRepair|TestSchemaReadiness' -count=1 -v
+```
+
+验收使用真实 SQLite 文件上的合成历史结构，覆盖正式 v3、Agent v3/v4/v5/v6、图片恢复 v3、产品 v7、同为 v7 但迁移名不同且缺表、整合 v8 缺字段或表等情况；这些夹具由当前模型删减并按历史字段合同设置 ledger，不是客户数据库副本。检查任务结果、失败诊断、资源记录、Agent 回执、恢复发送计数、原 ledger 和唯一索引。注入 v8/v9 ledger 写入故障验证 DDL 与 ledger 同时回滚；重复操作身份阻止升级且保留所有行。备份用 SQLite `VACUUM INTO` 生成一致副本，迁移后从未修改的备份重新打开并验证旧版本及输出引用。
+
+本整合分支已包含产品功能与 Agent 合同；数据库迁移测试仍不能替代运行验收。真实 CLI/MCP 服务与重启回放使用下列独立测试：它构建 CLI，在临时 SQLite 工作区启动本机 HTTP 服务，写入后关闭并重开服务，再以相同操作编号验证仅一次写入，并运行官方 MCP 客户端握手、工具调用、幂等冲突及只读检查。测试不配置模型、不调用付费上游。
+
+```sh
+cd backend
+go test ./cmd/beeftv -run TestCLIAndMCPAgainstIsolatedIntegratedRuntime -count=1 -v
+go test -race ./internal/app -run 'TestImageSubmission|TestCreateTaskReplaysSameClientOperation|TestMCPApprovedFrozenArgsPersistOneTaskAcrossDuplicateAndRestart' -count=1
+```
+
+Agent 宿主在安装仓库锁定的依赖后，可从仓库根目录执行 `bun test agent-host/*.test.mjs`；其中运行探针使用真实 Node/pi SDK 和本机模型、操作端点替身。该结果不代表真实供应商、用户工作区或桌面安装链已经验收。任何真实升级都必须先停止所有工作区写入者，创建完整工作区备份（包括 SQLite、资源文件和设置加密密钥），验证备份可读取，再只对独立副本升级并核验结果。正式安装、发布及真实数据库迁移还需用户单独授权。
+
+回滚只允许停止新程序后，将升级前完整备份恢复到新的隔离目录，由与该备份版本匹配的二进制打开；不得把旧程序指向已升级数据库，不得删除 v8/v9 ledger、降低版本号或删列模拟回滚。升级后产生的新数据不在旧备份中，应保留升级后目录并由 owner 决定如何迁回。本实验没有执行任何真实数据备份、升级、回滚或应用安装。
+
+### Lucas 统一候选测试入口
+
+待测远端分支为 `codex/pr41-sr-repair-20260930`。从干净的独立 checkout 拉取该分支并记录完整 commit；不要把其他会话的未提交修改覆盖到候选。上面的 Go 命令可先验证合成数据迁移和 CLI/MCP 合同。前端可在已有依赖和 FFmpeg/Chromium 环境执行 `BEEFTV_NATIVE_FFMPEG_TEST=1 BEEFTV_BROWSER_WORKER_TEST=1 bun run test`（工作目录 `web`），启用真实媒体和浏览器 Worker 用例；缺少工具不得记作通过。
+
+人工桌面验收须另行取得按候选 commit 构建的完整包。先关闭所有使用源工作区的程序，复制整个工作区到备份目录，再从备份复制一个测试目录；保留未打开过的备份。启动候选时显式设置 `CANVAS_DESKTOP_DATA_DIR` 为测试目录的绝对路径，核对启动日志及工作区内容后再操作。不得省略此变量而误用默认工作区。Windows PowerShell 示例（路径必须替换为实际独立目录）：
+
+```powershell
+$env:CANVAS_DESKTOP_DATA_DIR = 'D:\BeefTV-tests\candidate-workspace'
+& 'D:\BeefTV-tests\candidate-app\BeefTV.exe'
+```
+
+测试包应解压到新目录，保留 `BeefTV.exe`、`plugins`、`cli`、`agent-host` 完整布局，并按提供方的签名清单核对签名、大小及 SHA-256；本轮没有发布可下载包。旧 Windows 升级器不能直接接受这个布局，过渡升级器的本地方案在 `codex/product-windows-bridge-20260930`，尚未完成 Windows 真机验收或更新源部署。不要把新包只覆盖到旧目录、绕过验签或运行正式发布工作流来代替测试。
+
+人工检查画布与任务历史、失败诊断、重启后输出找回、CLI/MCP 操作回放、独立音轨和字幕成片、ZIP 在空工作区导入。生成类上游调用须另行获得预算授权。回滚时退出候选，把未升级的完整备份复制到另一个新目录，再使用匹配该备份的旧包显式指向该目录；禁止旧 Agent v6 或旧整合 v8 程序打开升级后的 v9 目录。
+
 ### 桌面本地任务诊断
 
-本地 SQLite 使用 `local_schema_migrations` 记录版本，当前为 v3。v3 为 `tasks` 新增可空文本列 `failure_diagnostics`，存储有界、脱敏的执行证据和失败摘要；旧任务保留空值。失败诊断与任务终态在同一次带租约校验的更新中保存，成功任务也保留执行证据，主动重试时清除上一轮诊断。任务列表和详情均读取该列，字段说明见 [HTTP API](./http-api)。
+本地 SQLite 使用 `local_schema_migrations` 记录版本，本整合分支为 v9，独立产品分支为 v7。正式 v3 为 `tasks` 新增可空文本列 `failure_diagnostics`，存储有界、脱敏的执行证据和失败摘要；旧任务保留空值。失败诊断与任务终态在同一次带租约校验的更新中保存，成功任务也保留执行证据，主动重试时清除上一轮诊断。任务列表和详情均读取该列，字段说明见 [HTTP API](./http-api)。产品 v7 追加图片恢复表；整合 v8 同时补齐历史分支可能缺失的产品与 Agent 结构，v9 修复已标 v8 的已知结构缺损并强化完整性检查，保留原迁移记录、Agent 表和任务扩展列。
 
 部分预览版曾将 v3–v6 用于其他迁移。启动时还会按实际表结构检查并补齐 `failure_diagnostics`，不覆盖迁移记录、不删除预览版字段或旧任务；就绪检查同时要求最低版本和该字段存在。任务入库失败返回 HTTP 500、`reason=local_storage_failed`，界面明确显示本地保存失败、尚未提交生成。内部错误链保留数据库原因，HTTP 响应不包含 SQL 原文；handler 日志记录错误类型。
 
 该迁移不删除任务或用户素材。升级后旧版程序会因本地 schema 版本检查而拒绝连接；修复发布应使用更高版本，不能通过降级二进制或删除诊断列回滚用户数据库。
+
+实验 Agent 的 v3–v6 与正式版本使用过重叠编号，迁移执行器按最大已应用版本推进。产品 v7 只补产品结构，不创建 Agent 运行时结构。本分支通过 v8 追加迁移显式补齐 `agent_op_records`（包含 `turn_id` 及其索引）、`tasks.client_operation_id`、`tasks.client_operation_hash` 和 `(user_id, client_operation_id)` 唯一索引；不依赖旧 v3–v6 再次执行。历史 Agent v6 程序不能直接连接升级后的 v7/v8 数据库。
+
+本分支是 Lucas 的统一待测候选：追加迁移、隔离 CLI/MCP 服务重启回放、任务恢复已通过本地测试。原生桌面完整交互、Windows 真机升级和用户数据副本验收仍是正式发布门槛；不能把局部合同测试当作这些门槛已经通过。旧候选 `2d1ce6b5a7803becd512f00c3678832e7adff30a` 保留为代码回退基线，旧数据备份独立保留。更新待测分支不授权迁移真实工作区。
+
+独立产品 v7 拒绝同为 v7 但缺少 `image_submissions` 或 `tasks.failure_diagnostics` 的数据库；本候选通过追加 v8/v9 显式补齐这些历史结构。同为当前 v9 但结构缺损仍拒绝 Ready，版本号本身不构成结构完备证明。不能改历史记录伪造兼容。回滚只能停止所有写入者后，恢复升级前完整工作区备份到独立目录，再用匹配该备份的旧二进制打开；禁止旧程序直接打开新数据库。
+
+### 桌面图片请求恢复
+
+本地工作区使用 `local_schema_migrations`；版本 7 新增 `image_submissions`。每条记录绑定用户、任务和路由尝试，保存经工作区密钥加密的完整 HTTP 请求（包括素材、请求头和幂等键）、首次保存时间、已发送次数及网关已返回成功的标记。任务 API 不返回这些字段。恢复前校验任务归属、运行状态和有效租约；保存失败时不发出请求。
+
+仅已验证的 BeefAPI HTTPS `/v1/images/generations`、`/v1/images/edits` 启用同键恢复。网络中断、服务暂时不可用和 `image_submission_pending` 使用原字节和原键退避重试；尚未收到成功响应时，每次提交最多发送 12 次，每轮等待最长 10 分钟（仍受任务超时限制），重启不会重置计数。已收到成功响应后，如本地保存失败，可继续取回同一回执：每轮最多三次网络尝试，轮次之间按 1–15 分钟退避，首次保存请求后 23 小时停止，为网关 24 小时回执保留期留出余量。明确限流拒绝可创建新尝试，单个任务轮次最多三次；余额、鉴权、参数及审核失败不会自动重新生成。未知结果、过期回执与幂等冲突停止自动恢复，并阻止任务重试接口和画布新建重试任务换键重发。取消只停止本地等待，不表示上游已取消或退款。
+
+新请求入库时清除超过 24 小时的历史请求密文，保留身份记录，避免过期记录被误当成未提交任务。此表是提交恢复记录，不是任务状态或计费的第二套来源；现有任务表、租约和终态规则继续决定画布展示与取消。
+
+非白名单上游不启用同键恢复；图片提交结果不明确时停止自动重发，并禁止通过任务重试换键重新生成。恢复等待会持久化本轮诊断证据，以便重启后继续排查。媒体文件写入与任务完成不属于同一事务；在两者之间崩溃可能留下未关联的本地资源，幂等上游恢复不等于本地文件写入的恰好一次保证。
 
 ### 旧内置 Agent 运行时（已退场，数据保留）
 
@@ -30,6 +93,23 @@ description: BeefTV后端核心持久化表与状态边界
 | `agent_profiles` | 保存用户、项目和画布层的旧内置 Agent 常驻偏好、哈希和独立 revision（保留，不再有新写入） | `(user_id, scope, project_id, canvas_id)` 唯一；归属由 service 校验，写入使用 revision CAS；正文不能授权新能力 |
 | `agent_lessons` | 用户私有的旧内置 Agent 记忆（保留）。原设计中 Agent 写入待审、用户批准后才会注入该用户的会话 | 按 `author_user_id` 隔离；写入机械脱敏；`steps_json` 存路线；`hits` 是主动查阅、`injected` 是自动注入；管理员可按用户查看和删除，不能代批 |
 | `agent_memory_settings` | 用户私有的旧内置 Agent 记忆压缩周期、文本模型和最近一次压缩任务状态（保留，自动压缩已停止） | 主键 `user_id`；压缩结果只在 `compact_task_id` 匹配时应用到该用户已批准记忆 |
+
+### 本地工作区结构（桌面形态）
+
+桌面形态使用由 `local_schema_migrations` 管理的本地结构版本（本实验为 9，见 `backend/internal/database/local_schema.go`），
+与上面的托管版本序列相互独立。
+
+版本 3 `agent-operation-records` 为既有版本 2 工作区创建 `agent_op_records` 及用户、操作 ID 联合主键；版本 4/5 为任务的客户端操作编号补充结构；版本 6 `agent-operation-turn-attribution` 为 `agent_op_records` 增加可空的 `turn_id` 与索引，用于把内置助手一轮对话的写入回执归到该轮上。迁移只新增结构，不重写画布、项目或任务数据；结构创建与迁移记录在同一事务中提交。重复启动不会重复迁移，已成功操作的幂等结果在重启后继续回放。
+
+`turn_id` 为空表示这次写入不属于助手回合（CLI、MCP 与 owner 直连都是如此）。回读既有 `opId` 时不会改写 `turn_id`，同一稳定操作在跨回合重放后仍归属最早执行它的那一轮。
+
+| 表 | 用途 | 关键边界 |
+| --- | --- | --- |
+| `canvas_projects` | 画布文档（含 `revision`） | 写入按 `revision` 原子 CAS：缺少读取时的 revision 或 revision 已过期都拒绝，不会覆盖别人刚写入的内容；`viewport` 属于本机查看偏好，由服务端规范化，不按内容保存 |
+| `canvas_snapshots`、`canvas_snapshot_resources` | 画布历史快照与快照引用的资源 | 快照读写按归属校验；历史恢复同样走 revision 前置条件 |
+| `agent_op_records` | 统一操作层的幂等记录：`(user_id, op_id)` 主键、payload 哈希、状态与可空 `turn_id` | 同一 `opId` 同参数回读原结果、不同参数返回冲突；失败操作回滚且不留幂等记录；只在本用户命名空间内回放，不跨用户读取；`turn_id` 与业务写入同事务提交，只有后端鉴权的内置宿主能写入归属 |
+
+按轮撤销的轮前快照不落库：它保存在数据目录的 `assistant-turns/` 下（0600），按最近 64 轮清理。撤销只依据同一事务内的写入回执重建该轮改动，因此后端在回合中途重启后，已经落地的助手写入仍然可追溯、可撤销。
 
 公开镜像不附带独立迁移程序。`CANVAS_AUTO_MIGRATE=true` 时，Backend 在开始接受请求前完成迁移与兼容性检查；失败时进程直接退出，不会带着不兼容结构提供服务。后续迁移必须新增版本，不得修改已经发布迁移的实现或校验和。
 
@@ -109,6 +189,7 @@ description: BeefTV后端核心持久化表与状态边界
 | `creation_runs` | 保存创作 Agent 的服务端权威状态、执行租约、已批准提案和画布快照 | `(user_id, client_key)` 唯一；客户端会话只作为输入，修订号、执行 epoch 和租约由 service 强校验，不能据前端状态跳过审批或重复执行 |
 | `creation_submissions` | 保存创作提案中每个生成项的请求、报价签名、审批和任务绑定 | `(run_id, item_key)` 与 `task_id` 分别唯一；相同提交只允许创建一个任务，过期、撤销或提案哈希不一致时拒绝执行 |
 | `tasks.creation_submission_id` | 将生成任务反向绑定到已批准的创作提交 | 字段可空以兼容普通任务和旧数据；非空值唯一，阻止同一提交产生多个任务 |
+| `tasks.client_operation_id` / `client_operation_hash` | 保存普通生成确认的稳定编号和原始请求 SHA-256 摘要 | 编号可空；`(user_id, client_operation_id)` 唯一。重放必须匹配完整原始生成请求，模型、参考素材或参数不同返回 409；摘要不对外返回。旧记录没有摘要时拒绝重放，不自动补单 |
 | `workflow_template_versions` / `workflow_instances` / `workflow_step_instances` | 保存短剧生产模板和项目、章节实例 | 短剧分镜工作流 v2 顺序为剧情、资产、分镜、动作预演、视频、交付 |
 
 短剧项目状态以这些领域表为准。自由画布可以承载探索节点，但画布 metadata 不作为生产完成度、镜头版本或交付可用性的真相源。

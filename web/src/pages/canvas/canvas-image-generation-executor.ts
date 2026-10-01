@@ -45,6 +45,7 @@ export async function executeImageGeneration({
     skillMetadata,
     taskContext,
     retryContext,
+    clientOperationId,
     showError,
     registerPendingNodeIds,
 }: CanvasGenerationExecution) {
@@ -186,13 +187,17 @@ export async function executeImageGeneration({
     let failureCount = 0;
     let representativeFailure: GenerationFailureMetadata | undefined;
     await Promise.all(
-        targetIds.map(async (targetId) => {
+        targetIds.map(async (targetId, index) => {
             try {
+                const operationId = clientOperationId
+                    ? (count > 1 ? `${clientOperationId}:${index}` : clientOperationId)
+                    : retryContext?.clientOperationId;
                 await runCanvasGenerationTaskToConsumer(
                     {
                         projectId,
                         nodeId: targetId,
                         ...retryContext,
+                        ...(operationId ? { clientOperationId: operationId } : {}),
                         mode: "image",
                         prompt: effectivePrompt,
                         config: { ...generationConfig, count: "1" },

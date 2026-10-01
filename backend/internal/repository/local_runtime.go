@@ -270,15 +270,53 @@ func (r *Repository) CreateMissingChannelModels(items []model.ChannelModel) (int
 	return result.RowsAffected, result.Error
 }
 
+// ClientOperationReplay 表示这个确认已经有任务。调用方应回读 Task，不能再插入一条。
+type ClientOperationReplay struct {
+	Task model.Task
+}
+
+func (e *ClientOperationReplay) Error() string { return "client operation replay" }
+
+func (r *Repository) TaskByClientOperation(userID, key string) (*model.Task, error) {
+	var task model.Task
+	err := r.db.Where("user_id = ? AND client_operation_id = ?", userID, key).First(&task).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
 func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, limit int) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if task.ClientOperationID != nil && strings.TrimSpace(*task.ClientOperationID) != "" {
+			var existing model.Task
+			err := tx.Where("user_id = ? AND client_operation_id = ?", task.UserID, *task.ClientOperationID).First(&existing).Error
+			if err == nil {
+				return &ClientOperationReplay{Task: existing}
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+		}
 		if err := r.requireActiveLogicalModelForTask(tx, task); err != nil {
 			return err
 		}
 		if err := enforceActiveTaskLimit(tx, task.UserID, limit); err != nil {
 			return err
 		}
-		return tx.Create(task).Error
+		if err := tx.Create(task).Error; err != nil {
+			if task.ClientOperationID != nil && isUniqueConstraint(err) {
+				var existing model.Task
+				if findErr := tx.Where("user_id = ? AND client_operation_id = ?", task.UserID, *task.ClientOperationID).First(&existing).Error; findErr == nil {
+					return &ClientOperationReplay{Task: existing}
+				}
+			}
+			return err
+		}
+		return nil
 	})
 }
 
@@ -318,6 +356,16 @@ func enforceActiveTaskLimit(tx *gorm.DB, userID string, limit int) error {
 		return ErrActiveTaskLimit
 	}
 	return nil
+}
+
+func isUniqueConstraint(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	return strings.Contains(strings.ToUpper(err.Error()), "UNIQUE CONSTRAINT FAILED")
 }
 
 func newRepositoryID() string {

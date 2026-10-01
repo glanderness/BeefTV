@@ -87,6 +87,28 @@ func TestTaskTerminalConflictDoesNotFinalize(t *testing.T) {
 	}
 }
 
+func TestTaskTerminalPreservesImageAndVideoSubmissionUncertainty(t *testing.T) {
+	for name, cause := range map[string]error{
+		"image": imageRecoveryError{errors.New("receipt lost")},
+		"video": providerSubmissionUnknownError{Cause: errors.New("receipt lost")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			task := &model.Task{ID: "task", Status: model.TaskStatusRunning}
+			repo := &taskTerminalRepositoryStub{task: task}
+			coordinator := newTaskTerminalCoordinatorForTest(repo, &taskTerminalReplayStub{}, &taskTerminalLoggerStub{}, &taskTerminalOutputStub{})
+			if err := coordinator.handleExecutionFailure(task, cause, false, false); !errors.Is(err, cause) {
+				t.Fatalf("original failure lost: %v", err)
+			}
+			if task.Stage != "submission_unknown" || !persistedFailureBlocksRetry(persistableTaskFailureMessage(cause), task.Stage) {
+				t.Fatalf("ambiguous paid request became retryable: %+v", task)
+			}
+			if !classifyTaskFailure(cause).Uncertain {
+				t.Fatal("submission uncertainty was lost")
+			}
+		})
+	}
+}
+
 func TestTaskTerminalCoordinatorHandlesCancellation(t *testing.T) {
 	task := &model.Task{ID: "task-1", UserID: "user-1"}
 	repo := &taskTerminalRepositoryStub{task: task}

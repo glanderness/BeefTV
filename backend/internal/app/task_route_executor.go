@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"infinite-canvas/backend/internal/model"
 )
@@ -94,6 +96,19 @@ func (e *taskRouteExecutor) execute(ctx context.Context, task *model.Task, attem
 		if execution.err == nil {
 			break
 		}
+		if task.Type == "canvas_image" && attempt != nil && attempt.DispatchState == "submission_unknown" && !isImageRecoveryError(execution.err) {
+			execution.err = imageRecoveryError{execution.err}
+		}
+		var upstream providerHTTPError
+		if task.Type == "canvas_image" && attempt != nil && attempt.AttemptNumber < 3 && definiteImageThrottle(execution.err) && errors.As(execution.err, &upstream) {
+			delay := time.Duration(1<<attempt.AttemptNumber) * time.Second
+			if upstream.RetryAfter > delay {
+				delay = upstream.RetryAfter
+			}
+			if waitErr := sleepContext(ctx, delay); waitErr != nil {
+				break
+			}
+		}
 		nextAttempt, routeErr := e.port.nextRouteAttemptAfterFailure(task, attempt, execution.err)
 		if routeErr != nil {
 			_ = e.port.log(task.UserID, task.ID, "warn", "备用路由不可用，保留原始失败", routeErr.Error())
@@ -107,7 +122,11 @@ func (e *taskRouteExecutor) execute(ctx context.Context, task *model.Task, attem
 		// its route from this object before it reaches the repository again.
 		task.RouteID = nextAttempt.RouteID
 		attempt = nextAttempt
-		_ = e.port.log(task.UserID, task.ID, "warn", "上游未创建任务，切换备用能力路由", nextAttempt.RouteID)
+		if task.Type == "canvas_image" {
+			_ = e.port.log(task.UserID, task.ID, "warn", "上游限流，正在重试原图片请求", nextAttempt.ID)
+		} else {
+			_ = e.port.log(task.UserID, task.ID, "warn", "上游未创建任务，切换备用能力路由", nextAttempt.RouteID)
+		}
 	}
 	execution.providerSucceeded = execution.err == nil
 	return execution, nil

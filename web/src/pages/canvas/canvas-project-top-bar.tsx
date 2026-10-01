@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Link } from "react-router";
-import { Check, ChevronDown, ChevronUp, Clapperboard, CloudUpload, Columns2, CopyPlus, Focus, FolderKanban, Gauge, History, Home, LayoutGrid, MoreHorizontal, Pencil, Plus, Redo2, Save, Search, Trash2, Undo2, Upload, Workflow, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Clapperboard, CloudUpload, Columns2, CopyPlus, Focus, FolderKanban, Gauge, History, Home, LayoutGrid, MoreHorizontal, Pencil, Plus, Redo2, Save, Search, Sparkles, Trash2, Undo2, Upload, Workflow, X } from "lucide-react";
 import { Button, Dropdown, Tooltip } from "antd";
 
 import { BrandLogoFrame } from "@/components/brand/brand-logo";
@@ -18,6 +18,8 @@ type CanvasTopBarProps = {
     syncStatus?: ReactNode;
     versionsOpen: boolean;
     onToggleVersions: () => void;
+    assistantOpen?: boolean;
+    onToggleAssistant?: () => void;
     title: string;
     titleDraft: string;
     isTitleEditing: boolean;
@@ -63,6 +65,8 @@ export function CanvasTopBar({
     syncStatus,
     versionsOpen,
     onToggleVersions,
+    assistantOpen = false,
+    onToggleAssistant,
     title,
     titleDraft,
     isTitleEditing,
@@ -328,7 +332,7 @@ export function CanvasTopBar({
                             <span>{currentCanvasLabel}</span>{canvasMenuOpen ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
                         </button>
                     </Dropdown>
-                    {!libtvChrome ? <span className="canvas-topbar-sync-status">{syncStatus}</span> : null}
+                    <span className="canvas-topbar-sync-status">{syncStatus}</span>
                 </div>
                 </div>
 
@@ -344,6 +348,21 @@ export function CanvasTopBar({
                 ) : null}
 
                 <div className="canvas-topbar-cluster canvas-topbar-local-cluster pointer-events-auto hidden items-center gap-1 lg:flex" style={dockStyle}>
+                    {onToggleAssistant ? (
+                        <CanvasTopBarTooltip label="助手（Ctrl/Cmd + J）">
+                            <Button
+                                type="text"
+                                className="canvas-topbar-action canvas-topbar-agent-button !h-9 !rounded-xl !px-2.5 !font-medium"
+                                style={{ color: theme.node.text, background: assistantOpen ? theme.toolbar.activeBg : undefined }}
+                                icon={<Sparkles className="size-4" />}
+                                onClick={onToggleAssistant}
+                                aria-label="助手"
+                                aria-pressed={assistantOpen}
+                            >
+                                助手
+                            </Button>
+                        </CanvasTopBarTooltip>
+                    ) : null}
                     {!libtvChrome ? <CanvasTopBarTooltip label="版本记录与本地历史"><Button type="text" className="canvas-topbar-action !h-9 !w-9 !min-w-9 !rounded-xl !p-0" style={{ color: theme.node.text, background: versionsOpen ? theme.toolbar.activeBg : undefined }} icon={<History className="size-4" />} onClick={onToggleVersions} aria-label="版本记录" aria-pressed={versionsOpen} /></CanvasTopBarTooltip> : null}
                 </div>
 
@@ -390,6 +409,21 @@ export function CanvasTopBar({
                                 aria-pressed={!shortDramaGuide.collapsed}
                             >
                                 <span className="tabular-nums">{shortDramaGuide.progress.completedCount}/5</span>
+                            </Button>
+                        </CanvasTopBarTooltip>
+                    ) : null}
+                    {onToggleAssistant ? (
+                        <CanvasTopBarTooltip label="助手（Ctrl/Cmd + J）">
+                            <Button
+                                type="text"
+                                className="canvas-topbar-action canvas-topbar-agent-button !h-10 !rounded-xl !px-2.5 !font-medium"
+                                style={{ color: theme.node.text, background: assistantOpen ? theme.toolbar.activeBg : undefined }}
+                                icon={<Sparkles className="size-4" />}
+                                onClick={onToggleAssistant}
+                                aria-label="助手"
+                                aria-pressed={assistantOpen}
+                            >
+                                <span className="sr-only">助手</span>
                             </Button>
                         </CanvasTopBarTooltip>
                     ) : null}

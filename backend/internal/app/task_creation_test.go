@@ -36,6 +36,66 @@ func TestTaskInputUsesWorkflowProvider(t *testing.T) {
 	}
 }
 
+func TestCreateTaskReplaysSameClientOperationAndRejectsDifferentContent(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+newID()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Task{}); err != nil {
+		t.Fatal(err)
+	}
+	key := "proposal:gp-1:node-1"
+	input := map[string]any{"metadata": map[string]any{"clientOperationId": key}}
+	original := CreateTaskRequest{Type: "canvas_image", Prompt: "a cat", ProjectID: "canvas-1", Input: input}
+	fingerprint, err := clientOperationHash(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	existing := model.Task{ID: "task-1", UserID: "user", Type: "canvas_image", Status: model.TaskStatusQueued, Prompt: "a cat", ProjectID: "canvas-1", ClientOperationID: &key}
+	existing.ClientOperationHash = fingerprint
+	if err := db.Create(&existing).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{repo: repository.New(db)}
+	got, err := svc.CreateTask("user", CreateTaskRequest{Type: "canvas_image", Prompt: "a cat", ProjectID: "canvas-1", Input: input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != existing.ID {
+		t.Fatalf("replay id = %s", got.ID)
+	}
+	for _, changed := range []CreateTaskRequest{
+		{Type: "canvas_image", Prompt: "a cat", ProjectID: "canvas-1", Model: "different-model", Input: input},
+		{Type: "canvas_image", Prompt: "a cat", ProjectID: "canvas-1", Provider: "different-provider", Input: input},
+		{Type: "canvas_image", Prompt: "a cat", ProjectID: "canvas-1", Input: map[string]any{"metadata": map[string]any{"clientOperationId": key}, "referenceImages": []any{"different-image"}}},
+		{Type: "canvas_image", Prompt: "a cat", ProjectID: "canvas-1", Input: map[string]any{"metadata": map[string]any{"clientOperationId": key}, "config": map[string]any{"duration": 10}}},
+	} {
+		if _, err := svc.CreateTask("user", changed); err == nil {
+			t.Fatal("changed generation input silently replayed an unrelated task")
+		}
+	}
+	original.TraceID, original.RequestID = "different-trace", "different-request"
+	if replay, err := svc.CreateTask("user", original); err != nil || replay.ID != existing.ID {
+		t.Fatalf("transport identity must not change generation identity: %v", err)
+	}
+	var count int64
+	if err := db.Model(&model.Task{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("tasks = %d", count)
+	}
+	if _, err := svc.CreateTask("user", CreateTaskRequest{Type: "canvas_image", Prompt: "a dog", ProjectID: "canvas-1", Input: input}); err == nil || !strings.Contains(err.Error(), "不同内容") {
+		t.Fatalf("conflict error = %v", err)
+	}
+	if err := db.Model(&model.Task{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("conflict created a task, count = %d", count)
+	}
+}
+
 func TestCreateTaskRejectsCrossTypeRetryFromDepthCapture(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+newID()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {

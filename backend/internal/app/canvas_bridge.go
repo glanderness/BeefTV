@@ -2,7 +2,9 @@ package app
 
 import (
 	"encoding/json"
+
 	"errors"
+	"gorm.io/gorm"
 	"time"
 
 	"infinite-canvas/backend/internal/assets"
@@ -98,7 +100,18 @@ func (h canvasHost) RecordActivity(userID, event string, count int) {
 	h.recordActivity(userID, event, count)
 }
 
+// newCanvasHost 使用根仓储构造 host（常规请求路径）。
 func newCanvasHost(service *Service) canvasHost {
+	var repo *repository.Repository
+	if service != nil {
+		repo = service.repo
+	}
+	return newCanvasHostWithRepo(service, repo)
+}
+
+// newCanvasHostWithRepo 与 newCanvasHost 完全一致，但配额/用量读取绑定到给定仓储。
+// 事务内的领域写入必须走这里，否则会回到根连接取用量而与自己的事务互相等待。
+func newCanvasHostWithRepo(service *Service, repo *repository.Repository) canvasHost {
 	if service == nil {
 		return canvasHost{}
 	}
@@ -115,7 +128,7 @@ func newCanvasHost(service *Service) canvasHost {
 			if err != nil {
 				return err
 			}
-			usage, err := service.repo.UserStorageUsage(userID)
+			usage, err := repo.UserStorageUsage(userID)
 			if err != nil {
 				return err
 			}
@@ -126,7 +139,7 @@ func newCanvasHost(service *Service) canvasHost {
 			if err != nil {
 				return err
 			}
-			usage, err := service.repo.UserStorageUsage(userID)
+			usage, err := repo.UserStorageUsage(userID)
 			if err != nil {
 				return err
 			}
@@ -202,6 +215,25 @@ func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (U
 	return s.canvasDomain().UpsertUserCanvasProject(userID, raw)
 }
 
+// Database 暴露本进程使用的数据库连接，供操作层与业务写入共用同一事务边界。
+func (s *Service) Database() *gorm.DB {
+	if s == nil || s.repo == nil {
+		return nil
+	}
+	return s.repo.DB()
+}
+
+// canvasDomainWithTx 返回完全绑定到同一事务的画布领域服务：仓储与 host 的配额读取都用同一个连接。
+func (s *Service) canvasDomainWithTx(tx *gorm.DB) *canvas.Service {
+	repo := s.repo.WithTx(tx)
+	return s.canvasDomain().WithRepository(repo).WithHost(newCanvasHostWithRepo(s, repo))
+}
+
+// UpsertUserCanvasProjectWithTx 把画布写入放进调用方给出的事务，使操作记录与业务写入原子提交。
+func (s *Service) UpsertUserCanvasProjectWithTx(tx *gorm.DB, userID string, raw json.RawMessage) (UserDataSummary, error) {
+	return s.canvasDomainWithTx(tx).UpsertUserCanvasProject(userID, raw)
+}
+
 func (s *Service) CommitUserCanvasProjectAssets(userID string, raw json.RawMessage, assets []json.RawMessage) (UserDataSummary, error) {
 	return s.canvasDomain().CommitUserCanvasProjectAssets(userID, raw, assets)
 }
@@ -272,4 +304,36 @@ func containsInlineMediaDataURL(value interface{}) bool {
 
 func assetFromJSON(userID string, raw json.RawMessage) (model.Asset, error) {
 	return canvas.AssetFromJSON(userID, raw)
+}
+
+// DataDir 返回本进程的数据目录，供操作层的本机客户端登记等本地状态使用。
+func (s *Service) DataDir() string {
+	if s == nil {
+		return ""
+	}
+	return s.dataDir
+}
+
+// UserCanvasProjectWithTx 在调用方事务里读取画布，让操作层读写共用同一条连接。
+func (s *Service) UserCanvasProjectWithTx(tx *gorm.DB, userID string, id string) (json.RawMessage, error) {
+	return s.canvasDomainWithTx(tx).UserCanvasProject(userID, id)
+}
+
+// UserAssetWithTx 在调用方事务里读取素材，与写操作同事务。
+func (s *Service) UserAssetWithTx(tx *gorm.DB, userID string, id string) (json.RawMessage, error) {
+	return s.canvasDomainWithTx(tx).UserAsset(userID, id)
+}
+
+// 以下是内置 Agent/CLI/MCP 的统一写入口：领域实现拥有规格与连接规则，
+// 操作层只做参数与幂等，写入与操作记录共用同一事务（tx 绑定仓储与 host）。
+func (s *Service) CreateUserCanvasNodesWithTx(tx *gorm.DB, userID, canvasID string, drafts []canvas.NodeDraft, expectedRevision int64) (UserDataSummary, []canvas.CreatedNode, error) {
+	return s.canvasDomainWithTx(tx).CreateUserCanvasNodes(userID, canvasID, drafts, expectedRevision)
+}
+
+func (s *Service) UpdateUserCanvasNodeFieldsWithTx(tx *gorm.DB, userID, canvasID, nodeID string, patch map[string]any, expectedRevision int64) (UserDataSummary, error) {
+	return s.canvasDomainWithTx(tx).UpdateUserCanvasNodeFields(userID, canvasID, nodeID, patch, expectedRevision)
+}
+
+func (s *Service) ConnectUserCanvasNodesWithTx(tx *gorm.DB, userID, canvasID, fromNodeID, toNodeID string, expectedRevision int64) (UserDataSummary, error) {
+	return s.canvasDomainWithTx(tx).ConnectUserCanvasNodesAtRevision(userID, canvasID, fromNodeID, toNodeID, expectedRevision)
 }

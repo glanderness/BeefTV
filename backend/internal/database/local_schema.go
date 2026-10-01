@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 3
+const CurrentSchemaVersion int64 = 9
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -46,6 +46,7 @@ func LocalModels() []any {
 		&model.Workspace{}, &model.IDSequence{}, &model.SystemSetting{}, &model.UserDailyActivity{},
 		&model.ModelChannel{}, &model.ChannelModel{}, &model.ChannelModelVariant{}, &model.ApiCallLog{},
 		&model.LogicalModel{}, &model.LogicalModelRevision{}, &model.LogicalModelRoute{}, &model.RouteAttempt{},
+		&model.ImageSubmission{},
 		&model.CloudAgentExecution{}, &model.CloudAgentCanvasMutation{}, &model.AgentProfile{}, &model.AgentLesson{}, &model.AgentMemorySetting{},
 		&model.PluginPlatformState{}, &model.UserPluginState{},
 		&model.Skill{}, &model.SkillVersion{}, &model.SkillFile{}, &model.UserSkillState{},
@@ -56,7 +57,7 @@ func LocalModels() []any {
 		&model.Project{}, &model.ProjectFolder{}, &model.StyleProfile{}, &model.ProjectUnit{}, &model.CanvasUnitLink{},
 		&model.Shot{}, &model.ShotRevision{}, &model.ShotArtifact{}, &model.ShotAssetReference{},
 		&model.WorkflowTemplateVersion{}, &model.WorkflowInstance{}, &model.WorkflowStepInstance{}, &model.WorkflowStepTask{}, &model.ProductionTaskLink{},
-		&model.CanvasProject{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{},
+		&model.CanvasProject{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{}, &model.AgentOpRecord{},
 		&model.PromptTemplate{}, &model.UserPromptCustomization{},
 		&model.Task{}, &model.CreationRun{}, &model.CreationSubmission{}, &model.TaskTextDelta{}, &model.TaskLog{}, &model.Result{},
 	}
@@ -74,10 +75,18 @@ func migrateLocalSchema(db *gorm.DB, beforeApply func(int64) error) error {
 		{version: 1, name: "local-core-schema", apply: migrateLocalCoreSchema},
 		{version: 2, name: "retire-hosted-schema", destructive: true, apply: migrateRetiredHostedSchema},
 		{version: 3, name: "task-failure-diagnostics", apply: ensureTaskFailureDiagnostics},
+		{version: 4, name: "task-client-operation", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.Task{}) }},
+		{version: 5, name: "task-client-operation-hash", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.Task{}) }},
+		{version: 6, name: "agent-operation-turn-attribution", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.AgentOpRecord{}) }},
+		{version: 8, name: "reconcile-product-agent-schema", apply: migrateProductAgentSchema},
+		{version: 9, name: "repair-product-agent-contracts", apply: repairProductAgentContracts},
 	}
 	current, err := currentSchemaVersion(db)
 	if err != nil {
 		return err
+	}
+	if current > CurrentSchemaVersion {
+		return fmt.Errorf("数据库版本 %d 高于当前程序支持的 %d，拒绝降级迁移", current, CurrentSchemaVersion)
 	}
 	for _, migration := range migrations {
 		if migration.version <= current {
@@ -103,11 +112,32 @@ func migrateLocalSchema(db *gorm.DB, beforeApply func(int64) error) error {
 		}
 		current = migration.version
 	}
-	// Preview builds used the same version numbers for unrelated migrations.
-	// Repair this additive requirement from the actual structure without changing
-	// their migration records or removing preview data.
-	if err := db.Transaction(ensureTaskFailureDiagnostics); err != nil {
-		return fmt.Errorf("补齐本地任务诊断字段: %w", err)
+	return requireReconciledSchema(db)
+}
+
+// Experimental integration only: v3-v6 have conflicting historical meanings.
+// Reconcile additive contracts at a new version without rebuilding tasks or
+// rewriting ledger identities. The migration caller owns the transaction.
+func migrateProductAgentSchema(tx *gorm.DB) error {
+	if !tx.Migrator().HasColumn("tasks", "failure_diagnostics") {
+		if err := tx.Exec("ALTER TABLE tasks ADD COLUMN failure_diagnostics TEXT").Error; err != nil {
+			return err
+		}
+	}
+	if err := tx.AutoMigrate(&model.ImageSubmission{}, &model.AgentOpRecord{}); err != nil {
+		return err
+	}
+	for _, field := range []string{"ClientOperationID", "ClientOperationHash"} {
+		if !tx.Migrator().HasColumn(&model.Task{}, field) {
+			if err := tx.Migrator().AddColumn(&model.Task{}, field); err != nil {
+				return err
+			}
+		}
+	}
+	if !tx.Migrator().HasIndex(&model.Task{}, "idx_tasks_user_client_op") {
+		if err := tx.Migrator().CreateIndex(&model.Task{}, "idx_tasks_user_client_op"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -279,7 +309,7 @@ func migrateLegacyCreationSubmissions(db *gorm.DB) error {
 }
 
 func RequireLocalSchema(db *gorm.DB) error {
-	for _, table := range []any{&model.Workspace{}, &model.Resource{}, &model.Project{}, &model.CanvasProject{}, &model.Task{}} {
+	for _, table := range []any{&model.Workspace{}, &model.Resource{}, &model.Project{}, &model.CanvasProject{}, &model.Task{}, &model.AgentOpRecord{}, &model.ImageSubmission{}} {
 		if !db.Migrator().HasTable(table) {
 			return fmt.Errorf("本地工作区数据库结构缺失，请启用自动迁移")
 		}
@@ -288,22 +318,64 @@ func RequireLocalSchema(db *gorm.DB) error {
 	if err != nil {
 		return err
 	}
-	if version < CurrentSchemaVersion {
+	if version != CurrentSchemaVersion {
 		return fmt.Errorf("本地工作区数据库版本为 %d，期望 %d，请启用自动迁移", version, CurrentSchemaVersion)
 	}
-	if !db.Migrator().HasColumn(&model.Task{}, "FailureDiagnostics") {
-		return fmt.Errorf("本地任务诊断字段缺失，请启用自动迁移")
+	return requireReconciledSchema(db)
+}
+
+func requireReconciledSchema(db *gorm.DB) error {
+	if err := requireSQLitePrimaryKey(db, "tasks", []string{"id"}); err != nil {
+		return err
+	}
+	if !db.Migrator().HasTable(&model.ImageSubmission{}) || !db.Migrator().HasTable(&model.AgentOpRecord{}) {
+		return fmt.Errorf("本地图片恢复或 Agent 操作表缺失，请从备份恢复或使用修复迁移")
+	}
+	for _, column := range []string{"failure_diagnostics", "client_operation_id", "client_operation_hash"} {
+		if !db.Migrator().HasColumn("tasks", column) {
+			return fmt.Errorf("本地任务结构缺失列 %s", column)
+		}
+	}
+	if !db.Migrator().HasColumn(&model.AgentOpRecord{}, "TurnID") || !db.Migrator().HasIndex(&model.AgentOpRecord{}, "idx_agent_op_records_turn_id") || !db.Migrator().HasIndex(&model.Task{}, "idx_tasks_user_client_op") {
+		return fmt.Errorf("本地 Agent 幂等或回合归属结构缺失")
+	}
+	for _, value := range []any{&model.ImageSubmission{}, &model.AgentOpRecord{}} {
+		stmt := &gorm.Statement{DB: db}
+		if err := stmt.Parse(value); err != nil {
+			return err
+		}
+		for _, column := range stmt.Schema.DBNames {
+			if !db.Migrator().HasColumn(stmt.Schema.Table, column) {
+				return fmt.Errorf("本地数据库表 %s 缺失列 %s", stmt.Schema.Table, column)
+			}
+		}
+		if err := requireSQLitePrimaryKey(db, stmt.Schema.Table, stmt.Schema.PrimaryFieldDBNames); err != nil {
+			return err
+		}
+	}
+	for _, index := range reconciledIndexes {
+		valid, err := matchesSQLiteIndex(db, index)
+		if err != nil {
+			return err
+		}
+		if !valid {
+			return fmt.Errorf("本地数据库索引 %s 定义不完整", index.name)
+		}
 	}
 	return nil
 }
 
 func ReadSchemaStatus(db *gorm.DB) (SchemaStatus, error) {
 	status := SchemaStatus{Expected: CurrentSchemaVersion}
+	var err error
+	status.Current, err = currentSchemaVersion(db)
+	if err != nil {
+		return status, err
+	}
 	if err := RequireLocalSchema(db); err != nil {
 		return status, nil
 	}
-	status.Current, _ = currentSchemaVersion(db)
-	status.Ready = true
+	status.Ready = status.Current == CurrentSchemaVersion
 	return status, nil
 }
 

@@ -128,8 +128,8 @@ func TestBuildRenderFFmpegArgsSilentFallbackUniqueLabels(t *testing.T) {
 	}}
 	args := buildRenderFFmpegArgs(plan, "out.mp4")
 	joined := strings.Join(args, " ")
-	// 两段均无音轨：静音源标签必须按片段唯一，否则 filter_complex 报错。
-	if !strings.Contains(joined, "[silent0]") || !strings.Contains(joined, "[silent1]") {
+	// 两段均无音轨：各自使用有限静音输入，并在 concat 前裁切。
+	if strings.Count(joined, "-i anullsrc=") != 2 || strings.Count(joined, "apad,atrim=duration=1.000") != 2 {
 		t.Fatalf("silent labels not unique: %s", joined)
 	}
 }

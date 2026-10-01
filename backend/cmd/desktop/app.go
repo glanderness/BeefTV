@@ -19,8 +19,9 @@ import (
 )
 
 type DesktopRuntimeConfig struct {
-	BaseURL     string `json:"baseURL"`
-	LaunchToken string `json:"launchToken"`
+	BaseURL          string `json:"baseURL"`
+	LaunchToken      string `json:"launchToken"`
+	UIBootstrapToken string `json:"uiBootstrapToken"`
 }
 
 type DesktopApp struct {
@@ -109,7 +110,7 @@ func (a *DesktopApp) RuntimeConfig() DesktopRuntimeConfig {
 	if runtime == nil {
 		return DesktopRuntimeConfig{}
 	}
-	return DesktopRuntimeConfig{BaseURL: runtime.BaseURL(), LaunchToken: runtime.LaunchToken()}
+	return DesktopRuntimeConfig{BaseURL: runtime.BaseURL(), LaunchToken: runtime.LaunchToken(), UIBootstrapToken: runtime.UIBootstrapToken()}
 }
 
 func (a *DesktopApp) SaveOwnedMedia(fileName string, resourceID string) (bool, error) {

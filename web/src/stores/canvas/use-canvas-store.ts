@@ -2,8 +2,9 @@ import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
 import { nanoid } from "nanoid";
-import { sameCanvasContent } from "@/lib/canvas/canvas-content";
+import { sameCanvasContent, sameCanvasDocument } from "@/lib/canvas/canvas-content";
 import { DEFAULT_CANVAS_BACKGROUND_MODE, normalizeCanvasAppearance, readCanvasAppearanceDefault, type CanvasAppearance } from "@/lib/canvas/canvas-appearance";
+import { decideExternalCanvasRevision } from "@/lib/canvas/canvas-external-revision";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { parseCanvasStorageDocument, rebaseCanvasProjects, serializeCanvasStorageDocument, type CanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
@@ -177,6 +178,156 @@ function clearCanvasSaveTimer(scope: string) {
 
 export function canvasStoreStorageRevision(scope: string) {
     return observedCanvasPersists.get(scope)?.revision ?? 0;
+}
+
+/** 该作用域最近一次落进浏览器存储的画布内容；没有记录返回 undefined。 */
+export function canvasDurableSnapshot(scope: string, projectId: string) {
+    return observedCanvasPersists.get(scope)?.projects.find((project) => project.id === projectId);
+}
+
+export type CanvasExternalRevisionConflict = {
+    projectId: string;
+    localRevision: number;
+    remoteRevision: number;
+    detectedAt: string;
+    /** 被挡下的外部内容：保留为候选，用户选择「以最新为准」时使用它。 */
+    candidate: CanvasProject;
+};
+
+type CanvasExternalRevisionState = {
+    conflicts: Map<string, CanvasExternalRevisionConflict>;
+    /** 每次冲突集合变化都自增，供订阅方重新投影。 */
+    version: number;
+};
+
+const canvasExternalRevisionState: CanvasExternalRevisionState = { conflicts: new Map(), version: 0 };
+const canvasExternalRevisionListeners = new Set<() => void>();
+
+function canvasExternalRevisionKey(scope: string, projectId: string) {
+    return `${scope}\0${projectId}`;
+}
+
+export function canvasExternalRevisionVersion() {
+    return canvasExternalRevisionState.version;
+}
+
+export function subscribeCanvasExternalRevision(listener: () => void) {
+    canvasExternalRevisionListeners.add(listener);
+    return () => { canvasExternalRevisionListeners.delete(listener); };
+}
+
+function publishCanvasExternalRevision() {
+    canvasExternalRevisionState.version += 1;
+    for (const listener of [...canvasExternalRevisionListeners]) listener();
+}
+
+/** 读某个画布当前是否处于「外部写入被本地编辑挡住」的冲突态。 */
+export function canvasExternalRevisionConflict(scope: string, projectId: string) {
+    const key = canvasExternalRevisionKey(scope, projectId);
+    const conflict = canvasExternalRevisionState.conflicts.get(key);
+    if (!conflict) return undefined;
+    // 本地 revision 已前进说明这次提交被服务端接受，冲突前提消失；
+    // 否则不同入口之间会一直提示同一份早已过时的冲突。
+    const localRevision = useCanvasStore.getState().projects.find((project) => project.id === projectId)?.revision ?? 0;
+    if (localRevision !== conflict.localRevision) {
+        canvasExternalRevisionState.conflicts.delete(key);
+        return undefined;
+    }
+    return conflict;
+}
+
+/** 冲突解除：本地编辑已被服务端接受，或用户选择以最新内容为准。 */
+export function clearCanvasExternalRevisionConflict(scope: string, projectId: string) {
+    if (!canvasExternalRevisionState.conflicts.delete(canvasExternalRevisionKey(scope, projectId))) return;
+    publishCanvasExternalRevision();
+}
+
+function markCanvasExternalRevisionConflict(scope: string, conflict: CanvasExternalRevisionConflict) {
+    const key = canvasExternalRevisionKey(scope, conflict.projectId);
+    const previous = canvasExternalRevisionState.conflicts.get(key);
+    if (previous && previous.localRevision === conflict.localRevision && previous.remoteRevision === conflict.remoteRevision && sameCanvasDocument(previous.candidate, conflict.candidate)) return;
+    canvasExternalRevisionState.conflicts.set(key, conflict);
+    publishCanvasExternalRevision();
+}
+
+type ApplyExternalCanvasRevisionOptions = {
+    scope?: string;
+    /**
+     * 本地是否有服务端尚未确认的编辑。必须由持有服务端确认基线与 HTTP 提交状态的
+     * 调用方给出；本地存储队列为空并不能证明服务端已经保存。
+     */
+    hasUnsyncedEdits: boolean;
+    onApplied?: (project: CanvasProject, previous: CanvasProject | undefined) => void;
+};
+
+/**
+ * 把一次外部写入（内置助手回合、CLI/MCP 操作）投影到本地存储与编辑器。
+ *
+ * 无未确认编辑时安全应用外部内容（保留本机视角与外观偏好），并通过 `onApplied`
+ * 把这次替换交给调用方通知编辑器；有未确认编辑时保留本地内容、把外部内容留作
+ * 候选并记录冲突，绝不覆盖用户正在编辑的值。
+ */
+export function applyExternalCanvasRevision(remote: CanvasProject, options: ApplyExternalCanvasRevisionOptions) {
+    const scope = options.scope ?? getActiveUserScope();
+    const previous = useCanvasStore.getState().projects.find((project) => project.id === remote.id)
+        ?? canvasMemoryStates.get(scope)?.projects.find((project) => project.id === remote.id);
+    return applyCanvasExternalDecision(scope, decideExternalCanvasRevision({
+        remote,
+        local: previous,
+        hasLocalEdits: options.hasUnsyncedEdits,
+    }), previous, options.onApplied);
+}
+
+/**
+ * 用户显式选择「以最新内容为准」：用保留的候选覆盖本地文档。
+ *
+ * 这是唯一允许在存在本地编辑时替换文档的路径，且只能由用户动作触发。
+ */
+export function acceptCanvasExternalRevisionCandidate(
+    projectId: string,
+    options: { scope?: string; onApplied?: (project: CanvasProject, previous: CanvasProject | undefined) => void } = {},
+) {
+    const scope = options.scope ?? getActiveUserScope();
+    const conflict = canvasExternalRevisionState.conflicts.get(canvasExternalRevisionKey(scope, projectId));
+    if (!conflict) return undefined;
+    const previous = useCanvasStore.getState().projects.find((project) => project.id === projectId);
+    return applyCanvasExternalDecision(scope, decideExternalCanvasRevision({
+        remote: conflict.candidate,
+        local: previous,
+        hasLocalEdits: false,
+    }), previous, options.onApplied);
+}
+
+function applyCanvasExternalDecision(
+    scope: string,
+    decision: ReturnType<typeof decideExternalCanvasRevision>,
+    previous: CanvasProject | undefined,
+    onApplied?: (project: CanvasProject, previous: CanvasProject | undefined) => void,
+) {
+    if (decision.kind === "keep-local") {
+        markCanvasExternalRevisionConflict(scope, {
+            projectId: decision.projectId,
+            localRevision: decision.localRevision,
+            remoteRevision: decision.remoteRevision,
+            detectedAt: new Date().toISOString(),
+            candidate: decision.candidate,
+        });
+        return decision;
+    }
+    const applied = decision.project;
+    // Validate/project into the live editor before advancing the stored revision.
+    // A merge conflict must not leave the store ahead of the visible editor.
+    onApplied?.(applied, previous);
+    withCanvasStorePersistenceSuppressed(() => {
+        useCanvasStore.setState((state) => ({
+            projects: state.projects.some((project) => project.id === applied.id)
+                ? state.projects.map((project) => project.id === applied.id ? applied : project)
+                : [...state.projects, applied],
+        }));
+    });
+    canvasMemoryStates.set(scope, { projects: useCanvasStore.getState().projects });
+    clearCanvasExternalRevisionConflict(scope, applied.id);
+    return decision;
 }
 
 export function recordCanvasStorageDocument(scope: string, document: CanvasStorageDocument) {
