@@ -80,6 +80,30 @@ func TestCreationSubmissionOutputIsLocalExecutionDescriptor(t *testing.T) {
 	}
 }
 
+func TestCreationExpiredLeaseRejectsConfirmAndSubmit(t *testing.T) {
+	s, db, id, guard := creationTestService(t)
+	past := time.Now().Add(-time.Minute)
+	if err := db.Model(&model.CreationRun{}).Where("id = ?", id).Update("lease_expires_at", past).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PrepareCreationSubmission("user", id, CreationRequest{CreationGuard: guard, ItemKey: "late", Request: creationTextRequest()}); err == nil {
+		t.Fatal("expired lease quote accepted")
+	}
+	if _, err := s.ChangeCreationRun("user", id, "proposal-approve", CreationRequest{CreationGuard: guard, Revision: 2, ProposalVersion: 1, Proposal: json.RawMessage(`{"title":"计划"}`), Ops: []CreationCanvasOp{{Type: "add_node", ID: "n", NodeType: "text"}}}); err == nil {
+		t.Fatal("expired lease confirmation accepted")
+	}
+}
+
+func TestCreationModelCannotSelfConfirm(t *testing.T) {
+	s, _, id, _ := creationTestService(t)
+	if _, err := s.ChangeCreationRun("user", id, "claim", CreationRequest{ExpectedEpoch: 1, CreationGuard: CreationGuard{Owner: "assistant"}}); err == nil {
+		t.Fatal("assistant claimed confirmation")
+	}
+	if _, err := s.ChangeCreationRun("user", id, "claim", CreationRequest{ExpectedEpoch: 1, CreationGuard: CreationGuard{Owner: "model"}}); err == nil {
+		t.Fatal("model claimed confirmation")
+	}
+}
+
 func TestCreationRunOwnershipCASAndFence(t *testing.T) {
 	s, _, id, guard := creationTestService(t)
 	if _, err := s.GetCreationRun("other", id); err == nil {
