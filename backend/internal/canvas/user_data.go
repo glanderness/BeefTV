@@ -385,6 +385,9 @@ func (s *Service) upsertUserCanvasProjectWithAssets(userID string, raw json.RawM
 				if errors.Is(err, repository.ErrCanvasHistoryResourceMissing) {
 					return kernel.NewAppError(http.StatusConflict, "画布引用的素材已变化，当前内容未被覆盖，请保留草稿并重新加载")
 				}
+				if errors.Is(err, repository.ErrCanvasLibraryFolderMissing) {
+					return kernel.BadAuthRequest("画布文件夹不存在")
+				}
 				return err
 			}
 			audit.NodesAfter = canvasNodeCount(project.PayloadJSON)

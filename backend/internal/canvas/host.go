@@ -16,6 +16,7 @@ type Host interface {
 	WithStorageLock(fn func() error) error
 	StructuredQuota(userID, kind string, creating bool, deltaBytes int64) error
 	StructuredBatchQuota(userID, kind string, createdCount int, deltaBytes int64) error
+	AdmitStructuredQuota(usage repository.UserStorageUsage, kind string, creating bool, deltaBytes int64) error
 	StructuredReplacementQuota(userID, kind string, count int, bytes int64) error
 	DeleteUserAssetWithResources(userID, assetID string) error
 	RecordActivity(userID, event string, count int)
@@ -37,8 +38,11 @@ func (nopHost) WithStorageLock(fn func() error) error {
 	}
 	return fn()
 }
-func (nopHost) StructuredQuota(string, string, bool, int64) error           { return nil }
-func (nopHost) StructuredBatchQuota(string, string, int, int64) error       { return nil }
+func (nopHost) StructuredQuota(string, string, bool, int64) error     { return nil }
+func (nopHost) StructuredBatchQuota(string, string, int, int64) error { return nil }
+func (nopHost) AdmitStructuredQuota(repository.UserStorageUsage, string, bool, int64) error {
+	return nil
+}
 func (nopHost) StructuredReplacementQuota(string, string, int, int64) error { return nil }
 func (nopHost) DeleteUserAssetWithResources(string, string) error           { return nil }
 func (nopHost) RecordActivity(string, string, int)                          {}

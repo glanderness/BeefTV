@@ -61,6 +61,17 @@ func (r *Repository) WithTx(tx *gorm.DB) *Repository {
 	return &Repository{db: tx}
 }
 
+// HoldsTransaction reports that this repository is already bound to a GORM
+// transaction. Callers that would take the process storage mutex must skip it
+// so a single SQLite connection cannot deadlock on transaction -> mutex -> DB.
+func (r *Repository) HoldsTransaction() bool {
+	if r == nil || r.db == nil || r.db.Statement == nil {
+		return false
+	}
+	_, ok := r.db.Statement.ConnPool.(gorm.TxCommitter)
+	return ok
+}
+
 type UserStorageUsage struct {
 	AssetCount   int64 `json:"assetCount"`
 	AssetBytes   int64 `json:"assetBytes"`
@@ -131,12 +142,18 @@ func (r *Repository) nextPrefixedID(db *gorm.DB, prefix string) (string, error) 
 
 func (r *Repository) UserStorageUsage(userID string) (UserStorageUsage, error) {
 	var usage UserStorageUsage
-	query := `
+	canvasBytes := `(SELECT COALESCE(SUM(length(CAST(COALESCE(payload_json, '') AS BLOB))), 0) FROM canvas_projects WHERE user_id = ?)`
+	args := []any{userID, userID, userID, userID}
+	if r.db.Migrator().HasTable(&model.CanvasDrawing{}) {
+		canvasBytes += ` + (SELECT COALESCE(SUM(length(CAST(COALESCE(snapshot_json, '') AS BLOB))), 0) FROM canvas_drawings WHERE user_id = ? AND deleted_at IS NULL)`
+		args = append(args, userID)
+	}
+	query := fmt.Sprintf(`
 		SELECT
 			(SELECT COUNT(*) FROM assets WHERE user_id = ?) AS asset_count,
 			(SELECT COALESCE(SUM(length(CAST(COALESCE(payload_json, '') AS BLOB))), 0) FROM assets WHERE user_id = ?) AS asset_bytes,
 			(SELECT COUNT(*) FROM canvas_projects WHERE user_id = ?) AS canvas_count,
-			(SELECT COALESCE(SUM(length(CAST(COALESCE(payload_json, '') AS BLOB))), 0) FROM canvas_projects WHERE user_id = ?) AS canvas_bytes,
+			%s AS canvas_bytes,
 			(SELECT COUNT(*) FROM tasks WHERE user_id = ?) AS task_count,
 			(SELECT COALESCE(SUM(length(CAST(COALESCE(prompt, '') AS BLOB)) + length(CAST(COALESCE(input_json, '') AS BLOB)) + length(CAST(COALESCE(result_json, '') AS BLOB)) + length(CAST(COALESCE(text_draft, '') AS BLOB)) + length(CAST(COALESCE(error, '') AS BLOB))), 0) FROM tasks WHERE user_id = ?)
 			+ (SELECT COALESCE(SUM(length(CAST(COALESCE(message, '') AS BLOB)) + length(CAST(COALESCE(payload, '') AS BLOB))), 0) FROM task_logs WHERE user_id = ?)
@@ -144,8 +161,9 @@ func (r *Repository) UserStorageUsage(userID string) (UserStorageUsage, error) {
 			+ (SELECT COALESCE(SUM(byte_count), 0) FROM task_text_delta WHERE user_id = ?)
 			+ (SELECT COALESCE(SUM(length(CAST(COALESCE(path, '') AS BLOB)) + length(CAST(COALESCE(model, '') AS BLOB)) + length(CAST(COALESCE(provider_request_id, '') AS BLOB)) + length(CAST(COALESCE(error_code, '') AS BLOB)) + length(CAST(COALESCE(error, '') AS BLOB)) + length(CAST(COALESCE(upstream_url, '') AS BLOB)) + length(CAST(COALESCE(request_body, '') AS BLOB)) + length(CAST(COALESCE(response_body, '') AS BLOB))), 0) FROM api_call_logs WHERE user_id = ?) AS task_bytes,
 			(SELECT COUNT(*) FROM api_call_logs WHERE user_id = ?) AS api_call_count
-	`
-	err := r.db.Raw(query, userID, userID, userID, userID, userID, userID, userID, userID, userID, userID, userID).Scan(&usage).Error
+	`, canvasBytes)
+	args = append(args, userID, userID, userID, userID, userID, userID, userID)
+	err := r.db.Raw(query, args...).Scan(&usage).Error
 	return usage, err
 }
 
@@ -1145,7 +1163,7 @@ func (r *Repository) DeleteCanvasProject(userID string, id string) error {
 			return err
 		}
 		if tx.Migrator().HasTable(&model.CanvasDrawing{}) {
-			if err := tx.Where("user_id = ? AND canvas_id = ?", userID, id).Delete(&model.CanvasDrawing{}).Error; err != nil {
+			if err := New(tx).TombstoneCanvasDrawingsForCanvas(userID, id, time.Now().UTC()); err != nil {
 				return err
 			}
 		}

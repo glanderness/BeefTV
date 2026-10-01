@@ -160,6 +160,7 @@ paths:
     put:
       tags: [canvas]
       summary: 创建或更新画布文件夹
+      description: 已删除的文件夹 ID 不能重新导入。封面必须是当前用户已就绪的资源。
       requestBody:
         required: true
         content:
@@ -180,9 +181,12 @@ paths:
           description: 信封 data.folder 为保存后的文件夹
         "400":
           description: 名称、ID 或封面资源不合法
+        "409":
+          description: 文件夹已删除，不能用本地草稿重建
     delete:
       tags: [canvas]
       summary: 删除画布文件夹并清空画布归属
+      description: 删除会递增仍指向该文件夹的画布 revision，并更新画布正文中的 folderId。重复删除已删除的文件夹返回成功。
       responses:
         "200":
           description: 信封 data.id 为已删除的文件夹
@@ -223,7 +227,7 @@ paths:
     put:
       tags: [canvas]
       summary: 按 revision 保存画板快照
-      description: 新建传 revision 0，更新传读取到的版本；成功原子加 1。预览和成品必须是当前用户已就绪的资源 ID。
+      description: 新建传 revision 0，更新传读取到的版本；成功原子加 1。丢失应答后用同一请求重试会回放已提交结果。已删除的画板不能用 revision 0 重建。预览和成品必须是当前用户已就绪的资源 ID。
       requestBody:
         required: true
         content:
@@ -251,12 +255,13 @@ paths:
         "400":
           description: 画板、引擎或资源引用不合法
         "409":
-          description: 版本冲突，原快照未被覆盖
+          description: 版本冲突，或画板已删除不能重新导入；reason 为 conflict 表示 CAS，failed_precondition 表示已删除
         "428":
           description: 缺少 revision
     delete:
       tags: [canvas]
       summary: 删除画板快照
+      description: 删除写入墓碑并释放预览/成品资源引用。重复删除已删除的画板返回成功。
       responses:
         "200":
           description: 信封 data.id 为已删除的画板

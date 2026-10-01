@@ -46,6 +46,35 @@ type CanvasDrawingDocument struct {
 	UpdatedAt         time.Time            `json:"updatedAt"`
 }
 
+func (s *Service) withWriteTx(fn func(*Service) error) error {
+	if s == nil || s.repo == nil {
+		return fn(s)
+	}
+	run := func() error {
+		if s.repo.HoldsTransaction() {
+			return fn(s)
+		}
+		return s.repo.Transaction(func(txRepo *repository.Repository) error {
+			return fn(s.WithRepository(txRepo))
+		})
+	}
+	if s.repo.HoldsTransaction() {
+		return run()
+	}
+	return s.host.WithStorageLock(run)
+}
+
+func (s *Service) admitStructuredBytes(userID, kind string, creating bool, deltaBytes int64) error {
+	if s.repo != nil && s.repo.HoldsTransaction() {
+		usage, err := s.repo.UserStorageUsage(userID)
+		if err != nil {
+			return err
+		}
+		return s.host.AdmitStructuredQuota(usage, kind, creating, deltaBytes)
+	}
+	return s.host.StructuredQuota(userID, kind, creating, deltaBytes)
+}
+
 func (s *Service) UserCanvasFolders(userID string) ([]model.CanvasLibraryFolder, error) {
 	return s.repo.CanvasLibraryFolders(userID)
 }
@@ -82,23 +111,32 @@ func (s *Service) UpsertUserCanvasFolder(userID string, id string, raw json.RawM
 		return model.CanvasLibraryFolder{}, kernel.BadAuthRequest("文件夹名称过长")
 	}
 	coverID := strings.TrimSpace(payload.CoverResourceID)
-	if err := s.ownedReadyResource(userID, coverID, "封面"); err != nil {
-		return model.CanvasLibraryFolder{}, err
-	}
 	now := time.Now().UTC()
 	folder := model.CanvasLibraryFolder{
 		ID: folderID, UserID: userID, Name: name, CoverResourceID: coverID,
 		CreatedAt: parseClientTime(payload.CreatedAt, now), UpdatedAt: now,
 	}
-	err := s.host.WithStorageLock(func() error {
-		existing, existingErr := s.repo.CanvasLibraryFolderForUser(userID, folderID)
+	err := s.withWriteTx(func(svc *Service) error {
+		if err := svc.ownedReadyResource(userID, coverID, "封面"); err != nil {
+			return err
+		}
+		existing, existingErr := svc.repo.CanvasLibraryFolderIncludingDeleted(userID, folderID)
 		if existingErr != nil && !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 			return existingErr
+		}
+		if existing != nil && existing.TombstonedAt != nil {
+			return folderDeletedError()
 		}
 		if existing != nil {
 			folder.CreatedAt = existing.CreatedAt
 		}
-		return s.repo.UpsertCanvasLibraryFolder(&folder)
+		if err := svc.repo.UpsertCanvasLibraryFolder(&folder); err != nil {
+			if errors.Is(err, repository.ErrCanvasLibraryFolderDeleted) {
+				return folderDeletedError()
+			}
+			return err
+		}
+		return nil
 	})
 	if err != nil {
 		return model.CanvasLibraryFolder{}, err
@@ -107,11 +145,54 @@ func (s *Service) UpsertUserCanvasFolder(userID string, id string, raw json.RawM
 }
 
 func (s *Service) DeleteUserCanvasFolder(userID, id string) error {
-	err := s.repo.DeleteCanvasLibraryFolder(userID, strings.TrimSpace(id))
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return kernel.NotFound("文件夹不存在")
+	folderID := strings.TrimSpace(id)
+	if folderID == "" {
+		return kernel.BadAuthRequest("文件夹 ID 无效")
 	}
-	return err
+	return s.withWriteTx(func(svc *Service) error {
+		existing, err := svc.repo.CanvasLibraryFolderIncludingDeleted(userID, folderID)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return kernel.NotFound("文件夹不存在")
+		}
+		if err != nil {
+			return err
+		}
+		if existing.TombstonedAt != nil {
+			return nil
+		}
+		projects, err := svc.repo.CanvasProjectsInLibraryFolder(userID, folderID)
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		for index := range projects {
+			before := projects[index]
+			after := before
+			after.LibraryFolderID = ""
+			after.UpdatedAt = now
+			payload, payloadErr := persistableCanvasPayload(after)
+			if payloadErr != nil {
+				return payloadErr
+			}
+			after.PayloadJSON = payload
+			if err := SaveDocumentWithHistory(svc.repo, &before, &after, "automatic"); err != nil {
+				if errors.Is(err, repository.ErrCanvasRevisionConflict) {
+					return canvasRevisionConflict()
+				}
+				return err
+			}
+		}
+		if err := svc.repo.TombstoneCanvasLibraryFolder(userID, folderID, now); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return kernel.NotFound("文件夹不存在")
+			}
+			if errors.Is(err, repository.ErrCanvasLibraryFolderDeleted) {
+				return nil
+			}
+			return err
+		}
+		return nil
+	})
 }
 
 func (s *Service) UserCanvasDrawings(userID, canvasID string) ([]CanvasDrawingDocument, error) {
@@ -146,10 +227,6 @@ func (s *Service) UserCanvasDrawing(userID, canvasID, drawingID string) (CanvasD
 func (s *Service) UpsertUserCanvasDrawing(userID, canvasID, drawingID string, raw json.RawMessage) (CanvasDrawingDocument, error) {
 	if len(raw) > canvasDrawingSnapshotMax+64<<10 {
 		return CanvasDrawingDocument{}, kernel.BadAuthRequest("画板数据超过 8MB")
-	}
-	canvasRow, err := s.ownedCanvas(userID, canvasID)
-	if err != nil {
-		return CanvasDrawingDocument{}, err
 	}
 	var payload struct {
 		DrawingID         string               `json:"drawingId"`
@@ -198,16 +275,10 @@ func (s *Service) UpsertUserCanvasDrawing(userID, canvasID, drawingID string, ra
 		return CanvasDrawingDocument{}, kernel.BadAuthRequest("画板数据超过 8MB")
 	}
 	previewID := strings.TrimSpace(payload.PreviewResourceID)
-	if err := s.ownedReadyResource(userID, previewID, "画板预览"); err != nil {
-		return CanvasDrawingDocument{}, err
-	}
 	render := payload.Render
 	renderID := ""
 	if render != nil {
 		renderID = strings.TrimSpace(render.ResourceID)
-		if err := s.ownedReadyResource(userID, renderID, "画板成品"); err != nil {
-			return CanvasDrawingDocument{}, err
-		}
 		if render.Background != "" && render.Background != "white" {
 			return CanvasDrawingDocument{}, kernel.BadAuthRequest("画板成品背景无效")
 		}
@@ -221,7 +292,7 @@ func (s *Service) UpsertUserCanvasDrawing(userID, canvasID, drawingID string, ra
 	}
 	now := time.Now().UTC()
 	row := model.CanvasDrawing{
-		UserID: userID, CanvasID: canvasRow.ID, DrawingID: id, Engine: engine,
+		UserID: userID, DrawingID: id, Engine: engine,
 		Revision: *payload.Revision, SnapshotJSON: string(snapshot),
 		ShapeCount: payload.ShapeCount, PageCount: pageCount,
 		PreviewResourceID: previewID, CreatedAt: now, UpdatedAt: now,
@@ -235,10 +306,26 @@ func (s *Service) UpsertUserCanvasDrawing(userID, canvasID, drawingID string, ra
 		row.RenderBackground = strings.TrimSpace(render.Background)
 		row.RenderStorageKey = strings.TrimSpace(render.StorageKey)
 	}
-	err = s.host.WithStorageLock(func() error {
-		existing, existingErr := s.repo.CanvasDrawingForUser(userID, canvasRow.ID, id)
+	err := s.withWriteTx(func(svc *Service) error {
+		canvasRow, err := svc.ownedCanvas(userID, canvasID)
+		if err != nil {
+			return err
+		}
+		row.CanvasID = canvasRow.ID
+		if err := svc.ownedReadyResource(userID, previewID, "画板预览"); err != nil {
+			return err
+		}
+		if render != nil {
+			if err := svc.ownedReadyResource(userID, renderID, "画板成品"); err != nil {
+				return err
+			}
+		}
+		existing, existingErr := svc.repo.CanvasDrawingIncludingDeleted(userID, canvasRow.ID, id)
 		if existingErr != nil && !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 			return existingErr
+		}
+		if existing != nil && existing.TombstonedAt != nil {
+			return drawingDeletedError()
 		}
 		if existing != nil {
 			row.CreatedAt = existing.CreatedAt
@@ -251,6 +338,10 @@ func (s *Service) UpsertUserCanvasDrawing(userID, canvasID, drawingID string, ra
 				row.RenderBackground = existing.RenderBackground
 				row.RenderStorageKey = existing.RenderStorageKey
 			}
+			if row.Revision+1 == existing.Revision && drawingWriteMatches(*existing, row) {
+				row = *existing
+				return nil
+			}
 		}
 		if (existing == nil && row.Revision != 0) || (existing != nil && row.Revision != existing.Revision) {
 			return drawingRevisionConflict()
@@ -259,10 +350,13 @@ func (s *Service) UpsertUserCanvasDrawing(userID, canvasID, drawingID string, ra
 		if existing != nil {
 			existingBytes = int64(len(existing.SnapshotJSON))
 		}
-		if err := s.host.StructuredQuota(userID, "canvas", errors.Is(existingErr, gorm.ErrRecordNotFound), int64(len(row.SnapshotJSON))-existingBytes); err != nil {
+		if err := svc.admitStructuredBytes(userID, "canvas", false, int64(len(row.SnapshotJSON))-existingBytes); err != nil {
 			return err
 		}
-		if err := s.repo.UpsertCanvasDrawing(&row); err != nil {
+		if err := svc.repo.UpsertCanvasDrawing(&row); err != nil {
+			if errors.Is(err, repository.ErrCanvasDrawingDeleted) {
+				return drawingDeletedError()
+			}
 			if errors.Is(err, repository.ErrCanvasRevisionConflict) {
 				return drawingRevisionConflict()
 			}
@@ -277,14 +371,23 @@ func (s *Service) UpsertUserCanvasDrawing(userID, canvasID, drawingID string, ra
 }
 
 func (s *Service) DeleteUserCanvasDrawing(userID, canvasID, drawingID string) error {
-	if _, err := s.ownedCanvas(userID, canvasID); err != nil {
+	id := strings.TrimSpace(drawingID)
+	if id == "" {
+		return kernel.BadAuthRequest("画板 ID 无效")
+	}
+	return s.withWriteTx(func(svc *Service) error {
+		if _, err := svc.ownedCanvas(userID, canvasID); err != nil {
+			return err
+		}
+		err := svc.repo.TombstoneCanvasDrawing(userID, canvasID, id, time.Now().UTC())
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return kernel.NotFound("画板不存在")
+		}
+		if errors.Is(err, repository.ErrCanvasDrawingDeleted) {
+			return nil
+		}
 		return err
-	}
-	err := s.repo.DeleteCanvasDrawing(userID, canvasID, strings.TrimSpace(drawingID))
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return kernel.NotFound("画板不存在")
-	}
-	return err
+	})
 }
 
 func (s *Service) ownedCanvas(userID, canvasID string) (*model.CanvasProject, error) {
@@ -332,6 +435,24 @@ func (s *Service) requireCanvasLibraryFolder(userID, folderID string) error {
 	return err
 }
 
+func persistableCanvasPayload(project model.CanvasProject) (string, error) {
+	raw, err := canvasProjectPayload(project)
+	if err != nil {
+		return "", err
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return "", err
+	}
+	delete(payload, "revision")
+	delete(payload, "remoteContentHash")
+	cleaned, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	return string(cleaned), nil
+}
+
 func canvasDrawingDocument(item model.CanvasDrawing, includeSnapshot bool) CanvasDrawingDocument {
 	doc := CanvasDrawingDocument{
 		DrawingID: item.DrawingID, Engine: item.Engine, Revision: item.Revision,
@@ -353,6 +474,35 @@ func canvasDrawingDocument(item model.CanvasDrawing, includeSnapshot bool) Canva
 	return doc
 }
 
+func drawingWriteMatches(existing, next model.CanvasDrawing) bool {
+	return existing.Engine == next.Engine &&
+		existing.SnapshotJSON == next.SnapshotJSON &&
+		existing.ShapeCount == next.ShapeCount &&
+		existing.PageCount == next.PageCount &&
+		existing.PreviewResourceID == next.PreviewResourceID &&
+		existing.RenderResourceID == next.RenderResourceID &&
+		existing.RenderPageID == next.RenderPageID &&
+		existing.RenderWidth == next.RenderWidth &&
+		existing.RenderHeight == next.RenderHeight &&
+		existing.RenderMimeType == next.RenderMimeType &&
+		existing.RenderBackground == next.RenderBackground &&
+		existing.RenderStorageKey == next.RenderStorageKey
+}
+
 func drawingRevisionConflict() error {
 	return kernel.NewAppError(http.StatusConflict, "画板已有更新，已停止覆盖；请保留本地草稿并加载最新版本")
+}
+
+func drawingDeletedError() error {
+	return &kernel.AppError{
+		Status: http.StatusConflict, Code: kernel.CodeConflict,
+		Reason: kernel.ReasonFailedPrecondition, Message: "画板已删除，不能重新导入",
+	}
+}
+
+func folderDeletedError() error {
+	return &kernel.AppError{
+		Status: http.StatusConflict, Code: kernel.CodeConflict,
+		Reason: kernel.ReasonFailedPrecondition, Message: "文件夹已删除，不能重新导入",
+	}
 }

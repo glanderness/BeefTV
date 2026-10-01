@@ -270,6 +270,12 @@ func (r *Repository) ResourceReferenceSnapshot(userID string, excludingAssetID s
 		snapshot.Direct = append(snapshot.Direct, ResourceDirectReference{Kind: "镜头产物", ID: artifact.ID, Title: artifact.Title, ResourceID: artifact.ResourceID})
 	}
 
+	libraryRefs, err := r.CanvasLibraryResourceReferences(userID, resourceIDs)
+	if err != nil {
+		return snapshot, err
+	}
+	snapshot.Direct = append(snapshot.Direct, libraryRefs...)
+
 	return snapshot, nil
 }
 
@@ -420,7 +426,39 @@ func guardAssetDeletionReferences(tx *gorm.DB, userID string, assetID string, re
 			return ErrResourceCleanupStillReferenced
 		}
 	}
+	if err := guardCanvasLibraryResourceReferences(tx, userID, resourceIDs); err != nil {
+		return err
+	}
 	return guardTaskResourceReferences(tx, userID, resourceIDs, true)
+}
+
+func guardCanvasLibraryResourceReferences(tx *gorm.DB, userID string, resourceIDs []string) error {
+	if len(resourceIDs) == 0 {
+		return nil
+	}
+	if tx.Migrator().HasTable(&model.CanvasDrawing{}) {
+		var count int64
+		if err := liveCanvasDrawings(tx.Model(&model.CanvasDrawing{})).
+			Where("user_id = ? AND (preview_resource_id IN ? OR render_resource_id IN ?)", userID, resourceIDs, resourceIDs).
+			Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return ErrResourceCleanupStillReferenced
+		}
+	}
+	if tx.Migrator().HasTable(&model.CanvasLibraryFolder{}) {
+		var count int64
+		if err := liveCanvasLibraryFolders(tx.Model(&model.CanvasLibraryFolder{})).
+			Where("user_id = ? AND cover_resource_id IN ?", userID, resourceIDs).
+			Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return ErrResourceCleanupStillReferenced
+		}
+	}
+	return nil
 }
 
 func guardActiveTaskResourceReferences(tx *gorm.DB, userID string, resourceIDs []string) error {

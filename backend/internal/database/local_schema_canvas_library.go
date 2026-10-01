@@ -15,6 +15,12 @@ func migrateCanvasLibrarySchema(tx *gorm.DB) error {
 	if err := ensureSQLiteColumn(tx, "canvas_projects", "library_folder_id", "TEXT"); err != nil {
 		return err
 	}
+	if err := ensureSQLiteColumn(tx, "canvas_library_folders", "deleted_at", "DATETIME"); err != nil {
+		return err
+	}
+	if err := ensureSQLiteColumn(tx, "canvas_drawings", "deleted_at", "DATETIME"); err != nil {
+		return err
+	}
 	if err := ensureSQLiteIndex(tx, "canvas_library_folders", "idx_canvas_library_folders_user",
 		"CREATE INDEX idx_canvas_library_folders_user ON canvas_library_folders(user_id)"); err != nil {
 		return err
@@ -37,7 +43,7 @@ func requireCanvasLibrarySchema(db *gorm.DB) error {
 	if !db.Migrator().HasTable(&model.CanvasDrawing{}) {
 		return fmt.Errorf("本地画板表缺失，请启用自动迁移")
 	}
-	for _, column := range []string{"id", "user_id", "name", "cover_resource_id", "created_at", "updated_at"} {
+	for _, column := range []string{"id", "user_id", "name", "cover_resource_id", "deleted_at", "created_at", "updated_at"} {
 		has, err := sqliteHasColumn(db, "canvas_library_folders", column)
 		if err != nil {
 			return err
@@ -50,7 +56,7 @@ func requireCanvasLibrarySchema(db *gorm.DB) error {
 		"user_id", "canvas_id", "drawing_id", "engine", "revision", "snapshot_json",
 		"shape_count", "page_count", "preview_resource_id", "render_resource_id",
 		"render_page_id", "render_width", "render_height", "render_mime_type",
-		"render_background", "render_storage_key", "created_at", "updated_at",
+		"render_background", "render_storage_key", "deleted_at", "created_at", "updated_at",
 	} {
 		has, err := sqliteHasColumn(db, "canvas_drawings", column)
 		if err != nil {
