@@ -120,7 +120,7 @@ writeFileSync(
     journalPath,
     `
 const memory = new Map();
-const empty = (canvasId) => ({ userScope: "guest", canvasId, confirmedRevision: 0, confirmedSnapshot: null, inFlight: null });
+const empty = (canvasId) => ({ userScope: "guest", canvasId, confirmedRevision: 0, confirmedSnapshot: null, inFlight: null, pendingProjection: null });
 export class CanvasJournalError extends Error { constructor(message) { super(message); this.name = "CanvasJournalError"; } }
 export const peekCanvasOperationJournal = (id) => memory.get(id);
 export const loadCanvasOperationJournal = async (id) => memory.get(id) ?? empty(id);
@@ -136,12 +136,22 @@ export const recordConfirmedCanvasCommit = async (project, _scope, options) => {
   return updateCanvasOperationJournal(project.id, "guest", (current) => {
     const incoming = project.revision ?? current.confirmedRevision;
     const ackMatches = options?.ackOperationId && current.inFlight?.operationId === options.ackOperationId;
+    const recoveryBase = current.pendingProjection?.base ?? current.confirmedSnapshot;
     return {
       ...current,
       confirmedRevision: Math.max(current.confirmedRevision, incoming),
       confirmedSnapshot: incoming < current.confirmedRevision ? current.confirmedSnapshot : project,
       inFlight: ackMatches ? null : current.inFlight,
+      pendingProjection: options?.unflushedProjection && recoveryBase
+        ? { identity: "proj-test", revision: incoming, base: recoveryBase, remote: project }
+        : current.pendingProjection,
     };
+  });
+};
+export const clearCanvasPendingProjection = async (id, _scope, identity) => {
+  return updateCanvasOperationJournal(id, "guest", (current) => {
+    if (current.pendingProjection?.identity !== identity) return;
+    return { ...current, pendingProjection: null };
   });
 };
 export const abandonCanvasInFlight = async (id) => {
@@ -150,6 +160,7 @@ export const abandonCanvasInFlight = async (id) => {
 };
 export const clearCanvasOperationJournal = async (id) => { memory.delete(id); };
 export const newCanvasCommitOperationId = () => "canvas-commit-test";
+export const newCanvasProjectionIdentity = () => "proj-test";
 export const resetCanvasOperationJournalMemory = () => { memory.clear(); };
 `,
 );

@@ -174,18 +174,15 @@ beforeEach(() => {
 });
 
 describe("画布刷新接缝（服务端基线）", () => {
-    test("live editor merge conflict cannot advance stored revision; choosing latest replaces the conflicting editor", async () => {
+    test("刷新通知抛错仍完成投影，基线与 live 一致", async () => {
         await establishConfirmedBaseline();
-        const before = useCanvasStore.getState().projects[0];
         replaceServerDocument(canvas(4, { title: "外部新增内容" }));
         rejectEditorMerge = true;
-        expect(await refreshLocalCanvasProjectIfChanged("c1")).toBeUndefined();
-        expect(useCanvasStore.getState().projects[0]).toBe(before);
-        expect(canvasExternalRevisionConflict(scope, "c1")?.remoteRevision).toBe(4);
-        // Explicit replacement must not call the failing three-way merge again.
-        const accepted = await acceptExternalCanvasRevision("c1");
-        expect(accepted?.title).toBe("外部新增内容");
+        const applied = await refreshLocalCanvasProjectIfChanged("c1");
+        expect(applied?.title).toBe("外部新增内容");
+        expect(useCanvasStore.getState().projects[0].title).toBe("外部新增内容");
         expect(useCanvasStore.getState().projects[0].revision).toBe(4);
+        expect(canvasExternalRevisionConflict(scope, "c1")).toBeUndefined();
         expect(hasUnconfirmedCanvasEdits("c1")).toBe(false);
         expect(server.puts.length).toBe(1);
     });

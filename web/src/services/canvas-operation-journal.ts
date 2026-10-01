@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 
+import { sameCanvasDocument } from "@/lib/canvas/canvas-content";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { recordCanvasDocumentBase, type CanvasProject } from "@/stores/canvas/use-canvas-store";
@@ -18,12 +19,24 @@ export type CanvasInFlightCommit = {
     payload: CanvasCommitPayload;
 };
 
+/**
+ * 服务端已确认、本地编辑器投影尚未落盘时的恢复状态。
+ * confirmedSnapshot 是服务端已提交真相；base 是投影前的旧确认基线。
+ */
+export type CanvasPendingProjection = {
+    identity: string;
+    revision: number;
+    base: CanvasProject;
+    remote: CanvasProject;
+};
+
 export type CanvasOperationJournal = {
     userScope: string;
     canvasId: string;
     confirmedRevision: number;
     confirmedSnapshot: CanvasProject | null;
     inFlight: CanvasInFlightCommit | null;
+    pendingProjection: CanvasPendingProjection | null;
 };
 
 export class CanvasJournalError extends Error {
@@ -59,7 +72,7 @@ function cacheKey(scope: string, canvasId: string) {
 }
 
 function emptyJournal(scope: string, canvasId: string): CanvasOperationJournal {
-    return { userScope: scope, canvasId, confirmedRevision: 0, confirmedSnapshot: null, inFlight: null };
+    return { userScope: scope, canvasId, confirmedRevision: 0, confirmedSnapshot: null, inFlight: null, pendingProjection: null };
 }
 
 function cloneJournal(journal: CanvasOperationJournal): CanvasOperationJournal {
@@ -112,6 +125,19 @@ function parseInFlight(value: unknown, canvasId: string): CanvasInFlightCommit |
     };
 }
 
+function parsePendingProjection(value: unknown, canvasId: string): CanvasPendingProjection | null {
+    if (value == null) return null;
+    if (!isPlainObject(value)) throw new CanvasJournalError("画布投影恢复状态无效");
+    if (typeof value.identity !== "string" || !value.identity) {
+        throw new CanvasJournalError("画布投影 identity 无效");
+    }
+    const revision = asNonNegativeInteger(value.revision, "pendingProjection.revision");
+    const base = parseConfirmedSnapshot(value.base, canvasId);
+    const remote = parseConfirmedSnapshot(value.remote, canvasId);
+    if (!base || !remote) throw new CanvasJournalError("画布投影恢复快照无效");
+    return { identity: value.identity, revision, base, remote };
+}
+
 function parseCanvasOperationJournal(raw: unknown, scope: string, canvasId: string): CanvasOperationJournal {
     if (!isPlainObject(raw)) throw new CanvasJournalError("画布提交日记损坏");
     if (raw.userScope !== scope || raw.canvasId !== canvasId) {
@@ -123,6 +149,7 @@ function parseCanvasOperationJournal(raw: unknown, scope: string, canvasId: stri
         confirmedRevision: asNonNegativeInteger(raw.confirmedRevision, "confirmedRevision"),
         confirmedSnapshot: parseConfirmedSnapshot(raw.confirmedSnapshot, canvasId),
         inFlight: parseInFlight(raw.inFlight, canvasId),
+        pendingProjection: parsePendingProjection(raw.pendingProjection, canvasId),
     };
 }
 
@@ -206,7 +233,7 @@ export async function updateCanvasOperationJournal(
 export async function recordConfirmedCanvasCommit(
     project: CanvasProject,
     scope = getActiveUserScope(),
-    options: { ackOperationId?: string } = {},
+    options: { ackOperationId?: string; unflushedProjection?: boolean } = {},
 ) {
     return updateCanvasOperationJournal(project.id, scope, (current) => {
         const incomingRevision = typeof project.revision === "number" && Number.isInteger(project.revision) && project.revision >= 0
@@ -217,15 +244,44 @@ export async function recordConfirmedCanvasCommit(
             if (ackMatches && current.inFlight) return { ...current, inFlight: null };
             return;
         }
+        if (
+            incomingRevision === current.confirmedRevision
+            && current.confirmedSnapshot
+            && sameCanvasDocument(current.confirmedSnapshot, project)
+        ) {
+            if (ackMatches && current.inFlight) return { ...current, inFlight: null };
+            return;
+        }
         const confirmedSnapshot = structuredClone(project);
         confirmedSnapshot.revision = incomingRevision;
+        const recoveryBase = current.pendingProjection?.base ?? current.confirmedSnapshot;
+        const pendingProjection = options.unflushedProjection && recoveryBase
+            ? {
+                identity: newCanvasProjectionIdentity(),
+                revision: incomingRevision,
+                base: structuredClone(recoveryBase),
+                remote: structuredClone(confirmedSnapshot),
+            }
+            : current.pendingProjection;
         return {
             ...current,
             confirmedRevision: incomingRevision,
             confirmedSnapshot,
             inFlight: ackMatches ? null : current.inFlight,
+            pendingProjection,
         };
     });
+}
+
+export async function clearCanvasPendingProjection(canvasId: string, scope: string, identity: string) {
+    return updateCanvasOperationJournal(canvasId, scope, (current) => {
+        if (current.pendingProjection?.identity !== identity) return;
+        return { ...current, pendingProjection: null };
+    });
+}
+
+export function newCanvasProjectionIdentity() {
+    return `canvas-projection-${nanoid()}`;
 }
 
 export async function abandonCanvasInFlight(canvasId: string, scope = getActiveUserScope()) {

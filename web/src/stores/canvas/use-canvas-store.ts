@@ -342,18 +342,18 @@ function applyCanvasExternalDecision(
         return decision;
     }
     const applied = decision.project;
-    // Validate/project into the live editor before advancing the stored revision.
-    // A merge conflict must not leave the store ahead of the visible editor.
-    onApplied?.(applied, previous);
-    withCanvasStorePersistenceSuppressed(() => {
-        useCanvasStore.setState((state) => ({
-            projects: state.projects.some((project) => project.id === applied.id)
-                ? state.projects.map((project) => project.id === applied.id ? applied : project)
-                : [...state.projects, applied],
-        }));
-    });
+    useCanvasStore.setState((state) => ({
+        projects: state.projects.some((project) => project.id === applied.id)
+            ? state.projects.map((project) => project.id === applied.id ? applied : project)
+            : [...state.projects, applied],
+    }));
     canvasMemoryStates.set(scope, { projects: useCanvasStore.getState().projects });
     clearCanvasExternalRevisionConflict(scope, applied.id);
+    try {
+        onApplied?.(applied, previous);
+    } catch (error) {
+        console.error("画布刷新通知失败", { id: applied.id, error });
+    }
     return decision;
 }
 

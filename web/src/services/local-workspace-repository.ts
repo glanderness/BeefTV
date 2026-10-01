@@ -5,7 +5,7 @@ import { commitCanvasDocument } from "@/services/api/operations";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { notifyCanvasRefresh } from "@/services/local-workspace-sync";
 import { canvasBackendSubmitPaused, CanvasBackendSubmitPausedError, CanvasStaleScopeError, handleRejectedCanvasBackendSave, isCanvasRevisionConflict, isCanvasSubmitControlError, pauseCanvasBackendSubmit, resumeCanvasBackendSubmit } from "@/services/canvas-revision-conflict";
-import { CanvasJournalError, clearCanvasOperationJournal, loadCanvasOperationJournal, newCanvasCommitOperationId, peekCanvasOperationJournal, recordConfirmedCanvasCommit, updateCanvasOperationJournal } from "@/services/canvas-operation-journal";
+import { CanvasJournalError, clearCanvasOperationJournal, clearCanvasPendingProjection, loadCanvasOperationJournal, newCanvasCommitOperationId, peekCanvasOperationJournal, recordConfirmedCanvasCommit, updateCanvasOperationJournal } from "@/services/canvas-operation-journal";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { getActiveUserScope } from "@/lib/user-scope";
@@ -14,13 +14,55 @@ import { rebaseCanvasDocumentThreeWay } from "@/lib/canvas/canvas-document-rebas
 
 export { CanvasBackendSubmitPausedError, CanvasStaleScopeError } from "@/services/canvas-revision-conflict";
 
+export class CanvasProjectionError extends Error {
+    override cause?: unknown;
+    canvasId: string;
+    confirmedRevision: number;
+    projectionIdentity: string | null;
+
+    constructor(message: string, options: { cause?: unknown; canvasId: string; confirmedRevision: number; projectionIdentity?: string | null }) {
+        super(message);
+        this.name = "CanvasProjectionError";
+        this.cause = options.cause;
+        this.canvasId = options.canvasId;
+        this.confirmedRevision = options.confirmedRevision;
+        this.projectionIdentity = options.projectionIdentity ?? null;
+    }
+}
+
+const CANVAS_PROJECTION_INCOMPLETE = "服务端已保存，本地画布还没写完。请重试这次回写，不要重新生成。";
+
+function incompleteCanvasProjection(id: string, scope: string, identity: string | null | undefined, cause: unknown) {
+    const journal = peekCanvasOperationJournal(id, scope);
+    return new CanvasProjectionError(CANVAS_PROJECTION_INCOMPLETE, {
+        cause,
+        canvasId: id,
+        confirmedRevision: journal?.confirmedRevision ?? 0,
+        projectionIdentity: identity ?? journal?.pendingProjection?.identity ?? null,
+    });
+}
+
 type LocalCanvasContent = Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId">>;
 type CanvasSaveSummary = Pick<CanvasProject, "id" | "title" | "createdAt" | "updatedAt" | "revision">;
 type CanvasDocumentPersistPatch = Partial<Pick<CanvasProject, "nodes" | "connections" | "timeline" | "chatSessions" | "activeChatId" | "appearance" | "backgroundMode" | "showImageInfo" | "title" | "folderId" | "directorScenes">>;
 
 const backendSaveTails = new Map<string, Promise<void>>();
 const backendSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const canvasProjectionLocks = new Map<string, Promise<void>>();
 const canvasDeleting = new Set<string>();
+let projectionStoreFlush: () => Promise<void> = () => flushCanvasStorePersistence();
+
+export function setCanvasProjectionStoreFlushForTest(flush: (() => Promise<void>) | null) {
+    projectionStoreFlush = flush ?? (() => flushCanvasStorePersistence());
+}
+
+function withCanvasProjection<T>(scope: string, id: string, fn: () => Promise<T>): Promise<T> {
+    const key = saveKey(scope, id);
+    const run = (canvasProjectionLocks.get(key) ?? Promise.resolve()).then(fn, fn);
+    canvasProjectionLocks.set(key, run.then(() => undefined, () => undefined));
+    return run;
+}
+
 /**
  * 每画布最后一次被服务端确认的文档快照：成功提交的入参，或从服务端读回并被
  * 采纳的内容。它是判断「本地是否有服务端尚未确认的编辑」的唯一权威基线——
@@ -45,9 +87,22 @@ function recordServerConfirmedCanvas(project: CanvasProject | undefined, scope: 
 }
 
 async function confirmRemoteDocument(project: CanvasProject, scope: string) {
-    const journal = await recordConfirmedCanvasCommit(project, scope);
+    const journal = await recordConfirmedCanvasCommit(project, scope, { unflushedProjection: true });
     recordServerConfirmedCanvas(journal.confirmedSnapshot ?? project, scope);
     return journal;
+}
+
+function invokeProjectionListener(
+    listener: ((project: CanvasProject, previous: CanvasProject | undefined) => void) | undefined,
+    project: CanvasProject,
+    previous: CanvasProject | undefined,
+) {
+    if (!listener) return;
+    try {
+        listener(project, previous);
+    } catch (error) {
+        console.error("画布刷新通知失败", { id: project.id, error });
+    }
 }
 
 /** HTTP 层是否还有该画布未落地的提交（已排队或正在发送）。 */
@@ -86,7 +141,8 @@ export function hasUnconfirmedCanvasEdits(id: string) {
     const live = openLocalCanvasProject(id);
     if (!live) return false;
     if (canvasBackendSubmitPending(id, scope) || canvasSubmitBlocked(id, scope)) return true;
-    if (peekCanvasOperationJournal(id, scope)?.inFlight) return true;
+    const journal = peekCanvasOperationJournal(id, scope);
+    if (journal?.inFlight || journal?.pendingProjection) return true;
     const confirmed = canvasDocumentBase(id, scope)?.snapshot ?? serverConfirmedCanvasSnapshots.get(saveKey(scope, id));
     if (confirmed) return !sameCanvasDocument(confirmed, live);
     const durable = canvasDurableSnapshot(scope, id);
@@ -152,20 +208,20 @@ function alignLiveAfterConfirmedRemote(input: {
     hadLive: boolean;
     onApplied?: (project: CanvasProject, previous: CanvasProject | undefined) => void;
 }): CanvasProject | undefined {
-    if (!isCurrentDispatchScope(input.scope)) return input.remote;
+    if (!isCurrentDispatchScope(input.scope)) return undefined;
     if (canvasDeleting.has(saveKey(input.scope, input.id))) return undefined;
     const live = openLocalCanvasProject(input.id);
     if (!live) {
         if (input.hadLive) return undefined;
         applyLiveCanvasProject(input.id, input.remote, true);
-        input.onApplied?.(input.remote, undefined);
+        invokeProjectionListener(input.onApplied, input.remote, undefined);
         return input.remote;
     }
     if (sameCanvasDocument(live, input.remote) || (input.base && sameCanvasDocument(live, input.base))) {
         const decision = applyExternalCanvasRevision(input.remote, {
             scope: input.scope,
             hasUnsyncedEdits: false,
-            onApplied: input.onApplied,
+            onApplied: (project, previous) => invokeProjectionListener(input.onApplied, project, previous),
         });
         return decision.kind === "apply" ? decision.project : live;
     }
@@ -175,9 +231,39 @@ function alignLiveAfterConfirmedRemote(input: {
     }
     const rebased = rebaseCanvasDocumentThreeWay({ base: input.base, local: live, remote: input.remote });
     applyLiveCanvasProject(input.id, rebased.project, false);
-    input.onApplied?.(rebased.project, live);
+    invokeProjectionListener(input.onApplied, rebased.project, live);
     if (rebased.conflict) pauseForExternalCandidate(input.id, input.remote, input.scope);
     return rebased.project;
+}
+
+async function persistProjectedCanvas(id: string, scope: string, identity: string | undefined, options: { throwOnFailure: boolean }) {
+    if (!identity || !isCurrentDispatchScope(scope) || !openLocalCanvasProject(id)) return;
+    try {
+        await projectionStoreFlush();
+        await clearCanvasPendingProjection(id, scope, identity);
+    } catch (error) {
+        if (error instanceof CanvasProjectionError) throw error;
+        if (!options.throwOnFailure) return;
+        throw incompleteCanvasProjection(id, scope, identity, error);
+    }
+}
+
+async function replayPendingCanvasProjection(id: string, scope: string, options: { throwOnFailure: boolean } = { throwOnFailure: false }) {
+    const journal = peekCanvasOperationJournal(id, scope) ?? await loadCanvasOperationJournal(id, scope);
+    const pending = journal.pendingProjection;
+    if (!pending) return openLocalCanvasProject(id) ?? undefined;
+    if (!isCurrentDispatchScope(scope) || canvasDeleting.has(saveKey(scope, id))) return undefined;
+    const live = openLocalCanvasProject(id);
+    if (!live) return undefined;
+    alignLiveAfterConfirmedRemote({
+        id,
+        scope,
+        remote: pending.remote,
+        base: pending.base,
+        hadLive: true,
+    });
+    await persistProjectedCanvas(id, scope, pending.identity, options);
+    return openLocalCanvasProject(id) ?? undefined;
 }
 
 /**
@@ -205,41 +291,47 @@ async function applyBackendCanvasRead(
     scope: string,
     hadLiveAtStart = Boolean(local),
 ) {
-    const liveNow = isCurrentDispatchScope(scope) ? openLocalCanvasProject(backend.id) : undefined;
-    const currentLocal = liveNow ?? local;
-    const hadLive = Boolean(liveNow) || hadLiveAtStart;
-    const chosen = selectPreferredCanvasProject(currentLocal, backend, scope);
-    if (!currentLocal || chosen === backend || sameCanvasDocument(chosen, backend)) {
-        const base = peekCanvasOperationJournal(backend.id, scope)?.confirmedSnapshot
-            ?? canvasDocumentBase(backend.id, scope)?.snapshot
-            ?? null;
-        let confirmed;
-        try {
-            confirmed = await confirmRemoteDocument(backend, scope);
-        } catch {
-            return openLocalCanvasProject(backend.id) ?? currentLocal ?? backend;
+    return withCanvasProjection(scope, backend.id, async () => {
+        await replayPendingCanvasProjection(backend.id, scope);
+        const liveNow = isCurrentDispatchScope(scope) ? openLocalCanvasProject(backend.id) : undefined;
+        const currentLocal = liveNow ?? local;
+        const hadLive = Boolean(liveNow) || hadLiveAtStart;
+        const chosen = selectPreferredCanvasProject(currentLocal, backend, scope);
+        if (!currentLocal || chosen === backend || sameCanvasDocument(chosen, backend)) {
+            const journal = peekCanvasOperationJournal(backend.id, scope);
+            const base = journal?.pendingProjection?.base
+                ?? journal?.confirmedSnapshot
+                ?? canvasDocumentBase(backend.id, scope)?.snapshot
+                ?? null;
+            let confirmed;
+            try {
+                confirmed = await confirmRemoteDocument(backend, scope);
+            } catch {
+                return openLocalCanvasProject(backend.id) ?? currentLocal ?? backend;
+            }
+            if ((backend.revision ?? 0) < confirmed.confirmedRevision) {
+                return openLocalCanvasProject(backend.id) ?? currentLocal ?? backend;
+            }
+            const aligned = alignLiveAfterConfirmedRemote({
+                id: backend.id,
+                scope,
+                remote: backend,
+                base,
+                hadLive,
+            });
+            await persistProjectedCanvas(backend.id, scope, confirmed.pendingProjection?.identity, { throwOnFailure: false });
+            if (hadLive && !openLocalCanvasProject(backend.id)) {
+                return openLocalCanvasProject(backend.id) ?? currentLocal ?? backend;
+            }
+            return aligned ?? openLocalCanvasProject(backend.id) ?? currentLocal ?? backend;
         }
-        if ((backend.revision ?? 0) < confirmed.confirmedRevision) {
-            return openLocalCanvasProject(backend.id) ?? currentLocal ?? backend;
-        }
-        const aligned = alignLiveAfterConfirmedRemote({
-            id: backend.id,
-            scope,
-            remote: backend,
-            base,
-            hadLive,
-        });
-        if (hadLive && !openLocalCanvasProject(backend.id)) {
-            return openLocalCanvasProject(backend.id) ?? currentLocal ?? backend;
-        }
-        return aligned ?? openLocalCanvasProject(backend.id) ?? currentLocal ?? backend;
-    }
-    const recorded = canvasDocumentBase(currentLocal.id, scope);
-    const serverMoved = !recorded
-        || (backend.revision ?? 0) !== recorded.revision
-        || !sameCanvasDocument(backend, recorded.snapshot);
-    if (serverMoved) pauseForExternalCandidate(currentLocal.id, backend, scope);
-    return currentLocal;
+        const recorded = canvasDocumentBase(currentLocal.id, scope);
+        const serverMoved = !recorded
+            || (backend.revision ?? 0) !== recorded.revision
+            || !sameCanvasDocument(backend, recorded.snapshot);
+        if (serverMoved) pauseForExternalCandidate(currentLocal.id, backend, scope);
+        return currentLocal;
+    });
 }
 
 /**
@@ -344,6 +436,11 @@ function isInitialCanvasCreate(project: CanvasProject, scope: string) {
 }
 
 async function commitLiveCanvasDocument(id: string, scope: string) {
+    return withCanvasProjection(scope, id, () => commitLiveCanvasDocumentUnlocked(id, scope));
+}
+
+async function commitLiveCanvasDocumentUnlocked(id: string, scope: string) {
+    await replayPendingCanvasProjection(id, scope, { throwOnFailure: true });
     const journal = await loadCanvasOperationJournal(id, scope);
     let sent = false;
     if (journal.inFlight) {
@@ -539,53 +636,51 @@ export function syncLocalCanvasGenerationProjectToBackend(id: string): Promise<v
  * 采纳服务端已确认的生成结果。无基线时不静默并集。有已确认快照时按字段三路合并到
  * 当前 live：本地删除与未冲突编辑保留，未改动的服务端字段（含生成媒体）采纳。
  */
-export async function adoptServerConfirmedGenerationPatch(project: CanvasProject, scope = getActiveUserScope()): Promise<CanvasProject> {
-    const incomingRevision = typeof project.revision === "number" && Number.isInteger(project.revision) && project.revision >= 0
-        ? project.revision
-        : -1;
-    const journal = await loadCanvasOperationJournal(project.id, scope);
-    const liveAtStart = isCurrentDispatchScope(scope) ? openLocalCanvasProject(project.id) : undefined;
-    const existed = Boolean(liveAtStart);
-    if (incomingRevision < 0 || incomingRevision < journal.confirmedRevision) {
-        return liveAtStart ?? journal.confirmedSnapshot ?? project;
-    }
-    if (incomingRevision === journal.confirmedRevision && journal.confirmedSnapshot && sameCanvasDocument(journal.confirmedSnapshot, project)) {
-        return liveAtStart ?? project;
-    }
-    const base = journal.confirmedSnapshot ?? canvasDocumentBase(project.id, scope)?.snapshot ?? null;
-    const dirty = Boolean(liveAtStart && (!base || !sameCanvasDocument(base, liveAtStart)));
-    if (dirty && !base) {
-        pauseForExternalCandidate(project.id, project, scope);
-        return liveAtStart ?? project;
-    }
-    if (canvasDeleting.has(saveKey(scope, project.id))) {
-        return liveAtStart ?? project;
-    }
-    let confirmed;
-    try {
-        confirmed = await confirmRemoteDocument(project, scope);
-    } catch {
-        return openLocalCanvasProject(project.id) ?? liveAtStart ?? journal.confirmedSnapshot ?? project;
-    }
-    if (incomingRevision < confirmed.confirmedRevision) {
-        return openLocalCanvasProject(project.id) ?? liveAtStart ?? project;
-    }
-    const aligned = alignLiveAfterConfirmedRemote({
-        id: project.id,
-        scope,
-        remote: project,
-        base,
-        hadLive: existed,
-    });
-    if (isCurrentDispatchScope(scope) && aligned && openLocalCanvasProject(project.id)) {
-        void flushCanvasStorePersistence().catch((error) => {
-            console.error("画布本地缓存写入失败，已保存到桌面数据库", { id: project.id, error });
+export async function adoptServerConfirmedGenerationPatch(project: CanvasProject, scope = getActiveUserScope()): Promise<CanvasProject | undefined> {
+    return withCanvasProjection(scope, project.id, async () => {
+        const incomingRevision = typeof project.revision === "number" && Number.isInteger(project.revision) && project.revision >= 0
+            ? project.revision
+            : -1;
+        const journal = await loadCanvasOperationJournal(project.id, scope);
+        if (!isCurrentDispatchScope(scope) || canvasDeleting.has(saveKey(scope, project.id))) return undefined;
+        if (incomingRevision < 0 || incomingRevision < journal.confirmedRevision) {
+            return openLocalCanvasProject(project.id) ?? undefined;
+        }
+        if (incomingRevision === journal.confirmedRevision && journal.confirmedSnapshot && sameCanvasDocument(journal.confirmedSnapshot, project)) {
+            if (journal.pendingProjection) {
+                return replayPendingCanvasProjection(project.id, scope, { throwOnFailure: true });
+            }
+            return openLocalCanvasProject(project.id) ?? undefined;
+        }
+        const liveAtStart = openLocalCanvasProject(project.id);
+        const existed = Boolean(liveAtStart);
+        const base = journal.pendingProjection?.base ?? journal.confirmedSnapshot ?? canvasDocumentBase(project.id, scope)?.snapshot ?? null;
+        const dirty = Boolean(liveAtStart && (!base || !sameCanvasDocument(base, liveAtStart)));
+        if (dirty && !base) {
+            pauseForExternalCandidate(project.id, project, scope);
+            return liveAtStart ?? undefined;
+        }
+        let confirmed;
+        try {
+            confirmed = await confirmRemoteDocument(project, scope);
+        } catch (error) {
+            throw incompleteCanvasProjection(project.id, scope, journal.pendingProjection?.identity, error);
+        }
+        if (!isCurrentDispatchScope(scope) || canvasDeleting.has(saveKey(scope, project.id))) return undefined;
+        if (incomingRevision < confirmed.confirmedRevision) {
+            return openLocalCanvasProject(project.id) ?? undefined;
+        }
+        const aligned = alignLiveAfterConfirmedRemote({
+            id: project.id,
+            scope,
+            remote: project,
+            base,
+            hadLive: existed,
         });
-    }
-    if (existed && !openLocalCanvasProject(project.id)) {
-        return openLocalCanvasProject(project.id) ?? liveAtStart ?? project;
-    }
-    return aligned ?? liveAtStart ?? project;
+        if (!isCurrentDispatchScope(scope) || !openLocalCanvasProject(project.id)) return undefined;
+        await persistProjectedCanvas(project.id, scope, confirmed.pendingProjection?.identity, { throwOnFailure: true });
+        return aligned ?? openLocalCanvasProject(project.id) ?? undefined;
+    });
 }
 
 export function scheduleLocalCanvasBackendSync(id: string) {
@@ -608,8 +703,10 @@ export function resetLocalCanvasBackendSaveState() {
     for (const timer of backendSaveTimers.values()) clearTimeout(timer);
     backendSaveTimers.clear();
     backendSaveTails.clear();
+    canvasProjectionLocks.clear();
     canvasDeleting.clear();
     serverConfirmedCanvasSnapshots.clear();
+    projectionStoreFlush = () => flushCanvasStorePersistence();
 }
 
 export function openLocalCanvasProject(id: string) {
@@ -646,8 +743,9 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
             if (!isCurrentDispatchScope(scope)) return false;
             try {
                 await loadCanvasOperationJournal(project.id, scope);
+                await replayPendingCanvasProjection(project.id, scope);
             } catch (error) {
-                if (!(error instanceof CanvasJournalError)) throw error;
+                if (!(error instanceof CanvasJournalError) && !(error instanceof CanvasProjectionError)) throw error;
             }
             const applied = await applyBackendCanvasRead(byId.get(project.id), project, scope, existedIds.has(project.id));
             if (existedIds.has(project.id) && !openLocalCanvasProject(project.id)) {
@@ -678,8 +776,9 @@ export async function openLocalCanvasProjectFromBackend(id: string) {
     try {
         try {
             await loadCanvasOperationJournal(id, scope);
+            await replayPendingCanvasProjection(id, scope);
         } catch (error) {
-            if (!(error instanceof CanvasJournalError)) throw error;
+            if (!(error instanceof CanvasJournalError) && !(error instanceof CanvasProjectionError)) throw error;
         }
         const backendProject = await readLocalCanvasProjectFromBackend(id);
         if (!backendProject) return openLocalCanvasProject(id);
@@ -714,6 +813,7 @@ export async function refreshLocalCanvasProjectIfChanged(id: string) {
     try {
         try {
             await loadCanvasOperationJournal(id, scope);
+            await replayPendingCanvasProjection(id, scope);
         } catch (error) {
             if (!(error instanceof CanvasJournalError)) throw error;
             return undefined;
@@ -729,21 +829,23 @@ export async function refreshLocalCanvasProjectIfChanged(id: string) {
             pauseForExternalCandidate(id, remote, scope);
             return undefined;
         }
-        const base = peekCanvasOperationJournal(id, scope)?.confirmedSnapshot
-            ?? canvasDocumentBase(id, scope)?.snapshot
-            ?? null;
-        const hadLive = Boolean(openLocalCanvasProject(id)) || existed;
-        let confirmed;
-        try {
-            confirmed = await confirmRemoteDocument(remote, scope);
-        } catch {
-            return undefined;
-        }
-        if ((remote.revision ?? 0) < confirmed.confirmedRevision) {
-            return openLocalCanvasProject(id);
-        }
-        if (existed && !openLocalCanvasProject(id)) return undefined;
-        try {
+        return withCanvasProjection(scope, id, async () => {
+            const journal = peekCanvasOperationJournal(id, scope);
+            const base = journal?.pendingProjection?.base
+                ?? journal?.confirmedSnapshot
+                ?? canvasDocumentBase(id, scope)?.snapshot
+                ?? null;
+            const hadLive = Boolean(openLocalCanvasProject(id)) || existed;
+            let confirmed;
+            try {
+                confirmed = await confirmRemoteDocument(remote, scope);
+            } catch {
+                return undefined;
+            }
+            if ((remote.revision ?? 0) < confirmed.confirmedRevision) {
+                return openLocalCanvasProject(id);
+            }
+            if (existed && !openLocalCanvasProject(id)) return undefined;
             const aligned = alignLiveAfterConfirmedRemote({
                 id,
                 scope,
@@ -755,14 +857,9 @@ export async function refreshLocalCanvasProjectIfChanged(id: string) {
                     notifyCanvasRefresh(project, previous);
                 },
             });
-            if (isCurrentDispatchScope(scope) && aligned && openLocalCanvasProject(id)) {
-                await flushCanvasStorePersistence();
-            }
+            await persistProjectedCanvas(id, scope, confirmed.pendingProjection?.identity, { throwOnFailure: false });
             return aligned;
-        } catch {
-            if (isCurrentDispatchScope(scope)) pauseForExternalCandidate(id, remote, scope);
-            return undefined;
-        }
+        });
     } catch {
         return undefined;
     }
@@ -779,13 +876,12 @@ export async function acceptExternalCanvasRevision(id: string) {
     const conflict = canvasExternalRevisionConflict(scope, id);
     if (!conflict) return undefined;
     const candidate = conflict.candidate;
-    await updateCanvasOperationJournal(id, scope, (current) => ({
-        ...current,
-        confirmedRevision: Math.max(current.confirmedRevision, candidate.revision ?? current.confirmedRevision),
-        confirmedSnapshot: structuredClone(candidate),
-        inFlight: null,
-    }));
-    recordServerConfirmedCanvas(candidate, scope);
+    const journal = await recordConfirmedCanvasCommit(candidate, scope, { unflushedProjection: true });
+    await updateCanvasOperationJournal(id, scope, (current) => {
+        if (!current.inFlight) return;
+        return { ...current, inFlight: null };
+    });
+    recordServerConfirmedCanvas(journal.confirmedSnapshot ?? candidate, scope);
     if (!isCurrentDispatchScope(scope)) {
         clearCanvasExternalRevisionConflict(scope, id);
         resumeCanvasBackendSubmit(id, scope);
@@ -799,7 +895,7 @@ export async function acceptExternalCanvasRevision(id: string) {
     });
     if (!decision || decision.kind !== "apply") return undefined;
     resumeCanvasBackendSubmit(id, scope);
-    await flushCanvasStorePersistence();
+    await persistProjectedCanvas(id, scope, journal.pendingProjection?.identity, { throwOnFailure: false });
     return decision.project;
 }
 
