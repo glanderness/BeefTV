@@ -13,6 +13,7 @@ import (
 
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/platform"
 	"infinite-canvas/backend/internal/provider/workflow"
 )
 
@@ -382,6 +383,7 @@ func workflowCreateInput(baseURL string) canvasGenerationInput {
 func workflowPaidTaskFixture(t *testing.T) (*Service, model.Task) {
 	t.Helper()
 	s, db := newTimelineTaskTestService(t)
+	s.coordinator = platform.NewLocalCoordinator()
 	expires := time.Now().Add(time.Hour)
 	task := model.Task{
 		ID:             "workflow-task",

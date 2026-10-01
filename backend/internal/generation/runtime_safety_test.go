@@ -67,6 +67,7 @@ func taskRuntime(extras ...func(*Runtime)) Runtime {
 	runtime := Runtime{
 		Images:   passImagePort{},
 		Receipts: nopReceipts{},
+		Limits:   stubLimits{limit: 1},
 		Call:     CallMeta{UserID: "user-1", TaskID: "task-1"},
 	}
 	for _, extra := range extras {
@@ -117,6 +118,20 @@ func TestExecuteRejectsImageTaskWithoutSubmissionPort(t *testing.T) {
 	}
 	if hits.Load() != 0 {
 		t.Fatalf("image paid path dispatched without Images port: %d", hits.Load())
+	}
+}
+
+func TestExecuteCannotBypassLimitsWithIdentityAndReceipts(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	t.Cleanup(server.Close)
+	runtime := taskRuntime(func(runtime *Runtime) { runtime.Limits = nil })
+	_, err := Execute(WithRuntime(context.Background(), runtime), Input{
+		Mode: "text", Prompt: "hello", Config: Config{BaseURL: server.URL, APIKey: "key", Model: "text"},
+	})
+	if err == nil || hits.Load() != 0 {
+		t.Fatalf("missing limits: err=%v, outbound requests=%d", err, hits.Load())
 	}
 }
 

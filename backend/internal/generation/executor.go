@@ -42,7 +42,7 @@ func requireTaskRuntime(ctx context.Context) error {
 	if strings.TrimSpace(runtime.Call.UserID) == "" || strings.TrimSpace(runtime.Call.TaskID) == "" {
 		return errors.New("生成任务缺少用户或任务身份")
 	}
-	if runtime.Images == nil || runtime.Receipts == nil {
+	if runtime.Images == nil || runtime.Receipts == nil || runtime.Limits == nil {
 		return errors.New("无法执行生成任务，请重试")
 	}
 	return nil
