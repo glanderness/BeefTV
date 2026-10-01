@@ -282,9 +282,9 @@ func TestMissingHostFailsWithoutSpawning(t *testing.T) {
 	}
 
 	router := gin.New()
-	api := router.Group("/api")
-	RegisterAgentHostLifecycleRoutes(api, svc, nil)
-	RegisterAgentProxyRoutes(api, svc, agentops.NewClientRegistry(dataDir), newUISessionStore(), nil)
+	// Exercise the public standalone registration too: it must not invent a
+	// supervisor that no composition root can close.
+	RegisterCanvasAPI(router.Group("/api"), svc)
 
 	status := lifecycleRequest(router, http.MethodGet, "/api/assistant/status", "", "")
 	if status.Code != http.StatusOK {

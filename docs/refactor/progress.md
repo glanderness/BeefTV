@@ -43,6 +43,18 @@
 
 第二批项目领域：job 20261002-011319-delegate-63acf902，工作树固定 0d29c11，负责项目实际规则退出 app、消除 project/localapp 反向依赖。仅允许项目相关接线，不能改生成、素材、宿主或插件核心。
 
+## 后续审查与并行接入
+
+- runtime 修正 a7dd50b 独立测试通过：assistantruntime 1.663s、assistant 1.155s、handler 3.064s、bootstrap 14.861s；合入 ecda201 / 1218b3e。Lead 进一步移除独立路由注册的无 Close 所有者 Host 兜底，集成 handler/bootstrap 通过。
+- pi 5541435：54 pass / 0 fail；额外确定性复现并发 replace 泄漏和 current.json 写失败后的状态分裂，未合入。继续 20261002-012611-continue-352b1416。
+- generation fdf34aa：未合入；恢复仍依赖 GET、元数据覆盖与错误吞没待修。继续 20261002-012722-continue-ab34e728，实现后台恢复和实际 taskdelivery 领域。
+- plugins e03031e：未合入；同包重装失败可能删除旧包、管理状态回滚存在并发窗口。继续 20261002-012809-continue-39115e00。
+- operations 7000765：聚焦四包独立测试通过；修复调用身份 fail-closed 并接入人工画布保存，继续 20261002-012045-continue-a38f46d6。
+- Agent 业务轮次：20261002-011801-continue-a7418435，固定 331857a，assistantturns + schema 10；官方 pi 保留会话事实，SQLite 负责业务轮次和撤销事务。
+- 模型目录/能力/渠道：20261002-012935-continue-dead2721，固定 1218b3e；实际规则退出 app，保留上游参数合同。
+
+以上都在独立工作树；尚未进入发布验收，没有新增真实模型费用。
+
 ## 后续必须继续的范围
 
 1. 人工 UI 接入公共操作；删除按时间戳竞争数据库事实的正常路径。当前 `local-workspace-repository` 仍有此路径。

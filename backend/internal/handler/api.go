@@ -26,7 +26,6 @@ func defaultRuntimeDependencies(svc *app.Service) RuntimeDependencies {
 	adapter := newServiceRuntimeAdapter(svc)
 	return RuntimeDependencies{
 		RequestCoordinator: adapter, ProviderConfig: adapter, Assets: adapter, Projects: adapter, Tasks: adapter, Generation: adapter,
-		AssistantHost: newAssistantHost(svc),
 	}
 }
 
@@ -38,9 +37,9 @@ func RegisterDesktopCanvasAPIWithDependencies(api *gin.RouterGroup, svc *app.Ser
 // local composition root free of runtime profile branches lets the Go linker
 // discard hosted handlers and their SaaS-only service methods from BeefTV.
 func registerDesktopCanvasAPI(api *gin.RouterGroup, svc *app.Service, dependencies RuntimeDependencies) {
-	if dependencies.AssistantHost == nil {
-		dependencies.AssistantHost = newAssistantHost(svc)
-	}
+	// A process supervisor needs an explicit Close owner. Only the composition
+	// root supplies it; standalone route registration must not create a child
+	// whose lifetime has no owner.
 	api.Use(RuntimeDependenciesMiddleware(dependencies))
 	RegisterOpenAPIRoutes(api)
 	RegisterWorkspaceRoutes(api, svc)

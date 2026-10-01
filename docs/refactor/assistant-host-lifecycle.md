@@ -33,6 +33,8 @@
 
 组合根把同一个 Host 放进 `RuntimeDependencies.AssistantHost`，生命周期路由与代理路由拿到同一指针。两个 `Host` 不共享子进程所有权。禁止按 `dataDir` 做进程级 Host 表。
 
+独立路由注册也不创建 Host；需要助手的调用方必须注入有明确 Close 所有者的实例。缺失时保持不可用，避免开发入口产生无人回收的子进程。
+
 ## 验证
 
 ```bash

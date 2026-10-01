@@ -12,10 +12,6 @@ import (
 	httptransport "infinite-canvas/backend/internal/transport/http"
 )
 
-func newAssistantHost(svc *app.Service) *assistantruntime.Host {
-	return assistantruntime.New(assistantruntime.OptionsFromService(svc))
-}
-
 func missingAssistantHost(c *gin.Context, host *assistantruntime.Host) bool {
 	if host != nil {
 		return false
