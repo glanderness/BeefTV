@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"infinite-canvas/backend/internal/editing"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
+	localtask "infinite-canvas/backend/internal/task"
 	"infinite-canvas/backend/internal/transcription"
 )
 
@@ -83,58 +83,13 @@ func (s *Service) logInfo(userID string, taskID string, message string, extra st
 	s.log(userID, taskID, "info", message, extra)
 }
 
-type TimelineTranscriptionCreateRequest struct {
-	ResourceID string `json:"resourceId"`
-	Language   string `json:"language"`
-	ProjectID  string `json:"projectId"`
-}
+type TimelineTranscriptionCreateRequest = localtask.TimelineTranscriptionCreateRequest
 
 func (s *Service) CreateTimelineTranscriptionTask(userID string, req TimelineTranscriptionCreateRequest) (*model.Task, error) {
-	if s.IsDraining() {
-		return nil, &AppError{Status: 503, Code: 503, Message: "服务正在维护，暂不接受新的生成任务", Retryable: true}
-	}
-	if err := s.RequireFeature(FeatureTimelineTranscription); err != nil {
-		return nil, err
-	}
-	resourceID := strings.TrimSpace(req.ResourceID)
-	if resourceID == "" {
-		return nil, BadAuthRequest("必须指定待转写媒体")
-	}
-	resource, err := s.Resource(userID, resourceID)
-	if err != nil || resource == nil {
-		return nil, BadAuthRequest("无法读取待转写媒体，可能已被删除")
-	}
-	if !transcription.IsTranscribableMIME(resource.MimeType) {
-		return nil, BadAuthRequest("仅支持音视频文件转写")
-	}
-	policy, err := s.RuntimePolicy()
-	if err != nil {
-		return nil, err
-	}
-	input := timelineTranscriptionInput{ResourceID: resourceID, Language: strings.TrimSpace(req.Language)}
-	inputJSON, _ := json.Marshal(input)
-	task := model.Task{
-		ID: newID(), UserID: userID, ProjectID: req.ProjectID,
-		Type: model.TaskTypeTimelineTranscription, Status: model.TaskStatusQueued,
-		Stage: "等待队列调度", Progress: 5, Prompt: "字幕转写",
-		Provider: "local", Model: "whisper.cpp", InputJSON: string(inputJSON),
-	}
-	if err := s.createTaskWithinStorageQuota(&task, policy); err != nil {
-		if errors.Is(err, repository.ErrActiveTaskLimit) {
-			return nil, BadAuthRequest(fmt.Sprintf("同时排队或运行的任务最多 %d 个，请等待已有任务完成", policy.Task.ActiveTaskLimit))
-		}
-		return nil, err
-	}
-	s.recordActivity(userID, "task", 1)
-	_ = s.log(userID, task.ID, "info", "字幕转写任务已进入队列", "")
-	return taskForOutput(task), nil
+	return s.taskDomain().CreateTimelineTranscriptionTask(userID, req)
 }
 
-type TimelineRenderCreateRequest struct {
-	ProjectID string          `json:"projectId"`
-	Timeline  editing.Project `json:"timeline"`
-	Options   editing.Options `json:"options"`
-}
+type TimelineRenderCreateRequest = localtask.TimelineRenderCreateRequest
 
 type timelineRenderInput struct {
 	ProjectID string          `json:"projectId"`
@@ -157,37 +112,7 @@ type timelineRenderResult struct {
 }
 
 func (s *Service) CreateTimelineRenderTask(userID string, req TimelineRenderCreateRequest) (*model.Task, error) {
-	if s.IsDraining() {
-		return nil, &AppError{Status: 503, Code: 503, Message: "服务正在维护，暂不接受新的生成任务", Retryable: true}
-	}
-	plan, err := editing.Compile(req.Timeline, nil, req.Options)
-	if err != nil {
-		return nil, BadAuthRequest(err.Error())
-	}
-	if !plan.HasMedia() {
-		return nil, BadAuthRequest("时间线没有可渲染的媒体片段")
-	}
-	policy, err := s.RuntimePolicy()
-	if err != nil {
-		return nil, err
-	}
-	input := timelineRenderInput{ProjectID: strings.TrimSpace(req.ProjectID), Timeline: req.Timeline, Options: req.Options}
-	inputJSON, _ := json.Marshal(input)
-	task := model.Task{
-		ID: newID(), UserID: userID, ProjectID: strings.TrimSpace(req.ProjectID),
-		Type: model.TaskTypeTimelineRender, Status: model.TaskStatusQueued,
-		Stage: "等待队列调度", Progress: 5, Prompt: "时间线渲染",
-		Provider: "local", Model: "ffmpeg", InputJSON: string(inputJSON),
-	}
-	if err := s.createTaskWithinStorageQuota(&task, policy); err != nil {
-		if errors.Is(err, repository.ErrActiveTaskLimit) {
-			return nil, BadAuthRequest(fmt.Sprintf("同时排队或运行的任务最多 %d 个，请等待已有任务完成", policy.Task.ActiveTaskLimit))
-		}
-		return nil, err
-	}
-	s.recordActivity(userID, "task", 1)
-	_ = s.log(userID, task.ID, "info", "时间线渲染任务已进入队列", "")
-	return taskForOutput(task), nil
+	return s.taskDomain().CreateTimelineRenderTask(userID, req)
 }
 
 func (s *Service) CompileTimelineRenderPlan(userID string, req TimelineRenderPlanRequest) (*editing.Plan, error) {

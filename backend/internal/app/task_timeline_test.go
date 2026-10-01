@@ -156,3 +156,33 @@ func TestCreateTimelineTranscriptionTaskRejectsNonTranscribable(t *testing.T) {
 		t.Fatalf("want 仅支持音视频 error, got %v", err)
 	}
 }
+
+func TestCreateTimelineTranscriptionTaskReplaysClientOperation(t *testing.T) {
+	svc, db := newTimelineTaskTestService(t)
+	seedResource(t, db, "res-video-1", "usr-create-test", "video/mp4")
+	seedResource(t, db, "res-video-2", "usr-create-test", "video/mp4")
+	seedActiveProject(t, db, "prj-1", "usr-create-test")
+
+	first, err := svc.CreateTimelineTranscriptionTask("usr-create-test", TimelineTranscriptionCreateRequest{
+		ResourceID: "res-video-1", Language: "zh", ProjectID: "prj-1", ClientOperationID: "timeline:app-1",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	replay, err := svc.CreateTimelineTranscriptionTask("usr-create-test", TimelineTranscriptionCreateRequest{
+		ResourceID: "res-video-1", Language: "zh", ProjectID: "prj-1", ClientOperationID: "timeline:app-1",
+	})
+	if err != nil || replay.ID != first.ID {
+		t.Fatalf("replay = %+v err=%v", replay, err)
+	}
+	_, err = svc.CreateTimelineTranscriptionTask("usr-create-test", TimelineTranscriptionCreateRequest{
+		ResourceID: "res-video-2", Language: "zh", ProjectID: "prj-1", ClientOperationID: "timeline:app-1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "不同内容") {
+		t.Fatalf("mismatch = %v", err)
+	}
+	var n int64
+	if err := db.Model(&model.Task{}).Count(&n).Error; err != nil || n != 1 {
+		t.Fatalf("rows = %d err=%v", n, err)
+	}
+}

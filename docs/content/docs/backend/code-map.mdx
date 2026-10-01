@@ -25,7 +25,7 @@ Wails / local dev
 | 组合根 | `backend/internal/bootstrap` | 打开本地数据、组合窄服务、启停 HTTP 与 worker |
 | 本地应用 | `backend/internal/localapp` | 定义 workspace/project/asset/task/generation/provider-config 端口（旧 Agent 空端口已移除） |
 | 工作区 | `backend/internal/workspace` | 本地身份、模型配置快照、未接线的 tar.gz helper；ZIP 导入导出不在此包 |
-| 任务域 | `backend/internal/task` | 本地任务命令、列表读模型和生命周期边界 |
+| 任务域 | `backend/internal/task` | 本地任务命令、列表读模型、生命周期，以及本机 ffmpeg/转写/深度捕捉的准入 |
 | 生成结果交付 | `backend/internal/taskdelivery` | 第一段把生成 dataURL/字节写入本地资源并改写 ResultJSON；第二段在任务成功后物化素材。不发起新的上游生成 |
 | 生成域 | `backend/internal/generation` | 统一生成输入、引用、能力、registry 协议调度和失败归类 |
 | 供应商适配 | `backend/internal/provider`, `protocol`, `outbound` | 外部模型 API、自定义渠道和插件协议 |

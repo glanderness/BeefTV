@@ -27,6 +27,9 @@ type AssetPort interface {
 
 type TaskPort interface {
 	TasksWithOptions(string, localtask.ListOptions) ([]localtask.Summary, error)
+	CreateTimelineRenderTask(string, localtask.TimelineRenderCreateRequest) (*model.Task, error)
+	CreateTimelineTranscriptionTask(string, localtask.TimelineTranscriptionCreateRequest) (*model.Task, error)
+	CreateDepthCaptureTask(string, localtask.DepthCaptureCreateRequest) (*model.Task, error)
 }
 
 type GenerationPort interface {

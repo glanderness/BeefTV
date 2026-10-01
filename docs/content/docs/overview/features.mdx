@@ -360,5 +360,5 @@ SEO 标题、描述、可选关键词会投影到浏览器 metadata、Open Graph
 - `web/src/lib/plugins/plugin-permission-check.ts`：命令执行权限与失败关闭策略。
 - `web/src/services/api/timeline-tasks.ts`：转写、渲染任务与只读渲染计划客户端。
 - `backend/internal/editing`：语义渲染计划编译。
-- `backend/internal/app/task_timeline.go`、`task_render.go`、`timeline_render_plan.go`：转写任务、native 渲染执行与计划 lowering。
+- `backend/internal/task`：本机转写/渲染/深度捕捉准入。`task_timeline.go`、`task_render.go`：领取后的转写与 native 渲染执行。
 - `backend/internal/repository/project_workbench_read.go`：项目概览指标聚合（含成片完成度计数）。

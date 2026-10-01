@@ -79,6 +79,17 @@ type Projects interface {
 	EnsureActive(userID, canvasOrProjectID string) error
 }
 
+// OwnedMedia loads an owner-scoped resource for local executor validation.
+// Task never imports asset/app to rebuild authorization itself.
+type OwnedMedia interface {
+	Resource(userID, id string) (*model.Resource, error)
+}
+
+// Features is the workspace capability gate used by local transcription.
+type Features interface {
+	Require(name string) error
+}
+
 // Policy supplies the live active-task cap. Quota bytes stay in Persistence.
 type Policy interface {
 	ActiveTaskLimit() (int, error)
@@ -142,12 +153,15 @@ type Activity interface {
 //
 //	admit persist: Store, Catalog, Secrets, Media, Projects, Policy, Runtime, TextReplay, Persist, Present
 //	admit PrepareOnly: Catalog, Secrets, Media, Projects, Policy, Runtime, TextReplay
+//	admit specialized: Store, Projects, Policy, Runtime, Persist, Present
+//	  transcription also needs OwnedMedia and Features; depth also needs OwnedMedia
 //	retry: Store, Runtime, Images, Failures, Secrets, Catalog, Policy, Projects, Present
 //	cancel: Store, Runtime, Present; Provider and TextReplay are optional
 //	reads: Store, Present
 //
 // Logs and Activity are optional. Provider cancel is best-effort after the
-// local cancel has already been committed.
+// local cancel has already been committed. Specialized local executors never
+// require Catalog, Secrets, Media, or TextReplay.
 type Dependencies struct {
 	Catalog    Catalog
 	Secrets    Secrets
@@ -163,6 +177,8 @@ type Dependencies struct {
 	Present    Presenter
 	Logs       Logger
 	Activity   Activity
+	OwnedMedia OwnedMedia
+	Features   Features
 	NewID      func() string
 	Now        func() time.Time
 }

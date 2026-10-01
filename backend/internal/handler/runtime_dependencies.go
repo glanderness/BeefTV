@@ -65,15 +65,18 @@ type RuntimeDependencies struct {
 }
 
 type serviceRuntimeAdapter struct {
-	allowRequest        func(context.Context, string, int, time.Duration) (bool, error)
-	requestRetryAfter   func(context.Context, string, time.Duration) time.Duration
-	readModelConfig     func() ([]byte, error)
-	saveModelConfig     func([]byte) error
-	resources           func(string, int) ([]model.Resource, error)
-	uploadLocalResource func(string, *multipart.FileHeader, string, int, int, int64, ...string) (*model.Resource, error)
-	listProjects        func(string) ([]localproject.Summary, error)
-	tasksWithOptions    func(string, localtask.ListOptions) ([]localtask.Summary, error)
-	createTask          func(string, localtask.CreateRequest) (*model.Task, error)
+	allowRequest                func(context.Context, string, int, time.Duration) (bool, error)
+	requestRetryAfter           func(context.Context, string, time.Duration) time.Duration
+	readModelConfig             func() ([]byte, error)
+	saveModelConfig             func([]byte) error
+	resources                   func(string, int) ([]model.Resource, error)
+	uploadLocalResource         func(string, *multipart.FileHeader, string, int, int, int64, ...string) (*model.Resource, error)
+	listProjects                func(string) ([]localproject.Summary, error)
+	tasksWithOptions            func(string, localtask.ListOptions) ([]localtask.Summary, error)
+	createTask                  func(string, localtask.CreateRequest) (*model.Task, error)
+	createTimelineRender        func(string, localtask.TimelineRenderCreateRequest) (*model.Task, error)
+	createTimelineTranscription func(string, localtask.TimelineTranscriptionCreateRequest) (*model.Task, error)
+	createDepthCapture          func(string, localtask.DepthCaptureCreateRequest) (*model.Task, error)
 }
 
 func newServiceRuntimeAdapter(value *app.Service) serviceRuntimeAdapter {
@@ -82,6 +85,8 @@ func newServiceRuntimeAdapter(value *app.Service) serviceRuntimeAdapter {
 		readModelConfig: value.ReadLocalModelConfig, saveModelConfig: value.SaveLocalModelConfig,
 		resources: value.Resources, uploadLocalResource: value.UploadLocalResource,
 		listProjects: value.ListProjects, tasksWithOptions: value.TasksWithOptions, createTask: value.CreateLocalTask,
+		createTimelineRender: value.CreateTimelineRenderTask, createTimelineTranscription: value.CreateTimelineTranscriptionTask,
+		createDepthCapture: value.CreateDepthCaptureTask,
 	}
 }
 
@@ -119,6 +124,18 @@ func (a serviceRuntimeAdapter) TasksWithOptions(userID string, options localtask
 
 func (a serviceRuntimeAdapter) CreateTask(userID string, request localtask.CreateRequest) (*model.Task, error) {
 	return a.createTask(userID, request)
+}
+
+func (a serviceRuntimeAdapter) CreateTimelineRenderTask(userID string, request localtask.TimelineRenderCreateRequest) (*model.Task, error) {
+	return a.createTimelineRender(userID, request)
+}
+
+func (a serviceRuntimeAdapter) CreateTimelineTranscriptionTask(userID string, request localtask.TimelineTranscriptionCreateRequest) (*model.Task, error) {
+	return a.createTimelineTranscription(userID, request)
+}
+
+func (a serviceRuntimeAdapter) CreateDepthCaptureTask(userID string, request localtask.DepthCaptureCreateRequest) (*model.Task, error) {
+	return a.createDepthCapture(userID, request)
 }
 
 func requestAssetPort(c *gin.Context, fallback *app.Service) localapp.AssetPort {

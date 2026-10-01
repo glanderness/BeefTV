@@ -6,7 +6,7 @@
 
 | 路径 | 语义计划 | 执行 | 说明 |
 | --- | --- | --- | --- |
-| 编辑器远程导出 `web/src/lib/plugins/builtin/editor/editor-export.tsx` → `renderRemote` | `CreateTimelineRenderTask` 入队后，`task_render.go` `processTimelineRender` 调用 `editing.Compile`（sources=nil，不透明 `resource:` id） | `editing.Renderer.Render`：授权落盘 → ffprobe → `ApplySourceFacts` → `BuildFFmpegArgs` 一条 `filter_complex` | 生产主路径。前端只提交时间线快照。app worker 再用 `asset.RecoverOwned`（任务 `id:0`）组合结果资源。 |
+| 编辑器远程导出 `web/src/lib/plugins/builtin/editor/editor-export.tsx` → `renderRemote` | `POST /timeline/renders` → `task.CreateTimelineRenderTask` 准入后入队；worker `task_render.go` `processTimelineRender` 再调用 `editing.Compile`（sources=nil，不透明 `resource:` id） | `editing.Renderer.Render`：授权落盘 → ffprobe → `ApplySourceFacts` → `BuildFFmpegArgs` 一条 `filter_complex` | 生产主路径。前端只提交时间线快照。准入走任务域固定本机 schema（`local`/`ffmpeg`），不经过模型目录。app worker 再用 `asset.RecoverOwned`（任务 `id:0`）组合结果资源。 |
 | 编辑器离线降级 `editor-export.tsx` → `exportLocalMp4`；预览面板 | `POST /api/timeline/render-plan` → `CompileTimelineRenderPlan` → `editing.Compile`（浏览器提交不透明 nodeId 元数据） | `lowerCanonicalPlan` → `exportTimelineToMp4` 每次 **new FFmpeg()** wasm worker → `executeTimelineRenderPlan` | 规划失败必须上抛，不得改走 TS 语义编译。取消 `terminate()` 自己的 worker。 |
 | 画布时间线成片 `canvas-timeline-dialog.tsx` `runExport` | 同上 `POST /api/timeline/render-plan` | 同上 wasm | 收集可见视频/图片/音频（含静音音轨），字幕来自返回计划。 |
 | 画布合并/裁切/提音 `canvas-video-merge.ts`、`canvas-video-segment.ts` | 无 TimelineRenderPlan | `canvas-ffmpeg-session.ts` 串行租约 + ffmpeg.wasm | 与时间线导出走两套 wasm 生命周期。见下节实际可共用点。 |
@@ -82,3 +82,4 @@ func (s *Service) nativeRenderer(userID string) *editing.Renderer
 - `processTimelineRender` 继续：`editing.Compile` → `asset.Service.RecoverOwned`（身份 `taskID:0`，缺字节时才 `Renderer.Render`）→ 任务完成态。
 - 不要把 editing 接到 `app.Service` 方法集，也不要让 editing import `internal/app`。
 - 无 operations 新注册：时间线创建仍走 HTTP `/timeline/renders` 与 `/timeline/render-plan`。
+- 入队由 `internal/task.CreateTimelineRenderTask` 完成：`editing.Compile` 校验时间线，随后复用任务域 drain / 项目归属 / 配额 / `clientOperationId` 回放。`app.CreateTimelineRenderTask` 只做转发。

@@ -47,12 +47,14 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *app.Service, hostedProfile ...b
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
-		var req app.TimelineTranscriptionCreateRequest
+		var req localtask.TimelineTranscriptionCreateRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		task, err := svc.CreateTimelineTranscriptionTask(user.ID, req)
+		req.TraceID = TraceID(c)
+		req.RequestID = RequestID(c)
+		task, err := requestTaskPort(c, svc).CreateTimelineTranscriptionTask(user.ID, req)
 		if err != nil {
 			failService(c, err)
 			return
@@ -70,12 +72,14 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *app.Service, hostedProfile ...b
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<20)
-		var req app.TimelineRenderCreateRequest
+		var req localtask.TimelineRenderCreateRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		task, err := svc.CreateTimelineRenderTask(user.ID, req)
+		req.TraceID = TraceID(c)
+		req.RequestID = RequestID(c)
+		task, err := requestTaskPort(c, svc).CreateTimelineRenderTask(user.ID, req)
 		if err != nil {
 			failService(c, err)
 			return
@@ -116,12 +120,14 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *app.Service, hostedProfile ...b
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
-		var req app.DepthCaptureCreateRequest
+		var req localtask.DepthCaptureCreateRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		task, err := svc.CreateDepthCaptureTask(user.ID, req)
+		req.TraceID = TraceID(c)
+		req.RequestID = RequestID(c)
+		task, err := requestTaskPort(c, svc).CreateDepthCaptureTask(user.ID, req)
 		if err != nil {
 			failService(c, err)
 			return

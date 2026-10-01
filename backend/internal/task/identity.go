@@ -111,6 +111,17 @@ func ValidateType(taskType string) error {
 	return fmt.Errorf("不支持的任务类型：%s", taskType)
 }
 
+func ValidateLocalExecutorType(taskType string) error {
+	switch taskType {
+	case model.TaskTypeTimelineTranscription, model.TaskTypeTimelineRender, model.TaskTypeDepthCapture:
+		return nil
+	}
+	if taskType == "" {
+		return errors.New("task type is required")
+	}
+	return fmt.Errorf(UnsupportedLocalExecutorTypeMessageFmt, taskType)
+}
+
 func compactPersistedValue(value interface{}) interface{} {
 	switch item := value.(type) {
 	case map[string]interface{}:

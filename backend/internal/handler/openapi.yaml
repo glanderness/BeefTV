@@ -672,7 +672,27 @@ paths:
     post:
       tags: [tasks]
       summary: 创建本机时间线渲染任务
-      description: 接收时间线快照与输出选项（宽高、帧率、采样率、是否烧录字幕）。选项写入任务输入，由本机 ffmpeg 按语义计划执行。
+      description: 接收时间线快照与输出选项（宽高、帧率、采样率、是否烧录字幕）。选项写入任务输入，由本机 ffmpeg 按语义计划执行。可选 clientOperationId：同一确认重复提交回读原任务。
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+  /timeline/transcriptions:
+    post:
+      tags: [tasks]
+      summary: 创建本机字幕转写任务
+      description: 接收待转写素材编号和可选语言。只接受当前用户已上传完成的音视频。可选 clientOperationId：同一确认重复提交回读原任务。
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+  /depth-captures:
+    post:
+      tags: [tasks]
+      summary: 创建本机深度动作捕捉任务
+      description: 接收待处理视频素材编号。只接受当前用户已上传完成的视频。可选 clientOperationId：同一确认重复提交回读原任务。
       responses:
         "200":
           $ref: "#/components/responses/Envelope"

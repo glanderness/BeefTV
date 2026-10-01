@@ -43,6 +43,8 @@ func (s *Service) taskDependencies() localtask.Dependencies {
 		Present:    taskPresenterAdapter{s},
 		Logs:       taskLogAdapter{s},
 		Activity:   taskActivityAdapter{s},
+		OwnedMedia: taskOwnedMediaAdapter{s},
+		Features:   taskFeaturesAdapter{s},
 		NewID:      newID,
 	}
 }
@@ -143,6 +145,18 @@ type taskProjectsAdapter struct{ s *Service }
 
 func (a taskProjectsAdapter) EnsureActive(userID, canvasOrProjectID string) error {
 	return a.s.ensureTaskProjectActive(userID, canvasOrProjectID)
+}
+
+type taskOwnedMediaAdapter struct{ s *Service }
+
+func (a taskOwnedMediaAdapter) Resource(userID, id string) (*model.Resource, error) {
+	return a.s.Resource(userID, id)
+}
+
+type taskFeaturesAdapter struct{ s *Service }
+
+func (a taskFeaturesAdapter) Require(name string) error {
+	return a.s.RequireFeature(name)
 }
 
 type taskPolicyAdapter struct{ s *Service }
