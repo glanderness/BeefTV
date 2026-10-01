@@ -43,15 +43,17 @@ func (s *Service) resourceDomain() *localasset.Service {
 	if s == nil {
 		return localasset.NewService(localasset.Dependencies{})
 	}
-	if s.assets != nil {
-		return s.assets
-	}
-	s.assets = localasset.NewService(localasset.Dependencies{
-		Repository:   localasset.NewRepository(s.repo),
-		Blobs:        localasset.NewFileStore(s.dataDir),
-		Quota:        resourceQuota{svc: s},
-		Lifecycle:    resourceLifecycle{svc: s},
-		LocalStorage: s.localResourceStorage || s.IsLocalMode(),
+	s.assetsOnce.Do(func() {
+		if s.assets != nil {
+			return
+		}
+		s.assets = localasset.NewService(localasset.Dependencies{
+			Repository:   localasset.NewRepository(s.repo),
+			Blobs:        localasset.NewFileStore(s.dataDir),
+			Quota:        resourceQuota{svc: s},
+			Lifecycle:    resourceLifecycle{svc: s},
+			LocalStorage: s.localResourceStorage || s.IsLocalMode(),
+		})
 	})
 	return s.assets
 }

@@ -20,6 +20,20 @@ func NewFileStore(dataDir string) *FileStore {
 	return &FileStore{root: filepath.Join(dataDir, "resources")}
 }
 
+func (s *FileStore) writeSpace() string {
+	if s == nil {
+		return ""
+	}
+	root := strings.TrimSpace(s.root)
+	if root == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(root); err == nil {
+		return filepath.Clean(abs)
+	}
+	return filepath.Clean(root)
+}
+
 func (s *FileStore) Write(objectKey string, body io.Reader) (returnErr error) {
 	target, err := s.path(objectKey)
 	if err != nil {

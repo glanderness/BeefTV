@@ -1,9 +1,9 @@
 package asset
 
 import (
+	"path/filepath"
 	"testing"
 
-	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 
@@ -73,7 +73,8 @@ func (r *readySaveFailRepo) SaveResource(resource *model.Resource) error {
 
 func newTestDomain(t *testing.T) (*Service, *repository.Repository, string) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file:"+kernel.NewID()+"?mode=memory&cache=shared&_busy_timeout=5000"), &gorm.Config{})
+	dataDir := t.TempDir()
+	db, err := gorm.Open(sqlite.Open(filepath.Join(dataDir, "meta.db")+"?_busy_timeout=5000&_foreign_keys=on"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +82,6 @@ func newTestDomain(t *testing.T) (*Service, *repository.Repository, string) {
 		t.Fatal(err)
 	}
 	repo := repository.New(db)
-	dataDir := t.TempDir()
 	return NewService(Dependencies{
 		Repository: NewRepository(repo),
 		Blobs:      NewFileStore(dataDir),

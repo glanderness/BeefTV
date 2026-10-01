@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 
+	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/gorm"
@@ -311,7 +312,7 @@ func (r *Repository) AssetBusinessReferences(userID string, assetID string) ([]R
 }
 
 func (r *Repository) DeleteAssetAndResources(userID string, assetID string, resourceIDs []string, deletionJobs []model.ResourceDeletionJob) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+	return withImmediateTransaction(r.db, func(tx *gorm.DB) error {
 		var asset model.Asset
 		if err := tx.Where("id = ? AND user_id = ?", assetID, userID).First(&asset).Error; err != nil {
 			return err
@@ -412,7 +413,142 @@ func guardAssetDeletionReferences(tx *gorm.DB, userID string, assetID string, re
 			return ErrResourceCleanupStillReferenced
 		}
 	}
+	return guardActiveTaskResourceReferences(tx, userID, resourceIDs)
+}
+
+func guardActiveTaskResourceReferences(tx *gorm.DB, userID string, resourceIDs []string) error {
+	if len(resourceIDs) == 0 {
+		return nil
+	}
+	owned := make(map[string]struct{}, len(resourceIDs))
+	for _, resourceID := range resourceIDs {
+		owned[resourceID] = struct{}{}
+	}
+	var tasks []model.Task
+	if err := tx.Select("id", "prompt", "status", "input_json", "result_json").Where("user_id = ?", userID).Find(&tasks).Error; err != nil {
+		return err
+	}
+	statuses := make(map[string]model.TaskStatus, len(tasks))
+	for _, task := range tasks {
+		statuses[task.ID] = task.Status
+		primary, secondary := task.InputJSON, task.ResultJSON
+		switch task.Status {
+		case model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled:
+			secondary = ""
+		}
+		if len(assets.DocumentReferencedIDs(primary, owned)) > 0 || len(assets.DocumentReferencedIDs(secondary, owned)) > 0 {
+			return ErrResourceCleanupStillReferenced
+		}
+	}
+	var logs []model.TaskLog
+	if err := tx.Select("id", "task_id", "payload").Where("user_id = ?", userID).Find(&logs).Error; err != nil {
+		return err
+	}
+	for _, log := range logs {
+		switch statuses[log.TaskID] {
+		case model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled:
+			continue
+		}
+		if len(assets.DocumentReferencedIDs(log.Payload, owned)) > 0 {
+			return ErrResourceCleanupStillReferenced
+		}
+	}
+	var results []model.Result
+	if err := tx.Select("id", "task_id", "url", "payload").Where("user_id = ?", userID).Find(&results).Error; err != nil {
+		return err
+	}
+	for _, result := range results {
+		switch statuses[result.TaskID] {
+		case model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled:
+			continue
+		}
+		if len(assets.DocumentReferencedIDs(result.URL, owned)) > 0 || len(assets.DocumentReferencedIDs(result.Payload, owned)) > 0 {
+			return ErrResourceCleanupStillReferenced
+		}
+	}
 	return nil
+}
+
+func withImmediateTransaction(db *gorm.DB, fn func(*gorm.DB) error) error {
+	if db == nil {
+		return gorm.ErrInvalidDB
+	}
+	return db.Connection(func(conn *gorm.DB) error {
+		tx := conn.Session(&gorm.Session{SkipDefaultTransaction: true, NewDB: true})
+		if err := tx.Exec("BEGIN IMMEDIATE").Error; err != nil {
+			return err
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				_ = tx.Exec("ROLLBACK").Error
+			}
+		}()
+		if err := fn(tx); err != nil {
+			return err
+		}
+		if err := tx.Exec("COMMIT").Error; err != nil {
+			return err
+		}
+		committed = true
+		return nil
+	})
+}
+
+// RequireReadyOwnedResourcesTx is the admission-side counterpart of
+// DeleteAssetAndResources. Lead must call it inside CreateTaskWithActiveLimit
+// (and RetryTask when input JSON is rewritten) after resolving input resource
+// IDs and before Create/Updates, in the same transaction as the task write.
+//
+// The no-op UPDATE takes SQLite's writer lock so WAL cannot commit a delete
+// between the readiness check and the task insert. A plain SELECT is not
+// enough: WAL readers do not block BEGIN IMMEDIATE. This package does not
+// change the task worker.
+func RequireReadyOwnedResourcesTx(tx *gorm.DB, userID string, resourceIDs []string) error {
+	if tx == nil {
+		return gorm.ErrInvalidDB
+	}
+	unique, err := uniqueResourceIDs(resourceIDs)
+	if err != nil {
+		return err
+	}
+	if len(unique) == 0 {
+		return nil
+	}
+	result := tx.Model(&model.Resource{}).
+		Where("user_id = ? AND id IN ? AND status = ?", userID, unique, model.ResourceStatusReady).
+		UpdateColumn("id", gorm.Expr("id"))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != int64(len(unique)) {
+		return ErrResourceNotReadyForAdmission
+	}
+	return nil
+}
+
+func uniqueResourceIDs(resourceIDs []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(resourceIDs))
+	unique := make([]string, 0, len(resourceIDs))
+	for _, id := range resourceIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return nil, ErrResourceNotReadyForAdmission
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	return unique, nil
+}
+
+func (r *Repository) RequireReadyOwnedResources(userID string, resourceIDs []string) error {
+	if r == nil || r.db == nil {
+		return gorm.ErrInvalidDB
+	}
+	return RequireReadyOwnedResourcesTx(r.db, userID, resourceIDs)
 }
 
 func guardAssetBusinessLinks(tx *gorm.DB, assetID string) error {

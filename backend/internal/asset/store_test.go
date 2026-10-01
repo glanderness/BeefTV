@@ -355,7 +355,7 @@ func TestRetryMismatchLeavesFailedUnchanged(t *testing.T) {
 }
 
 func TestRetryOwnedReclaimsStalePendingAfterNewService(t *testing.T) {
-	_, repo, dataDir := newTestDomain(t)
+	first, repo, dataDir := newTestDomain(t)
 	uploadKey := NormalizedUploadKey([]string{"stale-pending"})
 	pending := &model.Resource{
 		ID: "resource-stale", UserID: "user-1", Kind: "image", Status: model.ResourceStatusPending,
@@ -371,6 +371,13 @@ func TestRetryOwnedReclaimsStalePendingAfterNewService(t *testing.T) {
 		Quota:      nopQuota{},
 		Lifecycle:  nopLifecycle{},
 	})
+	if restarted.writeSpace() != first.writeSpace() {
+		t.Fatalf("restart lock space diverged: %q vs %q", restarted.writeSpace(), first.writeSpace())
+	}
+	_, stored, storeErr := restarted.Store("user-1", "image", "a.png", "text/plain", 7, 1, 1, 0, bytes.NewReader([]byte("payload")), uploadKey)
+	if stored || storeErr == nil || !strings.Contains(storeErr.Error(), "相同素材正在上传") {
+		t.Fatalf("restart Store reclaimed leftover pending: stored=%v err=%v", stored, storeErr)
+	}
 	recovered, err := restarted.RetryOwned("user-1", pending.ID, "image", "text/plain", 7, bytes.NewReader([]byte("payload")))
 	if err != nil {
 		t.Fatal(err)
@@ -437,6 +444,68 @@ func TestConcurrentStoreAndRetryDoesNotOverwriteInFlightWrite(t *testing.T) {
 			return
 		}
 		retried, retryErr = svc.RetryOwned("user-1", pending.ID, "image", "text/plain", 12, bytes.NewReader([]byte("retry-payload")))
+	}()
+	close(hold)
+	storeWG.Wait()
+	retryWG.Wait()
+	if storeErr != nil {
+		t.Fatalf("store: %v", storeErr)
+	}
+	if retryErr != nil {
+		t.Fatalf("retry: %v", retryErr)
+	}
+	if stored == nil || retried == nil || stored.ID != retried.ID {
+		t.Fatalf("store=%v retry=%v", stored, retried)
+	}
+	body, err := os.ReadFile(filepath.Join(dataDir, "resources", filepath.FromSlash(stored.ObjectKey)))
+	if err != nil || string(body) != "first-writer" {
+		t.Fatalf("body = %q err=%v", body, err)
+	}
+	resources, err := repo.Resources("user-1", 10)
+	if err != nil || len(resources) != 1 {
+		t.Fatalf("resource count = %d err=%v", len(resources), err)
+	}
+}
+
+func TestTwoHandlesCannotReclaimInFlightPending(t *testing.T) {
+	first, repo, dataDir := newTestDomain(t)
+	second := NewService(Dependencies{
+		Repository: NewRepository(repo),
+		Blobs:      NewFileStore(dataDir),
+		Quota:      nopQuota{},
+		Lifecycle:  nopLifecycle{},
+	})
+	if first.writeSpace() != second.writeSpace() {
+		t.Fatalf("lock spaces diverged: %q vs %q", first.writeSpace(), second.writeSpace())
+	}
+	uploadKey := NormalizedUploadKey([]string{"two-handles"})
+	announced := make(chan struct{})
+	hold := make(chan struct{})
+	var stored *model.Resource
+	var storeErr error
+	var storeWG sync.WaitGroup
+	storeWG.Add(1)
+	go func() {
+		defer storeWG.Done()
+		stored, _, storeErr = first.Store("user-1", "image", "a.png", "text/plain", 12, 1, 1, 0, &holdFirstRead{
+			announced: announced,
+			hold:      hold,
+			rest:      bytes.NewReader([]byte("first-writer")),
+		}, uploadKey)
+	}()
+	<-announced
+	var retried *model.Resource
+	var retryErr error
+	var retryWG sync.WaitGroup
+	retryWG.Add(1)
+	go func() {
+		defer retryWG.Done()
+		pending, err := repo.ResourceByUploadKey("user-1", *uploadKey)
+		if err != nil {
+			retryErr = err
+			return
+		}
+		retried, retryErr = second.RetryOwned("user-1", pending.ID, "image", "text/plain", 12, bytes.NewReader([]byte("second-handle")))
 	}()
 	close(hold)
 	storeWG.Wait()

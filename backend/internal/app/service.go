@@ -69,6 +69,7 @@ type Service struct {
 	canvas                   *canvas.Service
 	assistantTurns           *assistantturns.Service
 	assets                   *localasset.Service
+	assetsOnce               sync.Once
 	beefAPI                  *beefapi.Service
 	generationDeliveryMedia  taskdelivery.Media
 	generationDelivery       *taskdelivery.Deliverer

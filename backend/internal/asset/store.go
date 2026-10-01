@@ -18,19 +18,23 @@ import (
 // Canonical ownership and locking live here, not on Upload*. Upload and
 // generated storage call Store or RetryOwned without holding a second lock.
 //
-// The process-local mutex key includes userID plus uploadKey (when present)
-// and userID plus resourceID (RetryOwned). Multiple keys are acquired in
-// sorted order so Store(upload) and RetryOwned(upload+id) cannot deadlock.
+// The write lock is process-wide and keyed by the cleaned FileStore root plus
+// userID plus uploadKey (when present) and resourceID (RetryOwned). Two
+// Service handles that share a blob root share the lock table. Multiple keys
+// are acquired in sorted order so Store(upload) and RetryOwned(upload+id)
+// cannot deadlock.
 //
-// Same Service: an in-flight Store/RetryOwned holds the lock across pending
-// create, byte write, and metadata finalize. A concurrent Store waits, then
+// An in-flight Store/RetryOwned holds the lock across pending create, byte
+// write, and metadata finalize. A concurrent Store on any handle waits, then
 // returns the persisted READY row or UploadInProgress for leftover
 // FAILED/PENDING. A concurrent RetryOwned waits, then returns READY or
-// continues the leftover row. An active write is never overwritten.
+// continues the leftover row. An active write is never overwritten by a
+// second handle.
 //
-// After process restart the lock map is empty. RetryOwned may reclaim a
-// leftover PENDING or FAILED row. Store does not reclaim non-READY rows.
-// Generation adapters should call RetryOwned, not pass a forged Resource.
+// Leftover PENDING is reclaimed only when no live owner holds the lock
+// (process restart or the writer finished). A fresh Service is not treated as
+// restart while another handle is still writing. Store does not reclaim
+// non-READY rows. Generation adapters should call RetryOwned.
 //
 // Quota: callers of Store reserve upload/chunked quota. RetryOwned reserves
 // via ReserveRetry only after owner and identity checks, and releases on

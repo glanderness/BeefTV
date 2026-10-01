@@ -16,6 +16,8 @@ import (
 	"gorm.io/gorm"
 )
 
+var workspaceWriteLocks sync.Map
+
 type ResourceStream = assets.ResourceStream
 type ResourceDeliveryOptions = assets.ResourceDeliveryOptions
 type ResourceDelivery = assets.ResourceDelivery
@@ -27,7 +29,6 @@ type Service struct {
 	quota        Quota
 	lifecycle    Lifecycle
 	localStorage bool
-	uploadLocks  sync.Map
 }
 
 func NewService(deps Dependencies) *Service {
@@ -40,23 +41,37 @@ func NewService(deps Dependencies) *Service {
 	}
 }
 
-// lockWrite serializes Store/RetryOwned for one Service instance.
-// Keys include the user so identical client upload keys cannot cross owners.
-// Multiple keys are taken in sorted order to avoid nested deadlock.
+func (s *Service) writeSpace() string {
+	if s != nil {
+		if store, ok := s.blobs.(*FileStore); ok && store != nil {
+			if root := strings.TrimSpace(store.writeSpace()); root != "" {
+				return root
+			}
+		}
+	}
+	return fmt.Sprintf("service:%p", s)
+}
+
+// lockWrite serializes Store/RetryOwned for every Service that shares the
+// same FileStore root. Keys include the user so identical client upload keys
+// cannot cross owners. Multiple keys are taken in sorted order to avoid
+// nested deadlock. A second handle cannot reclaim an in-flight PENDING write;
+// leftover PENDING is reclaimable only when no live owner holds the lock.
 func (s *Service) lockWrite(userID string, uploadKey *string, resourceID string) func() {
 	if s == nil {
 		return func() {}
 	}
 	userID = strings.TrimSpace(userID)
 	resourceID = strings.TrimSpace(resourceID)
+	space := s.writeSpace()
 	keys := make([]string, 0, 2)
 	if userID != "" && uploadKey != nil {
 		if key := strings.TrimSpace(*uploadKey); key != "" {
-			keys = append(keys, "upload\x00"+userID+"\x00"+key)
+			keys = append(keys, space+"\x00upload\x00"+userID+"\x00"+key)
 		}
 	}
 	if userID != "" && resourceID != "" {
-		keys = append(keys, "resource\x00"+userID+"\x00"+resourceID)
+		keys = append(keys, space+"\x00resource\x00"+userID+"\x00"+resourceID)
 	}
 	if len(keys) == 0 {
 		return func() {}
@@ -64,7 +79,7 @@ func (s *Service) lockWrite(userID string, uploadKey *string, resourceID string)
 	sort.Strings(keys)
 	held := make([]*sync.Mutex, 0, len(keys))
 	for _, key := range keys {
-		value, _ := s.uploadLocks.LoadOrStore(key, &sync.Mutex{})
+		value, _ := workspaceWriteLocks.LoadOrStore(key, &sync.Mutex{})
 		lock := value.(*sync.Mutex)
 		lock.Lock()
 		held = append(held, lock)

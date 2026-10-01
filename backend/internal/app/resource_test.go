@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"testing/iotest"
 	"time"
@@ -265,6 +266,44 @@ func newResourceTestService(t *testing.T) *Service {
 		t.Fatal(err)
 	}
 	return &Service{repo: repository.New(db), dataDir: t.TempDir()}
+}
+
+func TestResourceDomainMemoizesConcurrentFirstCallers(t *testing.T) {
+	svc := newResourceTestService(t)
+	const workers = 32
+	got := make([]any, workers)
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func(index int) {
+			defer wg.Done()
+			got[index] = svc.resourceDomain()
+		}(i)
+	}
+	wg.Wait()
+	first := svc.resourceDomain()
+	if first == nil {
+		t.Fatal("resourceDomain returned nil")
+	}
+	for index, value := range got {
+		if value != first {
+			t.Fatalf("caller %d got a different asset.Service", index)
+		}
+	}
+}
+
+func TestNewServiceResourceDomainKeepsWiredPointer(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := newService(repository.New(db), t.TempDir(), serviceOptions{mode: serviceModeLocal})
+	if svc.assets == nil {
+		t.Fatal("newService did not wire assets")
+	}
+	if svc.resourceDomain() != svc.assets {
+		t.Fatal("resourceDomain diverged from constructor pointer")
+	}
 }
 
 func TestStoreResourceReusesReadyUploadIdentity(t *testing.T) {
