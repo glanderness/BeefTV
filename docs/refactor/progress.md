@@ -209,3 +209,10 @@
 - `6ad3bf4` 将已有性能预算变为可执行比较：匹配运行时和夹具，超过 1.5 倍且增加超过 2 ms 才失败。本地 CPU 基准 `performance-integrated-cpu.json` 未越线；这不代表 UI 或跨平台性能验收。
 - 独立核心复审 `20261002-050411-review-72951ad3` 发现终态资源与上传预留记录之间的崩溃窗口；Lead 核实，`20261002-052139-delegate-7d200e4d` 修复 READY/FAILED 重启结算、删除与同 key 重传。结论未关闭。
 - 素材读路径仍有 local-workspace 误分流，`20261002-050721-delegate-17eb1316` 负责素材页、选择器与会话入口读取 SQLite 并叠加明确草稿。完整备份/schema 12 仍由原 worker 进行；二者均未验收。
+
+### 第十一轮集成快照验证（42408c8）
+
+- 标准前端 `bun run test` 退出 0：2599 pass、0 fail、14 skip。显式开启的实际媒体专项沿用本轮此前同实现的独立证据，不把这 14 skip 计为通过。
+- `bun run build`、`bun run lint`、typecheck 通过；Web 产物 99.38 MiB / 105 MiB。仍有大分包提示，没有以构建通过宣称启动或渲染性能改善。
+- 发布器 Python 测试 14 项通过。全量 Go 以 `-p 1` 执行中；备份、素材读取和上传终态修复尚未进入该快照，因此它不是最终候选验收。
+- Lead 新增草稿 hydrate 的 A→B→A 回归最初因夹具缺少浏览器 window 未进入存储读取而超时；补齐夹具后专项 16 pass / 58 expect。没有修改生产等待时限。
