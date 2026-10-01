@@ -29,7 +29,7 @@ func withTaskRequestEvidence(ctx context.Context, previous ...*model.TaskFailure
 		prior := generation.SanitizeTaskDiagnostics(previous[0])
 		r.diagnostics.Requests, r.diagnostics.OmittedRequests, r.diagnostics.Input = prior.Requests, prior.OmittedRequests, prior.Input
 	}
-	return context.WithValue(ctx, taskRequestEvidenceKey{}, r), r
+	return bindRequestReceipts(context.WithValue(ctx, taskRequestEvidenceKey{}, r)), r
 }
 
 func taskRequestRecorder(ctx context.Context) *taskRequestEvidenceRecorder {

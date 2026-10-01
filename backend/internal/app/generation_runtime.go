@@ -266,9 +266,11 @@ func (s *Service) enrichGenerationRuntime(ctx context.Context, meta generation.C
 func (s *Service) applyGenerationRuntime(ctx context.Context, meta generation.CallMeta, replaceCall bool) context.Context {
 	if s == nil {
 		if replaceCall {
-			return generation.WithCallMeta(ctx, meta)
+			ctx = generation.WithCallMeta(ctx, meta)
+		} else {
+			ctx = generation.EnrichCallMeta(ctx, meta)
 		}
-		return generation.EnrichCallMeta(ctx, meta)
+		return bindRequestReceipts(ctx)
 	}
 	runtime := generation.Runtime{
 		Resources: appResourcePort{service: s},
@@ -289,6 +291,67 @@ func (s *Service) applyGenerationRuntime(ctx context.Context, meta generation.Ca
 		}
 	}
 	return generation.WithRuntime(ctx, runtime)
+}
+
+// bindRequestReceipts attaches a receipts port so DoJSON/DoBinary can record
+// sanitized HTTP evidence. It never looks up Service from a process map.
+// API call logs still require a Service already bound on this runtime.
+func bindRequestReceipts(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	runtime, _ := generation.RuntimeFromContext(ctx)
+	if runtime.Receipts != nil {
+		return ctx
+	}
+	if metadata, ok := ctx.Value(providerAnalyticsKey{}).(providerAnalyticsContext); ok {
+		if strings.TrimSpace(runtime.Call.UserID) == "" && strings.TrimSpace(runtime.Call.TaskID) == "" {
+			runtime.Call = generationCallMeta(metadata)
+		}
+	}
+	runtime.Receipts = appReceiptPort{service: boundRuntimeService(runtime)}
+	return generation.WithRuntime(ctx, runtime)
+}
+
+func boundRuntimeService(runtime generation.Runtime) *Service {
+	ports := []any{runtime.Receipts, runtime.Images, runtime.Config, runtime.Prompt, runtime.Style, runtime.Resources, runtime.Limits, runtime.Workflow}
+	for _, port := range ports {
+		switch p := port.(type) {
+		case appReceiptPort:
+			if p.service != nil {
+				return p.service
+			}
+		case appImagePort:
+			if p.service != nil {
+				return p.service
+			}
+		case appConfigPort:
+			if p.service != nil {
+				return p.service
+			}
+		case appPromptPort:
+			if p.service != nil {
+				return p.service
+			}
+		case appStylePort:
+			if p.service != nil {
+				return p.service
+			}
+		case appResourcePort:
+			if p.service != nil {
+				return p.service
+			}
+		case appLimitsPort:
+			if p.service != nil {
+				return p.service
+			}
+		case appWorkflowPort:
+			if p.service != nil {
+				return p.service
+			}
+		}
+	}
+	return nil
 }
 
 func generationCallMeta(metadata providerAnalyticsContext) generation.CallMeta {

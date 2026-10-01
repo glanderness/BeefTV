@@ -83,4 +83,11 @@ func TestCanonicalCallMetaUsesGenerationRequestKind(t *testing.T) {
 	if call.TaskID != "task-1" || call.UserID != "user-1" || call.Model != "seedance-2.5" || call.ChannelID != "channel-1" || call.TraceID != "trace-1" {
 		t.Fatalf("canonical Call lost route: %#v", call)
 	}
+	runtime, ok := generation.RuntimeFromContext(ctx)
+	if !ok || runtime.Receipts == nil {
+		t.Fatal("nil-service analytics must still bind receipts")
+	}
+	if runtime.Images != nil || runtime.Limits != nil {
+		t.Fatalf("nil-service analytics must not bind paid-image or limit owners: %#v", runtime)
+	}
 }

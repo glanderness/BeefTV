@@ -52,12 +52,7 @@ func withProviderAnalytics(ctx context.Context, service *Service, task model.Tas
 		}
 	}
 	ctx = context.WithValue(ctx, providerAnalyticsKey{}, metadata)
-	if service != nil {
-		ctx = service.bindGenerationRuntime(ctx, generationCallMeta(metadata))
-	} else {
-		ctx = generation.WithRuntime(ctx, generation.Runtime{Call: generationCallMeta(metadata)})
-	}
-	return ctx
+	return service.bindGenerationRuntime(ctx, generationCallMeta(metadata))
 }
 
 func resumedProviderRequestID(ctx context.Context) string {

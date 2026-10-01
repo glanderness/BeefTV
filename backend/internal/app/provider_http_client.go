@@ -18,16 +18,23 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+func withHTTPRequestRuntime(req *http.Request) *http.Request {
+	if req == nil {
+		return req
+	}
+	return req.WithContext(bindRequestReceipts(req.Context()))
+}
+
 func postGeminiJSON(ctx context.Context, config providerConfig, path string, body interface{}, target interface{}) error {
-	return generation.PostGeminiJSON(ctx, config, path, body, target)
+	return generation.PostGeminiJSON(bindRequestReceipts(ctx), config, path, body, target)
 }
 
 func getGeminiJSON(ctx context.Context, config providerConfig, path string, target interface{}) error {
-	return generation.GetGeminiJSON(ctx, config, path, target)
+	return generation.GetGeminiJSON(bindRequestReceipts(ctx), config, path, target)
 }
 
 func getGeminiBinary(ctx context.Context, config providerConfig, rawURL string) ([]byte, string, error) {
-	return generation.GetGeminiBinary(ctx, config, rawURL)
+	return generation.GetGeminiBinary(bindRequestReceipts(ctx), config, rawURL)
 }
 
 func geminiVeoURL(baseURL string, path string) string {
@@ -35,14 +42,15 @@ func geminiVeoURL(baseURL string, path string) string {
 }
 
 func postStreamingBinary(ctx context.Context, config providerConfig, path string, body interface{}, onChunk func(string, []byte)) ([]byte, string, error) {
-	return generation.PostStreamingBinary(ctx, config, path, body, onChunk)
+	return generation.PostStreamingBinary(bindRequestReceipts(ctx), config, path, body, onChunk)
 }
 
 func postJSON(ctx context.Context, config providerConfig, path string, body interface{}, target interface{}) error {
-	return generation.PostJSON(ctx, config, path, body, target)
+	return generation.PostJSON(bindRequestReceipts(ctx), config, path, body, target)
 }
 
 func postJSONWithSubmissionKey(ctx context.Context, config providerConfig, path string, body interface{}, target interface{}) error {
+	ctx = bindRequestReceipts(ctx)
 	if generation.SubmissionKeyFromContext(ctx) == "" {
 		if key, ok := ctx.Value(providerSubmissionKeyContext{}).(string); ok {
 			ctx = generation.WithSubmissionKey(ctx, key)
@@ -56,27 +64,27 @@ func applyProviderAuth(req *http.Request, config providerConfig) {
 }
 
 func postForm(ctx context.Context, config providerConfig, path string, contentType string, body io.Reader, target interface{}) error {
-	return generation.PostForm(ctx, config, path, contentType, body, target)
+	return generation.PostForm(bindRequestReceipts(ctx), config, path, contentType, body, target)
 }
 
 func getJSON(ctx context.Context, config providerConfig, path string, target interface{}) error {
-	return generation.GetJSON(ctx, config, path, target)
+	return generation.GetJSON(bindRequestReceipts(ctx), config, path, target)
 }
 
 func postBinary(ctx context.Context, config providerConfig, path string, body interface{}) ([]byte, string, error) {
-	return generation.PostBinary(ctx, config, path, body)
+	return generation.PostBinary(bindRequestReceipts(ctx), config, path, body)
 }
 
 func getBinary(ctx context.Context, config providerConfig, path string) ([]byte, string, error) {
-	return generation.GetBinary(ctx, config, path)
+	return generation.GetBinary(bindRequestReceipts(ctx), config, path)
 }
 
 func getExternalBinary(ctx context.Context, rawURL string) ([]byte, string, error) {
-	return generation.GetExternalBinary(ctx, rawURL)
+	return generation.GetExternalBinary(bindRequestReceipts(ctx), rawURL)
 }
 
 func getProviderExternalBinary(ctx context.Context, config providerConfig, rawURL string) ([]byte, string, error) {
-	return generation.GetProviderExternalBinary(ctx, config, rawURL)
+	return generation.GetProviderExternalBinary(bindRequestReceipts(ctx), config, rawURL)
 }
 
 func providerDownloadURL(baseURL string, rawURL string) string {
@@ -92,15 +100,15 @@ func sameProviderOrigin(baseURL string, rawURL string) bool {
 }
 
 func doJSON(req *http.Request, target interface{}) error {
-	return generation.DoJSON(req, target)
+	return generation.DoJSON(withHTTPRequestRuntime(req), target)
 }
 
 func doBinary(req *http.Request) ([]byte, string, error) {
-	return generation.DoBinary(req)
+	return generation.DoBinary(withHTTPRequestRuntime(req))
 }
 
 func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]byte, string, error) {
-	return generation.DoBinaryWithConsumer(req, onChunk)
+	return generation.DoBinaryWithConsumer(withHTTPRequestRuntime(req), onChunk)
 }
 
 func parseRetryAfter(value string, now time.Time) time.Duration {

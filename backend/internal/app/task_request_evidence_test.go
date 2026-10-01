@@ -12,6 +12,7 @@ import (
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -175,5 +176,77 @@ func TestTaskRequestEvidenceResponseLimit(t *testing.T) {
 	r := d.Requests[0]
 	if r.Outcome != "response_limit" || r.DeclaredResponseBytes != maxProviderResponseBytes+1 || r.ResponseLimitBytes != maxProviderResponseBytes {
 		t.Fatalf("request %+v", r)
+	}
+}
+
+func TestNilServiceAnalyticsRecordsHTTPEvidenceAndKeepsImageFailClosed(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-Id", "req-nil-service")
+		w.WriteHeader(400)
+		_, _ = w.Write([]byte(`{"error":{"message":"bad size"}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := withProviderAnalytics(context.Background(), nil, model.Task{ID: "task", UserID: "user", Type: "canvas_image"})
+	runtime, ok := generation.RuntimeFromContext(ctx)
+	if !ok || runtime.Receipts == nil {
+		t.Fatal("nil-service analytics dropped receipts")
+	}
+	if runtime.Images != nil {
+		t.Fatal("nil-service analytics bound an image owner")
+	}
+	ctx, recorder := withTaskRequestEvidence(ctx)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/images/edits", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]interface{}
+	_ = doJSON(req, &payload)
+	d := recorder.snapshot(false)
+	if len(d.Requests) != 1 || d.Requests[0].RequestID != "req-nil-service" || d.Requests[0].Outcome != "http_error" || !d.Requests[0].Dispatched {
+		t.Fatalf("nil-service evidence %+v", d)
+	}
+
+	expired, cancel := context.WithTimeout(ctx, 0)
+	cancel()
+	beef, err := http.NewRequestWithContext(expired, http.MethodPost, "https://beefapi.com/v1/images/generations", strings.NewReader(`{"prompt":"draw"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = generation.DoBinary(beef)
+	if !errors.Is(err, generation.ErrImageOwnerMissing) {
+		t.Fatalf("missing image owner err=%v", err)
+	}
+}
+
+func TestHTTPEvidenceStaysOnBoundRecorder(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-Id", r.Header.Get("X-Trace"))
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(server.Close)
+	ctx1, rec1 := withTaskRequestEvidence(context.Background())
+	ctx2, rec2 := withTaskRequestEvidence(context.Background())
+	req1, _ := http.NewRequestWithContext(ctx1, http.MethodPost, server.URL+"/v1/images/edits", strings.NewReader(`{"owner":"one"}`))
+	req1.Header.Set("X-Trace", "owner-one")
+	req2, _ := http.NewRequestWithContext(ctx2, http.MethodPost, server.URL+"/v1/images/edits", strings.NewReader(`{"owner":"two"}`))
+	req2.Header.Set("X-Trace", "owner-two")
+	var payload map[string]interface{}
+	if err := doJSON(req1, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := doJSON(req2, &payload); err != nil {
+		t.Fatal(err)
+	}
+	d1 := rec1.snapshot(true)
+	d2 := rec2.snapshot(true)
+	if len(d1.Requests) != 1 || d1.Requests[0].RequestID != "owner-one" {
+		t.Fatalf("first recorder %+v", d1)
+	}
+	if len(d2.Requests) != 1 || d2.Requests[0].RequestID != "owner-two" {
+		t.Fatalf("second recorder %+v", d2)
 	}
 }
