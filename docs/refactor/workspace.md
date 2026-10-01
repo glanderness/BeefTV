@@ -5,10 +5,11 @@
 ## ProviderConfig
 
 - 实现：`backend/internal/workspace/provider_config.go`
-- 同一工作区数据目录的多个 `NewProviderConfig` 句柄共享一把进程内互斥锁；锁键是 canonical 绝对路径（含已存在前缀的符号链接解析）。
+- 同一工作区数据目录的多个 `NewProviderConfig` 句柄共享一把进程内互斥锁；锁键是 canonical 绝对路径。符号链接别名解析到同一目录；环或权限/非目录错误失败。只有尚未创建的路径后缀可恢复。
 - 现有调用方不必再加锁。`app.Read/SaveLocalModelConfig` 每次仍会新建句柄，CAS 与脱敏密钥保留不再跨句柄竞态。
 - 无关工作区互不阻塞。
-- 读路径看到的是 rename 之后的完整文档/revision。写路径只接受当前主文件；主文件损坏时 `SaveLocalModelConfig` / `SaveLocalModelConfigRevision` 失败，不覆盖、不凭备份恢复后替换。
+- 读路径看到的是 rename 之后的完整文档/revision。写路径只接受当前主文件；主文件损坏、`null`、非对象时 `SaveLocalModelConfig` / `SaveLocalModelConfigRevision` 失败，不覆盖、不凭备份恢复后替换。
+- 带 `id` 的数组只按相同字符串 ID 保留密钥；无 ID 的遗留数组才按位置对应。对不上的脱敏占位拒绝写入。
 - 损坏主文件时读路径仍可从 `.bak` 恢复展示。这不能当作写成功。
 
 Lead 接线：组合根继续持有一个 `*workspace.ProviderConfig` 作为 `localapp.ProviderConfigPort`。不必改调用方加锁。

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -376,6 +377,265 @@ func TestProviderConfigInterruptedTempDoesNotReplaceLiveFile(t *testing.T) {
 	}
 	if !bytes.Equal(before, after) {
 		t.Fatal("leftover temp replaced the live config")
+	}
+}
+
+func TestProviderConfigRemoveChannelDoesNotCopySecretToNewID(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"channel-a","apiKey":"secret-a"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, LocalProviderConfigFile)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	redacted := []byte(`{"channels":[{"id":"channel-b","apiKey":"` + RedactedSecret + `"}]}`)
+	err = store.SaveLocalModelConfig(redacted)
+	requireSafeError(t, err, ErrUnmatchedRedactedSecret, "secret-a")
+	requireFileUnchanged(t, path, before)
+
+	if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"channel-b","apiKey":"secret-b"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := store.ReadLocalModelConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte("secret-a")) || !bytes.Contains(raw, []byte("secret-b")) {
+		t.Fatal("new channel inherited another channel's credential")
+	}
+}
+
+func TestProviderConfigReorderedIDsPreserveOwnSecrets(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"channel-a","apiKey":"secret-a"},{"id":"channel-b","apiKey":"secret-b"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	reordered := []byte(`{"channels":[{"id":"channel-b","apiKey":"` + RedactedSecret + `"},{"id":"channel-a","apiKey":"` + RedactedSecret + `"}]}`)
+	if err := store.SaveLocalModelConfig(reordered); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, LocalProviderConfigFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, _, err := decodeProviderDocument(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channels, _ := document.Config["channels"].([]any)
+	if len(channels) != 2 {
+		t.Fatalf("stored channel count = %d", len(channels))
+	}
+	first, _ := channels[0].(map[string]any)
+	second, _ := channels[1].(map[string]any)
+	if first["id"] != "channel-b" || first["apiKey"] != "secret-b" {
+		t.Fatal("reordered channel-b lost its own credential")
+	}
+	if second["id"] != "channel-a" || second["apiKey"] != "secret-a" {
+		t.Fatal("reordered channel-a lost its own credential")
+	}
+}
+
+func TestProviderConfigDuplicateAndInvalidIDsDoNotAlias(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"channel-a","apiKey":"secret-a"},{"id":"channel-b","apiKey":"secret-b"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, LocalProviderConfigFile)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	duplicate := []byte(`{"channels":[{"id":"channel-a","apiKey":"` + RedactedSecret + `"},{"id":"channel-a","apiKey":"` + RedactedSecret + `"}]}`)
+	requireSafeError(t, store.SaveLocalModelConfig(duplicate), ErrInvalidProviderIdentity, "secret-a", "secret-b")
+	requireFileUnchanged(t, path, before)
+
+	for _, body := range [][]byte{
+		[]byte(`{"channels":[{"id":1,"apiKey":"` + RedactedSecret + `"}]}`),
+		[]byte(`{"channels":[{"id":"","apiKey":"` + RedactedSecret + `"}]}`),
+		[]byte(`{"channels":[{"id":null,"apiKey":"` + RedactedSecret + `"}]}`),
+		[]byte(`{"channels":[{"id":{"nested":true},"apiKey":"` + RedactedSecret + `"}]}`),
+	} {
+		requireSafeError(t, store.SaveLocalModelConfig(body), ErrInvalidProviderIdentity, "secret-a", "secret-b")
+		requireFileUnchanged(t, path, before)
+	}
+
+	storedDuplicate := []byte(`{"schemaVersion":1,"revision":2,"config":{"channels":[{"id":"channel-a","apiKey":"secret-a"},{"id":"channel-a","apiKey":"secret-other"}]},"presetVersions":{}}`)
+	if err := os.WriteFile(path, storedDuplicate, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	incoming := []byte(`{"channels":[{"id":"channel-a","apiKey":"` + RedactedSecret + `"}]}`)
+	requireSafeError(t, store.SaveLocalModelConfig(incoming), ErrInvalidProviderIdentity, "secret-a", "secret-other")
+	requireFileUnchanged(t, path, storedDuplicate)
+}
+
+func TestProviderConfigNullPrimaryUnchangedWhenBackupExists(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"first-secret"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"second-secret"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, LocalProviderConfigFile)
+	if err := os.WriteFile(path, []byte("null"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	requireSafeError(t, store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"replacement"}]}`)), ErrProviderConfigNotObject, "first-secret", "second-secret", "replacement")
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(bytes.TrimSpace(after)) != "null" {
+		t.Fatal("null primary was modified")
+	}
+	if _, err := os.Stat(filepath.Join(dir, LocalProviderConfigFile+".bak")); err != nil {
+		t.Fatal(err)
+	}
+
+	envelope := []byte(`{"schemaVersion":1,"revision":1,"config":null}`)
+	if err := os.WriteFile(path, envelope, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	requireSafeError(t, store.SaveLocalModelConfig([]byte(`{"channels":[]}`)), ErrMalformedProviderConfig)
+	requireFileUnchanged(t, path, envelope)
+}
+
+func TestProviderConfigRejectsNullIncomingWithoutReplacingSecrets(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"kept-secret"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, LocalProviderConfigFile)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireSafeError(t, store.SaveLocalModelConfig([]byte("null")), ErrProviderConfigNotObject, "kept-secret")
+	requireSafeError(t, store.SaveLocalModelConfig([]byte(`["channels"]`)), ErrProviderConfigNotObject, "kept-secret")
+	requireFileUnchanged(t, path, before)
+	raw, err := store.ReadLocalModelConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte("kept-secret")) {
+		t.Fatal("null incoming replaced stored credentials")
+	}
+}
+
+func TestProviderConfigSymlinkAliasSharesLock(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.Mkdir(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(base, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Fatal(err)
+	}
+	first, err := NewProviderConfig(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewProviderConfig(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.mu == nil || first.mu != second.mu || first.dataDir != second.dataDir {
+		t.Fatal("symlink alias did not share the canonical workspace lock")
+	}
+	nested, err := NewProviderConfig(filepath.Join(alias, "child"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherNested, err := NewProviderConfig(filepath.Join(real, "child"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nested.mu != otherNested.mu {
+		t.Fatal("missing suffix under a symlink alias used a different lock")
+	}
+}
+
+func TestProviderConfigSymlinkLoopFailsSafely(t *testing.T) {
+	dir := t.TempDir()
+	left := filepath.Join(dir, "left")
+	right := filepath.Join(dir, "right")
+	if err := os.Symlink(right, left); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(left, right); err != nil {
+		t.Fatal(err)
+	}
+	_, err := NewProviderConfig(left)
+	if err == nil {
+		t.Fatal("symlink loop was accepted")
+	}
+	if strings.Contains(err.Error(), RedactedSecret) || strings.Contains(err.Error(), "apiKey") {
+		t.Fatal("path error exposed a credential")
+	}
+
+	blocked := filepath.Join(dir, "file")
+	if err := os.WriteFile(blocked, []byte("not-a-dir"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = NewProviderConfig(filepath.Join(blocked, "child"))
+	if err == nil {
+		t.Fatal("path through a file was accepted")
+	}
+}
+
+func requireSafeError(t *testing.T, err, want error, secrets ...string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if want != nil && !errors.Is(err, want) {
+		t.Fatalf("error type mismatch")
+	}
+	text := err.Error()
+	if strings.Contains(text, RedactedSecret) {
+		t.Fatal("error exposed the redaction marker")
+	}
+	for _, secret := range secrets {
+		if secret != "" && strings.Contains(text, secret) {
+			t.Fatal("error exposed a credential")
+		}
+	}
+}
+
+func requireFileUnchanged(t *testing.T, path string, before []byte) {
+	t.Helper()
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("existing config file was modified")
 	}
 }
 

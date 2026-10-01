@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,7 +26,13 @@ type ProviderConfig struct {
 	mu      *sync.Mutex
 }
 
-var ErrProviderConfigRevisionConflict = errors.New("本地模型配置已被其他写入更新")
+var (
+	ErrProviderConfigRevisionConflict = errors.New("本地模型配置已被其他写入更新")
+	ErrUnmatchedRedactedSecret        = errors.New("本地模型配置包含无法对应的脱敏密钥，请重新填写该密钥")
+	ErrInvalidProviderIdentity        = errors.New("本地模型配置包含无效或重复的渠道 ID")
+	ErrMalformedProviderConfig        = errors.New("本地模型配置损坏")
+	ErrProviderConfigNotObject        = errors.New("本地模型配置必须是 JSON 对象")
+)
 
 var providerConfigGuards sync.Map // canonical data dir -> *sync.Mutex
 
@@ -47,20 +54,43 @@ func canonicalWorkspacePath(dataDir string) (string, error) {
 		return "", fmt.Errorf("解析本地工作区数据目录失败: %w", err)
 	}
 	abs = filepath.Clean(abs)
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+	existing, missing, err := splitExistingPrefix(abs)
+	if err != nil {
+		return "", fmt.Errorf("解析本地工作区数据目录失败: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", fmt.Errorf("解析本地工作区数据目录失败: %w", err)
+	}
+	if len(missing) == 0 {
 		return resolved, nil
 	}
-	missing := make([]string, 0, 4)
-	current := abs
+	return filepath.Join(append([]string{resolved}, missing...)...), nil
+}
+
+func splitExistingPrefix(path string) (existing string, missing []string, err error) {
+	current := path
+	var suffix []string
 	for {
+		_, statErr := os.Lstat(current)
+		if statErr == nil {
+			if len(suffix) == 0 {
+				return current, nil, nil
+			}
+			missing = make([]string, 0, len(suffix))
+			for i := len(suffix) - 1; i >= 0; i-- {
+				missing = append(missing, suffix[i])
+			}
+			return current, missing, nil
+		}
+		if !errors.Is(statErr, os.ErrNotExist) {
+			return "", nil, statErr
+		}
 		parent := filepath.Dir(current)
 		if parent == current {
-			return abs, nil
+			return "", nil, statErr
 		}
-		missing = append([]string{filepath.Base(current)}, missing...)
-		if resolved, err := filepath.EvalSymlinks(parent); err == nil {
-			return filepath.Join(append([]string{resolved}, missing...)...), nil
-		}
+		suffix = append(suffix, filepath.Base(current))
 		current = parent
 	}
 }
@@ -127,10 +157,12 @@ func (s *ProviderConfig) saveLocalModelConfig(body []byte, existingDocument Prov
 	}
 	incoming, err := decodeIncomingConfig(body)
 	if err != nil {
-		return errors.New("本地模型配置必须是有效 JSON")
+		return err
 	}
 	if existingDocument.Config != nil {
-		preserveSecrets(incoming, existingDocument.Config)
+		if err := preserveSecrets(incoming, existingDocument.Config); err != nil {
+			return err
+		}
 	}
 	document := newProviderState(incoming, existingDocument.Revision+1)
 	canonical, err := json.Marshal(document)
@@ -240,31 +272,80 @@ func (s *ProviderConfig) loadPrimaryDocument() (ProviderStateDocument, error) {
 }
 
 func decodeProviderDocument(body []byte) (ProviderStateDocument, bool, error) {
-	var probe map[string]json.RawMessage
-	if err := json.Unmarshal(body, &probe); err != nil {
-		return ProviderStateDocument{}, false, err
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
+		return ProviderStateDocument{}, false, ErrMalformedProviderConfig
 	}
-	if _, versioned := probe["schemaVersion"]; versioned {
-		var document ProviderStateDocument
-		if err := json.Unmarshal(body, &document); err != nil {
-			return ProviderStateDocument{}, false, errors.New("不支持或损坏的本地模型配置版本")
+	var raw any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		var syntax *json.SyntaxError
+		if errors.As(err, &syntax) {
+			return ProviderStateDocument{}, false, errors.New("本地模型配置必须是有效 JSON")
 		}
-		if document.SchemaVersion != providerStateSchemaVersion || document.Config == nil || document.Revision < 0 {
-			return ProviderStateDocument{}, false, errors.New("不支持或损坏的本地模型配置版本")
+		return ProviderStateDocument{}, false, ErrMalformedProviderConfig
+	}
+	object, ok := raw.(map[string]any)
+	if !ok || object == nil {
+		return ProviderStateDocument{}, false, ErrProviderConfigNotObject
+	}
+	if _, versioned := object["schemaVersion"]; versioned {
+		document, err := decodeVersionedProviderDocument(body, object)
+		return document, false, err
+	}
+	return newProviderState(object, 0), true, nil
+}
+
+func decodeVersionedProviderDocument(body []byte, object map[string]any) (ProviderStateDocument, error) {
+	schemaVersion, ok := jsonNonNegativeInt(object["schemaVersion"])
+	if !ok || schemaVersion != providerStateSchemaVersion {
+		return ProviderStateDocument{}, ErrMalformedProviderConfig
+	}
+	if _, exists := object["revision"]; !exists || object["revision"] == nil {
+		return ProviderStateDocument{}, ErrMalformedProviderConfig
+	}
+	if _, ok := jsonNonNegativeInt(object["revision"]); !ok {
+		return ProviderStateDocument{}, ErrMalformedProviderConfig
+	}
+	config, ok := object["config"].(map[string]any)
+	if !ok || config == nil {
+		return ProviderStateDocument{}, ErrMalformedProviderConfig
+	}
+	var document ProviderStateDocument
+	if err := json.Unmarshal(body, &document); err != nil {
+		return ProviderStateDocument{}, ErrMalformedProviderConfig
+	}
+	if document.SchemaVersion != providerStateSchemaVersion || document.Config == nil || document.Revision < 0 {
+		return ProviderStateDocument{}, ErrMalformedProviderConfig
+	}
+	return document, nil
+}
+
+func jsonNonNegativeInt(value any) (int64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		n := int64(typed)
+		if typed != float64(n) || n < 0 {
+			return 0, false
 		}
-		return document, false, nil
+		return n, true
+	case json.Number:
+		n, err := typed.Int64()
+		if err != nil || n < 0 {
+			return 0, false
+		}
+		return n, true
+	default:
+		return 0, false
 	}
-	var config map[string]any
-	if err := json.Unmarshal(body, &config); err != nil {
-		return ProviderStateDocument{}, false, err
-	}
-	return newProviderState(config, 0), true, nil
 }
 
 func decodeIncomingConfig(body []byte) (map[string]any, error) {
 	document, _, err := decodeProviderDocument(body)
 	if err != nil {
 		return nil, err
+	}
+	if document.Config == nil {
+		return nil, ErrProviderConfigNotObject
 	}
 	return document.Config, nil
 }
@@ -329,39 +410,128 @@ func redactSecrets(value any) {
 	}
 }
 
-func preserveSecrets(incoming, existing any) {
+func preserveSecrets(incoming, existing any) error {
 	switch next := incoming.(type) {
 	case map[string]any:
 		previous, _ := existing.(map[string]any)
 		for key, value := range next {
-			if isSecretKey(key) && value == RedactedSecret {
-				if old, ok := previous[key]; ok {
-					next[key] = old
+			if isSecretKey(key) && isRedactedMarker(value) {
+				if previous == nil {
+					return ErrUnmatchedRedactedSecret
 				}
+				old, ok := previous[key]
+				if !ok || !usableStoredSecret(old) {
+					return ErrUnmatchedRedactedSecret
+				}
+				next[key] = old
 				continue
 			}
-			preserveSecrets(value, previous[key])
+			var old any
+			if previous != nil {
+				old = previous[key]
+			}
+			if err := preserveSecrets(value, old); err != nil {
+				return err
+			}
 		}
+		return nil
 	case []any:
 		previous, _ := existing.([]any)
-		for index, value := range next {
-			var old any
-			if candidate, ok := value.(map[string]any); ok {
-				if id, ok := candidate["id"]; ok {
-					for _, item := range previous {
-						if oldMap, ok := item.(map[string]any); ok && oldMap["id"] == id {
-							old = oldMap
-							break
-						}
-					}
-				}
+		return preserveSecretList(next, previous)
+	default:
+		return nil
+	}
+}
+
+func preserveSecretList(next, previous []any) error {
+	incoming := inspectArrayIdentity(next)
+	if incoming.invalid || incoming.duplicate {
+		return ErrInvalidProviderIdentity
+	}
+	stored := inspectArrayIdentity(previous)
+	if incoming.keyed && stored.duplicate {
+		return ErrInvalidProviderIdentity
+	}
+	positional := !incoming.keyed && !stored.keyed
+	previousByID := map[string]any{}
+	if incoming.keyed {
+		for _, item := range previous {
+			id, has, valid := objectStringID(item)
+			if has && valid {
+				previousByID[id] = item
 			}
-			if old == nil && index < len(previous) {
-				old = previous[index]
-			}
-			preserveSecrets(value, old)
 		}
 	}
+	for index, value := range next {
+		var old any
+		id, has, valid := objectStringID(value)
+		switch {
+		case has && valid:
+			old = previousByID[id]
+		case positional && index < len(previous):
+			old = previous[index]
+		}
+		if err := preserveSecrets(value, old); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type arrayIdentity struct {
+	keyed     bool
+	duplicate bool
+	invalid   bool
+}
+
+func inspectArrayIdentity(items []any) arrayIdentity {
+	seen := map[string]int{}
+	var info arrayIdentity
+	for _, item := range items {
+		id, has, valid := objectStringID(item)
+		if !has {
+			continue
+		}
+		if !valid {
+			info.invalid = true
+			continue
+		}
+		info.keyed = true
+		seen[id]++
+		if seen[id] > 1 {
+			info.duplicate = true
+		}
+	}
+	return info
+}
+
+func objectStringID(value any) (id string, has bool, valid bool) {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return "", false, true
+	}
+	raw, exists := object["id"]
+	if !exists {
+		return "", false, true
+	}
+	id, ok = raw.(string)
+	if !ok || id == "" {
+		return "", true, false
+	}
+	return id, true, true
+}
+
+func isRedactedMarker(value any) bool {
+	text, ok := value.(string)
+	return ok && text == RedactedSecret
+}
+
+func usableStoredSecret(value any) bool {
+	if value == nil || isRedactedMarker(value) {
+		return false
+	}
+	text, ok := value.(string)
+	return !ok || text != ""
 }
 
 func isSecretKey(key string) bool {
