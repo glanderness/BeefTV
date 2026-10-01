@@ -135,7 +135,7 @@ mock.module("@/stores/use-asset-store", () => ({ useAssetStore: { getState: () =
 mock.module("@/services/workspace-mode", () => ({ isLocalWorkspaceMode: () => true }));
 mock.module("@/services/api/resources", () => ({ resourceIdFromStorageKey: () => "" }));
 
-const { persistCanvasDocument, refreshLocalCanvasProjectIfChanged, resetLocalCanvasBackendSaveState, syncLocalCanvasProjectToBackend, hasUnconfirmedCanvasEdits, selectPreferredCanvasProject, deleteLocalCanvasProjects, adoptServerConfirmedGenerationPatch, CanvasStaleScopeError, CanvasBackendSubmitPausedError } = await import("@/services/local-workspace-repository");
+const { persistCanvasDocument, refreshLocalCanvasProjectIfChanged, resetLocalCanvasBackendSaveState, syncLocalCanvasProjectToBackend, hasUnconfirmedCanvasEdits, selectPreferredCanvasProject, deleteLocalCanvasProjects, adoptServerConfirmedGenerationPatch, openLocalCanvasProjectFromBackend, CanvasStaleScopeError, CanvasBackendSubmitPausedError } = await import("@/services/local-workspace-repository");
 const { useCanvasStore, canvasDocumentBase, canvasExternalRevisionConflict, clearCanvasDocumentBase, clearCanvasExternalRevisionConflict, recordCanvasDocumentBase } = await import("@/stores/canvas/use-canvas-store");
 const { CanvasJournalError, loadCanvasOperationJournal, peekCanvasOperationJournal, recordConfirmedCanvasCommit, resetCanvasOperationJournalMemory, saveCanvasOperationJournal, setCanvasJournalStorageDelay, updateCanvasOperationJournal } = await import("@/services/canvas-operation-journal");
 const { canvasBackendSubmitPaused } = await import("@/services/canvas-revision-conflict");
@@ -160,8 +160,39 @@ function canvas(title: string, revision = 1, patch: Record<string, unknown> = {}
     } as never;
 }
 
-function node(id: string, title: string) {
-    return { id, type: "image", title, position: { x: 0, y: 0 }, width: 320, height: 220, metadata: {} };
+function node(id: string, title: string, patch: Record<string, unknown> = {}) {
+    return { id, type: "image", title, position: { x: 0, y: 0 }, width: 320, height: 220, metadata: {}, ...patch };
+}
+
+function connection(id: string, fromNodeId: string, toNodeId: string) {
+    return { id, fromNodeId, toNodeId };
+}
+
+async function seedConfirmed(doc: ReturnType<typeof canvas> = canvas("基线", 1), scope = activeScope) {
+    await saveCanvasOperationJournal({
+        userScope: scope,
+        canvasId: "c1",
+        confirmedRevision: (doc as { revision: number }).revision,
+        confirmedSnapshot: doc,
+        inFlight: null,
+    });
+    recordCanvasDocumentBase(doc as never, scope);
+    useCanvasStore.setState({ projects: [doc as never] });
+}
+
+async function holdJournalWrite() {
+    let release = () => {};
+    let waiting = false;
+    setCanvasJournalStorageDelay({
+        beforeSet: async () => {
+            waiting = true;
+            await new Promise<void>((resolve) => { release = resolve; });
+        },
+    });
+    return {
+        wait: () => waitUntil(() => waiting),
+        resume: () => release(),
+    };
 }
 
 async function waitUntil(predicate: () => boolean, attempts = 80) {
@@ -631,5 +662,290 @@ describe("画布文档提交日记", () => {
         expect(journal.confirmedRevision).toBe(4);
         expect(journal.confirmedSnapshot?.nodes.map((item) => item.id)).toEqual(["n-gen"]);
         expect(journal.inFlight).toBeNull();
+    });
+
+    test("本地删除的节点和连线不会被生成回写复活", async () => {
+        const n1 = node("n1", "镜头1");
+        const n2 = node("n2", "镜头2");
+        const generated = node("n-gen", "生成结果", { metadata: { storageKey: "res-gen" } });
+        const c1 = connection("c1", "n1", "n2");
+        const base = canvas("基线", 1, { nodes: [n1, n2], connections: [c1] });
+        await seedConfirmed(base);
+        useCanvasStore.getState().updateProject("c1", { nodes: [n1] as never, connections: [] as never });
+
+        await adoptServerConfirmedGenerationPatch(canvas("生成", 4, { nodes: [n1, n2, generated], connections: [c1] }));
+
+        const live = useCanvasStore.getState().projects[0];
+        expect(live.nodes.map((item) => item.id)).toEqual(["n1", "n-gen"]);
+        expect(live.connections.map((item) => item.id)).toEqual([]);
+        expect(canvasBackendSubmitPaused("c1")).toBe(false);
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(4);
+    });
+
+    test("本地改过的文案保留，未改动字段采纳生成媒体", async () => {
+        const baseNode = node("n1", "镜头1", { metadata: { prompt: "基线提示" } });
+        await seedConfirmed(canvas("基线", 1, { nodes: [baseNode] }));
+        useCanvasStore.getState().updateProject("c1", {
+            nodes: [{ ...baseNode, title: "本地改名", metadata: { prompt: "本地提示" } }] as never,
+        });
+
+        await adoptServerConfirmedGenerationPatch(canvas("生成", 4, {
+            nodes: [{ ...baseNode, metadata: { prompt: "基线提示", storageKey: "res-gen", content: "https://media/gen" } }],
+        }));
+
+        const liveNode = useCanvasStore.getState().projects[0].nodes[0];
+        expect(liveNode.title).toBe("本地改名");
+        expect(liveNode.metadata?.prompt).toBe("本地提示");
+        expect(liveNode.metadata?.storageKey).toBe("res-gen");
+        expect(liveNode.metadata?.content).toBe("https://media/gen");
+        expect(canvasBackendSubmitPaused("c1")).toBe(false);
+    });
+
+    test("本地清空的数组不会被基线填回，服务端新增实体仍采纳", async () => {
+        const n1 = node("n1", "镜头1");
+        const generated = node("n-gen", "生成结果");
+        const c1 = connection("c1", "n1", "n1");
+        const cGen = connection("c-gen", "n-gen", "n1");
+        await seedConfirmed(canvas("基线", 1, { nodes: [n1], connections: [c1] }));
+        useCanvasStore.getState().updateProject("c1", { nodes: [] as never, connections: [] as never });
+
+        await adoptServerConfirmedGenerationPatch(canvas("生成", 4, {
+            nodes: [n1, generated],
+            connections: [c1, cGen],
+        }));
+
+        const live = useCanvasStore.getState().projects[0];
+        expect(live.nodes.map((item) => item.id)).toEqual(["n-gen"]);
+        expect(live.connections.map((item) => item.id)).toEqual(["c-gen"]);
+    });
+
+    test("服务端删除且本地未改的节点会随生成回写去掉", async () => {
+        const n1 = node("n1", "镜头1");
+        const n2 = node("n2", "镜头2");
+        await seedConfirmed(canvas("基线", 1, { nodes: [n1, n2] }));
+
+        await adoptServerConfirmedGenerationPatch(canvas("生成", 4, { nodes: [n1] }));
+
+        expect(useCanvasStore.getState().projects[0].nodes.map((item) => item.id)).toEqual(["n1"]);
+        expect(canvasBackendSubmitPaused("c1")).toBe(false);
+    });
+
+    test("同一节点本地位移与服务端生成结果一并保留", async () => {
+        const baseNode = node("n1", "镜头1");
+        await seedConfirmed(canvas("基线", 1, { nodes: [baseNode] }));
+        useCanvasStore.getState().updateProject("c1", {
+            nodes: [{ ...baseNode, position: { x: 40, y: 80 } }] as never,
+        });
+
+        await adoptServerConfirmedGenerationPatch(canvas("生成", 4, {
+            nodes: [{ ...baseNode, metadata: { storageKey: "res-gen", content: "https://media/gen" } }],
+        }));
+
+        const liveNode = useCanvasStore.getState().projects[0].nodes[0];
+        expect(liveNode.position).toEqual({ x: 40, y: 80 });
+        expect(liveNode.metadata?.storageKey).toBe("res-gen");
+        expect(liveNode.title).toBe("镜头1");
+        expect(canvasBackendSubmitPaused("c1")).toBe(false);
+    });
+
+    test("同一字段本地元数据与服务端元数据冲突时暂停，不猜胜者", async () => {
+        const baseNode = node("n1", "镜头1", { metadata: { prompt: "基线提示" } });
+        await seedConfirmed(canvas("基线", 1, { nodes: [baseNode] }));
+        useCanvasStore.getState().updateProject("c1", {
+            nodes: [{ ...baseNode, metadata: { prompt: "本地提示" } }] as never,
+        });
+
+        await adoptServerConfirmedGenerationPatch(canvas("生成", 4, {
+            nodes: [{ ...baseNode, metadata: { prompt: "服务端提示" } }],
+        }));
+
+        const live = useCanvasStore.getState().projects[0];
+        expect(live.nodes[0].metadata?.prompt).toBe("本地提示");
+        expect(canvasBackendSubmitPaused("c1")).toBe(true);
+        expect(canvasExternalRevisionConflict("guest", "c1")?.remoteRevision).toBe(4);
+        expect(canvasExternalRevisionConflict("guest", "c1")?.candidate.nodes[0].metadata?.prompt).toBe("服务端提示");
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(4);
+    });
+
+    test("无已确认快照时不把生成结果静默并进草稿", async () => {
+        resetCanvasOperationJournalMemory();
+        clearCanvasDocumentBase("c1");
+        const localOnly = node("n-local", "本地节点");
+        useCanvasStore.setState({ projects: [canvas("草稿", 1, { nodes: [localOnly] })] });
+
+        const adopted = await adoptServerConfirmedGenerationPatch(canvas("生成", 4, { nodes: [node("n-gen", "生成结果")] }));
+
+        expect(adopted.nodes.map((item) => item.id)).toEqual(["n-local"]);
+        expect(useCanvasStore.getState().projects[0].nodes.map((item) => item.id)).toEqual(["n-local"]);
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(0);
+        expect(canvasDocumentBase("c1")).toBeUndefined();
+        expect(canvasBackendSubmitPaused("c1")).toBe(true);
+    });
+
+    test("日记写入等待期间的手工编辑在生成回写后仍在", async () => {
+        await seedConfirmed(canvas("基线", 1));
+        const hold = await holdJournalWrite();
+        const pending = adoptServerConfirmedGenerationPatch(canvas("基线", 4, { nodes: [node("n-gen", "生成结果")] }));
+        await hold.wait();
+        useCanvasStore.getState().updateProject("c1", { title: "手工改了" });
+        hold.resume();
+        await pending;
+
+        const live = useCanvasStore.getState().projects[0];
+        expect(live.title).toBe("手工改了");
+        expect(live.nodes.map((item) => item.id)).toEqual(["n-gen"]);
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(4);
+        expect(canvasDocumentBase("c1")?.revision).toBe(4);
+        expect(canvasBackendSubmitPaused("c1")).toBe(false);
+    });
+
+    test("生成回写日记失败时不发布基线，等待期间的编辑仍在", async () => {
+        await seedConfirmed(canvas("基线", 1));
+        const hold = await holdJournalWrite();
+        failNextSetItem = true;
+        const pending = adoptServerConfirmedGenerationPatch(canvas("生成", 4, { nodes: [node("n-gen", "生成结果")] }));
+        await hold.wait();
+        useCanvasStore.getState().updateProject("c1", { title: "手工改了" });
+        hold.resume();
+        await pending;
+
+        expect(useCanvasStore.getState().projects[0].title).toBe("手工改了");
+        expect(useCanvasStore.getState().projects[0].nodes).toEqual([]);
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(1);
+        expect(canvasDocumentBase("c1")?.snapshot.title).toBe("基线");
+        expect(canvasDocumentBase("c1")?.revision).toBe(1);
+    });
+
+    test("等待生成回写时画布被删掉则不再写回 store", async () => {
+        await seedConfirmed(canvas("基线", 1));
+        const hold = await holdJournalWrite();
+        const pending = adoptServerConfirmedGenerationPatch(canvas("生成", 4, { nodes: [node("n-gen", "生成结果")] }));
+        await hold.wait();
+        useCanvasStore.setState({ projects: [] });
+        hold.resume();
+        await pending;
+
+        expect(useCanvasStore.getState().projects).toEqual([]);
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(4);
+    });
+
+    test("等待生成回写时切换账号，不改新账号的 store", async () => {
+        activeScope = "user-a";
+        resetCanvasOperationJournalMemory();
+        await seedConfirmed(canvas("用户A基线", 1), "user-a");
+        const hold = await holdJournalWrite();
+        const pending = adoptServerConfirmedGenerationPatch(canvas("生成", 4, { nodes: [node("n-gen", "生成结果")] }), "user-a");
+        await hold.wait();
+        activeScope = "user-b";
+        useCanvasStore.setState({ projects: [canvas("用户B画布", 1)] });
+        recordCanvasDocumentBase(canvas("用户B画布", 1), "user-b");
+        hold.resume();
+        await pending;
+
+        expect(useCanvasStore.getState().projects[0].title).toBe("用户B画布");
+        expect(useCanvasStore.getState().projects[0].nodes).toEqual([]);
+        const journalA = await loadCanvasOperationJournal("c1", "user-a");
+        expect(journalA.confirmedRevision).toBe(4);
+        expect(journalA.confirmedSnapshot?.revision).toBe(4);
+        expect(canvasDocumentBase("c1", "user-b")?.snapshot.title).toBe("用户B画布");
+        expect((await loadCanvasOperationJournal("c1", "user-b")).confirmedSnapshot).toBeNull();
+    });
+
+    test("过期生成响应不改确认快照，在途回执仍可回放，revision 与 snapshot 对齐", async () => {
+        await saveCanvasOperationJournal({
+            userScope: "guest",
+            canvasId: "c1",
+            confirmedRevision: 4,
+            confirmedSnapshot: canvas("已确认", 4),
+            inFlight: {
+                operationId: "op-keep",
+                expectedRevision: 1,
+                payload: { canvasId: "c1", expectedRevision: 1, document: canvas("在途", 1) },
+            },
+        });
+        useCanvasStore.setState({ projects: [canvas("本地草稿", 4)] });
+        recordCanvasDocumentBase(canvas("已确认", 4));
+
+        const adopted = await adoptServerConfirmedGenerationPatch(canvas("过期生成", 2, { nodes: [node("n-stale", "旧结果")] }));
+
+        expect(adopted.title).toBe("本地草稿");
+        expect(useCanvasStore.getState().projects[0].title).toBe("本地草稿");
+        expect(useCanvasStore.getState().projects[0].nodes).toEqual([]);
+        const journal = await loadCanvasOperationJournal("c1");
+        expect(journal.confirmedRevision).toBe(4);
+        expect(journal.confirmedSnapshot?.title).toBe("已确认");
+        expect(journal.confirmedSnapshot?.revision).toBe(4);
+        expect(journal.inFlight?.operationId).toBe("op-keep");
+        expect(canvasDocumentBase("c1")?.revision).toBe(4);
+        expect(canvasDocumentBase("c1")?.snapshot.title).toBe("已确认");
+    });
+
+    test("日记写入会把 snapshot.revision 对齐到 confirmedRevision", async () => {
+        await saveCanvasOperationJournal({
+            userScope: "guest",
+            canvasId: "c1",
+            confirmedRevision: 3,
+            confirmedSnapshot: canvas("基线", 1),
+            inFlight: null,
+        });
+        const journal = await loadCanvasOperationJournal("c1");
+        expect(journal.confirmedRevision).toBe(3);
+        expect(journal.confirmedSnapshot?.revision).toBe(3);
+    });
+
+    test("刷新在日记写入等待期间保留手工编辑并采纳未冲突的远端节点", async () => {
+        await seedConfirmed(canvas("基线", 1));
+        server.document = canvas("基线", 5, { nodes: [node("n-ext", "外部节点")] });
+        const hold = await holdJournalWrite();
+        const pending = refreshLocalCanvasProjectIfChanged("c1");
+        await hold.wait();
+        useCanvasStore.getState().updateProject("c1", { title: "手工改了" });
+        hold.resume();
+        const applied = await pending;
+
+        expect(applied?.title).toBe("手工改了");
+        expect(useCanvasStore.getState().projects[0].title).toBe("手工改了");
+        expect(useCanvasStore.getState().projects[0].nodes.map((item) => item.id)).toEqual(["n-ext"]);
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(5);
+        expect(canvasDocumentBase("c1")?.revision).toBe(5);
+        expect(canvasBackendSubmitPaused("c1")).toBe(false);
+    });
+
+    test("刷新日记写入失败时不发布基线", async () => {
+        await seedConfirmed(canvas("基线", 1));
+        server.document = canvas("助手改过", 5);
+        failNextSetItem = true;
+        expect(await refreshLocalCanvasProjectIfChanged("c1")).toBeUndefined();
+        expect(useCanvasStore.getState().projects[0].title).toBe("基线");
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(1);
+        expect(canvasDocumentBase("c1")?.snapshot.title).toBe("基线");
+        expect(canvasDocumentBase("c1")?.revision).toBe(1);
+    });
+
+    test("打开后端文档时日记写入等待期间的手工编辑不会丢", async () => {
+        await seedConfirmed(canvas("基线", 1));
+        server.document = canvas("基线", 5, { nodes: [node("n-ext", "外部节点")] });
+        const hold = await holdJournalWrite();
+        const pending = openLocalCanvasProjectFromBackend("c1");
+        await hold.wait();
+        useCanvasStore.getState().updateProject("c1", { title: "手工改了" });
+        hold.resume();
+        await pending;
+
+        const live = useCanvasStore.getState().projects[0];
+        expect(live.title).toBe("手工改了");
+        expect(live.nodes.map((item) => item.id)).toEqual(["n-ext"]);
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(5);
+        expect(canvasDocumentBase("c1")?.revision).toBe(5);
+    });
+
+    test("打开后端文档时日记写入失败不发布基线", async () => {
+        await seedConfirmed(canvas("基线", 1));
+        server.document = canvas("助手改过", 5);
+        failNextSetItem = true;
+        await openLocalCanvasProjectFromBackend("c1");
+        expect(useCanvasStore.getState().projects[0].title).toBe("基线");
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(1);
+        expect(canvasDocumentBase("c1")?.snapshot.title).toBe("基线");
     });
 });

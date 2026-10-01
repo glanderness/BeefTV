@@ -164,6 +164,9 @@ async function readJournalUnlocked(canvasId: string, scope: string): Promise<Can
 async function writeJournalUnlocked(journal: CanvasOperationJournal) {
     const scope = journal.userScope || getActiveUserScope();
     const validated = parseCanvasOperationJournal(journal, scope, journal.canvasId);
+    if (validated.confirmedSnapshot && validated.confirmedSnapshot.revision !== validated.confirmedRevision) {
+        validated.confirmedSnapshot = { ...validated.confirmedSnapshot, revision: validated.confirmedRevision };
+    }
     const serialized = JSON.stringify(validated);
     await journalStorageDelay?.beforeSet?.();
     await localForageStorageForScope(scope).setItem(journalName(journal.canvasId), serialized);
@@ -209,12 +212,17 @@ export async function recordConfirmedCanvasCommit(
         const incomingRevision = typeof project.revision === "number" && Number.isInteger(project.revision) && project.revision >= 0
             ? project.revision
             : current.confirmedRevision;
-        const revisionWentBackwards = incomingRevision < current.confirmedRevision;
         const ackMatches = Boolean(options.ackOperationId && current.inFlight?.operationId === options.ackOperationId);
+        if (incomingRevision < current.confirmedRevision) {
+            if (ackMatches && current.inFlight) return { ...current, inFlight: null };
+            return;
+        }
+        const confirmedSnapshot = structuredClone(project);
+        confirmedSnapshot.revision = incomingRevision;
         return {
             ...current,
-            confirmedRevision: Math.max(current.confirmedRevision, incomingRevision),
-            confirmedSnapshot: revisionWentBackwards ? current.confirmedSnapshot : structuredClone(project),
+            confirmedRevision: incomingRevision,
+            confirmedSnapshot,
             inFlight: ackMatches ? null : current.inFlight,
         };
     });

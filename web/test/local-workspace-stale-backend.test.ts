@@ -33,6 +33,7 @@ const modeStubPath = join(dir, "workspace-mode.ts");
 const resourcesStubPath = join(dir, "api-resources.ts");
 const userScopeStubPath = join(dir, "user-scope.ts");
 const canvasContentStubPath = join(dir, "canvas-content.ts");
+const rebaseStubPath = join(dir, "canvas-document-rebase.ts");
 
 writeFileSync(storePath, `
 export type CanvasProject = any;
@@ -100,6 +101,12 @@ export const sameCanvasDocument = (left, right) => {
   return JSON.stringify(left.nodes || []) === JSON.stringify(right.nodes || []) && left.title === right.title;
 };
 `);
+writeFileSync(rebaseStubPath, `
+export const rebaseCanvasDocumentThreeWay = ({ local, remote }) => ({
+  project: { ...local, revision: remote.revision, updatedAt: remote.updatedAt, remoteContentHash: remote.remoteContentHash },
+  conflict: false,
+});
+`);
 writeFileSync(requestPath, `
 export class ApiError extends Error {}
 export let remoteProject: any;
@@ -153,6 +160,7 @@ writeFileSync(join(dir, "repository.ts"), repositorySource
     .replace('"@/services/workspace-mode"', JSON.stringify(pathToFileURL(modeStubPath).href))
     .replace('"@/lib/user-scope"', JSON.stringify(pathToFileURL(userScopeStubPath).href))
     .replace('"@/lib/canvas/canvas-content"', JSON.stringify(pathToFileURL(canvasContentStubPath).href))
+    .replace('"@/lib/canvas/canvas-document-rebase"', JSON.stringify(pathToFileURL(rebaseStubPath).href))
     .replace('"@/services/api/resources"', JSON.stringify(pathToFileURL(resourcesStubPath).href)));
 
 const repository: typeof import("../src/services/local-workspace-repository") = await import(join(dir, "repository.ts"));

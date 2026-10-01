@@ -156,6 +156,13 @@ export const resetCanvasOperationJournalMemory = () => { memory.clear(); };
 writeFileSync(assetsPath, "export const useAssetStore = { getState: () => ({ assets: [] }) };\n");
 writeFileSync(resourcesPath, 'export const resourceIdFromStorageKey = () => "";\n');
 writeFileSync(modePath, "export let localMode = true; export const setLocalMode = (next: boolean) => { localMode = next; }; export const isLocalWorkspaceMode = () => localMode;\n");
+const rebasePath = join(dir, "canvas-document-rebase.ts");
+writeFileSync(rebasePath, `
+export const rebaseCanvasDocumentThreeWay = ({ local, remote }) => ({
+  project: { ...local, revision: remote.revision, updatedAt: remote.updatedAt, remoteContentHash: remote.remoteContentHash },
+  conflict: false,
+});
+`);
 writeFileSync(
     join(dir, "repository.ts"),
     repositorySource
@@ -166,7 +173,8 @@ writeFileSync(
         .replace('"@/services/canvas-operation-journal"', JSON.stringify(pathToFileURL(journalPath).href))
         .replace('"@/services/api/resources"', JSON.stringify(pathToFileURL(resourcesPath).href))
         .replace('"@/stores/use-asset-store"', JSON.stringify(pathToFileURL(assetsPath).href))
-        .replace('"@/services/workspace-mode"', JSON.stringify(pathToFileURL(modePath).href)),
+        .replace('"@/services/workspace-mode"', JSON.stringify(pathToFileURL(modePath).href))
+        .replace('"@/lib/canvas/canvas-document-rebase"', JSON.stringify(pathToFileURL(rebasePath).href)),
 );
 
 const repository: typeof import("../src/services/local-workspace-repository") = await import(join(dir, "repository.ts"));
