@@ -46,7 +46,7 @@ import { useAssetStore, type Asset, type AssetCategory, type AssetStatus, type E
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasNodeData } from "@/types/canvas";
 import { downloadOwnedOrBrowserMedia, reportOwnedMediaSave } from "@/services/desktop-media-save";
-import { sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
+import { mediaFileExtension, sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
 
 import { ProjectCharacterCard } from "./project-character-card";
 import { linkSelectedProjectAssets } from "./project-asset-linking";
@@ -378,7 +378,7 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
         const personal = personalAssets.find((item) => item.id === asset.id);
         if (personal && (personal.kind === "image" || personal.kind === "video" || personal.kind === "audio" || personal.kind === "model")) {
             const url = personal.kind === "image" ? personal.data.dataUrl : personal.data.url;
-            const extension = personal.kind === "model" ? personal.data.fileName.split(".").pop() || "glb" : personal.data.mimeType.split("/")[1] || "bin";
+            const extension = personal.kind === "model" ? personal.data.fileName.split(".").pop() || "glb" : mediaFileExtension(personal.data.mimeType, url) || "bin";
             void reportOwnedMediaSave(message, downloadOwnedOrBrowserMedia({
                 fileName: sanitizeDownloadFileName(`${asset.title || "素材"}.${extension}`),
                 resourceId: ownedResourceIdFromMediaRef(personal.data.storageKey, url) || undefined,

@@ -14,7 +14,15 @@ const version = readFileSync('VERSION', 'utf8').trim();
 const receipt = JSON.parse(readFileSync(`docs/release-evidence/${version}.json`, 'utf8'));
 const fail = message => { throw new Error(`Real generation release gate: ${message}`); };
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
-if (!Number.isFinite(receipt.budgetCNY) || !Number.isFinite(receipt.spentCNY) || !(receipt.budgetCNY > 0 && receipt.spentCNY >= 0 && receipt.spentCNY <= receipt.budgetCNY) || receipt.pendingCNY !== 0) fail('billing not reconciled within budget');
+const downloadOnlyWaiver = version === 'v1.6.20' && receipt.liveTestWaiver?.approvedBy === 'Ender' && receipt.liveTestWaiver?.instruction === '本版豁免付费生成矩阵，review 通过就发布（推荐）';
+if (!Number.isFinite(receipt.budgetCNY) || !Number.isFinite(receipt.spentCNY) || !((receipt.budgetCNY > 0 || (downloadOnlyWaiver && receipt.budgetCNY === 0)) && receipt.spentCNY >= 0 && receipt.spentCNY <= receipt.budgetCNY) || receipt.pendingCNY !== 0) fail('billing not reconciled within budget');
+// Ender waived only v1.6.20 paid generation after the Windows download smoke.
+// This release still requires the native download regression and independent review.
+if (downloadOnlyWaiver) {
+  if (receipt.verification?.windowsDownloads !== 'passed' || receipt.verification?.ci !== 'passed' || receipt.review?.result !== 'approved' || !receipt.upgrade?.preservedData || receipt.spentCNY !== 0) fail('download waiver requires reviewed Windows save and upgrade evidence with no paid generation');
+  console.log(`Real generation release gate waived by owner: ${version}; live matrix NOT completed; Windows downloads verified; no paid generation`);
+  process.exit(0);
+}
 // One release only: Ender explicitly waived further live testing on 2026-10-01.
 // Source binding and settled-cost checks above still apply; later releases use
 // the normal twelve-case gate. Never represent this exception as a passed test.
