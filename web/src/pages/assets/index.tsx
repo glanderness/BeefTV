@@ -1,7 +1,7 @@
 import { DeleteButton } from "@/components/ui/base/buttons/delete-button";
 import { AlertTriangle, ArrowDownUp, AudioLines, Box, Check, CheckCheck, Clapperboard, Copy, Download, FileText, FileUp, FileX2, FolderOpen, FolderPlus, History, Image as ImageIcon, Images, LayoutGrid, Link2, List, Maximize2, MoreHorizontal, PencilLine, Play, Plus, RotateCcw, Search, SlidersHorizontal, Star, Trash2, Upload, ZoomIn, ZoomOut, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Drawer, Dropdown, Form, Input, Modal, Popconfirm, Progress, Select, Space, Tag, Typography } from "antd";
 import type { MenuProps } from "antd";
 import { useNavigate, useSearchParams } from "react-router";
@@ -10,6 +10,15 @@ import { CollectionGrid, PageHeader, PaginationBar, WorkspacePage } from "@/comp
 import { WorkspaceErrorState, WorkspaceLoadingState, WorkspaceState } from "@/components/layout/workspace-state";
 import { AssetMediaPreview } from "@/components/asset-media-preview";
 import { AssetLibraryCard, AssetLibraryCardMedia } from "@/components/assets/asset-library-card";
+import {
+    assetFolderQueryKey,
+    assetLibraryQueryKey,
+    expectedScopeFromQueryKey,
+    keepAssetViewPlaceholder,
+    mergeHistoryLibraryAssets,
+    runAssetViewAction,
+    useAssetViewGeneration,
+} from "@/components/assets/asset-view-session";
 import { Switch } from "@/components/ui/base/switch";
 import { ownedResourceIdFromMediaRef } from "@/services/api/resources";
 import { downloadOwnedOrBrowserMedia, reportOwnedMediaSave } from "@/services/desktop-media-save";
@@ -21,6 +30,7 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { ASSET_CATEGORY_OPTIONS, assetCategoryLabel } from "@/lib/asset-category";
 import { resourceStorageLabel, resourceStorageLocation, resourceStorageTitle } from "@/lib/canvas/resource-storage-status";
 import { formatBytes, readFileAsDataUrl, readImageMeta } from "@/lib/image-utils";
+import { assertUserScope, captureUserScope, isUserScopeAbandonedError, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { flushAssetStorePersistence, useAssetStore, type Asset, type AssetCategory, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
@@ -73,8 +83,6 @@ const kindOptions = [
 ];
 
 const categoryOptions = [{ label: "全部分类", value: "all" }, ...ASSET_CATEGORY_OPTIONS];
-const ASSET_LIBRARY_QUERY_KEY = ["asset-library"] as const;
-const ASSET_FOLDER_QUERY_KEY = ["asset-folders"] as const;
 const ASSET_VIEW_MODE_KEY = "infinite-canvas:asset-view-mode";
 const ASSET_HISTORY_PAGE_SIZE = 40;
 type GenerationHistoryKind = "all" | "image" | "video" | "audio";
@@ -90,11 +98,18 @@ const assetKindIcons: Record<LibraryAsset["kind"], LucideIcon> = {
 };
 
 export default function AssetsPage() {
+    const queryClient = useQueryClient();
+    const generation = useAssetViewGeneration(queryClient);
+    return <AssetsPageSession key={generation} />;
+}
+
+function AssetsPageSession() {
     const { message } = App.useApp();
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const sourceTab = searchParams.get("tab") === "history" ? "history" : "personal";
     const queryClient = useQueryClient();
+    const [entryScope] = useState(() => captureUserScope());
     const copyText = useCopyText();
     const [form] = Form.useForm<AssetFormValues>();
     const coverInputRef = useRef<HTMLInputElement>(null);
@@ -165,20 +180,22 @@ export default function AssetsPage() {
     const debouncedKeyword = useDebouncedValue(keyword.trim(), 250);
 
     const foldersQuery = useQuery({
-        queryKey: ASSET_FOLDER_QUERY_KEY,
-        queryFn: () => listWorkspaceAssetFolders(),
+        queryKey: assetFolderQueryKey(entryScope),
+        queryFn: ({ queryKey }) => listWorkspaceAssetFolders(expectedScopeFromQueryKey(queryKey)),
         enabled: folderApi,
     });
     useEffect(() => {
         if (folderApi) return;
+        const expected = entryScope;
         let active = true;
-        void listWorkspaceAssetFolders().then((folders) => {
-            if (active) setLocalFolders(folders);
-        }).catch(() => {
+        void listWorkspaceAssetFolders(expected).then((folders) => {
+            if (active && userScopeMatches(expected)) setLocalFolders(folders);
+        }).catch((error) => {
+            if (isUserScopeAbandonedError(error)) return;
             // Ignore malformed local folder metadata; assets remain usable as uncategorized.
         });
         return () => { active = false; };
-    }, [folderApi, userId]);
+    }, [entryScope, folderApi]);
     const folders = folderApi ? foldersQuery.data || [] : localFolders;
 
     const allLibraryAssets = useMemo(() => assets.filter((asset): asset is LibraryAsset => asset.kind !== "entity"), [assets]);
@@ -212,8 +229,8 @@ export default function AssetsPage() {
     }, [validAssets, keyword, kindFilter, categoryFilter, folderFilter, favoriteOnly, recentOnly, projectFilter]);
 
     const assetPageQuery = useQuery({
-        queryKey: [...ASSET_LIBRARY_QUERY_KEY, page, pageSize, viewMode, kindFilter, categoryFilter, folderFilter, favoriteOnly, recentOnly, projectFilter, debouncedKeyword],
-        queryFn: ({ signal }) => loadAssetLibraryPage({
+        queryKey: assetLibraryQueryKey(entryScope, page, pageSize, viewMode, kindFilter, categoryFilter, folderFilter, favoriteOnly, recentOnly, projectFilter, debouncedKeyword),
+        queryFn: ({ queryKey, signal }) => loadAssetLibraryPage({
             page,
             pageSize,
             status: viewMode === "trash" ? "archived" : "active",
@@ -226,27 +243,29 @@ export default function AssetsPage() {
             recent: recentOnly || undefined,
             project: projectFilter === "all" ? undefined : projectFilter,
             signal,
+            expectedScope: expectedScopeFromQueryKey(queryKey),
         }),
         enabled: canonicalReads && sessionHydrated,
-        placeholderData: keepPreviousData,
+        placeholderData: (previousData, previousQuery) => keepAssetViewPlaceholder(previousData, previousQuery, entryScope),
     });
     const trashCountQuery = useQuery({
-        queryKey: [...ASSET_LIBRARY_QUERY_KEY, "trash-count"],
-        queryFn: ({ signal }) => loadAssetLibraryPage({ page: 1, pageSize: 1, status: "archived", signal }),
+        queryKey: assetLibraryQueryKey(entryScope, "trash-count"),
+        queryFn: ({ queryKey, signal }) => loadAssetLibraryPage({ page: 1, pageSize: 1, status: "archived", signal, expectedScope: expectedScopeFromQueryKey(queryKey) }),
         enabled: canonicalReads && sessionHydrated && viewMode === "library",
     });
     const historyQuery = useQuery({
-        queryKey: [...ASSET_LIBRARY_QUERY_KEY, "history", historyPage, historyKind],
-        queryFn: ({ signal }) => loadAssetLibraryPage({
+        queryKey: assetLibraryQueryKey(entryScope, "history", historyPage, historyKind),
+        queryFn: ({ queryKey, signal }) => loadAssetLibraryPage({
             page: historyPage,
             pageSize: ASSET_HISTORY_PAGE_SIZE,
             status: "active",
             generated: true,
             kind: historyKind === "all" ? undefined : historyKind,
             signal,
+            expectedScope: expectedScopeFromQueryKey(queryKey),
         }),
         enabled: canonicalReads && sessionHydrated && sourceTab === "history",
-        placeholderData: keepPreviousData,
+        placeholderData: (previousData, previousQuery) => keepAssetViewPlaceholder(previousData, previousQuery, entryScope),
     });
     useEffect(() => {
         if (sourceTab !== "history") {
@@ -258,10 +277,7 @@ export default function AssetsPage() {
     useEffect(() => {
         if (!canonicalReads || sourceTab !== "history" || !historyQuery.data || historyQuery.isPlaceholderData) return;
         const next = (historyQuery.data.assets || []).filter((asset): asset is LibraryAsset => asset.kind !== "entity" && asset.status !== "archived");
-        setHistoryAssets((current) => {
-            const merged = historyPage <= 1 ? next : [...current, ...next.filter((asset) => !current.some((item) => item.id === asset.id))];
-            return merged.filter((asset) => asset.status !== "archived");
-        });
+        setHistoryAssets((current) => mergeHistoryLibraryAssets(current, next, historyPage));
     }, [canonicalReads, historyPage, historyQuery.data, historyQuery.isPlaceholderData, sourceTab]);
 
     const localVisibleAssets = useMemo(() => {
@@ -337,40 +353,52 @@ export default function AssetsPage() {
         ...folders.map((folder) => ({ label: folder.name, value: folder.id })),
     ], [folders]);
 
-    const invalidateAssetLibrary = async () => {
+    const invalidateAssetLibrary = async (expected: CapturedUserScope = entryScope) => {
+        assertUserScope(expected);
         await Promise.all([
-            queryClient.invalidateQueries({ queryKey: ASSET_LIBRARY_QUERY_KEY }),
-            queryClient.invalidateQueries({ queryKey: ASSET_FOLDER_QUERY_KEY }),
+            queryClient.invalidateQueries({ queryKey: assetLibraryQueryKey(expected) }),
+            queryClient.invalidateQueries({ queryKey: assetFolderQueryKey(expected) }),
         ]);
     };
 
     const saveFolder = async () => {
         const name = folderName.trim();
         if (!name || !folderEditor) return;
+        const creating = folderEditor === "new";
+        const folderId = folderEditor === "new" ? "" : folderEditor.id;
         setFolderSaving(true);
+        const expected = captureUserScope();
         try {
-            if (folderEditor === "new") await createWorkspaceAssetFolder(name);
-            else await renameWorkspaceAssetFolder(folderEditor.id, name);
-            if (!folderApi) setLocalFolders(await listWorkspaceAssetFolders());
+            const saved = await runAssetViewAction(expected, async (scope) => {
+                if (creating) await createWorkspaceAssetFolder(name, scope);
+                else await renameWorkspaceAssetFolder(folderId, name, scope);
+                if (!folderApi) setLocalFolders(await listWorkspaceAssetFolders(scope));
+                await invalidateAssetLibrary(scope);
+                return creating ? "created" : "renamed";
+            });
+            if (!saved) return;
             setFolderEditor(null);
             setFolderName("");
-            await invalidateAssetLibrary();
-            message.success(folderEditor === "new" ? "素材分类已创建" : "素材分类已重命名");
+            message.success(saved === "created" ? "素材分类已创建" : "素材分类已重命名");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "素材分类保存失败");
         } finally {
-            setFolderSaving(false);
+            if (userScopeMatches(expected)) setFolderSaving(false);
         }
     };
 
     const removeFolder = async (folder: AssetFolder) => {
         try {
-            await deleteWorkspaceAssetFolder(folder.id);
-            if (!folderApi) setLocalFolders(await listWorkspaceAssetFolders());
-            await flushAssetStorePersistence();
+            const removed = await runAssetViewAction(captureUserScope(), async (scope) => {
+                await deleteWorkspaceAssetFolder(folder.id, scope);
+                if (!folderApi) setLocalFolders(await listWorkspaceAssetFolders(scope));
+                await flushAssetStorePersistence(scope);
+                await invalidateAssetLibrary(scope);
+                return true;
+            });
+            if (!removed) return;
             if (folderFilter === folder.id) setFolderFilter("all");
             setPage(1);
-            await invalidateAssetLibrary();
             message.success(`已删除分类「${folder.name}」，其中素材已移至未分类`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "素材分类删除失败");
@@ -381,11 +409,15 @@ export default function AssetsPage() {
     const moveSelectedAssetsToFolder = async (assetIds: string[], folderId: string) => {
         if (!assetIds.length) return;
         try {
-            await assignWorkspaceAssetsFolder(assetIds, folderId);
-            if (!folderApi) await persistWorkspaceAssetChanges();
-            await flushAssetStorePersistence();
+            const moved = await runAssetViewAction(captureUserScope(), async (scope) => {
+                await assignWorkspaceAssetsFolder(assetIds, folderId, scope);
+                if (!folderApi) await persistWorkspaceAssetChanges(scope);
+                await flushAssetStorePersistence(scope);
+                await invalidateAssetLibrary(scope);
+                return true;
+            });
+            if (!moved) return;
             setSelectedIds([]);
-            await invalidateAssetLibrary();
             message.success(`已移动 ${assetIds.length} 个素材`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "移动素材失败");
@@ -433,9 +465,15 @@ export default function AssetsPage() {
 
     const saveTags = async () => {
         if (!tagEditingAsset) return;
-        updateAsset(tagEditingAsset.id, { tags: tagDraft.filter(Boolean) });
+        const assetId = tagEditingAsset.id;
+        const tags = tagDraft.filter(Boolean);
         try {
-            await persistWorkspaceAssetChanges();
+            const saved = await runAssetViewAction(captureUserScope(), async (scope) => {
+                updateAsset(assetId, { tags });
+                await persistWorkspaceAssetChanges(scope);
+                return true;
+            });
+            if (!saved) return;
             message.success("标签已更新");
             setTagEditingAsset(null);
         } catch (error) {
@@ -445,24 +483,31 @@ export default function AssetsPage() {
     };
 
     const saveAsset = async () => {
+        const expected = captureUserScope();
         const values = await form.validateFields();
+        if (!userScopeMatches(expected)) return;
         let imageData = imageDraft;
         if (values.kind === "image" && imageFile) {
             setImageUploading(true);
             setImageUploadProgress({ phase: "uploading", percent: 0 });
             try {
-                const image = await uploadImage(imageFile);
+                const image = await runAssetViewAction(expected, (scope) => uploadImage(imageFile, undefined, scope));
+                if (!image) return;
+                if (!userScopeMatches(expected)) return;
                 setImageUploadProgress({ phase: "confirming" });
                 imageData = { dataUrl: image.url, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType };
                 setImageDraft(imageData);
                 setImageFile(null);
                 void queryClient.invalidateQueries({ queryKey: assetStorageUsageQueryKey });
             } catch (error) {
+                if (isUserScopeAbandonedError(error)) return;
                 message.error(error instanceof Error ? error.message : "图片上传失败，请重试");
                 return;
             } finally {
-                setImageUploading(false);
-                setImageUploadProgress(null);
+                if (userScopeMatches(expected)) {
+                    setImageUploading(false);
+                    setImageUploadProgress(null);
+                }
             }
         }
 
@@ -481,32 +526,41 @@ export default function AssetsPage() {
             metadata: editingAsset?.metadata || { source: "manual" },
         };
 
-        if (values.kind === "text") {
-            const asset = { ...base, kind: "text" as const, data: { content: (values.content || "").trim() } };
-            editingAsset ? updateAsset(editingAsset.id, asset) : addAsset(asset);
-        } else {
-            if (!imageData) {
-                message.error("请选择图片文件");
-                return;
-            }
-            const asset = { ...base, kind: "image" as const, data: imageData };
-            editingAsset ? updateAsset(editingAsset.id, asset) : addAsset(asset);
+        if (values.kind !== "text" && !imageData) {
+            message.error("请选择图片文件");
+            return;
         }
 
         try {
-            await persistWorkspaceAssetChanges();
-            await invalidateAssetLibrary();
-            message.success(editingAsset ? "素材已更新" : "素材已保存");
+            const saved = await runAssetViewAction(expected, async (scope) => {
+                if (values.kind === "text") {
+                    const asset = { ...base, kind: "text" as const, data: { content: (values.content || "").trim() } };
+                    editingAsset ? updateAsset(editingAsset.id, asset) : addAsset(asset);
+                } else {
+                    const asset = { ...base, kind: "image" as const, data: imageData! };
+                    editingAsset ? updateAsset(editingAsset.id, asset) : addAsset(asset);
+                }
+                await persistWorkspaceAssetChanges(scope);
+                await invalidateAssetLibrary(scope);
+                return editingAsset ? "updated" : "created";
+            });
+            if (!saved) return;
+            message.success(saved === "updated" ? "素材已更新" : "素材已保存");
+            setIsAssetOpen(false);
         } catch (error) {
             message.warning(localSavedRemotePendingMessage(editingAsset ? "素材已在本地更新" : "素材已在本地保存", error));
+            setIsAssetOpen(false);
         }
-        setIsAssetOpen(false);
     };
 
     const toggleFavorite = async (asset: LibraryAsset) => {
-        updateAsset(asset.id, { metadata: { ...(asset.metadata || {}), favorite: asset.metadata?.favorite !== true } });
         try {
-            await persistWorkspaceAssetChanges();
+            const saved = await runAssetViewAction(captureUserScope(), async (scope) => {
+                updateAsset(asset.id, { metadata: { ...(asset.metadata || {}), favorite: asset.metadata?.favorite !== true } });
+                await persistWorkspaceAssetChanges(scope);
+                return true;
+            });
+            if (!saved) return;
         } catch (error) {
             message.warning(localSavedRemotePendingMessage("收藏状态已在本地更新", error));
         }
@@ -514,47 +568,62 @@ export default function AssetsPage() {
 
     const readCoverFile = async (file?: File) => {
         if (!file) return;
+        const expected = captureUserScope();
         const dataUrl = await readFileAsDataUrl(file);
+        if (!userScopeMatches(expected)) return;
         form.setFieldValue("coverUrl", dataUrl);
     };
 
     const readImageFile = async (file?: File) => {
         if (!file || !file.type.startsWith("image/") || imageUploading) return;
+        const expected = captureUserScope();
         try {
             const dataUrl = await readFileAsDataUrl(file);
             const meta = await readImageMeta(dataUrl);
+            if (!userScopeMatches(expected)) return;
             setImageFile(file);
             const draft = { dataUrl, storageKey: "", width: meta.width, height: meta.height, bytes: file.size, mimeType: file.type || meta.mimeType };
             setImageDraft(draft);
             if (!form.getFieldValue("coverUrl")) form.setFieldValue("coverUrl", dataUrl);
             if (!form.getFieldValue("title")) form.setFieldValue("title", file.name);
         } catch (error) {
+            if (isUserScopeAbandonedError(error) || !userScopeMatches(expected)) return;
             message.error(error instanceof Error ? error.message : "读取图片失败，请重试");
         }
     };
 
     const readModelFile = async (file?: File) => {
         if (!file || !/\.(glb|gltf)$/i.test(file.name)) return;
-        const uploaded = await uploadMediaFile(file, "model");
-        void queryClient.invalidateQueries({ queryKey: assetStorageUsageQueryKey });
-        addAsset({
-            kind: "model",
-            title: file.name.replace(/\.(glb|gltf)$/i, ""),
-            coverUrl: "",
-            tags: ["3D模型"],
-            source: "手动上传",
-            data: { url: uploaded.url, storageKey: uploaded.storageKey, bytes: uploaded.bytes, mimeType: uploaded.mimeType, fileName: file.name },
-            metadata: { source: "manual" },
-        });
-        // Hosted mode may retry the remote copy; local mode intentionally keeps
-        // the browser fallback local and does not expose a cloud-upload warning.
-        if (uploaded.pendingRemoteUpload) {
-            // The local workspace must never surface a cloud-sync promise, even
-            // if an upload result was created before the session mode finished
-            // hydrating. Hosted mode keeps the retry wording.
-            message.warning(localWorkspace ? "3D 模型已保存在本机" : `3D 模型已保存在本机，等待远端同步${uploaded.remoteUploadError ? `：${uploaded.remoteUploadError}` : ""}`);
+        try {
+            const uploaded = await runAssetViewAction(captureUserScope(), async (scope) => {
+                const result = await uploadMediaFile(file, "model", undefined, scope);
+                assertUserScope(scope);
+                addAsset({
+                    kind: "model",
+                    title: file.name.replace(/\.(glb|gltf)$/i, ""),
+                    coverUrl: "",
+                    tags: ["3D模型"],
+                    source: "手动上传",
+                    data: { url: result.url, storageKey: result.storageKey, bytes: result.bytes, mimeType: result.mimeType, fileName: file.name },
+                    metadata: { source: "manual" },
+                });
+                void queryClient.invalidateQueries({ queryKey: assetStorageUsageQueryKey });
+                return result;
+            });
+            if (!uploaded) return;
+            // Hosted mode may retry the remote copy; local mode intentionally keeps
+            // the browser fallback local and does not expose a cloud-upload warning.
+            if (uploaded.pendingRemoteUpload) {
+                // The local workspace must never surface a cloud-sync promise, even
+                // if an upload result was created before the session mode finished
+                // hydrating. Hosted mode keeps the retry wording.
+                message.warning(localWorkspace ? "3D 模型已保存在本机" : `3D 模型已保存在本机，等待远端同步${uploaded.remoteUploadError ? `：${uploaded.remoteUploadError}` : ""}`);
+            }
+            else message.success("3D 模型已保存");
+        } catch (error) {
+            if (isUserScopeAbandonedError(error)) return;
+            message.error(error instanceof Error ? error.message : "3D 模型保存失败");
         }
-        else message.success("3D 模型已保存");
     };
 
     const copyAssetText = async (asset: LibraryAsset) => {
@@ -583,33 +652,46 @@ export default function AssetsPage() {
 
     const importAssetZip = async (file?: File) => {
         if (!file) return;
+        const expected = captureUserScope();
         try {
-            const importedAssets = await readAssetPackage(file);
-            importedAssets.forEach((asset) => {
-                const payload = { ...asset } as Record<string, unknown>;
-                delete payload.id;
-                delete payload.createdAt;
-                delete payload.updatedAt;
-                addAsset((localWorkspace ? normalizeLocalAsset(payload) : payload) as Parameters<typeof addAsset>[0]);
+            const imported = await runAssetViewAction(expected, async (scope) => {
+                const importedAssets = await readAssetPackage(file);
+                if (!userScopeMatches(scope)) return undefined;
+                importedAssets.forEach((asset) => {
+                    const payload = { ...asset } as Record<string, unknown>;
+                    delete payload.id;
+                    delete payload.createdAt;
+                    delete payload.updatedAt;
+                    addAsset((localWorkspace ? normalizeLocalAsset(payload) : payload) as Parameters<typeof addAsset>[0]);
+                });
+                await flushAssetStorePersistence(scope);
+                return importedAssets.length;
             });
-            await flushAssetStorePersistence();
+            if (imported == null) return;
             try {
-                await persistWorkspaceAssetChanges();
+                await persistWorkspaceAssetChanges(expected);
             } catch (error) {
+                if (isUserScopeAbandonedError(error)) return;
                 message.warning(localSavedRemotePendingMessage("素材已在本地导入", error));
             }
-            message.success(`已导入 ${importedAssets.length} 个素材`);
+            if (!userScopeMatches(expected)) return;
+            message.success(`已导入 ${imported} 个素材`);
         } catch {
+            if (!userScopeMatches(expected)) return;
             message.error("导入失败，请选择有效的素材压缩包");
         } finally {
-            if (assetInputRef.current) assetInputRef.current.value = "";
+            if (userScopeMatches(expected) && assetInputRef.current) assetInputRef.current.value = "";
         }
     };
 
     const restoreAsset = async (asset: LibraryAsset) => {
-        updateAsset(asset.id, { status: "confirmed" });
         try {
-            await persistWorkspaceAssetChanges();
+            const restored = await runAssetViewAction(captureUserScope(), async (scope) => {
+                updateAsset(asset.id, { status: "confirmed" });
+                await persistWorkspaceAssetChanges(scope);
+                return true;
+            });
+            if (!restored) return;
             message.success(`已还原素材「${asset.title}」`);
         } catch (error) {
             message.warning(localSavedRemotePendingMessage("已在本地还原", error));
@@ -618,13 +700,16 @@ export default function AssetsPage() {
 
     const batchRestore = async () => {
         if (!selectedIds.length) return;
-        for (const id of selectedIds) {
-            updateAsset(id, { status: "confirmed" });
-        }
         const count = selectedIds.length;
-        setSelectedIds([]);
+        const ids = [...selectedIds];
         try {
-            await persistWorkspaceAssetChanges();
+            const restored = await runAssetViewAction(captureUserScope(), async (scope) => {
+                for (const id of ids) updateAsset(id, { status: "confirmed" });
+                await persistWorkspaceAssetChanges(scope);
+                return true;
+            });
+            if (!restored) return;
+            setSelectedIds([]);
             message.success(`已还原 ${count} 个素材`);
         } catch (error) {
             message.warning(localSavedRemotePendingMessage("已在本地还原", error));
@@ -632,10 +717,14 @@ export default function AssetsPage() {
     };
 
     const archiveAsset = async (asset: LibraryAsset) => {
-        updateAsset(asset.id, { status: "archived" });
         try {
-            await persistWorkspaceAssetChanges();
-            await invalidateAssetLibrary();
+            const archived = await runAssetViewAction(captureUserScope(), async (scope) => {
+                updateAsset(asset.id, { status: "archived" });
+                await persistWorkspaceAssetChanges(scope);
+                await invalidateAssetLibrary(scope);
+                return true;
+            });
+            if (!archived) return;
             message.success(`已将「${asset.title}」移入回收站`);
         } catch (error) {
             message.warning(localSavedRemotePendingMessage("已移入回收站", error));
@@ -644,13 +733,16 @@ export default function AssetsPage() {
 
     const batchArchive = async () => {
         if (!selectedIds.length) return;
-        for (const id of selectedIds) {
-            updateAsset(id, { status: "archived" });
-        }
         const count = selectedIds.length;
-        setSelectedIds([]);
+        const ids = [...selectedIds];
         try {
-            await persistWorkspaceAssetChanges();
+            const archived = await runAssetViewAction(captureUserScope(), async (scope) => {
+                for (const id of ids) updateAsset(id, { status: "archived" });
+                await persistWorkspaceAssetChanges(scope);
+                return true;
+            });
+            if (!archived) return;
+            setSelectedIds([]);
             message.success(`已将 ${count} 个素材移入回收站`);
         } catch (error) {
             message.warning(localSavedRemotePendingMessage("已移入回收站", error));
@@ -660,13 +752,17 @@ export default function AssetsPage() {
     const emptyTrash = async () => {
         if (!trashCanonicalTotal && !trashCount) return;
         try {
-            const result = await clearWorkspaceArchivedAssets();
+            const feedback = await runAssetViewAction(captureUserScope(), async (scope) => {
+                const result = await clearWorkspaceArchivedAssets({ expectedScope: scope });
+                await invalidateAssetLibrary(scope);
+                return workspaceClearTrashMessage(result);
+            });
+            if (!feedback) return;
             setSelectedIds([]);
-            await invalidateAssetLibrary();
-            const feedback = workspaceClearTrashMessage(result);
             if (feedback.type === "success") message.success(feedback.text);
             else message.error(feedback.text);
         } catch (error) {
+            if (isUserScopeAbandonedError(error)) return;
             message.error(error instanceof Error ? error.message : "清空回收站失败");
         }
     };
@@ -674,10 +770,15 @@ export default function AssetsPage() {
     const confirmDelete = async () => {
         if (!deletingAsset) return;
         try {
-            await deleteWorkspaceAsset(deletingAsset.id);
+            const deleted = await runAssetViewAction(captureUserScope(), async (scope) => {
+                await deleteWorkspaceAsset(deletingAsset.id, scope);
+                return true;
+            });
+            if (!deleted) return;
             message.success("素材已彻底删除");
             setDeletingAsset(null);
         } catch (error) {
+            if (isUserScopeAbandonedError(error)) return;
             message.error(error instanceof Error ? error.message : "素材删除失败");
         }
     };
@@ -689,12 +790,18 @@ export default function AssetsPage() {
 
     const confirmBatchDelete = async () => {
         if (!selectedAssets.length) return;
+        const deleting = [...selectedAssets];
         try {
-            for (const asset of selectedAssets) await deleteWorkspaceAsset(asset.id);
-            message.success(`已彻底删除 ${selectedAssets.length} 个素材`);
+            const deleted = await runAssetViewAction(captureUserScope(), async (scope) => {
+                for (const asset of deleting) await deleteWorkspaceAsset(asset.id, scope);
+                return deleting.length;
+            });
+            if (!deleted) return;
+            message.success(`已彻底删除 ${deleted} 个素材`);
             setSelectedIds([]);
             setBatchDeleteOpen(false);
         } catch (error) {
+            if (isUserScopeAbandonedError(error)) return;
             message.error(error instanceof Error ? error.message : "批量删除失败");
         }
     };
@@ -1233,7 +1340,15 @@ export default function AssetsPage() {
 
             <AssetDrawer asset={previewAsset} onClose={() => setPreviewAsset(null)} onCopy={copyAssetText} onDownload={downloadImage} />
 
-            <AssetBatchUploadModal open={batchUploadOpen} defaultFolderId={folderFilter !== "all" && folderFilter !== "uncategorized" ? folderFilter : ""} folders={folders} onClose={() => setBatchUploadOpen(false)} onComplete={async () => { setBatchUploadOpen(false); await invalidateAssetLibrary(); }} />
+            <AssetBatchUploadModal open={batchUploadOpen} defaultFolderId={folderFilter !== "all" && folderFilter !== "uncategorized" ? folderFilter : ""} folders={folders} onClose={() => setBatchUploadOpen(false)} onComplete={async () => {
+                const expected = captureUserScope();
+                if (userScopeMatches(expected)) setBatchUploadOpen(false);
+                try {
+                    await invalidateAssetLibrary(expected);
+                } catch (error) {
+                    if (!isUserScopeAbandonedError(error)) throw error;
+                }
+            }} />
 
             <Modal
                 className="library-modal library-confirm-modal"

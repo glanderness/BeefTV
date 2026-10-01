@@ -5,6 +5,7 @@ import { FileImage, FileVideo, UploadCloud, X } from "lucide-react";
 
 import { ASSET_CATEGORY_OPTIONS, type AssetCategory } from "@/lib/asset-category";
 import { readImageMeta } from "@/lib/image-utils";
+import { captureUserScope, isUserScopeAbandonedError, userScopeMatches } from "@/lib/user-scope-guard";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { localSavedRemotePendingMessage } from "@/services/local-workspace-sync";
@@ -40,37 +41,53 @@ export function AssetBatchUploadModal({ open, defaultFolderId, folders, onClose,
     const uploadBatch = async () => {
         const pending = items.filter((item) => item.status === "queued" || item.status === "error");
         if (!pending.length) return;
+        const expected = captureUserScope();
         setUploading(true);
         let cursor = 0;
         const worker = async () => {
             while (cursor < pending.length) {
+                if (!userScopeMatches(expected)) return;
                 const item = pending[cursor++];
                 setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "uploading", percent: 10, error: undefined } : entry));
                 try {
                     if (item.file.type.startsWith("video/")) {
                         const uploaded = await uploadMediaFile(item.file, "video", (uploadedBytes, totalBytes) => {
+                            if (!userScopeMatches(expected)) return;
                             setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, percent: totalBytes ? Math.round((uploadedBytes / totalBytes) * 100) : 10 } : entry));
-                        });
+                        }, expected);
+                        if (!userScopeMatches(expected)) return;
                         addAsset({ kind: "video", title: item.file.name.replace(/\.[^.]+$/, ""), category, folderId: folderId || undefined, coverUrl: uploaded.preview?.url || "", tags, source: "批量上传", metadata: { source: "manual-batch" }, data: { url: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width || 0, height: uploaded.height || 0, durationMs: uploaded.durationMs, hasAudio: uploaded.hasAudio, bytes: uploaded.bytes, mimeType: uploaded.mimeType } });
                     } else {
-                        const uploaded = await uploadImage(item.file);
+                        const uploaded = await uploadImage(item.file, undefined, expected);
+                        if (!userScopeMatches(expected)) return;
                         const meta = await readImageMeta(uploaded.url).catch(() => ({ width: uploaded.width, height: uploaded.height, mimeType: uploaded.mimeType }));
+                        if (!userScopeMatches(expected)) return;
                         addAsset({ kind: "image", title: item.file.name.replace(/\.[^.]+$/, ""), category, folderId: folderId || undefined, coverUrl: uploaded.url, tags, source: "批量上传", metadata: { source: "manual-batch" }, data: { dataUrl: uploaded.url, storageKey: uploaded.storageKey, width: meta.width || uploaded.width, height: meta.height || uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType } });
                     }
+                    if (!userScopeMatches(expected)) return;
                     setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "done", percent: 100 } : entry));
                 } catch (error) {
+                    if (isUserScopeAbandonedError(error) || !userScopeMatches(expected)) return;
                     setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "error", error: error instanceof Error ? error.message : "上传失败" } : entry));
                 }
             }
         };
         await Promise.all(Array.from({ length: Math.min(4, pending.length) }, () => worker()));
+        if (!userScopeMatches(expected)) return;
         try {
-            await persistWorkspaceAssetChanges();
+            await persistWorkspaceAssetChanges(expected);
         } catch (error) {
+            if (isUserScopeAbandonedError(error)) return;
             message.warning(localSavedRemotePendingMessage("部分素材已保存在本地", error));
         }
+        if (!userScopeMatches(expected)) return;
         setUploading(false);
-        await onComplete();
+        try {
+            await onComplete();
+        } catch (error) {
+            if (isUserScopeAbandonedError(error)) return;
+            throw error;
+        }
     };
 
     const close = () => {

@@ -3,11 +3,18 @@ import type { MenuProps } from "antd";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { Check, ChevronDown, FileText, FolderOpen, HardDrive, Image as ImageIcon, LoaderCircle, Music2, Puzzle, RotateCcw, Search, Trash2, Upload, UserRound, Video } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUserStore } from "@/stores/use-user-store";
 
 import { AssetMediaPreview } from "@/components/asset-media-preview";
 import { AssetLibraryCard } from "@/components/assets/asset-library-card";
+import {
+    assetPickerQueryKey,
+    expectedScopeFromQueryKey,
+    runAssetViewAction,
+    useAssetViewGeneration,
+} from "@/components/assets/asset-view-session";
+import { captureUserScope, isUserScopeAbandonedError, userScopeMatches } from "@/lib/user-scope-guard";
 import { CachedResourceImage } from "@/components/cached-resource-image";
 import { PaginationBar } from "@/components/layout/workspace-page";
 import { cn } from "@/lib/utils";
@@ -86,7 +93,13 @@ type Props = {
     onFolderAction?: (folderId: string) => Promise<void> | void;
 };
 
-export function AssetLibraryPickerModal({
+export function AssetLibraryPickerModal(props: Props) {
+    const queryClient = useQueryClient();
+    const generation = useAssetViewGeneration(queryClient);
+    return <AssetLibraryPickerModalSession key={generation} {...props} />;
+}
+
+function AssetLibraryPickerModalSession({
     remoteLibrary = false,
     remoteKind,
     mediaKinds = DEFAULT_MEDIA_KINDS,
@@ -114,6 +127,7 @@ export function AssetLibraryPickerModal({
     onFolderAction,
 }: Props) {
     const { message } = App.useApp();
+    const [entryScope] = useState(() => captureUserScope());
     const [category, setCategory] = useState(initialCategory);
     const [mediaKind, setMediaKind] = useState<AssetPickerMediaKind | "all">("all");
     const [folderId, setFolderId] = useState(initialFolderId);
@@ -139,8 +153,17 @@ export function AssetLibraryPickerModal({
     // remoteKind 是调用方写死的能力约束；媒体类型筛选只在没有该约束时参与服务端查询。
     const remoteQueryKind = remoteKind || (mediaKind === "all" ? undefined : mediaKind);
     const remoteQuery = useQuery({
-        queryKey: ["asset-picker", userId, remotePage, remotePageSize, category, remoteKeyword, remoteQueryKind],
-        queryFn: ({ signal }) => loadAssetLibraryPage({ page: remotePage, pageSize: remotePageSize, kind: remoteQueryKind, category: category === "all" || category === "archived" || category === remoteQueryKind ? undefined : category, status: category === "archived" ? "archived" : "active", query: remoteKeyword, signal }),
+        queryKey: assetPickerQueryKey(entryScope, remotePage, remotePageSize, category, remoteKeyword, remoteQueryKind),
+        queryFn: ({ queryKey, signal }) => loadAssetLibraryPage({
+            page: remotePage,
+            pageSize: remotePageSize,
+            kind: remoteQueryKind,
+            category: category === "all" || category === "archived" || category === remoteQueryKind ? undefined : category,
+            status: category === "archived" ? "archived" : "active",
+            query: remoteKeyword,
+            signal,
+            expectedScope: expectedScopeFromQueryKey(queryKey),
+        }),
         enabled: remoteEnabled && open && sessionHydrated,
     });
     const remoteItems = useMemo<AssetLibraryPickerItem[]>(() => (remoteQuery.data?.assets || []).filter((asset) => asset.kind !== "entity" && asset.kind !== "model").map((asset) => {
@@ -273,58 +296,86 @@ export function AssetLibraryPickerModal({
 
     const confirm = async () => {
         if (!selectedIds.length || working) return;
+        const expected = captureUserScope();
         setWorking(true);
         setError("");
         try {
-            await onConfirm(selectedIds);
+            const confirmed = await runAssetViewAction(expected, async () => {
+                await onConfirm(selectedIds);
+                return true;
+            });
+            if (!confirmed) return;
         } catch (reason) {
+            if (isUserScopeAbandonedError(reason) || !userScopeMatches(expected)) return;
             setError(reason instanceof Error ? reason.message : "素材操作失败，请重试");
         } finally {
-            setWorking(false);
+            if (userScopeMatches(expected)) setWorking(false);
         }
     };
 
     const handleRestoreSelected = async () => {
         if (!archivedSelectedIds.length) return;
+        const expected = captureUserScope();
+        const restoring = [...archivedSelectedIds];
         setWorking(true);
         try {
-            for (const id of archivedSelectedIds) {
-                useAssetStore.getState().updateAsset(id, { status: "confirmed" });
-            }
-            await persistWorkspaceAssetChanges();
+            const restored = await runAssetViewAction(expected, async (scope) => {
+                for (const id of restoring) {
+                    useAssetStore.getState().updateAsset(id, { status: "confirmed" });
+                }
+                await persistWorkspaceAssetChanges(scope);
+                return restoring.length;
+            });
+            if (!restored) return;
             setSelected(new Set());
-            message.success(`已还原 ${archivedSelectedIds.length} 个素材至素材库`);
+            message.success(`已还原 ${restored} 个素材至素材库`);
             setCategory("all");
         } catch (error) {
+            if (isUserScopeAbandonedError(error) || !userScopeMatches(expected)) return;
             message.warning(localSavedRemotePendingMessage("已在本地还原", error));
         } finally {
-            setWorking(false);
-            if (remoteEnabled) void remoteQuery.refetch();
+            if (userScopeMatches(expected)) {
+                setWorking(false);
+                if (remoteEnabled) void remoteQuery.refetch();
+            }
         }
     };
 
     const handleDeleteSelected = async () => {
         if (!archivedSelectedIds.length) return;
+        const expected = captureUserScope();
+        const deleting = [...archivedSelectedIds];
         setWorking(true);
         try {
-            for (const id of archivedSelectedIds) await deleteWorkspaceAsset(id);
+            const deleted = await runAssetViewAction(expected, async (scope) => {
+                for (const id of deleting) await deleteWorkspaceAsset(id, scope);
+                return deleting.length;
+            });
+            if (!deleted) return;
             setSelected(new Set());
-            message.success(`已彻底删除 ${archivedSelectedIds.length} 个素材`);
+            message.success(`已彻底删除 ${deleted} 个素材`);
         } catch (err) {
+            if (isUserScopeAbandonedError(err) || !userScopeMatches(expected)) return;
             message.error(err instanceof Error ? err.message : "删除失败");
         } finally {
-            setWorking(false);
-            if (remoteEnabled) void remoteQuery.refetch();
+            if (userScopeMatches(expected)) {
+                setWorking(false);
+                if (remoteEnabled) void remoteQuery.refetch();
+            }
         }
     };
 
     const handleEmptyRecycleBin = async () => {
         if (!archivedCount) return;
+        const expected = captureUserScope();
         setWorking(true);
         try {
-            const result = await clearWorkspaceArchivedAssets();
+            const feedback = await runAssetViewAction(expected, async (scope) => {
+                const result = await clearWorkspaceArchivedAssets({ expectedScope: scope });
+                return workspaceClearTrashMessage(result);
+            });
+            if (!feedback) return;
             setSelected(new Set());
-            const feedback = workspaceClearTrashMessage(result);
             if (feedback.type === "success") {
                 message.success(feedback.text);
                 setCategory("all");
@@ -332,47 +383,67 @@ export function AssetLibraryPickerModal({
                 message.error(feedback.text);
             }
         } catch (err) {
+            if (isUserScopeAbandonedError(err) || !userScopeMatches(expected)) return;
             message.error(err instanceof Error ? err.message : "清空回收站失败");
         } finally {
-            setWorking(false);
-            if (remoteEnabled) void remoteQuery.refetch();
+            if (userScopeMatches(expected)) {
+                setWorking(false);
+                if (remoteEnabled) void remoteQuery.refetch();
+            }
         }
     };
 
     const handleUpload = async (files: FileList | null) => {
         if (!files?.length || working || (source === "local" && !upload) || (source === "plugin" && !upload?.external)) return;
+        const expected = captureUserScope();
         setWorking(true);
         setError("");
         setUploadingCount(files.length);
         try {
-            if (source === "plugin") {
-                const uploaded = await upload!.external!.onUpload(files, folderId === "all" ? undefined : folderId);
-                setUploadedItems((current) => [...current, ...uploaded]);
-                const ids = uploaded.map((item) => item.id);
-                if (ids.length) setSelected((current) => new Set(multiple ? [...current, ...ids] : ids.slice(-1)));
-            } else {
+            const uploaded = await runAssetViewAction(expected, async () => {
+                if (source === "plugin") {
+                    const items = await upload!.external!.onUpload(files, folderId === "all" ? undefined : folderId);
+                    return { kind: "plugin" as const, items };
+                }
                 const ids = await upload!.onUpload(files);
+                return { kind: "local" as const, ids };
+            });
+            if (!uploaded) return;
+            if (uploaded.kind === "plugin") {
+                setUploadedItems((current) => [...current, ...uploaded.items]);
+                const ids = uploaded.items.map((item) => item.id);
                 if (ids.length) setSelected((current) => new Set(multiple ? [...current, ...ids] : ids.slice(-1)));
+            } else if (uploaded.ids.length) {
+                setSelected((current) => new Set(multiple ? [...current, ...uploaded.ids] : uploaded.ids.slice(-1)));
             }
         } catch (reason) {
+            if (isUserScopeAbandonedError(reason) || !userScopeMatches(expected)) return;
             setError(reason instanceof Error ? reason.message : "素材上传失败，请重试");
         } finally {
-            if (uploadInputRef.current) uploadInputRef.current.value = "";
-            setWorking(false);
-            setUploadingCount(0);
+            if (userScopeMatches(expected)) {
+                if (uploadInputRef.current) uploadInputRef.current.value = "";
+                setWorking(false);
+                setUploadingCount(0);
+            }
         }
     };
 
     const runFolderAction = async () => {
         if (!onFolderAction || folderId === "all" || working) return;
+        const expected = captureUserScope();
         setWorking(true);
         setError("");
         try {
-            await onFolderAction(folderId);
+            const done = await runAssetViewAction(expected, async () => {
+                await onFolderAction(folderId);
+                return true;
+            });
+            if (!done) return;
         } catch (reason) {
+            if (isUserScopeAbandonedError(reason) || !userScopeMatches(expected)) return;
             setError(reason instanceof Error ? reason.message : "文件夹操作失败，请重试");
         } finally {
-            setWorking(false);
+            if (userScopeMatches(expected)) setWorking(false);
         }
     };
 
