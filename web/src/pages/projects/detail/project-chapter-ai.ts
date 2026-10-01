@@ -27,6 +27,16 @@ type ChapterTaskOptions = {
 
 export type ChapterTaskKind = "characters" | "storyboard";
 
+export type ChapterStoryboardApprovalSnapshot = {
+    revision: number;
+    shotIds: string[];
+};
+
+export type ChapterStoryboardRecoveryDecision =
+    | { action: "skip" }
+    | { action: "apply"; snapshot: ChapterStoryboardApprovalSnapshot }
+    | { action: "review" };
+
 export function chapterTaskIdentity(task: GenerationTask): { chapterId: string; kind: ChapterTaskKind } | null {
     const context = task.clientContext;
     if (context?.chapterId && (context.chapterOperation === "characters" || context.chapterOperation === "storyboard")) {
@@ -54,6 +64,22 @@ export function chapterStoryboardFromGenerationTask(task: GenerationTask) {
     return storyboardRowsFromTask(task);
 }
 
+export function chapterStoryboardApprovalSnapshot(inputJson?: string): ChapterStoryboardApprovalSnapshot | null {
+    const metadata = generationTaskMetadata(inputJson);
+    const revision = metadata.approvedRevision;
+    const shotIds = metadata.approvedShotIds;
+    if (typeof revision !== "number" || !Number.isInteger(revision) || revision <= 0) return null;
+    if (!Array.isArray(shotIds) || !shotIds.every((id) => typeof id === "string")) return null;
+    return { revision, shotIds: shotIds.slice() };
+}
+
+export function chapterStoryboardRecoveryDecision(input: { alreadyApplied: boolean; inputJson?: string }): ChapterStoryboardRecoveryDecision {
+    if (input.alreadyApplied) return { action: "skip" };
+    const snapshot = chapterStoryboardApprovalSnapshot(input.inputJson);
+    if (snapshot) return { action: "apply", snapshot };
+    return { action: "review" };
+}
+
 export async function extractChapterAssets(input: ChapterAnalysisInput, options?: ChapterTaskOptions): Promise<ChapterAssetBreakdown> {
     const result = await runProjectTextTask(input, "chapter_character_breakdown", {
         项目名称: input.projectName,
@@ -75,9 +101,17 @@ type ChapterStoryboardGenerationInput = {
     config: AiConfig;
     skills: Skill[];
     selectedSkillIds: string[];
+    approvedRevision: number;
+    approvedShotIds: string[];
 };
 
 export async function generateChapterStoryboard(input: ChapterStoryboardGenerationInput, options?: ChapterTaskOptions) {
+    if (!Number.isInteger(input.approvedRevision) || input.approvedRevision <= 0) {
+        throw new Error("请刷新后再生成分镜");
+    }
+    if (!Array.isArray(input.approvedShotIds) || input.approvedShotIds.some((id) => typeof id !== "string")) {
+        throw new Error("请刷新后再生成分镜");
+    }
     const model = input.config.textModel || input.config.model;
     const config = { ...input.config, model };
     const skillExecution = await skillRuntime.prepare({
@@ -117,6 +151,8 @@ export async function generateChapterStoryboard(input: ChapterStoryboardGenerati
                 chapterId: input.chapterId,
                 source: "short-drama-chapter-storyboard",
                 ...skillExecution.metadata,
+                approvedRevision: input.approvedRevision,
+                approvedShotIds: input.approvedShotIds.slice(),
             },
         },
     });

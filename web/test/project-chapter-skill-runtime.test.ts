@@ -8,6 +8,7 @@ test("章节页直接生成到分镜制作，并通过共享选择器执行技�
     expect(source).toContain("生成到分镜制作");
     expect(source).toContain("replaceProjectUnitShots");
     expect(source).toContain("approvedRevision");
+    expect(source).toContain("approvedShotIds");
     expect(source).toContain("detail.project.revision");
     expect(source).toContain("/storyboard`");
     expect(source).toContain('<SkillRuntimePicker profile="shortDrama"');
