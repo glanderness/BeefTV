@@ -28,6 +28,13 @@ func TestCanvasTaskBindAppliesReceiptInSameTransaction(t *testing.T) {
 	if result.Replayed || result.OpID != localtask.AttachNodeEffectKey(task.ID, "node-bind", 0) {
 		t.Fatalf("bind envelope = %#v", result)
 	}
+	payload, _ := result.Result.(map[string]any)
+	if status, _ := payload["bindingStatus"].(string); status != "bound" {
+		t.Fatalf("first bind bindingStatus = %#v", payload["bindingStatus"])
+	}
+	if payload["canvas"] == nil {
+		t.Fatal("first bind missing canonical canvas")
+	}
 	node := h.node(t, "node-bind")
 	if title, _ := node["title"].(string); title != "镜头原名" {
 		t.Fatalf("title overwritten: %#v", node)
@@ -84,6 +91,104 @@ func TestCanvasTaskBindReplayReturnsCurrentProjection(t *testing.T) {
 	}
 	if h.count(t, &model.Asset{}) != 1 {
 		t.Fatal("replay duplicated the asset")
+	}
+	if status, _ := payload["bindingStatus"].(string); status != "bound" {
+		t.Fatalf("replay bindingStatus = %#v", payload["bindingStatus"])
+	}
+}
+
+func TestCanvasTaskBindReplayProjectsReplacedDeletedAndManualEdit(t *testing.T) {
+	h := newHarness(t)
+	taskA := h.seedReadyCanvasImageTask(t, "task-bind-a", "node-shared", "任务A", 2, 3)
+	first, err := h.bindTask(t, taskA.ID, "node-shared", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalContent := h.nodeMetaString(t, "node-shared", "content")
+	if originalContent == "" {
+		t.Fatal("first bind missing content")
+	}
+
+	edited := h.node(t, "node-shared")
+	editMeta := nodeMeta(edited)
+	editMeta["content"] = "手工改过的旁白"
+	edited["metadata"] = editMeta
+	h.replaceNode(t, "node-shared", edited)
+	sameTaskReplay, err := h.bindTask(t, taskA.ID, "node-shared", 0)
+	if err != nil || !sameTaskReplay.Replayed {
+		t.Fatalf("same-task replay = %#v err=%v", sameTaskReplay, err)
+	}
+	samePayload, _ := sameTaskReplay.Result.(map[string]any)
+	if status, _ := samePayload["bindingStatus"].(string); status != "bound" {
+		t.Fatalf("manual edit bindingStatus = %#v", samePayload["bindingStatus"])
+	}
+	if content, _ := samePayload["content"].(string); content != "手工改过的旁白" {
+		t.Fatalf("manual edit current content = %#v", samePayload["content"])
+	}
+	historical, _ := samePayload["historical"].(map[string]any)
+	if content, _ := historical["content"].(string); content != originalContent {
+		t.Fatalf("historical content lost = %#v want %q", historical, originalContent)
+	}
+	if h.nodeMetaString(t, "node-shared", "content") != "手工改过的旁白" {
+		t.Fatal("replay restored the original bind content")
+	}
+
+	taskB := h.seedReadyCanvasImageTask(t, "task-bind-b", "node-shared-b", "任务B", 8, 9)
+	if _, err := h.bindTask(t, taskB.ID, "node-shared-b", 0); err != nil {
+		t.Fatal(err)
+	}
+	newer := h.node(t, "node-shared")
+	newerMeta := nodeMeta(newer)
+	bNode := h.node(t, "node-shared-b")
+	bMeta := nodeMeta(bNode)
+	for _, key := range []string{"taskId", "content", "storageKey", "assetId", "status"} {
+		newerMeta[key] = bMeta[key]
+	}
+	newer["metadata"] = newerMeta
+	h.replaceNode(t, "node-shared", newer)
+	replacedReplay, err := h.bindTask(t, taskA.ID, "node-shared", 0)
+	if err != nil || !replacedReplay.Replayed {
+		t.Fatalf("replaced replay = %#v err=%v", replacedReplay, err)
+	}
+	replacedPayload, _ := replacedReplay.Result.(map[string]any)
+	if status, _ := replacedPayload["bindingStatus"].(string); status != "replaced" {
+		t.Fatalf("replaced bindingStatus = %#v", replacedPayload["bindingStatus"])
+	}
+	if _, has := replacedPayload["content"]; has {
+		t.Fatalf("replaced replay leaked historical content: %#v", replacedPayload["content"])
+	}
+	replacedNode, _ := replacedPayload["node"].(map[string]any)
+	if nodeMeta(replacedNode)["taskId"] != taskB.ID {
+		t.Fatalf("replaced node = %#v", replacedNode)
+	}
+	if h.nodeMetaString(t, "node-shared", "taskId") != taskB.ID {
+		t.Fatal("replaced replay overwrote the newer task node")
+	}
+	if h.nodeMetaString(t, "node-shared", "content") != h.nodeMetaString(t, "node-shared-b", "content") {
+		t.Fatal("replaced replay changed the current generation")
+	}
+	stored := h.storedReceipt(t, localtask.AttachNodeEffectKey(taskA.ID, "node-shared", 0))
+	if content, _ := stored["content"].(string); content != originalContent {
+		t.Fatalf("stored historical receipt mutated = %#v", stored)
+	}
+
+	h.deleteNode(t, "node-shared")
+	deletedReplay, err := h.bindTask(t, taskA.ID, "node-shared", 0)
+	if err != nil || !deletedReplay.Replayed {
+		t.Fatalf("deleted replay = %#v err=%v", deletedReplay, err)
+	}
+	deletedPayload, _ := deletedReplay.Result.(map[string]any)
+	if status, _ := deletedPayload["bindingStatus"].(string); status != "deleted" {
+		t.Fatalf("deleted bindingStatus = %#v", deletedPayload["bindingStatus"])
+	}
+	if _, has := deletedPayload["node"]; has {
+		t.Fatalf("deleted replay still projected a node: %#v", deletedPayload["node"])
+	}
+	if h.findNode(t, "node-shared") != nil {
+		t.Fatal("deleted replay recreated the node")
+	}
+	if first.Revision <= 0 {
+		t.Fatal("first bind missing revision")
 	}
 }
 
@@ -507,6 +612,19 @@ func nodeMeta(node map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	return meta
+}
+
+func (h *harness) storedReceipt(t *testing.T, opID string) map[string]any {
+	t.Helper()
+	var record model.AgentOpRecord
+	if err := h.service.Database().Where("user_id = ? AND op_id = ?", h.userID, opID).First(&record).Error; err != nil {
+		t.Fatal(err)
+	}
+	var stored map[string]any
+	if err := json.Unmarshal([]byte(record.ResultJSON), &stored); err != nil {
+		t.Fatalf("stored receipt: %v", err)
+	}
+	return stored
 }
 
 func (h *harness) receiptCount(t *testing.T, opID string) int64 {

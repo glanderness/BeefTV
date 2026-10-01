@@ -3,12 +3,12 @@ import type { Dispatch, SetStateAction } from "react";
 import { parseCanvasStorageDocument, rebaseCanvasProjects, serializeCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
+import { captureUserScope, isUserScopeAbandonedError, UserScopeAbandonedError, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { bindCanvasTaskOutput, type CanvasTaskBindReceipt } from "@/services/api/operations";
 import type { GenerationTask, GenerationTaskOutput } from "@/services/api/task-center";
 import { generationEffectApplied } from "@/services/generation-consumer-dedupe";
 import { attachNodeEffectKey } from "@/services/generation-task-materializer";
 import { persistCanvasDocument } from "@/services/local-workspace-repository";
-import { loadCanvasOperationJournal, recordConfirmedCanvasCommit } from "@/services/canvas-operation-journal";
 import { hydrateBackendGeneratedOutputs } from "@/services/project-asset-sync";
 import { useAssetStore } from "@/stores/use-asset-store";
 import {
@@ -45,6 +45,25 @@ export class CanvasGenerationDurableAckError extends Error {
 export function isCanvasGenerationDurableAckError(error: unknown): error is CanvasGenerationDurableAckError {
     return error instanceof CanvasGenerationDurableAckError;
 }
+
+export class CanvasBindFlushError extends Error {
+    readonly cause: unknown;
+
+    constructor(cause: unknown) {
+        super(cause instanceof Error ? cause.message : "本地草稿还没保存，生成结果没有写到画布");
+        this.name = "CanvasBindFlushError";
+        this.cause = cause;
+    }
+}
+
+export class CanvasBindProjectionAdoptionError extends Error {
+    constructor() {
+        super("画布确认投影尚未接入 journal 三路采纳");
+        this.name = "CanvasBindProjectionAdoptionError";
+    }
+}
+
+export type AdoptServerConfirmedProjection = (project: CanvasProject, scope: string) => Promise<CanvasProject | undefined>;
 
 type CanvasGenerationLiveProjectState = Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId">;
 type CanvasGenerationLiveProjectAdapter = {
@@ -134,9 +153,9 @@ export type BindBackendCanvasGenerationRuntime = {
     hydrateOutputs?: typeof hydrateBackendGeneratedOutputs;
     persistDocument?: typeof persistCanvasDocument;
     bindOutput?: typeof bindCanvasTaskOutput;
-    loadJournal?: typeof loadCanvasOperationJournal;
-    recordConfirmed?: typeof recordConfirmedCanvasCommit;
-    activeScope?: () => string;
+    adoptConfirmedProjection?: AdoptServerConfirmedProjection;
+    captureScope?: () => CapturedUserScope;
+    liveScope?: () => CapturedUserScope;
 };
 
 export async function bindBackendCanvasGenerationResult(input: {
@@ -152,24 +171,23 @@ export async function bindBackendCanvasGenerationResult(input: {
 }) {
     if (input.task.status !== "succeeded") throw new Error("只有成功的任务才能绑定到画布");
     const runtime = input.runtime ?? {};
-    const activeScope = runtime.activeScope ?? getActiveUserScope;
-    const capturedScope = activeScope();
+    const liveScope = runtime.liveScope ?? captureUserScope;
+    const capturedScope = (runtime.captureScope ?? captureUserScope)();
     const capturedCanvasId = input.canvasId;
-    const sameUser = () => activeScope() === capturedScope;
     const outputIndex = input.outputIndex ?? 0;
     const hydrateOutputs = runtime.hydrateOutputs ?? hydrateBackendGeneratedOutputs;
     const persistDocument = runtime.persistDocument ?? persistCanvasDocument;
     const bindOutput = runtime.bindOutput ?? bindCanvasTaskOutput;
+    const adoptConfirmedProjection = runtime.adoptConfirmedProjection ?? defaultAdoptConfirmedProjection;
 
-    if (sameUser()) {
-        await hydrateOutputs(input.task, undefined, {
-            writeAsset: (asset) => {
-                if (!sameUser()) return;
-                useAssetStore.setState((state) => (state.assets.some((item) => item.id === asset.id) ? state : { assets: [asset, ...state.assets] }));
-            },
-        });
-    }
-    if (!sameUser()) return;
+    assertBindDispatchScope(capturedScope, liveScope);
+    await hydrateOutputs(input.task, input.signal, {
+        writeAsset: (asset) => {
+            if (!userScopeMatches(capturedScope, liveScope())) return;
+            useAssetStore.setState((state) => (state.assets.some((item) => item.id === asset.id) ? state : { assets: [asset, ...state.assets] }));
+        },
+    });
+    assertBindDispatchScope(capturedScope, liveScope);
 
     const live = useCanvasStore.getState().projects.find((project) => project.id === capturedCanvasId);
     if (live) {
@@ -177,10 +195,12 @@ export async function bindBackendCanvasGenerationResult(input: {
             await persistDocument(capturedCanvasId, { nodes: live.nodes, connections: live.connections });
         } catch (error) {
             if (error instanceof Error && error.name === "AbortError") throw error;
-            if (!sameUser()) return;
+            if (isUserScopeAbandonedError(error)) throw error;
+            assertBindDispatchScope(capturedScope, liveScope);
+            throw error instanceof CanvasBindFlushError ? error : new CanvasBindFlushError(error);
         }
     }
-    if (!sameUser()) return;
+    assertBindDispatchScope(capturedScope, liveScope);
 
     const response = await bindOutput({
         operationId: attachNodeEffectKey(input.task.id, input.nodeId, outputIndex),
@@ -188,8 +208,10 @@ export async function bindBackendCanvasGenerationResult(input: {
         taskId: input.task.id,
         nodeId: input.nodeId,
         outputIndex,
+        signal: input.signal,
+        expectedScope: capturedScope,
     });
-    if (!sameUser()) return;
+    assertBindDispatchScope(capturedScope, liveScope);
 
     const receipt = response.result ?? {};
     const revision = response.revision || receipt.revision;
@@ -198,12 +220,47 @@ export async function bindBackendCanvasGenerationResult(input: {
         nodeId: input.nodeId,
         receipt,
         revision,
-        updateLive: sameUser() && input.isCurrent(),
+        updateLive: input.isCurrent(),
         nodesRef: input.nodesRef,
         setNodes: input.setNodes,
     });
-    if (!sameUser()) return;
-    await recordConfirmedBindProjection(capturedCanvasId, input.nodeId, receipt, revision, capturedScope, runtime);
+    assertBindDispatchScope(capturedScope, liveScope);
+    const canonical = canonicalCanvasFromReceipt(capturedCanvasId, receipt, revision, useCanvasStore.getState().projects.find((project) => project.id === capturedCanvasId));
+    if (!canonical) throw new CanvasBindProjectionAdoptionError();
+    const adopted = await adoptConfirmedProjection(canonical, capturedScope.userScope);
+    assertBindDispatchScope(capturedScope, liveScope);
+    if (adopted && input.isCurrent()) {
+        input.nodesRef.current = adopted.nodes;
+        input.setNodes(adopted.nodes);
+    }
+}
+
+function assertBindDispatchScope(expected: CapturedUserScope, live: () => CapturedUserScope) {
+    if (!userScopeMatches(expected, live())) throw new UserScopeAbandonedError();
+}
+
+async function defaultAdoptConfirmedProjection(project: CanvasProject, scope: string) {
+    const repository = await import("@/services/local-workspace-repository");
+    const adopt = (repository as { adoptServerConfirmedGenerationPatch?: AdoptServerConfirmedProjection }).adoptServerConfirmedGenerationPatch;
+    if (!adopt) throw new CanvasBindProjectionAdoptionError();
+    return adopt(project, scope);
+}
+
+function canonicalCanvasFromReceipt(canvasId: string, receipt: CanvasTaskBindReceipt, revision: number | undefined, fallback?: CanvasProject): CanvasProject | undefined {
+    const raw = receipt.canvas;
+    if (!raw || typeof raw !== "object") {
+        return fallback ? { ...fallback, ...(revision != null ? { revision } : {}) } : undefined;
+    }
+    const document = raw as CanvasProject;
+    if (typeof document.id === "string" && document.id && document.id !== canvasId) return undefined;
+    return {
+        ...(fallback ?? document),
+        ...document,
+        id: canvasId,
+        ...(revision != null ? { revision } : {}),
+        nodes: Array.isArray(document.nodes) ? (document.nodes as CanvasNodeData[]) : fallback?.nodes ?? [],
+        connections: Array.isArray(document.connections) ? document.connections : fallback?.connections ?? [],
+    };
 }
 
 function overlayBoundGenerationOnLiveCanvas(input: {
@@ -215,7 +272,8 @@ function overlayBoundGenerationOnLiveCanvas(input: {
     nodesRef: { current: CanvasNodeData[] };
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
 }) {
-    const overlayNodes = (nodes: CanvasNodeData[]) => nodes.map((node) => (node.id === input.nodeId ? overlayGenerationReceiptOnNode(node, input.receipt) : node));
+    const overlayNodes = (nodes: CanvasNodeData[]) =>
+        nodes.map((node) => (node.id === input.nodeId && receiptAllowsGenerationOverlay(input.receipt, node) ? overlayGenerationReceiptOnNode(node, input.receipt) : node));
     if (input.updateLive) {
         const nextNodes = overlayNodes(input.nodesRef.current);
         input.nodesRef.current = nextNodes;
@@ -274,24 +332,12 @@ function overlayGenerationReceiptOnNode(node: CanvasNodeData, receipt: CanvasTas
     return { ...node, metadata };
 }
 
-async function recordConfirmedBindProjection(
-    canvasId: string,
-    nodeId: string,
-    receipt: CanvasTaskBindReceipt,
-    revision: number | undefined,
-    scope: string,
-    runtime?: BindBackendCanvasGenerationRuntime,
-) {
-    const loadJournal = runtime?.loadJournal ?? loadCanvasOperationJournal;
-    const recordConfirmed = runtime?.recordConfirmed ?? recordConfirmedCanvasCommit;
-    const journal = await loadJournal(canvasId, scope);
-    if (!journal.confirmedSnapshot) return;
-    const confirmed = {
-        ...journal.confirmedSnapshot,
-        ...(revision != null ? { revision } : {}),
-        nodes: journal.confirmedSnapshot.nodes.map((node) => (node.id === nodeId ? overlayGenerationReceiptOnNode(node, receipt) : node)),
-    };
-    await recordConfirmed(confirmed, scope);
+function receiptAllowsGenerationOverlay(receipt: CanvasTaskBindReceipt, node: CanvasNodeData) {
+    if (receipt.bindingStatus === "deleted" || receipt.bindingStatus === "replaced") return false;
+    const receiptTaskId = typeof receipt.taskId === "string" ? receipt.taskId : "";
+    const liveTaskId = typeof node.metadata?.taskId === "string" ? node.metadata.taskId : "";
+    if (receiptTaskId && liveTaskId && receiptTaskId !== liveTaskId) return false;
+    return true;
 }
 
 export async function persistCanvasOperationContinuationEffect(input: {

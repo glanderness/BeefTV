@@ -4,6 +4,7 @@ import { App } from "antd";
 
 import { generationTaskCanReloadResource, generationTaskNodeId } from "@/lib/canvas/canvas-generation-task-sync";
 import { bindBackendCanvasGenerationResult, CanvasGenerationDurableAckError, isCanvasGenerationDurableAckError } from "@/services/canvas-generation-consumer";
+import { captureUserScope, isUserScopeAbandonedError, userScopeMatches } from "@/lib/user-scope-guard";
 import { ensureCanvasNodeAsset, retryCanvasAssetSyncAfterRateLimit } from "@/services/project-asset-sync";
 import { listGenerationTasks, queryFailedVideoProviderTask, subscribeGenerationTasks, type GenerationTask } from "@/services/api/task-center";
 import { useTaskDetails } from "@/hooks/use-task-details";
@@ -13,7 +14,6 @@ import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { isDepthCaptureResultNode } from "@/lib/canvas/canvas-depth-capture";
 import { generationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 import { generationFailureMetadata } from "@/lib/generation-error";
-import { getActiveUserScope } from "@/lib/user-scope";
 import { canvasTaskFailureMetadata } from "./canvas-generation-failure";
 import { runGenerationConsumer } from "@/services/generation-consumer-lifecycle";
 import { consumeCanvasGenerationContinuation } from "./use-canvas-operation-history";
@@ -254,10 +254,10 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
 
     const applyGenerationTaskResult = useCallback(
         async (nodeId: string, task: GenerationTask) => {
-            const capturedScope = getActiveUserScope();
+            const capturedScope = captureUserScope();
             const capturedCanvasId = projectId;
             const controller = consumerControllerRef.current;
-            const isCurrentCanvas = () => getActiveUserScope() === capturedScope && !controller.signal.aborted;
+            const isCurrentCanvas = () => !controller.signal.aborted && userScopeMatches(capturedScope);
             if (task.status !== "succeeded") {
                 if (generationTaskCanReloadResource(task) && isCurrentCanvas()) {
                     setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, resourceReloadAvailable: true } } : node)));
@@ -277,6 +277,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                 });
             } catch (error) {
                 if (error instanceof Error && error.name === "AbortError") throw error;
+                if (isUserScopeAbandonedError(error)) return;
                 throw error instanceof CanvasGenerationDurableAckError ? error : new CanvasGenerationDurableAckError(error);
             }
         },

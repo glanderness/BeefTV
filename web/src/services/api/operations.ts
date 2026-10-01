@@ -1,3 +1,4 @@
+import type { CapturedUserScope } from "@/lib/user-scope-guard";
 import { http } from "@/services/api/request";
 
 export type WorkspaceCallerKind = "manual" | "assistant" | "external";
@@ -18,8 +19,13 @@ export type CanvasDocumentCommitResult = {
     updatedAt?: string;
 };
 
-export async function executeWorkspaceOperation<T>(op: string, body: { opId?: string; params: unknown }, signal?: AbortSignal) {
-    return http.post<WorkspaceOperationResult<T>>(`/ops/${encodeURIComponent(op)}`, body, { signal });
+export async function executeWorkspaceOperation<T>(
+    op: string,
+    body: { opId?: string; params: unknown },
+    signal?: AbortSignal,
+    expectedScope?: CapturedUserScope,
+) {
+    return http.post<WorkspaceOperationResult<T>>(`/ops/${encodeURIComponent(op)}`, body, { signal, expectedScope });
 }
 
 export async function commitCanvasDocument(input: {
@@ -52,12 +58,29 @@ export type CanvasTaskBindReceipt = {
     content?: string;
     revision?: number;
     alreadyBound?: boolean;
+    bindingStatus?: "bound" | "deleted" | "replaced";
+    historical?: {
+        taskId?: string;
+        content?: string;
+        storageKey?: string;
+        assetId?: string;
+        resourceId?: string;
+        revision?: number;
+    };
+    canvas?: CanvasProjectLike;
     node?: {
         id?: string;
         title?: string;
         position?: { x?: number; y?: number };
         metadata?: Record<string, unknown>;
     };
+};
+
+type CanvasProjectLike = {
+    id?: string;
+    revision?: number;
+    nodes?: CanvasTaskBindReceipt["node"][];
+    [key: string]: unknown;
 };
 
 export async function bindCanvasTaskOutput(input: {
@@ -67,6 +90,7 @@ export async function bindCanvasTaskOutput(input: {
     nodeId: string;
     outputIndex?: number;
     signal?: AbortSignal;
+    expectedScope?: CapturedUserScope;
 }) {
     return executeWorkspaceOperation<CanvasTaskBindReceipt>(
         "canvas.task.bind",
@@ -80,5 +104,6 @@ export async function bindCanvasTaskOutput(input: {
             },
         },
         input.signal,
+        input.expectedScope,
     );
 }

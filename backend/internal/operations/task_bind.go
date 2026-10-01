@@ -29,34 +29,119 @@ func opCanvasTaskBind(ctx *Context, params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, mapDomainError(err)
 	}
-	return sanitizeForClient(receiptMap(receipt)), nil
+	return sanitizeForClient(projectCanvasTaskBindOutcome(ctx, args.CanvasID, args.NodeID, receiptMap(receipt))), nil
 }
 
 func projectCanvasTaskBindReplay(ctx *Context, params json.RawMessage, stored any) (any, error) {
-	receipt, _ := stored.(map[string]any)
-	if receipt == nil {
-		receipt = map[string]any{}
-	}
 	var args struct {
 		CanvasID string `json:"canvasId"`
 		NodeID   string `json:"nodeId"`
+		TaskID   string `json:"taskId"`
 	}
 	if json.Unmarshal(params, &args) != nil {
 		return stored, nil
 	}
-	raw, err := ctx.Domain.UserCanvasProject(ctx.UserID, args.CanvasID)
+	historical := cloneReceiptMap(stored)
+	return sanitizeForClient(projectCanvasTaskBindOutcome(ctx, args.CanvasID, args.NodeID, historical)), nil
+}
+
+func projectCanvasTaskBindOutcome(ctx *Context, canvasID, nodeID string, stored map[string]any) map[string]any {
+	historical := historicalBindReceipt(stored)
+	projected := map[string]any{
+		"applied":       stored["applied"],
+		"canvasId":      stored["canvasId"],
+		"nodeId":        stored["nodeId"],
+		"taskId":        stored["taskId"],
+		"outputIndex":   stored["outputIndex"],
+		"effectKey":     stored["effectKey"],
+		"mediaType":     stored["mediaType"],
+		"alreadyBound":  stored["alreadyBound"],
+		"historical":    historical,
+		"bindingStatus": "deleted",
+	}
+	if ctx == nil || ctx.Domain == nil {
+		return projected
+	}
+	raw, err := ctx.Domain.UserCanvasProject(ctx.UserID, strings.TrimSpace(canvasID))
 	if err != nil {
-		return stored, nil
+		return projected
 	}
 	var doc map[string]any
 	if json.Unmarshal(raw, &doc) != nil {
-		return stored, nil
+		return projected
 	}
-	receipt["revision"] = canvasRevision(doc)
-	if node := findDocNode(doc, args.NodeID); node != nil {
-		receipt["node"] = node
+	projected["revision"] = canvasRevision(doc)
+	projected["canvas"] = doc
+	node := findDocNode(doc, strings.TrimSpace(nodeID))
+	if node == nil {
+		return projected
 	}
-	return sanitizeForClient(receipt), nil
+	projected["node"] = node
+	historicalTaskID, _ := stored["taskId"].(string)
+	if currentTaskID := nodeMetadataTaskID(node); currentTaskID != "" && strings.TrimSpace(historicalTaskID) != "" && currentTaskID != strings.TrimSpace(historicalTaskID) {
+		projected["bindingStatus"] = "replaced"
+		return projected
+	}
+	projected["bindingStatus"] = "bound"
+	copyCurrentGenerationFields(projected, node)
+	return projected
+}
+
+func historicalBindReceipt(stored map[string]any) map[string]any {
+	out := cloneReceiptMap(stored)
+	delete(out, "canvas")
+	delete(out, "historical")
+	delete(out, "bindingStatus")
+	return out
+}
+
+func cloneReceiptMap(stored any) map[string]any {
+	if stored == nil {
+		return map[string]any{}
+	}
+	encoded, err := json.Marshal(stored)
+	if err != nil {
+		if typed, ok := stored.(map[string]any); ok {
+			out := make(map[string]any, len(typed))
+			for key, value := range typed {
+				out[key] = value
+			}
+			return out
+		}
+		return map[string]any{}
+	}
+	var out map[string]any
+	if json.Unmarshal(encoded, &out) != nil || out == nil {
+		return map[string]any{}
+	}
+	return out
+}
+
+func nodeMetadataTaskID(node map[string]any) string {
+	if node == nil {
+		return ""
+	}
+	meta, _ := node["metadata"].(map[string]any)
+	if meta == nil {
+		return ""
+	}
+	value, _ := meta["taskId"].(string)
+	return strings.TrimSpace(value)
+}
+
+func copyCurrentGenerationFields(projected map[string]any, node map[string]any) {
+	if projected == nil || node == nil {
+		return
+	}
+	meta, _ := node["metadata"].(map[string]any)
+	if meta == nil {
+		return
+	}
+	for _, key := range []string{"content", "storageKey", "assetId"} {
+		if value, _ := meta[key].(string); strings.TrimSpace(value) != "" {
+			projected[key] = value
+		}
+	}
 }
 
 func receiptMap(receipt taskbinding.Receipt) map[string]any {

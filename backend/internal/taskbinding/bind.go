@@ -111,6 +111,12 @@ func durablePatch(ports Ports, userID string, task model.Task, req Request) (Nod
 	if resource == nil || strings.TrimSpace(resource.ID) == "" || resource.Status != model.ResourceStatusReady {
 		return NodePatch{}, precondition("resource_not_ready", "任务资源未就绪，不能绑定到画布")
 	}
+	if strings.TrimSpace(resource.UserID) != userID {
+		return NodePatch{}, forbidden("resource_foreign", "任务资源不属于当前用户")
+	}
+	if strings.TrimSpace(resource.ID) != strings.TrimSpace(output.ResourceID) {
+		return NodePatch{}, precondition("resource_mismatch", "任务资源与产物记录不一致，不能绑定到画布")
+	}
 	asset, err := ports.OwnedAsset(userID, output.MaterializedAssetID)
 	if err != nil {
 		return NodePatch{}, mapPortError(err)
@@ -120,6 +126,9 @@ func durablePatch(ports Ports, userID string, task model.Task, req Request) (Nod
 	}
 	if strings.TrimSpace(asset.UserID) != userID {
 		return NodePatch{}, forbidden("asset_foreign", "任务素材不属于当前用户")
+	}
+	if assetResourceID(asset) != strings.TrimSpace(output.ResourceID) {
+		return NodePatch{}, precondition("resource_mismatch", "任务素材未指向本次产物资源，不能绑定到画布")
 	}
 	mediaType := strings.TrimSpace(output.MediaType)
 	if mediaType == "" {
@@ -145,6 +154,9 @@ func durablePatch(ports Ports, userID string, task model.Task, req Request) (Nod
 }
 
 func textPatch(task model.Task, req Request) (NodePatch, error) {
+	if req.OutputIndex != 0 {
+		return NodePatch{}, invalid("invalid_params", "文本任务只能绑定 outputIndex 0")
+	}
 	text, storyboard, ok, unreadable := durableText(task.ResultJSON)
 	if unreadable {
 		return NodePatch{}, precondition("delivery_unreadable", "任务结果无法读取，不能绑定到画布")
@@ -171,6 +183,28 @@ func isTextTask(task model.Task) bool {
 	default:
 		return false
 	}
+}
+
+func assetResourceID(asset *model.Asset) string {
+	if asset == nil {
+		return ""
+	}
+	var payload map[string]any
+	if json.Unmarshal([]byte(asset.PayloadJSON), &payload) != nil {
+		return ""
+	}
+	if data, ok := payload["data"].(map[string]any); ok {
+		for _, key := range []string{"storageKey", "url", "dataUrl"} {
+			text, _ := data[key].(string)
+			if id := assets.ResourceID(text); id != "" {
+				return id
+			}
+		}
+	}
+	if cover, _ := payload["coverUrl"].(string); cover != "" {
+		return assets.ResourceID(cover)
+	}
+	return ""
 }
 
 func durableText(resultJSON string) (text string, storyboard map[string]any, ok bool, unreadable bool) {

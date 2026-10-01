@@ -37,6 +37,7 @@ mock.module("@/lib/localforage-storage", () => ({
 
 mock.module("@/lib/user-scope", () => ({
     getActiveUserScope: () => activeScope,
+    getActiveUserScopeEpoch: () => 1,
     scopedStorageKey: (name: string, scope = activeScope) => `${name}:user:${scope}`,
     scopedLocalStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
 }));

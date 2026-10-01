@@ -1,6 +1,6 @@
 import axios, { type AxiosRequestConfig, type AxiosResponse } from "axios";
 
-import { assertUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
+import { assertUserScope, isUserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
 
 export type ApiParams = Record<string, string | string[] | number | number[] | undefined>;
 
@@ -74,7 +74,7 @@ export async function request<T>(promise: Promise<{ data: BackendEnvelope<T>; st
 }
 
 function unwrapTransportError(error: unknown): never {
-    if (error instanceof ApiError || (error instanceof DOMException && error.name === "AbortError")) {
+    if (error instanceof ApiError || (error instanceof DOMException && error.name === "AbortError") || isUserScopeAbandonedError(error)) {
         throw error;
     }
     if (axios.isCancel(error) || (axios.isAxiosError(error) && error.code === axios.AxiosError.ERR_CANCELED)) {

@@ -176,7 +176,7 @@ func skippableCanvasBindError(err error) bool {
 	case "node_deleted", "node_task_mismatch", "node_mismatch", "canvas_mismatch",
 		"task_not_found", "task_not_succeeded", "task_foreign",
 		"output_not_ready", "resource_not_ready", "resource_missing", "resource_foreign",
-		"asset_foreign", "delivery_unreadable", "unsupported_result_shape",
+		"resource_mismatch", "asset_foreign", "delivery_unreadable", "unsupported_result_shape",
 		"effect_identity_mismatch":
 		return true
 	default:
