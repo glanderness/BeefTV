@@ -98,4 +98,7 @@ func TestNilAssistantScopeDoesNotFilterCatalog(t *testing.T) {
 	if len(empty) != 7 {
 		t.Fatalf("空助手范围应只露出助手集合，得到 %d", len(empty))
 	}
+	if got := registry.List(agentops.AssistantCaller(nil, false)); len(got) != 0 {
+		t.Fatalf("助手缺少范围时能力发现必须为空，得到 %d", len(got))
+	}
 }

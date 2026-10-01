@@ -50,13 +50,13 @@ func (s *Store) Run(ctx context.Context, req RunRequest, fn func(tx *gorm.DB) ([
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if !s.Available() {
+		return RunOutcome{}, newError(CodeInternal, "op_store_unavailable", "操作记录存储不可用", nil)
+	}
 	db := s.db.WithContext(ctx)
 	if strings.TrimSpace(req.OpID) == "" {
 		out, err := fn(db)
 		return RunOutcome{Result: out}, err
-	}
-	if !s.Available() {
-		return RunOutcome{}, newError(CodeInternal, "op_store_unavailable", "操作记录存储不可用", nil)
 	}
 	var outcome RunOutcome
 	err := db.Transaction(func(tx *gorm.DB) error {
@@ -105,10 +105,13 @@ func (s *Store) Run(ctx context.Context, req RunRequest, fn func(tx *gorm.DB) ([
 
 // RunDomain 把当前事务绑成 Domain 再执行：业务端口拿不到 *gorm.DB。
 func (s *Store) RunDomain(ctx context.Context, req RunRequest, binder DomainBinder, fn func(domain Domain) ([]byte, error)) (RunOutcome, error) {
+	if binder == nil {
+		return RunOutcome{}, newError(CodeInternal, "op_domain_unavailable", "操作域绑定不可用", nil)
+	}
 	return s.Run(ctx, req, func(tx *gorm.DB) ([]byte, error) {
-		var domain Domain
-		if binder != nil {
-			domain = binder.BindDomain(tx)
+		domain := binder.BindDomain(tx)
+		if domain == nil {
+			return nil, newError(CodeInternal, "op_domain_unavailable", "操作域绑定不可用", nil)
 		}
 		return fn(domain)
 	})

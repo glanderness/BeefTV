@@ -68,6 +68,9 @@ func (r *Registry) Register(op Op) {
 // readOnly 为真时只返回只读操作；带助手范围时进一步收窄到该范围真实允许的操作。
 func (r *Registry) List(caller Caller) []Descriptor {
 	caller = caller.resolved()
+	if !caller.knownKind() || caller.assistantWithoutScope() {
+		return nil
+	}
 	out := make([]Descriptor, 0, len(r.ops))
 	for _, op := range r.ops {
 		if caller.ReadOnly && !op.ReadOnly {
@@ -143,6 +146,12 @@ func (r *Registry) Execute(req Request) (Result, error) {
 		return Result{}, NotFound("unknown_operation", "未知操作: "+req.Op)
 	}
 	caller := req.resolvedCaller()
+	if !caller.knownKind() {
+		return Result{}, PermissionDenied("unknown_caller", "未知调用方身份")
+	}
+	if caller.assistantWithoutScope() {
+		return Result{}, PermissionDenied("missing_assistant_scope", "内置助手缺少可信范围，不能执行操作")
+	}
 	if caller.ReadOnly && !op.ReadOnly {
 		return Result{}, newError(CodeReadOnly, "read_only_client", "该客户端为只读模式，不能执行写操作: "+op.ID, nil)
 	}

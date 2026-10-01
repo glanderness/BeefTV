@@ -54,6 +54,19 @@ func (c Caller) resolved() Caller {
 	return c
 }
 
+func (c Caller) knownKind() bool {
+	switch c.Kind {
+	case CallerManual, CallerAssistant, CallerExternal:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c Caller) assistantWithoutScope() bool {
+	return c.Kind == CallerAssistant && c.Scope == nil
+}
+
 // liveAuthorizer 丢掉「带类型的空指针」：把 *T(nil) 赋给 Authorizer 时接口本身非空，
 // List/Execute 会误当成已设置助手范围，owner/CLI/MCP 的能力发现会被收成 7 项。
 func liveAuthorizer(scope Authorizer) Authorizer {

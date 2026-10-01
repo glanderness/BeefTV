@@ -1,6 +1,6 @@
 # 操作层切片：产品中立 operations API
 
-Agent 操作层抽成工作区共用的 `operations` 核。手工 UI、内置助手、外部 CLI/MCP 走同一套注册表、幂等键、调用方身份和事务回执。`agentops` 只保留本机凭据与助手范围适配。
+Agent 操作层抽成工作区共用的 `operations` 核：注册表、幂等键、调用方身份和事务回执。当前已接入内置助手与 CLI/MCP。手工 UI 尚未切到这套入口，仍走原画布保存路径。`agentops` 只保留本机凭据与助手范围适配。
 
 ## 依赖方向
 
@@ -38,7 +38,7 @@ listed := registry.List(operations.ManualCaller(false))
 | `ExternalCaller(readOnly)` | `external` | 同上 |
 | `AssistantCaller(scope, readOnly)` | `assistant` | 7 项（无 `asset.list` / `canvas.search`）；写操作 schema 不暴露 `operationId` |
 
-`Caller.Scope` 是 `Authorizer`（`Visible` / `Allows`）。空指针不能赋给该接口，否则会变成带类型的 nil，能力发现会被收成助手集合。
+`Caller.Scope` 是 `Authorizer`（`Visible` / `Allows`）。空指针不能赋给该接口，否则会变成带类型的 nil。手工/外部调用方遇到带类型的空范围时仍发现完整 9 项。显式 `assistant` 且没有活范围时，能力发现为空、执行拒绝；宿主在回合外应传入空的 `AssistantScope` 适配器，才能发现 7 项且执行全部拒绝。未知 `Kind` 失败关闭。
 
 ### 结果信封
 
@@ -60,4 +60,4 @@ listed := registry.List(operations.ManualCaller(false))
 
 ## 仍由其他切片拥有
 
-前端接入、任务 worker/provider、数据库迁移、model schema、Agent 宿主生命周期。
+手工 UI 切流、任务 worker/provider、数据库迁移、model schema、Agent 宿主生命周期。
