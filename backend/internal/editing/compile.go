@@ -2,6 +2,7 @@ package editing
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 )
@@ -11,8 +12,17 @@ import (
 // keys). When sources is non-nil, every visible video/audio/image clip must
 // match an opaque source id; native paths are never accepted.
 func Compile(project Project, sources []SourceMeta, opts Options) (*Plan, error) {
-	opts = NormalizeOptions(opts)
-	sourceIndex, sourcesProvided := indexSources(sources)
+	opts, err := NormalizeOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateProject(project); err != nil {
+		return nil, err
+	}
+	sourceIndex, sourcesProvided, err := indexSources(sources)
+	if err != nil {
+		return nil, err
+	}
 	visible := map[string]bool{}
 	muted := map[string]bool{}
 	for _, track := range project.Tracks {
@@ -34,22 +44,31 @@ func Compile(project Project, sources []SourceMeta, opts Options) (*Plan, error)
 	end := project.DurationMs
 	var visual []Clip
 	for _, clip := range project.Clips {
-		if len(project.Tracks) > 0 && !visible[clip.TrackID] {
-			continue
+		if len(project.Tracks) > 0 {
+			if _, ok := visible[clip.TrackID]; !ok {
+				return plan, fmt.Errorf("%w：%s", ErrUnknownTrack, clip.TrackID)
+			}
+			if !visible[clip.TrackID] {
+				continue
+			}
 		}
-		if clip.StartMs < 0 || clip.SourceStartMs < 0 {
+		if clip.StartMs < 0 || clip.SourceStartMs < 0 || clip.FadeInMs < 0 || clip.FadeOutMs < 0 {
 			return plan, ErrNegativeTime
 		}
 		if clip.Volume < 0 {
 			return plan, fmt.Errorf("%w：%s", ErrInvalidVolume, clipLabel(clip))
 		}
-		if clip.DurationMs > 0 && clip.StartMs+clip.DurationMs > end {
-			end = clip.StartMs + clip.DurationMs
+		clipEnd, err := addDuration(clip.StartMs, clip.DurationMs)
+		if err != nil {
+			return plan, fmt.Errorf("%w：%s", err, clipLabel(clip))
+		}
+		if clip.DurationMs > 0 && clipEnd > end {
+			end = clipEnd
 		}
 		switch clip.Kind {
 		case KindAudio:
 			if clip.DurationMs <= 0 {
-				continue
+				return plan, fmt.Errorf("%w：%s", ErrInvalidClip, clip.ID)
 			}
 			sourceID, source, err := resolveSource(clip, sourceIndex, sourcesProvided)
 			if err != nil {
@@ -74,13 +93,13 @@ func Compile(project Project, sources []SourceMeta, opts Options) (*Plan, error)
 			})
 		case KindVideo, KindImage:
 			if clip.DurationMs <= 0 {
-				continue
+				return plan, fmt.Errorf("%w：%s", ErrInvalidClip, clip.ID)
 			}
 			visual = append(visual, clip)
 		case KindSubtitle:
 			text := strings.TrimSpace(clip.Text)
 			if text == "" || clip.DurationMs <= 0 {
-				continue
+				return plan, fmt.Errorf("%w：%s", ErrInvalidClip, clip.ID)
 			}
 			plan.Subtitles = append(plan.Subtitles, Subtitle{
 				ClipID:     clip.ID,
@@ -88,6 +107,8 @@ func Compile(project Project, sources []SourceMeta, opts Options) (*Plan, error)
 				DurationMs: clip.DurationMs,
 				Text:       text,
 			})
+		default:
+			return plan, fmt.Errorf("%w：%s", ErrUnsupportedKind, clip.Kind)
 		}
 	}
 
@@ -149,14 +170,21 @@ func Compile(project Project, sources []SourceMeta, opts Options) (*Plan, error)
 			Muted:         trackMuted,
 			HasAudio:      hasAudio,
 		})
-		cursor = clip.StartMs + clip.DurationMs
+		cursor, err = addDuration(clip.StartMs, clip.DurationMs)
+		if err != nil {
+			return plan, fmt.Errorf("%w：%s", err, clipLabel(clip))
+		}
 	}
 	if end > cursor {
 		plan.Segments = append(plan.Segments, gapSegment(cursor, end-cursor))
 	}
 	plan.DurationMs = 0
 	for _, seg := range plan.Segments {
-		plan.DurationMs += seg.DurationMs
+		sum, err := addDuration(plan.DurationMs, seg.DurationMs)
+		if err != nil {
+			return plan, err
+		}
+		plan.DurationMs = sum
 	}
 	if *opts.BurnSubtitles {
 		plan.SubtitleSRT = buildSubtitleSRT(plan.Subtitles)
@@ -174,19 +202,74 @@ func gapSegment(startMs, durationMs int64) Segment {
 	return Segment{Kind: KindGap, StartMs: startMs, DurationMs: durationMs, Volume: 1}
 }
 
-func indexSources(sources []SourceMeta) (map[string]SourceMeta, bool) {
+func indexSources(sources []SourceMeta) (map[string]SourceMeta, bool, error) {
 	if sources == nil {
-		return nil, false
+		return nil, false, nil
 	}
 	index := make(map[string]SourceMeta, len(sources))
 	for _, source := range sources {
 		id := strings.TrimSpace(source.ID)
 		if id == "" {
-			continue
+			return nil, true, ErrInvalidID
+		}
+		if _, exists := index[id]; exists {
+			return nil, true, fmt.Errorf("%w：%s", ErrDuplicateID, id)
 		}
 		index[id] = source
 	}
-	return index, true
+	return index, true, nil
+}
+
+func validateProject(project Project) error {
+	if project.Version != ProjectVersion {
+		return ErrUnsupportedVersion
+	}
+	if project.DurationMs < 0 {
+		return ErrNegativeTime
+	}
+	if project.DurationMs > MaxDurationMs {
+		return ErrInvalidDuration
+	}
+	trackIDs := map[string]struct{}{}
+	for _, track := range project.Tracks {
+		id := strings.TrimSpace(track.ID)
+		if id == "" {
+			return ErrInvalidID
+		}
+		if _, exists := trackIDs[id]; exists {
+			return fmt.Errorf("%w：%s", ErrDuplicateID, id)
+		}
+		trackIDs[id] = struct{}{}
+	}
+	clipIDs := map[string]struct{}{}
+	for _, clip := range project.Clips {
+		id := strings.TrimSpace(clip.ID)
+		if id == "" {
+			return ErrInvalidID
+		}
+		if _, exists := clipIDs[id]; exists {
+			return fmt.Errorf("%w：%s", ErrDuplicateID, id)
+		}
+		clipIDs[id] = struct{}{}
+	}
+	return nil
+}
+
+func addDuration(startMs, durationMs int64) (int64, error) {
+	if startMs < 0 || durationMs < 0 {
+		return 0, ErrNegativeTime
+	}
+	if startMs > MaxDurationMs || durationMs > MaxDurationMs {
+		return 0, ErrInvalidDuration
+	}
+	if durationMs > math.MaxInt64-startMs {
+		return 0, ErrInvalidDuration
+	}
+	sum := startMs + durationMs
+	if sum > MaxDurationMs {
+		return 0, ErrInvalidDuration
+	}
+	return sum, nil
 }
 
 func resolveSource(clip Clip, index map[string]SourceMeta, sourcesProvided bool) (string, SourceMeta, error) {

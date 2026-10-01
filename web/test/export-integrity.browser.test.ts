@@ -61,6 +61,46 @@ test("ZIP from real browser storage imports through CanvasPage into a fresh brow
     } finally { await source.close(); await target.close(); }
 }, 30_000);
 
+test("empty workspace ZIP restores into a fresh empty browser workspace", async () => {
+    const source = await browser.newContext();
+    const target = await browser.newContext();
+    try {
+        const page = await source.newPage();
+        await page.goto(server.url.toString());
+        await page.getByRole("button", { name: "测试缺失导出" }).waitFor();
+        const archive = await page.evaluate(async () => (window as any).exportFixture.exportEmpty());
+        const imported = await target.newPage();
+        await imported.goto(server.url.toString());
+        await imported.getByRole("button", { name: "测试缺失导出" }).waitFor();
+        const before = await imported.evaluate(async () => (window as any).exportFixture.snapshot());
+        expect(before.projects).toHaveLength(0);
+        expect(before.media).toBeNull();
+        await imported.locator('input[type="file"]').setInputFiles({ name: "empty.zip", mimeType: "application/zip", buffer: Buffer.from(archive, "base64") });
+        await imported.getByText("已导入 0 个画布并保存到本地", { exact: true }).waitFor({ timeout: 15_000 });
+        const after = await imported.evaluate(async () => (window as any).exportFixture.snapshot());
+        expect(after.projects).toHaveLength(0);
+        expect(after.media).toBeNull();
+    } finally { await source.close(); await target.close(); }
+}, 30_000);
+
+test("corrupt canvas ZIP fails in an empty workspace and writes no media", async () => {
+    const context = await browser.newContext();
+    try {
+        const page = await context.newPage();
+        await page.goto(server.url.toString());
+        await page.getByRole("button", { name: "测试缺失导出" }).waitFor();
+        await page.locator('input[type="file"]').setInputFiles({
+            name: "corrupt.zip",
+            mimeType: "application/zip",
+            buffer: Buffer.from("PK\u0003\u0004not-a-canvas-backup"),
+        });
+        await page.getByText(/导入失败/).waitFor({ timeout: 15_000 });
+        const after = await page.evaluate(async () => (window as any).exportFixture.snapshot());
+        expect(after.projects).toHaveLength(0);
+        expect(after.media).toBeNull();
+    } finally { await context.close(); }
+}, 15_000);
+
 test("missing-file error is actually visible and no archive is saved", async () => {
     const context = await browser.newContext();
     try {

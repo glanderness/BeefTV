@@ -36,6 +36,7 @@ export type TimelineRenderContext = {
     width: number;
     height: number;
     fps: number;
+    sampleRate: number;
     /** 是否烧录字幕；false 时跳过 burn 步骤 */
     burnSubtitles: boolean;
     /** 最终输出文件名 */
@@ -116,24 +117,31 @@ export function buildSubtitleSrt(clips: TimelineClip[]): string {
 
 function defaultContext(plan: CanonicalTimelinePlan): TimelineRenderContext {
     return {
-        width: plan.output?.width || 1920,
-        height: plan.output?.height || 1080,
-        fps: plan.output?.fps || 30,
-        burnSubtitles: plan.output?.burnSubtitles !== false,
+        width: plan.output.width,
+        height: plan.output.height,
+        fps: plan.output.fps,
+        sampleRate: plan.output.sampleRate || 44100,
+        burnSubtitles: plan.output.burnSubtitles !== false,
         outputName: "export.mp4",
     };
 }
 
+function assertPlanOwnedOutput(plan: CanonicalTimelinePlan, context: Partial<TimelineRenderContext>): void {
+    const output = defaultContext(plan);
+    if (context.width != null && context.width !== output.width) throw new Error("导出尺寸必须与渲染计划一致");
+    if (context.height != null && context.height !== output.height) throw new Error("导出尺寸必须与渲染计划一致");
+    if (context.fps != null && context.fps !== output.fps) throw new Error("导出帧率必须与渲染计划一致");
+    if (context.sampleRate != null && context.sampleRate !== output.sampleRate) throw new Error("导出采样率必须与渲染计划一致");
+    if (context.burnSubtitles != null && context.burnSubtitles !== output.burnSubtitles) throw new Error("字幕烧录必须与渲染计划一致");
+}
+
 function renderContext(plan: CanonicalTimelinePlan, context: Partial<TimelineRenderContext>): TimelineRenderContext {
+    assertPlanOwnedOutput(plan, context);
     const defaults = defaultContext(plan);
     return {
         ...defaults,
-        ...context,
-        width: context.width || defaults.width,
-        height: context.height || defaults.height,
-        fps: context.fps || defaults.fps,
-        burnSubtitles: context.burnSubtitles ?? defaults.burnSubtitles,
         outputName: context.outputName || defaults.outputName,
+        subtitleImages: context.subtitleImages,
     };
 }
 
@@ -160,7 +168,7 @@ function lowerGap(segment: CanonicalSegment, index: number, cfg: TimelineRenderC
         output,
         args: [
             "-f", "lavfi", "-i", `color=c=black:s=${cfg.width}x${cfg.height}:r=${cfg.fps}:d=${durationSec}`,
-            "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+            "-f", "lavfi", "-i", `anullsrc=r=${cfg.sampleRate}:cl=stereo`,
             "-t", String(durationSec),
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-shortest", output,
         ],
@@ -173,12 +181,13 @@ function lowerVisual(segment: CanonicalSegment, index: number, fileName: string,
     const output = `trim-${index}.mp4`;
     const volume = segment.volume ?? 1;
     const audioMap = segment.hasAudio && !segment.muted ? "0:a:0" : "1:a:0";
+    const anullsrc = `anullsrc=r=${cfg.sampleRate}:cl=stereo`;
     const args = segment.kind === "image"
-        ? ["-loop", "1", "-t", String(durationSec), "-i", fileName, "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-map", "0:v:0", "-map", "1:a:0"]
-        : ["-i", fileName, "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-ss", String((segment.sourceStartMs || 0) / 1000), "-t", String(durationSec), "-map", "0:v:0", "-map", audioMap];
+        ? ["-loop", "1", "-t", String(durationSec), "-i", fileName, "-f", "lavfi", "-i", anullsrc, "-map", "0:v:0", "-map", "1:a:0", "-t", String(durationSec), "-shortest"]
+        : ["-i", fileName, "-f", "lavfi", "-i", anullsrc, "-ss", String((segment.sourceStartMs || 0) / 1000), "-t", String(durationSec), "-map", "0:v:0", "-map", audioMap];
     args.push(
         "-vf", `scale=${cfg.width}:${cfg.height}:force_original_aspect_ratio=decrease,pad=${cfg.width}:${cfg.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${cfg.fps},format=yuv420p`,
-        "-af", `aresample=44100,aformat=channel_layouts=stereo,volume=${volume}${audioFadeFilter(segment)},apad`,
+        "-af", `aresample=${cfg.sampleRate},aformat=channel_layouts=stereo,volume=${volume}${audioFadeFilter(segment)},apad`,
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "128k", output,
     );
     return {
@@ -189,7 +198,7 @@ function lowerVisual(segment: CanonicalSegment, index: number, fileName: string,
     };
 }
 
-function lowerMix(plan: CanonicalTimelinePlan, concatOutput: string, files: Map<string, string>, audioClips: CanonicalAudioClip[]): TimelineRenderStep {
+function lowerMix(plan: CanonicalTimelinePlan, concatOutput: string, files: Map<string, string>, audioClips: CanonicalAudioClip[], cfg: TimelineRenderContext): TimelineRenderStep {
     const durationSec = plan.durationMs / 1000;
     const args = ["-i", concatOutput];
     const filters = ["[0:v]null[v]", "[0:a]apad[base]"];
@@ -197,9 +206,9 @@ function lowerMix(plan: CanonicalTimelinePlan, concatOutput: string, files: Map<
         args.push("-i", fileForSource(clip.sourceId, files));
         const duration = clip.durationMs / 1000;
         const volume = clip.muted ? 0 : clip.volume ?? 1;
-        filters.push(`[${index + 1}:a]atrim=start=${(clip.sourceStartMs || 0) / 1000}:duration=${duration},asetpts=PTS-STARTPTS,aresample=44100,aformat=channel_layouts=stereo,volume=${volume}${audioFadeFilter(clip)},adelay=${clip.startMs}:all=1[a${index}]`);
+        filters.push(`[${index + 1}:a]atrim=start=${(clip.sourceStartMs || 0) / 1000}:duration=${duration},asetpts=PTS-STARTPTS,aresample=${cfg.sampleRate},aformat=channel_layouts=stereo,volume=${volume}${audioFadeFilter(clip)},adelay=${clip.startMs}:all=1[a${index}]`);
     });
-    filters.push(`[base]${audioClips.map((_, index) => `[a${index}]`).join("")}amix=inputs=${audioClips.length + 1}:normalize=0:duration=first,alimiter=level=false[a]`);
+    filters.push(`[base]${audioClips.map((_, index) => `[a${index}]`).join("")}amix=inputs=${audioClips.length + 1}:normalize=0:duration=first[a]`);
     args.push("-filter_complex", filters.join(";"), "-map", "[v]", "-map", "[a]", "-t", String(durationSec), "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "timeline-mixed.mp4");
     return { kind: "mix", output: "timeline-mixed.mp4", args, description: "混合配音与背景音乐" };
 }
@@ -239,7 +248,7 @@ export function lowerCanonicalPlan(plan: CanonicalTimelinePlan, sources: Timelin
 
     const audioClips = plan.audio || [];
     if (audioClips.length) {
-        const mix = lowerMix(plan, concatOutput, files, audioClips);
+        const mix = lowerMix(plan, concatOutput, files, audioClips, cfg);
         steps.push(mix);
         concatOutput = mix.output;
     }

@@ -35,6 +35,11 @@ Object.assign(window, { exportFixture: {
         await exportCanvasProjects([fixtureProject("first"), fixtureProject("second")]);
         return archive;
     },
+    async exportEmpty() {
+        archive = "";
+        await exportCanvasProjects([]);
+        return archive;
+    },
     async snapshot() {
         const media = await getMediaBlob("audio:fixture:voice");
         return { projects: useCanvasStore.getState().projects, media: media ? await media.text() : null, archive };

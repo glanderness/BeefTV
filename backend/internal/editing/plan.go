@@ -14,10 +14,18 @@ import (
 
 const (
 	PlanVersion         = 1
+	ProjectVersion      = 2
 	DefaultWidth        = 1920
 	DefaultHeight       = 1080
 	DefaultFPS          = 30
 	DefaultSampleRate   = 44100
+	MaxWidth            = 7680
+	MaxHeight           = 4320
+	MinFPS              = 1
+	MaxFPS              = 120
+	MinSampleRate       = 8000
+	MaxSampleRate       = 96000
+	MaxDurationMs       = 12 * 60 * 60 * 1000
 	DurationToleranceMs = 100
 	KindVideo           = "video"
 	KindImage           = "image"
@@ -149,24 +157,37 @@ func DefaultOptions() Options {
 	return Options{Width: DefaultWidth, Height: DefaultHeight, FPS: DefaultFPS, SampleRate: DefaultSampleRate, BurnSubtitles: &burn}
 }
 
-func NormalizeOptions(opts Options) Options {
-	if opts.Width <= 0 {
+// NormalizeOptions fills omitted output fields, then rejects encoder-impossible values.
+func NormalizeOptions(opts Options) (Options, error) {
+	if opts.Width == 0 {
 		opts.Width = DefaultWidth
 	}
-	if opts.Height <= 0 {
+	if opts.Height == 0 {
 		opts.Height = DefaultHeight
 	}
-	if opts.FPS <= 0 {
+	if opts.FPS == 0 {
 		opts.FPS = DefaultFPS
 	}
-	if opts.SampleRate <= 0 {
+	if opts.SampleRate == 0 {
 		opts.SampleRate = DefaultSampleRate
 	}
 	if opts.BurnSubtitles == nil {
 		burn := true
 		opts.BurnSubtitles = &burn
 	}
-	return opts
+	if opts.Width < 2 || opts.Width > MaxWidth || opts.Width%2 != 0 {
+		return opts, ErrInvalidOutput
+	}
+	if opts.Height < 2 || opts.Height > MaxHeight || opts.Height%2 != 0 {
+		return opts, ErrInvalidOutput
+	}
+	if opts.FPS < MinFPS || opts.FPS > MaxFPS {
+		return opts, ErrInvalidOutput
+	}
+	if opts.SampleRate < MinSampleRate || opts.SampleRate > MaxSampleRate {
+		return opts, ErrInvalidOutput
+	}
+	return opts, nil
 }
 
 func (p Plan) HasMedia() bool {

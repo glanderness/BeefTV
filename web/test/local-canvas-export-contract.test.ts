@@ -14,6 +14,8 @@ test("local canvas export includes media and drawing documents", () => {
 });
 
 test("local canvas import restores drawings locally and skips remote sync", () => {
+    expect(exportSource).toContain("export async function openCanvasArchive");
+    expect(librarySource).toContain("openCanvasArchive(file)");
     expect(librarySource).toContain("drawingDocuments");
     expect(librarySource).toContain("saveCanvasDrawing(");
     expect(librarySource).toContain("const remoteSyncEnabled = hasRemoteUserDataSyncSession();");

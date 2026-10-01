@@ -1,7 +1,7 @@
-import { createZip } from "@/lib/zip";
+import { createZip, readZip } from "@/lib/zip";
 import { saveOwnedOrBrowserBlob, type OwnedMediaSaveResult } from "@/services/desktop-media-save";
-import { getMediaBlob } from "@/services/file-storage";
-import { getImageBlob } from "@/services/image-storage";
+import { getMediaBlob, setMediaBlob } from "@/services/file-storage";
+import { getImageBlob, setImageBlob } from "@/services/image-storage";
 import type { CanvasExportAsset, CanvasExportFile } from "@/types/canvas-export";
 import type { CanvasFolder, CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { loadCanvasDrawing, loadCanvasDrawingPreview, loadCanvasDrawingRender } from "@/lib/canvas/canvas-drawing-storage";
@@ -80,6 +80,52 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
     const data: CanvasExportFile = { app: "infinite-canvas", version: 4, exportedAt: new Date().toISOString(), ...(folders?.length ? { folders } : {}), projects: exportedProjects };
     const zip = await createZip([{ name: "projects.json", data: JSON.stringify(data, null, 2) }, ...zipFiles]);
     return saveOwnedOrBrowserBlob(`${safeFileName(fileName)}.zip`, zip);
+}
+
+export type OpenCanvasArchive = {
+    data: CanvasExportFile;
+    files: Map<string, Blob>;
+};
+
+export async function openCanvasArchive(file: Blob): Promise<OpenCanvasArchive> {
+    const zip = await readZip(file);
+    const projectFile = zip.get("projects.json");
+    if (!projectFile) throw new Error("缺少 projects.json 元数据文件");
+    let data: CanvasExportFile;
+    try {
+        data = JSON.parse(await projectFile.text()) as CanvasExportFile;
+    } catch {
+        throw new Error("画布备份已损坏，无法导入");
+    }
+    if (!data || !Array.isArray(data.projects)) throw new Error("projects.json 中缺少画布列表");
+    for (const item of data.projects) {
+        if (!item || !Array.isArray(item.files)) {
+            throw new Error(`画布「${item?.project?.title || "未命名画布"}」的媒体清单无效`);
+        }
+        const missing = item.files.find((entry) => !entry?.path || !zip.get(entry.path));
+        if (missing) throw new Error(`压缩包缺少媒体文件：${missing.path || "未命名文件"}`);
+        for (const document of item.drawingDocuments || []) {
+            if (document.previewPath && !zip.get(document.previewPath)) {
+                throw new Error(`压缩包缺少媒体文件：${document.previewPath}`);
+            }
+            if (document.generationRender?.path && !zip.get(document.generationRender.path)) {
+                throw new Error(`压缩包缺少媒体文件：${document.generationRender.path}`);
+            }
+        }
+    }
+    return { data, files: zip };
+}
+
+export async function restoreCanvasArchiveMedia(archive: OpenCanvasArchive): Promise<void> {
+    for (const item of archive.data.projects) {
+        for (const fileItem of item.files) {
+            const blob = archive.files.get(fileItem.path);
+            if (!blob) throw new Error(`压缩包缺少媒体文件：${fileItem.path}`);
+            const mime = fileItem.mimeType || blob.type || "application/octet-stream";
+            const typedBlob = blob.type ? blob : blob.slice(0, blob.size, mime);
+            await (fileItem.storageKey.startsWith("image:") ? setImageBlob(fileItem.storageKey, typedBlob) : setMediaBlob(fileItem.storageKey, typedBlob));
+        }
+    }
 }
 
 function collectStorageKeys(value: unknown, keys = new Set<string>()) {

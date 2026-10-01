@@ -246,11 +246,13 @@ func (s *Service) CreateTimelineTranscriptionTask(userID string, req TimelineTra
 type TimelineRenderCreateRequest struct {
 	ProjectID string          `json:"projectId"`
 	Timeline  editing.Project `json:"timeline"`
+	Options   editing.Options `json:"options"`
 }
 
 type timelineRenderInput struct {
 	ProjectID string          `json:"projectId"`
 	Timeline  editing.Project `json:"timeline"`
+	Options   editing.Options `json:"options"`
 }
 
 // TimelineRenderPlanRequest 是浏览器导出的只读规划入参。
@@ -275,7 +277,7 @@ func (s *Service) CreateTimelineRenderTask(userID string, req TimelineRenderCrea
 	if s.IsDraining() {
 		return nil, &AppError{Status: 503, Code: 503, Message: "服务正在维护，暂不接受新的生成任务", Retryable: true}
 	}
-	plan, err := editing.Compile(req.Timeline, nil, editing.DefaultOptions())
+	plan, err := editing.Compile(req.Timeline, nil, req.Options)
 	if err != nil {
 		return nil, BadAuthRequest(err.Error())
 	}
@@ -286,7 +288,7 @@ func (s *Service) CreateTimelineRenderTask(userID string, req TimelineRenderCrea
 	if err != nil {
 		return nil, err
 	}
-	input := timelineRenderInput{ProjectID: strings.TrimSpace(req.ProjectID), Timeline: req.Timeline}
+	input := timelineRenderInput{ProjectID: strings.TrimSpace(req.ProjectID), Timeline: req.Timeline, Options: req.Options}
 	inputJSON, _ := json.Marshal(input)
 	task := model.Task{
 		ID: newID(), UserID: userID, ProjectID: strings.TrimSpace(req.ProjectID),

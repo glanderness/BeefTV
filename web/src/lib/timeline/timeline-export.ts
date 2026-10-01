@@ -78,6 +78,7 @@ export async function exportTimelineToMp4(timeline: TimelineProject, sources: Ti
             width: context?.width,
             height: context?.height,
             fps: context?.fps,
+            sampleRate: context?.sampleRate,
             burnSubtitles: context?.burnSubtitles,
         },
     }, signal);
@@ -98,8 +99,8 @@ export async function exportTimelineToMp4(timeline: TimelineProject, sources: Ti
     const preparedSources: TimelineRenderSource[] = [];
     const facts: Record<string, CanonicalSourceFacts> = {};
     const engine = createWasmEngine(ffmpeg);
-    const width = context?.width || canonical.output.width || 1920;
-    const height = context?.height || canonical.output.height || 1080;
+    const width = canonical.output.width;
+    const height = canonical.output.height;
 
     try {
         await ffmpeg.load({ coreURL, wasmURL });
@@ -137,7 +138,7 @@ export async function exportTimelineToMp4(timeline: TimelineProject, sources: Ti
                 subtitleImages.push(name);
             }
         }
-        const plan = lowerCanonicalPlan(canonical, preparedSources, { ...context, width, height, subtitleImages });
+        const plan = lowerCanonicalPlan(canonical, preparedSources, { outputName: context?.outputName, subtitleImages });
         onProgress?.({ phase: "encoding", percent: 10, detail: "开始编码" });
         const execution = await executeTimelineRenderPlan({
             plan,

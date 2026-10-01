@@ -194,3 +194,46 @@ test.skipIf(process.env.BEEFTV_NATIVE_FFMPEG_TEST !== "1")("native FFmpeg: share
         expect(streams.stdout.toString()).toContain("audio");
     } finally { rmSync(dir, { recursive: true, force: true }); }
 }, 120000);
+
+test.skipIf(process.env.BEEFTV_NATIVE_FFMPEG_TEST !== "1")("native FFmpeg: image+gap+subtitle terminates with bounded duration and mixed audio", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "beeftv-image-gap-"));
+    const run = (args: string[], timeout = 20_000) => {
+        const result = spawnSync("ffmpeg", ["-hide_banner", "-y", ...args], { cwd: dir, maxBuffer: 16 * 1024 * 1024, timeout, killSignal: "SIGKILL" });
+        if (result.error) throw result.error;
+        if (result.status !== 0) throw new Error(result.stderr.toString());
+        return result;
+    };
+    try {
+        run(["-f", "lavfi", "-i", "color=c=blue:s=320x180", "-frames:v", "1", "still.png"]);
+        run(["-f", "lavfi", "-i", "sine=frequency=440:duration=2", "voice.wav"]);
+        const canonical = loadEditingPlan("image-gap-sub.plan.json");
+        const sources = [
+            { nodeId: "still", fileName: "still.png", durationMs: 0, hasAudio: false },
+            { nodeId: "voice", fileName: "voice.wav", durationMs: 2000, hasAudio: true },
+        ];
+        const plan = lowerCanonicalPlan(canonical, sources, { outputName: "out.mp4" });
+        const image = plan.steps.find((step) => step.kind === "trim")!;
+        expect(image.args.lastIndexOf("-t")).toBeGreaterThan(image.args.lastIndexOf("-i"));
+        expect(plan.steps.find((step) => step.kind === "mix")!.args.join(" ")).not.toContain("alimiter");
+        const engine = createNativeEngine(dir);
+        const started = Date.now();
+        await executeTimelineRenderPlan({ plan, engine });
+        expect(Date.now() - started).toBeLessThan(20_000);
+        const probe = spawnSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", "out.mp4"], { cwd: dir });
+        expect(Math.abs(Number(probe.stdout.toString()) - 3)).toBeLessThan(0.12);
+        const pcm = run(["-i", "out.mp4", "-vn", "-ac", "1", "-ar", "44100", "-f", "f32le", "pipe:1"]).stdout;
+        const values = new Float32Array(pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.length));
+        const amp = (start: number) => {
+            const offset = Math.floor(start * 44100);
+            let sum = 0;
+            for (let i = 0; i < 4000; i++) sum += Math.abs(values[offset + i] || 0);
+            return sum / 4000;
+        };
+        expect(amp(0.5)).toBeGreaterThan(0.01);
+        expect(amp(2.3)).toBeLessThan(0.002);
+        const pixel = run(["-ss", "2.3", "-i", "out.mp4", "-frames:v", "1", "-vf", "scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"]).stdout;
+        expect(pixel[0]).toBeLessThan(40);
+        expect(pixel[1]).toBeLessThan(40);
+        expect(pixel[2]).toBeLessThan(40);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+}, 30000);

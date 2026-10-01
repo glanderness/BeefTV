@@ -21,7 +21,7 @@ mock.module("@/lib/canvas/canvas-drawing-storage", () => ({
 }));
 mock.module("@/services/workspace-mode", () => ({ isLocalWorkspaceMode: () => true }));
 
-const { exportCanvasProjects } = await import("@/lib/canvas/canvas-export");
+const { exportCanvasProjects, openCanvasArchive, restoreCanvasArchiveMedia } = await import("@/lib/canvas/canvas-export");
 const { exportAssets, readAssetPackage } = await import("@/pages/assets/asset-transfer");
 const { createZip, readZip } = await import("@/lib/zip");
 const { archiveFileExtension, ExportIntegrityError } = await import("@/lib/export-integrity");
@@ -215,6 +215,53 @@ test("duplicate sanitized drawing names fail instead of overwriting archive entr
     ] as CanvasProject["nodes"];
     await expect(exportCanvasProjects([canvas])).rejects.toThrow("重名文件");
     expect(saved).toHaveLength(0);
+});
+
+test("canvas ZIP restores into a new empty workspace through the actual export/import path", async () => {
+    blobs.set("video:one", new Blob([new Uint8Array([9, 8, 7])], { type: "video/mp4" }));
+    blobs.set("audio:voice", new Blob(["voice-bytes"], { type: "audio/wav" }));
+    expect(await exportCanvasProjects([project([...blobs.keys()])])).toBe("saved");
+    const archiveFile = new File([Buffer.from(saved[0].data, "base64")], "workspace.zip");
+    blobs.clear();
+    restored.clear();
+    const archive = await openCanvasArchive(archiveFile);
+    expect(archive.data.projects).toHaveLength(1);
+    await restoreCanvasArchiveMedia(archive);
+    expect(restored.size).toBe(2);
+    expect(new Uint8Array(await restored.get("video:one")!.arrayBuffer())).toEqual(new Uint8Array([9, 8, 7]));
+    expect(await restored.get("audio:voice")!.text()).toBe("voice-bytes");
+});
+
+test("empty workspace ZIP restores into an empty workspace with no media writes", async () => {
+    blobs.clear();
+    restored.clear();
+    expect(await exportCanvasProjects([])).toBe("saved");
+    const archiveFile = new File([Buffer.from(saved[0].data, "base64")], "empty.zip");
+    blobs.clear();
+    restored.clear();
+    const archive = await openCanvasArchive(archiveFile);
+    expect(archive.data.projects).toEqual([]);
+    await restoreCanvasArchiveMedia(archive);
+    expect(restored.size).toBe(0);
+});
+
+test("missing media and corrupt canvas ZIP fail before writing restored files", async () => {
+    restored.clear();
+    const missing = await createZip([{
+        name: "projects.json",
+        data: JSON.stringify({
+            app: "infinite-canvas",
+            version: 4,
+            exportedAt: "2026-10-02T00:00:00.000Z",
+            projects: [{ project: { id: "broken", title: "损坏画布", nodes: [] }, files: [{ storageKey: "video:missing", path: "projects/broken/files/missing.mp4", mimeType: "video/mp4", bytes: 3 }] }],
+        }),
+    }]);
+    await expect(openCanvasArchive(new File([missing], "missing.zip"))).rejects.toThrow("missing.mp4");
+    expect(restored.size).toBe(0);
+
+    const corrupt = await createZip([{ name: "projects.json", data: "{not-json" }]);
+    await expect(openCanvasArchive(new File([corrupt], "corrupt.zip"))).rejects.toThrow("已损坏");
+    expect(restored.size).toBe(0);
 });
 
 test("malformed asset archive fails before writing partial media; duplicate ZIP entries fail instead of overwriting", async () => {

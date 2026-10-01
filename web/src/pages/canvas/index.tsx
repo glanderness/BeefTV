@@ -8,17 +8,15 @@ import { ArrowLeft, Download, FolderPlus, Image as ImageIcon, MoreHorizontal, Pe
 import { CollectionGrid, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceLoadingState, WorkspaceState } from "@/components/layout/workspace-state";
 
-import { readZip } from "@/lib/zip";
 import { setMediaBlob } from "@/services/file-storage";
 import { setImageBlob } from "@/services/image-storage";
 import { CanvasFolderCard } from "@/components/canvas/canvas-folder-card";
 import { RecycleBinDialog } from "@/components/canvas/recycle-bin-dialog";
 import { LibraryCardShell } from "@/components/canvas/library-card-shell";
-import type { CanvasExportFile } from "@/types/canvas-export";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
-import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
+import { exportCanvasProjects, openCanvasArchive } from "@/lib/canvas/canvas-export";
 import { reportOwnedMediaSave } from "@/services/desktop-media-save";
 import { normalizeLocalCanvasProject } from "@/lib/local-workspace-migration";
 import { saveCanvasDrawing, type CanvasDrawingRenderDraft } from "@/lib/canvas/canvas-drawing-storage";
@@ -245,16 +243,7 @@ export default function CanvasPage() {
         if (!file) return;
         const hideLoading = message.loading({ content: "正在解压并准备导入画布...", duration: 0 });
         try {
-            const zip = await readZip(file);
-            const projectFile = zip.get("projects.json");
-            if (!projectFile) throw new Error("缺少 projects.json 元数据文件");
-            const data = JSON.parse(await projectFile.text()) as CanvasExportFile;
-            if (!Array.isArray(data.projects)) throw new Error("projects.json 中缺少画布列表");
-            for (const item of data.projects) {
-                if (!Array.isArray(item.files)) throw new Error(`画布「${item.project?.title || "未命名画布"}」的媒体清单无效`);
-                const missing = item.files.find((entry) => !zip.get(entry.path));
-                if (missing) throw new Error(`压缩包缺少媒体文件：${missing.path}`);
-            }
+            const { data, files: zip } = await openCanvasArchive(file);
             const folderIdMap = new Map<string, string>();
             for (const folder of data.folders || []) {
                 if (!folder || typeof folder.id !== "string" || typeof folder.name !== "string") continue;

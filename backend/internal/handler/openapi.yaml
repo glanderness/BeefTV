@@ -463,6 +463,7 @@ paths:
     post:
       tags: [tasks]
       summary: 创建本机时间线渲染任务
+      description: 接收时间线快照与输出选项（宽高、帧率、采样率、是否烧录字幕）。选项写入任务输入，由本机 ffmpeg 按语义计划执行。
       responses:
         "200":
           $ref: "#/components/responses/Envelope"

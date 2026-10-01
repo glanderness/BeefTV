@@ -31,7 +31,7 @@ func TestRenderContracts(t *testing.T) {
 		}
 	}
 	hidden := false
-	p := renderProject{DurationMs: 6000, Tracks: []renderTrack{{ID: "v"}, {ID: "a", Muted: true}, {ID: "s", Visible: &hidden}}, Clips: []renderClip{renderClipFixture("v", "video", "v", 0, 6000, "resource:v"), renderClipFixture("a", "audio", "a", 1000, 2000, "resource:a"), {ID: "s", Kind: "subtitle", TrackID: "s", DurationMs: 1000, Text: "隐藏"}}}
+	p := renderProject{Version: 2, DurationMs: 6000, Tracks: []renderTrack{{ID: "v"}, {ID: "a", Muted: true}, {ID: "s", Visible: &hidden}}, Clips: []renderClip{renderClipFixture("v", "video", "v", 0, 6000, "resource:v"), renderClipFixture("a", "audio", "a", 1000, 2000, "resource:a"), {ID: "s", Kind: "subtitle", TrackID: "s", DurationMs: 1000, Text: "隐藏"}}}
 	plan, err := buildRenderPlan(p)
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestRenderFFmpegSixSecondAudioAndChineseSubtitles(t *testing.T) {
 	}{{"440", "voice.wav"}, {"880", "bgm.wav"}} {
 		run("-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency="+tone.freq+":duration=6", tone.file)
 	}
-	project := renderProject{DurationMs: 6000, Tracks: []renderTrack{{ID: "v"}, {ID: "a"}, {ID: "s"}}}
+	project := renderProject{Version: 2, DurationMs: 6000, Tracks: []renderTrack{{ID: "v"}, {ID: "a"}, {ID: "s"}}}
 	for i := 0; i < 3; i++ {
 		clip := renderClipFixture(string(rune('a'+i)), "video", "v", int64(i*2000), 2000, "resource:video")
 		clip.SourceStartMs = int64(i * 2000)
@@ -303,6 +303,7 @@ func TestRenderFFmpegGapsSilentVideoAndFades(t *testing.T) {
 	voice := renderClipFixture("voice", "audio", "a", 0, 1000, "resource:voice")
 	voice.FadeInMs = 800
 	project := renderProject{
+		Version:    2,
 		DurationMs: 3000,
 		Tracks:     []renderTrack{{ID: "v"}, {ID: "a"}},
 		Clips:      []renderClip{tone, silent, voice},
@@ -370,6 +371,92 @@ func TestRenderFFmpegGapsSilentVideoAndFades(t *testing.T) {
 	}
 	if pixel[0] > 40 || pixel[1] > 40 || pixel[2] > 40 {
 		t.Fatalf("gap was not black: %v", pixel[:3])
+	}
+}
+
+func TestRenderFFmpegImageGapSubtitleTerminates(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg required")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	dir := t.TempDir()
+	run := func(args ...string) []byte {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, ffmpeg, args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("ffmpeg: %v: %s", err, out)
+		}
+		return out
+	}
+	run("-v", "error", "-y", "-f", "lavfi", "-i", "color=c=blue:s=320x180", "-frames:v", "1", "still.png")
+	run("-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "voice.wav")
+	still := renderClipFixture("still", "image", "v", 0, 2000, "resource:still")
+	voice := renderClipFixture("voice", "audio", "a", 0, 2000, "resource:voice")
+	project := renderProject{
+		Version:    2,
+		DurationMs: 3000,
+		Tracks:     []renderTrack{{ID: "v"}, {ID: "a"}, {ID: "s"}},
+		Clips: []renderClip{
+			still, voice,
+			{ID: "sub", Kind: "subtitle", TrackID: "s", StartMs: 500, DurationMs: 1000, Text: "图片"},
+		},
+	}
+	opts := editing.DefaultOptions()
+	opts.Width, opts.Height, opts.FPS = 320, 180, 30
+	plan, err := editing.Compile(project, nil, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Segments) != 2 || plan.Segments[0].Kind != editing.KindImage || plan.Segments[1].Kind != editing.KindGap {
+		t.Fatalf("segments=%+v", plan.Segments)
+	}
+	files := map[string]string{"still": "still.png", "voice": "voice.wav"}
+	if err := os.WriteFile(filepath.Join(dir, "render-subtitles.srt"), []byte(plan.SubtitleSRT), 0600); err != nil {
+		t.Fatal(err)
+	}
+	args := buildRenderFFmpegArgs(*plan, files, "output.mp4")
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "-t 3.000") || strings.Contains(joined, "alimiter") {
+		t.Fatalf("image output must be bounded and mix without limiter: %s", joined)
+	}
+	run(args...)
+	probe := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", filepath.Join(dir, "output.mp4"))
+	out, err := probe.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(parseDuration(t, string(out))-3) > 0.12 {
+		t.Fatalf("duration=%s", out)
+	}
+	pcmCmd := exec.CommandContext(ctx, ffmpeg, "-v", "error", "-i", filepath.Join(dir, "output.mp4"), "-vn", "-ac", "1", "-ar", "44100", "-f", "f32le", "-")
+	pcm, err := pcmCmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	amp := func(start float64) float64 {
+		var sum float64
+		n := 4000
+		offset := int(start * 44100)
+		for i := 0; i < n; i++ {
+			sum += math.Abs(float64(math.Float32frombits(binary.LittleEndian.Uint32(pcm[(offset+i)*4:]))))
+		}
+		return sum / float64(n)
+	}
+	if amp(0.5) < 0.01 {
+		t.Fatal("image+audio mix lost the voice")
+	}
+	if amp(2.3) > 0.002 {
+		t.Fatal("gap after the still was not silent")
+	}
+	if ctx.Err() != nil {
+		t.Fatal("image export did not finish within timeout")
 	}
 }
 

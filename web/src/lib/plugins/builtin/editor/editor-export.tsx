@@ -10,6 +10,7 @@ import { exportTimelineToMp4, type TimelineExportProgress } from "@/lib/timeline
 import { resourceFileUrl } from "@/services/api/resources";
 import { waitForGenerationTask } from "@/services/api/task-center";
 import { compileTimelineRenderPlan, createTimelineRenderTask, type TimelineRenderResult } from "@/services/api/timeline-tasks";
+import { isIgnorablePlanPreviewError, RENDER_PLAN_PREVIEW_DEBOUNCE_MS } from "@/lib/timeline/timeline-plan-preview";
 import type { TimelineProject } from "@/types/timeline";
 
 type ExportState = {
@@ -60,24 +61,32 @@ export function EditorExport() {
             return;
         }
         const controller = new AbortController();
-        setPreview({ plan: null, planError: "", loading: true });
-        compileTimelineRenderPlan({
-            timeline: project,
-            sources: sources.map((source) => ({ id: source.nodeId, durationMs: source.durationMs })),
-        }, controller.signal)
-            .then((canonical) => {
-                if (controller.signal.aborted) return;
-                setPreview({ plan: lowerCanonicalPlan(canonical, sources), planError: "", loading: false });
-            })
-            .catch((error: unknown) => {
-                if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
-                setPreview({
-                    plan: null,
-                    planError: error instanceof Error ? error.message : "无法生成导出计划",
-                    loading: false,
+        setPreview((current) => ({ ...current, loading: true, planError: "" }));
+        const timer = window.setTimeout(() => {
+            compileTimelineRenderPlan({
+                timeline: project,
+                sources: sources.map((source) => ({ id: source.nodeId, durationMs: source.durationMs })),
+            }, controller.signal)
+                .then((canonical) => {
+                    if (controller.signal.aborted) return;
+                    setPreview({ plan: lowerCanonicalPlan(canonical, sources), planError: "", loading: false });
+                })
+                .catch((error: unknown) => {
+                    if (isIgnorablePlanPreviewError(error, controller.signal)) {
+                        if (!controller.signal.aborted) setPreview((current) => ({ ...current, loading: false }));
+                        return;
+                    }
+                    setPreview({
+                        plan: null,
+                        planError: error instanceof Error ? error.message : "无法生成导出计划",
+                        loading: false,
+                    });
                 });
-            });
-        return () => controller.abort();
+        }, RENDER_PLAN_PREVIEW_DEBOUNCE_MS);
+        return () => {
+            window.clearTimeout(timer);
+            controller.abort();
+        };
     }, [project, sources]);
     const plan = preview.plan;
     const planError = preview.planError;

@@ -21,7 +21,7 @@ func clip(id, kind, track string, start, duration int64, source string) Clip {
 func TestCompileExpandsGapAndSorts(t *testing.T) {
 	project := Project{
 		Version: 2,
-		Tracks:  []Track{{ID: "track-video-1", Kind: KindVideo}},
+		Tracks:  []Track{{ID: "track-video-1", Kind: KindVideo}, {ID: "track-subtitle-1", Kind: KindSubtitle}},
 		Clips: []Clip{
 			clip("clip-b", KindVideo, "track-video-1", 3000, 2000, "resource:res-b"),
 			clip("clip-a", KindVideo, "track-video-1", 0, 2000, "resource:res-a"),
@@ -81,7 +81,8 @@ func TestCompileIncludesMutedAudioAndImages(t *testing.T) {
 
 func TestCompileOverlapAndNegativeTime(t *testing.T) {
 	project := Project{
-		Tracks: []Track{{ID: "v"}},
+		Version: 2,
+		Tracks:  []Track{{ID: "v"}},
 		Clips: []Clip{
 			clip("a", KindVideo, "v", 0, 2000, "resource:a"),
 			clip("b", KindVideo, "v", 1000, 1000, "resource:b"),
@@ -90,7 +91,7 @@ func TestCompileOverlapAndNegativeTime(t *testing.T) {
 	if _, err := Compile(project, nil, DefaultOptions()); !errors.Is(err, ErrOverlap) {
 		t.Fatalf("overlap err=%v", err)
 	}
-	neg := Project{Tracks: []Track{{ID: "v"}}, Clips: []Clip{clip("a", KindVideo, "v", -1, 1000, "resource:a")}}
+	neg := Project{Version: 2, Tracks: []Track{{ID: "v"}}, Clips: []Clip{clip("a", KindVideo, "v", -1, 1000, "resource:a")}}
 	if _, err := Compile(neg, nil, DefaultOptions()); !errors.Is(err, ErrNegativeTime) {
 		t.Fatalf("negative err=%v", err)
 	}
@@ -98,8 +99,9 @@ func TestCompileOverlapAndNegativeTime(t *testing.T) {
 
 func TestCompileRequiresOpaqueSourcesWhenProvided(t *testing.T) {
 	project := Project{
-		Tracks: []Track{{ID: "v"}},
-		Clips:  []Clip{clip("a", KindVideo, "v", 0, 1000, "resource:a")},
+		Version: 2,
+		Tracks:  []Track{{ID: "v"}},
+		Clips:   []Clip{clip("a", KindVideo, "v", 0, 1000, "resource:a")},
 	}
 	project.Clips[0].NodeID = "node-a"
 	_, err := Compile(project, []SourceMeta{}, DefaultOptions())
@@ -119,8 +121,9 @@ func TestCompileRequiresOpaqueSourcesWhenProvided(t *testing.T) {
 
 func TestCompileRejectsNativePathKeys(t *testing.T) {
 	project := Project{
-		Tracks: []Track{{ID: "v"}},
-		Clips:  []Clip{clip("a", KindVideo, "v", 0, 1000, "/tmp/secret.mp4")},
+		Version: 2,
+		Tracks:  []Track{{ID: "v"}},
+		Clips:   []Clip{clip("a", KindVideo, "v", 0, 1000, "/tmp/secret.mp4")},
 	}
 	if _, err := Compile(project, nil, DefaultOptions()); !errors.Is(err, ErrMissingMediaRef) {
 		t.Fatalf("path key accepted: %v", err)
@@ -139,6 +142,7 @@ func TestCompileVolumeZeroAndSubtitleSRT(t *testing.T) {
 	}
 	hidden := false
 	project := Project{
+		Version:    2,
 		DurationMs: 6000,
 		Tracks:     []Track{{ID: "v"}, {ID: "a", Muted: true}, {ID: "s", Visible: &hidden}},
 		Clips: []Clip{
@@ -147,7 +151,7 @@ func TestCompileVolumeZeroAndSubtitleSRT(t *testing.T) {
 			{ID: "s", Kind: KindSubtitle, TrackID: "s", DurationMs: 1000, Text: "隐藏"},
 			{ID: "sub-b", Kind: KindSubtitle, TrackID: "v", StartMs: 2000, DurationMs: 1000, Text: "第二条"},
 			{ID: "sub-a", Kind: KindSubtitle, TrackID: "v", StartMs: 0, DurationMs: 1000, Text: "第一条"},
-			{ID: "sub-blank", Kind: KindSubtitle, TrackID: "v", StartMs: 5000, DurationMs: 1000, Text: "   "},
+			{ID: "sub-blank", Kind: KindSubtitle, TrackID: "s", StartMs: 5000, DurationMs: 1000, Text: "   "},
 		},
 	}
 	plan, err := Compile(project, nil, DefaultOptions())
@@ -165,6 +169,7 @@ func TestCompileVolumeZeroAndSubtitleSRT(t *testing.T) {
 
 func TestCompileTrailingGapFromAudioAndProjectDuration(t *testing.T) {
 	project := Project{
+		Version:    2,
 		DurationMs: 5000,
 		Tracks:     []Track{{ID: "v"}, {ID: "a"}},
 		Clips: []Clip{
@@ -183,7 +188,8 @@ func TestCompileTrailingGapFromAudioAndProjectDuration(t *testing.T) {
 
 func TestApplySourceFactsSilentVideoAndDuration(t *testing.T) {
 	project := Project{
-		Tracks: []Track{{ID: "v"}, {ID: "a"}},
+		Version: 2,
+		Tracks:  []Track{{ID: "v"}, {ID: "a"}},
 		Clips: []Clip{
 			func() Clip {
 				c := clip("v", KindVideo, "v", 0, 1000, "resource:v")
@@ -224,6 +230,10 @@ func TestCompileSharedSixSecondMixFixture(t *testing.T) {
 
 func TestCompileSharedGapSilentFadeFixture(t *testing.T) {
 	assertFixturePlan(t, "gap-silent-fade.timeline.json", "gap-silent-fade.plan.json")
+}
+
+func TestCompileSharedImageGapSubFixture(t *testing.T) {
+	assertFixturePlan(t, "image-gap-sub.timeline.json", "image-gap-sub.plan.json")
 }
 
 func assertFixturePlan(t *testing.T, timelineName, planName string) {
@@ -282,6 +292,91 @@ func testdataRoot(t *testing.T) string {
 	}
 	t.Fatal("fixtures/editing not found")
 	return ""
+}
+
+func TestCompilePreflightRejectsMalformed(t *testing.T) {
+	valid := clip("v", KindVideo, "v", 0, 1000, "resource:v")
+	base := Project{Version: 2, Tracks: []Track{{ID: "v"}}, Clips: []Clip{valid}}
+	if _, err := Compile(base, nil, DefaultOptions()); err != nil {
+		t.Fatal(err)
+	}
+
+	noVersion := base
+	noVersion.Version = 1
+	if _, err := Compile(noVersion, nil, DefaultOptions()); !errors.Is(err, ErrUnsupportedVersion) {
+		t.Fatalf("version err=%v", err)
+	}
+
+	dup := base
+	dup.Clips = []Clip{valid, clip("v", KindVideo, "v", 2000, 1000, "resource:v2")}
+	if _, err := Compile(dup, nil, DefaultOptions()); !errors.Is(err, ErrDuplicateID) {
+		t.Fatalf("dup err=%v", err)
+	}
+
+	unknownKind := base
+	unknownKind.Clips = []Clip{{ID: "t", Kind: "text", TrackID: "v", StartMs: 0, DurationMs: 1000, Volume: 1}}
+	if _, err := Compile(unknownKind, nil, DefaultOptions()); !errors.Is(err, ErrUnsupportedKind) {
+		t.Fatalf("kind err=%v", err)
+	}
+
+	zeroDur := base
+	zeroDur.Clips = []Clip{clip("v", KindVideo, "v", 0, 0, "resource:v")}
+	if _, err := Compile(zeroDur, nil, DefaultOptions()); !errors.Is(err, ErrInvalidClip) {
+		t.Fatalf("zero duration err=%v", err)
+	}
+
+	unknownTrack := base
+	unknownTrack.Clips = []Clip{clip("v", KindVideo, "missing", 0, 1000, "resource:v")}
+	if _, err := Compile(unknownTrack, nil, DefaultOptions()); !errors.Is(err, ErrUnknownTrack) {
+		t.Fatalf("track err=%v", err)
+	}
+
+	emptySub := Project{
+		Version: 2,
+		Tracks:  []Track{{ID: "v"}, {ID: "s"}},
+		Clips: []Clip{
+			valid,
+			{ID: "sub", Kind: KindSubtitle, TrackID: "s", DurationMs: 1000, Text: "  "},
+		},
+	}
+	if _, err := Compile(emptySub, nil, DefaultOptions()); !errors.Is(err, ErrInvalidClip) {
+		t.Fatalf("empty subtitle err=%v", err)
+	}
+
+	hidden := false
+	hiddenBad := Project{
+		Version: 2,
+		Tracks:  []Track{{ID: "v"}, {ID: "h", Visible: &hidden}},
+		Clips: []Clip{
+			valid,
+			{ID: "bad", Kind: "text", TrackID: "h", DurationMs: 0},
+		},
+	}
+	if _, err := Compile(hiddenBad, nil, DefaultOptions()); err != nil {
+		t.Fatalf("hidden malformed clip should be omitted: %v", err)
+	}
+
+	if _, err := Compile(base, nil, Options{Width: 3, Height: 1080, FPS: 30, SampleRate: 44100}); !errors.Is(err, ErrInvalidOutput) {
+		t.Fatalf("odd width err=%v", err)
+	}
+	if _, err := Compile(base, nil, Options{Width: 1920, Height: 1080, FPS: 0, SampleRate: 44100}); err != nil {
+		t.Fatalf("zero fps should default: %v", err)
+	}
+	if _, err := Compile(base, nil, Options{Width: 1920, Height: 1080, FPS: 240, SampleRate: 44100}); !errors.Is(err, ErrInvalidOutput) {
+		t.Fatalf("fps err=%v", err)
+	}
+	if _, err := Compile(base, nil, Options{Width: 1920, Height: 1080, FPS: 30, SampleRate: 1000}); !errors.Is(err, ErrInvalidOutput) {
+		t.Fatalf("rate err=%v", err)
+	}
+	if _, err := Compile(base, nil, Options{Width: 9000, Height: 1080, FPS: 30, SampleRate: 44100}); !errors.Is(err, ErrInvalidOutput) {
+		t.Fatalf("huge width err=%v", err)
+	}
+
+	overflow := base
+	overflow.Clips = []Clip{clip("v", KindVideo, "v", MaxDurationMs-10, 100, "resource:v")}
+	if _, err := Compile(overflow, nil, DefaultOptions()); !errors.Is(err, ErrInvalidDuration) {
+		t.Fatalf("overflow err=%v", err)
+	}
 }
 
 func TestFormatSRTTimestamp(t *testing.T) {

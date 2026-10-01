@@ -22,15 +22,15 @@ const renderFfmpegEnv = "CANVAS_FFMPEG_PATH"
 // 渲染是本地重编码，不经模型路由；失败一律落明确终态。
 func (w *taskWorkerCoordinator) processTimelineRender(task *model.Task, ctx context.Context) error {
 	s := w.service
-	ffmpegBin, err := renderFfmpegBinary()
-	if err != nil {
-		return w.failTimelineTask(task, "渲染失败", err.Error())
-	}
 	var input timelineRenderInput
 	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
 		return w.failTimelineTask(task, "渲染失败", "任务缺少有效的时间线快照")
 	}
-	plan, err := editing.Compile(input.Timeline, nil, editing.DefaultOptions())
+	plan, err := editing.Compile(input.Timeline, nil, input.Options)
+	if err != nil {
+		return w.failTimelineTask(task, "渲染失败", err.Error())
+	}
+	ffmpegBin, err := renderFfmpegBinary()
 	if err != nil {
 		return w.failTimelineTask(task, "渲染失败", err.Error())
 	}

@@ -74,7 +74,8 @@ func TestTimelineRenderPlanIsAuthenticatedAndSideEffectFree(t *testing.T) {
 
 	overlap, _ := json.Marshal(app.TimelineRenderPlanRequest{
 		Timeline: editing.Project{
-			Tracks: []editing.Track{{ID: "v"}},
+			Version: 2,
+			Tracks:  []editing.Track{{ID: "v"}},
 			Clips: []editing.Clip{
 				{ID: "a", Kind: "video", NodeID: "a", TrackID: "v", DurationMs: 2000, Volume: 1, DirectMedia: &editing.DirectMedia{StorageKey: "resource:a"}},
 				{ID: "b", Kind: "video", NodeID: "b", TrackID: "v", StartMs: 1000, DurationMs: 1000, Volume: 1, DirectMedia: &editing.DirectMedia{StorageKey: "resource:b"}},

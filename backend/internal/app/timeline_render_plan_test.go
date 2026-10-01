@@ -27,11 +27,11 @@ func mustBuildRenderPlan(t *testing.T, project renderProject) *editing.Plan {
 func TestBuildRenderPlanExpandsGapAndSorts(t *testing.T) {
 	project := renderProject{
 		Version: 2,
-		Tracks:  []renderTrack{{ID: "track-video-1", Kind: "video"}},
+		Tracks:  []renderTrack{{ID: "track-video-1", Kind: "video"}, {ID: "track-subtitle-1", Kind: "subtitle"}},
 		Clips: []renderClip{
 			renderClipFixture("clip-b", "video", "track-video-1", 3000, 2000, "resource:res-b"),
 			renderClipFixture("clip-a", "video", "track-video-1", 0, 2000, "resource:res-a"),
-			renderClipFixture("clip-sub", "subtitle", "track-subtitle-1", 0, 1000, ""),
+			{ID: "clip-sub", Kind: "subtitle", TrackID: "track-subtitle-1", DurationMs: 1000, Text: "hi"},
 		},
 	}
 	plan := mustBuildRenderPlan(t, project)
@@ -78,7 +78,6 @@ func TestBuildRenderSubtitleSRT(t *testing.T) {
 		Clips: []renderClip{
 			{ID: "sub-b", Kind: "subtitle", StartMs: 2000, DurationMs: 1000, Text: "第二条"},
 			{ID: "sub-a", Kind: "subtitle", StartMs: 0, DurationMs: 1000, Text: "第一条"},
-			{ID: "sub-blank", Kind: "subtitle", StartMs: 5000, DurationMs: 1000, Text: "   "},
 		},
 	}
 	srt := buildRenderSubtitleSRT(project)

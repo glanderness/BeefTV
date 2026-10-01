@@ -38,6 +38,7 @@ export async function createTimelineTranscriptionTask(
 export type TimelineRenderCreateRequest = {
     projectId: string;
     timeline: TimelineProject;
+    options?: CanonicalPlanOptions;
 };
 
 export type TimelineRenderResult = {

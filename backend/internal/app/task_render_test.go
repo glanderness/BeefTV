@@ -124,8 +124,54 @@ func TestCreateTimelineRenderTaskRejectsNoMedia(t *testing.T) {
 		}},
 	}
 	_, err := svc.CreateTimelineRenderTask("usr-render-test", TimelineRenderCreateRequest{Timeline: textOnly})
-	if err == nil || !strings.Contains(err.Error(), "可渲染") {
-		t.Fatalf("err = %v, want mention of 没有可渲染的媒体片段", err)
+	if err == nil || (!strings.Contains(err.Error(), "可渲染") && !strings.Contains(err.Error(), "不支持")) {
+		t.Fatalf("err = %v, want unsupported kind or no renderable media", err)
+	}
+}
+
+func TestCreateTimelineRenderTaskCarriesOptions(t *testing.T) {
+	svc, db := newTimelineTaskTestService(t)
+	burn := false
+	task, err := svc.CreateTimelineRenderTask("usr-render-test", TimelineRenderCreateRequest{
+		ProjectID: "prj-render",
+		Timeline:  renderTestProject("resource:res-1"),
+		Options:   editing.Options{Width: 1280, Height: 720, FPS: 24, SampleRate: 48000, BurnSubtitles: &burn},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	var stored model.Task
+	if err := db.First(&stored, "id = ?", task.ID).Error; err != nil {
+		t.Fatalf("load task: %v", err)
+	}
+	var input timelineRenderInput
+	if err := json.Unmarshal([]byte(stored.InputJSON), &input); err != nil {
+		t.Fatalf("input: %v", err)
+	}
+	if input.Options.Width != 1280 || input.Options.Height != 720 || input.Options.FPS != 24 || input.Options.SampleRate != 48000 || input.Options.BurnSubtitles == nil || *input.Options.BurnSubtitles {
+		t.Fatalf("options not stored: %+v", input.Options)
+	}
+}
+
+func TestTimelineRenderRejectsMalformedBeforeFFmpeg(t *testing.T) {
+	svc, db := newTimelineTaskTestService(t)
+	project := renderTestProject("resource:res-1")
+	project.Clips[0].Kind = "text"
+	task := seedRunningRenderTask(t, db, renderInputJSON(t, project))
+	t.Setenv(renderFfmpegEnv, "/no/such/ffmpeg")
+	w := newTaskWorkerCoordinator(svc)
+	if err := w.processTimelineRender(task, context.Background()); err != nil {
+		t.Fatalf("process: want nil (task terminal handled internally), got %v", err)
+	}
+	var stored model.Task
+	if err := db.First(&stored, "id = ?", task.ID).Error; err != nil {
+		t.Fatalf("load task: %v", err)
+	}
+	if stored.Status != model.TaskStatusFailed {
+		t.Fatalf("status = %q, want failed", stored.Status)
+	}
+	if !strings.Contains(stored.Error, "不支持") {
+		t.Fatalf("error = %q, want unsupported kind before ffmpeg", stored.Error)
 	}
 }
 
