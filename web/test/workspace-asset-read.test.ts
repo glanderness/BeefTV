@@ -18,7 +18,7 @@ import {
     WORKSPACE_ASSET_BATCH_LIMIT,
     WORKSPACE_ASSET_TOMBSTONE_SEAM,
 } from "@/services/workspace-asset-read";
-import { recordAssetStoreDraft, resetAssetStoreDraftsForTests, useAssetStore, type Asset } from "@/stores/use-asset-store";
+import { peekAssetStoreDraft, recordAssetStoreDraft, resetAssetStoreDraftsForTests, useAssetStore, type Asset } from "@/stores/use-asset-store";
 
 function deferred<T = void>() {
     let resolve!: (value: T | PromiseLike<T>) => void;
@@ -70,17 +70,38 @@ function sampleClientAsset(id: string, title = "SQLite 素材", extra: Record<st
     };
 }
 
-function pageResponse(assets: unknown[], extra: { total?: number; page?: number; pageSize?: number; hasMore?: boolean } = {}) {
+function pageResponse(assets: unknown[], extra: { total?: number; page?: number; pageSize?: number; hasMore?: boolean; favoriteTotal?: number; recentTotal?: number } = {}) {
     return {
         assets,
         kindCounts: { image: assets.length },
         categoryCounts: { material: assets.length },
         folderCounts: {},
+        favoriteTotal: extra.favoriteTotal ?? 0,
+        recentTotal: extra.recentTotal ?? 0,
         page: extra.page ?? 1,
         pageSize: extra.pageSize ?? 40,
         total: extra.total ?? assets.length,
         hasMore: extra.hasMore ?? false,
     };
+}
+
+function favoriteCatalog(count = 125) {
+    return Array.from({ length: count }, (_, index) => {
+        const n = count - index;
+        const id = `fav-${String(n).padStart(3, "0")}`;
+        return sampleClientAsset(id, `收藏${n}`, { metadata: { favorite: true } });
+    });
+}
+
+function pagedFavorites(page: number, pageSize: number, catalog = favoriteCatalog()) {
+    const start = Math.max(0, page - 1) * pageSize;
+    return pageResponse(catalog.slice(start, start + pageSize), {
+        page,
+        pageSize,
+        total: catalog.length,
+        hasMore: start + pageSize < catalog.length,
+        favoriteTotal: catalog.length,
+    });
 }
 
 function envelope(data: unknown, status = 200) {
@@ -371,27 +392,111 @@ describe("workspace asset canonical reads", () => {
         }
     });
 
-    test("favorite extra filters reuse one bounded page and do not fetch each asset", async () => {
+    test("favorite filters page through backend counts instead of the first 120 rows", async () => {
         const restore = switchScope("owner-a");
         desktopBackend();
+        const requests: Array<Record<string, unknown>> = [];
+        try {
+            const load = (page: number) => withAdapter(async (config) => {
+                const params = requestParams(config);
+                requests.push(params);
+                expect(params.favorite).toBe(1);
+                expect(params.pageSize).toBe(40);
+                expect(params.page).toBe(page);
+                return envelope(pagedFavorites(page, 40));
+            }, async () => loadWorkspaceAssetLibraryPage({ page, pageSize: 40, favorite: true, status: "active" }));
+
+            const page1 = await load(1);
+            const page2 = await load(2);
+            const page4 = await load(4);
+            expect(page1.assets.map((asset) => asset.id)).toEqual(favoriteCatalog().slice(0, 40).map((asset) => asset.id));
+            expect(page1.assets.map((asset) => asset.id)).toContain("fav-125");
+            expect(page1.hasMore).toBe(true);
+            expect(page1.total).toBe(125);
+            expect(page1.favoriteTotal).toBe(125);
+            expect(page2.assets.map((asset) => asset.id)).toEqual(favoriteCatalog().slice(40, 80).map((asset) => asset.id));
+            expect(page2.assets.some((asset) => page1.assets.some((item) => item.id === asset.id))).toBe(false);
+            expect(page4.assets.map((asset) => asset.id)).toContain("fav-005");
+            expect(page4.assets).toHaveLength(5);
+            expect(page4.hasMore).toBe(false);
+            expect(page4.total).toBe(125);
+            expect(requests.every((params) => params.pageSize === 40 && params.favorite === 1)).toBe(true);
+            expect(requests.map((params) => params.page)).toEqual([1, 2, 4]);
+        } finally {
+            restore();
+        }
+    });
+
+    test("changed draft category and title leave the old filter and match the new one", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        useAssetStore.setState({ assets: [sampleAsset("live", "海边")] });
+        useAssetStore.getState().updateAsset("live", { title: "室内新标题", category: "other" });
+        try {
+            const oldFilter = await withAdapter(async () => envelope(pageResponse([sampleClientAsset("live", "海边")], { total: 1 })), async () => (
+                loadWorkspaceAssetLibraryPage({ page: 1, pageSize: 40, category: "material", query: "海边" })
+            ));
+            expect(oldFilter.assets.map((asset) => asset.id)).toEqual([]);
+            expect(oldFilter.total).toBe(0);
+
+            const newFilter = await withAdapter(async () => envelope(pageResponse([], { total: 0 })), async () => (
+                loadWorkspaceAssetLibraryPage({ page: 1, pageSize: 40, category: "other", query: "室内" })
+            ));
+            expect(newFilter.assets.map((asset) => asset.id)).toEqual(["live"]);
+            expect(newFilter.assets[0]?.title).toBe("室内新标题");
+            expect(isUnsavedWorkspaceAsset(newFilter.assets[0]!)).toBe(true);
+        } finally {
+            restore();
+        }
+    });
+
+    test("draft-only extras on page 1 do not duplicate when the backend row appears later", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        useAssetStore.setState({ assets: [{ ...sampleAsset("draft-1", "未提交"), status: "draft" }] });
+        recordAssetStoreDraft("draft-1", "upsert");
+        try {
+            const page1 = await withAdapter(async () => envelope(pageResponse([sampleClientAsset("sqlite-1")], { total: 2, hasMore: true })), async () => (
+                loadWorkspaceAssetLibraryPage({ page: 1, pageSize: 40 })
+            ));
+            expect(page1.assets.map((asset) => asset.id)).toEqual(["draft-1", "sqlite-1"]);
+
+            const page2 = await withAdapter(async () => envelope(pageResponse([sampleClientAsset("draft-1", "已写入")], { page: 2, total: 2, hasMore: false })), async () => (
+                loadWorkspaceAssetLibraryPage({ page: 2, pageSize: 40 })
+            ));
+            expect(page2.assets.map((asset) => asset.id)).toEqual([]);
+            const ids = [...page1.assets, ...page2.assets].map((asset) => asset.id);
+            expect(new Set(ids).size).toBe(ids.length);
+        } finally {
+            restore();
+        }
+    });
+
+    test("draft asset snapshot is usable when the store has no projected copy", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        useAssetStore.setState({ assets: [] });
+        recordAssetStoreDraft("snap-1", "upsert");
+        Object.assign(peekAssetStoreDraft(getActiveUserScope(), "snap-1") as object, { asset: sampleAsset("snap-1", "快照素材") });
         const urls: string[] = [];
-        const assets = [
-            sampleClientAsset("fav-1", "收藏一", { metadata: { favorite: true } }),
-            sampleClientAsset("plain-1", "普通"),
-            sampleClientAsset("fav-2", "收藏二", { metadata: { favorite: true } }),
-        ];
         try {
             const page = await withAdapter(async (config) => {
                 urls.push(requestKey(config));
-                expect(requestParams(config).page).toBe(1);
-                expect(Number(requestParams(config).pageSize)).toBeGreaterThanOrEqual(120);
-                expect(requestParams(config).favorite).toBeUndefined();
-                return envelope(pageResponse(assets, { pageSize: 120, total: 3 }));
-            }, async () => loadWorkspaceAssetLibraryPage({ page: 1, pageSize: 40, favorite: true }));
-            expect(page.assets.map((asset) => asset.id)).toEqual(["fav-1", "fav-2"]);
-            expect(page.total).toBe(2);
-            expect(urls).toEqual(["get /assets"]);
-            expect(urls.some((url) => url.includes("/assets/fav-"))).toBe(false);
+                if (String(config.method || "get").toLowerCase() === "put") throw new Error("snapshot must not PUT");
+                return envelope(pageResponse([], { total: 0 }));
+            }, async () => loadWorkspaceAssetLibraryPage({ page: 1, pageSize: 40 }));
+            expect(page.assets.map((asset) => asset.id)).toEqual(["snap-1"]);
+            expect(page.assets[0]?.title).toBe("快照素材");
+            expect(useAssetStore.getState().assets).toEqual([]);
+
+            await withAdapter(async (config) => {
+                urls.push(requestKey(config));
+                if (String(config.method || "get").toLowerCase() === "put") throw new Error("snapshot must not PUT");
+                throw new Error(`unexpected ${requestKey(config)}`);
+            }, async () => loadWorkspaceAssetsForUse(["snap-1"]));
+            expect(useAssetStore.getState().assets.find((asset) => asset.id === "snap-1")?.title).toBe("快照素材");
+            expect(urls.some((url) => url.startsWith("put "))).toBe(false);
+            expect(urls.some((url) => url.includes("/assets/batch"))).toBe(false);
         } finally {
             restore();
         }
@@ -441,6 +546,56 @@ describe("workspace asset canonical reads", () => {
             const asset = page.assets[0];
             expect(asset && "data" in asset && "dataUrl" in asset.data ? asset.data.dataUrl : "").toBe(resourceFileUrl("res-1"));
             expect(asset?.coverUrl).toBe(resourceFileUrl("res-1"));
+        } finally {
+            restore();
+        }
+    });
+
+    test("owned resource keys resolve the current resource route after the process URL changes", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        const stale = "http://127.0.0.1:9999/api/resources/res-1/file";
+        try {
+            const page = await withAdapter(async () => envelope(pageResponse([
+                sampleClientAsset("stale-image", "旧地址图片", {
+                    coverUrl: stale,
+                    data: { dataUrl: stale, storageKey: "resource:res-1", width: 8, height: 8, bytes: 4, mimeType: "image/png" },
+                }),
+                {
+                    id: "stale-video",
+                    kind: "video",
+                    title: "旧地址视频",
+                    coverUrl: stale,
+                    tags: [],
+                    category: "material",
+                    status: "confirmed",
+                    data: { url: stale, storageKey: "resource:res-1", width: 8, height: 8, bytes: 4, mimeType: "video/mp4" },
+                    createdAt: "2026-10-02T00:00:00.000Z",
+                    updatedAt: "2026-10-02T00:00:00.000Z",
+                },
+            ])), async () => loadWorkspaceAssetLibraryPage({ page: 1, pageSize: 40 }));
+            const image = page.assets.find((asset) => asset.id === "stale-image");
+            const video = page.assets.find((asset) => asset.id === "stale-video");
+            expect(image && "data" in image && "dataUrl" in image.data ? image.data.dataUrl : "").toBe(resourceFileUrl("res-1"));
+            expect(image?.coverUrl).toBe(resourceFileUrl("res-1"));
+            expect(video && "data" in video && "url" in video.data ? video.data.url : "").toBe(resourceFileUrl("res-1"));
+        } finally {
+            restore();
+        }
+    });
+
+    test("non-resource external media URLs are left unchanged", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        const external = "https://cdn.example.com/scene.png";
+        try {
+            const page = await withAdapter(async () => envelope(pageResponse([sampleClientAsset("external-1", "外链", {
+                coverUrl: external,
+                data: { dataUrl: external, width: 8, height: 8, bytes: 4, mimeType: "image/png" },
+            })])), async () => loadWorkspaceAssetLibraryPage({ page: 1, pageSize: 40 }));
+            const asset = page.assets[0];
+            expect(asset && "data" in asset && "dataUrl" in asset.data ? asset.data.dataUrl : "").toBe(external);
+            expect(asset?.coverUrl).toBe(external);
         } finally {
             restore();
         }

@@ -14,7 +14,10 @@ import {
     runAssetStoreProjection,
     useAssetStore,
     type Asset,
+    type AssetStoreDraftRecord,
 } from "@/stores/use-asset-store";
+
+type AssetStoreDraftWithSnapshot = AssetStoreDraftRecord & { asset?: Asset };
 
 export const WORKSPACE_ASSET_BATCH_LIMIT = 100;
 export const WORKSPACE_ASSET_RECENT_MS = 30 * 24 * 60 * 60 * 1000;
@@ -50,6 +53,8 @@ export type WorkspaceAssetLibraryPage = {
     kindCounts: Record<string, number>;
     categoryCounts: Record<string, number>;
     folderCounts: Record<string, number>;
+    favoriteTotal: number;
+    recentTotal: number;
     page: number;
     pageSize: number;
     total: number;
@@ -78,19 +83,19 @@ export async function loadWorkspaceAssetLibraryPage(options: WorkspaceAssetLibra
     assertUserScope(expected);
     throwIfAborted(options.signal);
 
-    const extraFilters = hasExtraClientFilters(options);
-    const requestPage = extraFilters ? 1 : options.page;
-    const requestPageSize = extraFilters ? Math.max(options.pageSize, 120) : options.pageSize;
     const remote = await listWorkspaceAssetsPage(
         {
-            page: requestPage,
-            pageSize: requestPageSize,
+            page: options.page,
+            pageSize: options.pageSize,
             kind: options.kind,
             category: options.category,
             folderId: options.folderId,
             uncategorized: options.uncategorized,
             status: options.status,
             query: options.query,
+            favorite: options.favorite,
+            recent: options.recent,
+            project: options.project,
         },
         { signal: options.signal, expectedScope: expected },
     );
@@ -100,21 +105,7 @@ export async function loadWorkspaceAssetLibraryPage(options: WorkspaceAssetLibra
     const parsed = parseWorkspaceAssetPage(remote);
     const overlaid = overlayAssetDrafts(parsed, options, expected);
     projectCommittedAssets(parsed.assets, expected);
-    if (!extraFilters) return overlaid;
-
-    const filtered = overlaid.assets.filter((asset) => matchesExtraClientFilters(asset, options));
-    const start = Math.max(0, options.page - 1) * options.pageSize;
-    return {
-        ...overlaid,
-        assets: filtered.slice(start, start + options.pageSize),
-        page: options.page,
-        pageSize: options.pageSize,
-        total: filtered.length,
-        hasMore: start + options.pageSize < filtered.length || parsed.hasMore,
-        kindCounts: countMap(filtered, (asset) => asset.kind),
-        categoryCounts: countMap(filtered, (asset) => asset.category || "other"),
-        folderCounts: countMap(filtered, (asset) => asset.folderId || ""),
-    };
+    return overlaid;
 }
 
 export async function loadWorkspaceAssetsForUse(ids: Iterable<string>, expectedScope?: CapturedUserScope) {
@@ -132,15 +123,20 @@ export async function loadWorkspaceAssetsForUse(ids: Iterable<string>, expectedS
     assertUserScope(expected);
     const drafts = readAssetStoreDrafts(expected);
     const deleted = new Set(drafts.deletes.map((draft) => draft.id));
-    const upserts = new Set(drafts.upserts.map((draft) => draft.id));
+    const upsertById = new Map(drafts.upserts.map((draft) => [draft.id, draft]));
     const storeById = new Map(useAssetStore.getState().assets.map((asset) => [asset.id, asset]));
-    const missingDraftDeletes = unique.filter((id) => deleted.has(id));
-    if (missingDraftDeletes.length) throw new Error("部分本地素材不存在，请重新选择素材");
+    if (unique.some((id) => deleted.has(id))) throw new Error("部分本地素材不存在，请重新选择素材");
 
-    const lookupIds = unique.filter((id) => !upserts.has(id));
+    const lookupIds = unique.filter((id) => !upsertById.has(id));
     const found = new Set<string>();
+    const snapshots: Asset[] = [];
     for (const id of unique) {
-        if (upserts.has(id) && storeById.has(id)) found.add(id);
+        const draft = upsertById.get(id);
+        if (!draft) continue;
+        const live = resolveDraftAsset(draft, storeById);
+        if (!live) continue;
+        found.add(id);
+        if (!storeById.has(id)) snapshots.push(live);
     }
     const loaded: Asset[] = [];
     for (const chunk of chunkIds(lookupIds, WORKSPACE_ASSET_BATCH_LIMIT)) {
@@ -152,6 +148,7 @@ export async function loadWorkspaceAssetsForUse(ids: Iterable<string>, expectedS
         }
     }
     projectCommittedAssets(loaded, expected);
+    if (snapshots.length) projectDraftSnapshots(snapshots, expected);
     if (unique.some((id) => !found.has(id))) throw new Error("部分本地素材不存在，请重新选择素材");
 }
 
@@ -187,13 +184,17 @@ export async function preserveLegacyCacheOnlyAssetDrafts(expectedScope?: Capture
 
 function loadBrowserLocalAssetPage(options: WorkspaceAssetLibraryPageOptions): WorkspaceAssetLibraryPage {
     const query = options.query?.trim().toLowerCase() || "";
-    const filtered = useAssetStore.getState().assets.filter((asset) => matchesLibraryFilters(asset, options, query));
+    const catalog = useAssetStore.getState().assets;
+    const filtered = catalog.filter((asset) => matchesLibraryFilters(asset, options, query));
     const start = Math.max(0, options.page - 1) * options.pageSize;
+    const active = catalog.filter((asset) => asset.status !== "archived");
     return {
         assets: filtered.slice(start, start + options.pageSize),
         kindCounts: countMap(filtered, (asset) => asset.kind),
         categoryCounts: countMap(filtered, (asset) => asset.category || "other"),
         folderCounts: countMap(filtered, (asset) => asset.folderId || ""),
+        favoriteTotal: active.filter((asset) => asset.metadata?.favorite === true).length,
+        recentTotal: active.filter(isRecentAsset).length,
         page: options.page,
         pageSize: options.pageSize,
         total: filtered.length,
@@ -208,30 +209,65 @@ function overlayAssetDrafts(page: WorkspaceAssetLibraryPage, options: WorkspaceA
     const upsertById = new Map(drafts.upserts.map((draft) => [draft.id, draft]));
     const storeById = new Map(useAssetStore.getState().assets.map((asset) => [asset.id, asset]));
     const query = options.query?.trim().toLowerCase() || "";
-
+    const backendIds = new Set(page.assets.map((asset) => asset.id));
+    const seen = new Set<string>();
     const assets: Asset[] = [];
+
     for (const asset of page.assets) {
         if (deleted.has(asset.id)) continue;
-        const live = upsertById.has(asset.id) ? storeById.get(asset.id) ?? asset : asset;
-        assets.push(upsertById.has(asset.id) ? markUnsavedCopy(live) : live);
+        const draft = upsertById.get(asset.id);
+        if (draft) {
+            if (options.page > 1) continue;
+            const live = resolveDraftAsset(draft, storeById) ?? asset;
+            if (!matchesLibraryFilters(live, options, query) || seen.has(live.id)) continue;
+            seen.add(live.id);
+            assets.push(markUnsavedCopy(live));
+            continue;
+        }
+        if (seen.has(asset.id)) continue;
+        seen.add(asset.id);
+        assets.push(asset);
     }
 
-    if (options.page <= 1 || hasExtraClientFilters(options)) {
+    if (options.page <= 1) {
         for (const draft of drafts.upserts) {
-            if (assets.some((asset) => asset.id === draft.id) || deleted.has(draft.id)) continue;
-            const live = storeById.get(draft.id);
+            if (seen.has(draft.id) || deleted.has(draft.id)) continue;
+            const live = resolveDraftAsset(draft, storeById);
             if (!live || !matchesLibraryFilters(live, options, query)) continue;
+            seen.add(draft.id);
             assets.unshift(markUnsavedCopy(live));
         }
     }
 
-    const hidden = page.assets.filter((asset) => deleted.has(asset.id)).length;
-    const added = assets.filter((asset) => !page.assets.some((item) => item.id === asset.id)).length;
+    let hidden = 0;
+    let localOnlyMatching = 0;
+    let favoriteTotal = page.favoriteTotal;
+    let recentTotal = page.recentTotal;
+    for (const asset of page.assets) {
+        if (deleted.has(asset.id)) hidden += 1;
+    }
+    for (const draft of drafts.upserts) {
+        if (deleted.has(draft.id)) continue;
+        const live = resolveDraftAsset(draft, storeById);
+        if (!live) continue;
+        if (!matchesLibraryFilters(live, options, query)) {
+            if (backendIds.has(draft.id) && !deleted.has(draft.id)) hidden += 1;
+            continue;
+        }
+        if (isLocalOnlyLibraryAsset(live) && !backendIds.has(draft.id)) {
+            localOnlyMatching += 1;
+            if (live.metadata?.favorite === true) favoriteTotal += 1;
+            if (isRecentAsset(live)) recentTotal += 1;
+        }
+    }
+
     return {
         ...page,
         assets,
-        total: Math.max(0, page.total - hidden + added),
-        hasMore: page.hasMore || (options.page <= 1 && added > 0 && assets.length > page.pageSize),
+        total: Math.max(0, page.total - hidden + localOnlyMatching),
+        hasMore: page.hasMore,
+        favoriteTotal,
+        recentTotal,
     };
 }
 
@@ -252,6 +288,21 @@ function projectCommittedAssets(assets: Asset[], expected: CapturedUserScope) {
     });
 }
 
+function projectDraftSnapshots(assets: Asset[], expected: CapturedUserScope) {
+    if (!assets.length) return;
+    assertUserScope(expected);
+    runAssetStoreProjection(() => {
+        useAssetStore.setState((state) => {
+            const next = new Map(state.assets.map((asset) => [asset.id, asset]));
+            for (const asset of assets) {
+                if (next.has(asset.id)) continue;
+                next.set(asset.id, asset);
+            }
+            return { assets: [...next.values()] };
+        });
+    });
+}
+
 function parseWorkspaceAssetPage(remote: WorkspaceAssetPageResponse): WorkspaceAssetLibraryPage {
     if (!remote || !Array.isArray(remote.assets)) throw new Error("素材列表无效");
     return {
@@ -259,6 +310,8 @@ function parseWorkspaceAssetPage(remote: WorkspaceAssetPageResponse): WorkspaceA
         kindCounts: numberMap(remote.kindCounts),
         categoryCounts: numberMap(remote.categoryCounts),
         folderCounts: numberMap(remote.folderCounts),
+        favoriteTotal: Number(remote.favoriteTotal) || 0,
+        recentTotal: Number(remote.recentTotal) || 0,
         page: Number(remote.page) || 1,
         pageSize: Number(remote.pageSize) || 40,
         total: Number(remote.total) || 0,
@@ -290,23 +343,62 @@ function applyResourceDisplayUrls(asset: Asset): Asset {
     const resourceId = resourceIdFromStorageKey(storageKey);
     if (!resourceId) return asset;
     const url = resourceFileUrl(resourceId);
+    const coverUrl = rewriteResourceCoverUrl(asset.coverUrl, resourceId, url);
     if (asset.kind === "video") {
-        return { ...asset, data: { ...asset.data, url: blobOrEmpty(asset.data.url) ? url : asset.data.url || url } };
+        return { ...asset, coverUrl, data: { ...asset.data, url } };
     }
     if (asset.kind === "audio") {
-        return { ...asset, data: { ...asset.data, url: blobOrEmpty(asset.data.url) ? url : asset.data.url || url } };
+        return { ...asset, coverUrl, data: { ...asset.data, url } };
     }
     if (asset.kind === "model") {
-        return { ...asset, data: { ...asset.data, url: blobOrEmpty(asset.data.url) ? url : asset.data.url || url } };
+        return { ...asset, coverUrl, data: { ...asset.data, url } };
     }
     if (asset.kind === "image") {
-        return {
-            ...asset,
-            coverUrl: blobOrEmpty(asset.coverUrl) ? url : asset.coverUrl || url,
-            data: { ...asset.data, dataUrl: blobOrEmpty(asset.data.dataUrl) ? url : asset.data.dataUrl || url },
-        };
+        return { ...asset, coverUrl, data: { ...asset.data, dataUrl: url } };
     }
-    return asset;
+    return { ...asset, coverUrl };
+}
+
+function rewriteResourceCoverUrl(value: string | undefined, resourceId: string, current: string) {
+    if (blobOrEmpty(value) || looksLikeOwnedResourceFileUrl(value, resourceId)) return current;
+    return value || current;
+}
+
+function looksLikeOwnedResourceFileUrl(value: string | undefined, resourceId: string) {
+    if (!value) return false;
+    const path = (value.includes("://") ? safeURLPathname(value) : value.split(/[?#]/, 1)[0] || "").replace(/\/+$/, "");
+    const match = path.match(/\/(?:api\/)?resources\/([^/]+)\/file$/);
+    if (!match) return false;
+    try {
+        return decodeURIComponent(match[1]) === resourceId;
+    } catch {
+        return match[1] === resourceId;
+    }
+}
+
+function safeURLPathname(value: string) {
+    try {
+        return new URL(value).pathname;
+    } catch {
+        return value.split(/[?#]/, 1)[0] || "";
+    }
+}
+
+function resolveDraftAsset(draft: AssetStoreDraftRecord, storeById: Map<string, Asset>) {
+    const stored = storeById.get(draft.id);
+    if (stored) return stored;
+    const snapshot = (draft as AssetStoreDraftWithSnapshot).asset;
+    if (!snapshot || snapshot.id !== draft.id) return undefined;
+    return applyResourceDisplayUrls(snapshot);
+}
+
+function isLocalOnlyLibraryAsset(asset: Asset) {
+    return asset.status === "draft" || asset.metadata?.recoverableLocalDraft === true;
+}
+
+function isRecentAsset(asset: Asset) {
+    const updated = new Date(asset.updatedAt).getTime();
+    return Number.isFinite(updated) && Date.now() - updated <= WORKSPACE_ASSET_RECENT_MS;
 }
 
 function matchesLibraryFilters(asset: Asset, options: WorkspaceAssetLibraryPageOptions, query: string) {
@@ -324,16 +416,9 @@ function matchesLibraryFilters(asset: Asset, options: WorkspaceAssetLibraryPageO
 
 function matchesExtraClientFilters(asset: Asset, options: WorkspaceAssetLibraryPageOptions) {
     if (options.favorite && asset.metadata?.favorite !== true) return false;
-    if (options.recent) {
-        const updated = new Date(asset.updatedAt).getTime();
-        if (!Number.isFinite(updated) || Date.now() - updated > WORKSPACE_ASSET_RECENT_MS) return false;
-    }
+    if (options.recent && !isRecentAsset(asset)) return false;
     if (options.project && assetProjectLabel(asset) !== options.project) return false;
     return true;
-}
-
-function hasExtraClientFilters(options: WorkspaceAssetLibraryPageOptions) {
-    return Boolean(options.favorite || options.recent || options.project);
 }
 
 function assetProjectLabel(asset: Asset) {

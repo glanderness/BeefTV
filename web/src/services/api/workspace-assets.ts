@@ -10,6 +10,9 @@ export type WorkspaceAssetPageFilter = {
     uncategorized?: boolean;
     status?: string;
     query?: string;
+    favorite?: boolean;
+    recent?: boolean;
+    project?: string;
 };
 
 export type WorkspaceAssetPageResponse = {
@@ -17,6 +20,8 @@ export type WorkspaceAssetPageResponse = {
     kindCounts?: Record<string, number>;
     categoryCounts?: Record<string, number>;
     folderCounts?: Record<string, number>;
+    favoriteTotal?: number;
+    recentTotal?: number;
     page: number;
     pageSize: number;
     total: number;
@@ -36,6 +41,9 @@ export function listWorkspaceAssetsPage(filter: WorkspaceAssetPageFilter, config
             uncategorized: filter.uncategorized ? 1 : undefined,
             status: filter.status,
             q: filter.query,
+            favorite: filter.favorite ? 1 : undefined,
+            recent: filter.recent ? 1 : undefined,
+            project: filter.project,
         }),
     });
 }

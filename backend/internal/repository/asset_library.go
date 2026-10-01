@@ -13,7 +13,12 @@ import (
 
 var ErrAssetFolderAssignmentConflict = errors.New("asset folder assignment conflict")
 
-const assetFolderAssignmentAttempts = 3
+const (
+	assetFolderAssignmentAttempts = 3
+	userAssetRecentDuration       = 30 * 24 * time.Hour
+	userAssetLinkedProjectLabel   = "已关联项目"
+	userAssetUnlinkedProjectLabel = "未关联项目"
+)
 
 type UserAssetPageFilter struct {
 	Kind          string
@@ -22,6 +27,9 @@ type UserAssetPageFilter struct {
 	Uncategorized bool
 	Status        string
 	Query         string
+	Favorite      bool
+	Recent        bool
+	Project       string
 }
 
 type UserAssetFacetRow struct {
@@ -61,6 +69,19 @@ func (r *Repository) UserAssetFacets(userID string, status string) ([]UserAssetF
 	return kindRows, categoryRows, folderRows, nil
 }
 
+func (r *Repository) UserAssetQuickFilterCounts(userID string) (favorite int64, recent int64, err error) {
+	base := func() *gorm.DB {
+		return r.db.Model(&model.Asset{}).Where("user_id = ? AND kind <> ?", userID, "entity")
+	}
+	if err := userAssetFilteredQuery(base(), UserAssetPageFilter{Status: "active", Favorite: true}, false).Count(&favorite).Error; err != nil {
+		return 0, 0, err
+	}
+	if err := userAssetFilteredQuery(base(), UserAssetPageFilter{Status: "active", Recent: true}, false).Count(&recent).Error; err != nil {
+		return 0, 0, err
+	}
+	return favorite, recent, nil
+}
+
 func userAssetFilteredQuery(query *gorm.DB, filter UserAssetPageFilter, includeSearch bool) *gorm.DB {
 	if value := strings.TrimSpace(filter.Kind); value != "" {
 		query = query.Where("kind = ?", value)
@@ -88,7 +109,26 @@ func userAssetFilteredQuery(query *gorm.DB, filter UserAssetPageFilter, includeS
 			query = query.Where("LOWER(title) LIKE ? OR LOWER(payload_json) LIKE ?", pattern, pattern)
 		}
 	}
+	if filter.Favorite {
+		query = query.Where("json_extract(payload_json, '$.metadata.favorite') IN (1, 'true', '1')")
+	}
+	if filter.Recent {
+		query = query.Where("updated_at >= ?", time.Now().UTC().Add(-userAssetRecentDuration))
+	}
+	if value := strings.TrimSpace(filter.Project); value != "" {
+		query = query.Where(userAssetProjectLabelSQL()+" = ?", value)
+	}
 	return query
+}
+
+func userAssetProjectLabelSQL() string {
+	return `CASE
+		WHEN TRIM(COALESCE(CAST(json_extract(payload_json, '$.metadata.projectName') AS TEXT), '')) != ''
+			THEN TRIM(CAST(json_extract(payload_json, '$.metadata.projectName') AS TEXT))
+		WHEN COALESCE(json_array_length(payload_json, '$.metadata.projectIds'), 0) > 0
+			THEN '` + userAssetLinkedProjectLabel + `'
+		ELSE '` + userAssetUnlinkedProjectLabel + `'
+	END`
 }
 
 func (r *Repository) AssetFolders(userID string) ([]model.AssetFolder, error) {

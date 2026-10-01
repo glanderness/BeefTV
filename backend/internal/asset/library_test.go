@@ -416,3 +416,23 @@ func mustLibraryResourceAssetJSON(t *testing.T, id, resourceID string) json.RawM
 	}
 	return raw
 }
+
+func TestUserAssetsPageAppliesFavoriteFilterAndSidebarCounts(t *testing.T) {
+	lib, db := newLibraryFixture(t)
+	now := time.Now().UTC()
+	for _, asset := range []model.Asset{
+		{ID: "fav-1", UserID: "owner", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed, Title: "收藏", PayloadJSON: `{"id":"fav-1","kind":"image","title":"收藏","coverUrl":"","tags":[],"metadata":{"favorite":true},"data":{"dataUrl":"https://example.com/a.png","width":1,"height":1,"bytes":1,"mimeType":"image/png"}}`, CreatedAt: now, UpdatedAt: now.Add(time.Second)},
+		{ID: "plain-1", UserID: "owner", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed, Title: "普通", PayloadJSON: `{"id":"plain-1","kind":"image","title":"普通","coverUrl":"","tags":[],"data":{"dataUrl":"https://example.com/a.png","width":1,"height":1,"bytes":1,"mimeType":"image/png"}}`, CreatedAt: now, UpdatedAt: now},
+	} {
+		if err := db.Create(&asset).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := lib.UserAssetsPage("owner", 1, 40, UserAssetPageFilter{Status: "active", Favorite: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 1 || len(page.Assets) != 1 || page.FavoriteTotal != 1 || page.RecentTotal != 2 || page.HasMore {
+		t.Fatalf("favorite page = %#v", page)
+	}
+}

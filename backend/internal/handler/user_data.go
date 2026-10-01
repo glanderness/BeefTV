@@ -291,7 +291,8 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			}
 			assets, pageErr := svc.UserAssetsPage(user.ID, page, pageSize, app.UserAssetPageFilter{
 				Kind: c.Query("kind"), Category: c.Query("category"), FolderID: folderID,
-				Uncategorized: c.Query("uncategorized") == "1", Status: c.Query("status"), Query: c.Query("q"),
+				Uncategorized: queryFlag(c, "uncategorized"), Status: c.Query("status"), Query: c.Query("q"),
+				Favorite: queryFlag(c, "favorite"), Recent: queryFlag(c, "recent"), Project: c.Query("project"),
 			})
 			if pageErr != nil {
 				failService(c, pageErr)
@@ -749,12 +750,17 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 }
 
 func hasUserAssetPageFilters(c *gin.Context) bool {
-	for _, key := range []string{"pageSize", "kind", "category", "folderId", "uncategorized", "status", "q"} {
+	for _, key := range []string{"pageSize", "kind", "category", "folderId", "uncategorized", "status", "q", "favorite", "recent", "project"} {
 		if _, present := c.GetQuery(key); present {
 			return true
 		}
 	}
 	return false
+}
+
+func queryFlag(c *gin.Context, key string) bool {
+	value := strings.TrimSpace(c.Query(key))
+	return value == "1" || strings.EqualFold(value, "true")
 }
 
 func resourceResponseETag(resource *model.Resource) string {

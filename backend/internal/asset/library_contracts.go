@@ -38,6 +38,8 @@ type UserAssetPage struct {
 	KindCounts     map[string]int64  `json:"kindCounts"`
 	CategoryCounts map[string]int64  `json:"categoryCounts"`
 	FolderCounts   map[string]int64  `json:"folderCounts"`
+	FavoriteTotal  int64             `json:"favoriteTotal"`
+	RecentTotal    int64             `json:"recentTotal"`
 	Page           int               `json:"page"`
 	PageSize       int               `json:"pageSize"`
 	Total          int64             `json:"total"`
@@ -51,4 +53,7 @@ type UserAssetPageFilter struct {
 	Uncategorized bool
 	Status        string
 	Query         string
+	Favorite      bool
+	Recent        bool
+	Project       string
 }

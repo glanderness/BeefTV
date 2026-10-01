@@ -8,7 +8,7 @@ import { ASSET_CATEGORY_LABELS, normalizeAssetCategory } from "@/lib/asset-categ
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import type { ProjectAsset, ProjectDetail } from "@/services/api/projects";
 import { getWorkspaceAsset } from "@/services/api/workspace-data";
-import { isLocalWorkspaceMode } from "@/services/workspace-mode";
+import { usesWorkspaceAssetLibraryApi } from "@/services/workspace-asset-read";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 
 const categoryLabels: Record<string, string> = { all: "全部资产", ...ASSET_CATEGORY_LABELS };
@@ -79,7 +79,7 @@ export function CanvasProjectAssetModal({
 
     return (
         <AssetLibraryPickerModal
-            remoteLibrary={!detail && !isLocalWorkspaceMode()}
+            remoteLibrary={!detail && usesWorkspaceAssetLibraryApi()}
             open={open}
             mediaKinds={["image", "video", "audio", "text"]}
             items={pickerItems}

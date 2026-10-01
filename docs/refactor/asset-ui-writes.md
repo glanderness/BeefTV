@@ -29,7 +29,7 @@
 
 ## 读取
 
-桌面/hosted 素材库列表与选择走 `workspace-asset-read.ts`：`usesWorkspaceAssetLibraryApi()` 为真时，已保存事实来自 `GET /assets?page=` 与 `POST /assets/batch`。浏览器缓存只做展示投影和明确未提交草稿 overlay。查询失败向上抛出。没有墓碑清单时，缓存里多出的 ID 只能标成未保存可恢复草稿，不能当成服务端仍存在。
+桌面/hosted 素材库列表与选择走 `workspace-asset-read.ts`：`usesWorkspaceAssetLibraryApi()` 为真时，已保存事实来自 `GET /assets?page=` 与 `POST /assets/batch`。收藏、最近使用、项目来源在 SQLite 用 `payload_json` 元数据与 `updated_at` 过滤后再 Limit/Offset；`favoriteTotal` / `recentTotal` 是未归档侧栏计数。浏览器缓存只做展示投影和明确未提交草稿 overlay；草稿替换后要重新匹配当前筛选，同一 ID 不得跨页重复。查询失败向上抛出。没有墓碑清单时，缓存里多出的 ID 只能标成未保存可恢复草稿，不能当成服务端仍存在。`resource:` 媒体必须按当前资源路由展示，不能沿用旧进程的绝对地址。
 
 ## 入口
 

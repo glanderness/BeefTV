@@ -151,3 +151,154 @@ func TestMoveUserAssetsToFolderRollsBackWhenAnyAssetIsForeign(t *testing.T) {
 		t.Fatalf("foreign asset caused partial move: %#v", unchanged)
 	}
 }
+
+func TestUserAssetsPageFiltersFavoriteRecentProjectBeforePagination(t *testing.T) {
+	repo, db := newAssetLibraryTestRepository(t)
+	now := time.Now().UTC()
+	create := func(asset model.Asset) {
+		t.Helper()
+		if err := db.Create(&asset).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index := 1; index <= 125; index++ {
+		id := fmt.Sprintf("fav-%03d", index)
+		create(model.Asset{
+			ID: id, UserID: "user-1", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed,
+			Title: id, PayloadJSON: fmt.Sprintf(`{"id":%q,"title":%q,"metadata":{"favorite":true}}`, id, id),
+			CreatedAt: now, UpdatedAt: now.Add(time.Duration(index) * time.Second),
+		})
+	}
+	create(model.Asset{
+		ID: "plain-old", UserID: "user-1", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed,
+		Title: "普通旧素材", PayloadJSON: `{"id":"plain-old","title":"普通旧素材","metadata":{"favorite":false}}`,
+		CreatedAt: now.Add(-40 * 24 * time.Hour), UpdatedAt: now.Add(-40 * 24 * time.Hour),
+	})
+	create(model.Asset{
+		ID: "recent-plain", UserID: "user-1", Kind: "text", Category: model.AssetCategoryOther, Status: model.AssetVersionStatusConfirmed,
+		Title: "最近文本", PayloadJSON: `{"id":"recent-plain","title":"最近文本","metadata":{"projectName":"海边剧"}}`,
+		CreatedAt: now, UpdatedAt: now.Add(200 * time.Second),
+	})
+	create(model.Asset{
+		ID: "named-project", UserID: "user-1", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed,
+		Title: "具名项目", PayloadJSON: `{"id":"named-project","title":"具名项目","metadata":{"projectName":" 海边剧 "}}`,
+		CreatedAt: now, UpdatedAt: now.Add(201 * time.Second),
+	})
+	create(model.Asset{
+		ID: "linked-project", UserID: "user-1", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed,
+		Title: "已关联", PayloadJSON: `{"id":"linked-project","title":"已关联","metadata":{"projectIds":["p-1"]}}`,
+		CreatedAt: now, UpdatedAt: now.Add(202 * time.Second),
+	})
+	create(model.Asset{
+		ID: "unlinked-project", UserID: "user-1", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed,
+		Title: "未关联", PayloadJSON: `{"id":"unlinked-project","title":"未关联","metadata":{}}`,
+		CreatedAt: now, UpdatedAt: now.Add(203 * time.Second),
+	})
+	create(model.Asset{
+		ID: "other-user", UserID: "user-2", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed,
+		Title: "他人收藏", PayloadJSON: `{"id":"other-user","metadata":{"favorite":true}}`,
+		CreatedAt: now, UpdatedAt: now,
+	})
+
+	page1, total, err := repo.UserAssetsPage("user-1", 1, 40, UserAssetPageFilter{Status: "active", Favorite: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 125 || len(page1) != 40 || page1[0].ID != "fav-125" || page1[39].ID != "fav-086" {
+		t.Fatalf("favorite page1 = total %d ids %s", total, assetIDs(page1))
+	}
+	page2, total, err := repo.UserAssetsPage("user-1", 2, 40, UserAssetPageFilter{Status: "active", Favorite: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 125 || len(page2) != 40 || page2[0].ID != "fav-085" || page2[39].ID != "fav-046" {
+		t.Fatalf("favorite page2 = total %d ids %s", total, assetIDs(page2))
+	}
+	page4, total, err := repo.UserAssetsPage("user-1", 4, 40, UserAssetPageFilter{Status: "active", Favorite: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 125 || len(page4) != 5 || page4[0].ID != "fav-005" || page4[4].ID != "fav-001" {
+		t.Fatalf("favorite page4 = total %d ids %s", total, assetIDs(page4))
+	}
+	for _, item := range page1 {
+		for _, other := range page2 {
+			if item.ID == other.ID {
+				t.Fatalf("favorite pages overlap on %s", item.ID)
+			}
+		}
+	}
+
+	recent, recentTotal, err := repo.UserAssetsPage("user-1", 1, 40, UserAssetPageFilter{Status: "active", Recent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recentTotal != 129 || len(recent) != 40 {
+		t.Fatalf("recent = total %d count %d ids %s", recentTotal, len(recent), assetIDs(recent))
+	}
+	for _, item := range recent {
+		if item.ID == "plain-old" {
+			t.Fatal("recent page included a 40-day-old asset")
+		}
+	}
+
+	named, namedTotal, err := repo.UserAssetsPage("user-1", 1, 40, UserAssetPageFilter{Status: "active", Project: "海边剧"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if namedTotal != 2 || !assetIDSet(named).Equal("recent-plain", "named-project") {
+		t.Fatalf("named project = total %d ids %s", namedTotal, assetIDs(named))
+	}
+	linked, linkedTotal, err := repo.UserAssetsPage("user-1", 1, 40, UserAssetPageFilter{Status: "active", Project: "已关联项目"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linkedTotal != 1 || len(linked) != 1 || linked[0].ID != "linked-project" {
+		t.Fatalf("linked project = total %d ids %s", linkedTotal, assetIDs(linked))
+	}
+	unlinked, unlinkedTotal, err := repo.UserAssetsPage("user-1", 1, 40, UserAssetPageFilter{Status: "active", Project: "未关联项目"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unlinkedTotal != 127 || len(unlinked) != 40 {
+		t.Fatalf("unlinked project total = %d count %d", unlinkedTotal, len(unlinked))
+	}
+
+	favoriteCount, recentCount, err := repo.UserAssetQuickFilterCounts("user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if favoriteCount != 125 || recentCount != 129 {
+		t.Fatalf("quick counts favorite=%d recent=%d", favoriteCount, recentCount)
+	}
+}
+
+func assetIDs(assets []model.Asset) string {
+	ids := make([]string, len(assets))
+	for index, asset := range assets {
+		ids[index] = asset.ID
+	}
+	return strings.Join(ids, ",")
+}
+
+type stringSet map[string]struct{}
+
+func assetIDSet(assets []model.Asset) stringSet {
+	result := make(stringSet, len(assets))
+	for _, asset := range assets {
+		result[asset.ID] = struct{}{}
+	}
+	return result
+}
+
+func (set stringSet) Equal(ids ...string) bool {
+	if len(set) != len(ids) {
+		return false
+	}
+	for _, id := range ids {
+		if _, ok := set[id]; !ok {
+			return false
+		}
+	}
+	return true
+}
