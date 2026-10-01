@@ -730,6 +730,26 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/Envelope"
+  /assets/{id}:
+    delete:
+      tags: [assets]
+      summary: 删除无业务引用的素材
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: expectedStatus
+          schema: { type: string, enum: [archived] }
+          description: 清空回收站时传 archived；事务内核对状态，已还原的素材返回 409 并保留。
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          description: 无效的状态条件
+        "409":
+          description: 素材状态已变化或仍有业务引用，未删除
 components:
   parameters:
   securitySchemes:

@@ -48,6 +48,8 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 
 ## 统一操作层与内置创作助手
 
+`DELETE /assets/:id` 校验素材归属及业务引用。清空回收站时传 `expectedStatus=archived`，在删除事务内再次检查状态；期间已经还原的素材返回 409 并保留。该参数只接受 `archived`，其他值返回 400。省略参数保留普通删除语义，仍须通过引用检查。
+
 `GET /ops` 返回调用者当前身份可用的操作描述（含 JSON Schema）；`POST /ops/:op` 执行单个操作。
 写操作必须带 `opId` 作为幂等键（同一 `opId` 同参数回读原结果，不同参数返回冲突），并按操作声明的
 `expectedRevision` 做原子 CAS：缺少读取时的 revision、或 revision 已过期，都会被拒绝，不会覆盖别人刚写入的内容。
