@@ -31,6 +31,7 @@ func defaultRuntimeDependencies(svc *app.Service) RuntimeDependencies {
 	}
 	if svc != nil {
 		dependencies.Diagnostics = svc.DiagnosticsDomain()
+		dependencies.Appearance = svc.AppearanceDomain()
 	}
 	return dependencies
 }

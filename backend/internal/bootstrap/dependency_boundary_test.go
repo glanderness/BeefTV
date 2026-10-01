@@ -83,6 +83,10 @@ func TestDiagnosticsDomainDoesNotDependOnApplicationService(t *testing.T) {
 	assertDomainDoesNotImportApp(t, "./internal/diagnostics")
 }
 
+func TestAppearanceDomainDoesNotDependOnApplicationService(t *testing.T) {
+	assertDomainDoesNotImportApp(t, "./internal/appearance")
+}
+
 func TestLocalAppDoesNotDependOnApplicationService(t *testing.T) {
 	command := exec.Command("go", "list", "-deps", "./internal/localapp")
 	command.Dir = "../.."
