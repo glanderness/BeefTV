@@ -9,6 +9,7 @@ import (
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	localtask "infinite-canvas/backend/internal/task"
+	"infinite-canvas/backend/internal/textreplay"
 )
 
 func (s *Service) taskDomain() *localtask.Service {
@@ -196,11 +197,11 @@ func (taskFailuresAdapter) UserMessage(message string) string {
 type taskTextReplayAdapter struct{ s *Service }
 
 func (taskTextReplayAdapter) IsRequest(input map[string]any) bool {
-	return isTextReplayTaskRequest(input)
+	return textreplay.IsRequest(input)
 }
 
 func (a taskTextReplayAdapter) Finalize(taskID string, status model.TaskStatus) error {
-	return a.s.finalizeTaskTextReplay(taskID, status)
+	return a.s.textReplayOrInit().Finalize(taskID, status)
 }
 
 type taskProviderAdapter struct{ s *Service }

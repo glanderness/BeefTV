@@ -7,6 +7,7 @@ import (
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/platform"
+	"infinite-canvas/backend/internal/textreplay"
 )
 
 type textReplayCacheKey struct {
@@ -24,13 +25,15 @@ func (s *Service) initReadCaches() {
 
 // SSE 展示专用，不用于写路径和权限决策；userID 进入 key，回源仍检查任务归属。
 // 游标保留在 key 中，避免重连读取到其他客户端已经越过的增量窗口。
+// 在 Lead 把长寿命 textreplay.Service 接到组合根之前，沿用 Service 上已有
+// 的读缓存字段，避免每次 lazy 构造丢失 750ms singleflight。
 func (s *Service) CachedTaskTextReplay(ctx context.Context, userID, taskID string, after int64) (*TextReplayResult, error) {
 	s.initReadCaches()
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	value, err := s.textReplayReadCache.Get(ctx, textReplayCacheKey{userID, taskID, after}, func(ctx context.Context) (*TextReplayResult, int, error) {
-		reader := &Service{repo: s.repo.WithContext(ctx)}
-		value, err := reader.TaskTextReplay(userID, taskID, after)
+		reader := textreplay.New(textreplay.NewStore(s.repo.WithContext(ctx)), textreplay.Dependencies{Logger: taskLogAdapter{s}})
+		value, err := reader.Read(userID, taskID, after)
 		if err != nil {
 			return nil, 0, err
 		}
