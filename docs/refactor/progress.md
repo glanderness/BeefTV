@@ -183,3 +183,19 @@
 - `2cd13b1` 快照前端标准 `bun run test` 退出 0：2546 pass、0 fail、14 skip。另在 `3dd522a` 明确开启浏览器 FFmpeg Worker 专项，10 pass / 103 expect；原生内容专项 4 pass / 77 expect，覆盖原声、人声、背景音乐、中文字幕、静音/淡入淡出和图片时长。未把 opt-in skip 记为通过。
 - `3dd522a` 为渲染/转写/深度等专用任务复用任务领域准入错误映射，缺少素材/不可用项目/坏 JSON 不再误报 500 本地存储故障。SQLite 拒绝后无任务行的专项 race 通过。
 - 辅助领域至 `f35fd5a` 合入 `51d7511` / `10f98a7` / `d42ec46` / `939dbae`，`0559fb2` 注入运行时拥有的 Eagle 客户端和同一 diagnostics/appearance 实例。Eagle 不跟随 redirect，真实路径 jail 保留合法库根 symlink；诊断脱敏、外观坏文档删除保护在领域内。三个领域完整 race 通过；app/handler/bootstrap 相邻专项 race 通过。没有真实 Eagle/真实账号调用。
+
+### 第十轮复审修正与集成
+
+- 原生剪辑修正合入 `b3a17d7` / `7eeff30`；`2974647` 保留有界 stderr 尾部之外的字体失败判据，并按实际帧间隔校验短片时长。真实 FFmpeg 1 fps / 500 ms 回归先复现再修正；editing/transcription 完整 race 通过。原生所有 cmd 编译及 Windows internal 交叉编译通过，不等于 Windows 实机验收。
+- 核心锁修正 `7ca98ab` / `9c4c4ca`：事务仓储不再抢根 storageMu；单连接 SQLite 的画布写、撤销与任务创建/完成四种交错均通过 race。测试用隔离 GORM 回调控制时序，没有生产全局测试钩子。
+- 项目结果回执 `04e011f` 合入 `0461e66`；`acef7b4` 补严格回执身份校验及文本 SSE 在 A→B→A 后拒绝发布。实际 AgentOpRecord 与结果写入同一事务；刷新未应用分镜须核对，已应用结果不覆盖后续编辑。project/operations/repository race 通过，前端专项 19 pass / 78 expect，typecheck 通过。
+- 播放与深度五个提交合入 `5a01a06` / `d8b7095` / `fe77251` / `d5f18fa` / `b6abd10`；`3eeef83` 由 runtime 持有领域单例和可取消 worker context，旧转码 claim 只恢复一次，重复扫描不重置在飞任务。四个领域完整 race、app 入口专项通过。实际 GPU / Windows 深度运行仍未验收。
+- 分片上传 `9a64c0b` / `420580a` 合入 `12899f3` / `ddaf697`；`192fe09` 修正同一日额释放两次及生产 DataDir 缺失，资源会话锁覆盖并发状态读取。分片、上传、结构迁移、app/handler 专项 race 通过。schema 13 是既有日额账的预留恢复索引；schema 12 仍待备份领域合入，当前仅对临时测试库执行迁移。
+- 整库 Go 回归正在运行，不能提前记为成功。
+
+### 第十轮仍未验收
+
+- 消息绑定 `5af8acb` 尚未合入；`20261002-044851-continue-4b37928b` 修复回执覆盖在途新草稿、持久化失败和类型化冲突。
+- 素材 UI `c1c06df` / `491a062` 尚未合入。进一步缩小到草稿持久化：`20261002-045929-continue-98e63164` 补实际内容快照、持久写入顺序与准确版本 ack。页面和 folder 接线由 Lead 复审整合。
+- 完整备份、实际画板/文件夹 SQLite 权威和 schema 12：`20261002-034350-continue-f6b7fd0d` 仍进行中。
+- 无新增真实模型费用、未 push/发布、未替换本机正式应用；最终冻结候选、跨平台/性能/真实客户端与明确预算的生成验收仍是独立门槛。
