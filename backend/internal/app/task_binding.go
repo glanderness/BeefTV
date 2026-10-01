@@ -40,17 +40,31 @@ func (s *Service) recoverCanvasTaskBindings(task model.Task) error {
 		return nil
 	}
 	registry := s.workspaceOperations()
-	if registry == nil {
-		return nil
-	}
+	intents := s.CanvasBindingIntents(task)
 	var last error
-	for _, target := range canvasBindTargets(task, s.CanvasBindingIntents(task)) {
-		if err := s.executeCanvasTaskBind(registry, task, target.nodeID, target.outputIndex); err != nil {
-			if skippableCanvasBindError(err) {
-				continue
+	if registry != nil {
+		for _, target := range canvasBindTargets(task, intents) {
+			if err := s.executeCanvasTaskBind(registry, task, target.nodeID, target.outputIndex); err != nil {
+				if skippableCanvasBindError(err) {
+					continue
+				}
+				last = err
 			}
-			last = err
 		}
+		for _, target := range messageBindTargets(task, intents) {
+			if err := s.executeMessageTaskAttach(registry, task, target.conversationID, target.messageID, target.outputIndex); err != nil {
+				if skippableCanvasBindError(err) {
+					continue
+				}
+				last = err
+			}
+		}
+	}
+	if err := s.RegisterTaskOutputFromTask(task); err != nil {
+		last = err
+	}
+	if projectID := strings.TrimSpace(task.ProjectID); projectID != "" {
+		s.reconcileCharacterTurnaroundTasks(task.UserID, projectID)
 	}
 	return last
 }
@@ -100,6 +114,34 @@ func (s *Service) recoverPendingCanvasBindings(limit int) error {
 	return last
 }
 
+func (s *Service) executeMessageTaskAttach(registry *operations.Registry, task model.Task, conversationID, messageID string, outputIndex int) error {
+	conversationID = strings.TrimSpace(conversationID)
+	messageID = strings.TrimSpace(messageID)
+	if registry == nil || conversationID == "" || messageID == "" {
+		return nil
+	}
+	params, err := json.Marshal(map[string]any{
+		"conversationId": conversationID,
+		"taskId":         task.ID,
+		"messageId":      messageID,
+		"outputIndex":    outputIndex,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = registry.Execute(operations.Request{
+		Op:     "conversation.message.attach",
+		OpID:   localtask.AttachMessageEffectKey(task.ID, messageID, outputIndex),
+		UserID: task.UserID,
+		Caller: operations.ManualCaller(false),
+		Params: params,
+	})
+	if skippableCanvasBindError(err) {
+		return nil
+	}
+	return err
+}
+
 func (s *Service) executeCanvasTaskBind(registry *operations.Registry, task model.Task, nodeID string, outputIndex int) error {
 	canvasID := strings.TrimSpace(task.ProjectID)
 	nodeID = strings.TrimSpace(nodeID)
@@ -133,6 +175,12 @@ type canvasBindTarget struct {
 	outputIndex int
 }
 
+type messageBindTarget struct {
+	conversationID string
+	messageID      string
+	outputIndex    int
+}
+
 func canvasBindTargets(task model.Task, intents []localtask.CanvasBindingIntent) []canvasBindTarget {
 	seen := map[string]bool{}
 	targets := make([]canvasBindTarget, 0, len(intents)+1)
@@ -161,6 +209,33 @@ func canvasBindTargets(task model.Task, intents []localtask.CanvasBindingIntent)
 	return targets
 }
 
+func messageBindTargets(task model.Task, intents []localtask.CanvasBindingIntent) []messageBindTarget {
+	seen := map[string]bool{}
+	targets := make([]messageBindTarget, 0, len(intents)+1)
+	add := func(conversationID, messageID string, outputIndex int) {
+		conversationID = strings.TrimSpace(conversationID)
+		messageID = strings.TrimSpace(messageID)
+		if conversationID == "" || messageID == "" {
+			return
+		}
+		key := conversationID + ":" + messageID + ":" + strconv.Itoa(outputIndex)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		targets = append(targets, messageBindTarget{conversationID: conversationID, messageID: messageID, outputIndex: outputIndex})
+	}
+	for _, intent := range intents {
+		if intent.TargetBinding == nil {
+			continue
+		}
+		add(intent.TargetBinding.ConversationID, intent.TargetBinding.MessageID, intent.OutputIndex)
+	}
+	target := localtask.TargetBindingFromInput(task.InputJSON)
+	add(target.ConversationID, target.MessageID, 0)
+	return targets
+}
+
 func skippableCanvasBindError(err error) bool {
 	if err == nil {
 		return true
@@ -174,6 +249,8 @@ func skippableCanvasBindError(err error) bool {
 	}
 	switch opErr.Reason {
 	case "node_deleted", "node_task_mismatch", "node_mismatch", "canvas_mismatch",
+		"conversation_deleted", "message_deleted", "message_mismatch", "conversation_mismatch",
+		"message_task_mismatch",
 		"task_not_found", "task_not_succeeded", "task_foreign",
 		"output_not_ready", "resource_not_ready", "resource_missing", "resource_foreign",
 		"resource_mismatch", "asset_foreign", "delivery_unreadable", "unsupported_result_shape",

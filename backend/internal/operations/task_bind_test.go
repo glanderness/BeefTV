@@ -437,6 +437,35 @@ func TestCanvasTaskBindRecoversWhenNodeAppearsAfterDeliver(t *testing.T) {
 	}
 }
 
+func TestCanvasTaskBindReplayThrowsOnUnreadableCanvasAndKeepsReceipt(t *testing.T) {
+	h := newHarness(t)
+	task := h.seedReadyCanvasImageTask(t, "task-unreadable-canvas", "node-unreadable", "损坏投影", 4, 5)
+	first, err := h.bindTask(t, task.ID, "node-unreadable", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Replayed {
+		t.Fatal("first bind should commit a receipt")
+	}
+	if err := h.service.Database().Model(&model.CanvasProject{}).Where("id = ?", h.canvasID).Update("payload_json", "{").Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err = h.bindTask(t, task.ID, "node-unreadable", 0)
+	if err == nil {
+		t.Fatal("unreadable canvas must not project as deleted")
+	}
+	if got := opErr(t, err); got.Reason == "deleted" || got.Reason == "node_deleted" {
+		t.Fatalf("read/json failure marked deleted: %v", err)
+	}
+	if h.receiptCount(t, localtask.AttachNodeEffectKey(task.ID, "node-unreadable", 0)) != 1 {
+		t.Fatal("projection failure rolled back the original bind receipt")
+	}
+	stored := h.storedReceipt(t, localtask.AttachNodeEffectKey(task.ID, "node-unreadable", 0))
+	if stored["taskId"] != task.ID {
+		t.Fatalf("stored receipt lost: %#v", stored)
+	}
+}
+
 func TestCanvasTaskBindUnreadableOutputIsNotReady(t *testing.T) {
 	h := newHarness(t)
 	h.addNode(t, "node-bad", "image", "坏结果", map[string]any{"taskId": "task-bad", "status": "loading"})

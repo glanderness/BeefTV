@@ -84,6 +84,57 @@ type CanvasProjectLike = {
     [key: string]: unknown;
 };
 
+export type ConversationMessageAttachReceipt = {
+    applied?: boolean;
+    conversationId?: string;
+    messageId?: string;
+    taskId?: string;
+    outputIndex?: number;
+    effectKey?: string;
+    mediaType?: string;
+    assetId?: string;
+    resourceId?: string;
+    storageKey?: string;
+    content?: string;
+    resultUrls?: string[];
+    revision?: number;
+    alreadyBound?: boolean;
+    bindingStatus?: "bound" | "deleted" | "replaced";
+    historical?: {
+        taskId?: string;
+        content?: string;
+        resultUrls?: string[];
+        revision?: number;
+    };
+    conversation?: Record<string, unknown>;
+    message?: Record<string, unknown>;
+};
+
+export async function attachConversationMessage(input: {
+    operationId: string;
+    conversationId: string;
+    taskId: string;
+    messageId: string;
+    outputIndex?: number;
+    signal?: AbortSignal;
+    expectedScope?: CapturedUserScope;
+}) {
+    return executeWorkspaceOperation<ConversationMessageAttachReceipt>(
+        "conversation.message.attach",
+        {
+            opId: input.operationId,
+            params: {
+                conversationId: input.conversationId,
+                taskId: input.taskId,
+                messageId: input.messageId,
+                outputIndex: input.outputIndex ?? 0,
+            },
+        },
+        input.signal,
+        input.expectedScope,
+    );
+}
+
 export async function bindCanvasTaskOutput(input: {
     operationId: string;
     canvasId: string;

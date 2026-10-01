@@ -3,7 +3,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { parseCanvasStorageDocument, rebaseCanvasProjects, serializeCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
-import { captureUserScope, isUserScopeAbandonedError, UserScopeAbandonedError, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
+import { assertUserScope, captureUserScope, isUserScopeAbandonedError, UserScopeAbandonedError, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { bindCanvasTaskOutput, type CanvasTaskBindReceipt } from "@/services/api/operations";
 import type { GenerationTask, GenerationTaskOutput } from "@/services/api/task-center";
 import { generationEffectApplied } from "@/services/generation-consumer-dedupe";
@@ -63,7 +63,8 @@ export class CanvasBindProjectionAdoptionError extends Error {
     }
 }
 
-export type AdoptServerConfirmedProjection = (project: CanvasProject, scope: string) => Promise<CanvasProject | undefined>;
+export type AdoptServerConfirmedProjection = (project: CanvasProject, scope: string, entryCapturedScope?: CapturedUserScope) => Promise<CanvasProject | undefined>;
+type PersistCanvasDocumentWithScope = (id: string, patch: { nodes?: CanvasNodeData[]; connections?: CanvasConnection[] }, entryCapturedScope?: CapturedUserScope) => Promise<void>;
 
 type CanvasGenerationLiveProjectState = Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId">;
 type CanvasGenerationLiveProjectAdapter = {
@@ -151,7 +152,7 @@ export async function applyCanvasGenerationTaskNodeEffect(input: {
 
 export type BindBackendCanvasGenerationRuntime = {
     hydrateOutputs?: typeof hydrateBackendGeneratedOutputs;
-    persistDocument?: typeof persistCanvasDocument;
+    persistDocument?: PersistCanvasDocumentWithScope;
     bindOutput?: typeof bindCanvasTaskOutput;
     adoptConfirmedProjection?: AdoptServerConfirmedProjection;
     captureScope?: () => CapturedUserScope;
@@ -176,7 +177,11 @@ export async function bindBackendCanvasGenerationResult(input: {
     const capturedCanvasId = input.canvasId;
     const outputIndex = input.outputIndex ?? 0;
     const hydrateOutputs = runtime.hydrateOutputs ?? hydrateBackendGeneratedOutputs;
-    const persistDocument = runtime.persistDocument ?? persistCanvasDocument;
+    const persistDocument = runtime.persistDocument ?? (async (id, patch, entryCapturedScope) => {
+        const captured = entryCapturedScope ?? capturedScope;
+        assertUserScope(captured, liveScope());
+        await (persistCanvasDocument as PersistCanvasDocumentWithScope)(id, patch, captured);
+    });
     const bindOutput = runtime.bindOutput ?? bindCanvasTaskOutput;
     const adoptConfirmedProjection = runtime.adoptConfirmedProjection ?? defaultAdoptConfirmedProjection;
 
@@ -192,7 +197,7 @@ export async function bindBackendCanvasGenerationResult(input: {
     const live = useCanvasStore.getState().projects.find((project) => project.id === capturedCanvasId);
     if (live) {
         try {
-            await persistDocument(capturedCanvasId, { nodes: live.nodes, connections: live.connections });
+            await persistDocument(capturedCanvasId, { nodes: live.nodes, connections: live.connections }, capturedScope);
         } catch (error) {
             if (error instanceof Error && error.name === "AbortError") throw error;
             if (isUserScopeAbandonedError(error)) throw error;
@@ -214,20 +219,11 @@ export async function bindBackendCanvasGenerationResult(input: {
     assertBindDispatchScope(capturedScope, liveScope);
 
     const receipt = response.result ?? {};
-    const revision = response.revision || receipt.revision;
-    overlayBoundGenerationOnLiveCanvas({
-        canvasId: capturedCanvasId,
-        nodeId: input.nodeId,
-        receipt,
-        revision,
-        updateLive: input.isCurrent(),
-        nodesRef: input.nodesRef,
-        setNodes: input.setNodes,
-    });
-    assertBindDispatchScope(capturedScope, liveScope);
-    const canonical = canonicalCanvasFromReceipt(capturedCanvasId, receipt, revision, useCanvasStore.getState().projects.find((project) => project.id === capturedCanvasId));
-    if (!canonical) throw new CanvasBindProjectionAdoptionError();
-    const adopted = await adoptConfirmedProjection(canonical, capturedScope.userScope);
+    if (receipt.bindingStatus === "deleted" && !receipt.canvas) {
+        return;
+    }
+    const canonical = canonicalCanvasFromReceipt(capturedCanvasId, receipt);
+    const adopted = await adoptConfirmedProjection(canonical, capturedScope.userScope, capturedScope);
     assertBindDispatchScope(capturedScope, liveScope);
     if (adopted && input.isCurrent()) {
         input.nodesRef.current = adopted.nodes;
@@ -239,27 +235,30 @@ function assertBindDispatchScope(expected: CapturedUserScope, live: () => Captur
     if (!userScopeMatches(expected, live())) throw new UserScopeAbandonedError();
 }
 
-async function defaultAdoptConfirmedProjection(project: CanvasProject, scope: string) {
+async function defaultAdoptConfirmedProjection(project: CanvasProject, scope: string, entryCapturedScope?: CapturedUserScope) {
+    const captured = entryCapturedScope;
+    if (!captured || captured.userScope !== scope) throw new CanvasBindProjectionAdoptionError();
     const repository = await import("@/services/local-workspace-repository");
+    assertUserScope(captured);
     const adopt = (repository as { adoptServerConfirmedGenerationPatch?: AdoptServerConfirmedProjection }).adoptServerConfirmedGenerationPatch;
     if (!adopt) throw new CanvasBindProjectionAdoptionError();
-    return adopt(project, scope);
+    return adopt(project, captured.userScope, captured);
 }
 
-function canonicalCanvasFromReceipt(canvasId: string, receipt: CanvasTaskBindReceipt, revision: number | undefined, fallback?: CanvasProject): CanvasProject | undefined {
+function canonicalCanvasFromReceipt(canvasId: string, receipt: CanvasTaskBindReceipt): CanvasProject {
     const raw = receipt.canvas;
-    if (!raw || typeof raw !== "object") {
-        return fallback ? { ...fallback, ...(revision != null ? { revision } : {}) } : undefined;
-    }
+    if (!raw || typeof raw !== "object") throw new CanvasBindProjectionAdoptionError();
     const document = raw as CanvasProject;
-    if (typeof document.id === "string" && document.id && document.id !== canvasId) return undefined;
+    if (typeof document.id === "string" && document.id && document.id !== canvasId) throw new CanvasBindProjectionAdoptionError();
+    const revision = typeof document.revision === "number" && Number.isInteger(document.revision)
+        ? document.revision
+        : (typeof receipt.revision === "number" ? receipt.revision : undefined);
     return {
-        ...(fallback ?? document),
         ...document,
         id: canvasId,
         ...(revision != null ? { revision } : {}),
-        nodes: Array.isArray(document.nodes) ? (document.nodes as CanvasNodeData[]) : fallback?.nodes ?? [],
-        connections: Array.isArray(document.connections) ? document.connections : fallback?.connections ?? [],
+        nodes: Array.isArray(document.nodes) ? (document.nodes as CanvasNodeData[]) : [],
+        connections: Array.isArray(document.connections) ? document.connections : [],
     };
 }
 

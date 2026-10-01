@@ -111,8 +111,8 @@ func (s *Service) finalizeCharacterTurnaroundTask(task model.Task, result map[st
 	return true, nil
 }
 
-// REMOVE when lead integrates taskdelivery: ProjectDetail/ProjectCore must not
-// repair turnaround bindings as a normal read. Delivery owns background recovery.
+// reconcileCharacterTurnaroundTasks restores unbound turnaround cards for an
+// explicit lifecycle or background scan. GET project/task must not call it.
 func (s *Service) reconcileCharacterTurnaroundTasks(userID string, projectID string) bool {
 	tasks, err := s.repo.UnboundCharacterTurnaroundTasks(userID, projectID)
 	if err != nil {

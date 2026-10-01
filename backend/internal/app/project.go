@@ -68,21 +68,6 @@ func (s *Service) ProjectDetail(userID string, id string) (ProjectDetail, error)
 	if _, err := s.projectDomain().Owned(userID, id); err != nil {
 		return ProjectDetail{}, err
 	}
-	// REMOVE when lead integrates taskdelivery: ProjectDetail must not own generated-output
-	// recovery. These two calls exist only so current production still heals interrupted
-	// browser refreshes until the delivery worker is wired.
-	if s.reconcileCharacterTurnaroundTasks(userID, id) {
-		if _, err := s.projectDomain().Owned(userID, id); err != nil {
-			return ProjectDetail{}, err
-		}
-	}
-	if tasks, tasksErr := s.repo.SuccessfulWorkflowTasksForProject(userID, id); tasksErr == nil {
-		for _, task := range tasks {
-			if err := s.RegisterTaskOutputFromTask(task); err != nil {
-				_ = s.log(userID, task.ID, "error", "项目读取时工作流产物补偿失败", err.Error())
-			}
-		}
-	}
 	core, err := s.projectDomain().Inspect(userID, id)
 	if err != nil {
 		return ProjectDetail{}, err

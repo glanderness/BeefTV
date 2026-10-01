@@ -210,9 +210,6 @@ func (a taskProviderAdapter) RequestCancel(ctx context.Context, task *model.Task
 type taskPresenterAdapter struct{ s *Service }
 
 func (a taskPresenterAdapter) Task(task model.Task) *model.Task {
-	if err := a.s.ensureSucceededTaskDelivery(&task); err != nil {
-		_ = a.s.log(task.UserID, task.ID, "error", "读取任务时补齐结果交付失败", err.Error())
-	}
 	projected := taskForOutput(task)
 	a.s.attachTaskDelivery(projected)
 	return projected

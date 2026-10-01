@@ -10,6 +10,7 @@ import (
 
 	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/canvas"
+	"infinite-canvas/backend/internal/conversation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/operations"
 	"infinite-canvas/backend/internal/repository"
@@ -388,17 +389,19 @@ func (s *Service) ConnectUserCanvasNodesWithTx(tx *gorm.DB, userID, canvasID, fr
 }
 
 // BindDomain 把当前事务绑成操作层 Domain：画布读写走同一条连接，任务/模型快照仍由组合根提供。
+// 对话写入必须 WithTx(tx)，不能只换仓储再开第二层 Transaction，SQLite 会自锁。
 func (s *Service) BindDomain(tx *gorm.DB) operations.Domain {
 	if tx == nil {
 		return &operationSession{canvas: s.canvasDomain(), service: s, repo: s.repo}
 	}
-	return &operationSession{canvas: s.canvasDomainWithTx(tx), service: s, repo: s.repo.WithTx(tx)}
+	return &operationSession{canvas: s.canvasDomainWithTx(tx), service: s, repo: s.repo.WithTx(tx), tx: tx}
 }
 
 type operationSession struct {
 	canvas  *canvas.Service
 	service *Service
 	repo    *repository.Repository
+	tx      *gorm.DB
 }
 
 func (s *operationSession) UserCanvasProject(userID string, id string) (json.RawMessage, error) {
@@ -509,6 +512,79 @@ func (s *operationSession) OwnedAsset(userID, assetID string) (*model.Asset, err
 
 func (s *operationSession) BindExistingCanvasNode(userID string, patch canvas.TaskOutputBind) (canvas.TaskOutputBindResult, error) {
 	return s.canvas.BindTaskOutputToExistingNode(userID, patch)
+}
+
+func (s *operationSession) conversations() *conversation.Service {
+	if s == nil || s.repo == nil {
+		return conversation.New(nil)
+	}
+	svc := conversation.New(conversation.NewStore(s.repo))
+	if s.tx != nil {
+		return svc.WithTx(s.tx)
+	}
+	return svc
+}
+
+func (s *operationSession) UserConversation(userID, conversationID string) (taskbinding.ConversationView, error) {
+	if s == nil || s.repo == nil {
+		return taskbinding.ConversationView{}, gorm.ErrRecordNotFound
+	}
+	row, err := s.repo.CreationConversation(s.tx, userID, conversationID)
+	if err != nil {
+		return taskbinding.ConversationView{}, err
+	}
+	view := taskbinding.ConversationView{
+		ID:       row.ConversationID,
+		Revision: row.Revision,
+		Deleted:  row.Deleted,
+	}
+	if !row.Deleted {
+		view.Document = []byte(row.Document)
+	}
+	return view, nil
+}
+
+func (s *operationSession) AttachConversationMessage(userID string, input taskbinding.MessageAttachInput) (taskbinding.ConversationView, error) {
+	record, err := s.conversations().AttachMessageResult(userID, conversation.AttachInput{
+		ConversationID: input.ConversationID,
+		MessageID:      input.MessageID,
+		TaskID:         input.TaskID,
+		EffectKey:      input.EffectKey,
+		ResultURLs:     input.ResultURLs,
+		Status:         input.Status,
+		Content:        input.Content,
+	})
+	if err != nil {
+		return taskbinding.ConversationView{}, mapConversationAttachError(err)
+	}
+	return taskbinding.ConversationView{
+		ID:       record.ID,
+		Revision: record.Revision,
+		Deleted:  record.Deleted,
+		Document: record.Document,
+	}, nil
+}
+
+func mapConversationAttachError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var convErr *conversation.Error
+	if !errors.As(err, &convErr) {
+		return err
+	}
+	switch {
+	case convErr.Reason == conversation.ReasonNotFound:
+		return &taskbinding.Error{Status: 404, Reason: "conversation_deleted", Message: convErr.Message}
+	case strings.Contains(convErr.Message, "消息未关联该任务"):
+		return &taskbinding.Error{Status: 409, Reason: "message_task_mismatch", Message: convErr.Message}
+	case strings.Contains(convErr.Message, "对话已删除"):
+		return &taskbinding.Error{Status: 409, Reason: "conversation_deleted", Message: convErr.Message}
+	case convErr.Reason == conversation.ReasonConflict:
+		return &taskbinding.Error{Status: 409, Reason: "stale_revision", Message: convErr.Message}
+	default:
+		return &taskbinding.Error{Status: convErr.Status, Reason: convErr.Reason, Message: convErr.Message}
+	}
 }
 
 var (

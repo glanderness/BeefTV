@@ -1,5 +1,6 @@
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { captureUserScopeEpoch, getActiveUserScope, userScopeEpochMatches, type UserScopeEpoch } from "@/lib/user-scope";
+import { assertUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { ApiError } from "@/services/api/request";
 import { creationConversationsApi, type CreationConversationDocument, type CreationConversationRecord } from "@/services/api/creation-conversations";
 
@@ -698,6 +699,24 @@ export async function parkCreationConversationDraft(
         document: cloneConversation(local),
         remote: remote ? cloneConversation(remote) : undefined,
     }));
+}
+
+export async function adoptServerConfirmedConversationDocument(
+    conversationId: string,
+    document: StoredCreationConversation,
+    revision: number,
+    entryCapturedScope: CapturedUserScope,
+) {
+    assertUserScope(entryCapturedScope);
+    const scope = entryCapturedScope.userScope;
+    const id = conversationId.trim();
+    if (!id) throw new Error("缺少要采纳的创作对话 ID");
+    const canonical = cloneConversation(document);
+    rememberCommitted(scope, id, revision, canonical);
+    pendingWrites.delete(scopeKey(scope, id));
+    await withScopeStorage(scope, () => removeDraft(scope, id));
+    assertUserScope(entryCapturedScope);
+    return canonical;
 }
 
 export async function acceptSavedCreationConversation(

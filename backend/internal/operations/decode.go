@@ -11,6 +11,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"infinite-canvas/backend/internal/conversation"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/taskbinding"
 )
@@ -91,6 +92,10 @@ func mapDomainError(err error) error {
 	if errors.As(err, &bindErr) {
 		return mapBindError(bindErr.Status, bindErr.Reason, bindErr.Message)
 	}
+	var convErr *conversation.Error
+	if errors.As(err, &convErr) {
+		return mapBindError(convErr.Status, convErr.Reason, convErr.Message)
+	}
 	var appErr *kernel.AppError
 	if errors.As(err, &appErr) {
 		reason := string(appErr.Reason)
@@ -130,6 +135,32 @@ func mapDomainError(err error) error {
 		return Conflict("stale_write", "写入冲突，已停止覆盖", nil)
 	}
 	return AsError(err)
+}
+
+func isNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return true
+	}
+	var bindErr *taskbinding.Error
+	if errors.As(err, &bindErr) && bindErr.Status == http.StatusNotFound {
+		return true
+	}
+	var convErr *conversation.Error
+	if errors.As(err, &convErr) && convErr.Status == http.StatusNotFound {
+		return true
+	}
+	var appErr *kernel.AppError
+	if errors.As(err, &appErr) && appErr.Status == http.StatusNotFound {
+		return true
+	}
+	var opErr *Error
+	if errors.As(err, &opErr) && opErr.Code == CodeNotFound {
+		return true
+	}
+	return false
 }
 
 func mapBindError(status int, reason, message string) error {

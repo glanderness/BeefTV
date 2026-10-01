@@ -23,11 +23,6 @@ type ProjectAssetCandidatePage = localproject.AssetCandidatePage
 type ProjectAssetPage = localproject.AssetPage
 
 func (s *Service) ProjectCore(userID string, projectID string) (ProjectCore, error) {
-	// REMOVE when lead integrates taskdelivery: workbench core must not repair
-	// turnaround bindings as a normal read.
-	if s.reconcileCharacterTurnaroundTasks(userID, projectID) {
-		return s.projectDomain().ProjectCore(userID, projectID)
-	}
 	return s.projectDomain().ProjectCore(userID, projectID)
 }
 

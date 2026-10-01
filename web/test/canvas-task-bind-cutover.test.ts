@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import { bindBackendCanvasGenerationResult, CanvasBindFlushError } from "@/services/canvas-generation-consumer";
+import { bindBackendCanvasGenerationResult, CanvasBindFlushError, CanvasBindProjectionAdoptionError } from "@/services/canvas-generation-consumer";
 import { UserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
 import type { CanvasTaskBindReceipt } from "@/services/api/operations";
 import { hydrateBackendGeneratedAsset, hydrateBackendGeneratedOutputs } from "@/services/project-asset-sync";
@@ -97,9 +97,15 @@ describe("backend canvas bind cutover", () => {
         expect(bind).toContain("adoptConfirmedProjection");
         expect(bind).toContain("CanvasBindFlushError");
         expect(bind).toContain("expectedScope");
+        expect(bind).toContain("capturedScope");
+        expect(bind).toContain("persistDocument(capturedCanvasId, { nodes: live.nodes, connections: live.connections }, capturedScope)");
+        expect(bind).toContain("adoptConfirmedProjection(canonical, capturedScope.userScope, capturedScope)");
+        expect(bind).not.toContain("overlayBoundGenerationOnLiveCanvas");
         expect(bind).not.toContain("recordConfirmedBindProjection");
         expect(bind).not.toContain("persistCanvasGenerationEffect");
         expect(bind).not.toContain("applyExternalCanvasRevision");
+        expect(consumerSource).toContain("persistCanvasDocument as PersistCanvasDocumentWithScope");
+        expect(consumerSource).toContain("adopt(project, captured.userScope, captured)");
     });
 
     test("message consumers hydrate backend outputs instead of rematerializing", () => {
@@ -108,6 +114,7 @@ describe("backend canvas bind cutover", () => {
         const consume = syncSource.slice(start, end);
         expect(consume).toContain("hasBackendDeliveredGenerationOutputs");
         expect(consume).toContain("hydrateBackendGeneratedOutputs");
+        expect(consume).toContain("bindBackendConversationMessageResult");
         expect(consume).not.toContain("uploadGeneratedAssetToConfiguredSources");
     });
 });
@@ -614,6 +621,95 @@ describe("bindBackendCanvasGenerationResult", () => {
 
         expect(nodesRef.current).toHaveLength(0);
         expect(useCanvasStore.getState().projects[0]?.nodes).toHaveLength(0);
+    });
+
+    test("passes the same captured scope object through persist bind and adopt", async () => {
+        const bound = canvasNode("node-1", "手工标题", { taskId: "task-1", status: "loading" });
+        const live = canvasProject("canvas-1", [bound], 3);
+        const server = canvasProject("canvas-1", [{ ...bound, metadata: { ...bound.metadata, status: "success", content: "/api/resources/res-1/file" } }], 4);
+        useCanvasStore.setState({ projects: [live] });
+        const nodesRef = { current: [bound] };
+        const identity = captured("user-a", 1);
+        const seen: unknown[] = [];
+
+        await bindBackendCanvasGenerationResult({
+            canvasId: "canvas-1",
+            nodeId: "node-1",
+            task: succeededTask(),
+            isCurrent: () => true,
+            nodesRef,
+            setNodes: (value) => {
+                nodesRef.current = typeof value === "function" ? value(nodesRef.current) : value;
+            },
+            runtime: {
+                hydrateOutputs: async () => undefined,
+                persistDocument: async (_id, _patch, scope) => {
+                    seen.push(scope);
+                },
+                bindOutput: async (input) => {
+                    expect(input.expectedScope).toBe(identity);
+                    return {
+                        op: "canvas.task.bind",
+                        opId: input.operationId,
+                        replayed: false,
+                        revision: 4,
+                        result: bindReceipt(server, "node-1"),
+                    };
+                },
+                adoptConfirmedProjection: async (_project, _scope, scope) => {
+                    seen.push(scope);
+                    return server;
+                },
+                captureScope: () => identity,
+                liveScope: () => identity,
+            },
+        });
+
+        expect(seen).toHaveLength(2);
+        expect(seen[0]).toBe(identity);
+        expect(seen[1]).toBe(identity);
+    });
+
+    test("missing receipt canvas throws instead of confirming a local snapshot revision", async () => {
+        const bound = canvasNode("node-1", "手工标题", { taskId: "task-1", status: "loading" });
+        useCanvasStore.setState({ projects: [canvasProject("canvas-1", [bound], 3)] });
+        const nodesRef = { current: [bound] };
+        const identity = captured("user-a", 1);
+        let adopted = 0;
+
+        await expect(
+            bindBackendCanvasGenerationResult({
+                canvasId: "canvas-1",
+                nodeId: "node-1",
+                task: succeededTask(),
+                isCurrent: () => true,
+                nodesRef,
+                setNodes: (value) => {
+                    nodesRef.current = typeof value === "function" ? value(nodesRef.current) : value;
+                },
+                runtime: {
+                    hydrateOutputs: async () => undefined,
+                    persistDocument: async () => undefined,
+                    bindOutput: async (input) => ({
+                        op: "canvas.task.bind",
+                        opId: input.operationId,
+                        replayed: false,
+                        revision: 9,
+                        result: { applied: true, canvasId: "canvas-1", nodeId: "node-1", taskId: "task-1", bindingStatus: "bound", revision: 9 },
+                    }),
+                    adoptConfirmedProjection: async () => {
+                        adopted += 1;
+                        return undefined;
+                    },
+                    captureScope: () => identity,
+                    liveScope: () => identity,
+                },
+            }),
+        ).rejects.toBeInstanceOf(CanvasBindProjectionAdoptionError);
+
+        expect(adopted).toBe(0);
+        expect(useCanvasStore.getState().projects[0]?.revision).toBe(3);
+        expect(nodesRef.current[0]?.metadata?.status).toBe("loading");
     });
 
     test("same-task manual content edit is kept after replay", async () => {

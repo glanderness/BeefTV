@@ -80,6 +80,7 @@ type AttachInput struct {
 	EffectKey      string
 	ResultURLs     []string
 	Status         string
+	Content        string
 }
 
 func (s *Service) List(userID string) (ListResult, error) {
@@ -528,6 +529,9 @@ func (s *Service) AttachMessageResult(userID string, input AttachInput) (Record,
 		}
 		if input.Status != "" {
 			target["status"] = input.Status
+		}
+		if text := strings.TrimSpace(input.Content); text != "" {
+			target["content"] = text
 		}
 		encoded, marshalErr := json.Marshal(object)
 		if marshalErr != nil {

@@ -75,7 +75,7 @@ func TestAssistantVisibleSetExcludesWorkspaceWideOps(t *testing.T) {
 			t.Fatalf("助手应能看到 %s: %v", id, visible)
 		}
 	}
-	for _, id := range []string{"asset.list", "canvas.search", "canvas.document.commit"} {
+	for _, id := range []string{"asset.list", "canvas.search", "canvas.document.commit", "conversation.message.attach"} {
 		if visible[id] {
 			t.Fatalf("工作区级或整页写操作 %s 不应暴露给助手", id)
 		}
@@ -92,7 +92,7 @@ func TestNilAssistantScopeDoesNotFilterCatalog(t *testing.T) {
 	agentops.RegisterDefaultOps(registry)
 	var typedNil *agentops.AssistantScope
 	listed := registry.List(agentops.Caller{Kind: agentops.CallerManual, Scope: typedNil})
-	if len(listed) != 11 {
+	if len(listed) != 12 {
 		t.Fatalf("空指针范围不应收窄目录，得到 %d", len(listed))
 	}
 	empty := registry.List(agentops.AssistantCaller(&agentops.AssistantScope{}, false))

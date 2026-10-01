@@ -347,14 +347,13 @@ export default function CreatePage() {
             const persistedTasks = await materializeCreationTaskResults(runtime, contextual, observationController.signal);
             if (cancelled) return;
             taskSyncWarningRef.current = false;
-            const attachable = persistedTasks.filter((task) => task.status === "succeeded" && Boolean(task.clientContext?.messageId) && Boolean(task.creationResultUrls?.length));
+            const attachable = persistedTasks.filter((task) => task.status === "succeeded" && Boolean(task.clientContext?.messageId) && Boolean(task.clientContext?.conversationId));
             for (const task of attachable) {
                 try {
-                    await runtime.consumeGenerationTaskMessage(task, task.clientContext!.messageId!, async ({ effectKey, resultUrls }) => {
+                    await runtime.consumeGenerationTaskMessage(task, task.clientContext!.messageId!, async ({ conversation, bindingStatus }) => {
                         if (cancelled) return;
-                        await updateConversationMessage(task.clientContext!.conversationId!, task.clientContext!.messageId!, (item) =>
-                            runtime.applyGenerationConsumerEffect(item, effectKey, (current) => ({ ...current, status: "done" as const, resultUrls: Array.from(new Set([...(current.resultUrls || []), ...resultUrls])) })).value,
-                        );
+                        if (bindingStatus === "deleted") return;
+                        if (conversation) applyCanonicalConversation(task.clientContext!.conversationId!, conversation as CreationConversation);
                     }, { signal: observationController.signal, materialize: async () => task, materializedUrls: runtime.generationTaskMaterializedUrls });
                 } catch (error) {
                     if (cancelled || observationController.signal.aborted) return;
@@ -411,6 +410,17 @@ export default function CreatePage() {
         conversationsRef.current = next;
         setConversations(next);
     }, [activeId]);
+
+    const applyCanonicalConversation = useCallback((conversationId: string, document: CreationConversation) => {
+        const next = updateCreationConversationSnapshot(conversationsRef.current, conversationId, (current) => ({
+            ...current,
+            ...document,
+            id: conversationId,
+            conflictRemote: current.conflictRemote,
+        }));
+        conversationsRef.current = next;
+        setConversations(next);
+    }, []);
 
     const updateConversationMessage = useCallback(async (conversationId: string, id: string, updater: (item: CreationMessage) => CreationMessage) => {
         const next = updateCreationConversationSnapshot(conversationsRef.current, conversationId, (conversation) => ({
@@ -723,7 +733,29 @@ export default function CreatePage() {
                     ...retryContext,
                 }));
                 if (!result.text?.trim()) throw new Error("后端任务没有返回文本");
-                updateOriginAssistant((item) => ({ ...item, content: result.text || "", reasoning: result.reasoning }));
+                const textTaskId = Array.from(boundTaskIds)[0];
+                if (textTaskId) {
+                    await runtime.consumeGenerationTaskMessage({
+                        ...(boundTasks.get(textTaskId) || {
+                            id: textTaskId,
+                            type: "text",
+                            status: "succeeded",
+                            prompt: expandedPrompt,
+                            attempts: 1,
+                            createdAt: new Date().toISOString(),
+                            updatedAt: new Date().toISOString(),
+                        }),
+                        id: textTaskId,
+                        type: boundTasks.get(textTaskId)?.type || "text",
+                        status: "succeeded",
+                        clientContext: { conversationId: originConversationId, messageId: assistantMessage.id },
+                    }, assistantMessage.id, async ({ conversation, bindingStatus }) => {
+                        if (bindingStatus === "deleted") return;
+                        if (conversation) applyCanonicalConversation(originConversationId, conversation as CreationConversation);
+                    }, { signal: requestLifecycle.signal, materialize: async (task) => task });
+                } else {
+                    updateOriginAssistant((item) => ({ ...item, content: result.text || "", reasoning: result.reasoning }));
+                }
             } else if (mode === "image") {
                 const taskCount = Math.max(1, Math.min(imageProfile.maxOutputs, Math.floor(Number(count) || 1)));
                 const settled = await runtime.runGenerationOperationOnce(retryContext?.clientOperationId, () => runtime.runBackendGenerationTaskBatch({
@@ -752,8 +784,9 @@ export default function CreatePage() {
                 const storedImages = await Promise.allSettled(generatedImages.map(async ({ image, taskId, batchIndex }) => {
                     if (!taskId) throw new Error("生成任务缺少稳定任务标识");
                     const task = completedCreationGenerationTask(runtime, { taskId, task: boundTasks.get(taskId), mode: "image", prompt: expandedPrompt, result: { mode: "image", images: [image] }, conversationId: activeConversation.id, messageId: assistantMessage.id, batchIndex, batchCount: taskCount });
-                    const materialized = await runtime.consumeGenerationTaskMessage(task, assistantMessage.id, async ({ resultUrls, effectKey }) => {
-                        await updateOriginAssistant((item) => runtime.applyGenerationConsumerEffect(item, effectKey, (current) => ({ ...current, status: "done" as const, content: "图片已生成", resultUrls: Array.from(new Set([...(current.resultUrls || []), ...resultUrls])) })).value);
+                    const materialized = await runtime.consumeGenerationTaskMessage(task, assistantMessage.id, async ({ conversation, bindingStatus }) => {
+                        if (bindingStatus === "deleted") return;
+                        if (conversation) applyCanonicalConversation(originConversationId, conversation as CreationConversation);
                     }, { signal: requestLifecycle.signal });
                     const url = runtime.generationTaskMaterializedUrls(materialized)[0];
                     if (!url) throw new Error("图片结果资源不可用");
@@ -785,8 +818,9 @@ export default function CreatePage() {
                 const taskId = Array.from(boundTaskIds)[0];
                 if (!taskId) throw new Error("生成任务缺少稳定任务标识");
                 const task = completedCreationGenerationTask(runtime, { taskId, task: boundTasks.get(taskId), mode: "video", prompt: expandedPrompt, result, conversationId: activeConversation.id, messageId: assistantMessage.id });
-                const materialized = await runtime.consumeGenerationTaskMessage(task, assistantMessage.id, async ({ resultUrls, effectKey }) => {
-                    await updateOriginAssistant((item) => runtime.applyGenerationConsumerEffect(item, effectKey, (current) => ({ ...current, status: "done" as const, content: "视频已生成", resultUrls })).value);
+                const materialized = await runtime.consumeGenerationTaskMessage(task, assistantMessage.id, async ({ conversation, bindingStatus }) => {
+                    if (bindingStatus === "deleted") return;
+                    if (conversation) applyCanonicalConversation(originConversationId, conversation as CreationConversation);
                 }, { signal: requestLifecycle.signal });
                 if (!runtime.generationTaskMaterializedUrls(materialized)[0]) throw new Error("视频结果资源不可用");
             }

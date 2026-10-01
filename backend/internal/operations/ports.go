@@ -8,6 +8,7 @@ import (
 	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/model"
 	localtask "infinite-canvas/backend/internal/task"
+	"infinite-canvas/backend/internal/taskbinding"
 )
 
 // Domain 是一次操作在当前事务里看到的工作区。方法不接受 *gorm.DB：
@@ -28,6 +29,8 @@ type Domain interface {
 	OwnedReadyResource(userID, resourceID string) (*model.Resource, error)
 	OwnedAsset(userID, assetID string) (*model.Asset, error)
 	BindExistingCanvasNode(userID string, patch canvas.TaskOutputBind) (canvas.TaskOutputBindResult, error)
+	UserConversation(userID, conversationID string) (taskbinding.ConversationView, error)
+	AttachConversationMessage(userID string, input taskbinding.MessageAttachInput) (taskbinding.ConversationView, error)
 }
 
 // DomainBinder 是组合根把根服务绑到当前事务的唯一缝。操作核的业务端口不再露出 *gorm.DB。

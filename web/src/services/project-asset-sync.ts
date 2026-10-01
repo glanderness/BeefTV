@@ -22,6 +22,8 @@ import { useAssetStore, type Asset, type AssetCategory, type NewAsset } from "@/
 import type { CanvasNodeData } from "@/types/canvas";
 import { persistWorkspaceAssetLink } from "@/services/workspace-asset-repository";
 import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
+import { bindBackendConversationMessageResult, type BindBackendConversationMessageRuntime } from "@/services/conversation-generation-consumer";
+import type { StoredCreationConversation } from "@/services/creation-conversation-store";
 
 function throwIfAborted(signal?: AbortSignal) {
     if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
@@ -603,13 +605,23 @@ export async function consumeGenerationTaskAgent(
 export async function consumeGenerationTaskMessage(
     task: GenerationTask,
     messageId: string,
-    consumer: (input: { task: GenerationTask; resultUrls: string[]; effectKey: string; signal?: AbortSignal }) => Promise<void> | void,
+    consumer: (input: {
+        task: GenerationTask;
+        resultUrls: string[];
+        effectKey: string;
+        signal?: AbortSignal;
+        content?: string;
+        conversation?: StoredCreationConversation;
+        revision?: number;
+        bindingStatus?: string;
+    }) => Promise<void> | void,
     dependencies: {
         signal?: AbortSignal;
         managed?: true;
         materialize?: typeof materializeGenerationTaskAssets;
         materializedUrls?: typeof generationTaskMaterializedUrls;
         attachMessage?: typeof attachGenerationTaskMessage;
+        bindMessage?: BindBackendConversationMessageRuntime;
     } = {},
 ): Promise<GenerationTask> {
     if (!dependencies.managed) {
@@ -621,6 +633,30 @@ export async function consumeGenerationTaskMessage(
               return task;
           })()
         : await (dependencies.materialize ?? materializeGenerationTaskAssets)(task, dependencies.signal);
+    const conversationId = materialized.clientContext?.conversationId?.trim() || "";
+    if (conversationId && materialized.status === "succeeded") {
+        for (const outputIndex of conversationMessageAttachIndexes(materialized)) {
+            const bound = await bindBackendConversationMessageResult({
+                conversationId,
+                messageId,
+                task: materialized,
+                outputIndex,
+                signal: dependencies.signal,
+                runtime: dependencies.bindMessage,
+            });
+            await consumer({
+                task: materialized,
+                resultUrls: bound.resultUrls,
+                effectKey: bound.effectKey,
+                signal: dependencies.signal,
+                content: bound.content,
+                conversation: bound.conversation,
+                revision: bound.receipt.revision,
+                bindingStatus: bound.receipt.bindingStatus,
+            });
+        }
+        return materialized;
+    }
     const resultUrls = (dependencies.materializedUrls ?? generationTaskMaterializedUrls)(materialized);
     const attach = dependencies.attachMessage ?? attachGenerationTaskMessage;
     const outputs = materialized.outputs?.filter((output) => output.materializedAssetId) ?? [];
@@ -636,6 +672,19 @@ export async function consumeGenerationTaskMessage(
         );
     }
     return materialized;
+}
+
+function conversationMessageAttachIndexes(task: GenerationTask): number[] {
+    switch (task.type) {
+        case "text":
+        case "canvas_text":
+        case "text_replay":
+            return [0];
+        default:
+            break;
+    }
+    const indexes = (task.outputs || []).map((output) => output.outputIndex);
+    return indexes.length ? indexes : [0];
 }
 
 export function generationTaskMaterializedUrls(task: GenerationTask): string[] {

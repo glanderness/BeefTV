@@ -83,7 +83,7 @@ func TestGenerationDeliverySurvivesSQLiteReopenAndUIClose(t *testing.T) {
 	}
 }
 
-func TestGenerationDeliveryGetRepairsAfterCompletionWithoutWorkerDeliver(t *testing.T) {
+func TestGenerationDeliveryGetDoesNotWriteRepairAfterCompletionWithoutWorkerDeliver(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "generation-repair.db")
 	svc, db := newGenerationDeliveryService(t, path)
 	defer closeDB(t, db)
@@ -104,14 +104,57 @@ func TestGenerationDeliveryGetRepairsAfterCompletionWithoutWorkerDeliver(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	if got.Outputs[0].MaterializedAssetID != "" {
+		t.Fatalf("GET wrote a delivery repair: %#v", got.Outputs[0])
+	}
+	var assets, results int64
+	if err := db.Model(&model.Asset{}).Count(&assets).Error; err != nil || assets != 0 {
+		t.Fatalf("GET created assets = %d err=%v", assets, err)
+	}
+	if err := db.Model(&model.Result{}).Where("kind = ?", localtask.ResultKindGenerationOutput).Count(&results).Error; err != nil || results != 0 {
+		t.Fatalf("GET created results = %d err=%v", results, err)
+	}
+	if err := svc.RecoverIncompleteGenerationDeliveries(8); err != nil {
+		t.Fatal(err)
+	}
+	got, err = svc.Task("user-1", task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got.ResultState != localtask.ResultStateReady || len(got.Outputs) != 1 || got.Outputs[0].MediaType != "video" {
-		t.Fatalf("repaired task = %#v", got)
+		t.Fatalf("background recovered task = %#v", got)
 	}
 	if got.Outputs[0].MaterializedAssetID != localtask.MaterializedAssetID(task.ID, 0) {
-		t.Fatalf("repaired asset = %q", got.Outputs[0].MaterializedAssetID)
+		t.Fatalf("recovered asset = %q", got.Outputs[0].MaterializedAssetID)
 	}
 	if got.Outputs[0].TargetBinding == nil || got.Outputs[0].TargetBinding.MessageID != "msg-1" || got.Outputs[0].TargetBinding.ConversationID != "conv-1" {
 		t.Fatalf("message binding = %#v", got.Outputs[0].TargetBinding)
+	}
+}
+
+func TestGenerationDeliveryGetFailedTaskDoesNotPayOrMaterialize(t *testing.T) {
+	svc, db := newGenerationDeliveryService(t, filepath.Join(t.TempDir(), "generation-get-failed.db"))
+	defer closeDB(t, db)
+	now := time.Now()
+	task := model.Task{
+		ID: "task-failed-get", UserID: "user-1", Type: "canvas_image", Status: model.TaskStatusFailed,
+		InputJSON:  `{"metadata":{"source":"create-page","conversationId":"conv-1","messageId":"msg-1"}}`,
+		ResultJSON: `{"images":[{"url":"https://example.invalid/paid-retry.png"}]}`,
+		Error:      "upstream failed",
+		CreatedAt:  now, UpdatedAt: now, CompletedAt: &now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Task("user-1", task.ID); err != nil {
+		t.Fatal(err)
+	}
+	var assets, results int64
+	if err := db.Model(&model.Asset{}).Count(&assets).Error; err != nil || assets != 0 {
+		t.Fatalf("failed GET created assets = %d err=%v", assets, err)
+	}
+	if err := db.Model(&model.Result{}).Count(&results).Error; err != nil || results != 0 {
+		t.Fatalf("failed GET created results = %d err=%v", results, err)
 	}
 }
 

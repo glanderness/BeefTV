@@ -73,6 +73,7 @@ mock.module("@/lib/localforage-storage", () => ({
 
 mock.module("@/lib/user-scope", () => ({
     getActiveUserScope: () => activeScope,
+    getActiveUserScopeEpoch: () => scopeGeneration,
     getUserScopeGeneration: () => scopeGeneration,
     captureUserScopeEpoch: (scope = activeScope) => ({ scope, generation: scopeGeneration }),
     userScopeEpochMatches: (epoch: { scope: string; generation: number }, live?: { scope: string; generation: number }) => {
@@ -166,6 +167,7 @@ const {
     acceptSavedCreationConversation,
     restoreParkedCreationConversation,
     hasParkedCreationConversationDraft,
+    adoptServerConfirmedConversationDocument,
 } = await import("@/services/creation-conversation-store");
 
 beforeEach(() => {
@@ -433,4 +435,29 @@ test("later generation is projected onto the canonical untitled ack", async () =
     expect(server.puts.map((item) => item.messageCount)).toEqual([1, 2]);
     expect(server.conversations.get("proj")?.document?.title).toBe("新创作");
     expect(server.conversations.get("proj")?.document?.messages).toHaveLength(2);
+});
+
+test("adoptServerConfirmedConversationDocument uses the entry captured scope and does not PUT", async () => {
+    const captured = { userScope: "guest", epoch: 1 };
+    const adopted = await adoptServerConfirmedConversationDocument("conv-1", {
+        id: "conv-1",
+        title: "已绑定",
+        messages: [{ id: "msg-1", role: "assistant", content: "图片已生成" }],
+    }, 4, captured);
+    expect(adopted.title).toBe("已绑定");
+    expect(server.puts).toEqual([]);
+
+    await expect(adoptServerConfirmedConversationDocument("conv-1", {
+        id: "conv-1",
+        title: "下一账号",
+        messages: [],
+    }, 5, { userScope: "guest", epoch: 1 })).resolves.toMatchObject({ title: "下一账号" });
+
+    switchScope("user-b");
+    await expect(adoptServerConfirmedConversationDocument("conv-1", {
+        id: "conv-1",
+        title: "不该写入",
+        messages: [],
+    }, 6, captured)).rejects.toMatchObject({ name: "UserScopeAbandonedError" });
+    expect(server.puts).toEqual([]);
 });
