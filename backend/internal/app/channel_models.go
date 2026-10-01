@@ -4,44 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/protocol"
+	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/repository"
 
 	"gorm.io/gorm"
 )
 
-type ChannelModelRequest struct {
-	ModelKey         string                       `json:"modelKey"`
-	ProviderModelKey string                       `json:"providerModelKey"`
-	DisplayName      string                       `json:"displayName"`
-	Icon             string                       `json:"icon"`
-	Capability       string                       `json:"capability"`
-	Protocol         string                       `json:"protocol"`
-	Enabled          *bool                        `json:"enabled"`
-	CapabilityConfig *ModelCapabilityConfig       `json:"capabilityConfig"`
-	Variants         []ChannelModelVariantRequest `json:"variants"`
-}
-
 const maxAdminChannelModelBatchDeleteCount = 100
-
-// ChannelModelVariantRequest maps one supported option set to an upstream SKU.
-// Resolution="*"、VideoSeconds=0 分别表示任意分辨率和任意时长。
-type ChannelModelVariantRequest struct {
-	// Selector 是 SKU 的规范匹配条件。支持 operation、quality、size、vquality、videoSeconds、imageCount；
-	// operation 可区分文生/图生/视频生，避免同一分辨率下错误复用上游 SKU。
-	Selector         map[string]string `json:"selector"`
-	Resolution       string            `json:"resolution"`
-	VideoSeconds     int               `json:"videoSeconds"`
-	ProviderModelKey string            `json:"providerModelKey"`
-	Enabled          *bool             `json:"enabled"`
-}
 
 // AdminChannelModelFetchResult 是管理员从上游拉目录后的汇总：models 为去重后的标识，added 为本次新建条数。
 type AdminChannelModelFetchResult struct {
@@ -324,13 +298,7 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	}
 	// 模型级上游键重命名时，与旧值相同的档位键属于“跟随模型默认”的隐式固化，必须级联跟随；
 	// 否则任务请求会继续把旧上游键发给供应商。管理员显式配置的其他上游 SKU 不受影响。
-	if previousProviderModelKey != "" && providerModelKey != previousProviderModelKey {
-		for index := range tiers {
-			if strings.TrimPrefix(strings.TrimSpace(tiers[index].ProviderModelKey), "models/") == previousProviderModelKey {
-				tiers[index].ProviderModelKey = providerModelKey
-			}
-		}
-	}
+	tiers = modelcatalog.CascadeUpstreamRename(tiers, previousProviderModelKey, providerModelKey)
 	item.ModelKey = modelKey
 	item.ProviderModelKey = providerModelKey
 	item.DisplayName = strings.TrimSpace(req.DisplayName)
@@ -378,42 +346,6 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	return item, nil
 }
 
-func validateChannelModelTierCapabilities(tiers []model.ChannelModelVariant, rawCapabilityConfig string, capability string) error {
-	if capability != "video" {
-		return nil
-	}
-	config, err := DecodeModelCapabilityConfig(rawCapabilityConfig)
-	if err != nil || config == nil || config.Video == nil {
-		return BadAuthRequest("视频模型能力配置无效，无法校验变体规格")
-	}
-	resolutionSupported := make(map[string]bool, len(config.Video.Resolutions))
-	for _, resolution := range config.Video.Resolutions {
-		resolutionSupported[normalizeChannelModelTierResolution(resolution)] = true
-	}
-	durationSupported := make(map[int]bool, len(config.Video.Duration.Values))
-	for _, seconds := range config.Video.Duration.Values {
-		durationSupported[seconds] = true
-	}
-	for _, tier := range tiers {
-		if tier.Resolution != "*" && !resolutionSupported[normalizeChannelModelTierResolution(tier.Resolution)] {
-			return BadAuthRequest("变体分辨率不在该视频模型支持范围内：" + tier.Resolution)
-		}
-		if tier.VideoSeconds == 0 {
-			continue
-		}
-		if !videoDurationSupported(config.Video) {
-			continue
-		}
-		if config.Video.Duration.Selection == "enum" && !durationSupported[tier.VideoSeconds] {
-			return BadAuthRequest(fmt.Sprintf("变体时长 %d 秒不在该视频模型支持范围内", tier.VideoSeconds))
-		}
-		if config.Video.Duration.Selection == "range" && (tier.VideoSeconds < config.Video.Duration.Min || tier.VideoSeconds > config.Video.Duration.Max || (config.Video.Duration.Step > 0 && (tier.VideoSeconds-config.Video.Duration.Min)%config.Video.Duration.Step != 0)) {
-			return BadAuthRequest(fmt.Sprintf("变体时长 %d 秒不在该视频模型支持范围内", tier.VideoSeconds))
-		}
-	}
-	return nil
-}
-
 // syncLogicalModelsFromChannelModel 只失效路由目录。系统渠道 SKU 与前台模型目录
 // 分别维护：保存渠道模型绝不能自动创建、覆盖或删除前台模型及其线路配置。
 func (s *Service) syncLogicalModelsFromChannelModel(actor *model.User, channelModel *model.ChannelModel) error {
@@ -424,135 +356,18 @@ func (s *Service) syncLogicalModelsFromChannelModel(actor *model.User, channelMo
 }
 
 func (s *Service) normalizeChannelModelVariants(req ChannelModelRequest, capability string, protocol model.ChannelInterfaceType, fallbackProviderModelKey string) ([]model.ChannelModelVariant, error) {
-	inputs := req.Variants
-	// A model without explicit variants uses its default upstream key.
-	if len(inputs) == 0 {
-		enabled := true
-		inputs = []ChannelModelVariantRequest{{
-			Resolution: "*", VideoSeconds: 0, ProviderModelKey: fallbackProviderModelKey, Enabled: &enabled,
-		}}
+	result, err := modelcatalog.NormalizeChannelModelVariants(req, capability, protocol, fallbackProviderModelKey)
+	if err != nil {
+		return nil, err
 	}
-	result := make([]model.ChannelModelVariant, 0, len(inputs))
-	seen := make(map[string]bool, len(inputs))
-	for _, input := range inputs {
-		selector, resolution, videoSeconds, selectorErr := normalizeChannelModelTierSelector(capability, input)
-		if selectorErr != nil {
-			return nil, selectorErr
-		}
-		_, key, keyErr := model.CanonicalSKUSelector(selector)
-		if keyErr != nil {
-			return nil, keyErr
-		}
-		if seen[key] {
-			return nil, BadAuthRequest("同一个操作和规格组合只能配置一个上游变体")
-		}
-		seen[key] = true
+	for index := range result {
 		id, idErr := s.repo.NextPrefixedID("VARIANT")
 		if idErr != nil {
 			return nil, idErr
 		}
-		enabled := input.Enabled == nil || *input.Enabled
-		result = append(result, model.ChannelModelVariant{
-			ID:               id,
-			SelectorKey:      key,
-			SelectorJSON:     key,
-			Selector:         selector,
-			Resolution:       resolution,
-			VideoSeconds:     videoSeconds,
-			ProviderModelKey: strings.TrimPrefix(strings.TrimSpace(firstNonEmpty(input.ProviderModelKey, fallbackProviderModelKey)), "models/"),
-			Enabled:          enabled,
-		})
+		result[index].ID = id
 	}
 	return result, nil
-}
-
-func normalizeChannelModelTierSelector(capability string, input ChannelModelVariantRequest) (map[string]string, string, int, error) {
-	selector := make(map[string]string, len(input.Selector)+3)
-	for rawKey, rawValue := range input.Selector {
-		key := strings.TrimSpace(rawKey)
-		value := strings.TrimSpace(rawValue)
-		if key == "" || value == "" {
-			continue
-		}
-		switch key {
-		case "operation":
-			value = strings.ToLower(value)
-		case "quality", "size":
-			value = strings.ToLower(value)
-			if value == "auto" || value == "any" {
-				value = "*"
-			}
-		case "vquality":
-			value = normalizeChannelModelTierResolution(value)
-		case "videoSeconds":
-			seconds, err := strconv.Atoi(value)
-			if err != nil || seconds < 0 {
-				return nil, "", 0, BadAuthRequest("视频变体时长必须是非负整数")
-			}
-			if seconds == 0 {
-				continue
-			}
-			value = strconv.Itoa(seconds)
-		case "imageCount":
-			count, err := strconv.Atoi(value)
-			if err != nil || count < 0 {
-				return nil, "", 0, BadAuthRequest("参考图片数量必须是非负整数")
-			}
-			if count == 0 {
-				continue
-			}
-			value = strconv.Itoa(count)
-		default:
-			return nil, "", 0, BadAuthRequest("模型变体不支持规格字段：" + key)
-		}
-		selector[key] = value
-	}
-	if capability == "video" {
-		if _, exists := selector["vquality"]; !exists {
-			if resolution := normalizeChannelModelTierResolution(input.Resolution); resolution != "*" {
-				selector["vquality"] = resolution
-			}
-		}
-		if _, exists := selector["videoSeconds"]; !exists && input.VideoSeconds > 0 {
-			selector["videoSeconds"] = strconv.Itoa(input.VideoSeconds)
-		}
-	} else if input.Resolution != "" && normalizeChannelModelTierResolution(input.Resolution) != "*" {
-		return nil, "", 0, BadAuthRequest("非视频模型不能使用视频分辨率变体")
-	} else if input.VideoSeconds != 0 {
-		return nil, "", 0, BadAuthRequest("非视频模型不能使用视频时长变体")
-	}
-	for _, key := range []string{"quality", "size"} {
-		if _, exists := selector[key]; exists && capability != "image" {
-			return nil, "", 0, BadAuthRequest("只有图片模型可以按 " + key + " 配置变体")
-		}
-	}
-	if _, exists := selector["vquality"]; exists && capability != "video" {
-		return nil, "", 0, BadAuthRequest("只有视频模型可以按分辨率配置变体")
-	}
-	if _, exists := selector["videoSeconds"]; exists && capability != "video" {
-		return nil, "", 0, BadAuthRequest("只有视频模型可以按时长配置变体")
-	}
-	if _, exists := selector["imageCount"]; exists && capability != "video" {
-		return nil, "", 0, BadAuthRequest("只有视频模型可以按参考图片数量配置变体")
-	}
-	resolution := "*"
-	if value := selector["vquality"]; value != "" {
-		resolution = value
-	}
-	videoSeconds := 0
-	if value := selector["videoSeconds"]; value != "" {
-		videoSeconds, _ = strconv.Atoi(value)
-	}
-	return selector, resolution, videoSeconds, nil
-}
-
-func normalizeChannelModelTierResolution(raw string) string {
-	value := strings.TrimSpace(raw)
-	if value == "" || value == "*" || strings.EqualFold(value, "any") {
-		return "*"
-	}
-	normalized := normalizeModelRequestOption("vquality", value)
-	return strings.ToLower(strings.TrimSpace(fmt.Sprint(normalized)))
 }
 
 func (s *Service) TestAdminChannelModel(ctx context.Context, actor *model.User, channelID string, req ChannelModelRequest) (*AdminChannelModelTestResult, error) {
@@ -681,76 +496,6 @@ func (s *Service) TestAdminChannelModel(ctx context.Context, actor *model.User, 
 
 // 模型测试必须使用当前模型声明的默认参数，避免固定分辨率 SKU 被通用 1K 测试值误伤。
 // videoTestDefaults 从模型能力画像取测试用的比例和分辨率；画像缺失时回退到最通用的 16:9 / 720。
-func videoTestDefaults(profile *VideoCapabilityConfig) (string, string) {
-	if profile == nil {
-		return "16:9", "720"
-	}
-	ratio := strings.TrimSpace(profile.DefaultRatio)
-	if ratio == "" && len(profile.Ratios) > 0 {
-		ratio = strings.TrimSpace(profile.Ratios[0])
-	}
-	if ratio == "" {
-		ratio = "16:9"
-	}
-	resolution := strings.TrimSpace(profile.DefaultResolution)
-	if resolution == "" && len(profile.Resolutions) > 0 {
-		resolution = strings.TrimSpace(profile.Resolutions[0])
-	}
-	if resolution == "" {
-		resolution = "720"
-	}
-	return ratio, resolution
-}
-
-func imageTestDefaults(profile *ImageCapabilityConfig) (string, string) {
-	if profile == nil {
-		return "1024x1024", "auto"
-	}
-	size := ""
-	if profile.Size.Parameter != "none" {
-		size = strings.TrimSpace(profile.Size.Default)
-	}
-	quality := ""
-	if profile.Quality.Supported {
-		quality = strings.TrimSpace(profile.Quality.Default)
-	}
-	return size, quality
-}
-
-func normalizeChannelModelContract(channel *model.ModelChannel, req ChannelModelRequest) (string, string, string, model.ChannelInterfaceType, error) {
-	return normalizeChannelModelContractWithRegistry(protocol.Builtins(), channel, req)
-}
-
-func (s *Service) normalizeChannelModelContract(channel *model.ModelChannel, req ChannelModelRequest) (string, string, string, model.ChannelInterfaceType, error) {
-	return normalizeChannelModelContractWithRegistry(s.protocolRegistry(), channel, req)
-}
-
-func normalizeChannelModelContractWithRegistry(registry *protocol.Registry, channel *model.ModelChannel, req ChannelModelRequest) (string, string, string, model.ChannelInterfaceType, error) {
-	modelKey := strings.TrimPrefix(strings.TrimSpace(req.ModelKey), "models/")
-	if modelKey == "" {
-		return "", "", "", "", BadAuthRequest("请填写模型标识")
-	}
-	providerModelKey := strings.TrimPrefix(strings.TrimSpace(req.ProviderModelKey), "models/")
-	if providerModelKey == "" {
-		providerModelKey = modelKey
-	}
-	capability := normalizeCapability(req.Capability)
-	if capability == "" {
-		return "", "", "", "", BadAuthRequest("请选择模型能力")
-	}
-	adapter, ok := registry.Resolve(strings.TrimSpace(req.Protocol))
-	if !ok || !adapter.Metadata().Enabled || adapter.Metadata().UnavailableReason != "" {
-		return "", "", "", "", BadAuthRequest("请选择有效的模型请求协议")
-	}
-	protocol := model.ChannelInterfaceType(adapter.Metadata().ID)
-	if expected := protocolCapabilityFromMetadata(adapter.Metadata()); expected != "" && expected != capability {
-		return "", "", "", "", BadAuthRequest("模型能力与请求协议不匹配")
-	}
-	if (protocol == model.ChannelInterfaceVolcengineJiMengImage || protocol == model.ChannelInterfaceVolcengineJiMengVideo) && (strings.TrimSpace(channel.APIKey) == "" || strings.TrimSpace(channel.SecretKey) == "") {
-		return "", "", "", "", BadAuthRequest("即梦官方协议需要先在渠道中配置 Access Key 和 Secret Key")
-	}
-	return modelKey, providerModelKey, capability, protocol, nil
-}
 
 func (s *Service) DeleteAdminChannelModel(actor *model.User, channelID string, id string) error {
 	_, err := s.DeleteAdminChannelModels(actor, channelID, []string{id})
@@ -805,26 +550,6 @@ func (s *Service) DeleteAdminChannelModels(actor *model.User, channelID string, 
 	return deleted, err
 }
 
-func normalizeAdminChannelModelDeleteIDs(values []string) ([]string, error) {
-	result := make([]string, 0, len(values))
-	seen := make(map[string]bool, len(values))
-	for _, value := range values {
-		id := strings.TrimSpace(value)
-		if id == "" || seen[id] {
-			continue
-		}
-		seen[id] = true
-		result = append(result, id)
-	}
-	if len(result) == 0 {
-		return nil, BadAuthRequest("请至少选择一个要删除的渠道模型")
-	}
-	if len(result) > maxAdminChannelModelBatchDeleteCount {
-		return nil, BadAuthRequest("单次最多删除 100 个渠道模型")
-	}
-	return result, nil
-}
-
 func (s *Service) syncInitialChannelModels(channel *model.ModelChannel, names []string) error {
 	existing, err := s.repo.ChannelModels(channel.ID, true)
 	if err != nil {
@@ -868,22 +593,6 @@ func (s *Service) syncInitialChannelModels(channel *model.ModelChannel, names []
 	return nil
 }
 
-func retiredChannelModelKeys(raw string) map[string]bool {
-	var values []string
-	_ = json.Unmarshal([]byte(raw), &values)
-	result := make(map[string]bool, len(values))
-	for _, value := range values {
-		if key := channelModelCatalogKey(value); key != "" {
-			result[key] = true
-		}
-	}
-	return result
-}
-
-func channelModelCatalogKey(value string) string {
-	return strings.ToLower(strings.TrimPrefix(strings.TrimSpace(value), "models/"))
-}
-
 func (s *Service) ensureChannelModels(channelID string, includeDisabled bool) ([]model.ChannelModel, error) {
 	items, err := s.repo.ChannelModels(channelID, includeDisabled)
 	if err != nil || len(items) > 0 {
@@ -909,11 +618,4 @@ func (s *Service) capabilityForProtocol(protocol model.ChannelInterfaceType) str
 		return ""
 	}
 	return protocolCapabilityFromMetadata(metadata)
-}
-
-func protocolCapabilityFromMetadata(metadata protocol.Metadata) string {
-	if len(metadata.Categories) == 0 {
-		return ""
-	}
-	return string(metadata.Categories[0])
 }

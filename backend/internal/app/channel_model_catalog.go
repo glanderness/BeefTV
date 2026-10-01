@@ -103,11 +103,6 @@ type ChannelModelCatalogOptions struct {
 	Resolution      []ChannelModelCatalogOption `json:"resolution,omitempty"`
 }
 
-type ChannelModelCatalogOption struct {
-	Value string `json:"value"`
-	Label string `json:"label,omitempty"`
-}
-
 func (s *Service) FetchChannelModelCatalog(ctx context.Context, actor *model.User, input ChannelModelsRequest) ([]ChannelModelCatalogItem, error) {
 	if actor == nil || strings.TrimSpace(actor.ID) == "" {
 		return nil, Unauthorized("请先登录")
@@ -219,44 +214,6 @@ func (s *Service) FetchChannelModelCatalog(ctx context.Context, actor *model.Use
 		catalog = extendChannelModelCatalog(baseURL, apiFormat, headers, catalog)
 	}
 	return catalog, nil
-}
-
-func normalizeCatalogModelType(value string) string {
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	switch normalized {
-	case "text", "image", "video", "audio":
-		return normalized
-	default:
-		return ""
-	}
-}
-
-func normalizeCatalogOptions(options []ChannelModelCatalogOption) []ChannelModelCatalogOption {
-	seen := make(map[string]bool, len(options))
-	normalized := make([]ChannelModelCatalogOption, 0, len(options))
-	for _, option := range options {
-		value := strings.TrimSpace(option.Value)
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		normalized = append(normalized, ChannelModelCatalogOption{Value: value, Label: strings.TrimSpace(option.Label)})
-	}
-	return normalized
-}
-
-func normalizeCatalogEndpointTypes(values []string) []string {
-	seen := make(map[string]bool, len(values))
-	normalized := make([]string, 0, len(values))
-	for _, value := range values {
-		item := strings.TrimSpace(value)
-		if item == "" || seen[item] {
-			continue
-		}
-		seen[item] = true
-		normalized = append(normalized, item)
-	}
-	return normalized
 }
 
 func channelModelsUpstreamError(err error) error {

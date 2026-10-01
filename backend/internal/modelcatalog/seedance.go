@@ -1,4 +1,4 @@
-package app
+package modelcatalog
 
 import (
 	"fmt"
@@ -8,23 +8,34 @@ import (
 	"strconv"
 	"strings"
 
+	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 )
 
 var opaqueVideoAssetPattern = regexp.MustCompile(`^asset://[A-Za-z0-9_-]+$`)
 
-func referenceDurationIsOpaqueAsset(media providerMedia) bool {
+func referenceDurationIsOpaqueAsset(media MediaRef) bool {
 	return media.DurationMs == 0 && !strings.HasPrefix(media.StorageKey, "resource:") && opaqueVideoAssetPattern.MatchString(strings.TrimSpace(media.URL))
 }
 
 const (
-	officialSeedanceImageMinEdge    = 300
-	officialSeedanceImageMaxEdge    = 6000
-	officialSeedanceImageMinAspect  = 0.4
-	officialSeedanceImageMaxAspect  = 2.5
-	officialSeedanceVideoMinPixels  = 409600
-	officialSeedanceVideoMaxPixels  = 8295044
-	officialSeedanceMinAudioSeconds = 1.8
+	OfficialSeedanceImageMinEdge    = 300
+	OfficialSeedanceImageMaxEdge    = 6000
+	OfficialSeedanceImageMinAspect  = 0.4
+	OfficialSeedanceImageMaxAspect  = 2.5
+	OfficialSeedanceVideoMinPixels  = 409600
+	OfficialSeedanceVideoMaxPixels  = 8295044
+	OfficialSeedanceMinAudioSeconds = 1.8
+)
+
+const (
+	officialSeedanceImageMinEdge    = OfficialSeedanceImageMinEdge
+	officialSeedanceImageMaxEdge    = OfficialSeedanceImageMaxEdge
+	officialSeedanceImageMinAspect  = OfficialSeedanceImageMinAspect
+	officialSeedanceImageMaxAspect  = OfficialSeedanceImageMaxAspect
+	officialSeedanceVideoMinPixels  = OfficialSeedanceVideoMinPixels
+	officialSeedanceVideoMaxPixels  = OfficialSeedanceVideoMaxPixels
+	officialSeedanceMinAudioSeconds = OfficialSeedanceMinAudioSeconds
 )
 
 func isSeedance2Family(protocol, modelName string) bool {
@@ -44,7 +55,7 @@ func isSeedance25Model(modelName string) bool {
 
 const documentedSeedanceVideoMinPixels = 407696
 
-func applySeedanceDocumentedVideoPixelFloor(config providerConfig, refs *VideoReferenceConfig) {
+func applySeedanceDocumentedVideoPixelFloor(config TaskConfig, refs *VideoReferenceConfig) {
 	if refs == nil || refs.MinVideoPixels != officialSeedanceVideoMinPixels || refs.MaxVideoPixels != officialSeedanceVideoMaxPixels {
 		return
 	}
@@ -105,27 +116,27 @@ func overlayOfficialSeedance2References(base VideoReferenceConfig, is25 bool) Vi
 	return refs
 }
 
-func validateVideoReferenceMedia(profile *VideoCapabilityConfig, input canvasGenerationInput) error {
+func validateVideoReferenceMedia(profile *VideoCapabilityConfig, input TaskInput) error {
 	if profile == nil {
-		return BadAuthRequest("当前视频模型能力参数无效")
+		return kernel.BadAuthRequest("当前视频模型能力参数无效")
 	}
 	refs := profile.References
 	applySeedanceDocumentedVideoPixelFloor(input.Config, &refs)
 
 	if len(input.ReferenceImages) > refs.MaxImages {
-		return BadAuthRequest(fmt.Sprintf("当前视频模型最多支持 %d 张参考图", refs.MaxImages))
+		return kernel.BadAuthRequest(fmt.Sprintf("当前视频模型最多支持 %d 张参考图", refs.MaxImages))
 	}
 	if len(input.ReferenceVideos) > refs.MaxVideos {
-		return BadAuthRequest(fmt.Sprintf("当前视频模型最多支持 %d 个参考视频", refs.MaxVideos))
+		return kernel.BadAuthRequest(fmt.Sprintf("当前视频模型最多支持 %d 个参考视频", refs.MaxVideos))
 	}
 	if len(input.ReferenceAudios) > refs.MaxAudios {
-		return BadAuthRequest(fmt.Sprintf("当前视频模型最多支持 %d 段参考音频", refs.MaxAudios))
+		return kernel.BadAuthRequest(fmt.Sprintf("当前视频模型最多支持 %d 段参考音频", refs.MaxAudios))
 	}
 	if !videoCapabilityAllowsAudioOnly(profile) && len(input.ReferenceAudios) > 0 && len(input.ReferenceImages) == 0 && len(input.ReferenceVideos) == 0 {
-		return BadAuthRequest("当前视频模型不支持只用音频生成视频，请同时添加参考图片或参考视频")
+		return kernel.BadAuthRequest("当前视频模型不支持只用音频生成视频，请同时添加参考图片或参考视频")
 	}
 	if len(input.ReferenceImages) < refs.MinImages {
-		return BadAuthRequest(fmt.Sprintf("当前视频模型至少需要 %d 张参考图", refs.MinImages))
+		return kernel.BadAuthRequest(fmt.Sprintf("当前视频模型至少需要 %d 张参考图", refs.MinImages))
 	}
 	for index, media := range input.ReferenceImages {
 		if err := validateVideoReferenceImage(refs, index, media); err != nil {
@@ -140,7 +151,7 @@ func validateVideoReferenceMedia(profile *VideoCapabilityConfig, input canvasGen
 		}
 	}
 	if maximum := refs.MaxVideoTotalDuration; maximum > 0 && totalVideoMs > int64(maximum)*1000 {
-		return BadAuthRequest(fmt.Sprintf("参考视频总时长为 %.2f 秒，当前模型最多支持 %d 秒；请裁剪或减少参考视频后再提交", float64(totalVideoMs)/1000, maximum))
+		return kernel.BadAuthRequest(fmt.Sprintf("参考视频总时长为 %.2f 秒，当前模型最多支持 %d 秒；请裁剪或减少参考视频后再提交", float64(totalVideoMs)/1000, maximum))
 	}
 	var totalAudioMs int64
 	for index, media := range input.ReferenceAudios {
@@ -153,19 +164,19 @@ func validateVideoReferenceMedia(profile *VideoCapabilityConfig, input canvasGen
 		totalAudioMs += media.DurationMs
 	}
 	if maximum := refs.MaxAudioTotalDuration; maximum > 0 && totalAudioMs > int64(maximum)*1000 {
-		return BadAuthRequest(fmt.Sprintf("参考音频总时长为 %.2f 秒，当前模型最多支持 %d 秒；请裁剪或减少参考音频后再提交", float64(totalAudioMs)/1000, maximum))
+		return kernel.BadAuthRequest(fmt.Sprintf("参考音频总时长为 %.2f 秒，当前模型最多支持 %d 秒；请裁剪或减少参考音频后再提交", float64(totalAudioMs)/1000, maximum))
 	}
 	return nil
 }
 
-func validateVideoReferenceImage(refs VideoReferenceConfig, index int, media providerMedia) error {
+func validateVideoReferenceImage(refs VideoReferenceConfig, index int, media MediaRef) error {
 	if err := validateReferenceFileBytes("图", index, media.Bytes, refs.MaxImageBytes); err != nil {
 		return err
 	}
 	return validateReferenceGeometry("图", index, media.Width, media.Height, refs.MinImageWidth, refs.MaxImageWidth, refs.MinImageHeight, refs.MaxImageHeight, refs.MinImageAspect, refs.MaxImageAspect, refs.MinImagePixels, refs.MaxImagePixels)
 }
 
-func validateVideoReferenceVideo(refs VideoReferenceConfig, index int, media providerMedia) error {
+func validateVideoReferenceVideo(refs VideoReferenceConfig, index int, media MediaRef) error {
 	if err := validateReferenceDurationUnlessOpaqueAsset("视频", index, media, float64(refs.MinVideoDuration), float64(refs.MaxVideoDuration)); err != nil {
 		return err
 	}
@@ -173,7 +184,7 @@ func validateVideoReferenceVideo(refs VideoReferenceConfig, index int, media pro
 		return err
 	}
 	if refs.MinVideoPixels > 0 && (media.Width <= 0 || media.Height <= 0) && !opaqueVideoAssetPattern.MatchString(strings.TrimSpace(media.URL)) {
-		return BadAuthRequest(fmt.Sprintf("第 %d 个参考视频尺寸无法读取，请重新导入素材后再提交", index+1))
+		return kernel.BadAuthRequest(fmt.Sprintf("第 %d 个参考视频尺寸无法读取，请重新导入素材后再提交", index+1))
 	}
 	return validateReferenceGeometry("视频", index, media.Width, media.Height, refs.MinVideoWidth, refs.MaxVideoWidth, refs.MinVideoHeight, refs.MaxVideoHeight, refs.MinVideoAspect, refs.MaxVideoAspect, refs.MinVideoPixels, refs.MaxVideoPixels)
 }
@@ -189,10 +200,10 @@ func validateReferenceFileBytes(kind string, index int, bytes, maximum int64) er
 			unit = "段"
 		}
 	}
-	return BadAuthRequest(fmt.Sprintf("第 %d %s参考%s文件过大，当前模型单文件上限为 %s；请压缩或更换后再提交", index+1, unit, kind, formatMediaByteLimit(maximum)))
+	return kernel.BadAuthRequest(fmt.Sprintf("第 %d %s参考%s文件过大，当前模型单文件上限为 %s；请压缩或更换后再提交", index+1, unit, kind, formatMediaByteLimit(maximum)))
 }
 
-func validateReferenceDurationUnlessOpaqueAsset(kind string, index int, media providerMedia, minimum, maximum float64) error {
+func validateReferenceDurationUnlessOpaqueAsset(kind string, index int, media MediaRef, minimum, maximum float64) error {
 	if referenceDurationIsOpaqueAsset(media) {
 		return nil
 	}
@@ -209,18 +220,18 @@ func validateReferenceGeometry(kind string, index, width, height, minWidth, maxW
 	}
 	label := fmt.Sprintf("第 %d %s参考%s", index+1, unit, kind)
 	if minWidth > 0 && width < minWidth || maxWidth > 0 && width > maxWidth {
-		return BadAuthRequest(fmt.Sprintf("%s宽度为 %d 像素，需要 %s 像素；请调整尺寸或更换后再提交", label, width, referenceBound(float64(minWidth), float64(maxWidth))))
+		return kernel.BadAuthRequest(fmt.Sprintf("%s宽度为 %d 像素，需要 %s 像素；请调整尺寸或更换后再提交", label, width, referenceBound(float64(minWidth), float64(maxWidth))))
 	}
 	if minHeight > 0 && height < minHeight || maxHeight > 0 && height > maxHeight {
-		return BadAuthRequest(fmt.Sprintf("%s高度为 %d 像素，需要 %s 像素；请调整尺寸或更换后再提交", label, height, referenceBound(float64(minHeight), float64(maxHeight))))
+		return kernel.BadAuthRequest(fmt.Sprintf("%s高度为 %d 像素，需要 %s 像素；请调整尺寸或更换后再提交", label, height, referenceBound(float64(minHeight), float64(maxHeight))))
 	}
 	aspect := float64(width) / float64(height)
 	if minAspect > 0 && aspect < minAspect || maxAspect > 0 && aspect > maxAspect {
-		return BadAuthRequest(fmt.Sprintf("%s宽高比为 %.2f，需要 %s；请调整尺寸或更换后再提交", label, aspect, referenceBound(minAspect, maxAspect)))
+		return kernel.BadAuthRequest(fmt.Sprintf("%s宽高比为 %.2f，需要 %s；请调整尺寸或更换后再提交", label, aspect, referenceBound(minAspect, maxAspect)))
 	}
 	pixels := int64(width) * int64(height)
 	if minPixels > 0 && pixels < minPixels || maxPixels > 0 && pixels > maxPixels {
-		return BadAuthRequest(fmt.Sprintf("%s像素总量为 %d（%d×%d），需要 %s 像素；请调整这份素材的尺寸或更换原文件，修改生成分辨率不会改变参考素材", label, pixels, width, height, referenceBound(float64(minPixels), float64(maxPixels))))
+		return kernel.BadAuthRequest(fmt.Sprintf("%s像素总量为 %d（%d×%d），需要 %s 像素；请调整这份素材的尺寸或更换原文件，修改生成分辨率不会改变参考素材", label, pixels, width, height, referenceBound(float64(minPixels), float64(maxPixels))))
 	}
 	return nil
 }
@@ -258,4 +269,36 @@ func videoCapabilityAllowsAudioOnly(profile *VideoCapabilityConfig) bool {
 		return false
 	}
 	return containsCapabilityString(profile.Operations, "audio_to_video")
+}
+
+func ValidateVideoReferenceMedia(profile *VideoCapabilityConfig, input TaskInput) error {
+	return validateVideoReferenceMedia(profile, input)
+}
+
+func IsSeedance2Family(protocol, modelName string) bool {
+	return isSeedance2Family(protocol, modelName)
+}
+
+func IsSeedance25Model(modelName string) bool {
+	return isSeedance25Model(modelName)
+}
+
+func OverlayOfficialSeedance2References(base VideoReferenceConfig, is25 bool) VideoReferenceConfig {
+	return overlayOfficialSeedance2References(base, is25)
+}
+
+func ApplySeedanceDocumentedVideoPixelFloor(config TaskConfig, refs *VideoReferenceConfig) {
+	applySeedanceDocumentedVideoPixelFloor(config, refs)
+}
+
+func ValidateVideoReferenceImage(refs VideoReferenceConfig, index int, media MediaRef) error {
+	return validateVideoReferenceImage(refs, index, media)
+}
+
+func ValidateVideoReferenceVideo(refs VideoReferenceConfig, index int, media MediaRef) error {
+	return validateVideoReferenceVideo(refs, index, media)
+}
+
+func VideoCapabilityAllowsAudioOnly(profile *VideoCapabilityConfig) bool {
+	return videoCapabilityAllowsAudioOnly(profile)
 }
