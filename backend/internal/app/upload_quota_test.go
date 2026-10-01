@@ -294,6 +294,26 @@ func TestChunkedUploadCrashBeforeMetaReleasesDailyViaReservationWitness(t *testi
 	}
 }
 
+func TestChunkedUploadRecoveryReleasesIdentityOnlyOnce(t *testing.T) {
+	svc := newResourceTestService(t)
+	day := time.Now().UTC().Format("2006-01-02")
+	if err := svc.repo.ReserveDailyUpload("user-1", day, 100, 1000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.StartChunkedResourceUpload("user-1", localasset.ChunkedUploadStart{FileName: "a.png", Kind: "image", Size: 7}); err != nil {
+		t.Fatal(err)
+	}
+	// Both the quota reservation and reserved meta.json survive the crash.
+	for range 2 {
+		restarted := &Service{repo: svc.repo, dataDir: svc.dataDir}
+		restarted.resourceDomain()
+		usage, err := svc.repo.DailyUploadBytes("user-1", day)
+		if err != nil || usage != 100 {
+			t.Fatalf("recovery changed other uploads: bytes=%d err=%v", usage, err)
+		}
+	}
+}
+
 func TestChunkedUploadCompleteCommitsCanonicalQuota(t *testing.T) {
 	svc := newResourceTestService(t)
 	body := []byte("payload")

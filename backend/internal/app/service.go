@@ -161,6 +161,7 @@ func newService(repo *repository.Repository, dataDir string, options serviceOpti
 	service.canvas = canvas.New(service.repo, newCanvasHost(service))
 	service.assistantTurns = assistantturns.New(assistantturns.NewStore(service.repo), assistantCanvasFactory{service}, filepath.Join(dataDir, "assistant-turns"))
 	service.assets = localasset.NewService(localasset.Dependencies{
+		DataDir:      dataDir,
 		Repository:   localasset.NewRepository(repo),
 		Blobs:        localasset.NewFileStore(dataDir),
 		Quota:        resourceQuota{svc: service},

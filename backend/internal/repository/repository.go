@@ -738,9 +738,22 @@ func (r *Repository) ReleaseDailyUpload(userID string, day string, size int64) e
 }
 
 func (r *Repository) ReleaseIdentifiedDailyUpload(userID string, day string, identity string, size int64) error {
-	id := userID + ":" + day
 	identity = strings.TrimSpace(identity)
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if identity != "" {
+			var held model.UserUploadReservation
+			err := tx.Where("user_id = ? AND identity = ?", userID, identity).First(&held).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			// Recovery may see both an orphan reservation and the session metadata.
+			// The durable identity owns the amount and day; release it only once.
+			day, size = held.Day, held.Size
+		}
+		id := userID + ":" + day
 		if err := tx.Model(&model.UserDailyUploadUsage{}).
 			Where("id = ?", id).
 			Updates(map[string]any{

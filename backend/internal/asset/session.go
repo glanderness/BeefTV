@@ -201,8 +201,12 @@ func (s *Service) StartChunkedUpload(userID string, req ChunkedUploadStart) (Chu
 	}
 	active := 0
 	for _, sess := range s.sessions {
-		if sess != nil && sess.UserID == userID && sess.complete == nil {
-			active++
+		if sess != nil && sess.UserID == userID {
+			sess.mu.Lock()
+			if sess.complete == nil {
+				active++
+			}
+			sess.mu.Unlock()
 		}
 	}
 	if active >= chunkUploadMaxPerUser {
