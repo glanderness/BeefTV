@@ -74,11 +74,11 @@ bootstrap.Open
 | --- | --- | --- |
 | `decryptTaskInputJSON` | `app/secret_store.go` | 任务输入加密属于密钥/任务域 |
 | `TasksWithOptions` | `app` 任务列表 | 工作台卡片要拼近期任务，领域读端口不持有 TaskSummary |
-| `RegisterTaskOutputFromTask` | `app/project_workflow.go` | 解析加密任务 JSON 与 result 资源 ID，再调领域 `EnsureGeneratedProjectAsset` + `RegisterTaskOutput` |
+| `RegisterTaskOutputFromTask` | `project/workflow_task_output.go` | 领域解析任务元数据与 result 资源 ID，再执行 `EnsureGeneratedProjectAsset` + `RegisterTaskOutput`；app 只保留任务输入解密包装 |
 | `finalizeCharacterTurnaroundTask` | `app/project_character.go` | 解密任务并解析图片资源后调领域 `BindCharacterTurnaround` |
 | `reconcileCharacterTurnaroundTasks` | `app/project_character.go` | **REMOVE**：Lead 接入 taskdelivery 后删除。当前 `ProjectDetail`/`ProjectCore` 仍调用，避免刷新丢三视图 |
 | `ProjectDetail` 读补偿 | `app/project.go` | **REMOVE**：成功任务 `RegisterTaskOutputFromTask` 不应属于正常读所有权；交付 worker 才拥有生成产物恢复 |
-| `ProjectWorkflows(projectID)` | `app/project_workflow.go` | 无 userID 的旧签名，仅兼容残留调用；`ProjectDetail` 已走领域 `ProjectWorkflows(userID, projectID)` |
+| `ProjectWorkflows(projectID)` | 已移除 | 无 userID 的旧签名没有调用方；`ProjectDetail` 统一走领域 `ProjectWorkflows(userID, projectID)` |
 
 `Workflows` 端口保持最小：只准备默认实例记录。步骤机、产物登记、章节工作流创建已在领域。`app` 方法名继续转发，HTTP JSON 不变。handler 在组合根迁完前仍可调用 `app.Service`。
 

@@ -267,3 +267,14 @@
 - 导演台上传/草稿确认合入 `df5db34` / `92631f4` / `7e94e76`；Lead `0276452` 进一步验证素材写回执 ID，普通保存遇到仅本机媒体必须返回未完成，导演台显式返回 confirmed=false，画布批量归档不再误报成功。六文件专项 52 pass / 213 expect，typecheck 通过。
 - 全量 Go `8811762` **失败**：app 中两项旧恢复夹具在 PENDING 缺见证时额外计入额度，分别为 `TestGenerationDeliveryRecoversFailedAndPendingResourceSameIdentity` 与 `TestPromoteReadyDoesNotDebitOrdinaryUploadPending`。交由原结算 worker 核对真实生命周期与升级语义，不能删除断言或以局部绿灯掩盖失败。
 - 尚未集成：生成生产编排与 analytics 全局表退场；素材 canonical UI 完整历史/回收站/分页；画板与文件夹并发草稿和回执；专用任务前端身份/生命周期。原合同范围不变，未新增付费调用或发布。
+
+### 生成领域、素材读取与项目登记集成
+
+- `0276452` 后补齐共享本地分流的两项旧源码断言，`ea97e4a` 对应标准前端全套退出 0：2832 pass / 0 fail / 14 skip。该快照不含后续素材页及专用任务前端。READY 修复集成 race：asset 6.388s / repository 3.764s；lint 通过。
+- 素材读取四个提交合入 `74bf9e6` / `a37aac8` / `ec783c3` / `de38dc5`，保留 SQLite 筛选后分页、完整生成历史、全部回收站、分类计数与独立 canonical 页数。`4dc03ca` 对齐新消息端口及已升级的草稿 hydrate 夹具，64 项前端专项和 typecheck 通过；asset/repository/CLI race 通过，operations 修补编译后完整 race 64.782s。
+- 清空回收站并发继续修补 `20261002-070544-continue-ac5f2840`：失败不得 ack 后来的删除意图，已恢复为 active 的素材不能被旧 archived 列表永久删除。素材页/选择器新增的累计历史与账号 epoch 隔离由 `20261002-070844-delegate-1b721c4c` 修补，不能用数据层检查代替页面状态归属。
+- `ebc6673` 将两项上传恢复夹具改为生产崩溃时真实持有的预留见证，保留日额不增加断言。但 Lead 对照正式 `bcc3b05` 发现旧版确有匿名预留后 PENDING 的升级遗留，因此 `20261002-071052-continue-96f72a0f` 继续补真实旧结构迁移；未接受重复计入额度作为默认代价。
+- `b032d30` 将实际付费生成编排移入 generation.Execute，删除进程级 provider 服务表与退休 Agent 空钩子。缺图片恢复所有者在网络前失败；worker 与恢复路径保留 taskId:inline 入库身份。Lead generation 完整 race 4.249s / app 相关入口及结算夹具 race 35.554s 通过，独立复审 `20261002-071014-continue-bcf34d22` 进行中。
+- `6fb2a7a` 将项目成功任务登记编排移入 project，app 只做解密；删除无调用方的无身份 ProjectWorkflows 旁路。领域 race 正在验证。
+- `27546fd` 接入剪辑、转写、深度任务的提交/观察 scope 与 clientOperationId。`20261002-071232-continue-f52f7cbf` 继续补资源缓存 expectedScope、深度恢复、persistMediaNodes 内部每次等待后的归属断言及改变输入后的重试身份，当前仅阶段集成。
+- 剩余 app 编排独立审查 `20261002-070109-continue-1fe4af26` 在指定范围给出 ACCEPT，区分合法组合/投影/恢复扫描与业务规则，不按行数强行搬迁。最终全量与完整架构审查仍未完成。无新增付费调用、push、发布或正式应用替换。
