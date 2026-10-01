@@ -1058,7 +1058,7 @@ func (r *Repository) CanvasProjects(userID string) ([]model.CanvasProject, error
 
 func (r *Repository) CanvasProjectSummaries(userID string) ([]model.CanvasProject, error) {
 	var projects []model.CanvasProject
-	err := r.db.Select("id", "title", "revision", "created_at", "updated_at").Order("updated_at desc").Find(&projects, "user_id = ?", userID).Error
+	err := r.db.Select("id", "title", "library_folder_id", "revision", "created_at", "updated_at").Order("updated_at desc").Find(&projects, "user_id = ?", userID).Error
 	return projects, err
 }
 
@@ -1092,7 +1092,7 @@ func (r *Repository) UpsertCanvasProject(project *model.CanvasProject) error {
 	// A missing row is a conflict, never an invitation to recreate a deleted canvas.
 	result := r.db.Model(&model.CanvasProject{}).
 		Where("id = ? AND user_id = ? AND revision = ?", project.ID, project.UserID, expected).
-		Updates(map[string]any{"project_id": project.ProjectID, "title": project.Title, "payload_json": project.PayloadJSON, "updated_at": project.UpdatedAt, "revision": expected + 1})
+		Updates(map[string]any{"project_id": project.ProjectID, "library_folder_id": project.LibraryFolderID, "title": project.Title, "payload_json": project.PayloadJSON, "updated_at": project.UpdatedAt, "revision": expected + 1})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -1118,6 +1118,11 @@ func (r *Repository) DeleteCanvasProject(userID string, id string) error {
 		}
 		if err := tx.Where("canvas_id = ?", id).Delete(&model.CanvasUnitLink{}).Error; err != nil {
 			return err
+		}
+		if tx.Migrator().HasTable(&model.CanvasDrawing{}) {
+			if err := tx.Where("user_id = ? AND canvas_id = ?", userID, id).Delete(&model.CanvasDrawing{}).Error; err != nil {
+				return err
+			}
 		}
 		// Historical tasks keep project_id. There is no FK from tasks to canvases;
 		// clearing the id would make a reload look like standalone work and start

@@ -300,6 +300,34 @@ func (s *Service) DeleteUserCanvasProject(userID string, id string) error {
 	return s.canvasDomain().DeleteUserCanvasProject(userID, id)
 }
 
+func (s *Service) UserCanvasFolders(userID string) ([]model.CanvasLibraryFolder, error) {
+	return s.canvasDomain().UserCanvasFolders(userID)
+}
+
+func (s *Service) UpsertUserCanvasFolder(userID, id string, raw json.RawMessage) (model.CanvasLibraryFolder, error) {
+	return s.canvasDomain().UpsertUserCanvasFolder(userID, id, raw)
+}
+
+func (s *Service) DeleteUserCanvasFolder(userID, id string) error {
+	return s.canvasDomain().DeleteUserCanvasFolder(userID, id)
+}
+
+func (s *Service) UserCanvasDrawings(userID, canvasID string) ([]canvas.CanvasDrawingDocument, error) {
+	return s.canvasDomain().UserCanvasDrawings(userID, canvasID)
+}
+
+func (s *Service) UserCanvasDrawing(userID, canvasID, drawingID string) (canvas.CanvasDrawingDocument, error) {
+	return s.canvasDomain().UserCanvasDrawing(userID, canvasID, drawingID)
+}
+
+func (s *Service) UpsertUserCanvasDrawing(userID, canvasID, drawingID string, raw json.RawMessage) (canvas.CanvasDrawingDocument, error) {
+	return s.canvasDomain().UpsertUserCanvasDrawing(userID, canvasID, drawingID, raw)
+}
+
+func (s *Service) DeleteUserCanvasDrawing(userID, canvasID, drawingID string) error {
+	return s.canvasDomain().DeleteUserCanvasDrawing(userID, canvasID, drawingID)
+}
+
 func (s *Service) CanvasHistory(userID, canvasID string) (CanvasHistoryList, error) {
 	return s.canvasDomain().CanvasHistory(userID, canvasID)
 }

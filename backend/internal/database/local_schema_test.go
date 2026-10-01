@@ -436,6 +436,9 @@ func TestAssistantTurnsMigrationFromPreviewV9(t *testing.T) {
 	if !foundV10 {
 		t.Fatal("v10 assistant-business-turns missing after v11")
 	}
+	if !db.Migrator().HasTable(&model.CanvasLibraryFolder{}) || !db.Migrator().HasTable(&model.CanvasDrawing{}) {
+		t.Fatal("v12 did not create canvas library tables")
+	}
 	for i, row := range before {
 		if ledger[i].Name != row.Name || !ledger[i].AppliedAt.Equal(row.AppliedAt) {
 			t.Fatalf("historical ledger overwritten: %+v", ledger)

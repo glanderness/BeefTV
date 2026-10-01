@@ -38,6 +38,70 @@ export function deleteAssetFolder(id: string, config?: HttpRequestConfig) {
     return http.delete<{ id: string }>(`/asset-folders/${encodeURIComponent(id)}`, config);
 }
 
+export type CanvasLibraryFolderRecord = {
+    id: string;
+    name: string;
+    coverResourceId?: string;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type CanvasDrawingRenderRecord = {
+    resourceId?: string;
+    pageId?: string;
+    width?: number;
+    height?: number;
+    mimeType?: string;
+    background?: "white";
+    storageKey?: string;
+};
+
+export type CanvasDrawingRecord = {
+    drawingId: string;
+    engine: "excalidraw";
+    revision: number;
+    snapshot?: unknown;
+    shapeCount: number;
+    pageCount: number;
+    previewResourceId?: string;
+    render?: CanvasDrawingRenderRecord;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export function listCanvasLibraryFolders() {
+    return http.get<{ folders: CanvasLibraryFolderRecord[] }>("/canvas-folders");
+}
+
+export function putCanvasLibraryFolder(id: string, folder: { id: string; name: string; coverResourceId?: string; createdAt?: string; updatedAt?: string }) {
+    return http.put<{ folder: CanvasLibraryFolderRecord }>(`/canvas-folders/${encodeURIComponent(id)}`, { folder });
+}
+
+export function deleteCanvasLibraryFolder(id: string) {
+    return http.delete<{ id: string }>(`/canvas-folders/${encodeURIComponent(id)}`);
+}
+
+export function getCanvasDrawing(canvasId: string, drawingId: string) {
+    return http.get<{ drawing: CanvasDrawingRecord }>(`/canvas-projects/${encodeURIComponent(canvasId)}/drawings/${encodeURIComponent(drawingId)}`);
+}
+
+export function putCanvasDrawing(canvasId: string, drawingId: string, drawing: {
+    drawingId: string;
+    engine: "excalidraw";
+    revision: number;
+    snapshot: unknown;
+    shapeCount: number;
+    pageCount: number;
+    previewResourceId?: string;
+    render?: CanvasDrawingRenderRecord;
+}) {
+    return http.put<{ drawing: CanvasDrawingRecord }>(`/canvas-projects/${encodeURIComponent(canvasId)}/drawings/${encodeURIComponent(drawingId)}`, { drawing });
+}
+
+export function deleteCanvasDrawing(canvasId: string, drawingId: string) {
+    return http.delete<{ id: string }>(`/canvas-projects/${encodeURIComponent(canvasId)}/drawings/${encodeURIComponent(drawingId)}`);
+}
+
 export function moveAssetsToFolder(assetIds: string[], folderId = "", config?: HttpRequestConfig) {
     return http.patch<{ assetIds: string[]; folderId: string }>("/assets/folder", { assetIds, folderId }, config);
 }

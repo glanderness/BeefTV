@@ -144,6 +144,124 @@ paths:
       responses:
         "200":
           description: 已打开
+  /canvas-folders:
+    get:
+      tags: [canvas]
+      summary: 列出当前用户的画布文件夹
+      responses:
+        "200":
+          description: 信封 data.folders 为文件夹列表，封面为资源 ID
+  /canvas-folders/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    put:
+      tags: [canvas]
+      summary: 创建或更新画布文件夹
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [folder]
+              properties:
+                folder:
+                  type: object
+                  required: [name]
+                  properties:
+                    id: { type: string }
+                    name: { type: string }
+                    coverResourceId: { type: string }
+      responses:
+        "200":
+          description: 信封 data.folder 为保存后的文件夹
+        "400":
+          description: 名称、ID 或封面资源不合法
+    delete:
+      tags: [canvas]
+      summary: 删除画布文件夹并清空画布归属
+      responses:
+        "200":
+          description: 信封 data.id 为已删除的文件夹
+        "404":
+          description: 文件夹不存在或不属于当前用户
+  /canvas-projects/{id}/drawings:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [canvas]
+      summary: 列出画布下的画板摘要（不含快照正文）
+      responses:
+        "200":
+          description: 信封 data.drawings 为画板摘要
+        "404":
+          description: 画布不存在或无权访问
+  /canvas-projects/{id}/drawings/{drawingId}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+      - in: path
+        name: drawingId
+        required: true
+        schema: { type: string }
+    get:
+      tags: [canvas]
+      summary: 读取画板快照与 revision
+      responses:
+        "200":
+          description: 信封 data.drawing 含 snapshot、revision 与预览/成品资源 ID
+        "404":
+          description: 画布或画板不存在
+    put:
+      tags: [canvas]
+      summary: 按 revision 保存画板快照
+      description: 新建传 revision 0，更新传读取到的版本；成功原子加 1。预览和成品必须是当前用户已就绪的资源 ID。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [drawing]
+              properties:
+                drawing:
+                  type: object
+                  required: [revision]
+                  properties:
+                    drawingId: { type: string }
+                    engine: { type: string }
+                    revision: { type: integer, format: int64, minimum: 0 }
+                    snapshot: { type: object }
+                    previewResourceId: { type: string }
+                    render:
+                      type: object
+                      properties:
+                        resourceId: { type: string }
+      responses:
+        "200":
+          description: 信封 data.drawing 返回递增后的 revision
+        "400":
+          description: 画板、引擎或资源引用不合法
+        "409":
+          description: 版本冲突，原快照未被覆盖
+        "428":
+          description: 缺少 revision
+    delete:
+      tags: [canvas]
+      summary: 删除画板快照
+      responses:
+        "200":
+          description: 信封 data.id 为已删除的画板
+        "404":
+          description: 画布或画板不存在
   /canvas-projects/{id}:
     parameters:
       - in: path

@@ -60,6 +60,7 @@ func LocalModels() []any {
 		&model.CanvasProject{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{}, &model.AgentOpRecord{},
 		&model.AssistantTurn{},
 		&model.CreationConversation{},
+		&model.CanvasLibraryFolder{}, &model.CanvasDrawing{},
 		&model.PromptTemplate{}, &model.UserPromptCustomization{},
 		&model.Task{}, &model.CreationRun{}, &model.CreationSubmission{}, &model.TaskTextDelta{}, &model.TaskLog{}, &model.Result{},
 	}
@@ -84,6 +85,7 @@ func canonicalLocalMigrations() []localMigration {
 		{version: 9, name: "repair-product-agent-contracts", apply: repairProductAgentContracts},
 		{version: 10, name: "assistant-business-turns", apply: migrateAssistantBusinessTurns},
 		{version: 11, name: "creation-conversations", apply: migrateCreationConversations},
+		{version: 12, name: "canvas-library-drawings", apply: migrateCanvasLibrarySchema},
 		{version: 13, name: "upload-reservation-witness", apply: migrateUploadReservationWitness},
 	}
 }
@@ -379,7 +381,7 @@ func migrateLegacyCreationSubmissions(db *gorm.DB) error {
 }
 
 func RequireLocalSchema(db *gorm.DB) error {
-	for _, table := range []any{&model.Workspace{}, &model.Resource{}, &model.Project{}, &model.CanvasProject{}, &model.Task{}, &model.AgentOpRecord{}, &model.ImageSubmission{}, &model.AssistantTurn{}, &model.CreationConversation{}} {
+	for _, table := range []any{&model.Workspace{}, &model.Resource{}, &model.Project{}, &model.CanvasProject{}, &model.Task{}, &model.AgentOpRecord{}, &model.ImageSubmission{}, &model.AssistantTurn{}, &model.CreationConversation{}, &model.CanvasLibraryFolder{}, &model.CanvasDrawing{}} {
 		if !db.Migrator().HasTable(table) {
 			return fmt.Errorf("本地工作区数据库结构缺失，请启用自动迁移")
 		}
@@ -457,7 +459,12 @@ func requireReconciledSchema(db *gorm.DB) error {
 		}
 	}
 	if version >= 11 {
-		return requireCreationConversationsSchema(db)
+		if err := requireCreationConversationsSchema(db); err != nil {
+			return err
+		}
+	}
+	if version >= 12 {
+		return requireCanvasLibrarySchema(db)
 	}
 	return nil
 }

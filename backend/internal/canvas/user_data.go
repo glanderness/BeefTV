@@ -121,7 +121,7 @@ func (s *Service) UserCanvasProjectSummaries(userID string) ([]UserDataSummary, 
 	}
 	result := make([]UserDataSummary, 0, len(projects))
 	for _, project := range projects {
-		result = append(result, UserDataSummary{ID: project.ID, Title: project.Title, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt, Revision: project.Revision})
+		result = append(result, UserDataSummary{ID: project.ID, FolderID: project.LibraryFolderID, Title: project.Title, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt, Revision: project.Revision})
 	}
 	return result, nil
 }
@@ -332,6 +332,9 @@ func (s *Service) upsertUserCanvasProjectWithAssets(userID string, raw json.RawM
 			}
 			createdAssets = created
 		}
+		if err := s.requireCanvasLibraryFolder(userID, project.LibraryFolderID); err != nil {
+			return err
+		}
 		existing, existingErr := s.repo.CanvasProjectForUser(userID, project.ID)
 		if existingErr != nil && !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 			return existingErr
@@ -426,6 +429,7 @@ func canvasProjectFromJSON(userID string, raw json.RawMessage) (model.CanvasProj
 		ID        string `json:"id"`
 		Title     string `json:"title"`
 		ProjectID string `json:"projectId"`
+		FolderID  string `json:"folderId"`
 		CreatedAt string `json:"createdAt"`
 		UpdatedAt string `json:"updatedAt"`
 	}
@@ -440,13 +444,14 @@ func canvasProjectFromJSON(userID string, raw json.RawMessage) (model.CanvasProj
 		id = kernel.NewID()
 	}
 	return model.CanvasProject{
-		ID:          id,
-		UserID:      userID,
-		ProjectID:   strings.TrimSpace(payload.ProjectID),
-		Title:       strings.TrimSpace(payload.Title),
-		PayloadJSON: string(raw),
-		CreatedAt:   createdAt,
-		UpdatedAt:   updatedAt,
+		ID:              id,
+		UserID:          userID,
+		ProjectID:       strings.TrimSpace(payload.ProjectID),
+		LibraryFolderID: strings.TrimSpace(payload.FolderID),
+		Title:           strings.TrimSpace(payload.Title),
+		PayloadJSON:     string(raw),
+		CreatedAt:       createdAt,
+		UpdatedAt:       updatedAt,
 	}, nil
 }
 

@@ -60,7 +60,7 @@ $env:CANVAS_DESKTOP_DATA_DIR = 'D:\BeefTV-tests\candidate-workspace'
 
 ### 桌面本地任务诊断
 
-本地 SQLite 使用 `local_schema_migrations` 记录版本。本地重构候选目前为 v11，正式 v1.6.21 为 v3；历史图片恢复预览曾使用 v7。正式 v3 为 `tasks` 新增可空文本列 `failure_diagnostics`，存储有界、脱敏的执行证据和失败摘要；旧任务保留空值。失败诊断与任务终态在同一次带租约校验的更新中保存，成功任务也保留执行证据，主动重试时清除上一轮诊断。任务列表和详情均读取该列，字段说明见 [HTTP API](./http-api)。整合 v8 同时补齐历史分支可能缺失的产品与 Agent 结构，v9 修复已标 v8 的已知结构缺损并强化完整性检查，v10 追加助手业务回合表，v11 追加创作对话表，保留原迁移记录、Agent 表和任务扩展列。
+本地 SQLite 使用 `local_schema_migrations` 记录版本。本地重构候选目前为 v13，正式 v1.6.21 为 v3；历史图片恢复预览曾使用 v7。正式 v3 为 `tasks` 新增可空文本列 `failure_diagnostics`，存储有界、脱敏的执行证据和失败摘要；旧任务保留空值。失败诊断与任务终态在同一次带租约校验的更新中保存，成功任务也保留执行证据，主动重试时清除上一轮诊断。任务列表和详情均读取该列，字段说明见 [HTTP API](./http-api)。整合 v8 同时补齐历史分支可能缺失的产品与 Agent 结构，v9 修复已标 v8 的已知结构缺损并强化完整性检查，v10 追加助手业务回合表，v11 追加创作对话表，v12 追加画布文件夹与画板，v13 追加上传预留恢复索引，保留原迁移记录、Agent 表和任务扩展列。
 
 部分预览版曾将 v3–v6 用于其他迁移。启动时还会按实际表结构检查并补齐 `failure_diagnostics`，不覆盖迁移记录、不删除预览版字段或旧任务；就绪检查同时要求最低版本和该字段存在。任务入库失败返回 HTTP 500、`reason=local_storage_failed`，界面明确显示本地保存失败、尚未提交生成。内部错误链保留数据库原因，HTTP 响应不包含 SQL 原文；handler 日志记录错误类型。
 
@@ -98,8 +98,8 @@ $env:CANVAS_DESKTOP_DATA_DIR = 'D:\BeefTV-tests\candidate-workspace'
 
 ### 本地工作区结构（桌面形态）
 
-桌面形态使用由 `local_schema_migrations` 管理的本地结构版本（当前为 10，见 `backend/internal/database/local_schema.go`），
-与上面的托管版本序列相互独立。
+桌面形态使用由 `local_schema_migrations` 管理的本地结构版本（当前为 12，见 `backend/internal/database/local_schema.go`），
+与上面的托管版本序列相互独立。版本 11 由会话工作单独占用，本序列从 10 直接进入 12。
 
 版本 3 `agent-operation-records` 为既有版本 2 工作区创建 `agent_op_records` 及用户、操作 ID 联合主键；版本 4/5 为任务的客户端操作编号补充结构；版本 6 `agent-operation-turn-attribution` 为 `agent_op_records` 增加可空的 `turn_id` 与索引，用于把内置助手一轮对话的写入回执归到该轮上。迁移只新增结构，不重写画布、项目或任务数据；结构创建与迁移记录在同一事务中提交。重复启动不会重复迁移，已成功操作的幂等结果在重启后继续回放。
 
@@ -107,7 +107,9 @@ $env:CANVAS_DESKTOP_DATA_DIR = 'D:\BeefTV-tests\candidate-workspace'
 
 | 表 | 用途 | 关键边界 |
 | --- | --- | --- |
-| `canvas_projects` | 画布文档（含 `revision`） | 写入按 `revision` 原子 CAS：缺少读取时的 revision 或 revision 已过期都拒绝，不会覆盖别人刚写入的内容；`viewport` 属于本机查看偏好，由服务端规范化，不按内容保存 |
+| `canvas_projects` | 画布文档（含 `revision` 与 `library_folder_id`） | 写入按 `revision` 原子 CAS：缺少读取时的 revision 或 revision 已过期都拒绝，不会覆盖别人刚写入的内容；`viewport` 属于本机查看偏好，由服务端规范化，不按内容保存；文件夹归属以 `library_folder_id` 为准，读回时覆盖 payload 中的 `folderId` |
+| `canvas_library_folders` | 画布库文件夹 | 按用户归属；删除时清空画布的 `library_folder_id`，不删除画布；封面是资源 ID |
+| `canvas_drawings` | 画板快照与 revision | 主键 `(user_id, canvas_id, drawing_id)`；写入按 revision CAS；预览和成品字节走资源 ID；删除画布时一并删除 |
 | `canvas_snapshots`、`canvas_snapshot_resources` | 画布历史快照与快照引用的资源 | 快照读写按归属校验；历史恢复同样走 revision 前置条件 |
 | `agent_op_records` | 统一操作层的幂等记录：`(user_id, op_id)` 主键、payload 哈希、状态与可空 `turn_id` | 同一 `opId` 同参数回读原结果、不同参数返回冲突；失败操作回滚且不留幂等记录；只在本用户命名空间内回放，不跨用户读取；`turn_id` 与业务写入同事务提交，只有后端鉴权的内置宿主能写入归属 |
 | `assistant_turns` | 助手业务回合：范围、轮前画布快照、结算摘要与撤销标记 | 主键 `turn_id`；必须带用户和画布身份；open 回合才接受写入归属；撤销把旧文档写成新 revision，并与 undone 标记同事务提交。不保存模型对话稿 |
@@ -116,6 +118,8 @@ $env:CANVAS_DESKTOP_DATA_DIR = 'D:\BeefTV-tests\candidate-workspace'
 版本 10 `assistant-business-turns` 为既有 v9 工作区创建 `assistant_turns`。旧 JSON 文件 `assistant-turns/<hexID>.json` 是只读迁移输入，按被访问的 ID 校验后导入，导入后不再作为竞争事实；生产路径不改写、不删除原文件。保留策略只压缩超龄大快照、留下身份墓碑，不会删掉进行中的回合、回执引用的回合或操作回执。操作层若要把回执记到某一轮，必须在该操作自己的事务里校验回合仍为 open；只做事务外预检无法关闭结算与写入的竞态。
 
 版本 11 `creation-conversations` 为既有 v10 工作区创建 `creation_conversations`。浏览器 IndexedDB `creation-conversations-v1` 只是导入源：没有后端记录或墓碑时，按稳定 `operationId` 与文档哈希在同一事务内导入；已有记录不覆盖。全量数组替换会删掉未见过的对话，因此写入是按对话 CAS，删除走显式墓碑。后续任务绑定可在同一调用方事务里调用 `AttachMessageResult`，只改该消息的结果字段。
+
+版本 12 `canvas-library-drawings` 为既有工作区创建 `canvas_library_folders`、`canvas_drawings`，并为 `canvas_projects` 增加 `library_folder_id`。画板快照由 SQLite 持有，预览和成品字节引用已有资源；IndexedDB 只作草稿和缓存。保留版本 11 的会话迁移身份。
 
 公开镜像不附带独立迁移程序。`CANVAS_AUTO_MIGRATE=true` 时，Backend 在开始接受请求前完成迁移与兼容性检查；失败时进程直接退出，不会带着不兼容结构提供服务。后续迁移必须新增版本，不得修改已经发布迁移的实现或校验和。
 

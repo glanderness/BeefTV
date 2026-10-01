@@ -17,6 +17,7 @@ const backendDir = resolve(import.meta.dir, "../../backend");
 const serverBin = join(tmpdir(), `beeftv-archive-restore-server-${process.pid}`);
 const videoBytes = new Uint8Array([9, 8, 7, 6]);
 const audioBytes = new Uint8Array([5, 4, 3, 2, 1]);
+const drawingPreviewBytes = new Uint8Array([11, 12, 13, 14, 15]);
 let built = false;
 
 type RunningServer = {
@@ -114,10 +115,27 @@ async function readProject(id: string) {
     const data = await http.get<{ project: {
         id: string;
         workspaceProjectId?: string;
-        nodes: Array<{ metadata?: { storageKey?: string; prompt?: string; assetId?: string } }>;
+        folderId?: string;
+        revision?: number;
+        nodes: Array<{ type?: string; metadata?: { storageKey?: string; prompt?: string; assetId?: string; drawingId?: string } }>;
         timeline?: { clips: Array<{ directMedia?: { storageKey?: string; assetId?: string } }> };
     } }>(`/canvas-projects/${encodeURIComponent(id)}`);
     return data.project;
+}
+
+async function listFolders() {
+    const data = await http.get<{ folders: Array<{ id: string; name: string; coverResourceId?: string }> }>("/canvas-folders");
+    return data.folders || [];
+}
+
+async function readDrawing(canvasId: string, drawingId: string) {
+    const data = await http.get<{ drawing: {
+        drawingId: string;
+        revision: number;
+        snapshot?: { elements?: Array<{ id?: string }> };
+        previewResourceId?: string;
+    } }>(`/canvas-projects/${encodeURIComponent(canvasId)}/drawings/${encodeURIComponent(drawingId)}`);
+    return data.drawing;
 }
 
 async function readResourceBytes(resourceId: string) {
@@ -137,10 +155,12 @@ async function fixtureZip() {
                 app: "infinite-canvas",
                 version: 4,
                 exportedAt: "2026-10-02T00:00:00.000Z",
+                folders: [{ id: "folder-old", name: "剧集", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" }],
                 projects: [{
                     project: {
                         id: "old-canvas",
                         workspaceProjectId: "old-workspace",
+                        folderId: "folder-old",
                         title: "持久画布",
                         revision: 0,
                         nodes: [{
@@ -155,6 +175,14 @@ async function fixtureZip() {
                                 content: "blob:expired",
                                 prompt: "描述里提到 data:image/png 和 blob:expired，但不是媒体文件",
                             },
+                        }, {
+                            id: "n-drawing",
+                            type: "drawing",
+                            title: "分镜手稿",
+                            position: { x: 40, y: 0 },
+                            width: 240,
+                            height: 240,
+                            metadata: { drawingId: "sketch" },
                         }],
                         connections: [],
                         timeline: {
@@ -176,11 +204,23 @@ async function fixtureZip() {
                         { storageKey: "video:clip", path: "projects/old-canvas/files/clip.mp4", mimeType: "video/mp4", bytes: videoBytes.byteLength },
                         { storageKey: "audio:voice", path: "projects/old-canvas/files/voice.wav", mimeType: "audio/wav", bytes: audioBytes.byteLength },
                     ],
+                    drawingDocuments: [{
+                        drawingId: "sketch",
+                        version: 2,
+                        engine: "excalidraw",
+                        snapshot: { elements: [{ id: "shape-1" }] },
+                        revision: 2,
+                        updatedAt: "2026-10-02T00:00:00.000Z",
+                        shapeCount: 1,
+                        pageCount: 1,
+                        previewPath: "projects/old-canvas/drawings/sketch.png",
+                    }],
                 }],
             }),
         },
         { name: "projects/old-canvas/files/clip.mp4", data: videoBytes },
         { name: "projects/old-canvas/files/voice.wav", data: audioBytes },
+        { name: "projects/old-canvas/drawings/sketch.png", data: drawingPreviewBytes },
     ]);
 }
 
@@ -211,24 +251,49 @@ test("valid archive restores into isolated SQLite, survives backend restart, and
         const saved = await readProject(result.projectIds[0]);
         expect(saved.id).toBe(result.projectIds[0]);
         expect(saved.workspaceProjectId).not.toBe("old-workspace");
+        expect((saved.revision ?? 0) >= 1).toBe(true);
+        const folders = await listFolders();
+        expect(folders).toHaveLength(1);
+        expect(folders[0].id).not.toBe("folder-old");
+        expect(folders[0].name).toBe("剧集");
+        expect(saved.folderId).toBe(folders[0].id);
+        expect(result.folderIds).toEqual([folders[0].id]);
         expect(saved.nodes[0].metadata?.storageKey).toStartWith("resource:");
         expect(saved.nodes[0].metadata?.prompt).toContain("data:image/png");
         expect(saved.nodes[0].metadata?.assetId).toBeTruthy();
+        expect(saved.nodes[1].metadata?.drawingId).toBe("sketch");
+        const drawing = await readDrawing(saved.id, "sketch");
+        expect(drawing.drawingId).toBe("sketch");
+        expect(drawing.revision).toBeGreaterThanOrEqual(1);
+        expect(drawing.snapshot?.elements?.[0]?.id).toBe("shape-1");
+        expect(drawing.previewResourceId).toBeTruthy();
         const clipKey = saved.timeline?.clips[0].directMedia?.storageKey;
         expect(clipKey).toStartWith("resource:");
         const videoId = resourceId(saved.nodes[0].metadata?.storageKey);
         const audioId = resourceId(clipKey);
+        // Fixture bytes prove the same octets were stored; they are not a playable video file.
         expect(await readResourceBytes(videoId)).toEqual(videoBytes);
         expect(await readResourceBytes(audioId)).toEqual(audioBytes);
+        expect(await readResourceBytes(drawing.previewResourceId!)).toEqual(drawingPreviewBytes);
 
         await stopServer(server);
         server = await startServer(dataDir);
         connect(server.port);
+        resetStores();
+        const restartedFolders = await listFolders();
+        expect(restartedFolders.map((folder) => ({ id: folder.id, name: folder.name }))).toEqual(folders.map((folder) => ({ id: folder.id, name: folder.name })));
         const restarted = await readProject(result.projectIds[0]);
+        expect(restarted.folderId).toBe(saved.folderId);
         expect(restarted.nodes[0].metadata?.storageKey).toBe(saved.nodes[0].metadata?.storageKey);
         expect(restarted.timeline?.clips[0].directMedia?.storageKey).toBe(clipKey);
+        const restartedDrawing = await readDrawing(saved.id, "sketch");
+        expect(restartedDrawing.drawingId).toBe("sketch");
+        expect(restartedDrawing.revision).toBe(drawing.revision);
+        expect(restartedDrawing.snapshot?.elements?.[0]?.id).toBe("shape-1");
+        expect(restartedDrawing.previewResourceId).toBe(drawing.previewResourceId);
         expect(await readResourceBytes(videoId)).toEqual(videoBytes);
         expect(await readResourceBytes(audioId)).toEqual(audioBytes);
+        expect(await readResourceBytes(restartedDrawing.previewResourceId!)).toEqual(drawingPreviewBytes);
 
         const retry = await restoreCanvasArchive(zip);
         expect(retry.projectIds[0]).not.toBe(result.projectIds[0]);

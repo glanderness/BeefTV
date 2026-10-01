@@ -28,6 +28,7 @@ func RegisterDesktopUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 }
 
 func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
+	registerCanvasLibraryRoutes(r, svc)
 	r.POST("/assets/batch", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

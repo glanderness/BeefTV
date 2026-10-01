@@ -48,6 +48,7 @@ export type CanvasFolder = {
     createdAt: string;
     updatedAt: string;
     coverDataUrl?: string;
+    coverResourceId?: string;
 };
 
 type CanvasStore = {
@@ -59,6 +60,7 @@ type CanvasStore = {
     renameFolder: (id: string, name: string) => void;
     deleteFolder: (id: string) => void;
     setFolderCover: (id: string, coverDataUrl: string) => void;
+    replaceFolders: (folders: CanvasFolder[]) => void;
     moveProjectsToFolder: (ids: string[], folderId?: string) => void;
     importProject: (project: Partial<CanvasProject>, workspaceProjectId?: string) => string;
     openProject: (id: string) => CanvasProject | null;
@@ -75,7 +77,10 @@ function readCanvasFolders(): CanvasFolder[] {
     try {
         const value = scopedLocalStorage.getItem(CANVAS_FOLDERS_KEY);
         const parsed = value ? JSON.parse(value) : [];
-        return Array.isArray(parsed) ? parsed.filter((folder): folder is CanvasFolder => Boolean(folder && typeof folder.id === "string" && typeof folder.name === "string")) : [];
+        return Array.isArray(parsed) ? parsed.filter((folder): folder is CanvasFolder => Boolean(folder && typeof folder.id === "string" && typeof folder.name === "string")).map((folder) => ({
+            ...folder,
+            coverResourceId: typeof folder.coverResourceId === "string" ? folder.coverResourceId : undefined,
+        })) : [];
     } catch {
         return [];
     }
@@ -727,6 +732,10 @@ export const useCanvasStore = create<CanvasStore>()(
                 writeCanvasFolders(folders);
                 return { folders };
             }),
+            replaceFolders: (folders) => {
+                writeCanvasFolders(folders);
+                set({ folders });
+            },
             moveProjectsToFolder: (ids, folderId) => set((state) => ({ projects: state.projects.map((project) => ids.includes(project.id) ? { ...project, folderId, updatedAt: new Date().toISOString() } : project) })),
             importProject: (source, workspaceProjectId) => {
                 const now = new Date().toISOString();

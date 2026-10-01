@@ -15,10 +15,12 @@ import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { restoreCanvasArchive } from "@/lib/canvas/canvas-archive-restore";
+import { createCanvasLibraryFolder, deleteCanvasLibraryFolder, hydrateCanvasLibraryFolders, persistCanvasFolderCover, renameCanvasLibraryFolder } from "@/lib/canvas/canvas-folder-storage";
 import { reportOwnedMediaSave } from "@/services/desktop-media-save";
 import { loadCanvasProjectForEditing, saveRemoteUserDataNow } from "@/services/local-workspace-sync";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
-import { createLocalCanvasProject, deleteLocalCanvasProjects, hydrateLocalCanvasProjectsFromBackend } from "@/services/local-workspace-repository";
+import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
+import { createLocalCanvasProject, deleteLocalCanvasProjects, hydrateLocalCanvasProjectsFromBackend, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
 import { createWorkspaceCanvasProject } from "@/services/workspace-project-repository";
 import { listWorkspaceCanvasProjectsPage, type CanvasLibrarySummary } from "@/services/api/workspace-data";
 import { useUserStore } from "@/stores/use-user-store";
@@ -52,10 +54,6 @@ export default function CanvasPage() {
     const hydrated = useCanvasStore((state) => state.hydrated);
     const localProjects = useCanvasStore((state) => state.projects);
     const folders = useCanvasStore((state) => state.folders);
-    const createFolder = useCanvasStore((state) => state.createFolder);
-    const renameFolder = useCanvasStore((state) => state.renameFolder);
-    const deleteFolder = useCanvasStore((state) => state.deleteFolder);
-    const setFolderCover = useCanvasStore((state) => state.setFolderCover);
     const moveProjectsToFolder = useCanvasStore((state) => state.moveProjectsToFolder);
     const userId = useUserStore((state) => state.user?.id);
     const sessionHydrated = useUserStore((state) => state.hydrated);
@@ -69,6 +67,7 @@ export default function CanvasPage() {
     useEffect(() => {
         if (!hydrated || !isLocalWorkspaceMode()) return;
         void hydrateLocalCanvasProjectsFromBackend();
+        void hydrateCanvasLibraryFolders();
     }, [hydrated]);
     const [debouncedKeyword, setDebouncedKeyword] = useState("");
     useEffect(() => {
@@ -180,10 +179,14 @@ export default function CanvasPage() {
     const projectFilterItems = useMemo(() => [{ key: "all", label: "全部画布" }, { key: "independent", label: "自由画布" }, ...(projectQuery.data?.projects || []).map(({ project }) => ({ key: project.id, label: project.name }))], [projectQuery.data]);
     const saveFolderRename = () => {
         const nextName = folderName.trim() || "未命名文件夹";
-        if (editingFolderId) renameFolder(editingFolderId, nextName);
+        const id = editingFolderId;
         setFolderName("");
         setEditingFolderId(null);
         setFolderDialogOpen(false);
+        if (!id) return;
+        void renameCanvasLibraryFolder(id, nextName).catch((error) => {
+            message.error(error instanceof Error ? error.message : "文件夹没有保存成功");
+        });
     };
     useEffect(() => {
         setLoadedProjectCount(50);
@@ -282,7 +285,11 @@ export default function CanvasPage() {
                     <Input prefix={<Search />} value={keyword} allowClear placeholder="搜索项目" aria-label="搜索项目" onChange={(event) => setKeyword(event.target.value)} />
                     <Button icon={<Upload />} disabled={!hydrated} onClick={() => inputRef.current?.click()}>导入画布</Button>
                     <Button icon={<Trash2 />} onClick={() => setHistoryOpen(true)}>回收站</Button>
-                    <Button icon={<FolderPlus />} disabled={!hydrated} onClick={() => createFolder("未命名文件夹")}>新建文件夹</Button>
+                    <Button icon={<FolderPlus />} disabled={!hydrated} onClick={() => {
+                        void createCanvasLibraryFolder("未命名文件夹").catch((error) => {
+                            message.error(error instanceof Error ? error.message : "文件夹没有保存成功");
+                        });
+                    }}>新建文件夹</Button>
                 </div>
             </header>
 
@@ -340,10 +347,22 @@ export default function CanvasPage() {
                             // 删除文件夹时，先将其中项目送入统一回收站，再移除文件夹。
                             // 这样不会绕过 deleteProjects 的软删除快照和恢复能力。
                             const folderProjectIds = localProjects.filter((project) => project.folderId === folder.id).map((project) => project.id);
-                            if (folderProjectIds.length) void deleteLocalCanvasProjects(folderProjectIds);
-                            deleteFolder(folder.id);
-                            message.success(folderProjectIds.length ? `文件夹及其中 ${folderProjectIds.length} 个项目已移入回收站` : "文件夹已删除");
-                        }} onCoverChange={(dataUrl) => { setFolderCover(folder.id, dataUrl); message.success("文件夹封面已更新"); }} />)}
+                            void (async () => {
+                                try {
+                                    if (folderProjectIds.length) await deleteLocalCanvasProjects(folderProjectIds);
+                                    await deleteCanvasLibraryFolder(folder.id);
+                                    message.success(folderProjectIds.length ? `文件夹及其中 ${folderProjectIds.length} 个项目已移入回收站` : "文件夹已删除");
+                                } catch (error) {
+                                    message.error(error instanceof Error ? error.message : "文件夹没有删除成功");
+                                }
+                            })();
+                        }} onCoverChange={(dataUrl) => {
+                            void persistCanvasFolderCover(folder.id, dataUrl).then(() => {
+                                message.success("文件夹封面已更新");
+                            }).catch((error) => {
+                                message.error(error instanceof Error ? error.message : "封面没有保存成功");
+                            });
+                        }} />)}
                         {visibleProjects.map((project) => (
                             <CanvasFolderCard
                                 key={project.id}
@@ -365,6 +384,9 @@ export default function CanvasPage() {
                                         const movedProject = useCanvasStore.getState().projects.find((item) => item.id === project.id);
                                         if (!movedProject || (movedProject.folderId || undefined) !== (folderId || undefined)) {
                                             throw new Error("项目移动未完成，请重试");
+                                        }
+                                        if (!usesBrowserLocalResourceStore()) {
+                                            await Promise.all(projectCanvasIds.map((id) => syncLocalCanvasProjectToBackend(id)));
                                         }
                                         message.success(folderId ? "已移动到文件夹" : "已移出文件夹");
                                     } catch (error) {

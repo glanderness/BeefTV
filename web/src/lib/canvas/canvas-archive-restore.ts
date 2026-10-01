@@ -6,7 +6,8 @@ import {
     preflightCanvasArchive,
     type OpenCanvasArchive,
 } from "@/lib/canvas/canvas-export";
-import { saveCanvasDrawing, type CanvasDrawingRenderDraft } from "@/lib/canvas/canvas-drawing-storage";
+import { createCanvasLibraryFolder, deleteCanvasLibraryFolder } from "@/lib/canvas/canvas-folder-storage";
+import { loadCanvasDrawing, saveCanvasDrawing, type CanvasDrawingRenderDraft } from "@/lib/canvas/canvas-drawing-storage";
 import { canvasWorkspaceProjectId } from "@/lib/canvas/canvas-workspace-project";
 import { normalizeLocalCanvasProject } from "@/lib/local-workspace-migration";
 import { assertUserScope, captureUserScope, isUserScopeAbandonedError, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
@@ -49,7 +50,7 @@ export type CanvasArchiveRestoreHost = {
     uploadMedia(blob: Blob, kind: "image" | "video" | "audio" | "file", meta: { storageKey: string; mimeType: string; fileName?: string }): Promise<RestoredMediaRef>;
     bindMediaAsset?(options: { canvasId: string; node: CanvasNodeData }): Promise<string>;
     saveDrawing: typeof saveCanvasDrawing;
-    loadDrawing?(projectId: string, drawingId: string): Promise<{ drawingId: string; revision: number } | null>;
+    loadDrawing?(projectId: string, drawingId: string): Promise<{ drawingId: string; revision: number; snapshot?: unknown; previewResourceId?: string } | null>;
     deleteResource?(resourceId: string): Promise<void>;
     onProjectProgress?(projectId: string, progress: CanvasArchiveProjectProgress | null): void;
 };
@@ -112,8 +113,8 @@ export function createCanvasArchiveRestoreHost(overrides: Partial<CanvasArchiveR
     const usesCanonicalBackend = overrides.usesCanonicalBackend ?? !usesBrowserLocalResourceStore();
     return {
         usesCanonicalBackend,
-        createFolder: (name) => store().createFolder(name),
-        deleteFolder: (id) => store().deleteFolder(id),
+        createFolder: (name) => createCanvasLibraryFolder(name),
+        deleteFolder: (id) => deleteCanvasLibraryFolder(id),
         importProject: (project, workspaceProjectId) => store().importProject(project, workspaceProjectId),
         updateProject: (id, patch) => store().updateProject(id, patch),
         persistProject: async (id) => {
@@ -165,6 +166,10 @@ export function createCanvasArchiveRestoreHost(overrides: Partial<CanvasArchiveR
             return result.assetId;
         },
         saveDrawing: saveCanvasDrawing,
+        loadDrawing: async (projectId, drawingId) => {
+            const saved = await loadCanvasDrawing(projectId, drawingId);
+            return saved ? { drawingId, revision: saved.revision, snapshot: saved.snapshot, previewResourceId: saved.previewResourceId } : null;
+        },
         ...overrides,
         usesCanonicalBackend,
     };
@@ -251,9 +256,9 @@ export async function restoreCanvasArchive(input: Blob | OpenCanvasArchive, host
             });
             const bound = await bindRestoredMedia(importedProjectId, remappedNodes, remappedTimeline, restoreHost);
             restoreHost.updateProject(importedProjectId, bound.timeline ? { nodes: bound.nodes, timeline: bound.timeline } : { nodes: bound.nodes });
-            await restoreArchiveDrawings(importedProjectId, item.drawingDocuments || [], archive.files, restoreHost);
             try {
                 await restoreHost.persistProject(importedProjectId);
+                await restoreArchiveDrawings(importedProjectId, item.drawingDocuments || [], archive.files, restoreHost);
                 await verifyRestoredDrawings(importedProjectId, item.drawingDocuments || [], restoreHost);
             } catch (error) {
                 restoreHost.onProjectProgress?.(importedProjectId, {
@@ -286,8 +291,9 @@ async function verifyRestoredDrawings(projectId: string, documents: CanvasDrawin
     if (!host.loadDrawing) return;
     for (const document of documents.filter((item) => !item.engine || item.engine === "excalidraw")) {
         const saved = await host.loadDrawing(projectId, document.drawingId);
-        if (!saved || saved.drawingId !== document.drawingId) throw new Error("画板未保存到工作区");
-        if ((saved.revision || 0) < 1) throw new Error("画板未保存到工作区");
+        if (!saved || saved.drawingId !== document.drawingId || (saved.revision || 0) < 1) throw new Error("画板未保存到工作区");
+        if (saved.snapshot !== undefined && JSON.stringify(saved.snapshot) !== JSON.stringify(document.snapshot)) throw new Error("画板未保存到工作区");
+        if (document.previewPath && !saved.previewResourceId) throw new Error("画板预览未保存到工作区");
     }
 }
 
@@ -508,15 +514,7 @@ async function restoreArchiveDrawings(
                 document.drawingId,
                 engine,
                 document.snapshot,
-                {
-                    version: 2,
-                    engine,
-                    snapshot: document.snapshot,
-                    revision: Math.max(0, document.revision - 1),
-                    updatedAt: document.updatedAt,
-                    shapeCount: document.shapeCount,
-                    pageCount: document.pageCount,
-                },
+                null,
                 preview,
                 render,
             );

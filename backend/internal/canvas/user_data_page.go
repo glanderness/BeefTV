@@ -14,6 +14,7 @@ func (s *Service) UserAssetsByIDs(userID string, ids []string) ([]json.RawMessag
 type CanvasLibrarySummary struct {
 	ID           string           `json:"id"`
 	ProjectID    string           `json:"projectId,omitempty"`
+	FolderID     string           `json:"folderId,omitempty"`
 	Title        string           `json:"title"`
 	Revision     int64            `json:"revision"`
 	CreatedAt    time.Time        `json:"createdAt"`
@@ -56,7 +57,7 @@ func (s *Service) UserCanvasProjectsPage(userID string, page int, pageSize int, 
 			return CanvasLibraryPage{}, err
 		}
 		preview := canvasLibraryPreviewNodes(document.Nodes)
-		result.Projects = append(result.Projects, CanvasLibrarySummary{ID: project.ID, ProjectID: project.ProjectID, Title: project.Title, Revision: project.Revision, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt, NodeCount: len(document.Nodes), PreviewNodes: preview})
+		result.Projects = append(result.Projects, CanvasLibrarySummary{ID: project.ID, ProjectID: project.ProjectID, FolderID: project.LibraryFolderID, Title: project.Title, Revision: project.Revision, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt, NodeCount: len(document.Nodes), PreviewNodes: preview})
 	}
 	return result, nil
 }
