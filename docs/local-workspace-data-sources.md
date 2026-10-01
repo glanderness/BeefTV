@@ -15,7 +15,7 @@
 
 ## 运行规则
 
-- 桌面启动使用合成的 `local` 工作区身份，不读取登录态。
+- 桌面启动使用合成的 `local` 工作区身份，不读取登录态。身份规则在 `workspace.Service`：本地工作区投影为 `username=local`、管理员、已启用；HTTP JSON 仍由 `AuthUser` 输出。
 - 本地上传优先调用本机 Go 资源接口；资源服务暂不可用时才退回 IndexedDB，且不设置 `pendingRemoteUpload`。
 - `resource:<id>` 只表示本机 Go 资源，不代表 SaaS 或对象存储。
 - 服务器 profile 仍保留原有远端同步实现，和桌面 profile 通过 `storageMode` 隔离。

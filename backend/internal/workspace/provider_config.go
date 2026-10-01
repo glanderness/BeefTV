@@ -18,19 +18,60 @@ const (
 
 // ProviderConfig owns the local provider snapshot. It has no database or
 // hosted-service dependency and can therefore be reused by CLI/desktop shells.
+// Mutation is serialized per canonical workspace directory so separately
+// constructed handles to the same path share CAS and secret preservation.
 type ProviderConfig struct {
 	dataDir string
-	mu      sync.Mutex
+	mu      *sync.Mutex
 }
 
 var ErrProviderConfigRevisionConflict = errors.New("本地模型配置已被其他写入更新")
+
+var providerConfigGuards sync.Map // canonical data dir -> *sync.Mutex
 
 func NewProviderConfig(dataDir string) (*ProviderConfig, error) {
 	dataDir = strings.TrimSpace(dataDir)
 	if dataDir == "" {
 		return nil, errors.New("本地工作区数据目录不能为空")
 	}
-	return &ProviderConfig{dataDir: dataDir}, nil
+	canonical, err := canonicalWorkspacePath(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	return &ProviderConfig{dataDir: canonical, mu: mutexFor(canonical)}, nil
+}
+
+func canonicalWorkspacePath(dataDir string) (string, error) {
+	abs, err := filepath.Abs(dataDir)
+	if err != nil {
+		return "", fmt.Errorf("解析本地工作区数据目录失败: %w", err)
+	}
+	abs = filepath.Clean(abs)
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved, nil
+	}
+	missing := make([]string, 0, 4)
+	current := abs
+	for {
+		parent := filepath.Dir(current)
+		if parent == current {
+			return abs, nil
+		}
+		missing = append([]string{filepath.Base(current)}, missing...)
+		if resolved, err := filepath.EvalSymlinks(parent); err == nil {
+			return filepath.Join(append([]string{resolved}, missing...)...), nil
+		}
+		current = parent
+	}
+}
+
+func mutexFor(canonical string) *sync.Mutex {
+	if existing, ok := providerConfigGuards.Load(canonical); ok {
+		return existing.(*sync.Mutex)
+	}
+	fresh := &sync.Mutex{}
+	actual, _ := providerConfigGuards.LoadOrStore(canonical, fresh)
+	return actual.(*sync.Mutex)
 }
 
 func (s *ProviderConfig) ReadLocalModelConfig() ([]byte, error) {
@@ -57,14 +98,17 @@ func (s *ProviderConfig) ReadRedactedModelConfig() ([]byte, error) {
 func (s *ProviderConfig) SaveLocalModelConfig(body []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	existingDocument, _, _ := s.loadDocument()
+	existingDocument, err := s.loadPrimaryDocument()
+	if err != nil {
+		return err
+	}
 	return s.saveLocalModelConfig(body, existingDocument)
 }
 
 func (s *ProviderConfig) SaveLocalModelConfigRevision(body []byte, expectedRevision int64) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	existingDocument, _, err := s.loadDocument()
+	existingDocument, err := s.loadPrimaryDocument()
 	if err != nil {
 		return 0, err
 	}
@@ -96,6 +140,9 @@ func (s *ProviderConfig) saveLocalModelConfig(body []byte, existingDocument Prov
 	if err := os.MkdirAll(s.dataDir, 0o700); err != nil {
 		return fmt.Errorf("创建本地配置目录失败: %w", err)
 	}
+	if err := os.Chmod(s.dataDir, 0o700); err != nil {
+		return fmt.Errorf("设置本地配置目录权限失败: %w", err)
+	}
 	tmp, err := os.CreateTemp(s.dataDir, ".local-model-config-*")
 	if err != nil {
 		return fmt.Errorf("创建本地配置临时文件失败: %w", err)
@@ -118,11 +165,13 @@ func (s *ProviderConfig) saveLocalModelConfig(body []byte, existingDocument Prov
 		return fmt.Errorf("关闭本地模型配置失败: %w", err)
 	}
 	if err := s.rotateBackup(); err != nil {
-		_ = tmp.Close()
 		return err
 	}
 	if err := os.Rename(tmpName, s.path()); err != nil {
 		return fmt.Errorf("替换本地模型配置失败: %w", err)
+	}
+	if err := os.Chmod(s.path(), 0o600); err != nil {
+		return fmt.Errorf("设置本地配置权限失败: %w", err)
 	}
 	if directory, err := os.Open(s.dataDir); err == nil {
 		_ = directory.Sync()
@@ -136,6 +185,8 @@ func (s *ProviderConfig) path() string { return filepath.Join(s.dataDir, LocalPr
 func (s *ProviderConfig) backupPath() string { return s.path() + ".bak" }
 
 func (s *ProviderConfig) LoadEffectiveModelConfig() (EffectiveModelConfig, ConfigHealth, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	document, health, err := s.loadDocument()
 	if err != nil {
 		return EffectiveModelConfig{}, health, err
@@ -173,6 +224,21 @@ func (s *ProviderConfig) loadDocument() (ProviderStateDocument, ConfigHealth, er
 	return document, ConfigHealthRecovered, nil
 }
 
+func (s *ProviderConfig) loadPrimaryDocument() (ProviderStateDocument, error) {
+	body, err := os.ReadFile(s.path())
+	if errors.Is(err, os.ErrNotExist) {
+		return newProviderState(map[string]any{}, 0), nil
+	}
+	if err != nil {
+		return ProviderStateDocument{}, fmt.Errorf("读取本地模型配置失败: %w", err)
+	}
+	document, _, decodeErr := decodeProviderDocument(body)
+	if decodeErr != nil {
+		return ProviderStateDocument{}, fmt.Errorf("本地模型配置损坏: %w", decodeErr)
+	}
+	return document, nil
+}
+
 func decodeProviderDocument(body []byte) (ProviderStateDocument, bool, error) {
 	var probe map[string]json.RawMessage
 	if err := json.Unmarshal(body, &probe); err != nil {
@@ -180,7 +246,10 @@ func decodeProviderDocument(body []byte) (ProviderStateDocument, bool, error) {
 	}
 	if _, versioned := probe["schemaVersion"]; versioned {
 		var document ProviderStateDocument
-		if err := json.Unmarshal(body, &document); err != nil || document.SchemaVersion != providerStateSchemaVersion || document.Config == nil {
+		if err := json.Unmarshal(body, &document); err != nil {
+			return ProviderStateDocument{}, false, errors.New("不支持或损坏的本地模型配置版本")
+		}
+		if document.SchemaVersion != providerStateSchemaVersion || document.Config == nil || document.Revision < 0 {
 			return ProviderStateDocument{}, false, errors.New("不支持或损坏的本地模型配置版本")
 		}
 		return document, false, nil

@@ -1,10 +1,15 @@
 package workspace
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestProviderConfigMigratesLegacyBeefAPIStateWithoutLosingLocalChoices(t *testing.T) {
@@ -30,10 +35,10 @@ func TestProviderConfigMigratesLegacyBeefAPIStateWithoutLosingLocalChoices(t *te
 	}
 	channel := requireEffectiveChannel(t, effective, "beefapi")
 	if channel["name"] != "BeefAPI" || channel["baseUrl"] != "https://enterprise.beefapi.com" {
-		t.Fatalf("preset-owned identity was not repaired: %#v", channel)
+		t.Fatal("preset-owned identity was not repaired")
 	}
 	if channel["apiKey"] != "local-secret" || channel["enabled"] != false {
-		t.Fatalf("local channel state was not preserved: %#v", channel)
+		t.Fatal("local channel state was not preserved")
 	}
 	headers, _ := channel["headers"].([]any)
 	if len(headers) != 1 {
@@ -71,7 +76,7 @@ func TestProviderConfigSeedsBeefAPIWhenLocalStateIsMissing(t *testing.T) {
 	}
 	channel := requireEffectiveChannel(t, effective, "beefapi")
 	if channel["apiKey"] != "" || channel["enabled"] != true {
-		t.Fatalf("unexpected seeded local state: %#v", channel)
+		t.Fatal("unexpected seeded local state")
 	}
 }
 
@@ -99,7 +104,7 @@ func TestProviderConfigRecoversLastValidBackup(t *testing.T) {
 		t.Fatalf("health = %q", health)
 	}
 	if got := requireEffectiveChannel(t, effective, "beefapi")["apiKey"]; got != "first-secret" {
-		t.Fatalf("recovered apiKey = %#v", got)
+		t.Fatal("recovered credential does not match the last valid backup")
 	}
 }
 
@@ -124,6 +129,253 @@ func TestProviderConfigCommittedRevisionOnlyAdvancesAfterValidWrite(t *testing.T
 	}
 	if first.Revision != 1 || second.Revision != first.Revision {
 		t.Fatalf("revisions = %d then %d", first.Revision, second.Revision)
+	}
+}
+
+func TestProviderConfigSeparateHandlesSharePathMutexAndCAS(t *testing.T) {
+	dir := t.TempDir()
+	first, err := NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewProviderConfig(filepath.Join(dir, "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.mu == nil || first.mu != second.mu {
+		t.Fatal("handles for one workspace path must share a mutex")
+	}
+	if err := first.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"kept-secret"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	effective, _, err := first.LoadEffectiveModelConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := effective.Revision
+
+	var (
+		wg       sync.WaitGroup
+		success  atomic.Int32
+		conflict atomic.Int32
+		other    atomic.Int32
+	)
+	start := make(chan struct{})
+	for _, store := range []*ProviderConfig{first, second} {
+		store := store
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, saveErr := store.SaveLocalModelConfigRevision([]byte(`{"channels":[{"id":"direct","apiKey":"kept-secret","label":"updated"}]}`), revision)
+			switch {
+			case saveErr == nil:
+				success.Add(1)
+			case errors.Is(saveErr, ErrProviderConfigRevisionConflict):
+				conflict.Add(1)
+			default:
+				other.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if success.Load() != 1 || conflict.Load() != 1 || other.Load() != 0 {
+		t.Fatalf("concurrent CAS results: success=%d conflict=%d other=%d", success.Load(), conflict.Load(), other.Load())
+	}
+	raw, err := first.ReadLocalModelConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte("kept-secret")) {
+		t.Fatal("committed config dropped the credential")
+	}
+}
+
+func TestProviderConfigRedactedUpdatePreservesCredentialsAcrossHandles(t *testing.T) {
+	dir := t.TempDir()
+	writer, err := NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"kept-secret"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	redacted, err := reader.ReadRedactedModelConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(redacted, []byte("kept-secret")) || !bytes.Contains(redacted, []byte(RedactedSecret)) {
+		t.Fatal("redacted view leaked or dropped the secret marker")
+	}
+	var view map[string]any
+	if err := json.Unmarshal(redacted, &view); err != nil {
+		t.Fatal(err)
+	}
+	view["label"] = "from-other-handle"
+	updated, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.SaveLocalModelConfig(updated); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := writer.ReadLocalModelConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte("kept-secret")) || !bytes.Contains(raw, []byte("from-other-handle")) {
+		t.Fatal("redacted update did not preserve the credential")
+	}
+}
+
+func TestProviderConfigCorruptExistingFileIsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"kept-secret"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"kept-secret","label":"second"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, LocalProviderConfigFile)
+	corrupt := []byte(`{"schemaVersion":`)
+	if err := os.WriteFile(path, corrupt, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"replacement"}]}`)); err == nil {
+		t.Fatal("corrupt existing file was replaced")
+	}
+	other, err := NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.SaveLocalModelConfigRevision([]byte(`{"channels":[]}`), 1); err == nil {
+		t.Fatal("corrupt existing file accepted a revision write")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, corrupt) {
+		t.Fatal("corrupt existing file was modified")
+	}
+}
+
+func TestProviderConfigMalformedRevisionRejectsMutation(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, LocalProviderConfigFile)
+	malformed := []byte(`{"schemaVersion":1,"revision":-1,"config":{"channels":[]}}`)
+	if err := os.WriteFile(path, malformed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.LoadEffectiveModelConfig(); err == nil {
+		t.Fatal("negative revision was accepted")
+	}
+	if err := store.SaveLocalModelConfig([]byte(`{"channels":[]}`)); err == nil {
+		t.Fatal("malformed revision was overwritten")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, malformed) {
+		t.Fatal("malformed revision file was modified")
+	}
+}
+
+func TestProviderConfigCrossWorkspaceSavesAreIndependent(t *testing.T) {
+	leftDir := t.TempDir()
+	rightDir := t.TempDir()
+	left, err := NewProviderConfig(leftDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := NewProviderConfig(rightDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left.mu == right.mu {
+		t.Fatal("distinct workspace paths must not share a mutex")
+	}
+
+	left.mu.Lock()
+	done := make(chan error, 1)
+	go func() {
+		done <- right.SaveLocalModelConfig([]byte(`{"channels":[{"id":"right","apiKey":"right-secret"}]}`))
+	}()
+	select {
+	case err := <-done:
+		left.mu.Unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		left.mu.Unlock()
+		t.Fatal("save on another workspace blocked behind an unrelated mutex")
+	}
+
+	if err := left.SaveLocalModelConfig([]byte(`{"channels":[{"id":"left","apiKey":"left-secret"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	leftRaw, err := left.ReadLocalModelConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightRaw, err := right.ReadLocalModelConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(leftRaw, []byte("left-secret")) || bytes.Contains(leftRaw, []byte("right-secret")) {
+		t.Fatal("left workspace mixed credentials")
+	}
+	if !bytes.Contains(rightRaw, []byte("right-secret")) || bytes.Contains(rightRaw, []byte("left-secret")) {
+		t.Fatal("right workspace mixed credentials")
+	}
+}
+
+func TestProviderConfigInterruptedTempDoesNotReplaceLiveFile(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"kept-secret"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	live := filepath.Join(dir, LocalProviderConfigFile)
+	before, err := os.ReadFile(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leftover := filepath.Join(dir, ".local-model-config-interrupted")
+	if err := os.WriteFile(leftover, []byte(`{"schemaVersion":1,"revision":99,"config":{"channels":[{"id":"direct","apiKey":"replacement"}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := store.ReadLocalModelConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte("kept-secret")) {
+		t.Fatal("live config was not retained")
+	}
+	after, err := os.ReadFile(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("leftover temp replaced the live config")
 	}
 }
 
