@@ -59,6 +59,8 @@ type Summary struct {
 	CreatedAt                 time.Time                     `json:"createdAt"`
 	UpdatedAt                 time.Time                     `json:"updatedAt"`
 	ClientContext             *ClientContext                `json:"clientContext,omitempty"`
+	ResultState               string                        `json:"resultState,omitempty"`
+	Outputs                   []CanonicalOutput             `json:"outputs,omitempty"`
 }
 
 type ClientContext struct {

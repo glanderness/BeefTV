@@ -192,7 +192,9 @@ func (s *Service) TasksWithOptions(userID string, options TaskListOptions) ([]Ta
 	if err != nil {
 		return nil, err
 	}
-	return taskSummariesForOutput(tasks), nil
+	summaries := taskSummariesForOutput(tasks)
+	s.attachTaskSummaryDeliveries(tasks, summaries)
+	return summaries, nil
 }
 
 func (s *Service) Task(userID string, id string) (*model.Task, error) {
@@ -201,7 +203,12 @@ func (s *Service) Task(userID string, id string) (*model.Task, error) {
 		return nil, err
 	}
 	s.hydrateTaskProviderRequestID(task)
-	return taskForOutput(*task), nil
+	if deliverErr := s.ensureSucceededTaskDelivery(task); deliverErr != nil {
+		_ = s.log(task.UserID, task.ID, "error", "读取任务时补齐结果交付失败", deliverErr.Error())
+	}
+	projected := taskForOutput(*task)
+	s.attachTaskDelivery(projected)
+	return projected, nil
 }
 
 func (s *Service) hydrateTaskProviderRequestID(task *model.Task) {

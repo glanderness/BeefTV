@@ -42,6 +42,8 @@ type Task struct {
 	TextDraft                 string                  `json:"textDraft,omitempty" gorm:"type:text"`
 	Error                     string                  `json:"error"`
 	ErrorCode                 string                  `json:"errorCode,omitempty" gorm:"-"`
+	ResultState               string                  `json:"resultState,omitempty" gorm:"-"`
+	Outputs                   []TaskOutput            `json:"outputs,omitempty" gorm:"-"`
 	FailureDiagnostics        *TaskFailureDiagnostics `json:"failureDiagnostics,omitempty" gorm:"serializer:json;type:text"`
 	Attempts                  int                     `json:"attempts"`
 	StartedAt                 *time.Time              `json:"startedAt"`
@@ -141,4 +143,24 @@ type Result struct {
 	URL       string    `json:"url"`
 	Payload   string    `json:"payload" gorm:"type:text"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+// TaskOutput is the public generation product identity. It is projected from
+// durable Result rows and is not a database column.
+type TaskOutput struct {
+	OutputIndex              int               `json:"outputIndex"`
+	MediaType                string            `json:"mediaType"`
+	ProviderArtifactRef      string            `json:"providerArtifactRef,omitempty"`
+	MaterializedAssetID      string            `json:"materializedAssetId,omitempty"`
+	MaterializationErrorCode string            `json:"materializationErrorCode,omitempty"`
+	ResourceID               string            `json:"resourceId,omitempty"`
+	EffectKey                string            `json:"effectKey,omitempty"`
+	TargetBinding            *TaskOutputTarget `json:"targetBinding,omitempty"`
+}
+
+type TaskOutputTarget struct {
+	NodeID         string `json:"nodeId,omitempty"`
+	MessageID      string `json:"messageId,omitempty"`
+	ConversationID string `json:"conversationId,omitempty"`
+	Source         string `json:"source,omitempty"`
 }

@@ -37,12 +37,14 @@ type taskLifecycleLogger interface {
 }
 
 type taskOutputLifecycle interface {
+	DeliverSucceededTask(task model.Task) error
 	RegisterTaskOutputFromTask(task model.Task) error
 }
 
 type taskTerminalServiceAdapter struct {
 	finalizeReplay func(string, model.TaskStatus) error
 	writeLog       func(string, string, string, string, string) error
+	deliver        func(model.Task) error
 	registerOutput func(model.Task) error
 }
 
@@ -54,6 +56,13 @@ func (a taskTerminalServiceAdapter) log(userID string, taskID string, level stri
 	return a.writeLog(userID, taskID, level, message, payload)
 }
 
+func (a taskTerminalServiceAdapter) DeliverSucceededTask(task model.Task) error {
+	if a.deliver == nil {
+		return nil
+	}
+	return a.deliver(task)
+}
+
 func (a taskTerminalServiceAdapter) RegisterTaskOutputFromTask(task model.Task) error {
 	return a.registerOutput(task)
 }
@@ -62,6 +71,7 @@ func newTaskTerminalCoordinator(s *Service) *taskTerminalCoordinator {
 	adapter := taskTerminalServiceAdapter{
 		finalizeReplay: s.finalizeTaskTextReplay,
 		writeLog:       s.log,
+		deliver:        s.DeliverSucceededTask,
 		registerOutput: s.RegisterTaskOutputFromTask,
 	}
 	return &taskTerminalCoordinator{
@@ -199,10 +209,18 @@ func (c *taskTerminalCoordinator) handleSuccess(task *model.Task) error {
 		completionErr = fmt.Errorf("任务成功后读取任务产物失败：%w", fetchErr)
 		_ = c.logger.log(task.UserID, task.ID, "error", "任务成功但读取任务产物失败", fetchErr.Error())
 	} else {
+		if deliverErr := c.outputs.DeliverSucceededTask(*completedTask); deliverErr != nil {
+			_ = c.logger.log(task.UserID, task.ID, "error", "任务成功但结果交付失败", deliverErr.Error())
+			completionErr = fmt.Errorf("任务成功后的结果交付失败：%w", deliverErr)
+		}
 		if registerErr := c.outputs.RegisterTaskOutputFromTask(*completedTask); registerErr != nil {
 			// 任务成功与产物登记分开记账；登记失败保持步骤异常，允许项目页幂等补登记。
 			_ = c.logger.log(task.UserID, task.ID, "error", "任务成功但项目产物登记失败", registerErr.Error())
-			completionErr = fmt.Errorf("任务成功后的项目产物登记失败：%w", registerErr)
+			completionErr = errors.Join(completionErr, fmt.Errorf("任务成功后的项目产物登记失败：%w", registerErr))
+		}
+		if deliverErr := c.outputs.DeliverSucceededTask(*completedTask); deliverErr != nil {
+			_ = c.logger.log(task.UserID, task.ID, "error", "任务成功但结果交付失败", deliverErr.Error())
+			completionErr = errors.Join(completionErr, fmt.Errorf("任务成功后的结果交付失败：%w", deliverErr))
 		}
 	}
 	_ = c.logger.log(task.UserID, task.ID, "info", "任务完成，结果已持久化", "")
