@@ -118,6 +118,21 @@ func prepareBeefAPISeedanceReferences(ctx context.Context, config providerConfig
 					return err
 				}
 			}
+			if input.VideoCapability != nil {
+				verified := *media
+				verified.Bytes = int64(len(data))
+				refs := input.VideoCapability.References
+				applySeedanceDocumentedVideoPixelFloor(config, &refs)
+				switch group.kind {
+				case "image":
+					err = validateVideoReferenceImage(refs, index, verified)
+				case "video":
+					err = validateVideoReferenceVideo(refs, index, verified)
+				}
+				if err != nil {
+					return err
+				}
+			}
 			digest := sha256.Sum256(data)
 			hexDigest := hex.EncodeToString(digest[:])
 			session, err := createBeefAPISeedanceUpload(ctx, config, beefAPISeedanceUploadRequest{

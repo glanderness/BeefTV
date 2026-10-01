@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -574,6 +576,67 @@ func TestBeefAPISeedancePreuploadOpenResourceLargeLocalVideo(t *testing.T) {
 	encoded, err := json.Marshal(body)
 	if err != nil || len(encoded) > 16<<10 || input.ReferenceVideos[0].Bytes != size || harness.putsByTicket["video"].length != size {
 		t.Fatalf("OpenResource 70MiB did not stay URL-only: err=%v json=%d put=%d", err, len(encoded), harness.putsByTicket["video"].length)
+	}
+}
+
+func TestBeefAPISeedancePreuploadRejectsLocalImageWithMissingStoredGeometry(t *testing.T) {
+	harness := newBeefAPISeedanceUploadHarness(t)
+	svc := newResourceTestService(t)
+	var data bytes.Buffer
+	if err := png.Encode(&data, image.NewRGBA(image.Rect(0, 0, 100, 100))); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(svc.dataDir, "resources", "users", "user-1", "image")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "small.png"), data.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resource := model.Resource{ID: "small-image", UserID: "user-1", Kind: "image", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "users/user-1/image/small.png", MimeType: "image/png", Size: int64(data.Len())}
+	if err := svc.repo.CreateResource(&resource); err != nil {
+		t.Fatal(err)
+	}
+	input := harness.testInput(providerMedia{StorageKey: "resource:small-image"}, providerMedia{}, providerMedia{})
+	if err := svc.hydrateVideoReferenceMetadata("user-1", &input); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.resolveVideoCapability(&input); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.hydrateGenerationMedia("user-1", &input, providerMediaHydrationPolicyFor(context.Background(), input)); err != nil {
+		t.Fatal(err)
+	}
+	if input.ReferenceImages[0].Width != 100 || input.ReferenceImages[0].Height != 100 {
+		t.Fatal("header geometry was lost")
+	}
+	err := svc.prepareBeefAPISeedanceReferences(context.Background(), "user-1", &input)
+	if err == nil || harness.creates != 0 || harness.generates != 0 {
+		t.Fatalf("invalid image reached network: err=%v create=%d generate=%d", err, harness.creates, harness.generates)
+	}
+}
+
+func TestBeefAPISeedancePreuploadRejectsProbedVideoBoundsBeforeUpload(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		width, height, duration int
+	}{
+		{"pixels", 100, 100, 3200}, {"duration", 1280, 720, 90000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			harness := newBeefAPISeedanceUploadHarness(t)
+			svc := newResourceTestService(t)
+			input := harness.testInput(providerMedia{}, providerMedia{StorageKey: "resource:video"}, providerMedia{})
+			if err := svc.resolveVideoCapability(&input); err != nil {
+				t.Fatal(err)
+			}
+			err := prepareBeefAPISeedanceReferences(context.Background(), input.Config, &input, func(string, providerMedia) ([]byte, string, bool, error) {
+				return syntheticVideoMP4(tc.width, tc.height, int64(tc.duration)), "video/mp4", false, nil
+			})
+			if err == nil || harness.creates != 0 || harness.puts != 0 {
+				t.Fatalf("invalid video uploaded: err=%v create=%d put=%d", err, harness.creates, harness.puts)
+			}
+		})
 	}
 }
 

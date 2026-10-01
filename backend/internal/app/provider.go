@@ -858,8 +858,12 @@ func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, poli
 		media.DataURL = ""
 		media.MimeType = firstNonEmpty(media.MimeType, resource.MimeType)
 		media.Bytes = resource.Size
-		media.Width = resource.Width
-		media.Height = resource.Height
+		if resource.Width > 0 {
+			media.Width = resource.Width
+		}
+		if resource.Height > 0 {
+			media.Height = resource.Height
+		}
 		if resource.DurationMs > 0 {
 			media.DurationMs = resource.DurationMs
 		}
