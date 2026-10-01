@@ -79,12 +79,22 @@
 - 画布组合 `8963bb4` 合入 `3286bfe`；独立 11 文件 125 pass / 0 fail。页面仍有后续职责与异步写入边界要收口，不能只以行数变化为完成证据。
 - 交付恢复继续 `20261002-015749-continue-0dfdf1f7`，补公平扫描与失败资源重试；资源继续 `20261002-015750-continue-d01fd274`；插件继续 `20261002-020352-continue-c1b4f643`，补数据库卸载事务与失败后的内存视图一致性。三者尚未合入。
 
-1. 人工 UI 接入公共操作；删除按时间戳竞争数据库事实的正常路径。当前 `local-workspace-repository` 仍有此路径。
-2. 配合后端结果交付切换前端 materializer/consumer，避免两个执行者同时交付。
-3. Agent 业务轮次、确认与撤销的持久化边界；当前 app 内 JSON 文件记录不能被误报为已完成统一事务。
-4. 模型目录、Provider/Protocol/Transport 的实际实现归属；插件提取只覆盖其中一个领域。
-5. 工作区、项目、素材、配置与生命周期接线。目前 `project`、`localapp` 仍直接引用 app 类型，LocalKernel/task facade 仍转发大 Service。
-6. 清理已退出运行面的旧 Agent 代码调用关系，保留历史数据；不能恢复旧 cloud_agent 调度。
-7. 真实媒体输出、备份还原、平台升级、性能基线、完整回归、独立复审和新候选付费验收。
+1. 人工 UI 已接入公共操作，继续补提交日志持久化失败、scope 切换与未知响应后的幂等身份保留。
+2. 配合后端结果交付切换前端 materializer/consumer，完成节点/消息与回执的原子绑定，避免两个执行者同时交付。
+3. Agent 业务轮次已改为 SQLite 单一账本并接入操作事务；继续在整合后验证确认、撤销及会话恢复。
+4. 模型目录、Provider/Protocol/Transport、RunningHub 的实际实现归属；插件状态与包文件的失败恢复。
+5. 工作区、项目、素材、配置与生命周期接线。project/localapp 已解除 app 反向依赖，LocalKernel/task facade 的生产组合根仍需切换到实际领域服务。
+6. 旧 Agent 活跃实现已移除；整合中持续守住历史数据保留和旧任务拒绝边界。
+7. 真实媒体输出、备份还原、平台升级、性能对比、完整回归、独立复审和新候选付费验收。
+
+### 第四轮审查与交付衔接
+
+- 整合快照 `6840b32`：前端 typecheck 和 `go test ./...` 通过。此前独立重跑 app 全包 193.509s，handler/bootstrap 43.788s/49.708s，operations/agentops/assistantturns/modelcatalog/project/localapp 均通过。不是最终候选全量验收。
+- 生成交付 `373fd84` 独立 task/taskdelivery/app 聚焦测试通过，合入 `baec6fd` / `f9a101f` / `d9a97ac`。包含后台公平扫描、同资源身份恢复、READY 所有权校验；节点绑定仍只是意图。后续 `20261002-022438-continue-54fd462d` 负责原子画布绑定和前端交付切换。
+- 任务运行时 `d6b8db8` 尚未合入。Lead 发现空 ResultWriter 造成虚假 Applied、Commit 失败状态、StartLoop 重入与槽位释放问题，继续 `20261002-021807-continue-0e6afbed`。
+- 资源 `84175ac` / `1e279f3` 尚未合入。继续 `20261002-021808-continue-6370b477`，补删除事务中的运行任务引用检查，以及同一工作区多个服务句柄的 PENDING 所有权。
+- 剪辑计划 `484eaaa` 尚未合入。Lead 发现图片分支无限音源未限定输出时长、执行器可覆盖计划参数、采样率与混音策略不一致，继续 `20261002-022311-continue-9d7dc656`；要求实际媒体输出与空工作区 ZIP 还原。
+- RunningHub 实际协议域由 `20261002-021904-delegate-ea62673e` 独立实现，固定 `6840b32`，与通用 Provider 切片不重叠。
+- 创作页对话原为 IndexedDB 唯一持久状态。`20261002-022128-delegate-0883fddd` 负责 SQLite aggregate、CAS、旧缓存幂等导入与删除 tombstone，为原子消息绑定提供事务端口；schema 11 只保留给该切片，尚未合入。
 
 不得将第一批 worker 完成、目录分包或旧版验收报告写作“完整重构完成”。后续变更需按实际依赖顺序实现与验证。
