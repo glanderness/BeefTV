@@ -46,6 +46,7 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 	} else if strings.TrimSpace(input.Config.ChannelID) != "" {
 		return nil, errors.New("无法解析系统渠道配置")
 	}
+	applyCanvasTextStreaming(runtime.Call.TaskType, &input)
 
 	if workflow.IsProviderInterface(input.Config.InterfaceType) {
 		return executeWorkflow(ctx, runtime, userID, input)
@@ -160,6 +161,15 @@ func executeWorkflow(ctx context.Context, runtime Runtime, userID string, input 
 		return nil, errors.New("无法执行工作流任务，请重试")
 	}
 	return runtime.Workflow.Execute(ctx, input)
+}
+
+func applyCanvasTextStreaming(taskType string, input *Input) {
+	if input == nil || input.Mode != "text" || !strings.HasPrefix(strings.TrimSpace(taskType), "canvas_text") {
+		return
+	}
+	requestedStream := input.TextOptions.Stream == nil || *input.TextOptions.Stream
+	supportsStream := input.Config.CapabilityConfig == nil || input.Config.CapabilityConfig.Text == nil || input.Config.CapabilityConfig.Text.Streaming == nil || *input.Config.CapabilityConfig.Text.Streaming
+	input.StreamText = requestedStream && supportsStream
 }
 
 func validatePreparedInput(ctx context.Context, input Input) error {

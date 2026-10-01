@@ -76,6 +76,9 @@ func RunProtocolAdapterTaskWithPolicy(ctx context.Context, input Input, adapter 
 		if err != nil {
 			return nil, err
 		}
+		if result, handled, streamErr := tryStreamingDeclarativeTextCreate(ctx, input, adapter, request, spec, policy); handled {
+			return result, streamErr
+		}
 		body, err := ExecuteProtocolRequest(WithRequestKind(ctx, "create"), input.Config, spec)
 		if err != nil {
 			if input.Mode == "video" {
@@ -185,6 +188,81 @@ func QueryProtocolAdapterVideoTask(ctx context.Context, input Input, adapter pro
 		return nil, providerStatus, nil
 	default:
 		return nil, providerStatus, fmt.Errorf("声明式协议任务 %s 返回未知状态：%s", taskID, providerStatus)
+	}
+}
+
+// tryStreamingDeclarativeTextCreate 让已知文本线协议在 Resolve 后的 StreamText 真正到达 OnTextDelta。
+// 其它声明式插件仍走 JSON 创建；上游忽略 stream 并返回 JSON 时回退 ParseCreate。
+func tryStreamingDeclarativeTextCreate(ctx context.Context, input Input, adapter protocol.Adapter, request protocol.GenerationRequest, spec protocol.RequestSpec, policy VideoPollPolicy) (map[string]interface{}, bool, error) {
+	if input.Mode != "text" || !input.StreamText {
+		return nil, false, nil
+	}
+	wire := streamingTextWire(input.Config.InterfaceType)
+	if wire == "" {
+		return nil, false, nil
+	}
+	body := ProtocolBodyObject(spec.Body)
+	if body == nil {
+		return nil, true, errors.New("声明式文本请求体必须是 JSON 对象")
+	}
+	body["stream"] = true
+	if wire == "chat-completion" {
+		if err := ensureChatCompletionStreamUsage(body); err != nil {
+			return nil, true, err
+		}
+	}
+	spec.Body = body
+	parser := NewStreamingAgentParser(wire, input.OnTextDelta)
+	parser.emitReasoning = input.OnReasoningDelta
+	data, mime, err := ExecuteProtocolBinaryRequestWithConsumer(WithRequestKind(ctx, "create"), input.Config, spec, parser.Consume)
+	if err != nil {
+		return nil, true, err
+	}
+	if strings.Contains(strings.ToLower(mime), "event-stream") {
+		parser.Flush()
+		parsed, err := parser.Result()
+		if err != nil {
+			return nil, true, err
+		}
+		if strings.TrimSpace(stringField(parsed, "text")) == "" {
+			return nil, true, errors.New("流式文本接口没有返回内容")
+		}
+		result := map[string]interface{}{"mode": "text", "text": stringField(parsed, "text")}
+		if reasoning := strings.TrimSpace(stringField(parsed, "reasoning")); reasoning != "" {
+			result["reasoning"] = reasoning
+		}
+		return result, true, nil
+	}
+	created, err := adapter.ParseCreate(ctx, data)
+	if err != nil {
+		return nil, true, err
+	}
+	taskID := created.TaskID
+	if taskID == "" {
+		if extracted, extractErr := ExtractProviderTaskID(data); extractErr == nil {
+			taskID = extracted
+		}
+	}
+	if created.Status == protocol.StatusFailed || created.Status == protocol.StatusCancelled {
+		return nil, true, ProtocolResultError(created.Message, taskID, data)
+	}
+	if created.Status == protocol.StatusSucceeded {
+		result, finishErr := FinishProtocolAdapterResult(ctx, input, adapter, request, taskID, created.Result, policy)
+		return result, true, finishErr
+	}
+	return nil, true, SubmissionUnknownError{Cause: errors.New("流式文本创建未返回最终结果")}
+}
+
+func streamingTextWire(interfaceType string) string {
+	switch strings.TrimSpace(interfaceType) {
+	case "chat-completion":
+		return "chat-completion"
+	case string(model.ChannelInterfaceOpenAIResponse), "responses":
+		return "responses"
+	case string(model.ChannelInterfaceClaudeAPI):
+		return "claude-api"
+	default:
+		return ""
 	}
 }
 

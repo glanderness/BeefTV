@@ -2,6 +2,7 @@ package generation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -126,6 +127,95 @@ func TestExecuteVideoSkipsPromptTemplateAndHonorsCancel(t *testing.T) {
 	}
 	if err == nil || hits.Load() != 0 || !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled video Execute error = %v hits=%d", err, hits.Load())
+	}
+}
+
+type countingResolvePort struct{ calls atomic.Int32 }
+
+func (p *countingResolvePort) Resolve(config Config) (Config, error) {
+	p.calls.Add(1)
+	if p.calls.Load() > 1 && config.ChannelModelKey == "seedance-2-5-480p" && config.Model == "doubao-seedance-2-5" {
+		return Config{}, errors.New("系统渠道模型标识不一致")
+	}
+	out := config
+	out.ChannelModelKey = "seedance-2-5-480p"
+	out.Model = "doubao-seedance-2-5"
+	if out.InterfaceType == "" {
+		out.InterfaceType = "chat-completion"
+	}
+	return out, nil
+}
+func (p *countingResolvePort) ApplyCapabilities(context.Context, *Input) error { return nil }
+func (p *countingResolvePort) RequireWorkflow(string) error                    { return nil }
+func (p *countingResolvePort) SyncArkPrivateAssets(context.Context, string, *Input) error {
+	return nil
+}
+
+func TestExecuteResolvesNoVariantSKUOnce(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	var posts atomic.Int32
+	var postedModel string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posts.Add(1)
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		postedModel, _ = body["model"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, chatCompletionJSON())
+	}))
+	t.Cleanup(server.Close)
+	port := &countingResolvePort{}
+	ctx := WithProtocolRegistry(WithRuntime(context.Background(), taskRuntime(func(runtime *Runtime) {
+		runtime.Config = port
+		runtime.Call.TaskType = "canvas_text"
+	})), LoadOfficialFallbackRegistry())
+	result, err := Execute(ctx, Input{
+		Mode: "text", Prompt: "hello",
+		Config: Config{ChannelID: "channel-1", ChannelModelKey: "seedance-2-5-480p", Model: "seedance-2-5-480p", BaseURL: server.URL, APIKey: "key", InterfaceType: "chat-completion"},
+	})
+	if err != nil || result["text"] != "ok" {
+		t.Fatalf("Execute: %#v %v", result, err)
+	}
+	if port.calls.Load() != 1 {
+		t.Fatalf("Config.Resolve calls = %d, want 1", port.calls.Load())
+	}
+	if posts.Load() != 1 || postedModel != "doubao-seedance-2-5" {
+		t.Fatalf("upstream posts=%d model=%q", posts.Load(), postedModel)
+	}
+}
+
+func TestExecuteCanvasTextStreamsVisibleTextWithoutReasoning(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	var posts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posts.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"内部分析\",\"content\":\"可见回答\"}}]}\n\ndata: [DONE]\n\n")
+	}))
+	t.Cleanup(server.Close)
+	var streamed strings.Builder
+	ctx := WithProtocolRegistry(WithRuntime(context.Background(), taskRuntime(func(runtime *Runtime) {
+		runtime.Call.TaskType = "canvas_text"
+	})), LoadOfficialFallbackRegistry())
+	result, err := Execute(ctx, Input{
+		Mode: "text", Prompt: "hello",
+		OnTextDelta: func(delta string) { streamed.WriteString(delta) },
+		Config:      Config{BaseURL: server.URL, APIKey: "key", Model: "text-model", InterfaceType: "chat-completion"},
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result["text"] != "可见回答" {
+		t.Fatalf("result = %#v", result)
+	}
+	if streamed.String() != "可见回答" {
+		t.Fatalf("streamed = %q", streamed.String())
+	}
+	if strings.Contains(streamed.String(), "内部分析") {
+		t.Fatalf("reasoning entered text stream: %q", streamed.String())
+	}
+	if posts.Load() != 1 {
+		t.Fatalf("upstream POSTs = %d, want 1", posts.Load())
 	}
 }
 

@@ -122,22 +122,9 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 	if input.Mode == "" && strings.HasPrefix(taskType, "video_") {
 		input.Mode = "video"
 	}
-	config, err := s.resolveProviderConfig(input.Config)
-	if err != nil {
-		return nil, err
-	}
-	input.Config = config
-	if input.Mode == "text" && strings.HasPrefix(taskType, "canvas_text") {
-		requestedStream := input.TextOptions.Stream == nil || *input.TextOptions.Stream
-		supportsStream := input.Config.CapabilityConfig == nil || input.Config.CapabilityConfig.Text == nil || input.Config.CapabilityConfig.Text.Streaming == nil || *input.Config.CapabilityConfig.Text.Streaming
-		input.StreamText = requestedStream && supportsStream
-	}
-	if input.Mode == "text" && strings.HasPrefix(taskType, "canvas_text") && input.StreamText {
+	if input.Mode == "text" && strings.HasPrefix(taskType, "canvas_text") && input.AgentRequests == nil {
 		textPublisher := newTaskTextStreamPublisher(s, userID, taskExecutionID(ctx))
 		input.OnTextDelta = textPublisher.Publish
-		if input.AgentRequests != nil {
-			input.OnReasoningDelta = textPublisher.Publish
-		}
 		defer textPublisher.Close()
 	}
 	return generation.Execute(ctx, input)
@@ -501,6 +488,7 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 		return providerConfig{}, errors.New("当前模型尚未配置请求协议")
 	}
 	providerModelKey := strings.TrimPrefix(strings.TrimSpace(config.ProviderModelKey), "models/")
+	authorizedUpstream := strings.TrimPrefix(strings.TrimSpace(channelModel.ProviderModelKey), "models/")
 	if config.VariantID != "" {
 		matched := false
 		for _, tier := range channelModel.Variants {
@@ -513,7 +501,7 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 		if !matched {
 			return providerConfig{}, errors.New("当前模型规格已更新，请重新创建任务")
 		}
-	} else if modelKey != "" && requestedModel != "" && modelKey != requestedModel {
+	} else if !trustedSystemModelIdentity(modelKey, requestedModel, providerModelKey, authorizedUpstream) {
 		return providerConfig{}, errors.New("系统渠道模型标识不一致")
 	}
 	config.InterfaceType = string(channelModel.Protocol)
@@ -548,6 +536,17 @@ func channelAPIFormatForProtocol(channelDefault string, protocol model.ChannelIn
 
 func providerChannelModelKey(config providerConfig) string {
 	return strings.TrimPrefix(strings.TrimSpace(firstNonEmpty(config.ChannelModelKey, config.Model)), "models/")
+}
+
+// trustedSystemModelIdentity 接受目录 SKU、授权上游标识，或已经解析过的配对。
+// 其它客户端自报的模型键一律拒绝。
+func trustedSystemModelIdentity(sku, requestedModel, requestedProviderKey, authorizedUpstream string) bool {
+	return allowedSystemModelKey(requestedModel, sku, authorizedUpstream) && allowedSystemModelKey(requestedProviderKey, sku, authorizedUpstream)
+}
+
+func allowedSystemModelKey(value, sku, authorizedUpstream string) bool {
+	value = strings.TrimSpace(value)
+	return value == "" || value == sku || (authorizedUpstream != "" && value == authorizedUpstream)
 }
 
 func systemChannelIDFromBaseURL(baseURL string) string {
