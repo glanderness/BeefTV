@@ -115,6 +115,15 @@ func TestRegisterTaskOutputFromTaskPersistsMediaAssetAndArtifactIdempotently(t *
 	}
 }
 
+func workflowProjectRevision(t *testing.T, db *gorm.DB, projectID string) int64 {
+	t.Helper()
+	var item model.Project
+	if err := db.First(&item, "id = ?", projectID).Error; err != nil {
+		t.Fatal(err)
+	}
+	return item.Revision
+}
+
 func seedWorkflowProject(t *testing.T, db *gorm.DB) (model.Project, model.ProjectUnit) {
 	t.Helper()
 	now := time.Now()
@@ -316,10 +325,14 @@ func TestReplaceProjectUnitShotsCreatesGeneratedAssetReferencesAtomically(t *tes
 		}
 	}
 
-	shots, err := service.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{ExpectedShotIDs: []string{}, Shots: []ReplaceProjectUnitShotInput{{
-		CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.01", Description: "人物拾起信封", DurationMs: 3000, Revision: ShotRevisionInput{PlotDescription: "人物拾起信封"}},
-		AssetVersionIDs:          []string{version.ID, version.ID},
-	}}})
+	shots, err := service.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
+		ExpectedShotIDs:  []string{},
+		ExpectedRevision: workflowProjectRevision(t, db, project.ID),
+		Shots: []ReplaceProjectUnitShotInput{{
+			CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.01", Description: "人物拾起信封", DurationMs: 3000, Revision: ShotRevisionInput{PlotDescription: "人物拾起信封"}},
+			AssetVersionIDs:          []string{version.ID, version.ID},
+		}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,17 +346,22 @@ func TestReplaceProjectUnitShotsCreatesGeneratedAssetReferencesAtomically(t *tes
 	if len(references) != 1 || references[0].AssetVersionID != version.ID || references[0].Role != "reference" {
 		t.Fatalf("references = %+v, want one generated reference", references)
 	}
-	_, err = service.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{ExpectedShotIDs: []string{"stale-shot-id"}, Shots: []ReplaceProjectUnitShotInput{{
-		CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.02", Description: "并发替换", DurationMs: 3000},
-	}}})
+	_, err = service.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
+		ExpectedShotIDs:  []string{"stale-shot-id"},
+		ExpectedRevision: workflowProjectRevision(t, db, project.ID),
+		Shots:            []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.02", Description: "并发替换", DurationMs: 3000}}},
+	})
 	if err == nil || err.Error() != "本章分镜已发生变化，请刷新后重新确认" {
 		t.Fatalf("concurrent replacement error = %v", err)
 	}
 
-	_, err = service.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{Shots: []ReplaceProjectUnitShotInput{{
-		CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.02", Description: "无效资产", DurationMs: 3000},
-		AssetVersionIDs:          []string{"missing-version"},
-	}}})
+	_, err = service.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
+		ExpectedRevision: workflowProjectRevision(t, db, project.ID),
+		Shots: []ReplaceProjectUnitShotInput{{
+			CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.02", Description: "无效资产", DurationMs: 3000},
+			AssetVersionIDs:          []string{"missing-version"},
+		}},
+	})
 	if err == nil {
 		t.Fatal("missing project asset version should reject replacement")
 	}

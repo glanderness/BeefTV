@@ -60,7 +60,8 @@ bootstrap.Open
 | 更新项目/章节/素材分类/文件夹 | 归属 + `revision = expected` 的 CAS | 另一方完整保留 |
 | 角色新版本 | `primary_version_id = expected` 的 CAS（空指针也参与，含 NULL/空字符串） | 旧主版本完整保留 |
 | 镜头修订 | `current_revision_id = expected` 的 CAS（空指针也参与，含 NULL/空字符串）；事务内再确认章节仍在 | 旧当前版本完整保留 |
-| 整章替换分镜 | 事务内章节仍在、引用版本仍属本项目；`expectedShotIds` 与进入方法时的镜头 `current_revision_id` 快照一致，并以项目 `revision` CAS 提交。省略 `expectedShotIds` 时用当时的服务端镜头集合 | 原分镜完整保留，返回可刷新冲突 |
+| 整章替换分镜 | 事务内章节仍在、引用版本仍属本项目；必须带上批准快照的 `expectedRevision`（缺省或非正数直接拒绝，不用当场读到的 revision 顶上）。`expectedShotIds` 与进入方法时的镜头 `current_revision_id` 快照一致，并以该 `expectedRevision` CAS 提交。省略 `expectedShotIds` 时用当时的服务端镜头集合 | 原分镜完整保留；缺版本 400，冲突可刷新 |
+| 工作流步骤完成 | 预检通过后事务内重读步骤/实例/下一跳、章节正文、候选、镜头与产物；完成门槛按该快照再判一次，实例 revision CAS，项目 revision CAS | 门槛数据被改过则不完成；冲突可刷新 |
 | 工作流产物登记 | 事务内重读步骤/实例/镜头；同任务已有 link 则不回放步骤、不抬实例 revision。新任务按当前状态派生。产物仅当 `revision_id` 等于镜头当前版本才 selected，完成门槛同样比较当前版本 | 同任务重试不改工作流；失败则 link/产物一并回滚 |
 
 内置工作流模板仍由 `EnsureBuiltinTemplate` 在项目事务外幂等写入（全局共享）。无新 schema version。

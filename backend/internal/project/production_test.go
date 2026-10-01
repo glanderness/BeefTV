@@ -302,14 +302,16 @@ func TestReplaceShotsRejectsStaleExpectedIDs(t *testing.T) {
 	project := seedProject(t, db, model.Project{ID: "project-1", UserID: "user-1", Name: "短剧"})
 	unit := seedChapter(t, svc, project.ID)
 	if _, err := svc.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
-		ExpectedShotIDs: []string{},
-		Shots:           []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.01", Description: "拾起信封", DurationMs: 3000}}},
+		ExpectedShotIDs:  []string{},
+		ExpectedRevision: ownedRevision(t, svc, project.ID),
+		Shots:            []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.01", Description: "拾起信封", DurationMs: 3000}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := svc.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
-		ExpectedShotIDs: []string{"stale-shot"},
-		Shots:           []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.02", Description: "并发", DurationMs: 3000}}},
+		ExpectedShotIDs:  []string{"stale-shot"},
+		ExpectedRevision: ownedRevision(t, svc, project.ID),
+		Shots:            []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.02", Description: "并发", DurationMs: 3000}}},
 	})
 	if err == nil || err.Error() != "本章分镜已发生变化，请刷新后重新确认" {
 		t.Fatalf("stale replace = %v", err)

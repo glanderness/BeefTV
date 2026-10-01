@@ -83,6 +83,15 @@ func newTestService(t *testing.T, workflows Workflows) (*Service, *gorm.DB) {
 	return New(repository.New(db), Dependencies{Workflows: workflows}), db
 }
 
+func ownedRevision(t *testing.T, svc *Service, projectID string) int64 {
+	t.Helper()
+	owned, err := svc.Owned("user-1", projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return owned.Revision
+}
+
 func seedProject(t *testing.T, db *gorm.DB, project model.Project) model.Project {
 	t.Helper()
 	if project.Revision < 1 {

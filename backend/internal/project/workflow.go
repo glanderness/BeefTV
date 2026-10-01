@@ -133,7 +133,33 @@ func (s *Service) UpdateWorkflowStep(userID string, projectID string, stepID str
 	if !canTransitionWorkflowStep(step.Status, status) {
 		return model.WorkflowStepInstance{}, kernel.BadAuthRequest("当前工作流步骤不能直接切换到目标状态")
 	}
-	now := time.Now()
+	if status == model.WorkflowStepStatusCompleted {
+		instance, instanceErr := s.repo.WorkflowInstance(step.WorkflowInstanceID)
+		if instanceErr != nil {
+			return model.WorkflowStepInstance{}, instanceErr
+		}
+		if err := s.validateWorkflowStepCompletion(projectID, instance, step); err != nil {
+			return model.WorkflowStepInstance{}, err
+		}
+	}
+	stored, err := s.repo.UpdateWorkflowProgressActive(userID, projectID, step.ID, project.Revision, func(current repository.WorkflowProgressCurrent) (repository.WorkflowProgressPlan, error) {
+		return planWorkflowStepUpdate(time.Now(), req, current)
+	})
+	if err != nil {
+		return model.WorkflowStepInstance{}, mapProjectWriteError(err)
+	}
+	return stored, nil
+}
+
+func planWorkflowStepUpdate(now time.Time, req UpdateWorkflowStepRequest, current repository.WorkflowProgressCurrent) (repository.WorkflowProgressPlan, error) {
+	status := model.WorkflowStepStatus(strings.TrimSpace(req.Status))
+	if !validWorkflowStepStatus(status) {
+		return repository.WorkflowProgressPlan{}, kernel.BadAuthRequest("不支持的工作流步骤状态")
+	}
+	if !canTransitionWorkflowStep(current.Step.Status, status) {
+		return repository.WorkflowProgressPlan{}, kernel.BadAuthRequest("当前工作流步骤不能直接切换到目标状态")
+	}
+	step := current.Step
 	step.Status = status
 	step.OutputJSON = req.OutputJSON
 	if strings.TrimSpace(step.OutputJSON) == "" {
@@ -149,13 +175,10 @@ func (s *Service) UpdateWorkflowStep(userID string, projectID string, stepID str
 		step.CompletedAt = nil
 	}
 	step.UpdatedAt = now
-	instance, err := s.repo.WorkflowInstance(step.WorkflowInstanceID)
-	if err != nil {
-		return model.WorkflowStepInstance{}, err
-	}
+	instance := current.Instance
 	if status == model.WorkflowStepStatusCompleted {
-		if err := s.validateWorkflowStepCompletion(projectID, instance, step); err != nil {
-			return model.WorkflowStepInstance{}, err
+		if err := completionGateAllows(&instance, &step, current.Unit, current.Candidates, current.Shots, current.Artifacts); err != nil {
+			return repository.WorkflowProgressPlan{}, err
 		}
 	}
 	instance.Status = model.WorkflowStatusActive
@@ -163,23 +186,20 @@ func (s *Service) UpdateWorkflowStep(userID string, projectID string, stepID str
 	instance.UpdatedAt = now
 	var next *model.WorkflowStepInstance
 	if status == model.WorkflowStepStatusCompleted || status == model.WorkflowStepStatusSkipped {
-		next, err = s.repo.NextWorkflowStep(step.WorkflowInstanceID, step.Position)
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			next = nil
+		if current.Next == nil {
 			instance.Status = model.WorkflowStatusCompleted
-		} else if err != nil {
-			return model.WorkflowStepInstance{}, err
-		} else if next.Status == model.WorkflowStepStatusPending {
-			next.Status = model.WorkflowStepStatusReady
-			next.UpdatedAt = now
+		} else {
+			nextCopy := *current.Next
+			if nextCopy.Status == model.WorkflowStepStatusPending {
+				nextCopy.Status = model.WorkflowStepStatusReady
+				nextCopy.UpdatedAt = now
+			}
+			next = &nextCopy
 		}
 	} else if status == model.WorkflowStepStatusFailed {
 		instance.Status = model.WorkflowStatusFailed
 	}
-	if err := s.repo.UpdateWorkflowProgressActive(userID, projectID, project.Revision, step, next, instance); err != nil {
-		return model.WorkflowStepInstance{}, mapProjectWriteError(err)
-	}
-	return *step, nil
+	return repository.WorkflowProgressPlan{Step: &step, Next: next, Instance: &instance}, nil
 }
 
 func (s *Service) RegisterTaskOutput(userID string, projectID string, stepID string, req RegisterTaskOutputRequest) (model.WorkflowStepInstance, error) {
@@ -389,26 +409,49 @@ func (s *Service) validateWorkflowStepCompletion(projectID string, instance *mod
 	if err != nil {
 		return err
 	}
+	var candidates []model.ProjectAssetCandidate
+	var shots []model.Shot
+	var artifacts []model.ShotArtifact
+	switch step.StepKey {
+	case "assets":
+		candidates, err = s.repo.ProjectAssetCandidates(projectID)
+		if err != nil {
+			return err
+		}
+	case "storyboard", "previz", "video", "delivery":
+		shots, err = s.repo.ProjectShots(projectID)
+		if err != nil {
+			return err
+		}
+		if step.StepKey != "storyboard" {
+			artifacts, err = s.repo.ProjectShotArtifacts(projectID)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return completionGateAllows(instance, step, unit, candidates, shots, artifacts)
+}
+
+func completionGateAllows(instance *model.WorkflowInstance, step *model.WorkflowStepInstance, unit *model.ProjectUnit, candidates []model.ProjectAssetCandidate, shots []model.Shot, artifacts []model.ShotArtifact) error {
+	if instance == nil || strings.TrimSpace(instance.UnitID) == "" {
+		return nil
+	}
+	if unit == nil {
+		return kernel.BadAuthRequest("章节不存在，不能完成本阶段")
+	}
 	switch step.StepKey {
 	case "story":
 		if strings.TrimSpace(unit.SourceText) == "" {
 			return kernel.BadAuthRequest("章节正文为空，不能完成剧情阶段")
 		}
 	case "assets":
-		candidates, candidateErr := s.repo.ProjectAssetCandidates(projectID)
-		if candidateErr != nil {
-			return candidateErr
-		}
 		for _, candidate := range candidates {
 			if candidate.UnitID == instance.UnitID && candidate.Status == "pending_confirmation" {
 				return kernel.BadAuthRequest("仍有待确认资产，不能完成资产拆分阶段")
 			}
 		}
 	case "storyboard", "previz", "video", "delivery":
-		shots, shotErr := s.repo.ProjectShots(projectID)
-		if shotErr != nil {
-			return shotErr
-		}
 		unitShots := make([]model.Shot, 0, len(shots))
 		for _, shot := range shots {
 			if shot.UnitID == instance.UnitID {
@@ -429,10 +472,6 @@ func (s *Service) validateWorkflowStepCompletion(projectID string, instance *mod
 		artifactType := "action_board"
 		if step.StepKey == "video" || step.StepKey == "delivery" {
 			artifactType = "video"
-		}
-		artifacts, artifactErr := s.repo.ProjectShotArtifacts(projectID)
-		if artifactErr != nil {
-			return artifactErr
 		}
 		shotsByID := make(map[string]model.Shot, len(unitShots))
 		for _, shot := range unitShots {

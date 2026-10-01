@@ -414,8 +414,9 @@ func TestReplaceShotsRechecksUnitAndVersionInsideTransaction(t *testing.T) {
 		}
 	}
 	created, err := svc.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
-		ExpectedShotIDs: []string{},
-		Shots:           []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.01", Description: "原分镜", DurationMs: 3000}, AssetVersionIDs: []string{version.ID}}},
+		ExpectedShotIDs:  []string{},
+		ExpectedRevision: ownedRevision(t, svc, project.ID),
+		Shots:            []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.01", Description: "原分镜", DurationMs: 3000}, AssetVersionIDs: []string{version.ID}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -463,8 +464,9 @@ func TestReplaceShotsRejectsInPlaceEditWithCapturedRevision(t *testing.T) {
 	project := seedProject(t, db, model.Project{ID: "project-1", UserID: "user-1", Name: "短剧"})
 	unit := seedChapter(t, svc, project.ID)
 	created, err := svc.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
-		ExpectedShotIDs: []string{},
-		Shots:           []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.01", Description: "原画面", DurationMs: 3000}}},
+		ExpectedShotIDs:  []string{},
+		ExpectedRevision: ownedRevision(t, svc, project.ID),
+		Shots:            []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.01", Description: "原画面", DurationMs: 3000}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -501,8 +503,9 @@ func TestReplaceShotsPreflightToTxPointerSnapshot(t *testing.T) {
 	project := seedProject(t, db, model.Project{ID: "project-1", UserID: "user-1", Name: "短剧"})
 	unit := seedChapter(t, svc, project.ID)
 	created, err := svc.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
-		ExpectedShotIDs: []string{},
-		Shots:           []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.01", Description: "原画面", DurationMs: 3000}}},
+		ExpectedShotIDs:  []string{},
+		ExpectedRevision: ownedRevision(t, svc, project.ID),
+		Shots:            []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.01", Description: "原画面", DurationMs: 3000}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -540,8 +543,9 @@ func TestMatchingShotIDsDoNotHideInPlaceContentChange(t *testing.T) {
 	project := seedProject(t, db, model.Project{ID: "project-1", UserID: "user-1", Name: "短剧"})
 	unit := seedChapter(t, svc, project.ID)
 	created, err := svc.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
-		ExpectedShotIDs: []string{},
-		Shots:           []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.01", Description: "原画面", DurationMs: 3000}}},
+		ExpectedShotIDs:  []string{},
+		ExpectedRevision: ownedRevision(t, svc, project.ID),
+		Shots:            []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.01", Description: "原画面", DurationMs: 3000}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -561,5 +565,125 @@ func TestMatchingShotIDsDoNotHideInPlaceContentChange(t *testing.T) {
 	err = svc.repo.ReplaceProjectUnitShotsActive("user-1", project.ID, unit.ID, nextShots, nextRevisions, nil, []string{created[0].ID}, map[string]string{created[0].ID: created[0].CurrentRevisionID}, owned.Revision)
 	if !errors.Is(err, repository.ErrProjectUnitShotsChanged) {
 		t.Fatalf("id-only content change = %v, want shots changed", err)
+	}
+}
+
+func TestStaleClientSameShotIDsChangedContentDoesNotMutate(t *testing.T) {
+	svc, db := newTestService(t, nil)
+	project := seedProject(t, db, model.Project{ID: "project-1", UserID: "user-1", Name: "短剧"})
+	unit := seedChapter(t, svc, project.ID)
+	created, err := svc.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
+		ExpectedShotIDs:  []string{},
+		ExpectedRevision: ownedRevision(t, svc, project.ID),
+		Shots:            []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.01", Description: "批准时的画面", DurationMs: 3000}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	approvedRevision := ownedRevision(t, svc, project.ID)
+	if _, _, err := svc.CreateShotRevision("user-1", project.ID, created[0].ID, ShotRevisionInput{PlotDescription: "镜头已改内容", DurationMs: 3200}); err != nil {
+		t.Fatal(err)
+	}
+	overwrite := []ReplaceProjectUnitShotInput{{CreateProjectShotRequest: CreateProjectShotRequest{Title: "SC.99", Description: "过期客户端整章覆盖", DurationMs: 3000}}}
+	_, err = svc.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
+		ExpectedShotIDs: []string{created[0].ID},
+		Shots:           overwrite,
+	})
+	if err == nil || err.Error() != "请刷新后再保存分镜" {
+		t.Fatalf("missing expectedRevision = %v, want 请刷新后再保存分镜", err)
+	}
+	_, err = svc.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
+		ExpectedShotIDs:  []string{created[0].ID},
+		ExpectedRevision: 0,
+		Shots:            overwrite,
+	})
+	if err == nil || err.Error() != "请刷新后再保存分镜" {
+		t.Fatalf("zero expectedRevision = %v, want 请刷新后再保存分镜", err)
+	}
+	_, err = svc.ReplaceProjectUnitShots("user-1", project.ID, unit.ID, ReplaceProjectUnitShotsRequest{
+		ExpectedShotIDs:  []string{created[0].ID},
+		ExpectedRevision: approvedRevision,
+		Shots:            overwrite,
+	})
+	if err == nil {
+		t.Fatal("stale client with same IDs overwrote changed content")
+	}
+	if !IsConflict(err) && err.Error() != "本章分镜已发生变化，请刷新后重新确认" {
+		t.Fatalf("stale same-id replace = %v", err)
+	}
+	var stored model.Shot
+	if err := db.First(&stored, "id = ?", created[0].ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Description != "镜头已改内容" {
+		t.Fatalf("description = %q, want 镜头已改内容", stored.Description)
+	}
+	if ownedRevision(t, svc, project.ID) <= approvedRevision {
+		t.Fatalf("in-place edit should have bumped project revision")
+	}
+}
+
+func TestUpdateWorkflowStepRechecksStoryGateInsideTransaction(t *testing.T) {
+	svc, db := newTestService(t, nil)
+	project := seedProject(t, db, model.Project{ID: "project-1", UserID: "user-1", Name: "短剧"})
+	unit := seedChapter(t, svc, project.ID)
+	workflow := seedUnitWorkflow(t, svc, project.ID, unit.ID)
+	story := workflowStepByKey(t, workflow, "story")
+	if _, err := svc.UpdateWorkflowStep("user-1", project.ID, story.ID, UpdateWorkflowStepRequest{Status: string(model.WorkflowStepStatusRunning)}); err != nil {
+		t.Fatal(err)
+	}
+	expectedRevision := ownedRevision(t, svc, project.ID)
+	if err := db.Model(&model.ProjectUnit{}).Where("id = ?", unit.ID).Update("source_text", "").Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.repo.UpdateWorkflowProgressActive("user-1", project.ID, story.ID, expectedRevision, func(current repository.WorkflowProgressCurrent) (repository.WorkflowProgressPlan, error) {
+		return planWorkflowStepUpdate(time.Now(), UpdateWorkflowStepRequest{Status: string(model.WorkflowStepStatusCompleted)}, current)
+	})
+	if err == nil || err.Error() != "章节正文为空，不能完成剧情阶段" {
+		t.Fatalf("story gate after silent source clear = %v", err)
+	}
+	stored, err := svc.repo.WorkflowStepForProject(project.ID, story.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.WorkflowStepStatusRunning {
+		t.Fatalf("step status = %s, want running", stored.Status)
+	}
+	if ownedRevision(t, svc, project.ID) != expectedRevision {
+		t.Fatalf("project revision mutated after rejected completion")
+	}
+}
+
+func TestUpdateWorkflowStepRechecksSelectedArtifactsInsideTransaction(t *testing.T) {
+	svc, db := newTestService(t, nil)
+	project := seedProject(t, db, model.Project{ID: "project-1", UserID: "user-1", Name: "短剧"})
+	unit := seedChapter(t, svc, project.ID)
+	workflow := seedUnitWorkflow(t, svc, project.ID, unit.ID)
+	previz := workflowStepByKey(t, workflow, "previz")
+	shot, err := svc.CreateProjectShot("user-1", project.ID, CreateProjectShotRequest{UnitID: unit.ID, Title: "SC.01", Description: "人物抬头", DurationMs: 3000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, resource := createSucceededTask(t, db, "task-previz-gate", "resource-previz-gate", project.ID, "image")
+	registerShotOutput(t, svc, project.ID, previz.ID, task.ID, unit.ID, shot.ID, shot.CurrentRevisionID, "action_board", resource.ID)
+	expectedRevision := ownedRevision(t, svc, project.ID)
+	if err := db.Model(&model.ShotArtifact{}).Where("task_id = ?", task.ID).Updates(map[string]any{"selected": false, "status": "stale"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.repo.UpdateWorkflowProgressActive("user-1", project.ID, previz.ID, expectedRevision, func(current repository.WorkflowProgressCurrent) (repository.WorkflowProgressPlan, error) {
+		return planWorkflowStepUpdate(time.Now(), UpdateWorkflowStepRequest{Status: string(model.WorkflowStepStatusCompleted)}, current)
+	})
+	if err == nil || err.Error() != "仍有镜头缺少已通过的动作预演，不能完成本阶段" {
+		t.Fatalf("artifact gate after silent unselect = %v", err)
+	}
+	stored, err := svc.repo.WorkflowStepForProject(project.ID, previz.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.WorkflowStepStatusRunning {
+		t.Fatalf("previz status = %s, want running", stored.Status)
+	}
+	if ownedRevision(t, svc, project.ID) != expectedRevision {
+		t.Fatalf("project revision mutated after rejected previz completion")
 	}
 }

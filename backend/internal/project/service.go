@@ -53,6 +53,9 @@ func mapProjectWriteError(err error) error {
 	if errors.Is(err, repository.ErrProjectRevisionConflict) {
 		return kernel.WrapAppError(kernel.CodeConflict, "项目已被其他操作更新，请重新加载后再保存", err)
 	}
+	if errors.Is(err, repository.ErrExpectedRevisionRequired) {
+		return kernel.BadAuthRequest("请刷新后再保存分镜")
+	}
 	if errors.Is(err, repository.ErrCanvasRevisionConflict) {
 		return kernel.WrapAppError(kernel.CodeConflict, "画布已被其他操作更新，无法完成项目关联", err)
 	}

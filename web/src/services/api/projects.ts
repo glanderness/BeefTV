@@ -563,8 +563,14 @@ export function deleteProjectShot(projectId: string, shotId: string) {
     return http.delete<{ deleted: boolean }>(`/projects/${encodeURIComponent(projectId)}/shots/${encodeURIComponent(shotId)}`);
 }
 
-export function replaceProjectUnitShots(projectId: string, unitId: string, shots: Array<{ title: string; description: string; durationMs: number; revision?: Partial<ShotRevisionInput>; assetVersionIds?: string[] }>, expectedShotIds?: string[]) {
-    return http.put<{ shots: ProjectShot[] }>(`/projects/${encodeURIComponent(projectId)}/units/${encodeURIComponent(unitId)}/shots`, { shots, ...(expectedShotIds ? { expectedShotIds } : {}) });
+export function replaceProjectUnitShots(
+    projectId: string,
+    unitId: string,
+    shots: Array<{ title: string; description: string; durationMs: number; revision?: Partial<ShotRevisionInput>; assetVersionIds?: string[] }>,
+    expectedShotIds: string[],
+    expectedRevision: number,
+) {
+    return http.put<{ shots: ProjectShot[] }>(`/projects/${encodeURIComponent(projectId)}/units/${encodeURIComponent(unitId)}/shots`, { shots, expectedShotIds, expectedRevision });
 }
 
 export function linkShotAsset(projectId: string, shotId: string, input: { assetVersionId: string; role: ShotAssetReference["role"] }) {

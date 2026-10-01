@@ -70,8 +70,7 @@ func (s *Service) CreateProjectShot(userID string, projectID string, req CreateP
 }
 
 func (s *Service) ReplaceProjectUnitShots(userID string, projectID string, unitID string, req ReplaceProjectUnitShotsRequest) ([]model.Shot, error) {
-	project, err := s.Active(userID, projectID)
-	if err != nil {
+	if _, err := s.Active(userID, projectID); err != nil {
 		return nil, err
 	}
 	unitID = strings.TrimSpace(unitID)
@@ -96,9 +95,8 @@ func (s *Service) ReplaceProjectUnitShots(userID string, projectID string, unitI
 	for _, shot := range currentShots {
 		expectedPointers[shot.ID] = shot.CurrentRevisionID
 	}
-	expectedRevision := req.ExpectedRevision
-	if expectedRevision <= 0 {
-		expectedRevision = project.Revision
+	if req.ExpectedRevision <= 0 {
+		return nil, kernel.BadAuthRequest("请刷新后再保存分镜")
 	}
 	now := time.Now()
 	shots := make([]model.Shot, 0, len(req.Shots))
@@ -134,7 +132,7 @@ func (s *Service) ReplaceProjectUnitShots(userID string, projectID string, unitI
 			references = append(references, model.ShotAssetReference{ID: kernel.NewID(), ShotID: shotID, AssetVersionID: versionID, Role: "reference", Status: "linked", CreatedAt: now})
 		}
 	}
-	if err := s.repo.ReplaceProjectUnitShotsActive(userID, projectID, unitID, shots, revisions, references, expectedIDs, expectedPointers, expectedRevision); err != nil {
+	if err := s.repo.ReplaceProjectUnitShotsActive(userID, projectID, unitID, shots, revisions, references, expectedIDs, expectedPointers, req.ExpectedRevision); err != nil {
 		return nil, mapProjectWriteError(err)
 	}
 	return shots, nil

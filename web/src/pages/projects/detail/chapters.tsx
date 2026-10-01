@@ -363,9 +363,9 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
         refreshProject();
         return created.candidates.length;
     };
-    const storeGeneratedStoryboard = async (unitId: string, rows: ReturnType<typeof chapterStoryboardFromGenerationTask>["rows"]) => {
+    const storeGeneratedStoryboard = async (unitId: string, rows: ReturnType<typeof chapterStoryboardFromGenerationTask>["rows"], approved: { revision: number; shotIds: string[] }) => {
         const shots = storyboardRowsToProjectShots(rows, detail);
-        await replaceProjectUnitShots(detail.project.id, unitId, shots, detail.shots.filter((shot) => shot.unitId === unitId).map((shot) => shot.id));
+        await replaceProjectUnitShots(detail.project.id, unitId, shots, approved.shotIds, approved.revision);
         await Promise.all([
             queryClient.invalidateQueries({ queryKey: ["project", detail.project.id] }),
             queryClient.invalidateQueries({ queryKey: ["projects"] }),
@@ -410,6 +410,8 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
             navigateToSettings({ continueCreation: true });
             return;
         }
+        const approvedRevision = detail.project.revision;
+        const approvedShotIds = detail.shots.filter((shot) => shot.unitId === unit.id).map((shot) => shot.id);
         if (storyboardImpact.shotCount && !(await confirmStoryboardReplacement(storyboardImpact))) return;
         setStoryboardOpen(false);
         beginChapterOperation(unit.id, "storyboard");
@@ -432,7 +434,7 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
                 skills: availableSkills,
                 selectedSkillIds,
             }, { onTaskUpdate: (task) => updateChapterOperation(unit.id, "storyboard", task) });
-            const shotCount = await storeGeneratedStoryboard(unit.id, result.rows);
+            const shotCount = await storeGeneratedStoryboard(unit.id, result.rows, { revision: approvedRevision, shotIds: approvedShotIds });
             message.success(result.skillCount ? `已生成 ${shotCount} 个分镜，并应用 ${result.skillCount} 个技能` : `已生成 ${shotCount} 个分镜`);
             navigate(`/projects/${detail.project.id}/workflow/${unit.id}/storyboard`);
         } catch (error) {
@@ -481,7 +483,10 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
                     await storeExtractedAssets(taskChapterId, chapterAssetsFromGenerationTask(completedTask));
                     message.success("已恢复刷新前完成的章节资产提取结果");
                 } else {
-                    await storeGeneratedStoryboard(taskChapterId, chapterStoryboardFromGenerationTask(completedTask).rows);
+                    await storeGeneratedStoryboard(taskChapterId, chapterStoryboardFromGenerationTask(completedTask).rows, {
+                        revision: detail.project.revision,
+                        shotIds: detail.shots.filter((shot) => shot.unitId === taskChapterId).map((shot) => shot.id),
+                    });
                     message.success("已恢复刷新前完成的章节分镜");
                 }
                 recoveredTaskIdsRef.current.add(task.id);

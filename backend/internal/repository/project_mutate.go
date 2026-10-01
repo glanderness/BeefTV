@@ -15,6 +15,8 @@ import (
 
 var ErrProjectRevisionConflict = errors.New("project revision changed")
 
+var ErrExpectedRevisionRequired = errors.New("expected revision required")
+
 var ErrProjectArchived = errors.New("project is archived")
 
 var ErrProjectAssetStillReferenced = errors.New("project asset still referenced")
@@ -43,6 +45,25 @@ type WorkflowTaskOutputRecords struct {
 	Link           *model.WorkflowStepTask
 	Representation *model.AssetRepresentation
 	ProductionLink *model.ProductionTaskLink
+}
+
+// WorkflowProgressCurrent is the step, instance, next step and completion-gate
+// rows loaded inside the progress transaction. Callers must re-authorize from this snapshot.
+type WorkflowProgressCurrent struct {
+	Step       model.WorkflowStepInstance
+	Instance   model.WorkflowInstance
+	Next       *model.WorkflowStepInstance
+	Unit       *model.ProjectUnit
+	Candidates []model.ProjectAssetCandidate
+	Shots      []model.Shot
+	Artifacts  []model.ShotArtifact
+}
+
+// WorkflowProgressPlan is the mutation derived from WorkflowProgressCurrent.
+type WorkflowProgressPlan struct {
+	Step     *model.WorkflowStepInstance
+	Next     *model.WorkflowStepInstance
+	Instance *model.WorkflowInstance
 }
 
 func (r *Repository) CreateProjectWithWorkflow(project *model.Project, instance *model.WorkflowInstance, steps []model.WorkflowStepInstance) error {
@@ -382,29 +403,64 @@ func (r *Repository) EnsureWorkflowInstanceAndBump(userID, projectID string, ins
 	return storedSteps, err
 }
 
-func (r *Repository) UpdateWorkflowProgressActive(userID, projectID string, expectedRevision int64, step *model.WorkflowStepInstance, next *model.WorkflowStepInstance, instance *model.WorkflowInstance) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+func (r *Repository) UpdateWorkflowProgressActive(userID, projectID, stepID string, expectedRevision int64, apply func(WorkflowProgressCurrent) (WorkflowProgressPlan, error)) (model.WorkflowStepInstance, error) {
+	var stored model.WorkflowStepInstance
+	err := r.db.Transaction(func(tx *gorm.DB) error {
 		if _, err := requireActiveProjectTx(tx, userID, projectID); err != nil {
 			return err
 		}
-		if err := tx.Model(&model.WorkflowStepInstance{}).Where("id = ? AND workflow_instance_id = ?", step.ID, step.WorkflowInstanceID).Updates(map[string]any{
-			"status": step.Status, "output_json": step.OutputJSON, "error": step.Error, "started_at": step.StartedAt,
-			"completed_at": step.CompletedAt, "updated_at": step.UpdatedAt,
-		}).Error; err != nil {
+		var step model.WorkflowStepInstance
+		if err := tx.Table("workflow_step_instances").Select("workflow_step_instances.*").
+			Joins("JOIN workflow_instances ON workflow_instances.id = workflow_step_instances.workflow_instance_id").
+			Where("workflow_instances.project_id = ? AND workflow_step_instances.id = ?", projectID, stepID).
+			First(&step).Error; err != nil {
 			return err
 		}
-		if next != nil {
-			if err := tx.Model(&model.WorkflowStepInstance{}).Where("id = ? AND workflow_instance_id = ?", next.ID, next.WorkflowInstanceID).
-				Updates(map[string]any{"status": next.Status, "updated_at": next.UpdatedAt}).Error; err != nil {
+		stored = step
+		var instance model.WorkflowInstance
+		if err := tx.First(&instance, "id = ? AND project_id = ?", step.WorkflowInstanceID, projectID).Error; err != nil {
+			return err
+		}
+		var next *model.WorkflowStepInstance
+		var nextRow model.WorkflowStepInstance
+		nextErr := tx.Where("workflow_instance_id = ? AND position > ?", instance.ID, step.Position).Order("position asc").First(&nextRow).Error
+		if nextErr == nil {
+			nextCopy := nextRow
+			next = &nextCopy
+		} else if !errors.Is(nextErr, gorm.ErrRecordNotFound) {
+			return nextErr
+		}
+		current := WorkflowProgressCurrent{Step: step, Instance: instance, Next: next}
+		if unitID := strings.TrimSpace(instance.UnitID); unitID != "" {
+			var unitRow model.ProjectUnit
+			if err := tx.First(&unitRow, "id = ? AND project_id = ?", unitID, projectID).Error; err != nil {
+				return err
+			}
+			current.Unit = &unitRow
+			if err := tx.Where("project_id = ?", projectID).Find(&current.Candidates).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("project_id = ?", projectID).Order("unit_id asc, position asc").Find(&current.Shots).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("project_id = ?", projectID).Find(&current.Artifacts).Error; err != nil {
 				return err
 			}
 		}
-		if err := tx.Model(&model.WorkflowInstance{}).Where("id = ? AND project_id = ?", instance.ID, projectID).
-			Updates(map[string]any{"status": instance.Status, "revision": instance.Revision, "updated_at": instance.UpdatedAt}).Error; err != nil {
+		plan, applyErr := apply(current)
+		if applyErr != nil {
+			return applyErr
+		}
+		if plan.Step == nil || plan.Instance == nil {
+			return gorm.ErrInvalidData
+		}
+		if err := persistWorkflowProgressTx(tx, projectID, plan.Step, plan.Next, plan.Instance, instance.Revision); err != nil {
 			return err
 		}
-		return bumpProjectRevisionCASTx(tx, projectID, expectedRevision, step.UpdatedAt)
+		stored = *plan.Step
+		return bumpProjectRevisionCASTx(tx, projectID, expectedRevision, plan.Step.UpdatedAt)
 	})
+	return stored, err
 }
 
 func (r *Repository) RegisterWorkflowTaskOutputActive(userID, projectID, stepID, shotID, shotRevisionID, unitID string, records WorkflowTaskOutputRecords, apply func(WorkflowOutputCurrent) (WorkflowOutputPlan, error)) (model.WorkflowStepInstance, error) {
@@ -914,10 +970,10 @@ func (r *Repository) ReplaceProjectUnitShotsActive(userID, projectID, unitID str
 		if err := invalidateUnitWorkflowTx(tx, projectID, unitID, "storyboard", now); err != nil {
 			return err
 		}
-		if expectedRevision > 0 {
-			return bumpProjectRevisionCASTx(tx, projectID, expectedRevision, now)
+		if expectedRevision <= 0 {
+			return ErrExpectedRevisionRequired
 		}
-		return bumpProjectRevisionTx(tx, projectID, now)
+		return bumpProjectRevisionCASTx(tx, projectID, expectedRevision, now)
 	})
 }
 
