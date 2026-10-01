@@ -1,6 +1,7 @@
 import localforage from "localforage";
 
 import { getActiveUserScope } from "@/lib/user-scope";
+import { assertUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { getResourceBlob, resourceIdFromStorageKey } from "@/services/api/resources";
 
 type ResourceCacheMeta = {
@@ -100,8 +101,9 @@ function runDownloadQueue() {
     while (activeDownloads < MAX_CONCURRENT_DOWNLOADS && downloadQueue.length) downloadQueue.shift()?.();
 }
 
-export async function primeResourceBlobCache(storageKey: string, blob: Blob) {
-    const target = await cacheTarget(storageKey);
+export async function primeResourceBlobCache(storageKey: string, blob: Blob, expectedScope?: CapturedUserScope) {
+    if (expectedScope) assertUserScope(expectedScope);
+    const target = await cacheTarget(storageKey, expectedScope?.userScope);
     if (!target) return "";
     sessionBlobs.set(target.key, blob);
     const url = objectUrl(target.key, blob);
@@ -209,10 +211,9 @@ async function readCachedObjectUrl(target: ResourceCacheMeta) {
     return objectUrl(target.key, blob);
 }
 
-async function cacheTarget(storageKey: string): Promise<ResourceCacheMeta | null> {
+async function cacheTarget(storageKey: string, userScope = getActiveUserScope()): Promise<ResourceCacheMeta | null> {
     const resourceId = resourceIdFromStorageKey(storageKey);
     if (!resourceId) return null;
-    const userScope = getActiveUserScope();
     // 本地桌面工作区没有登录用户，guest 只是本地命名空间，不代表
     // 禁止访问资源。资源文件接口本身仍负责桌面令牌鉴权。
     // resource ID 是不可变资源的稳定标识，文件接口本身负责鉴权。

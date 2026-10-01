@@ -8,6 +8,7 @@ import { CANVAS_PROJECT_CHAPTER_DND_TYPE, type CanvasProjectChapterPayload } fro
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
+import { isUserScopeAbandonedError } from "@/lib/user-scope-guard";
 import { audioMetadata, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
@@ -232,6 +233,7 @@ export function useCanvasUpload({
             if (remotePending) message.warning("已保存在本机缓存，资源服务暂不可用；等待远端同步");
             return id;
         } catch (error) {
+            if (isUserScopeAbandonedError(error)) return null;
             const details = error instanceof Error ? error.message : "文件上传失败";
             setNodes((current) => current.map((item) => item.id !== id ? item : original?.metadata?.content ? {
                 ...item, width: original.width, height: original.height, metadata: original.metadata,
@@ -435,6 +437,7 @@ export function useCanvasUpload({
                     created.push(media);
                 }
             } catch (error) {
+                if (isUserScopeAbandonedError(error)) continue;
                 message.error(error instanceof Error ? `素材上传失败：${error.message}` : "素材上传失败");
             }
         }
@@ -469,6 +472,7 @@ export function useCanvasUpload({
             progress.done(persisted ? "已生成新视频片段并加入项目资产" : "已生成新视频片段，项目资产待重试");
             return node;
         } catch (error) {
+            if (isUserScopeAbandonedError(error)) return null;
             const details = error instanceof Error ? error.message : "合成视频片段失败";
             progress.fail(details);
             message.error(details);
@@ -761,7 +765,7 @@ export function useCanvasUpload({
             });
             return status === "committed" ? created : [];
         } catch (error) {
-            if (!lifetime.matches(owner, canvasIdRef.current)) return [];
+            if (!lifetime.matches(owner, canvasIdRef.current) || isUserScopeAbandonedError(error)) return [];
             message.error(error instanceof Error ? error.message : failureMessage);
             throw error;
         }

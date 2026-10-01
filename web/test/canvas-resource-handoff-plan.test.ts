@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { linkedFolderPresentation, resolveCanvasAssetHandoffPlan } from "@/pages/canvas/canvas-resource-handoff-plan";
+import { linkedFolderPresentation, planCanvasHandoffEffect, resolveCanvasAssetHandoffPlan } from "@/pages/canvas/canvas-resource-handoff-plan";
 import type { Asset } from "@/stores/use-asset-store";
 
 function imageAsset(id: string): Asset {
@@ -96,6 +96,137 @@ describe("resolveCanvasAssetHandoffPlan", () => {
             currentKey: "",
             nodes: [{ metadata: { assetId: "asset-1" } }],
         })).toMatchObject({ kind: "commit", payloads: [] });
+    });
+});
+
+describe("planCanvasHandoffEffect", () => {
+    const searchParams = () => {
+        const params = new URLSearchParams({ mode: "handoff" });
+        params.append("asset", "asset-1");
+        return params;
+    };
+
+    test("does not auto-restart a failed persist until the retry nonce changes", () => {
+        const params = searchParams();
+        const plan = resolveCanvasAssetHandoffPlan({
+            projectLoaded: true,
+            assetsHydrated: true,
+            mode: "handoff",
+            projectId: "canvas-1",
+            assets: [imageAsset("asset-1")],
+            searchParams: params,
+            currentKey: "",
+            nodes: [],
+        });
+        expect(plan.kind).toBe("commit");
+        const blocked = planCanvasHandoffEffect({
+            plan,
+            searchParams: params,
+            ownerUserScope: "user-a",
+            liveUserScope: "user-a",
+            currentAttemptKey: "",
+            failedKey: plan.kind === "commit" ? plan.key : "",
+            retryNonce: 0,
+            nonceAtFail: 0,
+        });
+        expect(blocked.kind).toBe("blocked-until-retry");
+        const retried = planCanvasHandoffEffect({
+            plan,
+            searchParams: params,
+            ownerUserScope: "user-a",
+            liveUserScope: "user-a",
+            currentAttemptKey: "",
+            failedKey: "",
+            retryNonce: 1,
+            nonceAtFail: 0,
+        });
+        expect(retried.kind).toBe("commit");
+    });
+
+    test("consumes a retained handoff URL after an account change instead of reissuing it", () => {
+        const params = searchParams();
+        const plan = resolveCanvasAssetHandoffPlan({
+            projectLoaded: true,
+            assetsHydrated: true,
+            mode: "handoff",
+            projectId: "canvas-1",
+            assets: [imageAsset("asset-1")],
+            searchParams: params,
+            currentKey: "",
+            nodes: [],
+        });
+        const decision = planCanvasHandoffEffect({
+            plan,
+            searchParams: params,
+            ownerUserScope: "user-a",
+            liveUserScope: "user-b",
+            currentAttemptKey: "",
+            failedKey: plan.kind === "commit" ? plan.key : "",
+            retryNonce: 0,
+            nonceAtFail: 0,
+        });
+        expect(decision.kind).toBe("consume-foreign");
+        if (decision.kind !== "consume-foreign") return;
+        expect(decision.searchParams.get("mode")).toBeNull();
+        expect(decision.searchParams.get("asset")).toBeNull();
+    });
+
+    test("StrictMode re-entry with the same attempt key stays idle, remount with empty refs can start again", () => {
+        const params = searchParams();
+        const first = resolveCanvasAssetHandoffPlan({
+            projectLoaded: true,
+            assetsHydrated: true,
+            mode: "handoff",
+            projectId: "canvas-1",
+            assets: [imageAsset("asset-1")],
+            searchParams: params,
+            currentKey: "",
+            nodes: [],
+        });
+        expect(first.kind).toBe("commit");
+        if (first.kind !== "commit") return;
+        const strictModeReentry = resolveCanvasAssetHandoffPlan({
+            projectLoaded: true,
+            assetsHydrated: true,
+            mode: "handoff",
+            projectId: "canvas-1",
+            assets: [imageAsset("asset-1")],
+            searchParams: params,
+            currentKey: first.key,
+            nodes: [],
+        });
+        expect(planCanvasHandoffEffect({
+            plan: strictModeReentry,
+            searchParams: params,
+            ownerUserScope: "user-a",
+            liveUserScope: "user-a",
+            currentAttemptKey: first.key,
+            failedKey: "",
+            retryNonce: 0,
+            nonceAtFail: 0,
+        }).kind).toBe("idle");
+
+        const remount = resolveCanvasAssetHandoffPlan({
+            projectLoaded: true,
+            assetsHydrated: true,
+            mode: "handoff",
+            projectId: "canvas-1",
+            assets: [imageAsset("asset-1")],
+            searchParams: params,
+            currentKey: "",
+            nodes: [],
+        });
+        const remountDecision = planCanvasHandoffEffect({
+            plan: remount,
+            searchParams: params,
+            ownerUserScope: null,
+            liveUserScope: "user-a",
+            currentAttemptKey: "",
+            failedKey: "",
+            retryNonce: 0,
+            nonceAtFail: 0,
+        });
+        expect(remountDecision.kind).toBe("commit");
     });
 });
 

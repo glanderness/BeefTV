@@ -1,22 +1,38 @@
 const ACTIVE_USER_SCOPE_KEY = "infinite-canvas:active-user-scope";
 const GUEST_SCOPE = "guest";
 
-export function getActiveUserScope() {
-    if (typeof window === "undefined") return GUEST_SCOPE;
+let memoryScope: string | undefined;
+let activeUserScopeEpoch = 1;
+
+function readStoredUserScope() {
+    if (typeof window === "undefined") return "";
     try {
-        return window.localStorage?.getItem(ACTIVE_USER_SCOPE_KEY) || GUEST_SCOPE;
+        return window.localStorage?.getItem(ACTIVE_USER_SCOPE_KEY) || "";
     } catch {
         // Desktop shells, privacy modes and test harnesses may expose a window
         // without a usable Storage implementation. Local data must still use a
         // deterministic guest namespace instead of breaking uploads/cache keys.
-        return GUEST_SCOPE;
+        return "";
     }
 }
 
+export function getActiveUserScope() {
+    if (memoryScope !== undefined) return memoryScope;
+    return readStoredUserScope() || GUEST_SCOPE;
+}
+
+export function getActiveUserScopeEpoch() {
+    return activeUserScopeEpoch;
+}
+
 export function setActiveUserScope(userId?: string | null) {
+    const next = userId || GUEST_SCOPE;
+    memoryScope = next;
+    // Bump even when the scope string repeats so A→B→A cannot reuse a captured identity.
+    activeUserScopeEpoch += 1;
     if (typeof window === "undefined") return;
     try {
-        window.localStorage?.setItem(ACTIVE_USER_SCOPE_KEY, userId || GUEST_SCOPE);
+        window.localStorage?.setItem(ACTIVE_USER_SCOPE_KEY, next);
     } catch {
         // Scope persistence is best effort; callers can continue in guest mode.
     }

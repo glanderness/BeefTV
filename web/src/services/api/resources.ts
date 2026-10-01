@@ -1,6 +1,7 @@
 import { getActiveUserScope } from "@/lib/user-scope";
+import { assertUserScope, captureUserScope, isUserScopeAbandonedError, waitForRetryDelay, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
-import { http, apiClient, apiBaseURL, ApiError } from "@/services/api/request";
+import { http, apiClient, apiBaseURL, ApiError, type HttpRequestConfig } from "@/services/api/request";
 
 export type RemoteResource = {
     id: string;
@@ -42,6 +43,7 @@ export type ResourceUploadMeta = {
     durationMs?: number;
     fileName?: string;
     idempotencyKey?: string;
+    expectedScope?: CapturedUserScope;
 };
 
 /**
@@ -137,13 +139,14 @@ export async function uploadResourceFile(
     meta?: ResourceUploadMeta,
     onProgress?: (uploadedBytes: number, totalBytes: number) => void,
 ): Promise<RemoteResource> {
+    const expected = meta?.expectedScope ?? captureUserScope();
     const name = meta?.fileName || (file instanceof File ? file.name : `${kind}.${extensionFromMime(file.type, kind)}`);
     // 分片与 multipart 两条路径的失败都要归一成 ResourceUploadError，
     // 否则调用方只能靠文案猜测该重试还是该报错。
     try {
         if (file.size > CHUNK_UPLOAD_THRESHOLD) {
-            const resource = await uploadFileInChunks(file, name, kind, meta, onProgress);
-            resourceCache.set(resourceCacheKey(resource.id), resource);
+            const resource = await uploadFileInChunks(file, name, kind, meta, expected, onProgress);
+            rememberResource(resource, expected);
             return resource;
         }
         const formData = new FormData();
@@ -153,12 +156,12 @@ export async function uploadResourceFile(
         if (meta?.height) formData.append("height", String(Math.round(meta.height)));
         if (meta?.durationMs) formData.append("durationMs", String(Math.round(meta.durationMs)));
         const data = await http.post<{ resource: RemoteResource }>("/resources", formData, {
-            ...uploadRequestConfig(meta?.idempotencyKey),
+            ...scopedUploadConfig(expected, meta?.idempotencyKey),
             onUploadProgress: onProgress ? ({ loaded, total }) => {
                 if (total && total > 0) onProgress(Math.min(file.size, file.size * loaded / total), file.size);
             } : undefined,
         });
-        resourceCache.set(resourceCacheKey(data.resource.id), data.resource);
+        rememberResource(data.resource, expected);
         return data.resource;
     } catch (error) {
         throw normalizeUploadError(error);
@@ -167,35 +170,51 @@ export async function uploadResourceFile(
 
 // 分片上传：POST 开始会话 → 逐片 PUT 原始二进制（每片 8MB）→ POST 合并落库。
 // 单请求体积小、可断点续传/失败重试；单文件不再受 50MB 限制（仅日/总量配额约束）。
-async function uploadFileInChunks(file: Blob, name: string, kind: "image" | "video" | "audio" | "file", meta: ResourceUploadMeta | undefined, onProgress?: (uploadedBytes: number, totalBytes: number) => void) {
+async function uploadFileInChunks(file: Blob, name: string, kind: "image" | "video" | "audio" | "file", meta: ResourceUploadMeta | undefined, expected: CapturedUserScope, onProgress?: (uploadedBytes: number, totalBytes: number) => void) {
     // 片级失败通常意味着会话过期/网络抖动：整体重开一次会话重传（整传重试）。
     for (let attempt = 0; attempt < CHUNK_UPLOAD_RETRIES; attempt++) {
         try {
-            return await runChunkedUpload(file, name, kind, meta, onProgress);
+            return await runChunkedUpload(file, name, kind, meta, expected, onProgress);
         } catch (error) {
             if (attempt === CHUNK_UPLOAD_RETRIES - 1) throw error;
+            await prepareChunkRetry(error, expected);
         }
     }
     throw new Error("上传失败");
 }
 
-async function runChunkedUpload(file: Blob, name: string, kind: "image" | "video" | "audio" | "file", meta: ResourceUploadMeta | undefined, onProgress?: (uploadedBytes: number, totalBytes: number) => void) {
-    const session = await http.post<{ uploadId: string; chunkSize: number; chunkCount: number }>("/resources/uploads", { fileName: name, kind, size: file.size, width: meta?.width, height: meta?.height, durationMs: meta?.durationMs }, uploadRequestConfig(meta?.idempotencyKey));
+async function runChunkedUpload(file: Blob, name: string, kind: "image" | "video" | "audio" | "file", meta: ResourceUploadMeta | undefined, expected: CapturedUserScope, onProgress?: (uploadedBytes: number, totalBytes: number) => void) {
+    const session = await http.post<{ uploadId: string; chunkSize: number; chunkCount: number }>("/resources/uploads", { fileName: name, kind, size: file.size, width: meta?.width, height: meta?.height, durationMs: meta?.durationMs }, scopedUploadConfig(expected, meta?.idempotencyKey));
     for (let index = 0; index < session.chunkCount; index++) {
+        assertUserScope(expected);
         const start = index * session.chunkSize;
         const end = Math.min(file.size, start + session.chunkSize);
         const blob = file.slice(start, end);
-        const data = new FormData();
-        data.append("chunk", blob);
         // raw 二进制直传，与后端按裸 body 逐片落盘对齐（勿设手动 Content-Type，让 axios 处理）。
         await http.put<{ index: number }>(`/resources/uploads/${encodeURIComponent(session.uploadId)}/chunks/${index}`, blob, {
             headers: { "Content-Type": "application/octet-stream" },
+            expectedScope: expected,
             onUploadProgress: onProgress ? ({ loaded }) => onProgress(start + Math.min(loaded, blob.size), file.size) : undefined,
         });
         onProgress?.(Math.min(end, file.size), file.size);
     }
-    const complete = await http.post<{ resource: RemoteResource }>(`/resources/uploads/${encodeURIComponent(session.uploadId)}/complete`);
+    assertUserScope(expected);
+    const complete = await http.post<{ resource: RemoteResource }>(`/resources/uploads/${encodeURIComponent(session.uploadId)}/complete`, undefined, scopedUploadConfig(expected));
     return complete.resource;
+}
+
+async function prepareChunkRetry(error: unknown, expected: CapturedUserScope) {
+    if (isUserScopeAbandonedError(error)) throw error;
+    assertUserScope(expected);
+    if (error instanceof ApiError && error.retryable && error.retryAfterMs) {
+        await waitForRetryDelay(error.retryAfterMs);
+        assertUserScope(expected);
+    }
+}
+
+function rememberResource(resource: RemoteResource, expected: CapturedUserScope) {
+    assertUserScope(expected);
+    resourceCache.set(resourceCacheKey(resource.id, expected.userScope), resource);
 }
 
 // 失败分类直接复用 request() 已经算好的 ApiError.retryable（408/425/429/5xx 可重试），
@@ -203,6 +222,7 @@ async function runChunkedUpload(file: Blob, name: string, kind: "image" | "video
 // 差别只有一处：没有拿到任何 HTTP 响应（断网、超时）时 retryable 为 false，
 // 但这种失败恰恰是最该退回本机等待重传的，因此单独按瞬时处理。
 function normalizeUploadError(error: unknown): ResourceUploadError {
+    if (isUserScopeAbandonedError(error)) throw error;
     if (error instanceof ResourceUploadError) return error;
     // 请求取消不是上传失败，保持原始语义交给调用方。
     if (error instanceof DOMException && error.name === "AbortError") throw error;
@@ -220,14 +240,15 @@ function normalizeUploadError(error: unknown): ResourceUploadError {
 }
 
 export async function importResourceFromUrl(url: string, kind: "image" | "video" | "audio" | "file", meta?: Omit<ResourceUploadMeta, "fileName">) {
-    const data = await http.post<{ resource: RemoteResource }>("/resources/import", { url, kind, width: meta?.width, height: meta?.height, durationMs: meta?.durationMs }, uploadRequestConfig(meta?.idempotencyKey));
-    resourceCache.set(resourceCacheKey(data.resource.id), data.resource);
+    const expected = meta?.expectedScope ?? captureUserScope();
+    const data = await http.post<{ resource: RemoteResource }>("/resources/import", { url, kind, width: meta?.width, height: meta?.height, durationMs: meta?.durationMs }, scopedUploadConfig(expected, meta?.idempotencyKey));
+    rememberResource(data.resource, expected);
     return data.resource;
 }
 
-function uploadRequestConfig(idempotencyKey?: string) {
+function scopedUploadConfig(expected: CapturedUserScope, idempotencyKey?: string): HttpRequestConfig {
     const value = idempotencyKey?.trim();
-    return value ? { headers: { "X-Idempotency-Key": value } } : undefined;
+    return value ? { headers: { "X-Idempotency-Key": value }, expectedScope: expected } : { expectedScope: expected };
 }
 
 export function getResource(id: string): Promise<RemoteResource> {
@@ -278,8 +299,8 @@ export async function getResourceOSSUrl(storageKey?: string) {
     }
 }
 
-function resourceCacheKey(id: string) {
-    return `${getActiveUserScope()}:${id}`;
+function resourceCacheKey(id: string, scope = getActiveUserScope()) {
+    return `${scope}:${id}`;
 }
 
 export function resourceFileUrl(id: string) {

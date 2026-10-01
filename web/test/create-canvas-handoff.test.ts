@@ -389,12 +389,17 @@ test("Create forwards owned result assets through one new canvas and the project
     expect(resourceHook).not.toContain("handleProjectAssetsInsert");
     expect(resourceHook).toContain("CANVAS_HANDOFF_PERSIST_FAILED_MESSAGE");
     expect(resourceHook).toContain("resetIfCurrentAttempt");
+    expect(resourceHook).toContain("planCanvasHandoffEffect");
+    expect(resourceHook).toContain("handoffRetryNonce");
+    expect(resourceHook).toContain("requestHandoffRetry");
+    expect(resourceHook).toContain("consumeForeignHandoff");
+    expect(resourceHook).toContain("onClick: requestHandoffRetry");
     expect(resourceHook).toContain("runOwnedCanvasEnsureQueue");
     expect(canvasProject).toContain("createHandoffNodes: createAssetPayloadNodes");
     const uploadHook = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/use-canvas-upload.ts"), "utf8");
     expect(uploadHook).toContain("runOwnedCanvasCreatedNodes");
     expect(resourceHook).toContain("persistCanvasDocument(owner.canvasId, { nodes: nextNodes })");
-    expect(resourceHook.indexOf("persistCanvasDocument(owner.canvasId, { nodes: nextNodes })")).toBeLessThan(resourceHook.indexOf("setSearchParams(nextSearchParams"));
+    expect(resourceHook.indexOf("persistCanvasDocument(owner.canvasId, { nodes: nextNodes })")).toBeLessThan(resourceHook.indexOf("consumeUrl: (nextSearchParams)"));
 });
 
 test("Create image batch retry preserves per-index lineage under one attempt group", async () => {

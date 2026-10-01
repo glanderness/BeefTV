@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { App } from "antd";
 import type { SetURLSearchParams } from "react-router";
@@ -6,8 +6,9 @@ import type { SetURLSearchParams } from "react-router";
 import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { resolveProjectCanvasStyle } from "@/components/canvas/canvas-style-picker-modal";
 import { refreshCanvasCharacterReferenceNodes } from "@/lib/canvas/canvas-character-reference";
-import { canvasAssetHandoffIds } from "@/lib/canvas/canvas-asset-handoff";
+import { canvasAssetHandoffIds, consumeCanvasAssetHandoff } from "@/lib/canvas/canvas-asset-handoff";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
+import { isUserScopeAbandonedError } from "@/lib/user-scope-guard";
 import { createStyleProfileSnapshot, resolveStyleProfile, serializeStyleProfile } from "@/lib/canvas/style-profile";
 import { getProject } from "@/services/api/projects";
 import { queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
@@ -21,7 +22,7 @@ import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canv
 
 import { readOwnedCanvasNodes, runOwnedCanvasEnsureQueue, runOwnedCanvasPageCommit, useCanvasOwnerLifetime } from "./canvas-owner-epoch";
 import { applyArchivedCanvasNodeAssets, CANVAS_HANDOFF_PERSIST_FAILED_MESSAGE, commitOwnedCanvasAssetHandoff, rebaseCreatedCanvasNodes } from "./canvas-resource-handoff-commit";
-import { linkedFolderPresentation, resolveCanvasAssetHandoffPlan } from "./canvas-resource-handoff-plan";
+import { linkedFolderPresentation, planCanvasHandoffEffect, resolveCanvasAssetHandoffPlan } from "./canvas-resource-handoff-plan";
 
 const NODE_STATUS_SUCCESS = "success" as const;
 
@@ -56,9 +57,13 @@ export function useCanvasResourceHandoff({
 }: UseCanvasResourceHandoffOptions) {
     const { message } = App.useApp();
     const assetHandoffRef = useRef("");
+    const handoffOwnershipRef = useRef<string | null>(null);
+    const failedAttemptRef = useRef("");
+    const nonceAtFailRef = useRef(0);
+    const [handoffRetryNonce, setHandoffRetryNonce] = useState(0);
     const projectIdRef = useRef(projectId);
     projectIdRef.current = projectId;
-    const { lifetime, mountedRef } = useCanvasOwnerLifetime(projectId);
+    const { lifetime, mountedRef, userScope } = useCanvasOwnerLifetime(projectId);
     const linkedProjectQuery = useQuery({ queryKey: ["project", linkedProjectId], queryFn: () => getProject(linkedProjectId), enabled: Boolean(linkedProjectId) });
     const refetchLinkedProject = linkedProjectQuery.refetch;
 
@@ -156,6 +161,21 @@ export function useCanvasResourceHandoff({
         void loadAssetsForUse(canvasAssetHandoffIds(searchParams)).catch((error) => message.error(error instanceof Error ? error.message : "转入素材读取失败"));
     }, [projectLoaded, searchParams, message]);
 
+    const requestHandoffRetry = useCallback(() => {
+        if (assetHandoffRef.current) return;
+        if (handoffOwnershipRef.current && handoffOwnershipRef.current !== userScope) return;
+        failedAttemptRef.current = "";
+        assetHandoffRef.current = "";
+        setHandoffRetryNonce((nonce) => nonce + 1);
+    }, [userScope]);
+
+    const consumeForeignHandoff = useCallback((nextSearchParams: URLSearchParams) => {
+        handoffOwnershipRef.current = null;
+        assetHandoffRef.current = "";
+        failedAttemptRef.current = "";
+        setSearchParams(nextSearchParams, { replace: true });
+    }, [setSearchParams]);
+
     useEffect(() => {
         const plan = resolveCanvasAssetHandoffPlan({
             projectLoaded,
@@ -167,17 +187,33 @@ export function useCanvasResourceHandoff({
             currentKey: assetHandoffRef.current,
             nodes: nodesRef.current,
         });
-        if (plan.kind === "idle") return;
-        const attemptKey = plan.key;
-        assetHandoffRef.current = attemptKey;
-        if (plan.kind === "wait") return;
+        const decision = planCanvasHandoffEffect({
+            plan,
+            searchParams,
+            ownerUserScope: handoffOwnershipRef.current,
+            liveUserScope: userScope,
+            currentAttemptKey: assetHandoffRef.current,
+            failedKey: failedAttemptRef.current,
+            retryNonce: handoffRetryNonce,
+            nonceAtFail: nonceAtFailRef.current,
+        });
+        if (decision.kind === "idle") return;
+        if (decision.kind === "consume-foreign") {
+            consumeForeignHandoff(decision.searchParams);
+            return;
+        }
+        if (decision.kind === "blocked-until-retry") return;
+        if (!handoffOwnershipRef.current) handoffOwnershipRef.current = userScope;
+        assetHandoffRef.current = decision.key;
+        if (decision.kind === "wait") return;
+        const attemptKey = decision.key;
         const owner = lifetime.capture(projectId);
         const resetIfCurrentAttempt = () => {
             if (assetHandoffRef.current === attemptKey) assetHandoffRef.current = "";
         };
         void (async () => {
             try {
-                const createdNodes = plan.payloads.length ? await createHandoffNodes(plan.payloads, getCanvasCenter()) : [];
+                const createdNodes = decision.payloads.length ? await createHandoffNodes(decision.payloads, getCanvasCenter()) : [];
                 const result = await commitOwnedCanvasAssetHandoff({
                     owner,
                     getLiveCanvasId: () => projectIdRef.current,
@@ -201,25 +237,49 @@ export function useCanvasResourceHandoff({
                         setNodes((current) => rebaseCreatedCanvasNodes(current, created));
                     },
                     consumeUrl: (nextSearchParams) => {
+                        handoffOwnershipRef.current = null;
+                        failedAttemptRef.current = "";
                         setSearchParams(nextSearchParams, { replace: true });
                     },
                     resetAttempt: resetIfCurrentAttempt,
                     onPersistError: () => {
                         if (assetHandoffRef.current !== attemptKey && assetHandoffRef.current !== "") return;
-                        if (!mountedRef.current || !lifetime.userMatches(owner)) return;
-                        message.error(CANVAS_HANDOFF_PERSIST_FAILED_MESSAGE);
+                        if (!lifetime.userMatches(owner)) {
+                            consumeForeignHandoff(consumeCanvasAssetHandoff(searchParams));
+                            return;
+                        }
+                        if (!mountedRef.current) return;
+                        failedAttemptRef.current = attemptKey;
+                        nonceAtFailRef.current = handoffRetryNonce;
+                        message.error({
+                            content: CANVAS_HANDOFF_PERSIST_FAILED_MESSAGE,
+                            duration: 8,
+                            onClick: requestHandoffRetry,
+                        });
                     },
                 });
+                if (result === "abandoned" && !lifetime.userMatches(owner)) {
+                    consumeForeignHandoff(consumeCanvasAssetHandoff(searchParams));
+                    return;
+                }
+                if (result === "committed") {
+                    handoffOwnershipRef.current = null;
+                    failedAttemptRef.current = "";
+                }
                 if (result === "committed" && createdNodes.length && lifetime.matches(owner, projectIdRef.current)) {
                     message.success(`已引入 ${createdNodes.length} 项项目资产`);
                 }
             } catch (error) {
                 resetIfCurrentAttempt();
-                if (!mountedRef.current || !lifetime.userMatches(owner)) return;
+                if (!lifetime.userMatches(owner) || isUserScopeAbandonedError(error)) {
+                    if (!lifetime.userMatches(owner)) consumeForeignHandoff(consumeCanvasAssetHandoff(searchParams));
+                    return;
+                }
+                if (!mountedRef.current) return;
                 message.error(error instanceof Error ? error.message : "项目资产引入失败");
             }
         })();
-    }, [assets, assetsHydrated, createHandoffNodes, getCanvasCenter, lifetime, message, mountedRef, nodesRef, projectId, projectLoaded, searchParams, setNodes, setSearchParams]);
+    }, [assets, assetsHydrated, consumeForeignHandoff, createHandoffNodes, getCanvasCenter, handoffRetryNonce, lifetime, message, mountedRef, nodesRef, projectId, projectLoaded, requestHandoffRetry, searchParams, setNodes, setSearchParams, userScope]);
 
     const reloadCanvasNodeResource = useCallback(
         async (node: CanvasNodeData) => {

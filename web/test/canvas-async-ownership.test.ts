@@ -439,6 +439,83 @@ describe("handoff ownership", () => {
         expect((errors[0] as Error).message).toBe("sqlite unavailable");
         expect(CANVAS_HANDOFF_PERSIST_FAILED_MESSAGE).toBe("画布保存失败，请稍后重试");
     });
+
+    test("retry control starts a second persist without remounting, and does not auto-loop the failed request", async () => {
+        const owner = captureCanvasOwnerEpoch("canvas-a", "user-a");
+        const created = [node("created", { assetId: "asset-1" })];
+        let attemptKey = "canvas-a:asset-1:image";
+        let retryNonce = 0;
+        let nonceAtFail = 0;
+        let failedKey = "";
+        const persistCalls: string[] = [];
+        const persistGate = deferred();
+        const first = commitOwnedCanvasAssetHandoff({
+            owner,
+            getLiveCanvasId: () => "canvas-a",
+            getLiveUserScope: () => "user-a",
+            attemptKey,
+            getAttemptKey: () => attemptKey,
+            searchParams: new URLSearchParams({ mode: "handoff", asset: "asset-1" }),
+            createdNodes: created,
+            readLiveNodes: () => created,
+            persist: async () => {
+                persistCalls.push("first");
+                await persistGate.promise;
+            },
+            applyCreated: () => {},
+            consumeUrl: () => {},
+            resetAttempt: () => {
+                attemptKey = "";
+            },
+            onPersistError: () => {
+                failedKey = "canvas-a:asset-1:image";
+                nonceAtFail = retryNonce;
+            },
+        });
+        persistGate.reject(new Error("sqlite unavailable"));
+        expect(await first).toBe("failed");
+        expect(attemptKey).toBe("");
+        expect(failedKey).toBe("canvas-a:asset-1:image");
+        expect(retryNonce).toBe(nonceAtFail);
+
+        const { canStartCanvasHandoffAttempt } = await import("@/pages/canvas/canvas-resource-handoff-plan");
+        expect(canStartCanvasHandoffAttempt({
+            planKey: failedKey,
+            currentAttemptKey: attemptKey,
+            failedKey,
+            retryNonce,
+            nonceAtFail,
+        })).toBe(false);
+
+        retryNonce += 1;
+        failedKey = "";
+        expect(canStartCanvasHandoffAttempt({
+            planKey: "canvas-a:asset-1:image",
+            currentAttemptKey: attemptKey,
+            failedKey,
+            retryNonce,
+            nonceAtFail,
+        })).toBe(true);
+
+        const retry = await commitOwnedCanvasAssetHandoff({
+            owner,
+            getLiveCanvasId: () => "canvas-a",
+            getLiveUserScope: () => "user-a",
+            attemptKey: "canvas-a:asset-1:image",
+            getAttemptKey: () => "canvas-a:asset-1:image",
+            searchParams: new URLSearchParams({ mode: "handoff", asset: "asset-1" }),
+            createdNodes: created,
+            readLiveNodes: () => created,
+            persist: async () => {
+                persistCalls.push("retry");
+            },
+            applyCreated: () => {},
+            consumeUrl: () => {},
+            resetAttempt: () => {},
+        });
+        expect(retry).toBe("committed");
+        expect(persistCalls).toEqual(["first", "retry"]);
+    });
 });
 
 describe("archive and reload ownership", () => {

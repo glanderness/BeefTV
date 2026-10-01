@@ -1,5 +1,7 @@
 import axios, { type AxiosRequestConfig, type AxiosResponse } from "axios";
 
+import { assertUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
+
 export type ApiParams = Record<string, string | string[] | number | number[] | undefined>;
 
 export type BackendEnvelope<T> = {
@@ -125,9 +127,21 @@ function retryAfterMilliseconds(headers: unknown) {
     return Math.max(0, retryAt - Date.now());
 }
 
-export type HttpRequestConfig = Omit<AxiosRequestConfig, "method" | "url" | "data" | "baseURL">;
+export type HttpRequestConfig = Omit<AxiosRequestConfig, "method" | "url" | "data" | "baseURL"> & {
+    expectedScope?: CapturedUserScope;
+};
+
+function assertExpectedHttpScope(config?: { expectedScope?: CapturedUserScope }) {
+    if (config?.expectedScope) assertUserScope(config.expectedScope);
+}
+
+apiClient.interceptors.request.use((config) => {
+    assertExpectedHttpScope(config as HttpRequestConfig);
+    return config;
+});
 
 async function send<T>(method: string, url: string, data?: unknown, config?: HttpRequestConfig) {
+    assertExpectedHttpScope(config);
     return request<T>(apiClient.request<BackendEnvelope<T>>({ method, url, data, ...config }));
 }
 
@@ -141,8 +155,9 @@ export const http = {
     put: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => send<T>("put", url, data, config),
     patch: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => send<T>("patch", url, data, config),
     delete: <T>(url: string, config?: HttpRequestConfig) => send<T>("delete", url, undefined, config),
-    async raw<T>(config: AxiosRequestConfig): Promise<AxiosResponse<T>> {
+    async raw<T>(config: AxiosRequestConfig & { expectedScope?: CapturedUserScope }): Promise<AxiosResponse<T>> {
         try {
+            assertExpectedHttpScope(config);
             return await apiClient.request<T>(config);
         } catch (error) {
             throw unwrapTransportError(error);
