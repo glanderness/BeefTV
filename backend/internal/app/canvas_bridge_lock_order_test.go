@@ -210,18 +210,24 @@ func runLockOrderAgainstTask(t *testing.T, fx *lockOrderFixture, txPath, taskPat
 	var txOnce sync.Once
 	var proceedOnce sync.Once
 	t.Cleanup(func() {
-		storageLockRendezvous = nil
 		proceedOnce.Do(func() { close(proceed) })
 	})
-	storageLockRendezvous = func(insideTx bool) {
-		if !insideTx {
+	// Pause only this fixture's database after acquiring its transaction's
+	// connection. No process-global hook is installed in production code.
+	err := fx.service.repo.DB().Callback().Query().After("gorm:query").Register("test:lock-order", func(tx *gorm.DB) {
+		if !repoHoldsTransaction(repository.New(tx)) {
 			return
 		}
-		txOnce.Do(func() { close(txReady) })
-		select {
-		case <-proceed:
-		case <-time.After(4 * time.Second):
-		}
+		txOnce.Do(func() {
+			close(txReady)
+			select {
+			case <-proceed:
+			case <-time.After(4 * time.Second):
+			}
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	txErr := make(chan error, 1)

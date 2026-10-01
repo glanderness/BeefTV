@@ -138,10 +138,6 @@ func repoHoldsTransaction(repo *repository.Repository) bool {
 	return ok
 }
 
-// storageLockRendezvous is an optional test rendezvous after the TX-vs-mutex
-// decision. Production leaves it nil.
-var storageLockRendezvous func(insideTx bool)
-
 // newCanvasHostWithRepo 与 newCanvasHost 完全一致，但配额/用量读取绑定到给定仓储。
 // 事务内的领域写入必须走这里，否则会回到根连接取用量而与自己的事务互相等待。
 func newCanvasHostWithRepo(service *Service, repo *repository.Repository) canvasHost {
@@ -153,9 +149,6 @@ func newCanvasHostWithRepo(service *Service, repo *repository.Repository) canvas
 		openResourceRange: service.openResourceRange, prepareResourceDelivery: service.prepareResourceDelivery,
 		withStorageLock: func(fn func() error) error {
 			insideTx := repoHoldsTransaction(repo)
-			if hook := storageLockRendezvous; hook != nil {
-				hook(insideTx)
-			}
 			if insideTx {
 				// 写事务已经占着唯一连接并串行化 SQLite 写者；配额读同一条连接。
 				return fn()
