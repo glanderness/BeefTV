@@ -27,6 +27,7 @@ Wails / local dev
 | 任务域 | `backend/internal/task` | 本地任务命令、列表读模型和生命周期边界 |
 | 生成域 | `backend/internal/generation` | 统一生成输入、引用、能力、registry 协议调度和失败归类 |
 | 供应商适配 | `backend/internal/provider`, `protocol`, `outbound` | 外部模型 API、自定义渠道和插件协议 |
+| Seedance 参考素材预上传 | `backend/internal/app/beefapi_seedance_preupload.go` | 仅内置 BeefAPI Seedance：本机后端把参考图片/视频/音频换成短期 HTTPS 链接后再提交 `/v1/videos`；本机文件在上传完成前保持本地引用 |
 | 数据 | `backend/internal/database`, `repository` | SQLite schema、迁移和持久化 |
 | HTTP | `backend/internal/handler` | 本地 `/api` 合同、输入限制和响应封装 |
 | 企业连接 | `backend/internal/beefapi` | 设备授权、本机密钥和连接状态 |

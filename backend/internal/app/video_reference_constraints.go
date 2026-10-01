@@ -128,26 +128,14 @@ func validateVideoReferenceMedia(profile *VideoCapabilityConfig, input canvasGen
 		return BadAuthRequest(fmt.Sprintf("当前视频模型至少需要 %d 张参考图", refs.MinImages))
 	}
 	for index, media := range input.ReferenceImages {
-		if err := validateReferenceFileBytes("图", index, media.Bytes, refs.MaxImageBytes); err != nil {
-			return err
-		}
-		if err := validateReferenceGeometry("图", index, media.Width, media.Height, refs.MinImageWidth, refs.MaxImageWidth, refs.MinImageHeight, refs.MaxImageHeight, refs.MinImageAspect, refs.MaxImageAspect, refs.MinImagePixels, refs.MaxImagePixels); err != nil {
+		if err := validateVideoReferenceImage(refs, index, media); err != nil {
 			return err
 		}
 	}
 	var totalVideoMs int64
 	for index, media := range input.ReferenceVideos {
 		totalVideoMs += media.DurationMs
-		if err := validateReferenceDurationUnlessOpaqueAsset("视频", index, media, float64(refs.MinVideoDuration), float64(refs.MaxVideoDuration)); err != nil {
-			return err
-		}
-		if err := validateReferenceFileBytes("视频", index, media.Bytes, refs.MaxVideoBytes); err != nil {
-			return err
-		}
-		if refs.MinVideoPixels > 0 && (media.Width <= 0 || media.Height <= 0) && !opaqueVideoAssetPattern.MatchString(strings.TrimSpace(media.URL)) {
-			return BadAuthRequest(fmt.Sprintf("第 %d 个参考视频尺寸无法读取，请重新导入素材后再提交", index+1))
-		}
-		if err := validateReferenceGeometry("视频", index, media.Width, media.Height, refs.MinVideoWidth, refs.MaxVideoWidth, refs.MinVideoHeight, refs.MaxVideoHeight, refs.MinVideoAspect, refs.MaxVideoAspect, refs.MinVideoPixels, refs.MaxVideoPixels); err != nil {
+		if err := validateVideoReferenceVideo(refs, index, media); err != nil {
 			return err
 		}
 	}
@@ -168,6 +156,26 @@ func validateVideoReferenceMedia(profile *VideoCapabilityConfig, input canvasGen
 		return BadAuthRequest(fmt.Sprintf("参考音频总时长为 %.2f 秒，当前模型最多支持 %d 秒；请裁剪或减少参考音频后再提交", float64(totalAudioMs)/1000, maximum))
 	}
 	return nil
+}
+
+func validateVideoReferenceImage(refs VideoReferenceConfig, index int, media providerMedia) error {
+	if err := validateReferenceFileBytes("图", index, media.Bytes, refs.MaxImageBytes); err != nil {
+		return err
+	}
+	return validateReferenceGeometry("图", index, media.Width, media.Height, refs.MinImageWidth, refs.MaxImageWidth, refs.MinImageHeight, refs.MaxImageHeight, refs.MinImageAspect, refs.MaxImageAspect, refs.MinImagePixels, refs.MaxImagePixels)
+}
+
+func validateVideoReferenceVideo(refs VideoReferenceConfig, index int, media providerMedia) error {
+	if err := validateReferenceDurationUnlessOpaqueAsset("视频", index, media, float64(refs.MinVideoDuration), float64(refs.MaxVideoDuration)); err != nil {
+		return err
+	}
+	if err := validateReferenceFileBytes("视频", index, media.Bytes, refs.MaxVideoBytes); err != nil {
+		return err
+	}
+	if refs.MinVideoPixels > 0 && (media.Width <= 0 || media.Height <= 0) && !opaqueVideoAssetPattern.MatchString(strings.TrimSpace(media.URL)) {
+		return BadAuthRequest(fmt.Sprintf("第 %d 个参考视频尺寸无法读取，请重新导入素材后再提交", index+1))
+	}
+	return validateReferenceGeometry("视频", index, media.Width, media.Height, refs.MinVideoWidth, refs.MaxVideoWidth, refs.MinVideoHeight, refs.MaxVideoHeight, refs.MinVideoAspect, refs.MaxVideoAspect, refs.MinVideoPixels, refs.MaxVideoPixels)
 }
 
 func validateReferenceFileBytes(kind string, index int, bytes, maximum int64) error {

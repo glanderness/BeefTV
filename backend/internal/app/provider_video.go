@@ -18,6 +18,16 @@ import (
 )
 
 func (s *Service) validateResolvedVideoCapability(input *canvasGenerationInput) error {
+	if err := s.resolveVideoCapability(input); err != nil {
+		return err
+	}
+	if input.VideoCapability == nil {
+		return nil
+	}
+	return validateVideoTask(input.VideoCapability, *input)
+}
+
+func (s *Service) resolveVideoCapability(input *canvasGenerationInput) error {
 	if isBeefAPIVideoConfig(input.Config) {
 		if contract, ok := providerpreset.BeefAPIVideoContract(input.Config.Model); ok {
 			for _, ref := range []struct {
@@ -53,7 +63,7 @@ func (s *Service) validateResolvedVideoCapability(input *canvasGenerationInput) 
 		restoreBeefAPISeedanceAudioControl(input.Config, normalized.Video)
 		input.VideoCapability = normalized.Video
 		applyFixedVideoResolution(input, normalized.Video)
-		return validateVideoTask(normalized.Video, *input)
+		return nil
 	}
 	item, err := s.repo.ChannelModelByKey(channelID, providerChannelModelKey(input.Config))
 	if err != nil {
@@ -70,7 +80,7 @@ func (s *Service) validateResolvedVideoCapability(input *canvasGenerationInput) 
 	input.VideoCapability = normalized.Video
 	restoreBeefAPISeedanceAudioControl(input.Config, normalized.Video)
 	applyFixedVideoResolution(input, normalized.Video)
-	return validateVideoTask(normalized.Video, *input)
+	return nil
 }
 
 func restoreBeefAPISeedanceAudioControl(config providerConfig, video *VideoCapabilityConfig) {
@@ -281,6 +291,15 @@ func runSeedanceVideosTask(ctx context.Context, input canvasGenerationInput, pol
 		}
 		if err != nil {
 			return nil, err
+		}
+		if isBeefAPIVideoConfig(input.Config) {
+			encoded, marshalErr := json.Marshal(body)
+			if marshalErr != nil {
+				return nil, fmt.Errorf("序列化上游请求失败：%w", marshalErr)
+			}
+			if int64(len(encoded)) > videoJSONRequestLimitBytes {
+				return nil, errVideoJSONRequestTooLarge
+			}
 		}
 		post := postJSON
 		if isBeefAPIVideoConfig(input.Config) {
