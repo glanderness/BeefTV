@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -302,10 +303,10 @@ func TestWorkflowCreateUncertainCannotResubmit(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			creates := 0
+			var creates atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if strings.Contains(r.URL.Path, "/task/openapi/create") || strings.Contains(r.URL.Path, "/ai-app/run") {
-					creates++
+					creates.Add(1)
 					_, _ = io.Copy(io.Discard, r.Body)
 					tc.handler(w, r)
 					return
@@ -320,8 +321,8 @@ func TestWorkflowCreateUncertainCannotResubmit(t *testing.T) {
 			if !errors.As(err, &unknown) {
 				t.Fatalf("error = %v, want unknown", err)
 			}
-			if creates != 1 {
-				t.Fatalf("creates = %d, want 1", creates)
+			if creates.Load() != 1 {
+				t.Fatalf("creates = %d, want 1", creates.Load())
 			}
 			assertWorkflowUnknownTerminalBlocksRetry(t, s, &task, err)
 		})

@@ -16,7 +16,7 @@ type WorkflowField = workflow.Field
 type RunningHubWorkflowFetchRequest = workflow.FetchRequest
 
 func isRunningHubInterface(value string) bool {
-	pluginID, ok := workflowPluginIDForInterface(normalizeWorkflowInterfaceType(value))
+	pluginID, ok := workflowPluginIDForInterface(value)
 	return ok && pluginID == WorkflowPluginRunningHub
 }
 

@@ -125,4 +125,16 @@
 
 项目素材、角色、分镜和工作流已进入 `internal/project`（见 [projects.md](./projects.md)）；`app` 仍保留任务解密、任务列表和交付读补偿，后者将在后台完整恢复接线后退场。
 
+### 第七轮领域集成与恢复复审
+
+- 素材库 `4fe28cc` / `d322817` 合入 `63ceb0c` / `9f491dc`。独立 asset/canvas/repository race 通过；集成 asset/canvas/handler/app 通过（app 193.717s）。批量配额、资源和画布引用仍由实际调用链校验。
+- 插件完整切片至 `405ea68` 合入 `7f01522` / `6ce8e2a` / `68f118b` / `1c8e5c1` / `b713c34`。独立 plugins/repository race 通过（267.890s / 2.602s）；集成 plugins/repository/app/handler 通过（app 271.256s）。生产注册表为 SQLite 单一权威，包文件导出校验哈希。Windows 目录同步仍有平台能力边界，不能用 macOS 结果代替 Windows 验收。
+- 项目实际领域至 `fd975cb` 合入 `aceb1ce` / `7230598` / `1671213` / `9c509c4` / `885e6b4` / `7a31174`。独立 project/repository race 与前端 typecheck 通过。Lead 在 `c318453` 去除默认工作流绕经 app 的回调，领域自身生成工作流；聚焦 project/app 通过。刷新恢复分镜仍须保留原批准快照，继续 `20261002-032830-continue-0f08e07e`。
+- RunningHub 至 `48c54e3` 合入 `3cc9571` / `0acc7cf` / `da01b85` / `6a10d4a`。Lead 修正插件切片合并后的规范化调用和超时测试计数竞态，集成 workflow/app race 专项通过（1.445s / 2.451s），覆盖完整任务未知受理与禁止重试链。原独立 app race 失败不记为通过。
+- `7a31174` 集成 project/app/bootstrap/handler 全包通过（app 246.859s、bootstrap 75.765s、handler 54.703s），仍不是最终候选的全量验收。
+- Agent 监督器 `45c1e47` 尚未合入：独立 Go race 与 Bun 生命周期测试通过；继续 `20261002-032729-continue-7077865a`，避免未知健康状态被当作空闲杀掉生成，并处理非法认证字节。
+- 画布绑定 `4f6e9a0` 尚未合入，继续 `20261002-033055-continue-e4145505`：历史回执不能覆盖新任务节点，失败的草稿保存不能继续绑定，确认版本必须来自完整服务端投影。消息原子绑定等待 conversation schema 11。
+- 任务作用域 `2add02b` 尚未合入；删除画布会清空历史 task.project_id，重启后重试可被误当独立任务，继续 `20261002-033401-continue-c53f5fa8`。资源 `2d2bc4d` 继续 `20261002-032808-continue-eb655c0f`，恢复提交不得扣除其他上传的预留额度。
+- 对话与画布上传出现 scope epoch 公共文件接缝，集成时必须统一为同一计数与订阅，不允许两套身份时钟。人工画布三方合并继续补 pending projection 的崩溃恢复。
+
 不得将第一批 worker 完成、目录分包或旧版验收报告写作“完整重构完成”。后续变更需按实际依赖顺序实现与验证。
