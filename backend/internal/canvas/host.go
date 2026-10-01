@@ -1,6 +1,7 @@
 package canvas
 
 import (
+	"infinite-canvas/backend/internal/asset"
 	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
@@ -41,16 +42,51 @@ func (nopHost) DeleteUserAssetWithResources(string, string) error           { re
 func (nopHost) RecordActivity(string, string, int)                          {}
 
 type Service struct {
-	repo *repository.Repository
-	host Host
+	repo    *repository.Repository
+	host    Host
+	library *asset.Library
 }
+
+type canvasLibraryHost struct {
+	service *Service
+}
+
+func (h *canvasLibraryHost) EncryptSecret(value string) (string, error) {
+	return h.service.host.EncryptSecret(value)
+}
+func (h *canvasLibraryHost) DecryptSecret(value string) (string, error) {
+	return h.service.host.DecryptSecret(value)
+}
+func (h *canvasLibraryHost) WithStorageLock(fn func() error) error {
+	return h.service.host.WithStorageLock(fn)
+}
+func (h *canvasLibraryHost) StructuredQuota(userID, kind string, creating bool, deltaBytes int64) error {
+	return h.service.host.StructuredQuota(userID, kind, creating, deltaBytes)
+}
+func (h *canvasLibraryHost) StructuredReplacementQuota(userID, kind string, count int, bytes int64) error {
+	return h.service.host.StructuredReplacementQuota(userID, kind, count, bytes)
+}
+func (h *canvasLibraryHost) DeleteUserAssetWithResources(userID, assetID string) error {
+	return h.service.host.DeleteUserAssetWithResources(userID, assetID)
+}
+func (h *canvasLibraryHost) RecordActivity(userID, event string, count int) {
+	h.service.host.RecordActivity(userID, event, count)
+}
+func (h *canvasLibraryHost) GuardAssetCanvasReferences(userID string, item model.Asset) error {
+	return h.service.ValidateAssetCanvasReferences(userID, item)
+}
+func (h *canvasLibraryHost) GuardReplacementCanvasReferences(userID string, items []model.Asset) error {
+	return h.service.ValidateAssetReplacementCanvasReferences(userID, items)
+}
+
+var _ asset.Host = (*canvasLibraryHost)(nil)
 
 // WithHost 返回使用指定 host 的服务副本；host 提供配额、存储锁与资源访问等真实校验。
 func (s *Service) WithHost(host Host) *Service {
 	if s == nil {
 		return New(nil, host)
 	}
-	return &Service{repo: s.repo, host: host}
+	return New(s.repo, host)
 }
 
 // WithRepository 返回绑定到指定仓储（可为事务）的服务副本。
@@ -58,12 +94,28 @@ func (s *Service) WithRepository(repo *repository.Repository) *Service {
 	if s == nil {
 		return New(repo, nil)
 	}
-	return &Service{repo: repo, host: s.host}
+	next := New(repo, s.host)
+	if s.library != nil {
+		next.library = s.library.WithRepository(repo).WithHost(&canvasLibraryHost{service: next})
+	}
+	return next
 }
 
 func New(repo *repository.Repository, host Host) *Service {
 	if host == nil {
 		host = nopHost{}
 	}
-	return &Service{repo: repo, host: host}
+	s := &Service{repo: repo, host: host}
+	s.library = asset.NewLibrary(repo, &canvasLibraryHost{service: s})
+	return s
+}
+
+func (s *Service) Library() *asset.Library {
+	if s == nil {
+		return asset.NewLibrary(nil, nil)
+	}
+	if s.library != nil {
+		return s.library
+	}
+	return asset.NewLibrary(s.repo, &canvasLibraryHost{service: s})
 }

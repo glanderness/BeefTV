@@ -11,6 +11,10 @@ import (
 	"gorm.io/gorm"
 )
 
+var ErrAssetFolderAssignmentConflict = errors.New("asset folder assignment conflict")
+
+const assetFolderAssignmentAttempts = 3
+
 type UserAssetPageFilter struct {
 	Kind          string
 	Category      string
@@ -136,8 +140,24 @@ func (r *Repository) UpdateAssetFolder(folder *model.AssetFolder) error {
 
 func (r *Repository) MoveUserAssetsToFolder(userID string, assetIDs []string, folderID string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if strings.TrimSpace(folderID) != "" {
+			var folder model.AssetFolder
+			if err := tx.First(&folder, "id = ? AND user_id = ?", folderID, userID).Error; err != nil {
+				return err
+			}
+		}
 		return moveUserAssetsToFolder(tx, userID, assetIDs, folderID)
 	})
+}
+
+func (r *Repository) AssignUserAssetFolder(userID, assetID, folderID, payloadJSON string, expectedPayloadJSON string, now time.Time) (bool, error) {
+	result := r.db.Model(&model.Asset{}).Where("id = ? AND user_id = ? AND payload_json = ?", assetID, userID, expectedPayloadJSON).Updates(map[string]any{
+		"folder_id": folderID, "payload_json": payloadJSON, "updated_at": now,
+	})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
 }
 
 func (r *Repository) DeleteAssetFolder(userID string, folderID string) error {
@@ -179,19 +199,36 @@ func moveUserAssetsToFolder(tx *gorm.DB, userID string, assetIDs []string, folde
 	if len(assets) != len(assetIDs) {
 		return gorm.ErrRecordNotFound
 	}
-	now := time.Now().UTC()
 	for index := range assets {
-		payloadJSON, err := assetPayloadWithFolder(assets[index].PayloadJSON, folderID, now)
-		if err != nil {
-			return err
-		}
-		if err := tx.Model(&model.Asset{}).Where("id = ? AND user_id = ?", assets[index].ID, userID).Updates(map[string]any{
-			"folder_id": folderID, "payload_json": payloadJSON, "updated_at": now,
-		}).Error; err != nil {
+		if err := assignAssetFolder(tx, userID, assets[index], folderID); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func assignAssetFolder(tx *gorm.DB, userID string, item model.Asset, folderID string) error {
+	current := item
+	for attempt := 0; attempt < assetFolderAssignmentAttempts; attempt++ {
+		now := time.Now().UTC()
+		payloadJSON, err := assetPayloadWithFolder(current.PayloadJSON, folderID, now)
+		if err != nil {
+			return err
+		}
+		result := tx.Model(&model.Asset{}).Where("id = ? AND user_id = ? AND payload_json = ?", current.ID, userID, current.PayloadJSON).Updates(map[string]any{
+			"folder_id": folderID, "payload_json": payloadJSON, "updated_at": now,
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 1 {
+			return nil
+		}
+		if err := tx.Where("id = ? AND user_id = ?", current.ID, userID).First(&current).Error; err != nil {
+			return err
+		}
+	}
+	return ErrAssetFolderAssignmentConflict
 }
 
 func assetPayloadWithFolder(payloadJSON string, folderID string, updatedAt time.Time) (string, error) {

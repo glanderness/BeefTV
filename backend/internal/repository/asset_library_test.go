@@ -72,6 +72,57 @@ func TestDeleteAssetFolderMovesAssetsToUncategorized(t *testing.T) {
 	}
 }
 
+func TestMoveUserAssetsToFolderRejectsMissingFolder(t *testing.T) {
+	repo, db := newAssetLibraryTestRepository(t)
+	now := time.Now().UTC()
+	asset := model.Asset{ID: "asset-1", UserID: "user-1", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed, Title: "海边", PayloadJSON: `{"id":"asset-1"}`, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&asset).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.MoveUserAssetsToFolder("user-1", []string{"asset-1"}, "missing-folder"); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("move error = %v, want record-not-found", err)
+	}
+	var unchanged model.Asset
+	if err := db.First(&unchanged, "id = ?", "asset-1").Error; err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.FolderID != "" {
+		t.Fatalf("missing folder caused assignment: %#v", unchanged)
+	}
+}
+
+func TestAssignUserAssetFolderDoesNotOverwriteConcurrentPayload(t *testing.T) {
+	repo, db := newAssetLibraryTestRepository(t)
+	now := time.Now().UTC()
+	original := `{"id":"asset-1","source":"生成任务","folderId":""}`
+	updated := `{"id":"asset-1","source":"生成任务","title":"已物化","folderId":""}`
+	asset := model.Asset{ID: "asset-1", UserID: "user-1", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed, Title: "海边", PayloadJSON: original, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&asset).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Asset{}).Where("id = ?", asset.ID).Update("payload_json", updated).Error; err != nil {
+		t.Fatal(err)
+	}
+	patched, err := assetPayloadWithFolder(original, "folder-1", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, err := repo.AssignUserAssetFolder("user-1", "asset-1", "folder-1", patched, original, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("stale folder assignment succeeded")
+	}
+	var stored model.Asset
+	if err := db.First(&stored, "id = ?", "asset-1").Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.FolderID != "" || stored.PayloadJSON != updated {
+		t.Fatalf("generation payload overwritten: %#v", stored)
+	}
+}
+
 func TestMoveUserAssetsToFolderRollsBackWhenAnyAssetIsForeign(t *testing.T) {
 	repo, db := newAssetLibraryTestRepository(t)
 	now := time.Now().UTC()

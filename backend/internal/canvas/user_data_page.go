@@ -8,32 +8,7 @@ import (
 )
 
 func (s *Service) UserAssetsByIDs(userID string, ids []string) ([]json.RawMessage, error) {
-	if len(ids) > 100 {
-		return nil, kernel.BadAuthRequest("每次最多读取 100 个素材")
-	}
-	unique := make([]string, 0, len(ids))
-	seen := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		id = strings.TrimSpace(id)
-		if id == "" || len(id) > 80 {
-			return nil, kernel.BadAuthRequest("素材 ID 无效")
-		}
-		if !seen[id] {
-			seen[id] = true
-			unique = append(unique, id)
-		}
-	}
-	assets, err := s.repo.AssetsForUserIDs(userID, unique)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]json.RawMessage, 0, len(assets))
-	for _, asset := range assets {
-		if payload := ClientAssetPayload(asset); len(payload) > 0 {
-			result = append(result, payload)
-		}
-	}
-	return result, nil
+	return s.Library().UserAssetsByIDs(userID, ids)
 }
 
 type CanvasLibrarySummary struct {
