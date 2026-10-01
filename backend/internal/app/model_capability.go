@@ -893,6 +893,16 @@ func validateVideoTask(profile *VideoCapabilityConfig, input canvasGenerationInp
 	if err := validateVideoReferenceMedia(profile, input); err != nil {
 		return err
 	}
+	return validateVideoTaskParameters(profile, input)
+}
+
+func validateVideoTaskParameters(profile *VideoCapabilityConfig, input canvasGenerationInput) error {
+	if profile == nil {
+		return BadAuthRequest("当前视频模型能力参数无效")
+	}
+	if err := validateModelPromptLength("视频", input.Prompt, profile.References.PromptMaxChars); err != nil {
+		return err
+	}
 	seconds, err := strconv.Atoi(strings.TrimSpace(input.Config.VideoSeconds))
 	if err != nil || !videoDurationAllowed(profile.Duration, seconds) {
 		return BadAuthRequest("视频时长不在当前模型支持范围内")

@@ -9,6 +9,12 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.21
+
+- Keep copied media nodes on the canvas when regenerating them, including changing a copied video's resolution.
+- Upload local Seedance reference media before generation, supporting large files and validating media limits before submission.
+- Preserve reference dimensions and use the same media preparation path for built-in and protocol-based video generation.
+
 ## v1.6.20
 
 - Keep media file extensions when saving or renaming downloads in the Windows file dialog, while preserving overwrite confirmation and cancellation.

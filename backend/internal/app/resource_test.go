@@ -113,14 +113,17 @@ func TestBeefAPIPrefersHTTPSResourceURLWhenPublicBaseConfigured(t *testing.T) {
 		Config: providerConfig{
 			BaseURL: "https://enterprise.beefapi.com", InterfaceType: string(model.ChannelInterfaceNewAPIVideo), Model: "seedance-2.5",
 		},
-		ReferenceAudios: []providerMedia{{ID: "audio-1", StorageKey: "resource:beefapi-https-audio", MimeType: "audio/mpeg", DurationMs: 3000}},
+		ReferenceAudios: []providerMedia{{ID: "audio-1", StorageKey: "resource:beefapi-https-audio", URL: "https://example.com/stale-reference.mp3", DataURL: "data:audio/mpeg;base64,c3RhbGU=", MimeType: "audio/mpeg", DurationMs: 3000}},
 		Metadata:        map[string]interface{}{"videoEditOperation": "audio_to_video"},
 	}
 	if err := svc.hydrateGenerationMedia("user-1", &input, providerMediaHydrationPolicyFor(context.Background(), input)); err != nil {
 		t.Fatalf("hydrateGenerationMedia() error = %v", err)
 	}
-	if !strings.HasPrefix(input.ReferenceAudios[0].URL, "https://example.com/") || strings.HasPrefix(input.ReferenceAudios[0].DataURL, "data:") {
-		t.Fatalf("audio = %#v, want HTTPS public URL", input.ReferenceAudios[0])
+	if input.ReferenceAudios[0].StorageKey != "resource:beefapi-https-audio" || input.ReferenceAudios[0].URL != "" || strings.HasPrefix(input.ReferenceAudios[0].DataURL, "data:") {
+		t.Fatalf("audio = %#v, want owned local key until preupload", input.ReferenceAudios[0])
+	}
+	if input.ReferenceAudios[0].MimeType != "audio/mpeg" || input.ReferenceAudios[0].Bytes != 9 || input.ReferenceAudios[0].DurationMs != 3000 {
+		t.Fatalf("keepLocal metadata lost: %#v", input.ReferenceAudios[0])
 	}
 }
 
@@ -231,14 +234,21 @@ func TestBeefAPILocalVideoReferenceHydratesInlineForFlatRequest(t *testing.T) {
 	if err := svc.hydrateGenerationMedia("user-1", &input, providerMediaHydrationPolicyFor(context.Background(), input)); err != nil {
 		t.Fatalf("hydrateGenerationMedia() error = %v", err)
 	}
+	if input.ReferenceImages[0].DataURL != "" || input.ReferenceImages[0].StorageKey != "resource:beefapi-local-reference" {
+		t.Fatalf("keepLocal inlined local Seedance media: %#v", input.ReferenceImages[0])
+	}
+	if input.ReferenceImages[0].MimeType != "image/png" {
+		t.Fatalf("resource mime lost: %#v", input.ReferenceImages[0])
+	}
+	input.ReferenceImages[0].URL = "https://example.com/reference.png"
 	body, err := beefAPIVideoRequestBody(input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	content := body["content"].([]map[string]interface{})
 	image, _ := content[0]["image_url"].(map[string]interface{})
-	if !strings.HasPrefix(fmt.Sprint(image["url"]), "data:image/png;base64,") {
-		t.Fatalf("image = %#v, want inline image data URL", image)
+	if fmt.Sprint(image["url"]) != "https://example.com/reference.png" {
+		t.Fatalf("image = %#v, want URL-only reference", image)
 	}
 	if content[0]["role"] != "first_frame" || body["metadata"].(map[string]interface{})["ratio"] != "adaptive" {
 		t.Fatal("hydration lost frame constraints")
