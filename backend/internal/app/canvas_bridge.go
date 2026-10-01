@@ -136,15 +136,7 @@ func newCanvasHost(service *Service) canvasHost {
 // transaction. The desktop pool has one SQLite connection; a nested
 // storageMu here inverts createTaskWithinStorageQuota / 创作 Execute.
 func repoHoldsTransaction(repo *repository.Repository) bool {
-	if repo == nil {
-		return false
-	}
-	db := repo.DB()
-	if db == nil || db.Statement == nil {
-		return false
-	}
-	_, ok := db.Statement.ConnPool.(gorm.TxCommitter)
-	return ok
+	return repo.HoldsTransaction()
 }
 
 // newCanvasHostWithRepo 与 newCanvasHost 完全一致，但配额/用量读取绑定到给定仓储。
@@ -361,17 +353,16 @@ func (s *Service) DeleteUserCanvasDrawing(userID, canvasID, drawingID string) er
 
 // runCanvasLibraryWrite 在组合根开启写事务，并把 host 绑到同一条连接。
 // 领域 withWriteTx 见到 HoldsTransaction 后不再嵌套 BEGIN。
-// 这是现有 canvasDomainWithTx 的 HTTP 入口，不是另一套事务辅助函数。
 func (s *Service) runCanvasLibraryWrite(fn func(*canvas.Service) error) error {
 	if s == nil || s.repo == nil {
 		return fn(s.canvasDomain())
 	}
 	if s.repo.HoldsTransaction() {
-		return fn(s.canvasDomain().WithRepository(s.repo).WithHost(newCanvasHostWithRepo(s, s.repo)))
+		return fn(s.canvasDomainWithTx(s.repo.DB()))
 	}
 	return newCanvasHost(s).WithStorageLock(func() error {
 		return s.repo.Transaction(func(txRepo *repository.Repository) error {
-			return fn(s.canvasDomain().WithRepository(txRepo).WithHost(newCanvasHostWithRepo(s, txRepo)))
+			return fn(s.canvasDomainWithTx(txRepo.DB()))
 		})
 	})
 }

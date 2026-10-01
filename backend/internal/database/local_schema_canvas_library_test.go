@@ -46,8 +46,12 @@ func TestCanvasLibrarySchemaMigratesHistoricalLayouts(t *testing.T) {
 				t.Fatal(err)
 			}
 			last := ledger[len(ledger)-1]
-			if last.Version != CurrentSchemaVersion || last.Name != "canvas-library-drawings" {
-				t.Fatalf("v12 identity: %+v", last)
+			if last.Version != CurrentSchemaVersion {
+				t.Fatalf("current schema identity: %+v", last)
+			}
+			var canvasMigration localSchemaMigration
+			if err := db.First(&canvasMigration, "version = ?", 12).Error; err != nil || canvasMigration.Name != "canvas-library-drawings" {
+				t.Fatalf("v12 identity: %+v, err = %v", canvasMigration, err)
 			}
 			for i, row := range before {
 				if ledger[i].Name != row.Name || !ledger[i].AppliedAt.Equal(row.AppliedAt) {
@@ -88,7 +92,7 @@ func TestCanvasLibrarySchemaCrashRetryKeepsUnknownColumns(t *testing.T) {
 		t.Fatalf("migration error = %v, want injected failure", err)
 	}
 	version, err := currentSchemaVersion(db)
-	if err != nil || version != 10 {
+	if err != nil || version != 11 {
 		t.Fatalf("version after v12 failure = %d, err = %v", version, err)
 	}
 	if db.Migrator().HasTable(&model.CanvasDrawing{}) {
