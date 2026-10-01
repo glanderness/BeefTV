@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"infinite-canvas/backend/internal/agentops"
+	"infinite-canvas/backend/internal/operations"
 )
 
 func TestOpsListingKeepsOwnerAndExternalCatalogFull(t *testing.T) {
@@ -17,8 +19,14 @@ func TestOpsListingKeepsOwnerAndExternalCatalogFull(t *testing.T) {
 	}
 
 	ownerListing := getOps(t, env, map[string]string{"X-Beeftv-Owner": owner})
-	if len(ownerListing) != 10 {
-		t.Fatalf("owner 能力发现应为 10，得到 %d %v", len(ownerListing), ownerListing)
+	registry := operations.NewRegistry(nil, nil)
+	operations.RegisterDefaultOps(registry)
+	want := make([]string, 0)
+	for _, descriptor := range registry.List(operations.ManualCaller(false)) {
+		want = append(want, descriptor.ID)
+	}
+	if !reflect.DeepEqual(ownerListing, want) {
+		t.Fatalf("owner 能力发现应为 %v，得到 %v", want, ownerListing)
 	}
 	if !listingHas(ownerListing, "canvas.document.commit") {
 		t.Fatalf("owner 应包含文档提交: %v", ownerListing)
@@ -32,13 +40,19 @@ func TestOpsListingKeepsOwnerAndExternalCatalogFull(t *testing.T) {
 		t.Fatal(err)
 	}
 	externalListing := getOps(t, env, map[string]string{"X-Beeftv-Client": reg.ID, "Authorization": "Bearer " + token})
-	if len(externalListing) != 10 {
-		t.Fatalf("外部客户端能力发现应为 10，得到 %d %v", len(externalListing), externalListing)
+	if !reflect.DeepEqual(externalListing, want) {
+		t.Fatalf("外部客户端能力发现应为 %v，得到 %v", want, externalListing)
 	}
 
 	hostListing := getOps(t, env, map[string]string{"X-Beeftv-Agent-Token": assistantTestHostToken})
-	if len(hostListing) != 7 {
-		t.Fatalf("宿主回合外能力发现应为 7，得到 %d %v", len(hostListing), hostListing)
+	wantHost := make([]string, 0)
+	for _, descriptor := range registry.List(operations.ManualCaller(false)) {
+		if descriptor.ID != "asset.list" && descriptor.ID != "canvas.search" && descriptor.ID != "canvas.document.commit" {
+			wantHost = append(wantHost, descriptor.ID)
+		}
+	}
+	if !reflect.DeepEqual(hostListing, wantHost) {
+		t.Fatalf("宿主回合外能力发现应为 %v，得到 %v", wantHost, hostListing)
 	}
 	if listingHas(hostListing, "asset.list") || listingHas(hostListing, "canvas.search") || listingHas(hostListing, "canvas.document.commit") {
 		t.Fatalf("助手不应看到工作区级或整页写操作: %v", hostListing)

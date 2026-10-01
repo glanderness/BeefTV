@@ -139,8 +139,9 @@ func runSupervisorFixture() int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	_ = os.WriteFile(filepath.Join(dataDir, "endpoint.txt"), []byte(host.Endpoint()), 0o600)
 	_ = os.WriteFile(filepath.Join(dataDir, "child-pid.txt"), []byte(strconv.Itoa(host.PID())), 0o600)
+	// Publish readiness last; readers must never observe the PID file mid-truncate.
+	_ = os.WriteFile(filepath.Join(dataDir, "endpoint.txt"), []byte(host.Endpoint()), 0o600)
 	select {}
 }
 
