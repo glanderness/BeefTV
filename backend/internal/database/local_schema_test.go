@@ -128,6 +128,11 @@ func TestHostedCleanupCreatesRecoverableSQLiteBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	connection, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
 	if err := db.Exec("CREATE TABLE billing_orders (id TEXT PRIMARY KEY)").Error; err != nil {
 		t.Fatal(err)
 	}
@@ -145,6 +150,11 @@ func TestHostedCleanupCreatesRecoverableSQLiteBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	backupConnection, err := backup.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer backupConnection.Close()
 	var count int64
 	if err := backup.Table("billing_orders").Where("id = ?", "legacy-order").Count(&count).Error; err != nil || count != 1 {
 		t.Fatalf("backup legacy order count = %d, err = %v", count, err)
