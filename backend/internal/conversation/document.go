@@ -10,12 +10,14 @@ import (
 	"unicode/utf8"
 )
 
+// MaxDocumentBytes matches the existing structured workspace document bound.
+// Message count and individual text fields do not introduce smaller limits.
+const MaxDocumentBytes = 4 << 20
+
 const (
-	maxDocumentBytes = 512 << 10
-	maxMessages      = 1000
+	maxDocumentBytes = MaxDocumentBytes
 	maxIDLength      = 80
 	maxTitleLength   = 120
-	maxStringField   = 64 << 10
 )
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9._:~-]{1,80}$`)
@@ -106,9 +108,6 @@ func normalizeMessages(value any) ([]any, error) {
 	list, ok := value.([]any)
 	if !ok {
 		return nil, errInvalid("消息列表无效")
-	}
-	if len(list) > maxMessages {
-		return nil, errInvalid("消息数量超出限制")
 	}
 	out := make([]any, 0, len(list))
 	seen := make(map[string]struct{}, len(list))
@@ -275,9 +274,6 @@ func sanitizeValueAt(value any, key string) (any, error) {
 	case string:
 		if isMediaURLKey(key) && isTempMediaBlob(typed) {
 			return skipField, nil
-		}
-		if utf8.RuneCountInString(typed) > maxStringField {
-			return nil, errInvalid("对话字段过长")
 		}
 		return typed, nil
 	default:

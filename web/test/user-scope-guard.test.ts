@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { getActiveUserScope, getActiveUserScopeEpoch, setActiveUserScope } from "@/lib/user-scope";
+import { captureUserScopeEpoch, getActiveUserScope, getActiveUserScopeEpoch, getUserScopeGeneration, setActiveUserScope, subscribeUserScope, userScopeEpochMatches } from "@/lib/user-scope";
 import { assertUserScope, captureUserScope, isUserScopeAbandonedError, UserScopeAbandonedError, userScopeMatches } from "@/lib/user-scope-guard";
 
 function switchScope(userId: string) {
@@ -10,6 +10,21 @@ function switchScope(userId: string) {
 }
 
 describe("user scope guard", () => {
+    test("conversation subscribers and upload guards share one epoch", () => {
+        const restore = switchScope("owner-a");
+        const conversation = captureUserScopeEpoch();
+        const media = captureUserScope();
+        const seen: number[] = [];
+        const unsubscribe = subscribeUserScope((value) => seen.push(value.generation));
+        try {
+            setActiveUserScope("owner-b");
+            setActiveUserScope("owner-a");
+            expect(seen).toEqual([media.epoch + 1, media.epoch + 2]);
+            expect(getUserScopeGeneration()).toBe(getActiveUserScopeEpoch());
+            expect(userScopeEpochMatches(conversation)).toBe(false);
+            expect(userScopeMatches(media)).toBe(false);
+        } finally { unsubscribe(); restore(); }
+    });
     test("captures scope plus epoch and does not retain tokens", () => {
         const restore = switchScope("owner-a");
         try {

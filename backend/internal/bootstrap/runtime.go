@@ -18,6 +18,7 @@ import (
 	"infinite-canvas/backend/internal/assistantruntime"
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/buildinfo"
+	"infinite-canvas/backend/internal/conversation"
 	"infinite-canvas/backend/internal/database"
 	canvasHandler "infinite-canvas/backend/internal/handler"
 	"infinite-canvas/backend/internal/localapp"
@@ -203,6 +204,7 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 		Generation:         localRoot.Generation,
 		BeefAPI:            beefAPIConnection,
 		AssistantHost:      assistantHost,
+		Conversations:      conversation.New(conversation.NewStore(repo)),
 		DesktopTrust:       desktopTrust(launchToken, uiBootstrapToken),
 	})
 	router.NoRoute(func(c *gin.Context) {

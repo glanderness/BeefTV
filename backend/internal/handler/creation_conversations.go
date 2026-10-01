@@ -14,7 +14,7 @@ import (
 	"infinite-canvas/backend/internal/conversation"
 )
 
-const creationConversationMaxBody = 1 << 20
+const creationConversationMaxBody = conversation.MaxDocumentBytes + (1 << 20)
 
 func RegisterCreationConversationRoutes(r *gin.RouterGroup, svc *app.Service, conversations *conversation.Service) {
 	registerCreationConversationRoutes(r, svc, conversations)

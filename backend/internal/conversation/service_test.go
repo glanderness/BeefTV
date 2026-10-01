@@ -3,6 +3,7 @@ package conversation_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -16,6 +17,31 @@ import (
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/repository"
 )
+
+func TestConversationKeepsLongTextAndHistoryWithinWorkspaceDocumentBound(t *testing.T) {
+	_, _, service := openConversationFixture(t)
+	messages := make([]map[string]any, 1001)
+	for i := range messages {
+		messages[i] = map[string]any{"id": fmt.Sprintf("m-%d", i), "role": "user", "content": "hello"}
+	}
+	messages[0]["content"] = strings.Repeat("长", 70_000)
+	raw, err := json.Marshal(map[string]any{"id": "long-history", "title": "旧对话", "messages": messages})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Put("owner", "long-history", 0, raw); err != nil {
+		t.Fatalf("valid legacy history must remain saveable: %v", err)
+	}
+	tooLarge, err := json.Marshal(map[string]any{"id": "too-large", "messages": []map[string]any{
+		{"id": "m-1", "role": "user", "content": strings.Repeat("x", conversation.MaxDocumentBytes)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Put("owner", "too-large", 0, tooLarge); err == nil {
+		t.Fatal("document bound must reject without truncation")
+	}
+}
 
 func openConversationFixture(t *testing.T) (*gorm.DB, string, *conversation.Service) {
 	t.Helper()
