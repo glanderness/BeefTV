@@ -67,10 +67,10 @@ BeefTV 的 2.5 首帧设置显示“随首帧”，编辑/延长显示“随原�
 |---|---|---|
 |[火山真人素材库](https://docs.volcengine.com/docs/ark/upload-real-person-portrait-assets?lang=zh)|视频总像素 407696–8295044，图片另列边长与宽高比|不能把视频像素规则套到图片|
 |[WhatsToken 原生接口](https://www.whatstoken.ai/api/v1/plugins/docs-api/public/docs/11?lang=zh)|原生任务提交和查询接口|维持原生协议，不套兼容接口的参数枚举|
-|[WhatsToken 素材库](https://www.whatstoken.ai/api/v1/plugins/docs-api/public/docs/27?lang=zh)|素材管理接口，引用火山素材库|已知 BeefAPI/WhatsToken 地址的旧默认视频像素下限对齐 407696；其他模型、自定义限制和原生 Ark 默认不迁移|
+|[WhatsToken 素材库](https://www.whatstoken.ai/api/v1/plugins/docs-api/public/docs/27?lang=zh)|素材管理接口，引用火山素材库|已知 BeefAPI/WhatsToken 地址以及原生 Ark Seedance 2.x 的旧默认视频像素下限对齐 407696；其他模型与用户自定义限制不迁移|
 |[WhatsToken 兼容视频接口](https://www.whatstoken.ai/api/v1/plugins/docs-api/public/docs/47?lang=zh)|兼容路由的 images/videos/role/type 等字段|不把其 5/10 秒简化表视作原生 Seedance 全部能力|
 
-已覆盖数量、文件大小、单段及合计时长、边长、宽高比、视频总像素与角色参数。帧率从视频轨的采样时间读取，支持普通、分片及混合 MP4；不会拿音轨时长代算。直连 WhatsToken 在本地校验，企业渠道由网关根据实际线路校验。素材转换线路采用文档的 24–60 FPS 范围，23.976 低于该下限；火山原生接口不自动套用素材库的帧率限制。
+已覆盖数量、文件大小、单段及合计时长、边长、宽高比、视频总像素与角色参数。帧率从视频轨的采样时间读取，支持普通、分片及混合 MP4；不会拿音轨时长代算。直连 WhatsToken 与原生 Ark Seedance 2.x 在本地校验 24–60 FPS；企业渠道由网关根据实际线路校验。23.976 低于该下限。用户自定义渠道的明确限制仍按其配置执行。
 
 MP4/MOV 是容器格式，不是完整编码白名单。编码标识从视频轨读取，未被解析器识别的编码不直接判为模型不支持。上游明确拒绝编码时，会提示重新导出素材；只修改文件后缀无效。
 

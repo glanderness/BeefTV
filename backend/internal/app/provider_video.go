@@ -74,6 +74,9 @@ func (s *Service) validateResolvedVideoCapability(input *canvasGenerationInput) 
 }
 
 func restoreBeefAPISeedanceAudioControl(config providerConfig, video *VideoCapabilityConfig) {
+	if config.VideoCapabilitiesVersion != nil {
+		return
+	}
 	// Saved built-in profiles predate the supported audio switch. This is a
 	// BeefAPI contract correction, not an override of custom provider settings.
 	contract, known := providerpreset.BeefAPIVideoContract(config.Model)
