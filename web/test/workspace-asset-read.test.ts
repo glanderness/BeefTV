@@ -25,7 +25,7 @@ import {
     workspaceAssetProjectOptions,
     workspaceAssetTraversalTotal,
 } from "@/services/workspace-asset-read";
-import { peekAssetStoreDraft, recordAssetStoreDraft, resetAssetStoreDraftsForTests, useAssetStore, type Asset } from "@/stores/use-asset-store";
+import { hydrateAssetStoreDrafts, peekAssetStoreDraft, recordAssetStoreDraft, resetAssetStoreDraftsForTests, useAssetStore, type Asset } from "@/stores/use-asset-store";
 
 function deferred<T = void>() {
     let resolve!: (value: T | PromiseLike<T>) => void;
@@ -514,6 +514,9 @@ describe("workspace asset canonical reads", () => {
     test("draft asset snapshot is usable when the store has no projected copy", async () => {
         const restore = switchScope("owner-a");
         desktopBackend();
+        // Hydration itself projects drafts; stage this fixture afterward to
+        // exercise a draft whose effective-store projection is truly absent.
+        await hydrateAssetStoreDrafts("owner-a");
         useAssetStore.setState({ assets: [] });
         recordAssetStoreDraft("snap-1", "upsert");
         Object.assign(peekAssetStoreDraft(getActiveUserScope(), "snap-1") as object, { asset: sampleAsset("snap-1", "快照素材") });

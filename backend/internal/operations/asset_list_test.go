@@ -7,9 +7,17 @@ import (
 	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/model"
 	localtask "infinite-canvas/backend/internal/task"
+	"infinite-canvas/backend/internal/taskbinding"
 )
 
 type unusedDomain struct{}
+
+func (unusedDomain) UserConversation(string, string) (taskbinding.ConversationView, error) {
+	panic("unused")
+}
+func (unusedDomain) AttachConversationMessage(string, taskbinding.MessageAttachInput) (taskbinding.ConversationView, error) {
+	panic("unused")
+}
 
 func (unusedDomain) UserCanvasProject(string, string) (json.RawMessage, error) {
 	panic("unused")
