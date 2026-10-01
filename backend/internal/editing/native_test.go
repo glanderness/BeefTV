@@ -10,6 +10,22 @@ import (
 	"testing"
 )
 
+func TestBoundedEncoderLogRetainsEarlySplitFontFailure(t *testing.T) {
+	log := &ffmpegLogTail{max: 64 << 10}
+	_, _ = log.Write([]byte("[libass] failed to find any fall"))
+	_, _ = log.Write([]byte("back font\n"))
+	_, _ = log.Write([]byte(strings.Repeat("frame=100 encoding progress\n", 5000)))
+	if len(log.Text()) > 64<<10 {
+		t.Fatal("encoder log exceeded its bound")
+	}
+	if strings.Contains(log.Text(), "fallback") {
+		t.Fatal("fixture did not evict early warning")
+	}
+	if !log.FontFailure() {
+		t.Fatal("long encoding hid a subtitle font failure")
+	}
+}
+
 func TestBuildFFmpegArgsLayout(t *testing.T) {
 	plan, err := Compile(Project{
 		Version: 2,
@@ -176,11 +192,30 @@ exit 1
 }
 
 func TestOutputDurationWithinPlanAllowsEncoderSlack(t *testing.T) {
-	if !outputDurationWithinPlan(1000, 1080) || !outputDurationWithinPlan(1000, 920) {
+	if !outputDurationWithinPlan(1000, 1080, 30) || !outputDurationWithinPlan(1000, 920, 30) {
 		t.Fatal("normal container slack rejected")
 	}
-	if outputDurationWithinPlan(1000, 2000) || outputDurationWithinPlan(1000, 0) || outputDurationWithinPlan(0, 1000) {
+	if outputDurationWithinPlan(1000, 2000, 30) || outputDurationWithinPlan(1000, 0, 30) || outputDurationWithinPlan(0, 1000, 30) {
 		t.Fatal("large duration drift accepted")
+	}
+}
+
+func TestRendererAcceptsOneFrameAtSupportedLowFPS(t *testing.T) {
+	src := requireTinyAVSource(t)
+	plan := shortVideoPlan()
+	plan.Output.FPS = 1
+	plan.DurationMs = 500
+	plan.Segments[0].DurationMs = 500
+	renderer := &Renderer{Sources: fileSources{"src": src}}
+	output, cleanup, err := renderer.Render(context.Background(), plan, nil)
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		t.Fatalf("supported 1 fps plan rejected: %v", err)
+	}
+	if output.DurationMs <= 0 {
+		t.Fatal("empty duration")
 	}
 }
 

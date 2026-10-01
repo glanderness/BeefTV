@@ -104,7 +104,7 @@ func (r *Renderer) Render(ctx context.Context, plan *Plan, progress Progress) (R
 	cmd.Stderr = log
 	runErr := cmd.Run()
 	output := log.Text()
-	if runErr != nil || (plan.SubtitleSRT != "" && SubtitleFontFailure(output)) {
+	if runErr != nil || (plan.SubtitleSRT != "" && log.FontFailure()) {
 		return fail(fmt.Errorf("ffmpeg 渲染失败：%s", ffmpegErrorDetail(output, runErr)))
 	}
 	outputFacts, size, err := verifyRenderedOutput(ctx, target, plan)
@@ -149,13 +149,13 @@ func verifyRenderedOutput(ctx context.Context, path string, plan *Plan) (SourceF
 	if facts.DurationMs <= 0 {
 		return SourceFacts{}, 0, fmt.Errorf("渲染产物时长无效")
 	}
-	if plan != nil && !outputDurationWithinPlan(plan.DurationMs, facts.DurationMs) {
+	if plan != nil && !outputDurationWithinPlan(plan.DurationMs, facts.DurationMs, plan.Output.FPS) {
 		return SourceFacts{}, 0, fmt.Errorf("渲染产物时长无效")
 	}
 	return facts, stat.Size(), nil
 }
 
-func outputDurationWithinPlan(planMs, probedMs int64) bool {
+func outputDurationWithinPlan(planMs, probedMs int64, fps int) bool {
 	if planMs <= 0 || probedMs <= 0 {
 		return false
 	}
@@ -163,7 +163,13 @@ func outputDurationWithinPlan(planMs, probedMs int64) bool {
 	if delta < 0 {
 		delta = -delta
 	}
-	return delta <= OutputDurationToleranceMs
+	if fps <= 0 {
+		fps = DefaultFPS
+	}
+	// A legal low-frame-rate encode is quantized to complete video frames.
+	// Keep the normal bound, allowing at most one frame plus container slack.
+	tolerance := max(int64(OutputDurationToleranceMs), (1000+int64(fps)-1)/int64(fps)+100)
+	return delta <= tolerance
 }
 
 func ffmpegErrorDetail(output string, runErr error) string {
@@ -181,9 +187,11 @@ func ffmpegErrorDetail(output string, runErr error) string {
 }
 
 type ffmpegLogTail struct {
-	mu  sync.Mutex
-	max int
-	buf []byte
+	mu          sync.Mutex
+	max         int
+	buf         []byte
+	fontFailure bool
+	scanTail    string
 }
 
 func (t *ffmpegLogTail) Write(p []byte) (int, error) {
@@ -192,6 +200,14 @@ func (t *ffmpegLogTail) Write(p []byte) (int, error) {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	// Font warnings may occur early, before a long encode fills the diagnostic
+	// tail. Retain the verdict and a small overlap for split stderr writes.
+	scan := t.scanTail + string(p)
+	t.fontFailure = t.fontFailure || SubtitleFontFailure(scan)
+	if len(scan) > 256 {
+		scan = scan[len(scan)-256:]
+	}
+	t.scanTail = scan
 	if t.max <= 0 {
 		return len(p), nil
 	}
@@ -218,6 +234,15 @@ func (t *ffmpegLogTail) Text() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return string(t.buf)
+}
+
+func (t *ffmpegLogTail) FontFailure() bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.fontFailure
 }
 
 func (r *Renderer) materialize(ctx context.Context, plan *Plan) (string, map[string]string, func(), error) {

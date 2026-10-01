@@ -442,7 +442,7 @@ func TestRendererRenderProbesActualOutput(t *testing.T) {
 	if rendered.Size == 0 || rendered.Width != 320 {
 		t.Fatalf("rendered=%+v", rendered)
 	}
-	if !outputDurationWithinPlan(plan.DurationMs, rendered.DurationMs) {
+	if !outputDurationWithinPlan(plan.DurationMs, rendered.DurationMs, plan.Output.FPS) {
 		t.Fatalf("rendered duration %d outside plan %d", rendered.DurationMs, plan.DurationMs)
 	}
 	facts, err := Probe(ctx, rendered.Path)
