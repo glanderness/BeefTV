@@ -31,6 +31,33 @@ test("Wan uses shared protocol and supported reference limits across reloads", (
     }
 });
 
+test("saved BeefAPI Seedance profiles restore audio control without changing explicit defaults or custom endpoints", async () => {
+    const model = "seedance-2.0-fast";
+    for (const legacy of [false, true]) {
+        for (const baseUrl of ["https://enterprise.beefapi.com", "https://custom.example"]) {
+            const capabilityConfig = defaultModelCapabilityConfig("newapi", model);
+            capabilityConfig.video!.generateAudio = {supported: false, default: false};
+            capabilityConfig.video!.references.maxImages = legacy ? 9 : 2;
+            if (legacy) {
+                capabilityConfig.video!.operations = ["text_to_video", "image_to_video"];
+                Object.assign(capabilityConfig.video!.references, {maxVideos: 0, maxAudios: 0, maxVideoDurationSeconds: 0, maxAudioDurationSeconds: 0, maxVideoBytes: 200 * 1024 * 1024, maxAudioBytes: 15 * 1024 * 1024});
+            }
+            const channel = createModelChannel({id: "saved", baseUrl, models: [model], modelProfiles: [{model, capability: "video", protocol: "newapi", capabilityConfig}]});
+            let snapshot = {...defaultConfig, channels: [channel], videoGenerateAudio: "false"};
+            for (let reload = 0; reload < 2; reload++) snapshot = normalizeConfigSnapshot({config: snapshot}).config;
+            const profile = modelCapabilityConfigFor(snapshot, `saved::${model}`).video!;
+            expect(profile.generateAudio).toEqual({supported: isBeefAPIEndpoint(baseUrl), default: false});
+            expect(profile.references.maxImages).toBe(legacy ? 9 : 2);
+            if (!isBeefAPIEndpoint(baseUrl)) continue;
+            const config = resolveModelRequestConfig(snapshot, `saved::${model}`);
+            const calls: unknown[] = [];
+            const deps = {response: videoResponseTools, transport: {...createVideoTransport(config), post: async <T>(_url: string, body: unknown) => { calls.push(body); return {id: "saved", status: "queued"} as T; }}};
+            await createVideoGenerationsTask(deps, config, model, "test", [], [], []);
+            expect(calls[0]).toMatchObject({generate_audio: false});
+        }
+    }
+});
+
 test("new models preserve their catalog protocol without inheriting unverified inline support", () => {
     const model = "future-video";
     const channel = createModelChannel({id: "beefapi", baseUrl: "https://enterprise.beefapi.com", models: [model], modelProfiles: [{model, capability: "video", protocol: "minimax-video"}]});

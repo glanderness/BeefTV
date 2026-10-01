@@ -50,6 +50,7 @@ func (s *Service) validateResolvedVideoCapability(input *canvasGenerationInput) 
 			return errors.New("当前视频模型能力参数无效")
 		}
 		input.Config.CapabilityConfig = normalized
+		restoreBeefAPISeedanceAudioControl(input.Config, normalized.Video)
 		input.VideoCapability = normalized.Video
 		applyFixedVideoResolution(input, normalized.Video)
 		return validateVideoTask(normalized.Video, *input)
@@ -67,8 +68,18 @@ func (s *Service) validateResolvedVideoCapability(input *canvasGenerationInput) 
 		return errors.New("当前视频模型能力参数无效")
 	}
 	input.VideoCapability = normalized.Video
+	restoreBeefAPISeedanceAudioControl(input.Config, normalized.Video)
 	applyFixedVideoResolution(input, normalized.Video)
 	return validateVideoTask(normalized.Video, *input)
+}
+
+func restoreBeefAPISeedanceAudioControl(config providerConfig, video *VideoCapabilityConfig) {
+	// Saved built-in profiles predate the supported audio switch. This is a
+	// BeefAPI contract correction, not an override of custom provider settings.
+	contract, known := providerpreset.BeefAPIVideoContract(config.Model)
+	if isBeefAPIVideoConfig(config) && known && contract.Protocol == "newapi" && isSeedance2Family("newapi", config.Model) {
+		video.GenerateAudio.Supported = true
+	}
 }
 
 func runVideoTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
