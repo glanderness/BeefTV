@@ -1005,10 +1005,9 @@ func (r *Repository) DeleteCanvasProject(userID string, id string) error {
 		if err := tx.Where("canvas_id = ?", id).Delete(&model.CanvasUnitLink{}).Error; err != nil {
 			return err
 		}
-		// 任务和会话是审计记录，不随独立画布实体保留归属 ID，避免删除后继续挂住画布上下文。
-		if err := tx.Model(&model.Task{}).Where("user_id = ? AND project_id = ?", userID, id).Update("project_id", "").Error; err != nil {
-			return err
-		}
+		// Historical tasks keep project_id. There is no FK from tasks to canvases;
+		// clearing the id would make a reload look like standalone work and start
+		// a new paid run. Retry fail-closes because the canvas row is gone.
 		return tx.Delete(&model.CanvasProject{}, "id = ? AND user_id = ?", id, userID).Error
 	})
 }
@@ -1184,9 +1183,9 @@ func (r *Repository) DeleteProject(userID string, id string, canvasUpdates []mod
 		if err := tx.Where("project_id = ?", id).Delete(&model.ProjectUnit{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Model(&model.Task{}).Where("user_id = ? AND project_id = ?", userID, id).Update("project_id", "").Error; err != nil {
-			return err
-		}
+		// Historical tasks keep project_id. There is no FK from tasks to projects;
+		// clearing the id would make a reload look like standalone work and start
+		// a new paid run. Retry fail-closes because the project row is gone.
 		return tx.Delete(&model.Project{}, "id = ? AND user_id = ?", id, userID).Error
 	})
 }

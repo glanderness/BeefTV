@@ -13,9 +13,19 @@ import (
 	"gorm.io/gorm"
 )
 
+func taskScopeDSN(path string) string {
+	return path + "?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=on"
+}
+
 func newTaskScopeRepo(t *testing.T) (*Repository, *gorm.DB) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "task-scope.db")+"?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=on"), &gorm.Config{})
+	repo, db, _ := newTaskScopeRepoAt(t, filepath.Join(t.TempDir(), "task-scope.db"))
+	return repo, db
+}
+
+func newTaskScopeRepoAt(t *testing.T, path string) (*Repository, *gorm.DB, string) {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(taskScopeDSN(path)), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,10 +37,38 @@ func newTaskScopeRepo(t *testing.T) (*Repository, *gorm.DB) {
 		&model.CanvasSnapshotResource{},
 		&model.CanvasUnitLink{},
 		&model.Project{},
+		&model.ProjectUnit{},
+		&model.ProjectAssetLink{},
+		&model.ProjectAssetFolder{},
+		&model.ProjectAssetCandidate{},
+		&model.Shot{},
+		&model.ShotRevision{},
+		&model.ShotArtifact{},
+		&model.ShotAssetReference{},
+		&model.WorkflowInstance{},
+		&model.WorkflowStepInstance{},
+		&model.WorkflowStepTask{},
+		&model.ProductionTaskLink{},
 	); err != nil {
 		t.Fatal(err)
 	}
-	return New(db), db
+	return New(db), db, path
+}
+
+func reopenTaskScopeRepo(t *testing.T, db *gorm.DB, path string) (*Repository, *gorm.DB) {
+	t.Helper()
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := gorm.Open(sqlite.Open(taskScopeDSN(path)), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return New(reopened), reopened
 }
 
 func seedScopeProject(t *testing.T, db *gorm.DB, project model.Project) model.Project {
@@ -183,13 +221,22 @@ func TestRetryTaskFailsClosedOnDeletedCanvas(t *testing.T) {
 	if err := repo.DeleteCanvasProject("user-1", canvas.ID); err != nil {
 		t.Fatal(err)
 	}
-	prepared := *failed
-	if _, err := repo.RetryTask("user-1", &prepared, 8); !errors.Is(err, ErrTaskScopeNotActive) {
+	loaded, err := repo.TaskForUser("user-1", failed.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ProjectID != canvas.ID {
+		t.Fatalf("deleted canvas stripped task scope: %#v", loaded)
+	}
+	if _, err := repo.RetryTask("user-1", loaded, 8); !errors.Is(err, ErrTaskScopeNotActive) {
 		t.Fatalf("retry deleted canvas error = %v", err)
 	}
 	var still model.Task
 	if err := db.First(&still, "id = ?", failed.ID).Error; err != nil || still.Status != model.TaskStatusFailed {
 		t.Fatalf("retry mutated deleted-scope task: %#v err=%v", still, err)
+	}
+	if still.ProjectID != canvas.ID {
+		t.Fatalf("retry cleared original scope: %#v", still)
 	}
 }
 
@@ -218,15 +265,25 @@ func TestCreateTaskReplayAfterTargetDeletionReturnsReceipt(t *testing.T) {
 	if err := repo.DeleteCanvasProject("user-1", canvas.ID); err != nil {
 		t.Fatal(err)
 	}
+	stored, err := repo.TaskForUser("user-1", original.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ProjectID != canvas.ID {
+		t.Fatalf("replay receipt lost original scope: %#v", stored)
+	}
 	again := queuedScopeTask("task-replay-new", "user-1", canvas.ID)
 	again.ClientOperationID = &op
-	err := repo.CreateTaskWithActiveLimit(again, 8)
+	err = repo.CreateTaskWithActiveLimit(again, 8)
 	var replay *ClientOperationReplay
 	if !errors.As(err, &replay) || replay.Task.ID != original.ID {
 		t.Fatalf("replay after delete = %v", err)
 	}
 	if countTasks(t, db, again.ID) != 0 {
 		t.Fatal("replay inserted a new paid task")
+	}
+	if countTasks(t, db, original.ID) != 1 {
+		t.Fatal("replay deleted the original paid task")
 	}
 }
 
@@ -269,8 +326,8 @@ func TestCreateTaskAndDeleteCanvasDoNotAdmitDeletedScope(t *testing.T) {
 	if err := db.First(&stored, "id = ?", task.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if stored.ProjectID == canvas.ID {
-		t.Fatal("admitted task still bound to deleted canvas")
+	if stored.ProjectID != canvas.ID {
+		t.Fatalf("admitted task lost original canvas scope: %#v", stored)
 	}
 }
 
@@ -304,12 +361,8 @@ func TestRetryTaskAndDeleteCanvasDoNotRequeueDeletedScope(t *testing.T) {
 	if err := db.First(&stored, "id = ?", failed.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	var canvasCount int64
-	if err := db.Model(&model.CanvasProject{}).Where("id = ?", canvas.ID).Count(&canvasCount).Error; err != nil {
-		t.Fatal(err)
-	}
-	if canvasCount == 0 && stored.Status == model.TaskStatusQueued && stored.ProjectID == canvas.ID {
-		t.Fatal("retry requeued a deleted canvas")
+	if stored.ProjectID != canvas.ID {
+		t.Fatalf("retry/delete stripped original scope: %#v", stored)
 	}
 	if errors.Is(retryErr, ErrTaskScopeNotActive) && stored.Status != model.TaskStatusFailed {
 		t.Fatalf("rejected retry mutated status=%s", stored.Status)
@@ -377,5 +430,79 @@ func TestCreateLinkedCanvasValidatesBusinessProjectInSameTransaction(t *testing.
 	}
 	if errors.Is(createErr, ErrTaskScopeArchived) && countTasks(t, db, task.ID) != 0 {
 		t.Fatal("linked archived reject inserted a row")
+	}
+}
+
+func TestRetryAfterCanvasDeleteSurvivesReopen(t *testing.T) {
+	repo, db, path := newTaskScopeRepoAt(t, filepath.Join(t.TempDir(), "task-scope-reopen.db"))
+	canvas := seedScopeCanvas(t, db, model.CanvasProject{ID: "canvas-reopen", UserID: "user-1", Title: "画布"})
+	admitted := queuedScopeTask("task-reopen-canvas", "user-1", canvas.ID)
+	if err := repo.CreateTaskWithActiveLimit(admitted, 8); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", admitted.ID).Update("status", model.TaskStatusFailed).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteCanvasProject("user-1", canvas.ID); err != nil {
+		t.Fatal(err)
+	}
+	repo, db = reopenTaskScopeRepo(t, db, path)
+	loaded, err := repo.TaskForUser("user-1", admitted.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != model.TaskStatusFailed || loaded.ProjectID != canvas.ID {
+		t.Fatalf("reloaded task = %#v", loaded)
+	}
+	listed, err := repo.Tasks("user-1", 10, canvas.ID, false)
+	if err != nil || len(listed) != 1 || listed[0].ID != admitted.ID {
+		t.Fatalf("historical list = %#v err=%v", listed, err)
+	}
+	if _, err := repo.RetryTask("user-1", loaded, 8); !errors.Is(err, ErrTaskScopeNotActive) {
+		t.Fatalf("reopen retry error = %v", err)
+	}
+	if countTasks(t, db, admitted.ID) != 1 {
+		t.Fatal("retry after reopen changed admission count")
+	}
+	still, err := repo.TaskForUser("user-1", admitted.ID)
+	if err != nil || still.Status != model.TaskStatusFailed || still.ProjectID != canvas.ID {
+		t.Fatalf("retry after reopen mutated receipt: %#v err=%v", still, err)
+	}
+}
+
+func TestRetryAfterProjectDeleteSurvivesReopen(t *testing.T) {
+	repo, db, path := newTaskScopeRepoAt(t, filepath.Join(t.TempDir(), "task-scope-project-reopen.db"))
+	project := seedScopeProject(t, db, model.Project{ID: "project-reopen", UserID: "user-1", Name: "在产"})
+	admitted := queuedScopeTask("task-reopen-project", "user-1", project.ID)
+	if err := repo.CreateTaskWithActiveLimit(admitted, 8); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", admitted.ID).Update("status", model.TaskStatusFailed).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteProject("user-1", project.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	repo, db = reopenTaskScopeRepo(t, db, path)
+	loaded, err := repo.TaskForUser("user-1", admitted.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != model.TaskStatusFailed || loaded.ProjectID != project.ID {
+		t.Fatalf("reloaded project task = %#v", loaded)
+	}
+	listed, err := repo.Tasks("user-1", 10, project.ID, false)
+	if err != nil || len(listed) != 1 || listed[0].ID != admitted.ID {
+		t.Fatalf("historical project list = %#v err=%v", listed, err)
+	}
+	if _, err := repo.RetryTask("user-1", loaded, 8); !errors.Is(err, ErrTaskScopeNotActive) {
+		t.Fatalf("reopen project retry error = %v", err)
+	}
+	if countTasks(t, db, admitted.ID) != 1 {
+		t.Fatal("project retry after reopen changed admission count")
+	}
+	still, err := repo.TaskForUser("user-1", admitted.ID)
+	if err != nil || still.Status != model.TaskStatusFailed || still.ProjectID != project.ID {
+		t.Fatalf("project retry after reopen mutated receipt: %#v err=%v", still, err)
 	}
 }
