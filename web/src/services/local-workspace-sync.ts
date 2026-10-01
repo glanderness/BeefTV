@@ -1,4 +1,4 @@
-import { captureUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
+import { assertUserScope, captureUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { rebindInconsistentCanvasAssets, type CanvasAssetRebindResult } from "@/services/canvas-asset-repair";
 import { createLocalCanvasProject, deleteLocalCanvasProjects, openLocalCanvasProject, openLocalCanvasProjectFromBackend, persistCanvasDocument } from "@/services/local-workspace-repository";
 import { flushAssetStorePersistence, useAssetStore, type Asset } from "@/stores/use-asset-store";
@@ -58,11 +58,13 @@ export function notifyCanvasRefresh(project: CanvasProject, previous: CanvasProj
  */
 export async function syncLocalCanvasSnapshot(id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "appearance" | "backgroundMode" | "showImageInfo" | "viewport">>, expectedScope?: CapturedUserScope) {
     const expected = expectedScope ?? captureUserScope();
+    assertUserScope(expected);
     const current = openLocalCanvasProject(id);
     if (!current) throw new Error("本地画布不存在");
     const { viewport, ...documentPatch } = patch;
     if (viewport) useCanvasStore.getState().updateProject(id, { viewport });
     if (Object.keys(documentPatch).length > 0) await persistCanvasDocument(id, documentPatch, expected);
+    assertUserScope(expected);
     const saved = openLocalCanvasProject(id);
     if (!saved) throw new Error("本地画布不存在");
     return saved;
