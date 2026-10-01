@@ -105,3 +105,13 @@ func mapTaskResourceError(err error) error {
 	}
 	return nil
 }
+
+// AdmissionValidationError maps shared repository preconditions for specialized
+// task creators (render, transcription, depth) using the same admission rules.
+// A nil result means the error is not a known validation failure.
+func AdmissionValidationError(err error) error {
+	if mapped := mapTaskScopeError(err); mapped != nil {
+		return mapped
+	}
+	return mapTaskResourceError(err)
+}
