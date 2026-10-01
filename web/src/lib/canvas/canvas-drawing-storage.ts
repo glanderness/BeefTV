@@ -62,6 +62,7 @@ type DrawingCacheEnvelope = {
     draft?: DrawingDraftState;
     removedGeneration?: number;
     generationHighWater?: number;
+    blobGenerations?: number[];
 };
 
 type DrawingKeyStore<T> = {
@@ -79,6 +80,7 @@ let drawingPreviewStore: DrawingKeyStore<Blob> = defaultDrawingPreviewStore;
 let drawingRenderStore: DrawingKeyStore<CanvasDrawingRender> = defaultDrawingRenderStore;
 const drawingCommitChains = new Map<string, Promise<unknown>>();
 const envelopeLocks = new Map<string, Promise<unknown>>();
+const inFlightBlobGenerations = new Map<string, Set<number>>();
 let digestDelayForTests: (() => Promise<void>) | undefined;
 let stageBarrierForTests: (() => Promise<void>) | undefined;
 
@@ -131,25 +133,27 @@ function parseEnvelope(raw: DrawingCacheEnvelope | CanvasDrawingSnapshot | null)
     if (!raw) return emptyEnvelope();
     if ((raw as DrawingCacheEnvelope).version === 3) {
         const envelope = raw as DrawingCacheEnvelope;
+        const draft = envelope.draft?.document
+            ? {
+                document: documentFields(normalizeCanvasDrawingSnapshot(envelope.draft.document)!),
+                generation: Number(envelope.draft.generation) || 0,
+                canonicalMissing: envelope.draft.canonicalMissing === true,
+                conflict: envelope.draft.conflict === true,
+                blockedReimport: envelope.draft.blockedReimport === true,
+            }
+            : undefined;
         return {
             version: 3,
             committed: envelope.committed ? documentFields(normalizeCanvasDrawingSnapshot(envelope.committed)!) : undefined,
-            draft: envelope.draft?.document
-                ? {
-                    document: documentFields(normalizeCanvasDrawingSnapshot(envelope.draft.document)!),
-                    generation: Number(envelope.draft.generation) || 0,
-                    canonicalMissing: envelope.draft.canonicalMissing === true,
-                    conflict: envelope.draft.conflict === true,
-                    blockedReimport: envelope.draft.blockedReimport === true,
-                }
-                : undefined,
+            draft,
             removedGeneration: Number(envelope.removedGeneration) || undefined,
             generationHighWater: Number(envelope.generationHighWater) || undefined,
+            blobGenerations: unionBlobGenerations(ownedBlobGenerations(envelope), draft ? [draft.generation] : undefined),
         };
     }
     const legacy = normalizeCanvasDrawingSnapshot(raw as CanvasDrawingSnapshot);
     if (!legacy) return emptyEnvelope();
-    return { version: 3, draft: { document: documentFields(legacy), generation: 1 }, generationHighWater: 1 };
+    return { version: 3, draft: { document: documentFields(legacy), generation: 1 }, generationHighWater: 1, blobGenerations: [1] };
 }
 
 function generationHighWaterOf(envelope: DrawingCacheEnvelope) {
@@ -158,6 +162,77 @@ function generationHighWaterOf(envelope: DrawingCacheEnvelope) {
 
 function generationBlobKey(key: string, generation: number) {
     return `${key}\0g${generation}`;
+}
+
+function ownedBlobGenerations(envelope: Pick<DrawingCacheEnvelope, "blobGenerations"> | null | undefined) {
+    const values = envelope?.blobGenerations;
+    if (!Array.isArray(values) || !values.length) return undefined;
+    const owned = [...new Set(values.map(Number).filter((generation) => Number.isInteger(generation) && generation > 0))].sort((left, right) => left - right);
+    return owned.length ? owned : undefined;
+}
+
+function unionBlobGenerations(...lists: Array<number[] | undefined>) {
+    const owned = new Set<number>();
+    for (const list of lists) {
+        for (const generation of list || []) {
+            if (Number.isInteger(generation) && generation > 0) owned.add(generation);
+        }
+    }
+    return owned.size ? [...owned].sort((left, right) => left - right) : undefined;
+}
+
+function markInFlightBlobGeneration(key: string, generation: number) {
+    const current = inFlightBlobGenerations.get(key) ?? new Set<number>();
+    current.add(generation);
+    inFlightBlobGenerations.set(key, current);
+}
+
+function unmarkInFlightBlobGeneration(key: string, generation: number) {
+    const current = inFlightBlobGenerations.get(key);
+    if (!current) return;
+    current.delete(generation);
+    if (!current.size) inFlightBlobGenerations.delete(key);
+}
+
+function retainBlobGenerations(key: string, envelope: DrawingCacheEnvelope, extraRetain: number[] = []) {
+    const keep = new Set(extraRetain);
+    if (envelope.draft?.generation) keep.add(envelope.draft.generation);
+    for (const generation of inFlightBlobGenerations.get(key) ?? []) keep.add(generation);
+    return keep;
+}
+
+async function dropGenerationBlobs(key: string, generations: number[]) {
+    if (!generations.length) return;
+    await Promise.all(generations.flatMap((generation) => [
+        drawingPreviewStore.removeItem(generationBlobKey(key, generation)),
+        drawingRenderStore.removeItem(generationBlobKey(key, generation)),
+    ]));
+}
+
+async function inheritPublishedBlobsIntoGeneration(key: string, generation: number) {
+    const previewKey = generationBlobKey(key, generation);
+    if (!(await drawingPreviewStore.getItem(previewKey))) {
+        const publishedPreview = await drawingPreviewStore.getItem(key);
+        if (publishedPreview) await drawingPreviewStore.setItem(previewKey, publishedPreview);
+    }
+    const renderKey = generationBlobKey(key, generation);
+    if (!(await drawingRenderStore.getItem(renderKey))) {
+        const publishedRender = await drawingRenderStore.getItem(key);
+        if (publishedRender) await drawingRenderStore.setItem(renderKey, publishedRender);
+    }
+}
+
+async function reclaimGenerationBlobsUnlocked(key: string, envelope: DrawingCacheEnvelope, extraRetain: number[] = []) {
+    const keep = retainBlobGenerations(key, envelope, extraRetain);
+    const owned = ownedBlobGenerations(envelope) || [];
+    const drop = owned.filter((generation) => !keep.has(generation));
+    const remaining = owned.filter((generation) => keep.has(generation));
+    if (drop.length) await dropGenerationBlobs(key, drop);
+    const blobGenerations = remaining.length ? remaining : undefined;
+    if ((ownedBlobGenerations({ blobGenerations }) || []).join() === owned.join() && !drop.length) return envelope;
+    const next: DrawingCacheEnvelope = { ...envelope, blobGenerations };
+    await drawingStore.setItem(key, next);
+    return next;
 }
 
 async function readEnvelope(key: string) {
@@ -197,8 +272,9 @@ function mergeEnvelope(live: DrawingCacheEnvelope, proposed: DrawingCacheEnvelop
     const committed = liveRevision > proposedRevision ? live.committed : proposed.committed;
     const tombstoneSuperseded = draftGeneration > removedGeneration || ackDraftGeneration > removedGeneration;
     const activeRemoved = removedGeneration && !tombstoneSuperseded ? removedGeneration : 0;
+    const blobGenerations = unionBlobGenerations(live.blobGenerations, proposed.blobGenerations, draft ? [draft.generation] : undefined);
     if (activeRemoved && !draft) {
-        return { version: 3, removedGeneration: activeRemoved, generationHighWater: highWater };
+        return { version: 3, removedGeneration: activeRemoved, generationHighWater: highWater, blobGenerations };
     }
     return {
         version: 3,
@@ -206,6 +282,7 @@ function mergeEnvelope(live: DrawingCacheEnvelope, proposed: DrawingCacheEnvelop
         draft,
         removedGeneration: activeRemoved || undefined,
         generationHighWater: highWater,
+        blobGenerations,
     };
 }
 
@@ -297,14 +374,14 @@ async function writeDraftBlobs(
 
 async function readGenerationPreview(key: string, envelope: DrawingCacheEnvelope) {
     if (envelope.draft) {
-        return await drawingPreviewStore.getItem(generationBlobKey(key, envelope.draft.generation)) ?? await drawingPreviewStore.getItem(key);
+        return drawingPreviewStore.getItem(generationBlobKey(key, envelope.draft.generation));
     }
     return drawingPreviewStore.getItem(key);
 }
 
 async function readGenerationRender(key: string, envelope: DrawingCacheEnvelope) {
     if (envelope.draft) {
-        return await drawingRenderStore.getItem(generationBlobKey(key, envelope.draft.generation)) ?? await drawingRenderStore.getItem(key);
+        return drawingRenderStore.getItem(generationBlobKey(key, envelope.draft.generation));
     }
     return drawingRenderStore.getItem(key);
 }
@@ -381,21 +458,32 @@ export async function loadCanvasDrawing(projectId: string, drawingId: string, ex
     if (remoteError) {
         if (!isNotFoundDrawingError(remoteError)) throw remoteError;
         if (envelope.draft || envelope.committed) {
-            const next: DrawingCacheEnvelope = {
-                version: 3,
-                committed: envelope.committed,
-                draft: {
-                    document: documentFields((envelope.draft?.document || envelope.committed)!),
-                    generation: envelope.draft?.generation || nextDraftGeneration(envelope),
-                    canonicalMissing: true,
-                    conflict: envelope.draft?.conflict,
-                    blockedReimport: envelope.draft?.blockedReimport === true,
-                },
-                removedGeneration: envelope.removedGeneration,
-                generationHighWater: generationHighWaterOf(envelope),
-            };
-            const written = await writeEnvelope(key, next, expected);
-            return publishSnapshot(written, "draft");
+            const written = await withEnvelopeLock(key, async () => {
+                const live = await readEnvelope(key);
+                if (live.removedGeneration && !live.draft) return live;
+                if (!(live.draft || live.committed)) return live;
+                const generation = live.draft?.generation || nextDraftGeneration(live);
+                const createdNewGeneration = !live.draft;
+                const merged = await writeEnvelopeUnlocked(key, {
+                    version: 3,
+                    committed: live.committed,
+                    draft: {
+                        document: documentFields((live.draft?.document || live.committed)!),
+                        generation,
+                        canonicalMissing: true,
+                        conflict: live.draft?.conflict,
+                        blockedReimport: live.draft?.blockedReimport === true,
+                    },
+                    removedGeneration: live.removedGeneration,
+                    generationHighWater: generationHighWaterOf(live),
+                    blobGenerations: unionBlobGenerations(live.blobGenerations, [generation]),
+                }, expected, generation);
+                if (createdNewGeneration && merged.draft) {
+                    await inheritPublishedBlobsIntoGeneration(key, merged.draft.generation);
+                }
+                return merged;
+            });
+            return publishSnapshot(written, written.draft ? "draft" : "canonical");
         }
         return null;
     }
@@ -452,6 +540,7 @@ export async function saveCanvasDrawing(
             previewResourceId: previous?.previewResourceId ?? envelope.committed?.previewResourceId,
             renderResourceId: previous?.renderResourceId ?? envelope.committed?.renderResourceId,
         };
+        const previousGeneration = envelope.draft?.generation;
         const next: DrawingCacheEnvelope = {
             version: 3,
             committed: envelope.committed,
@@ -464,18 +553,35 @@ export async function saveCanvasDrawing(
             },
             removedGeneration: envelope.removedGeneration,
             generationHighWater: Math.max(generationHighWaterOf(envelope), generation),
+            blobGenerations: unionBlobGenerations(envelope.blobGenerations, [generation], previousGeneration ? [previousGeneration] : undefined),
         };
         const written = await writeEnvelopeUnlocked(key, next, expected, generation);
+        if (preview === undefined) {
+            const inheritedPreview = previousGeneration
+                ? await drawingPreviewStore.getItem(generationBlobKey(key, previousGeneration))
+                : await drawingPreviewStore.getItem(key);
+            if (inheritedPreview) await drawingPreviewStore.setItem(generationBlobKey(key, generation), inheritedPreview);
+        }
+        if (render === undefined) {
+            const inheritedRender = previousGeneration
+                ? await drawingRenderStore.getItem(generationBlobKey(key, previousGeneration))
+                : await drawingRenderStore.getItem(key);
+            if (inheritedRender) await drawingRenderStore.setItem(generationBlobKey(key, generation), inheritedRender);
+        }
         await writeDraftBlobs(key, generation, preview, render, draftDocument, expected, true);
         return { generation, written, draftDocument };
     });
 
     if (usesBrowserLocalResourceStore()) {
-        const written = await writeEnvelope(key, {
-            version: 3,
-            committed: staged.draftDocument,
-            generationHighWater: staged.generation,
-        }, expected, staged.generation);
+        const written = await withEnvelopeLock(key, async () => {
+            const acked = await writeEnvelopeUnlocked(key, {
+                version: 3,
+                committed: staged.draftDocument,
+                generationHighWater: staged.generation,
+                blobGenerations: staged.written.blobGenerations,
+            }, expected, staged.generation);
+            return reclaimGenerationBlobsUnlocked(key, acked);
+        });
         return publishSnapshot(written, "browser") ?? { ...staged.draftDocument, origin: "browser" as const };
     }
 
@@ -494,10 +600,17 @@ async function commitDrawingDraft(
     assertUserScope(expected);
     const envelope = await readEnvelope(key);
     const draft = envelope.draft;
-    if (!draft || draft.generation !== generation) return publishSnapshot(envelope, envelope.draft ? "draft" : "canonical")!;
+    if (!draft || draft.generation !== generation) {
+        await withEnvelopeLock(key, async () => {
+            const live = await readEnvelope(key);
+            await reclaimGenerationBlobsUnlocked(key, live);
+        });
+        return publishSnapshot(envelope, envelope.draft ? "draft" : "canonical")!;
+    }
     if (draft.blockedReimport || (draft.canonicalMissing && envelope.committed)) {
         throw new CanvasDrawingCanonicalMissingError();
     }
+    markInFlightBlobGeneration(key, generation);
     const stagedPreview = await drawingPreviewStore.getItem(generationBlobKey(key, generation));
     const stagedRender = await drawingRenderStore.getItem(generationBlobKey(key, generation));
     const persistPreview = stagedPreview ?? preview;
@@ -515,6 +628,7 @@ async function commitDrawingDraft(
                 draft: live.draft,
                 removedGeneration: live.removedGeneration,
                 generationHighWater: Math.max(generationHighWaterOf(live), generation),
+                blobGenerations: live.blobGenerations,
             };
             const written = await writeEnvelope(key, acked, expected, generation);
             return publishSnapshot(written, written.draft ? "draft" : "canonical")!;
@@ -525,6 +639,7 @@ async function commitDrawingDraft(
             draft: undefined,
             removedGeneration: live.removedGeneration,
             generationHighWater: Math.max(generationHighWaterOf(live), generation),
+            blobGenerations: live.blobGenerations,
         };
         const written = await writeEnvelope(key, acked, expected, generation);
         if (!written.draft && (persistPreview || persistRender)) {
@@ -539,6 +654,7 @@ async function commitDrawingDraft(
             await writeEnvelope(key, {
                 ...live,
                 generationHighWater: Math.max(generationHighWaterOf(live), generation),
+                blobGenerations: live.blobGenerations,
                 draft: {
                     ...live.draft!,
                     conflict: isDrawingRevisionConflict(error),
@@ -549,6 +665,12 @@ async function commitDrawingDraft(
         }
         if (isFailedPrecondition(error) || (isNotFoundDrawingError(error) && envelope.committed)) throw new CanvasDrawingCanonicalMissingError();
         throw error;
+    } finally {
+        unmarkInFlightBlobGeneration(key, generation);
+        await withEnvelopeLock(key, async () => {
+            const live = await readEnvelope(key);
+            await reclaimGenerationBlobsUnlocked(key, live);
+        });
     }
 }
 
@@ -652,13 +774,19 @@ export async function removeCanvasDrawing(projectId: string, drawingId: string, 
         return nextGeneration;
     });
     if (usesBrowserLocalResourceStore()) {
-        const live = await readEnvelope(key);
-        if ((live.draft?.generation || 0) > generation) return;
-        await Promise.all([
-            drawingPreviewStore.removeItem(key),
-            drawingRenderStore.removeItem(key),
-        ]);
-        await drawingStore.removeItem(key);
+        await withEnvelopeLock(key, async () => {
+            const live = await readEnvelope(key);
+            if ((live.draft?.generation || 0) > generation || generationHighWaterOf(live) > generation) {
+                await reclaimGenerationBlobsUnlocked(key, live);
+                return;
+            }
+            await dropGenerationBlobs(key, ownedBlobGenerations(live) || []);
+            await Promise.all([
+                drawingPreviewStore.removeItem(key),
+                drawingRenderStore.removeItem(key),
+            ]);
+            await drawingStore.removeItem(key);
+        });
         return;
     }
     try {
@@ -669,16 +797,24 @@ export async function removeCanvasDrawing(projectId: string, drawingId: string, 
     assertUserScope(expected);
     await withEnvelopeLock(key, async () => {
         const live = await readEnvelope(key);
-        if ((live.draft?.generation || 0) > generation || generationHighWaterOf(live) > generation) return;
-        await writeEnvelopeUnlocked(key, {
+        if ((live.draft?.generation || 0) > generation || generationHighWaterOf(live) > generation) {
+            await reclaimGenerationBlobsUnlocked(key, live);
+            return;
+        }
+        await dropGenerationBlobs(key, ownedBlobGenerations(live) || []);
+        const tombstone = await writeEnvelopeUnlocked(key, {
             version: 3,
             removedGeneration: generation,
             generationHighWater: Math.max(generationHighWaterOf(live), generation),
         }, expected, generation);
+        if (tombstone.draft) return;
         await Promise.all([
             drawingPreviewStore.removeItem(key),
             drawingRenderStore.removeItem(key),
         ]);
+        if (tombstone.blobGenerations?.length) {
+            await drawingStore.setItem(key, { ...tombstone, blobGenerations: undefined });
+        }
     });
 }
 
@@ -925,6 +1061,7 @@ export function replaceCanvasDrawingStoresForTests(stores?: {
 export function resetCanvasDrawingStorageForTests() {
     drawingCommitChains.clear();
     envelopeLocks.clear();
+    inFlightBlobGenerations.clear();
     digestDelayForTests = undefined;
     stageBarrierForTests = undefined;
     drawingStore = defaultDrawingStore;

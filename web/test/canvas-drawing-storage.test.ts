@@ -79,6 +79,15 @@ function snapshotOf(text: string) {
     return { elements: [{ id: text, isDeleted: false }] };
 }
 
+function drawingCacheKey(userScope: string, projectId = "p1", drawingId = "d1") {
+    return `${userScope}:${projectId}:${drawingId}`;
+}
+
+function generationOwnedKeys(map: Map<string, unknown>, drawingKey: string) {
+    const prefix = `${drawingKey}\0g`;
+    return [...map.keys()].filter((key) => key.startsWith(prefix)).sort();
+}
+
 function drawingRecord(snapshot: unknown, revision: number, extras: Record<string, unknown> = {}) {
     return {
         drawing: {
@@ -784,6 +793,218 @@ describe("canvas drawing storage", () => {
             else delete (globalThis as { document?: unknown }).document;
             if (originalWindow) globalThis.window = originalWindow;
             else delete (globalThis as { window?: unknown }).window;
+            restore();
+        }
+    });
+
+    test("multiple saves then ack leave only the published blobs", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        installStores();
+        const key = drawingCacheKey("owner-a");
+        try {
+            await withAdapter(async (config) => {
+                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
+                if (String(config.method).toLowerCase() === "put") {
+                    const body = requestBody(config) as { drawing: { snapshot: unknown; revision: number } };
+                    return envelope(drawingRecord(body.drawing.snapshot, (body.drawing.revision || 0) + 1));
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("first"), null, new Blob(["blob-a"]), { blob: new Blob(["render-a"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" }, captureUserScope());
+                await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("second"), null, new Blob(["blob-b"]), { blob: new Blob(["render-b"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" }, captureUserScope());
+            });
+            expect(generationOwnedKeys(previews as Map<string, unknown>, key)).toEqual([]);
+            expect(generationOwnedKeys(renders, key)).toEqual([]);
+            expect(await previews.get(key)?.text()).toBe("blob-b");
+            expect(await (renders.get(key) as { blob: Blob } | undefined)?.blob.text()).toBe("render-b");
+            const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { blobGenerations?: number[]; draft?: unknown };
+            expect(cached.draft).toBeUndefined();
+            expect(cached.blobGenerations ?? []).toEqual([]);
+        } finally {
+            restore();
+        }
+    });
+
+    test("failed submit keeps the recoverable generation blobs", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        installStores();
+        const key = drawingCacheKey("owner-a");
+        try {
+            await withAdapter(async (config) => {
+                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
+                if (String(config.method).toLowerCase() === "put") return failure(500, "工作区暂时无法保存");
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("keep"), null, new Blob(["keep-preview"]), { blob: new Blob(["keep-render"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" }, captureUserScope()))
+                    .rejects.toThrow(/工作区暂时无法保存/);
+            });
+            expect(generationOwnedKeys(previews as Map<string, unknown>, key)).toEqual([`${key}\0g1`]);
+            expect(await previews.get(`${key}\0g1`)?.text()).toBe("keep-preview");
+            expect(await (renders.get(`${key}\0g1`) as { blob: Blob } | undefined)?.blob.text()).toBe("keep-render");
+            expect(await loadCanvasDrawingPreview("p1", "d1", captureUserScope()).then((blob) => blob?.text())).toBe("keep-preview");
+        } finally {
+            restore();
+        }
+    });
+
+    test("unknown submit keeps the recoverable generation blobs", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        installStores();
+        const key = drawingCacheKey("owner-a");
+        try {
+            await withAdapter(async (config) => {
+                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
+                if (String(config.method).toLowerCase() === "put") throw new Error("网络中断");
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("keep"), null, new Blob(["keep-preview"]), { blob: new Blob(["keep-render"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" }, captureUserScope()))
+                    .rejects.toThrow(/网络中断/);
+            });
+            expect(generationOwnedKeys(previews as Map<string, unknown>, key)).toEqual([`${key}\0g1`]);
+            expect(await previews.get(`${key}\0g1`)?.text()).toBe("keep-preview");
+            expect(await loadCanvasDrawingPreview("p1", "d1", captureUserScope()).then((blob) => blob?.text())).toBe("keep-preview");
+            const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { generation: number }; blobGenerations?: number[] };
+            expect(cached.draft?.generation).toBe(1);
+            expect(cached.blobGenerations).toEqual([1]);
+        } finally {
+            restore();
+        }
+    });
+
+    test("old ack during a newer draft keeps the newer generation pair", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        installStores();
+        const key = drawingCacheKey("owner-a");
+        const enteredFirst = deferred();
+        const releaseFirst = deferred();
+        const enteredSecond = deferred();
+        const releaseSecond = deferred();
+        try {
+            await withAdapter(async (config) => {
+                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
+                if (String(config.method).toLowerCase() === "put") {
+                    const body = requestBody(config) as { drawing: { snapshot: unknown; revision: number } };
+                    if (JSON.stringify(body.drawing.snapshot) === JSON.stringify(snapshotOf("first"))) {
+                        enteredFirst.resolve();
+                        await releaseFirst.promise;
+                    } else {
+                        enteredSecond.resolve();
+                        await releaseSecond.promise;
+                    }
+                    return envelope(drawingRecord(body.drawing.snapshot, (body.drawing.revision || 0) + 1));
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                const first = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("first"), null, new Blob(["blob-a"]), { blob: new Blob(["render-a"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" }, captureUserScope());
+                await enteredFirst.promise;
+                const second = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("second"), null, new Blob(["blob-b"]), { blob: new Blob(["render-b"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" }, captureUserScope());
+                const deadline = Date.now() + 2000;
+                while (Date.now() < deadline) {
+                    const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { generation: number } };
+                    if (cached?.draft?.generation === 2) break;
+                    await new Promise((resolve) => setTimeout(resolve, 0));
+                }
+                releaseFirst.resolve();
+                await first;
+                expect(generationOwnedKeys(previews as Map<string, unknown>, key)).toEqual([`${key}\0g2`]);
+                expect(await previews.get(`${key}\0g2`)?.text()).toBe("blob-b");
+                expect(await loadCanvasDrawingPreview("p1", "d1", captureUserScope()).then((blob) => blob?.text())).toBe("blob-b");
+                releaseSecond.resolve();
+                await second;
+            });
+        } finally {
+            restore();
+        }
+    });
+
+    test("draft preview does not fall back to a cleaned published blob", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        installStores();
+        const key = drawingCacheKey("owner-a");
+        const enteredFirst = deferred();
+        const releaseFirst = deferred();
+        const enteredSecond = deferred();
+        const releaseSecond = deferred();
+        try {
+            await withAdapter(async (config) => {
+                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
+                if (String(config.method).toLowerCase() === "put") {
+                    const body = requestBody(config) as { drawing: { snapshot: unknown; revision: number } };
+                    if (JSON.stringify(body.drawing.snapshot) === JSON.stringify(snapshotOf("first"))) {
+                        enteredFirst.resolve();
+                        await releaseFirst.promise;
+                    } else {
+                        enteredSecond.resolve();
+                        await releaseSecond.promise;
+                    }
+                    return envelope(drawingRecord(body.drawing.snapshot, (body.drawing.revision || 0) + 1));
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                const first = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("first"), null, new Blob(["blob-a"]), undefined, captureUserScope());
+                await enteredFirst.promise;
+                const second = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("second"), null, new Blob(["blob-b"]), undefined, captureUserScope());
+                const deadline = Date.now() + 2000;
+                while (Date.now() < deadline) {
+                    const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { generation: number } };
+                    if (cached?.draft?.generation === 2) break;
+                    await new Promise((resolve) => setTimeout(resolve, 0));
+                }
+                releaseFirst.resolve();
+                await first;
+                previews.delete(`${key}\0g2`);
+                expect(await previews.get(key)?.text()).toBe("blob-b");
+                expect(await loadCanvasDrawingPreview("p1", "d1", captureUserScope())).toBeNull();
+                releaseSecond.resolve();
+                await second;
+            });
+        } finally {
+            restore();
+        }
+    });
+
+    test("delete cleanup does not drop another drawing or scope", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        installStores();
+        const keepKey = drawingCacheKey("owner-a", "p1", "d2");
+        const otherScope = drawingCacheKey("owner-b");
+        const dropped = drawingCacheKey("owner-a");
+        try {
+            await withAdapter(async (config) => {
+                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
+                if (String(config.method).toLowerCase() === "put") {
+                    const body = requestBody(config) as { drawing: { snapshot: unknown; revision: number } };
+                    if (JSON.stringify(body.drawing.snapshot) === JSON.stringify(snapshotOf("drop-2"))) {
+                        return failure(500, "工作区暂时无法保存");
+                    }
+                    return envelope(drawingRecord(body.drawing.snapshot, (body.drawing.revision || 0) + 1));
+                }
+                if (String(config.method).toLowerCase() === "delete") return envelope({ id: "d1" });
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("drop"), null, new Blob(["drop-a"]), { blob: new Blob(["drop-r"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" }, captureUserScope());
+                await saveCanvasDrawing("p1", "d2", "excalidraw", snapshotOf("keep"), null, new Blob(["keep-a"]), { blob: new Blob(["keep-r"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" }, captureUserScope());
+                const restoreB = switchScope("owner-b");
+                await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("other"), null, new Blob(["other-a"]), { blob: new Blob(["other-r"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" }, captureUserScope());
+                restoreB();
+                await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("drop-2"), null, new Blob(["drop-b"]), { blob: new Blob(["drop-r2"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" }, captureUserScope()))
+                    .rejects.toThrow(/工作区暂时无法保存/);
+                expect(generationOwnedKeys(previews as Map<string, unknown>, dropped)).toEqual([`${dropped}\0g2`]);
+                await removeCanvasDrawing("p1", "d1", captureUserScope());
+            });
+            expect([...previews.keys()].filter((key) => key === dropped || key.startsWith(`${dropped}\0g`))).toEqual([]);
+            expect([...renders.keys()].filter((key) => key === dropped || key.startsWith(`${dropped}\0g`))).toEqual([]);
+            expect(await previews.get(keepKey)?.text()).toBe("keep-a");
+            expect(generationOwnedKeys(previews as Map<string, unknown>, keepKey)).toEqual([]);
+            expect(await previews.get(otherScope)?.text()).toBe("other-a");
+            expect(await (renders.get(otherScope) as { blob: Blob } | undefined)?.blob.text()).toBe("other-r");
+        } finally {
             restore();
         }
     });
