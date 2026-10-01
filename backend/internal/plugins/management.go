@@ -12,6 +12,9 @@ import (
 
 // Service is the typed plugin-domain boundary. It owns management policy,
 // user/platform activation, and delegates registry mutation to Runtime.
+// Lifecycle locks live on the persistent Runtime: the host constructs a new
+// Service per call, so a Service-local mutex cannot serialize install or
+// availability updates.
 type Service struct {
 	runtime *Runtime
 	store   Store
@@ -73,22 +76,23 @@ func (s *Service) InstallUploaded(actorID string, data []byte, fileName string) 
 	if IsReservedApplication(parsed.Manifest.Metadata.ID) {
 		return View{}, fmt.Errorf("插件 ID %q 由官方应用保留", parsed.Manifest.Metadata.ID)
 	}
-	_, existed := ByID(s.runtime.List(), parsed.Manifest.Metadata.ID)
-	plugin, err := s.Install(data, fileName)
+	if s.store == nil {
+		return View{}, fmt.Errorf("插件状态存储未初始化")
+	}
+	s.runtime.beginMutation()
+	defer s.runtime.endMutation()
+	outcome, err := s.runtime.installLocked(data, fileName)
 	if err != nil {
 		return View{}, err
 	}
-	if s.store == nil {
-		return plugin, fmt.Errorf("插件状态存储未初始化")
-	}
 	now := time.Now()
-	state := &model.PluginPlatformState{PluginID: plugin.Manifest.ID, Available: plugin.Status == StatusEnabled, UpdatedBy: actorID, CreatedAt: now, UpdatedAt: now}
+	state := &model.PluginPlatformState{PluginID: outcome.view.Manifest.ID, Available: outcome.view.Status == StatusEnabled, UpdatedBy: actorID, CreatedAt: now, UpdatedAt: now}
 	if err := s.store.SavePluginPlatformState(state); err != nil {
-		if !existed {
-			_ = s.runtime.Uninstall(plugin.Manifest.ID)
-		}
-		return View{}, fmt.Errorf("保存插件平台状态：%w", err)
+		return View{}, joinMutationError(fmt.Errorf("保存插件平台状态：%w", err), s.runtime.rollbackInstall(outcome))
 	}
+	s.runtime.commitInstall(outcome)
+	plugin := outcome.view
+	plugin.Management = ManagementFromView(plugin)
 	return plugin, nil
 }
 
@@ -112,18 +116,24 @@ func (s *Service) Uninstall(id string) error {
 }
 
 func (s *Service) UninstallUploaded(id string) error {
-	if err := s.Uninstall(id); err != nil {
+	if s == nil || s.runtime == nil {
+		return fmt.Errorf("插件运行时未初始化")
+	}
+	s.runtime.beginMutation()
+	defer s.runtime.endMutation()
+	outcome, err := s.runtime.uninstallLocked(id)
+	if err != nil {
 		return err
 	}
-	if s.store == nil {
-		return nil
+	if s.store != nil {
+		if err := s.store.DeleteUserPluginStates(id); err != nil {
+			return joinMutationError(fmt.Errorf("清理用户插件状态：%w", err), s.runtime.rollbackUninstall(outcome))
+		}
+		if err := s.store.DeletePluginPlatformState(id); err != nil {
+			return joinMutationError(fmt.Errorf("清理插件平台状态：%w", err), s.runtime.rollbackUninstall(outcome))
+		}
 	}
-	if err := s.store.DeleteUserPluginStates(id); err != nil {
-		return fmt.Errorf("清理用户插件状态：%w", err)
-	}
-	if err := s.store.DeletePluginPlatformState(id); err != nil {
-		return fmt.Errorf("清理插件平台状态：%w", err)
-	}
+	s.runtime.commitUninstall(outcome)
 	return nil
 }
 
@@ -266,6 +276,16 @@ func (s *Service) SetPlatformAvailability(actor *model.User, pluginID string, av
 	if actor == nil || strings.TrimSpace(actor.ID) == "" {
 		return AdminStateView{}, ManagementView{}, Forbidden("请先登录")
 	}
+	if s == nil {
+		return AdminStateView{}, ManagementView{}, fmt.Errorf("插件运行时未初始化")
+	}
+	if s.store == nil {
+		return AdminStateView{}, ManagementView{}, fmt.Errorf("插件状态存储未初始化")
+	}
+	if s.runtime != nil {
+		s.runtime.beginMutation()
+		defer s.runtime.endMutation()
+	}
 	items := s.List()
 	runtimePlugin, hasRuntime := ByID(items, pluginID)
 	source := "bundled"
@@ -275,31 +295,30 @@ func (s *Service) SetPlatformAvailability(actor *model.User, pluginID string, av
 		return AdminStateView{}, ManagementView{}, fmt.Errorf("插件 %q 不存在", pluginID)
 	}
 	policy := Management(pluginID, source)
-	previousRuntimeEnabled := false
-	runtimeChanged := false
+	runtimeMutated := false
+	var previous []RegistryRecord
 	if policy.ActivationScope == ScopeSystem {
-		if !hasRuntime {
+		if !hasRuntime || s.runtime == nil {
 			return AdminStateView{}, policy, fmt.Errorf("插件 %q 缺少运行时", pluginID)
 		}
-		previousRuntimeEnabled = runtimePlugin.Status == StatusEnabled
-		if _, err := s.SetEnabled(pluginID, available); err != nil {
+		stored, err := s.runtime.readRegistry()
+		if err != nil {
 			return AdminStateView{}, policy, err
 		}
-		runtimeChanged = previousRuntimeEnabled != available
-	}
-	if s.store == nil {
-		if runtimeChanged {
-			_, _ = s.SetEnabled(pluginID, previousRuntimeEnabled)
+		previous = cloneRegistryRecords(stored)
+		if _, err := s.runtime.setEnabledLocked(pluginID, available); err != nil {
+			return AdminStateView{}, policy, err
 		}
-		return AdminStateView{}, policy, fmt.Errorf("插件状态存储未初始化")
+		runtimeMutated = true
 	}
 	now := time.Now()
 	platformState := &model.PluginPlatformState{PluginID: pluginID, Available: available, UpdatedBy: actor.ID, CreatedAt: now, UpdatedAt: now}
 	if err := s.store.SavePluginPlatformState(platformState); err != nil {
-		if runtimeChanged {
-			_, _ = s.SetEnabled(pluginID, previousRuntimeEnabled)
+		saveErr := fmt.Errorf("保存插件平台状态：%w", err)
+		if runtimeMutated {
+			return AdminStateView{}, policy, joinMutationError(saveErr, s.runtime.restoreRegistry(previous))
 		}
-		return AdminStateView{}, policy, fmt.Errorf("保存插件平台状态：%w", err)
+		return AdminStateView{}, policy, saveErr
 	}
 	states, err := s.AdminStates(actor)
 	if err != nil {

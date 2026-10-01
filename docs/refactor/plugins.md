@@ -28,4 +28,10 @@
 
 ## 合同收紧
 
-安装/启用/卸载在 reload 失败时回写 registry。新上传在平台状态保存失败时卸载该新插件；覆盖已有自定义插件时不卸载旧版本。
+`Runtime.mutationMu` 覆盖 registry 写入和平台状态持久化。宿主每次调用都会新建 `plugins.Service`，生命周期锁必须落在持久 `Runtime` 上。
+
+安装失败只删除本次新建且当前 registry 未引用的包文件。同内容重装不会删掉仍被引用的 blob；覆盖安装在平台状态保存成功前保留旧版本。保存失败则恢复安装前 registry，并把回滚失败一并返回。
+
+`SetPlatformAvailability` 在写库前检查 store。系统插件失败时按操作前 registry 快照恢复，不按旧布尔值再 `SetEnabled`。回滚失败不静默忽略。
+
+`List` 返回的视图会拷贝可变 metadata，调用方改切片或 map 不会写回运行时。

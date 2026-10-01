@@ -292,8 +292,152 @@ func TestRuntimeDropsRemovedOfficialProtocol(t *testing.T) {
 	}
 }
 
+func TestSameBytesReinstallKeepsLiveBlobWhenReloadFails(t *testing.T) {
+	dataDir := t.TempDir()
+	runtime, err := NewRuntime(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := testPluginPackage(t, testManifest("same-bytes-reload", "1.0.0"))
+	if _, err := runtime.Install(pkg, "same-bytes-reload.beeftv-plugin"); err != nil {
+		t.Fatal(err)
+	}
+	runtime.failNextReload(errors.New("forced same-bytes reload failure"))
+	if _, err := runtime.Install(pkg, "same-bytes-reload.beeftv-plugin"); err == nil || !strings.Contains(err.Error(), "forced same-bytes reload failure") {
+		t.Fatalf("same-bytes reload error = %v", err)
+	}
+	assertPackageBytes(t, runtime, dataDir, "same-bytes-reload", pkg)
+	assertBlobExists(t, runtime, pkg, true)
+}
+
+func TestSameBytesReinstallKeepsLiveBlobWhenWriteFails(t *testing.T) {
+	dataDir := t.TempDir()
+	runtime, err := NewRuntime(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := testPluginPackage(t, testManifest("same-bytes-write", "1.0.0"))
+	if _, err := runtime.Install(pkg, "same-bytes-write.beeftv-plugin"); err != nil {
+		t.Fatal(err)
+	}
+	runtime.failNextWriteRegistry(errors.New("forced same-bytes write failure"))
+	if _, err := runtime.Install(pkg, "same-bytes-write.beeftv-plugin"); err == nil || !strings.Contains(err.Error(), "forced same-bytes write failure") {
+		t.Fatalf("same-bytes write error = %v", err)
+	}
+	assertPackageBytes(t, runtime, dataDir, "same-bytes-write", pkg)
+	restarted, err := NewRuntime(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, ok := ByID(restarted.List(), "same-bytes-write")
+	if !ok || item.Manifest.Version != "1.0.0" || item.Status != StatusEnabled {
+		t.Fatalf("restarted same-bytes plugin = %#v", item)
+	}
+}
+
+func TestListReturnsDefensiveCopiesOfMutableMetadata(t *testing.T) {
+	runtime, err := NewRuntime(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := testPluginPackage(t, testManifestWithMutableMetadata("copy-semantics", "1.0.0"))
+	if _, err := runtime.Install(pkg, "copy-semantics.beeftv-plugin"); err != nil {
+		t.Fatal(err)
+	}
+	item, ok := ByID(runtime.List(), "copy-semantics")
+	if !ok {
+		t.Fatal("installed plugin missing from list")
+	}
+	if len(item.Manifest.Surfaces) == 0 || len(item.Manifest.Permissions) == 0 {
+		t.Fatalf("missing slices: %#v", item.Manifest)
+	}
+	if len(item.Manifest.Contributes.Providers) == 0 || item.Manifest.Contributes.Providers[0].Create.Fields == nil || item.Manifest.Contributes.Providers[0].Create.Headers == nil {
+		t.Fatalf("missing provider fields: %#v", item.Manifest.Contributes)
+	}
+	if len(item.Manifest.Contributes.Workflows) == 0 || item.Manifest.Contributes.Workflows[0].Defaults == nil {
+		t.Fatalf("missing workflow defaults: %#v", item.Manifest.Contributes)
+	}
+	if len(item.Manifest.Contributes.CanvasNodes) == 0 || item.Manifest.Contributes.CanvasNodes[0].DefaultSize == nil || item.Manifest.Contributes.CanvasNodes[0].Schema == nil {
+		t.Fatalf("missing canvas maps: %#v", item.Manifest.Contributes)
+	}
+	item.Manifest.Surfaces[0] = "mutated-surface"
+	item.Manifest.Permissions[0] = "mutated-permission"
+	item.Manifest.Contributes.Providers[0].Create.Fields["prompt"] = "mutated"
+	item.Manifest.Contributes.Providers[0].Create.Headers["X-Test"] = "mutated"
+	item.Manifest.Contributes.Workflows[0].Defaults["style"] = "mutated"
+	item.Manifest.Contributes.CanvasNodes[0].DefaultSize["width"] = 1
+	item.Manifest.Contributes.CanvasNodes[0].Schema["type"] = "mutated"
+
+	again, ok := ByID(runtime.List(), "copy-semantics")
+	if !ok {
+		t.Fatal("plugin missing after mutating list copy")
+	}
+	if again.Manifest.Surfaces[0] == "mutated-surface" || again.Manifest.Permissions[0] == "mutated-permission" {
+		t.Fatalf("list aliased slices: %#v", again.Manifest)
+	}
+	if again.Manifest.Contributes.Providers[0].Create.Fields["prompt"] == "mutated" {
+		t.Fatalf("list aliased create fields: %#v", again.Manifest.Contributes.Providers[0].Create.Fields)
+	}
+	if again.Manifest.Contributes.Providers[0].Create.Headers["X-Test"] == "mutated" {
+		t.Fatalf("list aliased headers: %#v", again.Manifest.Contributes.Providers[0].Create.Headers)
+	}
+	if again.Manifest.Contributes.Workflows[0].Defaults["style"] == "mutated" {
+		t.Fatalf("list aliased workflow defaults: %#v", again.Manifest.Contributes.Workflows[0].Defaults)
+	}
+	if again.Manifest.Contributes.CanvasNodes[0].DefaultSize["width"] == 1 {
+		t.Fatalf("list aliased defaultSize: %#v", again.Manifest.Contributes.CanvasNodes[0].DefaultSize)
+	}
+	if again.Manifest.Contributes.CanvasNodes[0].Schema["type"] == "mutated" {
+		t.Fatalf("list aliased schema: %#v", again.Manifest.Contributes.CanvasNodes[0].Schema)
+	}
+}
+
 func testManifest(id, version string) []byte {
 	return []byte(fmt.Sprintf(`{"apiVersion":"beeftv.plugin/v1","id":%q,"version":%q,"name":%q,"author":"Test","documentation":"# %s","contributes":{"providers":[{"id":%q,"label":%q,"capabilities":["video"],"scopes":["canvas"],"create":{"method":"POST","path":"/tasks","fields":{"prompt":"request.prompt"}},"response":{"statusPaths":["status"]}}]}}`, id, version, id, id, id, id))
+}
+
+func testManifestWithMutableMetadata(id, version string) []byte {
+	return []byte(fmt.Sprintf(`{"apiVersion":"beeftv.plugin/v1","id":%q,"version":%q,"name":%q,"author":"Test","documentation":"# %s","surfaces":["canvas","settings"],"permissions":["network"],"contributes":{"providers":[{"id":%q,"label":%q,"capabilities":["video"],"scopes":["canvas"],"create":{"method":"POST","path":"/tasks","fields":{"prompt":"request.prompt"},"headers":{"X-Test":"one"},"query":{"mode":"fast"}},"response":{"statusPaths":["status"]}}],"workflows":[{"id":%q,"label":"WF","providerId":%q,"capability":"video","defaults":{"style":"film"}}],"canvasNodes":[{"id":%q,"label":"Node","defaultTitle":"Node","defaultSize":{"width":320,"height":200},"schema":{"type":"object"},"renderer":"declarative"}]}}`, id, version, id, id, id, id, id+"-wf", id, id+"-node"))
+}
+
+func assertPackageBytes(t *testing.T, runtime *Runtime, dataDir, pluginID string, want []byte) {
+	t.Helper()
+	got, _, err := runtime.Package(pluginID)
+	if err != nil {
+		t.Fatalf("package %s: %v", pluginID, err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("package %s bytes changed", pluginID)
+	}
+	restarted, err := NewRuntime(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _, err = restarted.Package(pluginID)
+	if err != nil {
+		t.Fatalf("restart package %s: %v", pluginID, err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("restarted package %s bytes changed", pluginID)
+	}
+}
+
+func assertBlobExists(t *testing.T, runtime *Runtime, data []byte, want bool) {
+	t.Helper()
+	name := blobFileName(pluginHash(data))
+	_, err := os.Stat(filepath.Join(runtime.packageDir, name))
+	if want {
+		if err != nil {
+			t.Fatalf("blob %s missing: %v", name, err)
+		}
+		return
+	}
+	if err == nil {
+		t.Fatalf("blob %s still present", name)
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("blob %s stat: %v", name, err)
+	}
 }
 
 func testPluginPackage(t *testing.T, manifest []byte) []byte {

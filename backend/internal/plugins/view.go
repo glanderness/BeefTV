@@ -119,3 +119,36 @@ func viewFromRecord(item Record) View {
 		Error:       item.Error,
 	}
 }
+
+func clonePluginView(view View) View {
+	view.Manifest.Surfaces = cloneStringSlice(view.Manifest.Surfaces)
+	view.Manifest.Permissions = cloneStringSlice(view.Manifest.Permissions)
+	if data, err := json.Marshal(view.Manifest.Configuration); err == nil {
+		var configuration protocol.ManifestConfiguration
+		if json.Unmarshal(data, &configuration) == nil {
+			view.Manifest.Configuration = configuration
+		}
+	}
+	if data, err := json.Marshal(view.Manifest.Contributes); err == nil {
+		var contributes protocol.ManifestContributions
+		if json.Unmarshal(data, &contributes) == nil {
+			view.Manifest.Contributes = contributes
+		}
+	}
+	if data, err := json.Marshal(view.Manifest.Runtime); err == nil {
+		var runtime protocol.ManifestRuntime
+		if json.Unmarshal(data, &runtime) == nil {
+			view.Manifest.Runtime = runtime
+		}
+	}
+	return view
+}
+
+func cloneStringSlice(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	out := make([]string, len(values))
+	copy(out, values)
+	return out
+}

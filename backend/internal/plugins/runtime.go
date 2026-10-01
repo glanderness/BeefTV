@@ -18,15 +18,19 @@ const protocolPluginMaxBytes = protocol.PluginManifestMaxBytes
 
 // Runtime owns plugin registry files, package blobs, the live protocol
 // registry snapshot, and mutation concurrency. It is the single writer of
-// plugin_registry.json.
+// plugin_registry.json. Lifecycle operations that also persist platform
+// state must take mutationMu on this Runtime; a per-call Service cannot.
+
 type Runtime struct {
-	mu             sync.RWMutex
-	mutationMu     sync.Mutex
-	registryPath   string
-	packageDir     string
-	plugins        map[string]Record
-	registry       *protocol.Registry
-	testFailReload func() error
+	mu                    sync.RWMutex
+	mutationMu            sync.Mutex
+	registryPath          string
+	packageDir            string
+	plugins               map[string]Record
+	registry              *protocol.Registry
+	testBeforeMutation    func()
+	testFailReload        func() error
+	testFailWriteRegistry func() error
 }
 
 func NewRuntime(dataDir string) (*Runtime, error) {
@@ -75,7 +79,7 @@ func (c *Runtime) List() []View {
 	defer c.mu.RUnlock()
 	items := make([]View, 0, len(c.plugins))
 	for _, item := range c.plugins {
-		items = append(items, viewFromRecord(item))
+		items = append(items, clonePluginView(viewFromRecord(item)))
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Manifest.ID < items[j].Manifest.ID })
 	return items
@@ -109,6 +113,17 @@ func (c *Runtime) Package(id string) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("读取插件包失败：%w", err)
 	}
 	return data, record.FileName, nil
+}
+
+func (c *Runtime) beginMutation() {
+	if c.testBeforeMutation != nil {
+		c.testBeforeMutation()
+	}
+	c.mutationMu.Lock()
+}
+
+func (c *Runtime) endMutation() {
+	c.mutationMu.Unlock()
 }
 
 func (c *Runtime) reload() error {
@@ -198,6 +213,13 @@ func (c *Runtime) reload() error {
 func (c *Runtime) failNextReload(err error) {
 	c.testFailReload = func() error {
 		c.testFailReload = nil
+		return err
+	}
+}
+
+func (c *Runtime) failNextWriteRegistry(err error) {
+	c.testFailWriteRegistry = func() error {
+		c.testFailWriteRegistry = nil
 		return err
 	}
 }
