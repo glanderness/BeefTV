@@ -8,9 +8,10 @@ import { loadCanvasDrawing, loadCanvasDrawingPreview, loadCanvasDrawingRender } 
 import type { CanvasDrawingExport } from "@/types/canvas-export";
 import { normalizeLocalCanvasProject } from "@/lib/local-workspace-migration";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
-import { ExportIntegrityError, type MissingExportFile } from "@/lib/export-integrity";
+import { archiveFileExtension, assertBackupHasEntries, assertUniqueArchiveNames, ExportIntegrityError, type MissingExportFile } from "@/lib/export-integrity";
 
 export async function exportCanvasProjects(projects: CanvasProject[], fileName = "画布", options: { includeLocalDrawings?: boolean; folders?: CanvasFolder[] } = {}): Promise<OwnedMediaSaveResult> {
+    assertBackupHasEntries(projects.length, "workspace");
     const zipFiles: { name: string; data: BlobPart }[] = [];
     const missingFiles: MissingExportFile[] = [];
     const exportedProjects = await Promise.all(
@@ -29,7 +30,7 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
                         missingFiles.push({ owner: project.title || project.id, reference: storageKey });
                         return;
                     }
-                    const path = `projects/${encodeURIComponent(project.id)}/files/${encodeURIComponent(storageKey)}.${fileExtension(blob.type, storageKey)}`;
+                    const path = `projects/${encodeURIComponent(project.id)}/files/${encodeURIComponent(storageKey)}.${archiveFileExtension(blob.type, storageKey.startsWith("image:") ? "png" : "bin")}`;
                     files.push({ storageKey, path, mimeType: blob.type || "application/octet-stream", bytes: blob.size });
                     zipFiles.push({ name: path, data: blob });
                 }),
@@ -65,6 +66,15 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
     );
 
     if (missingFiles.length) throw new ExportIntegrityError(missingFiles);
+    assertUniqueArchiveNames(["projects.json", ...zipFiles.map((file) => file.name)]);
+    for (const item of exportedProjects) {
+        const liveKeys = new Set(collectStorageKeys(item.project));
+        for (const file of item.files) {
+            if (!liveKeys.has(file.storageKey) || file.path === file.storageKey) {
+                throw new Error("备份未完成：文件引用不一致，未生成备份。");
+            }
+        }
+    }
 
     const projectFolderIds = new Set(projects.map((project) => project.folderId).filter((id): id is string => Boolean(id)));
     const folders = options.folders?.filter((folder) => projectFolderIds.has(folder.id));
@@ -82,16 +92,4 @@ function collectStorageKeys(value: unknown, keys = new Set<string>()) {
 
 function safeFileName(value: string) {
     return value.replace(/[\\/:*?"<>|]/g, "_");
-}
-
-function fileExtension(mimeType: string, storageKey: string) {
-    if (mimeType.includes("png")) return "png";
-    if (mimeType.includes("jpeg")) return "jpg";
-    if (mimeType.includes("webp")) return "webp";
-    if (mimeType.includes("gif")) return "gif";
-    if (mimeType.includes("mp4")) return "mp4";
-    if (mimeType.includes("webm")) return "webm";
-    if (mimeType.includes("gltf-binary")) return "glb";
-    if (mimeType.includes("gltf+json")) return "gltf";
-    return storageKey.startsWith("image:") ? "png" : "bin";
 }

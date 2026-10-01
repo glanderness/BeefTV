@@ -1,4 +1,5 @@
 import { getMediaBlob } from "@/services/file-storage";
+import { assertUsableSegmentOutput } from "./canvas-video-segment-args";
 
 export type MergeVideoInput = { id: string; url?: string; storageKey?: string };
 export type MergeVideoProgress = { phase: "loading" | "reading" | "encoding"; progress: number };
@@ -48,16 +49,23 @@ export function warmFFmpeg() {
     return loadFFmpeg();
 }
 
-export async function mergeVideos(inputs: MergeVideoInput[], onProgress?: (progress: MergeVideoProgress) => void) {
+export async function mergeVideos(inputs: MergeVideoInput[], onProgress?: (progress: MergeVideoProgress) => void, signal?: AbortSignal) {
     if (inputs.length < 2) throw new Error("至少选择 2 个视频才能合并");
+    signal?.throwIfAborted();
     const ffmpeg = await loadFFmpeg(onProgress);
+    const abort = () => {
+        ffmpeg.terminate();
+        ffmpegPromise = null;
+    };
+    signal?.addEventListener("abort", abort, { once: true });
     const { fetchFile } = await import("@ffmpeg/util");
     const files: string[] = [];
     try {
         for (let index = 0; index < inputs.length; index += 1) {
+            signal?.throwIfAborted();
             const input = inputs[index];
             const storedBlob = input.storageKey ? await getMediaBlob(input.storageKey) : null;
-            const remoteBlob = !storedBlob && input.url ? await fetch(input.url).then((response) => {
+            const remoteBlob = !storedBlob && input.url ? await fetch(input.url, { signal }).then((response) => {
                 if (!response.ok) throw new Error(`视频资源请求失败（${response.status}）`);
                 return response.blob();
             }) : null;
@@ -77,10 +85,16 @@ export async function mergeVideos(inputs: MergeVideoInput[], onProgress?: (progr
             exitCode = await ffmpeg.exec(["-f", "concat", "-safe", "0", "-i", "concat.txt", "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", "merged.mp4"]);
         }
         if (exitCode !== 0) throw new Error("视频编码失败，请确认视频编码格式兼容");
+        signal?.throwIfAborted();
         const output = await ffmpeg.readFile("merged.mp4");
+        assertUsableSegmentOutput(output, "video");
         onProgress?.({ phase: "encoding", progress: 100 });
         return new Blob([output as BlobPart], { type: "video/mp4" });
+    } catch (error) {
+        signal?.throwIfAborted();
+        throw error;
     } finally {
-        await Promise.all([...files, "concat.txt", "merged.mp4"].map((file) => ffmpeg.deleteFile(file).catch(() => undefined)));
+        signal?.removeEventListener("abort", abort);
+        if (!signal?.aborted) await Promise.all([...files, "concat.txt", "merged.mp4"].map((file) => ffmpeg.deleteFile(file).catch(() => undefined)));
     }
 }

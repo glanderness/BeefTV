@@ -6,6 +6,7 @@ import type { Asset } from "@/stores/use-asset-store";
 const blobs = new Map<string, Blob>();
 const unreadable = new Set<string>();
 const restored = new Map<string, Blob>();
+const drawings = new Map<string, { version: 1; drawingId: string; snapshot: object; revision: number; updatedAt: string; shapeCount: number; pageCount: number }>();
 const getBlob = async (key: string) => {
     if (unreadable.has(key)) throw new Error("fixture disk read error");
     return blobs.get(key);
@@ -14,7 +15,7 @@ const setBlob = async (key: string, blob: Blob) => { restored.set(key, blob); };
 mock.module("@/services/file-storage", () => ({ getMediaBlob: getBlob, setMediaBlob: setBlob }));
 mock.module("@/services/image-storage", () => ({ getImageBlob: getBlob, setImageBlob: setBlob }));
 mock.module("@/lib/canvas/canvas-drawing-storage", () => ({
-    loadCanvasDrawing: async () => null,
+    loadCanvasDrawing: async (_projectId: string, drawingId: string) => drawings.get(drawingId) ?? null,
     loadCanvasDrawingPreview: async () => null,
     loadCanvasDrawingRender: async () => null,
 }));
@@ -33,6 +34,7 @@ beforeEach(() => {
     blobs.clear();
     restored.clear();
     unreadable.clear();
+    drawings.clear();
     saved.length = 0;
     acceptSave = true;
     Object.assign(globalThis, {
@@ -140,6 +142,7 @@ test("multiple canvases retain nested timeline media and collision-prone names w
         expect(await archive.get(file.path)!.text()).toBe(await blobs.get(file.storageKey)!.text());
     }
     expect(manifest.projects[0].project.timeline.clips[0].directMedia.storageKey).toBe(keys[2]);
+    expect(manifest.projects[0].files.map((file: { storageKey: string }) => file.storageKey).sort()).toEqual([...keys].sort());
 });
 
 test("a media read rejection is reported alongside other missing references and never saves", async () => {
@@ -165,6 +168,24 @@ test("asset package imports into empty storage with every byte, and shared media
     expect(restored.size).toBe(1);
     expect(await restored.get("audio:voice")!.text()).toBe(await original.text());
     expect(restored.get("audio:voice")!.type).toBe("audio/wav");
+});
+
+test("empty workspace and empty asset list never claim a complete backup", async () => {
+    await expect(exportCanvasProjects([])).rejects.toThrow("工作区为空，未生成备份。");
+    await expect(exportAssets([])).rejects.toThrow("没有可备份的素材，未生成备份。");
+    expect(saved).toHaveLength(0);
+});
+
+test("duplicate sanitized drawing names fail instead of overwriting archive entries", async () => {
+    drawings.set("a/b", { version: 1, drawingId: "a/b", snapshot: {}, revision: 1, updatedAt: "2026-10-02", shapeCount: 0, pageCount: 1 });
+    drawings.set("a_b", { version: 1, drawingId: "a_b", snapshot: {}, revision: 1, updatedAt: "2026-10-02", shapeCount: 0, pageCount: 1 });
+    const canvas = project([]);
+    canvas.nodes = [
+        { id: "one", type: "drawing", title: "稿一", metadata: { drawingId: "a/b" } },
+        { id: "two", type: "drawing", title: "稿二", metadata: { drawingId: "a_b" } },
+    ] as CanvasProject["nodes"];
+    await expect(exportCanvasProjects([canvas])).rejects.toThrow("重名文件");
+    expect(saved).toHaveLength(0);
 });
 
 test("malformed asset archive fails before writing partial media; duplicate ZIP entries fail instead of overwriting", async () => {

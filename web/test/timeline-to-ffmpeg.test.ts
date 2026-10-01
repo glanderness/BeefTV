@@ -91,6 +91,32 @@ describe("buildTimelineRenderPlan 片段与黑场对齐", () => {
         project.tracks = [{ id: "muted", kind: "audio", label: "BGM", order: 1, muted: true }];
         expect(buildTimelineRenderPlan(project, [source("v")]).steps.some((step) => step.kind === "mix")).toBe(false);
     });
+
+    test("未探测音轨时默认保留源音频，探测失败才改静音", () => {
+        const project = timeline([videoClip("a", "node-a", 0, 1000)]);
+        const keep = buildTimelineRenderPlan(project, [source("node-a")]);
+        expect(keep.steps.find((step) => step.kind === "trim")!.args.join(" ")).toContain("-map 0:a:0");
+        const silent = buildTimelineRenderPlan(project, [{ ...source("node-a"), hasAudio: false }]);
+        expect(silent.steps.find((step) => step.kind === "trim")!.args.join(" ")).toContain("-map 1:a:0");
+    });
+
+    test("请求清单包含视频、独立音轨和字幕，且计划必须包含对应步骤", () => {
+        const project = timeline([
+            videoClip("v", "v", 0, 3000),
+            { ...videoClip("voice", "voice", 0, 3000), kind: "audio" },
+            { id: "s", kind: "subtitle", nodeId: "s", trackId: "s", startMs: 0, durationMs: 3000, text: "中文" },
+        ]);
+        const plan = buildTimelineRenderPlan(project, [source("v"), source("voice")]);
+        expect(plan.request).toEqual({
+            videoClipIds: ["v"],
+            audioClipIds: ["voice"],
+            subtitleClipIds: ["s"],
+            durationMs: 3000,
+            burnSubtitles: true,
+        });
+        expect(plan.steps.some((step) => step.kind === "mix")).toBe(true);
+        expect(plan.steps.some((step) => step.kind === "burn")).toBe(true);
+    });
 });
 
 describe("trim 步骤输出 seek（-ss 在 -i 之后）", () => {

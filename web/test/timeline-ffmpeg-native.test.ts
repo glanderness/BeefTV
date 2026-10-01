@@ -3,9 +3,36 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { buildSubtitleSrt, buildTimelineRenderPlan } from "../src/lib/timeline/timeline-to-ffmpeg";
+import { buildTimelineRenderPlan } from "../src/lib/timeline/timeline-to-ffmpeg";
+import { executeTimelineRenderPlan, type TimelineRenderEngine } from "../src/lib/timeline/timeline-render-service";
+import { isSubtitleFontFailure } from "../src/lib/timeline/subtitle-font-failure";
 import type { TimelineProject, TimelineClip } from "../src/types/timeline";
 import { rasterizeTimelineSubtitle } from "../src/lib/timeline/timeline-subtitle-image";
+
+function createNativeEngine(dir: string): TimelineRenderEngine {
+    return {
+        async writeFile(name, data) {
+            writeFileSync(join(dir, name), typeof data === "string" ? data : Buffer.from(data));
+        },
+        async readFile(name) {
+            return readFileSync(join(dir, name));
+        },
+        async deleteFile(name) {
+            try { rmSync(join(dir, name)); } catch { /* owned temp dir */ }
+        },
+        async exec(args) {
+            const result = spawnSync("ffmpeg", ["-hide_banner", "-y", ...args], { cwd: dir, maxBuffer: 16 * 1024 * 1024 });
+            return { exitCode: result.status ?? 1, log: result.stderr.toString() };
+        },
+    };
+}
+
+test("native/wasm encoder fixture is opt-in; absent runtime is skipped instead of false-green", () => {
+    if (process.env.BEEFTV_NATIVE_FFMPEG_TEST === "1") {
+        expect(spawnSync("ffmpeg", ["-version"]).status).toBe(0);
+        expect(spawnSync("ffprobe", ["-version"]).status).toBe(0);
+    }
+});
 
 // Opt-in real local encoder test, not browser E2E. No network or paid media.
 test.skipIf(process.env.BEEFTV_NATIVE_FFMPEG_TEST !== "1")("native FFmpeg: three clips, original audio, voice, BGM and Chinese subtitles", async () => {
@@ -26,14 +53,13 @@ test.skipIf(process.env.BEEFTV_NATIVE_FFMPEG_TEST !== "1")("native FFmpeg: three
         clips.push({ id: "sub", nodeId: "sub", kind: "subtitle", trackId: "sub", startMs: 500, durationMs: 5000, text: "中文字幕完整性验证" });
         const project: TimelineProject = { version: 2, tracks: [], clips, durationMs: 6000 };
         const sources = clips.filter((clip) => clip.kind !== "subtitle").map((clip) => ({ nodeId: clip.nodeId, fileName: `${clip.nodeId}.${clip.kind === "video" ? "mp4" : "wav"}`, durationMs: 6000, hasAudio: true }));
-        const render = (name: string, subtitleImages?: string[]) => {
+        const render = async (name: string, subtitleImages?: string[]) => {
             const plan = buildTimelineRenderPlan(project, sources, { width: 320, height: 180, fps: 30, outputName: name, subtitleImages });
-            writeFileSync(join(dir, "concat.txt"), plan.concatEntries.map((file) => `file '${file}'`).join("\n"));
-            writeFileSync(join(dir, "timeline.srt"), buildSubtitleSrt(clips));
-            for (const step of plan.steps) if (step.args.length) {
-                const result = run(step.args);
-                if (step.kind === "burn") expect(result.stderr.toString()).not.toMatch(/failed to find any fallback|fontselect.*failed|can't find selected font provider/i);
-            }
+            expect(plan.request.audioClipIds).toContain("voice");
+            expect(plan.request.subtitleClipIds.length).toBeGreaterThan(0);
+            const result = await executeTimelineRenderPlan({ plan, timeline: project, engine: createNativeEngine(dir) });
+            expect(result.subtitleBurned).toBe(true);
+            expect(result.mixedAudio).toBe(true);
         };
         const spectrum = (name: string, start: number, frequency: number) => {
             const result = run(["-ss", String(start), "-i", name, "-t", "0.5", "-vn", "-ac", "1", "-ar", "8000", "-f", "f32le", "pipe:1"]);
@@ -42,7 +68,7 @@ test.skipIf(process.env.BEEFTV_NATIVE_FFMPEG_TEST !== "1")("native FFmpeg: three
             for (let i = 0; i < values.length; i++) { re += values[i] * Math.cos(2 * Math.PI * frequency * i / 8000); im += values[i] * Math.sin(2 * Math.PI * frequency * i / 8000); }
             return Math.hypot(re, im) / values.length;
         };
-        render("out.mp4");
+        await render("out.mp4");
         const probe = spawnSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", "out.mp4"], { cwd: dir });
         expect(Math.abs(Number(probe.stdout.toString()) - 6)).toBeLessThan(0.1);
         for (const [index, start] of [0.2, 2.2, 4.2].entries()) {
@@ -71,7 +97,7 @@ test.skipIf(process.env.BEEFTV_NATIVE_FFMPEG_TEST !== "1")("native FFmpeg: three
             const glyphs = await page.evaluate(async () => [Array.from(await (window as any).rasterize("中文", 320, 180)), Array.from(await (window as any).rasterize("测试", 320, 180))]);
             expect(glyphs[0]).not.toEqual(glyphs[1]);
         } finally { await browser.close(); }
-        render("browser-fonts.mp4", ["subtitle.png"]);
+        await render("browser-fonts.mp4", ["subtitle.png"]);
         expect(frame("browser-fonts.mp4").some((value, index) => Math.abs(value - withoutText[index]) > 80)).toBe(true);
         const outside = (name: string, time: string) => run(["-ss", time, "-i", name, "-frames:v", "1", "-vf", "crop=320:60:0:120", "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1"]).stdout;
         for (const time of ["0.2", "5.7"]) {
@@ -100,7 +126,11 @@ test.skipIf(process.env.BEEFTV_NATIVE_FFMPEG_TEST !== "1")("native FFmpeg: three
                 expect(Number(probe.format.duration)).toBeGreaterThanOrEqual(2);
                 expect(probe.streams.some((stream: { codec_type: string }) => stream.codec_type === "audio")).toBe(true);
             }
-            for (const step of plan.steps) if (step.args.length) { core.reset(); core.exec(...step.args); if (core.ret !== 0) throw new Error(`wasm ${step.description}: ${log}`); }
+            for (const step of plan.steps) if (step.args.length) {
+                core.reset();
+                core.exec(...step.args);
+                if (core.ret !== 0 || (step.kind === "burn" && isSubtitleFontFailure(log))) throw new Error(`wasm ${step.description}: ${log}`);
+            }
             writeFileSync(join(dir, "wasm.mp4"), core.FS.readFile("wasm.mp4"));
             expect(spectrum("wasm.mp4", 1.3, 220)).toBeGreaterThan(0.03);
             expect(spectrum("wasm.mp4", 1.3, 440)).toBeGreaterThan(0.03);
@@ -110,7 +140,7 @@ test.skipIf(process.env.BEEFTV_NATIVE_FFMPEG_TEST !== "1")("native FFmpeg: three
         } finally { globals.self = previousSelf; globals.importScripts = previousImportScripts; }
         clips.find((clip) => clip.id === "voice")!.volume = 0;
         project.tracks = [{ id: "bgm", kind: "audio", label: "BGM", order: 1, muted: true }];
-        render("muted.mp4");
+        await render("muted.mp4");
         expect(spectrum("muted.mp4", 1.3, 220)).toBeGreaterThan(0.03);
         expect(spectrum("muted.mp4", 1.3, 440)).toBeLessThan(0.002);
         expect(spectrum("muted.mp4", 1.3, 880)).toBeLessThan(0.002);

@@ -5,7 +5,7 @@ import { getImageBlob, setImageBlob } from "@/services/image-storage";
 import type { Asset } from "@/stores/use-asset-store";
 import { normalizeLocalAsset } from "@/lib/local-workspace-migration";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
-import { ExportIntegrityError, type MissingExportFile } from "@/lib/export-integrity";
+import { archiveFileExtension, assertBackupHasEntries, assertUniqueArchiveNames, ExportIntegrityError, type MissingExportFile } from "@/lib/export-integrity";
 
 type AssetExportFile = {
     app: "infinite-canvas";
@@ -23,6 +23,7 @@ type AssetExportItem = {
 };
 
 export async function exportAssets(assets: Asset[]): Promise<OwnedMediaSaveResult> {
+    assertBackupHasEntries(assets.length, "assets");
     const files: AssetExportItem[] = [];
     const zipFiles: { name: string; data: BlobPart }[] = [];
     const missingFiles: MissingExportFile[] = [];
@@ -49,13 +50,17 @@ export async function exportAssets(assets: Asset[]): Promise<OwnedMediaSaveResul
                 missingFiles.push({ owner: asset.title || asset.id, reference: storageKey });
                 return;
             }
-            const path = `files/${encodeURIComponent(storageKey)}.${fileExtension(blob.type, asset.kind)}`;
+            const path = `files/${encodeURIComponent(storageKey)}.${archiveFileExtension(blob.type, asset.kind === "image" ? "png" : "bin")}`;
             files.push({ storageKey, path, mimeType: blob.type || asset.data.mimeType, bytes: blob.size });
             zipFiles.push({ name: path, data: blob });
         }),
     );
 
     if (missingFiles.length) throw new ExportIntegrityError(missingFiles);
+    assertUniqueArchiveNames(["assets.json", ...zipFiles.map((file) => file.name)]);
+    for (const file of files) {
+        if (!file.storageKey || file.path === file.storageKey) throw new Error("备份未完成：文件引用不一致，未生成备份。");
+    }
 
     const exportedAssets = isLocalWorkspaceMode() ? assets.map(normalizeLocalAsset) : assets;
     const data: AssetExportFile = { app: "infinite-canvas", version: 1, exportedAt: new Date().toISOString(), assets: exportedAssets, files };
@@ -79,18 +84,4 @@ export async function readAssetPackage(file: File) {
         }),
     );
     return data.assets;
-}
-
-function fileExtension(mimeType: string, kind: Asset["kind"]) {
-    if (mimeType.includes("png")) return "png";
-    if (mimeType.includes("jpeg")) return "jpg";
-    if (mimeType.includes("webp")) return "webp";
-    if (mimeType.includes("gif")) return "gif";
-    if (mimeType.includes("mp4")) return "mp4";
-    if (mimeType.includes("webm")) return "webm";
-    if (mimeType.includes("mpeg")) return "mp3";
-    if (mimeType.includes("wav")) return "wav";
-    if (mimeType.includes("gltf-binary")) return "glb";
-    if (mimeType.includes("gltf+json") || mimeType.includes("json")) return "gltf";
-    return kind === "image" ? "png" : "bin";
 }

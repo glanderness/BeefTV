@@ -38,11 +38,21 @@ export type TimelineRenderContext = {
     subtitleImages?: string[];
 };
 
+export type TimelineRenderRequest = {
+    videoClipIds: string[];
+    audioClipIds: string[];
+    subtitleClipIds: string[];
+    durationMs: number;
+    burnSubtitles: boolean;
+};
+
 export type TimelineRenderPlan = {
     steps: TimelineRenderStep[];
     finalOutput: string;
     /** concat 输入文件列表（trim/gap 输出），运行时据此写 concat.txt */
     concatEntries: string[];
+    /** Requested export content. Execution must not succeed after dropping any of these. */
+    request: TimelineRenderRequest;
 };
 
 export const SUBTITLE_FILE = "timeline.srt";
@@ -163,11 +173,14 @@ export function buildTimelineRenderPlan(timeline: TimelineProject, sources: Time
         // -ss 必须放在 -i 之后（输出 seek）：放在 -i 之前是输入 seek，MP4/H.264 只会定位到目标时间戳
         // 之前最近的关键帧，切点会偏移最多一个 GOP（常见 0.5-2s）、片尾被 -t 截掉、音视频在切点处错位。
         // 本步骤已 -c:v libx264 重编码，输出 seek 帧精确，代价只是多解码。
+        // hasAudio defaults to present until probe proves otherwise; unknown must not map to silence.
         const durationSec = clip.durationMs / 1000;
+        const trackMuted = Boolean(timeline.tracks.find((track) => track.id === clip.trackId)?.muted);
+        const audioMap = source.hasAudio !== false && !trackMuted ? "0:a:0" : "1:a:0";
         steps.push({
             kind: "trim",
             output,
-            args: ["-i", source.fileName, "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-ss", String((clip.sourceStartMs || 0) / 1000), "-t", String(durationSec), "-map", "0:v:0", "-map", source.hasAudio && !timeline.tracks.find((track) => track.id === clip.trackId)?.muted ? "0:a:0" : "1:a:0", "-vf", `scale=${cfg.width}:${cfg.height}:force_original_aspect_ratio=decrease,pad=${cfg.width}:${cfg.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${cfg.fps},format=yuv420p`, "-af", `aresample=44100,aformat=channel_layouts=stereo,volume=${clip.volume ?? 1},apad`, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "128k", output],
+            args: ["-i", source.fileName, "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-ss", String((clip.sourceStartMs || 0) / 1000), "-t", String(durationSec), "-map", "0:v:0", "-map", audioMap, "-vf", `scale=${cfg.width}:${cfg.height}:force_original_aspect_ratio=decrease,pad=${cfg.width}:${cfg.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${cfg.fps},format=yuv420p`, "-af", `aresample=44100,aformat=channel_layouts=stereo,volume=${clip.volume ?? 1},apad`, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "128k", output],
             description: `裁切片段 ${index + 1}（${clip.title || clip.nodeId}）`,
         });
         concatEntries.push(output);
@@ -244,7 +257,18 @@ export function buildTimelineRenderPlan(timeline: TimelineProject, sources: Time
         });
     }
 
-    return { steps, finalOutput, concatEntries };
+    const request: TimelineRenderRequest = {
+        videoClipIds: videoClips.map((clip) => clip.id),
+        audioClipIds: audioClips.map((clip) => clip.id),
+        subtitleClipIds: subtitleClips.filter((clip) => clip.text?.trim()).map((clip) => clip.id),
+        durationMs: Math.max(timeline.durationMs, cursorMs, ...clips.map((clip) => clip.startMs + clip.durationMs)),
+        burnSubtitles: Boolean(cfg.burnSubtitles && subtitleClips.some((clip) => clip.text?.trim())),
+    };
+    if (request.videoClipIds.length && !concatEntries.length) throw new Error("导出计划丢失了视频片段，未生成不完整成片");
+    if (request.audioClipIds.length && !steps.some((step) => step.kind === "mix")) throw new Error("导出计划丢失了独立音轨，未生成不完整成片");
+    if (request.burnSubtitles && !steps.some((step) => step.kind === "burn")) throw new Error("导出计划丢失了字幕烧录，未生成无字幕成片");
+
+    return { steps, finalOutput, concatEntries, request };
 }
 
 /** 供导出对话框/文档展示的人类可读命令预览 */
