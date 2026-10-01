@@ -47,7 +47,7 @@ func TestOpsListingKeepsOwnerAndExternalCatalogFull(t *testing.T) {
 	hostListing := getOps(t, env, map[string]string{"X-Beeftv-Agent-Token": assistantTestHostToken})
 	wantHost := make([]string, 0)
 	for _, descriptor := range registry.List(operations.ManualCaller(false)) {
-		if descriptor.ID != "asset.list" && descriptor.ID != "canvas.search" && descriptor.ID != "canvas.document.commit" {
+		if descriptor.Scope != operations.ScopeConversation && descriptor.ID != "asset.list" && descriptor.ID != "canvas.search" && descriptor.ID != "canvas.document.commit" {
 			wantHost = append(wantHost, descriptor.ID)
 		}
 	}

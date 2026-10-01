@@ -12,6 +12,8 @@ let draftHold: Promise<void> | null = null;
 let releaseDraftHold: (() => void) | null = null;
 let draftWriteEntered = 0;
 let draftWriteError: Error | null = null;
+let draftRemoveHold: Promise<void> | null = null;
+let draftRemoveEntered = 0;
 
 function switchScope(next: string) {
     if (next !== activeScope) scopeGeneration += 1;
@@ -83,7 +85,13 @@ mock.module("@/lib/localforage-storage", () => ({
             }
             stored.set(`${scope ?? activeScope}:${name}`, value);
         },
-        removeItem: async (name: string) => { stored.delete(`${scope ?? activeScope}:${name}`); },
+        removeItem: async (name: string) => {
+            if (draftRemoveHold && name.startsWith("creation-conversation-drafts-v1:")) {
+                draftRemoveEntered += 1;
+                await draftRemoveHold;
+            }
+            stored.delete(`${scope ?? activeScope}:${name}`);
+        },
     }),
     localForageStorage: {
         getItem: async (name: string) => stored.get(`${activeScope}:${name}`) ?? null,
@@ -210,6 +218,8 @@ beforeEach(() => {
     releaseDraftHold = null;
     draftWriteEntered = 0;
     draftWriteError = null;
+    draftRemoveHold = null;
+    draftRemoveEntered = 0;
     resetCreationConversationStoreForTests();
 });
 
@@ -535,6 +545,22 @@ test("adopt keeps deferred user edits instead of dropping the draft", async () =
     expect(server.conversations.get("conv-1")?.document?.title).toBe("改名");
 });
 
+test("adopt keeps a local title edit without resurrecting a remotely deleted message", async () => {
+    server.conversations.set("conv-1", {
+        id: "conv-1", revision: 3, updatedAt: "2026-10-02T00:00:00.000Z",
+        document: { id: "conv-1", title: "原稿", messages: [{ id: "msg-1", role: "user", content: "旧消息" }] },
+    });
+    await loadCreationConversations();
+    holdPuts();
+    const saving = saveCreationConversations([{ id: "conv-1", title: "本地标题", messages: [{ id: "msg-1", role: "user", content: "旧消息" }] }]);
+    while (!server.putEntered) await Promise.resolve();
+    const adopted = await adoptServerConfirmedConversationDocument("conv-1", { id: "conv-1", title: "原稿", messages: [] }, 5, capturedGuest());
+    expect(adopted.title).toBe("本地标题");
+    expect(adopted.messages).toEqual([]);
+    server.releasePut?.();
+    await saving;
+});
+
 test("adopt refuses an older receipt instead of rolling back committed truth", async () => {
     const newer = await adoptServerConfirmedConversationDocument("conv-1", {
         id: "conv-1",
@@ -610,6 +636,23 @@ test("adopt IDB failure keeps the user draft and retry merges after restart", as
     expect((retried.messages as Array<{ id: string }>).find((item) => item.id === "user-2")).toBeDefined();
     server.releasePut?.();
     await saveP.catch(() => undefined);
+});
+
+test("adopt keeps an edit arriving during the final draft removal", async () => {
+    server.conversations.set("conv-1", { id: "conv-1", revision: 3, updatedAt: "2026-10-02T00:00:00.000Z", document: { id: "conv-1", title: "原稿", messages: [] } });
+    await loadCreationConversations();
+    let release!: () => void;
+    draftRemoveHold = new Promise<void>((resolve) => { release = resolve; });
+    holdPuts();
+    const adoptP = adoptServerConfirmedConversationDocument("conv-1", { id: "conv-1", title: "原稿", messages: [] }, 5, capturedGuest());
+    while (!draftRemoveEntered) await Promise.resolve();
+    const saveP = saveCreationConversations([{ id: "conv-1", title: "最后一步的新编辑", messages: [{ id: "new", role: "user", content: "保留" }] }]);
+    release();
+    const adopted = await adoptP;
+    server.releasePut?.();
+    await saveP.catch(() => undefined);
+    expect(adopted.title).toBe("最后一步的新编辑");
+    expect(adopted.messages).toHaveLength(1);
 });
 
 test("adopt keeps a newer draft that arrives while receipt persistence is in flight", async () => {

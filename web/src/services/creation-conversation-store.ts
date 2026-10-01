@@ -209,7 +209,7 @@ function threeWayMessages(base: unknown[], ours: unknown[], theirs: unknown[]) {
             continue;
         }
         if (samePersistable(item, previous)) {
-            merged.push(canonical ?? item);
+            if (canonical) merged.push(canonical);
             continue;
         }
         merged.push(threeWayValue(previous, item, canonical ?? item));
@@ -758,56 +758,46 @@ export async function adoptServerConfirmedConversationDocument(
             return;
         }
 
-        const ackGeneration = pendingWrites.get(key)?.generation ?? 0;
-        const latest = pendingWrites.get(key);
         const draft = await readDraft(scope, id);
-        const ours = latest?.document ?? draft?.document;
         const base = current?.document ?? draft?.remote?.document;
-        let live: StoredCreationConversation;
-        let remote: ConversationDraft["remote"];
-        let keepDraft = false;
-        if (!ours || persistableFingerprint(ours) === persistableFingerprint(canonical)) {
-            live = cloneConversation(canonical);
-        } else if (!base) {
-            live = cloneConversation(ours);
-            remote = { revision, document: cloneConversation(canonical) };
-            keepDraft = true;
-        } else {
-            live = projectPendingOnCanonical(base, ours, canonical);
-            keepDraft = persistableFingerprint(live) !== persistableFingerprint(canonical);
-        }
-
-        await writeDraft(scope, id, {
-            baseRevision: revision,
-            document: cloneConversation(keepDraft ? live : canonical),
-            remote,
-        });
-        if (!commitIfCurrent(scope, id, revision, canonical)) {
-            const latestCommitted = committed.get(key);
-            const oursNow = pendingWrites.get(key)?.document ?? (await readDraft(scope, id))?.document;
-            adopted = liveFromCommittedAndDraft(latestCommitted, oursNow) ?? cloneConversation(canonical);
-            return;
-        }
-
-        const after = pendingWrites.get(key);
-        if ((after?.generation ?? 0) > ackGeneration && after) {
-            const sameEdit = ours != null && persistableFingerprint(after.document) === persistableFingerprint(ours);
-            const projected = sameEdit ? live : projectPendingOnCanonical(base ?? canonical, after.document, canonical);
-            pendingWrites.set(key, { generation: after.generation, document: projected });
-            await writeDraft(scope, id, { baseRevision: revision, document: projected, remote: sameEdit ? remote : undefined });
-            adopted = sameEdit && remote ? withConflict(projected, remote) : projected;
-            return;
-        }
-        if (keepDraft) {
-            if (after && after.generation === ackGeneration) {
-                pendingWrites.set(key, { generation: after.generation, document: live });
+        // Every storage await can admit another edit, including the final
+        // remove. Only publish/ack a generation still current after its I/O.
+        for (;;) {
+            assertUserScope(entryCapturedScope);
+            const generation = writeGenerations.get(key) ?? 0;
+            const pending = pendingWrites.get(key);
+            const ours = pending?.document ?? draft?.document;
+            let live: StoredCreationConversation;
+            let remote: ConversationDraft["remote"];
+            let keepDraft = false;
+            if (!ours || persistableFingerprint(ours) === persistableFingerprint(canonical)) {
+                live = cloneConversation(canonical);
+            } else if (!base) {
+                live = cloneConversation(ours);
+                remote = { revision, document: cloneConversation(canonical) };
+                keepDraft = true;
+            } else {
+                live = projectPendingOnCanonical(base, ours, canonical);
+                keepDraft = persistableFingerprint(live) !== persistableFingerprint(canonical);
             }
-            adopted = remote ? withConflict(live, remote) : live;
+            await writeDraft(scope, id, { baseRevision: revision, document: cloneConversation(live), remote });
+            if ((writeGenerations.get(key) ?? 0) !== generation) continue;
+            if (!commitIfCurrent(scope, id, revision, canonical)) {
+                const latestCommitted = committed.get(key);
+                adopted = liveFromCommittedAndDraft(latestCommitted, pendingWrites.get(key)?.document ?? ours) ?? cloneConversation(canonical);
+                return;
+            }
+            if (keepDraft) {
+                if (pending) pendingWrites.set(key, { generation: pending.generation, document: live });
+                adopted = remote ? withConflict(live, remote) : live;
+                return;
+            }
+            await removeDraft(scope, id);
+            if ((writeGenerations.get(key) ?? 0) !== generation) continue;
+            if (pendingWrites.get(key)?.generation === pending?.generation) pendingWrites.delete(key);
+            adopted = cloneConversation(canonical);
             return;
         }
-        if ((after?.generation ?? 0) === ackGeneration) pendingWrites.delete(key);
-        await removeDraft(scope, id);
-        adopted = cloneConversation(canonical);
     });
 
     assertUserScope(entryCapturedScope);
