@@ -2,10 +2,12 @@ package asset
 
 import (
 	"bytes"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
@@ -294,6 +296,140 @@ func TestLeftoverFailedBytesPromoteKeepsOriginalDaily(t *testing.T) {
 	usage, err := repo.DailyUploadBytes("user-1", day)
 	if err != nil || usage != 7 {
 		t.Fatalf("leftover FAILED+bytes daily=%d err=%v", usage, err)
+	}
+}
+
+func TestReadyMissingRestoreWriteFailureReopenKeepsDaily(t *testing.T) {
+	svc, repo, dataDir := newRepoQuotaDomain(t)
+	identity := "task-ready-repair-write:0"
+	first, err := svc.RecoverOwned("user-1", identity, func() (RecoveredArtifact, error) {
+		return testArtifact("payload"), nil
+	})
+	if err != nil || first == nil || first.Status != model.ResourceStatusReady {
+		t.Fatalf("first recover = %#v err=%v", first, err)
+	}
+	day := time.Now().UTC().Format("2006-01-02")
+	usage, err := repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 7 {
+		t.Fatalf("consumed daily=%d err=%v", usage, err)
+	}
+	if err := NewFileStore(dataDir).Delete(first.ObjectKey); err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.RecoverOwned("user-1", identity, func() (RecoveredArtifact, error) {
+		artifact := testArtifact("payload")
+		artifact.Body = iotest.ErrReader(errors.New("injected restore write failure"))
+		return artifact, nil
+	})
+	if err == nil {
+		t.Fatal("missing-byte restore write succeeded")
+	}
+	latest, lookupErr := repo.Resource(first.ID)
+	if lookupErr != nil {
+		t.Fatal(lookupErr)
+	}
+	if latest.Status != model.ResourceStatusReady {
+		t.Fatalf("repair write failure mutated consumed status=%s", latest.Status)
+	}
+
+	svc, repo = reopenRepoQuotaDomain(t, repo, dataDir)
+	second, err := svc.RecoverOwned("user-1", identity, func() (RecoveredArtifact, error) {
+		return testArtifact("payload"), nil
+	})
+	if err != nil || second == nil || second.ID != first.ID || second.Status != model.ResourceStatusReady {
+		t.Fatalf("repair after reopen = %#v err=%v first=%s", second, err, first.ID)
+	}
+	if second.UploadKey == nil || first.UploadKey == nil || *second.UploadKey != *first.UploadKey {
+		t.Fatalf("repair identity first=%v second=%v", first.UploadKey, second.UploadKey)
+	}
+	usage, err = repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 7 {
+		t.Fatalf("repair reopen daily=%d err=%v", usage, err)
+	}
+}
+
+func TestReadyMissingRestoreSaveFailureReopenKeepsDaily(t *testing.T) {
+	svc, repo, dataDir := newRepoQuotaDomain(t)
+	identity := "task-ready-repair-save:0"
+	first, err := svc.RecoverOwned("user-1", identity, func() (RecoveredArtifact, error) {
+		return testArtifact("payload"), nil
+	})
+	if err != nil || first == nil || first.Status != model.ResourceStatusReady {
+		t.Fatalf("first recover = %#v err=%v", first, err)
+	}
+	day := time.Now().UTC().Format("2006-01-02")
+	if err := NewFileStore(dataDir).Delete(first.ObjectKey); err != nil {
+		t.Fatal(err)
+	}
+	failing := NewService(Dependencies{
+		Repository: &readySaveFailRepo{Repository: NewRepository(repo), remaining: 1},
+		Blobs:      NewFileStore(dataDir),
+		Quota:      repoQuota{repo: repo},
+		Lifecycle:  nopLifecycle{},
+		DataDir:    dataDir,
+	})
+	_, err = failing.RecoverOwned("user-1", identity, func() (RecoveredArtifact, error) {
+		return testArtifact("payload"), nil
+	})
+	if err == nil {
+		t.Fatal("missing-byte restore ready-save succeeded")
+	}
+	latest, lookupErr := repo.Resource(first.ID)
+	if lookupErr != nil {
+		t.Fatal(lookupErr)
+	}
+	if latest.Status != model.ResourceStatusReady {
+		t.Fatalf("repair save failure mutated consumed status=%s", latest.Status)
+	}
+
+	svc, repo = reopenRepoQuotaDomain(t, repo, dataDir)
+	second, err := svc.RecoverOwned("user-1", identity, func() (RecoveredArtifact, error) {
+		t.Fatal("READY+restored bytes called restore")
+		return RecoveredArtifact{}, nil
+	})
+	if err != nil || second == nil || second.ID != first.ID || second.Status != model.ResourceStatusReady {
+		t.Fatalf("repair save reopen = %#v err=%v first=%s", second, err, first.ID)
+	}
+	usage, err := repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 7 {
+		t.Fatalf("repair save reopen daily=%d err=%v", usage, err)
+	}
+}
+
+func TestPendingRestoreWriteFailureRefundsDaily(t *testing.T) {
+	svc, repo, dataDir := newRepoQuotaDomain(t)
+	identity := "task-pending-write-fail:0"
+	uploadKey := NormalizedUploadKey([]string{identity})
+	day := plantReservation(t, repo, "user-1", *uploadKey, 7)
+	pending := model.Resource{
+		ID: "res-pending-write-fail", UserID: "user-1", Kind: "image", Status: model.ResourceStatusPending,
+		Provider: "local", ObjectKey: "users/user-1/image/pending-write-fail.png", MimeType: "image/png", Size: 7,
+		UploadKey: uploadKey,
+	}
+	if err := repo.CreateResource(&pending); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.RecoverOwned("user-1", identity, func() (RecoveredArtifact, error) {
+		artifact := testArtifact("payload")
+		artifact.Body = iotest.ErrReader(errors.New("injected pending write failure"))
+		return artifact, nil
+	})
+	if err == nil {
+		t.Fatal("pending restore write succeeded")
+	}
+	if got == nil || got.Status != model.ResourceStatusFailed {
+		t.Fatalf("pending write failure resource=%#v", got)
+	}
+	usage, err := repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 0 {
+		t.Fatalf("pending write failure daily=%d err=%v", usage, err)
+	}
+	row, err := repo.UploadReservation("user-1", *uploadKey)
+	if err != nil || row != nil {
+		t.Fatalf("pending write failure witness %#v err=%v", row, err)
+	}
+	if statErr := NewFileStore(dataDir).Exists(pending.ObjectKey); statErr == nil {
+		t.Fatal("pending write failure left bytes")
 	}
 }
 

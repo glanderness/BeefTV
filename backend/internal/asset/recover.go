@@ -159,8 +159,10 @@ func (s *Service) recoverWrite(resource *model.Resource, artifact RecoveredArtif
 	}
 	claimedFailed := incoming == model.ResourceStatusFailed
 	alreadyConsumed := incoming == model.ResourceStatusReady
-	resource.Status = model.ResourceStatusPending
-	resource.Error = ""
+	if !alreadyConsumed {
+		resource.Status = model.ResourceStatusPending
+		resource.Error = ""
+	}
 	resource.UpdatedAt = time.Now()
 	identity := quotaIdentity(resource.UploadKey, resource.ID)
 	var day string
@@ -182,6 +184,10 @@ func (s *Service) recoverWrite(resource *model.Resource, artifact RecoveredArtif
 	etag, err := s.WriteObject(resource, artifact.FileName, artifact.Body)
 	resource.UpdatedAt = time.Now()
 	if err != nil {
+		if alreadyConsumed {
+			// Keep durable READY so the next retry does not reserve again.
+			return resource, err
+		}
 		if saveErr := s.persistFailedResource(resource, err); saveErr != nil {
 			return resource, errors.Join(err, fmt.Errorf("记录资源失败状态失败：%w", saveErr))
 		}
@@ -192,7 +198,14 @@ func (s *Service) recoverWrite(resource *model.Resource, artifact RecoveredArtif
 	}
 	applyRecoveredMetadata(resource, artifact, kind)
 	resource.ETag = etag
-	if err := s.finalizeReady(resource); err != nil {
+	if alreadyConsumed {
+		resource.Status = model.ResourceStatusReady
+		resource.Error = ""
+		if err := s.repo.SaveResource(resource); err != nil {
+			// Leave the original READY row; do not persist PENDING.
+			return resource, fmt.Errorf("保存资源就绪状态失败：%w", err)
+		}
+	} else if err := s.finalizeReady(resource); err != nil {
 		return resource, err
 	}
 	s.commitQuota(resource)
