@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -162,10 +164,23 @@ func (a *DesktopApp) promptSavePath(ctx context.Context, fileName string) (strin
 	if choose != nil {
 		return choose(ctx, fileName)
 	}
-	return wailsruntime.SaveFileDialog(ctx, wailsruntime.SaveDialogOptions{
+	return wailsruntime.SaveFileDialog(ctx, mediaSaveDialogOptions(fileName, runtime.GOOS))
+}
+
+func mediaSaveDialogOptions(fileName, platform string) wailsruntime.SaveDialogOptions {
+	options := wailsruntime.SaveDialogOptions{
 		DefaultFilename: fileName,
 		Title:           "保存文件",
-	})
+	}
+	// Windows uses the first filter to set the default extension. Without it,
+	// hiding known extensions or renaming the file can produce an extensionless file.
+	if ext := filepath.Ext(fileName); platform == "windows" && len(ext) > 1 {
+		options.Filters = []wailsruntime.FileFilter{{
+			DisplayName: strings.ToUpper(ext[1:]) + " 文件 (*" + ext + ")",
+			Pattern:     "*" + ext,
+		}}
+	}
+	return options
 }
 
 func (a *DesktopApp) copyMedia(resourceID, destPath string) error {
