@@ -9,6 +9,12 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.22
+
+- Add a director workbench for staging objects, cameras, motion paths, and shot previews.
+- Keep director references and exported previews attached to the correct scene when switching or closing the workbench.
+- Preserve shot prompts, camera motion, and independent paths when editing or duplicating scenes.
+
 ## v1.6.21
 
 - Keep copied media nodes on the canvas when regenerating them, including changing a copied video's resolution.
