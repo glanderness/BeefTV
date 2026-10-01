@@ -268,6 +268,27 @@ func (s *Service) reserveChunked(userID string, size int64) (string, error) {
 	return s.quota.ReserveChunked(userID, size)
 }
 
+func (s *Service) reserveGenerated(userID string, size int64) (string, error) {
+	if s == nil || s.quota == nil {
+		return "", nil
+	}
+	return s.quota.ReserveGenerated(userID, size)
+}
+
+func (s *Service) reserveGeneratedRetry(userID string, size int64) (string, error) {
+	if s == nil || s.quota == nil {
+		return "", nil
+	}
+	return s.quota.ReserveGeneratedRetry(userID, size)
+}
+
+func (s *Service) commitQuota(resource *model.Resource) {
+	if s == nil || s.quota == nil || resource == nil {
+		return
+	}
+	s.quota.Commit(resource.UserID, resource.Size)
+}
+
 func (s *Service) finishQuota(userID string, day string, size int64, stored bool, err error) {
 	if s == nil || s.quota == nil {
 		return

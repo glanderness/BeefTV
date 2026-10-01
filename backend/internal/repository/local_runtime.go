@@ -308,7 +308,11 @@ func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, limit int) erro
 		if err := RequireTaskScopeActiveTx(tx, task.UserID, task.ProjectID); err != nil {
 			return err
 		}
-		if err := RequireReadyOwnedResourcesTx(tx, task.UserID, taskInputResourceIDs(task.InputJSON)); err != nil {
+		ids, err := taskInputResourceIDs(task.InputJSON)
+		if err != nil {
+			return err
+		}
+		if err := RequireReadyOwnedResourcesTx(tx, task.UserID, ids); err != nil {
 			return err
 		}
 		if err := enforceActiveTaskLimit(tx, task.UserID, limit); err != nil {
@@ -333,7 +337,11 @@ func (r *Repository) RetryTask(userID string, prepared *model.Task, limit int) (
 		if err := RequireTaskScopeActiveTx(tx, userID, prepared.ProjectID); err != nil {
 			return err
 		}
-		if err := RequireReadyOwnedResourcesTx(tx, userID, taskInputResourceIDs(prepared.InputJSON)); err != nil {
+		ids, err := taskInputResourceIDs(prepared.InputJSON)
+		if err != nil {
+			return err
+		}
+		if err := RequireReadyOwnedResourcesTx(tx, userID, ids); err != nil {
 			return err
 		}
 		if err := enforceActiveTaskLimit(tx, userID, limit); err != nil {
@@ -361,19 +369,19 @@ func (r *Repository) RetryTask(userID string, prepared *model.Task, limit int) (
 	return &task, err
 }
 
-func taskInputResourceIDs(inputJSON string) []string {
+func taskInputResourceIDs(inputJSON string) ([]string, error) {
 	found := map[string]struct{}{}
 	raw := strings.TrimSpace(inputJSON)
 	if raw == "" {
-		return nil
+		return nil, nil
 	}
 	if err := assets.CollectOwnedDocumentReferences(raw, found); err != nil {
 		if id := assets.ResourceID(raw); id != "" {
-			return []string{id}
+			return []string{id}, nil
 		}
-		return nil
+		return nil, ErrTaskInputInvalid
 	}
-	return assets.SortedIDs(found)
+	return assets.SortedIDs(found), nil
 }
 
 func enforceActiveTaskLimit(tx *gorm.DB, userID string, limit int) error {

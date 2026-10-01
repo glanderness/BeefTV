@@ -31,6 +31,20 @@ func (q resourceQuota) ReserveRetry(userID string, size int64) (string, error) {
 	return q.svc.reserveRetryUploadQuota(userID, size)
 }
 
+func (q resourceQuota) ReserveGenerated(userID string, size int64) (string, error) {
+	if q.svc == nil {
+		return "", nil
+	}
+	return q.svc.reserveGeneratedResourceQuota(userID, size)
+}
+
+func (q resourceQuota) ReserveGeneratedRetry(userID string, size int64) (string, error) {
+	if q.svc == nil {
+		return "", nil
+	}
+	return q.svc.reserveRetryGeneratedQuota(userID, size)
+}
+
 func (q resourceQuota) Release(userID string, day string, size int64) {
 	if q.svc == nil {
 		return

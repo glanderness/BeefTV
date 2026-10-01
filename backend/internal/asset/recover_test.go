@@ -2,8 +2,10 @@ package asset
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -244,5 +246,241 @@ func TestRecoverOwnedCreateReservesQuotaReplayDoesNot(t *testing.T) {
 	}
 	if quota.reserved != first.Size {
 		t.Fatalf("replay changed quota reserved = %d", quota.reserved)
+	}
+}
+
+type limitQuota struct {
+	uploadExclusive    int64
+	generatedExclusive int64
+}
+
+func (q *limitQuota) ReserveUpload(_ string, size int64) (string, error) {
+	if size >= q.uploadExclusive {
+		return "", errors.New("upload exceeds ResourceUploadMB")
+	}
+	return "day", nil
+}
+func (q *limitQuota) ReserveChunked(_ string, size int64) (string, error) {
+	return q.ReserveUpload("", size)
+}
+func (q *limitQuota) ReserveRetry(_ string, size int64) (string, error) {
+	return q.ReserveUpload("", size)
+}
+func (q *limitQuota) ReserveGenerated(_ string, size int64) (string, error) {
+	if size >= q.generatedExclusive {
+		return "", errors.New("generated exceeds GeneratedFileMB")
+	}
+	return "day", nil
+}
+func (q *limitQuota) ReserveGeneratedRetry(_ string, size int64) (string, error) {
+	return q.ReserveGenerated("", size)
+}
+func (q *limitQuota) Release(string, string, int64)      {}
+func (q *limitQuota) ReleaseRetry(string, string, int64) {}
+func (q *limitQuota) Commit(string, int64)               {}
+
+type ledgerQuota struct {
+	pending  int64
+	daily    int64
+	commits  int
+	releases int
+}
+
+func (q *ledgerQuota) ReserveUpload(_ string, size int64) (string, error) {
+	q.pending += size
+	q.daily += size
+	return "day", nil
+}
+func (q *ledgerQuota) ReserveChunked(_ string, size int64) (string, error) {
+	return q.ReserveUpload("", size)
+}
+func (q *ledgerQuota) ReserveRetry(_ string, size int64) (string, error) {
+	q.daily += size
+	return "day", nil
+}
+func (q *ledgerQuota) ReserveGenerated(_ string, size int64) (string, error) {
+	q.pending += size
+	q.daily += size
+	return "day", nil
+}
+func (q *ledgerQuota) ReserveGeneratedRetry(_ string, size int64) (string, error) {
+	q.daily += size
+	return "day", nil
+}
+func (q *ledgerQuota) Release(_ string, _ string, size int64) {
+	q.pending -= size
+	q.daily -= size
+	q.releases++
+}
+func (q *ledgerQuota) ReleaseRetry(_ string, _ string, size int64) {
+	q.daily -= size
+	q.releases++
+}
+func (q *ledgerQuota) Commit(_ string, size int64) {
+	q.pending -= size
+	q.commits++
+}
+
+func TestRecoverOwnedUsesGeneratedQuotaNotUploadLimit(t *testing.T) {
+	base, repo, _ := newTestDomain(t)
+	quota := &limitQuota{uploadExclusive: 8, generatedExclusive: 33}
+	svc := NewService(Dependencies{
+		Repository: base.repo,
+		Blobs:      base.blobs,
+		Quota:      quota,
+		Lifecycle:  nopLifecycle{},
+	})
+	mid := strings.Repeat("m", 16)
+	if _, err := svc.reserveUpload("user-1", int64(len(mid))); err == nil {
+		t.Fatal("upload of in-between size should be rejected")
+	}
+	got, err := svc.RecoverOwned("user-1", "task-gen-quota:0", func() (RecoveredArtifact, error) {
+		return testArtifact(mid), nil
+	})
+	if err != nil || got == nil || got.Status != model.ResourceStatusReady || got.Size != int64(len(mid)) {
+		t.Fatalf("generated mid-size = %#v err=%v", got, err)
+	}
+	over := strings.Repeat("o", 40)
+	if _, err := svc.RecoverOwned("user-1", "task-gen-over:0", func() (RecoveredArtifact, error) {
+		return testArtifact(over), nil
+	}); err == nil {
+		t.Fatal("generated artifact above GeneratedFileMB should be rejected")
+	}
+	listed, err := repo.Resources("user-1", 10)
+	if err != nil || len(listed) != 1 || listed[0].ID != got.ID {
+		t.Fatalf("resources after generated quota = %#v err=%v", listed, err)
+	}
+}
+
+func TestRecoverOwnedFailedReadySaveKeepsQuotaUntilPromote(t *testing.T) {
+	base, repo, dataDir := newTestDomain(t)
+	quota := &ledgerQuota{}
+	failing := &readySaveFailRepo{Repository: base.repo, remaining: 1}
+	svc := NewService(Dependencies{
+		Repository: failing,
+		Blobs:      base.blobs,
+		Quota:      quota,
+		Lifecycle:  nopLifecycle{},
+	})
+	body := "payload"
+	first, err := svc.RecoverOwned("user-1", "task-quota-keep:0", func() (RecoveredArtifact, error) {
+		return testArtifact(body), nil
+	})
+	if err == nil || first == nil || first.Status == model.ResourceStatusReady {
+		t.Fatalf("first recover resource=%#v err=%v", first, err)
+	}
+	size := int64(len(body))
+	if quota.pending != size || quota.daily != size || quota.releases != 0 || quota.commits != 0 {
+		t.Fatalf("after failed ready-save ledger pending=%d daily=%d releases=%d commits=%d", quota.pending, quota.daily, quota.releases, quota.commits)
+	}
+	latest, lookupErr := repo.ResourceByUploadKey("user-1", *NormalizedUploadKey([]string{"task-quota-keep:0"}))
+	if lookupErr != nil {
+		t.Fatal(lookupErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(dataDir, "resources", filepath.FromSlash(latest.ObjectKey))); statErr != nil {
+		t.Fatalf("bytes missing after finalize failure: %v", statErr)
+	}
+	second, err := svc.RecoverOwned("user-1", "task-quota-keep:0", func() (RecoveredArtifact, error) {
+		t.Fatal("promote called restore")
+		return RecoveredArtifact{}, nil
+	})
+	if err != nil || second.ID != latest.ID || second.Status != model.ResourceStatusReady {
+		t.Fatalf("promote = %#v err=%v", second, err)
+	}
+	if quota.pending != 0 || quota.daily != size || quota.releases != 0 || quota.commits != 1 {
+		t.Fatalf("after promote ledger pending=%d daily=%d releases=%d commits=%d", quota.pending, quota.daily, quota.releases, quota.commits)
+	}
+}
+
+func TestRecoverOwnedReadyMissingRejectsIdentityDrift(t *testing.T) {
+	svc, repo, dataDir := newTestDomain(t)
+	first, err := svc.RecoverOwned("user-1", "task-drift:0", func() (RecoveredArtifact, error) {
+		return testArtifact("payload"), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := NewFileStore(dataDir).Delete(first.ObjectKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RecoverOwned("user-1", "task-drift:0", func() (RecoveredArtifact, error) {
+		return RecoveredArtifact{
+			Kind: "video", FileName: "other.mp4", MimeType: "video/mp4",
+			Size: 99, Body: bytes.NewReader([]byte("different-bytes")),
+		}, nil
+	}); err == nil || !strings.Contains(err.Error(), "上传幂等标识已用于其他文件") {
+		t.Fatalf("drift error = %v", err)
+	}
+	latest, lookupErr := repo.Resource(first.ID)
+	if lookupErr != nil {
+		t.Fatal(lookupErr)
+	}
+	if latest.Status != model.ResourceStatusReady || latest.Kind != "image" || latest.MimeType != "image/png" || latest.Size != first.Size {
+		t.Fatalf("drift mutated row: %#v", latest)
+	}
+	if _, statErr := os.Stat(filepath.Join(dataDir, "resources", filepath.FromSlash(latest.ObjectKey))); !os.IsNotExist(statErr) {
+		t.Fatalf("drift wrote mismatched bytes: %v", statErr)
+	}
+}
+
+func TestRecoverOwnedReadyMissingRefreshesMatchingMetadata(t *testing.T) {
+	svc, repo, dataDir := newTestDomain(t)
+	first, err := svc.RecoverOwned("user-1", "task-refresh:0", func() (RecoveredArtifact, error) {
+		return testArtifact("payload"), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.MimeType = ""
+	first.Width = 0
+	first.Height = 0
+	if err := repo.SaveResource(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewFileStore(dataDir).Delete(first.ObjectKey); err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.RecoverOwned("user-1", "task-refresh:0", func() (RecoveredArtifact, error) {
+		artifact := testArtifact("payload")
+		artifact.Width = 12
+		artifact.Height = 8
+		return artifact, nil
+	})
+	if err != nil || second.ID != first.ID || second.Status != model.ResourceStatusReady {
+		t.Fatalf("matching restore = %#v err=%v", second, err)
+	}
+	if second.MimeType != "image/png" || second.Kind != "image" || second.Size != first.Size || second.Width != 12 || second.Height != 8 {
+		t.Fatalf("metadata not refreshed: %#v", second)
+	}
+}
+
+func TestRecoverOwnedReadyMissingDoesNotReserveQuota(t *testing.T) {
+	base, _, dataDir := newTestDomain(t)
+	quota := &recordingQuota{}
+	svc := NewService(Dependencies{
+		Repository: base.repo,
+		Blobs:      base.blobs,
+		Quota:      quota,
+		Lifecycle:  nopLifecycle{},
+	})
+	first, err := svc.RecoverOwned("user-1", "task-ready-missing-quota:0", func() (RecoveredArtifact, error) {
+		return testArtifact("payload"), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quota.reserved != first.Size {
+		t.Fatalf("create reserved = %d want %d", quota.reserved, first.Size)
+	}
+	if err := NewFileStore(dataDir).Delete(first.ObjectKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RecoverOwned("user-1", "task-ready-missing-quota:0", func() (RecoveredArtifact, error) {
+		return testArtifact("payload"), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if quota.reserved != first.Size {
+		t.Fatalf("READY+missing reserved extra quota = %d", quota.reserved)
 	}
 }

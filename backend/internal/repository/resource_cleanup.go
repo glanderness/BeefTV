@@ -12,6 +12,7 @@ import (
 var ErrResourceCleanupSetChanged = errors.New("resource cleanup set changed")
 var ErrResourceCleanupStillReferenced = errors.New("resource cleanup resource is still directly referenced")
 var ErrResourceNotReadyForAdmission = errors.New("resource is not ready for admission")
+var ErrTaskInputInvalid = errors.New("task input is invalid")
 
 // DeleteDetachedResources removes Resource rows and enqueues physical deletion in one transaction.
 // JSON references are checked by the service before this call; direct foreign-key-like references

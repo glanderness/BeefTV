@@ -40,9 +40,12 @@ import (
 //
 // Quota: callers of Store reserve upload/chunked quota. RetryOwned reserves
 // via ReserveRetry only after owner and identity checks, and releases on
-// write or finalize failure. RecoverOwned reserves after it decides create
-// versus retry versus replay. READY replay and PENDING/FAILED promote of
-// existing bytes do not consume quota.
+// write or finalize failure. RecoverOwned uses ReserveGenerated /
+// ReserveGeneratedRetry (GeneratedFileMB), not ResourceUploadMB. READY
+// replay does not consume quota. A create reservation is kept when bytes
+// persist after a failed READY save; promoteReady Commits that ledger entry
+// so daily/storage are counted once. PENDING/FAILED promote of existing
+// bytes does not reserve again.
 
 // Store creates a pending row, publishes bytes through FileStore, then marks
 // READY. A failed READY write leaves FAILED (or PENDING if status cannot be

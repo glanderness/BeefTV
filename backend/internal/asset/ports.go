@@ -46,11 +46,15 @@ type Repository interface {
 }
 
 // Quota is implemented by the application upload-quota owner. The domain never
-// accounts bytes itself.
+// accounts bytes itself. Upload and generated artifacts share the same daily
+// and storage ledger; only the single-file cap differs. Release/Commit apply
+// to a matching prior Reserve; they are not a second counter.
 type Quota interface {
 	ReserveUpload(userID string, size int64) (day string, err error)
 	ReserveChunked(userID string, size int64) (day string, err error)
 	ReserveRetry(userID string, size int64) (day string, err error)
+	ReserveGenerated(userID string, size int64) (day string, err error)
+	ReserveGeneratedRetry(userID string, size int64) (day string, err error)
 	Release(userID string, day string, size int64)
 	ReleaseRetry(userID string, day string, size int64)
 	Commit(userID string, size int64)

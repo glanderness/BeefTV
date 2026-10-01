@@ -70,6 +70,42 @@ func TestReserveUserUploadQuotaRejectsTotalStoredFilesAtLimit(t *testing.T) {
 	}
 }
 
+func TestReserveGeneratedResourceQuotaAllowsUploadLimitAndRejectsGeneratedCap(t *testing.T) {
+	svc := newResourceTestService(t)
+	uploadLimit := megabytes(defaultRuntimePolicy().Resource.ResourceUploadMB)
+	generatedLimit := megabytes(defaultRuntimePolicy().Resource.GeneratedFileMB)
+	if _, err := svc.reserveUserUploadQuota("user-1", uploadLimit); err == nil || !strings.Contains(err.Error(), "小于 50MB") {
+		t.Fatalf("upload at ResourceUploadMB error = %v", err)
+	}
+	if _, err := svc.reserveGeneratedResourceQuota("user-1", uploadLimit); err != nil {
+		t.Fatalf("generated at ResourceUploadMB = %v", err)
+	}
+	if _, err := svc.reserveGeneratedResourceQuota("user-2", generatedLimit); err != nil {
+		t.Fatalf("generated at GeneratedFileMB = %v", err)
+	}
+	if _, err := svc.reserveGeneratedResourceQuota("user-3", generatedLimit+1); err == nil || !strings.Contains(err.Error(), "不能超过 64MB") {
+		t.Fatalf("generated above GeneratedFileMB error = %v", err)
+	}
+}
+
+func TestReserveRetryGeneratedQuotaUsesGeneratedFileLimit(t *testing.T) {
+	svc := newResourceTestService(t)
+	uploadLimit := megabytes(defaultRuntimePolicy().Resource.ResourceUploadMB)
+	generatedLimit := megabytes(defaultRuntimePolicy().Resource.GeneratedFileMB)
+	if _, err := svc.reserveRetryUploadQuota("user-1", uploadLimit); err == nil || !strings.Contains(err.Error(), "小于 50MB") {
+		t.Fatalf("retry upload at ResourceUploadMB error = %v", err)
+	}
+	if _, err := svc.reserveRetryGeneratedQuota("user-1", uploadLimit); err != nil {
+		t.Fatalf("retry generated at ResourceUploadMB = %v", err)
+	}
+	if _, err := svc.reserveRetryGeneratedQuota("user-2", generatedLimit); err != nil {
+		t.Fatalf("retry generated at GeneratedFileMB = %v", err)
+	}
+	if _, err := svc.reserveRetryGeneratedQuota("user-3", generatedLimit+1); err == nil || !strings.Contains(err.Error(), "不能超过 64MB") {
+		t.Fatalf("retry generated above GeneratedFileMB error = %v", err)
+	}
+}
+
 func TestAccountFileStorageUsageUsesStoredFilePolicy(t *testing.T) {
 	svc := newResourceTestService(t)
 	if err := svc.repo.Create(&model.Resource{ID: "resource-1", UserID: "user-1", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: "ready.png", Size: 3 << 20}); err != nil {

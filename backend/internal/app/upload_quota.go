@@ -60,6 +60,29 @@ func (s *Service) reserveRetryUploadQuota(userID string, size int64) (string, er
 	return day, nil
 }
 
+func (s *Service) reserveRetryGeneratedQuota(userID string, size int64) (string, error) {
+	policy, err := s.RuntimePolicy()
+	if err != nil {
+		return "", err
+	}
+	if size <= 0 {
+		return "", BadAuthRequest("上传文件不能为空")
+	}
+	if size >= megabytes(policy.Resource.GeneratedFileMB)+1 {
+		return "", BadAuthRequest(fmt.Sprintf("单个生成文件不能超过 %dMB", policy.Resource.GeneratedFileMB))
+	}
+	day := time.Now().UTC().Format("2006-01-02")
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+	if err := s.repo.ReserveDailyUpload(userID, day, size, megabytes(policy.Resource.DailyUploadMB)); err != nil {
+		if errors.Is(err, repository.ErrDailyUploadLimitExceeded) {
+			return "", QuotaExceeded(fmt.Sprintf("每个账号 UTC 自然日上传总量必须小于 %s", formatStorageLimit(megabytes(policy.Resource.DailyUploadMB))))
+		}
+		return "", err
+	}
+	return day, nil
+}
+
 func (s *Service) reserveUserStoredFileQuota(userID string, size int64, exclusiveSingleFileLimit int64, dailyLimit int64, storedLimit int64, singleFileMessage string) (string, error) {
 	if size <= 0 {
 		return "", BadAuthRequest("上传文件不能为空")
