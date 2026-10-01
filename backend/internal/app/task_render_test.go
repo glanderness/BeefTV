@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 
 	"gorm.io/gorm"
 
+	localasset "infinite-canvas/backend/internal/asset"
 	"infinite-canvas/backend/internal/editing"
 	"infinite-canvas/backend/internal/model"
 )
@@ -64,6 +66,7 @@ func seedRunningRenderTask(t *testing.T, db *gorm.DB, inputJSON string) *model.T
 func TestCreateTimelineRenderTaskQueues(t *testing.T) {
 	svc, db := newTimelineTaskTestService(t)
 	seedActiveProject(t, db, "prj-render", "usr-render-test")
+	seedResource(t, db, "res-1", "usr-render-test", "video/mp4")
 
 	task, err := svc.CreateTimelineRenderTask("usr-render-test", TimelineRenderCreateRequest{
 		ProjectID: "prj-render",
@@ -111,6 +114,19 @@ func TestCompileTimelineRenderPlanUsesOpaqueSources(t *testing.T) {
 	}
 }
 
+func TestCreateTimelineRenderTaskRejectsUnknownResource(t *testing.T) {
+	svc, db := newTimelineTaskTestService(t)
+	seedActiveProject(t, db, "prj-render", "usr-render-test")
+
+	_, err := svc.CreateTimelineRenderTask("usr-render-test", TimelineRenderCreateRequest{
+		ProjectID: "prj-render",
+		Timeline:  renderTestProject("resource:res-1"),
+	})
+	if err == nil {
+		t.Fatal("unknown resource admitted")
+	}
+}
+
 func TestCreateTimelineRenderTaskRejectsNoMedia(t *testing.T) {
 	svc, _ := newTimelineTaskTestService(t)
 
@@ -133,6 +149,7 @@ func TestCreateTimelineRenderTaskRejectsNoMedia(t *testing.T) {
 func TestCreateTimelineRenderTaskCarriesOptions(t *testing.T) {
 	svc, db := newTimelineTaskTestService(t)
 	seedActiveProject(t, db, "prj-render", "usr-render-test")
+	seedResource(t, db, "res-1", "usr-render-test", "video/mp4")
 	burn := false
 	task, err := svc.CreateTimelineRenderTask("usr-render-test", TimelineRenderCreateRequest{
 		ProjectID: "prj-render",
@@ -198,5 +215,42 @@ func TestTimelineRenderFailsFastWhenSourceUnreadable(t *testing.T) {
 	}
 	if !strings.Contains(stored.Error, "时间线引用的媒体") {
 		t.Fatalf("error = %q, want mention of 无法读取时间线引用的媒体", stored.Error)
+	}
+}
+
+func TestTimelineRenderReplaysRecoveredIdentityWithoutFFmpeg(t *testing.T) {
+	svc, db := newTimelineTaskTestService(t)
+	svc.dataDir = t.TempDir()
+	task := seedRunningRenderTask(t, db, renderInputJSON(t, renderTestProject("resource:res-missing")))
+	payload := []byte("recovered-render-bytes")
+	resource, err := svc.resourceDomain().RecoverOwned(task.UserID, timelineRenderArtifactIdentity(task.ID), func() (localasset.RecoveredArtifact, error) {
+		return localasset.RecoveredArtifact{
+			Kind: "video", FileName: timelineRenderFileName, MimeType: "video/mp4",
+			Size: int64(len(payload)), Width: 320, Height: 180, DurationMs: 2000,
+			Body: bytes.NewReader(payload),
+		}, nil
+	})
+	if err != nil || resource == nil {
+		t.Fatalf("seed recovered output: %v", err)
+	}
+
+	t.Setenv(editing.FFmpegPathEnv, "/no/such/ffmpeg")
+	w := newTaskWorkerCoordinator(svc)
+	if err := w.processTimelineRender(task, context.Background()); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	var stored model.Task
+	if err := db.First(&stored, "id = ?", task.ID).Error; err != nil {
+		t.Fatalf("load task: %v", err)
+	}
+	if stored.Status != model.TaskStatusSucceeded {
+		t.Fatalf("status = %q error=%q, want succeeded without re-render", stored.Status, stored.Error)
+	}
+	var result timelineRenderResult
+	if err := json.Unmarshal([]byte(stored.ResultJSON), &result); err != nil {
+		t.Fatalf("result: %v", err)
+	}
+	if result.ResourceID != resource.ID || result.FileName != timelineRenderFileName {
+		t.Fatalf("result=%+v want resource %s", result, resource.ID)
 	}
 }
