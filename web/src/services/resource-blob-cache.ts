@@ -1,5 +1,4 @@
-import localforage from "localforage";
-
+import { RESOURCE_BLOB_META_STORE_NAME, RESOURCE_BLOBS_STORE_NAME, localForageInstance } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { assertUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { getResourceBlob, resourceIdFromStorageKey } from "@/services/api/resources";
@@ -14,8 +13,8 @@ type ResourceCacheMeta = {
     lastAccessedAt: number;
 };
 
-const blobStore = localforage.createInstance({ name: "infinite-canvas", storeName: "resource_blobs" });
-const metaStore = localforage.createInstance({ name: "infinite-canvas", storeName: "resource_blob_meta" });
+const blobStore = localForageInstance(RESOURCE_BLOBS_STORE_NAME);
+const metaStore = localForageInstance(RESOURCE_BLOB_META_STORE_NAME);
 const objectUrls = new Map<string, string>();
 const sessionBlobs = new Map<string, Blob>();
 const inFlight = new Map<string, Promise<string>>();

@@ -25,7 +25,7 @@ describe("local asset upload semantics", () => {
         expect(imageStorage).toContain("await store.setItem(storageKey, blob);");
         expect(fileStorage).toContain('from "@/services/local-media-repository"');
         expect(localMediaRepository).toContain("saveLocalMedia");
-        expect(localMediaRepository).toContain("localforage.createInstance");
+        expect(localMediaRepository).toContain("localForageInstance(MEDIA_FILES_STORE_NAME)");
     });
 
     test("3D model fallback uses hosted-only remote wording", () => {

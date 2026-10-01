@@ -1,7 +1,11 @@
-import localforage from "localforage";
-
 import type { CanvasDrawingEngine } from "@/lib/canvas/canvas-drawing-engine";
 import { readImageMeta } from "@/lib/image-utils";
+import {
+    DRAWING_DOCUMENTS_STORE_NAME,
+    DRAWING_GENERATION_RENDERS_STORE_NAME,
+    DRAWING_PREVIEWS_STORE_NAME,
+    localForageInstance,
+} from "@/lib/localforage-storage";
 import { assertUserScope, captureUserScope, isUserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { deleteCanvasDrawing, getCanvasDrawing, putCanvasDrawing, type CanvasDrawingRecord } from "@/services/api/workspace-data";
 import { ApiError, http } from "@/services/api/request";
@@ -71,9 +75,9 @@ type DrawingKeyStore<T> = {
     removeItem(key: string): Promise<void>;
 };
 
-const defaultDrawingStore = localforage.createInstance({ name: "infinite-canvas", storeName: "drawing_documents" });
-const defaultDrawingPreviewStore = localforage.createInstance({ name: "infinite-canvas", storeName: "drawing_previews" });
-const defaultDrawingRenderStore = localforage.createInstance({ name: "infinite-canvas", storeName: "drawing_generation_renders" });
+const defaultDrawingStore = localForageInstance(DRAWING_DOCUMENTS_STORE_NAME) as DrawingKeyStore<DrawingCacheEnvelope | CanvasDrawingSnapshot>;
+const defaultDrawingPreviewStore = localForageInstance(DRAWING_PREVIEWS_STORE_NAME) as DrawingKeyStore<Blob>;
+const defaultDrawingRenderStore = localForageInstance(DRAWING_GENERATION_RENDERS_STORE_NAME) as DrawingKeyStore<CanvasDrawingRender>;
 
 let drawingStore: DrawingKeyStore<DrawingCacheEnvelope | CanvasDrawingSnapshot> = defaultDrawingStore;
 let drawingPreviewStore: DrawingKeyStore<Blob> = defaultDrawingPreviewStore;
