@@ -55,6 +55,15 @@
 
 以上都在独立工作树；尚未进入发布验收，没有新增真实模型费用。
 
+## 第二轮审查
+
+- editing 911bc1a / 708fc35 / 0c9d91b 已进入集成。Lead 复现取消当前工作时，后续租约拿到已终止预热 worker 的竞态，直接修正所有权转交与 dispose；36 项聚焦测试、2 项真实浏览器 worker 测试和 typecheck 通过。实际原生/浏览器共用内容计划继续由 20261002-014317-continue-8982ff92 实现。
+- project fc96599 独立 project/localapp/handler/bootstrap 测试通过；仍有章节/关联分步写入、更新无 CAS 和父文件夹归属问题，继续 20261002-013550-continue-babf5c0c，尚未合入。
+- assistantturns 408c16e 独立迁移/领域/应用聚焦测试通过；旧 JSON 双写、Begin 未优先迁移旧 ID、清理后可重导入、损坏 scope 静默降级必须修正。继续 20261002-014449-continue-1ca2e878，尚未合入 schema 10。
+- 资源真实领域：20261002-013215-delegate-6c5c1bb2，固定 673e320；保持现有生成存储方法适配，不能与交付 worker 重复拥有任务逻辑。
+- 旧 Agent 退场：20261002-013853-delegate-63e3a533，固定 673e320；只移除已验证无活跃入口的实现，保留历史数据及现有功能仍使用的公共规则。
+- CPU 数据处理基线已记录于 [performance.md](./performance.md)，并非 UI 或数据库端到端性能结论。
+
 ## 后续必须继续的范围
 
 1. 人工 UI 接入公共操作；删除按时间戳竞争数据库事实的正常路径。当前 `local-workspace-repository` 仍有此路径。

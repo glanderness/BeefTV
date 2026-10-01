@@ -65,6 +65,7 @@ export function createFFmpegSession(options: { spawn?: FFmpegSpawn } = {}) {
     let inflight: { item: QueuedLease; ffmpeg: FFmpegInstance | null } | null = null;
     const queue: QueuedLease[] = [];
     let pumping = false;
+    let disposed = false;
 
     function detachAbort(item: QueuedLease) {
         if (item.abortListener && item.signal) item.signal.removeEventListener("abort", item.abortListener);
@@ -113,26 +114,21 @@ export function createFFmpegSession(options: { spawn?: FFmpegSpawn } = {}) {
     }
 
     async function prewarm(onProgress?: (progress: CanvasFFmpegProgress) => void): Promise<FFmpegInstance> {
+        if (disposed) throw abortError();
         if (idle) return idle;
-        if (inflight?.ffmpeg) {
-            if (!idleLoading) {
-                const loading = spawn(onProgress)
-                    .then((ffmpeg) => {
-                        if (idleLoading === loading && !idle) idle = ffmpeg;
-                        else if (idle !== ffmpeg) terminateWorker(ffmpeg);
-                        return idle ?? ffmpeg;
-                    })
-                    .finally(() => {
-                        if (idleLoading === loading) idleLoading = null;
-                    });
-                idleLoading = loading;
-            }
-            return idleLoading;
-        }
         if (!idleLoading) {
             const loading = spawn(onProgress)
                 .then((ffmpeg) => {
-                    if (idleLoading === loading && !idle) idle = ffmpeg;
+                    if (disposed) {
+                        terminateWorker(ffmpeg);
+                        throw abortError();
+                    }
+                    // Clearing idleLoading in takeWorker transfers ownership to
+                    // that lease. A late prewarm completion must not kill it.
+                    if (idleLoading === loading) {
+                        parkWorker(ffmpeg);
+                        return idle!;
+                    }
                     return ffmpeg;
                 })
                 .finally(() => {
@@ -148,7 +144,7 @@ export function createFFmpegSession(options: { spawn?: FFmpegSpawn } = {}) {
         leaseOptions: { signal?: AbortSignal; onProgress?: (progress: CanvasFFmpegProgress) => void } = {},
     ): Promise<T> {
         const { signal, onProgress } = leaseOptions;
-        if (signal?.aborted) return Promise.reject(abortError(signal));
+        if (disposed || signal?.aborted) return Promise.reject(abortError(signal));
         return new Promise<T>((resolve, reject) => {
             const item: QueuedLease = {
                 work,
@@ -189,13 +185,13 @@ export function createFFmpegSession(options: { spawn?: FFmpegSpawn } = {}) {
                 try {
                     ffmpeg = await takeWorker(item.onProgress);
                     inflight.ffmpeg = ffmpeg;
-                    if (item.settled || item.signal?.aborted) {
+                    if (disposed || item.settled || item.signal?.aborted) {
                         terminateWorker(ffmpeg);
                         finishReject(item, abortError(item.signal));
                         continue;
                     }
                     const result = await item.work({ ffmpeg, filePrefix: `s${++seq}_` });
-                    if (item.signal?.aborted) {
+                    if (disposed || item.signal?.aborted) {
                         terminateWorker(ffmpeg);
                         finishReject(item, abortError(item.signal));
                     } else {
@@ -204,7 +200,7 @@ export function createFFmpegSession(options: { spawn?: FFmpegSpawn } = {}) {
                     }
                 } catch (error) {
                     if (ffmpeg) {
-                        if (isAbortLike(error, item.signal) || item.signal?.aborted) terminateWorker(ffmpeg);
+                        if (disposed || isAbortLike(error, item.signal) || item.signal?.aborted) terminateWorker(ffmpeg);
                         else parkWorker(ffmpeg);
                     }
                     finishReject(item, isAbortLike(error, item.signal) ? abortError(item.signal) : error);
@@ -219,11 +215,12 @@ export function createFFmpegSession(options: { spawn?: FFmpegSpawn } = {}) {
     }
 
     function dispose() {
+        disposed = true;
         if (idle) terminateWorker(idle);
         idle = null;
         idleLoading = null;
         if (inflight?.ffmpeg) terminateWorker(inflight.ffmpeg);
-        inflight = null;
+        if (inflight) finishReject(inflight.item, abortError(inflight.item.signal));
         for (const item of queue) finishReject(item, abortError(item.signal));
         queue.length = 0;
     }

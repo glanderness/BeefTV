@@ -168,3 +168,40 @@ test("abort listeners are removed after settle and do not fire on a later abort"
     await Promise.resolve();
     expect(workers[0].terminated).toBe(terminatedAfterSuccess);
 });
+
+test("a queued lease can claim a pending prewarm after the active worker is cancelled", async () => {
+    const firstWorker = new FakeFFmpeg();
+    const nextWorker = new FakeFFmpeg();
+    const warmReady = deferred<FFmpegInstance>();
+    let spawns = 0;
+    const session = createFFmpegSession({ spawn: async () => ++spawns === 1 ? firstWorker as unknown as FFmpegInstance : warmReady.promise });
+    sessions.push(session);
+    const active = new AbortController();
+    const running = session.withLease(async ({ ffmpeg }) => ffmpeg.exec([]), { signal: active.signal });
+    await firstWorker.started.promise;
+    const warming = session.prewarm();
+    const next = session.withLease(async ({ ffmpeg }) => {
+        expect(ffmpeg).toBe(nextWorker);
+        expect(nextWorker.terminated).toBe(false);
+        return "usable";
+    });
+    active.abort();
+    await expect(running).rejects.toMatchObject({ name: "AbortError" });
+    warmReady.resolve(nextWorker as unknown as FFmpegInstance);
+    await warming;
+    expect(await next).toBe("usable");
+});
+
+test("dispose during a pending spawn rejects the owner and destroys late workers", async () => {
+    const ready = deferred<FFmpegInstance>();
+    const worker = new FakeFFmpeg();
+    const session = createFFmpegSession({ spawn: () => ready.promise });
+    sessions.push(session);
+    const work = session.withLease(async () => { throw new Error("disposed work ran"); });
+    session.dispose();
+    await expect(work).rejects.toMatchObject({ name: "AbortError" });
+    ready.resolve(worker as unknown as FFmpegInstance);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(worker.terminated).toBe(true);
+    await expect(session.withLease(async () => "new")).rejects.toMatchObject({ name: "AbortError" });
+});
