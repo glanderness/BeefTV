@@ -4,9 +4,9 @@ import localforage from "localforage";
 
 import * as runtimeMode from "@/lib/runtime-mode";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
-import { captureUserScope } from "@/lib/user-scope-guard";
+import { captureUserScope, UserScopeAbandonedError } from "@/lib/user-scope-guard";
 import { apiClient } from "@/services/api/request";
-import { persistWorkspaceAssetChanges, persistWorkspaceAssetLink, resetWorkspaceAssetCommitStateForTests } from "@/services/workspace-asset-repository";
+import { deleteWorkspaceAsset, persistWorkspaceAssetChanges, persistWorkspaceAssetLink, resetWorkspaceAssetCommitStateForTests } from "@/services/workspace-asset-repository";
 import {
     flushAssetStorePersistence,
     hydrateAssetStoreDrafts,
@@ -55,6 +55,23 @@ function envelope(data: unknown, status = 200) {
 
 function requestKey(config: { method?: string; url?: string }) {
     return `${String(config.method || "get").toLowerCase()} ${String(config.url || "")}`;
+}
+
+function isDraftsKey(key: unknown) {
+    return String(key).includes("asset_store_drafts");
+}
+
+function isAssetCacheKey(key: unknown) {
+    const value = String(key);
+    return value.includes("asset_store") && !value.includes("asset_store_drafts");
+}
+
+async function waitFor(predicate: () => boolean, label: string) {
+    const deadline = Date.now() + 2000;
+    while (!predicate()) {
+        if (Date.now() > deadline) throw new Error(label);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    }
 }
 
 async function withAdapter<T>(adapter: NonNullable<typeof apiClient.defaults.adapter>, run: () => Promise<T>) {
@@ -294,6 +311,173 @@ describe("asset store draft commit identity", () => {
             });
             expect(useAssetStore.getState().assets.find((item) => item.id === "asset-live")?.title).toBe("本地新名");
         } finally {
+            restore();
+        }
+    });
+
+    test("deferred cache write then edit then A/B switch then restart restores the edited snapshot and submits it", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        const originalWindow = globalThis.window;
+        globalThis.window = originalWindow ?? ({ localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } } as never);
+        const memory = new Map<string, string>();
+        const cacheRead = deferred();
+        const cacheGate = deferred();
+        let blockedCacheRead = false;
+        const urls: string[] = [];
+        const titles: string[] = [];
+        const getItem = spyOn(localforage, "getItem").mockImplementation(async (key) => {
+            if (isAssetCacheKey(key) && !blockedCacheRead) {
+                blockedCacheRead = true;
+                cacheRead.resolve();
+                await cacheGate.promise;
+            }
+            return memory.get(String(key)) ?? null;
+        });
+        const setItem = spyOn(localforage, "setItem").mockImplementation(async (key, value) => {
+            memory.set(String(key), String(value));
+            return value;
+        });
+        const removeItem = spyOn(localforage, "removeItem").mockImplementation(async (key) => {
+            memory.delete(String(key));
+        });
+
+        try {
+            const id = useAssetStore.getState().addAsset({
+                kind: "text",
+                title: "原标题",
+                coverUrl: "",
+                tags: [],
+                category: "other",
+                status: "confirmed",
+                source: "手动添加",
+                data: { content: "v1" },
+            });
+            await cacheRead.promise;
+            useAssetStore.getState().updateAsset(id, { title: "编辑后" });
+            await waitFor(() => [...memory.entries()].some(([key, value]) => isDraftsKey(key) && value.includes("编辑后")), "edited draft snapshot");
+
+            const firstEpoch = captureUserScope();
+            setActiveUserScope("owner-b");
+            setActiveUserScope("owner-a");
+            const secondEpoch = captureUserScope();
+            expect(secondEpoch.epoch).not.toBe(firstEpoch.epoch);
+            cacheGate.resolve();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            expect([...memory.entries()].some(([key, value]) => isAssetCacheKey(key) && value.includes("编辑后"))).toBe(false);
+
+            unloadAssetStoreDraftsForTests();
+            useAssetStore.setState({ assets: [] });
+            expect(useAssetStore.getState().assets).toEqual([]);
+            expect(peekAssetStoreDraft("owner-a", id)).toBeUndefined();
+
+            await hydrateAssetStoreDrafts("owner-a");
+            expect(useAssetStore.getState().assets.find((item) => item.id === id)?.title).toBe("编辑后");
+            expect(peekAssetStoreDraft("owner-a", id)?.kind).toBe("upsert");
+            expect(peekAssetStoreDraft("owner-a", id)?.asset?.title).toBe("编辑后");
+
+            await withAdapter(async (config) => {
+                urls.push(requestKey(config));
+                const payload = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
+                if (payload?.asset?.title) titles.push(payload.asset.title);
+                return envelope({ asset: { id, title: payload?.asset?.title, createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" } });
+            }, async () => {
+                await persistWorkspaceAssetChanges(secondEpoch);
+            });
+            expect(urls).toEqual([`put /assets/${id}`]);
+            expect(titles).toEqual(["编辑后"]);
+        } finally {
+            cacheGate.resolve();
+            getItem.mockRestore();
+            setItem.mockRestore();
+            removeItem.mockRestore();
+            if (!originalWindow) delete (globalThis as { window?: unknown }).window;
+            restore();
+        }
+    });
+
+    test("persistWorkspaceAssetChanges reasserts the original scope after hydrate awaits", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        const originalWindow = globalThis.window;
+        globalThis.window = originalWindow ?? ({ localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } } as never);
+        const entered = deferred();
+        const gate = deferred();
+        const urls: string[] = [];
+        const getItem = spyOn(localforage, "getItem").mockImplementation(async (key) => {
+            if (isDraftsKey(key)) {
+                entered.resolve();
+                await gate.promise;
+            }
+            return null;
+        });
+        const setItem = spyOn(localforage, "setItem").mockImplementation(async (_key, value) => value);
+        const removeItem = spyOn(localforage, "removeItem").mockImplementation(async () => undefined);
+
+        try {
+            unloadAssetStoreDraftsForTests();
+            const expected = captureUserScope();
+            await withAdapter(async (config) => {
+                urls.push(requestKey(config));
+                return envelope({ asset: { id: "x" } });
+            }, async () => {
+                const pending = persistWorkspaceAssetChanges(expected);
+                await entered.promise;
+                setActiveUserScope("owner-b");
+                gate.resolve();
+                await expect(pending).rejects.toBeInstanceOf(UserScopeAbandonedError);
+            });
+            expect(urls).toEqual([]);
+        } finally {
+            gate.resolve();
+            getItem.mockRestore();
+            setItem.mockRestore();
+            removeItem.mockRestore();
+            if (!originalWindow) delete (globalThis as { window?: unknown }).window;
+            restore();
+        }
+    });
+
+    test("deleteWorkspaceAsset does not recapture a new account after hydrate awaits", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        const originalWindow = globalThis.window;
+        globalThis.window = originalWindow ?? ({ localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } } as never);
+        const entered = deferred();
+        const gate = deferred();
+        const urls: string[] = [];
+        const getItem = spyOn(localforage, "getItem").mockImplementation(async (key) => {
+            if (isDraftsKey(key)) {
+                entered.resolve();
+                await gate.promise;
+            }
+            return null;
+        });
+        const setItem = spyOn(localforage, "setItem").mockImplementation(async (_key, value) => value);
+        const removeItem = spyOn(localforage, "removeItem").mockImplementation(async () => undefined);
+
+        try {
+            unloadAssetStoreDraftsForTests();
+            const expected = captureUserScope();
+            await withAdapter(async (config) => {
+                urls.push(requestKey(config));
+                return envelope({ id: "asset-1" });
+            }, async () => {
+                const pending = deleteWorkspaceAsset("asset-1", expected);
+                await entered.promise;
+                setActiveUserScope("owner-b");
+                gate.resolve();
+                await expect(pending).rejects.toBeInstanceOf(UserScopeAbandonedError);
+            });
+            expect(urls).toEqual([]);
+            expect(peekAssetStoreDraft("owner-b", "asset-1")).toBeUndefined();
+            expect(peekAssetStoreDraft("owner-a", "asset-1")).toBeUndefined();
+        } finally {
+            gate.resolve();
+            getItem.mockRestore();
+            setItem.mockRestore();
+            removeItem.mockRestore();
+            if (!originalWindow) delete (globalThis as { window?: unknown }).window;
             restore();
         }
     });

@@ -135,7 +135,7 @@ async function commitTrackedAssetDraft(id: string, expected: CapturedUserScope, 
         return;
     }
 
-    const asset = useAssetStore.getState().assets.find((item) => item.id === id);
+    const asset = useAssetStore.getState().assets.find((item) => item.id === id) ?? draft.asset;
     if (!asset) return;
     const submitted = asset;
     const saved = await putWorkspaceAsset(id, submitted, { signal, expectedScope: expected });
@@ -151,6 +151,7 @@ export async function persistWorkspaceAssetLink({ asset, domainProjectId, catego
     throwIfAborted(signal);
     assertUserScope(expected);
     await hydrateAssetStoreDrafts(expected.userScope);
+    assertUserScope(expected);
 
     if (usesBrowserLocalResourceStore()) {
         if (domainProjectId) {
@@ -167,7 +168,7 @@ export async function persistWorkspaceAssetLink({ asset, domainProjectId, catego
     await enqueueAssetCommit(expected.userScope, asset.id, expected.epoch, async () => {
         throwIfAborted(signal);
         assertUserScope(expected);
-        const live = useAssetStore.getState().assets.find((item) => item.id === asset.id) ?? asset;
+        const live = useAssetStore.getState().assets.find((item) => item.id === asset.id) ?? peekAssetStoreDraft(expected.userScope, asset.id)?.asset ?? asset;
         const draft = peekAssetStoreDraft(expected.userScope, live.id);
         const submittedVersion = draft?.version;
         if (draft?.kind === "delete") {
@@ -218,6 +219,7 @@ export async function deleteWorkspaceAsset(id: string, expectedScope?: CapturedU
     if (!assetId) throw new Error("素材 ID 不能为空");
     assertUserScope(expected);
     await hydrateAssetStoreDrafts(expected.userScope);
+    assertUserScope(expected);
 
     if (usesBrowserLocalResourceStore()) {
         await useAssetStore.getState().removeAsset(assetId);
@@ -227,7 +229,7 @@ export async function deleteWorkspaceAsset(id: string, expectedScope?: CapturedU
         return;
     }
 
-    recordAssetStoreDraft(assetId, "delete");
+    recordAssetStoreDraft(assetId, "delete", expected);
     const submittedVersion = peekAssetStoreDraft(expected.userScope, assetId)?.version ?? 0;
     await enqueueAssetCommit(expected.userScope, assetId, expected.epoch, async () => {
         assertUserScope(expected);
@@ -252,6 +254,7 @@ export async function persistWorkspaceAssetChanges(expectedScope?: CapturedUserS
     const expected = expectedScope ?? captureUserScope();
     assertUserScope(expected);
     await hydrateAssetStoreDrafts(expected.userScope);
+    assertUserScope(expected);
     if (usesBrowserLocalResourceStore()) {
         const snapshot = readAssetStoreDrafts(expected);
         await flushAssetStorePersistence(expected);
