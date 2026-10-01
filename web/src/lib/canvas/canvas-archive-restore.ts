@@ -1,5 +1,6 @@
 import { confinedArchivePath } from "@/lib/zip";
 import { canonicalize } from "json-canonicalize";
+import { isLocalRuntimeMode } from "@/lib/runtime-mode";
 import {
     collectStorageKeys,
     isArchiveStorageKey,
@@ -234,6 +235,7 @@ function withRestoreScope(host: CanvasArchiveRestoreHost, scope: CapturedUserSco
 
 export async function restoreCanvasArchive(input: Blob | OpenCanvasArchive, host: Partial<CanvasArchiveRestoreHost> = {}): Promise<CanvasArchiveRestoreResult> {
     const scope = captureUserScope();
+    const localPersistence = isLocalRuntimeMode();
     const archive = "data" in input && "files" in input ? input : await openCanvasArchive(input);
     assertUserScope(scope);
     preflightCanvasArchive(archive.data, archive.files);
@@ -264,16 +266,16 @@ export async function restoreCanvasArchive(input: Blob | OpenCanvasArchive, host
                 projectId: archiveProjectId,
                 total: item.files.length,
                 completed: 0,
-                phase: "uploading",
-                message: restoreHost.usesCanonicalBackend ? "正在保存媒体" : "正在保存本地媒体",
+                phase: localPersistence ? "saving" : "uploading",
+                message: localPersistence ? "正在保存本地媒体" : "正在上传媒体",
             });
             const storageKeyMap = await restoreArchiveMedia(item.files, archive.files, restoreHost, resourceIds, (completed) => {
                 restoreHost.onProjectProgress?.(archiveProjectId, {
                     projectId: archiveProjectId,
                     total: item.files.length,
                     completed,
-                    phase: "uploading",
-                    message: restoreHost.usesCanonicalBackend ? "正在保存媒体" : "正在保存本地媒体",
+                    phase: localPersistence ? "saving" : "uploading",
+                    message: localPersistence ? "正在保存本地媒体" : "正在上传媒体",
                 });
             });
             const remappedNodes = (item.project.nodes || []).map((node) => remapArchiveNode(node, storageKeyMap, item.drawingDocuments || []));
@@ -297,7 +299,7 @@ export async function restoreCanvasArchive(input: Blob | OpenCanvasArchive, host
                 total: item.files.length,
                 completed: item.files.length,
                 phase: "saving",
-                message: restoreHost.usesCanonicalBackend ? "正在保存画布" : "正在保存本地画布",
+                message: localPersistence ? "正在保存本地画布" : "正在保存画布",
             });
             const bound = await bindRestoredMedia(importedProjectId, remappedNodes, remappedTimeline, restoreHost);
             restoreHost.updateProject(importedProjectId, bound.timeline ? { nodes: bound.nodes, timeline: bound.timeline } : { nodes: bound.nodes });

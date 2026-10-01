@@ -1,7 +1,7 @@
 import { confinedArchivePath, createZip, readZip } from "@/lib/zip";
 import { saveOwnedOrBrowserBlob, type OwnedMediaSaveResult } from "@/services/desktop-media-save";
-import { getMediaBlob, setMediaBlob } from "@/services/file-storage";
-import { getImageBlob, setImageBlob } from "@/services/image-storage";
+import { getMediaBlob } from "@/services/file-storage";
+import { getImageBlob } from "@/services/image-storage";
 import type { CanvasExportAsset, CanvasExportFile, CanvasProjectExportItem } from "@/types/canvas-export";
 import type { CanvasFolder, CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { loadCanvasDrawing, loadCanvasDrawingPreview, loadCanvasDrawingRender } from "@/lib/canvas/canvas-drawing-storage";
@@ -240,19 +240,6 @@ function preflightCanvasArchiveProject(
 function preflightCanvasArchiveTimeline(timeline: NonNullable<CanvasProject["timeline"]>, title: string) {
     if (!timeline || typeof timeline !== "object" || !Array.isArray(timeline.clips) || !Array.isArray(timeline.tracks)) {
         throw new Error(`画布「${title}」的时间线无效`);
-    }
-}
-
-export async function restoreCanvasArchiveMedia(archive: OpenCanvasArchive): Promise<void> {
-    preflightCanvasArchive(archive.data, archive.files);
-    for (const item of archive.data.projects) {
-        for (const fileItem of item.files) {
-            const blob = archive.files.get(fileItem.path) || archive.files.get(confinedArchivePath(fileItem.path));
-            if (!blob) throw new Error(`压缩包缺少媒体文件：${fileItem.path}`);
-            const mime = fileItem.mimeType || blob.type || "application/octet-stream";
-            const typedBlob = blob.type ? blob : blob.slice(0, blob.size, mime);
-            await (fileItem.storageKey.startsWith("image:") ? setImageBlob(fileItem.storageKey, typedBlob) : setMediaBlob(fileItem.storageKey, typedBlob));
-        }
     }
 }
 

@@ -147,7 +147,7 @@ func newCanvasHistoryTestService(t *testing.T) *Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.CanvasProject{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{}, &model.Resource{}, &model.Asset{}, &model.AssetFolder{}, &model.CanvasLibraryFolder{}, &model.CanvasDrawing{}); err != nil {
+	if err := db.AutoMigrate(&model.CanvasProject{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{}, &model.Resource{}, &model.Asset{}, &model.AssetFolder{}, &model.CanvasLibraryFolder{}, &model.CanvasDrawing{}, &model.CanvasUnitLink{}); err != nil {
 		t.Fatal(err)
 	}
 	sqlDB, _ := db.DB()

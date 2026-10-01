@@ -21,7 +21,7 @@ mock.module("@/lib/canvas/canvas-drawing-storage", () => ({
 }));
 mock.module("@/services/workspace-mode", () => ({ isLocalWorkspaceMode: () => true }));
 
-const { exportCanvasProjects, openCanvasArchive, restoreCanvasArchiveMedia } = await import("@/lib/canvas/canvas-export");
+const { exportCanvasProjects, openCanvasArchive } = await import("@/lib/canvas/canvas-export");
 const { exportAssets, readAssetPackage } = await import("@/pages/assets/asset-transfer");
 const { createZip, readZip } = await import("@/lib/zip");
 const { archiveFileExtension, ExportIntegrityError } = await import("@/lib/export-integrity");
@@ -234,7 +234,7 @@ test("duplicate sanitized drawing names fail instead of overwriting archive entr
     expect(saved).toHaveLength(0);
 });
 
-test("canvas ZIP restores into a new empty workspace through the actual export/import path", async () => {
+test("canvas ZIP opens with all bytes after the source cache is emptied", async () => {
     blobs.set("video:one", new Blob([new Uint8Array([9, 8, 7])], { type: "video/mp4" }));
     blobs.set("audio:voice", new Blob(["voice-bytes"], { type: "audio/wav" }));
     expect(await exportCanvasProjects([project([...blobs.keys()])])).toBe("saved");
@@ -243,13 +243,13 @@ test("canvas ZIP restores into a new empty workspace through the actual export/i
     restored.clear();
     const archive = await openCanvasArchive(archiveFile);
     expect(archive.data.projects).toHaveLength(1);
-    await restoreCanvasArchiveMedia(archive);
-    expect(restored.size).toBe(2);
-    expect(new Uint8Array(await restored.get("video:one")!.arrayBuffer())).toEqual(new Uint8Array([9, 8, 7]));
-    expect(await restored.get("audio:voice")!.text()).toBe("voice-bytes");
+    const files = new Map(archive.data.projects[0].files.map((file) => [file.storageKey, archive.files.get(file.path)!]));
+    expect(files.size).toBe(2);
+    expect(new Uint8Array(await files.get("video:one")!.arrayBuffer())).toEqual(new Uint8Array([9, 8, 7]));
+    expect(await files.get("audio:voice")!.text()).toBe("voice-bytes");
 });
 
-test("empty workspace ZIP restores into an empty workspace with no media writes", async () => {
+test("empty workspace ZIP opens with no media writes", async () => {
     blobs.clear();
     restored.clear();
     expect(await exportCanvasProjects([])).toBe("saved");
@@ -258,7 +258,6 @@ test("empty workspace ZIP restores into an empty workspace with no media writes"
     restored.clear();
     const archive = await openCanvasArchive(archiveFile);
     expect(archive.data.projects).toEqual([]);
-    await restoreCanvasArchiveMedia(archive);
     expect(restored.size).toBe(0);
 });
 

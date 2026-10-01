@@ -468,6 +468,14 @@ test("folder covers require archive bytes before any writes and restore under th
     expect(restored).toEqual({ id: "folder-1", bytes: [7, 8, 9], mime: "image/jpeg" });
 });
 
+test("native canonical restore reports local saving rather than cloud synchronization", async () => {
+    const progress: Array<{ phase: string; message: string }> = [];
+    const state = memoryHost({ usesCanonicalBackend: true, onProjectProgress: (_id, value) => { if (value) progress.push(value); } });
+    await restoreCanvasArchive(await validZip(), state.host);
+    expect(progress.length).toBeGreaterThan(0);
+    expect(progress.every((value) => value.phase === "saving" && value.message.includes("本地"))).toBe(true);
+});
+
 test("account switch abandons restore without cleaning the new account", async () => {
     setActiveUserScope("owner-a");
     const { host, projects, folders, deleted } = memoryHost({

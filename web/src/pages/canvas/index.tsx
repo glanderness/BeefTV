@@ -50,6 +50,7 @@ export default function CanvasPage() {
     const loadMoreRef = useRef<HTMLDivElement>(null);
     const [loadedProjectCount, setLoadedProjectCount] = useState(50);
     const [openingProjectId, setOpeningProjectId] = useState("");
+    const [creationError, setCreationError] = useState(false);
     const openingProjectIdRef = useRef("");
     const hydrated = useCanvasStore((state) => state.hydrated);
     const localProjects = useCanvasStore((state) => state.projects);
@@ -121,9 +122,13 @@ export default function CanvasPage() {
         [forwardedQuery, navigate, preloadProject],
     );
     const createAndEnter = () => {
+        setCreationError(false);
         void createLocalCanvasProject("未命名项目").then(({ id }) => {
             // 允许浏览器验收脚本在项目库内保留新卡片，真实用户仍沿用 LibTV 的直接进入画布行为。
             if (searchParams.get("stay") !== "1") enterProject(id);
+        }).catch((error) => {
+            setCreationError(true);
+            message.error(error instanceof Error ? error.message : "创建项目失败，请重试");
         });
     };
     const duplicateCanvasProject = useCallback(async (project: CanvasLibrarySummary) => {
@@ -264,10 +269,13 @@ export default function CanvasPage() {
         }
         void createLocalCanvasProject("未命名项目").then(({ id }) => {
             enterProject(id);
+        }).catch((error) => {
+            setCreationError(true);
+            message.error(error instanceof Error ? error.message : "创建项目失败，请重试");
         });
     }, [hydrated, message, mode, projects, remoteMode, sessionHydrated, libraryQuery.isSuccess]);
 
-    if (!libraryQuery.isError && (mode === "new" || mode === "recent" || mode === "handoff")) return <main className="flex h-full items-center justify-center bg-background text-sm text-stone-500">正在打开画布...</main>;
+    if (!creationError && !libraryQuery.isError && (mode === "new" || mode === "recent" || mode === "handoff")) return <main className="flex h-full items-center justify-center bg-background text-sm text-stone-500">正在打开画布...</main>;
 
     return (
         <WorkspacePage className="studio-collection-page lib-tv-project-page">

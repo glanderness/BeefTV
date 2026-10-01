@@ -8,8 +8,10 @@ import { useUserStore } from "../../src/stores/use-user-store";
 import { exportCanvasProjects } from "../../src/lib/canvas/canvas-export";
 import { setMediaBlob, getMediaBlob } from "../../src/services/file-storage";
 import { reportOwnedMediaSave } from "../../src/services/desktop-media-save";
+import { configureApiRuntime } from "../../src/services/api/request";
 
 let archive = "";
+if (window.location.search.includes("new=1")) configureApiRuntime(`${window.location.origin}/api`, "");
 Object.assign(window, { go: { main: { DesktopApp: { SaveOwnedArtifact: async (_name: string, data: string) => { archive = data; return true; } } } } });
 
 function fixtureProject(id: string): CanvasProject {
@@ -41,7 +43,8 @@ Object.assign(window, { exportFixture: {
         return archive;
     },
     async snapshot() {
-        const media = await getMediaBlob("audio:fixture:voice");
+        const restoredKey = useCanvasStore.getState().projects[0]?.timeline?.clips[0]?.directMedia?.storageKey;
+        const media = await getMediaBlob(restoredKey || "audio:fixture:voice");
         return { projects: useCanvasStore.getState().projects, media: media ? await media.text() : null, archive };
     },
 } });
@@ -51,6 +54,6 @@ useUserStore.setState({ hydrated: true, storageMode: "local", user: null });
 useCanvasStore.setState({ hydrated: true });
 createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <MemoryRouter initialEntries={["/canvas"]}><App><Controls /><CanvasPage /></App></MemoryRouter>
+        <MemoryRouter initialEntries={[window.location.search.includes("new=1") ? "/canvas?mode=new" : "/canvas"]}><App><Controls /><CanvasPage /></App></MemoryRouter>
     </QueryClientProvider>,
 );

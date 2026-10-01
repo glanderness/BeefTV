@@ -54,10 +54,16 @@ test("ZIP from real browser storage imports through CanvasPage into a fresh brow
         expect(after.media).toBe("unique archive bytes");
         for (const project of after.projects) {
             const media = project.timeline.clips[0].directMedia;
-            expect(media.storageKey).toBe("audio:fixture:voice");
+            expect(media.storageKey).toStartWith("audio:guest:");
+            expect(media.storageKey).not.toBe("audio:fixture:voice");
             expect(media.url).toStartWith("blob:");
             expect(media.url).not.toBe("blob:expired");
         }
+        await imported.reload();
+        await imported.getByRole("button", { name: "测试缺失导出" }).waitFor();
+        const reloaded = await imported.evaluate(async () => (window as any).exportFixture.snapshot());
+        expect(reloaded.projects).toHaveLength(2);
+        expect(reloaded.media).toBe("unique archive bytes");
     } finally { await source.close(); await target.close(); }
 }, 30_000);
 
@@ -110,5 +116,28 @@ test("missing-file error is actually visible and no archive is saved", async () 
         await page.getByText(/导出未完成：缺少 1 个文件/).waitFor();
         expect(await page.getByText(/导出未完成：缺少 1 个文件/).innerText()).toContain("audio:fixture:voice");
         expect((await page.evaluate(async () => (window as any).exportFixture.snapshot())).archive).toBe("");
+    } finally { await context.close(); }
+}, 15_000);
+
+test("automatic canvas creation failure leaves the opening screen and shows a retryable library", async () => {
+    const context = await browser.newContext();
+    try {
+        const page = await context.newPage();
+        const pageErrors: string[] = [];
+        const requests: string[] = [];
+        page.on("pageerror", (error) => pageErrors.push(error.message));
+        page.on("request", (request) => { if (request.url().includes("/api/")) requests.push(`${request.method()} ${request.url()}`); });
+        await page.route("**/api/ops/**", (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: 503, msg: "测试保存失败", reason: "storage_unavailable" }) }));
+        await page.route("**/api/canvas-projects/*", (route) => route.request().method() === "PUT"
+            ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: 503, msg: "测试保存失败", reason: "storage_unavailable" }) })
+            : route.continue());
+        const url = new URL(server.url);
+        url.hostname = "127.0.0.1";
+        url.search = "?new=1";
+        await page.goto(url.toString());
+        await page.getByText("测试保存失败", { exact: true }).waitFor({ timeout: 5000 }).catch(async () => { throw new Error(JSON.stringify({ text: await page.locator("body").innerText(), requests, pageErrors })); });
+        expect(await page.getByText("正在打开画布...", { exact: true }).count()).toBe(0);
+        expect(await page.getByRole("button", { name: "开始创作", exact: true }).count()).toBe(1);
+        expect(pageErrors).toEqual([]);
     } finally { await context.close(); }
 }, 15_000);

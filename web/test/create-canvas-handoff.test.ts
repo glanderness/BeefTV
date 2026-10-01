@@ -386,7 +386,8 @@ test("Create forwards owned result assets through one new canvas and the project
     expect(createPage).toContain("userScopeEpochMatches(epoch)");
     expect(canvasIndex).toContain('const handoffMode = mode === "handoff"');
     expect(canvasIndex).toContain('mode !== "new" && mode !== "recent" && mode !== "handoff"');
-    expect(canvasIndex).toContain('if (remoteMode && syncError && !isExpectedLocalOnlySyncError(syncError))');
+    expect(canvasIndex).toContain('setCreationError(true)');
+    expect(canvasIndex).toContain('if (!creationError && !libraryQuery.isError');
     expect(canvasProject).toContain("useCanvasResourceHandoff");
     expect(handoffPlan).toContain('if (!input.projectLoaded || !input.assetsHydrated || input.mode !== "handoff") return { kind: "idle" }');
     expect(handoffPlan).toContain("uninsertedCanvasAssetHandoffPayloads(input.nodes, attempt.payloads)");
