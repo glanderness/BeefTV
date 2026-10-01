@@ -102,7 +102,9 @@ func NewService(deps Dependencies) *Service {
 		dataDir:      strings.TrimSpace(deps.DataDir),
 		sessions:     map[string]*chunkedUploadSession{},
 	}
-	svc.abandonStaleSessions()
+	if svc.dataDir != "" {
+		svc.abandonStaleSessions()
+	}
 	return svc
 }
 
