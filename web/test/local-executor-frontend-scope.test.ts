@@ -5,6 +5,7 @@ import {
     beginLocalExecutorSession,
     isLocalExecutorSessionStop,
     isUncertainLocalExecutorSubmit,
+    localExecutorFrozenInputKey,
     localExecutorIntentAfterError,
     localExecutorIntentAfterSubmit,
     nextLocalExecutorClientOperationId,
@@ -106,6 +107,34 @@ describe("local-executor clientOperationId intent", () => {
         expect(isUncertainLocalExecutorSubmit(new Error("任务失败"), "task-terminal")).toBe(false);
         expect(isUncertainLocalExecutorSubmit(new ApiError("缺少媒体", { status: 400 }))).toBe(false);
         expect(isUncertainLocalExecutorSubmit(new DOMException("Aborted", "AbortError"))).toBe(false);
+    });
+
+    test("explicit 4xx before taskId is terminal and does not reuse clientOperationId", () => {
+        const frozenInputKey = localExecutorFrozenInputKey(["timeline_render", "proj-a", timeline]);
+        const first = nextLocalExecutorClientOperationId(null, frozenInputKey);
+        const after400 = localExecutorIntentAfterError(
+            { clientOperationId: first, frozenInputKey },
+            new ApiError("缺少媒体", { status: 400 }),
+        );
+        expect(after400.terminal).toBe(true);
+        expect(after400.submittedTaskId).toBeUndefined();
+        expect(nextLocalExecutorClientOperationId(after400, frozenInputKey)).not.toBe(first);
+        expect(isUncertainLocalExecutorSubmit(new ApiError("缺少媒体", { status: 400 }))).toBe(false);
+    });
+
+    test("uncertain retry with edited timeline or resource does not reuse clientOperationId", () => {
+        const original = localExecutorFrozenInputKey(["timeline_render", "proj-a", timeline]);
+        const edited = localExecutorFrozenInputKey(["timeline_render", "proj-a", { ...timeline, durationMs: 1200 }]);
+        const first = nextLocalExecutorClientOperationId(null, original);
+        const afterUnknown = localExecutorIntentAfterError({ clientOperationId: first, frozenInputKey: original }, new Error("Failed to fetch"));
+        expect(nextLocalExecutorClientOperationId(afterUnknown, original)).toBe(first);
+        expect(nextLocalExecutorClientOperationId(afterUnknown, edited)).not.toBe(first);
+        const resourceA = localExecutorFrozenInputKey(["timeline_transcription", "proj-a", "res-a"]);
+        const resourceB = localExecutorFrozenInputKey(["timeline_transcription", "proj-a", "res-b"]);
+        const transcribe = nextLocalExecutorClientOperationId(null, resourceA);
+        const afterTranscribeUnknown = localExecutorIntentAfterError({ clientOperationId: transcribe, frozenInputKey: resourceA }, new Error("Failed to fetch"));
+        expect(nextLocalExecutorClientOperationId(afterTranscribeUnknown, resourceA)).toBe(transcribe);
+        expect(nextLocalExecutorClientOperationId(afterTranscribeUnknown, resourceB)).not.toBe(transcribe);
     });
 });
 
@@ -435,6 +464,202 @@ describe("local-executor submit and attach ownership", () => {
                 });
                 expect(owned.task.id).toBe("render-retry");
                 expect(posts).toEqual([firstId, firstId, regenerated]);
+            });
+        } finally {
+            restore();
+        }
+    });
+
+    test("explicit 4xx before taskId posts a new clientOperationId for the same frozen input", async () => {
+        const restore = switchScope("owner-a");
+        const expectedScope = captureUserScope();
+        const posts: string[] = [];
+        const frozenInputKey = localExecutorFrozenInputKey(["timeline_render", "proj-a", timeline]);
+        try {
+            await withAdapter(async (config) => {
+                const path = requestPath(config);
+                if (path === "/timeline/renders") {
+                    const operationId = String(requestBody(config)?.clientOperationId || "");
+                    posts.push(operationId);
+                    if (posts.length === 1) throw new ApiError("缺少媒体", { status: 400 });
+                    return envelope(generationTask({
+                        id: "render-after-400",
+                        clientOperationId: operationId,
+                        status: "succeeded",
+                        resultJson: JSON.stringify({ resourceId: "out-400" }),
+                    }));
+                }
+                if (path === "/tasks/render-after-400") {
+                    return envelope(generationTask({
+                        id: "render-after-400",
+                        status: "succeeded",
+                        resultJson: JSON.stringify({ resourceId: "out-400" }),
+                    }));
+                }
+                throw new Error(`unexpected ${path}`);
+            }, async () => {
+                const firstId = nextLocalExecutorClientOperationId(null, frozenInputKey);
+                const sessionOf = () => beginLocalExecutorSession("proj-a", {
+                    controller: new AbortController(),
+                    getLiveProjectId: () => "proj-a",
+                    expectedScope,
+                });
+                await expect(runOwnedTimelineRender({
+                    session: sessionOf(),
+                    projectId: "proj-a",
+                    timeline,
+                    clientOperationId: firstId,
+                    intervalMs: 1,
+                    timeoutMs: 1000,
+                })).rejects.toBeTruthy();
+                const after400 = localExecutorIntentAfterError({ clientOperationId: firstId, frozenInputKey }, new ApiError("缺少媒体", { status: 400 }));
+                const retryId = nextLocalExecutorClientOperationId(after400, frozenInputKey);
+                expect(retryId).not.toBe(firstId);
+                const owned = await runOwnedTimelineRender({
+                    session: sessionOf(),
+                    projectId: "proj-a",
+                    timeline,
+                    clientOperationId: retryId,
+                    intervalMs: 1,
+                    timeoutMs: 1000,
+                });
+                expect(owned.task.id).toBe("render-after-400");
+                expect(posts).toEqual([firstId, retryId]);
+            });
+        } finally {
+            restore();
+        }
+    });
+
+    test("uncertain retry of an edited timeline posts a new clientOperationId", async () => {
+        const restore = switchScope("owner-a");
+        const expectedScope = captureUserScope();
+        const posts: Array<{ id: string; durationMs: number }> = [];
+        const originalKey = localExecutorFrozenInputKey(["timeline_render", "proj-a", timeline]);
+        const editedTimeline = { ...timeline, durationMs: 2400 };
+        const editedKey = localExecutorFrozenInputKey(["timeline_render", "proj-a", editedTimeline]);
+        try {
+            await withAdapter(async (config) => {
+                const path = requestPath(config);
+                if (path === "/timeline/renders") {
+                    const body = requestBody(config);
+                    posts.push({
+                        id: String(body?.clientOperationId || ""),
+                        durationMs: Number((body?.timeline as { durationMs?: number } | undefined)?.durationMs || 0),
+                    });
+                    if (posts.length === 1) throw new ApiError("network down");
+                    return envelope(generationTask({
+                        id: "render-edited",
+                        clientOperationId: String(body?.clientOperationId || ""),
+                        status: "succeeded",
+                        resultJson: JSON.stringify({ resourceId: "out-edited" }),
+                    }));
+                }
+                if (path === "/tasks/render-edited") {
+                    return envelope(generationTask({
+                        id: "render-edited",
+                        status: "succeeded",
+                        resultJson: JSON.stringify({ resourceId: "out-edited" }),
+                    }));
+                }
+                throw new Error(`unexpected ${path}`);
+            }, async () => {
+                const firstId = nextLocalExecutorClientOperationId(null, originalKey);
+                const sessionOf = () => beginLocalExecutorSession("proj-a", {
+                    controller: new AbortController(),
+                    getLiveProjectId: () => "proj-a",
+                    expectedScope,
+                });
+                await expect(runOwnedTimelineRender({
+                    session: sessionOf(),
+                    projectId: "proj-a",
+                    timeline,
+                    clientOperationId: firstId,
+                    intervalMs: 1,
+                    timeoutMs: 1000,
+                })).rejects.toBeTruthy();
+                const afterUnknown = localExecutorIntentAfterError({ clientOperationId: firstId, frozenInputKey: originalKey }, new ApiError("network down"));
+                expect(nextLocalExecutorClientOperationId(afterUnknown, originalKey)).toBe(firstId);
+                const retryId = nextLocalExecutorClientOperationId(afterUnknown, editedKey);
+                expect(retryId).not.toBe(firstId);
+                const owned = await runOwnedTimelineRender({
+                    session: sessionOf(),
+                    projectId: "proj-a",
+                    timeline: editedTimeline,
+                    clientOperationId: retryId,
+                    intervalMs: 1,
+                    timeoutMs: 1000,
+                });
+                expect(owned.task.id).toBe("render-edited");
+                expect(posts).toEqual([
+                    { id: firstId, durationMs: 0 },
+                    { id: retryId, durationMs: 2400 },
+                ]);
+            });
+        } finally {
+            restore();
+        }
+    });
+
+    test("owned depth getResource after A to B to A does not attach", async () => {
+        const restore = switchScope("owner-a");
+        const expectedScope = captureUserScope();
+        const entered = deferred();
+        const gate = deferred();
+        let attached = 0;
+        const urls: string[] = [];
+        try {
+            await withAdapter(async (config) => {
+                const path = requestPath(config);
+                urls.push(path);
+                if (path === "/depth-captures") {
+                    return envelope(generationTask({
+                        id: "depth-lookup",
+                        type: "depth_capture",
+                        clientOperationId: "op-depth-lookup",
+                        status: "succeeded",
+                        resultJson: JSON.stringify({ resourceId: "depth-lookup-out", fileName: "depth.mp4", size: 1, durationMs: 1000, width: 16, height: 9 }),
+                    }));
+                }
+                if (path === "/tasks/depth-lookup") {
+                    return envelope(generationTask({
+                        id: "depth-lookup",
+                        type: "depth_capture",
+                        status: "succeeded",
+                        resultJson: JSON.stringify({ resourceId: "depth-lookup-out", fileName: "depth.mp4", size: 1, durationMs: 1000, width: 16, height: 9 }),
+                    }));
+                }
+                if (path === "/resources/depth-lookup-out") {
+                    entered.resolve();
+                    await gate.promise;
+                    return envelope({ resource: { id: "depth-lookup-out", mimeType: "video/mp4", size: 1, width: 16, height: 9, durationMs: 1000 } });
+                }
+                throw new Error(`unexpected ${path}`);
+            }, async () => {
+                const session = beginLocalExecutorSession("proj-a", {
+                    controller: new AbortController(),
+                    getLiveProjectId: () => "proj-a",
+                    expectedScope,
+                });
+                const pending = runOwnedDepthCapture({
+                    session,
+                    projectId: "proj-a",
+                    resourceId: "src-1",
+                    clientOperationId: "op-depth-lookup",
+                    intervalMs: 1,
+                    timeoutMs: 1000,
+                }).then(async (owned) => {
+                    await attachLocalExecutorResult(session, () => {
+                        attached += 1;
+                        return owned.capture;
+                    });
+                });
+                await entered.promise;
+                setActiveUserScope("owner-b");
+                setActiveUserScope("owner-a");
+                gate.resolve();
+                await expect(pending).rejects.toBeInstanceOf(UserScopeAbandonedError);
+                expect(attached).toBe(0);
             });
         } finally {
             restore();

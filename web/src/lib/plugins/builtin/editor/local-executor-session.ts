@@ -25,7 +25,13 @@ export type LocalExecutorSession = {
 export type LocalExecutorIntentState = {
     clientOperationId: string;
     submittedTaskId?: string;
+    frozenInputKey?: string;
+    terminal?: boolean;
 };
+
+export function localExecutorFrozenInputKey(parts: Array<string | number | null | undefined | object>) {
+    return parts.map((part) => typeof part === "object" && part !== null ? JSON.stringify(part) : String(part ?? "")).join(":");
+}
 
 export function beginLocalExecutorSession(
     projectId: string,
@@ -56,15 +62,30 @@ export function isLocalExecutorSessionStop(error: unknown) {
     return isUserScopeAbandonedError(error) || (error instanceof Error && error.name === "AbortError");
 }
 
-export function nextLocalExecutorClientOperationId(previous?: Partial<LocalExecutorIntentState> | null) {
-    if (previous?.clientOperationId && !previous.submittedTaskId) return previous.clientOperationId;
+export function nextLocalExecutorClientOperationId(
+    previous?: Partial<LocalExecutorIntentState> | null,
+    currentInputKey?: string,
+) {
+    if (
+        previous?.clientOperationId
+        && !previous.submittedTaskId
+        && !previous.terminal
+        && (!currentInputKey || !previous.frozenInputKey || previous.frozenInputKey === currentInputKey)
+    ) {
+        return previous.clientOperationId;
+    }
     return crypto.randomUUID();
 }
 
-export function localExecutorIntentAfterSubmit(clientOperationId: string, task: GenerationTask): LocalExecutorIntentState {
+export function localExecutorIntentAfterSubmit(
+    clientOperationId: string,
+    task: GenerationTask,
+    previous?: Partial<LocalExecutorIntentState>,
+): LocalExecutorIntentState {
     return {
         clientOperationId: task.clientOperationId || clientOperationId,
         submittedTaskId: task.id,
+        frozenInputKey: previous?.frozenInputKey,
     };
 }
 
@@ -77,9 +98,9 @@ export function isUncertainLocalExecutorSubmit(error: unknown, submittedTaskId?:
 
 export function localExecutorIntentAfterError(intent: LocalExecutorIntentState, error: unknown): LocalExecutorIntentState {
     if (isUncertainLocalExecutorSubmit(error, intent.submittedTaskId)) {
-        return { clientOperationId: intent.clientOperationId };
+        return { clientOperationId: intent.clientOperationId, frozenInputKey: intent.frozenInputKey };
     }
-    return intent;
+    return { ...intent, terminal: true };
 }
 
 export async function attachLocalExecutorResult<T>(session: LocalExecutorSession, attach: () => T | Promise<T>): Promise<T> {
@@ -204,7 +225,10 @@ export async function runOwnedDepthCapture(input: {
     const capture = JSON.parse(task.resultJson || "{}") as DepthCaptureResult;
     if (!capture.resourceId) throw new Error("任务完成但没有返回深度视频资源");
     assertLocalExecutorSession(input.session);
-    const resource = await getResource(capture.resourceId);
+    const resource = await getResource(capture.resourceId, {
+        signal: input.session.controller.signal,
+        expectedScope: input.session.expectedScope,
+    });
     assertLocalExecutorSession(input.session);
     return { task, resource, capture };
 }

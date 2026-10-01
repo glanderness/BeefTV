@@ -7,7 +7,7 @@ import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import * as userScopeGuard from "@/lib/user-scope-guard";
 import { UserScopeAbandonedError } from "@/lib/user-scope-guard";
 import { apiClient, http } from "@/services/api/request";
-import { getResource, uploadResourceFile } from "@/services/api/resources";
+import { getResource, refreshResource, uploadResourceFile } from "@/services/api/resources";
 import { uploadImage } from "@/services/image-storage";
 import * as blobCache from "@/services/resource-blob-cache";
 
@@ -182,6 +182,135 @@ describe("resource upload scope", () => {
             });
         } finally {
             wait.mockRestore();
+            restore();
+        }
+    });
+});
+
+describe("resource lookup scope", () => {
+    test("deferred getResource A to B to A does not write cache or missing state", async () => {
+        const restore = switchScope("owner-a");
+        const expectedA = userScopeGuard.captureUserScope();
+        const entered = deferred();
+        const gate = deferred();
+        const urls: string[] = [];
+        try {
+            await withAdapter(async (config) => {
+                urls.push(String(config.url || ""));
+                entered.resolve();
+                await gate.promise;
+                return { data: envelope({ id: "res-lookup-aba" }), status: 200, statusText: "OK", headers: {}, config };
+            }, async () => {
+                const pending = getResource("res-lookup-aba", { expectedScope: expectedA });
+                await entered.promise;
+                setActiveUserScope("owner-b");
+                setActiveUserScope("owner-a");
+                gate.resolve();
+                await expect(pending).rejects.toBeInstanceOf(UserScopeAbandonedError);
+            });
+            await expect(getResource("res-lookup-aba", { expectedScope: expectedA })).rejects.toBeInstanceOf(UserScopeAbandonedError);
+            let followUp = 0;
+            await withAdapter(async (config) => {
+                followUp += 1;
+                return { data: envelope({ id: "res-lookup-aba" }), status: 200, statusText: "OK", headers: {}, config };
+            }, async () => {
+                const live = await getResource("res-lookup-aba");
+                expect(live.id).toBe("res-lookup-aba");
+            });
+            expect(followUp).toBe(1);
+            expect(urls).toEqual(["/resources/res-lookup-aba"]);
+        } finally {
+            restore();
+        }
+    });
+
+    test("in-flight getResource join is limited to the captured epoch", async () => {
+        const restore = switchScope("owner-a");
+        const expectedA = userScopeGuard.captureUserScope();
+        const firstEntered = deferred();
+        const firstGate = deferred();
+        const otherEntered = deferred();
+        let requests = 0;
+        try {
+            await withAdapter(async (config) => {
+                requests += 1;
+                if (requests === 1) {
+                    firstEntered.resolve();
+                    await firstGate.promise;
+                } else {
+                    otherEntered.resolve();
+                }
+                return { data: envelope({ id: "res-lookup-join" }), status: 200, statusText: "OK", headers: {}, config };
+            }, async () => {
+                const first = getResource("res-lookup-join", { expectedScope: expectedA });
+                await firstEntered.promise;
+                const joined = getResource("res-lookup-join", { expectedScope: expectedA });
+                expect(requests).toBe(1);
+                setActiveUserScope("owner-b");
+                const otherEpoch = getResource("res-lookup-join");
+                await otherEntered.promise;
+                expect(requests).toBe(2);
+                firstGate.resolve();
+                await expect(first).rejects.toBeInstanceOf(UserScopeAbandonedError);
+                await expect(joined).rejects.toBeInstanceOf(UserScopeAbandonedError);
+                expect((await otherEpoch).id).toBe("res-lookup-join");
+            });
+        } finally {
+            firstGate.resolve();
+            restore();
+        }
+    });
+
+    test("abandoned 404 lookup does not remember a missing resource for the original epoch", async () => {
+        const restore = switchScope("owner-a");
+        const expectedA = userScopeGuard.captureUserScope();
+        const entered = deferred();
+        const gate = deferred();
+        try {
+            await withAdapter(async (config) => {
+                entered.resolve();
+                await gate.promise;
+                throw new axios.AxiosError("not found", "ERR_BAD_REQUEST", config, undefined, {
+                    data: { code: 404, data: null, msg: "not found" },
+                    status: 404,
+                    statusText: "Error",
+                    headers: {},
+                    config,
+                });
+            }, async () => {
+                const pending = getResource("res-lookup-missing", { expectedScope: expectedA });
+                await entered.promise;
+                setActiveUserScope("owner-b");
+                setActiveUserScope("owner-a");
+                gate.resolve();
+                await expect(pending).rejects.toBeInstanceOf(UserScopeAbandonedError);
+            });
+            await expect(getResource("res-lookup-missing", { expectedScope: expectedA })).rejects.toBeInstanceOf(UserScopeAbandonedError);
+        } finally {
+            restore();
+        }
+    });
+
+    test("deferred refreshResource A to B to A does not write cache", async () => {
+        const restore = switchScope("owner-a");
+        const expectedA = userScopeGuard.captureUserScope();
+        const entered = deferred();
+        const gate = deferred();
+        try {
+            await withAdapter(async (config) => {
+                entered.resolve();
+                await gate.promise;
+                return { data: envelope({ id: "res-refresh-aba" }), status: 200, statusText: "OK", headers: {}, config };
+            }, async () => {
+                const pending = refreshResource("res-refresh-aba", { expectedScope: expectedA });
+                await entered.promise;
+                setActiveUserScope("owner-b");
+                setActiveUserScope("owner-a");
+                gate.resolve();
+                await expect(pending).rejects.toBeInstanceOf(UserScopeAbandonedError);
+            });
+            await expect(getResource("res-refresh-aba", { expectedScope: expectedA })).rejects.toBeInstanceOf(UserScopeAbandonedError);
+        } finally {
             restore();
         }
     });

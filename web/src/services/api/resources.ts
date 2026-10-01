@@ -1,4 +1,3 @@
-import { getActiveUserScope } from "@/lib/user-scope";
 import { assertUserScope, captureUserScope, isUserScopeAbandonedError, waitForRetryDelay, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
 import { http, apiClient, apiBaseURL, ApiError, type HttpRequestConfig } from "@/services/api/request";
@@ -214,7 +213,7 @@ async function prepareChunkRetry(error: unknown, expected: CapturedUserScope) {
 
 function rememberResource(resource: RemoteResource, expected: CapturedUserScope) {
     assertUserScope(expected);
-    resourceCache.set(resourceCacheKey(resource.id, expected.userScope), resource);
+    resourceCache.set(resourceCacheKey(resource.id, expected), resource);
 }
 
 // 失败分类直接复用 request() 已经算好的 ApiError.retryable（408/425/429/5xx 可重试），
@@ -251,19 +250,29 @@ function scopedUploadConfig(expected: CapturedUserScope, idempotencyKey?: string
     return value ? { headers: { "X-Idempotency-Key": value }, expectedScope: expected } : { expectedScope: expected };
 }
 
-export function getResource(id: string): Promise<RemoteResource> {
-    const cacheKey = resourceCacheKey(id);
+export function getResource(id: string, config?: HttpRequestConfig): Promise<RemoteResource> {
+    const expected = config?.expectedScope ?? captureUserScope();
+    const cacheKey = resourceCacheKey(id, expected);
     const cached = resourceCache.get(cacheKey);
     if (cached) return Promise.resolve(cached);
     if (missingResourceIds.has(cacheKey)) return Promise.reject(new Error("资源不存在或已被删除"));
     const pending = resourceRequests.get(cacheKey);
     if (pending) return pending;
-    const task = http.get<{ resource: RemoteResource }>(`/resources/${encodeURIComponent(id)}`)
+    const task = http.get<{ resource: RemoteResource }>(`/resources/${encodeURIComponent(id)}`, {
+        ...config,
+        signal: config?.signal,
+        expectedScope: expected,
+    })
         .then((data) => {
+            assertUserScope(expected);
             resourceCache.set(cacheKey, data.resource);
+            missingResourceIds.delete(cacheKey);
             return data.resource;
         })
         .catch((error) => {
+            if (isUserScopeAbandonedError(error)) throw error;
+            if (error instanceof DOMException && error.name === "AbortError") throw error;
+            assertUserScope(expected);
             if (error instanceof ApiError && error.status === 404) missingResourceIds.add(cacheKey);
             throw error;
         })
@@ -273,14 +282,19 @@ export function getResource(id: string): Promise<RemoteResource> {
 }
 
 // refreshResource 绕过缓存强制拉取资源最新状态（转码副本就绪轮询用），并回写缓存。
-export function refreshResource(id: string): Promise<RemoteResource> {
-    const cacheKey = resourceCacheKey(id);
-    return http.get<{ resource: RemoteResource }>(`/resources/${encodeURIComponent(id)}`)
-        .then((data) => {
-            resourceCache.set(cacheKey, data.resource);
-            missingResourceIds.delete(cacheKey);
-            return data.resource;
-        });
+export function refreshResource(id: string, config?: HttpRequestConfig): Promise<RemoteResource> {
+    const expected = config?.expectedScope ?? captureUserScope();
+    const cacheKey = resourceCacheKey(id, expected);
+    return http.get<{ resource: RemoteResource }>(`/resources/${encodeURIComponent(id)}`, {
+        ...config,
+        signal: config?.signal,
+        expectedScope: expected,
+    }).then((data) => {
+        assertUserScope(expected);
+        resourceCache.set(cacheKey, data.resource);
+        missingResourceIds.delete(cacheKey);
+        return data.resource;
+    });
 }
 
 export async function getResourceOSSUrl(storageKey?: string) {
@@ -299,8 +313,8 @@ export async function getResourceOSSUrl(storageKey?: string) {
     }
 }
 
-function resourceCacheKey(id: string, scope = getActiveUserScope()) {
-    return `${scope}:${id}`;
+function resourceCacheKey(id: string, expected: CapturedUserScope) {
+    return `${expected.userScope}:${expected.epoch}:${id}`;
 }
 
 export function resourceFileUrl(id: string) {

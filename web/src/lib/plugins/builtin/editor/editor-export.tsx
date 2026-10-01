@@ -9,6 +9,7 @@ import {
     attachLocalExecutorResult,
     beginLocalExecutorSession,
     isLocalExecutorSessionStop,
+    localExecutorFrozenInputKey,
     localExecutorIntentAfterError,
     localExecutorIntentAfterSubmit,
     nextLocalExecutorClientOperationId,
@@ -126,8 +127,9 @@ export function EditorExport() {
         const observer = new AbortController();
         remoteObservationRef.current?.abort();
         remoteObservationRef.current = observer;
-        const clientOperationId = nextLocalExecutorClientOperationId(submitIntentRef.current);
-        submitIntentRef.current = { clientOperationId };
+        const frozenInputKey = localExecutorFrozenInputKey(["timeline_render", originalProjectId, originalTimeline]);
+        const clientOperationId = nextLocalExecutorClientOperationId(submitIntentRef.current, frozenInputKey);
+        submitIntentRef.current = { clientOperationId, frozenInputKey };
         setState({ phase: "running", mode: "remote", percent: 0, detail: "提交渲染任务…", result: null });
         try {
             const session = beginLocalExecutorSession(originalProjectId, {
@@ -141,7 +143,7 @@ export function EditorExport() {
                 timeline: originalTimeline,
                 clientOperationId,
                 onCreated: (created) => {
-                    submitIntentRef.current = localExecutorIntentAfterSubmit(clientOperationId, created);
+                    submitIntentRef.current = localExecutorIntentAfterSubmit(clientOperationId, created, submitIntentRef.current ?? { clientOperationId, frozenInputKey });
                 },
                 onTaskUpdate: (next) =>
                     setState({
@@ -154,7 +156,7 @@ export function EditorExport() {
                         result: null,
                     }),
             });
-            submitIntentRef.current = localExecutorIntentAfterSubmit(clientOperationId, task);
+            submitIntentRef.current = localExecutorIntentAfterSubmit(clientOperationId, task, submitIntentRef.current ?? { clientOperationId, frozenInputKey });
             await attachLocalExecutorResult(session, () => {
                 setState({
                     phase: "done",
@@ -169,7 +171,7 @@ export function EditorExport() {
                 if (mountedRef.current) setState(IDLE_EXPORT_STATE);
                 return;
             }
-            submitIntentRef.current = localExecutorIntentAfterError({ clientOperationId, submittedTaskId: submitIntentRef.current?.submittedTaskId }, error);
+            submitIntentRef.current = localExecutorIntentAfterError(submitIntentRef.current ?? { clientOperationId, frozenInputKey }, error);
             setState({
                 phase: "error",
                 mode: "remote",

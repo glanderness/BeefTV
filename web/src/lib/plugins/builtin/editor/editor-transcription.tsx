@@ -9,6 +9,7 @@ import {
     attachLocalExecutorResult,
     beginLocalExecutorSession,
     isLocalExecutorSessionStop,
+    localExecutorFrozenInputKey,
     localExecutorIntentAfterError,
     localExecutorIntentAfterSubmit,
     nextLocalExecutorClientOperationId,
@@ -96,8 +97,9 @@ export function EditorTranscription() {
         const observer = new AbortController();
         observationRef.current?.abort();
         observationRef.current = observer;
-        const clientOperationId = nextLocalExecutorClientOperationId(submitIntentRef.current);
-        submitIntentRef.current = { clientOperationId };
+        const frozenInputKey = localExecutorFrozenInputKey(["timeline_transcription", originalProjectId, resourceId]);
+        const clientOperationId = nextLocalExecutorClientOperationId(submitIntentRef.current, frozenInputKey);
+        submitIntentRef.current = { clientOperationId, frozenInputKey };
         setRunning(true);
         setFailed(false);
         setMessage(null);
@@ -116,7 +118,7 @@ export function EditorTranscription() {
                 timeoutMs: WHISPER_WAIT_TIMEOUT_MS,
                 intervalMs: 2000,
                 onCreated: (created) => {
-                    submitIntentRef.current = localExecutorIntentAfterSubmit(clientOperationId, created);
+                    submitIntentRef.current = localExecutorIntentAfterSubmit(clientOperationId, created, submitIntentRef.current ?? { clientOperationId, frozenInputKey });
                 },
                 onTaskUpdate: (next) => {
                     const stage = next.stage;
@@ -124,7 +126,7 @@ export function EditorTranscription() {
                     if (stage) setProgressLabel(`${stage}${progress > 0 && progress < 100 ? ` ${progress}%` : ""}`);
                 },
             });
-            submitIntentRef.current = localExecutorIntentAfterSubmit(clientOperationId, task);
+            submitIntentRef.current = localExecutorIntentAfterSubmit(clientOperationId, task, submitIntentRef.current ?? { clientOperationId, frozenInputKey });
             const entries = toSrtEntries(result.segments ?? []);
             await attachLocalExecutorResult(session, () => {
                 if (entries.length === 0) {
@@ -149,7 +151,7 @@ export function EditorTranscription() {
                 }
                 return;
             }
-            submitIntentRef.current = localExecutorIntentAfterError({ clientOperationId, submittedTaskId: submitIntentRef.current?.submittedTaskId }, err);
+            submitIntentRef.current = localExecutorIntentAfterError(submitIntentRef.current ?? { clientOperationId, frozenInputKey }, err);
             setFailed(true);
             setMessage(err instanceof Error ? err.message : "转写失败，请稍后重试");
             setProgressLabel(null);
