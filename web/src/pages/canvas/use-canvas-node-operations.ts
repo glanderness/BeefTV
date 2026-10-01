@@ -8,7 +8,7 @@ import { FOLDER_COLLAPSED_HEIGHT, FOLDER_COLLAPSED_WIDTH, FRAME_HEADER_HEIGHT, g
 import { alignCanvasNodes, layoutCanvasAuto, layoutCanvasFlow, layoutCanvasNodes, nextCanvasVersionLabel, spreadCanvasNodes, type CanvasAlignmentMode } from "@/lib/canvas/canvas-layout";
 import { applyCanvasConnectionPromptSync } from "@/lib/canvas/canvas-resource-references";
 import { createCanvasNode, isHiddenBatchChild, removeCanvasNodes } from "@/lib/canvas/canvas-project-domain";
-import { isolateCopiedNodeMetadata, nextCopiedNodeTitle } from "@/lib/canvas/canvas-node-copy";
+import { isolateCopiedDirectorScenes, isolateCopiedNodeMetadata, nextCopiedNodeTitle } from "@/lib/canvas/canvas-node-copy";
 import { canOpenCanvasNodePromptPanel, mediaGeneratorMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { getCanvasNodeCreationDisabledReason } from "@/lib/canvas/canvas-feature-availability";
 import { CanvasNodeType, type CanvasConnection, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type ContextMenuState, type Position } from "@/types/canvas";
@@ -17,10 +17,13 @@ import type { CanvasDrawingEngine } from "@/lib/canvas/canvas-drawing-engine";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { workflowProviderPluginEnabled } from "@/lib/plugins/builtin/workflows";
 import { usePluginStore } from "@/stores/use-plugin-store";
+import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import type { DirectorScene } from "@/types/director";
 
 type CanvasClipboard = {
     nodes: CanvasNodeData[];
     connections: CanvasConnection[];
+    directorScenes?: DirectorScene[];
 };
 
 const CANVAS_NODES_CLIPBOARD_PREFIX = "open-ai-canvas-nodes:";
@@ -99,6 +102,14 @@ export function useCanvasNodeOperations({
         connectionsRef.current = nextConnections;
         setConnections(nextConnections);
     }, [connectionsRef, setConnections]);
+
+    const isolateDirectorCopies = useCallback((copies: CanvasNodeData[], idMap: ReadonlyMap<string, string>, sourceScenes?: DirectorScene[]) => {
+        const store = useCanvasStore.getState();
+        const project = store.projects.find((item) => item.id === projectId);
+        const isolated = isolateCopiedDirectorScenes(copies, sourceScenes || project?.directorScenes || [], idMap);
+        if (project && isolated.scenes.length) store.updateProject(projectId, { directorScenes: [...project.directorScenes, ...isolated.scenes] });
+        return isolated.nodes;
+    }, [projectId]);
 
     const cloneDrawingForNode = useCallback((source: CanvasNodeData, target: CanvasNodeData, failureMessage: string) => {
         const sourceDrawingId = source.metadata?.drawingId;
@@ -387,7 +398,7 @@ export function useCanvasNodeOperations({
         const versionRootId = duplicateMode === "variant" && !isFrameNode(source) ? source.metadata?.versionOfNodeId || source.id : undefined;
         const versionLabel = versionRootId ? nextCanvasVersionLabel(versionRootId, nodesRef.current) : undefined;
         const copyTitle = duplicateMode === "copy" ? nextCopiedNodeTitle(source.title, nodesRef.current.map((node) => node.title)) : undefined;
-        const copiedNodes = sources.map((node) => {
+        const copiedNodes = isolateDirectorCopies(sources.map((node) => {
             const metadata = isolateCopiedNodeMetadata(node, idMap);
             if (node.type === CanvasNodeType.Drawing) {
                 metadata.drawingId = `${idMap.get(node.id)}-document`;
@@ -409,7 +420,7 @@ export function useCanvasNodeOperations({
                 parentId: node.parentId ? idMap.get(node.parentId) || node.parentId : undefined,
                 metadata,
             };
-        });
+        }), idMap);
         const copiedIds = new Set(sources.map((node) => node.id));
         const copiedConnections = connectionsRef.current
             .filter((connection) => copiedIds.has(connection.fromNodeId) && copiedIds.has(connection.toNodeId))
@@ -431,7 +442,7 @@ export function useCanvasNodeOperations({
             if (sourceNode) cloneDrawingForNode(sourceNode, targetNode, "绘图副本保存失败，请重新复制");
         });
         setDialogNodeId(canOpenCanvasNodePromptPanel(copiedNodes.find((node) => node.id === id)) ? id : null);
-    }, [cloneDrawingForNode, commitConnections, commitNodes, connectionsRef, nodesRef, selectNodes, setDialogNodeId]);
+    }, [cloneDrawingForNode, commitConnections, commitNodes, connectionsRef, isolateDirectorCopies, nodesRef, selectNodes, setDialogNodeId]);
 
     const setPrimaryVersion = useCallback((nodeId: string) => {
         const target = nodesRef.current.find((node) => node.id === nodeId);
@@ -452,7 +463,9 @@ export function useCanvasNodeOperations({
             .map((node) => ({ ...node, position: { ...node.position }, metadata: node.metadata ? { ...node.metadata, frame: node.metadata.frame ? { ...node.metadata.frame } : undefined } : undefined }));
         if (!copiedNodes.length) return;
         const copiedConnections = connectionsRef.current.filter((connection) => copyIds.has(connection.fromNodeId) && copyIds.has(connection.toNodeId)).map((connection) => ({ ...connection }));
-        clipboardRef.current = { nodes: copiedNodes, connections: copiedConnections };
+        const sceneIds = new Set(copiedNodes.map((node) => node.metadata?.directorSceneId));
+        const directorScenes = structuredClone((useCanvasStore.getState().projects.find((item) => item.id === projectId)?.directorScenes || []).filter((scene) => sceneIds.has(scene.id)));
+        clipboardRef.current = { nodes: copiedNodes, connections: copiedConnections, directorScenes };
         try {
             sessionStorage.setItem(CANVAS_NODES_CLIPBOARD_STORAGE_KEY, JSON.stringify(clipboardRef.current));
         } catch {
@@ -478,7 +491,7 @@ export function useCanvasNodeOperations({
             markerWritePendingRef.current = false;
             preferCopiedNodesRef.current = true;
         }
-    }, [connectionsRef, nodesRef]);
+    }, [connectionsRef, nodesRef, projectId]);
 
     const copySelectedNodes = useCallback(() => {
         copyNodesToClipboard(new Set(selectedNodeIdsRef.current));
@@ -499,7 +512,7 @@ export function useCanvasNodeOperations({
         const idMap = new Map(clipboard.nodes.map((node, index) => [node.id, `${node.type}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`]));
         const copiedSourceIds = new Set(clipboard.nodes.map((node) => node.id));
         const reservedTitles = new Set(nodesRef.current.map((node) => node.title));
-        const nextNodes = clipboard.nodes.map((node) => {
+        const nextNodes = isolateDirectorCopies(clipboard.nodes.map((node) => {
             const metadata = isolateCopiedNodeMetadata(node, idMap);
             const title = nextCopiedNodeTitle(node.title, reservedTitles);
             reservedTitles.add(title);
@@ -518,7 +531,7 @@ export function useCanvasNodeOperations({
                 parentId: node.parentId ? idMap.get(node.parentId) : undefined,
                 metadata,
             };
-        });
+        }), idMap, clipboard.directorScenes);
         // 1) 剪贴板内部连线；2) 仍保留到画布上未复制参考节点的入边（只复制结果节点时常见）。
         const nextConnections = clipboard.connections.flatMap((connection, index) => {
             const fromNodeId = idMap.get(connection.fromNodeId);
@@ -546,7 +559,7 @@ export function useCanvasNodeOperations({
         const primaryNode = nextNodes.find((node) => !node.parentId);
         setDialogNodeId(canOpenCanvasNodePromptPanel(primaryNode) ? primaryNode!.id : null);
         return true;
-    }, [cloneDrawingForNode, commitConnections, commitNodes, connectionsRef, getCanvasCenter, nodesRef, selectNodes, setContextMenu, setDialogNodeId]);
+    }, [cloneDrawingForNode, commitConnections, commitNodes, connectionsRef, getCanvasCenter, isolateDirectorCopies, nodesRef, selectNodes, setContextMenu, setDialogNodeId]);
 
     const restoreCopiedNodesFromText = useCallback((value: string) => {
         const isMarker = value.startsWith(CANVAS_NODES_CLIPBOARD_PREFIX);
@@ -557,7 +570,7 @@ export function useCanvasNodeOperations({
             if (!serialized) return false;
             const parsed = JSON.parse(serialized) as Partial<CanvasClipboard>;
             if (!parsed.nodes?.length) return false;
-            clipboardRef.current = { nodes: parsed.nodes, connections: parsed.connections || [] };
+            clipboardRef.current = { nodes: parsed.nodes, connections: parsed.connections || [], directorScenes: parsed.directorScenes };
             setHasCopiedNodes(true);
             preferCopiedNodesRef.current = true;
             markerWritePendingRef.current = false;
