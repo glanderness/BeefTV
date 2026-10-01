@@ -15,6 +15,7 @@ export const GENERATION_ERROR_CATEGORIES = [
     "moderation_reference",
     "moderation_output",
     "invalid_params",
+    "local_storage",
     "context_too_long",
     "input_inaccessible",
     "input_too_large",
@@ -103,6 +104,7 @@ const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
     moderation_reference: { reason: "参考素材未通过内容安全审核", action: "请检查并更换参考素材后重新生成" },
     moderation_output: { reason: "生成结果未通过内容安全审核", action: "请调整提示词或参考素材后重新生成" },
     invalid_params: { reason: "模型不接受当前参数", action: "请检查模型、尺寸、时长、格式或数量后重试" },
+    local_storage: { reason: "本地任务保存失败，尚未提交生成", action: "请重启 BeefTV 后重试；若仍失败，请更新应用并联系支持" },
     context_too_long: { reason: "输入内容超出模型长度限制", action: "请缩短提示词或减少参考内容后重试" },
     input_inaccessible: { reason: "参考素材无法读取", action: "请检查素材后重试" },
     input_too_large: { reason: "参考素材过大", action: "请压缩或更换素材后重试" },
@@ -123,6 +125,7 @@ const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
 };
 
 const PROVIDER_CODE_CATEGORIES: Record<string, GenerationErrorCategory> = {
+    local_storage_failed: "local_storage",
     accountoverdueerror: "quota_upstream",
     "operationdenied.serviceoverdue": "quota_upstream",
     setlimitexceeded: "quota_limit",
@@ -355,7 +358,7 @@ export function formatGenerationDiagnostics(explanation: GenerationFailureExplan
         `原因：${sanitizeProviderText(explanation.reason)}`,
         explanation.action ? `下一步：${sanitizeProviderText(explanation.action)}` : "",
         `类别：${explanation.category}`,
-        `错误来源：${({ local_validation: "本地参数校验", upstream_http: "上游 HTTP 响应", upstream_response: "上游业务响应", local_result: "本地结果处理", local_response: "本地响应大小限制", client_result: "画布应用结果", unknown: "未记录" } as Record<string, string>)[evidence?.source || "unknown"] || "未记录"}`,
+        `错误来源：${explanation.category === "local_storage" ? "本地任务存储" : ({ local_validation: "本地参数校验", upstream_http: "上游 HTTP 响应", upstream_response: "上游业务响应", local_result: "本地结果处理", local_response: "本地响应大小限制", client_result: "画布应用结果", unknown: "未记录" } as Record<string, string>)[evidence?.source || "unknown"] || "未记录"}`,
         `错误摘要：${sanitizeProviderText(evidence?.summary || context.errorSummary || explanation.summary || "") || "未记录"}`,
         evidence && ["upstream_http", "upstream_response"].includes(evidence.source) && sanitizeProviderCode(evidence.providerCode || "") ? `上游代码：${sanitizeProviderCode(evidence.providerCode || "")}` : "",
         evidence?.httpStatus && Number.isInteger(evidence.httpStatus) && evidence.httpStatus >= 100 && evidence.httpStatus <= 599 ? `HTTP 状态：${evidence.httpStatus}` : "",
@@ -422,7 +425,11 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
     if (context.stage === "submission_unknown") return { category: "submission_uncertain", uncertain: true, retryable: false };
     if (!error) return { category: "unknown", retryable: false };
     if (typeof error === "object" && error) {
-        const record = error as Record<string, unknown>;
+    const record = error as Record<string, unknown>;
+        if (record.reason === "local_storage_failed") return { category: "local_storage", fromCode: true, retryable: false };
+        if (record.name === "ApiError" && record.reason === "quota_exceeded") {
+            return { category: "quota_limit", reason: sanitizeProviderText(String(record.message || "工作区用量已达到上限")), action: "请清理不需要的任务记录或素材后重试", fromCode: true, retryable: false };
+        }
         const response = record.response && typeof record.response === "object" ? (record.response as Record<string, unknown>) : undefined;
         const status = numericStatus(record.status) ?? numericStatus(record.statusCode) ?? numericStatus(response?.status);
         const data = record.data ?? record.body ?? response?.data ?? record.response;

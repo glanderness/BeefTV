@@ -79,3 +79,35 @@ func TestInstalledMediaContractOverridesLegacyGuess(t *testing.T) {
 		t.Fatal("URL-only contract ignored")
 	}
 }
+
+func TestSavedBeefAPISeedanceAudioControl(t *testing.T) {
+	for _, channelID := range []string{"", "saved-channel"} {
+		for _, baseURL := range []string{"https://enterprise.beefapi.com", "https://custom.example"} {
+			t.Run(channelID+baseURL, func(t *testing.T) {
+				svc, db, _, _ := creationTestService(t)
+				profile := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0-fast")
+				profile.Video.GenerateAudio.Supported = false
+				profile.Video.GenerateAudio.Default = false
+				profile.Video.References.MaxImages = 2
+				if channelID != "" {
+					if err := db.Create(&model.ChannelModel{ID: "saved-video", ChannelID: channelID, ModelKey: "seedance-2.0-fast", Capability: "video", Protocol: model.ChannelInterfaceNewAPIVideo, CapabilityConfigJSON: mustEncodeModelCapabilityConfig(t, profile), Enabled: true}).Error; err != nil {
+						t.Fatal(err)
+					}
+				}
+				input := canvasGenerationInput{Mode: "video", Prompt: "forest", Config: providerConfig{BaseURL: baseURL, ChannelID: channelID, Model: "seedance-2.0-fast", InterfaceType: "newapi", CapabilityConfig: profile, VideoSeconds: "5", VQuality: "480p", Size: "16:9", VideoGenerateAudio: "false"}}
+				if err := svc.validateResolvedVideoCapability(&input); err != nil {
+					t.Fatal(err)
+				}
+				if input.VideoCapability.GenerateAudio.Supported != isBeefAPIVideoConfig(input.Config) || input.VideoCapability.GenerateAudio.Default || input.VideoCapability.References.MaxImages != 2 {
+					t.Fatalf("unexpected profile: %#v", input.VideoCapability)
+				}
+				if isBeefAPIVideoConfig(input.Config) {
+					body, err := beefAPIVideoRequestBody(input)
+					if err != nil || body["generate_audio"] != false {
+						t.Fatalf("explicit false lost: %#v, %v", body, err)
+					}
+				}
+			})
+		}
+	}
+}

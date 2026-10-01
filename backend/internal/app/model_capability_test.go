@@ -454,6 +454,9 @@ func TestNormalizeBeefAPISeedanceFullModalReferenceCapability(t *testing.T) {
 	if normalized.Video.References.MaxVideos < 3 {
 		t.Fatalf("max videos = %d, want at least 3", normalized.Video.References.MaxVideos)
 	}
+	if !normalized.Video.GenerateAudio.Supported {
+		t.Fatal("BeefAPI Seedance must expose the audio toggle")
+	}
 	if !containsCapabilityString(normalized.Video.Operations, "reference_to_video") {
 		t.Fatalf("operations = %v, want reference_to_video", normalized.Video.Operations)
 	}

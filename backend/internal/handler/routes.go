@@ -35,7 +35,7 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *app.Service, hostedProfile ...b
 		req.RequestID = RequestID(c)
 		task, err := requestGenerationPort(c, svc).CreateTask(user.ID, req)
 		if err != nil {
-			fail(c, http.StatusBadRequest, err)
+			failService(c, err)
 			return
 		}
 		ok(c, task)

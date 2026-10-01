@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -99,13 +100,21 @@ func (s *Service) createTaskWithinStorageQuota(task *model.Task, policy RuntimeP
 func createTaskWithStorageQuotaRepository(repo *repository.Repository, task *model.Task, policy RuntimePolicySetting) error {
 	usage, err := repo.UserStorageUsage(task.UserID)
 	if err != nil {
-		return err
+		return taskStorageError(err)
 	}
 	incomingBytes := int64(len([]byte(task.Prompt)) + len([]byte(task.InputJSON)) + len([]byte(task.Error)))
 	if err := validateTaskStorageQuotaWithPolicy(usage, incomingBytes, policy.Resource); err != nil {
 		return err
 	}
-	return repo.CreateTaskWithActiveLimit(task, policy.Task.ActiveTaskLimit)
+	err = repo.CreateTaskWithActiveLimit(task, policy.Task.ActiveTaskLimit)
+	if err == nil || errors.Is(err, repository.ErrActiveTaskLimit) || errors.Is(err, repository.ErrLogicalModelUnavailable) {
+		return err
+	}
+	return taskStorageError(err)
+}
+
+func taskStorageError(cause error) error {
+	return &AppError{Status: 500, Code: 500, Reason: "local_storage_failed", Message: "本地任务保存失败，尚未提交生成。请重启 BeefTV 后重试；若仍失败，请更新应用并联系支持", Cause: cause}
 }
 
 // 任务完成会同时扩张任务历史和画布操作数据，必须在同一临界区核算并原子写入。

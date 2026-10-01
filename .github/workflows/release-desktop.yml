@@ -57,6 +57,9 @@ jobs:
         with:
           bun-version: 1.3.9
 
+      - name: Require two rounds of real client generation
+        run: node scripts/verify-real-generation-release.mjs
+
       - name: Require updater keys
         env:
           BEEFTV_UPDATER_PRIVATE_KEY: ${{ secrets.BEEFTV_UPDATER_PRIVATE_KEY }}

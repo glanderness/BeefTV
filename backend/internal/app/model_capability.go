@@ -317,6 +317,9 @@ func DefaultModelCapabilityConfigForModel(protocol string, modelName string) *Mo
 		video = applyModelSpecificVideoCapability(video, protocol, modelName)
 	}
 	if isSeedance2Family(protocol, modelName) {
+		if model.ChannelInterfaceType(protocol) == model.ChannelInterfaceNewAPIVideo {
+			video.GenerateAudio = VideoBooleanConfig{Supported: true, Default: true}
+		}
 		video.References = overlayOfficialSeedance2References(video.References, isSeedance25Model(modelName))
 		if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(protocol)) {
 			video.References.MinAudioDuration = 2
