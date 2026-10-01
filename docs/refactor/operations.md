@@ -66,8 +66,8 @@ listed := registry.List(operations.ManualCaller(false))
 
 生成结果提交仍走 `PUT /canvas-projects/:id/generated-assets`，待交付切片接入。`project.tsx` / 媒体工具仍通过 `syncLocalCanvasSnapshot` 调仓库；该桥接已改为同一条 `canvas.document.commit`，页面文件本身未改。
 
-## 回合存储接入钩子（未实现）
+## 回合与写入事务
 
-另一条线会把 JSON 业务回合记录换成 `internal/assistantturns` schema v10，并在操作存储的同一条事务里做「未关闭回合」授权。当前仍是回执事务外的预检。
+`internal/assistantturns` 的 schema v10 保存业务轮次；旧 JSON 只作为历史导入来源。官方 pi 的模型会话仍由 SDK `SessionManager` 保存。
 
-需要的钩子：`operations.Store.Run` 在 `tx.Create(agent_op_records)` 成功之后、调用业务 `fn(tx)` 之前，增加可选 `TurnGuard.ConfirmOpen(tx, userID, turnID)`。由 assistantturns 在同一 `*gorm.DB` 事务里锁定并确认未关闭回合行。`TurnID` 为空（手工 UI / CLI / MCP）时跳过。不要另起第二份 round store。
+`operations.Store.Run` 在插入回执后、执行业务写入前调用 `TurnGuard.VerifyOpenAssistantTurnInTx(tx, userID, turnID, canvasID)`，在同一事务验证轮次归属、画布和开放状态。非空 `TurnID` 缺少 guard 时失败关闭；校验失败同时回滚回执和业务写入。手工 UI / CLI / MCP 的空 `TurnID` 不归入助手轮次。授权先于回执重放；重放不会把已提交操作重新归入另一个轮次。
