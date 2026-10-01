@@ -407,6 +407,7 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.operations.push("reference_to_video", "audio_to_video");
     }
     if (isSeedance2Family(protocol, model)) {
+        if (protocol === "newapi") video.generateAudio = { supported: true, default: true };
         video.references = overlayOfficialSeedance2References(video.references, isSeedance25Model(model));
         if (protocol === "volcengine-ark-video" || protocol === "volcengine-ark-agent-plan-video") video.references.minAudioDurationSeconds = 2;
         video.operations = Array.from(new Set([...video.operations, "reference_to_video", ...(isSeedance25Model(model) ? ["audio_to_video" as const] : [])]));

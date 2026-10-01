@@ -6,6 +6,19 @@ import { createVideoGenerationsTask } from "../src/services/api/video-provider-n
 import { createVideoTransport } from "../src/services/api/video-transport";
 import { videoResponseTools } from "../src/services/api/video-response";
 
+test("Seedance repaired catalog exposes audio control and sends explicit false", async () => {
+    const model = "seedance-2.0-fast";
+    const channel = createModelChannel({id: "beefapi", baseUrl: "https://enterprise.beefapi.com", models: [model], modelProfiles: [{model, capability: "text", protocol: "chat-completion"}]});
+    const snapshot = normalizeConfigSnapshot({config: {...defaultConfig, channels: [channel], videoGenerateAudio: "false"}}).config;
+    const config = resolveModelRequestConfig(snapshot, `beefapi::${model}`);
+    expect(modelCapabilityConfigFor(snapshot, `beefapi::${model}`).video!.generateAudio.supported).toBe(true);
+    const calls: unknown[] = [];
+    const deps = {response: videoResponseTools, transport: {...createVideoTransport(config), post: async <T>(_url: string, body: unknown) => { calls.push(body); return {id: "test-seedance", status: "queued"} as T; }}};
+    await createVideoGenerationsTask(deps, config, model, "test", [], [], []);
+    expect(calls[0]).toMatchObject({generate_audio: false});
+    expect(defaultModelCapabilityConfig("newapi", "other-video").video!.generateAudio.supported).toBe(false);
+});
+
 test("Wan uses shared protocol and supported reference limits across reloads", () => {
     const model = "wan3.0-video";
     const channel = createModelChannel({id: "beefapi", baseUrl: "https://enterprise.beefapi.com", models: [model], modelProfiles: [{model, capability: "video", protocol: "openai-videos"}]});

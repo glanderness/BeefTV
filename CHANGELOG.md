@@ -11,6 +11,7 @@ All notable public changes to BeefTV are documented in this file.
 
 ## v1.6.17
 
+- Restore the audio toggle for BeefAPI Seedance models so silent video requests explicitly disable audio.
 - Repair missing task diagnostics columns when upgrading from preview databases that reused migration numbers, preserving existing projects and tasks.
 - Distinguish local task storage failures from model parameter errors and explain when generation has not been submitted.
 - Require two complete rounds of real generation acceptance across six image and video paths before publishing desktop updates.
