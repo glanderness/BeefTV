@@ -182,7 +182,7 @@ paths:
         "400":
           description: 名称、ID 或封面资源不合法
         "409":
-          description: 文件夹已删除，不能用本地草稿重建
+          description: 文件夹已删除，不能用原 ID 重建；本地草稿由前端保留并决定恢复方式
     delete:
       tags: [canvas]
       summary: 删除画布文件夹并清空画布归属
@@ -227,7 +227,7 @@ paths:
     put:
       tags: [canvas]
       summary: 按 revision 保存画板快照
-      description: 新建传 revision 0，更新传读取到的版本；成功原子加 1。丢失应答后用同一请求重试会回放已提交结果。已删除的画板不能用 revision 0 重建。预览和成品必须是当前用户已就绪的资源 ID。
+      description: 新建传 revision 0，更新传读取到的版本；成功原子加 1。丢失应答后用同一请求重试会回放已提交结果。已删除的画板不能用原 ID 重新导入；前端应保留可恢复草稿并决定恢复方式，不得自动按原 ID 写回。请求体上限为账号画布和素材数据上限加 JSON 信封余量，写入按同一上限核算字节，没有单独的 8MB 画板上限。预览和成品必须是当前用户已就绪的资源 ID。
       requestBody:
         required: true
         content:
@@ -253,9 +253,11 @@ paths:
         "200":
           description: 信封 data.drawing 返回递增后的 revision
         "400":
-          description: 画板、引擎或资源引用不合法
+          description: 画板、引擎或资源引用不合法，或 JSON 无法解析
+        "403":
+          description: 账号画布和素材数据已达上限
         "409":
-          description: 版本冲突，或画板已删除不能重新导入；reason 为 conflict 表示 CAS，failed_precondition 表示已删除
+          description: 版本冲突，或画板已删除不能用原 ID 重新导入；reason 为 conflict 表示 CAS，failed_precondition 表示已删除。已删除时前端保留可恢复草稿，不自动按原 ID 写回
         "428":
           description: 缺少 revision
     delete:

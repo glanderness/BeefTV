@@ -320,11 +320,19 @@ func (s *Service) UserCanvasFolders(userID string) ([]model.CanvasLibraryFolder,
 }
 
 func (s *Service) UpsertUserCanvasFolder(userID, id string, raw json.RawMessage) (model.CanvasLibraryFolder, error) {
-	return s.canvasDomain().UpsertUserCanvasFolder(userID, id, raw)
+	var folder model.CanvasLibraryFolder
+	err := s.runCanvasLibraryWrite(func(domain *canvas.Service) error {
+		var writeErr error
+		folder, writeErr = domain.UpsertUserCanvasFolder(userID, id, raw)
+		return writeErr
+	})
+	return folder, err
 }
 
 func (s *Service) DeleteUserCanvasFolder(userID, id string) error {
-	return s.canvasDomain().DeleteUserCanvasFolder(userID, id)
+	return s.runCanvasLibraryWrite(func(domain *canvas.Service) error {
+		return domain.DeleteUserCanvasFolder(userID, id)
+	})
 }
 
 func (s *Service) UserCanvasDrawings(userID, canvasID string) ([]canvas.CanvasDrawingDocument, error) {
@@ -336,11 +344,36 @@ func (s *Service) UserCanvasDrawing(userID, canvasID, drawingID string) (canvas.
 }
 
 func (s *Service) UpsertUserCanvasDrawing(userID, canvasID, drawingID string, raw json.RawMessage) (canvas.CanvasDrawingDocument, error) {
-	return s.canvasDomain().UpsertUserCanvasDrawing(userID, canvasID, drawingID, raw)
+	var drawing canvas.CanvasDrawingDocument
+	err := s.runCanvasLibraryWrite(func(domain *canvas.Service) error {
+		var writeErr error
+		drawing, writeErr = domain.UpsertUserCanvasDrawing(userID, canvasID, drawingID, raw)
+		return writeErr
+	})
+	return drawing, err
 }
 
 func (s *Service) DeleteUserCanvasDrawing(userID, canvasID, drawingID string) error {
-	return s.canvasDomain().DeleteUserCanvasDrawing(userID, canvasID, drawingID)
+	return s.runCanvasLibraryWrite(func(domain *canvas.Service) error {
+		return domain.DeleteUserCanvasDrawing(userID, canvasID, drawingID)
+	})
+}
+
+// runCanvasLibraryWrite 在组合根开启写事务，并把 host 绑到同一条连接。
+// 领域 withWriteTx 见到 HoldsTransaction 后不再嵌套 BEGIN。
+// 这是现有 canvasDomainWithTx 的 HTTP 入口，不是另一套事务辅助函数。
+func (s *Service) runCanvasLibraryWrite(fn func(*canvas.Service) error) error {
+	if s == nil || s.repo == nil {
+		return fn(s.canvasDomain())
+	}
+	if s.repo.HoldsTransaction() {
+		return fn(s.canvasDomain().WithRepository(s.repo).WithHost(newCanvasHostWithRepo(s, s.repo)))
+	}
+	return newCanvasHost(s).WithStorageLock(func() error {
+		return s.repo.Transaction(func(txRepo *repository.Repository) error {
+			return fn(s.canvasDomain().WithRepository(txRepo).WithHost(newCanvasHostWithRepo(s, txRepo)))
+		})
+	})
 }
 
 func (s *Service) CanvasHistory(userID, canvasID string) (CanvasHistoryList, error) {

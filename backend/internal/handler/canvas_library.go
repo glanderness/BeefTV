@@ -2,6 +2,8 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -9,6 +11,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// canvasDrawingJSONEnvelopeSlackBytes is the HTTP slack for {"drawing":...}
+// around a snapshot already bounded by StructuredDataMB. It is not a new cap.
+const canvasDrawingJSONEnvelopeSlackBytes = 64 << 10
 
 func registerCanvasLibraryRoutes(r *gin.RouterGroup, svc *app.Service) {
 	r.GET("/canvas-folders", func(c *gin.Context) {
@@ -108,12 +114,17 @@ func registerCanvasLibraryRoutes(r *gin.RouterGroup, svc *app.Service) {
 		if !available || !enforceRateLimit(c, "canvas-write:"+user.ID, policy.Request.CanvasWritePerMinute, time.Minute) {
 			return
 		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<20+64<<10)
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, (policy.Resource.StructuredDataMB<<20)+canvasDrawingJSONEnvelopeSlackBytes)
 		var req struct {
 			Drawing json.RawMessage `json:"drawing"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				failService(c, app.QuotaExceeded(fmt.Sprintf("账号画布和素材数据已达到 %dMB 上限，请先删除不需要的内容", policy.Resource.StructuredDataMB)))
+				return
+			}
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("画板数据格式错误"))
 			return
 		}
 		drawing, err := svc.UpsertUserCanvasDrawing(user.ID, c.Param("id"), c.Param("drawingId"), req.Drawing)

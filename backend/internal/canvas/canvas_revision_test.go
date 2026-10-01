@@ -174,6 +174,13 @@ func newCanvasLibraryTestPair(t *testing.T) (*Service, *Service, *gorm.DB) {
 	return svc, New(svc.repo, nil), svc.repo.DB()
 }
 
+func migrateUploadSettlementTables(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	if err := db.AutoMigrate(&model.UserDailyUploadUsage{}, &model.UserUploadReservation{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func mustOpenSQLite(t *testing.T, path string) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})

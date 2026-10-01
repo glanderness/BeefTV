@@ -18,7 +18,6 @@ import (
 const (
 	canvasFolderNameMaxRunes  = 80
 	canvasDrawingIDMaxRunes   = 80
-	canvasDrawingSnapshotMax  = 8 << 20
 	canvasDrawingEngineExcal  = "excalidraw"
 	canvasDrawingDefaultPages = 1
 )
@@ -225,9 +224,6 @@ func (s *Service) UserCanvasDrawing(userID, canvasID, drawingID string) (CanvasD
 }
 
 func (s *Service) UpsertUserCanvasDrawing(userID, canvasID, drawingID string, raw json.RawMessage) (CanvasDrawingDocument, error) {
-	if len(raw) > canvasDrawingSnapshotMax+64<<10 {
-		return CanvasDrawingDocument{}, kernel.BadAuthRequest("画板数据超过 8MB")
-	}
 	var payload struct {
 		DrawingID         string               `json:"drawingId"`
 		Engine            string               `json:"engine"`
@@ -270,9 +266,6 @@ func (s *Service) UpsertUserCanvasDrawing(userID, canvasID, drawingID string, ra
 	}
 	if !json.Valid(snapshot) {
 		return CanvasDrawingDocument{}, kernel.BadAuthRequest("画板数据格式错误")
-	}
-	if len(snapshot) > canvasDrawingSnapshotMax {
-		return CanvasDrawingDocument{}, kernel.BadAuthRequest("画板数据超过 8MB")
 	}
 	previewID := strings.TrimSpace(payload.PreviewResourceID)
 	render := payload.Render

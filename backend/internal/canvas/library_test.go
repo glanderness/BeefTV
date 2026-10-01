@@ -3,7 +3,9 @@ package canvas
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
@@ -255,6 +257,7 @@ func TestCanvasDeleteRetainsDrawingTombstoneAcrossRecreate(t *testing.T) {
 
 func TestCanvasDrawingPreviewBlocksResourceCleanup(t *testing.T) {
 	svc := newCanvasHistoryTestService(t)
+	migrateUploadSettlementTables(t, svc.repo.DB())
 	if _, err := svc.UpsertUserCanvasProject("owner", json.RawMessage(`{"id":"canvas","revision":0,"title":"x","nodes":[]}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -298,6 +301,7 @@ func TestCanvasDrawingPreviewBlocksResourceCleanup(t *testing.T) {
 
 func TestCanvasFolderCoverBlocksResourceCleanup(t *testing.T) {
 	svc := newCanvasHistoryTestService(t)
+	migrateUploadSettlementTables(t, svc.repo.DB())
 	if err := svc.repo.CreateResource(&model.Resource{ID: "cover-1", UserID: "owner", Kind: "image", Status: model.ResourceStatusReady}); err != nil {
 		t.Fatal(err)
 	}
@@ -321,6 +325,7 @@ func TestCanvasFolderCoverBlocksResourceCleanup(t *testing.T) {
 
 func TestCanvasDrawingWriteAndResourceDeleteSerialize(t *testing.T) {
 	a, b, db := newCanvasLibraryTestPair(t)
+	migrateUploadSettlementTables(t, db)
 	if _, err := a.UpsertUserCanvasProject("owner", json.RawMessage(`{"id":"canvas","revision":0,"title":"x","nodes":[]}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -485,8 +490,68 @@ func TestCanvasDrawingQuotaAdmitsByteDelta(t *testing.T) {
 	}
 }
 
+func TestCanvasDrawingLargerThanEightMiBAcceptedWhenQuotaAllows(t *testing.T) {
+	host := &limitedQuotaHost{limit: 16 << 20}
+	svc := newCanvasHistoryTestService(t).WithHost(host)
+	if _, err := svc.UpsertUserCanvasProject("owner", json.RawMessage(`{"id":"canvas","revision":0,"title":"x","nodes":[]}`)); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]any{
+		"drawingId": "sketch", "engine": "excalidraw", "revision": 0,
+		"snapshot":   map[string]any{"pad": strings.Repeat("a", 9<<20)},
+		"shapeCount": 1, "pageCount": 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) <= 8<<20 {
+		t.Fatalf("fixture too small: %d", len(raw))
+	}
+	drawing, err := svc.UpsertUserCanvasDrawing("owner", "canvas", "sketch", raw)
+	if err != nil || drawing.Revision != 1 {
+		t.Fatalf("9MiB drawing under 16MiB quota: %+v %v", drawing, err)
+	}
+}
+
+func TestCanvasDrawingLargerThanEightMiBRejectedWhenQuotaExhausted(t *testing.T) {
+	host := &limitedQuotaHost{limit: 8 << 20}
+	svc := newCanvasHistoryTestService(t).WithHost(host)
+	if _, err := svc.UpsertUserCanvasProject("owner", json.RawMessage(`{"id":"canvas","revision":0,"title":"x","nodes":[]}`)); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]any{
+		"drawingId": "sketch", "engine": "excalidraw", "revision": 0,
+		"snapshot":   map[string]any{"pad": strings.Repeat("a", 9<<20)},
+		"shapeCount": 1, "pageCount": 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.UpsertUserCanvasDrawing("owner", "canvas", "sketch", raw)
+	var appError *kernel.AppError
+	if !errors.As(err, &appError) || appError.Reason != kernel.ReasonQuotaExceeded {
+		t.Fatalf("9MiB drawing over 8MiB quota = %v", err)
+	}
+	if strings.Contains(err.Error(), "画板数据超过 8MB") {
+		t.Fatalf("independent 8MB cap still present: %v", err)
+	}
+}
+
+func TestCanvasDrawingRejectsMalformedJSON(t *testing.T) {
+	svc := newCanvasHistoryTestService(t)
+	if _, err := svc.UpsertUserCanvasProject("owner", json.RawMessage(`{"id":"canvas","revision":0,"title":"x","nodes":[]}`)); err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.UpsertUserCanvasDrawing("owner", "canvas", "sketch", json.RawMessage(`{"drawingId":`))
+	var appError *kernel.AppError
+	if !errors.As(err, &appError) || appError.Status != http.StatusBadRequest || appError.Error() != "画板数据格式错误" {
+		t.Fatalf("malformed drawing json = %v", err)
+	}
+}
+
 func TestCanvasDrawingRenderBlocksResourceCleanup(t *testing.T) {
 	svc := newCanvasHistoryTestService(t)
+	migrateUploadSettlementTables(t, svc.repo.DB())
 	if _, err := svc.UpsertUserCanvasProject("owner", json.RawMessage(`{"id":"canvas","revision":0,"title":"x","nodes":[]}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -521,5 +586,21 @@ type quotaAdmit struct {
 
 func (h *recordingQuotaHost) AdmitStructuredQuota(_ repository.UserStorageUsage, kind string, creating bool, deltaBytes int64) error {
 	h.admits = append(h.admits, quotaAdmit{kind: kind, creating: creating, delta: deltaBytes})
+	return nil
+}
+
+type limitedQuotaHost struct {
+	nopHost
+	limit int64
+}
+
+func (h *limitedQuotaHost) AdmitStructuredQuota(usage repository.UserStorageUsage, _ string, _ bool, deltaBytes int64) error {
+	if usage.AssetBytes+usage.CanvasBytes+deltaBytes > h.limit {
+		mb := h.limit >> 20
+		if mb < 1 {
+			mb = 1
+		}
+		return kernel.QuotaExceeded(fmt.Sprintf("账号画布和素材数据已达到 %dMB 上限，请先删除不需要的内容", mb))
+	}
 	return nil
 }
