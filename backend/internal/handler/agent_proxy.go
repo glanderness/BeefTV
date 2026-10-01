@@ -113,6 +113,16 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			ok(c, gin.H{"available": true, "model": modelInfo})
 			return
 		}
+		if state.Running {
+			// 探测超时或失败不是空闲证据，不能授权杀掉仍在跑的子进程。
+			// 用户显式 POST /assistant/host/restart 才是重试。
+			if time.Since(state.LaunchedAt) < hostStartGrace {
+				ok(c, gin.H{"available": false, "reason": "host_starting", "model": modelInfo})
+				return
+			}
+			ok(c, gin.H{"available": false, "reason": "host_unreachable", "model": modelInfo})
+			return
+		}
 		launched, err := host.Ensure(provider, hostOpsURL(c), launchToken(c), true)
 		if err != nil {
 			ok(c, gin.H{"available": false, "reason": "host_start_failed", "model": modelInfo})

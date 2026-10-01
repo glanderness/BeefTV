@@ -154,18 +154,21 @@ function instanceProof() {
   return crypto.createHash('sha256').update(INSTANCE_NONCE).digest('hex').slice(0, 16);
 }
 
+function timingSafeMatch(got, expected) {
+  const a = Buffer.from(String(got ?? ''));
+  const b = Buffer.from(String(expected ?? ''));
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
 function instanceOK(req) {
   if (!INSTANCE_NONCE) return true;
-  const got = String(req.headers['x-beeftv-instance-nonce'] || '');
-  if (got.length !== INSTANCE_NONCE.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(got), Buffer.from(INSTANCE_NONCE));
+  return timingSafeMatch(req.headers['x-beeftv-instance-nonce'] || '', INSTANCE_NONCE);
 }
 
 function authorized(req) {
   if (!instanceOK(req)) return { ok: false, reason: 'instance_mismatch' };
-  const token = String(req.headers['x-beeftv-agent-token'] || '');
-  if (token.length !== HOST_TOKEN.length) return { ok: false, reason: 'unauthorized' };
-  if (!crypto.timingSafeEqual(Buffer.from(token), Buffer.from(HOST_TOKEN))) return { ok: false, reason: 'unauthorized' };
+  if (!timingSafeMatch(req.headers['x-beeftv-agent-token'] || '', HOST_TOKEN)) return { ok: false, reason: 'unauthorized' };
   const origin = String(req.headers.origin || '');
   if (ALLOWED_ORIGIN && origin && origin !== ALLOWED_ORIGIN) return { ok: false, reason: 'origin_rejected' };
   const host = String(req.headers.host || '');
@@ -368,20 +371,6 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-await initializeModel();
-try {
-  const count = await ops.loadDescriptors();
-  console.error(`agent-host: 载入 ${count} 个操作（readOnly=${READ_ONLY_MODE}）`);
-}
-catch (error) { console.error(`agent-host: 能力发现失败（稍后可重试）：${error?.message || error}`); }
-function onListen() {
-  const bound = server.address();
-  const port = bound && typeof bound === 'object' ? bound.port : PORT;
-  console.log(`agent-host 已启动 http://127.0.0.1:${port} model=${MODEL?.id || MODEL_ID} api=${MODEL_API} baseUrl=${MODEL?.baseUrl || BASE_URL} ops=${OPS_URL} readOnly=${READ_ONLY_MODE} reason=${providerReason || 'ok'}`);
-}
-if (LISTEN_FD > 0) server.listen({ fd: LISTEN_FD }, onListen);
-else server.listen(PORT, '127.0.0.1', onListen);
-
 let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return;
@@ -402,3 +391,17 @@ if (LIFETIME_STDIN) {
   process.stdin.on('end', () => { void shutdown(); });
   process.stdin.on('error', () => { void shutdown(); });
 }
+
+await initializeModel();
+try {
+  const count = await ops.loadDescriptors();
+  console.error(`agent-host: 载入 ${count} 个操作（readOnly=${READ_ONLY_MODE}）`);
+}
+catch (error) { console.error(`agent-host: 能力发现失败（稍后可重试）：${error?.message || error}`); }
+function onListen() {
+  const bound = server.address();
+  const port = bound && typeof bound === 'object' ? bound.port : PORT;
+  console.log(`agent-host 已启动 http://127.0.0.1:${port} model=${MODEL?.id || MODEL_ID} api=${MODEL_API} baseUrl=${MODEL?.baseUrl || BASE_URL} ops=${OPS_URL} readOnly=${READ_ONLY_MODE} reason=${providerReason || 'ok'}`);
+}
+if (LISTEN_FD > 0) server.listen({ fd: LISTEN_FD }, onListen);
+else server.listen(PORT, '127.0.0.1', onListen);

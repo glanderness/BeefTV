@@ -20,11 +20,16 @@ function instanceProof() {
   return crypto.createHash('sha256').update(INSTANCE_NONCE).digest('hex').slice(0, 16);
 }
 
+function timingSafeMatch(got, expected) {
+  const a = Buffer.from(String(got ?? ''));
+  const b = Buffer.from(String(expected ?? ''));
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
 function instanceOK(req) {
   if (!INSTANCE_NONCE) return true;
-  const got = String(req.headers['x-beeftv-instance-nonce'] || '');
-  if (got.length !== INSTANCE_NONCE.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(got), Buffer.from(INSTANCE_NONCE));
+  return timingSafeMatch(req.headers['x-beeftv-instance-nonce'] || '', INSTANCE_NONCE);
 }
 
 if (DATA_DIR) {
@@ -39,9 +44,13 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({ ok: false, reason: 'instance_mismatch' }));
       return;
     }
+    if (DATA_DIR && fs.existsSync(path.join(DATA_DIR, 'hang-health'))) {
+      return;
+    }
+    const busy = DATA_DIR && fs.existsSync(path.join(DATA_DIR, 'busy'));
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
-      ok: true, busy: false, model: MODEL, instance: instanceProof() || undefined,
+      ok: true, busy, model: MODEL, instance: instanceProof() || undefined,
     }));
     return;
   }

@@ -18,6 +18,7 @@
 - 生产路径不读取 `BEEFTV_AGENT_HOST_URL` 或继承的 `BEEFTV_AGENT_PORT` 作为运行时权威。测试可调用 `Host.TestingUseOwnedEndpoint`。
 - 子进程不注入 `BEEFTV_OWNER_TOKEN`。继承的宿主凭据、供应商变量与 OPENAI/Anthropic 等环境密钥在权威注入前被过滤；空白权威值会清掉继承值。PATH 保留。
 - `/assistant/status` 在供应商指纹变化且子进程忙碌时返回 `host_busy`，模型 id 取正在跑的 health.Model，不得把旧模型标成新模型已就绪。
+- `/assistant/status` 探测超时或失败不是空闲证据：仍在跑的子进程必须保留。显式 `POST /assistant/host/restart` 才是用户重启。
 - `/assistant/cancel` 需要写权限，并在转发前解析 `canvasId`、校验画布归属。只读客户端不能中止。
 
 ## 行为保留

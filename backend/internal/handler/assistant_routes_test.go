@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/sqlite"
@@ -142,7 +144,17 @@ func (e *assistantTestEnv) call(t *testing.T, method, path, body string) *httpte
 	return e.callWithHeaders(t, method, path, body, map[string]string{"X-Beeftv-Ui-Session": e.uiToken})
 }
 
+func (e *assistantTestEnv) callWithTimeout(t *testing.T, timeout time.Duration, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	return e.callWithHeadersTimeout(t, timeout, method, path, body, map[string]string{"X-Beeftv-Ui-Session": e.uiToken})
+}
+
 func (e *assistantTestEnv) callWithHeaders(t *testing.T, method, path, body string, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	return e.callWithHeadersTimeout(t, 0, method, path, body, headers)
+}
+
+func (e *assistantTestEnv) callWithHeadersTimeout(t *testing.T, timeout time.Duration, method, path, body string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 	var reader *strings.Reader
 	if body == "" {
@@ -160,6 +172,11 @@ func (e *assistantTestEnv) callWithHeaders(t *testing.T, method, path, body stri
 			continue
 		}
 		request.Header.Set(key, value)
+	}
+	if timeout > 0 {
+		ctx, cancel := context.WithTimeout(request.Context(), timeout)
+		t.Cleanup(cancel)
+		request = request.WithContext(ctx)
 	}
 	recorder := httptest.NewRecorder()
 	e.router.ServeHTTP(recorder, request)
@@ -444,6 +461,38 @@ func TestAssistantStatusBusyOldModelAfterProviderChange(t *testing.T) {
 	modelInfo, _ := data["model"].(map[string]any)
 	if modelInfo["id"] != "old-model" {
 		t.Fatalf("忙碌时应报告正在跑的旧模型，得到 %#v", data["model"])
+	}
+}
+
+func TestAssistantStatusUncertainHealthDoesNotRelaunchOnFingerprintChange(t *testing.T) {
+	running := assistant.Provider{
+		ChannelID: "env", Model: "old-model", BaseURL: "https://relay.example.com/v1",
+		Protocol: "chat-completion", APIKey: "old-key",
+	}
+	env := newAssistantTestEnv(t, func(env *assistantTestEnv) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			env.hostHits[r.URL.Path]++
+			if r.URL.Path == "/health" {
+				<-r.Context().Done()
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		})
+	})
+	owned := env.assistantHost.Endpoint()
+	env.assistantHost.TestingUseOwnedEndpoint(owned, assistantTestNonce, running.Fingerprint())
+	useEnvProvider(t, "chat-completion")
+	t.Setenv("BEEFTV_AGENT_MODEL", "MiniMax-M3")
+
+	data := decodeEnvelope(t, env.callWithTimeout(t, 300*time.Millisecond, http.MethodGet, "/assistant/status", ""))
+	if env.assistantHost.Endpoint() != owned || !env.assistantHost.Running() {
+		t.Fatalf("探测失败不得杀掉自有子进程 endpoint=%q running=%v", env.assistantHost.Endpoint(), env.assistantHost.Running())
+	}
+	if available, _ := data["available"].(bool); available {
+		t.Fatalf("健康未知时不得标成已就绪: %#v", data)
+	}
+	if data["reason"] != "host_starting" && data["reason"] != "host_unreachable" {
+		t.Fatalf("健康未知时应保留子进程并报告未就绪，得到 %#v", data)
 	}
 }
 

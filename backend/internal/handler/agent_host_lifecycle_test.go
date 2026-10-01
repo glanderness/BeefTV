@@ -329,6 +329,81 @@ func TestMissingHostFailsWithoutSpawning(t *testing.T) {
 	}
 }
 
+func startOwnedListenerHost(t *testing.T) (*assistantruntime.Host, http.Handler, string) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	dataDir := t.TempDir()
+	svc := app.NewLocal(nil, dataDir)
+	owner, err := agentops.EnsureOwnerToken(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	useLifecycleProvider(t)
+	config, _ := ownedListenerConfig(t, dataDir)
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := assistantruntime.OptionsFromService(svc)
+	opts.ReadyTimeout = 8 * time.Second
+	host := assistantruntime.New(opts)
+	t.Cleanup(func() { _ = host.Stop() })
+	router := gin.New()
+	api := router.Group("/api")
+	RegisterAgentHostLifecycleRoutes(api, svc, host)
+	RegisterAgentProxyRoutes(api, svc, agentops.NewClientRegistry(dataDir), newUISessionStore(), host)
+	write := lifecycleRequest(router, http.MethodPut, "/api/assistant/host/config", owner, string(encoded))
+	if write.Code != http.StatusOK {
+		t.Fatalf("write status = %d body=%s", write.Code, write.Body.String())
+	}
+	start := lifecycleRequest(router, http.MethodPost, "/api/assistant/host/start", owner, "{}")
+	if start.Code != http.StatusOK {
+		t.Fatalf("start status = %d body=%s", start.Code, start.Body.String())
+	}
+	if host.PID() == 0 || host.Endpoint() == "" {
+		t.Fatal("owned-listener 应已就绪")
+	}
+	return host, router, dataDir
+}
+
+func TestStatusTimeoutChildWithFingerprintChangeDoesNotRelaunch(t *testing.T) {
+	host, router, dataDir := startOwnedListenerHost(t)
+	firstPID := host.PID()
+	firstURL := host.Endpoint()
+	if err := os.WriteFile(filepath.Join(dataDir, "hang-health"), []byte("1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BEEFTV_AGENT_MODEL", "other-model")
+
+	status := lifecycleRequest(router, http.MethodGet, "/api/assistant/status", "", "")
+	if status.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", status.Code, status.Body.String())
+	}
+	if host.PID() != firstPID || host.Endpoint() != firstURL {
+		t.Fatalf("健康未知时不得重启 pid %d→%d url %s→%s", firstPID, host.PID(), firstURL, host.Endpoint())
+	}
+	if strings.Contains(status.Body.String(), `"available":true`) {
+		t.Fatalf("探测超时时不得标成已就绪: %s", status.Body.String())
+	}
+}
+
+func TestStatusHealthyIdleFingerprintChangeRestarts(t *testing.T) {
+	host, router, _ := startOwnedListenerHost(t)
+	firstPID := host.PID()
+	t.Setenv("BEEFTV_AGENT_MODEL", "other-model")
+
+	status := lifecycleRequest(router, http.MethodGet, "/api/assistant/status", "", "")
+	if status.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", status.Code, status.Body.String())
+	}
+	if host.PID() == 0 || host.PID() == firstPID {
+		t.Fatalf("空闲且健康时应按新指纹重启 pid=%d first=%d body=%s", host.PID(), firstPID, status.Body.String())
+	}
+	if !strings.Contains(status.Body.String(), `"reason":"host_starting"`) {
+		t.Fatalf("重启后状态应为 host_starting: %s", status.Body.String())
+	}
+}
+
 func waitUntil(timeout time.Duration, ok func() bool) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
