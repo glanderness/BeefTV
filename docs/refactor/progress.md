@@ -256,3 +256,14 @@
 - 画板前端 `f3af80a` 的文件夹大草稿仍使用 localStorage，已退回 `20261002-062315-continue-f4fdb6ec` 改为 scoped localforage，并保留已删除远端对象的可恢复草稿。
 - 上传预留在 FAILED 重试 claim 后、重新预留前存在崩溃窗口；`20261002-062418-continue-16631d14` 用真实 SQLite 重启复现并修补。此前结算专项通过不覆盖该窗口。
 - 四个结构归属 worker 仍在实施；未冻结最终候选、未新增付费生成、未 push/发布、未替换正式应用。
+
+### 后端生产路径与素材确认继续收口
+
+- 画布库事务、墓碑与迁移合入 `f1559fd` / `8c40993` / `b1f6458`：同一事务内验证资源归属、配额和 revision；删除文件夹同步更新画布历史。canvas/repository 完整 race 与 app 单连接专项通过，迁移夹具按 current 13 与 v12 身份分别检查。
+- 模型/插件目录实际编排合入 `13e21e8`；首阶段媒体入库合入 `e2d9b75`，`404870b` 将生产 worker/恢复入口接入 taskId:inline 稳定身份。专项 race 通过；首阶段资源入库与第二阶段素材物化/节点绑定仍分开。
+- 专用渲染、转写、深度任务准入合入 `8811762`：领域统一身份、项目归属、drain、幂等、持久化配额及活动任务上限；task/localapp/handler race 通过。前端任务观察与迟到结果的 scope/lifetime 修补仍在执行。
+- `523c02d` 修复 FAILED claim 后无预留见证的恢复窗口；`b8bf939` 修复已消费 READY 缺字节修复失败被降级后重复计入额度。后者采用 SQLite 重开、物理写失败及最终保存失败回归，Lead 集成 race 正在运行。
+- 独立审查 `20261002-064700-continue-b74c31ec` 对 `8811762` 上述五包给出范围内 ACCEPT，无新增 P1/P2；明确排除生成编排、前端画板/素材页和当时未集成的 READY 修补，不能视为最终整体 review。
+- 导演台上传/草稿确认合入 `df5db34` / `92631f4` / `7e94e76`；Lead `0276452` 进一步验证素材写回执 ID，普通保存遇到仅本机媒体必须返回未完成，导演台显式返回 confirmed=false，画布批量归档不再误报成功。六文件专项 52 pass / 213 expect，typecheck 通过。
+- 全量 Go `8811762` **失败**：app 中两项旧恢复夹具在 PENDING 缺见证时额外计入额度，分别为 `TestGenerationDeliveryRecoversFailedAndPendingResourceSameIdentity` 与 `TestPromoteReadyDoesNotDebitOrdinaryUploadPending`。交由原结算 worker 核对真实生命周期与升级语义，不能删除断言或以局部绿灯掩盖失败。
+- 尚未集成：生成生产编排与 analytics 全局表退场；素材 canonical UI 完整历史/回收站/分页；画板与文件夹并发草稿和回执；专用任务前端身份/生命周期。原合同范围不变，未新增付费调用或发布。
