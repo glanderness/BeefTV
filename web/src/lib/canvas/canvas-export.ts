@@ -8,10 +8,9 @@ import { loadCanvasDrawing, loadCanvasDrawingPreview, loadCanvasDrawingRender } 
 import type { CanvasDrawingExport } from "@/types/canvas-export";
 import { normalizeLocalCanvasProject } from "@/lib/local-workspace-migration";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
-import { archiveFileExtension, assertBackupHasEntries, assertUniqueArchiveNames, ExportIntegrityError, type MissingExportFile } from "@/lib/export-integrity";
+import { archiveFileExtension, assertUniqueArchiveNames, ExportIntegrityError, type MissingExportFile } from "@/lib/export-integrity";
 
 export async function exportCanvasProjects(projects: CanvasProject[], fileName = "画布", options: { includeLocalDrawings?: boolean; folders?: CanvasFolder[] } = {}): Promise<OwnedMediaSaveResult> {
-    assertBackupHasEntries(projects.length, "workspace");
     const zipFiles: { name: string; data: BlobPart }[] = [];
     const missingFiles: MissingExportFile[] = [];
     const exportedProjects = await Promise.all(

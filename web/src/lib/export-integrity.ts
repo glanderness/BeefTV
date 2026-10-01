@@ -20,11 +20,6 @@ export function uniqueMissingExportFiles(missingFiles: MissingExportFile[]): Mis
         .sort((a, b) => a.owner.localeCompare(b.owner) || a.reference.localeCompare(b.reference));
 }
 
-export function assertBackupHasEntries(count: number, kind: "workspace" | "assets"): void {
-    if (count > 0) return;
-    throw new Error(kind === "workspace" ? "工作区为空，未生成备份。" : "没有可备份的素材，未生成备份。");
-}
-
 export function assertUniqueArchiveNames(names: Iterable<string>): void {
     const seen = new Set<string>();
     for (const name of names) {
@@ -33,16 +28,26 @@ export function assertUniqueArchiveNames(names: Iterable<string>): void {
     }
 }
 
+const ARCHIVE_EXTENSION_BY_MIME: Record<string, string> = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "video/mp4": "mp4",
+    "audio/mp4": "mp4",
+    "video/webm": "webm",
+    "audio/webm": "webm",
+    "audio/mpeg": "mp3",
+    "audio/mp3": "mp3",
+    "audio/wav": "wav",
+    "audio/wave": "wav",
+    "audio/x-wav": "wav",
+    "model/gltf-binary": "glb",
+    "model/gltf+json": "gltf",
+};
+
 export function archiveFileExtension(mimeType: string, fallback: "png" | "bin" | "wav" | "mp3"): string {
-    if (mimeType.includes("png")) return "png";
-    if (mimeType.includes("jpeg")) return "jpg";
-    if (mimeType.includes("webp")) return "webp";
-    if (mimeType.includes("gif")) return "gif";
-    if (mimeType.includes("mp4")) return "mp4";
-    if (mimeType.includes("webm")) return "webm";
-    if (mimeType.includes("mpeg")) return "mp3";
-    if (mimeType.includes("wav")) return "wav";
-    if (mimeType.includes("gltf-binary")) return "glb";
-    if (mimeType.includes("gltf+json") || mimeType.includes("json")) return "gltf";
-    return fallback;
+    const mime = mimeType.split(";")[0]?.trim().toLowerCase() ?? "";
+    return ARCHIVE_EXTENSION_BY_MIME[mime] ?? fallback;
 }

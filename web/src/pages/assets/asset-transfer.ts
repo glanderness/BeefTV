@@ -5,7 +5,7 @@ import { getImageBlob, setImageBlob } from "@/services/image-storage";
 import type { Asset } from "@/stores/use-asset-store";
 import { normalizeLocalAsset } from "@/lib/local-workspace-migration";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
-import { archiveFileExtension, assertBackupHasEntries, assertUniqueArchiveNames, ExportIntegrityError, type MissingExportFile } from "@/lib/export-integrity";
+import { archiveFileExtension, assertUniqueArchiveNames, ExportIntegrityError, type MissingExportFile } from "@/lib/export-integrity";
 
 type AssetExportFile = {
     app: "infinite-canvas";
@@ -23,7 +23,6 @@ type AssetExportItem = {
 };
 
 export async function exportAssets(assets: Asset[]): Promise<OwnedMediaSaveResult> {
-    assertBackupHasEntries(assets.length, "assets");
     const files: AssetExportItem[] = [];
     const zipFiles: { name: string; data: BlobPart }[] = [];
     const missingFiles: MissingExportFile[] = [];

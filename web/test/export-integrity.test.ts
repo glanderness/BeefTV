@@ -24,7 +24,7 @@ mock.module("@/services/workspace-mode", () => ({ isLocalWorkspaceMode: () => tr
 const { exportCanvasProjects } = await import("@/lib/canvas/canvas-export");
 const { exportAssets, readAssetPackage } = await import("@/pages/assets/asset-transfer");
 const { createZip, readZip } = await import("@/lib/zip");
-const { ExportIntegrityError } = await import("@/lib/export-integrity");
+const { archiveFileExtension, ExportIntegrityError } = await import("@/lib/export-integrity");
 const { reportOwnedMediaSave } = await import("@/services/desktop-media-save");
 const originalWindow = globalThis.window;
 const saved: { name: string; data: string }[] = [];
@@ -170,10 +170,39 @@ test("asset package imports into empty storage with every byte, and shared media
     expect(restored.get("audio:voice")!.type).toBe("audio/wav");
 });
 
-test("empty workspace and empty asset list never claim a complete backup", async () => {
-    await expect(exportCanvasProjects([])).rejects.toThrow("工作区为空，未生成备份。");
-    await expect(exportAssets([])).rejects.toThrow("没有可备份的素材，未生成备份。");
-    expect(saved).toHaveLength(0);
+test("empty workspace and empty asset list still produce honest empty archives", async () => {
+    expect(await exportCanvasProjects([])).toBe("saved");
+    expect(saved).toHaveLength(1);
+    const workspace = unzipSync(Buffer.from(saved[0].data, "base64"));
+    expect(JSON.parse(new TextDecoder().decode(workspace["projects.json"])).projects).toEqual([]);
+    saved.length = 0;
+    expect(await exportAssets([])).toBe("saved");
+    expect(saved).toHaveLength(1);
+    const assets = JSON.parse(new TextDecoder().decode(unzipSync(Buffer.from(saved[0].data, "base64"))["assets.json"]));
+    expect(assets.assets).toEqual([]);
+    expect(assets.files).toEqual([]);
+});
+
+test("generic JSON is not claimed as glTF; genuine glTF keeps its extension", () => {
+    expect(archiveFileExtension("application/json", "bin")).toBe("bin");
+    expect(archiveFileExtension("application/json; charset=utf-8", "bin")).toBe("bin");
+    expect(archiveFileExtension("model/gltf+json", "bin")).toBe("gltf");
+    expect(archiveFileExtension("model/gltf-binary", "bin")).toBe("glb");
+    expect(archiveFileExtension("image/png", "bin")).toBe("png");
+    expect(archiveFileExtension("audio/mpeg", "wav")).toBe("mp3");
+});
+
+test("canvas archive stores generic JSON with the fallback extension", async () => {
+    blobs.set("file:notes", new Blob(["{}"], { type: "application/json" }));
+    blobs.set("model:hero", new Blob([new Uint8Array([1, 2, 3])], { type: "model/gltf+json" }));
+    const canvas = project(["file:notes", "model:hero"]);
+    expect(await exportCanvasProjects([canvas])).toBe("saved");
+    const archive = unzipSync(Buffer.from(saved[0].data, "base64"));
+    const manifest = JSON.parse(new TextDecoder().decode(archive["projects.json"]));
+    const paths = manifest.projects[0].files.map((file: { path: string }) => file.path).sort();
+    expect(paths.some((path: string) => path.endsWith(".bin"))).toBe(true);
+    expect(paths.some((path: string) => path.endsWith(".gltf"))).toBe(true);
+    expect(paths.some((path: string) => path.endsWith(".json") && path.includes("files/"))).toBe(false);
 });
 
 test("duplicate sanitized drawing names fail instead of overwriting archive entries", async () => {
