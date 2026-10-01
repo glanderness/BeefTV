@@ -967,7 +967,7 @@ func metadataString(metadata map[string]any, key string) string {
 	if text, ok := value.(string); ok {
 		return strings.TrimSpace(text)
 	}
-	return strings.TrimSpace(fmt.Sprint(value))
+	return ""
 }
 
 func ValidateVideoTask(profile *VideoCapabilityConfig, input TaskInput) error {
