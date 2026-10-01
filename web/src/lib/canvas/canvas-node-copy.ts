@@ -1,5 +1,8 @@
+import { nanoid } from "nanoid";
+
 import { resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata, type StoryboardRow } from "@/types/canvas";
+import type { DirectorScene } from "@/types/director";
 
 const COPY_TITLE_SUFFIX = /^(.*)_copy(\d+)$/i;
 
@@ -77,6 +80,7 @@ export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyM
     metadata.directorPreviewNodeId = remapOwnedNodeId(node.metadata?.directorPreviewNodeId, idMap);
     metadata.directorDepthNodeId = remapOwnedNodeId(node.metadata?.directorDepthNodeId, idMap);
     metadata.directorNormalNodeId = remapOwnedNodeId(node.metadata?.directorNormalNodeId, idMap);
+    metadata.directorClayVideoNodeId = remapOwnedNodeId(node.metadata?.directorClayVideoNodeId, idMap);
 
     const characterViewNodeIds = node.metadata?.characterViewNodeIds;
     const copiedCharacterViewNodeIds = characterViewNodeIds ? {
@@ -99,4 +103,30 @@ export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyM
         referenceNodeIds: remapReferenceIds(node.metadata.storyboard.referenceNodeIds, idMap) || [],
     } : undefined;
     return metadata;
+}
+
+// Scene-local objects may retain their ids, but each copied card owns a deep
+// scene snapshot and fresh shot identities. Output nodes belong to the copy only.
+export function isolateCopiedDirectorScenes(nodes: CanvasNodeData[], sourceScenes: DirectorScene[], idMap: ReadonlyMap<string, string>) {
+    const scenes: DirectorScene[] = [];
+    const copiedNodes = nodes.map((node) => {
+        if (!node.metadata?.directorSceneId) return node;
+        const source = sourceScenes.find((scene) => scene.id === node.metadata?.directorSceneId);
+        if (!source) return { ...node, metadata: { ...node.metadata, directorSceneId: undefined, directorShotId: undefined, directorCoverStorageKey: undefined, directorCoverUrl: undefined, directorCoverSceneUpdatedAt: undefined } };
+        const copy = structuredClone(source);
+        const shotIds = new Map(copy.shots.map((shot) => [shot.id, nanoid()]));
+        copy.id = nanoid();
+        copy.createdAt = copy.updatedAt = new Date().toISOString();
+        copy.shots = copy.shots.map((shot) => ({
+            ...shot,
+            id: shotIds.get(shot.id)!,
+            previewNodeId: remapOwnedNodeId(shot.previewNodeId, idMap),
+            depthNodeId: remapOwnedNodeId(shot.depthNodeId, idMap),
+            normalNodeId: remapOwnedNodeId(shot.normalNodeId, idMap),
+        }));
+        copy.activeShotId = shotIds.get(source.activeShotId) || copy.shots[0]?.id || "";
+        scenes.push(copy);
+        return { ...node, metadata: { ...node.metadata, directorSceneId: copy.id, directorShotId: shotIds.get(node.metadata.directorShotId || "") || copy.activeShotId } };
+    });
+    return { nodes: copiedNodes, scenes };
 }

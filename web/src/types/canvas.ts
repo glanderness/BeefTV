@@ -37,6 +37,7 @@ export enum CanvasNodeType {
     ColorGrade = "colorgrade",
     MediaConversion = "media-conversion",
     BatchTable = "batch-table",
+    Director = "director",
 }
 
 /** Runtime IDs contributed by plugins share the persisted node type field. */

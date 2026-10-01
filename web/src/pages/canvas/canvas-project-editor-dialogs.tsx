@@ -4,8 +4,7 @@ import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/a
 import { AiArtCritiqueModal } from "@/components/canvas/art-critique/ai-art-critique-modal";
 import type { ArtCritiqueNodeState } from "@/lib/art-critique/contracts";
 import { CanvasCharacterReferenceModal } from "@/components/canvas/canvas-character-reference-modal";
-import { CanvasDirectorTemplateModal } from "@/components/canvas/director/canvas-director-template-modal";
-import type { DirectorTemplateId } from "@/lib/canvas/director/director-templates";
+import type { uploadImage } from "@/services/image-storage";
 import type { DirectorScene, DirectorSceneOutput } from "@/types/director";
 import { CanvasGenerationHistoryPicker } from "@/components/canvas/canvas-generation-history-picker";
 import { CanvasNodeInfoModal } from "@/components/canvas/canvas-node-toolbar";
@@ -80,11 +79,6 @@ export type CanvasProjectEditorDialogsProps = {
         applying: boolean;
         onClose: () => void;
         onSelect: (preset: CanvasStylePreset) => void;
-    };
-    directorTemplate: {
-        open: boolean;
-        onClose: () => void;
-        onSelect: (templateId: DirectorTemplateId) => void;
     };
     info: {
         node: CanvasNodeData | null;
@@ -164,6 +158,7 @@ export type CanvasProjectEditorDialogsProps = {
         onShouldCaptureCover?: (scene: DirectorScene, shotId: string) => boolean;
         onCaptureCover?: (input: { scene: DirectorScene; shotId: string; beauty: Blob }) => Promise<void>;
         onDeleteImageNode: (nodeId: string) => void;
+        onAddCanvasImage: (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal) => Promise<void>;
         onFlush: () => void | Promise<void>;
     };
     versionCompare: {
@@ -222,7 +217,6 @@ export function CanvasProjectEditorDialogs({
     generationHistory,
     imports,
     style,
-    directorTemplate,
     info,
     subtitle,
     frame,
@@ -246,7 +240,6 @@ export function CanvasProjectEditorDialogs({
             <LibTVImportDialog open={imports.libTVOpen} projectId={projectId} viewport={viewport} viewportSize={viewportSize} onClose={imports.onCloseLibTV} onApply={imports.onApplyLibTV} />
             <TapNowImportDialog open={imports.tapNowOpen} projectId={projectId} viewport={viewport} viewportSize={viewportSize} onClose={imports.onCloseTapNow} onApply={imports.onApplyTapNow} />
             <CanvasStylePickerModal open={style.open} value={style.value} applying={style.applying} onClose={style.onClose} onSelect={style.onSelect} />
-            <CanvasDirectorTemplateModal open={directorTemplate.open} onClose={directorTemplate.onClose} onSelect={directorTemplate.onSelect} />
             <CanvasNodeInfoModal node={info.node} open={Boolean(info.node)} onClose={info.onClose} onMetadataChange={info.onMetadataChange} />
             {subtitle.node ? <CanvasSubtitleDialog node={subtitle.node} open={Boolean(subtitle.node)} projectId={projectId} config={config} onClose={subtitle.onClose} onSave={subtitle.onSave} /> : null}
             {frame.node ? <CanvasVideoFrameDialog node={frame.node} open={Boolean(frame.node)} onClose={frame.onClose} onConfirm={frame.onConfirm} /> : null}
@@ -329,6 +322,7 @@ export function CanvasProjectEditorDialogs({
                         onShouldCaptureCover={director.onShouldCaptureCover}
                         onCaptureCover={director.onCaptureCover}
                         onDeleteImageNode={director.onDeleteImageNode}
+                        onAddCanvasImage={director.onAddCanvasImage}
                         onFlush={director.onFlush}
                         onboardingScope={director.onboardingScope}
                     />

@@ -29,6 +29,21 @@ describe("变换模式快捷键", () => {
 });
 
 describe("对象操作快捷键", () => {
+    test("方向键只解析为选择对象的方向移动，且不劫持输入控件或组合键", () => {
+        expect(resolveDirectorShortcut(press({ key: "ArrowUp" }))).toEqual({ kind: "nudge-selected", direction: "up" });
+        expect(resolveDirectorShortcut(press({ key: "ArrowLeft" }))).toEqual({ kind: "nudge-selected", direction: "left" });
+        expect(resolveDirectorShortcut(press({ key: "ArrowDown", shiftKey: true }))).toEqual({ kind: "nudge-selected", direction: "down", fine: true });
+        expect(resolveDirectorShortcut(press({ key: "ArrowRight", isInteractiveTarget: true }))).toBeNull();
+        expect(resolveDirectorShortcut(press({ key: "ArrowRight", ctrlKey: true }))).toBeNull();
+        expect(resolveDirectorShortcut(press({ key: "ArrowRight", altKey: true }))).toBeNull();
+    });
+
+    test("Shift+A 打开添加到场景菜单，普通 A 不触发", () => {
+        expect(resolveDirectorShortcut(press({ key: "A", shiftKey: true }))).toEqual({ kind: "open-add-menu" });
+        expect(resolveDirectorShortcut(press({ key: "a" }))).toBeNull();
+        expect(resolveDirectorShortcut(press({ key: "A", shiftKey: true, isInteractiveTarget: true }))).toBeNull();
+    });
+
     test("Delete 与 Backspace 都删除选中对象", () => {
         expect(resolveDirectorShortcut(press({ key: "Delete" }))).toEqual({ kind: "delete-selected" });
         expect(resolveDirectorShortcut(press({ key: "Backspace" }))).toEqual({ kind: "delete-selected" });
@@ -75,7 +90,7 @@ describe("修饰键与未知键边界", () => {
     });
 
     test("未映射的键返回 null", () => {
-        for (const key of ["q", "1", "ArrowUp", "Tab", "", "F5"]) {
+        for (const key of ["q", "1", "Tab", "", "F5"]) {
             expect(resolveDirectorShortcut(press({ key }))).toBeNull();
         }
     });

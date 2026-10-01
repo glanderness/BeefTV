@@ -8,6 +8,7 @@ import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { removeCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
 import { normalizeCanvasNodeTimestamps } from "@/lib/canvas/canvas-node-timestamps";
 import { normalizeCanvasMediaNodeSemanticsList } from "@/lib/canvas/canvas-node-semantics";
+import { migrateDirectorCanvas } from "@/lib/canvas/director/director-node-migration";
 import { canvasWorkspaceProjectId, listCanvasWorkspaceProjectCanvases } from "@/lib/canvas/canvas-workspace-project";
 import { hydrateAssistantImages, resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
@@ -142,7 +143,13 @@ export function useCanvasProjectLifecycle({
             const restoredAppearance = targetProject.appearance
                 ? normalizeCanvasAppearance(targetProject.appearance, fallbackTheme)
                 : canvasAppearanceForTheme(fallbackTheme);
-            const initialNodes = normalizeCanvasMediaNodeSemanticsList(normalizeCanvasNodeTimestamps(resetInterruptedGeneration(targetProject.nodes), {
+            const sourceNodes = resetInterruptedGeneration(targetProject.nodes);
+            const sourceScenes = targetProject.directorScenes || [];
+            const migration = migrateDirectorCanvas(sourceNodes, sourceScenes);
+            const normalizedDirectorNodes = migration.nodes;
+            const hasDirectorMigration = normalizedDirectorNodes.some((node, index) => node !== sourceNodes[index]) || migration.directorScenes !== sourceScenes;
+            if (hasDirectorMigration) updateProject(targetProject.id, migration);
+            const initialNodes = normalizeCanvasMediaNodeSemanticsList(normalizeCanvasNodeTimestamps(normalizedDirectorNodes, {
                 createdAt: targetProject.createdAt,
                 updatedAt: targetProject.updatedAt,
             }));
@@ -155,7 +162,7 @@ export function useCanvasProjectLifecycle({
                 backgroundMode: targetProject.backgroundMode || DEFAULT_CANVAS_BACKGROUND_MODE,
                 showImageInfo: targetProject.showImageInfo || false,
             };
-            observedContentRef.current = snapshot;
+            observedContentRef.current = hasDirectorMigration ? { ...snapshot, nodes: targetProject.nodes } : snapshot;
             chatSessionsRef.current = snapshot.chatSessions;
             activeChatIdRef.current = snapshot.activeChatId;
             nodesRef.current = snapshot.nodes;
