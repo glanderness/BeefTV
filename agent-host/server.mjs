@@ -167,6 +167,21 @@ function respond(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function respondStoreError(res, error) {
+  if (error?.reason === 'session_busy') { respond(res, 409, { code: 409, reason: 'session_busy' }); return true; }
+  if (error?.reason === 'session_not_current') { respond(res, 409, { code: 409, reason: 'session_not_current' }); return true; }
+  if (error?.reason === 'session_not_found') { respond(res, 404, { code: 404, reason: 'session_not_found' }); return true; }
+  if (error?.reason === 'session_pointer_failed') {
+    respond(res, 500, { code: 500, reason: 'session_pointer_failed', message: String(error.message || error) });
+    return true;
+  }
+  if (error?.reason === 'session_store_closed') {
+    respond(res, 503, { code: 503, reason: 'session_store_closed' });
+    return true;
+  }
+  return false;
+}
+
 function anySessionBusy() {
   for (const entry of store.sessions.values()) if (entry.busy) return true;
   return false;
@@ -211,15 +226,10 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse((await readBody(req)) || '{}');
       const canvasId = String(body.canvasId || '').trim();
       if (!canvasId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
-      try {
-        const entry = await store.replaceSession(canvasId, () => store.createLiveSession({
-          canvasId, sessionId: '', buildTools: ops.buildTools,
-        }));
-        respond(res, 200, { sessionId: entry.sessionId });
-      } catch (error) {
-        if (error?.reason === 'session_busy') { respond(res, 409, { code: 409, reason: 'session_busy' }); return; }
-        throw error;
-      }
+      const entry = await store.replaceSession(canvasId, () => store.createLiveSession({
+        canvasId, sessionId: '', buildTools: ops.buildTools,
+      }));
+      respond(res, 200, { sessionId: entry.sessionId });
       return;
     }
     if (req.method === 'POST' && url.pathname === '/sessions/activate') {
@@ -227,16 +237,10 @@ const server = http.createServer(async (req, res) => {
       const canvasId = String(body.canvasId || '').trim();
       const sessionId = String(body.sessionId || '').trim();
       if (!canvasId || !sessionId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
-      try {
-        const entry = await store.replaceSession(canvasId, () => store.createLiveSession({
-          canvasId, sessionId, buildTools: ops.buildTools,
-        }));
-        respond(res, 200, { sessionId: entry.sessionId });
-      } catch (error) {
-        if (error?.reason === 'session_busy') { respond(res, 409, { code: 409, reason: 'session_busy' }); return; }
-        if (error?.reason === 'session_not_found') { respond(res, 404, { code: 404, reason: 'session_not_found' }); return; }
-        throw error;
-      }
+      const entry = await store.replaceSession(canvasId, () => store.createLiveSession({
+        canvasId, sessionId, buildTools: ops.buildTools,
+      }));
+      respond(res, 200, { sessionId: entry.sessionId });
       return;
     }
     if (req.method === 'GET' && url.pathname === '/history') {
@@ -287,17 +291,10 @@ const server = http.createServer(async (req, res) => {
       }
       if (!canvasId || !message) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
       if (providerReason) { respond(res, 503, { code: 503, reason: providerReason }); return; }
-      const entry = await store.ensureSession(canvasId, ops.buildTools);
-      if (requestedSessionId && requestedSessionId !== entry.sessionId) {
-        respond(res, 409, { code: 409, reason: 'session_not_current' });
-        return;
-      }
-      if (entry.busy) { respond(res, 409, { code: 409, reason: 'session_busy' }); return; }
-      entry.busy = true;
-      entry.generation.aborted = false;
-      resetTurnAccumulator(entry.turn, revisionBefore, turnId);
+      const entry = await store.acquireChatSession(canvasId, ops.buildTools, requestedSessionId);
       const budget = createTurnBudget({ maxRequests: MAX_REQUESTS_PER_TURN, maxToolSteps: MAX_TOOL_STEPS_PER_TURN });
       try {
+        resetTurnAccumulator(entry.turn, revisionBefore, turnId);
         entry.manager.appendCustomEntry(`${TURN_ENTRY_TYPE}.started`, {
           turnId, userText, selectedNodeIds: selected, references, createdAt: new Date().toISOString(),
         });
@@ -333,13 +330,14 @@ const server = http.createServer(async (req, res) => {
         res.end();
         return;
       } finally {
-        entry.busy = false;
+        store.releaseChatSession(entry);
         persistLifetimeBudget();
       }
     }
     respond(res, 404, { code: 404, reason: 'not_found' });
   } catch (error) {
     if (error?.tooLarge) { respond(res, 413, { code: 413, reason: 'body_too_large' }); return; }
+    if (!res.headersSent && respondStoreError(res, error)) return;
     console.error(`agent-host: 请求失败 ${error?.message || error}`);
     if (!res.headersSent) { respond(res, 500, { code: 500, reason: 'internal_error', message: String(error?.message || error) }); }
     else { sendLine(res, { type: 'turn_end', reply: '', toolCalls: [], change: null, proposals: [], error: String(error?.message || error), cancelled: false }); res.end(); }
@@ -355,3 +353,19 @@ catch (error) { console.error(`agent-host: 能力发现失败（稍后可重试�
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`agent-host 已启动 http://127.0.0.1:${PORT} model=${MODEL?.id || MODEL_ID} api=${MODEL_API} baseUrl=${MODEL?.baseUrl || BASE_URL} ops=${OPS_URL} readOnly=${READ_ONLY_MODE} reason=${providerReason || 'ok'}`);
 });
+
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try {
+    const released = await store.disposeAll();
+    console.error(`agent-host: 关闭，释放 ${released} 个会话`);
+  } catch (error) {
+    console.error(`agent-host: 关闭时释放会话失败 ${error?.message || error}`);
+  }
+  await new Promise((resolve) => server.close(() => resolve()));
+  process.exit(0);
+}
+process.once('SIGTERM', () => { void shutdown(); });
+process.once('SIGINT', () => { void shutdown(); });

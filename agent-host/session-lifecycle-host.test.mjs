@@ -1,15 +1,16 @@
 import { expect, test } from 'bun:test';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { canvasKey } from './session-owner.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-test('真实宿主：新建会话替换会释放上一条，忙碌时拒绝替换', async () => {
+async function withHost(run, envExtra = {}) {
   const directory = mkdtempSync(path.join(tmpdir(), 'beeftv session lifecycle '));
   const hostToken = 'synthetic-lifecycle-host';
   let child;
@@ -84,6 +85,7 @@ test('真实宿主：新建会话替换会释放上一条，忙碌时拒绝替�
       BEEFTV_AGENT_API_KEY: 'synthetic-only',
       BEEFTV_AGENT_BASE_URL: `http://127.0.0.1:${modelPort}/v1`,
       BEEFTV_AGENT_TURN_TIMEOUT_MS: '20000',
+      ...envExtra,
     };
     child = spawn('node', [path.join(root, 'agent-host/server.mjs')], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout.on('data', (chunk) => { log += chunk; });
@@ -93,25 +95,7 @@ test('真实宿主：新建会话替换会释放上一条，忙碌时拒绝替�
       try { return (await fetch(base + '/health', { signal: AbortSignal.timeout(500) })).ok; }
       catch { return false; }
     }, 10000);
-
-    const created = await api('/sessions', { canvasId: 'life-canvas' });
-    expect(created.status).toBe(200);
-    const firstId = created.payload.sessionId;
-    expect(firstId).toBeTruthy();
-
-    const replaced = await api('/sessions', { canvasId: 'life-canvas' });
-    expect(replaced.status).toBe(200);
-    expect(replaced.payload.sessionId).not.toBe(firstId);
-    const listed = await api('/sessions?canvasId=life-canvas');
-    expect(listed.payload.currentSessionId).toBe(replaced.payload.sessionId);
-
-    const chat = api('/chat', { canvasId: 'life-canvas', message: 'Keep this turn busy.', turnId: 'busyturn1', revisionBefore: 1 });
-    await waitFor(() => modelCalls >= 1, 8000);
-    const busyReplace = await api('/sessions', { canvasId: 'life-canvas' });
-    expect(busyReplace.status).toBe(409);
-    expect(busyReplace.payload.reason).toBe('session_busy');
-    await api('/cancel', { canvasId: 'life-canvas' });
-    await chat;
+    await run({ api, waitFor, directory, child, getLog: () => log, getModelCalls: () => modelCalls });
   } finally {
     if (child && child.exitCode === null) {
       const exited = new Promise((resolve) => child.once('close', resolve));
@@ -127,4 +111,94 @@ test('真实宿主：新建会话替换会释放上一条，忙碌时拒绝替�
     }
     rmSync(directory, { recursive: true, force: true });
   }
+}
+
+test('真实宿主：新建会话替换会释放上一条，忙碌时拒绝替换', async () => {
+  await withHost(async ({ api, waitFor, getModelCalls }) => {
+    const created = await api('/sessions', { canvasId: 'life-canvas' });
+    expect(created.status).toBe(200);
+    const firstId = created.payload.sessionId;
+    expect(firstId).toBeTruthy();
+
+    const replaced = await api('/sessions', { canvasId: 'life-canvas' });
+    expect(replaced.status).toBe(200);
+    expect(replaced.payload.sessionId).not.toBe(firstId);
+    const listed = await api('/sessions?canvasId=life-canvas');
+    expect(listed.payload.currentSessionId).toBe(replaced.payload.sessionId);
+
+    const chat = api('/chat', { canvasId: 'life-canvas', message: 'Keep this turn busy.', turnId: 'busyturn1', revisionBefore: 1 });
+    await waitFor(() => getModelCalls() >= 1, 8000);
+    const busyReplace = await api('/sessions', { canvasId: 'life-canvas' });
+    expect(busyReplace.status).toBe(409);
+    expect(busyReplace.payload.reason).toBe('session_busy');
+    await api('/cancel', { canvasId: 'life-canvas' });
+    await chat;
+  });
+}, 35000);
+
+test('真实宿主：并发新建会话最终只有一条当前会话', async () => {
+  await withHost(async ({ api }) => {
+    const [a, b] = await Promise.all([
+      api('/sessions', { canvasId: 'parallel-canvas' }),
+      api('/sessions', { canvasId: 'parallel-canvas' }),
+    ]);
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    expect(a.payload.sessionId).not.toBe(b.payload.sessionId);
+    const listed = await api('/sessions?canvasId=parallel-canvas');
+    expect(listed.status).toBe(200);
+    expect([a.payload.sessionId, b.payload.sessionId]).toContain(listed.payload.currentSessionId);
+    const health = await api('/health');
+    expect(health.status).toBe(200);
+    expect(health.payload.sessions).toBe(1);
+  });
+}, 35000);
+
+test('真实宿主：指针写成目录后替换失败，当前会话仍是旧的', async () => {
+  await withHost(async ({ api, directory }) => {
+    const created = await api('/sessions', { canvasId: 'pointer-canvas' });
+    expect(created.status).toBe(200);
+    const firstId = created.payload.sessionId;
+    const pointer = path.join(directory, 'sessions', canvasKey('pointer-canvas'), 'current.json');
+    rmSync(pointer, { force: true });
+    mkdirSync(pointer);
+    const replaced = await api('/sessions', { canvasId: 'pointer-canvas' });
+    expect(replaced.status).toBe(500);
+    expect(replaced.payload.reason).toBe('session_pointer_failed');
+    const listed = await api('/sessions?canvasId=pointer-canvas');
+    expect(listed.status).toBe(200);
+    expect(listed.payload.currentSessionId).toBe(firstId);
+  });
+}, 35000);
+
+test('真实宿主：chat 与 replace 并发时不是 500，忙碌则拒绝替换', async () => {
+  await withHost(async ({ api }) => {
+    const created = await api('/sessions', { canvasId: 'mix-canvas' });
+    expect(created.status).toBe(200);
+    const [chat, replaced] = await Promise.all([
+      api('/chat', { canvasId: 'mix-canvas', message: 'Keep this turn busy.', turnId: 'mixturn1', revisionBefore: 1 }),
+      api('/sessions', { canvasId: 'mix-canvas' }),
+    ]);
+    expect(chat.status).toBe(200);
+    expect([200, 409]).toContain(replaced.status);
+    if (replaced.status === 409) expect(replaced.payload.reason).toBe('session_busy');
+    const listed = await api('/sessions?canvasId=mix-canvas');
+    expect(listed.status).toBe(200);
+    expect(listed.payload.currentSessionId).toBeTruthy();
+    const health = await api('/health');
+    expect(health.status).toBe(200);
+    expect(health.payload.sessions).toBe(1);
+  });
+}, 35000);
+
+test('真实宿主：SIGTERM 释放活动会话后退出', async () => {
+  await withHost(async ({ api, child, getLog }) => {
+    const created = await api('/sessions', { canvasId: 'shutdown-canvas' });
+    expect(created.status).toBe(200);
+    const exited = new Promise((resolve) => child.once('close', resolve));
+    child.kill('SIGTERM');
+    const code = await Promise.race([exited, delay(3000).then(() => 'timeout')]);
+    expect(code).not.toBe('timeout');
+    expect(getLog()).toContain('关闭，释放');
+  });
 }, 35000);

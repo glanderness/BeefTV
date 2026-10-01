@@ -43,9 +43,17 @@
 
 | 模块 | 责任 |
 | --- | --- |
-| `session-owner.mjs` | 官方会话创建、按画布替换、abort+dispose、SessionManager 指针与历史投影、prompt 结算。 |
+| `session-owner.mjs` | 官方会话创建、按画布预约队列、替换、abort+dispose、原子指针、prompt 结算。 |
 | `operation-bridge.mjs` | 已鉴权 `/api/ops`、scope 注入、`customTools`。 |
-| `server.mjs` | 本机 HTTP、鉴权、预算 fetch 包装、把官方事件写成 NDJSON。 |
+| `server.mjs` | 本机 HTTP、鉴权、预算 fetch 包装、NDJSON、SIGTERM/SIGINT 释放会话。 |
+
+## 会话所有权
+
+- 预约按 `canvasId`：`ensureSession` / `replaceSession` / `acquireChatSession` 共享一条队列；不同画布并行。
+- `acquireChatSession` 在同一把锁里 restore/create 并置 `busy`，然后才释放锁去跑 prompt。忙碌会话的 replace 在工厂之前拒绝（409 `session_busy`）。
+- 候选先 `createAgentSession`，指针 `current.*.tmp` + `rename` 成功后才写入 Map；指针失败则 dispose 候选、保留旧活动会话。
+- `ensureSession` 只把缺失指针（`ENOENT`）和 `session_not_found` 当成可回退：先 list 可恢复历史，再新建。EISDIR、损坏 JSON、SDK 装配失败原样抛出。
+- `disposeOwnedSession` 用 `disposed` 标记，abort+dispose 只走一次。进程 `SIGTERM`/`SIGINT` 先把 store 标为关闭，排空该画布预约队列里已入队的 ensure/replace/chat 占位，再 `disposeAll`。关闭后新的预约直接失败。`SIGKILL` 仍无法拦截，中断回执语义不变。
 
 ## 仍由本产品持有
 
@@ -54,9 +62,9 @@
 
 ## 已验证（钉选 0.87.1）
 
-- `session-owner.test.mjs`：真实 `createAgentSession` 创建 / 替换 / `abort`+`dispose`，以及 SessionManager JSONL 往返（不打模型）。
+- `session-owner.test.mjs`：真实 `createAgentSession` 创建 / 替换 / `abort`+`dispose`，以及 SessionManager JSONL 往返（不打模型）。并发 replace、指针 EISDIR 回滚、chat 占 busy、ensure 失败不吞。
 - `session-settings.test.mjs`：真实 `SettingsManager.inMemory` 读出压缩/重试钉值与 `cacheWarming: "off"`。
-- `session-lifecycle-host.test.mjs`：真实宿主 HTTP 新建会话替换当前 id；忙碌时 409 `session_busy`（本地替身模型）。
+- `session-lifecycle-host.test.mjs`：真实宿主 HTTP 新建/并发替换、忙碌 409、指针目录失败、SIGTERM 释放（本地替身模型）。
 - `interrupted-host.test.mjs`：SIGKILL 后重启仍能读到 `turn_interrupted` 原话。
 - `host-runtime-probe.test.mjs`：预算耗尽、素材参数、引用画布读取。
 - React：`lifecycle` 与 `agent_end` 都不结算回合；压缩/重试文案不出现内部事件名。
@@ -66,4 +74,5 @@
 - 未接官方 web-ui / TUI / 实验服务器。
 - 未升级 SDK。
 - 压缩与自动重试依赖官方内部路径；测试覆盖事件映射与设置钉值，不打付费模型。
+- 官方 `SessionManager` 在出现 assistant 消息前不落 jsonl。刚创建就被替换或释放的会话可能不会出现在 list 里；活动会话仍以内存 Map 与 `current.json` 为准。
 - Go 运行时、操作层、数据库、生成链路不在本切片。
