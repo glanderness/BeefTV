@@ -136,7 +136,15 @@ func compactPersistedValue(value interface{}) interface{} {
 
 func (s *Service) validateRetryType(userID, taskType string, input map[string]any) error {
 	metadata, _ := input["metadata"].(map[string]any)
-	retryOf := strings.TrimSpace(stringValue(metadata["retryOf"]))
+	raw, ok := metadata["retryOf"]
+	if !ok || raw == nil {
+		return nil
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return kernel.BadAuthRequest("retryOf 必须是字符串")
+	}
+	retryOf := strings.TrimSpace(value)
 	if retryOf == "" {
 		return nil
 	}
