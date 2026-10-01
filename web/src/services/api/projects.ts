@@ -2,6 +2,7 @@ import type { CapturedUserScope } from "@/lib/user-scope-guard";
 import { http } from "@/services/api/request";
 import { normalizeAssetCategory, type AssetCategory } from "@/lib/asset-category";
 import type { GenerationTask } from "@/services/api/task-center";
+import type { CapturedUserScope } from "@/lib/user-scope-guard";
 
 
 export type Project = {
@@ -488,20 +489,20 @@ export function unlinkCanvasProject(projectId: string, canvasId: string) {
     return http.delete<{ canvasId: string }>(`/projects/${encodeURIComponent(projectId)}/canvases/${encodeURIComponent(canvasId)}`);
 }
 
-export function linkProjectAsset(projectId: string, input: { assetId: string; category: AssetCategory; folderId?: string; title?: string; source?: "uploaded" | "canvas" }, signal?: AbortSignal) {
-    return http.post<{ asset: ProjectAsset }>(`/projects/${encodeURIComponent(projectId)}/assets`, input, { signal });
+export function linkProjectAsset(projectId: string, input: { assetId: string; category: AssetCategory; folderId?: string; title?: string; source?: "uploaded" | "canvas" }, signal?: AbortSignal, expectedScope?: CapturedUserScope) {
+    return http.post<{ asset: ProjectAsset }>(`/projects/${encodeURIComponent(projectId)}/assets`, input, { signal, expectedScope });
 }
 
-export function unlinkProjectAsset(projectId: string, assetId: string) {
-    return http.delete<{ id: string }>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}`);
+export function unlinkProjectAsset(projectId: string, assetId: string, signal?: AbortSignal, expectedScope?: CapturedUserScope) {
+    return http.delete<{ id: string }>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}`, { signal, expectedScope });
 }
 
-export function updateProjectAssetCategory(projectId: string, assetId: string, category: AssetCategory, signal?: AbortSignal) {
-    return http.patch<{ asset: ProjectAsset }>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}`, { category }, { signal });
+export function updateProjectAssetCategory(projectId: string, assetId: string, category: AssetCategory, signal?: AbortSignal, expectedScope?: CapturedUserScope) {
+    return http.patch<{ asset: ProjectAsset }>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}`, { category }, { signal, expectedScope });
 }
 
-export function moveProjectAsset(projectId: string, assetId: string, folderId: string, signal?: AbortSignal) {
-    return http.patch<{ asset: ProjectAsset }>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}`, { folderId }, { signal });
+export function moveProjectAsset(projectId: string, assetId: string, folderId: string, signal?: AbortSignal, expectedScope?: CapturedUserScope) {
+    return http.patch<{ asset: ProjectAsset }>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}`, { folderId }, { signal, expectedScope });
 }
 
 export function listProjectAssetFolders(projectId: string, signal?: AbortSignal) {

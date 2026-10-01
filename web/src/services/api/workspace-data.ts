@@ -1,6 +1,6 @@
 import type { Asset } from "@/stores/use-asset-store";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
-import { http, compactApiParams } from "@/services/api/request";
+import { http, compactApiParams, type HttpRequestConfig } from "@/services/api/request";
 
 export type AssetFolder = {
     id: string;
@@ -42,8 +42,27 @@ export function moveAssetsToFolder(assetIds: string[], folderId = "") {
     return http.patch<{ assetIds: string[]; folderId: string }>("/assets/folder", { assetIds, folderId });
 }
 
-export function getWorkspaceAsset(id: string, signal?: AbortSignal) {
-    return http.get<{ asset: Asset }>(`/assets/${encodeURIComponent(id)}`, { signal });
+export function getWorkspaceAsset(id: string, signal?: AbortSignal, config?: HttpRequestConfig) {
+    return http.get<{ asset: Asset }>(`/assets/${encodeURIComponent(id)}`, { signal, ...config });
+}
+
+export type WorkspaceAssetSummary = {
+    id: string;
+    folderId?: string;
+    kind?: string;
+    category?: string;
+    status?: string;
+    title: string;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export function putWorkspaceAsset(id: string, asset: Asset, config?: HttpRequestConfig) {
+    return http.put<{ asset: WorkspaceAssetSummary }>(`/assets/${encodeURIComponent(id)}`, { asset }, config);
+}
+
+export function deleteWorkspaceAssetRecord(id: string, config?: HttpRequestConfig) {
+    return http.delete<{ id: string }>(`/assets/${encodeURIComponent(id)}`, config);
 }
 
 export type CanvasHistoryEntry = {
