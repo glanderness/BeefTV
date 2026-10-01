@@ -2,6 +2,14 @@ import referenceVideoErrors from "./fixtures/reference-video-errors.json";
 import { describe, expect, test } from "bun:test";
 import { ApiError } from "../src/services/api/request";
 
+test("Windows socket disconnects explain saved historical errors without exposing network details", () => {
+    for (const detail of ["An existing connection was forcibly closed by the remote host.", "An established connection was aborted by the software in your host machine."]) {
+        const failure = explainGenerationError(`Get "https://private.example/task?token=secret": read tcp: wsarecv: ${detail}`);
+        expect(failure.category).toBe("network");
+        expect(failure.message).not.toMatch(/wsarecv|secret|private\.example/);
+    }
+});
+
 test("local task persistence errors keep their cause through API and saved details", () => {
     const error = new ApiError("本地任务保存失败，尚未提交生成", { status: 500, reason: "local_storage_failed" });
     const result = explainGenerationError(error);

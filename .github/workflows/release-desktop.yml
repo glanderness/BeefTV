@@ -240,6 +240,16 @@ jobs:
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-beeftv-windows-release.ps1
 
+      - name: Verify Windows video disconnect recovery
+        if: runner.os == 'Windows'
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        shell: pwsh
+        run: |
+          go test ./internal/app -run 'TestWindowsVideoConnectionResetRecovery|TestVideoRecoverySocketResetNeverResubmits|TestVideoRecoveryLostReceiptNeverResubmits|TestVideoRecoveryBeefAPIQueryUsesOnlyGet' -count=1 -timeout=120s
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Package updater zip
         working-directory: backend
         env:

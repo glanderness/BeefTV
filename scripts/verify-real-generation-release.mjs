@@ -15,6 +15,14 @@ const receipt = JSON.parse(readFileSync(`docs/release-evidence/${version}.json`,
 const fail = message => { throw new Error(`Real generation release gate: ${message}`); };
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
 if (!Number.isFinite(receipt.budgetCNY) || !Number.isFinite(receipt.spentCNY) || !(receipt.budgetCNY > 0 && receipt.spentCNY >= 0 && receipt.spentCNY <= receipt.budgetCNY) || receipt.pendingCNY !== 0) fail('billing not reconciled within budget');
+// One release only: Ender explicitly waived further live testing on 2026-10-01.
+// Source binding and settled-cost checks above still apply; later releases use
+// the normal twelve-case gate. Never represent this exception as a passed test.
+if (version === 'v1.6.18' && receipt.liveTestWaiver?.approvedBy === 'Ender' && receipt.liveTestWaiver?.instruction === '没事 这轮就不用实测了') {
+  if (receipt.verification?.windowsNativeRegression !== 'passed' || receipt.review?.result !== 'approved') fail('waiver requires reviewed Windows regression evidence');
+  console.log(`Real generation release gate waived by owner: ${version}; live matrix NOT completed; CNY ${receipt.spentCNY}/${receipt.budgetCNY}`);
+  process.exit(0);
+}
 if (!Array.isArray(receipt.cases) || receipt.cases.length !== 12) fail('expected exactly twelve successful cases');
 const paths = ['text-image', 'image-image', 'image-video', 'text-video', 'video-video', 'multi-video'];
 const taskIDs = new Set();
