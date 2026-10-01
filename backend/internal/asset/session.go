@@ -413,7 +413,9 @@ func (s *Service) completeSessionWork(sess *chunkedUploadSession) (*model.Resour
 			return existing, nil
 		}
 		if s.objectPresent(existing) {
-			resource, err := s.promoteReady(existing)
+			resource, err := s.promoteReady(existing, func() (string, error) {
+				return s.reserveRetry(existing.UserID, existing.Size, identity)
+			})
 			if err == nil && resource != nil && resource.Status == model.ResourceStatusReady {
 				if commitErr := s.commitWitness(sess.UserID, identity, sess.Size); commitErr != nil {
 					return resource, commitErr

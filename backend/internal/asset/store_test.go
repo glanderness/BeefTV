@@ -281,7 +281,7 @@ func TestRetryReleasesQuotaAfterFailure(t *testing.T) {
 }
 
 func TestUploadReadySaveFailureKeepsOwnPendingAndDaily(t *testing.T) {
-	base, _, dataDir := newTestDomain(t)
+	base, repo, dataDir := newTestDomain(t)
 	quota := &ledgerQuota{}
 	failing := &readySaveFailRepo{Repository: base.repo, remaining: 1}
 	svc := NewService(Dependencies{
@@ -303,6 +303,7 @@ func TestUploadReadySaveFailureKeepsOwnPendingAndDaily(t *testing.T) {
 	if quota.pendingOf("ordinary-upload") != ordinary || quota.pendingOf(identity) != 7 || quota.daily != ordinary+7 || quota.releases != 0 {
 		t.Fatalf("after ready-save fail ordinary=%d own=%d daily=%d releases=%d", quota.pendingOf("ordinary-upload"), quota.pendingOf(identity), quota.daily, quota.releases)
 	}
+	plantReservation(t, repo, "user-1", identity, 7)
 	second, err := svc.UploadFile("user-1", "a.png", 7, "image", 1, 1, 0, bytes.NewReader([]byte("payload")), "keep-ready")
 	if err != nil || second == nil || second.Status != model.ResourceStatusReady {
 		t.Fatalf("retry upload = %#v err=%v", second, err)
@@ -323,6 +324,7 @@ func TestPendingRestartWithoutBytesDoesNotReserveRetry(t *testing.T) {
 	if err := repo.CreateResource(pending); err != nil {
 		t.Fatal(err)
 	}
+	plantReservation(t, repo, "user-1", *uploadKey, 7)
 	quota := &ledgerQuota{daily: 7}
 	svc := NewService(Dependencies{
 		Repository: NewRepository(repo),
@@ -393,6 +395,7 @@ func TestRetryOwnedFailedReadySaveKeepsDailyUntilPromote(t *testing.T) {
 	if _, statErr := os.Stat(filepath.Join(dataDir, "resources", filepath.FromSlash(failed.ObjectKey))); statErr != nil {
 		t.Fatalf("bytes missing after retry finalize failure: %v", statErr)
 	}
+	plantReservation(t, repo, "user-1", *uploadKey, 7)
 	second, err := svc.RetryOwned("user-1", failed.ID, "image", "image/png", 7, bytes.NewReader([]byte("payload")))
 	if err != nil || second == nil || second.Status != model.ResourceStatusReady {
 		t.Fatalf("promote retry = %#v err=%v", second, err)

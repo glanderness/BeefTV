@@ -49,6 +49,7 @@ func TestRecoverOwnedPendingBytesFinalizesWithoutRestore(t *testing.T) {
 	if err := repo.CreateResource(pending); err != nil {
 		t.Fatal(err)
 	}
+	plantReservation(t, repo, "user-1", *uploadKey, 7)
 	if err := NewFileStore(dataDir).Write(pending.ObjectKey, bytes.NewReader([]byte("payload"))); err != nil {
 		t.Fatal(err)
 	}
@@ -440,6 +441,7 @@ func TestRecoverOwnedFailedReadySaveKeepsQuotaUntilPromote(t *testing.T) {
 	if _, statErr := os.Stat(filepath.Join(dataDir, "resources", filepath.FromSlash(latest.ObjectKey))); statErr != nil {
 		t.Fatalf("bytes missing after finalize failure: %v", statErr)
 	}
+	plantReservation(t, repo, "user-1", identity, size)
 	second, err := svc.RecoverOwned("user-1", "task-quota-keep:0", func() (RecoveredArtifact, error) {
 		t.Fatal("promote called restore")
 		return RecoveredArtifact{}, nil
@@ -557,6 +559,7 @@ func TestPromoteReadyDoesNotDebitOtherUploadPending(t *testing.T) {
 	if err := repo.CreateResource(pending); err != nil {
 		t.Fatal(err)
 	}
+	plantReservation(t, repo, "user-1", *uploadKey, 7)
 	if err := NewFileStore(dataDir).Write(pending.ObjectKey, bytes.NewReader([]byte("payload"))); err != nil {
 		t.Fatal(err)
 	}
@@ -605,6 +608,7 @@ func TestRecoverOwnedRestartPromoteKeepsDailyOnce(t *testing.T) {
 	if err := repo.CreateResource(pending); err != nil {
 		t.Fatal(err)
 	}
+	plantReservation(t, repo, "user-1", *uploadKey, size)
 	if err := NewFileStore(dataDir).Write(pending.ObjectKey, bytes.NewReader([]byte("payload"))); err != nil {
 		t.Fatal(err)
 	}
@@ -640,6 +644,7 @@ func TestRecoverOwnedPendingMissingBytesSkipsRetryReserve(t *testing.T) {
 	if err := repo.CreateResource(pending); err != nil {
 		t.Fatal(err)
 	}
+	plantReservation(t, repo, "user-1", *uploadKey, size)
 	quota := &ledgerQuota{daily: size}
 	svc := NewService(Dependencies{
 		Repository: NewRepository(repo),

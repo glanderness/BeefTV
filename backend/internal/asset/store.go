@@ -46,9 +46,10 @@ import (
 // status so a crash cannot leave a unique witness behind a READY or FAILED row.
 // Local bytes are independent of that reservation: a READY-save failure keeps
 // PENDING and the reservation; a write failure records FAILED and Releases.
-// RetryOwned ReserveRetry only when the persisted row is FAILED. RecoverOwned
-// uses ReserveGenerated / ReserveGeneratedRetry (GeneratedFileMB) the same
-// way. Commit applies only to this identity's pending.
+// PENDING about to become READY must hold a witness; if missing, reserve now.
+// ClaimFailed is status-only so leftover FAILED can keep the original consume.
+// RecoverOwned uses ReserveGenerated / ReserveGeneratedRetry the same way.
+// Commit applies only to this identity's pending.
 //
 // Ordinary Upload* adapters must not take lockWrite. The lock lives here so
 // Store and RetryOwned cannot deadlock. A live duplicate identity is rejected
@@ -181,8 +182,6 @@ func (s *Service) RetryOwned(userID string, resourceID string, kind string, mime
 	}
 	released := resource.Status == model.ResourceStatusFailed
 	if released {
-		// ClaimFailed releases a leftover identified witness in the same
-		// transaction as FAILED->PENDING so the first retry can reserve.
 		claimed, claimErr := s.repo.ClaimFailedResourceUpload(userID, resource.ID)
 		if claimErr != nil {
 			return nil, claimErr
@@ -216,18 +215,16 @@ func (s *Service) RetryOwned(userID string, resourceID string, kind string, mime
 	resource.Error = ""
 	resource.UpdatedAt = time.Now()
 	identity := quotaIdentity(resource.UploadKey, resource.ID)
-	var day string
-	heldRetry := false
-	if released {
-		reserved, err := s.reserveRetry(userID, size, identity)
-		if err != nil {
+	day, heldRetry, err := s.ensureReservation(userID, identity, func() (string, error) {
+		return s.reserveRetry(userID, size, identity)
+	})
+	if err != nil {
+		if released {
 			if saveErr := s.persistFailedResource(resource, err); saveErr != nil {
 				return nil, errors.Join(err, fmt.Errorf("恢复资源重试失败状态失败：%w", saveErr))
 			}
-			return nil, err
 		}
-		day = reserved
-		heldRetry = true
+		return nil, err
 	}
 	etag, err := s.WriteObject(resource, "", body)
 	resource.UpdatedAt = time.Now()
@@ -289,6 +286,21 @@ func (s *Service) releaseRetry(userID string, day string, size int64, identity s
 		return
 	}
 	s.quota.ReleaseRetry(userID, day, size, identity)
+}
+
+func (s *Service) ensureReservation(userID, identity string, reserve func() (string, error)) (string, bool, error) {
+	held, err := s.reservationHeld(userID, identity)
+	if err != nil {
+		return "", false, err
+	}
+	if held || reserve == nil {
+		return "", false, nil
+	}
+	day, err := reserve()
+	if err != nil {
+		return "", false, err
+	}
+	return day, true, nil
 }
 
 func (s *Service) persistFailedResource(resource *model.Resource, cause error) error {

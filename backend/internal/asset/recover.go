@@ -73,7 +73,7 @@ func (s *Service) recoverExisting(resource *model.Resource, restore ArtifactRest
 		if resource.Status == model.ResourceStatusReady {
 			return resource, nil
 		}
-		return s.promoteReady(resource)
+		return s.promoteReady(resource, s.generatedRetryReserve(resource))
 	}
 	artifact, err := invokeArtifactRestore(restore)
 	if err != nil {
@@ -82,9 +82,8 @@ func (s *Service) recoverExisting(resource *model.Resource, restore ArtifactRest
 	if err := uploadIdentityConflict(resource, artifact.Kind, artifact.MimeType, artifact.Size); err != nil {
 		return nil, err
 	}
-	retryQuota := resource.Status == model.ResourceStatusFailed
-	if resource.Status == model.ResourceStatusFailed {
-		// Same admission as RetryOwned: release a leftover FAILED witness first.
+	incoming := resource.Status
+	if incoming == model.ResourceStatusFailed {
 		claimed, claimErr := s.repo.ClaimFailedResourceUpload(resource.UserID, resource.ID)
 		if claimErr != nil {
 			return nil, claimErr
@@ -98,7 +97,7 @@ func (s *Service) recoverExisting(resource *model.Resource, restore ArtifactRest
 				return latest, nil
 			}
 			if s.objectPresent(latest) {
-				return s.promoteReady(latest)
+				return s.promoteReady(latest, s.generatedRetryReserve(latest))
 			}
 			return nil, UploadInProgress()
 		}
@@ -106,10 +105,10 @@ func (s *Service) recoverExisting(resource *model.Resource, restore ArtifactRest
 		if err != nil {
 			return nil, err
 		}
-	} else if resource.Status != model.ResourceStatusPending && resource.Status != model.ResourceStatusReady {
+	} else if incoming != model.ResourceStatusPending && incoming != model.ResourceStatusReady {
 		return nil, UploadInProgress()
 	}
-	return s.recoverWrite(resource, artifact, retryQuota)
+	return s.recoverWrite(resource, artifact, incoming, false)
 }
 
 func (s *Service) recoverCreate(userID string, uploadKey *string, restore ArtifactRestore) (*model.Resource, error) {
@@ -141,12 +140,12 @@ func (s *Service) recoverCreate(userID string, uploadKey *string, restore Artifa
 		s.finishQuota(userID, day, artifact.Size, nil, false, err, identity)
 		return nil, err
 	}
-	written, err := s.recoverWrite(&resource, artifact, false)
+	written, err := s.recoverWrite(&resource, artifact, model.ResourceStatusPending, true)
 	s.finishQuota(userID, day, artifact.Size, written, true, err, identity)
 	return written, err
 }
 
-func (s *Service) recoverWrite(resource *model.Resource, artifact RecoveredArtifact, retryQuota bool) (*model.Resource, error) {
+func (s *Service) recoverWrite(resource *model.Resource, artifact RecoveredArtifact, incoming model.ResourceStatus, alreadyReserved bool) (*model.Resource, error) {
 	if resource == nil {
 		return nil, ResourceMissing()
 	}
@@ -158,20 +157,27 @@ func (s *Service) recoverWrite(resource *model.Resource, artifact RecoveredArtif
 		resource.StorageSettingID = ""
 		resource.ObjectKey = ObjectKey(resource.UserID, kind, artifact.FileName, artifact.MimeType, time.Now())
 	}
+	claimedFailed := incoming == model.ResourceStatusFailed
+	alreadyConsumed := incoming == model.ResourceStatusReady
 	resource.Status = model.ResourceStatusPending
 	resource.Error = ""
 	resource.UpdatedAt = time.Now()
 	identity := quotaIdentity(resource.UploadKey, resource.ID)
 	var day string
-	if retryQuota {
-		reserved, err := s.reserveGeneratedRetry(resource.UserID, artifact.Size, identity)
+	acquired := false
+	if !alreadyReserved && !alreadyConsumed {
+		var err error
+		day, acquired, err = s.ensureReservation(resource.UserID, identity, func() (string, error) {
+			return s.reserveGeneratedRetry(resource.UserID, artifact.Size, identity)
+		})
 		if err != nil {
-			if saveErr := s.persistFailedResource(resource, err); saveErr != nil {
-				return resource, errors.Join(err, fmt.Errorf("恢复资源重试失败状态失败：%w", saveErr))
+			if claimedFailed {
+				if saveErr := s.persistFailedResource(resource, err); saveErr != nil {
+					return resource, errors.Join(err, fmt.Errorf("恢复资源重试失败状态失败：%w", saveErr))
+				}
 			}
 			return resource, err
 		}
-		day = reserved
 	}
 	etag, err := s.WriteObject(resource, artifact.FileName, artifact.Body)
 	resource.UpdatedAt = time.Now()
@@ -179,7 +185,7 @@ func (s *Service) recoverWrite(resource *model.Resource, artifact RecoveredArtif
 		if saveErr := s.persistFailedResource(resource, err); saveErr != nil {
 			return resource, errors.Join(err, fmt.Errorf("记录资源失败状态失败：%w", saveErr))
 		}
-		if retryQuota {
+		if acquired {
 			s.releaseRetry(resource.UserID, day, artifact.Size, identity)
 		}
 		return resource, err
@@ -194,9 +200,23 @@ func (s *Service) recoverWrite(resource *model.Resource, artifact RecoveredArtif
 	return resource, nil
 }
 
-func (s *Service) promoteReady(resource *model.Resource) (*model.Resource, error) {
+func (s *Service) generatedRetryReserve(resource *model.Resource) func() (string, error) {
+	if resource == nil {
+		return nil
+	}
+	identity := quotaIdentity(resource.UploadKey, resource.ID)
+	return func() (string, error) {
+		return s.reserveGeneratedRetry(resource.UserID, resource.Size, identity)
+	}
+}
+
+func (s *Service) promoteReady(resource *model.Resource, reserve func() (string, error)) (*model.Resource, error) {
 	if resource == nil {
 		return nil, ResourceMissing()
+	}
+	identity := quotaIdentity(resource.UploadKey, resource.ID)
+	if _, _, err := s.ensureReservation(resource.UserID, identity, reserve); err != nil {
+		return resource, err
 	}
 	resource.UpdatedAt = time.Now()
 	if err := s.finalizeReady(resource); err != nil {

@@ -129,6 +129,7 @@ func TestChunkedUploadReadySaveFailureDoesNotReturnReadyOrRefund(t *testing.T) {
 	if quota.daily != int64(len(body)) || quota.releases != 0 || quota.pendingTotal() != int64(len(body)) {
 		t.Fatalf("ready-save fail refunded daily=%d pending=%d releases=%d", quota.daily, quota.pendingTotal(), quota.releases)
 	}
+	plantReservation(t, repo, "user-1", session.UploadID, int64(len(body)))
 	second, err := svc.CompleteChunkedUpload("user-1", session.UploadID)
 	if err != nil || second == nil || second.Status != model.ResourceStatusReady {
 		t.Fatalf("complete replay after ready-save fail = %#v err=%v", second, err)
@@ -539,6 +540,7 @@ func TestChunkedUploadRetryAfterDroppedSessionFilesCommits(t *testing.T) {
 	if quota.pendingTotal() != int64(len(body)) || quota.commits != 0 {
 		t.Fatalf("after drop pending=%d commits=%d", quota.pendingTotal(), quota.commits)
 	}
+	plantReservation(t, repo, "user-1", session.UploadID, int64(len(body)))
 	second, err := svc.CompleteChunkedUpload("user-1", session.UploadID)
 	if err != nil || second == nil || second.Status != model.ResourceStatusReady {
 		t.Fatalf("retry after drop = %#v err=%v", second, err)
