@@ -218,3 +218,43 @@ func TestPromoteReadyDoesNotDebitOrdinaryUploadPending(t *testing.T) {
 		t.Fatalf("daily changed from %d to %d", usageBefore, usageAfter)
 	}
 }
+
+func TestUnkeyedGeneratedOperationsUseIndependentPending(t *testing.T) {
+	svc := newResourceTestService(t)
+	first, err := svc.resourceDomain().StoreGenerated("user-1", "image", "a.png", "image/png", 7, 1, 1, 0, bytes.NewReader([]byte("payload")))
+	if err != nil || first == nil {
+		t.Fatalf("first generated = %#v err=%v", first, err)
+	}
+	ordinary := int64(49 << 20)
+	if _, err := svc.reserveUserUploadQuotaFor("user-1", ordinary, "ordinary-upload"); err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.resourceDomain().StoreGenerated("user-1", "image", "b.png", "image/png", 5, 1, 1, 0, bytes.NewReader([]byte("other")))
+	if err != nil || second == nil || second.ID == first.ID {
+		t.Fatalf("second generated = %#v err=%v", second, err)
+	}
+	if got := svc.pendingStorage[pendingStorageKey("user-1", "ordinary-upload")]; got != ordinary {
+		t.Fatalf("ordinary pending = %d", got)
+	}
+}
+
+func TestChunkedUploadStartUsesCanonicalQuota(t *testing.T) {
+	svc := newResourceTestService(t)
+	ordinary := int64(49 << 20)
+	if _, err := svc.reserveUserUploadQuotaFor("user-1", ordinary, "ordinary-upload"); err != nil {
+		t.Fatal(err)
+	}
+	session, err := svc.StartChunkedResourceUpload("user-1", localasset.ChunkedUploadStart{FileName: "a.png", Kind: "image", Size: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.UploadID == "" || session.ChunkSize != localasset.ChunkUploadSize || session.ChunkCount != 1 {
+		t.Fatalf("session = %#v", session)
+	}
+	if got := svc.pendingStorage[pendingStorageKey("user-1", "ordinary-upload")]; got != ordinary {
+		t.Fatalf("ordinary pending = %d", got)
+	}
+	if got := svc.pendingStorage[pendingStorageKey("user-1", session.UploadID)]; got != 7 {
+		t.Fatalf("session pending = %d", got)
+	}
+}

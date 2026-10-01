@@ -84,4 +84,5 @@ type Dependencies struct {
 	Quota        Quota
 	Lifecycle    Lifecycle
 	LocalStorage bool
+	DataDir      string
 }

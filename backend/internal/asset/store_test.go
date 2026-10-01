@@ -280,6 +280,90 @@ func TestRetryReleasesQuotaAfterFailure(t *testing.T) {
 	}
 }
 
+func TestUploadReadySaveFailureKeepsOwnPendingAndDaily(t *testing.T) {
+	base, _, dataDir := newTestDomain(t)
+	quota := &ledgerQuota{}
+	failing := &readySaveFailRepo{Repository: base.repo, remaining: 1}
+	svc := NewService(Dependencies{
+		Repository: failing,
+		Blobs:      base.blobs,
+		Quota:      quota,
+		Lifecycle:  nopLifecycle{},
+		DataDir:    dataDir,
+	})
+	ordinary := int64(100)
+	if _, err := quota.ReserveUpload("user-1", ordinary, "ordinary-upload"); err != nil {
+		t.Fatal(err)
+	}
+	first, err := svc.UploadFile("user-1", "a.png", 7, "image", 1, 1, 0, bytes.NewReader([]byte("payload")), "keep-ready")
+	if err == nil || first != nil && first.Status == model.ResourceStatusReady {
+		t.Fatalf("first upload resource=%#v err=%v", first, err)
+	}
+	identity := *NormalizedUploadKey([]string{"keep-ready"})
+	if quota.pendingOf("ordinary-upload") != ordinary || quota.pendingOf(identity) != 7 || quota.daily != ordinary+7 || quota.releases != 0 {
+		t.Fatalf("after ready-save fail ordinary=%d own=%d daily=%d releases=%d", quota.pendingOf("ordinary-upload"), quota.pendingOf(identity), quota.daily, quota.releases)
+	}
+	second, err := svc.UploadFile("user-1", "a.png", 7, "image", 1, 1, 0, bytes.NewReader([]byte("payload")), "keep-ready")
+	if err != nil || second == nil || second.Status != model.ResourceStatusReady {
+		t.Fatalf("retry upload = %#v err=%v", second, err)
+	}
+	if quota.pendingOf("ordinary-upload") != ordinary || quota.pendingOf(identity) != 0 || quota.daily != ordinary+7 || quota.commits != 1 || quota.retryReserves != 0 {
+		t.Fatalf("after retry ordinary=%d own=%d daily=%d commits=%d retries=%d", quota.pendingOf("ordinary-upload"), quota.pendingOf(identity), quota.daily, quota.commits, quota.retryReserves)
+	}
+}
+
+func TestPendingRestartWithoutBytesDoesNotReserveRetry(t *testing.T) {
+	_, repo, dataDir := newTestDomain(t)
+	uploadKey := NormalizedUploadKey([]string{"pending-nobody"})
+	pending := &model.Resource{
+		ID: "resource-pending-nobody", UserID: "user-1", Kind: "image", Status: model.ResourceStatusPending,
+		Provider: "local", ObjectKey: "users/user-1/image/nobody.png", MimeType: "image/png", Size: 7,
+		UploadKey: uploadKey,
+	}
+	if err := repo.CreateResource(pending); err != nil {
+		t.Fatal(err)
+	}
+	quota := &ledgerQuota{daily: 7}
+	svc := NewService(Dependencies{
+		Repository: NewRepository(repo),
+		Blobs:      NewFileStore(dataDir),
+		Quota:      quota,
+		Lifecycle:  nopLifecycle{},
+		DataDir:    dataDir,
+	})
+	got, err := svc.RetryOwned("user-1", pending.ID, "image", "image/png", 7, bytes.NewReader([]byte("payload")))
+	if err != nil || got == nil || got.Status != model.ResourceStatusReady {
+		t.Fatalf("retry leftover pending = %#v err=%v", got, err)
+	}
+	if quota.daily != 7 || quota.retryReserves != 0 || quota.releases != 0 {
+		t.Fatalf("restart leftover reserved retry daily=%d retries=%d releases=%d", quota.daily, quota.retryReserves, quota.releases)
+	}
+}
+
+func TestStoreGeneratedUsesIndependentIdentities(t *testing.T) {
+	base, _, dataDir := newTestDomain(t)
+	quota := &ledgerQuota{}
+	failing := &readySaveFailRepo{Repository: base.repo, remaining: 1}
+	svc := NewService(Dependencies{
+		Repository: failing,
+		Blobs:      base.blobs,
+		Quota:      quota,
+		Lifecycle:  nopLifecycle{},
+		DataDir:    dataDir,
+	})
+	first, err := svc.StoreGenerated("user-1", "image", "a.png", "image/png", 7, 1, 1, 0, bytes.NewReader([]byte("payload")))
+	if err == nil || first == nil || first.Status == model.ResourceStatusReady {
+		t.Fatalf("first generated = %#v err=%v", first, err)
+	}
+	second, err := svc.StoreGenerated("user-1", "image", "b.png", "image/png", 5, 1, 1, 0, bytes.NewReader([]byte("other")))
+	if err != nil || second == nil || second.Status != model.ResourceStatusReady {
+		t.Fatalf("second generated = %#v err=%v", second, err)
+	}
+	if quota.pendingTotal() != 7 || quota.daily != 12 || quota.commits != 1 || quota.releases != 0 {
+		t.Fatalf("generated identities mixed pending=%d daily=%d commits=%d releases=%d", quota.pendingTotal(), quota.daily, quota.commits, quota.releases)
+	}
+}
+
 func TestRetryOwnedFailedReadySaveKeepsDailyUntilPromote(t *testing.T) {
 	base, repo, dataDir := newTestDomain(t)
 	quota := &ledgerQuota{}

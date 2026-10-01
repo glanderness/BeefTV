@@ -24,10 +24,25 @@ func NormalizedUploadKey(values []string) *string {
 	return &value
 }
 
+// EnsureUploadIdentity keeps a stable client key for idempotent replay and
+// mints a unique operation identity when the caller did not supply one.
+func EnsureUploadIdentity(values []string) []string {
+	if len(values) == 0 || strings.TrimSpace(values[0]) == "" {
+		return []string{kernel.NewID()}
+	}
+	return values
+}
+
 func DetectUploadedMimeType(file io.ReadSeeker, fileName string, declared string) string {
 	declared = strings.TrimSpace(strings.Split(declared, ";")[0])
 	if declared != "" && declared != "application/octet-stream" {
 		return declared
+	}
+	if file == nil {
+		if fromExtension := mime.TypeByExtension(filepath.Ext(fileName)); fromExtension != "" {
+			return strings.TrimSpace(strings.Split(fromExtension, ";")[0])
+		}
+		return "application/octet-stream"
 	}
 	buffer := make([]byte, 512)
 	read, _ := file.Read(buffer)

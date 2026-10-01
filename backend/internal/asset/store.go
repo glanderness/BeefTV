@@ -38,20 +38,18 @@ import (
 // non-READY rows. Generation adapters should call RecoverOwned so READY
 // rows with missing bytes can restore from the original provider result.
 //
-// Quota: callers of Store reserve upload/chunked quota under the upload
-// identity. RetryOwned reserves daily-only via ReserveRetry after owner and
-// identity checks when local bytes are missing, and releases on write
-// failure. A successful byte write whose READY save fails keeps that
-// reservation; the next RetryOwned rewrites without a second daily reserve.
-// RecoverOwned uses ReserveGenerated / ReserveGeneratedRetry
-// (GeneratedFileMB). READY replay does not consume quota. Create
-// reservations are kept when bytes persist after a failed READY save.
-// PENDING/FAILED promote of existing bytes does not reserve again and
-// Commits only this identity's pending.
+// Quota: callers of Store reserve upload/chunked quota under this operation's
+// identity. PENDING means that reservation is still held (including after a
+// crash that never ran Release). FAILED means the reservation was released.
+// Local bytes are independent of that reservation: a READY-save failure keeps
+// PENDING and the reservation; a write failure records FAILED and Releases.
+// RetryOwned ReserveRetry only when the persisted row is FAILED. RecoverOwned
+// uses ReserveGenerated / ReserveGeneratedRetry (GeneratedFileMB) the same
+// way. Commit applies only to this identity's pending.
 
 // Store creates a pending row, publishes bytes through FileStore, then marks
-// READY. A failed READY write leaves FAILED (or PENDING if status cannot be
-// saved) with bytes on disk so the same upload key can recover. READY is never
+// READY. A failed READY save leaves PENDING with bytes on disk so the same
+// identity can recover without a second daily reserve. READY is never
 // recorded without a successful metadata save after a successful file write.
 func (s *Service) Store(userID string, kind string, fileName string, mimeType string, size int64, width int, height int, durationMs int64, body io.Reader, uploadKey *string) (*model.Resource, bool, error) {
 	if s == nil || s.repo == nil {
@@ -95,18 +93,29 @@ func (s *Service) Store(userID string, kind string, fileName string, mimeType st
 		}
 		return &resource, true, err
 	}
-	resource.Status = model.ResourceStatusReady
 	resource.ETag = etag
-	if err := s.repo.SaveResource(&resource); err != nil {
-		resource.Status = model.ResourceStatusFailed
-		resource.Error = fmt.Sprintf("保存资源就绪状态失败：%v", err)
-		if statusErr := s.repo.SaveResource(&resource); statusErr != nil {
-			return &resource, true, errors.Join(err, fmt.Errorf("记录资源失败状态失败：%w", statusErr))
-		}
-		return &resource, true, fmt.Errorf("保存资源就绪状态失败：%w", err)
+	if err := s.finalizeReady(&resource); err != nil {
+		return &resource, true, err
 	}
 	s.afterReady(&resource)
 	return &resource, true, nil
+}
+
+func (s *Service) finalizeReady(resource *model.Resource) error {
+	if resource == nil {
+		return ResourceMissing()
+	}
+	resource.Status = model.ResourceStatusReady
+	resource.Error = ""
+	if err := s.repo.SaveResource(resource); err != nil {
+		resource.Status = model.ResourceStatusPending
+		resource.Error = fmt.Sprintf("保存资源就绪状态失败：%v", err)
+		if statusErr := s.repo.SaveResource(resource); statusErr != nil {
+			return errors.Join(err, fmt.Errorf("记录资源失败状态失败：%w", statusErr))
+		}
+		return fmt.Errorf("保存资源就绪状态失败：%w", err)
+	}
+	return nil
 }
 
 func (s *Service) WriteObject(resource *model.Resource, fileName string, body io.Reader) (string, error) {
@@ -165,7 +174,8 @@ func (s *Service) RetryOwned(userID string, resourceID string, kind string, mime
 	if err := uploadIdentityConflict(resource, kind, mimeType, size); err != nil {
 		return nil, err
 	}
-	if resource.Status == model.ResourceStatusFailed {
+	released := resource.Status == model.ResourceStatusFailed
+	if released {
 		claimed, claimErr := s.repo.ClaimFailedResourceUpload(userID, resource.ID)
 		if claimErr != nil {
 			return nil, claimErr
@@ -201,7 +211,7 @@ func (s *Service) RetryOwned(userID string, resourceID string, kind string, mime
 	identity := quotaIdentity(resource.UploadKey, resource.ID)
 	var day string
 	heldRetry := false
-	if !s.objectPresent(resource) {
+	if released {
 		reserved, err := s.reserveRetry(userID, size, identity)
 		if err != nil {
 			resource.Status = model.ResourceStatusFailed
@@ -228,16 +238,11 @@ func (s *Service) RetryOwned(userID string, resourceID string, kind string, mime
 		}
 		return nil, err
 	}
-	resource.Status = model.ResourceStatusReady
 	resource.ETag = etag
-	if err := s.repo.SaveResource(resource); err != nil {
-		resource.Status = model.ResourceStatusFailed
-		resource.Error = "保存资源重试就绪状态失败"
-		if saveErr := s.repo.SaveResource(resource); saveErr != nil {
-			return nil, errors.Join(err, fmt.Errorf("记录资源重试失败状态失败：%w", saveErr))
-		}
-		return nil, fmt.Errorf("保存资源重试就绪状态失败：%w", err)
+	if err := s.finalizeReady(resource); err != nil {
+		return nil, err
 	}
+	s.commitQuota(resource)
 	s.afterReady(resource)
 	return resource, nil
 }

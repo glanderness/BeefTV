@@ -97,5 +97,6 @@ func newTestDomain(t *testing.T) (*Service, *repository.Repository, string) {
 		Blobs:      NewFileStore(dataDir),
 		Quota:      nopQuota{},
 		Lifecycle:  nopLifecycle{},
+		DataDir:    dataDir,
 	}), repo, dataDir
 }

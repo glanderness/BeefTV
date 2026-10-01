@@ -53,6 +53,7 @@ func (s *Service) resourceDomain() *localasset.Service {
 			Quota:        resourceQuota{svc: s},
 			Lifecycle:    resourceLifecycle{svc: s},
 			LocalStorage: s.localResourceStorage || s.IsLocalMode(),
+			DataDir:      s.dataDir,
 		})
 	})
 	return s.assets
@@ -214,20 +215,21 @@ func (s *Service) UploadLocalResourceFile(userID string, fileName string, size i
 	return s.resourceDomain().UploadLocalFile(userID, fileName, size, kind, width, height, durationMs, file, uploadIdentity...)
 }
 
+func (s *Service) StartChunkedResourceUpload(userID string, req localasset.ChunkedUploadStart) (localasset.ChunkedUploadSessionInfo, error) {
+	return s.resourceDomain().StartChunkedUpload(userID, req)
+}
+
+func (s *Service) PutChunkedResourceUpload(userID string, uploadID string, index int, body io.Reader) error {
+	return s.resourceDomain().PutChunkedUpload(userID, uploadID, index, body)
+}
+
+func (s *Service) CompleteChunkedResourceUpload(userID string, uploadID string) (*model.Resource, error) {
+	return s.resourceDomain().CompleteChunkedUpload(userID, uploadID)
+}
+
 func (s *Service) ImportResourceURL(userID string, rawURL string, kind string, width int, height int, durationMs int64, uploadIdentity ...string) (*model.Resource, error) {
 	if s.IsLocalMode() {
 		return nil, localasset.RemoteImportForbidden()
-	}
-	uploadKey := normalizedResourceUploadKey(uploadIdentity)
-	existing, err := s.resourceForUploadKey(userID, uploadKey)
-	if err != nil {
-		return nil, err
-	}
-	if existing != nil && existing.Status == model.ResourceStatusReady {
-		return existing, nil
-	}
-	if existing != nil && existing.Status == model.ResourceStatusPending {
-		return nil, resourceUploadInProgress()
 	}
 	policy, err := s.RuntimePolicy()
 	if err != nil {
@@ -245,22 +247,7 @@ func (s *Service) ImportResourceURL(userID string, rawURL string, kind string, w
 		}
 	}
 	size := int64(len(payload.data))
-	if existing != nil {
-		return s.retryStoredResource(userID, existing, kind, payload.mimeType, size, bytes.NewReader(payload.data))
-	}
-	day, err := s.reserveUserUploadQuota(userID, size)
-	if err != nil {
-		return nil, err
-	}
-	resource, stored, err := s.storeResource(userID, kind, payload.fileName, payload.mimeType, size, width, height, durationMs, bytes.NewReader(payload.data), uploadKey, s.localResourceStorage)
-	if err != nil {
-		s.releaseUserUploadQuota(userID, day, size)
-	} else if stored {
-		s.commitUserUploadQuota(userID, size)
-	} else {
-		s.releaseUserUploadQuota(userID, day, size)
-	}
-	return resource, err
+	return s.resourceDomain().IngestUpload(userID, kind, payload.fileName, payload.mimeType, size, width, height, durationMs, bytes.NewReader(payload.data), uploadIdentity...)
 }
 
 func normalizedResourceUploadKey(values []string) *string {
@@ -406,22 +393,14 @@ func (s *Service) persistGeneratedMediaValueMode(userID string, value interface{
 						durationMs = probedDurationMs
 					}
 				}
-				quotaDay := ""
+				var resource *model.Resource
 				if enforceQuota {
-					quotaDay, err = s.reserveGeneratedResourceQuota(userID, int64(len(data)))
-					if err != nil {
-						return nil, err
-					}
+					resource, err = s.resourceDomain().StoreGenerated(userID, kind, "generated."+extensionFromMimeType(mimeType), mimeType, int64(len(data)), width, height, durationMs, bytes.NewReader(data))
+				} else {
+					resource, _, err = s.storeResource(userID, kind, "generated."+extensionFromMimeType(mimeType), mimeType, int64(len(data)), width, height, durationMs, bytes.NewReader(data), nil, s.localResourceStorage)
 				}
-				resource, _, err := s.storeResource(userID, kind, "generated."+extensionFromMimeType(mimeType), mimeType, int64(len(data)), width, height, durationMs, bytes.NewReader(data), nil, s.localResourceStorage)
 				if err != nil {
-					if enforceQuota {
-						s.releaseUserUploadQuota(userID, quotaDay, int64(len(data)))
-					}
 					return nil, fmt.Errorf("生成内容写入资源存储失败：%w", err)
-				}
-				if enforceQuota {
-					s.commitUserUploadQuota(userID, int64(len(data)))
 				}
 				resourceURL := resourceFileURL(resource.ID)
 				for _, key := range []string{"dataUrl", "content", "url", "coverUrl"} {

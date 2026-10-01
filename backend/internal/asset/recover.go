@@ -82,7 +82,7 @@ func (s *Service) recoverExisting(resource *model.Resource, restore ArtifactRest
 	if err := uploadIdentityConflict(resource, artifact.Kind, artifact.MimeType, artifact.Size); err != nil {
 		return nil, err
 	}
-	retryQuota := resource.Status != model.ResourceStatusReady
+	retryQuota := resource.Status == model.ResourceStatusFailed
 	if resource.Status == model.ResourceStatusFailed {
 		claimed, claimErr := s.repo.ClaimFailedResourceUpload(resource.UserID, resource.ID)
 		if claimErr != nil {
@@ -132,23 +132,16 @@ func (s *Service) recoverCreate(userID string, uploadKey *string, restore Artifa
 	}
 	if err := s.repo.CreateResource(&resource); err != nil {
 		if existing, lookupErr := s.resourceForUploadKey(userID, uploadKey); lookupErr == nil && existing != nil {
-			s.finishQuota(userID, day, artifact.Size, false, nil, identity)
+			s.finishQuota(userID, day, artifact.Size, nil, err, identity)
 			return s.recoverExisting(existing, func() (RecoveredArtifact, error) {
 				return artifact, nil
 			})
 		}
-		s.finishQuota(userID, day, artifact.Size, false, err, identity)
+		s.finishQuota(userID, day, artifact.Size, nil, err, identity)
 		return nil, err
 	}
 	written, err := s.recoverWrite(&resource, artifact, false)
-	if err == nil {
-		s.finishQuota(userID, day, artifact.Size, true, nil, identity)
-		return written, nil
-	}
-	if written != nil && s.objectPresent(written) {
-		return written, err
-	}
-	s.finishQuota(userID, day, artifact.Size, false, err, identity)
+	s.finishQuota(userID, day, artifact.Size, written, err, identity)
 	return written, err
 }
 
@@ -196,17 +189,11 @@ func (s *Service) recoverWrite(resource *model.Resource, artifact RecoveredArtif
 		return resource, err
 	}
 	applyRecoveredMetadata(resource, artifact, kind)
-	resource.Status = model.ResourceStatusReady
 	resource.ETag = etag
-	resource.Error = ""
-	if err := s.repo.SaveResource(resource); err != nil {
-		resource.Status = model.ResourceStatusFailed
-		resource.Error = fmt.Sprintf("保存资源就绪状态失败：%v", err)
-		if statusErr := s.repo.SaveResource(resource); statusErr != nil {
-			return resource, errors.Join(err, fmt.Errorf("记录资源失败状态失败：%w", statusErr))
-		}
-		return resource, fmt.Errorf("保存资源就绪状态失败：%w", err)
+	if err := s.finalizeReady(resource); err != nil {
+		return resource, err
 	}
+	s.commitQuota(resource)
 	s.afterReady(resource)
 	return resource, nil
 }
@@ -215,16 +202,9 @@ func (s *Service) promoteReady(resource *model.Resource) (*model.Resource, error
 	if resource == nil {
 		return nil, ResourceMissing()
 	}
-	resource.Status = model.ResourceStatusReady
-	resource.Error = ""
 	resource.UpdatedAt = time.Now()
-	if err := s.repo.SaveResource(resource); err != nil {
-		resource.Status = model.ResourceStatusFailed
-		resource.Error = fmt.Sprintf("保存资源就绪状态失败：%v", err)
-		if statusErr := s.repo.SaveResource(resource); statusErr != nil {
-			return resource, errors.Join(err, fmt.Errorf("记录资源失败状态失败：%w", statusErr))
-		}
-		return resource, fmt.Errorf("保存资源就绪状态失败：%w", err)
+	if err := s.finalizeReady(resource); err != nil {
+		return resource, err
 	}
 	s.commitQuota(resource)
 	s.afterReady(resource)

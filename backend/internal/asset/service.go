@@ -87,16 +87,23 @@ type Service struct {
 	quota        Quota
 	lifecycle    Lifecycle
 	localStorage bool
+	dataDir      string
+	sessionMu    sync.Mutex
+	sessions     map[string]*chunkedUploadSession
 }
 
 func NewService(deps Dependencies) *Service {
-	return &Service{
+	svc := &Service{
 		repo:         deps.Repository,
 		blobs:        deps.Blobs,
 		quota:        deps.Quota,
 		lifecycle:    deps.Lifecycle,
 		localStorage: deps.LocalStorage,
+		dataDir:      strings.TrimSpace(deps.DataDir),
+		sessions:     map[string]*chunkedUploadSession{},
 	}
+	svc.abandonStaleSessions()
+	return svc
 }
 
 func (s *Service) writeSpace() string {
@@ -195,6 +202,7 @@ func (s *Service) upload(userID string, header *multipart.FileHeader, kind strin
 	if header == nil {
 		return nil, MissingUpload()
 	}
+	uploadIdentity = EnsureUploadIdentity(uploadIdentity)
 	uploadKey := NormalizedUploadKey(uploadIdentity)
 	existing, err := s.resourceForUploadKey(userID, uploadKey)
 	if err != nil {
@@ -217,8 +225,8 @@ func (s *Service) upload(userID string, header *multipart.FileHeader, kind strin
 	if err != nil {
 		return nil, err
 	}
-	resource, stored, err := s.Store(userID, kind, header.Filename, mimeType, header.Size, width, height, durationMs, file, uploadKey)
-	s.finishQuota(userID, day, header.Size, stored, err, identity)
+	resource, _, err := s.Store(userID, kind, header.Filename, mimeType, header.Size, width, height, durationMs, file, uploadKey)
+	s.finishQuota(userID, day, header.Size, resource, err, identity)
 	return resource, err
 }
 
@@ -234,6 +242,7 @@ func (s *Service) uploadFile(userID string, fileName string, size int64, kind st
 	if file == nil || size <= 0 {
 		return nil, MissingUpload()
 	}
+	uploadIdentity = EnsureUploadIdentity(uploadIdentity)
 	uploadKey := NormalizedUploadKey(uploadIdentity)
 	existing, err := s.resourceForUploadKey(userID, uploadKey)
 	if err != nil {
@@ -251,8 +260,50 @@ func (s *Service) uploadFile(userID string, fileName string, size int64, kind st
 	if err != nil {
 		return nil, err
 	}
-	resource, stored, err := s.Store(userID, kind, fileName, mimeType, size, width, height, durationMs, file, uploadKey)
-	s.finishQuota(userID, day, size, stored, err, identity)
+	resource, _, err := s.Store(userID, kind, fileName, mimeType, size, width, height, durationMs, file, uploadKey)
+	s.finishQuota(userID, day, size, resource, err, identity)
+	return resource, err
+}
+
+// StoreGenerated persists one independent generated artifact under its own
+// operation identity so concurrent inlines do not share a pending bucket.
+func (s *Service) StoreGenerated(userID string, kind string, fileName string, mimeType string, size int64, width int, height int, durationMs int64, body io.Reader) (*model.Resource, error) {
+	uploadKey := NormalizedUploadKey(EnsureUploadIdentity(nil))
+	identity := quotaIdentity(uploadKey, "")
+	day, err := s.reserveGenerated(userID, size, identity)
+	if err != nil {
+		return nil, err
+	}
+	resource, _, err := s.Store(userID, kind, fileName, mimeType, size, width, height, durationMs, body, uploadKey)
+	s.finishQuota(userID, day, size, resource, err, identity)
+	return resource, err
+}
+
+// IngestUpload stores a downloaded remote file under upload quota (single-file
+// cap) with a stable or minted identity.
+func (s *Service) IngestUpload(userID string, kind string, fileName string, mimeType string, size int64, width int, height int, durationMs int64, body io.Reader, uploadIdentity ...string) (*model.Resource, error) {
+	if body == nil || size <= 0 {
+		return nil, MissingUpload()
+	}
+	uploadIdentity = EnsureUploadIdentity(uploadIdentity)
+	uploadKey := NormalizedUploadKey(uploadIdentity)
+	existing, err := s.resourceForUploadKey(userID, uploadKey)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil && existing.Status == model.ResourceStatusReady {
+		return existing, nil
+	}
+	if existing != nil {
+		return s.Retry(userID, existing, kind, mimeType, size, body)
+	}
+	identity := quotaIdentity(uploadKey, "")
+	day, err := s.reserveUpload(userID, size, identity)
+	if err != nil {
+		return nil, err
+	}
+	resource, _, err := s.Store(userID, kind, fileName, mimeType, size, width, height, durationMs, body, uploadKey)
+	s.finishQuota(userID, day, size, resource, err, identity)
 	return resource, err
 }
 
@@ -300,16 +351,14 @@ func (s *Service) commitQuota(resource *model.Resource) {
 	s.quota.Commit(resource.UserID, resource.Size, quotaIdentity(resource.UploadKey, resource.ID))
 }
 
-func (s *Service) finishQuota(userID string, day string, size int64, stored bool, err error, identity string) {
+func (s *Service) finishQuota(userID string, day string, size int64, resource *model.Resource, err error, identity string) {
 	if s == nil || s.quota == nil {
 		return
 	}
-	if err != nil {
-		s.quota.Release(userID, day, size, identity)
-		return
-	}
-	if stored {
-		s.quota.Commit(userID, size, identity)
+	if resource != nil && s.objectPresent(resource) {
+		if err == nil {
+			s.quota.Commit(userID, size, identity)
+		}
 		return
 	}
 	s.quota.Release(userID, day, size, identity)

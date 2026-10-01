@@ -280,10 +280,12 @@ func (q *limitQuota) ReleaseRetry(string, string, int64, string) {}
 func (q *limitQuota) Commit(string, int64, string)               {}
 
 type ledgerQuota struct {
-	pending  map[string]int64
-	daily    int64
-	commits  int
-	releases int
+	mu            sync.Mutex
+	pending       map[string]int64
+	daily         int64
+	commits       int
+	releases      int
+	retryReserves int
 }
 
 func (q *ledgerQuota) addPending(identity string, size int64) {
@@ -294,6 +296,8 @@ func (q *ledgerQuota) addPending(identity string, size int64) {
 }
 
 func (q *ledgerQuota) pendingOf(identity string) int64 {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	if q.pending == nil {
 		return 0
 	}
@@ -301,6 +305,8 @@ func (q *ledgerQuota) pendingOf(identity string) int64 {
 }
 
 func (q *ledgerQuota) pendingTotal() int64 {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	var total int64
 	for _, size := range q.pending {
 		total += size
@@ -309,6 +315,8 @@ func (q *ledgerQuota) pendingTotal() int64 {
 }
 
 func (q *ledgerQuota) ReserveUpload(_ string, size int64, identity string) (string, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	q.addPending(identity, size)
 	q.daily += size
 	return "day", nil
@@ -317,19 +325,29 @@ func (q *ledgerQuota) ReserveChunked(_ string, size int64, identity string) (str
 	return q.ReserveUpload("", size, identity)
 }
 func (q *ledgerQuota) ReserveRetry(_ string, size int64, _ string) (string, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.retryReserves++
 	q.daily += size
 	return "day", nil
 }
 func (q *ledgerQuota) ReserveGenerated(_ string, size int64, identity string) (string, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	q.addPending(identity, size)
 	q.daily += size
 	return "day", nil
 }
 func (q *ledgerQuota) ReserveGeneratedRetry(_ string, size int64, _ string) (string, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.retryReserves++
 	q.daily += size
 	return "day", nil
 }
 func (q *ledgerQuota) Release(_ string, _ string, size int64, identity string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	if q.pending != nil {
 		remaining := q.pending[identity] - size
 		if remaining > 0 {
@@ -342,11 +360,15 @@ func (q *ledgerQuota) Release(_ string, _ string, size int64, identity string) {
 	q.releases++
 }
 func (q *ledgerQuota) ReleaseRetry(_ string, _ string, size int64, _ string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	q.daily -= size
 	q.releases++
 }
 func (q *ledgerQuota) Commit(_ string, size int64, identity string) {
-	if q.pendingOf(identity) == 0 {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.pending == nil || q.pending[identity] == 0 {
 		return
 	}
 	remaining := q.pending[identity] - size
@@ -602,5 +624,37 @@ func TestRecoverOwnedRestartPromoteKeepsDailyOnce(t *testing.T) {
 	}
 	if quota.daily != size || quota.pendingTotal() != 0 || quota.commits != 0 || quota.releases != 0 {
 		t.Fatalf("restart ledger daily=%d pending=%d commits=%d releases=%d", quota.daily, quota.pendingTotal(), quota.commits, quota.releases)
+	}
+}
+
+func TestRecoverOwnedPendingMissingBytesSkipsRetryReserve(t *testing.T) {
+	_, repo, dataDir := newTestDomain(t)
+	identity := "task-nobody:0"
+	uploadKey := NormalizedUploadKey([]string{identity})
+	size := int64(7)
+	pending := &model.Resource{
+		ID: "resource-gen-nobody", UserID: "user-1", Kind: "image", Status: model.ResourceStatusPending,
+		Provider: "local", ObjectKey: "users/user-1/image/gen-nobody.png", MimeType: "image/png", Size: size,
+		UploadKey: uploadKey,
+	}
+	if err := repo.CreateResource(pending); err != nil {
+		t.Fatal(err)
+	}
+	quota := &ledgerQuota{daily: size}
+	svc := NewService(Dependencies{
+		Repository: NewRepository(repo),
+		Blobs:      NewFileStore(dataDir),
+		Quota:      quota,
+		Lifecycle:  nopLifecycle{},
+		DataDir:    dataDir,
+	})
+	got, err := svc.RecoverOwned("user-1", identity, func() (RecoveredArtifact, error) {
+		return testArtifact("payload"), nil
+	})
+	if err != nil || got == nil || got.Status != model.ResourceStatusReady {
+		t.Fatalf("missing-byte recover = %#v err=%v", got, err)
+	}
+	if quota.daily != size || quota.retryReserves != 0 || quota.releases != 0 {
+		t.Fatalf("missing-byte recover daily=%d retries=%d releases=%d", quota.daily, quota.retryReserves, quota.releases)
 	}
 }

@@ -2,6 +2,7 @@ package asset
 
 import (
 	"net/http"
+	"strconv"
 
 	"infinite-canvas/backend/internal/kernel"
 )
@@ -53,4 +54,28 @@ func StillReferenced() error {
 
 func RemoteImportForbidden() error {
 	return kernel.Forbidden("本地工作区不支持通过 URL 导入素材，请先下载到本机后上传")
+}
+
+func UploadSessionMissing() error {
+	return kernel.NotFound("上传会话不存在或已过期，请重新导入")
+}
+
+func UploadSessionBusy() error {
+	return kernel.RateLimited("同时进行中的上传过多，请稍后重试")
+}
+
+func UploadSessionIncomplete() error {
+	return kernel.BadAuthRequest("上传文件不完整，请重新导入")
+}
+
+func UploadChunkIndexInvalid() error {
+	return kernel.BadAuthRequest("非法的分片序号")
+}
+
+func UploadChunkIncomplete(index int) error {
+	return kernel.BadAuthRequest("分片 " + strconv.Itoa(index) + " 上传不完整，请重试")
+}
+
+func UploadChunkTooLarge(index int) error {
+	return kernel.BadAuthRequest("分片 " + strconv.Itoa(index) + " 超过大小限制")
 }
