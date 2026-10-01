@@ -22,7 +22,7 @@ test('release receipt rejects incomplete, stale, reused and unbalanced evidence'
     for (const mutate of [r => r.cases.pop(), r => r.sourceDigest = 'old', r => r.cases[1].taskId = r.cases[0].taskId, r => r.cases[0].clientSubmitted = false, r => r.cases[0].clientVersion = 'v1.6.16', r => r.pendingCNY = 1, r => r.spentCNY = 51, r => r.spentCNY = 1]) {
       const invalid = structuredClone(valid); mutate(invalid); save(invalid); assert.throws(() => run());
     }
-    for (const version of ['v1.6.18', 'v1.6.19']) {
+    for (const version of ['v1.6.18', 'v1.6.19', 'v1.6.20']) {
       writeFileSync(join(dir, 'VERSION'), `${version}\n`);
       git('add', 'VERSION'); git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', version);
       const waiver = { ...valid, version, sourceDigest: run('--fingerprint').trim(), cases: [], liveTestWaiver: { approvedBy: 'Ender', instruction: '没事 这轮就不用实测了' }, verification: { windowsNativeRegression: 'passed' }, review: { result: 'approved' } };
@@ -33,7 +33,17 @@ test('release receipt rejects incomplete, stale, reused and unbalanced evidence'
         for (const mutate of [r => r.sourceDigest = 'old', r => r.pendingCNY = 1, r => r.liveTestWaiver.approvedBy = 'unknown', r => r.review.result = 'pending', r => r.verification.windowsNativeRegression = 'unverified']) {
           const invalid = structuredClone(waiver); mutate(invalid); saveWaiver(invalid); assert.throws(() => run());
         }
-      } else assert.throws(() => run());
+      } else {
+        assert.throws(() => run());
+        const directRelease = { ...waiver, liveTestWaiver: { approvedBy: 'Ender', instruction: '发布吧' }, verification: { localReleaseGate: 'passed', errorRegression: 'passed' } };
+        saveWaiver(directRelease);
+        if (version === 'v1.6.19') {
+          assert.match(run(), /waived by owner.*live matrix NOT completed/);
+          for (const mutate of [r => r.sourceDigest = 'old', r => r.pendingCNY = 1, r => r.spentCNY = 51, r => r.liveTestWaiver.approvedBy = 'unknown', r => r.review.result = 'pending', r => r.verification.errorRegression = 'unverified', r => r.verification.localReleaseGate = 'unverified', r => r.upgrade.preservedData = false]) {
+            const invalid = structuredClone(directRelease); mutate(invalid); saveWaiver(invalid); assert.throws(() => run());
+          }
+        } else assert.throws(() => run());
+      }
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

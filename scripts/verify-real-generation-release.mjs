@@ -23,6 +23,13 @@ if (version === 'v1.6.18' && receipt.liveTestWaiver?.approvedBy === 'Ender' && r
   console.log(`Real generation release gate waived by owner: ${version}; live matrix NOT completed; CNY ${receipt.spentCNY}/${receipt.budgetCNY}`);
   process.exit(0);
 }
+// Ender selected direct publication after being offered the v1.6.19 matrix
+// waiver. This exception does not carry forward to any later version.
+if (version === 'v1.6.19' && receipt.liveTestWaiver?.approvedBy === 'Ender' && receipt.liveTestWaiver?.instruction === '发布吧') {
+  if (receipt.verification?.localReleaseGate !== 'passed' || receipt.verification?.errorRegression !== 'passed' || receipt.review?.result !== 'approved' || !receipt.upgrade?.preservedData) fail('waiver requires reviewed error regression and upgrade evidence');
+  console.log(`Real generation release gate waived by owner: ${version}; live matrix NOT completed; CNY ${receipt.spentCNY}/${receipt.budgetCNY}`);
+  process.exit(0);
+}
 if (!Array.isArray(receipt.cases) || receipt.cases.length !== 12) fail('expected exactly twelve successful cases');
 const paths = ['text-image', 'image-image', 'image-video', 'text-video', 'video-video', 'multi-video'];
 const taskIDs = new Set();
