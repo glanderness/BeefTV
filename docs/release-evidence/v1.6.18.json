@@ -1,7 +1,7 @@
 {
   "version": "v1.6.18",
-  "sourceCommit": "2d6dadf6dfeb587b97d3f91adc8d248f496b1b37",
-  "sourceDigest": "a756769cb4732b76d4620d308306eb0bad734e1eb7c222d1fbae5972e878c50a",
+  "sourceCommit": "30d742bd77412c6fa9451d5b1eea512584570c57",
+  "sourceDigest": "83e7957cb223ef83056f5df349b4c95820003f2a2c0c37c49d6aa7922f1e9bc6",
   "budgetCNY": 50,
   "spentCNY": 24.254388,
   "pendingCNY": 0,
@@ -61,6 +61,7 @@
     "webErrorTests": "61 passed, 736 assertions",
     "localReleaseGate": "passed",
     "releaseWaiverTests": "passed; stale source, pending charges, missing review and later versions rejected",
-    "realGenerationMatrix": "WAIVED, not completed"
+    "realGenerationMatrix": "WAIVED, not completed",
+    "integration": "Main includes independently merged PR #54 (dark workspace palette); all four CI checks passed; palette browser tests rerun: 2 pass, 8 assertions. Video recovery sources unchanged from reviewed candidate."
   }
 }
