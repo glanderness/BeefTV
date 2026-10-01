@@ -42,8 +42,8 @@ export function moveAssetsToFolder(assetIds: string[], folderId = "") {
     return http.patch<{ assetIds: string[]; folderId: string }>("/assets/folder", { assetIds, folderId });
 }
 
-export function getWorkspaceAsset(id: string) {
-    return http.get<{ asset: Asset }>(`/assets/${encodeURIComponent(id)}`);
+export function getWorkspaceAsset(id: string, signal?: AbortSignal) {
+    return http.get<{ asset: Asset }>(`/assets/${encodeURIComponent(id)}`, { signal });
 }
 
 export type CanvasHistoryEntry = {

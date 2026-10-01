@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -12,6 +13,8 @@ import (
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/operations"
 	"infinite-canvas/backend/internal/repository"
+	localtask "infinite-canvas/backend/internal/task"
+	"infinite-canvas/backend/internal/taskbinding"
 )
 
 type (
@@ -367,14 +370,15 @@ func (s *Service) ConnectUserCanvasNodesWithTx(tx *gorm.DB, userID, canvasID, fr
 // BindDomain 把当前事务绑成操作层 Domain：画布读写走同一条连接，任务/模型快照仍由组合根提供。
 func (s *Service) BindDomain(tx *gorm.DB) operations.Domain {
 	if tx == nil {
-		return &operationSession{canvas: s.canvasDomain(), service: s}
+		return &operationSession{canvas: s.canvasDomain(), service: s, repo: s.repo}
 	}
-	return &operationSession{canvas: s.canvasDomainWithTx(tx), service: s}
+	return &operationSession{canvas: s.canvasDomainWithTx(tx), service: s, repo: s.repo.WithTx(tx)}
 }
 
 type operationSession struct {
 	canvas  *canvas.Service
 	service *Service
+	repo    *repository.Repository
 }
 
 func (s *operationSession) UserCanvasProject(userID string, id string) (json.RawMessage, error) {
@@ -415,6 +419,76 @@ func (s *operationSession) ConnectUserCanvasNodesAtRevision(userID string, canva
 
 func (s *operationSession) CommitUserCanvasDocument(userID string, canvasID string, expectedRevision int64, document json.RawMessage) (canvas.UserDataSummary, json.RawMessage, error) {
 	return s.canvas.CommitUserCanvasDocument(userID, canvasID, expectedRevision, document)
+}
+
+func (s *operationSession) WorkspaceTask(userID string, id string) (*model.Task, error) {
+	if s.repo == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	task, err := s.repo.TaskForUser(userID, id)
+	if err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
+func (s *operationSession) GenerationOutputs(taskID string) ([]localtask.CanonicalOutput, error) {
+	if s.repo == nil {
+		return nil, nil
+	}
+	results, err := s.repo.GenerationOutputResults(taskID)
+	if err != nil {
+		return nil, err
+	}
+	outputs, err := localtask.DecodeOutputResults(results)
+	if err != nil {
+		return nil, &taskbinding.Error{Status: 412, Reason: localtask.MaterializeErrorDeliveryUnreadable, Message: "任务产物无法读取，不能当作已就绪结果绑定"}
+	}
+	return outputs, nil
+}
+
+func (s *operationSession) OwnedReadyResource(userID, resourceID string) (*model.Resource, error) {
+	resourceID = strings.TrimSpace(resourceID)
+	if s.repo == nil || resourceID == "" {
+		return nil, &taskbinding.Error{Status: 412, Reason: localtask.MaterializeErrorResourceMissing, Message: "任务资源不存在"}
+	}
+	resource, err := s.repo.ResourceForUser(userID, resourceID)
+	if err == nil {
+		if resource.Status != model.ResourceStatusReady {
+			return nil, &taskbinding.Error{Status: 412, Reason: localtask.MaterializeErrorResourceNotReady, Message: "任务资源未就绪"}
+		}
+		return resource, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if _, lookupErr := s.repo.Resource(resourceID); lookupErr == nil {
+		return nil, &taskbinding.Error{Status: 403, Reason: localtask.MaterializeErrorResourceForeign, Message: "任务资源不属于当前用户"}
+	}
+	return nil, &taskbinding.Error{Status: 412, Reason: localtask.MaterializeErrorResourceMissing, Message: "任务资源不存在"}
+}
+
+func (s *operationSession) OwnedAsset(userID, assetID string) (*model.Asset, error) {
+	assetID = strings.TrimSpace(assetID)
+	if s.repo == nil || assetID == "" {
+		return nil, &taskbinding.Error{Status: 412, Reason: "output_not_ready", Message: "任务素材尚未就绪"}
+	}
+	asset, err := s.repo.AssetForUser(userID, assetID)
+	if err == nil {
+		return asset, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	existing, lookupErr := s.repo.Asset(assetID)
+	if lookupErr == nil && existing != nil && existing.UserID != userID {
+		return nil, &taskbinding.Error{Status: 403, Reason: localtask.MaterializeErrorAssetForeign, Message: "任务素材不属于当前用户"}
+	}
+	return nil, &taskbinding.Error{Status: 412, Reason: "output_not_ready", Message: "任务素材尚未就绪"}
+}
+
+func (s *operationSession) BindExistingCanvasNode(userID string, patch canvas.TaskOutputBind) (canvas.TaskOutputBindResult, error) {
+	return s.canvas.BindTaskOutputToExistingNode(userID, patch)
 }
 
 var (

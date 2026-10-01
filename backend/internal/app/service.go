@@ -17,6 +17,7 @@ import (
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
+	"infinite-canvas/backend/internal/operations"
 	"infinite-canvas/backend/internal/platform"
 	"infinite-canvas/backend/internal/plugins"
 	localproject "infinite-canvas/backend/internal/project"
@@ -72,6 +73,10 @@ type Service struct {
 	generationArtifactLocks  map[string]*generationArtifactLock
 	tasks                    *localtask.Service
 	tasksOnce                sync.Once
+	workspaceOps             *operations.Registry
+	workspaceOpsMu           sync.Mutex
+	bindAfterID              string
+	bindCursorMu             sync.Mutex
 }
 
 const taskWorkerConcurrency = 3

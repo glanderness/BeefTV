@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"infinite-canvas/backend/internal/kernel"
+	"infinite-canvas/backend/internal/taskbinding"
 )
 
 func decodeParams(params json.RawMessage, target any) error {
@@ -86,20 +87,42 @@ func mapDomainError(err error) error {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return NotFound("not_found", "资源不存在")
 	}
+	var bindErr *taskbinding.Error
+	if errors.As(err, &bindErr) {
+		return mapBindError(bindErr.Status, bindErr.Reason, bindErr.Message)
+	}
 	var appErr *kernel.AppError
 	if errors.As(err, &appErr) {
+		reason := string(appErr.Reason)
 		switch appErr.Status {
 		case http.StatusNotFound:
-			return NotFound("not_found", appErr.Message)
+			if reason == "" || reason == string(kernel.ReasonNotFound) {
+				reason = "not_found"
+			}
+			return NotFound(reason, appErr.Message)
 		case http.StatusConflict:
-			return Conflict("stale_revision", appErr.Message, nil)
+			if reason == "" || reason == string(kernel.ReasonConflict) {
+				reason = "stale_revision"
+			}
+			return Conflict(reason, appErr.Message, nil)
 		case http.StatusPreconditionFailed:
-			return PreconditionFailed("precondition_failed", appErr.Message, nil)
+			if reason == "" {
+				reason = "precondition_failed"
+			}
+			return PreconditionFailed(reason, appErr.Message, nil)
+		case http.StatusForbidden:
+			if reason == "" {
+				reason = "permission_denied"
+			}
+			return PermissionDenied(reason, appErr.Message)
 		case http.StatusBadRequest:
 			if appErr.Reason == kernel.ReasonUnsupportedField {
 				return InvalidArg(string(kernel.ReasonUnsupportedField), appErr.Message)
 			}
-			return InvalidArg("invalid_request", appErr.Message)
+			if reason == "" {
+				reason = "invalid_request"
+			}
+			return InvalidArg(reason, appErr.Message)
 		}
 	}
 	var conflicter interface{ IsConflict() bool }
@@ -107,4 +130,24 @@ func mapDomainError(err error) error {
 		return Conflict("stale_write", "写入冲突，已停止覆盖", nil)
 	}
 	return AsError(err)
+}
+
+func mapBindError(status int, reason, message string) error {
+	if reason == "" {
+		reason = "bind_failed"
+	}
+	switch status {
+	case http.StatusNotFound:
+		return NotFound(reason, message)
+	case http.StatusConflict:
+		return Conflict(reason, message, nil)
+	case http.StatusPreconditionFailed:
+		return PreconditionFailed(reason, message, nil)
+	case http.StatusForbidden:
+		return PermissionDenied(reason, message)
+	case http.StatusBadRequest:
+		return InvalidArg(reason, message)
+	default:
+		return newError(CodeInternal, reason, message, nil)
+	}
 }

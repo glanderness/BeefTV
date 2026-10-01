@@ -1,9 +1,11 @@
 import { canvasNodeToAsset, declaredCanvasNodeAssetCategory, findCanvasNodeAsset, type CanvasAssetSource } from "@/lib/canvas/canvas-node-asset";
 import { canvasVideoAssetPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { readImageMeta } from "@/lib/image-utils";
+import { parseAssetRecord } from "@/lib/asset-record";
 import { parseBackendGenerationResult, type BackendGenerationResult } from "@/services/api/generation-task";
 import { ApiError, http } from "@/services/api/request";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
+import { getWorkspaceAsset } from "@/services/api/workspace-data";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import type { GenerationTask, GenerationTaskOutput } from "@/services/api/task-center";
 import { getMediaBlob, resolveMediaUrl, setMediaBlob } from "@/services/file-storage";
@@ -168,7 +170,7 @@ function generationTaskResult(task: GenerationTask): BackendGenerationResult {
 
 export function projectGenerationTaskResult(task: GenerationTask, result?: BackendGenerationResult): GenerationTask {
     const projectedResult = result ?? generationTaskResult(task);
-    const outputs: GenerationTaskOutput[] = projectedResult.images?.length
+    const projectedOutputs: GenerationTaskOutput[] = projectedResult.images?.length
         ? projectedResult.images.map((image, outputIndex) => ({
               outputIndex,
               mediaType: "image" as const,
@@ -191,6 +193,16 @@ export function projectGenerationTaskResult(task: GenerationTask, result?: Backe
                   },
               ]
             : (task.outputs?.map((output) => ({ ...output })) ?? []);
+    const delivered = new Map((task.outputs || []).map((output) => [output.outputIndex, output]));
+    const outputs = projectedOutputs.map((output) => {
+        const existing = delivered.get(output.outputIndex);
+        if (!existing?.materializedAssetId) return output;
+        return {
+            ...output,
+            materializedAssetId: existing.materializedAssetId,
+            materializationErrorCode: existing.materializationErrorCode,
+        };
+    });
 
     return {
         ...task,
@@ -198,6 +210,55 @@ export function projectGenerationTaskResult(task: GenerationTask, result?: Backe
         outputs,
         ...(task.status === "succeeded" && outputs.length && !outputs.every((output) => output.materializedAssetId) ? { resultState: "PENDING_MATERIALIZATION" as const } : {}),
     };
+}
+
+export function hasBackendDeliveredGenerationOutputs(task: Pick<GenerationTask, "outputs">) {
+    return (task.outputs || []).some((output) => Boolean(output.materializedAssetId));
+}
+
+export type HydrateBackendGeneratedAssetDependencies = {
+    getAsset?: (id: string, signal?: AbortSignal) => Promise<{ asset: Asset }>;
+    readAssets?: () => Asset[];
+    writeAsset?: (asset: Asset) => void;
+};
+
+const defaultHydrateBackendGeneratedAssetDependencies: HydrateBackendGeneratedAssetDependencies = {
+    getAsset: (id, signal) => getWorkspaceAsset(id, signal).then((payload) => ({ asset: payload.asset })),
+    readAssets: () => useAssetStore.getState().assets,
+    writeAsset: (asset) => {
+        useAssetStore.setState((state) => (state.assets.some((item) => item.id === asset.id) ? state : { assets: [asset, ...state.assets] }));
+    },
+};
+
+export async function hydrateBackendGeneratedAsset(
+    assetId: string,
+    signal?: AbortSignal,
+    dependencies: HydrateBackendGeneratedAssetDependencies = defaultHydrateBackendGeneratedAssetDependencies,
+) {
+    throwIfAborted(signal);
+    const id = assetId.trim();
+    if (!id) throw new Error("任务产物尚未由后端交付");
+    const getAsset = dependencies.getAsset ?? defaultHydrateBackendGeneratedAssetDependencies.getAsset!;
+    const readAssets = dependencies.readAssets ?? defaultHydrateBackendGeneratedAssetDependencies.readAssets!;
+    const writeAsset = dependencies.writeAsset ?? defaultHydrateBackendGeneratedAssetDependencies.writeAsset!;
+    const existing = readAssets().find((asset) => asset.id === id);
+    if (existing) return existing;
+    const payload = await getAsset(id, signal);
+    throwIfAborted(signal);
+    const asset = parseAssetRecord(payload.asset);
+    writeAsset(asset);
+    return asset;
+}
+
+export async function hydrateBackendGeneratedOutputs(
+    task: Pick<GenerationTask, "outputs">,
+    signal?: AbortSignal,
+    dependencies: HydrateBackendGeneratedAssetDependencies = defaultHydrateBackendGeneratedAssetDependencies,
+) {
+    for (const output of task.outputs || []) {
+        if (!output.materializedAssetId) continue;
+        await hydrateBackendGeneratedAsset(output.materializedAssetId, signal, dependencies);
+    }
 }
 
 async function storedGenerationImage(result: NonNullable<BackendGenerationResult["images"]>[number], effectKey: string, scope: string, signal?: AbortSignal) {
@@ -435,6 +496,11 @@ function generationTaskMaterializer(task: GenerationTask) {
 }
 
 export async function materializeGenerationTaskAssets(task: GenerationTask, signal?: AbortSignal): Promise<GenerationTask> {
+    if (hasBackendDeliveredGenerationOutputs(task)) {
+        await hydrateBackendGeneratedOutputs(task, signal);
+        throwIfAborted(signal);
+        return task;
+    }
     const materialized = await generationTaskMaterializer(task).materialize(projectGenerationTaskResult(task), signal);
     await registerMaterializedTaskAssets(materialized, useAssetStore.getState().assets);
     throwIfAborted(signal);
@@ -524,7 +590,12 @@ export async function consumeGenerationTaskMessage(
     if (!dependencies.managed) {
         return runGenerationConsumer(dependencies.signal, (signal) => consumeGenerationTaskMessage(task, messageId, consumer, { ...dependencies, signal, managed: true }));
     }
-    const materialized = await (dependencies.materialize ?? materializeGenerationTaskAssets)(task, dependencies.signal);
+    const materialized = hasBackendDeliveredGenerationOutputs(task)
+        ? await (async () => {
+              await hydrateBackendGeneratedOutputs(task, dependencies.signal);
+              return task;
+          })()
+        : await (dependencies.materialize ?? materializeGenerationTaskAssets)(task, dependencies.signal);
     const resultUrls = (dependencies.materializedUrls ?? generationTaskMaterializedUrls)(materialized);
     const attach = dependencies.attachMessage ?? attachGenerationTaskMessage;
     const outputs = materialized.outputs?.filter((output) => output.materializedAssetId) ?? [];

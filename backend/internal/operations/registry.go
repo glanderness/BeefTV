@@ -26,14 +26,18 @@ type Context struct {
 // Handler 实现一个操作；返回值必须是可 JSON 序列化的业务结果。
 type Handler func(ctx *Context, params json.RawMessage) (any, error)
 
+// ReplayProjection 在幂等回放后补上当前投影，不重新执行写入。
+type ReplayProjection func(ctx *Context, params json.RawMessage, stored any) (any, error)
+
 // Op 是操作的唯一定义，手工 UI、CLI、MCP 与内置助手都由它派生。
 type Op struct {
-	ID       string
-	Summary  string
-	ReadOnly bool
-	Scope    Scope
-	Params   json.RawMessage
-	Handler  Handler
+	ID            string
+	Summary       string
+	ReadOnly      bool
+	Scope         Scope
+	Params        json.RawMessage
+	Handler       Handler
+	ProjectReplay ReplayProjection
 }
 
 // Descriptor 是给客户端做能力发现用的稳定描述。
@@ -180,6 +184,13 @@ func (r *Registry) Execute(req Request) (Result, error) {
 	if !op.ReadOnly && opID == "" {
 		return Result{}, InvalidArg("missing_op_id", "写操作必须提供 opId 作为幂等键")
 	}
+	if op.ID == "canvas.task.bind" {
+		if key := bindEffectKey(params); key == "" {
+			return Result{}, InvalidArg("invalid_params", "canvasId、taskId、nodeId 必填")
+		} else if opID != key {
+			return Result{}, InvalidArg("effect_identity_mismatch", "写操作 opId 必须是 attach-node:任务:节点:输出序号")
+		}
+	}
 	if op.ReadOnly && strings.TrimSpace(req.OpID) != "" {
 		return Result{}, InvalidArg("unexpected_op_id", "只读操作不支持 opId")
 	}
@@ -224,6 +235,24 @@ func (r *Registry) Execute(req Request) (Result, error) {
 	if len(outcome.Result) > 0 {
 		if err := json.Unmarshal(outcome.Result, &decoded); err != nil {
 			return Result{}, AsError(err)
+		}
+	}
+	if outcome.Replayed && op.ProjectReplay != nil {
+		projected, projErr := r.store.RunDomain(runCtx, RunRequest{UserID: req.UserID}, r.binder, func(domain Domain) ([]byte, error) {
+			value, replayErr := op.ProjectReplay(&Context{Context: runCtx, UserID: req.UserID, Caller: caller, Domain: domain}, params, decoded)
+			if replayErr != nil {
+				return nil, replayErr
+			}
+			encoded, encErr := json.Marshal(value)
+			if encErr != nil {
+				return nil, AsError(encErr)
+			}
+			return encoded, nil
+		})
+		if projErr == nil && len(projected.Result) > 0 {
+			if err := json.Unmarshal(projected.Result, &decoded); err != nil {
+				return Result{}, AsError(err)
+			}
 		}
 	}
 	return Result{

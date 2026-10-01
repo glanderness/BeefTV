@@ -1,11 +1,16 @@
 import type { Dispatch, SetStateAction } from "react";
 
-import { applyMaterializedGenerationTaskResultToNodes } from "@/lib/canvas/canvas-generation-task-sync";
 import { parseCanvasStorageDocument, rebaseCanvasProjects, serializeCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
+import { bindCanvasTaskOutput, type CanvasTaskBindReceipt } from "@/services/api/operations";
 import type { GenerationTask, GenerationTaskOutput } from "@/services/api/task-center";
 import { generationEffectApplied } from "@/services/generation-consumer-dedupe";
+import { attachNodeEffectKey } from "@/services/generation-task-materializer";
+import { persistCanvasDocument } from "@/services/local-workspace-repository";
+import { loadCanvasOperationJournal, recordConfirmedCanvasCommit } from "@/services/canvas-operation-journal";
+import { hydrateBackendGeneratedOutputs } from "@/services/project-asset-sync";
+import { useAssetStore } from "@/stores/use-asset-store";
 import {
     CANVAS_STORE_KEY,
     canvasStoreStorageRevision,
@@ -113,19 +118,180 @@ export async function applyCanvasGenerationTaskNodeEffect(input: {
     nodesRef: { current: CanvasNodeData[] };
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
 }) {
-    throwIfAborted(input.signal);
-    const previousNodes = input.nodesRef.current;
-    const applied = await applyMaterializedGenerationTaskResultToNodes(previousNodes, input.task, input.output, input.effectKey, input.nodeId);
-    if (!applied.updated || !applied.node) throw new Error("画布中找不到对应任务节点");
-    const persistedProject = await persistCanvasGenerationEffect({
-        projectId: input.projectId,
-        effectKey: input.effectKey,
-        previousNodes,
-        nodes: applied.nodes,
+    await bindBackendCanvasGenerationResult({
+        canvasId: input.projectId,
+        nodeId: input.nodeId,
+        task: input.task,
+        outputIndex: input.output.outputIndex,
         signal: input.signal,
+        isCurrent: () => !input.signal?.aborted,
+        nodesRef: input.nodesRef,
+        setNodes: input.setNodes,
     });
-    input.nodesRef.current = persistedProject.nodes;
-    input.setNodes(persistedProject.nodes);
+}
+
+export type BindBackendCanvasGenerationRuntime = {
+    hydrateOutputs?: typeof hydrateBackendGeneratedOutputs;
+    persistDocument?: typeof persistCanvasDocument;
+    bindOutput?: typeof bindCanvasTaskOutput;
+    loadJournal?: typeof loadCanvasOperationJournal;
+    recordConfirmed?: typeof recordConfirmedCanvasCommit;
+    activeScope?: () => string;
+};
+
+export async function bindBackendCanvasGenerationResult(input: {
+    canvasId: string;
+    nodeId: string;
+    task: GenerationTask;
+    outputIndex?: number;
+    signal?: AbortSignal;
+    isCurrent: () => boolean;
+    nodesRef: { current: CanvasNodeData[] };
+    setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
+    runtime?: BindBackendCanvasGenerationRuntime;
+}) {
+    if (input.task.status !== "succeeded") throw new Error("只有成功的任务才能绑定到画布");
+    const runtime = input.runtime ?? {};
+    const activeScope = runtime.activeScope ?? getActiveUserScope;
+    const capturedScope = activeScope();
+    const capturedCanvasId = input.canvasId;
+    const sameUser = () => activeScope() === capturedScope;
+    const outputIndex = input.outputIndex ?? 0;
+    const hydrateOutputs = runtime.hydrateOutputs ?? hydrateBackendGeneratedOutputs;
+    const persistDocument = runtime.persistDocument ?? persistCanvasDocument;
+    const bindOutput = runtime.bindOutput ?? bindCanvasTaskOutput;
+
+    if (sameUser()) {
+        await hydrateOutputs(input.task, undefined, {
+            writeAsset: (asset) => {
+                if (!sameUser()) return;
+                useAssetStore.setState((state) => (state.assets.some((item) => item.id === asset.id) ? state : { assets: [asset, ...state.assets] }));
+            },
+        });
+    }
+    if (!sameUser()) return;
+
+    const live = useCanvasStore.getState().projects.find((project) => project.id === capturedCanvasId);
+    if (live) {
+        try {
+            await persistDocument(capturedCanvasId, { nodes: live.nodes, connections: live.connections });
+        } catch (error) {
+            if (error instanceof Error && error.name === "AbortError") throw error;
+            if (!sameUser()) return;
+        }
+    }
+    if (!sameUser()) return;
+
+    const response = await bindOutput({
+        operationId: attachNodeEffectKey(input.task.id, input.nodeId, outputIndex),
+        canvasId: capturedCanvasId,
+        taskId: input.task.id,
+        nodeId: input.nodeId,
+        outputIndex,
+    });
+    if (!sameUser()) return;
+
+    const receipt = response.result ?? {};
+    const revision = response.revision || receipt.revision;
+    overlayBoundGenerationOnLiveCanvas({
+        canvasId: capturedCanvasId,
+        nodeId: input.nodeId,
+        receipt,
+        revision,
+        updateLive: sameUser() && input.isCurrent(),
+        nodesRef: input.nodesRef,
+        setNodes: input.setNodes,
+    });
+    if (!sameUser()) return;
+    await recordConfirmedBindProjection(capturedCanvasId, input.nodeId, receipt, revision, capturedScope, runtime);
+}
+
+function overlayBoundGenerationOnLiveCanvas(input: {
+    canvasId: string;
+    nodeId: string;
+    receipt: CanvasTaskBindReceipt;
+    revision?: number;
+    updateLive: boolean;
+    nodesRef: { current: CanvasNodeData[] };
+    setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
+}) {
+    const overlayNodes = (nodes: CanvasNodeData[]) => nodes.map((node) => (node.id === input.nodeId ? overlayGenerationReceiptOnNode(node, input.receipt) : node));
+    if (input.updateLive) {
+        const nextNodes = overlayNodes(input.nodesRef.current);
+        input.nodesRef.current = nextNodes;
+        input.setNodes(nextNodes);
+    }
+    useCanvasStore.setState((state) => ({
+        projects: state.projects.map((project) => {
+            if (project.id !== input.canvasId) return project;
+            return {
+                ...project,
+                ...(input.revision != null ? { revision: input.revision } : {}),
+                nodes: overlayNodes(project.nodes),
+            };
+        }),
+    }));
+}
+
+function overlayGenerationReceiptOnNode(node: CanvasNodeData, receipt: CanvasTaskBindReceipt): CanvasNodeData {
+    const serverMeta = receipt.node?.metadata && typeof receipt.node.metadata === "object" ? receipt.node.metadata : {};
+    const metadata: NonNullable<CanvasNodeData["metadata"]> = { ...node.metadata };
+    if (typeof receipt.taskId === "string" && receipt.taskId) metadata.taskId = receipt.taskId;
+    if (typeof receipt.content === "string" && receipt.content) metadata.content = receipt.content;
+    else if (typeof serverMeta.content === "string" && serverMeta.content) metadata.content = serverMeta.content;
+    if (typeof receipt.storageKey === "string" && receipt.storageKey) metadata.storageKey = receipt.storageKey;
+    else if (typeof serverMeta.storageKey === "string" && serverMeta.storageKey) metadata.storageKey = serverMeta.storageKey;
+    if (typeof receipt.assetId === "string" && receipt.assetId) metadata.assetId = receipt.assetId;
+    else if (typeof serverMeta.assetId === "string" && serverMeta.assetId) metadata.assetId = serverMeta.assetId;
+    if (typeof serverMeta.mimeType === "string") metadata.mimeType = serverMeta.mimeType;
+    if (typeof serverMeta.bytes === "number") metadata.bytes = serverMeta.bytes;
+    if (typeof serverMeta.naturalWidth === "number") metadata.naturalWidth = serverMeta.naturalWidth;
+    if (typeof serverMeta.naturalHeight === "number") metadata.naturalHeight = serverMeta.naturalHeight;
+    if (typeof serverMeta.durationMs === "number") metadata.durationMs = serverMeta.durationMs;
+    if (typeof serverMeta.nodeRole === "string") metadata.nodeRole = serverMeta.nodeRole as NonNullable<CanvasNodeData["metadata"]>["nodeRole"];
+    if (typeof serverMeta.resultOrigin === "string") metadata.resultOrigin = serverMeta.resultOrigin as NonNullable<CanvasNodeData["metadata"]>["resultOrigin"];
+    if (serverMeta.storyboard && typeof serverMeta.storyboard === "object") {
+        const liveBoard = node.metadata?.storyboard;
+        const serverBoard = serverMeta.storyboard as NonNullable<CanvasNodeData["metadata"]>["storyboard"];
+        metadata.storyboard = {
+            ...serverBoard,
+            rows: serverBoard?.rows ?? liveBoard?.rows ?? [],
+            visibleColumns: liveBoard?.visibleColumns ?? serverBoard?.visibleColumns ?? [],
+            referenceNodeIds: liveBoard?.referenceNodeIds ?? serverBoard?.referenceNodeIds ?? [],
+        };
+    }
+    metadata.status = "success";
+    metadata.taskStatus = "succeeded";
+    metadata.taskProgress = 100;
+    metadata.errorDetails = undefined;
+    metadata.generationErrorCode = undefined;
+    metadata.resourceReloadAvailable = undefined;
+    metadata.failedPromptFingerprint = undefined;
+    metadata.failedInputFingerprint = undefined;
+    if (receipt.effectKey) {
+        metadata.generationEffectKeys = Array.from(new Set([...(node.metadata?.generationEffectKeys || []), receipt.effectKey]));
+    }
+    return { ...node, metadata };
+}
+
+async function recordConfirmedBindProjection(
+    canvasId: string,
+    nodeId: string,
+    receipt: CanvasTaskBindReceipt,
+    revision: number | undefined,
+    scope: string,
+    runtime?: BindBackendCanvasGenerationRuntime,
+) {
+    const loadJournal = runtime?.loadJournal ?? loadCanvasOperationJournal;
+    const recordConfirmed = runtime?.recordConfirmed ?? recordConfirmedCanvasCommit;
+    const journal = await loadJournal(canvasId, scope);
+    if (!journal.confirmedSnapshot) return;
+    const confirmed = {
+        ...journal.confirmedSnapshot,
+        ...(revision != null ? { revision } : {}),
+        nodes: journal.confirmedSnapshot.nodes.map((node) => (node.id === nodeId ? overlayGenerationReceiptOnNode(node, receipt) : node)),
+    };
+    await recordConfirmed(confirmed, scope);
 }
 
 export async function persistCanvasOperationContinuationEffect(input: {

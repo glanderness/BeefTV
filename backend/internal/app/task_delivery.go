@@ -22,11 +22,19 @@ import (
 const generationDeliveryRecoveryInterval = 5 * time.Second
 
 func (s *Service) DeliverSucceededTask(task model.Task) error {
-	return s.generationDeliverer().Deliver(task)
+	err := s.generationDeliverer().Deliver(task)
+	if bindErr := s.recoverCanvasTaskBindings(task); bindErr != nil {
+		log.Printf("generation canvas bind deferred: task_id=%s error=%v", task.ID, bindErr)
+	}
+	return err
 }
 
 func (s *Service) RecoverIncompleteGenerationDeliveries(limit int) error {
-	return s.generationDeliverer().RecoverIncomplete(limit)
+	err := s.generationDeliverer().RecoverIncomplete(limit)
+	if bindErr := s.recoverPendingCanvasBindings(limit); bindErr != nil {
+		log.Printf("generation canvas bind recovery paused: worker_id=%s error=%v", s.workerID, bindErr)
+	}
+	return err
 }
 
 func (s *Service) CanvasBindingIntents(task model.Task) []localtask.CanvasBindingIntent {

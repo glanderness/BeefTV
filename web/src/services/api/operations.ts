@@ -18,8 +18,8 @@ export type CanvasDocumentCommitResult = {
     updatedAt?: string;
 };
 
-export async function executeWorkspaceOperation<T>(op: string, body: { opId?: string; params: unknown }) {
-    return http.post<WorkspaceOperationResult<T>>(`/ops/${encodeURIComponent(op)}`, body);
+export async function executeWorkspaceOperation<T>(op: string, body: { opId?: string; params: unknown }, signal?: AbortSignal) {
+    return http.post<WorkspaceOperationResult<T>>(`/ops/${encodeURIComponent(op)}`, body, { signal });
 }
 
 export async function commitCanvasDocument(input: {
@@ -36,4 +36,49 @@ export async function commitCanvasDocument(input: {
             document: input.document,
         },
     });
+}
+
+export type CanvasTaskBindReceipt = {
+    applied?: boolean;
+    canvasId?: string;
+    nodeId?: string;
+    taskId?: string;
+    outputIndex?: number;
+    effectKey?: string;
+    mediaType?: string;
+    assetId?: string;
+    resourceId?: string;
+    storageKey?: string;
+    content?: string;
+    revision?: number;
+    alreadyBound?: boolean;
+    node?: {
+        id?: string;
+        title?: string;
+        position?: { x?: number; y?: number };
+        metadata?: Record<string, unknown>;
+    };
+};
+
+export async function bindCanvasTaskOutput(input: {
+    operationId: string;
+    canvasId: string;
+    taskId: string;
+    nodeId: string;
+    outputIndex?: number;
+    signal?: AbortSignal;
+}) {
+    return executeWorkspaceOperation<CanvasTaskBindReceipt>(
+        "canvas.task.bind",
+        {
+            opId: input.operationId,
+            params: {
+                canvasId: input.canvasId,
+                taskId: input.taskId,
+                nodeId: input.nodeId,
+                outputIndex: input.outputIndex ?? 0,
+            },
+        },
+        input.signal,
+    );
 }
