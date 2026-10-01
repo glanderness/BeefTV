@@ -5,12 +5,16 @@ import (
 	"strings"
 	"testing"
 
+	"infinite-canvas/backend/internal/depthcapture"
 	"infinite-canvas/backend/internal/model"
 )
 
 func TestCreateDepthCaptureTaskQueuesFixedStandardProfile(t *testing.T) {
 	svc, db := newTimelineTaskTestService(t)
 	seedResource(t, db, "res-depth-video", "usr-depth", "video/mp4")
+	if err := db.Create(&model.CanvasProject{ID: "prj-depth", UserID: "usr-depth", Title: "depth"}).Error; err != nil {
+		t.Fatalf("seed canvas: %v", err)
+	}
 
 	task, err := svc.CreateDepthCaptureTask("usr-depth", DepthCaptureCreateRequest{ProjectID: "prj-depth", ResourceID: "res-depth-video"})
 	if err != nil {
@@ -26,11 +30,11 @@ func TestCreateDepthCaptureTaskQueuesFixedStandardProfile(t *testing.T) {
 	if err := db.First(&stored, "id = ?", task.ID).Error; err != nil {
 		t.Fatalf("load stored task: %v", err)
 	}
-	var input depthCaptureInput
+	var input depthcapture.Input
 	if err := json.Unmarshal([]byte(stored.InputJSON), &input); err != nil {
 		t.Fatalf("decode input: %v", err)
 	}
-	if input.ResourceID != "res-depth-video" || input.Profile != depthStandardProfile {
+	if input.ResourceID != "res-depth-video" || input.Profile != depthcapture.StandardProfile {
 		t.Fatalf("input = %#v", input)
 	}
 }

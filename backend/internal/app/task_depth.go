@@ -1,26 +1,16 @@
 package app
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
+	"infinite-canvas/backend/internal/depthcapture"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
 
-const depthStandardProfile = "vda-small-mps-standard-v1"
-
-type DepthCaptureCreateRequest struct {
-	ProjectID  string `json:"projectId"`
-	ResourceID string `json:"resourceId"`
-}
-
-type depthCaptureInput struct {
-	ResourceID string `json:"resourceId"`
-	Profile    string `json:"profile"`
-}
+type DepthCaptureCreateRequest = depthcapture.CreateRequest
 
 func (s *Service) CreateDepthCaptureTask(userID string, req DepthCaptureCreateRequest) (*model.Task, error) {
 	if s.IsDraining() {
@@ -28,25 +18,25 @@ func (s *Service) CreateDepthCaptureTask(userID string, req DepthCaptureCreateRe
 	}
 	resourceID := strings.TrimSpace(req.ResourceID)
 	if resourceID == "" {
-		return nil, BadAuthRequest("必须指定待处理视频")
+		return nil, BadAuthRequest(depthcapture.ErrNeedVideo.Error())
 	}
 	resource, err := s.Resource(userID, resourceID)
 	if err != nil || resource == nil {
-		return nil, BadAuthRequest("无法读取待处理视频，可能已被删除")
+		return nil, BadAuthRequest(depthcapture.ErrMissingVideo.Error())
 	}
-	if !strings.HasPrefix(resource.MimeType, "video/") {
-		return nil, BadAuthRequest("深度动作捕捉仅支持视频资源")
+	inputJSON, err := depthcapture.PrepareInput(resourceID, resource)
+	if err != nil {
+		return nil, BadAuthRequest(err.Error())
 	}
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		return nil, err
 	}
-	inputJSON, _ := json.Marshal(depthCaptureInput{ResourceID: resourceID, Profile: depthStandardProfile})
 	task := model.Task{
 		ID: newID(), UserID: userID, ProjectID: strings.TrimSpace(req.ProjectID),
 		Type: model.TaskTypeDepthCapture, Status: model.TaskStatusQueued,
-		Stage: "检查深度处理组件", Progress: 0, Prompt: "深度动作捕捉",
-		Provider: "local", Model: "video-depth-anything-small", InputJSON: string(inputJSON),
+		Stage: depthcapture.InitialStage, Progress: 0, Prompt: depthcapture.Prompt,
+		Provider: depthcapture.Provider, Model: depthcapture.ModelID, InputJSON: string(inputJSON),
 	}
 	if err := s.createTaskWithinStorageQuota(&task, policy); err != nil {
 		if errors.Is(err, repository.ErrActiveTaskLimit) {
