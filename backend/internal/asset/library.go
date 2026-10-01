@@ -20,7 +20,7 @@ type Host interface {
 	WithStorageLock(fn func() error) error
 	StructuredBatchQuota(userID, kind string, createdCount int, deltaBytes int64) error
 	StructuredReplacementQuota(userID, kind string, count int, bytes int64) error
-	DeleteUserAssetWithResources(userID, assetID string) error
+	DeleteUserAssetWithResources(userID, assetID string, expectedStatus ...string) error
 	RecordActivity(userID, event string, count int)
 }
 

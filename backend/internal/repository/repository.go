@@ -40,6 +40,8 @@ var ErrProjectUnitShotsChanged = errors.New("project unit shots changed")
 
 var ErrCanvasRevisionConflict = errors.New("canvas revision changed")
 
+var ErrAssetExpectedStatusMismatch = errors.New("asset expected status mismatch")
+
 type Repository struct {
 	db *gorm.DB
 }

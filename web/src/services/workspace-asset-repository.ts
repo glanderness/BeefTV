@@ -235,7 +235,12 @@ export async function persistWorkspaceAssetLink({ asset, domainProjectId, catego
     });
 }
 
-export async function deleteWorkspaceAsset(id: string, expectedScope?: CapturedUserScope) {
+export type DeleteWorkspaceAssetOptions = {
+    expectedStatus?: "archived";
+    onDraftRecorded?: (version: number) => void;
+};
+
+export async function deleteWorkspaceAsset(id: string, expectedScope?: CapturedUserScope, options?: DeleteWorkspaceAssetOptions) {
     const expected = expectedScope ?? captureUserScope();
     const assetId = id.trim();
     if (!assetId) throw new Error("素材 ID 不能为空");
@@ -244,6 +249,12 @@ export async function deleteWorkspaceAsset(id: string, expectedScope?: CapturedU
     assertUserScope(expected);
 
     if (usesBrowserLocalResourceStore()) {
+        if (options?.expectedStatus) {
+            const live = useAssetStore.getState().assets.find((item) => item.id === assetId);
+            if (live && live.status !== options.expectedStatus) {
+                throw new ApiError("素材已不在回收站，未删除", { status: 409, code: 409 });
+            }
+        }
         await useAssetStore.getState().removeAsset(assetId);
         await flushAssetStorePersistence(expected);
         const draft = peekAssetStoreDraft(expected.userScope, assetId);
@@ -253,12 +264,16 @@ export async function deleteWorkspaceAsset(id: string, expectedScope?: CapturedU
 
     recordAssetStoreDraft(assetId, "delete", expected);
     const submittedVersion = peekAssetStoreDraft(expected.userScope, assetId)?.version ?? 0;
+    options?.onDraftRecorded?.(submittedVersion);
     await enqueueAssetCommit(expected.userScope, assetId, expected.epoch, async () => {
         assertUserScope(expected);
         const current = peekAssetStoreDraft(expected.userScope, assetId);
         if (current && current.version !== submittedVersion && current.kind === "upsert") return;
         try {
-            await deleteWorkspaceAssetRecord(assetId, { expectedScope: expected });
+            await deleteWorkspaceAssetRecord(assetId, {
+                expectedScope: expected,
+                ...(options?.expectedStatus ? { params: { expectedStatus: options.expectedStatus } } : {}),
+            });
         } catch (error) {
             if (!isNotFoundAssetError(error)) throw error;
         }
@@ -295,7 +310,7 @@ export async function clearWorkspaceArchivedAssets(options?: {
         for (const asset of trash) {
             throwIfAborted(options?.signal);
             assertUserScope(expected);
-            await deleteWorkspaceAsset(asset.id, expected);
+            await deleteWorkspaceAsset(asset.id, expected, { expectedStatus: "archived" });
         }
         const remaining = useAssetStore.getState().assets.filter((asset) => asset.kind !== "entity" && asset.status === "archived").length;
         return { deleted: trash.length - remaining, remaining };
@@ -315,13 +330,21 @@ export async function clearWorkspaceArchivedAssets(options?: {
             throwIfAborted(options?.signal);
             assertUserScope(expected);
             attempted.add(id);
+            let attemptVersion: number | undefined;
             try {
-                await deleteWorkspaceAsset(id, expected);
+                await deleteWorkspaceAsset(id, expected, {
+                    expectedStatus: "archived",
+                    onDraftRecorded: (version) => {
+                        attemptVersion = version;
+                    },
+                });
                 deleted += 1;
             } catch (error) {
                 if (error instanceof UserScopeAbandonedError || (error instanceof DOMException && error.name === "AbortError")) throw error;
-                const failed = peekAssetStoreDraft(expected.userScope, id);
-                if (failed?.kind === "delete") ackAssetStoreDraft(expected, id, failed.version);
+                if (attemptVersion !== undefined) {
+                    const latest = peekAssetStoreDraft(expected.userScope, id);
+                    if (latest?.kind === "delete" && latest.version === attemptVersion) ackAssetStoreDraft(expected, id, attemptVersion);
+                }
                 const remainingPage = await loadCanonicalArchivedPage(1, 1, expected, options?.signal);
                 return {
                     deleted,

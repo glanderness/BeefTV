@@ -79,13 +79,34 @@ func DeletionJobs(userID string, physicalObjects map[string]*model.Resource) []m
 	return jobs
 }
 
-func (s *Service) DeleteUserAssetWithResources(userID string, assetID string) error {
+func normalizeExpectedAssetStatus(values []string) (string, error) {
+	if len(values) == 0 {
+		return "", nil
+	}
+	value := strings.TrimSpace(values[0])
+	if value == "" {
+		return "", nil
+	}
+	if value != string(model.AssetVersionStatusArchived) {
+		return "", kernel.BadAuthRequest("删除条件无效")
+	}
+	return value, nil
+}
+
+func (s *Service) DeleteUserAssetWithResources(userID string, assetID string, expectedStatus ...string) error {
 	if s == nil || s.repo == nil {
 		return ResourceMissing()
+	}
+	expected, err := normalizeExpectedAssetStatus(expectedStatus)
+	if err != nil {
+		return err
 	}
 	asset, err := s.repo.AssetForUser(userID, assetID)
 	if err != nil {
 		return err
+	}
+	if expected != "" && string(asset.Status) != expected {
+		return TrashStatusConflict()
 	}
 	assetReferences, err := s.repo.AssetBusinessReferences(userID, assetID)
 	if err != nil {
@@ -196,12 +217,15 @@ func (s *Service) DeleteUserAssetWithResources(userID string, assetID string) er
 		physicalObjects[StorageIdentity(resource)] = resource
 	}
 	deletionJobs := DeletionJobs(userID, physicalObjects)
-	if err := s.repo.DeleteAssetAndResources(userID, assetID, ownedIDs, deletionJobs); err != nil {
+	if err := s.repo.DeleteAssetAndResources(userID, assetID, ownedIDs, deletionJobs, expected); err != nil {
 		if errors.Is(err, repository.ErrCanvasHistoryResourceReferenced) {
 			return HistoryReferenced()
 		}
 		if errors.Is(err, repository.ErrResourceCleanupStillReferenced) {
 			return StillReferenced()
+		}
+		if errors.Is(err, repository.ErrAssetExpectedStatusMismatch) {
+			return TrashStatusConflict()
 		}
 		return fmt.Errorf("素材记录删除失败，请重试：%w", err)
 	}

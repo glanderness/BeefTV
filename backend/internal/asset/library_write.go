@@ -39,12 +39,12 @@ func (l *Library) UpsertUserAsset(userID string, raw json.RawMessage) (Summary, 
 	return summaryFromAsset(item), nil
 }
 
-func (l *Library) DeleteUserAsset(userID string, id string) error {
+func (l *Library) DeleteUserAsset(userID string, id string, expectedStatus ...string) error {
 	if err := l.requireHost(); err != nil {
 		return err
 	}
 	return l.host.WithStorageLock(func() error {
-		return l.host.DeleteUserAssetWithResources(userID, id)
+		return l.host.DeleteUserAssetWithResources(userID, id, expectedStatus...)
 	})
 }
 

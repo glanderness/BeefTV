@@ -2,6 +2,7 @@ package asset
 
 import (
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -557,5 +558,127 @@ func TestDeletionWorkerRetriesFailedPhysicalDelete(t *testing.T) {
 	}
 	if remaining.Status != model.ResourceDeletionStatusPending || remaining.Attempts == 0 || remaining.LastError == "" {
 		t.Fatalf("retry job = %#v", remaining)
+	}
+}
+
+func TestDeleteUserAssetWithResourcesHonorsArchivedExpectation(t *testing.T) {
+	svc, db, _ := newDeletionDomain(t)
+	archived := model.Asset{
+		ID: "asset-archived", UserID: "user-1", Title: "回收站",
+		Status: model.AssetVersionStatusArchived, PayloadJSON: `{"title":"回收站"}`,
+	}
+	restored := model.Asset{
+		ID: "asset-restored", UserID: "user-1", Title: "已恢复",
+		Status: model.AssetVersionStatusArchived, PayloadJSON: `{"title":"已恢复"}`,
+	}
+	for _, item := range []any{&archived, &restored} {
+		if err := db.Create(item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := svc.DeleteUserAssetWithResources("user-1", archived.ID, string(model.AssetVersionStatusArchived)); err != nil {
+		t.Fatalf("archived delete: %v", err)
+	}
+	if err := db.Model(&model.Asset{}).Where("id = ?", restored.ID).Update("status", model.AssetVersionStatusConfirmed).Error; err != nil {
+		t.Fatal(err)
+	}
+	err := svc.DeleteUserAssetWithResources("user-1", restored.ID, string(model.AssetVersionStatusArchived))
+	var appErr *kernel.AppError
+	if !errors.As(err, &appErr) || appErr.Status != http.StatusConflict || !strings.Contains(err.Error(), "素材已不在回收站") {
+		t.Fatalf("restored delete = %v", err)
+	}
+	var remaining model.Asset
+	if err := db.First(&remaining, "id = ?", restored.ID).Error; err != nil {
+		t.Fatalf("restored asset missing: %v", err)
+	}
+	if remaining.Status != model.AssetVersionStatusConfirmed {
+		t.Fatalf("restored status = %s", remaining.Status)
+	}
+	if err := svc.DeleteUserAssetWithResources("user-1", restored.ID); err != nil {
+		t.Fatalf("ordinary delete: %v", err)
+	}
+	if err := db.First(&model.Asset{}, "id = ?", restored.ID).Error; !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("ordinary delete left row: %v", err)
+	}
+	if err := db.First(&model.Asset{}, "id = ?", archived.ID).Error; !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("archived delete left row: %v", err)
+	}
+}
+
+func TestDeleteAssetAndResourcesRejectsRestoredStatusInSameTransaction(t *testing.T) {
+	_, db, _ := newDeletionDomain(t)
+	asset := model.Asset{
+		ID: "asset-tx-restored", UserID: "user-1", Title: "事务恢复",
+		Status: model.AssetVersionStatusArchived, PayloadJSON: `{"title":"事务恢复"}`,
+	}
+	if err := db.Create(&asset).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Asset{}).Where("id = ?", asset.ID).Update("status", model.AssetVersionStatusConfirmed).Error; err != nil {
+		t.Fatal(err)
+	}
+	repo := repository.New(db)
+	err := repo.DeleteAssetAndResources("user-1", asset.ID, nil, nil, string(model.AssetVersionStatusArchived))
+	if !errors.Is(err, repository.ErrAssetExpectedStatusMismatch) {
+		t.Fatalf("DeleteAssetAndResources() = %v", err)
+	}
+	var remaining model.Asset
+	if err := db.First(&remaining, "id = ?", asset.ID).Error; err != nil {
+		t.Fatalf("row missing: %v", err)
+	}
+	if remaining.Status != model.AssetVersionStatusConfirmed {
+		t.Fatalf("status = %s", remaining.Status)
+	}
+}
+
+func TestDeleteAssetAndResourcesConcurrentRestoreKeepsActiveAsset(t *testing.T) {
+	dataDir := t.TempDir()
+	dsn := filepath.Join(dataDir, "restore-race.db") + "?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=on"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.MigrateLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	asset := model.Asset{
+		ID: "asset-restore-race", UserID: "user-1", Title: "并发恢复",
+		Status: model.AssetVersionStatusArchived, PayloadJSON: `{"title":"并发恢复"}`,
+	}
+	if err := db.Create(&asset).Error; err != nil {
+		t.Fatal(err)
+	}
+	repo := repository.New(db)
+	var deleteErr, restoreErr error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		deleteErr = repo.DeleteAssetAndResources("user-1", asset.ID, nil, nil, string(model.AssetVersionStatusArchived))
+	}()
+	go func() {
+		defer wg.Done()
+		restoreErr = db.Model(&model.Asset{}).Where("id = ? AND user_id = ?", asset.ID, "user-1").Update("status", model.AssetVersionStatusConfirmed).Error
+	}()
+	wg.Wait()
+	if restoreErr != nil {
+		t.Fatalf("restore: %v", restoreErr)
+	}
+	var remaining model.Asset
+	findErr := db.First(&remaining, "id = ?", asset.ID).Error
+	if findErr == nil {
+		if remaining.Status != model.AssetVersionStatusConfirmed {
+			t.Fatalf("remaining status = %s", remaining.Status)
+		}
+		if !errors.Is(deleteErr, repository.ErrAssetExpectedStatusMismatch) {
+			t.Fatalf("active row kept but delete err = %v", deleteErr)
+		}
+		return
+	}
+	if !errors.Is(findErr, gorm.ErrRecordNotFound) {
+		t.Fatalf("lookup: %v", findErr)
+	}
+	if deleteErr != nil {
+		t.Fatalf("row gone but delete err = %v", deleteErr)
 	}
 }

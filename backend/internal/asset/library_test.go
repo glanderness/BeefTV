@@ -45,7 +45,7 @@ func (h *testHost) StructuredReplacementQuota(userID, kind string, count int, by
 	}
 	return nil
 }
-func (h *testHost) DeleteUserAssetWithResources(userID, assetID string) error {
+func (h *testHost) DeleteUserAssetWithResources(userID, assetID string, _ ...string) error {
 	if h.deleteAsset != nil {
 		return h.deleteAsset(userID, assetID)
 	}

@@ -176,6 +176,7 @@ describe("workspace asset repository runtime boundary", () => {
         try {
             await withAdapter(async (config) => {
                 urls.push(`${String(config.method || "get").toLowerCase()} ${String(config.url || "")}`);
+                expect((config.params || {}) as Record<string, unknown>).not.toHaveProperty("expectedStatus");
                 return envelope({ id: "asset-1" });
             }, async () => {
                 await deleteWorkspaceAsset("asset-1");

@@ -84,8 +84,8 @@ func (s *Service) UpsertUserAsset(userID string, raw json.RawMessage) (UserDataS
 	return userDataSummaryFromAsset(item), nil
 }
 
-func (s *Service) DeleteUserAsset(userID string, id string) error {
-	return s.Library().DeleteUserAsset(userID, id)
+func (s *Service) DeleteUserAsset(userID string, id string, expectedStatus ...string) error {
+	return s.Library().DeleteUserAsset(userID, id, expectedStatus...)
 }
 
 func (s *Service) UserAssets(userID string) ([]json.RawMessage, error) {

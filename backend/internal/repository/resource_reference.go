@@ -317,11 +317,21 @@ func (r *Repository) AssetBusinessReferences(userID string, assetID string) ([]R
 	return result, nil
 }
 
-func (r *Repository) DeleteAssetAndResources(userID string, assetID string, resourceIDs []string, deletionJobs []model.ResourceDeletionJob) error {
+// DeleteAssetAndResources removes the owned asset and its resources in one
+// IMMEDIATE writer transaction. expectedStatus, when set, is checked against
+// the row and applied to the delete so a restore cannot commit with this TX.
+func (r *Repository) DeleteAssetAndResources(userID string, assetID string, resourceIDs []string, deletionJobs []model.ResourceDeletionJob, expectedStatus ...string) error {
+	expected := ""
+	if len(expectedStatus) > 0 {
+		expected = strings.TrimSpace(expectedStatus[0])
+	}
 	return withImmediateTransaction(r.db, func(tx *gorm.DB) error {
 		var asset model.Asset
 		if err := tx.Where("id = ? AND user_id = ?", assetID, userID).First(&asset).Error; err != nil {
 			return err
+		}
+		if expected != "" && string(asset.Status) != expected {
+			return ErrAssetExpectedStatusMismatch
 		}
 		if err := guardAssetDeletionReferences(tx, userID, assetID, resourceIDs); err != nil {
 			return err
@@ -348,7 +358,15 @@ func (r *Repository) DeleteAssetAndResources(userID string, assetID string, reso
 		if err := tx.Where("asset_id = ?", assetID).Delete(&model.AssetVersion{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Delete(&model.Asset{}, "id = ? AND user_id = ?", assetID, userID).Error; err != nil {
+		if expected != "" {
+			result := tx.Where("id = ? AND user_id = ? AND status = ?", assetID, userID, expected).Delete(&model.Asset{})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				return ErrAssetExpectedStatusMismatch
+			}
+		} else if err := tx.Delete(&model.Asset{}, "id = ? AND user_id = ?", assetID, userID).Error; err != nil {
 			return err
 		}
 		if len(deletionJobs) > 0 {

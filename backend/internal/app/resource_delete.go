@@ -6,8 +6,8 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
-func (s *Service) deleteUserAssetWithResources(userID string, assetID string) error {
-	return s.resourceDomain().DeleteUserAssetWithResources(userID, assetID)
+func (s *Service) deleteUserAssetWithResources(userID string, assetID string, expectedStatus ...string) error {
+	return s.resourceDomain().DeleteUserAssetWithResources(userID, assetID, expectedStatus...)
 }
 
 func resourceDeletionJobs(userID string, physicalObjects map[string]*model.Resource) []model.ResourceDeletionJob {

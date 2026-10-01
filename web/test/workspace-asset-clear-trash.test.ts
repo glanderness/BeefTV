@@ -10,7 +10,7 @@ import {
     WORKSPACE_ASSET_CLEAR_TRASH_PAGE_SIZE,
     workspaceClearTrashMessage,
 } from "@/services/workspace-asset-repository";
-import { peekAssetStoreDraft, resetAssetStoreDraftsForTests, useAssetStore, type Asset } from "@/stores/use-asset-store";
+import { peekAssetStoreDraft, recordAssetStoreDraft, resetAssetStoreDraftsForTests, useAssetStore, type Asset } from "@/stores/use-asset-store";
 
 function switchScope(userId: string) {
     const previous = getActiveUserScope();
@@ -55,6 +55,24 @@ function envelope(data: unknown, status = 200, code = 0, msg = "") {
 
 function requestParams(config: { params?: unknown }) {
     return (config.params || {}) as Record<string, unknown>;
+}
+
+function requestPath(config: { url?: unknown }) {
+    return String(config.url || "").split("?")[0];
+}
+
+function requestAssetId(config: { url?: unknown }) {
+    return requestPath(config).split("/").pop() || "";
+}
+
+function deferred<T>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+    return { promise, resolve, reject };
 }
 
 async function withAdapter<T>(adapter: NonNullable<typeof apiClient.defaults.adapter>, run: () => Promise<T>) {
@@ -116,7 +134,8 @@ describe("clear workspace archived assets", () => {
                     });
                 }
                 if (method === "delete") {
-                    const id = url.split("/").pop() || "";
+                    const id = requestAssetId(config);
+                    expect(requestParams(config).expectedStatus).toBe("archived");
                     expect(id.startsWith("arch-")).toBe(true);
                     expect(id.startsWith("live-")).toBe(false);
                     const index = remaining.indexOf(id);
@@ -161,7 +180,8 @@ describe("clear workspace archived assets", () => {
                     });
                 }
                 if (method === "delete") {
-                    const id = url.split("/").pop() || "";
+                    const id = requestAssetId(config);
+                    expect(requestParams(config).expectedStatus).toBe("archived");
                     if (id === "arch-080") {
                         return envelope(null, 200, 400, "素材仍被引用，请先在对应画布、任务或业务记录中解除引用后再删除");
                     }
@@ -203,11 +223,105 @@ describe("clear workspace archived assets", () => {
                     });
                 }
                 if (method === "delete") {
+                    expect(requestParams(config).expectedStatus).toBe("archived");
                     setActiveUserScope("owner-b");
-                    return envelope({ id: url.split("/").pop() });
+                    return envelope({ id: requestAssetId(config) });
                 }
                 throw new Error(`unexpected ${method} ${url}`);
             }, async () => clearWorkspaceArchivedAssets())).rejects.toBeInstanceOf(UserScopeAbandonedError);
+            expect(peekAssetStoreDraft("owner-a", "arch-002")?.kind).toBe("delete");
+        } finally {
+            restore();
+        }
+    });
+
+    test("failed clear-trash ack keeps a newer delete recorded during the request", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        const remaining = ["arch-002", "arch-001"];
+        const hold = deferred<ReturnType<typeof envelope>>();
+        let markStarted!: () => void;
+        const deleteStarted = new Promise<void>((resolve) => {
+            markStarted = resolve;
+        });
+        try {
+            const run = withAdapter(async (config) => {
+                const url = String(config.url || "");
+                const method = String(config.method || "get").toLowerCase();
+                if (method === "get") {
+                    return envelope({
+                        assets: remaining.map(archivedPayload),
+                        page: 1,
+                        pageSize: 40,
+                        total: remaining.length,
+                        hasMore: false,
+                    });
+                }
+                if (method === "delete") {
+                    const id = requestAssetId(config);
+                    expect(requestParams(config).expectedStatus).toBe("archived");
+                    if (id === "arch-002") {
+                        markStarted();
+                        return hold.promise;
+                    }
+                    throw new Error(`unexpected ${method} ${url}`);
+                }
+                throw new Error(`unexpected ${method} ${url}`);
+            }, async () => clearWorkspaceArchivedAssets());
+            await deleteStarted;
+            const attempt = peekAssetStoreDraft("owner-a", "arch-002");
+            expect(attempt?.kind).toBe("delete");
+            const attemptVersion = attempt?.version ?? 0;
+            recordAssetStoreDraft("arch-002", "delete");
+            hold.resolve(envelope(null, 200, 400, "素材仍被引用，请先在对应画布、任务或业务记录中解除引用后再删除"));
+            const result = await run;
+            expect(result.deleted).toBe(0);
+            expect(result.error?.message).toContain("素材仍被引用");
+            expect(peekAssetStoreDraft("owner-a", "arch-002")).toEqual({ kind: "delete", version: attemptVersion + 1 });
+        } finally {
+            restore();
+        }
+    });
+
+    test("failed clear-trash ack keeps a newer upsert recorded during the request", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        const remaining = ["arch-002", "arch-001"];
+        const hold = deferred<ReturnType<typeof envelope>>();
+        let markStarted!: () => void;
+        const deleteStarted = new Promise<void>((resolve) => {
+            markStarted = resolve;
+        });
+        try {
+            const run = withAdapter(async (config) => {
+                const url = String(config.url || "");
+                const method = String(config.method || "get").toLowerCase();
+                if (method === "get") {
+                    return envelope({
+                        assets: remaining.map(archivedPayload),
+                        page: 1,
+                        pageSize: 40,
+                        total: remaining.length,
+                        hasMore: false,
+                    });
+                }
+                if (method === "delete") {
+                    expect(requestParams(config).expectedStatus).toBe("archived");
+                    markStarted();
+                    return hold.promise;
+                }
+                throw new Error(`unexpected ${method} ${url}`);
+            }, async () => clearWorkspaceArchivedAssets());
+            await deleteStarted;
+            const attempt = peekAssetStoreDraft("owner-a", "arch-002");
+            expect(attempt?.kind).toBe("delete");
+            const attemptVersion = attempt?.version ?? 0;
+            recordAssetStoreDraft("arch-002", "upsert");
+            hold.resolve(envelope(null, 200, 400, "素材仍被引用，请先在对应画布、任务或业务记录中解除引用后再删除"));
+            const result = await run;
+            expect(result.deleted).toBe(0);
+            expect(result.error?.message).toContain("素材仍被引用");
+            expect(peekAssetStoreDraft("owner-a", "arch-002")).toEqual({ kind: "upsert", version: attemptVersion + 1 });
         } finally {
             restore();
         }

@@ -18,7 +18,7 @@ type Host interface {
 	StructuredBatchQuota(userID, kind string, createdCount int, deltaBytes int64) error
 	AdmitStructuredQuota(usage repository.UserStorageUsage, kind string, creating bool, deltaBytes int64) error
 	StructuredReplacementQuota(userID, kind string, count int, bytes int64) error
-	DeleteUserAssetWithResources(userID, assetID string) error
+	DeleteUserAssetWithResources(userID, assetID string, expectedStatus ...string) error
 	RecordActivity(userID, event string, count int)
 }
 
@@ -43,9 +43,9 @@ func (nopHost) StructuredBatchQuota(string, string, int, int64) error { return n
 func (nopHost) AdmitStructuredQuota(repository.UserStorageUsage, string, bool, int64) error {
 	return nil
 }
-func (nopHost) StructuredReplacementQuota(string, string, int, int64) error { return nil }
-func (nopHost) DeleteUserAssetWithResources(string, string) error           { return nil }
-func (nopHost) RecordActivity(string, string, int)                          {}
+func (nopHost) StructuredReplacementQuota(string, string, int, int64) error  { return nil }
+func (nopHost) DeleteUserAssetWithResources(string, string, ...string) error { return nil }
+func (nopHost) RecordActivity(string, string, int)                           {}
 
 type Service struct {
 	repo    *repository.Repository
@@ -66,8 +66,8 @@ func (h *canvasLibraryHost) StructuredBatchQuota(userID, kind string, createdCou
 func (h *canvasLibraryHost) StructuredReplacementQuota(userID, kind string, count int, bytes int64) error {
 	return h.service.host.StructuredReplacementQuota(userID, kind, count, bytes)
 }
-func (h *canvasLibraryHost) DeleteUserAssetWithResources(userID, assetID string) error {
-	return h.service.host.DeleteUserAssetWithResources(userID, assetID)
+func (h *canvasLibraryHost) DeleteUserAssetWithResources(userID, assetID string, expectedStatus ...string) error {
+	return h.service.host.DeleteUserAssetWithResources(userID, assetID, expectedStatus...)
 }
 func (h *canvasLibraryHost) RecordActivity(userID, event string, count int) {
 	h.service.host.RecordActivity(userID, event, count)

@@ -39,7 +39,7 @@ type canvasHost struct {
 	structuredBatchQuota       func(string, string, int, int64) error
 	admitStructuredQuota       func(repository.UserStorageUsage, string, bool, int64) error
 	structuredReplacementQuota func(string, string, int, int64) error
-	deleteAsset                func(string, string) error
+	deleteAsset                func(string, string, ...string) error
 	recordActivity             func(string, string, int)
 }
 
@@ -109,11 +109,11 @@ func (h canvasHost) StructuredReplacementQuota(userID, kind string, count int, b
 	return h.structuredReplacementQuota(userID, kind, count, bytes)
 }
 
-func (h canvasHost) DeleteUserAssetWithResources(userID, assetID string) error {
+func (h canvasHost) DeleteUserAssetWithResources(userID, assetID string, expectedStatus ...string) error {
 	if h.deleteAsset == nil {
 		return nil
 	}
-	return h.deleteAsset(userID, assetID)
+	return h.deleteAsset(userID, assetID, expectedStatus...)
 }
 
 func (h canvasHost) RecordActivity(userID, event string, count int) {
@@ -240,8 +240,8 @@ func (s *Service) UpsertUserAsset(userID string, raw json.RawMessage) (UserDataS
 	return s.canvasDomain().UpsertUserAsset(userID, raw)
 }
 
-func (s *Service) DeleteUserAsset(userID string, id string) error {
-	return s.canvasDomain().DeleteUserAsset(userID, id)
+func (s *Service) DeleteUserAsset(userID string, id string, expectedStatus ...string) error {
+	return s.canvasDomain().DeleteUserAsset(userID, id, expectedStatus...)
 }
 
 func (s *Service) UserAssets(userID string) ([]json.RawMessage, error) {

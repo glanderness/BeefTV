@@ -36,7 +36,7 @@ type Repository interface {
 	ResourcesForUserIDs(userID string, resourceIDs []string) ([]model.Resource, error)
 	ResourceStorageReferenceCount(resource *model.Resource, excludedResourceIDs []string) (int64, error)
 	ResourceReferenceSnapshot(userID string, excludingAssetID string, resourceIDs []string) (repository.ResourceReferenceSnapshot, error)
-	DeleteAssetAndResources(userID string, assetID string, resourceIDs []string, deletionJobs []model.ResourceDeletionJob) error
+	DeleteAssetAndResources(userID string, assetID string, resourceIDs []string, deletionJobs []model.ResourceDeletionJob, expectedStatus ...string) error
 	DeleteDetachedResources(resources []model.Resource, deletionJobs []model.ResourceDeletionJob) error
 	ResourceCleanupCandidates(incompleteBefore time.Time, readyBefore time.Time, limit int) ([]model.Resource, error)
 	ClaimNextResourceDeletionJob(owner string, leaseDuration time.Duration) (*model.ResourceDeletionJob, error)

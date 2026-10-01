@@ -52,6 +52,10 @@ func StillReferenced() error {
 	return kernel.BadAuthRequest("素材仍被引用，请先在对应画布、任务或业务记录中解除引用后再删除")
 }
 
+func TrashStatusConflict() error {
+	return kernel.NewAppError(http.StatusConflict, "素材已不在回收站，未删除")
+}
+
 func RemoteImportForbidden() error {
 	return kernel.Forbidden("本地工作区不支持通过 URL 导入素材，请先下载到本机后上传")
 }

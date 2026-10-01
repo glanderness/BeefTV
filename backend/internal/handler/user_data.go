@@ -451,7 +451,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		if err := svc.DeleteUserAsset(user.ID, c.Param("id")); err != nil {
+		if err := svc.DeleteUserAsset(user.ID, c.Param("id"), strings.TrimSpace(c.Query("expectedStatus"))); err != nil {
 			failService(c, err)
 			return
 		}
