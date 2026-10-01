@@ -80,6 +80,34 @@ afterEach(async () => {
 });
 
 describe("asset store durable draft storage", () => {
+    test("a delayed draft hydrate cannot project into a later A to B to A epoch", async () => {
+        const restore = switchScope("owner-a");
+        const entered = deferred();
+        const gate = deferred();
+        const getItem = spyOn(localforage, "getItem").mockImplementation(async (key) => {
+            if (!isDraftsKey(key)) return null;
+            entered.resolve();
+            await gate.promise;
+            return JSON.stringify({ drafts: { "asset-1": { kind: "upsert", version: 1, asset: textAsset("asset-1", "旧草稿") } } });
+        });
+        try {
+            unloadAssetStoreDraftsForTests();
+            const hydrating = hydrateAssetStoreDrafts("owner-a");
+            await entered.promise;
+            setActiveUserScope("owner-b");
+            setActiveUserScope("owner-a");
+            useAssetStore.setState({ assets: [textAsset("asset-1", "当前画面")] });
+            gate.resolve();
+            await hydrating;
+            expect(useAssetStore.getState().assets[0]?.title).toBe("当前画面");
+            expect(peekAssetStoreDraft("owner-a", "asset-1")?.asset?.title).toBe("旧草稿");
+        } finally {
+            gate.resolve();
+            getItem.mockRestore();
+            restore();
+        }
+    });
+
     test("serializes draft writes per userScope and keeps the later immutable document", async () => {
         const restore = switchScope("owner-a");
         const originalWindow = globalThis.window;

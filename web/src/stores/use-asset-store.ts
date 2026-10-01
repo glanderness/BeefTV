@@ -320,6 +320,7 @@ export async function hydrateAssetStoreDrafts(userScope = getActiveUserScope()) 
     if (hydratedAssetDraftScopes.has(userScope)) return;
     const pending = hydratingAssetDraftScopes.get(userScope);
     if (pending) return pending;
+    const entryScope = captureUserScope();
 
     const done = (async () => {
         const durable = parsePersistedAssetStoreDraftDocument(await localForageStorageForScope(userScope).getItem(ASSET_STORE_DRAFTS_KEY));
@@ -331,7 +332,7 @@ export async function hydrateAssetStoreDrafts(userScope = getActiveUserScope()) 
         if (clocks.size) assetStoreDraftClocks.set(userScope, clocks);
         else assetStoreDraftClocks.delete(userScope);
         hydratedAssetDraftScopes.add(userScope);
-        if (getActiveUserScope() === userScope) applyAssetStoreDraftsToEffectiveAssets(merged);
+        if (entryScope.userScope === userScope && userScopeMatches(entryScope)) applyAssetStoreDraftsToEffectiveAssets(merged);
         if (memoryDrafts.size > 0 || bumped) scheduleAssetStoreDraftPersist(userScope);
     })();
 

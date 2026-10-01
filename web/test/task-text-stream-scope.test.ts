@@ -2,6 +2,40 @@ import { expect, test } from "bun:test";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import { captureUserScope, UserScopeAbandonedError } from "@/lib/user-scope-guard";
 import { waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
+import { apiClient } from "@/services/api/request";
+
+test("an in-flight poll cannot publish or retry after A to B to A", async () => {
+    const previousScope = getActiveUserScope();
+    const previousAdapter = apiClient.defaults.adapter;
+    setActiveUserScope("poll-owner-a");
+    const expectedScope = captureUserScope();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let requests = 0;
+    let updates = 0;
+    apiClient.defaults.adapter = async (config) => {
+        requests += 1;
+        entered();
+        await held;
+        return { config, status: 200, statusText: "OK", headers: {}, data: { code: 0, msg: "", data: { id: "task-1", status: "succeeded" } } };
+    };
+    try {
+        const pending = waitForGenerationTask("task-1", { expectedScope, intervalMs: 1, onTaskUpdate: () => { updates += 1; } });
+        await started;
+        setActiveUserScope("poll-owner-b");
+        setActiveUserScope("poll-owner-a");
+        release();
+        await expect(pending).rejects.toBeInstanceOf(UserScopeAbandonedError);
+        expect(updates).toBe(0);
+        expect(requests).toBe(1);
+    } finally {
+        release();
+        apiClient.defaults.adapter = previousAdapter;
+        setActiveUserScope(previousScope);
+    }
+});
 
 test("an in-flight text stream cannot publish after A to B to A", async () => {
     const previousScope = getActiveUserScope();

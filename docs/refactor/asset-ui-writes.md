@@ -8,10 +8,12 @@
 | --- | --- | --- |
 | 已提交素材 / 工作区分类 | SQLite `asset.Library` | `PUT/DELETE /assets/:id`、`GET/POST/PATCH/DELETE /asset-folders`、`PATCH /assets/folder` |
 | 已提交项目素材链接 / 项目内目录 | SQLite `internal/project` | `POST /projects/:id/assets`、项目 `asset-folders` |
-| 未提交编辑 | 前端草稿（`userScope` 持久，含 version） | 只表示 commit 意图。旧 epoch 不得自动 dispatch；新用户动作进入新 epoch 才可提交 |
+| 未提交编辑 | 前端草稿（`userScope` 持久，含 version 和 upsert 内容快照或删除 tombstone） | 旧 epoch 不得自动 dispatch；新用户动作进入新 epoch 才可提交。草稿不代表 SQLite 已保存 |
 | 浏览器纯本地素材库 | IndexedDB 资产 cache | 无 Go 资源库时的产品路径，不是服务端保存 |
 
 服务端回执只合并用户提交后未改过的字段。后续本地 title/tags/data/metadata 保留。`PUT` 资产上的 `folderId` 只是素材归属，不是分类名称或层级。
+
+草稿写入按 scope 串行、入队抓不可变快照；flush 观察已结束的写失败。版本高水位在 ack 后保留，旧回执不能确认新编辑。hydrate 等待期间的内存编辑优先于旧持久稿；旧 epoch 完成的 hydrate 只恢复所属 scope 的草稿，不投影到新页面。
 
 ## 运行时分流
 

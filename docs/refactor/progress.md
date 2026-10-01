@@ -199,3 +199,13 @@
 - 素材 UI `c1c06df` / `491a062` 尚未合入。进一步缩小到草稿持久化：`20261002-045929-continue-98e63164` 补实际内容快照、持久写入顺序与准确版本 ack。页面和 folder 接线由 Lead 复审整合。
 - 完整备份、实际画板/文件夹 SQLite 权威和 schema 12：`20261002-034350-continue-f6b7fd0d` 仍进行中。
 - 无新增真实模型费用、未 push/发布、未替换本机正式应用；最终冻结候选、跨平台/性能/真实客户端与明确预算的生成验收仍是独立门槛。
+
+### 第十一轮草稿、消息交付与复审
+
+- 消息原子绑定合入 `a7dd851` / `01b82bb`，后台交付覆盖消息、画布和项目结果，普通 GET 不再负责写补偿。conversation/taskbinding/operations/handler/app 的绑定专项 race 通过。Lead 在 `23c0c56` 复现并修正最后一次草稿 remove 等待期间的新编辑丢失，以及远端删除消息被三方合并复活的问题；相关前端回归通过。
+- 素材 UI 写入合入 `2561de1` / `c4cc58a`；持久草稿修正 `83ce956` 合入 `5ea78b0`。upsert 保存真实快照，删除保存 tombstone，按 scope 串行持久化，版本高水位不因 ack 归零。Lead 独立专项 23 pass / 76 expect，typecheck 通过，并补旧 hydrate 不投影进 A→B→A 新 epoch 的回归。
+- `6460ffd` 在 HTTP 成功响应后重验原 epoch，文件夹投影也重新校验。独立复审指出任务轮询可能重试废弃 scope；Lead 补立即退出及 poll/SSE 最终查询发布前断言，A→B→A 轮询和 SSE 两项通过。
+- 第十轮全量 Go **失败**：asset 只读测试仓储因启动清理调用未实现端口而 panic，已由 `ba228eb` 限定有 DataDir 的实际资源服务恢复，完整 asset race 再跑通过；bootstrap 5 秒冷启动在并行负载下耗时 5.295 秒，单独三次为 1.256 / 0.902 / 1.059 秒，完整 bootstrap race 通过。没有放宽 5 秒阈值，尚不能记录最终全量通过。
+- `6ad3bf4` 将已有性能预算变为可执行比较：匹配运行时和夹具，超过 1.5 倍且增加超过 2 ms 才失败。本地 CPU 基准 `performance-integrated-cpu.json` 未越线；这不代表 UI 或跨平台性能验收。
+- 独立核心复审 `20261002-050411-review-72951ad3` 发现终态资源与上传预留记录之间的崩溃窗口；Lead 核实，`20261002-052139-delegate-7d200e4d` 修复 READY/FAILED 重启结算、删除与同 key 重传。结论未关闭。
+- 素材读路径仍有 local-workspace 误分流，`20261002-050721-delegate-17eb1316` 负责素材页、选择器与会话入口读取 SQLite 并叠加明确草稿。完整备份/schema 12 仍由原 worker 进行；二者均未验收。

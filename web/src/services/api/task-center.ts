@@ -396,11 +396,13 @@ export async function waitForGenerationTask(id: string, options?: WaitForGenerat
             let task: GenerationTask;
             try {
                 task = await queryGenerationTask(id, { signal: options?.signal, expectedScope: options?.expectedScope });
+                if (options?.expectedScope) assertUserScope(options.expectedScope);
                 lastTask = task;
                 lastQueryError = undefined;
                 consecutiveFailures = 0;
                 options?.onTaskUpdate?.(task);
             } catch (error) {
+                if (isUserScopeAbandonedError(error)) throw error;
                 lastQueryError = error;
                 consecutiveFailures += 1;
                 // 连续失败说明查询通道已不可用，继续轮询只会空转到整体超时；
@@ -439,6 +441,7 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
     let lastStreamError: unknown;
     if (!lastTask) {
         lastTask = await queryGenerationTask(id, { signal: options.signal, expectedScope: options.expectedScope });
+        if (options.expectedScope) assertUserScope(options.expectedScope);
         options.onTaskUpdate?.(lastTask);
     }
     const timeoutMs = options.timeoutMs || taskWaitTimeoutMs(lastTask);
@@ -515,6 +518,7 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             }
             if (terminalReceived) {
                 const completed = await queryGenerationTask(id, { signal: options.signal, expectedScope: options.expectedScope });
+                if (options.expectedScope) assertUserScope(options.expectedScope);
                 options.onTaskUpdate?.(completed);
                 if (completed.status === "succeeded") return completed;
                 if (completed.status === "failed" || completed.status === "cancelled") {
