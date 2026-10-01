@@ -3,6 +3,7 @@ package database
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/model"
@@ -12,11 +13,13 @@ type sqliteIndexContract struct {
 	table, name string
 	columns     []string
 	unique      bool
+	partial     bool
+	whereSQL    string
 }
 
 var reconciledIndexes = []sqliteIndexContract{
-	{"tasks", "idx_tasks_user_client_op", []string{"user_id", "client_operation_id"}, true},
-	{"agent_op_records", "idx_agent_op_records_turn_id", []string{"turn_id"}, false},
+	{table: "tasks", name: "idx_tasks_user_client_op", columns: []string{"user_id", "client_operation_id"}, unique: true},
+	{table: "agent_op_records", name: "idx_agent_op_records_turn_id", columns: []string{"turn_id"}, unique: false},
 }
 
 // Names alone do not prove uniqueness, scope or column order. All names here
@@ -34,7 +37,14 @@ func matchesSQLiteIndex(db *gorm.DB, expected sqliteIndexContract) (bool, error)
 		if index.Name != expected.name {
 			continue
 		}
-		if (index.Unique == 1) != expected.unique || index.Partial != 0 {
+		if (index.Unique == 1) != expected.unique {
+			return false, nil
+		}
+		if expected.partial {
+			if index.Partial == 0 {
+				return false, nil
+			}
+		} else if index.Partial != 0 {
 			return false, nil
 		}
 		var columns []struct{ Name string }
@@ -45,7 +55,17 @@ func matchesSQLiteIndex(db *gorm.DB, expected sqliteIndexContract) (bool, error)
 		for i, column := range columns {
 			actual[i] = column.Name
 		}
-		return slices.Equal(actual, expected.columns), nil
+		if !slices.Equal(actual, expected.columns) {
+			return false, nil
+		}
+		if expected.whereSQL == "" {
+			return true, nil
+		}
+		var sql string
+		if err := db.Raw("SELECT sql FROM sqlite_master WHERE type = ? AND name = ?", "index", expected.name).Scan(&sql).Error; err != nil {
+			return false, err
+		}
+		return strings.Contains(strings.ToUpper(sql), strings.ToUpper(expected.whereSQL)), nil
 	}
 	return false, nil
 }

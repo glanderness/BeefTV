@@ -1,18 +1,9 @@
 import { beforeEach, expect, mock, test } from "bun:test";
+import { ApiError } from "@/services/api/request";
 
 type Stored = Map<string, string>;
 const stored: Stored = new Map();
 let activeScope = "guest";
-
-class ApiError extends Error {
-    status?: number;
-    reason?: string;
-    constructor(message: string, options: { status?: number; reason?: string } = {}) {
-        super(message);
-        this.status = options.status;
-        this.reason = options.reason;
-    }
-}
 
 type RecordShape = {
     id: string;
@@ -28,6 +19,9 @@ const server = {
     failNext: null as { status: number; reason?: string; message?: string } | null,
     puts: [] as Array<{ id: string; expectedRevision: number; title?: string }>,
     imports: [] as string[],
+    putHold: null as Promise<void> | null,
+    releasePut: null as (() => void) | null,
+    putEntered: 0,
 };
 
 function failIfNeeded() {
@@ -35,6 +29,12 @@ function failIfNeeded() {
     const failure = server.failNext;
     server.failNext = null;
     throw new ApiError(failure.message || "保存失败", { status: failure.status, reason: failure.reason });
+}
+
+function holdPuts() {
+    server.putHold = new Promise((resolve) => {
+        server.releasePut = resolve;
+    });
 }
 
 mock.module("@/lib/localforage-storage", () => ({
@@ -56,11 +56,6 @@ mock.module("@/lib/user-scope", () => ({
     scopedLocalStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
 }));
 
-mock.module("@/services/api/request", () => ({
-    ApiError,
-    http: { get: async () => ({}), put: async () => ({}), post: async () => ({}), delete: async () => ({}) },
-}));
-
 mock.module("@/services/api/creation-conversations", () => ({
     creationConversationsApi: {
         list: async () => {
@@ -70,13 +65,24 @@ mock.module("@/services/api/creation-conversations", () => ({
                 deletedIds: Array.from(server.deleted),
             };
         },
+        get: async (id: string) => {
+            failIfNeeded();
+            const existing = server.conversations.get(id);
+            if (!existing || existing.deleted) throw new ApiError("创作对话不存在", { status: 404, reason: "not_found" });
+            return existing;
+        },
         put: async (id: string, input: { expectedRevision: number; document: { id: string; title?: string; messages: Array<Record<string, unknown>> } }) => {
+            server.putEntered += 1;
+            if (server.putHold) await server.putHold;
             failIfNeeded();
             server.puts.push({ id, expectedRevision: input.expectedRevision, title: input.document.title });
             const existing = server.conversations.get(id);
             if (!existing && input.expectedRevision !== 0) throw new ApiError("对话已更新，当前草稿未覆盖已保存内容", { status: 409, reason: "conflict" });
             if (existing?.deleted) throw new ApiError("对话已删除，无法再写入", { status: 409, reason: "conflict" });
-            if (existing && existing.revision !== input.expectedRevision) throw new ApiError("对话已更新，当前草稿未覆盖已保存内容", { status: 409, reason: "conflict" });
+            if (existing && existing.revision !== input.expectedRevision) {
+                if (existing.revision === input.expectedRevision + 1 && JSON.stringify(existing.document) === JSON.stringify(input.document)) return existing;
+                throw new ApiError("对话已更新，当前草稿未覆盖已保存内容", { status: 409, reason: "conflict" });
+            }
             const record: RecordShape = {
                 id,
                 revision: (existing?.revision ?? 0) + 1,
@@ -135,6 +141,9 @@ beforeEach(() => {
     server.failNext = null;
     server.puts = [];
     server.imports = [];
+    server.putHold = null;
+    server.releasePut = null;
+    server.putEntered = 0;
     activeScope = "guest";
     resetCreationConversationStoreForTests();
 });
@@ -151,6 +160,8 @@ test("load imports IndexedDB only when backend has no record or tombstone", asyn
     expect(server.imports).toEqual(["creation-conversations-v1:fresh"]);
     expect(loaded?.map((item) => item.id).sort()).toEqual(["fresh", "kept"]);
     expect(loaded?.find((item) => item.id === "kept")).toMatchObject({ title: "后端" });
+    const leftover = JSON.parse(stored.get(`guest:${CREATION_CONVERSATIONS_KEY}`) || "[]") as Array<{ id: string }>;
+    expect(leftover.map((item) => item.id)).toEqual(["gone"]);
 });
 
 test("save failure keeps visible draft and does not mark server success", async () => {
@@ -185,4 +196,96 @@ test("deleted tombstone is not resurrected by later save of local cache", async 
     await expect(saveCreationConversations([{ id: "dead", title: "复活", messages: [] }])).rejects.toThrow("对话已删除，无法再写入");
     expect(server.conversations.get("dead")?.deleted).toBe(true);
     expect(server.conversations.get("dead")?.document?.title).toBe("旧");
+});
+
+test("held write then later save still persists the latest document", async () => {
+    holdPuts();
+    const first = saveCreationConversations([{ id: "shared", title: "A", messages: [] }]);
+    while (server.putEntered === 0) await Promise.resolve();
+    const second = saveCreationConversations([{ id: "shared", title: "B", messages: [] }]);
+    server.releasePut?.();
+    await Promise.all([first, second]);
+    expect(server.conversations.get("shared")?.document?.title).toBe("B");
+    expect(server.puts.map((item) => item.title)).toEqual(["A", "B"]);
+});
+
+test("different conversation drafts survive concurrent saves", async () => {
+    await Promise.all([
+        saveCreationConversations([{ id: "left", title: "左", messages: [] }]),
+        saveCreationConversations([{ id: "right", title: "右", messages: [] }]),
+    ]);
+    expect(server.conversations.get("left")?.document?.title).toBe("左");
+    expect(server.conversations.get("right")?.document?.title).toBe("右");
+});
+
+test("failed write then reload recovers the latest draft", async () => {
+    const latest = { id: "recover", title: "最新草稿", messages: [{ id: "m1", role: "user" as const, content: "data: keep this prompt" }] };
+    server.failNext = { status: 500, message: "对话保存失败" };
+    await expect(saveCreationConversations([latest])).rejects.toThrow("对话保存失败");
+    resetCreationConversationStoreForTests();
+    const recovered = await loadLocalCreationConversationDrafts("guest");
+    expect(recovered?.find((item) => item.id === "recover")).toMatchObject({ title: "最新草稿" });
+    expect(recovered?.find((item) => item.id === "recover")?.messages[0]).toMatchObject({ content: "data: keep this prompt" });
+});
+
+test("conflicting local draft stays visible and does not overwrite remote", async () => {
+    server.conversations.set("live", { id: "live", revision: 5, updatedAt: "2026-10-02T00:00:00.000Z", document: { id: "live", title: "后端", messages: [] } });
+    stored.set("guest:creation-conversation-drafts-v1:live", JSON.stringify({
+        baseRevision: 4,
+        document: { id: "live", title: "本地编辑", messages: [{ id: "m1", role: "user", content: "未提交" }] },
+    }));
+    stored.set("guest:creation-conversation-drafts-v1:index", JSON.stringify(["live"]));
+    const loaded = await loadCreationConversations();
+    expect(loaded?.find((item) => item.id === "live")).toMatchObject({ title: "本地编辑" });
+    expect(loaded?.find((item) => item.id === "live")?.conflictRemote).toMatchObject({ revision: 5, document: { title: "后端" } });
+    await expect(saveCreationConversations(loaded || [])).rejects.toThrow("对话已更新，当前草稿未覆盖已保存内容");
+    expect(server.conversations.get("live")?.document?.title).toBe("后端");
+    expect(server.conversations.get("live")?.revision).toBe(5);
+});
+
+test("fallback after remote reject keeps original scope and skips cached tombstones", async () => {
+    server.conversations.set("kept", { id: "kept", revision: 1, updatedAt: "2026-10-02T00:00:00.000Z", document: { id: "kept", title: "后端", messages: [] } });
+    server.deleted.add("gone");
+    stored.set(`guest:${CREATION_CONVERSATIONS_KEY}`, JSON.stringify([
+        { id: "gone", title: "墓碑", messages: [] },
+    ]));
+    stored.set("guest:creation-conversation-drafts-v1:drafty", JSON.stringify({
+        baseRevision: 0,
+        document: { id: "drafty", title: "原工作区草稿", messages: [] },
+    }));
+    stored.set("guest:creation-conversation-drafts-v1:index", JSON.stringify(["drafty"]));
+    stored.set("other-workspace:creation-conversation-drafts-v1:other", JSON.stringify({
+        baseRevision: 0,
+        document: { id: "other", title: "新工作区", messages: [] },
+    }));
+    stored.set("other-workspace:creation-conversation-drafts-v1:index", JSON.stringify(["other"]));
+    await loadCreationConversations("guest");
+    server.failNext = { status: 500, message: "对话加载失败" };
+    await expect(loadCreationConversations("guest")).rejects.toThrow("对话加载失败");
+    activeScope = "other-workspace";
+    const fallback = await loadLocalCreationConversationDrafts("guest");
+    expect(fallback?.map((item) => item.id).sort()).toEqual(["drafty"]);
+    expect(fallback?.find((item) => item.id === "gone")).toBeUndefined();
+});
+
+test("lost ack of the same document is recovered without a permanent 409", async () => {
+    const draft = { id: "replay", title: "原稿", messages: [{ id: "m1", role: "user" as const, content: "hi" }] };
+    await saveCreationConversations([draft]);
+    expect(server.conversations.get("replay")?.revision).toBe(1);
+    resetCreationConversationStoreForTests();
+    await saveCreationConversations([draft]);
+    expect(server.conversations.get("replay")?.revision).toBe(1);
+    expect(server.conversations.get("replay")?.document?.title).toBe("原稿");
+});
+
+test("blob-only attachment is a recoverable persist failure", async () => {
+    const draft = {
+        id: "blob-only",
+        title: "附件",
+        messages: [{ id: "m1", role: "user" as const, content: "hi", attachments: [{ id: "a1", dataUrl: "data:image/png;base64,aaaa" }] }],
+    };
+    await expect(saveCreationConversations([draft])).rejects.toThrow("附件没有可恢复的存储引用");
+    expect(server.puts).toHaveLength(0);
+    const local = await loadLocalCreationConversationDrafts();
+    expect(local?.find((item) => item.id === "blob-only")).toMatchObject({ title: "附件" });
 });

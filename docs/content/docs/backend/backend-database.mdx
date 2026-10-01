@@ -15,7 +15,7 @@ description: BeefTV后端核心持久化表与状态边界
 
 ### 迁移实验的隔离验收与回滚
 
-v9 `repair-product-agent-contracts` 为已经标记 v8 但缺少诊断列、恢复表或恢复字段的合成历史结构提供显式修复；不重写历史 ledger。Ready 同时检查图片恢复与 Agent 操作表的完整字段、主键，以及任务操作编号唯一索引的列顺序、唯一性和非部分索引属性。已有表缺主键时拒绝自动重建；重复操作身份无法建立唯一索引时保留全部行并回滚。结构校验在 v9 事务内完成后才写入版本。v10 `assistant-business-turns` 在 v9 之后只追加 `assistant_turns` 及 `(user_id, canvas_id)` 索引，不改写 v1–v9 身份。v11 `creation-conversations` 再追加 `creation_conversations` 及 `(user_id, updated_at)` 索引，主键为 `(user_id, conversation_id)`，不改写 v1–v10 身份。同为当前版本但缺结构仍阻断，未来版本拒绝迁移。状态接口在结构损坏时保留实际版本，不能用 Ready=false、current=0 掩盖已经存在的 ledger。
+v9 `repair-product-agent-contracts` 为已经标记 v8 但缺少诊断列、恢复表或恢复字段的合成历史结构提供显式修复；不重写历史 ledger。Ready 同时检查图片恢复与 Agent 操作表的完整字段、主键，以及任务操作编号唯一索引的列顺序、唯一性和非部分索引属性。已有表缺主键时拒绝自动重建；重复操作身份无法建立唯一索引时保留全部行并回滚。结构校验在 v9 事务内完成后才写入版本。v10 `assistant-business-turns` 在 v9 之后只追加 `assistant_turns` 及 `(user_id, canvas_id)` 索引，不改写 v1–v9 身份。v11 `creation-conversations` 再追加 `creation_conversations`、`(user_id, updated_at)` 索引，以及 `(user_id, import_operation_id)` 部分唯一索引（仅 `import_operation_id` 非空），主键为 `(user_id, conversation_id)`，不改写 v1–v10 身份。同为当前版本但缺结构仍阻断，未来版本拒绝迁移。状态接口在结构损坏时保留实际版本，不能用 Ready=false、current=0 掩盖已经存在的 ledger。
 
 在本分支仓库根目录执行以下命令，仅创建 `t.TempDir()` 内的合成 SQLite 数据库；不打开应用、不读取真实工作区、不连接上游。
 
@@ -109,7 +109,7 @@ $env:CANVAS_DESKTOP_DATA_DIR = 'D:\BeefTV-tests\candidate-workspace'
 | `canvas_snapshots`、`canvas_snapshot_resources` | 画布历史快照与快照引用的资源 | 快照读写按归属校验；历史恢复同样走 revision 前置条件 |
 | `agent_op_records` | 统一操作层的幂等记录：`(user_id, op_id)` 主键、payload 哈希、状态与可空 `turn_id` | 同一 `opId` 同参数回读原结果、不同参数返回冲突；失败操作回滚且不留幂等记录；只在本用户命名空间内回放，不跨用户读取；`turn_id` 与业务写入同事务提交，只有后端鉴权的内置宿主能写入归属 |
 | `assistant_turns` | 助手业务回合：范围、轮前画布快照、结算摘要与撤销标记 | 主键 `turn_id`；必须带用户和画布身份；open 回合才接受写入归属；撤销把旧文档写成新 revision，并与 undone 标记同事务提交。不保存模型对话稿 |
-| `creation_conversations` | `/create` 页面对话与消息文档 | 主键 `(user_id, conversation_id)`；按 revision CAS 写入；删除写墓碑，稳定 ID 不会被 IndexedDB 缓存复活。不保存密钥或 `data:`/`blob:` 临时媒体。删除对话不删除任务或素材 |
+| `creation_conversations` | `/create` 页面对话与消息文档 | 主键 `(user_id, conversation_id)`；按 revision CAS 写入；删除写墓碑，稳定 ID 不会被 IndexedDB 缓存复活。导入操作在 `(user_id, import_operation_id)` 上有部分唯一索引。不保存密钥。临时媒体只从附件/结果 URL 字段去掉，正文保留。删除对话不删除任务或素材 |
 
 版本 10 `assistant-business-turns` 为既有 v9 工作区创建 `assistant_turns`。旧 JSON 文件 `assistant-turns/<hexID>.json` 是只读迁移输入，按被访问的 ID 校验后导入，导入后不再作为竞争事实；生产路径不改写、不删除原文件。保留策略只压缩超龄大快照、留下身份墓碑，不会删掉进行中的回合、回执引用的回合或操作回执。操作层若要把回执记到某一轮，必须在该操作自己的事务里校验回合仍为 open；只做事务外预检无法关闭结算与写入的竞态。
 

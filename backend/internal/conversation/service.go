@@ -23,6 +23,10 @@ func New(store Store) *Service {
 	return &Service{store: store, now: func() time.Time { return time.Now().UTC() }}
 }
 
+func (s *Service) Available() bool {
+	return s.storeReady()
+}
+
 // WithRepository returns a copy bound to repo, including a transaction-backed
 // repository. Later task binders use this to share one commit.
 func (s *Service) WithRepository(repo *repository.Repository) *Service {
@@ -193,6 +197,14 @@ func (s *Service) Put(userID, conversationID string, expectedRevision int64, raw
 			return errDeleted()
 		}
 		if existing.Revision != expectedRevision {
+			if existing.Revision == expectedRevision+1 && DocumentHash([]byte(existing.Document)) == DocumentHash(doc.raw) {
+				decoded, recErr := recordFromRow(existing)
+				if recErr != nil {
+					return recErr
+				}
+				record = decoded
+				return nil
+			}
 			return errConflict()
 		}
 		next := *existing
@@ -235,11 +247,41 @@ func (s *Service) Delete(userID, conversationID string, expectedRevision int64) 
 	err := s.inTx(func(tx *gorm.DB) error {
 		existing, getErr := s.store.Get(tx, userID, conversationID)
 		if errors.Is(getErr, gorm.ErrRecordNotFound) {
-			if expectedRevision == 0 {
-				record = Record{ID: conversationID, Deleted: true}
+			if expectedRevision != 0 {
+				return errNotFound()
+			}
+			now := s.now()
+			row := &model.CreationConversation{
+				UserID: userID, ConversationID: conversationID, Revision: 1,
+				Document: "{}", Deleted: true, CreatedAt: now, UpdatedAt: now,
+			}
+			inserted, insErr := s.store.Insert(tx, row)
+			if insErr != nil {
+				return insErr
+			}
+			if !inserted {
+				current, curErr := s.store.Get(tx, userID, conversationID)
+				if curErr != nil {
+					return errConflict()
+				}
+				if !current.Deleted {
+					return errConflict()
+				}
+				decoded, recErr := recordFromRow(current)
+				if recErr != nil {
+					return recErr
+				}
+				decoded.Document = nil
+				record = decoded
 				return nil
 			}
-			return errNotFound()
+			decoded, recErr := recordFromRow(row)
+			if recErr != nil {
+				return recErr
+			}
+			decoded.Document = nil
+			record = decoded
+			return nil
 		}
 		if getErr != nil {
 			return getErr
@@ -253,7 +295,7 @@ func (s *Service) Delete(userID, conversationID string, expectedRevision int64) 
 			record = decoded
 			return nil
 		}
-		if expectedRevision != 0 && existing.Revision != expectedRevision {
+		if existing.Revision != expectedRevision {
 			return errConflict()
 		}
 		next := *existing
@@ -345,9 +387,17 @@ func (s *Service) Import(userID, operationID, clientHash string, raw json.RawMes
 		}
 		inserted, insErr := s.store.Insert(tx, row)
 		if insErr != nil {
-			return insErr
+			if !isUniqueConflict(insErr) {
+				return insErr
+			}
+			return replayImportByOperation(s, tx, userID, operationID, hash, &result)
 		}
 		if !inserted {
+			if replayErr := replayImportByOperation(s, tx, userID, operationID, hash, &result); replayErr == nil {
+				return nil
+			} else if !isNotFound(replayErr) {
+				return replayErr
+			}
 			current, curErr := s.store.Get(tx, userID, doc.id)
 			if curErr != nil {
 				return errConflict()
@@ -357,6 +407,9 @@ func (s *Service) Import(userID, operationID, clientHash string, raw json.RawMes
 				return recErr
 			}
 			result = ImportResult{Imported: false, ID: decoded.ID, Deleted: current.Deleted, Conversation: decoded}
+			if current.Deleted {
+				result.Conversation.Document = nil
+			}
 			return nil
 		}
 		decoded, recErr := recordFromRow(row)
@@ -556,6 +609,40 @@ func importOperationPattern(value string) bool {
 
 func utf8Len(value string) int {
 	return len([]rune(value))
+}
+
+func replayImportByOperation(s *Service, tx *gorm.DB, userID, operationID, hash string, result *ImportResult) error {
+	byOp, opErr := s.store.GetByImportOperation(tx, userID, operationID)
+	if errors.Is(opErr, gorm.ErrRecordNotFound) {
+		return errNotFound()
+	}
+	if opErr != nil {
+		return opErr
+	}
+	if byOp.ImportHash != hash {
+		return errConflict()
+	}
+	decoded, recErr := recordFromRow(byOp)
+	if recErr != nil {
+		return recErr
+	}
+	*result = ImportResult{Imported: false, ID: decoded.ID, Deleted: byOp.Deleted, Conversation: decoded}
+	if byOp.Deleted {
+		result.Conversation.Document = nil
+	}
+	return nil
+}
+
+func isUniqueConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "unique constraint failed")
+}
+
+func isNotFound(err error) bool {
+	var convErr *Error
+	return errors.As(err, &convErr) && convErr.Reason == ReasonNotFound
 }
 
 func fmtString(value any) string {

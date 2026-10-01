@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/conversation"
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/workspace"
@@ -37,7 +38,8 @@ func conversationRouter(t *testing.T) (*gin.Engine, *app.Service) {
 	router := gin.New()
 	router.Use(WorkspaceMiddleware(workspace.Context{ID: owner.ID, DataDir: t.TempDir()}))
 	api := router.Group("/api")
-	RegisterCreationConversationRoutes(api, svc)
+	conversations := conversation.New(conversation.NewStore(repository.New(db)))
+	RegisterCreationConversationRoutes(api, svc, conversations)
 	return router, svc
 }
 
@@ -74,8 +76,16 @@ func TestCreationConversationPutGetAndConflict(t *testing.T) {
 	if put.Code != http.StatusOK {
 		t.Fatalf("put status=%d body=%s", put.Code, put.Body.String())
 	}
-	conflict := httptest.NewRecorder()
+	replay := httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPut, "/api/creation-conversations/conversation-1", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(replay, req)
+	if replay.Code != http.StatusOK {
+		t.Fatalf("lost-ack replay status=%d body=%s", replay.Code, replay.Body.String())
+	}
+	changed := []byte(`{"expectedRevision":0,"document":{"id":"conversation-1","title":"第二镜","messages":[{"id":"m1","role":"user","content":"hi"}]}}`)
+	conflict := httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut, "/api/creation-conversations/conversation-1", bytes.NewReader(changed))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(conflict, req)
 	if conflict.Code != http.StatusConflict {
@@ -129,5 +139,16 @@ func TestCreationConversationImportSkipsTombstone(t *testing.T) {
 	}
 	if err := json.Unmarshal(imp.Body.Bytes(), &envelope); err != nil || envelope.Data.Imported || !envelope.Data.Deleted {
 		t.Fatalf("import envelope=%s err=%v", imp.Body.String(), err)
+	}
+}
+
+func TestCreationConversationRoutesFailClosedWithoutService(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	RegisterCreationConversationRoutes(router.Group("/api"), &app.Service{}, nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/creation-conversations", nil))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("nil conversation service status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }

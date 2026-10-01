@@ -56,3 +56,7 @@ func errIdentity() *Error {
 func errUnavailable() *Error {
 	return &Error{Status: http.StatusServiceUnavailable, Reason: ReasonUnavailable, Message: "创作对话存储不可用"}
 }
+
+func ErrUnavailable() *Error {
+	return errUnavailable()
+}

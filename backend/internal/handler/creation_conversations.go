@@ -12,24 +12,20 @@ import (
 
 	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/conversation"
-	"infinite-canvas/backend/internal/repository"
 )
 
 const creationConversationMaxBody = 1 << 20
 
-func RegisterCreationConversationRoutes(r *gin.RouterGroup, svc *app.Service) {
-	registerCreationConversationRoutes(r, svc, newCreationConversationService(svc))
-}
-
-func newCreationConversationService(svc *app.Service) *conversation.Service {
-	if svc == nil || svc.Database() == nil {
-		return conversation.New(conversation.NewStore(nil))
-	}
-	return conversation.New(conversation.NewStore(repository.New(svc.Database())))
+func RegisterCreationConversationRoutes(r *gin.RouterGroup, svc *app.Service, conversations *conversation.Service) {
+	registerCreationConversationRoutes(r, svc, conversations)
 }
 
 func registerCreationConversationRoutes(r *gin.RouterGroup, svc *app.Service, conversations *conversation.Service) {
 	r.GET("/creation-conversations", func(c *gin.Context) {
+		if !conversationReady(conversations) {
+			failConversation(c, conversation.ErrUnavailable())
+			return
+		}
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
@@ -43,6 +39,10 @@ func registerCreationConversationRoutes(r *gin.RouterGroup, svc *app.Service, co
 		ok(c, result)
 	})
 	r.POST("/creation-conversations/import", func(c *gin.Context) {
+		if !conversationReady(conversations) {
+			failConversation(c, conversation.ErrUnavailable())
+			return
+		}
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
@@ -70,6 +70,10 @@ func registerCreationConversationRoutes(r *gin.RouterGroup, svc *app.Service, co
 		ok(c, result)
 	})
 	r.GET("/creation-conversations/:id", func(c *gin.Context) {
+		if !conversationReady(conversations) {
+			failConversation(c, conversation.ErrUnavailable())
+			return
+		}
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
@@ -83,6 +87,10 @@ func registerCreationConversationRoutes(r *gin.RouterGroup, svc *app.Service, co
 		ok(c, result)
 	})
 	r.PUT("/creation-conversations/:id", func(c *gin.Context) {
+		if !conversationReady(conversations) {
+			failConversation(c, conversation.ErrUnavailable())
+			return
+		}
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
@@ -109,6 +117,10 @@ func registerCreationConversationRoutes(r *gin.RouterGroup, svc *app.Service, co
 		ok(c, result)
 	})
 	r.DELETE("/creation-conversations/:id", func(c *gin.Context) {
+		if !conversationReady(conversations) {
+			failConversation(c, conversation.ErrUnavailable())
+			return
+		}
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
@@ -130,6 +142,10 @@ func registerCreationConversationRoutes(r *gin.RouterGroup, svc *app.Service, co
 		}
 		ok(c, result)
 	})
+}
+
+func conversationReady(conversations *conversation.Service) bool {
+	return conversations != nil && conversations.Available()
 }
 
 func readCreationConversationBody(c *gin.Context) ([]byte, error) {

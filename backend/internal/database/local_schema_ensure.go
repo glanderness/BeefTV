@@ -263,7 +263,7 @@ func ensureCreationConversationsTable(tx *gorm.DB) error {
 				return err
 			}
 		}
-		return ensureCreationConversationsUserUpdatedIndex(tx)
+		return ensureCreationConversationsIndexes(tx)
 	}
 	if err := tx.Exec(`CREATE TABLE creation_conversations (
 		user_id TEXT NOT NULL,
@@ -279,12 +279,24 @@ func ensureCreationConversationsTable(tx *gorm.DB) error {
 	)`).Error; err != nil {
 		return fmt.Errorf("创建创作对话表: %w", err)
 	}
-	return ensureCreationConversationsUserUpdatedIndex(tx)
+	return ensureCreationConversationsIndexes(tx)
+}
+
+func ensureCreationConversationsIndexes(tx *gorm.DB) error {
+	if err := ensureCreationConversationsUserUpdatedIndex(tx); err != nil {
+		return err
+	}
+	return ensureCreationConversationsUserImportIndex(tx)
 }
 
 func ensureCreationConversationsUserUpdatedIndex(tx *gorm.DB) error {
 	return ensureSQLiteIndex(tx, "creation_conversations", "idx_creation_conversations_user_updated",
 		"CREATE INDEX idx_creation_conversations_user_updated ON creation_conversations(user_id, updated_at)")
+}
+
+func ensureCreationConversationsUserImportIndex(tx *gorm.DB) error {
+	return ensureSQLiteIndex(tx, "creation_conversations", "idx_creation_conversations_user_import",
+		"CREATE UNIQUE INDEX idx_creation_conversations_user_import ON creation_conversations(user_id, import_operation_id) WHERE import_operation_id IS NOT NULL AND import_operation_id != ''")
 }
 
 func requireCreationConversationsSchema(db *gorm.DB) error {
@@ -315,6 +327,17 @@ func requireCreationConversationsSchema(db *gorm.DB) error {
 	}
 	if !valid {
 		return fmt.Errorf("本地数据库索引 idx_creation_conversations_user_updated 定义不完整")
+	}
+	valid, err = matchesSQLiteIndex(db, sqliteIndexContract{
+		table: "creation_conversations", name: "idx_creation_conversations_user_import",
+		columns: []string{"user_id", "import_operation_id"}, unique: true, partial: true,
+		whereSQL: "import_operation_id IS NOT NULL",
+	})
+	if err != nil {
+		return err
+	}
+	if !valid {
+		return fmt.Errorf("本地数据库索引 idx_creation_conversations_user_import 定义不完整")
 	}
 	return nil
 }

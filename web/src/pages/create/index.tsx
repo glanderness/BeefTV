@@ -66,6 +66,9 @@ export default function CreatePage() {
     const demoConversation = searchParams.get("demo") === "conversation";
     const marketplaceSkill = (searchParams.get("skill") || (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("skill") : ""))?.trim() || "";
     const { message: toast, modal } = App.useApp();
+    const toastRef = useRef(toast);
+    toastRef.current = toast;
+    const userId = useUserStore((state) => state.user?.id);
     const navigate = useNavigate();
     const [openingCanvas, setOpeningCanvas] = useState(false);
     const openingCanvasRef = useRef(false);
@@ -256,8 +259,9 @@ export default function CreatePage() {
             setHydrated(true);
             return () => { cancelled = true; };
         }
-        void loadCreationConversations<CreationConversation>().then((stored) => {
-            if (cancelled) return;
+        const loadScope = getActiveUserScope();
+        void loadCreationConversations<CreationConversation>(loadScope).then((stored) => {
+            if (cancelled || getActiveUserScope() !== loadScope) return;
             skipPersistRef.current = true;
             const next = stored?.length ? stored : [newConversation()];
             conversationsRef.current = next;
@@ -265,15 +269,15 @@ export default function CreatePage() {
             setActiveId(next[0].id);
             setHydrated(true);
         }).catch(async (error) => {
-            if (cancelled) return;
-            toast.error(error instanceof Error ? error.message : "对话加载失败");
+            if (cancelled || getActiveUserScope() !== loadScope) return;
+            toastRef.current.error(error instanceof Error ? error.message : "对话加载失败");
             let local: CreationConversation[] | null = null;
             try {
-                local = await loadLocalCreationConversationDrafts<CreationConversation>();
+                local = await loadLocalCreationConversationDrafts<CreationConversation>(loadScope);
             } catch {
                 local = null;
             }
-            if (cancelled) return;
+            if (cancelled || getActiveUserScope() !== loadScope) return;
             skipPersistRef.current = true;
             const next = local?.length ? local : [newConversation()];
             conversationsRef.current = next;
@@ -285,7 +289,7 @@ export default function CreatePage() {
             cancelled = true;
             // 页面卸载只停止当前页面的状态更新，后台任务由任务中心继续执行，返回页面后再恢复状态。
         };
-    }, [demoConversation, toast]);
+    }, [demoConversation, userId]);
 
     useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -300,10 +304,11 @@ export default function CreatePage() {
             skipPersistRef.current = false;
             return;
         }
-        void saveCreationConversations(conversations).catch((error) => {
-            toast.error(error instanceof Error ? error.message : "对话保存失败");
+        const persistScope = getActiveUserScope();
+        void saveCreationConversations(conversations, persistScope).catch((error) => {
+            toastRef.current.error(error instanceof Error ? error.message : "对话保存失败");
         });
-    }, [conversations, demoConversation, hydrated, toast]);
+    }, [conversations, demoConversation, hydrated]);
 
     useEffect(() => {
         if (!hydrated || !recoveryTaskKey || !pendingTaskIds.length) return;
@@ -391,7 +396,7 @@ export default function CreatePage() {
         }));
         conversationsRef.current = next;
         setConversations(next);
-        await saveCreationConversations(next);
+        await saveCreationConversations(next, getActiveUserScope());
     }, []);
 
     const selectMode = (next: CreationMode) => {
@@ -815,9 +820,9 @@ export default function CreatePage() {
             const next = updateCreationConversationSnapshot(conversationsRef.current, source.id, (item) => ({ ...item, canvasId: result.id }));
             conversationsRef.current = next;
             setConversations(next);
-            await saveCreationConversations(next);
+            await saveCreationConversations(next, scope);
             if (scope !== getActiveUserScope()) return;
-            if (result.syncError && !localMode) toast.warning("会话已保存在本机，云端同步尚未完成。");
+            if (result.syncError && !localMode) toastRef.current.warning("会话已保存在本机，云端同步尚未完成。");
             const params = new URLSearchParams({ conversation: result.sessionId });
             if (assetIds.length) {
                 params.set("mode", "handoff");
@@ -825,7 +830,7 @@ export default function CreatePage() {
             }
             navigate(`/canvas/${result.id}?${params.toString()}`);
         } catch (cause) {
-            if (scope === getActiveUserScope()) toast.error(cause instanceof Error ? cause.message : "转入画布失败，原会话已保留");
+            if (scope === getActiveUserScope()) toastRef.current.error(cause instanceof Error ? cause.message : "转入画布失败，原会话已保留");
         } finally { openingCanvasRef.current = false; setOpeningCanvas(false); }
     };
 
@@ -849,8 +854,9 @@ export default function CreatePage() {
             okButtonProps: { danger: true },
             cancelText: "保留",
             onOk: async () => {
+                const scope = getActiveUserScope();
                 try {
-                    await deleteCreationConversation(conversation.id);
+                    await deleteCreationConversation(conversation.id, scope);
                     const remaining = removeCreationConversationSnapshot(conversationsRef.current, conversation.id);
                     const sortedRemaining = [...remaining].sort((left, right) => conversationTimestamp(right.updatedAt) - conversationTimestamp(left.updatedAt));
                     const fallback = sortedRemaining.find((item) => item.messages.length > 0) || sortedRemaining[0] || newConversation();
@@ -865,9 +871,9 @@ export default function CreatePage() {
                         setAttachments([]);
                         setDraftReferences([]);
                     }
-                    toast.success("历史对话已删除，素材仍保留");
+                    toastRef.current.success("历史对话已删除，素材仍保留");
                 } catch (error) {
-                    toast.error(error instanceof Error ? error.message : "历史对话删除失败");
+                    toastRef.current.error(error instanceof Error ? error.message : "历史对话删除失败");
                     throw error;
                 }
             },
@@ -880,7 +886,8 @@ export default function CreatePage() {
         const next = updateCreationConversationSnapshot(conversationsRef.current, conversation.id, (item) => ({ ...item, title: nextTitle }));
         conversationsRef.current = next;
         setConversations(next);
-        void saveCreationConversations(next).catch((error) => toast.error(error instanceof Error ? error.message : "对话重命名保存失败"));
+        const scope = getActiveUserScope();
+        void saveCreationConversations(next, scope).catch((error) => toastRef.current.error(error instanceof Error ? error.message : "对话重命名保存失败"));
     };
 
     const restoreMessageDraft = (item: CreationMessage) => {

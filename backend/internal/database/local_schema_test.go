@@ -476,4 +476,47 @@ func TestCreationConversationsMigrationPreservesUnknownColumns(t *testing.T) {
 	if row.Revision != 1 || !strings.Contains(row.Document, "conversation-keep") {
 		t.Fatalf("v11 rewrote conversation row: %+v", row)
 	}
+	valid, err := matchesSQLiteIndex(db, sqliteIndexContract{
+		table: "creation_conversations", name: "idx_creation_conversations_user_import",
+		columns: []string{"user_id", "import_operation_id"}, unique: true, partial: true,
+		whereSQL: "import_operation_id IS NOT NULL",
+	})
+	if err != nil || !valid {
+		t.Fatalf("v11 import unique index missing: valid=%v err=%v", valid, err)
+	}
+}
+
+func TestCreationConversationsImportIndexRepairedWithoutNewMigration(t *testing.T) {
+	db := openHistorical(t, "preview-v9")
+	if err := MigrateLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("DROP INDEX IF EXISTS idx_creation_conversations_user_import").Error; err != nil {
+		t.Fatal(err)
+	}
+	var ledgerBefore []localSchemaMigration
+	if err := db.Order("version").Find(&ledgerBefore).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	valid, err := matchesSQLiteIndex(db, sqliteIndexContract{
+		table: "creation_conversations", name: "idx_creation_conversations_user_import",
+		columns: []string{"user_id", "import_operation_id"}, unique: true, partial: true,
+		whereSQL: "import_operation_id IS NOT NULL",
+	})
+	if err != nil || !valid {
+		t.Fatalf("import unique index not repaired: valid=%v err=%v", valid, err)
+	}
+	var ledgerAfter []localSchemaMigration
+	if err := db.Order("version").Find(&ledgerAfter).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(ledgerAfter) != len(ledgerBefore) {
+		t.Fatalf("repair added a migration: %d -> %d", len(ledgerBefore), len(ledgerAfter))
+	}
 }

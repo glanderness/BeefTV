@@ -70,12 +70,14 @@ func NormalizeDocument(expectedID string, raw json.RawMessage) (normalizedDocume
 		return normalizedDocument{}, err
 	}
 	doc["title"] = title
-	if canvasID, exists := doc["canvasId"]; exists && canvasID != nil && strings.TrimSpace(fmt.Sprint(canvasID)) != "" {
-		normalizedCanvas, canvasErr := requiredID(canvasID, "画布")
-		if canvasErr != nil {
-			return normalizedDocument{}, canvasErr
+	if canvasID, exists := doc["canvasId"]; exists && canvasID != nil {
+		if text, ok := canvasID.(string); !ok || strings.TrimSpace(text) != "" {
+			normalizedCanvas, canvasErr := requiredID(canvasID, "画布")
+			if canvasErr != nil {
+				return normalizedDocument{}, canvasErr
+			}
+			doc["canvasId"] = normalizedCanvas
 		}
-		doc["canvasId"] = normalizedCanvas
 	}
 	messages, err := normalizeMessages(doc["messages"])
 	if err != nil {
@@ -129,12 +131,14 @@ func normalizeMessages(value any) ([]any, error) {
 			return nil, err
 		}
 		message["role"] = role
-		if mode, exists := message["mode"]; exists && mode != nil && strings.TrimSpace(fmt.Sprint(mode)) != "" {
-			normalizedMode, modeErr := requiredMode(mode)
-			if modeErr != nil {
-				return nil, modeErr
+		if mode, exists := message["mode"]; exists && mode != nil {
+			if text, ok := mode.(string); !ok || strings.TrimSpace(text) != "" {
+				normalizedMode, modeErr := requiredMode(mode)
+				if modeErr != nil {
+					return nil, modeErr
+				}
+				message["mode"] = normalizedMode
 			}
-			message["mode"] = normalizedMode
 		}
 		if taskIDs, exists := message["taskIds"]; exists && taskIDs != nil {
 			normalizedTasks, taskErr := normalizeIDList(taskIDs, "任务")
@@ -149,8 +153,12 @@ func normalizeMessages(value any) ([]any, error) {
 }
 
 func requiredID(value any, label string) (string, error) {
-	text := strings.TrimSpace(fmt.Sprint(value))
-	if text == "" || text == "<nil>" {
+	text, ok := value.(string)
+	if !ok {
+		return "", errInvalid(label + "标识无效")
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
 		return "", errInvalid("缺少" + label + "标识")
 	}
 	if utf8.RuneCountInString(text) > maxIDLength || !idPattern.MatchString(text) {
@@ -160,7 +168,11 @@ func requiredID(value any, label string) (string, error) {
 }
 
 func requiredRole(value any) (string, error) {
-	role := strings.TrimSpace(fmt.Sprint(value))
+	role, ok := value.(string)
+	if !ok {
+		return "", errInvalid("消息角色无效")
+	}
+	role = strings.TrimSpace(role)
 	if role != "user" && role != "assistant" {
 		return "", errInvalid("消息角色无效")
 	}
@@ -168,7 +180,11 @@ func requiredRole(value any) (string, error) {
 }
 
 func requiredMode(value any) (string, error) {
-	mode := strings.TrimSpace(fmt.Sprint(value))
+	mode, ok := value.(string)
+	if !ok {
+		return "", errInvalid("对话模式无效")
+	}
+	mode = strings.TrimSpace(mode)
 	if mode != "text" && mode != "image" && mode != "video" {
 		return "", errInvalid("对话模式无效")
 	}
@@ -179,8 +195,12 @@ func optionalTitle(value any) (string, error) {
 	if value == nil {
 		return "新创作", nil
 	}
-	title := strings.TrimSpace(fmt.Sprint(value))
-	if title == "" || title == "<nil>" {
+	title, ok := value.(string)
+	if !ok {
+		return "", errInvalid("对话标题无效")
+	}
+	title = strings.TrimSpace(title)
+	if title == "" {
 		return "新创作", nil
 	}
 	runes := []rune(title)
@@ -212,27 +232,37 @@ func normalizeIDList(value any, label string) ([]any, error) {
 }
 
 func sanitizeValue(value any) (any, error) {
+	return sanitizeValueAt(value, "")
+}
+
+func sanitizeValueAt(value any, key string) (any, error) {
 	switch typed := value.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(typed))
-		for key, item := range typed {
-			if isCredentialKey(key) {
+		for childKey, item := range typed {
+			if isCredentialKey(childKey) {
 				return nil, errInvalid("对话内容不能包含凭据")
 			}
-			cleaned, err := sanitizeValue(item)
+			cleaned, err := sanitizeValueAt(item, childKey)
 			if err != nil {
 				return nil, err
 			}
 			if cleaned == skipField {
 				continue
 			}
-			out[key] = cleaned
+			out[childKey] = cleaned
 		}
 		return out, nil
 	case []any:
+		if isAttachmentListKey(key) {
+			return sanitizeAttachmentList(typed)
+		}
+		if isMediaURLListKey(key) {
+			return sanitizeMediaURLList(typed)
+		}
 		out := make([]any, 0, len(typed))
 		for _, item := range typed {
-			cleaned, err := sanitizeValue(item)
+			cleaned, err := sanitizeValueAt(item, "")
 			if err != nil {
 				return nil, err
 			}
@@ -243,7 +273,7 @@ func sanitizeValue(value any) (any, error) {
 		}
 		return out, nil
 	case string:
-		if isTempMediaBlob(typed) {
+		if isMediaURLKey(key) && isTempMediaBlob(typed) {
 			return skipField, nil
 		}
 		if utf8.RuneCountInString(typed) > maxStringField {
@@ -253,6 +283,98 @@ func sanitizeValue(value any) (any, error) {
 	default:
 		return typed, nil
 	}
+}
+
+func sanitizeAttachmentList(list []any) ([]any, error) {
+	out := make([]any, 0, len(list))
+	for _, item := range list {
+		object, ok := item.(map[string]any)
+		if !ok {
+			return nil, errInvalid("附件必须是对象")
+		}
+		cleaned, err := sanitizeAttachment(object)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, cleaned)
+	}
+	return out, nil
+}
+
+func sanitizeAttachment(object map[string]any) (map[string]any, error) {
+	storageKey := firstStringField(object, "storageKey", "storage_key")
+	out := make(map[string]any, len(object))
+	for key, item := range object {
+		if isCredentialKey(key) {
+			return nil, errInvalid("对话内容不能包含凭据")
+		}
+		if text, ok := item.(string); ok && isMediaURLKey(key) && isTempMediaBlob(text) {
+			if storageKey == "" {
+				return nil, errInvalid("附件没有可恢复的存储引用")
+			}
+			continue
+		}
+		cleaned, err := sanitizeValueAt(item, key)
+		if err != nil {
+			return nil, err
+		}
+		if cleaned == skipField {
+			continue
+		}
+		out[key] = cleaned
+	}
+	return out, nil
+}
+
+func sanitizeMediaURLList(list []any) ([]any, error) {
+	out := make([]any, 0, len(list))
+	for _, item := range list {
+		text, ok := item.(string)
+		if ok && isTempMediaBlob(text) {
+			continue
+		}
+		cleaned, err := sanitizeValueAt(item, "url")
+		if err != nil {
+			return nil, err
+		}
+		if cleaned == skipField {
+			continue
+		}
+		out = append(out, cleaned)
+	}
+	return out, nil
+}
+
+func firstStringField(object map[string]any, keys ...string) string {
+	for _, key := range keys {
+		text, ok := object[key].(string)
+		if ok && strings.TrimSpace(text) != "" {
+			return strings.TrimSpace(text)
+		}
+	}
+	return ""
+}
+
+func normalizeFieldKey(key string) string {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	return strings.ReplaceAll(normalized, "_", "")
+}
+
+func isMediaURLKey(key string) bool {
+	switch normalizeFieldKey(key) {
+	case "dataurl", "url", "previewurl", "poster", "src", "thumbnail", "thumbnailurl", "imageurl":
+		return true
+	default:
+		return false
+	}
+}
+
+func isMediaURLListKey(key string) bool {
+	return normalizeFieldKey(key) == "resulturls"
+}
+
+func isAttachmentListKey(key string) bool {
+	return normalizeFieldKey(key) == "attachments"
 }
 
 var skipField = struct{ skip bool }{skip: true}

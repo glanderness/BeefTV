@@ -296,7 +296,7 @@ func TestPutRejectsCredentialsAndKeepsUnknownFields(t *testing.T) {
 	if !errors.As(err, &convErr) || convErr.Reason != conversation.ReasonInvalid {
 		t.Fatalf("credential error = %v", err)
 	}
-	raw := json.RawMessage(`{"id":"conversation-keep","title":"保留","futureField":true,"messages":[{"id":"m1","role":"user","content":"hi","unknownLocator":"resource:keep","dataUrl":"data:image/png;base64,aaaa"}]}`)
+	raw := json.RawMessage(`{"id":"conversation-keep","title":"保留","futureField":true,"messages":[{"id":"m1","role":"user","content":"data: keep the prompt","unknownLocator":"resource:keep","dataUrl":"data:image/png;base64,aaaa","attachments":[{"id":"a1","storageKey":"resource:shot-1","dataUrl":"data:image/png;base64,aaaa"}]}]}`)
 	saved, err := svc.Put("local", "conversation-keep", 0, raw)
 	if err != nil {
 		t.Fatal(err)
@@ -314,6 +314,112 @@ func TestDeleteDoesNotRequireMissingLocalDraft(t *testing.T) {
 	deleted, err := svc.Delete("local", "conversation-never", 0)
 	if err != nil || !deleted.Deleted {
 		t.Fatalf("missing local delete = %+v err=%v", deleted, err)
+	}
+	imported, err := svc.Import("local", "creation-conversations-v1:conversation-never", "", sampleDocument("conversation-never", "复活", "assistant-1", "task-1"))
+	if err != nil || imported.Imported || !imported.Deleted {
+		t.Fatalf("zero-revision tombstone missing: %+v err=%v", imported, err)
+	}
+}
+
+func TestDeleteZeroRevisionDoesNotDeleteExisting(t *testing.T) {
+	_, _, svc := openConversationFixture(t)
+	if _, err := svc.Put("local", "conversation-live", 0, sampleDocument("conversation-live", "在用", "assistant-1", "task-1")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.Delete("local", "conversation-live", 0)
+	var convErr *conversation.Error
+	if !errors.As(err, &convErr) || convErr.Reason != conversation.ReasonConflict {
+		t.Fatalf("zero revision delete = %v", err)
+	}
+	loaded, err := svc.Get("local", "conversation-live")
+	if err != nil || loaded.Revision != 1 {
+		t.Fatalf("existing row deleted by revision 0: %+v err=%v", loaded, err)
+	}
+}
+
+func TestPutReplayAfterLostAckIsIdempotent(t *testing.T) {
+	_, _, svc := openConversationFixture(t)
+	raw := sampleDocument("conversation-replay", "原稿", "assistant-1", "task-1")
+	first, err := svc.Put("local", "conversation-replay", 0, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := svc.Put("local", "conversation-replay", 0, raw)
+	if err != nil || replay.Revision != first.Revision {
+		t.Fatalf("lost-ack replay = %+v err=%v", replay, err)
+	}
+	next := sampleDocument("conversation-replay", "改名", "assistant-1", "task-1")
+	_, err = svc.Put("local", "conversation-replay", 0, next)
+	var convErr *conversation.Error
+	if !errors.As(err, &convErr) || convErr.Reason != conversation.ReasonConflict {
+		t.Fatalf("different document replay = %v", err)
+	}
+}
+
+func TestNormalizeKeepsPromptTextAndRejectsNumericIDs(t *testing.T) {
+	_, _, svc := openConversationFixture(t)
+	raw := json.RawMessage(`{"id":"conversation-text","title":"保留","messages":[{"id":"m1","role":"user","mode":"video","content":"data: this is a URI scheme note","unknownLocator":"resource:keep"}]}`)
+	saved, err := svc.Put("local", "conversation-text", 0, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !jsonContains(saved.Document, `"content":"data: this is a URI scheme note"`) || !jsonContains(saved.Document, `"unknownLocator":"resource:keep"`) {
+		t.Fatalf("prompt or unknown field dropped: %s", saved.Document)
+	}
+	_, err = svc.Put("local", "conversation-number", 0, json.RawMessage(`{"id":123,"title":"x","messages":[]}`))
+	var convErr *conversation.Error
+	if !errors.As(err, &convErr) || convErr.Reason != conversation.ReasonInvalid {
+		t.Fatalf("numeric id error = %v", err)
+	}
+	_, err = svc.Put("local", "conversation-blob-only", 0, json.RawMessage(`{"id":"conversation-blob-only","title":"x","messages":[{"id":"m1","role":"user","content":"hi","attachments":[{"id":"a1","dataUrl":"data:image/png;base64,aaaa"}]}]}`))
+	if !errors.As(err, &convErr) || convErr.Reason != conversation.ReasonInvalid {
+		t.Fatalf("blob-only attachment error = %v", err)
+	}
+}
+
+func TestConcurrentImportSameOperationDifferentDocuments(t *testing.T) {
+	db, _, svc := openConversationFixture(t)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	results := make([]error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			id := "conversation-import-a"
+			title := "甲"
+			if i == 1 {
+				id = "conversation-import-b"
+				title = "乙"
+			}
+			_, results[i] = svc.Import("local", "creation-conversations-v1:shared-op", "", sampleDocument(id, title, "assistant-1", "task-1"))
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	successes := 0
+	conflicts := 0
+	for _, err := range results {
+		if err == nil {
+			successes++
+			continue
+		}
+		var convErr *conversation.Error
+		if !errors.As(err, &convErr) || convErr.Reason != conversation.ReasonConflict {
+			t.Fatalf("import error = %v", err)
+		}
+		conflicts++
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("successes=%d conflicts=%d errors=%v", successes, conflicts, results)
+	}
+	var count int64
+	if err := db.Raw("SELECT COUNT(*) FROM creation_conversations WHERE import_operation_id = ?", "creation-conversations-v1:shared-op").Scan(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("duplicate import rows = %d", count)
 	}
 }
 

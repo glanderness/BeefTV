@@ -50,7 +50,7 @@ func registerDesktopCanvasAPI(api *gin.RouterGroup, svc *app.Service, dependenci
 	// 都不能由浏览器或直接 API 触发。历史执行、偏好和记忆数据保留在本地数据库，
 	// 不做破坏性迁移；替换内核落地时再设计新的入口契约。
 	RegisterCreationRoutes(api, svc)
-	RegisterCreationConversationRoutes(api, svc)
+	RegisterCreationConversationRoutes(api, svc, dependencies.Conversations)
 	RegisterChannelModelRoutes(api, svc)
 	RegisterCustomRelayRoutes(api, svc)
 	RegisterTaskRoutes(api, svc, false)
