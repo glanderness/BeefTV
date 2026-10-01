@@ -15,6 +15,7 @@ export const GENERATION_ERROR_CATEGORIES = [
     "moderation_reference",
     "moderation_output",
     "invalid_params",
+    "local_storage",
     "canvas_conflict",
     "context_too_long",
     "input_inaccessible",
@@ -104,6 +105,7 @@ const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
     moderation_reference: { reason: "参考素材未通过内容安全审核", action: "请检查并更换参考素材后重新生成" },
     moderation_output: { reason: "生成结果未通过内容安全审核", action: "请调整提示词或参考素材后重新生成" },
     invalid_params: { reason: "模型不接受当前参数", action: "请检查模型、尺寸、时长、格式或数量后重试" },
+    local_storage: { reason: "本地数据库无法读写", action: "请重启应用；若仍失败，请保留排查信息并联系支持，不要重复生成" },
     canvas_conflict: { reason: "生成结果已保留，画布尚未更新", action: "请先使用画布最新版本，再重新加载资源，不要重新生成" },
     context_too_long: { reason: "输入内容超出模型长度限制", action: "请缩短提示词或减少参考内容后重试" },
     input_inaccessible: { reason: "参考素材无法读取", action: "请检查素材后重试" },
@@ -238,6 +240,7 @@ const DEFAULT_GENERATION_ERROR_MESSAGE = "生成失败。请查看详情后再�
 export const CONTENT_MODERATION_MESSAGE = "提示词未通过内容安全审核。请修改提示词或参考图后重新生成。";
 
 const HTML_BODY = /^\s*(?:<!doctype|<html|<head|<body)/i;
+const LOCAL_DATABASE_ERROR = /(?:^|:\s*)(?:table\s+[a-z0-9_]+\s+has no column named\s+[a-z0-9_]+|no such (?:column|table):\s*[a-z0-9_.]+|(?:UNIQUE|NOT NULL|CHECK) constraint failed:\s*\S+|FOREIGN KEY constraint failed|database (?:is locked|is malformed)|database disk image is malformed|attempt to write a readonly database|disk I\/O error)(?:\b|$)/i;
 const HTTP_STATUS = /(?:HTTP\s+|status(?:[_\s]+code)?\s*[:：=]?\s*)(\d{3})\b/i;
 const WRAPPED_HTTP_STATUS = /Request failed with status code\s+(\d{3})/i;
 const URL_PATTERN = /(?:https?:\/\/|data:[a-z0-9.+-]+\/[^;]+;base64,)[^\s"'<>]+/gi;
@@ -265,7 +268,7 @@ export function explainGenerationError(error: unknown, context: GenerationFailur
     const uncertain = classified.uncertain || classified.category === "submission_uncertain" || classified.category === "download_failed" || (classified.category === "timeout" && classified.status === 524);
     return {
         category: classified.category,
-        summary: sanitizeProviderText(error instanceof Error ? error.message : typeof error === "string" ? error : providerPayloadMessage(error)),
+        summary: classified.category === "local_storage" ? copy.reason : sanitizeProviderText(error instanceof Error ? error.message : typeof error === "string" ? error : providerPayloadMessage(error)),
         reason: copy.reason,
         action: copy.action,
         message: message || DEFAULT_GENERATION_ERROR_MESSAGE,
@@ -523,6 +526,9 @@ function classifyText(raw: string): Classified {
     const storage = resourceStorageFailureMessage(text);
     if (storage) return { category: "input_inaccessible", reason: storage.replace(/。$/, ""), action: "", retryable: false };
     const fields = extractProviderFields(text);
+    // Inspect only the error message, never JSON request echoes or debug fields.
+    const databaseMessage = fields.code || fields.type || fields.message || fields.status || /^[{[]/.test(text) ? fields.message : text;
+    if (LOCAL_DATABASE_ERROR.test(databaseMessage)) return { category: "local_storage", fromCode: true, requestId: sanitizeDebugId(fields.requestId), taskId: sanitizeDebugId(fields.taskId), retryable: false };
     if (fields.code || fields.type || fields.message || fields.status) {
         const fromCode = categoryFromProviderCode(fields.code, fields.type, fields.status);
         if (fromCode) return specialize({ category: fromCode, fromCode: true, providerCode: sanitizeProviderCode(fields.code), requestId: sanitizeDebugId(fields.requestId), taskId: sanitizeDebugId(fields.taskId) }, fields);

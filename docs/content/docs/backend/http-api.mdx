@@ -98,7 +98,7 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 
 NewAPI Channel 2 与 BeefAPI 视频的暂时下载断连会保留原任务 ID 并继续后台取回，自动恢复最长到任务开始后 24 小时；超出窗口后可在失败任务详情手动取回。任务日志接口提供脱敏的 `summary`，不返回原始 `message` / `payload` 内容；摘要不写回数据库。
 
-任务列表与详情中的 `errorCode` 是 BeefTV 归类后的错误类别，不能当作上游原始代码。新记录的失败任务可包含 `failureDiagnostics`：`source` 区分本地校验、上游 HTTP / 业务响应、本地结果处理及未知来源；`summary` 保存脱敏后的错误摘要，另带实际记录到的 `providerCode`、`httpStatus`、`param`、`requestId`、`providerTaskId`、`stage` 和 `capturedAt`。缺失信息不推断或补造。`createdAt` 是任务创建时间，`completedAt` 是结束时间，均不等于错误记录时间。
+任务列表与详情中的 `errorCode` 是 BeefTV 归类后的错误类别，不能当作上游原始代码。已识别的 SQLite 缺表/列、锁定、只读、I/O 和约束失败使用 `local_storage`，提示本地数据库无法读写、不自动重试；不能因为外层 HTTP 400 把它归为模型参数错误。判断只读取实际错误消息，不读取请求或提示词回显。新记录的失败任务可包含 `failureDiagnostics`：`source` 区分本地校验、上游 HTTP / 业务响应、本地结果处理及未知来源；`summary` 保存脱敏后的错误摘要，另带实际记录到的 `providerCode`、`httpStatus`、`param`、`requestId`、`providerTaskId`、`stage` 和 `capturedAt`。缺失信息不推断或补造。`createdAt` 是任务创建时间，`completedAt` 是结束时间，均不等于错误记录时间。
 
 诊断字段在本地 schema v3 中以可空文本列保存，旧任务不补写原始错误，重试会清除上一轮诊断。任务列表、详情和画布的“复制排查信息”使用同一份诊断；复制内容不包含请求正文、提示词、凭据、素材 URL 或本地文件路径。`providerRequestId` 可能是供应商任务标识，在复制内容中标作“服务端关联 ID”，与 HTTP 请求 ID 分开。
 

@@ -69,3 +69,49 @@ jobs:
         run: |
           bunx playwright install --with-deps chromium
           bun run test
+
+  database-platforms:
+    if: github.event_name == 'workflow_dispatch'
+    name: SQLite and runtime (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: backend
+    env:
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Select runner C compiler on Windows
+        if: runner.os == 'Windows'
+        run: echo 'C:/msys64/mingw64/bin' >> "$GITHUB_PATH"
+      - name: Record actual platform and SQLite driver
+        run: |
+          mkdir -p matrix-evidence
+          go version | tee matrix-evidence/platform.txt
+          go env GOOS GOARCH CGO_ENABLED CC | tee -a matrix-evidence/platform.txt
+          gcc --version | head -1 | tee -a matrix-evidence/platform.txt
+          go list -m gorm.io/driver/sqlite github.com/mattn/go-sqlite3 | tee -a matrix-evidence/platform.txt
+      - name: Build official protocol packages
+        run: sh ../plugin-packages/build-packages.sh
+      - name: Historical SQLite, schema repair and interrupted migration
+        run: go test ./internal/database -count=1 -json | tee matrix-evidence/database.jsonl
+      - name: Local provider task persistence and restart matrix
+        run: go test ./internal/app -run '^TestDBRuntime' -count=1 -json | tee matrix-evidence/runtime.jsonl
+      - name: Actual CLI and MCP against isolated HTTP runtime
+        run: go test ./cmd/beeftv -run '^TestCLIAndMCPAgainstIsolatedIntegratedRuntime$' -count=1 -json | tee matrix-evidence/cli-mcp.jsonl
+      - name: Preserve per-test results and platform evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-matrix-${{ runner.os }}-${{ github.sha }}
+          path: backend/matrix-evidence/

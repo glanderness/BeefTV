@@ -13,6 +13,33 @@ import (
 	"infinite-canvas/backend/internal/generation"
 )
 
+func TestLocalDatabaseFailuresNeverBlameModelParameters(t *testing.T) {
+	for _, message := range []string{"table tasks has no column named failure_diagnostics", "no such column: failure_diagnostics", "no such table: tasks", "database is locked", "attempt to write a readonly database", "disk I/O error", "UNIQUE constraint failed: tasks.id", "NOT NULL constraint failed: tasks.type", "CHECK constraint failed: task_status", "FOREIGN KEY constraint failed"} {
+		for _, failure := range []generation.Failure{generation.ClassifyText(message), generation.ClassifyAppError(400, 400, "invalid_argument", message), generation.ClassifyHTTP(500, "", message), generation.ClassifyText(fmt.Sprintf(`{"error":{"code":"invalid_argument","message":%q}}`, message))} {
+			if string(failure.Category) != "local_storage" || failure.Retryable || !failure.BlocksAutomaticRetry() || !strings.Contains(failure.UserMessage(), "数据库") || strings.Contains(failure.UserMessage(), "failure_diagnostics") {
+				t.Errorf("%q: %+v; display=%s", message, failure, failure.UserMessage())
+			}
+		}
+	}
+}
+
+func TestLocalDatabaseClassificationPreservesProviderParameters(t *testing.T) {
+	for _, echo := range []string{"UNIQUE constraint failed: tasks.id", "NOT NULL constraint failed: tasks.type", "CHECK constraint failed: task_status", "FOREIGN KEY constraint failed"} {
+		if got := generation.ClassifyText(fmt.Sprintf(`{"error":{"code":"invalid_parameter","message":"invalid size"},"prompt":%q}`, echo)); got.Category != generation.CategoryInvalidParams {
+			t.Errorf("request echo changed classification: %+v", got)
+		}
+	}
+	for _, raw := range []string{`{"error":{"code":"invalid_parameter","message":"invalid size"},"prompt":"table tasks has no column named failure_diagnostics"}`, `{"error":{"code":"invalid_parameter","message":"invalid size"}}`} {
+		if got := generation.ClassifyText(raw); got.Category != generation.CategoryInvalidParams {
+			t.Errorf("provider parameter failure changed: %+v", got)
+		}
+	}
+	failure := generation.ClassifyAppError(500, 500, "local_storage", "")
+	if failure.Category != generation.CategoryLocalStorage || generation.ClassifyText(failure.UserMessage()).Category != generation.CategoryLocalStorage {
+		t.Errorf("stable reason or persisted copy lost: %+v", failure)
+	}
+}
+
 func TestGatewayReferenceGeometryAndRequestSize(t *testing.T) {
 	height := `{"error":{"code":"400","message":"Height must be between 300px and 6000px","type":"api_error"}} (request id: 202609270829245377912978268d9d6USz1NP3R)`
 	failure := generation.ClassifyText(height)

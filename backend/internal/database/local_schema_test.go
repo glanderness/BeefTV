@@ -58,7 +58,7 @@ func TestLocalSchemaRecordsVersionAndIsIdempotent(t *testing.T) {
 	if err := db.Table("local_schema_migrations").Order("version").Pluck("version", &versions).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(versions) != 7 || versions[len(versions)-1] != CurrentSchemaVersion {
+	if len(versions) != 8 || versions[len(versions)-1] != CurrentSchemaVersion {
 		t.Fatalf("recorded versions = %v, current = %d", versions, CurrentSchemaVersion)
 	}
 }

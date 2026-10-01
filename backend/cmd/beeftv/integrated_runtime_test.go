@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os/exec"
 	"path/filepath"
+	stdruntime "runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -23,6 +24,9 @@ func TestCLIAndMCPAgainstIsolatedIntegratedRuntime(t *testing.T) {
 		t.Setenv(key, "")
 	}
 	bin := filepath.Join(t.TempDir(), "beeftv")
+	if stdruntime.GOOS == "windows" {
+		bin += ".exe"
+	}
 	build := exec.Command("go", "build", "-o", bin, ".")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v %s", err, output)

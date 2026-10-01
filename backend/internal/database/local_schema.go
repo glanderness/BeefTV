@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 8
+const CurrentSchemaVersion int64 = 9
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -79,6 +79,7 @@ func migrateLocalSchema(db *gorm.DB, beforeApply func(int64) error) error {
 		{version: 5, name: "task-client-operation-hash", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.Task{}) }},
 		{version: 6, name: "agent-operation-turn-attribution", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.AgentOpRecord{}) }},
 		{version: 8, name: "reconcile-product-agent-schema", apply: migrateProductAgentSchema},
+		{version: 9, name: "repair-product-agent-contracts", apply: repairProductAgentContracts},
 	}
 	current, err := currentSchemaVersion(db)
 	if err != nil {
@@ -317,6 +318,9 @@ func RequireLocalSchema(db *gorm.DB) error {
 }
 
 func requireReconciledSchema(db *gorm.DB) error {
+	if err := requireSQLitePrimaryKey(db, "tasks", []string{"id"}); err != nil {
+		return err
+	}
 	if !db.Migrator().HasTable(&model.ImageSubmission{}) || !db.Migrator().HasTable(&model.AgentOpRecord{}) {
 		return fmt.Errorf("本地图片恢复或 Agent 操作表缺失，请从备份恢复或使用修复迁移")
 	}
@@ -328,15 +332,42 @@ func requireReconciledSchema(db *gorm.DB) error {
 	if !db.Migrator().HasColumn(&model.AgentOpRecord{}, "TurnID") || !db.Migrator().HasIndex(&model.AgentOpRecord{}, "idx_agent_op_records_turn_id") || !db.Migrator().HasIndex(&model.Task{}, "idx_tasks_user_client_op") {
 		return fmt.Errorf("本地 Agent 幂等或回合归属结构缺失")
 	}
+	for _, value := range []any{&model.ImageSubmission{}, &model.AgentOpRecord{}} {
+		stmt := &gorm.Statement{DB: db}
+		if err := stmt.Parse(value); err != nil {
+			return err
+		}
+		for _, column := range stmt.Schema.DBNames {
+			if !db.Migrator().HasColumn(stmt.Schema.Table, column) {
+				return fmt.Errorf("本地数据库表 %s 缺失列 %s", stmt.Schema.Table, column)
+			}
+		}
+		if err := requireSQLitePrimaryKey(db, stmt.Schema.Table, stmt.Schema.PrimaryFieldDBNames); err != nil {
+			return err
+		}
+	}
+	for _, index := range reconciledIndexes {
+		valid, err := matchesSQLiteIndex(db, index)
+		if err != nil {
+			return err
+		}
+		if !valid {
+			return fmt.Errorf("本地数据库索引 %s 定义不完整", index.name)
+		}
+	}
 	return nil
 }
 
 func ReadSchemaStatus(db *gorm.DB) (SchemaStatus, error) {
 	status := SchemaStatus{Expected: CurrentSchemaVersion}
+	var err error
+	status.Current, err = currentSchemaVersion(db)
+	if err != nil {
+		return status, err
+	}
 	if err := RequireLocalSchema(db); err != nil {
 		return status, nil
 	}
-	status.Current, _ = currentSchemaVersion(db)
 	status.Ready = status.Current == CurrentSchemaVersion
 	return status, nil
 }

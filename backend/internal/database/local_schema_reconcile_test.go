@@ -10,6 +10,12 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+func fixtureHasDiagnostics(history string) bool {
+	return strings.HasPrefix(history, "product") && history != "product-v1" && history != "product-v2" && history != "product-v3-missing"
+}
+
+// Synthetic branch-shape fixtures, not copies of customer databases. Agent v4
+// and v5 column contracts follow commits 2525b2c and 05edc16 respectively.
 func reconciliationFixture(t *testing.T, history string) *gorm.DB {
 	t.Helper()
 	db, err := Open(Config{Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "fixture.db")})
@@ -36,6 +42,12 @@ func reconciliationFixture(t *testing.T, history string) *gorm.DB {
 	names := map[int64]string{1: "local-core-schema", 2: "retire-hosted-schema"}
 	if strings.HasPrefix(history, "agent") {
 		names[3] = "agent-operation-records"
+		if history == "agent-v4" || history == "agent-v5" {
+			names[4] = "task-client-operation"
+		}
+		if history == "agent-v5" {
+			names[5] = "task-client-operation-hash"
+		}
 		if history == "agent-v6" {
 			names[4], names[5], names[6] = "task-client-operation", "task-client-operation-hash", "agent-operation-turn-attribution"
 		} else {
@@ -52,12 +64,14 @@ func reconciliationFixture(t *testing.T, history string) *gorm.DB {
 			names[7] = "product-image-recovery-and-diagnostics"
 		}
 	}
-	if history != "agent-v6" {
+	if history != "agent-v4" && history != "agent-v5" && history != "agent-v6" {
 		exec("DROP INDEX idx_tasks_user_client_op")
 		exec("ALTER TABLE tasks DROP COLUMN client_operation_id")
+	}
+	if history != "agent-v5" && history != "agent-v6" {
 		exec("ALTER TABLE tasks DROP COLUMN client_operation_hash")
 	}
-	if strings.HasPrefix(history, "product") {
+	if fixtureHasDiagnostics(history) {
 		exec("ALTER TABLE tasks ADD COLUMN failure_diagnostics TEXT")
 	}
 	if history != "product-v7" && history != "image-v3" {
@@ -66,19 +80,26 @@ func reconciliationFixture(t *testing.T, history string) *gorm.DB {
 	if history == "product-v7-missing" {
 		names[7] = "unrelated-branch-v7"
 	}
+	if history == "product-v1" {
+		delete(names, 2)
+		delete(names, 3)
+	}
+	if history == "product-v2" {
+		delete(names, 3)
+	}
 	for version, name := range names {
 		if err := db.Create(&localSchemaMigration{Version: version, Name: name, AppliedAt: time.Now()}).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
 	exec(`INSERT INTO tasks(id,user_id,type,status,input_json,result_json,error) VALUES ('task','owner','canvas_image','failed','{"source":"original"}','{"resourceId":"resource"}','historical error')`)
-	if strings.HasPrefix(history, "product") {
+	if fixtureHasDiagnostics(history) {
 		exec(`UPDATE tasks SET failure_diagnostics = '{"source":"gateway","requestId":"request"}'`)
 	}
 	if history == "agent-v6" {
 		exec(`UPDATE tasks SET client_operation_id = 'operation', client_operation_hash = 'hash'`)
 		exec(`INSERT INTO agent_op_records(user_id,op_id,status,result_json,turn_id) VALUES ('owner','operation','completed','{"taskId":"task"}','turn')`)
-	} else if history == "agent-v3" {
+	} else if strings.HasPrefix(history, "agent") {
 		exec(`INSERT INTO agent_op_records(user_id,op_id,status,result_json) VALUES ('owner','operation','completed','{"taskId":"task"}')`)
 	}
 	if db.Migrator().HasTable(&model.ImageSubmission{}) {
@@ -93,7 +114,7 @@ func reconciliationFixture(t *testing.T, history string) *gorm.DB {
 }
 
 func TestAgentProductReconcileHistoricalLedgers(t *testing.T) {
-	for _, history := range []string{"product-v7", "product-v7-missing", "product-v3", "agent-v3", "agent-v6", "image-v3"} {
+	for _, history := range []string{"product-v1", "product-v2", "product-v3", "product-v3-missing", "product-v7", "product-v7-missing", "agent-v3", "agent-v4", "agent-v5", "agent-v6", "image-v3"} {
 		t.Run(history, func(t *testing.T) {
 			db := reconciliationFixture(t, history)
 			var before []localSchemaMigration
@@ -116,7 +137,7 @@ func TestAgentProductReconcileHistoricalLedgers(t *testing.T) {
 				t.Fatalf("task changed: %+v", task)
 			}
 			var diagnostic string
-			if strings.HasPrefix(history, "product") {
+			if fixtureHasDiagnostics(history) {
 				if err := db.Raw("SELECT failure_diagnostics FROM tasks WHERE id = 'task'").Scan(&diagnostic).Error; err != nil {
 					t.Fatal(err)
 				}
@@ -259,7 +280,7 @@ func TestAgentProductReconcileSameVersionDamageIsNotReady(t *testing.T) {
 
 func TestAgentProductReconcileRefusesFutureVersion(t *testing.T) {
 	db := reconciliationFixture(t, "product-v7")
-	if err := db.Create(&localSchemaMigration{Version: 9, Name: "future", AppliedAt: time.Now()}).Error; err != nil {
+	if err := db.Create(&localSchemaMigration{Version: CurrentSchemaVersion + 1, Name: "future", AppliedAt: time.Now()}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := MigrateLocalSchema(db); err == nil {
