@@ -1,7 +1,5 @@
 import { useCallback, useRef, useState } from "react";
 
-import type { Position } from "@/types/canvas";
-
 export type CanvasProjectDialogIds = {
     textEditorNodeId: string | null;
     characterReferenceNodeId: string | null;
@@ -50,7 +48,6 @@ export function useCanvasProjectDialogs() {
     const [tapNowImportOpen, setTapNowImportOpen] = useState(false);
     const [nodeSearchOpen, setNodeSearchOpen] = useState(false);
     const [stylePickerOpen, setStylePickerOpen] = useState(false);
-    const [directorTemplateRequest, setDirectorTemplateRequest] = useState<{ position?: Position } | null>(null);
     const [libTVImportOpen, setLibTVImportOpen] = useState(false);
     const [textEditorNodeId, setTextEditorNodeId] = useState<string | null>(null);
     const [characterReferenceNodeId, setCharacterReferenceNodeId] = useState<string | null>(null);
@@ -103,8 +100,6 @@ export function useCanvasProjectDialogs() {
         setNodeSearchOpen,
         stylePickerOpen,
         setStylePickerOpen,
-        directorTemplateRequest,
-        setDirectorTemplateRequest,
         libTVImportOpen,
         setLibTVImportOpen,
         textEditorNodeId,
