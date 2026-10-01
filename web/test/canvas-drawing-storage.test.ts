@@ -15,6 +15,7 @@ import {
     createCanvasDrawingFromImage,
     loadCanvasDrawing,
     loadCanvasDrawingPreview,
+    loadCanvasDrawingRender,
     peekCanvasDrawingCacheForTests,
     removeCanvasDrawing,
     replaceCanvasDrawingStoresForTests,
@@ -42,7 +43,11 @@ function switchScope(userId: string) {
     return () => setActiveUserScope(previous);
 }
 
-function memoryStore<T>(values: Map<string, T>, hooks?: { beforeGet?: (key: string) => Promise<void> | void; beforeSet?: (key: string, value: T) => Promise<void> | void }) {
+function memoryStore<T>(values: Map<string, T>, hooks?: {
+    beforeGet?: (key: string) => Promise<void> | void;
+    beforeSet?: (key: string, value: T) => Promise<void> | void;
+    beforeRemove?: (key: string) => Promise<void> | void;
+}) {
     return {
         async getItem(key: string) {
             await hooks?.beforeGet?.(key);
@@ -54,6 +59,7 @@ function memoryStore<T>(values: Map<string, T>, hooks?: { beforeGet?: (key: stri
             return value;
         },
         async removeItem(key: string) {
+            await hooks?.beforeRemove?.(key);
             values.delete(key);
         },
     };
@@ -128,13 +134,19 @@ function installStores(hooks?: {
     beforeSet?: (key: string, value: unknown) => Promise<void> | void;
     beforeGet?: (key: string) => Promise<void> | void;
     previewBeforeSet?: (key: string, value: Blob) => Promise<void> | void;
+    previewBeforeGet?: (key: string) => Promise<void> | void;
+    previewBeforeRemove?: (key: string) => Promise<void> | void;
 }) {
     documents.clear();
     previews.clear();
     renders.clear();
     replaceCanvasDrawingStoresForTests({
         documents: memoryStore(documents, { beforeSet: hooks?.beforeSet, beforeGet: hooks?.beforeGet }),
-        previews: memoryStore(previews, { beforeSet: hooks?.previewBeforeSet }),
+        previews: memoryStore(previews, {
+            beforeSet: hooks?.previewBeforeSet,
+            beforeGet: hooks?.previewBeforeGet,
+            beforeRemove: hooks?.previewBeforeRemove,
+        }),
         renders: memoryStore(renders as Map<string, never>),
     });
 }
@@ -1004,6 +1016,134 @@ describe("canvas drawing storage", () => {
             expect(generationOwnedKeys(previews as Map<string, unknown>, keepKey)).toEqual([]);
             expect(await previews.get(otherScope)?.text()).toBe("other-a");
             expect(await (renders.get(otherScope) as { blob: Blob } | undefined)?.blob.text()).toBe("other-r");
+        } finally {
+            restore();
+        }
+    });
+
+    test("thrown generation blob read then later ack reclaims the leaked in-flight generation", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        let throwGenRead = true;
+        installStores({
+            previewBeforeGet: async (key) => {
+                if (throwGenRead && key.includes("\0g")) {
+                    throwGenRead = false;
+                    throw new Error("preview store read failed");
+                }
+            },
+        });
+        const key = drawingCacheKey("owner-a");
+        try {
+            await withAdapter(async (config) => {
+                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
+                if (String(config.method).toLowerCase() === "put") {
+                    const body = requestBody(config) as { drawing: { snapshot: unknown; revision: number } };
+                    return envelope(drawingRecord(body.drawing.snapshot, (body.drawing.revision || 0) + 1));
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("first"), null, new Blob(["blob-a"]), { blob: new Blob(["render-a"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" }, captureUserScope()))
+                    .rejects.toThrow(/preview store read failed/);
+                await saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("second"), null, new Blob(["blob-b"]), { blob: new Blob(["render-b"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" }, captureUserScope());
+            });
+            expect(generationOwnedKeys(previews as Map<string, unknown>, key)).toEqual([]);
+            expect(await previews.get(key)?.text()).toBe("blob-b");
+        } finally {
+            restore();
+        }
+    });
+
+    test("legacy snapshot published blobs remain readable without a server PUT", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        installStores();
+        const key = drawingCacheKey("owner-a");
+        documents.set(key, {
+            version: 2,
+            engine: "excalidraw",
+            snapshot: snapshotOf("legacy"),
+            revision: 3,
+            updatedAt: "2026-10-01T00:00:00.000Z",
+            shapeCount: 1,
+            pageCount: 1,
+        });
+        previews.set(key, new Blob(["legacy-preview"], { type: "image/png" }));
+        renders.set(key, {
+            blob: new Blob(["legacy-render"], { type: "image/png" }),
+            pageId: "page",
+            width: 8,
+            height: 8,
+            mimeType: "image/png",
+            background: "white",
+            version: 1,
+            revision: 3,
+            updatedAt: "2026-10-01T00:00:00.000Z",
+        });
+        const puts: string[] = [];
+        try {
+            const loaded = await withAdapter(async (config) => {
+                if (String(config.method).toLowerCase() === "put") {
+                    puts.push(`${config.method} ${config.url}`);
+                    throw new Error("legacy load must not PUT");
+                }
+                if (String(config.method).toLowerCase() === "get" && String(config.url).includes("/drawings/")) {
+                    return failure(404, "画板不存在");
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                const preview = await loadCanvasDrawingPreview("p1", "d1", captureUserScope());
+                const render = await loadCanvasDrawingRender("p1", "d1", captureUserScope());
+                const document = await loadCanvasDrawing("p1", "d1", captureUserScope());
+                return { preview, render, document };
+            });
+            expect(await loaded.preview?.text()).toBe("legacy-preview");
+            expect(await loaded.render?.blob.text()).toBe("legacy-render");
+            expect(loaded.document?.snapshot).toEqual(snapshotOf("legacy"));
+            expect(await previews.get(`${key}\0g1`)?.text()).toBe("legacy-preview");
+            expect(puts).toEqual([]);
+        } finally {
+            restore();
+        }
+    });
+
+    test("reclaim failure does not mask an unknown network error", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        installStores({
+            previewBeforeRemove: async (key) => {
+                if (key.includes("\0g1")) throw new Error("reclaim failed");
+            },
+        });
+        const enteredFirst = deferred();
+        const releaseFirst = deferred();
+        try {
+            await withAdapter(async (config) => {
+                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
+                if (String(config.method).toLowerCase() === "put") {
+                    const body = requestBody(config) as { drawing: { snapshot: unknown; revision: number } };
+                    if (JSON.stringify(body.drawing.snapshot) === JSON.stringify(snapshotOf("first"))) {
+                        enteredFirst.resolve();
+                        await releaseFirst.promise;
+                        throw new Error("网络中断");
+                    }
+                    return envelope(drawingRecord(body.drawing.snapshot, (body.drawing.revision || 0) + 1));
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                const first = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("first"), null, new Blob(["blob-a"]), { blob: new Blob(["render-a"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" }, captureUserScope());
+                await enteredFirst.promise;
+                const second = saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("second"), null, new Blob(["blob-b"]), { blob: new Blob(["render-b"]), pageId: "page", width: 8, height: 8, mimeType: "image/png", background: "white" }, captureUserScope());
+                const deadline = Date.now() + 2000;
+                while (Date.now() < deadline) {
+                    const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { generation: number } };
+                    if (cached?.draft?.generation === 2) break;
+                    await new Promise((resolve) => setTimeout(resolve, 0));
+                }
+                releaseFirst.resolve();
+                await expect(first).rejects.toThrow(/网络中断/);
+                await second;
+            });
         } finally {
             restore();
         }
