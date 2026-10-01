@@ -271,6 +271,51 @@ func TestUserAssetsPageFiltersFavoriteRecentProjectBeforePagination(t *testing.T
 	if favoriteCount != 125 || recentCount != 129 {
 		t.Fatalf("quick counts favorite=%d recent=%d", favoriteCount, recentCount)
 	}
+
+	projectRows, err := repo.UserAssetProjectCounts("user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectCounts := facetCountMap(projectRows)
+	if projectCounts["海边剧"] != 2 || projectCounts["已关联项目"] != 1 || projectCounts["未关联项目"] != 127 || len(projectCounts) != 3 {
+		t.Fatalf("project counts = %#v", projectCounts)
+	}
+}
+
+func TestUserAssetProjectCountsUsesActiveNonEntitySemantics(t *testing.T) {
+	repo, db := newAssetLibraryTestRepository(t)
+	now := time.Now().UTC()
+	create := func(asset model.Asset) {
+		t.Helper()
+		if err := db.Create(&asset).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	create(model.Asset{
+		ID: "named", UserID: "user-1", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed,
+		Title: "海边", PayloadJSON: `{"id":"named","metadata":{"projectName":"海边剧"}}`, CreatedAt: now, UpdatedAt: now,
+	})
+	create(model.Asset{
+		ID: "archived", UserID: "user-1", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusArchived,
+		Title: "归档", PayloadJSON: `{"id":"archived","metadata":{"projectName":"归档项目"}}`, CreatedAt: now, UpdatedAt: now,
+	})
+	create(model.Asset{
+		ID: "entity", UserID: "user-1", Kind: "entity", Category: model.AssetCategoryOther, Status: model.AssetVersionStatusConfirmed,
+		Title: "角色", PayloadJSON: `{"id":"entity","metadata":{"projectName":"角色项目"}}`, CreatedAt: now, UpdatedAt: now,
+	})
+	create(model.Asset{
+		ID: "plain", UserID: "user-1", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed,
+		Title: "普通", PayloadJSON: `{"id":"plain","metadata":{}}`, CreatedAt: now, UpdatedAt: now,
+	})
+
+	rows, err := repo.UserAssetProjectCounts("user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := facetCountMap(rows)
+	if got["海边剧"] != 1 || got["未关联项目"] != 1 || got["归档项目"] != 0 || got["角色项目"] != 0 || len(got) != 2 {
+		t.Fatalf("active non-entity project counts = %#v", got)
+	}
 }
 
 func assetIDs(assets []model.Asset) string {
@@ -301,4 +346,12 @@ func (set stringSet) Equal(ids ...string) bool {
 		}
 	}
 	return true
+}
+
+func facetCountMap(rows []UserAssetFacetRow) map[string]int64 {
+	result := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		result[row.Key] = row.Count
+	}
+	return result
 }

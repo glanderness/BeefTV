@@ -40,6 +40,7 @@ type UserAssetPage struct {
 	FolderCounts   map[string]int64  `json:"folderCounts"`
 	FavoriteTotal  int64             `json:"favoriteTotal"`
 	RecentTotal    int64             `json:"recentTotal"`
+	ProjectCounts  map[string]int64  `json:"projectCounts"`
 	Page           int               `json:"page"`
 	PageSize       int               `json:"pageSize"`
 	Total          int64             `json:"total"`

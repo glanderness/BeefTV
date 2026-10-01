@@ -82,6 +82,17 @@ func (r *Repository) UserAssetQuickFilterCounts(userID string) (favorite int64, 
 	return favorite, recent, nil
 }
 
+func (r *Repository) UserAssetProjectCounts(userID string) ([]UserAssetFacetRow, error) {
+	expr := userAssetProjectLabelSQL()
+	var rows []UserAssetFacetRow
+	err := userAssetFilteredQuery(
+		r.db.Model(&model.Asset{}).Where("user_id = ? AND kind <> ?", userID, "entity"),
+		UserAssetPageFilter{Status: "active"},
+		false,
+	).Select(expr + " AS key, COUNT(*) AS count").Group(expr).Scan(&rows).Error
+	return rows, err
+}
+
 func userAssetFilteredQuery(query *gorm.DB, filter UserAssetPageFilter, includeSearch bool) *gorm.DB {
 	if value := strings.TrimSpace(filter.Kind); value != "" {
 		query = query.Where("kind = ?", value)

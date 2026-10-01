@@ -126,9 +126,13 @@ func (l *Library) UserAssetsPage(userID string, page int, pageSize int, filter U
 	if err != nil {
 		return UserAssetPage{}, err
 	}
+	projectRows, err := l.repo.UserAssetProjectCounts(userID)
+	if err != nil {
+		return UserAssetPage{}, err
+	}
 	return UserAssetPage{
 		Assets: clientPayloads(assets), KindCounts: assetFacetMap(kindRows), CategoryCounts: assetFacetMap(categoryRows), FolderCounts: assetFacetMap(folderRows),
-		FavoriteTotal: favoriteTotal, RecentTotal: recentTotal,
+		FavoriteTotal: favoriteTotal, RecentTotal: recentTotal, ProjectCounts: assetFacetMap(projectRows),
 		Page: page, PageSize: pageSize, Total: total, HasMore: int64(page*pageSize) < total,
 	}, nil
 }

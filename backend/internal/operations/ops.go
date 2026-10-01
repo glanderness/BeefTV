@@ -21,7 +21,7 @@ func RegisterDefaultOps(r *Registry) {
 		Params:  json.RawMessage(`{"type":"object","properties":{"page":{"type":"integer"},"pageSize":{"type":"integer"},"query":{"type":"string"},"canvasId":{"type":"string"},"sort":{"type":"string"}}}`),
 		Handler: opCanvasSearch})
 	r.Register(Op{ID: "asset.list", Summary: "分页列出用户素材库中的素材", ReadOnly: true, Scope: ScopeWorkspaceRead,
-		Params:  json.RawMessage(`{"type":"object","properties":{"page":{"type":"integer"},"pageSize":{"type":"integer"},"query":{"type":"string"},"kind":{"type":"string"},"category":{"type":"string"}}}`),
+		Params:  json.RawMessage(`{"type":"object","properties":{"page":{"type":"integer"},"pageSize":{"type":"integer"},"query":{"type":"string"},"kind":{"type":"string"},"category":{"type":"string"},"favorite":{"type":"boolean"},"recent":{"type":"boolean"},"project":{"type":"string"}}}`),
 		Handler: opAssetList})
 	r.Register(Op{ID: "asset.get", Summary: "按 ID 读取单个素材", ReadOnly: true, Scope: ScopeWorkspaceRead,
 		Params:  json.RawMessage(`{"type":"object","properties":{"assetId":{"type":"string"}},"required":["assetId"]}`),
@@ -186,6 +186,9 @@ func opAssetList(ctx *Context, params json.RawMessage) (any, error) {
 		Query    string `json:"query"`
 		Kind     string `json:"kind"`
 		Category string `json:"category"`
+		Favorite bool   `json:"favorite"`
+		Recent   bool   `json:"recent"`
+		Project  string `json:"project"`
 	}
 	if err := decodeParams(params, &args); err != nil {
 		return nil, err
@@ -203,6 +206,7 @@ func opAssetList(ctx *Context, params json.RawMessage) (any, error) {
 	}
 	result, err := ctx.Domain.UserAssetsPage(ctx.UserID, page, size, canvas.UserAssetPageFilter{
 		Kind: args.Kind, Category: args.Category, Query: args.Query,
+		Favorite: args.Favorite, Recent: args.Recent, Project: args.Project,
 	})
 	if err != nil {
 		return nil, mapDomainError(err)

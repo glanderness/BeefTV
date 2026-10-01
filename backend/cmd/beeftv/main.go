@@ -344,7 +344,7 @@ func usage() {
   beeftv canvas node update --canvas <id> --node <id> --expected-revision N [--title T] [--prompt P] [--content C] --op-id <id>
   beeftv canvas nodes create --canvas <id> --expected-revision N --node <title:type[:prompt]>... --op-id <id>
   beeftv canvas edge create --canvas <id> --from <nodeId> --to <nodeId> --expected-revision N --op-id <id>
-  beeftv asset list [--query <q>] [--kind <kind>] [--json]
+  beeftv asset list [--query <q>] [--kind <kind>] [--favorite] [--recent] [--project <name>] [--json]
   beeftv asset get --asset <id> [--json]
   beeftv task get --task <id> [--json]
   beeftv client register --label <label> --mode read-only|read-write [--kind codex|claude|cursor|other]
@@ -553,13 +553,19 @@ func runAsset(c *client, args []string) error {
 		fs := flag.NewFlagSet("asset list", flag.ContinueOnError)
 		query := fs.String("query", "", "搜索关键字")
 		kind := fs.String("kind", "", "素材类型")
+		favorite := fs.Bool("favorite", false, "只列出收藏")
+		recent := fs.Bool("recent", false, "只列出最近使用")
+		project := fs.String("project", "", "项目来源")
 		page := fs.Int("page", 1, "页码")
 		pageSize := fs.Int("page-size", 40, "每页数量")
 		jsonOut := fs.Bool("json", false, "输出 JSON")
 		if err := fs.Parse(args[1:]); err != nil {
 			return flagError(err)
 		}
-		raw, err := c.callOp("asset.list", "", mustJSON(map[string]any{"query": *query, "kind": *kind, "page": *page, "pageSize": *pageSize}))
+		raw, err := c.callOp("asset.list", "", mustJSON(map[string]any{
+			"query": *query, "kind": *kind, "favorite": *favorite, "recent": *recent, "project": *project,
+			"page": *page, "pageSize": *pageSize,
+		}))
 		if err != nil {
 			return err
 		}

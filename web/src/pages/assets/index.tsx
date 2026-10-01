@@ -27,7 +27,7 @@ import { flushAssetStorePersistence, useAssetStore, type Asset, type AssetCatego
 import { exportAssets, readAssetPackage } from "./asset-transfer";
 import { assetStorageUsageQueryKey } from "./asset-storage-usage";
 import { loadAssetLibraryPage, localSavedRemotePendingMessage } from "@/services/local-workspace-sync";
-import { isUnsavedWorkspaceAsset, usesWorkspaceAssetLibraryApi } from "@/services/workspace-asset-read";
+import { isUnsavedWorkspaceAsset, usesWorkspaceAssetLibraryApi, WORKSPACE_ASSET_UNLINKED_PROJECT, workspaceAssetAllProjectsCount, workspaceAssetProjectLabel, workspaceAssetProjectOptions } from "@/services/workspace-asset-read";
 import { deleteWorkspaceAsset, persistWorkspaceAssetChanges } from "@/services/workspace-asset-repository";
 import {
     assignWorkspaceAssetsFolder,
@@ -185,12 +185,11 @@ export default function AssetsPage() {
     const generationHistoryCount = useMemo(() => activeAssets.filter(isGeneratedHistoryAsset).length, [activeAssets]);
     const validAssets = viewMode === "trash" ? trashAssets : activeAssets;
     const selectedAssets = useMemo(() => validAssets.filter((asset) => selectedIds.includes(asset.id)), [selectedIds, validAssets]);
-    const projectOptions = useMemo(() => {
+    const localProjectOptions = useMemo(() => {
         const names = new Set<string>();
         for (const asset of activeAssets) {
-            const projectName = asset.metadata?.projectName;
-            if (typeof projectName === "string" && projectName.trim()) names.add(projectName.trim());
-            else if (Array.isArray(asset.metadata?.projectIds) && asset.metadata.projectIds.length) names.add("已关联项目");
+            const label = workspaceAssetProjectLabel(asset);
+            if (label !== WORKSPACE_ASSET_UNLINKED_PROJECT) names.add(label);
         }
         return Array.from(names).sort((left, right) => left.localeCompare(right, "zh-CN"));
     }, [activeAssets]);
@@ -200,7 +199,7 @@ export default function AssetsPage() {
         return validAssets.filter((asset) => {
             if (favoriteOnly && asset.metadata?.favorite !== true) return false;
             if (recentOnly && new Date(asset.updatedAt).getTime() < recentCutoff) return false;
-            if (projectFilter !== "all" && assetProjectLabel(asset) !== projectFilter) return false;
+            if (projectFilter !== "all" && workspaceAssetProjectLabel(asset) !== projectFilter) return false;
             if (kindFilter !== "all" && asset.kind !== kindFilter) return false;
             if (categoryFilter !== "all" && (asset.category || "other") !== categoryFilter) return false;
             if (folderFilter === "uncategorized" && asset.folderId) return false;
@@ -277,11 +276,15 @@ export default function AssetsPage() {
         : (canonicalReads && trashCountQuery.isSuccess ? trashCountQuery.data?.total ?? 0 : trashAssets.length);
     const favoriteCount = remoteReady ? assetPageQuery.data?.favoriteTotal ?? 0 : activeAssets.filter((asset) => asset.metadata?.favorite === true).length;
     const recentCount = remoteReady ? assetPageQuery.data?.recentTotal ?? 0 : activeAssets.filter((asset) => Number.isFinite(new Date(asset.updatedAt).getTime()) && Date.now() - new Date(asset.updatedAt).getTime() <= 30 * 24 * 60 * 60 * 1000).length;
+    const remoteProjectCounts = remoteReady ? assetPageQuery.data?.projectCounts : undefined;
+    const projectOptions = remoteProjectCounts ? workspaceAssetProjectOptions(remoteProjectCounts) : localProjectOptions;
+    const allProjectsCount = remoteProjectCounts ? workspaceAssetAllProjectsCount(remoteProjectCounts) : activeAssets.length;
+    const paginationTotal = remoteReady && !assetPageQuery.data?.hasMore && page <= 1 ? Math.min(totalAssets, pageSize) : totalAssets;
 
     useEffect(() => {
-        const maxPage = Math.max(1, Math.ceil(totalAssets / pageSize));
+        const maxPage = Math.max(1, Math.ceil(paginationTotal / pageSize));
         setPage((value) => Math.min(value, maxPage));
-    }, [pageSize, totalAssets]);
+    }, [pageSize, paginationTotal]);
 
     useEffect(() => {
         window.localStorage.setItem(ASSET_VIEW_MODE_KEY, assetViewMode);
@@ -863,10 +866,10 @@ export default function AssetsPage() {
                                     <span className="collection-filter-label">项目来源</span>
                                     <div className="collection-filter-options">
                                         <button type="button" aria-pressed={projectFilter === "all"} className={`assets-filter-item ${projectFilter === "all" ? "is-active" : ""}`} onClick={() => { setProjectFilter("all"); setPage(1); }}>
-                                            <span className="assets-filter-item-label">全部项目</span><span className="assets-filter-count">{activeAssets.length}</span>
+                                            <span className="assets-filter-item-label">全部项目</span><span className="assets-filter-count">{allProjectsCount}</span>
                                         </button>
                                         {projectOptions.map((project) => {
-                                            const count = activeAssets.filter((asset) => assetProjectLabel(asset) === project).length;
+                                            const count = remoteProjectCounts ? remoteProjectCounts[project] ?? 0 : activeAssets.filter((asset) => workspaceAssetProjectLabel(asset) === project).length;
                                             return <button key={project} type="button" aria-pressed={projectFilter === project} className={`assets-filter-item ${projectFilter === project ? "is-active" : ""}`} onClick={() => { setProjectFilter(project); setRecentOnly(false); setFavoriteOnly(false); setPage(1); }}><span className="assets-filter-item-label truncate">{project}</span><span className="assets-filter-count">{count}</span></button>;
                                         })}
                                     </div>
@@ -978,7 +981,7 @@ export default function AssetsPage() {
                                     <PaginationBar
                                         current={page}
                                         pageSize={pageSize}
-                                        total={totalAssets}
+                                        total={paginationTotal}
                                         pageSizeOptions={[40, 80, 120]}
                                         onChange={(nextPage, nextPageSize) => {
                                             setPage(nextPageSize !== pageSize ? 1 : nextPage);
@@ -1341,7 +1344,7 @@ function AssetCard({
                 <div className="asset-collection-source mt-1 flex min-w-0 items-center gap-1.5">
                     <span className="truncate">{asset.source || "未标注来源"}</span>
                     <span aria-hidden="true">·</span>
-                    <span className="truncate">{assetProjectLabel(asset)}</span>
+                    <span className="truncate">{workspaceAssetProjectLabel(asset)}</span>
                 </div>
             </button>
         </AssetLibraryCard>
@@ -1730,7 +1733,7 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: LibraryAss
                     <div className="asset-archive-link">
                         <Link2 />
                         <span>所属项目</span>
-                        <strong>{assetProjectLabel(asset)}</strong>
+                        <strong>{workspaceAssetProjectLabel(asset)}</strong>
                     </div>
                     {asset.note ? (
                         <div className="asset-archive-section">
@@ -1820,12 +1823,6 @@ function StorageTag({ asset }: { asset: LibraryAsset }) {
 
 function assetSearchText(asset: LibraryAsset) {
     return [asset.title, asset.source || "", asset.note || "", assetCategoryLabel(asset.category), (asset.tags || []).join(" "), asset.kind === "text" ? asset.data.content : asset.data.mimeType].join(" ").toLowerCase();
-}
-
-function assetProjectLabel(asset: LibraryAsset) {
-    const projectName = asset.metadata?.projectName;
-    if (typeof projectName === "string" && projectName.trim()) return projectName;
-    return Array.isArray(asset.metadata?.projectIds) && asset.metadata.projectIds.length ? "已关联项目" : "未关联项目";
 }
 
 function assetKindLabel(kind: AssetKind) {

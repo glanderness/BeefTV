@@ -423,6 +423,7 @@ func TestUserAssetsPageAppliesFavoriteFilterAndSidebarCounts(t *testing.T) {
 	for _, asset := range []model.Asset{
 		{ID: "fav-1", UserID: "owner", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed, Title: "收藏", PayloadJSON: `{"id":"fav-1","kind":"image","title":"收藏","coverUrl":"","tags":[],"metadata":{"favorite":true},"data":{"dataUrl":"https://example.com/a.png","width":1,"height":1,"bytes":1,"mimeType":"image/png"}}`, CreatedAt: now, UpdatedAt: now.Add(time.Second)},
 		{ID: "plain-1", UserID: "owner", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed, Title: "普通", PayloadJSON: `{"id":"plain-1","kind":"image","title":"普通","coverUrl":"","tags":[],"data":{"dataUrl":"https://example.com/a.png","width":1,"height":1,"bytes":1,"mimeType":"image/png"}}`, CreatedAt: now, UpdatedAt: now},
+		{ID: "named-1", UserID: "owner", Kind: "image", Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed, Title: "海边", PayloadJSON: `{"id":"named-1","kind":"image","title":"海边","coverUrl":"","tags":[],"metadata":{"projectName":"海边剧"},"data":{"dataUrl":"https://example.com/a.png","width":1,"height":1,"bytes":1,"mimeType":"image/png"}}`, CreatedAt: now, UpdatedAt: now},
 	} {
 		if err := db.Create(&asset).Error; err != nil {
 			t.Fatal(err)
@@ -432,7 +433,10 @@ func TestUserAssetsPageAppliesFavoriteFilterAndSidebarCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.Total != 1 || len(page.Assets) != 1 || page.FavoriteTotal != 1 || page.RecentTotal != 2 || page.HasMore {
+	if page.Total != 1 || len(page.Assets) != 1 || page.FavoriteTotal != 1 || page.RecentTotal != 3 || page.HasMore {
 		t.Fatalf("favorite page = %#v", page)
+	}
+	if page.ProjectCounts["海边剧"] != 1 || page.ProjectCounts["未关联项目"] != 2 {
+		t.Fatalf("project counts = %#v", page.ProjectCounts)
 	}
 }

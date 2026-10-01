@@ -21,6 +21,8 @@ type AssetStoreDraftWithSnapshot = AssetStoreDraftRecord & { asset?: Asset };
 
 export const WORKSPACE_ASSET_BATCH_LIMIT = 100;
 export const WORKSPACE_ASSET_RECENT_MS = 30 * 24 * 60 * 60 * 1000;
+export const WORKSPACE_ASSET_LINKED_PROJECT = "已关联项目";
+export const WORKSPACE_ASSET_UNLINKED_PROJECT = "未关联项目";
 
 /**
  * SQLite Library hard-deletes rows and GET /assets plus POST /assets/batch only
@@ -55,6 +57,7 @@ export type WorkspaceAssetLibraryPage = {
     folderCounts: Record<string, number>;
     favoriteTotal: number;
     recentTotal: number;
+    projectCounts: Record<string, number>;
     page: number;
     pageSize: number;
     total: number;
@@ -103,7 +106,7 @@ export async function loadWorkspaceAssetLibraryPage(options: WorkspaceAssetLibra
     throwIfAborted(options.signal);
 
     const parsed = parseWorkspaceAssetPage(remote);
-    const overlaid = overlayAssetDrafts(parsed, options, expected);
+    const overlaid = await overlayAssetDrafts(parsed, options, expected);
     projectCommittedAssets(parsed.assets, expected);
     return overlaid;
 }
@@ -187,7 +190,7 @@ function loadBrowserLocalAssetPage(options: WorkspaceAssetLibraryPageOptions): W
     const catalog = useAssetStore.getState().assets;
     const filtered = catalog.filter((asset) => matchesLibraryFilters(asset, options, query));
     const start = Math.max(0, options.page - 1) * options.pageSize;
-    const active = catalog.filter((asset) => asset.status !== "archived");
+    const active = catalog.filter(isActiveLibraryAsset);
     return {
         assets: filtered.slice(start, start + options.pageSize),
         kindCounts: countMap(filtered, (asset) => asset.kind),
@@ -195,6 +198,7 @@ function loadBrowserLocalAssetPage(options: WorkspaceAssetLibraryPageOptions): W
         folderCounts: countMap(filtered, (asset) => asset.folderId || ""),
         favoriteTotal: active.filter((asset) => asset.metadata?.favorite === true).length,
         recentTotal: active.filter(isRecentAsset).length,
+        projectCounts: countMap(active, workspaceAssetProjectLabel),
         page: options.page,
         pageSize: options.pageSize,
         total: filtered.length,
@@ -202,22 +206,26 @@ function loadBrowserLocalAssetPage(options: WorkspaceAssetLibraryPageOptions): W
     };
 }
 
-function overlayAssetDrafts(page: WorkspaceAssetLibraryPage, options: WorkspaceAssetLibraryPageOptions, expected: CapturedUserScope): WorkspaceAssetLibraryPage {
+async function overlayAssetDrafts(page: WorkspaceAssetLibraryPage, options: WorkspaceAssetLibraryPageOptions, expected: CapturedUserScope): Promise<WorkspaceAssetLibraryPage> {
     assertUserScope(expected);
     const drafts = readAssetStoreDrafts(expected);
+    if (!drafts.upserts.length && !drafts.deletes.length) return page;
+
     const deleted = new Set(drafts.deletes.map((draft) => draft.id));
     const upsertById = new Map(drafts.upserts.map((draft) => [draft.id, draft]));
     const storeById = new Map(useAssetStore.getState().assets.map((asset) => [asset.id, asset]));
     const query = options.query?.trim().toLowerCase() || "";
-    const backendIds = new Set(page.assets.map((asset) => asset.id));
+    const affectedIds = [...new Set([...drafts.deletes, ...drafts.upserts].map((draft) => draft.id))];
+    const canonical = await lookupCanonicalAssets(affectedIds, options, expected);
+    assertUserScope(expected);
+    throwIfAborted(options.signal);
+
     const seen = new Set<string>();
     const assets: Asset[] = [];
-
     for (const asset of page.assets) {
         if (deleted.has(asset.id)) continue;
         const draft = upsertById.get(asset.id);
         if (draft) {
-            if (options.page > 1) continue;
             const live = resolveDraftAsset(draft, storeById) ?? asset;
             if (!matchesLibraryFilters(live, options, query) || seen.has(live.id)) continue;
             seen.add(live.id);
@@ -234,40 +242,38 @@ function overlayAssetDrafts(page: WorkspaceAssetLibraryPage, options: WorkspaceA
             if (seen.has(draft.id) || deleted.has(draft.id)) continue;
             const live = resolveDraftAsset(draft, storeById);
             if (!live || !matchesLibraryFilters(live, options, query)) continue;
+            const before = canonical.get(draft.id);
+            if (before && matchesLibraryFilters(before, options, query)) continue;
             seen.add(draft.id);
             assets.unshift(markUnsavedCopy(live));
         }
     }
 
-    let hidden = 0;
-    let localOnlyMatching = 0;
+    let total = page.total;
     let favoriteTotal = page.favoriteTotal;
     let recentTotal = page.recentTotal;
-    for (const asset of page.assets) {
-        if (deleted.has(asset.id)) hidden += 1;
-    }
-    for (const draft of drafts.upserts) {
-        if (deleted.has(draft.id)) continue;
-        const live = resolveDraftAsset(draft, storeById);
-        if (!live) continue;
-        if (!matchesLibraryFilters(live, options, query)) {
-            if (backendIds.has(draft.id) && !deleted.has(draft.id)) hidden += 1;
-            continue;
-        }
-        if (isLocalOnlyLibraryAsset(live) && !backendIds.has(draft.id)) {
-            localOnlyMatching += 1;
-            if (live.metadata?.favorite === true) favoriteTotal += 1;
-            if (isRecentAsset(live)) recentTotal += 1;
-        }
+    const projectCounts = { ...page.projectCounts };
+    for (const id of affectedIds) {
+        const before = canonical.get(id);
+        const after = draftAfterState(id, deleted, upsertById, storeById, before);
+        total += matchDelta(after, before, (asset) => matchesLibraryFilters(asset, options, query));
+        favoriteTotal += matchDelta(after, before, isActiveFavoriteAsset);
+        recentTotal += matchDelta(after, before, isActiveRecentAsset);
+        const beforeLabel = before && isActiveLibraryAsset(before) ? workspaceAssetProjectLabel(before) : undefined;
+        const afterLabel = after && isActiveLibraryAsset(after) ? workspaceAssetProjectLabel(after) : undefined;
+        if (beforeLabel === afterLabel) continue;
+        if (beforeLabel) bumpCount(projectCounts, beforeLabel, -1);
+        if (afterLabel) bumpCount(projectCounts, afterLabel, 1);
     }
 
     return {
         ...page,
         assets,
-        total: Math.max(0, page.total - hidden + localOnlyMatching),
+        total: Math.max(0, total),
         hasMore: page.hasMore,
-        favoriteTotal,
-        recentTotal,
+        favoriteTotal: Math.max(0, favoriteTotal),
+        recentTotal: Math.max(0, recentTotal),
+        projectCounts,
     };
 }
 
@@ -312,6 +318,7 @@ function parseWorkspaceAssetPage(remote: WorkspaceAssetPageResponse): WorkspaceA
         folderCounts: numberMap(remote.folderCounts),
         favoriteTotal: Number(remote.favoriteTotal) || 0,
         recentTotal: Number(remote.recentTotal) || 0,
+        projectCounts: numberMap(remote.projectCounts),
         page: Number(remote.page) || 1,
         pageSize: Number(remote.pageSize) || 40,
         total: Number(remote.total) || 0,
@@ -392,8 +399,50 @@ function resolveDraftAsset(draft: AssetStoreDraftRecord, storeById: Map<string, 
     return applyResourceDisplayUrls(snapshot);
 }
 
-function isLocalOnlyLibraryAsset(asset: Asset) {
-    return asset.status === "draft" || asset.metadata?.recoverableLocalDraft === true;
+async function lookupCanonicalAssets(ids: string[], options: WorkspaceAssetLibraryPageOptions, expected: CapturedUserScope) {
+    const found = new Map<string, Asset>();
+    for (const chunk of chunkIds(ids, WORKSPACE_ASSET_BATCH_LIMIT)) {
+        throwIfAborted(options.signal);
+        const result = await lookupWorkspaceAssetsByIds(chunk, { signal: options.signal, expectedScope: expected });
+        assertUserScope(expected);
+        for (const asset of parseWorkspaceAssetPayloads(result.assets)) found.set(asset.id, asset);
+    }
+    return found;
+}
+
+function draftAfterState(
+    id: string,
+    deleted: Set<string>,
+    upsertById: Map<string, AssetStoreDraftRecord>,
+    storeById: Map<string, Asset>,
+    before: Asset | undefined,
+) {
+    if (deleted.has(id)) return undefined;
+    const draft = upsertById.get(id);
+    if (!draft) return before;
+    return resolveDraftAsset(draft, storeById) ?? before;
+}
+
+function matchDelta(after: Asset | undefined, before: Asset | undefined, matches: (asset: Asset) => boolean) {
+    return Number(Boolean(after && matches(after))) - Number(Boolean(before && matches(before)));
+}
+
+function isActiveLibraryAsset(asset: Asset) {
+    return asset.kind !== "entity" && asset.status !== "archived";
+}
+
+function isActiveFavoriteAsset(asset: Asset) {
+    return isActiveLibraryAsset(asset) && asset.metadata?.favorite === true;
+}
+
+function isActiveRecentAsset(asset: Asset) {
+    return isActiveLibraryAsset(asset) && isRecentAsset(asset);
+}
+
+function bumpCount(counts: Record<string, number>, key: string, delta: number) {
+    const next = (counts[key] || 0) + delta;
+    if (next <= 0) delete counts[key];
+    else counts[key] = next;
 }
 
 function isRecentAsset(asset: Asset) {
@@ -402,6 +451,7 @@ function isRecentAsset(asset: Asset) {
 }
 
 function matchesLibraryFilters(asset: Asset, options: WorkspaceAssetLibraryPageOptions, query: string) {
+    if (asset.kind === "entity") return false;
     if (options.kind && asset.kind !== options.kind) return false;
     if (options.category && (asset.category || "other") !== options.category) return false;
     if (options.status === "archived" && asset.status !== "archived") return false;
@@ -417,14 +467,24 @@ function matchesLibraryFilters(asset: Asset, options: WorkspaceAssetLibraryPageO
 function matchesExtraClientFilters(asset: Asset, options: WorkspaceAssetLibraryPageOptions) {
     if (options.favorite && asset.metadata?.favorite !== true) return false;
     if (options.recent && !isRecentAsset(asset)) return false;
-    if (options.project && assetProjectLabel(asset) !== options.project) return false;
+    if (options.project && workspaceAssetProjectLabel(asset) !== options.project) return false;
     return true;
 }
 
-function assetProjectLabel(asset: Asset) {
+export function workspaceAssetProjectLabel(asset: Pick<Asset, "metadata">) {
     const projectName = asset.metadata?.projectName;
     if (typeof projectName === "string" && projectName.trim()) return projectName.trim();
-    return Array.isArray(asset.metadata?.projectIds) && asset.metadata.projectIds.length ? "已关联项目" : "未关联项目";
+    return Array.isArray(asset.metadata?.projectIds) && asset.metadata.projectIds.length ? WORKSPACE_ASSET_LINKED_PROJECT : WORKSPACE_ASSET_UNLINKED_PROJECT;
+}
+
+export function workspaceAssetProjectOptions(counts: Record<string, number>) {
+    return Object.keys(counts)
+        .filter((name) => name !== WORKSPACE_ASSET_UNLINKED_PROJECT && (counts[name] || 0) > 0)
+        .sort((left, right) => left.localeCompare(right, "zh-CN"));
+}
+
+export function workspaceAssetAllProjectsCount(counts: Record<string, number>) {
+    return Object.values(counts).reduce((sum, count) => sum + (Number(count) || 0), 0);
 }
 
 function markUnsavedCopy(asset: Asset): Asset {

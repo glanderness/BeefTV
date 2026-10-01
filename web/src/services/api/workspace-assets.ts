@@ -22,6 +22,7 @@ export type WorkspaceAssetPageResponse = {
     folderCounts?: Record<string, number>;
     favoriteTotal?: number;
     recentTotal?: number;
+    projectCounts?: Record<string, number>;
     page: number;
     pageSize: number;
     total: number;
