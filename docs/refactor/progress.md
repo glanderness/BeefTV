@@ -177,3 +177,9 @@
 - Eagle/diagnostics/appearance `e12ca38` 暂不集成：Eagle redirect 和真实路径 symlink jail 仍待收紧，`20261002-042228-continue-7166c008` 修复。
 - 消息原子绑定/后台交付 `20261002-035911-continue-f32ddfe4`、项目结果应用回执 `20261002-041143-continue-dfc02ab9`、素材 UI 后端权威及 epoch `20261002-041314-delegate-51107282`、完整备份及 schema 12 `20261002-034350-continue-f6b7fd0d` 仍在执行。
 - 尚未冻结最终候选；未增加真实费用、未 push/发布。阶段性集成通过不能替代最终全量回归和真实客户端验收。
+
+### 第九轮补充验证与辅助领域
+
+- `2cd13b1` 快照前端标准 `bun run test` 退出 0：2546 pass、0 fail、14 skip。另在 `3dd522a` 明确开启浏览器 FFmpeg Worker 专项，10 pass / 103 expect；原生内容专项 4 pass / 77 expect，覆盖原声、人声、背景音乐、中文字幕、静音/淡入淡出和图片时长。未把 opt-in skip 记为通过。
+- `3dd522a` 为渲染/转写/深度等专用任务复用任务领域准入错误映射，缺少素材/不可用项目/坏 JSON 不再误报 500 本地存储故障。SQLite 拒绝后无任务行的专项 race 通过。
+- 辅助领域至 `f35fd5a` 合入 `51d7511` / `10f98a7` / `d42ec46` / `939dbae`，`0559fb2` 注入运行时拥有的 Eagle 客户端和同一 diagnostics/appearance 实例。Eagle 不跟随 redirect，真实路径 jail 保留合法库根 symlink；诊断脱敏、外观坏文档删除保护在领域内。三个领域完整 race 通过；app/handler/bootstrap 相邻专项 race 通过。没有真实 Eagle/真实账号调用。

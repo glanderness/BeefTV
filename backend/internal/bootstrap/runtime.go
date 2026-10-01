@@ -292,7 +292,6 @@ func (r *Runtime) Start() error {
 		defer r.background.Done()
 		r.service.BackfillPlaybackTranscodes()
 	}()
-	r.status.markStarted()
 	// The assistant loads its operation catalog from this server before becoming
 	// healthy. Accept requests before synchronously waiting for child readiness.
 	go func() {
@@ -320,6 +319,7 @@ func (r *Runtime) Start() error {
 	if r.beefAPI != nil {
 		_ = r.beefAPI.Recover(context.Background())
 	}
+	r.status.markStarted()
 	return nil
 }
 
