@@ -346,6 +346,9 @@ func truncateTaskLogPayload(payload string) string {
 func (s *Service) registerActiveTask(id string, cancel context.CancelFunc) {
 	s.cancelMu.Lock()
 	defer s.cancelMu.Unlock()
+	if s.activeCancels == nil {
+		s.activeCancels = make(map[string]context.CancelFunc)
+	}
 	s.activeCancels[id] = cancel
 }
 
