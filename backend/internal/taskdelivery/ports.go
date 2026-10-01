@@ -32,6 +32,9 @@ type Store interface {
 
 // Media persists leftover upstream artifacts through the existing generated
 // resource pipeline. It must not submit a new provider generation.
+// First-stage inline dataURL/byte ingest is Ingestor, not this interface:
+// ingest rewrites ResultJSON before durable task completion; Deliver later
+// materializes assets from those resource IDs. The stages are complementary.
 type Media interface {
 	PersistRemoteArtifact(userID, mediaType, artifactURL, identity string) (*model.Resource, error)
 }
