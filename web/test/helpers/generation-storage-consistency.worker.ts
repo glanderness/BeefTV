@@ -1,10 +1,11 @@
 import localforage from "localforage";
+import { spyOn } from "bun:test";
 
 import { getActiveUserScope, setActiveUserScope } from "../../src/lib/user-scope";
 
 type InstanceHook = (storeName: string, key: string, value: unknown) => Promise<void> | void;
 
-type Scenario = "image-cleanup" | "scope-cleanup-switch" | "scope-cleanup-late-canvas-reference" | "video-commit-race" | "audio-commit-race";
+type Scenario = "image-cleanup" | "scope-cleanup-switch" | "scope-cleanup-late-canvas-reference" | "video-commit-race" | "audio-commit-race" | "copied-video-save";
 
 function installStorageHarness() {
     const originalCreateInstance = localforage.createInstance.bind(localforage);
@@ -392,10 +393,53 @@ async function runMediaCommitRace(mediaType: "video" | "audio") {
     }
 }
 
+async function runCopiedVideoSave() {
+    const harness = installStorageHarness();
+    const { http } = await import("../../src/services/api/request");
+    const put = spyOn(http, "put").mockImplementation(async (_url, body) => {
+        const { project } = body as { project: { id: string; title: string; createdAt: string; updatedAt: string } };
+        return { project } as never;
+    });
+    const scope = "copied-video-save";
+    setActiveUserScope(scope);
+    try {
+        const { useCanvasStore, CANVAS_STORE_KEY, recordCanvasStorageDocument, flushCanvasStorePersistence, withCanvasStorePersistenceSuppressed } = await import("../../src/stores/canvas/use-canvas-store");
+        const { parseCanvasStorageDocument, serializeCanvasStorageDocument } = await import("../../src/lib/canvas/canvas-storage-revision");
+        const { localForageStorageForScope } = await import("../../src/lib/localforage-storage");
+        const { isolateCopiedNodeMetadata } = await import("../../src/lib/canvas/canvas-node-copy");
+        const { persistCanvasGenerationEffect } = await import("../../src/services/canvas-generation-consumer");
+        const { CanvasNodeType } = await import("../../src/types/canvas");
+        await useCanvasStore.persist.rehydrate();
+        const source = { id: "source", type: CanvasNodeType.Video, title: "480P", position: { x: 0, y: 0 }, width: 340, height: 240, metadata: { content: "video-480p", taskId: "old-task", generationEffectKeys: ["attach-node:old-task:source:0"] } };
+        const project = { id: "copy-project", title: "copy", nodes: [source], connections: [], chatSessions: [], activeChatId: null, backgroundMode: "dots" as const, showImageInfo: false, viewport: { x: 0, y: 0, k: 1 }, directorScenes: [], createdAt: "2026-10-01", updatedAt: "2026-10-01" };
+        const storage = localForageStorageForScope(scope);
+        const document = parseCanvasStorageDocument(null, [project]);
+        await storage.setItem(CANVAS_STORE_KEY, serializeCanvasStorageDocument(document));
+        recordCanvasStorageDocument(scope, document);
+        withCanvasStorePersistenceSuppressed(() => useCanvasStore.setState({ projects: [project] }));
+        const copy = { ...source, id: "copy", metadata: isolateCopiedNodeMetadata(source, new Map([[source.id, "copy"]])) };
+        const previousNodes = [source, copy];
+        useCanvasStore.getState().updateProject(project.id, { nodes: previousNodes });
+        await flushCanvasStorePersistence();
+        const saved = parseCanvasStorageDocument(await storage.getItem(CANVAS_STORE_KEY));
+        const copiedIds = saved.state.projects[0].nodes.map((node) => node.id);
+        const effectKey = "attach-node:new-task:copy:0";
+        const completed = { ...copy, metadata: { ...copy.metadata, content: "video-720p", taskId: "new-task", generationEffectKeys: [effectKey] } };
+        // Only the backend transport is stubbed; storage and generation reconciliation are real.
+        const persisted = await persistCanvasGenerationEffect({ projectId: project.id, previousNodes, nodes: [source, completed], effectKey });
+        return { copiedIds, completedIds: persisted.nodes.map((node) => node.id), content: persisted.nodes.find((node) => node.id === "copy")?.metadata?.content, sourceKeys: persisted.nodes[0].metadata?.generationEffectKeys, copyKeys: persisted.nodes.find((node) => node.id === "copy")?.metadata?.generationEffectKeys };
+    } finally {
+        put.mockRestore();
+        harness.restore();
+    }
+}
+
 self.onmessage = async (event: MessageEvent<Scenario>) => {
     try {
         const result =
-            event.data === "image-cleanup"
+            event.data === "copied-video-save"
+                ? await runCopiedVideoSave()
+                : event.data === "image-cleanup"
                 ? await runImageCleanup()
                 : event.data === "scope-cleanup-switch"
                   ? await runScopeCleanupAfterSwitch()
