@@ -168,6 +168,22 @@ func TestSaveOwnedMediaCancelReturnsNoError(t *testing.T) {
 	}
 }
 
+func TestMediaSaveDialogSuppliesDefaultFileType(t *testing.T) {
+	for _, ext := range []string{"mp4", "png", "jpg", "webp", "mov", "wav", "m4a", "zip", "glb"} {
+		t.Run(ext, func(t *testing.T) {
+			name := "中文素材_20261001." + ext
+			options := mediaSaveDialogOptions(name)
+			if options.DefaultFilename != name || len(options.Filters) != 1 || options.Filters[0].Pattern != "*."+ext {
+				t.Fatalf("save dialog must supply the actual format as its default filter: %+v", options)
+			}
+		})
+	}
+	options := mediaSaveDialogOptions("未命名文件")
+	if len(options.Filters) != 0 {
+		t.Fatalf("must not invent a format for an extensionless artifact: %+v", options)
+	}
+}
+
 func TestSaveOwnedMediaClosedContextFails(t *testing.T) {
 	app := newDesktopApp(t.TempDir())
 	ctx, cancel := context.WithCancel(context.Background())
