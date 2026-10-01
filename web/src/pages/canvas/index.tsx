@@ -68,8 +68,10 @@ export default function CanvasPage() {
     useEffect(() => {
         if (!hydrated || !isLocalWorkspaceMode()) return;
         void hydrateLocalCanvasProjectsFromBackend();
-        void hydrateCanvasLibraryFolders();
-    }, [hydrated]);
+        void hydrateCanvasLibraryFolders().catch((error) => {
+            message.error(error instanceof Error ? error.message : "文件夹列表读取失败");
+        });
+    }, [hydrated, message]);
     const [debouncedKeyword, setDebouncedKeyword] = useState("");
     useEffect(() => {
         const timer = window.setTimeout(() => setDebouncedKeyword(keyword.trim()), 250);
@@ -463,7 +465,7 @@ export default function CanvasPage() {
     );
 }
 
-function CanvasLibraryFolderTile({ folder, onOpen, onRename, onDelete, onCoverChange }: { folder: { id: string; name: string; updatedAt: string; coverDataUrl?: string }; onOpen: () => void; onRename: () => void; onDelete: () => void; onCoverChange: (dataUrl: string) => void }) {
+function CanvasLibraryFolderTile({ folder, onOpen, onRename, onDelete, onCoverChange }: { folder: { id: string; name: string; updatedAt: string; coverDataUrl?: string; unsaved?: boolean; saveError?: string }; onOpen: () => void; onRename: () => void; onDelete: () => void; onCoverChange: (dataUrl: string) => void }) {
     const { message } = App.useApp();
     const coverInputRef = useRef<HTMLInputElement>(null);
     const chooseCover = (event: ChangeEvent<HTMLInputElement>) => {
@@ -495,7 +497,7 @@ function CanvasLibraryFolderTile({ folder, onOpen, onRename, onDelete, onCoverCh
             className="libtv-folder-card"
             updatedAt={folder.updatedAt}
             onOpen={onOpen}
-            title={folder.name}
+            title={folder.saveError ? `${folder.name} · 保存失败` : folder.unsaved ? `${folder.name} · 未保存` : folder.name}
             cover={<div className={cn("libtv-folder-cover-art", folder.coverDataUrl && "has-custom-cover")} style={folder.coverDataUrl ? { backgroundImage: `url(${folder.coverDataUrl})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined} />}
             actions={<>
                 <Dropdown

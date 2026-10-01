@@ -49,6 +49,8 @@ export type CanvasFolder = {
     updatedAt: string;
     coverDataUrl?: string;
     coverResourceId?: string;
+    unsaved?: boolean;
+    saveError?: string;
 };
 
 type CanvasStore = {
@@ -73,14 +75,32 @@ type CanvasStore = {
 
 export const CANVAS_FOLDERS_KEY = "infinite-canvas:canvas_folders";
 
+function isStaleProcessCoverUrl(value: string) {
+    if (value.startsWith("blob:")) return true;
+    try {
+        const parsed = new URL(value, "http://127.0.0.1");
+        return (parsed.protocol === "http:" || parsed.protocol === "https:")
+            && (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost");
+    } catch {
+        return false;
+    }
+}
+
 function readCanvasFolders(): CanvasFolder[] {
     try {
         const value = scopedLocalStorage.getItem(CANVAS_FOLDERS_KEY);
         const parsed = value ? JSON.parse(value) : [];
-        return Array.isArray(parsed) ? parsed.filter((folder): folder is CanvasFolder => Boolean(folder && typeof folder.id === "string" && typeof folder.name === "string")).map((folder) => ({
-            ...folder,
-            coverResourceId: typeof folder.coverResourceId === "string" ? folder.coverResourceId : undefined,
-        })) : [];
+        return Array.isArray(parsed) ? parsed.filter((folder): folder is CanvasFolder => Boolean(folder && typeof folder.id === "string" && typeof folder.name === "string")).map((folder) => {
+            const coverResourceId = typeof folder.coverResourceId === "string" ? folder.coverResourceId : undefined;
+            const coverDataUrl = typeof folder.coverDataUrl === "string" && !isStaleProcessCoverUrl(folder.coverDataUrl) ? folder.coverDataUrl : undefined;
+            return {
+                ...folder,
+                coverResourceId,
+                coverDataUrl,
+                unsaved: folder.unsaved === true ? true : undefined,
+                saveError: typeof folder.saveError === "string" && folder.saveError ? folder.saveError : undefined,
+            };
+        }) : [];
     } catch {
         return [];
     }

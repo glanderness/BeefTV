@@ -2,10 +2,10 @@ import localforage from "localforage";
 
 import type { CanvasDrawingEngine } from "@/lib/canvas/canvas-drawing-engine";
 import { readImageMeta } from "@/lib/image-utils";
-import { getActiveUserScope } from "@/lib/user-scope";
+import { assertUserScope, captureUserScope, isUserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { deleteCanvasDrawing, getCanvasDrawing, putCanvasDrawing, type CanvasDrawingRecord } from "@/services/api/workspace-data";
-import { ApiError } from "@/services/api/request";
-import { getResourceBlob, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
+import { ApiError, http } from "@/services/api/request";
+import { resourceFileUrl, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
 import { imageToDataUrl } from "@/services/image-storage";
 import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
 
@@ -19,6 +19,9 @@ export type CanvasDrawingSnapshot = {
     pageCount: number;
     previewResourceId?: string;
     renderResourceId?: string;
+    origin?: "canonical" | "draft" | "browser";
+    canonicalMissing?: boolean;
+    draftGeneration?: number;
 };
 
 export type CanvasDrawingRenderDraft = {
@@ -38,34 +41,280 @@ export type CanvasDrawingRender = CanvasDrawingRenderDraft & {
     updatedAt: string;
 };
 
-const drawingStore = localforage.createInstance({ name: "infinite-canvas", storeName: "drawing_documents" });
-const drawingPreviewStore = localforage.createInstance({ name: "infinite-canvas", storeName: "drawing_previews" });
-const drawingRenderStore = localforage.createInstance({ name: "infinite-canvas", storeName: "drawing_generation_renders" });
+export class CanvasDrawingCanonicalMissingError extends Error {
+    constructor() {
+        super("画板在工作区中不存在或已删除，本地草稿已保留");
+        this.name = "CanvasDrawingCanonicalMissingError";
+    }
+}
+
+type DrawingDraftState = {
+    document: CanvasDrawingSnapshot;
+    generation: number;
+    canonicalMissing?: boolean;
+    conflict?: boolean;
+};
+
+type DrawingCacheEnvelope = {
+    version: 3;
+    committed?: CanvasDrawingSnapshot;
+    draft?: DrawingDraftState;
+    removedGeneration?: number;
+};
+
+type DrawingKeyStore<T> = {
+    getItem(key: string): Promise<T | null>;
+    setItem(key: string, value: T): Promise<T>;
+    removeItem(key: string): Promise<void>;
+};
+
+const defaultDrawingStore = localforage.createInstance({ name: "infinite-canvas", storeName: "drawing_documents" });
+const defaultDrawingPreviewStore = localforage.createInstance({ name: "infinite-canvas", storeName: "drawing_previews" });
+const defaultDrawingRenderStore = localforage.createInstance({ name: "infinite-canvas", storeName: "drawing_generation_renders" });
+
+let drawingStore: DrawingKeyStore<DrawingCacheEnvelope | CanvasDrawingSnapshot> = defaultDrawingStore;
+let drawingPreviewStore: DrawingKeyStore<Blob> = defaultDrawingPreviewStore;
+let drawingRenderStore: DrawingKeyStore<CanvasDrawingRender> = defaultDrawingRenderStore;
+const drawingCommitChains = new Map<string, Promise<unknown>>();
+const envelopeLocks = new Map<string, Promise<unknown>>();
+let digestDelayForTests: (() => Promise<void>) | undefined;
+
 const INITIAL_DRAWING_RENDER_MAX_DIMENSION = 2048;
 const INITIAL_DRAWING_RENDER_PADDING = 24;
 
-function drawingKey(projectId: string, drawingId: string) {
-    return `${getActiveUserScope()}:${projectId}:${drawingId}`;
+function drawingKey(projectId: string, drawingId: string, userScope: string) {
+    return `${userScope}:${projectId}:${drawingId}`;
 }
 
-export async function loadCanvasDrawing(projectId: string, drawingId: string) {
-    if (!projectId || !drawingId) return null;
-    if (!usesBrowserLocalResourceStore()) {
-        try {
-            const remote = await getCanvasDrawing(projectId, drawingId);
-            const saved = snapshotFromRecord(remote.drawing);
-            await cacheCanvasDrawing(projectId, drawingId, saved, undefined, undefined);
-            await cacheDrawingResources(projectId, drawingId, remote.drawing);
-            return saved;
-        } catch (error) {
-            if (!(error instanceof ApiError) || error.status !== 404) throw error;
-        }
+function captureScope(expectedScope?: CapturedUserScope) {
+    const expected = expectedScope ?? captureUserScope();
+    assertUserScope(expected);
+    return expected;
+}
+
+function enqueueDrawingCommit<T>(key: string, job: () => Promise<T>): Promise<T> {
+    const previous = drawingCommitChains.get(key) ?? Promise.resolve();
+    const run = previous.then(undefined, () => undefined).then(job);
+    drawingCommitChains.set(key, run.then(() => undefined, () => undefined));
+    return run;
+}
+
+function withEnvelopeLock<T>(key: string, job: () => Promise<T>): Promise<T> {
+    const previous = envelopeLocks.get(key) ?? Promise.resolve();
+    const run = previous.then(undefined, () => undefined).then(job);
+    envelopeLocks.set(key, run.then(() => undefined, () => undefined));
+    return run;
+}
+
+function documentFields(snapshot: CanvasDrawingSnapshot): CanvasDrawingSnapshot {
+    return {
+        version: 2,
+        engine: snapshot.engine,
+        snapshot: snapshot.snapshot,
+        revision: snapshot.revision,
+        updatedAt: snapshot.updatedAt,
+        shapeCount: snapshot.shapeCount,
+        pageCount: snapshot.pageCount,
+        previewResourceId: snapshot.previewResourceId,
+        renderResourceId: snapshot.renderResourceId,
+    };
+}
+
+function emptyEnvelope(): DrawingCacheEnvelope {
+    return { version: 3 };
+}
+
+function parseEnvelope(raw: DrawingCacheEnvelope | CanvasDrawingSnapshot | null): DrawingCacheEnvelope {
+    if (!raw) return emptyEnvelope();
+    if ((raw as DrawingCacheEnvelope).version === 3) {
+        const envelope = raw as DrawingCacheEnvelope;
+        return {
+            version: 3,
+            committed: envelope.committed ? documentFields(normalizeCanvasDrawingSnapshot(envelope.committed)!) : undefined,
+            draft: envelope.draft?.document
+                ? {
+                    document: documentFields(normalizeCanvasDrawingSnapshot(envelope.draft.document)!),
+                    generation: Number(envelope.draft.generation) || 0,
+                    canonicalMissing: envelope.draft.canonicalMissing === true,
+                    conflict: envelope.draft.conflict === true,
+                }
+                : undefined,
+            removedGeneration: Number(envelope.removedGeneration) || undefined,
+        };
     }
-    const saved = normalizeCanvasDrawingSnapshot(await drawingStore.getItem<CanvasDrawingSnapshot>(drawingKey(projectId, drawingId)));
-    if (!saved) return null;
-    // IndexedDB revision is a local draft, not a backend CAS token.
-    if (!usesBrowserLocalResourceStore()) return { ...saved, revision: 0 };
-    return saved;
+    const legacy = normalizeCanvasDrawingSnapshot(raw as CanvasDrawingSnapshot);
+    if (!legacy) return emptyEnvelope();
+    return { version: 3, draft: { document: documentFields(legacy), generation: 1 } };
+}
+
+async function readEnvelope(key: string) {
+    return parseEnvelope(await drawingStore.getItem(key));
+}
+
+async function writeEnvelope(key: string, envelope: DrawingCacheEnvelope, expected: CapturedUserScope, ackDraftGeneration = envelope.draft?.generation || 0) {
+    return withEnvelopeLock(key, async () => {
+        assertUserScope(expected);
+        const live = await readEnvelope(key);
+        assertUserScope(expected);
+        const liveDraftGeneration = live.draft?.generation || 0;
+        if (liveDraftGeneration > ackDraftGeneration) {
+            envelope = { ...envelope, draft: live.draft };
+        }
+        if ((live.removedGeneration || 0) > (envelope.removedGeneration || 0) && !envelope.draft) {
+            envelope = { ...envelope, removedGeneration: live.removedGeneration };
+        }
+        await drawingStore.setItem(key, envelope);
+        assertUserScope(expected);
+    });
+}
+
+function nextDraftGeneration(envelope: DrawingCacheEnvelope) {
+    return Math.max(envelope.draft?.generation || 0, envelope.removedGeneration || 0) + 1;
+}
+
+function publishSnapshot(envelope: DrawingCacheEnvelope, origin: CanvasDrawingSnapshot["origin"]): CanvasDrawingSnapshot | null {
+    if (envelope.removedGeneration && !envelope.draft) return null;
+    if (envelope.draft) {
+        const casRevision = envelope.committed?.revision ?? 0;
+        return {
+            ...envelope.draft.document,
+            revision: casRevision,
+            origin: origin || "draft",
+            canonicalMissing: envelope.draft.canonicalMissing || !envelope.committed,
+            draftGeneration: envelope.draft.generation,
+            previewResourceId: envelope.committed?.previewResourceId ?? envelope.draft.document.previewResourceId,
+            renderResourceId: envelope.committed?.renderResourceId ?? envelope.draft.document.renderResourceId,
+        };
+    }
+    if (envelope.committed) return { ...envelope.committed, origin: origin || "canonical" };
+    return null;
+}
+
+async function writeDraftBlobs(
+    key: string,
+    generation: number,
+    preview: Blob | null | undefined,
+    render: CanvasDrawingRenderDraft | null | undefined,
+    meta: Pick<CanvasDrawingSnapshot, "revision" | "updatedAt">,
+    expected: CapturedUserScope,
+) {
+    assertUserScope(expected);
+    if (preview) await drawingPreviewStore.setItem(key, preview);
+    else if (preview === null) await drawingPreviewStore.removeItem(key);
+    if (render) {
+        await drawingRenderStore.setItem(key, {
+            ...liveRenderPublication(render),
+            version: 1,
+            revision: meta.revision,
+            updatedAt: meta.updatedAt,
+        });
+    } else if (render === null) await drawingRenderStore.removeItem(key);
+    assertUserScope(expected);
+    const live = await readEnvelope(key);
+    if ((live.draft?.generation || 0) !== generation && (live.removedGeneration || 0) !== generation) {
+        return;
+    }
+}
+
+function liveRenderPublication(render: CanvasDrawingRenderDraft): CanvasDrawingRenderDraft {
+    const resourceId = resourceIdFromRender(render);
+    return {
+        ...render,
+        storageKey: render.storageKey || (resourceId ? resourceStorageKey(resourceId) : render.storageKey),
+        url: resourceId ? resourceFileUrl(resourceId) : staleProcessUrl(render.url) ? undefined : render.url,
+    };
+}
+
+function resourceIdFromRender(render: Pick<CanvasDrawingRenderDraft, "storageKey" | "url">) {
+    const fromKey = render.storageKey?.startsWith("resource:") ? render.storageKey.slice("resource:".length) : "";
+    if (fromKey) return fromKey;
+    const url = render.url || "";
+    const match = url.match(/\/resources\/([^/?#]+)\/file/);
+    if (!match) return "";
+    try {
+        return decodeURIComponent(match[1]);
+    } catch {
+        return "";
+    }
+}
+
+function staleProcessUrl(url?: string) {
+    if (!url) return false;
+    if (url.startsWith("blob:")) return true;
+    try {
+        const parsed = new URL(url, "http://127.0.0.1");
+        return (parsed.protocol === "http:" || parsed.protocol === "https:")
+            && (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost");
+    } catch {
+        return false;
+    }
+}
+
+function isNotFoundDrawingError(error: unknown) {
+    return error instanceof ApiError && (error.status === 404 || error.code === 404);
+}
+
+function isDrawingRevisionConflict(error: unknown) {
+    return error instanceof ApiError && (error.status === 409 || error.code === 409);
+}
+
+export async function loadCanvasDrawing(projectId: string, drawingId: string, expectedScope?: CapturedUserScope) {
+    if (!projectId || !drawingId) return null;
+    const expected = captureScope(expectedScope);
+    const key = drawingKey(projectId, drawingId, expected.userScope);
+    if (usesBrowserLocalResourceStore()) {
+        const envelope = await readEnvelope(key);
+        assertUserScope(expected);
+        return publishSnapshot(envelope, "browser");
+    }
+
+    let remote: { drawing: CanvasDrawingRecord } | undefined;
+    let remoteError: unknown;
+    try {
+        remote = await getCanvasDrawing(projectId, drawingId, { expectedScope: expected });
+    } catch (error) {
+        remoteError = error;
+    }
+    assertUserScope(expected);
+    const envelope = await readEnvelope(key);
+    assertUserScope(expected);
+
+    if (envelope.removedGeneration && !envelope.draft) return null;
+
+    if (remoteError) {
+        if (!isNotFoundDrawingError(remoteError)) throw remoteError;
+        if (envelope.draft || envelope.committed) {
+            const next: DrawingCacheEnvelope = {
+                version: 3,
+                committed: envelope.committed,
+                draft: {
+                    document: documentFields((envelope.draft?.document || envelope.committed)!),
+                    generation: envelope.draft?.generation || 1,
+                    canonicalMissing: true,
+                    conflict: envelope.draft?.conflict,
+                },
+                removedGeneration: envelope.removedGeneration,
+            };
+            await writeEnvelope(key, next, expected);
+            return publishSnapshot(next, "draft");
+        }
+        return null;
+    }
+
+    const record = remote!.drawing;
+    if ((envelope.committed?.revision || 0) > record.revision) {
+        return publishSnapshot(envelope, envelope.draft ? "draft" : "canonical");
+    }
+    const committed = snapshotFromRecord(record);
+    const next: DrawingCacheEnvelope = {
+        version: 3,
+        committed,
+        draft: envelope.draft,
+        removedGeneration: undefined,
+    };
+    await writeEnvelope(key, next, expected);
+    if (!next.draft) await cacheDrawingResources(key, record, expected);
+    return publishSnapshot(next, next.draft ? "draft" : "canonical");
 }
 
 export async function saveCanvasDrawing(
@@ -76,28 +325,99 @@ export async function saveCanvasDrawing(
     previous?: CanvasDrawingSnapshot | null,
     preview?: Blob | null,
     render?: CanvasDrawingRenderDraft | null,
+    expectedScope?: CapturedUserScope,
 ) {
+    const expected = captureScope(expectedScope);
+    const key = drawingKey(projectId, drawingId, expected.userScope);
     const summary = summarizeCanvasDrawing(engine, snapshot);
-    if (!usesBrowserLocalResourceStore()) {
-        const saved = await persistCanvasDrawingToBackend(projectId, drawingId, engine, snapshot, summary, previous, preview, render);
-        await cacheCanvasDrawing(projectId, drawingId, saved, preview, render);
-        return saved;
-    }
-    const revision = (previous?.revision || 0) + 1;
+    const envelope = await readEnvelope(key);
+    assertUserScope(expected);
+    const generation = nextDraftGeneration(envelope);
     const updatedAt = new Date().toISOString();
-    const next: CanvasDrawingSnapshot = {
+    const casRevision = envelope.committed?.revision ?? 0;
+    const draftDocument: CanvasDrawingSnapshot = {
         version: 2,
         engine,
         snapshot,
-        revision,
+        revision: usesBrowserLocalResourceStore() ? (previous?.revision || envelope.draft?.document.revision || envelope.committed?.revision || 0) + 1 : casRevision,
         updatedAt,
         shapeCount: summary.shapeCount,
         pageCount: Math.min(summary.pageCount, 1),
-        previewResourceId: previous?.previewResourceId,
-        renderResourceId: previous?.renderResourceId,
+        previewResourceId: previous?.previewResourceId ?? envelope.committed?.previewResourceId,
+        renderResourceId: previous?.renderResourceId ?? envelope.committed?.renderResourceId,
     };
-    await cacheCanvasDrawing(projectId, drawingId, next, preview, render);
-    return next;
+    const next: DrawingCacheEnvelope = {
+        version: 3,
+        committed: envelope.committed,
+        draft: {
+            document: draftDocument,
+            generation,
+            canonicalMissing: envelope.draft?.canonicalMissing,
+            conflict: false,
+        },
+    };
+    await writeEnvelope(key, next, expected);
+    await writeDraftBlobs(key, generation, preview, render, draftDocument, expected);
+
+    if (usesBrowserLocalResourceStore()) {
+        await writeEnvelope(key, { version: 3, committed: draftDocument }, expected, generation);
+        return { ...draftDocument, origin: "browser" as const };
+    }
+
+    return enqueueDrawingCommit(key, () => commitDrawingDraft(projectId, drawingId, key, generation, preview, render, expected));
+}
+
+async function commitDrawingDraft(
+    projectId: string,
+    drawingId: string,
+    key: string,
+    generation: number,
+    preview: Blob | null | undefined,
+    render: CanvasDrawingRenderDraft | null | undefined,
+    expected: CapturedUserScope,
+) {
+    assertUserScope(expected);
+    const envelope = await readEnvelope(key);
+    const draft = envelope.draft;
+    if (!draft || draft.generation < generation) return publishSnapshot(envelope, envelope.draft ? "draft" : "canonical")!;
+    if (draft.canonicalMissing && envelope.committed) {
+        throw new CanvasDrawingCanonicalMissingError();
+    }
+
+    try {
+        const saved = await persistCanvasDrawingToBackend(projectId, drawingId, draft.document, envelope.committed, preview, render, expected);
+        assertUserScope(expected);
+        const live = await readEnvelope(key);
+        assertUserScope(expected);
+        const keepDraft = (live.draft?.generation || 0) > generation;
+        const acked: DrawingCacheEnvelope = {
+            version: 3,
+            committed: saved,
+            draft: keepDraft ? live.draft : undefined,
+            removedGeneration: keepDraft ? live.removedGeneration : undefined,
+        };
+        await writeEnvelope(key, acked, expected, generation);
+        if (!keepDraft && (preview || render)) {
+            await writeDraftBlobs(key, generation, preview, render, saved, expected);
+        }
+        return publishSnapshot(acked, keepDraft ? "draft" : "canonical")!;
+    } catch (error) {
+        if (isUserScopeAbandonedError(error)) throw error;
+        assertUserScope(expected);
+        const live = await readEnvelope(key);
+        if ((live.draft?.generation || 0) === generation) {
+            await writeEnvelope(key, {
+                ...live,
+                draft: {
+                    ...live.draft!,
+                    conflict: isDrawingRevisionConflict(error),
+                    canonicalMissing: live.draft!.canonicalMissing || isNotFoundDrawingError(error),
+                },
+            }, expected, generation);
+        }
+        if (isNotFoundDrawingError(error) && envelope.committed) throw new CanvasDrawingCanonicalMissingError();
+        throw error;
+    }
 }
 
 export async function createCanvasDrawingFromImage(
@@ -105,86 +425,134 @@ export async function createCanvasDrawingFromImage(
     drawingId: string,
     engine: CanvasDrawingEngine,
     image: { url: string; storageKey?: string; name: string; mimeType?: string },
+    expectedScope?: CapturedUserScope,
 ) {
+    const expected = captureScope(expectedScope);
     const dataUrl = await imageToDataUrl({ url: image.url, storageKey: image.storageKey, name: image.name, mimeType: image.mimeType });
+    assertUserScope(expected);
     if (!dataUrl?.startsWith("data:image/")) throw new Error("无法读取来源图片");
 
     const { width, height, mimeType } = await readImageMeta(dataUrl);
     const source = { dataUrl, width, height, mimeType: mimeType || image.mimeType || "image/png", name: image.name || "来源图片" };
     const document = (await import("@/lib/canvas/canvas-drawing-excalidraw-document")).createExcalidrawDrawingFromImage(source);
+    assertUserScope(expected);
 
-    // 来源图必须进入绘图快照本身，不能继续依赖可能被替换或清理的原节点 URL。
     try {
         const render = await createInitialDrawingRender(dataUrl, width, height, document.pageId);
-        return await saveCanvasDrawing(projectId, drawingId, engine, document.snapshot, null, render.blob, render);
+        assertUserScope(expected);
+        return await saveCanvasDrawing(projectId, drawingId, engine, document.snapshot, null, render.blob, render, expected);
     } catch (error) {
-        await removeCanvasDrawing(projectId, drawingId).catch((cleanupError) => console.warn("清理失败的绘图初始化数据失败", cleanupError));
+        await removeCanvasDrawing(projectId, drawingId, expected).catch((cleanupError) => console.warn("清理失败的绘图初始化数据失败", cleanupError));
         throw error;
     }
 }
 
-export async function loadCanvasDrawingPreview(projectId: string, drawingId: string) {
+export async function loadCanvasDrawingPreview(projectId: string, drawingId: string, expectedScope?: CapturedUserScope) {
     if (!projectId || !drawingId) return null;
-    const cached = await drawingPreviewStore.getItem<Blob>(drawingKey(projectId, drawingId));
-    if (cached) return cached;
-    if (usesBrowserLocalResourceStore()) return null;
-    await loadCanvasDrawing(projectId, drawingId);
-    return drawingPreviewStore.getItem<Blob>(drawingKey(projectId, drawingId));
+    const expected = captureScope(expectedScope);
+    const key = drawingKey(projectId, drawingId, expected.userScope);
+    const envelope = await readEnvelope(key);
+    assertUserScope(expected);
+    if (envelope.removedGeneration && !envelope.draft) return null;
+    if (envelope.draft) {
+        return drawingPreviewStore.getItem(key);
+    }
+    if (usesBrowserLocalResourceStore()) return drawingPreviewStore.getItem(key);
+    const saved = await loadCanvasDrawing(projectId, drawingId, expected);
+    if (!saved) return null;
+    assertUserScope(expected);
+    return drawingPreviewStore.getItem(key);
 }
 
-export async function loadCanvasDrawingRender(projectId: string, drawingId: string) {
+export async function loadCanvasDrawingRender(projectId: string, drawingId: string, expectedScope?: CapturedUserScope) {
     if (!projectId || !drawingId) return null;
-    const cached = await drawingRenderStore.getItem<CanvasDrawingRender>(drawingKey(projectId, drawingId));
-    if (cached) return cached;
-    if (usesBrowserLocalResourceStore()) return null;
-    await loadCanvasDrawing(projectId, drawingId);
-    return drawingRenderStore.getItem<CanvasDrawingRender>(drawingKey(projectId, drawingId));
+    const expected = captureScope(expectedScope);
+    const key = drawingKey(projectId, drawingId, expected.userScope);
+    const envelope = await readEnvelope(key);
+    assertUserScope(expected);
+    if (envelope.removedGeneration && !envelope.draft) return null;
+    if (envelope.draft) {
+        const cached = await drawingRenderStore.getItem(key);
+        return cached ? { ...cached, ...liveRenderPublication(cached) } : null;
+    }
+    if (usesBrowserLocalResourceStore()) {
+        const cached = await drawingRenderStore.getItem(key);
+        return cached ? { ...cached, ...liveRenderPublication(cached) } : null;
+    }
+    const saved = await loadCanvasDrawing(projectId, drawingId, expected);
+    if (!saved) return null;
+    assertUserScope(expected);
+    const next = await drawingRenderStore.getItem(key);
+    return next ? { ...next, ...liveRenderPublication(next) } : null;
 }
 
-export async function saveCanvasDrawingRenderPublication(projectId: string, drawingId: string, revision: number, publication: Pick<CanvasDrawingRenderDraft, "storageKey" | "url">) {
-    const key = drawingKey(projectId, drawingId);
-    const render = await drawingRenderStore.getItem<CanvasDrawingRender>(key);
+export async function saveCanvasDrawingRenderPublication(
+    projectId: string,
+    drawingId: string,
+    revision: number,
+    publication: Pick<CanvasDrawingRenderDraft, "storageKey" | "url">,
+    expectedScope?: CapturedUserScope,
+) {
+    const expected = captureScope(expectedScope);
+    const key = drawingKey(projectId, drawingId, expected.userScope);
+    const render = await drawingRenderStore.getItem(key);
+    const envelope = await readEnvelope(key);
+    assertUserScope(expected);
     if (!render || render.revision !== revision) return false;
-    await drawingRenderStore.setItem(key, { ...render, ...publication });
+    if (envelope.draft && envelope.draft.document.revision !== revision && envelope.committed?.revision !== revision) return false;
+    await drawingRenderStore.setItem(key, { ...render, ...liveRenderPublication({ ...render, ...publication }) });
+    assertUserScope(expected);
     return true;
 }
 
-export async function removeCanvasDrawing(projectId: string, drawingId: string) {
+export async function removeCanvasDrawing(projectId: string, drawingId: string, expectedScope?: CapturedUserScope) {
     if (!projectId || !drawingId) return;
-    if (!usesBrowserLocalResourceStore()) {
-        try {
-            await deleteCanvasDrawing(projectId, drawingId);
-        } catch (error) {
-            if (!(error instanceof ApiError) || error.status !== 404) throw error;
-        }
-    }
+    const expected = captureScope(expectedScope);
+    const key = drawingKey(projectId, drawingId, expected.userScope);
+    const envelope = await readEnvelope(key);
+    const generation = nextDraftGeneration(envelope);
+    await writeEnvelope(key, { version: 3, removedGeneration: generation }, expected, generation);
     await Promise.all([
-        drawingStore.removeItem(drawingKey(projectId, drawingId)),
-        drawingPreviewStore.removeItem(drawingKey(projectId, drawingId)),
-        drawingRenderStore.removeItem(drawingKey(projectId, drawingId)),
+        drawingPreviewStore.removeItem(key),
+        drawingRenderStore.removeItem(key),
     ]);
+    if (usesBrowserLocalResourceStore()) {
+        await drawingStore.removeItem(key);
+        return;
+    }
+    try {
+        await deleteCanvasDrawing(projectId, drawingId, { expectedScope: expected });
+    } catch (error) {
+        if (!isNotFoundDrawingError(error)) throw error;
+    }
+    assertUserScope(expected);
+    const live = await readEnvelope(key);
+    if ((live.draft?.generation || 0) > generation) return;
+    await writeEnvelope(key, { version: 3, removedGeneration: generation }, expected, generation);
 }
 
-export async function cloneCanvasDrawing(projectId: string, sourceDrawingId: string, targetDrawingId: string) {
+export async function cloneCanvasDrawing(projectId: string, sourceDrawingId: string, targetDrawingId: string, expectedScope?: CapturedUserScope) {
+    const expected = captureScope(expectedScope);
     const [source, preview, render] = await Promise.all([
-        loadCanvasDrawing(projectId, sourceDrawingId),
-        loadCanvasDrawingPreview(projectId, sourceDrawingId),
-        loadCanvasDrawingRender(projectId, sourceDrawingId),
+        loadCanvasDrawing(projectId, sourceDrawingId, expected),
+        loadCanvasDrawingPreview(projectId, sourceDrawingId, expected),
+        loadCanvasDrawingRender(projectId, sourceDrawingId, expected),
     ]);
+    assertUserScope(expected);
     if (!source) return null;
     const renderDraft = render
         ? {
-              blob: render.blob,
-              pageId: render.pageId,
-              width: render.width,
-              height: render.height,
-              mimeType: render.mimeType,
-              background: render.background,
-              storageKey: render.storageKey,
-              url: render.url,
-          } satisfies CanvasDrawingRenderDraft
+            blob: render.blob,
+            pageId: render.pageId,
+            width: render.width,
+            height: render.height,
+            mimeType: render.mimeType,
+            background: render.background,
+            storageKey: render.storageKey,
+            url: render.url,
+        } satisfies CanvasDrawingRenderDraft
         : undefined;
-    return saveCanvasDrawing(projectId, targetDrawingId, source.engine, source.snapshot, null, preview || undefined, renderDraft);
+    return saveCanvasDrawing(projectId, targetDrawingId, source.engine, source.snapshot, null, preview || undefined, renderDraft, expected);
 }
 
 export function summarizeCanvasDrawing(engine: CanvasDrawingEngine, snapshot: unknown) {
@@ -203,25 +571,40 @@ function normalizeCanvasDrawingSnapshot(saved: CanvasDrawingSnapshot | null) {
 async function persistCanvasDrawingToBackend(
     projectId: string,
     drawingId: string,
-    engine: CanvasDrawingEngine,
-    snapshot: unknown,
-    summary: { shapeCount: number; pageCount: number },
-    previous?: CanvasDrawingSnapshot | null,
-    preview?: Blob | null,
-    render?: CanvasDrawingRenderDraft | null,
+    document: CanvasDrawingSnapshot,
+    committed: CanvasDrawingSnapshot | undefined,
+    preview: Blob | null | undefined,
+    render: CanvasDrawingRenderDraft | null | undefined,
+    expected: CapturedUserScope,
 ) {
-    const previewResourceId = preview
-        ? (await uploadResourceFile(preview, "image", { fileName: `${drawingId}-preview.png`, idempotencyKey: `canvas-drawing-preview:sha256:${await contentDigest(preview)}` })).id
-        : preview === null
-            ? ""
-            : previous?.previewResourceId;
+    assertUserScope(expected);
+    let previewResourceId = committed?.previewResourceId;
+    if (preview) {
+        if (digestDelayForTests) await digestDelayForTests();
+        assertUserScope(expected);
+        const digest = await contentDigest(preview);
+        assertUserScope(expected);
+        previewResourceId = (await uploadResourceFile(preview, "image", {
+            fileName: `${drawingId}-preview.png`,
+            idempotencyKey: `canvas-drawing-preview:sha256:${digest}`,
+            expectedScope: expected,
+        })).id;
+    } else if (preview === null) {
+        previewResourceId = "";
+    }
+    assertUserScope(expected);
     let renderRecord: { resourceId?: string; pageId?: string; width?: number; height?: number; mimeType?: string; background?: "white"; storageKey?: string } | undefined;
     if (render) {
+        if (digestDelayForTests) await digestDelayForTests();
+        assertUserScope(expected);
+        const digest = await contentDigest(render.blob);
+        assertUserScope(expected);
         const resource = await uploadResourceFile(render.blob, "image", {
             fileName: `${drawingId}-render.png`,
             width: render.width,
             height: render.height,
-            idempotencyKey: `canvas-drawing-render:sha256:${await contentDigest(render.blob)}`,
+            idempotencyKey: `canvas-drawing-render:sha256:${digest}`,
+            expectedScope: expected,
         });
         renderRecord = {
             resourceId: resource.id,
@@ -235,51 +618,58 @@ async function persistCanvasDrawingToBackend(
     } else if (render === null) {
         renderRecord = { resourceId: "" };
     }
+    assertUserScope(expected);
     const saved = await putCanvasDrawing(projectId, drawingId, {
         drawingId,
-        engine,
-        revision: previous?.revision ?? 0,
-        snapshot,
-        shapeCount: summary.shapeCount,
-        pageCount: Math.min(summary.pageCount, 1),
+        engine: document.engine,
+        revision: committed?.revision ?? 0,
+        snapshot: document.snapshot,
+        shapeCount: document.shapeCount,
+        pageCount: Math.min(document.pageCount, 1),
         previewResourceId,
         render: renderRecord,
-    });
-    return snapshotFromRecord(saved.drawing, snapshot);
+    }, { expectedScope: expected });
+    assertUserScope(expected);
+    return snapshotFromRecord(saved.drawing, document.snapshot);
 }
 
-async function cacheCanvasDrawing(
-    projectId: string,
-    drawingId: string,
-    next: CanvasDrawingSnapshot,
-    preview?: Blob | null,
-    render?: CanvasDrawingRenderDraft | null,
-) {
-    const key = drawingKey(projectId, drawingId);
-    await drawingStore.setItem(key, next);
-    if (preview) await drawingPreviewStore.setItem(key, preview);
-    else if (preview === null) await drawingPreviewStore.removeItem(key);
-    if (render) {
-        await drawingRenderStore.setItem<CanvasDrawingRender>(key, {
-            ...render,
-            version: 1,
-            revision: next.revision,
-            updatedAt: next.updatedAt,
+async function fetchDrawingResourceBlob(resourceId: string, expected: CapturedUserScope) {
+    assertUserScope(expected);
+    try {
+        const response = await http.raw<Blob>({
+            method: "get",
+            url: `/resources/${encodeURIComponent(resourceId)}/file?proxy=1`,
+            responseType: "blob",
+            expectedScope: expected,
         });
-    } else if (render === null) await drawingRenderStore.removeItem(key);
+        assertUserScope(expected);
+        return response.data instanceof Blob ? response.data : new Blob([response.data as BlobPart]);
+    } catch (error) {
+        if (isUserScopeAbandonedError(error)) throw error;
+        return null;
+    }
 }
 
-async function cacheDrawingResources(projectId: string, drawingId: string, record: CanvasDrawingRecord) {
-    const key = drawingKey(projectId, drawingId);
+async function cacheDrawingResources(key: string, record: CanvasDrawingRecord, expected: CapturedUserScope) {
+    assertUserScope(expected);
+    const blocked = async () => {
+        const live = await readEnvelope(key);
+        return Boolean(live.draft || (live.removedGeneration && !live.draft));
+    };
+    if (await blocked()) return;
     if (record.previewResourceId) {
-        const blob = await getResourceBlob(resourceStorageKey(record.previewResourceId));
+        const blob = await fetchDrawingResourceBlob(record.previewResourceId, expected);
+        assertUserScope(expected);
+        if (await blocked()) return;
         if (blob) await drawingPreviewStore.setItem(key, blob);
     }
     if (record.render?.resourceId) {
-        const blob = await getResourceBlob(resourceStorageKey(record.render.resourceId));
+        const blob = await fetchDrawingResourceBlob(record.render.resourceId, expected);
+        assertUserScope(expected);
+        if (await blocked()) return;
         if (!blob) return;
-        const previous = await drawingRenderStore.getItem<CanvasDrawingRender>(key);
-        await drawingRenderStore.setItem<CanvasDrawingRender>(key, {
+        const previous = await drawingRenderStore.getItem(key);
+        await drawingRenderStore.setItem(key, {
             blob,
             pageId: record.render.pageId || previous?.pageId || "",
             width: record.render.width || previous?.width || 0,
@@ -287,7 +677,7 @@ async function cacheDrawingResources(projectId: string, drawingId: string, recor
             mimeType: record.render.mimeType || previous?.mimeType || blob.type || "image/png",
             background: "white",
             storageKey: record.render.storageKey || resourceStorageKey(record.render.resourceId),
-            url: previous?.url,
+            url: resourceFileUrl(record.render.resourceId),
             version: 1,
             revision: record.revision,
             updatedAt: record.updatedAt,
@@ -296,7 +686,7 @@ async function cacheDrawingResources(projectId: string, drawingId: string, recor
 }
 
 function snapshotFromRecord(record: CanvasDrawingRecord, snapshot: unknown = record.snapshot): CanvasDrawingSnapshot {
-    return normalizeCanvasDrawingSnapshot({
+    return documentFields(normalizeCanvasDrawingSnapshot({
         version: 2,
         engine: record.engine,
         snapshot,
@@ -306,7 +696,7 @@ function snapshotFromRecord(record: CanvasDrawingRecord, snapshot: unknown = rec
         pageCount: record.pageCount,
         previewResourceId: record.previewResourceId,
         renderResourceId: record.render?.resourceId,
-    })!;
+    })!);
 }
 
 async function contentDigest(blob: Blob) {
@@ -357,4 +747,31 @@ function canvasToPngBlob(canvas: HTMLCanvasElement) {
     return new Promise<Blob>((resolve, reject) => {
         canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("无法生成绘图预览")), "image/png");
     });
+}
+
+export function peekCanvasDrawingCacheForTests(projectId: string, drawingId: string, userScope: string) {
+    return drawingStore.getItem(drawingKey(projectId, drawingId, userScope));
+}
+
+export function setCanvasDrawingDigestDelayForTests(delay?: () => Promise<void>) {
+    digestDelayForTests = delay;
+}
+
+export function replaceCanvasDrawingStoresForTests(stores?: {
+    documents?: DrawingKeyStore<DrawingCacheEnvelope | CanvasDrawingSnapshot>;
+    previews?: DrawingKeyStore<Blob>;
+    renders?: DrawingKeyStore<CanvasDrawingRender>;
+}) {
+    drawingStore = stores?.documents ?? defaultDrawingStore;
+    drawingPreviewStore = stores?.previews ?? defaultDrawingPreviewStore;
+    drawingRenderStore = stores?.renders ?? defaultDrawingRenderStore;
+}
+
+export function resetCanvasDrawingStorageForTests() {
+    drawingCommitChains.clear();
+    envelopeLocks.clear();
+    digestDelayForTests = undefined;
+    drawingStore = defaultDrawingStore;
+    drawingPreviewStore = defaultDrawingPreviewStore;
+    drawingRenderStore = defaultDrawingRenderStore;
 }
