@@ -205,6 +205,7 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 		BeefAPI:            beefAPIConnection,
 		AssistantHost:      assistantHost,
 		Conversations:      conversation.New(conversation.NewStore(repo)),
+		TextReplay:         svc.TextReplay(),
 		DesktopTrust:       desktopTrust(launchToken, uiBootstrapToken),
 	})
 	router.NoRoute(func(c *gin.Context) {

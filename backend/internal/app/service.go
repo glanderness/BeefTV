@@ -26,6 +26,7 @@ import (
 	"infinite-canvas/backend/internal/skills"
 	localtask "infinite-canvas/backend/internal/task"
 	"infinite-canvas/backend/internal/taskdelivery"
+	"infinite-canvas/backend/internal/textreplay"
 )
 
 type Service struct {
@@ -56,7 +57,8 @@ type Service struct {
 	workers                  *platform.Worker
 	readCachesOnce           sync.Once
 	concurrencyReadCache     *platform.BoundedReadCache[string, platform.RuntimeTaskPolicy]
-	textReplayReadCache      *platform.BoundedReadCache[textReplayCacheKey, *TextReplayResult]
+	textReplay               *textreplay.Service
+	textReplayOnce           sync.Once
 	routeVersionReadCache    *platform.BoundedReadCache[string, int64]
 	skills                   *skills.Service
 	prompts                  *prompts.Service

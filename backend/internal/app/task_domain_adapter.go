@@ -9,7 +9,6 @@ import (
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	localtask "infinite-canvas/backend/internal/task"
-	"infinite-canvas/backend/internal/textreplay"
 )
 
 func (s *Service) taskDomain() *localtask.Service {
@@ -38,7 +37,7 @@ func (s *Service) taskDependencies() localtask.Dependencies {
 		Runtime:    taskRuntimeAdapter{s},
 		Images:     taskImagesAdapter{s},
 		Failures:   taskFailuresAdapter{},
-		TextReplay: taskTextReplayAdapter{s},
+		TextReplay: s.TextReplay(),
 		Provider:   taskProviderAdapter{s},
 		Present:    taskPresenterAdapter{s},
 		Logs:       taskLogAdapter{s},
@@ -192,16 +191,6 @@ func (taskFailuresAdapter) Category(message, stage string) generation.FailureCat
 
 func (taskFailuresAdapter) UserMessage(message string) string {
 	return classifyTaskFailure(errors.New(message)).UserMessage()
-}
-
-type taskTextReplayAdapter struct{ s *Service }
-
-func (taskTextReplayAdapter) IsRequest(input map[string]any) bool {
-	return textreplay.IsRequest(input)
-}
-
-func (a taskTextReplayAdapter) Finalize(taskID string, status model.TaskStatus) error {
-	return a.s.textReplayOrInit().Finalize(taskID, status)
 }
 
 type taskProviderAdapter struct{ s *Service }
