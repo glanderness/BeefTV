@@ -23,7 +23,10 @@ func (s *Service) DiagnosticsDomain() *diagnostics.Service {
 	if s == nil {
 		return diagnostics.New(diagnostics.Dependencies{})
 	}
-	return diagnostics.New(diagnostics.Dependencies{Store: s.repo, Brand: diagnosticBrand{svc: s}})
+	s.diagnosticsOnce.Do(func() {
+		s.diagnostics = diagnostics.New(diagnostics.Dependencies{Store: s.repo, Brand: diagnosticBrand{svc: s}})
+	})
+	return s.diagnostics
 }
 
 func (s *Service) PreviewDiagnosticBundle(userID string, req DiagnosticExportRequest) (*DiagnosticPreview, error) {

@@ -100,13 +100,16 @@ func (s *Service) AppearanceDomain() *appearance.Service {
 	if s == nil {
 		return appearance.New(appearance.Dependencies{})
 	}
-	return appearance.New(appearance.Dependencies{
-		Settings:  s.repo,
-		Resources: s.repo,
-		Files:     appearanceFiles{dataDir: s.dataDir},
-		Admin:     appearanceAdminGate{requireAdmin: s.RequireAdmin, appendAudit: s.appendAdminAudit},
-		Lock:      appearanceLock{svc: s},
+	s.appearanceOnce.Do(func() {
+		s.appearance = appearance.New(appearance.Dependencies{
+			Settings:  s.repo,
+			Resources: s.repo,
+			Files:     appearanceFiles{dataDir: s.dataDir},
+			Admin:     appearanceAdminGate{requireAdmin: s.RequireAdmin, appendAudit: s.appendAdminAudit},
+			Lock:      appearanceLock{svc: s},
+		})
 	})
+	return s.appearance
 }
 
 func (s *Service) Appearance() (*PublicAppearanceSetting, error) {

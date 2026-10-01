@@ -51,11 +51,11 @@ type RuntimeDependencies struct {
 	Generation         localapp.GenerationPort
 	Conversations      *conversation.Service
 	// TextReplay is the archive owned by the runtime; legacy callers use its app facade.
-	TextReplay textreplay.API
-	BeefAPI    *beefapi.Service
-	Eagle              *eagle.Client
-	Diagnostics        *diagnostics.Service
-	Appearance         *appearance.Service
+	TextReplay  textreplay.API
+	BeefAPI     *beefapi.Service
+	Eagle       *eagle.Client
+	Diagnostics *diagnostics.Service
+	Appearance  *appearance.Service
 	// AssistantHost is the per-runtime supervisor for the built-in agent-host child.
 	// Separate runtimes must not share this value.
 	AssistantHost *assistantruntime.Host

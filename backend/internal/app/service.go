@@ -10,10 +10,12 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"infinite-canvas/backend/internal/appearance"
 	localasset "infinite-canvas/backend/internal/asset"
 	"infinite-canvas/backend/internal/assistantturns"
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/canvas"
+	"infinite-canvas/backend/internal/diagnostics"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
@@ -67,6 +69,10 @@ type Service struct {
 	assistantTurns           *assistantturns.Service
 	assets                   *localasset.Service
 	assetsOnce               sync.Once
+	appearance               *appearance.Service
+	appearanceOnce           sync.Once
+	diagnostics              *diagnostics.Service
+	diagnosticsOnce          sync.Once
 	beefAPI                  *beefapi.Service
 	generationDeliveryMedia  taskdelivery.Media
 	generationDelivery       *taskdelivery.Deliverer

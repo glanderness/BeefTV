@@ -20,6 +20,7 @@ import (
 	"infinite-canvas/backend/internal/buildinfo"
 	"infinite-canvas/backend/internal/conversation"
 	"infinite-canvas/backend/internal/database"
+	"infinite-canvas/backend/internal/eagle"
 	canvasHandler "infinite-canvas/backend/internal/handler"
 	"infinite-canvas/backend/internal/localapp"
 	"infinite-canvas/backend/internal/repository"
@@ -206,6 +207,9 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 		AssistantHost:      assistantHost,
 		Conversations:      conversation.New(conversation.NewStore(repo)),
 		TextReplay:         svc.TextReplay(),
+		Appearance:         svc.AppearanceDomain(),
+		Diagnostics:        svc.DiagnosticsDomain(),
+		Eagle:              eagle.New(),
 		DesktopTrust:       desktopTrust(launchToken, uiBootstrapToken),
 	})
 	router.NoRoute(func(c *gin.Context) {
