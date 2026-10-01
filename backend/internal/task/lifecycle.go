@@ -83,6 +83,9 @@ func (s *Service) Retry(userID, id string) (*model.Task, error) {
 	if errors.Is(err, repository.ErrTaskNotRetryable) {
 		return nil, kernel.BadAuthRequest(RetryNotRetryableMessage)
 	}
+	if mapped := mapTaskScopeError(err); mapped != nil {
+		return nil, mapped
+	}
 	if err != nil {
 		return nil, err
 	}

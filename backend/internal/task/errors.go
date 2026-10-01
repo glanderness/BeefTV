@@ -23,6 +23,8 @@ const (
 	DownloadFailureRetryMessage                        = "生成结果下载失败，请先重新加载或查询原任务，不要立即重新提交"
 	CreationRetryConflictMessage                       = "智能创作重做需要新的报价批准，请回到创作会话继续"
 	LogicalModelUnavailableMessage                     = "所选模型已停用、归档或配置已更新，请重新选择"
+	TaskScopeArchivedMessage                           = "项目已归档，无法创建生成任务"
+	TaskScopeUnavailableMessage                        = "当前画布或项目不可用，无法创建生成任务"
 	RetryNotRetryableMessage                           = "任务已被其他请求重新入队，请勿重复重试"
 	RetryOnlyFailedOrCancelled                         = "only failed or cancelled tasks can be retried"
 	PromptRequiredMessage                              = "请填写提示词"
@@ -69,9 +71,22 @@ func mapPersistError(err error, req CreateRequest, present Presenter, limit int)
 	if errors.Is(err, repository.ErrLogicalModelUnavailable) {
 		return nil, kernel.BadAuthRequest(LogicalModelUnavailableMessage)
 	}
+	if mapped := mapTaskScopeError(err); mapped != nil {
+		return nil, mapped
+	}
 	var appErr *kernel.AppError
 	if errors.As(err, &appErr) && appErr != nil {
 		return nil, err
 	}
 	return nil, localStorageFailed(err)
+}
+
+func mapTaskScopeError(err error) error {
+	if errors.Is(err, repository.ErrTaskScopeArchived) {
+		return kernel.BadAuthRequest(TaskScopeArchivedMessage)
+	}
+	if errors.Is(err, repository.ErrTaskScopeNotActive) {
+		return kernel.BadAuthRequest(TaskScopeUnavailableMessage)
+	}
+	return nil
 }

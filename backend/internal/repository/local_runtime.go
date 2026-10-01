@@ -304,6 +304,9 @@ func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, limit int) erro
 		if err := r.requireActiveLogicalModelForTask(tx, task); err != nil {
 			return err
 		}
+		if err := RequireTaskScopeActiveTx(tx, task.UserID, task.ProjectID); err != nil {
+			return err
+		}
 		if err := enforceActiveTaskLimit(tx, task.UserID, limit); err != nil {
 			return err
 		}
@@ -323,6 +326,9 @@ func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, limit int) erro
 func (r *Repository) RetryTask(userID string, prepared *model.Task, limit int) (*model.Task, error) {
 	var task model.Task
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := RequireTaskScopeActiveTx(tx, userID, prepared.ProjectID); err != nil {
+			return err
+		}
 		if err := enforceActiveTaskLimit(tx, userID, limit); err != nil {
 			return err
 		}

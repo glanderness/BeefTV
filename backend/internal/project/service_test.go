@@ -476,21 +476,49 @@ func TestDeleteProjectRejectsActiveCanvasTasks(t *testing.T) {
 	}
 }
 
-func TestEnsureTaskScopeActiveBlocksArchivedProject(t *testing.T) {
+func TestEnsureTaskScopeActive(t *testing.T) {
 	svc, db := newTestService(t, nil)
+	active := seedProject(t, db, model.Project{ID: "project-active", UserID: "user-1", Name: "在产"})
 	archived := seedProject(t, db, model.Project{ID: "archived", UserID: "user-1", Name: "旧项目", Status: model.ProjectStatusArchived})
-	canvas := model.CanvasProject{ID: "canvas-archived", UserID: "user-1", ProjectID: archived.ID, Title: "旧画布", PayloadJSON: `{}`}
-	if err := db.Create(&canvas).Error; err != nil {
+	foreign := seedProject(t, db, model.Project{ID: "project-foreign", UserID: "user-2", Name: "别人的项目"})
+	personal := model.CanvasProject{ID: "canvas-personal", UserID: "user-1", Title: "个人画布", PayloadJSON: `{}`}
+	linked := model.CanvasProject{ID: "canvas-linked", UserID: "user-1", ProjectID: active.ID, Title: "项目画布", PayloadJSON: `{}`}
+	archivedCanvas := model.CanvasProject{ID: "canvas-archived", UserID: "user-1", ProjectID: archived.ID, Title: "旧画布", PayloadJSON: `{}`}
+	foreignCanvas := model.CanvasProject{ID: "canvas-foreign", UserID: "user-2", Title: "别人的画布", PayloadJSON: `{}`}
+	deleted := model.CanvasProject{ID: "canvas-deleted", UserID: "user-1", Title: "将被删除", PayloadJSON: `{}`}
+	for _, item := range []model.CanvasProject{personal, linked, archivedCanvas, foreignCanvas, deleted} {
+		if err := db.Create(&item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Delete(&model.CanvasProject{}, "id = ?", deleted.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.EnsureTaskScopeActive("user-1", archived.ID); err == nil {
-		t.Fatal("archived project allowed task creation")
+
+	if err := svc.EnsureTaskScopeActive("user-1", ""); err != nil {
+		t.Fatalf("empty scope error = %v", err)
 	}
-	if err := svc.EnsureTaskScopeActive("user-1", canvas.ID); err == nil {
-		t.Fatal("canvas of archived project allowed task creation")
+	if err := svc.EnsureTaskScopeActive("user-1", personal.ID); err != nil {
+		t.Fatalf("personal canvas error = %v", err)
 	}
-	if err := svc.EnsureTaskScopeActive("user-1", "missing"); err != nil {
-		t.Fatalf("unknown scope error = %v", err)
+	if err := svc.EnsureTaskScopeActive("user-1", active.ID); err != nil {
+		t.Fatalf("active project error = %v", err)
+	}
+	if err := svc.EnsureTaskScopeActive("user-1", linked.ID); err != nil {
+		t.Fatalf("linked canvas error = %v", err)
+	}
+
+	for _, id := range []string{archived.ID, archivedCanvas.ID} {
+		err := svc.EnsureTaskScopeActive("user-1", id)
+		if err == nil || err.Error() != "项目已归档，无法创建生成任务" {
+			t.Fatalf("archived %s error = %v", id, err)
+		}
+	}
+	for _, id := range []string{"missing", foreign.ID, foreignCanvas.ID, deleted.ID} {
+		err := svc.EnsureTaskScopeActive("user-1", id)
+		if err == nil || err.Error() != "当前画布或项目不可用，无法创建生成任务" {
+			t.Fatalf("unavailable %s error = %v", id, err)
+		}
 	}
 }
 

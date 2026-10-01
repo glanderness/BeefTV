@@ -102,37 +102,18 @@ func (s *Service) Active(userID, projectID string) (*model.Project, error) {
 	return project, nil
 }
 
-// EnsureTaskScopeActive accepts a canvas id or project id. Unknown ids stay
-// allowed because generation still uses canvas ids that are not business projects.
+// EnsureTaskScopeActive accepts an owned canvas id or owned active business
+// project id. Empty stays allowed for standalone text/media. Unknown, foreign,
+// deleted, and archived nonempty ids fail closed.
 func (s *Service) EnsureTaskScopeActive(userID, canvasOrProjectID string) error {
-	id := strings.TrimSpace(canvasOrProjectID)
-	if id == "" {
-		return nil
-	}
-	if canvas, err := s.repo.CanvasProjectForUser(userID, id); err == nil {
-		if canvas.ProjectID == "" {
-			return nil
-		}
-		project, projectErr := s.Owned(userID, canvas.ProjectID)
-		if projectErr != nil {
-			return projectErr
-		}
-		if project.Status == model.ProjectStatusArchived {
+	if err := s.repo.RequireTaskScopeActive(userID, canvasOrProjectID); err != nil {
+		if errors.Is(err, repository.ErrTaskScopeArchived) {
 			return kernel.BadAuthRequest("项目已归档，无法创建生成任务")
 		}
-		return nil
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
-	}
-	project, err := s.Owned(userID, id)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
+		if errors.Is(err, repository.ErrTaskScopeNotActive) {
+			return kernel.BadAuthRequest("当前画布或项目不可用，无法创建生成任务")
 		}
 		return err
-	}
-	if project.Status == model.ProjectStatusArchived {
-		return kernel.BadAuthRequest("项目已归档，无法创建生成任务")
 	}
 	return nil
 }
