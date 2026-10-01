@@ -1,4 +1,4 @@
-import { assertUserScope, captureUserScope, isUserScopeAbandonedError, waitForRetryDelay, type CapturedUserScope } from "@/lib/user-scope-guard";
+import { assertUserScope, captureUserScope, isUserScopeAbandonedError, UserScopeAbandonedError, waitForRetryDelay, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
 import { http, apiClient, apiBaseURL, ApiError, type HttpRequestConfig } from "@/services/api/request";
 
@@ -250,51 +250,69 @@ function scopedUploadConfig(expected: CapturedUserScope, idempotencyKey?: string
     return value ? { headers: { "X-Idempotency-Key": value }, expectedScope: expected } : { expectedScope: expected };
 }
 
+function lookupAccessError(expected: CapturedUserScope, signal?: { aborted?: boolean }) {
+    if (signal?.aborted) return new DOMException("Aborted", "AbortError");
+    try {
+        assertUserScope(expected);
+        return undefined;
+    } catch (error) {
+        return error instanceof Error ? error : new UserScopeAbandonedError();
+    }
+}
+
+function rememberLookupResult(cacheKey: string, resource: RemoteResource, expected: CapturedUserScope, signal?: { aborted?: boolean }) {
+    const blocked = lookupAccessError(expected, signal);
+    if (blocked) throw blocked;
+    resourceCache.set(cacheKey, resource);
+    missingResourceIds.delete(cacheKey);
+    return resource;
+}
+
 export function getResource(id: string, config?: HttpRequestConfig): Promise<RemoteResource> {
     const expected = config?.expectedScope ?? captureUserScope();
+    const blocked = lookupAccessError(expected, config?.signal);
+    if (blocked) return Promise.reject(blocked);
     const cacheKey = resourceCacheKey(id, expected);
     const cached = resourceCache.get(cacheKey);
     if (cached) return Promise.resolve(cached);
     if (missingResourceIds.has(cacheKey)) return Promise.reject(new Error("资源不存在或已被删除"));
-    const pending = resourceRequests.get(cacheKey);
-    if (pending) return pending;
+    const sharePending = !config?.signal;
+    if (sharePending) {
+        const pending = resourceRequests.get(cacheKey);
+        if (pending) return pending;
+    }
     const task = http.get<{ resource: RemoteResource }>(`/resources/${encodeURIComponent(id)}`, {
         ...config,
         signal: config?.signal,
         expectedScope: expected,
     })
-        .then((data) => {
-            assertUserScope(expected);
-            resourceCache.set(cacheKey, data.resource);
-            missingResourceIds.delete(cacheKey);
-            return data.resource;
-        })
+        .then((data) => rememberLookupResult(cacheKey, data.resource, expected, config?.signal))
         .catch((error) => {
             if (isUserScopeAbandonedError(error)) throw error;
             if (error instanceof DOMException && error.name === "AbortError") throw error;
-            assertUserScope(expected);
+            const abandoned = lookupAccessError(expected, config?.signal);
+            if (abandoned) throw abandoned;
             if (error instanceof ApiError && error.status === 404) missingResourceIds.add(cacheKey);
             throw error;
         })
-        .finally(() => resourceRequests.delete(cacheKey));
-    resourceRequests.set(cacheKey, task);
+        .finally(() => {
+            if (sharePending && resourceRequests.get(cacheKey) === task) resourceRequests.delete(cacheKey);
+        });
+    if (sharePending) resourceRequests.set(cacheKey, task);
     return task;
 }
 
 // refreshResource 绕过缓存强制拉取资源最新状态（转码副本就绪轮询用），并回写缓存。
 export function refreshResource(id: string, config?: HttpRequestConfig): Promise<RemoteResource> {
     const expected = config?.expectedScope ?? captureUserScope();
+    const blocked = lookupAccessError(expected, config?.signal);
+    if (blocked) return Promise.reject(blocked);
     const cacheKey = resourceCacheKey(id, expected);
     return http.get<{ resource: RemoteResource }>(`/resources/${encodeURIComponent(id)}`, {
         ...config,
         signal: config?.signal,
         expectedScope: expected,
-    }).then((data) => {
-        assertUserScope(expected);
-        resourceCache.set(cacheKey, data.resource);
-        missingResourceIds.delete(cacheKey);
-        return data.resource;
-    });
+    }).then((data) => rememberLookupResult(cacheKey, data.resource, expected, config?.signal));
 }
 
 export async function getResourceOSSUrl(storageKey?: string) {

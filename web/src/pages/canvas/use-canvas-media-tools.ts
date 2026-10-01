@@ -69,7 +69,7 @@ import {
     nextLocalExecutorClientOperationId,
     runOwnedDepthCapture,
 } from "@/lib/plugins/builtin/editor/local-executor-session";
-import { captureUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
+import { assertUserScope, captureUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
 
 function normalizeMaskEditQuality(quality: string | undefined, size: string | undefined) {
     const value = String(quality || "").trim().toLowerCase();
@@ -192,10 +192,13 @@ export function useCanvasMediaTools({
                     return project ? { nodes: project.nodes, connections: project.connections } : undefined;
                 },
                 hasProject: (canvasId) => useCanvasStore.getState().projects.some((item) => item.id === canvasId),
-                openProject: openLocalCanvasProjectFromBackend,
+                openProject: (id, expectedScope) => openLocalCanvasProjectFromBackend(id, expectedScope),
                 updateProject: (canvasId, patch) => useCanvasStore.getState().updateProject(canvasId, patch),
-                flushPersistence: flushCanvasStorePersistence,
-                syncSnapshot: (canvasId, patch) => syncLocalCanvasSnapshot(canvasId, patch),
+                flushPersistence: async (expectedScope) => {
+                    assertUserScope(expectedScope);
+                    await flushCanvasStorePersistence();
+                },
+                syncSnapshot: (id, patch, expectedScope) => syncLocalCanvasSnapshot(id, patch, expectedScope),
                 readSavedProject: async (canvasId, expectedScope) => {
                     const { project } = await http.get<{ project: { nodes: CanvasNodeData[] } }>(
                         `/canvas-projects/${encodeURIComponent(canvasId)}`,

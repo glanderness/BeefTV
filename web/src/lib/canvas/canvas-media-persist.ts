@@ -43,10 +43,10 @@ export type PersistOwnedCanvasMediaNodesDeps = {
     }) => Promise<CanvasNodeAssetResult>;
     getStoredProject: (canvasId: string) => PersistOwnedCanvasMediaNodesStore | undefined;
     hasProject: (canvasId: string) => boolean;
-    openProject?: (canvasId: string) => Promise<unknown>;
+    openProject?: (canvasId: string, expectedScope: CapturedUserScope) => Promise<unknown>;
     updateProject: (canvasId: string, patch: PersistOwnedCanvasMediaNodesStore) => void;
-    flushPersistence: () => Promise<void>;
-    syncSnapshot?: (canvasId: string, patch: PersistOwnedCanvasMediaNodesStore) => Promise<unknown>;
+    flushPersistence: (expectedScope: CapturedUserScope) => Promise<void>;
+    syncSnapshot?: (canvasId: string, patch: PersistOwnedCanvasMediaNodesStore, expectedScope: CapturedUserScope) => Promise<unknown>;
     readSavedProject?: (canvasId: string, expectedScope: CapturedUserScope) => Promise<{ nodes: CanvasNodeData[] } | undefined>;
     setNodes: (updater: (current: CanvasNodeData[]) => CanvasNodeData[]) => void;
     getLiveProjectId: () => string;
@@ -91,6 +91,7 @@ export async function persistOwnedCanvasMediaNodes(
             return result.assetId;
         } catch (error) {
             if (isPersistStop(error)) throw error;
+            assertPersistOwnership();
             const details = error instanceof Error ? error.message : "未知错误";
             if (required) {
                 deps.warn?.(`已有媒体节点尚未完成素材库绑定，无法保存本次结果：${details}`);
@@ -131,7 +132,7 @@ export async function persistOwnedCanvasMediaNodes(
 
     assertPersistOwnership();
     if (!deps.hasProject(originalProjectId) && deps.isLocalWorkspace()) {
-        await deps.openProject?.(originalProjectId);
+        await deps.openProject?.(originalProjectId, expected);
         assertPersistOwnership();
     }
     if (!deps.hasProject(originalProjectId)) {
@@ -147,10 +148,10 @@ export async function persistOwnedCanvasMediaNodes(
     deps.updateProject(originalProjectId, snapshot);
     try {
         assertPersistOwnership();
-        await deps.flushPersistence();
+        await deps.flushPersistence(expected);
         assertPersistOwnership();
         if (deps.isLocalWorkspace()) {
-            await deps.syncSnapshot?.(originalProjectId, snapshot);
+            await deps.syncSnapshot?.(originalProjectId, snapshot, expected);
             assertPersistOwnership();
             const saved = await deps.readSavedProject?.(originalProjectId, expected);
             assertPersistOwnership();
@@ -160,6 +161,7 @@ export async function persistOwnedCanvasMediaNodes(
         }
     } catch (error) {
         if (isPersistStop(error)) throw error;
+        assertPersistOwnership();
         deps.error?.(`媒体结果已生成，但本地画布保存失败：${error instanceof Error ? error.message : "未知错误"}`);
         throw error;
     }

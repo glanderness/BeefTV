@@ -291,6 +291,120 @@ describe("resource lookup scope", () => {
         }
     });
 
+    test("cached getResource with a stale captured scope does not return old data", async () => {
+        const restore = switchScope("owner-a");
+        const expectedA = userScopeGuard.captureUserScope();
+        let requests = 0;
+        try {
+            await withAdapter(async (config) => {
+                requests += 1;
+                return { data: envelope({ id: "res-stale-cache" }), status: 200, statusText: "OK", headers: {}, config };
+            }, async () => {
+                expect((await getResource("res-stale-cache", { expectedScope: expectedA })).id).toBe("res-stale-cache");
+                expect(requests).toBe(1);
+                setActiveUserScope("owner-b");
+                setActiveUserScope("owner-a");
+                await expect(getResource("res-stale-cache", { expectedScope: expectedA })).rejects.toBeInstanceOf(UserScopeAbandonedError);
+                expect(requests).toBe(1);
+                expect((await getResource("res-stale-cache")).id).toBe("res-stale-cache");
+                expect(requests).toBe(2);
+            });
+        } finally {
+            restore();
+        }
+    });
+
+    test("aborted signal rejects cached getResource without a new request", async () => {
+        const restore = switchScope("owner-a");
+        const expectedScope = userScopeGuard.captureUserScope();
+        const controller = new AbortController();
+        let requests = 0;
+        try {
+            await withAdapter(async (config) => {
+                requests += 1;
+                return { data: envelope({ id: "res-cached-abort" }), status: 200, statusText: "OK", headers: {}, config };
+            }, async () => {
+                expect((await getResource("res-cached-abort", { expectedScope })).id).toBe("res-cached-abort");
+                expect(requests).toBe(1);
+                controller.abort();
+                await expect(getResource("res-cached-abort", { expectedScope, signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+                expect(requests).toBe(1);
+            });
+        } finally {
+            restore();
+        }
+    });
+
+    test("remembered missing lookup does not return to a stale captured scope", async () => {
+        const restore = switchScope("owner-a");
+        const expectedA = userScopeGuard.captureUserScope();
+        let requests = 0;
+        try {
+            await withAdapter(async (config) => {
+                requests += 1;
+                throw new axios.AxiosError("not found", "ERR_BAD_REQUEST", config, undefined, {
+                    data: { code: 404, data: null, msg: "not found" },
+                    status: 404,
+                    statusText: "Error",
+                    headers: {},
+                    config,
+                });
+            }, async () => {
+                await expect(getResource("res-missing-stale", { expectedScope: expectedA })).rejects.toThrow("not found");
+                expect(requests).toBe(1);
+                await expect(getResource("res-missing-stale", { expectedScope: expectedA })).rejects.toThrow("资源不存在或已被删除");
+                expect(requests).toBe(1);
+                setActiveUserScope("owner-b");
+                setActiveUserScope("owner-a");
+                await expect(getResource("res-missing-stale", { expectedScope: expectedA })).rejects.toBeInstanceOf(UserScopeAbandonedError);
+                expect(requests).toBe(1);
+            });
+        } finally {
+            restore();
+        }
+    });
+
+    test("signaled getResource callers do not share an AbortSignal", async () => {
+        const restore = switchScope("owner-a");
+        const expectedScope = userScopeGuard.captureUserScope();
+        const first = new AbortController();
+        const second = new AbortController();
+        const firstEntered = deferred();
+        const firstGate = deferred();
+        const secondEntered = deferred();
+        const secondGate = deferred();
+        let requests = 0;
+        try {
+            await withAdapter(async (config) => {
+                requests += 1;
+                const n = requests;
+                if (n === 1) {
+                    firstEntered.resolve();
+                    await firstGate.promise;
+                } else {
+                    secondEntered.resolve();
+                    await secondGate.promise;
+                }
+                return { data: envelope({ id: "res-signal-independent" }), status: 200, statusText: "OK", headers: {}, config };
+            }, async () => {
+                const pendingFirst = getResource("res-signal-independent", { expectedScope, signal: first.signal });
+                await firstEntered.promise;
+                const pendingSecond = getResource("res-signal-independent", { expectedScope, signal: second.signal });
+                await secondEntered.promise;
+                expect(requests).toBe(2);
+                first.abort();
+                firstGate.resolve();
+                await expect(pendingFirst).rejects.toMatchObject({ name: "AbortError" });
+                secondGate.resolve();
+                expect((await pendingSecond).id).toBe("res-signal-independent");
+            });
+        } finally {
+            firstGate.resolve();
+            secondGate.resolve();
+            restore();
+        }
+    });
+
     test("deferred refreshResource A to B to A does not write cache", async () => {
         const restore = switchScope("owner-a");
         const expectedA = userScopeGuard.captureUserScope();

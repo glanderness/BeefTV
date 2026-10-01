@@ -11,7 +11,7 @@ import {
 import { recoverOwnedDepthCaptureNode, recoverOwnedDepthCaptureNodes } from "@/lib/canvas/canvas-depth-recover";
 import { beginLocalExecutorSession, isLocalExecutorSessionStop } from "@/lib/plugins/builtin/editor/local-executor-session";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
-import { captureUserScope, UserScopeAbandonedError } from "@/lib/user-scope-guard";
+import { captureUserScope, UserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { apiClient } from "@/services/api/request";
 import type { GenerationTask } from "@/services/api/task-center";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -207,6 +207,158 @@ describe("persistOwnedCanvasMediaNodes interior ownership", () => {
             restore();
         }
     });
+
+    test("ordinary ensure error after project switch does not warn", async () => {
+        const restore = switchScope("owner-a");
+        const expectedScope = captureUserScope();
+        const entered = deferred();
+        const gate = deferred();
+        let liveProject = "proj-a";
+        const warnings: string[] = [];
+        const errors: string[] = [];
+        try {
+            const pending = persistOwnedCanvasMediaNodes({
+                canvasId: "proj-a",
+                mediaNodes: [imageNode("media-1")],
+                expectedScope,
+            }, persistDeps({
+                ensureCanvasNodeAsset: async () => {
+                    entered.resolve();
+                    await gate.promise;
+                    throw new Error("network down");
+                },
+                getLiveProjectId: () => liveProject,
+                getLiveNodes: () => [],
+                warn: (text) => { warnings.push(text); },
+                error: (text) => { errors.push(text); },
+            }));
+            await entered.promise;
+            liveProject = "proj-b";
+            gate.resolve();
+            await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+            expect(warnings).toEqual([]);
+            expect(errors).toEqual([]);
+        } finally {
+            restore();
+        }
+    });
+
+    test("ordinary flush error after project switch or A to B to A does not toast", async () => {
+        const restore = switchScope("owner-a");
+        const expectedScope = captureUserScope();
+        const switchEntered = deferred();
+        const switchGate = deferred();
+        const abaEntered = deferred();
+        const abaGate = deferred();
+        let liveProject = "proj-a";
+        const switchErrors: string[] = [];
+        const abaErrors: string[] = [];
+        try {
+            const switched = persistOwnedCanvasMediaNodes({
+                canvasId: "proj-a",
+                mediaNodes: [imageNode("media-1")],
+                expectedScope,
+            }, persistDeps({
+                ensureCanvasNodeAsset: async () => ({ assetId: "asset-1", created: true, linkedToProject: true, confirmed: true }),
+                getLiveProjectId: () => liveProject,
+                getLiveNodes: () => [],
+                flushPersistence: async () => {
+                    switchEntered.resolve();
+                    await switchGate.promise;
+                    throw new Error("flush failed");
+                },
+                error: (text) => { switchErrors.push(text); },
+            }));
+            await switchEntered.promise;
+            liveProject = "proj-b";
+            switchGate.resolve();
+            await expect(switched).rejects.toMatchObject({ name: "AbortError" });
+            expect(switchErrors).toEqual([]);
+
+            const aba = persistOwnedCanvasMediaNodes({
+                canvasId: "proj-a",
+                mediaNodes: [imageNode("media-2")],
+                expectedScope,
+            }, persistDeps({
+                ensureCanvasNodeAsset: async () => ({ assetId: "asset-2", created: true, linkedToProject: true, confirmed: true }),
+                getLiveProjectId: () => "proj-a",
+                getLiveNodes: () => [],
+                flushPersistence: async () => {
+                    abaEntered.resolve();
+                    await abaGate.promise;
+                    throw new Error("flush failed");
+                },
+                error: (text) => { abaErrors.push(text); },
+            }));
+            await abaEntered.promise;
+            setActiveUserScope("owner-b");
+            setActiveUserScope("owner-a");
+            abaGate.resolve();
+            await expect(aba).rejects.toBeInstanceOf(UserScopeAbandonedError);
+            expect(abaErrors).toEqual([]);
+        } finally {
+            restore();
+        }
+    });
+
+    test("ordinary flush error on the original session still reports save failure", async () => {
+        const restore = switchScope("owner-a");
+        const expectedScope = captureUserScope();
+        const errors: string[] = [];
+        try {
+            await expect(persistOwnedCanvasMediaNodes({
+                canvasId: "proj-a",
+                mediaNodes: [imageNode("media-1")],
+                expectedScope,
+            }, persistDeps({
+                ensureCanvasNodeAsset: async () => ({ assetId: "asset-1", created: true, linkedToProject: true, confirmed: true }),
+                getLiveProjectId: () => "proj-a",
+                getLiveNodes: () => [],
+                flushPersistence: async () => {
+                    throw new Error("flush failed");
+                },
+                error: (text) => { errors.push(text); },
+            }))).rejects.toThrow("flush failed");
+            expect(errors).toEqual(["媒体结果已生成，但本地画布保存失败：flush failed"]);
+        } finally {
+            restore();
+        }
+    });
+
+    test("open, flush, and sync receive the captured expectedScope", async () => {
+        const restore = switchScope("owner-a");
+        const expectedScope = captureUserScope();
+        const media = imageNode("media-1");
+        let exists = false;
+        const opened: CapturedUserScope[] = [];
+        const flushed: CapturedUserScope[] = [];
+        const synced: CapturedUserScope[] = [];
+        try {
+            await persistOwnedCanvasMediaNodes({
+                canvasId: "proj-a",
+                mediaNodes: [media],
+                expectedScope,
+            }, persistDeps({
+                ensureCanvasNodeAsset: async () => ({ assetId: "asset-1", created: true, linkedToProject: true, confirmed: true }),
+                getLiveProjectId: () => "proj-a",
+                getLiveNodes: () => [],
+                hasProject: () => exists,
+                openProject: async (_id, scope) => {
+                    opened.push(scope);
+                    exists = true;
+                },
+                flushPersistence: async (scope) => { flushed.push(scope); },
+                isLocalWorkspace: () => true,
+                syncSnapshot: async (_id, _patch, scope) => { synced.push(scope); },
+                readSavedProject: async () => ({ nodes: [{ ...media, metadata: { ...media.metadata, assetId: "asset-1" } }] }),
+            }));
+            expect(opened).toEqual([expectedScope]);
+            expect(flushed).toEqual([expectedScope]);
+            expect(synced).toEqual([expectedScope]);
+        } finally {
+            restore();
+        }
+    });
 });
 
 describe("recoverOwnedDepthCaptureNodes ownership", () => {
@@ -319,6 +471,60 @@ describe("recoverOwnedDepthCaptureNodes ownership", () => {
             restore();
         }
     });
+
+    test("ordinary getResource error after project switch does not write failed metadata", async () => {
+        const restore = switchScope("owner-a");
+        const expectedScope = captureUserScope();
+        const lookupEntered = deferred();
+        const lookupGate = deferred();
+        let liveProject = "proj-a";
+        const controller = new AbortController();
+        const nodeWrites: string[] = [];
+        const node = depthNode("depth-1");
+        try {
+            await withAdapter(async (config) => {
+                const path = String(config.url || "");
+                if (path === "/tasks/depth-task") {
+                    return envelope(generationTask({
+                        id: "depth-task",
+                        status: "succeeded",
+                        resultJson: JSON.stringify({ resourceId: "depth-out", fileName: "depth.mp4", size: 1, durationMs: 1000, width: 16, height: 9 }),
+                    }));
+                }
+                if (path === "/resources/depth-out") {
+                    lookupEntered.resolve();
+                    await lookupGate.promise;
+                    throw new Error("lookup failed");
+                }
+                throw new Error(`unexpected ${path}`);
+            }, async () => {
+                const session = beginLocalExecutorSession("proj-a", {
+                    controller,
+                    getLiveProjectId: () => liveProject,
+                    expectedScope,
+                });
+                const pending = recoverOwnedDepthCaptureNode({
+                    node,
+                    session,
+                    persist: async () => undefined,
+                    setNodes: (updater) => {
+                        const next = updater([node]);
+                        nodeWrites.push(next.find((item) => item.id === node.id)?.metadata?.status || "");
+                    },
+                    nodeStillMounted: () => true,
+                });
+                await lookupEntered.promise;
+                liveProject = "proj-b";
+                lookupGate.resolve();
+                await pending;
+                expect(controller.signal.aborted).toBe(true);
+                expect(nodeWrites.some((status) => status === "error" || status === "success")).toBe(false);
+            });
+        } finally {
+            lookupGate.resolve();
+            restore();
+        }
+    });
 });
 
 describe("owned canvas persist and recover callbacks", () => {
@@ -331,6 +537,9 @@ describe("owned canvas persist and recover callbacks", () => {
         expect(tools).toContain("taskClientOperationTerminal");
         expect(tools).toContain("nextLocalExecutorClientOperationId(");
         expect(tools).toContain("localExecutorFrozenInputKey([\"depth_capture\"");
+        expect(tools).toContain("openLocalCanvasProjectFromBackend(id, expectedScope)");
+        expect(tools).toContain("syncLocalCanvasSnapshot(id, patch, expectedScope)");
+        expect(tools).toContain("assertUserScope(expectedScope)");
         const exportSource = readFileSync(join(here, "../src/lib/plugins/builtin/editor/editor-export.tsx"), "utf8");
         expect(exportSource).toContain("nextLocalExecutorClientOperationId(submitIntentRef.current, frozenInputKey)");
         const transcription = readFileSync(join(here, "../src/lib/plugins/builtin/editor/editor-transcription.tsx"), "utf8");

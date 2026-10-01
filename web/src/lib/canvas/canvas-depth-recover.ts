@@ -95,6 +95,12 @@ export async function recoverOwnedDepthCaptureNode(input: {
         });
     } catch (error) {
         if (isLocalExecutorSessionStop(error)) return;
+        try {
+            assertLocalExecutorSession(session);
+        } catch (stop) {
+            if (isLocalExecutorSessionStop(stop)) return;
+            throw stop;
+        }
         input.setNodes((current) => current.map((item) => item.id === node.id ? {
             ...item,
             metadata: { ...item.metadata, status: NODE_STATUS_ERROR, taskStatus: "failed", errorDetails: generationErrorMessage(error) },

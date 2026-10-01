@@ -136,6 +136,12 @@ describe("local-executor clientOperationId intent", () => {
         expect(nextLocalExecutorClientOperationId(afterTranscribeUnknown, resourceA)).toBe(transcribe);
         expect(nextLocalExecutorClientOperationId(afterTranscribeUnknown, resourceB)).not.toBe(transcribe);
     });
+
+    test("frozen input key serializes the full tuple without colon collisions", () => {
+        expect(localExecutorFrozenInputKey(["a", "b:c"])).not.toBe(localExecutorFrozenInputKey(["a:b", "c"]));
+        expect(localExecutorFrozenInputKey(["a", "b:c"])).toBe(JSON.stringify(["a", "b:c"]));
+        expect(localExecutorFrozenInputKey(["a:b", "c"])).toBe(JSON.stringify(["a:b", "c"]));
+    });
 });
 
 describe("local-executor typed HTTP contract", () => {

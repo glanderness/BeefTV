@@ -30,7 +30,7 @@ export type LocalExecutorIntentState = {
 };
 
 export function localExecutorFrozenInputKey(parts: Array<string | number | null | undefined | object>) {
-    return parts.map((part) => typeof part === "object" && part !== null ? JSON.stringify(part) : String(part ?? "")).join(":");
+    return JSON.stringify(parts);
 }
 
 export function beginLocalExecutorSession(
