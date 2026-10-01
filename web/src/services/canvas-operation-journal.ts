@@ -37,6 +37,18 @@ export class CanvasJournalError extends Error {
 }
 
 const memory = new Map<string, CanvasOperationJournal>();
+const journalLocks = new Map<string, Promise<void>>();
+
+type JournalStorageDelay = {
+    beforeGet?: () => Promise<void>;
+    beforeSet?: () => Promise<void>;
+};
+
+let journalStorageDelay: JournalStorageDelay | null = null;
+
+export function setCanvasJournalStorageDelay(delay: JournalStorageDelay | null) {
+    journalStorageDelay = delay;
+}
 
 function journalName(canvasId: string) {
     return `${JOURNAL_PREFIX}:${canvasId}`;
@@ -48,6 +60,10 @@ function cacheKey(scope: string, canvasId: string) {
 
 function emptyJournal(scope: string, canvasId: string): CanvasOperationJournal {
     return { userScope: scope, canvasId, confirmedRevision: 0, confirmedSnapshot: null, inFlight: null };
+}
+
+function cloneJournal(journal: CanvasOperationJournal): CanvasOperationJournal {
+    return structuredClone(journal);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -110,14 +126,18 @@ function parseCanvasOperationJournal(raw: unknown, scope: string, canvasId: stri
     };
 }
 
-export function peekCanvasOperationJournal(canvasId: string, scope = getActiveUserScope()) {
-    return memory.get(cacheKey(scope, canvasId));
+function withJournal<T>(scope: string, canvasId: string, fn: () => Promise<T>): Promise<T> {
+    const key = cacheKey(scope, canvasId);
+    const run = (journalLocks.get(key) ?? Promise.resolve()).then(fn, fn);
+    journalLocks.set(key, run.then(() => undefined, () => undefined));
+    return run;
 }
 
-export async function loadCanvasOperationJournal(canvasId: string, scope = getActiveUserScope()) {
+async function readJournalUnlocked(canvasId: string, scope: string): Promise<CanvasOperationJournal> {
     const key = cacheKey(scope, canvasId);
     const cached = memory.get(key);
-    if (cached) return cached;
+    if (cached) return cloneJournal(cached);
+    await journalStorageDelay?.beforeGet?.();
     let raw: string | null = null;
     try {
         raw = await localForageStorageForScope(scope).getItem(journalName(canvasId));
@@ -127,7 +147,7 @@ export async function loadCanvasOperationJournal(canvasId: string, scope = getAc
     if (raw == null || raw === "") {
         const journal = emptyJournal(scope, canvasId);
         memory.set(key, journal);
-        return journal;
+        return cloneJournal(journal);
     }
     let parsed: unknown;
     try {
@@ -138,15 +158,46 @@ export async function loadCanvasOperationJournal(canvasId: string, scope = getAc
     const journal = parseCanvasOperationJournal(parsed, scope, canvasId);
     memory.set(key, journal);
     if (journal.confirmedSnapshot) recordCanvasDocumentBase(journal.confirmedSnapshot, scope);
-    return journal;
+    return cloneJournal(journal);
+}
+
+async function writeJournalUnlocked(journal: CanvasOperationJournal) {
+    const scope = journal.userScope || getActiveUserScope();
+    const validated = parseCanvasOperationJournal(journal, scope, journal.canvasId);
+    const serialized = JSON.stringify(validated);
+    await journalStorageDelay?.beforeSet?.();
+    await localForageStorageForScope(scope).setItem(journalName(journal.canvasId), serialized);
+    const detached = parseCanvasOperationJournal(JSON.parse(serialized), scope, journal.canvasId);
+    memory.set(cacheKey(scope, journal.canvasId), detached);
+    if (detached.confirmedSnapshot) recordCanvasDocumentBase(detached.confirmedSnapshot, scope);
+    return cloneJournal(detached);
+}
+
+export function peekCanvasOperationJournal(canvasId: string, scope = getActiveUserScope()) {
+    const cached = memory.get(cacheKey(scope, canvasId));
+    return cached ? cloneJournal(cached) : undefined;
+}
+
+export async function loadCanvasOperationJournal(canvasId: string, scope = getActiveUserScope()) {
+    return withJournal(scope, canvasId, () => readJournalUnlocked(canvasId, scope));
 }
 
 export async function saveCanvasOperationJournal(journal: CanvasOperationJournal) {
     const scope = journal.userScope || getActiveUserScope();
-    const validated = parseCanvasOperationJournal(journal, scope, journal.canvasId);
-    await localForageStorageForScope(scope).setItem(journalName(journal.canvasId), JSON.stringify(validated));
-    memory.set(cacheKey(scope, journal.canvasId), validated);
-    if (validated.confirmedSnapshot) recordCanvasDocumentBase(validated.confirmedSnapshot, scope);
+    return withJournal(scope, journal.canvasId, () => writeJournalUnlocked(journal));
+}
+
+export async function updateCanvasOperationJournal(
+    canvasId: string,
+    scope: string,
+    updater: (current: CanvasOperationJournal) => CanvasOperationJournal | void | Promise<CanvasOperationJournal | void>,
+) {
+    return withJournal(scope, canvasId, async () => {
+        const current = await readJournalUnlocked(canvasId, scope);
+        const next = await updater(current);
+        if (next == null) return current;
+        return writeJournalUnlocked(next);
+    });
 }
 
 export async function recordConfirmedCanvasCommit(
@@ -154,29 +205,34 @@ export async function recordConfirmedCanvasCommit(
     scope = getActiveUserScope(),
     options: { ackOperationId?: string } = {},
 ) {
-    const current = await loadCanvasOperationJournal(project.id, scope);
-    const incomingRevision = typeof project.revision === "number" && Number.isInteger(project.revision) && project.revision >= 0
-        ? project.revision
-        : current.confirmedRevision;
-    const revisionWentBackwards = incomingRevision < current.confirmedRevision;
-    const ackMatches = Boolean(options.ackOperationId && current.inFlight?.operationId === options.ackOperationId);
-    await saveCanvasOperationJournal({
-        ...current,
-        confirmedRevision: Math.max(current.confirmedRevision, incomingRevision),
-        confirmedSnapshot: revisionWentBackwards ? current.confirmedSnapshot : project,
-        inFlight: ackMatches ? null : current.inFlight,
+    return updateCanvasOperationJournal(project.id, scope, (current) => {
+        const incomingRevision = typeof project.revision === "number" && Number.isInteger(project.revision) && project.revision >= 0
+            ? project.revision
+            : current.confirmedRevision;
+        const revisionWentBackwards = incomingRevision < current.confirmedRevision;
+        const ackMatches = Boolean(options.ackOperationId && current.inFlight?.operationId === options.ackOperationId);
+        return {
+            ...current,
+            confirmedRevision: Math.max(current.confirmedRevision, incomingRevision),
+            confirmedSnapshot: revisionWentBackwards ? current.confirmedSnapshot : structuredClone(project),
+            inFlight: ackMatches ? null : current.inFlight,
+        };
     });
 }
 
 export async function abandonCanvasInFlight(canvasId: string, scope = getActiveUserScope()) {
-    const current = await loadCanvasOperationJournal(canvasId, scope);
-    if (!current.inFlight) return;
-    await saveCanvasOperationJournal({ ...current, inFlight: null });
+    await updateCanvasOperationJournal(canvasId, scope, (current) => {
+        if (!current.inFlight) return;
+        return { ...current, inFlight: null };
+    });
 }
 
 export async function clearCanvasOperationJournal(canvasId: string, scope = getActiveUserScope()) {
-    await localForageStorageForScope(scope).removeItem(journalName(canvasId));
-    memory.delete(cacheKey(scope, canvasId));
+    return withJournal(scope, canvasId, async () => {
+        await journalStorageDelay?.beforeSet?.();
+        await localForageStorageForScope(scope).removeItem(journalName(canvasId));
+        memory.delete(cacheKey(scope, canvasId));
+    });
 }
 
 export function newCanvasCommitOperationId() {
@@ -185,4 +241,6 @@ export function newCanvasCommitOperationId() {
 
 export function resetCanvasOperationJournalMemory() {
     memory.clear();
+    journalLocks.clear();
+    journalStorageDelay = null;
 }

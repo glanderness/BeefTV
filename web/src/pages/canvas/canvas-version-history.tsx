@@ -9,7 +9,7 @@ import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { getActiveUserScope } from "@/lib/user-scope";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
+import { canvasSyncProgressKey, useSyncProgressStore } from "@/stores/use-sync-progress-store";
 import { workspaceCapabilities } from "@/services/workspace-mode";
 import "./canvas-version-history.css";
 
@@ -30,7 +30,7 @@ export function useCanvasVersionHistory(projectId: string, onRestore: (snapshotI
     const contextRef = useRef({ projectId, scope });
     contextRef.current = { projectId, scope };
     const isCurrentContext = () => contextRef.current.projectId === projectId && contextRef.current.scope === scope && getActiveUserScope() === scope;
-    const draftCount = useSyncProgressStore((state) => state.syncingProjects[projectId]?.draftCount);
+    const draftCount = useSyncProgressStore((state) => state.syncingProjects[canvasSyncProgressKey(projectId)]?.draftCount);
     const storedProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
     const currentProject = projectFromEditor || storedProject;
     const localOnly = workspaceCapabilities().local;

@@ -43,7 +43,8 @@ const getState = () => ({
   openProject: (id: string) => projects.find((project) => project.id === id) ?? null,
   createProject: () => "unused",
   updateProject: () => {},
-  deleteProjects: () => {},
+  deleteProjects: (ids) => { projects = projects.filter((project) => !ids.includes(project.id)); },
+  restoreProject: (project) => { if (!projects.some((item) => item.id === project.id)) projects = [project, ...projects]; },
 });
 export const useCanvasStore = {
   getState,
@@ -66,6 +67,7 @@ export const applyExternalCanvasRevision = (remote: any, options: any) => {
   return { kind: "apply", project: merged, localRevision: local?.revision ?? 0, remoteRevision: merged.revision ?? 0 };
 };
 export const acceptCanvasExternalRevisionCandidate = () => undefined;
+export const clearCanvasExternalRevisionConflict = () => {};
 export const canvasDurableSnapshot = () => undefined;
 export const canvasExternalRevisionConflict = () => undefined;
 export const canvasExternalRevisionVersion = () => 0;
@@ -78,8 +80,12 @@ export const clearCanvasDocumentBase = (id) => { bases.delete(id); };
 writeFileSync(historyPath, "export const useCanvasHistoryStore = { getState: () => ({ recordDeletedProjects: () => {} }) };\n");
 writeFileSync(syncStubPath, "export const notifyCanvasRefresh = () => {};\n");
 writeFileSync(conflictStubPath, `
+export class CanvasBackendSubmitPausedError extends Error { constructor(message = "") { super(message); this.name = "CanvasBackendSubmitPausedError"; } }
+export class CanvasStaleScopeError extends Error { constructor(message = "") { super(message); this.name = "CanvasStaleScopeError"; } }
 export const isCanvasRevisionConflict = () => false;
+export const isCanvasSubmitControlError = (error) => error instanceof CanvasBackendSubmitPausedError || error instanceof CanvasStaleScopeError;
 export const canvasBackendSubmitPaused = () => false;
+export const pauseCanvasBackendSubmit = () => {};
 export const resumeCanvasBackendSubmit = () => {};
 export const handleRejectedCanvasBackendSave = async () => false;
 `);
@@ -111,15 +117,23 @@ export class CanvasJournalError extends Error { constructor(message) { super(mes
 export const peekCanvasOperationJournal = (id) => memory.get(id);
 export const loadCanvasOperationJournal = async (id) => memory.get(id) ?? empty(id);
 export const saveCanvasOperationJournal = async (journal) => { memory.set(journal.canvasId, journal); };
+export const updateCanvasOperationJournal = async (id, _scope, updater) => {
+  const current = memory.get(id) ?? empty(id);
+  const next = await updater(current);
+  if (next == null) return current;
+  memory.set(id, next);
+  return next;
+};
 export const recordConfirmedCanvasCommit = async (project, _scope, options) => {
-  const current = memory.get(project.id) ?? empty(project.id);
-  const incoming = project.revision ?? current.confirmedRevision;
-  const ackMatches = options?.ackOperationId && current.inFlight?.operationId === options.ackOperationId;
-  memory.set(project.id, {
-    ...current,
-    confirmedRevision: Math.max(current.confirmedRevision, incoming),
-    confirmedSnapshot: incoming < current.confirmedRevision ? current.confirmedSnapshot : project,
-    inFlight: ackMatches ? null : current.inFlight,
+  return updateCanvasOperationJournal(project.id, "guest", (current) => {
+    const incoming = project.revision ?? current.confirmedRevision;
+    const ackMatches = options?.ackOperationId && current.inFlight?.operationId === options.ackOperationId;
+    return {
+      ...current,
+      confirmedRevision: Math.max(current.confirmedRevision, incoming),
+      confirmedSnapshot: incoming < current.confirmedRevision ? current.confirmedSnapshot : project,
+      inFlight: ackMatches ? null : current.inFlight,
+    };
   });
 };
 export const abandonCanvasInFlight = async () => {};

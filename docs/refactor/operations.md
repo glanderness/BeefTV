@@ -66,7 +66,9 @@ listed := registry.List(operations.ManualCaller(false))
 
 生成结果提交仍走 `PUT /canvas-projects/:id/generated-assets`，待交付切片接入。`project.tsx` / 媒体工具仍通过 `syncLocalCanvasSnapshot` 调仓库；该桥接把文档字段合成一次 `canvas.document.commit`，viewport 只留在本地，页面文件本身未改。
 
-手工 UI 提交日记按 `userScope + canvasId` 隔离。损坏、无法解析或越权的日记 fail-closed，不发明空操作；离线仍可打开本地草稿。内存与基线只在 IndexedDB 写入成功后发布。回执按 `operationId` 精确确认；刷新和生成结果 PUT 不清除未确认操作。`confirmedRevision` 只前进。派发时捕获用户作用域：排队中的旧账号工作不再发送，进行中的请求把 ack 写回原作用域，不改新账号的 live store。
+手工 UI 提交日记按 `userScope + canvasId` 隔离，同一把钥匙上的读改写排队。损坏、无法解析或越权的日记 fail-closed，不发明空操作；离线仍可打开本地草稿。内存与基线只在 IndexedDB 写入成功后发布。回执按 `operationId` 精确确认；刷新 keep-local 不得把远端读成功当成可编辑基线，只保留候选并暂停自动保存，直到用户显式采用或三路 rebase。在途操作允许原样回放，但回执不得把基线回退到更旧文档，也不得用旧整份快照覆盖外部已确认内容。`confirmedRevision` 只前进。派发、冲突草稿、同步进度和删除都捕获用户作用域：排队中的旧账号工作在发出前若已切换，返回过期作用域错误而不是成功；进行中的请求把 ack 写回原作用域，不改新账号的 live store。删除与未完成提交串行，发出前核对作用域，失败时保留后续编辑。
+
+本轮仍保留：初次创建/导入 PUT、生成结果 `PUT /canvas-projects/:id/generated-assets`。仓库暴露 `adoptServerConfirmedGenerationPatch` 给交付切片：干净缓存整份采纳，草稿按节点/连线 id 合并。
 
 ## 回合与写入事务
 

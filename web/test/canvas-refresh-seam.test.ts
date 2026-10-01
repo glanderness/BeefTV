@@ -119,9 +119,9 @@ const {
     resetLocalCanvasBackendSaveState,
     syncLocalCanvasProjectToBackend,
 } = await import("@/services/local-workspace-repository");
-const { canvasExternalRevisionConflict, useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
+const { canvasExternalRevisionConflict, clearCanvasExternalRevisionConflict, useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
 const { getActiveUserScope } = await import("@/lib/user-scope");
-const { useSyncProgressStore } = await import("@/stores/use-sync-progress-store");
+const { projectSyncProgress, useSyncProgressStore } = await import("@/stores/use-sync-progress-store");
 const { resetCanvasOperationJournalMemory } = await import("@/services/canvas-operation-journal");
 
 const scope = getActiveUserScope();
@@ -169,6 +169,7 @@ beforeEach(() => {
     server.releaseGet = null;
     server.rejectNextWrite = null;
     useSyncProgressStore.getState().clearAll();
+    clearCanvasExternalRevisionConflict(scope, "c1");
     useCanvasStore.setState({ projects: [] });
 });
 
@@ -278,7 +279,7 @@ describe("画布刷新接缝（服务端基线）", () => {
 
         await expect(syncLocalCanvasProjectToBackend("c1")).rejects.toThrow();
 
-        expect(useSyncProgressStore.getState().syncingProjects.c1?.phase).toBe("conflict");
+        expect(projectSyncProgress("c1")?.phase).toBe("conflict");
         expect(useCanvasStore.getState().projects[0].title).toBe("本地新标题");
         expect(hasUnconfirmedCanvasEdits("c1")).toBe(true);
     });

@@ -6,12 +6,12 @@ import { readAllCanvasSyncDrafts, readCanvasSyncDrafts, type CanvasSyncDraft } f
 import { getActiveUserScope } from "@/lib/user-scope";
 import { acceptExternalCanvasRevision, pendingExternalCanvasRevision } from "@/services/local-workspace-repository";
 import { canvasExternalRevisionVersion, subscribeCanvasExternalRevision, useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
+import { canvasSyncProgressKey, useSyncProgressStore } from "@/stores/use-sync-progress-store";
 import { workspaceCapabilities } from "@/services/workspace-mode";
 
 export function CanvasSyncStatus({ projectId, onLoadLatest, onOpenVersions }: { projectId: string; onLoadLatest: () => Promise<void>; onOpenVersions?: () => void }) {
     const { message } = App.useApp();
-    const progress = useSyncProgressStore((state) => state.syncingProjects[projectId]);
+    const progress = useSyncProgressStore((state) => state.syncingProjects[canvasSyncProgressKey(projectId)]);
     const localOnly = workspaceCapabilities().local;
     const [busy, setBusy] = useState(false);
     const [statusOpen, setStatusOpen] = useState(false);

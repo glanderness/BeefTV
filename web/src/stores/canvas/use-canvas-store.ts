@@ -256,7 +256,7 @@ export function canvasExternalRevisionConflict(scope: string, projectId: string)
     // 本地 revision 已前进说明这次提交被服务端接受，冲突前提消失；
     // 否则不同入口之间会一直提示同一份早已过时的冲突。
     const localRevision = useCanvasStore.getState().projects.find((project) => project.id === projectId)?.revision ?? 0;
-    if (localRevision !== conflict.localRevision) {
+    if (localRevision > conflict.remoteRevision) {
         canvasExternalRevisionState.conflicts.delete(key);
         return undefined;
     }

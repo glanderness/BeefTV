@@ -27,6 +27,8 @@ const getState = () => ({
   updateProject: (id: string, patch: Record<string, unknown>) => {
     projects = projects.map((project) => project.id === id ? { ...project, ...patch } : project);
   },
+  deleteProjects: (ids) => { projects = projects.filter((project) => !ids.includes(project.id)); },
+  restoreProject: (project) => { if (!projects.some((item) => item.id === project.id)) projects = [project, ...projects]; },
 });
 export const useCanvasStore = {
   getState,
@@ -43,6 +45,7 @@ export const resetFlush = () => { flushCalls = 0; flushImpl = async () => {}; };
 // 画布刷新接缝：这个用例只关心 timeline 落库，因此把外部 revision 相关入口做成最薄替身。
 export const applyExternalCanvasRevision = () => ({ kind: "keep-local", projectId: "", candidate: {}, localRevision: 0, remoteRevision: 0 });
 export const acceptCanvasExternalRevisionCandidate = () => undefined;
+export const clearCanvasExternalRevisionConflict = () => {};
 export const canvasDurableSnapshot = () => undefined;
 export const canvasExternalRevisionConflict = () => undefined;
 const bases = new Map();
@@ -122,15 +125,23 @@ export class CanvasJournalError extends Error { constructor(message) { super(mes
 export const peekCanvasOperationJournal = (id) => memory.get(id);
 export const loadCanvasOperationJournal = async (id) => memory.get(id) ?? empty(id);
 export const saveCanvasOperationJournal = async (journal) => { memory.set(journal.canvasId, journal); };
+export const updateCanvasOperationJournal = async (id, _scope, updater) => {
+  const current = memory.get(id) ?? empty(id);
+  const next = await updater(current);
+  if (next == null) return current;
+  memory.set(id, next);
+  return next;
+};
 export const recordConfirmedCanvasCommit = async (project, _scope, options) => {
-  const current = memory.get(project.id) ?? empty(project.id);
-  const incoming = project.revision ?? current.confirmedRevision;
-  const ackMatches = options?.ackOperationId && current.inFlight?.operationId === options.ackOperationId;
-  memory.set(project.id, {
-    ...current,
-    confirmedRevision: Math.max(current.confirmedRevision, incoming),
-    confirmedSnapshot: incoming < current.confirmedRevision ? current.confirmedSnapshot : project,
-    inFlight: ackMatches ? null : current.inFlight,
+  return updateCanvasOperationJournal(project.id, "guest", (current) => {
+    const incoming = project.revision ?? current.confirmedRevision;
+    const ackMatches = options?.ackOperationId && current.inFlight?.operationId === options.ackOperationId;
+    return {
+      ...current,
+      confirmedRevision: Math.max(current.confirmedRevision, incoming),
+      confirmedSnapshot: incoming < current.confirmedRevision ? current.confirmedSnapshot : project,
+      inFlight: ackMatches ? null : current.inFlight,
+    };
   });
 };
 export const abandonCanvasInFlight = async (id) => {
