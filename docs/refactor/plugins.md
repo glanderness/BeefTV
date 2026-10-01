@@ -24,12 +24,12 @@
 
 新代码应依赖 `internal/plugins` 的导出类型与 `plugins.Service`。`app` 上的 `PluginView` / `InstallPlugin` / `PluginStatesForUser` 等是过渡别名和委托，不要在这里补第二份实现。
 
-仍留在 `app` 的原因：管理员鉴权、`appendAdminAudit`、`FeatureEnabled`（系统插件对普通用户可见性）、`PluginProviderCatalog` 以及生成路径对 `protocolRegistry()` 的读取。
+仍留在 `app` 的原因：管理员鉴权、`appendAdminAudit`、`FeatureEnabled`（系统插件对普通用户可见性的配置读取）以及生成路径对 `protocolRegistry()` 的读取。`ProviderCatalog` / `ForUser` 由 `plugins.Service` 拥有；app 只做功能开关适配和类型别名。
 
 ## 下一阶段仍在 app 的依赖
 
-- `PluginProviderCatalog` / `protocolRegistry` / `canonicalProtocolID`：生成与渠道设置仍从 `app.Service` 读 registry
-- `PluginsForUser`：功能开关 `FeatureSystemPlugins` 仍在 app/platform
+- `protocolRegistry` / `canonicalProtocolID`：生成与渠道设置仍从 `app.Service` 读 registry
+- `PluginsForUser` 薄门面：`FeatureSystemPlugins` 仍在 app/platform，过滤算法在 `plugins.Service.ForUser`
 - HTTP handler、`RequireAdmin`、管理员审计
 - `generation.OfficialPluginPackageDir` 与 `LoadOfficialFallbackRegistry`：官方包目录和启动回退 registry 仍在 generation，plugins 只调用目录解析
 - 前端内置应用插件（Eagle、审美批改、编辑器壳等）本身仍不由协议 runtime 装载，只走管理策略

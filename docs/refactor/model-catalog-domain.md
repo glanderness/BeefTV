@@ -21,7 +21,7 @@
 - 前台产品规格覆盖校验、渠道规格投影、默认参数
 - 助手渠道/协议选择（`assistant.Provider` 合同不变；BeefAPI 托管密钥由 app 注入）
 
-`app` 只保留：HTTP/仓储/功能开关、工作流 plugin 授权桥、上游目录 HTTP 与插件扩展、BeefAPI 视频 overlay、`TestAdminChannelModel` 真实探测、以及 attempt 生命周期里对 provider 拥有的 image/direct 端口调用。
+`app` 只保留：HTTP/仓储/功能开关、工作流 plugin 授权桥、上游目录出站适配（SSRF、请求头、超时与状态映射）、BeefAPI 托管凭证、厂商 extras 发现端口、`TestAdminChannelModel` 真实探测、以及 attempt 生命周期里对 provider 拥有的 image/direct 端口调用。渠道 `/models` 的校验、解析、合并与 BeefAPI/WhatsToken 视频 overlay 由 `modelcatalog.LoadChannelModelCatalog` 拥有。
 
 ## 调用图（现状）
 
@@ -82,8 +82,8 @@ HTTP 目录
 - 工作流 plugin 授权：`RequireWorkflowPluginForUser` / `validateWorkflowProvider*`
 - `TestAdminChannelModel` 真实协议探测（走 `runTextTask`/`runImageTask`/`runVideoTask`/`runAudioTask`）
 - `beginTaskRouteAttempt` 编排：读 attempts、查 ImageSubmission、调用 provider 拥有的 direct/image 端口、写 `UpdateTaskProviderState`
-- `FetchChannelModelCatalog` 出站：`apiURL` / Gemini `/v1beta` 拼接、`doBinary`、`providerHTTPError` → 502 文案；`extendChannelModelCatalog` 插件；`beefapi.NormalizeCatalogVideoCapability`
-- `resolveChannelModelsRequest` 托管凭证（BeefAPI）
+- `FetchChannelModelCatalog` 出站适配：登录校验、`resolveChannelModelsRequest` 托管凭证、`NormalizeOutboundHeaders`、`apiURL` / Gemini `/v1beta` 拼接、`ValidateOutboundURL`、`doBinary`、`providerHTTPError` → 502 文案；`ENABLE_PROVIDER_PLUGINS` 时注入 extras 端口（bailian 发现，不发 HTTP）
+- 领域：`LoadChannelModelCatalog` 校验/拉取/解析、`OverlayCatalogVideoCapabilities`（官方 BeefAPI/WhatsToken 合同）、`MergeCatalogExtras`
 - 渠道密钥加解密、审计日志、仓储事务、`LogAPICall`/`APICallLogs`
 - `local_model_config.go` 桌面 `workspace.ProviderConfig` IO
 - `provider*.go` 出站、媒体水合、image/direct attempt 创建（provider worker 拥有）；`channelAPIFormatForProtocol` 出站副本仍在 `provider.go`，admission 走领域同名函数
@@ -125,5 +125,5 @@ go test ./internal/app -count=1 -timeout 180s \
 
 - 生成包能力类型去重并改为 import `modelcatalog`（provider worker）
 - `provider.go` 出站与媒体编排；`createDirectTaskAttempt` / `retryRejectedImageAttempt`
-- 上游目录 HTTP 与协议插件扩展
+- 上游目录出站 HTTP（SSRF/Header/超时）与厂商 extras 发现适配仍在 app
 - 前端目录 UI

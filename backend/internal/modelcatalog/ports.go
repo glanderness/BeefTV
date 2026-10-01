@@ -65,9 +65,14 @@ type TaskInputCodec struct {
 	ValidateCapability func(input map[string]any) error
 }
 
-// CatalogFetcher performs the safe outbound GET for /models. Provider owns the
-// HTTP client and URL joining; this domain owns parse and merge.
+// CatalogFetcher performs the safe outbound GET for /models. The outbound
+// adapter owns the HTTP client, SSRF checks, headers, and URL joining; this
+// domain owns validate, parse, merge, and capability overlay.
 type CatalogFetcher func(ctx context.Context, baseURL, apiFormat, apiKey string, headers []ChannelHeader) ([]byte, error)
+
+// CatalogExtraSource supplies vendor catalog entries after the standard
+// /models fetch. The source must not perform HTTP or hold secrets.
+type CatalogExtraSource func(baseURL, apiFormat string, headers []ChannelHeader) []ChannelModelCatalogItem
 
 // LookupFromRegistry adapts protocol.Registry.Resolve without exposing Adapter.
 func LookupFromRegistry(registry *protocol.Registry) ProtocolLookup {

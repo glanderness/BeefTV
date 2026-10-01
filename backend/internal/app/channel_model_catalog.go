@@ -2,12 +2,10 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
 
-	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 )
@@ -40,14 +38,9 @@ func (s *Service) FetchChannelModelCatalog(ctx context.Context, actor *model.Use
 	if err != nil {
 		return nil, err
 	}
-	catalog, err := modelcatalog.LoadChannelModelCatalog(ctx, s.fetchChannelModelCatalogBytes, input.BaseURL, input.APIFormat, input.APIKey, headers)
+	catalog, err := modelcatalog.LoadChannelModelCatalog(ctx, s.fetchChannelModelCatalogBytes, input.BaseURL, input.APIFormat, input.APIKey, headers, s.catalogExtraSource())
 	if err != nil {
 		return nil, mapChannelModelCatalogError(err)
-	}
-	catalog = overlayCatalogVideoCapabilities(catalog)
-	if s.isPluginEnabled() {
-		baseURL, _, apiFormat, _ := modelcatalog.ValidateCatalogRequest(input.BaseURL, input.APIKey, input.APIFormat)
-		catalog = extendChannelModelCatalog(baseURL, apiFormat, headers, catalog)
 	}
 	return catalog, nil
 }
@@ -84,23 +77,11 @@ func (s *Service) fetchChannelModelCatalogBytes(ctx context.Context, baseURL, ap
 	return data, nil
 }
 
-func overlayCatalogVideoCapabilities(items []ChannelModelCatalogItem) []ChannelModelCatalogItem {
-	for index, item := range items {
-		if video, ok := beefapi.NormalizeCatalogVideoCapability(item.VideoCapabilities); ok {
-			if raw, err := json.Marshal(video); err == nil {
-				items[index].VideoCapabilities = raw
-				version := ""
-				if item.VideoCapabilitiesVersion != nil {
-					version = strings.TrimSpace(*item.VideoCapabilitiesVersion)
-				}
-				items[index].VideoCapabilitiesVersion = &version
-				continue
-			}
-		}
-		items[index].VideoCapabilities = nil
-		items[index].VideoCapabilitiesVersion = nil
+func (s *Service) catalogExtraSource() modelcatalog.CatalogExtraSource {
+	if s == nil || !s.isPluginEnabled() {
+		return nil
 	}
-	return items
+	return extraChannelModelCatalogItems
 }
 
 func mapChannelModelCatalogError(err error) error {

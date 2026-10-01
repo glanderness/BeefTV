@@ -85,7 +85,7 @@ func ValidateCatalogRequest(baseURL, apiKey, apiFormat string) (string, string, 
 	return baseURL, apiKey, normalizedFormat, nil
 }
 
-func LoadChannelModelCatalog(ctx context.Context, fetcher CatalogFetcher, baseURL, apiFormat, apiKey string, headers []ChannelHeader) ([]ChannelModelCatalogItem, error) {
+func LoadChannelModelCatalog(ctx context.Context, fetcher CatalogFetcher, baseURL, apiFormat, apiKey string, headers []ChannelHeader, extras CatalogExtraSource) ([]ChannelModelCatalogItem, error) {
 	baseURL, apiKey, apiFormat, err := ValidateCatalogRequest(baseURL, apiKey, apiFormat)
 	if err != nil {
 		return nil, err
@@ -97,7 +97,15 @@ func LoadChannelModelCatalog(ctx context.Context, fetcher CatalogFetcher, baseUR
 	if err != nil {
 		return nil, err
 	}
-	return ParseChannelModelCatalog(data, apiFormat)
+	catalog, err := ParseChannelModelCatalog(data, apiFormat)
+	if err != nil {
+		return nil, err
+	}
+	catalog = OverlayCatalogVideoCapabilities(catalog)
+	if extras != nil {
+		catalog = MergeCatalogExtras(catalog, extras(baseURL, apiFormat, headers))
+	}
+	return catalog, nil
 }
 
 func ParseChannelModelCatalog(data []byte, apiFormat string) ([]ChannelModelCatalogItem, error) {

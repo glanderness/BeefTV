@@ -7,91 +7,6 @@ import (
 	"infinite-canvas/backend/internal/protocol"
 )
 
-type PluginProviderCatalogItem struct {
-	ID                string                      `json:"id"`
-	Version           string                      `json:"version"`
-	Name              string                      `json:"name"`
-	Vendor            string                      `json:"vendor"`
-	Categories        []protocol.Capability       `json:"categories"`
-	Scopes            []protocol.Surface          `json:"scopes"`
-	Create            string                      `json:"create,omitempty"`
-	Poll              string                      `json:"poll,omitempty"`
-	ContentType       string                      `json:"contentType,omitempty"`
-	BaseURL           string                      `json:"baseUrl,omitempty"`
-	Enabled           bool                        `json:"enabled"`
-	UnavailableReason string                      `json:"unavailableReason,omitempty"`
-	Workflows         []protocol.ManifestWorkflow `json:"workflows,omitempty"`
-}
-
-// PluginProviderCatalog projects provider and workflow contributions from the
-// unified plugin registry for channel and creation settings.
-func (s *Service) PluginProviderCatalog(scope, capability string, includeUnavailable bool) []PluginProviderCatalogItem {
-	wantScope := protocol.Surface(strings.TrimSpace(scope))
-	wantCapability := protocol.Capability(strings.TrimSpace(capability))
-	items := make([]PluginProviderCatalogItem, 0)
-	for _, plugin := range s.Plugins() {
-		for _, provider := range plugin.Manifest.Contributes.Providers {
-			if !containsPluginSurface(provider.Scopes, wantScope) || (wantCapability != "" && !containsPluginCapability(provider.Capabilities, wantCapability)) {
-				continue
-			}
-			item := PluginProviderCatalogItem{ID: provider.ID, Version: plugin.Manifest.Version, Name: provider.Label, Vendor: plugin.Manifest.Author, Categories: provider.Capabilities, Scopes: provider.Scopes, BaseURL: provider.BaseURL, Enabled: plugin.Status == "enabled", UnavailableReason: plugin.Error, Workflows: workflowsForProvider(plugin.Manifest.Contributes.Workflows, provider.ID)}
-			item.Create, item.Poll, item.ContentType = operationSummary(provider.Create), operationSummaryPtr(provider.Poll), provider.Create.ContentType
-			// The registry metadata is the canonical provider projection. This keeps
-			// host-backed dispatch paths out of every user-facing catalog consumer.
-			if adapter, ok := canonicalProviderAdapter(s.protocolRegistry(), provider.ID); ok {
-				metadata := adapter.Metadata()
-				item.Create, item.Poll, item.ContentType = metadata.Create, metadata.Poll, metadata.ContentType
-			}
-			if includeUnavailable || item.Enabled {
-				items = append(items, item)
-			}
-		}
-	}
-	return items
-}
-
-func canonicalProviderAdapter(registry *protocol.Registry, id string) (protocol.Adapter, bool) {
-	return registry.Resolve(id)
-}
-
-func containsPluginSurface(items []protocol.Surface, want protocol.Surface) bool {
-	for _, item := range items {
-		if item == want {
-			return true
-		}
-	}
-	return false
-}
-func containsPluginCapability(items []protocol.Capability, want protocol.Capability) bool {
-	for _, item := range items {
-		if item == want {
-			return true
-		}
-	}
-	return false
-}
-func workflowsForProvider(items []protocol.ManifestWorkflow, providerID string) []protocol.ManifestWorkflow {
-	result := make([]protocol.ManifestWorkflow, 0)
-	for _, item := range items {
-		if item.ProviderID == providerID {
-			result = append(result, item)
-		}
-	}
-	return result
-}
-func operationSummary(operation protocol.ManifestOperation) string {
-	path := strings.ReplaceAll(operation.Path, "{{model}}", "{model}")
-	path = strings.ReplaceAll(path, "{{taskId}}", "{task_id}")
-	return strings.ToUpper(operation.Method) + " " + path
-}
-
-func operationSummaryPtr(operation *protocol.ManifestOperation) string {
-	if operation == nil {
-		return ""
-	}
-	return operationSummary(*operation)
-}
-
 func (s *Service) protocolRegistry() *protocol.Registry {
 	if registry := s.pluginDomain().Registry(); registry != nil {
 		return registry
@@ -122,34 +37,6 @@ func (s *Service) canonicalProtocolID(id string) (string, bool) {
 func (s *Service) protocolIsSelectable(id string) bool {
 	metadata, ok := s.channelProtocolMetadata(id)
 	return ok && metadata.Enabled && metadata.UnavailableReason == ""
-}
-
-func (s *Service) Plugins() []PluginView {
-	return s.pluginDomain().List()
-}
-
-// PluginsForUser keeps the plugin center response aligned with the public
-// feature switch. Administrators must still be able to inspect and recover
-// bundled plugins even when ordinary users cannot see them.
-func (s *Service) PluginsForUser(actor *model.User) ([]PluginView, error) {
-	items := s.Plugins()
-	if actor != nil && actor.Role == model.UserRoleAdmin {
-		return items, nil
-	}
-	visible, err := s.FeatureEnabled(FeatureSystemPlugins)
-	if err != nil {
-		return nil, err
-	}
-	if visible {
-		return items, nil
-	}
-	filtered := make([]PluginView, 0, len(items))
-	for _, item := range items {
-		if item.Management.ActivationScope == PluginScopeUser {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered, nil
 }
 
 func (s *Service) InstallPlugin(data []byte, fileName string) (PluginView, error) {

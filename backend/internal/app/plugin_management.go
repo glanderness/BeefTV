@@ -36,6 +36,22 @@ func pluginManagement(pluginID string, source string) PluginManagementView {
 	return plugins.Management(pluginID, source)
 }
 
+func (s *Service) Plugins() []PluginView {
+	return s.pluginDomain().List()
+}
+
+func (s *Service) PluginsForUser(actor *model.User) ([]PluginView, error) {
+	visible := true
+	if actor == nil || actor.Role != model.UserRoleAdmin {
+		var err error
+		visible, err = s.FeatureEnabled(FeatureSystemPlugins)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return s.pluginDomain().ForUser(actor, visible), nil
+}
+
 func (s *Service) PluginStatesForUser(actor *model.User) (map[string]PluginStateView, error) {
 	return s.pluginDomain().StatesForUser(actor)
 }

@@ -61,13 +61,13 @@ func TestLoadChannelModelCatalogUsesFetcher(t *testing.T) {
 			t.Fatalf("fetcher args = %q %q %q", baseURL, apiFormat, apiKey)
 		}
 		return []byte(`{"data":[{"id":"m1"}]}`), nil
-	}, "https://example.com/v1", "openai", "k", nil)
+	}, "https://example.com/v1", "openai", "k", nil, nil)
 	if err != nil || !called || len(items) != 1 || items[0].ID != "m1" {
 		t.Fatalf("load = %#v %v called=%v", items, err, called)
 	}
 	_, err = LoadChannelModelCatalog(context.Background(), func(context.Context, string, string, string, []ChannelHeader) ([]byte, error) {
 		return nil, CatalogFetchError{StatusCode: 401, Cause: errors.New("no")}
-	}, "https://example.com/v1", "openai", "k", nil)
+	}, "https://example.com/v1", "openai", "k", nil, nil)
 	if err == nil {
 		t.Fatal("fetcher error dropped")
 	}

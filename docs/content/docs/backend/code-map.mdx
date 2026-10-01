@@ -28,6 +28,8 @@ Wails / local dev
 | 任务域 | `backend/internal/task` | 本地任务命令、列表读模型和生命周期边界 |
 | 生成域 | `backend/internal/generation` | 统一生成输入、引用、能力、registry 协议调度和失败归类 |
 | 供应商适配 | `backend/internal/provider`, `protocol`, `outbound` | 外部模型 API、自定义渠道和插件协议 |
+| 模型目录 | `backend/internal/modelcatalog` | 能力合同、渠道目录校验/解析/合并与 BeefAPI/WhatsToken overlay；出站 HTTP 仍走 outbound |
+| 协议插件 | `backend/internal/plugins` | registry、安装/启用和渠道设置用的 provider 能力目录；live 快照按 Runtime 隔离 |
 | Seedance 参考素材预上传 | `backend/internal/app/beefapi_seedance_preupload.go` | 仅内置 BeefAPI Seedance：本机后端把参考图片/视频/音频换成短期 HTTPS 链接后再提交 `/v1/videos`；本机文件在上传完成前保持本地引用 |
 | 数据 | `backend/internal/database`, `repository` | SQLite schema、迁移和持久化 |
 | 剪辑语义计划 | `backend/internal/editing` | 版本化时间线渲染计划：选择、顺序、空隙、裁剪、音量、字幕与输出宽高/帧率/采样率。不依赖 `internal/app`，不接受本地路径或 ffmpeg 参数 |
