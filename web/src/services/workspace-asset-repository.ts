@@ -3,7 +3,7 @@ import { ApiError } from "@/services/api/request";
 import { deleteWorkspaceAssetRecord, putWorkspaceAsset } from "@/services/api/workspace-data";
 import { normalizeAssetCategory } from "@/lib/asset-category";
 import { assertUserScope, captureUserScope, userScopeMatches, UserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
-import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
+import { usesBrowserLocalResourceStore, workspaceAssetHasCanonicalMediaPersist } from "@/services/workspace-resource-storage";
 import {
     ackAssetStoreDraft,
     flushAssetStorePersistence,
@@ -137,6 +137,10 @@ async function commitTrackedAssetDraft(id: string, expected: CapturedUserScope, 
 
     const asset = useAssetStore.getState().assets.find((item) => item.id === id) ?? draft.asset;
     if (!asset) return;
+    if (!workspaceAssetHasCanonicalMediaPersist(asset)) {
+        await flushAssetStorePersistence(expected);
+        return;
+    }
     const submitted = asset;
     const saved = await putWorkspaceAsset(id, submitted, { signal, expectedScope: expected });
     throwIfAborted(signal);
@@ -152,6 +156,10 @@ export async function persistWorkspaceAssetLink({ asset, domainProjectId, catego
     assertUserScope(expected);
     await hydrateAssetStoreDrafts(expected.userScope);
     assertUserScope(expected);
+    if (!workspaceAssetHasCanonicalMediaPersist(asset)) {
+        await flushAssetStorePersistence(expected);
+        return;
+    }
 
     if (usesBrowserLocalResourceStore()) {
         if (domainProjectId) {

@@ -267,6 +267,8 @@ describe("异步导演台输出使用最新权威状态", () => {
         expect(hook).toContain("uploadImage(output.beauty, undefined, expectedScope)");
         expect(hook).toContain('uploadMediaFile(output.clayVideo, "director-clay", undefined, expectedScope)');
         expect(hook).toContain("ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId, node: mediaNode, source: \"canvas-manual\", expectedScope })");
+        expect(hook).toContain("if (!result.confirmed) confirmed = false");
+        expect(hook).toContain("return { confirmed };");
         expect(hook).toContain("uploadImage(beauty, undefined, expectedScope)");
     });
 });

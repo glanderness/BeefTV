@@ -18,10 +18,10 @@ import { createProviderNeutralGenerationTaskEffectStore } from "@/services/provi
 import { getActiveUserScope } from "@/lib/user-scope";
 import { assertUserScope, captureUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { runGenerationConsumer } from "@/services/generation-consumer-lifecycle";
-import { useAssetStore, type Asset, type AssetCategory, type NewAsset } from "@/stores/use-asset-store";
+import { flushAssetStorePersistence, useAssetStore, type Asset, type AssetCategory, type NewAsset } from "@/stores/use-asset-store";
 import type { CanvasNodeData } from "@/types/canvas";
 import { persistWorkspaceAssetLink } from "@/services/workspace-asset-repository";
-import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
+import { usesBrowserLocalResourceStore, workspaceAssetHasCanonicalMediaPersist } from "@/services/workspace-resource-storage";
 import { bindBackendConversationMessageResult, type BindBackendConversationMessageRuntime } from "@/services/conversation-generation-consumer";
 import type { StoredCreationConversation } from "@/services/creation-conversation-store";
 
@@ -45,6 +45,7 @@ export type CanvasNodeAssetResult = {
     assetId: string;
     created: boolean;
     linkedToProject: boolean;
+    confirmed: boolean;
 };
 
 type MaterializedLocalAssetDependencies = {
@@ -167,6 +168,12 @@ async function persistCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions): Pr
         asset = useAssetStore.getState().assets.find((item) => item.id === asset?.id) || asset;
     }
     const storageKey = "storageKey" in asset.data ? asset.data.storageKey : undefined;
+    const confirmed = workspaceAssetHasCanonicalMediaPersist(asset);
+    if (!confirmed) {
+        await flushAssetStorePersistence(expected);
+        assertUserScope(expected);
+        return { assetId: asset.id, created, linkedToProject: false, confirmed: false };
+    }
     // Browser-local IndexedDB is the durable store, but a proxied Go canvas
     // repository still requires an owned Asset for resource: keys. Desktop and
     // hosted commits go through persistWorkspaceAssetLink's typed APIs instead.
@@ -186,7 +193,7 @@ async function persistCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions): Pr
         expectedScope: expected,
     });
     assertUserScope(expected);
-    return { assetId: asset.id, created, linkedToProject: Boolean(options.domainProjectId) };
+    return { assetId: asset.id, created, linkedToProject: Boolean(options.domainProjectId), confirmed: true };
 }
 
 function generationTaskResult(task: GenerationTask): BackendGenerationResult {

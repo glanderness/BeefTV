@@ -1076,7 +1076,7 @@ function InfiniteCanvasPage() {
             const result = await ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId: currentProject?.projectId, node, source: "canvas-upload", expectedScope: expected });
             if (!current()) throw new DOMException("导演台会话已结束", "AbortError");
             setNodes((currentNodes) => currentNodes.map((item) => item.id === node.id ? { ...item, metadata: { ...item.metadata, assetId: result.assetId } } : item));
-            return { assetId: result.assetId, persisted: true };
+            return { assetId: result.assetId, persisted: result.confirmed };
         } catch (error) {
             if (!current()) throw new DOMException("导演台会话已结束", "AbortError");
             message.warning(error instanceof Error ? `图片已加入画布，但素材同步失败：${error.message}` : "图片已加入画布，但素材同步失败");

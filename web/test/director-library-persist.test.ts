@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import localforage from "localforage";
 
 import * as runtimeMode from "@/lib/runtime-mode";
 import { isDirectorCanonicalPersistSource, persistDirectorImageUpload, persistDirectorLibraryAsset } from "@/lib/canvas/director/director-library-persist";
@@ -9,8 +10,8 @@ import { captureUserScope, UserScopeAbandonedError } from "@/lib/user-scope-guar
 import { apiClient } from "@/services/api/request";
 import * as imageStorage from "@/services/image-storage";
 import * as localWorkspaceSync from "@/services/local-workspace-sync";
-import { resetWorkspaceAssetCommitStateForTests } from "@/services/workspace-asset-repository";
-import { peekAssetStoreDraft, resetAssetStoreDraftsForTests, useAssetStore, type ImageAsset, type NewAsset } from "@/stores/use-asset-store";
+import { persistWorkspaceAssetChanges, resetWorkspaceAssetCommitStateForTests } from "@/services/workspace-asset-repository";
+import { hydrateAssetStoreDrafts, peekAssetStoreDraft, resetAssetStoreDraftsForTests, unloadAssetStoreDraftsForTests, useAssetStore, type ImageAsset, type NewAsset } from "@/stores/use-asset-store";
 
 function deferred<T = void>() {
     let resolve!: (value: T | PromiseLike<T>) => void;
@@ -284,6 +285,60 @@ describe("director library persist canonical writes", () => {
         }
     });
 
+    test("desktop IDB-only model keeps a draft across restart and does not PUT", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        const urls: string[] = [];
+        const originalWindow = globalThis.window;
+        globalThis.window = originalWindow ?? ({ localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } } as never);
+        const memory = new Map<string, string>();
+        const getItem = spyOn(localforage, "getItem").mockImplementation(async (key) => memory.get(String(key)) ?? null);
+        const setItem = spyOn(localforage, "setItem").mockImplementation(async (key, value) => {
+            memory.set(String(key), String(value));
+            return value;
+        });
+        const removeItem = spyOn(localforage, "removeItem").mockImplementation(async (key) => {
+            memory.delete(String(key));
+        });
+        try {
+            await withAdapter(async (config) => {
+                urls.push(requestKey(config));
+                return envelope({ asset: { id: "unexpected" } });
+            }, async () => {
+                const result = await persistDirectorLibraryAsset({
+                    asset: {
+                        kind: "model",
+                        title: "角色",
+                        coverUrl: "",
+                        tags: ["3D模型"],
+                        source: "导演台",
+                        data: { url: "blob:model", storageKey: "file:owner-a:model", bytes: 4, mimeType: "model/gltf-binary", fileName: "hero.glb" },
+                        metadata: { source: "director" },
+                    },
+                    expectedScope: captureUserScope(),
+                    pendingRemoteUpload: true,
+                });
+                expect(result.created).toBe(true);
+                expect(result.confirmed).toBe(false);
+                expect(urls).toEqual([]);
+                expect(peekAssetStoreDraft(getActiveUserScope(), result.assetId)?.kind).toBe("upsert");
+                await persistWorkspaceAssetChanges(captureUserScope());
+                expect(urls).toEqual([]);
+                unloadAssetStoreDraftsForTests();
+                useAssetStore.setState({ assets: [] });
+                await hydrateAssetStoreDrafts("owner-a");
+                expect(peekAssetStoreDraft("owner-a", result.assetId)?.kind).toBe("upsert");
+                expect(useAssetStore.getState().assets.map((item) => item.id)).toEqual([result.assetId]);
+            });
+        } finally {
+            getItem.mockRestore();
+            setItem.mockRestore();
+            removeItem.mockRestore();
+            if (!originalWindow) delete (globalThis as { window?: unknown }).window;
+            restore();
+        }
+    });
+
     test("capturing and restoring scope does not reset the identity clock", () => {
         const start = getActiveUserScopeEpoch();
         const restore = switchScope("owner-a");
@@ -348,6 +403,9 @@ describe("director workbench wiring", () => {
         expect(workbench).toContain("pendingRemoteUpload: uploaded.pendingRemoteUpload");
         expect(workbench).toContain("persist.confirmed");
         expect(workbench).toContain('message[persist.confirmed ? "success" : "warning"]');
+        expect(workbench).toContain("applyResult?.confirmed === false");
+        expect(workbench).toContain("构图已回写画布，文件目前只在这台设备上");
+        expect(workbench).toContain("白膜视频已导出，文件目前只在这台设备上");
         expect(workbench).toContain("截图期间场景或镜头已切换，请重试");
         expect(workbench).toContain("void onCaptureCover({ scene: current, shotId: shot.id, beauty })");
     });
@@ -355,11 +413,16 @@ describe("director workbench wiring", () => {
     test("canvas reference handoff carries captured scope and returns persist confirmation", () => {
         const project = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/project.tsx"), "utf8");
         const dialogs = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/canvas-project-editor-dialogs.tsx"), "utf8");
+        const editor = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/use-canvas-node-editor.ts"), "utf8");
         expect(project).toContain("expectedScope: CapturedUserScope = canvasCapturedScope");
         expect(project).toContain("ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId: currentProject?.projectId, node, source: \"canvas-upload\", expectedScope: expected })");
         expect(project).toContain("findWorkspaceAssetIdByStorageKey(image.storageKey)");
-        expect(project).toContain("return { assetId: result.assetId, persisted: true };");
+        expect(project).toContain("return { assetId: result.assetId, persisted: result.confirmed };");
+        expect(project).not.toContain("return { assetId: result.assetId, persisted: true };");
         expect(dialogs).toContain("expectedScope: CapturedUserScope");
         expect(dialogs).toContain("Promise<{ assetId?: string; persisted?: boolean } | void>");
+        expect(dialogs).toContain("Promise<void | { confirmed?: boolean }>");
+        expect(editor).toContain("if (!result.confirmed) message.warning");
+        expect(editor).toContain("文件目前只在这台设备上");
     });
 });

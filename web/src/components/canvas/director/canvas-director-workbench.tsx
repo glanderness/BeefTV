@@ -58,7 +58,7 @@ import type { CanvasNodeData } from "@/types/canvas";
 import type { ReferenceImage } from "@/types/image";
 import type { DirectorCamera, DirectorCameraMove, DirectorHumanoidBone, DirectorKeyframeDeleteTarget, DirectorKeyframeEasing, DirectorLight, DirectorObject, DirectorPose, DirectorQuat, DirectorRenderMode, DirectorRig, DirectorScene, DirectorSceneOutput, DirectorShot, DirectorShotSize, DirectorTransform, DirectorVec3 } from "@/types/director";
 
-export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, onboardingScope, onClose, onChange, onApply, onDeleteImageNode, onAddCanvasImage, onFlush, onShouldCaptureCover, onCaptureCover, generatePanorama = generateDirectorPanorama }: { open: boolean; scene: DirectorScene | null; projectId?: string; imageNodes: CanvasNodeData[]; onboardingScope: string; onClose: () => void; onChange: (scene: DirectorScene) => void; onApply: (output: DirectorSceneOutput) => Promise<void>; onDeleteImageNode: (nodeId: string) => void; onAddCanvasImage?: (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal, expectedScope: CapturedUserScope) => void | Promise<void | DirectorCanvasImageHandoff>; onFlush?: () => void | Promise<void>; onShouldCaptureCover?: (scene: DirectorScene, shotId: string) => boolean; onCaptureCover?: (input: { scene: DirectorScene; shotId: string; beauty: Blob }) => Promise<void>; generatePanorama?: typeof generateDirectorPanorama }) {
+export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, onboardingScope, onClose, onChange, onApply, onDeleteImageNode, onAddCanvasImage, onFlush, onShouldCaptureCover, onCaptureCover, generatePanorama = generateDirectorPanorama }: { open: boolean; scene: DirectorScene | null; projectId?: string; imageNodes: CanvasNodeData[]; onboardingScope: string; onClose: () => void; onChange: (scene: DirectorScene) => void; onApply: (output: DirectorSceneOutput) => Promise<void | { confirmed?: boolean }>; onDeleteImageNode: (nodeId: string) => void; onAddCanvasImage?: (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal, expectedScope: CapturedUserScope) => void | Promise<void | DirectorCanvasImageHandoff>; onFlush?: () => void | Promise<void>; onShouldCaptureCover?: (scene: DirectorScene, shotId: string) => boolean; onCaptureCover?: (input: { scene: DirectorScene; shotId: string; beauty: Blob }) => Promise<void>; generatePanorama?: typeof generateDirectorPanorama }) {
     const { message, modal } = App.useApp();
     const theme = canvasThemes[useActiveTheme()];
     const effectiveConfig = useEffectiveConfig();
@@ -98,7 +98,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     const cameraPreviewUrlRef = useRef<string | null>(null);
     const previewPlayheadRef = useRef(0);
     const [recording, setRecording] = useState(false);
-    const [exportNotice, setExportNotice] = useState<{ kind: "success" | "error"; text: string } | null>(null);
+    const [exportNotice, setExportNotice] = useState<{ kind: "success" | "warning" | "error"; text: string } | null>(null);
     useEffect(() => {
         if (!exportNotice) return;
         const timeout = window.setTimeout(() => setExportNotice(null), 6_000);
@@ -1448,9 +1448,10 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
             // 先镜像最新 scene，再做 canvas 输出；失败时 draft 保留可继续重试。
             const next = touchDirectorScene(current);
             writeAndPublish(next);
-            await onApply({ scene: next, shot: activeShot, prompt, beauty });
+            const applyResult = await onApply({ scene: next, shot: activeShot, prompt, beauty });
             session.assertCurrent();
-            message.success("导演台构图已回写画布");
+            if (applyResult?.confirmed === false) message.warning("构图已回写画布，文件目前只在这台设备上");
+            else message.success("导演台构图已回写画布");
         } catch (error) {
             if (session.current()) message.error(error instanceof Error ? error.message : "导演台输出失败");
         } finally {
@@ -1530,9 +1531,11 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
             const next = touchDirectorScene(draftRef.current || current);
             writeAndPublish(next);
             if (!isDirectorOutputSnapshotCurrent(draftRef.current, { scene: next, shotId: expected.shotId })) throw new Error("输出期间场景或镜头已变化，请重试");
-            await onApply({ scene: next, shot: activeShot, prompt: compileDirectorPrompt(next, activeShot), beauty, clayVideo, clayVideoMimeType: clayVideo.type });
+            const applyResult = await onApply({ scene: next, shot: activeShot, prompt: compileDirectorPrompt(next, activeShot), beauty, clayVideo, clayVideoMimeType: clayVideo.type });
             session.assertCurrent();
-            setExportNotice({ kind: "success", text: "白膜视频已导出，可在画布中预览播放" });
+            setExportNotice(applyResult?.confirmed === false
+                ? { kind: "warning", text: "白膜视频已导出，文件目前只在这台设备上" }
+                : { kind: "success", text: "白膜视频已导出，可在画布中预览播放" });
         } catch (error) {
             if (session.current()) setExportNotice({ kind: "error", text: error instanceof Error ? error.message : "白膜视频导出失败" });
         } finally {

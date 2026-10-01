@@ -16,7 +16,7 @@ test("实际回写画布后重新迁移，不把编译输出追加进用户场�
     const projectId = useCanvasStore.getState().createProject("director output migration");
     useCanvasStore.getState().updateProject(projectId, { nodes: [node], directorScenes: [scene] });
     const upload = spyOn(imageStorage, "uploadImage").mockResolvedValue({ storageKey: "image:test-output", url: "blob:test-output", width: 8, height: 8, bytes: 1, mimeType: "image/png" });
-    const asset = spyOn(assetSync, "ensureCanvasNodeAsset").mockResolvedValue({ assetId: "asset-output", created: false, linkedToProject: false });
+    const asset = spyOn(assetSync, "ensureCanvasNodeAsset").mockResolvedValue({ assetId: "asset-output", created: false, linkedToProject: false, confirmed: true });
     let director!: ReturnType<typeof useCanvasDirector>;
     function Harness() {
         director = useCanvasDirector({ projectId, directorNodeId: node.id, directorScenes: [scene], nodesRef, connectionsRef: { current: [] }, getCanvasCenter: () => ({ x: 0, y: 0 }),

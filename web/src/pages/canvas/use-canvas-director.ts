@@ -225,9 +225,11 @@ export function useCanvasDirector({
 
         const mediaNodes = nextNodes.filter((item) => item.id === previewId || Boolean(clayVideoId && item.id === clayVideoId));
         const assetIds = new Map<string, string>();
+        let confirmed = true;
         for (const mediaNode of mediaNodes) {
             const result = await ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId, node: mediaNode, source: "canvas-manual", expectedScope });
             assetIds.set(mediaNode.id, result.assetId);
+            if (!result.confirmed) confirmed = false;
         }
         if (!userScopeMatches(expectedScope)) throw new UserScopeAbandonedError();
         // 素材登记同样会等待磁盘/网络。提交前再核验，并以最新画布为基底，
@@ -275,6 +277,7 @@ export function useCanvasDirector({
         setNodes(finalizedNodes);
         setConnections(committedConnections);
         saveDirectorScene(committedScene);
+        return { confirmed };
     }, [connectionsRef, directorNodeId, domainProjectId, nodesRef, projectId, saveDirectorScene, setConnections, setNodes]);
 
     return { applyDirectorOutput, captureDirectorCover, createDirectorShot, openDirectorWorkbench, saveDirectorScene, shouldCaptureCover };

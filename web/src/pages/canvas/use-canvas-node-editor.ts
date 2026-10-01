@@ -192,7 +192,8 @@ export function useCanvasNodeEditor({
             .then(async (result) => {
                 setNodes((current) => current.map((item) => item.id === nodeId ? { ...item, metadata: { ...item.metadata, assetId: result.assetId } } : item));
                 if (domainProjectId) await queryClient.invalidateQueries({ queryKey: ["project", domainProjectId] });
-                message.success("资产分类已更新");
+                if (result.confirmed) message.success("资产分类已更新");
+                else message.warning("文件目前只在这台设备上");
             })
             .catch((error) => message.error(error instanceof Error ? error.message : "资产分类更新失败"));
     }, [canvasId, domainProjectId, message, nodesRef, queryClient, setNodes]);
@@ -213,7 +214,8 @@ export function useCanvasNodeEditor({
             const result = await ensureCanvasNodeAsset({ canvasId, domainProjectId, node, source: "canvas-manual" });
             setNodes((current) => current.map((item) => item.id === node.id ? { ...item, metadata: { ...item.metadata, assetId: result.assetId } } : item));
             if (domainProjectId) await queryClient.invalidateQueries({ queryKey: ["project", domainProjectId] });
-            message.success(result.linkedToProject ? "已加入项目资产" : "已加入我的素材");
+            if (!result.confirmed) message.warning("文件目前只在这台设备上");
+            else message.success(result.linkedToProject ? "已加入项目资产" : "已加入我的素材");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "素材保存失败");
         }

@@ -1,13 +1,21 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import axios from "axios";
+import localforage from "localforage";
 
 import * as runtimeMode from "@/lib/runtime-mode";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import { UserScopeAbandonedError, captureUserScope } from "@/lib/user-scope-guard";
 import { apiClient, ApiError } from "@/services/api/request";
 import { ensureCanvasNodeAsset, retryCanvasAssetSyncAfterRateLimit } from "@/services/project-asset-sync";
-import { persistWorkspaceAssetLink, resetWorkspaceAssetCommitStateForTests } from "@/services/workspace-asset-repository";
-import { resetAssetStoreDraftsForTests, useAssetStore, type Asset } from "@/stores/use-asset-store";
+import { persistWorkspaceAssetChanges, persistWorkspaceAssetLink, resetWorkspaceAssetCommitStateForTests } from "@/services/workspace-asset-repository";
+import {
+    hydrateAssetStoreDrafts,
+    peekAssetStoreDraft,
+    resetAssetStoreDraftsForTests,
+    unloadAssetStoreDraftsForTests,
+    useAssetStore,
+    type Asset,
+} from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 function deferred<T = void>() {
@@ -76,6 +84,49 @@ function desktopBackend() {
     spies.push(spyOn(runtimeMode, "isLocalRuntimeMode").mockReturnValue(true));
 }
 
+function browserLocal() {
+    spies.push(spyOn(runtimeMode, "isNativeDesktopRuntime").mockReturnValue(false));
+    spies.push(spyOn(runtimeMode, "isLocalRuntimeMode").mockReturnValue(true));
+}
+
+function hostedBackend() {
+    spies.push(spyOn(runtimeMode, "isNativeDesktopRuntime").mockReturnValue(false));
+    spies.push(spyOn(runtimeMode, "isLocalRuntimeMode").mockReturnValue(false));
+}
+
+function idbImageNode(id = "node-1"): CanvasNodeData {
+    return {
+        ...imageNode(id),
+        metadata: {
+            ...imageNode(id).metadata,
+            content: "blob:local-image",
+            storageKey: "image:owner-a:draft",
+        },
+    };
+}
+
+async function withDurableDraftMemory<T>(run: () => Promise<T>) {
+    const originalWindow = globalThis.window;
+    globalThis.window = originalWindow ?? ({ localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } } as never);
+    const memory = new Map<string, string>();
+    const getItem = spyOn(localforage, "getItem").mockImplementation(async (key) => memory.get(String(key)) ?? null);
+    const setItem = spyOn(localforage, "setItem").mockImplementation(async (key, value) => {
+        memory.set(String(key), String(value));
+        return value;
+    });
+    const removeItem = spyOn(localforage, "removeItem").mockImplementation(async (key) => {
+        memory.delete(String(key));
+    });
+    try {
+        return await run();
+    } finally {
+        getItem.mockRestore();
+        setItem.mockRestore();
+        removeItem.mockRestore();
+        if (!originalWindow) delete (globalThis as { window?: unknown }).window;
+    }
+}
+
 afterEach(async () => {
     while (spies.length) spies.pop()?.mockRestore();
     useAssetStore.setState({ assets: [] });
@@ -111,6 +162,7 @@ describe("ensureCanvasNodeAsset scope and canonical writes", () => {
                 });
                 expect(result.created).toBe(true);
                 expect(result.linkedToProject).toBe(true);
+                expect(result.confirmed).toBe(true);
                 expect(urls[0]?.startsWith("put /assets/")).toBe(true);
                 expect(urls[1]).toBe("post /projects/project-1/assets");
             });
@@ -296,6 +348,7 @@ describe("ensureCanvasNodeAsset scope and canonical writes", () => {
                 waitGate.resolve();
                 const result = await pending;
                 expect(result.linkedToProject).toBe(true);
+                expect(result.confirmed).toBe(true);
                 expect(puts).toBe(2);
                 expect(urls.filter((url) => url === "post /projects/project-1/assets")).toEqual(["post /projects/project-1/assets"]);
             });
@@ -333,6 +386,123 @@ describe("ensureCanvasNodeAsset scope and canonical writes", () => {
                 await expect(pending).rejects.toBeInstanceOf(UserScopeAbandonedError);
                 expect(urls.every((url) => url.startsWith("put /assets/"))).toBe(true);
                 expect(urls.some((url) => url.includes("/projects/"))).toBe(false);
+            });
+        } finally {
+            restore();
+        }
+    });
+
+    test("desktop IDB-only image stays a recoverable draft and does not PUT", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        const urls: string[] = [];
+        try {
+            await withDurableDraftMemory(async () => {
+                await withAdapter(async (config) => {
+                    urls.push(requestKey(config));
+                    return envelope({ asset: { id: "unexpected" } });
+                }, async () => {
+                    const result = await ensureCanvasNodeAsset({
+                        canvasId: "canvas-1",
+                        domainProjectId: "project-1",
+                        node: idbImageNode(),
+                        source: "canvas-manual",
+                    });
+                    expect(result.created).toBe(true);
+                    expect(result.confirmed).toBe(false);
+                    expect(result.linkedToProject).toBe(false);
+                    expect(urls).toEqual([]);
+                    expect(useAssetStore.getState().assets).toHaveLength(1);
+                    expect(peekAssetStoreDraft(getActiveUserScope(), result.assetId)?.kind).toBe("upsert");
+
+                    const again = await ensureCanvasNodeAsset({
+                        canvasId: "canvas-1",
+                        domainProjectId: "project-1",
+                        node: { ...idbImageNode(), metadata: { ...idbImageNode().metadata, assetId: result.assetId } },
+                        source: "canvas-manual",
+                    });
+                    expect(again.assetId).toBe(result.assetId);
+                    expect(again.created).toBe(false);
+                    expect(again.confirmed).toBe(false);
+                    expect(useAssetStore.getState().assets).toHaveLength(1);
+
+                    await persistWorkspaceAssetChanges(captureUserScope());
+                    expect(urls).toEqual([]);
+
+                    unloadAssetStoreDraftsForTests();
+                    useAssetStore.setState({ assets: [] });
+                    expect(peekAssetStoreDraft("owner-a", result.assetId)).toBeUndefined();
+                    await hydrateAssetStoreDrafts("owner-a");
+                    expect(peekAssetStoreDraft("owner-a", result.assetId)?.kind).toBe("upsert");
+                    expect(useAssetStore.getState().assets.map((item) => item.id)).toEqual([result.assetId]);
+                    expect(useAssetStore.getState().assets[0] && "storageKey" in useAssetStore.getState().assets[0].data ? useAssetStore.getState().assets[0].data.storageKey : undefined).toBe("image:owner-a:draft");
+                });
+            });
+        } finally {
+            restore();
+        }
+    });
+
+    test("hosted IDB-only video stays a draft and does not PUT", async () => {
+        const restore = switchScope("owner-a");
+        hostedBackend();
+        const urls: string[] = [];
+        const node: CanvasNodeData = {
+            id: "node-video",
+            type: CanvasNodeType.Video,
+            title: "视频",
+            position: { x: 0, y: 0 },
+            width: 8,
+            height: 8,
+            metadata: {
+                content: "blob:local-video",
+                storageKey: "file:owner-a:video",
+                mimeType: "video/webm",
+                bytes: 4,
+            },
+        };
+        try {
+            await withAdapter(async (config) => {
+                urls.push(requestKey(config));
+                return envelope({ asset: { id: "unexpected" } });
+            }, async () => {
+                const result = await ensureCanvasNodeAsset({
+                    canvasId: "canvas-1",
+                    domainProjectId: "project-1",
+                    node,
+                    source: "canvas-upload",
+                });
+                expect(result.confirmed).toBe(false);
+                expect(result.linkedToProject).toBe(false);
+                expect(urls).toEqual([]);
+                expect(peekAssetStoreDraft(getActiveUserScope(), result.assetId)?.kind).toBe("upsert");
+            });
+        } finally {
+            restore();
+        }
+    });
+
+    test("browser-local image keys remain a confirmed product persist without PUT", async () => {
+        const restore = switchScope("owner-a");
+        browserLocal();
+        const urls: string[] = [];
+        try {
+            await withAdapter(async (config) => {
+                urls.push(requestKey(config));
+                return envelope({ asset: { id: "unexpected" } });
+            }, async () => {
+                const result = await ensureCanvasNodeAsset({
+                    canvasId: "canvas-1",
+                    domainProjectId: "project-1",
+                    node: idbImageNode(),
+                    source: "canvas-upload",
+                });
+                expect(result.created).toBe(true);
+                expect(result.confirmed).toBe(true);
+                expect(result.linkedToProject).toBe(true);
+                expect(urls).toEqual([]);
+                expect(useAssetStore.getState().assets).toHaveLength(1);
+                expect(peekAssetStoreDraft(getActiveUserScope(), result.assetId)).toBeUndefined();
             });
         } finally {
             restore();

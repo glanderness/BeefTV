@@ -4,12 +4,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { useCanvasDirector } from "@/pages/canvas/use-canvas-director";
 import { createDirectorScene } from "@/lib/canvas/director/director-scene";
+import * as runtimeMode from "@/lib/runtime-mode";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import { captureUserScope, UserScopeAbandonedError } from "@/lib/user-scope-guard";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { apiClient } from "@/services/api/request";
 import * as imageStorage from "@/services/image-storage";
 import * as fileStorage from "@/services/file-storage";
 import * as assetSync from "@/services/project-asset-sync";
+import { resetWorkspaceAssetCommitStateForTests } from "@/services/workspace-asset-repository";
+import { peekAssetStoreDraft, resetAssetStoreDraftsForTests, useAssetStore } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 function deferred<T = void>() {
@@ -65,8 +69,30 @@ function mountDirector(projectId: string, node: CanvasNodeData, scene: ReturnTyp
 
 const spies: Array<{ mockRestore: () => void }> = [];
 
-afterEach(() => {
+function desktopBackend() {
+    spies.push(spyOn(runtimeMode, "isNativeDesktopRuntime").mockReturnValue(true));
+    spies.push(spyOn(runtimeMode, "isLocalRuntimeMode").mockReturnValue(true));
+}
+
+function requestKey(config: { method?: string; url?: string }) {
+    return `${String(config.method || "get").toLowerCase()} ${String(config.url || "")}`;
+}
+
+async function withAdapter<T>(adapter: NonNullable<typeof apiClient.defaults.adapter>, run: () => Promise<T>) {
+    const previous = apiClient.defaults.adapter;
+    apiClient.defaults.adapter = adapter;
+    try {
+        return await run();
+    } finally {
+        apiClient.defaults.adapter = previous;
+    }
+}
+
+afterEach(async () => {
     while (spies.length) spies.pop()?.mockRestore();
+    useAssetStore.setState({ assets: [] });
+    resetWorkspaceAssetCommitStateForTests();
+    await resetAssetStoreDraftsForTests();
 });
 
 describe("director cover and output captured scope", () => {
@@ -198,6 +224,41 @@ describe("director cover and output captured scope", () => {
             await expect(pending).rejects.toBeInstanceOf(UserScopeAbandonedError);
             expect(ensure).not.toHaveBeenCalled();
             expect(fileStorage.uploadMediaFile).toHaveBeenCalledWith(expect.anything(), "director-clay", undefined, expected);
+        } finally {
+            restore();
+            useCanvasStore.setState((state) => ({ projects: state.projects.filter((project) => project.id !== projectId) }));
+        }
+    });
+
+    test("desktop IDB-only apply writes the canvas without claiming a confirmed persist", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        const expected = captureUserScope();
+        const scene = createDirectorScene();
+        const node = directorNode(scene.id, scene.shots[0].id);
+        const nodesRef = { current: [node] };
+        const projectId = useCanvasStore.getState().createProject("output idb");
+        useCanvasStore.getState().updateProject(projectId, { nodes: [node], directorScenes: [scene] });
+        const urls: string[] = [];
+        spies.push(spyOn(App, "useApp").mockReturnValue({ message: { success: () => {}, error: () => {}, warning: () => {} } } as ReturnType<typeof App.useApp>));
+        spies.push(spyOn(imageStorage, "uploadImage").mockImplementation(async (_source, _progress, scope) => {
+            expect(scope).toEqual(expected);
+            return { storageKey: "image:output", url: "blob:output", width: 8, height: 8, bytes: 1, mimeType: "image/png", pendingRemoteUpload: true };
+        }));
+        try {
+            await withAdapter(async (config) => {
+                urls.push(requestKey(config));
+                return { data: { code: 0, msg: "", data: { asset: { id: "unexpected" } } }, status: 200, statusText: "OK", headers: {}, config: {} as never };
+            }, async () => {
+                const director = mountDirector(projectId, node, scene, nodesRef);
+                const result = await director.applyDirectorOutput({ scene, shot: scene.shots[0], prompt: "构图", beauty: new Blob(["image"]) });
+                expect(result).toEqual({ confirmed: false });
+                const preview = nodesRef.current.find((item) => item.type === CanvasNodeType.Image);
+                expect(preview?.metadata?.storageKey).toBe("image:output");
+                expect(preview?.metadata?.assetId).toBeTruthy();
+                expect(urls).toEqual([]);
+                expect(peekAssetStoreDraft(getActiveUserScope(), preview?.metadata?.assetId || "")?.kind).toBe("upsert");
+            });
         } finally {
             restore();
             useCanvasStore.setState((state) => ({ projects: state.projects.filter((project) => project.id !== projectId) }));

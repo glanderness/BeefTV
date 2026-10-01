@@ -1,9 +1,8 @@
 import { assertUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
-import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { uploadImage, type UploadedImage } from "@/services/image-storage";
 import { persistWorkspaceAssetLink } from "@/services/workspace-asset-repository";
-import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
+import { isCanonicalWorkspaceMediaPersistSource } from "@/services/workspace-resource-storage";
 import { peekAssetStoreDraft, useAssetStore, type NewAsset } from "@/stores/use-asset-store";
 
 export type DirectorCanvasImageHandoff = {
@@ -27,9 +26,7 @@ function storageKeyOf(asset: NewAsset) {
 
 /** Native/hosted confirm only resource-backed rows; browser-local IndexedDB is the product store. */
 export function isDirectorCanonicalPersistSource(input: { storageKey?: string; pendingRemoteUpload?: boolean }) {
-    if (input.pendingRemoteUpload) return false;
-    if (usesBrowserLocalResourceStore()) return Boolean(input.storageKey?.trim());
-    return Boolean(resourceIdFromStorageKey(input.storageKey));
+    return isCanonicalWorkspaceMediaPersistSource(input);
 }
 
 export function findWorkspaceAssetIdByStorageKey(storageKey?: string) {
@@ -65,25 +62,23 @@ export async function persistDirectorLibraryAsset(input: {
     if (existingId) {
         const live = useAssetStore.getState().assets.find((item) => item.id === existingId);
         if (live) {
-            if (input.existingPersisted && !peekAssetStoreDraft(expectedScope.userScope, live.id)) {
-                return { assetId: live.id, created: false, confirmed: canonical };
+            if (canonical && input.existingPersisted && !peekAssetStoreDraft(expectedScope.userScope, live.id)) {
+                return { assetId: live.id, created: false, confirmed: true };
             }
-            if (!canonical) return { assetId: live.id, created: false, confirmed: false };
             await persistWorkspaceAssetLink({ asset: live, expectedScope, signal, source: "uploaded" });
             throwIfAborted(signal);
             assertUserScope(expectedScope);
-            return { assetId: live.id, created: false, confirmed: true };
+            return { assetId: live.id, created: false, confirmed: canonical };
         }
     }
 
     const assetId = useAssetStore.getState().addAsset(input.asset);
     const asset = useAssetStore.getState().assets.find((item) => item.id === assetId);
     if (!asset) throw new Error("素材写入本地失败");
-    if (!canonical) return { assetId, created: true, confirmed: false };
     await persistWorkspaceAssetLink({ asset, expectedScope, signal, source: "uploaded" });
     throwIfAborted(signal);
     assertUserScope(expectedScope);
-    return { assetId, created: true, confirmed: true };
+    return { assetId, created: true, confirmed: canonical };
 }
 
 /** Upload with the captured identity, then persist. Do not recapture after the original upload. */

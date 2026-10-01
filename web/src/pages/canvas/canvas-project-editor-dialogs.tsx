@@ -155,7 +155,7 @@ export type CanvasProjectEditorDialogsProps = {
         onboardingScope: string;
         onClose: () => void;
         onChange: (scene: DirectorScene) => void;
-        onApply: (output: DirectorSceneOutput) => Promise<void>;
+        onApply: (output: DirectorSceneOutput) => Promise<void | { confirmed?: boolean }>;
         onShouldCaptureCover?: (scene: DirectorScene, shotId: string) => boolean;
         onCaptureCover?: (input: { scene: DirectorScene; shotId: string; beauty: Blob }) => Promise<void>;
         onDeleteImageNode: (nodeId: string) => void;
