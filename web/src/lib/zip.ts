@@ -66,7 +66,7 @@ export async function readZip(file: Blob) {
         const path = confinedArchivePath(name);
         if (files.has(path)) throw new Error(`压缩包存在重名文件：${path}`);
         if (data.byteLength > ARCHIVE_MAX_ENTRY_BYTES) throw new Error("压缩包文件过大");
-        files.set(path, new Blob([data]));
+        files.set(path, new Blob([new Uint8Array(data)]));
     }
     return files;
 }

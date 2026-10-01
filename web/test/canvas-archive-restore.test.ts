@@ -158,7 +158,7 @@ function memoryHost(overrides: Partial<CanvasArchiveRestoreHost> = {}) {
                 backgroundMode: "dots",
                 showImageInfo: false,
                 viewport: { x: 0, y: 0, k: 1 },
-                directorScenes: [],
+                directorScenes: project.directorScenes || [],
                 timeline: project.timeline,
             });
             return id;
@@ -387,6 +387,35 @@ test("readback mismatch is an explicit restore failure", () => {
     expect(() => assertRestoredCanvasMatches(intended, { ...intended, timeline: undefined } as CanvasProject)).toThrow("画布时间线未保存到工作区");
 });
 
+test("restore readback rejects missing text, layout, or director content even with identical media references", () => {
+    const intended = { id: "canvas", title: "原文", nodes: [textNode()], directorScenes: [{ id: "scene", title: "场景" }] } as CanvasProject;
+    for (const patch of [
+        { title: "旧标题" },
+        { nodes: [{ ...textNode(), metadata: { content: "丢失的正文" } }] },
+        { nodes: [{ ...textNode(), position: { x: 99, y: 99 } }] },
+        { directorScenes: [] },
+    ]) expect(() => assertRestoredCanvasMatches(intended, { ...intended, ...patch })).toThrow("画布内容未完整保存到工作区");
+    expect(() => assertRestoredCanvasMatches(intended, { ...intended, revision: 8, updatedAt: "server-time" })).not.toThrow();
+});
+
+test("restore remaps director panorama, object, and screenshot media into the destination workspace", async () => {
+    const data = archiveData();
+    const project = data.projects[0].project as Partial<CanvasProject>;
+    project.directorScenes = [{
+        id: "scene", panorama: { storageKey: "video:clip", url: "blob:old", rotation: 0 },
+        objects: [{ id: "actor", storageKey: "video:clip", url: "blob:old", assetId: "old-asset" }],
+        shots: [{ id: "shot", screenshots: [{ id: "capture", storageKey: "audio:voice", url: "blob:old" }] }],
+    }] as CanvasProject["directorScenes"];
+    const state = memoryHost();
+    await restoreCanvasArchive(await validZip(data), state.host);
+    const scene = state.projects[0].directorScenes[0];
+    expect(scene.panorama?.storageKey).toStartWith("resource:");
+    expect(scene.panorama?.url).toStartWith("/api/resources/");
+    expect(scene.objects[0].assetId).toBeUndefined();
+    expect(scene.objects[0].url).toBe(scene.panorama?.url);
+    expect(scene.shots[0].screenshots?.[0].url).toStartWith("/api/resources/");
+});
+
 test("one immediate upload rejection waits for delayed success then cleans that artifact", async () => {
     let closed = false;
     let delayedDone = false;
@@ -408,6 +437,20 @@ test("one immediate upload rejection waits for delayed success then cleans that 
     expect(deleted).toEqual([]);
     closed = true;
     await new Promise((resolve) => setTimeout(resolve, 50));
+});
+
+test("failed durable cleanup preserves the visible imported project and reports both failures", async () => {
+    const state = memoryHost({
+        persistProject: async () => { throw new Error("save-failed"); },
+        deleteProjects: async () => { throw new Error("delete-failed"); },
+    });
+    let failure: unknown;
+    try { await restoreCanvasArchive(await validZip(), state.host); } catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).message).toContain("save-failed");
+    expect((failure as AggregateError).errors[1].message).toBe("delete-failed");
+    expect(state.projects).toHaveLength(1);
+    expect(state.deletedResources).toEqual([]);
 });
 
 test("account switch abandons restore without cleaning the new account", async () => {

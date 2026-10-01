@@ -1,4 +1,5 @@
 import { confinedArchivePath } from "@/lib/zip";
+import { canonicalize } from "json-canonicalize";
 import {
     collectStorageKeys,
     isArchiveStorageKey,
@@ -72,7 +73,7 @@ export async function archiveMediaIdempotencyKey(blob: Blob): Promise<string> {
     return `canvas-archive:sha256:${await archiveContentDigest(blob)}`;
 }
 
-export function assertRestoredCanvasMatches(intended: Pick<CanvasProject, "id" | "folderId" | "nodes" | "timeline">, saved: CanvasProject) {
+export function assertRestoredCanvasMatches(intended: Partial<CanvasProject> & Pick<CanvasProject, "id" | "nodes">, saved: CanvasProject) {
     if (!saved?.id || saved.id !== intended.id) throw new Error("画布未保存到工作区");
     if ((saved.folderId || "") !== (intended.folderId || "")) throw new Error("画布文件夹未保存到工作区");
     const intendedTimeline = timelineStorageKeys(intended.timeline);
@@ -84,6 +85,14 @@ export function assertRestoredCanvasMatches(intended: Pick<CanvasProject, "id" |
     const intendedAssets = mediaAssetIds(intended.nodes, intended.timeline);
     const savedAssets = mediaAssetIds(saved.nodes, saved.timeline);
     if (intendedAssets.join("\n") !== savedAssets.join("\n")) throw new Error("画布素材引用未保存到工作区");
+    // Compare every submitted document field, including new editor features.
+    // Only server-owned timestamps and synchronization metadata may differ.
+    for (const [key, value] of Object.entries(intended)) {
+        if (["revision", "createdAt", "updatedAt", "remoteContentHash"].includes(key)) continue;
+        const actual = saved[key as keyof CanvasProject];
+        if (value === undefined && (actual === undefined || actual === null || actual === "")) continue;
+        if (canonicalize(value) !== canonicalize(actual)) throw new Error("画布内容未完整保存到工作区");
+    }
 }
 
 function timelineStorageKeys(timeline: TimelineProject | undefined) {
@@ -108,11 +117,10 @@ function isMediaNode(type: CanvasNodeData["type"]) {
     return type === CanvasNodeType.Image || type === CanvasNodeType.Video || type === CanvasNodeType.Audio;
 }
 
-export function createCanvasArchiveRestoreHost(overrides: Partial<CanvasArchiveRestoreHost> = {}): CanvasArchiveRestoreHost {
+export function createCanvasArchiveRestoreHost(overrides: Partial<CanvasArchiveRestoreHost> = {}, scope = captureUserScope()): CanvasArchiveRestoreHost {
     const store = () => useCanvasStore.getState();
     const usesCanonicalBackend = overrides.usesCanonicalBackend ?? !usesBrowserLocalResourceStore();
     return {
-        usesCanonicalBackend,
         createFolder: (name) => createCanvasLibraryFolder(name),
         deleteFolder: (id) => deleteCanvasLibraryFolder(id),
         importProject: (project, workspaceProjectId) => store().importProject(project, workspaceProjectId),
@@ -122,16 +130,18 @@ export function createCanvasArchiveRestoreHost(overrides: Partial<CanvasArchiveR
             if (!live) throw new Error("画布未保存到工作区");
             if (!usesCanonicalBackend) {
                 await flushCanvasStorePersistence();
+                assertUserScope(scope);
                 const cached = store().openProject(id);
                 if (!cached) throw new Error("画布未保存到工作区");
                 assertRestoredCanvasMatches(live, cached);
                 return;
             }
-            await syncLocalCanvasProjectToBackend(id);
+            await syncLocalCanvasProjectToBackend(id, scope);
             let saved: CanvasProject;
             try {
-                saved = await readLocalCanvasProjectFromBackend(id);
-            } catch {
+                saved = await readLocalCanvasProjectFromBackend(id, scope);
+            } catch (error) {
+                if (isUserScopeAbandonedError(error)) throw error;
                 throw new Error("画布未保存到工作区");
             }
             assertRestoredCanvasMatches(live, saved);
@@ -141,28 +151,30 @@ export function createCanvasArchiveRestoreHost(overrides: Partial<CanvasArchiveR
             const unique = [...new Set(ids.filter(Boolean))];
             if (usesCanonicalBackend) {
                 await Promise.all(unique.map(async (id) => {
-                    try {
-                        await http.delete(`/canvas-projects/${encodeURIComponent(id)}`);
-                    } catch {
-                        // Cleanup only this attempt; a missing row is already recovered.
-                    }
+                    await http.delete(`/canvas-projects/${encodeURIComponent(id)}`, { expectedScope: scope });
                 }));
             }
+            assertUserScope(scope);
             store().deleteProjects(unique);
         },
         discardProjects: (ids) => store().deleteProjects([...ids]),
         uploadMedia: async (blob, kind, meta) => {
             if (!usesCanonicalBackend) {
-                const url = await (meta.storageKey.startsWith("image:") ? setImageBlob(meta.storageKey, blob) : setMediaBlob(meta.storageKey, blob));
-                return { storageKey: meta.storageKey, url: url || "" };
+                const storageKey = `${kind}:${scope.userScope}:${crypto.randomUUID()}`;
+                const url = await (kind === "image" ? setImageBlob(storageKey, blob) : setMediaBlob(storageKey, blob));
+                assertUserScope(scope);
+                return { storageKey, url: url || "" };
             }
-            const resource = await uploadResourceFile(blob, kind, { fileName: meta.fileName, idempotencyKey: await archiveMediaIdempotencyKey(blob) });
+            const resource = await uploadResourceFile(blob, kind, { fileName: meta.fileName, idempotencyKey: await archiveMediaIdempotencyKey(blob), expectedScope: scope });
+            assertUserScope(scope);
             const storageKey = resourceStorageKey(resource.id);
-            await primeResourceBlobCache(storageKey, blob).catch(() => undefined);
+            await primeResourceBlobCache(storageKey, blob, scope).catch((error) => {
+                if (isUserScopeAbandonedError(error)) throw error;
+            });
             return { storageKey, url: resource.publicUrl || resourceFileUrl(resource.id), resourceId: resource.id };
         },
         bindMediaAsset: async (options) => {
-            const result = await ensureCanvasNodeAsset({ ...options, source: "canvas-upload" });
+            const result = await ensureCanvasNodeAsset({ ...options, source: "canvas-upload", expectedScope: scope });
             return result.assetId;
         },
         saveDrawing: saveCanvasDrawing,
@@ -178,7 +190,13 @@ export function createCanvasArchiveRestoreHost(overrides: Partial<CanvasArchiveR
 function withRestoreScope(host: CanvasArchiveRestoreHost, scope: CapturedUserScope): CanvasArchiveRestoreHost {
     const run = <Args extends unknown[], Result>(fn: (...args: Args) => Result) => (...args: Args) => {
         assertUserScope(scope);
-        return fn(...args);
+        const result = fn(...args);
+        if (result instanceof Promise) return result.then((value) => {
+            assertUserScope(scope);
+            return value;
+        }) as Result;
+        assertUserScope(scope);
+        return result;
     };
     return {
         usesCanonicalBackend: host.usesCanonicalBackend,
@@ -194,7 +212,7 @@ function withRestoreScope(host: CanvasArchiveRestoreHost, scope: CapturedUserSco
         saveDrawing: run(host.saveDrawing),
         loadDrawing: host.loadDrawing ? run(host.loadDrawing) : undefined,
         deleteResource: host.deleteResource ? run(host.deleteResource) : undefined,
-        onProjectProgress: host.onProjectProgress,
+        onProjectProgress: host.onProjectProgress ? run(host.onProjectProgress) : undefined,
     };
 }
 
@@ -203,7 +221,7 @@ export async function restoreCanvasArchive(input: Blob | OpenCanvasArchive, host
     const archive = "data" in input && "files" in input ? input : await openCanvasArchive(input);
     assertUserScope(scope);
     preflightCanvasArchive(archive.data, archive.files);
-    const restoreHost = withRestoreScope(createCanvasArchiveRestoreHost(host), scope);
+    const restoreHost = withRestoreScope(createCanvasArchiveRestoreHost(host, scope), scope);
     const folderIds: string[] = [];
     const projectIds: string[] = [];
     const resourceIds: string[] = [];
@@ -235,6 +253,7 @@ export async function restoreCanvasArchive(input: Blob | OpenCanvasArchive, host
             });
             const remappedNodes = (item.project.nodes || []).map((node) => remapArchiveNode(node, storageKeyMap, item.drawingDocuments || []));
             const remappedTimeline = remapArchiveTimeline(item.project.timeline, storageKeyMap);
+            const directorScenes = remapArchiveDirectorScenes(item.project.directorScenes, storageKeyMap);
             const sourceWorkspaceProjectId = canvasWorkspaceProjectId(item.project);
             const importedProjectId = restoreHost.importProject({
                 ...normalizeLocalCanvasProject(item.project),
@@ -243,6 +262,7 @@ export async function restoreCanvasArchive(input: Blob | OpenCanvasArchive, host
                 title: item.project.title || "导入画布",
                 nodes: remappedNodes,
                 timeline: remappedTimeline,
+                directorScenes,
             }, importedWorkspaceProjectIds.get(sourceWorkspaceProjectId));
             projectIds.push(importedProjectId);
             if (!importedWorkspaceProjectIds.has(sourceWorkspaceProjectId)) importedWorkspaceProjectIds.set(sourceWorkspaceProjectId, importedProjectId);
@@ -282,7 +302,11 @@ export async function restoreCanvasArchive(input: Blob | OpenCanvasArchive, host
         };
     } catch (error) {
         if (isUserScopeAbandonedError(error) || !userScopeMatches(scope)) throw error;
-        await cleanupCanvasArchiveAttempt(restoreHost, scope, { folderIds, projectIds, resourceIds });
+        try {
+            await cleanupCanvasArchiveAttempt(restoreHost, scope, { folderIds, projectIds, resourceIds });
+        } catch (cleanupError) {
+            throw new AggregateError([error, cleanupError], `${error instanceof Error ? error.message : "导入未完成"}；部分导入内容未能清理，请检查工作区后重试`);
+        }
         throw error;
     }
 }
@@ -424,7 +448,7 @@ function remapArchiveNode(node: CanvasNodeData, storageKeyMap: Map<string, Resto
                 ? {
                     ...node.metadata.videoPreview,
                     storageKey: media ? previewMapped?.storageKey ?? dropDeadStorageKey(node.metadata.videoPreview.storageKey) : node.metadata.videoPreview.storageKey,
-                    content: media ? (previewMapped ? previewMapped.url : dropInlineMediaRef(node.metadata.videoPreview.content)) : node.metadata.videoPreview.content,
+                    content: media ? (previewMapped ? previewMapped.url : dropInlineMediaRef(node.metadata.videoPreview.content) || "") : node.metadata.videoPreview.content,
                 }
                 : node.metadata?.videoPreview,
             drawingEngine: node.type === CanvasNodeType.Drawing && node.metadata?.drawingId
@@ -476,6 +500,20 @@ function remapArchiveTimeline(timeline: TimelineProject | undefined, storageKeyM
 function dropDeadStorageKey(value?: string) {
     if (!value || !isArchiveStorageKey(value)) return undefined;
     return value;
+}
+
+function remapArchiveDirectorScenes(scenes: CanvasProject["directorScenes"] | undefined, media: Map<string, RestoredMediaRef>): CanvasProject["directorScenes"] {
+    const remap = <T extends { storageKey?: string; url?: string }>(source: T): T => {
+        const mapped = source.storageKey ? media.get(source.storageKey) : undefined;
+        if (!mapped) return { ...source, url: dropInlineMediaRef(source.url) };
+        return { ...source, storageKey: mapped.storageKey, url: mapped.url };
+    };
+    return (scenes || []).map((scene) => ({
+        ...scene,
+        panorama: scene.panorama ? remap(scene.panorama) : undefined,
+        objects: scene.objects.map((object) => ({ ...remap(object), assetId: undefined })),
+        shots: scene.shots.map((shot) => ({ ...shot, screenshots: shot.screenshots?.map(remap) })),
+    }));
 }
 
 function dropInlineMediaRef(value?: string) {
@@ -538,7 +576,8 @@ async function cleanupCanvasArchiveAttempt(
             await host.deleteProjects(attempt.projectIds);
         } catch (error) {
             if (isUserScopeAbandonedError(error) || !userScopeMatches(scope)) return;
-            host.discardProjects(attempt.projectIds);
+            // Keep the visible projects when their durable deletion failed.
+            throw error;
         }
     }
     if (!userScopeMatches(scope)) return;
@@ -547,6 +586,7 @@ async function cleanupCanvasArchiveAttempt(
             await host.deleteFolder(folderId);
         } catch (error) {
             if (isUserScopeAbandonedError(error) || !userScopeMatches(scope)) return;
+            throw error;
         }
     }
     if (!host.deleteResource || !userScopeMatches(scope)) return;
@@ -554,8 +594,9 @@ async function cleanupCanvasArchiveAttempt(
         try {
             assertUserScope(scope);
             await host.deleteResource?.(resourceId);
-        } catch {
-            // Only this attempt's unreferenced objects; missing delete is recoverable.
+        } catch (error) {
+            if (isUserScopeAbandonedError(error) || !userScopeMatches(scope)) return;
+            throw error;
         }
     }));
 }

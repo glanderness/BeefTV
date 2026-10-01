@@ -1,17 +1,43 @@
-import { afterAll, afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, expect, mock, test } from "bun:test";
 import { spawn, type Subprocess } from "bun";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { restoreCanvasArchive } from "@/lib/canvas/canvas-archive-restore";
-import { openCanvasArchive } from "@/lib/canvas/canvas-export";
-import { createZip } from "@/lib/zip";
-import { apiClient, configureApiRuntime, http } from "@/services/api/request";
-import { resetCanvasOperationJournalMemory } from "@/services/canvas-operation-journal";
-import { syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
-import { useAssetStore } from "@/stores/use-asset-store";
-import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+
+// Bun has no IndexedDB. Only the optional browser cache is emulated here;
+// all canonical requests go to the actual isolated SQLite server below.
+const browserCaches = new Map<string, Map<string, unknown>>();
+function cacheInstance(namespace = "app_state") {
+    let data = browserCaches.get(namespace);
+    if (!data) browserCaches.set(namespace, data = new Map());
+    return {
+        config: () => undefined,
+        createInstance: (options: { storeName?: string }) => cacheInstance(options.storeName),
+        getItem: async (key: string) => data!.get(key) ?? null,
+        setItem: async (key: string, value: unknown) => { data!.set(key, value); return value; },
+        removeItem: async (key: string) => { data!.delete(key); },
+        clear: async () => { data!.clear(); },
+        keys: async () => [...data!.keys()],
+        length: async () => data!.size,
+        iterate: async (callback: (value: unknown, key: string, index: number) => unknown) => {
+            let index = 0;
+            for (const [key, value] of data!) {
+                const result = callback(value, key, ++index);
+                if (result !== undefined) return result;
+            }
+        },
+    };
+}
+mock.module("localforage", () => ({ default: cacheInstance() }));
+const { restoreCanvasArchive } = await import("@/lib/canvas/canvas-archive-restore");
+const { openCanvasArchive } = await import("@/lib/canvas/canvas-export");
+const { createZip } = await import("@/lib/zip");
+const { apiClient, configureApiRuntime, http } = await import("@/services/api/request");
+const { resetCanvasOperationJournalMemory } = await import("@/services/canvas-operation-journal");
+const { syncLocalCanvasProjectToBackend } = await import("@/services/local-workspace-repository");
+const { useAssetStore } = await import("@/stores/use-asset-store");
+const { useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
 
 const backendDir = resolve(import.meta.dir, "../../backend");
 const serverBin = join(tmpdir(), `beeftv-archive-restore-server-${process.pid}`);
@@ -277,6 +303,7 @@ test("valid archive restores into isolated SQLite, survives backend restart, and
         expect(await readResourceBytes(drawing.previewResourceId!)).toEqual(drawingPreviewBytes);
 
         await stopServer(server);
+        for (const cache of browserCaches.values()) cache.clear();
         server = await startServer(dataDir);
         connect(server.port);
         resetStores();
