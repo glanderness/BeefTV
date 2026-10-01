@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/outbound"
+	"infinite-canvas/backend/internal/provider/workflow"
 )
 
 // Input 是画布生成任务的统一输入合同。
@@ -103,40 +104,8 @@ type Media struct {
 	DurationMs int64  `json:"durationMs"`
 }
 
-// WorkflowField 是云端工作流字段描述。完整工作流执行仍在 service。
-type WorkflowField struct {
-	ID                 string        `json:"id"`
-	NodeID             string        `json:"nodeId"`
-	ClassType          string        `json:"classType,omitempty"`
-	FieldName          string        `json:"fieldName"`
-	Value              interface{}   `json:"value,omitempty"`
-	FieldValue         interface{}   `json:"fieldValue,omitempty"`
-	FieldType          string        `json:"fieldType,omitempty"`
-	Label              string        `json:"label,omitempty"`
-	Role               string        `json:"role,omitempty"`
-	SafeToOverride     *bool         `json:"safeToOverride,omitempty"`
-	OptionsSource      string        `json:"optionsSource,omitempty"`
-	Options            []interface{} `json:"options,omitempty"`
-	Min                interface{}   `json:"min,omitempty"`
-	Max                interface{}   `json:"max,omitempty"`
-	Step               interface{}   `json:"step,omitempty"`
-	RandomEnabled      bool          `json:"randomEnabled,omitempty"`
-	BindPrompt         bool          `json:"bindPrompt,omitempty"`
-	Enabled            *bool         `json:"enabled,omitempty"`
-	Source             string        `json:"source,omitempty"`
-	SourceIndex        int           `json:"sourceIndex,omitempty"`
-	ImageOrder         int           `json:"imageOrder,omitempty"`
-	SourceFromUpstream bool          `json:"sourceFromUpstream,omitempty"`
-	Required           bool          `json:"required,omitempty"`
-	SourceAutomatic    *bool         `json:"sourceAutomatic,omitempty"`
-	sourceConfigured   bool
-}
-
-// SourceConfigured 暴露反序列化期间的来源配置标记，供 service 工作流逻辑使用。
-func (f WorkflowField) SourceConfigured() bool { return f.sourceConfigured }
-
-// SetSourceConfigured 供 service 在归一化路径写入来源配置标记。
-func (f *WorkflowField) SetSourceConfigured(v bool) { f.sourceConfigured = v }
+// WorkflowField 是云端工作流字段描述。实现位于 provider/workflow。
+type WorkflowField = workflow.Field
 
 type MediaHydrationPolicy struct {
 	RequireURL bool

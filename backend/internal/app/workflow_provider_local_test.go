@@ -34,3 +34,17 @@ func TestUploadRunningHubMediaRejectsLocalMode(t *testing.T) {
 		t.Fatalf("local RunningHub upload error = %v, want local-workspace rejection", err)
 	}
 }
+
+func TestWorkflowPluginsNilServiceFailsClosed(t *testing.T) {
+	err := (workflowPlugins{}).EnsureEnabled(context.Background(), string(model.ChannelInterfaceRunningHubImage))
+	if err == nil || !strings.Contains(err.Error(), "插件授权") {
+		t.Fatalf("nil plugin service error = %v, want fail closed", err)
+	}
+}
+
+func TestWorkflowReceiptNilServiceFailsClosed(t *testing.T) {
+	err := (workflowReceipt{}).RecordAccepted(context.Background(), "accepted-1", "submitted", nil)
+	if err == nil || !strings.Contains(err.Error(), "受理回执") {
+		t.Fatalf("nil receipt service error = %v, want fail closed", err)
+	}
+}

@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/outbound"
@@ -111,14 +112,23 @@ func httpStatusMessage(code int) string {
 	return "provider request failed"
 }
 
-type noopReceipt struct{}
+// AcceptedNotRecorded means upstream accepted a task but the local receipt
+// was not persisted. Resume the original RequestID; do not create a new task.
+type AcceptedNotRecorded struct {
+	RequestID string
+	Stage     string
+	Err       error
+}
 
-func (noopReceipt) RecordAccepted(context.Context, string, string, *time.Time) error {
-	return nil
+func (e AcceptedNotRecorded) Error() string {
+	id := strings.TrimSpace(e.RequestID)
+	if id == "" {
+		return "任务已受理，但未能保存任务编号。请继续查询原任务，不要重新提交。"
+	}
+	return "任务已受理，但未能保存任务编号（" + id + "）。请继续查询原任务，不要重新提交。"
 }
-func (noopReceipt) UpdateStage(context.Context, string, string, *time.Time) error {
-	return nil
-}
+
+func (e AcceptedNotRecorded) Unwrap() error { return e.Err }
 
 type noopProgress struct{}
 

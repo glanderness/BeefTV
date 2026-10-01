@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"strings"
+	"time"
 )
 
 // Client executes RunningHub workflow create/poll/download through typed ports.
@@ -24,43 +25,73 @@ type Client struct {
 	Poller   VideoPoller
 }
 
-func (c *Client) ready() *Client {
-	if c.Receipt == nil {
-		c.Receipt = noopReceipt{}
+// prepared returns a shallow copy with optional Progress/Time defaults.
+// It never writes back onto the receiver, so a shared Client is safe to reuse.
+func (c *Client) prepared() *Client {
+	out := Client{}
+	if c != nil {
+		out = *c
 	}
-	if c.Progress == nil {
-		c.Progress = noopProgress{}
+	if out.Progress == nil {
+		out.Progress = noopProgress{}
 	}
-	if c.Time == nil {
-		c.Time = DefaultTimePolicy{}
+	if out.Time == nil {
+		out.Time = DefaultTimePolicy{}
 	}
-	return c
+	return &out
 }
 
-// Run is the workflow-provider entry. Plugin authorization is enforced when Plugins is set.
-func (c *Client) Run(ctx context.Context, input Input) (map[string]interface{}, error) {
-	c = c.ready()
-	if c.Plugins != nil {
-		if err := c.Plugins.EnsureEnabled(ctx, input.Config.InterfaceType); err != nil {
-			return nil, err
-		}
+func (c *Client) requireActor(ctx context.Context, interfaceType string) error {
+	if c.Plugins == nil {
+		return errors.New("工作流缺少插件授权端口")
 	}
+	return c.Plugins.EnsureEnabled(ctx, interfaceType)
+}
+
+func (c *Client) requirePaidCreate() error {
+	if c.Requests == nil {
+		return errors.New("工作流缺少受保护的请求执行端口")
+	}
+	if c.Receipt == nil {
+		return errors.New("工作流缺少受理回执端口")
+	}
+	return nil
+}
+
+// Run is the workflow-provider entry. Plugin authorization is required.
+func (c *Client) Run(ctx context.Context, input Input) (map[string]interface{}, error) {
+	exec := c.prepared()
 	if isRunningHubInterface(input.Config.InterfaceType) {
-		return c.RunRunningHub(ctx, input)
+		return exec.runRunningHub(ctx, input)
+	}
+	if err := exec.requireActor(ctx, input.Config.InterfaceType); err != nil {
+		return nil, err
 	}
 	return nil, errors.New("未知工作流协议")
 }
 
 // RunRunningHub submits or resumes a RunningHub workflow/app task.
 func (c *Client) RunRunningHub(ctx context.Context, input Input) (map[string]interface{}, error) {
-	c = c.ready()
+	return c.prepared().runRunningHub(ctx, input)
+}
+
+func (c *Client) runRunningHub(ctx context.Context, input Input) (map[string]interface{}, error) {
 	if input.LocalWorkspace && (len(input.ReferenceImages) > 0 || len(input.ReferenceVideos) > 0 || len(input.ReferenceAudios) > 0 || input.Mask != nil) {
 		return nil, errors.New("本地工作区不支持将参考素材上传到 RunningHub")
+	}
+	if err := c.requireActor(ctx, input.Config.InterfaceType); err != nil {
+		return nil, err
 	}
 	root := runningHubRootURL(input.Config.BaseURL)
 	apiKey := runningHubAPIKey(input.Config)
 	if resumed := strings.TrimSpace(input.ResumedRequestID); resumed != "" {
+		if c.Requests == nil {
+			return nil, errors.New("工作流缺少受保护的请求执行端口")
+		}
 		return c.Poll(ctx, input.Config, root, resumed, input.Mode)
+	}
+	if err := c.requirePaidCreate(); err != nil {
+		return nil, err
 	}
 	workflowID := strings.TrimSpace(input.Config.WorkflowID)
 	webappID := strings.TrimSpace(input.Config.WebappID)
@@ -136,13 +167,14 @@ func (c *Client) RunRunningHub(ctx context.Context, input Input) (map[string]int
 	}
 	if err := c.Receipt.RecordAccepted(ctx, taskID, "submitted", nil); err != nil {
 		c.Progress.Log(ctx, "error", "RunningHub 请求状态保存失败", taskID+"："+err.Error())
+		return nil, AcceptedNotRecorded{RequestID: taskID, Stage: "submitted", Err: err}
 	}
 	return c.Poll(ctx, input.Config, root, taskID, input.Mode)
 }
 
 // FetchWorkflowJSON loads the current API workflow JSON for field inference.
 func (c *Client) FetchWorkflowJSON(ctx context.Context, root string, config Config, workflowID string) (map[string]interface{}, error) {
-	c = c.ready()
+	c = c.prepared()
 	response, err := c.PostJSON(ctx, config, root+"/api/openapi/getJsonApiFormat", "workflow-schema", map[string]any{
 		"apiKey":     runningHubAPIKey(config),
 		"workflowId": workflowID,
@@ -158,27 +190,12 @@ func (c *Client) FetchWorkflowJSON(ctx context.Context, root string, config Conf
 	if data == nil {
 		return nil, errors.New("RunningHub 工作流参数响应缺少 data")
 	}
-	raw := data["prompt"]
-	if raw == nil {
-		return nil, errors.New("RunningHub 工作流参数响应缺少 prompt")
-	}
-	if text, ok := raw.(string); ok {
-		var parsed map[string]interface{}
-		if err := json.Unmarshal([]byte(text), &parsed); err != nil {
-			return nil, err
-		}
-		return parsed, nil
-	}
-	parsed, ok := raw.(map[string]interface{})
-	if !ok {
-		return nil, errors.New("RunningHub 工作流参数格式无效")
-	}
-	return parsed, nil
+	return parseWorkflowPrompt(data["prompt"], true)
 }
 
 // UploadMedia uploads one reference file. Local workspace always rejects.
 func (c *Client) UploadMedia(ctx context.Context, root string, config Config, media Media, localWorkspace bool) (string, error) {
-	c = c.ready()
+	c = c.prepared()
 	if localWorkspace {
 		return "", errors.New("本地工作区不支持将素材上传到 RunningHub")
 	}
@@ -256,7 +273,7 @@ func (c *Client) UploadMedia(ctx context.Context, root string, config Config, me
 
 // PostJSON sends a JSON body through RequestExecutor.
 func (c *Client) PostJSON(ctx context.Context, config Config, endpoint string, kind string, body interface{}) (map[string]any, error) {
-	c = c.ready()
+	c = c.prepared()
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -281,7 +298,7 @@ func (c *Client) PostJSON(ctx context.Context, config Config, endpoint string, k
 
 // Poll waits for the original accepted task. Video uses VideoPoller; other modes use the legacy interval.
 func (c *Client) Poll(ctx context.Context, config Config, root string, taskID string, mode string) (map[string]interface{}, error) {
-	c = c.ready()
+	c = c.prepared()
 	if mode == "video" {
 		return c.PollVideo(ctx, config, root, taskID, defaultVideoPolicy())
 	}
@@ -290,7 +307,7 @@ func (c *Client) Poll(ctx context.Context, config Config, root string, taskID st
 
 // PollVideo queries the original task through the provider video poll loop.
 func (c *Client) PollVideo(ctx context.Context, config Config, root string, taskID string, policy PollPolicy) (map[string]interface{}, error) {
-	c = c.ready()
+	c = c.prepared()
 	if c.Poller == nil {
 		return nil, errors.New("工作流缺少视频轮询端口")
 	}
@@ -319,7 +336,7 @@ func (c *Client) PollVideo(ctx context.Context, config Config, root string, task
 			if err != nil {
 				return PollOutcome{}, err
 			}
-			_ = c.Receipt.UpdateStage(ctx, taskID, "succeeded", nil)
+			c.updateReceipt(ctx, taskID, "succeeded", nil)
 			return PollOutcome{Done: true, Result: result}, nil
 		}
 		if code == 805 || code == 806 {
@@ -336,7 +353,7 @@ func (c *Client) PollVideo(ctx context.Context, config Config, root string, task
 			interval = defaultVideoPollInterval
 		}
 		next := c.Time.Now().Add(interval)
-		_ = c.Receipt.UpdateStage(ctx, taskID, stage, &next)
+		c.updateReceipt(ctx, taskID, stage, &next)
 		return PollOutcome{}, nil
 	})
 }
@@ -364,7 +381,7 @@ func (c *Client) pollLegacy(ctx context.Context, config Config, root string, tas
 			for index, rawURL := range urls {
 				urls[index] = resolveRunningHubOutputURL(root, rawURL)
 			}
-			_ = c.Receipt.UpdateStage(ctx, taskID, "succeeded", nil)
+			c.updateReceipt(ctx, taskID, "succeeded", nil)
 			return c.DownloadOutputs(ctx, urls, "", nil)
 		}
 		if code == 805 || code == 806 {
@@ -377,7 +394,7 @@ func (c *Client) pollLegacy(ctx context.Context, config Config, root string, tas
 			stage = "pending"
 		}
 		next := c.Time.Now().Add(interval)
-		_ = c.Receipt.UpdateStage(ctx, taskID, stage, &next)
+		c.updateReceipt(ctx, taskID, stage, &next)
 		if err := c.Time.Sleep(ctx, interval); err != nil {
 			return nil, err
 		}
@@ -387,7 +404,7 @@ func (c *Client) pollLegacy(ctx context.Context, config Config, root string, tas
 
 // DownloadOutputs fetches and normalizes output URLs. policy != nil uses video download retries.
 func (c *Client) DownloadOutputs(ctx context.Context, urls []string, taskID string, policy *PollPolicy) (map[string]interface{}, error) {
-	c = c.ready()
+	c = c.prepared()
 	images := make([]map[string]interface{}, 0)
 	var video, audio map[string]interface{}
 	for _, rawURL := range urls {
@@ -472,6 +489,13 @@ func (c *Client) execute(ctx context.Context, req Request) ([]byte, string, erro
 		return nil, "", errors.New("工作流缺少受保护的请求执行端口")
 	}
 	return c.Requests.Execute(ctx, req)
+}
+
+func (c *Client) updateReceipt(ctx context.Context, requestID, stage string, nextPollAt *time.Time) {
+	if c.Receipt == nil {
+		return
+	}
+	_ = c.Receipt.UpdateStage(ctx, requestID, stage, nextPollAt)
 }
 
 func defaultVideoPolicy() PollPolicy {

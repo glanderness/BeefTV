@@ -148,10 +148,16 @@ func (workflowMediaLoader) LocalBytes(media workflow.Media) ([]byte, string, err
 type workflowReceipt struct{ service *Service }
 
 func (r workflowReceipt) RecordAccepted(ctx context.Context, requestID, stage string, nextPollAt *time.Time) error {
+	if r.service == nil {
+		return errors.New("工作流缺少受理回执端口")
+	}
 	return r.service.recordWorkflowProviderRequest(ctx, requestID, stage, nextPollAt)
 }
 
 func (r workflowReceipt) UpdateStage(ctx context.Context, requestID, stage string, nextPollAt *time.Time) error {
+	if r.service == nil {
+		return errors.New("工作流缺少受理回执端口")
+	}
 	return r.service.updateWorkflowProviderState(ctx, requestID, stage, nextPollAt)
 }
 
@@ -169,7 +175,7 @@ type workflowPlugins struct{ service *Service }
 
 func (p workflowPlugins) EnsureEnabled(_ context.Context, interfaceType string) error {
 	if p.service == nil {
-		return nil
+		return errors.New("工作流缺少插件授权端口")
 	}
 	return p.service.RequireWorkflowPluginForInterface(interfaceType)
 }

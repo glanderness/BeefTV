@@ -24,5 +24,8 @@ func TestPackageDoesNotImportApp(t *testing.T) {
 		if dependency == "infinite-canvas/backend/internal/app" {
 			t.Fatal("workflow domain must not import internal/app")
 		}
+		if dependency == "infinite-canvas/backend/internal/generation" {
+			t.Fatal("workflow domain must not import generation; generation may import workflow")
+		}
 	}
 }

@@ -2,10 +2,10 @@ package app
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
+
+	"infinite-canvas/backend/internal/provider/workflow"
 )
 
 func (s *Service) FetchRunningHubWorkflowInfo(ctx context.Context, req RunningHubWorkflowFetchRequest) (map[string]any, error) {
@@ -17,24 +17,7 @@ func (s *Service) FetchRunningHubWorkflowInfo(ctx context.Context, req RunningHu
 	if err != nil {
 		return nil, err
 	}
-	root := runningHubRootURL(config.BaseURL)
-	var response map[string]any
-	if err := s.runningHubJSON(ctx, config, root+"/api/openapi/getJsonApiFormat", map[string]any{"apiKey": runningHubAPIKey(config), "workflowId": workflowID}, &response); err != nil {
-		return nil, fmt.Errorf("拉取 RunningHub 工作流参数失败：%w", err)
-	}
-	data, _ := response["data"].(map[string]any)
-	if data == nil {
-		return nil, errors.New("RunningHub 工作流参数响应缺少 data")
-	}
-	workflowJSON := map[string]any{}
-	if prompt, ok := data["prompt"].(string); ok && strings.TrimSpace(prompt) != "" {
-		if err := json.Unmarshal([]byte(prompt), &workflowJSON); err != nil {
-			return nil, fmt.Errorf("RunningHub 工作流 JSON 解析失败：%w", err)
-		}
-	} else if prompt, ok := data["prompt"].(map[string]any); ok {
-		workflowJSON = prompt
-	}
-	return map[string]any{"workflowId": workflowID, "kind": "workflow", "title": firstNonEmptyString(req.Title, workflowID), "fields": collectManagementWorkflowFields(workflowJSON, req.Capability), "workflowJson": workflowJSON, "raw": response}, nil
+	return s.workflowClient(nil).FetchSettingsWorkflow(ctx, workflowConfigFromProvider(config), req)
 }
 
 func (s *Service) FetchRunningHubAppInfo(ctx context.Context, req RunningHubWorkflowFetchRequest) (map[string]any, error) {
@@ -60,7 +43,7 @@ func (s *Service) FetchRunningHubAppInfo(ctx context.Context, req RunningHubWork
 	rawData, _ := response["data"].(map[string]any)
 	result := map[string]any{"kind": "app", "webappId": webappID, "workflowId": webappID, "title": firstNonEmptyString(req.Title, webappID), "fields": []map[string]any{}, "raw": response}
 	if rawData != nil {
-		result["fields"] = normalizeManagementAppFields(rawData["nodeInfoList"], req.Capability)
+		result["fields"] = workflow.CollectAppFields(rawData["nodeInfoList"], req.Capability)
 	}
 	return result, nil
 }

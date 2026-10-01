@@ -51,7 +51,7 @@ func (s *Service) recordWorkflowProviderRequest(ctx context.Context, requestID s
 }
 
 func (s *Service) runRunningHubWorkflow(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
-	return s.workflowClient(nil).RunRunningHub(ctx, s.workflowInputFromCanvas(ctx, input))
+	return s.workflowClient(nil).Run(ctx, s.workflowInputFromCanvas(ctx, input))
 }
 
 func (s *Service) fetchRunningHubWorkflowJSON(ctx context.Context, root string, config providerConfig, workflowID string) (map[string]interface{}, error) {
@@ -104,12 +104,4 @@ func runningHubPayloadCode(payload map[string]any) (int, bool) { return workflow
 
 func runningHubFailureMessage(payload map[string]any) string {
 	return workflow.FailureMessage(payload)
-}
-
-func collectManagementWorkflowFields(workflowJSON map[string]any, capability string) []map[string]any {
-	return workflow.CollectFields(workflowJSON, capability)
-}
-
-func normalizeManagementAppFields(raw any, capability string) []map[string]any {
-	return workflow.CollectAppFields(raw, capability)
 }

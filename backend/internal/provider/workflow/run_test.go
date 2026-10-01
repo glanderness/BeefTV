@@ -78,6 +78,74 @@ type denyPlugin struct{ err error }
 
 func (d denyPlugin) EnsureEnabled(context.Context, string) error { return d.err }
 
+type allowPlugin struct{}
+
+func (allowPlugin) EnsureEnabled(context.Context, string) error { return nil }
+
+type memoryReceipt struct {
+	mu           sync.Mutex
+	accepted     []string
+	failAccepted error
+}
+
+func (m *memoryReceipt) RecordAccepted(_ context.Context, requestID, _ string, _ *time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.failAccepted != nil {
+		return m.failAccepted
+	}
+	m.accepted = append(m.accepted, requestID)
+	return nil
+}
+
+func (m *memoryReceipt) UpdateStage(context.Context, string, string, *time.Time) error { return nil }
+
+func (m *memoryReceipt) acceptedIDs() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]string, len(m.accepted))
+	copy(out, m.accepted)
+	return out
+}
+
+func imageCreateInput() Input {
+	return Input{
+		Mode: "image",
+		Config: Config{
+			InterfaceType: string(model.ChannelInterfaceRunningHubImage),
+			BaseURL:       "https://www.runninghub.cn",
+			APIKey:        "k",
+			WorkflowID:    "wf-1",
+			WorkflowJSON:  map[string]interface{}{"1": map[string]interface{}{"class_type": "Note", "inputs": map[string]interface{}{}}},
+		},
+	}
+}
+
+func productionClient(exec RequestExecutor, extras ...any) *Client {
+	client := &Client{
+		Requests: exec,
+		Media:    stubMedia{},
+		Receipt:  &memoryReceipt{},
+		Plugins:  allowPlugin{},
+		Poller:   immediatePoller{},
+	}
+	for _, extra := range extras {
+		switch value := extra.(type) {
+		case Receipt:
+			client.Receipt = value
+		case PluginAvailability:
+			client.Plugins = value
+		case TimePolicy:
+			client.Time = value
+		case VideoPoller:
+			client.Poller = value
+		case MediaLoader:
+			client.Media = value
+		}
+	}
+	return client
+}
+
 func pngJSON() []byte {
 	return []byte(`{"code":0,"data":[{"fileUrl":"https://rh-images.xiaoyaoyou.com/out.png"}]}`)
 }
@@ -100,7 +168,8 @@ func TestRunResumesOriginalAcceptedTaskWithoutCreate(t *testing.T) {
 		t.Fatalf("unexpected URL %s", req.URL)
 		return nil, "", nil
 	}}
-	client := &Client{Requests: exec, Media: stubMedia{}, Poller: immediatePoller{}}
+	client := productionClient(exec)
+	client.Receipt = nil
 	result, err := client.RunRunningHub(context.Background(), Input{
 		Mode:             "image",
 		ResumedRequestID: "orig-9",
@@ -143,17 +212,8 @@ func TestCreateOmitsCodeButReturnsTaskIDThenPollsOriginal(t *testing.T) {
 			return nil, "", nil
 		}
 	}}
-	client := &Client{Requests: exec, Media: stubMedia{}, Poller: immediatePoller{}}
-	result, err := client.RunRunningHub(context.Background(), Input{
-		Mode: "image",
-		Config: Config{
-			InterfaceType: string(model.ChannelInterfaceRunningHubImage),
-			BaseURL:       "https://www.runninghub.cn",
-			APIKey:        "k",
-			WorkflowID:    "wf-1",
-			WorkflowJSON:  map[string]interface{}{"1": map[string]interface{}{"class_type": "Note", "inputs": map[string]interface{}{}}},
-		},
-	})
+	client := productionClient(exec)
+	result, err := client.RunRunningHub(context.Background(), imageCreateInput())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,17 +233,8 @@ func TestCreateProtocolErrorIsReturned(t *testing.T) {
 		t.Fatalf("unexpected URL %s", req.URL)
 		return nil, "", nil
 	}}
-	client := &Client{Requests: exec, Media: stubMedia{}, Poller: immediatePoller{}}
-	_, err := client.RunRunningHub(context.Background(), Input{
-		Mode: "image",
-		Config: Config{
-			InterfaceType: string(model.ChannelInterfaceRunningHubImage),
-			BaseURL:       "https://www.runninghub.cn",
-			APIKey:        "k",
-			WorkflowID:    "wf-1",
-			WorkflowJSON:  map[string]interface{}{"1": map[string]interface{}{"class_type": "Note", "inputs": map[string]interface{}{}}},
-		},
-	})
+	client := productionClient(exec)
+	_, err := client.RunRunningHub(context.Background(), imageCreateInput())
 	if err == nil || !strings.Contains(err.Error(), "重新选择该 App") {
 		t.Fatalf("error = %v, want actionable protocol message", err)
 	}
@@ -250,7 +301,7 @@ func TestAppModeUsesAiAppEndpoint(t *testing.T) {
 		t.Fatalf("unexpected URL %s", req.URL)
 		return nil, "", nil
 	}}
-	client := &Client{Requests: exec, Media: stubMedia{}, Poller: immediatePoller{}}
+	client := productionClient(exec)
 	_, err := client.RunRunningHub(context.Background(), Input{
 		Mode: "image",
 		Config: Config{
@@ -318,5 +369,155 @@ func TestValidateConfigRequiresWorkflowIdentity(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "workflowId") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestNilReceiptFailsBeforePaidCreate(t *testing.T) {
+	exec := &scriptedExecutor{handler: func(Request) ([]byte, string, error) {
+		t.Fatal("nil receipt must not call upstream")
+		return nil, "", nil
+	}}
+	client := productionClient(exec)
+	client.Receipt = nil
+	_, err := client.Run(context.Background(), imageCreateInput())
+	if err == nil || !strings.Contains(err.Error(), "受理回执") {
+		t.Fatalf("error = %v, want missing receipt", err)
+	}
+}
+
+func TestNilPluginsFailsBeforePaidCreate(t *testing.T) {
+	exec := &scriptedExecutor{handler: func(Request) ([]byte, string, error) {
+		t.Fatal("nil plugins must not call upstream")
+		return nil, "", nil
+	}}
+	client := productionClient(exec)
+	client.Plugins = nil
+	_, err := client.Run(context.Background(), imageCreateInput())
+	if err == nil || !strings.Contains(err.Error(), "插件授权") {
+		t.Fatalf("error = %v, want missing plugin port", err)
+	}
+}
+
+func TestRunRunningHubEnforcesPluginGate(t *testing.T) {
+	denied := errors.New("RunningHub 工作流插件未启用")
+	client := productionClient(&scriptedExecutor{handler: func(Request) ([]byte, string, error) {
+		t.Fatal("disabled plugin must not call upstream")
+		return nil, "", nil
+	}}, denyPlugin{err: denied})
+	_, err := client.RunRunningHub(context.Background(), imageCreateInput())
+	if !errors.Is(err, denied) {
+		t.Fatalf("error = %v, want plugin denial", err)
+	}
+}
+
+func TestResumeRequiresPluginButNotReceipt(t *testing.T) {
+	denied := errors.New("RunningHub 工作流插件未启用")
+	exec := &scriptedExecutor{handler: func(Request) ([]byte, string, error) {
+		t.Fatal("denied resume must not poll")
+		return nil, "", nil
+	}}
+	client := productionClient(exec, denyPlugin{err: denied})
+	client.Receipt = nil
+	_, err := client.Run(context.Background(), Input{
+		Mode:             "image",
+		ResumedRequestID: "orig-9",
+		Config: Config{
+			InterfaceType: string(model.ChannelInterfaceRunningHubImage),
+			BaseURL:       "https://www.runninghub.cn",
+			APIKey:        "k",
+			WorkflowID:    "wf-1",
+		},
+	})
+	if !errors.Is(err, denied) {
+		t.Fatalf("error = %v, want plugin denial", err)
+	}
+}
+
+func TestAcceptedReceiptFailurePreservesOriginalAndResumeDoesNotCreate(t *testing.T) {
+	creates := 0
+	exec := &scriptedExecutor{handler: func(req Request) ([]byte, string, error) {
+		switch {
+		case strings.Contains(req.URL, "/task/openapi/create"):
+			creates++
+			return []byte(`{"code":0,"data":{"taskId":"accepted-77"}}`), "application/json", nil
+		case strings.Contains(req.URL, "/task/openapi/outputs"):
+			var payload map[string]any
+			_ = json.Unmarshal(req.Body, &payload)
+			if payload["taskId"] != "accepted-77" {
+				t.Fatalf("poll taskId = %#v", payload["taskId"])
+			}
+			return pngJSON(), "application/json", nil
+		case strings.HasSuffix(req.URL, "/out.png"):
+			return []byte("PNGDATA"), "image/png", nil
+		default:
+			t.Fatalf("unexpected URL %s", req.URL)
+			return nil, "", nil
+		}
+	}}
+	persistErr := errors.New("receipt write failed")
+	client := productionClient(exec, &memoryReceipt{failAccepted: persistErr})
+	_, err := client.Run(context.Background(), imageCreateInput())
+	var recorded AcceptedNotRecorded
+	if !errors.As(err, &recorded) {
+		t.Fatalf("error = %v, want AcceptedNotRecorded", err)
+	}
+	if recorded.RequestID != "accepted-77" {
+		t.Fatalf("request id = %q", recorded.RequestID)
+	}
+	if !errors.Is(err, persistErr) {
+		t.Fatalf("unwrap = %v, want persist error", err)
+	}
+	if creates != 1 {
+		t.Fatalf("creates after failed receipt = %d", creates)
+	}
+	resume := productionClient(exec)
+	resume.Receipt = nil
+	input := imageCreateInput()
+	input.ResumedRequestID = recorded.RequestID
+	result, err := resume.Run(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["mode"] != "image" {
+		t.Fatalf("result = %#v", result)
+	}
+	if creates != 1 {
+		t.Fatalf("resume created a new upstream task: creates = %d", creates)
+	}
+}
+
+func TestConcurrentRunDoesNotMutateSharedClient(t *testing.T) {
+	exec := &scriptedExecutor{handler: func(req Request) ([]byte, string, error) {
+		switch {
+		case strings.Contains(req.URL, "/task/openapi/create"):
+			return []byte(`{"code":0,"data":{"taskId":"race-1"}}`), "application/json", nil
+		case strings.Contains(req.URL, "/task/openapi/outputs"):
+			return pngJSON(), "application/json", nil
+		case strings.HasSuffix(req.URL, "/out.png"):
+			return []byte("PNGDATA"), "image/png", nil
+		default:
+			return nil, "", errors.New("unexpected URL " + req.URL)
+		}
+	}}
+	client := productionClient(exec)
+	var wg sync.WaitGroup
+	errCh := make(chan error, 16)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := client.Run(context.Background(), imageCreateInput())
+			errCh <- err
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if client.Time != nil || client.Progress != nil {
+		t.Fatal("shared client received lazy defaults")
 	}
 }
