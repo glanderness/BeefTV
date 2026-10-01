@@ -105,6 +105,13 @@ type providerConfig struct {
 const providerHTTPTimeout = 5 * time.Minute
 const videoPollTimeout = time.Hour
 const maxProviderResponseBytes int64 = 64 << 20
+const videoJSONRequestLimitBytes int64 = 64 << 20
+
+var errVideoJSONRequestTooLarge = errors.New("video request body exceeds the 64 MiB request limit; use public media URLs instead of inline base64")
+
+// beefAPIVideoBaseURLForTest lets httptest exercise the built-in BeefAPI
+// Seedance path without spoofing enterprise.beefapi.com.
+var beefAPIVideoBaseURLForTest string
 
 type providerMedia struct {
 	ID         string `json:"id"`
@@ -382,6 +389,9 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		if err := s.prepareArkPrivateAssetReferences(ctx, userID, &input); err != nil {
 			return nil, err
 		}
+		if err := s.prepareBeefAPISeedanceReferences(ctx, userID, &input); err != nil {
+			return nil, err
+		}
 	}
 	if input.Mode == "video" && input.VideoCapability != nil && resumedProviderRequestID(ctx) == "" {
 		if err := validateVideoTask(input.VideoCapability, input); err != nil {
@@ -417,6 +427,7 @@ type providerMediaHydrationPolicy struct {
 	requireURL  bool
 	preferURL   bool
 	preferHTTPS bool
+	keepLocal   bool
 }
 
 func providerMediaHydrationPolicyFor(ctx context.Context, input canvasGenerationInput) providerMediaHydrationPolicy {
@@ -425,11 +436,11 @@ func providerMediaHydrationPolicyFor(ctx context.Context, input canvasGeneration
 		return providerMediaHydrationPolicy{preferHTTPS: true}
 	}
 	// Prefer an existing HTTPS resource address when the workspace already has
-	// a public base. Local desktop without CANVAS_PUBLIC_BASE_URL still falls
-	// through to a bounded data URL; asset:// references are preserved.
+	// a public base. Built-in BeefAPI Seedance keeps local files on disk until
+	// the shared preupload path rewrites them to short-lived HTTPS URLs.
 	if isBeefAPIVideoConfig(input.Config) {
 		if contract, ok := providerpreset.BeefAPIVideoContract(input.Config.Model); ok && contract.InlineMedia && (contract.Protocol == input.Config.InterfaceType || isSeedanceVideoConfig(input.Config)) {
-			return providerMediaHydrationPolicy{preferHTTPS: true}
+			return providerMediaHydrationPolicy{preferHTTPS: true, keepLocal: isBeefAPISeedancePreuploadConfig(input.Config)}
 		}
 	}
 	// The channel-1 NewAPI profile also accepts data URLs in its media field.
@@ -827,6 +838,16 @@ func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, poli
 		if httpsURL, err := s.signedHTTPSPublicResourceURL(resource, time.Now().Add(providerResourceURLTTL)); err == nil {
 			media.URL = httpsURL
 			media.DataURL = ""
+			media.MimeType = firstNonEmpty(media.MimeType, resource.MimeType)
+			media.Bytes = resource.Size
+			media.Width = resource.Width
+			media.Height = resource.Height
+			if resource.DurationMs > 0 {
+				media.DurationMs = resource.DurationMs
+			}
+			return nil
+		}
+		if policy.keepLocal {
 			media.MimeType = firstNonEmpty(media.MimeType, resource.MimeType)
 			media.Bytes = resource.Size
 			media.Width = resource.Width

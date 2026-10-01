@@ -272,6 +272,9 @@ func runSeedanceVideosTask(ctx context.Context, input canvasGenerationInput, pol
 	id := resumedProviderRequestID(ctx)
 	var created map[string]interface{}
 	if id == "" {
+		if err := prepareBeefAPISeedanceReferences(ctx, input.Config, &input, nil); err != nil {
+			return nil, err
+		}
 		var body interface{}
 		var err error
 		if isBeefAPIVideoConfig(input.Config) {
@@ -281,6 +284,15 @@ func runSeedanceVideosTask(ctx context.Context, input canvasGenerationInput, pol
 		}
 		if err != nil {
 			return nil, err
+		}
+		if isBeefAPIVideoConfig(input.Config) {
+			encoded, marshalErr := json.Marshal(body)
+			if marshalErr != nil {
+				return nil, fmt.Errorf("序列化上游请求失败：%w", marshalErr)
+			}
+			if int64(len(encoded)) > videoJSONRequestLimitBytes {
+				return nil, errVideoJSONRequestTooLarge
+			}
 		}
 		post := postJSON
 		if isBeefAPIVideoConfig(input.Config) {

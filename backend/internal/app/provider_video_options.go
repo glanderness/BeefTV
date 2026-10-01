@@ -21,7 +21,16 @@ func isSeedanceVideoConfig(config providerConfig) bool {
 }
 
 func isBeefAPIVideoConfig(config providerConfig) bool {
+	if testBase := strings.TrimSpace(beefAPIVideoBaseURLForTest); testBase != "" {
+		got := strings.TrimRight(strings.TrimSpace(config.BaseURL), "/")
+		want := strings.TrimRight(testBase, "/")
+		return got == want || strings.HasPrefix(got, want+"/")
+	}
 	return providerpreset.IsBeefAPIEndpoint(config.BaseURL)
+}
+
+func isBeefAPISeedancePreuploadConfig(config providerConfig) bool {
+	return isBeefAPIVideoConfig(config) && isSeedanceVideoConfig(config)
 }
 
 func isGrokVideoConfig(config providerConfig) bool {

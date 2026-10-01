@@ -406,8 +406,8 @@ func protocolRequestBody(ctx context.Context, config providerConfig, spec protoc
 		}
 		// Ark documents a 64 MiB JSON request limit. Measure the actual wire
 		// representation, including base64; URL resource sizes are irrelevant.
-		if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(config.InterfaceType)) && len(data) > 64*1024*1024 {
-			return nil, "", errors.New("video request body exceeds the 64 MiB request limit; use public media URLs instead of inline base64")
+		if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(config.InterfaceType)) && int64(len(data)) > videoJSONRequestLimitBytes {
+			return nil, "", errVideoJSONRequestTooLarge
 		}
 		return bytes.NewReader(data), "application/json", nil
 	case "application/x-www-form-urlencoded":

@@ -231,14 +231,21 @@ func TestBeefAPILocalVideoReferenceHydratesInlineForFlatRequest(t *testing.T) {
 	if err := svc.hydrateGenerationMedia("user-1", &input, providerMediaHydrationPolicyFor(context.Background(), input)); err != nil {
 		t.Fatalf("hydrateGenerationMedia() error = %v", err)
 	}
+	if input.ReferenceImages[0].DataURL != "" || input.ReferenceImages[0].StorageKey != "resource:beefapi-local-reference" {
+		t.Fatalf("keepLocal inlined local Seedance media: %#v", input.ReferenceImages[0])
+	}
+	if input.ReferenceImages[0].MimeType != "image/png" {
+		t.Fatalf("resource mime lost: %#v", input.ReferenceImages[0])
+	}
+	input.ReferenceImages[0].URL = "https://example.com/reference.png"
 	body, err := beefAPIVideoRequestBody(input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	content := body["content"].([]map[string]interface{})
 	image, _ := content[0]["image_url"].(map[string]interface{})
-	if !strings.HasPrefix(fmt.Sprint(image["url"]), "data:image/png;base64,") {
-		t.Fatalf("image = %#v, want inline image data URL", image)
+	if fmt.Sprint(image["url"]) != "https://example.com/reference.png" {
+		t.Fatalf("image = %#v, want URL-only reference", image)
 	}
 	if content[0]["role"] != "first_frame" || body["metadata"].(map[string]interface{})["ratio"] != "adaptive" {
 		t.Fatal("hydration lost frame constraints")
