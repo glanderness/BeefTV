@@ -33,6 +33,10 @@ const (
 	LocalStorageFailedReason        kernel.ErrorReason = "local_storage_failed"
 )
 
+func unavailable() error {
+	return kernel.NewAppError(kernel.CodeInternal, "任务服务不可用")
+}
+
 func localStorageFailed(cause error) error {
 	return &kernel.AppError{
 		Status:  kernel.CodeInternal,

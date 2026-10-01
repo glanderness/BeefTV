@@ -20,8 +20,10 @@ type Backend interface {
 //
 // New(backend) is the bootstrap facade: CreateTask forwards to the desktop
 // kernel, which then re-enters the real domain through app.CreateLocalTask.
-// NewService is the domain constructor. Keeping New is a temporary root-cut
-// compatibility shim; bootstrap still does not compose the domain directly.
+// NewService is the domain constructor; it does not require every port.
+// Operations fail closed when a collaborator needed on that path is missing.
+// Keeping New is a temporary root-cut compatibility shim; bootstrap still
+// does not compose the domain directly.
 type Service struct {
 	backend Backend
 	store   Store
@@ -88,26 +90,29 @@ func (s *Service) now() time.Time {
 	return time.Now()
 }
 
-func presentTask(present Presenter, task model.Task) *model.Task {
-	if present != nil {
-		return present.Task(task)
+func presentTask(present Presenter, task model.Task) (*model.Task, error) {
+	if present == nil {
+		return nil, unavailable()
 	}
-	copied := task
-	return &copied
+	out := present.Task(task)
+	if out == nil {
+		return nil, unavailable()
+	}
+	return out, nil
 }
 
-func presentSummaries(present Presenter, tasks []model.Task) []Summary {
-	if present != nil {
-		return present.Summaries(tasks)
+func presentSummaries(present Presenter, tasks []model.Task) ([]Summary, error) {
+	if present == nil {
+		return nil, unavailable()
 	}
-	return nil
+	return present.Summaries(tasks), nil
 }
 
-func presentLogs(present Presenter, logs []model.TaskLog) []model.TaskLog {
-	if present != nil {
-		return present.Logs(logs)
+func presentLogs(present Presenter, logs []model.TaskLog) ([]model.TaskLog, error) {
+	if present == nil {
+		return nil, unavailable()
 	}
-	return logs
+	return present.Logs(logs), nil
 }
 
 func (s *Service) log(userID, taskID, level, message, payload string) {

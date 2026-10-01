@@ -135,8 +135,19 @@ type Activity interface {
 	Record(userID, kind string, n int)
 }
 
-// Dependencies are the explicit collaborators of the task domain. Missing
-// required ports fail closed on the path that needs them.
+// Dependencies are the explicit collaborators of the task domain.
+// NewService does not require every port so reads can omit provider-side
+// collaborators. Operations fail closed when a port needed on that path is
+// missing:
+//
+//	admit persist: Store, Catalog, Secrets, Media, Projects, Policy, Runtime, TextReplay, Persist, Present
+//	admit PrepareOnly: Catalog, Secrets, Media, Projects, Policy, Runtime, TextReplay
+//	retry: Store, Runtime, Images, Failures, Secrets, Catalog, Policy, Projects, Present
+//	cancel: Store, Runtime, Present; Provider and TextReplay are optional
+//	reads: Store, Present
+//
+// Logs and Activity are optional. Provider cancel is best-effort after the
+// local cancel has already been committed.
 type Dependencies struct {
 	Catalog    Catalog
 	Secrets    Secrets

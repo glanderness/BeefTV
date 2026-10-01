@@ -158,13 +158,10 @@ func (s *Service) validateRetryType(userID, taskType string, input map[string]an
 	if parent.Type != taskType {
 		return kernel.BadAuthRequest(fmt.Sprintf("重试任务类型不一致：原任务为 %s，新任务为 %s", parent.Type, taskType))
 	}
-	if s.deps.Images != nil {
-		return s.deps.Images.ValidateRetry(parent)
+	if s.deps.Images == nil {
+		return unavailable()
 	}
-	if parent.Type == "canvas_image" {
-		return kernel.NewAppError(kernel.CodeInternal, "任务服务不可用")
-	}
-	return nil
+	return s.deps.Images.ValidateRetry(parent)
 }
 
 func admitExisting(existing model.Task, req CreateRequest, present Presenter) (*model.Task, error) {
@@ -175,5 +172,5 @@ func admitExisting(existing model.Task, req CreateRequest, present Presenter) (*
 	if existing.ClientOperationHash == "" || existing.ClientOperationHash != fingerprint {
 		return nil, kernel.NewAppError(kernel.CodeConflict, ClientOperationConflictMessage)
 	}
-	return presentTask(present, existing), nil
+	return presentTask(present, existing)
 }
