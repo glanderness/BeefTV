@@ -246,3 +246,13 @@
 - 结构审查 `20261002-060445-review-cf4377b6` 给出 REPAIR。Lead 核对了实际 desktop worker/handler 调用：生成主编排、图片恢复的全局服务表、剪辑/深度专用准入、模型/插件目录和首阶段媒体入库仍有 app.Service 业务体。不能据此前目录拆分声明完整重构。
 - 固定 `890b224` 再拆四个独立 Grok 工作树：`20261002-062025-delegate-31b5a890` 生成主编排/图片恢复/退休 Agent 空钩子；`20261002-062025-delegate-80ec02ac` 专用任务领域准入；`20261002-062025-delegate-5cc8bf40` 模型/插件目录；`20261002-062025-delegate-418c3026` 媒体首阶段入库。彼此禁止改对方业务体；Lead 合并共享 composition hunks。
 - Lead 将 generation/plugins/modelcatalog/operations/asset/canvas/creation/taskruntime/taskdelivery/taskbinding/agentops/assistantruntime/assistantturns/playback/depthcapture/transcription/workspace/provider-workflow 加入真正 go list -deps 防倒置测试，18 个领域通过。该证据只证明依赖方向，不代替业务迁移。
+
+### 集成复核：保存回执与功能保留
+
+- `c0ff9f4` 为首次画布 PUT 检查返回 project 的身份；空回执不得清掉 revision 0 草稿。专项 52 pass / 294 expect，typecheck 通过。
+- `2b0bc92` 等待并发画板写入全部结束后才清理失败导入，避免清理后再次落盘；画板必须读回完整快照，canonical 预览与生成图必须有资源身份。专项 17 pass / 89 expect；真实隔离 Go/SQLite 重启验证 2 pass / 54 expect；typecheck 通过。
+- 素材读取 `ae5cdce` 已完成 SQLite 项目来源聚合、统一筛选和跨页草稿总量。Lead 仍未接受其功能回退：生成历史仅首 120 条、清空回收站变当前页删除。`20261002-063010-continue-e6ddff5f` 保留完整原功能并补 canonical 分页、全部类别和草稿计数。
+- 导演台 `3f9155a` 删除生产 epoch 复位接口，桌面上传失败保留 pendingRemoteUpload，AI 全景恢复使用捕获 epoch。Lead 继续追踪本地缓存经 ensureCanvasNodeAsset 被误认已保存的路径，`20261002-063221-continue-c2843ecc` 补实际持久草稿与成功回执边界，尚未集成。
+- 画板前端 `f3af80a` 的文件夹大草稿仍使用 localStorage，已退回 `20261002-062315-continue-f4fdb6ec` 改为 scoped localforage，并保留已删除远端对象的可恢复草稿。
+- 上传预留在 FAILED 重试 claim 后、重新预留前存在崩溃窗口；`20261002-062418-continue-16631d14` 用真实 SQLite 重启复现并修补。此前结算专项通过不覆盖该窗口。
+- 四个结构归属 worker 仍在实施；未冻结最终候选、未新增付费生成、未 push/发布、未替换正式应用。
