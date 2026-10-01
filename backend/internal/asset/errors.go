@@ -14,7 +14,7 @@ func UploadInProgress() error {
 }
 
 func UploadQuotaAttributionUncertain() error {
-	return kernel.NewAppError(http.StatusConflict, "未完成的上传无法确认今日用量，已停止自动恢复。可删除该未完成素材后重新上传；已计入的用量不会退回。")
+	return kernel.NewAppError(http.StatusConflict, "旧上传记录无法确认用量，已暂停自动恢复。已有数据和用量记录已保留。")
 }
 
 func UploadConflict() error {

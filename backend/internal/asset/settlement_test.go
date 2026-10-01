@@ -759,7 +759,7 @@ func TestUnattributedLegacyPendingDoesNotReserve(t *testing.T) {
 		t.Fatal("unattributed leftover called restore")
 		return RecoveredArtifact{}, nil
 	})
-	if err == nil || !strings.Contains(err.Error(), "无法确认今日用量") {
+	if err == nil || !strings.Contains(err.Error(), "无法确认用量") {
 		t.Fatalf("unattributed recover = %#v err=%v", got, err)
 	}
 	if got == nil || got.Status != model.ResourceStatusPending {
@@ -798,7 +798,7 @@ func TestUnattributedFailedSaveRetryAndRestartKeepMarker(t *testing.T) {
 	}
 
 	got, err := svc.RetryOwned("user-1", failed.ID, "image", "image/png", 7, bytes.NewReader([]byte("payload")))
-	if err == nil || !strings.Contains(err.Error(), "无法确认今日用量") {
+	if err == nil || !strings.Contains(err.Error(), "无法确认用量") {
 		t.Fatalf("unattributed retry = %#v err=%v", got, err)
 	}
 	row, err := repo.UploadReservation("user-1", *uploadKey)
@@ -835,7 +835,7 @@ func TestUnattributedFailedSaveRetryAndRestartKeepMarker(t *testing.T) {
 			t.Fatalf("restart %d daily=%d err=%v", i, usage, usageErr)
 		}
 		got, err = svc.RetryOwned("user-1", failed.ID, "image", "image/png", 7, bytes.NewReader([]byte("payload")))
-		if err == nil || !strings.Contains(err.Error(), "无法确认今日用量") {
+		if err == nil || !strings.Contains(err.Error(), "无法确认用量") {
 			t.Fatalf("restart %d retry = %#v err=%v", i, got, err)
 		}
 	}

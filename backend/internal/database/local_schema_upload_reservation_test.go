@@ -62,7 +62,7 @@ func TestMixedUnpaidReadyAndPaidPendingEqualDailyStayUnattributed(t *testing.T) 
 		return localasset.RecoveredArtifact{}, nil
 	}
 	got, err := svc.RecoverOwned("user-1", identity, restore)
-	if err == nil || !strings.Contains(err.Error(), "无法确认今日用量") {
+	if err == nil || !strings.Contains(err.Error(), "无法确认用量") {
 		t.Fatalf("mixed recover = %#v err=%v", got, err)
 	}
 	if got == nil || got.Status != model.ResourceStatusPending {
@@ -73,7 +73,7 @@ func TestMixedUnpaidReadyAndPaidPendingEqualDailyStayUnattributed(t *testing.T) 
 	for i := 0; i < 2; i++ {
 		svc = restartMigratedAssetService(t, repo, dataDir)
 		got, err = svc.RecoverOwned("user-1", identity, restore)
-		if err == nil || !strings.Contains(err.Error(), "无法确认今日用量") {
+		if err == nil || !strings.Contains(err.Error(), "无法确认用量") {
 			t.Fatalf("restart %d recover = %#v err=%v", i, got, err)
 		}
 		assertDailyBytes(t, repo.DB(), "user-1", day, size)
@@ -154,13 +154,13 @@ func TestFailedPreRefundCrashStaysUnattributedAcrossRestarts(t *testing.T) {
 		return localasset.RecoveredArtifact{}, nil
 	}
 	got, err := svc.RecoverOwned("user-1", identity, restore)
-	if err == nil || !strings.Contains(err.Error(), "无法确认今日用量") {
+	if err == nil || !strings.Contains(err.Error(), "无法确认用量") {
 		t.Fatalf("failed recover = %#v err=%v", got, err)
 	}
 	for i := 0; i < 2; i++ {
 		svc = restartMigratedAssetService(t, repo, dataDir)
 		got, err = svc.RecoverOwned("user-1", identity, restore)
-		if err == nil || !strings.Contains(err.Error(), "无法确认今日用量") {
+		if err == nil || !strings.Contains(err.Error(), "无法确认用量") {
 			t.Fatalf("failed restart %d = %#v err=%v", i, got, err)
 		}
 		assertDailyBytes(t, repo.DB(), "user-1", day, size)
