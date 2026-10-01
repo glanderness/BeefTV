@@ -2,9 +2,12 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 
@@ -193,6 +196,110 @@ func TestResolveTaskModelSelectionStillRequiresLogicalModelWithoutExplicitSystem
 	}, "", "canvas_video", "", true)
 	if err == nil || !strings.Contains(err.Error(), "logicalModelId") {
 		t.Fatalf("resolveTaskModelSelection() error = %v, want logicalModelId validation", err)
+	}
+	var modelErr *ModelError
+	if !errors.As(err, &modelErr) || modelErr.ErrorCode != ErrCodeInvalidModelSelection {
+		t.Fatalf("machineReason drifted: %#v", err)
+	}
+	if string(modelErr.Reason) != string(ErrCodeInvalidModelSelection) {
+		t.Fatalf("Reason = %q, want %q", modelErr.Reason, ErrCodeInvalidModelSelection)
+	}
+}
+
+func TestCreateTaskPersistsAuthoritativeSystemChannelSelection(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "admit.db")+"?_journal_mode=WAL&_busy_timeout=5000"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(database.LocalModels()...); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewLocal(repository.New(db), t.TempDir())
+	t.Cleanup(func() { _ = svc.Close() })
+
+	profile := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceGrokImage), "grok-image")
+	capabilityJSON, err := json.Marshal(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel := model.ModelChannel{ID: "channel-admit", Scope: model.ChannelScopeSystem, Enabled: true, Name: "System Channel", APIFormat: "legacy"}
+	channelModel := model.ChannelModel{
+		ID: "cm-admit", ChannelID: channel.ID, ModelKey: "image-model", ProviderModelKey: "provider-default",
+		Capability: "image", Protocol: model.ChannelInterfaceGrokImage, Enabled: true, CapabilityConfigJSON: string(capabilityJSON),
+	}
+	if err := db.Create(&channel).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&channelModel).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, tier := range []model.ChannelModelVariant{
+		newSelectionVariant("tier-1k", `{"operation":"text_to_image","quality":"1k"}`, "provider-image-1k", "fixed_request"),
+		newSelectionVariant("tier-2k", `{"operation":"text_to_image","quality":"2k"}`, "provider-image-2k", "fixed_request"),
+	} {
+		tier.ChannelModelID = channelModel.ID
+		if err := db.Create(&tier).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	task, err := svc.CreateTask("user", CreateTaskRequest{
+		Type:   "canvas_image",
+		Prompt: "a cat",
+		Input: map[string]any{
+			"mode": "image",
+			"config": map[string]any{
+				"channelId":        channel.ID,
+				"model":            channelModel.ModelKey,
+				"quality":          "2k",
+				"variantId":        "client-tier",
+				"providerModelKey": "client-provider-model",
+				"interfaceType":    "runninghub-workflow-image",
+				"apiFormat":        "client-format",
+				"baseUrl":          "https://attacker.invalid/v1",
+				"apiKey":           "client-api-key",
+				"secretKey":        "client-secret",
+				"headers":          []any{map[string]any{"name": "Authorization", "value": "client-token"}},
+			},
+			"capabilityOptions": map[string]any{"quality": "1k", "size": "1:1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	stored, err := repository.New(db).Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := svc.decryptTaskInputJSON(stored.InputJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted map[string]any
+	if err := json.Unmarshal([]byte(decoded), &persisted); err != nil {
+		t.Fatal(err)
+	}
+	config, _ := persisted["config"].(map[string]any)
+	if config == nil {
+		t.Fatalf("persisted config missing: %#v", persisted)
+	}
+	for _, forbidden := range []string{"baseUrl", "apiKey", "secretKey", "headers"} {
+		if _, exists := config[forbidden]; exists {
+			t.Fatalf("persisted config[%q] = %#v, want stripped", forbidden, config[forbidden])
+		}
+	}
+	if config["variantId"] != "tier-1k" {
+		t.Fatalf("persisted variantId = %#v, want tier-1k", config["variantId"])
+	}
+	if config["providerModelKey"] != "provider-image-1k" {
+		t.Fatalf("persisted providerModelKey = %#v, want provider-image-1k", config["providerModelKey"])
+	}
+	if config["interfaceType"] != string(model.ChannelInterfaceGrokImage) {
+		t.Fatalf("persisted interfaceType = %#v, want server protocol", config["interfaceType"])
+	}
+	options, _ := persisted["capabilityOptions"].(map[string]any)
+	if options["quality"] != "1k" || options["size"] != "1:1" {
+		t.Fatalf("persisted capabilityOptions = %#v", options)
 	}
 }
 

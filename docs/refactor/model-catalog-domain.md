@@ -21,7 +21,7 @@
 - 前台产品规格覆盖校验、渠道规格投影、默认参数
 - 助手渠道/协议选择（`assistant.Provider` 合同不变；BeefAPI 托管密钥由 app 注入）
 
-`app` 只保留：HTTP/仓储/功能开关、工作流 provider 分支、上游目录 HTTP 与插件扩展、BeefAPI 视频 overlay、`TestAdminChannelModel` 真实探测、以及 attempt 生命周期里对 provider 拥有的 image/direct 端口调用。
+`app` 只保留：HTTP/仓储/功能开关、工作流 plugin 授权桥、上游目录 HTTP 与插件扩展、BeefAPI 视频 overlay、`TestAdminChannelModel` 真实探测、以及 attempt 生命周期里对 provider 拥有的 image/direct 端口调用。
 
 ## 调用图（现状）
 
@@ -31,6 +31,7 @@ HTTP 目录
     FeatureFrontendModels
       开：PublicLogicalModels（Router 选路目录）
       关：repo.SystemChannels/ChannelModels -> modelcatalog.PublicSystemChannelCatalog
+    互斥读模型：modelcatalog.NewCatalogResponse（始终 []，frontend/system 互斥）
 
 渠道保存
   RequireAdmin -> NormalizeChannelModelContract(lookup)
@@ -40,9 +41,11 @@ HTTP 目录
                -> repo.SaveChannelModelWithVariants
 
 任务准入
-  Service.ValidateTaskCapability
-    工作流接口：app validateWorkflowProvider*
-    其余：modelcatalog.ValidateConfiguredTask + ChannelModelByKey
+  task.Service.admit -> Catalog.Select
+    工作流：app RequireWorkflowPluginForUser（cross-domain 桥）
+    其余：FeatureFrontendModels + modelcatalog.SelectTaskModel
+           repo.SystemChannel / ChannelModelByKey / Router.ResolveLogicalModel
+    能力：工作流 app validateWorkflowProvider*；其余 ValidateConfiguredTask
 
 助手
   Service.assistantConfig（读本地快照）
@@ -51,7 +54,7 @@ HTTP 目录
   -> assistant.Provider / UnavailableError
 ```
 
-生成执行仍从 `task_creation` / `provider.go` 进入；能力校验与 MatchCapability 已指向领域实现。`generation.ModelCapabilityConfig` 仍是生成包内的重复类型，尚未切换。
+生成执行仍从 `provider.go` 进入。能力校验、MatchCapability 与系统渠道 admission 已指向领域实现。`generation.ModelCapabilityConfig` 仍是生成包内的重复类型，尚未切换。
 
 ## 切片 2 实际算法已搬家
 
@@ -63,15 +66,28 @@ HTTP 目录
 - 本地桌面快照解析与 generation-mode 过滤（直接 `canvas/capability`）
 - attempt 决策 / finish / switch / retry 准备；app 仍调用 `createDirectTaskAttempt`、`retryRejectedImageAttempt`、`ImageSubmission`
 
+## 切片 3 实际算法已搬家（任务准入）
+
+- `SelectTaskModel`：前台 logical 路由、系统渠道重建、自定义渠道放行、catalog mismatch
+- `ResolveSystemChannelModelSelection`：剥离客户端凭证/`interfaceType`/`variantId`/`providerModelKey`，能力默认值、`capabilityOptions` 覆盖、MatchCapability、变体与上游键重写、`ChannelAPIFormatForProtocol`
+- 分类：`TaskInputUsesWorkflowProvider`（`channelId` 在场则不能靠客户端 `interfaceType` 绕过）、`TaskInputUsesCustomChannel`（含 managed BeefAPI）、`TaskInputUsesSystemChannel`
+- `HasExecutableVideoConfig`（执行分类器；app 保留同名包装）
+- `ModelError` 及 `invalid_model_selection` / `model_catalog_mismatch` / `model_capability_not_supported`；app 用类型别名，HTTP `errors.As(*app.ModelError)` 与 `Reason` 不漂移
+- 公开目录互斥读模型 `NewCatalogResponse`
+
+`app` 任务 adapter 只传 typed input、repo lookup、`FeatureFrontendModels`、工作流 plugin 授权桥。禁止把 Service 旧算法再挂成 callback。
+
 ## 仍留在 app 的算法（诚实边界）
 
+- 工作流 plugin 授权：`RequireWorkflowPluginForUser` / `validateWorkflowProvider*`
 - `TestAdminChannelModel` 真实协议探测（走 `runTextTask`/`runImageTask`/`runVideoTask`/`runAudioTask`）
 - `beginTaskRouteAttempt` 编排：读 attempts、查 ImageSubmission、调用 provider 拥有的 direct/image 端口、写 `UpdateTaskProviderState`
 - `FetchChannelModelCatalog` 出站：`apiURL` / Gemini `/v1beta` 拼接、`doBinary`、`providerHTTPError` → 502 文案；`extendChannelModelCatalog` 插件；`beefapi.NormalizeCatalogVideoCapability`
 - `resolveChannelModelsRequest` 托管凭证（BeefAPI）
 - 渠道密钥加解密、审计日志、仓储事务、`LogAPICall`/`APICallLogs`
 - `local_model_config.go` 桌面 `workspace.ProviderConfig` IO
-- `provider*.go` 出站、媒体水合、image/direct attempt 创建（provider worker 拥有）
+- `provider*.go` 出站、媒体水合、image/direct attempt 创建（provider worker 拥有）；`channelAPIFormatForProtocol` 出站副本仍在 `provider.go`，admission 走领域同名函数
+- `service.go` / `bootstrap/runtime.go` 未改。生产接线已在 `taskCatalogAdapter.Select`：Catalog.Select → `modelcatalog.SelectTaskModel`
 
 ## 剩余 provider / transport 边界
 
@@ -95,6 +111,15 @@ go test ./internal/app -count=1 -timeout 180s \
 切片 1 实测：`go test ./internal/modelcatalog -count=1` 通过；构建协议包后 105 个既有 model/capability/channel/assistant 测试通过。
 
 切片 2 实测：`go test ./internal/modelcatalog -count=1` 通过；构建协议包后 app 路由风暴/选路/渠道 CRUD/导入合并/级联重命名/能力/图片永久错误不换路 通过。`go list -deps ./internal/modelcatalog` 不含 `internal/app`。零付费上游调用，无真实 App/DB/GUI。
+
+切片 3 准入实测：
+
+```bash
+cd backend
+go test ./internal/modelcatalog -count=1
+go test ./internal/app -count=1 -timeout 180s \
+  -run 'TestTaskInputUsesWorkflowProvider|TestResolveTaskModelSelection|TestResolveSystemChannelModelSelection|TestImageResolutionPricingOnSystemChannel|TestRenamedUpstreamKeyReachesSystemChannelRequests|TestCreateTaskDoesNotClassifyCustomChannelAsMissingSystemModel|TestCreateTaskPersistsAuthoritativeSystemChannelSelection|TestCreateTaskReplaysSameClientOperation|TestCreateTaskRejectsCrossTypeRetry'
+```
 
 ## 未做
 

@@ -8,6 +8,7 @@ import (
 
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/modelcatalog"
 	localtask "infinite-canvas/backend/internal/task"
 )
 
@@ -66,7 +67,7 @@ type taskCatalogAdapter struct{ s *Service }
 
 func (a taskCatalogAdapter) Select(userID string, req localtask.SelectRequest) (localtask.SelectResult, error) {
 	input := req.Input
-	if taskInputUsesWorkflowProvider(input) {
+	if modelcatalog.TaskInputUsesWorkflowProvider(input) {
 		config, _ := input["config"].(map[string]any)
 		if err := a.s.RequireWorkflowPluginForUser(userID, strings.TrimSpace(fmt.Sprint(config["interfaceType"]))); err != nil {
 			return localtask.SelectResult{}, err
@@ -77,12 +78,19 @@ func (a taskCatalogAdapter) Select(userID string, req localtask.SelectRequest) (
 	if err != nil {
 		return localtask.SelectResult{}, err
 	}
-	routed, normalized, err := a.s.resolveTaskModelSelection(input, req.LogicalModelID, req.Type, req.Operation, frontendEnabled)
+	selected, err := modelcatalog.SelectTaskModel(modelcatalog.TaskSelectRequest{
+		Input:           input,
+		LogicalModelID:  req.LogicalModelID,
+		Type:            req.Type,
+		Operation:       req.Operation,
+		FrontendEnabled: frontendEnabled,
+	}, a.s.taskSelectLookup())
 	if err != nil {
 		return localtask.SelectResult{}, err
 	}
-	result := localtask.SelectResult{Input: normalized}
-	if routed != nil {
+	result := localtask.SelectResult{Input: selected.Input}
+	if selected.Routed != nil {
+		routed := selected.Routed
 		result.Binding = &localtask.RouteBinding{
 			LogicalModelID:         routed.LogicalModel.ID,
 			LogicalModelRevisionID: routed.Revision.ID,
@@ -108,7 +116,7 @@ func (a taskCatalogAdapter) ValidateCapability(input map[string]any) error {
 }
 
 func (taskCatalogAdapter) HasExecutableVideoConfig(input map[string]any) bool {
-	return hasExecutableProviderVideoConfig(input)
+	return modelcatalog.HasExecutableVideoConfig(input)
 }
 
 type taskSecretsAdapter struct{ s *Service }

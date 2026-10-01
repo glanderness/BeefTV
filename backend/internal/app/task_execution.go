@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/modelcatalog"
 )
 
 // processTask 是任务执行阶段唯一的类型分派入口。
@@ -53,20 +54,5 @@ func canRunProviderTask(task model.Task) bool {
 }
 
 func hasExecutableProviderVideoConfig(input map[string]any) bool {
-	mode, _ := input["mode"].(string)
-	config, ok := input["config"].(map[string]any)
-	if mode != "video" || !ok {
-		return false
-	}
-	interfaceType := stringValue(config["interfaceType"])
-	if isRunningHubInterface(interfaceType) {
-		if stringValue(config["workflowId"]) == "" && stringValue(config["webappId"]) == "" && stringValue(config["model"]) == "" {
-			return false
-		}
-		return stringValue(config["baseUrl"]) != "" && stringValue(config["apiKey"]) != ""
-	}
-	if stringValue(config["model"]) == "" {
-		return false
-	}
-	return stringValue(config["channelId"]) != "" || (stringValue(config["baseUrl"]) != "" && stringValue(config["apiKey"]) != "")
+	return modelcatalog.HasExecutableVideoConfig(input)
 }

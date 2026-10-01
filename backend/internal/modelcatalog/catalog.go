@@ -152,3 +152,43 @@ func SystemChannelIDFromBaseURL(baseURL string) string {
 func ProviderChannelModelKey(channelModelKey, modelName string) string {
 	return strings.TrimPrefix(strings.TrimSpace(kernel.FirstNonEmpty(channelModelKey, modelName)), "models/")
 }
+
+// CatalogSource 决定 CatalogResponse 中哪一个集合具有语义。
+// frontend 与 system 的数据形状互斥，调用方不能把缺失集合解释成空目录。
+type CatalogSource string
+
+const (
+	CatalogSourceFrontend CatalogSource = "frontend"
+	CatalogSourceSystem   CatalogSource = "system"
+)
+
+// CatalogResponse 是创作端模型选择的统一读模型。
+// Source=frontend 时读取 Models；Source=system 时读取 Channels。
+// 两个集合都始终序列化为数组：空目录必须发 []，缺字段会被前端判成畸形响应。
+type CatalogResponse struct {
+	Source   CatalogSource          `json:"source"`
+	Models   []PublicLogicalModel   `json:"models"`
+	Channels []PublicChannelCatalog `json:"channels"`
+}
+
+// NewCatalogResponse 固定互斥数据形状：空目录发 []，未选中的集合不会带上另一侧的数据。
+func NewCatalogResponse(source CatalogSource, models []PublicLogicalModel, channels []PublicChannelCatalog) CatalogResponse {
+	if models == nil {
+		models = []PublicLogicalModel{}
+	}
+	if channels == nil {
+		channels = []PublicChannelCatalog{}
+	}
+	response := CatalogResponse{
+		Source:   source,
+		Models:   []PublicLogicalModel{},
+		Channels: []PublicChannelCatalog{},
+	}
+	switch source {
+	case CatalogSourceFrontend:
+		response.Models = models
+	case CatalogSourceSystem:
+		response.Channels = channels
+	}
+	return response
+}
