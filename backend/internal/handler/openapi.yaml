@@ -445,6 +445,29 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+  /timeline/render-plan:
+    post:
+      tags: [tasks]
+      summary: 编译时间线语义渲染计划
+      description: |
+        只读规划：根据时间线快照与不透明源元数据返回版本化语义计划。
+        不排队、不落盘、不计费，不接受 ffmpeg 参数或本地路径。
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+  /timeline/renders:
+    post:
+      tags: [tasks]
+      summary: 创建本机时间线渲染任务
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
   /tasks:
     post:
       tags: [tasks]

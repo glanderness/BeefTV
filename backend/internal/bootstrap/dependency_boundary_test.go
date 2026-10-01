@@ -21,15 +21,24 @@ func TestDesktopDependencyGraphDoesNotContainServiceAliasPackage(t *testing.T) {
 }
 
 func TestTaskDomainDoesNotDependOnApplicationService(t *testing.T) {
-	command := exec.Command("go", "list", "-deps", "./internal/task")
+	assertDomainDoesNotImportApp(t, "./internal/task")
+}
+
+func TestEditingDomainDoesNotDependOnApplicationService(t *testing.T) {
+	assertDomainDoesNotImportApp(t, "./internal/editing")
+}
+
+func assertDomainDoesNotImportApp(t *testing.T, pkg string) {
+	t.Helper()
+	command := exec.Command("go", "list", "-deps", pkg)
 	command.Dir = "../.."
 	output, err := command.Output()
 	if err != nil {
-		t.Fatalf("list task dependencies: %v", err)
+		t.Fatalf("list %s dependencies: %v", pkg, err)
 	}
 	for _, dependency := range strings.Fields(string(output)) {
 		if dependency == "infinite-canvas/backend/internal/app" {
-			t.Fatal("task domain still depends on the application service kernel")
+			t.Fatalf("%s still depends on the application service kernel", pkg)
 		}
 	}
 }

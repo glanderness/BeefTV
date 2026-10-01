@@ -5,11 +5,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, Loader2, PackageOpen, Server } from "lucide-react";
 
 import { useEditorHostContext, useEditorStoreContext } from "@/components/editor/editor-context";
-import { buildTimelineRenderPlan, getExportClips, type TimelineRenderSource } from "@/lib/timeline/timeline-to-ffmpeg";
+import { lowerCanonicalPlan, getVisibleMediaClips, type TimelineRenderPlan, type TimelineRenderSource } from "@/lib/timeline/timeline-to-ffmpeg";
 import { exportTimelineToMp4, type TimelineExportProgress } from "@/lib/timeline/timeline-export";
 import { resourceFileUrl } from "@/services/api/resources";
 import { waitForGenerationTask } from "@/services/api/task-center";
-import { createTimelineRenderTask, type TimelineRenderResult } from "@/services/api/timeline-tasks";
+import { compileTimelineRenderPlan, createTimelineRenderTask, type TimelineRenderResult } from "@/services/api/timeline-tasks";
 import type { TimelineProject } from "@/types/timeline";
 
 type ExportState = {
@@ -20,12 +20,11 @@ type ExportState = {
     result: TimelineRenderResult | null;
 };
 
-/** 从时间线 clip 收集渲染源（按 nodeId 关联；directMedia 提供本地媒体定位）。 */
+/** 从时间线 clip 收集渲染源（按 nodeId 关联；directMedia 提供本地媒体定位）。含静音音轨与图片。 */
 function collectRenderSources(project: TimelineProject): TimelineRenderSource[] {
     const seen = new Set<string>();
     const sources: TimelineRenderSource[] = [];
-    for (const clip of getExportClips(project)) {
-        if (clip.kind !== "video" && clip.kind !== "image" && clip.kind !== "audio") continue;
+    for (const clip of getVisibleMediaClips(project)) {
         const direct = clip.directMedia;
         if (!direct) continue;
         if (seen.has(clip.nodeId)) continue;
@@ -33,7 +32,7 @@ function collectRenderSources(project: TimelineProject): TimelineRenderSource[] 
         sources.push({
             nodeId: clip.nodeId,
             fileName: `input-${sources.length}.mp4`,
-            durationMs: clip.durationMs,
+            durationMs: clip.sourceDurationMs || clip.durationMs,
             storageKey: direct.storageKey,
             url: direct.url || direct.dataUrl || direct.content,
         });
@@ -50,10 +49,38 @@ export function EditorExport() {
     useEffect(() => () => localControllerRef.current?.abort(), []);
 
     const sources = useMemo(() => (project ? collectRenderSources(project) : []), [project]);
-    const { plan, planError } = useMemo(() => {
-        try { return { plan: project ? buildTimelineRenderPlan(project, sources) : null, planError: "" }; }
-        catch (error) { return { plan: null, planError: error instanceof Error ? error.message : "无法生成导出计划" }; }
+    const [preview, setPreview] = useState<{ plan: TimelineRenderPlan | null; planError: string; loading: boolean }>({
+        plan: null,
+        planError: "",
+        loading: false,
+    });
+    useEffect(() => {
+        if (!project) {
+            setPreview({ plan: null, planError: "", loading: false });
+            return;
+        }
+        const controller = new AbortController();
+        setPreview({ plan: null, planError: "", loading: true });
+        compileTimelineRenderPlan({
+            timeline: project,
+            sources: sources.map((source) => ({ id: source.nodeId, durationMs: source.durationMs })),
+        }, controller.signal)
+            .then((canonical) => {
+                if (controller.signal.aborted) return;
+                setPreview({ plan: lowerCanonicalPlan(canonical, sources), planError: "", loading: false });
+            })
+            .catch((error: unknown) => {
+                if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
+                setPreview({
+                    plan: null,
+                    planError: error instanceof Error ? error.message : "无法生成导出计划",
+                    loading: false,
+                });
+            });
+        return () => controller.abort();
     }, [project, sources]);
+    const plan = preview.plan;
+    const planError = preview.planError;
 
     // 主路径：提交后端渲染任务并轮询（服务端任务上限 60 分钟，前端多留余量）。
     const renderRemote = async () => {
@@ -152,7 +179,7 @@ export function EditorExport() {
                             )}
                         </ul>
                     ) : (
-                        <p className="mt-2 text-[11px] text-[var(--director-dock-fg)]/55">{planError || "时间线没有可渲染的视频片段。"}</p>
+                        <p className="mt-2 text-[11px] text-[var(--director-dock-fg)]/55">{planError || (preview.loading ? "正在生成渲染计划" : "时间线没有可渲染的媒体片段。")}</p>
                     )}
                 </div>
 

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chromium, type Browser, type Page } from "playwright";
 import { build } from "vite";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -28,8 +28,27 @@ beforeAll(async () => {
         resolve: { alias: { "@": resolve(import.meta.dir, "../src") } },
         build: { outDir: dist, emptyOutDir: true, rolldownOptions: { input: resolve(import.meta.dir, "fixtures/timeline-worker-harness.html") } },
     });
-    server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const goldenPlan = JSON.parse(readFileSync(resolve(import.meta.dir, "../../fixtures/editing/six-second-mix.plan.json"), "utf8"));
+    server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
         const path = new URL(request.url).pathname;
+        if (request.method === "POST" && path === "/api/timeline/render-plan") {
+            const body = await request.json().catch(() => ({})) as { timeline?: { clips?: { kind?: string; text?: string }[] }; options?: { width?: number; height?: number; fps?: number; burnSubtitles?: boolean } };
+            const plan = structuredClone(goldenPlan);
+            const sub = body.timeline?.clips?.find((clip) => clip.kind === "subtitle");
+            if (sub?.text && plan.subtitles?.[0]) {
+                plan.subtitles[0].text = sub.text;
+                plan.subtitleSrt = `1\n00:00:00,500 --> 00:00:05,500\n${sub.text}\n\n`;
+            }
+            if (body.options?.width) plan.output.width = body.options.width;
+            if (body.options?.height) plan.output.height = body.options.height;
+            if (body.options?.fps) plan.output.fps = body.options.fps;
+            if (body.options?.burnSubtitles === false) {
+                plan.output.burnSubtitles = false;
+                plan.subtitles = [];
+                plan.subtitleSrt = "";
+            }
+            return Response.json({ code: 0, data: plan, msg: "ok" });
+        }
         if (/^\/fixtures\/(?:v[012]\.mp4|voice\.wav|bgm\.wav|broken\.mp4)$/.test(path)) return new Response(Bun.file(join(dir, path.split("/").pop()!)));
         const file = path === "/" ? join(dist, "test/fixtures/timeline-worker-harness.html") : resolve(dist, "." + path);
         return file.startsWith(dist + sep) ? new Response(Bun.file(file)) : new Response("Not found", { status: 404 });

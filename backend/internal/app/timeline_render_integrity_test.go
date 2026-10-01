@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"os/exec"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"infinite-canvas/backend/internal/editing"
 )
 
 func TestRenderContracts(t *testing.T) {
@@ -29,19 +32,22 @@ func TestRenderContracts(t *testing.T) {
 	}
 	hidden := false
 	p := renderProject{DurationMs: 6000, Tracks: []renderTrack{{ID: "v"}, {ID: "a", Muted: true}, {ID: "s", Visible: &hidden}}, Clips: []renderClip{renderClipFixture("v", "video", "v", 0, 6000, "resource:v"), renderClipFixture("a", "audio", "a", 1000, 2000, "resource:a"), {ID: "s", Kind: "subtitle", TrackID: "s", DurationMs: 1000, Text: "隐藏"}}}
-	plan := buildRenderPlan(p)
+	plan, err := buildRenderPlan(p)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(plan.Audio) != 1 || !plan.Audio[0].Muted || plan.SubtitleSRT != "" {
 		t.Fatalf("bad plan: %+v", plan)
 	}
-	if args := buildRenderFFmpegArgs(plan, "x.mp4"); args != nil {
+	if args := buildRenderFFmpegArgs(*plan, nil, "x.mp4"); args != nil {
 		t.Fatal("missing source must fail")
 	}
 	p.Clips = append(p.Clips, renderClipFixture("overlap", "video", "v", 1000, 1000, "resource:v"))
-	if buildRenderPlan(p).Error == nil {
+	if _, overlapErr := buildRenderPlan(p); overlapErr == nil {
 		t.Fatal("overlap must fail explicitly")
 	}
-	missing := renderPlan{Segments: []renderSegment{{Kind: "video", Clip: renderClip{ID: "missing"}}}}
-	if _, cleanup, err := materializeRenderSources(context.Background(), nil, "", &missing); err == nil {
+	missing := editing.Plan{Segments: []editing.Segment{{Kind: "video", ClipID: "missing", SourceID: "missing"}}}
+	if _, _, cleanup, err := materializeRenderSources(context.Background(), nil, "", &missing); err == nil {
 		if cleanup != nil {
 			cleanup()
 		}
@@ -89,16 +95,22 @@ func TestRenderFFmpegSixSecondAudioAndChineseSubtitles(t *testing.T) {
 	bgm := renderClipFixture("bgm", "audio", "a", 0, 6000, "resource:bgm")
 	bgm.Volume = 0.2
 	project.Clips = append(project.Clips, voice, bgm, renderClip{ID: "sub", Kind: "subtitle", TrackID: "s", StartMs: 1000, DurationMs: 2000, Text: "中文成片验证"})
-	plan := buildRenderPlan(project)
-	for i := range plan.Segments {
-		plan.Segments[i].Source = &renderSource{Path: "source.mkv", HasAudio: true}
+	plan, err := buildRenderPlan(project)
+	if err != nil {
+		t.Fatal(err)
 	}
-	plan.Audio[0].Source = &renderSource{Path: "voice.wav", HasAudio: true}
-	plan.Audio[1].Source = &renderSource{Path: "bgm.wav", HasAudio: true}
+	files := map[string]string{"video": "source.mkv", "voice": "voice.wav", "bgm": "bgm.wav"}
+	if err := editing.ApplySourceFacts(plan, map[string]editing.SourceFacts{
+		"video": {HasVideo: true, HasAudio: true, DurationMs: 6000},
+		"voice": {HasAudio: true, DurationMs: 6000},
+		"bgm":   {HasAudio: true, DurationMs: 6000},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "render-subtitles.srt"), []byte(plan.SubtitleSRT), 0600); err != nil {
 		t.Fatal(err)
 	}
-	log := run(buildRenderFFmpegArgs(plan, "output.mp4")...)
+	log := run(buildRenderFFmpegArgs(*plan, files, "output.mp4")...)
 	if strings.Contains(string(log), "failed to find any fallback") {
 		t.Fatalf("missing Chinese font: %s", log)
 	}
@@ -141,9 +153,9 @@ func TestRenderFFmpegSixSecondAudioAndChineseSubtitles(t *testing.T) {
 	for i := range plan.Segments {
 		plan.Segments[i].Muted = true
 	}
-	plan.Audio[0].Clip.Volume = 0
+	plan.Audio[0].Volume = 0
 	plan.Audio[1].Muted = true
-	run(buildRenderFFmpegArgs(plan, "muted.mp4")...)
+	run(buildRenderFFmpegArgs(*plan, files, "muted.mp4")...)
 	mutedCmd := exec.CommandContext(ctx, ffmpeg, "-v", "error", "-i", filepath.Join(dir, "muted.mp4"), "-vn", "-ac", "1", "-ar", "44100", "-f", "f32le", "-")
 	mutedPCM, err := mutedCmd.Output()
 	if err != nil {
@@ -172,14 +184,14 @@ func TestRenderFFmpegSixSecondAudioAndChineseSubtitles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "broken.mp4"), []byte("not a video"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := probeHasAudioStream(ctx, filepath.Join(dir, "broken.mp4")); err == nil {
+	if _, err := probeMedia(ctx, filepath.Join(dir, "broken.mp4")); err == nil {
 		t.Fatal("corrupt input silently became mute")
 	}
 	// Subtitle errors must fail the actual command, not produce a successful silent fallback.
 	if err := os.Remove(filepath.Join(dir, "render-subtitles.srt")); err != nil {
 		t.Fatal(err)
 	}
-	cmd = exec.CommandContext(ctx, ffmpeg, buildRenderFFmpegArgs(plan, "failed.mp4")...)
+	cmd = exec.CommandContext(ctx, ffmpeg, buildRenderFFmpegArgs(*plan, files, "failed.mp4")...)
 	cmd.Dir = dir
 	if err := cmd.Run(); err == nil {
 		t.Fatal("missing subtitle accepted")
@@ -234,11 +246,15 @@ func TestRenderFFmpegShortVideoHoldsLastFrame(t *testing.T) {
 	for _, color := range []string{"red", "blue"} {
 		run("-v", "error", "-y", "-f", "lavfi", "-i", "color=c="+color+":s=320x180:r=30:d=1", "-c:v", "libx264", color+".mp4")
 	}
-	plan := renderPlan{Segments: []renderSegment{
-		{Kind: "video", DurationMs: 2000, Clip: renderClip{DurationMs: 2000, Volume: 1}, Source: &renderSource{Path: "red.mp4"}},
-		{Kind: "video", DurationMs: 1000, Clip: renderClip{DurationMs: 1000, Volume: 1}, Source: &renderSource{Path: "blue.mp4"}},
-	}}
-	run(buildRenderFFmpegArgs(plan, "output.mp4")...)
+	plan := editing.Plan{
+		Output:     editing.Output{Width: editing.DefaultWidth, Height: editing.DefaultHeight, FPS: editing.DefaultFPS, SampleRate: editing.DefaultSampleRate},
+		DurationMs: 3000,
+		Segments: []editing.Segment{
+			{Kind: "video", SourceID: "red", DurationMs: 2000, Volume: 1},
+			{Kind: "video", SourceID: "blue", DurationMs: 1000, Volume: 1},
+		},
+	}
+	run(buildRenderFFmpegArgs(plan, map[string]string{"red": "red.mp4", "blue": "blue.mp4"}, "output.mp4")...)
 	cmd := exec.CommandContext(ctx, ffmpeg, "-v", "error", "-i", filepath.Join(dir, "output.mp4"), "-an", "-vf", "scale=1:1", "-pix_fmt", "rgb24", "-f", "rawvideo", "-")
 	pixels, err := cmd.Output()
 	if err != nil {
@@ -256,4 +272,112 @@ func TestRenderFFmpegShortVideoHoldsLastFrame(t *testing.T) {
 			t.Fatalf("blue boundary shifted at frame %d", i)
 		}
 	}
+}
+
+func TestRenderFFmpegGapsSilentVideoAndFades(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg required")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	dir := t.TempDir()
+	run := func(args ...string) []byte {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, ffmpeg, args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("ffmpeg: %v: %s", err, out)
+		}
+		return out
+	}
+	run("-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=320x180:r=30:d=1", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:v", "libx264", "-c:a", "aac", "tone.mp4")
+	run("-v", "error", "-y", "-f", "lavfi", "-i", "color=c=green:s=320x180:r=30:d=1", "-an", "-c:v", "libx264", "silent.mp4")
+	run("-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=880:duration=2", "voice.wav")
+	tone := renderClipFixture("tone", "video", "v", 0, 1000, "resource:tone")
+	silent := renderClipFixture("silent", "video", "v", 2000, 1000, "resource:silent")
+	voice := renderClipFixture("voice", "audio", "a", 0, 1000, "resource:voice")
+	voice.FadeInMs = 800
+	project := renderProject{
+		DurationMs: 3000,
+		Tracks:     []renderTrack{{ID: "v"}, {ID: "a"}},
+		Clips:      []renderClip{tone, silent, voice},
+	}
+	plan, err := buildRenderPlan(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Segments) != 3 || plan.Segments[1].Kind != "gap" {
+		t.Fatalf("expected tone/gap/silent: %+v", plan.Segments)
+	}
+	files := map[string]string{"tone": "tone.mp4", "silent": "silent.mp4", "voice": "voice.wav"}
+	if err := editing.ApplySourceFacts(plan, map[string]editing.SourceFacts{
+		"tone":   {HasVideo: true, HasAudio: true, DurationMs: 1000},
+		"silent": {HasVideo: true, HasAudio: false, DurationMs: 1000},
+		"voice":  {HasAudio: true, DurationMs: 2000},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Segments[2].HasAudio {
+		t.Fatal("silent video kept a mapped audio stream")
+	}
+	args := buildRenderFFmpegArgs(*plan, files, "output.mp4")
+	if !strings.Contains(strings.Join(args, " "), "afade=t=in") {
+		t.Fatalf("fade missing: %s", args)
+	}
+	run(args...)
+	probe := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", filepath.Join(dir, "output.mp4"))
+	out, err := probe.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(parseDuration(t, string(out))-3) > 0.08 {
+		t.Fatalf("duration=%s", out)
+	}
+	pcmCmd := exec.CommandContext(ctx, ffmpeg, "-v", "error", "-i", filepath.Join(dir, "output.mp4"), "-vn", "-ac", "1", "-ar", "44100", "-f", "f32le", "-")
+	pcm, err := pcmCmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	amp := func(start float64) float64 {
+		var sum float64
+		n := 4000
+		offset := int(start * 44100)
+		for i := 0; i < n; i++ {
+			sum += math.Abs(float64(math.Float32frombits(binary.LittleEndian.Uint32(pcm[(offset+i)*4:]))))
+		}
+		return sum / float64(n)
+	}
+	earlyFade, lateFade, midGap, late := amp(0.02), amp(0.7), amp(1.2), amp(2.2)
+	t.Logf("amp fade0=%.5f fade1=%.5f gap=%.5f silent=%.5f", earlyFade, lateFade, midGap, late)
+	if earlyFade >= lateFade {
+		t.Fatal("audio fade-in did not increase over the first second")
+	}
+	if midGap > 0.002 {
+		t.Fatal("gap was not silent")
+	}
+	if late > 0.002 {
+		t.Fatal("silent video leaked source audio")
+	}
+	frame := exec.CommandContext(ctx, ffmpeg, "-v", "error", "-ss", "1.2", "-i", filepath.Join(dir, "output.mp4"), "-frames:v", "1", "-vf", "scale=1:1", "-pix_fmt", "rgb24", "-f", "rawvideo", "-")
+	pixel, err := frame.Output()
+	if err != nil || len(pixel) < 3 {
+		t.Fatalf("gap frame: %v %d", err, len(pixel))
+	}
+	if pixel[0] > 40 || pixel[1] > 40 || pixel[2] > 40 {
+		t.Fatalf("gap was not black: %v", pixel[:3])
+	}
+}
+
+func parseDuration(t *testing.T, raw string) float64 {
+	t.Helper()
+	var value float64
+	if _, err := fmt.Sscanf(strings.TrimSpace(raw), "%f", &value); err != nil {
+		t.Fatal(err)
+	}
+	return value
 }

@@ -3,18 +3,25 @@ package app
 import (
 	"strings"
 	"testing"
+
+	"infinite-canvas/backend/internal/editing"
 )
 
 func renderClipFixture(id string, kind string, trackID string, startMs int64, durationMs int64, storageKey string) renderClip {
 	clip := renderClip{ID: id, Kind: kind, TrackID: trackID, StartMs: startMs, DurationMs: durationMs, Volume: 1}
 	if storageKey != "" {
-		clip.DirectMedia = &struct {
-			ID         string `json:"id"`
-			Kind       string `json:"kind"`
-			StorageKey string `json:"storageKey"`
-		}{ID: "media-" + id, Kind: kind, StorageKey: storageKey}
+		clip.DirectMedia = &editing.DirectMedia{ID: "media-" + id, Kind: kind, StorageKey: storageKey}
 	}
 	return clip
+}
+
+func mustBuildRenderPlan(t *testing.T, project renderProject) *editing.Plan {
+	t.Helper()
+	plan, err := buildRenderPlan(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plan
 }
 
 func TestBuildRenderPlanExpandsGapAndSorts(t *testing.T) {
@@ -27,22 +34,21 @@ func TestBuildRenderPlanExpandsGapAndSorts(t *testing.T) {
 			renderClipFixture("clip-sub", "subtitle", "track-subtitle-1", 0, 1000, ""),
 		},
 	}
-	plan := buildRenderPlan(project)
-	if !plan.HasMedia {
+	plan := mustBuildRenderPlan(t, project)
+	if !plan.HasMedia() {
 		t.Fatal("HasMedia = false, want true")
 	}
-	// 前 0–3000ms 被 clip-a(0-2000) 覆盖后仍有 1000ms 空隙，应展开为黑场段。
 	if len(plan.Segments) != 3 {
 		t.Fatalf("segments = %d, want 3 (clip-a, gap, clip-b)", len(plan.Segments))
 	}
-	if plan.Segments[0].Kind != "video" || plan.Segments[0].Clip.ID != "clip-a" {
-		t.Fatalf("seg0 = %s/%s, want video/clip-a", plan.Segments[0].Kind, plan.Segments[0].Clip.ID)
+	if plan.Segments[0].Kind != "video" || plan.Segments[0].ClipID != "clip-a" {
+		t.Fatalf("seg0 = %s/%s, want video/clip-a", plan.Segments[0].Kind, plan.Segments[0].ClipID)
 	}
 	if plan.Segments[1].Kind != "gap" || plan.Segments[1].DurationMs != 1000 {
 		t.Fatalf("seg1 = %s/%dms, want gap/1000ms", plan.Segments[1].Kind, plan.Segments[1].DurationMs)
 	}
-	if plan.Segments[2].Clip.ID != "clip-b" {
-		t.Fatalf("seg2 = %s, want clip-b (sorted by startMs)", plan.Segments[2].Clip.ID)
+	if plan.Segments[2].ClipID != "clip-b" {
+		t.Fatalf("seg2 = %s, want clip-b (sorted by startMs)", plan.Segments[2].ClipID)
 	}
 }
 
@@ -53,13 +59,17 @@ func TestBuildRenderPlanSkipsHiddenTrack(t *testing.T) {
 		Tracks:  []renderTrack{{ID: "track-hidden", Kind: "video", Visible: &hidden}},
 		Clips:   []renderClip{renderClipFixture("clip-hidden", "video", "track-hidden", 0, 1000, "resource:res-x")},
 	}
-	plan := buildRenderPlan(project)
-	if len(plan.Segments) != 0 {
-		t.Fatalf("segments = %d, want 0 (hidden track skipped)", len(plan.Segments))
+	plan, err := buildRenderPlan(project)
+	if err == nil || !planHasNoMedia(plan, err) {
+		t.Fatalf("hidden-only: plan=%v err=%v", plan, err)
 	}
-	if plan.HasMedia {
-		t.Fatal("HasMedia = true, want false for hidden-only timeline")
+}
+
+func planHasNoMedia(plan *editing.Plan, err error) bool {
+	if err != nil && strings.Contains(err.Error(), "可渲染") {
+		return true
 	}
+	return plan != nil && !plan.HasMedia()
 }
 
 func TestBuildRenderSubtitleSRT(t *testing.T) {
@@ -82,7 +92,7 @@ func TestBuildRenderSubtitleSRT(t *testing.T) {
 }
 
 func TestBuildRenderFFmpegArgsLayout(t *testing.T) {
-	plan := buildRenderPlan(renderProject{
+	plan := mustBuildRenderPlan(t, renderProject{
 		Version: 2,
 		Tracks:  []renderTrack{{ID: "track-video-1", Kind: "video"}},
 		Clips: []renderClip{
@@ -90,11 +100,11 @@ func TestBuildRenderFFmpegArgsLayout(t *testing.T) {
 			renderClipFixture("clip-b", "video", "track-video-1", 5000, 1000, "resource:res-b"),
 		},
 	})
-	plan.Segments[0].Source = &renderSource{ResourceID: "res-a", Path: "src-0.mp4", HasAudio: true}
-	plan.Segments[1].Source = &renderSource{ResourceID: "res-a", Path: "src-0.mp4", HasAudio: true}
-	plan.Segments[2].Source = &renderSource{ResourceID: "res-b", Path: "src-1.mp4", HasAudio: true}
+	plan.Segments[0].HasAudio = true
+	plan.Segments[2].HasAudio = true
+	files := map[string]string{plan.Segments[0].SourceID: "src-0.mp4", plan.Segments[2].SourceID: "src-1.mp4"}
 
-	args := buildRenderFFmpegArgs(plan, "render-output.mp4")
+	args := buildRenderFFmpegArgs(*plan, files, "render-output.mp4")
 	joined := strings.Join(args, " ")
 	if len(args) == 0 {
 		t.Fatal("args empty, want ffmpeg arguments")
@@ -112,23 +122,25 @@ func TestBuildRenderFFmpegArgsLayout(t *testing.T) {
 			t.Fatalf("args missing %q: %s", want, joined)
 		}
 	}
-	// 每段两个输入：视频 + 音频；末尾输入索引应为 5（3 段 × 2）。
 	if !strings.Contains(joined, "[5:a]") {
 		t.Fatalf("args missing final audio input label [5:a]: %s", joined)
 	}
-	if buildRenderFFmpegArgs(renderPlan{}, "out.mp4") != nil {
+	if buildRenderFFmpegArgs(editing.Plan{}, nil, "out.mp4") != nil {
 		t.Fatal("args for empty plan: want nil")
 	}
 }
 
 func TestBuildRenderFFmpegArgsSilentFallbackUniqueLabels(t *testing.T) {
-	plan := renderPlan{Segments: []renderSegment{
-		{Kind: "video", DurationMs: 1000, Source: &renderSource{Path: "src-0.mp4", HasAudio: false}},
-		{Kind: "video", DurationMs: 1000, Source: &renderSource{Path: "src-1.mp4", HasAudio: false}},
-	}}
-	args := buildRenderFFmpegArgs(plan, "out.mp4")
+	plan := editing.Plan{
+		Output:     editing.Output{Width: 1920, Height: 1080, FPS: 30, SampleRate: 44100},
+		DurationMs: 2000,
+		Segments: []editing.Segment{
+			{Kind: "video", SourceID: "a", DurationMs: 1000, HasAudio: false, Volume: 1},
+			{Kind: "video", SourceID: "b", DurationMs: 1000, HasAudio: false, Volume: 1},
+		},
+	}
+	args := buildRenderFFmpegArgs(plan, map[string]string{"a": "src-0.mp4", "b": "src-1.mp4"}, "out.mp4")
 	joined := strings.Join(args, " ")
-	// 两段均无音轨：各自使用有限静音输入，并在 concat 前裁切。
 	if strings.Count(joined, "-i anullsrc=") != 2 || strings.Count(joined, "apad,atrim=duration=1.000") != 2 {
 		t.Fatalf("silent labels not unique: %s", joined)
 	}

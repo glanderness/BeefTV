@@ -1,9 +1,12 @@
-// 第三期：时间线导出运行时。把 buildTimelineRenderPlan 产出的步骤逐步在 ffmpeg.wasm 中执行，
-// 独立 worker 从同源加载 core/wasm，取消不会影响其他媒体操作。
+// Browser wasm export: compile via the local planning API, then lower the
+// returned canonical plan. This module must not re-select content from the
+// raw timeline if the endpoint fails.
+import { compileTimelineRenderPlan } from "@/services/api/timeline-tasks";
 import { getMediaBlob } from "@/services/file-storage";
+import { applySourceFacts, canonicalSourceIds, type CanonicalSourceFacts, type CanonicalSourceMeta } from "./timeline-canonical-plan";
 import { rasterizeTimelineSubtitle } from "./timeline-subtitle-image";
 import type { TimelineProject } from "@/types/timeline";
-import { buildTimelineRenderPlan, getExportClips, getOrderedSubtitleClips, type TimelineRenderContext, type TimelineRenderSource } from "./timeline-to-ffmpeg";
+import { lowerCanonicalPlan, type TimelineRenderContext, type TimelineRenderSource } from "./timeline-to-ffmpeg";
 import { cleanupRenderFiles, executeTimelineRenderPlan, type TimelineRenderEngine } from "./timeline-render-service";
 
 export type TimelineExportProgress = {
@@ -55,11 +58,34 @@ function createWasmEngine(ffmpeg: import("@ffmpeg/ffmpeg").FFmpeg): TimelineRend
     };
 }
 
-/** 导出时间线为 MP4：写媒体 → 按计划逐步执行 → 返回 Blob（下载由调用方处理） */
+function toCompileSources(sources: TimelineRenderSource[]): CanonicalSourceMeta[] {
+    return sources.map((source) => ({
+        id: source.nodeId,
+        hasAudio: source.hasAudio,
+        durationMs: source.durationMs,
+    }));
+}
+
+/** 导出时间线为 MP4：取语义计划 → 写媒体 → 按计划逐步执行 → 返回 Blob（下载由调用方处理） */
 export async function exportTimelineToMp4(timeline: TimelineProject, sources: TimelineRenderSource[], options: TimelineExportOptions = {}): Promise<Blob> {
     const { onProgress, context, signal } = options;
     signal?.throwIfAborted();
-    buildTimelineRenderPlan(timeline, sources, context);
+    onProgress?.({ phase: "loading", percent: 0, detail: "生成渲染计划" });
+    const canonical = await compileTimelineRenderPlan({
+        timeline,
+        sources: toCompileSources(sources),
+        options: {
+            width: context?.width,
+            height: context?.height,
+            fps: context?.fps,
+            burnSubtitles: context?.burnSubtitles,
+        },
+    }, signal);
+    signal?.throwIfAborted();
+    const sourceById = new Map(sources.map((item) => [item.nodeId, item]));
+    for (const sourceId of canonicalSourceIds(canonical)) {
+        if (!sourceById.has(sourceId)) throw new Error("找不到素材：" + sourceId);
+    }
     if (!__BEEFTV_HEAVY_MEDIA_ENABLED__) throw new Error("精简版未包含 FFmpeg 本地媒体工具，请安装完整媒体包");
     onProgress?.({ phase: "loading", percent: 0, detail: "加载 FFmpeg" });
     const [{ FFmpeg }, { default: coreURL }, { default: wasmURL }, { fetchFile }] = await Promise.all([import("@ffmpeg/ffmpeg"), import("@ffmpeg/core?url"), import("@ffmpeg/core/wasm?url"), import("@ffmpeg/util")]);
@@ -70,12 +96,15 @@ export async function exportTimelineToMp4(timeline: TimelineProject, sources: Ti
     signal?.addEventListener("abort", abort, { once: true });
     const writtenFiles = new Set<string>();
     const preparedSources: TimelineRenderSource[] = [];
+    const facts: Record<string, CanonicalSourceFacts> = {};
     const engine = createWasmEngine(ffmpeg);
+    const width = context?.width || canonical.output.width || 1920;
+    const height = context?.height || canonical.output.height || 1080;
 
     try {
         await ffmpeg.load({ coreURL, wasmURL });
-        const activeNodeIds = new Set(getExportClips(timeline).filter((clip) => clip.kind === "video" || clip.kind === "audio").map((clip) => clip.nodeId));
-        for (const source of sources.filter((item) => activeNodeIds.has(item.nodeId))) {
+        for (const sourceId of canonicalSourceIds(canonical)) {
+            const source = sourceById.get(sourceId)!;
             signal?.throwIfAborted();
             onProgress?.({ phase: "reading", percent: 5, detail: "读取素材 " + source.fileName });
             const blob = await fetchSourceBlob(source, signal);
@@ -89,31 +118,29 @@ export async function exportTimelineToMp4(timeline: TimelineProject, sources: Ti
             if (probeCode !== 0 && probeCode !== -1) throw new Error("无法解析素材：" + source.nodeId);
             const probe = JSON.parse(await ffmpeg.readFile("probe.json", "utf8") as string) as { streams?: { codec_type: string }[]; format?: { duration?: string } };
             const hasAudio = probe.streams?.some((stream) => stream.codec_type === "audio") ?? false;
+            const hasVideo = probe.streams?.some((stream) => stream.codec_type === "video") ?? false;
             const durationMs = Number(probe.format?.duration) * 1000;
-            for (const clip of getExportClips(timeline).filter((item) => item.nodeId === source.nodeId && (item.kind === "video" || item.kind === "audio"))) {
-                if (!probe.streams?.some((stream) => stream.codec_type === clip.kind)) throw new Error("素材缺少所需音视频轨：" + (clip.title || clip.nodeId));
-                if (!Number.isFinite(durationMs) || (clip.sourceStartMs || 0) + clip.durationMs > durationMs + 100) throw new Error("素材时长不足，请调整裁剪范围：" + (clip.title || clip.nodeId));
-            }
+            facts[source.nodeId] = { hasAudio, hasVideo, durationMs: Number.isFinite(durationMs) ? durationMs : 0 };
             preparedSources.push({ ...source, hasAudio });
         }
+        applySourceFacts(canonical, facts);
 
         const subtitleImages: string[] = [];
-        if (context?.burnSubtitles !== false) {
-            for (const clip of getOrderedSubtitleClips(timeline).filter((clip) => clip.text?.trim())) {
+        if (canonical.output.burnSubtitles !== false) {
+            for (const clip of canonical.subtitles || []) {
                 signal?.throwIfAborted();
                 const name = `subtitle-${subtitleImages.length}.png`;
-                const bytes = await rasterizeTimelineSubtitle(clip.text!, context?.width ?? 1920, context?.height ?? 1080);
+                const bytes = await rasterizeTimelineSubtitle(clip.text, width, height);
                 signal?.throwIfAborted();
                 writtenFiles.add(name);
                 await ffmpeg.writeFile(name, bytes);
                 subtitleImages.push(name);
             }
         }
-        const plan = buildTimelineRenderPlan(timeline, preparedSources, { ...context, subtitleImages });
+        const plan = lowerCanonicalPlan(canonical, preparedSources, { ...context, width, height, subtitleImages });
         onProgress?.({ phase: "encoding", percent: 10, detail: "开始编码" });
         const execution = await executeTimelineRenderPlan({
             plan,
-            timeline,
             engine,
             signal,
             writtenFiles,

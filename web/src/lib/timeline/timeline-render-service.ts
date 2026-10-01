@@ -1,11 +1,10 @@
-// Shared native/wasm execution for a TimelineRenderPlan. Engines only run args;
-// this module owns concat/SRT writes, requested-content checks, cancel, and cleanup.
-import type { TimelineProject } from "@/types/timeline";
+// Shared native/wasm execution for a lowered TimelineRenderPlan. Engines only
+// run args; this module owns concat/SRT writes, requested-content checks,
+// cancel, and cleanup. Subtitle text comes from the canonical plan, not a
+// second pass over the raw timeline.
 import { isSubtitleFontFailure } from "./subtitle-font-failure";
 import {
     SUBTITLE_FILE,
-    buildSubtitleSrt,
-    getOrderedSubtitleClips,
     type TimelineRenderPlan,
     type TimelineRenderRequest,
 } from "./timeline-to-ffmpeg";
@@ -48,13 +47,12 @@ export function assertPlanPreservesRequestedContent(plan: TimelineRenderPlan): v
 
 export async function executeTimelineRenderPlan(options: {
     plan: TimelineRenderPlan;
-    timeline: TimelineProject;
     engine: TimelineRenderEngine;
     signal?: AbortSignal;
     onProgress?: (progress: TimelineRenderProgress) => void;
     writtenFiles?: Set<string>;
 }): Promise<TimelineRenderExecution> {
-    const { plan, timeline, engine, signal, onProgress } = options;
+    const { plan, engine, signal, onProgress } = options;
     const writtenFiles = options.writtenFiles ?? new Set<string>();
     assertPlanPreservesRequestedContent(plan);
     const executableSteps = plan.steps.filter((step) => step.kind !== "subtitle");
@@ -64,8 +62,8 @@ export async function executeTimelineRenderPlan(options: {
     for (const step of plan.steps) {
         signal?.throwIfAborted();
         if (step.kind === "subtitle") {
-            const srt = buildSubtitleSrt(getOrderedSubtitleClips(timeline));
-            if (!srt && plan.request.burnSubtitles) throw new Error("字幕内容为空，未导出无字幕成片");
+            const srt = plan.subtitleSrt || "";
+            if (!srt.trim() && plan.request.burnSubtitles) throw new Error("字幕内容为空，未导出无字幕成片");
             if (srt) {
                 await engine.writeFile(SUBTITLE_FILE, srt);
                 writtenFiles.add(SUBTITLE_FILE);

@@ -10,6 +10,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"infinite-canvas/backend/internal/editing"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -29,11 +30,8 @@ func renderTestProject(storageKey string) renderProject {
 			DurationMs:    2000,
 			SourceStartMs: 0,
 			Volume:        1,
-			DirectMedia: &struct {
-				ID         string `json:"id"`
-				Kind       string `json:"kind"`
-				StorageKey string `json:"storageKey"`
-			}{ID: "asset-v1", Kind: "video", StorageKey: storageKey},
+			NodeID:        "clip-v1",
+			DirectMedia:   &editing.DirectMedia{ID: "asset-v1", Kind: "video", StorageKey: storageKey},
 		}},
 	}
 }
@@ -86,6 +84,29 @@ func TestCreateTimelineRenderTaskQueues(t *testing.T) {
 	}
 	if stored.ProjectID != "prj-render" || stored.UserID != "usr-render-test" {
 		t.Fatalf("stored owner/project mismatch: %s/%s", stored.UserID, stored.ProjectID)
+	}
+}
+
+func TestCompileTimelineRenderPlanUsesOpaqueSources(t *testing.T) {
+	svc, db := newTimelineTaskTestService(t)
+	hasAudio := true
+	hasVideo := true
+	plan, err := svc.CompileTimelineRenderPlan("usr-render-test", TimelineRenderPlanRequest{
+		Timeline: renderTestProject("resource:res-1"),
+		Sources:  []editing.SourceMeta{{ID: "clip-v1", HasAudio: &hasAudio, HasVideo: &hasVideo, DurationMs: 4000}},
+	})
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if plan.Version != editing.PlanVersion || plan.Segments[0].SourceID != "clip-v1" {
+		t.Fatalf("plan=%+v", plan)
+	}
+	var tasks int64
+	if err := db.Model(&model.Task{}).Count(&tasks).Error; err != nil || tasks != 0 {
+		t.Fatalf("planning created a task: %d %v", tasks, err)
+	}
+	if _, err := svc.CompileTimelineRenderPlan("", TimelineRenderPlanRequest{Timeline: renderTestProject("resource:res-1")}); err == nil {
+		t.Fatal("empty user accepted")
 	}
 }
 

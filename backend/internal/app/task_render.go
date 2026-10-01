@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/editing"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -29,36 +30,31 @@ func (w *taskWorkerCoordinator) processTimelineRender(task *model.Task, ctx cont
 	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
 		return w.failTimelineTask(task, "渲染失败", "任务缺少有效的时间线快照")
 	}
-	plan := buildRenderPlan(input.Timeline)
-	if plan.Error != nil {
-		return w.failTimelineTask(task, "渲染失败", plan.Error.Error())
-	}
-	if !plan.HasMedia {
-		return w.failTimelineTask(task, "渲染失败", "时间线没有可渲染的媒体片段")
+	plan, err := editing.Compile(input.Timeline, nil, editing.DefaultOptions())
+	if err != nil {
+		return w.failTimelineTask(task, "渲染失败", err.Error())
 	}
 
 	if err := w.progress(task, "准备媒体…", 10); err != nil {
 		return err
 	}
-	workDir, cleanup, err := materializeRenderSources(ctx, s, task.UserID, &plan)
+	workDir, files, cleanup, err := materializeRenderSources(ctx, s, task.UserID, plan)
 	if cleanup != nil {
 		defer cleanup()
 	}
 	if err != nil {
 		return w.failTimelineTask(task, "渲染失败", err.Error())
 	}
-	for _, seg := range append(append([]renderSegment{}, plan.Segments...), plan.Audio...) {
-		if seg.Source == nil || seg.Kind == "image" {
-			continue
-		}
-		hasAudio, probeErr := probeHasAudioStream(ctx, seg.Source.Path)
+	facts := map[string]editing.SourceFacts{}
+	for sourceID, path := range files {
+		fact, probeErr := probeMedia(ctx, path)
 		if probeErr != nil {
 			return w.failTimelineTask(task, "渲染失败", probeErr.Error())
 		}
-		if seg.Kind == "audio" && !hasAudio {
-			return w.failTimelineTask(task, "渲染失败", "独立音频素材没有可用音轨")
-		}
-		seg.Source.HasAudio = hasAudio
+		facts[sourceID] = fact
+	}
+	if err := editing.ApplySourceFacts(plan, facts); err != nil {
+		return w.failTimelineTask(task, "渲染失败", err.Error())
 	}
 
 	if plan.SubtitleSRT != "" {
@@ -66,7 +62,7 @@ func (w *taskWorkerCoordinator) processTimelineRender(task *model.Task, ctx cont
 			return w.failTimelineTask(task, "渲染失败", "写入字幕文件失败")
 		}
 	}
-	args := buildRenderFFmpegArgs(plan, filepath.Join(workDir, "render-output.mp4"))
+	args := buildRenderFFmpegArgs(*plan, files, filepath.Join(workDir, "render-output.mp4"))
 	if len(args) == 0 {
 		return w.failTimelineTask(task, "渲染失败", "无法生成渲染命令")
 	}
@@ -97,9 +93,16 @@ func (w *taskWorkerCoordinator) processTimelineRender(task *model.Task, ctx cont
 	if err != nil || stat.Size() == 0 {
 		return w.failTimelineTask(task, "渲染失败", "渲染产物为空")
 	}
-	durationMs := planDurationMs(plan)
+	durationMs := planDurationMs(*plan)
 	fileName := fmt.Sprintf("timeline-render-%s.mp4", time.Now().Format("20060102-150405"))
-	resource, _, err := s.storeResource(task.UserID, "media", fileName, "video/mp4", stat.Size(), renderWidth, renderHeight, durationMs, file, nil, s.localResourceStorage)
+	width, height := plan.Output.Width, plan.Output.Height
+	if width <= 0 {
+		width = editing.DefaultWidth
+	}
+	if height <= 0 {
+		height = editing.DefaultHeight
+	}
+	resource, _, err := s.storeResource(task.UserID, "media", fileName, "video/mp4", stat.Size(), width, height, durationMs, file, nil, s.localResourceStorage)
 	if err != nil || resource == nil {
 		return w.failTimelineTask(task, "渲染失败", "保存渲染产物失败")
 	}
@@ -128,12 +131,8 @@ func (w *taskWorkerCoordinator) processTimelineRender(task *model.Task, ctx cont
 	return nil
 }
 
-func planDurationMs(plan renderPlan) int64 {
-	var total int64
-	for _, seg := range plan.Segments {
-		total += seg.DurationMs
-	}
-	return total
+func planDurationMs(plan editing.Plan) int64 {
+	return plan.DurationMs
 }
 
 func renderFfmpegBinary() (string, error) {
@@ -147,79 +146,102 @@ func renderFfmpegBinary() (string, error) {
 	return path, nil
 }
 
-// materializeRenderSources 把计划中每个媒体片段对应的资源下载到临时目录，
-// 同资源复用同一份本地文件；返回工作目录与清理函数。
-func materializeRenderSources(ctx context.Context, s *Service, userID string, plan *renderPlan) (string, func(), error) {
+// materializeRenderSources 按计划中的不透明 sourceId 拉取已授权资源。
+// 不信任任何客户端路径；同 id 复用同一份本地文件。
+func materializeRenderSources(ctx context.Context, s *Service, userID string, plan *editing.Plan) (string, map[string]string, func(), error) {
 	tmpDir, err := os.MkdirTemp("", "beeftv-render-*")
 	if err != nil {
-		return "", nil, fmt.Errorf("创建临时目录失败: %w", err)
+		return "", nil, nil, fmt.Errorf("创建临时目录失败: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(tmpDir) }
-	cache := map[string]string{}
-	segments := make([]*renderSegment, 0, len(plan.Segments)+len(plan.Audio))
-	for i := range plan.Segments {
-		segments = append(segments, &plan.Segments[i])
-	}
-	for i := range plan.Audio {
-		segments = append(segments, &plan.Audio[i])
-	}
-	for _, seg := range segments {
-		if seg.Kind == "gap" {
-			continue
-		}
+	files := map[string]string{}
+	for _, sourceID := range plan.SourceIDs() {
 		if err := ctx.Err(); err != nil {
 			cleanup()
-			return "", nil, err
+			return "", nil, nil, err
 		}
-		resourceID, ok := mediaResourceID(seg.Clip)
-		if !ok {
+		if sourceID == "" {
 			cleanup()
-			return "", nil, fmt.Errorf("片段 %s 缺少有效媒体引用", seg.Clip.ID)
+			return "", nil, nil, fmt.Errorf("片段缺少有效媒体引用")
 		}
-		path, cached := cache[resourceID]
-		if !cached {
-			_, reader, err := s.OpenResource(userID, resourceID)
-			if err != nil || reader == nil {
-				cleanup()
-				return "", nil, fmt.Errorf("无法读取时间线引用的媒体，可能已被删除")
-			}
-			ext := extForMime("video/mp4")
-			path = filepath.Join(tmpDir, fmt.Sprintf("src-%d%s", len(cache), ext))
-			file, err := os.Create(path)
-			if err != nil {
-				reader.Close()
-				cleanup()
-				return "", nil, fmt.Errorf("写入临时媒体失败: %w", err)
-			}
-			if _, err := io.Copy(file, reader); err != nil {
-				file.Close()
-				reader.Close()
-				cleanup()
-				return "", nil, fmt.Errorf("读取时间线媒体失败: %w", err)
-			}
+		if s == nil {
+			cleanup()
+			return "", nil, nil, fmt.Errorf("无法读取时间线引用的媒体，可能已被删除")
+		}
+		_, reader, err := s.OpenResource(userID, sourceID)
+		if err != nil || reader == nil {
+			cleanup()
+			return "", nil, nil, fmt.Errorf("无法读取时间线引用的媒体，可能已被删除")
+		}
+		path := filepath.Join(tmpDir, fmt.Sprintf("src-%d%s", len(files), extForMime("video/mp4")))
+		file, err := os.Create(path)
+		if err != nil {
+			reader.Close()
+			cleanup()
+			return "", nil, nil, fmt.Errorf("写入临时媒体失败: %w", err)
+		}
+		if _, err := io.Copy(file, reader); err != nil {
 			file.Close()
 			reader.Close()
-			cache[resourceID] = path
+			cleanup()
+			return "", nil, nil, fmt.Errorf("读取时间线媒体失败: %w", err)
 		}
-		seg.Source = &renderSource{ResourceID: resourceID, Clip: seg.Clip, Path: path, Ext: filepath.Ext(path)}
+		file.Close()
+		reader.Close()
+		files[sourceID] = path
 	}
-	return tmpDir, cleanup, nil
+	return tmpDir, files, cleanup, nil
 }
 
-// probeHasAudioStream 用 ffprobe 判断媒体是否含音轨，供滤镜图选择静音回退。
-func probeHasAudioStream(ctx context.Context, path string) (bool, error) {
+func probeMedia(ctx context.Context, path string) (editing.SourceFacts, error) {
 	bin, err := exec.LookPath("ffprobe")
 	if err != nil {
-		return false, fmt.Errorf("媒体探测依赖未安装（需要 ffprobe）")
+		return editing.SourceFacts{}, fmt.Errorf("媒体探测依赖未安装（需要 ffprobe）")
 	}
 	cmd := exec.CommandContext(ctx, bin,
-		"-v", "error", "-select_streams", "a:0", "-show_entries", "stream=index",
-		"-of", "csv=p=0", path)
+		"-v", "error", "-show_entries", "stream=codec_type:format=duration",
+		"-of", "json", path)
 	output, runErr := cmd.Output()
 	if runErr != nil {
-		return false, fmt.Errorf("媒体音轨探测失败: %w", runErr)
+		return editing.SourceFacts{}, fmt.Errorf("媒体音轨探测失败: %w", runErr)
 	}
-	return strings.TrimSpace(string(output)) != "", nil
+	var parsed struct {
+		Streams []struct {
+			CodecType string `json:"codec_type"`
+		} `json:"streams"`
+		Format struct {
+			Duration string `json:"duration"`
+		} `json:"format"`
+	}
+	if err := json.Unmarshal(output, &parsed); err != nil {
+		return editing.SourceFacts{}, fmt.Errorf("无法解析素材：%w", err)
+	}
+	facts := editing.SourceFacts{}
+	for _, stream := range parsed.Streams {
+		switch stream.CodecType {
+		case "audio":
+			facts.HasAudio = true
+		case "video":
+			facts.HasVideo = true
+		}
+	}
+	if seconds, convErr := parseProbeSeconds(parsed.Format.Duration); convErr == nil {
+		facts.DurationMs = int64(seconds * 1000)
+	}
+	return facts, nil
+}
+
+func parseProbeSeconds(raw string) (float64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "N/A" {
+		return 0, fmt.Errorf("missing duration")
+	}
+	var seconds float64
+	_, err := fmt.Sscanf(raw, "%f", &seconds)
+	if err != nil || seconds <= 0 {
+		return 0, fmt.Errorf("invalid duration")
+	}
+	return seconds, nil
 }
 
 // libass can exit successfully even when no font can render the subtitle glyphs.

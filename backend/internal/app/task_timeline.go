@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/editing"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -243,13 +244,21 @@ func (s *Service) CreateTimelineTranscriptionTask(userID string, req TimelineTra
 // Timeline 为前端 TimelineProject 快照（v2：tracks/clips 平铺）。
 // 片段通过 directMedia.storageKey=resource:<id> 引用后端资源。
 type TimelineRenderCreateRequest struct {
-	ProjectID string        `json:"projectId"`
-	Timeline  renderProject `json:"timeline"`
+	ProjectID string          `json:"projectId"`
+	Timeline  editing.Project `json:"timeline"`
 }
 
 type timelineRenderInput struct {
-	ProjectID string        `json:"projectId"`
-	Timeline  renderProject `json:"timeline"`
+	ProjectID string          `json:"projectId"`
+	Timeline  editing.Project `json:"timeline"`
+}
+
+// TimelineRenderPlanRequest 是浏览器导出的只读规划入参。
+// sources 只接受不透明 id 与探测元数据，不含本地路径或 ffmpeg 参数。
+type TimelineRenderPlanRequest struct {
+	Timeline editing.Project      `json:"timeline"`
+	Sources  []editing.SourceMeta `json:"sources"`
+	Options  editing.Options      `json:"options"`
 }
 
 type timelineRenderResult struct {
@@ -266,8 +275,11 @@ func (s *Service) CreateTimelineRenderTask(userID string, req TimelineRenderCrea
 	if s.IsDraining() {
 		return nil, &AppError{Status: 503, Code: 503, Message: "服务正在维护，暂不接受新的生成任务", Retryable: true}
 	}
-	plan := buildRenderPlan(req.Timeline)
-	if !plan.HasMedia {
+	plan, err := editing.Compile(req.Timeline, nil, editing.DefaultOptions())
+	if err != nil {
+		return nil, BadAuthRequest(err.Error())
+	}
+	if !plan.HasMedia() {
 		return nil, BadAuthRequest("时间线没有可渲染的媒体片段")
 	}
 	policy, err := s.RuntimePolicy()
@@ -291,4 +303,17 @@ func (s *Service) CreateTimelineRenderTask(userID string, req TimelineRenderCrea
 	s.recordActivity(userID, "task", 1)
 	_ = s.log(userID, task.ID, "info", "时间线渲染任务已进入队列", "")
 	return taskForOutput(task), nil
+}
+
+// CompileTimelineRenderPlan 编译语义渲染计划：无排队、无落盘、无计费。
+// 源标识保持不透明，不打开资源、不接受 ffmpeg 参数。
+func (s *Service) CompileTimelineRenderPlan(userID string, req TimelineRenderPlanRequest) (*editing.Plan, error) {
+	if strings.TrimSpace(userID) == "" {
+		return nil, Unauthorized("未登录")
+	}
+	plan, err := editing.Compile(req.Timeline, req.Sources, req.Options)
+	if err != nil {
+		return nil, BadAuthRequest(err.Error())
+	}
+	return plan, nil
 }

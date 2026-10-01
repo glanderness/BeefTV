@@ -30,6 +30,7 @@ Wails / local dev
 | 供应商适配 | `backend/internal/provider`, `protocol`, `outbound` | 外部模型 API、自定义渠道和插件协议 |
 | Seedance 参考素材预上传 | `backend/internal/app/beefapi_seedance_preupload.go` | 仅内置 BeefAPI Seedance：本机后端把参考图片/视频/音频换成短期 HTTPS 链接后再提交 `/v1/videos`；本机文件在上传完成前保持本地引用 |
 | 数据 | `backend/internal/database`, `repository` | SQLite schema、迁移和持久化 |
+| 剪辑语义计划 | `backend/internal/editing` | 版本化时间线渲染计划：选择、顺序、空隙、裁剪、音量、字幕与输出尺寸。不依赖 `internal/app`，不接受本地路径或 ffmpeg 参数 |
 | HTTP | `backend/internal/handler` | 本地 `/api` 合同、输入限制和响应封装 |
 | 企业连接 | `backend/internal/beefapi` | 设备授权、本机密钥和连接状态 |
 | 本机 MCP | `backend/internal/mcp` | 进程内 initialize / tools/list / tools/call |

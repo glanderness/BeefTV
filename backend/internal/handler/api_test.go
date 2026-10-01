@@ -23,7 +23,8 @@ func TestRegisterCanvasAPIExposesOpenAPIAndProjects(t *testing.T) {
 	wanted := map[string]bool{
 		"GET /api/openapi.yaml": false,
 		"GET /api/projects":     false,
-		"POST /api/tasks":       false,
+		"POST /api/tasks":                 false,
+		"POST /api/timeline/render-plan":  false,
 		"GET /api/resources":    false,
 	}
 	for _, route := range router.Routes() {

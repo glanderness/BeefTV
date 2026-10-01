@@ -18,6 +18,22 @@ export function exportTimelineToMp4(_project: TimelineProject, sources: Timeline
         }, { once: true });
     });
 }
+export async function compileTimelineRenderPlan(_input: unknown, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    return {
+        version: 1,
+        output: { width: 1920, height: 1080, fps: 30, sampleRate: 44100, burnSubtitles: false },
+        durationMs: 6000,
+        segments: [{ kind: "video", clipId: "video", sourceId: "video", startMs: 0, durationMs: 6000, volume: 1, hasAudio: true }],
+        audio: [
+            { clipId: "bgm", sourceId: "bgm", startMs: 0, durationMs: 6000, sourceStartMs: 0, volume: 1 },
+            { clipId: "voice", sourceId: "voice", startMs: 1000, durationMs: 2000, sourceStartMs: 0, volume: 1 },
+        ],
+        subtitles: [],
+        subtitleSrt: "",
+    };
+}
+
 export async function createTimelineRenderTask(input: { timeline: TimelineProject }) {
     receipt.remote.push(input.timeline);
     return { id: "render-fixture" };

@@ -1,3 +1,4 @@
+import { assertCanonicalPlan, type CanonicalPlanOptions, type CanonicalSourceMeta, type CanonicalTimelinePlan } from "@/lib/timeline/timeline-canonical-plan";
 import { http } from "@/services/api/request";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { TimelineProject } from "@/types/timeline";
@@ -52,4 +53,20 @@ export async function createTimelineRenderTask(
     signal?: AbortSignal,
 ): Promise<GenerationTask> {
     return http.post<GenerationTask>("/timeline/renders", payload, { signal });
+}
+
+export type TimelineRenderPlanCompileRequest = {
+    timeline: TimelineProject;
+    sources?: CanonicalSourceMeta[];
+    options?: CanonicalPlanOptions;
+};
+
+/** 只读规划：不排队、不落盘、不计费。失败必须上抛，导出不得改走本地语义编译。 */
+export async function compileTimelineRenderPlan(
+    payload: TimelineRenderPlanCompileRequest,
+    signal?: AbortSignal,
+): Promise<CanonicalTimelinePlan> {
+    const plan = await http.post<CanonicalTimelinePlan>("/timeline/render-plan", payload, { signal });
+    assertCanonicalPlan(plan);
+    return plan;
 }

@@ -86,6 +86,29 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *app.Service, hostedProfile ...b
 		}
 		ok(c, task)
 	})
+	r.POST("/timeline/render-plan", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		policy, available := loadRuntimePolicy(c, svc)
+		if !available || !enforceRateLimit(c, "timeline-plan:"+user.ID, policy.Request.CanvasWritePerMinute, time.Minute) {
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<20)
+		var req app.TimelineRenderPlanRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		plan, err := svc.CompileTimelineRenderPlan(user.ID, req)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, plan)
+	})
 	r.POST("/depth-captures", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

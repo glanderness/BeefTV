@@ -20,7 +20,7 @@ import { computeSnap } from "@/lib/timeline/timeline-snap";
 import { DEFAULT_AUDIO_TRACK_ID, DEFAULT_VIDEO_TRACK_ID, normalizeTimelineProject } from "@/lib/timeline/timeline-tracks";
 import { formatTimelineTime, getTimelineTrackWidth, getFitTimelineZoom, zoomIn, zoomOut } from "@/lib/timeline/timeline-view";
 import { exportTimelineToMp4 } from "@/lib/timeline/timeline-export";
-import type { TimelineRenderSource } from "@/lib/timeline/timeline-to-ffmpeg";
+import { getVisibleMediaClips, type TimelineRenderSource } from "@/lib/timeline/timeline-to-ffmpeg";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { SrtEntry, TimelineClip, TimelineDirectMedia, TimelineProject } from "@/types/timeline";
 
@@ -504,13 +504,10 @@ export function CanvasTimelineDialog({
     // 组装导出：把当前草稿按片段顺序合成一个 MP4 Blob（导出下载与生成新片段共用）。
     const runExport = async (): Promise<Blob> => {
         if (exportControllerRef.current) throw new Error("正在导出，请等待当前操作完成");
-        const videoClips = draft.clips.filter((clip) => clip.kind === "video" || clip.kind === "audio").filter((clip) => {
-            const track = draft.tracks.find((item) => item.id === clip.trackId);
-            return track?.visible !== false && !(clip.kind === "audio" && track?.muted);
-        });
-        if (!videoClips.length) throw new Error("时间线没有视频片段，无法导出");
+        const mediaClips = getVisibleMediaClips(draft);
+        if (!mediaClips.length) throw new Error("时间线没有可渲染的媒体片段");
         const sources: TimelineRenderSource[] = [];
-        for (const clip of videoClips) {
+        for (const clip of mediaClips) {
             const sourceNode = nodes.find((item) => item.id === clip.nodeId);
             const media = clip.directMedia;
             if (sources.some((source) => source.nodeId === clip.nodeId)) continue;
@@ -523,7 +520,7 @@ export function CanvasTimelineDialog({
                 url: media ? media.url || media.dataUrl || media.content : sourceNode?.metadata?.content || undefined,
             });
         }
-        if (!sources.length) throw new Error("找不到可导出的视频素材，请确认视频节点包含媒体");
+        if (!sources.length) throw new Error("找不到素材");
         setExporting(true);
         const controller = new AbortController();
         exportControllerRef.current = controller;
