@@ -53,8 +53,8 @@ function envelope(data: unknown, status = 200) {
     return { data: { code: 0, msg: "", data }, status, statusText: "OK", headers: {}, config: {} as never };
 }
 
-function failure(status: number, msg: string) {
-    return { data: { code: status, msg, data: null }, status, statusText: "ERR", headers: {}, config: {} as never };
+function failure(status: number, msg: string, reason?: string) {
+    return { data: { code: status, msg, data: null, reason }, status, statusText: "ERR", headers: {}, config: {} as never };
 }
 
 function requestBody(config: { data?: unknown }) {
@@ -353,7 +353,7 @@ describe("canvas drawing storage", () => {
             await withAdapter(async (config) => {
                 if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
                 if (String(config.method).toLowerCase() === "put" && String(config.url).includes("/drawings/")) {
-                    return failure(409, "画板已有更新，已停止覆盖；请保留本地草稿并加载最新版本");
+                    return failure(409, "画板已有更新，已停止覆盖；请保留本地草稿并加载最新版本", "conflict");
                 }
                 throw new Error(`unexpected ${config.method} ${config.url}`);
             }, async () => {
@@ -363,6 +363,79 @@ describe("canvas drawing storage", () => {
             const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { document: CanvasDrawingSnapshot; conflict?: boolean } };
             expect(cached.draft?.document.snapshot).toEqual(snapshotOf("mine"));
             expect(cached.draft?.conflict).toBe(true);
+        } finally {
+            restore();
+        }
+    });
+
+    test("failed_precondition keeps the actual draft and blocks reimport of the old id", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        installStores();
+        const puts: number[] = [];
+        try {
+            await withAdapter(async (config) => {
+                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
+                if (String(config.method).toLowerCase() === "put") {
+                    puts.push(1);
+                    return failure(409, "画板已删除，不能重新导入", "failed_precondition");
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("keep"), null, new Blob(["p"]), undefined, captureUserScope()))
+                    .rejects.toBeInstanceOf(CanvasDrawingCanonicalMissingError);
+                await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("keep-2"), null, new Blob(["q"]), undefined, captureUserScope()))
+                    .rejects.toBeInstanceOf(CanvasDrawingCanonicalMissingError);
+            });
+            expect(puts).toEqual([1]);
+            const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { document: CanvasDrawingSnapshot; blockedReimport?: boolean } };
+            expect(cached.draft?.document.snapshot).toEqual(snapshotOf("keep-2"));
+            expect(cached.draft?.blockedReimport).toBe(true);
+        } finally {
+            restore();
+        }
+    });
+
+    test("failed_precondition survives GET 404 and still blocks reimport", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        installStores();
+        const puts: number[] = [];
+        try {
+            await withAdapter(async (config) => {
+                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-1", status: "ready" } });
+                if (String(config.method).toLowerCase() === "put") {
+                    puts.push(1);
+                    return failure(409, "画板已删除，不能重新导入", "failed_precondition");
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("keep"), null, new Blob(["p"]), undefined, captureUserScope()))
+                    .rejects.toBeInstanceOf(CanvasDrawingCanonicalMissingError);
+            });
+
+            const loaded = await withAdapter(async (config) => {
+                if (String(config.method).toLowerCase() === "get") return failure(404, "画板不存在");
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => loadCanvasDrawing("p1", "d1", captureUserScope()));
+            expect(loaded?.snapshot).toEqual(snapshotOf("keep"));
+            expect(loaded?.canonicalMissing).toBe(true);
+
+            await withAdapter(async (config) => {
+                if (String(config.url).includes("/resources")) return envelope({ resource: { id: "res-2", status: "ready" } });
+                if (String(config.method).toLowerCase() === "put") {
+                    puts.push(1);
+                    return envelope(drawingRecord(snapshotOf("resurrected"), 1));
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                await expect(saveCanvasDrawing("p1", "d1", "excalidraw", snapshotOf("keep-3"), loaded, new Blob(["q"]), undefined, captureUserScope()))
+                    .rejects.toBeInstanceOf(CanvasDrawingCanonicalMissingError);
+            });
+            expect(puts).toEqual([1]);
+            const cached = await peekCanvasDrawingCacheForTests("p1", "d1", "owner-a") as { draft?: { document: CanvasDrawingSnapshot; blockedReimport?: boolean } };
+            expect(cached.draft?.document.snapshot).toEqual(snapshotOf("keep-3"));
+            expect(cached.draft?.blockedReimport).toBe(true);
         } finally {
             restore();
         }

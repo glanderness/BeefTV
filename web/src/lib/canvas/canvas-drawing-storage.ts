@@ -53,6 +53,7 @@ type DrawingDraftState = {
     generation: number;
     canonicalMissing?: boolean;
     conflict?: boolean;
+    blockedReimport?: boolean;
 };
 
 type DrawingCacheEnvelope = {
@@ -137,6 +138,7 @@ function parseEnvelope(raw: DrawingCacheEnvelope | CanvasDrawingSnapshot | null)
                     generation: Number(envelope.draft.generation) || 0,
                     canonicalMissing: envelope.draft.canonicalMissing === true,
                     conflict: envelope.draft.conflict === true,
+                    blockedReimport: envelope.draft.blockedReimport === true,
                 }
                 : undefined,
             removedGeneration: Number(envelope.removedGeneration) || undefined,
@@ -254,8 +256,12 @@ function isNotFoundDrawingError(error: unknown) {
     return error instanceof ApiError && (error.status === 404 || error.code === 404);
 }
 
+function isFailedPrecondition(error: unknown) {
+    return error instanceof ApiError && error.reason === "failed_precondition";
+}
+
 function isDrawingRevisionConflict(error: unknown) {
-    return error instanceof ApiError && (error.status === 409 || error.code === 409);
+    return error instanceof ApiError && (error.status === 409 || error.code === 409) && error.reason !== "failed_precondition";
 }
 
 export async function loadCanvasDrawing(projectId: string, drawingId: string, expectedScope?: CapturedUserScope) {
@@ -292,6 +298,7 @@ export async function loadCanvasDrawing(projectId: string, drawingId: string, ex
                     generation: envelope.draft?.generation || 1,
                     canonicalMissing: true,
                     conflict: envelope.draft?.conflict,
+                    blockedReimport: envelope.draft?.blockedReimport === true,
                 },
                 removedGeneration: envelope.removedGeneration,
             };
@@ -354,6 +361,7 @@ export async function saveCanvasDrawing(
             generation,
             canonicalMissing: envelope.draft?.canonicalMissing,
             conflict: false,
+            blockedReimport: envelope.draft?.blockedReimport === true,
         },
     };
     await writeEnvelope(key, next, expected);
@@ -380,7 +388,7 @@ async function commitDrawingDraft(
     const envelope = await readEnvelope(key);
     const draft = envelope.draft;
     if (!draft || draft.generation < generation) return publishSnapshot(envelope, envelope.draft ? "draft" : "canonical")!;
-    if (draft.canonicalMissing && envelope.committed) {
+    if (draft.blockedReimport || (draft.canonicalMissing && envelope.committed)) {
         throw new CanvasDrawingCanonicalMissingError();
     }
 
@@ -411,11 +419,12 @@ async function commitDrawingDraft(
                 draft: {
                     ...live.draft!,
                     conflict: isDrawingRevisionConflict(error),
-                    canonicalMissing: live.draft!.canonicalMissing || isNotFoundDrawingError(error),
+                    canonicalMissing: live.draft!.canonicalMissing || isNotFoundDrawingError(error) || isFailedPrecondition(error),
+                    blockedReimport: live.draft!.blockedReimport || isFailedPrecondition(error),
                 },
             }, expected, generation);
         }
-        if (isNotFoundDrawingError(error) && envelope.committed) throw new CanvasDrawingCanonicalMissingError();
+        if (isFailedPrecondition(error) || (isNotFoundDrawingError(error) && envelope.committed)) throw new CanvasDrawingCanonicalMissingError();
         throw error;
     }
 }

@@ -10,6 +10,7 @@ import { parseCanvasStorageDocument, rebaseCanvasProjects, serializeCanvasStorag
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { scopedLocalStorage } from "@/lib/user-scope";
 import { getActiveUserScope } from "@/lib/user-scope";
+import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import type { CanvasStarterMode } from "@/lib/canvas/canvas-starter";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
@@ -107,7 +108,13 @@ function readCanvasFolders(): CanvasFolder[] {
 }
 
 function writeCanvasFolders(folders: CanvasFolder[]) {
-    scopedLocalStorage.setItem(CANVAS_FOLDERS_KEY, JSON.stringify(folders));
+    const persistable = usesBrowserLocalResourceStore()
+        ? folders
+        : folders.map((folder) => ({
+            ...folder,
+            coverDataUrl: folder.coverDataUrl?.startsWith("data:") ? undefined : folder.coverDataUrl,
+        }));
+    scopedLocalStorage.setItem(CANVAS_FOLDERS_KEY, JSON.stringify(persistable));
 }
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
