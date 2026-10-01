@@ -3,7 +3,7 @@ import localforage from "localforage";
 
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import { captureUserScope } from "@/lib/user-scope-guard";
-import { flushAssetStorePersistence, useAssetStore } from "@/stores/use-asset-store";
+import { ASSET_STORE_KEY, flushAssetStorePersistence, resetAssetStoreDraftsForTests, useAssetStore } from "@/stores/use-asset-store";
 
 function deferred<T = void>() {
     let resolve!: (value: T | PromiseLike<T>) => void;
@@ -22,8 +22,9 @@ function switchScope(userId: string) {
 }
 
 describe("asset store flush namespace isolation", () => {
-    afterEach(() => {
+    afterEach(async () => {
         useAssetStore.setState({ assets: [] });
+        await resetAssetStoreDraftsForTests();
     });
 
     test("A→B→A does not let the abandoned epoch write after the new epoch flush", async () => {
@@ -43,9 +44,11 @@ describe("asset store flush namespace isolation", () => {
             }
             return null;
         });
-        const setItem = spyOn(localforage, "setItem").mockImplementation(async (_key, value) => {
-            const live = captureUserScope();
-            writes.push(`${live.userScope}:${live.epoch}`);
+        const setItem = spyOn(localforage, "setItem").mockImplementation(async (key, value) => {
+            if (String(key).includes(ASSET_STORE_KEY) && !String(key).includes("asset_store_drafts")) {
+                const live = captureUserScope();
+                writes.push(`${live.userScope}:${live.epoch}`);
+            }
             return value;
         });
 

@@ -15,7 +15,6 @@ import { ownedResourceIdFromMediaRef } from "@/services/api/resources";
 import { downloadOwnedOrBrowserMedia, reportOwnedMediaSave } from "@/services/desktop-media-save";
 import { mediaFileExtension, sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
 import { cn } from "@/lib/utils";
-import { localForageStorageForScope } from "@/lib/localforage-storage";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -29,10 +28,18 @@ import { exportAssets, readAssetPackage } from "./asset-transfer";
 import { assetStorageUsageQueryKey } from "./asset-storage-usage";
 import { loadAssetLibraryPage, localSavedRemotePendingMessage } from "@/services/local-workspace-sync";
 import { deleteWorkspaceAsset, persistWorkspaceAssetChanges } from "@/services/workspace-asset-repository";
+import {
+    assignWorkspaceAssetsFolder,
+    createWorkspaceAssetFolder,
+    deleteWorkspaceAssetFolder,
+    listWorkspaceAssetFolders,
+    renameWorkspaceAssetFolder,
+    usesWorkspaceAssetFolderApi,
+} from "@/services/workspace-asset-folders";
 import { workspaceCapabilities } from "@/services/workspace-mode";
 import { normalizeLocalAsset } from "@/lib/local-workspace-migration";
 import { useUserStore } from "@/stores/use-user-store";
-import { createAssetFolder, deleteAssetFolder, listAssetFolders, moveAssetsToFolder, updateAssetFolder, type AssetFolder } from "@/services/api/workspace-data";
+import type { AssetFolder } from "@/services/api/workspace-data";
 import { AssetBatchUploadModal } from "./asset-batch-upload-modal";
 import "@/styles/assets-reference-baseline.css";
 import "@/styles/assets-frame-lock.css";
@@ -68,7 +75,6 @@ const categoryOptions = [{ label: "全部分类", value: "all" }, ...ASSET_CATEG
 const ASSET_LIBRARY_QUERY_KEY = ["asset-library"] as const;
 const ASSET_FOLDER_QUERY_KEY = ["asset-folders"] as const;
 const ASSET_VIEW_MODE_KEY = "infinite-canvas:asset-view-mode";
-const LOCAL_ASSET_FOLDERS_KEY = "infinite-canvas:asset-folders";
 type AssetFolderFilter = "all" | "uncategorized" | string;
 type AssetSortOrder = "updated_desc" | "updated_asc" | "name_asc";
 
@@ -99,6 +105,7 @@ export default function AssetsPage() {
     const userId = useUserStore((state) => state.user?.id || "");
     const localWorkspace = workspaceCapabilities().local;
     const remoteMode = Boolean(userId) && !localWorkspace;
+    const folderApi = usesWorkspaceAssetFolderApi();
     const retentionDays = useUserStore((state) => state.runtimeLimits.recycleBinRetentionDays ?? 30);
     const [viewMode, setViewMode] = useState<"library" | "trash">("library");
     const [keyword, setKeyword] = useState("");
@@ -151,29 +158,20 @@ export default function AssetsPage() {
 
     const foldersQuery = useQuery({
         queryKey: ASSET_FOLDER_QUERY_KEY,
-        queryFn: () => listAssetFolders(),
-        enabled: remoteMode,
+        queryFn: () => listWorkspaceAssetFolders(),
+        enabled: folderApi,
     });
     useEffect(() => {
-        if (remoteMode) return;
+        if (folderApi) return;
         let active = true;
-        void Promise.resolve(localForageStorageForScope().getItem(LOCAL_ASSET_FOLDERS_KEY)).then((raw) => {
-            if (!active || !raw) return;
-            try {
-                const parsed = JSON.parse(raw) as unknown;
-                if (Array.isArray(parsed)) setLocalFolders(parsed.filter((folder): folder is AssetFolder => Boolean(folder && typeof folder === "object" && typeof (folder as AssetFolder).id === "string" && typeof (folder as AssetFolder).name === "string")));
-            } catch {
-                // Ignore malformed local folder metadata; assets remain usable as uncategorized.
-            }
+        void listWorkspaceAssetFolders().then((folders) => {
+            if (active) setLocalFolders(folders);
+        }).catch(() => {
+            // Ignore malformed local folder metadata; assets remain usable as uncategorized.
         });
         return () => { active = false; };
-    }, [remoteMode]);
-    const folders = remoteMode ? foldersQuery.data?.folders || [] : localFolders;
-
-    const persistLocalFolders = async (next: AssetFolder[]) => {
-        setLocalFolders(next);
-        await localForageStorageForScope().setItem(LOCAL_ASSET_FOLDERS_KEY, JSON.stringify(next));
-    };
+    }, [folderApi, userId]);
+    const folders = folderApi ? foldersQuery.data || [] : localFolders;
 
     const allLibraryAssets = useMemo(() => assets.filter((asset): asset is LibraryAsset => asset.kind !== "entity"), [assets]);
     const activeAssets = useMemo(() => allLibraryAssets.filter((asset) => asset.status !== "archived"), [allLibraryAssets]);
@@ -293,16 +291,9 @@ export default function AssetsPage() {
         if (!name || !folderEditor) return;
         setFolderSaving(true);
         try {
-            if (!remoteMode) {
-                const now = new Date().toISOString();
-                if (folderEditor === "new") {
-                    const id = `asset-folder-${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
-                    await persistLocalFolders([...localFolders, { id, name, position: localFolders.length, createdAt: now, updatedAt: now }]);
-                } else {
-                    await persistLocalFolders(localFolders.map((folder) => folder.id === folderEditor.id ? { ...folder, name, updatedAt: now } : folder));
-                }
-            } else if (folderEditor === "new") await createAssetFolder(name);
-            else await updateAssetFolder(folderEditor.id, name);
+            if (folderEditor === "new") await createWorkspaceAssetFolder(name);
+            else await renameWorkspaceAssetFolder(folderEditor.id, name);
+            if (!folderApi) setLocalFolders(await listWorkspaceAssetFolders());
             setFolderEditor(null);
             setFolderName("");
             await invalidateAssetLibrary();
@@ -316,15 +307,12 @@ export default function AssetsPage() {
 
     const removeFolder = async (folder: AssetFolder) => {
         try {
-            if (remoteMode) await deleteAssetFolder(folder.id);
-            else await persistLocalFolders(localFolders.filter((item) => item.id !== folder.id));
-            for (const asset of useAssetStore.getState().assets) {
-                if (asset.folderId === folder.id) updateAsset(asset.id, { folderId: undefined });
-            }
+            await deleteWorkspaceAssetFolder(folder.id);
+            if (!folderApi) setLocalFolders(await listWorkspaceAssetFolders());
             await flushAssetStorePersistence();
             if (folderFilter === folder.id) setFolderFilter("all");
             setPage(1);
-            if (remoteMode) await invalidateAssetLibrary();
+            await invalidateAssetLibrary();
             message.success(`已删除分类「${folder.name}」，其中素材已移至未分类`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "素材分类删除失败");
@@ -332,14 +320,14 @@ export default function AssetsPage() {
         }
     };
 
-    const moveAssetsToFolder = async (assetIds: string[], folderId: string) => {
+    const moveSelectedAssetsToFolder = async (assetIds: string[], folderId: string) => {
         if (!assetIds.length) return;
         try {
-            if (remoteMode) await moveAssetsToFolder(assetIds, folderId);
-            assetIds.forEach((id) => updateAsset(id, { folderId: folderId || undefined }));
+            await assignWorkspaceAssetsFolder(assetIds, folderId);
+            if (!folderApi) await persistWorkspaceAssetChanges();
             await flushAssetStorePersistence();
             setSelectedIds([]);
-            if (remoteMode) await invalidateAssetLibrary();
+            await invalidateAssetLibrary();
             message.success(`已移动 ${assetIds.length} 个素材`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "移动素材失败");
@@ -903,7 +891,7 @@ export default function AssetsPage() {
                                     onArchive={() => setBatchArchiveOpen(true)}
                                     onDelete={() => setBatchDeleteOpen(true)}
                                     folderOptions={folderSelectOptions}
-                                    onMoveToFolder={(folderId) => void moveAssetsToFolder(selectedAssets.map((asset) => asset.id), folderId)}
+                                    onMoveToFolder={(folderId) => void moveSelectedAssetsToFolder(selectedAssets.map((asset) => asset.id), folderId)}
                                 />
                             ) : null}
                             {validAssets.length === 0 && totalAssets === 0 ? (
@@ -936,7 +924,7 @@ export default function AssetsPage() {
                                                     onArchive={() => setArchivingAsset(asset)}
                                                     onDelete={() => setDeletingAsset(asset)}
                                                     folderOptions={folderSelectOptions}
-                                                    onMoveToFolder={(folderId) => void moveAssetsToFolder([asset.id], folderId)}
+                                                    onMoveToFolder={(folderId) => void moveSelectedAssetsToFolder([asset.id], folderId)}
                                                 />
                                             ))}
                                         </CollectionGrid>

@@ -6,8 +6,8 @@ import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import { captureUserScope } from "@/lib/user-scope-guard";
 import { apiClient } from "@/services/api/request";
 import * as localWorkspaceSync from "@/services/local-workspace-sync";
-import { persistWorkspaceAssetChanges, persistWorkspaceAssetLink, deleteWorkspaceAsset } from "@/services/workspace-asset-repository";
-import { useAssetStore, type Asset } from "@/stores/use-asset-store";
+import { persistWorkspaceAssetChanges, persistWorkspaceAssetLink, deleteWorkspaceAsset, resetWorkspaceAssetCommitStateForTests } from "@/services/workspace-asset-repository";
+import { resetAssetStoreDraftsForTests, useAssetStore, type Asset } from "@/stores/use-asset-store";
 
 function deferred<T = void>() {
     let resolve!: (value: T | PromiseLike<T>) => void;
@@ -73,9 +73,11 @@ function hostedSession() {
     spies.push(spyOn(runtimeMode, "isLocalRuntimeMode").mockReturnValue(false));
 }
 
-afterEach(() => {
+afterEach(async () => {
     while (spies.length) spies.pop()?.mockRestore();
     useAssetStore.setState({ assets: [] });
+    resetWorkspaceAssetCommitStateForTests();
+    await resetAssetStoreDraftsForTests();
 });
 
 describe("workspace asset repository runtime boundary", () => {

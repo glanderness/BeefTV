@@ -82,7 +82,16 @@ type QueuedAssetPersist = {
     token: number;
 };
 
-type AssetStoreDraftKind = "upsert" | "delete";
+export type AssetStoreDraftKind = "upsert" | "delete";
+
+export type AssetStoreDraft = {
+    kind: AssetStoreDraftKind;
+    version: number;
+};
+
+export type AssetStoreDraftRecord = AssetStoreDraft & { id: string };
+
+export const ASSET_STORE_DRAFTS_KEY = "infinite-canvas:asset_store_drafts";
 
 let suppressAssetStorePersistence = 0;
 let suppressAssetStoreDraftTracking = 0;
@@ -91,7 +100,9 @@ const observedAssetPersists = new Map<string, ObservedAssetPersist>();
 const queuedAssetPersists = new Map<string, QueuedAssetPersist>();
 const assetPersistTokens = new Map<string, number>();
 const assetOperations = new Map<Promise<unknown>, CapturedUserScope>();
-const assetStoreDrafts = new Map<string, Map<string, AssetStoreDraftKind>>();
+/** Uncommitted commit-intent, keyed by userScope so A→B→A can recover without auto-dispatch. */
+const assetStoreDrafts = new Map<string, Map<string, AssetStoreDraft>>();
+const hydratedAssetDraftScopes = new Set<string>();
 const generationAssetFailures = new Map<string, unknown>();
 
 function assetPersistNamespace(scope: CapturedUserScope) {
@@ -99,29 +110,80 @@ function assetPersistNamespace(scope: CapturedUserScope) {
 }
 
 function dropAbandonedAssetPersists(live: CapturedUserScope) {
-    const liveNamespace = assetPersistNamespace(live);
     for (const [key, queued] of [...queuedAssetPersists.entries()]) {
         if (queued.scope === live.userScope && queued.epoch === live.epoch) continue;
         queuedAssetPersists.delete(key);
         assetPersistTokens.delete(key);
     }
-    for (const key of [...assetStoreDrafts.keys()]) {
-        if (key === liveNamespace) continue;
-        assetStoreDrafts.delete(key);
+}
+
+function parsePersistedAssetStoreDrafts(raw: string | null) {
+    const drafts = new Map<string, AssetStoreDraft>();
+    if (!raw) return drafts;
+    try {
+        const parsed = JSON.parse(raw) as { drafts?: Record<string, { kind?: unknown; version?: unknown }> };
+        if (!parsed || typeof parsed !== "object" || !parsed.drafts || typeof parsed.drafts !== "object") return drafts;
+        for (const [id, value] of Object.entries(parsed.drafts)) {
+            if (!id || (value?.kind !== "upsert" && value?.kind !== "delete")) continue;
+            const version = Number(value.version);
+            if (!Number.isInteger(version) || version < 1) continue;
+            drafts.set(id, { kind: value.kind, version });
+        }
+    } catch {
+        // Recoverable commit-intent only; a bad cache must not block the asset library.
     }
+    return drafts;
+}
+
+function serializeAssetStoreDrafts(drafts: Map<string, AssetStoreDraft>) {
+    return JSON.stringify({ drafts: Object.fromEntries(drafts) });
+}
+
+async function writeAssetStoreDrafts(userScope: string) {
+    const storage = localForageStorageForScope(userScope);
+    const drafts = assetStoreDrafts.get(userScope);
+    if (!drafts?.size) {
+        await storage.removeItem(ASSET_STORE_DRAFTS_KEY);
+        return;
+    }
+    await storage.setItem(ASSET_STORE_DRAFTS_KEY, serializeAssetStoreDrafts(drafts));
+}
+
+function scheduleAssetStoreDraftPersist(userScope: string) {
+    return trackAssetOperation(writeAssetStoreDrafts(userScope), captureUserScope());
+}
+
+export async function hydrateAssetStoreDrafts(userScope = getActiveUserScope()) {
+    if (hydratedAssetDraftScopes.has(userScope)) return;
+    const durable = parsePersistedAssetStoreDrafts(await localForageStorageForScope(userScope).getItem(ASSET_STORE_DRAFTS_KEY));
+    const memory = assetStoreDrafts.get(userScope) ?? new Map<string, AssetStoreDraft>();
+    const merged = new Map(durable);
+    for (const [id, draft] of memory) {
+        const existing = merged.get(id);
+        if (!existing || draft.version >= existing.version) merged.set(id, draft);
+    }
+    if (merged.size) assetStoreDrafts.set(userScope, merged);
+    else assetStoreDrafts.delete(userScope);
+    hydratedAssetDraftScopes.add(userScope);
 }
 
 function markAssetStoreDraft(id: string, kind: AssetStoreDraftKind) {
     if (suppressAssetStoreDraftTracking) return;
-    const namespace = assetPersistNamespace(captureUserScope());
-    const drafts = assetStoreDrafts.get(namespace) ?? new Map<string, AssetStoreDraftKind>();
-    if (kind === "delete" && drafts.get(id) === "upsert") {
-        drafts.delete(id);
-    } else {
-        drafts.set(id, kind);
-    }
-    if (drafts.size) assetStoreDrafts.set(namespace, drafts);
-    else assetStoreDrafts.delete(namespace);
+    const userScope = getActiveUserScope();
+    const drafts = assetStoreDrafts.get(userScope) ?? new Map<string, AssetStoreDraft>();
+    const previous = drafts.get(id);
+    drafts.set(id, { kind, version: (previous?.version ?? 0) + 1 });
+    assetStoreDrafts.set(userScope, drafts);
+    scheduleAssetStoreDraftPersist(userScope);
+}
+
+/** Record an explicit delete intent without waiting for removeAsset. 404 is idempotent. */
+export function recordAssetStoreDraft(id: string, kind: AssetStoreDraftKind) {
+    markAssetStoreDraft(id, kind);
+}
+
+export function peekAssetStoreDraft(userScope: string, id: string) {
+    return assetStoreDrafts.get(userScope)?.get(id);
 }
 
 /** Apply a server projection without treating the local patch as a new uncommitted write. */
@@ -136,23 +198,38 @@ export function runAssetStoreProjection<T>(operation: () => T): T {
 
 export function readAssetStoreDrafts(expected: CapturedUserScope) {
     assertUserScope(expected);
-    const drafts = assetStoreDrafts.get(assetPersistNamespace(expected)) ?? new Map<string, AssetStoreDraftKind>();
-    const upserts: string[] = [];
-    const deletes: string[] = [];
-    for (const [id, kind] of drafts) {
-        if (kind === "upsert") upserts.push(id);
-        else deletes.push(id);
+    const drafts = assetStoreDrafts.get(expected.userScope) ?? new Map<string, AssetStoreDraft>();
+    const upserts: AssetStoreDraftRecord[] = [];
+    const deletes: AssetStoreDraftRecord[] = [];
+    for (const [id, draft] of drafts) {
+        if (draft.kind === "upsert") upserts.push({ id, ...draft });
+        else deletes.push({ id, ...draft });
     }
     return { upserts, deletes };
 }
 
-export function consumeAssetStoreDrafts(expected: CapturedUserScope, ids: Iterable<string>) {
-    assertUserScope(expected);
-    const namespace = assetPersistNamespace(expected);
-    const drafts = assetStoreDrafts.get(namespace);
+/** Ack only the submitted version. A later local edit keeps its draft. */
+export function ackAssetStoreDraft(expected: CapturedUserScope, id: string, version: number) {
+    if (!userScopeMatches(expected)) return;
+    const drafts = assetStoreDrafts.get(expected.userScope);
     if (!drafts) return;
-    for (const id of ids) drafts.delete(id);
-    if (!drafts.size) assetStoreDrafts.delete(namespace);
+    const current = drafts.get(id);
+    if (!current || current.version !== version) return;
+    drafts.delete(id);
+    if (drafts.size) assetStoreDrafts.set(expected.userScope, drafts);
+    else assetStoreDrafts.delete(expected.userScope);
+    scheduleAssetStoreDraftPersist(expected.userScope);
+}
+
+export function unloadAssetStoreDraftsForTests() {
+    assetStoreDrafts.clear();
+    hydratedAssetDraftScopes.clear();
+}
+
+export async function resetAssetStoreDraftsForTests() {
+    const scopes = new Set([...assetStoreDrafts.keys(), ...hydratedAssetDraftScopes, getActiveUserScope()]);
+    unloadAssetStoreDraftsForTests();
+    await Promise.all([...scopes].map((scope) => localForageStorageForScope(scope).removeItem(ASSET_STORE_DRAFTS_KEY)));
 }
 
 function recordAssetStorageDocument(scope: string, document: AssetStorageDocument) {
@@ -560,6 +637,7 @@ export const useAssetStore = create<AssetStore>()(
             partialize: (state) => ({ assets: state.assets }) as StorageValue<AssetStore>["state"],
             onRehydrateStorage: () => () => {
                 useAssetStore.setState({ hydrated: true });
+                void hydrateAssetStoreDrafts();
             },
         },
     ),

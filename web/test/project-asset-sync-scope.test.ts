@@ -6,8 +6,8 @@ import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import { UserScopeAbandonedError, captureUserScope } from "@/lib/user-scope-guard";
 import { apiClient, ApiError } from "@/services/api/request";
 import { ensureCanvasNodeAsset, retryCanvasAssetSyncAfterRateLimit } from "@/services/project-asset-sync";
-import { persistWorkspaceAssetLink } from "@/services/workspace-asset-repository";
-import { useAssetStore, type Asset } from "@/stores/use-asset-store";
+import { persistWorkspaceAssetLink, resetWorkspaceAssetCommitStateForTests } from "@/services/workspace-asset-repository";
+import { resetAssetStoreDraftsForTests, useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 function deferred<T = void>() {
@@ -76,9 +76,11 @@ function desktopBackend() {
     spies.push(spyOn(runtimeMode, "isLocalRuntimeMode").mockReturnValue(true));
 }
 
-afterEach(() => {
+afterEach(async () => {
     while (spies.length) spies.pop()?.mockRestore();
     useAssetStore.setState({ assets: [] });
+    resetWorkspaceAssetCommitStateForTests();
+    await resetAssetStoreDraftsForTests();
 });
 
 function requestKey(config: { method?: string; url?: string }) {

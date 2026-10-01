@@ -22,24 +22,24 @@ export function listWorkspaceCanvasProjectsPage(options: { page: number; pageSiz
     });
 }
 
-export function listAssetFolders() {
-    return http.get<{ folders: AssetFolder[] }>("/asset-folders");
+export function listAssetFolders(config?: HttpRequestConfig) {
+    return http.get<{ folders: AssetFolder[] }>("/asset-folders", config);
 }
 
-export function createAssetFolder(name: string) {
-    return http.post<{ folder: AssetFolder }>("/asset-folders", { name });
+export function createAssetFolder(name: string, config?: HttpRequestConfig) {
+    return http.post<{ folder: AssetFolder }>("/asset-folders", { name }, config);
 }
 
-export function updateAssetFolder(id: string, name: string) {
-    return http.patch<{ folder: AssetFolder }>(`/asset-folders/${encodeURIComponent(id)}`, { name });
+export function updateAssetFolder(id: string, name: string, config?: HttpRequestConfig) {
+    return http.patch<{ folder: AssetFolder }>(`/asset-folders/${encodeURIComponent(id)}`, { name }, config);
 }
 
-export function deleteAssetFolder(id: string) {
-    return http.delete<{ id: string }>(`/asset-folders/${encodeURIComponent(id)}`);
+export function deleteAssetFolder(id: string, config?: HttpRequestConfig) {
+    return http.delete<{ id: string }>(`/asset-folders/${encodeURIComponent(id)}`, config);
 }
 
-export function moveAssetsToFolder(assetIds: string[], folderId = "") {
-    return http.patch<{ assetIds: string[]; folderId: string }>("/assets/folder", { assetIds, folderId });
+export function moveAssetsToFolder(assetIds: string[], folderId = "", config?: HttpRequestConfig) {
+    return http.patch<{ assetIds: string[]; folderId: string }>("/assets/folder", { assetIds, folderId }, config);
 }
 
 export function getWorkspaceAsset(id: string, signal?: AbortSignal, config?: HttpRequestConfig) {

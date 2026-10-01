@@ -2,31 +2,43 @@
 
 状态：前端素材创建/项目链接/分类/文件夹/删除写入接入已有 `asset.Library` 与 `internal/project` HTTP 合同。SQLite 为已提交事实；前端只保留显示和明确未提交草稿。不是完整重构完成证明。Lead 负责 backup worker 接线。
 
+## 权威关系
+
+| 状态 | 权威 | 说明 |
+| --- | --- | --- |
+| 已提交素材 / 工作区分类 | SQLite `asset.Library` | `PUT/DELETE /assets/:id`、`GET/POST/PATCH/DELETE /asset-folders`、`PATCH /assets/folder` |
+| 已提交项目素材链接 / 项目内目录 | SQLite `internal/project` | `POST /projects/:id/assets`、项目 `asset-folders` |
+| 未提交编辑 | 前端草稿（`userScope` 持久，含 version） | 只表示 commit 意图。旧 epoch 不得自动 dispatch；新用户动作进入新 epoch 才可提交 |
+| 浏览器纯本地素材库 | IndexedDB 资产 cache | 无 Go 资源库时的产品路径，不是服务端保存 |
+
+服务端回执只合并用户提交后未改过的字段。后续本地 title/tags/data/metadata 保留。`PUT` 资产上的 `folderId` 只是素材归属，不是分类名称或层级。
+
 ## 运行时分流
 
 以现有函数为准，不凭关键词替换：
 
-| 运行时 | 判定 | 素材写入 |
-| --- | --- | --- |
-| 浏览器纯本地（无 Go 资源库） | `usesBrowserLocalResourceStore()` | IndexedDB 仍是产品持久路径；`projectIds` 写在本地 metadata |
-| 桌面有后端 | `isNativeDesktopRuntime()` 且本地运行时 | `PUT /assets/:id`、`POST /projects/:id/assets`、分类/文件夹 PATCH、`DELETE /assets/:id` |
-| hosted | 非浏览器本地资源库 | 同上 typed API；禁止 `saveRemoteUserDataNow` 整批覆盖 |
+| 运行时 | 判定 | 素材写入 | 工作区分类 |
+| --- | --- | --- | --- |
+| 浏览器纯本地（无 Go 资源库） | `usesBrowserLocalResourceStore()` | IndexedDB 仍是产品持久路径；`projectIds` 写在本地 metadata | IndexedDB `infinite-canvas:asset-folders` |
+| 桌面有后端 | `isNativeDesktopRuntime()` 且本地运行时 | `PUT /assets/:id`、`POST /projects/:id/assets`、分类/文件夹 PATCH、`DELETE /assets/:id` | `/asset-folders` 与 `PATCH /assets/folder` |
+| hosted | 非浏览器本地资源库 | 同上 typed API；禁止 `saveRemoteUserDataNow` 整批覆盖 | 同上 |
 
-`isLocalWorkspaceMode()` 仍表示本地优先产品面（路由把项目详情送到画布）。桌面也是 local workspace，不能再用它跳过项目链接。
+`isLocalWorkspaceMode()` 仍表示本地优先产品面（路由把项目详情送到画布）。桌面也是 local workspace，不能再用它跳过项目链接或分类 API。Vite+Go 与纯浏览器共用 `usesBrowserLocalResourceStore()`，分类仍走 IDB。
 
 ## 入口
 
 - `ensureCanvasNodeAsset(options)`：入口捕获 `expectedScope`（可注入，backup worker 复用）；pending key 含 `userScope` 与 `epoch`；429 等待后、HTTP dispatch 前、store 投影前同一身份。
-- `persistWorkspaceAssetLink`：浏览器本地走 IDB；其余先 upsert 素材再链接项目。失败向上抛出。成功才把 `linkedToProject` 交给调用方（ensure 在 persist 返回后才标记）。
-- `persistWorkspaceAssetChanges` / `deleteWorkspaceAsset`：同一分流。脏草稿走具体 PUT/DELETE，不把 flush IDB 当成服务端保存。
+- `persistWorkspaceAssetLink`：浏览器本地走 IDB；其余先 upsert 素材再链接项目。失败向上抛出。成功才把 `linkedToProject` 交给调用方（ensure 在 persist 返回后才标记）。回执按提交版本 ack，按字段合并。
+- `persistWorkspaceAssetChanges` / `deleteWorkspaceAsset`：同一分流。脏草稿走具体 PUT/DELETE；同一 `userScope+assetId` 串行；入队 epoch 与 live 不一致则放弃 dispatch 并保留草稿。删除意图保守记录 DELETE（404 幂等），已有服务端素材改过再删也会发出 DELETE。
 - `registerMaterializedLocalAsset`：现有 `localWorkspace()` 注入点保留；`putAsset` 接收 `expectedScope`。
+- Assets 页分类增删改/读取走 `workspace-asset-folders.ts`，不再用 `workspaceCapabilities().local` 把桌面打进 localForage。
 
 ## 禁止
 
 - 用 IndexedDB flush 冒充服务端已保存
 - 用 `saveRemoteUserDataNow` 覆盖服务端新数据
 - 新建平行 ledger / 整批 ReplaceUserAssets
-- 改 `hydrateBackendGeneratedOutputs`、canvas-generation-consumer、local-workspace-repository/journal/canvas store、资源配额或 schema 12
+- 改 `hydrateBackendGeneratedOutputs`、canvas-generation-consumer、local-workspace-repository/journal/canvas store、资源配额或 schema 12 / schema 13
 
 ## Lead 接线
 
