@@ -241,6 +241,84 @@ func ensureAssistantTurnsUserCanvasIndex(tx *gorm.DB) error {
 		"CREATE INDEX idx_assistant_turns_user_canvas ON assistant_turns(user_id, canvas_id)")
 }
 
+func migrateCreationConversations(tx *gorm.DB) error {
+	if err := ensureCreationConversationsTable(tx); err != nil {
+		return err
+	}
+	return requireCreationConversationsSchema(tx)
+}
+
+func ensureCreationConversationsTable(tx *gorm.DB) error {
+	if tx.Migrator().HasTable("creation_conversations") {
+		for _, column := range []struct{ name, definition string }{
+			{"revision", "INTEGER NOT NULL DEFAULT 0"},
+			{"document", "TEXT NOT NULL DEFAULT '{}'"},
+			{"deleted", "NUMERIC NOT NULL DEFAULT 0"},
+			{"import_operation_id", "TEXT"},
+			{"import_hash", "TEXT"},
+			{"created_at", "DATETIME"},
+			{"updated_at", "DATETIME"},
+		} {
+			if err := ensureSQLiteColumn(tx, "creation_conversations", column.name, column.definition); err != nil {
+				return err
+			}
+		}
+		return ensureCreationConversationsUserUpdatedIndex(tx)
+	}
+	if err := tx.Exec(`CREATE TABLE creation_conversations (
+		user_id TEXT NOT NULL,
+		conversation_id TEXT NOT NULL,
+		revision INTEGER NOT NULL DEFAULT 0,
+		document TEXT NOT NULL,
+		deleted NUMERIC NOT NULL DEFAULT 0,
+		import_operation_id TEXT,
+		import_hash TEXT,
+		created_at DATETIME,
+		updated_at DATETIME,
+		PRIMARY KEY (user_id, conversation_id)
+	)`).Error; err != nil {
+		return fmt.Errorf("创建创作对话表: %w", err)
+	}
+	return ensureCreationConversationsUserUpdatedIndex(tx)
+}
+
+func ensureCreationConversationsUserUpdatedIndex(tx *gorm.DB) error {
+	return ensureSQLiteIndex(tx, "creation_conversations", "idx_creation_conversations_user_updated",
+		"CREATE INDEX idx_creation_conversations_user_updated ON creation_conversations(user_id, updated_at)")
+}
+
+func requireCreationConversationsSchema(db *gorm.DB) error {
+	if !db.Migrator().HasTable("creation_conversations") {
+		return fmt.Errorf("本地创作对话表缺失，请启用自动迁移")
+	}
+	for _, column := range []string{
+		"user_id", "conversation_id", "revision", "document", "deleted",
+		"import_operation_id", "import_hash", "created_at", "updated_at",
+	} {
+		has, err := sqliteHasColumn(db, "creation_conversations", column)
+		if err != nil {
+			return err
+		}
+		if !has {
+			return fmt.Errorf("本地创作对话表缺失列 %s", column)
+		}
+	}
+	if err := requireSQLitePrimaryKey(db, "creation_conversations", []string{"user_id", "conversation_id"}); err != nil {
+		return err
+	}
+	valid, err := matchesSQLiteIndex(db, sqliteIndexContract{
+		table: "creation_conversations", name: "idx_creation_conversations_user_updated",
+		columns: []string{"user_id", "updated_at"}, unique: false,
+	})
+	if err != nil {
+		return err
+	}
+	if !valid {
+		return fmt.Errorf("本地数据库索引 idx_creation_conversations_user_updated 定义不完整")
+	}
+	return nil
+}
+
 func requireAssistantTurnsSchema(db *gorm.DB) error {
 	if !db.Migrator().HasTable("assistant_turns") {
 		return fmt.Errorf("本地助手业务回合表缺失，请启用自动迁移")

@@ -26,7 +26,68 @@ tags:
   - name: beefapi
   - name: agent-ops
   - name: assistant
+  - name: creation-conversations
 paths:
+  /creation-conversations:
+    get:
+      tags: [creation-conversations]
+      summary: 列出当前工作区未删除的创作对话
+      description: 返回已提交对话文档与墓碑 ID。IndexedDB 不是提交事实。
+      responses:
+        "200":
+          description: 信封 data 为 conversations 与 deletedIds
+  /creation-conversations/import:
+    post:
+      tags: [creation-conversations]
+      summary: 按稳定操作标识导入本地历史对话
+      description: 仅在没有后端记录或墓碑时导入；同一 operationId 与哈希可重放。
+      responses:
+        "200":
+          description: 信封 data 含 imported 与对话记录
+        "409":
+          description: 同一操作标识对应不同内容
+  /creation-conversations/{id}:
+    get:
+      tags: [creation-conversations]
+      summary: 读取一条未删除的创作对话
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 信封 data 为 revision 与 document
+        "404":
+          description: 不存在或已删除
+    put:
+      tags: [creation-conversations]
+      summary: 按 expectedRevision 提交一条创作对话
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 新 revision
+        "409":
+          description: 版本冲突或墓碑拒绝复活
+    delete:
+      tags: [creation-conversations]
+      summary: 为创作对话写入墓碑
+      description: 不删除关联任务或素材。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: expectedRevision
+          schema: { type: integer }
+      responses:
+        "200":
+          description: 墓碑已写入
   /beefapi/connection:
     get:
       tags: [beefapi]

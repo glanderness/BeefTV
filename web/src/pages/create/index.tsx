@@ -17,7 +17,7 @@ import { inferVideoOperation, resolveCompatibleModel, mergedImageCapabilityConfi
 import type { BackendGenerationResult } from "@/services/api/generation-task";
 import type { Skill } from "@/services/api/skills";
 import type { GenerationTask } from "@/services/api/task-center";
-import { loadCreationConversations, pendingCreationTaskIds, removeCreationConversationSnapshot, saveCreationConversations, updateCreationConversationSnapshot } from "@/services/creation-conversation-store";
+import { deleteCreationConversation, loadCreationConversations, loadLocalCreationConversationDrafts, pendingCreationTaskIds, removeCreationConversationSnapshot, saveCreationConversations, updateCreationConversationSnapshot } from "@/services/creation-conversation-store";
 import { resolveModelChannel, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
@@ -91,6 +91,7 @@ export default function CreatePage() {
     const [activeId, setActiveId] = useState("");
     const activeIdRef = useRef("");
     const [hydrated, setHydrated] = useState(false);
+    const skipPersistRef = useRef(true);
     const [mode, setMode] = useState<CreationMode>(() => requestedMode || initialComposerPreferences.mode || defaultCreationMode);
     const [prompt, setPrompt] = useState(() => marketplaceSkill ? `@${marketplaceSkill} ` : "");
     const [attachments, setAttachments] = useState<CreationAttachment[]>([]);
@@ -257,7 +258,24 @@ export default function CreatePage() {
         }
         void loadCreationConversations<CreationConversation>().then((stored) => {
             if (cancelled) return;
+            skipPersistRef.current = true;
             const next = stored?.length ? stored : [newConversation()];
+            conversationsRef.current = next;
+            setConversations(next);
+            setActiveId(next[0].id);
+            setHydrated(true);
+        }).catch(async (error) => {
+            if (cancelled) return;
+            toast.error(error instanceof Error ? error.message : "对话加载失败");
+            let local: CreationConversation[] | null = null;
+            try {
+                local = await loadLocalCreationConversationDrafts<CreationConversation>();
+            } catch {
+                local = null;
+            }
+            if (cancelled) return;
+            skipPersistRef.current = true;
+            const next = local?.length ? local : [newConversation()];
             conversationsRef.current = next;
             setConversations(next);
             setActiveId(next[0].id);
@@ -267,7 +285,7 @@ export default function CreatePage() {
             cancelled = true;
             // 页面卸载只停止当前页面的状态更新，后台任务由任务中心继续执行，返回页面后再恢复状态。
         };
-    }, [demoConversation]);
+    }, [demoConversation, toast]);
 
     useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -277,8 +295,15 @@ export default function CreatePage() {
 
     useEffect(() => {
         conversationsRef.current = conversations;
-        if (hydrated && !demoConversation) void saveCreationConversations(conversations);
-    }, [conversations, demoConversation, hydrated]);
+        if (!hydrated || demoConversation) return;
+        if (skipPersistRef.current) {
+            skipPersistRef.current = false;
+            return;
+        }
+        void saveCreationConversations(conversations).catch((error) => {
+            toast.error(error instanceof Error ? error.message : "对话保存失败");
+        });
+    }, [conversations, demoConversation, hydrated, toast]);
 
     useEffect(() => {
         if (!hydrated || !recoveryTaskKey || !pendingTaskIds.length) return;
@@ -825,11 +850,11 @@ export default function CreatePage() {
             cancelText: "保留",
             onOk: async () => {
                 try {
+                    await deleteCreationConversation(conversation.id);
                     const remaining = removeCreationConversationSnapshot(conversationsRef.current, conversation.id);
                     const sortedRemaining = [...remaining].sort((left, right) => conversationTimestamp(right.updatedAt) - conversationTimestamp(left.updatedAt));
                     const fallback = sortedRemaining.find((item) => item.messages.length > 0) || sortedRemaining[0] || newConversation();
                     const next = remaining.length ? remaining : [fallback];
-                    await saveCreationConversations(next);
                     conversationsRef.current = next;
                     setConversations(next);
                     if (activeIdRef.current === conversation.id) {

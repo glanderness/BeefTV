@@ -8,7 +8,7 @@ import (
 )
 
 func TestProductRecoverySameVersionMissingStructureFailsClosed(t *testing.T) {
-	for _, missing := range []string{"image_submissions", "failure_diagnostics"} {
+	for _, missing := range []string{"image_submissions", "failure_diagnostics", "creation_conversations"} {
 		t.Run(missing, func(t *testing.T) {
 			db, err := Open(Config{Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "workspace.db")})
 			if err != nil {
@@ -24,6 +24,8 @@ func TestProductRecoverySameVersionMissingStructureFailsClosed(t *testing.T) {
 			}
 			if missing == "image_submissions" {
 				err = db.Migrator().DropTable(&model.ImageSubmission{})
+			} else if missing == "creation_conversations" {
+				err = db.Migrator().DropTable(&model.CreationConversation{})
 			} else {
 				err = db.Migrator().DropColumn(&model.Task{}, "FailureDiagnostics")
 			}

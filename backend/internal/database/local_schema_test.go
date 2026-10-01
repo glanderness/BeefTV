@@ -413,13 +413,28 @@ func TestAssistantTurnsMigrationFromPreviewV9(t *testing.T) {
 	if !db.Migrator().HasTable(&model.AssistantTurn{}) {
 		t.Fatal("v10 did not create assistant_turns")
 	}
+	if !db.Migrator().HasTable(&model.CreationConversation{}) {
+		t.Fatal("v11 did not create creation_conversations")
+	}
 	mustColumn(t, db, "tasks", "preview_marker", "keep")
 	var ledger []localSchemaMigration
 	if err := db.Order("version").Find(&ledger).Error; err != nil {
 		t.Fatal(err)
 	}
-	if ledger[len(ledger)-1].Version != 10 || ledger[len(ledger)-1].Name != "assistant-business-turns" {
-		t.Fatalf("v10 identity: %+v", ledger[len(ledger)-1])
+	if ledger[len(ledger)-1].Version != 11 || ledger[len(ledger)-1].Name != "creation-conversations" {
+		t.Fatalf("v11 identity: %+v", ledger[len(ledger)-1])
+	}
+	foundV10 := false
+	for _, row := range ledger {
+		if row.Version == 10 {
+			foundV10 = true
+			if row.Name != "assistant-business-turns" {
+				t.Fatalf("v10 identity rewritten: %+v", row)
+			}
+		}
+	}
+	if !foundV10 {
+		t.Fatal("v10 assistant-business-turns missing after v11")
 	}
 	for i, row := range before {
 		if ledger[i].Name != row.Name || !ledger[i].AppliedAt.Equal(row.AppliedAt) {
@@ -434,6 +449,31 @@ func TestAssistantTurnsMigrationFromPreviewV9(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(again) != len(ledger) {
-		t.Fatalf("idempotent v10 rewrote ledger: %d -> %d", len(ledger), len(again))
+		t.Fatalf("idempotent v11 rewrote ledger: %d -> %d", len(ledger), len(again))
+	}
+}
+
+func TestCreationConversationsMigrationPreservesUnknownColumns(t *testing.T) {
+	db := openHistorical(t, "preview-v9")
+	if err := MigrateLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("ALTER TABLE creation_conversations ADD COLUMN preview_marker TEXT").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO creation_conversations (user_id, conversation_id, revision, document, deleted, preview_marker, created_at, updated_at)
+		VALUES ('local', 'conversation-keep', 1, '{"id":"conversation-keep","title":"历史","messages":[]}', 0, 'keep', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateLocalSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	mustColumn(t, db, "creation_conversations", "preview_marker", "keep")
+	var row model.CreationConversation
+	if err := db.Where("user_id = ? AND conversation_id = ?", "local", "conversation-keep").First(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.Revision != 1 || !strings.Contains(row.Document, "conversation-keep") {
+		t.Fatalf("v11 rewrote conversation row: %+v", row)
 	}
 }

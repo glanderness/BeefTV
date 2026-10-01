@@ -378,6 +378,8 @@ test("Create forwards owned result assets through one new canvas and the project
     expect(createPage).toContain("if (ids.length !== item.resultUrls.length) throw new Error");
     expect(createPage).toContain("await saveCreationConversations(next)");
     expect(createPage.indexOf("await saveCreationConversations(next)")).toBeLessThan(createPage.indexOf("navigate(`/canvas/${result.id}?${params.toString()}`)"));
+    expect(createPage).toContain("await deleteCreationConversation(conversation.id)");
+    expect(createPage).toContain("toast.error(error instanceof Error ? error.message : \"对话保存失败\")");
     expect(canvasIndex).toContain('const handoffMode = mode === "handoff"');
     expect(canvasIndex).toContain('mode !== "new" && mode !== "recent" && mode !== "handoff"');
     expect(canvasIndex).toContain('if (remoteMode && syncError && !isExpectedLocalOnlySyncError(syncError))');

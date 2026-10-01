@@ -57,6 +57,20 @@ func TestProjectDomainDoesNotDependOnApplicationService(t *testing.T) {
 	}
 }
 
+func TestConversationDomainDoesNotDependOnApplicationService(t *testing.T) {
+	command := exec.Command("go", "list", "-deps", "./internal/conversation")
+	command.Dir = "../.."
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("list conversation dependencies: %v", err)
+	}
+	for _, dependency := range strings.Fields(string(output)) {
+		if dependency == "infinite-canvas/backend/internal/app" {
+			t.Fatal("conversation domain still depends on the application service kernel")
+		}
+	}
+}
+
 func TestLocalAppDoesNotDependOnApplicationService(t *testing.T) {
 	command := exec.Command("go", "list", "-deps", "./internal/localapp")
 	command.Dir = "../.."

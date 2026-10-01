@@ -9,13 +9,13 @@ description: BeefTV后端核心持久化表与状态边界
 
 ## 结构迁移与版本
 
-当前完整重构候选的结构版本为 v10。正式 v1.6.21 的结构版本为 v3，历史 Agent 候选曾使用 v3–v6，另有图片恢复预览分支使用 v3 或 v7；这些预览编号不能当作正式版本已发布的证据。以下旧托管数据库的 `schema_migrations` 版本历史与本地版本分开维护，不共用版本号。
+当前完整重构候选的结构版本为 v11。正式 v1.6.21 的结构版本为 v3，历史 Agent 候选曾使用 v3–v6，另有图片恢复预览分支使用 v3 或 v7；这些预览编号不能当作正式版本已发布的证据。以下旧托管数据库的 `schema_migrations` 版本历史与本地版本分开维护，不共用版本号。
 
 实验 v8 `reconcile-product-agent-schema` 在一个事务中补齐 `tasks.failure_diagnostics`（可空 TEXT）、图片恢复表 `image_submissions`、Agent 操作表（包括 `turn_id` 索引）、任务 `client_operation_id`/`client_operation_hash` 和用户维度操作编号唯一索引。已有数据和原迁移名称保持不变；不通过重建 `tasks` 来删除产品字段。相同版本号但缺表、列或必要索引时拒绝 Ready；未来更高版本拒绝迁移。唯一索引遇到重复身份时整步回滚，不自动删除或合并任务。
 
 ### 迁移实验的隔离验收与回滚
 
-v9 `repair-product-agent-contracts` 为已经标记 v8 但缺少诊断列、恢复表或恢复字段的合成历史结构提供显式修复；不重写历史 ledger。Ready 同时检查图片恢复与 Agent 操作表的完整字段、主键，以及任务操作编号唯一索引的列顺序、唯一性和非部分索引属性。已有表缺主键时拒绝自动重建；重复操作身份无法建立唯一索引时保留全部行并回滚。结构校验在 v9 事务内完成后才写入版本。v10 `assistant-business-turns` 在 v9 之后只追加 `assistant_turns` 及 `(user_id, canvas_id)` 索引，不改写 v1–v9 身份。同为当前版本但缺结构仍阻断，未来版本拒绝迁移。状态接口在结构损坏时保留实际版本，不能用 Ready=false、current=0 掩盖已经存在的 ledger。
+v9 `repair-product-agent-contracts` 为已经标记 v8 但缺少诊断列、恢复表或恢复字段的合成历史结构提供显式修复；不重写历史 ledger。Ready 同时检查图片恢复与 Agent 操作表的完整字段、主键，以及任务操作编号唯一索引的列顺序、唯一性和非部分索引属性。已有表缺主键时拒绝自动重建；重复操作身份无法建立唯一索引时保留全部行并回滚。结构校验在 v9 事务内完成后才写入版本。v10 `assistant-business-turns` 在 v9 之后只追加 `assistant_turns` 及 `(user_id, canvas_id)` 索引，不改写 v1–v9 身份。v11 `creation-conversations` 再追加 `creation_conversations` 及 `(user_id, updated_at)` 索引，主键为 `(user_id, conversation_id)`，不改写 v1–v10 身份。同为当前版本但缺结构仍阻断，未来版本拒绝迁移。状态接口在结构损坏时保留实际版本，不能用 Ready=false、current=0 掩盖已经存在的 ledger。
 
 在本分支仓库根目录执行以下命令，仅创建 `t.TempDir()` 内的合成 SQLite 数据库；不打开应用、不读取真实工作区、不连接上游。
 
@@ -58,7 +58,7 @@ $env:CANVAS_DESKTOP_DATA_DIR = 'D:\BeefTV-tests\candidate-workspace'
 
 ### 桌面本地任务诊断
 
-本地 SQLite 使用 `local_schema_migrations` 记录版本。本地重构候选目前为 v10，正式 v1.6.21 为 v3；历史图片恢复预览曾使用 v7。正式 v3 为 `tasks` 新增可空文本列 `failure_diagnostics`，存储有界、脱敏的执行证据和失败摘要；旧任务保留空值。失败诊断与任务终态在同一次带租约校验的更新中保存，成功任务也保留执行证据，主动重试时清除上一轮诊断。任务列表和详情均读取该列，字段说明见 [HTTP API](./http-api)。整合 v8 同时补齐历史分支可能缺失的产品与 Agent 结构，v9 修复已标 v8 的已知结构缺损并强化完整性检查，v10 追加助手业务回合表，保留原迁移记录、Agent 表和任务扩展列。
+本地 SQLite 使用 `local_schema_migrations` 记录版本。本地重构候选目前为 v11，正式 v1.6.21 为 v3；历史图片恢复预览曾使用 v7。正式 v3 为 `tasks` 新增可空文本列 `failure_diagnostics`，存储有界、脱敏的执行证据和失败摘要；旧任务保留空值。失败诊断与任务终态在同一次带租约校验的更新中保存，成功任务也保留执行证据，主动重试时清除上一轮诊断。任务列表和详情均读取该列，字段说明见 [HTTP API](./http-api)。整合 v8 同时补齐历史分支可能缺失的产品与 Agent 结构，v9 修复已标 v8 的已知结构缺损并强化完整性检查，v10 追加助手业务回合表，v11 追加创作对话表，保留原迁移记录、Agent 表和任务扩展列。
 
 部分预览版曾将 v3–v6 用于其他迁移。启动时还会按实际表结构检查并补齐 `failure_diagnostics`，不覆盖迁移记录、不删除预览版字段或旧任务；就绪检查同时要求最低版本和该字段存在。任务入库失败返回 HTTP 500、`reason=local_storage_failed`，界面明确显示本地保存失败、尚未提交生成。内部错误链保留数据库原因，HTTP 响应不包含 SQL 原文；handler 日志记录错误类型。
 
@@ -68,7 +68,7 @@ $env:CANVAS_DESKTOP_DATA_DIR = 'D:\BeefTV-tests\candidate-workspace'
 
 本地完整重构候选以正式 v1.6.21 与 Agent 开发分支为整合起点，当前验收状态见仓库 `docs/refactor/progress.md`。原生桌面完整交互、Windows 真机升级和用户数据副本验收仍是新候选的发布门槛；旧候选或正式版的验收回执不能替代这些验证。历史候选及旧数据备份独立保留，更新开发分支不触发真实工作区迁移。
 
-历史图片恢复预览 v7 拒绝同为 v7 但缺少 `image_submissions` 或 `tasks.failure_diagnostics` 的数据库；本候选通过追加 v8/v9 显式补齐这些历史结构，再以 v10 追加业务回合表。同为当前版本但结构缺损仍拒绝 Ready，版本号本身不构成结构完备证明。不能改历史记录伪造兼容。回滚只能停止所有写入者后，恢复升级前完整工作区备份到独立目录，再用匹配该备份的旧二进制打开；禁止旧程序直接打开新数据库。
+历史图片恢复预览 v7 拒绝同为 v7 但缺少 `image_submissions` 或 `tasks.failure_diagnostics` 的数据库；本候选通过追加 v8/v9 显式补齐这些历史结构，再以 v10 追加业务回合表，v11 追加创作对话表。同为当前版本但结构缺损仍拒绝 Ready，版本号本身不构成结构完备证明。不能改历史记录伪造兼容。回滚只能停止所有写入者后，恢复升级前完整工作区备份到独立目录，再用匹配该备份的旧二进制打开；禁止旧程序直接打开新数据库。
 
 ### 桌面图片请求恢复
 
@@ -109,8 +109,11 @@ $env:CANVAS_DESKTOP_DATA_DIR = 'D:\BeefTV-tests\candidate-workspace'
 | `canvas_snapshots`、`canvas_snapshot_resources` | 画布历史快照与快照引用的资源 | 快照读写按归属校验；历史恢复同样走 revision 前置条件 |
 | `agent_op_records` | 统一操作层的幂等记录：`(user_id, op_id)` 主键、payload 哈希、状态与可空 `turn_id` | 同一 `opId` 同参数回读原结果、不同参数返回冲突；失败操作回滚且不留幂等记录；只在本用户命名空间内回放，不跨用户读取；`turn_id` 与业务写入同事务提交，只有后端鉴权的内置宿主能写入归属 |
 | `assistant_turns` | 助手业务回合：范围、轮前画布快照、结算摘要与撤销标记 | 主键 `turn_id`；必须带用户和画布身份；open 回合才接受写入归属；撤销把旧文档写成新 revision，并与 undone 标记同事务提交。不保存模型对话稿 |
+| `creation_conversations` | `/create` 页面对话与消息文档 | 主键 `(user_id, conversation_id)`；按 revision CAS 写入；删除写墓碑，稳定 ID 不会被 IndexedDB 缓存复活。不保存密钥或 `data:`/`blob:` 临时媒体。删除对话不删除任务或素材 |
 
 版本 10 `assistant-business-turns` 为既有 v9 工作区创建 `assistant_turns`。旧 JSON 文件 `assistant-turns/<hexID>.json` 是只读迁移输入，按被访问的 ID 校验后导入，导入后不再作为竞争事实；生产路径不改写、不删除原文件。保留策略只压缩超龄大快照、留下身份墓碑，不会删掉进行中的回合、回执引用的回合或操作回执。操作层若要把回执记到某一轮，必须在该操作自己的事务里校验回合仍为 open；只做事务外预检无法关闭结算与写入的竞态。
+
+版本 11 `creation-conversations` 为既有 v10 工作区创建 `creation_conversations`。浏览器 IndexedDB `creation-conversations-v1` 只是导入源：没有后端记录或墓碑时，按稳定 `operationId` 与文档哈希在同一事务内导入；已有记录不覆盖。全量数组替换会删掉未见过的对话，因此写入是按对话 CAS，删除走显式墓碑。后续任务绑定可在同一调用方事务里调用 `AttachMessageResult`，只改该消息的结果字段。
 
 公开镜像不附带独立迁移程序。`CANVAS_AUTO_MIGRATE=true` 时，Backend 在开始接受请求前完成迁移与兼容性检查；失败时进程直接退出，不会带着不兼容结构提供服务。后续迁移必须新增版本，不得修改已经发布迁移的实现或校验和。
 
