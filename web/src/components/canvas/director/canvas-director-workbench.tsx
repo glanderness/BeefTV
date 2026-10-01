@@ -39,6 +39,8 @@ import { createDirectorActorCrowd, createDirectorActorPreset, DIRECTOR_ACTOR_CRO
 import { createDirectorGeometricObject, DIRECTOR_GEOMETRY_PRESET_OPTIONS } from "@/lib/canvas/director/director-geometry-presets";
 import { appendDirectorScreenshot, isDirectorOutputSnapshotCurrent, nextDirectorScreenshotName, shouldReinitializeDirectorSession } from "@/lib/canvas/director/director-session";
 import { directorAsyncSession } from "@/lib/canvas/director/director-async-session";
+import { persistDirectorImageUpload, persistDirectorLibraryAsset, persistDirectorMediaUpload, type DirectorCanvasImageHandoff } from "@/lib/canvas/director/director-library-persist";
+import { isUserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { restoreDirectorPlaybackOnEnd, waitForDirectorCaptureCamera } from "@/lib/canvas/director/director-output-camera";
 import { bindDirectorCameraFollow, removeDirectorCameraBindingsForObject, replaceDirectorSceneObjects, unbindDirectorCameraFollow } from "@/lib/canvas/director/director-camera-binding";
 import { blocksDirectorShortcut, releaseDirectorFocusAfterPointer, resolveDirectorShortcut, type DirectorShortcutAction } from "@/lib/canvas/director/director-shortcuts";
@@ -46,10 +48,8 @@ import { applyDirectorUniformScale, createDirectorActor, createDirectorBillboard
 import { resolveDirectorSceneSelection, searchDirectorSceneItems } from "@/lib/canvas/director/director-scene-search";
 import { describeDirectorSaveStatus, resolveDirectorCloseOutcome, shouldBlockDirectorUnload, shouldOfferDirectorDraftRecovery } from "@/lib/canvas/director/director-save-wiring";
 import { useDirectorSaveCoordinator } from "@/components/canvas/director/use-director-save-coordinator";
-import { uploadMediaFile } from "@/services/file-storage";
 import { imageToDataUrl, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { requestImageQuestion } from "@/services/api/image";
-import { hasRemoteUserDataSyncSession, localSavedRemotePendingMessage, saveRemoteUserDataNow } from "@/services/local-workspace-sync";
 import { useAssetStore, type ImageAsset, type ModelAsset } from "@/stores/use-asset-store";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { useDirectorWorkbenchStore } from "@/stores/canvas/use-director-workbench-store";
@@ -58,7 +58,7 @@ import type { CanvasNodeData } from "@/types/canvas";
 import type { ReferenceImage } from "@/types/image";
 import type { DirectorCamera, DirectorCameraMove, DirectorHumanoidBone, DirectorKeyframeDeleteTarget, DirectorKeyframeEasing, DirectorLight, DirectorObject, DirectorPose, DirectorQuat, DirectorRenderMode, DirectorRig, DirectorScene, DirectorSceneOutput, DirectorShot, DirectorShotSize, DirectorTransform, DirectorVec3 } from "@/types/director";
 
-export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, onboardingScope, onClose, onChange, onApply, onDeleteImageNode, onAddCanvasImage, onFlush, onShouldCaptureCover, onCaptureCover, generatePanorama = generateDirectorPanorama }: { open: boolean; scene: DirectorScene | null; projectId?: string; imageNodes: CanvasNodeData[]; onboardingScope: string; onClose: () => void; onChange: (scene: DirectorScene) => void; onApply: (output: DirectorSceneOutput) => Promise<void>; onDeleteImageNode: (nodeId: string) => void; onAddCanvasImage?: (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal) => void | Promise<void>; onFlush?: () => void | Promise<void>; onShouldCaptureCover?: (scene: DirectorScene, shotId: string) => boolean; onCaptureCover?: (input: { scene: DirectorScene; shotId: string; beauty: Blob }) => Promise<void>; generatePanorama?: typeof generateDirectorPanorama }) {
+export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, onboardingScope, onClose, onChange, onApply, onDeleteImageNode, onAddCanvasImage, onFlush, onShouldCaptureCover, onCaptureCover, generatePanorama = generateDirectorPanorama }: { open: boolean; scene: DirectorScene | null; projectId?: string; imageNodes: CanvasNodeData[]; onboardingScope: string; onClose: () => void; onChange: (scene: DirectorScene) => void; onApply: (output: DirectorSceneOutput) => Promise<void>; onDeleteImageNode: (nodeId: string) => void; onAddCanvasImage?: (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal, expectedScope: CapturedUserScope) => void | Promise<void | DirectorCanvasImageHandoff>; onFlush?: () => void | Promise<void>; onShouldCaptureCover?: (scene: DirectorScene, shotId: string) => boolean; onCaptureCover?: (input: { scene: DirectorScene; shotId: string; beauty: Blob }) => Promise<void>; generatePanorama?: typeof generateDirectorPanorama }) {
     const { message, modal } = App.useApp();
     const theme = canvasThemes[useActiveTheme()];
     const effectiveConfig = useEffectiveConfig();
@@ -196,7 +196,6 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
         if (drawingCameraKind && (!open || workspaceView !== "scene" || selectedObjectId !== null)) setDrawingCameraKind(null);
     }, [drawingCameraKind, open, selectedObjectId, workspaceView]);
     const assets = useAssetStore((state) => state.assets);
-    const addAsset = useAssetStore((state) => state.addAsset);
     const modelAssets = useMemo(() => assets.filter((asset): asset is ModelAsset => asset.kind === "model"), [assets]);
     const imageAssets = useMemo(() => assets.filter((asset): asset is ImageAsset => asset.kind === "image"), [assets]);
 
@@ -542,12 +541,16 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
                 const current = draftRef.current;
                 const shot = current?.shots.find((item) => item.id === current.activeShotId) || current?.shots[0];
                 if (current && shot && onCaptureCover && onShouldCaptureCover?.(current, shot.id) && viewportRef.current) {
+                    const session = directorAsyncSession(sessionRef.current.signal);
                     try {
                         const beauty = await viewportRef.current.capture("beauty");
-                        void onCaptureCover({ scene: current, shotId: shot.id, beauty }).catch(() => {
+                        session.assertCurrent();
+                        void onCaptureCover({ scene: current, shotId: shot.id, beauty }).catch((error) => {
+                            if (isUserScopeAbandonedError(error) || (error instanceof DOMException && error.name === "AbortError")) return;
                             message.warning("导演台封面保存失败，下次打开镜头后可重试");
                         });
-                    } catch {
+                    } catch (error) {
+                        if (isUserScopeAbandonedError(error) || (error instanceof DOMException && error.name === "AbortError")) return;
                         message.warning("导演台截图失败，下次打开镜头后可重试");
                     }
                 }
@@ -780,11 +783,15 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
         setPanoramaUploading(true);
         const session = directorAsyncSession(sessionRef.current.signal);
         try {
-            const uploaded = await uploadImage(file);
+            const { uploaded } = await persistDirectorImageUpload({
+                source: file,
+                expectedScope: session.expectedScope,
+                signal: session.signal,
+                toAsset: (image) => ({ kind: "image", title: file.name, coverUrl: image.url, tags: ["全景图"], source: "导演台", data: { dataUrl: image.url, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType }, metadata: { source: "director-panorama" } }),
+            });
             session.assertCurrent();
-            addAsset({ kind: "image", title: file.name, coverUrl: uploaded.url, tags: ["全景图"], source: "导演台", data: { dataUrl: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType }, metadata: { source: "director-panorama" } });
             setPanorama(uploaded.url, uploaded.storageKey, file.name);
-            message[uploaded.pendingRemoteUpload ? "warning" : "success"](uploaded.pendingRemoteUpload ? "全景图已保存在本机；资源服务恢复后请检查同步" : "全景图已加入场景和素材库");
+            message[uploaded.pendingRemoteUpload ? "warning" : "success"](uploaded.pendingRemoteUpload ? "全景图已保存在这台设备，稍后请检查是否同步完成" : "全景图已加入场景和素材库");
         } catch (error) {
             if (session.current()) message.error(error instanceof Error ? error.message : "全景图上传失败");
         } finally {
@@ -822,16 +829,20 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     const uploadModel = async (file?: File) => {
         if (!file || !/\.(glb|gltf)$/i.test(file.name)) return;
         const session = directorAsyncSession(sessionRef.current.signal);
-        const uploaded = await uploadMediaFile(file, "model");
-        if (!session.current()) return;
-        const assetId = addAsset({ kind: "model", title: file.name.replace(/\.(glb|gltf)$/i, ""), coverUrl: "", tags: ["3D模型"], source: "导演台", data: { url: uploaded.url, storageKey: uploaded.storageKey, bytes: uploaded.bytes, mimeType: uploaded.mimeType, fileName: file.name }, metadata: { source: "director" } });
-        const asset = useAssetStore.getState().assets.find((item): item is ModelAsset => item.id === assetId && item.kind === "model");
-        if (asset) addModelAsset(asset);
         try {
-            if (hasRemoteUserDataSyncSession()) await saveRemoteUserDataNow();
-            message.success(hasRemoteUserDataSyncSession() ? "3D 模型已加入场景和素材库" : "3D 模型已加入场景和本地素材库");
+            const { uploaded, persist } = await persistDirectorMediaUpload({
+                source: file,
+                prefix: "model",
+                expectedScope: session.expectedScope,
+                signal: session.signal,
+                toAsset: (media) => ({ kind: "model", title: file.name.replace(/\.(glb|gltf)$/i, ""), coverUrl: "", tags: ["3D模型"], source: "导演台", data: { url: media.url, storageKey: media.storageKey, bytes: media.bytes, mimeType: media.mimeType, fileName: file.name }, metadata: { source: "director" } }),
+            });
+            session.assertCurrent();
+            const asset = useAssetStore.getState().assets.find((item): item is ModelAsset => item.id === persist.assetId && item.kind === "model");
+            if (asset) addModelAsset(asset);
+            message[uploaded.pendingRemoteUpload ? "warning" : "success"](uploaded.pendingRemoteUpload ? "3D 模型已加入场景；文件目前只在这台设备上" : "3D 模型已加入场景和素材库");
         } catch (error) {
-            message.warning(localSavedRemotePendingMessage("3D 模型已加入场景和本机素材库", error));
+            if (session.current()) message.error(error instanceof Error ? error.message : "3D 模型上传失败");
         }
     };
 
@@ -846,15 +857,21 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
         setSceneReferenceUploading(true);
         const session = directorAsyncSession(sessionRef.current.signal);
         try {
-            const uploaded = await uploadImage(file);
+            const uploaded = await uploadImage(file, undefined, session.expectedScope);
             session.assertCurrent();
             const name = file.name.replace(/\.[^.]+$/, "") || "场景参考";
-            await onAddCanvasImage?.(uploaded, name, session.signal);
+            const canvasHandoff = await onAddCanvasImage?.(uploaded, name, session.signal, session.expectedScope);
+            session.assertCurrent();
+            await persistDirectorLibraryAsset({
+                asset: { kind: "image", title: name, coverUrl: uploaded.url, tags: ["导演台参考图"], source: "导演台", data: { dataUrl: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType }, metadata: { source: "director-scene-reference", sceneId: draftRef.current?.id } },
+                expectedScope: session.expectedScope,
+                signal: session.signal,
+                existingAssetId: canvasHandoff?.assetId,
+            });
             session.assertCurrent();
             setSceneReferenceImage({ id: nanoid(), name, type: uploaded.mimeType, dataUrl: uploaded.url, url: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, bytes: uploaded.bytes });
-            addAsset({ kind: "image", title: name, coverUrl: uploaded.url, tags: ["导演台参考图"], source: "导演台", data: { dataUrl: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType }, metadata: { source: "director-scene-reference", sceneId: draftRef.current?.id } });
             addObject(createDirectorBillboard(name, uploaded.url, uploaded.storageKey));
-            message[uploaded.pendingRemoteUpload ? "warning" : "success"](uploaded.pendingRemoteUpload ? "参考图片已保存在本机，并加入当前场景" : "参考图片已加入当前场景");
+            message[uploaded.pendingRemoteUpload ? "warning" : "success"](uploaded.pendingRemoteUpload ? "参考图片已保存在这台设备，并加入当前场景" : "参考图片已加入当前场景");
         } catch (error) {
             if (session.current()) message.error(error instanceof Error ? error.message : "参考图片添加失败");
         } finally {
@@ -1448,20 +1465,28 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
             const beauty = await viewportRef.current.capture("beauty");
             session.assertCurrent();
             if (!openRef.current || draftRef.current?.id !== current.id) throw new Error("截图期间场景已切换，请重试");
-            const uploaded = await uploadImage(beauty);
+            const uploaded = await uploadImage(beauty, undefined, session.expectedScope);
             session.assertCurrent();
             const latest = draftRef.current;
             const latestShot = latest?.shots.find((item) => item.id === shot.id);
             if (!openRef.current || !latest || latest.id !== current.id || !latestShot) throw new Error("截图期间场景或镜头已切换，请重试");
             const name = nextDirectorScreenshotName(latest.cameras.find((item) => item.id === latestShot.cameraId)?.name || "机位", latestShot.screenshots?.length || 0);
             const screenshot = { id: nanoid(), name, url: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, createdAt: new Date().toISOString() };
-            addAsset({ kind: "image", title: name, coverUrl: uploaded.url, tags: ["导演台截图"], source: "导演台", data: { dataUrl: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType }, metadata: { source: "director-screenshot", sceneId: latest.id, shotId: shot.id } });
+            await persistDirectorLibraryAsset({
+                asset: { kind: "image", title: name, coverUrl: uploaded.url, tags: ["导演台截图"], source: "导演台", data: { dataUrl: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType }, metadata: { source: "director-screenshot", sceneId: latest.id, shotId: shot.id } },
+                expectedScope: session.expectedScope,
+                signal: session.signal,
+            });
+            session.assertCurrent();
+            const committed = draftRef.current;
+            const committedShot = committed?.shots.find((item) => item.id === shot.id);
+            if (!openRef.current || !committed || committed.id !== current.id || !committedShot) throw new Error("截图期间场景或镜头已切换，请重试");
             commit((scene) => appendDirectorScreenshot(scene, { sceneId: current.id, shotId: shot.id, screenshot }));
             setSelectedObjectId(null);
             setSelectedLightId(null);
             setSceneInspectorView("shot");
             setCameraInspectorTab("screenshots");
-            message.success(uploaded.pendingRemoteUpload ? "截图已保存在本机，资源服务暂不可用" : "截图已保存到资源库");
+            message.success(uploaded.pendingRemoteUpload ? "截图已保存在这台设备" : "截图已保存到素材库");
         } catch (error) {
             if (session.current()) message.error(error instanceof Error ? error.message : "截图失败，请重试");
         } finally {

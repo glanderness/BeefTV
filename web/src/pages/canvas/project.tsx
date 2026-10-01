@@ -10,7 +10,8 @@ import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { uploadMediaFile } from "@/services/file-storage";
 import { createCanvasGenerationLiveProjectAdapter, registerCanvasGenerationLiveProject } from "@/services/canvas-generation-consumer";
 import { getActiveUserScope, scopedLocalStorage } from "@/lib/user-scope";
-import { captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
+import { captureUserScope, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
+import { findWorkspaceAssetIdByStorageKey } from "@/lib/canvas/director/director-library-persist";
 import { resourceFileUrl, resourceIdFromStorageKey, syncResourceToArkPrivateAsset } from "@/services/api/resources";
 import { uploadImage } from "@/services/image-storage";
 import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
@@ -1056,9 +1057,10 @@ function InfiniteCanvasPage() {
         directorReferenceTargetRef.current = { projectId, nodeId: directorNodeId, scope: canvasStorageScope };
         return () => { directorReferenceTargetRef.current = null; };
     }, [projectId, directorNodeId, canvasStorageScope]);
-    const addDirectorReferenceToCanvas = useCallback(async (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal) => {
+    const addDirectorReferenceToCanvas = useCallback(async (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal, expectedScope: CapturedUserScope = canvasCapturedScope) => {
+        const expected = expectedScope;
         const current = () => !signal.aborted && directorReferenceTargetRef.current?.projectId === projectId
-            && directorReferenceTargetRef.current?.nodeId === directorNodeId && userScopeMatches(canvasCapturedScope)
+            && directorReferenceTargetRef.current?.nodeId === directorNodeId && userScopeMatches(expected)
             && nodesRef.current.some((item) => item.id === directorNodeId);
         if (!current()) throw new DOMException("导演台会话已结束", "AbortError");
         const node = createCanvasNode(CanvasNodeType.Image, getCanvasCenter(), imageMetadata(image));
@@ -1070,14 +1072,18 @@ function InfiniteCanvasPage() {
         setConnections(linked.connections);
         setSelectedNodeIds(new Set([node.id]));
         setSelectedConnectionId(null);
+        let assetId: string | undefined;
         try {
-            const result = await ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId: currentProject?.projectId, node, source: "canvas-upload", expectedScope: canvasCapturedScope });
+            const result = await ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId: currentProject?.projectId, node, source: "canvas-upload", expectedScope: expected });
             if (!current()) throw new DOMException("导演台会话已结束", "AbortError");
-            setNodes((current) => current.map((item) => item.id === node.id ? { ...item, metadata: { ...item.metadata, assetId: result.assetId } } : item));
+            assetId = result.assetId;
+            setNodes((currentNodes) => currentNodes.map((item) => item.id === node.id ? { ...item, metadata: { ...item.metadata, assetId: result.assetId } } : item));
         } catch (error) {
             if (!current()) throw new DOMException("导演台会话已结束", "AbortError");
             message.warning(error instanceof Error ? `图片已加入画布，但素材同步失败：${error.message}` : "图片已加入画布，但素材同步失败");
+            assetId = findWorkspaceAssetIdByStorageKey(image.storageKey);
         }
+        return { assetId };
     }, [canvasCapturedScope.epoch, canvasCapturedScope.userScope, connectionsRef, currentProject?.projectId, directorNodeId, getCanvasCenter, message, nodesRef, projectId, setConnections, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
     const {
         timelineAddNodeRef,

@@ -6,6 +6,14 @@ import { resolveDirectorCameraGizmoEdit, resolveDirectorMultiObjectGroupTransfor
 import { resolveDirectorCameraLocalFraming, resolveDirectorCameraTransform } from "@/lib/canvas/director/director-view-modes";
 import { replaceDirectorSceneObjects } from "@/lib/canvas/director/director-camera-binding";
 import { directorAsyncSession } from "@/lib/canvas/director/director-async-session";
+import { getActiveUserScope, resetActiveUserScopeForTests, setActiveUserScope } from "@/lib/user-scope";
+import { userScopeMatches, UserScopeAbandonedError } from "@/lib/user-scope-guard";
+
+function switchScope(userId: string) {
+    const previous = getActiveUserScope();
+    setActiveUserScope(userId);
+    return () => setActiveUserScope(previous);
+}
 
 test("复制轨迹后控制点引用属于副本，可独立编辑和撤销轨迹", () => {
     const actor = createDirectorActorPath(createDirectorActor(), "ring", 5);
@@ -81,4 +89,21 @@ test("旧会话异步完成时关闭再打开同一场景也不会恢复写权�
     await expect(pending).rejects.toThrow("导演台会话已结束");
     expect(writes).toBe(0);
     expect(reopened.current()).toBe(true);
+});
+
+test("A→B→A 复用同一用户名时旧会话仍不能写入", async () => {
+    const restore = switchScope("owner-a");
+    try {
+        const operation = directorAsyncSession(new AbortController().signal);
+        const captured = operation.expectedScope;
+        setActiveUserScope("owner-b");
+        setActiveUserScope("owner-a");
+        expect(getActiveUserScope()).toBe("owner-a");
+        expect(operation.current()).toBe(false);
+        expect(userScopeMatches(captured)).toBe(false);
+        expect(() => operation.assertCurrent()).toThrow(UserScopeAbandonedError);
+    } finally {
+        restore();
+        resetActiveUserScopeForTests();
+    }
 });

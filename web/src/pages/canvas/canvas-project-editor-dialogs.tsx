@@ -4,6 +4,7 @@ import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/a
 import { AiArtCritiqueModal } from "@/components/canvas/art-critique/ai-art-critique-modal";
 import type { ArtCritiqueNodeState } from "@/lib/art-critique/contracts";
 import { CanvasCharacterReferenceModal } from "@/components/canvas/canvas-character-reference-modal";
+import type { CapturedUserScope } from "@/lib/user-scope-guard";
 import type { uploadImage } from "@/services/image-storage";
 import type { DirectorScene, DirectorSceneOutput } from "@/types/director";
 import { CanvasGenerationHistoryPicker } from "@/components/canvas/canvas-generation-history-picker";
@@ -158,7 +159,7 @@ export type CanvasProjectEditorDialogsProps = {
         onShouldCaptureCover?: (scene: DirectorScene, shotId: string) => boolean;
         onCaptureCover?: (input: { scene: DirectorScene; shotId: string; beauty: Blob }) => Promise<void>;
         onDeleteImageNode: (nodeId: string) => void;
-        onAddCanvasImage: (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal) => Promise<void>;
+        onAddCanvasImage: (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal, expectedScope: CapturedUserScope) => Promise<{ assetId?: string } | void>;
         onFlush: () => void | Promise<void>;
     };
     versionCompare: {

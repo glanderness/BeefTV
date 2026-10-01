@@ -52,6 +52,19 @@ export function subscribeUserScope(listener: (epoch: UserScopeEpoch) => void) {
     };
 }
 
+/** Drop the in-memory identity so later tests can read localStorage again. */
+export function resetActiveUserScopeForTests() {
+    memoryScope = undefined;
+    activeUserScopeEpoch = 1;
+    if (typeof window !== "undefined") {
+        try {
+            window.localStorage?.removeItem(ACTIVE_USER_SCOPE_KEY);
+        } catch {
+            // Test harnesses may mock Storage without removeItem.
+        }
+    }
+}
+
 export function setActiveUserScope(userId?: string | null) {
     const next = userId || GUEST_SCOPE;
     memoryScope = next;
