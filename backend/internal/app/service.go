@@ -14,7 +14,6 @@ import (
 	"infinite-canvas/backend/internal/assistantturns"
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/canvas"
-	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
@@ -70,6 +69,8 @@ type Service struct {
 	deliveryMu               sync.Mutex
 	generationArtifactMu     sync.Mutex
 	generationArtifactLocks  map[string]*generationArtifactLock
+	tasks                    *localtask.Service
+	tasksOnce                sync.Once
 }
 
 const taskWorkerConcurrency = 3
@@ -137,6 +138,7 @@ func newService(repo *repository.Repository, dataDir string, options serviceOpti
 	service.projects = localproject.New(repo, localproject.Dependencies{Workflows: projectWorkflowHost{service: service}})
 	service.canvas = canvas.New(service.repo, newCanvasHost(service))
 	service.assistantTurns = assistantturns.New(assistantturns.NewStore(service.repo), assistantCanvasFactory{service}, filepath.Join(dataDir, "assistant-turns"))
+<<<<<<< HEAD
 	service.assets = localasset.NewService(localasset.Dependencies{
 		Repository:   localasset.NewRepository(repo),
 		Blobs:        localasset.NewFileStore(dataDir),
@@ -144,6 +146,9 @@ func newService(repo *repository.Repository, dataDir string, options serviceOpti
 		Lifecycle:    resourceLifecycle{svc: service},
 		LocalStorage: localResourceStorage,
 	})
+=======
+	service.tasks = localtask.NewService(localtask.NewStore(service.repo), service.taskDependencies())
+>>>>>>> 25ddcbf (refactor(task): 任务准入 - 抽出 admission 与生命周期领域服务)
 	if service.IsLocalMode() {
 		service.platform = platform.NewLocal(service.repo, coordinator, newPlatformHost(service))
 	} else {
@@ -193,6 +198,7 @@ func (s *Service) Tasks(userID string, limit int) ([]TaskSummary, error) {
 }
 
 func (s *Service) TasksWithOptions(userID string, options TaskListOptions) ([]TaskSummary, error) {
+<<<<<<< HEAD
 	tasks, err := s.repo.Tasks(userID, options.Limit, options.ProjectID, options.ActiveOnly)
 	if err != nil {
 		return nil, err
@@ -214,6 +220,13 @@ func (s *Service) Task(userID string, id string) (*model.Task, error) {
 	projected := taskForOutput(*task)
 	s.attachTaskDelivery(projected)
 	return projected, nil
+=======
+	return s.taskDomain().TasksWithOptions(userID, options)
+}
+
+func (s *Service) Task(userID string, id string) (*model.Task, error) {
+	return s.taskDomain().Get(userID, id)
+>>>>>>> 25ddcbf (refactor(task): 任务准入 - 抽出 admission 与生命周期领域服务)
 }
 
 func (s *Service) hydrateTaskProviderRequestID(task *model.Task) {
@@ -251,24 +264,15 @@ func (s *Service) refreshTaskProviderState(task *model.Task) error {
 }
 
 func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
-	return s.taskLifecycle().retryTask(userID, id)
+	return s.taskDomain().Retry(userID, id)
 }
 
 func (s *Service) CancelTask(ctx context.Context, userID string, id string) (*model.Task, error) {
-	return s.taskLifecycle().cancelTask(ctx, userID, id)
+	return s.taskDomain().Cancel(ctx, userID, id)
 }
 
 func (s *Service) TaskLogs(userID string, id string) ([]model.TaskLog, error) {
-	logs, err := s.repo.TaskLogs(userID, id)
-	for i := range logs {
-		logs[i].Summary = generation.DiagnosticSummary(logs[i].Message)
-		if logs[i].Level == "error" && logs[i].Payload != "" {
-			logs[i].Summary += "：" + generation.ClassifyText(logs[i].Payload).UserMessage()
-		}
-		// Raw payloads can contain credentials, prompts and private media URLs.
-		logs[i].Message, logs[i].Payload = "", ""
-	}
-	return logs, err
+	return s.taskDomain().Logs(userID, id)
 }
 
 func (s *Service) ProcessNextTask() error {

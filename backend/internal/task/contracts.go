@@ -20,6 +20,12 @@ type CreateRequest struct {
 	Input          map[string]any `json:"input"`
 	TraceID        string         `json:"-"`
 	RequestID      string         `json:"-"`
+	// AdmissionID is a trusted internal identity. Transports cannot set it
+	// through public JSON; only in-process callers may populate it.
+	AdmissionID string `json:"-"`
+	// PrepareOnly builds the admitted row without persisting it. Creation
+	// quoting uses this so a quote cannot become an accepted generation.
+	PrepareOnly bool `json:"-"`
 }
 
 type ListOptions struct {
