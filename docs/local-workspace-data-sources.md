@@ -5,7 +5,7 @@
 | 数据域 | 本地事实来源 | 浏览器侧职责 | 云端同步 |
 | --- | --- | --- | --- |
 | 画布、项目、文件夹 | scoped IndexedDB/localForage | 首屏恢复、编辑持久化 | 关闭 |
-| 素材元数据 | scoped IndexedDB/localForage | 素材库索引与筛选 | 关闭 |
+| 素材元数据 | 桌面/hosted：Go SQLite `asset.Library`（`GET /assets?page=`、`POST /assets/batch`）；浏览器纯本地：scoped IndexedDB | 展示缓存与未提交草稿；查询失败不得显示成空库 | 关闭 |
 | 图片、视频、音频、模型二进制 | Go 资源服务的本地文件目录 | Blob/Object URL 缓存 | 关闭 |
 | 模型渠道与 API Key | Go 工作区数据目录中的 `local-model-config.json` | Zustand 镜像与表单状态 | 关闭 |
 | 生成任务、状态、日志 | Go 本地 SQLite | 查询缓存与实时展示 | 关闭 |

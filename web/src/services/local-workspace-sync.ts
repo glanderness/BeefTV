@@ -1,6 +1,11 @@
 import { rebindInconsistentCanvasAssets, type CanvasAssetRebindResult } from "@/services/canvas-asset-repair";
 import { createLocalCanvasProject, deleteLocalCanvasProjects, openLocalCanvasProject, openLocalCanvasProjectFromBackend, persistCanvasDocument } from "@/services/local-workspace-repository";
 import { flushAssetStorePersistence, useAssetStore, type Asset } from "@/stores/use-asset-store";
+import {
+    loadWorkspaceAssetLibraryPage,
+    loadWorkspaceAssetsForUse,
+    type WorkspaceAssetLibraryPageOptions,
+} from "@/services/workspace-asset-read";
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 
 export { isLocalWorkspaceMode } from "@/services/workspace-mode";
@@ -61,51 +66,14 @@ export async function syncLocalCanvasSnapshot(id: string, patch: Partial<Pick<Ca
     return saved;
 }
 
-type LocalAssetPageOptions = {
-    page: number;
-    pageSize: number;
-    kind?: string;
-    category?: string;
-    folderId?: string;
-    uncategorized?: boolean;
-    status?: string;
-    query?: string;
-    signal?: AbortSignal;
-};
+export type LocalAssetPageOptions = WorkspaceAssetLibraryPageOptions;
 
-export async function loadAssetLibraryPage(options: LocalAssetPageOptions) {
-    if (options.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
-    const query = options.query?.trim().toLowerCase() || "";
-    const filtered = useAssetStore.getState().assets.filter((asset) => {
-        if (options.kind && asset.kind !== options.kind) return false;
-        if (options.category && asset.category !== options.category) return false;
-        if (options.status && asset.status !== options.status) return false;
-        if (options.folderId && asset.folderId !== options.folderId) return false;
-        if (options.uncategorized && asset.folderId) return false;
-        if (!query) return true;
-        return [asset.title, asset.source, ...(asset.tags || [])].join(" ").toLowerCase().includes(query);
-    });
-    const start = Math.max(0, options.page - 1) * options.pageSize;
-    const countBy = (key: (asset: Asset) => string | undefined) => filtered.reduce<Record<string, number>>((counts, asset) => {
-        const value = key(asset) || "";
-        counts[value] = (counts[value] || 0) + 1;
-        return counts;
-    }, {});
-    return {
-        assets: filtered.slice(start, start + options.pageSize),
-        kindCounts: countBy((asset) => asset.kind),
-        categoryCounts: countBy((asset) => asset.category),
-        folderCounts: countBy((asset) => asset.folderId),
-        page: options.page,
-        pageSize: options.pageSize,
-        total: filtered.length,
-        hasMore: start + options.pageSize < filtered.length,
-    };
+export function loadAssetLibraryPage(options: LocalAssetPageOptions) {
+    return loadWorkspaceAssetLibraryPage(options);
 }
 
-export async function loadAssetsForUse(ids: Iterable<string>) {
-    const available = new Set(useAssetStore.getState().assets.map((asset) => asset.id));
-    if ([...new Set(ids)].some((id) => !available.has(id))) throw new Error("部分本地素材不存在，请重新选择素材");
+export function loadAssetsForUse(ids: Iterable<string>, expectedScope?: WorkspaceAssetLibraryPageOptions["expectedScope"]) {
+    return loadWorkspaceAssetsForUse(ids, expectedScope);
 }
 
 export function localSavedRemotePendingMessage(localAction: string, error: unknown) {

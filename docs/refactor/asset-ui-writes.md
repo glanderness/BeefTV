@@ -25,7 +25,11 @@
 | 桌面有后端 | `isNativeDesktopRuntime()` 且本地运行时 | `PUT /assets/:id`、`POST /projects/:id/assets`、分类/文件夹 PATCH、`DELETE /assets/:id` | `/asset-folders` 与 `PATCH /assets/folder` |
 | hosted | 非浏览器本地资源库 | 同上 typed API；禁止 `saveRemoteUserDataNow` 整批覆盖 | 同上 |
 
-`isLocalWorkspaceMode()` 仍表示本地优先产品面（路由把项目详情送到画布）。桌面也是 local workspace，不能再用它跳过项目链接或分类 API。Vite+Go 与纯浏览器共用 `usesBrowserLocalResourceStore()`，分类仍走 IDB。
+`isLocalWorkspaceMode()` 仍表示本地优先产品面（路由把项目详情送到画布）。桌面也是 local workspace，不能再用它跳过项目链接、分类 API 或素材库读取。Vite+Go 与纯浏览器共用 `usesBrowserLocalResourceStore()`，分类与纯浏览器素材库仍走 IDB。
+
+## 读取
+
+桌面/hosted 素材库列表与选择走 `workspace-asset-read.ts`：`usesWorkspaceAssetLibraryApi()` 为真时，已保存事实来自 `GET /assets?page=` 与 `POST /assets/batch`。浏览器缓存只做展示投影和明确未提交草稿 overlay。查询失败向上抛出。没有墓碑清单时，缓存里多出的 ID 只能标成未保存可恢复草稿，不能当成服务端仍存在。
 
 ## 入口
 

@@ -5,7 +5,6 @@ import { Check, ChevronDown, FileText, FolderOpen, HardDrive, Image as ImageIcon
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useUserStore } from "@/stores/use-user-store";
-import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 
 import { AssetMediaPreview } from "@/components/asset-media-preview";
 import { AssetLibraryCard } from "@/components/assets/asset-library-card";
@@ -15,6 +14,7 @@ import { cn } from "@/lib/utils";
 import type { ExternalAssetPickerReference } from "@/lib/plugins/plugin-types";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { loadAssetLibraryPage, localSavedRemotePendingMessage } from "@/services/local-workspace-sync";
+import { isUnsavedWorkspaceAsset, usesWorkspaceAssetLibraryApi } from "@/services/workspace-asset-read";
 import { deleteWorkspaceAsset, persistWorkspaceAssetChanges } from "@/services/workspace-asset-repository";
 
 export type AssetPickerMediaKind = "image" | "video" | "audio" | "text";
@@ -130,10 +130,7 @@ export function AssetLibraryPickerModal({
     const [remotePage, setRemotePage] = useState(1);
     const [remotePageSize, setRemotePageSize] = useState(40);
     const [remoteKeyword, setRemoteKeyword] = useState("");
-    // The local desktop workspace may still have a synthetic user id. That id
-    // must never turn on the hosted asset-library query; local mode reads the
-    // IndexedDB/Go resource store only.
-    const remoteEnabled = remoteLibrary && !isLocalWorkspaceMode() && Boolean(userId) && source === "local";
+    const remoteEnabled = remoteLibrary && usesWorkspaceAssetLibraryApi() && Boolean(userId) && source === "local";
     useEffect(() => {
         const timer = window.setTimeout(() => setRemoteKeyword(keyword.trim()), 250);
         return () => window.clearTimeout(timer);
@@ -146,11 +143,21 @@ export function AssetLibraryPickerModal({
         queryFn: ({ signal }) => loadAssetLibraryPage({ page: remotePage, pageSize: remotePageSize, kind: remoteQueryKind, category: category === "all" || category === "archived" || category === remoteQueryKind ? undefined : category, status: category === "archived" ? "archived" : "active", query: remoteKeyword, signal }),
         enabled: remoteEnabled && open && sessionHydrated,
     });
-    const remoteItems = useMemo<AssetLibraryPickerItem[]>(() => (remoteQuery.data?.assets || []).filter((asset) => asset.kind !== "entity" && asset.kind !== "model").map((asset) => ({
-        id: asset.id, title: asset.title, category: asset.category || "other", archived: asset.status === "archived", asset,
-        kindLabel: asset.kind === "image" ? "图片" : asset.kind === "video" ? "视频" : asset.kind === "audio" ? "音频" : "文本", searchText: (asset.tags ?? []).join(" "),
-        ...(items.find((item) => item.id === asset.id) || { disabledReason: "此素材不适用于当前操作" }),
-    })), [remoteQuery.data, items]);
+    const remoteItems = useMemo<AssetLibraryPickerItem[]>(() => (remoteQuery.data?.assets || []).filter((asset) => asset.kind !== "entity" && asset.kind !== "model").map((asset) => {
+        const parent = items.find((item) => item.id === asset.id);
+        return {
+            ...parent,
+            id: asset.id,
+            title: asset.title,
+            category: asset.category || "other",
+            archived: asset.status === "archived",
+            asset,
+            kindLabel: asset.kind === "image" ? "图片" : asset.kind === "video" ? "视频" : asset.kind === "audio" ? "音频" : "文本",
+            mediaKind: pickerAssetMediaKind(asset),
+            searchText: (asset.tags ?? []).join(" "),
+            disabledReason: workspaceAssetPickerDisabledReason(asset, items, mediaKinds, remoteKind),
+        };
+    }), [items, mediaKinds, remoteKind, remoteQuery.data]);
     const uploadInputRef = useRef<HTMLInputElement>(null);
     const initialSelectedIdsRef = useRef(initialSelectedIds);
     const itemsRef = useRef(items);
@@ -161,13 +168,9 @@ export function AssetLibraryPickerModal({
     }, [items, uploadedItems]);
     itemsRef.current = allItems;
     const localItems = useMemo(() => allItems.filter((item) => !item.external), [allItems]);
-    // 远端成功且有可展示素材时用远端。真正的空结果保持空列表。
-    // 仅在远端空而本地仍有素材、或远端总数>0 但本页全被排除时回退本地，避免合法空搜索被缓存铺满。
     const remoteTotal = remoteQuery.data?.total ?? 0;
     const remoteReady = remoteEnabled && remoteQuery.isSuccess;
-    const preferLocalUnsynced = remoteReady && remoteTotal === 0 && localItems.length > 0;
-    const remoteEntityOnlyPage = remoteReady && remoteItems.length === 0 && remoteTotal > 0;
-    const useRemoteItems = remoteReady && !preferLocalUnsynced && !remoteEntityOnlyPage && (remoteItems.length > 0 || remoteTotal === 0);
+    const useRemoteItems = Boolean(remoteReady);
     const effectivePagination = useRemoteItems ? { current: remotePage, pageSize: remotePageSize, total: remoteTotal, onChange: (page: number, pageSize: number) => { setRemotePage(page); setRemotePageSize(pageSize); } } : pagination;
     const pluginItems = useMemo(() => allItems.filter((item) => Boolean(item.external)), [allItems]);
     const hasPluginSource = useMemo(() => Object.keys(categoryLabels).some((value) => value.startsWith("external:")) || pluginItems.some((item) => item.category.startsWith("external:")), [categoryLabels, pluginItems]);
@@ -201,12 +204,15 @@ export function AssetLibraryPickerModal({
     const selectedIds = useMemo(
         () =>
             Array.from(selected).filter((id) => {
-                const item = allItems.find((entry) => entry.id === id);
-                return !item?.disabledReason;
+                const item = resolvePickerCatalogItem(id, allItems, useRemoteItems ? remoteItems : []);
+                return item ? !item.disabledReason : false;
             }),
-        [allItems, selected],
+        [allItems, remoteItems, selected, useRemoteItems],
     );
-    const archivedSelectedIds = useMemo(() => selectedIds.filter((id) => allItems.find((item) => item.id === id)?.archived), [allItems, selectedIds]);
+    const archivedSelectedIds = useMemo(
+        () => selectedIds.filter((id) => resolvePickerCatalogItem(id, allItems, useRemoteItems ? remoteItems : [])?.archived),
+        [allItems, remoteItems, selectedIds, useRemoteItems],
+    );
 
     useEffect(() => {
         if (!open) return;
@@ -369,7 +375,7 @@ export function AssetLibraryPickerModal({
             label: (
                 <span className="asset-picker-source-menu-label">
                     <span>本地素材</span>
-                    <em>{localItems.filter((item) => !item.archived).length}</em>
+                    <em>{useRemoteItems ? remoteTotal : localItems.filter((item) => !item.archived).length}</em>
                 </span>
             ),
         },
@@ -492,11 +498,17 @@ export function AssetLibraryPickerModal({
                     </nav>
                     <div className="asset-picker-grid-wrap">
                         <div className="asset-picker-grid">
-                            {remoteEnabled && remoteQuery.isError ? <div role="alert">素材读取失败<Button onClick={() => void remoteQuery.refetch()}>重试</Button></div> : loading || (useRemoteItems && remoteQuery.isFetching) ? (
+                            {remoteEnabled && remoteQuery.isError ? (
+                                <div className="asset-picker-empty" role="alert">
+                                    <strong>素材读取失败</strong>
+                                    <span>请稍后重试。</span>
+                                    <Button onClick={() => void remoteQuery.refetch()}>重试</Button>
+                                </div>
+                            ) : loading || (remoteEnabled && !remoteQuery.isSuccess) ? (
                                 <div className="asset-picker-empty">
                                     <LoaderCircle className="animate-spin" />
                                     <strong>正在读取素材</strong>
-                                    <span>素材会按页加载，不会一次下载整个项目库。</span>
+                                    <span>正在加载已保存的素材。</span>
                                 </div>
                             ) : visibleItems.length ? (
                                 visibleItems.map((item) => <PickerCard key={item.id} item={item} selected={selected.has(item.id)} onToggle={() => toggle(item)} />)
@@ -582,6 +594,30 @@ export function pickerItemMediaKind(item: AssetLibraryPickerItem): AssetPickerMe
     return kind === "image" || kind === "video" || kind === "audio" || kind === "text" ? kind : undefined;
 }
 
+function pickerAssetMediaKind(asset: Asset): AssetPickerMediaKind | undefined {
+    return asset.kind === "image" || asset.kind === "video" || asset.kind === "audio" || asset.kind === "text" ? asset.kind : undefined;
+}
+
+/** Empty parent items must not disable a SQLite asset that matches the picker media constraint. */
+export function workspaceAssetPickerDisabledReason(
+    asset: Asset,
+    items: AssetLibraryPickerItem[],
+    mediaKinds: AssetPickerMediaKind[] = DEFAULT_MEDIA_KINDS,
+    remoteKind?: string,
+) {
+    const parent = items.find((item) => item.id === asset.id);
+    if (parent) return parent.disabledReason;
+    const mediaKind = pickerAssetMediaKind(asset);
+    if (remoteKind && mediaKind !== remoteKind) return "此素材不适用于当前操作";
+    if (mediaKind && mediaKinds.length > 0 && !mediaKinds.includes(mediaKind)) return "此素材不适用于当前操作";
+    if (!mediaKind && (Boolean(remoteKind) || mediaKinds.length > 0)) return "此素材不适用于当前操作";
+    return undefined;
+}
+
+function resolvePickerCatalogItem(id: string, localItems: AssetLibraryPickerItem[], remoteItems: AssetLibraryPickerItem[]) {
+    return remoteItems.find((item) => item.id === id) || localItems.find((item) => item.id === id);
+}
+
 function PickerCard({ item, selected, onToggle }: { item: AssetLibraryPickerItem; selected: boolean; onToggle: () => void }) {
     const disabled = Boolean(item.disabledReason);
     return (
@@ -613,6 +649,7 @@ function PickerCard({ item, selected, onToggle }: { item: AssetLibraryPickerItem
                 <div className="asset-picker-card-copy">
                     <strong>{item.title || "未命名素材"}</strong>
                     {item.description ? <span>{item.description}</span> : null}
+                    {item.asset && isUnsavedWorkspaceAsset(item.asset) ? <span>未保存</span> : null}
                 </div>
             </button>
         </AssetLibraryCard>
