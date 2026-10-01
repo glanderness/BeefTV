@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { createElement, useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { App } from "antd";
+import { App, Button } from "antd";
 import type { SetURLSearchParams } from "react-router";
 
 import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
@@ -64,6 +64,7 @@ export function useCanvasResourceHandoff({
     const projectIdRef = useRef(projectId);
     projectIdRef.current = projectId;
     const { lifetime, mountedRef, userScope } = useCanvasOwnerLifetime(projectId);
+    useEffect(() => () => message.destroy(`canvas-handoff:${projectId}`), [message, projectId, userScope]);
     const linkedProjectQuery = useQuery({ queryKey: ["project", linkedProjectId], queryFn: () => getProject(linkedProjectId), enabled: Boolean(linkedProjectId) });
     const refetchLinkedProject = linkedProjectQuery.refetch;
 
@@ -164,10 +165,11 @@ export function useCanvasResourceHandoff({
     const requestHandoffRetry = useCallback(() => {
         if (assetHandoffRef.current) return;
         if (handoffOwnershipRef.current && handoffOwnershipRef.current !== userScope) return;
+        message.destroy(`canvas-handoff:${projectId}`);
         failedAttemptRef.current = "";
         assetHandoffRef.current = "";
         setHandoffRetryNonce((nonce) => nonce + 1);
-    }, [userScope]);
+    }, [message, projectId, userScope]);
 
     const consumeForeignHandoff = useCallback((nextSearchParams: URLSearchParams) => {
         handoffOwnershipRef.current = null;
@@ -252,9 +254,10 @@ export function useCanvasResourceHandoff({
                         failedAttemptRef.current = attemptKey;
                         nonceAtFailRef.current = handoffRetryNonce;
                         message.error({
-                            content: CANVAS_HANDOFF_PERSIST_FAILED_MESSAGE,
-                            duration: 8,
-                            onClick: requestHandoffRetry,
+                            key: `canvas-handoff:${projectId}`,
+                            content: createElement("span", null, CANVAS_HANDOFF_PERSIST_FAILED_MESSAGE, " ",
+                                createElement(Button, { type: "link", size: "small", onClick: requestHandoffRetry }, "重试")),
+                            duration: 0,
                         });
                     },
                 });

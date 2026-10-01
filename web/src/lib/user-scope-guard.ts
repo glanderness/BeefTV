@@ -17,7 +17,7 @@ export type CapturedUserScope = {
 
 export class UserScopeAbandonedError extends Error {
     constructor() {
-        super("user-scope-abandoned");
+        super("账号已切换，本次操作已停止");
         this.name = "UserScopeAbandonedError";
     }
 }
