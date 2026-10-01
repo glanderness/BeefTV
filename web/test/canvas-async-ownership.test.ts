@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import { CANVAS_OWNER_CHANGED_PROPOSAL_MESSAGE, executeAssistantProposal } from "@/pages/canvas/canvas-assistant-proposal-execution";
 import { rebaseInsertedCanvasNode, runOwnedCanvasHistoryInsert } from "@/pages/canvas/canvas-generation-orchestration";
-import { captureCanvasOwnerEpoch, canvasOwnerEpochMatches, readOwnedCanvasNodes, runOwnedCanvasPageCommit } from "@/pages/canvas/canvas-owner-epoch";
-import { applyArchivedCanvasNodeAssets, commitOwnedCanvasAssetHandoff, rebaseCreatedCanvasNodes } from "@/pages/canvas/canvas-resource-handoff-commit";
+import { captureCanvasOwnerEpoch, canvasOwnerEpochMatches, createCanvasOwnerLifetime, readOwnedCanvasNodes, runOwnedCanvasCreatedNodes, runOwnedCanvasEnsureQueue, runOwnedCanvasPageCommit } from "@/pages/canvas/canvas-owner-epoch";
+import { applyArchivedCanvasNodeAssets, CANVAS_HANDOFF_PERSIST_FAILED_MESSAGE, commitOwnedCanvasAssetHandoff, rebaseCreatedCanvasNodes } from "@/pages/canvas/canvas-resource-handoff-commit";
 import { defaultConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import type { GenerationTask } from "@/services/api/task-center";
@@ -147,6 +147,86 @@ describe("history insert ownership", () => {
         expect(pageNodes.map((item) => item.id)).toEqual(["keep", "typed-during-persist", pageNodes.at(-1)!.id]);
         expect(pageNodes.at(-1)?.metadata?.assetId).toBe("asset-history");
     });
+
+    test("abandons before ensureAsset and persist when the account switches during applyResult, even if the canvas id collides", async () => {
+        const owner = captureCanvasOwnerEpoch("canvas-a", "user-a");
+        let liveUser = "user-a";
+        const applyGate = deferred();
+        let ensureCalls = 0;
+        let persistCalls = 0;
+        let readCalls = 0;
+        let committed = false;
+        const pending = runOwnedCanvasHistoryInsert({
+            owner,
+            getLiveCanvasId: () => "canvas-a",
+            getLiveUserScope: () => liveUser,
+            task: historyTask(),
+            projectId: "canvas-a",
+            center: { x: 10, y: 10 },
+            nodes: [node("keep")],
+            assets: [],
+            readLiveNodes: () => {
+                readCalls += 1;
+                return [node("other-account")];
+            },
+            persist: async () => {
+                persistCalls += 1;
+            },
+            ensureAsset: async () => {
+                ensureCalls += 1;
+                return { assetId: "asset-history" };
+            },
+            applyResult: async (nodes, task, targetNodeId) => {
+                await applyGate.promise;
+                return applyHistoryNode(nodes, task, targetNodeId);
+            },
+            onCommit: () => {
+                committed = true;
+            },
+        });
+        liveUser = "user-b";
+        applyGate.resolve();
+        expect(await pending).toBe("abandoned");
+        expect(ensureCalls).toBe(0);
+        expect(persistCalls).toBe(0);
+        expect(readCalls).toBe(0);
+        expect(committed).toBe(false);
+    });
+
+    test("does not persist after ensureAsset when the account switches mid-flight", async () => {
+        const owner = captureCanvasOwnerEpoch("canvas-a", "user-a");
+        let liveUser = "user-a";
+        const ensureGate = deferred();
+        let persistCalls = 0;
+        let committed = false;
+        const pending = runOwnedCanvasHistoryInsert({
+            owner,
+            getLiveCanvasId: () => "canvas-a",
+            getLiveUserScope: () => liveUser,
+            task: historyTask(),
+            projectId: "canvas-a",
+            center: { x: 10, y: 10 },
+            nodes: [node("keep")],
+            assets: [],
+            readLiveNodes: () => [node("other-account")],
+            persist: async () => {
+                persistCalls += 1;
+            },
+            ensureAsset: async () => {
+                await ensureGate.promise;
+                return { assetId: "asset-history" };
+            },
+            applyResult: applyHistoryNode,
+            onCommit: () => {
+                committed = true;
+            },
+        });
+        liveUser = "user-b";
+        ensureGate.resolve();
+        expect(await pending).toBe("abandoned");
+        expect(persistCalls).toBe(0);
+        expect(committed).toBe(false);
+    });
 });
 
 describe("handoff ownership", () => {
@@ -280,6 +360,85 @@ describe("handoff ownership", () => {
         expect(persisted).toEqual([["original", "created"]]);
         expect(searchParams.get("mode")).toBe("handoff");
     });
+
+    test("abandons before persist when the account switches during node load, even if the canvas id collides", async () => {
+        const owner = captureCanvasOwnerEpoch("canvas-a", "user-a");
+        const created = [node("created", { assetId: "asset-1" })];
+        let liveUser = "user-a";
+        let persistCalls = 0;
+        let readCalls = 0;
+        let applied = false;
+        const loadGate = deferred<CanvasNodeData[]>();
+        const pending = (async () => {
+            const createdNodes = await loadGate.promise;
+            return commitOwnedCanvasAssetHandoff({
+                owner,
+                getLiveCanvasId: () => "canvas-a",
+                getLiveUserScope: () => liveUser,
+                searchParams: new URLSearchParams({ mode: "handoff", asset: "asset-1" }),
+                createdNodes,
+                readLiveNodes: () => {
+                    readCalls += 1;
+                    return [node("other-account")];
+                },
+                persist: async () => {
+                    persistCalls += 1;
+                },
+                applyCreated: () => {
+                    applied = true;
+                },
+                consumeUrl: () => {
+                    throw new Error("must not consume URL after account switch");
+                },
+                resetAttempt: () => {},
+            });
+        })();
+        liveUser = "user-b";
+        loadGate.resolve(created);
+        expect(await pending).toBe("abandoned");
+        expect(persistCalls).toBe(0);
+        expect(readCalls).toBe(0);
+        expect(applied).toBe(false);
+    });
+
+    test("failed persist reports an actionable error and does not let an old attempt clear a newer key", async () => {
+        const owner = captureCanvasOwnerEpoch("canvas-a", "user-a");
+        const created = [node("created", { assetId: "asset-1" })];
+        let attemptKey = "first";
+        const persistGate = deferred();
+        const errors: unknown[] = [];
+        const first = commitOwnedCanvasAssetHandoff({
+            owner,
+            getLiveCanvasId: () => "canvas-a",
+            getLiveUserScope: () => "user-a",
+            attemptKey: "first",
+            getAttemptKey: () => attemptKey,
+            searchParams: new URLSearchParams({ mode: "handoff", asset: "asset-1" }),
+            createdNodes: created,
+            readLiveNodes: () => created,
+            persist: async () => {
+                await persistGate.promise;
+            },
+            applyCreated: () => {
+                throw new Error("must not apply after persist failure");
+            },
+            consumeUrl: () => {
+                throw new Error("must not consume URL after persist failure");
+            },
+            resetAttempt: () => {
+                attemptKey = "";
+            },
+            onPersistError: (error) => {
+                errors.push(error);
+            },
+        });
+        attemptKey = "second";
+        persistGate.reject(new Error("sqlite unavailable"));
+        expect(await first).toBe("failed");
+        expect(attemptKey).toBe("second");
+        expect((errors[0] as Error).message).toBe("sqlite unavailable");
+        expect(CANVAS_HANDOFF_PERSIST_FAILED_MESSAGE).toBe("画布保存失败，请稍后重试");
+    });
 });
 
 describe("archive and reload ownership", () => {
@@ -305,6 +464,71 @@ describe("archive and reload ownership", () => {
         archiveGate.resolve([{ assetId: "archived" }]);
         expect(await pending).toBe("abandoned");
         expect(pageNodes[0]?.metadata?.assetId).toBe("old");
+    });
+
+    test("does not start the next ensureAsset after an account switch; page commit is callbacks-only", async () => {
+        const owner = captureCanvasOwnerEpoch("canvas-a", "user-a");
+        let liveUser = "user-a";
+        const firstGate = deferred();
+        const ensureCalls: string[] = [];
+        const pending = runOwnedCanvasEnsureQueue({
+            owner,
+            getLiveUserScope: () => liveUser,
+            items: ["node-a", "node-b"],
+            ensure: async (item) => {
+                ensureCalls.push(item);
+                if (item === "node-a") await firstGate.promise;
+                return { id: item };
+            },
+        });
+        liveUser = "user-b";
+        firstGate.resolve();
+        expect(await pending).toEqual([{ id: "node-a" }]);
+        expect(ensureCalls).toEqual(["node-a"]);
+    });
+
+    test("rejects stale page completion after remount and A→B→A back-navigation", async () => {
+        const lifetime = createCanvasOwnerLifetime();
+        const owner = lifetime.capture("canvas-a", "user-a");
+        const workGate = deferred<string>();
+        let committed: string | null = null;
+        const pending = runOwnedCanvasPageCommit({
+            owner,
+            getLiveCanvasId: () => "canvas-a",
+            getLiveUserScope: () => "user-a",
+            getLiveLifetime: () => lifetime.current(),
+            work: () => workGate.promise,
+            onCommit: (value) => {
+                committed = value;
+            },
+        });
+        lifetime.invalidate();
+        lifetime.invalidate();
+        workGate.resolve("stale");
+        expect(await pending).toBe("abandoned");
+        expect(committed).toBeNull();
+    });
+});
+
+describe("project asset insert ownership", () => {
+    test("does not apply created nodes after an account switch during create", async () => {
+        const owner = captureCanvasOwnerEpoch("canvas-a", "user-a");
+        let liveUser = "user-a";
+        const createGate = deferred<CanvasNodeData[]>();
+        let applied = false;
+        const pending = runOwnedCanvasCreatedNodes({
+            owner,
+            getLiveCanvasId: () => "canvas-a",
+            getLiveUserScope: () => liveUser,
+            create: () => createGate.promise,
+            apply: () => {
+                applied = true;
+            },
+        });
+        liveUser = "user-b";
+        createGate.resolve([node("created")]);
+        expect(await pending).toBe("abandoned");
+        expect(applied).toBe(false);
     });
 });
 

@@ -385,6 +385,14 @@ test("Create forwards owned result assets through one new canvas and the project
     expect(handoffPlan).toContain('if (!input.projectLoaded || !input.assetsHydrated || input.mode !== "handoff") return { kind: "idle" }');
     expect(handoffPlan).toContain("uninsertedCanvasAssetHandoffPayloads(input.nodes, attempt.payloads)");
     expect(resourceHook).toContain("commitOwnedCanvasAssetHandoff");
+    expect(resourceHook).toContain("createHandoffNodes");
+    expect(resourceHook).not.toContain("handleProjectAssetsInsert");
+    expect(resourceHook).toContain("CANVAS_HANDOFF_PERSIST_FAILED_MESSAGE");
+    expect(resourceHook).toContain("resetIfCurrentAttempt");
+    expect(resourceHook).toContain("runOwnedCanvasEnsureQueue");
+    expect(canvasProject).toContain("createHandoffNodes: createAssetPayloadNodes");
+    const uploadHook = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/use-canvas-upload.ts"), "utf8");
+    expect(uploadHook).toContain("runOwnedCanvasCreatedNodes");
     expect(resourceHook).toContain("persistCanvasDocument(owner.canvasId, { nodes: nextNodes })");
     expect(resourceHook.indexOf("persistCanvasDocument(owner.canvasId, { nodes: nextNodes })")).toBeLessThan(resourceHook.indexOf("setSearchParams(nextSearchParams"));
 });

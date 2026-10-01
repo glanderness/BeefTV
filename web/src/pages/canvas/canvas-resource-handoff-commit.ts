@@ -1,7 +1,9 @@
 import { finalizeCanvasAssetHandoff } from "@/lib/canvas/canvas-asset-handoff";
 import type { CanvasNodeData } from "@/types/canvas";
 
-import { canvasOwnerEpochMatches, type CanvasOwnerEpoch } from "./canvas-owner-epoch";
+import { CanvasOwnerAbandonedError, canvasOwnerCanPersist, canvasOwnerEpochMatches, type CanvasOwnerEpoch } from "./canvas-owner-epoch";
+
+export const CANVAS_HANDOFF_PERSIST_FAILED_MESSAGE = "画布保存失败，请稍后重试";
 
 export function rebaseCreatedCanvasNodes<T extends { id: string }>(live: T[], created: T[]) {
     const createdIds = new Set(created.map((node) => node.id));
@@ -23,7 +25,10 @@ export async function commitOwnedCanvasAssetHandoff<T extends { id: string }>(in
     owner: CanvasOwnerEpoch;
     getLiveCanvasId: () => string;
     getLiveUserScope?: () => string;
+    getLiveLifetime?: () => number;
     stillOwnsPage?: () => boolean;
+    attemptKey?: string;
+    getAttemptKey?: () => string;
     searchParams: URLSearchParams;
     createdNodes: T[];
     readLiveNodes: () => T[];
@@ -31,23 +36,37 @@ export async function commitOwnedCanvasAssetHandoff<T extends { id: string }>(in
     consumeUrl: (searchParams: URLSearchParams) => void;
     applyCreated: (createdNodes: T[]) => void;
     resetAttempt: () => void;
+    onPersistError?: (error: unknown) => void;
 }): Promise<"committed" | "abandoned" | "failed"> {
+    const liveUser = () => input.getLiveUserScope?.();
+    const liveLifetime = () => input.getLiveLifetime?.();
+    const canPersist = () => canvasOwnerCanPersist(input.owner, input.getLiveCanvasId(), liveUser(), liveLifetime());
+    if (!canPersist()) return "abandoned";
+    const currentNodes = input.readLiveNodes();
+    if (!canPersist()) return "abandoned";
     try {
         const finalized = await finalizeCanvasAssetHandoff({
             searchParams: input.searchParams,
-            currentNodes: input.readLiveNodes(),
+            currentNodes,
             createdNodes: input.createdNodes,
-            persist: input.persist,
+            persist: async (nodes) => {
+                if (!canPersist()) throw new CanvasOwnerAbandonedError();
+                await input.persist(nodes);
+            },
         });
         const stillOwns = input.stillOwnsPage
             ? input.stillOwnsPage()
-            : canvasOwnerEpochMatches(input.owner, input.getLiveCanvasId(), input.getLiveUserScope?.());
+            : canvasOwnerEpochMatches(input.owner, input.getLiveCanvasId(), liveUser(), liveLifetime());
         if (!stillOwns) return "abandoned";
         input.applyCreated(input.createdNodes);
         input.consumeUrl(finalized.searchParams);
         return "committed";
-    } catch {
-        input.resetAttempt();
+    } catch (error) {
+        if (error instanceof CanvasOwnerAbandonedError) return "abandoned";
+        if (input.attemptKey === undefined || input.getAttemptKey?.() === input.attemptKey) {
+            input.resetAttempt();
+        }
+        input.onPersistError?.(error);
         return "failed";
     }
 }

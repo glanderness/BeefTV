@@ -12,7 +12,7 @@ import type { GenerationTask } from "@/services/api/task-center";
 import type { Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Position } from "@/types/canvas";
 
-import { canvasOwnerEpochMatches, type CanvasOwnerEpoch } from "./canvas-owner-epoch";
+import { CanvasOwnerAbandonedError, canvasOwnerCanPersist, canvasOwnerEpochMatches, canvasOwnerUserMatches, type CanvasOwnerEpoch } from "./canvas-owner-epoch";
 
 const NODE_STATUS_SUCCESS = "success" as const;
 
@@ -153,7 +153,8 @@ export async function insertCanvasGenerationHistoryTask(input: {
     ensureAsset: (node: CanvasNodeData) => Promise<{ assetId: string }>;
     applyResult?: typeof applyGenerationTaskResultToNodes;
     readLiveNodes: () => CanvasNodeData[];
-}) {
+    canContinueWrite?: () => boolean;
+}): Promise<{ node: CanvasNodeData; nextNodes: CanvasNodeData[]; abandoned?: boolean }> {
     const mode = generationTaskMode(input.task);
     const nodeType = mode === "video" ? CanvasNodeType.Video : mode === "audio" ? CanvasNodeType.Audio : CanvasNodeType.Image;
     const node = createCanvasNode(nodeType, input.center, {
@@ -171,11 +172,16 @@ export async function insertCanvasGenerationHistoryTask(input: {
     node.title = mode === "video" ? "历史视频" : mode === "audio" ? "历史音频" : "历史图片";
     const applied = await (input.applyResult || applyGenerationTaskResultToNodes)([node], input.task, node.id);
     if (!applied.node) throw new Error("生成结果无法定位到画布节点");
-    const bound = await bindMissingCanvasResourceAssets([applied.node], input.assets, input.ensureAsset);
+    if (input.canContinueWrite && !input.canContinueWrite()) return { node: applied.node, nextNodes: [], abandoned: true };
+    const bound = await bindMissingCanvasResourceAssets([applied.node], input.assets, async (item) => {
+        if (input.canContinueWrite && !input.canContinueWrite()) throw new CanvasOwnerAbandonedError();
+        return input.ensureAsset(item);
+    });
     const inserted = bound[0];
     if (!inserted || canvasNodesMissingResourceAssetBinding(bound).length) {
         throw new Error("生成结果尚未进入素材库，无法插入画布");
     }
+    if (input.canContinueWrite && !input.canContinueWrite()) return { node: inserted, nextNodes: [], abandoned: true };
     const nextNodes = rebaseInsertedCanvasNode(input.readLiveNodes(), inserted);
     await input.persist(nextNodes);
     return { node: inserted, nextNodes };
@@ -185,6 +191,7 @@ export async function runOwnedCanvasHistoryInsert(input: {
     owner: CanvasOwnerEpoch;
     getLiveCanvasId: () => string;
     getLiveUserScope?: () => string;
+    getLiveLifetime?: () => number;
     task: GenerationTask;
     projectId: string;
     domainProjectId?: string;
@@ -197,8 +204,24 @@ export async function runOwnedCanvasHistoryInsert(input: {
     readLiveNodes: () => CanvasNodeData[];
     onCommit: (node: CanvasNodeData) => void;
 }): Promise<"committed" | "abandoned"> {
-    const { node } = await insertCanvasGenerationHistoryTask(input);
-    if (!canvasOwnerEpochMatches(input.owner, input.getLiveCanvasId(), input.getLiveUserScope?.())) return "abandoned";
-    input.onCommit(node);
-    return "committed";
+    const liveUser = () => input.getLiveUserScope?.();
+    const liveLifetime = () => input.getLiveLifetime?.();
+    const canContinueWrite = () => canvasOwnerCanPersist(input.owner, input.getLiveCanvasId(), liveUser(), liveLifetime());
+    try {
+        const result = await insertCanvasGenerationHistoryTask({
+            ...input,
+            canContinueWrite,
+            ensureAsset: async (node) => {
+                if (!canvasOwnerUserMatches(input.owner, liveUser())) throw new CanvasOwnerAbandonedError();
+                return input.ensureAsset(node);
+            },
+        });
+        if (result.abandoned) return "abandoned";
+        if (!canvasOwnerEpochMatches(input.owner, input.getLiveCanvasId(), liveUser(), liveLifetime())) return "abandoned";
+        input.onCommit(result.node);
+        return "committed";
+    } catch (error) {
+        if (error instanceof CanvasOwnerAbandonedError) return "abandoned";
+        throw error;
+    }
 }

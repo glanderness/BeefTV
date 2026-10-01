@@ -7,7 +7,7 @@ import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 import { executeAssistantProposal } from "./canvas-assistant-proposal-execution";
 import { prepareAssistantProposalSnapshot } from "./canvas-assistant-proposal-snapshot";
 import { readAssistantProposalSourceState, readPersistedAssistantProposalSource } from "./canvas-assistant-proposal-source";
-import { captureCanvasOwnerEpoch, canvasOwnerEpochMatches } from "./canvas-owner-epoch";
+import { useCanvasOwnerLifetime } from "./canvas-owner-epoch";
 import type { CanvasNodeGenerationOptions } from "./use-canvas-generation-executor";
 
 type GenerateNode = (nodeId: string, mode: "image" | "video", prompt: string, options?: CanvasNodeGenerationOptions) => Promise<unknown>;
@@ -43,10 +43,11 @@ export function useCanvasAssistantProposal({
     addedSkillsRef.current = addedSkills;
     const projectIdRef = useRef(projectId);
     projectIdRef.current = projectId;
+    const { lifetime } = useCanvasOwnerLifetime(projectId);
 
     const runAssistantProposal = useCallback(
         (proposal: AssistantGenerationProposal) => {
-            const owner = captureCanvasOwnerEpoch(projectId);
+            const owner = lifetime.capture(projectId);
             const generateForThisRun = handleGenerateNodeRef.current;
             setAssistantProposalFeedback((current) => ({ ...current, [proposal.proposalId]: "" }));
             void executeAssistantProposal({
@@ -61,14 +62,14 @@ export function useCanvasAssistantProposal({
                         () => readPersistedAssistantProposalSource(owner.canvasId),
                     ),
                 generate: generateForThisRun,
-                stillOwns: () => canvasOwnerEpochMatches(owner, projectIdRef.current),
+                stillOwns: () => lifetime.matches(owner, projectIdRef.current),
                 markHandled: (proposalId) => markHandledRef.current(proposalId),
                 notify: (content) => {
                     setAssistantProposalFeedback((current) => ({ ...current, [proposal.proposalId]: content }));
                 },
             });
         },
-        [connectionsRef, nodesRef, projectId],
+        [connectionsRef, lifetime, nodesRef, projectId],
     );
 
     return { runAssistantProposal, assistantProposalFeedback };

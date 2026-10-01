@@ -996,6 +996,7 @@ function InfiniteCanvasPage() {
         assetPickerOpen,
         closeAssetPicker,
         createVideoNodeFromBlob,
+        createAssetPayloadNodes,
         createImageAssetNode,
         fileDropActive,
         handleAssetsInsert,
@@ -1041,7 +1042,7 @@ function InfiniteCanvasPage() {
         setSearchParams,
         setNodes,
         getCanvasCenter,
-        handleProjectAssetsInsert,
+        createHandoffNodes: createAssetPayloadNodes,
         applyGenerationTaskResult,
     });
     const canvasContext = useMemo(() => summarizeCanvasContext(nodes, selectedNodeIds, linkedProjectQuery.data?.units), [linkedProjectQuery.data?.units, nodes, selectedNodeIds]);

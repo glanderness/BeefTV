@@ -24,6 +24,7 @@ import { useAssetStore, type ImageAsset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasNodeData, type ContextMenuState, type Position } from "@/types/canvas";
 import type { TimelineDirectMedia } from "@/types/timeline";
 import type { CanvasUploadStatus } from "./canvas-project-feedback";
+import { runOwnedCanvasCreatedNodes, useCanvasOwnerLifetime } from "./canvas-owner-epoch";
 
 type UseCanvasUploadOptions = {
     canvasId: string;
@@ -72,6 +73,9 @@ export function useCanvasUpload({
 }: UseCanvasUploadOptions) {
     const { message } = App.useApp();
     const queryClient = useQueryClient();
+    const canvasIdRef = useRef(canvasId);
+    canvasIdRef.current = canvasId;
+    const { lifetime } = useCanvasOwnerLifetime(canvasId);
     const imageInputRef = useRef<HTMLInputElement>(null);
     const uploadTargetRef = useRef<{ nodeId?: string; position?: Position } | null>(null);
     const assetInsertPositionRef = useRef<Position | null>(null);
@@ -728,23 +732,40 @@ export function useCanvasUpload({
         return { id, type: CanvasNodeType.Image, title: payload.title.slice(0, 32) || "Generated Image", position: { x: center.x - size.width / 2, y: center.y - size.height / 2 }, width: size.width, height: size.height, metadata: mediaResultMetadata("library", { ...metadata, prompt: payload.title, assetId: payload.assetId }) } satisfies CanvasNodeData;
     }, []);
 
+    const createAssetPayloadNodes = useCallback(async (payloads: InsertAssetPayload[], origin: Position) => {
+        return Promise.all(payloads.map((payload, index) => createAssetPayloadNode(payload, {
+            x: origin.x + (index % BATCH_UPLOAD_COLUMNS) * BATCH_UPLOAD_COLUMN_GAP,
+            y: origin.y + Math.floor(index / BATCH_UPLOAD_COLUMNS) * BATCH_UPLOAD_ROW_GAP,
+        })));
+    }, [createAssetPayloadNode]);
+
     const insertAssetPayloads = useCallback(async (payloads: InsertAssetPayload[], origin: Position, successMessage: string, failureMessage: string): Promise<CanvasNodeData[]> => {
+        const owner = lifetime.capture(canvasId);
+        let created: CanvasNodeData[] = [];
         try {
-            const created = await Promise.all(payloads.map((payload, index) => createAssetPayloadNode(payload, {
-                x: origin.x + (index % BATCH_UPLOAD_COLUMNS) * BATCH_UPLOAD_COLUMN_GAP,
-                y: origin.y + Math.floor(index / BATCH_UPLOAD_COLUMNS) * BATCH_UPLOAD_ROW_GAP,
-            })));
-            setNodes((current) => [...current, ...created]);
-            setSelectedNodeIds(new Set(created.map((node) => node.id)));
-            setSelectedConnectionId(null);
-            setDialogNodeId(null);
-            message.success(successMessage);
-            return created;
+            const status = await runOwnedCanvasCreatedNodes({
+                owner,
+                getLiveCanvasId: () => canvasIdRef.current,
+                getLiveLifetime: () => lifetime.current(),
+                create: async () => {
+                    created = await createAssetPayloadNodes(payloads, origin);
+                    return created;
+                },
+                apply: (nodes) => {
+                    setNodes((current) => [...current, ...nodes]);
+                    setSelectedNodeIds(new Set(nodes.map((node) => node.id)));
+                    setSelectedConnectionId(null);
+                    setDialogNodeId(null);
+                    message.success(successMessage);
+                },
+            });
+            return status === "committed" ? created : [];
         } catch (error) {
+            if (!lifetime.matches(owner, canvasIdRef.current)) return [];
             message.error(error instanceof Error ? error.message : failureMessage);
             throw error;
         }
-    }, [createAssetPayloadNode, message, setDialogNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
+    }, [canvasId, createAssetPayloadNodes, lifetime, message, setDialogNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
 
     const handleAssetsInsert = useCallback(async (payloads: InsertAssetPayload[]): Promise<CanvasNodeData[]> => {
         const origin = assetInsertPositionRef.current || getCanvasCenter();
@@ -761,6 +782,7 @@ export function useCanvasUpload({
         closeAssetPicker,
         createVideoNodeFromBlob,
         createAssetPayloadNode,
+        createAssetPayloadNodes,
         createImageAssetNode,
         fileDropActive,
         handleAssetsInsert,

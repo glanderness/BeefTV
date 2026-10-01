@@ -22,7 +22,7 @@ import {
     runOwnedCanvasHistoryInsert,
     selectRetryableImageBatchChildren,
 } from "./canvas-generation-orchestration";
-import { captureCanvasOwnerEpoch, readOwnedCanvasNodes } from "./canvas-owner-epoch";
+import { readOwnedCanvasNodes, useCanvasOwnerLifetime } from "./canvas-owner-epoch";
 import { useCanvasBatchTable } from "./use-canvas-batch-table";
 import { useCanvasGeneration } from "./use-canvas-generation";
 import { useCanvasGenerationBatches } from "./use-canvas-generation-batches";
@@ -79,6 +79,7 @@ export function useCanvasGenerationOrchestration({
     const insertingHistory = useRef(createInsertingHistoryGate());
     const projectIdRef = useRef(projectId);
     projectIdRef.current = projectId;
+    const { lifetime } = useCanvasOwnerLifetime(projectId);
 
     const {
         applyGenerationTaskResult,
@@ -236,11 +237,12 @@ export function useCanvasGenerationOrchestration({
     const insertGenerationHistoryTask = useCallback(
         async (task: GenerationTask) => {
             if (!insertingHistory.current.tryEnter()) return;
-            const owner = captureCanvasOwnerEpoch(projectId);
+            const owner = lifetime.capture(projectId);
             try {
                 await runOwnedCanvasHistoryInsert({
                     owner,
                     getLiveCanvasId: () => projectIdRef.current,
+                    getLiveLifetime: () => lifetime.current(),
                     task,
                     projectId: owner.canvasId,
                     domainProjectId,
@@ -250,6 +252,7 @@ export function useCanvasGenerationOrchestration({
                     readLiveNodes: () => readOwnedCanvasNodes({
                         owner,
                         liveCanvasId: projectIdRef.current,
+                        liveLifetime: lifetime.current(),
                         pageNodes: nodesRef.current,
                         storedNodes: useCanvasStore.getState().openProject(owner.canvasId)?.nodes,
                     }),
@@ -268,7 +271,7 @@ export function useCanvasGenerationOrchestration({
                 insertingHistory.current.exit();
             }
         },
-        [domainProjectId, getCanvasCenter, message, nodesRef, projectId, setGenerationHistoryOpen, setNodes, setSelectedNodeIds],
+        [domainProjectId, getCanvasCenter, lifetime, message, nodesRef, projectId, setGenerationHistoryOpen, setNodes, setSelectedNodeIds],
     );
 
     const reconcileImageBatchRootNode = useCallback(
