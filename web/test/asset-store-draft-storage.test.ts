@@ -82,6 +82,8 @@ afterEach(async () => {
 describe("asset store durable draft storage", () => {
     test("a delayed draft hydrate cannot project into a later A to B to A epoch", async () => {
         const restore = switchScope("owner-a");
+        const originalWindow = globalThis.window;
+        globalThis.window = originalWindow ?? ({ localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } } as never);
         const entered = deferred();
         const gate = deferred();
         const getItem = spyOn(localforage, "getItem").mockImplementation(async (key) => {
@@ -104,6 +106,7 @@ describe("asset store durable draft storage", () => {
         } finally {
             gate.resolve();
             getItem.mockRestore();
+            if (!originalWindow) delete (globalThis as { window?: unknown }).window;
             restore();
         }
     });
