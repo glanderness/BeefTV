@@ -254,70 +254,107 @@ type limitQuota struct {
 	generatedExclusive int64
 }
 
-func (q *limitQuota) ReserveUpload(_ string, size int64) (string, error) {
+func (q *limitQuota) ReserveUpload(_ string, size int64, _ string) (string, error) {
 	if size >= q.uploadExclusive {
 		return "", errors.New("upload exceeds ResourceUploadMB")
 	}
 	return "day", nil
 }
-func (q *limitQuota) ReserveChunked(_ string, size int64) (string, error) {
-	return q.ReserveUpload("", size)
+func (q *limitQuota) ReserveChunked(_ string, size int64, identity string) (string, error) {
+	return q.ReserveUpload("", size, identity)
 }
-func (q *limitQuota) ReserveRetry(_ string, size int64) (string, error) {
-	return q.ReserveUpload("", size)
+func (q *limitQuota) ReserveRetry(_ string, size int64, identity string) (string, error) {
+	return q.ReserveUpload("", size, identity)
 }
-func (q *limitQuota) ReserveGenerated(_ string, size int64) (string, error) {
+func (q *limitQuota) ReserveGenerated(_ string, size int64, _ string) (string, error) {
 	if size >= q.generatedExclusive {
 		return "", errors.New("generated exceeds GeneratedFileMB")
 	}
 	return "day", nil
 }
-func (q *limitQuota) ReserveGeneratedRetry(_ string, size int64) (string, error) {
-	return q.ReserveGenerated("", size)
+func (q *limitQuota) ReserveGeneratedRetry(_ string, size int64, identity string) (string, error) {
+	return q.ReserveGenerated("", size, identity)
 }
-func (q *limitQuota) Release(string, string, int64)      {}
-func (q *limitQuota) ReleaseRetry(string, string, int64) {}
-func (q *limitQuota) Commit(string, int64)               {}
+func (q *limitQuota) Release(string, string, int64, string)      {}
+func (q *limitQuota) ReleaseRetry(string, string, int64, string) {}
+func (q *limitQuota) Commit(string, int64, string)               {}
 
 type ledgerQuota struct {
-	pending  int64
+	pending  map[string]int64
 	daily    int64
 	commits  int
 	releases int
 }
 
-func (q *ledgerQuota) ReserveUpload(_ string, size int64) (string, error) {
-	q.pending += size
+func (q *ledgerQuota) addPending(identity string, size int64) {
+	if q.pending == nil {
+		q.pending = map[string]int64{}
+	}
+	q.pending[identity] += size
+}
+
+func (q *ledgerQuota) pendingOf(identity string) int64 {
+	if q.pending == nil {
+		return 0
+	}
+	return q.pending[identity]
+}
+
+func (q *ledgerQuota) pendingTotal() int64 {
+	var total int64
+	for _, size := range q.pending {
+		total += size
+	}
+	return total
+}
+
+func (q *ledgerQuota) ReserveUpload(_ string, size int64, identity string) (string, error) {
+	q.addPending(identity, size)
 	q.daily += size
 	return "day", nil
 }
-func (q *ledgerQuota) ReserveChunked(_ string, size int64) (string, error) {
-	return q.ReserveUpload("", size)
+func (q *ledgerQuota) ReserveChunked(_ string, size int64, identity string) (string, error) {
+	return q.ReserveUpload("", size, identity)
 }
-func (q *ledgerQuota) ReserveRetry(_ string, size int64) (string, error) {
+func (q *ledgerQuota) ReserveRetry(_ string, size int64, _ string) (string, error) {
 	q.daily += size
 	return "day", nil
 }
-func (q *ledgerQuota) ReserveGenerated(_ string, size int64) (string, error) {
-	q.pending += size
+func (q *ledgerQuota) ReserveGenerated(_ string, size int64, identity string) (string, error) {
+	q.addPending(identity, size)
 	q.daily += size
 	return "day", nil
 }
-func (q *ledgerQuota) ReserveGeneratedRetry(_ string, size int64) (string, error) {
+func (q *ledgerQuota) ReserveGeneratedRetry(_ string, size int64, _ string) (string, error) {
 	q.daily += size
 	return "day", nil
 }
-func (q *ledgerQuota) Release(_ string, _ string, size int64) {
-	q.pending -= size
+func (q *ledgerQuota) Release(_ string, _ string, size int64, identity string) {
+	if q.pending != nil {
+		remaining := q.pending[identity] - size
+		if remaining > 0 {
+			q.pending[identity] = remaining
+		} else {
+			delete(q.pending, identity)
+		}
+	}
 	q.daily -= size
 	q.releases++
 }
-func (q *ledgerQuota) ReleaseRetry(_ string, _ string, size int64) {
+func (q *ledgerQuota) ReleaseRetry(_ string, _ string, size int64, _ string) {
 	q.daily -= size
 	q.releases++
 }
-func (q *ledgerQuota) Commit(_ string, size int64) {
-	q.pending -= size
+func (q *ledgerQuota) Commit(_ string, size int64, identity string) {
+	if q.pendingOf(identity) == 0 {
+		return
+	}
+	remaining := q.pending[identity] - size
+	if remaining > 0 {
+		q.pending[identity] = remaining
+	} else {
+		delete(q.pending, identity)
+	}
 	q.commits++
 }
 
@@ -331,7 +368,7 @@ func TestRecoverOwnedUsesGeneratedQuotaNotUploadLimit(t *testing.T) {
 		Lifecycle:  nopLifecycle{},
 	})
 	mid := strings.Repeat("m", 16)
-	if _, err := svc.reserveUpload("user-1", int64(len(mid))); err == nil {
+	if _, err := svc.reserveUpload("user-1", int64(len(mid)), ""); err == nil {
 		t.Fatal("upload of in-between size should be rejected")
 	}
 	got, err := svc.RecoverOwned("user-1", "task-gen-quota:0", func() (RecoveredArtifact, error) {
@@ -370,8 +407,9 @@ func TestRecoverOwnedFailedReadySaveKeepsQuotaUntilPromote(t *testing.T) {
 		t.Fatalf("first recover resource=%#v err=%v", first, err)
 	}
 	size := int64(len(body))
-	if quota.pending != size || quota.daily != size || quota.releases != 0 || quota.commits != 0 {
-		t.Fatalf("after failed ready-save ledger pending=%d daily=%d releases=%d commits=%d", quota.pending, quota.daily, quota.releases, quota.commits)
+	identity := *NormalizedUploadKey([]string{"task-quota-keep:0"})
+	if quota.pendingOf(identity) != size || quota.daily != size || quota.releases != 0 || quota.commits != 0 {
+		t.Fatalf("after failed ready-save ledger pending=%d daily=%d releases=%d commits=%d", quota.pendingOf(identity), quota.daily, quota.releases, quota.commits)
 	}
 	latest, lookupErr := repo.ResourceByUploadKey("user-1", *NormalizedUploadKey([]string{"task-quota-keep:0"}))
 	if lookupErr != nil {
@@ -387,8 +425,8 @@ func TestRecoverOwnedFailedReadySaveKeepsQuotaUntilPromote(t *testing.T) {
 	if err != nil || second.ID != latest.ID || second.Status != model.ResourceStatusReady {
 		t.Fatalf("promote = %#v err=%v", second, err)
 	}
-	if quota.pending != 0 || quota.daily != size || quota.releases != 0 || quota.commits != 1 {
-		t.Fatalf("after promote ledger pending=%d daily=%d releases=%d commits=%d", quota.pending, quota.daily, quota.releases, quota.commits)
+	if quota.pendingOf(identity) != 0 || quota.pendingTotal() != 0 || quota.daily != size || quota.releases != 0 || quota.commits != 1 {
+		t.Fatalf("after promote ledger pending=%d daily=%d releases=%d commits=%d", quota.pendingTotal(), quota.daily, quota.releases, quota.commits)
 	}
 }
 
@@ -482,5 +520,87 @@ func TestRecoverOwnedReadyMissingDoesNotReserveQuota(t *testing.T) {
 	}
 	if quota.reserved != first.Size {
 		t.Fatalf("READY+missing reserved extra quota = %d", quota.reserved)
+	}
+}
+
+func TestPromoteReadyDoesNotDebitOtherUploadPending(t *testing.T) {
+	_, repo, dataDir := newTestDomain(t)
+	identity := "task-orphan:0"
+	uploadKey := NormalizedUploadKey([]string{identity})
+	pending := &model.Resource{
+		ID: "resource-orphan", UserID: "user-1", Kind: "image", Status: model.ResourceStatusPending,
+		Provider: "local", ObjectKey: "users/user-1/image/orphan.png", MimeType: "image/png", Size: 7,
+		UploadKey: uploadKey,
+	}
+	if err := repo.CreateResource(pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewFileStore(dataDir).Write(pending.ObjectKey, bytes.NewReader([]byte("payload"))); err != nil {
+		t.Fatal(err)
+	}
+	quota := &ledgerQuota{}
+	svc := NewService(Dependencies{
+		Repository: NewRepository(repo),
+		Blobs:      NewFileStore(dataDir),
+		Quota:      quota,
+		Lifecycle:  nopLifecycle{},
+	})
+	ordinary := int64(100)
+	if _, err := quota.ReserveUpload("user-1", ordinary, "ordinary-upload"); err != nil {
+		t.Fatal(err)
+	}
+	var promoteErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, promoteErr = svc.RecoverOwned("user-1", identity, func() (RecoveredArtifact, error) {
+			return RecoveredArtifact{}, errors.New("leftover bytes called restore")
+		})
+	}()
+	wg.Wait()
+	if promoteErr != nil {
+		t.Fatal(promoteErr)
+	}
+	if quota.pendingOf("ordinary-upload") != ordinary || quota.pendingTotal() != ordinary {
+		t.Fatalf("ordinary pending stolen: %#v", quota.pending)
+	}
+	if quota.daily != ordinary || quota.commits != 0 || quota.releases != 0 {
+		t.Fatalf("promote mutated ledger daily=%d commits=%d releases=%d", quota.daily, quota.commits, quota.releases)
+	}
+}
+
+func TestRecoverOwnedRestartPromoteKeepsDailyOnce(t *testing.T) {
+	_, repo, dataDir := newTestDomain(t)
+	identity := "task-restart:0"
+	uploadKey := NormalizedUploadKey([]string{identity})
+	size := int64(7)
+	pending := &model.Resource{
+		ID: "resource-restart", UserID: "user-1", Kind: "image", Status: model.ResourceStatusPending,
+		Provider: "local", ObjectKey: "users/user-1/image/restart.png", MimeType: "image/png", Size: size,
+		UploadKey: uploadKey,
+	}
+	if err := repo.CreateResource(pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewFileStore(dataDir).Write(pending.ObjectKey, bytes.NewReader([]byte("payload"))); err != nil {
+		t.Fatal(err)
+	}
+	quota := &ledgerQuota{daily: size}
+	svc := NewService(Dependencies{
+		Repository: NewRepository(repo),
+		Blobs:      NewFileStore(dataDir),
+		Quota:      quota,
+		Lifecycle:  nopLifecycle{},
+	})
+	got, err := svc.RecoverOwned("user-1", identity, func() (RecoveredArtifact, error) {
+		t.Fatal("restart promote called restore")
+		return RecoveredArtifact{}, nil
+	})
+	if err != nil || got == nil || got.Status != model.ResourceStatusReady {
+		t.Fatalf("restart promote = %#v err=%v", got, err)
+	}
+	if quota.daily != size || quota.pendingTotal() != 0 || quota.commits != 0 || quota.releases != 0 {
+		t.Fatalf("restart ledger daily=%d pending=%d commits=%d releases=%d", quota.daily, quota.pendingTotal(), quota.commits, quota.releases)
 	}
 }

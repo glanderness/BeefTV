@@ -38,14 +38,16 @@ import (
 // non-READY rows. Generation adapters should call RecoverOwned so READY
 // rows with missing bytes can restore from the original provider result.
 //
-// Quota: callers of Store reserve upload/chunked quota. RetryOwned reserves
-// via ReserveRetry only after owner and identity checks, and releases on
-// write or finalize failure. RecoverOwned uses ReserveGenerated /
-// ReserveGeneratedRetry (GeneratedFileMB), not ResourceUploadMB. READY
-// replay does not consume quota. A create reservation is kept when bytes
-// persist after a failed READY save; promoteReady Commits that ledger entry
-// so daily/storage are counted once. PENDING/FAILED promote of existing
-// bytes does not reserve again.
+// Quota: callers of Store reserve upload/chunked quota under the upload
+// identity. RetryOwned reserves daily-only via ReserveRetry after owner and
+// identity checks when local bytes are missing, and releases on write
+// failure. A successful byte write whose READY save fails keeps that
+// reservation; the next RetryOwned rewrites without a second daily reserve.
+// RecoverOwned uses ReserveGenerated / ReserveGeneratedRetry
+// (GeneratedFileMB). READY replay does not consume quota. Create
+// reservations are kept when bytes persist after a failed READY save.
+// PENDING/FAILED promote of existing bytes does not reserve again and
+// Commits only this identity's pending.
 
 // Store creates a pending row, publishes bytes through FileStore, then marks
 // READY. A failed READY write leaves FAILED (or PENDING if status cannot be
@@ -196,20 +198,29 @@ func (s *Service) RetryOwned(userID string, resourceID string, kind string, mime
 	resource.Status = model.ResourceStatusPending
 	resource.Error = ""
 	resource.UpdatedAt = time.Now()
-	day, err := s.reserveRetry(userID, size)
-	if err != nil {
-		resource.Status = model.ResourceStatusFailed
-		resource.Error = err.Error()
-		resource.UpdatedAt = time.Now()
-		if saveErr := s.repo.SaveResource(resource); saveErr != nil {
-			return nil, errors.Join(err, fmt.Errorf("恢复资源重试失败状态失败：%w", saveErr))
+	identity := quotaIdentity(resource.UploadKey, resource.ID)
+	var day string
+	heldRetry := false
+	if !s.objectPresent(resource) {
+		reserved, err := s.reserveRetry(userID, size, identity)
+		if err != nil {
+			resource.Status = model.ResourceStatusFailed
+			resource.Error = err.Error()
+			resource.UpdatedAt = time.Now()
+			if saveErr := s.repo.SaveResource(resource); saveErr != nil {
+				return nil, errors.Join(err, fmt.Errorf("恢复资源重试失败状态失败：%w", saveErr))
+			}
+			return nil, err
 		}
-		return nil, err
+		day = reserved
+		heldRetry = true
 	}
 	etag, err := s.WriteObject(resource, "", body)
 	resource.UpdatedAt = time.Now()
 	if err != nil {
-		s.releaseRetry(userID, day, size)
+		if heldRetry {
+			s.releaseRetry(userID, day, size, identity)
+		}
 		resource.Status = model.ResourceStatusFailed
 		resource.Error = err.Error()
 		if saveErr := s.repo.SaveResource(resource); saveErr != nil {
@@ -220,7 +231,6 @@ func (s *Service) RetryOwned(userID string, resourceID string, kind string, mime
 	resource.Status = model.ResourceStatusReady
 	resource.ETag = etag
 	if err := s.repo.SaveResource(resource); err != nil {
-		s.releaseRetry(userID, day, size)
 		resource.Status = model.ResourceStatusFailed
 		resource.Error = "保存资源重试就绪状态失败"
 		if saveErr := s.repo.SaveResource(resource); saveErr != nil {
@@ -260,16 +270,16 @@ func uploadIdentityConflict(resource *model.Resource, kind string, mimeType stri
 	return nil
 }
 
-func (s *Service) reserveRetry(userID string, size int64) (string, error) {
+func (s *Service) reserveRetry(userID string, size int64, identity string) (string, error) {
 	if s == nil || s.quota == nil {
 		return "", nil
 	}
-	return s.quota.ReserveRetry(userID, size)
+	return s.quota.ReserveRetry(userID, size, identity)
 }
 
-func (s *Service) releaseRetry(userID string, day string, size int64) {
+func (s *Service) releaseRetry(userID string, day string, size int64, identity string) {
 	if s == nil || s.quota == nil {
 		return
 	}
-	s.quota.ReleaseRetry(userID, day, size)
+	s.quota.ReleaseRetry(userID, day, size, identity)
 }

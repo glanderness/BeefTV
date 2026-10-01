@@ -116,7 +116,8 @@ func (s *Service) recoverCreate(userID string, uploadKey *string, restore Artifa
 	if err != nil {
 		return nil, err
 	}
-	day, err := s.reserveGenerated(userID, artifact.Size)
+	identity := quotaIdentity(uploadKey, "")
+	day, err := s.reserveGenerated(userID, artifact.Size, identity)
 	if err != nil {
 		return nil, err
 	}
@@ -131,23 +132,23 @@ func (s *Service) recoverCreate(userID string, uploadKey *string, restore Artifa
 	}
 	if err := s.repo.CreateResource(&resource); err != nil {
 		if existing, lookupErr := s.resourceForUploadKey(userID, uploadKey); lookupErr == nil && existing != nil {
-			s.finishQuota(userID, day, artifact.Size, false, nil)
+			s.finishQuota(userID, day, artifact.Size, false, nil, identity)
 			return s.recoverExisting(existing, func() (RecoveredArtifact, error) {
 				return artifact, nil
 			})
 		}
-		s.finishQuota(userID, day, artifact.Size, false, err)
+		s.finishQuota(userID, day, artifact.Size, false, err, identity)
 		return nil, err
 	}
 	written, err := s.recoverWrite(&resource, artifact, false)
 	if err == nil {
-		s.finishQuota(userID, day, artifact.Size, true, nil)
+		s.finishQuota(userID, day, artifact.Size, true, nil, identity)
 		return written, nil
 	}
 	if written != nil && s.objectPresent(written) {
 		return written, err
 	}
-	s.finishQuota(userID, day, artifact.Size, false, err)
+	s.finishQuota(userID, day, artifact.Size, false, err, identity)
 	return written, err
 }
 
@@ -166,9 +167,10 @@ func (s *Service) recoverWrite(resource *model.Resource, artifact RecoveredArtif
 	resource.Status = model.ResourceStatusPending
 	resource.Error = ""
 	resource.UpdatedAt = time.Now()
+	identity := quotaIdentity(resource.UploadKey, resource.ID)
 	var day string
 	if retryQuota {
-		reserved, err := s.reserveGeneratedRetry(resource.UserID, artifact.Size)
+		reserved, err := s.reserveGeneratedRetry(resource.UserID, artifact.Size, identity)
 		if err != nil {
 			resource.Status = model.ResourceStatusFailed
 			resource.Error = err.Error()
@@ -184,7 +186,7 @@ func (s *Service) recoverWrite(resource *model.Resource, artifact RecoveredArtif
 	resource.UpdatedAt = time.Now()
 	if err != nil {
 		if retryQuota {
-			s.releaseRetry(resource.UserID, day, artifact.Size)
+			s.releaseRetry(resource.UserID, day, artifact.Size, identity)
 		}
 		resource.Status = model.ResourceStatusFailed
 		resource.Error = err.Error()

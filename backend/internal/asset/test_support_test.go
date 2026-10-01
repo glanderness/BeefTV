@@ -13,42 +13,42 @@ import (
 
 type nopQuota struct{}
 
-func (nopQuota) ReserveUpload(string, int64) (string, error)         { return "day", nil }
-func (nopQuota) ReserveChunked(string, int64) (string, error)        { return "day", nil }
-func (nopQuota) ReserveRetry(string, int64) (string, error)          { return "day", nil }
-func (nopQuota) ReserveGenerated(string, int64) (string, error)      { return "day", nil }
-func (nopQuota) ReserveGeneratedRetry(string, int64) (string, error) { return "day", nil }
-func (nopQuota) Release(string, string, int64)                       {}
-func (nopQuota) ReleaseRetry(string, string, int64)                  {}
-func (nopQuota) Commit(string, int64)                                {}
+func (nopQuota) ReserveUpload(string, int64, string) (string, error)         { return "day", nil }
+func (nopQuota) ReserveChunked(string, int64, string) (string, error)        { return "day", nil }
+func (nopQuota) ReserveRetry(string, int64, string) (string, error)          { return "day", nil }
+func (nopQuota) ReserveGenerated(string, int64, string) (string, error)      { return "day", nil }
+func (nopQuota) ReserveGeneratedRetry(string, int64, string) (string, error) { return "day", nil }
+func (nopQuota) Release(string, string, int64, string)                       {}
+func (nopQuota) ReleaseRetry(string, string, int64, string)                  {}
+func (nopQuota) Commit(string, int64, string)                                {}
 
 type recordingQuota struct {
 	reserved int64
 }
 
-func (q *recordingQuota) ReserveUpload(_ string, size int64) (string, error) {
+func (q *recordingQuota) ReserveUpload(_ string, size int64, _ string) (string, error) {
 	q.reserved += size
 	return "day", nil
 }
-func (q *recordingQuota) ReserveChunked(_ string, size int64) (string, error) {
+func (q *recordingQuota) ReserveChunked(_ string, size int64, _ string) (string, error) {
 	q.reserved += size
 	return "day", nil
 }
-func (q *recordingQuota) ReserveRetry(_ string, size int64) (string, error) {
+func (q *recordingQuota) ReserveRetry(_ string, size int64, _ string) (string, error) {
 	q.reserved += size
 	return "day", nil
 }
-func (q *recordingQuota) ReserveGenerated(_ string, size int64) (string, error) {
+func (q *recordingQuota) ReserveGenerated(_ string, size int64, _ string) (string, error) {
 	q.reserved += size
 	return "day", nil
 }
-func (q *recordingQuota) ReserveGeneratedRetry(_ string, size int64) (string, error) {
+func (q *recordingQuota) ReserveGeneratedRetry(_ string, size int64, _ string) (string, error) {
 	q.reserved += size
 	return "day", nil
 }
-func (q *recordingQuota) Release(_ string, _ string, size int64)      { q.reserved -= size }
-func (q *recordingQuota) ReleaseRetry(_ string, _ string, size int64) { q.reserved -= size }
-func (q *recordingQuota) Commit(string, int64)                        {}
+func (q *recordingQuota) Release(_ string, _ string, size int64, _ string)      { q.reserved -= size }
+func (q *recordingQuota) ReleaseRetry(_ string, _ string, size int64, _ string) { q.reserved -= size }
+func (q *recordingQuota) Commit(string, int64, string)                          {}
 
 type nopLifecycle struct{}
 

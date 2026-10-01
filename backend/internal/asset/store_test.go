@@ -280,6 +280,44 @@ func TestRetryReleasesQuotaAfterFailure(t *testing.T) {
 	}
 }
 
+func TestRetryOwnedFailedReadySaveKeepsDailyUntilPromote(t *testing.T) {
+	base, repo, dataDir := newTestDomain(t)
+	quota := &ledgerQuota{}
+	failing := &readySaveFailRepo{Repository: base.repo, remaining: 1}
+	svc := NewService(Dependencies{
+		Repository: failing,
+		Blobs:      base.blobs,
+		Quota:      quota,
+		Lifecycle:  nopLifecycle{},
+	})
+	uploadKey := NormalizedUploadKey([]string{"retry-keep"})
+	failed := &model.Resource{
+		ID: "resource-retry-keep", UserID: "user-1", Kind: "image", Status: model.ResourceStatusFailed,
+		Provider: "local", ObjectKey: "users/user-1/image/retry-keep.png", MimeType: "image/png", Size: 7,
+		UploadKey: uploadKey,
+	}
+	if err := repo.CreateResource(failed); err != nil {
+		t.Fatal(err)
+	}
+	first, err := svc.RetryOwned("user-1", failed.ID, "image", "image/png", 7, bytes.NewReader([]byte("payload")))
+	if err == nil || first != nil && first.Status == model.ResourceStatusReady {
+		t.Fatalf("first retry resource=%#v err=%v", first, err)
+	}
+	if quota.daily != 7 || quota.pendingTotal() != 0 || quota.releases != 0 || quota.commits != 0 {
+		t.Fatalf("after failed ready-save daily=%d pending=%d releases=%d commits=%d", quota.daily, quota.pendingTotal(), quota.releases, quota.commits)
+	}
+	if _, statErr := os.Stat(filepath.Join(dataDir, "resources", filepath.FromSlash(failed.ObjectKey))); statErr != nil {
+		t.Fatalf("bytes missing after retry finalize failure: %v", statErr)
+	}
+	second, err := svc.RetryOwned("user-1", failed.ID, "image", "image/png", 7, bytes.NewReader([]byte("payload")))
+	if err != nil || second == nil || second.Status != model.ResourceStatusReady {
+		t.Fatalf("promote retry = %#v err=%v", second, err)
+	}
+	if quota.daily != 7 || quota.pendingTotal() != 0 || quota.releases != 0 || quota.commits != 0 {
+		t.Fatalf("after promote daily=%d pending=%d releases=%d commits=%d", quota.daily, quota.pendingTotal(), quota.releases, quota.commits)
+	}
+}
+
 func TestRetryRejectsForeignOwnerForgedReady(t *testing.T) {
 	svc, repo, dataDir := newTestDomain(t)
 	uploadKey := NormalizedUploadKey([]string{"owner-check"})

@@ -47,17 +47,20 @@ type Repository interface {
 
 // Quota is implemented by the application upload-quota owner. The domain never
 // accounts bytes itself. Upload and generated artifacts share the same daily
-// and storage ledger; only the single-file cap differs. Release/Commit apply
-// to a matching prior Reserve; they are not a second counter.
+// and storage ledger; only the single-file cap differs. identity scopes the
+// in-memory pending storage entry so Release/Commit apply to this
+// resource/artifact reservation, not another request's. Retry reserves are
+// daily-only and do not create pending entries. Commit is a no-op when this
+// identity has no pending reservation.
 type Quota interface {
-	ReserveUpload(userID string, size int64) (day string, err error)
-	ReserveChunked(userID string, size int64) (day string, err error)
-	ReserveRetry(userID string, size int64) (day string, err error)
-	ReserveGenerated(userID string, size int64) (day string, err error)
-	ReserveGeneratedRetry(userID string, size int64) (day string, err error)
-	Release(userID string, day string, size int64)
-	ReleaseRetry(userID string, day string, size int64)
-	Commit(userID string, size int64)
+	ReserveUpload(userID string, size int64, identity string) (day string, err error)
+	ReserveChunked(userID string, size int64, identity string) (day string, err error)
+	ReserveRetry(userID string, size int64, identity string) (day string, err error)
+	ReserveGenerated(userID string, size int64, identity string) (day string, err error)
+	ReserveGeneratedRetry(userID string, size int64, identity string) (day string, err error)
+	Release(userID string, day string, size int64, identity string)
+	ReleaseRetry(userID string, day string, size int64, identity string)
+	Commit(userID string, size int64, identity string)
 }
 
 // Lifecycle is the typed application seam for activity, playback, appearance

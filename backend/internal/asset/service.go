@@ -212,12 +212,13 @@ func (s *Service) upload(userID string, header *multipart.FileHeader, kind strin
 	if existing != nil {
 		return s.Retry(userID, existing, kind, mimeType, header.Size, file)
 	}
-	day, err := s.reserveUpload(userID, header.Size)
+	identity := quotaIdentity(uploadKey, "")
+	day, err := s.reserveUpload(userID, header.Size, identity)
 	if err != nil {
 		return nil, err
 	}
 	resource, stored, err := s.Store(userID, kind, header.Filename, mimeType, header.Size, width, height, durationMs, file, uploadKey)
-	s.finishQuota(userID, day, header.Size, stored, err)
+	s.finishQuota(userID, day, header.Size, stored, err, identity)
 	return resource, err
 }
 
@@ -245,63 +246,73 @@ func (s *Service) uploadFile(userID string, fileName string, size int64, kind st
 	if existing != nil {
 		return s.Retry(userID, existing, kind, mimeType, size, file)
 	}
-	day, err := s.reserveChunked(userID, size)
+	identity := quotaIdentity(uploadKey, "")
+	day, err := s.reserveChunked(userID, size, identity)
 	if err != nil {
 		return nil, err
 	}
 	resource, stored, err := s.Store(userID, kind, fileName, mimeType, size, width, height, durationMs, file, uploadKey)
-	s.finishQuota(userID, day, size, stored, err)
+	s.finishQuota(userID, day, size, stored, err, identity)
 	return resource, err
 }
 
-func (s *Service) reserveUpload(userID string, size int64) (string, error) {
-	if s == nil || s.quota == nil {
-		return "", nil
+func quotaIdentity(uploadKey *string, resourceID string) string {
+	if uploadKey != nil {
+		if key := strings.TrimSpace(*uploadKey); key != "" {
+			return key
+		}
 	}
-	return s.quota.ReserveUpload(userID, size)
+	return strings.TrimSpace(resourceID)
 }
 
-func (s *Service) reserveChunked(userID string, size int64) (string, error) {
+func (s *Service) reserveUpload(userID string, size int64, identity string) (string, error) {
 	if s == nil || s.quota == nil {
 		return "", nil
 	}
-	return s.quota.ReserveChunked(userID, size)
+	return s.quota.ReserveUpload(userID, size, identity)
 }
 
-func (s *Service) reserveGenerated(userID string, size int64) (string, error) {
+func (s *Service) reserveChunked(userID string, size int64, identity string) (string, error) {
 	if s == nil || s.quota == nil {
 		return "", nil
 	}
-	return s.quota.ReserveGenerated(userID, size)
+	return s.quota.ReserveChunked(userID, size, identity)
 }
 
-func (s *Service) reserveGeneratedRetry(userID string, size int64) (string, error) {
+func (s *Service) reserveGenerated(userID string, size int64, identity string) (string, error) {
 	if s == nil || s.quota == nil {
 		return "", nil
 	}
-	return s.quota.ReserveGeneratedRetry(userID, size)
+	return s.quota.ReserveGenerated(userID, size, identity)
+}
+
+func (s *Service) reserveGeneratedRetry(userID string, size int64, identity string) (string, error) {
+	if s == nil || s.quota == nil {
+		return "", nil
+	}
+	return s.quota.ReserveGeneratedRetry(userID, size, identity)
 }
 
 func (s *Service) commitQuota(resource *model.Resource) {
 	if s == nil || s.quota == nil || resource == nil {
 		return
 	}
-	s.quota.Commit(resource.UserID, resource.Size)
+	s.quota.Commit(resource.UserID, resource.Size, quotaIdentity(resource.UploadKey, resource.ID))
 }
 
-func (s *Service) finishQuota(userID string, day string, size int64, stored bool, err error) {
+func (s *Service) finishQuota(userID string, day string, size int64, stored bool, err error, identity string) {
 	if s == nil || s.quota == nil {
 		return
 	}
 	if err != nil {
-		s.quota.Release(userID, day, size)
+		s.quota.Release(userID, day, size, identity)
 		return
 	}
 	if stored {
-		s.quota.Commit(userID, size)
+		s.quota.Commit(userID, size, identity)
 		return
 	}
-	s.quota.Release(userID, day, size)
+	s.quota.Release(userID, day, size, identity)
 }
 
 func (s *Service) resourceForUploadKey(userID string, uploadKey *string) (*model.Resource, error) {

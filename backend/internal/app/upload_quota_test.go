@@ -1,9 +1,14 @@
 package app
 
 import (
+	"bytes"
+	"errors"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	localasset "infinite-canvas/backend/internal/asset"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -49,8 +54,8 @@ func TestCommitUserUploadQuotaKeepsDailyUsageWithoutPendingStorage(t *testing.T)
 		t.Fatal(err)
 	}
 	svc.commitUserUploadQuota("user-1", 49<<20)
-	if svc.pendingStorage["user-1"] != 0 {
-		t.Fatalf("pending storage = %d", svc.pendingStorage["user-1"])
+	if svc.pendingStorage[pendingStorageKey("user-1", "")] != 0 {
+		t.Fatalf("pending storage = %d", svc.pendingStorage[pendingStorageKey("user-1", "")])
 	}
 	usage, err := svc.repo.DailyUploadBytes("user-1", day)
 	if err != nil {
@@ -126,5 +131,90 @@ func TestAccountFileStorageUsageUsesStoredFilePolicy(t *testing.T) {
 	}
 	if usage.UsedBytes != 3<<20 || usage.TotalBytes != gigabytes(defaultRuntimePolicy().Resource.StoredFileGB) {
 		t.Fatalf("AccountFileStorageUsage() = %#v", usage)
+	}
+}
+
+func TestCommitIdentifiedQuotaLeavesOtherPending(t *testing.T) {
+	svc := newResourceTestService(t)
+	ordinary := int64(49 << 20)
+	if _, err := svc.reserveUserUploadQuotaFor("user-1", ordinary, "ordinary-upload"); err != nil {
+		t.Fatal(err)
+	}
+	svc.commitUserUploadQuotaFor("user-1", 7, "generated-orphan")
+	if got := svc.pendingStorage[pendingStorageKey("user-1", "ordinary-upload")]; got != ordinary {
+		t.Fatalf("ordinary pending = %d", got)
+	}
+	if _, ok := svc.pendingStorage[pendingStorageKey("user-1", "generated-orphan")]; ok {
+		t.Fatal("missing identity created a pending entry")
+	}
+}
+
+func TestRetryReservationDoesNotConsumeUploadPending(t *testing.T) {
+	svc := newResourceTestService(t)
+	ordinary := int64(49 << 20)
+	if _, err := svc.reserveUserUploadQuotaFor("user-1", ordinary, "ordinary-upload"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.reserveRetryGeneratedQuotaFor("user-1", 7, "generated-retry"); err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.pendingStorage[pendingStorageKey("user-1", "ordinary-upload")]; got != ordinary {
+		t.Fatalf("ordinary pending = %d", got)
+	}
+	if _, ok := svc.pendingStorage[pendingStorageKey("user-1", "generated-retry")]; ok {
+		t.Fatal("retry-only reservation wrote pending storage")
+	}
+}
+
+func TestPromoteReadyDoesNotDebitOrdinaryUploadPending(t *testing.T) {
+	svc := newResourceTestService(t)
+	identity := "task-orphan:0"
+	uploadKey := localasset.NormalizedUploadKey([]string{identity})
+	resource := model.Resource{
+		ID: "res-orphan", UserID: "user-1", Kind: "image", Status: model.ResourceStatusPending,
+		Provider: "local", ObjectKey: "users/user-1/image/orphan.png", MimeType: "image/png", Size: 7,
+		UploadKey: uploadKey,
+	}
+	if err := svc.repo.Create(&resource); err != nil {
+		t.Fatal(err)
+	}
+	if err := localasset.NewFileStore(svc.dataDir).Write(resource.ObjectKey, bytes.NewReader([]byte("payload"))); err != nil {
+		t.Fatal(err)
+	}
+	ordinary := int64(49 << 20)
+	if _, err := svc.reserveUserUploadQuotaFor("user-1", ordinary, "ordinary-upload"); err != nil {
+		t.Fatal(err)
+	}
+	day := time.Now().UTC().Format("2006-01-02")
+	prior := int64(7)
+	if err := svc.repo.ReserveDailyUpload("user-1", day, prior, megabytes(defaultRuntimePolicy().Resource.DailyUploadMB)); err != nil {
+		t.Fatal(err)
+	}
+	usageBefore, err := svc.repo.DailyUploadBytes("user-1", day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var promoteErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, promoteErr = svc.resourceDomain().RecoverOwned("user-1", identity, func() (localasset.RecoveredArtifact, error) {
+			return localasset.RecoveredArtifact{}, errors.New("leftover bytes called restore")
+		})
+	}()
+	wg.Wait()
+	if promoteErr != nil {
+		t.Fatal(promoteErr)
+	}
+	if got := svc.pendingStorage[pendingStorageKey("user-1", "ordinary-upload")]; got != ordinary {
+		t.Fatalf("ordinary pending = %d", got)
+	}
+	usageAfter, err := svc.repo.DailyUploadBytes("user-1", day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usageAfter != usageBefore {
+		t.Fatalf("daily changed from %d to %d", usageBefore, usageAfter)
 	}
 }
