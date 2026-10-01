@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/generation"
@@ -105,8 +106,8 @@ func (p appReceiptPort) NotifyPoll(ctx context.Context, event string, err error)
 	if p.service == nil || p.service.repo == nil {
 		return
 	}
-	metadata, ok := ctx.Value(providerAnalyticsKey{}).(providerAnalyticsContext)
-	if !ok || metadata.TaskID == "" {
+	call := canonicalCallMeta(ctx)
+	if strings.TrimSpace(call.TaskID) == "" {
 		return
 	}
 	message := "上游视频查询暂时异常，将继续轮询原任务"
@@ -119,7 +120,7 @@ func (p appReceiptPort) NotifyPoll(ctx context.Context, event string, err error)
 		message = "上游视频查询已恢复"
 		level = "info"
 	}
-	_ = p.service.log(metadata.UserID, metadata.TaskID, level, message, payload)
+	_ = p.service.log(call.UserID, call.TaskID, level, message, payload)
 }
 
 func (p appReceiptPort) SyncProgress(taskID string, body []byte) {
@@ -150,6 +151,12 @@ func (p appWorkflowPort) Execute(ctx context.Context, input generation.Input) (m
 	return p.service.runWorkflowProviderTask(ctx, input)
 }
 
+type appMediaProbe struct{}
+
+func (appMediaProbe) ProbeSeedance2Video(config generation.Config, index int, media *generation.Media, data []byte) error {
+	return applySeedance2VideoProbe(config, index, media, data)
+}
+
 func resourceInfoFromModel(userID string, resource *model.Resource) generation.ResourceInfo {
 	if resource == nil {
 		return generation.ResourceInfo{UserID: userID}
@@ -169,37 +176,36 @@ func resourceInfoFromModel(userID string, resource *model.Resource) generation.R
 }
 
 func (s *Service) bindGenerationRuntime(ctx context.Context, meta generation.CallMeta) context.Context {
+	return s.applyGenerationRuntime(ctx, meta, true)
+}
+
+func (s *Service) enrichGenerationRuntime(ctx context.Context, meta generation.CallMeta) context.Context {
+	return s.applyGenerationRuntime(ctx, meta, false)
+}
+
+func (s *Service) applyGenerationRuntime(ctx context.Context, meta generation.CallMeta, replaceCall bool) context.Context {
 	if s == nil {
-		return ctx
+		if replaceCall {
+			return generation.WithCallMeta(ctx, meta)
+		}
+		return generation.EnrichCallMeta(ctx, meta)
 	}
 	runtime := generation.Runtime{
 		Resources: appResourcePort{service: s},
 		Receipts:  appReceiptPort{service: s},
 		Images:    appImagePort{service: s},
 		Workflow:  appWorkflowPort{service: s},
+		Probe:     appMediaProbe{},
 		Call:      meta,
 	}
 	if s.repo != nil {
 		runtime.Limits = appLimitsPort{service: s}
 	}
 	if existing, ok := generation.RuntimeFromContext(ctx); ok {
-		merged := existing.Call
-		if meta.UserID != "" {
-			merged.UserID = meta.UserID
+		runtime.Endpoints = existing.Endpoints
+		if !replaceCall {
+			runtime.Call = generation.IdentityCallMeta(existing.Call, meta)
 		}
-		if meta.TaskID != "" {
-			merged.TaskID = meta.TaskID
-		}
-		if meta.RequestKind != "" {
-			merged.RequestKind = meta.RequestKind
-		}
-		if meta.ProviderRequestID != "" {
-			merged.ProviderRequestID = meta.ProviderRequestID
-		}
-		if meta.ChannelID != "" {
-			merged.ChannelID = meta.ChannelID
-		}
-		runtime.Call = merged
 		if runtime.Limits == nil {
 			runtime.Limits = existing.Limits
 		}

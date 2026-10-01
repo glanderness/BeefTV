@@ -11,20 +11,12 @@ import (
 	"infinite-canvas/backend/internal/providerpreset"
 )
 
-// BeefAPIVideoBaseURLForTest lets httptest exercise the built-in BeefAPI
-// Seedance path without spoofing enterprise.beefapi.com.
-var BeefAPIVideoBaseURLForTest string
-
-// BeefAPIVideoBaseURLForTestHook lets the app test helper share its local override.
-var BeefAPIVideoBaseURLForTestHook func() string
-
-func beefAPITestBaseURL() string {
-	if BeefAPIVideoBaseURLForTestHook != nil {
-		if value := strings.TrimSpace(BeefAPIVideoBaseURLForTestHook()); value != "" {
-			return value
-		}
+func beefAPITestBaseURL(ctx context.Context) string {
+	runtime, ok := RuntimeFromContext(ctx)
+	if !ok {
+		return ""
 	}
-	return strings.TrimSpace(BeefAPIVideoBaseURLForTest)
+	return strings.TrimSpace(runtime.Endpoints.BeefAPIVideoBaseURL)
 }
 
 func IsPublicMediaURL(value string) bool {
@@ -37,8 +29,8 @@ func IsSeedanceVideoConfig(config Config) bool {
 	return strings.Contains(modelName, "seedance") || strings.Contains(modelName, "doubao-seedance") || IsArkPlanVideoConfig(config)
 }
 
-func IsBeefAPIVideoConfig(config Config) bool {
-	if testBase := beefAPITestBaseURL(); testBase != "" {
+func IsBeefAPIVideoConfig(ctx context.Context, config Config) bool {
+	if testBase := beefAPITestBaseURL(ctx); testBase != "" {
 		got := strings.TrimRight(strings.TrimSpace(config.BaseURL), "/")
 		want := strings.TrimRight(testBase, "/")
 		return got == want || strings.HasPrefix(got, want+"/")
@@ -46,8 +38,8 @@ func IsBeefAPIVideoConfig(config Config) bool {
 	return providerpreset.IsBeefAPIEndpoint(config.BaseURL)
 }
 
-func IsBeefAPISeedancePreuploadConfig(config Config) bool {
-	return IsBeefAPIVideoConfig(config) && IsSeedanceVideoConfig(config)
+func IsBeefAPISeedancePreuploadConfig(ctx context.Context, config Config) bool {
+	return IsBeefAPIVideoConfig(ctx, config) && IsSeedanceVideoConfig(config)
 }
 
 func IsGrokVideoConfig(config Config) bool {

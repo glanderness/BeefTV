@@ -22,10 +22,6 @@ const (
 	arkPrivateAssetPollLimit  = 3 * time.Minute
 )
 
-// 测试可以注入本地控制面服务；生产环境必须根据管理员显式配置的 Region 推导方舟控制面地址，
-// 不能接受客户端传入任意控制面 URL。
-var arkPrivateAssetAPIBaseURLOverride string
-
 func (s *Service) prepareArkPrivateAssetReferences(ctx context.Context, userID string, input *canvasGenerationInput) error {
 	// 可信素材 asset:// 仅方舟视频协议支持；Agent Plan Seedream 等图片渠道不能上传或改写。
 	if input == nil || input.Mode != "video" || !isArkPrivateAssetVideoConfig(input.Config) || !parseBool(input.Config.ArkPrivateAssetUpload, true) {

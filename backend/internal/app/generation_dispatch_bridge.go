@@ -253,8 +253,8 @@ type streamingAgentParser = generation.StreamingAgentParser
 type providerTextResult = generation.ProviderTextResult
 type streamingTextDeltaParser = generation.StreamingTextDeltaParser
 
-func restoreBeefAPISeedanceAudioControl(config providerConfig, video *VideoCapabilityConfig) {
-	generation.RestoreBeefAPISeedanceAudioControl(config, video)
+func restoreBeefAPISeedanceAudioControl(ctx context.Context, config providerConfig, video *VideoCapabilityConfig) {
+	generation.RestoreBeefAPISeedanceAudioControl(ctx, config, video)
 }
 
 func runVideoTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
@@ -704,12 +704,12 @@ func isSeedanceVideoConfig(config providerConfig) bool {
 	return generation.IsSeedanceVideoConfig(config)
 }
 
-func isBeefAPIVideoConfig(config providerConfig) bool {
-	return generation.IsBeefAPIVideoConfig(config)
+func isBeefAPIVideoConfig(ctx context.Context, config providerConfig) bool {
+	return generation.IsBeefAPIVideoConfig(ctx, config)
 }
 
-func isBeefAPISeedancePreuploadConfig(config providerConfig) bool {
-	return generation.IsBeefAPISeedancePreuploadConfig(config)
+func isBeefAPISeedancePreuploadConfig(ctx context.Context, config providerConfig) bool {
+	return generation.IsBeefAPISeedancePreuploadConfig(ctx, config)
 }
 
 func isGrokVideoConfig(config providerConfig) bool {
@@ -828,16 +828,16 @@ func putBeefAPISeedanceBytes(ctx context.Context, session beefAPISeedanceUploadS
 	return generation.PutBeefAPISeedanceBytes(ctx, session, data)
 }
 
-func validateBeefAPISeedanceSession(session beefAPISeedanceUploadSession) error {
-	return generation.ValidateBeefAPISeedanceSession(session)
+func validateBeefAPISeedanceSession(ctx context.Context, session beefAPISeedanceUploadSession) error {
+	return generation.ValidateBeefAPISeedanceSession(ctx, session)
 }
 
-func validateBeefAPISeedanceSecureURL(raw string) error {
-	return generation.ValidateBeefAPISeedanceSecureURL(raw)
+func validateBeefAPISeedanceSecureURL(ctx context.Context, raw string) error {
+	return generation.ValidateBeefAPISeedanceSecureURL(ctx, raw)
 }
 
-func beefAPISeedanceAllowInsecureTestURL(parsed *url.URL) bool {
-	return generation.BeefAPISeedanceAllowInsecureTestURL(parsed)
+func beefAPISeedanceAllowInsecureTestURL(ctx context.Context, parsed *url.URL) bool {
+	return generation.BeefAPISeedanceAllowInsecureTestURL(ctx, parsed)
 }
 
 func skipBeefAPISeedancePutHeader(name string) bool {
@@ -918,8 +918,8 @@ func arkPrivateAssetUpstreamDetail(response map[string]interface{}) string {
 	return generation.ArkPrivateAssetUpstreamDetail(response)
 }
 
-func arkPrivateAssetControlPlaneURL(region string) (string, error) {
-	return generation.ArkPrivateAssetControlPlaneURL(region)
+func arkPrivateAssetControlPlaneURL(ctx context.Context, region string) (string, error) {
+	return generation.ArkPrivateAssetControlPlaneURL(ctx, region)
 }
 
 func arkPrivateAssetResponseField(response map[string]interface{}, keys ...string) string {

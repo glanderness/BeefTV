@@ -3,6 +3,7 @@ package app
 // 视频生成遗留手写路径；已有官方插件的接口类型走声明式协议。
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,7 +13,11 @@ import (
 )
 
 func (s *Service) validateResolvedVideoCapability(input *canvasGenerationInput) error {
-	if err := s.resolveVideoCapability(input); err != nil {
+	return s.validateResolvedVideoCapabilityContext(context.Background(), input)
+}
+
+func (s *Service) validateResolvedVideoCapabilityContext(ctx context.Context, input *canvasGenerationInput) error {
+	if err := s.resolveVideoCapability(ctx, input); err != nil {
 		return err
 	}
 	if input.VideoCapability == nil {
@@ -21,8 +26,8 @@ func (s *Service) validateResolvedVideoCapability(input *canvasGenerationInput) 
 	return validateVideoTask(input.VideoCapability, *input)
 }
 
-func (s *Service) resolveVideoCapability(input *canvasGenerationInput) error {
-	if isBeefAPIVideoConfig(input.Config) {
+func (s *Service) resolveVideoCapability(ctx context.Context, input *canvasGenerationInput) error {
+	if isBeefAPIVideoConfig(ctx, input.Config) {
 		if contract, ok := providerpreset.BeefAPIVideoContract(input.Config.Model); ok {
 			for _, ref := range []struct {
 				kind, label string
@@ -54,7 +59,7 @@ func (s *Service) resolveVideoCapability(input *canvasGenerationInput) error {
 			return errors.New("当前视频模型能力参数无效")
 		}
 		input.Config.CapabilityConfig = normalized
-		restoreBeefAPISeedanceAudioControl(input.Config, normalized.Video)
+		restoreBeefAPISeedanceAudioControl(ctx, input.Config, normalized.Video)
 		input.VideoCapability = normalized.Video
 		applyFixedVideoResolution(input, normalized.Video)
 		return nil
@@ -72,7 +77,7 @@ func (s *Service) resolveVideoCapability(input *canvasGenerationInput) error {
 		return errors.New("当前视频模型能力参数无效")
 	}
 	input.VideoCapability = normalized.Video
-	restoreBeefAPISeedanceAudioControl(input.Config, normalized.Video)
+	restoreBeefAPISeedanceAudioControl(ctx, input.Config, normalized.Video)
 	applyFixedVideoResolution(input, normalized.Video)
 	return nil
 }

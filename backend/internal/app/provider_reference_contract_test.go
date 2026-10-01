@@ -98,10 +98,10 @@ func TestSavedBeefAPISeedanceAudioControl(t *testing.T) {
 				if err := svc.validateResolvedVideoCapability(&input); err != nil {
 					t.Fatal(err)
 				}
-				if input.VideoCapability.GenerateAudio.Supported != isBeefAPIVideoConfig(input.Config) || input.VideoCapability.GenerateAudio.Default || input.VideoCapability.References.MaxImages != 2 {
+				if input.VideoCapability.GenerateAudio.Supported != isBeefAPIVideoConfig(context.Background(), input.Config) || input.VideoCapability.GenerateAudio.Default || input.VideoCapability.References.MaxImages != 2 {
 					t.Fatalf("unexpected profile: %#v", input.VideoCapability)
 				}
-				if isBeefAPIVideoConfig(input.Config) {
+				if isBeefAPIVideoConfig(context.Background(), input.Config) {
 					body, err := beefAPIVideoRequestBody(input)
 					if err != nil || body["generate_audio"] != false {
 						t.Fatalf("explicit false lost: %#v, %v", body, err)

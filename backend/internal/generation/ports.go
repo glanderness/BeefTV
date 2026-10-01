@@ -85,6 +85,20 @@ type WorkflowPort interface {
 	Execute(ctx context.Context, input Input) (map[string]interface{}, error)
 }
 
+// MediaProbePort inspects local/inline Seedance 2 reference videos for the
+// current execution. A missing port fails closed when a referenced video
+// must be probed; it is not a package-level callback.
+type MediaProbePort interface {
+	ProbeSeedance2Video(config Config, index int, media *Media, data []byte) error
+}
+
+// Endpoints holds per-execution test/control-plane URL overrides.
+// Production leaves this empty and derives hosts from config/region.
+type Endpoints struct {
+	BeefAPIVideoBaseURL       string
+	ArkPrivateAssetAPIBaseURL string
+}
+
 type CallMeta struct {
 	UserID            string
 	TaskID            string
@@ -106,5 +120,7 @@ type Runtime struct {
 	Receipts  ReceiptPort
 	Images    ImageSubmissionPort
 	Workflow  WorkflowPort
+	Probe     MediaProbePort
 	Call      CallMeta
+	Endpoints Endpoints
 }

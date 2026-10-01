@@ -22,10 +22,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// beefAPIVideoBaseURLForTest lets httptest exercise the built-in BeefAPI
-// Seedance path without spoofing enterprise.beefapi.com.
-var beefAPIVideoBaseURLForTest string
-
 type providerAnalyticsKey struct{}
 
 var providerAnalyticsServices = struct {
@@ -103,11 +99,21 @@ func resumedProviderRequestID(ctx context.Context) string {
 func withProviderRequestKind(ctx context.Context, requestKind string) context.Context {
 	metadata, ok := ctx.Value(providerAnalyticsKey{}).(providerAnalyticsContext)
 	if !ok {
-		return ctx
+		return generation.WithRequestKind(ctx, requestKind)
 	}
 	metadata.RequestKind = requestKind
 	ctx = context.WithValue(ctx, providerAnalyticsKey{}, metadata)
 	return generation.WithRequestKind(ctx, requestKind)
+}
+
+func canonicalCallMeta(ctx context.Context) generation.CallMeta {
+	if runtime, ok := generation.RuntimeFromContext(ctx); ok {
+		if strings.TrimSpace(runtime.Call.UserID) != "" || strings.TrimSpace(runtime.Call.TaskID) != "" || strings.TrimSpace(runtime.Call.RequestKind) != "" || runtime.Call.ConcurrencyLimit != 0 {
+			return runtime.Call
+		}
+	}
+	metadata, _ := ctx.Value(providerAnalyticsKey{}).(providerAnalyticsContext)
+	return generationCallMeta(metadata)
 }
 
 func newProviderPayloadError(raw string) providerPayloadError {
@@ -142,7 +148,7 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 	if err := json.Unmarshal([]byte(rawInput), &input); err != nil {
 		return nil, fmt.Errorf("任务输入解析失败：%w", err)
 	}
-	ctx = s.bindGenerationRuntime(ctx, generation.CallMeta{UserID: userID, TaskID: taskExecutionID(ctx)})
+	ctx = s.enrichGenerationRuntime(ctx, generation.CallMeta{UserID: userID, TaskID: taskExecutionID(ctx)})
 	if strings.TrimSpace(input.Prompt) == "" {
 		input.Prompt = fallbackPrompt
 	}
@@ -228,11 +234,11 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		}
 	}
 	if input.Mode == "video" && resumedProviderRequestID(ctx) == "" {
-		if err := s.hydrateVideoReferenceMetadata(userID, &input); err != nil {
+		if err := s.hydrateVideoReferenceMetadata(ctx, userID, &input); err != nil {
 			return nil, err
 		}
-		if isBeefAPISeedancePreuploadConfig(input.Config) {
-			if err := s.resolveVideoCapability(&input); err != nil {
+		if isBeefAPISeedancePreuploadConfig(ctx, input.Config) {
+			if err := s.resolveVideoCapability(ctx, &input); err != nil {
 				return nil, err
 			}
 			if input.VideoCapability != nil {
@@ -240,7 +246,7 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 					return nil, err
 				}
 			}
-		} else if err := s.validateResolvedVideoCapability(&input); err != nil {
+		} else if err := s.validateResolvedVideoCapabilityContext(ctx, &input); err != nil {
 			return nil, err
 		}
 	}
@@ -282,9 +288,9 @@ func providerMediaHydrationPolicyFor(ctx context.Context, input canvasGeneration
 	// Prefer an existing HTTPS resource address when the workspace already has
 	// a public base. Built-in BeefAPI Seedance keeps local files on disk until
 	// the shared preupload path rewrites them to short-lived HTTPS URLs.
-	if isBeefAPIVideoConfig(input.Config) {
+	if isBeefAPIVideoConfig(ctx, input.Config) {
 		if contract, ok := providerpreset.BeefAPIVideoContract(input.Config.Model); ok && contract.InlineMedia && (contract.Protocol == input.Config.InterfaceType || isSeedanceVideoConfig(input.Config)) {
-			return providerMediaHydrationPolicy{PreferHTTPS: true, KeepLocal: isBeefAPISeedancePreuploadConfig(input.Config)}
+			return providerMediaHydrationPolicy{PreferHTTPS: true, KeepLocal: isBeefAPISeedancePreuploadConfig(ctx, input.Config)}
 		}
 	}
 	// The channel-1 NewAPI profile also accepts data URLs in its media field.
@@ -563,7 +569,7 @@ func metadataStringValues(value any) map[string]string {
 
 // Read owned resource metadata before preflight, without downloading media.
 // Character/workflow references may carry only a resource storage key.
-func (s *Service) hydrateVideoReferenceMetadata(userID string, input *canvasGenerationInput) error {
+func (s *Service) hydrateVideoReferenceMetadata(ctx context.Context, userID string, input *canvasGenerationInput) error {
 	for _, group := range [][]providerMedia{input.ReferenceImages, input.ReferenceVideos, input.ReferenceAudios} {
 		for index := range group {
 			media := &group[index]
@@ -606,7 +612,7 @@ func (s *Service) hydrateVideoReferenceMetadata(userID string, input *canvasGene
 	// Probe actual local/inline videos even when callers supplied dimensions.
 	// Built-in BeefAPI Seedance keeps that probe on the sequential preupload
 	// buffer so a 200MiB file is not read twice before PUT.
-	if isSeedance2Family(input.Config.InterfaceType, input.Config.Model) && !isBeefAPISeedancePreuploadConfig(input.Config) {
+	if isSeedance2Family(input.Config.InterfaceType, input.Config.Model) && !isBeefAPISeedancePreuploadConfig(ctx, input.Config) {
 		for i := range input.ReferenceVideos {
 			media := &input.ReferenceVideos[i]
 			var data []byte
@@ -660,12 +666,12 @@ func (s *Service) hydrateGenerationMedia(userID string, input *canvasGenerationI
 }
 
 func (s *Service) hydrateGenerationMediaWithContext(ctx context.Context, userID string, input *canvasGenerationInput, policy providerMediaHydrationPolicy) error {
-	ctx = s.bindGenerationRuntime(ctx, generation.CallMeta{UserID: userID})
+	ctx = s.enrichGenerationRuntime(ctx, generation.CallMeta{UserID: userID})
 	return generation.HydrateMedia(ctx, userID, input, policy)
 }
 
 func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, policy providerMediaHydrationPolicy) error {
-	ctx := s.bindGenerationRuntime(context.Background(), generation.CallMeta{UserID: userID})
+	ctx := s.enrichGenerationRuntime(context.Background(), generation.CallMeta{UserID: userID})
 	return generation.HydrateOne(ctx, userID, media, policy)
 }
 

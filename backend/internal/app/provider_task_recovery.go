@@ -92,7 +92,7 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	}
 	ctx = ensureOfficialProtocolAdapter(ctx, config.InterfaceType)
 	adapter, declarative := declarativeProtocolAdapterForContext(ctx, config.InterfaceType)
-	beefVideo := isBeefAPIVideoConfig(config) && isSeedanceVideoConfig(config)
+	beefVideo := isBeefAPIVideoConfig(ctx, config) && isSeedanceVideoConfig(config)
 	if !declarative && !beefVideo {
 		return nil, BadAuthRequest("该任务的请求协议不支持安全查询上游状态")
 	}

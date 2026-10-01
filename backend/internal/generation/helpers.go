@@ -1,6 +1,7 @@
 package generation
 
 import (
+	"context"
 	"errors"
 	"mime"
 	"mime/multipart"
@@ -189,15 +190,12 @@ func BadAuthRequest(message string) error {
 	return kernel.BadAuthRequest(message)
 }
 
-// ApplySeedance2VideoProbe inspects local/inline Seedance 2 reference videos.
-// The probe implementation stays with app media tools; generation calls this hook.
-var ApplySeedance2VideoProbe func(config Config, index int, media *Media, data []byte) error
-
-func applySeedance2VideoProbe(config Config, index int, media *Media, data []byte) error {
-	if ApplySeedance2VideoProbe == nil {
-		return errors.New("参考视频探测未接入")
+func applySeedance2VideoProbe(ctx context.Context, config Config, index int, media *Media, data []byte) error {
+	runtime, ok := RuntimeFromContext(ctx)
+	if !ok || runtime.Probe == nil {
+		return errors.New("参考视频无法校验，请重新导入")
 	}
-	return ApplySeedance2VideoProbe(config, index, media, data)
+	return runtime.Probe.ProbeSeedance2Video(config, index, media, data)
 }
 
 func ensureChatCompletionStreamUsage(payload map[string]any) error {

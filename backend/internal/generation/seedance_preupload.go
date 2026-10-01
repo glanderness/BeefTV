@@ -79,7 +79,7 @@ type BeefAPISeedanceUploadRequest struct {
 // first create may keep the previous inline JSON path when that body is still
 // under the existing 64 MiB wire limit.
 func PrepareBeefAPISeedanceReferences(ctx context.Context, config Config, input *Input, read BeefAPISeedanceMediaReader) error {
-	if input == nil || !IsBeefAPISeedancePreuploadConfig(config) {
+	if input == nil || !IsBeefAPISeedancePreuploadConfig(ctx, config) {
 		return nil
 	}
 	if err := ctx.Err(); err != nil {
@@ -118,7 +118,7 @@ func PrepareBeefAPISeedanceReferences(ctx context.Context, config Config, input 
 				return err
 			}
 			if group.kind == "video" && modelcatalog.IsSeedance2Family(config.InterfaceType, config.Model) {
-				if err := applySeedance2VideoProbe(config, index, media, data); err != nil {
+				if err := applySeedance2VideoProbe(ctx, config, index, media, data); err != nil {
 					return err
 				}
 			}
@@ -264,7 +264,7 @@ func FallbackBeefAPISeedanceInline(ctx context.Context, input *Input, read BeefA
 				return err
 			}
 			if group.kind == "video" && modelcatalog.IsSeedance2Family(input.Config.InterfaceType, input.Config.Model) {
-				if err := applySeedance2VideoProbe(input.Config, index, media, data); err != nil {
+				if err := applySeedance2VideoProbe(ctx, input.Config, index, media, data); err != nil {
 					return err
 				}
 			}
@@ -289,7 +289,7 @@ func CreateBeefAPISeedanceUpload(ctx context.Context, config Config, request Bee
 	if err := PostJSON(ctx, config, beefAPISeedanceUploadCreatePath, request, &session); err != nil {
 		return BeefAPISeedanceUploadSession{}, err
 	}
-	if err := ValidateBeefAPISeedanceSession(session); err != nil {
+	if err := ValidateBeefAPISeedanceSession(ctx, session); err != nil {
 		return BeefAPISeedanceUploadSession{}, err
 	}
 	return session, nil
@@ -306,7 +306,7 @@ func CompleteBeefAPISeedanceUpload(ctx context.Context, config Config, session B
 	if strings.TrimSpace(uploaded.URL) == "" {
 		return BeefAPISeedanceUploadComplete{}, errBeefAPISeedanceUploadIncomplete
 	}
-	if err := ValidateBeefAPISeedanceSecureURL(uploaded.URL); err != nil {
+	if err := ValidateBeefAPISeedanceSecureURL(ctx, uploaded.URL); err != nil {
 		return BeefAPISeedanceUploadComplete{}, errBeefAPISeedanceUploadUnavailable
 	}
 	return uploaded, nil
@@ -326,7 +326,7 @@ func PutBeefAPISeedanceBytes(ctx context.Context, session BeefAPISeedanceUploadS
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := ValidateBeefAPISeedanceSecureURL(session.UploadURL); err != nil {
+	if err := ValidateBeefAPISeedanceSecureURL(ctx, session.UploadURL); err != nil {
 		return err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, strings.TrimSpace(session.UploadURL), bytes.NewReader(data))
@@ -363,7 +363,7 @@ func PutBeefAPISeedanceBytes(ctx context.Context, session BeefAPISeedanceUploadS
 	return nil
 }
 
-func ValidateBeefAPISeedanceSession(session BeefAPISeedanceUploadSession) error {
+func ValidateBeefAPISeedanceSession(ctx context.Context, session BeefAPISeedanceUploadSession) error {
 	if strings.TrimSpace(session.Ticket) == "" {
 		return errBeefAPISeedanceUploadUnavailable
 	}
@@ -371,18 +371,18 @@ func ValidateBeefAPISeedanceSession(session BeefAPISeedanceUploadSession) error 
 	if method != "" && method != http.MethodPut {
 		return errBeefAPISeedanceUploadUnavailable
 	}
-	if err := ValidateBeefAPISeedanceSecureURL(session.UploadURL); err != nil {
+	if err := ValidateBeefAPISeedanceSecureURL(ctx, session.UploadURL); err != nil {
 		return err
 	}
 	return nil
 }
 
-func ValidateBeefAPISeedanceSecureURL(raw string) error {
+func ValidateBeefAPISeedanceSecureURL(ctx context.Context, raw string) error {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || !parsed.IsAbs() || parsed.Hostname() == "" || parsed.User != nil {
 		return errBeefAPISeedanceUploadUnavailable
 	}
-	if parsed.Scheme != "https" && !BeefAPISeedanceAllowInsecureTestURL(parsed) {
+	if parsed.Scheme != "https" && !BeefAPISeedanceAllowInsecureTestURL(ctx, parsed) {
 		return errBeefAPISeedanceUploadUnavailable
 	}
 	if _, err := outbound.ValidateOutboundURL(parsed.String()); err != nil {
@@ -391,8 +391,8 @@ func ValidateBeefAPISeedanceSecureURL(raw string) error {
 	return nil
 }
 
-func BeefAPISeedanceAllowInsecureTestURL(parsed *url.URL) bool {
-	return parsed != nil && parsed.Scheme == "http" && beefAPITestBaseURL() != ""
+func BeefAPISeedanceAllowInsecureTestURL(ctx context.Context, parsed *url.URL) bool {
+	return parsed != nil && parsed.Scheme == "http" && beefAPITestBaseURL(ctx) != ""
 }
 
 func SkipBeefAPISeedancePutHeader(name string) bool {

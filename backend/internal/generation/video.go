@@ -18,14 +18,14 @@ import (
 	"infinite-canvas/backend/internal/providerpreset"
 )
 
-func RestoreBeefAPISeedanceAudioControl(config Config, video *VideoCapabilityConfig) {
+func RestoreBeefAPISeedanceAudioControl(ctx context.Context, config Config, video *VideoCapabilityConfig) {
 	if config.VideoCapabilitiesVersion != nil {
 		return
 	}
 	// Saved built-in profiles predate the supported audio switch. This is a
 	// BeefAPI contract correction, not an override of custom provider settings.
 	contract, known := providerpreset.BeefAPIVideoContract(config.Model)
-	if IsBeefAPIVideoConfig(config) && known && contract.Protocol == "newapi" && modelcatalog.IsSeedance2Family("newapi", config.Model) {
+	if IsBeefAPIVideoConfig(ctx, config) && known && contract.Protocol == "newapi" && modelcatalog.IsSeedance2Family("newapi", config.Model) {
 		video.GenerateAudio.Supported = true
 	}
 }
@@ -38,7 +38,7 @@ func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPo
 	// BeefAPI exposes its flat /v1/videos contract. Route it before
 	// protocol adapters so stale persisted channel metadata cannot select an
 	// incompatible legacy multipart or flat request shape.
-	if IsBeefAPIVideoConfig(input.Config) && IsSeedanceVideoConfig(input.Config) {
+	if IsBeefAPIVideoConfig(ctx, input.Config) && IsSeedanceVideoConfig(input.Config) {
 		return RunSeedanceVideosTask(ctx, input, pollPolicy)
 	}
 	// 路由顺序是协议边界，不是“哪个请求先试”：官方声明式接口必须由已注册适配器执行，
@@ -219,7 +219,7 @@ func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPol
 	if id == "" {
 		var body interface{}
 		var err error
-		if IsBeefAPIVideoConfig(input.Config) {
+		if IsBeefAPIVideoConfig(ctx, input.Config) {
 			body, err = BeefAPIVideoRequestBody(input)
 		} else {
 			body, err = SeedanceVideosRequestBody(input)
@@ -227,7 +227,7 @@ func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPol
 		if err != nil {
 			return nil, err
 		}
-		if IsBeefAPIVideoConfig(input.Config) {
+		if IsBeefAPIVideoConfig(ctx, input.Config) {
 			encoded, marshalErr := json.Marshal(body)
 			if marshalErr != nil {
 				return nil, fmt.Errorf("序列化上游请求失败：%w", marshalErr)
@@ -237,7 +237,7 @@ func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPol
 			}
 		}
 		post := PostJSON
-		if IsBeefAPIVideoConfig(input.Config) {
+		if IsBeefAPIVideoConfig(ctx, input.Config) {
 			post = PostJSONWithSubmissionKey
 		}
 		if err := post(ctx, input.Config, "/videos", body, &created); err != nil {

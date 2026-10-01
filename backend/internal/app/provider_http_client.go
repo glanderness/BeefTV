@@ -204,9 +204,10 @@ func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode in
 	if req == nil {
 		return
 	}
-	metadata, ok := req.Context().Value(providerAnalyticsKey{}).(providerAnalyticsContext)
+	metadata, _ := req.Context().Value(providerAnalyticsKey{}).(providerAnalyticsContext)
 	service := providerService(metadata)
-	if !ok || service == nil {
+	call := canonicalCallMeta(req.Context())
+	if service == nil {
 		return
 	}
 	status := model.ApiCallStatusSucceeded
@@ -221,33 +222,33 @@ func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode in
 		errorText = businessMessage
 	}
 	requestKind := providerRequestKind(req.Method, req.URL.Path)
-	if metadata.RequestKind != "" {
-		requestKind = metadata.RequestKind
+	if call.RequestKind != "" {
+		requestKind = call.RequestKind
 	}
-	if status == model.ApiCallStatusSucceeded && (requestKind == "create" || requestKind == "poll") && (metadata.Capability == "image" || metadata.Capability == "video") {
-		service.syncProviderTaskProgress(metadata.TaskID, responseBody)
+	if status == model.ApiCallStatusSucceeded && (requestKind == "create" || requestKind == "poll") && (call.Capability == "image" || call.Capability == "video") {
+		service.syncProviderTaskProgress(call.TaskID, responseBody)
 	}
 	apiFormat := "openai"
 	if req.Header.Get("x-goog-api-key") != "" {
 		apiFormat = "gemini"
 	}
 	callLog := model.ApiCallLog{
-		UserID: metadata.UserID, TraceID: metadata.TraceID, RequestID: metadata.RequestID, ChannelID: metadata.ChannelID, TaskID: metadata.TaskID,
-		Source: "backend-task", Capability: metadata.Capability, Operation: metadata.Operation,
+		UserID: call.UserID, TraceID: call.TraceID, RequestID: call.RequestID, ChannelID: call.ChannelID, TaskID: call.TaskID,
+		Source: "backend-task", Capability: call.Capability, Operation: call.Operation,
 		RequestKind: requestKind,
-		APIFormat:   apiFormat, Method: req.Method, Path: req.URL.Path, Model: metadata.Model,
+		APIFormat:   apiFormat, Method: req.Method, Path: req.URL.Path, Model: call.Model,
 		Status: status, StatusCode: statusCode, DurationMs: time.Since(startedAt).Milliseconds(),
-		ErrorCode: errorCode, Error: errorText, ConcurrencyLimit: metadata.ConcurrencyLimit, UpstreamURL: req.URL.Scheme + "://" + req.URL.Host + req.URL.Path,
-		ProviderRequestID: metadata.ProviderRequestID, RequestContentType: req.Header.Get("Content-Type"), RequestBody: requestPayloadForLog(req), ResponseBody: SanitizeAPICallPayload(responseBody, ""),
+		ErrorCode: errorCode, Error: errorText, ConcurrencyLimit: call.ConcurrencyLimit, UpstreamURL: req.URL.Scheme + "://" + req.URL.Host + req.URL.Path,
+		ProviderRequestID: call.ProviderRequestID, RequestContentType: req.Header.Get("Content-Type"), RequestBody: requestPayloadForLog(req), ResponseBody: SanitizeAPICallPayload(responseBody, ""),
 	}
 	if code, message := ChannelSlotFailureDetails(requestErr); code != "" {
 		callLog.ErrorCode = code
 		callLog.Error = message
 	}
-	if requestKind == "create" && metadata.Capability == "video" {
-		callLog.VideoSeconds = metadata.VideoSeconds
+	if requestKind == "create" && call.Capability == "video" {
+		callLog.VideoSeconds = call.VideoSeconds
 		if callLog.VideoSeconds <= 0 {
-			if strings.Contains(strings.ToLower(metadata.Model), "seedance") || strings.Contains(req.URL.Path, "/contents/generations/tasks") {
+			if strings.Contains(strings.ToLower(call.Model), "seedance") || strings.Contains(req.URL.Path, "/contents/generations/tasks") {
 				callLog.VideoSeconds = 5
 			} else {
 				callLog.VideoSeconds = 6

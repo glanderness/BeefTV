@@ -35,14 +35,6 @@ const (
 	arkPrivateAssetPollLimit  = 3 * time.Minute
 )
 
-// 测试可以注入本地控制面服务；生产环境必须根据管理员显式配置的 Region 推导方舟控制面地址，
-// 不能接受客户端传入任意控制面 URL。
-var arkPrivateAssetAPIBaseURLOverride string
-
-// ArkPrivateAssetAPIBaseURLOverrideHook lets app tests inject an httptest
-// control-plane URL without exposing the generation package variable.
-var ArkPrivateAssetAPIBaseURLOverrideHook func() string
-
 // 可信素材 asset:// 仅方舟视频协议支持；Agent Plan Seedream 等图片渠道不能上传或改写。
 
 // The desktop profile owns the source media locally. Never copy a local
@@ -123,7 +115,7 @@ func CallArkPrivateAssetAPI(ctx context.Context, setting ArkPrivateAssetSettingV
 	if err != nil {
 		return nil, err
 	}
-	baseURL, err := ArkPrivateAssetControlPlaneURL(setting.Region)
+	baseURL, err := ArkPrivateAssetControlPlaneURL(ctx, setting.Region)
 	if err != nil {
 		return nil, err
 	}
@@ -188,14 +180,11 @@ func ArkPrivateAssetUpstreamDetail(response map[string]interface{}) string {
 	return detail
 }
 
-func ArkPrivateAssetControlPlaneURL(region string) (string, error) {
-	if hook := ArkPrivateAssetAPIBaseURLOverrideHook; hook != nil {
-		if override := strings.TrimSpace(hook()); override != "" {
+func ArkPrivateAssetControlPlaneURL(ctx context.Context, region string) (string, error) {
+	if runtime, ok := RuntimeFromContext(ctx); ok {
+		if override := strings.TrimSpace(runtime.Endpoints.ArkPrivateAssetAPIBaseURL); override != "" {
 			return override, nil
 		}
-	}
-	if override := strings.TrimSpace(arkPrivateAssetAPIBaseURLOverride); override != "" {
-		return override, nil
 	}
 	region = strings.ToLower(strings.TrimSpace(region))
 	if region == "" {

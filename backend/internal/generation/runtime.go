@@ -25,6 +25,43 @@ func WithCallMeta(ctx context.Context, meta CallMeta) context.Context {
 	return WithRuntime(ctx, runtime)
 }
 
+// EnrichCallMeta copies only identity/resume fields onto the current Call.
+// Route, model, trace, capability, and videoSeconds stay as they are.
+func EnrichCallMeta(ctx context.Context, patch CallMeta) context.Context {
+	runtime, _ := RuntimeFromContext(ctx)
+	runtime.Call = enrichCallMeta(runtime.Call, patch)
+	return WithRuntime(ctx, runtime)
+}
+
+func IdentityCallMeta(base, patch CallMeta) CallMeta {
+	return enrichCallMeta(base, patch)
+}
+
+func enrichCallMeta(base, patch CallMeta) CallMeta {
+	if value := strings.TrimSpace(patch.UserID); value != "" {
+		base.UserID = value
+	}
+	if value := strings.TrimSpace(patch.TaskID); value != "" {
+		base.TaskID = value
+	}
+	if value := strings.TrimSpace(patch.RequestKind); value != "" {
+		base.RequestKind = value
+	}
+	if value := strings.TrimSpace(patch.ProviderRequestID); value != "" {
+		base.ProviderRequestID = value
+	}
+	return base
+}
+
+func WithEndpoints(ctx context.Context, endpoints Endpoints) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	runtime, _ := RuntimeFromContext(ctx)
+	runtime.Endpoints = endpoints
+	return WithRuntime(ctx, runtime)
+}
+
 func CallMetaFromContext(ctx context.Context) (CallMeta, bool) {
 	runtime, ok := RuntimeFromContext(ctx)
 	if !ok {

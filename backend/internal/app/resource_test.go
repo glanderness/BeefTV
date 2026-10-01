@@ -46,7 +46,7 @@ func TestVideoReferenceMetadataPreflightUsesOwnedResource(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := canvasGenerationInput{Prompt: "test", Config: providerConfig{InterfaceType: "newapi-channel-2", Model: "seedance-2.5", VideoSeconds: "5"}, ReferenceAudios: []providerMedia{{StorageKey: "resource:voice-preflight"}}}
-	if err := svc.hydrateVideoReferenceMetadata("user-1", &input); err != nil {
+	if err := svc.hydrateVideoReferenceMetadata(context.Background(), "user-1", &input); err != nil {
 		t.Fatal(err)
 	}
 	if input.ReferenceAudios[0].DurationMs != 2500 || input.ReferenceAudios[0].Bytes != 1200 {
@@ -55,7 +55,7 @@ func TestVideoReferenceMetadataPreflightUsesOwnedResource(t *testing.T) {
 	if err := svc.validateResolvedVideoCapability(&input); err != nil {
 		t.Fatalf("valid stored voice rejected: %v", err)
 	}
-	if err := svc.hydrateVideoReferenceMetadata("another-user", &input); err == nil {
+	if err := svc.hydrateVideoReferenceMetadata(context.Background(), "another-user", &input); err == nil {
 		t.Fatal("foreign resource accepted")
 	}
 }
@@ -183,7 +183,7 @@ func TestMissingImageMetadataHydratesHeaderAndRejectsTooSmallBeforeProvider(t *t
 			{StorageKey: "resource:large-image", MimeType: "image/png"},
 		},
 	}
-	if err := svc.hydrateVideoReferenceMetadata("user-1", &input); err != nil {
+	if err := svc.hydrateVideoReferenceMetadata(context.Background(), "user-1", &input); err != nil {
 		t.Fatal(err)
 	}
 	if input.ReferenceImages[0].Width != 384 || input.ReferenceImages[0].Height != 216 {

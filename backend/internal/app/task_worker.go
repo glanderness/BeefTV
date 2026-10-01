@@ -340,7 +340,7 @@ func (s *Service) shouldDeferVideoProviderTask(task model.Task, decryptedInput s
 		return false
 	}
 	resolved, resolveErr := s.resolveProviderConfig(input.Config)
-	return resolveErr == nil && (resolved.InterfaceType == string(model.ChannelInterfaceNewAPIChannel2) || isBeefAPIVideoConfig(resolved))
+	return resolveErr == nil && (resolved.InterfaceType == string(model.ChannelInterfaceNewAPIChannel2) || isBeefAPIVideoConfig(context.Background(), resolved))
 }
 
 func newAPIChannel2TaskSyncExpired(task model.Task, err error, now time.Time) bool {

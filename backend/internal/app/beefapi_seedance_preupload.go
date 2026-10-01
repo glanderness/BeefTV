@@ -8,7 +8,7 @@ import (
 )
 
 func (s *Service) prepareBeefAPISeedanceReferences(ctx context.Context, userID string, input *canvasGenerationInput) error {
-	if input == nil || input.Mode != "video" || !isBeefAPISeedancePreuploadConfig(input.Config) {
+	if input == nil || input.Mode != "video" || !isBeefAPISeedancePreuploadConfig(ctx, input.Config) {
 		return nil
 	}
 	return prepareBeefAPISeedanceReferences(ctx, input.Config, input, func(kind string, media providerMedia) ([]byte, string, bool, error) {
