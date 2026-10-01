@@ -635,14 +635,16 @@ func TestImageSubmissionTwelfthSuccessSurvivesStorageFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := map[string]interface{}{"mode": "image", "images": []map[string]string{{"dataUrl": testReferenceImageDataURL}}}
-	goodDir := s.dataDir
-	badDir := filepath.Join(t.TempDir(), "not-a-directory")
-	if err := os.WriteFile(badDir, []byte("blocked"), 0600); err != nil {
+	// Fault the fixed workspace filesystem rather than swapping the service's
+	// dataDir: the resource domain deliberately retains one workspace owner.
+	blockedRoot := filepath.Join(s.dataDir, "resources")
+	if err := os.WriteFile(blockedRoot, []byte("blocked"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	s.dataDir = badDir
 	_, saveErr := s.persistGeneratedMediaResult(task.UserID, result)
-	s.dataDir = goodDir
+	if err := os.Remove(blockedRoot); err != nil {
+		t.Fatal(err)
+	}
 	if saveErr == nil {
 		t.Fatal("storage fault injection did not fail")
 	}

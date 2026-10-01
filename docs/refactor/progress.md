@@ -97,4 +97,15 @@
 - RunningHub 实际协议域由 `20261002-021904-delegate-ea62673e` 独立实现，固定 `6840b32`，与通用 Provider 切片不重叠。
 - 创作页对话原为 IndexedDB 唯一持久状态。`20261002-022128-delegate-0883fddd` 负责 SQLite aggregate、CAS、旧缓存幂等导入与删除 tombstone，为原子消息绑定提供事务端口；schema 11 只保留给该切片，尚未合入。
 
+### 第五轮整合与独立复审
+
+- `dcbe8ed` 全量前端隔离回归：2409 pass / 0 fail / 12 skip；operations/assistantturns/taskdelivery race 通过。
+- 发布包补齐 pi 新宿主模块，使用内置 Node 24.15.0、空 PATH 和隔离数据目录完成实际启动，3 项测试通过、模型请求 0。合入 `e2ed6c7`。
+- 工作区身份及配置 `f09c75a` / `ac32331` 独立测试通过，合入 `0409d30` / `1ae05aa`。渠道凭据仅按 ID 匹配，null 配置和异常路径失败关闭。
+- 资源域 `84175ac` / `1e279f3` / `f2f495c` 独立资源/仓库/app 测试通过，合入 `e5b9728` / `75be749` / `c7f4443`。任务运行时 `d6b8db8` / `fff369a` race 通过，合入 `dc60669` / `0900f4d`。模型路由 `2dd4fbe` 独立 race 通过，合入 `6545fa1`。
+- 以上整合回归发现 1 项旧测试通过修改 Service.dataDir 注入故障，与固定资源所有者冲突；改为在同一工作区制造、解除真实文件系统故障后专项通过。其余 app 测试以及 asset/workspace/taskruntime/modelcatalog/bootstrap/handler 通过。不把原先整轮失败记为通过。
+- 组合根改接实际资源服务和工作区身份域，删除 LocalKernel 资源转发与旧 Asset 边界；asset/bootstrap/localapp 回归通过。任务服务组合根仍等待准入修正。
+- 独立 Agent 审查 `20261002-023129-review-ac6d2341` 为 REPAIR。Lead 已核实未受监督残留进程被当作可用、子进程凭据/端口继承、取消接口权限缺口，交给 `20261002-024935-continue-d922e56d` 修复；不是发布签核。
+- 待复审：任务准入 `20261002-024307-continue-6693893d`，资源交付与删除/准入事务 `20261002-024418-continue-b310dc32`，画布异步归属 `20261002-024510-continue-a21de995`，项目产物/版本事务 `20261002-024639-continue-63120f34`，RunningHub 实际提交边界 `20261002-024707-continue-d8c2dc8f`。
+
 不得将第一批 worker 完成、目录分包或旧版验收报告写作“完整重构完成”。后续变更需按实际依赖顺序实现与验证。

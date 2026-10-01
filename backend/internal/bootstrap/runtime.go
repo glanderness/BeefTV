@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/app"
-	localasset "infinite-canvas/backend/internal/asset"
 	"infinite-canvas/backend/internal/assistantruntime"
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/buildinfo"
@@ -91,7 +90,8 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 		return nil, err
 	}
 
-	svc := app.NewLocal(repository.New(db), cfg.DataDir)
+	repo := repository.New(db)
+	svc := app.NewLocal(repo, cfg.DataDir)
 	cleanupService := func() {
 		_ = svc.Close()
 		cleanupDB()
@@ -138,11 +138,11 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 	}
 	svc.SetBeefAPI(beefAPIConnection)
 	localKernel := app.NewLocalKernel(svc)
-	assetService := localasset.New(localKernel, cfg.DataDir)
+	assetService := svc.ResourceService()
 	projectService := svc.ProjectService()
 	taskService := localtask.New(localKernel)
 	localRoot, err := localapp.New(localapp.Options{
-		Workspace: localKernel, Projects: projectService, Assets: assetService, Tasks: taskService,
+		Workspace: workspace.NewService(repo), Projects: projectService, Assets: assetService, Tasks: taskService,
 		Generation: taskService, ProviderConfig: providerConfig, Lifecycle: taskService,
 	})
 	if err != nil {

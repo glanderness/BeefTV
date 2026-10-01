@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"mime/multipart"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
@@ -13,38 +12,22 @@ import (
 // Method values prevent interface reflection from retaining the full Service
 // method set, while keeping that linker concern out of the composition root.
 type LocalKernel struct {
-	workspaceOwner      func(string) (*model.User, error)
-	resources           func(string, int) ([]model.Resource, error)
-	uploadLocalResource func(string, *multipart.FileHeader, string, int, int, int64, ...string) (*model.Resource, error)
-	tasksWithOptions    func(string, localtask.ListOptions) ([]localtask.Summary, error)
-	createLocalTask     func(string, localtask.CreateRequest) (*model.Task, error)
-	allowRequest        func(context.Context, string, int, time.Duration) (bool, error)
-	requestRetryAfter   func(context.Context, string, time.Duration) time.Duration
-	startWorker         func()
-	stopWorker          func(context.Context) error
-	close               func() error
+	tasksWithOptions  func(string, localtask.ListOptions) ([]localtask.Summary, error)
+	createLocalTask   func(string, localtask.CreateRequest) (*model.Task, error)
+	allowRequest      func(context.Context, string, int, time.Duration) (bool, error)
+	requestRetryAfter func(context.Context, string, time.Duration) time.Duration
+	startWorker       func()
+	stopWorker        func(context.Context) error
+	close             func() error
 }
 
 func NewLocalKernel(service *Service) *LocalKernel {
 	return &LocalKernel{
-		workspaceOwner: service.WorkspaceOwner, resources: service.Resources,
-		uploadLocalResource: service.UploadLocalResource, tasksWithOptions: service.TasksWithOptions,
-		createLocalTask: service.CreateLocalTask, allowRequest: service.AllowRequest,
+		tasksWithOptions: service.TasksWithOptions,
+		createLocalTask:  service.CreateLocalTask, allowRequest: service.AllowRequest,
 		requestRetryAfter: service.RequestRetryAfter, startWorker: service.StartWorker,
 		stopWorker: service.StopWorker, close: service.Close,
 	}
-}
-
-func (k *LocalKernel) WorkspaceOwner(userID string) (*model.User, error) {
-	return k.workspaceOwner(userID)
-}
-
-func (k *LocalKernel) Resources(userID string, limit int) ([]model.Resource, error) {
-	return k.resources(userID, limit)
-}
-
-func (k *LocalKernel) UploadLocalResource(userID string, header *multipart.FileHeader, kind string, width, height int, durationMs int64, identity ...string) (*model.Resource, error) {
-	return k.uploadLocalResource(userID, header, kind, width, height, durationMs, identity...)
 }
 
 func (k *LocalKernel) TasksWithOptions(userID string, options localtask.ListOptions) ([]localtask.Summary, error) {
