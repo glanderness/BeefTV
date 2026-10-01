@@ -62,6 +62,7 @@ function stubController(open: boolean, setOpen: (next: boolean) => void, width: 
         pendingSelectedNodeIds: [],
         streamed: "",
         streaming: false,
+		lifecycleNotice: null,
         error: null,
         canRetry: false,
         turnStatus: {},
