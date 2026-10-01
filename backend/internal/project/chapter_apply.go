@@ -176,11 +176,12 @@ func (s *Service) ChapterApplyReceipts(userID, projectID string, taskIDs []strin
 		if taskID == "" || taskID == record.OpID {
 			continue
 		}
-		if strings.TrimSpace(record.ResultJSON) != "" {
-			var stored chapterApplyReceipt
-			if json.Unmarshal([]byte(record.ResultJSON), &stored) == nil && stored.ProjectID != "" && stored.ProjectID != projectID {
-				continue
-			}
+		var stored chapterApplyReceipt
+		if json.Unmarshal([]byte(record.ResultJSON), &stored) != nil || stored.TaskID != taskID || stored.UnitID == "" || stored.Kind != kind || stored.ProjectID == "" {
+			return nil, kernel.NewAppError(kernel.CodeInternal, "已保存的写入记录无法读取，请稍后重试")
+		}
+		if stored.ProjectID != projectID {
+			continue
 		}
 		receipts = append(receipts, ChapterApplyReceiptView{TaskID: taskID, Op: record.Op, Kind: kind, Applied: true})
 	}

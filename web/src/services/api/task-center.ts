@@ -1,5 +1,5 @@
 import { generationErrorMessage } from "@/lib/generation-error";
-import { assertUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
+import { assertUserScope, isUserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { http, apiBaseURL, type BackendEnvelope, type HttpRequestConfig } from "@/services/api/request";
 import { consumeTaskTextStream, createTaskTextStreamParser, type TaskTextStreamEvent } from "@/services/api/task-text-stream";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
@@ -464,6 +464,7 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             const decoder = new TextDecoder();
             const parser = createTaskTextStreamParser();
             const onEvent = (event: TaskTextStreamEvent) => {
+                if (options.expectedScope) assertUserScope(options.expectedScope);
                 const payload = asTaskTextStreamRecord(event.data);
                 if (event.event === "delta") {
                     const sequence = numberValue(payload.sequence) || event.id || 0;
@@ -500,12 +501,18 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
                 }
                 if (event.event === "error") throw new Error(typeof payload.message === "string" ? payload.message : "任务文本流不可用");
             };
-            for (;;) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                consumeTaskTextStream(parser, decoder.decode(value, { stream: true }), onEvent);
+            try {
+                for (;;) {
+                    const { done, value } = await reader.read();
+                    if (options.expectedScope) assertUserScope(options.expectedScope);
+                    if (done) break;
+                    consumeTaskTextStream(parser, decoder.decode(value, { stream: true }), onEvent);
+                }
+                consumeTaskTextStream(parser, decoder.decode(), onEvent, true);
+            } finally {
+                await reader.cancel().catch(() => undefined);
+                reader.releaseLock();
             }
-            consumeTaskTextStream(parser, decoder.decode(), onEvent, true);
             if (terminalReceived) {
                 const completed = await queryGenerationTask(id, { signal: options.signal, expectedScope: options.expectedScope });
                 options.onTaskUpdate?.(completed);
@@ -517,6 +524,7 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             lastStreamError = new Error("任务文本流连接提前结束");
         } catch (error) {
             if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+            if (isUserScopeAbandonedError(error)) throw error;
             if (error instanceof TaskTextStreamFatalError) throw error;
             lastStreamError = error;
         }

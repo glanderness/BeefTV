@@ -28,6 +28,26 @@ tags:
   - name: assistant
   - name: creation-conversations
 paths:
+  /projects/{id}/chapter-apply-receipts:
+    get:
+      tags: [projects]
+      summary: 查询章节生成结果的持久化写入回执
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: taskIds
+          description: 逗号分隔的生成任务 ID，最多 100 个
+          schema: { type: string }
+      responses:
+        "200":
+          description: 信封 data.receipts 含 taskId、op、kind、applied；只返回本项目已提交回执
+        "404":
+          description: 项目不存在或不属于当前用户
+        "500":
+          description: 回执无法读取，不推断结果已应用
   /creation-conversations:
     get:
       tags: [creation-conversations]

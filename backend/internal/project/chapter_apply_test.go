@@ -541,6 +541,22 @@ func TestChapterApplyReceiptsStayOnOwningProject(t *testing.T) {
 	}
 }
 
+func TestChapterApplyReceiptRejectsCorruptIdentity(t *testing.T) {
+	for _, raw := range []string{"", "{", `{}`, `{"taskId":"other","projectId":"project-1","unitId":"unit-1","kind":"storyboard"}`} {
+		t.Run(raw, func(t *testing.T) {
+			svc, db := newTestService(t, nil)
+			seedProject(t, db, model.Project{ID: "project-1", UserID: "user-1", Name: "短剧"})
+			record := model.AgentOpRecord{UserID: "user-1", OpID: chapterApplyOpID("task-1"), Op: ChapterApplyOpStoryboard, Status: "succeeded", ResultJSON: raw}
+			if err := db.Create(&record).Error; err != nil {
+				t.Fatal(err)
+			}
+			if receipts, err := svc.ChapterApplyReceipts("user-1", "project-1", []string{"task-1"}); err == nil || len(receipts) != 0 {
+				t.Fatalf("corrupt receipt reported applied: %#v, %v", receipts, err)
+			}
+		})
+	}
+}
+
 func TestReplaceWithoutSourceTaskDoesNotWriteReceipt(t *testing.T) {
 	svc, db := newTestService(t, nil)
 	project := seedProject(t, db, model.Project{ID: "project-1", UserID: "user-1", Name: "短剧"})
