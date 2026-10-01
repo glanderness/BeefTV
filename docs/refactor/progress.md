@@ -158,3 +158,11 @@
 - 以上没有新增真实生成费用、没有发布。后续仍需全量回归、实际媒体/新工作区重启、性能/平台/发布包和有明确预算的真实模型验收。
 
 不得将第一批 worker 完成、目录分包或旧版验收报告写作“完整重构完成”。后续变更需按实际依赖顺序实现与验证。
+
+### 时间线原生渲染与 whisper 转写（本树并行切片）
+
+- `af2b47e` native lowering/探测/执行进入 `internal/editing`；真实 ffmpeg 夹具探测时长、音轨与字幕烧录。
+- `b6a3780` whisper HTTP、16k wav、SRT 进入 `internal/transcription`。
+- `2546b73` app task worker 只调 typed executor，结果经 `asset.Store` 组合；未改 `service.go` / bootstrap / operations。
+- 接线说明见 [editing.md](./editing.md) 与 [transcription.md](./transcription.md)。Lead 尚未把 Renderer/Executor 接到组合根字段。
+
