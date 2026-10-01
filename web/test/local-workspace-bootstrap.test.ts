@@ -46,7 +46,7 @@ test("local workspace bootstrap is the product startup contract", () => {
     expect(imageStorage).toContain("const localRuntime = isLocalRuntimeMode();");
     expect(imageStorage).toContain("The desktop Go resource service is local storage");
     expect(imageStorage).not.toContain("if (!localOnly) try");
-    expect(fileStorage).toContain("const localRuntime = isLocalRuntimeMode();");
+    expect(fileStorage).toContain("if (usesBrowserLocalResourceStore())");
     expect(fileStorage).toContain("The native desktop Go resource service is the canonical local store");
     expect(fileStorage).not.toContain("if (!localOnly) try");
 });
