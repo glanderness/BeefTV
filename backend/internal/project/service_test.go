@@ -19,7 +19,6 @@ type recordingWorkflows struct {
 	ensured int
 	created []string
 	fail    error
-	bump    func(string) error
 }
 
 func (r *recordingWorkflows) EnsureBuiltinTemplate() error {
@@ -27,15 +26,22 @@ func (r *recordingWorkflows) EnsureBuiltinTemplate() error {
 	return nil
 }
 
-func (r *recordingWorkflows) CreateDefault(projectID string) error {
+func (r *recordingWorkflows) PrepareDefault(projectID string) (WorkflowSeed, error) {
 	if r.fail != nil {
-		return r.fail
+		return WorkflowSeed{}, r.fail
 	}
 	r.created = append(r.created, projectID)
-	if r.bump != nil {
-		return r.bump(projectID)
+	now := time.Now()
+	instance := model.WorkflowInstance{
+		ID: kernel.NewID(), ProjectID: projectID, TemplateVersionID: "test-template",
+		Scope: "project", Status: model.WorkflowStatusActive, Revision: 1, CreatedAt: now, UpdatedAt: now,
 	}
-	return nil
+	steps := []model.WorkflowStepInstance{{
+		ID: kernel.NewID(), WorkflowInstanceID: instance.ID, StepKey: "story", Name: "剧情",
+		Position: 0, Status: model.WorkflowStepStatusReady, InputJSON: "{}", OutputJSON: "{}",
+		CreatedAt: now, UpdatedAt: now,
+	}}
+	return WorkflowSeed{Instance: instance, Steps: steps}, nil
 }
 
 func newTestService(t *testing.T, workflows Workflows) (*Service, *gorm.DB) {
@@ -62,6 +68,7 @@ func newTestService(t *testing.T, workflows Workflows) (*Service, *gorm.DB) {
 		&model.ShotRevision{},
 		&model.ShotArtifact{},
 		&model.ShotAssetReference{},
+		&model.WorkflowTemplateVersion{},
 		&model.WorkflowInstance{},
 		&model.WorkflowStepInstance{},
 		&model.WorkflowStepTask{},
@@ -123,9 +130,6 @@ func TestOwnedRejectsForeignProject(t *testing.T) {
 func TestCreateUpdateAndRevision(t *testing.T) {
 	workflows := &recordingWorkflows{}
 	svc, db := newTestService(t, workflows)
-	workflows.bump = func(projectID string) error {
-		return svc.repo.BumpProjectRevision(projectID)
-	}
 
 	created, err := svc.CreateProject("user-1", CreateProjectRequest{Name: " 短剧一 ", DefaultImageModel: " system-channel::image "})
 	if err != nil {
@@ -142,6 +146,13 @@ func TestCreateUpdateAndRevision(t *testing.T) {
 	}
 	if workflows.ensured != 1 || len(workflows.created) != 1 || workflows.created[0] != created.ID {
 		t.Fatalf("workflow bootstrap = %+v", workflows)
+	}
+	var workflowCount int64
+	if err := db.Model(&model.WorkflowInstance{}).Where("project_id = ?", created.ID).Count(&workflowCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if workflowCount != 1 {
+		t.Fatalf("workflow instance count = %d, want 1", workflowCount)
 	}
 
 	updated, err := svc.UpdateProject("user-1", created.ID, UpdateProjectRequest{Name: "短剧一改"})

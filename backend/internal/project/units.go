@@ -9,18 +9,15 @@ import (
 )
 
 func (s *Service) CreateProjectUnit(userID string, projectID string, req CreateProjectUnitRequest) (model.ProjectUnit, error) {
-	if _, err := s.Owned(userID, projectID); err != nil {
+	if _, err := s.Active(userID, projectID); err != nil {
 		return model.ProjectUnit{}, err
 	}
 	unit, err := newProjectUnit(projectID, req, req.Position)
 	if err != nil {
 		return model.ProjectUnit{}, err
 	}
-	if err := s.repo.CreateProjectUnit(&unit); err != nil {
-		return model.ProjectUnit{}, err
-	}
-	if err := s.repo.BumpProjectRevision(projectID); err != nil {
-		return model.ProjectUnit{}, err
+	if err := s.repo.CreateProjectUnitAndBump(userID, projectID, &unit); err != nil {
+		return model.ProjectUnit{}, mapProjectWriteError(err)
 	}
 	return unit, nil
 }
@@ -37,7 +34,7 @@ func (s *Service) GetProjectUnit(userID string, projectID string, unitID string)
 }
 
 func (s *Service) ImportProjectUnits(userID string, projectID string, req ImportProjectUnitsRequest) ([]model.ProjectUnit, error) {
-	if _, err := s.Owned(userID, projectID); err != nil {
+	if _, err := s.Active(userID, projectID); err != nil {
 		return nil, err
 	}
 	if len(req.Units) == 0 || len(req.Units) > 2500 {
@@ -62,7 +59,7 @@ func (s *Service) ImportProjectUnits(userID string, projectID string, req Import
 }
 
 func (s *Service) ReorderProjectUnits(userID string, projectID string, req ReorderProjectUnitsRequest) error {
-	if _, err := s.Owned(userID, projectID); err != nil {
+	if _, err := s.Active(userID, projectID); err != nil {
 		return err
 	}
 	units, err := s.repo.ProjectUnits(projectID)
@@ -93,7 +90,7 @@ func (s *Service) ReorderProjectUnits(userID string, projectID string, req Reord
 }
 
 func (s *Service) DeleteProjectUnit(userID string, projectID string, unitID string) error {
-	if _, err := s.Owned(userID, projectID); err != nil {
+	if _, err := s.Active(userID, projectID); err != nil {
 		return err
 	}
 	if _, err := s.repo.ProjectUnit(projectID, unitID); err != nil {
@@ -127,7 +124,7 @@ func newProjectUnit(projectID string, req CreateProjectUnitRequest, position int
 }
 
 func (s *Service) UpdateProjectUnit(userID string, projectID string, unitID string, req UpdateProjectUnitRequest) (model.ProjectUnit, error) {
-	if _, err := s.Owned(userID, projectID); err != nil {
+	if _, err := s.Active(userID, projectID); err != nil {
 		return model.ProjectUnit{}, err
 	}
 	unit, err := s.repo.ProjectUnit(projectID, unitID)

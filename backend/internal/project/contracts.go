@@ -60,6 +60,13 @@ type CreateProjectFolderRequest struct {
 	ParentID string `json:"parentId"`
 }
 
+// WorkflowSeed is the default production instance prepared by a collaborator.
+// Persistence stays in the same project-create transaction.
+type WorkflowSeed struct {
+	Instance model.WorkflowInstance
+	Steps    []model.WorkflowStepInstance
+}
+
 // Summary is the local list card. Collaborator counts stay numeric so the
 // composition root does not leak asset or task document types into this port.
 type Summary struct {

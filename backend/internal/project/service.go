@@ -15,10 +15,11 @@ import (
 )
 
 // Workflows bootstraps the default production template when a project is created.
-// The workflow step machine itself stays outside this package.
+// The workflow step machine itself stays outside this package. PrepareDefault
+// must not write; the project row and returned records share one transaction.
 type Workflows interface {
 	EnsureBuiltinTemplate() error
-	CreateDefault(projectID string) error
+	PrepareDefault(projectID string) (WorkflowSeed, error)
 }
 
 type Dependencies struct {
@@ -37,6 +38,27 @@ func New(repo *repository.Repository, deps Dependencies) *Service {
 
 func IsNotFound(err error) bool {
 	return errors.Is(err, gorm.ErrRecordNotFound)
+}
+
+func IsConflict(err error) bool {
+	var appErr *kernel.AppError
+	return errors.As(err, &appErr) && appErr.Status == kernel.CodeConflict
+}
+
+func mapProjectWriteError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, repository.ErrProjectRevisionConflict) {
+		return kernel.WrapAppError(kernel.CodeConflict, "项目已被其他操作更新，请重新加载后再保存", err)
+	}
+	if errors.Is(err, repository.ErrCanvasRevisionConflict) {
+		return kernel.WrapAppError(kernel.CodeConflict, "画布已被其他操作更新，无法完成项目关联", err)
+	}
+	if errors.Is(err, repository.ErrProjectArchived) {
+		return kernel.BadAuthRequest("项目已归档，不能修改短剧生产数据")
+	}
+	return err
 }
 
 func (s *Service) Owned(userID, projectID string) (*model.Project, error) {
@@ -159,9 +181,15 @@ func (s *Service) CreateProjectFolder(userID string, req CreateProjectFolderRequ
 	if name == "" {
 		return model.ProjectFolder{}, kernel.BadAuthRequest("文件夹名称不能为空")
 	}
+	parentID := strings.TrimSpace(req.ParentID)
+	if parentID != "" {
+		if _, err := s.repo.ProjectFolderForUser(userID, parentID); err != nil {
+			return model.ProjectFolder{}, err
+		}
+	}
 	now := time.Now()
-	folder := model.ProjectFolder{ID: kernel.NewID(), UserID: userID, ParentID: strings.TrimSpace(req.ParentID), Name: name, CreatedAt: now, UpdatedAt: now}
-	if err := s.repo.CreateProjectFolder(&folder); err != nil {
+	folder := model.ProjectFolder{ID: kernel.NewID(), UserID: userID, ParentID: parentID, Name: name, CreatedAt: now, UpdatedAt: now}
+	if err := s.repo.CreateProjectFolderChecked(&folder); err != nil {
 		return model.ProjectFolder{}, err
 	}
 	return folder, nil
@@ -177,7 +205,7 @@ func (s *Service) MoveProjectToFolder(userID, projectID, folderID string) error 
 			return err
 		}
 	}
-	return s.repo.MoveProject(userID, projectID, folderID)
+	return mapProjectWriteError(s.repo.MoveProjectAndBump(userID, projectID, folderID))
 }
 
 func (s *Service) DuplicateProject(userID, projectID string) (model.Project, error) {
@@ -244,18 +272,18 @@ func (s *Service) CreateProject(userID string, req CreateProjectRequest) (model.
 		DefaultImageModel: defaultImageModel, DefaultVideoModel: defaultVideoModel, Status: model.ProjectStatusActive,
 		Revision: 1, CreatedAt: now, UpdatedAt: now,
 	}
-	if err := s.repo.CreateProject(&item); err != nil {
-		return model.Project{}, err
-	}
+	var instance *model.WorkflowInstance
+	var steps []model.WorkflowStepInstance
 	if s.workflows != nil {
-		if err := s.workflows.CreateDefault(item.ID); err != nil {
-			if deleteErr := s.repo.DeleteProject(userID, item.ID, nil); deleteErr != nil {
-				return model.Project{}, errors.Join(err, fmt.Errorf("项目初始化失败，回滚项目记录失败：%w", deleteErr))
-			}
-			return model.Project{}, err
+		seed, seedErr := s.workflows.PrepareDefault(item.ID)
+		if seedErr != nil {
+			return model.Project{}, seedErr
 		}
-		item.Revision++
-		item.UpdatedAt = time.Now()
+		instance = &seed.Instance
+		steps = seed.Steps
+	}
+	if err := s.repo.CreateProjectWithWorkflow(&item, instance, steps); err != nil {
+		return model.Project{}, err
 	}
 	return item, nil
 }
@@ -329,10 +357,11 @@ func (s *Service) UpdateProject(userID string, id string, req UpdateProjectReque
 		}
 		item.Status = status
 	}
-	item.Revision++
+	expectedRevision := item.Revision
+	item.Revision = expectedRevision + 1
 	item.UpdatedAt = time.Now()
-	if err := s.repo.UpdateProject(item); err != nil {
-		return model.Project{}, err
+	if err := s.repo.UpdateProjectCAS(userID, expectedRevision, item); err != nil {
+		return model.Project{}, mapProjectWriteError(err)
 	}
 	return *item, nil
 }

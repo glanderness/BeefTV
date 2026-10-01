@@ -70,6 +70,24 @@ func (s *Service) EnsureBuiltinProjectWorkflowTemplate() error {
 	return s.repo.CreateWorkflowTemplateVersion(&template)
 }
 
+func (s *Service) newProjectWorkflowRecords(projectID string, unitID string, scope string) (model.WorkflowInstance, []model.WorkflowStepInstance, error) {
+	template, err := s.repo.WorkflowTemplateVersion(builtinShortDramaWorkflowKey, builtinShortDramaWorkflowVersion)
+	if err != nil {
+		return model.WorkflowInstance{}, nil, err
+	}
+	now := time.Now()
+	instance := model.WorkflowInstance{ID: newID(), ProjectID: projectID, UnitID: unitID, TemplateVersionID: template.ID, Scope: scope, Status: model.WorkflowStatusActive, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	steps := make([]model.WorkflowStepInstance, 0, len(builtinShortDramaSteps))
+	for index, definition := range builtinShortDramaSteps {
+		status := model.WorkflowStepStatusPending
+		if index == 0 {
+			status = model.WorkflowStepStatusReady
+		}
+		steps = append(steps, model.WorkflowStepInstance{ID: newID(), WorkflowInstanceID: instance.ID, StepKey: definition.Key, Name: definition.Name, Position: index, Status: status, InputJSON: "{}", OutputJSON: "{}", CreatedAt: now, UpdatedAt: now})
+	}
+	return instance, steps, nil
+}
+
 func (s *Service) createProjectWorkflow(projectID string, unitID string, scope string) (ProjectWorkflowDetail, error) {
 	template, err := s.repo.WorkflowTemplateVersion(builtinShortDramaWorkflowKey, builtinShortDramaWorkflowVersion)
 	if err != nil {
@@ -81,15 +99,9 @@ func (s *Service) createProjectWorkflow(projectID string, unitID string, scope s
 	} else if !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 		return ProjectWorkflowDetail{}, existingErr
 	}
-	now := time.Now()
-	instance := model.WorkflowInstance{ID: newID(), ProjectID: projectID, UnitID: unitID, TemplateVersionID: template.ID, Scope: scope, Status: model.WorkflowStatusActive, Revision: 1, CreatedAt: now, UpdatedAt: now}
-	steps := make([]model.WorkflowStepInstance, 0, len(builtinShortDramaSteps))
-	for index, definition := range builtinShortDramaSteps {
-		status := model.WorkflowStepStatusPending
-		if index == 0 {
-			status = model.WorkflowStepStatusReady
-		}
-		steps = append(steps, model.WorkflowStepInstance{ID: newID(), WorkflowInstanceID: instance.ID, StepKey: definition.Key, Name: definition.Name, Position: index, Status: status, InputJSON: "{}", OutputJSON: "{}", CreatedAt: now, UpdatedAt: now})
+	instance, steps, err := s.newProjectWorkflowRecords(projectID, unitID, scope)
+	if err != nil {
+		return ProjectWorkflowDetail{}, err
 	}
 	if err := s.repo.CreateWorkflowInstance(&instance, steps); err != nil {
 		return ProjectWorkflowDetail{}, err
