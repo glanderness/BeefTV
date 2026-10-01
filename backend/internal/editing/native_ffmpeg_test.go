@@ -439,15 +439,57 @@ func TestRendererRenderProbesActualOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rendered.Size == 0 || rendered.DurationMs != 1000 || rendered.Width != 320 {
+	if rendered.Size == 0 || rendered.Width != 320 {
 		t.Fatalf("rendered=%+v", rendered)
+	}
+	if !outputDurationWithinPlan(plan.DurationMs, rendered.DurationMs) {
+		t.Fatalf("rendered duration %d outside plan %d", rendered.DurationMs, plan.DurationMs)
 	}
 	facts, err := Probe(ctx, rendered.Path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !facts.HasVideo || !facts.HasAudio || facts.DurationMs < 800 {
+	if !facts.HasVideo || !facts.HasAudio || facts.DurationMs <= 0 {
 		t.Fatalf("probe=%+v", facts)
+	}
+}
+
+func TestRendererRejectsVideoOnlyFakeOutput(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg required")
+	}
+	src := requireTinyAVSource(t)
+	script := fmt.Sprintf(`out=""; for arg in "$@"; do out=$arg; done
+%q -v error -y -f lavfi -i color=c=red:s=320x180:r=30:d=1 -an -c:v libx264 "$out"
+exit 0`, ffmpeg)
+	renderer := &Renderer{FFmpeg: writeFakeFFmpeg(t, script), Sources: fileSources{"src": src}}
+	_, cleanup, err := renderer.Render(context.Background(), shortVideoPlan(), nil)
+	if cleanup != nil {
+		cleanup()
+	}
+	if err == nil || !strings.Contains(err.Error(), "音频轨") {
+		t.Fatalf("err=%v, want missing audio rejected", err)
+	}
+}
+
+func TestRendererRejectsDurationMismatchFakeOutput(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg required")
+	}
+	src := requireTinyAVSource(t)
+	script := fmt.Sprintf(`out=""; for arg in "$@"; do out=$arg; done
+%q -v error -y -f lavfi -i color=c=red:s=320x180:r=30:d=3 -f lavfi -i sine=frequency=440:duration=3 -c:v libx264 -c:a aac "$out"
+exit 0`, ffmpeg)
+	plan := shortVideoPlan()
+	renderer := &Renderer{FFmpeg: writeFakeFFmpeg(t, script), Sources: fileSources{"src": src}}
+	_, cleanup, err := renderer.Render(context.Background(), plan, nil)
+	if cleanup != nil {
+		cleanup()
+	}
+	if err == nil || !strings.Contains(err.Error(), "时长") {
+		t.Fatalf("err=%v, want duration mismatch rejected", err)
 	}
 }
 

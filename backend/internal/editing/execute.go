@@ -8,9 +8,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
-const renderOutputName = "render-output.mp4"
+const (
+	renderOutputName     = "render-output.mp4"
+	ffmpegLogTailMax     = 64 << 10
+	ffmpegErrorTailBytes = 400
+)
 
 // Renderer executes a compiled semantic plan with native ffmpeg.
 // It materializes opaque sources, probes tracks, lowers the plan, and writes
@@ -94,20 +99,17 @@ func (r *Renderer) Render(ctx context.Context, plan *Plan, progress Progress) (R
 	}
 	cmd := exec.CommandContext(ctx, ffmpegBin, args...)
 	cmd.Dir = workDir
-	output, runErr := cmd.CombinedOutput()
-	if runErr != nil || (plan.SubtitleSRT != "" && SubtitleFontFailure(string(output))) {
-		detail := strings.TrimSpace(string(output))
-		if len(detail) > 400 {
-			detail = detail[len(detail)-400:]
-		}
-		return fail(fmt.Errorf("ffmpeg 渲染失败：%s", detail))
+	log := &ffmpegLogTail{max: ffmpegLogTailMax}
+	cmd.Stdout = log
+	cmd.Stderr = log
+	runErr := cmd.Run()
+	output := log.Text()
+	if runErr != nil || (plan.SubtitleSRT != "" && SubtitleFontFailure(output)) {
+		return fail(fmt.Errorf("ffmpeg 渲染失败：%s", ffmpegErrorDetail(output, runErr)))
 	}
-	stat, err := os.Stat(target)
+	outputFacts, size, err := verifyRenderedOutput(ctx, target, plan)
 	if err != nil {
-		return fail(fmt.Errorf("读取渲染产物失败"))
-	}
-	if stat.Size() == 0 {
-		return fail(fmt.Errorf("渲染产物为空"))
+		return fail(err)
 	}
 	width, height := plan.Output.Width, plan.Output.Height
 	if width <= 0 {
@@ -118,12 +120,104 @@ func (r *Renderer) Render(ctx context.Context, plan *Plan, progress Progress) (R
 	}
 	return RenderedOutput{
 		Path:        target,
-		Size:        stat.Size(),
+		Size:        size,
 		Width:       width,
 		Height:      height,
-		DurationMs:  plan.DurationMs,
+		DurationMs:  outputFacts.DurationMs,
 		SubtitleSRT: plan.SubtitleSRT,
 	}, cleanup, nil
+}
+
+func verifyRenderedOutput(ctx context.Context, path string, plan *Plan) (SourceFacts, int64, error) {
+	stat, err := os.Stat(path)
+	if err != nil {
+		return SourceFacts{}, 0, fmt.Errorf("读取渲染产物失败")
+	}
+	if stat.Size() == 0 {
+		return SourceFacts{}, 0, fmt.Errorf("渲染产物为空")
+	}
+	facts, err := Probe(ctx, path)
+	if err != nil {
+		return SourceFacts{}, 0, fmt.Errorf("渲染产物不是有效媒体")
+	}
+	if !facts.HasVideo {
+		return SourceFacts{}, 0, fmt.Errorf("渲染产物缺少视频轨")
+	}
+	if !facts.HasAudio {
+		return SourceFacts{}, 0, fmt.Errorf("渲染产物缺少音频轨")
+	}
+	if facts.DurationMs <= 0 {
+		return SourceFacts{}, 0, fmt.Errorf("渲染产物时长无效")
+	}
+	if plan != nil && !outputDurationWithinPlan(plan.DurationMs, facts.DurationMs) {
+		return SourceFacts{}, 0, fmt.Errorf("渲染产物时长无效")
+	}
+	return facts, stat.Size(), nil
+}
+
+func outputDurationWithinPlan(planMs, probedMs int64) bool {
+	if planMs <= 0 || probedMs <= 0 {
+		return false
+	}
+	delta := planMs - probedMs
+	if delta < 0 {
+		delta = -delta
+	}
+	return delta <= OutputDurationToleranceMs
+}
+
+func ffmpegErrorDetail(output string, runErr error) string {
+	detail := strings.TrimSpace(output)
+	if len(detail) > ffmpegErrorTailBytes {
+		detail = detail[len(detail)-ffmpegErrorTailBytes:]
+	}
+	if detail != "" {
+		return detail
+	}
+	if runErr != nil {
+		return runErr.Error()
+	}
+	return "unknown encoder error"
+}
+
+type ffmpegLogTail struct {
+	mu  sync.Mutex
+	max int
+	buf []byte
+}
+
+func (t *ffmpegLogTail) Write(p []byte) (int, error) {
+	if t == nil {
+		return len(p), nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.max <= 0 {
+		return len(p), nil
+	}
+	if len(p) >= t.max {
+		t.buf = append(t.buf[:0], p[len(p)-t.max:]...)
+		return len(p), nil
+	}
+	overflow := len(t.buf) + len(p) - t.max
+	if overflow > 0 {
+		if overflow >= len(t.buf) {
+			t.buf = t.buf[:0]
+		} else {
+			t.buf = t.buf[overflow:]
+		}
+	}
+	t.buf = append(t.buf, p...)
+	return len(p), nil
+}
+
+func (t *ffmpegLogTail) Text() string {
+	if t == nil {
+		return ""
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return string(t.buf)
 }
 
 func (r *Renderer) materialize(ctx context.Context, plan *Plan) (string, map[string]string, func(), error) {

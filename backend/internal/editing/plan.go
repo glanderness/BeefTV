@@ -13,25 +13,26 @@ import (
 )
 
 const (
-	PlanVersion         = 1
-	ProjectVersion      = 2
-	DefaultWidth        = 1920
-	DefaultHeight       = 1080
-	DefaultFPS          = 30
-	DefaultSampleRate   = 44100
-	MaxWidth            = 7680
-	MaxHeight           = 4320
-	MinFPS              = 1
-	MaxFPS              = 120
-	MinSampleRate       = 8000
-	MaxSampleRate       = 96000
-	MaxDurationMs       = 12 * 60 * 60 * 1000
-	DurationToleranceMs = 100
-	KindVideo           = "video"
-	KindImage           = "image"
-	KindAudio           = "audio"
-	KindSubtitle        = "subtitle"
-	KindGap             = "gap"
+	PlanVersion               = 1
+	ProjectVersion            = 2
+	DefaultWidth              = 1920
+	DefaultHeight             = 1080
+	DefaultFPS                = 30
+	DefaultSampleRate         = 44100
+	MaxWidth                  = 7680
+	MaxHeight                 = 4320
+	MinFPS                    = 1
+	MaxFPS                    = 120
+	MinSampleRate             = 8000
+	MaxSampleRate             = 96000
+	MaxDurationMs             = 12 * 60 * 60 * 1000
+	DurationToleranceMs       = 100
+	OutputDurationToleranceMs = 250
+	KindVideo                 = "video"
+	KindImage                 = "image"
+	KindAudio                 = "audio"
+	KindSubtitle              = "subtitle"
+	KindGap                   = "gap"
 )
 
 // Project is the TimelineProject v2 snapshot shared with the frontend.

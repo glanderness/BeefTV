@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -130,4 +132,88 @@ func TestRendererRejectsEmptyPlan(t *testing.T) {
 		}
 		t.Fatalf("err=%v want ErrNoMedia", err)
 	}
+}
+
+func TestRendererRejectsNonMediaFakeOutput(t *testing.T) {
+	src := requireTinyAVSource(t)
+	plan := shortVideoPlan()
+	renderer := &Renderer{FFmpeg: writeFakeFFmpeg(t, `out=""; for arg in "$@"; do out=$arg; done; printf 'not-a-media-file' > "$out"; exit 0`), Sources: fileSources{"src": src}}
+	_, cleanup, err := renderer.Render(context.Background(), plan, nil)
+	if cleanup != nil {
+		cleanup()
+	}
+	if err == nil || !strings.Contains(err.Error(), "有效媒体") {
+		t.Fatalf("err=%v, want non-media output rejected", err)
+	}
+}
+
+func TestRendererKeepsBoundedFFmpegLogOnFailure(t *testing.T) {
+	src := requireTinyAVSource(t)
+	plan := shortVideoPlan()
+	renderer := &Renderer{FFmpeg: writeFakeFFmpeg(t, `
+i=0
+while [ "$i" -lt 8000 ]; do
+  printf 'ffmpeg debug line %s padding-padding-padding-padding\n' "$i" >&2
+  i=$((i+1))
+done
+printf 'UNIQUE_TAIL_MARKER_boom\n' >&2
+exit 1
+`), Sources: fileSources{"src": src}}
+	_, cleanup, err := renderer.Render(context.Background(), plan, nil)
+	if cleanup != nil {
+		cleanup()
+	}
+	if err == nil {
+		t.Fatal("want ffmpeg failure")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "UNIQUE_TAIL_MARKER_boom") {
+		t.Fatalf("error missing log tail: %s", message)
+	}
+	if len(message) > 600 {
+		t.Fatalf("error retained unbounded stderr: %d bytes", len(message))
+	}
+}
+
+func TestOutputDurationWithinPlanAllowsEncoderSlack(t *testing.T) {
+	if !outputDurationWithinPlan(1000, 1080) || !outputDurationWithinPlan(1000, 920) {
+		t.Fatal("normal container slack rejected")
+	}
+	if outputDurationWithinPlan(1000, 2000) || outputDurationWithinPlan(1000, 0) || outputDurationWithinPlan(0, 1000) {
+		t.Fatal("large duration drift accepted")
+	}
+}
+
+func shortVideoPlan() *Plan {
+	return &Plan{
+		Output:     Output{Width: 320, Height: 180, FPS: 30, SampleRate: 44100},
+		DurationMs: 1000,
+		Segments:   []Segment{{Kind: KindVideo, ClipID: "v", SourceID: "src", DurationMs: 1000, Volume: 1}},
+	}
+}
+
+func writeFakeFFmpeg(t *testing.T, script string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ffmpeg")
+	body := "#!/bin/sh\n" + script + "\n"
+	if err := os.WriteFile(path, []byte(body), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func requireTinyAVSource(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg required")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe required")
+	}
+	src := filepath.Join(t.TempDir(), "source.mp4")
+	cmd := exec.Command("ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=320x180:r=30:d=1", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:v", "libx264", "-c:a", "aac", src)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("source fixture: %v %s", err, out)
+	}
+	return src
 }

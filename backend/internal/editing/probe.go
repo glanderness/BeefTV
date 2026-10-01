@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -49,12 +51,11 @@ func Probe(ctx context.Context, path string) (SourceFacts, error) {
 
 func parseProbeSeconds(raw string) (float64, error) {
 	raw = strings.TrimSpace(raw)
-	if raw == "" || raw == "N/A" {
+	if raw == "" || strings.EqualFold(raw, "N/A") {
 		return 0, fmt.Errorf("missing duration")
 	}
-	var seconds float64
-	_, err := fmt.Sscanf(raw, "%f", &seconds)
-	if err != nil || seconds <= 0 {
+	seconds, err := strconv.ParseFloat(raw, 64)
+	if err != nil || seconds <= 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
 		return 0, fmt.Errorf("invalid duration")
 	}
 	return seconds, nil
