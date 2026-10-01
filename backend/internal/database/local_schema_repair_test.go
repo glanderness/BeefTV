@@ -3,7 +3,6 @@ package database
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -88,23 +87,9 @@ func TestSchemaRepairRecoversAfterProcessKill(t *testing.T) {
 // the version supported by the binary under test.
 func brokenV8Fixture(t *testing.T, damage string) (*gorm.DB, string) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "historical-v8.db")
-	db, err := Open(Config{Driver: "sqlite", DSN: path})
-	if err != nil {
-		t.Fatal(err)
-	}
-	connection, _ := db.DB()
-	t.Cleanup(func() { _ = connection.Close() })
-	if err := db.AutoMigrate(&localSchemaMigration{}); err != nil {
-		t.Fatal(err)
-	}
-	if err := migrateLocalCoreSchema(db); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&localSchemaMigration{Version: 8, Name: "reconcile-product-agent-schema", AppliedAt: time.Unix(100, 0)}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&model.Task{ID: "retained", UserID: "owner", ResultJSON: `{"output":"keep"}`, Error: "historical"}).Error; err != nil {
+	db, path := openFileDB(t)
+	stampHistorical(t, db, "preview-v8")
+	if err := db.Exec("UPDATE tasks SET id = 'retained', result_json = ?, error = 'historical' WHERE id = 'task'", `{"output":"keep"}`).Error; err != nil {
 		t.Fatal(err)
 	}
 	if damage != "" {
@@ -160,7 +145,7 @@ func TestSchemaRepairV8MissingDiagnosticsAndRecovery(t *testing.T) {
 				t.Fatalf("data lost: %+v %v", retained, err)
 			}
 			var old localSchemaMigration
-			if err := reopened.First(&old, "version = 8").Error; err != nil || old.Name != "reconcile-product-agent-schema" || !old.AppliedAt.Equal(time.Unix(100, 0)) {
+			if err := reopened.First(&old, "version = 8").Error; err != nil || old.Name != "reconcile-product-agent-schema" || !old.AppliedAt.Equal(time.Unix(800, 0).UTC()) {
 				t.Fatalf("historical ledger rewritten: %+v %v", old, err)
 			}
 		})

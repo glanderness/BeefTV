@@ -51,10 +51,10 @@ func matchesSQLiteIndex(db *gorm.DB, expected sqliteIndexContract) (bool, error)
 }
 
 // v9 repairs v8 fixtures through an explicit transaction and a new ledger
-// entry. A failed unique-index repair preserves every row and the old ledger.
+// entry. Additive column/table repair never rebuilds existing tables. A failed
+// unique-index repair preserves every row and the old ledger.
 func repairProductAgentContracts(tx *gorm.DB) error {
 	// A missing primary key is not safely repaired by an additive migration.
-	// Refuse existing malformed identity tables before AutoMigrate can rebuild.
 	for table, columns := range map[string][]string{"tasks": {"id"}, "image_submissions": {"attempt_id"}, "agent_op_records": {"user_id", "op_id"}} {
 		if tx.Migrator().HasTable(table) {
 			if err := requireSQLitePrimaryKey(tx, table, columns); err != nil {

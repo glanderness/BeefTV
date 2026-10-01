@@ -2,7 +2,6 @@ package database
 
 import (
 	"errors"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,56 +54,45 @@ func TestLocalSchemaRecordsVersionAndIsIdempotent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var versions []int64
-	if err := db.Table("local_schema_migrations").Order("version").Pluck("version", &versions).Error; err != nil {
+	var rows []localSchemaMigration
+	if err := db.Order("version").Find(&rows).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(versions) != 8 || versions[len(versions)-1] != CurrentSchemaVersion {
-		t.Fatalf("recorded versions = %v, current = %d", versions, CurrentSchemaVersion)
+	want := canonicalLocalMigrations()
+	if len(rows) != len(want) || rows[len(rows)-1].Version != CurrentSchemaVersion {
+		t.Fatalf("recorded versions = %+v, current = %d", rows, CurrentSchemaVersion)
+	}
+	for i, row := range rows {
+		if row.Version != want[i].version || row.Name != want[i].name {
+			t.Fatalf("canonical identity mismatch at %d: %+v want v%d %s", i, row, want[i].version, want[i].name)
+		}
+	}
+	if rows[2].Name != "task-failure-diagnostics" {
+		t.Fatalf("fresh database used preview v3 identity: %s", rows[2].Name)
 	}
 }
 
 func TestTaskDiagnosticsMigrationPreservesExistingTasks(t *testing.T) {
-	db, err := Open(Config{Driver: "sqlite", DSN: "file:task-diagnostics-migration?mode=memory&cache=shared"})
-	if err != nil {
+	db := openHistorical(t, "product-v2")
+	if err := db.Exec("UPDATE tasks SET id = 'existing-task', error = '历史错误' WHERE id = 'task'").Error; err != nil {
 		t.Fatal(err)
 	}
-	if err = MigrateLocalSchema(db); err != nil {
-		t.Fatal(err)
-	}
-	if err = db.Create(&model.Task{ID: "existing-task", Error: "历史错误"}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err = db.Migrator().DropColumn(&model.Task{}, "FailureDiagnostics"); err != nil {
-		t.Fatal(err)
-	}
-	if err = db.Delete(&localSchemaMigration{}, "version >= ?", 3).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err = MigrateLocalSchema(db); err != nil {
+	if err := MigrateLocalSchema(db); err != nil {
 		t.Fatal(err)
 	}
 	var task model.Task
-	if err = db.First(&task, "id = ?", "existing-task").Error; err != nil {
+	if err := db.First(&task, "id = ?", "existing-task").Error; err != nil {
 		t.Fatal(err)
 	}
 	if task.Error != "历史错误" || task.FailureDiagnostics != nil {
 		t.Fatalf("task changed: %+v", task)
 	}
+	mustColumn(t, db, "tasks", "preview_marker", "keep")
 }
 
 func TestImageRecoveryMigrationUpgradesExistingWorkspace(t *testing.T) {
-	db, err := Open(Config{Driver: "sqlite", DSN: "file:image-schema-upgrade?mode=memory&cache=shared"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AutoMigrate(&localSchemaMigration{}, &model.Task{}); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&localSchemaMigration{Version: 2, Name: "retire-hosted-schema", AppliedAt: time.Now()}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&model.Task{ID: "existing-image", UserID: "user", Type: "canvas_image", Status: model.TaskStatusFailed, InputJSON: `{"original":true}`}).Error; err != nil {
+	db := openHistorical(t, "product-v2")
+	if err := db.Exec("UPDATE tasks SET id = 'existing-image', user_id = 'user', type = 'canvas_image', status = 'failed', input_json = '{\"original\":true}' WHERE id = 'task'").Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := MigrateLocalSchema(db); err != nil {
@@ -120,6 +108,7 @@ func TestImageRecoveryMigrationUpgradesExistingWorkspace(t *testing.T) {
 	if task.InputJSON != `{"original":true}` || task.Status != model.TaskStatusFailed {
 		t.Fatal("migration rewrote old task")
 	}
+	mustColumn(t, db, "tasks", "legacy_branch_payload", "branch-payload")
 }
 
 func TestHostedCleanupCreatesRecoverableSQLiteBackup(t *testing.T) {
@@ -369,43 +358,21 @@ func TestLocalSchemaUpgradeDropsHostedTablesAndKeepsCoreData(t *testing.T) {
 }
 
 func TestTaskDiagnosticsRepairWithOccupiedMigrationVersions(t *testing.T) {
-	for _, version := range []int64{3, 6} {
-		t.Run(fmt.Sprint(version), func(t *testing.T) {
-			db, err := Open(Config{Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "canvas.db")})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = MigrateLocalSchema(db); err != nil {
-				t.Fatal(err)
-			}
-			if err = db.Create(&model.Task{ID: "old", Error: "历史错误"}).Error; err != nil {
-				t.Fatal(err)
-			}
-			if err = db.Migrator().DropColumn(&model.Task{}, "FailureDiagnostics"); err != nil {
-				t.Fatal(err)
-			}
-			if err = db.Exec("UPDATE local_schema_migrations SET name = 'agent-operation-records' WHERE version = 3").Error; err != nil {
-				t.Fatal(err)
-			}
-			if err = db.Exec("DELETE FROM local_schema_migrations WHERE version > 3").Error; err != nil {
-				t.Fatal(err)
-			}
-			if version > 3 {
-				if err = db.Create(&localSchemaMigration{Version: version, Name: "preview-record"}).Error; err != nil {
-					t.Fatal(err)
-				}
-			}
-			if err = db.Exec("ALTER TABLE tasks ADD COLUMN preview_marker TEXT").Error; err != nil {
-				t.Fatal(err)
-			}
-			if err = db.Exec("UPDATE tasks SET preview_marker = 'keep' WHERE id = 'old'").Error; err != nil {
+	for _, history := range []string{"agent-v3", "agent-v6"} {
+		t.Run(history, func(t *testing.T) {
+			db := openHistorical(t, history)
+			if err := db.Exec("UPDATE tasks SET id = 'old', error = '历史错误' WHERE id = 'task'").Error; err != nil {
 				t.Fatal(err)
 			}
 			if RequireLocalSchema(db) == nil {
 				t.Fatal("missing column reported ready")
 			}
+			var before localSchemaMigration
+			if err := db.First(&before, "version = 3").Error; err != nil {
+				t.Fatal(err)
+			}
 			for i := 0; i < 2; i++ {
-				if err = MigrateLocalSchema(db); err != nil {
+				if err := MigrateLocalSchema(db); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -414,13 +381,14 @@ func TestTaskDiagnosticsRepairWithOccupiedMigrationVersions(t *testing.T) {
 				t.Fatalf("status=%+v error=%v", status, err)
 			}
 			var migration localSchemaMigration
-			if err = db.First(&migration, "version = 3").Error; err != nil || migration.Name != "agent-operation-records" {
+			if err = db.First(&migration, "version = 3").Error; err != nil || migration.Name != "agent-operation-records" || !migration.AppliedAt.Equal(before.AppliedAt) {
 				t.Fatalf("migration overwritten: %+v %v", migration, err)
 			}
 			var old struct{ Error, PreviewMarker string }
 			if err = db.Table("tasks").Where("id = 'old'").Scan(&old).Error; err != nil || old.Error != "历史错误" || old.PreviewMarker != "keep" {
 				t.Fatalf("old data lost: %+v %v", old, err)
 			}
+			mustColumn(t, db, "agent_op_records", "preview_receipt", "keep-receipt")
 			for _, kind := range []string{"canvas_text", "image_generate", "video_generate"} {
 				if err = db.Create(&model.Task{ID: kind, Type: kind, Prompt: "真实升级回归"}).Error; err != nil {
 					t.Fatal(err)

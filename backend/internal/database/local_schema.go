@@ -67,20 +67,23 @@ func MigrateLocalSchema(db *gorm.DB) error {
 	return migrateLocalSchema(db, nil)
 }
 
-func migrateLocalSchema(db *gorm.DB, beforeApply func(int64) error) error {
-	if err := db.AutoMigrate(&localSchemaMigration{}); err != nil {
-		return fmt.Errorf("初始化本地结构版本表: %w", err)
-	}
-	migrations := []localMigration{
+// canonicalLocalMigrations is the unified catalog. Fresh databases record these
+// names. Occupied historical version numbers are never re-applied, even when a
+// preview branch stored a different name for the same number.
+func canonicalLocalMigrations() []localMigration {
+	return []localMigration{
 		{version: 1, name: "local-core-schema", apply: migrateLocalCoreSchema},
 		{version: 2, name: "retire-hosted-schema", destructive: true, apply: migrateRetiredHostedSchema},
 		{version: 3, name: "task-failure-diagnostics", apply: ensureTaskFailureDiagnostics},
-		{version: 4, name: "task-client-operation", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.Task{}) }},
-		{version: 5, name: "task-client-operation-hash", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.Task{}) }},
-		{version: 6, name: "agent-operation-turn-attribution", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.AgentOpRecord{}) }},
+		{version: 4, name: "task-client-operation", apply: ensureTaskClientOperation},
+		{version: 5, name: "task-client-operation-hash", apply: ensureTaskClientOperationHash},
+		{version: 6, name: "agent-operation-turn-attribution", apply: ensureAgentOperationTurnAttribution},
 		{version: 8, name: "reconcile-product-agent-schema", apply: migrateProductAgentSchema},
 		{version: 9, name: "repair-product-agent-contracts", apply: repairProductAgentContracts},
 	}
+}
+
+func migrateLocalSchema(db *gorm.DB, beforeApply func(int64) error) error {
 	current, err := currentSchemaVersion(db)
 	if err != nil {
 		return err
@@ -88,7 +91,25 @@ func migrateLocalSchema(db *gorm.DB, beforeApply func(int64) error) error {
 	if current > CurrentSchemaVersion {
 		return fmt.Errorf("数据库版本 %d 高于当前程序支持的 %d，拒绝降级迁移", current, CurrentSchemaVersion)
 	}
-	for _, migration := range migrations {
+	if err := db.AutoMigrate(&localSchemaMigration{}); err != nil {
+		return fmt.Errorf("初始化本地结构版本表: %w", err)
+	}
+	frozen, err := listSchemaMigrations(db)
+	if err != nil {
+		return err
+	}
+	occupied := make(map[int64]localSchemaMigration, len(frozen))
+	for _, row := range frozen {
+		occupied[row.Version] = row
+	}
+	current, err = currentSchemaVersion(db)
+	if err != nil {
+		return err
+	}
+	for _, migration := range canonicalLocalMigrations() {
+		if _, exists := occupied[migration.version]; exists {
+			continue
+		}
 		if migration.version <= current {
 			continue
 		}
@@ -106,47 +127,44 @@ func migrateLocalSchema(db *gorm.DB, beforeApply func(int64) error) error {
 			if err := migration.apply(tx); err != nil {
 				return err
 			}
-			return tx.Create(&localSchemaMigration{Version: migration.version, Name: migration.name, AppliedAt: time.Now().UTC()}).Error
+			if err := tx.Create(&localSchemaMigration{Version: migration.version, Name: migration.name, AppliedAt: time.Now().UTC()}).Error; err != nil {
+				return err
+			}
+			return assertLedgerImmutable(tx, frozen)
 		}); err != nil {
 			return fmt.Errorf("执行本地数据库迁移 v%d %s: %w", migration.version, migration.name, err)
 		}
+		frozen, err = listSchemaMigrations(db)
+		if err != nil {
+			return err
+		}
 		current = migration.version
+	}
+	if err := assertLedgerImmutable(db, frozen); err != nil {
+		return err
 	}
 	return requireReconciledSchema(db)
 }
 
-// Experimental integration only: v3-v6 have conflicting historical meanings.
-// Reconcile additive contracts at a new version without rebuilding tasks or
-// rewriting ledger identities. The migration caller owns the transaction.
+// migrateProductAgentSchema adds the unified product/Agent contract without
+// rebuilding existing tables or rewriting ledger identities.
 func migrateProductAgentSchema(tx *gorm.DB) error {
-	if !tx.Migrator().HasColumn("tasks", "failure_diagnostics") {
-		if err := tx.Exec("ALTER TABLE tasks ADD COLUMN failure_diagnostics TEXT").Error; err != nil {
-			return err
-		}
-	}
-	if err := tx.AutoMigrate(&model.ImageSubmission{}, &model.AgentOpRecord{}); err != nil {
+	if err := ensureTaskFailureDiagnostics(tx); err != nil {
 		return err
 	}
-	for _, field := range []string{"ClientOperationID", "ClientOperationHash"} {
-		if !tx.Migrator().HasColumn(&model.Task{}, field) {
-			if err := tx.Migrator().AddColumn(&model.Task{}, field); err != nil {
-				return err
-			}
-		}
+	if err := ensureImageSubmissionsTable(tx); err != nil {
+		return err
 	}
-	if !tx.Migrator().HasIndex(&model.Task{}, "idx_tasks_user_client_op") {
-		if err := tx.Migrator().CreateIndex(&model.Task{}, "idx_tasks_user_client_op"); err != nil {
-			return err
-		}
+	if err := ensureAgentOpRecordsTable(tx); err != nil {
+		return err
 	}
-	return nil
-}
-
-func ensureTaskFailureDiagnostics(db *gorm.DB) error {
-	if db.Migrator().HasColumn(&model.Task{}, "FailureDiagnostics") {
-		return nil
+	if err := ensureTaskClientOperation(tx); err != nil {
+		return err
 	}
-	return db.Migrator().AddColumn(&model.Task{}, "FailureDiagnostics")
+	if err := ensureTaskClientOperationHash(tx); err != nil {
+		return err
+	}
+	return ensureTaskUserClientOpIndex(tx)
 }
 
 func migrateLocalCoreSchema(tx *gorm.DB) error {
@@ -174,11 +192,46 @@ func migrateRetiredHostedSchema(tx *gorm.DB) error {
 }
 
 func currentSchemaVersion(db *gorm.DB) (int64, error) {
+	if !hasSchemaLedger(db) {
+		return 0, nil
+	}
 	var version int64
 	if err := db.Model(&localSchemaMigration{}).Select("COALESCE(MAX(version), 0)").Scan(&version).Error; err != nil {
 		return 0, fmt.Errorf("读取本地结构版本: %w", err)
 	}
 	return version, nil
+}
+
+func hasSchemaLedger(db *gorm.DB) bool {
+	var count int
+	if err := db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type = ? AND name = ?", "table", "local_schema_migrations").Scan(&count).Error; err != nil {
+		return false
+	}
+	return count > 0
+}
+
+func listSchemaMigrations(db *gorm.DB) ([]localSchemaMigration, error) {
+	if !hasSchemaLedger(db) {
+		return nil, nil
+	}
+	var rows []localSchemaMigration
+	if err := db.Order("version").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("读取本地结构迁移记录: %w", err)
+	}
+	return rows, nil
+}
+
+func assertLedgerImmutable(db *gorm.DB, frozen []localSchemaMigration) error {
+	for _, old := range frozen {
+		var actual localSchemaMigration
+		if err := db.First(&actual, "version = ?", old.Version).Error; err != nil {
+			return fmt.Errorf("历史迁移身份丢失: v%d %s: %w", old.Version, old.Name, err)
+		}
+		if actual.Name != old.Name || !actual.AppliedAt.Equal(old.AppliedAt) {
+			return fmt.Errorf("历史迁移身份被改写: v%d 原 %s %s 现 %s %s", old.Version, old.Name, old.AppliedAt.UTC().Format(time.RFC3339Nano), actual.Name, actual.AppliedAt.UTC().Format(time.RFC3339Nano))
+		}
+	}
+	return nil
 }
 
 func backupBeforeDestructiveMigration(db *gorm.DB, version int64) error {
@@ -328,15 +381,23 @@ func requireReconciledSchema(db *gorm.DB) error {
 	if err := requireSQLitePrimaryKey(db, "tasks", []string{"id"}); err != nil {
 		return err
 	}
-	if !db.Migrator().HasTable(&model.ImageSubmission{}) || !db.Migrator().HasTable(&model.AgentOpRecord{}) {
+	if !db.Migrator().HasTable("image_submissions") || !db.Migrator().HasTable("agent_op_records") {
 		return fmt.Errorf("本地图片恢复或 Agent 操作表缺失，请从备份恢复或使用修复迁移")
 	}
 	for _, column := range []string{"failure_diagnostics", "client_operation_id", "client_operation_hash"} {
-		if !db.Migrator().HasColumn("tasks", column) {
+		has, err := sqliteHasColumn(db, "tasks", column)
+		if err != nil {
+			return err
+		}
+		if !has {
 			return fmt.Errorf("本地任务结构缺失列 %s", column)
 		}
 	}
-	if !db.Migrator().HasColumn(&model.AgentOpRecord{}, "TurnID") || !db.Migrator().HasIndex(&model.AgentOpRecord{}, "idx_agent_op_records_turn_id") || !db.Migrator().HasIndex(&model.Task{}, "idx_tasks_user_client_op") {
+	hasTurnID, err := sqliteHasColumn(db, "agent_op_records", "turn_id")
+	if err != nil {
+		return err
+	}
+	if !hasTurnID {
 		return fmt.Errorf("本地 Agent 幂等或回合归属结构缺失")
 	}
 	for _, value := range []any{&model.ImageSubmission{}, &model.AgentOpRecord{}} {
@@ -345,7 +406,11 @@ func requireReconciledSchema(db *gorm.DB) error {
 			return err
 		}
 		for _, column := range stmt.Schema.DBNames {
-			if !db.Migrator().HasColumn(stmt.Schema.Table, column) {
+			has, err := sqliteHasColumn(db, stmt.Schema.Table, column)
+			if err != nil {
+				return err
+			}
+			if !has {
 				return fmt.Errorf("本地数据库表 %s 缺失列 %s", stmt.Schema.Table, column)
 			}
 		}
