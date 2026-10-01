@@ -4,10 +4,8 @@ import (
 	"encoding/binary"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/playback"
@@ -125,26 +123,15 @@ func TestBackfillRejudgesLegacyNoneVideos(t *testing.T) {
 		t.Fatalf("H.264 存量 none 行被错误改判为 %q", h264.PlaybackStatus)
 	}
 
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Log("无 ffmpeg，跳过 MPEG-4 终态断言")
-		return
-	}
 	var mp4v model.Resource
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		if err := db.First(&mp4v, "id = ?", "legacy-mpeg4").Error; err != nil {
-			t.Fatal(err)
-		}
-		if mp4v.PlaybackStatus == model.PlaybackStatusFailed || mp4v.PlaybackStatus == model.PlaybackStatusReady {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("MPEG-4 存量行未达终态，停在 %q（error=%q）", mp4v.PlaybackStatus, mp4v.PlaybackError)
-		}
-		time.Sleep(100 * time.Millisecond)
+	if err := db.First(&mp4v, "id = ?", "legacy-mpeg4").Error; err != nil {
+		t.Fatal(err)
 	}
-	if mp4v.PlaybackStatus != model.PlaybackStatusFailed {
-		t.Fatalf("fake mp4v 应转码失败落 failed，实际 %q", mp4v.PlaybackStatus)
+	if mp4v.PlaybackStatus == model.PlaybackStatusProcessing {
+		t.Fatal("runner 拒绝后 claim 仍停在 processing，重启无法恢复")
+	}
+	if mp4v.PlaybackStatus == model.PlaybackStatusReady {
+		t.Fatal("无 runtime worker 时不应写出 READY")
 	}
 }
 

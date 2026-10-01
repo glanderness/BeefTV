@@ -1,6 +1,11 @@
 package playback
 
-import "infinite-canvas/backend/internal/model"
+import (
+	"context"
+	"time"
+
+	"infinite-canvas/backend/internal/model"
+)
 
 const (
 	DirName         = "playback"
@@ -12,30 +17,40 @@ const (
 	PersistAttempts = 3
 	probeMaxMoov    = 128 << 20
 	backfillBatch   = 20
+	backfillMaxScan = 10_000
 )
 
 // Store is the durable playback-status port. Adapters wrap the existing
 // resource repository; this package never opens a second ledger.
+// Outcome writes are field-level and require the claimed processing row
+// to still be READY-owned, so a concurrent delete cannot be resurrected.
 type Store interface {
-	ResourceForUser(userID string, id string) (*model.Resource, error)
-	SaveResource(*model.Resource) error
+	ResourceForUser(userID, id string) (*model.Resource, error)
 	ClaimPlaybackTranscode(id string) (bool, error)
+	ReleasePlaybackTranscodeClaim(id string) error
+	FinishPlaybackTranscode(id, status, objectKey, errText string) (bool, error)
+	MarkPlaybackNone(id string) (bool, error)
 	ResetStuckPlaybackTranscodes() error
-	PlaybackPendingVideos(limit int) ([]model.Resource, error)
-	PlaybackNoneVideos(limit int) ([]model.Resource, error)
+	PlaybackPendingVideos(afterCreatedAt time.Time, afterID string, limit int) ([]model.Resource, error)
+	PlaybackNoneVideos(afterCreatedAt time.Time, afterID string, limit int) ([]model.Resource, error)
 }
 
-// Runner starts background transcode on the shared worker lifecycle.
-// Go reports whether the work was accepted by that owner.
+// Runner starts background transcode on the runtime-owned worker.
+// Go reports whether that owner accepted the work. A false result means
+// the caller must release the claim; there is no fallback goroutine.
+// fn receives the worker cancellation context.
 type Runner interface {
-	Go(func()) bool
+	Go(fn func(context.Context)) bool
 }
 
 // Deps constructs the playback domain. DataDir is the workspace root.
+// Context is the runtime-owned cancellation scope for Backfill and for
+// refusing new claims during Stop. Lead injects worker.Context().
 type Deps struct {
 	DataDir   string
 	Store     Store
 	Runner    Runner
+	Context   context.Context
 	LookPath  func(file string) (string, error)
-	Transcode func(src string, dst string) error
+	Transcode func(ctx context.Context, src, dst string) error
 }

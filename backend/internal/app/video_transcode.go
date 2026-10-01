@@ -42,5 +42,5 @@ func (s *Service) OpenResourcePlaybackRange(userID string, resourceID string) (*
 // BackfillPlaybackTranscodes 转给 playback 域。bootstrap 仍调用本方法；
 // Lead 接线后应改为直接调用 runtime 拥有的 playback.Service.Backfill。
 func (s *Service) BackfillPlaybackTranscodes() {
-	s.playbackRuntime().Backfill()
+	logPlaybackBackfill(s.playbackRuntime().Backfill(nil))
 }

@@ -92,4 +92,16 @@ func (r *Worker) Stop(ctx context.Context) error {
 
 func (r *Worker) IsDraining() bool { return r.draining.Load() }
 
+// Context is the runtime-owned cancellation scope. It is nil when the
+// worker has not started or has fully stopped. Callers must not Start
+// the worker to obtain it.
+func (r *Worker) Context() context.Context {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.started || r.ctx == nil {
+		return nil
+	}
+	return r.ctx
+}
+
 func (r *Worker) ActiveTaskCount() int64 { return r.activeTasks.Load() }

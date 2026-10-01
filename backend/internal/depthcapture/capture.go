@@ -15,26 +15,32 @@ func (s *Service) Process(ctx context.Context, task *model.Task) error {
 	if task == nil {
 		return ErrBadInput
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !Supported(s.goos, s.goarch) {
-		return s.fail(task, stageUnavailable, ErrUnsupportedOS.Error())
+		return s.failUnlessCanceled(ctx, task, stageUnavailable, ErrUnsupportedOS.Error())
 	}
 	input, err := ParseInput(task.InputJSON)
 	if err != nil {
-		return s.fail(task, stageFailed, err.Error())
+		return s.failUnlessCanceled(ctx, task, stageFailed, err.Error())
 	}
 	if s.media == nil {
-		return s.fail(task, stageFailed, ErrMissingVideo.Error())
+		return s.failUnlessCanceled(ctx, task, stageFailed, ErrMissingVideo.Error())
 	}
 	resource, reader, err := s.media.Open(task.UserID, input.ResourceID)
 	if err != nil || resource == nil || reader == nil {
-		return s.fail(task, stageFailed, ErrMissingVideo.Error())
+		return s.failUnlessCanceled(ctx, task, stageFailed, ErrMissingVideo.Error())
 	}
 	defer reader.Close()
 	if !strings.HasPrefix(resource.MimeType, "video/") {
-		return s.fail(task, stageFailed, ErrNotVideo.Error())
+		return s.failUnlessCanceled(ctx, task, stageFailed, ErrNotVideo.Error())
 	}
 	if OverDuration(resource.DurationMs) {
-		return s.fail(task, stageTooLong, ErrTooLong.Error())
+		return s.failUnlessCanceled(ctx, task, stageTooLong, ErrTooLong.Error())
 	}
 	started := time.Now()
 	platform := PlatformID(s.goos)
@@ -51,36 +57,42 @@ func (s *Service) Process(ctx context.Context, task *model.Task) error {
 		return s.cudaProbe(probeCtx, cudaPython, cudaToolDir, cudaModelRuntime)
 	})
 	if err != nil {
-		return s.fail(task, stageComponent, err.Error())
+		return s.failUnlessCanceled(ctx, task, stageComponent, err.Error())
 	}
 	python, toolDir, modelRuntime := cudaPython, cudaToolDir, cudaModelRuntime
 	if choice.Device != "cuda" {
 		python, toolDir, modelRuntime, err = s.resolveRuntime(ctx, task, platform, choice.Variant)
 	}
 	if err != nil {
-		return s.fail(task, stageComponent, err.Error())
+		return s.failUnlessCanceled(ctx, task, stageComponent, err.Error())
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := s.progress(task, "准备视频", 8); err != nil {
 		return err
 	}
 	workDir, err := s.mkdirTemp("", "beeftv-depth-*")
 	if err != nil {
-		return s.fail(task, stageFailed, ErrTempDir.Error())
+		return s.failUnlessCanceled(ctx, task, stageFailed, ErrTempDir.Error())
 	}
 	defer os.RemoveAll(workDir)
 	inputPath := filepath.Join(workDir, "input.mp4")
 	inputFile, err := os.OpenFile(inputPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		return s.fail(task, stageFailed, ErrPrepareInput.Error())
+		return s.failUnlessCanceled(ctx, task, stageFailed, ErrPrepareInput.Error())
 	}
 	_, copyErr := io.Copy(inputFile, reader)
 	closeErr := inputFile.Close()
 	if copyErr != nil || closeErr != nil {
-		return s.fail(task, stageFailed, ErrReadInput.Error())
+		return s.failUnlessCanceled(ctx, task, stageFailed, ErrReadInput.Error())
 	}
 	outputDir := filepath.Join(workDir, "output")
 	if err := os.MkdirAll(outputDir, 0o700); err != nil {
-		return s.fail(task, stageFailed, ErrPrepareOutput.Error())
+		return s.failUnlessCanceled(ctx, task, stageFailed, ErrPrepareOutput.Error())
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := s.progress(task, "加载深度模型", 15); err != nil {
 		return err
@@ -105,13 +117,13 @@ func (s *Service) Process(ctx context.Context, task *model.Task) error {
 		}
 		python, toolDir, modelRuntime, err = s.resolveRuntime(ctx, task, platform, "cpu")
 		if err != nil {
-			return s.fail(task, stageComponent, err.Error())
+			return s.failUnlessCanceled(ctx, task, stageComponent, err.Error())
 		}
 		if err := os.RemoveAll(outputDir); err != nil {
-			return s.fail(task, stageFailed, ErrCleanCUDA.Error())
+			return s.failUnlessCanceled(ctx, task, stageFailed, ErrCleanCUDA.Error())
 		}
 		if err := os.MkdirAll(outputDir, 0o700); err != nil {
-			return s.fail(task, stageFailed, ErrReprepareOut.Error())
+			return s.failUnlessCanceled(ctx, task, stageFailed, ErrReprepareOut.Error())
 		}
 		runErr = s.run(ctx, python, toolDir, modelRuntime, "cpu", inputPath, outputDir, func(line string) {
 			switch {
@@ -128,25 +140,31 @@ func (s *Service) Process(ctx context.Context, task *model.Task) error {
 		}
 		return s.fail(task, stageFailed, s.truncate(runErr.Error(), 800))
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	matches, _ := filepath.Glob(filepath.Join(outputDir, "*_depth_preview.mp4"))
 	if len(matches) != 1 {
-		return s.fail(task, stageOutput, ErrNoPreview.Error())
+		return s.failUnlessCanceled(ctx, task, stageOutput, ErrNoPreview.Error())
 	}
 	if err := s.progress(task, "保存到素材库", 92); err != nil {
 		return err
 	}
 	file, err := os.Open(matches[0])
 	if err != nil {
-		return s.fail(task, stageOutput, ErrOpenPreview.Error())
+		return s.failUnlessCanceled(ctx, task, stageOutput, ErrOpenPreview.Error())
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil || info.Size() <= 0 {
-		return s.fail(task, stageOutput, ErrEmptyPreview.Error())
+		return s.failUnlessCanceled(ctx, task, stageOutput, ErrEmptyPreview.Error())
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	stored, err := s.media.SaveVideo(task.UserID, OutputName, info.Size(), OutputWidth, OutputHeight, resource.DurationMs, file, "depth:"+task.ID)
 	if err != nil {
-		return s.fail(task, stageSave, err.Error())
+		return s.failUnlessCanceled(ctx, task, stageSave, err.Error())
 	}
 	result := Result{
 		ResourceID:     stored.ID,
@@ -159,6 +177,9 @@ func (s *Service) Process(ctx context.Context, task *model.Task) error {
 		FallbackReason: choice.FallbackReason,
 		RuntimeVersion: "v1",
 		ProcessingMs:   time.Since(started).Milliseconds(),
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if s.tasks == nil {
 		return nil

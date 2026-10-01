@@ -4,6 +4,7 @@
 // transcode, runs ffmpeg, persists status, serves the copy for range reads,
 // and backfills leftover or legacy rows. It must not import internal/app.
 // File bytes live under dataDir/playback; original media stays in the
-// resource store. Background work uses the injected Runner (the shared
-// platform.Worker) so transcode is not an unowned goroutine.
+// resource store. Background work uses the injected runtime-owned Runner;
+// a refused Go releases the claim so the next start can recover. Transcode
+// and Backfill observe a cancellation context and do not write READY after Stop.
 package playback

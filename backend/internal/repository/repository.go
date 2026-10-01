@@ -802,38 +802,40 @@ func (r *Repository) Resources(userID string, limit int) ([]model.Resource, erro
 }
 
 // PlaybackPendingVideos 返回本地存储、就绪但尚无播放副本判定结果的视频
-// （H.264 需标记 none、H.265 需触发转码）。
-func (r *Repository) PlaybackPendingVideos(limit int) ([]model.Resource, error) {
-	var resources []model.Resource
-	if limit <= 0 || limit > 100 {
-		limit = 20
-	}
-	err := r.db.Where("kind = ? AND status = ? AND provider = ? AND (playback_status = ? OR playback_status IS NULL)",
-		"video", model.ResourceStatusReady, "local", "").Order("created_at asc").Limit(limit).Find(&resources).Error
-	return resources, err
+// （H.264 需标记 none、H.265 需触发转码）。afterCreatedAt/afterID 是 (created_at, id) 游标。
+func (r *Repository) PlaybackPendingVideos(afterCreatedAt time.Time, afterID string, limit int) ([]model.Resource, error) {
+	return r.listPlaybackVideos(afterCreatedAt, afterID, limit, "kind = ? AND status = ? AND provider = ? AND (playback_status = ? OR playback_status IS NULL)",
+		"video", model.ResourceStatusReady, "local", "")
 }
 
 // PlaybackNoneVideos 返回存量本地视频中旧逻辑遗留、停在 none 的行
 // （规则变更前 H.265/MPEG-4 Part 2 曾被误判为浏览器可播并落 none）。
 // 服务启动回填时对它们重新按 codec 判定，让判定规则变更覆盖规则变更前已导入的文件。
-func (r *Repository) PlaybackNoneVideos(limit int) ([]model.Resource, error) {
+func (r *Repository) PlaybackNoneVideos(afterCreatedAt time.Time, afterID string, limit int) ([]model.Resource, error) {
+	return r.listPlaybackVideos(afterCreatedAt, afterID, limit, "kind = ? AND status = ? AND provider = ? AND playback_status = ?",
+		"video", model.ResourceStatusReady, "local", model.PlaybackStatusNone)
+}
+
+func (r *Repository) listPlaybackVideos(afterCreatedAt time.Time, afterID string, limit int, cond string, args ...any) ([]model.Resource, error) {
 	var resources []model.Resource
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	err := r.db.Where("kind = ? AND status = ? AND provider = ? AND playback_status = ?",
-		"video", model.ResourceStatusReady, "local", model.PlaybackStatusNone).
-		Order("created_at asc").Limit(limit).Find(&resources).Error
+	query := r.db.Where(cond, args...)
+	if !afterCreatedAt.IsZero() || afterID != "" {
+		query = query.Where("(created_at > ?) OR (created_at = ? AND id > ?)", afterCreatedAt, afterCreatedAt, afterID)
+	}
+	err := query.Order("created_at asc, id asc").Limit(limit).Find(&resources).Error
 	return resources, err
 }
 
-// ClaimPlaybackTranscode 原子地把待判定（空/none）视频置为 processing，返回是否抢占成功。
+// ClaimPlaybackTranscode 原子地把仍为 READY 且待判定（空/none）的视频置为 processing。
 // 多实例或多 goroutine 并发转同一资源时仅一个能成功置位，其余返回 false 直接放弃，
-// 避免重复转码同一份文件。
+// 避免重复转码同一份文件，也不抢占已删除/非就绪行。
 func (r *Repository) ClaimPlaybackTranscode(id string) (bool, error) {
 	res := r.db.Model(&model.Resource{}).
-		Where("id = ? AND (playback_status = ? OR playback_status IS NULL OR playback_status = ?)",
-			id, "", model.PlaybackStatusNone).
+		Where("id = ? AND status = ? AND (playback_status = ? OR playback_status IS NULL OR playback_status = ?)",
+			id, model.ResourceStatusReady, "", model.PlaybackStatusNone).
 		Updates(map[string]any{"playback_status": model.PlaybackStatusProcessing, "playback_error": ""})
 	if res.Error != nil {
 		return false, res.Error
@@ -846,7 +848,44 @@ func (r *Repository) ClaimPlaybackTranscode(id string) (bool, error) {
 func (r *Repository) ResetStuckPlaybackTranscodes() error {
 	return r.db.Model(&model.Resource{}).
 		Where("playback_status = ?", model.PlaybackStatusProcessing).
-		Updates(map[string]any{"playback_status": "", "playback_error": ""}).Error
+		Updates(map[string]any{"playback_status": "", "playback_error": "", "updated_at": time.Now()}).Error
+}
+
+// ReleasePlaybackTranscodeClaim 把仍处于 processing 且资源仍 READY 的 claim 放回待判定，
+// 供 Runner 拒绝或 Stop 取消后由下次启动回填恢复。
+func (r *Repository) ReleasePlaybackTranscodeClaim(id string) error {
+	return r.db.Model(&model.Resource{}).
+		Where("id = ? AND playback_status = ? AND status = ?", id, model.PlaybackStatusProcessing, model.ResourceStatusReady).
+		Updates(map[string]any{"playback_status": "", "playback_error": "", "updated_at": time.Now()}).Error
+}
+
+// FinishPlaybackTranscode 仅在 claim 仍为 processing 且资源仍为 READY 时写入终态，
+// 避免整行 Save 把并发删除或其他更新复活/覆盖。
+func (r *Repository) FinishPlaybackTranscode(id, status, objectKey, errText string) (bool, error) {
+	res := r.db.Model(&model.Resource{}).
+		Where("id = ? AND playback_status = ? AND status = ?", id, model.PlaybackStatusProcessing, model.ResourceStatusReady).
+		Updates(map[string]any{
+			"playback_status":     status,
+			"playback_object_key": objectKey,
+			"playback_error":      errText,
+			"updated_at":          time.Now(),
+		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// MarkPlaybackNone 只把 READY 且尚未进入 processing/ready/failed 的行标为 none。
+func (r *Repository) MarkPlaybackNone(id string) (bool, error) {
+	res := r.db.Model(&model.Resource{}).
+		Where("id = ? AND status = ? AND (playback_status = ? OR playback_status IS NULL OR playback_status = ?)",
+			id, model.ResourceStatusReady, "", model.PlaybackStatusNone).
+		Updates(map[string]any{"playback_status": model.PlaybackStatusNone, "playback_error": "", "updated_at": time.Now()})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
 }
 
 func (r *Repository) ResourceCleanupCandidates(incompleteBefore time.Time, readyBefore time.Time, limit int) ([]model.Resource, error) {

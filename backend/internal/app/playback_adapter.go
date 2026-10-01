@@ -1,6 +1,10 @@
 package app
 
 import (
+	"context"
+	"log"
+	"time"
+
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/playback"
 	"infinite-canvas/backend/internal/repository"
@@ -12,10 +16,12 @@ func (s *Service) playbackRuntime() *playback.Service {
 	if s == nil {
 		return playback.New(playback.Deps{})
 	}
+	runner := playbackRunner{svc: s}
 	return playback.New(playback.Deps{
 		DataDir: s.dataDir,
 		Store:   playbackStore{repo: s.repo},
-		Runner:  playbackRunner{svc: s},
+		Runner:  runner,
+		Context: runner.Context(),
 	})
 }
 
@@ -23,18 +29,11 @@ type playbackStore struct {
 	repo *repository.Repository
 }
 
-func (s playbackStore) ResourceForUser(userID string, id string) (*model.Resource, error) {
+func (s playbackStore) ResourceForUser(userID, id string) (*model.Resource, error) {
 	if s.repo == nil {
 		return nil, nil
 	}
 	return s.repo.ResourceForUser(userID, id)
-}
-
-func (s playbackStore) SaveResource(resource *model.Resource) error {
-	if s.repo == nil {
-		return nil
-	}
-	return s.repo.SaveResource(resource)
 }
 
 func (s playbackStore) ClaimPlaybackTranscode(id string) (bool, error) {
@@ -44,6 +43,27 @@ func (s playbackStore) ClaimPlaybackTranscode(id string) (bool, error) {
 	return s.repo.ClaimPlaybackTranscode(id)
 }
 
+func (s playbackStore) ReleasePlaybackTranscodeClaim(id string) error {
+	if s.repo == nil {
+		return nil
+	}
+	return s.repo.ReleasePlaybackTranscodeClaim(id)
+}
+
+func (s playbackStore) FinishPlaybackTranscode(id, status, objectKey, errText string) (bool, error) {
+	if s.repo == nil {
+		return false, nil
+	}
+	return s.repo.FinishPlaybackTranscode(id, status, objectKey, errText)
+}
+
+func (s playbackStore) MarkPlaybackNone(id string) (bool, error) {
+	if s.repo == nil {
+		return false, nil
+	}
+	return s.repo.MarkPlaybackNone(id)
+}
+
 func (s playbackStore) ResetStuckPlaybackTranscodes() error {
 	if s.repo == nil {
 		return nil
@@ -51,31 +71,50 @@ func (s playbackStore) ResetStuckPlaybackTranscodes() error {
 	return s.repo.ResetStuckPlaybackTranscodes()
 }
 
-func (s playbackStore) PlaybackPendingVideos(limit int) ([]model.Resource, error) {
+func (s playbackStore) PlaybackPendingVideos(afterCreatedAt time.Time, afterID string, limit int) ([]model.Resource, error) {
 	if s.repo == nil {
 		return nil, nil
 	}
-	return s.repo.PlaybackPendingVideos(limit)
+	return s.repo.PlaybackPendingVideos(afterCreatedAt, afterID, limit)
 }
 
-func (s playbackStore) PlaybackNoneVideos(limit int) ([]model.Resource, error) {
+func (s playbackStore) PlaybackNoneVideos(afterCreatedAt time.Time, afterID string, limit int) ([]model.Resource, error) {
 	if s.repo == nil {
 		return nil, nil
 	}
-	return s.repo.PlaybackNoneVideos(limit)
+	return s.repo.PlaybackNoneVideos(afterCreatedAt, afterID, limit)
 }
 
 type playbackRunner struct {
 	svc *Service
 }
 
-func (r playbackRunner) Go(fn func()) bool {
+func (r playbackRunner) Go(fn func(context.Context)) bool {
 	if r.svc == nil || fn == nil {
 		return false
 	}
-	if r.svc.runWorkerTask(fn) {
-		return true
+	ctx := r.Context()
+	if ctx == nil {
+		return false
 	}
-	r.svc.backgroundWorkers().Start()
-	return r.svc.runWorkerTask(fn)
+	return r.svc.runWorkerTask(func() { fn(ctx) })
+}
+
+func (r playbackRunner) Context() context.Context {
+	if r.svc == nil {
+		return nil
+	}
+	r.svc.workerRuntimeMu.Lock()
+	w := r.svc.workers
+	r.svc.workerRuntimeMu.Unlock()
+	if w == nil {
+		return nil
+	}
+	return w.Context()
+}
+
+func logPlaybackBackfill(err error) {
+	if err != nil {
+		log.Printf("playback backfill: %v", err)
+	}
 }

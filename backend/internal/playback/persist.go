@@ -6,31 +6,61 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
-func persistResource(store Store, resource *model.Resource, context string) error {
-	if store == nil || resource == nil {
-		return nil
-	}
+func withPersistRetry(op func() error) error {
 	var err error
 	for attempt := 1; attempt <= PersistAttempts; attempt++ {
-		err = store.SaveResource(resource)
+		err = op()
 		if err == nil {
 			return nil
 		}
 	}
-	log.Printf("playback transcode persist failed: resource=%s context=%s attempts=%d error=%v", resource.ID, context, PersistAttempts, err)
 	return err
 }
 
-func markNone(store Store, resource *model.Resource) {
-	if resource == nil || store == nil {
+func finishPlayback(store Store, id, status, objectKey, errText, context string) (bool, error) {
+	if store == nil || id == "" {
+		return false, nil
+	}
+	var accepted bool
+	err := withPersistRetry(func() error {
+		ok, opErr := store.FinishPlaybackTranscode(id, status, objectKey, errText)
+		if opErr != nil {
+			return opErr
+		}
+		accepted = ok
+		return nil
+	})
+	if err != nil {
+		log.Printf("playback transcode persist failed: resource=%s context=%s attempts=%d error=%v", id, context, PersistAttempts, err)
+		return false, err
+	}
+	return accepted, nil
+}
+
+func markNone(store Store, id, previous string) {
+	if store == nil || id == "" {
 		return
 	}
-	if resource.PlaybackStatus == model.PlaybackStatusNone {
+	if previous == model.PlaybackStatusNone {
 		return
 	}
-	previous := resource.PlaybackStatus
-	resource.PlaybackStatus = model.PlaybackStatusNone
-	if err := persistResource(store, resource, "mark_none"); err != nil {
-		resource.PlaybackStatus = previous
+	err := withPersistRetry(func() error {
+		_, opErr := store.MarkPlaybackNone(id)
+		return opErr
+	})
+	if err != nil {
+		log.Printf("playback mark none failed: resource=%s error=%v", id, err)
+	}
+}
+
+func releaseClaim(store Store, id string) {
+	if store == nil || id == "" {
+		return
+	}
+	err := withPersistRetry(func() error {
+		return store.ReleasePlaybackTranscodeClaim(id)
+	})
+	if err != nil {
+		log.Printf("playback claim release failed: resource=%s error=%v", id, err)
 	}
 }

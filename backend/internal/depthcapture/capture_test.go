@@ -352,3 +352,76 @@ func TestProcessCancelDoesNotRetryCUDA(t *testing.T) {
 		t.Fatalf("canceled CUDA retried, runs=%d", runs)
 	}
 }
+
+func TestProcessCancelAfterOutputSkipsComplete(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	tasks := &fakeTasks{}
+	media := &fakeMedia{resource: testVideo(), body: []byte("mp4")}
+	svc := New(Deps{
+		GOOS: "darwin", GOARCH: "arm64",
+		Media:     media,
+		Tasks:     tasks,
+		Installer: fakeInstaller{},
+		Stat:      func(string) error { return nil },
+		Getenv: func(key string) string {
+			switch key {
+			case pythonEnv, toolDirEnv, runtimeEnv:
+				return "override"
+			default:
+				return ""
+			}
+		},
+		Run: func(runCtx context.Context, python, toolDir, modelRuntime, device, inputPath, outputDir string, onLine func(string)) error {
+			if err := os.WriteFile(filepath.Join(outputDir, "clip_depth_preview.mp4"), []byte("preview"), 0o600); err != nil {
+				return err
+			}
+			cancel()
+			return nil
+		},
+	})
+	err := svc.Process(ctx, &model.Task{ID: "t1", UserID: "user-1", InputJSON: `{"resourceId":"res-1"}`})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	if tasks.result != nil {
+		t.Fatal("canceled process completed the task")
+	}
+	if tasks.failStage != "" {
+		t.Fatalf("canceled process failed the task: %s", tasks.failStage)
+	}
+	if media.saved != nil {
+		t.Fatal("canceled process saved a new video")
+	}
+}
+
+func TestProcessCancelDuringDeviceProbeDoesNotFailTask(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	tasks := &fakeTasks{}
+	svc := New(Deps{
+		GOOS: "windows", GOARCH: "amd64",
+		Media:     &fakeMedia{resource: testVideo(), body: []byte("mp4")},
+		Tasks:     tasks,
+		Installer: fakeInstaller{},
+		NVIDIA:    func(context.Context) bool { return true },
+		ProbeCUDA: func(context.Context, string, string, string) error {
+			cancel()
+			return context.Canceled
+		},
+		Stat: func(string) error { return nil },
+		Getenv: func(key string) string {
+			switch key {
+			case pythonEnv, toolDirEnv, runtimeEnv:
+				return "override"
+			default:
+				return ""
+			}
+		},
+	})
+	err := svc.Process(ctx, &model.Task{ID: "t1", UserID: "user-1", InputJSON: `{"resourceId":"res-1"}`})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	if tasks.failStage != "" {
+		t.Fatalf("canceled probe wrote fail stage %s", tasks.failStage)
+	}
+}

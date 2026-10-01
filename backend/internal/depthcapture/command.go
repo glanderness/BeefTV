@@ -23,6 +23,11 @@ func hasNVIDIACandidate(ctx context.Context, goos string) bool {
 }
 
 func probeCUDA(ctx context.Context, python, toolDir, modelRuntime, goos string, configure func(*exec.Cmd)) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 	workDir, err := os.MkdirTemp("", "beeftv-depth-cuda-probe-*")
 	if err != nil {
 		return err
@@ -51,6 +56,11 @@ func probeCUDA(ctx context.Context, python, toolDir, modelRuntime, goos string, 
 }
 
 func runCommand(ctx context.Context, python, toolDir, modelRuntime, device, inputPath, outputDir, goos string, onLine func(string), configure func(*exec.Cmd)) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 	command := exec.CommandContext(ctx, python, "-m", "depth_capture", inputPath,
 		"--output-dir", outputDir, "--runtime-dir", modelRuntime, "--device", device,
 		"--input-size", "280", "--max-resolution", "960", "--output-resolution", "1920x1080",

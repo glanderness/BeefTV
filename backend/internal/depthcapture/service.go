@@ -117,3 +117,10 @@ func (s *Service) fail(task *model.Task, stage, message string) error {
 	}
 	return s.tasks.Fail(task, stage, message)
 }
+
+func (s *Service) failUnlessCanceled(ctx context.Context, task *model.Task, stage, message string) error {
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return s.fail(task, stage, message)
+}
