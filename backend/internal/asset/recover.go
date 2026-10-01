@@ -132,16 +132,16 @@ func (s *Service) recoverCreate(userID string, uploadKey *string, restore Artifa
 	}
 	if err := s.repo.CreateResource(&resource); err != nil {
 		if existing, lookupErr := s.resourceForUploadKey(userID, uploadKey); lookupErr == nil && existing != nil {
-			s.finishQuota(userID, day, artifact.Size, nil, err, identity)
+			s.finishQuota(userID, day, artifact.Size, nil, false, err, identity)
 			return s.recoverExisting(existing, func() (RecoveredArtifact, error) {
 				return artifact, nil
 			})
 		}
-		s.finishQuota(userID, day, artifact.Size, nil, err, identity)
+		s.finishQuota(userID, day, artifact.Size, nil, false, err, identity)
 		return nil, err
 	}
 	written, err := s.recoverWrite(&resource, artifact, false)
-	s.finishQuota(userID, day, artifact.Size, written, err, identity)
+	s.finishQuota(userID, day, artifact.Size, written, true, err, identity)
 	return written, err
 }
 
@@ -165,10 +165,7 @@ func (s *Service) recoverWrite(resource *model.Resource, artifact RecoveredArtif
 	if retryQuota {
 		reserved, err := s.reserveGeneratedRetry(resource.UserID, artifact.Size, identity)
 		if err != nil {
-			resource.Status = model.ResourceStatusFailed
-			resource.Error = err.Error()
-			resource.UpdatedAt = time.Now()
-			if saveErr := s.repo.SaveResource(resource); saveErr != nil {
+			if saveErr := s.persistFailedResource(resource, err); saveErr != nil {
 				return resource, errors.Join(err, fmt.Errorf("恢复资源重试失败状态失败：%w", saveErr))
 			}
 			return resource, err
@@ -178,13 +175,11 @@ func (s *Service) recoverWrite(resource *model.Resource, artifact RecoveredArtif
 	etag, err := s.WriteObject(resource, artifact.FileName, artifact.Body)
 	resource.UpdatedAt = time.Now()
 	if err != nil {
+		if saveErr := s.persistFailedResource(resource, err); saveErr != nil {
+			return resource, errors.Join(err, fmt.Errorf("记录资源失败状态失败：%w", saveErr))
+		}
 		if retryQuota {
 			s.releaseRetry(resource.UserID, day, artifact.Size, identity)
-		}
-		resource.Status = model.ResourceStatusFailed
-		resource.Error = err.Error()
-		if saveErr := s.repo.SaveResource(resource); saveErr != nil {
-			return resource, errors.Join(err, fmt.Errorf("记录资源失败状态失败：%w", saveErr))
 		}
 		return resource, err
 	}

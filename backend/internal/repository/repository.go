@@ -18,6 +18,8 @@ import (
 
 var ErrDailyUploadLimitExceeded = errors.New("daily upload limit exceeded")
 
+var ErrUploadReservationConflict = errors.New("upload reservation already exists")
+
 var ErrTaskProviderRecoveryConflict = errors.New("task provider recovery is already running")
 
 var ErrTaskProviderCancellationConflict = errors.New("task provider cancellation is already claimed")
@@ -721,7 +723,7 @@ func (r *Repository) ReserveIdentifiedDailyUpload(userID string, day string, ide
 			return nil
 		}
 		now := time.Now()
-		return tx.Create(&model.UserUploadReservation{
+		err := tx.Create(&model.UserUploadReservation{
 			ID:        userID + ":" + identity,
 			UserID:    userID,
 			Identity:  identity,
@@ -730,6 +732,10 @@ func (r *Repository) ReserveIdentifiedDailyUpload(userID string, day string, ide
 			CreatedAt: now,
 			UpdatedAt: now,
 		}).Error
+		if isUniqueConstraint(err) {
+			return ErrUploadReservationConflict
+		}
+		return err
 	})
 }
 
@@ -738,43 +744,13 @@ func (r *Repository) ReleaseDailyUpload(userID string, day string, size int64) e
 }
 
 func (r *Repository) ReleaseIdentifiedDailyUpload(userID string, day string, identity string, size int64) error {
-	identity = strings.TrimSpace(identity)
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if identity != "" {
-			var held model.UserUploadReservation
-			err := tx.Where("user_id = ? AND identity = ?", userID, identity).First(&held).Error
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			// Recovery may see both an orphan reservation and the session metadata.
-			// The durable identity owns the amount and day; release it only once.
-			day, size = held.Day, held.Size
-		}
-		id := userID + ":" + day
-		if err := tx.Model(&model.UserDailyUploadUsage{}).
-			Where("id = ?", id).
-			Updates(map[string]any{
-				"bytes":      gorm.Expr("CASE WHEN bytes >= ? THEN bytes - ? ELSE 0 END", size, size),
-				"updated_at": time.Now(),
-			}).Error; err != nil {
-			return err
-		}
-		if identity == "" {
-			return nil
-		}
-		return tx.Where("user_id = ? AND identity = ?", userID, identity).Delete(&model.UserUploadReservation{}).Error
+		return releaseIdentifiedDailyUploadTx(tx, userID, day, identity, size)
 	})
 }
 
 func (r *Repository) ClearUploadReservation(userID string, identity string) error {
-	identity = strings.TrimSpace(identity)
-	if strings.TrimSpace(userID) == "" || identity == "" {
-		return nil
-	}
-	return r.db.Where("user_id = ? AND identity = ?", userID, identity).Delete(&model.UserUploadReservation{}).Error
+	return clearUploadReservationTx(r.db, userID, identity)
 }
 
 func (r *Repository) ListUploadReservations() ([]model.UserUploadReservation, error) {
@@ -829,7 +805,16 @@ func (r *Repository) CreateResource(resource *model.Resource) error {
 }
 
 func (r *Repository) SaveResource(resource *model.Resource) error {
-	return r.db.Save(resource).Error
+	if resource == nil {
+		return errors.New("resource is nil")
+	}
+	identity := resourceUploadIdentity(resource)
+	if identity == "" || (resource.Status != model.ResourceStatusReady && resource.Status != model.ResourceStatusFailed) {
+		return r.db.Save(resource).Error
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		return saveResourceSettlingReservation(tx, resource)
+	})
 }
 
 func (r *Repository) ResourceByUploadKey(userID string, uploadKey string) (*model.Resource, error) {
@@ -848,7 +833,20 @@ func (r *Repository) ClaimFailedResourceUpload(userID string, id string) (bool, 
 }
 
 func (r *Repository) DeleteResource(userID string, id string) error {
-	return r.db.Delete(&model.Resource{}, "id = ? AND user_id = ?", id, userID).Error
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var resource model.Resource
+		err := tx.Where("id = ? AND user_id = ?", id, userID).First(&resource).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := settleDeletedResourceReservation(tx, &resource); err != nil {
+			return err
+		}
+		return tx.Delete(&model.Resource{}, "id = ? AND user_id = ?", id, userID).Error
+	})
 }
 
 func (r *Repository) Resource(id string) (*model.Resource, error) {

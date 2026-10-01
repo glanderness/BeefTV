@@ -12,6 +12,7 @@ import (
 	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 
 	"gorm.io/gorm"
 )
@@ -227,8 +228,8 @@ func (s *Service) upload(userID string, header *multipart.FileHeader, kind strin
 	if err != nil {
 		return nil, err
 	}
-	resource, _, err := s.Store(userID, kind, header.Filename, mimeType, header.Size, width, height, durationMs, file, uploadKey)
-	s.finishQuota(userID, day, header.Size, resource, err, identity)
+	resource, created, err := s.Store(userID, kind, header.Filename, mimeType, header.Size, width, height, durationMs, file, uploadKey)
+	s.finishQuota(userID, day, header.Size, resource, created, err, identity)
 	return resource, err
 }
 
@@ -262,8 +263,8 @@ func (s *Service) uploadFile(userID string, fileName string, size int64, kind st
 	if err != nil {
 		return nil, err
 	}
-	resource, _, err := s.Store(userID, kind, fileName, mimeType, size, width, height, durationMs, file, uploadKey)
-	s.finishQuota(userID, day, size, resource, err, identity)
+	resource, created, err := s.Store(userID, kind, fileName, mimeType, size, width, height, durationMs, file, uploadKey)
+	s.finishQuota(userID, day, size, resource, created, err, identity)
 	return resource, err
 }
 
@@ -276,8 +277,8 @@ func (s *Service) StoreGenerated(userID string, kind string, fileName string, mi
 	if err != nil {
 		return nil, err
 	}
-	resource, _, err := s.Store(userID, kind, fileName, mimeType, size, width, height, durationMs, body, uploadKey)
-	s.finishQuota(userID, day, size, resource, err, identity)
+	resource, created, err := s.Store(userID, kind, fileName, mimeType, size, width, height, durationMs, body, uploadKey)
+	s.finishQuota(userID, day, size, resource, created, err, identity)
 	return resource, err
 }
 
@@ -304,8 +305,8 @@ func (s *Service) IngestUpload(userID string, kind string, fileName string, mime
 	if err != nil {
 		return nil, err
 	}
-	resource, _, err := s.Store(userID, kind, fileName, mimeType, size, width, height, durationMs, body, uploadKey)
-	s.finishQuota(userID, day, size, resource, err, identity)
+	resource, created, err := s.Store(userID, kind, fileName, mimeType, size, width, height, durationMs, body, uploadKey)
+	s.finishQuota(userID, day, size, resource, created, err, identity)
 	return resource, err
 }
 
@@ -322,28 +323,38 @@ func (s *Service) reserveUpload(userID string, size int64, identity string) (str
 	if s == nil || s.quota == nil {
 		return "", nil
 	}
-	return s.quota.ReserveUpload(userID, size, identity)
+	return mapQuotaReserveError(s.quota.ReserveUpload(userID, size, identity))
 }
 
 func (s *Service) reserveChunked(userID string, size int64, identity string) (string, error) {
 	if s == nil || s.quota == nil {
 		return "", nil
 	}
-	return s.quota.ReserveChunked(userID, size, identity)
+	return mapQuotaReserveError(s.quota.ReserveChunked(userID, size, identity))
 }
 
 func (s *Service) reserveGenerated(userID string, size int64, identity string) (string, error) {
 	if s == nil || s.quota == nil {
 		return "", nil
 	}
-	return s.quota.ReserveGenerated(userID, size, identity)
+	return mapQuotaReserveError(s.quota.ReserveGenerated(userID, size, identity))
 }
 
 func (s *Service) reserveGeneratedRetry(userID string, size int64, identity string) (string, error) {
 	if s == nil || s.quota == nil {
 		return "", nil
 	}
-	return s.quota.ReserveGeneratedRetry(userID, size, identity)
+	return mapQuotaReserveError(s.quota.ReserveGeneratedRetry(userID, size, identity))
+}
+
+func mapQuotaReserveError(day string, err error) (string, error) {
+	if err == nil {
+		return day, nil
+	}
+	if errors.Is(err, repository.ErrUploadReservationConflict) {
+		return "", UploadInProgress()
+	}
+	return "", err
 }
 
 func (s *Service) commitQuota(resource *model.Resource) {
@@ -353,14 +364,25 @@ func (s *Service) commitQuota(resource *model.Resource) {
 	s.quota.Commit(resource.UserID, resource.Size, quotaIdentity(resource.UploadKey, resource.ID))
 }
 
-func (s *Service) finishQuota(userID string, day string, size int64, resource *model.Resource, err error, identity string) {
+func (s *Service) finishQuota(userID string, day string, size int64, resource *model.Resource, created bool, err error, identity string) {
 	if s == nil || s.quota == nil {
 		return
 	}
-	if resource != nil && s.objectPresent(resource) {
-		if err == nil {
+	if resource != nil && resource.Status == model.ResourceStatusReady {
+		if created && err == nil {
 			s.quota.Commit(userID, size, identity)
+			return
 		}
+		// A live replay reserved after another handle already committed READY.
+		// Drop the extra hold so daily bytes stay with the original consume.
+		s.quota.Release(userID, day, size, identity)
+		return
+	}
+	if resource != nil && resource.Status == model.ResourceStatusFailed {
+		s.quota.Release(userID, day, size, identity)
+		return
+	}
+	if resource != nil && (resource.Status == model.ResourceStatusPending || s.objectPresent(resource)) {
 		return
 	}
 	s.quota.Release(userID, day, size, identity)

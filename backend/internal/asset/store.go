@@ -41,11 +41,18 @@ import (
 // Quota: callers of Store reserve upload/chunked quota under this operation's
 // identity. PENDING means that reservation is still held (including after a
 // crash that never ran Release). FAILED means the reservation was released.
+// READY means daily usage is consumed and the witness is cleared. SaveResource
+// applies that reservation mutation in the same transaction as the terminal
+// status so a crash cannot leave a unique witness behind a READY or FAILED row.
 // Local bytes are independent of that reservation: a READY-save failure keeps
 // PENDING and the reservation; a write failure records FAILED and Releases.
 // RetryOwned ReserveRetry only when the persisted row is FAILED. RecoverOwned
 // uses ReserveGenerated / ReserveGeneratedRetry (GeneratedFileMB) the same
 // way. Commit applies only to this identity's pending.
+//
+// Ordinary Upload* adapters must not take lockWrite. The lock lives here so
+// Store and RetryOwned cannot deadlock. A live duplicate identity is rejected
+// by the reservation unique index before Store and mapped to UploadInProgress.
 
 // Store creates a pending row, publishes bytes through FileStore, then marks
 // READY. A failed READY save leaves PENDING with bytes on disk so the same
@@ -86,9 +93,7 @@ func (s *Service) Store(userID string, kind string, fileName string, mimeType st
 	etag, err := s.WriteObject(&resource, fileName, body)
 	resource.UpdatedAt = time.Now()
 	if err != nil {
-		resource.Status = model.ResourceStatusFailed
-		resource.Error = err.Error()
-		if saveErr := s.repo.SaveResource(&resource); saveErr != nil {
+		if saveErr := s.persistFailedResource(&resource, err); saveErr != nil {
 			return &resource, true, errors.Join(err, fmt.Errorf("记录资源失败状态失败：%w", saveErr))
 		}
 		return &resource, true, err
@@ -214,10 +219,7 @@ func (s *Service) RetryOwned(userID string, resourceID string, kind string, mime
 	if released {
 		reserved, err := s.reserveRetry(userID, size, identity)
 		if err != nil {
-			resource.Status = model.ResourceStatusFailed
-			resource.Error = err.Error()
-			resource.UpdatedAt = time.Now()
-			if saveErr := s.repo.SaveResource(resource); saveErr != nil {
+			if saveErr := s.persistFailedResource(resource, err); saveErr != nil {
 				return nil, errors.Join(err, fmt.Errorf("恢复资源重试失败状态失败：%w", saveErr))
 			}
 			return nil, err
@@ -228,13 +230,11 @@ func (s *Service) RetryOwned(userID string, resourceID string, kind string, mime
 	etag, err := s.WriteObject(resource, "", body)
 	resource.UpdatedAt = time.Now()
 	if err != nil {
+		if saveErr := s.persistFailedResource(resource, err); saveErr != nil {
+			return nil, errors.Join(err, fmt.Errorf("记录资源重试失败状态失败：%w", saveErr))
+		}
 		if heldRetry {
 			s.releaseRetry(userID, day, size, identity)
-		}
-		resource.Status = model.ResourceStatusFailed
-		resource.Error = err.Error()
-		if saveErr := s.repo.SaveResource(resource); saveErr != nil {
-			return nil, errors.Join(err, fmt.Errorf("记录资源重试失败状态失败：%w", saveErr))
 		}
 		return nil, err
 	}
@@ -279,7 +279,7 @@ func (s *Service) reserveRetry(userID string, size int64, identity string) (stri
 	if s == nil || s.quota == nil {
 		return "", nil
 	}
-	return s.quota.ReserveRetry(userID, size, identity)
+	return mapQuotaReserveError(s.quota.ReserveRetry(userID, size, identity))
 }
 
 func (s *Service) releaseRetry(userID string, day string, size int64, identity string) {
@@ -287,4 +287,20 @@ func (s *Service) releaseRetry(userID string, day string, size int64, identity s
 		return
 	}
 	s.quota.ReleaseRetry(userID, day, size, identity)
+}
+
+func (s *Service) persistFailedResource(resource *model.Resource, cause error) error {
+	if resource == nil {
+		return nil
+	}
+	resource.Status = model.ResourceStatusFailed
+	if cause != nil {
+		resource.Error = cause.Error()
+	}
+	resource.UpdatedAt = time.Now()
+	if saveErr := s.repo.SaveResource(resource); saveErr != nil {
+		resource.Status = model.ResourceStatusPending
+		return saveErr
+	}
+	return nil
 }

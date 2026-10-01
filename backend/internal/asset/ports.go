@@ -29,6 +29,8 @@ type Repository interface {
 	ResourceByUploadKey(userID string, uploadKey string) (*model.Resource, error)
 	ListUploadReservations() ([]model.UserUploadReservation, error)
 	UploadReservation(userID string, identity string) (*model.UserUploadReservation, error)
+	ClearUploadReservation(userID string, identity string) error
+	ReleaseIdentifiedDailyUpload(userID string, day string, identity string, size int64) error
 	ClaimFailedResourceUpload(userID string, id string) (bool, error)
 	DeleteResource(userID string, id string) error
 	ResourcesForUserIDs(userID string, resourceIDs []string) ([]model.Resource, error)

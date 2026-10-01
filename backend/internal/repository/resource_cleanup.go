@@ -89,6 +89,9 @@ func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletio
 		if err := tx.Where("resource_id IN ?", resourceIDs).Delete(&model.ArkPrivateAssetBinding{}).Error; err != nil {
 			return err
 		}
+		if err := settleDeletedResources(tx, current); err != nil {
+			return err
+		}
 		if len(deletionJobs) > 0 {
 			if err := tx.Create(&deletionJobs).Error; err != nil {
 				return err

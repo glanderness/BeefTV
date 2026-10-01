@@ -341,3 +341,149 @@ func TestChunkedUploadCompleteCommitsCanonicalQuota(t *testing.T) {
 		t.Fatalf("reservation witness after commit %#v err=%v", row, err)
 	}
 }
+
+func TestLeftoverReadyRestartDeleteKeepsConsumedDaily(t *testing.T) {
+	svc := newResourceTestService(t)
+	resource, err := svc.UploadResourceFile("user-1", "a.png", 7, "image", 1, 1, 0, bytes.NewReader([]byte("payload")), "ready-left")
+	if err != nil || resource == nil {
+		t.Fatalf("upload = %#v err=%v", resource, err)
+	}
+	identity := *localasset.NormalizedUploadKey([]string{"ready-left"})
+	day := time.Now().UTC().Format("2006-01-02")
+	cleared, err := svc.repo.UploadReservation("user-1", identity)
+	if err != nil || cleared != nil {
+		t.Fatalf("READY save left witness %#v err=%v", cleared, err)
+	}
+	now := time.Now()
+	if err := svc.repo.DB().Create(&model.UserUploadReservation{
+		ID: "user-1:" + identity, UserID: "user-1", Identity: identity, Day: day, Size: 7,
+		CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := &Service{repo: svc.repo, dataDir: svc.dataDir}
+	if restarted.resourceDomain() == nil {
+		t.Fatal("restart domain is nil")
+	}
+	usage, err := restarted.repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 7 {
+		t.Fatalf("READY leftover daily=%d err=%v", usage, err)
+	}
+	row, err := restarted.repo.UploadReservation("user-1", identity)
+	if err != nil || row != nil {
+		t.Fatalf("READY leftover witness %#v err=%v", row, err)
+	}
+
+	if err := restarted.repo.DeleteResource("user-1", resource.ID); err != nil {
+		t.Fatal(err)
+	}
+	again := &Service{repo: svc.repo, dataDir: svc.dataDir}
+	again.resourceDomain()
+	usage, err = again.repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 7 {
+		t.Fatalf("delete then restart refunded daily=%d err=%v", usage, err)
+	}
+}
+
+func TestLeftoverFailedRestartAllowsRetry(t *testing.T) {
+	svc := newResourceTestService(t)
+	identity := *localasset.NormalizedUploadKey([]string{"failed-left"})
+	day := time.Now().UTC().Format("2006-01-02")
+	if err := svc.repo.ReserveIdentifiedDailyUpload("user-1", day, identity, 7, 1<<40); err != nil {
+		t.Fatal(err)
+	}
+	failed := &model.Resource{
+		ID: "res-failed-left", UserID: "user-1", Kind: "image", Status: model.ResourceStatusFailed,
+		Provider: "local", ObjectKey: "users/user-1/image/failed-left.png", MimeType: "image/png", Size: 7,
+		UploadKey: &identity, Error: "write failed", CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	if err := svc.repo.CreateResource(failed); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := &Service{repo: svc.repo, dataDir: svc.dataDir}
+	restarted.resourceDomain()
+	usage, err := restarted.repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 0 {
+		t.Fatalf("FAILED leftover daily=%d err=%v", usage, err)
+	}
+	row, err := restarted.repo.UploadReservation("user-1", identity)
+	if err != nil || row != nil {
+		t.Fatalf("FAILED leftover witness %#v err=%v", row, err)
+	}
+	got, err := restarted.resourceDomain().RetryOwned("user-1", failed.ID, "image", "image/png", 7, bytes.NewReader([]byte("payload")))
+	if err != nil || got == nil || got.Status != model.ResourceStatusReady {
+		t.Fatalf("retry after FAILED leftover = %#v err=%v", got, err)
+	}
+	usage, err = restarted.repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 7 {
+		t.Fatalf("retry daily=%d err=%v", usage, err)
+	}
+}
+
+func TestDuplicateLiveUploadFileMapsToUploadInProgress(t *testing.T) {
+	svc := newResourceTestService(t)
+	announced := make(chan struct{})
+	hold := make(chan struct{})
+	original := svc.assets
+	svc.assets = localasset.NewService(localasset.Dependencies{
+		Repository: &holdCreateResourceRepo{Repository: localasset.NewRepository(svc.repo), announced: announced, hold: hold},
+		Blobs:      localasset.NewFileStore(svc.dataDir),
+		Quota:      resourceQuota{svc: svc},
+		Lifecycle:  nopLifecycleAdapter{},
+		DataDir:    svc.dataDir,
+	})
+	t.Cleanup(func() { svc.assets = original })
+
+	var first *model.Resource
+	var firstErr error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		first, firstErr = svc.UploadResourceFile("user-1", "a.png", 7, "image", 1, 1, 0, bytes.NewReader([]byte("payload")), "live-dup")
+	}()
+	<-announced
+	_, dupErr := svc.UploadResourceFile("user-1", "a.png", 7, "image", 1, 1, 0, bytes.NewReader([]byte("payload")), "live-dup")
+	if dupErr == nil || dupErr.Error() != localasset.UploadInProgress().Error() {
+		t.Fatalf("duplicate live err=%v", dupErr)
+	}
+	close(hold)
+	<-done
+	if firstErr != nil || first == nil || first.Status != model.ResourceStatusReady {
+		t.Fatalf("first upload = %#v err=%v", first, firstErr)
+	}
+}
+
+type holdCreateResourceRepo struct {
+	localasset.Repository
+	announced chan struct{}
+	hold      chan struct{}
+	once      sync.Once
+}
+
+func (r *holdCreateResourceRepo) CreateResource(resource *model.Resource) error {
+	r.once.Do(func() {
+		close(r.announced)
+		<-r.hold
+	})
+	return r.Repository.CreateResource(resource)
+}
+
+type nopLifecycleAdapter struct{}
+
+func (nopLifecycleAdapter) RecordActivity(string, string, int) {}
+func (nopLifecycleAdapter) AfterResourceReady(*model.Resource) {}
+func (nopLifecycleAdapter) AppearanceReferencedIDs([]string) map[string]struct{} {
+	return map[string]struct{}{}
+}
+func (nopLifecycleAdapter) RecycleRetentionDays() (int, error)   { return 0, nil }
+func (nopLifecycleAdapter) WorkerID() string                     { return "test-worker" }
+func (nopLifecycleAdapter) RunBackground(func())                 {}
+func (nopLifecycleAdapter) DeleteUserAsset(string, string) error { return nil }
+func (nopLifecycleAdapter) WithStorageLock(fn func() error) error {
+	if fn == nil {
+		return nil
+	}
+	return fn()
+}

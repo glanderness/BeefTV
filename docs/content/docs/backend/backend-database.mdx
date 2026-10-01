@@ -11,7 +11,7 @@ description: BeefTV后端核心持久化表与状态边界
 
 当前完整重构候选的结构版本为 v13。正式 v1.6.21 的结构版本为 v3，历史 Agent 候选曾使用 v3–v6，另有图片恢复预览分支使用 v3 或 v7；这些预览编号不能当作正式版本已发布的证据。以下旧托管数据库的 `schema_migrations` 版本历史与本地版本分开维护，不共用版本号。
 
-v13 `upload-reservation-witness` 追加 `user_upload_reservations`，以 `(user_id, identity)` 唯一索引记录未完成上传预留的日期和字节数。日额仍由 `user_daily_upload_usages` 记账，预留索引与日额增加在同一事务内完成。完成后清除索引，放弃时按索引中的金额和日期在同一事务内释放且删除，重复清理不再扣减其他上传的日额。分片会话文件不是配额账；查询失败时保留恢复证据。
+v13 `upload-reservation-witness` 追加 `user_upload_reservations`，以 `(user_id, identity)` 唯一索引记录未完成上传预留的日期和字节数。日额仍由 `user_daily_upload_usages` 记账，预留索引与日额增加在同一事务内完成。资源进入 READY 时与状态保存在同一事务清除索引并保留日额；进入 FAILED 或放弃时与状态保存在同一事务按索引金额和日期释放。启动恢复：无对应资源则释放一次；PENDING 保留索引；FAILED 释放；READY 清索引且保留日额。删除 READY 资源只清索引，不把已计入日额当成孤儿退还。重复清理不再扣减其他上传的日额。分片会话文件不是配额账；查询失败时保留恢复证据。同一身份的进行中重复预留映射为上传进行中。
 
 实验 v8 `reconcile-product-agent-schema` 在一个事务中补齐 `tasks.failure_diagnostics`（可空 TEXT）、图片恢复表 `image_submissions`、Agent 操作表（包括 `turn_id` 索引）、任务 `client_operation_id`/`client_operation_hash` 和用户维度操作编号唯一索引。已有数据和原迁移名称保持不变；不通过重建 `tasks` 来删除产品字段。相同版本号但缺表、列或必要索引时拒绝 Ready；未来更高版本拒绝迁移。唯一索引遇到重复身份时整步回滚，不自动删除或合并任务。
 

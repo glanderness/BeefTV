@@ -386,6 +386,9 @@ func (s *Service) completeMissingSession(userID, uploadID string) (*model.Resour
 	if ready, err := s.readyResourceByIdentity(userID, uploadID); err != nil {
 		return nil, err
 	} else if ready != nil {
+		if commitErr := s.commitWitness(userID, quotaIdentity(ready.UploadKey, ready.ID), ready.Size); commitErr != nil {
+			return nil, commitErr
+		}
 		return ready, nil
 	}
 	return nil, UploadSessionMissing()
@@ -403,13 +406,17 @@ func (s *Service) completeSessionWork(sess *chunkedUploadSession) (*model.Resour
 	}
 	if existing != nil {
 		if existing.Status == model.ResourceStatusReady {
-			s.quotaCommit(sess.UserID, sess.Size, identity)
+			if commitErr := s.commitWitness(sess.UserID, identity, sess.Size); commitErr != nil {
+				return nil, commitErr
+			}
 			return existing, nil
 		}
 		if s.objectPresent(existing) {
 			resource, err := s.promoteReady(existing)
 			if err == nil && resource != nil && resource.Status == model.ResourceStatusReady {
-				s.quotaCommit(sess.UserID, sess.Size, identity)
+				if commitErr := s.commitWitness(sess.UserID, identity, sess.Size); commitErr != nil {
+					return resource, commitErr
+				}
 			}
 			return resource, err
 		}
@@ -431,8 +438,8 @@ func (s *Service) completeSessionWork(sess *chunkedUploadSession) (*model.Resour
 	defer closeAssembled(body)
 	mimeType := DetectUploadedMimeType(body, sess.FileName, "")
 	_, _ = body.Seek(0, io.SeekStart)
-	resource, _, err := s.Store(sess.UserID, sess.Kind, sess.FileName, mimeType, sess.Size, sess.Width, sess.Height, sess.DurationMs, body, &uploadKey)
-	s.finishQuota(sess.UserID, sess.Day, sess.Size, resource, err, identity)
+	resource, created, err := s.Store(sess.UserID, sess.Kind, sess.FileName, mimeType, sess.Size, sess.Width, sess.Height, sess.DurationMs, body, &uploadKey)
+	s.finishQuota(sess.UserID, sess.Day, sess.Size, resource, created, err, identity)
 	if err == nil && resource != nil && resource.Status == model.ResourceStatusReady {
 		s.quotaCommit(sess.UserID, sess.Size, identity)
 	}
@@ -698,12 +705,46 @@ func (s *Service) releaseOrphanReservationsLocked() error {
 			}
 			continue
 		}
-		if existing != nil {
-			continue
+		if settleErr := s.settleOrphanReservation(row, existing); settleErr != nil && first == nil {
+			first = settleErr
 		}
-		s.quotaRelease(row.UserID, row.Day, row.Size, row.Identity)
 	}
 	return first
+}
+
+func (s *Service) settleOrphanReservation(row model.UserUploadReservation, existing *model.Resource) error {
+	if existing != nil && existing.Status == model.ResourceStatusPending {
+		return nil
+	}
+	if existing != nil && existing.Status == model.ResourceStatusReady {
+		return s.commitWitness(row.UserID, row.Identity, row.Size)
+	}
+	if existing != nil && existing.Status != model.ResourceStatusFailed {
+		return s.commitWitness(row.UserID, row.Identity, row.Size)
+	}
+	return s.releaseWitness(row)
+}
+
+func (s *Service) commitWitness(userID, identity string, size int64) error {
+	if s == nil || s.repo == nil {
+		return nil
+	}
+	if err := s.repo.ClearUploadReservation(userID, identity); err != nil {
+		return err
+	}
+	s.quotaCommit(userID, size, identity)
+	return nil
+}
+
+func (s *Service) releaseWitness(row model.UserUploadReservation) error {
+	if s == nil || s.repo == nil {
+		return nil
+	}
+	if err := s.repo.ReleaseIdentifiedDailyUpload(row.UserID, row.Day, row.Identity, row.Size); err != nil {
+		return err
+	}
+	s.quotaRelease(row.UserID, row.Day, row.Size, row.Identity)
+	return nil
 }
 
 func (s *Service) reconcileSessionDirsLocked() error {
