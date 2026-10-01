@@ -1,8 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
 import { zipSync } from "fflate";
 
-import { restoreCanvasArchive, type CanvasArchiveRestoreHost } from "@/lib/canvas/canvas-archive-restore";
+import { archiveMediaIdempotencyKey, assertRestoredCanvasMatches, restoreCanvasArchive, type CanvasArchiveRestoreHost } from "@/lib/canvas/canvas-archive-restore";
 import { openCanvasArchive } from "@/lib/canvas/canvas-export";
+import { setActiveUserScope } from "@/lib/user-scope";
 import { ARCHIVE_MAX_ENTRY_BYTES, ARCHIVE_MAX_FILES, ARCHIVE_MAX_TOTAL_BYTES, createZip } from "@/lib/zip";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { CanvasNodeData } from "@/types/canvas";
@@ -25,6 +26,7 @@ function videoNode(storageKey = "video:clip"): CanvasNodeData {
         metadata: {
             storageKey,
             content: "blob:expired",
+            assetId: "source-asset",
             prompt: "描述里提到 data:image/png 和 blob:expired，但不是媒体文件",
         },
     };
@@ -42,6 +44,18 @@ function drawingNode(): CanvasNodeData {
     };
 }
 
+function textNode(): CanvasNodeData {
+    return {
+        id: "n-text",
+        type: "text",
+        title: "说明",
+        position: { x: 80, y: 0 },
+        width: 200,
+        height: 80,
+        metadata: { content: "data:image/png;base64,not-a-file" },
+    };
+}
+
 function timeline(): TimelineProject {
     return {
         version: 2,
@@ -54,7 +68,7 @@ function timeline(): TimelineProject {
             trackId: "voice",
             startMs: 0,
             durationMs: 1000,
-            directMedia: { id: "m1", kind: "audio", title: "配音", storageKey: "audio:voice", url: "blob:expired" },
+            directMedia: { id: "m1", kind: "audio", title: "配音", storageKey: "audio:voice", url: "blob:expired", assetId: "source-clip-asset" },
         }],
     };
 }
@@ -69,9 +83,10 @@ function archiveData(overrides: Record<string, unknown> = {}) {
             project: {
                 id: "old-canvas",
                 workspaceProjectId: "old-workspace",
+                projectId: "source-business",
                 folderId: "folder-old",
                 title: "测试画布",
-                nodes: [videoNode(), drawingNode()],
+                nodes: [videoNode(), drawingNode(), textNode()],
                 connections: [],
                 timeline: timeline(),
             },
@@ -108,6 +123,9 @@ function memoryHost(overrides: Partial<CanvasArchiveRestoreHost> = {}) {
     const media = new Map<string, Uint8Array>();
     const drawings: string[] = [];
     const deleted: string[] = [];
+    const deletedResources: string[] = [];
+    const binds: Array<{ canvasId: string; node: CanvasNodeData }> = [];
+    const idempotencyKeys: string[] = [];
     let folderSeq = 0;
     let projectSeq = 0;
     let assetSeq = 0;
@@ -171,14 +189,23 @@ function memoryHost(overrides: Partial<CanvasArchiveRestoreHost> = {}) {
             media.set(storageKey, new Uint8Array(await blob.arrayBuffer()));
             return { storageKey, url: `/api/resources/${resourceId}/file`, resourceId };
         },
-        bindMediaAsset: async () => `asset-${++assetSeq}`,
+        bindMediaAsset: async (options) => {
+            binds.push(options);
+            return `asset-${++assetSeq}`;
+        },
         saveDrawing: async (projectId, drawingId) => {
             drawings.push(`${projectId}:${drawingId}`);
             return { version: 2, engine: "excalidraw", snapshot: {}, revision: 1, updatedAt: "2026-10-02T00:00:00.000Z", shapeCount: 0, pageCount: 1 };
         },
+        loadDrawing: async (projectId, drawingId) => (
+            drawings.includes(`${projectId}:${drawingId}`) ? { drawingId, revision: 1 } : null
+        ),
+        deleteResource: async (resourceId) => {
+            deletedResources.push(resourceId);
+        },
         ...overrides,
     };
-    return { host, folders, projects, media, drawings, deleted };
+    return { host, folders, projects, media, drawings, deleted, deletedResources, binds, idempotencyKeys };
 }
 
 test("preflight rejects missing media, invalid project, version, duplicate IDs, and data/blob keys before writes", async () => {
@@ -280,7 +307,7 @@ test("zip traversal and duplicate confined paths fail before restore writes", as
 });
 
 test("production restore remaps media and timeline, preserves drawings, and ignores prompt data/blob strings", async () => {
-    const { host, folders, projects, media, drawings } = memoryHost();
+    const { host, folders, projects, media, drawings, binds } = memoryHost();
     const result = await restoreCanvasArchive(await validZip(), host);
     expect(result.storage).toBe("backend");
     expect(result.count).toBe(1);
@@ -290,16 +317,22 @@ test("production restore remaps media and timeline, preserves drawings, and igno
     expect(projects).toHaveLength(1);
     expect(projects[0].id).toBe("imported-1");
     expect(projects[0].workspaceProjectId).toBe("imported-1");
+    expect(projects[0].projectId).toBeFalsy();
     expect(projects[0].folderId).toBe("folder-1");
     const node = projects[0].nodes.find((item) => item.type === "video")!;
     expect(node.metadata?.storageKey).toStartWith("resource:");
     expect(node.metadata?.content).toStartWith("/api/resources/");
     expect(node.metadata?.prompt).toContain("data:image/png");
     expect(node.metadata?.assetId).toBe("asset-1");
+    expect(node.metadata?.assetId).not.toBe("source-asset");
+    const text = projects[0].nodes.find((item) => item.type === "text")!;
+    expect(text.metadata?.content).toBe("data:image/png;base64,not-a-file");
     const clip = projects[0].timeline?.clips[0].directMedia;
     expect(clip?.storageKey).toStartWith("resource:");
     expect(clip?.url).toStartWith("/api/resources/");
     expect(clip?.assetId).toBe("asset-2");
+    expect(clip?.assetId).not.toBe("source-clip-asset");
+    expect(binds.every((item) => !item.node.metadata?.assetId)).toBe(true);
     expect([...media.keys()]).toHaveLength(2);
     expect(drawings).toEqual(["imported-1:sketch"]);
 });
@@ -328,4 +361,65 @@ test("retrying a valid archive creates new IDs and never reuses archive workspac
     expect(state.projects.map((project) => project.workspaceProjectId).sort()).toEqual(["imported-1", "imported-2"]);
     expect(state.projects.some((project) => project.id === "old-canvas" || project.workspaceProjectId === "old-workspace")).toBe(false);
     expect(new Set([...one.resourceIds, ...two.resourceIds]).size).toBe(4);
+});
+
+test("archive media idempotency follows content, not source storage keys", async () => {
+    const same = new Blob([new Uint8Array([1, 2, 3, 4])], { type: "video/mp4" });
+    const changed = new Blob([new Uint8Array([1, 2, 3, 5])], { type: "video/mp4" });
+    const first = await archiveMediaIdempotencyKey(same);
+    const retry = await archiveMediaIdempotencyKey(same);
+    const next = await archiveMediaIdempotencyKey(changed);
+    expect(first).toBe(retry);
+    expect(first).toStartWith("canvas-archive:sha256:");
+    expect(next).toStartWith("canvas-archive:sha256:");
+    expect(next).not.toBe(first);
+});
+
+test("readback mismatch is an explicit restore failure", () => {
+    const intended = {
+        id: "imported-1",
+        folderId: "folder-1",
+        nodes: [videoNode("resource:new")],
+        timeline: timeline(),
+    };
+    expect(() => assertRestoredCanvasMatches(intended, { ...intended, id: "other" } as CanvasProject)).toThrow("画布未保存到工作区");
+    expect(() => assertRestoredCanvasMatches(intended, { ...intended, folderId: "other" } as CanvasProject)).toThrow("画布文件夹未保存到工作区");
+    expect(() => assertRestoredCanvasMatches(intended, { ...intended, timeline: undefined } as CanvasProject)).toThrow("画布时间线未保存到工作区");
+});
+
+test("one immediate upload rejection waits for delayed success then cleans that artifact", async () => {
+    let closed = false;
+    let delayedDone = false;
+    const { host, deleted, deletedResources, projects, folders } = memoryHost({
+        uploadMedia: async (_blob, _kind, meta) => {
+            if (closed) throw new Error("post-cleanup write");
+            if (meta.storageKey === "video:clip") throw new Error("upload-fail");
+            await new Promise((resolve) => setTimeout(resolve, 40));
+            if (closed) throw new Error("post-cleanup write");
+            delayedDone = true;
+            return { storageKey: "resource:delayed", url: "/api/resources/delayed/file", resourceId: "delayed" };
+        },
+    });
+    await expect(restoreCanvasArchive(await validZip(), host)).rejects.toThrow("upload-fail");
+    expect(delayedDone).toBe(true);
+    expect(deletedResources).toEqual(["delayed"]);
+    expect(projects).toEqual([]);
+    expect(folders).toEqual([]);
+    expect(deleted).toEqual([]);
+    closed = true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+});
+
+test("account switch abandons restore without cleaning the new account", async () => {
+    setActiveUserScope("owner-a");
+    const { host, projects, folders, deleted } = memoryHost({
+        persistProject: async () => {
+            setActiveUserScope("owner-b");
+            throw new Error("persist-after-switch");
+        },
+    });
+    await expect(restoreCanvasArchive(await validZip(), host)).rejects.toThrow("persist-after-switch");
+    expect(deleted).toEqual([]);
+    expect(projects).toHaveLength(1);
+    expect(folders).toHaveLength(1);
 });
