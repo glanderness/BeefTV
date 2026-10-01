@@ -60,13 +60,16 @@ func TestWorkflowReceiptNilServiceFailsClosed(t *testing.T) {
 }
 
 func TestWorkflowReceiptReadyRequiresLocalTaskContext(t *testing.T) {
-	s, _ := newTimelineTaskTestService(t)
+	s, owned := workflowPaidTaskFixture(t)
 	receipt := workflowReceipt{service: s}
 	if err := receipt.Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "本地任务回执上下文") {
 		t.Fatalf("Ready without analytics = %v, want local receipt context", err)
 	}
 	if err := receipt.RecordAccepted(context.Background(), "accepted-1", "submitted", nil); err == nil || !strings.Contains(err.Error(), "本地任务回执上下文") {
 		t.Fatalf("RecordAccepted without TaskID = %v, want fail closed", err)
+	}
+	if err := receipt.Ready(withProviderAnalytics(context.Background(), s, owned)); err != nil {
+		t.Fatalf("Ready with owned sqlite task = %v", err)
 	}
 }
 
@@ -91,6 +94,46 @@ func TestWorkflowPaidCreateRequiresAnalyticsTaskID(t *testing.T) {
 	}
 	if creates != 0 {
 		t.Fatalf("creates = %d, want 0", creates)
+	}
+}
+
+func TestWorkflowPaidCreateRejectsStaleAndForeignTaskIdentity(t *testing.T) {
+	allowLoopbackProviderTest(t)
+	creates := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/task/openapi/create") || strings.Contains(r.URL.Path, "/ai-app/run") {
+			creates++
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+	s, owned := workflowPaidTaskFixture(t)
+	stale := owned
+	stale.ID = "invented-stale-id"
+	foreign := owned
+	foreign.UserID = "other-user"
+	for _, tc := range []struct {
+		name string
+		task model.Task
+	}{
+		{name: "stale invented ID", task: stale},
+		{name: "foreign owner", task: foreign},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := creates
+			ctx := withProviderAnalytics(context.Background(), s, tc.task)
+			_, err := s.runRunningHubWorkflow(ctx, workflowCreateInput(server.URL))
+			if err == nil || !strings.Contains(err.Error(), "本地任务回执上下文") {
+				t.Fatalf("error = %v, want owned local receipt rejection", err)
+			}
+			var unknown providerSubmissionUnknownError
+			if errors.As(err, &unknown) {
+				t.Fatalf("identity rejection wrapped as unknown: %v", err)
+			}
+			if creates != before {
+				t.Fatalf("creates = %d, want %d", creates, before)
+			}
+		})
 	}
 }
 
@@ -244,6 +287,17 @@ func TestWorkflowCreateUncertainCannotResubmit(t *testing.T) {
 				}
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(`{"code":0,"data":{}}`))
+			},
+		},
+		{
+			name: "empty envelope",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				if !strings.Contains(r.URL.Path, "/task/openapi/create") && !strings.Contains(r.URL.Path, "/ai-app/run") {
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
 			},
 		},
 	} {

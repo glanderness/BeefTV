@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -156,8 +157,13 @@ func (r workflowReceipt) Ready(ctx context.Context) error {
 		return errors.New("工作流缺少本地任务回执上下文")
 	}
 	metadata, ok := ctx.Value(providerAnalyticsKey{}).(providerAnalyticsContext)
-	if !ok || strings.TrimSpace(metadata.TaskID) == "" {
+	taskID := strings.TrimSpace(metadata.TaskID)
+	userID := strings.TrimSpace(metadata.UserID)
+	if !ok || taskID == "" || userID == "" {
 		return errors.New("工作流缺少本地任务回执上下文")
+	}
+	if _, err := r.service.repo.TaskForUser(userID, taskID); err != nil {
+		return fmt.Errorf("工作流缺少本地任务回执上下文：%w", err)
 	}
 	return nil
 }

@@ -309,6 +309,23 @@ func TestCreateMissingTaskIDIsCreateUncertain(t *testing.T) {
 	}
 }
 
+func TestCreateEmptySuccessEnvelopeIsCreateUncertain(t *testing.T) {
+	for _, body := range []string{`{}`, `{"data":{}}`} {
+		exec := &scriptedExecutor{handler: func(req Request) ([]byte, string, error) {
+			if strings.Contains(req.URL, "/task/openapi/create") {
+				return []byte(body), "application/json", nil
+			}
+			t.Fatalf("unexpected URL %s", req.URL)
+			return nil, "", nil
+		}}
+		_, err := productionClient(exec).Run(context.Background(), imageCreateInput())
+		var uncertain CreateUncertain
+		if !errors.As(err, &uncertain) {
+			t.Fatalf("body %s error = %v, want CreateUncertain", body, err)
+		}
+	}
+}
+
 func TestPollCancelDoesNotCreateNewTask(t *testing.T) {
 	polls := 0
 	exec := &scriptedExecutor{handler: func(req Request) ([]byte, string, error) {

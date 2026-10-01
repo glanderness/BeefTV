@@ -154,11 +154,7 @@ func (c *Client) runRunningHub(ctx context.Context, input Input) (map[string]int
 		return nil, CreateUncertain{Err: fmt.Errorf("RunningHub 工作流提交失败：%w", err)}
 	}
 	code, validCode := runningHubPayloadCode(submitted)
-	if !validCode {
-		validCode = runningHubTaskID(submitted) != ""
-		code = 0
-	}
-	if !validCode || code != 0 {
+	if validCode && code != 0 {
 		return nil, fmt.Errorf("RunningHub 工作流提交失败：%s", runningHubWorkflowFailureMessage(submitted))
 	}
 	taskID := runningHubTaskID(submitted)
