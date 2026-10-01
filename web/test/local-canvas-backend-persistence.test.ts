@@ -6,7 +6,7 @@ const repository = readFileSync(resolve(import.meta.dir, "../src/services/local-
 const lifecycle = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/use-canvas-project-lifecycle.ts"), "utf8");
 
 test("desktop local canvas creation is durable in the Go repository before navigation", () => {
-    const sync = repository.indexOf("await syncLocalCanvasProjectToBackend(id);");
+    const sync = repository.indexOf("await syncLocalCanvasProject(id, false, scope);");
     const returned = repository.indexOf("return { id };");
     expect(sync).toBeGreaterThan(-1);
     expect(returned).toBeGreaterThan(sync);

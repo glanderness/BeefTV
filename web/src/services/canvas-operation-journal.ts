@@ -26,6 +26,16 @@ export type CanvasOperationJournal = {
     inFlight: CanvasInFlightCommit | null;
 };
 
+export class CanvasJournalError extends Error {
+    override cause?: unknown;
+
+    constructor(message: string, options?: { cause?: unknown }) {
+        super(message);
+        this.name = "CanvasJournalError";
+        this.cause = options?.cause;
+    }
+}
+
 const memory = new Map<string, CanvasOperationJournal>();
 
 function journalName(canvasId: string) {
@@ -40,8 +50,64 @@ function emptyJournal(scope: string, canvasId: string): CanvasOperationJournal {
     return { userScope: scope, canvasId, confirmedRevision: 0, confirmedSnapshot: null, inFlight: null };
 }
 
-function belongsToScope(journal: CanvasOperationJournal | null | undefined, scope: string, canvasId: string) {
-    return Boolean(journal && journal.userScope === scope && journal.canvasId === canvasId);
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function asNonNegativeInteger(value: unknown, label: string): number {
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+        throw new CanvasJournalError(`画布提交日记 ${label} 无效`);
+    }
+    return value;
+}
+
+function parseConfirmedSnapshot(value: unknown, canvasId: string): CanvasProject | null {
+    if (value == null) return null;
+    if (!isPlainObject(value) || typeof value.id !== "string" || value.id !== canvasId) {
+        throw new CanvasJournalError("画布提交日记快照无效");
+    }
+    return value as unknown as CanvasProject;
+}
+
+function parseInFlight(value: unknown, canvasId: string): CanvasInFlightCommit | null {
+    if (value == null) return null;
+    if (!isPlainObject(value)) throw new CanvasJournalError("画布提交日记在途操作无效");
+    const operationId = value.operationId;
+    if (typeof operationId !== "string" || !operationId) {
+        throw new CanvasJournalError("画布提交日记 operationId 无效");
+    }
+    const expectedRevision = asNonNegativeInteger(value.expectedRevision, "expectedRevision");
+    if (!isPlainObject(value.payload)) throw new CanvasJournalError("画布提交日记 payload 无效");
+    const payload = value.payload;
+    if (payload.canvasId !== canvasId) throw new CanvasJournalError("画布提交日记 payload 作用域不匹配");
+    const payloadExpected = asNonNegativeInteger(payload.expectedRevision, "payload.expectedRevision");
+    if (payloadExpected !== expectedRevision) {
+        throw new CanvasJournalError("画布提交日记 payload revision 不一致");
+    }
+    if (!isPlainObject(payload.document)) throw new CanvasJournalError("画布提交日记 payload 文档无效");
+    return {
+        operationId,
+        expectedRevision,
+        payload: {
+            canvasId,
+            expectedRevision: payloadExpected,
+            document: payload.document as unknown as CanvasProject,
+        },
+    };
+}
+
+function parseCanvasOperationJournal(raw: unknown, scope: string, canvasId: string): CanvasOperationJournal {
+    if (!isPlainObject(raw)) throw new CanvasJournalError("画布提交日记损坏");
+    if (raw.userScope !== scope || raw.canvasId !== canvasId) {
+        throw new CanvasJournalError("画布提交日记作用域不匹配");
+    }
+    return {
+        userScope: scope,
+        canvasId,
+        confirmedRevision: asNonNegativeInteger(raw.confirmedRevision, "confirmedRevision"),
+        confirmedSnapshot: parseConfirmedSnapshot(raw.confirmedSnapshot, canvasId),
+        inFlight: parseInFlight(raw.inFlight, canvasId),
+    };
 }
 
 export function peekCanvasOperationJournal(canvasId: string, scope = getActiveUserScope()) {
@@ -52,14 +118,24 @@ export async function loadCanvasOperationJournal(canvasId: string, scope = getAc
     const key = cacheKey(scope, canvasId);
     const cached = memory.get(key);
     if (cached) return cached;
-    let stored: CanvasOperationJournal | null = null;
+    let raw: string | null = null;
     try {
-        const raw = await localForageStorageForScope(scope).getItem(journalName(canvasId));
-        if (raw) stored = JSON.parse(raw) as CanvasOperationJournal;
-    } catch {
-        stored = null;
+        raw = await localForageStorageForScope(scope).getItem(journalName(canvasId));
+    } catch (error) {
+        throw new CanvasJournalError("画布提交日记读取失败", { cause: error });
     }
-    const journal = belongsToScope(stored, scope, canvasId) ? stored! : emptyJournal(scope, canvasId);
+    if (raw == null || raw === "") {
+        const journal = emptyJournal(scope, canvasId);
+        memory.set(key, journal);
+        return journal;
+    }
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch (error) {
+        throw new CanvasJournalError("画布提交日记无法解析", { cause: error });
+    }
+    const journal = parseCanvasOperationJournal(parsed, scope, canvasId);
     memory.set(key, journal);
     if (journal.confirmedSnapshot) recordCanvasDocumentBase(journal.confirmedSnapshot, scope);
     return journal;
@@ -67,18 +143,28 @@ export async function loadCanvasOperationJournal(canvasId: string, scope = getAc
 
 export async function saveCanvasOperationJournal(journal: CanvasOperationJournal) {
     const scope = journal.userScope || getActiveUserScope();
-    memory.set(cacheKey(scope, journal.canvasId), journal);
-    if (journal.confirmedSnapshot) recordCanvasDocumentBase(journal.confirmedSnapshot, scope);
-    await localForageStorageForScope(scope).setItem(journalName(journal.canvasId), JSON.stringify(journal));
+    const validated = parseCanvasOperationJournal(journal, scope, journal.canvasId);
+    await localForageStorageForScope(scope).setItem(journalName(journal.canvasId), JSON.stringify(validated));
+    memory.set(cacheKey(scope, journal.canvasId), validated);
+    if (validated.confirmedSnapshot) recordCanvasDocumentBase(validated.confirmedSnapshot, scope);
 }
 
-export async function recordConfirmedCanvasCommit(project: CanvasProject, scope = getActiveUserScope()) {
+export async function recordConfirmedCanvasCommit(
+    project: CanvasProject,
+    scope = getActiveUserScope(),
+    options: { ackOperationId?: string } = {},
+) {
     const current = await loadCanvasOperationJournal(project.id, scope);
+    const incomingRevision = typeof project.revision === "number" && Number.isInteger(project.revision) && project.revision >= 0
+        ? project.revision
+        : current.confirmedRevision;
+    const revisionWentBackwards = incomingRevision < current.confirmedRevision;
+    const ackMatches = Boolean(options.ackOperationId && current.inFlight?.operationId === options.ackOperationId);
     await saveCanvasOperationJournal({
         ...current,
-        confirmedRevision: project.revision ?? current.confirmedRevision,
-        confirmedSnapshot: project,
-        inFlight: null,
+        confirmedRevision: Math.max(current.confirmedRevision, incomingRevision),
+        confirmedSnapshot: revisionWentBackwards ? current.confirmedSnapshot : project,
+        inFlight: ackMatches ? null : current.inFlight,
     });
 }
 
@@ -89,8 +175,8 @@ export async function abandonCanvasInFlight(canvasId: string, scope = getActiveU
 }
 
 export async function clearCanvasOperationJournal(canvasId: string, scope = getActiveUserScope()) {
-    memory.delete(cacheKey(scope, canvasId));
     await localForageStorageForScope(scope).removeItem(journalName(canvasId));
+    memory.delete(cacheKey(scope, canvasId));
 }
 
 export function newCanvasCommitOperationId() {

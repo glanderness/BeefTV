@@ -116,6 +116,7 @@ const {
     acceptExternalCanvasRevision,
     hasUnconfirmedCanvasEdits,
     refreshLocalCanvasProjectIfChanged,
+    resetLocalCanvasBackendSaveState,
     syncLocalCanvasProjectToBackend,
 } = await import("@/services/local-workspace-repository");
 const { canvasExternalRevisionConflict, useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
@@ -159,6 +160,7 @@ async function establishConfirmedBaseline() {
 beforeEach(() => {
     stored.clear();
     resetCanvasOperationJournalMemory();
+    resetLocalCanvasBackendSaveState();
     notifications.length = 0;
     rejectEditorMerge = false;
     server.gets = 0;

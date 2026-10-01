@@ -106,10 +106,22 @@ const journalPath = join(dir, "journal.ts");
 writeFileSync(operationsPath, "export const commitCanvasDocument = async () => ({ revision: 1, result: {} });\n");
 writeFileSync(journalPath, `
 const memory = new Map();
+const empty = (id) => ({ userScope: "guest", canvasId: id, confirmedRevision: 0, confirmedSnapshot: null, inFlight: null });
+export class CanvasJournalError extends Error { constructor(message) { super(message); this.name = "CanvasJournalError"; } }
 export const peekCanvasOperationJournal = (id) => memory.get(id);
-export const loadCanvasOperationJournal = async (id) => memory.get(id) ?? { userScope: "guest", canvasId: id, confirmedRevision: 0, confirmedSnapshot: null, inFlight: null };
+export const loadCanvasOperationJournal = async (id) => memory.get(id) ?? empty(id);
 export const saveCanvasOperationJournal = async (journal) => { memory.set(journal.canvasId, journal); };
-export const recordConfirmedCanvasCommit = async (project) => { memory.set(project.id, { userScope: "guest", canvasId: project.id, confirmedRevision: project.revision ?? 0, confirmedSnapshot: project, inFlight: null }); };
+export const recordConfirmedCanvasCommit = async (project, _scope, options) => {
+  const current = memory.get(project.id) ?? empty(project.id);
+  const incoming = project.revision ?? current.confirmedRevision;
+  const ackMatches = options?.ackOperationId && current.inFlight?.operationId === options.ackOperationId;
+  memory.set(project.id, {
+    ...current,
+    confirmedRevision: Math.max(current.confirmedRevision, incoming),
+    confirmedSnapshot: incoming < current.confirmedRevision ? current.confirmedSnapshot : project,
+    inFlight: ackMatches ? null : current.inFlight,
+  });
+};
 export const abandonCanvasInFlight = async () => {};
 export const clearCanvasOperationJournal = async (id) => { memory.delete(id); };
 export const newCanvasCommitOperationId = () => "op";

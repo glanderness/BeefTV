@@ -118,10 +118,21 @@ writeFileSync(
     `
 const memory = new Map();
 const empty = (canvasId) => ({ userScope: "guest", canvasId, confirmedRevision: 0, confirmedSnapshot: null, inFlight: null });
+export class CanvasJournalError extends Error { constructor(message) { super(message); this.name = "CanvasJournalError"; } }
 export const peekCanvasOperationJournal = (id) => memory.get(id);
 export const loadCanvasOperationJournal = async (id) => memory.get(id) ?? empty(id);
 export const saveCanvasOperationJournal = async (journal) => { memory.set(journal.canvasId, journal); };
-export const recordConfirmedCanvasCommit = async (project) => { memory.set(project.id, { userScope: "guest", canvasId: project.id, confirmedRevision: project.revision ?? 0, confirmedSnapshot: project, inFlight: null }); };
+export const recordConfirmedCanvasCommit = async (project, _scope, options) => {
+  const current = memory.get(project.id) ?? empty(project.id);
+  const incoming = project.revision ?? current.confirmedRevision;
+  const ackMatches = options?.ackOperationId && current.inFlight?.operationId === options.ackOperationId;
+  memory.set(project.id, {
+    ...current,
+    confirmedRevision: Math.max(current.confirmedRevision, incoming),
+    confirmedSnapshot: incoming < current.confirmedRevision ? current.confirmedSnapshot : project,
+    inFlight: ackMatches ? null : current.inFlight,
+  });
+};
 export const abandonCanvasInFlight = async (id) => {
   const current = memory.get(id) ?? empty(id);
   memory.set(id, { ...current, inFlight: null });
@@ -270,7 +281,7 @@ describe("persistCanvasTimeline http", () => {
     });
 
     it("rejects when the desktop PUT fails", async () => {
-        request.setPutError(new Error("画布后端持久化失败"));
+        request.setPutError(new request.ApiError("画布后端持久化失败", { status: 400 }));
         let caught: unknown;
         try {
             await repository.persistCanvasTimeline(project.id, timeline);
@@ -362,7 +373,7 @@ describe("persistCanvasDocument http", () => {
 
     it("rejects when the desktop PUT fails", async () => {
         store.resetProjects([{ ...project, nodes: [originalAudioNode] }]);
-        request.setPutError(new Error("画布保存失败，请重试"));
+        request.setPutError(new request.ApiError("画布保存失败，请重试", { status: 400 }));
         let caught: unknown;
         try {
             await repository.persistCanvasDocument(project.id, { nodes: [originalAudioNode, historyAudioNode] });
@@ -379,7 +390,7 @@ describe("persistCanvasDocument http", () => {
             for (const node of body.project?.nodes || []) {
                 const storageKey = String(node.metadata?.storageKey || "");
                 if (storageKey.startsWith("resource:") && !node.metadata?.assetId) {
-                    return new Error("画布媒体尚未进入素材库，请等待同步完成后重试");
+                    return new request.ApiError("画布媒体尚未进入素材库，请等待同步完成后重试", { status: 400 });
                 }
             }
             return null;
@@ -407,7 +418,7 @@ describe("persistCanvasDocument http", () => {
             for (const node of body.project?.nodes || []) {
                 const storageKey = String(node.metadata?.storageKey || "");
                 if (storageKey.startsWith("resource:") && !node.metadata?.assetId) {
-                    return new Error("画布媒体尚未进入素材库，请等待同步完成后重试");
+                    return new request.ApiError("画布媒体尚未进入素材库，请等待同步完成后重试", { status: 400 });
                 }
             }
             return null;
@@ -447,7 +458,7 @@ describe("persistCanvasDocument http", () => {
         store.useCanvasStore.setState((state: { projects: Array<Record<string, unknown>> }) => ({
             projects: state.projects.map((item) => (item.id === project.id ? { ...item, revision: 9 } : item)),
         }));
-        rejectPut(new Error("画布保存失败，请重试"));
+        rejectPut(new request.ApiError("画布保存失败，请重试", { status: 400 }));
         let caught: unknown;
         try {
             await pending;
@@ -484,7 +495,7 @@ describe("persistCanvasDocument http", () => {
             metadata: { content: "飞行中编辑" },
         };
         store.useCanvasStore.getState().updateProject(project.id, { nodes: [editedOriginal, historyAudioNode, laterText] });
-        rejectPut(new Error("画布保存失败，请重试"));
+        rejectPut(new request.ApiError("画布保存失败，请重试", { status: 400 }));
         await pending.catch(() => undefined);
         expect(store.projects[0].nodes.map((node: { id: string; title: string }) => ({ id: node.id, title: node.title }))).toEqual([
             { id: "audio-original", title: "旁白改名" },

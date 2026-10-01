@@ -64,7 +64,9 @@ listed := registry.List(operations.ManualCaller(false))
 
 任务 worker/provider、数据库迁移、model schema、Agent 宿主生命周期、画布 UI 页面（`project.tsx`）、助手侧栏、时间线/合并/导出库。
 
-生成结果提交仍走 `PUT /canvas-projects/:id/generated-assets`，待交付切片接入。`project.tsx` / 媒体工具仍通过 `syncLocalCanvasSnapshot` 调仓库；该桥接已改为同一条 `canvas.document.commit`，页面文件本身未改。
+生成结果提交仍走 `PUT /canvas-projects/:id/generated-assets`，待交付切片接入。`project.tsx` / 媒体工具仍通过 `syncLocalCanvasSnapshot` 调仓库；该桥接把文档字段合成一次 `canvas.document.commit`，viewport 只留在本地，页面文件本身未改。
+
+手工 UI 提交日记按 `userScope + canvasId` 隔离。损坏、无法解析或越权的日记 fail-closed，不发明空操作；离线仍可打开本地草稿。内存与基线只在 IndexedDB 写入成功后发布。回执按 `operationId` 精确确认；刷新和生成结果 PUT 不清除未确认操作。`confirmedRevision` 只前进。派发时捕获用户作用域：排队中的旧账号工作不再发送，进行中的请求把 ack 写回原作用域，不改新账号的 live store。
 
 ## 回合与写入事务
 

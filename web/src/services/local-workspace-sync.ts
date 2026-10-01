@@ -1,5 +1,5 @@
 import { rebindInconsistentCanvasAssets, type CanvasAssetRebindResult } from "@/services/canvas-asset-repair";
-import { createLocalCanvasProject, deleteLocalCanvasProjects, openLocalCanvasProject, openLocalCanvasProjectFromBackend, persistCanvasDocument, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
+import { createLocalCanvasProject, deleteLocalCanvasProjects, openLocalCanvasProject, openLocalCanvasProjectFromBackend, persistCanvasDocument } from "@/services/local-workspace-repository";
 import { flushAssetStorePersistence, useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 
@@ -53,19 +53,9 @@ export function notifyCanvasRefresh(project: CanvasProject, previous: CanvasProj
 export async function syncLocalCanvasSnapshot(id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "appearance" | "backgroundMode" | "showImageInfo" | "viewport">>) {
     const current = openLocalCanvasProject(id);
     if (!current) throw new Error("本地画布不存在");
-    const documentPatch: { nodes?: CanvasProject["nodes"]; connections?: CanvasProject["connections"] } = {};
-    if (patch.nodes) documentPatch.nodes = patch.nodes;
-    if (patch.connections) documentPatch.connections = patch.connections;
-    const rest = { ...patch };
-    delete rest.nodes;
-    delete rest.connections;
-    if (documentPatch.nodes || documentPatch.connections) {
-        await persistCanvasDocument(id, documentPatch);
-    }
-    if (Object.keys(rest).length > 0) {
-        useCanvasStore.getState().updateProject(id, rest);
-        await syncLocalCanvasProjectToBackend(id);
-    }
+    const { viewport, ...documentPatch } = patch;
+    if (viewport) useCanvasStore.getState().updateProject(id, { viewport });
+    if (Object.keys(documentPatch).length > 0) await persistCanvasDocument(id, documentPatch);
     const saved = openLocalCanvasProject(id);
     if (!saved) throw new Error("本地画布不存在");
     return saved;
