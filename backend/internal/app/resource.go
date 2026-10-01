@@ -323,7 +323,14 @@ func (s *Service) storeResourceObject(resource *model.Resource, fileName string,
 
 func (s *Service) retryStoredResource(userID string, resource *model.Resource, kind string, mimeType string, size int64, body io.Reader, forceLocalFlag ...bool) (*model.Resource, error) {
 	_ = forceLocalFlag
-	return s.resourceDomain().Retry(userID, resource, kind, mimeType, size, body)
+	if resource == nil {
+		return nil, localasset.ResourceMissing()
+	}
+	return s.retryOwnedResource(userID, resource.ID, kind, mimeType, size, body)
+}
+
+func (s *Service) retryOwnedResource(userID string, resourceID string, kind string, mimeType string, size int64, body io.Reader) (*model.Resource, error) {
+	return s.resourceDomain().RetryOwned(userID, resourceID, kind, mimeType, size, body)
 }
 
 func localObjectKey(userID string, kind string, fileName string, mimeType string, now time.Time) string {

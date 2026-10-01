@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"sort"
+	"strings"
 	"sync"
 
 	"infinite-canvas/backend/internal/assets"
@@ -38,14 +40,40 @@ func NewService(deps Dependencies) *Service {
 	}
 }
 
-func (s *Service) lockUploadKey(key *string) func() {
-	if s == nil || key == nil || *key == "" {
+// lockWrite serializes Store/RetryOwned for one Service instance.
+// Keys include the user so identical client upload keys cannot cross owners.
+// Multiple keys are taken in sorted order to avoid nested deadlock.
+func (s *Service) lockWrite(userID string, uploadKey *string, resourceID string) func() {
+	if s == nil {
 		return func() {}
 	}
-	value, _ := s.uploadLocks.LoadOrStore(*key, &sync.Mutex{})
-	lock := value.(*sync.Mutex)
-	lock.Lock()
-	return lock.Unlock
+	userID = strings.TrimSpace(userID)
+	resourceID = strings.TrimSpace(resourceID)
+	keys := make([]string, 0, 2)
+	if userID != "" && uploadKey != nil {
+		if key := strings.TrimSpace(*uploadKey); key != "" {
+			keys = append(keys, "upload\x00"+userID+"\x00"+key)
+		}
+	}
+	if userID != "" && resourceID != "" {
+		keys = append(keys, "resource\x00"+userID+"\x00"+resourceID)
+	}
+	if len(keys) == 0 {
+		return func() {}
+	}
+	sort.Strings(keys)
+	held := make([]*sync.Mutex, 0, len(keys))
+	for _, key := range keys {
+		value, _ := s.uploadLocks.LoadOrStore(key, &sync.Mutex{})
+		lock := value.(*sync.Mutex)
+		lock.Lock()
+		held = append(held, lock)
+	}
+	return func() {
+		for index := len(held) - 1; index >= 0; index-- {
+			held[index].Unlock()
+		}
+	}
 }
 
 func (s *Service) Resources(userID string, limit int) ([]model.Resource, error) {
@@ -108,8 +136,6 @@ func (s *Service) upload(userID string, header *multipart.FileHeader, kind strin
 		return nil, MissingUpload()
 	}
 	uploadKey := NormalizedUploadKey(uploadIdentity)
-	unlock := s.lockUploadKey(uploadKey)
-	defer unlock()
 	existing, err := s.resourceForUploadKey(userID, uploadKey)
 	if err != nil {
 		return nil, err
@@ -148,8 +174,6 @@ func (s *Service) uploadFile(userID string, fileName string, size int64, kind st
 		return nil, MissingUpload()
 	}
 	uploadKey := NormalizedUploadKey(uploadIdentity)
-	unlock := s.lockUploadKey(uploadKey)
-	defer unlock()
 	existing, err := s.resourceForUploadKey(userID, uploadKey)
 	if err != nil {
 		return nil, err

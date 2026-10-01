@@ -190,12 +190,7 @@ func (s *Service) DrainDeletionJobs(limit int) {
 		if job == nil {
 			return
 		}
-		resource := &model.Resource{
-			ID: job.ResourceID, UserID: job.UserID, Provider: job.Provider,
-			Endpoint: job.Endpoint, Bucket: job.Bucket, StorageSettingID: job.StorageSettingID,
-			ObjectKey: job.ObjectKey,
-		}
-		if err := s.DeleteStoredObject(job.UserID, resource); err != nil {
+		if err := s.deleteOutboxObject(job); err != nil {
 			delay := deletionRetryDelay(job.Attempts)
 			if retryErr := s.repo.RetryResourceDeletionJob(job.ID, owner, err.Error(), time.Now().Add(delay)); retryErr != nil {
 				log.Printf("resource deletion worker retry update failed for %s: %v", job.ID, retryErr)

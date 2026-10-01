@@ -312,6 +312,13 @@ func (r *Repository) AssetBusinessReferences(userID string, assetID string) ([]R
 
 func (r *Repository) DeleteAssetAndResources(userID string, assetID string, resourceIDs []string, deletionJobs []model.ResourceDeletionJob) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		var asset model.Asset
+		if err := tx.Where("id = ? AND user_id = ?", assetID, userID).First(&asset).Error; err != nil {
+			return err
+		}
+		if err := guardAssetDeletionReferences(tx, userID, assetID, resourceIDs); err != nil {
+			return err
+		}
 		if err := New(tx).RequireNoCanvasHistoryReferences(resourceIDs); err != nil {
 			return err
 		}
@@ -350,4 +357,90 @@ func (r *Repository) DeleteAssetAndResources(userID string, assetID string, reso
 		}
 		return tx.Where("user_id = ? AND id IN ?", userID, resourceIDs).Delete(&model.Resource{}).Error
 	})
+}
+
+// guardAssetDeletionReferences re-checks live documents and direct links inside
+// the delete transaction so a reference added after the service snapshot cannot
+// commit with the resource rows and outbox.
+func guardAssetDeletionReferences(tx *gorm.DB, userID string, assetID string, resourceIDs []string) error {
+	if err := guardAssetBusinessLinks(tx, assetID); err != nil {
+		return err
+	}
+	if len(resourceIDs) == 0 {
+		return nil
+	}
+	var assetDocuments []string
+	if err := tx.Model(&model.Asset{}).Where("user_id = ? AND id <> ?", userID, assetID).Pluck("payload_json", &assetDocuments).Error; err != nil {
+		return err
+	}
+	var canvasDocuments []string
+	if err := tx.Model(&model.CanvasProject{}).Where("user_id = ?", userID).Pluck("payload_json", &canvasDocuments).Error; err != nil {
+		return err
+	}
+	documents := append(assetDocuments, canvasDocuments...)
+	for _, resourceID := range resourceIDs {
+		storageKey := "resource:" + resourceID + `"`
+		fileURL := "/api/resources/" + resourceID + "/"
+		for _, document := range documents {
+			if strings.Contains(document, storageKey) || strings.Contains(document, fileURL) {
+				return ErrResourceCleanupStillReferenced
+			}
+		}
+	}
+	var representationCount int64
+	if err := tx.Table("asset_representations").
+		Joins("JOIN asset_versions ON asset_versions.id = asset_representations.asset_version_id").
+		Where("asset_versions.asset_id <> ? AND asset_representations.resource_id IN ?", assetID, resourceIDs).
+		Count(&representationCount).Error; err != nil {
+		return err
+	}
+	if representationCount > 0 {
+		return ErrResourceCleanupStillReferenced
+	}
+	for _, check := range []struct {
+		model any
+		query string
+	}{
+		{&model.VoiceProfile{}, "sample_resource_id IN ?"},
+		{&model.ShotArtifact{}, "resource_id IN ?"},
+	} {
+		var count int64
+		if err := tx.Model(check.model).Where(check.query, resourceIDs).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return ErrResourceCleanupStillReferenced
+		}
+	}
+	return nil
+}
+
+func guardAssetBusinessLinks(tx *gorm.DB, assetID string) error {
+	for _, check := range []struct {
+		model any
+		query string
+		args  []any
+	}{
+		{&model.ProjectAssetLink{}, "asset_id = ?", []any{assetID}},
+		{&model.ProjectAssetCandidate{}, "resolved_asset_id = ?", []any{assetID}},
+	} {
+		var count int64
+		if err := tx.Model(check.model).Where(check.query, check.args...).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return ErrResourceCleanupStillReferenced
+		}
+	}
+	var shotCount int64
+	if err := tx.Table("shot_asset_references").
+		Joins("JOIN asset_versions ON asset_versions.id = shot_asset_references.asset_version_id").
+		Where("asset_versions.asset_id = ?", assetID).
+		Count(&shotCount).Error; err != nil {
+		return err
+	}
+	if shotCount > 0 {
+		return ErrResourceCleanupStillReferenced
+	}
+	return nil
 }

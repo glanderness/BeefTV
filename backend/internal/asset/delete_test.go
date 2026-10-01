@@ -1,6 +1,7 @@
 package asset
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -165,6 +166,158 @@ func TestDetachedCleanupKeepsReferencedResource(t *testing.T) {
 	}
 	if orphanCount != 0 || backedCount != 1 {
 		t.Fatalf("cleanup result: orphan=%d backed=%d", orphanCount, backedCount)
+	}
+}
+
+func TestDeleteStoredObjectRejectsForeignOwnerForgedIdentity(t *testing.T) {
+	svc, db, dataDir := newDeletionDomain(t)
+	objectKey := "users/user-1/image/owned.png"
+	resourcePath := filepath.Join(dataDir, "resources", filepath.FromSlash(objectKey))
+	if err := os.MkdirAll(filepath.Dir(resourcePath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(resourcePath, []byte("image"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	resource := model.Resource{
+		ID: "resource-owned", UserID: "user-1", Provider: "local", ObjectKey: objectKey,
+		Status: model.ResourceStatusReady,
+	}
+	if err := db.Create(&resource).Error; err != nil {
+		t.Fatal(err)
+	}
+	forged := &model.Resource{
+		ID: resource.ID, UserID: "user-2", Provider: "local",
+		ObjectKey: objectKey, Status: model.ResourceStatusReady,
+	}
+	if err := svc.DeleteStoredObject("user-2", forged); err == nil {
+		t.Fatal("foreign delete succeeded")
+	}
+	if _, err := os.Stat(resourcePath); err != nil {
+		t.Fatalf("owned file was removed: %v", err)
+	}
+	missing := &model.Resource{
+		ID: "missing-id", UserID: "user-2", Provider: "local", ObjectKey: objectKey,
+	}
+	if err := svc.DeleteStoredObject("user-2", missing); err == nil {
+		t.Fatal("missing-id delete succeeded")
+	}
+	if _, err := os.Stat(resourcePath); err != nil {
+		t.Fatalf("owned file was removed via missing id: %v", err)
+	}
+}
+
+func TestDeleteStoredObjectUsesPersistedObjectKey(t *testing.T) {
+	svc, db, dataDir := newDeletionDomain(t)
+	ownedKey := "users/user-1/image/owned.png"
+	decoyKey := "users/user-1/image/decoy.png"
+	for _, key := range []string{ownedKey, decoyKey} {
+		path := filepath.Join(dataDir, "resources", filepath.FromSlash(key))
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(key), 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resource := model.Resource{
+		ID: "resource-persisted", UserID: "user-1", Provider: "local", ObjectKey: ownedKey,
+		Status: model.ResourceStatusReady,
+	}
+	if err := db.Create(&resource).Error; err != nil {
+		t.Fatal(err)
+	}
+	forged := &model.Resource{
+		ID: resource.ID, UserID: "user-1", Provider: "local", ObjectKey: decoyKey,
+	}
+	if err := svc.DeleteStoredObject("user-1", forged); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "resources", filepath.FromSlash(ownedKey))); !os.IsNotExist(err) {
+		t.Fatalf("persisted object still exists: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "resources", filepath.FromSlash(decoyKey))); err != nil {
+		t.Fatalf("forged object key was deleted: %v", err)
+	}
+}
+
+func TestDeleteAssetAndResourcesAbortsWhenLiveCanvasAppears(t *testing.T) {
+	_, db, dataDir := newDeletionDomain(t)
+	objectKey := "users/user-1/image/live.png"
+	resourcePath := filepath.Join(dataDir, "resources", filepath.FromSlash(objectKey))
+	if err := os.MkdirAll(filepath.Dir(resourcePath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(resourcePath, []byte("image"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	resource := model.Resource{ID: "resource-live", UserID: "user-1", Provider: "local", ObjectKey: objectKey, Status: model.ResourceStatusReady}
+	asset := model.Asset{ID: "asset-live", UserID: "user-1", Title: "素材", PayloadJSON: `{"data":{"storageKey":"resource:resource-live"}}`}
+	canvas := model.CanvasProject{ID: "canvas-live", UserID: "user-1", Title: "画布", PayloadJSON: `{"nodes":[{"data":{"storageKey":"resource:resource-live"}}]}`}
+	for _, item := range []any{&resource, &asset, &canvas} {
+		if err := db.Create(item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	repo := repository.New(db)
+	job := model.ResourceDeletionJob{
+		ID: "should-not-commit", UserID: "user-1", ResourceID: resource.ID,
+		Provider: "local", ObjectKey: objectKey, Status: model.ResourceDeletionStatusPending,
+	}
+	err := repo.DeleteAssetAndResources("user-1", asset.ID, []string{resource.ID}, []model.ResourceDeletionJob{job})
+	if !errors.Is(err, repository.ErrResourceCleanupStillReferenced) {
+		t.Fatalf("DeleteAssetAndResources() error = %v", err)
+	}
+	var assetCount, resourceCount, jobCount int64
+	if err := db.Model(&model.Asset{}).Where("id = ?", asset.ID).Count(&assetCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Resource{}).Where("id = ?", resource.ID).Count(&resourceCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.ResourceDeletionJob{}).Where("id = ?", job.ID).Count(&jobCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if assetCount != 1 || resourceCount != 1 || jobCount != 0 {
+		t.Fatalf("tx leaked: asset=%d resource=%d job=%d", assetCount, resourceCount, jobCount)
+	}
+	if _, err := os.Stat(resourcePath); err != nil {
+		t.Fatalf("bytes removed while delete aborted: %v", err)
+	}
+}
+
+func TestDeleteAssetEnqueuesOutboxWithoutRemovingBytes(t *testing.T) {
+	svc, db, dataDir := newDeletionDomain(t)
+	objectKey := "users/user-1/image/queued-keep.png"
+	resourcePath := filepath.Join(dataDir, "resources", filepath.FromSlash(objectKey))
+	if err := os.MkdirAll(filepath.Dir(resourcePath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(resourcePath, []byte("image"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	resource := model.Resource{ID: "resource-keep", UserID: "user-1", Provider: "local", ObjectKey: objectKey, Status: model.ResourceStatusReady}
+	asset := model.Asset{ID: "asset-keep", UserID: "user-1", Title: "可删素材", PayloadJSON: `{"data":{"storageKey":"resource:resource-keep"}}`}
+	for _, item := range []any{&resource, &asset} {
+		if err := db.Create(item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := svc.DeleteUserAssetWithResources("user-1", asset.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(resourcePath); err != nil {
+		t.Fatalf("metadata commit removed bytes: %v", err)
+	}
+	var resourceCount, jobCount int64
+	if err := db.Model(&model.Resource{}).Where("id = ?", resource.ID).Count(&resourceCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.ResourceDeletionJob{}).Count(&jobCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if resourceCount != 0 || jobCount != 1 {
+		t.Fatalf("outbox state: resource=%d job=%d", resourceCount, jobCount)
 	}
 }
 

@@ -3,14 +3,31 @@ package asset
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"testing/iotest"
 
 	"infinite-canvas/backend/internal/model"
 )
+
+type holdFirstRead struct {
+	once      sync.Once
+	announced chan struct{}
+	hold      <-chan struct{}
+	rest      io.Reader
+}
+
+func (h *holdFirstRead) Read(p []byte) (int, error) {
+	h.once.Do(func() {
+		close(h.announced)
+		<-h.hold
+	})
+	return h.rest.Read(p)
+}
 
 var errReadySave = errors.New("injected ready save failure")
 
@@ -260,6 +277,186 @@ func TestRetryReleasesQuotaAfterFailure(t *testing.T) {
 	}
 	if quota.reserved != 0 {
 		t.Fatalf("quota reserved = %d, want 0", quota.reserved)
+	}
+}
+
+func TestRetryRejectsForeignOwnerForgedReady(t *testing.T) {
+	svc, repo, dataDir := newTestDomain(t)
+	uploadKey := NormalizedUploadKey([]string{"owner-check"})
+	failed := &model.Resource{
+		ID: "resource-owned", UserID: "user-1", Kind: "image", Status: model.ResourceStatusFailed,
+		Provider: "local", ObjectKey: "users/user-1/image/owned.png", MimeType: "image/png", Size: 7,
+		UploadKey: uploadKey,
+	}
+	if err := repo.CreateResource(failed); err != nil {
+		t.Fatal(err)
+	}
+	forged := *failed
+	forged.UserID = "user-2"
+	forged.Status = model.ResourceStatusReady
+	forged.ObjectKey = "users/user-2/image/forged.png"
+	if _, err := svc.Retry("user-2", &forged, "image", "image/png", 7, bytes.NewReader([]byte("payload"))); err == nil {
+		t.Fatal("foreign retry succeeded")
+	}
+	latest, err := repo.Resource("resource-owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.Status != model.ResourceStatusFailed || latest.UserID != "user-1" {
+		t.Fatalf("persisted = %#v", latest)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "resources", filepath.FromSlash(failed.ObjectKey))); !os.IsNotExist(err) {
+		t.Fatalf("foreign retry published bytes: %v", err)
+	}
+}
+
+func TestRetryMismatchLeavesFailedUnchanged(t *testing.T) {
+	quota := &recordingQuota{}
+	base, repo, _ := newTestDomain(t)
+	svc := NewService(Dependencies{
+		Repository: base.repo,
+		Blobs:      base.blobs,
+		Quota:      quota,
+		Lifecycle:  nopLifecycle{},
+	})
+	uploadKey := NormalizedUploadKey([]string{"mismatch"})
+	failed := &model.Resource{
+		ID: "resource-mismatch", UserID: "user-1", Kind: "image", Status: model.ResourceStatusFailed,
+		Provider: "local", ObjectKey: "users/user-1/image/mismatch.png", MimeType: "image/png", Size: 7,
+		UploadKey: uploadKey, Error: "previous write failed",
+	}
+	if err := repo.CreateResource(failed); err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.Retry("user-1", failed, "image", "image/png", 8, bytes.NewReader([]byte("payload!")))
+	if err == nil || !strings.Contains(err.Error(), "上传幂等标识已用于其他文件") {
+		t.Fatalf("mismatch error = %v", err)
+	}
+	latest, lookupErr := repo.Resource("resource-mismatch")
+	if lookupErr != nil {
+		t.Fatal(lookupErr)
+	}
+	if latest.Status != model.ResourceStatusFailed {
+		t.Fatalf("status = %s, want failed", latest.Status)
+	}
+	if latest.Error != "previous write failed" {
+		t.Fatalf("error rewritten: %q", latest.Error)
+	}
+	if quota.reserved != 0 {
+		t.Fatalf("quota reserved = %d, want 0", quota.reserved)
+	}
+	recovered, retryErr := svc.RetryOwned("user-1", failed.ID, "image", "image/png", 7, bytes.NewReader([]byte("payload")))
+	if retryErr != nil {
+		t.Fatal(retryErr)
+	}
+	if recovered.Status != model.ResourceStatusReady || recovered.ID != failed.ID {
+		t.Fatalf("recovered = %#v", recovered)
+	}
+}
+
+func TestRetryOwnedReclaimsStalePendingAfterNewService(t *testing.T) {
+	_, repo, dataDir := newTestDomain(t)
+	uploadKey := NormalizedUploadKey([]string{"stale-pending"})
+	pending := &model.Resource{
+		ID: "resource-stale", UserID: "user-1", Kind: "image", Status: model.ResourceStatusPending,
+		Provider: "local", ObjectKey: "users/user-1/image/stale.png", MimeType: "text/plain", Size: 7,
+		UploadKey: uploadKey,
+	}
+	if err := repo.CreateResource(pending); err != nil {
+		t.Fatal(err)
+	}
+	restarted := NewService(Dependencies{
+		Repository: NewRepository(repo),
+		Blobs:      NewFileStore(dataDir),
+		Quota:      nopQuota{},
+		Lifecycle:  nopLifecycle{},
+	})
+	recovered, err := restarted.RetryOwned("user-1", pending.ID, "image", "text/plain", 7, bytes.NewReader([]byte("payload")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.ID != pending.ID || recovered.Status != model.ResourceStatusReady {
+		t.Fatalf("recovered = %#v", recovered)
+	}
+}
+
+func TestStoreDoesNotReclaimPending(t *testing.T) {
+	svc, repo, _ := newTestDomain(t)
+	uploadKey := NormalizedUploadKey([]string{"store-pending"})
+	pending := &model.Resource{
+		ID: "resource-store-pending", UserID: "user-1", Kind: "image", Status: model.ResourceStatusPending,
+		Provider: "local", ObjectKey: "users/user-1/image/store-pending.png", MimeType: "text/plain", Size: 7,
+		UploadKey: uploadKey,
+	}
+	if err := repo.CreateResource(pending); err != nil {
+		t.Fatal(err)
+	}
+	_, stored, err := svc.Store("user-1", "image", "a.png", "text/plain", 7, 1, 1, 0, bytes.NewReader([]byte("payload")), uploadKey)
+	if err == nil || stored {
+		t.Fatalf("store reclaimed pending: stored=%v err=%v", stored, err)
+	}
+	if !strings.Contains(err.Error(), "相同素材正在上传") {
+		t.Fatalf("store error = %v", err)
+	}
+	latest, lookupErr := repo.Resource(pending.ID)
+	if lookupErr != nil {
+		t.Fatal(lookupErr)
+	}
+	if latest.Status != model.ResourceStatusPending {
+		t.Fatalf("status = %s, want pending", latest.Status)
+	}
+}
+
+func TestConcurrentStoreAndRetryDoesNotOverwriteInFlightWrite(t *testing.T) {
+	svc, repo, dataDir := newTestDomain(t)
+	uploadKey := NormalizedUploadKey([]string{"in-flight"})
+	announced := make(chan struct{})
+	hold := make(chan struct{})
+	var stored *model.Resource
+	var storeErr error
+	var storeWG sync.WaitGroup
+	storeWG.Add(1)
+	go func() {
+		defer storeWG.Done()
+		stored, _, storeErr = svc.Store("user-1", "image", "a.png", "text/plain", 12, 1, 1, 0, &holdFirstRead{
+			announced: announced,
+			hold:      hold,
+			rest:      bytes.NewReader([]byte("first-writer")),
+		}, uploadKey)
+	}()
+	<-announced
+	var retried *model.Resource
+	var retryErr error
+	var retryWG sync.WaitGroup
+	retryWG.Add(1)
+	go func() {
+		defer retryWG.Done()
+		pending, err := repo.ResourceByUploadKey("user-1", *uploadKey)
+		if err != nil {
+			retryErr = err
+			return
+		}
+		retried, retryErr = svc.RetryOwned("user-1", pending.ID, "image", "text/plain", 12, bytes.NewReader([]byte("retry-payload")))
+	}()
+	close(hold)
+	storeWG.Wait()
+	retryWG.Wait()
+	if storeErr != nil {
+		t.Fatalf("store: %v", storeErr)
+	}
+	if retryErr != nil {
+		t.Fatalf("retry: %v", retryErr)
+	}
+	if stored == nil || retried == nil || stored.ID != retried.ID {
+		t.Fatalf("store=%v retry=%v", stored, retried)
+	}
+	body, err := os.ReadFile(filepath.Join(dataDir, "resources", filepath.FromSlash(stored.ObjectKey)))
+	if err != nil || string(body) != "first-writer" {
+		t.Fatalf("body = %q err=%v", body, err)
+	}
+	resources, err := repo.Resources("user-1", 10)
+	if err != nil || len(resources) != 1 {
+		t.Fatalf("resource count = %d err=%v", len(resources), err)
 	}
 }
 

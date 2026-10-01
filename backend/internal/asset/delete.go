@@ -11,6 +11,8 @@ import (
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
+
+	"gorm.io/gorm"
 )
 
 type ResourceUsage struct {
@@ -198,6 +200,9 @@ func (s *Service) DeleteUserAssetWithResources(userID string, assetID string) er
 		if errors.Is(err, repository.ErrCanvasHistoryResourceReferenced) {
 			return HistoryReferenced()
 		}
+		if errors.Is(err, repository.ErrResourceCleanupStillReferenced) {
+			return StillReferenced()
+		}
 		return fmt.Errorf("素材记录删除失败，请重试：%w", err)
 	}
 	if len(deletionJobs) > 0 {
@@ -207,9 +212,39 @@ func (s *Service) DeleteUserAssetWithResources(userID string, assetID string) er
 }
 
 func (s *Service) DeleteStoredObject(userID string, resource *model.Resource) error {
-	_ = userID
 	if resource == nil {
 		return errors.New("资源记录为空")
+	}
+	if s == nil || s.repo == nil {
+		return ResourceMissing()
+	}
+	persisted, err := s.repo.ResourceForUser(userID, resource.ID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ResourceMissing()
+		}
+		return err
+	}
+	return s.deleteTrustedObject(userID, persisted)
+}
+
+func (s *Service) deleteOutboxObject(job *model.ResourceDeletionJob) error {
+	if job == nil || strings.TrimSpace(job.UserID) == "" || strings.TrimSpace(job.ObjectKey) == "" {
+		return errors.New("资源记录为空")
+	}
+	return s.deleteTrustedObject(job.UserID, &model.Resource{
+		ID: job.ResourceID, UserID: job.UserID, Provider: job.Provider,
+		Endpoint: job.Endpoint, Bucket: job.Bucket, StorageSettingID: job.StorageSettingID,
+		ObjectKey: job.ObjectKey,
+	})
+}
+
+func (s *Service) deleteTrustedObject(userID string, resource *model.Resource) error {
+	if resource == nil {
+		return errors.New("资源记录为空")
+	}
+	if strings.TrimSpace(userID) == "" || (resource.UserID != "" && resource.UserID != userID) {
+		return ResourceMissing()
 	}
 	if strings.TrimSpace(resource.ObjectKey) == "" {
 		return fmt.Errorf("资源 %s 的存储路径为空", resource.ID)
