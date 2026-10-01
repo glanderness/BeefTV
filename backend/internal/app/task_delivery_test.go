@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"path/filepath"
 	"sync"
@@ -839,16 +840,7 @@ func TestGenerationDeliveryRecoversFailedAndPendingResourceSameIdentity(t *testi
 	if err := db.Create(&failedTask).Error; err != nil {
 		t.Fatal(err)
 	}
-	adapter := generationDeliveryMediaAdapter{service: svc}
-	failedSeed, err := adapter.PersistRemoteArtifact("user-1", "image", tinyPNGDataURL, failedTask.ID+":0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	failedSeed.Status = model.ResourceStatusFailed
-	failedSeed.Error = "simulated persist crash"
-	if err := svc.repo.SaveResource(failedSeed); err != nil {
-		t.Fatal(err)
-	}
+	failedSeed := seedLeftoverGenerationArtifact(t, svc, "res-media-failed", "user-1", failedTask.ID+":0", model.ResourceStatusFailed, tinyPNGDataURL)
 	if err := svc.RecoverIncompleteGenerationDeliveries(8); err != nil {
 		t.Fatal(err)
 	}
@@ -868,18 +860,10 @@ func TestGenerationDeliveryRecoversFailedAndPendingResourceSameIdentity(t *testi
 	if err := db.Create(&pendingTask).Error; err != nil {
 		t.Fatal(err)
 	}
-	pendingSeed, err := adapter.PersistRemoteArtifact("user-1", "image", tinyPNGDataURL, pendingTask.ID+":0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	pendingSeed := seedLeftoverGenerationArtifact(t, svc, "res-media-pending", "user-1", pendingTask.ID+":0", model.ResourceStatusPending, tinyPNGDataURL)
 	day := time.Now().UTC().Format("2006-01-02")
 	usageBefore, err := svc.repo.DailyUploadBytes("user-1", day)
 	if err != nil {
-		t.Fatal(err)
-	}
-	pendingSeed.Status = model.ResourceStatusPending
-	pendingSeed.Error = "simulated crash after write"
-	if err := svc.repo.SaveResource(pendingSeed); err != nil {
 		t.Fatal(err)
 	}
 	closeDB(t, db)
@@ -1217,6 +1201,44 @@ func generationOutputsByIndex(t *testing.T, svc *Service, taskID string) map[int
 func generationArtifactPresent(t *testing.T, svc *Service, resource *model.Resource) bool {
 	t.Helper()
 	return svc.generationLocalArtifactPresent(resource)
+}
+
+func seedLeftoverGenerationArtifact(t *testing.T, svc *Service, resourceID, userID, identity string, status model.ResourceStatus, artifactURL string) *model.Resource {
+	t.Helper()
+	// NewService releases FAILED leftovers. Initialize the domain while empty.
+	_ = svc.resourceDomain()
+	kind, data, mimeType, fileName, width, height, durationMs, err := (generationDeliveryMediaAdapter{service: svc}).decodeGenerationArtifact("image", artifactURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploadKey := localasset.NormalizedUploadKey([]string{identity})
+	if uploadKey == nil {
+		t.Fatal("generation artifact identity is incomplete")
+	}
+	now := time.Now()
+	resource := model.Resource{
+		ID: resourceID, UserID: userID, Kind: kind, Status: status, Provider: "local",
+		ObjectKey: localasset.ObjectKey(userID, kind, fileName, mimeType, now),
+		MimeType:  mimeType, Size: int64(len(data)), Width: width, Height: height, DurationMs: durationMs,
+		UploadKey: uploadKey, CreatedAt: now, UpdatedAt: now,
+	}
+	if status == model.ResourceStatusFailed {
+		resource.Error = "simulated persist crash"
+	}
+	if status == model.ResourceStatusPending {
+		resource.Error = "simulated crash after write"
+	}
+	if err := svc.repo.CreateResource(&resource); err != nil {
+		t.Fatal(err)
+	}
+	if err := localasset.NewFileStore(svc.dataDir).Write(resource.ObjectKey, bytes.NewReader(data)); err != nil {
+		t.Fatal(err)
+	}
+	day := time.Now().UTC().Format("2006-01-02")
+	if err := svc.repo.ReserveIdentifiedDailyUpload(userID, day, *uploadKey, resource.Size, 1<<40); err != nil {
+		t.Fatal(err)
+	}
+	return &resource
 }
 
 func closeDB(t *testing.T, db *gorm.DB) {

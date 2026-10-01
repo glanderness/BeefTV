@@ -188,8 +188,7 @@ func TestPromoteReadyDoesNotDebitOrdinaryUploadPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	day := time.Now().UTC().Format("2006-01-02")
-	prior := int64(7)
-	if err := svc.repo.ReserveDailyUpload("user-1", day, prior, megabytes(defaultRuntimePolicy().Resource.DailyUploadMB)); err != nil {
+	if err := svc.repo.ReserveIdentifiedDailyUpload("user-1", day, *uploadKey, resource.Size, megabytes(defaultRuntimePolicy().Resource.DailyUploadMB)); err != nil {
 		t.Fatal(err)
 	}
 	usageBefore, err := svc.repo.DailyUploadBytes("user-1", day)
