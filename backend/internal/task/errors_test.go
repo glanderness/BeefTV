@@ -17,6 +17,8 @@ func TestMapPersistErrorMapsTaskScope(t *testing.T) {
 	}{
 		{repository.ErrTaskScopeNotActive, TaskScopeUnavailableMessage},
 		{repository.ErrTaskScopeArchived, TaskScopeArchivedMessage},
+		{repository.ErrResourceNotReadyForAdmission, ResourceNotReadyMessage},
+		{repository.ErrTaskInputInvalid, TaskInputInvalidMessage},
 	}
 	for _, item := range cases {
 		task, err := mapPersistError(item.err, CreateRequest{}, identityPresent{}, 8)
@@ -30,6 +32,31 @@ func TestMapPersistErrorMapsTaskScope(t *testing.T) {
 		if errors.Is(err, repository.ErrTaskScopeNotActive) || errors.Is(err, repository.ErrTaskScopeArchived) {
 			t.Fatalf("%v leaked repository error through kernel mapping", item.err)
 		}
+	}
+}
+
+func TestRetryMapsResourceAdmissionFailuresWithoutRequeue(t *testing.T) {
+	for _, item := range []struct {
+		err  error
+		want string
+	}{
+		{repository.ErrResourceNotReadyForAdmission, ResourceNotReadyMessage},
+		{repository.ErrTaskInputInvalid, TaskInputInvalidMessage},
+	} {
+		t.Run(item.want, func(t *testing.T) {
+			store := newMemStore()
+			store.tasks["failed"] = model.Task{ID: "failed", UserID: "user", Type: "canvas_image", Status: model.TaskStatusFailed, InputJSON: `{}`}
+			svc := NewService(retryErrorStore{Store: store, err: item.err}, domainService(store, nil).deps)
+			_, err := svc.Retry("user", "failed")
+			var appErr *kernel.AppError
+			if !errors.As(err, &appErr) || appErr.Status != 400 || appErr.Message != item.want {
+				t.Fatalf("retry: %v", err)
+			}
+			stored, _ := store.TaskForUser("user", "failed")
+			if stored.Status != model.TaskStatusFailed {
+				t.Fatal("invalid resource was requeued")
+			}
+		})
 	}
 }
 

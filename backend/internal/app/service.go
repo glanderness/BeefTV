@@ -69,8 +69,6 @@ type Service struct {
 	generationDeliveryMedia  taskdelivery.Media
 	generationDelivery       *taskdelivery.Deliverer
 	deliveryMu               sync.Mutex
-	generationArtifactMu     sync.Mutex
-	generationArtifactLocks  map[string]*generationArtifactLock
 	tasks                    *localtask.Service
 	tasksOnce                sync.Once
 	workspaceOps             *operations.Registry

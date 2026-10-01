@@ -137,4 +137,24 @@
 - 任务作用域 `2add02b` 尚未合入；删除画布会清空历史 task.project_id，重启后重试可被误当独立任务，继续 `20261002-033401-continue-c53f5fa8`。资源 `2d2bc4d` 继续 `20261002-032808-continue-eb655c0f`，恢复提交不得扣除其他上传的预留额度。
 - 对话与画布上传出现 scope epoch 公共文件接缝，集成时必须统一为同一计数与订阅，不允许两套身份时钟。人工画布三方合并继续补 pending projection 的崩溃恢复。
 
+### 第八轮整合与端到端边界
+
+- 画布 UI 至 `b29148d` 合入 `781212f` / `f9277fa` / `bc79199`，Lead `6a60446` 添加可见交接重试入口与中文账号切换提示。独立及集成 67 pass，typecheck 通过。公共 scope epoch 与 conversation 订阅共用同一个时钟。
+- Provider `cc8b241` / `e475ba4` 合入 `7fbe3f3` / `09a8d15`；Lead `8525690` 收紧 Limits 依赖、删除重复 workflow Field 和全局回调，generation/workflow/app race 专项通过。该快照的全量 Go 曾因旧空 Service 测试夹具失败；`0791ac6` 改成真实本地策略与任务夹具，Seedance 仅轮询原任务、无需已删除参考素材的专项通过。不能把原全量失败记成通过。
+- 任务作用域 `2add02b` / `d8624f5` 合入 `dbb5be4` / `9dbe21b`：已删除/归档作用域禁止新准入，历史 task.project_id 保留，原 client operation 重放仍优先。集成 task/project/repository/app race 通过。
+- 对话 `f7c10ad` / `cfe8999` / `239bb15` 对应合入 `a55634e` / `8522e53` / `1e003c3`，schema 11。`b9a2745` 接入实际组合根、统一账号时钟，采用既有 4 MiB 结构文档边界，移除新增的 1000 条消息和 64 KiB 单字段限制。conversation/database/handler/bootstrap race 通过；前端 42 pass 与 typecheck 通过。消息结果原子绑定继续实现。
+- Agent `45c1e47` / `cfc32b5` 合入 `576aad8` / `9922328`。集成 runtime/handler/bootstrap/assistant race 通过；官方依赖安装后生命周期 5 pass。打包使用 Node 24.15.0、空 PATH、带空格目录，3 pass / 0 模型调用。首次生命周期测试因集成树缺少依赖失败，未伪记通过。独立复审 `20261002-040018-review-4d55c6e9` 仍进行中。
+- 项目分镜恢复 `4f2eba8` 合入 `7a111ca`，只自动应用原批准快照；冲突/旧任务保留结果供明确核对后写入，不重新生成。创作领域 `7857208` / `a92fb3b` 合入 `936c0b0` / `aabe821`，`a3b4d00` 直接调用实际任务域 PrepareOnly，删除旧私有准备标记。creation/app/handler race 专项与章节前端测试通过。
+- 画布绑定 `4f6e9a0` / `3964fcf` 合入 `968fa61` / `8bed2fb`；集成 taskbinding/operations/agentops/canvas race 通过，前端绑定及章节 29 pass，typecheck 通过。Lead 仍发现本地 fallback 伪造确认投影、投影错误吞没和过早写 store；`20261002-035911-continue-f32ddfe4` 在新集成基线修正并实现消息原子绑定与后台恢复，不能当作边界已验收。
+- 资源 `325a34d` / `2d2bc4d` / `6e4a2c4` 合入 `5407617` / `bf77b96` / `020f575`。READY 资源与作用域在同一任务准入事务检查；生成恢复使用原身份和 GeneratedFileMB。Lead 修复嵌套创作事务不能另取 pooled connection，补单连接回滚测试，并映射资源未就绪/坏输入到用户可处理错误。repository/asset/task race 与 app 创作/交付/配额专项通过。普通上传失败额度与分片会话准入仍由 `20261002-035434-continue-8e6b0071` 收口。
+- `c7d9d3c` 让画布/创作配额的策略读取使用同一事务仓储；单连接 SQLite 中未提交策略可见性及相关 race 专项通过。宿主、生成与资源的实际产品入口仍需最终冻结候选联合验证。
+
+### 尚在执行的完整性补齐
+
+- 人工画布提交日记：`20261002-035249-continue-358efd28`，完整 pending projection、A→B→A 及真实 HTTP dispatch 的同一 epoch。
+- 备份：`20261002-034350-continue-f6b7fd0d`，并发失败清理、内容身份、实际服务端读回；画板文档与文件夹仍须同样以 SQLite 为提交权威，schema 12 专用于此。
+- 原生渲染与转写 `20261002-035403-delegate-55a59d90`；播放转码与深度捕获 `20261002-035404-delegate-cb8dbd53`；Eagle/诊断/appearance `20261002-035406-delegate-07a755ef`；文本回放 `20261002-035408-delegate-0c84ccc0`。这些是只读完整性审查定位到的真实旧 app 算法，不按文件行数机械迁移。
+- 模型准入选择仍在旧 app/task_creation.go；`20261002-040134-continue-e8b01dc6` 收入已有 modelcatalog，保留系统渠道、变体和自定义渠道合同。
+- 以上没有新增真实生成费用、没有发布。后续仍需全量回归、实际媒体/新工作区重启、性能/平台/发布包和有明确预算的真实模型验收。
+
 不得将第一批 worker 完成、目录分包或旧版验收报告写作“完整重构完成”。后续变更需按实际依赖顺序实现与验证。

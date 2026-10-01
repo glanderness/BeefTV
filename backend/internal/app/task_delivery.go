@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"sync"
 	"time"
 
 	localasset "infinite-canvas/backend/internal/asset"
@@ -249,39 +248,6 @@ func mapDeliveryStoreErr(err error) error {
 		return taskdelivery.ErrForeignAsset
 	}
 	return err
-}
-
-type generationArtifactLock struct {
-	mu   sync.Mutex
-	refs int
-}
-
-func (s *Service) lockGenerationArtifact(identity string) func() {
-	identity = strings.TrimSpace(identity)
-	if s == nil || identity == "" {
-		return func() {}
-	}
-	s.generationArtifactMu.Lock()
-	if s.generationArtifactLocks == nil {
-		s.generationArtifactLocks = map[string]*generationArtifactLock{}
-	}
-	lock := s.generationArtifactLocks[identity]
-	if lock == nil {
-		lock = &generationArtifactLock{}
-		s.generationArtifactLocks[identity] = lock
-	}
-	lock.refs++
-	s.generationArtifactMu.Unlock()
-	lock.mu.Lock()
-	return func() {
-		lock.mu.Unlock()
-		s.generationArtifactMu.Lock()
-		lock.refs--
-		if lock.refs == 0 {
-			delete(s.generationArtifactLocks, identity)
-		}
-		s.generationArtifactMu.Unlock()
-	}
 }
 
 type generationDeliveryMediaAdapter struct {

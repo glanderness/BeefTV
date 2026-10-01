@@ -1,16 +1,48 @@
 package repository
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestTaskAdmissionWithinCreationTransactionRollsBack(t *testing.T) {
+	repo, db := newAdmissionRepo(t)
+	pool, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = pool.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	rollback := errors.New("approval receipt failed")
+	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		task := model.Task{ID: "nested", UserID: "user", Type: "canvas_image", Status: model.TaskStatusQueued, InputJSON: `{}`}
+		if err := repo.WithTx(tx).CreateTaskWithActiveLimit(&task, 10); err != nil {
+			return err
+		}
+		return rollback
+	})
+	if !errors.Is(err, rollback) {
+		t.Fatalf("nested admission failed: %v", err)
+	}
+	var count int64
+	if err := db.Model(&model.Task{}).Where("id = ?", "nested").Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("task escaped failed approval transaction")
+	}
+}
 
 func newAdmissionRepo(t *testing.T) (*Repository, *gorm.DB) {
 	t.Helper()

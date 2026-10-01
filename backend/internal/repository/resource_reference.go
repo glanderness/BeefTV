@@ -483,6 +483,12 @@ func withImmediateTransaction(db *gorm.DB, fn func(*gorm.DB) error) error {
 	if db == nil {
 		return gorm.ErrInvalidDB
 	}
+	// Creation approval already owns a transaction. Taking another pooled
+	// connection here would deadlock the single-connection desktop database
+	// and detach task admission from its approval/receipt rollback.
+	if _, insideTransaction := db.Statement.ConnPool.(gorm.TxCommitter); insideTransaction {
+		return db.Transaction(fn)
+	}
 	return db.Connection(func(conn *gorm.DB) error {
 		tx := conn.Session(&gorm.Session{SkipDefaultTransaction: true, NewDB: true})
 		if err := tx.Exec("BEGIN IMMEDIATE").Error; err != nil {

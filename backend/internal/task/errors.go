@@ -25,6 +25,8 @@ const (
 	LogicalModelUnavailableMessage                     = "所选模型已停用、归档或配置已更新，请重新选择"
 	TaskScopeArchivedMessage                           = "项目已归档，无法创建生成任务"
 	TaskScopeUnavailableMessage                        = "当前画布或项目不可用，无法创建生成任务"
+	ResourceNotReadyMessage                            = "参考素材还没准备好，请确认文件已上传完成后再试"
+	TaskInputInvalidMessage                            = "任务输入无法解析，请重新提交"
 	RetryNotRetryableMessage                           = "任务已被其他请求重新入队，请勿重复重试"
 	RetryOnlyFailedOrCancelled                         = "only failed or cancelled tasks can be retried"
 	PromptRequiredMessage                              = "请填写提示词"
@@ -74,6 +76,9 @@ func mapPersistError(err error, req CreateRequest, present Presenter, limit int)
 	if mapped := mapTaskScopeError(err); mapped != nil {
 		return nil, mapped
 	}
+	if mapped := mapTaskResourceError(err); mapped != nil {
+		return nil, mapped
+	}
 	var appErr *kernel.AppError
 	if errors.As(err, &appErr) && appErr != nil {
 		return nil, err
@@ -87,6 +92,16 @@ func mapTaskScopeError(err error) error {
 	}
 	if errors.Is(err, repository.ErrTaskScopeNotActive) {
 		return kernel.BadAuthRequest(TaskScopeUnavailableMessage)
+	}
+	return nil
+}
+
+func mapTaskResourceError(err error) error {
+	if errors.Is(err, repository.ErrResourceNotReadyForAdmission) {
+		return kernel.BadAuthRequest(ResourceNotReadyMessage)
+	}
+	if errors.Is(err, repository.ErrTaskInputInvalid) {
+		return kernel.BadAuthRequest(TaskInputInvalidMessage)
 	}
 	return nil
 }

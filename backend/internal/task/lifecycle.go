@@ -86,6 +86,9 @@ func (s *Service) Retry(userID, id string) (*model.Task, error) {
 	if mapped := mapTaskScopeError(err); mapped != nil {
 		return nil, mapped
 	}
+	if mapped := mapTaskResourceError(err); mapped != nil {
+		return nil, mapped
+	}
 	if err != nil {
 		return nil, err
 	}
