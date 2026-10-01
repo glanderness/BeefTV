@@ -1,3 +1,4 @@
+import type { CapturedUserScope } from "@/lib/user-scope-guard";
 import { http } from "@/services/api/request";
 import { normalizeAssetCategory, type AssetCategory } from "@/lib/asset-category";
 import type { GenerationTask } from "@/services/api/task-center";
@@ -569,8 +570,14 @@ export function replaceProjectUnitShots(
     shots: Array<{ title: string; description: string; durationMs: number; revision?: Partial<ShotRevisionInput>; assetVersionIds?: string[] }>,
     expectedShotIds: string[],
     expectedRevision: number,
+    options?: { sourceTaskId?: string; expectedScope?: CapturedUserScope },
 ) {
-    return http.put<{ shots: ProjectShot[] }>(`/projects/${encodeURIComponent(projectId)}/units/${encodeURIComponent(unitId)}/shots`, { shots, expectedShotIds, expectedRevision });
+    return http.put<{ shots: ProjectShot[] }>(`/projects/${encodeURIComponent(projectId)}/units/${encodeURIComponent(unitId)}/shots`, {
+        shots,
+        expectedShotIds,
+        expectedRevision,
+        ...(options?.sourceTaskId ? { sourceTaskId: options.sourceTaskId } : {}),
+    }, { expectedScope: options?.expectedScope });
 }
 
 export function linkShotAsset(projectId: string, shotId: string, input: { assetVersionId: string; role: ShotAssetReference["role"] }) {
@@ -585,8 +592,31 @@ export function createShotRevision(projectId: string, shotId: string, input: Sho
     return http.post<{ shot: ProjectShot; revision: ShotRevision }>(`/projects/${encodeURIComponent(projectId)}/shots/${encodeURIComponent(shotId)}/revisions`, input);
 }
 
-export function createProjectAssetCandidates(projectId: string, candidates: Array<{ unitId?: string; shotId?: string; name: string; category: AssetCategory; details?: Record<string, unknown> }>, source?: "chapter_character_extract" | "agent") {
-	return http.post<{ candidates: ProjectAssetCandidate[] }>(`/projects/${encodeURIComponent(projectId)}/asset-candidates`, { candidates, source });
+export function createProjectAssetCandidates(
+    projectId: string,
+    candidates: Array<{ unitId?: string; shotId?: string; name: string; category: AssetCategory; details?: Record<string, unknown> }>,
+    source?: "chapter_character_extract" | "agent",
+    options?: { sourceTaskId?: string; expectedScope?: CapturedUserScope },
+) {
+    return http.post<{ candidates: ProjectAssetCandidate[] }>(`/projects/${encodeURIComponent(projectId)}/asset-candidates`, {
+        candidates,
+        source,
+        ...(options?.sourceTaskId ? { sourceTaskId: options.sourceTaskId } : {}),
+    }, { expectedScope: options?.expectedScope });
+}
+
+export type ChapterApplyReceipt = {
+    taskId: string;
+    op: string;
+    kind: "storyboard" | "characters" | string;
+    applied: boolean;
+};
+
+export function listChapterApplyReceipts(projectId: string, taskIds: string[], options?: { expectedScope?: CapturedUserScope }) {
+    return http.get<{ receipts: ChapterApplyReceipt[] }>(`/projects/${encodeURIComponent(projectId)}/chapter-apply-receipts`, {
+        params: { taskIds: taskIds.filter(Boolean).join(",") },
+        expectedScope: options?.expectedScope,
+    });
 }
 
 export function confirmProjectAssetCandidate(projectId: string, candidateId: string, assetId?: string) {

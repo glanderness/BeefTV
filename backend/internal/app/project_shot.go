@@ -42,3 +42,7 @@ func (s *Service) UnlinkShotAsset(userID string, projectID string, shotID string
 func (s *Service) CreateProjectAssetCandidates(userID string, projectID string, req CreateAssetCandidatesRequest) ([]model.ProjectAssetCandidate, error) {
 	return s.projectDomain().CreateProjectAssetCandidates(userID, projectID, req)
 }
+
+func (s *Service) ChapterApplyReceipts(userID string, projectID string, taskIDs []string) ([]localproject.ChapterApplyReceiptView, error) {
+	return s.projectDomain().ChapterApplyReceipts(userID, projectID, taskIDs)
+}

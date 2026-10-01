@@ -28,6 +28,7 @@ type Error struct {
 	Message string         `json:"message"`
 	Reason  string         `json:"reason,omitempty"`
 	Details map[string]any `json:"details,omitempty"`
+	cause   error
 }
 
 func (e *Error) Error() string {
@@ -35,6 +36,13 @@ func (e *Error) Error() string {
 		return fmt.Sprintf("%s: %s (%s)", e.Code, e.Message, e.Reason)
 	}
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
+}
+
+func (e *Error) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
 }
 
 func newError(code Code, reason, message string, details map[string]any) *Error {
@@ -72,7 +80,9 @@ func AsError(err error) *Error {
 	if errors.As(err, &opErr) {
 		return opErr
 	}
-	return newError(CodeInternal, "operation_failed", err.Error(), nil)
+	wrapped := newError(CodeInternal, "operation_failed", err.Error(), nil)
+	wrapped.cause = err
+	return wrapped
 }
 
 // HTTPStatus 把操作错误映射到真实 HTTP 状态，不把失败包装成 200。

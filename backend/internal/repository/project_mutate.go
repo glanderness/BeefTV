@@ -677,26 +677,33 @@ func (r *Repository) UnlinkProjectAssetAndBump(userID, projectID, assetID string
 }
 
 func (r *Repository) CreateProjectAssetCandidatesAndBump(userID, projectID string, candidates []model.ProjectAssetCandidate) ([]model.ProjectAssetCandidate, error) {
-	inserted := make([]model.ProjectAssetCandidate, 0, len(candidates))
+	var inserted []model.ProjectAssetCandidate
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		if _, err := requireActiveProjectTx(tx, userID, projectID); err != nil {
-			return err
-		}
-		for index := range candidates {
-			result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&candidates[index])
-			if result.Error != nil {
-				return result.Error
-			}
-			if result.RowsAffected == 1 {
-				inserted = append(inserted, candidates[index])
-			}
-		}
-		if len(inserted) == 0 {
-			return nil
-		}
-		return bumpProjectRevisionTx(tx, projectID, time.Now())
+		created, runErr := createProjectAssetCandidatesAndBumpTx(tx, userID, projectID, candidates)
+		inserted = created
+		return runErr
 	})
 	return inserted, err
+}
+
+func createProjectAssetCandidatesAndBumpTx(tx *gorm.DB, userID, projectID string, candidates []model.ProjectAssetCandidate) ([]model.ProjectAssetCandidate, error) {
+	if _, err := requireActiveProjectTx(tx, userID, projectID); err != nil {
+		return nil, err
+	}
+	inserted := make([]model.ProjectAssetCandidate, 0, len(candidates))
+	for index := range candidates {
+		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&candidates[index])
+		if result.Error != nil {
+			return nil, result.Error
+		}
+		if result.RowsAffected == 1 {
+			inserted = append(inserted, candidates[index])
+		}
+	}
+	if len(inserted) == 0 {
+		return inserted, nil
+	}
+	return inserted, bumpProjectRevisionTx(tx, projectID, time.Now())
 }
 
 func (r *Repository) CreateProjectAssetFolderActive(userID string, folder *model.ProjectAssetFolder) error {
@@ -914,67 +921,71 @@ func (r *Repository) SaveShotWithRevisionActive(userID string, shot *model.Shot,
 
 func (r *Repository) ReplaceProjectUnitShotsActive(userID, projectID, unitID string, shots []model.Shot, revisions []model.ShotRevision, references []model.ShotAssetReference, expectedShotIDs []string, expectedShotPointers map[string]string, expectedRevision int64) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if _, err := requireActiveProjectTx(tx, userID, projectID); err != nil {
-			return err
-		}
-		if err := requireProjectUnitTx(tx, projectID, unitID); err != nil {
-			return err
-		}
-		seenVersions := make(map[string]struct{}, len(references))
-		for _, reference := range references {
-			versionID := strings.TrimSpace(reference.AssetVersionID)
-			if versionID == "" {
-				continue
-			}
-			if _, seen := seenVersions[versionID]; seen {
-				continue
-			}
-			seenVersions[versionID] = struct{}{}
-			if err := requireProjectAssetVersionTx(tx, projectID, versionID); err != nil {
-				return err
-			}
-		}
-		if err := assertShotExpectationsTx(tx, projectID, unitID, expectedShotIDs, expectedShotPointers); err != nil {
-			return err
-		}
-		shotIDs := tx.Model(&model.Shot{}).Select("id").Where("project_id = ? AND unit_id = ?", projectID, unitID)
-		if err := tx.Where("project_id = ? AND unit_id = ?", projectID, unitID).Delete(&model.ShotArtifact{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("shot_id IN (?)", shotIDs).Delete(&model.ShotRevision{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("shot_id IN (?)", shotIDs).Delete(&model.ShotAssetReference{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("project_id = ? AND shot_id IN (?)", projectID, shotIDs).Delete(&model.ProjectAssetCandidate{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("project_id = ? AND unit_id = ?", projectID, unitID).Delete(&model.Shot{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Create(&shots).Error; err != nil {
-			return err
-		}
-		if len(revisions) > 0 {
-			if err := tx.Create(&revisions).Error; err != nil {
-				return err
-			}
-		}
-		if len(references) > 0 {
-			if err := tx.Create(&references).Error; err != nil {
-				return err
-			}
-		}
-		now := time.Now()
-		if err := invalidateUnitWorkflowTx(tx, projectID, unitID, "storyboard", now); err != nil {
-			return err
-		}
-		if expectedRevision <= 0 {
-			return ErrExpectedRevisionRequired
-		}
-		return bumpProjectRevisionCASTx(tx, projectID, expectedRevision, now)
+		return replaceProjectUnitShotsTx(tx, userID, projectID, unitID, shots, revisions, references, expectedShotIDs, expectedShotPointers, expectedRevision)
 	})
+}
+
+func replaceProjectUnitShotsTx(tx *gorm.DB, userID, projectID, unitID string, shots []model.Shot, revisions []model.ShotRevision, references []model.ShotAssetReference, expectedShotIDs []string, expectedShotPointers map[string]string, expectedRevision int64) error {
+	if _, err := requireActiveProjectTx(tx, userID, projectID); err != nil {
+		return err
+	}
+	if err := requireProjectUnitTx(tx, projectID, unitID); err != nil {
+		return err
+	}
+	seenVersions := make(map[string]struct{}, len(references))
+	for _, reference := range references {
+		versionID := strings.TrimSpace(reference.AssetVersionID)
+		if versionID == "" {
+			continue
+		}
+		if _, seen := seenVersions[versionID]; seen {
+			continue
+		}
+		seenVersions[versionID] = struct{}{}
+		if err := requireProjectAssetVersionTx(tx, projectID, versionID); err != nil {
+			return err
+		}
+	}
+	if err := assertShotExpectationsTx(tx, projectID, unitID, expectedShotIDs, expectedShotPointers); err != nil {
+		return err
+	}
+	shotIDs := tx.Model(&model.Shot{}).Select("id").Where("project_id = ? AND unit_id = ?", projectID, unitID)
+	if err := tx.Where("project_id = ? AND unit_id = ?", projectID, unitID).Delete(&model.ShotArtifact{}).Error; err != nil {
+		return err
+	}
+	if err := tx.Where("shot_id IN (?)", shotIDs).Delete(&model.ShotRevision{}).Error; err != nil {
+		return err
+	}
+	if err := tx.Where("shot_id IN (?)", shotIDs).Delete(&model.ShotAssetReference{}).Error; err != nil {
+		return err
+	}
+	if err := tx.Where("project_id = ? AND shot_id IN (?)", projectID, shotIDs).Delete(&model.ProjectAssetCandidate{}).Error; err != nil {
+		return err
+	}
+	if err := tx.Where("project_id = ? AND unit_id = ?", projectID, unitID).Delete(&model.Shot{}).Error; err != nil {
+		return err
+	}
+	if err := tx.Create(&shots).Error; err != nil {
+		return err
+	}
+	if len(revisions) > 0 {
+		if err := tx.Create(&revisions).Error; err != nil {
+			return err
+		}
+	}
+	if len(references) > 0 {
+		if err := tx.Create(&references).Error; err != nil {
+			return err
+		}
+	}
+	now := time.Now()
+	if err := invalidateUnitWorkflowTx(tx, projectID, unitID, "storyboard", now); err != nil {
+		return err
+	}
+	if expectedRevision <= 0 {
+		return ErrExpectedRevisionRequired
+	}
+	return bumpProjectRevisionCASTx(tx, projectID, expectedRevision, now)
 }
 
 func (r *Repository) DeleteProjectShotActive(userID, projectID, shotID string, updatedAt time.Time) error {

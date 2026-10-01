@@ -1,6 +1,7 @@
 package project
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -8,6 +9,9 @@ import (
 
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/operations"
+
+	"gorm.io/gorm"
 )
 
 const AssetCandidateSourceChapterCharacter = "chapter_character_extract"
@@ -132,8 +136,37 @@ func (s *Service) ReplaceProjectUnitShots(userID string, projectID string, unitI
 			references = append(references, model.ShotAssetReference{ID: kernel.NewID(), ShotID: shotID, AssetVersionID: versionID, Role: "reference", Status: "linked", CreatedAt: now})
 		}
 	}
-	if err := s.repo.ReplaceProjectUnitShotsActive(userID, projectID, unitID, shots, revisions, references, expectedIDs, expectedPointers, req.ExpectedRevision); err != nil {
-		return nil, mapProjectWriteError(err)
+	source, err := s.resolveChapterApplySource(userID, projectID, unitID, req.SourceTaskID, chapterApplyStoryboard, storyboardApplyPayloadFromRequest(unitID, req.Shots))
+	if err != nil {
+		return nil, err
+	}
+	if source.TaskID == "" {
+		if err := s.repo.ReplaceProjectUnitShotsActive(userID, projectID, unitID, shots, revisions, references, expectedIDs, expectedPointers, req.ExpectedRevision); err != nil {
+			return nil, mapChapterApplyWriteError(err)
+		}
+		return shots, nil
+	}
+	receiptJSON, err := marshalChapterApplyReceipt(chapterApplyReceipt{
+		TaskID: source.TaskID, ProjectID: projectID, UnitID: unitID, Kind: chapterApplyKindStoryboard, Shots: shots,
+	})
+	if err != nil {
+		return nil, err
+	}
+	outcome, err := operations.NewStore(s.repo.DB()).Run(context.Background(), source.runRequest(userID), func(tx *gorm.DB) ([]byte, error) {
+		if runErr := s.repo.ReplaceProjectUnitShotsTx(tx, userID, projectID, unitID, shots, revisions, references, expectedIDs, expectedPointers, req.ExpectedRevision); runErr != nil {
+			return nil, runErr
+		}
+		return receiptJSON, nil
+	})
+	if err != nil {
+		return nil, mapChapterApplyWriteError(err)
+	}
+	if outcome.Replayed {
+		stored, replayErr := unmarshalChapterApplyReceipt(outcome.Result)
+		if replayErr != nil {
+			return nil, replayErr
+		}
+		return stored.Shots, nil
 	}
 	return shots, nil
 }
@@ -264,7 +297,8 @@ func (s *Service) CreateProjectAssetCandidates(userID string, projectID string, 
 	if _, err := s.Active(userID, projectID); err != nil {
 		return nil, err
 	}
-	if len(req.Candidates) == 0 || len(req.Candidates) > 100 {
+	sourceTaskID := strings.TrimSpace(req.SourceTaskID)
+	if len(req.Candidates) > 100 || (len(req.Candidates) == 0 && sourceTaskID == "") {
 		return nil, kernel.BadAuthRequest("资产候选数量必须在 1 到 100 之间")
 	}
 	source := strings.TrimSpace(req.Source)
@@ -318,11 +352,56 @@ func (s *Service) CreateProjectAssetCandidates(userID string, projectID string, 
 		pending = append(pending, model.ProjectAssetCandidate{ID: kernel.NewID(), ProjectID: projectID, UnitID: strings.TrimSpace(input.UnitID), ShotID: strings.TrimSpace(input.ShotID), Name: name, NameKey: nameKey, Category: category, Status: "pending_confirmation", Source: source, DetailsJSON: detailsJSON, CreatedAt: now, UpdatedAt: now})
 		addAssetCandidateIdentityKeys(knownKeys, category, identityKeys)
 	}
-	inserted, err := s.repo.CreateProjectAssetCandidatesAndBump(userID, projectID, pending)
+	applyUnitID := characterApplyUnitID(req)
+	applySource, err := s.resolveChapterApplySource(userID, projectID, applyUnitID, sourceTaskID, chapterApplyCharacters, characterApplyPayloadFromRequest(req))
 	if err != nil {
-		return nil, mapProjectWriteError(err)
+		return nil, err
+	}
+	if applySource.TaskID != "" {
+		for _, input := range req.Candidates {
+			if unitID := strings.TrimSpace(input.UnitID); unitID != "" && unitID != applySource.UnitID {
+				return nil, kernel.Forbidden("不能把其他章节的生成结果写入本章")
+			}
+		}
+	}
+	if applySource.TaskID == "" {
+		inserted, err := s.repo.CreateProjectAssetCandidatesAndBump(userID, projectID, pending)
+		if err != nil {
+			return nil, mapChapterApplyWriteError(err)
+		}
+		return inserted, nil
+	}
+	var inserted []model.ProjectAssetCandidate
+	outcome, err := operations.NewStore(s.repo.DB()).Run(context.Background(), applySource.runRequest(userID), func(tx *gorm.DB) ([]byte, error) {
+		created, runErr := s.repo.CreateProjectAssetCandidatesAndBumpTx(tx, userID, projectID, pending)
+		if runErr != nil {
+			return nil, runErr
+		}
+		inserted = created
+		return marshalChapterApplyReceipt(chapterApplyReceipt{
+			TaskID: applySource.TaskID, ProjectID: projectID, UnitID: applySource.UnitID, Kind: chapterApplyKindCharacters, Candidates: created,
+		})
+	})
+	if err != nil {
+		return nil, mapChapterApplyWriteError(err)
+	}
+	if outcome.Replayed {
+		stored, replayErr := unmarshalChapterApplyReceipt(outcome.Result)
+		if replayErr != nil {
+			return nil, replayErr
+		}
+		return stored.Candidates, nil
 	}
 	return inserted, nil
+}
+
+func characterApplyUnitID(req CreateAssetCandidatesRequest) string {
+	for _, candidate := range req.Candidates {
+		if unitID := strings.TrimSpace(candidate.UnitID); unitID != "" {
+			return unitID
+		}
+	}
+	return ""
 }
 
 func projectAssetCandidateIdentityKeys(candidates []model.ProjectAssetCandidate, assets []model.Asset) map[string]struct{} {

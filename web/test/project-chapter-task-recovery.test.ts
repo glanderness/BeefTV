@@ -47,74 +47,48 @@ describe("章节生成任务刷新恢复", () => {
         expect(snapshot).not.toEqual(current);
     });
 
-    test("刷新后同镜头 ID 内容已改时，仍按原批准快照恢复，不自动改用当前版本", () => {
-        const currentAfterEdit = { revision: 6, shotIds: ["shot-a"] };
-        const decision = chapterStoryboardRecoveryDecision({
-            alreadyApplied: false,
-            inputJson: JSON.stringify({
-                metadata: {
-                    source: "short-drama-chapter-storyboard",
-                    approvedRevision: 5,
-                    approvedShotIds: ["shot-a"],
-                },
-            }),
-        });
-        expect(decision).toEqual({ action: "apply", snapshot: { revision: 5, shotIds: ["shot-a"] } });
-        expect(decision.action === "apply" ? decision.snapshot : null).not.toEqual(currentAfterEdit);
+    test("刷新后按真实回执分类：已写入跳过，未写入进入核对", () => {
+        expect(chapterStoryboardRecoveryDecision({ alreadyApplied: true })).toEqual({ action: "skip" });
+        expect(chapterStoryboardRecoveryDecision({ alreadyApplied: false })).toEqual({ action: "review" });
     });
 
-    test("原批准版本未变时可以按快照恢复", () => {
-        expect(chapterStoryboardRecoveryDecision({
-            alreadyApplied: false,
-            inputJson: JSON.stringify({
-                metadata: {
-                    approvedRevision: 3,
-                    approvedShotIds: ["shot-a", "shot-b"],
-                },
-            }),
-        })).toEqual({ action: "apply", snapshot: { revision: 3, shotIds: ["shot-a", "shot-b"] } });
+    test("未写入结果即使仍有原批准快照也不会自动写入", () => {
+        const snapshot = chapterStoryboardApprovalSnapshot(JSON.stringify({
+            metadata: {
+                source: "short-drama-chapter-storyboard",
+                approvedRevision: 5,
+                approvedShotIds: ["shot-a"],
+            },
+        }));
+        expect(snapshot).toEqual({ revision: 5, shotIds: ["shot-a"] });
+        expect(chapterStoryboardRecoveryDecision({ alreadyApplied: false })).toEqual({ action: "review" });
     });
 
-    test("缺少批准快照的旧任务不会自动写入", () => {
-        expect(chapterStoryboardRecoveryDecision({
-            alreadyApplied: false,
-            inputJson: JSON.stringify({
-                metadata: {
-                    domainProjectId: "project-1",
-                    chapterId: "chapter-1",
-                    source: "short-drama-chapter-storyboard",
-                },
-            }),
-        })).toEqual({ action: "review" });
-        expect(chapterStoryboardApprovalSnapshot(JSON.stringify({
-            metadata: { approvedRevision: 0, approvedShotIds: ["shot-a"] },
-        }))).toBeNull();
-        expect(chapterStoryboardRecoveryDecision({
-            alreadyApplied: false,
-            inputJson: JSON.stringify({ metadata: { approvedRevision: 4 } }),
-        })).toEqual({ action: "review" });
-    });
-
-    test("已写入的任务不再自动替换", () => {
-        expect(chapterStoryboardRecoveryDecision({
-            alreadyApplied: true,
-            inputJson: JSON.stringify({
-                metadata: { approvedRevision: 4, approvedShotIds: ["shot-a"] },
-            }),
-        })).toEqual({ action: "skip" });
-    });
-
-    test("恢复路径使用任务快照，不会把当前页面版本写进自动替换", async () => {
+    test("恢复路径使用任务身份与冻结快照，不靠时间戳猜测", async () => {
         const source = await Bun.file(new URL("../src/pages/projects/detail/chapters.tsx", import.meta.url)).text();
         const helper = await Bun.file(new URL("../src/pages/projects/detail/project-chapter-ai.ts", import.meta.url)).text();
+        const createStoryboard = source.slice(source.indexOf("const createStoryboard"));
+        const applyRecovery = source.slice(source.indexOf("const applyPendingStoryboardRecovery"));
         expect(helper).toContain("approvedRevision: input.approvedRevision");
         expect(helper).toContain("approvedShotIds: input.approvedShotIds.slice()");
-        expect(source).toContain("chapterStoryboardRecoveryDecision");
-        expect(source).toContain("decision.snapshot");
-        expect(source).toContain("reviewedRevision");
+        expect(helper).toContain("taskId: completed.id");
+        expect(helper).toContain("expectedScope: options?.expectedScope");
+        expect(source).toContain("listChapterApplyReceipts");
+        expect(source).toContain("sourceTaskId");
+        expect(source).toContain("captureUserScope");
+        expect(source).toContain("queryGenerationTask(task.id, { expectedScope })");
         expect(source).toContain("核对后写入");
-        expect(source).not.toContain("revision: detail.project.revision");
+        expect(createStoryboard.indexOf("const approvedRevision")).toBeLessThan(createStoryboard.indexOf("confirmStoryboardReplacement"));
+        expect(applyRecovery.indexOf("const reviewedRevision")).toBeLessThan(applyRecovery.indexOf("confirmRecoveredStoryboardWrite"));
+        expect(source).not.toContain("chapterTaskResultAlreadyApplied");
+        expect(source).not.toContain("shot.updatedAt");
         expect(source).not.toMatch(/storeGeneratedStoryboard\([^;]*detail\.project\.revision/);
+        expect(source).toContain("error.reason === \"project_unit_shots_changed\"");
+        expect(source).toContain("error.reason === \"project_revision_conflict\"");
+        expect(source).not.toContain('error.reason === "conflict"');
+        expect(source).not.toContain("本章分镜已发生变化，请刷新后重新确认");
+        expect(source).not.toContain("项目已被其他操作更新，请重新加载后再保存");
+        expect(source).not.toContain("刷新前生成的分镜还在");
     });
 });
 

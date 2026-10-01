@@ -300,6 +300,9 @@ type ReplaceProjectUnitShotsRequest struct {
 	Shots            []ReplaceProjectUnitShotInput `json:"shots"`
 	ExpectedShotIDs  []string                      `json:"expectedShotIds"`
 	ExpectedRevision int64                         `json:"expectedRevision"`
+	// SourceTaskID 是章节生成任务的查找键，不是客户端可自选的幂等凭据。
+	// 服务端校验 owner/project/chapter/operation 后派生应用身份。
+	SourceTaskID string `json:"sourceTaskId"`
 }
 
 type ReplaceProjectUnitShotInput struct {
@@ -323,6 +326,15 @@ type AssetCandidateInput struct {
 type CreateAssetCandidatesRequest struct {
 	Candidates []AssetCandidateInput `json:"candidates"`
 	Source     string                `json:"source"`
+	// SourceTaskID 是章节提取任务的查找键，不是客户端可自选的幂等凭据。
+	SourceTaskID string `json:"sourceTaskId"`
+}
+
+type ChapterApplyReceiptView struct {
+	TaskID  string `json:"taskId"`
+	Op      string `json:"op"`
+	Kind    string `json:"kind"`
+	Applied bool   `json:"applied"`
 }
 
 type WorkflowDetail struct {

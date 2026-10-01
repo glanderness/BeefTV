@@ -77,6 +77,7 @@ func newTestService(t *testing.T, workflows Workflows) (*Service, *gorm.DB) {
 		&model.WorkflowStepInstance{},
 		&model.WorkflowStepTask{},
 		&model.ProductionTaskLink{},
+		&model.AgentOpRecord{},
 	); err != nil {
 		t.Fatal(err)
 	}

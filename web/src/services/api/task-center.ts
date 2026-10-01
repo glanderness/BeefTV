@@ -1,5 +1,6 @@
 import { generationErrorMessage } from "@/lib/generation-error";
-import { http, apiBaseURL, type BackendEnvelope } from "@/services/api/request";
+import { assertUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
+import { http, apiBaseURL, type BackendEnvelope, type HttpRequestConfig } from "@/services/api/request";
 import { consumeTaskTextStream, createTaskTextStreamParser, type TaskTextStreamEvent } from "@/services/api/task-text-stream";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
 
@@ -122,8 +123,8 @@ export type CreateTaskInput = {
 	logicalModelId?: string;
     input?: Record<string, unknown>;
 };
-export function createGenerationTask(input: CreateTaskInput) {
-    return http.post<GenerationTask>("/tasks", input).then((task) => {
+export function createGenerationTask(input: CreateTaskInput, config?: HttpRequestConfig) {
+    return http.post<GenerationTask>("/tasks", input, config).then((task) => {
         recordDiagnosticEvent({ level: "info", category: "task", message: "任务已创建", taskId: task.id, projectId: task.projectId });
         notifyCanvasTaskCreated(task);
         return task;
@@ -199,8 +200,8 @@ async function collectGenerationTaskPages<T>(readPage: (request: GenerationTaskP
     return items.slice(0, limit);
 }
 
-export function queryGenerationTask(id: string, options?: { signal?: AbortSignal }) {
-    return http.get<GenerationTask>(`/tasks/${encodeURIComponent(id)}`, { signal: options?.signal });
+export function queryGenerationTask(id: string, options?: { signal?: AbortSignal; expectedScope?: CapturedUserScope }) {
+    return http.get<GenerationTask>(`/tasks/${encodeURIComponent(id)}`, { signal: options?.signal, expectedScope: options?.expectedScope });
 }
 
 type GenerationTaskSubscriptionDependencies = {
@@ -375,6 +376,7 @@ export type WaitForGenerationTaskOptions = {
     onTaskUpdate?: (task: GenerationTask) => void;
     onTextDelta?: (text: string) => void;
     useTextEvents?: boolean;
+    expectedScope?: CapturedUserScope;
 };
 
 export function shouldUseTaskTextEvents(options?: Pick<WaitForGenerationTaskOptions, "onTextDelta" | "useTextEvents">) {
@@ -393,7 +395,7 @@ export async function waitForGenerationTask(id: string, options?: WaitForGenerat
             if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
             let task: GenerationTask;
             try {
-                task = await queryGenerationTask(id, { signal: options?.signal });
+                task = await queryGenerationTask(id, { signal: options?.signal, expectedScope: options?.expectedScope });
                 lastTask = task;
                 lastQueryError = undefined;
                 consecutiveFailures = 0;
@@ -436,12 +438,13 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
     let fullText = lastTask?.textDraft || "";
     let lastStreamError: unknown;
     if (!lastTask) {
-        lastTask = await queryGenerationTask(id, { signal: options.signal });
+        lastTask = await queryGenerationTask(id, { signal: options.signal, expectedScope: options.expectedScope });
         options.onTaskUpdate?.(lastTask);
     }
     const timeoutMs = options.timeoutMs || taskWaitTimeoutMs(lastTask);
     while (Date.now() - startedAt < timeoutMs) {
         if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        if (options.expectedScope) assertUserScope(options.expectedScope);
         let terminalReceived = false;
         try {
             const base = String(apiBaseURL).replace(/\/+$/, "");
@@ -504,7 +507,7 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             }
             consumeTaskTextStream(parser, decoder.decode(), onEvent, true);
             if (terminalReceived) {
-                const completed = await queryGenerationTask(id, { signal: options.signal });
+                const completed = await queryGenerationTask(id, { signal: options.signal, expectedScope: options.expectedScope });
                 options.onTaskUpdate?.(completed);
                 if (completed.status === "succeeded") return completed;
                 if (completed.status === "failed" || completed.status === "cancelled") {

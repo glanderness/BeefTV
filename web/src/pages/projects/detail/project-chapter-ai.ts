@@ -4,6 +4,7 @@ import { storyboardRowsFromTask, storyboardRowsOutputContract } from "@/lib/canv
 import { parseChapterAssetBreakdown, type ChapterAssetBreakdown } from "@/lib/canvas/chapter-asset-breakdown";
 import { parseCharacterBreakdown } from "@/lib/canvas/canvas-character-reference";
 import { backendProviderConfig, parseBackendGenerationResult } from "@/services/api/generation-task";
+import type { CapturedUserScope } from "@/lib/user-scope-guard";
 import { createGenerationTask, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import type { Skill } from "@/services/api/skills";
 import { skillRuntime } from "@/services/skill-runtime";
@@ -23,6 +24,7 @@ type ChapterAnalysisInput = {
 
 type ChapterTaskOptions = {
     onTaskUpdate?: (task: GenerationTask) => void;
+    expectedScope?: CapturedUserScope;
 };
 
 export type ChapterTaskKind = "characters" | "storyboard";
@@ -34,7 +36,6 @@ export type ChapterStoryboardApprovalSnapshot = {
 
 export type ChapterStoryboardRecoveryDecision =
     | { action: "skip" }
-    | { action: "apply"; snapshot: ChapterStoryboardApprovalSnapshot }
     | { action: "review" };
 
 export function chapterTaskIdentity(task: GenerationTask): { chapterId: string; kind: ChapterTaskKind } | null {
@@ -73,21 +74,19 @@ export function chapterStoryboardApprovalSnapshot(inputJson?: string): ChapterSt
     return { revision, shotIds: shotIds.slice() };
 }
 
-export function chapterStoryboardRecoveryDecision(input: { alreadyApplied: boolean; inputJson?: string }): ChapterStoryboardRecoveryDecision {
+export function chapterStoryboardRecoveryDecision(input: { alreadyApplied: boolean }): ChapterStoryboardRecoveryDecision {
     if (input.alreadyApplied) return { action: "skip" };
-    const snapshot = chapterStoryboardApprovalSnapshot(input.inputJson);
-    if (snapshot) return { action: "apply", snapshot };
     return { action: "review" };
 }
 
-export async function extractChapterAssets(input: ChapterAnalysisInput, options?: ChapterTaskOptions): Promise<ChapterAssetBreakdown> {
+export async function extractChapterAssets(input: ChapterAnalysisInput, options?: ChapterTaskOptions): Promise<ChapterAssetBreakdown & { taskId: string }> {
     const result = await runProjectTextTask(input, "chapter_character_breakdown", {
         项目名称: input.projectName,
         章节名称: input.chapterTitle,
         项目画风: input.projectStyle || "项目尚未指定画风，保持视觉描述中性、可执行。",
         章节正文: input.sourceText,
     }, options);
-    return parseChapterAssetBreakdown(result);
+    return { ...parseChapterAssetBreakdown(result.text), taskId: result.taskId };
 }
 
 type ChapterStoryboardGenerationInput = {
@@ -155,14 +154,15 @@ export async function generateChapterStoryboard(input: ChapterStoryboardGenerati
                 approvedShotIds: input.approvedShotIds.slice(),
             },
         },
-    });
+    }, options?.expectedScope ? { expectedScope: options.expectedScope } : undefined);
     options?.onTaskUpdate?.(task);
-    const completed = await waitForGenerationTask(task.id, { initialTask: task, useTextEvents: true, onTaskUpdate: options?.onTaskUpdate });
-    return { ...storyboardRowsFromTask(completed), skillCount: skillExecution.selectedSkills.length };
+    const completed = await waitForGenerationTask(task.id, { initialTask: task, useTextEvents: true, onTaskUpdate: options?.onTaskUpdate, expectedScope: options?.expectedScope });
+    return { ...storyboardRowsFromTask(completed), skillCount: skillExecution.selectedSkills.length, taskId: completed.id };
 }
 
 async function runProjectTextTask(input: ChapterAnalysisInput, operation: string, promptTemplateVariables: Record<string, string>, options?: ChapterTaskOptions) {
     const model = input.config.textModel || input.config.model;
+    let taskId = "";
     const result = await runBackendCanvasGenerationTask({
         projectId: input.projectId,
         nodeId: `${operation}:${input.chapterId}`,
@@ -170,10 +170,15 @@ async function runProjectTextTask(input: ChapterAnalysisInput, operation: string
         prompt: promptTemplateTaskPlaceholder("章节角色、场景与道具提取"),
         config: { ...input.config, model },
         metadata: { domainProjectId: input.projectId, chapterId: input.chapterId, operation, promptTemplateOperation: PromptTemplateOperation.ChapterAssetsExtract, promptTemplateVariables },
-        onTaskCreated: options?.onTaskUpdate,
+        onTaskCreated: (task) => {
+            taskId = task.id;
+            options?.onTaskUpdate?.(task);
+        },
+        expectedScope: options?.expectedScope,
     });
     if (!result.text?.trim()) throw new Error("模型没有返回可用结果");
-    return result.text;
+    if (!taskId) throw new Error("生成任务身份缺失");
+    return { text: result.text, taskId };
 }
 
 function generationTaskMetadata(inputJson?: string): Record<string, unknown> {
