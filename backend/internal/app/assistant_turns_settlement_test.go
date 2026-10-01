@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -89,11 +90,16 @@ func TestFinalizeKeepsSnapshotWithoutReceiptDatabase(t *testing.T) {
 	if _, err := service.BeginAssistantTurn("local", canvasID, turnID, AssistantTurnInput{}); err != nil {
 		t.Fatal(err)
 	}
+	record, err := service.loadAssistantTurn(turnID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeLegacyTurnFixture(t, service.dataDir, record)
 	withoutRepository := &Service{dataDir: service.dataDir}
 	if err := withoutRepository.FinalizeAssistantTurn(turnID); err == nil {
 		t.Fatal("missing receipt database must fail settlement")
 	}
-	record, err := service.loadAssistantTurn(turnID)
+	record, err = service.loadAssistantTurn(turnID)
 	if err != nil || record.State != assistantTurnStateOpen || len(record.Document) == 0 {
 		t.Fatalf("unavailable receipts must preserve open snapshot: %+v, %v", record, err)
 	}
@@ -299,6 +305,28 @@ func TestBeginAssistantTurnPersistsVerifiedReferences(t *testing.T) {
 	}
 	if !containsAll(scope.CanvasIDs, "canvas-ref") {
 		t.Fatalf("额外画布引用应进入范围: %v", scope.CanvasIDs)
+	}
+}
+
+func writeLegacyTurnFixture(t *testing.T, dataDir string, record assistantTurnRecord) {
+	t.Helper()
+	dir := filepath.Join(dataDir, "assistant-turns")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"turnId": record.TurnID, "userId": record.UserID, "canvasId": record.CanvasID,
+		"revisionBefore": record.RevisionBefore, "createdAt": record.CreatedAt.UTC().Format("2006-01-02T15:04:05.000000000Z"),
+		"state": record.State, "selectedNodeIds": record.SelectedNodeIDs,
+		"referencedAssetIds": record.ReferencedAssetIDs, "referencedCanvasIds": record.ReferencedCanvasIDs,
+		"associatedAssetIds": record.AssociatedAssetIDs, "associatedTaskIds": record.AssociatedTaskIDs,
+		"undone": record.Undone, "change": record.Change, "document": record.Document,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, record.TurnID+".json"), body, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

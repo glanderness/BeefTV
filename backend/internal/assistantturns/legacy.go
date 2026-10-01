@@ -11,8 +11,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// legacyFile is the on-disk JSON shape used before v10. Files are retained
-// after import and never become competing truth once a database row exists.
+// legacyFile is the on-disk JSON shape used before v10. Files are read-only
+// migration inputs, preserved byte-for-byte. They never become competing
+// truth once a database row exists, including compact identity tombstones.
 type legacyFile struct {
 	TurnID              string          `json:"turnId"`
 	UserID              string          `json:"userId"`
@@ -85,52 +86,29 @@ func (s *Service) readLegacyFile(turnID string) (Record, error) {
 	}, nil
 }
 
-func (s *Service) retainLegacyFile(rec Record) error {
-	path := s.legacyPath(rec.TurnID)
-	if path == "" {
-		return nil
+func (s *Service) resolveIdentity(tx *gorm.DB, turnID string) (Record, bool, error) {
+	id := NormalizeTurnID(turnID)
+	if id == "" {
+		return Record{}, false, errInvalidID()
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+	if s.storeReady() {
+		row, err := s.store.Get(tx, id)
+		if err == nil {
+			rec, recErr := recordFromModel(row)
+			return rec, true, recErr
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return Record{}, false, err
+		}
 	}
-	file := legacyFile{
-		TurnID:              rec.TurnID,
-		UserID:              rec.UserID,
-		CanvasID:            rec.CanvasID,
-		RevisionBefore:      rec.RevisionBefore,
-		CreatedAt:           rec.CreatedAt.UTC().Format(time.RFC3339Nano),
-		State:               rec.effectiveState(),
-		SelectedNodeIDs:     uniqueSorted(rec.SelectedNodeIDs),
-		ReferencedAssetIDs:  uniqueSorted(rec.ReferencedAssetIDs),
-		ReferencedCanvasIDs: uniqueSorted(rec.ReferencedCanvasIDs),
-		AssociatedAssetIDs:  uniqueSorted(rec.AssociatedAssetIDs),
-		AssociatedTaskIDs:   uniqueSorted(rec.AssociatedTaskIDs),
-		Undone:              rec.Undone,
-		Change:              rec.Change,
-		Document:            rec.Document,
+	rec, err := s.readLegacyFile(id)
+	if isMissing(err) {
+		return Record{}, false, nil
 	}
-	encoded, err := json.Marshal(file)
 	if err != nil {
-		return err
+		return Record{}, false, err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".turn-*")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	defer os.Remove(name)
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(encoded); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, path)
+	return rec, true, nil
 }
 
 func (s *Service) importLegacyIfMissing(tx *gorm.DB, turnID string) (Record, error) {
@@ -150,7 +128,10 @@ func (s *Service) importLegacyIfMissing(tx *gorm.DB, turnID string) (Record, err
 		if getErr != nil {
 			return Record{}, getErr
 		}
-		got := recordFromModel(existing)
+		got, recErr := recordFromModel(existing)
+		if recErr != nil {
+			return Record{}, recErr
+		}
 		if got.UserID != rec.UserID || got.CanvasID != rec.CanvasID {
 			return Record{}, &Error{Reason: ReasonOwnership, Message: "轮次文件与已有记录归属不一致"}
 		}

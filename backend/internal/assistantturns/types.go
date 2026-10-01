@@ -50,6 +50,10 @@ func errInvalidID() *Error {
 	return &Error{Reason: ReasonNotFound, Message: "轮次标识无效"}
 }
 
+func errCorruptStored() *Error {
+	return &Error{Reason: ReasonCorruptFile, Message: "轮次记录损坏，已保留现场"}
+}
+
 // Change is the canvas effect of one business round, reconstructed from
 // operation receipts that share this turn identity.
 type Change struct {

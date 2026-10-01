@@ -48,8 +48,7 @@ func (s *Service) assistantTurnsOrInit() *assistantturns.Service {
 	if s.assistantTurns != nil {
 		return s.assistantTurns
 	}
-	s.assistantTurns = assistantturns.New(assistantturns.NewStore(s.repo), assistantCanvasFactory{s}, s.assistantTurnDir())
-	return s.assistantTurns
+	return assistantturns.New(assistantturns.NewStore(s.repo), assistantCanvasFactory{s}, s.assistantTurnDir())
 }
 
 func (s *Service) BeginAssistantTurn(userID, canvasID, turnID string, input AssistantTurnInput) (int64, error) {

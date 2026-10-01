@@ -12,21 +12,27 @@ import (
 
 func (s *Service) lockOpenTurn(tx *gorm.DB, userID, turnID, canvasID string) (Record, error) {
 	id := NormalizeTurnID(turnID)
+	var rec Record
 	var row model.AssistantTurn
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("turn_id = ?", id).First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		rec, importErr := s.importLegacyIfMissing(tx, id)
+		imported, importErr := s.importLegacyIfMissing(tx, id)
 		if importErr != nil {
 			if isMissing(importErr) {
 				return Record{}, &Error{Reason: ReasonNotOpen, Message: "这一轮不存在或已结束"}
 			}
 			return Record{}, importErr
 		}
-		row = *recordToModel(rec, s.now())
+		rec = imported
 	} else if err != nil {
 		return Record{}, err
+	} else {
+		decoded, recErr := recordFromModel(&row)
+		if recErr != nil {
+			return Record{}, recErr
+		}
+		rec = decoded
 	}
-	rec := recordFromModel(&row)
 	if rec.UserID != userID || rec.CanvasID != canvasID || rec.Undone || rec.effectiveState() != StateOpen {
 		return Record{}, &Error{Reason: ReasonNotOpen, Message: "这一轮不存在或已结束"}
 	}

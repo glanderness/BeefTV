@@ -341,3 +341,18 @@ func TestUndoAssistantTurnIsScopedToOwnerAndCanvas(t *testing.T) {
 		t.Fatal("其他画布不应能撤销这一轮")
 	}
 }
+
+func TestAssistantTurnsOrInitDoesNotAssignLazyField(t *testing.T) {
+	service := &Service{dataDir: t.TempDir()}
+	first := service.assistantTurnsOrInit()
+	if first == nil {
+		t.Fatal("literal service must still construct a domain fallback")
+	}
+	if service.assistantTurns != nil {
+		t.Fatal("lazy fallback must not assign a shared mutable field")
+	}
+	second := service.assistantTurnsOrInit()
+	if second == nil || second == first {
+		t.Fatal("stateless fallback must return a fresh instance")
+	}
+}

@@ -20,7 +20,7 @@ type Store interface {
 	Get(tx *gorm.DB, turnID string) (*model.AssistantTurn, error)
 	Insert(tx *gorm.DB, row *model.AssistantTurn) (bool, error)
 	Save(tx *gorm.DB, row *model.AssistantTurn) error
-	Delete(tx *gorm.DB, turnIDs []string) error
+	CompactDocuments(tx *gorm.DB, turnIDs []string) error
 	ListPrunable(tx *gorm.DB, retain int) ([]string, error)
 	CountReceipts(tx *gorm.DB, turnID string) (int64, error)
 	SucceededByTurn(tx *gorm.DB, userID, turnID string) ([]model.AgentOpRecord, error)
@@ -60,8 +60,8 @@ func (s gormStore) Save(tx *gorm.DB, row *model.AssistantTurn) error {
 	return s.repo.SaveAssistantTurn(tx, row)
 }
 
-func (s gormStore) Delete(tx *gorm.DB, turnIDs []string) error {
-	return s.repo.DeleteAssistantTurns(tx, turnIDs)
+func (s gormStore) CompactDocuments(tx *gorm.DB, turnIDs []string) error {
+	return s.repo.CompactAssistantTurnDocuments(tx, turnIDs)
 }
 
 func (s gormStore) ListPrunable(tx *gorm.DB, retain int) ([]string, error) {
@@ -92,21 +92,41 @@ func encodeStringList(values []string) string {
 	return string(raw)
 }
 
-func decodeStringList(raw string) []string {
+func decodeStringList(raw string) ([]string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return nil
+		return nil, nil
 	}
 	var values []string
-	if json.Unmarshal([]byte(trimmed), &values) != nil {
-		return nil
+	if err := json.Unmarshal([]byte(trimmed), &values); err != nil {
+		return nil, errCorruptStored()
 	}
-	return uniqueSorted(values)
+	return uniqueSorted(values), nil
 }
 
-func recordFromModel(row *model.AssistantTurn) Record {
+func recordFromModel(row *model.AssistantTurn) (Record, error) {
 	if row == nil {
-		return Record{}
+		return Record{}, nil
+	}
+	selected, err := decodeStringList(row.SelectedNodeIDs)
+	if err != nil {
+		return Record{}, err
+	}
+	referencedAssets, err := decodeStringList(row.ReferencedAssetIDs)
+	if err != nil {
+		return Record{}, err
+	}
+	referencedCanvas, err := decodeStringList(row.ReferencedCanvasIDs)
+	if err != nil {
+		return Record{}, err
+	}
+	associatedAssets, err := decodeStringList(row.AssociatedAssetIDs)
+	if err != nil {
+		return Record{}, err
+	}
+	associatedTasks, err := decodeStringList(row.AssociatedTaskIDs)
+	if err != nil {
+		return Record{}, err
 	}
 	rec := Record{
 		TurnID:              row.TurnID,
@@ -115,23 +135,27 @@ func recordFromModel(row *model.AssistantTurn) Record {
 		RevisionBefore:      row.RevisionBefore,
 		CreatedAt:           row.CreatedAt,
 		State:               row.State,
-		SelectedNodeIDs:     decodeStringList(row.SelectedNodeIDs),
-		ReferencedAssetIDs:  decodeStringList(row.ReferencedAssetIDs),
-		ReferencedCanvasIDs: decodeStringList(row.ReferencedCanvasIDs),
-		AssociatedAssetIDs:  decodeStringList(row.AssociatedAssetIDs),
-		AssociatedTaskIDs:   decodeStringList(row.AssociatedTaskIDs),
+		SelectedNodeIDs:     selected,
+		ReferencedAssetIDs:  referencedAssets,
+		ReferencedCanvasIDs: referencedCanvas,
+		AssociatedAssetIDs:  associatedAssets,
+		AssociatedTaskIDs:   associatedTasks,
 		Undone:              row.Undone,
 	}
 	if strings.TrimSpace(row.Document) != "" {
+		if !json.Valid([]byte(row.Document)) {
+			return Record{}, errCorruptStored()
+		}
 		rec.Document = json.RawMessage(row.Document)
 	}
 	if strings.TrimSpace(row.ChangeJSON) != "" {
 		var change Change
-		if json.Unmarshal([]byte(row.ChangeJSON), &change) == nil {
-			rec.Change = &change
+		if err := json.Unmarshal([]byte(row.ChangeJSON), &change); err != nil {
+			return Record{}, errCorruptStored()
 		}
+		rec.Change = &change
 	}
-	return rec
+	return rec, nil
 }
 
 func recordToModel(rec Record, now time.Time) *model.AssistantTurn {

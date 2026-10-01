@@ -1,12 +1,14 @@
 package assistantturns_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -260,6 +262,48 @@ func TestInterruptedFinalizeKeepsOpenSnapshot(t *testing.T) {
 	}
 }
 
+func (fx *turnFixture) writeLegacyBytes(t *testing.T, turnID string, raw []byte) string {
+	t.Helper()
+	dir := filepath.Join(fx.dir, "assistant-turns")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, turnID+".json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func (fx *turnFixture) mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func (fx *turnFixture) assertNoLegacyFiles(t *testing.T) {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(fx.dir, "assistant-turns", "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("production path wrote legacy files: %v", matches)
+	}
+}
+
+func (fx *turnFixture) rowCount(t *testing.T, turnID string) int64 {
+	t.Helper()
+	var count int64
+	if err := fx.db.Model(&model.AssistantTurn{}).Where("turn_id = ?", turnID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
 func TestFailedUndoMarkerRollsBackCanvas(t *testing.T) {
 	fx := openTurnFixture(t)
 	turnID := "aabbccdd1122334a"
@@ -287,6 +331,7 @@ func TestFailedUndoMarkerRollsBackCanvas(t *testing.T) {
 	if len(nodes) != 2 {
 		t.Fatalf("node set changed: %v", nodes)
 	}
+	fx.assertNoLegacyFiles(t)
 }
 
 func TestLaterEditsNotLostOnUndo(t *testing.T) {
@@ -466,6 +511,243 @@ func TestRetentionSkipsOpenTurns(t *testing.T) {
 	rec, err := fx.turns.Load(openID)
 	if err != nil || rec.State != assistantturns.StateOpen {
 		t.Fatalf("open turn pruned: %+v %v", rec, err)
+	}
+}
+
+func TestBeginDoesNotWriteLegacyFile(t *testing.T) {
+	fx := openTurnFixture(t)
+	if _, err := fx.turns.Begin(fx.userID, fx.canvasID, "aabbccdd11223360", assistantturns.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	fx.assertNoLegacyFiles(t)
+}
+
+func TestBeginLegacySameIDReplaysOriginalSnapshot(t *testing.T) {
+	fx := openTurnFixture(t)
+	turnID := "aabbccdd11223361"
+	legacyDoc, err := json.Marshal(map[string]any{"id": fx.canvasID, "revision": 7, "nodes": []any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"turnId": turnID, "userId": fx.userID, "canvasId": fx.canvasID,
+		"revisionBefore": 7, "createdAt": "2026-01-02T03:04:05.000000000Z",
+		"state": "open", "referencedAssetIds": []string{"a1"}, "undone": false,
+		"document": json.RawMessage(legacyDoc),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := fx.writeLegacyBytes(t, turnID, body)
+	before := fx.mustReadFile(t, path)
+	fx.appendNode(t, "n2")
+	got, err := fx.turns.Begin(fx.userID, fx.canvasID, turnID, assistantturns.Input{AssetIDs: []string{"a1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 7 {
+		t.Fatalf("legacy replay used current canvas: %d", got)
+	}
+	if !bytes.Equal(before, fx.mustReadFile(t, path)) {
+		t.Fatal("legacy source file was modified")
+	}
+	rec, err := fx.turns.Load(turnID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.RevisionBefore != 7 || !bytes.Equal(rec.Document, legacyDoc) {
+		t.Fatalf("imported snapshot replaced: %+v", rec)
+	}
+}
+
+func TestBeginLegacySameIDCollisionPreservesFile(t *testing.T) {
+	fx := openTurnFixture(t)
+	turnID := "aabbccdd11223362"
+	body, err := json.Marshal(map[string]any{
+		"turnId": turnID, "userId": fx.userID, "canvasId": fx.canvasID,
+		"revisionBefore": 3, "createdAt": "2026-01-02T03:04:05.000000000Z",
+		"state": "open", "referencedAssetIds": []string{"a1"}, "undone": false,
+		"document": map[string]any{"id": fx.canvasID, "revision": 3},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := fx.writeLegacyBytes(t, turnID, body)
+	before := fx.mustReadFile(t, path)
+	_, err = fx.turns.Begin(fx.userID, fx.canvasID, turnID, assistantturns.Input{AssetIDs: []string{"a2"}})
+	var turnErr *assistantturns.Error
+	if !errors.As(err, &turnErr) || turnErr.Reason != assistantturns.ReasonIDCollision {
+		t.Fatalf("expected collision, got %v", err)
+	}
+	if !bytes.Equal(before, fx.mustReadFile(t, path)) {
+		t.Fatal("collision mutated legacy source file")
+	}
+	if fx.rowCount(t, turnID) != 0 {
+		t.Fatal("mismatch begin imported a replacement row")
+	}
+}
+
+func TestBeginCorruptLegacyPreservesFile(t *testing.T) {
+	fx := openTurnFixture(t)
+	turnID := "aabbccdd11223363"
+	path := fx.writeLegacyBytes(t, turnID, []byte("{nope"))
+	before := fx.mustReadFile(t, path)
+	_, err := fx.turns.Begin(fx.userID, fx.canvasID, turnID, assistantturns.Input{})
+	var turnErr *assistantturns.Error
+	if !errors.As(err, &turnErr) || turnErr.Reason != assistantturns.ReasonCorruptFile {
+		t.Fatalf("corrupt legacy hidden: %v", err)
+	}
+	if !bytes.Equal(before, fx.mustReadFile(t, path)) {
+		t.Fatal("corrupt begin mutated source file")
+	}
+	if fx.rowCount(t, turnID) != 0 {
+		t.Fatal("corrupt begin inserted a replacement row")
+	}
+}
+
+func TestRetentionCompactsSnapshotsWithoutResurrectingLegacy(t *testing.T) {
+	fx := openTurnFixture(t)
+	openID := "ffffffffffffffff"
+	if _, err := fx.turns.Begin(fx.userID, fx.canvasID, openID, assistantturns.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	overflowID := hexID(69)
+	legacyBody, err := json.Marshal(map[string]any{
+		"turnId": overflowID, "userId": fx.userID, "canvasId": fx.canvasID,
+		"revisionBefore": 1, "createdAt": "2026-01-02T03:04:05.000000000Z",
+		"state": "open", "referencedAssetIds": []string{"resurrect"}, "undone": false,
+		"document": map[string]any{"id": fx.canvasID, "revision": 99, "title": "stale-open"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := fx.writeLegacyBytes(t, overflowID, legacyBody)
+	legacyBefore := fx.mustReadFile(t, legacyPath)
+	for i := 0; i < 70; i++ {
+		id := hexID(i)
+		row := model.AssistantTurn{
+			TurnID:         id,
+			UserID:         fx.userID,
+			CanvasID:       fx.canvasID,
+			RevisionBefore: 1,
+			CreatedAt:      now.Add(-time.Duration(i) * time.Minute),
+			UpdatedAt:      now,
+			State:          assistantturns.StateSettled,
+			Document:       `{"id":"canvas-1","revision":1}`,
+		}
+		if err := fx.db.Create(&row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	receiptID := "dddddddddddddddd"
+	if err := fx.db.Create(&model.AssistantTurn{
+		TurnID:         receiptID,
+		UserID:         fx.userID,
+		CanvasID:       fx.canvasID,
+		RevisionBefore: 2,
+		CreatedAt:      now.Add(-2 * time.Hour),
+		UpdatedAt:      now,
+		State:          assistantturns.StateSettled,
+		Document:       `{"id":"canvas-1","revision":2,"keep":true}`,
+		ChangeJSON:     `{"revisionBefore":2,"revisionAfter":3}`,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	fx.receipt(t, receiptID, "op-keep", "canvas.nodes.create", map[string]any{"canvasId": fx.canvasID, "revision": 3, "created": []any{map[string]any{"id": "kept"}}})
+	if _, err := fx.turns.Begin(fx.userID, fx.canvasID, "eeeeeeeeeeeeeeee", assistantturns.Input{}); err != nil {
+		t.Fatal(err)
+	}
+
+	openRec, err := fx.turns.Load(openID)
+	if err != nil || openRec.State != assistantturns.StateOpen || len(openRec.Document) == 0 {
+		t.Fatalf("open turn compacted: %+v %v", openRec, err)
+	}
+	if fx.rowCount(t, overflowID) != 1 {
+		t.Fatal("overflow identity row was deleted")
+	}
+	compacted, err := fx.turns.Load(overflowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compacted.State != assistantturns.StateSettled || len(compacted.Document) != 0 {
+		t.Fatalf("overflow snapshot not compacted: %+v", compacted)
+	}
+	if !bytes.Equal(legacyBefore, fx.mustReadFile(t, legacyPath)) {
+		t.Fatal("prune mutated legacy source file")
+	}
+	if _, ok, scopeErr := fx.turns.ScopeForHost(fx.userID, overflowID); scopeErr != nil || ok {
+		t.Fatalf("tombstone resurrected open scope: ok=%v err=%v", ok, scopeErr)
+	}
+	_, beginErr := fx.turns.Begin(fx.userID, fx.canvasID, overflowID, assistantturns.Input{AssetIDs: []string{"resurrect"}})
+	var turnErr *assistantturns.Error
+	if !errors.As(beginErr, &turnErr) || turnErr.Reason != assistantturns.ReasonIDCollision {
+		t.Fatalf("begin after prune resurrected legacy scope: %v", beginErr)
+	}
+	if !bytes.Equal(legacyBefore, fx.mustReadFile(t, legacyPath)) {
+		t.Fatal("begin after prune mutated legacy source file")
+	}
+	replay, err := fx.turns.Begin(fx.userID, fx.canvasID, overflowID, assistantturns.Input{})
+	if err != nil || replay != 1 {
+		t.Fatalf("tombstone replay lost revision: %d %v", replay, err)
+	}
+	afterReplay, err := fx.turns.Load(overflowID)
+	if err != nil || len(afterReplay.Document) != 0 || afterReplay.State != assistantturns.StateSettled {
+		t.Fatalf("begin after prune restored snapshot: %+v %v", afterReplay, err)
+	}
+	kept, err := fx.turns.Load(receiptID)
+	if err != nil || !bytes.Contains(kept.Document, []byte(`"keep"`)) {
+		t.Fatalf("receipt-referenced snapshot compacted: %+v %v", kept, err)
+	}
+	var receipts int64
+	if err := fx.db.Model(&model.AgentOpRecord{}).Where("turn_id = ?", receiptID).Count(&receipts).Error; err != nil {
+		t.Fatal(err)
+	}
+	if receipts != 1 {
+		t.Fatalf("receipt history lost: %d", receipts)
+	}
+}
+
+func TestCorruptStoredScopeJSONIsObservable(t *testing.T) {
+	fx := openTurnFixture(t)
+	turnID := "aabbccdd11223364"
+	if _, err := fx.turns.Begin(fx.userID, fx.canvasID, turnID, assistantturns.Input{SelectedNodeIDs: []string{"n1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.db.Model(&model.AssistantTurn{}).Where("turn_id = ?", turnID).Update("selected_node_ids", "{not-json").Error; err != nil {
+		t.Fatal(err)
+	}
+	scope, ok, err := fx.turns.ScopeForHost(fx.userID, turnID)
+	var turnErr *assistantturns.Error
+	if !errors.As(err, &turnErr) || turnErr.Reason != assistantturns.ReasonCorruptFile || ok {
+		t.Fatalf("corrupt scope hidden: scope=%+v ok=%v err=%v", scope, ok, err)
+	}
+}
+
+func TestCorruptStoredChangeJSONDoesNotInventUndo(t *testing.T) {
+	fx := openTurnFixture(t)
+	turnID := "aabbccdd11223365"
+	if _, err := fx.turns.Begin(fx.userID, fx.canvasID, turnID, assistantturns.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	after := fx.appendNode(t, "n2")
+	fx.receipt(t, turnID, "op-n2", "canvas.nodes.create", map[string]any{"canvasId": fx.canvasID, "revision": after, "created": []any{map[string]any{"id": "n2"}}})
+	if err := fx.turns.Finalize(turnID); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.db.Model(&model.AssistantTurn{}).Where("turn_id = ?", turnID).Update("change_json", "{broken").Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err := fx.turns.Undo(fx.userID, fx.canvasID, turnID)
+	var turnErr *assistantturns.Error
+	if !errors.As(err, &turnErr) || turnErr.Reason != assistantturns.ReasonCorruptFile {
+		t.Fatalf("corrupt change reconstructed undo: %v", err)
+	}
+	if fx.revision(t) != after {
+		t.Fatalf("corrupt undo mutated canvas: %d", fx.revision(t))
+	}
+	if _, histErr := fx.turns.History(fx.userID, fx.canvasID, turnID); histErr == nil {
+		t.Fatal("history must surface corrupt change json")
 	}
 }
 

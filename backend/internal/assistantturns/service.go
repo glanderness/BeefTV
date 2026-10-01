@@ -49,7 +49,7 @@ func (s *Service) load(tx *gorm.DB, turnID string) (Record, error) {
 	if s.storeReady() {
 		row, err := s.store.Get(tx, id)
 		if err == nil {
-			return recordFromModel(row), nil
+			return recordFromModel(row)
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return Record{}, err
@@ -66,16 +66,17 @@ func (s *Service) persist(tx *gorm.DB, rec Record) error {
 	if !s.storeReady() {
 		return storeUnavailable()
 	}
-	if err := s.store.Save(tx, recordToModel(rec, s.now())); err != nil {
-		return err
-	}
-	_ = s.retainLegacyFile(rec)
-	return nil
+	return s.store.Save(tx, recordToModel(rec, s.now()))
+}
+
+func beginCollision() *Error {
+	return &Error{Reason: ReasonIDCollision, Message: "同一轮次标识已用于不同的范围或身份"}
 }
 
 // Begin captures the pre-turn canvas document and verified references.
 // Replaying the same ID with the same actor and scope returns the original
-// snapshot revision. A different scope on that ID is refused.
+// snapshot revision. A different scope on that ID is refused. Legacy files
+// are read-only migration inputs; this method never writes them.
 func (s *Service) Begin(userID, canvasID, turnID string, input Input) (int64, error) {
 	if err := requireActor(userID, canvasID); err != nil {
 		return 0, err
@@ -87,33 +88,52 @@ func (s *Service) Begin(userID, canvasID, turnID string, input Input) (int64, er
 	if s.canvas == nil {
 		return 0, errors.New("画布存储不可用")
 	}
-	raw, err := s.canvas.BoundTo(nil).UserCanvasProject(userID, canvasID)
-	if err != nil {
-		return 0, err
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return 0, err
-	}
-	associatedAssets, associatedTasks := AssociatedReferences(raw)
-	rec := Record{
-		TurnID:              id,
-		UserID:              userID,
-		CanvasID:            canvasID,
-		RevisionBefore:      DocumentRevision(doc),
-		CreatedAt:           s.now(),
-		State:               StateOpen,
-		Document:            raw,
-		SelectedNodeIDs:     uniqueSorted(input.SelectedNodeIDs),
-		ReferencedAssetIDs:  uniqueSorted(input.AssetIDs),
-		ReferencedCanvasIDs: uniqueSorted(input.CanvasIDs),
-		AssociatedAssetIDs:  associatedAssets,
-		AssociatedTaskIDs:   associatedTasks,
-	}
 	if !s.storeReady() {
 		return 0, storeUnavailable()
 	}
-	err = s.store.DB().Transaction(func(tx *gorm.DB) error {
+	var rec Record
+	err := s.store.DB().Transaction(func(tx *gorm.DB) error {
+		existing, found, resolveErr := s.resolveIdentity(tx, id)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		if found {
+			if !existing.sameBeginScope(userID, canvasID, input) {
+				return beginCollision()
+			}
+			if _, getErr := s.store.Get(tx, id); errors.Is(getErr, gorm.ErrRecordNotFound) {
+				if _, insErr := s.store.Insert(tx, recordToModel(existing, s.now())); insErr != nil {
+					return insErr
+				}
+			} else if getErr != nil {
+				return getErr
+			}
+			rec = existing
+			return nil
+		}
+		raw, canvasErr := s.canvas.BoundTo(tx).UserCanvasProject(userID, canvasID)
+		if canvasErr != nil {
+			return canvasErr
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			return err
+		}
+		associatedAssets, associatedTasks := AssociatedReferences(raw)
+		rec = Record{
+			TurnID:              id,
+			UserID:              userID,
+			CanvasID:            canvasID,
+			RevisionBefore:      DocumentRevision(doc),
+			CreatedAt:           s.now(),
+			State:               StateOpen,
+			Document:            raw,
+			SelectedNodeIDs:     uniqueSorted(input.SelectedNodeIDs),
+			ReferencedAssetIDs:  uniqueSorted(input.AssetIDs),
+			ReferencedCanvasIDs: uniqueSorted(input.CanvasIDs),
+			AssociatedAssetIDs:  associatedAssets,
+			AssociatedTaskIDs:   associatedTasks,
+		}
 		inserted, insErr := s.store.Insert(tx, recordToModel(rec, s.now()))
 		if insErr != nil {
 			return insErr
@@ -125,17 +145,19 @@ func (s *Service) Begin(userID, canvasID, turnID string, input Input) (int64, er
 		if getErr != nil {
 			return getErr
 		}
-		existing := recordFromModel(existingRow)
-		if !existing.sameBeginScope(userID, canvasID, input) {
-			return &Error{Reason: ReasonIDCollision, Message: "同一轮次标识已用于不同的范围或身份"}
+		existingRec, recErr := recordFromModel(existingRow)
+		if recErr != nil {
+			return recErr
 		}
-		rec = existing
+		if !existingRec.sameBeginScope(userID, canvasID, input) {
+			return beginCollision()
+		}
+		rec = existingRec
 		return nil
 	})
 	if err != nil {
 		return 0, err
 	}
-	_ = s.retainLegacyFile(rec)
 	s.prune()
 	return rec.RevisionBefore, nil
 }
@@ -300,7 +322,7 @@ func (s *Service) prune() {
 	if err != nil || len(ids) == 0 {
 		return
 	}
-	_ = s.store.Delete(nil, ids)
+	_ = s.store.CompactDocuments(nil, ids)
 }
 
 // Load is used by app tests that previously inspected JSON files.

@@ -53,7 +53,7 @@ func (r *Repository) SaveAssistantTurn(tx *gorm.DB, row *model.AssistantTurn) er
 	return db.Save(row).Error
 }
 
-func (r *Repository) DeleteAssistantTurns(tx *gorm.DB, turnIDs []string) error {
+func (r *Repository) CompactAssistantTurnDocuments(tx *gorm.DB, turnIDs []string) error {
 	if len(turnIDs) == 0 {
 		return nil
 	}
@@ -61,7 +61,10 @@ func (r *Repository) DeleteAssistantTurns(tx *gorm.DB, turnIDs []string) error {
 	if db == nil {
 		return errors.New("助手回合存储不可用")
 	}
-	return db.Where("turn_id IN ?", turnIDs).Delete(&model.AssistantTurn{}).Error
+	return db.Model(&model.AssistantTurn{}).
+		Where("turn_id IN ? AND state <> ? AND TRIM(COALESCE(document, '')) <> ''", turnIDs, "open").
+		Where("NOT EXISTS (SELECT 1 FROM agent_op_records WHERE agent_op_records.turn_id = assistant_turns.turn_id)").
+		Update("document", "").Error
 }
 
 func (r *Repository) ListPrunableAssistantTurns(tx *gorm.DB, retain int) ([]string, error) {
@@ -74,7 +77,9 @@ func (r *Repository) ListPrunableAssistantTurns(tx *gorm.DB, retain int) ([]stri
 	}
 	var rows []model.AssistantTurn
 	if err := db.Select("turn_id", "created_at").
-		Where("state <> ? ", "open").
+		Where("state <> ?", "open").
+		Where("TRIM(COALESCE(document, '')) <> ''").
+		Where("NOT EXISTS (SELECT 1 FROM agent_op_records WHERE agent_op_records.turn_id = assistant_turns.turn_id)").
 		Order("created_at DESC").
 		Find(&rows).Error; err != nil {
 		return nil, err
