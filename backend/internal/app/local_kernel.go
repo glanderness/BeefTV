@@ -14,7 +14,6 @@ import (
 // method set, while keeping that linker concern out of the composition root.
 type LocalKernel struct {
 	workspaceOwner      func(string) (*model.User, error)
-	listProjects        func(string) ([]ProjectSummary, error)
 	resources           func(string, int) ([]model.Resource, error)
 	uploadLocalResource func(string, *multipart.FileHeader, string, int, int, int64, ...string) (*model.Resource, error)
 	tasksWithOptions    func(string, localtask.ListOptions) ([]localtask.Summary, error)
@@ -28,8 +27,7 @@ type LocalKernel struct {
 
 func NewLocalKernel(service *Service) *LocalKernel {
 	return &LocalKernel{
-		workspaceOwner: service.WorkspaceOwner,
-		listProjects:   service.ListProjects, resources: service.Resources,
+		workspaceOwner: service.WorkspaceOwner, resources: service.Resources,
 		uploadLocalResource: service.UploadLocalResource, tasksWithOptions: service.TasksWithOptions,
 		createLocalTask: service.CreateLocalTask, allowRequest: service.AllowRequest,
 		requestRetryAfter: service.RequestRetryAfter, startWorker: service.StartWorker,
@@ -39,10 +37,6 @@ func NewLocalKernel(service *Service) *LocalKernel {
 
 func (k *LocalKernel) WorkspaceOwner(userID string) (*model.User, error) {
 	return k.workspaceOwner(userID)
-}
-
-func (k *LocalKernel) ListProjects(userID string) ([]ProjectSummary, error) {
-	return k.listProjects(userID)
 }
 
 func (k *LocalKernel) Resources(userID string, limit int) ([]model.Resource, error) {

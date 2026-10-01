@@ -6,16 +6,16 @@ import (
 	"reflect"
 	"testing"
 
-	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/model"
+	localproject "infinite-canvas/backend/internal/project"
 	localtask "infinite-canvas/backend/internal/task"
 )
 
 type fakePorts struct{}
 
-func (fakePorts) WorkspaceOwner(string) (*model.User, error)        { return &model.User{}, nil }
-func (fakePorts) ListProjects(string) ([]app.ProjectSummary, error) { return nil, nil }
-func (fakePorts) Resources(string, int) ([]model.Resource, error)   { return nil, nil }
+func (fakePorts) WorkspaceOwner(string) (*model.User, error)          { return &model.User{}, nil }
+func (fakePorts) ListProjects(string) ([]localproject.Summary, error) { return nil, nil }
+func (fakePorts) Resources(string, int) ([]model.Resource, error)     { return nil, nil }
 func (fakePorts) UploadLocalResource(string, *multipart.FileHeader, string, int, int, int64, ...string) (*model.Resource, error) {
 	return nil, nil
 }

@@ -2,47 +2,10 @@ package app
 
 import (
 	"infinite-canvas/backend/internal/model"
+	localproject "infinite-canvas/backend/internal/project"
 
 	"golang.org/x/sync/errgroup"
 )
-
-type ProjectCore struct {
-	Project model.Project `json:"project"`
-}
-
-type ProjectUnitSummaries struct {
-	Units        []model.ProjectUnit `json:"units"`
-	CanvasCounts map[string]int64    `json:"canvasCounts"`
-}
-
-type ProjectOverview struct {
-	Metrics ProjectOverviewMetrics `json:"metrics"`
-	Units   []ProjectOverviewUnit  `json:"units"`
-}
-
-type ProjectOverviewMetrics struct {
-	UnitCount             int64 `json:"unitCount"`
-	CompletedUnitCount    int64 `json:"completedUnitCount"`
-	TotalWordCount        int64 `json:"totalWordCount"`
-	UnitsWithoutText      int64 `json:"unitsWithoutText"`
-	UnitsWithoutShots     int64 `json:"unitsWithoutShots"`
-	CanvasCount           int64 `json:"canvasCount"`
-	AssetCount            int64 `json:"assetCount"`
-	ShotCount             int64 `json:"shotCount"`
-	PendingCandidateCount int64 `json:"pendingCandidateCount"`
-	ReadyStoryboardCount  int64 `json:"readyStoryboardCount"`
-	ReadyPrevizCount      int64 `json:"readyPrevizCount"`
-	ReadyVideoCount       int64 `json:"readyVideoCount"`
-	RenderSucceededCount  int64 `json:"renderSucceededCount"`
-	StaleArtifactCount    int64 `json:"staleArtifactCount"`
-}
-
-type ProjectOverviewUnit struct {
-	Unit           model.ProjectUnit `json:"unit"`
-	ShotCount      int64             `json:"shotCount"`
-	CandidateCount int64             `json:"candidateCount"`
-	CanvasCount    int64             `json:"canvasCount"`
-}
 
 type ProjectUnitWorkspace struct {
 	Unit            model.ProjectUnit             `json:"unit"`
@@ -72,15 +35,6 @@ type ProjectShotAssetReferenceVersion struct {
 	Representations []CharacterRepresentationSummary `json:"representations"`
 }
 
-type ProjectCanvasPage struct {
-	Canvases        []model.CanvasProject  `json:"canvases"`
-	CanvasUnitLinks []model.CanvasUnitLink `json:"canvasUnitLinks"`
-	Page            int                    `json:"page"`
-	PageSize        int                    `json:"pageSize"`
-	Total           int64                  `json:"total"`
-	HasMore         bool                   `json:"hasMore"`
-}
-
 type ProjectAssetCandidatePage struct {
 	Candidates []model.ProjectAssetCandidate `json:"candidates"`
 	Page       int                           `json:"page"`
@@ -100,82 +54,26 @@ type ProjectAssetPage struct {
 }
 
 func (s *Service) ProjectCore(userID string, projectID string) (ProjectCore, error) {
-	project, err := s.repo.ProjectForUser(userID, projectID)
+	project, err := s.projectDomain().Owned(userID, projectID)
 	if err != nil {
 		return ProjectCore{}, err
 	}
 	if s.reconcileCharacterTurnaroundTasks(userID, project.ID) {
-		project, err = s.repo.ProjectForUser(userID, projectID)
-		if err != nil {
-			return ProjectCore{}, err
-		}
+		return s.projectDomain().ProjectCore(userID, projectID)
 	}
 	return ProjectCore{Project: *project}, nil
 }
 
 func (s *Service) ProjectUnitSummaries(userID string, projectID string) (ProjectUnitSummaries, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
-		return ProjectUnitSummaries{}, err
-	}
-	var units []model.ProjectUnit
-	var canvasCounts map[string]int64
-	var group errgroup.Group
-	group.Go(func() error {
-		var err error
-		units, err = s.repo.ProjectUnitSummaries(projectID)
-		return err
-	})
-	group.Go(func() error {
-		var err error
-		canvasCounts, err = s.repo.ProjectUnitCanvasCounts(projectID)
-		return err
-	})
-	if err := group.Wait(); err != nil {
-		return ProjectUnitSummaries{}, err
-	}
-	return ProjectUnitSummaries{Units: units, CanvasCounts: canvasCounts}, nil
+	return s.projectDomain().ProjectUnitSummaries(userID, projectID)
 }
 
 func (s *Service) ProjectOverview(userID string, projectID string) (ProjectOverview, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
-		return ProjectOverview{}, err
-	}
-	var metrics ProjectOverviewMetrics
-	var units []ProjectOverviewUnit
-	var group errgroup.Group
-	group.Go(func() error {
-		row, err := s.repo.ProjectOverviewMetrics(projectID)
-		if err != nil {
-			return err
-		}
-		metrics = ProjectOverviewMetrics{
-			UnitCount: row.UnitCount, CompletedUnitCount: row.CompletedUnitCount, TotalWordCount: row.TotalWordCount,
-			UnitsWithoutText: row.UnitsWithoutText, UnitsWithoutShots: row.UnitsWithoutShots, CanvasCount: row.CanvasCount,
-			AssetCount: row.AssetCount, ShotCount: row.ShotCount, PendingCandidateCount: row.PendingCandidateCount,
-			ReadyStoryboardCount: row.ReadyStoryboardCount, ReadyPrevizCount: row.ReadyPrevizCount, ReadyVideoCount: row.ReadyVideoCount,
-			RenderSucceededCount: row.TimelineRenderSucceededCount, StaleArtifactCount: row.StaleArtifactCount,
-		}
-		return nil
-	})
-	group.Go(func() error {
-		rows, err := s.repo.ProjectOverviewUnits(projectID, 8)
-		if err != nil {
-			return err
-		}
-		units = make([]ProjectOverviewUnit, 0, len(rows))
-		for _, row := range rows {
-			units = append(units, ProjectOverviewUnit{Unit: row.ProjectUnit, ShotCount: row.ShotCount, CandidateCount: row.CandidateCount, CanvasCount: row.CanvasCount})
-		}
-		return nil
-	})
-	if err := group.Wait(); err != nil {
-		return ProjectOverview{}, err
-	}
-	return ProjectOverview{Metrics: metrics, Units: units}, nil
+	return s.projectDomain().ProjectOverview(userID, projectID)
 }
 
 func (s *Service) ProjectUnitWorkspace(userID string, projectID string, unitID string) (ProjectUnitWorkspace, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectDomain().Owned(userID, projectID); err != nil {
 		return ProjectUnitWorkspace{}, err
 	}
 	unit, err := s.repo.ProjectUnit(projectID, unitID)
@@ -336,27 +234,11 @@ func (s *Service) ProjectUnitWorkspace(userID string, projectID string, unitID s
 }
 
 func (s *Service) ProjectCanvasesPage(userID string, projectID string, page int, pageSize int) (ProjectCanvasPage, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
-		return ProjectCanvasPage{}, err
-	}
-	page, pageSize = normalizeProjectPage(page, pageSize, 100)
-	canvases, total, err := s.repo.ProjectCanvasSummariesPage(userID, projectID, page, pageSize)
-	if err != nil {
-		return ProjectCanvasPage{}, err
-	}
-	ids := make([]string, 0, len(canvases))
-	for _, canvas := range canvases {
-		ids = append(ids, canvas.ID)
-	}
-	links, err := s.repo.ProjectCanvasUnitLinksForCanvases(projectID, ids)
-	if err != nil {
-		return ProjectCanvasPage{}, err
-	}
-	return ProjectCanvasPage{Canvases: canvases, CanvasUnitLinks: links, Page: page, PageSize: pageSize, Total: total, HasMore: int64(page*pageSize) < total}, nil
+	return s.projectDomain().ProjectCanvasesPage(userID, projectID, page, pageSize)
 }
 
 func (s *Service) ProjectAssetCandidatesPage(userID string, projectID string, page int, pageSize int, unitID string, status string, category string, query string) (ProjectAssetCandidatePage, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectDomain().Owned(userID, projectID); err != nil {
 		return ProjectAssetCandidatePage{}, err
 	}
 	page, pageSize = normalizeProjectPage(page, pageSize, 200)
@@ -368,7 +250,7 @@ func (s *Service) ProjectAssetCandidatesPage(userID string, projectID string, pa
 }
 
 func (s *Service) ProjectAssetsPage(userID string, projectID string, page int, pageSize int, category string, mediaType string, status string, folderID *string, query string) (ProjectAssetPage, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectDomain().Owned(userID, projectID); err != nil {
 		return ProjectAssetPage{}, err
 	}
 	page, pageSize = normalizeProjectPage(page, pageSize, 80)
@@ -409,14 +291,5 @@ func (s *Service) ProjectAssetsPage(userID string, projectID string, page int, p
 }
 
 func normalizeProjectPage(page int, pageSize int, maximum int) (int, int) {
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = 40
-	}
-	if pageSize > maximum {
-		pageSize = maximum
-	}
-	return page, pageSize
+	return localproject.NormalizePage(page, pageSize, maximum)
 }

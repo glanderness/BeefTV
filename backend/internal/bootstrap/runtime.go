@@ -22,7 +22,6 @@ import (
 	"infinite-canvas/backend/internal/database"
 	canvasHandler "infinite-canvas/backend/internal/handler"
 	"infinite-canvas/backend/internal/localapp"
-	localproject "infinite-canvas/backend/internal/project"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/runtimeinfo"
 	localtask "infinite-canvas/backend/internal/task"
@@ -140,7 +139,7 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 	svc.SetBeefAPI(beefAPIConnection)
 	localKernel := app.NewLocalKernel(svc)
 	assetService := localasset.New(localKernel, cfg.DataDir)
-	projectService := localproject.New(localKernel)
+	projectService := svc.ProjectService()
 	taskService := localtask.New(localKernel)
 	localRoot, err := localapp.New(localapp.Options{
 		Workspace: localKernel, Projects: projectService, Assets: assetService, Tasks: taskService,

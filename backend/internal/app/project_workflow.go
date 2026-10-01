@@ -499,7 +499,7 @@ func (s *Service) RegisterTaskOutputFromTask(task model.Task) error {
 	}
 	projectID := strings.TrimSpace(input.DomainProjectID)
 	if projectID == "" {
-		if _, projectErr := s.repo.ProjectForUser(task.UserID, task.ProjectID); projectErr == nil {
+		if _, projectErr := s.projectDomain().Owned(task.UserID, task.ProjectID); projectErr == nil {
 			projectID = task.ProjectID
 		}
 	}

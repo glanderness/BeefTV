@@ -26,14 +26,14 @@ type UpdateProjectAssetFolderRequest struct {
 }
 
 func (s *Service) ProjectAssetFolders(userID string, projectID string) ([]model.ProjectAssetFolder, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectDomain().Owned(userID, projectID); err != nil {
 		return nil, err
 	}
 	return s.repo.ProjectAssetFolders(projectID)
 }
 
 func (s *Service) CreateProjectAssetFolder(userID string, projectID string, req CreateProjectAssetFolderRequest) (model.ProjectAssetFolder, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectDomain().Owned(userID, projectID); err != nil {
 		return model.ProjectAssetFolder{}, err
 	}
 	folders, err := s.repo.ProjectAssetFolders(projectID)
@@ -72,7 +72,7 @@ func (s *Service) CreateProjectAssetFolder(userID string, projectID string, req 
 }
 
 func (s *Service) UpdateProjectAssetFolder(userID string, projectID string, folderID string, req UpdateProjectAssetFolderRequest) (model.ProjectAssetFolder, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectDomain().Owned(userID, projectID); err != nil {
 		return model.ProjectAssetFolder{}, err
 	}
 	folder, err := s.repo.ProjectAssetFolder(projectID, strings.TrimSpace(folderID))
@@ -129,7 +129,7 @@ func (s *Service) UpdateProjectAssetFolder(userID string, projectID string, fold
 }
 
 func (s *Service) DeleteProjectAssetFolder(userID string, projectID string, folderID string) error {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectDomain().Owned(userID, projectID); err != nil {
 		return err
 	}
 	err := s.repo.DeleteProjectAssetFolder(projectID, strings.TrimSpace(folderID))

@@ -11,6 +11,7 @@ import (
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/localapp"
 	"infinite-canvas/backend/internal/model"
+	localproject "infinite-canvas/backend/internal/project"
 	localtask "infinite-canvas/backend/internal/task"
 	"infinite-canvas/backend/internal/workspace"
 
@@ -59,7 +60,7 @@ type serviceRuntimeAdapter struct {
 	saveModelConfig     func([]byte) error
 	resources           func(string, int) ([]model.Resource, error)
 	uploadLocalResource func(string, *multipart.FileHeader, string, int, int, int64, ...string) (*model.Resource, error)
-	listProjects        func(string) ([]app.ProjectSummary, error)
+	listProjects        func(string) ([]localproject.Summary, error)
 	tasksWithOptions    func(string, localtask.ListOptions) ([]localtask.Summary, error)
 	createTask          func(string, localtask.CreateRequest) (*model.Task, error)
 }
@@ -97,7 +98,7 @@ func (a serviceRuntimeAdapter) UploadLocalResource(userID string, header *multip
 	return a.uploadLocalResource(userID, header, kind, width, height, durationMs, identity...)
 }
 
-func (a serviceRuntimeAdapter) ListProjects(userID string) ([]app.ProjectSummary, error) {
+func (a serviceRuntimeAdapter) ListProjects(userID string) ([]localproject.Summary, error) {
 	return a.listProjects(userID)
 }
 

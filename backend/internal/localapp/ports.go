@@ -4,20 +4,20 @@ import (
 	"context"
 	"mime/multipart"
 
-	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/model"
+	localproject "infinite-canvas/backend/internal/project"
 	localtask "infinite-canvas/backend/internal/task"
 )
 
-// These ports intentionally expose one cohesive local capability each. During
-// the strangler migration app.Service implements them; later stages replace
-// the adapters independently without changing the composition root.
+// These ports intentionally expose one cohesive local capability each.
+// ProjectPort is implemented by internal/project; remaining ports are still
+// adapted from the application kernel while those domains are extracted.
 type WorkspacePort interface {
 	WorkspaceOwner(string) (*model.User, error)
 }
 
 type ProjectPort interface {
-	ListProjects(string) ([]app.ProjectSummary, error)
+	ListProjects(string) ([]localproject.Summary, error)
 }
 
 type AssetPort interface {

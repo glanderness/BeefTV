@@ -17,6 +17,7 @@ import (
 	"infinite-canvas/backend/internal/mcp"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/platform"
+	localproject "infinite-canvas/backend/internal/project"
 	"infinite-canvas/backend/internal/prompts"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/skills"
@@ -64,6 +65,7 @@ type Service struct {
 	routeCatalogRefreshError error
 	skills                   *skills.Service
 	prompts                  *prompts.Service
+	projects                 *localproject.Service
 	canvas                   *canvas.Service
 	beefAPI                  *beefapi.Service
 	mcpOnce                  sync.Once
@@ -132,6 +134,7 @@ func newService(repo *repository.Repository, dataDir string, options serviceOpti
 	service.taskLifecycleCoordinator = newTaskLifecycleCoordinator(service)
 	service.skills = skills.New(service.repo, service.dataDir, service.runWorkerLoop)
 	service.prompts = prompts.New(service.repo, newPromptAdminGate(service))
+	service.projects = localproject.New(repo, localproject.Dependencies{Workflows: projectWorkflowHost{service: service}})
 	service.canvas = canvas.New(service.repo, newCanvasHost(service))
 	if service.IsLocalMode() {
 		service.platform = platform.NewLocal(service.repo, coordinator, newPlatformHost(service))

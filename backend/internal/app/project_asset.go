@@ -93,6 +93,9 @@ func (s *Service) FilterProjectAssets(userID string, projectID string, filter Pr
 }
 
 func (s *Service) ProjectAssets(userID string, projectID string) ([]ProjectAssetSummary, error) {
+	if _, err := s.projectDomain().Owned(userID, projectID); err != nil {
+		return nil, err
+	}
 	assets, err := s.repo.ProjectAssets(userID, projectID)
 	if err != nil {
 		return nil, err
@@ -109,7 +112,7 @@ func (s *Service) ProjectAssets(userID string, projectID string) ([]ProjectAsset
 }
 
 func (s *Service) LinkProjectAsset(userID string, projectID string, req LinkProjectAssetRequest) (ProjectAssetSummary, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectDomain().Owned(userID, projectID); err != nil {
 		return ProjectAssetSummary{}, err
 	}
 	assetID := strings.TrimSpace(req.AssetID)
@@ -240,7 +243,7 @@ func mediaTitleFallback(resource *model.Resource) string {
 }
 
 func (s *Service) UnlinkProjectAsset(userID string, projectID string, assetID string) error {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectDomain().Owned(userID, projectID); err != nil {
 		return err
 	}
 	asset, err := s.repo.AssetForUser(userID, assetID)
@@ -296,7 +299,7 @@ func canvasReferencesCharacterAsset(payloadJSON string, assetID string) (bool, e
 }
 
 func (s *Service) UpdateProjectAsset(userID string, projectID string, assetID string, req UpdateProjectAssetRequest) (ProjectAssetSummary, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectDomain().Owned(userID, projectID); err != nil {
 		return ProjectAssetSummary{}, err
 	}
 	asset, err := s.repo.AssetForUser(userID, strings.TrimSpace(assetID))
@@ -345,7 +348,7 @@ func (s *Service) UpdateProjectAsset(userID string, projectID string, assetID st
 }
 
 func (s *Service) CreateProjectAssetVersion(userID string, projectID string, assetID string, req CreateAssetVersionRequest) (model.AssetVersion, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectDomain().Owned(userID, projectID); err != nil {
 		return model.AssetVersion{}, err
 	}
 	asset, err := s.repo.AssetForUser(userID, assetID)
@@ -392,7 +395,7 @@ func (s *Service) CreateProjectAssetVersion(userID string, projectID string, ass
 }
 
 func (s *Service) ConfirmProjectAssetCandidate(userID string, projectID string, candidateID string, req ConfirmProjectAssetCandidateRequest) (ProjectAssetSummary, error) {
-	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+	if _, err := s.projectDomain().Owned(userID, projectID); err != nil {
 		return ProjectAssetSummary{}, err
 	}
 	candidate, err := s.repo.ProjectAssetCandidate(projectID, candidateID)
