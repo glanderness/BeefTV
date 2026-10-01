@@ -42,6 +42,33 @@ func isSeedance25Model(modelName string) bool {
 	return base == "seedance-2.5" || strings.HasPrefix(base, "seedance-2.5-") || strings.HasPrefix(base, "doubao-seedance-2-5") || strings.HasPrefix(base, "doubao-seedance-2.5")
 }
 
+const documentedSeedanceVideoMinPixels = 407696
+
+func applySeedanceDocumentedVideoPixelFloor(config providerConfig, refs *VideoReferenceConfig) {
+	if refs == nil || refs.MinVideoPixels != officialSeedanceVideoMinPixels || refs.MaxVideoPixels != officialSeedanceVideoMaxPixels {
+		return
+	}
+	if !isSeedance2Family(config.InterfaceType, config.Model) {
+		return
+	}
+	if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(config.InterfaceType)) || seedanceMaterialLibraryHost(config.BaseURL) {
+		refs.MinVideoPixels = documentedSeedanceVideoMinPixels
+	}
+}
+
+func seedanceMaterialLibraryHost(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(u.Hostname()) {
+	case "enterprise.beefapi.com", "beefapi.com", "www.whatstoken.ai", "whatstoken.ai":
+		return true
+	default:
+		return false
+	}
+}
+
 func overlayOfficialSeedance2References(base VideoReferenceConfig, is25 bool) VideoReferenceConfig {
 	refs := base
 	if is25 {
@@ -83,12 +110,7 @@ func validateVideoReferenceMedia(profile *VideoCapabilityConfig, input canvasGen
 		return BadAuthRequest("当前视频模型能力参数无效")
 	}
 	refs := profile.References
-	if u, err := url.Parse(input.Config.BaseURL); err == nil && isSeedance2Family(input.Config.InterfaceType, input.Config.Model) && refs.MinVideoPixels == 409600 && refs.MaxVideoPixels == 8295044 {
-		switch strings.ToLower(u.Hostname()) {
-		case "enterprise.beefapi.com", "beefapi.com", "www.whatstoken.ai", "whatstoken.ai":
-			refs.MinVideoPixels = 407696
-		}
-	}
+	applySeedanceDocumentedVideoPixelFloor(input.Config, &refs)
 
 	if len(input.ReferenceImages) > refs.MaxImages {
 		return BadAuthRequest(fmt.Sprintf("当前视频模型最多支持 %d 张参考图", refs.MaxImages))

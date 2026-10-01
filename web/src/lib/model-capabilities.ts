@@ -1,4 +1,4 @@
-import type { ModelProtocol, ModelProtocolWorkflow } from "@/lib/model-protocols";
+import { isVolcengineArkVideoProtocol, type ModelProtocol, type ModelProtocolWorkflow } from "@/lib/model-protocols";
 import type { ImageResolutionOption, ImageResolutionTier } from "@/lib/image-resolution-tiers";
 
 export type ModelCapabilityConfig = {
@@ -156,6 +156,173 @@ export function normalizeModelCapabilityConfig(config: ModelCapabilityConfig): M
               }
             : undefined,
     };
+}
+
+const catalogIntBounds: Record<string, [number, number]> = {
+    promptMaxChars: [1, 1_000_000],
+    minImages: [0, 100],
+    maxImages: [0, 100],
+    maxVideos: [0, 100],
+    maxAudios: [0, 100],
+    maxVideoDurationSeconds: [0, Number.MAX_SAFE_INTEGER],
+    minVideoDurationSeconds: [0, Number.MAX_SAFE_INTEGER],
+    maxAudioDurationSeconds: [0, Number.MAX_SAFE_INTEGER],
+    maxAudioTotalDurationSeconds: [0, Number.MAX_SAFE_INTEGER],
+    maxVideoTotalDurationSeconds: [0, Number.MAX_SAFE_INTEGER],
+    minImageWidth: [0, Number.MAX_SAFE_INTEGER],
+    maxImageWidth: [0, Number.MAX_SAFE_INTEGER],
+    minImageHeight: [0, Number.MAX_SAFE_INTEGER],
+    maxImageHeight: [0, Number.MAX_SAFE_INTEGER],
+    minVideoWidth: [0, Number.MAX_SAFE_INTEGER],
+    maxVideoWidth: [0, Number.MAX_SAFE_INTEGER],
+    minVideoHeight: [0, Number.MAX_SAFE_INTEGER],
+    maxVideoHeight: [0, Number.MAX_SAFE_INTEGER],
+};
+const catalogInt64Fields = ["maxImageBytes", "maxVideoBytes", "maxAudioBytes", "minImagePixels", "maxImagePixels", "minVideoPixels", "maxVideoPixels"] as const;
+const catalogFloatFields = ["minImageAspect", "maxImageAspect", "minVideoAspect", "maxVideoAspect", "minAudioDurationSeconds"] as const;
+
+function catalogObject(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function catalogFiniteNumber(value: unknown): number | null {
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function catalogWholeNumber(value: unknown): number | null {
+    const number = catalogFiniteNumber(value);
+    return number !== null && Number.isInteger(number) ? number : null;
+}
+
+function catalogStringValue(value: unknown): string | null {
+    return typeof value === "string" ? value.trim() : null;
+}
+
+function catalogStringList(value: unknown, allowEmpty: boolean): string[] | null {
+    if (!Array.isArray(value)) return null;
+    const result: string[] = [];
+    const seen = new Set<string>();
+    for (const item of value) {
+        const text = catalogStringValue(item);
+        if (text === null) return null;
+        if (!text || seen.has(text)) continue;
+        seen.add(text);
+        result.push(text);
+    }
+    if (!allowEmpty && !result.length) return null;
+    return result;
+}
+
+function catalogBooleanConfig(value: unknown): { supported: boolean; default: boolean } | null {
+    const child = catalogObject(value);
+    if (!child || typeof child.supported !== "boolean" || typeof child.default !== "boolean") return null;
+    return { supported: child.supported, default: child.default };
+}
+
+function catalogNumbersFinite(value: unknown): boolean {
+    if (typeof value === "number") return Number.isFinite(value);
+    if (Array.isArray(value)) return value.every(catalogNumbersFinite);
+    if (value && typeof value === "object") return Object.values(value).every(catalogNumbersFinite);
+    return true;
+}
+
+function catalogPresentNumber(object: Record<string, number>, key: string): number | undefined {
+    return object[key];
+}
+
+function sanitizeCatalogReferences(input: Record<string, unknown>): VideoCapabilityConfig["references"] | null {
+    const refs: Record<string, number> = {};
+    for (const [key, bounds] of Object.entries(catalogIntBounds)) {
+        if (!(key in input)) continue;
+        const value = catalogWholeNumber(input[key]);
+        if (value === null || value < bounds[0] || value > bounds[1]) return null;
+        refs[key] = value;
+    }
+    for (const key of catalogInt64Fields) {
+        if (!(key in input)) continue;
+        const value = catalogWholeNumber(input[key]);
+        if (value === null || value < 0) return null;
+        refs[key] = value;
+    }
+    for (const key of catalogFloatFields) {
+        if (!(key in input)) continue;
+        const value = catalogFiniteNumber(input[key]);
+        if (value === null || value < 0) return null;
+        refs[key] = value;
+    }
+    const minImages = catalogPresentNumber(refs, "minImages");
+    const maxImages = catalogPresentNumber(refs, "maxImages");
+    if (minImages !== undefined && maxImages !== undefined && minImages > maxImages) return null;
+    const minVideo = catalogPresentNumber(refs, "minVideoDurationSeconds");
+    const maxVideo = catalogPresentNumber(refs, "maxVideoDurationSeconds");
+    if (minVideo !== undefined && maxVideo !== undefined && maxVideo > 0 && minVideo > maxVideo) return null;
+    const minAudio = catalogPresentNumber(refs, "minAudioDurationSeconds");
+    const maxAudio = catalogPresentNumber(refs, "maxAudioDurationSeconds");
+    if (minAudio !== undefined && maxAudio !== undefined && maxAudio > 0 && minAudio > maxAudio) return null;
+    return refs as VideoCapabilityConfig["references"];
+}
+
+function sanitizeCatalogDuration(input: Record<string, unknown>): VideoCapabilityConfig["duration"] | null {
+    const selection = catalogStringValue(input.selection);
+    const defaultValue = catalogWholeNumber(input.default);
+    if ((selection !== "range" && selection !== "enum") || defaultValue === null) return null;
+    if (selection === "range") {
+        const min = catalogWholeNumber(input.min);
+        const max = catalogWholeNumber(input.max);
+        const step = catalogWholeNumber(input.step);
+        if (min === null || max === null || step === null) return null;
+        if (min < 1 || max < min || max > 3600 || step < 1 || defaultValue < min || defaultValue > max || (defaultValue - min) % step !== 0) return null;
+        return { selection, min, max, step, default: defaultValue };
+    }
+    if (!Array.isArray(input.values) || !input.values.length || input.values.length > 100) return null;
+    const values: number[] = [];
+    const seen = new Set<number>();
+    for (const raw of input.values) {
+        const value = catalogWholeNumber(raw);
+        if (value === null || (value < 1 && value !== -1) || value > 3600 || seen.has(value)) return null;
+        seen.add(value);
+        values.push(value);
+    }
+    if (!seen.has(defaultValue)) return null;
+    return { selection, values, default: defaultValue };
+}
+
+export function sanitizeServerVideoCapability(value: unknown): VideoCapabilityConfig | null {
+    const object = catalogObject(value);
+    if (!object || !catalogNumbersFinite(object)) return null;
+    const references = catalogObject(object.references);
+    const duration = catalogObject(object.duration);
+    const generateAudio = catalogBooleanConfig(object.generateAudio);
+    const watermark = catalogBooleanConfig(object.watermark);
+    const ratios = catalogStringList(object.ratios, true);
+    const resolutions = catalogStringList(object.resolutions, true);
+    const operations = catalogStringList(object.operations, false);
+    const defaultRatio = catalogStringValue(object.defaultRatio);
+    const defaultResolution = catalogStringValue(object.defaultResolution);
+    const defaultOperation = catalogStringValue(object.defaultOperation);
+    if (!references || !duration || !generateAudio || !watermark || !ratios || !resolutions || !operations || defaultRatio === null || defaultResolution === null || !defaultOperation || !operations.includes(defaultOperation)) return null;
+    if (ratios.length ? !defaultRatio || !ratios.includes(defaultRatio) : defaultRatio !== "") return null;
+    if (resolutions.length ? !defaultResolution || !resolutions.includes(defaultResolution) : defaultResolution !== "") return null;
+    const normalizedDuration = sanitizeCatalogDuration(duration);
+    const normalizedRefs = sanitizeCatalogReferences(references);
+    if (!normalizedDuration || !normalizedRefs) return null;
+    const video: VideoCapabilityConfig = {
+        references: normalizedRefs,
+        duration: normalizedDuration,
+        ratios,
+        defaultRatio,
+        resolutions,
+        defaultResolution,
+        generateAudio,
+        watermark,
+        operations,
+        defaultOperation,
+    };
+    if ("durationSupported" in object) {
+        if (typeof object.durationSupported !== "boolean") return null;
+        video.durationSupported = object.durationSupported;
+    }
+    return video;
 }
 
 // Keep explicit pixel presets for each resolution tier so the settings panel can
@@ -453,7 +620,8 @@ export function modelCapabilityConfigFor(
     const alignMaterialPixels = (video: VideoCapabilityConfig | undefined) => {
         let host = "";
         try { host = new URL(channel?.baseUrl || "").hostname.toLowerCase(); } catch { /* no public URL */ }
-        if (video && isSeedance2Family(protocol, modelName) && ["enterprise.beefapi.com", "beefapi.com", "whatstoken.ai", "www.whatstoken.ai"].includes(host) && video.references.minVideoPixels === 409600 && video.references.maxVideoPixels === 8295044) video.references.minVideoPixels = 407696;
+        const materialHost = ["enterprise.beefapi.com", "beefapi.com", "whatstoken.ai", "www.whatstoken.ai"].includes(host);
+        if (video && isSeedance2Family(protocol, modelName) && (isVolcengineArkVideoProtocol(protocol) || materialHost) && video.references.minVideoPixels === 409600 && video.references.maxVideoPixels === 8295044) video.references.minVideoPixels = 407696;
     };
 
     if (!profile?.capabilityConfig) {

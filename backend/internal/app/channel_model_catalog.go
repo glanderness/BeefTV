@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -29,16 +30,18 @@ type channelModelsPayload struct {
 }
 
 type channelModelItem struct {
-	ID                     string                        `json:"id"`
-	Name                   string                        `json:"name"`
-	DisplayName            string                        `json:"display_name"`
-	ModelType              string                        `json:"model_type"`
-	SupportedEndpointTypes []string                      `json:"supported_endpoint_types"`
-	DefaultParameters      channelModelCatalogParameters `json:"default_parameters"`
-	Options                channelModelCatalogOptions    `json:"options"`
-	SupportsImages         *bool                         `json:"supports_images"`
-	MinImages              *int                          `json:"min_images"`
-	MaxImages              *int                          `json:"max_images"`
+	ID                       string                        `json:"id"`
+	Name                     string                        `json:"name"`
+	DisplayName              string                        `json:"display_name"`
+	ModelType                string                        `json:"model_type"`
+	SupportedEndpointTypes   []string                      `json:"supported_endpoint_types"`
+	DefaultParameters        channelModelCatalogParameters `json:"default_parameters"`
+	Options                  channelModelCatalogOptions    `json:"options"`
+	SupportsImages           *bool                         `json:"supports_images"`
+	MinImages                *int                          `json:"min_images"`
+	MaxImages                *int                          `json:"max_images"`
+	VideoCapabilities        json.RawMessage               `json:"video_capabilities"`
+	VideoCapabilitiesVersion string                        `json:"video_capabilities_version"`
 }
 
 type channelModelCatalogParameters struct {
@@ -75,15 +78,17 @@ func (s *Service) FetchChannelModels(ctx context.Context, actor *model.User, inp
 // ChannelModelCatalogItem 是前端自定义渠道拉取模型目录后的最小合同；
 // 协议、能力和可选参数均来自上游公开元数据，不展开供应商内部兼容模型。
 type ChannelModelCatalogItem struct {
-	ID                     string                               `json:"id"`
-	DisplayName            string                               `json:"displayName,omitempty"`
-	ModelType              string                               `json:"modelType,omitempty"`
-	SupportedEndpointTypes []string                             `json:"supportedEndpointTypes,omitempty"`
-	DefaultParameters      ChannelModelCatalogDefaultParameters `json:"defaultParameters,omitempty"`
-	Options                ChannelModelCatalogOptions           `json:"options,omitempty"`
-	SupportsImages         *bool                                `json:"supportsImages,omitempty"`
-	MinImages              *int                                 `json:"minImages,omitempty"`
-	MaxImages              *int                                 `json:"maxImages,omitempty"`
+	ID                       string                               `json:"id"`
+	DisplayName              string                               `json:"displayName,omitempty"`
+	ModelType                string                               `json:"modelType,omitempty"`
+	SupportedEndpointTypes   []string                             `json:"supportedEndpointTypes,omitempty"`
+	DefaultParameters        ChannelModelCatalogDefaultParameters `json:"defaultParameters,omitempty"`
+	Options                  ChannelModelCatalogOptions           `json:"options,omitempty"`
+	SupportsImages           *bool                                `json:"supportsImages,omitempty"`
+	MinImages                *int                                 `json:"minImages,omitempty"`
+	MaxImages                *int                                 `json:"maxImages,omitempty"`
+	VideoCapabilities        json.RawMessage                      `json:"videoCapabilities,omitempty"`
+	VideoCapabilitiesVersion *string                              `json:"videoCapabilitiesVersion,omitempty"`
 }
 
 type ChannelModelCatalogDefaultParameters struct {
@@ -179,7 +184,7 @@ func (s *Service) FetchChannelModelCatalog(ctx context.Context, actor *model.Use
 			continue
 		}
 		seen[name] = true
-		catalog = append(catalog, ChannelModelCatalogItem{
+		entry := ChannelModelCatalogItem{
 			ID:                     name,
 			DisplayName:            strings.TrimSpace(item.DisplayName),
 			ModelType:              normalizeCatalogModelType(item.ModelType),
@@ -197,7 +202,15 @@ func (s *Service) FetchChannelModelCatalog(ctx context.Context, actor *model.Use
 			SupportsImages: item.SupportsImages,
 			MinImages:      item.MinImages,
 			MaxImages:      item.MaxImages,
-		})
+		}
+		if video, ok := beefapi.NormalizeCatalogVideoCapability(item.VideoCapabilities); ok {
+			if raw, err := json.Marshal(video); err == nil {
+				entry.VideoCapabilities = raw
+				version := strings.TrimSpace(item.VideoCapabilitiesVersion)
+				entry.VideoCapabilitiesVersion = &version
+			}
+		}
+		catalog = append(catalog, entry)
 	}
 	sort.Slice(catalog, func(left int, right int) bool {
 		return catalog[left].ID < catalog[right].ID

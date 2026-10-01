@@ -97,3 +97,22 @@ func TestReferenceVideoFrameRateScope(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeArkSeedanceFrameRateScope(t *testing.T) {
+	ark := providerConfig{InterfaceType: "volcengine-ark-video", Model: "seedance-2.0", BaseURL: "https://ark.cn-beijing.volces.com/api/v3"}
+	custom := providerConfig{InterfaceType: "newapi", Model: "seedance-2.0", BaseURL: "https://example.com"}
+	for _, fps := range []float64{0, 23.976, 24, 30, 59.94, 60, 120} {
+		err := referenceVideoFrameRateError(ark, 0, fps)
+		want := fps < 24 || fps > 60
+		if (err != nil) != want {
+			t.Fatalf("ark fps=%f error=%v", fps, err)
+		}
+		if err := referenceVideoFrameRateError(custom, 0, fps); err != nil {
+			t.Fatalf("custom newapi fps=%f gated: %v", fps, err)
+		}
+	}
+	other := providerConfig{InterfaceType: "volcengine-ark-video", Model: "other-video", BaseURL: "https://ark.cn-beijing.volces.com/api/v3"}
+	if err := referenceVideoFrameRateError(other, 0, 23.976); err != nil {
+		t.Fatalf("non-Seedance Ark fps gated: %v", err)
+	}
+}

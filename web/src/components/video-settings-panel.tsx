@@ -319,7 +319,7 @@ function VideoDurationControl({ profile, value, theme, disabled, onChange }: { p
         <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min(options.length, 4)}, minmax(0, 1fr))` }}>
             {options.map((option) => (
                 <OptionPill key={option} selected={normalizedNumber(value) === option} disabled={disabled?.(option)} theme={theme} onClick={() => onChange(option)}>
-                    {option}s
+                    {option === -1 ? "自动" : `${option}s`}
                 </OptionPill>
             ))}
         </div>

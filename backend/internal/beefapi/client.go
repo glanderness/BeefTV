@@ -62,11 +62,13 @@ type connectionView struct {
 
 type modelsPayload struct {
 	Data []struct {
-		ID                     string   `json:"id"`
-		Name                   string   `json:"name"`
-		DisplayName            string   `json:"display_name"`
-		ModelType              string   `json:"model_type"`
-		SupportedEndpointTypes []string `json:"supported_endpoint_types"`
+		ID                       string          `json:"id"`
+		Name                     string          `json:"name"`
+		DisplayName              string          `json:"display_name"`
+		ModelType                string          `json:"model_type"`
+		SupportedEndpointTypes   []string        `json:"supported_endpoint_types"`
+		VideoCapabilities        json.RawMessage `json:"video_capabilities"`
+		VideoCapabilitiesVersion string          `json:"video_capabilities_version"`
 	} `json:"data"`
 }
 
@@ -294,10 +296,12 @@ func (s *Service) fetchModels(apiKey string) ([]CatalogModel, error) {
 		}
 		seen[id] = true
 		models = append(models, CatalogModel{
-			ID:                     id,
-			DisplayName:            strings.TrimSpace(item.DisplayName),
-			ModelType:              strings.ToLower(strings.TrimSpace(item.ModelType)),
-			SupportedEndpointTypes: item.SupportedEndpointTypes,
+			ID:                       id,
+			DisplayName:              strings.TrimSpace(item.DisplayName),
+			ModelType:                strings.ToLower(strings.TrimSpace(item.ModelType)),
+			SupportedEndpointTypes:   item.SupportedEndpointTypes,
+			VideoCapabilities:        append(json.RawMessage(nil), item.VideoCapabilities...),
+			VideoCapabilitiesVersion: strings.TrimSpace(item.VideoCapabilitiesVersion),
 		})
 	}
 	return models, nil

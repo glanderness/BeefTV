@@ -6,6 +6,8 @@ import (
 	"math"
 	"net/url"
 	"strings"
+
+	"infinite-canvas/backend/internal/model"
 )
 
 // Sample timing belongs to the video track, not the movie/audio duration.
@@ -146,15 +148,22 @@ func referenceFragmentSamples(data []byte, trackID uint32) (samples, ticks float
 	return samples, ticks
 }
 
-func referenceVideoFrameRateError(config providerConfig, index int, fps float64) error {
+func seedanceFrameRatePreflight(config providerConfig) bool {
+	if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(config.InterfaceType)) {
+		return isSeedance2Family(config.InterfaceType, config.Model)
+	}
 	u, err := url.Parse(config.BaseURL)
 	if err != nil {
-		return nil
+		return false
 	}
 	host := strings.ToLower(u.Hostname())
 	// Managed BeefAPI routing is checked by the gateway, where the actual
-	// upstream is known. Native Ark has a separate model contract.
-	if host != "whatstoken.ai" && host != "www.whatstoken.ai" {
+	// upstream is known. Direct WhatsToken still validates locally.
+	return host == "whatstoken.ai" || host == "www.whatstoken.ai"
+}
+
+func referenceVideoFrameRateError(config providerConfig, index int, fps float64) error {
+	if !seedanceFrameRatePreflight(config) {
 		return nil
 	}
 	if fps <= 0 || math.IsNaN(fps) || math.IsInf(fps, 0) {

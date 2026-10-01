@@ -20,6 +20,8 @@ type OpenAIModelRecord = {
     display_name?: string;
     model_type?: string;
     supported_endpoint_types?: string[];
+    video_capabilities?: unknown;
+    video_capabilities_version?: string;
 };
 type OpenAIModelPayload = { data?: OpenAIModelRecord[]; error?: { message?: string } };
 
@@ -32,6 +34,8 @@ async function fetchOpenAIModelCatalog(config: Pick<AiConfig, "baseUrl" | "apiKe
                 displayName: model.display_name || model.name,
                 modelType: model.model_type,
                 supportedEndpointTypes: model.supported_endpoint_types,
+                videoCapabilities: model.video_capabilities,
+                videoCapabilitiesVersion: model.video_capabilities_version,
             }),
         )
         .filter((item): item is ChannelModelCatalogItem => Boolean(item));
