@@ -95,6 +95,11 @@ export type GenerationFailureDiagnostics = {
 
 type CategoryCopy = { reason: string; action: string };
 
+const LOCAL_TASK_ADMISSION_FAILURE: CategoryCopy = {
+    reason: "本地任务保存失败，尚未提交生成",
+    action: "请重启应用后重试；若仍失败，请保留排查信息并联系支持",
+};
+
 const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
     auth: { reason: "模型服务鉴权失败", action: "请检查 API Key 后重试" },
     permission: { reason: "当前渠道没有使用该模型的权限", action: "请更换模型或检查渠道权限" },
@@ -437,7 +442,7 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
     if (!error) return { category: "unknown", retryable: false };
     if (typeof error === "object" && error) {
     const record = error as Record<string, unknown>;
-        if (record.reason === "local_storage_failed") return { category: "local_storage", fromCode: true, retryable: false };
+        if (record.reason === "local_storage_failed") return { category: "local_storage", ...LOCAL_TASK_ADMISSION_FAILURE, fromCode: true, retryable: false };
         if (record.name === "ApiError" && record.reason === "quota_exceeded") {
             return { category: "quota_limit", reason: sanitizeProviderText(String(record.message || "工作区用量已达到上限")), action: "请清理不需要的任务记录或素材后重试", fromCode: true, retryable: false };
         }
@@ -502,6 +507,9 @@ function classifyHttp(status: number | undefined, body: unknown): Classified {
 function classifyText(raw: string): Classified {
     const text = raw.trim();
     if (!text) return { category: "unknown", retryable: false };
+    if (text === LOCAL_TASK_ADMISSION_FAILURE.reason || text.startsWith(`${LOCAL_TASK_ADMISSION_FAILURE.reason}。`)) {
+        return { category: "local_storage", ...LOCAL_TASK_ADMISSION_FAILURE, fromCode: true, retryable: false };
+    }
     const taskCopy = persistedTaskConstraintCopy(text);
     if (taskCopy) return { category: "invalid_params", ...taskCopy, requestId: sanitizeDebugId(text.match(/请求 ([A-Za-z0-9._:-]{6,127})/)?.[1]), taskId: sanitizeDebugId(text.match(/任务 ([A-Za-z0-9._:-]{6,127})/)?.[1]), retryable: false };
     const moderationCopy = persistedModerationCopy(text);
