@@ -27,7 +27,7 @@ type Store interface {
 	Asset(id string) (*model.Asset, error)
 	AssetVersion(id string) (*model.AssetVersion, error)
 	CommitOwned(OwnedDelivery) error
-	SucceededTasksForDelivery(limit int) ([]model.Task, error)
+	SucceededTasksForDelivery(afterID string, limit int) ([]model.Task, error)
 }
 
 // Media persists leftover upstream artifacts through the existing generated

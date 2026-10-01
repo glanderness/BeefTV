@@ -116,6 +116,9 @@ func TestResultStateAndDeliveryComplete(t *testing.T) {
 	if !DeliveryComplete(`{"images":[{"url":"blob:local"}]}`, unsupported) {
 		t.Fatal("recorded unsupported shape should stop rewriting")
 	}
+	if OutputSettled(pending[0]) || !OutputSettled(ready[0]) || !OutputSettled(foreign[0]) || OutputSettled(failedPersist[0]) {
+		t.Fatal("settled predicate drifted from delivery completion")
+	}
 }
 
 func TestInspectResultJSONAndUnsupportedShapes(t *testing.T) {

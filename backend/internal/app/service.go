@@ -69,6 +69,10 @@ type Service struct {
 	assistantTurns           *assistantturns.Service
 	beefAPI                  *beefapi.Service
 	generationDeliveryMedia  taskdelivery.Media
+	generationDelivery       *taskdelivery.Deliverer
+	deliveryMu               sync.Mutex
+	generationArtifactMu     sync.Mutex
+	generationArtifactLocks  map[string]*generationArtifactLock
 }
 
 const taskWorkerConcurrency = 3

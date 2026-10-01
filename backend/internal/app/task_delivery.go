@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
+	localasset "infinite-canvas/backend/internal/asset"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 	localtask "infinite-canvas/backend/internal/task"
@@ -120,7 +122,16 @@ func (s *Service) startGenerationDeliveryRecovery(context.Context) {
 }
 
 func (s *Service) generationDeliverer() *taskdelivery.Deliverer {
-	return taskdelivery.New(generationDeliveryStore{repo: s.repo}, s.deliveryMedia())
+	if s == nil {
+		return taskdelivery.New(generationDeliveryStore{}, nil)
+	}
+	s.deliveryMu.Lock()
+	defer s.deliveryMu.Unlock()
+	if s.generationDelivery == nil {
+		// One Deliverer per Service so recovery ticks keep the keyset cursor.
+		s.generationDelivery = taskdelivery.New(generationDeliveryStore{repo: s.repo}, s.deliveryMedia())
+	}
+	return s.generationDelivery
 }
 
 func (s *Service) deliveryMedia() taskdelivery.Media {
@@ -215,8 +226,8 @@ func (s generationDeliveryStore) CommitOwned(item taskdelivery.OwnedDelivery) er
 	}))
 }
 
-func (s generationDeliveryStore) SucceededTasksForDelivery(limit int) ([]model.Task, error) {
-	return s.repo.SucceededTasksForDelivery(limit)
+func (s generationDeliveryStore) SucceededTasksForDelivery(afterID string, limit int) ([]model.Task, error) {
+	return s.repo.SucceededTasksForDelivery(afterID, limit)
 }
 
 func mapDeliveryStoreErr(err error) error {
@@ -230,6 +241,39 @@ func mapDeliveryStoreErr(err error) error {
 		return taskdelivery.ErrForeignAsset
 	}
 	return err
+}
+
+type generationArtifactLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func (s *Service) lockGenerationArtifact(identity string) func() {
+	identity = strings.TrimSpace(identity)
+	if s == nil || identity == "" {
+		return func() {}
+	}
+	s.generationArtifactMu.Lock()
+	if s.generationArtifactLocks == nil {
+		s.generationArtifactLocks = map[string]*generationArtifactLock{}
+	}
+	lock := s.generationArtifactLocks[identity]
+	if lock == nil {
+		lock = &generationArtifactLock{}
+		s.generationArtifactLocks[identity] = lock
+	}
+	lock.refs++
+	s.generationArtifactMu.Unlock()
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		s.generationArtifactMu.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			delete(s.generationArtifactLocks, identity)
+		}
+		s.generationArtifactMu.Unlock()
+	}
 }
 
 type generationDeliveryMediaAdapter struct {
@@ -246,26 +290,71 @@ func (a generationDeliveryMediaAdapter) PersistRemoteArtifact(userID, mediaType,
 	if userID == "" || artifactURL == "" || identity == "" {
 		return nil, fmt.Errorf("generation artifact identity is incomplete")
 	}
+	unlock := a.service.lockGenerationArtifact(identity)
+	defer unlock()
+
 	uploadKey := normalizedResourceUploadKey([]string{identity})
-	if existing, err := a.service.resourceForUploadKey(userID, uploadKey); err != nil {
+	existing, err := a.service.resourceForUploadKey(userID, uploadKey)
+	if err != nil {
 		return nil, err
-	} else if existing != nil && existing.Status == model.ResourceStatusReady {
-		return existing, nil
-	} else if existing != nil {
-		return nil, resourceUploadInProgress()
+	}
+	if existing != nil {
+		present := a.service.generationLocalArtifactPresent(existing)
+		if existing.Status == model.ResourceStatusReady && present {
+			return existing, nil
+		}
+		if existing.Status == model.ResourceStatusPending && present {
+			existing.Status = model.ResourceStatusReady
+			existing.Error = ""
+			existing.UpdatedAt = time.Now()
+			if err := a.service.repo.SaveResource(existing); err != nil {
+				return nil, err
+			}
+			return existing, nil
+		}
 	}
 
-	kind := strings.TrimSpace(mediaType)
-	var data []byte
-	var mimeType string
-	var fileName string
-	var width, height int
-	var durationMs int64
+	kind, data, mimeType, fileName, width, height, durationMs, err := a.decodeGenerationArtifact(mediaType, artifactURL)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		if existing.Status != model.ResourceStatusFailed {
+			existing.Status = model.ResourceStatusFailed
+			existing.Error = "generation artifact missing local file"
+			existing.UpdatedAt = time.Now()
+			if err := a.service.repo.SaveResource(existing); err != nil {
+				return nil, err
+			}
+		}
+		return a.service.retryStoredResource(userID, existing, kind, mimeType, int64(len(data)), bytes.NewReader(data), a.service.localResourceStorage)
+	}
+
+	size := int64(len(data))
+	quotaDay, err := a.service.reserveGeneratedResourceQuota(userID, size)
+	if err != nil {
+		return nil, err
+	}
+	resource, stored, err := a.service.storeResource(userID, kind, fileName, mimeType, size, width, height, durationMs, bytes.NewReader(data), uploadKey, a.service.localResourceStorage)
+	if err != nil {
+		a.service.releaseUserUploadQuota(userID, quotaDay, size)
+		return nil, err
+	}
+	if stored {
+		a.service.commitUserUploadQuota(userID, size)
+	} else {
+		a.service.releaseUserUploadQuota(userID, quotaDay, size)
+	}
+	return resource, nil
+}
+
+func (a generationDeliveryMediaAdapter) decodeGenerationArtifact(mediaType, artifactURL string) (kind string, data []byte, mimeType, fileName string, width, height int, durationMs int64, err error) {
+	kind = strings.TrimSpace(mediaType)
 	switch {
 	case strings.HasPrefix(artifactURL, "data:"):
-		decodedType, decoded, err := a.service.decodeDataURL(artifactURL)
-		if err != nil {
-			return nil, err
+		decodedType, decoded, decodeErr := a.service.decodeDataURL(artifactURL)
+		if decodeErr != nil {
+			return "", nil, "", "", 0, 0, 0, decodeErr
 		}
 		mimeType, data = decodedType, decoded
 		kind = normalizeResourceKind(kind, mimeType)
@@ -276,14 +365,15 @@ func (a generationDeliveryMediaAdapter) PersistRemoteArtifact(userID, mediaType,
 		if kind == "video" {
 			width, height, durationMs = probeGeneratedVideoMedia(data)
 		}
+		return kind, data, mimeType, fileName, width, height, durationMs, nil
 	case strings.HasPrefix(artifactURL, "http://") || strings.HasPrefix(artifactURL, "https://"):
-		policy, err := a.service.RuntimePolicy()
-		if err != nil {
-			return nil, err
+		policy, policyErr := a.service.RuntimePolicy()
+		if policyErr != nil {
+			return "", nil, "", "", 0, 0, 0, policyErr
 		}
-		payload, err := downloadRemoteResource(artifactURL, megabytes(policy.Resource.GeneratedFileMB)+1)
-		if err != nil {
-			return nil, err
+		payload, downloadErr := downloadRemoteResource(artifactURL, megabytes(policy.Resource.GeneratedFileMB)+1)
+		if downloadErr != nil {
+			return "", nil, "", "", 0, 0, 0, downloadErr
 		}
 		mimeType, data = payload.mimeType, payload.data
 		kind = normalizeResourceKind(kind, mimeType)
@@ -303,24 +393,23 @@ func (a generationDeliveryMediaAdapter) PersistRemoteArtifact(userID, mediaType,
 				durationMs = probedDurationMs
 			}
 		}
+		return kind, data, mimeType, fileName, width, height, durationMs, nil
 	default:
-		return nil, fmt.Errorf("unsupported generation artifact %q", artifactURL)
+		return "", nil, "", "", 0, 0, 0, fmt.Errorf("unsupported generation artifact %q", artifactURL)
 	}
+}
 
-	size := int64(len(data))
-	quotaDay, err := a.service.reserveGeneratedResourceQuota(userID, size)
+// generationLocalArtifactPresent checks the same FileStore path storeResourceObject
+// writes. asset.Service.validateLocalResource and any future Retry lock stay in
+// the resource-worker domain; this adapter does not edit that package.
+func (s *Service) generationLocalArtifactPresent(resource *model.Resource) bool {
+	if s == nil || resource == nil || strings.TrimSpace(resource.ObjectKey) == "" {
+		return false
+	}
+	body, err := localasset.NewFileStore(s.dataDir).Open(resource.ObjectKey)
 	if err != nil {
-		return nil, err
+		return false
 	}
-	resource, stored, err := a.service.storeResource(userID, kind, fileName, mimeType, size, width, height, durationMs, bytes.NewReader(data), uploadKey, a.service.localResourceStorage)
-	if err != nil {
-		a.service.releaseUserUploadQuota(userID, quotaDay, size)
-		return nil, err
-	}
-	if stored {
-		a.service.commitUserUploadQuota(userID, size)
-	} else {
-		a.service.releaseUserUploadQuota(userID, quotaDay, size)
-	}
-	return resource, nil
+	_ = body.Close()
+	return true
 }

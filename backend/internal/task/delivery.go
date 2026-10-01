@@ -252,6 +252,10 @@ func ResultState(status model.TaskStatus, outputs []CanonicalOutput, failedRetry
 	}
 }
 
+func OutputSettled(output CanonicalOutput) bool {
+	return strings.TrimSpace(output.MaterializedAssetID) != "" || terminalMaterializeError(output.MaterializationErrorCode)
+}
+
 func DeliveryComplete(resultJSON string, stored []CanonicalOutput) bool {
 	expected := CanonicalOutputs(resultJSON)
 	if len(expected) == 0 {
@@ -263,13 +267,9 @@ func DeliveryComplete(resultJSON string, stored []CanonicalOutput) bool {
 	}
 	for _, output := range expected {
 		got, ok := byIndex[output.OutputIndex]
-		if !ok {
+		if !ok || !OutputSettled(got) {
 			return false
 		}
-		if got.MaterializedAssetID != "" || terminalMaterializeError(got.MaterializationErrorCode) {
-			continue
-		}
-		return false
 	}
 	return true
 }

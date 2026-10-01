@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"infinite-canvas/backend/internal/assets"
@@ -15,8 +16,10 @@ import (
 const recoveryBatchLimit = 64
 
 type Deliverer struct {
-	store Store
-	media Media
+	store   Store
+	media   Media
+	mu      sync.Mutex
+	afterID string
 }
 
 func New(store Store, media Media) *Deliverer {
@@ -25,6 +28,10 @@ func New(store Store, media Media) *Deliverer {
 
 func (d *Deliverer) Deliver(task model.Task) error {
 	if d == nil || d.store == nil || strings.TrimSpace(task.ID) == "" || task.Status != model.TaskStatusSucceeded {
+		return nil
+	}
+	stored, loadErr := d.loadedOutputs(task.ID)
+	if loadErr == nil && localtask.DeliveryComplete(task.ResultJSON, stored) {
 		return nil
 	}
 	outputs, unusable := localtask.InspectResultJSON(task.ResultJSON)
@@ -36,18 +43,37 @@ func (d *Deliverer) Deliver(task model.Task) error {
 			return d.commitUnsupported(tx, task, localtask.CanonicalOutput{OutputIndex: 0, ProviderArtifactRef: unusable}, unusable)
 		})
 	}
+	storedByIndex := map[int]localtask.CanonicalOutput{}
+	if loadErr == nil {
+		for _, output := range stored {
+			storedByIndex[output.OutputIndex] = output
+		}
+	}
 	var persistErr error
 	for i, output := range outputs {
-		if strings.TrimSpace(output.ResourceID) != "" {
+		if got, ok := storedByIndex[output.OutputIndex]; ok {
+			if localtask.OutputSettled(got) {
+				outputs[i] = got
+				continue
+			}
+			if strings.TrimSpace(got.ResourceID) != "" {
+				outputs[i].ResourceID = got.ResourceID
+				if strings.TrimSpace(outputs[i].ProviderArtifactRef) == "" {
+					outputs[i].ProviderArtifactRef = got.ProviderArtifactRef
+				}
+				continue
+			}
+		}
+		if strings.TrimSpace(outputs[i].ResourceID) != "" {
 			continue
 		}
-		if shape := localtask.UnsupportedResultShape(output); shape != "" {
+		if shape := localtask.UnsupportedResultShape(outputs[i]); shape != "" {
 			continue
 		}
-		if d.media == nil || !localtask.PersistableArtifactURL(output.ProviderArtifactRef) {
+		if d.media == nil || !localtask.PersistableArtifactURL(outputs[i].ProviderArtifactRef) {
 			continue
 		}
-		resource, err := d.media.PersistRemoteArtifact(task.UserID, output.MediaType, output.ProviderArtifactRef, task.ID+":"+fmt.Sprint(output.OutputIndex))
+		resource, err := d.media.PersistRemoteArtifact(task.UserID, outputs[i].MediaType, outputs[i].ProviderArtifactRef, task.ID+":"+fmt.Sprint(outputs[i].OutputIndex))
 		if err != nil {
 			persistErr = errors.Join(persistErr, err)
 			continue
@@ -88,10 +114,27 @@ func (d *Deliverer) RecoverIncomplete(limit int) error {
 	if limit <= 0 {
 		limit = recoveryBatchLimit
 	}
-	tasks, err := d.store.SucceededTasksForDelivery(limit)
+	d.mu.Lock()
+	afterID := d.afterID
+	d.mu.Unlock()
+	tasks, err := d.store.SucceededTasksForDelivery(afterID, limit)
 	if err != nil {
 		return err
 	}
+	if len(tasks) == 0 && afterID != "" {
+		// Past the last id: wrap so later ticks still scan every persisted candidate.
+		tasks, err = d.store.SucceededTasksForDelivery("", limit)
+		if err != nil {
+			return err
+		}
+	}
+	d.mu.Lock()
+	if len(tasks) == 0 || len(tasks) < limit {
+		d.afterID = ""
+	} else {
+		d.afterID = tasks[len(tasks)-1].ID
+	}
+	d.mu.Unlock()
 	var errs error
 	for _, task := range tasks {
 		stored, loadErr := d.loadedOutputs(task.ID)
@@ -138,13 +181,7 @@ func (d *Deliverer) deliverOne(tx Store, task model.Task, output localtask.Canon
 		if shape := localtask.UnsupportedResultShape(output); shape != "" {
 			return d.commitUnsupported(tx, task, output, shape)
 		}
-		output.MaterializationErrorCode = localtask.MaterializeErrorPersistFailed
-		encoded, encodeErr := localtask.EncodeOutputPayload(output)
-		if encodeErr != nil {
-			return encodeErr
-		}
-		item.Result.Payload = encoded
-		return tx.CommitOwned(item)
+		return d.commitRecorded(tx, output, item, localtask.MaterializeErrorPersistFailed)
 	}
 	if existing.ID != "" {
 		return d.bindExisting(tx, task, output, existing, item)
@@ -154,13 +191,7 @@ func (d *Deliverer) deliverOne(tx Store, task model.Task, output localtask.Canon
 		if resourceErr != nil && !knownResourceError(resourceErr) {
 			return resourceErr
 		}
-		output.MaterializationErrorCode = resourceErrorCode(resourceErr)
-		encoded, encodeErr := localtask.EncodeOutputPayload(output)
-		if encodeErr != nil {
-			return encodeErr
-		}
-		item.Result.Payload = encoded
-		return tx.CommitOwned(item)
+		return d.commitRecorded(tx, output, item, resourceErrorCode(resourceErr))
 	}
 	if localtask.HasWorkflowOutputIntent(task.InputJSON) {
 		return tx.CommitOwned(item)
@@ -222,22 +253,37 @@ func (d *Deliverer) deliverOne(tx Store, task model.Task, output localtask.Canon
 }
 
 func (d *Deliverer) bindExisting(tx Store, task model.Task, output localtask.CanonicalOutput, existing model.AssetRepresentation, item OwnedDelivery) error {
-	if existing.AssetVersionID == "" {
-		return fmt.Errorf("generation representation %s missing asset version", existing.ID)
+	resourceID := strings.TrimSpace(output.ResourceID)
+	if resourceID == "" {
+		resourceID = strings.TrimSpace(existing.ResourceID)
+	}
+	resource, resourceErr := ownedReadyResource(tx, task.UserID, resourceID)
+	if resource == nil {
+		if resourceErr != nil && !knownResourceError(resourceErr) {
+			return resourceErr
+		}
+		if output.ResourceID == "" {
+			output.ResourceID = resourceID
+		}
+		return d.commitRecorded(tx, output, item, resourceErrorCode(resourceErr))
+	}
+	output.ResourceID = resource.ID
+	if strings.TrimSpace(existing.AssetVersionID) == "" {
+		return d.commitRecorded(tx, output, item, localtask.MaterializeErrorPersistFailed)
 	}
 	version, err := tx.AssetVersion(existing.AssetVersionID)
 	if err != nil || version == nil {
-		if err == nil {
-			err = ErrNotFound
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return err
 		}
-		return err
+		return d.commitRecorded(tx, output, item, localtask.MaterializeErrorPersistFailed)
 	}
 	asset, err := tx.Asset(version.AssetID)
 	if err != nil || asset == nil {
-		if err == nil {
-			err = ErrNotFound
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return err
 		}
-		return err
+		return d.commitRecorded(tx, output, item, localtask.MaterializeErrorPersistFailed)
 	}
 	if asset.UserID != task.UserID {
 		return d.commitForeignAsset(tx, task, output)
@@ -249,8 +295,22 @@ func (d *Deliverer) bindExisting(tx Store, task model.Task, output localtask.Can
 		return err
 	}
 	item.Result.Payload = encoded
+	item.Result.URL = assets.FileURL(resource.ID)
+	return tx.CommitOwned(item)
+}
+
+func (d *Deliverer) commitRecorded(tx Store, output localtask.CanonicalOutput, item OwnedDelivery, code string) error {
+	output.MaterializedAssetID = ""
+	output.MaterializationErrorCode = code
+	encoded, err := localtask.EncodeOutputPayload(output)
+	if err != nil {
+		return err
+	}
+	item.Result.Payload = encoded
 	if output.ResourceID != "" {
 		item.Result.URL = assets.FileURL(output.ResourceID)
+	} else {
+		item.Result.URL = ""
 	}
 	return tx.CommitOwned(item)
 }

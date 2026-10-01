@@ -1,8 +1,6 @@
 package repository
 
 import (
-	"strings"
-
 	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/gorm"
@@ -66,62 +64,19 @@ func (r *Repository) GenerationOutputResultsForTasks(taskIDs []string) ([]model.
 	return results, err
 }
 
-func (r *Repository) SucceededTasksForDelivery(limit int) ([]model.Task, error) {
+// SucceededTasksForDelivery returns one id-keyset page of succeeded tasks with
+// a result payload. Completeness is decided by the Deliverer, not this query.
+func (r *Repository) SucceededTasksForDelivery(afterID string, limit int) ([]model.Task, error) {
 	if limit <= 0 {
 		limit = 64
 	}
+	query := r.db.Where("status = ? AND result_json <> ''", model.TaskStatusSucceeded)
+	if afterID != "" {
+		query = query.Where("id > ?", afterID)
+	}
 	var tasks []model.Task
-	seen := make(map[string]struct{}, limit*3)
-	appendUnique := func(batch []model.Task) {
-		for _, task := range batch {
-			if strings.TrimSpace(task.ID) == "" {
-				continue
-			}
-			if _, ok := seen[task.ID]; ok {
-				continue
-			}
-			seen[task.ID] = struct{}{}
-			tasks = append(tasks, task)
-		}
-	}
-
-	var missing []model.Task
-	if err := r.db.Where("status = ? AND result_json <> ''", model.TaskStatusSucceeded).
-		Where("NOT EXISTS (SELECT 1 FROM results WHERE results.task_id = tasks.id AND results.kind = ?)", generationOutputResultKind).
-		Order("updated_at asc").Limit(limit).Find(&missing).Error; err != nil {
-		return nil, err
-	}
-	appendUnique(missing)
-
-	var retryable []model.Task
-	if err := r.db.Where("status = ? AND result_json <> ''", model.TaskStatusSucceeded).
-		Where(`EXISTS (SELECT 1 FROM results WHERE results.task_id = tasks.id AND results.kind = ? AND (
-			results.payload LIKE ? OR results.payload LIKE ? OR results.payload LIKE ? OR results.payload LIKE ?
-		))`, generationOutputResultKind,
-			`%"materializationErrorCode":"persist_failed"%`,
-			`%"materializationErrorCode":"resource_missing"%`,
-			`%"materializationErrorCode":"resource_not_ready"%`,
-			`%"materializationErrorCode":"delivery_unreadable"%`,
-		).
-		Order("updated_at asc").Limit(limit).Find(&retryable).Error; err != nil {
-		return nil, err
-	}
-	appendUnique(retryable)
-
-	if len(tasks) >= limit {
-		return tasks, nil
-	}
-
-	var recent []model.Task
-	if err := r.db.Where("status = ? AND result_json <> ''", model.TaskStatusSucceeded).
-		Order("updated_at desc").Limit(limit).Find(&recent).Error; err != nil {
-		return nil, err
-	}
-	appendUnique(recent)
-	if len(tasks) > limit {
-		return tasks[:limit], nil
-	}
-	return tasks, nil
+	err := query.Order("id asc").Limit(limit).Find(&tasks).Error
+	return tasks, err
 }
 
 func insertOwnedAsset(tx *gorm.DB, asset *model.Asset) error {
