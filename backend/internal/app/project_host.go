@@ -7,15 +7,11 @@ type projectWorkflowHost struct {
 }
 
 func (h projectWorkflowHost) EnsureBuiltinTemplate() error {
-	return h.service.EnsureBuiltinProjectWorkflowTemplate()
+	return h.service.projectDomain().EnsureBuiltinTemplate()
 }
 
 func (h projectWorkflowHost) PrepareDefault(projectID string) (localproject.WorkflowSeed, error) {
-	instance, steps, err := h.service.newProjectWorkflowRecords(projectID, "", "project")
-	if err != nil {
-		return localproject.WorkflowSeed{}, err
-	}
-	return localproject.WorkflowSeed{Instance: instance, Steps: steps}, nil
+	return h.service.projectDomain().PrepareDefaultWorkflow(projectID)
 }
 
 func (s *Service) ProjectService() *localproject.Service {

@@ -21,6 +21,8 @@ type ProjectOverview = localproject.Overview
 type ProjectOverviewMetrics = localproject.OverviewMetrics
 type ProjectOverviewUnit = localproject.OverviewUnit
 type ProjectCanvasPage = localproject.CanvasPage
+type ProjectAssetSummary = localproject.AssetSummary
+type ProjectWorkflowDetail = localproject.WorkflowDetail
 
 type ProjectDetail struct {
 	Project         model.Project                 `json:"project"`
@@ -66,7 +68,9 @@ func (s *Service) ProjectDetail(userID string, id string) (ProjectDetail, error)
 	if _, err := s.projectDomain().Owned(userID, id); err != nil {
 		return ProjectDetail{}, err
 	}
-	// 项目读取允许降级修复：旧任务可能已成功持久化图片，但浏览器刷新中断了角色版本绑定。
+	// REMOVE when lead integrates taskdelivery: ProjectDetail must not own generated-output
+	// recovery. These two calls exist only so current production still heals interrupted
+	// browser refreshes until the delivery worker is wired.
 	if s.reconcileCharacterTurnaroundTasks(userID, id) {
 		if _, err := s.projectDomain().Owned(userID, id); err != nil {
 			return ProjectDetail{}, err
@@ -83,11 +87,11 @@ func (s *Service) ProjectDetail(userID string, id string) (ProjectDetail, error)
 	if err != nil {
 		return ProjectDetail{}, err
 	}
-	assets, err := s.ProjectAssets(userID, core.Project.ID)
+	assets, err := s.projectDomain().ProjectAssets(userID, core.Project.ID)
 	if err != nil {
 		return ProjectDetail{}, err
 	}
-	workflows, err := s.ProjectWorkflows(core.Project.ID)
+	workflows, err := s.projectDomain().ProjectWorkflows(userID, core.Project.ID)
 	if err != nil {
 		return ProjectDetail{}, err
 	}
@@ -161,4 +165,8 @@ func IsProjectNotFound(err error) bool {
 
 func (s *Service) ensureTaskProjectActive(userID string, canvasOrProjectID string) error {
 	return s.projectDomain().EnsureTaskScopeActive(userID, canvasOrProjectID)
+}
+
+func normalizeProjectPage(page int, pageSize int, maximum int) (int, int) {
+	return localproject.NormalizePage(page, pageSize, maximum)
 }
