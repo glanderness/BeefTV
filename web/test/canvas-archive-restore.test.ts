@@ -122,6 +122,7 @@ function memoryHost(overrides: Partial<CanvasArchiveRestoreHost> = {}) {
     const projects: CanvasProject[] = [];
     const media = new Map<string, Uint8Array>();
     const drawings: string[] = [];
+    const drawingSnapshots = new Map<string, unknown>();
     const deleted: string[] = [];
     const deletedResources: string[] = [];
     const binds: Array<{ canvasId: string; node: CanvasNodeData }> = [];
@@ -193,12 +194,13 @@ function memoryHost(overrides: Partial<CanvasArchiveRestoreHost> = {}) {
             binds.push(options);
             return `asset-${++assetSeq}`;
         },
-        saveDrawing: async (projectId, drawingId) => {
+        saveDrawing: async (projectId, drawingId, _engine, snapshot) => {
             drawings.push(`${projectId}:${drawingId}`);
-            return { version: 2, engine: "excalidraw", snapshot: {}, revision: 1, updatedAt: "2026-10-02T00:00:00.000Z", shapeCount: 0, pageCount: 1 };
+            drawingSnapshots.set(`${projectId}:${drawingId}`, snapshot);
+            return { version: 2, engine: "excalidraw", snapshot, revision: 1, updatedAt: "2026-10-02T00:00:00.000Z", shapeCount: 0, pageCount: 1 };
         },
         loadDrawing: async (projectId, drawingId) => (
-            drawings.includes(`${projectId}:${drawingId}`) ? { drawingId, revision: 1 } : null
+            drawings.includes(`${projectId}:${drawingId}`) ? { drawingId, revision: 1, snapshot: drawingSnapshots.get(`${projectId}:${drawingId}`) } : null
         ),
         deleteResource: async (resourceId) => {
             deletedResources.push(resourceId);
@@ -451,6 +453,41 @@ test("failed durable cleanup preserves the visible imported project and reports 
     expect((failure as AggregateError).errors[1].message).toBe("delete-failed");
     expect(state.projects).toHaveLength(1);
     expect(state.deletedResources).toEqual([]);
+});
+
+test("drawing failure waits for all sibling writes before deleting the imported project", async () => {
+    const data = archiveData();
+    data.projects[0].drawingDocuments.push({ ...data.projects[0].drawingDocuments[0], drawingId: "delayed" });
+    let release!: () => void;
+    let started!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+    const events: string[] = [];
+    const state = memoryHost();
+    const save = state.host.saveDrawing;
+    const remove = state.host.deleteProjects;
+    state.host.saveDrawing = async (...args) => {
+        if (args[1] === "sketch") throw new Error("drawing-save-failed");
+        started();
+        await pending;
+        events.push("drawing-saved");
+        return save(...args);
+    };
+    state.host.deleteProjects = async (ids) => { events.push("cleanup"); await remove(ids); };
+    const completion = restoreCanvasArchive(await validZip(data), state.host).catch((error: unknown) => error);
+    await startedPromise;
+    expect(events).toEqual([]);
+    release();
+    const failure = await completion;
+    expect((failure as Error).message).toBe("drawing-save-failed");
+    expect(events).toEqual(["drawing-saved", "cleanup"]);
+    expect(state.projects).toEqual([]);
+});
+
+test("drawing receipt must contain the saved snapshot", async () => {
+    const state = memoryHost({ loadDrawing: async (_projectId, drawingId) => ({ drawingId, revision: 1 }) });
+    await expect(restoreCanvasArchive(await validZip(), state.host)).rejects.toThrow("画板未保存到工作区");
+    expect(state.projects).toEqual([]);
 });
 
 test("folder covers require archive bytes before any writes and restore under the new folder ID", async () => {

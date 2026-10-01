@@ -54,7 +54,7 @@ export type CanvasArchiveRestoreHost = {
     uploadMedia(blob: Blob, kind: "image" | "video" | "audio" | "file", meta: { storageKey: string; mimeType: string; fileName?: string }): Promise<RestoredMediaRef>;
     bindMediaAsset?(options: { canvasId: string; node: CanvasNodeData }): Promise<string>;
     saveDrawing: typeof saveCanvasDrawing;
-    loadDrawing?(projectId: string, drawingId: string): Promise<{ drawingId: string; revision: number; snapshot?: unknown; previewResourceId?: string } | null>;
+    loadDrawing?(projectId: string, drawingId: string): Promise<{ drawingId: string; revision: number; snapshot?: unknown; previewResourceId?: string; renderResourceId?: string } | null>;
     deleteResource?(resourceId: string): Promise<void>;
     onProjectProgress?(projectId: string, progress: CanvasArchiveProjectProgress | null): void;
 };
@@ -196,7 +196,7 @@ export function createCanvasArchiveRestoreHost(overrides: Partial<CanvasArchiveR
         saveDrawing: saveCanvasDrawing,
         loadDrawing: async (projectId, drawingId) => {
             const saved = await loadCanvasDrawing(projectId, drawingId);
-            return saved ? { drawingId, revision: saved.revision, snapshot: saved.snapshot, previewResourceId: saved.previewResourceId } : null;
+            return saved ? { drawingId, revision: saved.revision, snapshot: saved.snapshot, previewResourceId: saved.previewResourceId, renderResourceId: saved.renderResourceId } : null;
         },
         ...overrides,
         usesCanonicalBackend,
@@ -343,8 +343,9 @@ async function verifyRestoredDrawings(projectId: string, documents: CanvasDrawin
     for (const document of documents.filter((item) => !item.engine || item.engine === "excalidraw")) {
         const saved = await host.loadDrawing(projectId, document.drawingId);
         if (!saved || saved.drawingId !== document.drawingId || (saved.revision || 0) < 1) throw new Error("画板未保存到工作区");
-        if (saved.snapshot !== undefined && JSON.stringify(saved.snapshot) !== JSON.stringify(document.snapshot)) throw new Error("画板未保存到工作区");
-        if (document.previewPath && !saved.previewResourceId) throw new Error("画板预览未保存到工作区");
+        if (canonicalize(saved.snapshot) !== canonicalize(document.snapshot)) throw new Error("画板未保存到工作区");
+        if (host.usesCanonicalBackend && document.previewPath && !saved.previewResourceId) throw new Error("画板预览未保存到工作区");
+        if (host.usesCanonicalBackend && document.generationRender && !saved.renderResourceId) throw new Error("画板生成图未保存到工作区");
     }
 }
 
@@ -557,8 +558,8 @@ async function restoreArchiveDrawings(
     zip: Map<string, Blob>,
     host: CanvasArchiveRestoreHost,
 ) {
-    await Promise.all(
-        documents.filter((document) => !document.engine || document.engine === "excalidraw").map((document) => {
+    const results = await Promise.allSettled(
+        documents.filter((document) => !document.engine || document.engine === "excalidraw").map(async (document) => {
             const previewFile = document.previewPath ? zip.get(document.previewPath) || zip.get(confinedArchivePath(document.previewPath)) : undefined;
             const preview = previewFile && !previewFile.type ? previewFile.slice(0, previewFile.size, "image/png") : previewFile;
             const renderFile = document.generationRender?.path ? zip.get(document.generationRender.path) || zip.get(confinedArchivePath(document.generationRender.path)) : undefined;
@@ -586,6 +587,9 @@ async function restoreArchiveDrawings(
             );
         }),
     );
+    // Cleanup must not race a sibling drawing that is still being persisted.
+    const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failure) throw failure.reason;
 }
 
 async function cleanupCanvasArchiveAttempt(
