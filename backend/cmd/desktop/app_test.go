@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"infinite-canvas/backend/internal/bootstrap"
 )
 
 // This catches desktop-shell regressions where Wails opens before the local
@@ -165,6 +167,38 @@ func TestSaveOwnedMediaCancelReturnsNoError(t *testing.T) {
 	saved, err := app.SaveOwnedMedia("clip.mp4", "owned-id")
 	if err != nil || saved || copied {
 		t.Fatalf("cancelled save = saved:%v err:%v copied:%v", saved, err, copied)
+	}
+}
+
+func TestMediaSaveDialogSuppliesDefaultFileType(t *testing.T) {
+	for _, ext := range []string{"mp4", "png", "jpg", "webp", "mov", "wav", "m4a", "zip", "glb"} {
+		t.Run(ext, func(t *testing.T) {
+			name := "中文素材_20261001." + ext
+			options := mediaSaveDialogOptions(name, "windows")
+			if options.DefaultFilename != name || options.Title != "保存文件" || len(options.Filters) != 1 || options.Filters[0].Pattern != "*."+ext || options.Filters[0].DisplayName == "" {
+				t.Fatalf("save dialog must supply the actual format as its default filter: %+v", options)
+			}
+		})
+	}
+	for _, tc := range []struct{ input, name, pattern string }{
+		{`../clip:name.MP4`, "clip_name.MP4", "*.MP4"},
+		{"a.b.mp4", "a.b.mp4", "*.mp4"},
+		{strings.Repeat("好", 100) + ".mp4", strings.Repeat("好", 58) + ".mp4", "*.mp4"},
+	} {
+		options := mediaSaveDialogOptions(bootstrap.SanitizeSaveFileName(tc.input), "windows")
+		if options.DefaultFilename != tc.name || len(options.Filters) != 1 || options.Filters[0].Pattern != tc.pattern {
+			t.Fatalf("sanitized %q: %+v", tc.input, options)
+		}
+	}
+	options := mediaSaveDialogOptions("未命名文件", "windows")
+	if len(options.Filters) != 0 {
+		t.Fatalf("must not invent a format for an extensionless artifact: %+v", options)
+	}
+	for _, platform := range []string{"darwin", "linux"} {
+		options := mediaSaveDialogOptions("clip.mp4", platform)
+		if options.DefaultFilename != "clip.mp4" || len(options.Filters) != 0 {
+			t.Fatalf("must preserve the existing %s dialog options: %+v", platform, options)
+		}
 	}
 }
 

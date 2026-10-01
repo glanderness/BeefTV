@@ -374,6 +374,7 @@ export type ModelChannel = {
         capability: ModelCapability;
         protocol?: ModelProtocol;
         capabilityConfig?: ModelCapabilityConfig;
+        videoCapabilitiesVersion?: string;
         logicalModelId?: string;
         logicalCapabilitySpec?: CapabilitySpec;
         logicalCapabilityProfiles?: CapabilitySpec[];
@@ -748,8 +749,9 @@ function beefApiVideoProtocol(model: string, current?: ModelProtocol): ModelProt
     return (beefAPIVideoContract(model)?.protocol as ModelProtocol | undefined) || current || "newapi-channel-2";
 }
 
-function beefApiVideoCapabilityConfig(model: string, protocol: ModelProtocol, current?: ModelCapabilityConfig): ModelCapabilityConfig | undefined {
-    const profile = beefApiSeedanceCapabilityConfig(model, current);
+function beefApiVideoCapabilityConfig(model: string, protocol: ModelProtocol, current?: ModelCapabilityConfig, sourced = false): ModelCapabilityConfig | undefined {
+    const profile = beefApiSeedanceCapabilityConfig(model, current, sourced);
+    if (sourced) return profile;
     const contract = beefAPIVideoContract(model);
     const limits = contract?.maxReferences;
     if (!limits) return profile;
@@ -762,7 +764,8 @@ function beefApiVideoCapabilityConfig(model: string, protocol: ModelProtocol, cu
     } };
 }
 
-function beefApiSeedanceCapabilityConfig(model: string, current?: ModelCapabilityConfig): ModelCapabilityConfig | undefined {
+function beefApiSeedanceCapabilityConfig(model: string, current?: ModelCapabilityConfig, sourced = false): ModelCapabilityConfig | undefined {
+    if (sourced) return current;
     if (!/^seedance-2\.(?:0|5)(?:-|$)/i.test(model)) return current;
     const video = current?.video;
     const refs = video?.references;
@@ -838,7 +841,7 @@ function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
             model,
             capability: "video",
             protocol,
-            capabilityConfig: beefApiVideoCapabilityConfig(model, protocol, current?.capabilityConfig),
+            capabilityConfig: beefApiVideoCapabilityConfig(model, protocol, current?.capabilityConfig, current?.videoCapabilitiesVersion !== undefined),
         });
     }
     return { ...channel, models, modelProfiles: Array.from(existing.values()) };

@@ -43,6 +43,12 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 			if protocol != "" {
 				profile["protocol"] = protocol
 			}
+			if capability == "video" {
+				if video, ok := NormalizeCatalogVideoCapability(model.VideoCapabilities); ok {
+					profile["capabilityConfig"] = map[string]any{"version": 1, "video": video}
+					profile["videoCapabilitiesVersion"] = model.VideoCapabilitiesVersion
+				}
+			}
 		}
 		nextProfiles = append(nextProfiles, profile)
 	}

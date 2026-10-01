@@ -98,7 +98,7 @@ func runProtocolAdapterTaskWithPolicy(ctx context.Context, input canvasGeneratio
 			taskID = extracted
 		}
 		if created.Status == protocol.StatusFailed || created.Status == protocol.StatusCancelled {
-			return nil, protocolResultError(created.Message, taskID)
+			return nil, protocolResultError(created.Message, taskID, body)
 		}
 		if created.Status == protocol.StatusSucceeded {
 			return finishProtocolAdapterResult(ctx, input, adapter, request, taskID, created.Result, policy)
@@ -129,7 +129,7 @@ func runProtocolAdapterTaskWithPolicy(ctx context.Context, input canvasGeneratio
 			result, err := finishProtocolAdapterResult(ctx, input, adapter, request, taskID, state.Result, policy)
 			return videoPollOutcome{Done: err == nil, Result: result}, err
 		case protocol.StatusFailed, protocol.StatusCancelled:
-			return videoPollOutcome{}, protocolResultError(state.Message, taskID)
+			return videoPollOutcome{}, protocolResultError(state.Message, taskID, body)
 		}
 		return videoPollOutcome{}, nil
 	})
@@ -179,7 +179,7 @@ func queryProtocolAdapterVideoTask(ctx context.Context, input canvasGenerationIn
 		result, err := finishProtocolAdapterResult(ctx, input, adapter, request, taskID, state.Result, defaultVideoPollPolicy())
 		return result, providerStatus, err
 	case protocol.StatusFailed, protocol.StatusCancelled:
-		return nil, providerStatus, protocolResultError(state.Message, taskID)
+		return nil, providerStatus, protocolResultError(state.Message, taskID, body)
 	case protocol.StatusPending, protocol.StatusProcessing:
 		return nil, providerStatus, nil
 	default:
@@ -406,8 +406,8 @@ func protocolRequestBody(ctx context.Context, config providerConfig, spec protoc
 		}
 		// Ark documents a 64 MiB JSON request limit. Measure the actual wire
 		// representation, including base64; URL resource sizes are irrelevant.
-		if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(config.InterfaceType)) && len(data) > 64*1024*1024 {
-			return nil, "", errors.New("video request body exceeds the 64 MiB request limit; use public media URLs instead of inline base64")
+		if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(config.InterfaceType)) && int64(len(data)) > videoJSONRequestLimitBytes {
+			return nil, "", errVideoJSONRequestTooLarge
 		}
 		return bytes.NewReader(data), "application/json", nil
 	case "application/x-www-form-urlencoded":
@@ -971,7 +971,22 @@ func retryableProtocolMediaDownload(err error) bool {
 	return false
 }
 
-func protocolResultError(message, taskID string) error {
+func protocolResultError(message, taskID string, bodies ...[]byte) error {
+	// Keep structured failure codes instead of flattening them to plugin prose.
+	if len(bodies) > 0 {
+		var payload map[string]interface{}
+		if json.Unmarshal(bodies[0], &payload) == nil {
+			requestID := firstNonEmpty(stringField(payload, "request_id"), stringField(payload, "requestId"))
+			if nested, ok := payload["data"].(map[string]interface{}); ok {
+				payload = nested
+			}
+			if providerError, ok := payload["error"].(map[string]interface{}); ok && stringField(providerError, "code") != "" {
+				requestID = firstNonEmpty(stringField(providerError, "request_id"), stringField(providerError, "requestId"), stringField(payload, "request_id"), requestID)
+				raw, _ := json.Marshal(map[string]interface{}{"task_id": taskID, "request_id": requestID, "error": map[string]string{"code": stringField(providerError, "code"), "message": stringField(providerError, "message"), "type": stringField(providerError, "type"), "param": stringField(providerError, "param")}})
+				return providerPayloadError{raw: string(raw), message: providerPayloadErrorMessage(string(raw))}
+			}
+		}
+	}
 	message = strings.TrimSpace(message)
 	if message == "" {
 		message = "上游返回失败状态"

@@ -66,44 +66,52 @@ type providerTextMessage struct {
 }
 
 type providerConfig struct {
-	ChannelID             string                 `json:"channelId"`
-	ChannelModelKey       string                 `json:"channelModelKey,omitempty"`
-	VariantID             string                 `json:"variantId,omitempty"`
-	ProviderModelKey      string                 `json:"providerModelKey,omitempty"`
-	APIFormat             string                 `json:"apiFormat"`
-	InterfaceType         string                 `json:"interfaceType"`
-	BaseURL               string                 `json:"baseUrl"`
-	APIKey                string                 `json:"apiKey"`
-	SecretKey             string                 `json:"secretKey"`
-	Headers               []OutboundHeader       `json:"headers"`
-	Model                 string                 `json:"model"`
-	Size                  string                 `json:"size"`
-	Quality               string                 `json:"quality"`
-	TransparentBackground string                 `json:"transparentBackground"`
-	Count                 string                 `json:"count"`
-	VideoSeconds          string                 `json:"videoSeconds"`
-	VQuality              string                 `json:"vquality"`
-	VideoGenerateAudio    string                 `json:"videoGenerateAudio"`
-	VideoWatermark        string                 `json:"videoWatermark"`
-	ArkPrivateAssetUpload string                 `json:"videoArkPrivateAssetUpload"`
-	AudioVoice            string                 `json:"audioVoice"`
-	AudioFormat           string                 `json:"audioFormat"`
-	AudioSpeed            string                 `json:"audioSpeed"`
-	AudioInstructions     string                 `json:"audioInstructions"`
-	SystemPrompt          string                 `json:"systemPrompt"`
-	CapabilityConfig      *ModelCapabilityConfig `json:"capabilityConfig"`
-	WorkflowID            string                 `json:"workflowId"`
-	WebappID              string                 `json:"webappId"`
-	WorkflowJSON          map[string]interface{} `json:"workflowJson"`
-	WorkflowFields        []WorkflowField        `json:"workflowFields"`
-	RunningHubUseWallet   bool                   `json:"runningHubUseWallet"`
-	RunningHubWalletKey   string                 `json:"runningHubWalletApiKey"`
-	RunningHubUploadKey   string                 `json:"runningHubUploadApiKey"`
+	ChannelID                string                 `json:"channelId"`
+	ChannelModelKey          string                 `json:"channelModelKey,omitempty"`
+	VariantID                string                 `json:"variantId,omitempty"`
+	ProviderModelKey         string                 `json:"providerModelKey,omitempty"`
+	APIFormat                string                 `json:"apiFormat"`
+	InterfaceType            string                 `json:"interfaceType"`
+	BaseURL                  string                 `json:"baseUrl"`
+	APIKey                   string                 `json:"apiKey"`
+	SecretKey                string                 `json:"secretKey"`
+	Headers                  []OutboundHeader       `json:"headers"`
+	Model                    string                 `json:"model"`
+	Size                     string                 `json:"size"`
+	Quality                  string                 `json:"quality"`
+	TransparentBackground    string                 `json:"transparentBackground"`
+	Count                    string                 `json:"count"`
+	VideoSeconds             string                 `json:"videoSeconds"`
+	VQuality                 string                 `json:"vquality"`
+	VideoGenerateAudio       string                 `json:"videoGenerateAudio"`
+	VideoWatermark           string                 `json:"videoWatermark"`
+	ArkPrivateAssetUpload    string                 `json:"videoArkPrivateAssetUpload"`
+	AudioVoice               string                 `json:"audioVoice"`
+	AudioFormat              string                 `json:"audioFormat"`
+	AudioSpeed               string                 `json:"audioSpeed"`
+	AudioInstructions        string                 `json:"audioInstructions"`
+	SystemPrompt             string                 `json:"systemPrompt"`
+	CapabilityConfig         *ModelCapabilityConfig `json:"capabilityConfig"`
+	VideoCapabilitiesVersion *string                `json:"videoCapabilitiesVersion,omitempty"`
+	WorkflowID               string                 `json:"workflowId"`
+	WebappID                 string                 `json:"webappId"`
+	WorkflowJSON             map[string]interface{} `json:"workflowJson"`
+	WorkflowFields           []WorkflowField        `json:"workflowFields"`
+	RunningHubUseWallet      bool                   `json:"runningHubUseWallet"`
+	RunningHubWalletKey      string                 `json:"runningHubWalletApiKey"`
+	RunningHubUploadKey      string                 `json:"runningHubUploadApiKey"`
 }
 
 const providerHTTPTimeout = 5 * time.Minute
 const videoPollTimeout = time.Hour
 const maxProviderResponseBytes int64 = 64 << 20
+const videoJSONRequestLimitBytes int64 = 64 << 20
+
+var errVideoJSONRequestTooLarge = errors.New("video request body exceeds the 64 MiB request limit; use public media URLs instead of inline base64")
+
+// beefAPIVideoBaseURLForTest lets httptest exercise the built-in BeefAPI
+// Seedance path without spoofing enterprise.beefapi.com.
+var beefAPIVideoBaseURLForTest string
 
 type providerMedia struct {
 	ID         string `json:"id"`
@@ -369,7 +377,16 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		if err := s.hydrateVideoReferenceMetadata(userID, &input); err != nil {
 			return nil, err
 		}
-		if err := s.validateResolvedVideoCapability(&input); err != nil {
+		if isBeefAPISeedancePreuploadConfig(input.Config) {
+			if err := s.resolveVideoCapability(&input); err != nil {
+				return nil, err
+			}
+			if input.VideoCapability != nil {
+				if err := validateVideoTaskParameters(input.VideoCapability, input); err != nil {
+					return nil, err
+				}
+			}
+		} else if err := s.validateResolvedVideoCapability(&input); err != nil {
 			return nil, err
 		}
 	}
@@ -379,6 +396,9 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 			return nil, err
 		}
 		if err := s.prepareArkPrivateAssetReferences(ctx, userID, &input); err != nil {
+			return nil, err
+		}
+		if err := s.prepareBeefAPISeedanceReferences(ctx, userID, &input); err != nil {
 			return nil, err
 		}
 	}
@@ -416,6 +436,7 @@ type providerMediaHydrationPolicy struct {
 	requireURL  bool
 	preferURL   bool
 	preferHTTPS bool
+	keepLocal   bool
 }
 
 func providerMediaHydrationPolicyFor(ctx context.Context, input canvasGenerationInput) providerMediaHydrationPolicy {
@@ -424,11 +445,11 @@ func providerMediaHydrationPolicyFor(ctx context.Context, input canvasGeneration
 		return providerMediaHydrationPolicy{preferHTTPS: true}
 	}
 	// Prefer an existing HTTPS resource address when the workspace already has
-	// a public base. Local desktop without CANVAS_PUBLIC_BASE_URL still falls
-	// through to a bounded data URL; asset:// references are preserved.
+	// a public base. Built-in BeefAPI Seedance keeps local files on disk until
+	// the shared preupload path rewrites them to short-lived HTTPS URLs.
 	if isBeefAPIVideoConfig(input.Config) {
 		if contract, ok := providerpreset.BeefAPIVideoContract(input.Config.Model); ok && contract.InlineMedia && (contract.Protocol == input.Config.InterfaceType || isSeedanceVideoConfig(input.Config)) {
-			return providerMediaHydrationPolicy{preferHTTPS: true}
+			return providerMediaHydrationPolicy{preferHTTPS: true, keepLocal: isBeefAPISeedancePreuploadConfig(input.Config)}
 		}
 	}
 	// The channel-1 NewAPI profile also accepts data URLs in its media field.
@@ -748,7 +769,9 @@ func (s *Service) hydrateVideoReferenceMetadata(userID string, input *canvasGene
 		}
 	}
 	// Probe actual local/inline videos even when callers supplied dimensions.
-	if isSeedance2Family(input.Config.InterfaceType, input.Config.Model) {
+	// Built-in BeefAPI Seedance keeps that probe on the sequential preupload
+	// buffer so a 200MiB file is not read twice before PUT.
+	if isSeedance2Family(input.Config.InterfaceType, input.Config.Model) && !isBeefAPISeedancePreuploadConfig(input.Config) {
 		for i := range input.ReferenceVideos {
 			media := &input.ReferenceVideos[i]
 			var data []byte
@@ -771,21 +794,29 @@ func (s *Service) hydrateVideoReferenceMetadata(userID string, input *canvasGene
 			if err != nil || len(data) > 200<<20 {
 				return BadAuthRequest(fmt.Sprintf("第 %d 个参考视频无法读取或超过 200MB，请重新导入", i+1))
 			}
-			w, h, durationMs := probeGeneratedVideoMedia(data)
-			if w <= 0 || h <= 0 {
-				return BadAuthRequest(fmt.Sprintf("第 %d 个参考视频尺寸无法读取，请重新导出 MP4/MOV 后导入", i+1))
-			}
-			media.Width, media.Height, media.Bytes = w, h, int64(len(data))
-			_, fps := referenceVideoEncoding(data)
-			if err := referenceVideoFrameRateError(input.Config, i, fps); err != nil {
+			if err := applySeedance2VideoProbe(input.Config, i, media, data); err != nil {
 				return err
 			}
-			if durationMs > 0 {
-				media.DurationMs = durationMs
-			}
+			media.Bytes = int64(len(data))
 		}
 	}
 
+	return nil
+}
+
+func applySeedance2VideoProbe(config providerConfig, index int, media *providerMedia, data []byte) error {
+	w, h, durationMs := probeGeneratedVideoMedia(data)
+	if w <= 0 || h <= 0 {
+		return BadAuthRequest(fmt.Sprintf("第 %d 个参考视频尺寸无法读取，请重新导出 MP4/MOV 后导入", index+1))
+	}
+	media.Width, media.Height = w, h
+	_, fps := referenceVideoEncoding(data)
+	if err := referenceVideoFrameRateError(config, index, fps); err != nil {
+		return err
+	}
+	if durationMs > 0 {
+		media.DurationMs = durationMs
+	}
 	return nil
 }
 
@@ -821,6 +852,22 @@ func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, poli
 	}
 	if s.IsLocalMode() && resourceUsesObjectStorage(resource) {
 		return errors.New("本地工作区检测到旧的远程素材记录，请重新导入到本地资源目录")
+	}
+	if policy.keepLocal {
+		media.URL = ""
+		media.DataURL = ""
+		media.MimeType = firstNonEmpty(media.MimeType, resource.MimeType)
+		media.Bytes = resource.Size
+		if resource.Width > 0 {
+			media.Width = resource.Width
+		}
+		if resource.Height > 0 {
+			media.Height = resource.Height
+		}
+		if resource.DurationMs > 0 {
+			media.DurationMs = resource.DurationMs
+		}
+		return nil
 	}
 	if policy.preferHTTPS {
 		if httpsURL, err := s.signedHTTPSPublicResourceURL(resource, time.Now().Add(providerResourceURLTTL)); err == nil {

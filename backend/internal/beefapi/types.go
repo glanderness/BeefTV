@@ -1,6 +1,7 @@
 package beefapi
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 )
@@ -56,10 +57,12 @@ type Credential struct {
 }
 
 type CatalogModel struct {
-	ID                     string
-	DisplayName            string
-	ModelType              string
-	SupportedEndpointTypes []string
+	ID                       string
+	DisplayName              string
+	ModelType                string
+	SupportedEndpointTypes   []string
+	VideoCapabilities        json.RawMessage
+	VideoCapabilitiesVersion string
 }
 
 type persistedDevice struct {
