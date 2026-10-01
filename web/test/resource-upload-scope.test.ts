@@ -42,6 +42,27 @@ async function withAdapter<T>(adapter: NonNullable<typeof apiClient.defaults.ada
 }
 
 describe("HTTP expectedScope dispatch", () => {
+    test("does not return an in-flight result after A to B to A", async () => {
+        const restore = switchScope("owner-a");
+        const expectedScope = userScopeGuard.captureUserScope();
+        const entered = deferred();
+        const gate = deferred();
+        try {
+            await withAdapter(async (config) => {
+                entered.resolve();
+                await gate.promise;
+                return { data: { code: 0, data: { assets: [] }, msg: "" }, status: 200, statusText: "OK", headers: {}, config };
+            }, async () => {
+                const pending = http.get("/assets", { expectedScope });
+                await entered.promise;
+                setActiveUserScope("owner-b");
+                setActiveUserScope("owner-a");
+                gate.resolve();
+                await expect(pending).rejects.toBeInstanceOf(UserScopeAbandonedError);
+            });
+        } finally { restore(); }
+    });
+
     test("checks captured scope at send before a new request is constructed", async () => {
         const restore = switchScope("owner-a");
         const expected = userScopeGuard.captureUserScope();

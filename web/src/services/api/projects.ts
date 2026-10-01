@@ -2,7 +2,6 @@ import type { CapturedUserScope } from "@/lib/user-scope-guard";
 import { http } from "@/services/api/request";
 import { normalizeAssetCategory, type AssetCategory } from "@/lib/asset-category";
 import type { GenerationTask } from "@/services/api/task-center";
-import type { CapturedUserScope } from "@/lib/user-scope-guard";
 
 
 export type Project = {

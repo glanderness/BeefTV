@@ -142,7 +142,9 @@ apiClient.interceptors.request.use((config) => {
 
 async function send<T>(method: string, url: string, data?: unknown, config?: HttpRequestConfig) {
     assertExpectedHttpScope(config);
-    return request<T>(apiClient.request<BackendEnvelope<T>>({ method, url, data, ...config }));
+    const result = await request<T>(apiClient.request<BackendEnvelope<T>>({ method, url, data, ...config }));
+    assertExpectedHttpScope(config);
+    return result;
 }
 
 /**
@@ -158,7 +160,9 @@ export const http = {
     async raw<T>(config: AxiosRequestConfig & { expectedScope?: CapturedUserScope }): Promise<AxiosResponse<T>> {
         try {
             assertExpectedHttpScope(config);
-            return await apiClient.request<T>(config);
+            const result = await apiClient.request<T>(config);
+            assertExpectedHttpScope(config);
+            return result;
         } catch (error) {
             throw unwrapTransportError(error);
         }
