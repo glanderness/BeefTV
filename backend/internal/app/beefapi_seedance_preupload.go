@@ -24,6 +24,7 @@ const (
 	beefAPISeedanceImageMaxBytes       = int64(30 << 20)
 	beefAPISeedanceVideoMaxBytes       = int64(200 << 20)
 	beefAPISeedanceAudioMaxBytes       = int64(15 << 20)
+	beefAPISeedanceUploadTimeout       = 15 * time.Minute
 )
 
 var (
@@ -112,6 +113,11 @@ func prepareBeefAPISeedanceReferences(ctx context.Context, config providerConfig
 			if err != nil {
 				return err
 			}
+			if group.kind == "video" && isSeedance2Family(config.InterfaceType, config.Model) {
+				if err := applySeedance2VideoProbe(config, index, media, data); err != nil {
+					return err
+				}
+			}
 			digest := sha256.Sum256(data)
 			hexDigest := hex.EncodeToString(digest[:])
 			session, err := createBeefAPISeedanceUpload(ctx, config, beefAPISeedanceUploadRequest{
@@ -141,6 +147,7 @@ func prepareBeefAPISeedanceReferences(ctx context.Context, config providerConfig
 			}
 			media.URL = uploaded.URL
 			media.DataURL = ""
+			media.StorageKey = ""
 			media.MimeType = firstNonEmpty(uploaded.Mime, mime)
 			media.Bytes = size
 			if uploaded.Bytes > 0 {
@@ -271,6 +278,11 @@ func fallbackBeefAPISeedanceInline(ctx context.Context, input *canvasGenerationI
 			if err != nil {
 				return err
 			}
+			if group.kind == "video" && isSeedance2Family(input.Config.InterfaceType, input.Config.Model) {
+				if err := applySeedance2VideoProbe(input.Config, index, media, data); err != nil {
+					return err
+				}
+			}
 			size := int64(len(data))
 			encoded := dataURL(mime, data)
 			data = nil
@@ -315,6 +327,16 @@ func completeBeefAPISeedanceUpload(ctx context.Context, config providerConfig, s
 	return uploaded, nil
 }
 
+func beefAPISeedancePutTimeout(ctx context.Context) time.Duration {
+	timeout := beefAPISeedanceUploadTimeout
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 && remaining < timeout {
+			return remaining
+		}
+	}
+	return timeout
+}
+
 func putBeefAPISeedanceBytes(ctx context.Context, session beefAPISeedanceUploadSession, data []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -340,13 +362,7 @@ func putBeefAPISeedanceBytes(ctx context.Context, session beefAPISeedanceUploadS
 	req.Header.Del("X-Api-Key")
 	req.Header.Del("X-Goog-Api-Key")
 	ApplyDefaultOutboundHeaders(req)
-	timeout := providerHTTPTimeout
-	if deadline, ok := ctx.Deadline(); ok {
-		if remaining := time.Until(deadline); remaining > 0 && remaining < timeout {
-			timeout = remaining
-		}
-	}
-	client := OutboundHTTPClient(timeout)
+	client := OutboundHTTPClient(beefAPISeedancePutTimeout(ctx))
 	client.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return errBeefAPISeedanceUploadRedirect
 	}
@@ -429,11 +445,11 @@ func mapBeefAPISeedanceUploadError(err error, completing bool) error {
 		case http.StatusServiceUnavailable, http.StatusBadGateway, http.StatusGatewayTimeout:
 			return errBeefAPISeedanceUploadUnavailable
 		case http.StatusBadRequest:
-			if completing {
-				return errBeefAPISeedanceUploadIncomplete
-			}
 			if message := beefAPISeedanceUserErrorMessage(httpErr.Body); message != "" {
 				return errors.New(message)
+			}
+			if completing {
+				return errBeefAPISeedanceUploadIncomplete
 			}
 			return errors.New("请检查文件类型、大小后再提交")
 		}

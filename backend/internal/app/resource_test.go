@@ -119,8 +119,11 @@ func TestBeefAPIPrefersHTTPSResourceURLWhenPublicBaseConfigured(t *testing.T) {
 	if err := svc.hydrateGenerationMedia("user-1", &input, providerMediaHydrationPolicyFor(context.Background(), input)); err != nil {
 		t.Fatalf("hydrateGenerationMedia() error = %v", err)
 	}
-	if !strings.HasPrefix(input.ReferenceAudios[0].URL, "https://example.com/") || strings.HasPrefix(input.ReferenceAudios[0].DataURL, "data:") {
-		t.Fatalf("audio = %#v, want HTTPS public URL", input.ReferenceAudios[0])
+	if input.ReferenceAudios[0].StorageKey != "resource:beefapi-https-audio" || input.ReferenceAudios[0].URL != "" || strings.HasPrefix(input.ReferenceAudios[0].DataURL, "data:") {
+		t.Fatalf("audio = %#v, want owned local key until preupload", input.ReferenceAudios[0])
+	}
+	if input.ReferenceAudios[0].MimeType != "audio/mpeg" || input.ReferenceAudios[0].Bytes != 9 || input.ReferenceAudios[0].DurationMs != 3000 {
+		t.Fatalf("keepLocal metadata lost: %#v", input.ReferenceAudios[0])
 	}
 }
 

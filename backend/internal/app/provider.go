@@ -377,7 +377,16 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		if err := s.hydrateVideoReferenceMetadata(userID, &input); err != nil {
 			return nil, err
 		}
-		if err := s.validateResolvedVideoCapability(&input); err != nil {
+		if isBeefAPISeedancePreuploadConfig(input.Config) {
+			if err := s.resolveVideoCapability(&input); err != nil {
+				return nil, err
+			}
+			if input.VideoCapability != nil {
+				if err := validateVideoTaskParameters(input.VideoCapability, input); err != nil {
+					return nil, err
+				}
+			}
+		} else if err := s.validateResolvedVideoCapability(&input); err != nil {
 			return nil, err
 		}
 	}
@@ -760,7 +769,9 @@ func (s *Service) hydrateVideoReferenceMetadata(userID string, input *canvasGene
 		}
 	}
 	// Probe actual local/inline videos even when callers supplied dimensions.
-	if isSeedance2Family(input.Config.InterfaceType, input.Config.Model) {
+	// Built-in BeefAPI Seedance keeps that probe on the sequential preupload
+	// buffer so a 200MiB file is not read twice before PUT.
+	if isSeedance2Family(input.Config.InterfaceType, input.Config.Model) && !isBeefAPISeedancePreuploadConfig(input.Config) {
 		for i := range input.ReferenceVideos {
 			media := &input.ReferenceVideos[i]
 			var data []byte
@@ -783,21 +794,29 @@ func (s *Service) hydrateVideoReferenceMetadata(userID string, input *canvasGene
 			if err != nil || len(data) > 200<<20 {
 				return BadAuthRequest(fmt.Sprintf("第 %d 个参考视频无法读取或超过 200MB，请重新导入", i+1))
 			}
-			w, h, durationMs := probeGeneratedVideoMedia(data)
-			if w <= 0 || h <= 0 {
-				return BadAuthRequest(fmt.Sprintf("第 %d 个参考视频尺寸无法读取，请重新导出 MP4/MOV 后导入", i+1))
-			}
-			media.Width, media.Height, media.Bytes = w, h, int64(len(data))
-			_, fps := referenceVideoEncoding(data)
-			if err := referenceVideoFrameRateError(input.Config, i, fps); err != nil {
+			if err := applySeedance2VideoProbe(input.Config, i, media, data); err != nil {
 				return err
 			}
-			if durationMs > 0 {
-				media.DurationMs = durationMs
-			}
+			media.Bytes = int64(len(data))
 		}
 	}
 
+	return nil
+}
+
+func applySeedance2VideoProbe(config providerConfig, index int, media *providerMedia, data []byte) error {
+	w, h, durationMs := probeGeneratedVideoMedia(data)
+	if w <= 0 || h <= 0 {
+		return BadAuthRequest(fmt.Sprintf("第 %d 个参考视频尺寸无法读取，请重新导出 MP4/MOV 后导入", index+1))
+	}
+	media.Width, media.Height = w, h
+	_, fps := referenceVideoEncoding(data)
+	if err := referenceVideoFrameRateError(config, index, fps); err != nil {
+		return err
+	}
+	if durationMs > 0 {
+		media.DurationMs = durationMs
+	}
 	return nil
 }
 
@@ -834,20 +853,20 @@ func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, poli
 	if s.IsLocalMode() && resourceUsesObjectStorage(resource) {
 		return errors.New("本地工作区检测到旧的远程素材记录，请重新导入到本地资源目录")
 	}
+	if policy.keepLocal {
+		media.MimeType = firstNonEmpty(media.MimeType, resource.MimeType)
+		media.Bytes = resource.Size
+		media.Width = resource.Width
+		media.Height = resource.Height
+		if resource.DurationMs > 0 {
+			media.DurationMs = resource.DurationMs
+		}
+		return nil
+	}
 	if policy.preferHTTPS {
 		if httpsURL, err := s.signedHTTPSPublicResourceURL(resource, time.Now().Add(providerResourceURLTTL)); err == nil {
 			media.URL = httpsURL
 			media.DataURL = ""
-			media.MimeType = firstNonEmpty(media.MimeType, resource.MimeType)
-			media.Bytes = resource.Size
-			media.Width = resource.Width
-			media.Height = resource.Height
-			if resource.DurationMs > 0 {
-				media.DurationMs = resource.DurationMs
-			}
-			return nil
-		}
-		if policy.keepLocal {
 			media.MimeType = firstNonEmpty(media.MimeType, resource.MimeType)
 			media.Bytes = resource.Size
 			media.Width = resource.Width
