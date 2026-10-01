@@ -30,6 +30,14 @@ type RunRequest struct {
 	Op          string
 	PayloadHash string
 	TurnID      string
+	CanvasID    string
+	TurnGuard   TurnGuard
+}
+
+// TurnGuard closes the preflight/settlement race on the same connection as
+// the operation receipt and canvas mutation. Manual operations have no turn.
+type TurnGuard interface {
+	VerifyOpenAssistantTurnInTx(tx *gorm.DB, userID, turnID, canvasID string) error
 }
 
 // PayloadHash 是幂等键的组成部分：同 opId 同 payload 才允许回读原结果。
@@ -82,6 +90,14 @@ func (s *Store) Run(ctx context.Context, req RunRequest, fn func(tx *gorm.DB) ([
 			outcome = RunOutcome{Result: []byte(existing.ResultJSON), Replayed: true}
 			return nil
 		}
+		if strings.TrimSpace(req.TurnID) != "" {
+			if req.TurnGuard == nil {
+				return PreconditionFailed("turn_guard_unavailable", "助手轮次校验不可用", nil)
+			}
+			if err := req.TurnGuard.VerifyOpenAssistantTurnInTx(tx, req.UserID, req.TurnID, req.CanvasID); err != nil {
+				return err
+			}
+		}
 		out, runErr := fn(tx)
 		if runErr != nil {
 			return runErr
@@ -107,6 +123,9 @@ func (s *Store) Run(ctx context.Context, req RunRequest, fn func(tx *gorm.DB) ([
 func (s *Store) RunDomain(ctx context.Context, req RunRequest, binder DomainBinder, fn func(domain Domain) ([]byte, error)) (RunOutcome, error) {
 	if binder == nil {
 		return RunOutcome{}, newError(CodeInternal, "op_domain_unavailable", "操作域绑定不可用", nil)
+	}
+	if guard, ok := binder.(TurnGuard); ok {
+		req.TurnGuard = guard
 	}
 	return s.Run(ctx, req, func(tx *gorm.DB) ([]byte, error) {
 		domain := binder.BindDomain(tx)

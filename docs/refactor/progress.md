@@ -66,6 +66,19 @@
 
 ## 后续必须继续的范围
 
+### 第三轮集成核查
+
+- pi `5541435` + `ea763e8` 已合入 `0174d60` / `561073e`。独立官方 SDK 宿主测试 75 pass / 0 fail；前端事件投影测试 40 pass / 0 fail。
+- 在 `372a835` 上按仓库隔离入口完成全量前端回归：2414 pass / 0 fail / 12 skip，退出 0。跳过项不是已验收；剪辑真实媒体仍需专项输出验证。
+- 项目核心 `fc96599` + `362a491` 合入 `2ade7a4` / `f065ae0`；独立 project/repository/localapp/bootstrap/handler 通过。项目素材、角色、分镜、工作流实际领域继续 `20261002-015848-continue-a98109ad`。
+- 旧 Agent 退场 `50931cf` 合入 `6666186`；独立 app 全包 179.928s，handler/bootstrap/generation/database/repository 通过。历史表保留，现行 pi 入口保留。
+- 模型规则 `fbf25da` 合入 `5f416c8`，Lead 保留非字符串 metadata 的严格读取语义（`d750b18`）。独立 modelcatalog 与 app 相关能力/渠道/助手/Seedance 测试通过。模型服务与路由实际归属继续 `20261002-020309-continue-bb37025d`；Provider 执行另由 `20261002-020308-continue-35d509a8` 负责。
+- assistantturns `408c16e` + `f26c674` 合入 `64aa600` / `80a493f`，schema 10。独立迁移、轮次和 app 聚焦测试通过。旧 JSON 为只读输入；SQLite 为唯一业务轮次账本。
+- operations `7000765` / `96593b0` / `94f2f31` 进入集成 `d29fe0e` / `69666a9` / `3a826bc`；独立后端五包通过，前端 36 pass。人工提交日志仍有 IO 失败、scope 切换与取消后身份保留缺口，继续 `20261002-020021-continue-4a95b35b`，本次合入不代表该边界验收完成。
+- Lead 已在操作事务里接入轮次开放校验，修正遗留 JSON 读取测试；agentops/operations/assistantturns 独立集成测试通过。覆盖预检后结算拒绝写入、先提交的写入被结算记录、缺少轮次事务校验时失败关闭。
+- 画布组合 `8963bb4` 合入 `3286bfe`；独立 11 文件 125 pass / 0 fail。页面仍有后续职责与异步写入边界要收口，不能只以行数变化为完成证据。
+- 交付恢复继续 `20261002-015749-continue-0dfdf1f7`，补公平扫描与失败资源重试；资源继续 `20261002-015750-continue-d01fd274`；插件继续 `20261002-020352-continue-c1b4f643`，补数据库卸载事务与失败后的内存视图一致性。三者尚未合入。
+
 1. 人工 UI 接入公共操作；删除按时间戳竞争数据库事实的正常路径。当前 `local-workspace-repository` 仍有此路径。
 2. 配合后端结果交付切换前端 materializer/consumer，避免两个执行者同时交付。
 3. Agent 业务轮次、确认与撤销的持久化边界；当前 app 内 JSON 文件记录不能被误报为已完成统一事务。

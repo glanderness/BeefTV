@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"infinite-canvas/backend/internal/agentops"
+	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -12,11 +13,16 @@ import (
 // 回执仍然属于最早执行它的那一轮，新回合不能借重放「认领」别人的写入。
 func TestStableReplayDoesNotMoveTurnAttribution(t *testing.T) {
 	h := newHarness(t)
+	for _, turnID := range []string{"aaaabbbb", "ccccdddd"} {
+		if _, err := h.service.BeginAssistantTurn(h.userID, h.canvasID, turnID, app.AssistantTurnInput{}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	body := map[string]any{"canvasId": h.canvasID, "expectedRevision": h.revision,
 		"nodes": []any{map[string]any{"title": "稳定身份", "type": "image"}}}
 	params := mustRaw(t, body)
 	first, err := h.registry.Execute(agentops.Request{Op: "canvas.nodes.create", OpID: "stable-op-1",
-		UserID: "local", Params: params, TurnID: "turn-first"})
+		UserID: "local", Params: params, TurnID: "aaaabbbb"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,14 +30,14 @@ func TestStableReplayDoesNotMoveTurnAttribution(t *testing.T) {
 		t.Fatal("首次执行不应是回放")
 	}
 	replay, err := h.registry.Execute(agentops.Request{Op: "canvas.nodes.create", OpID: "stable-op-1",
-		UserID: "local", Params: params, TurnID: "turn-second"})
+		UserID: "local", Params: params, TurnID: "ccccdddd"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !replay.Replayed || mustJSON(t, replay.Result) != mustJSON(t, first.Result) {
 		t.Fatal("同一 opId 同 payload 必须回读原结果")
 	}
-	if record := lookupOpRecord(t, h, "stable-op-1"); record.TurnID != "turn-first" {
+	if record := lookupOpRecord(t, h, "stable-op-1"); record.TurnID != "aaaabbbb" {
 		t.Fatalf("重放不能把归属搬到新回合: %q", record.TurnID)
 	}
 }

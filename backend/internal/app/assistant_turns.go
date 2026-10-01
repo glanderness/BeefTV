@@ -2,10 +2,12 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"path/filepath"
 
 	"infinite-canvas/backend/internal/assistantturns"
 	"infinite-canvas/backend/internal/canvas"
+	"infinite-canvas/backend/internal/operations"
 
 	"gorm.io/gorm"
 )
@@ -78,7 +80,12 @@ func (s *Service) UndoAssistantTurn(userID, canvasID, turnID string) (int64, err
 //
 //	func (s *app.Service) VerifyOpenAssistantTurnInTx(tx *gorm.DB, userID, turnID, canvasID string) error
 func (s *Service) VerifyOpenAssistantTurnInTx(tx *gorm.DB, userID, turnID, canvasID string) error {
-	return s.assistantTurnsOrInit().VerifyOpenTurnInTx(tx, userID, turnID, canvasID)
+	err := s.assistantTurnsOrInit().VerifyOpenTurnInTx(tx, userID, turnID, canvasID)
+	var turnErr *assistantturns.Error
+	if errors.As(err, &turnErr) {
+		return operations.PreconditionFailed(turnErr.Reason, turnErr.Message, nil)
+	}
+	return err
 }
 
 func canvasAssociatedReferences(raw json.RawMessage) ([]string, []string) {

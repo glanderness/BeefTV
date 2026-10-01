@@ -196,8 +196,16 @@ func (r *Registry) Execute(req Request) (Result, error) {
 		runCtx = context.Background()
 	}
 	hash := PayloadHash(op.ID, params)
+	var target struct {
+		CanvasID string `json:"canvasId"`
+	}
+	if !op.ReadOnly && strings.TrimSpace(req.TurnID) != "" {
+		if err := json.Unmarshal(params, &target); err != nil || strings.TrimSpace(target.CanvasID) == "" {
+			return Result{}, InvalidArg("missing_turn_canvas", "助手写入必须指定当前画布")
+		}
+	}
 	outcome, err := r.store.RunDomain(runCtx, RunRequest{UserID: req.UserID, OpID: opID, Op: op.ID,
-		PayloadHash: hash, TurnID: req.TurnID}, r.binder, func(domain Domain) ([]byte, error) {
+		PayloadHash: hash, TurnID: req.TurnID, CanvasID: target.CanvasID}, r.binder, func(domain Domain) ([]byte, error) {
 		execCtx := &Context{Context: runCtx, UserID: req.UserID, Caller: caller, Domain: domain}
 		value, runErr := op.Handler(execCtx, params)
 		if runErr != nil {

@@ -6,8 +6,6 @@ import (
 	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -76,18 +74,14 @@ func TestRecoveryCorruptReceiptPreservesBeforeDocument(t *testing.T) {
 	if err := h.service.FinalizeAssistantTurn(turnID); err == nil {
 		t.Fatal("corrupt successful receipt must not become no-change")
 	}
-	raw, err := os.ReadFile(filepath.Join(h.dataDir, "assistant-turns", turnID+".json"))
-	if err != nil {
+	var record model.AssistantTurn
+	if err := h.service.Database().Where("turn_id = ?", turnID).First(&record).Error; err != nil {
 		t.Fatal(err)
 	}
-	var record map[string]any
-	if err = json.Unmarshal(raw, &record); err != nil {
-		t.Fatal(err)
-	}
-	if record["document"] == nil {
+	if record.Document == "" || !json.Valid([]byte(record.Document)) || record.State != "open" {
 		t.Fatal("before document was erased")
 	}
-	if _, err = h.service.ReadAssistantTurnHistoryState(h.userID, h.canvasID, turnID); err == nil {
+	if _, err := h.service.ReadAssistantTurnHistoryState(h.userID, h.canvasID, turnID); err == nil {
 		t.Fatal("history must surface unavailable evidence rather than report no change")
 	}
 }
