@@ -216,7 +216,8 @@ export function videoSizeLabel(value: string) {
 }
 
 export function videoSecondsLabel(value: string) {
-    return `${normalizeVideoDuration(value)}s`;
+    const normalized = normalizeVideoDuration(value);
+    return normalized === "-1" ? "自动" : `${normalized}s`;
 }
 
 export function normalizeVideoSizeValue(value: string) {

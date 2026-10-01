@@ -1,3 +1,4 @@
+import { normalizeVideoDuration } from "@/lib/video-generation-options";
 import { modelCapabilityConfigFor, videoDurationAllowed } from "@/lib/model-capabilities";
 import { channelHasGenerationCredential, isBuiltinBeefAPIChannel, resolveModelChannel } from "@/stores/use-config-store";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -108,8 +109,7 @@ export function assertVideoConfig(config: ResolvedAiConfig, selectedModel: strin
 }
 
 export function normalizeVideoSeconds(value: string) {
-    const seconds = Math.floor(Number(value) || 6);
-    return String(Math.max(1, seconds));
+    return normalizeVideoDuration(value);
 }
 
 export function normalizeVideoSize(value: string) {

@@ -4,6 +4,7 @@ export const VIDEO_RESOLUTION_CAPABILITY_OPTIONS = VIDEO_RESOLUTION_OPTIONS.map(
 export const VIDEO_DURATION_MIN = 1;
 
 export function normalizeVideoDuration(value: string | number | undefined) {
+    if (Number(value) === -1) return "-1";
     const seconds = Math.floor(Number(value) || VIDEO_DURATION_OPTIONS[0]);
     return String(Math.max(VIDEO_DURATION_MIN, seconds));
 }

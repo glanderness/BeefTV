@@ -239,3 +239,32 @@ test("direct OpenAI catalog fetch keeps BeefAPI video capability fields", async 
         axios.request = original;
     }
 });
+
+test("Auto duration survives shared normalization and config hydration", async () => {
+    const { normalizeVideoDuration } = await import("../src/lib/video-generation-options");
+    const { normalizeVideoSeconds } = await import("../src/services/api/video-validation");
+    const { videoSecondsLabel } = await import("../src/components/video-settings-panel");
+    expect(normalizeVideoDuration(-1)).toBe("-1");
+    expect(normalizeVideoSeconds("-1")).toBe("-1");
+    expect(videoSecondsLabel("-1")).toBe("自动");
+    expect(normalizeConfigSnapshot({ config: { ...defaultConfig, videoSeconds: "-1" } }).config.videoSeconds).toBe("-1");
+    expect(normalizeVideoSeconds("5")).toBe("5");
+    expect(normalizeVideoSeconds("-2")).toBe("1");
+});
+
+test("Auto duration reaches canvas model selection and final generation unchanged", async () => {
+    const { buildGenerationConfig } = await import("../src/lib/canvas/canvas-project-generation");
+    const video = sampleVideo(3, 3);
+    video.duration = { selection: "enum", values: [-1, 4, 5], default: 4 };
+    const channel = legacyZeroVideo("seedance-2.0");
+    channel.modelProfiles = mergeFetchedChannelModelProfiles(channel, [{
+        id: "seedance-2.0", modelType: "video",
+        videoCapabilities: video, videoCapabilitiesVersion: "auto-v1",
+    }]);
+    const model = "beefapi::seedance-2.0";
+    const config = { ...defaultConfig, channels: [channel], models: [model], videoModels: [model], model, videoModel: model, videoSeconds: "-1", size: "16:9", vquality: "720" };
+    const { CanvasNodeType } = await import("../src/types/canvas");
+    const result = buildGenerationConfig(config, { id: "auto", type: CanvasNodeType.Video, title: "Auto", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { model, seconds: "-1" } }, "video");
+    expect(result.model).toBe(model);
+    expect(result.videoSeconds).toBe("-1");
+});
