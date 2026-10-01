@@ -138,6 +138,12 @@ function requestKey(config: { method?: string; url?: string }) {
     return `${String(config.method || "get").toLowerCase()} ${String(config.url || "")}`;
 }
 
+function requestAssetID(config: { method?: string; url?: string; data?: unknown }) {
+    if (String(config.method).toLowerCase() === "put") return decodeURIComponent(String(config.url).split("/").at(-1)!);
+    const body = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
+    return (body as { assetId: string }).assetId;
+}
+
 describe("ensureCanvasNodeAsset scope and canonical writes", () => {
     test("desktop ensure puts the asset then links the project", async () => {
         const restore = switchScope("owner-a");
@@ -147,10 +153,10 @@ describe("ensureCanvasNodeAsset scope and canonical writes", () => {
             await withAdapter(async (config) => {
                 urls.push(requestKey(config));
                 if (String(config.method).toLowerCase() === "put") {
-                    return envelope({ asset: { id: "ignored", title: "图片", category: "material", status: "confirmed", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" } });
+                    return envelope({ asset: { id: requestAssetID(config), title: "图片", category: "material", status: "confirmed", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" } });
                 }
                 if (String(config.method).toLowerCase() === "post") {
-                    return envelope({ asset: { id: "ignored", title: "图片", category: "material", status: "confirmed", mediaType: "image", versionCount: 1, usages: [], position: 0, updatedAt: "2026-10-02T00:00:00.000Z" } });
+                    return envelope({ asset: { id: requestAssetID(config), title: "图片", category: "material", status: "confirmed", mediaType: "image", versionCount: 1, usages: [], position: 0, updatedAt: "2026-10-02T00:00:00.000Z" } });
                 }
                 throw new Error(`unexpected ${config.method} ${config.url}`);
             }, async () => {
@@ -183,9 +189,9 @@ describe("ensureCanvasNodeAsset scope and canonical writes", () => {
                     puts += 1;
                     entered.resolve();
                     await gate.promise;
-                    return envelope({ asset: { id: "x", title: "图片", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" } });
+                    return envelope({ asset: { id: requestAssetID(config), title: "图片", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" } });
                 }
-                return envelope({ asset: { id: "x", title: "图片", category: "material", status: "confirmed", mediaType: "image", versionCount: 1, usages: [], position: 0, updatedAt: "2026-10-02T00:00:00.000Z" } });
+                return envelope({ asset: { id: requestAssetID(config), title: "图片", category: "material", status: "confirmed", mediaType: "image", versionCount: 1, usages: [], position: 0, updatedAt: "2026-10-02T00:00:00.000Z" } });
             }, async () => {
                 const first = ensureCanvasNodeAsset({ canvasId: "canvas-1", domainProjectId: "project-1", node: imageNode(), source: "canvas-upload" });
                 await entered.promise;
@@ -214,9 +220,9 @@ describe("ensureCanvasNodeAsset scope and canonical writes", () => {
                         firstEntered.resolve();
                         await firstGate.promise;
                     }
-                    return envelope({ asset: { id: "x", title: "图片", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" } });
+                    return envelope({ asset: { id: requestAssetID(config), title: "图片", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" } });
                 }
-                return envelope({ asset: { id: "x", title: "图片", category: "material", status: "confirmed", mediaType: "image", versionCount: 1, usages: [], position: 0, updatedAt: "2026-10-02T00:00:00.000Z" } });
+                return envelope({ asset: { id: requestAssetID(config), title: "图片", category: "material", status: "confirmed", mediaType: "image", versionCount: 1, usages: [], position: 0, updatedAt: "2026-10-02T00:00:00.000Z" } });
             }, async () => {
                 const first = ensureCanvasNodeAsset({ canvasId: "canvas-1", domainProjectId: "project-1", node: imageNode("node-a"), source: "canvas-manual" });
                 await firstEntered.promise;
@@ -299,7 +305,7 @@ describe("ensureCanvasNodeAsset scope and canonical writes", () => {
             await withAdapter(async (config) => {
                 urls.push(requestKey(config));
                 if (String(config.method).toLowerCase() === "put") {
-                    return envelope({ asset: { id: "x", title: "图片", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" } });
+                    return envelope({ asset: { id: requestAssetID(config), title: "图片", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" } });
                 }
                 throw httpError(config, 500, "写入失败");
             }, async () => {
@@ -330,9 +336,9 @@ describe("ensureCanvasNodeAsset scope and canonical writes", () => {
                 if (String(config.method).toLowerCase() === "put") {
                     puts += 1;
                     if (puts === 1) throw httpError(config, 429, "请求过于频繁，请稍后重试");
-                    return envelope({ asset: { id: "x", title: "图片", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" } });
+                    return envelope({ asset: { id: requestAssetID(config), title: "图片", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" } });
                 }
-                return envelope({ asset: { id: "x", title: "图片", category: "material", status: "confirmed", mediaType: "image", versionCount: 1, usages: [], position: 0, updatedAt: "2026-10-02T00:00:00.000Z" } });
+                return envelope({ asset: { id: requestAssetID(config), title: "图片", category: "material", status: "confirmed", mediaType: "image", versionCount: 1, usages: [], position: 0, updatedAt: "2026-10-02T00:00:00.000Z" } });
             }, async () => {
                 const pending = retryCanvasAssetSyncAfterRateLimit(
                     () => ensureCanvasNodeAsset({ canvasId: "canvas-1", domainProjectId: "project-1", node: imageNode(), source: "canvas-generation", expectedScope: expected }),
@@ -426,7 +432,7 @@ describe("ensureCanvasNodeAsset scope and canonical writes", () => {
                     expect(again.confirmed).toBe(false);
                     expect(useAssetStore.getState().assets).toHaveLength(1);
 
-                    await persistWorkspaceAssetChanges(captureUserScope());
+                    await expect(persistWorkspaceAssetChanges(captureUserScope())).rejects.toThrow("素材文件尚未保存到工作区");
                     expect(urls).toEqual([]);
 
                     unloadAssetStoreDraftsForTests();

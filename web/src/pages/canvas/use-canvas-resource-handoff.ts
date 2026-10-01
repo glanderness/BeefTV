@@ -87,12 +87,16 @@ export function useCanvasResourceHandoff({
                 onCommit: (results) => {
                     const archivedByNodeId = new Map(droppedNodes.flatMap((node, index) => {
                         const result = results[index];
-                        if (!result) return [];
+                        if (!result?.confirmed) return [];
                         return [[node.id, { assetId: result.assetId, content: node.metadata?.content, previousAssetId: node.metadata?.assetId }] as const];
                     }));
                     setNodes((current) => applyArchivedCanvasNodeAssets(current, archivedByNodeId));
                     void refetchLinkedProject();
-                    message.success(`已归档到“${folderTitle}”`);
+                    if (results.some((result) => !result?.confirmed)) {
+                        message.warning("部分素材文件尚未保存到工作区，未完成归档，修改已保留在本机");
+                    } else {
+                        message.success(`已归档到“${folderTitle}”`);
+                    }
                 },
             }).catch((error) => {
                 if (!lifetime.matches(owner, projectIdRef.current)) return;

@@ -322,7 +322,7 @@ describe("director library persist canonical writes", () => {
                 expect(result.confirmed).toBe(false);
                 expect(urls).toEqual([]);
                 expect(peekAssetStoreDraft(getActiveUserScope(), result.assetId)?.kind).toBe("upsert");
-                await persistWorkspaceAssetChanges(captureUserScope());
+                await expect(persistWorkspaceAssetChanges(captureUserScope())).rejects.toThrow("素材文件尚未保存到工作区");
                 expect(urls).toEqual([]);
                 unloadAssetStoreDraftsForTests();
                 useAssetStore.setState({ assets: [] });

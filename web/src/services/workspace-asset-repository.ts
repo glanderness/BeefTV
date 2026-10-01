@@ -30,6 +30,17 @@ export type WorkspaceAssetLinkOptions = {
 
 const assetCommitChains = new Map<string, Promise<unknown>>();
 
+export class WorkspaceAssetMediaPendingError extends Error {
+    constructor() {
+        super("素材文件尚未保存到工作区，修改已保留在本机");
+        this.name = "WorkspaceAssetMediaPendingError";
+    }
+}
+
+function assertAssetWriteReceipt(receipt: AssetWriteReceipt | undefined, id: string): asserts receipt is AssetWriteReceipt {
+    if (!receipt || receipt.id !== id) throw new Error("素材保存回执无效，修改已保留在本机");
+}
+
 function throwIfAborted(signal?: AbortSignal) {
     if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
 }
@@ -139,12 +150,13 @@ async function commitTrackedAssetDraft(id: string, expected: CapturedUserScope, 
     if (!asset) return;
     if (!workspaceAssetHasCanonicalMediaPersist(asset)) {
         await flushAssetStorePersistence(expected);
-        return;
+        throw new WorkspaceAssetMediaPendingError();
     }
     const submitted = asset;
     const saved = await putWorkspaceAsset(id, submitted, { signal, expectedScope: expected });
     throwIfAborted(signal);
     if (!userScopeMatches(expected)) throw new UserScopeAbandonedError();
+    assertAssetWriteReceipt(saved?.asset, id);
     ackAssetStoreDraft(expected, id, submittedVersion);
     applyReceiptProjection(id, submitted, saved.asset);
 }
@@ -158,7 +170,7 @@ export async function persistWorkspaceAssetLink({ asset, domainProjectId, catego
     assertUserScope(expected);
     if (!workspaceAssetHasCanonicalMediaPersist(asset)) {
         await flushAssetStorePersistence(expected);
-        return;
+        throw new WorkspaceAssetMediaPendingError();
     }
 
     if (usesBrowserLocalResourceStore()) {
@@ -187,6 +199,7 @@ export async function persistWorkspaceAssetLink({ asset, domainProjectId, catego
         const saved = await putWorkspaceAsset(live.id, submitted, { signal, expectedScope: expected });
         throwIfAborted(signal);
         if (!userScopeMatches(expected)) throw new UserScopeAbandonedError();
+        assertAssetWriteReceipt(saved?.asset, live.id);
         if (submittedVersion) ackAssetStoreDraft(expected, live.id, submittedVersion);
         const afterPut = peekAssetStoreDraft(expected.userScope, live.id);
         if (afterPut?.kind === "delete") {

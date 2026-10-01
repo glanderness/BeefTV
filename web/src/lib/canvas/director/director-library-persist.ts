@@ -1,7 +1,7 @@
 import { assertUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { uploadImage, type UploadedImage } from "@/services/image-storage";
-import { persistWorkspaceAssetLink } from "@/services/workspace-asset-repository";
+import { persistWorkspaceAssetLink, WorkspaceAssetMediaPendingError } from "@/services/workspace-asset-repository";
 import { isCanonicalWorkspaceMediaPersistSource } from "@/services/workspace-resource-storage";
 import { peekAssetStoreDraft, useAssetStore, type NewAsset } from "@/stores/use-asset-store";
 
@@ -65,20 +65,32 @@ export async function persistDirectorLibraryAsset(input: {
             if (canonical && input.existingPersisted && !peekAssetStoreDraft(expectedScope.userScope, live.id)) {
                 return { assetId: live.id, created: false, confirmed: true };
             }
-            await persistWorkspaceAssetLink({ asset: live, expectedScope, signal, source: "uploaded" });
+            let confirmed = canonical;
+            try {
+                await persistWorkspaceAssetLink({ asset: live, expectedScope, signal, source: "uploaded" });
+            } catch (error) {
+                if (!(error instanceof WorkspaceAssetMediaPendingError)) throw error;
+                confirmed = false;
+            }
             throwIfAborted(signal);
             assertUserScope(expectedScope);
-            return { assetId: live.id, created: false, confirmed: canonical };
+            return { assetId: live.id, created: false, confirmed };
         }
     }
 
     const assetId = useAssetStore.getState().addAsset(input.asset);
     const asset = useAssetStore.getState().assets.find((item) => item.id === assetId);
     if (!asset) throw new Error("素材写入本地失败");
-    await persistWorkspaceAssetLink({ asset, expectedScope, signal, source: "uploaded" });
+    let confirmed = canonical;
+    try {
+        await persistWorkspaceAssetLink({ asset, expectedScope, signal, source: "uploaded" });
+    } catch (error) {
+        if (!(error instanceof WorkspaceAssetMediaPendingError)) throw error;
+        confirmed = false;
+    }
     throwIfAborted(signal);
     assertUserScope(expectedScope);
-    return { assetId, created: true, confirmed: canonical };
+    return { assetId, created: true, confirmed };
 }
 
 /** Upload with the captured identity, then persist. Do not recapture after the original upload. */

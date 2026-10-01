@@ -99,6 +99,22 @@ afterEach(async () => {
 });
 
 describe("asset store draft commit identity", () => {
+    for (const receipt of [{}, { asset: { id: "wrong-asset" } }]) {
+        test(`invalid asset receipt preserves the submitted draft: ${JSON.stringify(receipt)}`, async () => {
+            const restore = switchScope("owner-a");
+            desktopBackend();
+            useAssetStore.setState({ assets: [textAsset("asset-receipt")] });
+            try {
+                useAssetStore.getState().updateAsset("asset-receipt", { title: "保留修改" });
+                await withAdapter(async () => envelope(receipt), async () => {
+                    await expect(persistWorkspaceAssetChanges(captureUserScope())).rejects.toThrow("素材保存回执无效");
+                });
+                expect(peekAssetStoreDraft("owner-a", "asset-receipt")?.kind).toBe("upsert");
+                expect(useAssetStore.getState().assets[0].title).toBe("保留修改");
+            } finally { restore(); }
+        });
+    }
+
     test("editing then deleting an existing server asset still sends DELETE", async () => {
         const restore = switchScope("owner-a");
         desktopBackend();
