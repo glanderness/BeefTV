@@ -102,7 +102,26 @@ jobs:
           gcc --version | head -1 | tee -a matrix-evidence/platform.txt
           go list -m gorm.io/driver/sqlite github.com/mattn/go-sqlite3 | tee -a matrix-evidence/platform.txt
       - name: Build official protocol packages
+        if: runner.os != 'Windows'
         run: sh ../plugin-packages/build-packages.sh
+      - name: Build official protocol packages with runner Python on Windows
+        if: runner.os == 'Windows'
+        run: |
+          node ../plugin-packages/embed-documentation.mjs
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          root = Path('../plugin-packages')
+          for manifest in sorted(root.glob('*/manifest.json')):
+              package = manifest.parent
+              files = []
+              for name in ['manifest.json', 'README.md', 'docs', 'assets', 'web', 'backend', 'LICENSE']:
+                  source = package / name
+                  files.extend([source] if source.is_file() else [item for item in source.rglob('*') if item.is_file()])
+              with ZipFile(root / (package.name + '.beeftv-plugin'), 'w', ZIP_DEFLATED) as archive:
+                  for source in sorted(files):
+                      archive.write(source, source.relative_to(package).as_posix())
+          PY
       - name: Historical SQLite, schema repair and interrupted migration
         run: go test ./internal/database -count=1 -json | tee matrix-evidence/database.jsonl
       - name: Local provider task persistence and restart matrix
