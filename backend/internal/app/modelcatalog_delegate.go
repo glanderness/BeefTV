@@ -335,3 +335,51 @@ func capabilityOptionValuesEqual(name string, candidate any, value any) bool {
 func validateReferenceDuration(kind string, index int, durationMs int64, minimum, maximum float64) error {
 	return modelcatalog.ValidateReferenceDuration(kind, index, durationMs, minimum, maximum)
 }
+
+func enabledLogicalRouteSpecs(routes []cachedLogicalRoute) []CapabilitySpec {
+	return modelcatalog.EnabledLogicalRouteSpecs(routes)
+}
+
+func logicalModelConfigurationError(product CapabilitySpec, routeSpecs []CapabilitySpec) string {
+	return modelcatalog.LogicalModelConfigurationError(product, routeSpecs)
+}
+
+func isRouteDispatchUncertain(err error) bool {
+	return modelcatalog.IsDispatchUncertain(err)
+}
+
+func channelModelNames(channel model.ModelChannel) []string {
+	return modelcatalog.ChannelModelNames(channel)
+}
+
+func mergeChannelRequest(req ChannelRequest, channel model.ModelChannel) ChannelRequest {
+	return modelcatalog.MergeChannelRequest(req, channel)
+}
+
+func publicChannel(channel model.ModelChannel, admin bool, channelModels []model.ChannelModel) PublicModelChannel {
+	return modelcatalog.PublicChannel(channel, admin, channelModels)
+}
+
+func duplicateChannelName(name string) string {
+	return modelcatalog.DuplicateChannelName(name)
+}
+
+func validateChannelSortOrder(value int) error {
+	return modelcatalog.ValidateChannelSortOrder(value)
+}
+
+func normalizeAdminPage(page int, limit int) (int, int) {
+	return modelcatalog.NormalizeAdminPage(page, limit)
+}
+
+func applyRoutedProviderSelection(input map[string]any, routed *RoutedModel) map[string]any {
+	return modelcatalog.ApplyRoutedProviderSelection(input, routed)
+}
+
+func channelFromRequest(req ChannelRequest, channel model.ModelChannel) (model.ModelChannel, error) {
+	return modelcatalog.ApplyChannelRequest(req, channel)
+}
+
+func (s *Service) channelFromRequest(req ChannelRequest, channel model.ModelChannel) (model.ModelChannel, error) {
+	return modelcatalog.ApplyChannelRequest(req, channel)
+}

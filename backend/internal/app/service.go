@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -18,6 +17,7 @@ import (
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/platform"
 	localproject "infinite-canvas/backend/internal/project"
 	"infinite-canvas/backend/internal/prompts"
@@ -48,21 +48,15 @@ type Service struct {
 	pluginRuntime            *pluginRuntime
 	pluginRuntimeErr         error
 	workerID                 string
-	routeCatalogMu           sync.RWMutex
-	routeCatalogRefreshMu    sync.Mutex
-	routeCatalog             *routeCatalogSnapshot
+	routerMu                 sync.Mutex
+	router                   *modelcatalog.Router
 	routeCatalogTTL          time.Duration
 	routeCatalogMaxStale     time.Duration
-	routeCatalogVersion      int64
-	routeHealthMu            sync.Mutex
-	routeHealthBlocked       map[string]time.Time
 	workers                  *platform.Worker
 	readCachesOnce           sync.Once
 	concurrencyReadCache     *platform.BoundedReadCache[string, platform.RuntimeTaskPolicy]
 	textReplayReadCache      *platform.BoundedReadCache[textReplayCacheKey, *TextReplayResult]
 	routeVersionReadCache    *platform.BoundedReadCache[string, int64]
-	routeCatalogRetryAt      time.Time
-	routeCatalogRefreshError error
 	skills                   *skills.Service
 	prompts                  *prompts.Service
 	projects                 *localproject.Service
@@ -133,7 +127,7 @@ func newService(repo *repository.Repository, dataDir string, options serviceOpti
 	localResourceStorage := options.mode == serviceModeLocal
 	coordinator := platform.NewLocalCoordinator()
 	pluginRuntime, pluginRuntimeErr := newPluginRuntime(dataDir)
-	service := &Service{repo: repo, dataDir: dataDir, mode: options.mode, activeCancels: make(map[string]context.CancelFunc), coordinator: coordinator, localResourceStorage: localResourceStorage, pluginRuntime: pluginRuntime, pluginRuntimeErr: pluginRuntimeErr, workerID: newID(), routeCatalogTTL: 30 * time.Second, routeCatalogMaxStale: 5 * time.Minute, routeHealthBlocked: make(map[string]time.Time)}
+	service := &Service{repo: repo, dataDir: dataDir, mode: options.mode, activeCancels: make(map[string]context.CancelFunc), coordinator: coordinator, localResourceStorage: localResourceStorage, pluginRuntime: pluginRuntime, pluginRuntimeErr: pluginRuntimeErr, workerID: newID(), routeCatalogTTL: 30 * time.Second, routeCatalogMaxStale: 5 * time.Minute}
 	service.taskTerminalCoordinator = newTaskTerminalCoordinator(service)
 	service.taskRouteExecutor = newTaskRouteExecutor(service)
 	service.taskWorkerCoordinator = newTaskWorkerCoordinator(service)
@@ -155,6 +149,7 @@ func newService(repo *repository.Repository, dataDir string, options serviceOpti
 	} else {
 		service.platform = platform.New(service.repo, coordinator, newPlatformHost(service))
 	}
+	service.ensureRouter()
 	return service
 }
 
@@ -191,12 +186,6 @@ func (s *Service) runWorkerLoop(fn func(context.Context)) bool {
 
 func (s *Service) runWorkerTask(fn func()) bool {
 	return s.backgroundWorkers().GoTask(fn)
-}
-
-func channelModelNames(channel model.ModelChannel) []string {
-	models := []string{}
-	_ = json.Unmarshal([]byte(channel.ModelsJSON), &models)
-	return uniqueNonEmpty(models)
 }
 
 func (s *Service) Tasks(userID string, limit int) ([]TaskSummary, error) {

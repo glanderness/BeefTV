@@ -1,7 +1,9 @@
 package modelcatalog
 
 import (
+	"context"
 	"strings"
+	"time"
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/protocol"
@@ -21,6 +23,51 @@ type ProtocolLookup func(id string) (ProtocolMeta, bool)
 
 // ChannelModelLookup loads one configured channel model by channel and key.
 type ChannelModelLookup func(channelID, modelKey string) (*model.ChannelModel, error)
+
+// IDGen allocates a prefixed persistence identity.
+type IDGen func(prefix string) (string, error)
+
+// Clock returns the current time for cache, health, and attempt timestamps.
+type Clock func() time.Time
+
+// CatalogLoader loads the enabled logical-model graph used by the route cache.
+type CatalogLoader interface {
+	Load(ctx context.Context) (items []model.LogicalModel, graphs map[string]LogicalModelGraph, channels []model.ModelChannel, err error)
+}
+
+// CatalogInvalidator runs after a local cache bump (distributed version + read caches).
+type CatalogInvalidator func(ctx context.Context)
+
+// RouteStore persists route attempts and the task fields they mutate.
+type RouteStore interface {
+	NextPrefixedID(prefix string) (string, error)
+	CreateRouteAttempt(*model.RouteAttempt) error
+	SaveRouteAttempt(*model.RouteAttempt) error
+	MarkRouteAttemptDispatching(id string) error
+	RouteAttempts(taskID string, routeRun int) ([]model.RouteAttempt, error)
+	ChannelModelByID(channelID, id string) (*model.ChannelModel, error)
+	ChannelModel(id string) (*model.ChannelModel, error)
+	LogicalModel(id string) (*model.LogicalModel, error)
+	LogicalModelRevision(id string) (*model.LogicalModelRevision, error)
+	LogicalModelRoute(id string) (*model.LogicalModelRoute, error)
+	LogicalModelRoutes(revisionID string, includeDisabled bool) ([]model.LogicalModelRoute, error)
+	ChannelModelsByIDs(ids []string) ([]model.ChannelModel, error)
+	SystemChannel(id string) (*model.ModelChannel, error)
+	SystemChannelsByIDs(ids []string, includeDisabled bool) ([]model.ModelChannel, error)
+	SwitchTaskLogicalRoute(taskID, expectedRouteID, routeID, inputJSON, channelModelID string) error
+	UpdateTaskProviderState(taskID, providerRequestID, pollStage string, nextPollAt *time.Time) error
+}
+
+// TaskInputCodec is the task-worker seam used when switching routes.
+type TaskInputCodec struct {
+	Decrypt            func(raw string) (string, error)
+	ProtectSecrets     func(input any) error
+	ValidateCapability func(input map[string]any) error
+}
+
+// CatalogFetcher performs the safe outbound GET for /models. Provider owns the
+// HTTP client and URL joining; this domain owns parse and merge.
+type CatalogFetcher func(ctx context.Context, baseURL, apiFormat, apiKey string, headers []ChannelHeader) ([]byte, error)
 
 // LookupFromRegistry adapts protocol.Registry.Resolve without exposing Adapter.
 func LookupFromRegistry(registry *protocol.Registry) ProtocolLookup {

@@ -325,54 +325,6 @@ func (s *Service) resolveTaskModelSelection(input map[string]any, logicalModelID
 	return nil, input, nil
 }
 
-func applyRoutedProviderSelection(input map[string]any, routed *RoutedModel) map[string]any {
-	config, _ := input["config"].(map[string]any)
-	nextConfig := make(map[string]any, len(config)+2)
-	for key, value := range config {
-		switch key {
-		case "channelId", "channelModelKey", "variantId", "providerModelKey", "apiFormat", "interfaceType", "baseUrl", "apiKey", "secretKey", "headers", "model", "capabilityConfig":
-			continue
-		default:
-			nextConfig[key] = value
-		}
-	}
-	for key, value := range routed.Defaults {
-		canonical := canonicalCapabilityOptionName(key)
-		if existing, exists := nextConfig[canonical]; !exists || existing == nil || strings.TrimSpace(fmt.Sprint(existing)) == "" {
-			nextConfig[canonical] = providerConfigOptionValue(value)
-		}
-	}
-	// 路由匹配和真实请求必须使用同一组参数；逻辑能力参数覆盖空的页面配置，但不携带供应链字段。
-	if options, ok := input["capabilityOptions"].(map[string]any); ok {
-		for key, value := range options {
-			canonical := canonicalCapabilityOptionName(key)
-			if isProviderCapabilityOption(canonical) {
-				nextConfig[canonical] = providerConfigOptionValue(value)
-			}
-		}
-	}
-	nextConfig["channelId"] = routed.ChannelModel.ChannelID
-	nextConfig["model"] = routed.ChannelModel.ModelKey
-	nextConfig["channelModelKey"] = routed.ChannelModel.ModelKey
-	if routed.Variant != nil {
-		nextConfig["variantId"] = routed.Variant.ID
-		nextConfig["providerModelKey"] = routed.Variant.ProviderModelKey
-	}
-	input["config"] = nextConfig
-	return input
-}
-
-func providerConfigOptionValue(value any) string {
-	switch typed := value.(type) {
-	case string:
-		return typed
-	case json.Number:
-		return typed.String()
-	default:
-		return fmt.Sprint(value)
-	}
-}
-
 // 所有任务输入先收敛为 JSON 对象，确保密钥保护不会因 Go 结构体类型不同而被绕过。
 func normalizeTaskInput(input map[string]any) (map[string]any, error) {
 	if input == nil {
