@@ -1,4 +1,4 @@
-import { afterAll, afterEach, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { spawn, type Subprocess } from "bun";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,6 +8,7 @@ import { join, resolve } from "node:path";
 // Bun has no IndexedDB. Only the optional browser cache is emulated here;
 // all canonical requests go to the actual isolated SQLite server below.
 const browserCaches = new Map<string, Map<string, unknown>>();
+const originalWindow = globalThis.window;
 function cacheInstance(namespace = "app_state") {
     let data = browserCaches.get(namespace);
     if (!data) browserCaches.set(namespace, data = new Map());
@@ -44,6 +45,7 @@ const serverBin = join(tmpdir(), `beeftv-archive-restore-server-${process.pid}`)
 const videoBytes = new Uint8Array([9, 8, 7, 6]);
 const audioBytes = new Uint8Array([5, 4, 3, 2, 1]);
 const drawingPreviewBytes = new Uint8Array([11, 12, 13, 14, 15]);
+const folderCoverBytes = new Uint8Array([16, 17, 18, 19]);
 let built = false;
 
 type RunningServer = {
@@ -181,7 +183,7 @@ async function fixtureZip() {
                 app: "infinite-canvas",
                 version: 4,
                 exportedAt: "2026-10-02T00:00:00.000Z",
-                folders: [{ id: "folder-old", name: "剧集", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" }],
+                folders: [{ id: "folder-old", name: "剧集", coverPath: "folders/old/cover.png", coverMimeType: "image/png", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" }],
                 projects: [{
                     project: {
                         id: "old-canvas",
@@ -247,13 +249,17 @@ async function fixtureZip() {
         { name: "projects/old-canvas/files/clip.mp4", data: videoBytes },
         { name: "projects/old-canvas/files/voice.wav", data: audioBytes },
         { name: "projects/old-canvas/drawings/sketch.png", data: drawingPreviewBytes },
+        { name: "folders/old/cover.png", data: folderCoverBytes },
     ]);
 }
 
+beforeEach(() => {
+    globalThis.window = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout } as unknown as Window & typeof globalThis;
+});
 afterEach(() => {
-    void globalThis.window;
     configureApiRuntime("/api", "");
     resetStores();
+    globalThis.window = originalWindow;
 });
 
 afterAll(() => {
@@ -282,6 +288,8 @@ test("valid archive restores into isolated SQLite, survives backend restart, and
         expect(folders).toHaveLength(1);
         expect(folders[0].id).not.toBe("folder-old");
         expect(folders[0].name).toBe("剧集");
+        expect(folders[0].coverResourceId).toBeTruthy();
+        expect(await readResourceBytes(folders[0].coverResourceId!)).toEqual(folderCoverBytes);
         expect(saved.folderId).toBe(folders[0].id);
         expect(result.folderIds).toEqual([folders[0].id]);
         expect(saved.nodes[0].metadata?.storageKey).toStartWith("resource:");
@@ -308,6 +316,7 @@ test("valid archive restores into isolated SQLite, survives backend restart, and
         connect(server.port);
         resetStores();
         const restartedFolders = await listFolders();
+        expect(await readResourceBytes(restartedFolders[0].coverResourceId!)).toEqual(folderCoverBytes);
         expect(restartedFolders.map((folder) => ({ id: folder.id, name: folder.name }))).toEqual(folders.map((folder) => ({ id: folder.id, name: folder.name })));
         const restarted = await readProject(result.projectIds[0]);
         expect(restarted.folderId).toBe(saved.folderId);
@@ -367,14 +376,18 @@ test("missing archive entry and persist failure do not create a saved SQLite can
         expect(useCanvasStore.getState().projects).toEqual([]);
 
         const zip = await fixtureZip();
-        await expect(restoreCanvasArchive(zip, {
+        const failure = await restoreCanvasArchive(zip, {
             persistProject: async (id) => {
                 await syncLocalCanvasProjectToBackend(id);
                 throw new Error("画布未保存到工作区");
             },
-        })).rejects.toThrow("画布未保存到工作区");
+        }).catch((error: unknown) => error);
+        expect(failure).not.toBeInstanceOf(AggregateError);
+        expect((failure as Error).message).toBe("画布未保存到工作区");
         expect(useCanvasStore.getState().projects).toEqual([]);
         expect(await listProjects()).toEqual([]);
+        const assets = await http.get<{ assets: unknown[] }>("/assets");
+        expect(assets.assets).toEqual([]);
     } finally {
         await stopServer(server);
         rmSync(dataDir, { recursive: true, force: true });

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { unzipSync } from "fflate";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { Asset } from "@/stores/use-asset-store";
@@ -26,6 +26,7 @@ const { exportAssets, readAssetPackage } = await import("@/pages/assets/asset-tr
 const { createZip, readZip } = await import("@/lib/zip");
 const { archiveFileExtension, ExportIntegrityError } = await import("@/lib/export-integrity");
 const { reportOwnedMediaSave } = await import("@/services/desktop-media-save");
+const { http } = await import("@/services/api/request");
 const originalWindow = globalThis.window;
 const saved: { name: string; data: string }[] = [];
 let acceptSave = true;
@@ -77,6 +78,22 @@ test("complete canvas archive contains every referenced media byte", async () =>
     for (const file of manifest.projects[0].files) {
         expect(archive[file.path]).toEqual(new Uint8Array(await blobs.get(file.storageKey)!.arrayBuffer()));
     }
+});
+
+test("folder cover export embeds canonical bytes and drops source resource identity", async () => {
+    const canvas = { ...project([]), folderId: "folder" };
+    const read = spyOn(http, "raw").mockResolvedValue({ data: new Blob(["cover bytes"], { type: "image/jpeg" }) } as never);
+    try {
+        await exportCanvasProjects([canvas], "备份", { folders: [{ id: "folder", name: "剧集", createdAt: "", updatedAt: "", coverResourceId: "old-cover", coverDataUrl: "http://old-host.invalid/stale" }] });
+        const archive = await readZip(new Blob([Buffer.from(saved[0].data, "base64")]));
+        const manifest = JSON.parse(await archive.get("projects.json")!.text());
+        const folder = manifest.folders[0];
+        expect(folder.coverResourceId).toBeUndefined();
+        expect(folder.coverDataUrl).toBeUndefined();
+        expect(folder.coverMimeType).toBe("image/jpeg");
+        expect(await archive.get(folder.coverPath)!.text()).toBe("cover bytes");
+        expect(read.mock.calls[0][0]).toMatchObject({ url: "/resources/old-cover/file?proxy=1", expectedScope: expect.any(Object) });
+    } finally { read.mockRestore(); }
 });
 
 test("missing and empty blobs are all reported before saving an archive", async () => {

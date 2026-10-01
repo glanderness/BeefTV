@@ -7,7 +7,7 @@ import {
     preflightCanvasArchive,
     type OpenCanvasArchive,
 } from "@/lib/canvas/canvas-export";
-import { createCanvasLibraryFolder, deleteCanvasLibraryFolder } from "@/lib/canvas/canvas-folder-storage";
+import { createCanvasLibraryFolder, deleteCanvasLibraryFolder, persistCanvasFolderCover } from "@/lib/canvas/canvas-folder-storage";
 import { loadCanvasDrawing, saveCanvasDrawing, type CanvasDrawingRenderDraft } from "@/lib/canvas/canvas-drawing-storage";
 import { canvasWorkspaceProjectId } from "@/lib/canvas/canvas-workspace-project";
 import { normalizeLocalCanvasProject } from "@/lib/local-workspace-migration";
@@ -19,6 +19,7 @@ import { setMediaBlob } from "@/services/file-storage";
 import { setImageBlob } from "@/services/image-storage";
 import { readLocalCanvasProjectFromBackend, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
+import { deleteWorkspaceAsset } from "@/services/workspace-asset-repository";
 import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -43,6 +44,7 @@ export type CanvasArchiveRestoreHost = {
     usesCanonicalBackend: boolean;
     createFolder(name: string): string | Promise<string>;
     deleteFolder(id: string): void | Promise<void>;
+    restoreFolderCover?(id: string, cover: Blob): Promise<void>;
     importProject(project: Partial<CanvasProject>, workspaceProjectId?: string): string;
     updateProject(id: string, patch: Partial<CanvasProject>): void;
     persistProject(id: string): Promise<void>;
@@ -120,9 +122,17 @@ function isMediaNode(type: CanvasNodeData["type"]) {
 export function createCanvasArchiveRestoreHost(overrides: Partial<CanvasArchiveRestoreHost> = {}, scope = captureUserScope()): CanvasArchiveRestoreHost {
     const store = () => useCanvasStore.getState();
     const usesCanonicalBackend = overrides.usesCanonicalBackend ?? !usesBrowserLocalResourceStore();
+    const createdAssets = new Set<string>();
     return {
         createFolder: (name) => createCanvasLibraryFolder(name),
         deleteFolder: (id) => deleteCanvasLibraryFolder(id),
+        restoreFolderCover: async (id, cover) => {
+            const bytes = new Uint8Array(await cover.arrayBuffer());
+            assertUserScope(scope);
+            let binary = "";
+            for (let offset = 0; offset < bytes.length; offset += 8192) binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
+            await persistCanvasFolderCover(id, `data:${cover.type || "image/png"};base64,${btoa(binary)}`);
+        },
         importProject: (project, workspaceProjectId) => store().importProject(project, workspaceProjectId),
         updateProject: (id, patch) => store().updateProject(id, patch),
         persistProject: async (id) => {
@@ -156,6 +166,10 @@ export function createCanvasArchiveRestoreHost(overrides: Partial<CanvasArchiveR
             }
             assertUserScope(scope);
             store().deleteProjects(unique);
+            for (const assetId of createdAssets) {
+                await deleteWorkspaceAsset(assetId, scope);
+                createdAssets.delete(assetId);
+            }
         },
         discardProjects: (ids) => store().deleteProjects([...ids]),
         uploadMedia: async (blob, kind, meta) => {
@@ -175,6 +189,7 @@ export function createCanvasArchiveRestoreHost(overrides: Partial<CanvasArchiveR
         },
         bindMediaAsset: async (options) => {
             const result = await ensureCanvasNodeAsset({ ...options, source: "canvas-upload", expectedScope: scope });
+            if (result.created) createdAssets.add(result.assetId);
             return result.assetId;
         },
         saveDrawing: saveCanvasDrawing,
@@ -202,6 +217,7 @@ function withRestoreScope(host: CanvasArchiveRestoreHost, scope: CapturedUserSco
         usesCanonicalBackend: host.usesCanonicalBackend,
         createFolder: run(host.createFolder),
         deleteFolder: run(host.deleteFolder),
+        restoreFolderCover: host.restoreFolderCover ? run(host.restoreFolderCover) : undefined,
         importProject: run(host.importProject),
         updateProject: run(host.updateProject),
         persistProject: run(host.persistProject),
@@ -232,6 +248,15 @@ export async function restoreCanvasArchive(input: Blob | OpenCanvasArchive, host
             const id = await restoreHost.createFolder(folder.name);
             folderIds.push(id);
             folderIdMap.set(folder.id, id);
+            if (folder.coverPath && restoreHost.restoreFolderCover) {
+                const cover = archive.files.get(confinedArchivePath(folder.coverPath));
+                if (!cover) throw new Error(`压缩包缺少文件夹封面：${folder.name}`);
+                await restoreHost.restoreFolderCover(id, cover.slice(0, cover.size, folder.coverMimeType || cover.type || "image/png"));
+            } else if (folder.coverDataUrl?.startsWith("data:image/") && restoreHost.restoreFolderCover) {
+                const response = await fetch(folder.coverDataUrl);
+                assertUserScope(scope);
+                await restoreHost.restoreFolderCover(id, await response.blob());
+            }
         }
         for (const item of archive.data.projects) {
             const archiveProjectId = item.project.id;
@@ -441,6 +466,7 @@ function remapArchiveNode(node: CanvasNodeData, storageKeyMap: Map<string, Resto
         metadata: {
             ...node.metadata,
             assetId: undefined,
+            taskId: undefined,
             storageKey: media ? mapped?.storageKey ?? dropDeadStorageKey(node.metadata?.storageKey) : node.metadata?.storageKey,
             content: media ? (mapped ? mapped.url : dropInlineMediaRef(node.metadata?.content)) : node.metadata?.content,
             previewContent: media ? (mapped ? mapped.url : dropInlineMediaRef(node.metadata?.previewContent)) : node.metadata?.previewContent,

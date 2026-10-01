@@ -9,6 +9,8 @@ import type { CanvasDrawingExport } from "@/types/canvas-export";
 import { normalizeLocalCanvasProject } from "@/lib/local-workspace-migration";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { archiveFileExtension, assertUniqueArchiveNames, ExportIntegrityError, type MissingExportFile } from "@/lib/export-integrity";
+import { assertUserScope, captureUserScope } from "@/lib/user-scope-guard";
+import { http } from "@/services/api/request";
 
 export const ARCHIVE_STORAGE_KEY_PATTERN = /^(image|video|audio|file|resource|model|video-reference|audio-reference):/;
 
@@ -19,6 +21,7 @@ export function isArchiveStorageKey(value: string) {
 }
 
 export async function exportCanvasProjects(projects: CanvasProject[], fileName = "画布", options: { includeLocalDrawings?: boolean; folders?: CanvasFolder[] } = {}): Promise<OwnedMediaSaveResult> {
+    const scope = captureUserScope();
     const zipFiles: { name: string; data: BlobPart }[] = [];
     const missingFiles: MissingExportFile[] = [];
     const exportedProjects = await Promise.all(
@@ -72,6 +75,25 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
         }),
     );
 
+    assertUserScope(scope);
+    const projectFolderIds = new Set(projects.map((project) => project.folderId).filter((id): id is string => Boolean(id)));
+    const folders: CanvasExportFile["folders"] = [];
+    for (const folder of options.folders?.filter((item) => projectFolderIds.has(item.id)) || []) {
+        let cover: Blob | undefined;
+        if (folder.coverResourceId) {
+            const response = await http.raw<Blob>({ method: "GET", url: `/resources/${encodeURIComponent(folder.coverResourceId)}/file?proxy=1`, responseType: "blob", expectedScope: scope });
+            cover = response.data;
+        } else if (folder.coverDataUrl) {
+            const response = await fetch(folder.coverDataUrl);
+            if (!response.ok) throw new ExportIntegrityError([{ owner: folder.name, reference: "文件夹封面" }]);
+            cover = await response.blob();
+        }
+        assertUserScope(scope);
+        if (cover && !cover.size) throw new ExportIntegrityError([{ owner: folder.name, reference: "文件夹封面" }]);
+        const coverPath = cover ? `folders/${encodeURIComponent(folder.id)}/cover.${archiveFileExtension(cover.type, "png")}` : undefined;
+        if (cover && coverPath) zipFiles.push({ name: coverPath, data: cover });
+        folders.push({ ...folder, coverResourceId: undefined, coverDataUrl: undefined, coverPath, coverMimeType: cover?.type || undefined });
+    }
     if (missingFiles.length) throw new ExportIntegrityError(missingFiles);
     assertUniqueArchiveNames(["projects.json", ...zipFiles.map((file) => file.name)]);
     for (const item of exportedProjects) {
@@ -83,10 +105,9 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
         }
     }
 
-    const projectFolderIds = new Set(projects.map((project) => project.folderId).filter((id): id is string => Boolean(id)));
-    const folders = options.folders?.filter((folder) => projectFolderIds.has(folder.id));
     const data: CanvasExportFile = { app: "infinite-canvas", version: 4, exportedAt: new Date().toISOString(), ...(folders?.length ? { folders } : {}), projects: exportedProjects };
     const zip = await createZip([{ name: "projects.json", data: JSON.stringify(data, null, 2) }, ...zipFiles]);
+    assertUserScope(scope);
     return saveOwnedOrBrowserBlob(`${safeFileName(fileName)}.zip`, zip);
 }
 
@@ -115,15 +136,22 @@ export function preflightCanvasArchive(data: CanvasExportFile, zip: Map<string, 
     if (!Array.isArray(data.projects)) throw new Error("projects.json 中缺少画布列表");
     if (data.folders !== undefined && !Array.isArray(data.folders)) throw new Error("备份中的文件夹列表无效");
     const folderIds = new Set<string>();
+    const archivePaths = new Set<string>(["projects.json"]);
     for (const folder of data.folders || []) {
         if (!folder || typeof folder.id !== "string" || !folder.id.trim() || typeof folder.name !== "string") {
             throw new Error("备份中的文件夹无效");
         }
         if (folderIds.has(folder.id)) throw new Error("备份中存在重复的文件夹");
         folderIds.add(folder.id);
+        if (folder.coverPath !== undefined) {
+            const path = confinedArchivePath(folder.coverPath);
+            if (archivePaths.has(path)) throw new Error(`压缩包存在重名文件：${path}`);
+            archivePaths.add(path);
+            const blob = zip.get(path);
+            if (!blob?.size) throw new Error(`压缩包缺少文件夹封面：${folder.name}`);
+        }
     }
     const projectIds = new Set<string>();
-    const archivePaths = new Set<string>(["projects.json"]);
     for (const item of data.projects) {
         preflightCanvasArchiveProject(item, zip, projectIds, folderIds, archivePaths);
     }

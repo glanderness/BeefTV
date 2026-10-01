@@ -453,6 +453,21 @@ test("failed durable cleanup preserves the visible imported project and reports 
     expect(state.deletedResources).toEqual([]);
 });
 
+test("folder covers require archive bytes before any writes and restore under the new folder ID", async () => {
+    const data = archiveData({ folders: [{ id: "folder-old", name: "剧集", coverPath: "folders/old/cover.jpg", coverMimeType: "image/jpeg" }] });
+    const archive = await openCanvasArchive(await validZip());
+    archive.data = data as typeof archive.data;
+    let restored: { id: string; bytes: number[]; mime: string } | undefined;
+    const state = memoryHost({ restoreFolderCover: async (id, blob) => {
+        restored = { id, bytes: [...new Uint8Array(await blob.arrayBuffer())], mime: blob.type };
+    } });
+    await expect(restoreCanvasArchive(archive, state.host)).rejects.toThrow("压缩包缺少文件夹封面");
+    expect(state.folders).toEqual([]);
+    archive.files.set("folders/old/cover.jpg", new Blob([new Uint8Array([7, 8, 9])]));
+    await restoreCanvasArchive(archive, state.host);
+    expect(restored).toEqual({ id: "folder-1", bytes: [7, 8, 9], mime: "image/jpeg" });
+});
+
 test("account switch abandons restore without cleaning the new account", async () => {
     setActiveUserScope("owner-a");
     const { host, projects, folders, deleted } = memoryHost({
