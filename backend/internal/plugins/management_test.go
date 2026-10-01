@@ -1,7 +1,6 @@
 package plugins
 
 import (
-	"bytes"
 	"errors"
 	"strings"
 	"sync"
@@ -183,10 +182,14 @@ func TestInstallUploadedSurfacesRollbackFailure(t *testing.T) {
 	}
 	v2 := testPluginPackage(t, testManifest("replace-rollback-fail", "2.0.0"))
 	_, err = svc.InstallUploaded("admin-1", v2, "replace-rollback-v2.beeftv-plugin")
-	if err == nil || !strings.Contains(err.Error(), "保存插件平台状态") || !strings.Contains(err.Error(), "回滚失败") {
+	if err == nil || !strings.Contains(err.Error(), "保存插件平台状态") {
 		t.Fatalf("rollback failure error = %v", err)
 	}
+	assertImmediatePlugin(t, runtime, "replace-rollback-fail", "1.0.0", StatusEnabled, v1)
 	assertBlobExists(t, runtime, v1, true)
+	assertBlobExists(t, runtime, v2, false)
+	runtime.testFailReload = nil
+	assertPackageBytes(t, runtime, dataDir, "replace-rollback-fail", v1)
 	restarted, err := NewRuntime(dataDir)
 	if err != nil {
 		t.Fatal(err)
@@ -194,13 +197,6 @@ func TestInstallUploadedSurfacesRollbackFailure(t *testing.T) {
 	item, ok := ByID(restarted.List(), "replace-rollback-fail")
 	if !ok || item.Manifest.Version != "1.0.0" {
 		t.Fatalf("disk after rollback failure = %#v", item)
-	}
-	got, _, err := restarted.Package("replace-rollback-fail")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, v1) {
-		t.Fatal("restarted package bytes changed after rollback failure")
 	}
 }
 
@@ -325,9 +321,11 @@ func TestSetPlatformAvailabilitySurfacesRollbackFailure(t *testing.T) {
 		runtime.failNextReload(errors.New("forced restore reload failure"))
 	}
 	_, _, err = svc.SetPlatformAvailability(&model.User{ID: "admin-1"}, "avail-rollback-fail", false)
-	if err == nil || !strings.Contains(err.Error(), "保存插件平台状态") || !strings.Contains(err.Error(), "回滚失败") {
+	if err == nil || !strings.Contains(err.Error(), "保存插件平台状态") {
 		t.Fatalf("availability rollback failure error = %v", err)
 	}
+	assertImmediatePlugin(t, runtime, "avail-rollback-fail", "1.0.0", StatusEnabled, pkg)
+	runtime.testFailReload = nil
 	assertPackageBytes(t, runtime, dataDir, "avail-rollback-fail", pkg)
 	restarted, err := NewRuntime(dataDir)
 	if err != nil {
@@ -410,15 +408,89 @@ func TestUninstallUploadedStoreFailureRestoresPlugin(t *testing.T) {
 	if _, err := svc.InstallUploaded("admin-1", pkg, "uninstall-store-fail.beeftv-plugin"); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.SaveUserPluginState(&model.UserPluginState{ID: "user-state-1", UserID: "user-1", PluginID: "uninstall-store-fail", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
 	store.failDeletePlatform = true
-	if err := svc.UninstallUploaded("uninstall-store-fail"); err == nil || !strings.Contains(err.Error(), "清理插件平台状态") {
+	if err := svc.UninstallUploaded("uninstall-store-fail"); err == nil || !strings.Contains(err.Error(), "清理插件状态") {
 		t.Fatalf("uninstall store error = %v", err)
 	}
-	item, ok := ByID(runtime.List(), "uninstall-store-fail")
-	if !ok || item.Manifest.Version != "1.0.0" {
-		t.Fatalf("uninstall rollback = %#v", item)
+	assertImmediatePlugin(t, runtime, "uninstall-store-fail", "1.0.0", StatusEnabled, pkg)
+	userState, err := store.UserPluginState("user-1", "uninstall-store-fail")
+	if err != nil || userState == nil || !userState.Enabled {
+		t.Fatalf("user state rolled back = %#v err=%v", userState, err)
+	}
+	platformState, err := store.PluginPlatformState("uninstall-store-fail")
+	if err != nil || platformState == nil {
+		t.Fatalf("platform state rolled back = %#v err=%v", platformState, err)
 	}
 	assertPackageBytes(t, runtime, dataDir, "uninstall-store-fail", pkg)
+}
+
+func TestUninstallUploadedSerializesSetUserEnabled(t *testing.T) {
+	runtime, err := NewRuntime(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &memoryStore{}
+	seed := New(runtime, store)
+	if _, err := seed.InstallUploaded("admin-1", testPluginPackage(t, testManifest("uninstall-serial", "1.0.0")), "uninstall-serial.beeftv-plugin"); err != nil {
+		t.Fatal(err)
+	}
+	store.deleteStarted = make(chan struct{})
+	store.blockDelete = make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(store.blockDelete) })
+	t.Cleanup(unblock)
+	var enters atomic.Int32
+	secondEntered := make(chan struct{})
+	runtime.testBeforeMutation = func() {
+		if enters.Add(1) == 2 {
+			close(secondEntered)
+		}
+	}
+	svcA := New(runtime, store)
+	svcB := New(runtime, store)
+	user := &model.User{ID: "user-1"}
+	errUninstall := make(chan error, 1)
+	errEnable := make(chan error, 1)
+	go func() {
+		errUninstall <- svcA.UninstallUploaded("uninstall-serial")
+	}()
+	select {
+	case <-store.deleteStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("uninstall delete did not start")
+	}
+	go func() {
+		_, err := svcB.SetUserEnabled(user, WorkflowRunningHub, true)
+		errEnable <- err
+	}()
+	select {
+	case <-secondEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("SetUserEnabled did not enter mutation")
+	}
+	state, err := store.UserPluginState(user.ID, WorkflowRunningHub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != nil {
+		t.Fatal("SetUserEnabled wrote while uninstall held the runtime lock")
+	}
+	unblock()
+	if err := <-errUninstall; err != nil {
+		t.Fatalf("uninstall error = %v", err)
+	}
+	if err := <-errEnable; err != nil {
+		t.Fatalf("SetUserEnabled error = %v", err)
+	}
+	if _, ok := ByID(runtime.List(), "uninstall-serial"); ok {
+		t.Fatal("uninstalled plugin still listed")
+	}
+	enabled, err := store.UserPluginState(user.ID, WorkflowRunningHub)
+	if err != nil || enabled == nil || !enabled.Enabled {
+		t.Fatalf("serialized user enable = %#v err=%v", enabled, err)
+	}
 }
 
 type memoryStore struct {
@@ -432,6 +504,9 @@ type memoryStore struct {
 	saveStarted        chan struct{}
 	blockSave          chan struct{}
 	beforeSave         func()
+	deleteStarted      chan struct{}
+	blockDelete        chan struct{}
+	beforeDelete       func()
 }
 
 func (s *memoryStore) PluginPlatformState(pluginID string) (*model.PluginPlatformState, error) {
@@ -513,22 +588,29 @@ func (s *memoryStore) EnabledPluginUserCounts() (map[string]int64, error) {
 	return counts, nil
 }
 
-func (s *memoryStore) DeleteUserPluginStates(pluginID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for key, state := range s.users {
-		if state.PluginID == pluginID {
-			delete(s.users, key)
+func (s *memoryStore) DeletePluginStates(pluginID string) error {
+	if s.beforeDelete != nil {
+		s.beforeDelete()
+	}
+	if s.deleteStarted != nil {
+		select {
+		case <-s.deleteStarted:
+		default:
+			close(s.deleteStarted)
 		}
 	}
-	return nil
-}
-
-func (s *memoryStore) DeletePluginPlatformState(pluginID string) error {
+	if s.blockDelete != nil {
+		<-s.blockDelete
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.failDeletePlatform {
 		return errStoreFailed
+	}
+	for key, state := range s.users {
+		if state.PluginID == pluginID {
+			delete(s.users, key)
+		}
 	}
 	delete(s.platform, pluginID)
 	return nil

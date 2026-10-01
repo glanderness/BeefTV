@@ -306,6 +306,7 @@ func TestSameBytesReinstallKeepsLiveBlobWhenReloadFails(t *testing.T) {
 	if _, err := runtime.Install(pkg, "same-bytes-reload.beeftv-plugin"); err == nil || !strings.Contains(err.Error(), "forced same-bytes reload failure") {
 		t.Fatalf("same-bytes reload error = %v", err)
 	}
+	assertImmediatePlugin(t, runtime, "same-bytes-reload", "1.0.0", StatusEnabled, pkg)
 	assertPackageBytes(t, runtime, dataDir, "same-bytes-reload", pkg)
 	assertBlobExists(t, runtime, pkg, true)
 }
@@ -392,12 +393,72 @@ func TestListReturnsDefensiveCopiesOfMutableMetadata(t *testing.T) {
 	}
 }
 
+func TestClonePluginViewJSONFailureDoesNotLeakAliases(t *testing.T) {
+	defaults := map[string]any{"style": "film"}
+	view := View{
+		Manifest: ManifestView{
+			ID:      "clone-fail",
+			Name:    "clone-fail",
+			Version: "1.0.0",
+			Configuration: protocol.ManifestConfiguration{
+				Fields: []protocol.ManifestField{{Name: "bad", Default: make(chan int)}},
+			},
+			Contributes: protocol.ManifestContributions{
+				Workflows: []protocol.ManifestWorkflow{{ID: "wf", Defaults: defaults}},
+			},
+		},
+	}
+	cloned := clonePluginView(view)
+	if cloned.Manifest.ID != "clone-fail" || cloned.Manifest.Version != "1.0.0" {
+		t.Fatalf("sanitized view dropped identity: %#v", cloned.Manifest)
+	}
+	if cloned.Manifest.Configuration.Fields != nil {
+		t.Fatalf("clone leaked configuration: %#v", cloned.Manifest.Configuration)
+	}
+	if cloned.Manifest.Contributes.Workflows != nil {
+		t.Fatalf("clone leaked contributes: %#v", cloned.Manifest.Contributes)
+	}
+	if cloned.Error != "插件清单无法展示" {
+		t.Fatalf("clone failure error = %q", cloned.Error)
+	}
+	defaults["style"] = "mutated"
+	view.Manifest.Contributes.Workflows[0].Defaults["style"] = "mutated-again"
+	if cloned.Manifest.Contributes.Workflows != nil {
+		t.Fatal("clone acquired aliases after mutating the original")
+	}
+}
+
 func testManifest(id, version string) []byte {
 	return []byte(fmt.Sprintf(`{"apiVersion":"beeftv.plugin/v1","id":%q,"version":%q,"name":%q,"author":"Test","documentation":"# %s","contributes":{"providers":[{"id":%q,"label":%q,"capabilities":["video"],"scopes":["canvas"],"create":{"method":"POST","path":"/tasks","fields":{"prompt":"request.prompt"}},"response":{"statusPaths":["status"]}}]}}`, id, version, id, id, id, id))
 }
 
 func testManifestWithMutableMetadata(id, version string) []byte {
 	return []byte(fmt.Sprintf(`{"apiVersion":"beeftv.plugin/v1","id":%q,"version":%q,"name":%q,"author":"Test","documentation":"# %s","surfaces":["canvas","settings"],"permissions":["network"],"contributes":{"providers":[{"id":%q,"label":%q,"capabilities":["video"],"scopes":["canvas"],"create":{"method":"POST","path":"/tasks","fields":{"prompt":"request.prompt"},"headers":{"X-Test":"one"},"query":{"mode":"fast"}},"response":{"statusPaths":["status"]}}],"workflows":[{"id":%q,"label":"WF","providerId":%q,"capability":"video","defaults":{"style":"film"}}],"canvasNodes":[{"id":%q,"label":"Node","defaultTitle":"Node","defaultSize":{"width":320,"height":200},"schema":{"type":"object"},"renderer":"declarative"}]}}`, id, version, id, id, id, id, id+"-wf", id, id+"-node"))
+}
+
+func assertImmediatePlugin(t *testing.T, runtime *Runtime, pluginID, version, status string, want []byte) {
+	t.Helper()
+	item, ok := ByID(runtime.List(), pluginID)
+	if !ok || item.Manifest.Version != version || item.Status != status {
+		t.Fatalf("live plugin %s = %#v ok=%v want version=%s status=%s", pluginID, item, ok, version, status)
+	}
+	got, _, err := runtime.Package(pluginID)
+	if err != nil {
+		t.Fatalf("live package %s: %v", pluginID, err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("live package %s bytes changed", pluginID)
+	}
+	if runtime.Registry() == nil {
+		t.Fatal("live registry is nil")
+	}
+	selectable := runtime.Registry().IsCapability(pluginID, protocol.CapabilityVideo)
+	if status == StatusEnabled && !selectable {
+		t.Fatalf("live registry missing enabled plugin %s", pluginID)
+	}
+	if status != StatusEnabled && selectable {
+		t.Fatalf("live registry still selects %s", pluginID)
+	}
 }
 
 func assertPackageBytes(t *testing.T, runtime *Runtime, dataDir, pluginID string, want []byte) {

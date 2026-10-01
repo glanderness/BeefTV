@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/protocol"
@@ -121,25 +122,26 @@ func viewFromRecord(item Record) View {
 }
 
 func clonePluginView(view View) View {
+	data, err := json.Marshal(view.Manifest)
+	if err != nil {
+		return sanitizedPluginView(view)
+	}
+	var manifest ManifestView
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return sanitizedPluginView(view)
+	}
+	view.Manifest = manifest
+	return view
+}
+
+func sanitizedPluginView(view View) View {
 	view.Manifest.Surfaces = cloneStringSlice(view.Manifest.Surfaces)
 	view.Manifest.Permissions = cloneStringSlice(view.Manifest.Permissions)
-	if data, err := json.Marshal(view.Manifest.Configuration); err == nil {
-		var configuration protocol.ManifestConfiguration
-		if json.Unmarshal(data, &configuration) == nil {
-			view.Manifest.Configuration = configuration
-		}
-	}
-	if data, err := json.Marshal(view.Manifest.Contributes); err == nil {
-		var contributes protocol.ManifestContributions
-		if json.Unmarshal(data, &contributes) == nil {
-			view.Manifest.Contributes = contributes
-		}
-	}
-	if data, err := json.Marshal(view.Manifest.Runtime); err == nil {
-		var runtime protocol.ManifestRuntime
-		if json.Unmarshal(data, &runtime) == nil {
-			view.Manifest.Runtime = runtime
-		}
+	view.Manifest.Runtime = protocol.ManifestRuntime{}
+	view.Manifest.Configuration = protocol.ManifestConfiguration{}
+	view.Manifest.Contributes = protocol.ManifestContributions{}
+	if strings.TrimSpace(view.Error) == "" {
+		view.Error = "插件清单无法展示"
 	}
 	return view
 }

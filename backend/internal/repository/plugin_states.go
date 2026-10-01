@@ -37,6 +37,15 @@ func (r *Repository) DeletePluginPlatformState(pluginID string) error {
 	return r.db.Delete(&model.PluginPlatformState{}, "plugin_id = ?", pluginID).Error
 }
 
+func (r *Repository) DeletePluginStates(pluginID string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&model.UserPluginState{}, "plugin_id = ?", pluginID).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&model.PluginPlatformState{}, "plugin_id = ?", pluginID).Error
+	})
+}
+
 func (r *Repository) UserPluginState(userID string, pluginID string) (*model.UserPluginState, error) {
 	var state model.UserPluginState
 	if err := r.db.First(&state, "user_id = ? AND plugin_id = ?", userID, pluginID).Error; err != nil {

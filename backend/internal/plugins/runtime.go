@@ -1,7 +1,6 @@
 package plugins
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -126,88 +125,45 @@ func (c *Runtime) endMutation() {
 	c.mutationMu.Unlock()
 }
 
-func (c *Runtime) reload() error {
+func (c *Runtime) captureLive() liveSnapshot {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return liveSnapshot{plugins: c.plugins, registry: c.registry}
+}
+
+func (c *Runtime) restoreLive(snap liveSnapshot) {
+	if snap.plugins == nil {
+		return
+	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.plugins = snap.plugins
+	c.registry = snap.registry
+	c.mu.Unlock()
+}
+
+func (c *Runtime) publishLive(plugins map[string]Record, registry *protocol.Registry) error {
 	if hook := c.testFailReload; hook != nil {
 		if err := hook(); err != nil {
 			return err
 		}
 	}
+	c.mu.Lock()
+	c.plugins = plugins
+	c.registry = registry
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *Runtime) reload() error {
 	stored, err := c.readRegistry()
 	if err != nil {
 		return err
 	}
-	plugins := make(map[string]Record)
-	for _, storedRecord := range stored {
-		data := storedRecord.Raw
-		if len(data) > protocolPluginMaxBytes {
-			return fmt.Errorf("plugin %s exceeds %d bytes", storedRecord.ID, protocolPluginMaxBytes)
-		}
-		var manifest protocol.Manifest
-		if err := json.Unmarshal(data, &manifest); err != nil {
-			return fmt.Errorf("decode plugin %s: %w", storedRecord.ID, err)
-		}
-		metadata := manifest.Metadata
-		if strings.TrimSpace(metadata.ID) == "" {
-			return fmt.Errorf("plugin %s has no metadata id", storedRecord.ID)
-		}
-		if _, exists := plugins[metadata.ID]; exists {
-			return fmt.Errorf("duplicate installed protocol %q", metadata.ID)
-		}
-		packageSHA256 := storedRecord.PackageSHA256
-		if packageSHA256 == "" && strings.TrimSpace(storedRecord.PackagePath) == "" {
-			packageSHA256 = pluginHash(data)
-		}
-		plugins[metadata.ID] = Record{Raw: data, Metadata: metadata, Source: storedRecord.Source, FileName: storedRecord.FileName, PackagePath: storedRecord.PackagePath, PackageSHA256: packageSHA256, SHA256: packageSHA256, InstalledAt: storedRecord.InstalledAt, UpdatedAt: storedRecord.UpdatedAt, Status: StatusInvalid}
-	}
-	registry, err := protocol.NewRegistry()
+	plugins, registry, err := materializeRecords(stored)
 	if err != nil {
 		return err
 	}
-	for id, record := range plugins {
-		var manifest protocol.Manifest
-		if err := json.Unmarshal(record.Raw, &manifest); err != nil {
-			record.Error = err.Error()
-			plugins[id] = record
-			continue
-		}
-		adapters, loadErr := protocol.LoadInstalledProviders(record.Raw, nil)
-		if loadErr != nil {
-			record.Metadata.Enabled = false
-			record.Metadata.UnavailableReason = loadErr.Error()
-			record.Error = loadErr.Error()
-			_ = registry.Register(protocol.UnavailableAdapter{Info: record.Metadata})
-			plugins[id] = record
-			continue
-		}
-		if !record.Metadata.Enabled {
-			record.Status = StatusDisabled
-			for _, adapter := range adapters {
-				info := adapter.Metadata()
-				info.Enabled = false
-				_ = registry.Register(protocol.UnavailableAdapter{Info: info})
-			}
-			plugins[id] = record
-			continue
-		}
-		registrationFailed := false
-		for _, adapter := range adapters {
-			if err := registry.Register(adapter); err != nil {
-				record.Error = err.Error()
-				registrationFailed = true
-			}
-		}
-		if registrationFailed {
-			plugins[id] = record
-			continue
-		}
-		record.Status = StatusEnabled
-		plugins[id] = record
-	}
-	c.plugins = plugins
-	c.registry = registry
-	return nil
+	return c.publishLive(plugins, registry)
 }
 
 func (c *Runtime) failNextReload(err error) {

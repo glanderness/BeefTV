@@ -12,21 +12,23 @@ import (
 	"infinite-canvas/backend/internal/protocol"
 )
 
-type blobMutation struct {
-	previous    []RegistryRecord
-	oldBlob     string
-	newBlob     string
-	createdBlob bool
+type liveSnapshot struct {
+	plugins  map[string]Record
+	registry *protocol.Registry
 }
 
-type installOutcome struct {
-	view View
-	blobMutation
-}
-
-type uninstallOutcome struct {
-	previous []RegistryRecord
-	blob     string
+type stagedMutation struct {
+	previousDisk []RegistryRecord
+	previousLive liveSnapshot
+	nextDisk     []RegistryRecord
+	nextPlugins  map[string]Record
+	nextRegistry *protocol.Registry
+	view         View
+	oldBlob      string
+	newBlob      string
+	createdBlob  bool
+	diskWritten  bool
+	liveSwapped  bool
 }
 
 func (c *Runtime) Install(data []byte, fileName string) (View, error) {
@@ -35,39 +37,42 @@ func (c *Runtime) Install(data []byte, fileName string) (View, error) {
 	}
 	c.beginMutation()
 	defer c.endMutation()
-	outcome, err := c.installLocked(data, fileName)
+	stage, err := c.stageInstallLocked(data, fileName)
 	if err != nil {
 		return View{}, err
 	}
-	c.commitInstall(outcome)
-	return outcome.view, nil
+	if err := c.publishStaged(&stage); err != nil {
+		return View{}, joinMutationError(err, c.abortStaged(&stage))
+	}
+	c.commitInstall(stage)
+	return stage.view, nil
 }
 
-func (c *Runtime) installLocked(data []byte, fileName string) (installOutcome, error) {
+func (c *Runtime) stageInstallLocked(data []byte, fileName string) (stagedMutation, error) {
 	if len(data) == 0 || len(data) > protocol.PluginPackageMaxBytes {
-		return installOutcome{}, fmt.Errorf("plugin package must be between 1 and %d bytes", protocol.PluginPackageMaxBytes)
+		return stagedMutation{}, fmt.Errorf("plugin package must be between 1 and %d bytes", protocol.PluginPackageMaxBytes)
 	}
 	pkg, err := protocol.ParsePluginPackage(data)
 	if err != nil {
-		return installOutcome{}, err
+		return stagedMutation{}, err
 	}
 	manifest := pkg.Manifest
 	if strings.HasPrefix(strings.TrimSpace(manifest.Runtime.Backend), "host:") {
-		return installOutcome{}, errors.New("上传插件不能使用宿主内置执行器")
+		return stagedMutation{}, errors.New("上传插件不能使用宿主内置执行器")
 	}
 	if _, err := protocol.LoadInstalledProviders(pkg.ManifestRaw, nil); err != nil {
-		return installOutcome{}, err
+		return stagedMutation{}, err
 	}
 	c.mu.RLock()
 	existing, exists := c.plugins[manifest.Metadata.ID]
 	c.mu.RUnlock()
 	if exists && IsBuiltInSource(existing.Source) {
-		return installOutcome{}, fmt.Errorf("内置插件 %q 不能通过上传覆盖", manifest.Metadata.ID)
+		return stagedMutation{}, fmt.Errorf("内置插件 %q 不能通过上传覆盖", manifest.Metadata.ID)
 	}
 	manifest.Metadata.Enabled = !exists || existing.Metadata.Enabled
 	manifestData, err := json.Marshal(manifest)
 	if err != nil {
-		return installOutcome{}, err
+		return stagedMutation{}, err
 	}
 	hash := pluginHash(data)
 	packageName := filepath.Base(strings.TrimSpace(fileName))
@@ -79,14 +84,14 @@ func (c *Runtime) installLocked(data []byte, fileName string) (installOutcome, e
 	_, statErr := os.Stat(packagePath)
 	createdBlob := errors.Is(statErr, os.ErrNotExist)
 	if err := writePluginFile(packagePath, data); err != nil {
-		return installOutcome{}, fmt.Errorf("保存插件包失败：%w", err)
+		return stagedMutation{}, fmt.Errorf("保存插件包失败：%w", err)
 	}
 	stored, err := c.readRegistry()
 	if err != nil {
 		if createdBlob {
 			c.discardBlobIfUnreferenced(blobName)
 		}
-		return installOutcome{}, err
+		return stagedMutation{}, err
 	}
 	previousStored := cloneRegistryRecords(stored)
 	now := time.Now().UTC()
@@ -107,51 +112,78 @@ func (c *Runtime) installLocked(data []byte, fileName string) (installOutcome, e
 	} else {
 		stored = append(stored, newRecord)
 	}
-	if err := c.writeRegistry(stored); err != nil {
+	plugins, registry, err := materializeRecords(stored)
+	if err != nil {
 		if createdBlob {
 			c.discardBlobIfUnreferenced(blobName)
 		}
-		return installOutcome{}, fmt.Errorf("保存插件失败：%w", err)
+		return stagedMutation{}, err
 	}
-	outcome := installOutcome{
-		blobMutation: blobMutation{
-			previous:    previousStored,
-			oldBlob:     existing.PackagePath,
-			newBlob:     blobName,
-			createdBlob: createdBlob,
-		},
-	}
-	if err := c.reload(); err != nil {
-		if rb := c.rollbackInstall(outcome); rb != nil {
-			return installOutcome{}, joinMutationError(err, rb)
+	view, err := viewFromPlugins(plugins, manifest.Metadata.ID)
+	if err != nil {
+		if createdBlob {
+			c.discardBlobIfUnreferenced(blobName)
 		}
-		return installOutcome{}, err
+		return stagedMutation{}, err
 	}
-	for _, item := range c.List() {
-		if item.Manifest.ID == manifest.Metadata.ID {
-			outcome.view = item
-			return outcome, nil
-		}
-	}
-	if rb := c.rollbackInstall(outcome); rb != nil {
-		return installOutcome{}, joinMutationError(errors.New("插件保存后未加载"), rb)
-	}
-	return installOutcome{}, errors.New("插件保存后未加载")
+	return stagedMutation{
+		previousDisk: previousStored,
+		previousLive: c.captureLive(),
+		nextDisk:     stored,
+		nextPlugins:  plugins,
+		nextRegistry: registry,
+		view:         view,
+		oldBlob:      existing.PackagePath,
+		newBlob:      blobName,
+		createdBlob:  createdBlob,
+	}, nil
 }
 
-func (c *Runtime) commitInstall(outcome installOutcome) {
-	if outcome.oldBlob == "" || outcome.oldBlob == outcome.newBlob {
-		return
+func (c *Runtime) publishStaged(stage *stagedMutation) error {
+	if stage == nil {
+		return errors.New("插件变更未准备")
 	}
-	c.discardBlobIfUnreferenced(outcome.oldBlob)
+	if err := c.writeRegistry(stage.nextDisk); err != nil {
+		return err
+	}
+	stage.diskWritten = true
+	if err := c.publishLive(stage.nextPlugins, stage.nextRegistry); err != nil {
+		if rb := c.writeRegistry(stage.previousDisk); rb != nil {
+			return joinMutationError(err, rb)
+		}
+		stage.diskWritten = false
+		return err
+	}
+	stage.liveSwapped = true
+	return nil
 }
 
-func (c *Runtime) rollbackInstall(outcome installOutcome) error {
-	err := c.restoreRegistry(outcome.previous)
-	if outcome.createdBlob {
-		c.discardBlobIfUnreferenced(outcome.newBlob)
+func (c *Runtime) abortStaged(stage *stagedMutation) error {
+	if stage == nil {
+		return nil
+	}
+	if stage.liveSwapped {
+		c.restoreLive(stage.previousLive)
+		stage.liveSwapped = false
+	}
+	var err error
+	if stage.diskWritten {
+		err = c.writeRegistry(stage.previousDisk)
+		if err == nil {
+			stage.diskWritten = false
+		}
+	}
+	if stage.createdBlob {
+		c.discardBlobIfUnreferenced(stage.newBlob)
 	}
 	return err
+}
+
+func (c *Runtime) commitInstall(stage stagedMutation) {
+	if stage.oldBlob == "" || stage.oldBlob == stage.newBlob {
+		return
+	}
+	c.discardBlobIfUnreferenced(stage.oldBlob)
 }
 
 func (c *Runtime) SetEnabled(id string, enabled bool) (View, error) {
@@ -164,24 +196,35 @@ func (c *Runtime) SetEnabled(id string, enabled bool) (View, error) {
 }
 
 func (c *Runtime) setEnabledLocked(id string, enabled bool) (View, error) {
+	stage, err := c.stageSetEnabledLocked(id, enabled)
+	if err != nil {
+		return View{}, err
+	}
+	if err := c.publishStaged(&stage); err != nil {
+		return View{}, joinMutationError(err, c.abortStaged(&stage))
+	}
+	return stage.view, nil
+}
+
+func (c *Runtime) stageSetEnabledLocked(id string, enabled bool) (stagedMutation, error) {
 	c.mu.RLock()
 	record, ok := c.plugins[strings.TrimSpace(id)]
 	c.mu.RUnlock()
 	if !ok {
-		return View{}, fmt.Errorf("插件 %q 不存在", id)
+		return stagedMutation{}, fmt.Errorf("插件 %q 不存在", id)
 	}
 	var manifest protocol.Manifest
 	if err := json.Unmarshal(record.Raw, &manifest); err != nil {
-		return View{}, err
+		return stagedMutation{}, err
 	}
 	manifest.Metadata.Enabled = enabled
 	data, err := json.Marshal(manifest)
 	if err != nil {
-		return View{}, err
+		return stagedMutation{}, err
 	}
 	stored, err := c.readRegistry()
 	if err != nil {
-		return View{}, err
+		return stagedMutation{}, err
 	}
 	previousStored := cloneRegistryRecords(stored)
 	for index := range stored {
@@ -190,24 +233,22 @@ func (c *Runtime) setEnabledLocked(id string, enabled bool) (View, error) {
 			stored[index].UpdatedAt = time.Now().UTC()
 		}
 	}
-	if err := c.writeRegistry(stored); err != nil {
-		return View{}, err
+	plugins, registry, err := materializeRecords(stored)
+	if err != nil {
+		return stagedMutation{}, err
 	}
-	if err := c.reload(); err != nil {
-		if rb := c.restoreRegistry(previousStored); rb != nil {
-			return View{}, joinMutationError(err, rb)
-		}
-		return View{}, err
+	view, err := viewFromPlugins(plugins, manifest.Metadata.ID)
+	if err != nil {
+		return stagedMutation{}, err
 	}
-	for _, item := range c.List() {
-		if item.Manifest.ID == manifest.Metadata.ID {
-			return item, nil
-		}
-	}
-	if rb := c.restoreRegistry(previousStored); rb != nil {
-		return View{}, joinMutationError(errors.New("插件状态更新后未加载"), rb)
-	}
-	return View{}, errors.New("插件状态更新后未加载")
+	return stagedMutation{
+		previousDisk: previousStored,
+		previousLive: c.captureLive(),
+		nextDisk:     stored,
+		nextPlugins:  plugins,
+		nextRegistry: registry,
+		view:         view,
+	}, nil
 }
 
 func (c *Runtime) Uninstall(id string) error {
@@ -216,27 +257,30 @@ func (c *Runtime) Uninstall(id string) error {
 	}
 	c.beginMutation()
 	defer c.endMutation()
-	outcome, err := c.uninstallLocked(id)
+	stage, err := c.stageUninstallLocked(id)
 	if err != nil {
 		return err
 	}
-	c.commitUninstall(outcome)
+	if err := c.publishStaged(&stage); err != nil {
+		return joinMutationError(err, c.abortStaged(&stage))
+	}
+	c.commitUninstall(stage)
 	return nil
 }
 
-func (c *Runtime) uninstallLocked(id string) (uninstallOutcome, error) {
+func (c *Runtime) stageUninstallLocked(id string) (stagedMutation, error) {
 	c.mu.RLock()
 	record, ok := c.plugins[strings.TrimSpace(id)]
 	c.mu.RUnlock()
 	if !ok {
-		return uninstallOutcome{}, fmt.Errorf("插件 %q 不存在", id)
+		return stagedMutation{}, fmt.Errorf("插件 %q 不存在", id)
 	}
 	if IsBuiltInSource(record.Source) {
-		return uninstallOutcome{}, fmt.Errorf("内置插件 %q 不能卸载，可停用该插件", id)
+		return stagedMutation{}, fmt.Errorf("内置插件 %q 不能卸载，可停用该插件", id)
 	}
 	stored, err := c.readRegistry()
 	if err != nil {
-		return uninstallOutcome{}, err
+		return stagedMutation{}, err
 	}
 	previousStored := cloneRegistryRecords(stored)
 	filtered := make([]RegistryRecord, 0, len(stored))
@@ -245,23 +289,28 @@ func (c *Runtime) uninstallLocked(id string) (uninstallOutcome, error) {
 			filtered = append(filtered, item)
 		}
 	}
-	if err := c.writeRegistry(filtered); err != nil {
-		return uninstallOutcome{}, err
+	plugins, registry, err := materializeRecords(filtered)
+	if err != nil {
+		return stagedMutation{}, err
 	}
-	outcome := uninstallOutcome{previous: previousStored, blob: record.PackagePath}
-	if err := c.reload(); err != nil {
-		if rb := c.rollbackUninstall(outcome); rb != nil {
-			return uninstallOutcome{}, joinMutationError(err, rb)
-		}
-		return uninstallOutcome{}, err
-	}
-	return outcome, nil
+	return stagedMutation{
+		previousDisk: previousStored,
+		previousLive: c.captureLive(),
+		nextDisk:     filtered,
+		nextPlugins:  plugins,
+		nextRegistry: registry,
+		oldBlob:      record.PackagePath,
+	}, nil
 }
 
-func (c *Runtime) commitUninstall(outcome uninstallOutcome) {
-	c.discardBlobIfUnreferenced(outcome.blob)
+func (c *Runtime) commitUninstall(stage stagedMutation) {
+	c.discardBlobIfUnreferenced(stage.oldBlob)
 }
 
-func (c *Runtime) rollbackUninstall(outcome uninstallOutcome) error {
-	return c.restoreRegistry(outcome.previous)
+func viewFromPlugins(plugins map[string]Record, id string) (View, error) {
+	record, ok := plugins[id]
+	if !ok {
+		return View{}, errors.New("插件保存后未加载")
+	}
+	return clonePluginView(viewFromRecord(record)), nil
 }

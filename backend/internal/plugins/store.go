@@ -13,8 +13,7 @@ type Store interface {
 	SaveUserPluginState(state *model.UserPluginState) error
 	SavePluginPlatformState(state *model.PluginPlatformState) error
 	EnabledPluginUserCounts() (map[string]int64, error)
-	DeleteUserPluginStates(pluginID string) error
-	DeletePluginPlatformState(pluginID string) error
+	DeletePluginStates(pluginID string) error
 }
 
 type repositoryStore struct {
@@ -48,10 +47,6 @@ func (s repositoryStore) EnabledPluginUserCounts() (map[string]int64, error) {
 	return s.repo.EnabledPluginUserCounts()
 }
 
-func (s repositoryStore) DeleteUserPluginStates(pluginID string) error {
-	return s.repo.DeleteUserPluginStates(pluginID)
-}
-
-func (s repositoryStore) DeletePluginPlatformState(pluginID string) error {
-	return s.repo.DeletePluginPlatformState(pluginID)
+func (s repositoryStore) DeletePluginStates(pluginID string) error {
+	return s.repo.DeletePluginStates(pluginID)
 }

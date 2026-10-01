@@ -81,17 +81,20 @@ func (s *Service) InstallUploaded(actorID string, data []byte, fileName string) 
 	}
 	s.runtime.beginMutation()
 	defer s.runtime.endMutation()
-	outcome, err := s.runtime.installLocked(data, fileName)
+	stage, err := s.runtime.stageInstallLocked(data, fileName)
 	if err != nil {
 		return View{}, err
 	}
 	now := time.Now()
-	state := &model.PluginPlatformState{PluginID: outcome.view.Manifest.ID, Available: outcome.view.Status == StatusEnabled, UpdatedBy: actorID, CreatedAt: now, UpdatedAt: now}
+	state := &model.PluginPlatformState{PluginID: stage.view.Manifest.ID, Available: stage.view.Status == StatusEnabled, UpdatedBy: actorID, CreatedAt: now, UpdatedAt: now}
 	if err := s.store.SavePluginPlatformState(state); err != nil {
-		return View{}, joinMutationError(fmt.Errorf("保存插件平台状态：%w", err), s.runtime.rollbackInstall(outcome))
+		return View{}, joinMutationError(fmt.Errorf("保存插件平台状态：%w", err), s.runtime.abortStaged(&stage))
 	}
-	s.runtime.commitInstall(outcome)
-	plugin := outcome.view
+	if err := s.runtime.publishStaged(&stage); err != nil {
+		return View{}, joinMutationError(err, s.runtime.abortStaged(&stage))
+	}
+	s.runtime.commitInstall(stage)
+	plugin := stage.view
 	plugin.Management = ManagementFromView(plugin)
 	return plugin, nil
 }
@@ -121,19 +124,19 @@ func (s *Service) UninstallUploaded(id string) error {
 	}
 	s.runtime.beginMutation()
 	defer s.runtime.endMutation()
-	outcome, err := s.runtime.uninstallLocked(id)
+	stage, err := s.runtime.stageUninstallLocked(id)
 	if err != nil {
 		return err
 	}
+	if err := s.runtime.publishStaged(&stage); err != nil {
+		return joinMutationError(err, s.runtime.abortStaged(&stage))
+	}
 	if s.store != nil {
-		if err := s.store.DeleteUserPluginStates(id); err != nil {
-			return joinMutationError(fmt.Errorf("清理用户插件状态：%w", err), s.runtime.rollbackUninstall(outcome))
-		}
-		if err := s.store.DeletePluginPlatformState(id); err != nil {
-			return joinMutationError(fmt.Errorf("清理插件平台状态：%w", err), s.runtime.rollbackUninstall(outcome))
+		if err := s.store.DeletePluginStates(id); err != nil {
+			return joinMutationError(fmt.Errorf("清理插件状态：%w", err), s.runtime.abortStaged(&stage))
 		}
 	}
-	s.runtime.commitUninstall(outcome)
+	s.runtime.commitUninstall(stage)
 	return nil
 }
 
@@ -226,6 +229,10 @@ func (s *Service) SetUserEnabled(actor *model.User, pluginID string, enabled boo
 	if actor == nil || strings.TrimSpace(actor.ID) == "" {
 		return StateView{}, Forbidden("请先登录")
 	}
+	if s != nil && s.runtime != nil {
+		s.runtime.beginMutation()
+		defer s.runtime.endMutation()
+	}
 	items := s.List()
 	current, err := s.stateForUser(actor, pluginID, items)
 	if err != nil {
@@ -295,28 +302,28 @@ func (s *Service) SetPlatformAvailability(actor *model.User, pluginID string, av
 		return AdminStateView{}, ManagementView{}, fmt.Errorf("插件 %q 不存在", pluginID)
 	}
 	policy := Management(pluginID, source)
-	runtimeMutated := false
-	var previous []RegistryRecord
+	var stage stagedMutation
+	runtimeStaged := false
 	if policy.ActivationScope == ScopeSystem {
 		if !hasRuntime || s.runtime == nil {
 			return AdminStateView{}, policy, fmt.Errorf("插件 %q 缺少运行时", pluginID)
 		}
-		stored, err := s.runtime.readRegistry()
+		prepared, err := s.runtime.stageSetEnabledLocked(pluginID, available)
 		if err != nil {
 			return AdminStateView{}, policy, err
 		}
-		previous = cloneRegistryRecords(stored)
-		if _, err := s.runtime.setEnabledLocked(pluginID, available); err != nil {
-			return AdminStateView{}, policy, err
+		stage = prepared
+		runtimeStaged = true
+		if err := s.runtime.publishStaged(&stage); err != nil {
+			return AdminStateView{}, policy, joinMutationError(err, s.runtime.abortStaged(&stage))
 		}
-		runtimeMutated = true
 	}
 	now := time.Now()
 	platformState := &model.PluginPlatformState{PluginID: pluginID, Available: available, UpdatedBy: actor.ID, CreatedAt: now, UpdatedAt: now}
 	if err := s.store.SavePluginPlatformState(platformState); err != nil {
 		saveErr := fmt.Errorf("保存插件平台状态：%w", err)
-		if runtimeMutated {
-			return AdminStateView{}, policy, joinMutationError(saveErr, s.runtime.restoreRegistry(previous))
+		if runtimeStaged {
+			return AdminStateView{}, policy, joinMutationError(saveErr, s.runtime.abortStaged(&stage))
 		}
 		return AdminStateView{}, policy, saveErr
 	}
