@@ -5,6 +5,7 @@ import (
 
 	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/eagle"
 
 	"github.com/gin-gonic/gin"
 )
@@ -26,6 +27,7 @@ func defaultRuntimeDependencies(svc *app.Service) RuntimeDependencies {
 	adapter := newServiceRuntimeAdapter(svc)
 	return RuntimeDependencies{
 		RequestCoordinator: adapter, ProviderConfig: adapter, Assets: adapter, Projects: adapter, Tasks: adapter, Generation: adapter,
+		Eagle: eagle.New(),
 	}
 }
 
