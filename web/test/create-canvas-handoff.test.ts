@@ -384,9 +384,9 @@ test("Create forwards owned result assets through one new canvas and the project
     expect(canvasProject).toContain("useCanvasResourceHandoff");
     expect(handoffPlan).toContain('if (!input.projectLoaded || !input.assetsHydrated || input.mode !== "handoff") return { kind: "idle" }');
     expect(handoffPlan).toContain("uninsertedCanvasAssetHandoffPayloads(input.nodes, attempt.payloads)");
-    expect(resourceHook).toContain("finalizeCanvasAssetHandoff");
-    expect(resourceHook).toContain("await flushCanvasStorePersistence()");
-    expect(resourceHook.indexOf("await flushCanvasStorePersistence()")).toBeLessThan(resourceHook.indexOf("setSearchParams(finalized.searchParams"));
+    expect(resourceHook).toContain("commitOwnedCanvasAssetHandoff");
+    expect(resourceHook).toContain("persistCanvasDocument(owner.canvasId, { nodes: nextNodes })");
+    expect(resourceHook.indexOf("persistCanvasDocument(owner.canvasId, { nodes: nextNodes })")).toBeLessThan(resourceHook.indexOf("setSearchParams(nextSearchParams"));
 });
 
 test("Create image batch retry preserves per-index lineage under one attempt group", async () => {

@@ -6,7 +6,7 @@ import type { SetURLSearchParams } from "react-router";
 import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { resolveProjectCanvasStyle } from "@/components/canvas/canvas-style-picker-modal";
 import { refreshCanvasCharacterReferenceNodes } from "@/lib/canvas/canvas-character-reference";
-import { canvasAssetHandoffIds, finalizeCanvasAssetHandoff } from "@/lib/canvas/canvas-asset-handoff";
+import { canvasAssetHandoffIds } from "@/lib/canvas/canvas-asset-handoff";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { createStyleProfileSnapshot, resolveStyleProfile, serializeStyleProfile } from "@/lib/canvas/style-profile";
 import { getProject } from "@/services/api/projects";
@@ -14,10 +14,13 @@ import { queryGenerationTask, type GenerationTask } from "@/services/api/task-ce
 import { loadAssetsForUse } from "@/services/local-workspace-sync";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
-import { flushCanvasStorePersistence } from "@/stores/canvas/use-canvas-store";
+import { persistCanvasDocument } from "@/services/local-workspace-repository";
+import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import type { Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
 
+import { captureCanvasOwnerEpoch, canvasOwnerEpochMatches, readOwnedCanvasNodes, runOwnedCanvasPageCommit } from "./canvas-owner-epoch";
+import { applyArchivedCanvasNodeAssets, commitOwnedCanvasAssetHandoff, rebaseCreatedCanvasNodes } from "./canvas-resource-handoff-commit";
 import { linkedFolderPresentation, resolveCanvasAssetHandoffPlan } from "./canvas-resource-handoff-plan";
 
 const NODE_STATUS_SUCCESS = "success" as const;
@@ -34,7 +37,6 @@ type UseCanvasResourceHandoffOptions = {
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
     getCanvasCenter: () => Position;
     handleProjectAssetsInsert: (payloads: InsertAssetPayload[]) => Promise<CanvasNodeData[]>;
-    updateProject: (id: string, patch: { nodes: CanvasNodeData[] }) => void;
     applyGenerationTaskResult: (nodeId: string, task: GenerationTask) => Promise<void>;
 };
 
@@ -50,11 +52,16 @@ export function useCanvasResourceHandoff({
     setNodes,
     getCanvasCenter,
     handleProjectAssetsInsert,
-    updateProject,
     applyGenerationTaskResult,
 }: UseCanvasResourceHandoffOptions) {
     const { message } = App.useApp();
     const assetHandoffRef = useRef("");
+    const projectIdRef = useRef(projectId);
+    projectIdRef.current = projectId;
+    const mountedRef = useRef(true);
+    useEffect(() => () => {
+        mountedRef.current = false;
+    }, []);
     const linkedProjectQuery = useQuery({ queryKey: ["project", linkedProjectId], queryFn: () => getProject(linkedProjectId), enabled: Boolean(linkedProjectId) });
     const refetchLinkedProject = linkedProjectQuery.refetch;
 
@@ -63,20 +70,22 @@ export function useCanvasResourceHandoff({
             const folderId = folder.metadata?.folder?.assetFolderId;
             const domainProjectId = folder.metadata?.folder?.projectId || linkedProjectId;
             if (!folderId || !domainProjectId || !droppedNodes.length) return;
-            void Promise.all(droppedNodes.map((node) => ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId, folderId, node, source: "canvas-manual" })))
-                .then((results) => {
+            const owner = captureCanvasOwnerEpoch(projectId);
+            const folderTitle = folder.title;
+            void runOwnedCanvasPageCommit({
+                owner,
+                getLiveCanvasId: () => projectIdRef.current,
+                work: () => Promise.all(droppedNodes.map((node) => ensureCanvasNodeAsset({ canvasId: owner.canvasId, domainProjectId, folderId, node, source: "canvas-manual" }))),
+                onCommit: (results) => {
                     const archivedByNodeId = new Map(droppedNodes.map((node, index) => [node.id, { assetId: results[index].assetId, content: node.metadata?.content, previousAssetId: node.metadata?.assetId }]));
-                    setNodes((current) =>
-                        current.map((node) => {
-                            const archived = archivedByNodeId.get(node.id);
-                            if (!archived || node.metadata?.content !== archived.content || node.metadata?.assetId !== archived.previousAssetId) return node;
-                            return { ...node, metadata: { ...node.metadata, assetId: archived.assetId } };
-                        }),
-                    );
+                    setNodes((current) => applyArchivedCanvasNodeAssets(current, archivedByNodeId));
                     void refetchLinkedProject();
-                    message.success(`已归档到“${folder.title}”`);
-                })
-                .catch((error) => message.error(error instanceof Error ? error.message : "素材归档失败"));
+                    message.success(`已归档到“${folderTitle}”`);
+                },
+            }).catch((error) => {
+                if (!canvasOwnerEpochMatches(owner, projectIdRef.current)) return;
+                message.error(error instanceof Error ? error.message : "素材归档失败");
+            });
         },
         [linkedProjectId, message, projectId, refetchLinkedProject, setNodes],
     );
@@ -155,30 +164,39 @@ export function useCanvasResourceHandoff({
         if (plan.kind === "idle") return;
         assetHandoffRef.current = plan.key;
         if (plan.kind === "wait") return;
-        let disposed = false;
+        const owner = captureCanvasOwnerEpoch(projectId);
         const persistHandoff = async (createdNodes: CanvasNodeData[]) => {
-            if (disposed) return;
-            const finalized = await finalizeCanvasAssetHandoff({
+            await commitOwnedCanvasAssetHandoff({
+                owner,
+                getLiveCanvasId: () => projectIdRef.current,
+                stillOwnsPage: () => mountedRef.current && canvasOwnerEpochMatches(owner, projectIdRef.current),
                 searchParams,
-                currentNodes: nodesRef.current,
                 createdNodes,
+                readLiveNodes: () => readOwnedCanvasNodes({
+                    owner,
+                    liveCanvasId: projectIdRef.current,
+                    pageNodes: nodesRef.current,
+                    storedNodes: useCanvasStore.getState().openProject(owner.canvasId)?.nodes,
+                }),
                 persist: async (nextNodes) => {
-                    nodesRef.current = nextNodes;
-                    updateProject(projectId, { nodes: nextNodes });
-                    await flushCanvasStorePersistence();
+                    await persistCanvasDocument(owner.canvasId, { nodes: nextNodes });
+                },
+                applyCreated: (created) => {
+                    setNodes((current) => rebaseCreatedCanvasNodes(current, created));
+                },
+                consumeUrl: (nextSearchParams) => {
+                    setSearchParams(nextSearchParams, { replace: true });
+                },
+                resetAttempt: () => {
+                    assetHandoffRef.current = "";
                 },
             });
-            if (disposed) return;
-            setSearchParams(finalized.searchParams, { replace: true });
         };
         const insertion = plan.payloads.length ? handleProjectAssetsInsert(plan.payloads) : Promise.resolve([] as CanvasNodeData[]);
         void insertion.then(persistHandoff).catch(() => {
-            if (!disposed) assetHandoffRef.current = "";
+            assetHandoffRef.current = "";
         });
-        return () => {
-            disposed = true;
-        };
-    }, [assets, assetsHydrated, handleProjectAssetsInsert, nodesRef, projectId, projectLoaded, searchParams, setSearchParams, updateProject]);
+    }, [assets, assetsHydrated, handleProjectAssetsInsert, nodesRef, projectId, projectLoaded, searchParams, setNodes, setSearchParams]);
 
     const reloadCanvasNodeResource = useCallback(
         async (node: CanvasNodeData) => {
@@ -188,18 +206,22 @@ export function useCanvasResourceHandoff({
                 message.info("本地工作区不会从云端重新加载任务资源，请直接在画布中重新生成");
                 return;
             }
-            setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: "loading", taskStage: "正在重新加载资源", errorDetails: undefined } } : item)));
+            const owner = captureCanvasOwnerEpoch(projectId);
+            const targetNodeId = node.id;
+            setNodes((current) => current.map((item) => (item.id === targetNodeId ? { ...item, metadata: { ...item.metadata, status: "loading", taskStage: "正在重新加载资源", errorDetails: undefined } } : item)));
             try {
                 const task = await queryGenerationTask(taskId);
+                if (!canvasOwnerEpochMatches(owner, projectIdRef.current)) return;
                 if (task.status !== "succeeded") throw new Error("原生成任务尚未成功，无法重新加载资源");
-                await applyGenerationTaskResult(node.id, task);
+                await applyGenerationTaskResult(targetNodeId, task);
             } catch (error) {
+                if (!canvasOwnerEpochMatches(owner, projectIdRef.current)) return;
                 setNodes((current) =>
-                    current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: "error", errorDetails: error instanceof Error ? error.message : "资源重新加载失败", resourceReloadAvailable: true } } : item)),
+                    current.map((item) => (item.id === targetNodeId ? { ...item, metadata: { ...item.metadata, status: "error", errorDetails: error instanceof Error ? error.message : "资源重新加载失败", resourceReloadAvailable: true } } : item)),
                 );
             }
         },
-        [applyGenerationTaskResult, message, setNodes],
+        [applyGenerationTaskResult, message, projectId, setNodes],
     );
 
     return {

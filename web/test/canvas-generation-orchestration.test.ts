@@ -5,6 +5,7 @@ import {
     createImageNodeFromTextSource,
     createInsertingHistoryGate,
     insertCanvasGenerationHistoryTask,
+    rebaseInsertedCanvasNode,
     reconcileImageBatchRootNodes,
     runImageBatchChildRetry,
     selectRetryableImageBatchChildren,
@@ -159,6 +160,7 @@ describe("insertCanvasGenerationHistoryTask", () => {
             center: { x: 100, y: 80 },
             nodes: [],
             assets: [],
+            readLiveNodes: () => [],
             persist: async (nodes) => {
                 order.push("persist");
                 expect(nodes).toHaveLength(1);
@@ -187,5 +189,14 @@ describe("insertCanvasGenerationHistoryTask", () => {
         expect(order).toEqual(["ensure", "persist"]);
         expect(result.node.metadata?.taskId).toBe("task-history");
         expect(result.nextNodes).toHaveLength(1);
+    });
+});
+
+describe("rebaseInsertedCanvasNode", () => {
+    test("replaces an existing id and otherwise appends", () => {
+        const live = [imageNode("keep"), imageNode("target", { content: "old" })];
+        const inserted = imageNode("target", { content: "new" });
+        expect(rebaseInsertedCanvasNode(live, inserted).map((node) => `${node.id}:${node.metadata?.content}`)).toEqual(["keep:undefined", "target:new"]);
+        expect(rebaseInsertedCanvasNode([imageNode("keep")], inserted).map((node) => node.id)).toEqual(["keep", "target"]);
     });
 });

@@ -9,17 +9,20 @@ import { cancelGenerationTask, type GenerationTask } from "@/services/api/task-c
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import type { Skill } from "@/services/api/skills";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
+import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Position } from "@/types/canvas";
 
 import {
     createImageNodeFromTextSource,
     createInsertingHistoryGate,
-    insertCanvasGenerationHistoryTask,
+    rebaseInsertedCanvasNode,
     reconcileImageBatchRootNodes,
     runImageBatchChildRetry,
+    runOwnedCanvasHistoryInsert,
     selectRetryableImageBatchChildren,
 } from "./canvas-generation-orchestration";
+import { captureCanvasOwnerEpoch, readOwnedCanvasNodes } from "./canvas-owner-epoch";
 import { useCanvasBatchTable } from "./use-canvas-batch-table";
 import { useCanvasGeneration } from "./use-canvas-generation";
 import { useCanvasGenerationBatches } from "./use-canvas-generation-batches";
@@ -74,6 +77,8 @@ export function useCanvasGenerationOrchestration({
     const queryClient = useQueryClient();
     const effectiveConfig = useEffectiveConfig();
     const insertingHistory = useRef(createInsertingHistoryGate());
+    const projectIdRef = useRef(projectId);
+    projectIdRef.current = projectId;
 
     const {
         applyGenerationTaskResult,
@@ -231,22 +236,32 @@ export function useCanvasGenerationOrchestration({
     const insertGenerationHistoryTask = useCallback(
         async (task: GenerationTask) => {
             if (!insertingHistory.current.tryEnter()) return;
+            const owner = captureCanvasOwnerEpoch(projectId);
             try {
-                const { node, nextNodes } = await insertCanvasGenerationHistoryTask({
+                await runOwnedCanvasHistoryInsert({
+                    owner,
+                    getLiveCanvasId: () => projectIdRef.current,
                     task,
-                    projectId,
+                    projectId: owner.canvasId,
                     domainProjectId,
                     center: getCanvasCenter(),
                     nodes: nodesRef.current,
                     assets: useAssetStore.getState().assets,
-                    persist: (persisted) => persistCanvasDocument(projectId, { nodes: persisted }),
-                    ensureAsset: (item) => ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId, node: item, source: "canvas-generation", taskId: task.id }),
+                    readLiveNodes: () => readOwnedCanvasNodes({
+                        owner,
+                        liveCanvasId: projectIdRef.current,
+                        pageNodes: nodesRef.current,
+                        storedNodes: useCanvasStore.getState().openProject(owner.canvasId)?.nodes,
+                    }),
+                    persist: (persisted) => persistCanvasDocument(owner.canvasId, { nodes: persisted }),
+                    ensureAsset: (item) => ensureCanvasNodeAsset({ canvasId: owner.canvasId, domainProjectId, node: item, source: "canvas-generation", taskId: task.id }),
+                    onCommit: (node) => {
+                        setNodes((current) => rebaseInsertedCanvasNode(current, node));
+                        setSelectedNodeIds(new Set([node.id]));
+                        setGenerationHistoryOpen(false);
+                        message.success("已从生成历史插入到画布");
+                    },
                 });
-                nodesRef.current = nextNodes;
-                setNodes(nextNodes);
-                setSelectedNodeIds(new Set([node.id]));
-                setGenerationHistoryOpen(false);
-                message.success("已从生成历史插入到画布");
             } catch (error) {
                 message.error(error instanceof Error ? error.message : "生成结果无法插入画布");
             } finally {

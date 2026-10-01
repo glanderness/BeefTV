@@ -7,6 +7,7 @@ import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 import { executeAssistantProposal } from "./canvas-assistant-proposal-execution";
 import { prepareAssistantProposalSnapshot } from "./canvas-assistant-proposal-snapshot";
 import { readAssistantProposalSourceState, readPersistedAssistantProposalSource } from "./canvas-assistant-proposal-source";
+import { captureCanvasOwnerEpoch, canvasOwnerEpochMatches } from "./canvas-owner-epoch";
 import type { CanvasNodeGenerationOptions } from "./use-canvas-generation-executor";
 
 type GenerateNode = (nodeId: string, mode: "image" | "video", prompt: string, options?: CanvasNodeGenerationOptions) => Promise<unknown>;
@@ -40,9 +41,13 @@ export function useCanvasAssistantProposal({
     handleGenerateNodeRef.current = handleGenerateNode;
     const addedSkillsRef = useRef(addedSkills);
     addedSkillsRef.current = addedSkills;
+    const projectIdRef = useRef(projectId);
+    projectIdRef.current = projectId;
 
     const runAssistantProposal = useCallback(
         (proposal: AssistantGenerationProposal) => {
+            const owner = captureCanvasOwnerEpoch(projectId);
+            const generateForThisRun = handleGenerateNodeRef.current;
             setAssistantProposalFeedback((current) => ({ ...current, [proposal.proposalId]: "" }));
             void executeAssistantProposal({
                 proposal,
@@ -52,10 +57,11 @@ export function useCanvasAssistantProposal({
                 prepare: () =>
                     prepareAssistantProposalSnapshot(
                         proposal,
-                        () => readAssistantProposalSourceState(projectId, nodesRef.current, connectionsRef.current, addedSkillsRef.current),
-                        () => readPersistedAssistantProposalSource(projectId),
+                        () => readAssistantProposalSourceState(owner.canvasId, nodesRef.current, connectionsRef.current, addedSkillsRef.current),
+                        () => readPersistedAssistantProposalSource(owner.canvasId),
                     ),
-                generate: (nodeId, mode, prompt, options) => handleGenerateNodeRef.current(nodeId, mode, prompt, options),
+                generate: generateForThisRun,
+                stillOwns: () => canvasOwnerEpochMatches(owner, projectIdRef.current),
                 markHandled: (proposalId) => markHandledRef.current(proposalId),
                 notify: (content) => {
                     setAssistantProposalFeedback((current) => ({ ...current, [proposal.proposalId]: content }));

@@ -12,6 +12,8 @@ import type { GenerationTask } from "@/services/api/task-center";
 import type { Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Position } from "@/types/canvas";
 
+import { canvasOwnerEpochMatches, type CanvasOwnerEpoch } from "./canvas-owner-epoch";
+
 const NODE_STATUS_SUCCESS = "success" as const;
 
 export type CanvasNodeRetryPlan =
@@ -132,6 +134,14 @@ export function createInsertingHistoryGate() {
     };
 }
 
+export function rebaseInsertedCanvasNode(live: CanvasNodeData[], inserted: CanvasNodeData) {
+    const index = live.findIndex((node) => node.id === inserted.id);
+    if (index < 0) return [...live, inserted];
+    const next = live.slice();
+    next[index] = inserted;
+    return next;
+}
+
 export async function insertCanvasGenerationHistoryTask(input: {
     task: GenerationTask;
     projectId: string;
@@ -142,6 +152,7 @@ export async function insertCanvasGenerationHistoryTask(input: {
     persist: (nodes: CanvasNodeData[]) => Promise<void>;
     ensureAsset: (node: CanvasNodeData) => Promise<{ assetId: string }>;
     applyResult?: typeof applyGenerationTaskResultToNodes;
+    readLiveNodes: () => CanvasNodeData[];
 }) {
     const mode = generationTaskMode(input.task);
     const nodeType = mode === "video" ? CanvasNodeType.Video : mode === "audio" ? CanvasNodeType.Audio : CanvasNodeType.Image;
@@ -160,10 +171,34 @@ export async function insertCanvasGenerationHistoryTask(input: {
     node.title = mode === "video" ? "历史视频" : mode === "audio" ? "历史音频" : "历史图片";
     const applied = await (input.applyResult || applyGenerationTaskResultToNodes)([node], input.task, node.id);
     if (!applied.node) throw new Error("生成结果无法定位到画布节点");
-    const nextNodes = await bindMissingCanvasResourceAssets([...input.nodes, applied.node], input.assets, input.ensureAsset);
-    if (canvasNodesMissingResourceAssetBinding(nextNodes).length) {
+    const bound = await bindMissingCanvasResourceAssets([applied.node], input.assets, input.ensureAsset);
+    const inserted = bound[0];
+    if (!inserted || canvasNodesMissingResourceAssetBinding(bound).length) {
         throw new Error("生成结果尚未进入素材库，无法插入画布");
     }
+    const nextNodes = rebaseInsertedCanvasNode(input.readLiveNodes(), inserted);
     await input.persist(nextNodes);
-    return { node: applied.node, nextNodes };
+    return { node: inserted, nextNodes };
+}
+
+export async function runOwnedCanvasHistoryInsert(input: {
+    owner: CanvasOwnerEpoch;
+    getLiveCanvasId: () => string;
+    getLiveUserScope?: () => string;
+    task: GenerationTask;
+    projectId: string;
+    domainProjectId?: string;
+    center: Position;
+    nodes: CanvasNodeData[];
+    assets: Asset[];
+    persist: (nodes: CanvasNodeData[]) => Promise<void>;
+    ensureAsset: (node: CanvasNodeData) => Promise<{ assetId: string }>;
+    applyResult?: typeof applyGenerationTaskResultToNodes;
+    readLiveNodes: () => CanvasNodeData[];
+    onCommit: (node: CanvasNodeData) => void;
+}): Promise<"committed" | "abandoned"> {
+    const { node } = await insertCanvasGenerationHistoryTask(input);
+    if (!canvasOwnerEpochMatches(input.owner, input.getLiveCanvasId(), input.getLiveUserScope?.())) return "abandoned";
+    input.onCommit(node);
+    return "committed";
 }

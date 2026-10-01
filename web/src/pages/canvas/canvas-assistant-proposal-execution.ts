@@ -4,6 +4,8 @@ import type { CanvasNodeGenerationOptions } from "./use-canvas-generation-execut
 import { buildGenerationConfig } from "@/lib/canvas/canvas-project-generation";
 import { STALE_PROPOSAL_MESSAGE, type ConfirmedGenerationInputs } from "./canvas-assistant-proposal-snapshot";
 
+export const CANVAS_OWNER_CHANGED_PROPOSAL_MESSAGE = "画布或账号已切换，未提交生成。请重新确认提案。";
+
 type ProposalExecution = {
     proposal: AssistantGenerationProposal;
     nodes: CanvasNodeData[];
@@ -13,6 +15,7 @@ type ProposalExecution = {
     generate: (nodeId: string, mode: "image" | "video", prompt: string, options?: CanvasNodeGenerationOptions) => Promise<unknown>;
     markHandled: (proposalId: string) => void;
     notify: (content: string) => void;
+    stillOwns?: () => boolean;
 };
 
 function proposalModelKey(value: unknown) {
@@ -34,7 +37,7 @@ export function buildConfirmedGenerationConfig(
     return result;
 }
 
-export async function executeAssistantProposal({ proposal, nodes, claims, isHandled, prepare, generate, markHandled, notify }: ProposalExecution) {
+export async function executeAssistantProposal({ proposal, nodes, claims, isHandled, prepare, generate, markHandled, notify, stillOwns }: ProposalExecution) {
     if (isHandled || claims.has(proposal.proposalId)) {
         notify("这项提案已提交或正在提交，请在任务列表查看进度。");
         return;
@@ -58,7 +61,15 @@ export async function executeAssistantProposal({ proposal, nodes, claims, isHand
         try {
             confirmedInputs = await prepare();
         } catch (error) {
+            if (stillOwns && !stillOwns()) {
+                notify(CANVAS_OWNER_CHANGED_PROPOSAL_MESSAGE);
+                return;
+            }
             notify(error instanceof Error && error.message === STALE_PROPOSAL_MESSAGE ? error.message : "无法核对提案的最新内容，请检查连接后重试。");
+            return;
+        }
+        if (stillOwns && !stillOwns()) {
+            notify(CANVAS_OWNER_CHANGED_PROPOSAL_MESSAGE);
             return;
         }
         const confirmedTargets = [...new Set(proposal.nodeIds)].map((id) => confirmedInputs.nodes.find((node) => node.id === id));

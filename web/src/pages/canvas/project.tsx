@@ -61,7 +61,6 @@ import {
     buildCanvasNodeMentionReferenceMap,
     buildCanvasResourceReferences,
     getContextResourceNodes,
-    normalizeCanvasNodeMentionTokens,
     reorderCanvasResourceConnections,
     replaceCanvasReferenceMentions,
     type CanvasResourceReference,
@@ -76,7 +75,7 @@ import { canvasWorkspaceProjectId, listCanvasWorkspaceProjectCanvases } from "@/
 import { deleteWorkspaceCanvasProjects } from "@/services/workspace-project-repository";
 import { createLibTvAudioFixture, createLibTvEmptyTextFixture, createLibTvGeneratingFixture, createLibTvReadonlyDenseFixture, createLibTvStoryboardFixture, createLibTvTextFixture, createLibTvVideoConversionFixture, createLibTvVideoFixture, createLibTvVideoMergeFixture, createLibTvVideoSubtitleFixture } from "@/lib/canvas/canvas-libtv-fixture";
 import { libtvOriginalEdgeEndpoints } from "@/lib/canvas/libtv-original-edges";
-import { stampCanvasNodeChanges, updateCanvasNode, updateCanvasNodes } from "@/lib/canvas/canvas-node-timestamps";
+import { stampCanvasNodeChanges } from "@/lib/canvas/canvas-node-timestamps";
 import { batchSourceRestriction } from "@/lib/canvas/canvas-batch-connection";
 import { deriveStoryboardPipelineProgress } from "@/lib/canvas/canvas-storyboard-progress";
 import { CanvasSyncStatus } from "./canvas-sync-status";
@@ -117,7 +116,11 @@ import { copyImageToSystemClipboard } from "./canvas-project-clipboard";
 import { canvasNodeRetryPlan } from "./canvas-generation-orchestration";
 import { linkedFolderPresentation } from "./canvas-resource-handoff-plan";
 import { useCanvasAssistantProposal } from "./use-canvas-assistant-proposal";
+import { useCanvasConnectedNodeVisibility } from "./use-canvas-connected-node-visibility";
 import { useCanvasGenerationOrchestration } from "./use-canvas-generation-orchestration";
+import { useCanvasMentionNormalize } from "./use-canvas-mention-normalize";
+import { useCanvasNodeContent } from "./use-canvas-node-content";
+import { useCanvasPointerSelectionChrome, useCanvasNodeToolbarHover } from "./use-canvas-pointer-chrome";
 import { useCanvasProjectDialogs } from "./use-canvas-project-dialogs";
 import { useCanvasResourceHandoff } from "./use-canvas-resource-handoff";
 import {
@@ -125,7 +128,6 @@ import {
     type CanvasAssistantSession,
     type CanvasConnection,
     type CanvasNodeData,
-    type CanvasNodeMetadata,
     type CanvasMediaPerformanceMode,
     type StoryboardShotCount,
     type StoryboardShotDuration,
@@ -176,7 +178,6 @@ function InfiniteCanvasPage() {
     const canvasStorageScope = getActiveUserScope();
     const containerRef = useRef<HTMLDivElement>(null);
     const didInitialCenterRef = useRef(false);
-    const toolbarHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
@@ -902,57 +903,16 @@ function InfiniteCanvasPage() {
         setToolbarNodeId,
     });
 
-    // When the Agent dock is open, a connected node can otherwise be created
-    // beneath the dock because its world position is intentionally kept stable.
-    // The same rule applies to the ordinary canvas: a generated target is
-    // placed to the right of its source, so without a small viewport pan it
-    // can be clipped even when no dock is open. Pan only the viewport (never
-    // the node) when the new node crosses the visible canvas safe area.
-    const keepConnectedNodeVisible = useCallback((node: CanvasNodeData, sourceNodeId?: string) => {
-        // A quick-connect can fire during the same render that first measures
-        // the canvas. Fall back to the live container width so the first
-        // created target is not left clipped just because React has not yet
-        // committed the measured `size` state.
-        const canvasWidth = size.width || containerRef.current?.clientWidth || 0;
-        if (canvasWidth <= 0) return;
-        const current = viewportRef.current;
-        const scale = Math.max(current.k, 0.05);
-        const source = nodesRef.current.find((candidate) => candidate.id === sourceNodeId && candidate.id !== node.id) || nodesRef.current
-            .filter((candidate) => candidate.id !== node.id && candidate.position.x + candidate.width <= node.position.x + 180)
-            .sort((a, b) => Math.abs((a.position.y + a.height / 2) - (node.position.y + node.height / 2)) - Math.abs((b.position.y + b.height / 2) - (node.position.y + node.height / 2)))[0];
-        const relatedIds = new Set<string>([node.id, ...(source ? [source.id] : [])]);
-        if (source) {
-            connectionsRef.current.forEach((connection) => {
-                if (connection.fromNodeId === source.id) relatedIds.add(connection.toNodeId);
-                if (connection.toNodeId === source.id) relatedIds.add(connection.fromNodeId);
-            });
-        }
-        const visibleNodes = [node, ...nodesRef.current.filter((candidate) => relatedIds.has(candidate.id) && candidate.id !== node.id)];
-        const leftWorld = Math.min(...visibleNodes.map((item) => item.position.x));
-        const rightWorld = Math.max(...visibleNodes.map((item) => item.position.x + item.width));
-        const topWorld = Math.min(...visibleNodes.map((item) => item.position.y));
-        const bottomWorld = Math.max(...visibleNodes.map((item) => item.position.y + item.height));
-        const safeLeft = 24;
-        const safeRight = canvasWidth - 24;
-        const canvasHeight = size.height || containerRef.current?.clientHeight || 0;
-        const safeTop = 64;
-        const safeBottom = Math.max(safeTop + 1, canvasHeight - 72);
-        const worldWidth = Math.max(1, rightWorld - leftWorld);
-        const worldHeight = Math.max(1, bottomWorld - topWorld);
-        const availableWidth = Math.max(1, safeRight - safeLeft);
-        const availableHeight = Math.max(1, safeBottom - safeTop);
-        const nextScale = Math.max(0.35, Math.min(scale, availableWidth / worldWidth, availableHeight / worldHeight));
-        const centerX = (safeLeft + safeRight) / 2;
-        const centerY = (safeTop + safeBottom) / 2;
-        const next = {
-            x: centerX - ((leftWorld + rightWorld) / 2) * nextScale,
-            y: centerY - ((topWorld + bottomWorld) / 2) * nextScale,
-            k: nextScale,
-        };
-        if (Math.abs(next.x - current.x) < 1 && Math.abs(next.y - current.y) < 1 && Math.abs(next.k - current.k) < 0.01) return;
-        viewportRef.current = next;
-        setViewport(next);
-    }, [connectionsRef, containerRef, nodesRef, setViewport, size.height, size.width, viewportRef]);
+    // Pan only the viewport (never the node) when a newly connected target
+    // crosses the visible canvas safe area, including under the Agent dock.
+    const keepConnectedNodeVisible = useCanvasConnectedNodeVisibility({
+        size,
+        containerRef,
+        viewportRef,
+        nodesRef,
+        connectionsRef,
+        setViewport,
+    });
 
     const {
         applyGenerationTaskResult,
@@ -1082,7 +1042,6 @@ function InfiniteCanvasPage() {
         setNodes,
         getCanvasCenter,
         handleProjectAssetsInsert,
-        updateProject,
         applyGenerationTaskResult,
     });
     const canvasContext = useMemo(() => summarizeCanvasContext(nodes, selectedNodeIds, linkedProjectQuery.data?.units), [linkedProjectQuery.data?.units, nodes, selectedNodeIds]);
@@ -1420,21 +1379,19 @@ function InfiniteCanvasPage() {
 
     const batchSourceNodeIds = useMemo(() => nodes.filter((node) => selectedNodeIds.has(node.id) && !batchSourceRestriction(node)).map((node) => node.id), [nodes, selectedNodeIds]);
 
-    const handleCanvasSelectionStart = useCallback(() => {
-        setContextMenu(null);
-    }, []);
-
-    const handleNodeInteractionStart = useCallback((selectionModifier: boolean) => {
-        setContextMenu(null);
-        setHoveredNodeId(null);
-        // Keep the source node's extraction state visible while FFmpeg is
-        // producing the independent video/audio outputs.  Opening the generic
-        // node editor here would clear the toolbar and make the running task
-        // appear to have reverted to its idle state.
-        if (segmentRunningMode === "audio") return;
-        setToolbarNodeId(null);
-        if (selectionModifier) setDialogNodeId(null);
-    }, [segmentRunningMode]);
+    const {
+        handleCanvasSelectionStart,
+        handleNodeInteractionStart,
+        handleNodeDragEnd,
+        handleCanvasDeselect,
+    } = useCanvasPointerSelectionChrome({
+        nodesRef,
+        segmentRunningMode,
+        setContextMenu,
+        setHoveredNodeId,
+        setToolbarNodeId,
+        setDialogNodeId,
+    });
 
     const handleSelectedNodeClick = useCallback(
         (node: CanvasNodeData) => {
@@ -1486,29 +1443,6 @@ function InfiniteCanvasPage() {
         [bringNodeToFront, nodesRef],
     );
 
-    const handleNodeDragEnd = useCallback(
-        (nodeId: string) => {
-            const node = nodesRef.current.find((item) => item.id === nodeId);
-            if (!node || !canOpenCanvasNodePromptPanel(node)) {
-                setDialogNodeId(null);
-                if (node && isCanvasMediaResultNode(node)) setToolbarNodeId(node.id);
-                return;
-            }
-            // A drag selects a new node even though it is not a click. Keep the
-            // generation editor bound to the node most recently moved so a stale
-            // panel from the previous node cannot reappear after mouse-up.
-            setDialogNodeId(node.id);
-        },
-        [nodesRef],
-    );
-
-    const handleCanvasDeselect = useCallback(() => {
-        setContextMenu(null);
-        setHoveredNodeId(null);
-        setToolbarNodeId(null);
-        setDialogNodeId(null);
-    }, []);
-
     const { alignmentGuides, cancelSelectionBox, deselectCanvas, dragPreview, frameDropTargetId, handleCanvasMouseDown, handleNodeMouseDown, isNodeDragging, nodeDraggingRef, selectionBoundsElementRef, selectionBox } = useCanvasSelectionController({
         containerRef,
         nodesRef,
@@ -1531,25 +1465,17 @@ function InfiniteCanvasPage() {
         snapToGrid,
     });
 
-    const keepNodeToolbar = useCallback(
-        (nodeId: string) => {
-            if (nodeDraggingRef.current || nodeImageSettingsOpen) return;
-            if (toolbarHideTimerRef.current) {
-                clearTimeout(toolbarHideTimerRef.current);
-                toolbarHideTimerRef.current = null;
-            }
-            setToolbarNodeId(nodeId);
-        },
-        [nodeImageSettingsOpen],
-    );
-
-    const hideNodeToolbar = useCallback(() => {
-        if (toolbarHideTimerRef.current) clearTimeout(toolbarHideTimerRef.current);
-        toolbarHideTimerRef.current = setTimeout(() => {
-            setToolbarNodeId(null);
-            toolbarHideTimerRef.current = null;
-        }, 120);
-    }, []);
+    const {
+        keepNodeToolbar,
+        hideNodeToolbar,
+        handleCanvasNodeHoverStart,
+        handleCanvasNodeHoverEnd,
+    } = useCanvasNodeToolbarHover({
+        nodeDraggingRef,
+        nodeImageSettingsOpen,
+        setHoveredNodeId,
+        setToolbarNodeId,
+    });
 
     const {
         collapsingBatchIds,
@@ -1738,24 +1664,7 @@ function InfiniteCanvasPage() {
         dialogNodeId,
     });
     const renderedConnections = showConnections ? displayConnections : [];
-    useEffect(() => {
-        setNodes((current) => {
-            let changed = false;
-            const next = current.map((node) => {
-                const references = mentionReferencesByNodeId.get(node.id);
-                const savedPrompt = node.metadata?.composerContent ?? node.metadata?.prompt;
-                if (!references?.length || !savedPrompt?.includes("@[node:")) return node;
-                const normalizedPrompt = normalizeCanvasNodeMentionTokens(savedPrompt, references);
-                if (normalizedPrompt === savedPrompt) return node;
-                changed = true;
-                return {
-                    ...node,
-                    metadata: node.metadata?.composerContent !== undefined ? { ...node.metadata, composerContent: normalizedPrompt } : { ...node.metadata, prompt: normalizedPrompt },
-                };
-            });
-            return changed ? next : current;
-        });
-    }, [mentionReferencesByNodeId, setNodes]);
+    useCanvasMentionNormalize(mentionReferencesByNodeId, setNodes);
     const dialogNodeCandidate = dialogNodeId ? nodeById.get(dialogNodeId) || null : null;
     const dialogNode = canOpenCanvasNodePromptPanel(dialogNodeCandidate) ? dialogNodeCandidate : null;
     // dragPreview is published on the same pointer-down frame as isNodeDragging.
@@ -1815,41 +1724,10 @@ function InfiniteCanvasPage() {
     }, []);
     const duplicateNodeFromContent = useCallback((node: CanvasNodeData) => duplicateNode(node.id), [duplicateNode]);
     const deleteNodeFromContent = useCallback((node: CanvasNodeData) => deleteNodes(new Set([node.id])), [deleteNodes]);
-    const updateNodeFromContent = useCallback((nodeId: string, update: (node: CanvasNodeData) => CanvasNodeData) => {
-        setNodesState((current) => {
-            const next = updateCanvasNode(current, nodeId, update);
-            nodesRef.current = next;
-            return next;
-        });
-    }, []);
-    const pendingMediaUpdatesRef = useRef(new Map<string, (node: CanvasNodeData) => CanvasNodeData>());
-    const mediaUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const updateMediaNodeFromContent = useCallback((nodeId: string, update: (node: CanvasNodeData) => CanvasNodeData) => {
-        const previous = pendingMediaUpdatesRef.current.get(nodeId);
-        pendingMediaUpdatesRef.current.set(nodeId, previous ? (node) => update(previous(node)) : update);
-        if (mediaUpdateTimerRef.current) return;
-        mediaUpdateTimerRef.current = setTimeout(() => {
-            const updates = pendingMediaUpdatesRef.current;
-            pendingMediaUpdatesRef.current = new Map();
-            mediaUpdateTimerRef.current = null;
-            if (!updates.size) return;
-            setNodesState((current) => {
-                const next = updateCanvasNodes(current, updates);
-                nodesRef.current = next;
-                return next;
-            });
-        }, 120);
-    }, []);
-    useEffect(() => () => {
-        if (toolbarHideTimerRef.current) clearTimeout(toolbarHideTimerRef.current);
-        if (mediaUpdateTimerRef.current) clearTimeout(mediaUpdateTimerRef.current);
-    }, []);
-    const updateNodeMetadataFromContent = useCallback(
-        (nodeId: string, patch: CanvasNodeMetadata) => {
-            updateNodeFromContent(nodeId, (node) => ({ ...node, metadata: { ...node.metadata, ...patch } }));
-        },
-        [updateNodeFromContent],
-    );
+    const { updateNodeFromContent, updateMediaNodeFromContent, updateNodeMetadataFromContent } = useCanvasNodeContent({
+        nodesRef,
+        setNodesState,
+    });
     const canvasNodeActions = useMemo<CanvasNodeActionContextValue>(
         () => ({
             upload: replaceCanvasNodeMedia,
@@ -2398,21 +2276,6 @@ function InfiniteCanvasPage() {
         ],
     );
 
-    const handleCanvasNodeHoverStart = useCallback(
-        (nodeId: string) => {
-            if (nodeDraggingRef.current) return;
-            setHoveredNodeId(nodeId);
-            keepNodeToolbar(nodeId);
-        },
-        [keepNodeToolbar],
-    );
-    const handleCanvasNodeHoverEnd = useCallback(
-        (nodeId: string) => {
-            setHoveredNodeId((current) => (current === nodeId ? null : current));
-            hideNodeToolbar();
-        },
-        [hideNodeToolbar],
-    );
     const retryCanvasNode = useCallback(
         (node: CanvasNodeData) => {
             const plan = canvasNodeRetryPlan(node, nodesRef.current);

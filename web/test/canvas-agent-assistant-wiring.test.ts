@@ -111,7 +111,9 @@ describe("助手前端接线", () => {
     test("付费生成由画布既有生成链路执行，面板不自己调模型", () => {
         expect(project).toContain("runAssistantProposal");
         expect(project).toContain("useCanvasAssistantProposal");
-        expect(proposal).toContain("handleGenerateNodeRef.current(nodeId, mode, prompt, options)");
+        expect(proposal).toContain("const generateForThisRun = handleGenerateNodeRef.current");
+        expect(proposal).toContain("generate: generateForThisRun");
+        expect(proposal).toContain("stillOwns: () => canvasOwnerEpochMatches(owner, projectIdRef.current)");
         expect(proposal).toContain("prepareAssistantProposalSnapshot");
         expect(proposal).toContain("executeAssistantProposal");
         for (const file of [sidebar, composer, turn, hook]) {
