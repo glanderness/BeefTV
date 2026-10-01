@@ -36,6 +36,16 @@ const RETIRED_AGENT_MODULES = [
     "src/lib/canvas/agent-canvas-actions.ts",
     "src/lib/canvas/agent-debug-export.ts",
     "src/lib/canvas/agent-canvas-snapshot.ts",
+    "src/components/canvas/canvas-creative-interaction.tsx",
+    "src/services/creative-agent-controller.ts",
+    "src/services/creative-agent-recovery.ts",
+    "src/components/creation/creative-agent-cards.tsx",
+    "src/components/creation/creative-agent-cards.css",
+    "src/lib/creation/creative-agent-contract.ts",
+    "src/lib/creation/creative-agent-state.ts",
+    "src/lib/creation/creative-agent-tools.ts",
+    "src/lib/creation/creative-plan.ts",
+    "src/lib/creation/creative-scenarios.ts",
 ];
 
 const RETIRED_AGENT_IMPORT_FRAGMENTS = [
@@ -56,6 +66,15 @@ const RETIRED_AGENT_IMPORT_FRAGMENTS = [
     "lib/canvas/agent-panel-layout",
     "lib/canvas/agent-tool-presentation",
     "lib/canvas/agent-canvas-snapshot",
+    "canvas-creative-interaction",
+    "creative-agent-controller",
+    "creative-agent-recovery",
+    "creative-agent-cards",
+    "creative-agent-contract",
+    "creative-agent-state",
+    "creative-agent-tools",
+    "lib/creation/creative-plan",
+    "lib/creation/creative-scenarios",
 ];
 
 /** 这两个模块名字带 agent，但服务的是保留能力，不能跟着退场一起删。 */

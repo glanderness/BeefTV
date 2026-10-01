@@ -14,7 +14,6 @@ import (
 	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/mcp"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/platform"
 	localproject "infinite-canvas/backend/internal/project"
@@ -31,9 +30,6 @@ type Service struct {
 	cancelMu                 sync.Mutex
 	storageMu                sync.Mutex
 	workerRuntimeMu          sync.Mutex
-	agentSchedulerMu         sync.Mutex
-	agentSchedulerCursor     string
-	agentConflictStreak      map[string]int
 	characterTaskMu          sync.Mutex
 	activeCancels            map[string]context.CancelFunc
 	pendingStorage           map[string]int64
@@ -68,8 +64,6 @@ type Service struct {
 	projects                 *localproject.Service
 	canvas                   *canvas.Service
 	beefAPI                  *beefapi.Service
-	mcpOnce                  sync.Once
-	mcpSession               *mcp.Session
 }
 
 const taskWorkerConcurrency = 3
@@ -127,7 +121,7 @@ func newService(repo *repository.Repository, dataDir string, options serviceOpti
 	localResourceStorage := options.mode == serviceModeLocal
 	coordinator := platform.NewLocalCoordinator()
 	pluginRuntime, pluginRuntimeErr := newPluginRuntime(dataDir)
-	service := &Service{repo: repo, dataDir: dataDir, mode: options.mode, activeCancels: make(map[string]context.CancelFunc), agentConflictStreak: make(map[string]int), coordinator: coordinator, localResourceStorage: localResourceStorage, pluginRuntime: pluginRuntime, pluginRuntimeErr: pluginRuntimeErr, workerID: newID(), routeCatalogTTL: 30 * time.Second, routeCatalogMaxStale: 5 * time.Minute, routeHealthBlocked: make(map[string]time.Time)}
+	service := &Service{repo: repo, dataDir: dataDir, mode: options.mode, activeCancels: make(map[string]context.CancelFunc), coordinator: coordinator, localResourceStorage: localResourceStorage, pluginRuntime: pluginRuntime, pluginRuntimeErr: pluginRuntimeErr, workerID: newID(), routeCatalogTTL: 30 * time.Second, routeCatalogMaxStale: 5 * time.Minute, routeHealthBlocked: make(map[string]time.Time)}
 	service.taskTerminalCoordinator = newTaskTerminalCoordinator(service)
 	service.taskRouteExecutor = newTaskRouteExecutor(service)
 	service.taskWorkerCoordinator = newTaskWorkerCoordinator(service)

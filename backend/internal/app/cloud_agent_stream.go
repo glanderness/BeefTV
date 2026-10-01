@@ -1,7 +1,11 @@
 package app
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
+	"time"
 	"unicode/utf8"
 
 	"gorm.io/gorm"
@@ -9,9 +13,12 @@ import (
 	"infinite-canvas/backend/internal/repository"
 )
 
-// Publish upstream deltas to the same durable, revisioned transcript used by
-// Agent SSE/replay. Each flush re-reads state; never overwrite a scheduler's
-// checkpoint with the snapshot from when the model request started.
+// newCloudAgentStreamPublisher is the name provider.go still calls when a
+// canvas_text task carries AgentRequests (art-critique and similar tool
+// generation). If no historical CloudAgentExecution is bound to the task,
+// deltas are discarded — the same no-op as before the old runtime left the
+// product surface. This must not become a task-text alias: that would change
+// live AgentRequests streaming.
 func newCloudAgentStreamPublisher(s *Service, userID, taskID, kind string) *taskTextStreamPublisher {
 	p := newTaskTextStreamPublisher(s, userID, taskID)
 	written := 0
@@ -38,19 +45,10 @@ func newCloudAgentStreamPublisher(s *Service, userID, taskID, kind string) *task
 				return err
 			}
 			err = s.repo.MutateCloudAgent(userID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
-				state, err := cloudAgentDecode(current)
-				if err != nil {
-					return err
-				}
-				if state.ActiveTaskID != taskID || (current.Status != "running" && current.Status != "queued") {
+				if current.Status != "running" && current.Status != "queued" {
 					return nil
 				}
-				messageID := taskID
-				if kind == "reasoning_delta" {
-					messageID += ":reasoning"
-				}
-				state.event(run.ID, kind, map[string]any{"messageId": messageID, "text": delta})
-				return cloudAgentSave(current, &state)
+				return appendCloudAgentStreamDelta(current, taskID, kind, delta)
 			})
 			if errors.Is(err, repository.ErrCreationConflict) {
 				continue
@@ -63,4 +61,57 @@ func newCloudAgentStreamPublisher(s *Service, userID, taskID, kind string) *task
 		return repository.ErrCreationConflict
 	}
 	return p
+}
+
+type cloudAgentStreamEvent struct {
+	EventID   string         `json:"eventId"`
+	RunID     string         `json:"runId"`
+	Seq       int            `json:"seq"`
+	Type      string         `json:"type"`
+	Payload   map[string]any `json:"payload"`
+	CreatedAt time.Time      `json:"createdAt"`
+}
+
+func appendCloudAgentStreamDelta(run *model.CloudAgentExecution, taskID, kind, delta string) error {
+	root := map[string]json.RawMessage{}
+	if strings.TrimSpace(run.StateJSON) != "" {
+		if err := json.Unmarshal([]byte(run.StateJSON), &root); err != nil {
+			return err
+		}
+	}
+	var activeTaskID string
+	if raw, ok := root["activeTaskId"]; ok {
+		if err := json.Unmarshal(raw, &activeTaskID); err != nil {
+			return err
+		}
+	}
+	if activeTaskID != taskID {
+		return nil
+	}
+	var events []cloudAgentStreamEvent
+	if raw, ok := root["events"]; ok && len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &events); err != nil {
+			return err
+		}
+	}
+	messageID := taskID
+	if kind == "reasoning_delta" {
+		messageID += ":reasoning"
+	}
+	seq := len(events) + 1
+	events = append(events, cloudAgentStreamEvent{
+		EventID: fmt.Sprintf("%s:%d", run.ID, seq), RunID: run.ID, Seq: seq, Type: kind,
+		Payload: map[string]any{"messageId": messageID, "text": delta}, CreatedAt: time.Now(),
+	})
+	encoded, err := json.Marshal(events)
+	if err != nil {
+		return err
+	}
+	root["events"] = encoded
+	next, err := json.Marshal(root)
+	if err != nil {
+		return err
+	}
+	run.StateJSON = string(next)
+	return nil
 }
