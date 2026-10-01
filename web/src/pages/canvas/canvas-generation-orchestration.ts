@@ -1,0 +1,169 @@
+import type { Dispatch, SetStateAction } from "react";
+import { nanoid } from "nanoid";
+
+import { getNodeSpec } from "@/constant/canvas";
+import { applyGenerationTaskResultToNodes, generationTaskMode } from "@/lib/canvas/canvas-generation-task-sync";
+import { failedImageBatchChildren, markImageBatchRetrying, reconcileImageBatchRoot, restoreUnsubmittedImageBatchChild } from "@/lib/canvas/canvas-image-batch-retry";
+import { bindMissingCanvasResourceAssets, canvasNodesMissingResourceAssetBinding } from "@/lib/canvas/canvas-node-asset";
+import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
+import { getGenerationCount } from "@/lib/canvas/canvas-project-generation";
+import { shouldBlockAutomaticRetry } from "@/lib/generation-error";
+import type { GenerationTask } from "@/services/api/task-center";
+import type { Asset } from "@/stores/use-asset-store";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Position } from "@/types/canvas";
+
+const NODE_STATUS_SUCCESS = "success" as const;
+
+export type CanvasNodeRetryPlan =
+    | { kind: "depth" }
+    | { kind: "script"; prompt: string }
+    | { kind: "script-empty" }
+    | { kind: "image-batch-root"; children: CanvasNodeData[] }
+    | { kind: "image-batch-empty" }
+    | { kind: "image-batch-child"; rootId: string }
+    | { kind: "single" };
+
+export function canvasNodeRetryPlan(node: CanvasNodeData, nodes: CanvasNodeData[]): CanvasNodeRetryPlan {
+    if (node.metadata?.depthSourceNodeId) return { kind: "depth" };
+    if (node.type === CanvasNodeType.Script) {
+        const prompt = (node.metadata?.composerContent || node.metadata?.prompt || "").trim();
+        return prompt ? { kind: "script", prompt } : { kind: "script-empty" };
+    }
+    if (node.type === CanvasNodeType.Image && node.metadata?.isBatchRoot) {
+        const children = failedImageBatchChildren(node, nodes);
+        return children.length ? { kind: "image-batch-root", children } : { kind: "image-batch-empty" };
+    }
+    if (node.type === CanvasNodeType.Image && node.metadata?.batchRootId) {
+        return { kind: "image-batch-child", rootId: node.metadata.batchRootId };
+    }
+    return { kind: "single" };
+}
+
+export function selectRetryableImageBatchChildren(children: CanvasNodeData[]) {
+    const retryable = children.filter((child) => !shouldBlockAutomaticRetry({ code: child.metadata?.generationErrorCode || child.metadata?.taskErrorCode, message: child.metadata?.errorDetails }, child.metadata?.taskStage));
+    return { retryable, blocked: retryable.length < children.length };
+}
+
+export function reconcileImageBatchRootNodes(rootId: string, nodes: CanvasNodeData[]) {
+    const root = nodes.find((item) => item.id === rootId);
+    if (!root) return nodes;
+    const reconciled = reconcileImageBatchRoot(root, nodes);
+    return nodes.map((item) => (item.id === root.id ? reconciled : item));
+}
+
+export async function runImageBatchChildRetry(input: {
+    rootId: string;
+    children: CanvasNodeData[];
+    retry: (child: CanvasNodeData) => Promise<unknown>;
+    setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
+    reconcile: (rootId: string) => void;
+}) {
+    const childIds = input.children.map((child) => child.id);
+    input.setNodes((current) => markImageBatchRetrying(input.rootId, childIds, current));
+    await Promise.allSettled(
+        input.children.map(async (child) => {
+            await input.retry(child);
+            input.setNodes((current) => current.map((item) => (item.id === child.id ? restoreUnsubmittedImageBatchChild(item, child) : item)));
+        }),
+    );
+    input.reconcile(input.rootId);
+}
+
+export type ImageNodeFromTextConfig = {
+    imageModel?: string;
+    model?: string;
+    size?: string;
+    quality?: string;
+    transparentBackground?: string;
+    canvasImageCount?: string;
+    count?: string;
+};
+
+export type ImageNodeFromTextResult =
+    | { ok: false; reason: "empty-prompt" | "missing-source" }
+    | { ok: true; imageNode: CanvasNodeData; connection: CanvasConnection; nextNodes: CanvasNodeData[]; nextConnections: CanvasConnection[] };
+
+export function createImageNodeFromTextSource(input: {
+    sourceId: string;
+    prompt: string;
+    nodes: CanvasNodeData[];
+    connections: CanvasConnection[];
+    config: ImageNodeFromTextConfig;
+    connectionId?: string;
+}): ImageNodeFromTextResult {
+    const prompt = input.prompt.trim();
+    if (!prompt) return { ok: false, reason: "empty-prompt" };
+    const sourceNode = input.nodes.find((item) => item.id === input.sourceId);
+    if (!sourceNode) return { ok: false, reason: "missing-source" };
+    const nodeSize = getNodeSpec(CanvasNodeType.Image);
+    const imageNode = createCanvasNode(
+        CanvasNodeType.Image,
+        {
+            x: sourceNode.position.x + sourceNode.width + 96 + nodeSize.width / 2,
+            y: sourceNode.position.y + sourceNode.height / 2,
+        },
+        {
+            prompt: "@文本1",
+            composerContent: "@文本1",
+            model: input.config.imageModel || input.config.model,
+            size: input.config.size,
+            quality: input.config.quality,
+            transparentBackground: input.config.transparentBackground,
+            count: getGenerationCount(input.config.canvasImageCount || input.config.count || ""),
+        },
+    );
+    imageNode.title = "图片生成";
+    const connection = { id: input.connectionId || nanoid(), fromNodeId: sourceNode.id, toNodeId: imageNode.id };
+    const nextNodes = input.nodes.map((item) => (item.id === sourceNode.id ? { ...item, metadata: { ...item.metadata, content: prompt, richText: undefined, prompt, status: NODE_STATUS_SUCCESS } } : item)).concat(imageNode);
+    return { ok: true, imageNode, connection, nextNodes, nextConnections: [...input.connections, connection] };
+}
+
+export function createInsertingHistoryGate() {
+    let busy = false;
+    return {
+        tryEnter() {
+            if (busy) return false;
+            busy = true;
+            return true;
+        },
+        exit() {
+            busy = false;
+        },
+    };
+}
+
+export async function insertCanvasGenerationHistoryTask(input: {
+    task: GenerationTask;
+    projectId: string;
+    domainProjectId?: string;
+    center: Position;
+    nodes: CanvasNodeData[];
+    assets: Asset[];
+    persist: (nodes: CanvasNodeData[]) => Promise<void>;
+    ensureAsset: (node: CanvasNodeData) => Promise<{ assetId: string }>;
+    applyResult?: typeof applyGenerationTaskResultToNodes;
+}) {
+    const mode = generationTaskMode(input.task);
+    const nodeType = mode === "video" ? CanvasNodeType.Video : mode === "audio" ? CanvasNodeType.Audio : CanvasNodeType.Image;
+    const node = createCanvasNode(nodeType, input.center, {
+        prompt: input.task.prompt,
+        composerContent: input.task.prompt,
+        status: "loading",
+        taskId: input.task.id,
+        taskStatus: input.task.status,
+        taskStage: input.task.stage,
+        taskProvider: input.task.provider,
+        taskCreatedAt: input.task.createdAt,
+        taskCompletedAt: input.task.completedAt,
+        model: input.task.model,
+    });
+    node.title = mode === "video" ? "历史视频" : mode === "audio" ? "历史音频" : "历史图片";
+    const applied = await (input.applyResult || applyGenerationTaskResultToNodes)([node], input.task, node.id);
+    if (!applied.node) throw new Error("生成结果无法定位到画布节点");
+    const nextNodes = await bindMissingCanvasResourceAssets([...input.nodes, applied.node], input.assets, input.ensureAsset);
+    if (canvasNodesMissingResourceAssetBinding(nextNodes).length) {
+        throw new Error("生成结果尚未进入素材库，无法插入画布");
+    }
+    await input.persist(nextNodes);
+    return { node: applied.node, nextNodes };
+}

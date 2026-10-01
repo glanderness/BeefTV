@@ -9,6 +9,8 @@ import type { GenerationTask } from "../src/services/api/task-center";
 const picker = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-generation-history-picker.tsx"), "utf8");
 const definitions = readFileSync(resolve(import.meta.dir, "../src/lib/canvas/tool-registry/definitions/add-node-menu-tools.tsx"), "utf8");
 const project = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/project.tsx"), "utf8");
+const orchestration = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/canvas-generation-orchestration.ts"), "utf8");
+const orchestrationHook = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/use-canvas-generation-orchestration.ts"), "utf8");
 const localHistory = readFileSync(resolve(import.meta.dir, "../src/lib/local-task-history.ts"), "utf8");
 const taskSync = readFileSync(resolve(import.meta.dir, "../src/lib/canvas/canvas-generation-task-sync.ts"), "utf8");
 
@@ -24,12 +26,12 @@ describe("LibTV generation history picker", () => {
     test("is exposed from the add-node menu and applies the result to a canvas node", () => {
         expect(definitions).toContain('id: "generation-history"');
         expect(definitions).toContain("onOpenGenerationHistory");
-        expect(project).toContain("applyGenerationTaskResultToNodes");
+        expect(orchestration).toContain("applyGenerationTaskResultToNodes");
         expect(project).toContain("insertGenerationHistoryTask");
         expect(localHistory).toContain("localResultJson");
         expect(localHistory).toContain("resultJson");
         expect(localHistory).toContain("storageKey");
-        expect(project).toContain("setGenerationHistoryOpen(false)");
+        expect(orchestrationHook).toContain("setGenerationHistoryOpen(false)");
         expect(taskSync).toContain("reuseGeneratedMediaStorageKey");
         expect(taskSync).toContain("reuseAudioKey");
         expect(taskSync).toContain("reuseVideoKey");
@@ -37,20 +39,27 @@ describe("LibTV generation history picker", () => {
     });
 
     test("persists the inserted node to the local canvas document before closing success", () => {
-        const insertStart = project.indexOf("const insertGenerationHistoryTask");
-        const insertEnd = project.indexOf("handleReplaceNodeReference", insertStart);
-        const insert = project.slice(insertStart, insertEnd);
-        expect(insert).toContain("bindMissingCanvasResourceAssets");
-        expect(insert).toContain("[...nodesRef.current, applied.node]");
-        expect(insert).toContain("canvasNodesMissingResourceAssetBinding");
+        const helperStart = orchestration.indexOf("export async function insertCanvasGenerationHistoryTask");
+        const helper = orchestration.slice(helperStart);
+        expect(helper).toContain("bindMissingCanvasResourceAssets");
+        expect(helper).toContain("[...input.nodes, applied.node]");
+        expect(helper).toContain("canvasNodesMissingResourceAssetBinding");
+        expect(helper).toContain("await input.persist(nextNodes)");
+        expect(helper.indexOf("await input.persist(nextNodes)")).toBeLessThan(helper.indexOf("return { node: applied.node, nextNodes }"));
+
+        const hookStart = orchestrationHook.indexOf("const insertGenerationHistoryTask = useCallback");
+        const hookEnd = orchestrationHook.indexOf("const reconcileImageBatchRootNode", hookStart);
+        const insert = orchestrationHook.slice(hookStart, hookEnd);
+        expect(insert).toContain("insertCanvasGenerationHistoryTask");
+        expect(insert).toContain("insertingHistory.current.tryEnter()");
+        expect(orchestrationHook).toContain("createInsertingHistoryGate");
+        expect(insert).toContain("persistCanvasDocument(projectId, { nodes: persisted })");
         expect(insert).toContain("ensureCanvasNodeAsset");
-        expect(insert).toContain("insertingHistoryRef");
-        expect(insert).toContain("await persistCanvasDocument(projectId, { nodes: nextNodes })");
-        expect(insert.indexOf("await persistCanvasDocument")).toBeGreaterThan(-1);
-        expect(insert.indexOf("await persistCanvasDocument")).toBeLessThan(insert.indexOf("setGenerationHistoryOpen(false)"));
-        expect(insert.indexOf("await persistCanvasDocument")).toBeLessThan(insert.indexOf('message.success("已从生成历史插入到画布")'));
+        expect(insert.indexOf("insertCanvasGenerationHistoryTask")).toBeLessThan(insert.indexOf("setGenerationHistoryOpen(false)"));
+        expect(insert.indexOf("insertCanvasGenerationHistoryTask")).toBeLessThan(insert.indexOf('message.success("已从生成历史插入到画布")'));
         expect(insert.indexOf("flushCanvasStorePersistence")).toBe(-1);
         expect(insert.indexOf("saveCanvasProject")).toBe(-1);
+        expect(project).toContain("insertGenerationHistoryTask");
     });
 
     test("does not use audio or video file URLs as card image sources", () => {

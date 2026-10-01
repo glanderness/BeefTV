@@ -10,6 +10,7 @@ const composer = read("src/pages/canvas/canvas-assistant-composer.tsx");
 const turn = read("src/pages/canvas/canvas-assistant-turn.tsx");
 const copy = read("src/pages/canvas/canvas-assistant-copy.ts");
 const project = read("src/pages/canvas/project.tsx");
+const proposal = read("src/pages/canvas/use-canvas-assistant-proposal.ts");
 const syncStatus = read("src/pages/canvas/canvas-sync-status.tsx");
 
 /** 粗略取出源码里的字符串字面量与模板字符串，用于检查渲染文案。 */
@@ -109,7 +110,10 @@ describe("助手前端接线", () => {
 
     test("付费生成由画布既有生成链路执行，面板不自己调模型", () => {
         expect(project).toContain("runAssistantProposal");
-        expect(project).toContain("handleGenerateNode(nodeId, mode,");
+        expect(project).toContain("useCanvasAssistantProposal");
+        expect(proposal).toContain("handleGenerateNodeRef.current(nodeId, mode, prompt, options)");
+        expect(proposal).toContain("prepareAssistantProposalSnapshot");
+        expect(proposal).toContain("executeAssistantProposal");
         for (const file of [sidebar, composer, turn, hook]) {
             expect(file).not.toContain("services/api/image");
             expect(file).not.toContain("channel-transport");

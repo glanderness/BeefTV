@@ -12,6 +12,7 @@ const dock = readFileSync(resolve(import.meta.dir, "../src/components/canvas/dir
 const viewport = readFileSync(resolve(import.meta.dir, "../src/components/canvas/director/director-viewport.tsx"), "utf8");
 const hook = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/use-canvas-director.ts"), "utf8");
 const project = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/project.tsx"), "utf8");
+const editorDialogs = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/canvas-project-editor-dialogs.tsx"), "utf8");
 const modal = readFileSync(resolve(import.meta.dir, "../src/components/canvas/director/canvas-director-template-modal.tsx"), "utf8");
 const store = readFileSync(resolve(import.meta.dir, "../src/stores/canvas/use-director-workbench-store.ts"), "utf8");
 const styles = readFileSync(resolve(import.meta.dir, "../src/styles/globals.css"), "utf8");
@@ -44,9 +45,11 @@ describe("新建场景必须显式选模板", () => {
     });
 
     test("选中模板后带着 position 建场景", () => {
-        const element = slice(project, "<CanvasDirectorTemplateModal", "/>");
-        expect(element).toContain("open={Boolean(directorTemplateRequest)}");
-        expect(element).toContain("onSelect={(templateId) => createDirectorShot(templateId, directorTemplateRequest?.position)}");
+        expect(project).toContain("open: Boolean(directorTemplateRequest)");
+        expect(project).toContain("onSelect: (templateId) => createDirectorShot(templateId, directorTemplateRequest?.position)");
+        const element = slice(editorDialogs, "<CanvasDirectorTemplateModal", "/>");
+        expect(element).toContain("open={directorTemplate.open}");
+        expect(element).toContain("onSelect={directorTemplate.onSelect}");
     });
 
     test("模板弹窗把 5 个模板全列出来，没有「默认」快捷项", () => {

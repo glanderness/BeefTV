@@ -370,6 +370,8 @@ test("Create forwards owned result assets through one new canvas and the project
     const createPage = readFileSync(resolve(import.meta.dir, "../src/pages/create/index.tsx"), "utf8");
     const canvasIndex = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/index.tsx"), "utf8");
     const canvasProject = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/project.tsx"), "utf8");
+    const resourceHook = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/use-canvas-resource-handoff.ts"), "utf8");
+    const handoffPlan = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/canvas-resource-handoff-plan.ts"), "utf8");
 
     expect(workspace).toContain("onContinueCanvas(resultAssetIds)");
     expect(createPage).toContain("continueCreationConversationOnCanvas(source)");
@@ -379,11 +381,12 @@ test("Create forwards owned result assets through one new canvas and the project
     expect(canvasIndex).toContain('const handoffMode = mode === "handoff"');
     expect(canvasIndex).toContain('mode !== "new" && mode !== "recent" && mode !== "handoff"');
     expect(canvasIndex).toContain('if (remoteMode && syncError && !isExpectedLocalOnlySyncError(syncError))');
-    expect(canvasProject).toContain('import { canvasAssetHandoffAttempt, finalizeCanvasAssetHandoff, uninsertedCanvasAssetHandoffPayloads } from "@/lib/canvas/canvas-asset-handoff"');
-    expect(canvasProject).toContain('if (!projectLoaded || !assetsHydrated || searchParams.get("mode") !== "handoff") return');
-    expect(canvasProject).toContain("const pendingPayloads = uninsertedCanvasAssetHandoffPayloads(nodesRef.current, payloads)");
-    expect(canvasProject).toContain("await flushCanvasStorePersistence()");
-    expect(canvasProject.indexOf("await flushCanvasStorePersistence()")).toBeLessThan(canvasProject.indexOf("setSearchParams(finalized.searchParams"));
+    expect(canvasProject).toContain("useCanvasResourceHandoff");
+    expect(handoffPlan).toContain('if (!input.projectLoaded || !input.assetsHydrated || input.mode !== "handoff") return { kind: "idle" }');
+    expect(handoffPlan).toContain("uninsertedCanvasAssetHandoffPayloads(input.nodes, attempt.payloads)");
+    expect(resourceHook).toContain("finalizeCanvasAssetHandoff");
+    expect(resourceHook).toContain("await flushCanvasStorePersistence()");
+    expect(resourceHook.indexOf("await flushCanvasStorePersistence()")).toBeLessThan(resourceHook.indexOf("setSearchParams(finalized.searchParams"));
 });
 
 test("Create image batch retry preserves per-index lineage under one attempt group", async () => {
