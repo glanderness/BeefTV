@@ -119,8 +119,13 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 			}
 			models := make([]beefapi.CatalogModel, 0, len(items))
 			for _, item := range items {
+				version := ""
+				if item.VideoCapabilitiesVersion != nil {
+					version = *item.VideoCapabilitiesVersion
+				}
 				models = append(models, beefapi.CatalogModel{
 					ID: item.ID, DisplayName: item.DisplayName, ModelType: item.ModelType, SupportedEndpointTypes: item.SupportedEndpointTypes,
+					VideoCapabilities: item.VideoCapabilities, VideoCapabilitiesVersion: version,
 				})
 			}
 			return models, nil

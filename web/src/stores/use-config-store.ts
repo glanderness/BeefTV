@@ -374,6 +374,7 @@ export type ModelChannel = {
         capability: ModelCapability;
         protocol?: ModelProtocol;
         capabilityConfig?: ModelCapabilityConfig;
+        videoCapabilitiesVersion?: string;
         logicalModelId?: string;
         logicalCapabilitySpec?: CapabilitySpec;
         logicalCapabilityProfiles?: CapabilitySpec[];
@@ -754,8 +755,9 @@ function beefApiVideoProtocol(model: string, current?: ModelProtocol): ModelProt
     return (beefAPIVideoContract(model)?.protocol as ModelProtocol | undefined) || current || "newapi-channel-2";
 }
 
-function beefApiVideoCapabilityConfig(model: string, protocol: ModelProtocol, current?: ModelCapabilityConfig): ModelCapabilityConfig | undefined {
-    const profile = beefApiSeedanceCapabilityConfig(model, current);
+function beefApiVideoCapabilityConfig(model: string, protocol: ModelProtocol, current?: ModelCapabilityConfig, sourced = false): ModelCapabilityConfig | undefined {
+    const profile = beefApiSeedanceCapabilityConfig(model, current, sourced);
+    if (sourced) return profile;
     const contract = beefAPIVideoContract(model);
     const limits = contract?.maxReferences;
     if (!limits) return profile;
@@ -768,7 +770,8 @@ function beefApiVideoCapabilityConfig(model: string, protocol: ModelProtocol, cu
     } };
 }
 
-function beefApiSeedanceCapabilityConfig(model: string, current?: ModelCapabilityConfig): ModelCapabilityConfig | undefined {
+function beefApiSeedanceCapabilityConfig(model: string, current?: ModelCapabilityConfig, sourced = false): ModelCapabilityConfig | undefined {
+    if (sourced) return current;
     if (!/^seedance-2\.(?:0|5)(?:-|$)/i.test(model)) return current;
     const video = current?.video;
     const refs = video?.references;
@@ -779,10 +782,13 @@ function beefApiSeedanceCapabilityConfig(model: string, current?: ModelCapabilit
         refs.maxVideoBytes === 200 * 1024 * 1024 && refs.maxAudioBytes === 15 * 1024 * 1024 &&
         refs.maxVideoDurationSeconds === 0 && refs.maxAudioDurationSeconds === 0;
     const defaults = defaultModelCapabilityConfig("newapi", model);
-    if (!current) return defaults;
-    if (!legacy) return current;
+    if (!current || !video) return defaults;
+    // The built-in BeefAPI Seedance contract supports the audio switch even
+    // when an older saved profile advertised no control. Keep its default.
+    const generateAudio = { ...video!.generateAudio, supported: true };
+    if (!legacy) return { ...current, video: { ...video!, generateAudio } };
     const next = defaults.video!;
-    return { ...current, video: { ...video!, operations: next.operations, references: { ...refs!,
+    return { ...current, video: { ...video!, generateAudio, operations: next.operations, references: { ...refs!,
         maxImages: next.references.maxImages,
         maxVideos: next.references.maxVideos, maxAudios: next.references.maxAudios,
         maxVideoDurationSeconds: next.references.maxVideoDurationSeconds,
@@ -841,7 +847,7 @@ function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
             model,
             capability: "video",
             protocol,
-            capabilityConfig: beefApiVideoCapabilityConfig(model, protocol, current?.capabilityConfig),
+            capabilityConfig: beefApiVideoCapabilityConfig(model, protocol, current?.capabilityConfig, current?.videoCapabilitiesVersion !== undefined),
         });
     }
     return { ...channel, models, modelProfiles: Array.from(existing.values()) };

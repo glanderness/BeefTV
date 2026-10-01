@@ -19952,12 +19952,12 @@ html:not(.dark) .creation-home .creation-user-message-copy-wrap { box-shadow: 0 
 
 .dark .app-user-workspace,
 .dark .app-user-overlays {
-    --user-page-bg: #151517;
-    --user-surface: #1c1c1f;
-    --user-surface-raised: #222226;
-    --user-surface-muted: #26262a;
-    --user-surface-hover: #303036;
-    --user-control-pressed: #3a3a40;
+    --user-page-bg: #101010;
+    --user-surface: #161616;
+    --user-surface-raised: #1b1b1b;
+    --user-surface-muted: #202020;
+    --user-surface-hover: #242424;
+    --user-control-pressed: #303030;
     --user-border: rgba(255, 255, 255, .09);
     --user-border-strong: rgba(255, 255, 255, .16);
     --user-ink: #f3f3f5;

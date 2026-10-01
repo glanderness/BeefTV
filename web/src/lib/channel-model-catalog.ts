@@ -1,4 +1,4 @@
-import { defaultModelCapabilityConfig, type ModelCapabilityConfig } from "@/lib/model-capabilities";
+import { defaultModelCapabilityConfig, sanitizeServerVideoCapability, type ModelCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { modelProtocolCapability, protocolForModelCatalog, type ModelProtocol } from "@/lib/model-protocols";
 import type { ModelChannel } from "@/stores/use-config-store";
 
@@ -22,6 +22,8 @@ export type ChannelModelCatalogItem = {
     supportsImages?: boolean;
     minImages?: number;
     maxImages?: number;
+    videoCapabilities?: VideoCapabilityConfig;
+    videoCapabilitiesVersion?: string;
 };
 
 type ChannelModelProfile = NonNullable<ModelChannel["modelProfiles"]>[number];
@@ -58,6 +60,7 @@ export function sanitizeChannelModelCatalogItem(value: unknown): ChannelModelCat
         supportsImages: typeof record.supportsImages === "boolean" ? record.supportsImages : undefined,
         minImages: nonNegativeInteger(record.minImages),
         maxImages: nonNegativeInteger(record.maxImages),
+        ...catalogVideoFields(record),
     });
 }
 
@@ -136,18 +139,25 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
             const protocol = inferredProtocol || existing.protocol;
             const capability = inferredCapability || existing.capability;
             const capabilityChanged = capability !== existing.capability;
-            const patchCapabilityConfig = hasCatalogCapabilityConfig(item) && (capability === "image" || capability === "video");
-            const capabilityConfig = patchCapabilityConfig
-                ? catalogCapabilityConfig(item, protocol || channel.interfaceType, capability, capabilityChanged ? undefined : existing.capabilityConfig, false)
-                : capabilityChanged
-                  ? undefined
-                  : existing.capabilityConfig;
+            const sourcedVideo = isBeefAPICatalogChannel(channel) && capability === "video" ? sanitizeServerVideoCapability(item.videoCapabilities) : null;
+            const keepSourced = isBeefAPICatalogChannel(channel) && existing.videoCapabilitiesVersion !== undefined && !sourcedVideo;
+            const patchCapabilityConfig = !keepSourced && !sourcedVideo && hasCatalogCapabilityConfig(item) && (capability === "image" || capability === "video");
+            const capabilityConfig = sourcedVideo
+                ? { version: 1, video: sourcedVideo }
+                : keepSourced
+                  ? existing.capabilityConfig
+                  : patchCapabilityConfig
+                    ? catalogCapabilityConfig(item, protocol || channel.interfaceType, capability, capabilityChanged ? undefined : existing.capabilityConfig, false)
+                    : capabilityChanged
+                      ? undefined
+                      : existing.capabilityConfig;
             next.push({
                 ...existing,
                 ...(item.displayName ? { displayName: item.displayName } : {}),
                 capability,
                 ...(protocol ? { protocol } : {}),
-                ...(patchCapabilityConfig || capabilityChanged ? { capabilityConfig } : {}),
+                ...(patchCapabilityConfig || capabilityChanged || sourcedVideo || keepSourced ? { capabilityConfig } : {}),
+                ...(sourcedVideo ? { videoCapabilitiesVersion: item.videoCapabilitiesVersion ?? "" } : {}),
             });
             continue;
         }
@@ -155,13 +165,19 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
         const capability = inferredCapability || modelProtocolCapability(channel.interfaceType);
         const protocol = inferredProtocol || protocolTemplateForNewCatalogModel(capability, channel.interfaceType);
         if (!protocol || !capability) continue;
-        const capabilityConfig = capability === "image" || capability === "video" ? catalogCapabilityConfig(item, protocol, capability, undefined, true) : undefined;
+        const sourcedVideo = isBeefAPICatalogChannel(channel) && capability === "video" ? sanitizeServerVideoCapability(item.videoCapabilities) : null;
+        const capabilityConfig = sourcedVideo
+            ? { version: 1, video: sourcedVideo }
+            : capability === "image" || capability === "video"
+              ? catalogCapabilityConfig(item, protocol, capability, undefined, true)
+              : undefined;
         next.push({
             model: item.id,
             ...(item.displayName ? { displayName: item.displayName } : {}),
             capability,
             protocol,
             ...(capabilityConfig ? { capabilityConfig } : {}),
+            ...(sourcedVideo ? { videoCapabilitiesVersion: item.videoCapabilitiesVersion ?? "" } : {}),
         });
     }
     return next;
@@ -251,6 +267,16 @@ function compactCatalogItem(item: ChannelModelCatalogItem): ChannelModelCatalogI
         ...(item.supportsImages !== undefined ? { supportsImages: item.supportsImages } : {}),
         ...(item.minImages !== undefined ? { minImages: item.minImages } : {}),
         ...(item.maxImages !== undefined ? { maxImages: item.maxImages } : {}),
+        ...(item.videoCapabilities ? { videoCapabilities: item.videoCapabilities, videoCapabilitiesVersion: item.videoCapabilitiesVersion ?? "" } : {}),
+    };
+}
+
+function catalogVideoFields(record: Record<string, unknown>): Pick<ChannelModelCatalogItem, "videoCapabilities" | "videoCapabilitiesVersion"> {
+    const video = sanitizeServerVideoCapability(record.videoCapabilities);
+    if (!video) return {};
+    return {
+        videoCapabilities: video,
+        videoCapabilitiesVersion: typeof record.videoCapabilitiesVersion === "string" ? record.videoCapabilitiesVersion.trim() : "",
     };
 }
 

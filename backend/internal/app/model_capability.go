@@ -317,6 +317,9 @@ func DefaultModelCapabilityConfigForModel(protocol string, modelName string) *Mo
 		video = applyModelSpecificVideoCapability(video, protocol, modelName)
 	}
 	if isSeedance2Family(protocol, modelName) {
+		if model.ChannelInterfaceType(protocol) == model.ChannelInterfaceNewAPIVideo {
+			video.GenerateAudio = VideoBooleanConfig{Supported: true, Default: true}
+		}
 		video.References = overlayOfficialSeedance2References(video.References, isSeedance25Model(modelName))
 		if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(protocol)) {
 			video.References.MinAudioDuration = 2
@@ -888,6 +891,16 @@ func validateVideoTask(profile *VideoCapabilityConfig, input canvasGenerationInp
 		return err
 	}
 	if err := validateVideoReferenceMedia(profile, input); err != nil {
+		return err
+	}
+	return validateVideoTaskParameters(profile, input)
+}
+
+func validateVideoTaskParameters(profile *VideoCapabilityConfig, input canvasGenerationInput) error {
+	if profile == nil {
+		return BadAuthRequest("当前视频模型能力参数无效")
+	}
+	if err := validateModelPromptLength("视频", input.Prompt, profile.References.PromptMaxChars); err != nil {
 		return err
 	}
 	seconds, err := strconv.Atoi(strings.TrimSpace(input.Config.VideoSeconds))

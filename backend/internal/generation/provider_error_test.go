@@ -16,6 +16,9 @@ import (
 func TestLocalDatabaseFailuresNeverBlameModelParameters(t *testing.T) {
 	for _, message := range []string{"table tasks has no column named failure_diagnostics", "no such column: failure_diagnostics", "no such table: tasks", "database is locked", "attempt to write a readonly database", "disk I/O error", "UNIQUE constraint failed: tasks.id", "NOT NULL constraint failed: tasks.type", "CHECK constraint failed: task_status", "FOREIGN KEY constraint failed"} {
 		for _, failure := range []generation.Failure{generation.ClassifyText(message), generation.ClassifyAppError(400, 400, "invalid_argument", message), generation.ClassifyHTTP(500, "", message), generation.ClassifyText(fmt.Sprintf(`{"error":{"code":"invalid_argument","message":%q}}`, message))} {
+			if strings.Contains(failure.UserMessage(), "尚未提交") {
+				t.Errorf("raw database error cannot establish submission state: %s", failure.UserMessage())
+			}
 			if string(failure.Category) != "local_storage" || failure.Retryable || !failure.BlocksAutomaticRetry() || !strings.Contains(failure.UserMessage(), "数据库") || strings.Contains(failure.UserMessage(), "failure_diagnostics") {
 				t.Errorf("%q: %+v; display=%s", message, failure, failure.UserMessage())
 			}
@@ -37,6 +40,25 @@ func TestLocalDatabaseClassificationPreservesProviderParameters(t *testing.T) {
 	failure := generation.ClassifyAppError(500, 500, "local_storage", "")
 	if failure.Category != generation.CategoryLocalStorage || generation.ClassifyText(failure.UserMessage()).Category != generation.CategoryLocalStorage {
 		t.Errorf("stable reason or persisted copy lost: %+v", failure)
+	}
+}
+
+func TestTypedLocalStorageFailurePreservesPreSubmissionEvidence(t *testing.T) {
+	for _, failure := range []generation.Failure{generation.ClassifyAppError(500, 500, "local_storage_failed", ""), generation.ClassifyText(`{"error":{"code":"local_storage_failed","message":"opaque"}}`)} {
+		for _, got := range []generation.Failure{failure, generation.ClassifyText(failure.UserMessage())} {
+			if got.Category != generation.CategoryLocalStorage || !strings.Contains(got.UserMessage(), "尚未提交生成") || !got.BlocksAutomaticRetry() {
+				t.Errorf("typed pre-submission evidence lost: %+v", got)
+			}
+		}
+	}
+}
+
+func TestWindowsSocketFailureIsActionable(t *testing.T) {
+	for _, message := range []string{"An existing connection was forcibly closed by the remote host.", "An established connection was aborted by the software in your host machine."} {
+		failure := generation.ClassifyError(errors.New(`Get "https://private.example/task?token=secret": read tcp: wsarecv: ` + message))
+		if failure.Category != generation.CategoryNetwork || strings.Contains(failure.UserMessage(), "wsarecv") || strings.Contains(failure.UserMessage(), "secret") {
+			t.Fatalf("failure=%+v message=%s", failure, failure.UserMessage())
+		}
 	}
 }
 
@@ -294,8 +316,8 @@ func TestBeefAPIErrorCodeInventory(t *testing.T) {
 	if err := json.Unmarshal(data, &inventory); err != nil {
 		t.Fatal(err)
 	}
-	if len(inventory) != 50 {
-		t.Fatalf("BeefAPI error code inventory has %d entries, want 50", len(inventory))
+	if len(inventory) != 51 {
+		t.Fatalf("BeefAPI error code inventory has %d entries, want 51", len(inventory))
 	}
 	for code, category := range inventory {
 		t.Run(code, func(t *testing.T) {

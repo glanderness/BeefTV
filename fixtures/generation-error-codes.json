@@ -1,4 +1,5 @@
 {
+  "local_storage_failed": "local_storage",
   "ContentSecurityDetectionError": "provider_unavailable",
   "AccountOverdueError": "quota_upstream",
   "OperationDenied.ServiceOverdue": "quota_upstream",

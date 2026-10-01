@@ -13,7 +13,7 @@ import { AssetLibraryCard, AssetLibraryCardMedia } from "@/components/assets/ass
 import { Switch } from "@/components/ui/base/switch";
 import { ownedResourceIdFromMediaRef } from "@/services/api/resources";
 import { downloadOwnedOrBrowserMedia, reportOwnedMediaSave } from "@/services/desktop-media-save";
-import { sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
+import { mediaFileExtension, sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
 import { cn } from "@/lib/utils";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 
@@ -519,7 +519,7 @@ export default function AssetsPage() {
     const downloadImage = (asset: LibraryAsset) => {
         if (asset.kind !== "image" && asset.kind !== "video" && asset.kind !== "audio" && asset.kind !== "model") return;
         const url = asset.kind === "image" ? asset.data.dataUrl : asset.data.url;
-        const extension = asset.kind === "model" ? asset.data.fileName.split(".").pop() || "glb" : asset.data.mimeType.split("/")[1] || "png";
+        const extension = asset.kind === "model" ? asset.data.fileName.split(".").pop() || "glb" : mediaFileExtension(asset.data.mimeType, url) || "bin";
         void reportOwnedMediaSave(message, downloadOwnedOrBrowserMedia({
             fileName: sanitizeDownloadFileName(`${asset.title || "素材"}.${extension}`),
             resourceId: ownedResourceIdFromMediaRef(asset.data.storageKey, url) || undefined,

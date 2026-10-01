@@ -6,6 +6,28 @@ import (
 	"testing"
 )
 
+func TestSourcedSeedanceGenerationKeepsServerLimitsAndAudio(t *testing.T) {
+	version := "gateway-version"
+	profile := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0")
+	profile.Video.References.MaxImages = 12
+	profile.Video.GenerateAudio.Supported = false
+	input := canvasGenerationInput{Mode: "video", Prompt: "test", Config: providerConfig{InterfaceType: "newapi", BaseURL: "https://enterprise.beefapi.com", Model: "seedance-2.0", VideoSeconds: "5", Size: "16:9", VQuality: "720p", CapabilityConfig: profile, VideoCapabilitiesVersion: &version}}
+	for i := 0; i < 10; i++ {
+		input.ReferenceImages = append(input.ReferenceImages, providerMedia{URL: "asset://test", Width: 640, Height: 640, Bytes: 10})
+	}
+	if err := (&Service{}).validateResolvedVideoCapability(&input); err != nil {
+		t.Fatal(err)
+	}
+	if input.VideoCapability.GenerateAudio.Supported {
+		t.Fatal("catalog audio false was restored by legacy repair")
+	}
+	input.Config.VideoCapabilitiesVersion = nil
+	restoreBeefAPISeedanceAudioControl(input.Config, input.VideoCapability)
+	if !input.VideoCapability.GenerateAudio.Supported {
+		t.Fatal("legacy saved profiles should retain the audio repair")
+	}
+}
+
 func TestNativeArkModelDefaultsAndExplicitRestrictions(t *testing.T) {
 	for _, protocol := range []string{"volcengine-ark-video", "volcengine-ark-agent-plan-video"} {
 		for _, name := range []string{"seedance-2.5", "doubao-seedance-2-5-260528"} {
@@ -90,6 +112,46 @@ func TestEnterpriseSeedanceMaxImagesNotExpandedToOfficial30(t *testing.T) {
 	}
 	if normalized.Video.References.MaxImages != 9 {
 		t.Fatalf("enterprise maxImages expanded: %d", normalized.Video.References.MaxImages)
+	}
+}
+
+func TestNativeArkSeedanceUsesDocumentedVideoPixelFloor(t *testing.T) {
+	profile := DefaultModelCapabilityConfigForModel("volcengine-ark-video", "seedance-2.0").Video
+	if profile.References.MinVideoPixels != officialSeedanceVideoMinPixels {
+		t.Fatalf("stored default min pixels = %d", profile.References.MinVideoPixels)
+	}
+	input := canvasGenerationInput{
+		Config:          providerConfig{InterfaceType: "volcengine-ark-video", Model: "seedance-2.0", BaseURL: "https://ark.cn-beijing.volces.com/api/v3"},
+		ReferenceVideos: []providerMedia{{Width: 720, Height: 567, DurationMs: 3000, Bytes: 1}},
+	}
+	if err := validateVideoReferenceMedia(profile, input); err != nil {
+		t.Fatalf("720×567 should pass documented 407696 floor: %v", err)
+	}
+	input.ReferenceVideos[0].Height = 566
+	if err := validateVideoReferenceMedia(profile, input); err == nil {
+		t.Fatal("720×566 accepted below 407696")
+	}
+}
+
+func TestCustomSeedancePixelRestrictionIsPreserved(t *testing.T) {
+	profile := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
+	profile.References.MinVideoPixels = 500000
+	profile.References.MaxVideoPixels = officialSeedanceVideoMaxPixels
+	input := canvasGenerationInput{
+		Config:          providerConfig{InterfaceType: "newapi", Model: "seedance-2.0", BaseURL: "https://example.com"},
+		ReferenceVideos: []providerMedia{{Width: 720, Height: 700, DurationMs: 3000, Bytes: 1}},
+	}
+	if err := validateVideoReferenceMedia(profile, input); err != nil {
+		t.Fatalf("custom 500000 floor rejected 720×700: %v", err)
+	}
+	input.ReferenceVideos[0].Height = 694
+	if err := validateVideoReferenceMedia(profile, input); err == nil {
+		t.Fatal("custom 500000 floor accepted 720×694")
+	}
+	overlay := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
+	input.ReferenceVideos[0] = providerMedia{Width: 720, Height: 567, DurationMs: 3000, Bytes: 1}
+	if err := validateVideoReferenceMedia(overlay, input); err == nil {
+		t.Fatal("custom newapi remapped overlay 409600 to 407696")
 	}
 }
 
@@ -453,6 +515,9 @@ func TestNormalizeBeefAPISeedanceFullModalReferenceCapability(t *testing.T) {
 	}
 	if normalized.Video.References.MaxVideos < 3 {
 		t.Fatalf("max videos = %d, want at least 3", normalized.Video.References.MaxVideos)
+	}
+	if !normalized.Video.GenerateAudio.Supported {
+		t.Fatal("BeefAPI Seedance must expose the audio toggle")
 	}
 	if !containsCapabilityString(normalized.Video.Operations, "reference_to_video") {
 		t.Fatalf("operations = %v, want reference_to_video", normalized.Video.Operations)

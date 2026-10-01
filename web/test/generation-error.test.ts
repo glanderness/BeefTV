@@ -1,5 +1,37 @@
 import referenceVideoErrors from "./fixtures/reference-video-errors.json";
 import { describe, expect, test } from "bun:test";
+import { ApiError } from "../src/services/api/request";
+
+test("Windows socket disconnects explain saved historical errors without exposing network details", () => {
+    for (const detail of ["An existing connection was forcibly closed by the remote host.", "An established connection was aborted by the software in your host machine."]) {
+        const failure = explainGenerationError(`Get "https://private.example/task?token=secret": read tcp: wsarecv: ${detail}`);
+        expect(failure.category).toBe("network");
+        expect(failure.message).not.toMatch(/wsarecv|secret|private\.example/);
+    }
+});
+
+test("local task persistence errors keep their cause through API and saved details", () => {
+    const error = new ApiError("本地任务保存失败，尚未提交生成", { status: 500, reason: "local_storage_failed" });
+    const result = explainGenerationError(error);
+    expect(result.category).toBe("local_storage");
+    expect(result.message).toContain("尚未提交生成");
+    expect(result.message).not.toContain("模型不接受");
+    expect(result.blockAutomaticRetry).toBe(true);
+    expect(explainGenerationError(result.message).category).toBe("local_storage");
+    const diagnostics = formatGenerationDiagnostics(result);
+    expect(diagnostics).toContain("类别：local_storage");
+    expect(diagnostics).toContain("错误来源：本地任务存储");
+    expect(diagnostics).toContain("尚未提交生成");
+});
+
+test("local API quota keeps the actual capacity error instead of channel permissions", () => {
+    const result = explainGenerationError(new ApiError("账号任务历史已达到 100 条上限", {status: 403, code: 40301, reason: "quota_exceeded"}));
+    expect(result.category).toBe("quota_limit");
+    expect(result.reason).toContain("100 条上限");
+    expect(result.action).toContain("清理");
+    expect(result.message).not.toMatch(/权限|供应商|账单/);
+    expect(result.blockAutomaticRetry).toBe(true);
+});
 import audioErrorContract from "../../fixtures/reference-audio-errors.json";
 
 test("local database failures never blame model parameters", () => {
@@ -9,6 +41,7 @@ test("local database failures never blame model parameters", () => {
             expect(failure.category).toBe("local_storage");
             expect(failure.reason).toContain("数据库");
             expect(failure.message).not.toContain("failure_diagnostics");
+            expect(failure.message).not.toContain("尚未提交");
             expect(failure.retryable).toBe(false);
             expect(failure.blockAutomaticRetry).toBe(true);
             expect(explainGenerationError(failure.message).category).toBe("local_storage");
@@ -24,6 +57,9 @@ test("database classification preserves provider parameters and stable codes", (
         expect(explainGenerationError(input).category).toBe("invalid_params");
     }
     expect(explainGenerationError({ status: 500, data: { code: "local_storage", message: "" } }).category).toBe("local_storage");
+    const typed = explainGenerationError({ status: 500, data: { code: "local_storage_failed", message: "opaque" } });
+    expect(typed.message).toContain("尚未提交生成");
+    expect(explainGenerationError(typed.message).message).toContain("尚未提交生成");
 });
 
 test("image receipt states never invite automatic paid regeneration", () => {
@@ -159,7 +195,7 @@ import gatewayCodes from "../../fixtures/generation-error-codes.json";
 
 describe("generation error classification", () => {
     test("all declared gateway error codes match the shared backend contract", () => {
-        expect(Object.keys(gatewayCodes)).toHaveLength(50);
+        expect(Object.keys(gatewayCodes)).toHaveLength(51);
         for (const [code, category] of Object.entries(gatewayCodes)) {
             expect(explainGenerationError({ code, message: "opaque provider message" }).category).toBe(category);
             expect(explainGenerationError({ status: 400, data: { error: { code } } }).category).toBe(category);

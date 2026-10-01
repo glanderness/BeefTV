@@ -522,6 +522,7 @@ components:
                 - unavailable
                 - timeout
                 - internal
+                - local_storage_failed
                 - bad_gateway
                 - model_capability_not_supported
                 - model_price_not_configured

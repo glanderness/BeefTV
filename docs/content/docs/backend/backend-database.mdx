@@ -60,6 +60,8 @@ $env:CANVAS_DESKTOP_DATA_DIR = 'D:\BeefTV-tests\candidate-workspace'
 
 本地 SQLite 使用 `local_schema_migrations` 记录版本，本整合分支为 v9，独立产品分支为 v7。正式 v3 为 `tasks` 新增可空文本列 `failure_diagnostics`，存储有界、脱敏的执行证据和失败摘要；旧任务保留空值。失败诊断与任务终态在同一次带租约校验的更新中保存，成功任务也保留执行证据，主动重试时清除上一轮诊断。任务列表和详情均读取该列，字段说明见 [HTTP API](./http-api)。产品 v7 追加图片恢复表；整合 v8 同时补齐历史分支可能缺失的产品与 Agent 结构，v9 修复已标 v8 的已知结构缺损并强化完整性检查，保留原迁移记录、Agent 表和任务扩展列。
 
+部分预览版曾将 v3–v6 用于其他迁移。本整合分支通过 v8/v9 的显式事务补齐 `failure_diagnostics`，不覆盖历史记录、不删除预览版字段或旧任务；就绪检查要求精确版本 v9 与完整结构，不在同版本损坏时静默补列。任务创建前入库失败返回 HTTP 500、`reason=local_storage_failed`，界面明确显示本地保存失败、尚未提交生成；生成后发生的普通 SQLite 错误只提示本地数据库无法读写，不推断未提交。内部错误链保留数据库原因，HTTP 响应不包含 SQL 原文；handler 日志记录错误类型。
+
 该迁移不删除任务或用户素材。升级后旧版程序会因本地 schema 版本检查而拒绝连接；修复发布应使用更高版本，不能通过降级二进制或删除诊断列回滚用户数据库。
 
 实验 Agent 的 v3–v6 与正式版本使用过重叠编号，迁移执行器按最大已应用版本推进。产品 v7 只补产品结构，不创建 Agent 运行时结构。本分支通过 v8 追加迁移显式补齐 `agent_op_records`（包含 `turn_id` 及其索引）、`tasks.client_operation_id`、`tasks.client_operation_hash` 和 `(user_id, client_operation_id)` 唯一索引；不依赖旧 v3–v6 再次执行。历史 Agent v6 程序不能直接连接升级后的 v7/v8 数据库。
