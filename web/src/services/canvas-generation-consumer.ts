@@ -58,7 +58,7 @@ export class CanvasBindFlushError extends Error {
 
 export class CanvasBindProjectionAdoptionError extends Error {
     constructor() {
-        super("画布确认投影尚未接入 journal 三路采纳");
+        super("这次生成结果没能写进画布。请再试一次。");
         this.name = "CanvasBindProjectionAdoptionError";
     }
 }
@@ -219,9 +219,7 @@ export async function bindBackendCanvasGenerationResult(input: {
     assertBindDispatchScope(capturedScope, liveScope);
 
     const receipt = response.result ?? {};
-    if (receipt.bindingStatus === "deleted" && !receipt.canvas) {
-        return;
-    }
+    if (receipt.bindingStatus === "deleted" && !receipt.canvas) return;
     const canonical = canonicalCanvasFromReceipt(capturedCanvasId, receipt);
     const adopted = await adoptConfirmedProjection(canonical, capturedScope.userScope, capturedScope);
     assertBindDispatchScope(capturedScope, liveScope);
@@ -246,97 +244,24 @@ async function defaultAdoptConfirmedProjection(project: CanvasProject, scope: st
 }
 
 function canonicalCanvasFromReceipt(canvasId: string, receipt: CanvasTaskBindReceipt): CanvasProject {
+    if (receipt.bindingStatus !== "bound" && receipt.bindingStatus !== "replaced" && receipt.bindingStatus !== "deleted") {
+        throw new CanvasBindProjectionAdoptionError();
+    }
+    if (typeof receipt.revision !== "number" || !Number.isInteger(receipt.revision) || receipt.revision < 1) {
+        throw new CanvasBindProjectionAdoptionError();
+    }
     const raw = receipt.canvas;
     if (!raw || typeof raw !== "object") throw new CanvasBindProjectionAdoptionError();
     const document = raw as CanvasProject;
     if (typeof document.id === "string" && document.id && document.id !== canvasId) throw new CanvasBindProjectionAdoptionError();
-    const revision = typeof document.revision === "number" && Number.isInteger(document.revision)
-        ? document.revision
-        : (typeof receipt.revision === "number" ? receipt.revision : undefined);
+    if (!Array.isArray(document.nodes) || !Array.isArray(document.connections)) throw new CanvasBindProjectionAdoptionError();
     return {
         ...document,
         id: canvasId,
-        ...(revision != null ? { revision } : {}),
-        nodes: Array.isArray(document.nodes) ? (document.nodes as CanvasNodeData[]) : [],
-        connections: Array.isArray(document.connections) ? document.connections : [],
+        revision: receipt.revision,
+        nodes: document.nodes as CanvasNodeData[],
+        connections: document.connections,
     };
-}
-
-function overlayBoundGenerationOnLiveCanvas(input: {
-    canvasId: string;
-    nodeId: string;
-    receipt: CanvasTaskBindReceipt;
-    revision?: number;
-    updateLive: boolean;
-    nodesRef: { current: CanvasNodeData[] };
-    setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
-}) {
-    const overlayNodes = (nodes: CanvasNodeData[]) =>
-        nodes.map((node) => (node.id === input.nodeId && receiptAllowsGenerationOverlay(input.receipt, node) ? overlayGenerationReceiptOnNode(node, input.receipt) : node));
-    if (input.updateLive) {
-        const nextNodes = overlayNodes(input.nodesRef.current);
-        input.nodesRef.current = nextNodes;
-        input.setNodes(nextNodes);
-    }
-    useCanvasStore.setState((state) => ({
-        projects: state.projects.map((project) => {
-            if (project.id !== input.canvasId) return project;
-            return {
-                ...project,
-                ...(input.revision != null ? { revision: input.revision } : {}),
-                nodes: overlayNodes(project.nodes),
-            };
-        }),
-    }));
-}
-
-function overlayGenerationReceiptOnNode(node: CanvasNodeData, receipt: CanvasTaskBindReceipt): CanvasNodeData {
-    const serverMeta = receipt.node?.metadata && typeof receipt.node.metadata === "object" ? receipt.node.metadata : {};
-    const metadata: NonNullable<CanvasNodeData["metadata"]> = { ...node.metadata };
-    if (typeof receipt.taskId === "string" && receipt.taskId) metadata.taskId = receipt.taskId;
-    if (typeof receipt.content === "string" && receipt.content) metadata.content = receipt.content;
-    else if (typeof serverMeta.content === "string" && serverMeta.content) metadata.content = serverMeta.content;
-    if (typeof receipt.storageKey === "string" && receipt.storageKey) metadata.storageKey = receipt.storageKey;
-    else if (typeof serverMeta.storageKey === "string" && serverMeta.storageKey) metadata.storageKey = serverMeta.storageKey;
-    if (typeof receipt.assetId === "string" && receipt.assetId) metadata.assetId = receipt.assetId;
-    else if (typeof serverMeta.assetId === "string" && serverMeta.assetId) metadata.assetId = serverMeta.assetId;
-    if (typeof serverMeta.mimeType === "string") metadata.mimeType = serverMeta.mimeType;
-    if (typeof serverMeta.bytes === "number") metadata.bytes = serverMeta.bytes;
-    if (typeof serverMeta.naturalWidth === "number") metadata.naturalWidth = serverMeta.naturalWidth;
-    if (typeof serverMeta.naturalHeight === "number") metadata.naturalHeight = serverMeta.naturalHeight;
-    if (typeof serverMeta.durationMs === "number") metadata.durationMs = serverMeta.durationMs;
-    if (typeof serverMeta.nodeRole === "string") metadata.nodeRole = serverMeta.nodeRole as NonNullable<CanvasNodeData["metadata"]>["nodeRole"];
-    if (typeof serverMeta.resultOrigin === "string") metadata.resultOrigin = serverMeta.resultOrigin as NonNullable<CanvasNodeData["metadata"]>["resultOrigin"];
-    if (serverMeta.storyboard && typeof serverMeta.storyboard === "object") {
-        const liveBoard = node.metadata?.storyboard;
-        const serverBoard = serverMeta.storyboard as NonNullable<CanvasNodeData["metadata"]>["storyboard"];
-        metadata.storyboard = {
-            ...serverBoard,
-            rows: serverBoard?.rows ?? liveBoard?.rows ?? [],
-            visibleColumns: liveBoard?.visibleColumns ?? serverBoard?.visibleColumns ?? [],
-            referenceNodeIds: liveBoard?.referenceNodeIds ?? serverBoard?.referenceNodeIds ?? [],
-        };
-    }
-    metadata.status = "success";
-    metadata.taskStatus = "succeeded";
-    metadata.taskProgress = 100;
-    metadata.errorDetails = undefined;
-    metadata.generationErrorCode = undefined;
-    metadata.resourceReloadAvailable = undefined;
-    metadata.failedPromptFingerprint = undefined;
-    metadata.failedInputFingerprint = undefined;
-    if (receipt.effectKey) {
-        metadata.generationEffectKeys = Array.from(new Set([...(node.metadata?.generationEffectKeys || []), receipt.effectKey]));
-    }
-    return { ...node, metadata };
-}
-
-function receiptAllowsGenerationOverlay(receipt: CanvasTaskBindReceipt, node: CanvasNodeData) {
-    if (receipt.bindingStatus === "deleted" || receipt.bindingStatus === "replaced") return false;
-    const receiptTaskId = typeof receipt.taskId === "string" ? receipt.taskId : "";
-    const liveTaskId = typeof node.metadata?.taskId === "string" ? node.metadata.taskId : "";
-    if (receiptTaskId && liveTaskId && receiptTaskId !== liveTaskId) return false;
-    return true;
 }
 
 export async function persistCanvasOperationContinuationEffect(input: {

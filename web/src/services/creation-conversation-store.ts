@@ -34,6 +34,7 @@ type ConversationDraft = {
 type CommittedState = {
     revision: number;
     fingerprint: string;
+    document: StoredCreationConversation;
 };
 
 type PendingWrite = {
@@ -91,7 +92,14 @@ function draftItemKey(id: string) {
 }
 
 function rememberCommitted(scope: string, id: string, revision: number, document: StoredCreationConversation) {
-    committed.set(scopeKey(scope, id), { revision, fingerprint: fingerprintOf(document) });
+    committed.set(scopeKey(scope, id), { revision, fingerprint: fingerprintOf(document), document: cloneConversation(document) });
+}
+
+function commitIfCurrent(scope: string, id: string, revision: number, document: StoredCreationConversation) {
+    const current = committed.get(scopeKey(scope, id));
+    if (current && current.revision > revision) return false;
+    rememberCommitted(scope, id, revision, document);
+    return true;
 }
 
 function forgetCommitted(scope: string, id: string) {
@@ -184,15 +192,34 @@ function looksLikeMessageList(value: unknown[]) {
 
 function threeWayMessages(base: unknown[], ours: unknown[], theirs: unknown[]) {
     const baseById = messageMap(base);
+    const oursById = messageMap(ours);
     const theirsById = messageMap(theirs);
-    return ours.map((item) => {
-        if (!isPlainObject(item) || typeof item.id !== "string") return item;
+    const seen = new Set<string>();
+    const merged: unknown[] = [];
+    for (const item of ours) {
+        if (!isPlainObject(item) || typeof item.id !== "string") {
+            merged.push(item);
+            continue;
+        }
+        seen.add(item.id);
         const previous = baseById.get(item.id);
         const canonical = theirsById.get(item.id);
-        if (!previous) return item;
-        if (samePersistable(item, previous)) return canonical ?? item;
-        return threeWayValue(previous, item, canonical ?? item);
-    });
+        if (!previous) {
+            merged.push(item);
+            continue;
+        }
+        if (samePersistable(item, previous)) {
+            merged.push(canonical ?? item);
+            continue;
+        }
+        merged.push(threeWayValue(previous, item, canonical ?? item));
+    }
+    for (const item of theirs) {
+        if (!isPlainObject(item) || typeof item.id !== "string" || seen.has(item.id)) continue;
+        if (baseById.has(item.id) && !oursById.has(item.id)) continue;
+        merged.push(item);
+    }
+    return merged;
 }
 
 function messageMap(list: unknown[]) {
@@ -643,7 +670,7 @@ async function flushConversation(scope: string, epoch: UserScopeEpoch, id: strin
         }
         rejectIfScopeChanged(epoch);
         const canonical = documentFromRecord(saved);
-        rememberCommitted(scope, id, saved.revision, canonical);
+        if (!commitIfCurrent(scope, id, saved.revision, canonical)) return;
         const latest = pendingWrites.get(key);
         if (latest && latest.generation > snapshot.generation) {
             const projected = projectPendingOnCanonical(snapshot.document, latest.document, canonical);
@@ -701,6 +728,12 @@ export async function parkCreationConversationDraft(
     }));
 }
 
+function liveFromCommittedAndDraft(state: CommittedState | undefined, ours: StoredCreationConversation | undefined) {
+    if (!ours) return state ? cloneConversation(state.document) : undefined;
+    if (!state) return cloneConversation(ours);
+    return projectPendingOnCanonical(state.document, ours, state.document);
+}
+
 export async function adoptServerConfirmedConversationDocument(
     conversationId: string,
     document: StoredCreationConversation,
@@ -711,12 +744,75 @@ export async function adoptServerConfirmedConversationDocument(
     const scope = entryCapturedScope.userScope;
     const id = conversationId.trim();
     if (!id) throw new Error("缺少要采纳的创作对话 ID");
-    const canonical = cloneConversation(document);
-    rememberCommitted(scope, id, revision, canonical);
-    pendingWrites.delete(scopeKey(scope, id));
-    await withScopeStorage(scope, () => removeDraft(scope, id));
+    if (!Number.isInteger(revision) || revision < 1) throw new Error("对话版本无效");
+    const canonical = cloneConversation({ ...document, id });
+    let adopted: StoredCreationConversation | undefined;
+
+    await withScopeStorage(scope, async () => {
+        assertUserScope(entryCapturedScope);
+        const key = scopeKey(scope, id);
+        const current = committed.get(key);
+        if (current && current.revision > revision) {
+            const ours = pendingWrites.get(key)?.document ?? (await readDraft(scope, id))?.document;
+            adopted = liveFromCommittedAndDraft(current, ours) ?? cloneConversation(current.document);
+            return;
+        }
+
+        const ackGeneration = pendingWrites.get(key)?.generation ?? 0;
+        const latest = pendingWrites.get(key);
+        const draft = await readDraft(scope, id);
+        const ours = latest?.document ?? draft?.document;
+        const base = current?.document ?? draft?.remote?.document;
+        let live: StoredCreationConversation;
+        let remote: ConversationDraft["remote"];
+        let keepDraft = false;
+        if (!ours || persistableFingerprint(ours) === persistableFingerprint(canonical)) {
+            live = cloneConversation(canonical);
+        } else if (!base) {
+            live = cloneConversation(ours);
+            remote = { revision, document: cloneConversation(canonical) };
+            keepDraft = true;
+        } else {
+            live = projectPendingOnCanonical(base, ours, canonical);
+            keepDraft = persistableFingerprint(live) !== persistableFingerprint(canonical);
+        }
+
+        await writeDraft(scope, id, {
+            baseRevision: revision,
+            document: cloneConversation(keepDraft ? live : canonical),
+            remote,
+        });
+        if (!commitIfCurrent(scope, id, revision, canonical)) {
+            const latestCommitted = committed.get(key);
+            const oursNow = pendingWrites.get(key)?.document ?? (await readDraft(scope, id))?.document;
+            adopted = liveFromCommittedAndDraft(latestCommitted, oursNow) ?? cloneConversation(canonical);
+            return;
+        }
+
+        const after = pendingWrites.get(key);
+        if ((after?.generation ?? 0) > ackGeneration && after) {
+            const sameEdit = ours != null && persistableFingerprint(after.document) === persistableFingerprint(ours);
+            const projected = sameEdit ? live : projectPendingOnCanonical(base ?? canonical, after.document, canonical);
+            pendingWrites.set(key, { generation: after.generation, document: projected });
+            await writeDraft(scope, id, { baseRevision: revision, document: projected, remote: sameEdit ? remote : undefined });
+            adopted = sameEdit && remote ? withConflict(projected, remote) : projected;
+            return;
+        }
+        if (keepDraft) {
+            if (after && after.generation === ackGeneration) {
+                pendingWrites.set(key, { generation: after.generation, document: live });
+            }
+            adopted = remote ? withConflict(live, remote) : live;
+            return;
+        }
+        if ((after?.generation ?? 0) === ackGeneration) pendingWrites.delete(key);
+        await removeDraft(scope, id);
+        adopted = cloneConversation(canonical);
+    });
+
     assertUserScope(entryCapturedScope);
-    return canonical;
+    if (!adopted) throw new Error("这次生成结果没能写进对话。请再试一次。");
+    return adopted;
 }
 
 export async function acceptSavedCreationConversation(

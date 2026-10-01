@@ -6,10 +6,13 @@ import (
 )
 
 const (
-	ReasonNotFound    = "not_found"
-	ReasonConflict    = "conflict"
-	ReasonInvalid     = "invalid_argument"
-	ReasonUnavailable = "unavailable"
+	ReasonNotFound            = "not_found"
+	ReasonConflict            = "conflict"
+	ReasonStaleRevision       = "stale_revision"
+	ReasonDeleted             = "conversation_deleted"
+	ReasonMessageTaskMismatch = "message_task_mismatch"
+	ReasonInvalid             = "invalid_argument"
+	ReasonUnavailable         = "unavailable"
 )
 
 // Error is the domain HTTP projection. Handlers map Status/Reason; this
@@ -39,7 +42,11 @@ func errConflict() *Error {
 }
 
 func errDeleted() *Error {
-	return &Error{Status: http.StatusConflict, Reason: ReasonConflict, Message: "对话已删除，无法再写入"}
+	return &Error{Status: http.StatusConflict, Reason: ReasonDeleted, Message: "对话已删除，无法再写入"}
+}
+
+func errMessageTaskMismatch() *Error {
+	return &Error{Status: http.StatusConflict, Reason: ReasonMessageTaskMismatch, Message: "这条消息已经换了任务，不能再写入这次结果"}
 }
 
 func errInvalid(message string) *Error {

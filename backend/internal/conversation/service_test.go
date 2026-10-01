@@ -315,6 +315,35 @@ func TestAttachMessageResultRollsBackWithCallerTx(t *testing.T) {
 	}
 }
 
+func TestAttachMessageResultTypedReasons(t *testing.T) {
+	_, _, svc := openConversationFixture(t)
+	if _, err := svc.Put("local", "conversation-typed", 0, sampleDocument("conversation-typed", "待挂载", "assistant-1", "task-1")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.AttachMessageResult("local", conversation.AttachInput{
+		ConversationID: "conversation-typed",
+		MessageID:      "assistant-1",
+		TaskID:         "task-other",
+		ResultURLs:     []string{"resource:result-3"},
+	})
+	var convErr *conversation.Error
+	if !errors.As(err, &convErr) || convErr.Reason != conversation.ReasonMessageTaskMismatch {
+		t.Fatalf("task mismatch = %v", err)
+	}
+	if _, err := svc.Delete("local", "conversation-typed", 1); err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.AttachMessageResult("local", conversation.AttachInput{
+		ConversationID: "conversation-typed",
+		MessageID:      "assistant-1",
+		TaskID:         "task-1",
+		ResultURLs:     []string{"resource:result-1"},
+	})
+	if !errors.As(err, &convErr) || convErr.Reason != conversation.ReasonDeleted {
+		t.Fatalf("deleted attach = %v", err)
+	}
+}
+
 func TestPutRejectsCredentialsAndKeepsUnknownFields(t *testing.T) {
 	_, _, svc := openConversationFixture(t)
 	_, err := svc.Put("local", "conversation-secret", 0, json.RawMessage(`{"id":"conversation-secret","title":"x","messages":[],"apiKey":"sk-test"}`))

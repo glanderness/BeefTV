@@ -209,16 +209,6 @@ func messageReceiptFor(req MessageRequest, patch messagePatchFields, attached Co
 }
 
 func isMessageRevisionConflict(err error) bool {
-	if err == nil {
-		return false
-	}
 	var bindErr *Error
-	if errors.As(err, &bindErr) && (bindErr.Reason == "stale_revision" || bindErr.Reason == "conflict") {
-		return true
-	}
-	message := strings.ToLower(err.Error())
-	if strings.Contains(message, "对话已更新") {
-		return true
-	}
-	return strings.Contains(message, "revision") && (strings.Contains(message, "conflict") || strings.Contains(message, "已有更新") || strings.Contains(message, "stale"))
+	return errors.As(err, &bindErr) && bindErr.Reason == "stale_revision"
 }

@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"infinite-canvas/backend/internal/conversation"
+	"infinite-canvas/backend/internal/taskbinding"
+	"net/http"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -296,4 +299,30 @@ func pendingText(err error) string {
 		return "ok"
 	}
 	return err.Error()
+}
+
+func TestMapConversationAttachErrorUsesTypedReasons(t *testing.T) {
+	t.Helper()
+	deleted := mapConversationAttachError(&conversation.Error{
+		Status: http.StatusConflict, Reason: conversation.ReasonDeleted, Message: "对话已删除，无法再写入",
+	})
+	var bindErr *taskbinding.Error
+	if !errors.As(deleted, &bindErr) || bindErr.Reason != "conversation_deleted" || bindErr.Status != 409 {
+		t.Fatalf("deleted = %#v", deleted)
+	}
+	mismatch := mapConversationAttachError(&conversation.Error{
+		Status: http.StatusConflict, Reason: conversation.ReasonMessageTaskMismatch, Message: "这条消息已经换了任务，不能再写入这次结果",
+	})
+	if !errors.As(mismatch, &bindErr) || bindErr.Reason != "message_task_mismatch" {
+		t.Fatalf("mismatch = %#v", mismatch)
+	}
+	stale := mapConversationAttachError(&conversation.Error{
+		Status: http.StatusConflict, Reason: conversation.ReasonConflict, Message: "对话已更新，当前草稿未覆盖已保存内容",
+	})
+	if !errors.As(stale, &bindErr) || bindErr.Reason != "stale_revision" {
+		t.Fatalf("stale = %#v", stale)
+	}
+	if mapped := mapConversationAttachError(errors.New("对话已更新，当前草稿未覆盖已保存内容")); mapped.Error() != "对话已更新，当前草稿未覆盖已保存内容" {
+		t.Fatalf("untyped text must pass through: %v", mapped)
+	}
 }

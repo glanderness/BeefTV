@@ -261,13 +261,6 @@ func mapPortError(err error) error {
 }
 
 func isRevisionConflict(err error) bool {
-	if err == nil {
-		return false
-	}
 	var bindErr *Error
-	if errors.As(err, &bindErr) && bindErr.Reason == "stale_revision" {
-		return true
-	}
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "revision") && (strings.Contains(message, "conflict") || strings.Contains(message, "已有更新") || strings.Contains(message, "stale"))
+	return errors.As(err, &bindErr) && bindErr.Reason == "stale_revision"
 }

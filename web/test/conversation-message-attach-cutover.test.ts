@@ -177,6 +177,33 @@ describe("bindBackendConversationMessageResult", () => {
         expect(adopted).toBe(0);
     });
 
+    test("bound receipt without revision throws instead of adopting a local fallback", async () => {
+        const identity = captured("user-a", 1);
+        let adopted = 0;
+        await expect(
+            bindBackendConversationMessageResult({
+                conversationId: "conv-1",
+                messageId: "msg-1",
+                task: succeededTask(),
+                runtime: {
+                    attachMessage: async (input) => ({
+                        op: "conversation.message.attach",
+                        opId: input.operationId,
+                        replayed: false,
+                        result: { applied: true, conversationId: "conv-1", messageId: "msg-1", taskId: "task-1", bindingStatus: "bound", conversation: conversationDoc("conv-1", "msg-1") },
+                    }),
+                    adoptConfirmedConversation: async () => {
+                        adopted += 1;
+                        throw new Error("missing revision must not adopt");
+                    },
+                    captureScope: () => identity,
+                    liveScope: () => identity,
+                },
+            }),
+        ).rejects.toBeInstanceOf(ConversationBindProjectionAdoptionError);
+        expect(adopted).toBe(0);
+    });
+
     test("bound receipt without conversation document throws", async () => {
         const identity = captured("user-a", 1);
         await expect(

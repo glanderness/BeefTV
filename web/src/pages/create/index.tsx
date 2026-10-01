@@ -416,7 +416,6 @@ export default function CreatePage() {
             ...current,
             ...document,
             id: conversationId,
-            conflictRemote: current.conflictRemote,
         }));
         conversationsRef.current = next;
         setConversations(next);

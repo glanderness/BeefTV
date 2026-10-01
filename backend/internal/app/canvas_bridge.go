@@ -573,14 +573,14 @@ func mapConversationAttachError(err error) error {
 	if !errors.As(err, &convErr) {
 		return err
 	}
-	switch {
-	case convErr.Reason == conversation.ReasonNotFound:
+	switch convErr.Reason {
+	case conversation.ReasonNotFound:
 		return &taskbinding.Error{Status: 404, Reason: "conversation_deleted", Message: convErr.Message}
-	case strings.Contains(convErr.Message, "消息未关联该任务"):
-		return &taskbinding.Error{Status: 409, Reason: "message_task_mismatch", Message: convErr.Message}
-	case strings.Contains(convErr.Message, "对话已删除"):
+	case conversation.ReasonDeleted:
 		return &taskbinding.Error{Status: 409, Reason: "conversation_deleted", Message: convErr.Message}
-	case convErr.Reason == conversation.ReasonConflict:
+	case conversation.ReasonMessageTaskMismatch:
+		return &taskbinding.Error{Status: 409, Reason: "message_task_mismatch", Message: convErr.Message}
+	case conversation.ReasonStaleRevision, conversation.ReasonConflict:
 		return &taskbinding.Error{Status: 409, Reason: "stale_revision", Message: convErr.Message}
 	default:
 		return &taskbinding.Error{Status: convErr.Status, Reason: convErr.Reason, Message: convErr.Message}

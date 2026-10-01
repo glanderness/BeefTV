@@ -90,7 +90,7 @@ describe("backend canvas bind cutover", () => {
 
     test("bind helper flushes the journal then binds generation fields only", () => {
         const bindStart = consumerSource.indexOf("export async function bindBackendCanvasGenerationResult");
-        const bindEnd = consumerSource.indexOf("function overlayBoundGenerationOnLiveCanvas", bindStart);
+        const bindEnd = consumerSource.indexOf("function assertBindDispatchScope", bindStart);
         const bind = consumerSource.slice(bindStart, bindEnd);
         expect(bind).toContain("persistDocument");
         expect(bind).toContain("bindOutput");
@@ -101,9 +101,11 @@ describe("backend canvas bind cutover", () => {
         expect(bind).toContain("persistDocument(capturedCanvasId, { nodes: live.nodes, connections: live.connections }, capturedScope)");
         expect(bind).toContain("adoptConfirmedProjection(canonical, capturedScope.userScope, capturedScope)");
         expect(bind).not.toContain("overlayBoundGenerationOnLiveCanvas");
+        expect(bind).not.toContain("overlayGenerationReceiptOnNode");
         expect(bind).not.toContain("recordConfirmedBindProjection");
         expect(bind).not.toContain("persistCanvasGenerationEffect");
         expect(bind).not.toContain("applyExternalCanvasRevision");
+        expect(consumerSource).not.toContain("overlayBoundGenerationOnLiveCanvas");
         expect(consumerSource).toContain("persistCanvasDocument as PersistCanvasDocumentWithScope");
         expect(consumerSource).toContain("adopt(project, captured.userScope, captured)");
     });

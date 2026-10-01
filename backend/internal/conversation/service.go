@@ -495,7 +495,7 @@ func (s *Service) AttachMessageResult(userID string, input AttachInput) (Record,
 			return errNotFound()
 		}
 		if !containsString(stringList(target["taskIds"]), input.TaskID) {
-			return errInvalid("消息未关联该任务")
+			return errMessageTaskMismatch()
 		}
 		effectKeys := stringList(target["generationEffectKeys"])
 		if input.EffectKey != "" && containsString(effectKeys, input.EffectKey) {

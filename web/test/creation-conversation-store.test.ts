@@ -8,6 +8,10 @@ let scopeGeneration = 1;
 let storageHold: Promise<void> | null = null;
 let releaseStorage: (() => void) | null = null;
 let storageEntered = 0;
+let draftHold: Promise<void> | null = null;
+let releaseDraftHold: (() => void) | null = null;
+let draftWriteEntered = 0;
+let draftWriteError: Error | null = null;
 
 function switchScope(next: string) {
     if (next !== activeScope) scopeGeneration += 1;
@@ -52,6 +56,16 @@ function holdPuts() {
     });
 }
 
+function holdDraftWrites() {
+    draftHold = new Promise((resolve) => {
+        releaseDraftHold = resolve;
+    });
+}
+
+function capturedGuest() {
+    return { userScope: "guest", epoch: 1 };
+}
+
 mock.module("@/lib/localforage-storage", () => ({
     localForageStorageForScope: (scope?: string) => ({
         getItem: async (name: string) => stored.get(`${scope ?? activeScope}:${name}`) ?? null,
@@ -59,6 +73,13 @@ mock.module("@/lib/localforage-storage", () => ({
             if (storageHold && name === "creation-conversations-v1") {
                 storageEntered += 1;
                 await storageHold;
+            }
+            if (name.startsWith("creation-conversation-drafts-v1:")) {
+                if (draftHold) {
+                    draftWriteEntered += 1;
+                    await draftHold;
+                }
+                if (draftWriteError) throw draftWriteError;
             }
             stored.set(`${scope ?? activeScope}:${name}`, value);
         },
@@ -185,6 +206,10 @@ beforeEach(() => {
     storageHold = null;
     releaseStorage = null;
     storageEntered = 0;
+    draftHold = null;
+    releaseDraftHold = null;
+    draftWriteEntered = 0;
+    draftWriteError = null;
     resetCreationConversationStoreForTests();
 });
 
@@ -460,4 +485,175 @@ test("adoptServerConfirmedConversationDocument uses the entry captured scope and
         messages: [],
     }, 6, captured)).rejects.toMatchObject({ name: "UserScopeAbandonedError" });
     expect(server.puts).toEqual([]);
+});
+
+test("adopt keeps deferred user edits instead of dropping the draft", async () => {
+    server.conversations.set("conv-1", {
+        id: "conv-1",
+        revision: 3,
+        updatedAt: "2026-10-02T00:00:00.000Z",
+        document: {
+            id: "conv-1",
+            title: "原稿",
+            messages: [
+                { id: "user-1", role: "user", content: "镜头" },
+                { id: "msg-1", role: "assistant", status: "pending", content: "", taskIds: ["task-1"] },
+            ],
+        },
+    });
+    await loadCreationConversations();
+    holdPuts();
+    const saveP = saveCreationConversations([{
+        id: "conv-1",
+        title: "改名",
+        messages: [
+            { id: "user-1", role: "user", content: "镜头" },
+            { id: "msg-1", role: "assistant", status: "pending", content: "", taskIds: ["task-1"] },
+            { id: "user-2", role: "user", content: "补充" },
+        ],
+    }]);
+    while (server.putEntered === 0) await Promise.resolve();
+    const adopted = await adoptServerConfirmedConversationDocument("conv-1", {
+        id: "conv-1",
+        title: "原稿",
+        messages: [
+            { id: "user-1", role: "user", content: "镜头" },
+            { id: "msg-1", role: "assistant", status: "done", content: "图片已生成", taskIds: ["task-1"], resultUrls: ["/api/resources/res-1/file"] },
+        ],
+    }, 5, capturedGuest());
+    expect(adopted.title).toBe("改名");
+    expect((adopted.messages as Array<{ id: string; content?: string }>).map((item) => item.id)).toEqual(["user-1", "msg-1", "user-2"]);
+    expect((adopted.messages as Array<{ id: string; content?: string }>).find((item) => item.id === "msg-1")?.content).toBe("图片已生成");
+    expect((adopted.messages as Array<{ id: string; content?: string }>).find((item) => item.id === "user-2")?.content).toBe("补充");
+    const drafts = await loadLocalCreationConversationDrafts();
+    expect(drafts?.find((item) => item.id === "conv-1")).toMatchObject({ title: "改名" });
+    expect(drafts?.find((item) => item.id === "conv-1")?.messages).toHaveLength(3);
+    server.releasePut?.();
+    await saveP;
+    const afterFlush = await loadLocalCreationConversationDrafts();
+    expect(afterFlush?.find((item) => item.id === "conv-1")?.messages).toHaveLength(3);
+    expect(server.conversations.get("conv-1")?.document?.title).toBe("改名");
+});
+
+test("adopt refuses an older receipt instead of rolling back committed truth", async () => {
+    const newer = await adoptServerConfirmedConversationDocument("conv-1", {
+        id: "conv-1",
+        title: "新确认",
+        messages: [{ id: "msg-1", role: "assistant", content: "图片已生成" }],
+    }, 5, capturedGuest());
+    expect(newer.title).toBe("新确认");
+    const older = await adoptServerConfirmedConversationDocument("conv-1", {
+        id: "conv-1",
+        title: "旧回执",
+        messages: [{ id: "msg-1", role: "assistant", content: "旧内容" }],
+    }, 3, capturedGuest());
+    expect(older.title).toBe("新确认");
+    expect((older.messages as Array<{ content?: string }>)[0]?.content).toBe("图片已生成");
+    const drafts = await loadLocalCreationConversationDrafts();
+    expect(drafts?.find((item) => item.id === "conv-1")).toBeUndefined();
+});
+
+test("adopt IDB failure keeps the user draft and retry merges after restart", async () => {
+    server.conversations.set("conv-1", {
+        id: "conv-1",
+        revision: 3,
+        updatedAt: "2026-10-02T00:00:00.000Z",
+        document: {
+            id: "conv-1",
+            title: "原稿",
+            messages: [
+                { id: "user-1", role: "user", content: "镜头" },
+                { id: "msg-1", role: "assistant", status: "pending", content: "", taskIds: ["task-1"] },
+            ],
+        },
+    });
+    await loadCreationConversations();
+    holdPuts();
+    const saveP = saveCreationConversations([{
+        id: "conv-1",
+        title: "改名",
+        messages: [
+            { id: "user-1", role: "user", content: "镜头" },
+            { id: "msg-1", role: "assistant", status: "pending", content: "", taskIds: ["task-1"] },
+            { id: "user-2", role: "user", content: "补充" },
+        ],
+    }]);
+    while (server.putEntered === 0) await Promise.resolve();
+    draftWriteError = new Error("IndexedDB unavailable");
+    await expect(adoptServerConfirmedConversationDocument("conv-1", {
+        id: "conv-1",
+        title: "原稿",
+        messages: [
+            { id: "user-1", role: "user", content: "镜头" },
+            { id: "msg-1", role: "assistant", status: "done", content: "图片已生成", taskIds: ["task-1"] },
+        ],
+    }, 5, capturedGuest())).rejects.toThrow("IndexedDB unavailable");
+    const kept = JSON.parse(stored.get("guest:creation-conversation-drafts-v1:conv-1") || "null") as { document?: { title?: string; messages?: unknown[] } };
+    expect(kept.document?.title).toBe("改名");
+    expect(kept.document?.messages).toHaveLength(3);
+    draftWriteError = null;
+    resetCreationConversationStoreForTests();
+    const afterRestart = await loadLocalCreationConversationDrafts();
+    expect(afterRestart?.find((item) => item.id === "conv-1")).toMatchObject({ title: "改名" });
+    expect(afterRestart?.find((item) => item.id === "conv-1")?.messages).toHaveLength(3);
+    await loadCreationConversations();
+    const retried = await adoptServerConfirmedConversationDocument("conv-1", {
+        id: "conv-1",
+        title: "原稿",
+        messages: [
+            { id: "user-1", role: "user", content: "镜头" },
+            { id: "msg-1", role: "assistant", status: "done", content: "图片已生成", taskIds: ["task-1"] },
+        ],
+    }, 5, capturedGuest());
+    expect(retried.title).toBe("改名");
+    expect((retried.messages as Array<{ id: string; content?: string }>).find((item) => item.id === "msg-1")?.content).toBe("图片已生成");
+    expect((retried.messages as Array<{ id: string }>).find((item) => item.id === "user-2")).toBeDefined();
+    server.releasePut?.();
+    await saveP.catch(() => undefined);
+});
+
+test("adopt keeps a newer draft that arrives while receipt persistence is in flight", async () => {
+    server.conversations.set("conv-1", {
+        id: "conv-1",
+        revision: 3,
+        updatedAt: "2026-10-02T00:00:00.000Z",
+        document: {
+            id: "conv-1",
+            title: "原稿",
+            messages: [
+                { id: "user-1", role: "user", content: "镜头" },
+                { id: "msg-1", role: "assistant", status: "pending", content: "", taskIds: ["task-1"] },
+            ],
+        },
+    });
+    await loadCreationConversations();
+    holdDraftWrites();
+    const adoptP = adoptServerConfirmedConversationDocument("conv-1", {
+        id: "conv-1",
+        title: "原稿",
+        messages: [
+            { id: "user-1", role: "user", content: "镜头" },
+            { id: "msg-1", role: "assistant", status: "done", content: "图片已生成", taskIds: ["task-1"] },
+        ],
+    }, 5, capturedGuest());
+    while (draftWriteEntered === 0) await Promise.resolve();
+    const saveP = saveCreationConversations([{
+        id: "conv-1",
+        title: "途中改名",
+        messages: [
+            { id: "user-1", role: "user", content: "镜头" },
+            { id: "msg-1", role: "assistant", status: "pending", content: "", taskIds: ["task-1"] },
+            { id: "user-2", role: "user", content: "途中补充" },
+        ],
+    }]);
+    await Promise.resolve();
+    releaseDraftHold?.();
+    const adopted = await adoptP;
+    expect(adopted.title).toBe("途中改名");
+    expect((adopted.messages as Array<{ id: string; content?: string }>).find((item) => item.id === "msg-1")?.content).toBe("图片已生成");
+    expect((adopted.messages as Array<{ id: string; content?: string }>).find((item) => item.id === "user-2")?.content).toBe("途中补充");
+    await saveP.catch(() => undefined);
+    const drafts = await loadLocalCreationConversationDrafts();
+    expect(drafts?.find((item) => item.id === "conv-1")).toMatchObject({ title: "途中改名" });
+    expect((drafts?.find((item) => item.id === "conv-1")?.messages as Array<{ id: string }> | undefined)?.some((item) => item.id === "user-2")).toBe(true);
 });
