@@ -2,7 +2,6 @@ import { nanoid } from "nanoid";
 
 import { getActiveUserScope } from "@/lib/user-scope";
 import { assertUserScope, captureUserScope, isUserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
-import { isLocalRuntimeMode } from "@/lib/runtime-mode";
 import { captureVideoPoster, detectVideoAudioTrackFromBlob } from "@/lib/video-poster";
 import { resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, ResourceUploadError, uploadResourceFile } from "@/services/api/resources";
 import { apiBaseURL } from "@/services/api/request";
@@ -36,7 +35,6 @@ export async function uploadMediaFile(input: Blob, prefix = "file", onProgress?:
     // 直传和失败后的本地同步必须复用同一上传身份，避免响应丢失后创建第二个对象。
     const expected = expectedScope ?? captureUserScope();
     const storageKey = `${prefix}:${expected.userScope}:${nanoid()}`;
-    const localRuntime = isLocalRuntimeMode();
     const blob = input;
     const previewUrl = URL.createObjectURL(blob);
     let retainPreviewUrl = false;
@@ -146,8 +144,8 @@ export async function uploadMediaFile(input: Blob, prefix = "file", onProgress?:
             mimeType: blob.type || "application/octet-stream",
             ...meta,
             preview: poster,
-            pendingRemoteUpload: localRuntime ? undefined : true,
-            remoteUploadError: localRuntime ? undefined : remoteUploadError,
+            pendingRemoteUpload: true,
+            remoteUploadError,
         };
     } finally {
         // 只有本地降级结果需要把 objectURL 留给页面；成功上传和所有异常路径都及时释放。

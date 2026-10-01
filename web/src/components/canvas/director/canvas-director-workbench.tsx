@@ -83,7 +83,8 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
         if (!open || !scene?.id || !projectId) return;
         const controller = new AbortController();
         void recoverDirectorPanoramaTasks(projectId, scene.id, controller.signal).catch((error) => {
-            if (!controller.signal.aborted) console.warn("导演台全景图历史恢复失败", error);
+            if (controller.signal.aborted || isUserScopeAbandonedError(error)) return;
+            console.warn("导演台全景图历史恢复失败", error);
         });
         return () => controller.abort();
     }, [open, projectId, scene?.id]);
@@ -783,7 +784,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
         setPanoramaUploading(true);
         const session = directorAsyncSession(sessionRef.current.signal);
         try {
-            const { uploaded } = await persistDirectorImageUpload({
+            const { uploaded, persist } = await persistDirectorImageUpload({
                 source: file,
                 expectedScope: session.expectedScope,
                 signal: session.signal,
@@ -791,7 +792,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
             });
             session.assertCurrent();
             setPanorama(uploaded.url, uploaded.storageKey, file.name);
-            message[uploaded.pendingRemoteUpload ? "warning" : "success"](uploaded.pendingRemoteUpload ? "全景图已保存在这台设备，稍后请检查是否同步完成" : "全景图已加入场景和素材库");
+            message[persist.confirmed ? "success" : "warning"](persist.confirmed ? "全景图已加入场景和素材库" : "全景图已保存在这台设备，稍后请检查是否同步完成");
         } catch (error) {
             if (session.current()) message.error(error instanceof Error ? error.message : "全景图上传失败");
         } finally {
@@ -840,7 +841,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
             session.assertCurrent();
             const asset = useAssetStore.getState().assets.find((item): item is ModelAsset => item.id === persist.assetId && item.kind === "model");
             if (asset) addModelAsset(asset);
-            message[uploaded.pendingRemoteUpload ? "warning" : "success"](uploaded.pendingRemoteUpload ? "3D 模型已加入场景；文件目前只在这台设备上" : "3D 模型已加入场景和素材库");
+            message[persist.confirmed ? "success" : "warning"](persist.confirmed ? "3D 模型已加入场景和素材库" : "3D 模型已加入场景；文件目前只在这台设备上");
         } catch (error) {
             if (session.current()) message.error(error instanceof Error ? error.message : "3D 模型上传失败");
         }
@@ -862,16 +863,18 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
             const name = file.name.replace(/\.[^.]+$/, "") || "场景参考";
             const canvasHandoff = await onAddCanvasImage?.(uploaded, name, session.signal, session.expectedScope);
             session.assertCurrent();
-            await persistDirectorLibraryAsset({
+            const persist = await persistDirectorLibraryAsset({
                 asset: { kind: "image", title: name, coverUrl: uploaded.url, tags: ["导演台参考图"], source: "导演台", data: { dataUrl: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType }, metadata: { source: "director-scene-reference", sceneId: draftRef.current?.id } },
                 expectedScope: session.expectedScope,
                 signal: session.signal,
                 existingAssetId: canvasHandoff?.assetId,
+                existingPersisted: canvasHandoff?.persisted,
+                pendingRemoteUpload: uploaded.pendingRemoteUpload,
             });
             session.assertCurrent();
             setSceneReferenceImage({ id: nanoid(), name, type: uploaded.mimeType, dataUrl: uploaded.url, url: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, bytes: uploaded.bytes });
             addObject(createDirectorBillboard(name, uploaded.url, uploaded.storageKey));
-            message[uploaded.pendingRemoteUpload ? "warning" : "success"](uploaded.pendingRemoteUpload ? "参考图片已保存在这台设备，并加入当前场景" : "参考图片已加入当前场景");
+            message[persist.confirmed ? "success" : "warning"](persist.confirmed ? "参考图片已加入当前场景" : "参考图片已保存在这台设备，并加入当前场景");
         } catch (error) {
             if (session.current()) message.error(error instanceof Error ? error.message : "参考图片添加失败");
         } finally {
@@ -1472,10 +1475,11 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
             if (!openRef.current || !latest || latest.id !== current.id || !latestShot) throw new Error("截图期间场景或镜头已切换，请重试");
             const name = nextDirectorScreenshotName(latest.cameras.find((item) => item.id === latestShot.cameraId)?.name || "机位", latestShot.screenshots?.length || 0);
             const screenshot = { id: nanoid(), name, url: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, createdAt: new Date().toISOString() };
-            await persistDirectorLibraryAsset({
+            const persist = await persistDirectorLibraryAsset({
                 asset: { kind: "image", title: name, coverUrl: uploaded.url, tags: ["导演台截图"], source: "导演台", data: { dataUrl: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType }, metadata: { source: "director-screenshot", sceneId: latest.id, shotId: shot.id } },
                 expectedScope: session.expectedScope,
                 signal: session.signal,
+                pendingRemoteUpload: uploaded.pendingRemoteUpload,
             });
             session.assertCurrent();
             const committed = draftRef.current;
@@ -1486,7 +1490,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
             setSelectedLightId(null);
             setSceneInspectorView("shot");
             setCameraInspectorTab("screenshots");
-            message.success(uploaded.pendingRemoteUpload ? "截图已保存在这台设备" : "截图已保存到素材库");
+            message[persist.confirmed ? "success" : "warning"](persist.confirmed ? "截图已保存到素材库" : "截图已保存在这台设备");
         } catch (error) {
             if (session.current()) message.error(error instanceof Error ? error.message : "截图失败，请重试");
         } finally {

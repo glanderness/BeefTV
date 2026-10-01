@@ -159,7 +159,7 @@ export type CanvasProjectEditorDialogsProps = {
         onShouldCaptureCover?: (scene: DirectorScene, shotId: string) => boolean;
         onCaptureCover?: (input: { scene: DirectorScene; shotId: string; beauty: Blob }) => Promise<void>;
         onDeleteImageNode: (nodeId: string) => void;
-        onAddCanvasImage: (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal, expectedScope: CapturedUserScope) => Promise<{ assetId?: string } | void>;
+        onAddCanvasImage: (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal, expectedScope: CapturedUserScope) => Promise<{ assetId?: string; persisted?: boolean } | void>;
         onFlush: () => void | Promise<void>;
     };
     versionCompare: {

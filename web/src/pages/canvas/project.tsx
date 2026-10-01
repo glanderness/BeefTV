@@ -1072,18 +1072,16 @@ function InfiniteCanvasPage() {
         setConnections(linked.connections);
         setSelectedNodeIds(new Set([node.id]));
         setSelectedConnectionId(null);
-        let assetId: string | undefined;
         try {
             const result = await ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId: currentProject?.projectId, node, source: "canvas-upload", expectedScope: expected });
             if (!current()) throw new DOMException("导演台会话已结束", "AbortError");
-            assetId = result.assetId;
             setNodes((currentNodes) => currentNodes.map((item) => item.id === node.id ? { ...item, metadata: { ...item.metadata, assetId: result.assetId } } : item));
+            return { assetId: result.assetId, persisted: true };
         } catch (error) {
             if (!current()) throw new DOMException("导演台会话已结束", "AbortError");
             message.warning(error instanceof Error ? `图片已加入画布，但素材同步失败：${error.message}` : "图片已加入画布，但素材同步失败");
-            assetId = findWorkspaceAssetIdByStorageKey(image.storageKey);
+            return { assetId: findWorkspaceAssetIdByStorageKey(image.storageKey) };
         }
-        return { assetId };
     }, [canvasCapturedScope.epoch, canvasCapturedScope.userScope, connectionsRef, currentProject?.projectId, directorNodeId, getCanvasCenter, message, nodesRef, projectId, setConnections, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
     const {
         timelineAddNodeRef,

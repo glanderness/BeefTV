@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { useCanvasDirector } from "@/pages/canvas/use-canvas-director";
 import { createDirectorScene } from "@/lib/canvas/director/director-scene";
-import { getActiveUserScope, resetActiveUserScopeForTests, setActiveUserScope } from "@/lib/user-scope";
+import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import { captureUserScope, UserScopeAbandonedError } from "@/lib/user-scope-guard";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import * as imageStorage from "@/services/image-storage";
@@ -67,7 +67,6 @@ const spies: Array<{ mockRestore: () => void }> = [];
 
 afterEach(() => {
     while (spies.length) spies.pop()?.mockRestore();
-    resetActiveUserScopeForTests();
 });
 
 describe("director cover and output captured scope", () => {

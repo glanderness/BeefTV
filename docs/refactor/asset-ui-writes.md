@@ -34,7 +34,7 @@
 - `persistWorkspaceAssetChanges` / `deleteWorkspaceAsset`：同一分流。脏草稿走具体 PUT/DELETE；同一 `userScope+assetId` 串行；入队 epoch 与 live 不一致则放弃 dispatch 并保留草稿。删除意图保守记录 DELETE（404 幂等），已有服务端素材改过再删也会发出 DELETE。
 - `registerMaterializedLocalAsset`：现有 `localWorkspace()` 注入点保留；`putAsset` 接收 `expectedScope`。
 - Assets 页分类增删改/读取走 `workspace-asset-folders.ts`，不再用 `workspaceCapabilities().local` 把桌面打进 localForage。
-- 导演台全景/模型/参考图/截图：入口一次捕获 `{userScope, epoch}`，经 `uploadImage` / `uploadMediaFile` 与 `persistDirectorLibraryAsset`（内部 `persistWorkspaceAssetLink`）提交。桌面走 typed PUT，浏览器本地仍走 IndexedDB。失败保留明确草稿，不宣称已保存。参考图若 `onAddCanvasImage` 已 `ensureCanvasNodeAsset`，回传 `assetId` 避免重复创建。封面与构图输出把同一捕获身份传入上传和 `ensureCanvasNodeAsset`，不在 await 后再捕获。禁止 `saveRemoteUserDataNow`。
+- 导演台全景/模型/参考图/截图：入口一次捕获 `{userScope, epoch}`；AI 全景观察守卫同一身份，A→B→A 不得只比用户名。经 `uploadImage` / `uploadMediaFile` 与 `persistDirectorLibraryAsset`（内部 `persistWorkspaceAssetLink`）提交。桌面/托管只有 `resource:` 且非 pending 才算确认持久化；浏览器本地 IndexedDB 仍是产品路径。桌面退回 IndexedDB 时 `pendingRemoteUpload: true`，保留明确草稿，不宣称已保存。参考图仅在 `ensureCanvasNodeAsset` 成功时回传 `persisted`；cache-only `assetId` 对同一 id 做幂等 persist，不新建第二份素材。封面与构图输出把同一捕获身份传入上传和 `ensureCanvasNodeAsset`，不在 await 后再捕获。禁止 `saveRemoteUserDataNow`。身份 epoch 只向前递增。
 
 ## 禁止
 

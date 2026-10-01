@@ -6,7 +6,7 @@ import { resolveDirectorCameraGizmoEdit, resolveDirectorMultiObjectGroupTransfor
 import { resolveDirectorCameraLocalFraming, resolveDirectorCameraTransform } from "@/lib/canvas/director/director-view-modes";
 import { replaceDirectorSceneObjects } from "@/lib/canvas/director/director-camera-binding";
 import { directorAsyncSession } from "@/lib/canvas/director/director-async-session";
-import { getActiveUserScope, resetActiveUserScopeForTests, setActiveUserScope } from "@/lib/user-scope";
+import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import { userScopeMatches, UserScopeAbandonedError } from "@/lib/user-scope-guard";
 
 function switchScope(userId: string) {
@@ -104,6 +104,5 @@ test("A→B→A 复用同一用户名时旧会话仍不能写入", async () => {
         expect(() => operation.assertCurrent()).toThrow(UserScopeAbandonedError);
     } finally {
         restore();
-        resetActiveUserScopeForTests();
     }
 });

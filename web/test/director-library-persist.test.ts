@@ -3,14 +3,14 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import * as runtimeMode from "@/lib/runtime-mode";
-import { persistDirectorImageUpload, persistDirectorLibraryAsset } from "@/lib/canvas/director/director-library-persist";
-import { getActiveUserScope, resetActiveUserScopeForTests, setActiveUserScope } from "@/lib/user-scope";
+import { isDirectorCanonicalPersistSource, persistDirectorImageUpload, persistDirectorLibraryAsset } from "@/lib/canvas/director/director-library-persist";
+import { getActiveUserScope, getActiveUserScopeEpoch, setActiveUserScope } from "@/lib/user-scope";
 import { captureUserScope, UserScopeAbandonedError } from "@/lib/user-scope-guard";
 import { apiClient } from "@/services/api/request";
 import * as imageStorage from "@/services/image-storage";
 import * as localWorkspaceSync from "@/services/local-workspace-sync";
 import { resetWorkspaceAssetCommitStateForTests } from "@/services/workspace-asset-repository";
-import { peekAssetStoreDraft, resetAssetStoreDraftsForTests, useAssetStore, type NewAsset } from "@/stores/use-asset-store";
+import { peekAssetStoreDraft, resetAssetStoreDraftsForTests, useAssetStore, type ImageAsset, type NewAsset } from "@/stores/use-asset-store";
 
 function deferred<T = void>() {
     let resolve!: (value: T | PromiseLike<T>) => void;
@@ -28,13 +28,28 @@ function switchScope(userId: string) {
     return () => setActiveUserScope(previous);
 }
 
-function panoramaAsset(title = "全景图"): NewAsset {
+function panoramaAsset(title = "全景图", storageKey = "resource:res-1"): NewAsset {
     return {
         kind: "image",
         title,
         coverUrl: "/api/resources/res-1/file",
         tags: ["全景图"],
         source: "导演台",
+        data: { dataUrl: "/api/resources/res-1/file", storageKey, width: 8, height: 8, bytes: 4, mimeType: "image/png" },
+        metadata: { source: "director-panorama" },
+    };
+}
+
+function cacheOnlyAsset(id = "cache-only"): ImageAsset {
+    return {
+        id,
+        kind: "image",
+        title: "参考图",
+        coverUrl: "/api/resources/res-1/file",
+        tags: ["全景图"],
+        source: "导演台",
+        createdAt: "2026-10-02T00:00:00.000Z",
+        updatedAt: "2026-10-02T00:00:00.000Z",
         data: { dataUrl: "/api/resources/res-1/file", storageKey: "resource:res-1", width: 8, height: 8, bytes: 4, mimeType: "image/png" },
         metadata: { source: "director-panorama" },
     };
@@ -75,7 +90,6 @@ afterEach(async () => {
     useAssetStore.setState({ assets: [] });
     resetWorkspaceAssetCommitStateForTests();
     await resetAssetStoreDraftsForTests();
-    resetActiveUserScopeForTests();
 });
 
 describe("director library persist canonical writes", () => {
@@ -92,6 +106,7 @@ describe("director library persist canonical writes", () => {
             }, async () => {
                 const result = await persistDirectorLibraryAsset({ asset: panoramaAsset(), expectedScope: captureUserScope() });
                 expect(result.created).toBe(true);
+                expect(result.confirmed).toBe(true);
                 expect(urls).toEqual([`put /assets/${result.assetId}`]);
                 expect(remote).not.toHaveBeenCalled();
                 expect(peekAssetStoreDraft(getActiveUserScope(), result.assetId)).toBeUndefined();
@@ -177,7 +192,35 @@ describe("director library persist canonical writes", () => {
         }
     });
 
-    test("existing canvas asset identity is reused instead of creating a second library row", async () => {
+    test("cache-only existingAssetId still persists the same library row", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        const urls: string[] = [];
+        useAssetStore.setState({ assets: [cacheOnlyAsset()] });
+        expect(peekAssetStoreDraft(getActiveUserScope(), "cache-only")).toBeUndefined();
+        try {
+            await withAdapter(async (config) => {
+                urls.push(requestKey(config));
+                const id = String(config.url || "").split("/").pop();
+                return envelope({ asset: { id, title: "参考图", createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" } });
+            }, async () => {
+                const result = await persistDirectorLibraryAsset({
+                    asset: panoramaAsset("参考图"),
+                    expectedScope: captureUserScope(),
+                    existingAssetId: "cache-only",
+                });
+                expect(result.assetId).toBe("cache-only");
+                expect(result.created).toBe(false);
+                expect(result.confirmed).toBe(true);
+                expect(useAssetStore.getState().assets).toHaveLength(1);
+                expect(urls).toEqual(["put /assets/cache-only"]);
+            });
+        } finally {
+            restore();
+        }
+    });
+
+    test("successful ensure receipt skips a second persist of the same asset", async () => {
         const restore = switchScope("owner-a");
         desktopBackend();
         const urls: string[] = [];
@@ -192,15 +235,77 @@ describe("director library persist canonical writes", () => {
                     asset: panoramaAsset("参考图副本"),
                     expectedScope: captureUserScope(),
                     existingAssetId: first.assetId,
+                    existingPersisted: true,
                 });
                 expect(second.assetId).toBe(first.assetId);
                 expect(second.created).toBe(false);
+                expect(second.confirmed).toBe(true);
                 expect(useAssetStore.getState().assets).toHaveLength(1);
                 expect(urls).toEqual([`put /assets/${first.assetId}`]);
             });
         } finally {
             restore();
         }
+    });
+
+    test("desktop IndexedDB fallback keeps a draft and does not claim a save", async () => {
+        const restore = switchScope("owner-a");
+        desktopBackend();
+        const urls: string[] = [];
+        const upload = spyOn(imageStorage, "uploadImage").mockResolvedValue({
+            storageKey: "image:owner-a:draft",
+            url: "blob:panorama",
+            width: 8,
+            height: 8,
+            bytes: 1,
+            mimeType: "image/png",
+            pendingRemoteUpload: true,
+            remoteUploadError: "资源服务暂时不可用",
+        });
+        try {
+            await withAdapter(async (config) => {
+                urls.push(requestKey(config));
+                return envelope({ asset: { id: "unexpected" } });
+            }, async () => {
+                const { persist } = await persistDirectorImageUpload({
+                    source: new Blob(["img"], { type: "image/png" }),
+                    expectedScope: captureUserScope(),
+                    toAsset: (uploaded) => panoramaAsset("全景图", uploaded.storageKey),
+                });
+                expect(persist.created).toBe(true);
+                expect(persist.confirmed).toBe(false);
+                expect(urls).toEqual([]);
+                expect(useAssetStore.getState().assets).toHaveLength(1);
+                expect(peekAssetStoreDraft(getActiveUserScope(), persist.assetId)?.kind).toBe("upsert");
+            });
+        } finally {
+            upload.mockRestore();
+            restore();
+        }
+    });
+
+    test("capturing and restoring scope does not reset the identity clock", () => {
+        const start = getActiveUserScopeEpoch();
+        const restore = switchScope("owner-a");
+        const mid = getActiveUserScopeEpoch();
+        restore();
+        expect(mid).toBeGreaterThan(start);
+        expect(getActiveUserScopeEpoch()).toBeGreaterThan(mid);
+        const source = readFileSync(resolve(import.meta.dir, "../src/lib/user-scope.ts"), "utf8");
+        expect(source).not.toContain("resetActiveUserScopeForTests");
+    });
+
+    test("desktop image keys are not canonical persist sources", () => {
+        desktopBackend();
+        expect(isDirectorCanonicalPersistSource({ storageKey: "image:owner-a:draft", pendingRemoteUpload: true })).toBe(false);
+        expect(isDirectorCanonicalPersistSource({ storageKey: "image:owner-a:draft" })).toBe(false);
+        expect(isDirectorCanonicalPersistSource({ storageKey: "resource:res-1" })).toBe(true);
+    });
+
+    test("browser-local image keys remain the product persist path", () => {
+        browserLocal();
+        expect(isDirectorCanonicalPersistSource({ storageKey: "image:owner-a:draft" })).toBe(true);
+        expect(isDirectorCanonicalPersistSource({ storageKey: "image:owner-a:draft", pendingRemoteUpload: true })).toBe(false);
     });
 
     test("browser-local persist flushes the local store and does not PUT assets", async () => {
@@ -215,6 +320,7 @@ describe("director library persist canonical writes", () => {
             }, async () => {
                 const result = await persistDirectorLibraryAsset({ asset: panoramaAsset(), expectedScope: captureUserScope() });
                 expect(result.created).toBe(true);
+                expect(result.confirmed).toBe(true);
                 expect(urls).toEqual([]);
                 expect(remote).not.toHaveBeenCalled();
                 expect(useAssetStore.getState().assets.map((item) => item.id)).toEqual([result.assetId]);
@@ -238,18 +344,22 @@ describe("director workbench wiring", () => {
         expect(workbench).toContain("uploadImage(file, undefined, session.expectedScope)");
         expect(workbench).toContain("uploadImage(beauty, undefined, session.expectedScope)");
         expect(workbench).toContain("existingAssetId: canvasHandoff?.assetId");
+        expect(workbench).toContain("existingPersisted: canvasHandoff?.persisted");
+        expect(workbench).toContain("pendingRemoteUpload: uploaded.pendingRemoteUpload");
+        expect(workbench).toContain("persist.confirmed");
+        expect(workbench).toContain('message[persist.confirmed ? "success" : "warning"]');
         expect(workbench).toContain("截图期间场景或镜头已切换，请重试");
         expect(workbench).toContain("void onCaptureCover({ scene: current, shotId: shot.id, beauty })");
     });
 
-    test("canvas reference handoff carries captured scope and returns asset identity", () => {
+    test("canvas reference handoff carries captured scope and returns persist confirmation", () => {
         const project = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/project.tsx"), "utf8");
         const dialogs = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/canvas-project-editor-dialogs.tsx"), "utf8");
         expect(project).toContain("expectedScope: CapturedUserScope = canvasCapturedScope");
         expect(project).toContain("ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId: currentProject?.projectId, node, source: \"canvas-upload\", expectedScope: expected })");
         expect(project).toContain("findWorkspaceAssetIdByStorageKey(image.storageKey)");
-        expect(project).toContain("return { assetId };");
+        expect(project).toContain("return { assetId: result.assetId, persisted: true };");
         expect(dialogs).toContain("expectedScope: CapturedUserScope");
-        expect(dialogs).toContain("Promise<{ assetId?: string } | void>");
+        expect(dialogs).toContain("Promise<{ assetId?: string; persisted?: boolean } | void>");
     });
 });

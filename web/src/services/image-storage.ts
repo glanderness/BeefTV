@@ -97,7 +97,7 @@ export async function uploadImage(input: string | Blob, onProgress?: (uploadedBy
         await store.setItem(storageKey, blob);
         const url = previewUrl;
         objectUrls.set(storageKey, url);
-        return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType, pendingRemoteUpload: localRuntime ? undefined : true, remoteUploadError: localRuntime ? undefined : remoteUploadError };
+        return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType, pendingRemoteUpload: true, remoteUploadError };
     } catch (error) {
         URL.revokeObjectURL(previewUrl);
         throw error;
