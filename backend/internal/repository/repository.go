@@ -1220,6 +1220,9 @@ func (r *Repository) CreateProjectUnit(unit *model.ProjectUnit) error {
 
 func (r *Repository) ImportProjectUnits(projectID string, units []model.ProjectUnit) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireUnarchivedProjectTx(tx, projectID); err != nil {
+			return err
+		}
 		// 分批写入仍处于同一事务，避免两千章导入超过 SQLite/PostgreSQL 单语句参数上限。
 		if err := tx.CreateInBatches(&units, 100).Error; err != nil {
 			return err
@@ -1230,6 +1233,9 @@ func (r *Repository) ImportProjectUnits(projectID string, units []model.ProjectU
 
 func (r *Repository) ReorderProjectUnits(projectID string, unitIDs []string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireUnarchivedProjectTx(tx, projectID); err != nil {
+			return err
+		}
 		now := time.Now()
 		for position, unitID := range unitIDs {
 			result := tx.Model(&model.ProjectUnit{}).Where("id = ? AND project_id = ?", unitID, projectID).Updates(map[string]any{"position": position, "updated_at": now})
@@ -1254,6 +1260,9 @@ func (r *Repository) ProjectUnit(projectID string, id string) (*model.ProjectUni
 
 func (r *Repository) UpdateProjectUnit(unit *model.ProjectUnit, invalidateWorkflow bool) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireUnarchivedProjectTx(tx, unit.ProjectID); err != nil {
+			return err
+		}
 		result := tx.Model(&model.ProjectUnit{}).Where("id = ? AND project_id = ?", unit.ID, unit.ProjectID).Updates(map[string]any{
 			"parent_id": unit.ParentID, "title": unit.Title, "source_text": unit.SourceText, "word_count": unit.WordCount, "status": unit.Status, "position": unit.Position, "updated_at": unit.UpdatedAt,
 		})
@@ -1277,6 +1286,9 @@ func (r *Repository) UpdateProjectUnit(unit *model.ProjectUnit, invalidateWorkfl
 
 func (r *Repository) DeleteProjectUnit(projectID string, id string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireUnarchivedProjectTx(tx, projectID); err != nil {
+			return err
+		}
 		if err := tx.Where("project_id = ? AND unit_id = ?", projectID, id).Delete(&model.CanvasUnitLink{}).Error; err != nil {
 			return err
 		}
@@ -1357,6 +1369,9 @@ func (r *Repository) ProjectCanvasUnitLinks(projectID string) ([]model.CanvasUni
 
 func (r *Repository) DeleteCanvasUnitLink(projectID string, canvasID string, unitID string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireUnarchivedProjectTx(tx, projectID); err != nil {
+			return err
+		}
 		result := tx.Delete(&model.CanvasUnitLink{}, "project_id = ? AND canvas_id = ? AND unit_id = ?", projectID, canvasID, unitID)
 		if result.Error != nil {
 			return result.Error
@@ -1374,6 +1389,9 @@ func (r *Repository) AssignCanvasToProject(userID string, canvasID string, proje
 
 func (r *Repository) UnassignCanvasFromProject(userID string, projectID string, canvasID string, payloadJSON string, updatedAt time.Time, revision int64) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := requireActiveProjectTx(tx, userID, projectID); err != nil {
+			return err
+		}
 		if err := tx.Where("project_id = ? AND canvas_id = ?", projectID, canvasID).Delete(&model.CanvasUnitLink{}).Error; err != nil {
 			return err
 		}
@@ -1421,6 +1439,9 @@ func (r *Repository) NextProjectAssetPosition(projectID string, folderID string)
 
 func (r *Repository) MoveProjectAsset(projectID string, assetID string, folderID string, position int) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireUnarchivedProjectTx(tx, projectID); err != nil {
+			return err
+		}
 		result := tx.Model(&model.ProjectAssetLink{}).
 			Where("project_id = ? AND asset_id = ?", projectID, assetID).
 			Updates(map[string]any{"folder_id": folderID, "position": position})
@@ -1451,6 +1472,9 @@ func (r *Repository) ProjectAssetFolder(projectID string, folderID string) (*mod
 
 func (r *Repository) CreateProjectAssetFolder(folder *model.ProjectAssetFolder) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireUnarchivedProjectTx(tx, folder.ProjectID); err != nil {
+			return err
+		}
 		if err := tx.Create(folder).Error; err != nil {
 			return err
 		}
@@ -1461,6 +1485,9 @@ func (r *Repository) CreateProjectAssetFolder(folder *model.ProjectAssetFolder) 
 
 func (r *Repository) UpdateProjectAssetFolder(folder *model.ProjectAssetFolder) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireUnarchivedProjectTx(tx, folder.ProjectID); err != nil {
+			return err
+		}
 		result := tx.Model(&model.ProjectAssetFolder{}).
 			Where("id = ? AND project_id = ?", folder.ID, folder.ProjectID).
 			Updates(map[string]any{"parent_id": folder.ParentID, "name": folder.Name, "name_key": folder.NameKey, "style": folder.Style, "theme": folder.Theme, "position": folder.Position, "updated_at": folder.UpdatedAt})
@@ -1477,6 +1504,9 @@ func (r *Repository) UpdateProjectAssetFolder(folder *model.ProjectAssetFolder) 
 
 func (r *Repository) DeleteProjectAssetFolder(projectID string, folderID string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireUnarchivedProjectTx(tx, projectID); err != nil {
+			return err
+		}
 		var childCount int64
 		if err := tx.Model(&model.ProjectAssetFolder{}).Where("project_id = ? AND parent_id = ?", projectID, folderID).Count(&childCount).Error; err != nil {
 			return err
@@ -1506,6 +1536,14 @@ func (r *Repository) DeleteProjectAssetFolder(projectID string, folderID string)
 func (r *Repository) LinkProjectAsset(asset *model.Asset, version *model.AssetVersion, link *model.ProjectAssetLink) (bool, error) {
 	createdLink := false
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := requireActiveProjectTx(tx, asset.UserID, link.ProjectID); err != nil {
+			return err
+		}
+		if strings.TrimSpace(link.FolderID) != "" {
+			if err := tx.First(&model.ProjectAssetFolder{}, "id = ? AND project_id = ?", link.FolderID, link.ProjectID).Error; err != nil {
+				return err
+			}
+		}
 		// 资产可能尚未落库（首次导入）或已存在（并发/重试），冲突幂等跳过。
 		assetCreated := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoNothing: true}).Create(asset)
 		if assetCreated.Error != nil {
@@ -1644,6 +1682,9 @@ func (r *Repository) SaveShot(shot *model.Shot, create bool) error {
 // SaveShotWithRevision 原子保存镜头当前值、新版本和下游失效状态。
 func (r *Repository) SaveShotWithRevision(shot *model.Shot, revision *model.ShotRevision, create bool) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireUnarchivedProjectTx(tx, shot.ProjectID); err != nil {
+			return err
+		}
 		if create {
 			if err := tx.Create(shot).Error; err != nil {
 				return err
@@ -1689,6 +1730,9 @@ func (r *Repository) SaveShotWithRevision(shot *model.Shot, revision *model.Shot
 
 func (r *Repository) ReplaceProjectUnitShots(projectID string, unitID string, shots []model.Shot, revisions []model.ShotRevision, references []model.ShotAssetReference, expectedShotIDs []string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireUnarchivedProjectTx(tx, projectID); err != nil {
+			return err
+		}
 		if expectedShotIDs != nil {
 			var currentShotIDs []string
 			if err := tx.Model(&model.Shot{}).Where("project_id = ? AND unit_id = ?", projectID, unitID).Order("id asc").Pluck("id", &currentShotIDs).Error; err != nil {
@@ -1755,6 +1799,9 @@ func (r *Repository) ShotRevisionForShot(shotID string, revisionID string) (*mod
 // DeleteProjectShot 原子删除单个镜头的领域关联，并重新压紧同章节镜头顺序。
 func (r *Repository) DeleteProjectShot(projectID string, shotID string, updatedAt time.Time) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireUnarchivedProjectTx(tx, projectID); err != nil {
+			return err
+		}
 		var shot model.Shot
 		if err := tx.First(&shot, "id = ? AND project_id = ?", shotID, projectID).Error; err != nil {
 			return err
@@ -1852,6 +1899,9 @@ func (r *Repository) UpsertShotAssetReference(reference *model.ShotAssetReferenc
 
 func (r *Repository) UpsertShotAssetReferenceAndInvalidate(projectID string, reference *model.ShotAssetReference, updatedAt time.Time) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireUnarchivedProjectTx(tx, projectID); err != nil {
+			return err
+		}
 		result := tx.Model(&model.ShotAssetReference{}).Where("shot_id = ? AND asset_version_id = ? AND role = ?", reference.ShotID, reference.AssetVersionID, reference.Role).Updates(map[string]any{"status": reference.Status})
 		if result.Error != nil {
 			return result.Error
@@ -1878,6 +1928,9 @@ func (r *Repository) UpsertShotAssetReferenceAndInvalidate(projectID string, ref
 func (r *Repository) DeleteShotAssetReferenceAndInvalidate(projectID string, shotID string, referenceID string, updatedAt time.Time) (bool, error) {
 	deleted := false
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireUnarchivedProjectTx(tx, projectID); err != nil {
+			return err
+		}
 		result := tx.Where("id = ? AND shot_id = ?", referenceID, shotID).Delete(&model.ShotAssetReference{})
 		if result.Error != nil {
 			return result.Error
@@ -1983,6 +2036,9 @@ func (r *Repository) CreateProjectAssetCandidate(candidate *model.ProjectAssetCa
 // ConfirmProjectAssetCandidate 将正式资产身份、首版本、项目引用和候选状态放在同一事务中，避免出现半确认数据。
 func (r *Repository) ConfirmProjectAssetCandidate(candidate *model.ProjectAssetCandidate, asset *model.Asset, version *model.AssetVersion, link *model.ProjectAssetLink, createAsset bool) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireUnarchivedProjectTx(tx, candidate.ProjectID); err != nil {
+			return err
+		}
 		if createAsset {
 			if err := tx.Create(asset).Error; err != nil {
 				return err
@@ -2086,6 +2142,9 @@ func (r *Repository) UpdateWorkflowStep(step *model.WorkflowStepInstance) error 
 // UpdateWorkflowProgress 原子保存当前步骤、下一步骤和实例状态，确保刷新后流程依赖仍可恢复。
 func (r *Repository) UpdateWorkflowProgress(step *model.WorkflowStepInstance, next *model.WorkflowStepInstance, instance *model.WorkflowInstance, projectID string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireUnarchivedProjectTx(tx, projectID); err != nil {
+			return err
+		}
 		if err := tx.Model(&model.WorkflowStepInstance{}).Where("id = ? AND workflow_instance_id = ?", step.ID, step.WorkflowInstanceID).Updates(map[string]any{
 			"status": step.Status, "output_json": step.OutputJSON, "error": step.Error, "started_at": step.StartedAt,
 			"completed_at": step.CompletedAt, "updated_at": step.UpdatedAt,
@@ -2110,6 +2169,9 @@ func (r *Repository) UpdateWorkflowProgress(step *model.WorkflowStepInstance, ne
 // RegisterWorkflowTaskOutput 将成功任务、流程步骤和产物表示写入同一事务，重复回填使用任务与用途唯一键幂等。
 func (r *Repository) RegisterWorkflowTaskOutput(step *model.WorkflowStepInstance, next *model.WorkflowStepInstance, instance *model.WorkflowInstance, projectID string, link *model.WorkflowStepTask, representation *model.AssetRepresentation, productionLink *model.ProductionTaskLink, artifact *model.ShotArtifact) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireUnarchivedProjectTx(tx, projectID); err != nil {
+			return err
+		}
 		var existingLink model.WorkflowStepTask
 		if err := tx.Where("workflow_step_id = ? AND task_id = ?", link.WorkflowStepID, link.TaskID).First(&existingLink).Error; errors.Is(err, gorm.ErrRecordNotFound) {
 			if err := tx.Create(link).Error; err != nil {
