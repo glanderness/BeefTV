@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { App, Button, Dropdown, Input, Modal } from "antd";
 import { Select } from "@/components/ui/base/select";
-import { ArrowLeft, Download, FolderPlus, Image as ImageIcon, MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, FolderPlus, Image as ImageIcon, MoreHorizontal, Pencil, Plus, Search, Trash2, Upload } from "lucide-react";
 
 import { CollectionGrid, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceLoadingState, WorkspaceState } from "@/components/layout/workspace-state";
@@ -515,6 +515,7 @@ export default function CanvasPage() {
                 </div>
                 <div className="libtv-project-actions">
                     <Input prefix={<Search />} value={keyword} allowClear placeholder="搜索项目" aria-label="搜索项目" onChange={(event) => setKeyword(event.target.value)} />
+                    <Button icon={<Upload />} disabled={!hydrated} onClick={() => inputRef.current?.click()}>导入画布</Button>
                     <Button icon={<Trash2 />} onClick={() => setHistoryOpen(true)}>回收站</Button>
                     <Button icon={<FolderPlus />} disabled={!hydrated} onClick={() => createFolder("未命名文件夹")}>新建文件夹</Button>
                 </div>

@@ -71,6 +71,11 @@ const zhCNTranslations = {
 
 const supportedVideoMimeTypes = new Set<VideoMimeType>(["video/mp4", "video/webm", "video/3gp", "video/ogg", "video/avi", "video/mpeg", "video/object"]);
 
+export function normalizeVideoPlayerMimeType(mimeType?: string): VideoMimeType {
+    const container = mimeType?.split(";", 1)[0]?.trim().toLowerCase() as VideoMimeType | undefined;
+    return container && supportedVideoMimeTypes.has(container) ? container : "video/mp4";
+}
+
 /**
  * 统一视频播放表面，保留原生媒体 URL 契约，同时提供可访问的完整控件布局。
  * 画布节点需要隔离播放器手势，避免拖动进度条时被误判为拖动画布。
@@ -169,7 +174,7 @@ export function VideoPlayer({
         }
         if (dataCanvasNoZoom) event.stopPropagation();
     };
-    const type = mimeType && supportedVideoMimeTypes.has(mimeType as VideoMimeType) ? (mimeType as VideoMimeType) : "video/mp4";
+    const type = normalizeVideoPlayerMimeType(mimeType);
     const mediaSource = useMemo(() => ({ src, type }), [src, type]);
     const handleCanPlay = (detail: Parameters<NonNullable<MediaPlayerProps["onCanPlay"]>>[0], event: Parameters<NonNullable<MediaPlayerProps["onCanPlay"]>>[1]) => {
         const provider = event.target.provider;

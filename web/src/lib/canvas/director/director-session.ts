@@ -15,6 +15,18 @@ export function upsertDirectorSceneById(scenes: DirectorScene[], scene: Director
     return scenes.some((item) => item.id === scene.id) ? scenes.map((item) => (item.id === scene.id ? scene : item)) : [...scenes, scene];
 }
 
+/** Commit a canvas director-node description to its shot prompt; stale shot ids fall back safely. */
+export function updateDirectorShotPrompt(scene: DirectorScene, requestedShotId: string | undefined, input: string): DirectorScene {
+    const prompt = input.trim();
+    if (!prompt || scene.shots.length === 0) return scene;
+    const shotId = requestedShotId && scene.shots.some((shot) => shot.id === requestedShotId)
+        ? requestedShotId
+        : scene.shots.some((shot) => shot.id === scene.activeShotId) ? scene.activeShotId : scene.shots[0].id;
+    const current = scene.shots.find((shot) => shot.id === shotId)!;
+    if (current.prompt === prompt) return scene;
+    return { ...scene, shots: scene.shots.map((shot) => shot.id === shotId ? { ...shot, prompt } : shot) };
+}
+
 /**
  * 输出上传可能跨越数秒。只把生成出的预览引用合并到最新场景，绝不拿输出开始时的
  * scene 快照覆盖期间发生的标题、对象、关键帧或镜头编辑。
@@ -25,6 +37,25 @@ export function mergeDirectorOutputPreview(scene: DirectorScene, input: { sceneI
         ...scene,
         shots: scene.shots.map((shot) => (shot.id === input.shotId ? { ...shot, previewNodeId: input.previewNodeId, depthNodeId: undefined, normalNodeId: undefined } : shot)),
     };
+}
+
+/** Asynchronous uploads and asset registration must not publish into a switched canvas or deleted shot. */
+export function isDirectorOutputTargetCurrent(input: {
+    currentProjectId: string | null;
+    outputProjectId: string;
+    projectExists: boolean;
+    sourceNode: { id: string; metadata?: { directorSceneId?: string } } | undefined;
+    sourceNodeId: string;
+    latestScene: Pick<DirectorScene, "id" | "shots"> | undefined;
+    sceneId: string;
+    shotId: string;
+}): boolean {
+    return input.currentProjectId === input.outputProjectId
+        && input.projectExists
+        && input.sourceNode?.id === input.sourceNodeId
+        && input.sourceNode.metadata?.directorSceneId === input.sceneId
+        && input.latestScene?.id === input.sceneId
+        && input.latestScene.shots.some((shot) => shot.id === input.shotId);
 }
 
 /** 截图上传完成后合入最新场景，避免旧快照覆盖期间的其他编辑。 */

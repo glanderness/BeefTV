@@ -60,7 +60,6 @@ describe("导演台 AI 全景图", () => {
             else Reflect.deleteProperty(globalThis, "window");
         }
     });
-
     test("没有图片模型时不上传也不创建付费任务", async () => {
         let uploads = 0;
         await expect(generateDirectorPanorama(input(), {

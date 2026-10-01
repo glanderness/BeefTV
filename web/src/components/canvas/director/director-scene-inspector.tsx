@@ -54,7 +54,7 @@ export function DirectorSceneInspector({ scene, onChange }: { scene: DirectorSce
             <section className="space-y-4 border-b px-4 py-4" style={{ borderColor: "var(--border)" }} aria-label="全景背景">
                 <h3 className="font-semibold">全景背景</h3>
                 <div className="space-y-2">
-                    <span className="text-xs opacity-65">已连接全景图</span>
+                    <span className="text-xs opacity-65">{scene.panorama ? "已连接全景图" : "尚未添加全景图"}</span>
                     {scene.panorama ? <div className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs" style={{ borderColor: "var(--border)" }}>
                         <span className="min-w-0 truncate">{scene.panorama.name || "全景图片"}</span>
                         <button type="button" aria-label="移除全景图" className="shrink-0 opacity-65 hover:opacity-100" onClick={() => onChange({ panorama: undefined })}>移除</button>

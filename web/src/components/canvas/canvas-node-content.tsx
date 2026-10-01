@@ -10,6 +10,7 @@ import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { loadCanvasDrawingPreview } from "@/lib/canvas/canvas-drawing-storage";
 import { canvasNodeVideoPreviewUrl } from "@/lib/canvas/canvas-media-preview";
+import { isSilentDirectorClayVideo } from "@/lib/canvas/director/director-clay-output";
 import { bindCanvasVideoHoverPreview } from "@/lib/canvas/canvas-video-hover-preview";
 import { canvasVideoPresentationState } from "@/lib/canvas/canvas-video-presentation";
 import { buildLibTVImagePreviewUrl, buildLibTVVideoSourceUrl } from "@/lib/canvas/libtv-import";
@@ -73,6 +74,7 @@ export function CanvasNodeContent(props: CanvasNodeContentProps) {
     const hasCustomContent = props.node.type === CanvasNodeType.Config
         || props.node.type === CanvasNodeType.Script
         || props.node.type === CanvasNodeType.BatchTable
+        || props.node.type === CanvasNodeType.Director
         || Boolean(props.node.metadata?.directorSceneId)
         || (props.node.metadata?.workflowKind === "character" && Boolean(props.node.metadata.characterAssetId))
         || (props.node.metadata?.workflowKind === "story_input" && !props.isEditingContent)
@@ -548,6 +550,7 @@ function ToggleLine({ label, value, onChange }: { label: string; value: boolean;
 }
 
 function inferVideoHasAudio(metadata: CanvasNodeData["metadata"]): boolean | undefined {
+    if (isSilentDirectorClayVideo(metadata)) return false;
     if (typeof metadata?.hasAudio === "boolean") return metadata.hasAudio;
     // Generated nodes from older saves may not have `hasAudio` yet. In that
     // case an explicit generation setting is the only persisted signal we

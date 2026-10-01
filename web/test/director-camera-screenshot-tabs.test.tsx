@@ -42,4 +42,17 @@ describe("导演台摄影机截图页", () => {
         expect(html).toContain(`${scene.cameras[0].name}截图`);
         expect(html).not.toContain("可编辑镜头参数");
     });
+
+    test("运动轨迹页只显示机位运动控制，不混入属性或截图", () => {
+        const scene = createDirectorReproScene();
+        const html = renderToStaticMarkup(createElement(DirectorCameraScreenshotTabs, {
+            scene,
+            tab: "motion",
+            motionContent: createElement("span", null, "可编辑轨迹参数"),
+            children: createElement("span", null, "可编辑镜头参数"),
+        }));
+        expect(html).toContain("运动轨迹");
+        expect(html).toContain("可编辑轨迹参数");
+        expect(html).not.toContain("可编辑镜头参数");
+    });
 });
