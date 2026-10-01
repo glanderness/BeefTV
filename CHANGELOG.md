@@ -9,6 +9,12 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.19
+
+- Explain account quota shortages with actionable balance, token and plan guidance.
+- Distinguish completed videos that could not be saved from generation failures, directing users to recover the original result without paying again.
+- Preserve structured provider errors and request IDs through video creation, polling and manual result recovery.
+
 ## v1.6.18
 
 - Continue polling the original video task after Windows socket resets or connection aborts instead of failing immediately.
