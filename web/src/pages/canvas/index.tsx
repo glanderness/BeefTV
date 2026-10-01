@@ -8,19 +8,15 @@ import { ArrowLeft, Download, FolderPlus, Image as ImageIcon, MoreHorizontal, Pe
 import { CollectionGrid, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceLoadingState, WorkspaceState } from "@/components/layout/workspace-state";
 
-import { setMediaBlob } from "@/services/file-storage";
-import { setImageBlob } from "@/services/image-storage";
 import { CanvasFolderCard } from "@/components/canvas/canvas-folder-card";
 import { RecycleBinDialog } from "@/components/canvas/recycle-bin-dialog";
 import { LibraryCardShell } from "@/components/canvas/library-card-shell";
-import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
-import { exportCanvasProjects, openCanvasArchive } from "@/lib/canvas/canvas-export";
+import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
+import { restoreCanvasArchive } from "@/lib/canvas/canvas-archive-restore";
 import { reportOwnedMediaSave } from "@/services/desktop-media-save";
-import { normalizeLocalCanvasProject } from "@/lib/local-workspace-migration";
-import { saveCanvasDrawing, type CanvasDrawingRenderDraft } from "@/lib/canvas/canvas-drawing-storage";
-import { hasRemoteUserDataSyncSession, loadCanvasProjectForEditing, saveRemoteUserDataNow, scheduleRemoteUserDataSync } from "@/services/local-workspace-sync";
+import { loadCanvasProjectForEditing, saveRemoteUserDataNow } from "@/services/local-workspace-sync";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { createLocalCanvasProject, deleteLocalCanvasProjects, hydrateLocalCanvasProjectsFromBackend } from "@/services/local-workspace-repository";
 import { createWorkspaceCanvasProject } from "@/services/workspace-project-repository";
@@ -28,18 +24,10 @@ import { listWorkspaceCanvasProjectsPage, type CanvasLibrarySummary } from "@/se
 import { useUserStore } from "@/stores/use-user-store";
 import { listProjects } from "@/services/api/projects";
 import { loadCanvasProjectPage } from "@/lib/workspace-route-modules";
-import { resourceFileUrl, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
-import { primeResourceBlobCache } from "@/services/resource-blob-cache";
 import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
-import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
 import { cn } from "@/lib/utils";
 import { canvasIdsForWorkspaceProjects, canvasWorkspaceProjectId, listCanvasWorkspaceProjectCanvases, listCanvasWorkspaceProjectRoots, previewNodesForWorkspaceProject } from "@/lib/canvas/canvas-workspace-project";
-
-function isExpectedLocalOnlySyncError(error: unknown) {
-    const message = error instanceof Error ? error.message : String(error || "");
-    return /尚未建立云端同步会话|未登录|guest/i.test(message);
-}
 
 const CanvasDeleteProjectsDialog = lazy(() => import("@/components/canvas/canvas-delete-projects-dialog").then((module) => ({ default: module.CanvasDeleteProjectsDialog })));
 
@@ -98,7 +86,6 @@ export default function CanvasPage() {
         ? libraryQuery.data?.pages.flatMap((page) => page.projects) || []
         : listCanvasWorkspaceProjectRoots(localProjects).map((project) => ({ ...project, nodeCount: project.nodes.length, previewNodes: previewNodesForWorkspaceProject(localProjects, canvasWorkspaceProjectId(project)) })), [libraryQuery.data, localProjects, remoteMode]);
     const totalProjects = remoteMode ? libraryQuery.data?.pages[0]?.total || 0 : projects.length;
-    const importProject = useCanvasStore((state) => state.importProject);
     const selectedIds = useCanvasUiStore((state) => state.selectedProjectIds);
     const deleteDialogOpen = useCanvasUiStore((state) => state.deleteProjectIds.length > 0);
     const setDeleteIds = useCanvasUiStore((state) => state.setDeleteProjectIds);
@@ -243,226 +230,15 @@ export default function CanvasPage() {
         if (!file) return;
         const hideLoading = message.loading({ content: "正在解压并准备导入画布...", duration: 0 });
         try {
-            const { data, files: zip } = await openCanvasArchive(file);
-            const folderIdMap = new Map<string, string>();
-            for (const folder of data.folders || []) {
-                if (!folder || typeof folder.id !== "string" || typeof folder.name !== "string") continue;
-                folderIdMap.set(folder.id, createFolder(folder.name));
-            }
+            const result = await restoreCanvasArchive(file, {
+                onProjectProgress: (projectId, progress) => {
+                    useSyncProgressStore.getState().setProjectProgress(projectId, progress);
+                },
+            });
             hideLoading();
-            const remoteSyncEnabled = hasRemoteUserDataSyncSession();
-            let remoteSyncWarning: unknown;
-            const importedWorkspaceProjectIds = new Map<string, string>();
-
-            for (const item of data.projects) {
-                const totalFiles = item.files.length;
-                const sourceWorkspaceProjectId = canvasWorkspaceProjectId(item.project);
-                const importedProjectId = importProject({
-                    ...(!remoteMode ? normalizeLocalCanvasProject(item.project) : item.project),
-                    folderId: item.project.folderId ? folderIdMap.get(item.project.folderId) : undefined,
-                    title: item.project.title || "导入画布",
-                    nodes: item.project.nodes || [],
-                }, importedWorkspaceProjectIds.get(sourceWorkspaceProjectId));
-                if (!importedWorkspaceProjectIds.has(sourceWorkspaceProjectId)) importedWorkspaceProjectIds.set(sourceWorkspaceProjectId, importedProjectId);
-
-                if (totalFiles > 0) {
-                    useSyncProgressStore.getState().setProjectProgress(importedProjectId, {
-                        projectId: importedProjectId,
-                        total: totalFiles,
-                        completed: 0,
-                        phase: remoteSyncEnabled ? "uploading" : "saving",
-                        message: remoteSyncEnabled ? "正在上传媒体至云端" : "正在保存本地媒体",
-                    });
-                }
-
-                try {
-                    const storageKeyMap = new Map<string, { storageKey: string; url: string }>();
-                    const concurrency = 4;
-                    let fileIndex = 0;
-                    const workers = new Array(Math.min(item.files.length, concurrency)).fill(null).map(async () => {
-                        while (fileIndex < item.files.length) {
-                            const current = fileIndex++;
-                            const fileItem = item.files[current];
-                            const blob = zip.get(fileItem.path)!;
-                            const mime = fileItem.mimeType || blob.type || "image/png";
-                            const typedBlob = blob.type ? blob : blob.slice(0, blob.size, mime);
-                            const kind: "image" | "video" | "audio" | "file" = mime.startsWith("image/") ? "image" : mime.startsWith("video/") ? "video" : mime.startsWith("audio/") ? "audio" : "file";
-
-                            try {
-                                if (!remoteMode) throw new Error("local-storage-mode");
-                                const resource = await uploadResourceFile(typedBlob, kind, { fileName: fileItem.path.split("/").pop() });
-                                const newStorageKey = resourceStorageKey(resource.id);
-                                const newUrl = resourceFileUrl(resource.id);
-                                await primeResourceBlobCache(newStorageKey, typedBlob).catch(() => "");
-                                storageKeyMap.set(fileItem.storageKey, { storageKey: newStorageKey, url: newUrl });
-                            } catch (uploadErr) {
-                                if (remoteMode && !(uploadErr instanceof Error && uploadErr.message === "local-storage-mode")) console.warn("上传资源到后端失败，降级保存本地", uploadErr);
-                                const localUrl = await (fileItem.storageKey.startsWith("image:") ? setImageBlob(fileItem.storageKey, typedBlob) : setMediaBlob(fileItem.storageKey, typedBlob));
-                                if (localUrl) {
-                                    storageKeyMap.set(fileItem.storageKey, { storageKey: fileItem.storageKey, url: localUrl });
-                                }
-                            } finally {
-                                useSyncProgressStore.getState().incrementProjectCompleted(importedProjectId);
-                            }
-                        }
-                    });
-                    await Promise.all(workers);
-
-                    const drawingEngineById = new Map((item.drawingDocuments || []).filter((document) => !document.engine || document.engine === "excalidraw").map((document) => [document.drawingId, "excalidraw" as const]));
-                    const remapNodeMedia = (node: CanvasNodeData): CanvasNodeData => {
-                        const oldKey = node.metadata?.storageKey;
-                        const mapped = oldKey ? storageKeyMap.get(oldKey) : undefined;
-                        const isDeadBlob = (val?: string) => typeof val === "string" && val.startsWith("blob:");
-                        const nextStorageKey = mapped ? mapped.storageKey : oldKey && !isDeadBlob(oldKey) ? oldKey : undefined;
-                        const content = mapped ? mapped.url : isDeadBlob(node.metadata?.content) ? "" : node.metadata?.content;
-                        const previewContent = mapped ? mapped.url : isDeadBlob(node.metadata?.previewContent) ? "" : node.metadata?.previewContent;
-                        return {
-                            ...node,
-                            metadata: {
-                                ...node.metadata,
-                                ...(nextStorageKey !== undefined ? { storageKey: nextStorageKey } : {}),
-                                ...(content !== undefined ? { content } : {}),
-                                ...(previewContent !== undefined ? { previewContent } : {}),
-                                drawingEngine: node.type === "drawing" && node.metadata?.drawingId ? drawingEngineById.get(node.metadata.drawingId) || "excalidraw" : node.metadata?.drawingEngine,
-                            },
-                        };
-                    };
-
-                    let remappedNodes = (item.project.nodes || []).map(remapNodeMedia);
-                    let remappedTimeline = item.project.timeline
-                        ? {
-                              ...item.project.timeline,
-                              clips: item.project.timeline.clips.map((clip) => {
-                                  const directMedia = clip.directMedia;
-                                  if (!directMedia?.storageKey) return clip;
-                                  const mapped = storageKeyMap.get(directMedia.storageKey);
-                                  return mapped
-                                      ? {
-                                            ...clip,
-                                            directMedia: { ...directMedia, storageKey: mapped.storageKey, url: mapped.url, dataUrl: directMedia.dataUrl ? mapped.url : directMedia.dataUrl, content: directMedia.content ? mapped.url : directMedia.content },
-                                        }
-                                      : clip;
-                              }),
-                          }
-                        : undefined;
-                    updateProject(importedProjectId, { nodes: remappedNodes, timeline: remappedTimeline });
-
-                    const assetIdByStorageKey = new Map<string, string>();
-                    for (let index = 0; index < remappedNodes.length; index += 1) {
-                        const node = remappedNodes[index];
-                        const isMedia = node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio;
-                        if (!isMedia || !node.metadata?.content) continue;
-                        const storageKey = node.metadata.storageKey || "";
-                        let assetId = storageKey ? assetIdByStorageKey.get(storageKey) : undefined;
-                        if (!assetId) {
-                            const result = await ensureCanvasNodeAsset({ canvasId: importedProjectId, domainProjectId: item.project.projectId, node, source: "canvas-upload" });
-                            assetId = result.assetId;
-                            if (storageKey) assetIdByStorageKey.set(storageKey, assetId);
-                        }
-                        remappedNodes[index] = { ...node, metadata: { ...node.metadata, assetId } };
-                    }
-                    if (remappedTimeline) {
-                        const clips: typeof remappedTimeline.clips = [];
-                        for (const clip of remappedTimeline.clips) {
-                            const media = clip.directMedia;
-                            const content = media?.url || media?.dataUrl || media?.content || "";
-                            if (!media || media.assetId || !media.storageKey || !content || media.kind === "text") {
-                                clips.push(clip);
-                                continue;
-                            }
-                            let assetId = assetIdByStorageKey.get(media.storageKey);
-                            if (!assetId) {
-                                const type = media.kind === "audio" ? CanvasNodeType.Audio : media.kind === "video" ? CanvasNodeType.Video : CanvasNodeType.Image;
-                                const node: CanvasNodeData = {
-                                    id: media.id,
-                                    type,
-                                    title: media.title,
-                                    position: { x: 0, y: 0 },
-                                    width: media.width || 320,
-                                    height: media.height || (type === CanvasNodeType.Audio ? 120 : 240),
-                                    metadata: { content, storageKey: media.storageKey, naturalWidth: media.width, naturalHeight: media.height, durationMs: media.durationMs, bytes: media.bytes, mimeType: media.mimeType },
-                                };
-                                const result = await ensureCanvasNodeAsset({ canvasId: importedProjectId, domainProjectId: item.project.projectId, node, source: "canvas-upload" });
-                                assetId = result.assetId;
-                                assetIdByStorageKey.set(media.storageKey, assetId);
-                            }
-                            clips.push({ ...clip, directMedia: { ...media, assetId } });
-                        }
-                        remappedTimeline = { ...remappedTimeline, clips };
-                    }
-                    updateProject(importedProjectId, { nodes: remappedNodes, timeline: remappedTimeline });
-
-                    await Promise.all(
-                        (item.drawingDocuments || []).filter((document) => !document.engine || document.engine === "excalidraw").map((document) => {
-                            const previewFile = document.previewPath ? zip.get(document.previewPath) : undefined;
-                            const preview = previewFile && !previewFile.type ? previewFile.slice(0, previewFile.size, "image/png") : previewFile;
-                            const renderFile = document.generationRender?.path ? zip.get(document.generationRender.path) : undefined;
-                            const renderBlob = renderFile && !renderFile.type ? renderFile.slice(0, renderFile.size, document.generationRender?.mimeType || "image/png") : renderFile;
-                            const render =
-                                renderBlob && document.generationRender
-                                    ? ({
-                                          blob: renderBlob,
-                                          pageId: document.generationRender.pageId,
-                                          width: document.generationRender.width,
-                                          height: document.generationRender.height,
-                                          mimeType: document.generationRender.mimeType,
-                                          background: document.generationRender.background,
-                                      } satisfies CanvasDrawingRenderDraft)
-                                    : undefined;
-                            const engine = "excalidraw" as const;
-                            return saveCanvasDrawing(
-                                importedProjectId,
-                                document.drawingId,
-                                engine,
-                                document.snapshot,
-                                {
-                                    version: 2,
-                                    engine,
-                                    snapshot: document.snapshot,
-                                    revision: Math.max(0, document.revision - 1),
-                                    updatedAt: document.updatedAt,
-                                    shapeCount: document.shapeCount,
-                                    pageCount: document.pageCount,
-                                },
-                                preview,
-                                render,
-                            );
-                        }),
-                    );
-
-                    useSyncProgressStore.getState().setProjectProgress(importedProjectId, {
-                        phase: "saving",
-                        message: remoteSyncEnabled ? "正在保存画布结构" : "正在保存本地画布",
-                    });
-                    await flushCanvasStorePersistence();
-                    if (remoteSyncEnabled) {
-                        try {
-                            await saveRemoteUserDataNow(importedProjectId);
-                        } catch (syncError) {
-                            remoteSyncWarning ||= syncError;
-                            scheduleRemoteUserDataSync();
-                            if (remoteMode && syncError && !isExpectedLocalOnlySyncError(syncError)) {
-                                console.warn("导入画布云端同步失败，等待自动重试", syncError);
-                            }
-                        }
-                    }
-                } catch (error) {
-                    useSyncProgressStore.getState().setProjectProgress(importedProjectId, {
-                        phase: "error",
-                        message: error instanceof Error ? error.message : "画布导入未完成",
-                    });
-                    throw error;
-                } finally {
-                    if (!remoteSyncEnabled) useSyncProgressStore.getState().setProjectProgress(importedProjectId, null);
-                }
-            }
-
-            await flushCanvasStorePersistence();
-            if (remoteSyncWarning) {
-                message.warning(`已导入 ${data.projects.length} 个画布，云端同步未完成，将自动重试`);
-            } else {
-                message.success(remoteSyncEnabled ? `已导入 ${data.projects.length} 个画布并完成云端同步` : `已导入 ${data.projects.length} 个画布并保存到本地`);
-            }
+            message.success(result.storage === "backend"
+                ? `已导入 ${result.count} 个画布`
+                : `已导入 ${result.count} 个画布并保存到本地`);
         } catch (error) {
             hideLoading();
             console.error("导入画布失败", error);

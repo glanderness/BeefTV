@@ -1,14 +1,22 @@
-import { createZip, readZip } from "@/lib/zip";
+import { confinedArchivePath, createZip, readZip } from "@/lib/zip";
 import { saveOwnedOrBrowserBlob, type OwnedMediaSaveResult } from "@/services/desktop-media-save";
 import { getMediaBlob, setMediaBlob } from "@/services/file-storage";
 import { getImageBlob, setImageBlob } from "@/services/image-storage";
-import type { CanvasExportAsset, CanvasExportFile } from "@/types/canvas-export";
+import type { CanvasExportAsset, CanvasExportFile, CanvasProjectExportItem } from "@/types/canvas-export";
 import type { CanvasFolder, CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { loadCanvasDrawing, loadCanvasDrawingPreview, loadCanvasDrawingRender } from "@/lib/canvas/canvas-drawing-storage";
 import type { CanvasDrawingExport } from "@/types/canvas-export";
 import { normalizeLocalCanvasProject } from "@/lib/local-workspace-migration";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { archiveFileExtension, assertUniqueArchiveNames, ExportIntegrityError, type MissingExportFile } from "@/lib/export-integrity";
+
+export const ARCHIVE_STORAGE_KEY_PATTERN = /^(image|video|audio|file|resource|model|video-reference|audio-reference):/;
+
+export function isArchiveStorageKey(value: string) {
+    const key = value.trim();
+    if (!key || key.startsWith("data:") || key.startsWith("blob:")) return false;
+    return ARCHIVE_STORAGE_KEY_PATTERN.test(key);
+}
 
 export async function exportCanvasProjects(projects: CanvasProject[], fileName = "画布", options: { includeLocalDrawings?: boolean; folders?: CanvasFolder[] } = {}): Promise<OwnedMediaSaveResult> {
     const zipFiles: { name: string; data: BlobPart }[] = [];
@@ -97,29 +105,121 @@ export async function openCanvasArchive(file: Blob): Promise<OpenCanvasArchive> 
     } catch {
         throw new Error("画布备份已损坏，无法导入");
     }
-    if (!data || !Array.isArray(data.projects)) throw new Error("projects.json 中缺少画布列表");
-    for (const item of data.projects) {
-        if (!item || !Array.isArray(item.files)) {
-            throw new Error(`画布「${item?.project?.title || "未命名画布"}」的媒体清单无效`);
-        }
-        const missing = item.files.find((entry) => !entry?.path || !zip.get(entry.path));
-        if (missing) throw new Error(`压缩包缺少媒体文件：${missing.path || "未命名文件"}`);
-        for (const document of item.drawingDocuments || []) {
-            if (document.previewPath && !zip.get(document.previewPath)) {
-                throw new Error(`压缩包缺少媒体文件：${document.previewPath}`);
-            }
-            if (document.generationRender?.path && !zip.get(document.generationRender.path)) {
-                throw new Error(`压缩包缺少媒体文件：${document.generationRender.path}`);
-            }
-        }
-    }
+    preflightCanvasArchive(data, zip);
     return { data, files: zip };
 }
 
+export function preflightCanvasArchive(data: CanvasExportFile, zip: Map<string, Blob>): void {
+    if (!data || data.app !== "infinite-canvas") throw new Error("不是有效的画布备份");
+    if (data.version !== 3 && data.version !== 4) throw new Error("不支持的画布备份版本");
+    if (!Array.isArray(data.projects)) throw new Error("projects.json 中缺少画布列表");
+    if (data.folders !== undefined && !Array.isArray(data.folders)) throw new Error("备份中的文件夹列表无效");
+    const folderIds = new Set<string>();
+    for (const folder of data.folders || []) {
+        if (!folder || typeof folder.id !== "string" || !folder.id.trim() || typeof folder.name !== "string") {
+            throw new Error("备份中的文件夹无效");
+        }
+        if (folderIds.has(folder.id)) throw new Error("备份中存在重复的文件夹");
+        folderIds.add(folder.id);
+    }
+    const projectIds = new Set<string>();
+    const archivePaths = new Set<string>(["projects.json"]);
+    for (const item of data.projects) {
+        preflightCanvasArchiveProject(item, zip, projectIds, folderIds, archivePaths);
+    }
+}
+
+function preflightCanvasArchiveProject(
+    item: CanvasProjectExportItem,
+    zip: Map<string, Blob>,
+    projectIds: Set<string>,
+    folderIds: Set<string>,
+    archivePaths: Set<string>,
+) {
+    if (!item || !item.project || typeof item.project !== "object") throw new Error("备份中的画布无效");
+    const project = item.project;
+    const title = typeof project.title === "string" && project.title.trim() ? project.title : "未命名画布";
+    if (typeof project.id !== "string" || !project.id.trim()) throw new Error(`画布「${title}」缺少编号`);
+    if (projectIds.has(project.id)) throw new Error(`备份中存在重复的画布：${title}`);
+    projectIds.add(project.id);
+    if (project.folderId && !folderIds.has(project.folderId)) throw new Error(`画布「${title}」引用了不存在的文件夹`);
+    if (!Array.isArray(item.files)) throw new Error(`画布「${title}」的媒体清单无效`);
+    if (project.nodes !== undefined && !Array.isArray(project.nodes)) throw new Error(`画布「${title}」的节点列表无效`);
+    if (project.connections !== undefined && !Array.isArray(project.connections)) throw new Error(`画布「${title}」的连线列表无效`);
+    if (project.timeline !== undefined) preflightCanvasArchiveTimeline(project.timeline, title);
+    const nodeIds = new Set<string>();
+    for (const node of project.nodes || []) {
+        if (!node || typeof node !== "object" || typeof node.id !== "string" || !node.id.trim() || typeof node.type !== "string" || !node.type.trim()) {
+            throw new Error(`画布「${title}」包含无效节点`);
+        }
+        if (nodeIds.has(node.id)) throw new Error(`画布「${title}」存在重复节点`);
+        nodeIds.add(node.id);
+    }
+    const fileKeys = new Set<string>();
+    for (const fileItem of item.files) {
+        if (!fileItem || typeof fileItem.storageKey !== "string" || typeof fileItem.path !== "string") {
+            throw new Error(`画布「${title}」的媒体清单无效`);
+        }
+        if (!isArchiveStorageKey(fileItem.storageKey)) {
+            throw new Error(`画布「${title}」包含无效的媒体引用`);
+        }
+        if (fileKeys.has(fileItem.storageKey)) throw new Error(`画布「${title}」存在重复的媒体引用`);
+        fileKeys.add(fileItem.storageKey);
+        const path = confinedArchivePath(fileItem.path);
+        if (path === "projects.json" || archivePaths.has(path)) throw new Error(`压缩包存在重名文件：${path}`);
+        archivePaths.add(path);
+        const blob = zip.get(path) || zip.get(fileItem.path);
+        if (!blob || blob.size === 0) throw new Error(`压缩包缺少媒体文件：${fileItem.path || "未命名文件"}`);
+    }
+    const liveKeys = collectStorageKeys(project);
+    for (const storageKey of liveKeys) {
+        if (!fileKeys.has(storageKey)) throw new Error(`压缩包缺少媒体文件：${storageKey}`);
+    }
+    for (const storageKey of fileKeys) {
+        if (!liveKeys.includes(storageKey)) throw new Error(`画布「${title}」的媒体清单与画布内容不一致`);
+    }
+    if (item.drawingDocuments !== undefined && !Array.isArray(item.drawingDocuments)) {
+        throw new Error(`画布「${title}」的画板文档无效`);
+    }
+    const drawingIds = new Set<string>();
+    for (const document of item.drawingDocuments || []) {
+        if (!document || typeof document.drawingId !== "string" || !document.drawingId.trim()) {
+            throw new Error(`画布「${title}」的画板文档无效`);
+        }
+        if (drawingIds.has(document.drawingId)) throw new Error(`画布「${title}」存在重复画板`);
+        drawingIds.add(document.drawingId);
+        if (document.previewPath) {
+            const path = confinedArchivePath(document.previewPath);
+            if (archivePaths.has(path)) throw new Error(`压缩包存在重名文件：${path}`);
+            archivePaths.add(path);
+            if (!zip.get(path) && !zip.get(document.previewPath)) throw new Error(`压缩包缺少媒体文件：${document.previewPath}`);
+        }
+        if (document.generationRender?.path) {
+            const path = confinedArchivePath(document.generationRender.path);
+            if (archivePaths.has(path)) throw new Error(`压缩包存在重名文件：${path}`);
+            archivePaths.add(path);
+            if (!zip.get(path) && !zip.get(document.generationRender.path)) throw new Error(`压缩包缺少媒体文件：${document.generationRender.path}`);
+        }
+    }
+    for (const node of project.nodes || []) {
+        if (node.type !== "drawing" || !node.metadata?.drawingId) continue;
+        if (item.drawingDocuments && !drawingIds.has(node.metadata.drawingId)) {
+            throw new Error(`画布「${title}」缺少画板 ${node.title || node.metadata.drawingId}`);
+        }
+    }
+}
+
+function preflightCanvasArchiveTimeline(timeline: NonNullable<CanvasProject["timeline"]>, title: string) {
+    if (!timeline || typeof timeline !== "object" || !Array.isArray(timeline.clips) || !Array.isArray(timeline.tracks)) {
+        throw new Error(`画布「${title}」的时间线无效`);
+    }
+}
+
 export async function restoreCanvasArchiveMedia(archive: OpenCanvasArchive): Promise<void> {
+    preflightCanvasArchive(archive.data, archive.files);
     for (const item of archive.data.projects) {
         for (const fileItem of item.files) {
-            const blob = archive.files.get(fileItem.path);
+            const blob = archive.files.get(fileItem.path) || archive.files.get(confinedArchivePath(fileItem.path));
             if (!blob) throw new Error(`压缩包缺少媒体文件：${fileItem.path}`);
             const mime = fileItem.mimeType || blob.type || "application/octet-stream";
             const typedBlob = blob.type ? blob : blob.slice(0, blob.size, mime);
@@ -128,9 +228,9 @@ export async function restoreCanvasArchiveMedia(archive: OpenCanvasArchive): Pro
     }
 }
 
-function collectStorageKeys(value: unknown, keys = new Set<string>()) {
+export function collectStorageKeys(value: unknown, keys = new Set<string>()) {
     if (!value || typeof value !== "object") return [...keys];
-    if ("storageKey" in value && typeof value.storageKey === "string" && value.storageKey.includes(":")) keys.add(value.storageKey);
+    if ("storageKey" in value && typeof value.storageKey === "string" && isArchiveStorageKey(value.storageKey)) keys.add(value.storageKey);
     Object.values(value).forEach((item) => (Array.isArray(item) ? item.forEach((child) => collectStorageKeys(child, keys)) : collectStorageKeys(item, keys)));
     return [...keys];
 }
