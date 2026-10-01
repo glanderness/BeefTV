@@ -9,14 +9,15 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 
-	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/assistant"
 )
 
 // Options 是 Host 的可注入边界：配置、供应商解析、凭据与进程环境。
 type Options struct {
 	DataDir         string
-	ResolveProvider func() (app.AssistantProvider, string)
+	ResolveProvider func() (assistant.Provider, string)
 	HostToken       func() string
 	OwnerToken      func() string
 	Environ         func() []string
@@ -28,8 +29,9 @@ type Options struct {
 // Host 是一个助手宿主监督器实例。bootstrap 为每个运行时持有一个；
 // 路由通过 RuntimeDependencies 拿到同一实例，而不是进程级全局变量。
 type Host struct {
-	opts Options
-	proc *supervisor
+	opts      Options
+	proc      *supervisor
+	lifecycle sync.Mutex
 }
 
 func New(opts Options) *Host {
@@ -38,13 +40,13 @@ func New(opts Options) *Host {
 
 func OptionsFromService(svc ProviderService) Options {
 	if svc == nil {
-		return Options{ResolveProvider: func() (app.AssistantProvider, string) {
+		return Options{ResolveProvider: func() (assistant.Provider, string) {
 			return ResolveProvider(nil)
 		}}
 	}
 	return Options{
 		DataDir: svc.DataDir(),
-		ResolveProvider: func() (app.AssistantProvider, string) {
+		ResolveProvider: func() (assistant.Provider, string) {
 			return ResolveProvider(svc.ResolveAssistantProvider)
 		},
 	}
@@ -104,6 +106,8 @@ func (h *Host) Start(opsURL, desktopToken string) error {
 	if h == nil {
 		return nil
 	}
+	h.lifecycle.Lock()
+	defer h.lifecycle.Unlock()
 	config, configured := h.EffectiveConfig()
 	if !configured || strings.TrimSpace(config.HostCommand) == "" {
 		return nil
@@ -116,10 +120,16 @@ func (h *Host) Start(opsURL, desktopToken string) error {
 }
 
 // Launch 按已解析的供应商启动；已在跑则是 no-op。调用方负责先检查配置是否存在。
-func (h *Host) Launch(provider app.AssistantProvider, opsURL, desktopToken string) error {
+func (h *Host) Launch(provider assistant.Provider, opsURL, desktopToken string) error {
 	if h == nil {
 		return invalidArg("host_command_missing", "未配置宿主启动命令")
 	}
+	h.lifecycle.Lock()
+	defer h.lifecycle.Unlock()
+	return h.launchLocked(provider, opsURL, desktopToken)
+}
+
+func (h *Host) launchLocked(provider assistant.Provider, opsURL, desktopToken string) error {
 	config, configured := h.EffectiveConfig()
 	if !configured || strings.TrimSpace(config.HostCommand) == "" {
 		return invalidArg("host_command_missing", "未配置宿主启动命令")
@@ -131,6 +141,8 @@ func (h *Host) Stop() error {
 	if h == nil {
 		return nil
 	}
+	h.lifecycle.Lock()
+	defer h.lifecycle.Unlock()
 	return h.proc.stop()
 }
 
@@ -138,8 +150,14 @@ func (h *Host) Stop() error {
 //
 // 只对它自己启动过的进程生效（未启动时是 no-op），不会去清理外接宿主或别人的 PID；
 // 宿主不可达/已退出时返回 nil，避免把关闭流程拖成失败。
+// 超时仍等到 stop 结束才释放生命周期锁，避免 Ensure/Restart 在回收中途再拉起进程。
 func (h *Host) StopContext(ctx context.Context) error {
-	if h == nil || !h.proc.running() {
+	if h == nil {
+		return nil
+	}
+	h.lifecycle.Lock()
+	defer h.lifecycle.Unlock()
+	if !h.proc.running() {
 		return nil
 	}
 	done := make(chan error, 1)
@@ -151,6 +169,10 @@ func (h *Host) StopContext(ctx context.Context) error {
 		}
 		return nil
 	case <-ctx.Done():
+		err := <-done
+		if err != nil {
+			return fmt.Errorf("停止内置创作助手宿主超时：%w", ctx.Err())
+		}
 		return fmt.Errorf("停止内置创作助手宿主超时：%w", ctx.Err())
 	}
 }
@@ -158,10 +180,12 @@ func (h *Host) StopContext(ctx context.Context) error {
 // Ensure 让状态查询自己把宿主带起来：
 // 没跑就按当前配置启动；跑着但供应商指纹变了、而且此刻空闲，就重启到新配置。
 // 返回 launched=true 表示这次调用刚拉起进程（界面此时应显示 host_starting）。
-func (h *Host) Ensure(provider app.AssistantProvider, opsURL, desktopToken string, idle bool) (launched bool, err error) {
+func (h *Host) Ensure(provider assistant.Provider, opsURL, desktopToken string, idle bool) (launched bool, err error) {
 	if h == nil {
 		return false, invalidArg("host_command_missing", "未配置宿主启动命令")
 	}
+	h.lifecycle.Lock()
+	defer h.lifecycle.Unlock()
 	config, configured := h.EffectiveConfig()
 	if !configured || strings.TrimSpace(config.HostCommand) == "" {
 		return false, invalidArg("host_command_missing", "未配置宿主启动命令")
@@ -183,10 +207,12 @@ func (h *Host) Ensure(provider app.AssistantProvider, opsURL, desktopToken strin
 }
 
 // Restart 是「重试」按钮的真实动作：停掉旧进程再按当前配置启动。
-func (h *Host) Restart(provider app.AssistantProvider, opsURL, desktopToken string) error {
+func (h *Host) Restart(provider assistant.Provider, opsURL, desktopToken string) error {
 	if h == nil {
 		return invalidArg("host_command_missing", "未配置宿主启动命令")
 	}
+	h.lifecycle.Lock()
+	defer h.lifecycle.Unlock()
 	config, configured := h.EffectiveConfig()
 	if !configured || strings.TrimSpace(config.HostCommand) == "" {
 		return invalidArg("host_command_missing", "未配置宿主启动命令")

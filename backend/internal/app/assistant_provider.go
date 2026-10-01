@@ -1,11 +1,10 @@
 package app
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"strings"
 
+	"infinite-canvas/backend/internal/assistant"
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/workspace"
 )
@@ -15,49 +14,18 @@ import (
 // 而不是读顶层 apiKey —— 顶层在托管形态下永远是空串。
 
 // 助手不可用的机器可读原因；UI 按 reason 映射文案，不解析 msg。
+// 规范定义在 assistant 包；这里保留既有 app 名称给现有调用方。
 const (
-	AssistantReasonModelNotConfigured  = "model_not_configured"
-	AssistantReasonCredentialMissing   = "credential_missing"
-	AssistantReasonProtocolUnsupported = "model_protocol_unsupported"
+	AssistantReasonModelNotConfigured  = assistant.ReasonModelNotConfigured
+	AssistantReasonCredentialMissing   = assistant.ReasonCredentialMissing
+	AssistantReasonProtocolUnsupported = assistant.ReasonProtocolUnsupported
 )
 
-// AssistantUnavailableError 承载稳定 reason，让 handler 直接投影成契约里的状态。
-type AssistantUnavailableError struct {
-	Reason  string
-	Message string
-}
-
-func (e *AssistantUnavailableError) Error() string {
-	if strings.TrimSpace(e.Message) != "" {
-		return e.Message
-	}
-	return e.Reason
-}
+type AssistantUnavailableError = assistant.UnavailableError
+type AssistantProvider = assistant.Provider
 
 func assistantUnavailable(reason, message string) error {
-	return &AssistantUnavailableError{Reason: reason, Message: message}
-}
-
-// AssistantProvider 是助手宿主要用的一次性连接信息（含密钥，只在进程内传递）。
-type AssistantProvider struct {
-	ChannelID   string
-	ChannelName string
-	// Model 是渠道内的模型 id（不含 channel:: 前缀）；ModelKey 是配置里的原值。
-	Model    string
-	ModelKey string
-	Protocol string
-	BaseURL  string
-	APIKey   string
-}
-
-// Fingerprint 是「当前生效的供应商配置」的稳定指纹：变化即说明宿主环境已过期。
-// 密钥只进哈希，不进任何可读输出。
-func (p AssistantProvider) Fingerprint() string {
-	sum := sha256.Sum256([]byte(p.APIKey))
-	digest := sha256.Sum256([]byte(strings.Join([]string{
-		p.ChannelID, p.Model, p.BaseURL, p.Protocol, hex.EncodeToString(sum[:]),
-	}, "\x00")))
-	return hex.EncodeToString(digest[:])
+	return &assistant.UnavailableError{Reason: reason, Message: message}
 }
 
 // assistantProtocols 是助手会话支持的文本协议。配置里历史上同时出现

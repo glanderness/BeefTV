@@ -16,22 +16,25 @@ func newAssistantHost(svc *app.Service) *assistantruntime.Host {
 	return assistantruntime.New(assistantruntime.OptionsFromService(svc))
 }
 
-func requestAssistantHost(c *gin.Context, svc *app.Service) *assistantruntime.Host {
-	if dependencies, ok := runtimeDependencies(c); ok && dependencies.AssistantHost != nil {
-		return dependencies.AssistantHost
+func missingAssistantHost(c *gin.Context, host *assistantruntime.Host) bool {
+	if host != nil {
+		return false
 	}
-	return newAssistantHost(svc)
+	c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_unreachable",
+		"msg": "内置创作助手宿主未运行"})
+	return true
 }
 
 // RegisterAgentHostLifecycleRoutes 暴露宿主配置与启停：全部需要 owner 凭据 + 本机同源。
+// host 必须是本次路由注册持有的实例；缺失时明确失败，绝不在请求里 new 一个随后被丢掉的监督器。
 func RegisterAgentHostLifecycleRoutes(r gin.IRouter, svc *app.Service, host *assistantruntime.Host) {
-	if host == nil {
-		host = newAssistantHost(svc)
-	}
 	ownerGuard := func(c *gin.Context) bool { return requireOwner(c, svc) }
 
 	r.GET("/assistant/host/config", func(c *gin.Context) {
 		if !ownerGuard(c) {
+			return
+		}
+		if missingAssistantHost(c, host) {
 			return
 		}
 		config, configured := host.EffectiveConfig()
@@ -44,6 +47,9 @@ func RegisterAgentHostLifecycleRoutes(r gin.IRouter, svc *app.Service, host *ass
 
 	r.PUT("/assistant/host/config", func(c *gin.Context) {
 		if !ownerGuard(c) {
+			return
+		}
+		if missingAssistantHost(c, host) {
 			return
 		}
 		var request assistantruntime.HostConfig
@@ -60,6 +66,9 @@ func RegisterAgentHostLifecycleRoutes(r gin.IRouter, svc *app.Service, host *ass
 
 	r.POST("/assistant/host/start", func(c *gin.Context) {
 		if !ownerGuard(c) {
+			return
+		}
+		if missingAssistantHost(c, host) {
 			return
 		}
 		config, configured := host.EffectiveConfig()
@@ -86,6 +95,9 @@ func RegisterAgentHostLifecycleRoutes(r gin.IRouter, svc *app.Service, host *ass
 
 	r.POST("/assistant/host/stop", func(c *gin.Context) {
 		if !ownerGuard(c) {
+			return
+		}
+		if missingAssistantHost(c, host) {
 			return
 		}
 		if err := host.Stop(); err != nil {

@@ -5,10 +5,10 @@ import (
 	"strconv"
 	"strings"
 
-	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/assistant"
 )
 
-func (h *Host) buildEnv(provider app.AssistantProvider, opsURL, desktopToken string) []string {
+func (h *Host) buildEnv(provider assistant.Provider, opsURL, desktopToken string) []string {
 	env := h.environ()
 	appendIf := func(key, value string) {
 		if strings.TrimSpace(value) != "" {

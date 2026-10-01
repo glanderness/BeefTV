@@ -5,21 +5,21 @@ import (
 	"os"
 	"strings"
 
-	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/assistant"
 )
 
 // ProviderService 是宿主解析模型/凭据时需要的窄端口；*app.Service 满足该接口。
 type ProviderService interface {
 	DataDir() string
-	ResolveAssistantProvider() (app.AssistantProvider, error)
+	ResolveAssistantProvider() (assistant.Provider, error)
 }
 
-// ResolveProvider 按用户选中的渠道解析模型与凭据（app 层拥有规则），
-// 并允许显式环境变量覆盖，便于开发与受控测试。
+// ResolveProvider 允许显式环境变量覆盖渠道解析（开发与受控测试路径）。
+// 实际渠道选择算法仍由 app 拥有，通过 resolve 注入。
 //
 // 失败时返回的 reason 直接就是 /assistant/status 契约里的机器可读原因。
-func ResolveProvider(resolve func() (app.AssistantProvider, error)) (app.AssistantProvider, string) {
-	override := app.AssistantProvider{
+func ResolveProvider(resolve func() (assistant.Provider, error)) (assistant.Provider, string) {
+	override := assistant.Provider{
 		BaseURL:  strings.TrimSpace(os.Getenv("BEEFTV_AGENT_BASE_URL")),
 		APIKey:   strings.TrimSpace(os.Getenv("BEEFTV_AGENT_API_KEY")),
 		Model:    strings.TrimSpace(os.Getenv("BEEFTV_AGENT_MODEL")),
@@ -35,20 +35,20 @@ func ResolveProvider(resolve func() (app.AssistantProvider, error)) (app.Assista
 		return override, ""
 	}
 	if resolve == nil {
-		return app.AssistantProvider{}, app.AssistantReasonModelNotConfigured
+		return assistant.Provider{}, assistant.ReasonModelNotConfigured
 	}
 	provider, err := resolve()
 	if err != nil {
-		var unavailable *app.AssistantUnavailableError
+		var unavailable *assistant.UnavailableError
 		if errors.As(err, &unavailable) {
-			return app.AssistantProvider{}, unavailable.Reason
+			return assistant.Provider{}, unavailable.Reason
 		}
-		return app.AssistantProvider{}, app.AssistantReasonModelNotConfigured
+		return assistant.Provider{}, assistant.ReasonModelNotConfigured
 	}
 	return provider, ""
 }
 
-func (h *Host) ResolveProvider() (app.AssistantProvider, string) {
+func (h *Host) ResolveProvider() (assistant.Provider, string) {
 	if h != nil && h.opts.ResolveProvider != nil {
 		return h.opts.ResolveProvider()
 	}

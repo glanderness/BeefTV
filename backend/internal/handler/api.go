@@ -5,7 +5,6 @@ import (
 
 	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/app"
-	"infinite-canvas/backend/internal/assistantruntime"
 
 	"github.com/gin-gonic/gin"
 )
@@ -27,7 +26,7 @@ func defaultRuntimeDependencies(svc *app.Service) RuntimeDependencies {
 	adapter := newServiceRuntimeAdapter(svc)
 	return RuntimeDependencies{
 		RequestCoordinator: adapter, ProviderConfig: adapter, Assets: adapter, Projects: adapter, Tasks: adapter, Generation: adapter,
-		AssistantHost: assistantruntime.New(assistantruntime.OptionsFromService(svc)),
+		AssistantHost: newAssistantHost(svc),
 	}
 }
 
@@ -40,7 +39,7 @@ func RegisterDesktopCanvasAPIWithDependencies(api *gin.RouterGroup, svc *app.Ser
 // discard hosted handlers and their SaaS-only service methods from BeefTV.
 func registerDesktopCanvasAPI(api *gin.RouterGroup, svc *app.Service, dependencies RuntimeDependencies) {
 	if dependencies.AssistantHost == nil {
-		dependencies.AssistantHost = assistantruntime.New(assistantruntime.OptionsFromService(svc))
+		dependencies.AssistantHost = newAssistantHost(svc)
 	}
 	api.Use(RuntimeDependenciesMiddleware(dependencies))
 	RegisterOpenAPIRoutes(api)
@@ -70,7 +69,7 @@ func registerDesktopCanvasAPI(api *gin.RouterGroup, svc *app.Service, dependenci
 	RegisterAgentUISessionRoutes(api, svc, uiSessions, dependencies.DesktopTrust)
 	// 外部 Agent 凭据的签发与吊销：只有受信任的桌面界面能进，外部客户端拿不到桌面启动令牌。
 	RegisterAgentClientRoutes(api, svc, clients, dependencies.DesktopTrust)
-	RegisterAgentProxyRoutes(api, svc, clients, uiSessions)
+	RegisterAgentProxyRoutes(api, svc, clients, uiSessions, dependencies.AssistantHost)
 	// 宿主生命周期：配置当前文本模型与启动命令，显式启停；未配置时返回明确未就绪。
 	RegisterAgentHostLifecycleRoutes(api, svc, dependencies.AssistantHost)
 	RegisterChunkedUploadRoutes(api, svc, false)

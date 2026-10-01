@@ -24,7 +24,8 @@ func TestAssistantAcceptanceRejectsMissingForeignAndExpiredUISessions(t *testing
 	expired.ExpiresAt = time.Now().Add(-time.Hour)
 	ui.sessions[expired.Token] = expired
 	router := gin.New()
-	RegisterAgentProxyRoutes(router.Group("/api"), env.service, agentops.NewClientRegistry(env.service.DataDir()), ui)
+	router.Use(RuntimeDependenciesMiddleware(RuntimeDependencies{AssistantHost: env.assistantHost}))
+	RegisterAgentProxyRoutes(router.Group("/api"), env.service, agentops.NewClientRegistry(env.service.DataDir()), ui, env.assistantHost)
 	env.router = router
 	for _, tc := range []struct{ name, token string }{
 		{"missing", ""}, {"unknown", "not-issued"}, {"foreign-user", foreignUser.Token}, {"foreign-store", foreignStore.Token}, {"expired", expired.Token},

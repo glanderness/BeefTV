@@ -10,11 +10,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
-	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/assistant"
 )
 
 const fixtureEnv = "BEEFTV_ASSISTANT_RUNTIME_FIXTURE"
@@ -41,8 +42,8 @@ func runProcessFixture(mode string) int {
 	}
 }
 
-func fixtureProvider() app.AssistantProvider {
-	return app.AssistantProvider{Model: "m", BaseURL: "https://example.invalid/v1", APIKey: "k", Protocol: "chat-completion"}
+func fixtureProvider() assistant.Provider {
+	return assistant.Provider{Model: "m", BaseURL: "https://example.invalid/v1", APIKey: "k", Protocol: "chat-completion"}
 }
 
 func waitForStopSignal() {
@@ -186,6 +187,45 @@ func TestEnsureRestartsWhenFingerprintChangesAndIdle(t *testing.T) {
 	launched, err = host.Ensure(updated, "http://127.0.0.1:18090/api", "", true)
 	if err != nil || launched {
 		t.Fatalf("相同指纹且在跑时 Ensure 应为 no-op launched=%v err=%v", launched, err)
+	}
+}
+
+func TestConcurrentLifecycleLeavesSingleOwnedChild(t *testing.T) {
+	host := fixtureHost(t, "sleep")
+	provider := fixtureProvider()
+	if err := host.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
+		t.Fatal(err)
+	}
+	updated := provider
+	updated.APIKey = "rotated"
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			_, _ = host.Ensure(provider, "http://127.0.0.1:18090/api", "", true)
+		}()
+		go func() {
+			defer wg.Done()
+			_, _ = host.Ensure(updated, "http://127.0.0.1:18090/api", "", false)
+		}()
+		go func() {
+			defer wg.Done()
+			_ = host.Restart(provider, "http://127.0.0.1:18090/api", "")
+		}()
+	}
+	wg.Wait()
+	if err := host.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if host.Running() {
+		t.Fatal("并发 Ensure/Restart 结束后 Stop 必须带走本 Host 的子进程")
+	}
+	if err := host.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
+		t.Fatalf("单次 Wait 约束在并发后仍应可再次启动: %v", err)
+	}
+	if !host.Running() {
+		t.Fatal("再次启动应有子进程")
 	}
 }
 

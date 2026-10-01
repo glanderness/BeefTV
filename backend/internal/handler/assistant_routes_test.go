@@ -17,6 +17,7 @@ import (
 
 	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/assistantruntime"
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
@@ -30,12 +31,13 @@ import (
 const assistantTestHostToken = "test-host-token"
 
 type assistantTestEnv struct {
-	router   *gin.Engine
-	service  *app.Service
-	clients  *agentops.ClientRegistry
-	uiToken  string
-	canvasID string
-	hostHits map[string]int
+	router        *gin.Engine
+	service       *app.Service
+	clients       *agentops.ClientRegistry
+	assistantHost *assistantruntime.Host
+	uiToken       string
+	canvasID      string
+	hostHits      map[string]int
 }
 
 func newAssistantTestEnv(t *testing.T, host func(env *assistantTestEnv) http.Handler) *assistantTestEnv {
@@ -81,11 +83,15 @@ func newAssistantTestEnv(t *testing.T, host func(env *assistantTestEnv) http.Han
 
 	ui := newUISessionStore()
 	env.uiToken = ui.issue(owner.ID).Token
+	assistantHost := assistantruntime.New(assistantruntime.OptionsFromService(service))
+	t.Cleanup(func() { _ = assistantHost.Stop() })
+	env.assistantHost = assistantHost
 	router := gin.New()
+	router.Use(RuntimeDependenciesMiddleware(RuntimeDependencies{AssistantHost: assistantHost}))
 	api := router.Group("/api")
 	clients := agentops.NewClientRegistry(dataDir)
 	env.clients = clients
-	RegisterAgentProxyRoutes(api, service, clients, ui)
+	RegisterAgentProxyRoutes(api, service, clients, ui, assistantHost)
 	// 操作层与生产走同一条注册路径：替身宿主通过真实 HTTP 入口写画布，
 	// 「回执与业务写入同事务」这条前提才有意义。
 	RegisterAgentOpsRoutes(api, service, agentops.NewStore(db), clients)

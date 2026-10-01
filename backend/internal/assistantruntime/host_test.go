@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/assistant"
 )
 
-func testProvider() app.AssistantProvider {
-	return app.AssistantProvider{Model: "gpt-5.5", BaseURL: "https://beefapi.com/v1", APIKey: "test-key", Protocol: "chat-completion"}
+func testProvider() assistant.Provider {
+	return assistant.Provider{Model: "gpt-5.5", BaseURL: "https://beefapi.com/v1", APIKey: "test-key", Protocol: "chat-completion"}
 }
 
 func envValue(env []string, key string) string {
@@ -94,7 +94,7 @@ func TestAssistantHostEnvCarriesProtocolAndBaseURLShape(t *testing.T) {
 		{"claude-api", "https://enterprise.beefapi.com", "anthropic-messages", "https://enterprise.beefapi.com"},
 	}
 	for _, item := range cases {
-		env := host.buildEnv(app.AssistantProvider{Model: "m", BaseURL: item.baseURL, APIKey: "k", Protocol: item.protocol},
+		env := host.buildEnv(assistant.Provider{Model: "m", BaseURL: item.baseURL, APIKey: "k", Protocol: item.protocol},
 			"http://127.0.0.1:18090/api", "")
 		if got := envValue(env, "BEEFTV_AGENT_API"); got != item.wantAPI {
 			t.Fatalf("协议 %s 应映射到 %s，得到 %q", item.protocol, item.wantAPI, got)
@@ -102,28 +102,6 @@ func TestAssistantHostEnvCarriesProtocolAndBaseURLShape(t *testing.T) {
 		if got := envValue(env, "BEEFTV_AGENT_BASE_URL"); got != item.wantBase {
 			t.Fatalf("协议 %s 的接口地址应为 %s，得到 %q", item.protocol, item.wantBase, got)
 		}
-	}
-}
-
-// 供应商指纹必须随渠道/模型/地址/协议/密钥变化，否则配置换了也不会重启宿主。
-func TestAssistantProviderFingerprintTracksEveryField(t *testing.T) {
-	base := app.AssistantProvider{ChannelID: "beefapi", Model: "MiniMax-M3",
-		BaseURL: "https://enterprise.beefapi.com/v1", Protocol: "chat-completion", APIKey: "one"}
-	variants := []app.AssistantProvider{
-		{ChannelID: "other", Model: base.Model, BaseURL: base.BaseURL, Protocol: base.Protocol, APIKey: base.APIKey},
-		{ChannelID: base.ChannelID, Model: "claude-fable-5", BaseURL: base.BaseURL, Protocol: base.Protocol, APIKey: base.APIKey},
-		{ChannelID: base.ChannelID, Model: base.Model, BaseURL: "https://other.example/v1", Protocol: base.Protocol, APIKey: base.APIKey},
-		{ChannelID: base.ChannelID, Model: base.Model, BaseURL: base.BaseURL, Protocol: "claude-api", APIKey: base.APIKey},
-		{ChannelID: base.ChannelID, Model: base.Model, BaseURL: base.BaseURL, Protocol: base.Protocol, APIKey: "two"},
-	}
-	for _, variant := range variants {
-		if variant.Fingerprint() == base.Fingerprint() {
-			t.Fatalf("指纹未随字段变化: %#v", variant)
-		}
-	}
-	if base.Fingerprint() != (app.AssistantProvider{ChannelID: "beefapi", Model: "MiniMax-M3",
-		BaseURL: "https://enterprise.beefapi.com/v1", Protocol: "chat-completion", APIKey: "one"}).Fingerprint() {
-		t.Fatal("相同配置应得到相同指纹")
 	}
 }
 
@@ -188,7 +166,7 @@ func TestAgentHostReapsExitAndRestartsWithSpacedPath(t *testing.T) {
 	if err := host.WriteConfig(HostConfig{HostCommand: script}); err != nil {
 		t.Fatal(err)
 	}
-	provider := app.AssistantProvider{Model: "m", BaseURL: "https://example.invalid/v1", APIKey: "k", Protocol: "chat-completion"}
+	provider := assistant.Provider{Model: "m", BaseURL: "https://example.invalid/v1", APIKey: "k", Protocol: "chat-completion"}
 	for attempt := 0; attempt < 2; attempt++ {
 		if err := host.Launch(provider, "http://127.0.0.1:18090/api", ""); err != nil {
 			t.Fatal(err)

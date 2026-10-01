@@ -103,7 +103,7 @@ func newTurnID() string {
 
 // RegisterAgentProxyRoutes 让浏览器通过同源后端使用内置创作助手：
 // 页面只发业务消息，宿主凭据由后端注入；宿主不可用时返回明确状态而不是空回复。
-func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops.ClientRegistry, ui *uiSessionStore) {
+func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops.ClientRegistry, ui *uiSessionStore, host *assistantruntime.Host) {
 	client := agentHostClient(10 * time.Minute)
 
 	guard := func(c *gin.Context, requireWrite bool) bool {
@@ -142,7 +142,10 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 	}
 
 	status := func(c *gin.Context) {
-		host := requestAssistantHost(c, svc)
+		if host == nil {
+			unavailable(c, "host_unreachable")
+			return
+		}
 		provider, reason := host.ResolveProvider()
 		if reason != "" {
 			unavailable(c, reason)
@@ -191,7 +194,9 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		if !guard(c, true) {
 			return
 		}
-		host := requestAssistantHost(c, svc)
+		if missingAssistantHost(c, host) {
+			return
+		}
 		provider, reason := host.ResolveProvider()
 		if reason != "" {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": reason,
