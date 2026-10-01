@@ -52,8 +52,8 @@ func TestMCPClientLoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tools/list 失败: %v", err)
 	}
-	if len(tools.Tools) != 9 {
-		t.Fatalf("工具数量 = %d，期望 9", len(tools.Tools))
+	if len(tools.Tools) != 10 {
+		t.Fatalf("工具数量 = %d，期望 10", len(tools.Tools))
 	}
 	var create *mcp.Tool
 	var sawPropose bool

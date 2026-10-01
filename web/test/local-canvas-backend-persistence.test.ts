@@ -17,6 +17,7 @@ test("local canvas edits schedule and explicit saves await backend persistence",
     expect(lifecycle).toContain("if (localMode) scheduleLocalCanvasBackendSync(projectId);");
     expect(lifecycle).toContain("if (localMode) await syncLocalCanvasProjectToBackend(projectId);");
     expect(repository).toContain("const backendSaveTails = new Map<string, Promise<void>>()");
+    expect(repository).toContain("commitCanvasDocument");
 });
 
 test("canvas save summary never replaces the full node document", () => {

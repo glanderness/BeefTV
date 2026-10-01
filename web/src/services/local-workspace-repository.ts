@@ -1,9 +1,11 @@
-import { acceptCanvasExternalRevisionCandidate, applyExternalCanvasRevision, canvasDurableSnapshot, canvasExternalRevisionConflict, flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
+import { acceptCanvasExternalRevisionCandidate, applyExternalCanvasRevision, canvasDocumentBase, canvasDurableSnapshot, canvasExternalRevisionConflict, clearCanvasDocumentBase, flushCanvasStorePersistence, recordCanvasDocumentBase, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
-import { http } from "@/services/api/request";
+import { ApiError, http } from "@/services/api/request";
+import { commitCanvasDocument } from "@/services/api/operations";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { notifyCanvasRefresh } from "@/services/local-workspace-sync";
-import { canvasBackendSubmitPaused, handleRejectedCanvasBackendSave, resumeCanvasBackendSubmit } from "@/services/canvas-revision-conflict";
+import { canvasBackendSubmitPaused, handleRejectedCanvasBackendSave, isCanvasRevisionConflict, resumeCanvasBackendSubmit } from "@/services/canvas-revision-conflict";
+import { abandonCanvasInFlight, clearCanvasOperationJournal, loadCanvasOperationJournal, newCanvasCommitOperationId, peekCanvasOperationJournal, recordConfirmedCanvasCommit, saveCanvasOperationJournal } from "@/services/canvas-operation-journal";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { getActiveUserScope } from "@/lib/user-scope";
@@ -15,7 +17,7 @@ type CanvasSaveSummary = Pick<CanvasProject, "id" | "title" | "createdAt" | "upd
 const backendSaveTails = new Map<string, Promise<void>>();
 const backendSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 /**
- * 每画布最后一次被服务端确认的文档快照：成功 PUT 的入参，或从服务端读回并被
+ * 每画布最后一次被服务端确认的文档快照：成功提交的入参，或从服务端读回并被
  * 采纳的内容。它是判断「本地是否有服务端尚未确认的编辑」的唯一权威基线——
  * 浏览器存储队列只说明有没有写进 IndexedDB，不代表服务端已经收到。
  */
@@ -24,6 +26,7 @@ const serverConfirmedCanvasSnapshots = new Map<string, CanvasProject>();
 function recordServerConfirmedCanvas(project: CanvasProject | undefined) {
     if (!project) return;
     serverConfirmedCanvasSnapshots.set(project.id, project);
+    recordCanvasDocumentBase(project);
 }
 
 /** HTTP 层是否还有该画布未落地的提交（已排队或正在发送）。 */
@@ -44,7 +47,7 @@ export function hasUnconfirmedCanvasEdits(id: string) {
     const live = openLocalCanvasProject(id);
     if (!live) return false;
     if (canvasBackendSubmitPending(id) || canvasBackendSubmitPaused(id)) return true;
-    const confirmed = serverConfirmedCanvasSnapshots.get(id);
+    const confirmed = canvasDocumentBase(id)?.snapshot ?? serverConfirmedCanvasSnapshots.get(id);
     if (confirmed) return !sameCanvasDocument(confirmed, live);
     const durable = canvasDurableSnapshot(getActiveUserScope(), id);
     if (durable) return !sameCanvasDocument(durable, live);
@@ -89,35 +92,40 @@ export function bindCanvasGenerationCommitAssets(project: CanvasProject, assets:
     };
 }
 
-function projectUpdatedAt(project: CanvasProject) {
-    const timestamp = Date.parse(project.updatedAt);
-    return Number.isFinite(timestamp) ? timestamp : 0;
-}
-
 /**
- * Resolve the browser/desktop dual-store snapshot without allowing an older
- * backend response to erase edits that have already been persisted locally.
- * Unknown/equal versions intentionally keep the local copy: data preservation
- * is safer than treating a backend read as authoritative without evidence that
- * it is newer.
+ * 桌面本地：已提交真相是服务端 revision。干净缓存采用后端；未确认草稿相对已记录基线保留。
  */
 export function selectPreferredCanvasProject(local: CanvasProject | null | undefined, backend: CanvasProject) {
     if (!local) return backend;
-    const localUpdatedAt = projectUpdatedAt(local);
-    const backendUpdatedAt = projectUpdatedAt(backend);
-    if (backendUpdatedAt !== localUpdatedAt) return backendUpdatedAt > localUpdatedAt ? backend : local;
-    const localRevision = local.revision ?? 0;
-    const backendRevision = backend.revision ?? 0;
-    if (backendRevision !== localRevision) return backendRevision > localRevision ? backend : local;
+    const recorded = canvasDocumentBase(local.id);
+    if (recorded) {
+        if (sameCanvasDocument(local, recorded.snapshot) || sameCanvasDocument(local, backend)) return backend;
+        return local;
+    }
+    if (sameCanvasDocument(local, backend)) return backend;
+    return local;
+}
+
+async function applyBackendCanvasRead(local: CanvasProject | null | undefined, backend: CanvasProject) {
+    const chosen = selectPreferredCanvasProject(local, backend);
+    if (!local || chosen === backend || sameCanvasDocument(chosen, backend)) {
+        recordServerConfirmedCanvas(backend);
+        await recordConfirmedCanvasCommit(backend);
+        return backend;
+    }
+    const recorded = canvasDocumentBase(local.id);
+    const serverMoved = !recorded
+        || (backend.revision ?? 0) !== recorded.revision
+        || !sameCanvasDocument(backend, recorded.snapshot);
+    if (serverMoved) applyExternalCanvasRevision(backend, { hasUnsyncedEdits: true });
     return local;
 }
 
 /**
  * Local workspace persistence boundary.
  *
- * This module deliberately has no network, account, or hosted-service imports.
- * Keep local canvas CRUD here so desktop callers do not need to enter the
- * hosted synchronization service just to persist a project.
+ * Desktop ongoing saves commit through the operations registry. IndexedDB is
+ * the offline cache, so a stopped backend never prevents opening a project.
  */
 export async function createLocalCanvasProject(title: string, projectId?: string, initialContent?: LocalCanvasContent, workspaceProjectId?: string) {
     const id = useCanvasStore.getState().createProject(title, projectId, workspaceProjectId);
@@ -142,30 +150,11 @@ export async function createLocalCanvasProject(title: string, projectId?: string
 function syncLocalCanvasProject(id: string, includeGeneratedAssets: boolean): Promise<void> {
     const previous = backendSaveTails.get(id) || Promise.resolve();
     const next = previous.catch(() => undefined).then(async () => {
-        const project = openLocalCanvasProject(id);
-        if (!project) return;
-        const assets = includeGeneratedAssets ? canvasGenerationCommitAssets(project, useAssetStore.getState().assets) : [];
-        const projectForSave = includeGeneratedAssets ? bindCanvasGenerationCommitAssets(project, assets) : project;
-        const endpoint = includeGeneratedAssets ? `/canvas-projects/${encodeURIComponent(id)}/generated-assets` : `/canvas-projects/${encodeURIComponent(id)}`;
-        const saved = await submitCanvasProjectToBackend(id, project, endpoint, projectForSave, assets, includeGeneratedAssets);
-        if (!saved) return;
-        // 服务端已确认这次提交：记下被接受的那一份内容，作为后续刷新的基线。
-        recordServerConfirmedCanvas(projectForSave);
-        useCanvasStore.setState((state) => ({
-            projects: state.projects.map((current) => current.id === id
-                // Preserve edits made while the request was in flight; only the
-                // server-owned optimistic revision must advance.
-                ? {
-                    ...(includeGeneratedAssets ? bindCanvasGenerationCommitAssets(current, assets) : current),
-                    revision: saved.revision,
-                    ...(current.updatedAt === project.updatedAt ? { updatedAt: saved.updatedAt } : {}),
-                }
-                : current),
-        }));
-        resumeCanvasBackendSubmit(id);
-        void flushCanvasStorePersistence().catch((error) => {
-            console.error("画布本地缓存写入失败，已保存到桌面数据库", { id, error });
-        });
+        if (includeGeneratedAssets) {
+            await submitGeneratedAssetsToBackend(id);
+            return;
+        }
+        await commitLiveCanvasDocument(id);
     });
     const tail = next.finally(() => {
         if (backendSaveTails.get(id) === tail) backendSaveTails.delete(id);
@@ -174,13 +163,36 @@ function syncLocalCanvasProject(id: string, includeGeneratedAssets: boolean): Pr
     return tail;
 }
 
-/**
- * 发送一次画布提交并返回服务端摘要。
- *
- * 失败时先按「陈旧提交」收尾（保留本地草稿并暂停自动提交），再把错误抛出，
- * 让调用方看到真实失败，而不是被包装成成功。
- */
-async function submitCanvasProjectToBackend(id: string, project: CanvasProject, endpoint: string, projectForSave: CanvasProject, assets: Asset[], includeGeneratedAssets: boolean) {
+async function applyAcceptedCanvasSave(id: string, submitted: CanvasProject, saved: CanvasSaveSummary, bindAssets?: Asset[]) {
+    const confirmed = saved.revision != null ? { ...submitted, revision: saved.revision, updatedAt: saved.updatedAt ?? submitted.updatedAt } : submitted;
+    recordServerConfirmedCanvas(confirmed);
+    await recordConfirmedCanvasCommit(confirmed);
+    useCanvasStore.setState((state) => ({
+        projects: state.projects.map((current) => current.id === id
+            ? {
+                ...(bindAssets ? bindCanvasGenerationCommitAssets(current, bindAssets) : current),
+                revision: saved.revision,
+                ...(current.updatedAt === submitted.updatedAt ? { updatedAt: saved.updatedAt } : {}),
+            }
+            : current),
+    }));
+    resumeCanvasBackendSubmit(id);
+    void flushCanvasStorePersistence().catch((error) => {
+        console.error("画布本地缓存写入失败，已保存到桌面数据库", { id, error });
+    });
+}
+
+async function submitGeneratedAssetsToBackend(id: string) {
+    const project = openLocalCanvasProject(id);
+    if (!project) return;
+    const assets = canvasGenerationCommitAssets(project, useAssetStore.getState().assets);
+    const projectForSave = bindCanvasGenerationCommitAssets(project, assets);
+    const saved = await putCanvasProjectToBackend(id, project, `/canvas-projects/${encodeURIComponent(id)}/generated-assets`, projectForSave, assets, true);
+    if (!saved) return;
+    await applyAcceptedCanvasSave(id, projectForSave, saved, assets);
+}
+
+async function putCanvasProjectToBackend(id: string, project: CanvasProject, endpoint: string, projectForSave: CanvasProject, assets: Asset[], includeGeneratedAssets: boolean) {
     try {
         const response = await http.put<{ project: CanvasSaveSummary }>(endpoint, includeGeneratedAssets ? { project: projectForSave, assets } : { project: projectForSave });
         return response.project;
@@ -191,6 +203,76 @@ async function submitCanvasProjectToBackend(id: string, project: CanvasProject, 
         }
         throw error;
     }
+}
+
+function isInitialCanvasCreate(project: CanvasProject) {
+    const journal = peekCanvasOperationJournal(project.id);
+    if (journal?.confirmedSnapshot || journal?.inFlight) return false;
+    return (project.revision ?? 0) === 0;
+}
+
+async function commitLiveCanvasDocument(id: string) {
+    const journal = await loadCanvasOperationJournal(id);
+    if (journal.inFlight) {
+        await sendCanvasDocumentCommit(id, journal.inFlight.operationId, journal.inFlight.payload);
+    }
+    if (canvasBackendSubmitPaused(id)) return;
+    const project = openLocalCanvasProject(id);
+    if (!project) return;
+    const current = await loadCanvasOperationJournal(id);
+    if (current.confirmedSnapshot && sameCanvasDocument(current.confirmedSnapshot, project) && !current.inFlight) return;
+    if (isInitialCanvasCreate(project) && !current.inFlight) {
+        const saved = await putCanvasProjectToBackend(id, project, `/canvas-projects/${encodeURIComponent(id)}`, project, [], false);
+        if (!saved) return;
+        await applyAcceptedCanvasSave(id, project, saved);
+        return;
+    }
+    if (current.inFlight) return;
+    const expectedRevision = current.confirmedRevision || project.revision || 0;
+    const operationId = newCanvasCommitOperationId();
+    const payload = { canvasId: id, expectedRevision, document: project };
+    await saveCanvasOperationJournal({
+        ...current,
+        inFlight: { operationId, expectedRevision, payload },
+    });
+    await sendCanvasDocumentCommit(id, operationId, payload);
+}
+
+async function sendCanvasDocumentCommit(id: string, operationId: string, payload: { canvasId: string; expectedRevision: number; document: CanvasProject }) {
+    try {
+        const result = await commitCanvasDocument({
+            operationId,
+            canvasId: payload.canvasId,
+            expectedRevision: payload.expectedRevision,
+            document: payload.document as unknown as Record<string, unknown>,
+        });
+        const saved: CanvasSaveSummary = {
+            id,
+            title: result.result?.title ?? payload.document.title,
+            createdAt: payload.document.createdAt,
+            updatedAt: result.result?.updatedAt ?? payload.document.updatedAt,
+            revision: result.revision || result.result?.revision,
+        };
+        await applyAcceptedCanvasSave(id, payload.document, saved);
+    } catch (error) {
+        if (isCanvasRevisionConflict(error)) {
+            await abandonCanvasInFlight(id);
+            await handleRejectedCanvasBackendSave(id, payload.document, error);
+            throw error;
+        }
+        if (!isRetryableCanvasCommitError(error)) {
+            await abandonCanvasInFlight(id);
+        }
+        throw error;
+    }
+}
+
+function isRetryableCanvasCommitError(error: unknown) {
+    if (error instanceof DOMException && error.name === "AbortError") return false;
+    if (!(error instanceof ApiError)) return false;
+    if (error.retryable) return true;
+    // 没有 HTTP 响应时请求可能已经落到服务端，必须复用同一 operationId。
+    return error.status === undefined && error.code === undefined;
 }
 
 export function syncLocalCanvasProjectToBackend(id: string): Promise<void> {
@@ -248,9 +330,10 @@ function revertUnchangedCanvasDocumentPatch(current: CanvasProject, previous: Ca
 
 /**
  * Persist a canvas document patch before the caller reports success.
- * Local desktop hydrates from SQLite, so that profile PUTs the Go repository
- * without waiting on IndexedDB. Hosted keeps update plus an awaited flush.
- * A failed write only reverts patch fields that nobody else changed.
+ * Local desktop hydrates from SQLite, so ongoing saves commit through the
+ * operations registry without waiting on IndexedDB. Hosted keeps update plus an awaited flush.
+ * Network-unknown keeps the live patch and the same operationId. Stale revision
+ * keeps the local draft. Other failures revert patch fields that nobody else changed.
  */
 export async function persistCanvasDocument(id: string, patch: CanvasDocumentPersistPatch) {
     const previous = useCanvasStore.getState().openProject(id);
@@ -263,7 +346,9 @@ export async function persistCanvasDocument(id: string, patch: CanvasDocumentPer
         }
         await flushCanvasStorePersistence();
     } catch (error) {
-        if (previous) {
+        if (isRetryableCanvasCommitError(error)) throw error;
+        if (!isCanvasRevisionConflict(error) && previous) {
+            await abandonCanvasInFlight(id);
             useCanvasStore.setState((state) => ({
                 projects: state.projects.map((item) => {
                     if (item.id !== id) return item;
@@ -322,7 +407,10 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
         if (projects.length === 0) return false;
         const current = useCanvasStore.getState().projects;
         const byId = new Map(current.map((project) => [project.id, project]));
-        for (const project of projects) byId.set(project.id, selectPreferredCanvasProject(byId.get(project.id), project));
+        for (const project of projects) {
+            await loadCanvasOperationJournal(project.id);
+            byId.set(project.id, await applyBackendCanvasRead(byId.get(project.id), project));
+        }
         useCanvasStore.setState({ projects: [...byId.values()] });
         await flushCanvasStorePersistence();
         return true;
@@ -340,12 +428,10 @@ export async function readLocalCanvasProjectFromBackend(id: string): Promise<Can
 
 export async function openLocalCanvasProjectFromBackend(id: string) {
     try {
+        await loadCanvasOperationJournal(id);
         const backendProject = await readLocalCanvasProjectFromBackend(id);
         if (!backendProject) return openLocalCanvasProject(id);
-        const project = selectPreferredCanvasProject(openLocalCanvasProject(id), backendProject);
-        // 服务端这一版就是它当前的确认内容；即使最终采用较新的本地内容，
-        // 这份快照仍然是「服务端确认到哪一版」的基线。
-        recordServerConfirmedCanvas(backendProject);
+        const project = await applyBackendCanvasRead(openLocalCanvasProject(id), backendProject);
         useCanvasStore.setState((state) => ({
             projects: state.projects.some((item) => item.id === id)
                 ? state.projects.map((item) => item.id === id ? project : item)
@@ -391,6 +477,7 @@ export async function refreshLocalCanvasProjectIfChanged(id: string) {
             return undefined;
         }
         if (decision.kind === "keep-local") return undefined;
+        await recordConfirmedCanvasCommit(decision.project);
         await flushCanvasStorePersistence();
         return decision.project;
     } catch {
@@ -414,6 +501,7 @@ export async function acceptExternalCanvasRevision(id: string) {
         },
     });
     if (!decision || decision.kind !== "apply") return undefined;
+    await recordConfirmedCanvasCommit(decision.project);
     resumeCanvasBackendSubmit(id);
     await flushCanvasStorePersistence();
     return decision.project;
@@ -437,6 +525,9 @@ export async function deleteLocalCanvasProjects(ids: readonly string[]) {
     await Promise.all(ids.map(async (id) => {
         try {
             await http.delete(`/canvas-projects/${encodeURIComponent(id)}`);
+            await clearCanvasOperationJournal(id);
+            clearCanvasDocumentBase(id);
+            serverConfirmedCanvasSnapshots.delete(id);
         } catch (error) {
             console.error("画布后端删除失败", { id, error });
             throw error;

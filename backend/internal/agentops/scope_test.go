@@ -32,6 +32,7 @@ func TestAssistantScopeAllowsOnlyVerifiedResources(t *testing.T) {
 		{"关联任务可读", "task.get", `{"taskId":"task-1"}`, false},
 		{"无关任务不可读", "task.get", `{"taskId":"task-2"}`, true},
 		{"工作区级列举不可用", "asset.list", `{}`, true},
+		{"整页文档提交不可用", "canvas.document.commit", `{"canvasId":"canvas-a"}`, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,9 +75,9 @@ func TestAssistantVisibleSetExcludesWorkspaceWideOps(t *testing.T) {
 			t.Fatalf("助手应能看到 %s: %v", id, visible)
 		}
 	}
-	for _, id := range []string{"asset.list", "canvas.search"} {
+	for _, id := range []string{"asset.list", "canvas.search", "canvas.document.commit"} {
 		if visible[id] {
-			t.Fatalf("工作区级操作 %s 不应暴露给助手", id)
+			t.Fatalf("工作区级或整页写操作 %s 不应暴露给助手", id)
 		}
 	}
 	// 外部客户端（不带助手范围）仍然能看到完整工作区能力。
@@ -91,7 +92,7 @@ func TestNilAssistantScopeDoesNotFilterCatalog(t *testing.T) {
 	agentops.RegisterDefaultOps(registry)
 	var typedNil *agentops.AssistantScope
 	listed := registry.List(agentops.Caller{Kind: agentops.CallerManual, Scope: typedNil})
-	if len(listed) != 9 {
+	if len(listed) != 10 {
 		t.Fatalf("空指针范围不应收窄目录，得到 %d", len(listed))
 	}
 	empty := registry.List(agentops.AssistantCaller(&agentops.AssistantScope{}, false))

@@ -16,8 +16,8 @@ import (
 	httptransport "infinite-canvas/backend/internal/transport/http"
 )
 
-// agentOpsMaxBody 限制操作请求体积，避免本机入口被大 payload 拖垮。
-const agentOpsMaxBody = 1 << 20
+// agentOpsMaxBody 与画布 PUT 上限对齐：文档提交会带上整份画布，1MB 不够。
+const agentOpsMaxBody = 5 << 20
 
 // RegisterAgentOpsRoutes 暴露统一操作层：CLI、MCP 与内置 pi 都调用同一组端点，
 // 不各自打开数据库或另起 worker。
@@ -109,7 +109,7 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 			return
 		}
 		if int64(len(body)) > agentOpsMaxBody {
-			fail(c, http.StatusRequestEntityTooLarge, app.BadAuthRequest("请求体超过 1MB 限制"))
+			fail(c, http.StatusRequestEntityTooLarge, app.BadAuthRequest("请求体超过 5MB 限制"))
 			return
 		}
 		// 只读能力只由客户端身份（登记模式）决定：请求体不接受 readOnly，
@@ -176,7 +176,21 @@ func resolveCaller(c *gin.Context, svc *app.Service, clients *agentops.ClientReg
 	if agentops.OwnerTokenMatches(svc.DataDir(), strings.TrimSpace(c.GetHeader("X-Beeftv-Owner"))) {
 		return agentops.Caller{Kind: agentops.CallerManual}, "owner", nil
 	}
+	if trustedDesktopUI(c) {
+		return agentops.Caller{Kind: agentops.CallerManual}, "desktop-ui", nil
+	}
 	return agentops.Caller{}, "", errUnidentified
+}
+
+func trustedDesktopUI(c *gin.Context) bool {
+	if c == nil || c.Request == nil || !isLoopbackRequest(c.Request) {
+		return false
+	}
+	dependencies, ok := runtimeDependencies(c)
+	if !ok || dependencies.DesktopTrust == nil {
+		return false
+	}
+	return dependencies.DesktopTrust(c.Request)
 }
 
 func resolveClientMode(c *gin.Context, svc *app.Service, clients *agentops.ClientRegistry) (bool, string, error) {
@@ -197,7 +211,7 @@ func (e clientAuthError) Error() string { return e.message }
 
 var (
 	errUnknownClient = clientAuthError{"未登记或凭据无效的 Agent 客户端"}
-	errUnidentified  = clientAuthError{"缺少可信身份：需要已登记的客户端凭据或 owner 凭据"}
+	errUnidentified  = clientAuthError{"缺少可信身份：需要已登记的客户端凭据、owner 凭据或受信任的桌面界面"}
 )
 
 // loopbackHosts 是允许访问本机操作层的主机名；后续 Wails 正式 origin 也在这里登记。

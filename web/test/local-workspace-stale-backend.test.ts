@@ -37,7 +37,7 @@ const canvasContentStubPath = join(dir, "canvas-content.ts");
 writeFileSync(storePath, `
 export type CanvasProject = any;
 export let projects: any[] = [];
-export const resetProjects = (next: any[]) => { projects = next; };
+export const resetProjects = (next: any[]) => { projects = next; bases.clear(); };
 const getState = () => ({
   projects,
   openProject: (id: string) => projects.find((project) => project.id === id) ?? null,
@@ -70,6 +70,10 @@ export const canvasDurableSnapshot = () => undefined;
 export const canvasExternalRevisionConflict = () => undefined;
 export const canvasExternalRevisionVersion = () => 0;
 export const subscribeCanvasExternalRevision = () => () => {};
+const bases = new Map();
+export const recordCanvasDocumentBase = (project) => { bases.set(project.id, { revision: project.revision ?? 0, snapshot: project }); };
+export const canvasDocumentBase = (id) => bases.get(id);
+export const clearCanvasDocumentBase = (id) => { bases.delete(id); };
 `);
 writeFileSync(historyPath, "export const useCanvasHistoryStore = { getState: () => ({ recordDeletedProjects: () => {} }) };\n");
 writeFileSync(syncStubPath, "export const notifyCanvasRefresh = () => {};\n");
@@ -83,17 +87,40 @@ writeFileSync(assetStubPath, "export const useAssetStore = { getState: () => ({ 
 writeFileSync(modeStubPath, "export const isLocalWorkspaceMode = () => true;\n");
 writeFileSync(resourcesStubPath, "export const resourceIdFromStorageKey = () => '';\n");
 writeFileSync(userScopeStubPath, "export const getActiveUserScope = () => 'guest';\n");
-writeFileSync(canvasContentStubPath, "export const sameCanvasDocument = () => true;\n");
+writeFileSync(canvasContentStubPath, `
+export const sameCanvasDocument = (left, right) => {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return JSON.stringify(left.nodes || []) === JSON.stringify(right.nodes || []) && left.title === right.title;
+};
+`);
 writeFileSync(requestPath, `
+export class ApiError extends Error {}
 export let remoteProject: any;
 export let remoteProjects: any[] = [];
 export const setRemoteProject = (next: any) => { remoteProject = next; remoteProjects = next ? [{ id: next.id }] : []; };
 export const http = { get: async (path: string) => path === "/canvas-projects" ? { projects: remoteProjects } : { project: remoteProject } };
 `);
+const operationsPath = join(dir, "operations.ts");
+const journalPath = join(dir, "journal.ts");
+writeFileSync(operationsPath, "export const commitCanvasDocument = async () => ({ revision: 1, result: {} });\n");
+writeFileSync(journalPath, `
+const memory = new Map();
+export const peekCanvasOperationJournal = (id) => memory.get(id);
+export const loadCanvasOperationJournal = async (id) => memory.get(id) ?? { userScope: "guest", canvasId: id, confirmedRevision: 0, confirmedSnapshot: null, inFlight: null };
+export const saveCanvasOperationJournal = async (journal) => { memory.set(journal.canvasId, journal); };
+export const recordConfirmedCanvasCommit = async (project) => { memory.set(project.id, { userScope: "guest", canvasId: project.id, confirmedRevision: project.revision ?? 0, confirmedSnapshot: project, inFlight: null }); };
+export const abandonCanvasInFlight = async () => {};
+export const clearCanvasOperationJournal = async (id) => { memory.delete(id); };
+export const newCanvasCommitOperationId = () => "op";
+export const resetCanvasOperationJournalMemory = () => { memory.clear(); };
+`);
 writeFileSync(join(dir, "repository.ts"), repositorySource
     .replace('"@/stores/canvas/use-canvas-store"', JSON.stringify(pathToFileURL(storePath).href))
     .replace('"@/stores/canvas/use-canvas-history-store"', JSON.stringify(pathToFileURL(historyPath).href))
     .replace('"@/services/api/request"', JSON.stringify(pathToFileURL(requestPath).href))
+    .replace('"@/services/api/operations"', JSON.stringify(pathToFileURL(operationsPath).href))
+    .replace('"@/services/canvas-operation-journal"', JSON.stringify(pathToFileURL(journalPath).href))
     .replace('"@/services/local-workspace-sync"', JSON.stringify(pathToFileURL(syncStubPath).href))
     .replace('"@/services/canvas-revision-conflict"', JSON.stringify(pathToFileURL(conflictStubPath).href))
     .replace('"@/stores/use-asset-store"', JSON.stringify(pathToFileURL(assetStubPath).href))
@@ -130,30 +157,33 @@ beforeEach(() => {
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("local workspace stale backend protection", () => {
-    it("keeps newer local canvas content when opening an older backend snapshot", async () => {
-        const local = project({ updatedAt: "2026-09-22T09:00:00.000Z", nodes: [{ id: "kept-node" }] });
-        const staleRemote = project({ updatedAt: "2026-09-22T08:00:00.000Z", nodes: [] });
+    it("keeps dirty local drafts when opening a backend snapshot", async () => {
+        const local = project({ updatedAt: "2026-09-22T08:00:00.000Z", nodes: [{ id: "kept-node" }] });
+        const remote = project({ updatedAt: "2026-09-22T09:00:00.000Z", revision: 2, nodes: [] });
         store.resetProjects([local]);
-        request.setRemoteProject(staleRemote);
+        store.recordCanvasDocumentBase(project({ nodes: [] }));
+        request.setRemoteProject(remote);
 
         expect(await repository.openLocalCanvasProjectFromBackend(local.id)).toEqual(local);
         expect(store.projects[0].nodes).toEqual([{ id: "kept-node" }]);
     });
 
-    it("keeps newer local canvas content during backend hydration", async () => {
-        const local = project({ updatedAt: "2026-09-22T09:00:00.000Z", nodes: [{ id: "kept-node" }] });
-        const staleRemote = project({ updatedAt: "2026-09-22T08:00:00.000Z", nodes: [] });
+    it("keeps dirty local drafts during backend hydration", async () => {
+        const local = project({ updatedAt: "2026-09-22T08:00:00.000Z", nodes: [{ id: "kept-node" }] });
+        const remote = project({ updatedAt: "2026-09-22T09:00:00.000Z", revision: 2, nodes: [] });
         store.resetProjects([local]);
-        request.setRemoteProject(staleRemote);
+        store.recordCanvasDocumentBase(project({ nodes: [] }));
+        request.setRemoteProject(remote);
 
         await repository.hydrateLocalCanvasProjectsFromBackend();
         expect(store.projects[0].nodes).toEqual([{ id: "kept-node" }]);
     });
 
-    it("accepts a genuinely newer backend snapshot", async () => {
-        const local = project({ updatedAt: "2026-09-22T08:00:00.000Z", nodes: [] });
-        const remote = project({ updatedAt: "2026-09-22T09:00:00.000Z", revision: 1, nodes: [{ id: "remote-node" }] });
+    it("clean caches adopt the backend document", async () => {
+        const local = project({ updatedAt: "2026-09-22T09:00:00.000Z", nodes: [] });
+        const remote = project({ updatedAt: "2026-09-22T08:00:00.000Z", revision: 1, nodes: [{ id: "remote-node" }] });
         store.resetProjects([local]);
+        store.recordCanvasDocumentBase(local);
         request.setRemoteProject(remote);
 
         expect(await repository.openLocalCanvasProjectFromBackend(local.id)).toEqual(remote);

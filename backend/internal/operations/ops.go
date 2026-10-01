@@ -38,6 +38,9 @@ func RegisterDefaultOps(r *Registry) {
 	r.Register(Op{ID: "canvas.edge.create", Summary: "连接两个节点（重复连接幂等返回）", Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"fromNodeId":{"type":"string"},"toNodeId":{"type":"string"},"expectedRevision":{"type":"integer"}},"required":["canvasId","fromNodeId","toNodeId","expectedRevision"]}`),
 		Handler: opCanvasEdgeCreate})
+	r.Register(Op{ID: "canvas.document.commit", Summary: "按已知服务端 revision 提交整份画布文档（保留未触及字段，带 CAS）", Scope: ScopeCanvas,
+		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"expectedRevision":{"type":"integer"},"document":{"type":"object"}},"required":["canvasId","expectedRevision","document"]}`),
+		Handler: opCanvasDocumentCommit})
 	// 付费生成只提议不执行：这里校验目标并给出用户要确认的模型，真正的生成由界面在用户确认后发起。
 	r.Register(Op{ID: "canvas.generation.propose", Summary: "提议对选中节点做付费图片/视频生成（只登记提议，不生成、不扣费）", ReadOnly: true, Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":8},"kind":{"type":"string","enum":["image","video"]},"note":{"type":"string"}},"required":["canvasId","nodeIds","kind"]}`),
@@ -340,6 +343,39 @@ func opCanvasNodesCreate(ctx *Context, params json.RawMessage) (any, error) {
 		}
 		return map[string]any{"canvasId": args.CanvasID, "created": created}
 	})
+}
+
+func opCanvasDocumentCommit(ctx *Context, params json.RawMessage) (any, error) {
+	var args struct {
+		CanvasID         string          `json:"canvasId"`
+		ExpectedRevision *int64          `json:"expectedRevision"`
+		Document         json.RawMessage `json:"document"`
+	}
+	if err := decodeParams(params, &args); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(args.CanvasID) == "" {
+		return nil, InvalidArg("invalid_params", "canvasId 必填")
+	}
+	if args.ExpectedRevision == nil {
+		return nil, InvalidArg("invalid_params", "expectedRevision 必填")
+	}
+	if *args.ExpectedRevision < 0 {
+		return nil, InvalidArg("invalid_params", "expectedRevision 无效")
+	}
+	if len(args.Document) == 0 || strings.TrimSpace(string(args.Document)) == "null" {
+		return nil, InvalidArg("invalid_params", "document 必填")
+	}
+	summary, _, err := ctx.Domain.CommitUserCanvasDocument(ctx.UserID, args.CanvasID, *args.ExpectedRevision, args.Document)
+	if err != nil {
+		return nil, mapDomainError(err)
+	}
+	return map[string]any{
+		"canvasId":  args.CanvasID,
+		"revision":  summary.Revision,
+		"title":     summary.Title,
+		"updatedAt": summary.UpdatedAt,
+	}, nil
 }
 
 func opCanvasEdgeCreate(ctx *Context, params json.RawMessage) (any, error) {

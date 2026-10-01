@@ -45,12 +45,27 @@ export const applyExternalCanvasRevision = () => ({ kind: "keep-local", projectI
 export const acceptCanvasExternalRevisionCandidate = () => undefined;
 export const canvasDurableSnapshot = () => undefined;
 export const canvasExternalRevisionConflict = () => undefined;
+const bases = new Map();
+export const recordCanvasDocumentBase = (project) => { bases.set(project.id, { revision: project.revision ?? 0, snapshot: project }); };
+export const canvasDocumentBase = (id) => bases.get(id);
+export const clearCanvasDocumentBase = (id) => { bases.delete(id); };
 `,
 );
 writeFileSync(historyPath, "export const useCanvasHistoryStore = { getState: () => ({ recordDeletedProjects: () => {} }) };\n");
 writeFileSync(
     requestPath,
     `
+export class ApiError extends Error {
+  status?: number;
+  reason?: string;
+  retryable: boolean;
+  constructor(message: string, options: { status?: number; reason?: string; retryable?: boolean } = {}) {
+    super(message);
+    this.status = options.status;
+    this.reason = options.reason;
+    this.retryable = options.retryable ?? false;
+  }
+}
 export let puts: Array<{ path: string; body: any }> = [];
 export let putError: Error | null = null;
 export let putGuard = null;
@@ -60,19 +75,60 @@ export const resetPuts = () => { puts = []; putError = null; putGuard = null; pu
 export const setPutError = (next: Error | null) => { putError = next; };
 export const setPutGuard = (next) => { putGuard = next; };
 export const setPutGate = (next) => { putGate = next; };
-export const http = {
-  put: async (path: string, body: any) => {
+async function write(path, body) {
     putStarted += 1;
     await putGate;
     if (putError) throw putError;
+    const project = body?.project ?? body?.params?.document;
     if (putGuard) {
-      const guarded = putGuard(path, body);
+      const guarded = putGuard(path, { project, ...body });
       if (guarded) throw guarded;
     }
-    puts.push({ path, body });
-    return { project: { id: body.project.id, title: body.project.title, createdAt: body.project.createdAt, updatedAt: body.project.updatedAt, revision: (body.project.revision ?? 0) + 1 } };
-  },
+    puts.push({ path, body: { ...body, project } });
+    return project;
+  }
+  export const http = {
+    put: async (path, body) => {
+      const project = await write(path, body);
+      return { project: { id: project.id, title: project.title, createdAt: project.createdAt, updatedAt: project.updatedAt, revision: (project.revision ?? 0) + 1 } };
+    },
+    post: async (path, body) => {
+      const project = await write(path, body);
+      const revision = (project.revision ?? 0) + 1;
+      return { op: "canvas.document.commit", opId: body.opId, replayed: false, caller: "manual", revision, result: { canvasId: project.id, revision, updatedAt: project.updatedAt } };
+    },
+  };
+`,
+);
+const operationsPath = join(dir, "operations.ts");
+const journalPath = join(dir, "journal.ts");
+writeFileSync(
+    operationsPath,
+    `import { http } from ${JSON.stringify(pathToFileURL(requestPath).href)};
+export async function commitCanvasDocument(input) {
+  return http.post("/ops/canvas.document.commit", {
+    opId: input.operationId,
+    params: { canvasId: input.canvasId, expectedRevision: input.expectedRevision, document: input.document },
+  });
+}
+`,
+);
+writeFileSync(
+    journalPath,
+    `
+const memory = new Map();
+const empty = (canvasId) => ({ userScope: "guest", canvasId, confirmedRevision: 0, confirmedSnapshot: null, inFlight: null });
+export const peekCanvasOperationJournal = (id) => memory.get(id);
+export const loadCanvasOperationJournal = async (id) => memory.get(id) ?? empty(id);
+export const saveCanvasOperationJournal = async (journal) => { memory.set(journal.canvasId, journal); };
+export const recordConfirmedCanvasCommit = async (project) => { memory.set(project.id, { userScope: "guest", canvasId: project.id, confirmedRevision: project.revision ?? 0, confirmedSnapshot: project, inFlight: null }); };
+export const abandonCanvasInFlight = async (id) => {
+  const current = memory.get(id) ?? empty(id);
+  memory.set(id, { ...current, inFlight: null });
 };
+export const clearCanvasOperationJournal = async (id) => { memory.delete(id); };
+export const newCanvasCommitOperationId = () => "canvas-commit-test";
+export const resetCanvasOperationJournalMemory = () => { memory.clear(); };
 `,
 );
 writeFileSync(assetsPath, "export const useAssetStore = { getState: () => ({ assets: [] }) };\n");
@@ -84,6 +140,8 @@ writeFileSync(
         .replace('"@/stores/canvas/use-canvas-store"', JSON.stringify(pathToFileURL(storePath).href))
         .replace('"@/stores/canvas/use-canvas-history-store"', JSON.stringify(pathToFileURL(historyPath).href))
         .replace('"@/services/api/request"', JSON.stringify(pathToFileURL(requestPath).href))
+        .replace('"@/services/api/operations"', JSON.stringify(pathToFileURL(operationsPath).href))
+        .replace('"@/services/canvas-operation-journal"', JSON.stringify(pathToFileURL(journalPath).href))
         .replace('"@/services/api/resources"', JSON.stringify(pathToFileURL(resourcesPath).href))
         .replace('"@/stores/use-asset-store"', JSON.stringify(pathToFileURL(assetsPath).href))
         .replace('"@/services/workspace-mode"', JSON.stringify(pathToFileURL(modePath).href)),
@@ -93,6 +151,7 @@ const repository: typeof import("../src/services/local-workspace-repository") = 
 const store = await import(storePath);
 const request = await import(requestPath);
 const mode = await import(modePath);
+const journal = await import(journalPath);
 
 const timeline: TimelineProject = normalizeTimelineProject({
     version: 2,
@@ -116,7 +175,7 @@ const project = {
     title: "验收画布",
     createdAt: "2026-09-24T08:00:00.000Z",
     updatedAt: "2026-09-24T08:00:00.000Z",
-    revision: 0,
+    revision: 1,
     nodes: [],
     connections: [],
     chatSessions: [],
@@ -132,6 +191,7 @@ beforeEach(() => {
     request.resetPuts();
     store.resetFlush();
     mode.setLocalMode(true);
+    journal.resetCanvasOperationJournalMemory();
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -139,7 +199,7 @@ describe("persistCanvasTimeline http", () => {
     it("PUTs the timeline document to the desktop canvas route", async () => {
         await repository.persistCanvasTimeline(project.id, timeline);
         expect(request.puts).toHaveLength(1);
-        expect(request.puts[0].path).toBe("/canvas-projects/canvas-a");
+        expect(request.puts[0].path).toBe("/ops/canvas.document.commit");
         expect(request.puts[0].body.project.timeline.durationMs).toBe(5600);
         expect(request.puts[0].body.project.timeline.clips).toEqual([expect.objectContaining({ id: "clip-audio-1", kind: "audio", nodeId: "7vvfM674HnenwTekmj88V", durationMs: 5600 })]);
         expect(request.puts[0].body.project.timeline.tracks.map((track: { kind: string }) => track.kind)).toEqual(["video", "audio", "subtitle"]);
@@ -161,6 +221,7 @@ describe("persistCanvasTimeline http", () => {
 
         request.resetPuts();
         store.resetFlush();
+        journal.resetCanvasOperationJournalMemory();
         store.resetProjects([{ ...project }]);
         store.setFlushImpl(async () => {
             throw new Error("IndexedDB hung");
@@ -246,7 +307,7 @@ describe("persistCanvasDocument http", () => {
         store.resetProjects([{ ...project, timeline, nodes: [originalAudioNode] }]);
         await repository.persistCanvasDocument(project.id, { nodes: [originalAudioNode, historyAudioNode] });
         expect(request.puts).toHaveLength(1);
-        expect(request.puts[0].path).toBe("/canvas-projects/canvas-a");
+        expect(request.puts[0].path).toBe("/ops/canvas.document.commit");
         expect(request.puts[0].body.project.nodes.map((node: { title: string }) => node.title)).toEqual(["旁白", "历史音频"]);
         expect(request.puts[0].body.project.nodes[1].metadata.storageKey).toBe("resource:audio-owned");
         expect(request.puts[0].body.project.timeline.durationMs).toBe(5600);
@@ -271,6 +332,7 @@ describe("persistCanvasDocument http", () => {
 
         request.resetPuts();
         store.resetFlush();
+        journal.resetCanvasOperationJournalMemory();
         store.resetProjects([{ ...project, nodes: [originalAudioNode] }]);
         store.setFlushImpl(async () => {
             throw new Error("IndexedDB hung");
@@ -355,7 +417,7 @@ describe("persistCanvasDocument http", () => {
         store.resetProjects([{ ...project, nodes: [original] }]);
         await repository.persistCanvasDocument(project.id, { nodes: [original, history] });
         expect(request.puts).toHaveLength(1);
-        expect(request.puts[0].path).toBe("/canvas-projects/canvas-a");
+        expect(request.puts[0].path).toBe("/ops/canvas.document.commit");
         expect(request.puts[0].body.assets).toBeUndefined();
         expect(
             request.puts[0].body.project.nodes.map((node: { title: string; metadata?: { assetId?: string } }) => ({

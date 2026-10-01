@@ -394,6 +394,10 @@ func (s *operationSession) ConnectUserCanvasNodesAtRevision(userID string, canva
 	return s.canvas.ConnectUserCanvasNodesAtRevision(userID, canvasID, fromNodeID, toNodeID, expectedRevision)
 }
 
+func (s *operationSession) CommitUserCanvasDocument(userID string, canvasID string, expectedRevision int64, document json.RawMessage) (canvas.UserDataSummary, json.RawMessage, error) {
+	return s.canvas.CommitUserCanvasDocument(userID, canvasID, expectedRevision, document)
+}
+
 var (
 	_ operations.DomainBinder = (*Service)(nil)
 	_ operations.Domain       = (*operationSession)(nil)

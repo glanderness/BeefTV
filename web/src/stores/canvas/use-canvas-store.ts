@@ -185,6 +185,33 @@ export function canvasDurableSnapshot(scope: string, projectId: string) {
     return observedCanvasPersists.get(scope)?.projects.find((project) => project.id === projectId);
 }
 
+type CanvasDocumentBase = {
+    revision: number;
+    snapshot: CanvasProject;
+};
+
+const canvasDocumentBases = new Map<string, CanvasDocumentBase>();
+
+function canvasDocumentBaseKey(scope: string, projectId: string) {
+    return `${scope}\0${projectId}`;
+}
+
+/** 最近一次被服务端确认的画布基线（revision + 文档），与 IndexedDB 存储队列无关。 */
+export function recordCanvasDocumentBase(project: CanvasProject, scope = getActiveUserScope()) {
+    canvasDocumentBases.set(canvasDocumentBaseKey(scope, project.id), {
+        revision: project.revision ?? 0,
+        snapshot: project,
+    });
+}
+
+export function canvasDocumentBase(projectId: string, scope = getActiveUserScope()) {
+    return canvasDocumentBases.get(canvasDocumentBaseKey(scope, projectId));
+}
+
+export function clearCanvasDocumentBase(projectId: string, scope = getActiveUserScope()) {
+    canvasDocumentBases.delete(canvasDocumentBaseKey(scope, projectId));
+}
+
 export type CanvasExternalRevisionConflict = {
     projectId: string;
     localRevision: number;

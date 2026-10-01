@@ -17,8 +17,11 @@ func TestOpsListingKeepsOwnerAndExternalCatalogFull(t *testing.T) {
 	}
 
 	ownerListing := getOps(t, env, map[string]string{"X-Beeftv-Owner": owner})
-	if len(ownerListing) != 9 {
-		t.Fatalf("owner 能力发现应为 9，得到 %d %v", len(ownerListing), ownerListing)
+	if len(ownerListing) != 10 {
+		t.Fatalf("owner 能力发现应为 10，得到 %d %v", len(ownerListing), ownerListing)
+	}
+	if !listingHas(ownerListing, "canvas.document.commit") {
+		t.Fatalf("owner 应包含文档提交: %v", ownerListing)
 	}
 	if !listingHas(ownerListing, "asset.list") || !listingHas(ownerListing, "canvas.search") {
 		t.Fatalf("owner 应包含工作区级操作: %v", ownerListing)
@@ -29,16 +32,16 @@ func TestOpsListingKeepsOwnerAndExternalCatalogFull(t *testing.T) {
 		t.Fatal(err)
 	}
 	externalListing := getOps(t, env, map[string]string{"X-Beeftv-Client": reg.ID, "Authorization": "Bearer " + token})
-	if len(externalListing) != 9 {
-		t.Fatalf("外部客户端能力发现应为 9，得到 %d %v", len(externalListing), externalListing)
+	if len(externalListing) != 10 {
+		t.Fatalf("外部客户端能力发现应为 10，得到 %d %v", len(externalListing), externalListing)
 	}
 
 	hostListing := getOps(t, env, map[string]string{"X-Beeftv-Agent-Token": assistantTestHostToken})
 	if len(hostListing) != 7 {
 		t.Fatalf("宿主回合外能力发现应为 7，得到 %d %v", len(hostListing), hostListing)
 	}
-	if listingHas(hostListing, "asset.list") || listingHas(hostListing, "canvas.search") {
-		t.Fatalf("助手不应看到工作区级操作: %v", hostListing)
+	if listingHas(hostListing, "asset.list") || listingHas(hostListing, "canvas.search") || listingHas(hostListing, "canvas.document.commit") {
+		t.Fatalf("助手不应看到工作区级或整页写操作: %v", hostListing)
 	}
 }
 
