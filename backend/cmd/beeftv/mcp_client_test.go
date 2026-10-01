@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"infinite-canvas/backend/internal/operations"
 )
 
 // TestMCPClientLoop 用官方 MCP 客户端连接 `beeftv mcp serve`，验证握手、工具描述、
@@ -52,8 +53,25 @@ func TestMCPClientLoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tools/list 失败: %v", err)
 	}
-	if len(tools.Tools) != 10 {
-		t.Fatalf("工具数量 = %d，期望 10", len(tools.Tools))
+	registry := operations.NewRegistry(nil, nil)
+	operations.RegisterDefaultOps(registry)
+	expected := registry.List(operations.ManualCaller(false))
+	if len(tools.Tools) != len(expected) {
+		t.Fatalf("MCP tools = %d, workspace operations = %d", len(tools.Tools), len(expected))
+	}
+	for _, operation := range expected {
+		found := false
+		for _, tool := range tools.Tools {
+			if tool.Name == operation.ID {
+				found = true
+				if tool.Annotations == nil || tool.Annotations.ReadOnlyHint != operation.ReadOnly {
+					t.Fatalf("MCP permission differs from workspace operation %s", operation.ID)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("MCP omitted workspace operation %s", operation.ID)
+		}
 	}
 	var create *mcp.Tool
 	var sawPropose bool
