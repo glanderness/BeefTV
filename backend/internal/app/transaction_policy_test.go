@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +12,69 @@ import (
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
+
+func TestCanvasHostSkipsStorageMutexInsideTransactionAndStillSeesTxQuota(t *testing.T) {
+	s, db := newTimelineTaskTestService(t)
+	pool, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool.SetMaxOpenConns(1)
+	pool.SetMaxIdleConns(1)
+	t.Cleanup(func() { _ = pool.Close() })
+
+	s.storageMu.Lock()
+	held := true
+	t.Cleanup(func() {
+		if held {
+			s.storageMu.Unlock()
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(&model.CanvasProject{ID: "quota-tx-canvas", UserID: "user", Title: "tx", PayloadJSON: "abcd"}).Error; err != nil {
+				return err
+			}
+			repo := s.repo.WithTx(tx)
+			if !repoHoldsTransaction(repo) {
+				return errors.New("WithTx repo must be a TxCommitter")
+			}
+			host := newCanvasHostWithRepo(s, repo)
+			txUsage, err := repo.UserStorageUsage("user")
+			if err != nil {
+				return err
+			}
+			if txUsage.CanvasCount != 1 || txUsage.CanvasBytes < 4 {
+				return fmt.Errorf("tx usage must see uncommitted canvas, tx=%#v", txUsage)
+			}
+			policy, err := s.runtimePolicyWithRepo(repo)
+			if err != nil {
+				return err
+			}
+			delta := megabytes(policy.Resource.StructuredDataMB)
+			if err := host.WithStorageLock(func() error {
+				return host.StructuredQuota("user", "canvas", false, delta)
+			}); err == nil {
+				return errors.New("structured quota ignored in-transaction usage")
+			}
+			return nil
+		})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("事务内 WithStorageLock 仍在等根 storageMu")
+	}
+	s.storageMu.Unlock()
+	held = false
+}
 
 func TestCanvasQuotaReadsPolicyFromItsTransaction(t *testing.T) {
 	s, db := newTimelineTaskTestService(t)
