@@ -35,7 +35,7 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 			failService(c, err)
 			return
 		}
-		readOnly, clientLabel, authErr := resolveClientMode(c, svc, clients)
+		caller, clientLabel, authErr := resolveCaller(c, svc, clients)
 		if authErr != nil {
 			fail(c, http.StatusForbidden, app.BadAuthRequest(authErr.Error()))
 			return
@@ -46,8 +46,8 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 			fail(c, http.StatusForbidden, app.BadAuthRequest(scopeErr.Error()))
 			return
 		}
-		caller := agentops.Caller{ReadOnly: readOnly, Assistant: scope}
-		ok(c, gin.H{"ops": registry.List(caller), "readOnly": readOnly, "client": clientLabel})
+		caller = withRequestScope(caller, scope)
+		ok(c, gin.H{"ops": registry.List(caller), "readOnly": caller.ReadOnly, "client": clientLabel, "caller": caller.Kind})
 	})
 
 	r.POST("/ops/clients", func(c *gin.Context) {
@@ -124,7 +124,7 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 				return
 			}
 		}
-		readOnly, clientLabel, authErr := resolveClientMode(c, svc, clients)
+		caller, clientLabel, authErr := resolveCaller(c, svc, clients)
 		if authErr != nil {
 			fail(c, http.StatusForbidden, app.BadAuthRequest(authErr.Error()))
 			return
@@ -137,10 +137,11 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 			fail(c, http.StatusForbidden, app.BadAuthRequest(scopeErr.Error()))
 			return
 		}
+		caller = withRequestScope(caller, scope)
 		result, execErr := registry.Execute(agentops.Request{
 			Context: c.Request.Context(),
-			OpID:    req.OpID, Op: c.Param("op"), UserID: user.ID, ReadOnly: readOnly, Params: req.Params,
-			TurnID: turnID, Assistant: scope,
+			OpID:    req.OpID, Op: c.Param("op"), UserID: user.ID, Caller: caller, Params: req.Params,
+			TurnID: turnID,
 		})
 		if execErr != nil {
 			opErr := agentops.AsError(execErr)
@@ -155,30 +156,39 @@ func RegisterAgentOpsRoutes(r gin.IRouter, svc *app.Service, store *agentops.Sto
 	return registry
 }
 
-// resolveClientMode 决定本次调用的能力模式。
+// resolveCaller 决定本次调用的身份与能力模式。
 // 已登记的客户端：模式完全由服务端登记决定，请求体/请求头都不能自行提升或改变。
 // 内置助手宿主：凭自己那份后端注入的宿主凭据拿到读写；页面的 UI 会话凭据不在这里。
-// 未登记的本机调用（桌面/开发）：允许用请求声明的只读标志，但绝不能借它提权成写。
-func resolveClientMode(c *gin.Context, svc *app.Service, clients *agentops.ClientRegistry) (bool, string, error) {
-	// 宿主凭据优先：它只由后端注入宿主进程，普通客户端与页面都拿不到。
+// owner 通道是手工 UI 与本机直连的身份。
+func resolveCaller(c *gin.Context, svc *app.Service, clients *agentops.ClientRegistry) (agentops.Caller, string, error) {
 	if isAssistantHostRequest(c, svc) {
-		return false, "assistant-host", nil
+		return agentops.Caller{Kind: agentops.CallerAssistant}, "assistant-host", nil
 	}
 	clientID := strings.TrimSpace(c.GetHeader("X-Beeftv-Client"))
 	if clientID != "" {
 		token := strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "))
 		reg, found := clients.Lookup(clientID, token)
 		if !found {
-			return true, "", errUnknownClient
+			return agentops.Caller{}, "", errUnknownClient
 		}
-		// 已登记客户端：能力模式只由服务端登记决定，请求头/请求体不能提升。
-		return reg.Mode == agentops.ClientReadOnly, reg.Label, nil
+		return agentops.Caller{Kind: agentops.CallerExternal, ReadOnly: reg.Mode == agentops.ClientReadOnly}, reg.Label, nil
 	}
-	// 没有客户端身份时必须是 owner 可信通道；不存在“省略 ID 即可写”的回落。
 	if agentops.OwnerTokenMatches(svc.DataDir(), strings.TrimSpace(c.GetHeader("X-Beeftv-Owner"))) {
-		return false, "owner", nil
+		return agentops.Caller{Kind: agentops.CallerManual}, "owner", nil
 	}
-	return true, "", errUnidentified
+	return agentops.Caller{}, "", errUnidentified
+}
+
+func resolveClientMode(c *gin.Context, svc *app.Service, clients *agentops.ClientRegistry) (bool, string, error) {
+	caller, label, err := resolveCaller(c, svc, clients)
+	return caller.ReadOnly, label, err
+}
+
+func withRequestScope(caller agentops.Caller, scope *agentops.AssistantScope) agentops.Caller {
+	if scope != nil {
+		caller.Scope = scope
+	}
+	return caller
 }
 
 type clientAuthError struct{ message string }

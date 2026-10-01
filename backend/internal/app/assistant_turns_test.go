@@ -105,9 +105,9 @@ func nodeIDs(t *testing.T, service *Service, canvasID string) []string {
 
 // recordTurnReceipt 落一条带回合归属的操作回执。
 //
-// app 包内的测试不能 import agentops（agentops 依赖 app，会形成 import cycle），
-// 而「用回执重建回合变更」正是这里要验证的规则；真实入口的原子归属由
-// assistant_turns_operations_test.go 用真实注册表与真实事务覆盖。
+// app 包内测试仍不直接 import agentops：回执重建规则在这里用仓储记录覆盖，
+// 真实注册表与事务入口在 assistant_turns_operations_test.go。
+// 操作核已迁到 operations，不再反向依赖 app。
 func recordTurnReceipt(t *testing.T, service *Service, turnID, opID, op string, payload map[string]any) {
 	t.Helper()
 	encoded, err := json.Marshal(payload)

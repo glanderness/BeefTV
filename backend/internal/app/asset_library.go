@@ -1,37 +1,15 @@
 package app
 
 import (
-	"encoding/json"
 	"errors"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 
 	"gorm.io/gorm"
 )
-
-type UserAssetPage struct {
-	Assets         []json.RawMessage `json:"assets"`
-	KindCounts     map[string]int64  `json:"kindCounts"`
-	CategoryCounts map[string]int64  `json:"categoryCounts"`
-	FolderCounts   map[string]int64  `json:"folderCounts"`
-	Page           int               `json:"page"`
-	PageSize       int               `json:"pageSize"`
-	Total          int64             `json:"total"`
-	HasMore        bool              `json:"hasMore"`
-}
-
-type UserAssetPageFilter struct {
-	Kind          string
-	Category      string
-	FolderID      *string
-	Uncategorized bool
-	Status        string
-	Query         string
-}
 
 type CreateAssetFolderRequest struct {
 	Name string `json:"name"`
@@ -44,40 +22,6 @@ type UpdateAssetFolderRequest struct {
 type MoveUserAssetsRequest struct {
 	AssetIDs []string `json:"assetIds"`
 	FolderID string   `json:"folderId"`
-}
-
-func (s *Service) UserAssetsPage(userID string, page int, pageSize int, filter UserAssetPageFilter) (UserAssetPage, error) {
-	page, pageSize = normalizeProjectPage(page, pageSize, 120)
-	repoFilter := repository.UserAssetPageFilter{
-		Kind: filter.Kind, Category: filter.Category, FolderID: filter.FolderID,
-		Uncategorized: filter.Uncategorized, Status: filter.Status, Query: filter.Query,
-	}
-	assets, total, err := s.repo.UserAssetsPage(userID, page, pageSize, repoFilter)
-	if err != nil {
-		return UserAssetPage{}, err
-	}
-	rawAssets := make([]json.RawMessage, 0, len(assets))
-	for _, asset := range assets {
-		if payload := clientAssetPayload(asset); len(payload) > 0 {
-			rawAssets = append(rawAssets, payload)
-		}
-	}
-	kindRows, categoryRows, folderRows, err := s.repo.UserAssetFacets(userID, filter.Status)
-	if err != nil {
-		return UserAssetPage{}, err
-	}
-	return UserAssetPage{
-		Assets: rawAssets, KindCounts: assetFacetMap(kindRows), CategoryCounts: assetFacetMap(categoryRows), FolderCounts: assetFacetMap(folderRows),
-		Page: page, PageSize: pageSize, Total: total, HasMore: int64(page*pageSize) < total,
-	}, nil
-}
-
-func assetFacetMap(rows []repository.UserAssetFacetRow) map[string]int64 {
-	result := make(map[string]int64, len(rows))
-	for _, row := range rows {
-		result[row.Key] = row.Count
-	}
-	return result
 }
 
 func (s *Service) AssetFolders(userID string) ([]model.AssetFolder, error) {

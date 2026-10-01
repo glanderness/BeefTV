@@ -3,6 +3,8 @@ package agentops
 import (
 	"encoding/json"
 	"strings"
+
+	"infinite-canvas/backend/internal/operations"
 )
 
 // AssistantScope 是内置助手的可信范围：当前画布 + 后端验证过归属的额外引用，
@@ -21,7 +23,10 @@ type AssistantScope struct {
 // 当前画布读写、单个素材/任务读取与付费生成提议。
 // 工作区级列举（asset.list、canvas.search）不在其中——它们没有可校验的单资源归属，
 // 不能用提示词代替授权。
-func assistantVisible(op *Op) bool {
+func assistantVisible(op *operations.Op) bool {
+	if op == nil {
+		return false
+	}
 	switch op.ID {
 	case "canvas.get", "canvas.node.update", "canvas.nodes.create", "canvas.edge.create",
 		"canvas.generation.propose", "asset.get", "task.get":
@@ -32,7 +37,14 @@ func assistantVisible(op *Op) bool {
 }
 
 // Allows 判断一次调用是否落在助手范围内；越界返回结构化的 scope_denied。
-func (s *AssistantScope) Allows(op *Op, params json.RawMessage) error {
+func (s *AssistantScope) Visible(op *operations.Op) bool {
+	if s == nil {
+		return true
+	}
+	return assistantVisible(op)
+}
+
+func (s *AssistantScope) Allows(op *operations.Op, params json.RawMessage) error {
 	if s == nil {
 		return nil
 	}
@@ -84,5 +96,7 @@ func (s *AssistantScope) canvasAllowed(canvasID string) bool {
 }
 
 func denied(message string) *Error {
-	return newError(CodePermissionDenied, "scope_denied", message, nil)
+	return operations.PermissionDenied("scope_denied", message)
 }
+
+var _ operations.Authorizer = (*AssistantScope)(nil)

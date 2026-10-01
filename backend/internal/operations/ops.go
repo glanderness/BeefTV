@@ -1,68 +1,15 @@
-package agentops
+package operations
 
 import (
-	"bytes"
 	"crypto/rand"
-
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-
-	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/canvas"
-	"infinite-canvas/backend/internal/kernel"
 )
-
-// decodeParams 是全部操作参数的唯一解析入口：未知字段整批拒绝。
-//
-// encoding/json 默认丢弃未知字段，于是「title + temperature」这样的请求会部分执行并
-// 推进 revision，调用方却以为整个请求生效了。这里必须让未知字段变成稳定失败，
-// 而不是让操作层各自记得加 DisallowUnknownFields。
-// DisallowUnknownFields 对嵌套结构体同样生效，所以 patch/nodes 里的未知字段也会在
-// 写之前被拒；所有操作都必须在调用领域写入之前先走这里。
-func decodeParams(params json.RawMessage, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(params))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		var typeErr *json.UnmarshalTypeError
-		if errors.As(err, &typeErr) {
-			return InvalidArg("invalid_params", "参数类型不正确: 字段 "+typeErr.Field)
-		}
-		if field, ok := unknownField(err); ok {
-			return newError(CodeInvalidArgument, "unknown_field", "参数包含未知字段: "+field,
-				map[string]any{"field": field})
-		}
-		return InvalidArg("invalid_params", err.Error())
-	}
-	// 顶层后面的多余内容（例如 "{}{}" 或尾随垃圾）同样整批拒绝。
-	if err := decoder.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
-		return InvalidArg("invalid_params", "参数包含多余内容")
-	}
-	return nil
-}
-
-// unknownField 从 encoding/json 的未知字段错误里取出字段名。
-// 报错文案是标准库固定格式（json: unknown field "x"），取不到时退化为通用失败。
-func unknownField(err error) (string, bool) {
-	const prefix = `json: unknown field `
-	message := err.Error()
-	if !strings.HasPrefix(message, prefix) {
-		return "", false
-	}
-	name := strings.Trim(strings.TrimPrefix(message, prefix), `"`)
-	if name == "" {
-		return "", false
-	}
-	return name, true
-}
 
 // RegisterDefaultOps 注册首版全部操作。生成/付费入口不在本轮暴露：
 // 未经参数与费用风险验收的能力明确不注册，而不是提供 stub 伪成功。
@@ -116,7 +63,7 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 	if len(args.NodeIDs) == 0 || len(args.NodeIDs) > 8 {
 		return nil, InvalidArg("invalid_batch", "nodeIds 必须是 1..8 项的数组")
 	}
-	raw, err := ctx.Services.UserCanvasProject(ctx.UserID, args.CanvasID)
+	raw, err := ctx.Domain.UserCanvasProject(ctx.UserID, args.CanvasID)
 	if err != nil {
 		return nil, mapDomainError(err)
 	}
@@ -144,7 +91,7 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 		seen[id] = true
 		nodeIDs = append(nodeIDs, id)
 	}
-	display, modelKey, configRevision, err := ctx.Services.AssistantGenerationModelSnapshot(args.Kind)
+	display, modelKey, configRevision, err := ctx.Domain.AssistantGenerationModelSnapshot(args.Kind)
 	if err != nil {
 		return nil, AsError(err)
 	}
@@ -183,7 +130,7 @@ func opCanvasGet(ctx *Context, params json.RawMessage) (any, error) {
 	if strings.TrimSpace(args.CanvasID) == "" {
 		return nil, InvalidArg("invalid_params", "canvasId 必填")
 	}
-	raw, err := ctx.Services.UserCanvasProject(ctx.UserID, args.CanvasID)
+	raw, err := ctx.Domain.UserCanvasProject(ctx.UserID, args.CanvasID)
 	if err != nil {
 		return nil, mapDomainError(err)
 	}
@@ -216,7 +163,7 @@ func opCanvasSearch(ctx *Context, params json.RawMessage) (any, error) {
 	if size > 100 {
 		size = 100
 	}
-	result, err := ctx.Services.UserCanvasProjectsPage(ctx.UserID, page, size, args.CanvasID, args.Query, args.Sort)
+	result, err := ctx.Domain.UserCanvasProjectsPage(ctx.UserID, page, size, args.CanvasID, args.Query, args.Sort)
 	if err != nil {
 		return nil, mapDomainError(err)
 	}
@@ -245,7 +192,7 @@ func opAssetList(ctx *Context, params json.RawMessage) (any, error) {
 	if size > 100 {
 		size = 100
 	}
-	result, err := ctx.Services.UserAssetsPage(ctx.UserID, page, size, app.UserAssetPageFilter{
+	result, err := ctx.Domain.UserAssetsPage(ctx.UserID, page, size, canvas.UserAssetPageFilter{
 		Kind: args.Kind, Category: args.Category, Query: args.Query,
 	})
 	if err != nil {
@@ -264,7 +211,7 @@ func opAssetGet(ctx *Context, params json.RawMessage) (any, error) {
 	if strings.TrimSpace(args.AssetID) == "" {
 		return nil, InvalidArg("invalid_params", "assetId 必填")
 	}
-	raw, err := ctx.Services.UserAssetWithTx(ctx.Tx, ctx.UserID, args.AssetID)
+	raw, err := ctx.Domain.UserAsset(ctx.UserID, args.AssetID)
 	if err != nil {
 		return nil, mapDomainError(err)
 	}
@@ -285,7 +232,7 @@ func opTaskGet(ctx *Context, params json.RawMessage) (any, error) {
 	if strings.TrimSpace(args.TaskID) == "" {
 		return nil, InvalidArg("invalid_params", "taskId 必填")
 	}
-	task, err := ctx.Services.Task(ctx.UserID, args.TaskID)
+	task, err := ctx.Domain.Task(ctx.UserID, args.TaskID)
 	if err != nil {
 		return nil, mapDomainError(err)
 	}
@@ -298,7 +245,6 @@ func opTaskGet(ctx *Context, params json.RawMessage) (any, error) {
 	}, nil
 }
 
-// canvasDoc 以 map 承载整份文档，保证未触碰的字段在写回时逐字保持原样。
 func canvasRevision(doc map[string]any) int64 {
 	switch v := doc["revision"].(type) {
 	case float64:
@@ -352,14 +298,14 @@ func opCanvasNodeUpdate(ctx *Context, params json.RawMessage) (any, error) {
 	if len(patch) == 0 {
 		return nil, InvalidArg("empty_patch", "patch 至少要有一个字段")
 	}
-	// 领域实现拥有写入规则；操作层只转接，写入与操作记录同事务。
-	if _, err := ctx.Services.UpdateUserCanvasNodeFieldsWithTx(ctx.Tx, ctx.UserID, args.CanvasID, args.NodeID, patch, args.ExpectedRevision); err != nil {
+	if _, err := ctx.Domain.UpdateUserCanvasNodeFields(ctx.UserID, args.CanvasID, args.NodeID, patch, args.ExpectedRevision); err != nil {
 		return nil, mapDomainError(err)
 	}
 	return canvasWriteResult(ctx, args.CanvasID, func(doc map[string]any) map[string]any {
 		return map[string]any{"canvasId": args.CanvasID, "nodeId": args.NodeID, "node": findDocNode(doc, args.NodeID)}
 	})
 }
+
 func opCanvasNodesCreate(ctx *Context, params json.RawMessage) (any, error) {
 	var args struct {
 		CanvasID         string `json:"canvasId"`
@@ -383,8 +329,7 @@ func opCanvasNodesCreate(ctx *Context, params json.RawMessage) (any, error) {
 	for _, node := range args.Nodes {
 		drafts = append(drafts, canvas.NodeDraft{Title: node.Title, Type: node.Type, Prompt: node.Prompt})
 	}
-	// 新节点身份由领域返回：标题是用户内容，不是身份，不能用它回找。
-	_, createdNodes, err := ctx.Services.CreateUserCanvasNodesWithTx(ctx.Tx, ctx.UserID, args.CanvasID, drafts, args.ExpectedRevision)
+	_, createdNodes, err := ctx.Domain.CreateUserCanvasNodes(ctx.UserID, args.CanvasID, drafts, args.ExpectedRevision)
 	if err != nil {
 		return nil, mapDomainError(err)
 	}
@@ -413,23 +358,19 @@ func opCanvasEdgeCreate(ctx *Context, params json.RawMessage) (any, error) {
 	if args.FromNodeID == args.ToNodeID {
 		return nil, InvalidArg("self_loop", "不能把节点连接到自身")
 	}
-	summary, err := ctx.Services.ConnectUserCanvasNodesWithTx(ctx.Tx, ctx.UserID, args.CanvasID, args.FromNodeID, args.ToNodeID, args.ExpectedRevision)
+	summary, err := ctx.Domain.ConnectUserCanvasNodesAtRevision(ctx.UserID, args.CanvasID, args.FromNodeID, args.ToNodeID, args.ExpectedRevision)
 	if err != nil {
 		return nil, mapDomainError(err)
 	}
-	// 领域层遇到已存在的连线会原样返回（revision 不变），真正新建才推进 revision。
-	// 写后扫描连线永远能扫到这条边，因此必须按领域结果判定，而不是按写后状态判定。
 	created := summary.Revision != args.ExpectedRevision
 	return canvasWriteResult(ctx, args.CanvasID, func(doc map[string]any) map[string]any {
-		// 连线 id 要回给调用方：按轮撤销与变更摘要需要知道这一轮新增了哪些连线。
 		return map[string]any{"canvasId": args.CanvasID, "duplicate": !created, "revision": summary.Revision,
 			"edgeId": findDocEdgeID(doc, args.FromNodeID, args.ToNodeID), "created": created}
 	})
 }
 
-// canvasWriteResult 写后在同一事务连接上回读，并补齐 revision。
 func canvasWriteResult(ctx *Context, canvasID string, build func(doc map[string]any) map[string]any) (any, error) {
-	after, err := ctx.Services.UserCanvasProjectWithTx(ctx.Tx, ctx.UserID, canvasID)
+	after, err := ctx.Domain.UserCanvasProject(ctx.UserID, canvasID)
 	if err != nil {
 		return nil, mapDomainError(err)
 	}
@@ -470,70 +411,4 @@ func findDocEdgeID(doc map[string]any, fromNodeID, toNodeID string) string {
 		}
 	}
 	return ""
-}
-
-// secretKeyPattern 命中凭据类字段名；读取结果统一脱敏后再外发。
-var secretKeyPattern = regexp.MustCompile(`(?i)(api[_-]?key|secret|token|authorization|password|credential|private[_-]?key)`)
-
-func sanitizeForClient(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		out := make(map[string]any, len(typed))
-		for key, item := range typed {
-			if secretKeyPattern.MatchString(key) {
-				out[key] = "[redacted]"
-				continue
-			}
-			out[key] = sanitizeForClient(item)
-		}
-		return out
-	case []any:
-		out := make([]any, 0, len(typed))
-		for _, item := range typed {
-			out = append(out, sanitizeForClient(item))
-		}
-		return out
-	case string:
-		if strings.Contains(typed, "?") && secretKeyPattern.MatchString(typed) {
-			if idx := strings.Index(typed, "?"); idx > 0 {
-				return typed[:idx]
-			}
-		}
-		return typed
-	default:
-		return value
-	}
-}
-
-// mapDomainError 把领域错误映射为结构化操作错误，避免把内部细节透给客户端。
-func mapDomainError(err error) error {
-	if err == nil {
-		return nil
-	}
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return NotFound("not_found", "资源不存在")
-	}
-	var appErr *kernel.AppError
-	if errors.As(err, &appErr) {
-		switch appErr.Status {
-		case http.StatusNotFound:
-			return NotFound("not_found", appErr.Message)
-		case http.StatusConflict:
-			return Conflict("stale_revision", appErr.Message, nil)
-		case http.StatusPreconditionFailed:
-			return PreconditionFailed("precondition_failed", appErr.Message, nil)
-		case http.StatusBadRequest:
-			// 领域层给出的稳定原因优先（例如 unsupported_field）：调用方要能区分
-			// 「字段不被该节点类型支持」和普通参数错误，而不是只能解析文案。
-			if appErr.Reason == kernel.ReasonUnsupportedField {
-				return InvalidArg(string(kernel.ReasonUnsupportedField), appErr.Message)
-			}
-			return InvalidArg("invalid_request", appErr.Message)
-		}
-	}
-	var conflicter interface{ IsConflict() bool }
-	if errors.As(err, &conflicter) && conflicter.IsConflict() {
-		return Conflict("stale_write", "写入冲突，已停止覆盖", nil)
-	}
-	return AsError(err)
 }

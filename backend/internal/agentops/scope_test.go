@@ -65,7 +65,7 @@ func TestAssistantVisibleSetExcludesWorkspaceWideOps(t *testing.T) {
 	registry := agentops.NewRegistry(nil, nil)
 	agentops.RegisterDefaultOps(registry)
 	visible := map[string]bool{}
-	for _, descriptor := range registry.List(agentops.Caller{Assistant: &agentops.AssistantScope{}}) {
+	for _, descriptor := range registry.List(agentops.AssistantCaller(&agentops.AssistantScope{}, false)) {
 		visible[descriptor.ID] = true
 	}
 	for _, id := range []string{"canvas.get", "canvas.node.update", "canvas.nodes.create", "canvas.edge.create",
@@ -83,5 +83,19 @@ func TestAssistantVisibleSetExcludesWorkspaceWideOps(t *testing.T) {
 	full := registry.List(agentops.Caller{})
 	if len(full) <= len(visible) {
 		t.Fatalf("外部客户端应看到完整能力集: %d <= %d", len(full), len(visible))
+	}
+}
+
+func TestNilAssistantScopeDoesNotFilterCatalog(t *testing.T) {
+	registry := agentops.NewRegistry(nil, nil)
+	agentops.RegisterDefaultOps(registry)
+	var typedNil *agentops.AssistantScope
+	listed := registry.List(agentops.Caller{Kind: agentops.CallerManual, Scope: typedNil})
+	if len(listed) != 9 {
+		t.Fatalf("空指针范围不应收窄目录，得到 %d", len(listed))
+	}
+	empty := registry.List(agentops.AssistantCaller(&agentops.AssistantScope{}, false))
+	if len(empty) != 7 {
+		t.Fatalf("空助手范围应只露出助手集合，得到 %d", len(empty))
 	}
 }

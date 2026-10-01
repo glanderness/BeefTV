@@ -2,14 +2,15 @@ package app
 
 import (
 	"encoding/json"
-
 	"errors"
-	"gorm.io/gorm"
 	"time"
+
+	"gorm.io/gorm"
 
 	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/operations"
 	"infinite-canvas/backend/internal/repository"
 )
 
@@ -20,6 +21,8 @@ type (
 	UserDataSnapshot     = canvas.UserDataSnapshot
 	CanvasLibrarySummary = canvas.CanvasLibrarySummary
 	CanvasLibraryPage    = canvas.CanvasLibraryPage
+	UserAssetPage        = canvas.UserAssetPage
+	UserAssetPageFilter  = canvas.UserAssetPageFilter
 )
 
 type canvasHost struct {
@@ -286,6 +289,10 @@ func (s *Service) UserAssetsByIDs(userID string, ids []string) ([]json.RawMessag
 	return s.canvasDomain().UserAssetsByIDs(userID, ids)
 }
 
+func (s *Service) UserAssetsPage(userID string, page int, pageSize int, filter UserAssetPageFilter) (UserAssetPage, error) {
+	return s.canvasDomain().UserAssetsPage(userID, page, pageSize, filter)
+}
+
 func (s *Service) UserCanvasProjectsPage(userID string, page int, pageSize int, projectID string, search string, sort string) (CanvasLibraryPage, error) {
 	return s.canvasDomain().UserCanvasProjectsPage(userID, page, pageSize, projectID, search, sort)
 }
@@ -337,3 +344,57 @@ func (s *Service) UpdateUserCanvasNodeFieldsWithTx(tx *gorm.DB, userID, canvasID
 func (s *Service) ConnectUserCanvasNodesWithTx(tx *gorm.DB, userID, canvasID, fromNodeID, toNodeID string, expectedRevision int64) (UserDataSummary, error) {
 	return s.canvasDomainWithTx(tx).ConnectUserCanvasNodesAtRevision(userID, canvasID, fromNodeID, toNodeID, expectedRevision)
 }
+
+// BindDomain 把当前事务绑成操作层 Domain：画布读写走同一条连接，任务/模型快照仍由组合根提供。
+func (s *Service) BindDomain(tx *gorm.DB) operations.Domain {
+	if tx == nil {
+		return &operationSession{canvas: s.canvasDomain(), service: s}
+	}
+	return &operationSession{canvas: s.canvasDomainWithTx(tx), service: s}
+}
+
+type operationSession struct {
+	canvas  *canvas.Service
+	service *Service
+}
+
+func (s *operationSession) UserCanvasProject(userID string, id string) (json.RawMessage, error) {
+	return s.canvas.UserCanvasProject(userID, id)
+}
+
+func (s *operationSession) UserCanvasProjectsPage(userID string, page int, pageSize int, projectID string, search string, sort string) (canvas.CanvasLibraryPage, error) {
+	return s.canvas.UserCanvasProjectsPage(userID, page, pageSize, projectID, search, sort)
+}
+
+func (s *operationSession) UserAssetsPage(userID string, page int, pageSize int, filter canvas.UserAssetPageFilter) (canvas.UserAssetPage, error) {
+	return s.canvas.UserAssetsPage(userID, page, pageSize, filter)
+}
+
+func (s *operationSession) UserAsset(userID string, id string) (json.RawMessage, error) {
+	return s.canvas.UserAsset(userID, id)
+}
+
+func (s *operationSession) Task(userID string, id string) (*model.Task, error) {
+	return s.service.Task(userID, id)
+}
+
+func (s *operationSession) AssistantGenerationModelSnapshot(kind string) (string, string, int64, error) {
+	return s.service.AssistantGenerationModelSnapshot(kind)
+}
+
+func (s *operationSession) CreateUserCanvasNodes(userID string, canvasID string, drafts []canvas.NodeDraft, expectedRevision int64) (canvas.UserDataSummary, []canvas.CreatedNode, error) {
+	return s.canvas.CreateUserCanvasNodes(userID, canvasID, drafts, expectedRevision)
+}
+
+func (s *operationSession) UpdateUserCanvasNodeFields(userID string, canvasID string, nodeID string, patch map[string]any, expectedRevision int64) (canvas.UserDataSummary, error) {
+	return s.canvas.UpdateUserCanvasNodeFields(userID, canvasID, nodeID, patch, expectedRevision)
+}
+
+func (s *operationSession) ConnectUserCanvasNodesAtRevision(userID string, canvasID string, fromNodeID string, toNodeID string, expectedRevision int64) (canvas.UserDataSummary, error) {
+	return s.canvas.ConnectUserCanvasNodesAtRevision(userID, canvasID, fromNodeID, toNodeID, expectedRevision)
+}
+
+var (
+	_ operations.DomainBinder = (*Service)(nil)
+	_ operations.Domain       = (*operationSession)(nil)
+)
