@@ -11,6 +11,7 @@ import (
 	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 
 	"gorm.io/gorm"
 )
@@ -262,33 +263,12 @@ func (s *Service) RegisterTaskOutput(userID string, projectID string, stepID str
 		return model.WorkflowStepInstance{}, kernel.BadAuthRequest("产物元数据必须是有效 JSON")
 	}
 	now := time.Now()
-	step.Status = model.WorkflowStepStatusCompleted
-	step.OutputJSON = strings.TrimSpace(req.OutputJSON)
-	if step.OutputJSON == "" {
-		step.OutputJSON = task.ResultJSON
+	outputJSON := strings.TrimSpace(req.OutputJSON)
+	if outputJSON == "" {
+		outputJSON = task.ResultJSON
 	}
-	if strings.TrimSpace(step.OutputJSON) == "" {
-		step.OutputJSON = "{}"
-	}
-	step.Error = ""
-	step.CompletedAt = &now
-	step.UpdatedAt = now
-	instance, err := s.repo.WorkflowInstance(step.WorkflowInstanceID)
-	if err != nil {
-		return model.WorkflowStepInstance{}, err
-	}
-	instance.Revision++
-	instance.Status = model.WorkflowStatusActive
-	instance.UpdatedAt = now
-	next, nextErr := s.repo.NextWorkflowStep(step.WorkflowInstanceID, step.Position)
-	if errors.Is(nextErr, gorm.ErrRecordNotFound) {
-		instance.Status = model.WorkflowStatusCompleted
-		next = nil
-	} else if nextErr != nil {
-		return model.WorkflowStepInstance{}, nextErr
-	} else if next.Status == model.WorkflowStepStatusPending {
-		next.Status = model.WorkflowStepStatusReady
-		next.UpdatedAt = now
+	if strings.TrimSpace(outputJSON) == "" {
+		outputJSON = "{}"
 	}
 	var representation *model.AssetRepresentation
 	if strings.TrimSpace(req.AssetVersionID) != "" {
@@ -307,21 +287,98 @@ func (s *Service) RegisterTaskOutput(userID string, projectID string, stepID str
 		artifactType = workflowArtifactType(step.StepKey)
 	}
 	productionLink := &model.ProductionTaskLink{ID: kernel.NewID(), TaskID: task.ID, ProjectID: projectID, CanvasID: canvasID, UnitID: unitID, ShotID: shotID, WorkflowStepID: step.ID, ArtifactType: artifactType, CreatedAt: now, UpdatedAt: now}
-	var artifact *model.ShotArtifact
-	if shot != nil && strings.TrimSpace(req.ResourceID) != "" && artifactType != "" {
-		artifact = &model.ShotArtifact{ID: kernel.NewID(), ProjectID: projectID, UnitID: shot.UnitID, ShotID: shot.ID, RevisionID: shotRevisionID, TaskID: task.ID, Type: artifactType, ResourceID: strings.TrimSpace(req.ResourceID), Status: "ready", Selected: true, MetadataJSON: metadata, CreatedAt: now, UpdatedAt: now}
-	}
-	// 单镜产物成功只代表该镜头完成，不能提前放行整个章节阶段。
-	if shot != nil {
-		step.Status = model.WorkflowStepStatusRunning
-		step.CompletedAt = nil
-		instance.Status = model.WorkflowStatusActive
-		next = nil
-	}
-	if err := s.repo.RegisterWorkflowTaskOutputActive(userID, projectID, step, next, instance, link, representation, productionLink, artifact); err != nil {
+	resourceID := strings.TrimSpace(req.ResourceID)
+	stored, err := s.repo.RegisterWorkflowTaskOutputActive(userID, projectID, step.ID, shotID, shotRevisionID, unitID, repository.WorkflowTaskOutputRecords{
+		Link: link, Representation: representation, ProductionLink: productionLink,
+	}, func(current repository.WorkflowOutputCurrent) (repository.WorkflowOutputPlan, error) {
+		return planRegisteredTaskOutput(now, task.ID, outputJSON, metadata, resourceID, artifactType, shotRevisionID, current)
+	})
+	if err != nil {
 		return model.WorkflowStepInstance{}, mapProjectWriteError(err)
 	}
-	return *step, nil
+	return stored, nil
+}
+
+func planRegisteredTaskOutput(now time.Time, taskID, outputJSON, metadata, resourceID, artifactType, shotRevisionID string, current repository.WorkflowOutputCurrent) (repository.WorkflowOutputPlan, error) {
+	if current.ExistingLink != nil {
+		return repository.WorkflowOutputPlan{}, nil
+	}
+	if current.Step.Status == model.WorkflowStepStatusFailed {
+		return repository.WorkflowOutputPlan{}, kernel.BadAuthRequest("失败步骤不能登记成功产物")
+	}
+	plan := repository.WorkflowOutputPlan{}
+	if current.Shot != nil && resourceID != "" && artifactType != "" {
+		selected := strings.TrimSpace(shotRevisionID) == current.Shot.CurrentRevisionID
+		status := "ready"
+		if !selected {
+			status = "stale"
+		}
+		if strings.TrimSpace(metadata) == "" {
+			metadata = "{}"
+		}
+		plan.Artifact = &model.ShotArtifact{
+			ID: kernel.NewID(), ProjectID: current.Shot.ProjectID, UnitID: current.Shot.UnitID, ShotID: current.Shot.ID,
+			RevisionID: shotRevisionID, TaskID: taskID, Type: artifactType, ResourceID: resourceID,
+			Status: status, Selected: selected, MetadataJSON: metadata, CreatedAt: now, UpdatedAt: now,
+		}
+	}
+	step := current.Step
+	instance := current.Instance
+	if strings.TrimSpace(outputJSON) == "" {
+		outputJSON = "{}"
+	}
+	if current.Shot != nil {
+		switch step.Status {
+		case model.WorkflowStepStatusPending, model.WorkflowStepStatusReady, model.WorkflowStepStatusRunning:
+			if step.Status != model.WorkflowStepStatusRunning {
+				step.Status = model.WorkflowStepStatusRunning
+			}
+			if step.StartedAt == nil {
+				started := now
+				step.StartedAt = &started
+			}
+			step.OutputJSON = outputJSON
+			step.Error = ""
+			step.CompletedAt = nil
+			step.UpdatedAt = now
+			instance.Revision++
+			instance.Status = model.WorkflowStatusActive
+			instance.UpdatedAt = now
+			plan.Step = &step
+			plan.Instance = &instance
+		}
+		return plan, nil
+	}
+	if step.Status == model.WorkflowStepStatusCompleted {
+		return plan, nil
+	}
+	if step.Status == model.WorkflowStepStatusFailed || step.Status == model.WorkflowStepStatusSkipped {
+		return repository.WorkflowOutputPlan{}, kernel.BadAuthRequest("当前工作流步骤不能登记成功产物")
+	}
+	step.Status = model.WorkflowStepStatusCompleted
+	step.OutputJSON = outputJSON
+	step.Error = ""
+	completed := now
+	step.CompletedAt = &completed
+	step.UpdatedAt = now
+	if step.StartedAt == nil {
+		started := now
+		step.StartedAt = &started
+	}
+	instance.Revision++
+	instance.Status = model.WorkflowStatusActive
+	instance.UpdatedAt = now
+	if current.Next == nil {
+		instance.Status = model.WorkflowStatusCompleted
+	} else if current.Next.Status == model.WorkflowStepStatusPending {
+		next := *current.Next
+		next.Status = model.WorkflowStepStatusReady
+		next.UpdatedAt = now
+		plan.Next = &next
+	}
+	plan.Step = &step
+	plan.Instance = &instance
+	return plan, nil
 }
 
 func (s *Service) validateWorkflowStepCompletion(projectID string, instance *model.WorkflowInstance, step *model.WorkflowStepInstance) error {
@@ -377,9 +434,17 @@ func (s *Service) validateWorkflowStepCompletion(projectID string, instance *mod
 		if artifactErr != nil {
 			return artifactErr
 		}
+		shotsByID := make(map[string]model.Shot, len(unitShots))
+		for _, shot := range unitShots {
+			shotsByID[shot.ID] = shot
+		}
 		readyShots := make(map[string]struct{}, len(unitShots))
 		for _, artifact := range artifacts {
-			if artifact.UnitID == instance.UnitID && artifact.Type == artifactType && artifact.Selected && artifact.Status == "ready" {
+			shot, ok := shotsByID[artifact.ShotID]
+			if !ok {
+				continue
+			}
+			if artifact.UnitID == instance.UnitID && artifact.Type == artifactType && artifact.Selected && artifact.Status == "ready" && artifact.RevisionID == shot.CurrentRevisionID {
 				readyShots[artifact.ShotID] = struct{}{}
 			}
 		}

@@ -363,7 +363,18 @@ func TestGeneratedOutputIsIdempotentByTaskIdentity(t *testing.T) {
 		}
 	}
 	register()
+	var instanceAfterFirst model.WorkflowInstance
+	if err := db.First(&instanceAfterFirst, "id = ?", workflow.Instance.ID).Error; err != nil {
+		t.Fatal(err)
+	}
 	register()
+	var instanceAfterRetry model.WorkflowInstance
+	if err := db.First(&instanceAfterRetry, "id = ?", workflow.Instance.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if instanceAfterRetry.Revision != instanceAfterFirst.Revision {
+		t.Fatalf("same-task retry revision = %d, want %d", instanceAfterRetry.Revision, instanceAfterFirst.Revision)
+	}
 	assetID := GeneratedEntityID("asset", task.ID)
 	checks := []struct {
 		table string

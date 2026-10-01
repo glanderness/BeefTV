@@ -19,6 +19,32 @@ var ErrProjectArchived = errors.New("project is archived")
 
 var ErrProjectAssetStillReferenced = errors.New("project asset still referenced")
 
+// WorkflowOutputCurrent is the step/instance/shot snapshot loaded inside the
+// registration transaction. Callers must derive transitions from this state.
+type WorkflowOutputCurrent struct {
+	Step         model.WorkflowStepInstance
+	Instance     model.WorkflowInstance
+	Next         *model.WorkflowStepInstance
+	ExistingLink *model.WorkflowStepTask
+	Shot         *model.Shot
+}
+
+// WorkflowOutputPlan is the mutation derived from WorkflowOutputCurrent.
+// A nil Step means the workflow rows stay untouched.
+type WorkflowOutputPlan struct {
+	Step     *model.WorkflowStepInstance
+	Next     *model.WorkflowStepInstance
+	Instance *model.WorkflowInstance
+	Artifact *model.ShotArtifact
+}
+
+// WorkflowTaskOutputRecords are the identity-keyed rows for a task output.
+type WorkflowTaskOutputRecords struct {
+	Link           *model.WorkflowStepTask
+	Representation *model.AssetRepresentation
+	ProductionLink *model.ProductionTaskLink
+}
+
 func (r *Repository) CreateProjectWithWorkflow(project *model.Project, instance *model.WorkflowInstance, steps []model.WorkflowStepInstance) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(project).Error; err != nil {
@@ -381,13 +407,107 @@ func (r *Repository) UpdateWorkflowProgressActive(userID, projectID string, expe
 	})
 }
 
-func (r *Repository) RegisterWorkflowTaskOutputActive(userID, projectID string, step *model.WorkflowStepInstance, next *model.WorkflowStepInstance, instance *model.WorkflowInstance, link *model.WorkflowStepTask, representation *model.AssetRepresentation, productionLink *model.ProductionTaskLink, artifact *model.ShotArtifact) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		if _, err := requireActiveProjectTx(tx, userID, projectID); err != nil {
-			return err
+func (r *Repository) RegisterWorkflowTaskOutputActive(userID, projectID, stepID, shotID, shotRevisionID, unitID string, records WorkflowTaskOutputRecords, apply func(WorkflowOutputCurrent) (WorkflowOutputPlan, error)) (model.WorkflowStepInstance, error) {
+	var stored model.WorkflowStepInstance
+	var err error
+	for attempt := 0; attempt < 8; attempt++ {
+		err = r.db.Transaction(func(tx *gorm.DB) error {
+			if _, err := requireActiveProjectTx(tx, userID, projectID); err != nil {
+				return err
+			}
+			var step model.WorkflowStepInstance
+			if err := tx.Table("workflow_step_instances").Select("workflow_step_instances.*").
+				Joins("JOIN workflow_instances ON workflow_instances.id = workflow_step_instances.workflow_instance_id").
+				Where("workflow_instances.project_id = ? AND workflow_step_instances.id = ?", projectID, stepID).
+				First(&step).Error; err != nil {
+				return err
+			}
+			stored = step
+			var instance model.WorkflowInstance
+			if err := tx.First(&instance, "id = ? AND project_id = ?", step.WorkflowInstanceID, projectID).Error; err != nil {
+				return err
+			}
+			var next *model.WorkflowStepInstance
+			var nextRow model.WorkflowStepInstance
+			nextErr := tx.Where("workflow_instance_id = ? AND position > ?", instance.ID, step.Position).Order("position asc").First(&nextRow).Error
+			if nextErr == nil {
+				nextCopy := nextRow
+				next = &nextCopy
+			} else if !errors.Is(nextErr, gorm.ErrRecordNotFound) {
+				return nextErr
+			}
+			if records.Link == nil {
+				return gorm.ErrInvalidData
+			}
+			var existingLink *model.WorkflowStepTask
+			var linkRow model.WorkflowStepTask
+			linkErr := tx.Where("workflow_step_id = ? AND task_id = ?", step.ID, records.Link.TaskID).First(&linkRow).Error
+			if linkErr == nil {
+				existingCopy := linkRow
+				existingLink = &existingCopy
+			} else if !errors.Is(linkErr, gorm.ErrRecordNotFound) {
+				return linkErr
+			}
+			if strings.TrimSpace(unitID) != "" {
+				if err := requireProjectUnitTx(tx, projectID, unitID); err != nil {
+					return err
+				}
+			}
+			var shot *model.Shot
+			if strings.TrimSpace(shotID) != "" {
+				var shotRow model.Shot
+				if err := tx.First(&shotRow, "id = ? AND project_id = ?", shotID, projectID).Error; err != nil {
+					return err
+				}
+				if strings.TrimSpace(shotRow.UnitID) != "" {
+					if err := requireProjectUnitTx(tx, projectID, shotRow.UnitID); err != nil {
+						return err
+					}
+				}
+				if strings.TrimSpace(shotRevisionID) != "" {
+					if err := tx.First(&model.ShotRevision{}, "id = ? AND shot_id = ?", shotRevisionID, shotRow.ID).Error; err != nil {
+						return err
+					}
+				}
+				shot = &shotRow
+				if records.ProductionLink != nil {
+					records.ProductionLink.UnitID = shotRow.UnitID
+					records.ProductionLink.ShotID = shotRow.ID
+				}
+			}
+			plan, applyErr := apply(WorkflowOutputCurrent{Step: step, Instance: instance, Next: next, ExistingLink: existingLink, Shot: shot})
+			if applyErr != nil {
+				return applyErr
+			}
+			if existingLink != nil {
+				stored = step
+				return nil
+			}
+			if err := persistWorkflowTaskOutputRecordsTx(tx, records, plan.Artifact); err != nil {
+				return err
+			}
+			if plan.Step != nil {
+				if plan.Instance == nil {
+					return gorm.ErrInvalidData
+				}
+				if err := persistWorkflowProgressTx(tx, projectID, plan.Step, plan.Next, plan.Instance, instance.Revision); err != nil {
+					return err
+				}
+				stored = *plan.Step
+			}
+			now := time.Now()
+			if plan.Step != nil {
+				now = plan.Step.UpdatedAt
+			} else if plan.Artifact != nil {
+				now = plan.Artifact.UpdatedAt
+			}
+			return bumpProjectRevisionTx(tx, projectID, now)
+		})
+		if err == nil || !errors.Is(err, ErrProjectRevisionConflict) {
+			return stored, err
 		}
-		return registerWorkflowTaskOutputTx(tx, projectID, step, next, instance, link, representation, productionLink, artifact)
-	})
+	}
+	return stored, err
 }
 
 func (r *Repository) CreateProjectAssetVersionAndBump(userID, projectID string, asset *model.Asset, version *model.AssetVersion) error {
@@ -687,15 +807,17 @@ func (r *Repository) SaveShotWithRevisionActive(userID string, shot *model.Shot,
 		if _, err := requireActiveProjectTx(tx, userID, shot.ProjectID); err != nil {
 			return err
 		}
+		if strings.TrimSpace(shot.UnitID) != "" {
+			if err := requireProjectUnitTx(tx, shot.ProjectID, shot.UnitID); err != nil {
+				return err
+			}
+		}
 		if create {
 			if err := tx.Create(shot).Error; err != nil {
 				return err
 			}
 		} else {
-			query := tx.Model(&model.Shot{}).Where("id = ? AND project_id = ?", shot.ID, shot.ProjectID)
-			if expectedCurrentRevisionID != "" {
-				query = query.Where("current_revision_id = ?", expectedCurrentRevisionID)
-			}
+			query := whereExpectedPointer(tx.Model(&model.Shot{}).Where("id = ? AND project_id = ?", shot.ID, shot.ProjectID), "current_revision_id", expectedCurrentRevisionID)
 			result := query.Updates(map[string]any{
 				"unit_id": shot.UnitID, "title": shot.Title, "description": shot.Description, "position": shot.Position,
 				"duration_ms": shot.DurationMs, "status": shot.Status, "updated_at": shot.UpdatedAt,
@@ -734,21 +856,30 @@ func (r *Repository) SaveShotWithRevisionActive(userID string, shot *model.Shot,
 	})
 }
 
-func (r *Repository) ReplaceProjectUnitShotsActive(userID, projectID, unitID string, shots []model.Shot, revisions []model.ShotRevision, references []model.ShotAssetReference, expectedShotIDs []string) error {
+func (r *Repository) ReplaceProjectUnitShotsActive(userID, projectID, unitID string, shots []model.Shot, revisions []model.ShotRevision, references []model.ShotAssetReference, expectedShotIDs []string, expectedShotPointers map[string]string, expectedRevision int64) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if _, err := requireActiveProjectTx(tx, userID, projectID); err != nil {
 			return err
 		}
-		if expectedShotIDs != nil {
-			var currentShotIDs []string
-			if err := tx.Model(&model.Shot{}).Where("project_id = ? AND unit_id = ?", projectID, unitID).Order("id asc").Pluck("id", &currentShotIDs).Error; err != nil {
+		if err := requireProjectUnitTx(tx, projectID, unitID); err != nil {
+			return err
+		}
+		seenVersions := make(map[string]struct{}, len(references))
+		for _, reference := range references {
+			versionID := strings.TrimSpace(reference.AssetVersionID)
+			if versionID == "" {
+				continue
+			}
+			if _, seen := seenVersions[versionID]; seen {
+				continue
+			}
+			seenVersions[versionID] = struct{}{}
+			if err := requireProjectAssetVersionTx(tx, projectID, versionID); err != nil {
 				return err
 			}
-			expected := append([]string(nil), expectedShotIDs...)
-			sort.Strings(expected)
-			if !slices.Equal(currentShotIDs, expected) {
-				return ErrProjectUnitShotsChanged
-			}
+		}
+		if err := assertShotExpectationsTx(tx, projectID, unitID, expectedShotIDs, expectedShotPointers); err != nil {
+			return err
 		}
 		shotIDs := tx.Model(&model.Shot{}).Select("id").Where("project_id = ? AND unit_id = ?", projectID, unitID)
 		if err := tx.Where("project_id = ? AND unit_id = ?", projectID, unitID).Delete(&model.ShotArtifact{}).Error; err != nil {
@@ -782,6 +913,9 @@ func (r *Repository) ReplaceProjectUnitShotsActive(userID, projectID, unitID str
 		now := time.Now()
 		if err := invalidateUnitWorkflowTx(tx, projectID, unitID, "storyboard", now); err != nil {
 			return err
+		}
+		if expectedRevision > 0 {
+			return bumpProjectRevisionCASTx(tx, projectID, expectedRevision, now)
 		}
 		return bumpProjectRevisionTx(tx, projectID, now)
 	})
@@ -840,6 +974,12 @@ func (r *Repository) DeleteProjectShotActive(userID, projectID, shotID string, u
 func (r *Repository) UpsertShotAssetReferenceActive(userID, projectID string, reference *model.ShotAssetReference, updatedAt time.Time) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if _, err := requireActiveProjectTx(tx, userID, projectID); err != nil {
+			return err
+		}
+		if err := tx.First(&model.Shot{}, "id = ? AND project_id = ?", reference.ShotID, projectID).Error; err != nil {
+			return err
+		}
+		if err := requireProjectAssetVersionTx(tx, projectID, reference.AssetVersionID); err != nil {
 			return err
 		}
 		result := tx.Model(&model.ShotAssetReference{}).Where("shot_id = ? AND asset_version_id = ? AND role = ?", reference.ShotID, reference.AssetVersionID, reference.Role).Updates(map[string]any{"status": reference.Status})
@@ -915,10 +1055,7 @@ func saveCharacterVersionCAS(tx *gorm.DB, expectedPrimaryVersionID string, asset
 			return err
 		}
 	}
-	query := tx.Model(&model.Asset{}).Where("id = ? AND user_id = ?", asset.ID, asset.UserID)
-	if expectedPrimaryVersionID != "" {
-		query = query.Where("primary_version_id = ?", expectedPrimaryVersionID)
-	}
+	query := whereExpectedPointer(tx.Model(&model.Asset{}).Where("id = ? AND user_id = ?", asset.ID, asset.UserID), "primary_version_id", expectedPrimaryVersionID)
 	result := query.Updates(map[string]any{
 		"kind": asset.Kind, "category": asset.Category, "status": asset.Status, "primary_version_id": asset.PrimaryVersionID,
 		"title": asset.Title, "payload_json": asset.PayloadJSON, "updated_at": asset.UpdatedAt,
@@ -1008,64 +1145,62 @@ func upsertCanvasUnitLinkTx(tx *gorm.DB, link *model.CanvasUnitLink) error {
 	return tx.Create(link).Error
 }
 
-func registerWorkflowTaskOutputTx(tx *gorm.DB, projectID string, step *model.WorkflowStepInstance, next *model.WorkflowStepInstance, instance *model.WorkflowInstance, link *model.WorkflowStepTask, representation *model.AssetRepresentation, productionLink *model.ProductionTaskLink, artifact *model.ShotArtifact) error {
-	var existingLink model.WorkflowStepTask
-	if err := tx.Where("workflow_step_id = ? AND task_id = ?", link.WorkflowStepID, link.TaskID).First(&existingLink).Error; errors.Is(err, gorm.ErrRecordNotFound) {
-		if err := tx.Create(link).Error; err != nil {
-			return err
-		}
-	} else if err != nil {
+func persistWorkflowTaskOutputRecordsTx(tx *gorm.DB, records WorkflowTaskOutputRecords, artifact *model.ShotArtifact) error {
+	if records.Link == nil {
+		return gorm.ErrInvalidData
+	}
+	if err := tx.Create(records.Link).Error; err != nil {
 		return err
 	}
-	if representation != nil {
+	if records.Representation != nil {
 		var existingRepresentation model.AssetRepresentation
-		if err := tx.Where("task_id = ? AND role = ?", representation.TaskID, representation.Role).First(&existingRepresentation).Error; errors.Is(err, gorm.ErrRecordNotFound) {
-			if err := tx.Create(representation).Error; err != nil {
+		if err := tx.Where("task_id = ? AND role = ?", records.Representation.TaskID, records.Representation.Role).First(&existingRepresentation).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+			if err := tx.Create(records.Representation).Error; err != nil {
 				return err
 			}
 		} else if err != nil {
 			return err
 		}
 	}
-	if productionLink != nil {
+	if records.ProductionLink != nil {
 		var existingProductionLink model.ProductionTaskLink
-		err := tx.Where("task_id = ? AND shot_id = ? AND artifact_type = ?", productionLink.TaskID, productionLink.ShotID, productionLink.ArtifactType).First(&existingProductionLink).Error
+		err := tx.Where("task_id = ? AND shot_id = ? AND artifact_type = ?", records.ProductionLink.TaskID, records.ProductionLink.ShotID, records.ProductionLink.ArtifactType).First(&existingProductionLink).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			if err := tx.Create(productionLink).Error; err != nil {
+			if err := tx.Create(records.ProductionLink).Error; err != nil {
 				return err
 			}
 		} else if err != nil {
 			return err
 		} else if err := tx.Model(&existingProductionLink).Updates(map[string]any{
-			"project_id": productionLink.ProjectID, "canvas_id": productionLink.CanvasID, "unit_id": productionLink.UnitID,
-			"workflow_step_id": productionLink.WorkflowStepID, "updated_at": productionLink.UpdatedAt,
+			"project_id": records.ProductionLink.ProjectID, "canvas_id": records.ProductionLink.CanvasID, "unit_id": records.ProductionLink.UnitID,
+			"workflow_step_id": records.ProductionLink.WorkflowStepID, "updated_at": records.ProductionLink.UpdatedAt,
 		}).Error; err != nil {
 			return err
 		}
 	}
-	if artifact != nil {
-		var existing model.ShotArtifact
-		if err := tx.Where("task_id = ? AND shot_id = ? AND type = ?", artifact.TaskID, artifact.ShotID, artifact.Type).First(&existing).Error; err == nil {
-			artifact = nil
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+	if artifact == nil {
+		return nil
+	}
+	var existing model.ShotArtifact
+	if err := tx.Where("task_id = ? AND shot_id = ? AND type = ?", artifact.TaskID, artifact.ShotID, artifact.Type).First(&existing).Error; err == nil {
+		return nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	var currentVersion int
+	if err := tx.Model(&model.ShotArtifact{}).Where("shot_id = ? AND type = ?", artifact.ShotID, artifact.Type).Select("COALESCE(MAX(version), 0)").Scan(&currentVersion).Error; err != nil {
+		return err
+	}
+	artifact.Version = currentVersion + 1
+	if artifact.Selected {
+		if err := tx.Model(&model.ShotArtifact{}).Where("shot_id = ? AND type = ?", artifact.ShotID, artifact.Type).Updates(map[string]any{"selected": false, "updated_at": artifact.UpdatedAt}).Error; err != nil {
 			return err
 		}
 	}
-	if artifact != nil {
-		var currentVersion int
-		if err := tx.Model(&model.ShotArtifact{}).Where("shot_id = ? AND type = ?", artifact.ShotID, artifact.Type).Select("COALESCE(MAX(version), 0)").Scan(&currentVersion).Error; err != nil {
-			return err
-		}
-		artifact.Version = currentVersion + 1
-		if artifact.Selected {
-			if err := tx.Model(&model.ShotArtifact{}).Where("shot_id = ? AND type = ?", artifact.ShotID, artifact.Type).Updates(map[string]any{"selected": false, "updated_at": artifact.UpdatedAt}).Error; err != nil {
-				return err
-			}
-		}
-		if err := tx.Create(artifact).Error; err != nil {
-			return err
-		}
-	}
+	return tx.Create(artifact).Error
+}
+
+func persistWorkflowProgressTx(tx *gorm.DB, projectID string, step *model.WorkflowStepInstance, next *model.WorkflowStepInstance, instance *model.WorkflowInstance, expectedInstanceRevision int64) error {
 	stepResult := tx.Model(&model.WorkflowStepInstance{}).Where("id = ? AND workflow_instance_id = ?", step.ID, step.WorkflowInstanceID).Updates(map[string]any{
 		"status": step.Status, "output_json": step.OutputJSON, "error": step.Error, "started_at": step.StartedAt,
 		"completed_at": step.CompletedAt, "updated_at": step.UpdatedAt,
@@ -1085,12 +1220,62 @@ func registerWorkflowTaskOutputTx(tx *gorm.DB, projectID string, step *model.Wor
 			return gorm.ErrInvalidData
 		}
 	}
-	instanceResult := tx.Model(&model.WorkflowInstance{}).Where("id = ? AND project_id = ?", instance.ID, projectID).Updates(map[string]any{"status": instance.Status, "revision": instance.Revision, "updated_at": instance.UpdatedAt})
+	instanceResult := tx.Model(&model.WorkflowInstance{}).Where("id = ? AND project_id = ? AND revision = ?", instance.ID, projectID, expectedInstanceRevision).Updates(map[string]any{"status": instance.Status, "revision": instance.Revision, "updated_at": instance.UpdatedAt})
 	if instanceResult.Error != nil {
 		return instanceResult.Error
 	}
 	if instanceResult.RowsAffected != 1 {
-		return gorm.ErrInvalidData
+		return ErrProjectRevisionConflict
 	}
-	return bumpProjectRevisionTx(tx, projectID, step.UpdatedAt)
+	return nil
+}
+
+func requireProjectUnitTx(tx *gorm.DB, projectID, unitID string) error {
+	return tx.First(&model.ProjectUnit{}, "id = ? AND project_id = ?", unitID, projectID).Error
+}
+
+func requireProjectAssetVersionTx(tx *gorm.DB, projectID, versionID string) error {
+	var version model.AssetVersion
+	return tx.Table("asset_versions").Select("asset_versions.id").
+		Joins("JOIN project_asset_links ON project_asset_links.asset_id = asset_versions.asset_id").
+		Where("project_asset_links.project_id = ? AND asset_versions.id = ?", projectID, versionID).
+		First(&version).Error
+}
+
+func assertShotExpectationsTx(tx *gorm.DB, projectID, unitID string, expectedShotIDs []string, expectedShotPointers map[string]string) error {
+	var current []model.Shot
+	if err := tx.Select("id", "current_revision_id").Where("project_id = ? AND unit_id = ?", projectID, unitID).Find(&current).Error; err != nil {
+		return err
+	}
+	if expectedShotIDs != nil {
+		currentIDs := make([]string, 0, len(current))
+		for _, shot := range current {
+			currentIDs = append(currentIDs, shot.ID)
+		}
+		sort.Strings(currentIDs)
+		expected := append([]string(nil), expectedShotIDs...)
+		sort.Strings(expected)
+		if !slices.Equal(currentIDs, expected) {
+			return ErrProjectUnitShotsChanged
+		}
+	}
+	if expectedShotPointers != nil {
+		if len(current) != len(expectedShotPointers) {
+			return ErrProjectUnitShotsChanged
+		}
+		for _, shot := range current {
+			expected, ok := expectedShotPointers[shot.ID]
+			if !ok || expected != shot.CurrentRevisionID {
+				return ErrProjectUnitShotsChanged
+			}
+		}
+	}
+	return nil
+}
+
+func whereExpectedPointer(tx *gorm.DB, column, expected string) *gorm.DB {
+	if strings.TrimSpace(expected) == "" {
+		return tx.Where("("+column+" IS NULL OR "+column+" = ?)", "")
+	}
+	return tx.Where(column+" = ?", expected)
 }

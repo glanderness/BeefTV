@@ -297,8 +297,9 @@ type ShotRevisionInput struct {
 }
 
 type ReplaceProjectUnitShotsRequest struct {
-	Shots           []ReplaceProjectUnitShotInput `json:"shots"`
-	ExpectedShotIDs []string                      `json:"expectedShotIds"`
+	Shots            []ReplaceProjectUnitShotInput `json:"shots"`
+	ExpectedShotIDs  []string                      `json:"expectedShotIds"`
+	ExpectedRevision int64                         `json:"expectedRevision"`
 }
 
 type ReplaceProjectUnitShotInput struct {
