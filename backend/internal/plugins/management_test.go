@@ -11,6 +11,17 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+func newManagedRuntime(t *testing.T) (*Runtime, *memoryStore, string) {
+	t.Helper()
+	dataDir := t.TempDir()
+	store := &memoryStore{}
+	runtime, err := NewRuntimeWithStore(dataDir, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return runtime, store, dataDir
+}
+
 func TestUploadedManifestCannotClaimUserActivationScope(t *testing.T) {
 	policy := Management(PromptOptimizer, OriginUploaded)
 	if policy.Origin != OriginUploaded || policy.ActivationScope != ScopeSystem || policy.ConfigurationScope != ConfigurationSystem {
@@ -33,23 +44,17 @@ func TestEditorShellIsUserToggleableApplication(t *testing.T) {
 }
 
 func TestInstallUploadedRejectsReservedApplicationID(t *testing.T) {
-	runtime, err := NewRuntime(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	svc := New(runtime, &memoryStore{})
-	_, err = svc.InstallUploaded("admin-1", testPluginPackage(t, testManifest(PromptOptimizer, "1.0.0")), "prompt-optimizer.beeftv-plugin")
+	runtime, store, _ := newManagedRuntime(t)
+	svc := New(runtime, store)
+	_, err := svc.InstallUploaded("admin-1", testPluginPackage(t, testManifest(PromptOptimizer, "1.0.0")), "prompt-optimizer.beeftv-plugin")
 	if err == nil || !strings.Contains(err.Error(), "由官方应用保留") {
 		t.Fatalf("reserved id error = %v", err)
 	}
 }
 
 func TestEditorShellReportsPlatformAvailableWithoutPlatformState(t *testing.T) {
-	runtime, err := NewRuntime(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	svc := New(runtime, &memoryStore{})
+	runtime, store, _ := newManagedRuntime(t)
+	svc := New(runtime, store)
 	user := &model.User{ID: "user-1", Role: model.UserRoleUser}
 	states, err := svc.StatesForUser(user)
 	if err != nil {
@@ -68,11 +73,8 @@ func TestEditorShellReportsPlatformAvailableWithoutPlatformState(t *testing.T) {
 }
 
 func TestApplicationPluginUsesUserStateUnderPlatformAvailability(t *testing.T) {
-	runtime, err := NewRuntime(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	svc := New(runtime, &memoryStore{})
+	runtime, store, _ := newManagedRuntime(t)
+	svc := New(runtime, store)
 	user := &model.User{ID: "user-1", Role: model.UserRoleUser}
 	admin := &model.User{ID: "admin-1", Role: model.UserRoleAdmin}
 
@@ -107,13 +109,10 @@ func TestApplicationPluginUsesUserStateUnderPlatformAvailability(t *testing.T) {
 }
 
 func TestInstallUploadedRollsBackNewPluginWhenStoreFails(t *testing.T) {
-	runtime, err := NewRuntime(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := &memoryStore{failSavePlatform: true}
+	runtime, store, _ := newManagedRuntime(t)
+	store.failSavePlatform = true
 	svc := New(runtime, store)
-	_, err = svc.InstallUploaded("admin-1", testPluginPackage(t, testManifest("store-fail-upload", "1.0.0")), "store-fail-upload.beeftv-plugin")
+	_, err := svc.InstallUploaded("admin-1", testPluginPackage(t, testManifest("store-fail-upload", "1.0.0")), "store-fail-upload.beeftv-plugin")
 	if err == nil || !strings.Contains(err.Error(), "保存插件平台状态") {
 		t.Fatalf("store failure error = %v", err)
 	}
@@ -138,12 +137,7 @@ func TestInstallUploadedNilStoreDoesNotInstall(t *testing.T) {
 }
 
 func TestInstallUploadedReplacementKeepsOldVersionWhenStoreFails(t *testing.T) {
-	dataDir := t.TempDir()
-	runtime, err := NewRuntime(dataDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := &memoryStore{}
+	runtime, store, dataDir := newManagedRuntime(t)
 	svc := New(runtime, store)
 	v1 := testPluginPackage(t, testManifest("replace-store-fail", "1.0.0"))
 	if _, err := svc.InstallUploaded("admin-1", v1, "replace-v1.beeftv-plugin"); err != nil {
@@ -151,7 +145,7 @@ func TestInstallUploadedReplacementKeepsOldVersionWhenStoreFails(t *testing.T) {
 	}
 	store.failSavePlatform = true
 	v2 := testPluginPackage(t, testManifest("replace-store-fail", "2.0.0"))
-	_, err = svc.InstallUploaded("admin-1", v2, "replace-v2.beeftv-plugin")
+	_, err := svc.InstallUploaded("admin-1", v2, "replace-v2.beeftv-plugin")
 	if err == nil || !strings.Contains(err.Error(), "保存插件平台状态") {
 		t.Fatalf("replacement store error = %v", err)
 	}
@@ -164,49 +158,29 @@ func TestInstallUploadedReplacementKeepsOldVersionWhenStoreFails(t *testing.T) {
 	assertBlobExists(t, runtime, v2, false)
 }
 
-func TestInstallUploadedSurfacesRollbackFailure(t *testing.T) {
-	dataDir := t.TempDir()
-	runtime, err := NewRuntime(dataDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := &memoryStore{}
+func TestInstallUploadedCommitThenSkippedPublishRestartsFromStore(t *testing.T) {
+	runtime, store, dataDir := newManagedRuntime(t)
 	svc := New(runtime, store)
-	v1 := testPluginPackage(t, testManifest("replace-rollback-fail", "1.0.0"))
-	if _, err := svc.InstallUploaded("admin-1", v1, "replace-rollback-v1.beeftv-plugin"); err != nil {
+	v1 := testPluginPackage(t, testManifest("replace-skip-publish", "1.0.0"))
+	if _, err := svc.InstallUploaded("admin-1", v1, "replace-skip-publish-v1.beeftv-plugin"); err != nil {
 		t.Fatal(err)
 	}
-	store.failSavePlatform = true
-	store.beforeSave = func() {
-		runtime.failNextReload(errors.New("forced restore reload failure"))
+	runtime.skipNextPublish()
+	v2 := testPluginPackage(t, testManifest("replace-skip-publish", "2.0.0"))
+	_, err := svc.InstallUploaded("admin-1", v2, "replace-skip-publish-v2.beeftv-plugin")
+	if err == nil || !errors.Is(err, errPublishInterrupted) {
+		t.Fatalf("skip publish error = %v", err)
 	}
-	v2 := testPluginPackage(t, testManifest("replace-rollback-fail", "2.0.0"))
-	_, err = svc.InstallUploaded("admin-1", v2, "replace-rollback-v2.beeftv-plugin")
-	if err == nil || !strings.Contains(err.Error(), "保存插件平台状态") {
-		t.Fatalf("rollback failure error = %v", err)
-	}
-	assertImmediatePlugin(t, runtime, "replace-rollback-fail", "1.0.0", StatusEnabled, v1)
-	assertBlobExists(t, runtime, v1, true)
-	assertBlobExists(t, runtime, v2, false)
-	runtime.testFailReload = nil
-	assertPackageBytes(t, runtime, dataDir, "replace-rollback-fail", v1)
-	restarted, err := NewRuntime(dataDir)
+	assertImmediatePlugin(t, runtime, "replace-skip-publish", "1.0.0", StatusEnabled, v1)
+	restarted, err := NewRuntimeWithStore(dataDir, store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, ok := ByID(restarted.List(), "replace-rollback-fail")
-	if !ok || item.Manifest.Version != "1.0.0" {
-		t.Fatalf("disk after rollback failure = %#v", item)
-	}
+	assertImmediatePlugin(t, restarted, "replace-skip-publish", "2.0.0", StatusEnabled, v2)
 }
 
 func TestInstallUploadedConcurrentStoreFailureDoesNotDropOtherUpdate(t *testing.T) {
-	dataDir := t.TempDir()
-	runtime, err := NewRuntime(dataDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := &memoryStore{}
+	runtime, store, dataDir := newManagedRuntime(t)
 	seed := New(runtime, store)
 	v1 := testPluginPackage(t, testManifest("concurrent-upload", "1.0.0"))
 	if _, err := seed.InstallUploaded("admin-1", v1, "concurrent-v1.beeftv-plugin"); err != nil {
@@ -268,33 +242,35 @@ func TestSetPlatformAvailabilityNilStoreDoesNotChangeRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := New(runtime, &memoryStore{})
-	if _, err := svc.InstallUploaded("admin-1", testPluginPackage(t, testManifest("avail-nil-store", "1.0.0")), "avail-nil-store.beeftv-plugin"); err != nil {
-		t.Fatal(err)
+	var officialID string
+	for _, item := range runtime.List() {
+		if item.Source == OriginOfficial && item.Status == StatusEnabled && Management(item.Manifest.ID, item.Source).ActivationScope == ScopeSystem {
+			officialID = item.Manifest.ID
+			break
+		}
+	}
+	if officialID == "" {
+		t.Fatal("no system-scoped official plugin")
 	}
 	nilSvc := New(runtime, nil)
-	_, _, err = nilSvc.SetPlatformAvailability(&model.User{ID: "admin-1"}, "avail-nil-store", false)
+	_, _, err = nilSvc.SetPlatformAvailability(&model.User{ID: "admin-1"}, officialID, false)
 	if err == nil || !strings.Contains(err.Error(), "插件状态存储未初始化") {
 		t.Fatalf("nil store error = %v", err)
 	}
-	item, ok := ByID(runtime.List(), "avail-nil-store")
+	item, ok := ByID(runtime.List(), officialID)
 	if !ok || item.Status != StatusEnabled {
 		t.Fatalf("nil store mutated runtime = %#v", item)
 	}
 }
 
 func TestSetPlatformAvailabilityRollsBackRuntimeWhenStoreFails(t *testing.T) {
-	runtime, err := NewRuntime(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := &memoryStore{}
+	runtime, store, _ := newManagedRuntime(t)
 	svc := New(runtime, store)
 	if _, err := svc.InstallUploaded("admin-1", testPluginPackage(t, testManifest("avail-store-fail", "1.0.0")), "avail-store-fail.beeftv-plugin"); err != nil {
 		t.Fatal(err)
 	}
 	store.failSavePlatform = true
-	_, _, err = svc.SetPlatformAvailability(&model.User{ID: "admin-1"}, "avail-store-fail", false)
+	_, _, err := svc.SetPlatformAvailability(&model.User{ID: "admin-1"}, "avail-store-fail", false)
 	if err == nil || !strings.Contains(err.Error(), "保存插件平台状态") {
 		t.Fatalf("availability store error = %v", err)
 	}
@@ -304,45 +280,31 @@ func TestSetPlatformAvailabilityRollsBackRuntimeWhenStoreFails(t *testing.T) {
 	}
 }
 
-func TestSetPlatformAvailabilitySurfacesRollbackFailure(t *testing.T) {
-	dataDir := t.TempDir()
-	runtime, err := NewRuntime(dataDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := &memoryStore{}
+func TestSetPlatformAvailabilityCommitThenSkippedPublishRestartsFromStore(t *testing.T) {
+	runtime, store, dataDir := newManagedRuntime(t)
 	svc := New(runtime, store)
-	pkg := testPluginPackage(t, testManifest("avail-rollback-fail", "1.0.0"))
-	if _, err := svc.InstallUploaded("admin-1", pkg, "avail-rollback-fail.beeftv-plugin"); err != nil {
+	pkg := testPluginPackage(t, testManifest("avail-skip-publish", "1.0.0"))
+	if _, err := svc.InstallUploaded("admin-1", pkg, "avail-skip-publish.beeftv-plugin"); err != nil {
 		t.Fatal(err)
 	}
-	store.failSavePlatform = true
-	store.beforeSave = func() {
-		runtime.failNextReload(errors.New("forced restore reload failure"))
+	runtime.skipNextPublish()
+	_, _, err := svc.SetPlatformAvailability(&model.User{ID: "admin-1"}, "avail-skip-publish", false)
+	if err == nil || !errors.Is(err, errPublishInterrupted) {
+		t.Fatalf("availability skip publish error = %v", err)
 	}
-	_, _, err = svc.SetPlatformAvailability(&model.User{ID: "admin-1"}, "avail-rollback-fail", false)
-	if err == nil || !strings.Contains(err.Error(), "保存插件平台状态") {
-		t.Fatalf("availability rollback failure error = %v", err)
-	}
-	assertImmediatePlugin(t, runtime, "avail-rollback-fail", "1.0.0", StatusEnabled, pkg)
-	runtime.testFailReload = nil
-	assertPackageBytes(t, runtime, dataDir, "avail-rollback-fail", pkg)
-	restarted, err := NewRuntime(dataDir)
+	assertImmediatePlugin(t, runtime, "avail-skip-publish", "1.0.0", StatusEnabled, pkg)
+	restarted, err := NewRuntimeWithStore(dataDir, store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, ok := ByID(restarted.List(), "avail-rollback-fail")
-	if !ok || item.Status != StatusEnabled {
-		t.Fatalf("disk after availability rollback failure = %#v", item)
+	item, ok := ByID(restarted.List(), "avail-skip-publish")
+	if !ok || item.Status != StatusDisabled {
+		t.Fatalf("restarted availability = %#v", item)
 	}
 }
 
 func TestSetPlatformAvailabilityConcurrentStoreFailureDoesNotUndoOtherChange(t *testing.T) {
-	runtime, err := NewRuntime(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := &memoryStore{}
+	runtime, store, _ := newManagedRuntime(t)
 	seed := New(runtime, store)
 	if _, err := seed.InstallUploaded("admin-1", testPluginPackage(t, testManifest("avail-concurrent", "1.0.0")), "avail-concurrent.beeftv-plugin"); err != nil {
 		t.Fatal(err)
@@ -397,12 +359,7 @@ func TestSetPlatformAvailabilityConcurrentStoreFailureDoesNotUndoOtherChange(t *
 }
 
 func TestUninstallUploadedStoreFailureRestoresPlugin(t *testing.T) {
-	dataDir := t.TempDir()
-	runtime, err := NewRuntime(dataDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := &memoryStore{}
+	runtime, store, dataDir := newManagedRuntime(t)
 	svc := New(runtime, store)
 	pkg := testPluginPackage(t, testManifest("uninstall-store-fail", "1.0.0"))
 	if _, err := svc.InstallUploaded("admin-1", pkg, "uninstall-store-fail.beeftv-plugin"); err != nil {
@@ -428,11 +385,7 @@ func TestUninstallUploadedStoreFailureRestoresPlugin(t *testing.T) {
 }
 
 func TestUninstallUploadedSerializesSetUserEnabled(t *testing.T) {
-	runtime, err := NewRuntime(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := &memoryStore{}
+	runtime, store, _ := newManagedRuntime(t)
 	seed := New(runtime, store)
 	if _, err := seed.InstallUploaded("admin-1", testPluginPackage(t, testManifest("uninstall-serial", "1.0.0")), "uninstall-serial.beeftv-plugin"); err != nil {
 		t.Fatal(err)
@@ -497,6 +450,8 @@ type memoryStore struct {
 	mu                 sync.Mutex
 	platform           map[string]*model.PluginPlatformState
 	users              map[string]*model.UserPluginState
+	records            []RegistryRecord
+	hasRegistry        bool
 	failSavePlatform   bool
 	failDeletePlatform bool
 	failSaveAt         int
@@ -589,6 +544,58 @@ func (s *memoryStore) EnabledPluginUserCounts() (map[string]int64, error) {
 }
 
 func (s *memoryStore) DeletePluginStates(pluginID string) error {
+	return s.CommitPluginRegistry(RegistryCommit{DeletePluginID: pluginID, Records: s.snapshotRecords()})
+}
+
+func (s *memoryStore) LoadPluginRegistry() ([]RegistryRecord, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.hasRegistry {
+		return nil, false, nil
+	}
+	return cloneRegistryRecords(s.records), true, nil
+}
+
+func (s *memoryStore) CommitPluginRegistry(commit RegistryCommit) error {
+	if commit.DeletePluginID != "" {
+		return s.commitDelete(commit)
+	}
+	return s.commitSave(commit)
+}
+
+func (s *memoryStore) commitSave(commit RegistryCommit) error {
+	if s.beforeSave != nil {
+		s.beforeSave()
+	}
+	if s.saveStarted != nil {
+		select {
+		case <-s.saveStarted:
+		default:
+			close(s.saveStarted)
+		}
+	}
+	if s.blockSave != nil {
+		<-s.blockSave
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.saveCount++
+	if s.failSavePlatform || (s.failSaveAt != 0 && s.saveCount == s.failSaveAt) {
+		return errStoreFailed
+	}
+	s.records = cloneRegistryRecords(commit.Records)
+	s.hasRegistry = true
+	if commit.Platform != nil {
+		if s.platform == nil {
+			s.platform = map[string]*model.PluginPlatformState{}
+		}
+		copy := *commit.Platform
+		s.platform[commit.Platform.PluginID] = &copy
+	}
+	return nil
+}
+
+func (s *memoryStore) commitDelete(commit RegistryCommit) error {
 	if s.beforeDelete != nil {
 		s.beforeDelete()
 	}
@@ -607,13 +614,21 @@ func (s *memoryStore) DeletePluginStates(pluginID string) error {
 	if s.failDeletePlatform {
 		return errStoreFailed
 	}
+	s.records = cloneRegistryRecords(commit.Records)
+	s.hasRegistry = true
 	for key, state := range s.users {
-		if state.PluginID == pluginID {
+		if state.PluginID == commit.DeletePluginID {
 			delete(s.users, key)
 		}
 	}
-	delete(s.platform, pluginID)
+	delete(s.platform, commit.DeletePluginID)
 	return nil
+}
+
+func (s *memoryStore) snapshotRecords() []RegistryRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return cloneRegistryRecords(s.records)
 }
 
 var errStoreFailed = errString("store failed")

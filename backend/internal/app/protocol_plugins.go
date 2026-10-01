@@ -28,6 +28,17 @@ func newPluginRuntime(dataDir string) (*pluginRuntime, error) {
 	return &pluginRuntime{Runtime: runtime}, nil
 }
 
+func newPluginRuntimeWithStore(dataDir string, store plugins.Store) (*pluginRuntime, error) {
+	if store == nil {
+		return nil, fmt.Errorf("插件状态存储未初始化")
+	}
+	runtime, err := plugins.NewRuntimeWithStore(dataDir, store)
+	if err != nil {
+		return nil, err
+	}
+	return &pluginRuntime{Runtime: runtime}, nil
+}
+
 func pluginRuntimeFromRecords(records map[string]pluginRecord) *pluginRuntime {
 	return &pluginRuntime{Runtime: plugins.RuntimeForTest(records)}
 }

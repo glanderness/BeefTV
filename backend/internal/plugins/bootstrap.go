@@ -40,22 +40,18 @@ func parseOfficialPluginPackage(data []byte) (protocol.PluginPackage, error) {
 	return pkg, nil
 }
 
-func (c *Runtime) bootstrapBuiltInPlugins() error {
-	stored, err := c.readRegistry()
-	if err != nil {
-		return err
-	}
+func (c *Runtime) reconcileBuiltIns(stored []RegistryRecord) ([]RegistryRecord, error) {
 	byID := make(map[string]RegistryRecord, len(stored))
 	for _, record := range stored {
 		byID[record.ID] = record
 	}
 	officialDir, err := officialPluginPackageDir()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	entries, err := os.ReadDir(officialDir)
 	if err != nil {
-		return fmt.Errorf("读取官方插件目录失败：%w", err)
+		return nil, fmt.Errorf("读取官方插件目录失败：%w", err)
 	}
 	builtInIDs := make(map[string]struct{}, len(entries)+2)
 	for _, entry := range entries {
@@ -64,21 +60,21 @@ func (c *Runtime) bootstrapBuiltInPlugins() error {
 		}
 		packageData, err := os.ReadFile(filepath.Join(officialDir, entry.Name()))
 		if err != nil {
-			return fmt.Errorf("读取官方插件包 %s：%w", entry.Name(), err)
+			return nil, fmt.Errorf("读取官方插件包 %s：%w", entry.Name(), err)
 		}
 		pkg, err := parseOfficialPluginPackage(packageData)
 		if err != nil {
-			return fmt.Errorf("校验官方插件包 %s：%w", entry.Name(), err)
+			return nil, fmt.Errorf("校验官方插件包 %s：%w", entry.Name(), err)
 		}
 		if strings.HasPrefix(strings.TrimSpace(pkg.Manifest.Runtime.Backend), "host:") {
-			return fmt.Errorf("官方插件 %q 不能依赖 host 执行器", pkg.Manifest.Metadata.ID)
+			return nil, fmt.Errorf("官方插件 %q 不能依赖 host 执行器", pkg.Manifest.Metadata.ID)
 		}
 		if _, err := protocol.LoadInstalledProviders(pkg.ManifestRaw, nil); err != nil {
-			return fmt.Errorf("加载官方插件 %q：%w", pkg.Manifest.Metadata.ID, err)
+			return nil, fmt.Errorf("加载官方插件 %q：%w", pkg.Manifest.Metadata.ID, err)
 		}
 		id := pkg.Manifest.Metadata.ID
 		if _, duplicate := builtInIDs[id]; duplicate {
-			return fmt.Errorf("官方插件 ID %q 重复", id)
+			return nil, fmt.Errorf("官方插件 ID %q 重复", id)
 		}
 		builtInIDs[id] = struct{}{}
 		manifest := pkg.Manifest
@@ -91,49 +87,57 @@ func (c *Runtime) bootstrapBuiltInPlugins() error {
 		}
 		manifestData, err := json.Marshal(manifest)
 		if err != nil {
-			return fmt.Errorf("编码官方插件 %q：%w", id, err)
+			return nil, fmt.Errorf("编码官方插件 %q：%w", id, err)
 		}
 		hash := pluginHash(packageData)
 		packageName := hash + protocol.PluginPackageExtension
 		if err := writePluginFile(filepath.Join(c.packageDir, packageName), packageData); err != nil {
-			return fmt.Errorf("缓存官方插件 %q：%w", id, err)
+			return nil, fmt.Errorf("缓存官方插件 %q：%w", id, err)
 		}
 		now := time.Now().UTC()
-		if record.InstalledAt.IsZero() {
-			record.InstalledAt = now
+		next := RegistryRecord{
+			ID: id, Raw: manifestData, Source: OriginOfficial, FileName: entry.Name(),
+			PackagePath: packageName, PackageSHA256: hash, InstalledAt: now, UpdatedAt: now,
 		}
-		source := OriginOfficial
-		record.ID, record.Raw, record.Source, record.FileName = id, manifestData, source, entry.Name()
-		record.PackagePath, record.PackageSHA256, record.UpdatedAt = packageName, hash, now
-		byID[id] = record
+		if !record.InstalledAt.IsZero() {
+			next.InstalledAt = record.InstalledAt
+		}
+		if !registryRecordContentChanged(record, next) {
+			next.UpdatedAt = record.UpdatedAt
+		}
+		byID[id] = next
 	}
 	bundledManifests := BundledWorkflowManifests()
 	for _, bundled := range bundledManifests {
 		builtInIDs[bundled.Metadata.ID] = struct{}{}
 		data, err := json.Marshal(bundled)
 		if err != nil {
-			return fmt.Errorf("encode built-in plugin %s: %w", bundled.Metadata.ID, err)
+			return nil, fmt.Errorf("encode built-in plugin %s: %w", bundled.Metadata.ID, err)
 		}
 		record := byID[bundled.Metadata.ID]
 		if len(record.Raw) > 0 {
 			var installed protocol.Manifest
 			if err := json.Unmarshal(record.Raw, &installed); err != nil {
-				return fmt.Errorf("decode built-in plugin %s: %w", bundled.Metadata.ID, err)
+				return nil, fmt.Errorf("decode built-in plugin %s: %w", bundled.Metadata.ID, err)
 			}
 			bundled.Metadata.Enabled = installed.Metadata.Enabled
 			data, err = json.Marshal(bundled)
 			if err != nil {
-				return fmt.Errorf("encode built-in plugin %s: %w", bundled.Metadata.ID, err)
+				return nil, fmt.Errorf("encode built-in plugin %s: %w", bundled.Metadata.ID, err)
 			}
 		}
 		now := time.Now().UTC()
-		if record.InstalledAt.IsZero() {
-			record.InstalledAt = now
+		next := RegistryRecord{
+			ID: bundled.Metadata.ID, Raw: data, Source: OriginOfficial,
+			InstalledAt: now, UpdatedAt: now,
 		}
-		source := OriginOfficial
-		record.UpdatedAt = now
-		record.ID, record.Raw, record.Source, record.PackagePath = bundled.Metadata.ID, data, source, ""
-		byID[bundled.Metadata.ID] = record
+		if !record.InstalledAt.IsZero() {
+			next.InstalledAt = record.InstalledAt
+		}
+		if !registryRecordContentChanged(record, next) {
+			next.UpdatedAt = record.UpdatedAt
+		}
+		byID[bundled.Metadata.ID] = next
 	}
 	result := make([]RegistryRecord, 0, len(byID))
 	for _, record := range byID {
@@ -147,5 +151,5 @@ func (c *Runtime) bootstrapBuiltInPlugins() error {
 		result = append(result, record)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
-	return c.writeRegistry(result)
+	return result, nil
 }

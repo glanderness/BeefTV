@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -22,6 +23,16 @@ type Service struct {
 
 func New(runtime *Runtime, store Store) *Service {
 	return &Service{runtime: runtime, store: store}
+}
+
+func (s *Service) durableStore() Store {
+	if s == nil {
+		return nil
+	}
+	if s.runtime != nil && s.runtime.store != nil {
+		return s.runtime.store
+	}
+	return s.store
 }
 
 func (s *Service) Runtime() *Runtime {
@@ -76,7 +87,7 @@ func (s *Service) InstallUploaded(actorID string, data []byte, fileName string) 
 	if IsReservedApplication(parsed.Manifest.Metadata.ID) {
 		return View{}, fmt.Errorf("插件 ID %q 由官方应用保留", parsed.Manifest.Metadata.ID)
 	}
-	if s.store == nil {
+	if s.runtime.store == nil {
 		return View{}, fmt.Errorf("插件状态存储未初始化")
 	}
 	s.runtime.beginMutation()
@@ -87,11 +98,12 @@ func (s *Service) InstallUploaded(actorID string, data []byte, fileName string) 
 	}
 	now := time.Now()
 	state := &model.PluginPlatformState{PluginID: stage.view.Manifest.ID, Available: stage.view.Status == StatusEnabled, UpdatedBy: actorID, CreatedAt: now, UpdatedAt: now}
-	if err := s.store.SavePluginPlatformState(state); err != nil {
-		return View{}, joinMutationError(fmt.Errorf("保存插件平台状态：%w", err), s.runtime.abortStaged(&stage))
-	}
-	if err := s.runtime.publishStaged(&stage); err != nil {
-		return View{}, joinMutationError(err, s.runtime.abortStaged(&stage))
+	if err := s.runtime.commitAndPublish(&stage, persistExtras{platform: state}); err != nil {
+		s.runtime.abortUncommitted(&stage)
+		if errors.Is(err, errPublishInterrupted) {
+			return View{}, err
+		}
+		return View{}, fmt.Errorf("保存插件平台状态：%w", err)
 	}
 	s.runtime.commitInstall(stage)
 	plugin := stage.view
@@ -122,22 +134,10 @@ func (s *Service) UninstallUploaded(id string) error {
 	if s == nil || s.runtime == nil {
 		return fmt.Errorf("插件运行时未初始化")
 	}
-	s.runtime.beginMutation()
-	defer s.runtime.endMutation()
-	stage, err := s.runtime.stageUninstallLocked(id)
-	if err != nil {
-		return err
+	if s.runtime.store == nil {
+		return fmt.Errorf("插件状态存储未初始化")
 	}
-	if err := s.runtime.publishStaged(&stage); err != nil {
-		return joinMutationError(err, s.runtime.abortStaged(&stage))
-	}
-	if s.store != nil {
-		if err := s.store.DeletePluginStates(id); err != nil {
-			return joinMutationError(fmt.Errorf("清理插件状态：%w", err), s.runtime.abortStaged(&stage))
-		}
-	}
-	s.runtime.commitUninstall(stage)
-	return nil
+	return s.runtime.Uninstall(id)
 }
 
 func (s *Service) Package(id string) ([]byte, string, error) {
@@ -170,11 +170,12 @@ func (s *Service) stateForUser(actor *model.User, pluginID string, items []View)
 	}
 	policy := Management(pluginID, source)
 	platformAvailable := policy.Kind == KindApplication
-	if hasRuntime && (policy.ActivationScope == ScopeSystem || s.store == nil) {
+	store := s.durableStore()
+	if hasRuntime && (policy.ActivationScope == ScopeSystem || store == nil) {
 		platformAvailable = runtimePlugin.Status == StatusEnabled
 	}
-	if s.store != nil {
-		platformState, err := s.store.PluginPlatformState(pluginID)
+	if store != nil {
+		platformState, err := store.PluginPlatformState(pluginID)
 		if err != nil {
 			return StateView{}, fmt.Errorf("读取插件平台状态：%w", err)
 		}
@@ -186,8 +187,8 @@ func (s *Service) stateForUser(actor *model.User, pluginID string, items []View)
 	userEnabled := false
 	userConfigured := false
 	if policy.ActivationScope == ScopeUser && actor != nil {
-		if s.store != nil {
-			userState, err := s.store.UserPluginState(actor.ID, pluginID)
+		if store != nil {
+			userState, err := store.UserPluginState(actor.ID, pluginID)
 			if err != nil {
 				return StateView{}, fmt.Errorf("读取用户插件状态：%w", err)
 			}
@@ -249,12 +250,13 @@ func (s *Service) SetUserEnabled(actor *model.User, pluginID string, enabled boo
 	if !current.PlatformAvailable {
 		return StateView{}, Forbidden("管理员已停用该插件")
 	}
-	if s.store == nil {
+	store := s.durableStore()
+	if store == nil {
 		return StateView{}, fmt.Errorf("插件状态存储未初始化")
 	}
 	now := time.Now()
 	state := &model.UserPluginState{ID: kernel.NewID(), UserID: actor.ID, PluginID: pluginID, Enabled: enabled, CreatedAt: now, UpdatedAt: now}
-	if err := s.store.SaveUserPluginState(state); err != nil {
+	if err := store.SaveUserPluginState(state); err != nil {
 		return StateView{}, fmt.Errorf("保存用户插件状态：%w", err)
 	}
 	return s.stateForUser(actor, pluginID, items)
@@ -265,10 +267,11 @@ func (s *Service) AdminStates(actor *model.User) (map[string]AdminStateView, err
 	if err != nil {
 		return nil, err
 	}
-	if s.store == nil {
+	store := s.durableStore()
+	if store == nil {
 		return nil, fmt.Errorf("插件状态存储未初始化")
 	}
-	counts, err := s.store.EnabledPluginUserCounts()
+	counts, err := store.EnabledPluginUserCounts()
 	if err != nil {
 		return nil, fmt.Errorf("统计插件启用用户数：%w", err)
 	}
@@ -286,7 +289,8 @@ func (s *Service) SetPlatformAvailability(actor *model.User, pluginID string, av
 	if s == nil {
 		return AdminStateView{}, ManagementView{}, fmt.Errorf("插件运行时未初始化")
 	}
-	if s.store == nil {
+	store := s.durableStore()
+	if store == nil {
 		return AdminStateView{}, ManagementView{}, fmt.Errorf("插件状态存储未初始化")
 	}
 	if s.runtime != nil {
@@ -302,30 +306,33 @@ func (s *Service) SetPlatformAvailability(actor *model.User, pluginID string, av
 		return AdminStateView{}, ManagementView{}, fmt.Errorf("插件 %q 不存在", pluginID)
 	}
 	policy := Management(pluginID, source)
-	var stage stagedMutation
-	runtimeStaged := false
+	now := time.Now()
+	platformState := &model.PluginPlatformState{PluginID: pluginID, Available: available, UpdatedBy: actor.ID, CreatedAt: now, UpdatedAt: now}
 	if policy.ActivationScope == ScopeSystem {
 		if !hasRuntime || s.runtime == nil {
 			return AdminStateView{}, policy, fmt.Errorf("插件 %q 缺少运行时", pluginID)
 		}
-		prepared, err := s.runtime.stageSetEnabledLocked(pluginID, available)
+		stage, err := s.runtime.stageSetEnabledLocked(pluginID, available)
 		if err != nil {
 			return AdminStateView{}, policy, err
 		}
-		stage = prepared
-		runtimeStaged = true
-		if err := s.runtime.publishStaged(&stage); err != nil {
-			return AdminStateView{}, policy, joinMutationError(err, s.runtime.abortStaged(&stage))
+		if err := s.runtime.commitAndPublish(&stage, persistExtras{platform: platformState}); err != nil {
+			s.runtime.abortUncommitted(&stage)
+			if errors.Is(err, errPublishInterrupted) {
+				return AdminStateView{}, policy, err
+			}
+			return AdminStateView{}, policy, fmt.Errorf("保存插件平台状态：%w", err)
 		}
-	}
-	now := time.Now()
-	platformState := &model.PluginPlatformState{PluginID: pluginID, Available: available, UpdatedBy: actor.ID, CreatedAt: now, UpdatedAt: now}
-	if err := s.store.SavePluginPlatformState(platformState); err != nil {
-		saveErr := fmt.Errorf("保存插件平台状态：%w", err)
-		if runtimeStaged {
-			return AdminStateView{}, policy, joinMutationError(saveErr, s.runtime.abortStaged(&stage))
+	} else if s.runtime != nil && s.runtime.store != nil {
+		records, err := s.runtime.currentRecords()
+		if err != nil {
+			return AdminStateView{}, policy, err
 		}
-		return AdminStateView{}, policy, saveErr
+		if err := s.runtime.persistRecords(records, persistExtras{platform: platformState}); err != nil {
+			return AdminStateView{}, policy, fmt.Errorf("保存插件平台状态：%w", err)
+		}
+	} else if err := store.SavePluginPlatformState(platformState); err != nil {
+		return AdminStateView{}, policy, fmt.Errorf("保存插件平台状态：%w", err)
 	}
 	states, err := s.AdminStates(actor)
 	if err != nil {

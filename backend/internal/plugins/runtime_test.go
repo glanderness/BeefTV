@@ -150,7 +150,7 @@ func TestMutationRollsBackWhenReloadFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := ids(runtime.List())
-	runtime.failNextReload(errors.New("forced reload failure"))
+	runtime.failNextCommit(errors.New("forced reload failure"))
 	_, err = runtime.Install(testPluginPackage(t, testManifest("atomic-install", "1.0.0")), "atomic-install.beeftv-plugin")
 	if err == nil || !strings.Contains(err.Error(), "forced reload failure") {
 		t.Fatalf("install error = %v", err)
@@ -166,7 +166,7 @@ func TestMutationRollsBackWhenReloadFails(t *testing.T) {
 	if plugin.Status != StatusEnabled {
 		t.Fatalf("toggle fixture status = %s", plugin.Status)
 	}
-	runtime.failNextReload(errors.New("forced enable failure"))
+	runtime.failNextCommit(errors.New("forced enable failure"))
 	if _, err := runtime.SetEnabled("atomic-toggle", false); err == nil || !strings.Contains(err.Error(), "forced enable failure") {
 		t.Fatalf("setEnabled error = %v", err)
 	}
@@ -175,7 +175,7 @@ func TestMutationRollsBackWhenReloadFails(t *testing.T) {
 		t.Fatalf("setEnabled rollback = %#v", still)
 	}
 
-	runtime.failNextReload(errors.New("forced uninstall failure"))
+	runtime.failNextCommit(errors.New("forced uninstall failure"))
 	if err := runtime.Uninstall("atomic-toggle"); err == nil || !strings.Contains(err.Error(), "forced uninstall failure") {
 		t.Fatalf("uninstall error = %v", err)
 	}
@@ -302,7 +302,7 @@ func TestSameBytesReinstallKeepsLiveBlobWhenReloadFails(t *testing.T) {
 	if _, err := runtime.Install(pkg, "same-bytes-reload.beeftv-plugin"); err != nil {
 		t.Fatal(err)
 	}
-	runtime.failNextReload(errors.New("forced same-bytes reload failure"))
+	runtime.failNextCommit(errors.New("forced same-bytes reload failure"))
 	if _, err := runtime.Install(pkg, "same-bytes-reload.beeftv-plugin"); err == nil || !strings.Contains(err.Error(), "forced same-bytes reload failure") {
 		t.Fatalf("same-bytes reload error = %v", err)
 	}
@@ -470,7 +470,12 @@ func assertPackageBytes(t *testing.T, runtime *Runtime, dataDir, pluginID string
 	if !bytes.Equal(got, want) {
 		t.Fatalf("package %s bytes changed", pluginID)
 	}
-	restarted, err := NewRuntime(dataDir)
+	var restarted *Runtime
+	if runtime.store != nil {
+		restarted, err = NewRuntimeWithStore(dataDir, runtime.store)
+	} else {
+		restarted, err = NewRuntime(dataDir)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

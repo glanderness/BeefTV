@@ -81,7 +81,8 @@ type Record struct {
 	Error         string
 }
 
-// RegistryRecord is the on-disk plugin_registry.json row.
+// RegistryRecord is the committed plugin registry row. Production stores it
+// in SystemSetting plugin_registry; plugin_registry.json is a one-time import.
 type RegistryRecord struct {
 	ID            string          `json:"id"`
 	Raw           json.RawMessage `json:"manifest"`

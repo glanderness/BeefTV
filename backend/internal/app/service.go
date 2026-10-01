@@ -18,6 +18,7 @@ import (
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/platform"
+	"infinite-canvas/backend/internal/plugins"
 	localproject "infinite-canvas/backend/internal/project"
 	"infinite-canvas/backend/internal/prompts"
 	"infinite-canvas/backend/internal/repository"
@@ -127,7 +128,13 @@ type serviceOptions struct {
 func newService(repo *repository.Repository, dataDir string, options serviceOptions) *Service {
 	localResourceStorage := options.mode == serviceModeLocal
 	coordinator := platform.NewLocalCoordinator()
-	pluginRuntime, pluginRuntimeErr := newPluginRuntime(dataDir)
+	var pluginRuntime *pluginRuntime
+	var pluginRuntimeErr error
+	if repo == nil {
+		pluginRuntimeErr = fmt.Errorf("插件状态存储未初始化")
+	} else {
+		pluginRuntime, pluginRuntimeErr = newPluginRuntimeWithStore(dataDir, plugins.NewRepositoryStore(repo))
+	}
 	service := &Service{repo: repo, dataDir: dataDir, mode: options.mode, activeCancels: make(map[string]context.CancelFunc), coordinator: coordinator, localResourceStorage: localResourceStorage, pluginRuntime: pluginRuntime, pluginRuntimeErr: pluginRuntimeErr, workerID: newID(), routeCatalogTTL: 30 * time.Second, routeCatalogMaxStale: 5 * time.Minute}
 	service.taskTerminalCoordinator = newTaskTerminalCoordinator(service)
 	service.taskRouteExecutor = newTaskRouteExecutor(service)

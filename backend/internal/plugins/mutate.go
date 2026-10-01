@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/protocol"
 )
 
@@ -17,8 +18,12 @@ type liveSnapshot struct {
 	registry *protocol.Registry
 }
 
+type persistExtras struct {
+	platform *model.PluginPlatformState
+	deleteID string
+}
+
 type stagedMutation struct {
-	previousDisk []RegistryRecord
 	previousLive liveSnapshot
 	nextDisk     []RegistryRecord
 	nextPlugins  map[string]Record
@@ -27,9 +32,11 @@ type stagedMutation struct {
 	oldBlob      string
 	newBlob      string
 	createdBlob  bool
-	diskWritten  bool
+	persisted    bool
 	liveSwapped  bool
 }
+
+var errPublishInterrupted = errors.New("插件变更已提交，但内存发布未完成")
 
 func (c *Runtime) Install(data []byte, fileName string) (View, error) {
 	if c == nil {
@@ -41,8 +48,9 @@ func (c *Runtime) Install(data []byte, fileName string) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
-	if err := c.publishStaged(&stage); err != nil {
-		return View{}, joinMutationError(err, c.abortStaged(&stage))
+	if err := c.commitAndPublish(&stage, persistExtras{}); err != nil {
+		c.abortUncommitted(&stage)
+		return View{}, err
 	}
 	c.commitInstall(stage)
 	return stage.view, nil
@@ -86,14 +94,13 @@ func (c *Runtime) stageInstallLocked(data []byte, fileName string) (stagedMutati
 	if err := writePluginFile(packagePath, data); err != nil {
 		return stagedMutation{}, fmt.Errorf("保存插件包失败：%w", err)
 	}
-	stored, err := c.readRegistry()
+	stored, err := c.currentRecords()
 	if err != nil {
 		if createdBlob {
 			c.discardBlobIfUnreferenced(blobName)
 		}
 		return stagedMutation{}, err
 	}
-	previousStored := cloneRegistryRecords(stored)
 	now := time.Now().UTC()
 	newRecord := RegistryRecord{ID: manifest.Metadata.ID, Raw: manifestData, Source: OriginUploaded, FileName: packageName, PackagePath: blobName, PackageSHA256: hash, InstalledAt: now, UpdatedAt: now}
 	if exists {
@@ -127,7 +134,6 @@ func (c *Runtime) stageInstallLocked(data []byte, fileName string) (stagedMutati
 		return stagedMutation{}, err
 	}
 	return stagedMutation{
-		previousDisk: previousStored,
 		previousLive: c.captureLive(),
 		nextDisk:     stored,
 		nextPlugins:  plugins,
@@ -139,44 +145,37 @@ func (c *Runtime) stageInstallLocked(data []byte, fileName string) (stagedMutati
 	}, nil
 }
 
-func (c *Runtime) publishStaged(stage *stagedMutation) error {
+func (c *Runtime) commitAndPublish(stage *stagedMutation, extras persistExtras) error {
 	if stage == nil {
 		return errors.New("插件变更未准备")
 	}
-	if err := c.writeRegistry(stage.nextDisk); err != nil {
+	if err := c.persistRecords(stage.nextDisk, extras); err != nil {
 		return err
 	}
-	stage.diskWritten = true
-	if err := c.publishLive(stage.nextPlugins, stage.nextRegistry); err != nil {
-		if rb := c.writeRegistry(stage.previousDisk); rb != nil {
-			return joinMutationError(err, rb)
-		}
-		stage.diskWritten = false
-		return err
+	stage.persisted = true
+	if c.testAfterCommit != nil {
+		c.testAfterCommit()
 	}
+	if c.testSkipPublish {
+		c.testSkipPublish = false
+		return errPublishInterrupted
+	}
+	c.publishLive(stage.nextPlugins, stage.nextRegistry)
 	stage.liveSwapped = true
 	return nil
 }
 
-func (c *Runtime) abortStaged(stage *stagedMutation) error {
-	if stage == nil {
-		return nil
+func (c *Runtime) abortUncommitted(stage *stagedMutation) {
+	if stage == nil || stage.persisted {
+		return
 	}
 	if stage.liveSwapped {
 		c.restoreLive(stage.previousLive)
 		stage.liveSwapped = false
 	}
-	var err error
-	if stage.diskWritten {
-		err = c.writeRegistry(stage.previousDisk)
-		if err == nil {
-			stage.diskWritten = false
-		}
-	}
 	if stage.createdBlob {
 		c.discardBlobIfUnreferenced(stage.newBlob)
 	}
-	return err
 }
 
 func (c *Runtime) commitInstall(stage stagedMutation) {
@@ -200,8 +199,9 @@ func (c *Runtime) setEnabledLocked(id string, enabled bool) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
-	if err := c.publishStaged(&stage); err != nil {
-		return View{}, joinMutationError(err, c.abortStaged(&stage))
+	if err := c.commitAndPublish(&stage, persistExtras{}); err != nil {
+		c.abortUncommitted(&stage)
+		return View{}, err
 	}
 	return stage.view, nil
 }
@@ -222,11 +222,10 @@ func (c *Runtime) stageSetEnabledLocked(id string, enabled bool) (stagedMutation
 	if err != nil {
 		return stagedMutation{}, err
 	}
-	stored, err := c.readRegistry()
+	stored, err := c.currentRecords()
 	if err != nil {
 		return stagedMutation{}, err
 	}
-	previousStored := cloneRegistryRecords(stored)
 	for index := range stored {
 		if stored[index].ID == record.Metadata.ID {
 			stored[index].Raw = data
@@ -242,7 +241,6 @@ func (c *Runtime) stageSetEnabledLocked(id string, enabled bool) (stagedMutation
 		return stagedMutation{}, err
 	}
 	return stagedMutation{
-		previousDisk: previousStored,
 		previousLive: c.captureLive(),
 		nextDisk:     stored,
 		nextPlugins:  plugins,
@@ -261,8 +259,16 @@ func (c *Runtime) Uninstall(id string) error {
 	if err != nil {
 		return err
 	}
-	if err := c.publishStaged(&stage); err != nil {
-		return joinMutationError(err, c.abortStaged(&stage))
+	extras := persistExtras{}
+	if c.store != nil {
+		extras.deleteID = strings.TrimSpace(id)
+	}
+	if err := c.commitAndPublish(&stage, extras); err != nil {
+		c.abortUncommitted(&stage)
+		if extras.deleteID != "" && !errors.Is(err, errPublishInterrupted) {
+			return fmt.Errorf("清理插件状态：%w", err)
+		}
+		return err
 	}
 	c.commitUninstall(stage)
 	return nil
@@ -278,11 +284,10 @@ func (c *Runtime) stageUninstallLocked(id string) (stagedMutation, error) {
 	if IsBuiltInSource(record.Source) {
 		return stagedMutation{}, fmt.Errorf("内置插件 %q 不能卸载，可停用该插件", id)
 	}
-	stored, err := c.readRegistry()
+	stored, err := c.currentRecords()
 	if err != nil {
 		return stagedMutation{}, err
 	}
-	previousStored := cloneRegistryRecords(stored)
 	filtered := make([]RegistryRecord, 0, len(stored))
 	for _, item := range stored {
 		if item.ID != record.Metadata.ID {
@@ -294,7 +299,6 @@ func (c *Runtime) stageUninstallLocked(id string) (stagedMutation, error) {
 		return stagedMutation{}, err
 	}
 	return stagedMutation{
-		previousDisk: previousStored,
 		previousLive: c.captureLive(),
 		nextDisk:     filtered,
 		nextPlugins:  plugins,

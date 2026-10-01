@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,14 +14,7 @@ import (
 	"infinite-canvas/backend/internal/protocol"
 )
 
-func (c *Runtime) readRegistry() ([]RegistryRecord, error) {
-	data, err := os.ReadFile(c.registryPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return []RegistryRecord{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
+func decodeRegistryJSON(data []byte) ([]RegistryRecord, error) {
 	if len(data) > protocol.PluginManifestMaxBytes*64 {
 		return nil, fmt.Errorf("插件 registry 超过大小限制")
 	}
@@ -29,6 +23,17 @@ func (c *Runtime) readRegistry() ([]RegistryRecord, error) {
 		return nil, fmt.Errorf("读取插件 registry 失败：%w", err)
 	}
 	return records, nil
+}
+
+func (c *Runtime) readRegistry() ([]RegistryRecord, error) {
+	data, err := os.ReadFile(c.registryPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return []RegistryRecord{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return decodeRegistryJSON(data)
 }
 
 func (c *Runtime) writeRegistry(records []RegistryRecord) error {
@@ -42,6 +47,92 @@ func (c *Runtime) writeRegistry(records []RegistryRecord) error {
 		return err
 	}
 	return writePluginFile(c.registryPath, data)
+}
+
+func (c *Runtime) importLegacyRegistry() ([]RegistryRecord, error) {
+	data, err := os.ReadFile(c.registryPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return []RegistryRecord{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("读取遗留插件 registry 失败：%w", err)
+	}
+	records, err := decodeRegistryJSON(data)
+	if err != nil {
+		return nil, fmt.Errorf("读取遗留插件 registry 失败：%w", err)
+	}
+	return records, nil
+}
+
+func (c *Runtime) loadAuthority() ([]RegistryRecord, bool, error) {
+	if c.store != nil {
+		records, found, err := c.store.LoadPluginRegistry()
+		if err != nil {
+			return nil, false, fmt.Errorf("读取插件 registry：%w", err)
+		}
+		if found {
+			return records, true, nil
+		}
+		imported, err := c.importLegacyRegistry()
+		if err != nil {
+			return nil, false, err
+		}
+		return imported, false, nil
+	}
+	_, statErr := os.Stat(c.registryPath)
+	records, err := c.readRegistry()
+	if err != nil {
+		return nil, false, err
+	}
+	return records, statErr == nil, nil
+}
+
+func (c *Runtime) currentRecords() ([]RegistryRecord, error) {
+	if c.store != nil {
+		records, found, err := c.store.LoadPluginRegistry()
+		if err != nil {
+			return nil, fmt.Errorf("读取插件 registry：%w", err)
+		}
+		if !found {
+			return nil, fmt.Errorf("插件 registry 未初始化")
+		}
+		return cloneRegistryRecords(records), nil
+	}
+	return c.readRegistry()
+}
+
+func (c *Runtime) persistRecords(records []RegistryRecord, extras persistExtras) error {
+	if hook := c.testFailCommit; hook != nil {
+		c.testFailCommit = nil
+		if err := hook(); err != nil {
+			return err
+		}
+	}
+	if c.store != nil {
+		return c.store.CommitPluginRegistry(RegistryCommit{
+			Records:        records,
+			Platform:       extras.platform,
+			DeletePluginID: extras.deleteID,
+		})
+	}
+	if extras.platform != nil || extras.deleteID != "" {
+		return fmt.Errorf("插件状态存储未初始化")
+	}
+	return c.writeRegistry(records)
+}
+
+func (c *Runtime) persistedRecordsForGC() ([]RegistryRecord, error) {
+	if c.store != nil {
+		records, found, err := c.store.LoadPluginRegistry()
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return []RegistryRecord{}, nil
+		}
+		return records, nil
+	}
+	return c.readRegistry()
 }
 
 func blobFileName(hash string) string {
@@ -87,7 +178,7 @@ func (c *Runtime) discardBlobIfUnreferenced(name string) {
 	if c.liveBlobReferenced(name) {
 		return
 	}
-	stored, err := c.readRegistry()
+	stored, err := c.persistedRecordsForGC()
 	if err != nil {
 		return
 	}
@@ -207,4 +298,30 @@ func cloneRegistryRecords(records []RegistryRecord) []RegistryRecord {
 		}
 	}
 	return out
+}
+
+func registryContentEqual(a, b []RegistryRecord) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	index := make(map[string]RegistryRecord, len(a))
+	for _, record := range a {
+		index[record.ID] = record
+	}
+	for _, record := range b {
+		prev, ok := index[record.ID]
+		if !ok || registryRecordContentChanged(prev, record) {
+			return false
+		}
+	}
+	return true
+}
+
+func registryRecordContentChanged(prev, next RegistryRecord) bool {
+	return prev.ID != next.ID ||
+		!bytes.Equal(prev.Raw, next.Raw) ||
+		prev.Source != next.Source ||
+		prev.FileName != next.FileName ||
+		prev.PackagePath != next.PackagePath ||
+		prev.PackageSHA256 != next.PackageSHA256
 }

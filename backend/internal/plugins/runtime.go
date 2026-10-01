@@ -15,24 +15,38 @@ import (
 
 const protocolPluginMaxBytes = protocol.PluginManifestMaxBytes
 
-// Runtime owns plugin registry files, package blobs, the live protocol
-// registry snapshot, and mutation concurrency. It is the single writer of
-// plugin_registry.json. Lifecycle operations that also persist platform
-// state must take mutationMu on this Runtime; a per-call Service cannot.
-
+// Runtime owns package blobs, the live protocol registry snapshot, and
+// mutation concurrency. Production binds Store before adapters are published;
+// SQLite is then the committed registry authority. Standalone file mode is
+// retained for independent tests: plugin_registry.json is written only when
+// Store is nil.
 type Runtime struct {
 	mu                    sync.RWMutex
 	mutationMu            sync.Mutex
+	store                 Store
 	registryPath          string
 	packageDir            string
 	plugins               map[string]Record
 	registry              *protocol.Registry
 	testBeforeMutation    func()
-	testFailReload        func() error
+	testFailCommit        func() error
 	testFailWriteRegistry func() error
+	testAfterCommit       func()
+	testSkipPublish       bool
 }
 
 func NewRuntime(dataDir string) (*Runtime, error) {
+	return newRuntime(dataDir, nil)
+}
+
+func NewRuntimeWithStore(dataDir string, store Store) (*Runtime, error) {
+	if store == nil {
+		return nil, fmt.Errorf("插件状态存储未初始化")
+	}
+	return newRuntime(dataDir, store)
+}
+
+func newRuntime(dataDir string, store Store) (*Runtime, error) {
 	dataDir = strings.TrimSpace(dataDir)
 	if dataDir == "" {
 		return nil, errors.New("plugin data directory is empty")
@@ -49,14 +63,38 @@ func NewRuntime(dataDir string) (*Runtime, error) {
 	if err := os.MkdirAll(packageDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create plugin package directory: %w", err)
 	}
-	center := &Runtime{registryPath: filepath.Join(dataDir, "plugin_registry.json"), packageDir: packageDir, plugins: make(map[string]Record)}
-	if err := center.bootstrapBuiltInPlugins(); err != nil {
-		return nil, err
+	center := &Runtime{
+		store:        store,
+		registryPath: filepath.Join(dataDir, "plugin_registry.json"),
+		packageDir:   packageDir,
+		plugins:      make(map[string]Record),
 	}
-	if err := center.reload(); err != nil {
+	if err := center.open(); err != nil {
 		return nil, err
 	}
 	return center, nil
+}
+
+func (c *Runtime) open() error {
+	stored, found, err := c.loadAuthority()
+	if err != nil {
+		return err
+	}
+	next, err := c.reconcileBuiltIns(stored)
+	if err != nil {
+		return err
+	}
+	if !found || !registryContentEqual(stored, next) {
+		if err := c.persistRecords(next, persistExtras{}); err != nil {
+			return err
+		}
+	}
+	plugins, registry, err := materializeRecords(next)
+	if err != nil {
+		return err
+	}
+	c.publishLive(plugins, registry)
+	return nil
 }
 
 // RuntimeForTest builds an in-memory runtime for host tests that only need
@@ -141,34 +179,16 @@ func (c *Runtime) restoreLive(snap liveSnapshot) {
 	c.mu.Unlock()
 }
 
-func (c *Runtime) publishLive(plugins map[string]Record, registry *protocol.Registry) error {
-	if hook := c.testFailReload; hook != nil {
-		if err := hook(); err != nil {
-			return err
-		}
-	}
+func (c *Runtime) publishLive(plugins map[string]Record, registry *protocol.Registry) {
 	c.mu.Lock()
 	c.plugins = plugins
 	c.registry = registry
 	c.mu.Unlock()
-	return nil
 }
 
-func (c *Runtime) reload() error {
-	stored, err := c.readRegistry()
-	if err != nil {
-		return err
-	}
-	plugins, registry, err := materializeRecords(stored)
-	if err != nil {
-		return err
-	}
-	return c.publishLive(plugins, registry)
-}
-
-func (c *Runtime) failNextReload(err error) {
-	c.testFailReload = func() error {
-		c.testFailReload = nil
+func (c *Runtime) failNextCommit(err error) {
+	c.testFailCommit = func() error {
+		c.testFailCommit = nil
 		return err
 	}
 }
@@ -178,6 +198,10 @@ func (c *Runtime) failNextWriteRegistry(err error) {
 		c.testFailWriteRegistry = nil
 		return err
 	}
+}
+
+func (c *Runtime) skipNextPublish() {
+	c.testSkipPublish = true
 }
 
 func officialPluginPackageDir() (string, error) {
