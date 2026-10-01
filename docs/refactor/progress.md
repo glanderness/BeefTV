@@ -159,10 +159,21 @@
 
 不得将第一批 worker 完成、目录分包或旧版验收报告写作“完整重构完成”。后续变更需按实际依赖顺序实现与验证。
 
-### 时间线原生渲染与 whisper 转写（本树并行切片）
+### 第九轮集成与独立复审
 
-- `af2b47e` native lowering/探测/执行进入 `internal/editing`；真实 ffmpeg 夹具探测时长、音轨与字幕烧录。
-- `b6a3780` whisper HTTP、16k wav、SRT 进入 `internal/transcription`。
-- `2546b73` app task worker 只调 typed executor，结果经 `asset.Store` 组合；未改 `service.go` / bootstrap / operations。
-- 接线说明见 [editing.md](./editing.md) 与 [transcription.md](./transcription.md)。Lead 尚未把 Renderer/Executor 接到组合根字段。
+- 文本回放四个提交合入 `0d33a89` / `fcbdb67` / `74ce210` / `e2f7d73`；`dd5713c` 删除进程级 Service map，由同一 runtime 持有领域实例和缓存，任务、HTTP 与清扫共用。textreplay/app/handler/bootstrap 相关 race 专项通过。
+- 原生剪辑与转写合入 `3cd763f` / `8d44111` / `00d0a4b` / `165016d`。editing/transcription 领域专项通过；集成 app 仍有两个创建测试引用未登记资源，不能记为整体通过。`20261002-042302-continue-19c37d4c` 补 READY 夹具、生成输出身份/配额与实际输出校验。
+- `235219a` 修正 supervisor 测试先发布 endpoint 再覆写 PID 的竞态，并让能力目录测试对照实际注册表及宿主可见范围；父进程杀死专项三次 race 通过，能力目录专项通过。此前全量 Go 的这些失败保留为失败记录，尚未重新完成全量。
+- 独立 Agent 复审发现真实启动依赖循环：父端尚未 Serve 就等待会读取父端 `/ops` 的子进程就绪。`25ed58e` 先 Serve，新增真实 Node/pi 首次启动断言，避免 status/Ensure 后备重启掩盖失败。真实宿主启动与桌面打包布局链路 race 通过，模型请求为零。
+- 人工画布恢复至 `10b3c43` 合入 `1241c4c` / `be358dd` / `37913b6` / `76dc941` / `141db35`：服务端完整确认快照、pending projection、三方合并和 entry epoch 贯穿提交队列及 HTTP。集成 typecheck 与 76 项专项通过；保留公共 scope 单一时钟、conversation 订阅及绑定 API。
+- 模型准入 `f60a486` 合入 `a03499f`，实际 Select 调用 modelcatalog；系统渠道重建、规格默认、上游模型和 variant 选择离开旧 app 算法。modelcatalog/app 专项 race 通过。
+- `b90e382` 更新视频找回浏览器夹具，提供已交付素材及完整服务端画布绑定回执，验证原任务不重新生成、绑定恰好一次。浏览器 5 pass；绑定生产错误恢复仍由下述 worker 收尾。
 
+### 第九轮仍未关闭的问题
+
+- 独立核心复审发现事务内 canvas host 抢根 storageMu 与先锁 storageMu 再取 SQLite 连接的路径形成 ABBA。`20261002-042350-continue-7a00bb5a` 修复 TX-aware 锁并补单连接真实写/撤销并发回归。
+- 分片上传 `9a64c0b` 暂不集成：并发 chunk/complete、整份内存拼接、同 key 不同请求、失败/重启额度归因仍有问题。`20261002-042018-continue-5b26d8c5` 继续；schema 12 为 backup 独占，如必须增加上传归因表只能独立 schema 13。
+- 播放/深度 `63edaeb` 暂不集成：播放仍有 Runner 拒绝后裸 goroutine、重新启动 worker、无界失败回填等生命周期问题，`20261002-042833-continue-6aa5137c` 修复。
+- Eagle/diagnostics/appearance `e12ca38` 暂不集成：Eagle redirect 和真实路径 symlink jail 仍待收紧，`20261002-042228-continue-7166c008` 修复。
+- 消息原子绑定/后台交付 `20261002-035911-continue-f32ddfe4`、项目结果应用回执 `20261002-041143-continue-dfc02ab9`、素材 UI 后端权威及 epoch `20261002-041314-delegate-51107282`、完整备份及 schema 12 `20261002-034350-continue-f6b7fd0d` 仍在执行。
+- 尚未冻结最终候选；未增加真实费用、未 push/发布。阶段性集成通过不能替代最终全量回归和真实客户端验收。
