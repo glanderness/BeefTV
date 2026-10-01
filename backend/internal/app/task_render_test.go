@@ -16,13 +16,13 @@ import (
 
 // renderTestProject 构造一个可渲染的 v2 快照：一条可见视频轨 + 一个
 // 经 directMedia.storageKey（resource:<id>）引用后端资源的片段。
-func renderTestProject(storageKey string) renderProject {
+func renderTestProject(storageKey string) editing.Project {
 	visible := true
-	return renderProject{
+	return editing.Project{
 		Version:    2,
 		DurationMs: 2000,
-		Tracks:     []renderTrack{{ID: "track-v1", Kind: "video", Visible: &visible}},
-		Clips: []renderClip{{
+		Tracks:     []editing.Track{{ID: "track-v1", Kind: "video", Visible: &visible}},
+		Clips: []editing.Clip{{
 			ID:            "clip-v1",
 			Kind:          "video",
 			TrackID:       "track-v1",
@@ -36,7 +36,7 @@ func renderTestProject(storageKey string) renderProject {
 	}
 }
 
-func renderInputJSON(t *testing.T, project renderProject) string {
+func renderInputJSON(t *testing.T, project editing.Project) string {
 	t.Helper()
 	raw, err := json.Marshal(timelineRenderInput{ProjectID: "prj-render", Timeline: project})
 	if err != nil {
@@ -63,6 +63,7 @@ func seedRunningRenderTask(t *testing.T, db *gorm.DB, inputJSON string) *model.T
 
 func TestCreateTimelineRenderTaskQueues(t *testing.T) {
 	svc, db := newTimelineTaskTestService(t)
+	seedActiveProject(t, db, "prj-render", "usr-render-test")
 
 	task, err := svc.CreateTimelineRenderTask("usr-render-test", TimelineRenderCreateRequest{
 		ProjectID: "prj-render",
@@ -114,11 +115,11 @@ func TestCreateTimelineRenderTaskRejectsNoMedia(t *testing.T) {
 	svc, _ := newTimelineTaskTestService(t)
 
 	visible := true
-	textOnly := renderProject{
+	textOnly := editing.Project{
 		Version:    2,
 		DurationMs: 1000,
-		Tracks:     []renderTrack{{ID: "track-t1", Kind: "text", Visible: &visible}},
-		Clips: []renderClip{{
+		Tracks:     []editing.Track{{ID: "track-t1", Kind: "text", Visible: &visible}},
+		Clips: []editing.Clip{{
 			ID: "clip-t1", Kind: "text", TrackID: "track-t1", StartMs: 0,
 			DurationMs: 1000, Text: "字幕",
 		}},
@@ -131,6 +132,7 @@ func TestCreateTimelineRenderTaskRejectsNoMedia(t *testing.T) {
 
 func TestCreateTimelineRenderTaskCarriesOptions(t *testing.T) {
 	svc, db := newTimelineTaskTestService(t)
+	seedActiveProject(t, db, "prj-render", "usr-render-test")
 	burn := false
 	task, err := svc.CreateTimelineRenderTask("usr-render-test", TimelineRenderCreateRequest{
 		ProjectID: "prj-render",
@@ -158,7 +160,7 @@ func TestTimelineRenderRejectsMalformedBeforeFFmpeg(t *testing.T) {
 	project := renderTestProject("resource:res-1")
 	project.Clips[0].Kind = "text"
 	task := seedRunningRenderTask(t, db, renderInputJSON(t, project))
-	t.Setenv(renderFfmpegEnv, "/no/such/ffmpeg")
+	t.Setenv(editing.FFmpegPathEnv, "/no/such/ffmpeg")
 	w := newTaskWorkerCoordinator(svc)
 	if err := w.processTimelineRender(task, context.Background()); err != nil {
 		t.Fatalf("process: want nil (task terminal handled internally), got %v", err)
@@ -181,7 +183,7 @@ func TestTimelineRenderFailsFastWhenSourceUnreadable(t *testing.T) {
 	// 素材落盘（materialize）阶段即失败，且该失败早于任何外部命令执行。
 	task := seedRunningRenderTask(t, db, renderInputJSON(t, renderTestProject("resource:res-missing")))
 
-	t.Setenv(renderFfmpegEnv, "/no/such/ffmpeg")
+	t.Setenv(editing.FFmpegPathEnv, "/no/such/ffmpeg")
 	w := newTaskWorkerCoordinator(svc)
 	if err := w.processTimelineRender(task, context.Background()); err != nil {
 		t.Fatalf("process: want nil (task terminal handled internally), got %v", err)
