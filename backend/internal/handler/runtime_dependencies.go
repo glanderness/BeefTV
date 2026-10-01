@@ -10,6 +10,7 @@ import (
 	"infinite-canvas/backend/internal/assistantruntime"
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/conversation"
+	"infinite-canvas/backend/internal/diagnostics"
 	"infinite-canvas/backend/internal/eagle"
 	"infinite-canvas/backend/internal/localapp"
 	"infinite-canvas/backend/internal/model"
@@ -52,6 +53,7 @@ type RuntimeDependencies struct {
 	TextReplay textreplay.API
 	BeefAPI    *beefapi.Service
 	Eagle              *eagle.Client
+	Diagnostics        *diagnostics.Service
 	// AssistantHost is the per-runtime supervisor for the built-in agent-host child.
 	// Separate runtimes must not share this value.
 	AssistantHost *assistantruntime.Host

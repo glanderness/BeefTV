@@ -25,10 +25,14 @@ func RegisterDesktopCanvasAPI(api *gin.RouterGroup, svc *app.Service) {
 
 func defaultRuntimeDependencies(svc *app.Service) RuntimeDependencies {
 	adapter := newServiceRuntimeAdapter(svc)
-	return RuntimeDependencies{
+	dependencies := RuntimeDependencies{
 		RequestCoordinator: adapter, ProviderConfig: adapter, Assets: adapter, Projects: adapter, Tasks: adapter, Generation: adapter,
 		Eagle: eagle.New(),
 	}
+	if svc != nil {
+		dependencies.Diagnostics = svc.DiagnosticsDomain()
+	}
+	return dependencies
 }
 
 func RegisterDesktopCanvasAPIWithDependencies(api *gin.RouterGroup, svc *app.Service, dependencies RuntimeDependencies) {
