@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	localasset "infinite-canvas/backend/internal/asset"
 	"infinite-canvas/backend/internal/assistantturns"
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/canvas"
@@ -67,6 +68,7 @@ type Service struct {
 	projects                 *localproject.Service
 	canvas                   *canvas.Service
 	assistantTurns           *assistantturns.Service
+	assets                   *localasset.Service
 	beefAPI                  *beefapi.Service
 	generationDeliveryMedia  taskdelivery.Media
 	generationDelivery       *taskdelivery.Deliverer
@@ -140,6 +142,13 @@ func newService(repo *repository.Repository, dataDir string, options serviceOpti
 	service.projects = localproject.New(repo, localproject.Dependencies{Workflows: projectWorkflowHost{service: service}})
 	service.canvas = canvas.New(service.repo, newCanvasHost(service))
 	service.assistantTurns = assistantturns.New(assistantturns.NewStore(service.repo), assistantCanvasFactory{service}, filepath.Join(dataDir, "assistant-turns"))
+	service.assets = localasset.NewService(localasset.Dependencies{
+		Repository:   localasset.NewRepository(repo),
+		Blobs:        localasset.NewFileStore(dataDir),
+		Quota:        resourceQuota{svc: service},
+		Lifecycle:    resourceLifecycle{svc: service},
+		LocalStorage: localResourceStorage,
+	})
 	if service.IsLocalMode() {
 		service.platform = platform.NewLocal(service.repo, coordinator, newPlatformHost(service))
 	} else {

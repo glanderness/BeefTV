@@ -1,0 +1,91 @@
+package asset
+
+import (
+	"testing"
+
+	"infinite-canvas/backend/internal/kernel"
+	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+)
+
+type nopQuota struct{}
+
+func (nopQuota) ReserveUpload(string, int64) (string, error)  { return "day", nil }
+func (nopQuota) ReserveChunked(string, int64) (string, error) { return "day", nil }
+func (nopQuota) ReserveRetry(string, int64) (string, error)   { return "day", nil }
+func (nopQuota) Release(string, string, int64)                {}
+func (nopQuota) ReleaseRetry(string, string, int64)           {}
+func (nopQuota) Commit(string, int64)                         {}
+
+type recordingQuota struct {
+	reserved int64
+}
+
+func (q *recordingQuota) ReserveUpload(_ string, size int64) (string, error) {
+	q.reserved += size
+	return "day", nil
+}
+func (q *recordingQuota) ReserveChunked(_ string, size int64) (string, error) {
+	q.reserved += size
+	return "day", nil
+}
+func (q *recordingQuota) ReserveRetry(_ string, size int64) (string, error) {
+	q.reserved += size
+	return "day", nil
+}
+func (q *recordingQuota) Release(_ string, _ string, size int64)      { q.reserved -= size }
+func (q *recordingQuota) ReleaseRetry(_ string, _ string, size int64) { q.reserved -= size }
+func (q *recordingQuota) Commit(string, int64)                        {}
+
+type nopLifecycle struct{}
+
+func (nopLifecycle) RecordActivity(string, string, int) {}
+func (nopLifecycle) AfterResourceReady(*model.Resource) {}
+func (nopLifecycle) AppearanceReferencedIDs([]string) map[string]struct{} {
+	return map[string]struct{}{}
+}
+func (nopLifecycle) RecycleRetentionDays() (int, error)   { return 0, nil }
+func (nopLifecycle) WorkerID() string                     { return "test-worker" }
+func (nopLifecycle) RunBackground(func())                 {}
+func (nopLifecycle) DeleteUserAsset(string, string) error { return nil }
+func (nopLifecycle) WithStorageLock(fn func() error) error {
+	if fn == nil {
+		return nil
+	}
+	return fn()
+}
+
+type readySaveFailRepo struct {
+	Repository
+	remaining int
+}
+
+func (r *readySaveFailRepo) SaveResource(resource *model.Resource) error {
+	if resource != nil && resource.Status == model.ResourceStatusReady && r.remaining > 0 {
+		r.remaining--
+		return errReadySave
+	}
+	return r.Repository.SaveResource(resource)
+}
+
+func newTestDomain(t *testing.T) (*Service, *repository.Repository, string) {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open("file:"+kernel.NewID()+"?mode=memory&cache=shared&_busy_timeout=5000"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Resource{}, &model.UserDailyUploadUsage{}); err != nil {
+		t.Fatal(err)
+	}
+	repo := repository.New(db)
+	dataDir := t.TempDir()
+	return NewService(Dependencies{
+		Repository: NewRepository(repo),
+		Blobs:      NewFileStore(dataDir),
+		Quota:      nopQuota{},
+		Lifecycle:  nopLifecycle{},
+	}), repo, dataDir
+}

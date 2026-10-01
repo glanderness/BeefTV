@@ -81,6 +81,25 @@ func (s *FileStore) Open(objectKey string) (*os.File, error) {
 	return os.Open(path)
 }
 
+// Exists reports whether objectKey names a regular file inside the store.
+func (s *FileStore) Exists(objectKey string) error {
+	path, err := s.path(objectKey)
+	if err != nil {
+		return err
+	}
+	if err := s.ensureSafeExistingPath(path); err != nil {
+		return err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return errors.New("local resource path points to a directory")
+	}
+	return nil
+}
+
 func (s *FileStore) Delete(objectKey string) error {
 	path, err := s.path(objectKey)
 	if err != nil {

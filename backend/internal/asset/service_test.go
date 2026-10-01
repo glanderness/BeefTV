@@ -14,7 +14,7 @@ func (f fakeBackend) UploadLocalResource(string, *multipart.FileHeader, string, 
 	return nil, nil
 }
 
-func TestServiceRejectsCloudAndMissingReadyAssets(t *testing.T) {
+func TestLocalKernelBoundaryRejectsCloudAndMissingReadyAssets(t *testing.T) {
 	root := t.TempDir()
 	tests := []model.Resource{
 		{ID: "cloud", Provider: "s3", Status: model.ResourceStatusReady, ObjectKey: "cloud.png"},

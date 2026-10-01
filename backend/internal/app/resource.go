@@ -5,7 +5,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,13 +14,11 @@ import (
 	_ "image/png"
 	"infinite-canvas/backend/internal/kernel"
 	"io"
-	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -42,6 +39,23 @@ type ResourceStream = assets.ResourceStream
 type ResourceDeliveryOptions = assets.ResourceDeliveryOptions
 type ResourceDelivery = assets.ResourceDelivery
 
+func (s *Service) resourceDomain() *localasset.Service {
+	if s == nil {
+		return localasset.NewService(localasset.Dependencies{})
+	}
+	if s.assets != nil {
+		return s.assets
+	}
+	s.assets = localasset.NewService(localasset.Dependencies{
+		Repository:   localasset.NewRepository(s.repo),
+		Blobs:        localasset.NewFileStore(s.dataDir),
+		Quota:        resourceQuota{svc: s},
+		Lifecycle:    resourceLifecycle{svc: s},
+		LocalStorage: s.localResourceStorage || s.IsLocalMode(),
+	})
+	return s.assets
+}
+
 // localResourceUnavailable is the single storage-boundary check used by all
 // read and delivery paths. A local workspace must never fall through to a
 // historical OSS provider, even if an old database row still contains one.
@@ -50,24 +64,16 @@ func (s *Service) localResourceUnavailable(resource *model.Resource) bool {
 }
 
 func (s *Service) Resources(userID string, limit int) ([]model.Resource, error) {
-	resources, err := s.repo.Resources(userID, limit)
-	for index := range resources {
-		resources[index].PublicURL = ""
-	}
-	return resources, err
+	return s.resourceDomain().Resources(userID, limit)
 }
 
 func (s *Service) Resource(userID string, id string) (*model.Resource, error) {
-	resource, err := s.repo.ResourceForUser(userID, id)
-	if resource != nil {
-		resource.PublicURL = ""
-	}
-	return resource, err
+	return s.resourceDomain().Resource(userID, id)
 }
 
 // DirectResourceURL 仅为本地文件签发短时下载地址。
 func (s *Service) DirectResourceURL(userID string, id string) (string, error) {
-	resource, err := s.repo.ResourceForUser(userID, id)
+	resource, err := s.resourceDomain().Resource(userID, id)
 	if err != nil {
 		return "", err
 	}
@@ -89,29 +95,11 @@ func (s *Service) directResourceURL(resource *model.Resource, expiresAt time.Tim
 
 // PrepareResourceDelivery 统一决定浏览器资源出口：配置 CDN 时默认直连 CDN，显式代理仅用于需要同源 Blob 的内部读取。
 func (s *Service) PrepareResourceDelivery(userID string, id string, options ResourceDeliveryOptions) (*ResourceDelivery, error) {
-	resource, err := s.repo.ResourceForUser(userID, id)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, NotFound("资源不存在")
-		}
-		return nil, err
-	}
-	return s.prepareResourceDelivery(userID, resource, options)
+	return s.resourceDomain().PrepareDelivery(userID, id, options)
 }
 
 func (s *Service) prepareResourceDelivery(userID string, resource *model.Resource, options ResourceDeliveryOptions) (*ResourceDelivery, error) {
-	if resource == nil {
-		return nil, errors.New("资源不存在")
-	}
-	if resource.Status != model.ResourceStatusReady {
-		return nil, BadAuthRequest("资源尚未上传完成")
-	}
-	if resource.Provider != "local" {
-		return nil, BadAuthRequest("资源不在本地存储中")
-	}
-	_ = userID
-	_ = options
-	return &ResourceDelivery{Resource: resource}, nil
+	return s.resourceDomain().PrepareOwnedDelivery(userID, resource, options)
 }
 
 func (s *Service) signedPublicResourceURL(resource *model.Resource, expiresAt time.Time) (string, error) {
@@ -205,130 +193,28 @@ func validatePublicResourceBaseURL(raw string) (*url.URL, error) {
 }
 
 func (s *Service) UploadResource(userID string, header *multipart.FileHeader, kind string, width int, height int, durationMs int64, uploadIdentity ...string) (*model.Resource, error) {
-	return s.uploadResource(userID, header, kind, width, height, durationMs, s.IsLocalMode(), uploadIdentity...)
+	return s.resourceDomain().Upload(userID, header, kind, width, height, durationMs, uploadIdentity...)
 }
 
-// UploadLocalResource is the desktop boundary: local uploads must never consult
-// historical OSS settings, even if a database was previously used by the hosted
-// profile.
 func (s *Service) UploadLocalResource(userID string, header *multipart.FileHeader, kind string, width int, height int, durationMs int64, uploadIdentity ...string) (*model.Resource, error) {
-	return s.uploadResource(userID, header, kind, width, height, durationMs, true, uploadIdentity...)
+	return s.resourceDomain().UploadLocal(userID, header, kind, width, height, durationMs, uploadIdentity...)
 }
 
-// uploadLocalResource keeps small system-owned assets on the server even when
-// the uploader or platform has enabled object storage. The resource still uses
-// the normal database record and persistent data directory lifecycle.
 func (s *Service) uploadLocalResource(userID string, header *multipart.FileHeader, kind string, width int, height int, durationMs int64, uploadIdentity ...string) (*model.Resource, error) {
-	return s.uploadResource(userID, header, kind, width, height, durationMs, true, uploadIdentity...)
+	return s.resourceDomain().UploadLocal(userID, header, kind, width, height, durationMs, uploadIdentity...)
 }
 
-func (s *Service) uploadResource(userID string, header *multipart.FileHeader, kind string, width int, height int, durationMs int64, forceLocal bool, uploadIdentity ...string) (*model.Resource, error) {
-	if header == nil {
-		return nil, BadAuthRequest("请选择要上传的文件")
-	}
-	uploadKey := normalizedResourceUploadKey(uploadIdentity)
-	existing, err := s.resourceForUploadKey(userID, uploadKey)
-	if err != nil {
-		return nil, err
-	}
-	if existing != nil && existing.Status == model.ResourceStatusReady {
-		return existing, nil
-	}
-	if existing != nil && existing.Status == model.ResourceStatusPending {
-		return nil, resourceUploadInProgress()
-	}
-	file, err := header.Open()
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	mimeType := strings.TrimSpace(header.Header.Get("Content-Type"))
-	mimeType = detectUploadedMimeType(file, header.Filename, mimeType)
-	if existing != nil {
-		return s.retryStoredResource(userID, existing, kind, mimeType, header.Size, file, forceLocal)
-	}
-	day, err := s.reserveUserUploadQuota(userID, header.Size)
-	if err != nil {
-		return nil, err
-	}
-	resource, stored, err := s.storeResource(userID, kind, header.Filename, mimeType, header.Size, width, height, durationMs, file, uploadKey, forceLocal)
-	if err != nil {
-		s.releaseUserUploadQuota(userID, day, header.Size)
-	} else if stored {
-		s.commitUserUploadQuota(userID, header.Size)
-	} else {
-		s.releaseUserUploadQuota(userID, day, header.Size)
-	}
-	return resource, err
-}
-
-// UploadResourceFile 接收已完整落盘的本地文件（分片上传合并后调用）。
-// 它与 UploadResource 共享资源幂等、媒体探测、配额和持久化语义，唯一差异是分片会话已在 handler 校验单文件上限，
-// 因而此处不再重复该上限检查；uploadIdentity 用于跨请求重试时复用同一逻辑资源，避免重复对象。
 func (s *Service) UploadResourceFile(userID string, fileName string, size int64, kind string, width int, height int, durationMs int64, file io.ReadSeeker, uploadIdentity ...string) (*model.Resource, error) {
-	return s.uploadResourceFile(userID, fileName, size, kind, width, height, durationMs, file, s.IsLocalMode(), uploadIdentity...)
+	return s.resourceDomain().UploadFile(userID, fileName, size, kind, width, height, durationMs, file, uploadIdentity...)
 }
 
-// UploadLocalResourceFile is the chunked-upload equivalent of UploadLocalResource.
 func (s *Service) UploadLocalResourceFile(userID string, fileName string, size int64, kind string, width int, height int, durationMs int64, file io.ReadSeeker, uploadIdentity ...string) (*model.Resource, error) {
-	return s.uploadResourceFile(userID, fileName, size, kind, width, height, durationMs, file, true, uploadIdentity...)
-}
-
-func (s *Service) uploadResourceFile(userID string, fileName string, size int64, kind string, width int, height int, durationMs int64, file io.ReadSeeker, forceLocal bool, uploadIdentity ...string) (*model.Resource, error) {
-	if file == nil || size <= 0 {
-		return nil, BadAuthRequest("请选择要上传的文件")
-	}
-	uploadKey := normalizedResourceUploadKey(uploadIdentity)
-	existing, err := s.resourceForUploadKey(userID, uploadKey)
-	if err != nil {
-		return nil, err
-	}
-	if existing != nil && existing.Status == model.ResourceStatusReady {
-		return existing, nil
-	}
-	if existing != nil && existing.Status == model.ResourceStatusPending {
-		return nil, resourceUploadInProgress()
-	}
-	mimeType := detectUploadedMimeType(file, fileName, "")
-	if existing != nil {
-		return s.retryStoredResource(userID, existing, kind, mimeType, size, file, forceLocal)
-	}
-	day, err := s.reserveChunkedUploadQuota(userID, size)
-	if err != nil {
-		return nil, err
-	}
-	resource, stored, err := s.storeResource(userID, kind, fileName, mimeType, size, width, height, durationMs, file, uploadKey, forceLocal)
-	if err != nil {
-		s.releaseUserUploadQuota(userID, day, size)
-	} else if stored {
-		s.commitUserUploadQuota(userID, size)
-	} else {
-		s.releaseUserUploadQuota(userID, day, size)
-	}
-	return resource, err
-}
-
-func detectUploadedMimeType(file io.ReadSeeker, fileName string, declared string) string {
-	declared = strings.TrimSpace(strings.Split(declared, ";")[0])
-	if declared != "" && declared != "application/octet-stream" {
-		return declared
-	}
-	buffer := make([]byte, 512)
-	read, _ := file.Read(buffer)
-	_, _ = file.Seek(0, io.SeekStart)
-	if detected := http.DetectContentType(buffer[:read]); detected != "" && detected != "application/octet-stream" {
-		return strings.TrimSpace(strings.Split(detected, ";")[0])
-	}
-	if fromExtension := mime.TypeByExtension(filepath.Ext(fileName)); fromExtension != "" {
-		return strings.TrimSpace(strings.Split(fromExtension, ";")[0])
-	}
-	return "application/octet-stream"
+	return s.resourceDomain().UploadLocalFile(userID, fileName, size, kind, width, height, durationMs, file, uploadIdentity...)
 }
 
 func (s *Service) ImportResourceURL(userID string, rawURL string, kind string, width int, height int, durationMs int64, uploadIdentity ...string) (*model.Resource, error) {
 	if s.IsLocalMode() {
-		return nil, Forbidden("本地工作区不支持通过 URL 导入素材，请先下载到本机后上传")
+		return nil, localasset.RemoteImportForbidden()
 	}
 	uploadKey := normalizedResourceUploadKey(uploadIdentity)
 	existing, err := s.resourceForUploadKey(userID, uploadKey)
@@ -376,12 +262,7 @@ func (s *Service) ImportResourceURL(userID string, rawURL string, kind string, w
 }
 
 func normalizedResourceUploadKey(values []string) *string {
-	if len(values) == 0 || strings.TrimSpace(values[0]) == "" {
-		return nil
-	}
-	digest := sha256.Sum256([]byte(strings.TrimSpace(values[0])))
-	value := hex.EncodeToString(digest[:])
-	return &value
+	return localasset.NormalizedUploadKey(values)
 }
 
 func (s *Service) resourceForUploadKey(userID string, uploadKey *string) (*model.Resource, error) {
@@ -396,25 +277,21 @@ func (s *Service) resourceForUploadKey(userID string, uploadKey *string) (*model
 }
 
 func resourceUploadInProgress() *AppError {
-	err := NewAppError(http.StatusConflict, "相同素材正在上传，请稍后重试")
-	err.Retryable = true
-	return err
+	err := localasset.UploadInProgress()
+	if appErr, ok := err.(*AppError); ok {
+		return appErr
+	}
+	conflict := NewAppError(http.StatusConflict, err.Error())
+	conflict.Retryable = true
+	return conflict
 }
 
 func (s *Service) OpenResource(userID string, id string) (*model.Resource, io.ReadCloser, error) {
-	stream, err := s.OpenResourceRange(userID, id, "")
-	if err != nil {
-		return nil, nil, err
-	}
-	return stream.Resource, stream.Body, nil
+	return s.resourceDomain().Open(userID, id)
 }
 
 func (s *Service) OpenResourceRange(userID string, id string, rangeHeader string) (*ResourceStream, error) {
-	resource, err := s.repo.ResourceForUser(userID, id)
-	if err != nil {
-		return nil, err
-	}
-	return s.openResourceRange(userID, resource, rangeHeader)
+	return s.resourceDomain().OpenRange(userID, id, rangeHeader)
 }
 
 func (s *Service) OpenPublicResourceRange(id string, expires string, signature string, rangeHeader string) (*ResourceStream, error) {
@@ -428,174 +305,29 @@ func (s *Service) OpenPublicResourceRange(id string, expires string, signature s
 	if err := s.verifyPublicResourceSignature(resource.ID, expires, signature); err != nil {
 		return nil, err
 	}
-	return s.openResourceRange(resource.UserID, resource, rangeHeader)
+	return s.resourceDomain().OpenOwnedRange(resource.UserID, resource, rangeHeader)
 }
 
 func (s *Service) openResourceRange(userID string, resource *model.Resource, rangeHeader string) (*ResourceStream, error) {
-	if resource.Status != model.ResourceStatusReady {
-		return nil, BadAuthRequest("资源尚未上传完成")
-	}
-	if resource == nil || resource.Provider != "local" {
-		return nil, BadAuthRequest("资源不在本地存储中")
-	}
-	body, err := localasset.NewFileStore(s.dataDir).Open(resource.ObjectKey)
-	if err != nil {
-		return nil, err
-	}
-	_ = userID
-	_ = rangeHeader
-	return &ResourceStream{Resource: resource, Body: body, StatusCode: http.StatusOK, ContentLength: resource.Size, AcceptRanges: "bytes"}, nil
+	return s.resourceDomain().OpenOwnedRange(userID, resource, rangeHeader)
 }
 
 func (s *Service) storeResource(userID string, kind string, fileName string, mimeType string, size int64, width int, height int, durationMs int64, body io.Reader, uploadKey *string, forceLocal bool) (*model.Resource, bool, error) {
 	_ = forceLocal
-	if existing, err := s.resourceForUploadKey(userID, uploadKey); err != nil {
-		return nil, false, err
-	} else if existing != nil {
-		if existing.Status == model.ResourceStatusReady {
-			return existing, false, nil
-		}
-		return nil, false, resourceUploadInProgress()
-	}
-	now := time.Now()
-	kind = normalizeResourceKind(kind, mimeType)
-	objectKey := localObjectKey(userID, kind, fileName, mimeType, now)
-	resource := model.Resource{ID: newID(), UserID: userID, Kind: kind, Status: model.ResourceStatusPending, Provider: "local", ObjectKey: objectKey, MimeType: mimeType, Size: size, Width: width, Height: height, DurationMs: durationMs, UploadKey: uploadKey, CreatedAt: now, UpdatedAt: now}
-	if err := s.repo.CreateResource(&resource); err != nil {
-		if existing, lookupErr := s.resourceForUploadKey(userID, uploadKey); lookupErr == nil && existing != nil {
-			if existing.Status == model.ResourceStatusReady {
-				return existing, false, nil
-			}
-			return nil, false, resourceUploadInProgress()
-		}
-		return nil, false, err
-	}
-	etag, err := s.storeResourceObject(&resource, fileName, body)
-	resource.UpdatedAt = time.Now()
-	if err != nil {
-		resource.Status = model.ResourceStatusFailed
-		resource.Error = err.Error()
-		if saveErr := s.repo.SaveResource(&resource); saveErr != nil {
-			return nil, true, errors.Join(err, fmt.Errorf("记录资源失败状态失败：%w", saveErr))
-		}
-		return nil, true, err
-	}
-	resource.Status = model.ResourceStatusReady
-	resource.ETag = etag
-	if err := s.repo.SaveResource(&resource); err != nil {
-		cleanupErr := s.deleteStoredResourceObject(userID, &resource)
-		if cleanupErr == nil {
-			if deleteErr := s.repo.DeleteResource(userID, resource.ID); deleteErr != nil {
-				return nil, true, errors.Join(err, fmt.Errorf("清理资源记录失败：%w", deleteErr))
-			}
-			return nil, true, fmt.Errorf("保存资源就绪状态失败：%w", err)
-		}
-
-		resource.Status = model.ResourceStatusFailed
-		resource.Error = fmt.Sprintf("保存资源就绪状态失败，物理对象清理失败：%v", cleanupErr)
-		statusErr := s.repo.SaveResource(&resource)
-		if statusErr != nil {
-			return nil, true, errors.Join(err, cleanupErr, fmt.Errorf("记录资源失败状态失败：%w", statusErr))
-		}
-		return nil, true, errors.Join(err, fmt.Errorf("清理已上传资源对象失败：%w", cleanupErr))
-	}
-	s.recordActivity(userID, "resource", 1)
-	s.maybeStartPlaybackTranscode(&resource)
-	return &resource, true, nil
+	return s.resourceDomain().Store(userID, kind, fileName, mimeType, size, width, height, durationMs, body, uploadKey)
 }
 
-// storeResourceObject is the single local persistence boundary.
 func (s *Service) storeResourceObject(resource *model.Resource, fileName string, body io.Reader) (string, error) {
-	if resource == nil {
-		return "", errors.New("资源不存在")
-	}
-	resource.Provider = "local"
-	resource.Endpoint = ""
-	resource.Bucket = ""
-	resource.StorageSettingID = ""
-	resource.ETag = ""
-	if strings.TrimSpace(resource.ObjectKey) == "" {
-		resource.ObjectKey = localObjectKey(resource.UserID, resource.Kind, fileName, resource.MimeType, time.Now())
-	}
-	return "", localasset.NewFileStore(s.dataDir).Write(resource.ObjectKey, body)
+	return s.resourceDomain().WriteObject(resource, fileName, body)
 }
 
 func (s *Service) retryStoredResource(userID string, resource *model.Resource, kind string, mimeType string, size int64, body io.Reader, forceLocalFlag ...bool) (*model.Resource, error) {
 	_ = forceLocalFlag
-	if resource == nil {
-		return nil, errors.New("资源不存在")
-	}
-	if resource.Status == model.ResourceStatusReady {
-		return resource, nil
-	}
-	if resource.Status != model.ResourceStatusFailed {
-		return nil, resourceUploadInProgress()
-	}
-	kind = normalizeResourceKind(kind, mimeType)
-	if resource.Size != size || resource.Kind != kind || (resource.MimeType != "" && mimeType != "" && resource.MimeType != mimeType) {
-		return nil, NewAppError(http.StatusConflict, "上传幂等标识已用于其他文件")
-	}
-	claimed, err := s.repo.ClaimFailedResourceUpload(userID, resource.ID)
-	if err != nil {
-		return nil, err
-	}
-	if !claimed {
-		latest, latestErr := s.repo.ResourceForUser(userID, resource.ID)
-		if latestErr == nil && latest.Status == model.ResourceStatusReady {
-			return latest, nil
-		}
-		return nil, resourceUploadInProgress()
-	}
-	if resource.Provider != "local" {
-		resource.Provider = "local"
-		resource.Endpoint = ""
-		resource.Bucket = ""
-		resource.StorageSettingID = ""
-		resource.ObjectKey = localObjectKey(userID, kind, "", mimeType, time.Now())
-	}
-	resource.Status = model.ResourceStatusPending
-	resource.Error = ""
-	resource.UpdatedAt = time.Now()
-	day, err := s.reserveRetryUploadQuota(userID, size)
-	if err != nil {
-		resource.Status = model.ResourceStatusFailed
-		resource.Error = err.Error()
-		resource.UpdatedAt = time.Now()
-		if saveErr := s.repo.SaveResource(resource); saveErr != nil {
-			return nil, errors.Join(err, fmt.Errorf("恢复资源重试失败状态失败：%w", saveErr))
-		}
-		return nil, err
-	}
-	var etag string
-	etag, err = s.storeResourceObject(resource, "", body)
-	resource.UpdatedAt = time.Now()
-	if err != nil {
-		s.releaseRetryUploadQuota(userID, day, size)
-		resource.Status = model.ResourceStatusFailed
-		resource.Error = err.Error()
-		if saveErr := s.repo.SaveResource(resource); saveErr != nil {
-			return nil, errors.Join(err, fmt.Errorf("记录资源重试失败状态失败：%w", saveErr))
-		}
-		return nil, err
-	}
-	resource.Status = model.ResourceStatusReady
-	resource.ETag = etag
-	if err := s.repo.SaveResource(resource); err != nil {
-		s.releaseRetryUploadQuota(userID, day, size)
-		resource.Status = model.ResourceStatusFailed
-		resource.Error = "保存资源重试就绪状态失败"
-		if saveErr := s.repo.SaveResource(resource); saveErr != nil {
-			return nil, errors.Join(err, fmt.Errorf("记录资源重试失败状态失败：%w", saveErr))
-		}
-		return nil, fmt.Errorf("保存资源重试就绪状态失败：%w", err)
-	}
-	s.recordActivity(userID, "resource", 1)
-	return resource, nil
+	return s.resourceDomain().Retry(userID, resource, kind, mimeType, size, body)
 }
 
 func localObjectKey(userID string, kind string, fileName string, mimeType string, now time.Time) string {
-	ext := resourceFileExtension(fileName, mimeType, kind)
-	return path.Join("users", safeObjectSegment(userID), kind, now.Format("2006/01/02"), newID()+ext)
+	return localasset.ObjectKey(userID, kind, fileName, mimeType, now)
 }
 
 func (s *Service) persistGeneratedMediaResult(userID string, result map[string]interface{}) (map[string]interface{}, error) {
@@ -750,7 +482,7 @@ func intValue(value interface{}) int {
 	case float64:
 		return int(number)
 	case int:
-		return number
+		return int(number)
 	case int64:
 		return int(number)
 	default:
@@ -827,54 +559,11 @@ func validateRemoteResourceURL(rawURL string) (*url.URL, error) {
 }
 
 func extensionFromMimeType(mimeType string) string {
-	if strings.Contains(mimeType, "png") {
-		return "png"
-	}
-	if strings.Contains(mimeType, "jpeg") {
-		return "jpg"
-	}
-	if strings.Contains(mimeType, "webp") {
-		return "webp"
-	}
-	if strings.Contains(mimeType, "gif") {
-		return "gif"
-	}
-	if strings.Contains(mimeType, "mp4") {
-		return "mp4"
-	}
-	if strings.Contains(mimeType, "webm") {
-		return "webm"
-	}
-	if strings.Contains(mimeType, "mpeg") {
-		return "mp3"
-	}
-	if strings.Contains(mimeType, "wav") {
-		return "wav"
-	}
-	return "bin"
+	return localasset.ExtensionFromMimeType(mimeType)
 }
 
 func resourceFileExtension(fileName string, mimeType string, kind string) string {
-	if ext := strings.ToLower(filepath.Ext(strings.TrimSpace(fileName))); ext != "" && ext != "." {
-		return ext
-	}
-	cleanMimeType := strings.TrimSpace(strings.Split(mimeType, ";")[0])
-	if extensions, err := mime.ExtensionsByType(cleanMimeType); err == nil && len(extensions) > 0 {
-		return strings.ToLower(extensions[0])
-	}
-	if mapped := extensionFromMimeType(cleanMimeType); mapped != "bin" {
-		return "." + mapped
-	}
-	switch kind {
-	case "image":
-		return ".png"
-	case "video":
-		return ".mp4"
-	case "audio":
-		return ".mp3"
-	default:
-		return ".bin"
-	}
+	return localasset.FileExtension(fileName, mimeType, kind)
 }
 
 const imageHeaderDecodeLimit = 2 << 20
@@ -896,33 +585,11 @@ func imageHeaderDimensions(r io.Reader) (int, int, error) {
 }
 
 func normalizeResourceKind(kind string, mimeType string) string {
-	kind = strings.ToLower(strings.TrimSpace(kind))
-	switch kind {
-	case "image", "video", "audio", "file":
-		return kind
-	}
-	if strings.HasPrefix(mimeType, "image/") {
-		return "image"
-	}
-	if strings.HasPrefix(mimeType, "video/") {
-		return "video"
-	}
-	if strings.HasPrefix(mimeType, "audio/") {
-		return "audio"
-	}
-	return "file"
+	return localasset.NormalizeKind(kind, mimeType)
 }
 
 func normalizeSingleByteRange(value string) string {
-	value = strings.TrimSpace(value)
-	if len(value) > 128 || !strings.HasPrefix(value, "bytes=") || strings.Contains(value, ",") {
-		return ""
-	}
-	start, end, ok := strings.Cut(strings.TrimPrefix(value, "bytes="), "-")
-	if !ok || (start == "" && end == "") || !decimalDigits(start) || !decimalDigits(end) {
-		return ""
-	}
-	return "bytes=" + start + "-" + end
+	return localasset.NormalizeSingleByteRange(value)
 }
 
 func decimalDigits(value string) bool {
@@ -932,17 +599,6 @@ func decimalDigits(value string) bool {
 		}
 	}
 	return true
-}
-
-func safeObjectSegment(value string) string {
-	value = strings.TrimSpace(value)
-	value = strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
-			return r
-		}
-		return '-'
-	}, value)
-	return strings.Trim(value, "-")
 }
 
 func firstNonEmpty(values ...string) string {

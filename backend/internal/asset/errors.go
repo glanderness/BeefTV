@@ -1,0 +1,52 @@
+package asset
+
+import (
+	"net/http"
+
+	"infinite-canvas/backend/internal/kernel"
+)
+
+func UploadInProgress() error {
+	err := kernel.NewAppError(http.StatusConflict, "相同素材正在上传，请稍后重试")
+	err.Retryable = true
+	return err
+}
+
+func UploadConflict() error {
+	return kernel.NewAppError(http.StatusConflict, "上传幂等标识已用于其他文件")
+}
+
+func MissingUpload() error {
+	return kernel.BadAuthRequest("请选择要上传的文件")
+}
+
+func ResourceNotReady() error {
+	return kernel.BadAuthRequest("资源尚未上传完成")
+}
+
+func ResourceNotLocal() error {
+	return kernel.BadAuthRequest("资源不在本地存储中")
+}
+
+func ResourceMissing() error {
+	return kernel.BadAuthRequest("资源不存在")
+}
+
+func UnreadableAssetDocument(kind string) error {
+	switch kind {
+	case "version":
+		return kernel.BadAuthRequest("素材版本数据无法解析，已停止删除以避免误删文件")
+	case "representation":
+		return kernel.BadAuthRequest("素材表现数据无法解析，已停止删除以避免误删文件")
+	default:
+		return kernel.BadAuthRequest("素材数据无法解析，已停止删除以避免误删文件")
+	}
+}
+
+func HistoryReferenced() error {
+	return kernel.BadAuthRequest("素材仍被画布历史版本引用，已保留文件")
+}
+
+func RemoteImportForbidden() error {
+	return kernel.Forbidden("本地工作区不支持通过 URL 导入素材，请先下载到本机后上传")
+}
