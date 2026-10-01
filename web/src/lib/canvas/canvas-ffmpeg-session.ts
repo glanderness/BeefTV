@@ -161,7 +161,12 @@ export function createFFmpegSession(options: { spawn?: FFmpegSpawn } = {}) {
                     finishReject(item, abortError(signal));
                     return;
                 }
-                if (inflight?.item === item && inflight.ffmpeg) terminateWorker(inflight.ffmpeg);
+                if (inflight?.item === item) {
+                    if (inflight.ffmpeg) terminateWorker(inflight.ffmpeg);
+                    // Loading can outlive cancellation. Reject the caller now;
+                    // pump still owns and destroys any worker arriving later.
+                    finishReject(item, abortError(signal));
+                }
             };
             item.abortListener = abortListener;
             signal?.addEventListener("abort", abortListener, { once: true });

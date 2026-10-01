@@ -205,3 +205,17 @@ test("dispose during a pending spawn rejects the owner and destroys late workers
     expect(worker.terminated).toBe(true);
     await expect(session.withLease(async () => "new")).rejects.toMatchObject({ name: "AbortError" });
 });
+
+test("cancel during loading rejects promptly and disposes the late worker", async () => {
+    const ready = deferred<FFmpegInstance>();
+    const worker = new FakeFFmpeg();
+    const session = createFFmpegSession({ spawn: () => ready.promise });
+    sessions.push(session);
+    const abort = new AbortController();
+    const work = session.withLease(async () => { throw new Error("cancelled work ran"); }, { signal: abort.signal });
+    abort.abort();
+    await expect(work).rejects.toMatchObject({ name: "AbortError" });
+    ready.resolve(worker as unknown as FFmpegInstance);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(worker.terminated).toBe(true);
+});
