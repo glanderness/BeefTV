@@ -377,21 +377,28 @@ func TestCreateProjectRollsBackWhenWorkflowInsertFails(t *testing.T) {
 	}
 }
 
-func TestCreateProjectWithoutWorkflowsKeepsRevisionOne(t *testing.T) {
+func TestCreateProjectDefaultsToOwnedWorkflowSeed(t *testing.T) {
 	svc, db := newTestService(t, nil)
 	created, err := svc.CreateProject("user-1", CreateProjectRequest{Name: "空白项目"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.Revision != 1 {
-		t.Fatalf("revision = %d, want 1", created.Revision)
+	if created.Revision != 2 {
+		t.Fatalf("revision = %d, want 2 after default workflow creation", created.Revision)
 	}
 	var workflowCount int64
 	if err := db.Model(&model.WorkflowInstance{}).Count(&workflowCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if workflowCount != 0 {
-		t.Fatalf("workflow count = %d, want 0", workflowCount)
+	if workflowCount != 1 {
+		t.Fatalf("workflow count = %d, want 1", workflowCount)
+	}
+	var stepCount int64
+	if err := db.Model(&model.WorkflowStepInstance{}).Count(&stepCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stepCount != int64(len(builtinShortDramaSteps)) {
+		t.Fatalf("workflow steps = %d, want %d", stepCount, len(builtinShortDramaSteps))
 	}
 }
 

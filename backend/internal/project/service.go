@@ -34,7 +34,20 @@ type Service struct {
 }
 
 func New(repo *repository.Repository, deps Dependencies) *Service {
-	return &Service{repo: repo, workflows: deps.Workflows}
+	service := &Service{repo: repo, workflows: deps.Workflows}
+	if service.workflows == nil {
+		service.workflows = builtinWorkflows{service}
+	}
+	return service
+}
+
+// Default workflow records belong to the project domain. The host need not
+// call back through app to obtain records from this same service.
+type builtinWorkflows struct{ service *Service }
+
+func (w builtinWorkflows) EnsureBuiltinTemplate() error { return w.service.EnsureBuiltinTemplate() }
+func (w builtinWorkflows) PrepareDefault(projectID string) (WorkflowSeed, error) {
+	return w.service.PrepareDefaultWorkflow(projectID)
 }
 
 func IsNotFound(err error) bool {

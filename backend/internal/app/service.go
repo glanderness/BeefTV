@@ -142,7 +142,7 @@ func newService(repo *repository.Repository, dataDir string, options serviceOpti
 	service.taskLifecycleCoordinator = newTaskLifecycleCoordinator(service)
 	service.skills = skills.New(service.repo, service.dataDir, service.runWorkerLoop)
 	service.prompts = prompts.New(service.repo, newPromptAdminGate(service))
-	service.projects = localproject.New(repo, localproject.Dependencies{Workflows: projectWorkflowHost{service: service}})
+	service.projects = localproject.New(repo, localproject.Dependencies{})
 	service.canvas = canvas.New(service.repo, newCanvasHost(service))
 	service.assistantTurns = assistantturns.New(assistantturns.NewStore(service.repo), assistantCanvasFactory{service}, filepath.Join(dataDir, "assistant-turns"))
 	service.assets = localasset.NewService(localasset.Dependencies{
