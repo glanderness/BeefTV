@@ -265,6 +265,137 @@ func TestClaimFailedSettledThenReserveAfterReopen(t *testing.T) {
 	}
 }
 
+func TestSaveResourceFailedKeepsUnattributedMarker(t *testing.T) {
+	repo := newUploadReservationRepo(t)
+	identity := "unattributed-failed"
+	now := time.Now()
+	day := now.UTC().Format("2006-01-02")
+	if err := repo.DB().Create(&model.UserDailyUploadUsage{
+		ID: "user-1:" + day, UserID: "user-1", Day: day, Bytes: 7, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DB().Create(&model.UserUploadReservation{
+		ID: "user-1:" + identity, UserID: "user-1", Identity: identity,
+		Day: model.UploadReservationUnattributedDay, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	resource := &model.Resource{
+		ID: "res-unattributed-failed", UserID: "user-1", Kind: "image", Status: model.ResourceStatusPending,
+		Provider: "local", ObjectKey: "users/user-1/image/u.png", Size: 7, UploadKey: &identity,
+	}
+	if err := repo.CreateResource(resource); err != nil {
+		t.Fatal(err)
+	}
+	resource.Status = model.ResourceStatusFailed
+	resource.Error = "write failed"
+	if err := repo.SaveResource(resource); err != nil {
+		t.Fatal(err)
+	}
+	row, err := repo.UploadReservation("user-1", identity)
+	if err != nil || row == nil || !row.Unattributed() {
+		t.Fatalf("SaveFailed cleared sentinel %#v err=%v", row, err)
+	}
+	usage, err := repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 7 {
+		t.Fatalf("SaveFailed daily=%d err=%v", usage, err)
+	}
+}
+
+func TestClaimFailedKeepsUnattributedMarker(t *testing.T) {
+	repo := newUploadReservationRepo(t)
+	identity := "unattributed-claim"
+	now := time.Now()
+	if err := repo.DB().Create(&model.UserUploadReservation{
+		ID: "user-1:" + identity, UserID: "user-1", Identity: identity,
+		Day: model.UploadReservationUnattributedDay, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	resource := &model.Resource{
+		ID: "res-unattributed-claim", UserID: "user-1", Kind: "image", Status: model.ResourceStatusFailed,
+		Provider: "local", ObjectKey: "users/user-1/image/c.png", Size: 7, UploadKey: &identity,
+	}
+	if err := repo.CreateResource(resource); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := repo.ClaimFailedResourceUpload("user-1", resource.ID)
+	if err != nil || !claimed {
+		t.Fatalf("claim claimed=%v err=%v", claimed, err)
+	}
+	row, err := repo.UploadReservation("user-1", identity)
+	if err != nil || row == nil || !row.Unattributed() {
+		t.Fatalf("claim cleared sentinel %#v err=%v", row, err)
+	}
+}
+
+func TestReleaseUnattributedIsNoop(t *testing.T) {
+	repo := newUploadReservationRepo(t)
+	identity := "unattributed-release"
+	now := time.Now()
+	day := now.UTC().Format("2006-01-02")
+	if err := repo.DB().Create(&model.UserDailyUploadUsage{
+		ID: "user-1:" + day, UserID: "user-1", Day: day, Bytes: 7, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DB().Create(&model.UserUploadReservation{
+		ID: "user-1:" + identity, UserID: "user-1", Identity: identity,
+		Day: model.UploadReservationUnattributedDay, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ReleaseIdentifiedDailyUpload("user-1", day, identity, 7); err != nil {
+		t.Fatal(err)
+	}
+	row, err := repo.UploadReservation("user-1", identity)
+	if err != nil || row == nil || !row.Unattributed() {
+		t.Fatalf("release cleared sentinel %#v err=%v", row, err)
+	}
+	usage, err := repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 7 {
+		t.Fatalf("release daily=%d err=%v", usage, err)
+	}
+}
+
+func TestDeleteUnattributedClearsMarkerWithoutRefund(t *testing.T) {
+	repo := newUploadReservationRepo(t)
+	identity := "unattributed-delete"
+	now := time.Now()
+	day := now.UTC().Format("2006-01-02")
+	if err := repo.DB().Create(&model.UserDailyUploadUsage{
+		ID: "user-1:" + day, UserID: "user-1", Day: day, Bytes: 7, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DB().Create(&model.UserUploadReservation{
+		ID: "user-1:" + identity, UserID: "user-1", Identity: identity,
+		Day: model.UploadReservationUnattributedDay, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	resource := &model.Resource{
+		ID: "res-unattributed-delete", UserID: "user-1", Kind: "image", Status: model.ResourceStatusPending,
+		Provider: "local", ObjectKey: "users/user-1/image/d.png", Size: 7, UploadKey: &identity,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := repo.CreateResource(resource); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteResource("user-1", resource.ID); err != nil {
+		t.Fatal(err)
+	}
+	row, err := repo.UploadReservation("user-1", identity)
+	if err != nil || row != nil {
+		t.Fatalf("delete left sentinel %#v err=%v", row, err)
+	}
+	usage, err := repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 7 {
+		t.Fatalf("delete refunded daily=%d err=%v", usage, err)
+	}
+}
+
 func TestReleaseIdentifiedDailyUploadMissingRowIsNoop(t *testing.T) {
 	repo := newUploadReservationRepo(t)
 	if err := repo.ReserveIdentifiedDailyUpload("user-1", "2026-10-02", "held", 11, 1000); err != nil {

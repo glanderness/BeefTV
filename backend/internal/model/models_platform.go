@@ -50,16 +50,26 @@ type UserDailyUploadUsage struct {
 }
 
 // UserUploadReservation is a recovery index for an open daily-upload
-// reservation. Bytes stay on UserDailyUploadUsage; a row means the daily
-// increment committed for this identity and has not been Released or Committed.
+// reservation. Bytes stay on UserDailyUploadUsage. A positive Size and a real
+// Day mean this identity already incremented daily and has not been Released
+// or Committed. Day equal to UploadReservationUnattributedDay (Size 0) marks a
+// pre-witness leftover that must not reserve, refund, or be guessed from totals.
 type UserUploadReservation struct {
 	ID        string    `json:"id" gorm:"primaryKey;size:200"`
 	UserID    string    `json:"userId" gorm:"size:36;uniqueIndex:idx_user_upload_reservation_identity,priority:1"`
 	Identity  string    `json:"identity" gorm:"size:128;uniqueIndex:idx_user_upload_reservation_identity,priority:2"`
-	Day       string    `json:"day" gorm:"size:10"`
+	Day       string    `json:"day" gorm:"size:16"`
 	Size      int64     `json:"size"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// UploadReservationUnattributedDay marks a leftover that already has a resource
+// row but cannot be matched to daily bytes without a second ledger.
+const UploadReservationUnattributedDay = "unattributed"
+
+func (r UserUploadReservation) Unattributed() bool {
+	return r.Day == UploadReservationUnattributedDay || r.Size <= 0
 }
 
 type Skill struct {

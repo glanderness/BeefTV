@@ -40,13 +40,16 @@ import (
 //
 // Quota: callers of Store reserve upload/chunked quota under this operation's
 // identity. PENDING means that reservation is still held (including after a
-// crash that never ran Release). FAILED means the reservation was released.
-// READY means daily usage is consumed and the witness is cleared. SaveResource
-// applies that reservation mutation in the same transaction as the terminal
-// status so a crash cannot leave a unique witness behind a READY or FAILED row.
-// Local bytes are independent of that reservation: a READY-save failure keeps
-// PENDING and the reservation; a write failure records FAILED and Releases.
-// PENDING about to become READY must hold a witness; if missing, reserve now.
+// crash that never ran Release). FAILED means a positive witness was released;
+// an unattributed Size-0 marker stays until the unfinished row is deleted.
+// READY means daily usage is consumed and a positive witness is cleared.
+// SaveResource applies that reservation mutation in the same transaction as
+// the terminal status so a crash cannot leave a unique witness behind a READY
+// or FAILED row. Local bytes are independent of that reservation: a READY-save
+// failure keeps PENDING and the reservation; a write failure records FAILED
+// and Releases a positive hold. PENDING about to become READY must hold a
+// witness; if missing, reserve now. An unattributed leftover marker must not
+// reserve.
 // ClaimFailed is status-only so leftover FAILED can keep the original consume.
 // RecoverOwned uses ReserveGenerated / ReserveGeneratedRetry the same way.
 // Commit applies only to this identity's pending.
@@ -289,11 +292,17 @@ func (s *Service) releaseRetry(userID string, day string, size int64, identity s
 }
 
 func (s *Service) ensureReservation(userID, identity string, reserve func() (string, error)) (string, bool, error) {
-	held, err := s.reservationHeld(userID, identity)
+	row, err := s.lookupReservation(userID, identity)
 	if err != nil {
 		return "", false, err
 	}
-	if held || reserve == nil {
+	if row != nil {
+		if row.Unattributed() {
+			return "", false, UploadQuotaAttributionUncertain()
+		}
+		return "", false, nil
+	}
+	if reserve == nil {
 		return "", false, nil
 	}
 	day, err := reserve()

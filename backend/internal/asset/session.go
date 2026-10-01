@@ -718,6 +718,9 @@ func (s *Service) releaseOrphanReservationsLocked() error {
 }
 
 func (s *Service) settleOrphanReservation(row model.UserUploadReservation, existing *model.Resource) error {
+	if row.Unattributed() {
+		return nil
+	}
 	if existing != nil && existing.Status == model.ResourceStatusPending {
 		return nil
 	}
@@ -813,12 +816,16 @@ func (s *Service) reconcileSessionDirsLocked() error {
 }
 
 func (s *Service) reservationHeld(userID, identity string) (bool, error) {
-	if s == nil || s.repo == nil {
-		return false, nil
-	}
-	row, err := s.repo.UploadReservation(userID, identity)
+	row, err := s.lookupReservation(userID, identity)
 	if err != nil {
 		return false, err
 	}
 	return row != nil, nil
+}
+
+func (s *Service) lookupReservation(userID, identity string) (*model.UserUploadReservation, error) {
+	if s == nil || s.repo == nil {
+		return nil, nil
+	}
+	return s.repo.UploadReservation(userID, identity)
 }

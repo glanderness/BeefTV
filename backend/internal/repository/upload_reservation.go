@@ -33,6 +33,13 @@ func saveResourceSettlingReservation(tx *gorm.DB, resource *model.Resource) erro
 	if identity == "" {
 		return nil
 	}
+	held, err := lookupUploadReservationTx(tx, resource.UserID, identity)
+	if err != nil {
+		return err
+	}
+	if held != nil && held.Unattributed() {
+		return nil
+	}
 	switch resource.Status {
 	case model.ResourceStatusReady:
 		return clearUploadReservationTx(tx, resource.UserID, identity)
@@ -48,6 +55,15 @@ func settleDeletedResourceReservation(tx *gorm.DB, resource *model.Resource) err
 	if identity == "" || resource == nil {
 		return nil
 	}
+	held, err := lookupUploadReservationTx(tx, resource.UserID, identity)
+	if err != nil {
+		return err
+	}
+	if held != nil && held.Unattributed() {
+		// User delete of the unfinished row is the explicit resolution: drop
+		// the sentinel without refunding anonymous daily bytes.
+		return clearUploadReservationTx(tx, resource.UserID, identity)
+	}
 	switch resource.Status {
 	case model.ResourceStatusPending, model.ResourceStatusFailed:
 		return releaseIdentifiedDailyUploadTx(tx, resource.UserID, "", identity, 0)
@@ -57,6 +73,22 @@ func settleDeletedResourceReservation(tx *gorm.DB, resource *model.Resource) err
 		// unused reservation.
 		return clearUploadReservationTx(tx, resource.UserID, identity)
 	}
+}
+
+func lookupUploadReservationTx(tx *gorm.DB, userID string, identity string) (*model.UserUploadReservation, error) {
+	identity = strings.TrimSpace(identity)
+	if strings.TrimSpace(userID) == "" || identity == "" {
+		return nil, nil
+	}
+	var held model.UserUploadReservation
+	err := tx.Where("user_id = ? AND identity = ?", userID, identity).First(&held).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &held, nil
 }
 
 func clearUploadReservationTx(tx *gorm.DB, userID string, identity string) error {
@@ -70,17 +102,22 @@ func clearUploadReservationTx(tx *gorm.DB, userID string, identity string) error
 func releaseIdentifiedDailyUploadTx(tx *gorm.DB, userID string, day string, identity string, size int64) error {
 	identity = strings.TrimSpace(identity)
 	if identity != "" {
-		var held model.UserUploadReservation
-		err := tx.Where("user_id = ? AND identity = ?", userID, identity).First(&held).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
-		}
+		held, err := lookupUploadReservationTx(tx, userID, identity)
 		if err != nil {
 			return err
+		}
+		if held == nil {
+			return nil
+		}
+		if held.Unattributed() {
+			return nil
 		}
 		// Recovery may see both an orphan reservation and the session metadata.
 		// The durable identity owns the amount and day; release it only once.
 		day, size = held.Day, held.Size
+	}
+	if day == model.UploadReservationUnattributedDay {
+		return nil
 	}
 	id := userID + ":" + day
 	if err := tx.Model(&model.UserDailyUploadUsage{}).

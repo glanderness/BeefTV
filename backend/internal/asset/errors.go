@@ -13,6 +13,10 @@ func UploadInProgress() error {
 	return err
 }
 
+func UploadQuotaAttributionUncertain() error {
+	return kernel.NewAppError(http.StatusConflict, "未完成的上传无法确认今日用量，已停止自动恢复。可删除该未完成素材后重新上传；已计入的用量不会退回。")
+}
+
 func UploadConflict() error {
 	return kernel.NewAppError(http.StatusConflict, "上传幂等标识已用于其他文件")
 }

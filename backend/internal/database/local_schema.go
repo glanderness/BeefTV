@@ -183,7 +183,7 @@ func migrateUploadReservationWitness(tx *gorm.DB) error {
 	if err := tx.AutoMigrate(&model.UserUploadReservation{}); err != nil {
 		return fmt.Errorf("迁移上传预留恢复索引: %w", err)
 	}
-	return nil
+	return backfillUnattributedLegacyUploads(tx)
 }
 
 func migrateLocalCoreSchema(tx *gorm.DB) error {

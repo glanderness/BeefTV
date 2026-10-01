@@ -683,6 +683,231 @@ func TestSameKeyReuploadAfterDelete(t *testing.T) {
 	}
 }
 
+func TestV13CrashBeforeReserveMissingWitnessChargesOnce(t *testing.T) {
+	svc, repo, dataDir := newRepoQuotaDomain(t)
+	identity := "v13-crash-before-reserve"
+	uploadKey := NormalizedUploadKey([]string{identity})
+	pending := model.Resource{
+		ID: "res-v13-missing-witness", UserID: "user-1", Kind: "image", Status: model.ResourceStatusPending,
+		Provider: "local", ObjectKey: "users/user-1/image/v13-missing-witness.png", MimeType: "image/png", Size: 7,
+		UploadKey: uploadKey,
+	}
+	if err := repo.CreateResource(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewFileStore(dataDir).Write(pending.ObjectKey, bytes.NewReader([]byte("payload"))); err != nil {
+		t.Fatal(err)
+	}
+	day := time.Now().UTC().Format("2006-01-02")
+	usage, err := repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 0 {
+		t.Fatalf("before recover daily=%d err=%v", usage, err)
+	}
+	first, err := svc.RecoverOwned("user-1", identity, func() (RecoveredArtifact, error) {
+		t.Fatal("v13 leftover with bytes called restore")
+		return RecoveredArtifact{}, nil
+	})
+	if err != nil || first == nil || first.Status != model.ResourceStatusReady {
+		t.Fatalf("first recover = %#v err=%v", first, err)
+	}
+	usage, err = repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 7 {
+		t.Fatalf("after first daily=%d err=%v", usage, err)
+	}
+	second, err := svc.RecoverOwned("user-1", identity, func() (RecoveredArtifact, error) {
+		t.Fatal("READY replay called restore")
+		return RecoveredArtifact{}, nil
+	})
+	if err != nil || second == nil || second.ID != first.ID || second.Status != model.ResourceStatusReady {
+		t.Fatalf("second recover = %#v err=%v", second, err)
+	}
+	usage, err = repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 7 {
+		t.Fatalf("after second daily=%d err=%v", usage, err)
+	}
+}
+
+func TestUnattributedLegacyPendingDoesNotReserve(t *testing.T) {
+	svc, repo, dataDir := newRepoQuotaDomain(t)
+	identity := "legacy-unattributed"
+	uploadKey := NormalizedUploadKey([]string{identity})
+	pending := model.Resource{
+		ID: "res-legacy-unattributed", UserID: "user-1", Kind: "image", Status: model.ResourceStatusPending,
+		Provider: "local", ObjectKey: "users/user-1/image/legacy-unattributed.png", MimeType: "image/png", Size: 7,
+		UploadKey: uploadKey,
+	}
+	if err := repo.CreateResource(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewFileStore(dataDir).Write(pending.ObjectKey, bytes.NewReader([]byte("payload"))); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	day := now.UTC().Format("2006-01-02")
+	if err := repo.DB().Create(&model.UserDailyUploadUsage{
+		ID: "user-1:" + day, UserID: "user-1", Day: day, Bytes: 7, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DB().Create(&model.UserUploadReservation{
+		ID: "user-1:" + *uploadKey, UserID: "user-1", Identity: *uploadKey,
+		Day: model.UploadReservationUnattributedDay, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.RecoverOwned("user-1", identity, func() (RecoveredArtifact, error) {
+		t.Fatal("unattributed leftover called restore")
+		return RecoveredArtifact{}, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "无法确认今日用量") {
+		t.Fatalf("unattributed recover = %#v err=%v", got, err)
+	}
+	if got == nil || got.Status != model.ResourceStatusPending {
+		t.Fatalf("unattributed mutated %#v", got)
+	}
+	usage, err := repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 7 {
+		t.Fatalf("unattributed daily=%d err=%v", usage, err)
+	}
+}
+
+func TestUnattributedFailedSaveRetryAndRestartKeepMarker(t *testing.T) {
+	svc, repo, dataDir := newRepoQuotaDomain(t)
+	identity := "unattributed-retry"
+	uploadKey := NormalizedUploadKey([]string{identity})
+	failed := model.Resource{
+		ID: "res-unattributed-retry", UserID: "user-1", Kind: "image", Status: model.ResourceStatusFailed,
+		Provider: "local", ObjectKey: "users/user-1/image/unattributed-retry.png", MimeType: "image/png", Size: 7,
+		UploadKey: uploadKey, Error: "write failed",
+	}
+	if err := repo.CreateResource(&failed); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	day := now.UTC().Format("2006-01-02")
+	if err := repo.DB().Create(&model.UserDailyUploadUsage{
+		ID: "user-1:" + day, UserID: "user-1", Day: day, Bytes: 7, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DB().Create(&model.UserUploadReservation{
+		ID: "user-1:" + *uploadKey, UserID: "user-1", Identity: *uploadKey,
+		Day: model.UploadReservationUnattributedDay, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := svc.RetryOwned("user-1", failed.ID, "image", "image/png", 7, bytes.NewReader([]byte("payload")))
+	if err == nil || !strings.Contains(err.Error(), "无法确认今日用量") {
+		t.Fatalf("unattributed retry = %#v err=%v", got, err)
+	}
+	row, err := repo.UploadReservation("user-1", *uploadKey)
+	if err != nil || row == nil || !row.Unattributed() {
+		t.Fatalf("retry persistFailed cleared sentinel %#v err=%v", row, err)
+	}
+	latest, err := repo.Resource(failed.ID)
+	if err != nil || latest == nil || latest.Status != model.ResourceStatusFailed {
+		t.Fatalf("retry persistFailed status %#v err=%v", latest, err)
+	}
+	svc = restartDomain(t, repo, dataDir)
+	row, err = repo.UploadReservation("user-1", *uploadKey)
+	if err != nil || row == nil || !row.Unattributed() {
+		t.Fatalf("FAILED leftover restart cleared sentinel %#v err=%v", row, err)
+	}
+
+	claimed, err := repo.ClaimFailedResourceUpload("user-1", failed.ID)
+	if err != nil || !claimed {
+		t.Fatalf("claim claimed=%v err=%v", claimed, err)
+	}
+	row, err = repo.UploadReservation("user-1", *uploadKey)
+	if err != nil || row == nil || !row.Unattributed() {
+		t.Fatalf("claim cleared sentinel %#v err=%v", row, err)
+	}
+
+	for i := 0; i < 2; i++ {
+		svc = restartDomain(t, repo, dataDir)
+		row, err = repo.UploadReservation("user-1", *uploadKey)
+		if err != nil || row == nil || !row.Unattributed() {
+			t.Fatalf("restart %d cleared sentinel %#v err=%v", i, row, err)
+		}
+		usage, usageErr := repo.DailyUploadBytes("user-1", day)
+		if usageErr != nil || usage != 7 {
+			t.Fatalf("restart %d daily=%d err=%v", i, usage, usageErr)
+		}
+		got, err = svc.RetryOwned("user-1", failed.ID, "image", "image/png", 7, bytes.NewReader([]byte("payload")))
+		if err == nil || !strings.Contains(err.Error(), "无法确认今日用量") {
+			t.Fatalf("restart %d retry = %#v err=%v", i, got, err)
+		}
+	}
+}
+
+func TestUnattributedDeleteThenReuploadReserves(t *testing.T) {
+	svc, repo, _ := newRepoQuotaDomain(t)
+	identity := "unattributed-reupload"
+	uploadKey := NormalizedUploadKey([]string{identity})
+	pending := model.Resource{
+		ID: "res-unattributed-reupload", UserID: "user-1", Kind: "image", Status: model.ResourceStatusPending,
+		Provider: "local", ObjectKey: "users/user-1/image/unattributed-reupload.png", MimeType: "image/png", Size: 7,
+		UploadKey: uploadKey,
+	}
+	if err := repo.CreateResource(&pending); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	day := now.UTC().Format("2006-01-02")
+	if err := repo.DB().Create(&model.UserDailyUploadUsage{
+		ID: "user-1:" + day, UserID: "user-1", Day: day, Bytes: 7, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DB().Create(&model.UserUploadReservation{
+		ID: "user-1:" + *uploadKey, UserID: "user-1", Identity: *uploadKey,
+		Day: model.UploadReservationUnattributedDay, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteResource("user-1", pending.ID); err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.UploadFile("user-1", "a.png", 7, "image", 1, 1, 0, bytes.NewReader([]byte("payload")), identity)
+	if err != nil || second == nil || second.ID == pending.ID || second.Status != model.ResourceStatusReady {
+		t.Fatalf("reupload after unattributed delete = %#v err=%v", second, err)
+	}
+	usage, err := repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 14 {
+		t.Fatalf("reupload daily=%d err=%v", usage, err)
+	}
+}
+
+func TestV13PositiveWitnessSkipsReserve(t *testing.T) {
+	svc, repo, dataDir := newRepoQuotaDomain(t)
+	identity := "v13-positive-witness"
+	uploadKey := NormalizedUploadKey([]string{identity})
+	day := plantReservation(t, repo, "user-1", *uploadKey, 7)
+	pending := model.Resource{
+		ID: "res-v13-positive", UserID: "user-1", Kind: "image", Status: model.ResourceStatusPending,
+		Provider: "local", ObjectKey: "users/user-1/image/v13-positive.png", MimeType: "image/png", Size: 7,
+		UploadKey: uploadKey,
+	}
+	if err := repo.CreateResource(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewFileStore(dataDir).Write(pending.ObjectKey, bytes.NewReader([]byte("payload"))); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.RecoverOwned("user-1", identity, func() (RecoveredArtifact, error) {
+		t.Fatal("positive witness called restore")
+		return RecoveredArtifact{}, nil
+	})
+	if err != nil || got == nil || got.Status != model.ResourceStatusReady {
+		t.Fatalf("positive witness recover = %#v err=%v", got, err)
+	}
+	usage, err := repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 7 {
+		t.Fatalf("positive witness daily=%d err=%v", usage, err)
+	}
+}
+
 func TestPendingRestartRetainsWitness(t *testing.T) {
 	_, repo, dataDir := newRepoQuotaDomain(t)
 	uploadKey := NormalizedUploadKey([]string{"pending-keep"})
