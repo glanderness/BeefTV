@@ -14,9 +14,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// Workflows bootstraps the default production template when a project is created.
-// The workflow step machine itself stays outside this package. PrepareDefault
-// must not write; the project row and returned records share one transaction.
+// Workflows optionally supplies the default production seed when a project is created.
+// PrepareDefault must not write; the project row and returned records share one transaction.
+// The workflow step machine, asset version rules and production writes live on Service.
 type Workflows interface {
 	EnsureBuiltinTemplate() error
 	PrepareDefault(projectID string) (WorkflowSeed, error)
@@ -26,7 +26,8 @@ type Dependencies struct {
 	Workflows Workflows
 }
 
-// Service owns project identity, folders, units, revision and canvas membership.
+// Service owns project identity, folders, units, revision, canvas membership,
+// workflow steps, asset versions, characters and shots.
 type Service struct {
 	repo      *repository.Repository
 	workflows Workflows
@@ -57,6 +58,15 @@ func mapProjectWriteError(err error) error {
 	}
 	if errors.Is(err, repository.ErrProjectArchived) {
 		return kernel.BadAuthRequest("项目已归档，不能修改短剧生产数据")
+	}
+	if errors.Is(err, repository.ErrProjectUnitShotsChanged) {
+		return kernel.BadAuthRequest("本章分镜已发生变化，请刷新后重新确认")
+	}
+	if errors.Is(err, repository.ErrProjectAssetStillReferenced) {
+		return kernel.BadAuthRequest("素材仍被项目镜头引用，请先解除镜头用途")
+	}
+	if errors.Is(err, repository.ErrProjectAssetFolderNotEmpty) {
+		return kernel.BadAuthRequest("文件夹非空，请先移动其中的素材和子文件夹")
 	}
 	return err
 }
@@ -199,13 +209,7 @@ func (s *Service) MoveProjectToFolder(userID, projectID, folderID string) error 
 	if _, err := s.Owned(userID, projectID); err != nil {
 		return err
 	}
-	folderID = strings.TrimSpace(folderID)
-	if folderID != "" {
-		if _, err := s.repo.ProjectFolderForUser(userID, folderID); err != nil {
-			return err
-		}
-	}
-	return mapProjectWriteError(s.repo.MoveProjectAndBump(userID, projectID, folderID))
+	return mapProjectWriteError(s.repo.MoveProjectAndBump(userID, projectID, strings.TrimSpace(folderID)))
 }
 
 func (s *Service) DuplicateProject(userID, projectID string) (model.Project, error) {

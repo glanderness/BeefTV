@@ -1,6 +1,10 @@
 package project
 
-import "infinite-canvas/backend/internal/model"
+import (
+	"time"
+
+	"infinite-canvas/backend/internal/model"
+)
 
 type CreateProjectRequest struct {
 	Name              string `json:"name"`
@@ -132,8 +136,264 @@ type CanvasPage struct {
 	HasMore         bool                   `json:"hasMore"`
 }
 
-// Snapshot is the project-owned slice of a workbench read. Asset cards,
-// workflow instances and task summaries remain collaborator-owned.
+const (
+	AssetSourceUploaded = "uploaded"
+	AssetSourceCanvas   = "canvas"
+)
+
+type LinkProjectAssetRequest struct {
+	AssetID  string  `json:"assetId"`
+	Category string  `json:"category"`
+	FolderID *string `json:"folderId"`
+	Title    string  `json:"title"`
+	Source   string  `json:"source"`
+}
+
+type UpdateProjectAssetRequest struct {
+	Category *string `json:"category"`
+	FolderID *string `json:"folderId"`
+}
+
+type CreateAssetVersionRequest struct {
+	Prompt         string `json:"prompt"`
+	DefinitionJSON string `json:"definitionJson"`
+	Note           string `json:"note"`
+}
+
+type ProjectAssetFilter struct {
+	Category  string
+	MediaType string
+	Status    string
+	Usage     string
+}
+
+type ConfirmProjectAssetCandidateRequest struct {
+	AssetID string `json:"assetId"`
+}
+
+type CreateProjectAssetFolderRequest struct {
+	Name     string `json:"name"`
+	ParentID string `json:"parentId"`
+	Style    string `json:"style"`
+	Theme    string `json:"theme"`
+}
+
+type UpdateProjectAssetFolderRequest struct {
+	Name     *string `json:"name"`
+	ParentID *string `json:"parentId"`
+	Style    *string `json:"style"`
+	Theme    *string `json:"theme"`
+}
+
+type CreateProjectCharacterRequest struct {
+	Name       string         `json:"name"`
+	Definition map[string]any `json:"definition"`
+}
+
+type UpdateProjectCharacterRequest struct {
+	Name       string         `json:"name"`
+	Definition map[string]any `json:"definition"`
+}
+
+type CharacterRepresentationInput struct {
+	Role       string `json:"role"`
+	ResourceID string `json:"resourceId"`
+	Metadata   any    `json:"metadata"`
+}
+
+type ReplaceCharacterRepresentationsRequest struct {
+	Representations []CharacterRepresentationInput `json:"representations"`
+}
+
+type BindCharacterVoiceRequest struct {
+	VoiceProfileID   string `json:"voiceProfileId"`
+	SampleResourceID string `json:"sampleResourceId"`
+	VoiceName        string `json:"voiceName"`
+	Instructions     string `json:"instructions"`
+}
+
+type CharacterRepresentationSummary struct {
+	ID         string `json:"id"`
+	ResourceID string `json:"resourceId"`
+	MediaType  string `json:"mediaType"`
+	Role       string `json:"role"`
+}
+
+type VoiceProfileSummary struct {
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Provider         string   `json:"provider"`
+	VoiceKey         string   `json:"voiceKey"`
+	Language         string   `json:"language"`
+	Timbre           string   `json:"timbre"`
+	SampleResourceID string   `json:"sampleResourceId,omitempty"`
+	CompatibleModels []string `json:"compatibleModels"`
+	Status           string   `json:"status"`
+}
+
+type CharacterVoiceSummary struct {
+	Profile      VoiceProfileSummary `json:"profile"`
+	Instructions string              `json:"instructions"`
+}
+
+type CharacterCardSummary struct {
+	VersionID       string                           `json:"versionId"`
+	Version         int                              `json:"version"`
+	Definition      map[string]any                   `json:"definition"`
+	Representations []CharacterRepresentationSummary `json:"representations"`
+	Voice           *CharacterVoiceSummary           `json:"voice,omitempty"`
+	VisualStatus    string                           `json:"visualStatus"`
+	VoiceStatus     string                           `json:"voiceStatus"`
+}
+
+type AssetSummary struct {
+	ID               string                   `json:"id"`
+	Title            string                   `json:"title"`
+	MediaType        string                   `json:"mediaType"`
+	Category         model.AssetCategory      `json:"category"`
+	Status           model.AssetVersionStatus `json:"status"`
+	PrimaryVersionID string                   `json:"primaryVersionId,omitempty"`
+	VersionCount     int                      `json:"versionCount"`
+	Usages           []string                 `json:"usages"`
+	FolderID         string                   `json:"folderId,omitempty"`
+	Position         int                      `json:"position"`
+	StorageKey       string                   `json:"storageKey,omitempty"`
+	DurationMs       int64                    `json:"durationMs,omitempty"`
+	PreviewText      string                   `json:"previewText,omitempty"`
+	UpdatedAt        time.Time                `json:"updatedAt"`
+	Source           string                   `json:"source,omitempty"`
+	Character        *CharacterCardSummary    `json:"character,omitempty"`
+}
+
+type CharacterDetail struct {
+	Asset     AssetSummary         `json:"asset"`
+	Character CharacterCardSummary `json:"character"`
+}
+
+type CreateProjectShotRequest struct {
+	ID          string            `json:"id"`
+	UnitID      string            `json:"unitId"`
+	Title       string            `json:"title"`
+	Description string            `json:"description"`
+	Position    int               `json:"position"`
+	DurationMs  int64             `json:"durationMs"`
+	Status      string            `json:"status"`
+	Revision    ShotRevisionInput `json:"revision"`
+}
+
+type ShotRevisionInput struct {
+	PlotDescription string           `json:"plotDescription"`
+	Action          string           `json:"action"`
+	Dialogue        string           `json:"dialogue"`
+	ShotSize        string           `json:"shotSize"`
+	CameraAngle     string           `json:"cameraAngle"`
+	CameraMovement  string           `json:"cameraMovement"`
+	DurationMs      int64            `json:"durationMs"`
+	ImagePrompt     string           `json:"imagePrompt"`
+	VideoPrompt     string           `json:"videoPrompt"`
+	NegativePrompt  string           `json:"negativePrompt"`
+	ContinuityNotes string           `json:"continuityNotes"`
+	ActionBeats     []map[string]any `json:"actionBeats"`
+}
+
+type ReplaceProjectUnitShotsRequest struct {
+	Shots           []ReplaceProjectUnitShotInput `json:"shots"`
+	ExpectedShotIDs []string                      `json:"expectedShotIds"`
+}
+
+type ReplaceProjectUnitShotInput struct {
+	CreateProjectShotRequest
+	AssetVersionIDs []string `json:"assetVersionIds"`
+}
+
+type LinkShotAssetRequest struct {
+	AssetVersionID string `json:"assetVersionId"`
+	Role           string `json:"role"`
+}
+
+type AssetCandidateInput struct {
+	UnitID   string         `json:"unitId"`
+	ShotID   string         `json:"shotId"`
+	Name     string         `json:"name"`
+	Category string         `json:"category"`
+	Details  map[string]any `json:"details"`
+}
+
+type CreateAssetCandidatesRequest struct {
+	Candidates []AssetCandidateInput `json:"candidates"`
+	Source     string                `json:"source"`
+}
+
+type WorkflowDetail struct {
+	Instance model.WorkflowInstance       `json:"instance"`
+	Steps    []model.WorkflowStepInstance `json:"steps"`
+}
+
+type UpdateWorkflowStepRequest struct {
+	Status     string `json:"status"`
+	OutputJSON string `json:"outputJson"`
+	Error      string `json:"error"`
+}
+
+type RegisterTaskOutputRequest struct {
+	TaskID         string `json:"taskId"`
+	CanvasID       string `json:"canvasId"`
+	UnitID         string `json:"unitId"`
+	ShotID         string `json:"shotId"`
+	ShotRevisionID string `json:"shotRevisionId"`
+	ArtifactType   string `json:"artifactType"`
+	AssetVersionID string `json:"assetVersionId"`
+	ResourceID     string `json:"resourceId"`
+	MediaType      string `json:"mediaType"`
+	Role           string `json:"role"`
+	MetadataJSON   string `json:"metadataJson"`
+	OutputJSON     string `json:"outputJson"`
+}
+
+type ShotAssetReference struct {
+	model.ShotAssetReference
+	Asset             AssetSummary              `json:"asset"`
+	ReferencedVersion ShotAssetReferenceVersion `json:"referencedVersion"`
+}
+
+type ShotAssetReferenceVersion struct {
+	ID              string                           `json:"id"`
+	AssetID         string                           `json:"assetId"`
+	Version         int                              `json:"version"`
+	Representations []CharacterRepresentationSummary `json:"representations"`
+}
+
+type UnitWorkspace struct {
+	Unit            model.ProjectUnit             `json:"unit"`
+	Workflows       []WorkflowDetail              `json:"workflows"`
+	Shots           []model.Shot                  `json:"shots"`
+	ShotRevisions   []model.ShotRevision          `json:"shotRevisions"`
+	ShotArtifacts   []model.ShotArtifact          `json:"shotArtifacts"`
+	ShotReferences  []ShotAssetReference          `json:"shotReferences"`
+	AssetCandidates []model.ProjectAssetCandidate `json:"assetCandidates"`
+	Assets          []AssetSummary                `json:"assets"`
+}
+
+type AssetCandidatePage struct {
+	Candidates []model.ProjectAssetCandidate `json:"candidates"`
+	Page       int                           `json:"page"`
+	PageSize   int                           `json:"pageSize"`
+	Total      int64                         `json:"total"`
+	HasMore    bool                          `json:"hasMore"`
+}
+
+type AssetPage struct {
+	Assets         []AssetSummary   `json:"assets"`
+	CategoryCounts map[string]int64 `json:"categoryCounts"`
+	FolderCounts   map[string]int64 `json:"folderCounts"`
+	Page           int              `json:"page"`
+	PageSize       int              `json:"pageSize"`
+	Total          int64            `json:"total"`
+	HasMore        bool             `json:"hasMore"`
+}
+
+// Snapshot is the project-owned slice of a workbench read. Task summaries stay
+// with the generation adapter because they require TasksWithOptions.
 type Snapshot struct {
 	Project         model.Project                 `json:"project"`
 	Units           []model.ProjectUnit           `json:"units"`

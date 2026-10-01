@@ -52,8 +52,8 @@ func (s *Service) ImportProjectUnits(userID string, projectID string, req Import
 		}
 		units = append(units, unit)
 	}
-	if err := s.repo.ImportProjectUnits(projectID, units); err != nil {
-		return nil, err
+	if err := s.repo.ImportProjectUnitsActive(userID, projectID, units); err != nil {
+		return nil, mapProjectWriteError(err)
 	}
 	return units, nil
 }
@@ -86,7 +86,7 @@ func (s *Service) ReorderProjectUnits(userID string, projectID string, req Reord
 		seen[id] = struct{}{}
 		normalizedIDs = append(normalizedIDs, id)
 	}
-	return s.repo.ReorderProjectUnits(projectID, normalizedIDs)
+	return mapProjectWriteError(s.repo.ReorderProjectUnitsActive(userID, projectID, normalizedIDs))
 }
 
 func (s *Service) DeleteProjectUnit(userID string, projectID string, unitID string) error {
@@ -96,7 +96,7 @@ func (s *Service) DeleteProjectUnit(userID string, projectID string, unitID stri
 	if _, err := s.repo.ProjectUnit(projectID, unitID); err != nil {
 		return err
 	}
-	return s.repo.DeleteProjectUnit(projectID, unitID)
+	return mapProjectWriteError(s.repo.DeleteProjectUnitActive(userID, projectID, unitID))
 }
 
 func newProjectUnit(projectID string, req CreateProjectUnitRequest, position int) (model.ProjectUnit, error) {
@@ -124,7 +124,8 @@ func newProjectUnit(projectID string, req CreateProjectUnitRequest, position int
 }
 
 func (s *Service) UpdateProjectUnit(userID string, projectID string, unitID string, req UpdateProjectUnitRequest) (model.ProjectUnit, error) {
-	if _, err := s.Active(userID, projectID); err != nil {
+	project, err := s.Active(userID, projectID)
+	if err != nil {
 		return model.ProjectUnit{}, err
 	}
 	unit, err := s.repo.ProjectUnit(projectID, unitID)
@@ -144,8 +145,8 @@ func (s *Service) UpdateProjectUnit(userID string, projectID string, unitID stri
 		unit.Status = status
 	}
 	unit.UpdatedAt = time.Now()
-	if err := s.repo.UpdateProjectUnit(unit, sourceChanged); err != nil {
-		return model.ProjectUnit{}, err
+	if err := s.repo.UpdateProjectUnitActive(userID, project.Revision, unit, sourceChanged); err != nil {
+		return model.ProjectUnit{}, mapProjectWriteError(err)
 	}
 	return *unit, nil
 }
