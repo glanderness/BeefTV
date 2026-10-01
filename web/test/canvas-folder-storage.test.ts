@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import localforage from "localforage";
 
 import * as runtimeMode from "@/lib/runtime-mode";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
@@ -10,6 +11,7 @@ import {
     deleteCanvasLibraryFolder,
     hydrateCanvasLibraryFolders,
     peekCanvasFolderPendingForTests,
+    peekCanvasFolderPendingHighWaterForTests,
     persistCanvasFolderCover,
     renameCanvasLibraryFolder,
     replaceCanvasFolderPendingStoreForTests,
@@ -18,7 +20,17 @@ import {
 } from "@/lib/canvas/canvas-folder-storage";
 import { scopedStorageKey } from "@/lib/user-scope";
 import { apiClient } from "@/services/api/request";
-import { useCanvasStore, type CanvasFolder } from "@/stores/canvas/use-canvas-store";
+import { resetCanvasOperationJournalMemory } from "@/services/canvas-operation-journal";
+import { resetLocalCanvasBackendSaveState } from "@/services/local-workspace-repository";
+import {
+    canvasExternalRevisionConflict,
+    clearCanvasDocumentBase,
+    clearCanvasExternalRevisionConflict,
+    recordCanvasDocumentBase,
+    useCanvasStore,
+    type CanvasFolder,
+    type CanvasProject,
+} from "@/stores/canvas/use-canvas-store";
 
 function deferred<T = void>() {
     let resolve!: (value: T | PromiseLike<T>) => void;
@@ -78,6 +90,32 @@ function record(id: string, name: string, extras: Partial<CanvasFolder> = {}): C
     };
 }
 
+function canvasProject(id: string, folderId: string | undefined, revision: number, patch: Partial<CanvasProject> = {}): CanvasProject {
+    return {
+        id,
+        folderId,
+        revision,
+        title: "画布",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        nodes: [{ id: "n1", type: "image", title: "镜头1", position: { x: 0, y: 0 }, width: 320, height: 220, metadata: { prompt: "基线" } }],
+        connections: [],
+        chatSessions: [],
+        activeChatId: null,
+        backgroundMode: "grid",
+        showImageInfo: false,
+        viewport: { x: 0, y: 0, k: 1 },
+        directorScenes: [],
+        ...patch,
+    } as CanvasProject;
+}
+
+function stubJournalStorage() {
+    spies.push(spyOn(localforage, "getItem").mockResolvedValue(null as never));
+    spies.push(spyOn(localforage, "setItem").mockImplementation(async (_key, value) => value as never));
+    spies.push(spyOn(localforage, "removeItem").mockResolvedValue(undefined as never));
+}
+
 async function withAdapter<T>(adapter: NonNullable<typeof apiClient.defaults.adapter>, run: () => Promise<T>) {
     const previous = apiClient.defaults.adapter;
     apiClient.defaults.adapter = adapter;
@@ -120,7 +158,13 @@ function installWindow() {
 afterEach(() => {
     while (spies.length) spies.pop()?.mockRestore();
     resetCanvasFolderStorageForTests();
-    useCanvasStore.setState({ folders: [] });
+    resetCanvasOperationJournalMemory();
+    resetLocalCanvasBackendSaveState();
+    clearCanvasDocumentBase("c1");
+    clearCanvasDocumentBase("c2");
+    clearCanvasExternalRevisionConflict(getActiveUserScope(), "c1");
+    clearCanvasExternalRevisionConflict(getActiveUserScope(), "c2");
+    useCanvasStore.setState({ folders: [], projects: [] });
     memory.clear();
     pendingValues.clear();
     setCanvasFolderDigestDelayForTests();
@@ -420,6 +464,157 @@ describe("canvas folder storage", () => {
             expect(folder?.name).toBe("再改");
             expect(folder?.unsaved).toBe(true);
             expect((await peekCanvasFolderPendingForTests("owner-a"))["folder-1"]?.blockedReimport).toBe(true);
+        } finally {
+            restoreWindow();
+            restore();
+        }
+    });
+
+    test("empty or wrong-id PUT keeps the draft and is not success", async () => {
+        const restore = switchScope("owner-a");
+        const restoreWindow = installWindow();
+        desktopBackend();
+        installPendingStore();
+        useCanvasStore.setState({ folders: [record("folder-1", "原名")], hydrated: true });
+        try {
+            await withAdapter(async (config) => {
+                if (String(config.method).toLowerCase() === "put") return envelope({});
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                await expect(renameCanvasLibraryFolder("folder-1", "空回执", captureUserScope())).rejects.toThrow(/文件夹没有保存成功/);
+            });
+            const emptyReceipt = useCanvasStore.getState().folders.find((item) => item.id === "folder-1");
+            expect(emptyReceipt?.name).toBe("空回执");
+            expect(emptyReceipt?.unsaved).toBe(true);
+            expect((await peekCanvasFolderPendingForTests("owner-a"))["folder-1"]?.kind).toBe("upsert");
+
+            await withAdapter(async (config) => {
+                if (String(config.method).toLowerCase() === "put") return envelope({ folder: record("other-id", "错身份") });
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                await expect(renameCanvasLibraryFolder("folder-1", "错身份", captureUserScope())).rejects.toThrow(/文件夹没有保存成功/);
+            });
+            const wrongId = useCanvasStore.getState().folders.find((item) => item.id === "folder-1");
+            expect(wrongId?.name).toBe("错身份");
+            expect(wrongId?.unsaved).toBe(true);
+            expect((await peekCanvasFolderPendingForTests("owner-a"))["folder-1"]?.folder?.name).toBe("错身份");
+        } finally {
+            restoreWindow();
+            restore();
+        }
+    });
+
+    test("folder generation high water survives ack and reload", async () => {
+        const restore = switchScope("owner-a");
+        const restoreWindow = installWindow();
+        desktopBackend();
+        installPendingStore();
+        useCanvasStore.setState({ folders: [record("folder-1", "原名")], hydrated: true });
+        const generations: number[] = [];
+        try {
+            await withAdapter(async (config) => {
+                if (String(config.method).toLowerCase() === "put") {
+                    const pending = await peekCanvasFolderPendingForTests("owner-a");
+                    generations.push(pending["folder-1"]?.generation || 0);
+                    const body = requestBody(config) as { folder: { name: string } };
+                    return envelope({ folder: record("folder-1", body.folder.name, { updatedAt: "2026-10-02T00:00:00.000Z" }) });
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                await renameCanvasLibraryFolder("folder-1", "第一次", captureUserScope());
+                expect(useCanvasStore.getState().folders.find((folder) => folder.id === "folder-1")?.unsaved).toBeUndefined();
+                expect((await peekCanvasFolderPendingForTests("owner-a"))["folder-1"]).toBeUndefined();
+                expect((await peekCanvasFolderPendingHighWaterForTests("owner-a"))["folder-1"]).toBeGreaterThanOrEqual(1);
+
+                resetCanvasFolderStorageForTests();
+                installPendingStore();
+                await renameCanvasLibraryFolder("folder-1", "第二次", captureUserScope());
+            });
+            expect(generations).toEqual([1, 2]);
+            expect((await peekCanvasFolderPendingHighWaterForTests("owner-a"))["folder-1"]).toBeGreaterThanOrEqual(2);
+            expect(useCanvasStore.getState().folders.find((folder) => folder.id === "folder-1")?.name).toBe("第二次");
+            expect(useCanvasStore.getState().folders.find((folder) => folder.id === "folder-1")?.unsaved).toBeUndefined();
+        } finally {
+            restoreWindow();
+            restore();
+        }
+    });
+
+    test("folder delete applies canonical canvas receipt and keeps a newer local edit", async () => {
+        const restore = switchScope("owner-a");
+        const restoreWindow = installWindow();
+        desktopBackend();
+        installPendingStore();
+        stubJournalStorage();
+        const clean = canvasProject("c1", "folder-1", 1);
+        const unrelated = canvasProject("c2", "other-folder", 3, { title: "别的画布", nodes: [{ id: "n2", type: "image", title: "别的镜头", position: { x: 1, y: 1 }, width: 320, height: 220, metadata: { prompt: "别的" } }] });
+        useCanvasStore.setState({
+            folders: [record("folder-1", "待删")],
+            projects: [clean, unrelated],
+            hydrated: true,
+        });
+        recordCanvasDocumentBase(clean, "owner-a");
+        recordCanvasDocumentBase(unrelated, "owner-a");
+        const receipt = canvasProject("c1", undefined, 2, { updatedAt: "2026-10-02T00:00:00.000Z" });
+        try {
+            await withAdapter(async (config) => {
+                if (String(config.method).toLowerCase() === "delete" && String(config.url).includes("/canvas-folders/folder-1")) {
+                    return envelope({ id: "folder-1" });
+                }
+                if (String(config.method).toLowerCase() === "get" && String(config.url).includes("/canvas-projects/c1")) {
+                    return envelope({ project: receipt });
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                await deleteCanvasLibraryFolder("folder-1", captureUserScope());
+            });
+            const applied = useCanvasStore.getState().projects.find((project) => project.id === "c1");
+            expect(applied?.folderId).toBeUndefined();
+            expect(applied?.revision).toBe(2);
+            expect(applied?.nodes).toEqual(receipt.nodes);
+            expect(useCanvasStore.getState().projects.find((project) => project.id === "c2")?.folderId).toBe("other-folder");
+            expect(useCanvasStore.getState().folders.some((folder) => folder.id === "folder-1")).toBe(false);
+        } finally {
+            restoreWindow();
+            restore();
+        }
+    });
+
+    test("folder delete keeps a newer unsaved canvas edit and records the remote receipt", async () => {
+        const restore = switchScope("owner-a");
+        const restoreWindow = installWindow();
+        desktopBackend();
+        installPendingStore();
+        stubJournalStorage();
+        const baseline = canvasProject("c1", "folder-1", 1);
+        const localNodes = [{ id: "n-local", type: "image" as const, title: "用户刚改", position: { x: 8, y: 8 }, width: 320, height: 220, metadata: { prompt: "未保存" } }];
+        const live = { ...baseline, nodes: localNodes };
+        useCanvasStore.setState({
+            folders: [record("folder-1", "待删")],
+            projects: [live],
+            hydrated: true,
+        });
+        recordCanvasDocumentBase(baseline, "owner-a");
+        const receipt = canvasProject("c1", undefined, 4, {
+            nodes: [{ id: "n-remote", type: "image", title: "服务端改过", position: { x: 0, y: 0 }, width: 320, height: 220, metadata: { prompt: "远端" } }],
+        });
+        try {
+            await withAdapter(async (config) => {
+                if (String(config.method).toLowerCase() === "delete" && String(config.url).includes("/canvas-folders/folder-1")) {
+                    return envelope({ id: "folder-1" });
+                }
+                if (String(config.method).toLowerCase() === "get" && String(config.url).includes("/canvas-projects/c1")) {
+                    return envelope({ project: receipt });
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                await deleteCanvasLibraryFolder("folder-1", captureUserScope());
+            });
+            const kept = useCanvasStore.getState().projects.find((project) => project.id === "c1");
+            expect(kept?.nodes).toEqual(localNodes);
+            expect(kept?.folderId).toBe("folder-1");
+            expect(canvasExternalRevisionConflict("owner-a", "c1")?.remoteRevision).toBe(4);
+            expect(canvasExternalRevisionConflict("owner-a", "c1")?.candidate.folderId).toBeUndefined();
         } finally {
             restoreWindow();
             restore();

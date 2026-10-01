@@ -823,8 +823,8 @@ export async function readLocalCanvasProjectFromBackend(id: string, expectedScop
     return response.project;
 }
 
-export async function openLocalCanvasProjectFromBackend(id: string) {
-    const expected = captureUserScope();
+export async function openLocalCanvasProjectFromBackend(id: string, expectedScope?: CapturedUserScope) {
+    const expected = expectedScope ?? captureUserScope();
     const scope = expected.userScope;
     const existed = Boolean(openLocalCanvasProject(id));
     try {
@@ -862,8 +862,8 @@ export async function openLocalCanvasProjectFromBackend(id: string) {
  * 「是否有未确认编辑」在 GET 返回之后、应用之前同步重算一次：等待网络期间用户
  * 仍可能继续编辑，用请求发出时的判断会漏掉这些新编辑。
  */
-export async function refreshLocalCanvasProjectIfChanged(id: string) {
-    const expected = captureUserScope();
+export async function refreshLocalCanvasProjectIfChanged(id: string, expectedScope?: CapturedUserScope) {
+    const expected = expectedScope ?? captureUserScope();
     const scope = expected.userScope;
     const existed = Boolean(openLocalCanvasProject(id));
     try {
