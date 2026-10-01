@@ -113,7 +113,7 @@ func TestBeefAPIPrefersHTTPSResourceURLWhenPublicBaseConfigured(t *testing.T) {
 		Config: providerConfig{
 			BaseURL: "https://enterprise.beefapi.com", InterfaceType: string(model.ChannelInterfaceNewAPIVideo), Model: "seedance-2.5",
 		},
-		ReferenceAudios: []providerMedia{{ID: "audio-1", StorageKey: "resource:beefapi-https-audio", MimeType: "audio/mpeg", DurationMs: 3000}},
+		ReferenceAudios: []providerMedia{{ID: "audio-1", StorageKey: "resource:beefapi-https-audio", URL: "https://example.com/stale-reference.mp3", DataURL: "data:audio/mpeg;base64,c3RhbGU=", MimeType: "audio/mpeg", DurationMs: 3000}},
 		Metadata:        map[string]interface{}{"videoEditOperation": "audio_to_video"},
 	}
 	if err := svc.hydrateGenerationMedia("user-1", &input, providerMediaHydrationPolicyFor(context.Background(), input)); err != nil {

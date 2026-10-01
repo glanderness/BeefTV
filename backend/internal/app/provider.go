@@ -854,6 +854,8 @@ func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, poli
 		return errors.New("本地工作区检测到旧的远程素材记录，请重新导入到本地资源目录")
 	}
 	if policy.keepLocal {
+		media.URL = ""
+		media.DataURL = ""
 		media.MimeType = firstNonEmpty(media.MimeType, resource.MimeType)
 		media.Bytes = resource.Size
 		media.Width = resource.Width
