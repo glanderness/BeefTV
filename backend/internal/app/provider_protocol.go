@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/protocol"
 
 	"github.com/google/uuid"
@@ -953,6 +954,9 @@ func protocolMediaBytesOnce(ctx context.Context, config providerConfig, referenc
 func retryableProtocolMediaDownload(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
+	}
+	if outbound.IsConnectionInterrupted(err) {
+		return true
 	}
 	var networkError net.Error
 	if errors.As(err, &networkError) && (networkError.Timeout() || networkError.Temporary()) {

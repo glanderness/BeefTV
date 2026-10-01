@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -66,6 +67,47 @@ func TestVideoRecoverySubmissionClassification(t *testing.T) {
 		if !errors.As(uncertainVideoSubmission(context.Background(), err), &unknown) {
 			t.Fatalf("lost receipt not protected: %v", err)
 		}
+	}
+}
+
+func TestVideoRecoverySocketResetNeverResubmits(t *testing.T) {
+	allowLoopbackProviderTest(t)
+	creates, polls, downloads := 0, 0, 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			creates++
+			_, _ = io.WriteString(w, `{"code":"success","data":{"task_id":"original-paid-task","status":"IN_PROGRESS"}}`)
+			return
+		}
+		if r.URL.Path == "/result.mp4" {
+			downloads++
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write([]byte("test-video"))
+			return
+		}
+		polls++
+		if polls == 1 {
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			// Abort TCP with RST: on Windows the client receives WSAECONNRESET.
+			_ = conn.(*net.TCPConn).SetLinger(0)
+			_ = conn.Close()
+			return
+		}
+		if r.URL.Path != "/v1/video/generations/original-paid-task" {
+			t.Errorf("unexpected task query: %s", r.URL.Path)
+		}
+		_, _ = fmt.Fprintf(w, `{"code":"success","data":{"task_id":"original-paid-task","status":"SUCCESS","result_url":%q}}`, server.URL+"/result.mp4")
+	}))
+	defer server.Close()
+	input := canvasGenerationInput{Mode: "video", Prompt: "test", Config: providerConfig{BaseURL: server.URL, Model: "seedance-2.0-mini", InterfaceType: "newapi-channel-2"}}
+	result, err := runProtocolAdapterTaskWithPolicy(context.Background(), input, recoveryTestAdapter(t), fastVideoPollPolicy())
+	if err != nil || result == nil || creates != 1 || polls != 2 || downloads != 1 {
+		t.Fatalf("creates=%d polls=%d downloads=%d result=%v err=%v", creates, polls, downloads, result, err)
 	}
 }
 

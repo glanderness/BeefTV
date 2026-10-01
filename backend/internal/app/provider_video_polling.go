@@ -9,8 +9,9 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"syscall"
 	"time"
+
+	"infinite-canvas/backend/internal/outbound"
 )
 
 const defaultVideoPollInterval = 30 * time.Second
@@ -192,7 +193,7 @@ func retryableVideoPollError(ctx context.Context, err error) (retry bool, notFou
 	if isTransientResponseDecodeError(err) {
 		return true, false
 	}
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.ErrClosedPipe) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.ErrClosedPipe) || outbound.IsConnectionInterrupted(err) {
 		return true, false
 	}
 	if errors.Is(err, context.DeadlineExceeded) {

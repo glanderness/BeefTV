@@ -9,6 +9,12 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.18
+
+- Continue polling the original video task after Windows socket resets or connection aborts instead of failing immediately.
+- Retry interrupted media downloads without submitting a new paid generation, while preserving cancellation and retry limits.
+- Explain Windows network disconnects clearly in saved task errors and include native Windows recovery regression checks in desktop releases.
+
 ## v1.6.17
 
 - Restore the audio toggle for BeefAPI Seedance models so silent video requests explicitly disable audio.
