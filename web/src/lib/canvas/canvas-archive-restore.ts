@@ -125,14 +125,14 @@ export function createCanvasArchiveRestoreHost(overrides: Partial<CanvasArchiveR
     const usesCanonicalBackend = overrides.usesCanonicalBackend ?? !usesBrowserLocalResourceStore();
     const createdAssets = new Set<string>();
     return {
-        createFolder: (name) => createCanvasLibraryFolder(name),
-        deleteFolder: (id) => deleteCanvasLibraryFolder(id),
+        createFolder: (name) => createCanvasLibraryFolder(name, scope),
+        deleteFolder: (id) => deleteCanvasLibraryFolder(id, scope),
         restoreFolderCover: async (id, cover) => {
             const bytes = new Uint8Array(await cover.arrayBuffer());
             assertUserScope(scope);
             let binary = "";
             for (let offset = 0; offset < bytes.length; offset += 8192) binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
-            await persistCanvasFolderCover(id, `data:${cover.type || "image/png"};base64,${btoa(binary)}`);
+            await persistCanvasFolderCover(id, `data:${cover.type || "image/png"};base64,${btoa(binary)}`, scope);
         },
         importProject: (project, workspaceProjectId) => store().importProject(project, workspaceProjectId),
         updateProject: (id, patch) => store().updateProject(id, patch),
@@ -191,11 +191,16 @@ export function createCanvasArchiveRestoreHost(overrides: Partial<CanvasArchiveR
         bindMediaAsset: async (options) => {
             const result = await ensureCanvasNodeAsset({ ...options, source: "canvas-upload", expectedScope: scope });
             if (result.created) createdAssets.add(result.assetId);
+            if (!result.confirmed) throw new Error("素材文件尚未保存到工作区，导入未完成");
             return result.assetId;
         },
-        saveDrawing: saveCanvasDrawing,
+        saveDrawing: (projectId, drawingId, engine, snapshot, previous, preview, render) =>
+            saveCanvasDrawing(projectId, drawingId, engine, snapshot, previous, preview, render, scope),
         loadDrawing: async (projectId, drawingId) => {
-            const saved = await loadCanvasDrawing(projectId, drawingId);
+            const saved = await loadCanvasDrawing(projectId, drawingId, scope);
+            if (usesCanonicalBackend && saved && saved.origin !== "canonical") {
+                throw new Error("画板尚未保存到工作区，导入未完成");
+            }
             return saved ? { drawingId, revision: saved.revision, snapshot: saved.snapshot, previewResourceId: saved.previewResourceId, renderResourceId: saved.renderResourceId } : null;
         },
         ...overrides,

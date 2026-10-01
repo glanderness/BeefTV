@@ -125,7 +125,19 @@ test("automatic canvas creation failure leaves the opening screen and shows a re
         const page = await context.newPage();
         const pageErrors: string[] = [];
         const requests: string[] = [];
+        const consoleErrors: string[] = [];
+        await page.addInitScript(() => {
+            const seen: string[] = [];
+            Object.assign(window, { creationMessages: seen });
+            new MutationObserver(() => {
+                for (const node of document.querySelectorAll(".ant-message-notice-content")) {
+                    const text = node.textContent || "";
+                    if (text && !seen.includes(text)) seen.push(text);
+                }
+            }).observe(document, { childList: true, subtree: true });
+        });
         page.on("pageerror", (error) => pageErrors.push(error.message));
+        page.on("console", (entry) => { if (entry.type() === "error") consoleErrors.push(entry.text()); });
         page.on("request", (request) => { if (request.url().includes("/api/")) requests.push(`${request.method()} ${request.url()}`); });
         await page.route("**/api/ops/**", (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: 503, msg: "测试保存失败", reason: "storage_unavailable" }) }));
         await page.route("**/api/canvas-projects/*", (route) => route.request().method() === "PUT"
@@ -135,7 +147,7 @@ test("automatic canvas creation failure leaves the opening screen and shows a re
         url.hostname = "127.0.0.1";
         url.search = "?new=1";
         await page.goto(url.toString());
-        await page.getByText("测试保存失败", { exact: true }).waitFor({ timeout: 5000 }).catch(async () => { throw new Error(JSON.stringify({ text: await page.locator("body").innerText(), requests, pageErrors })); });
+        await page.getByText("测试保存失败", { exact: true }).waitFor({ timeout: 5000 }).catch(async () => { throw new Error(JSON.stringify({ text: await page.locator("body").innerText(), requests, pageErrors, consoleErrors, messages: await page.evaluate(() => (window as any).creationMessages) })); });
         expect(await page.getByText("正在打开画布...", { exact: true }).count()).toBe(0);
         expect(await page.getByRole("button", { name: "开始创作", exact: true }).count()).toBe(1);
         expect(pageErrors).toEqual([]);

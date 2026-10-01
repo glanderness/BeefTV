@@ -49,9 +49,9 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
                 const drawingId = node.metadata?.drawingId;
                 if (!drawingId) return null;
                 const [saved, preview, render] = await Promise.all([
-                    loadCanvasDrawing(project.id, drawingId),
-                    loadCanvasDrawingPreview(project.id, drawingId),
-                    loadCanvasDrawingRender(project.id, drawingId),
+                    loadCanvasDrawing(project.id, drawingId, scope),
+                    loadCanvasDrawingPreview(project.id, drawingId, scope),
+                    loadCanvasDrawingRender(project.id, drawingId, scope),
                 ]);
                 if (!saved) {
                     missingFiles.push({ owner: project.title || project.id, reference: `画板 ${node.title || drawingId}` });
