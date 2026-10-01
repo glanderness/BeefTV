@@ -220,6 +220,37 @@ func TestNilServiceAnalyticsRecordsHTTPEvidenceAndKeepsImageFailClosed(t *testin
 	}
 }
 
+func TestControlPlaneEvidenceDoesNotRestoreAccounting(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-Id", "control-plane")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(server.Close)
+	// An unrelated resource port must never become an accounting authority.
+	// Its deliberately unconfigured Service would panic if used for API logging.
+	service := &Service{}
+	ctx := generation.WithRuntime(context.Background(), generation.Runtime{
+		Resources: appResourcePort{service: service},
+		Receipts:  appReceiptPort{service: service},
+		Call:      generation.CallMeta{UserID: "user", ChannelID: "generation-channel"},
+	})
+	ctx = generation.WithoutCallAccounting(ctx)
+	ctx, recorder := withTaskRequestEvidence(ctx)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/assets", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]interface{}
+	if err := doJSON(req, &payload); err != nil {
+		t.Fatal(err)
+	}
+	d := recorder.snapshot(true)
+	if len(d.Requests) != 1 || d.Requests[0].RequestID != "control-plane" || !d.Requests[0].Dispatched {
+		t.Fatalf("control-plane evidence %+v", d)
+	}
+}
+
 func TestHTTPEvidenceStaysOnBoundRecorder(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

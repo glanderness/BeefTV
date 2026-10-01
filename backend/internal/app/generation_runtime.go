@@ -309,49 +309,11 @@ func bindRequestReceipts(ctx context.Context) context.Context {
 			runtime.Call = generationCallMeta(metadata)
 		}
 	}
-	runtime.Receipts = appReceiptPort{service: boundRuntimeService(runtime)}
+	// Missing receipts may be intentional (WithoutCallAccounting). Restore only
+	// the context diagnostic recorder; never recover accounting authority from
+	// unrelated ports. Normal task/admin entrypoints bind their Service explicitly.
+	runtime.Receipts = appReceiptPort{}
 	return generation.WithRuntime(ctx, runtime)
-}
-
-func boundRuntimeService(runtime generation.Runtime) *Service {
-	ports := []any{runtime.Receipts, runtime.Images, runtime.Config, runtime.Prompt, runtime.Style, runtime.Resources, runtime.Limits, runtime.Workflow}
-	for _, port := range ports {
-		switch p := port.(type) {
-		case appReceiptPort:
-			if p.service != nil {
-				return p.service
-			}
-		case appImagePort:
-			if p.service != nil {
-				return p.service
-			}
-		case appConfigPort:
-			if p.service != nil {
-				return p.service
-			}
-		case appPromptPort:
-			if p.service != nil {
-				return p.service
-			}
-		case appStylePort:
-			if p.service != nil {
-				return p.service
-			}
-		case appResourcePort:
-			if p.service != nil {
-				return p.service
-			}
-		case appLimitsPort:
-			if p.service != nil {
-				return p.service
-			}
-		case appWorkflowPort:
-			if p.service != nil {
-				return p.service
-			}
-		}
-	}
-	return nil
 }
 
 func generationCallMeta(metadata providerAnalyticsContext) generation.CallMeta {
