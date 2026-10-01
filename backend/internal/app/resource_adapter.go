@@ -81,7 +81,7 @@ func (l resourceLifecycle) AfterResourceReady(resource *model.Resource) {
 	if l.svc == nil {
 		return
 	}
-	l.svc.maybeStartPlaybackTranscode(resource)
+	l.svc.playbackRuntime().MaybeStart(resource)
 }
 
 func (l resourceLifecycle) AppearanceReferencedIDs(resourceIDs []string) map[string]struct{} {

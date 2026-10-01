@@ -135,6 +135,21 @@ func ProbeGeneratedVideoMedia(data []byte) (width int, height int, durationMs in
 	return 0, 0, 0
 }
 
+// FirstPayload returns the first box payload of type want.
+func FirstPayload(data []byte, pos, end int, want string) []byte {
+	return firstMP4Payload(data, pos, end, want)
+}
+
+// Payloads returns every top-level box payload of type want.
+func Payloads(data []byte, want string) [][]byte {
+	return mp4Payloads(data, want)
+}
+
+// TrackHandler returns the mdia/hdlr handler type of a trak payload.
+func TrackHandler(trak []byte) string {
+	return trakHandlerType(trak)
+}
+
 func trakHandlerType(trak []byte) string {
 	for _, mdia := range mp4Payloads(trak, "mdia") {
 		if hdlr := firstMP4Payload(mdia, 0, len(mdia), "hdlr"); len(hdlr) >= 12 {
