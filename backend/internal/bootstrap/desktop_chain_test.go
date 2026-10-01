@@ -382,7 +382,7 @@ func TestDesktopProfileStartupChain(t *testing.T) {
 }
 
 func TestBundledAgentHostCommandForAppLayout(t *testing.T) {
-	// 打包布局寻址由 handler 包负责；这里只保证 bootstrap 侧不引入别的路径假设。
+	// 打包布局寻址由 assistantruntime 包负责；这里只保证 bootstrap 侧不引入别的路径假设。
 	workspaceRoot := filepath.Clean(filepath.Join("..", "..", ".."))
 	if _, err := os.Stat(filepath.Join(workspaceRoot, "agent-host", "run-agent-host.sh")); err != nil {
 		t.Skipf("随包启动器不存在: %v", err)

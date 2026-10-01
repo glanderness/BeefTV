@@ -5,6 +5,7 @@ import (
 
 	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/assistantruntime"
 
 	"github.com/gin-gonic/gin"
 )
@@ -24,7 +25,10 @@ func RegisterDesktopCanvasAPI(api *gin.RouterGroup, svc *app.Service) {
 
 func defaultRuntimeDependencies(svc *app.Service) RuntimeDependencies {
 	adapter := newServiceRuntimeAdapter(svc)
-	return RuntimeDependencies{RequestCoordinator: adapter, ProviderConfig: adapter, Assets: adapter, Projects: adapter, Tasks: adapter, Generation: adapter}
+	return RuntimeDependencies{
+		RequestCoordinator: adapter, ProviderConfig: adapter, Assets: adapter, Projects: adapter, Tasks: adapter, Generation: adapter,
+		AssistantHost: assistantruntime.New(assistantruntime.OptionsFromService(svc)),
+	}
 }
 
 func RegisterDesktopCanvasAPIWithDependencies(api *gin.RouterGroup, svc *app.Service, dependencies RuntimeDependencies) {
@@ -35,6 +39,9 @@ func RegisterDesktopCanvasAPIWithDependencies(api *gin.RouterGroup, svc *app.Ser
 // local composition root free of runtime profile branches lets the Go linker
 // discard hosted handlers and their SaaS-only service methods from BeefTV.
 func registerDesktopCanvasAPI(api *gin.RouterGroup, svc *app.Service, dependencies RuntimeDependencies) {
+	if dependencies.AssistantHost == nil {
+		dependencies.AssistantHost = assistantruntime.New(assistantruntime.OptionsFromService(svc))
+	}
 	api.Use(RuntimeDependenciesMiddleware(dependencies))
 	RegisterOpenAPIRoutes(api)
 	RegisterWorkspaceRoutes(api, svc)
@@ -65,7 +72,7 @@ func registerDesktopCanvasAPI(api *gin.RouterGroup, svc *app.Service, dependenci
 	RegisterAgentClientRoutes(api, svc, clients, dependencies.DesktopTrust)
 	RegisterAgentProxyRoutes(api, svc, clients, uiSessions)
 	// 宿主生命周期：配置当前文本模型与启动命令，显式启停；未配置时返回明确未就绪。
-	RegisterAgentHostLifecycleRoutes(api, svc)
+	RegisterAgentHostLifecycleRoutes(api, svc, dependencies.AssistantHost)
 	RegisterChunkedUploadRoutes(api, svc, false)
 	RegisterDiagnosticsRoutes(api, svc)
 	RegisterPluginRoutes(api, svc, false)

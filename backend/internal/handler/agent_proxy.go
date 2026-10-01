@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,12 +19,9 @@ import (
 
 	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/assistantruntime"
 	httptransport "infinite-canvas/backend/internal/transport/http"
 )
-
-// agentHostTokenPath 是内置 agent-host 的宿主凭据：只由后端读取并注入到宿主请求，
-// 页面与浏览器永不接触该凭据（也不接触模型 key 与 owner 凭据）。
-const agentHostTokenPath = "agent_host_token"
 
 // agentProxyMaxBody 限制转发体积；解析失败或超限都按真实失败返回。
 const agentProxyMaxBody = 64 << 10
@@ -54,17 +50,7 @@ func agentHostClient(timeout time.Duration) *http.Client {
 }
 
 func readAgentHostToken(dataDir string) string {
-	if value := strings.TrimSpace(os.Getenv("BEEFTV_AGENT_HOST_TOKEN")); value != "" {
-		return value
-	}
-	if dataDir == "" {
-		return ""
-	}
-	raw, err := os.ReadFile(filepath.Join(dataDir, agentHostTokenPath))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(raw))
+	return assistantruntime.ReadHostToken(dataDir)
 }
 
 // hostHealth 是宿主 /health 的可公开事实（不含凭据）。
@@ -156,7 +142,8 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 	}
 
 	status := func(c *gin.Context) {
-		provider, reason := resolveAssistantProvider(svc)
+		host := requestAssistantHost(c, svc)
+		provider, reason := host.ResolveProvider()
 		if reason != "" {
 			unavailable(c, reason)
 			return
@@ -164,11 +151,11 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		modelInfo := gin.H{"id": provider.Model, "channelId": provider.ChannelID, "channelName": provider.ChannelName}
 		token := readAgentHostToken(svc.DataDir())
 		health := probeAgentHost(token)
-		state := processAgentHostSupervisor.state()
+		state := host.State()
 		if health.OK {
 			// 配置换过模型/渠道/密钥后，空闲时把宿主重启到新配置；正在生成时不打断。
 			if state.Running && state.Fingerprint != provider.Fingerprint() && !health.Busy {
-				if err := restartAgentHost(svc, provider, hostOpsURL(c), launchToken(c)); err != nil {
+				if err := host.Restart(provider, hostOpsURL(c), launchToken(c)); err != nil {
 					unavailable(c, "host_start_failed")
 					return
 				}
@@ -178,7 +165,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			ok(c, gin.H{"available": true, "model": modelInfo})
 			return
 		}
-		launched, err := ensureAgentHost(svc, provider, hostOpsURL(c), launchToken(c), !health.Busy)
+		launched, err := host.Ensure(provider, hostOpsURL(c), launchToken(c), !health.Busy)
 		if err != nil {
 			ok(c, gin.H{"available": false, "reason": "host_start_failed", "model": modelInfo})
 			return
@@ -204,13 +191,14 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		if !guard(c, true) {
 			return
 		}
-		provider, reason := resolveAssistantProvider(svc)
+		host := requestAssistantHost(c, svc)
+		provider, reason := host.ResolveProvider()
 		if reason != "" {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": reason,
 				"msg": "助手模型或凭据还没准备好"})
 			return
 		}
-		if err := restartAgentHost(svc, provider, hostOpsURL(c), launchToken(c)); err != nil {
+		if err := host.Restart(provider, hostOpsURL(c), launchToken(c)); err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_start_failed", "msg": err.Error()})
 			return
 		}

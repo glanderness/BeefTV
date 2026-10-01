@@ -16,6 +16,7 @@ import (
 
 	"infinite-canvas/backend/internal/app"
 	localasset "infinite-canvas/backend/internal/asset"
+	"infinite-canvas/backend/internal/assistantruntime"
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/buildinfo"
 	"infinite-canvas/backend/internal/database"
@@ -43,6 +44,7 @@ type Runtime struct {
 	launchToken      string
 	uiBootstrapToken string
 	beefAPI          *beefapi.Service
+	assistantHost    *assistantruntime.Host
 	listener         net.Listener
 	httpServer       *http.Server
 	serveErr         chan error
@@ -190,6 +192,7 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 	router.Use(canvasHandler.WorkspaceMiddleware(scope))
 	// 本机可信凭据在组合根生成：owner 凭据与宿主凭据只在本机数据目录，0600。
 	agentops.EnsureAgentCredentials(svc.DataDir())
+	assistantHost := assistantruntime.New(assistantruntime.OptionsFromService(svc))
 	api := router.Group("/api")
 	status := newSystemStatus(db, svc, true)
 	registerSystemStatusRoutes(api, status)
@@ -201,6 +204,7 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 		Tasks:              localRoot.Tasks,
 		Generation:         localRoot.Generation,
 		BeefAPI:            beefAPIConnection,
+		AssistantHost:      assistantHost,
 		DesktopTrust:       desktopTrust(launchToken, uiBootstrapToken),
 	})
 	router.NoRoute(func(c *gin.Context) {
@@ -234,6 +238,7 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 		launchToken:      launchToken,
 		uiBootstrapToken: uiBootstrapToken,
 		beefAPI:          beefAPIConnection,
+		assistantHost:    assistantHost,
 		serveErr:         make(chan error, 1),
 	}, nil
 }
@@ -292,8 +297,10 @@ func (r *Runtime) Start() error {
 		if err := runtimeinfo.Write(r.cfg.DataDir, opsURL, buildinfo.Current().Version); err != nil {
 			log.Printf("未能写入运行时地址（外部 Agent 需手动指定 BEEFTV_BASE_URL）：%v", err)
 		}
-		if err := canvasHandler.StartProcessAgentHost(r.service, opsURL, r.launchToken); err != nil {
-			log.Printf("内置创作助手宿主未启动（不影响应用启动）：%v", err)
+		if r.assistantHost != nil {
+			if err := r.assistantHost.Start(opsURL, r.launchToken); err != nil {
+				log.Printf("内置创作助手宿主未启动（不影响应用启动）：%v", err)
+			}
 		}
 	}
 	if r.beefAPI != nil {
@@ -386,8 +393,10 @@ func (r *Runtime) Close(ctx context.Context) error {
 		}
 		// 本进程启动的内置宿主子进程必须跟着一起退出：否则后端重启后旧宿主会占着端口，
 		// 让状态查询显示「可用」但其实是上一个进程的实例。只清理本进程启动过的 PID。
-		if err := canvasHandler.StopProcessAgentHost(ctx); err != nil {
-			failures = append(failures, err)
+		if r.assistantHost != nil {
+			if err := r.assistantHost.StopContext(ctx); err != nil {
+				failures = append(failures, err)
+			}
 		}
 		var serviceErr error
 		if r.localApp != nil {
