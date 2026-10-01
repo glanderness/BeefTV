@@ -17,7 +17,7 @@
  *
  * 聚焦、复制、重命名没有对应实现，不在这里造无处可去的动作。
  */
-export type DirectorShortcutAction = { kind: "transform-mode"; mode: "translate" | "rotate" | "scale" } | { kind: "delete-selected" } | { kind: "undo" } | { kind: "redo" } | { kind: "toggle-visibility" } | { kind: "deselect" } | { kind: "toggle-play" };
+export type DirectorShortcutAction = { kind: "transform-mode"; mode: "translate" | "rotate" | "scale" } | { kind: "nudge-selected"; direction: "up" | "down" | "left" | "right"; fine?: boolean } | { kind: "delete-selected" } | { kind: "undo" } | { kind: "redo" } | { kind: "toggle-visibility" } | { kind: "deselect" } | { kind: "toggle-play" } | { kind: "open-add-menu" };
 
 /** 只取事件的必要形状，便于测试构造，也避免耦合真实 KeyboardEvent。 */
 export type DirectorKeyEvent = {
@@ -64,6 +64,10 @@ export function resolveDirectorShortcut(event: DirectorKeyEvent): DirectorShortc
 
     if (event.altKey) return null;
 
+    const arrowDirections: Record<string, "up" | "down" | "left" | "right"> = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" };
+    if (arrowDirections[key]) return { kind: "nudge-selected", direction: arrowDirections[key], ...(event.shiftKey ? { fine: true } : {}) };
+
+    if (lower === "a" && event.shiftKey) return { kind: "open-add-menu" };
     if (lower in TRANSFORM_KEYS) return { kind: "transform-mode", mode: TRANSFORM_KEYS[lower] };
     if (key === "Delete" || key === "Backspace") return { kind: "delete-selected" };
     if (lower === "h") return { kind: "toggle-visibility" };

@@ -90,6 +90,9 @@ export function useCanvasKeyboard({
     useEffect(() => {
         if (!enabled) return;
         const handleKeyDown = (event: KeyboardEvent) => {
+            // Runtime guard complements the React `enabled` flag: the workbench
+            // owns keyboard input whenever mounted, regardless of stale canvas selection.
+            if (document.querySelector("[data-director-workbench='true']")) return;
             const target = event.target instanceof Element ? event.target : null;
             if (target?.closest(".canvas-node-toolbar, .canvas-node-toolbar-menu")) return;
             const key = event.key.toLowerCase();

@@ -10,6 +10,7 @@ import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
 import { audioMetadata, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
+import { connectDirectorReferenceNodes } from "@/lib/canvas/director/director-reference-assets";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { isAudioFile } from "@/lib/canvas/canvas-project-generation";
 import { fitNodeSize, VIDEO_NODE_MAX_SIZE } from "@/lib/canvas/canvas-node-size";
@@ -21,7 +22,7 @@ import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { getProjectUnit } from "@/services/api/projects";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { useAssetStore, type ImageAsset } from "@/stores/use-asset-store";
-import { CanvasNodeType, type CanvasNodeData, type ContextMenuState, type Position } from "@/types/canvas";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ContextMenuState, type Position } from "@/types/canvas";
 import type { TimelineDirectMedia } from "@/types/timeline";
 import type { CanvasUploadStatus } from "./canvas-project-feedback";
 
@@ -29,10 +30,12 @@ type UseCanvasUploadOptions = {
     canvasId: string;
     domainProjectId?: string;
     nodesRef: { current: CanvasNodeData[] };
+    connectionsRef: { current: CanvasConnection[] };
     selectedNodeIdsRef: { current: Set<string> };
     getCanvasCenter: () => Position;
     screenToCanvas: (clientX: number, clientY: number) => Position;
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
+    setConnections: Dispatch<SetStateAction<CanvasConnection[]>>;
     setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
     setSelectedConnectionId: Dispatch<SetStateAction<string | null>>;
     setContextMenu: Dispatch<SetStateAction<ContextMenuState | null>>;
@@ -61,10 +64,12 @@ export function useCanvasUpload({
     canvasId,
     domainProjectId,
     nodesRef,
+    connectionsRef,
     selectedNodeIdsRef,
     getCanvasCenter,
     screenToCanvas,
     setNodes,
+    setConnections,
     setSelectedNodeIds,
     setSelectedConnectionId,
     setContextMenu,
@@ -73,7 +78,7 @@ export function useCanvasUpload({
     const { message } = App.useApp();
     const queryClient = useQueryClient();
     const imageInputRef = useRef<HTMLInputElement>(null);
-    const uploadTargetRef = useRef<{ nodeId?: string; position?: Position } | null>(null);
+    const uploadTargetRef = useRef<{ nodeId?: string; referenceToNodeId?: string; position?: Position } | null>(null);
     const assetInsertPositionRef = useRef<Position | null>(null);
     const uploadStatusIdRef = useRef(0);
     const statusTimersRef = useRef<Set<number>>(new Set());
@@ -360,13 +365,25 @@ export function useCanvasUpload({
         imageInputRef.current?.click();
     }, [nodesRef]);
 
+    const handleUploadReferenceRequest = useCallback((targetNodeId: string, position: Position) => {
+        uploadTargetRef.current = { referenceToNodeId: targetNodeId, position };
+        if (imageInputRef.current) {
+            imageInputRef.current.accept = "image/*";
+            imageInputRef.current.multiple = true;
+        }
+        imageInputRef.current?.click();
+    }, []);
+
     const handleUploadFiles = useCallback(async (files: File[]) => {
-        const supportedFiles = files.filter((file) => uploadNodeType(file));
+        const uploadTarget = uploadTargetRef.current;
+        const supportedFiles = files.filter((file) => uploadTarget?.referenceToNodeId
+            ? uploadNodeType(file) === CanvasNodeType.Image
+            : Boolean(uploadNodeType(file)));
         if (!supportedFiles.length) {
-            message.warning("请选择图片、视频、音频或 TXT / Markdown 文件");
+            message.warning(uploadTarget?.referenceToNodeId ? "请选择图片作为导演台参考素材" : "请选择图片、视频、音频或 TXT / Markdown 文件");
             return false;
         }
-        const center = uploadTargetRef.current?.position || getCanvasCenter();
+        const center = uploadTarget?.position || getCanvasCenter();
         const columns = Math.min(BATCH_UPLOAD_COLUMNS, supportedFiles.length);
         const originX = center.x - ((columns - 1) * BATCH_UPLOAD_COLUMN_GAP) / 2;
         const createdIds: string[] = [];
@@ -380,14 +397,31 @@ export function useCanvasUpload({
             if (createdId) createdIds.push(createdId);
         }
         if (!createdIds.length) return false;
+        let linkedReferenceCount = 0;
+        if (uploadTarget?.referenceToNodeId) {
+            const linked = connectDirectorReferenceNodes(nodesRef.current, connectionsRef.current, createdIds, uploadTarget.referenceToNodeId, () => `director-reference-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+            linkedReferenceCount = linked.linkedSourceIds.length;
+            if (linked.nodes !== nodesRef.current) {
+                nodesRef.current = linked.nodes;
+                setNodes(linked.nodes);
+            }
+            if (linked.connections !== connectionsRef.current) {
+                connectionsRef.current = linked.connections;
+                setConnections(linked.connections);
+            }
+        }
         setSelectedNodeIds(new Set(createdIds));
         setSelectedConnectionId(null);
         setDialogNodeId(null);
         const failedCount = supportedFiles.length - createdIds.length;
-        if (failedCount) message.warning(`已添加 ${createdIds.length} 个文件，${failedCount} 个上传失败`);
+        if (uploadTarget?.referenceToNodeId) {
+            if (linkedReferenceCount) message.success(`已添加并连接 ${linkedReferenceCount} 张参考图`);
+            else message.warning("参考图已上传到画布，但导演节点已不存在；可手动连接素材节点");
+        }
+        else if (failedCount) message.warning(`已添加 ${createdIds.length} 个文件，${failedCount} 个上传失败`);
         else message.success(`已添加 ${createdIds.length} 个文件到画布`);
         return true;
-    }, [createFileNode, getCanvasCenter, message, setDialogNodeId, setSelectedConnectionId, setSelectedNodeIds]);
+    }, [connectionsRef, createFileNode, getCanvasCenter, message, nodesRef, setConnections, setDialogNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
 
     // 时间线专用：把本地音视频文件上传为直连媒体（仅时间线作用域，不创建画布节点），返回媒体描述数组。
     const uploadTimelineMedia = useCallback(async (files: File[]): Promise<TimelineDirectMedia[]> => {
@@ -773,6 +807,7 @@ export function useCanvasUpload({
         handleProjectChapterInsert,
         handleUploadFiles,
         handleUploadRequest,
+        handleUploadReferenceRequest,
         imageInputRef,
         openAssetsAtPosition,
         pasteAssistantImage,

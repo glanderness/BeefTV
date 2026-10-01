@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { AlertCircle, BookOpenCheck, CheckCircle2, ChevronRight, Clapperboard, Copy, Download, FileText, GripVertical, Image as ImageIcon, Lock, Maximize2, Music2, Pencil, RefreshCw, ScanSearch, Settings2, Star, Trash2, Video, WandSparkles } from "lucide-react";
+import { AlertCircle, BookOpenCheck, CheckCircle2, ChevronRight, Clapperboard, Copy, Download, FileText, GripVertical, Image as ImageIcon, Lock, Maximize2, Move3d, Music2, Pencil, RefreshCw, ScanSearch, Settings2, Star, Trash2, Video, WandSparkles } from "lucide-react";
 
 import { useCanvasNodeActions } from "./canvas-node-action-context";
 import { shouldBlockAutomaticRetry } from "@/lib/generation-error";
@@ -67,7 +67,6 @@ type CanvasNodeProps = {
     onViewImage?: (node: CanvasNodeData) => void;
     onReplaceMedia?: (node: CanvasNodeData) => void;
     onOpenTextEditor?: (node: CanvasNodeData) => void;
-    onOpenDirector?: (node: CanvasNodeData) => void;
     onOpenDrawing?: (node: CanvasNodeData) => void;
     onMediaPlayRequest?: (nodeId: string) => void;
     imageCropActive?: boolean;
@@ -126,7 +125,6 @@ export const CanvasNode = React.memo(function CanvasNode({
     onOpenVersions,
     onViewImage,
     onOpenTextEditor,
-    onOpenDirector,
     onOpenDrawing,
     onMediaPlayRequest,
     imageCropActive = false,
@@ -154,7 +152,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     const hasVideoContent = data.type === CanvasNodeType.Video && Boolean(data.metadata?.content);
     const hasAudioContent = data.type === CanvasNodeType.Audio && Boolean(data.metadata?.content || data.metadata?.storageKey);
     const isComposerNode = data.type === CanvasNodeType.Config;
-    const isDirectorNode = Boolean(data.metadata?.directorSceneId);
+    const isDirectorNode = data.type === CanvasNodeType.Director || Boolean(data.metadata?.directorSceneId);
     const isBatchRoot = data.type === CanvasNodeType.Image && Boolean(data.metadata?.isBatchRoot) && batchCount > 1;
     const isBatchChild = data.type === CanvasNodeType.Image && Boolean(data.metadata?.batchRootId);
     const showStatusTrack = Boolean(data.metadata?.locked || isBatchRoot || (isBatchChild && !readOnly));
@@ -401,7 +399,6 @@ export const CanvasNode = React.memo(function CanvasNode({
                     }
                     if (data.metadata?.directorSceneId) {
                         event.stopPropagation();
-                        onOpenDirector?.(data);
                         return;
                     }
                     if (data.type === CanvasNodeType.Drawing) {
@@ -636,7 +633,6 @@ function areCanvasNodePropsEqual(previous: CanvasNodeProps, next: CanvasNodeProp
         previous.onViewImage === next.onViewImage &&
         previous.onReplaceMedia === next.onReplaceMedia &&
         previous.onOpenTextEditor === next.onOpenTextEditor &&
-        previous.onOpenDirector === next.onOpenDirector &&
         previous.onOpenDrawing === next.onOpenDrawing &&
         previous.imageCropActive === next.imageCropActive &&
         previous.onCancelImageCrop === next.onCancelImageCrop &&
@@ -726,9 +722,10 @@ function NodeExternalHeader({ node, scale, dimensionLabel, active, editable, edi
     // 标题保持屏幕尺寸只适用于近景；远景继续反向缩放会遮住节点和连线。
     if (scale < NODE_EXTERNAL_HEADER_MIN_SCALE && !editing && node.metadata?.fixture !== "libtv-readonly-dense") return null;
     const inverseScale = 1 / Math.max(scale, 0.05);
-    const Icon = nodeTypeIcon(node.type);
+    const isDirectorNode = node.type === CanvasNodeType.Director || Boolean(node.metadata?.directorSceneId);
+    const Icon = isDirectorNode ? Move3d : nodeTypeIcon(node.type);
     const maxHeaderWidth = Math.min(240, node.width * scale);
-    const directorCardWidth = Math.min(node.width - 16, node.height - 124);
+    const directorCardWidth = Math.min(node.width, node.height);
 
     return (
         <div
@@ -778,7 +775,7 @@ function NodeExternalHeader({ node, scale, dimensionLabel, active, editable, edi
                 >
                     {node.metadata?.locked ? <Lock className="size-3" /> : <GripVertical className="size-3" strokeWidth={1.8} />}
                 </button>
-                <Icon className="size-3 shrink-0" strokeWidth={1.8} />
+                <Icon className="size-3 shrink-0" strokeWidth={1.8} data-node-header-icon={isDirectorNode ? "director" : undefined} />
                 {editing ? (
                     <input
                         autoFocus

@@ -55,7 +55,6 @@ import { CanvasNodeLightingPanel } from "@/components/canvas/canvas-node-lightin
 import { CanvasTextEditorModal } from "@/components/canvas/canvas-text-editor-modal";
 import { CanvasNodeSearchModal } from "@/components/canvas/canvas-node-search-modal";
 import { CanvasStylePickerModal } from "@/components/canvas/canvas-style-picker-modal";
-import { CanvasDirectorTemplateModal } from "@/components/canvas/director/canvas-director-template-modal";
 import { CanvasFileDropOverlay } from "@/components/canvas/canvas-file-drop-overlay";
 import { CanvasPanoramaConfigModal } from "@/components/canvas/canvas-panorama-config-modal";
 import { InfiniteCanvas } from "@/components/canvas/infinite-canvas";
@@ -94,6 +93,7 @@ import { resolveCanvasEmptyStateKind } from "@/lib/canvas/canvas-starter";
 import { failedImageBatchChildren, markImageBatchRetrying, reconcileImageBatchRoot, restoreUnsubmittedImageBatchChild } from "@/lib/canvas/canvas-image-batch-retry";
 import { shouldBlockAutomaticRetry } from "@/lib/generation-error";
 import { createCanvasNode, getInputSummary, isHiddenBatchChild } from "@/lib/canvas/canvas-project-domain";
+import { connectDirectorReferenceNodes } from "@/lib/canvas/director/director-reference-assets";
 import { canvasWorkspaceProjectId, listCanvasWorkspaceProjectCanvases } from "@/lib/canvas/canvas-workspace-project";
 import { deleteWorkspaceCanvasProjects } from "@/services/workspace-project-repository";
 import { createLibTvAudioFixture, createLibTvEmptyTextFixture, createLibTvGeneratingFixture, createLibTvReadonlyDenseFixture, createLibTvStoryboardFixture, createLibTvTextFixture, createLibTvVideoConversionFixture, createLibTvVideoFixture, createLibTvVideoMergeFixture, createLibTvVideoSubtitleFixture } from "@/lib/canvas/canvas-libtv-fixture";
@@ -370,8 +370,6 @@ function InfiniteCanvasPage() {
     const [characterReferenceNodeId, setCharacterReferenceNodeId] = useState<string | null>(null);
     const [drawingNodeId, setDrawingNodeId] = useState<string | null>(null);
     const [stylePickerOpen, setStylePickerOpen] = useState(false);
-    // 新建导演台镜头必须先选模板：null 表示未在选择中，undefined position 表示用画布中心。
-    const [directorTemplateRequest, setDirectorTemplateRequest] = useState<{ position?: Position } | null>(null);
     const [infoNodeId, setInfoNodeId] = useState<string | null>(null);
     const [subtitleNodeId, setSubtitleNodeId] = useState<string | null>(null);
     const [timelineNodeId, setTimelineNodeId] = useState<string | null>(null);
@@ -1080,6 +1078,7 @@ function InfiniteCanvasPage() {
         handleProjectChapterInsert,
         handleUploadFiles,
         handleUploadRequest,
+        handleUploadReferenceRequest,
         imageInputRef,
         openAssetsAtPosition,
         pasteAssistantImage,
@@ -1092,16 +1091,35 @@ function InfiniteCanvasPage() {
         canvasId: projectId,
         domainProjectId: linkedProjectId,
         nodesRef,
+        connectionsRef,
         selectedNodeIdsRef,
         getCanvasCenter,
         screenToCanvas,
         setNodes,
+        setConnections,
         setSelectedNodeIds,
         setSelectedConnectionId,
         setContextMenu,
         setDialogNodeId,
     });
     const replaceCanvasNodeMedia = useCallback((node: CanvasNodeData) => handleUploadRequest(node.id), [handleUploadRequest]);
+    const addDirectorReferenceToCanvas = useCallback(async (image: Awaited<ReturnType<typeof uploadImage>>, title: string) => {
+        const node = createCanvasNode(CanvasNodeType.Image, getCanvasCenter(), imageMetadata(image));
+        node.title = title;
+        const linked = connectDirectorReferenceNodes([...nodesRef.current, node], connectionsRef.current, [node.id], directorNodeId || "", () => nanoid(), "replace");
+        nodesRef.current = linked.nodes;
+        connectionsRef.current = linked.connections;
+        setNodes(linked.nodes);
+        setConnections(linked.connections);
+        setSelectedNodeIds(new Set([node.id]));
+        setSelectedConnectionId(null);
+        try {
+            const result = await ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId: currentProject?.projectId, node, source: "canvas-upload" });
+            setNodes((current) => current.map((item) => item.id === node.id ? { ...item, metadata: { ...item.metadata, assetId: result.assetId } } : item));
+        } catch (error) {
+            message.warning(error instanceof Error ? `图片已加入画布，但素材同步失败：${error.message}` : "图片已加入画布，但素材同步失败");
+        }
+    }, [connectionsRef, currentProject?.projectId, directorNodeId, getCanvasCenter, message, nodesRef, projectId, setConnections, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
     const {
         timelineAddNodeRef,
         timelineMediaAddRef,
@@ -1566,6 +1584,9 @@ function InfiniteCanvasPage() {
             } else if (node.type === CanvasNodeType.Panorama) {
                 // 全景节点是纯查看器，没有可编辑提示词，不弹提示词面板。
                 setDialogNodeId(null);
+            } else if (node.type === CanvasNodeType.Director) {
+                // 导演台仅通过卡片上的“打开导演台”按钮进入，不属于生成节点。
+                setDialogNodeId(null);
             } else if (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) {
                 // Media generators own the composer; results from any origin own the media toolbar.
                 if (canOpenCanvasNodePromptPanel(node)) {
@@ -1704,7 +1725,12 @@ function InfiniteCanvasPage() {
             const removedConnectionIds = new Set(previousConnections.filter((connection) => connection.fromNodeId === referenceNodeId && (connection.toNodeId === targetNodeId || connection.toNodeId === configNodeId)).map((connection) => connection.id));
             if (!removedConnectionIds.size) return;
             const nextConnections = previousConnections.filter((connection) => !removedConnectionIds.has(connection.id));
-            const nextNodes = applyCanvasConnectionPromptSync(previousNodes, previousConnections, previousNodes, nextConnections);
+            const promptSyncedNodes = applyCanvasConnectionPromptSync(previousNodes, previousConnections, previousNodes, nextConnections);
+            const targetNode = promptSyncedNodes.find((node) => node.id === targetNodeId);
+            const referenceAssetNodeIds = targetNode?.metadata?.referenceAssetNodeIds;
+            const nextNodes = targetNode?.metadata?.workflowKind === "shot" && referenceAssetNodeIds?.includes(referenceNodeId)
+                ? promptSyncedNodes.map((node) => node.id === targetNodeId ? { ...node, metadata: { ...node.metadata, referenceAssetNodeIds: referenceAssetNodeIds.filter((id) => id !== referenceNodeId) } } : node)
+                : promptSyncedNodes;
             if (nextNodes !== previousNodes) {
                 nodesRef.current = nextNodes;
                 setNodes(nextNodes);
@@ -2072,7 +2098,7 @@ function InfiniteCanvasPage() {
     }, [clearCanvasFiles, deselectCanvas, message, nodesRef, projectId, setEmotionNodeId]);
 
     useCanvasKeyboard({
-        enabled: projectLoaded && !versions.preview,
+        enabled: projectLoaded && !versions.preview && !directorNodeId,
         nodesRef,
         selectedNodeIdsRef,
         selectedConnectionId,
@@ -2632,16 +2658,14 @@ function InfiniteCanvasPage() {
                     />
                 );
             }
-            if (contentNode.metadata?.directorSceneId) {
+            if (contentNode.type === CanvasNodeType.Director || contentNode.metadata?.directorSceneId) {
                 return (
                     <CanvasDirectorNodePanel
                         node={contentNode}
                         scene={currentProject?.directorScenes?.find((scene) => scene.id === contentNode.metadata?.directorSceneId) || null}
                         readNodeContent={(nodeId) => (nodeId ? nodesRef.current.find((item) => item.id === nodeId)?.metadata?.content : undefined)}
-                        readNodeStorageKey={(nodeId) => (nodeId ? nodesRef.current.find((item) => item.id === nodeId)?.metadata?.storageKey : undefined)}
                         professional={workspaceMode === "professional"}
                         onOpen={() => openDirectorWorkbench(contentNode.id)}
-                        onPromptChange={(composerContent) => handleConfigNodeChange(contentNode.id, { composerContent })}
                     />
                 );
             }
@@ -2681,7 +2705,9 @@ function InfiniteCanvasPage() {
             handleConnectDrop,
             handleConnectStart,
             handleGenerateNode,
+            handleRemoveNodeReference,
             handleNodeResize,
+            handleUploadReferenceRequest,
             mentionReferencesByNodeId,
             mergeVideosByIds,
             openDirectorWorkbench,
@@ -2758,7 +2784,6 @@ function InfiniteCanvasPage() {
     );
     const openCanvasNodeVersions = useCallback((node: CanvasNodeData) => setVersionCompareRootId(node.metadata?.versionOfNodeId || node.id), []);
     const viewCanvasNodeImage = useCallback((node: CanvasNodeData) => setPreviewNodeId(node.id), []);
-    const editCanvasDirector = useCallback((node: CanvasNodeData) => openDirectorWorkbench(node.id), [openDirectorWorkbench]);
     const locateProjectStyleNode = useCallback(() => {
         const styleNode = nodesRef.current.find((node) => node.type === CanvasNodeType.Text && node.metadata?.workflowKind === "styleboard");
         if (!styleNode) {
@@ -2790,7 +2815,7 @@ function InfiniteCanvasPage() {
             onAddWorkflow: () => createNode(CanvasNodeType.Config),
             onAddExtensionNode: (type) => createNode(type),
             onChooseStyle: () => setStylePickerOpen(true),
-            onOpenDirector: () => setDirectorTemplateRequest({}),
+            onOpenDirector: () => createDirectorShot(),
             onUpload: () => handleUploadRequest(),
             onOpenMyAssets: () => openCanvasAssetLibrary(),
             onOpenProjectCharacters: () => openProjectAssets("character"),
@@ -2950,8 +2975,6 @@ function InfiniteCanvasPage() {
 
                         <CanvasStylePickerModal open={stylePickerOpen} value={activeStylePresetId} applying={styleApplying} onClose={() => setStylePickerOpen(false)} onSelect={selectCanvasStyle} />
 
-                        <CanvasDirectorTemplateModal open={Boolean(directorTemplateRequest)} onClose={() => setDirectorTemplateRequest(null)} onSelect={(templateId) => createDirectorShot(templateId, directorTemplateRequest?.position)} />
-
                         <div className="relative flex min-h-0 min-w-0 flex-1">
                             <div className="relative min-w-0 flex-1 overflow-hidden">
                                 <InfiniteCanvas
@@ -3069,7 +3092,6 @@ function InfiniteCanvasPage() {
                                                 onViewImage={viewCanvasNodeImage}
                                                 onReplaceMedia={replaceCanvasNodeMedia}
                                                 onOpenTextEditor={openTextNodeEditor}
-                                                onOpenDirector={editCanvasDirector}
                                                 onOpenDrawing={openDrawingNode}
                                                 onStartBatchConnection={startBatchConnection}
                                                 imageCropNodeId={cropNodeId}
@@ -3135,7 +3157,7 @@ function InfiniteCanvasPage() {
                                         onAddDrawing={() => createNode(CanvasNodeType.Drawing)}
                                         onAddExtensionNode={(type) => createNode(type)}
                                         onAddWorkflow={() => createNode(CanvasNodeType.Config)}
-                                        onOpenDirector={() => setDirectorTemplateRequest({})}
+                                        onOpenDirector={() => createDirectorShot()}
                                         onUndo={undoCanvas}
                                         onRedo={redoCanvas}
                                         onUpload={() => handleUploadRequest()}
@@ -3417,7 +3439,7 @@ function InfiniteCanvasPage() {
                             onAddNode={(type, position) => createNode(type, position)}
                             onAddFolder={createFolder}
                             onChooseStyle={() => setStylePickerOpen(true)}
-                            onOpenDirector={(position) => setDirectorTemplateRequest({ position })}
+                            onOpenDirector={(position) => createDirectorShot(position)}
                             onUpload={(nodeId, position) => handleUploadRequest(nodeId, position)}
                             onOpenAssets={openCanvasAssetLibrary}
                             onOpenProjectCharacters={(position) => openProjectAssets("character", position)}
@@ -3624,6 +3646,7 @@ function InfiniteCanvasPage() {
                                     onShouldCaptureCover={shouldCaptureCover}
                                     onCaptureCover={captureDirectorCover}
                                     onDeleteImageNode={(nodeId) => deleteNodes(new Set([nodeId]))}
+                                    onAddCanvasImage={addDirectorReferenceToCanvas}
                                     onFlush={() => flushCanvasStorePersistence()}
                                     onboardingScope={directorOnboardingScope}
                                 />

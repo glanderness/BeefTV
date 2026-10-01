@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { createDirectorReproScene } from "../src/lib/canvas/director/director-repro-fixture";
 import { resolveDirectorCameraLocalFraming, resolveDirectorViewFraming } from "../src/lib/canvas/director/director-view-modes";
+import { resolveDirectorCameraGizmoEdit, resolveDirectorCameraMoveKeyframes, resolveDirectorCameraMoveLookAtMode, resolveDirectorCameraMoveTransform } from "../src/lib/canvas/director/director-animation-semantics";
 import { bindDirectorCameraFollow, removeDirectorCameraBindingsForObject, unbindDirectorCameraFollow } from "../src/lib/canvas/director/director-camera-binding";
 import type { DirectorCamera, DirectorVec3 } from "../src/types/director";
 
@@ -15,6 +16,44 @@ const movedScene = () => {
 };
 
 describe("导演台摄影机跟随与注视", () => {
+    test("机位移动保留注视模式，机位旋转切换为旋转驱动并真实改变取景", () => {
+        const scene = createDirectorReproScene();
+        const camera = scene.cameras[0];
+        const movedTransform = { ...camera.transform, position: [camera.transform.position[0] + 2, camera.transform.position[1], camera.transform.position[2]] as DirectorVec3 };
+        const moved = resolveDirectorCameraGizmoEdit({ camera, from: camera.transform, edited: movedTransform, rawTime: 0, snappedTime: 0 });
+        expect(moved.lookAtMode).toBe(camera.lookAtMode);
+        expect(moved.transform.position).toEqual(movedTransform.position);
+        expect(moved.target).toEqual(camera.target);
+
+        const rotatedTransform = { ...camera.transform, rotation: [0, Math.PI / 2, 0] as DirectorVec3 };
+        const rotated = resolveDirectorCameraGizmoEdit({ camera, from: camera.transform, edited: rotatedTransform, rawTime: 0, snappedTime: 0 });
+        expect(rotated.lookAtMode).toBe("rotation");
+        expect(rotated.target).toEqual(camera.target);
+        const framing = resolveDirectorCameraLocalFraming(scene, rotated, 0);
+        expect(framing?.target[0]).toBeCloseTo(camera.transform.position[0] - 1, 5);
+        expect(framing?.target[1]).toBeCloseTo(camera.transform.position[1], 5);
+        expect(framing?.target[2]).toBeCloseTo(camera.transform.position[2], 5);
+    });
+
+    test("相机操纵器用 raw 播放头取渲染起点、用吸附播放头写关键帧", () => {
+        const scene = createDirectorReproScene();
+        const camera = scene.cameras[0];
+        const trajectory = {
+            ...camera,
+            keyframes: [
+                { id: "start", time: 0, transform: camera.transform },
+                { id: "end", time: 2, transform: { ...camera.transform, position: [10, 2.7, 6.8] as DirectorVec3 } },
+            ],
+        };
+        const rawTime = 1.02;
+        const from = { ...camera.transform, position: [7.452, 2.7, 6.8] as DirectorVec3 };
+        const edited = { ...from, position: [7.452, 3.7, 6.8] as DirectorVec3 };
+        const result = resolveDirectorCameraGizmoEdit({ camera: trajectory, from, edited, rawTime, snappedTime: 1 });
+        const inserted = result.keyframes.find((frame) => frame.time === 1);
+        expect(inserted?.transform.position).toEqual([7.452, 3.7, 6.8]);
+        expect(result.keyframes.map((frame) => frame.time)).toEqual([0, 1, 2]);
+    });
+
     test("绑定跟随后当前画面不跳变，角色移动时相机保留相对位置", () => {
         const scene = movedScene();
         const camera = bindDirectorCameraFollow(scene.cameras[0], scene, scene.objects[0].id, 0);
@@ -42,6 +81,29 @@ describe("导演台摄影机跟随与注视", () => {
         const fallback = resolveDirectorViewFraming({ scene: { ...scene, cameras: [deleted] }, mode: "camera", playhead: 0 });
         expect(fallback?.position).toEqual([0, 1, 5]);
         expect(fallback?.target).toEqual(camera.target);
+    });
+
+    test("摇镜/俯仰关键帧在 CAM 中改变注视方向且摄影机位置固定", () => {
+        const scene = createDirectorReproScene();
+        const base = { ...scene.cameras[0], transform: { ...scene.cameras[0].transform, position: [0, 1, 5] as DirectorVec3 }, target: [0, 1, 0] as DirectorVec3 };
+        const panEnd = resolveDirectorCameraMoveTransform(base.transform, base.target, "pan_right");
+        const panCamera = {
+            ...base,
+            lookAtMode: resolveDirectorCameraMoveLookAtMode(base.lookAtMode, "pan_right"),
+            keyframes: resolveDirectorCameraMoveKeyframes([], base.transform, panEnd, 2),
+        };
+        const start = resolveDirectorCameraLocalFraming(scene, panCamera, 0);
+        const end = resolveDirectorCameraLocalFraming(scene, panCamera, 2);
+        expect(end?.position).toEqual(start?.position);
+        expect(end?.target[0]).toBeGreaterThan(start?.target[0] || 0);
+
+        const tiltEnd = resolveDirectorCameraMoveTransform(base.transform, base.target, "tilt_up");
+        const tiltCamera = {
+            ...base,
+            lookAtMode: resolveDirectorCameraMoveLookAtMode(base.lookAtMode, "tilt_up"),
+            keyframes: resolveDirectorCameraMoveKeyframes([], base.transform, tiltEnd, 2),
+        };
+        expect(resolveDirectorCameraLocalFraming(scene, tiltCamera, 2)?.target[1]).toBeGreaterThan(base.target[1]);
     });
 
     test("删除被跟随或注视的对象时只清理对应绑定", () => {
