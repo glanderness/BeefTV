@@ -421,8 +421,8 @@ func TestAssistantTurnsMigrationFromPreviewV9(t *testing.T) {
 	if err := db.Order("version").Find(&ledger).Error; err != nil {
 		t.Fatal(err)
 	}
-	if ledger[len(ledger)-1].Version != 11 || ledger[len(ledger)-1].Name != "creation-conversations" {
-		t.Fatalf("v11 identity: %+v", ledger[len(ledger)-1])
+	if ledger[len(ledger)-1].Version != CurrentSchemaVersion || ledger[len(ledger)-1].Name != "upload-reservation-witness" {
+		t.Fatalf("current identity: %+v", ledger[len(ledger)-1])
 	}
 	foundV10 := false
 	for _, row := range ledger {

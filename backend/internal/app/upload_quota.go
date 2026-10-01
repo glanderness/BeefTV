@@ -70,7 +70,6 @@ func (s *Service) reserveRetryUploadQuota(userID string, size int64) (string, er
 }
 
 func (s *Service) reserveRetryUploadQuotaFor(userID string, size int64, identity string) (string, error) {
-	_ = identity
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		return "", err
@@ -84,7 +83,7 @@ func (s *Service) reserveRetryUploadQuotaFor(userID string, size int64, identity
 	day := time.Now().UTC().Format("2006-01-02")
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
-	if err := s.repo.ReserveDailyUpload(userID, day, size, megabytes(policy.Resource.DailyUploadMB)); err != nil {
+	if err := s.repo.ReserveIdentifiedDailyUpload(userID, day, identity, size, megabytes(policy.Resource.DailyUploadMB)); err != nil {
 		if errors.Is(err, repository.ErrDailyUploadLimitExceeded) {
 			return "", QuotaExceeded(fmt.Sprintf("每个账号 UTC 自然日上传总量必须小于 %s", formatStorageLimit(megabytes(policy.Resource.DailyUploadMB))))
 		}
@@ -98,7 +97,6 @@ func (s *Service) reserveRetryGeneratedQuota(userID string, size int64) (string,
 }
 
 func (s *Service) reserveRetryGeneratedQuotaFor(userID string, size int64, identity string) (string, error) {
-	_ = identity
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		return "", err
@@ -112,7 +110,7 @@ func (s *Service) reserveRetryGeneratedQuotaFor(userID string, size int64, ident
 	day := time.Now().UTC().Format("2006-01-02")
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
-	if err := s.repo.ReserveDailyUpload(userID, day, size, megabytes(policy.Resource.DailyUploadMB)); err != nil {
+	if err := s.repo.ReserveIdentifiedDailyUpload(userID, day, identity, size, megabytes(policy.Resource.DailyUploadMB)); err != nil {
 		if errors.Is(err, repository.ErrDailyUploadLimitExceeded) {
 			return "", QuotaExceeded(fmt.Sprintf("每个账号 UTC 自然日上传总量必须小于 %s", formatStorageLimit(megabytes(policy.Resource.DailyUploadMB))))
 		}
@@ -143,7 +141,7 @@ func (s *Service) reserveUserStoredFileQuota(userID string, size int64, exclusiv
 		return "", QuotaExceeded(fmt.Sprintf("账号资源和会话附件已达到 %s 上限，请联系管理员清理历史文件", formatStorageLimit(storedLimit)))
 	}
 	s.pendingStorage[key] += size
-	if err := s.repo.ReserveDailyUpload(userID, day, size, dailyLimit); err != nil {
+	if err := s.repo.ReserveIdentifiedDailyUpload(userID, day, identity, size, dailyLimit); err != nil {
 		s.decreasePendingStorage(key, size)
 		if errors.Is(err, repository.ErrDailyUploadLimitExceeded) {
 			return "", QuotaExceeded(fmt.Sprintf("每个账号 UTC 自然日上传总量必须小于 %s", formatStorageLimit(dailyLimit)))
@@ -171,7 +169,7 @@ func (s *Service) releaseUserUploadQuotaFor(userID string, day string, size int6
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
 	s.decreasePendingStorage(pendingStorageKey(userID, identity), size)
-	if err := s.repo.ReleaseDailyUpload(userID, day, size); err != nil {
+	if err := s.repo.ReleaseIdentifiedDailyUpload(userID, day, identity, size); err != nil {
 		log.Printf("release upload quota failed: user=%s day=%s size=%d error=%v", userID, day, size, err)
 	}
 }
@@ -181,13 +179,12 @@ func (s *Service) releaseRetryUploadQuota(userID string, day string, size int64)
 }
 
 func (s *Service) releaseRetryUploadQuotaFor(userID string, day string, size int64, identity string) {
-	_ = identity
 	if day == "" || size <= 0 {
 		return
 	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
-	if err := s.repo.ReleaseDailyUpload(userID, day, size); err != nil {
+	if err := s.repo.ReleaseIdentifiedDailyUpload(userID, day, identity, size); err != nil {
 		log.Printf("release retry upload quota failed: user=%s day=%s size=%d error=%v", userID, day, size, err)
 	}
 }
@@ -203,10 +200,14 @@ func (s *Service) commitUserUploadQuotaFor(userID string, size int64, identity s
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
 	key := pendingStorageKey(userID, identity)
-	if _, ok := s.pendingStorage[key]; !ok {
-		return
+	if _, ok := s.pendingStorage[key]; ok {
+		s.decreasePendingStorage(key, size)
 	}
-	s.decreasePendingStorage(key, size)
+	if s.repo != nil {
+		if err := s.repo.ClearUploadReservation(userID, identity); err != nil {
+			log.Printf("clear upload reservation failed: user=%s identity=%s error=%v", userID, identity, err)
+		}
+	}
 }
 
 func (s *Service) decreasePendingStorage(key string, size int64) {

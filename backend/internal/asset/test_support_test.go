@@ -88,7 +88,7 @@ func newTestDomain(t *testing.T) (*Service, *repository.Repository, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.Resource{}, &model.UserDailyUploadUsage{}); err != nil {
+	if err := db.AutoMigrate(&model.Resource{}, &model.UserDailyUploadUsage{}, &model.UserUploadReservation{}); err != nil {
 		t.Fatal(err)
 	}
 	repo := repository.New(db)

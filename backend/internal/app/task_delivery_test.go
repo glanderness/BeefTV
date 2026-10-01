@@ -1058,7 +1058,7 @@ func newGenerationDeliveryService(t *testing.T, path string) (*Service, *gorm.DB
 		t.Fatal(err)
 	}
 	if err := db.AutoMigrate(
-		&model.SystemSetting{}, &model.UserDailyUploadUsage{}, &model.Task{}, &model.TaskLog{}, &model.Result{},
+		&model.SystemSetting{}, &model.UserDailyUploadUsage{}, &model.UserUploadReservation{}, &model.Task{}, &model.TaskLog{}, &model.Result{},
 		&model.Asset{}, &model.AssetVersion{}, &model.AssetRepresentation{}, &model.Resource{},
 	); err != nil {
 		t.Fatal(err)

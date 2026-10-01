@@ -27,6 +27,8 @@ type Repository interface {
 	ResourceForUser(userID string, id string) (*model.Resource, error)
 	Resources(userID string, limit int) ([]model.Resource, error)
 	ResourceByUploadKey(userID string, uploadKey string) (*model.Resource, error)
+	ListUploadReservations() ([]model.UserUploadReservation, error)
+	UploadReservation(userID string, identity string) (*model.UserUploadReservation, error)
 	ClaimFailedResourceUpload(userID string, id string) (bool, error)
 	DeleteResource(userID string, id string) error
 	ResourcesForUserIDs(userID string, resourceIDs []string) ([]model.Resource, error)

@@ -49,6 +49,19 @@ type UserDailyUploadUsage struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// UserUploadReservation is a recovery index for an open daily-upload
+// reservation. Bytes stay on UserDailyUploadUsage; a row means the daily
+// increment committed for this identity and has not been Released or Committed.
+type UserUploadReservation struct {
+	ID        string    `json:"id" gorm:"primaryKey;size:200"`
+	UserID    string    `json:"userId" gorm:"size:36;uniqueIndex:idx_user_upload_reservation_identity,priority:1"`
+	Identity  string    `json:"identity" gorm:"size:128;uniqueIndex:idx_user_upload_reservation_identity,priority:2"`
+	Day       string    `json:"day" gorm:"size:10"`
+	Size      int64     `json:"size"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
 type Skill struct {
 	ID                string     `json:"id" gorm:"primaryKey;size:36"`
 	OwnerID           string     `json:"ownerId" gorm:"index;size:36"`

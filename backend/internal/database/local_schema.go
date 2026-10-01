@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 11
+const CurrentSchemaVersion int64 = 13
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -50,7 +50,7 @@ func LocalModels() []any {
 		&model.CloudAgentExecution{}, &model.CloudAgentCanvasMutation{}, &model.AgentProfile{}, &model.AgentLesson{}, &model.AgentMemorySetting{},
 		&model.PluginPlatformState{}, &model.UserPluginState{},
 		&model.Skill{}, &model.SkillVersion{}, &model.SkillFile{}, &model.UserSkillState{},
-		&model.Resource{}, &model.ResourceDeletionJob{}, &model.UserDailyUploadUsage{}, &model.ArkPrivateAssetBinding{},
+		&model.Resource{}, &model.ResourceDeletionJob{}, &model.UserDailyUploadUsage{}, &model.UserUploadReservation{}, &model.ArkPrivateAssetBinding{},
 		&model.Asset{}, &model.AssetFolder{}, &model.AssetVersion{}, &model.AssetRepresentation{},
 		&model.ProjectAssetLink{}, &model.ProjectAssetFolder{}, &model.ProjectAssetCandidate{},
 		&model.VoiceProfile{}, &model.CharacterVoiceBinding{},
@@ -84,6 +84,7 @@ func canonicalLocalMigrations() []localMigration {
 		{version: 9, name: "repair-product-agent-contracts", apply: repairProductAgentContracts},
 		{version: 10, name: "assistant-business-turns", apply: migrateAssistantBusinessTurns},
 		{version: 11, name: "creation-conversations", apply: migrateCreationConversations},
+		{version: 13, name: "upload-reservation-witness", apply: migrateUploadReservationWitness},
 	}
 }
 
@@ -174,6 +175,13 @@ func migrateProductAgentSchema(tx *gorm.DB) error {
 		return err
 	}
 	return ensureTaskUserClientOpIndex(tx)
+}
+
+func migrateUploadReservationWitness(tx *gorm.DB) error {
+	if err := tx.AutoMigrate(&model.UserUploadReservation{}); err != nil {
+		return fmt.Errorf("迁移上传预留恢复索引: %w", err)
+	}
+	return nil
 }
 
 func migrateLocalCoreSchema(tx *gorm.DB) error {
@@ -379,6 +387,9 @@ func RequireLocalSchema(db *gorm.DB) error {
 	version, err := currentSchemaVersion(db)
 	if err != nil {
 		return err
+	}
+	if version >= 13 && !db.Migrator().HasTable(&model.UserUploadReservation{}) {
+		return fmt.Errorf("本地工作区数据库结构缺失，请启用自动迁移")
 	}
 	if version != CurrentSchemaVersion {
 		return fmt.Errorf("本地工作区数据库版本为 %d，期望 %d，请启用自动迁移", version, CurrentSchemaVersion)

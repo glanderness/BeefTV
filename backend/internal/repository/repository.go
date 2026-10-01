@@ -698,7 +698,12 @@ func (r *Repository) DeleteSystemSetting(key string) error {
 }
 
 func (r *Repository) ReserveDailyUpload(userID string, day string, size int64, limit int64) error {
+	return r.ReserveIdentifiedDailyUpload(userID, day, "", size, limit)
+}
+
+func (r *Repository) ReserveIdentifiedDailyUpload(userID string, day string, identity string, size int64, limit int64) error {
 	usage := model.UserDailyUploadUsage{ID: userID + ":" + day, UserID: userID, Day: day}
+	identity = strings.TrimSpace(identity)
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&usage).Error; err != nil {
 			return err
@@ -712,18 +717,75 @@ func (r *Repository) ReserveDailyUpload(userID string, day string, size int64, l
 		if result.RowsAffected == 0 {
 			return ErrDailyUploadLimitExceeded
 		}
-		return nil
+		if identity == "" {
+			return nil
+		}
+		now := time.Now()
+		return tx.Create(&model.UserUploadReservation{
+			ID:        userID + ":" + identity,
+			UserID:    userID,
+			Identity:  identity,
+			Day:       day,
+			Size:      size,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}).Error
 	})
 }
 
 func (r *Repository) ReleaseDailyUpload(userID string, day string, size int64) error {
+	return r.ReleaseIdentifiedDailyUpload(userID, day, "", size)
+}
+
+func (r *Repository) ReleaseIdentifiedDailyUpload(userID string, day string, identity string, size int64) error {
 	id := userID + ":" + day
-	return r.db.Model(&model.UserDailyUploadUsage{}).
-		Where("id = ?", id).
-		Updates(map[string]any{
-			"bytes":      gorm.Expr("CASE WHEN bytes >= ? THEN bytes - ? ELSE 0 END", size, size),
-			"updated_at": time.Now(),
-		}).Error
+	identity = strings.TrimSpace(identity)
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.UserDailyUploadUsage{}).
+			Where("id = ?", id).
+			Updates(map[string]any{
+				"bytes":      gorm.Expr("CASE WHEN bytes >= ? THEN bytes - ? ELSE 0 END", size, size),
+				"updated_at": time.Now(),
+			}).Error; err != nil {
+			return err
+		}
+		if identity == "" {
+			return nil
+		}
+		return tx.Where("user_id = ? AND identity = ?", userID, identity).Delete(&model.UserUploadReservation{}).Error
+	})
+}
+
+func (r *Repository) ClearUploadReservation(userID string, identity string) error {
+	identity = strings.TrimSpace(identity)
+	if strings.TrimSpace(userID) == "" || identity == "" {
+		return nil
+	}
+	return r.db.Where("user_id = ? AND identity = ?", userID, identity).Delete(&model.UserUploadReservation{}).Error
+}
+
+func (r *Repository) ListUploadReservations() ([]model.UserUploadReservation, error) {
+	var rows []model.UserUploadReservation
+	if err := r.db.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func (r *Repository) UploadReservation(userID string, identity string) (*model.UserUploadReservation, error) {
+	identity = strings.TrimSpace(identity)
+	if strings.TrimSpace(userID) == "" || identity == "" {
+		return nil, nil
+	}
+	var row model.UserUploadReservation
+	err := r.db.Where("user_id = ? AND identity = ?", userID, identity).First(&row).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &row, nil
 }
 
 func (r *Repository) UserStoredFileBytes(userID string) (int64, error) {

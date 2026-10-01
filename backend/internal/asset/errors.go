@@ -64,6 +64,18 @@ func UploadSessionBusy() error {
 	return kernel.RateLimited("同时进行中的上传过多，请稍后重试")
 }
 
+func UploadSessionCompleting() error {
+	err := kernel.NewAppError(http.StatusConflict, "上传正在完成，请稍候")
+	err.Retryable = true
+	return err
+}
+
+func UploadSessionRecoveryFailed() error {
+	err := kernel.NewAppError(http.StatusServiceUnavailable, "上传会话恢复失败，请稍后重试")
+	err.Retryable = true
+	return err
+}
+
 func UploadSessionIncomplete() error {
 	return kernel.BadAuthRequest("上传文件不完整，请重新导入")
 }

@@ -3,6 +3,8 @@ package app
 import (
 	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -256,5 +258,66 @@ func TestChunkedUploadStartUsesCanonicalQuota(t *testing.T) {
 	}
 	if got := svc.pendingStorage[pendingStorageKey("user-1", session.UploadID)]; got != 7 {
 		t.Fatalf("session pending = %d", got)
+	}
+}
+
+func TestChunkedUploadCrashBeforeMetaReleasesDailyViaReservationWitness(t *testing.T) {
+	svc := newResourceTestService(t)
+	session, err := svc.StartChunkedResourceUpload("user-1", localasset.ChunkedUploadStart{FileName: "a.png", Kind: "image", Size: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	day := time.Now().UTC().Format("2006-01-02")
+	usage, err := svc.repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 7 {
+		t.Fatalf("start daily=%d err=%v", usage, err)
+	}
+	root := filepath.Join(svc.dataDir, "chunk-sessions")
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("session dir missing: %v %v", entries, err)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	restarted := &Service{repo: svc.repo, dataDir: svc.dataDir}
+	if restarted.resourceDomain() == nil {
+		t.Fatal("restart domain is nil")
+	}
+	usage, err = restarted.repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != 0 {
+		t.Fatalf("crash-before-meta leaked daily=%d err=%v session=%s", usage, err, session.UploadID)
+	}
+	row, err := restarted.repo.UploadReservation("user-1", session.UploadID)
+	if err != nil || row != nil {
+		t.Fatalf("reservation witness leftover %#v err=%v", row, err)
+	}
+}
+
+func TestChunkedUploadCompleteCommitsCanonicalQuota(t *testing.T) {
+	svc := newResourceTestService(t)
+	body := []byte("payload")
+	session, err := svc.StartChunkedResourceUpload("user-1", localasset.ChunkedUploadStart{FileName: "a.png", Kind: "image", Size: int64(len(body))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.PutChunkedResourceUpload("user-1", session.UploadID, 0, bytes.NewReader(body)); err != nil {
+		t.Fatal(err)
+	}
+	resource, err := svc.CompleteChunkedResourceUpload("user-1", session.UploadID)
+	if err != nil || resource == nil || resource.Status != model.ResourceStatusReady {
+		t.Fatalf("complete = %#v err=%v", resource, err)
+	}
+	if got := svc.pendingStorage[pendingStorageKey("user-1", session.UploadID)]; got != 0 {
+		t.Fatalf("pending leftover after complete = %d", got)
+	}
+	day := time.Now().UTC().Format("2006-01-02")
+	usage, err := svc.repo.DailyUploadBytes("user-1", day)
+	if err != nil || usage != int64(len(body)) {
+		t.Fatalf("committed daily=%d err=%v", usage, err)
+	}
+	row, err := svc.repo.UploadReservation("user-1", session.UploadID)
+	if err != nil || row != nil {
+		t.Fatalf("reservation witness after commit %#v err=%v", row, err)
 	}
 }
