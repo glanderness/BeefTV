@@ -32,6 +32,19 @@ func TestEditingDomainDoesNotDependOnApplicationService(t *testing.T) {
 	assertDomainDoesNotImportApp(t, "./internal/editing")
 }
 
+func TestRefactoredDomainsDoNotDependOnApplicationService(t *testing.T) {
+	for _, name := range []string{
+		"generation", "plugins", "modelcatalog", "operations", "asset", "canvas",
+		"creation", "taskruntime", "taskdelivery", "taskbinding", "agentops",
+		"assistantruntime", "assistantturns", "playback", "depthcapture", "transcription",
+		"workspace", "provider/workflow",
+	} {
+		t.Run(name, func(t *testing.T) {
+			assertDomainDoesNotImportApp(t, "./internal/"+name)
+		})
+	}
+}
+
 func assertDomainDoesNotImportApp(t *testing.T, pkg string) {
 	t.Helper()
 	command := exec.Command("go", "list", "-deps", pkg)

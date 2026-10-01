@@ -239,3 +239,10 @@
 - `d480a1e` 前端整套第一阶段失败于四个旧入口源码断言；迁移断言至新归属后专项通过，并修正本地导入进度文案、新建画布失败退出等待页。真实 headless Chrome 五项通过，包含新浏览器空间导入后 reload、缺文件、坏包及实际 PUT 503 失败入口。Bun/浏览器测试夹具分清原生 API 与纯浏览器存储，未用源码断言代替这五项行为。
 - 同快照全量 Go 因新画板删除夹具缺少 canvas_unit_links 失败；补齐夹具后完整 canvas race 2.628s 通过。尚未重新记录最终全量成功。旧 restoreCanvasArchiveMedia 无产品调用者，已移除，导入只保留统一恢复流程；导出测试据实只声明包内字节检查。
 - 导演台 `d5b0322` 暂未集成：拒绝生产导出测试复位接口把 epoch 重置为 1，AI 全景仍须同 epoch，`20261002-061624-continue-2d6d3709` 收尾。画板后端 `4acad09` 暂未集成：`20261002-061728-continue-41ddd32e` 去掉独立 8MiB 新限制，按既有结构化存储策略准入；Lead 合并时必须保留事务仓储绑定的 runtimePolicyWithRepo。
+
+### 独立结构复审后的实际执行路径收口
+
+- `890b224` 标准前端全套退出 0：2802 pass、0 fail、14 skip。全量 Go 的唯一失败为前述 canvas_unit_links 夹具，后续 canvas 完整 race 已通过；最终完整 Go 仍须在最后候选重跑。
+- 结构审查 `20261002-060445-review-cf4377b6` 给出 REPAIR。Lead 核对了实际 desktop worker/handler 调用：生成主编排、图片恢复的全局服务表、剪辑/深度专用准入、模型/插件目录和首阶段媒体入库仍有 app.Service 业务体。不能据此前目录拆分声明完整重构。
+- 固定 `890b224` 再拆四个独立 Grok 工作树：`20261002-062025-delegate-31b5a890` 生成主编排/图片恢复/退休 Agent 空钩子；`20261002-062025-delegate-80ec02ac` 专用任务领域准入；`20261002-062025-delegate-5cc8bf40` 模型/插件目录；`20261002-062025-delegate-418c3026` 媒体首阶段入库。彼此禁止改对方业务体；Lead 合并共享 composition hunks。
+- Lead 将 generation/plugins/modelcatalog/operations/asset/canvas/creation/taskruntime/taskdelivery/taskbinding/agentops/assistantruntime/assistantturns/playback/depthcapture/transcription/workspace/provider-workflow 加入真正 go list -deps 防倒置测试，18 个领域通过。该证据只证明依赖方向，不代替业务迁移。

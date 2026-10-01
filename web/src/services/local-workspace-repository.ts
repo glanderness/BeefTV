@@ -456,6 +456,7 @@ async function putCanvasProjectToBackend(id: string, project: CanvasProject, end
             includeGeneratedAssets ? { project: projectForSave, assets } : { project: projectForSave },
             { expectedScope: expected },
         );
+        if (!response.project || response.project.id !== id) throw new Error("画布保存回执无效，修改仍保留在本地，请重试");
         return response.project;
     } catch (error) {
         rethrowIfAbandoned(error);

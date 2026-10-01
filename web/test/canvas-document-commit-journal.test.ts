@@ -37,6 +37,7 @@ class ApiError extends Error {
 }
 
 const server = {
+    missingCreateReceipt: false,
     revision: 1,
     document: null as Record<string, unknown> | null,
     commits: [] as Array<{ opId: string; expectedRevision: number; title: string; nodeIds?: string[] }>,
@@ -106,6 +107,7 @@ mock.module("@/services/api/request", () => ({
                 server.dispatchWaiting = false;
             }
             assertMockExpectedScope(config);
+            if (server.missingCreateReceipt) return {};
             return { project: { id: "c1", revision: 1 } };
         },
         post: async (_path: string, body: { opId: string; params: { expectedRevision: number; document: { title: string; nodes?: Array<{ id: string }> } } }, config?: { expectedScope?: { userScope: string; epoch: number } }) => {
@@ -266,6 +268,7 @@ beforeEach(() => {
     failSetItemOn = 0;
     setItemCount = 0;
     server.revision = 1;
+    server.missingCreateReceipt = false;
     server.document = canvas("基线", 1);
     server.commits = [];
     server.receipts.clear();
@@ -287,6 +290,19 @@ beforeEach(() => {
 });
 
 describe("画布文档提交日记", () => {
+    test("首次保存 200 但缺少画布回执不能确认成功，草稿保留可重试", async () => {
+        clearCanvasDocumentBase("c1");
+        useCanvasStore.setState({ projects: [canvas("新画布", 0)] });
+        server.missingCreateReceipt = true;
+        await expect(syncLocalCanvasProjectToBackend("c1")).rejects.toThrow("画布保存回执无效");
+        expect(useCanvasStore.getState().openProject("c1")?.title).toBe("新画布");
+        expect(useCanvasStore.getState().openProject("c1")?.revision).toBe(0);
+        expect(peekCanvasOperationJournal("c1")?.confirmedRevision || 0).toBe(0);
+        server.missingCreateReceipt = false;
+        await syncLocalCanvasProjectToBackend("c1");
+        expect(useCanvasStore.getState().openProject("c1")?.revision).toBe(1);
+    });
+
     test("干净缓存采用后端，脏草稿相对已记录基线保留", () => {
         const localClean = canvas("基线", 1);
         const backend = canvas("助手改过", 2);
