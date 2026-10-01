@@ -1,6 +1,6 @@
 # 项目领域抽取
 
-状态：项目聚合（身份、归属、修订、文件夹、章节、画布关联）已迁入 `internal/project`。素材卡片、工作流步骤机和生成任务仍由 `app` 提供协作实现。本文记录当前真实依赖，不是完成证明。
+状态：项目聚合与生产算法（素材版本、角色、镜头、工作流步骤机、工作台只读装配）已迁入 `internal/project`。`app` 仍保留跨域任务解密、任务列表和交付补偿适配器。本文记录当前真实依赖，不是完整重构完成证明。
 
 ## 实际依赖图
 
@@ -11,14 +11,15 @@ HTTP handler
         └─ app.Service.projectDomain()        → internal/project.Service
 
 internal/project.Service
-  ├─ repository.Repository（项目/文件夹/章节/画布关系/封面资源/活跃任务计数）
-  ├─ repository/project_mutate.go（同一事务内的聚合写入）
+  ├─ repository.Repository
+  ├─ repository/project_mutate.go（同一事务内的聚合写入、归档/归属、CAS）
   ├─ model
-  ├─ kernel（结构化校验错误与 ID）
+  ├─ kernel
   ├─ prompts.ValidateStyleProfileJSON / ValidateStyleProfilePreset
-  └─ Workflows 端口（app.projectWorkflowHost）
-        ├─ EnsureBuiltinTemplate（全局模板，项目行之外）
-        └─ PrepareDefault（只准备记录，不写库）
+  ├─ assets.FileURL（生成产物卡片的资源地址）
+  └─ Workflows 端口（app.projectWorkflowHost，仅种子）
+        ├─ EnsureBuiltinTemplate → 领域 EnsureBuiltinTemplate
+        └─ PrepareDefault → 领域 PrepareDefaultWorkflow（只准备记录）
 
 internal/localapp.ProjectPort
   └─ []project.Summary（不再引用 app 类型）
@@ -38,44 +39,46 @@ bootstrap.Open
 - 删除项目：进行中任务拒绝；画布脱离项目并改写 payload；项目侧生产行删除；账号素材库与画布任务保留
 - 文件夹：父夹必须是当前用户已有记录，空 parentId 为根；搬家时原子递增 revision
 - 复制项目：新身份、名称加「副本」、revision 归 1，章节正文与父子关系一并复制
-- 章节创建与 revision bump 同一事务；导入/排序/删除/更新仍走原仓储事务
-- 画布-章节关联：列 `project_id`、payload `projectId`、unit link、双方项目 revision 同一事务；未知 payload 字段保留。画布从旧项目改挂到新项目时删除旧 link 并 bump 旧项目
+- 章节创建/导入/排序/删除/更新与 revision 同一事务；覆盖写走 CAS
+- 画布-章节关联：列 `project_id`、payload `projectId`、unit link、双方项目 revision 同一事务；未知 payload 字段保留。旧项目只在同用户且未归档时 bump；已有 link 回填原 ID，不返回新编造 ID
 - 解除章节关联、解除项目关系；解除项目关系时删除 payload 中的 `projectId`，保留其余未知字段
-- 归档项目不能再改章节或画布关联，也不能作为生成任务的业务项目；更新项目本身仍可解档
-- 工作台 core/overview/unit summaries/canvas page 的仓储读取
+- 归档项目不能再改生产数据，也不能作为生成任务的业务项目；更新项目本身仍可解档
+- 素材链接/解除/分类/目录、版本、候选确认；角色卡与声音绑定；镜头创建/整章替换/修订/引用；工作流步骤机与任务产物登记
+- 生成产物身份：`sha256(namespace:taskID)` 截断 16 字节，登记幂等
+- 工作台 core/overview/unit summaries/canvas page，以及 typed `Inspect` / `ProjectUnitWorkspace` / 素材与候选分页
 - 测试/遗留 `Service{repo}` 构造不再懒写入共享 `projects` 字段；缺字段时每次返回无状态实例
 
-## 写入原子性（本切片）
+## 写入原子性
 
-窄仓储 `repository/project_mutate.go` 持有事务，领域不把 `app.Service` 回调进事务。
+窄仓储 `repository/project_mutate.go` 持有事务。领域写入先 `Active()` 早失败，事务内再 `requireActiveProjectTx`（`id AND user_id` 且未归档）。覆盖写使用读到的 revision / `primary_version_id` / `current_revision_id` / `expectedShotIds` 做 CAS；追加写使用 `revision + 1`。素材文件夹父夹与镜头目标文件夹在事务内再查一次。
 
 | 写入 | 同一事务内 | 失败后 |
 | --- | --- | --- |
 | 创建项目 + 默认工作流 | 项目行、workflow instance/steps、revision+1 | 项目与实例都不留 |
-| 创建章节 | unit 行 + 项目 revision | 不留孤立章节 |
-| 关联画布章节 | canvas 列与 payload、link、新旧项目 revision | 列/payload/link 一致回滚 |
-| 更新项目 | 归属 + `revision = expected` 的 CAS | 另一方完整保留 |
-| 项目搬家 | folder_id + revision+1 | 位置与修订一起回滚 |
-| 创建文件夹 | 父夹同用户存在性 + insert | 不出现无主 parentId |
+| 章节/素材/角色/镜头/候选 | 生产行 + 归属归档校验 + 项目 revision | 不留半写入 |
+| 关联画布章节 | canvas 列与 payload、link、本项目 revision；旧项目仅同用户未归档才 bump | 列/payload/link 一致回滚 |
+| 更新项目/章节/素材分类/文件夹 | 归属 + `revision = expected` 的 CAS | 另一方完整保留 |
+| 角色新版本 | `primary_version_id = expected` 的 CAS | 旧主版本完整保留 |
+| 镜头修订 | `current_revision_id = expected` 的 CAS | 旧当前版本完整保留 |
+| 整章替换分镜 | `expectedShotIds` 一致才替换 | 原分镜完整保留 |
+| 工作流产物登记 | 步骤/任务/表现/镜头产物按 task 身份幂等 + revision | 重复登记不复制行 |
 
-内置工作流模板仍由 `EnsureBuiltinTemplate` 在项目事务外幂等写入（全局共享）。章节工作流 `createProjectWorkflow` 仍在 app：先 `CreateWorkflowInstance` 再 `BumpProjectRevision`，不是本切片的原子范围。
+内置工作流模板仍由 `EnsureBuiltinTemplate` 在项目事务外幂等写入（全局共享）。无新 schema version。
 
-## 仍留在 app 的残余
+## 仍留在 app 的适配器
 
-这些实现与生成任务、角色版本修复或素材卡片装配缠在一起，尚未迁出。项目领域通过一次归属校验或 `Inspect` 快照接入，不复制规则。下一刀是这些算法，不是已经完成的聚合抽取。
+这些不是领域缺口的伪装完成。跨域任务、密钥解密和交付补偿仍在 `app`；Lead 接入 taskdelivery 前，读路径仍调用它们以保持现网行为。
 
-| 残余 | 位置 | 仍在 app 的算法 |
+| 残余 | 位置 | 仍在 app 的原因 |
 | --- | --- | --- |
-| `ProjectDetail` 装配 | `app/project.go` | 读前补偿后拼卡片：`reconcileCharacterTurnaroundTasks`、成功任务 `RegisterTaskOutputFromTask`、再 `Inspect` + `ProjectAssets` + `ProjectWorkflows` + `TasksWithOptions` |
-| 项目素材 | `app/project_asset.go` | 链接/解除、分类与目录移动、新版本、确认候选、上传资源合成资产、`projectAssetSummary`；写后单独 `BumpProjectRevision` |
-| 项目素材文件夹 | `app/project_asset_folder.go` | 素材库内文件夹 CRUD 与父夹解析 |
-| 角色与声音 | `app/project_character.go` | 角色创建/更新、三视图替换、试听绑定、turnaround 任务回写与读取补偿、角色版本准备 |
-| 镜头 | `app/project_shot.go` | 分镜创建/整章替换、修订、删除、镜头资产引用、资产候选；部分路径单独 bump revision |
-| 工作流步骤机 | `app/project_workflow.go` | 内置模板确保、章节工作流实例创建（instance 与 revision 仍分两步）、步骤状态机与完成校验、任务产物登记、`ensureGeneratedProjectAsset` |
-| 工作台卡片页 | `app/project_workbench_read.go` | `ProjectUnitWorkspace` 装配素材/工作流/任务；素材与候选分页 |
+| `decryptTaskInputJSON` | `app/secret_store.go` | 任务输入加密属于密钥/任务域 |
+| `TasksWithOptions` | `app` 任务列表 | 工作台卡片要拼近期任务，领域读端口不持有 TaskSummary |
+| `RegisterTaskOutputFromTask` | `app/project_workflow.go` | 解析加密任务 JSON 与 result 资源 ID，再调领域 `EnsureGeneratedProjectAsset` + `RegisterTaskOutput` |
+| `finalizeCharacterTurnaroundTask` | `app/project_character.go` | 解密任务并解析图片资源后调领域 `BindCharacterTurnaround` |
+| `reconcileCharacterTurnaroundTasks` | `app/project_character.go` | **REMOVE**：Lead 接入 taskdelivery 后删除。当前 `ProjectDetail`/`ProjectCore` 仍调用，避免刷新丢三视图 |
+| `ProjectDetail` 读补偿 | `app/project.go` | **REMOVE**：成功任务 `RegisterTaskOutputFromTask` 不应属于正常读所有权；交付 worker 才拥有生成产物恢复 |
+| `ProjectWorkflows(projectID)` | `app/project_workflow.go` | 无 userID 的旧签名，仅兼容残留调用；`ProjectDetail` 已走领域 `ProjectWorkflows(userID, projectID)` |
 
-`Workflows` 是项目拥有的窄端口：只准备默认实例记录。步骤机、产物登记和章节工作流创建仍在 app。
+`Workflows` 端口保持最小：只准备默认实例记录。步骤机、产物登记、章节工作流创建已在领域。`app` 方法名继续转发，HTTP JSON 不变。handler 在组合根迁完前仍可调用 `app.Service`。
 
-## 兼容委托
-
-`app` 的原方法名全部改为一次转发到 `internal/project`，HTTP JSON 字段不变。handler 在组合根迁移完成前可以继续调用 `app.Service`。`ProjectDetail` 是唯一仍在 app 编排的聚合读取：先做任务侧补偿，再 `Inspect`，再补素材/工作流/任务卡片。
+不得把本切片写成完整重构完成：任务、资源、画布桥、插件、模型目录和前端仍不在本工作树。
