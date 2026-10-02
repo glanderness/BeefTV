@@ -84,7 +84,7 @@ for (const round of [1, 2]) for (const path of paths) {
   if (!item.providerRequestId || item.clientVersion !== version || !item.platform || !/^[a-f0-9]{64}$/.test(item.fixtureDigest || '') || !item.model) fail(`incomplete provenance for ${round}/${path}`);
   if (item.status !== 'succeeded' || !item.clientSubmitted || !item.canvasVerified || !item.mediaDecoded || !item.mediaOpened || item.billing !== 'settled' || !(item.costCNY >= 0) || !/^[a-f0-9]{64}$/.test(item.artifactSHA256 || '')) fail(`incomplete acceptance for ${round}/${path}`);
   if (themeAgent) {
-    if (item.entrypoint !== 'assistant' || !nonempty(item.sessionId) || !nonempty(item.turnId) || !nonempty(item.proposalId) || item.confirmed !== true) fail(`incomplete assistant provenance for ${round}/${path}`);
+    if (item.entrypoint !== 'assistant' || !nonempty(item.sessionId) || !nonempty(item.turnId) || !nonempty(item.proposalId) || !nonempty(item.operationId) || item.confirmed !== true) fail(`incomplete assistant provenance for ${round}/${path}`);
     caseDigests.add(item.fixtureDigest);
   }
 }

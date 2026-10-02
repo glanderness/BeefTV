@@ -2,9 +2,8 @@ import { createHash } from 'node:crypto';
 
 // Completeness contract only. The reporter still has to prove the evidence is true.
 // contractVersion must be exactly 2; unknown future contract versions fail closed.
-// Theme/fixture copy checks inspect existing lower-version receipts that already
-// declare contractVersion=2. Missing historical files are not errors, and pre-v2
-// receipts are not compared, even if their fixtures happen to match.
+// Theme identity uses v2 receipts; fixture digests also inspect historical cases
+// so the first v2 release cannot reuse the old fixed material set.
 export const THEME_AGENT_CONTRACT_VERSION = 2;
 export const THEME_AGENT_SINCE = 'v1.6.23';
 export const REQUIRED_AGENT_CHECK_IDS = Object.freeze([
@@ -80,6 +79,7 @@ export function inspectFixtureManifest(manifest) {
 export function findCopiedPriorTheme(scenario, digest, priors) {
   const id = typeof scenario?.id === 'string' ? scenario.id.trim() : '';
   for (const prior of priors) {
+    if (Array.isArray(prior?.cases) && prior.cases.some(item => item?.fixtureDigest === digest)) return prior;
     if (prior?.contractVersion !== THEME_AGENT_CONTRACT_VERSION || !prior.scenario || typeof prior.scenario !== 'object') continue;
     const priorId = typeof prior.scenario.id === 'string' ? prior.scenario.id.trim() : '';
     const sameId = Boolean(id && priorId && priorId === id);

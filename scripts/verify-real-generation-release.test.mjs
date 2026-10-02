@@ -81,6 +81,7 @@ function makeCases(version, fixtureDigest) {
     sessionId: `s-${round}-${path}`,
     turnId: `t-${round}-${path}`,
     proposalId: `p-${round}-${path}`,
+    operationId: `proposal:p-${round}-${path}:node-${round}-${path}`,
     confirmed: true,
   })));
 }
@@ -221,6 +222,8 @@ test('v1.6.23+ requires theme, shared fixtures and native assistant evidence', (
       [r => { r.cases[0].sessionId = ''; }, /incomplete assistant provenance/],
       [r => { r.cases[0].turnId = ' '; }, /incomplete assistant provenance/],
       [r => { r.cases[0].proposalId = ''; }, /incomplete assistant provenance/],
+      [r => { delete r.cases[0].operationId; }, /incomplete assistant provenance/],
+      [r => { r.cases[0].operationId = ' '; }, /incomplete assistant provenance/],
       [r => { r.cases[0].confirmed = false; }, /incomplete assistant provenance/],
       [r => { r.sourceDigest = 'old'; }, /receipt does not match this release source/],
       [r => { delete r.agentChecks; }, /boolean-only agent coverage is not accepted/],
@@ -244,9 +247,9 @@ test('v1.6.23+ requires theme, shared fixtures and native assistant evidence', (
     assert.match(run(), /12\/12/);
 
     const bunny = makeV2('v1.6.23', sourceDigest, { fixtures: BUNNY_FIXTURES });
-    save({ version: 'v1.6.22', contractVersion: 1, scenario: makeScenario(BUNNY_FIXTURES, { id: 'big-buck-bunny' }), cases: [] }, 'v1.6.22');
+    save({ version: 'v1.6.22', cases: [{ fixtureDigest: fixtureDigestFromManifest(BUNNY_FIXTURES) }] }, 'v1.6.22');
     save(bunny);
-    assert.match(run(), /12\/12/);
+    assert.throws(() => run(), /copied preceding release scenario or fixtures/);
 
     commitVersion('v1.6.24');
     const nextDigest = run('--fingerprint').trim();
