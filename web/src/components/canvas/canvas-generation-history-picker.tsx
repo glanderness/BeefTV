@@ -4,11 +4,11 @@ import { Input, Modal, Spin } from "antd";
 import { FileAudio, FileVideo, Image as ImageIcon, Search } from "lucide-react";
 
 import { CachedResourceImage } from "@/components/cached-resource-image";
-import { insertableCanvasGenerationHistoryTasks, loadCanvasGenerationHistory } from "@/lib/canvas/canvas-generation-history";
+import { insertableCanvasGenerationHistoryTasks } from "@/lib/canvas/canvas-generation-history";
 import { generationTaskMode } from "@/lib/canvas/canvas-generation-task-sync";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { ownedResourceIdFromMediaRef, resourceIdFromStorageKey, resourceStorageKey } from "@/services/api/resources";
-import type { GenerationTask } from "@/services/api/task-center";
+import { listGenerationTasks, type GenerationTask } from "@/services/api/task-center";
 
 type CanvasGenerationHistoryPickerProps = {
     open: boolean;
@@ -22,7 +22,7 @@ export function CanvasGenerationHistoryPicker({ open, projectId, onClose, onSele
     const scope = getActiveUserScope();
     const query = useQuery({
         queryKey: ["canvas-generation-history", scope, projectId],
-        queryFn: ({ signal }) => loadCanvasGenerationHistory(projectId, { signal }),
+        queryFn: ({ signal }) => listGenerationTasks(100, { projectId, activeOnly: false }, undefined, signal),
         enabled: open && Boolean(projectId),
         staleTime: 15_000,
     });

@@ -1,19 +1,7 @@
 import { generationTaskMode } from "@/lib/canvas/canvas-generation-task-sync";
-import { listGenerationTasks, type GenerationTask } from "@/services/api/task-center";
+import type { GenerationTask } from "@/services/api/task-center";
 
-export type CanvasGenerationHistoryListFn = (projectId: string, signal?: AbortSignal) => Promise<GenerationTask[]>;
-
-/** Desktop and browser both read persisted Go tasks. Canvas nodes are not a history store. */
-export async function loadCanvasGenerationHistory(
-    projectId: string,
-    options: { signal?: AbortSignal; list?: CanvasGenerationHistoryListFn } = {},
-) {
-    const id = projectId.trim();
-    if (!id) throw new Error("缺少画布");
-    const list = options.list ?? ((canvasId, signal) => listGenerationTasks(100, { projectId: canvasId, activeOnly: false }, undefined, signal));
-    return list(id, options.signal);
-}
-
+/** Succeeded media tasks with persisted resultJson. Canvas nodes are not a history store. */
 export function insertableCanvasGenerationHistoryTasks(
     tasks: GenerationTask[],
     options: { projectId: string; keyword?: string },

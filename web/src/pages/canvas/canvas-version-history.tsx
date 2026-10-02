@@ -3,14 +3,7 @@ import { EmptyState } from "@/components/ui/product/empty-state";
 import { App, Button, Grid, Spin } from "antd";
 import { Check, ChevronDown, Cloud, Download, FileClock, History, RefreshCw, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-    CANVAS_LOCAL_DRAFT_TAB_LABEL,
-    CANVAS_SAVED_VERSION_TAB_LABEL,
-    loadPersistedCanvasVersionEntry,
-    loadPersistedCanvasVersionHistory,
-    partitionCanvasVersionHistory,
-} from "@/lib/canvas/canvas-version-history-source";
-import { type CanvasHistoryEntry } from "@/services/api/workspace-data";
+import { getCanvasHistoryEntry, listCanvasHistory, type CanvasHistoryEntry } from "@/services/api/workspace-data";
 import { preserveCanvasSyncDraft, readCanvasSyncDrafts, type CanvasSyncDraft } from "@/services/canvas-sync-drafts";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { getActiveUserScope } from "@/lib/user-scope";
@@ -81,7 +74,7 @@ export function useCanvasVersionHistory(projectId: string, onRestore: (snapshotI
         setError("");
         setEntries([]);
         setCurrentRevision(undefined);
-        void loadPersistedCanvasVersionHistory(projectId, { signal: controller.signal })
+        void listCanvasHistory(projectId, controller.signal)
             .then((result) => {
                 if (controller.signal.aborted || !isCurrentContext()) return;
                 setEntries(result.snapshots);
@@ -132,7 +125,7 @@ export function useCanvasVersionHistory(projectId: string, onRestore: (snapshotI
         const selection: CanvasVersionPreviewState = { key: entry.id, label: `版本 ${entry.revision}`, date: entry.contentUpdatedAt, kind: "cloud", snapshot: entry };
         setPreview(selection);
         setListOpen(false);
-        void loadPersistedCanvasVersionEntry(projectId, entry.id, controller.signal)
+        void getCanvasHistoryEntry(projectId, entry.id, controller.signal)
             .then(({ project }) => {
                 if (!controller.signal.aborted && previewRequest.current === controller && isCurrentContext()) setPreview({ ...selection, project });
             })
@@ -256,10 +249,9 @@ export type CanvasVersionHistoryController = ReturnType<typeof useCanvasVersionH
 export function CanvasVersionHistory({ history }: { history: CanvasVersionHistoryController }) {
     const { open, tab, entries, drafts, currentProject, currentRevision, preview, loading, draftLoading, restoring, exporting, error, draftError, localOnly } = history;
     if (!open) return null;
-    const { saved, drafts: listedDrafts } = partitionCanvasVersionHistory({ snapshots: entries, drafts });
-    const displayDrafts = listedDrafts.length || !localOnly || !currentProject ? listedDrafts : [{ id: "current-local-snapshot", savedAt: currentProject.updatedAt, project: currentProject }];
+    const displayDrafts = drafts.length || !localOnly || !currentProject ? drafts : [{ id: "current-local-snapshot", savedAt: currentProject.updatedAt, project: currentProject }];
     const groups = new Map<string, CanvasHistoryEntry[]>();
-    for (const entry of saved) {
+    for (const entry of entries) {
         const day = new Date(entry.contentUpdatedAt).toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" });
         groups.set(day, [...(groups.get(day) || []), entry]);
     }
@@ -295,7 +287,7 @@ export function CanvasVersionHistory({ history }: { history: CanvasVersionHistor
                     onClick={() => history.changeTab("cloud")}
                 >
                     <Cloud size={14} />
-                    {CANVAS_SAVED_VERSION_TAB_LABEL} <span className="canvas-version-count">{saved.length}</span>
+                    已保存版本 <span className="canvas-version-count">{entries.length}</span>
                 </button>
                 <button
                     type="button"
@@ -309,7 +301,7 @@ export function CanvasVersionHistory({ history }: { history: CanvasVersionHistor
                     onClick={() => history.changeTab("draft")}
                 >
                     <FileClock size={14} />
-                    {CANVAS_LOCAL_DRAFT_TAB_LABEL} <span className="canvas-version-count">{displayDrafts.length}</span>
+                    本机草稿 <span className="canvas-version-count">{displayDrafts.length}</span>
                 </button>
             </div>
             <div id="canvas-version-list" role="tabpanel" aria-labelledby={tab === "cloud" ? "canvas-cloud-tab" : "canvas-draft-tab"} className="canvas-version-list">
@@ -335,7 +327,7 @@ export function CanvasVersionHistory({ history }: { history: CanvasVersionHistor
                             <div className="canvas-version-empty">
                                 <Spin size="small" />
                             </div>
-                        ) : !saved.length && !error ? (
+                        ) : !entries.length && !error ? (
                             <EmptyState size="compact" description="暂无历史版本，后续保存时会自动保留" />
                         ) : null}
                         {[...groups].map(([day, items]) => (

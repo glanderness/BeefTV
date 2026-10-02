@@ -3,11 +3,11 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { generationHistoryPreviewImageSrc } from "../src/components/canvas/canvas-generation-history-picker";
-import { insertableCanvasGenerationHistoryTasks, loadCanvasGenerationHistory } from "../src/lib/canvas/canvas-generation-history";
+import { insertableCanvasGenerationHistoryTasks } from "../src/lib/canvas/canvas-generation-history";
 import { reuseGeneratedMediaStorageKey } from "../src/lib/canvas/canvas-generation-task-sync";
 import { insertCanvasGenerationHistoryTask } from "../src/pages/canvas/canvas-generation-orchestration";
 import { localTaskHistoryFromProjects } from "../src/lib/local-task-history";
-import type { GenerationTask } from "../src/services/api/task-center";
+import { listGenerationTasks, type GenerationTask } from "../src/services/api/task-center";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 import type { CanvasProject } from "../src/stores/canvas/use-canvas-store";
 
@@ -66,14 +66,18 @@ function wipedCanvasProject(): CanvasProject {
 describe("LibTV generation history picker", () => {
     test("queries and filters successful media generation tasks", () => {
         expect(picker).toContain('title="从生成历史选择"');
-        expect(picker).toContain("loadCanvasGenerationHistory");
+        expect(picker).toContain("listGenerationTasks(100, { projectId, activeOnly: false }, undefined, signal)");
         expect(picker).toContain("insertableCanvasGenerationHistoryTasks");
         expect(picker).toContain("onSelect(task)");
+        expect(picker).toContain("enabled: open && Boolean(projectId)");
         expect(picker).not.toContain("localTaskHistoryFromProjects");
         expect(picker).not.toContain("isLocalWorkspaceMode");
+        expect(picker).not.toContain("loadCanvasGenerationHistory");
         expect(picker).toContain("query.isError ? \"生成历史暂时无法读取\"");
         expect(picker).toContain('queryKey: ["canvas-generation-history", scope, projectId]');
-        expect(historySource).toContain("listGenerationTasks(100, { projectId: canvasId, activeOnly: false }");
+        expect(historySource).toContain("export function insertableCanvasGenerationHistoryTasks");
+        expect(historySource).not.toContain("loadCanvasGenerationHistory");
+        expect(historySource).not.toContain("listGenerationTasks");
     });
 
     test("lists a succeeded backend task even when the canvas node has no content", () => {
@@ -90,12 +94,13 @@ describe("LibTV generation history picker", () => {
     });
 
     test("history API failure is not turned into an empty list", async () => {
-        await expect(loadCanvasGenerationHistory("lelvpvjEnuJ98wD_f2FI7", {
-            list: async () => {
+        await expect(listGenerationTasks(100, { projectId: "lelvpvjEnuJ98wD_f2FI7", activeOnly: false }, {
+            listBackend: async () => {
                 throw new Error("backend down");
             },
         })).rejects.toThrow("backend down");
-        await expect(loadCanvasGenerationHistory("  ")).rejects.toThrow("缺少画布");
+        expect(picker).not.toContain(".catch(");
+        expect(picker).toContain("query.isError ? \"生成历史暂时无法读取\"");
     });
 
     test("keeps project scope when listing insertable history", () => {
