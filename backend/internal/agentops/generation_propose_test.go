@@ -1,6 +1,7 @@
 package agentops_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,10 +14,59 @@ import (
 // 并且只接受确实属于本画布的节点，否则模型可以借它把别处的对象写进提议。
 func writeGenerationModels(t *testing.T, dataDir string) {
 	t.Helper()
-	body := `{"schemaVersion":1,"revision":1,"config":{"imageModel":"beefapi::gpt-image-2","videoModel":"beefapi::wan3.0-video"}}`
+	body := `{"schemaVersion":1,"revision":1,"config":{"imageModel":"beefapi::gpt-image-2","videoModel":"beefapi::wan3.0-video","channels":[{"id":"beefapi","name":"BeefAPI","enabled":true,"modelProfiles":[{"model":"gpt-image-2","capability":"image","protocol":"openai-image"},{"model":"gpt-image-2.5-flare","capability":"image","protocol":"openai-image"},{"model":"wan3.0-video","capability":"video","protocol":"newapi-channel-1"}]}]}}`
 	if err := os.WriteFile(filepath.Join(dataDir, "local-model-config.json"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func (h *harness) patchNode(t *testing.T, nodeID string, mutate func(node map[string]any)) {
+	t.Helper()
+	raw, err := h.service.UserCanvasProject(h.userID, h.canvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	nodes, _ := doc["nodes"].([]any)
+	found := false
+	for index, rawNode := range nodes {
+		node, _ := rawNode.(map[string]any)
+		if node["id"] == nodeID {
+			mutate(node)
+			nodes[index] = node
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing node %s", nodeID)
+	}
+	doc["nodes"] = nodes
+	encoded, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.UpsertUserCanvasProject(h.userID, encoded); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (h *harness) setNodeModel(t *testing.T, nodeID, model string) {
+	t.Helper()
+	h.patchNode(t, nodeID, func(node map[string]any) {
+		metadata, _ := node["metadata"].(map[string]any)
+		if metadata == nil {
+			metadata = map[string]any{}
+		}
+		if model == "" {
+			delete(metadata, "model")
+		} else {
+			metadata["model"] = model
+		}
+		node["metadata"] = metadata
+	})
 }
 
 func TestGenerationProposeIsReadOnlyAndReportsCanvasDefaultModel(t *testing.T) {
@@ -143,6 +193,9 @@ func TestGenerationProposeRejectsForeignNodesAndBadInput(t *testing.T) {
 // 没有配置默认生成模型时必须明确失败：不能给出一个用户无法执行的提议。
 func TestGenerationProposeFailsWithoutCanvasDefaultModel(t *testing.T) {
 	h := newHarness(t)
+	h.patchNode(t, "n1", func(node map[string]any) {
+		node["type"] = "video"
+	})
 
 	_, err := h.run(t, "canvas.generation.propose", "", map[string]any{
 		"canvasId": h.canvasID, "nodeIds": []any{"n1"}, "kind": "video"}, false)
@@ -151,5 +204,92 @@ func TestGenerationProposeFailsWithoutCanvasDefaultModel(t *testing.T) {
 	}
 	if reason := agentops.AsError(err).Reason; reason != "generation_model_not_configured" {
 		t.Fatalf("reason 应为 generation_model_not_configured，得到 %q", reason)
+	}
+}
+
+func TestGenerationProposeUsesNodeOverrideBeforeGlobalDefault(t *testing.T) {
+	h := newHarness(t)
+	writeGenerationModels(t, h.dataDir)
+	h.setNodeModel(t, "n1", "beefapi::gpt-image-2.5-flare")
+
+	got := h.canvas(t)
+	metadata := got["nodes"].([]any)[0].(map[string]any)["metadata"].(map[string]any)
+	if metadata["model"] != "beefapi::gpt-image-2.5-flare" {
+		t.Fatalf("canvas.get 应看到节点覆盖模型: %#v", metadata)
+	}
+
+	result, err := h.run(t, "canvas.generation.propose", "", map[string]any{
+		"canvasId": h.canvasID, "nodeIds": []any{"n1"}, "kind": "image"}, true)
+	if err != nil {
+		t.Fatalf("提议应成功: %v", err)
+	}
+	payload := result.Result.(map[string]any)
+	if payload["model"] != "gpt-image-2.5-flare" || payload["modelKey"] != "beefapi::gpt-image-2.5-flare" {
+		t.Fatalf("提议应使用节点覆盖模型而不是全局默认: %#v", payload)
+	}
+	source := payload["source"].(map[string]any)
+	if source["canvasId"] != h.canvasID || source["modelConfigRevision"] != float64(1) {
+		t.Fatalf("提案仍须绑定画布与配置版本: %#v", source)
+	}
+}
+
+func TestGenerationProposeFallsBackToDefaultWhenNodeHasNoModel(t *testing.T) {
+	h := newHarness(t)
+	writeGenerationModels(t, h.dataDir)
+
+	result, err := h.run(t, "canvas.generation.propose", "", map[string]any{
+		"canvasId": h.canvasID, "nodeIds": []any{"n1"}, "kind": "image"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := result.Result.(map[string]any)
+	if payload["modelKey"] != "beefapi::gpt-image-2" || payload["model"] != "gpt-image-2" {
+		t.Fatalf("未设置节点模型时应回退全局默认: %#v", payload)
+	}
+}
+
+func TestGenerationProposeRejectsMixedNodeModels(t *testing.T) {
+	h := newHarness(t)
+	writeGenerationModels(t, h.dataDir)
+	h.setNodeModel(t, "n1", "beefapi::gpt-image-2.5-flare")
+	h.setNodeModel(t, "n2", "beefapi::gpt-image-2")
+
+	_, err := h.run(t, "canvas.generation.propose", "", map[string]any{
+		"canvasId": h.canvasID, "nodeIds": []any{"n1", "n2"}, "kind": "image"}, false)
+	if err == nil {
+		t.Fatal("不同节点模型必须拒绝，不能静默挑选其中一个")
+	}
+	if reason := agentops.AsError(err).Reason; reason != "mixed_generation_models" {
+		t.Fatalf("reason 应为 mixed_generation_models，得到 %q", reason)
+	}
+}
+
+func TestGenerationProposeRejectsKindMismatch(t *testing.T) {
+	h := newHarness(t)
+	writeGenerationModels(t, h.dataDir)
+	h.patchNode(t, "n1", func(node map[string]any) {
+		node["type"] = "video"
+	})
+
+	_, err := h.run(t, "canvas.generation.propose", "", map[string]any{
+		"canvasId": h.canvasID, "nodeIds": []any{"n1"}, "kind": "image"}, false)
+	if err == nil {
+		t.Fatal("视频节点的图片提议应被拒绝")
+	}
+	if reason := agentops.AsError(err).Reason; reason != "generation_kind_mismatch" {
+		t.Fatalf("reason 应为 generation_kind_mismatch，得到 %q", reason)
+	}
+
+	h.patchNode(t, "n1", func(node map[string]any) {
+		node["type"] = "image"
+	})
+	h.setNodeModel(t, "n1", "beefapi::wan3.0-video")
+	_, err = h.run(t, "canvas.generation.propose", "", map[string]any{
+		"canvasId": h.canvasID, "nodeIds": []any{"n1"}, "kind": "image"}, false)
+	if err == nil {
+		t.Fatal("节点上的视频模型不能用于图片提议")
+	}
+	if reason := agentops.AsError(err).Reason; reason != "generation_model_kind_mismatch" {
+		t.Fatalf("reason 应为 generation_model_kind_mismatch，得到 %q", reason)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/canvas"
+	"infinite-canvas/backend/internal/canvas/capability"
 )
 
 // RegisterDefaultOps 注册首版全部操作。生成/付费入口不在本轮暴露：
@@ -80,18 +81,18 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil, AsError(err)
 	}
-	owned := map[string]bool{}
+	owned := map[string]map[string]any{}
 	for _, rawNode := range canvasNodes(doc) {
 		if node, ok := rawNode.(map[string]any); ok {
 			if id, _ := node["id"].(string); id != "" {
-				owned[id] = true
+				owned[id] = node
 			}
 		}
 	}
 	seen := make(map[string]bool, len(args.NodeIDs))
 	nodeIDs := make([]string, 0, len(args.NodeIDs))
 	for _, id := range args.NodeIDs {
-		if !owned[id] {
+		if _, exists := owned[id]; !exists {
 			return nil, InvalidArg("node_not_in_canvas", "节点不属于当前画布: "+id)
 		}
 		if seen[id] {
@@ -100,17 +101,34 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 		seen[id] = true
 		nodeIDs = append(nodeIDs, id)
 	}
-	display, modelKey, configRevision, err := ctx.Domain.AssistantGenerationModelSnapshot(args.Kind)
-	if err != nil {
-		return nil, AsError(err)
-	}
-	if display == "" {
-		return nil, PreconditionFailed("generation_model_not_configured", "还没有设置默认的"+generationKindLabel(args.Kind)+"模型", nil)
+	var resolved AssistantGenerationModel
+	for _, id := range nodeIDs {
+		node := owned[id]
+		if err := validateProposalNodeKind(node, args.Kind); err != nil {
+			return nil, err
+		}
+		choice, err := ctx.Domain.ResolveAssistantGenerationModel(args.Kind, nodeSelectedModel(node))
+		if err != nil {
+			return nil, AsError(err)
+		}
+		if choice.KindMismatch {
+			return nil, InvalidArg("generation_model_kind_mismatch", "这个节点当前的模型不能用来生成"+generationKindLabel(args.Kind))
+		}
+		if choice.Display == "" || choice.ModelKey == "" {
+			return nil, PreconditionFailed("generation_model_not_configured", "还没有设置默认的"+generationKindLabel(args.Kind)+"模型", nil)
+		}
+		if resolved.ModelKey == "" {
+			resolved = choice
+			continue
+		}
+		if choice.ModelKey != resolved.ModelKey {
+			return nil, InvalidArg("mixed_generation_models", "这些节点当前选用了不同的模型，请按模型分开提出生成")
+		}
 	}
 	return map[string]any{
 		"proposalId": newProposalID(), "kind": args.Kind, "nodeIds": nodeIDs,
-		"model": display, "modelKey": modelKey, "note": strings.TrimSpace(args.Note),
-		"source": map[string]any{"canvasId": args.CanvasID, "canvasRevision": doc["revision"], "modelConfigRevision": configRevision},
+		"model": resolved.Display, "modelKey": resolved.ModelKey, "note": strings.TrimSpace(args.Note),
+		"source": map[string]any{"canvasId": args.CanvasID, "canvasRevision": doc["revision"], "modelConfigRevision": resolved.Revision},
 	}, nil
 }
 
@@ -119,6 +137,36 @@ func generationKindLabel(kind string) string {
 		return "视频"
 	}
 	return "图片"
+}
+
+func nodeSelectedModel(node map[string]any) string {
+	metadata, _ := node["metadata"].(map[string]any)
+	if metadata == nil {
+		return ""
+	}
+	model, _ := metadata["model"].(string)
+	return strings.TrimSpace(model)
+}
+
+func nodeGenerationKind(node map[string]any) string {
+	if metadata, _ := node["metadata"].(map[string]any); metadata != nil {
+		if mode, _ := metadata["generationMode"].(string); strings.TrimSpace(mode) != "" {
+			return strings.ToLower(strings.TrimSpace(mode))
+		}
+	}
+	nodeType, _ := node["type"].(string)
+	if descriptor, ok := capability.BuiltinRegistry().Resolve(nodeType); ok {
+		return descriptor.GenerationMode
+	}
+	return ""
+}
+
+func validateProposalNodeKind(node map[string]any, kind string) error {
+	nodeKind := nodeGenerationKind(node)
+	if nodeKind != "" && nodeKind != kind {
+		return InvalidArg("generation_kind_mismatch", "这个节点不能用来生成"+generationKindLabel(kind))
+	}
+	return nil
 }
 
 func newProposalID() string {
@@ -181,11 +229,11 @@ func opCanvasSearch(ctx *Context, params json.RawMessage) (any, error) {
 
 func opAssetList(ctx *Context, params json.RawMessage) (any, error) {
 	var args struct {
-		Page     int    `json:"page"`
-		PageSize int    `json:"pageSize"`
-		Query    string `json:"query"`
-		Kind     string `json:"kind"`
-		Category string `json:"category"`
+		Page      int    `json:"page"`
+		PageSize  int    `json:"pageSize"`
+		Query     string `json:"query"`
+		Kind      string `json:"kind"`
+		Category  string `json:"category"`
 		Favorite  bool   `json:"favorite"`
 		Recent    bool   `json:"recent"`
 		Project   string `json:"project"`

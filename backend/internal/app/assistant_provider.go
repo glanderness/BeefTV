@@ -109,15 +109,20 @@ func assistantChannelName(channel assistantChannel) string {
 }
 
 func (s *Service) AssistantGenerationModel(kind string) (display string, modelKey string) {
-	display, modelKey, _, _ = s.AssistantGenerationModelSnapshot(kind)
+	display, modelKey, _, _, _ = s.ResolveAssistantGenerationModel(kind, "")
 	return display, modelKey
 }
 
 func (s *Service) AssistantGenerationModelSnapshot(kind string) (display string, modelKey string, revision int64, err error) {
+	display, modelKey, revision, _, err = s.ResolveAssistantGenerationModel(kind, "")
+	return
+}
+
+func (s *Service) ResolveAssistantGenerationModel(kind, selectedModel string) (display string, modelKey string, revision int64, kindMismatch bool, err error) {
 	snapshot, err := s.assistantConfig()
 	if err != nil {
-		return "", "", 0, err
+		return "", "", 0, false, err
 	}
-	display, modelKey = modelcatalog.AssistantGenerationModelKey(snapshot, kind)
-	return display, modelKey, snapshot.Revision, nil
+	choice := modelcatalog.ResolveAssistantGenerationModel(snapshot, kind, selectedModel)
+	return choice.Display, choice.ModelKey, snapshot.Revision, choice.KindMismatch, nil
 }

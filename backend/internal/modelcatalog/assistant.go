@@ -198,3 +198,92 @@ func AssistantGenerationModelKey(snapshot AssistantConfigSnapshot, kind string) 
 	_, display = SplitModelKey(modelKey)
 	return display, modelKey
 }
+
+// AssistantGenerationChoice 是一次生成提议要用的有效模型：节点显式设置优先于全局默认。
+type AssistantGenerationChoice struct {
+	Display      string
+	ModelKey     string
+	FromNode     bool
+	KindMismatch bool
+}
+
+func ResolveAssistantGenerationModel(snapshot AssistantConfigSnapshot, kind, selectedModel string) AssistantGenerationChoice {
+	kind = normalizeCapability(kind)
+	selected := strings.TrimSpace(selectedModel)
+	if selected != "" {
+		if assistantGenerationModelConflictsKind(snapshot, selected, kind) {
+			return AssistantGenerationChoice{KindMismatch: true}
+		}
+		if assistantGenerationModelMatchesKind(snapshot, selected, kind) {
+			_, display := SplitModelKey(selected)
+			return AssistantGenerationChoice{Display: display, ModelKey: selected, FromNode: true}
+		}
+	}
+	display, modelKey := AssistantGenerationModelKey(snapshot, kind)
+	return AssistantGenerationChoice{Display: display, ModelKey: modelKey}
+}
+
+func assistantGenerationModelMatchesKind(snapshot AssistantConfigSnapshot, modelKey, kind string) bool {
+	if kind != "image" && kind != "video" {
+		return false
+	}
+	modelKey = strings.TrimSpace(modelKey)
+	if modelKey == "" {
+		return false
+	}
+	_, defaultKey := AssistantGenerationModelKey(snapshot, kind)
+	if modelKey == defaultKey {
+		return true
+	}
+	capability, found := assistantGenerationModelCapability(snapshot, modelKey)
+	return found && capability == kind
+}
+
+func assistantGenerationModelConflictsKind(snapshot AssistantConfigSnapshot, modelKey, kind string) bool {
+	if kind != "image" && kind != "video" {
+		return true
+	}
+	modelKey = strings.TrimSpace(modelKey)
+	if modelKey == "" {
+		return false
+	}
+	other := "video"
+	if kind == "video" {
+		other = "image"
+	}
+	_, otherDefault := AssistantGenerationModelKey(snapshot, other)
+	if otherDefault != "" && modelKey == otherDefault {
+		return true
+	}
+	capability, found := assistantGenerationModelCapability(snapshot, modelKey)
+	if !found || capability == "" {
+		return false
+	}
+	return capability != kind
+}
+
+func assistantGenerationModelCapability(snapshot AssistantConfigSnapshot, modelKey string) (string, bool) {
+	channelID, modelID := SplitModelKey(modelKey)
+	if modelID == "" {
+		return "", false
+	}
+	for _, channel := range snapshot.Channels {
+		if !channel.Enabled {
+			continue
+		}
+		if channelID != "" && channel.ID != channelID {
+			continue
+		}
+		for _, profile := range channel.ModelProfiles {
+			if strings.TrimSpace(profile.Model) != modelID {
+				continue
+			}
+			capability := normalizeCapability(profile.Capability)
+			if capability == "" {
+				return "", false
+			}
+			return capability, true
+		}
+	}
+	return "", false
+}

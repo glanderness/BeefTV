@@ -30,7 +30,7 @@ func (unusedDomain) UserAssetsPage(string, int, int, canvas.UserAssetPageFilter)
 }
 func (unusedDomain) UserAsset(string, string) (json.RawMessage, error) { panic("unused") }
 func (unusedDomain) Task(string, string) (*model.Task, error)          { panic("unused") }
-func (unusedDomain) AssistantGenerationModelSnapshot(string) (string, string, int64, error) {
+func (unusedDomain) ResolveAssistantGenerationModel(string, string) (AssistantGenerationModel, error) {
 	panic("unused")
 }
 func (unusedDomain) CreateUserCanvasNodes(string, string, []canvas.NodeDraft, int64) (canvas.UserDataSummary, []canvas.CreatedNode, error) {

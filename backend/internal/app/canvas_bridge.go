@@ -479,8 +479,14 @@ func (s *operationSession) Task(userID string, id string) (*model.Task, error) {
 	return s.service.Task(userID, id)
 }
 
-func (s *operationSession) AssistantGenerationModelSnapshot(kind string) (string, string, int64, error) {
-	return s.service.AssistantGenerationModelSnapshot(kind)
+func (s *operationSession) ResolveAssistantGenerationModel(kind, selectedModel string) (operations.AssistantGenerationModel, error) {
+	display, modelKey, revision, kindMismatch, err := s.service.ResolveAssistantGenerationModel(kind, selectedModel)
+	if err != nil {
+		return operations.AssistantGenerationModel{}, err
+	}
+	return operations.AssistantGenerationModel{
+		Display: display, ModelKey: modelKey, Revision: revision, KindMismatch: kindMismatch,
+	}, nil
 }
 
 func (s *operationSession) CreateUserCanvasNodes(userID string, canvasID string, drafts []canvas.NodeDraft, expectedRevision int64) (canvas.UserDataSummary, []canvas.CreatedNode, error) {

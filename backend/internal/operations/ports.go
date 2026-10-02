@@ -19,7 +19,7 @@ type Domain interface {
 	UserAssetsPage(userID string, page int, pageSize int, filter canvas.UserAssetPageFilter) (canvas.UserAssetPage, error)
 	UserAsset(userID string, id string) (json.RawMessage, error)
 	Task(userID string, id string) (*model.Task, error)
-	AssistantGenerationModelSnapshot(kind string) (display string, modelKey string, revision int64, err error)
+	ResolveAssistantGenerationModel(kind, selectedModel string) (AssistantGenerationModel, error)
 	CreateUserCanvasNodes(userID string, canvasID string, drafts []canvas.NodeDraft, expectedRevision int64) (canvas.UserDataSummary, []canvas.CreatedNode, error)
 	UpdateUserCanvasNodeFields(userID string, canvasID string, nodeID string, patch map[string]any, expectedRevision int64) (canvas.UserDataSummary, error)
 	ConnectUserCanvasNodesAtRevision(userID string, canvasID string, fromNodeID string, toNodeID string, expectedRevision int64) (canvas.UserDataSummary, error)
@@ -31,6 +31,15 @@ type Domain interface {
 	BindExistingCanvasNode(userID string, patch canvas.TaskOutputBind) (canvas.TaskOutputBindResult, error)
 	UserConversation(userID, conversationID string) (taskbinding.ConversationView, error)
 	AttachConversationMessage(userID string, input taskbinding.MessageAttachInput) (taskbinding.ConversationView, error)
+}
+
+// AssistantGenerationModel 是一次生成提议解析出的有效模型。
+// KindMismatch 表示节点显式模型与本次 kind 冲突，调用方必须拒绝而不是改用默认。
+type AssistantGenerationModel struct {
+	Display      string
+	ModelKey     string
+	Revision     int64
+	KindMismatch bool
 }
 
 // DomainBinder 是组合根把根服务绑到当前事务的唯一缝。操作核的业务端口不再露出 *gorm.DB。
