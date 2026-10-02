@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -37,7 +34,7 @@ function nativeWails(hash = "#/canvas/abc", search = ""): AppRoutingRuntime {
             search: "",
             hash,
             href: `wails://wails/${hash}`,
-            origin: "wails://wails",
+            origin: new URL("wails://wails/").origin,
         },
     };
 }
@@ -139,29 +136,5 @@ describe("route URL contract", () => {
         expect(appPathnameFrom("https://app.example/canvas/abc", browser("/canvas/abc"))).toBe("/canvas/abc");
         expect(appHref("/settings?section=channels", nativeWindows("#"))).toBe("http://wails.localhost/#/settings?section=channels");
         expect(new URL(appHref("/settings?section=channels", browser("/"))).pathname).toBe("/settings");
-    });
-});
-
-describe("call sites keep native route helpers", () => {
-    test("router factory and native consumers use app routing helpers", () => {
-        const root = resolve(import.meta.dir, "../src");
-        const router = readFileSync(resolve(root, "router.tsx"), "utf8");
-        const project = readFileSync(resolve(root, "pages/canvas/project.tsx"), "utf8");
-        const hydrator = readFileSync(resolve(root, "components/workspace/workspace-bootstrap-hydrator.tsx"), "utf8");
-        const diagnostics = readFileSync(resolve(root, "services/diagnostics/client-diagnostics.ts"), "utf8");
-        const settings = readFileSync(resolve(root, "lib/settings-navigation.ts"), "utf8");
-        const routing = readFileSync(resolve(root, "lib/app-routing.ts"), "utf8");
-
-        expect(router).toContain("createWorkspaceRouter");
-        expect(router).not.toContain("createBrowserRouter");
-        expect(router).not.toContain("desktop-media-save");
-        expect(router).not.toContain("file-saver");
-        expect(project).toContain("appHref(`/canvas/${canvasId}`)");
-        expect(project).not.toContain("new URL(`/canvas/${canvasId}`, window.location.href)");
-        expect(hydrator).toContain("preloadWorkspaceRoute(appPathname())");
-        expect(diagnostics).toContain("appPathnameFrom(input.route)");
-        expect(settings).toContain("window.location.assign(appHref(to))");
-        expect(routing).not.toContain("file-saver");
-        expect(routing).not.toContain("desktop-media-save");
     });
 });

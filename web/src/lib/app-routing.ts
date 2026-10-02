@@ -111,7 +111,11 @@ function runtimeOrigin(runtime: AppRoutingRuntime): string {
     const origin = String(runtime.location.origin || "").replace(/\/+$/u, "");
     if (origin && origin !== "null") return origin;
     try {
-        if (runtime.location.href) return new URL(runtime.location.href).origin;
+        if (runtime.location.href) {
+            const url = new URL(runtime.location.href);
+            if (url.origin !== "null") return url.origin;
+            if (url.protocol === "wails:" && url.host) return `${url.protocol}//${url.host}`;
+        }
     } catch {
         // href may be a non-standard wails: URL in older webviews
     }

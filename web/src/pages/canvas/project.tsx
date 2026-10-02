@@ -2465,6 +2465,10 @@ function InfiniteCanvasPage() {
         <>
             <a
                 href="#canvas-main"
+                onClick={(event) => {
+                    event.preventDefault();
+                    canvasMainRef.current?.focus();
+                }}
                 className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[var(--z-toast)] focus:rounded-md focus:border focus:bg-background focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:shadow-lg"
             >
                 跳转到画布主内容
