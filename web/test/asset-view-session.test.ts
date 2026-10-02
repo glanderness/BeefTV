@@ -293,7 +293,7 @@ describe("asset page and picker wiring", () => {
 
         const projectSettings = read("../src/pages/projects/detail/settings.tsx");
         expect(projectSettings).toContain("uploadImage(file, undefined, expectedScope)");
-        expect(projectSettings).toContain("updateProject(project.id, { coverResourceId }, expectedScope)");
+        expect(projectSettings).toContain("updateProject(projectId, { coverResourceId }, expectedScope)");
         expect(projectSettings).toContain("shouldSuppressAssetViewError(error, variables.expectedScope)");
     });
 });
