@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -52,17 +53,17 @@ func changeFromReceipts(record Record, receipts []model.AgentOpRecord) (*Change,
 		switch item.op {
 		case "canvas.nodes.create":
 			for _, raw := range docItems(item.payload["created"]) {
-				if id, _ := raw["id"].(string); id != "" {
+				if id, _ := raw["id"].(string); id != "" && !slices.Contains(change.CreatedNodeIDs, id) {
 					change.CreatedNodeIDs = append(change.CreatedNodeIDs, id)
 				}
 			}
 		case "canvas.node.update":
-			if id, _ := item.payload["nodeId"].(string); id != "" {
+			if id, _ := item.payload["nodeId"].(string); id != "" && !slices.Contains(change.UpdatedNodeIDs, id) {
 				change.UpdatedNodeIDs = append(change.UpdatedNodeIDs, id)
 			}
 		case "canvas.edge.create":
 			if created, _ := item.payload["created"].(bool); created {
-				if id, _ := item.payload["edgeId"].(string); id != "" {
+				if id, _ := item.payload["edgeId"].(string); id != "" && !slices.Contains(change.CreatedEdgeIDs, id) {
 					change.CreatedEdgeIDs = append(change.CreatedEdgeIDs, id)
 				}
 			}

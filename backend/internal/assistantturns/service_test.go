@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -241,6 +242,40 @@ func TestStaleClosedScopeRejected(t *testing.T) {
 		return fx.turns.VerifyOpenTurnInTx(tx, fx.userID, turnID, fx.canvasID)
 	}); err == nil {
 		t.Fatal("verify after settle must fail")
+	}
+}
+
+func TestHistoryCountsRepeatedEditsOnceAndRetainsEveryReceipt(t *testing.T) {
+	fx := openTurnFixture(t)
+	fx.appendNode(t, "edited-video")
+	turnID := "aabbccdd11223399"
+	if _, err := fx.turns.Begin(fx.userID, fx.canvasID, turnID, assistantturns.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, title := range []string{"first-edit", "second-edit"} {
+		doc := fx.readCanvas(t)
+		for _, raw := range doc["nodes"].([]any) {
+			node := raw.(map[string]any)
+			if node["id"] == "edited-video" {
+				node["title"] = title
+			}
+		}
+		revision := fx.writeCanvas(t, doc)
+		fx.receipt(t, turnID, title, "canvas.node.update", map[string]any{
+			"canvasId": fx.canvasID, "revision": revision, "nodeId": "edited-video",
+		})
+	}
+	if err := fx.turns.Finalize(turnID); err != nil {
+		t.Fatal(err)
+	}
+	reopened := fx.reopen(t)
+	history, err := reopened.turns.History(fx.userID, fx.canvasID, turnID)
+	if err != nil || history == nil || history.Change == nil {
+		t.Fatalf("history missing: %+v %v", history, err)
+	}
+	if !reflect.DeepEqual(history.Change.UpdatedNodeIDs, []string{"edited-video"}) ||
+		!reflect.DeepEqual(history.Change.OperationIDs, []string{"first-edit", "second-edit"}) {
+		t.Fatalf("history must count objects without losing write receipts: %+v", history.Change)
 	}
 }
 
