@@ -200,6 +200,7 @@ export function useCanvasVersionHistory(projectId: string, onRestore: (snapshotI
         draftError,
         localOnly,
         show: () => {
+            if (restoring || confirming) return;
             setOpen(true);
             setListOpen(true);
             // Keep a conflict draft of the current editor. Saved versions come

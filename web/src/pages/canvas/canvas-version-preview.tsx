@@ -101,7 +101,7 @@ export function CanvasVersionPreview({ preview, busy = false, onReturn, onShowVe
                     <strong className="text-sm">{preview.label} · 只读预览</strong>
                     <p className="mt-1 text-xs text-muted-foreground">{new Date(preview.date).toLocaleString("zh-CN")}</p>
                 </div>
-                <Button type="text" className="lg:!hidden" icon={<History size={15} />} onClick={onShowVersions}>
+                <Button type="text" className="lg:!hidden" icon={<History size={15} />} disabled={busy} onClick={onShowVersions}>
                     版本
                 </Button>
                 <Button className="col-span-3" icon={<ArrowLeft size={15} />} disabled={busy} onClick={onReturn}>
