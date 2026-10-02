@@ -3,7 +3,7 @@
 // "仅时间线作用域"直连媒体（nodeId=asset:<id>）。导入链路：uploadResourceFile →
 // linkProjectAsset（后端按资源元数据合成资产记录）→ refreshAssets。
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Boxes, Check, ChevronDown, ChevronRight, Clapperboard, Film, FolderOpen, HardDrive, Image as ImageIcon, Loader2, Music2, Plus, X } from "lucide-react";
 
 import { useEditorHostContext, useEditorStoreContext } from "@/components/editor/editor-context";
@@ -12,6 +12,7 @@ import { probeMediaDurationMs } from "@/lib/media-metadata";
 import { makeClipFromAsset } from "@/lib/timeline/asset-ingest";
 import { DEFAULT_AUDIO_TRACK_ID, DEFAULT_SUBTITLE_TRACK_ID, DEFAULT_VIDEO_TRACK_ID } from "@/lib/timeline/timeline-tracks";
 import { assertUserScope, captureUserScope, isUserScopeAbandonedError } from "@/lib/user-scope-guard";
+import { getActiveUserScopeEpoch, subscribeUserScope } from "@/lib/user-scope";
 import { linkProjectAsset } from "@/services/api/projects";
 import { uploadResourceFile, type ResourceUploadMeta } from "@/services/api/resources";
 import { resolveMediaUrl } from "@/services/file-storage";
@@ -304,6 +305,12 @@ function AssetDetailSheet({
 }
 
 export function EditorAssetIngest() {
+    const { projectId } = useEditorHostContext();
+    const scopeEpoch = useSyncExternalStore(subscribeUserScope, getActiveUserScopeEpoch, getActiveUserScopeEpoch);
+    return <EditorAssetIngestSession key={JSON.stringify([projectId, scopeEpoch])} />;
+}
+
+function EditorAssetIngestSession() {
     const { projectId, assets, refreshAssets } = useEditorHostContext();
     const { project, dispatch } = useEditorStoreContext();
     const [added, setAdded] = useState<string | null>(null);
@@ -324,14 +331,8 @@ export function EditorAssetIngest() {
     const lastAddKey = useRef<string | null>(null);
     const lastAddAt = useRef(0);
     const mountedGenerationRef = useRef(0);
-    const projectGenerationRef = useRef(0);
-    const projectIdRef = useRef(projectId);
     const timelineReadyRef = useRef(Boolean(project));
     timelineReadyRef.current = Boolean(project);
-    if (projectIdRef.current !== projectId) {
-        projectIdRef.current = projectId;
-        projectGenerationRef.current += 1;
-    }
     useEffect(() => {
         const generation = ++mountedGenerationRef.current;
         return () => {
@@ -358,13 +359,10 @@ export function EditorAssetIngest() {
         const expectedScope = captureUserScope();
         const originalProjectId = projectId;
         const startedMountedGeneration = mountedGenerationRef.current;
-        const startedProjectGeneration = projectGenerationRef.current;
         const assertImportOwner = () => {
             assertUserScope(expectedScope);
             if (
                 mountedGenerationRef.current !== startedMountedGeneration
-                || projectGenerationRef.current !== startedProjectGeneration
-                || projectIdRef.current !== originalProjectId
                 || !timelineReadyRef.current
             ) {
                 throw new EditorImportAbandonedError();

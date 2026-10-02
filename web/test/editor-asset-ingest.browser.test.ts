@@ -380,3 +380,22 @@ test("a new import after A→B→A still succeeds under the live identity", asyn
     await page.getByText("已导入 1 个媒体").waitFor({ timeout: 8_000 });
     expect(await page.getByTestId("asset-ids").textContent()).toBe("res-1");
 }, 15_000);
+
+test("old import completion cannot clear a new project import busy state", async () => {
+    await hold("probe");
+    await importFiles(["old.mp4"]);
+    await waitForCall("probe");
+    await switchProject();
+    await page.evaluate(() => {
+        const state = (window as Window & { __editorAssetIngestHarness?: HarnessState }).__editorAssetIngestHarness!;
+        state.doubles.hold.probe = false;
+        state.doubles.hold.upload = true;
+    });
+    await importFiles(["new.mp4"]);
+    await waitForCall("upload");
+    await release("probe");
+    await settle();
+    expect(await page.getByRole("button", { name: "导入中" }).isDisabled()).toBe(true);
+    await release("upload");
+    await page.getByText("已导入 1 个媒体").waitFor({ timeout: 8_000 });
+}, 15_000);
