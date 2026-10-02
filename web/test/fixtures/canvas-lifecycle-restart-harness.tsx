@@ -6,7 +6,7 @@ import { useCanvasProjectLifecycle } from "../../src/pages/canvas/use-canvas-pro
 import { useCanvasHistory } from "../../src/pages/canvas/use-canvas-history";
 import { canvasAppearanceForTheme } from "../../src/lib/canvas/canvas-appearance";
 import { useCanvasStore, flushCanvasStorePersistence } from "../../src/stores/canvas/use-canvas-store";
-import { useUserStore } from "../../src/stores/use-user-store";
+import { useUserStore } from "@/stores/use-user-store";
 import { recordConfirmedCanvasCommit } from "../../src/services/canvas-operation-journal";
 import { syncLocalCanvasProjectToBackend } from "../../src/services/local-workspace-repository";
 import type { CanvasNodeData, CanvasConnection, CanvasAssistantSession } from "../../src/types/canvas";
