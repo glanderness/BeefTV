@@ -390,14 +390,23 @@ test("readback mismatch is an explicit restore failure", () => {
 });
 
 test("restore readback rejects missing text, layout, or director content even with identical media references", () => {
-    const intended = { id: "canvas", title: "原文", nodes: [textNode()], directorScenes: [{ id: "scene", title: "场景" }] } as CanvasProject;
+    const intended = { id: "canvas", title: "原文", nodes: [textNode()], connections: [], directorScenes: [{ id: "scene", title: "场景" }] } as CanvasProject;
     for (const patch of [
         { title: "旧标题" },
         { nodes: [{ ...textNode(), metadata: { content: "丢失的正文" } }] },
         { nodes: [{ ...textNode(), position: { x: 99, y: 99 } }] },
         { directorScenes: [] },
+        { connections: [{ id: "unexpected", source: "a", target: "b" }] },
     ]) expect(() => assertRestoredCanvasMatches(intended, { ...intended, ...patch })).toThrow("画布内容未完整保存到工作区");
     expect(() => assertRestoredCanvasMatches(intended, { ...intended, revision: 8, updatedAt: "server-time" })).not.toThrow();
+});
+
+test("canonical restore readback permits local viewport differences without relaxing browser readback", () => {
+    const intended = { id: "canvas", nodes: [textNode()], viewport: { x: -17, y: 280, k: 0.38 } } as CanvasProject;
+    const saved = { ...intended, viewport: { x: 0, y: 0, k: 1 } };
+    expect(() => assertRestoredCanvasMatches(intended, saved, "backend")).not.toThrow();
+    expect(() => assertRestoredCanvasMatches(intended, saved)).toThrow("画布内容未完整保存到工作区");
+    expect(() => assertRestoredCanvasMatches(intended, { ...saved, nodes: [] }, "backend")).toThrow("画布内容未完整保存到工作区");
 });
 
 test("restore remaps director panorama, object, and screenshot media into the destination workspace", async () => {

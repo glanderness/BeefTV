@@ -32,12 +32,12 @@ function cacheInstance(namespace = "app_state") {
     };
 }
 mock.module("localforage", () => ({ default: cacheInstance() }));
-const { restoreCanvasArchive } = await import("@/lib/canvas/canvas-archive-restore");
+const { restoreCanvasArchive, assertRestoredCanvasMatches } = await import("@/lib/canvas/canvas-archive-restore");
 const { openCanvasArchive } = await import("@/lib/canvas/canvas-export");
 const { createZip } = await import("@/lib/zip");
 const { apiClient, configureApiRuntime, http } = await import("@/services/api/request");
 const { resetCanvasOperationJournalMemory } = await import("@/services/canvas-operation-journal");
-const { syncLocalCanvasProjectToBackend } = await import("@/services/local-workspace-repository");
+const { syncLocalCanvasProjectToBackend, readLocalCanvasProjectFromBackend } = await import("@/services/local-workspace-repository");
 const { useAssetStore } = await import("@/stores/use-asset-store");
 const { useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
 
@@ -192,6 +192,7 @@ async function fixtureZip() {
                         folderId: "folder-old",
                         title: "持久画布",
                         revision: 0,
+                        viewport: { x: -17.6638, y: 280.4097, k: 0.3847 },
                         nodes: [{
                             id: "n-video",
                             type: "video",
@@ -213,7 +214,7 @@ async function fixtureZip() {
                             height: 240,
                             metadata: { drawingId: "sketch" },
                         }],
-                        connections: [],
+                        connections: [{ id: "video-drawing", source: "n-video", target: "n-drawing" }],
                         timeline: {
                             version: 2,
                             durationMs: 1000,
@@ -278,6 +279,7 @@ test("valid archive restores into isolated SQLite, survives backend restart, and
         const result = await restoreCanvasArchive(zip);
         expect(result.storage).toBe("backend");
         expect(result.count).toBe(1);
+        expect(useCanvasStore.getState().openProject(result.projectIds[0])?.viewport).toEqual({ x: -17.6638, y: 280.4097, k: 0.3847 });
         expect(result.projectIds[0]).not.toBe("old-canvas");
         const listed = await listProjects();
         expect(listed.map((item) => item.id)).toEqual(result.projectIds);
@@ -342,6 +344,33 @@ test("valid archive restores into isolated SQLite, survives backend restart, and
         expect(retried.workspaceProjectId).not.toBe("old-workspace");
         expect(retried.workspaceProjectId).not.toBe(saved.workspaceProjectId);
         expect(retried.nodes[0].metadata?.storageKey).toStartWith("resource:");
+    } finally {
+        await stopServer(server);
+        rmSync(dataDir, { recursive: true, force: true });
+    }
+}, 180_000);
+
+test("canonical readback still rejects lost nodes, connections, or title and rolls back SQLite restore", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "beeftv-archive-sqlite-content-"));
+    let server: RunningServer | undefined;
+    try {
+        server = await startServer(dataDir);
+        connect(server.port);
+        resetStores();
+        const zip = await fixtureZip();
+        for (const patch of [{ nodes: [] }, { connections: [] }, { title: "" }]) {
+            await expect(restoreCanvasArchive(zip, {
+                persistProject: async (id) => {
+                    const live = useCanvasStore.getState().openProject(id)!;
+                    await syncLocalCanvasProjectToBackend(id);
+                    const saved = await readLocalCanvasProjectFromBackend(id);
+                    assertRestoredCanvasMatches(live, { ...saved, ...patch }, "backend");
+                },
+            })).rejects.toThrow();
+            expect(await listProjects()).toEqual([]);
+            expect(useCanvasStore.getState().projects).toEqual([]);
+            expect((await http.get<{ assets: unknown[] }>("/assets")).assets).toEqual([]);
+        }
     } finally {
         await stopServer(server);
         rmSync(dataDir, { recursive: true, force: true });

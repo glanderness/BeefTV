@@ -76,7 +76,7 @@ export async function archiveMediaIdempotencyKey(blob: Blob): Promise<string> {
     return `canvas-archive:sha256:${await archiveContentDigest(blob)}`;
 }
 
-export function assertRestoredCanvasMatches(intended: Partial<CanvasProject> & Pick<CanvasProject, "id" | "nodes">, saved: CanvasProject) {
+export function assertRestoredCanvasMatches(intended: Partial<CanvasProject> & Pick<CanvasProject, "id" | "nodes">, saved: CanvasProject, storage: "browser" | "backend" = "browser") {
     if (!saved?.id || saved.id !== intended.id) throw new Error("画布未保存到工作区");
     if ((saved.folderId || "") !== (intended.folderId || "")) throw new Error("画布文件夹未保存到工作区");
     const intendedTimeline = timelineStorageKeys(intended.timeline);
@@ -92,6 +92,9 @@ export function assertRestoredCanvasMatches(intended: Partial<CanvasProject> & P
     // Only server-owned timestamps and synchronization metadata may differ.
     for (const [key, value] of Object.entries(intended)) {
         if (["revision", "createdAt", "updatedAt", "remoteContentHash"].includes(key)) continue;
+        // Canonical document commits exclude viewport; the client retains this
+        // local view preference. Browser-cache readback must still preserve it.
+        if (storage === "backend" && key === "viewport") continue;
         const actual = saved[key as keyof CanvasProject];
         if (value === undefined && (actual === undefined || actual === null || actual === "")) continue;
         if (canonicalize(value) !== canonicalize(actual)) throw new Error("画布内容未完整保存到工作区");
@@ -155,7 +158,7 @@ export function createCanvasArchiveRestoreHost(overrides: Partial<CanvasArchiveR
                 if (isUserScopeAbandonedError(error)) throw error;
                 throw new Error("画布未保存到工作区");
             }
-            assertRestoredCanvasMatches(live, saved);
+            assertRestoredCanvasMatches(live, saved, "backend");
             if ((saved.revision ?? 0) < 1) throw new Error("画布未保存到工作区");
         },
         deleteProjects: async (ids) => {
