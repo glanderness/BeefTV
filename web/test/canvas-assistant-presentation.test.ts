@@ -189,6 +189,22 @@ describe("assistantVisibleReply", () => {
         expect(assistantVisibleReply("已完成<think>还在写")).toBe("已完成");
         expect(assistantVisibleReply("<think>只有草稿")).toBe("");
     });
+
+    test("正文里的 thinking 标记不显示，代码示例和普通答复保留", async () => {
+        const { assistantVisibleReply } = await import("@/pages/canvas/canvas-assistant-copy");
+        expect(assistantVisibleReply("<thinking>先核对节点</thinking>\n已为这个节点登记提议。")).toBe("已为这个节点登记提议。");
+        expect(assistantVisibleReply("<thinking>The draft quotes 这个节点当前的模型不能用来生成视频.\n\nI should report.我按你的要求只读取了画布，没有改动。")).toBe("我按你的要求只读取了画布，没有改动。");
+        expect(assistantVisibleReply("<thinking>The draft quotes 这个节点当前的模型不能用来生成视频.\n\nI should report.我按你的要求只读取了画布，没有改动。</thinking>")).toBe("我按你的要求只读取了画布，没有改动。");
+        expect(assistantVisibleReply("我先读取画布。\n<thinking>The node state is unchanged")).toBe("我先读取画布。");
+        expect(assistantVisibleReply("<thinking>The node state is unchanged")).toBe("");
+        expect(assistantVisibleReply("已改好<thinking")).toBe("已改好");
+        expect(assistantVisibleReply("<thinking>已改好三个镜头，可以继续。</thinking>")).toBe("已改好三个镜头，可以继续。");
+        const example = "示例：\n```\n<thinking>keep this</thinking>\n<think>also keep</think>\n```\n正文还在";
+        expect(assistantVisibleReply(example)).toBe(example);
+        expect(assistantVisibleReply("标签 `<thinking>` 只是示例")).toBe("标签 `<thinking>` 只是示例");
+        expect(assistantVisibleReply("准备生成没有成功")).toBe("准备生成没有成功");
+        expect(assistantVisibleReply(assistantVisibleReply("<thinking>draft</thinking>\n已核对。"))).toBe("已核对。");
+    });
 });
 
 describe("assistantUnresolvedFailures", () => {

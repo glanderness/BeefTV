@@ -15,6 +15,10 @@ describe('官方会话事件映射', () => {
       .toEqual({ type: 'lifecycle', phase: 'retry', attempt: 1, maxAttempts: 3 });
     expect(mapSessionEvent({ type: 'auto_retry_end', success: false, attempt: 1 }))
       .toEqual({ type: 'lifecycle', phase: 'retry_end', success: false, attempt: 1 });
+    expect(mapSessionEvent({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'thinking_delta', delta: 'draft' },
+    })).toBeNull();
     expect(mapSessionEvent({ type: 'agent_end', messages: [], willRetry: false })).toBeNull();
     expect(mapSessionEvent({ type: 'agent_end', messages: [], willRetry: true })).toBeNull();
     expect(mapSessionEvent({ type: 'agent_settled' })).toBeNull();

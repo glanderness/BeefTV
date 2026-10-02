@@ -205,4 +205,14 @@ describe('模型终态投影', () => {
     expect(modelTurnCompletion(null).reply).toBe('');
     expect(modelTurnCompletion({ content: [{ type: 'text', text: '当前回复' }], stopReason: 'stop' })).toEqual({ reply: '当前回复', error: null, errorReason: null });
   });
+  test('思考块不进入回复，正文里的标记原样保留', () => {
+    const result = modelTurnCompletion({
+      content: [
+        { type: 'thinking', thinking: 'internal draft' },
+        { type: 'text', text: '<thinking>draft</thinking>可见答复' },
+      ],
+      stopReason: 'stop',
+    });
+    expect(result).toEqual({ reply: '<thinking>draft</thinking>可见答复', error: null, errorReason: null });
+  });
 });
