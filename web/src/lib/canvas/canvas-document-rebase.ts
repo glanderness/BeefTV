@@ -132,6 +132,8 @@ function remoteHasBoundGenerationResult(node: CanvasNodeData | undefined) {
 function hasTrueGenerationContentConflict(base: CanvasNodeData | undefined, local: CanvasNodeData, remote: CanvasNodeData) {
     const localContent = ownMetadataString(local.metadata, "content");
     if (localContent === undefined) return false;
+    // loading/error + 空串是恢复 overlay，不是人把已绑定 success 清掉。
+    if (!nonemptyMediaRef(localContent) && isInFlightGenerationOverlay(local)) return false;
     const remoteContent = ownMetadataString(remote.metadata, "content") ?? "";
     const baseContent = ownMetadataString(base?.metadata, "content") ?? "";
     return localContent !== remoteContent && localContent !== baseContent;

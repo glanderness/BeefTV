@@ -87,18 +87,38 @@ describe("settleInFlightGenerationOverlay", () => {
         expect(rebased.project.nodes[0]?.metadata?.content).toBe("https://media/new");
     });
 
-    test("same-task explicit empty content is a human edit and is not overwritten by remote success", () => {
+    test("same-task in-flight empty overlay adopts remote bound success", () => {
+        const original = node("node-dlu63hran9ns-43e87554d6", "秋日旅行", {
+            taskId: "e24cb37f0a7d146afc8560456d88a550",
+            status: "success",
+            taskStatus: "succeeded",
+            content: "/api/resources/8edbd8862c4714bbe42424d83e63bc08/file",
+            storageKey: "resource:8edbd8862c4714bbe42424d83e63bc08",
+        });
+        const base = project([original], 34);
+        const local = project([{ ...original, metadata: { ...original.metadata, status: "loading", content: "", storageKey: undefined, assetId: undefined } }], 34);
+        const remote = project([original], 34);
+        const settled = settleInFlightGenerationOverlay({ base, local, remote });
+        expect(settled.nodes[0]?.metadata?.status).toBe("success");
+        expect(settled.nodes[0]?.metadata?.content).toBe("/api/resources/8edbd8862c4714bbe42424d83e63bc08/file");
+        expect(settled.nodes[0]?.metadata?.storageKey).toBe("resource:8edbd8862c4714bbe42424d83e63bc08");
+        const rebased = rebaseCanvasDocumentThreeWay({ base, local: settled, remote });
+        expect(rebased.conflict).toBe(false);
+        expect(rebased.project.nodes[0]?.metadata?.status).toBe("success");
+        expect(rebased.project.nodes[0]?.metadata?.storageKey).toBe("resource:8edbd8862c4714bbe42424d83e63bc08");
+    });
+
+    test("in-flight nonempty human content still wins over remote success", () => {
         const original = node("image-origin", "原图", { taskId: "task-1", status: "idle", content: "旧图", storageKey: "old-key" });
         const base = project([original], 10);
-        const local = project([{ ...original, metadata: { taskId: "task-1", status: "loading", content: "" } }], 10);
+        const local = project([{ ...original, metadata: { taskId: "task-1", status: "loading", content: "人类改过的内容" } }], 10);
         const remote = project([{ ...original, metadata: { taskId: "task-1", status: "success", content: "https://media/gen", storageKey: "res-gen" } }], 14);
         const settled = settleInFlightGenerationOverlay({ base, local, remote });
-        expect(settled.nodes[0]?.metadata?.content).toBe("");
+        expect(settled.nodes[0]?.metadata?.content).toBe("人类改过的内容");
         expect(settled.nodes[0]?.metadata?.status).toBe("loading");
         const rebased = rebaseCanvasDocumentThreeWay({ base, local: settled, remote });
         expect(rebased.conflict).toBe(true);
-        expect(rebased.project.nodes[0]?.metadata?.content).toBe("");
-        expect(rebased.project.nodes[0]?.metadata?.status).not.toBe("success");
+        expect(rebased.project.nodes[0]?.metadata?.content).toBe("人类改过的内容");
     });
 
     test("baseline empty content on first generation is not treated as a human clear", () => {

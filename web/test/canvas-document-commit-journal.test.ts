@@ -316,6 +316,92 @@ describe("画布文档提交日记", () => {
         expect(selectPreferredCanvasProject(localDirty, backend).title).toBe("本地草稿");
     });
 
+    test("启动恢复提交不能用 loading 空 overlay 覆盖已确认 success+storageKey", async () => {
+        const node1 = node("image-1790921196364-0djku", "图片", {
+            metadata: {
+                taskId: "016077a262cc8f86b127e1cad4b6bf9f",
+                status: "loading",
+                taskStatus: "succeeded",
+                content: "",
+                errorDetails: "正在从任务中心恢复生成状态...",
+            },
+        });
+        const node2 = node("node-dlu63hran9ns-43e87554d6", "图片", {
+            metadata: {
+                taskId: "e24cb37f0a7d146afc8560456d88a550",
+                status: "success",
+                taskStatus: "succeeded",
+                content: "/api/resources/8edbd8862c4714bbe42424d83e63bc08/file",
+                storageKey: "resource:8edbd8862c4714bbe42424d83e63bc08",
+                assetId: "generation_b4ef53b7ce14b86365c28d172bd64fc5591175be1667e8ecc9717775babc87d5",
+            },
+        });
+        const confirmed = canvas("未命名项目", 34, { nodes: [node1, node2] });
+        await seedConfirmed(confirmed);
+        server.revision = 34;
+        server.document = confirmed as never;
+        const overlay = [
+            { ...node1, metadata: { ...node1.metadata, errorDetails: undefined } },
+            { ...node2, metadata: { taskId: node2.metadata.taskId, status: "loading", taskStatus: "succeeded", content: "" } },
+        ];
+        expect("resultJson" in overlay[1].metadata).toBe(false);
+        await persistCanvasDocument("c1", { nodes: overlay });
+        const committed = server.document as { nodes: Array<{ id: string; metadata?: Record<string, unknown> }> };
+        const second = committed.nodes.find((item) => item.id === node2.id);
+        expect(second?.metadata?.status).toBe("success");
+        expect(second?.metadata?.storageKey).toBe("resource:8edbd8862c4714bbe42424d83e63bc08");
+        expect(second?.metadata?.content).toBe("/api/resources/8edbd8862c4714bbe42424d83e63bc08/file");
+        const live = useCanvasStore.getState().openProject("c1")?.nodes.find((item) => item.id === node2.id);
+        expect(live?.metadata?.storageKey).toBe("resource:8edbd8862c4714bbe42424d83e63bc08");
+        expect(live?.metadata?.status).toBe("success");
+    });
+
+    test("打开画布时本地 loading 空 overlay 不能挡住后端同 task 的 success", async () => {
+        const node2 = node("node-dlu63hran9ns-43e87554d6", "图片", {
+            metadata: {
+                taskId: "e24cb37f0a7d146afc8560456d88a550",
+                status: "success",
+                taskStatus: "succeeded",
+                content: "/api/resources/8edbd8862c4714bbe42424d83e63bc08/file",
+                storageKey: "resource:8edbd8862c4714bbe42424d83e63bc08",
+            },
+        });
+        const confirmed = canvas("未命名项目", 34, { nodes: [node2] });
+        const overlay = canvas("未命名项目", 34, {
+            nodes: [{ ...node2, metadata: { taskId: node2.metadata.taskId, status: "loading", taskStatus: "succeeded", content: "" } }],
+        });
+        await seedConfirmed(confirmed);
+        useCanvasStore.setState({ projects: [overlay as never] });
+        server.revision = 34;
+        server.document = confirmed as never;
+        const opened = await openLocalCanvasProjectFromBackend("c1");
+        const openedNode = opened?.nodes.find((item) => item.id === node2.id);
+        expect(openedNode?.metadata?.status).toBe("success");
+        expect(openedNode?.metadata?.storageKey).toBe("resource:8edbd8862c4714bbe42424d83e63bc08");
+        expect(useCanvasStore.getState().openProject("c1")?.nodes[0]?.metadata?.storageKey).toBe("resource:8edbd8862c4714bbe42424d83e63bc08");
+    });
+
+    test("新任务清掉 content 键后提交不会把旧 task 的 storageKey 写回", async () => {
+        const oldNode = node("node-dlu63hran9ns-43e87554d6", "图片", {
+            metadata: {
+                taskId: "e24cb37f0a7d146afc8560456d88a550",
+                status: "success",
+                taskStatus: "succeeded",
+                content: "/api/resources/8edbd8862c4714bbe42424d83e63bc08/file",
+                storageKey: "resource:8edbd8862c4714bbe42424d83e63bc08",
+            },
+        });
+        await seedConfirmed(canvas("未命名项目", 34, { nodes: [oldNode] }));
+        server.revision = 34;
+        await persistCanvasDocument("c1", {
+            nodes: [{ ...oldNode, metadata: { taskId: "task-new", status: "loading", taskStatus: "running", prompt: "新提示" } }],
+        });
+        const committed = (server.document as { nodes: Array<{ metadata?: Record<string, unknown> }> }).nodes[0];
+        expect(committed.metadata?.taskId).toBe("task-new");
+        expect(committed.metadata?.status).toBe("loading");
+        expect(committed.metadata?.storageKey).toBeUndefined();
+    });
+
     test("网络未知时重试复用同一 operationId 与 payload，后续编辑另开一笔", async () => {
         useCanvasStore.getState().updateProject("c1", { title: "第一次" });
         server.failNext = { status: 503 };
@@ -1101,7 +1187,7 @@ describe("画布文档提交日记", () => {
         expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(14);
     });
 
-    test("同一任务人类清空 content 空串时保留空值并说明冲突", async () => {
+    test("同一任务 in-flight 空串 overlay 采纳远端已绑定 success", async () => {
         const original = node("image-origin", "原图", { metadata: { taskId: "task-1", status: "idle", content: "旧图" } });
         await seedConfirmed(canvas("基线", 10, { nodes: [original] }));
         useCanvasStore.getState().updateProject("c1", {
@@ -1114,10 +1200,11 @@ describe("画布文档提交日记", () => {
 
         const live = useCanvasStore.getState().projects[0];
         expect(live.nodes).toEqual(adopted.nodes);
-        expect(live.nodes[0].metadata?.content).toBe("");
-        expect(live.nodes[0].metadata?.status).not.toBe("success");
-        expect(canvasBackendSubmitPaused("c1")).toBe(true);
-        expect(canvasExternalRevisionConflict("guest", "c1")?.candidate.nodes[0].metadata?.content).toBe("https://media/gen");
+        expect(live.nodes[0].metadata?.status).toBe("success");
+        expect(live.nodes[0].metadata?.content).toBe("https://media/gen");
+        expect(live.nodes[0].metadata?.storageKey).toBe("res-gen");
+        expect(canvasBackendSubmitPaused("c1")).toBe(false);
+        expect(canvasExternalRevisionConflict("guest", "c1")).toBeUndefined();
         expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(14);
     });
 

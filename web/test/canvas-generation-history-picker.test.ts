@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { generationHistoryPreviewImageSrc } from "../src/components/canvas/canvas-generation-history-picker";
-import { insertableCanvasGenerationHistoryTasks } from "../src/lib/canvas/canvas-generation-history";
+import { insertableCanvasGenerationHistoryTasks, resolveCanvasGenerationHistoryTaskForInsert } from "../src/lib/canvas/canvas-generation-history";
 import { reuseGeneratedMediaStorageKey } from "../src/lib/canvas/canvas-generation-task-sync";
 import { insertCanvasGenerationHistoryTask } from "../src/pages/canvas/canvas-generation-orchestration";
 import { localTaskHistoryFromProjects } from "../src/lib/local-task-history";
@@ -20,22 +20,31 @@ const orchestrationHook = readFileSync(resolve(import.meta.dir, "../src/pages/ca
 const localHistory = readFileSync(resolve(import.meta.dir, "../src/lib/local-task-history.ts"), "utf8");
 const taskSync = readFileSync(resolve(import.meta.dir, "../src/lib/canvas/canvas-generation-task-sync.ts"), "utf8");
 
-function succeededImageTask(partial: Partial<GenerationTask> = {}): GenerationTask {
+function succeededImageSummary(partial: Partial<GenerationTask> = {}): GenerationTask {
     return {
         id: "016077a262cc8f86b127e1cad4b6bf9f",
         projectId: "lelvpvjEnuJ98wD_f2FI7",
         type: "canvas_image",
         status: "succeeded",
         prompt: "金色湖畔露营车",
-        resultJson: JSON.stringify({
-            mode: "image",
-            images: [{ storageKey: "resource:generated-image", url: "/api/resources/generated-image/file" }],
-        }),
+        previewUrl: "/api/resources/generated-image/file",
+        previewKind: "image",
+        clientContext: { nodeId: "image-1790921196364-0djku" },
         attempts: 1,
         createdAt: "2026-10-02T15:18:58.000Z",
         updatedAt: "2026-10-02T15:18:58.000Z",
         ...partial,
     };
+}
+
+function succeededImageDetail(partial: Partial<GenerationTask> = {}): GenerationTask {
+    return succeededImageSummary({
+        resultJson: JSON.stringify({
+            mode: "image",
+            images: [{ storageKey: "resource:generated-image", url: "/api/resources/generated-image/file" }],
+        }),
+        ...partial,
+    });
 }
 
 function wipedCanvasProject(): CanvasProject {
@@ -68,7 +77,10 @@ describe("LibTV generation history picker", () => {
         expect(picker).toContain('title="从生成历史选择"');
         expect(picker).toContain("listGenerationTasks(100, { projectId, activeOnly: false }, undefined, signal)");
         expect(picker).toContain("insertableCanvasGenerationHistoryTasks");
-        expect(picker).toContain("onSelect(task)");
+        expect(picker).toContain("resolveCanvasGenerationHistoryTaskForInsert");
+        expect(picker).toContain("onSelect(await resolveCanvasGenerationHistoryTaskForInsert(task, { projectId }))");
+        expect(historySource).toContain("queryGenerationTask");
+        expect(historySource).not.toContain("filter((task) => Boolean(task.resultJson");
         expect(picker).toContain("enabled: open && Boolean(projectId)");
         expect(picker).not.toContain("localTaskHistoryFromProjects");
         expect(picker).not.toContain("isLocalWorkspaceMode");
@@ -81,16 +93,49 @@ describe("LibTV generation history picker", () => {
     });
 
     test("lists a succeeded backend task even when the canvas node has no content", () => {
-        const local = localTaskHistoryFromProjects([wipedCanvasProject()]);
-        expect(insertableCanvasGenerationHistoryTasks(local, { projectId: "lelvpvjEnuJ98wD_f2FI7" })).toEqual([]);
+        expect(picker).not.toContain("localTaskHistoryFromProjects");
+        expect(localTaskHistoryFromProjects([wipedCanvasProject()]).some((task) => !task.resultJson)).toBe(true);
 
         const listed = insertableCanvasGenerationHistoryTasks([
-            succeededImageTask({ previewUrl: undefined }),
-            succeededImageTask({ id: "other-canvas", projectId: "other-canvas" }),
-            succeededImageTask({ id: "failed", status: "failed" }),
-            succeededImageTask({ id: "empty-result", resultJson: "" }),
+            succeededImageSummary(),
+            succeededImageSummary({ id: "other-canvas", projectId: "other-canvas" }),
+            succeededImageSummary({ id: "failed", status: "failed" }),
+            succeededImageSummary({ id: "text-task", type: "canvas_text" }),
         ], { projectId: "lelvpvjEnuJ98wD_f2FI7" });
         expect(listed.map((task) => task.id)).toEqual(["016077a262cc8f86b127e1cad4b6bf9f"]);
+        expect(listed.every((task) => task.resultJson === undefined)).toBe(true);
+        expect(listed[0]?.previewUrl).toBe("/api/resources/generated-image/file");
+        expect(listed[0]?.clientContext?.nodeId).toBe("image-1790921196364-0djku");
+    });
+
+    test("select fetches detail once and keeps list summaries free of resultJson", async () => {
+        const summary = succeededImageSummary();
+        const detail = succeededImageDetail();
+        let queries = 0;
+        const resolved = await resolveCanvasGenerationHistoryTaskForInsert(summary, {
+            projectId: "lelvpvjEnuJ98wD_f2FI7",
+            queryTask: async (id) => {
+                queries += 1;
+                expect(id).toBe(summary.id);
+                expect(summary.resultJson).toBeUndefined();
+                return detail;
+            },
+        });
+        expect(queries).toBe(1);
+        expect(resolved.resultJson).toContain("resource:generated-image");
+
+        await expect(resolveCanvasGenerationHistoryTaskForInsert(summary, {
+            projectId: "lelvpvjEnuJ98wD_f2FI7",
+            queryTask: async () => ({ ...detail, status: "failed", error: "上游内容审核未通过" }),
+        })).rejects.toThrow("上游内容审核未通过");
+        await expect(resolveCanvasGenerationHistoryTaskForInsert(summary, {
+            projectId: "other-canvas",
+            queryTask: async () => detail,
+        })).rejects.toThrow("生成任务不属于当前画布");
+        await expect(resolveCanvasGenerationHistoryTaskForInsert(summary, {
+            projectId: "lelvpvjEnuJ98wD_f2FI7",
+            queryTask: async () => ({ ...detail, resultJson: undefined }),
+        })).rejects.toThrow("该任务没有可插入的生成结果");
     });
 
     test("history API failure is not turned into an empty list", async () => {
@@ -105,15 +150,15 @@ describe("LibTV generation history picker", () => {
 
     test("keeps project scope when listing insertable history", () => {
         const listed = insertableCanvasGenerationHistoryTasks([
-            succeededImageTask(),
-            succeededImageTask({ id: "foreign", projectId: "canvas-b" }),
+            succeededImageSummary(),
+            succeededImageSummary({ id: "foreign", projectId: "canvas-b" }),
         ], { projectId: "lelvpvjEnuJ98wD_f2FI7", keyword: "湖畔" });
         expect(listed).toHaveLength(1);
-        expect(insertableCanvasGenerationHistoryTasks([succeededImageTask()], { projectId: "lelvpvjEnuJ98wD_f2FI7", keyword: "无匹配" })).toEqual([]);
+        expect(insertableCanvasGenerationHistoryTasks([succeededImageSummary()], { projectId: "lelvpvjEnuJ98wD_f2FI7", keyword: "无匹配" })).toEqual([]);
     });
 
     test("inserts from persisted resultJson without requiring node preview", async () => {
-        const task = succeededImageTask({ previewUrl: undefined });
+        const task = succeededImageDetail({ previewUrl: undefined });
         const persisted: CanvasNodeData[][] = [];
         const result = await insertCanvasGenerationHistoryTask({
             task,

@@ -360,7 +360,13 @@ async function applyBackendCanvasRead(
             || (backend.revision ?? 0) !== recorded.revision
             || !sameCanvasDocument(backend, recorded.snapshot);
         if (serverMoved) pauseForExternalCandidate(currentLocal.id, backend, scope);
-        return currentLocal;
+        const settled = settleInFlightGenerationOverlay({
+            base: recorded?.snapshot ?? backend,
+            local: currentLocal,
+            remote: backend,
+        });
+        if (settled !== currentLocal) applyLiveCanvasProject(backend.id, settled, false);
+        return settled;
     });
 }
 
@@ -507,16 +513,21 @@ async function commitLiveCanvasDocumentUnlocked(id: string, expected: CapturedUs
     }
     const project = openLocalCanvasProject(id);
     if (!project) return;
-    if (isInitialCanvasCreate(project, scope)) {
-        const saved = await putCanvasProjectToBackend(id, project, `/canvas-projects/${encodeURIComponent(id)}`, project, [], false, expected);
+    const confirmed = journal.confirmedSnapshot;
+    const settled = confirmed
+        ? settleInFlightGenerationOverlay({ base: confirmed, local: project, remote: confirmed })
+        : project;
+    if (settled !== project) applyLiveCanvasProject(id, settled, false);
+    if (isInitialCanvasCreate(settled, scope)) {
+        const saved = await putCanvasProjectToBackend(id, settled, `/canvas-projects/${encodeURIComponent(id)}`, settled, [], false, expected);
         if (!saved) return;
-        await applyAcceptedCanvasSave(id, project, saved, undefined, expected);
+        await applyAcceptedCanvasSave(id, settled, saved, undefined, expected);
         return;
     }
     const queued = await updateCanvasOperationJournal(id, scope, (current) => {
         if (current.inFlight) return;
-        if (current.confirmedSnapshot && sameCanvasDocument(current.confirmedSnapshot, project) && !current.inFlight) return;
-        const expectedRevision = current.confirmedRevision || project.revision || 0;
+        if (current.confirmedSnapshot && sameCanvasDocument(current.confirmedSnapshot, settled) && !current.inFlight) return;
+        const expectedRevision = current.confirmedRevision || settled.revision || 0;
         const operationId = newCanvasCommitOperationId();
         return {
             ...current,
@@ -526,7 +537,7 @@ async function commitLiveCanvasDocumentUnlocked(id: string, expected: CapturedUs
                 payload: {
                     canvasId: id,
                     expectedRevision,
-                    document: structuredClone(project),
+                    document: structuredClone(settled),
                 },
             },
         };
