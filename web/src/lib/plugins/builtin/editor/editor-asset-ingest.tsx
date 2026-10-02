@@ -11,6 +11,7 @@ import { defaultAssetCategoryForKind } from "@/lib/asset-category";
 import { probeMediaDurationMs } from "@/lib/media-metadata";
 import { makeClipFromAsset } from "@/lib/timeline/asset-ingest";
 import { DEFAULT_AUDIO_TRACK_ID, DEFAULT_SUBTITLE_TRACK_ID, DEFAULT_VIDEO_TRACK_ID } from "@/lib/timeline/timeline-tracks";
+import { assertUserScope, captureUserScope, isUserScopeAbandonedError } from "@/lib/user-scope-guard";
 import { linkProjectAsset } from "@/services/api/projects";
 import { uploadResourceFile, type ResourceUploadMeta } from "@/services/api/resources";
 import { resolveMediaUrl } from "@/services/file-storage";
@@ -35,6 +36,18 @@ const MEDIA_RE = /\.(mp4|mov|webm|mkv|m4v|avi)$/i;
 
 /** 本地上传标记（assetFromUploadedResource 写入 payload.data.source）。画布产物同步时写入 canvas，仅作数据追溯，面板不再单列分组。 */
 const SOURCE_UPLOADED = "uploaded";
+
+/** 编辑器世代或项目已离开入口导入；不展示给用户，只用来中止过期写入。 */
+class EditorImportAbandonedError extends Error {
+    constructor() {
+        super("editor-import-abandoned");
+        this.name = "EditorImportAbandonedError";
+    }
+}
+
+function isAbandonedImportError(error: unknown) {
+    return isUserScopeAbandonedError(error) || (error instanceof Error && error.name === "EditorImportAbandonedError");
+}
 
 type AssetFilter = "all" | "project" | "uploaded";
 
@@ -310,6 +323,21 @@ export function EditorAssetIngest() {
     const inputRef = useRef<HTMLInputElement | null>(null);
     const lastAddKey = useRef<string | null>(null);
     const lastAddAt = useRef(0);
+    const mountedGenerationRef = useRef(0);
+    const projectGenerationRef = useRef(0);
+    const projectIdRef = useRef(projectId);
+    const timelineReadyRef = useRef(Boolean(project));
+    timelineReadyRef.current = Boolean(project);
+    if (projectIdRef.current !== projectId) {
+        projectIdRef.current = projectId;
+        projectGenerationRef.current += 1;
+    }
+    useEffect(() => {
+        const generation = ++mountedGenerationRef.current;
+        return () => {
+            if (mountedGenerationRef.current === generation) mountedGenerationRef.current += 1;
+        };
+    }, []);
     // 展开浮层指向的素材被移除/刷新消失时自动关闭，避免浮层残留指向已不存在的数据。
     useEffect(() => {
         if (expandedId && !assets.some((a) => a.id === expandedId)) {
@@ -327,6 +355,22 @@ export function EditorAssetIngest() {
             setImportError("仅支持视频、音频与图片文件");
             return;
         }
+        const expectedScope = captureUserScope();
+        const originalProjectId = projectId;
+        const startedMountedGeneration = mountedGenerationRef.current;
+        const startedProjectGeneration = projectGenerationRef.current;
+        const assertImportOwner = () => {
+            assertUserScope(expectedScope);
+            if (
+                mountedGenerationRef.current !== startedMountedGeneration
+                || projectGenerationRef.current !== startedProjectGeneration
+                || projectIdRef.current !== originalProjectId
+                || !timelineReadyRef.current
+            ) {
+                throw new EditorImportAbandonedError();
+            }
+        };
+        const stillMountedGeneration = () => mountedGenerationRef.current === startedMountedGeneration;
         setImporting(true);
         setImportError(null);
         setImportNote(null);
@@ -347,11 +391,21 @@ export function EditorAssetIngest() {
             const skipped = media.length - toImport.length;
             // 逐文件导入：单文件失败不中断整批，汇总失败数提示。
             const linkedIds: string[] = [];
+            const linkInput = (file: File, kind: "image" | "video" | "audio", assetId: string) => ({
+                assetId,
+                category: defaultAssetCategoryForKind(kind),
+                title: file.name,
+            });
             for (const { file, kind } of toImport) {
                 try {
+                    assertImportOwner();
                     // 上传前探测真实时长（视频/音频），随 meta 入库供时间线片段使用。
                     const durationMs = await probeMediaDurationMs(file);
-                    const resource = await uploadResourceFile(file, kind, durationMs !== undefined ? { durationMs } : undefined);
+                    assertImportOwner();
+                    const meta: ResourceUploadMeta = { expectedScope };
+                    if (durationMs !== undefined) meta.durationMs = durationMs;
+                    const resource = await uploadResourceFile(file, kind, meta);
+                    assertImportOwner();
                     if (resource.status === "failed") {
                         failedNames.push(file.name);
                         if (!firstErrorMsg) firstErrorMsg = resource.error ? `「${file.name}」${resource.error}` : null;
@@ -359,14 +413,22 @@ export function EditorAssetIngest() {
                     }
                     let linked = false;
                     try {
-                        await linkProjectAsset(projectId, { assetId: resource.id, category: defaultAssetCategoryForKind(kind), title: file.name });
+                        assertImportOwner();
+                        await linkProjectAsset(originalProjectId, linkInput(file, kind, resource.id), undefined, expectedScope);
                         linked = true;
-                    } catch {
+                    } catch (error) {
+                        if (isAbandonedImportError(error)) throw error;
                         // 链接偶发失败（网络抖动/后端竞态）时重试一次，避免资源已入库却未挂到项目下。
-                        linked = await linkProjectAsset(projectId, { assetId: resource.id, category: defaultAssetCategoryForKind(kind), title: file.name })
-                            .then(() => true)
-                            .catch(() => false);
+                        assertImportOwner();
+                        try {
+                            await linkProjectAsset(originalProjectId, linkInput(file, kind, resource.id), undefined, expectedScope);
+                            linked = true;
+                        } catch (retryError) {
+                            if (isAbandonedImportError(retryError)) throw retryError;
+                            linked = false;
+                        }
                     }
+                    assertImportOwner();
                     if (!linked) {
                         // 两次挂载都失败（asset 可能已创建但未挂上项目）：不删除，提示重试——重试走幂等路径可补挂。
                         failedNames.push(file.name);
@@ -376,17 +438,21 @@ export function EditorAssetIngest() {
                     okCount += 1;
                     linkedIds.push(resource.id);
                 } catch (err) {
+                    if (isAbandonedImportError(err)) throw err;
                     failedNames.push(file.name);
                     const detail = extractApiMessage(err);
                     if (!firstErrorMsg) firstErrorMsg = detail ? `「${file.name}」${detail}` : `「${file.name}」导入失败`;
                 }
             }
+            assertImportOwner();
             if (okCount > 0) {
                 // 刷新后校验本次挂载的素材是否都出现在列表里；若单次刷新因网络抖动
                 // 或后端提交延迟而拿不到最新结果，立即再刷新一次，避免列表停留在旧快照。
                 const firstList = await refreshAssets();
+                assertImportOwner();
                 if (firstList && linkedIds.some((id) => !firstList.some((asset) => asset.id === id))) {
                     await refreshAssets();
+                    assertImportOwner();
                 }
                 setImportNote(skipped > 0 ? `已导入 ${okCount} 个，跳过 ${skipped} 个重复文件` : `已导入 ${okCount} 个媒体`);
             } else if (skipped > 0 && failedNames.length === 0) {
@@ -398,8 +464,10 @@ export function EditorAssetIngest() {
                 const failedText = failedNames.length === 1 ? `「${failedNames[0]}」` : `${failedNames.length} 个文件`;
                 setImportError(`${failedText}导入失败，请重试`);
             }
+        } catch (error) {
+            if (!isAbandonedImportError(error)) throw error;
         } finally {
-            setImporting(false);
+            if (stillMountedGeneration()) setImporting(false);
         }
     };
 
