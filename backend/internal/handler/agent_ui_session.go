@@ -28,10 +28,11 @@ type uiSessionStore struct {
 	mu       sync.Mutex
 	sessions map[string]uiSession
 	ttl      time.Duration
+	now      func() time.Time
 }
 
 func newUISessionStore() *uiSessionStore {
-	return &uiSessionStore{sessions: map[string]uiSession{}, ttl: 30 * time.Minute}
+	return &uiSessionStore{sessions: map[string]uiSession{}, ttl: 30 * time.Minute, now: time.Now}
 }
 
 func (s *uiSessionStore) issue(userID string) uiSession {
@@ -39,12 +40,13 @@ func (s *uiSessionStore) issue(userID string) uiSession {
 	if _, err := rand.Read(buf); err != nil {
 		return uiSession{}
 	}
-	session := uiSession{Token: hex.EncodeToString(buf), UserID: userID, ExpiresAt: time.Now().Add(s.ttl)}
+	now := s.now()
+	session := uiSession{Token: hex.EncodeToString(buf), UserID: userID, ExpiresAt: now.Add(s.ttl)}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// 清理过期项，避免长期累积。
 	for token, item := range s.sessions {
-		if time.Now().After(item.ExpiresAt) {
+		if !now.Before(item.ExpiresAt) {
 			delete(s.sessions, token)
 		}
 	}
@@ -59,7 +61,7 @@ func (s *uiSessionStore) verify(token, userID string) (uiSession, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	item, ok := s.sessions[token]
-	if !ok || time.Now().After(item.ExpiresAt) {
+	if !ok || !s.now().Before(item.ExpiresAt) {
 		return uiSession{}, false
 	}
 	if subtle.ConstantTimeCompare([]byte(item.UserID), []byte(userID)) != 1 {

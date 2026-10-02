@@ -1,6 +1,7 @@
 // 内置创作助手：浏览器只与同源 Go 代理通信，宿主/owner/模型凭据都不进入页面。
 // 三个端点的真实路径都在 /api/assistant/* 下；写错路径会让面板永远拿不到回复。
 import { ApiError, apiBaseURL, http } from "./request";
+import { assertUserScope, captureUserScope, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 
 /** 后端给出的不可用原因（穷举，见契约 A1）；未知值一律走兜底文案。 */
 export type AssistantUnavailableReason =
@@ -100,7 +101,9 @@ export type AssistantHistory = {
 };
 
 // UI 会话凭据只保存在内存里：刷新页面即重新签发，不写入 localStorage。
-let uiSessionToken: string | null = null;
+let uiSession: { token: string; expiresAt: number; scope: CapturedUserScope } | null = null;
+let uiSessionPending: { promise: Promise<string>; scope: CapturedUserScope } | null = null;
+let uiSessionGeneration = 0;
 
 /**
  * 服务端失败原因只用于分支，展示给用户的永远是用户语。
@@ -215,25 +218,43 @@ export function assistantUndoFailure(error: unknown): AssistantUndoFailure {
 }
 
 export async function ensureAgentUiSession(): Promise<string> {
-    if (uiSessionToken) return uiSessionToken;
-    let data: { token?: string };
+    const scope = captureUserScope();
+    if (uiSession && userScopeMatches(uiSession.scope, scope) && Date.now() + 30_000 < uiSession.expiresAt) return uiSession.token;
+    if (uiSessionPending && userScopeMatches(uiSessionPending.scope, scope)) return uiSessionPending.promise;
+    const generation = ++uiSessionGeneration;
+    const promise = issueAgentUiSession(scope, generation);
+    uiSessionPending = { promise, scope };
     try {
-        data = await http.post<{ token: string }>("/assistant/ui-session", {});
+        return await promise;
+    } finally {
+        if (uiSessionPending?.promise === promise) uiSessionPending = null;
+    }
+}
+
+async function issueAgentUiSession(scope: CapturedUserScope, generation: number): Promise<string> {
+    let data: { token?: string; expiresAt?: string };
+    try {
+        data = await http.post<{ token: string; expiresAt: string }>("/assistant/ui-session", {});
     } catch (error) {
         const status = error instanceof ApiError ? error.status : undefined;
         if (status === 403) {
-            resetAgentUiSession();
             throw new Error(agentAssistantFailureText("forbidden"));
         }
         throw new Error(agentAssistantFailureText(undefined, "创作助手暂时不可用，请稍后再试"));
     }
     if (!data?.token) throw new Error("创作助手暂时不可用，请稍后再试");
-    uiSessionToken = data.token;
+    assertUserScope(scope);
+    if (generation !== uiSessionGeneration) throw new Error("当前页面会话已更新，请重新发送");
+    // Invalid/missing expiry is never cached; the server remains the authority on validity.
+    const expiresAt = Date.parse(data.expiresAt ?? "");
+    uiSession = Number.isFinite(expiresAt) ? { token: data.token, expiresAt, scope } : null;
     return data.token;
 }
 
 export function resetAgentUiSession() {
-    uiSessionToken = null;
+    uiSession = null;
+    uiSessionPending = null;
+    uiSessionGeneration += 1;
 }
 
 export type AgentLifecycleEvent = {
@@ -287,6 +308,14 @@ export class AgentTurnFailedError extends Error {
     }
 }
 
+/** The chat was not sent, or Go explicitly rejected it before beginning a turn. */
+export class AgentChatNotAdmittedError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "AgentChatNotAdmittedError";
+    }
+}
+
 // NDJSON 流式对话：http 客户端只做信封解包，流式必须用原生 fetch（同源）。
 export async function streamAgentChat(
     canvasId: string,
@@ -295,7 +324,15 @@ export async function streamAgentChat(
     request: AgentChatRequest = {},
 ): Promise<void> {
     const { signal, selectedNodeIds = [], references = [], sessionId } = request;
-    const token = await ensureAgentUiSession();
+    const scope = captureUserScope();
+    let token: string;
+    try {
+        token = await ensureAgentUiSession();
+        assertUserScope(scope);
+    } catch (error) {
+        throw new AgentChatNotAdmittedError(error instanceof Error ? error.message : "消息未发送，请重试");
+    }
+    signal?.throwIfAborted();
     const body: Record<string, unknown> = { canvasId, message, selectedNodeIds };
     if (references.length) body.references = references;
     if (sessionId) body.sessionId = sessionId;
@@ -309,8 +346,12 @@ export async function streamAgentChat(
         const text = await response.text().catch(() => "");
         let reason = `http_${response.status}`;
         try { reason = JSON.parse(text)?.reason || reason; } catch { /* 非 JSON */ }
-        if (response.status === 403) resetAgentUiSession();
-        throw new Error(agentAssistantFailureText(reason));
+        if (response.status === 403 && uiSession?.token === token) resetAgentUiSession();
+        const message = agentAssistantFailureText(reason);
+        if (response.headers.get("X-Beeftv-Turn-Admission") === "rejected") {
+            throw new AgentChatNotAdmittedError(message);
+        }
+        throw new Error(message);
     }
     const result = await readAgentTurnStream(response.body, handlers, signal);
     if (!result.settled) throw new Error(AGENT_STREAM_INCOMPLETE_MESSAGE);
@@ -407,7 +448,7 @@ export async function cancelAgentChat(canvasId: string): Promise<void> {
     const text = await response.text().catch(() => "");
     let payload: { code?: number; reason?: string } | null = null;
     try { payload = JSON.parse(text) as { code?: number; reason?: string }; } catch { payload = null; }
-    if (response.status === 403) resetAgentUiSession();
+    if (response.status === 403 && uiSession?.token === token) resetAgentUiSession();
     const businessFailed = payload !== null && typeof payload.code === "number" && payload.code !== 0;
     if (!response.ok || businessFailed) {
         throw new Error(agentAssistantFailureText(payload?.reason, "停止失败，请再试一次"));

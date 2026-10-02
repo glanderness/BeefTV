@@ -28,7 +28,7 @@ describe("助手前端接线", () => {
         expect(source).toContain('fetch(`${apiBaseURL}/assistant/cancel`');
         expect(source).not.toContain("/api/agent/chat");
         expect(source).not.toContain("/api/agent/cancel");
-        expect(source).toContain('http.post<{ token: string }>("/assistant/ui-session"');
+        expect(source).toContain('http.post<{ token: string; expiresAt: string }>("/assistant/ui-session"');
         expect(source).toContain('http.get<AgentHostStatus>("/assistant/status")');
     });
 

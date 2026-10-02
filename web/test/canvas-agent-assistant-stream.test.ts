@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 
 /**
  * NDJSON 回合流的确定性边界用例：分片切割、末尾无换行、中途断流。
@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
  */
 
 const requests: Array<{ url: string; method: string; body: string }> = [];
-let chatResponse: (() => Response) | null = null;
+let chatResponse: (() => Response | Promise<Response>) | null = null;
 let sessionResponse: (() => Response) | null = null;
 
 mock.module("@/services/api/request", () => ({
@@ -32,10 +32,13 @@ mock.module("@/services/api/request", () => ({
 }));
 
 const { ApiError } = await import("@/services/api/request");
+const { setActiveUserScope } = await import("@/lib/user-scope");
 const {
+    AgentChatNotAdmittedError,
     AGENT_STREAM_INCOMPLETE_MESSAGE,
     assistantUndoFailure,
     cancelAgentChat,
+    ensureAgentUiSession,
     resetAgentUiSession,
     streamAgentChat,
 } = await import("@/services/api/agent-assistant");
@@ -84,6 +87,95 @@ afterEach(() => {
 const TURN_END = JSON.stringify({ type: "turn_end", reply: "完成", toolCalls: [], error: null, cancelled: false });
 
 describe("创作助手回合流边界", () => {
+    test("身份切换后不会复用凭据，旧签发也不能跨身份回写", async () => {
+        let issued = 0;
+        sessionResponse = () => new Response(JSON.stringify({ data: { token: `token-${++issued}`, expiresAt: new Date(Date.now() + 1_800_000).toISOString() } }));
+        try {
+            setActiveUserScope("a");
+            expect(await ensureAgentUiSession()).toBe("token-1");
+            setActiveUserScope("b");
+            const stale = ensureAgentUiSession().catch((error: Error) => error);
+            setActiveUserScope("a");
+            expect(await ensureAgentUiSession()).toBe("token-3");
+            expect(await stale).toBeInstanceOf(Error);
+            expect((await stale as Error).message).toContain("账号已切换");
+            expect(await ensureAgentUiSession()).toBe("token-3");
+        } finally { setActiveUserScope(null); }
+    });
+
+    test("临近30分钟过期前续签，并发调用共用一次签发", async () => {
+        let now = Date.parse("2026-10-02T00:00:00Z");
+        const clock = spyOn(Date, "now").mockImplementation(() => now);
+        let issued = 0;
+        sessionResponse = () => new Response(JSON.stringify({ data: { token: `token-${++issued}`, expiresAt: new Date(now + 30 * 60_000).toISOString() } }));
+        try {
+            expect(await Promise.all([ensureAgentUiSession(), ensureAgentUiSession()])).toEqual(["token-1", "token-1"]);
+            now += 29 * 60_000;
+            expect(await ensureAgentUiSession()).toBe("token-1");
+            now += 30_000;
+            expect(await ensureAgentUiSession()).toBe("token-2");
+            expect(issued).toBe(2);
+        } finally { clock.mockRestore(); }
+    });
+
+    test("reset 后旧签发不能回写或返回旧凭据", async () => {
+        let issued = 0;
+        sessionResponse = () => new Response(JSON.stringify({ data: { token: `token-${++issued}`, expiresAt: new Date(Date.now() + 1_800_000).toISOString() } }));
+        const stale = ensureAgentUiSession().catch((error: Error) => error);
+        resetAgentUiSession();
+        expect(await ensureAgentUiSession()).toBe("token-2");
+        expect(await stale).toBeInstanceOf(Error);
+        expect((await stale as Error).message).toContain("当前页面会话已更新");
+        expect(await ensureAgentUiSession()).toBe("token-2");
+    });
+
+    test("明确的403接纳拒绝清除旧凭据但绝不自动重放消息", async () => {
+        let issued = 0;
+        sessionResponse = () => new Response(JSON.stringify({ data: { token: `token-${++issued}`, expiresAt: new Date(Date.now() + 1_800_000).toISOString() } }));
+        chatResponse = () => new Response(JSON.stringify({ reason: "unauthenticated" }), { status: 403, headers: { "X-Beeftv-Turn-Admission": "rejected" } });
+        await expect(streamAgentChat("c1", "hi", {})).rejects.toBeInstanceOf(AgentChatNotAdmittedError);
+        expect(requests.filter((r) => r.url.endsWith("/chat"))).toHaveLength(1);
+        expect(await ensureAgentUiSession()).toBe("token-2");
+    });
+
+    test("签发失败没有发送chat，按未接纳处理", async () => {
+        sessionResponse = () => new Response("", { status: 403 });
+        await expect(streamAgentChat("c1", "hi", {})).rejects.toBeInstanceOf(AgentChatNotAdmittedError);
+        expect(requests).toHaveLength(0);
+    });
+
+    test("旧请求延迟返回403不会清除已经续签的新凭据", async () => {
+        let issued = 0;
+        sessionResponse = () => new Response(JSON.stringify({ data: { token: `token-${++issued}`, expiresAt: new Date(Date.now() + 1_800_000).toISOString() } }));
+        let rejectResponse!: (response: Response) => void;
+        let sent!: () => void;
+        const dispatched = new Promise<void>((resolve) => { sent = resolve; });
+        chatResponse = () => {
+            sent();
+            return new Promise<Response>((resolve) => { rejectResponse = resolve; });
+        };
+        const oldRequest = streamAgentChat("c1", "hi", {}).catch((error: Error) => error);
+        await dispatched;
+        resetAgentUiSession();
+        expect(await ensureAgentUiSession()).toBe("token-2");
+        rejectResponse(new Response(JSON.stringify({ reason: "unauthenticated" }), { status: 403, headers: { "X-Beeftv-Turn-Admission": "rejected" } }));
+        expect(await oldRequest).toBeInstanceOf(AgentChatNotAdmittedError);
+        expect(await ensureAgentUiSession()).toBe("token-2");
+        expect(issued).toBe(2);
+    });
+
+    test("没有明确拒绝标记的HTTP错误和已接纳断流继续视为结果未知", async () => {
+        for (const admission of [null, "unknown", "admitted"]) {
+            chatResponse = () => new Response(JSON.stringify({ reason: "host_unreachable" }), { status: 503, headers: admission ? { "X-Beeftv-Turn-Admission": admission } : {} });
+            const error = await streamAgentChat("c1", "hi", {}).catch((e: unknown) => e);
+            expect(error).toBeInstanceOf(Error);
+            expect(error).not.toBeInstanceOf(AgentChatNotAdmittedError);
+        }
+        chatResponse = () => chatResponseOf([`{"type":"text_delta","delta":"半截"}\n`]);
+        const error = await streamAgentChat("c1", "hi", {}).catch((e: unknown) => e);
+        expect(error).not.toBeInstanceOf(AgentChatNotAdmittedError);
+        expect(requests.filter((r) => r.url.endsWith("/chat"))).toHaveLength(4);
+    });
 	 test("对话和取消连接当前桌面运行时地址", async () => {
 		chatResponse = () => chatResponseOf([TURN_END + "\n"]);
 		await streamAgentChat("canvas-1", "test", {});

@@ -13,6 +13,10 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 - 写入接口限制 body 大小并校验资源归属；不信任前端提供的文件路径、模型能力或 provider 状态。
 - 外部模型密钥由本地 provider config 管理，不在 API 日志或任务列表中返回。
 
+`POST /assistant/ui-session` 返回仅驻留内存、绑定当前 owner 的 `token` 与 `expiresAt`。界面在到期前 30 秒重新签发凭据，同一身份的并发请求共用签发结果；重置或切换身份后旧响应不能恢复旧凭据。签发仍要求原有本机同源与 owner/桌面引导校验。
+
+`POST /assistant/chat` 的响应头 `X-Beeftv-Turn-Admission` 区分 `rejected`（尚未调用业务轮次入口）、`unknown`（已经尝试开始轮次）与 `admitted`（已创建轮次）。仅明确的 `rejected` 或尚未发送消息的签发失败可按未接纳处理；缺少标记、网络错误或接纳后的断流仍需读取回执与画布确认。凭据续签和 403 失效处理都不会自动重放消息。
+
 ## 核心路由组
 
 `canvas.generation.propose` 是只读操作，返回的 `source` 包含 `canvasId`、`canvasRevision`、`modelConfigRevision`；模型键与配置版本来自同一次配置读取。提案不创建生成任务。

@@ -6,6 +6,7 @@ import {
     activateAssistantSession,
     agentAssistantFailureText,
     AgentTurnFailedError,
+    AgentChatNotAdmittedError,
     cancelAgentChat,
     createAssistantSession,
     getAgentHostStatus,
@@ -296,6 +297,10 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             // 用户点「停止」会以 AbortError 结束这次请求：这是预期结果，不当成失败。
             const aborted = streamError instanceof DOMException && streamError.name === "AbortError";
             const current = runFor(targetCanvas);
+            if (streamError instanceof AgentChatNotAdmittedError) {
+                current.dispatched = false;
+                current.recovery = null;
+            }
             // 失败时保留用户刚发的那句话，错误卡片就贴在它下面；主动停止才收起。
             if (aborted) {
                 current.pendingUserText = null;

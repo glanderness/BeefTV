@@ -332,6 +332,8 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 	})
 
 	r.POST("/assistant/chat", func(c *gin.Context) {
+		// Only failures before BeginAssistantTurn prove no business turn was admitted.
+		c.Header("X-Beeftv-Turn-Admission", "rejected")
 		if !guard(c, true) {
 			return
 		}
@@ -397,12 +399,14 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		// 否则撤销会拿不到「这轮开始之前」的文档。范围也只在这里验证并持久化：
 		// 之后的操作入口按这条记录读授权，宿主与模型都无法自报。
 		turnID := newTurnID()
+		c.Header("X-Beeftv-Turn-Admission", "unknown")
 		revisionBefore, snapshotErr := svc.BeginAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, turnID,
 			assistantTurnInput(payload.SelectedNodeIDs, references))
 		if snapshotErr != nil {
 			failService(c, snapshotErr)
 			return
 		}
+		c.Header("X-Beeftv-Turn-Admission", "admitted")
 		// 回合状态由自己的回执结算，和浏览器流是两件事：无论下面走哪条返回路径
 		// （宿主不可达、宿主拒绝、浏览器中途断开、正常结束），都已经落地的操作都要可追溯。
 		defer settleAssistantTurn(turnID, svc)

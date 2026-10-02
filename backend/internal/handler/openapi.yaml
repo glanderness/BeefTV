@@ -476,7 +476,7 @@ paths:
       description: 需本机同源，并出示 owner 凭据（或本机显式的开发引导开关）。
       responses:
         "200":
-          description: 信封 data.token 为短期限凭据；只应保存在内存里
+          description: 信封 data.token 为绑定当前 owner 的短期限凭据，data.expiresAt 为到期时间；只应保存在内存里并在到期前续签
         "403":
           description: 非本机同源，或既没有 owner 凭据也没有显式本地引导
   /assistant/chat:
@@ -487,6 +487,8 @@ paths:
         请求头 X-Beeftv-Ui-Session 由 /assistant/ui-session 签发。响应为 NDJSON：
         若干 text_delta 增量，最后恰好一条 turn_end 结算（含 reply、toolCalls、error、cancelled）。
         宿主凭据与模型密钥由后端注入，浏览器不接触。
+        X-Beeftv-Turn-Admission 响应头为 rejected（尚未尝试创建业务轮次）、unknown（已尝试创建）或 admitted（已创建）。
+        只有 rejected 可以确认未接纳；缺少标记、网络故障或接纳后失败仍需读取回执。续签凭据不会重放消息。
       responses:
         "200":
           description: application/x-ndjson 事件流
