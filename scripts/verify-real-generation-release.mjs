@@ -54,6 +54,8 @@ catch { fail('unparseable VERSION'); }
 let scenarioDigest = '';
 if (themeAgent) {
   if (!Number.isInteger(receipt.contractVersion) || receipt.contractVersion !== THEME_AGENT_CONTRACT_VERSION) fail(`explicit contractVersion=${THEME_AGENT_CONTRACT_VERSION} is required`);
+  const review = receipt.review;
+  if (!review || review.result !== 'approved' || review.sourceDigest !== sourceDigest || !nonempty(review.reviewer) || !Array.isArray(review.evidence) || !review.evidence.length || review.evidence.some(item => !nonempty(item))) fail('independent review must approve this release source with reviewer and evidence');
   if (receipt.agentChecks === true || receipt.agentChecks === false) fail('boolean-only agent coverage is not accepted');
   const scenario = receipt.scenario;
   if (!scenario || typeof scenario !== 'object' || Array.isArray(scenario) || !nonempty(scenario.id) || !nonempty(scenario.title) || !nonempty(scenario.source) || !nonempty(scenario.queryDate) || !/^https?:\/\/\S+$/.test(scenario.source.trim()) || !/^\d{4}-\d{2}-\d{2}$/.test(scenario.queryDate.trim())) fail('scenario must include nonempty id, title, source URL and query date');

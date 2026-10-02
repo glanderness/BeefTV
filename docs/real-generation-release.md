@@ -74,4 +74,6 @@ JSON 顶层字段为 `version, sourceDigest, budgetCNY, spentCNY, pendingCNY, up
 
 每个 case 另存 `entrypoint: "assistant", sessionId, turnId, proposalId, confirmed: true, operationId`。`agentChecks` 必须逐项包含 `canvas_read, asset_reference, canvas_mutation, multi_turn, proposal_decline, proposal_stale, proposal_idempotency, session_history, session_restart, cancel, conflict_undo, host_recovery, scope_isolation, budget, cli_mcp`；每项记录 `status: "passed"`、`method`、非空 `evidence` 引用数组及本版 `sourceDigest`。`method` 通常为 `native`；只有预算、权限隔离、宿主恢复和并发撤销可标为 `deterministic`，证据中说明注入方式及未覆盖的实机边界。不能用一个布尔值代替专项回执。
 
-记录中禁止凭据、签名素材 URL 或私有提示词。证据真实性由发布人逐项核验；脚本负责完整性与版本绑定。
+从 v1.6.23 起，`review` 必须包含 `result: "approved"`、与本版一致的 `sourceDigest`、非空 `reviewer` 和非空 `evidence` 引用数组。独立复审未完成、拒绝或源码变化后未复审时，门禁必须拒绝。字段只能记录实际复审结果，不能由生成矩阵通过自动填为批准。
+
+记录中禁止凭据、签名素材 URL 或私有提示词。证据真实性与复审独立性由发布人逐项核验；脚本负责完整性与版本绑定。
