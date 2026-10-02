@@ -1,4 +1,4 @@
-# 工作区切片：配置、身份、备份 helper
+# 工作区切片：配置与身份
 
 本页是 Lead 接线备忘，不是产品备份验收，也不是完整重构完成声明。
 
@@ -34,12 +34,8 @@ localapp.Options{
 
 ## 备份 helper
 
-`workspace.Backup` / `workspace.Restore` 在本仓库没有生产调用方。桌面 ZIP 导入导出属于剪辑/画布/素材前端：
+`workspace.Backup` / `workspace.Restore` tar.gz 缝已删除：本仓库没有 HTTP/CLI/Wails/bootstrap 调用方。桌面 ZIP 导入导出属于剪辑/画布/素材前端：
 
 - `web/src/lib/canvas/canvas-export.ts`
 - `web/src/pages/canvas/index.tsx` 画布 ZIP 导入
 - `web/src/pages/assets/asset-transfer.ts`
-
-缺失的生产缝：没有任何 HTTP/CLI/Wails/bootstrap 路径调用这个 tar.gz helper。本切片只修 helper 自身的归档完整性，不新增第二条备份 UX 或 CLI。
-
-helper 现约束：拒绝来源目录内的归档（避免自包含）、错误路径关闭 reader、发布前读完 gzip 校验、发布时目标已存在则拒绝、拒绝越界路径/符号链接/特殊文件。
