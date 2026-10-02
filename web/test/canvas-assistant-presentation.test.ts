@@ -193,17 +193,49 @@ describe("assistantVisibleReply", () => {
     test("正文里的 thinking 标记不显示，代码示例和普通答复保留", async () => {
         const { assistantVisibleReply } = await import("@/pages/canvas/canvas-assistant-copy");
         expect(assistantVisibleReply("<thinking>先核对节点</thinking>\n已为这个节点登记提议。")).toBe("已为这个节点登记提议。");
-        expect(assistantVisibleReply("<thinking>The draft quotes 这个节点当前的模型不能用来生成视频.\n\nI should report.我按你的要求只读取了画布，没有改动。")).toBe("我按你的要求只读取了画布，没有改动。");
-        expect(assistantVisibleReply("<thinking>The draft quotes 这个节点当前的模型不能用来生成视频.\n\nI should report.我按你的要求只读取了画布，没有改动。</thinking>")).toBe("我按你的要求只读取了画布，没有改动。");
+        expect(assistantVisibleReply("<thinking>English draft.这是一段超过八个字的中文草稿。\n\n另一段中文仍然属于思考。")).toBe("");
+        expect(assistantVisibleReply("<thinking>English draft.这是一段超过八个字的中文草稿。</thinking>")).toBe("");
         expect(assistantVisibleReply("我先读取画布。\n<thinking>The node state is unchanged")).toBe("我先读取画布。");
         expect(assistantVisibleReply("<thinking>The node state is unchanged")).toBe("");
         expect(assistantVisibleReply("已改好<thinking")).toBe("已改好");
-        expect(assistantVisibleReply("<thinking>已改好三个镜头，可以继续。</thinking>")).toBe("已改好三个镜头，可以继续。");
+        expect(assistantVisibleReply("<thinking>已改好三个镜头，可以继续。</thinking>")).toBe("");
         const example = "示例：\n```\n<thinking>keep this</thinking>\n<think>also keep</think>\n```\n正文还在";
         expect(assistantVisibleReply(example)).toBe(example);
         expect(assistantVisibleReply("标签 `<thinking>` 只是示例")).toBe("标签 `<thinking>` 只是示例");
         expect(assistantVisibleReply("准备生成没有成功")).toBe("准备生成没有成功");
+        expect(assistantVisibleReply("The canvas is unchanged. 我只读取了画布，没有改动。")).toBe("The canvas is unchanged. 我只读取了画布，没有改动。");
         expect(assistantVisibleReply(assistantVisibleReply("<thinking>draft</thinking>\n已核对。"))).toBe("已核对。");
+    });
+
+    test("每个流式前缀都不会漏出标签或未闭合思考", async () => {
+        const { assistantVisibleReply } = await import("@/pages/canvas/canvas-assistant-copy");
+        for (const tag of ["think", "thinking", "THINKING"]) {
+            const hidden = `<${tag}>English draft.中文草稿超过八个字。</${tag}>`;
+            for (let length = 1; length <= hidden.length; length += 1) {
+                expect(assistantVisibleReply(`正文${hidden.slice(0, length)}`)).toBe("正文");
+            }
+            expect(assistantVisibleReply(`正文${hidden}Final answer. 最终答复。`)).toBe("正文Final answer. 最终答复。");
+        }
+        expect(assistantVisibleReply("正文 <thing")).toBe("正文 <thing");
+    });
+
+    test("代码示例不改变标签状态，思考中的代码也隐藏", async () => {
+        const { assistantVisibleReply } = await import("@/pages/canvas/canvas-assistant-copy");
+        for (const code of [
+            "`<thinking>示例</thinking>`",
+            "``<think>含 ` 单个反引号</think>``",
+            "`````\n```xml\n<thinking>嵌套围栏示例</thinking>\n```\n`````",
+            "`` 含 ``` 和 <thinking> 的示例 ``",
+            "```xml\n<thinking>示例</thinking>\n```",
+            "~~~xml\n<think>示例</think>\n~~~",
+            "```\n<thinking>未闭合示例",
+        ]) {
+            expect(assistantVisibleReply(`示例：\n${code}`)).toBe(`示例：\n${code}`);
+        }
+        const draft = "<thinking>草稿 `</thinking>` 仍是草稿\n```\n<think>代码示例</think>\n```\n继续思考";
+        expect(assistantVisibleReply(`前言${draft}`)).toBe("前言");
+        expect(assistantVisibleReply(`${draft}</thinking>已完成。`)).toBe("已完成。");
+        expect(assistantVisibleReply("<thinking>外层<think>内层</think>仍是草稿</thinking>正文")).toBe("正文");
     });
 });
 

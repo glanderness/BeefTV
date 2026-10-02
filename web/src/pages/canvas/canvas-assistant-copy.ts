@@ -126,100 +126,44 @@ export function assistantLifecycleText(event: Pick<AgentLifecycleEvent, "phase">
 
 const REASONING_TAG_PREFIXES = ["</thinking>", "<thinking>", "</think>", "<think>"];
 
-function isCjk(char: string) {
-    return char >= "\u4e00" && char <= "\u9fff";
-}
-
-/** 未闭合的推理标记里，用户能看的答复从句号或换行后的连续中文开始。短引文仍算草稿。 */
-function visibleTailAfterReasoning(inner: string): string {
-    for (let index = 0; index < inner.length; index += 1) {
-        if (!isCjk(inner[index] ?? "")) continue;
-        let end = index + 1;
-        while (end < inner.length && isCjk(inner[end] ?? "")) end += 1;
-        if (end - index < 8) {
-            index = end - 1;
-            continue;
-        }
-        let previous = index - 1;
-        while (previous >= 0 && /\s/u.test(inner[previous] ?? "")) previous -= 1;
-        const boundary = previous < 0 ? "" : inner[previous] ?? "";
-        if (previous < 0 || ".!?。！？\n".includes(boundary)) return inner.slice(index).trim();
-        index = end - 1;
-    }
-    return "";
-}
-
-function keptClosedThinking(inner: string): string {
-    const tail = visibleTailAfterReasoning(inner);
-    if (tail) return tail;
-    const cjk = inner.match(/[\u4e00-\u9fff]/gu)?.length ?? 0;
-    const latin = inner.match(/[A-Za-z]/gu)?.length ?? 0;
-    if (cjk >= 8 && cjk > latin) return inner.trim();
-    return "";
-}
-
 function stripDanglingReasoningTag(text: string) {
-    let cut = 0;
-    for (const tag of REASONING_TAG_PREFIXES) {
-        const max = Math.min(tag.length - 1, text.length);
-        for (let length = max; length >= "<think".length; length -= 1) {
-            if (text.endsWith(tag.slice(0, length))) {
-                cut = Math.max(cut, length);
-                break;
-            }
-        }
-    }
-    return cut ? text.slice(0, -cut) : text;
-}
-
-function stripMalformedReasoningMarkers(prose: string) {
-    let next = prose.replace(/<thinking>([\s\S]*?)<\/thinking>/gi, (_match, inner: string) => keptClosedThinking(inner));
-    const open = next.search(/<thinking>/i);
-    if (open >= 0) next = next.slice(0, open) + visibleTailAfterReasoning(next.slice(open + "<thinking>".length));
-    next = next
-        .replace(/<\/?thinking>/gi, "")
-        .replace(/<think>[\s\S]*?<\/think>/gi, "")
-        .replace(/<think>[\s\S]*$/i, "");
-    return stripDanglingReasoningTag(next);
-}
-
-function mapOutsideCode(text: string, transform: (prose: string) => string) {
-    let output = "";
-    let index = 0;
-    while (index < text.length) {
-        const fence = text.startsWith("```", index) ? "```" : text.startsWith("~~~", index) ? "~~~" : "";
-        if (fence) {
-            const end = text.indexOf(fence, index + fence.length);
-            const close = end < 0 ? text.length : end + fence.length;
-            output += text.slice(index, close);
-            index = close;
-            continue;
-        }
-        if (text[index] === "`") {
-            const end = text.indexOf("`", index + 1);
-            const close = end < 0 ? text.length : end + 1;
-            output += text.slice(index, close);
-            index = close;
-            continue;
-        }
-        const fenceAt = text.indexOf("```", index);
-        const tildeAt = text.indexOf("~~~", index);
-        const inlineAt = text.indexOf("`", index);
-        const candidates = [fenceAt, tildeAt, inlineAt].filter((position) => position >= 0);
-        const next = candidates.length ? Math.min(...candidates) : text.length;
-        output += transform(text.slice(index, next));
-        index = next;
-    }
-    return output;
+    const start = text.lastIndexOf("<");
+    return start >= 0 && REASONING_TAG_PREFIXES.some((tag) => tag.startsWith(text.slice(start).toLowerCase()))
+        ? text.slice(0, start) : text;
 }
 
 /**
  * 官方会话把推理放在独立的 thinking 块里，不进入回复。
  * 有的模型仍把 <thinking> 或 <think> 直接写进正文；那是草稿，不是给用户的话。
- * 代码示例里的同名标记保留。未闭合、且答复已经接在草稿后面时，只留下答复。
+ * 代码示例里的同名标记保留。未闭合的思考区块隐藏到正文末尾，不猜测答案起点。
  */
 export function assistantVisibleReply(text: string): string {
-    return mapOutsideCode(text, stripMalformedReasoningMarkers).trim();
+    const tokens = /`+|~{3,}|<\/?(?:think|thinking)>/gi;
+    const reasoning: string[] = [];
+    let output = "";
+    let index = 0;
+    for (let token = tokens.exec(text); token; token = tokens.exec(text)) {
+        if (!reasoning.length) output += text.slice(index, token.index);
+        const marker = token[0];
+        index = tokens.lastIndex;
+        if (marker[0] === "`" || marker[0] === "~") {
+            const delimiters = new RegExp(`${marker[0]}+`, "g");
+            delimiters.lastIndex = index;
+            let end = delimiters.exec(text);
+            while (end && (marker.length >= 3 ? end[0].length < marker.length : end[0].length !== marker.length)) {
+                end = delimiters.exec(text);
+            }
+            index = end ? delimiters.lastIndex : text.length;
+            if (!reasoning.length) output += text.slice(token.index, index);
+            tokens.lastIndex = index;
+        } else if (marker[1] !== "/") {
+            reasoning.push(marker.slice(1, -1).toLowerCase());
+        } else if (reasoning.at(-1) === marker.slice(2, -1).toLowerCase()) {
+            reasoning.pop();
+        }
+    }
+    if (!reasoning.length) output += stripDanglingReasoningTag(text.slice(index));
+    return output.trim();
 }
 
 /** 同一件事的身份：修改看节点，连线看两端，新建看有没有再次成功；读操作失败不影响画布，不单独提示。 */
