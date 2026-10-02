@@ -68,4 +68,10 @@ v1.6.19 在发布人说明“允许前台完成验收”与“本版豁免付费
 6. 将脱敏证据写入 `docs/release-evidence/<VERSION>.json`。`sourceDigest` 来自提交候选代码后运行 `node scripts/verify-real-generation-release.mjs --fingerprint`。证据文件不进入摘要，因此可在后续提交加入；任何打包源码变化都使旧证据失效，包括 `agent-host/` 的宿主源码、依赖清单与锁文件。
 7. 本地及发布 workflow 必须通过 `node scripts/verify-real-generation-release.mjs`，再合入 main 并触发发布。发布后核对三平台产物、签名更新源和真实安装/升级；不能用发布前构建冒充已发布二进制。
 
-JSON 顶层字段为 `version, sourceDigest, budgetCNY, spentCNY, pendingCNY, upgrade, cases`。每个 case 保存 `round, path, taskId, providerRequestId, clientVersion, platform, fixtureDigest, model, status, clientSubmitted, canvasVerified, mediaDecoded, mediaOpened, billing, costCNY, artifactSHA256`。记录中禁止凭据、签名素材 URL 或私有提示词。证据真实性由发布人逐项核验；脚本负责完整性与版本绑定。
+JSON 顶层字段为 `version, sourceDigest, budgetCNY, spentCNY, pendingCNY, upgrade, cases`。每个 case 保存 `round, path, taskId, providerRequestId, clientVersion, platform, fixtureDigest, model, status, clientSubmitted, canvasVerified, mediaDecoded, mediaOpened, billing, costCNY, artifactSHA256`。
+
+从 v1.6.23 起，额外要求 `contractVersion: 2`、`scenario` 和 `agentChecks`。`scenario` 包含 `id, title, source, queryDate, fixtures`；`source` 是选题来源 URL，`queryDate` 为查询日期，`fixtures` 是素材文件名到 SHA256 的映射。将文件名排序后紧凑 JSON 的 SHA256 作为所有 case 共用的 `fixtureDigest`。素材来源、许可和媒体规格另附证据。已有 v2 回执中的主题 ID 或整套素材摘要不得复用。
+
+每个 case 另存 `entrypoint: "assistant", sessionId, turnId, proposalId, confirmed: true, operationId`。`agentChecks` 必须逐项包含 `canvas_read, asset_reference, canvas_mutation, multi_turn, proposal_decline, proposal_stale, proposal_idempotency, session_history, session_restart, cancel, conflict_undo, host_recovery, scope_isolation, budget, cli_mcp`；每项记录 `status: "passed"`、`method`、非空 `evidence` 引用数组及本版 `sourceDigest`。`method` 通常为 `native`；只有预算、权限隔离、宿主恢复和并发撤销可标为 `deterministic`，证据中说明注入方式及未覆盖的实机边界。不能用一个布尔值代替专项回执。
+
+记录中禁止凭据、签名素材 URL 或私有提示词。证据真实性由发布人逐项核验；脚本负责完整性与版本绑定。
