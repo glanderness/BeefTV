@@ -42,18 +42,12 @@ export type LocalForageKeyStore = {
 };
 
 const stores = new Map<string, LocalForage>();
-let databaseTail: Promise<void> = Promise.resolve();
+let databaseReady: Promise<void> | undefined;
 
 // Extra object stores on this IndexedDB name upgrade the whole database and
-// close other connections. Overlapping reads during that upgrade throw
-// TypeError on a nulled db handle and abort durable canvas PUT.
-// iteratee must not call back into this database; the scan holds the same queue.
-
-function withInfiniteCanvasDatabase<T>(job: () => Promise<T>): Promise<T> {
-    const run = databaseTail.then(job, job);
-    databaseTail = run.then(() => undefined, () => undefined);
-    return run;
-}
+// close other connections. Open the fixed store list once, sequentially, then
+// let ordinary get/set/iterate overlap so a stalled cache read cannot block
+// a durable draft write.
 
 function forageForStore(storeName: string): LocalForage {
     const cached = stores.get(storeName);
@@ -65,8 +59,41 @@ function forageForStore(storeName: string): LocalForage {
     return instance;
 }
 
+function isUnavailableDriverError(error: unknown) {
+    return error instanceof Error && error.message === "No available storage method found.";
+}
+
+async function readyInstance(instance: LocalForage) {
+    if (typeof instance.ready !== "function") return;
+    try {
+        await instance.ready();
+    } catch (error) {
+        if (!isUnavailableDriverError(error)) throw error;
+    }
+}
+
+async function openInfiniteCanvasStores() {
+    for (const storeName of INFINITE_CANVAS_OBJECT_STORES) {
+        await readyInstance(forageForStore(storeName));
+    }
+}
+
+function ensureInfiniteCanvasDatabase(): Promise<void> {
+    if (!databaseReady) {
+        databaseReady = openInfiniteCanvasStores().then(
+            () => undefined,
+            (error) => {
+                databaseReady = undefined;
+                throw error;
+            },
+        );
+    }
+    return databaseReady;
+}
+
 async function withStore<T>(storeName: string, job: (store: LocalForage) => Promise<T>): Promise<T> {
-    return withInfiniteCanvasDatabase(async () => job(forageForStore(storeName)));
+    await ensureInfiniteCanvasDatabase();
+    return job(forageForStore(storeName));
 }
 
 export function localForageInstance(storeName: string): LocalForageKeyStore {
@@ -105,5 +132,5 @@ export const localForageStorage: StateStorage = localForageStorageForScope();
 
 export function resetLocalForageDatabaseForTests() {
     stores.clear();
-    databaseTail = Promise.resolve();
+    databaseReady = undefined;
 }

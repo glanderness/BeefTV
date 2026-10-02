@@ -5,8 +5,6 @@ import localforage from "localforage";
 
 import {
     APP_STATE_STORE_NAME,
-    CANVAS_FOLDER_PENDING_STORE_NAME,
-    IMAGE_FILES_STORE_NAME,
     INFINITE_CANVAS_OBJECT_STORES,
     localForageInstance,
     localForageStorageForScope,
@@ -45,106 +43,89 @@ test("infinite-canvas stores use the shared facade instead of a private createIn
     }
 });
 
-function mockExtraStore(onReady: () => Promise<void>) {
-    const store = {
-        ready: onReady,
-        getItem: async () => {
-            await store.ready();
-            return null;
-        },
-        setItem: async (_key: string, value: unknown) => value,
-        removeItem: async () => undefined,
-        keys: async () => {
-            await store.ready();
-            return [];
-        },
-        clear: async () => {
-            await store.ready();
-        },
-        length: async () => {
-            await store.ready();
-            return 0;
-        },
-        iterate: async (iteratee: (value: unknown, key: string, iterationNumber: number) => unknown) => {
-            await store.ready();
-            return iteratee(null, "k", 1);
-        },
-    };
-    return store;
+function deferred<T = void>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+    return { promise, resolve, reject };
 }
 
-test("folder pending ready does not overlap an app_state read", async () => {
-    let appReads = 0;
-    let folderInits = 0;
+test("first open readies object stores one at a time", async () => {
+    let inflight = 0;
     let overlapped = false;
-    const getItem = spyOn(localforage, "getItem").mockImplementation(async () => {
-        appReads += 1;
-        if (folderInits) overlapped = true;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-        if (folderInits) overlapped = true;
-        appReads -= 1;
-        return null;
+    const readied: string[] = [];
+    const mark = async (storeName: string) => {
+        if (inflight) overlapped = true;
+        inflight += 1;
+        readied.push(storeName);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        if (inflight > 1) overlapped = true;
+        inflight -= 1;
+    };
+    const ready = spyOn(localforage, "ready").mockImplementation(async () => {
+        await mark(APP_STATE_STORE_NAME);
     });
-    const createInstance = spyOn(localforage, "createInstance").mockImplementation(() => {
-        return mockExtraStore(async () => {
-            folderInits += 1;
-            if (appReads) overlapped = true;
-            await new Promise((resolve) => setTimeout(resolve, 20));
-            if (appReads) overlapped = true;
-            folderInits -= 1;
-        }) as never;
+    const getItem = spyOn(localforage, "getItem").mockResolvedValue(null);
+    const createInstance = spyOn(localforage, "createInstance").mockImplementation((options: { storeName?: string } = {}) => {
+        const storeName = options.storeName || "";
+        return {
+            ready: async () => mark(storeName),
+            getItem: async () => null,
+            setItem: async (_key: string, value: unknown) => value,
+            removeItem: async () => undefined,
+            keys: async () => [],
+            clear: async () => undefined,
+            length: async () => 0,
+            iterate: async () => undefined,
+        } as never;
     });
     try {
-        await Promise.all([
-            localForageStorageForScope("guest").getItem("canvas-document-journal:startup"),
-            localForageInstance(CANVAS_FOLDER_PENDING_STORE_NAME).getItem("guest"),
-        ]);
+        await Promise.all(INFINITE_CANVAS_OBJECT_STORES.map((name) => localForageInstance(name).getItem("probe")));
         expect(overlapped).toBe(false);
-        expect(createInstance).toHaveBeenCalledTimes(1);
-        expect(createInstance.mock.calls[0]?.[0]).toEqual({
-            name: "infinite-canvas",
-            storeName: CANVAS_FOLDER_PENDING_STORE_NAME,
-        });
+        expect(readied).toEqual([...INFINITE_CANVAS_OBJECT_STORES]);
+        expect(createInstance.mock.calls.map((call) => call[0]?.storeName)).toEqual(
+            INFINITE_CANVAS_OBJECT_STORES.filter((name) => name !== APP_STATE_STORE_NAME),
+        );
     } finally {
+        ready.mockRestore();
         getItem.mockRestore();
         createInstance.mockRestore();
         resetLocalForageDatabaseForTests();
     }
 });
 
-test("all infinite-canvas object stores serialize ready including iterate", async () => {
-    let inflight = 0;
-    let overlapped = false;
-    const mark = async () => {
-        if (inflight) overlapped = true;
-        inflight += 1;
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        if (inflight > 1) overlapped = true;
-        inflight -= 1;
-    };
-    const getItem = spyOn(localforage, "getItem").mockImplementation(async () => {
-        await mark();
-        return null;
+test("stalled app_state cache getItem does not block a draft setItem", async () => {
+    const originalWindow = globalThis.window;
+    globalThis.window = originalWindow ?? ({ localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } } as never);
+    const entered = deferred();
+    const gate = deferred();
+    const memory = new Map<string, string>();
+    const getItem = spyOn(localforage, "getItem").mockImplementation(async (key) => {
+        entered.resolve();
+        await gate.promise;
+        return memory.get(String(key)) ?? null;
     });
-    const created = new Set<string>();
-    const createInstance = spyOn(localforage, "createInstance").mockImplementation((options: { storeName?: string } = {}) => {
-        created.add(options.storeName || "");
-        return mockExtraStore(mark) as never;
+    const setItem = spyOn(localforage, "setItem").mockImplementation(async (key, value) => {
+        memory.set(String(key), String(value));
+        return value;
     });
     try {
-        await Promise.all(INFINITE_CANVAS_OBJECT_STORES.flatMap((name) => {
-            const store = localForageInstance(name);
-            return name === APP_STATE_STORE_NAME
-                ? [store.getItem("probe")]
-                : [store.getItem("probe"), store.iterate(() => undefined), store.keys(), store.length()];
-        }));
-        expect(overlapped).toBe(false);
-        expect([...created].sort()).toEqual(
-            INFINITE_CANVAS_OBJECT_STORES.filter((name) => name !== APP_STATE_STORE_NAME).slice().sort(),
-        );
+        const storage = localForageStorageForScope("owner-a");
+        const read = storage.getItem("infinite-canvas:asset_store");
+        await entered.promise;
+        await storage.setItem("infinite-canvas:asset_store_drafts", JSON.stringify({ drafts: { asset: { title: "编辑后" } } }));
+        expect([...memory.entries()].some(([key, value]) => key.includes("asset_store_drafts") && value.includes("编辑后"))).toBe(true);
+        gate.resolve();
+        await read;
     } finally {
+        gate.resolve();
         getItem.mockRestore();
-        createInstance.mockRestore();
+        setItem.mockRestore();
+        if (!originalWindow) delete (globalThis as { window?: unknown }).window;
+        else globalThis.window = originalWindow;
         resetLocalForageDatabaseForTests();
     }
 });
