@@ -12,6 +12,9 @@ import (
 
 func RegisterTaskRoutes(r *gin.RouterGroup, svc *app.Service, hostedProfile ...bool) {
 	r.POST("/tasks", func(c *gin.Context) {
+		if !requireTrustedDesktopWritePrincipal(c, "任务只能由当前桌面界面创建") {
+			return
+		}
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
@@ -37,6 +40,9 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *app.Service, hostedProfile ...b
 		ok(c, task)
 	})
 	r.POST("/timeline/transcriptions", func(c *gin.Context) {
+		if !requireTrustedDesktopWritePrincipal(c, "字幕转写只能由当前桌面界面创建") {
+			return
+		}
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
@@ -62,6 +68,9 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *app.Service, hostedProfile ...b
 		ok(c, task)
 	})
 	r.POST("/timeline/renders", func(c *gin.Context) {
+		if !requireTrustedDesktopWritePrincipal(c, "时间线渲染只能由当前桌面界面创建") {
+			return
+		}
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
@@ -110,6 +119,9 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *app.Service, hostedProfile ...b
 		ok(c, plan)
 	})
 	r.POST("/depth-captures", func(c *gin.Context) {
+		if !requireTrustedDesktopWritePrincipal(c, "深度捕捉只能由当前桌面界面创建") {
+			return
+		}
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)

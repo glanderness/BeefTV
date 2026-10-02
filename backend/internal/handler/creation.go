@@ -2,7 +2,6 @@ package handler
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"infinite-canvas/backend/internal/app"
@@ -90,20 +89,6 @@ func RegisterCreationRoutes(r *gin.RouterGroup, svc *app.Service) {
 
 // requireCreationWritePrincipal binds the existing desktop UI capability.
 // JSON owner is a lease identity after this trusted call, not a caller role.
-// Registered Agent tokens only skip the launch token on /api/ops; they cannot
-// invoke creation writes even when a launch token is also present.
 func requireCreationWritePrincipal(c *gin.Context) bool {
-	if strings.TrimSpace(c.GetHeader("X-Beeftv-Client")) != "" {
-		fail(c, http.StatusForbidden, app.Forbidden("创作操作只能由当前桌面界面完成"))
-		return false
-	}
-	dependencies, ok := runtimeDependencies(c)
-	if !ok || dependencies.DesktopTrust == nil {
-		return true
-	}
-	if !trustedDesktopUI(c) {
-		fail(c, http.StatusForbidden, app.Forbidden("创作操作只能由当前桌面界面完成"))
-		return false
-	}
-	return true
+	return requireTrustedDesktopWritePrincipal(c, "创作操作只能由当前桌面界面完成")
 }
