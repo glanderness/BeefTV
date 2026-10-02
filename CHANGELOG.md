@@ -9,6 +9,14 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.6.23
+
+- Add a canvas assistant for drafting scenes, editing nodes, connecting references, and proposing image or video generation for confirmation.
+- Keep assistant conversations and canvas changes recoverable across restarts, with conflict checks and per-turn undo.
+- Let external agents connect through the bundled CLI and MCP using revocable read-only or read-write access.
+- Share canvas operations and generation delivery across manual editing and agents, preserving original tasks during recovery.
+- Unify media rendering and workspace backup paths while retaining existing projects, assets, and tasks.
+
 ## v1.6.22
 
 - Add a director workbench for staging objects, cameras, motion paths, and shot previews.
