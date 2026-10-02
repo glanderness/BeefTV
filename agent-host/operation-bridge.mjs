@@ -92,6 +92,17 @@ export function createOperationBridge({
             throw new Error(`missing_tool_call_id: ${descriptor.id} 写入缺少工具调用标识，已拒绝以免重复写入`);
           }
           opId = toolOperationId(identityPrefix, toolCallId);
+          if (descriptor.id === 'canvas.task.bind') {
+            // Binding has one durable identity shared with automatic task delivery.
+            // Normalize the default too, so a replay uses the same payload hash.
+            params.taskId = typeof params.taskId === 'string' ? params.taskId.trim() : '';
+            params.nodeId = typeof params.nodeId === 'string' ? params.nodeId.trim() : '';
+            params.outputIndex = params.outputIndex ?? 0;
+            if (!params.taskId || !params.nodeId || !Number.isSafeInteger(params.outputIndex) || params.outputIndex < 0) {
+              throw new Error('invalid_params: 绑定产物需要有效任务、节点和输出序号');
+            }
+            opId = `attach-node:${params.taskId}:${params.nodeId}:${params.outputIndex}`;
+          }
         }
         const started = Date.now();
         try {

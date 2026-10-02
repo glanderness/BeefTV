@@ -13,6 +13,52 @@ function listen(server) {
 }
 
 describe('操作桥', () => {
+  test('任务绑定与自动交付共用产物身份，跨会话重试不制造第二次效果', async () => {
+    const seen = [];
+    const receipts = new Set();
+    const server = createServer(async (req, res) => {
+      res.setHeader('content-type', 'application/json');
+      if (req.url === '/ops') {
+        res.end(JSON.stringify({ code: 0, data: { ops: [{ id: 'canvas.task.bind', readOnly: false,
+          params: { type: 'object', properties: { canvasId: { type: 'string' }, taskId: { type: 'string' }, nodeId: { type: 'string' }, outputIndex: { type: 'integer' } } } }] } }));
+        return;
+      }
+      let raw = '';
+      for await (const chunk of req) raw += chunk;
+      const body = JSON.parse(raw);
+      seen.push(body);
+      const { taskId, nodeId, outputIndex } = body.params;
+      const key = `attach-node:${taskId}:${nodeId}:${outputIndex}`;
+      if (body.opId !== key) {
+        res.writeHead(400); res.end(JSON.stringify({ code: 1, reason: 'effect_identity_mismatch' })); return;
+      }
+      const replayed = receipts.has(key);
+      receipts.add(key);
+      res.end(JSON.stringify({ code: 0, data: { replayed, result: { revision: 3, nodeId } } }));
+    });
+    const port = await listen(server);
+    try {
+      const bridge = createOperationBridge({ opsUrl: `http://127.0.0.1:${port}`, hostToken: 'test-only', turnBudgetContext: new AsyncLocalStorage() });
+      await bridge.loadDescriptors();
+      const tool = (session) => bridge.buildTools('canvas-1', [], { aborted: false }, resetTurnAccumulator(newTurnAccumulator(), 1, 'turn-1'), session)[0];
+      const first = await tool('session-A').execute('call-A', { taskId: ' task-1 ', nodeId: ' node-1 ', operationId: 'forged' });
+      const replay = await tool('session-B').execute('call-B', { taskId: 'task-1', nodeId: 'node-1', outputIndex: 0 });
+      expect(JSON.parse(first.content[0].text).replayed).toBe(false);
+      expect(JSON.parse(replay.content[0].text).replayed).toBe(true);
+      expect(seen[0]).toEqual({ opId: 'attach-node:task-1:node-1:0', params: { taskId: 'task-1', nodeId: 'node-1', canvasId: 'canvas-1', outputIndex: 0 } });
+      expect(seen[1]).toEqual(seen[0]);
+      for (const outputIndex of [-1, 0.5, '0']) {
+        await expect(tool('session-A').execute('bad', { taskId: 'task-1', nodeId: 'node-1', outputIndex })).rejects.toThrow('invalid_params');
+      }
+      await expect(tool('session-A').execute('foreign', { canvasId: 'other', taskId: 'task-1', nodeId: 'node-1' })).rejects.toThrow('scope_denied');
+      expect(seen).toHaveLength(2);
+      expect(receipts.size).toBe(1);
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   test('schema 去掉 canvasId 与 operationId，引用画布读取可保留 canvasId', () => {
     const params = {
       type: 'object',
