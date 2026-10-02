@@ -195,15 +195,15 @@ export type CanvasProjectEditorDialogsProps = {
     assets: {
         pickerOpen: boolean;
         multiple: boolean;
-        onInsertLibrary: (payloads: InsertAssetPayload[]) => void | Promise<void>;
+        onInsertLibrary: (payloads: InsertAssetPayload[], expectedScope: CapturedUserScope) => void | Promise<void>;
         onClosePicker: () => void;
         projectOpen: boolean;
         detail?: ProjectDetail;
         initialCategory?: string;
         initialFolderId?: string;
         onCloseProject: () => void;
-        onInsertProject: (payloads: InsertAssetPayload[]) => void | Promise<void>;
-        onInsertFolder?: (folderId: string) => Promise<void> | void;
+        onInsertProject: (payloads: InsertAssetPayload[], expectedScope: CapturedUserScope) => void | Promise<void>;
+        onInsertFolder?: (folderId: string, expectedScope: CapturedUserScope) => Promise<void> | void;
     };
 };
 

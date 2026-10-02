@@ -5,7 +5,7 @@ import { FileImage, FileVideo, UploadCloud, X } from "lucide-react";
 
 import { ASSET_CATEGORY_OPTIONS, type AssetCategory } from "@/lib/asset-category";
 import { readImageMeta } from "@/lib/image-utils";
-import { captureUserScope, isUserScopeAbandonedError, userScopeMatches } from "@/lib/user-scope-guard";
+import { captureUserScope, isUserScopeAbandonedError, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { localSavedRemotePendingMessage } from "@/services/local-workspace-sync";
@@ -15,9 +15,10 @@ import type { AssetFolder } from "@/services/api/workspace-data";
 
 type BatchItem = { id: string; file: File; status: "queued" | "uploading" | "done" | "error"; error?: string; percent?: number };
 
-export function AssetBatchUploadModal({ open, defaultFolderId, folders, onClose, onComplete }: { open: boolean; defaultFolderId: string; folders: AssetFolder[]; onClose: () => void; onComplete: () => Promise<void> }) {
+export function AssetBatchUploadModal({ open, defaultFolderId, folders, onClose, onComplete, entryScope }: { open: boolean; defaultFolderId: string; folders: AssetFolder[]; onClose: () => void; onComplete: () => Promise<void>; entryScope?: CapturedUserScope }) {
     const { message } = App.useApp();
     const addAsset = useAssetStore((state) => state.addAsset);
+    const [sessionScope] = useState(() => entryScope ?? captureUserScope());
     const [items, setItems] = useState<BatchItem[]>([]);
     const [category, setCategory] = useState<AssetCategory>("material");
     const [folderId, setFolderId] = useState(defaultFolderId);
@@ -41,7 +42,7 @@ export function AssetBatchUploadModal({ open, defaultFolderId, folders, onClose,
     const uploadBatch = async () => {
         const pending = items.filter((item) => item.status === "queued" || item.status === "error");
         if (!pending.length) return;
-        const expected = captureUserScope();
+        const expected = sessionScope;
         setUploading(true);
         let cursor = 0;
         const worker = async () => {
@@ -77,7 +78,7 @@ export function AssetBatchUploadModal({ open, defaultFolderId, folders, onClose,
         try {
             await persistWorkspaceAssetChanges(expected);
         } catch (error) {
-            if (isUserScopeAbandonedError(error)) return;
+            if (isUserScopeAbandonedError(error) || !userScopeMatches(expected)) return;
             message.warning(localSavedRemotePendingMessage("部分素材已保存在本地", error));
         }
         if (!userScopeMatches(expected)) return;
@@ -85,7 +86,7 @@ export function AssetBatchUploadModal({ open, defaultFolderId, folders, onClose,
         try {
             await onComplete();
         } catch (error) {
-            if (isUserScopeAbandonedError(error)) return;
+            if (isUserScopeAbandonedError(error) || !userScopeMatches(expected)) return;
             throw error;
         }
     };

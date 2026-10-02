@@ -4,6 +4,7 @@ import { getActiveUserScopeEpoch, subscribeUserScope } from "@/lib/user-scope";
 import {
     assertUserScope,
     isUserScopeAbandonedError,
+    userScopeMatches,
     type CapturedUserScope,
 } from "@/lib/user-scope-guard";
 
@@ -85,6 +86,10 @@ export function mergeHistoryLibraryAssets<T extends { id: string; status?: strin
     return merged.filter((asset) => asset.status !== "archived");
 }
 
+export function shouldSuppressAssetViewError(error: unknown, expected: CapturedUserScope) {
+    return isUserScopeAbandonedError(error) || !userScopeMatches(expected);
+}
+
 export async function runAssetViewAction<T>(
     expected: CapturedUserScope,
     action: (expected: CapturedUserScope) => Promise<T>,
@@ -95,7 +100,7 @@ export async function runAssetViewAction<T>(
         assertUserScope(expected);
         return value;
     } catch (error) {
-        if (isUserScopeAbandonedError(error)) return undefined;
+        if (shouldSuppressAssetViewError(error, expected)) return undefined;
         throw error;
     }
 }

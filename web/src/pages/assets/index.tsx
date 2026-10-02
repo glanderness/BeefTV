@@ -17,6 +17,7 @@ import {
     keepAssetViewPlaceholder,
     mergeHistoryLibraryAssets,
     runAssetViewAction,
+    shouldSuppressAssetViewError,
     useAssetViewGeneration,
 } from "@/components/assets/asset-view-session";
 import { Switch } from "@/components/ui/base/switch";
@@ -30,7 +31,7 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { ASSET_CATEGORY_OPTIONS, assetCategoryLabel } from "@/lib/asset-category";
 import { resourceStorageLabel, resourceStorageLocation, resourceStorageTitle } from "@/lib/canvas/resource-storage-status";
 import { formatBytes, readFileAsDataUrl, readImageMeta } from "@/lib/image-utils";
-import { assertUserScope, captureUserScope, isUserScopeAbandonedError, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
+import { assertUserScope, captureUserScope, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { flushAssetStorePersistence, useAssetStore, type Asset, type AssetCategory, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
@@ -191,7 +192,7 @@ function AssetsPageSession() {
         void listWorkspaceAssetFolders(expected).then((folders) => {
             if (active && userScopeMatches(expected)) setLocalFolders(folders);
         }).catch((error) => {
-            if (isUserScopeAbandonedError(error)) return;
+            if (shouldSuppressAssetViewError(error, expected)) return;
             // Ignore malformed local folder metadata; assets remain usable as uncategorized.
         });
         return () => { active = false; };
@@ -367,9 +368,8 @@ function AssetsPageSession() {
         const creating = folderEditor === "new";
         const folderId = folderEditor === "new" ? "" : folderEditor.id;
         setFolderSaving(true);
-        const expected = captureUserScope();
         try {
-            const saved = await runAssetViewAction(expected, async (scope) => {
+            const saved = await runAssetViewAction(entryScope, async (scope) => {
                 if (creating) await createWorkspaceAssetFolder(name, scope);
                 else await renameWorkspaceAssetFolder(folderId, name, scope);
                 if (!folderApi) setLocalFolders(await listWorkspaceAssetFolders(scope));
@@ -381,15 +381,16 @@ function AssetsPageSession() {
             setFolderName("");
             message.success(saved === "created" ? "素材分类已创建" : "素材分类已重命名");
         } catch (error) {
+            if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.error(error instanceof Error ? error.message : "素材分类保存失败");
         } finally {
-            if (userScopeMatches(expected)) setFolderSaving(false);
+            if (userScopeMatches(entryScope)) setFolderSaving(false);
         }
     };
 
     const removeFolder = async (folder: AssetFolder) => {
         try {
-            const removed = await runAssetViewAction(captureUserScope(), async (scope) => {
+            const removed = await runAssetViewAction(entryScope, async (scope) => {
                 await deleteWorkspaceAssetFolder(folder.id, scope);
                 if (!folderApi) setLocalFolders(await listWorkspaceAssetFolders(scope));
                 await flushAssetStorePersistence(scope);
@@ -401,6 +402,7 @@ function AssetsPageSession() {
             setPage(1);
             message.success(`已删除分类「${folder.name}」，其中素材已移至未分类`);
         } catch (error) {
+            if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.error(error instanceof Error ? error.message : "素材分类删除失败");
             throw error;
         }
@@ -409,7 +411,7 @@ function AssetsPageSession() {
     const moveSelectedAssetsToFolder = async (assetIds: string[], folderId: string) => {
         if (!assetIds.length) return;
         try {
-            const moved = await runAssetViewAction(captureUserScope(), async (scope) => {
+            const moved = await runAssetViewAction(entryScope, async (scope) => {
                 await assignWorkspaceAssetsFolder(assetIds, folderId, scope);
                 if (!folderApi) await persistWorkspaceAssetChanges(scope);
                 await flushAssetStorePersistence(scope);
@@ -420,6 +422,7 @@ function AssetsPageSession() {
             setSelectedIds([]);
             message.success(`已移动 ${assetIds.length} 个素材`);
         } catch (error) {
+            if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.error(error instanceof Error ? error.message : "移动素材失败");
         }
     };
@@ -468,7 +471,7 @@ function AssetsPageSession() {
         const assetId = tagEditingAsset.id;
         const tags = tagDraft.filter(Boolean);
         try {
-            const saved = await runAssetViewAction(captureUserScope(), async (scope) => {
+            const saved = await runAssetViewAction(entryScope, async (scope) => {
                 updateAsset(assetId, { tags });
                 await persistWorkspaceAssetChanges(scope);
                 return true;
@@ -477,34 +480,34 @@ function AssetsPageSession() {
             message.success("标签已更新");
             setTagEditingAsset(null);
         } catch (error) {
+            if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.warning(localSavedRemotePendingMessage("标签已在本地更新", error));
             setTagEditingAsset(null);
         }
     };
 
     const saveAsset = async () => {
-        const expected = captureUserScope();
         const values = await form.validateFields();
-        if (!userScopeMatches(expected)) return;
+        if (!userScopeMatches(entryScope)) return;
         let imageData = imageDraft;
         if (values.kind === "image" && imageFile) {
             setImageUploading(true);
             setImageUploadProgress({ phase: "uploading", percent: 0 });
             try {
-                const image = await runAssetViewAction(expected, (scope) => uploadImage(imageFile, undefined, scope));
+                const image = await runAssetViewAction(entryScope, (scope) => uploadImage(imageFile, undefined, scope));
                 if (!image) return;
-                if (!userScopeMatches(expected)) return;
+                if (!userScopeMatches(entryScope)) return;
                 setImageUploadProgress({ phase: "confirming" });
                 imageData = { dataUrl: image.url, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType };
                 setImageDraft(imageData);
                 setImageFile(null);
                 void queryClient.invalidateQueries({ queryKey: assetStorageUsageQueryKey });
             } catch (error) {
-                if (isUserScopeAbandonedError(error)) return;
+                if (shouldSuppressAssetViewError(error, entryScope)) return;
                 message.error(error instanceof Error ? error.message : "图片上传失败，请重试");
                 return;
             } finally {
-                if (userScopeMatches(expected)) {
+                if (userScopeMatches(entryScope)) {
                     setImageUploading(false);
                     setImageUploadProgress(null);
                 }
@@ -532,7 +535,7 @@ function AssetsPageSession() {
         }
 
         try {
-            const saved = await runAssetViewAction(expected, async (scope) => {
+            const saved = await runAssetViewAction(entryScope, async (scope) => {
                 if (values.kind === "text") {
                     const asset = { ...base, kind: "text" as const, data: { content: (values.content || "").trim() } };
                     editingAsset ? updateAsset(editingAsset.id, asset) : addAsset(asset);
@@ -548,6 +551,7 @@ function AssetsPageSession() {
             message.success(saved === "updated" ? "素材已更新" : "素材已保存");
             setIsAssetOpen(false);
         } catch (error) {
+            if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.warning(localSavedRemotePendingMessage(editingAsset ? "素材已在本地更新" : "素材已在本地保存", error));
             setIsAssetOpen(false);
         }
@@ -555,39 +559,38 @@ function AssetsPageSession() {
 
     const toggleFavorite = async (asset: LibraryAsset) => {
         try {
-            const saved = await runAssetViewAction(captureUserScope(), async (scope) => {
+            const saved = await runAssetViewAction(entryScope, async (scope) => {
                 updateAsset(asset.id, { metadata: { ...(asset.metadata || {}), favorite: asset.metadata?.favorite !== true } });
                 await persistWorkspaceAssetChanges(scope);
                 return true;
             });
             if (!saved) return;
         } catch (error) {
+            if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.warning(localSavedRemotePendingMessage("收藏状态已在本地更新", error));
         }
     };
 
     const readCoverFile = async (file?: File) => {
         if (!file) return;
-        const expected = captureUserScope();
         const dataUrl = await readFileAsDataUrl(file);
-        if (!userScopeMatches(expected)) return;
+        if (!userScopeMatches(entryScope)) return;
         form.setFieldValue("coverUrl", dataUrl);
     };
 
     const readImageFile = async (file?: File) => {
         if (!file || !file.type.startsWith("image/") || imageUploading) return;
-        const expected = captureUserScope();
         try {
             const dataUrl = await readFileAsDataUrl(file);
             const meta = await readImageMeta(dataUrl);
-            if (!userScopeMatches(expected)) return;
+            if (!userScopeMatches(entryScope)) return;
             setImageFile(file);
             const draft = { dataUrl, storageKey: "", width: meta.width, height: meta.height, bytes: file.size, mimeType: file.type || meta.mimeType };
             setImageDraft(draft);
             if (!form.getFieldValue("coverUrl")) form.setFieldValue("coverUrl", dataUrl);
             if (!form.getFieldValue("title")) form.setFieldValue("title", file.name);
         } catch (error) {
-            if (isUserScopeAbandonedError(error) || !userScopeMatches(expected)) return;
+            if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.error(error instanceof Error ? error.message : "读取图片失败，请重试");
         }
     };
@@ -595,7 +598,7 @@ function AssetsPageSession() {
     const readModelFile = async (file?: File) => {
         if (!file || !/\.(glb|gltf)$/i.test(file.name)) return;
         try {
-            const uploaded = await runAssetViewAction(captureUserScope(), async (scope) => {
+            const uploaded = await runAssetViewAction(entryScope, async (scope) => {
                 const result = await uploadMediaFile(file, "model", undefined, scope);
                 assertUserScope(scope);
                 addAsset({
@@ -607,7 +610,9 @@ function AssetsPageSession() {
                     data: { url: result.url, storageKey: result.storageKey, bytes: result.bytes, mimeType: result.mimeType, fileName: file.name },
                     metadata: { source: "manual" },
                 });
+                await persistWorkspaceAssetChanges(scope);
                 void queryClient.invalidateQueries({ queryKey: assetStorageUsageQueryKey });
+                await invalidateAssetLibrary(scope);
                 return result;
             });
             if (!uploaded) return;
@@ -621,8 +626,8 @@ function AssetsPageSession() {
             }
             else message.success("3D 模型已保存");
         } catch (error) {
-            if (isUserScopeAbandonedError(error)) return;
-            message.error(error instanceof Error ? error.message : "3D 模型保存失败");
+            if (shouldSuppressAssetViewError(error, entryScope)) return;
+            message.warning(localSavedRemotePendingMessage("3D 模型已在本地保存", error));
         }
     };
 
@@ -652,9 +657,8 @@ function AssetsPageSession() {
 
     const importAssetZip = async (file?: File) => {
         if (!file) return;
-        const expected = captureUserScope();
         try {
-            const imported = await runAssetViewAction(expected, async (scope) => {
+            const imported = await runAssetViewAction(entryScope, async (scope) => {
                 const importedAssets = await readAssetPackage(file);
                 if (!userScopeMatches(scope)) return undefined;
                 importedAssets.forEach((asset) => {
@@ -669,24 +673,24 @@ function AssetsPageSession() {
             });
             if (imported == null) return;
             try {
-                await persistWorkspaceAssetChanges(expected);
+                await persistWorkspaceAssetChanges(entryScope);
             } catch (error) {
-                if (isUserScopeAbandonedError(error)) return;
+                if (shouldSuppressAssetViewError(error, entryScope)) return;
                 message.warning(localSavedRemotePendingMessage("素材已在本地导入", error));
             }
-            if (!userScopeMatches(expected)) return;
+            if (!userScopeMatches(entryScope)) return;
             message.success(`已导入 ${imported} 个素材`);
-        } catch {
-            if (!userScopeMatches(expected)) return;
+        } catch (error) {
+            if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.error("导入失败，请选择有效的素材压缩包");
         } finally {
-            if (userScopeMatches(expected) && assetInputRef.current) assetInputRef.current.value = "";
+            if (userScopeMatches(entryScope) && assetInputRef.current) assetInputRef.current.value = "";
         }
     };
 
     const restoreAsset = async (asset: LibraryAsset) => {
         try {
-            const restored = await runAssetViewAction(captureUserScope(), async (scope) => {
+            const restored = await runAssetViewAction(entryScope, async (scope) => {
                 updateAsset(asset.id, { status: "confirmed" });
                 await persistWorkspaceAssetChanges(scope);
                 return true;
@@ -694,6 +698,7 @@ function AssetsPageSession() {
             if (!restored) return;
             message.success(`已还原素材「${asset.title}」`);
         } catch (error) {
+            if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.warning(localSavedRemotePendingMessage("已在本地还原", error));
         }
     };
@@ -703,7 +708,7 @@ function AssetsPageSession() {
         const count = selectedIds.length;
         const ids = [...selectedIds];
         try {
-            const restored = await runAssetViewAction(captureUserScope(), async (scope) => {
+            const restored = await runAssetViewAction(entryScope, async (scope) => {
                 for (const id of ids) updateAsset(id, { status: "confirmed" });
                 await persistWorkspaceAssetChanges(scope);
                 return true;
@@ -712,13 +717,14 @@ function AssetsPageSession() {
             setSelectedIds([]);
             message.success(`已还原 ${count} 个素材`);
         } catch (error) {
+            if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.warning(localSavedRemotePendingMessage("已在本地还原", error));
         }
     };
 
     const archiveAsset = async (asset: LibraryAsset) => {
         try {
-            const archived = await runAssetViewAction(captureUserScope(), async (scope) => {
+            const archived = await runAssetViewAction(entryScope, async (scope) => {
                 updateAsset(asset.id, { status: "archived" });
                 await persistWorkspaceAssetChanges(scope);
                 await invalidateAssetLibrary(scope);
@@ -727,6 +733,7 @@ function AssetsPageSession() {
             if (!archived) return;
             message.success(`已将「${asset.title}」移入回收站`);
         } catch (error) {
+            if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.warning(localSavedRemotePendingMessage("已移入回收站", error));
         }
     };
@@ -736,7 +743,7 @@ function AssetsPageSession() {
         const count = selectedIds.length;
         const ids = [...selectedIds];
         try {
-            const archived = await runAssetViewAction(captureUserScope(), async (scope) => {
+            const archived = await runAssetViewAction(entryScope, async (scope) => {
                 for (const id of ids) updateAsset(id, { status: "archived" });
                 await persistWorkspaceAssetChanges(scope);
                 return true;
@@ -745,6 +752,7 @@ function AssetsPageSession() {
             setSelectedIds([]);
             message.success(`已将 ${count} 个素材移入回收站`);
         } catch (error) {
+            if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.warning(localSavedRemotePendingMessage("已移入回收站", error));
         }
     };
@@ -752,7 +760,7 @@ function AssetsPageSession() {
     const emptyTrash = async () => {
         if (!trashCanonicalTotal && !trashCount) return;
         try {
-            const feedback = await runAssetViewAction(captureUserScope(), async (scope) => {
+            const feedback = await runAssetViewAction(entryScope, async (scope) => {
                 const result = await clearWorkspaceArchivedAssets({ expectedScope: scope });
                 await invalidateAssetLibrary(scope);
                 return workspaceClearTrashMessage(result);
@@ -762,7 +770,7 @@ function AssetsPageSession() {
             if (feedback.type === "success") message.success(feedback.text);
             else message.error(feedback.text);
         } catch (error) {
-            if (isUserScopeAbandonedError(error)) return;
+            if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.error(error instanceof Error ? error.message : "清空回收站失败");
         }
     };
@@ -770,7 +778,7 @@ function AssetsPageSession() {
     const confirmDelete = async () => {
         if (!deletingAsset) return;
         try {
-            const deleted = await runAssetViewAction(captureUserScope(), async (scope) => {
+            const deleted = await runAssetViewAction(entryScope, async (scope) => {
                 await deleteWorkspaceAsset(deletingAsset.id, scope);
                 return true;
             });
@@ -778,7 +786,7 @@ function AssetsPageSession() {
             message.success("素材已彻底删除");
             setDeletingAsset(null);
         } catch (error) {
-            if (isUserScopeAbandonedError(error)) return;
+            if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.error(error instanceof Error ? error.message : "素材删除失败");
         }
     };
@@ -792,7 +800,7 @@ function AssetsPageSession() {
         if (!selectedAssets.length) return;
         const deleting = [...selectedAssets];
         try {
-            const deleted = await runAssetViewAction(captureUserScope(), async (scope) => {
+            const deleted = await runAssetViewAction(entryScope, async (scope) => {
                 for (const asset of deleting) await deleteWorkspaceAsset(asset.id, scope);
                 return deleting.length;
             });
@@ -801,7 +809,7 @@ function AssetsPageSession() {
             setSelectedIds([]);
             setBatchDeleteOpen(false);
         } catch (error) {
-            if (isUserScopeAbandonedError(error)) return;
+            if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.error(error instanceof Error ? error.message : "批量删除失败");
         }
     };
@@ -1340,13 +1348,13 @@ function AssetsPageSession() {
 
             <AssetDrawer asset={previewAsset} onClose={() => setPreviewAsset(null)} onCopy={copyAssetText} onDownload={downloadImage} />
 
-            <AssetBatchUploadModal open={batchUploadOpen} defaultFolderId={folderFilter !== "all" && folderFilter !== "uncategorized" ? folderFilter : ""} folders={folders} onClose={() => setBatchUploadOpen(false)} onComplete={async () => {
-                const expected = captureUserScope();
-                if (userScopeMatches(expected)) setBatchUploadOpen(false);
+            <AssetBatchUploadModal entryScope={entryScope} open={batchUploadOpen} defaultFolderId={folderFilter !== "all" && folderFilter !== "uncategorized" ? folderFilter : ""} folders={folders} onClose={() => setBatchUploadOpen(false)} onComplete={async () => {
+                if (!userScopeMatches(entryScope)) return;
+                setBatchUploadOpen(false);
                 try {
-                    await invalidateAssetLibrary(expected);
+                    await invalidateAssetLibrary(entryScope);
                 } catch (error) {
-                    if (!isUserScopeAbandonedError(error)) throw error;
+                    if (!shouldSuppressAssetViewError(error, entryScope)) throw error;
                 }
             }} />
 

@@ -9,6 +9,7 @@ import type { AssetLibraryPickerItem } from "@/components/assets/asset-library-p
 import { generationErrorCode, generationErrorMessage } from "@/lib/generation-error";
 import { creationResultAssetIds } from "@/lib/canvas/canvas-asset-handoff";
 import { captureUserScopeEpoch, userScopeEpochMatches } from "@/lib/user-scope";
+import { assertUserScope, captureUserScope, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { continueCreationConversationOnCanvas } from "@/services/creation-canvas-conversation";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { useExternalAssetSources } from "@/hooks/use-external-asset-sources";
@@ -491,39 +492,47 @@ export default function CreatePage() {
             })),
         ...externalLibraryItems,
     ], [assets, externalLibraryItems, mode]);
-    const uploadCreationAsset = async (file: File) => {
+    const uploadCreationAsset = async (file: File, expectedScope: CapturedUserScope) => {
         const { uploadImage, uploadMediaFile } = await loadCreationRuntime();
+        assertUserScope(expectedScope);
         if (file.type.startsWith("video/")) {
-            const uploaded = await uploadMediaFile(file, "create-upload");
+            const uploaded = await uploadMediaFile(file, "create-upload", undefined, expectedScope);
+            assertUserScope(expectedScope);
             return {
                 asset: creationVideoAsset({ title: file.name, uploaded, metadata: { source: "create-upload", fileName: file.name } }),
                 attachment: creationAttachmentFromVideo(file, uploaded),
             };
         }
         if (file.type.startsWith("audio/")) {
-            const uploaded = await uploadMediaFile(file, "create-upload");
+            const uploaded = await uploadMediaFile(file, "create-upload", undefined, expectedScope);
+            assertUserScope(expectedScope);
             return {
                 asset: creationAudioAsset({ title: file.name, uploaded, metadata: { source: "create-upload", fileName: file.name } }),
                 attachment: creationAttachmentFromAudio(file, uploaded),
             };
         }
         if (!file.type.startsWith("image/")) {
-            const uploaded = await uploadMediaFile(file, "create-upload");
+            const uploaded = await uploadMediaFile(file, "create-upload", undefined, expectedScope);
+            assertUserScope(expectedScope);
             return { attachment: creationAttachmentFromDocument(file, uploaded) };
         }
-        const uploaded = await uploadImage(file);
+        const uploaded = await uploadImage(file, undefined, expectedScope);
+        assertUserScope(expectedScope);
         return {
             asset: creationImageAsset({ title: file.name, uploaded, metadata: { source: "create-upload", fileName: file.name } }),
             attachment: creationAttachmentFromImage(file, uploaded),
         };
     };
-    const uploadLibraryAssets = async (files: FileList | File[]) => {
+    const uploadLibraryAssets = async (files: FileList | File[], expectedScope: CapturedUserScope) => {
+        assertUserScope(expectedScope);
         const next = Array.from(files).filter((file) => creationFileAccepted(mode, file));
         if (!next.length) return [];
         const settled = await Promise.allSettled(next.map(async (file) => {
-            const { asset } = await uploadCreationAsset(file);
+            const { asset } = await uploadCreationAsset(file, expectedScope);
+            assertUserScope(expectedScope);
             return asset ? addAsset(asset) : "";
         }));
+        if (!userScopeMatches(expectedScope)) return [];
         const assetIds = settled.flatMap((entry) => entry.status === "fulfilled" && entry.value ? [entry.value] : []);
         const failed = settled.filter((entry) => entry.status === "rejected");
         if (assetIds.length) toast.success(`${assetIds.length} 个素材已上传到素材库并自动选中`);
@@ -531,7 +540,8 @@ export default function CreatePage() {
         return assetIds;
     };
 
-    const handleLibrarySelect = (selectedIds: string[]) => {
+    const handleLibrarySelect = (selectedIds: string[], expectedScope: CapturedUserScope) => {
+        assertUserScope(expectedScope);
         const next = selectedIds.flatMap((id): CreationAttachment[] => {
             const asset = assets.find((item) => item.id === id);
             if (asset?.kind === "image") return [creationAttachmentFromAsset(asset)];
@@ -603,12 +613,15 @@ export default function CreatePage() {
             return;
         }
         setReferenceReplacementBusy(true);
+        const expectedScope = captureUserScope();
         try {
-            const { asset, attachment } = await uploadCreationAsset(file);
+            const { asset, attachment } = await uploadCreationAsset(file, expectedScope);
+            if (!userScopeMatches(expectedScope)) return;
             if (creationAttachmentKind(attachment) !== "image") throw new Error("上传结果不是可用图片");
             if (asset) addAsset(asset);
             if (replaceAttachmentReference(targetAttachmentId, attachment)) toast.success("参考图已替换，槽位不变，提示词无需修改");
         } catch (error) {
+            if (!userScopeMatches(expectedScope)) return;
             toast.error(error instanceof Error ? error.message : "参考图上传或替换失败");
         } finally {
             setReferenceReplacementBusy(false);
@@ -1229,7 +1242,7 @@ export default function CreatePage() {
             categoryLabels={{ ...creationAssetCategoryLabels, ...externalAssetSources.categoryLabels }}
             folders={externalAssetSources.folders}
             initialSelectedIds={attachments.flatMap((item) => item.id.startsWith("asset:") ? [item.id.slice(6)] : item.id.startsWith("external:") ? [item.id] : [])}
-            upload={{ accept: creationUploadAccept(mode), description: mode === "text" ? "支持图片、视频、音频和常用文档；媒体会保存到素材库" : `支持图片${mode === "video" ? "、视频和音频" : ""}，上传后保存到素材库`, onUpload: uploadLibraryAssets, external: { accept: "image/*", description: "写入当前 Eagle 文件夹；Eagle 当前支持图片文件", onUpload: (files, folderId) => externalAssetSources.uploadExternalFiles(files, folderId) } }}
+            upload={{ accept: creationUploadAccept(mode), description: mode === "text" ? "支持图片、视频、音频和常用文档；媒体会保存到素材库" : `支持图片${mode === "video" ? "、视频和音频" : ""}，上传后保存到素材库`, onUpload: uploadLibraryAssets, external: { accept: "image/*", description: "写入当前 Eagle 文件夹；Eagle 当前支持图片文件", onUpload: (files, folderId, expectedScope) => externalAssetSources.uploadExternalFiles(files, folderId, undefined, expectedScope) } }}
             onClose={() => setLibraryOpen(false)}
             onConfirm={handleLibrarySelect}
         /></Suspense> : null}

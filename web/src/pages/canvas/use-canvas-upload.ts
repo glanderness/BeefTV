@@ -8,7 +8,7 @@ import { CANVAS_PROJECT_CHAPTER_DND_TYPE, type CanvasProjectChapterPayload } fro
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
-import { captureUserScope, isUserScopeAbandonedError, userScopeMatches } from "@/lib/user-scope-guard";
+import { assertUserScope, captureUserScope, isUserScopeAbandonedError, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { audioMetadata, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { connectDirectorReferenceNodes } from "@/lib/canvas/director/director-reference-assets";
@@ -714,7 +714,7 @@ export function useCanvasUpload({
         setAssetPickerOpen(false);
     }, []);
 
-    const createAssetPayloadNode = useCallback(async (payload: InsertAssetPayload, center: Position) => {
+    const createAssetPayloadNode = useCallback(async (payload: InsertAssetPayload, center: Position, expectedScope?: CapturedUserScope) => {
         if (payload.kind === "character") {
             const width = 320;
             const height = 260;
@@ -765,7 +765,7 @@ export function useCanvasUpload({
             ? { url: payload.url, storageKey: undefined, width: payload.width || 1, height: payload.height || 1, bytes: payload.bytes || 0, mimeType: payload.mimeType || "image/png" }
             : payload.storageKey
                 ? { url: payload.dataUrl, storageKey: payload.storageKey, width: payload.width || 1, height: payload.height || 1, bytes: payload.bytes || 0, mimeType: payload.mimeType || "image/png" }
-                : await uploadImage(payload.dataUrl);
+                : await uploadImage(payload.dataUrl, undefined, expectedScope);
         const meta = !payload.storageKey && (!payload.width || !payload.height) ? await readImageMeta(storedImage.url) : storedImage;
         const size = fitNodeSize(meta.width, meta.height);
         const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -775,14 +775,15 @@ export function useCanvasUpload({
         return { id, type: CanvasNodeType.Image, title: payload.title.slice(0, 32) || "Generated Image", position: { x: center.x - size.width / 2, y: center.y - size.height / 2 }, width: size.width, height: size.height, metadata: mediaResultMetadata("library", { ...metadata, prompt: payload.title, assetId: payload.assetId }) } satisfies CanvasNodeData;
     }, []);
 
-    const createAssetPayloadNodes = useCallback(async (payloads: InsertAssetPayload[], origin: Position) => {
+    const createAssetPayloadNodes = useCallback(async (payloads: InsertAssetPayload[], origin: Position, expectedScope?: CapturedUserScope) => {
         return Promise.all(payloads.map((payload, index) => createAssetPayloadNode(payload, {
             x: origin.x + (index % BATCH_UPLOAD_COLUMNS) * BATCH_UPLOAD_COLUMN_GAP,
             y: origin.y + Math.floor(index / BATCH_UPLOAD_COLUMNS) * BATCH_UPLOAD_ROW_GAP,
-        })));
+        }, expectedScope)));
     }, [createAssetPayloadNode]);
 
-    const insertAssetPayloads = useCallback(async (payloads: InsertAssetPayload[], origin: Position, successMessage: string, failureMessage: string): Promise<CanvasNodeData[]> => {
+    const insertAssetPayloads = useCallback(async (payloads: InsertAssetPayload[], origin: Position, successMessage: string, failureMessage: string, expectedScope?: CapturedUserScope): Promise<CanvasNodeData[]> => {
+        if (expectedScope) assertUserScope(expectedScope);
         const owner = lifetime.capture(canvasId);
         let created: CanvasNodeData[] = [];
         try {
@@ -791,7 +792,8 @@ export function useCanvasUpload({
                 getLiveCanvasId: () => canvasIdRef.current,
                 getLiveLifetime: () => lifetime.current(),
                 create: async () => {
-                    created = await createAssetPayloadNodes(payloads, origin);
+                    if (expectedScope) assertUserScope(expectedScope);
+                    created = await createAssetPayloadNodes(payloads, origin, expectedScope);
                     return created;
                 },
                 apply: (nodes) => {
@@ -804,20 +806,20 @@ export function useCanvasUpload({
             });
             return status === "committed" ? created : [];
         } catch (error) {
-            if (!lifetime.matches(owner, canvasIdRef.current) || isUserScopeAbandonedError(error)) return [];
+            if (!lifetime.matches(owner, canvasIdRef.current) || isUserScopeAbandonedError(error) || (expectedScope && !userScopeMatches(expectedScope))) return [];
             message.error(error instanceof Error ? error.message : failureMessage);
             throw error;
         }
     }, [canvasId, createAssetPayloadNodes, lifetime, message, setDialogNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
 
-    const handleAssetsInsert = useCallback(async (payloads: InsertAssetPayload[]): Promise<CanvasNodeData[]> => {
+    const handleAssetsInsert = useCallback(async (payloads: InsertAssetPayload[], expectedScope?: CapturedUserScope): Promise<CanvasNodeData[]> => {
         const origin = assetInsertPositionRef.current || getCanvasCenter();
-        return insertAssetPayloads(payloads, origin, `已插入 ${payloads.length} 项素材`, "素材插入失败");
+        return insertAssetPayloads(payloads, origin, `已插入 ${payloads.length} 项素材`, "素材插入失败", expectedScope);
     }, [getCanvasCenter, insertAssetPayloads]);
 
-    const handleProjectAssetsInsert = useCallback(async (payloads: InsertAssetPayload[], position?: Position): Promise<CanvasNodeData[]> => {
+    const handleProjectAssetsInsert = useCallback(async (payloads: InsertAssetPayload[], position?: Position, expectedScope?: CapturedUserScope): Promise<CanvasNodeData[]> => {
         const origin = position || getCanvasCenter();
-        return insertAssetPayloads(payloads, origin, `已引入 ${payloads.length} 项项目资产`, "项目资产引入失败");
+        return insertAssetPayloads(payloads, origin, `已引入 ${payloads.length} 项项目资产`, "项目资产引入失败", expectedScope);
     }, [getCanvasCenter, insertAssetPayloads]);
 
     return {

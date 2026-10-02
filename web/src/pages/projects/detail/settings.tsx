@@ -4,10 +4,12 @@ import { App, Button, Input, Modal } from "antd";
 import { Select } from "@/components/ui/base/select";
 import { Archive, Check, Eye, FolderOpen, Image as ImageIcon, Palette, Pencil, Save, ShieldAlert, Trash2 } from "lucide-react";
 
+import { shouldSuppressAssetViewError } from "@/components/assets/asset-view-session";
 import { AssetLibraryPickerModal, type AssetLibraryPickerItem } from "@/components/assets/asset-library-picker-modal";
 import { CanvasStyleDetailModal, CanvasStylePickerModal, resolveProjectCanvasStyle, type CanvasStylePreset } from "@/components/canvas/canvas-style-picker-modal";
 import { ModelPicker } from "@/components/model-picker";
 import { createStyleProfileSnapshot, parseStyleProfile, resolveStyleExecutionPlan, serializeStyleProfile } from "@/lib/canvas/style-profile";
+import { assertUserScope, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { listProjectAssetsPage, updateProject } from "@/services/api/projects";
 import { uploadImage } from "@/services/image-storage";
@@ -97,7 +99,22 @@ export default function ProjectSettingsView({ detail, refreshProject }: ProjectD
     const currentCoverItemId = coverPickerItems.find((item) => coverResourceByItemId.get(item.id) === project.coverResourceId)?.id;
     const saveMutation = useMutation({ mutationFn: () => updateProject(project.id, { name: name.trim(), description, aspectRatio, sourceType, stylePresetId, styleProfileJson, defaultImageModel, defaultVideoModel }), onSuccess: () => { refreshProject(); message.success("项目设置已保存"); }, onError: (error) => message.error(error instanceof Error ? error.message : "项目设置保存失败") });
     const archiveMutation = useMutation({ mutationFn: () => updateProject(project.id, { status: project.status === "archived" ? "active" : "archived" }), onSuccess: () => { setArchiveOpen(false); refreshProject(); message.success(project.status === "archived" ? "项目已恢复" : "项目已归档"); }, onError: (error) => message.error(error instanceof Error ? error.message : "项目状态更新失败") });
-    const coverMutation = useMutation({ mutationFn: (coverResourceId: string) => updateProject(project.id, { coverResourceId }), onSuccess: (_, coverResourceId) => { setCoverPickerOpen(false); refreshProject(); message.success(coverResourceId ? "项目主图已更新" : "项目主图已移除"); }, onError: (error) => message.error(error instanceof Error ? error.message : "项目主图更新失败") });
+    const coverMutation = useMutation({
+        mutationFn: ({ coverResourceId, expectedScope }: { coverResourceId: string; expectedScope?: CapturedUserScope }) => {
+            if (expectedScope) assertUserScope(expectedScope);
+            return updateProject(project.id, { coverResourceId }, expectedScope);
+        },
+        onSuccess: (_, { coverResourceId, expectedScope }) => {
+            if (expectedScope && !userScopeMatches(expectedScope)) return;
+            setCoverPickerOpen(false);
+            refreshProject();
+            message.success(coverResourceId ? "项目主图已更新" : "项目主图已移除");
+        },
+        onError: (error, variables) => {
+            if (variables.expectedScope && shouldSuppressAssetViewError(error, variables.expectedScope)) return;
+            message.error(error instanceof Error ? error.message : "项目主图更新失败");
+        },
+    });
 
     return (
         <div>
@@ -136,7 +153,7 @@ export default function ProjectSettingsView({ detail, refreshProject }: ProjectD
                 <div className="flex flex-col gap-3 rounded-lg border border-border/70 bg-surface-active p-3 sm:flex-row sm:items-center">
                     {project.coverResourceId ? <img src={resourceFileUrl(project.coverResourceId)} alt={`${project.name}项目主图`} className="aspect-video w-full shrink-0 rounded-md bg-foreground/5 object-cover sm:w-52" /> : <span className="grid aspect-video w-full shrink-0 place-items-center rounded-md bg-foreground/5 text-foreground/30 sm:w-52"><ImageIcon className="size-6" /></span>}
                     <div className="min-w-0 flex-1"><div className="text-sm font-medium">{project.coverResourceId ? "已设置项目主图" : "尚未设置项目主图"}</div><p className="mt-1 text-xs leading-5 text-foreground/48">从个人素材库或项目素材库选择，也可以在选择窗口中上传一张新图片。</p></div>
-                    <div className="flex shrink-0 gap-2"><Button icon={<FolderOpen className="size-3.5" />} onClick={() => { setCoverPage(1); setCoverPickerOpen(true); }}>{project.coverResourceId ? "替换主图" : "设置主图"}</Button>{project.coverResourceId ? <Button danger type="text" icon={<Trash2 className="size-3.5" />} loading={coverMutation.isPending} onClick={() => coverMutation.mutate("")}>移除</Button> : null}</div>
+                    <div className="flex shrink-0 gap-2"><Button icon={<FolderOpen className="size-3.5" />} onClick={() => { setCoverPage(1); setCoverPickerOpen(true); }}>{project.coverResourceId ? "替换主图" : "设置主图"}</Button>{project.coverResourceId ? <Button danger type="text" icon={<Trash2 className="size-3.5" />} loading={coverMutation.isPending} onClick={() => coverMutation.mutate({ coverResourceId: "" })}>移除</Button> : null}</div>
                 </div>
             </section>
 
@@ -178,17 +195,20 @@ export default function ProjectSettingsView({ detail, refreshProject }: ProjectD
                 emptyDescription="可以从底部上传一张新图片，上传后会自动选中。"
                 loading={coverAssetsQuery.isLoading}
                 pagination={{ current: coverPage, pageSize: coverPageSize, total: coverAssetsQuery.data?.total || 0, onChange: (nextPage, nextPageSize) => { setCoverPage(nextPageSize !== coverPageSize ? 1 : nextPage); setCoverPageSize(nextPageSize); } }}
-                upload={{ accept: "image/png,image/jpeg,image/webp,image/avif", description: "支持 PNG、JPG、WebP、AVIF", onUpload: async (files) => {
+                upload={{ accept: "image/png,image/jpeg,image/webp,image/avif", description: "支持 PNG、JPG、WebP、AVIF", onUpload: async (files, expectedScope) => {
+                    assertUserScope(expectedScope);
                     const file = Array.from(files)[0];
                     if (!file?.type.startsWith("image/")) throw new Error("请选择图片文件");
-                    const uploaded = await uploadImage(file);
+                    const uploaded = await uploadImage(file, undefined, expectedScope);
+                    assertUserScope(expectedScope);
                     const resourceId = resourceIdFromStorageKey(uploaded.storageKey);
                     if (!resourceId) throw new Error("图片上传未同步到服务端资源库，请检查后端连接");
                     const id = addAsset({ kind: "image", title: file.name.replace(/\.[^.]+$/, "") || "项目主图", coverUrl: uploaded.url, tags: ["项目主图"], status: "confirmed", source: "项目设置", data: { dataUrl: uploaded.url, storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, bytes: uploaded.bytes, mimeType: uploaded.mimeType } });
                     return [id];
                 } }}
                 onClose={() => setCoverPickerOpen(false)}
-                onConfirm={async (ids) => {
+                onConfirm={async (ids, expectedScope) => {
+                    assertUserScope(expectedScope);
                     const id = ids[0];
                     let resourceId = coverResourceByItemIdRef.current.get(id);
                     if (!resourceId) {
@@ -196,7 +216,7 @@ export default function ProjectSettingsView({ detail, refreshProject }: ProjectD
                         resourceId = asset?.kind === "image" ? resourceIdFromStorageKey(asset.data.storageKey) : "";
                     }
                     if (!resourceId) throw new Error("所选图片尚未同步到服务端资源库");
-                    await coverMutation.mutateAsync(resourceId);
+                    await coverMutation.mutateAsync({ coverResourceId: resourceId, expectedScope });
                 }}
             />
             <CanvasStylePickerModal open={stylePickerOpen} value={stylePresetId} currentProfile={styleProfile} startInEditor={styleEditorRequested} onClose={() => { setStylePickerOpen(false); setStyleEditorRequested(false); }} onSelect={(preset) => { applyStyle(preset); setStylePickerOpen(false); setStyleEditorRequested(false); }} />

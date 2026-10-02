@@ -11,6 +11,7 @@ import {
     keepAssetViewPlaceholder,
     mergeHistoryLibraryAssets,
     runAssetViewAction,
+    shouldSuppressAssetViewError,
     subscribeAssetViewScope,
 } from "@/components/assets/asset-view-session";
 import { getActiveUserScope, getActiveUserScopeEpoch, setActiveUserScope } from "@/lib/user-scope";
@@ -135,6 +136,42 @@ describe("asset view session controller", () => {
         }
     });
 
+    test("ordinary delayed network error after A→B→A is swallowed instead of rethrown", async () => {
+        const restore = switchScope("owner-a");
+        const started = deferred();
+        const gate = deferred();
+        try {
+            const entry = captureUserScope();
+            const pending = runAssetViewAction(entry, async () => {
+                started.resolve();
+                await gate.promise;
+                throw new Error("确认失败：网络中断");
+            });
+            await started.promise;
+            setActiveUserScope("owner-b");
+            setActiveUserScope("owner-a");
+            gate.resolve();
+            expect(await pending).toBeUndefined();
+            expect(shouldSuppressAssetViewError(new Error("确认失败：网络中断"), entry)).toBe(true);
+            expect(userScopeMatches(entry)).toBe(false);
+        } finally {
+            restore();
+        }
+    });
+
+    test("ordinary network error still throws while the entry scope is live", async () => {
+        const restore = switchScope("owner-a");
+        try {
+            const entry = captureUserScope();
+            await expect(runAssetViewAction(entry, async () => {
+                throw new Error("确认失败：网络中断");
+            })).rejects.toThrow("确认失败：网络中断");
+            expect(shouldSuppressAssetViewError(new Error("确认失败：网络中断"), entry)).toBe(false);
+        } finally {
+            restore();
+        }
+    });
+
     test("generation change drops cached library, folder, and picker queries before the next view", () => {
         const restore = switchScope("owner-a");
         const removed: string[] = [];
@@ -178,8 +215,19 @@ describe("asset page and picker wiring", () => {
         expect(page).toContain("generated: true");
         expect(page).toContain("加载更多");
         expect(page).toContain("清空回收站");
+        expect(page).toContain("runAssetViewAction(entryScope");
+        expect(page).toContain("shouldSuppressAssetViewError(error, entryScope)");
+        expect(page).toContain("entryScope={entryScope}");
+        expect(page).not.toContain("runAssetViewAction(captureUserScope()");
         expect(page).not.toContain("keepPreviousData");
         expect(page).not.toContain('queryKey: [...ASSET_LIBRARY_QUERY_KEY');
+
+        const readModel = page.slice(page.indexOf("const readModelFile"), page.indexOf("const copyAssetText"));
+        expect(readModel).toContain("addAsset({");
+        expect(readModel).toContain("await persistWorkspaceAssetChanges(scope)");
+        expect(readModel.indexOf("await persistWorkspaceAssetChanges(scope)")).toBeGreaterThan(readModel.indexOf("addAsset({"));
+        expect(readModel).toContain("3D 模型已保存");
+        expect(readModel).toContain('localSavedRemotePendingMessage("3D 模型已在本地保存"');
     });
 
     test("picker remounts on generation and does not recapture live identity in queryFn", () => {
@@ -192,18 +240,60 @@ describe("asset page and picker wiring", () => {
         expect(picker).toContain("deleteWorkspaceAsset(id, scope)");
         expect(picker).toContain("clearWorkspaceArchivedAssets({ expectedScope: scope })");
         expect(picker).toContain("清空回收站");
+        expect(picker).toContain("onConfirm: (ids: string[], expectedScope: CapturedUserScope)");
+        expect(picker).toContain("onUpload: (files: FileList, expectedScope: CapturedUserScope)");
+        expect(picker).toContain("await onConfirm(selectedIds, scope)");
+        expect(picker).toContain("upload!.onUpload(files, scope)");
+        expect(picker).toContain("await onFolderAction(folderId, scope)");
+        expect(picker).toContain("shouldSuppressAssetViewError");
         expect(picker).not.toContain('queryKey: ["asset-picker", userId');
         expect(picker).not.toContain("isLocalWorkspaceMode");
     });
 
-    test("batch upload captures entry scope before media APIs and persist", () => {
+    test("batch upload uses the page entry scope instead of recapturing at click", () => {
         const modal = read("../src/pages/assets/asset-batch-upload-modal.tsx");
-        expect(modal).toContain("const expected = captureUserScope()");
+        expect(modal).toContain("entryScope?: CapturedUserScope");
+        expect(modal).toContain("const [sessionScope] = useState(() => entryScope ?? captureUserScope())");
+        expect(modal).toContain("const expected = sessionScope");
         expect(modal).toContain("uploadMediaFile(item.file, \"video\"");
         expect(modal).toContain("expected);");
         expect(modal).toContain("uploadImage(item.file, undefined, expected)");
         expect(modal).toContain("persistWorkspaceAssetChanges(expected)");
         expect(modal).toContain("if (!userScopeMatches(expected)) return");
-        expect(modal).toContain("isUserScopeAbandonedError");
+        expect(modal).toContain("isUserScopeAbandonedError(error) || !userScopeMatches(expected)");
+    });
+
+    test("picker parents carry expectedScope into async confirm, upload, and insert work", () => {
+        const create = read("../src/pages/create/index.tsx");
+        expect(create).toContain("const uploadLibraryAssets = async (files: FileList | File[], expectedScope: CapturedUserScope)");
+        expect(create).toContain("const handleLibrarySelect = (selectedIds: string[], expectedScope: CapturedUserScope)");
+        expect(create).toContain("uploadImage(file, undefined, expectedScope)");
+        expect(create).toContain("uploadMediaFile(file, \"create-upload\", undefined, expectedScope)");
+        expect(create).toContain("externalAssetSources.uploadExternalFiles(files, folderId, undefined, expectedScope)");
+
+        const canvasPicker = read("../src/components/canvas/asset-picker-modal.tsx");
+        expect(canvasPicker).toContain("onInsert: (payloads: InsertAssetPayload[], expectedScope: CapturedUserScope)");
+        expect(canvasPicker).toContain("await onInsert(assetPickerItemsToInsertPayloads(ids, items), expectedScope)");
+
+        const projectPicker = read("../src/components/canvas/canvas-project-asset-modal.tsx");
+        expect(projectPicker).toContain("getWorkspaceAsset(item.project.id, undefined, { expectedScope })");
+        expect(projectPicker).toContain("await onInsertFolder(folderId, expectedScope)");
+
+        const canvasUpload = read("../src/pages/canvas/use-canvas-upload.ts");
+        expect(canvasUpload).toContain("uploadImage(payload.dataUrl, undefined, expectedScope)");
+        expect(canvasUpload).toContain("expectedScope && !userScopeMatches(expectedScope)");
+
+        const projectAssets = read("../src/pages/projects/detail/assets.tsx");
+        expect(projectAssets).toContain("linkProjectAsset(detail.project.id,");
+        expect(projectAssets).toContain("undefined, expectedScope");
+        expect(projectAssets).toContain("replaceProjectCharacterRepresentations(detail.project.id, imageAsset.id");
+        expect(projectAssets).toContain("expectedScope");
+        expect(projectAssets).toContain("uploadMediaFile(file, \"character-voice\", undefined, expectedScope)");
+        expect(projectAssets).toContain("shouldSuppressAssetViewError(error, variables.expectedScope)");
+
+        const projectSettings = read("../src/pages/projects/detail/settings.tsx");
+        expect(projectSettings).toContain("uploadImage(file, undefined, expectedScope)");
+        expect(projectSettings).toContain("updateProject(project.id, { coverResourceId }, expectedScope)");
+        expect(projectSettings).toContain("shouldSuppressAssetViewError(error, variables.expectedScope)");
     });
 });

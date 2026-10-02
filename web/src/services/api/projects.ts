@@ -444,8 +444,8 @@ export function createProject(input: { name: string; type: string; aspectRatio: 
     return http.post<{ project: Project }>("/projects", input);
 }
 
-export function updateProject(projectId: string, input: Partial<Pick<Project, "name" | "type" | "aspectRatio" | "sourceType" | "description" | "coverResourceId" | "stylePresetId" | "styleProfileJson" | "defaultImageModel" | "defaultVideoModel" | "status">>) {
-    return http.patch<{ project: Project }>(`/projects/${encodeURIComponent(projectId)}`, input);
+export function updateProject(projectId: string, input: Partial<Pick<Project, "name" | "type" | "aspectRatio" | "sourceType" | "description" | "coverResourceId" | "stylePresetId" | "styleProfileJson" | "defaultImageModel" | "defaultVideoModel" | "status">>, expectedScope?: CapturedUserScope) {
+    return http.patch<{ project: Project }>(`/projects/${encodeURIComponent(projectId)}`, input, { expectedScope });
 }
 
 export function deleteProject(projectId: string) {
@@ -540,12 +540,12 @@ export function updateProjectCharacter(projectId: string, assetId: string, input
     return http.patch<ProjectCharacterDetail>(`/projects/${encodeURIComponent(projectId)}/characters/${encodeURIComponent(assetId)}`, input);
 }
 
-export function replaceProjectCharacterRepresentations(projectId: string, assetId: string, representations: Array<{ role: string; resourceId: string; metadata?: Record<string, unknown> }>) {
-    return http.put<ProjectCharacterDetail>(`/projects/${encodeURIComponent(projectId)}/characters/${encodeURIComponent(assetId)}/representations`, { representations });
+export function replaceProjectCharacterRepresentations(projectId: string, assetId: string, representations: Array<{ role: string; resourceId: string; metadata?: Record<string, unknown> }>, expectedScope?: CapturedUserScope) {
+    return http.put<ProjectCharacterDetail>(`/projects/${encodeURIComponent(projectId)}/characters/${encodeURIComponent(assetId)}/representations`, { representations }, { expectedScope });
 }
 
-export function bindProjectCharacterVoice(projectId: string, assetId: string, input: { voiceProfileId?: string; sampleResourceId?: string; voiceName?: string; instructions?: string }) {
-    return http.put<ProjectCharacterDetail>(`/projects/${encodeURIComponent(projectId)}/characters/${encodeURIComponent(assetId)}/voice`, input);
+export function bindProjectCharacterVoice(projectId: string, assetId: string, input: { voiceProfileId?: string; sampleResourceId?: string; voiceName?: string; instructions?: string }, expectedScope?: CapturedUserScope) {
+    return http.put<ProjectCharacterDetail>(`/projects/${encodeURIComponent(projectId)}/characters/${encodeURIComponent(assetId)}/voice`, input, { expectedScope });
 }
 
 export function unbindProjectCharacterVoice(projectId: string, assetId: string) {

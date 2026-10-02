@@ -10,7 +10,7 @@ import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { uploadMediaFile } from "@/services/file-storage";
 import { createCanvasGenerationLiveProjectAdapter, registerCanvasGenerationLiveProject } from "@/services/canvas-generation-consumer";
 import { getActiveUserScope, scopedLocalStorage } from "@/lib/user-scope";
-import { captureUserScope, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
+import { assertUserScope, captureUserScope, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { findWorkspaceAssetIdByStorageKey } from "@/lib/canvas/director/director-library-persist";
 import { resourceFileUrl, resourceIdFromStorageKey, syncResourceToArkPrivateAsset } from "@/services/api/resources";
 import { uploadImage } from "@/services/image-storage";
@@ -1597,7 +1597,8 @@ function InfiniteCanvasPage() {
     );
 
     const handleProjectFolderInsert = useCallback(
-        (folderId: string) => {
+        (folderId: string, expectedScope: CapturedUserScope) => {
+            assertUserScope(expectedScope);
             const folder = linkedProjectQuery.data?.assetFolders.find((item) => item.id === folderId);
             if (!folder || !linkedProjectId) throw new Error("素材文件夹已不存在，请刷新后重试");
             const { style, theme } = linkedFolderPresentation(folder);
