@@ -75,8 +75,8 @@ export function unflushedSessionHistory(sessionId, activeSessionId) {
 export function turnChange(turn) {
   if (!turn || turn.revisionAfter <= turn.revisionBefore) return null;
   const change = { revisionBefore: turn.revisionBefore, revisionAfter: turn.revisionAfter,
-    createdNodeIds: [...turn.createdNodeIds], updatedNodeIds: [...turn.updatedNodeIds],
-    createdEdgeIds: [...turn.createdEdgeIds] };
+    createdNodeIds: [...new Set(turn.createdNodeIds)], updatedNodeIds: [...new Set(turn.updatedNodeIds)],
+    createdEdgeIds: [...new Set(turn.createdEdgeIds)] };
   if (turn.operationIds.length) change.operationIds = [...turn.operationIds];
   return change;
 }

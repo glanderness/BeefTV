@@ -45,6 +45,18 @@ describe("本轮画布变更", () => {
         expect(turnChange(turn)).toBeNull();
     });
 
+    test("连续修改同一节点只计一个对象，保留每次真实写入回执", () => {
+        const turn = resetTurnAccumulator(newTurnAccumulator(), 45);
+        collectTurnEffects(turn, "canvas.node.update", { revision: 46, nodeId: "video" }, "first-edit");
+        collectTurnEffects(turn, "canvas.node.update", { revision: 47, nodeId: "video" }, "second-edit");
+        collectTurnEffects(turn, "canvas.node.update", { revision: 48, nodeId: "image" }, "third-edit");
+        expect(turnChange(turn)).toEqual({
+            revisionBefore: 45, revisionAfter: 48,
+            createdNodeIds: [], updatedNodeIds: ["video", "image"], createdEdgeIds: [],
+            operationIds: ["first-edit", "second-edit", "third-edit"],
+        });
+    });
+
     test("只读了画布的一轮没有变更摘要", () => {
         const turn = resetTurnAccumulator(newTurnAccumulator(), 5);
 
