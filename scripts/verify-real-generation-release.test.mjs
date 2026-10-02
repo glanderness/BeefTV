@@ -125,6 +125,25 @@ function makeV2(version, sourceDigest, extra = {}) {
   };
 }
 
+test('v1.6.23 failed-chat evidence exception is exact and cannot waive media or future releases', () => {
+  const { dir, run, save, commitVersion } = setupRepo('v1.6.23');
+  try {
+    const requestIds = ['202610020816334239151708268d9d6eZ5lRPwt', '202610021242434383740578268d9d6BAoXA1u1'];
+    const valid = makeV2('v1.6.23', run('--fingerprint').trim(), {
+      pendingCNY: null, knownPendingCNY: 0,
+      financialUncertainty: { status: 'unresolved', failedRequestIds: requestIds },
+      financialEvidenceException: { approvedBy: 'Ender', instruction: '上线吧', scope: 'two-failed-chat-refund-evidence-only', requestIds, evidence: ['financial-audit.json'] },
+    });
+    save(valid); assert.match(run(), /total pending remains unknown/);
+    for (const mutate of [r => delete r.financialEvidenceException, r => r.knownPendingCNY = 1, r => r.pendingCNY = 1, r => r.financialEvidenceException.requestIds = ['other'], r => r.financialUncertainty.failedRequestIds = [...requestIds, 'other'], r => r.financialEvidenceException.evidence = [], r => r.cases[0].billing = 'pending', r => r.cases.pop(), r => r.review.result = 'pending']) {
+      const invalid = structuredClone(valid); mutate(invalid); save(invalid); assert.throws(() => run());
+    }
+    commitVersion('v1.6.24');
+    save({ ...valid, version: 'v1.6.24', sourceDigest: run('--fingerprint').trim() }, 'v1.6.24');
+    assert.throws(() => run(), /billing not reconciled/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('canonical fixture digest matches historical bunny receipts', () => {
   assert.equal(fixtureDigestFromManifest(BUNNY_FIXTURES), '2714dc3b18420b1b9b266fef54883611185a71b2afb8fe78db13885fac07e2c6');
   assert.equal(inspectFixtureManifest(BUNNY_FIXTURES).ok, true);

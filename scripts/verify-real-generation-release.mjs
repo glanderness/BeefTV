@@ -25,7 +25,21 @@ const fail = message => { throw new Error(`Real generation release gate: ${messa
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
 const downloadOnlyWaiver = version === 'v1.6.20' && receipt.liveTestWaiver?.approvedBy === 'Ender' && receipt.liveTestWaiver?.instruction === '本版豁免付费生成矩阵，review 通过就发布（推荐）';
-if (!Number.isFinite(receipt.budgetCNY) || !Number.isFinite(receipt.spentCNY) || !((receipt.budgetCNY > 0 || (downloadOnlyWaiver && receipt.budgetCNY === 0)) && receipt.spentCNY >= 0 && receipt.spentCNY <= receipt.budgetCNY) || receipt.pendingCNY !== 0) fail('billing not reconciled within budget');
+// Owner accepted only these two failed-chat receipt gaps for v1.6.23.
+// Keep unknown pending as null; this does not waive any paid media case.
+const financialException = receipt.financialEvidenceException;
+const acceptedFailedRequests = ['202610020816334239151708268d9d6eZ5lRPwt', '202610021242434383740578268d9d6BAoXA1u1'];
+const financialEvidenceWaiver = version === 'v1.6.23'
+  && financialException?.approvedBy === 'Ender' && financialException?.instruction === '上线吧'
+  && financialException?.scope === 'two-failed-chat-refund-evidence-only'
+  && Array.isArray(financialException?.requestIds)
+  && JSON.stringify([...financialException.requestIds].sort()) === JSON.stringify(acceptedFailedRequests)
+  && Array.isArray(financialException?.evidence) && financialException.evidence.length > 0 && financialException.evidence.every(nonempty)
+  && receipt.pendingCNY === null && receipt.knownPendingCNY === 0
+  && receipt.financialUncertainty?.status === 'unresolved'
+  && Array.isArray(receipt.financialUncertainty?.failedRequestIds)
+  && JSON.stringify([...receipt.financialUncertainty.failedRequestIds].sort()) === JSON.stringify(acceptedFailedRequests);
+if (!Number.isFinite(receipt.budgetCNY) || !Number.isFinite(receipt.spentCNY) || !((receipt.budgetCNY > 0 || (downloadOnlyWaiver && receipt.budgetCNY === 0)) && receipt.spentCNY >= 0 && receipt.spentCNY <= receipt.budgetCNY) || (receipt.pendingCNY !== 0 && !financialEvidenceWaiver)) fail('billing not reconciled within budget');
 // Ender waived only v1.6.20 paid generation after the Windows download smoke.
 // This release still requires the native download regression and independent review.
 if (downloadOnlyWaiver) {
@@ -106,3 +120,4 @@ if (themeAgent) {
 if (receipt.cases.reduce((sum, item) => sum + item.costCNY, 0) > receipt.spentCNY + 0.000001) fail('case costs exceed reported spend');
 if (!receipt.upgrade?.preservedData || !receipt.upgrade?.generationVerified) fail('existing database upgrade unverified');
 console.log(`Real generation release gate passed: ${version}, 12/12, CNY ${receipt.spentCNY}/${receipt.budgetCNY}`);
+if (financialEvidenceWaiver) console.log('Owner accepted two failed-chat refund-evidence gaps for v1.6.23 only; total pending remains unknown, all twelve media cases settled.');
