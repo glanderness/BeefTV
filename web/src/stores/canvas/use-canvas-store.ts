@@ -3,6 +3,7 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 
 import { nanoid } from "nanoid";
 import { sameCanvasContent, sameCanvasDocument } from "@/lib/canvas/canvas-content";
+import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
 import { DEFAULT_CANVAS_BACKGROUND_MODE, normalizeCanvasAppearance, readCanvasAppearanceDefault, type CanvasAppearance } from "@/lib/canvas/canvas-appearance";
 import { decideExternalCanvasRevision } from "@/lib/canvas/canvas-external-revision";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -414,6 +415,10 @@ export async function commitPendingCanvasStorePersistenceLocked(scope: string) {
             baseRevision: queued.baseRevision,
         }).document;
         await storage.setItem(queued.name, serializeCanvasStorageDocument(rebased));
+        for (const project of rebased.state.projects) {
+            const previous = durable.state.projects.find((item) => item.id === project.id);
+            if (previous?.connections?.length !== project.connections?.length) traceCanvasGraph("cache.commit", { previous, queued: queued.state.projects.find((item) => item.id === project.id), saved: project });
+        }
         committed = rebased;
         recordCanvasStorageDocument(scope, rebased);
 
@@ -691,6 +696,7 @@ const canvasStorage: PersistStorage<CanvasStore> = {
         }
         const document = parseCanvasStorageDocument(value);
         const state = document.state as PersistedCanvasState;
+        for (const project of state.projects) traceCanvasGraph("cache.rehydrate", { project });
         canvasMemoryStates.set(scope, state);
         recordCanvasStorageDocument(scope, document);
         return document as unknown as StorageValue<CanvasStore>;
@@ -858,6 +864,7 @@ export const useCanvasStore = create<CanvasStore>()(
                 const next = { ...current, ...patch };
                 const contentChanged = !sameCanvasContent(current, next);
                 if (!contentChanged && samePersistenceValue(current.viewport, next.viewport)) return state;
+                if (patch.connections && current.connections.length !== patch.connections.length) traceCanvasGraph("store.updateProject", { previous: current, next });
                 if (contentChanged) next.updatedAt = new Date().toISOString();
                 return { projects: state.projects.map((project) => project === current ? next : project) };
             }),

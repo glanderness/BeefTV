@@ -1,4 +1,5 @@
 import { mergeCanvasRefreshPatch } from "@/lib/canvas/canvas-patch-merge";
+import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
 import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { App } from "antd";
 import { useNavigate } from "react-router";
@@ -138,6 +139,7 @@ export function useCanvasProjectLifecycle({
             observedContentRef.current = null;
         }
         const applyRestoredProject = (targetProject: CanvasProject) => {
+            traceCanvasGraph(cancelled ? "editor.restore.cancelled" : "editor.restore.apply", { target: targetProject, render: { id: projectId, nodes, connections }, live: { id: projectId, nodes: nodesRef.current, connections: connectionsRef.current } });
             if (cancelled || targetProject.id !== projectId) return;
             const fallbackTheme = useCanvasThemeStore.getState().theme;
             const restoredAppearance = targetProject.appearance
@@ -186,10 +188,12 @@ export function useCanvasProjectLifecycle({
         const load = async () => {
             const cachedProject = useCanvasStore.getState().projects.find((p) => p.id === projectId);
             if (!latest && !historyRestore && cachedProject) {
+                traceCanvasGraph("editor.load.cache", { cached: cachedProject });
                 // 本地已有该画布的持久化缓存：先以本地数据秒开渲染，彻底消除白屏与等待
                 applyRestoredProject(cachedProject);
             }
             const loadedProject = await loadCanvasProjectForEditing(projectId, { latest, historyRestore: historyRestore || undefined, onLoad: applyRestoredProject });
+            traceCanvasGraph("editor.load.return", { loaded: loadedProject, stored: useCanvasStore.getState().openProject(projectId) });
             if (cancelled) return;
             if (historyRestoreRef.current === historyRestore) {
                 historyRestoreRef.current = null;
@@ -268,6 +272,7 @@ export function useCanvasProjectLifecycle({
         // Merge only server-changed fields so dragging/editing other nodes can
         // continue while Agent media tasks complete. Same-field conflicts fail.
         const merged = previous ? mergeCanvasRefreshPatch(previous, project, nodesRef.current, connectionsRef.current) : project;
+        traceCanvasGraph("editor.refresh", { previous, incoming: project, live: { id: projectId, nodes: nodesRef.current, connections: connectionsRef.current }, merged });
         if (observedContentRef.current) {
             const observed = observedContentRef.current;
             // Advance only the observed server fields; edits in live refs still
@@ -287,6 +292,7 @@ export function useCanvasProjectLifecycle({
         if (!projectLoaded || editorProjectIdRef.current !== projectId || historyPausedRef.current) return;
         const snapshot = { nodes, connections, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo };
         if (!observedContentRef.current || JSON.stringify(observedContentRef.current) === JSON.stringify(snapshot)) return;
+        traceCanvasGraph("editor.autosave", { observed: { id: projectId, ...observedContentRef.current }, render: { id: projectId, ...snapshot }, stored: useCanvasStore.getState().openProject(projectId) });
         observedContentRef.current = snapshot;
         const patch = { nodes, connections, chatSessions, activeChatId, appearance: canvasAppearance, backgroundMode, showImageInfo };
         const stored = useCanvasStore.getState().projects.find((project) => project.id === projectId);
@@ -361,6 +367,7 @@ export function useCanvasProjectLifecycle({
         if (!projectLoaded || editorProjectIdRef.current !== projectId) return;
         const snapshot = { nodes: nodesRef.current, connections: connectionsRef.current, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo };
         if (observedContentRef.current && JSON.stringify(observedContentRef.current) !== JSON.stringify(snapshot)) {
+            traceCanvasGraph("editor.explicitSave", { observed: { id: projectId, ...observedContentRef.current }, live: { id: projectId, ...snapshot }, stored: useCanvasStore.getState().openProject(projectId) });
             updateProject(projectId, {
                 nodes: nodesRef.current,
                 connections: connectionsRef.current,

@@ -13,6 +13,7 @@ import { getActiveUserScope } from "@/lib/user-scope";
 import { captureUserScope, isUserScopeAbandonedError, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { sameCanvasDocument } from "@/lib/canvas/canvas-content";
 import { rebaseCanvasDocumentThreeWay, settleInFlightGenerationOverlay } from "@/lib/canvas/canvas-document-rebase";
+import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
 
 export type { CapturedUserScope } from "@/lib/user-scope-guard";
 
@@ -205,6 +206,7 @@ export function bindCanvasGenerationCommitAssets(project: CanvasProject, assets:
 }
 
 function applyLiveCanvasProject(id: string, project: CanvasProject, allowInsert: boolean) {
+    traceCanvasGraph("repository.applyLive", { previous: openLocalCanvasProject(id), project });
     useCanvasStore.setState((state) => {
         const exists = state.projects.some((item) => item.id === id);
         if (!exists && !allowInsert) return state;
@@ -325,6 +327,7 @@ async function applyBackendCanvasRead(
         const hadLive = Boolean(liveNow) || hadLiveAtStart;
         if (!matchesDispatchGuard(expected)) return currentLocal ?? local ?? backend;
         const chosen = selectPreferredCanvasProject(currentLocal, backend, scope);
+        traceCanvasGraph("repository.read.select", { local: currentLocal, backend, base: canvasDocumentBase(backend.id, scope)?.snapshot, chosen });
         if (!currentLocal || chosen === backend || sameCanvasDocument(chosen, backend)) {
             const journal = peekCanvasOperationJournal(backend.id, scope);
             const base = journal?.pendingProjection?.base
@@ -548,6 +551,7 @@ async function commitLiveCanvasDocumentUnlocked(id: string, expected: CapturedUs
 }
 
 async function sendCanvasDocumentCommit(id: string, operationId: string, payload: { canvasId: string; expectedRevision: number; document: CanvasProject }, expected: CapturedUserScope) {
+    traceCanvasGraph("repository.submit", { document: payload.document, confirmed: canvasDocumentBase(id, expected.userScope)?.snapshot });
     const scope = expected.userScope;
     assertDispatchGuard(expected);
     try {
