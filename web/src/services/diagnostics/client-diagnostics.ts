@@ -1,5 +1,6 @@
 import { type AxiosError, type AxiosRequestConfig } from "axios";
 
+import { appPathnameFrom } from "@/lib/app-routing";
 import { apiClient } from "@/services/api/request";
 
 export type ClientDiagnosticLevel = "info" | "warning" | "error";
@@ -51,7 +52,7 @@ export function initializeClientDiagnostics() {
 
     apiClient.interceptors.request.use(
         (config) => {
-            const route = normalizeRoute(config.url);
+            const route = appPathnameFrom(config.url);
             if (config.method?.toLowerCase() === "post" && route === "/tasks") {
                 activeTraceId = createDiagnosticId("trace");
             }
@@ -69,7 +70,7 @@ export function initializeClientDiagnostics() {
         (response) => {
             const config = response.config;
             const meta = requestMeta.get(config);
-            const route = normalizeRoute(config.url);
+            const route = appPathnameFrom(config.url);
             const status = response.status;
             const businessCode = response.data && typeof response.data === "object" && "code" in response.data ? Number(response.data.code) : 0;
             const requestId = readHeader(response.headers, "x-request-id");
@@ -91,7 +92,7 @@ export function initializeClientDiagnostics() {
             const meta = config ? requestMeta.get(config) : undefined;
             const response = error.response;
             const body = response?.data && typeof response.data === "object" ? (response.data as { code?: number; msg?: string }) : undefined;
-            const route = normalizeRoute(config?.url);
+            const route = appPathnameFrom(config?.url);
             recordDiagnosticEvent({
                 level: "error",
                 category: "request",
@@ -124,7 +125,7 @@ export function recordDiagnosticEvent(input: DiagnosticEventInput) {
         category: input.category,
         code: redactClientText(input.code),
         message: redactClientText(input.message) || "未命名诊断事件",
-        route: normalizeRoute(input.route || (typeof window !== "undefined" ? window.location?.pathname || "" : "")),
+        route: appPathnameFrom(input.route),
         durationMs: input.durationMs === undefined ? undefined : clampNumber(input.durationMs, 0, 86_400_000),
         httpStatus: input.httpStatus === undefined ? undefined : clampNumber(input.httpStatus, 0, 599),
         requestId: safeDiagnosticId(input.requestId),
@@ -175,17 +176,6 @@ function readHeader(headers: unknown, key: string) {
     if (typeof candidate.get === "function") return candidate.get(key) || undefined;
     const value = candidate[key] ?? candidate[key.toLowerCase()];
     return typeof value === "string" ? value : undefined;
-}
-
-function normalizeRoute(value?: string) {
-    const raw = String(value || "").trim();
-    if (!raw) return typeof window !== "undefined" ? window.location.pathname : "/";
-    try {
-        const parsed = new URL(raw, typeof window !== "undefined" ? window.location.origin : "http://localhost");
-        return parsed.pathname || "/";
-    } catch {
-        return raw.split(/[?#]/, 1)[0] || "/";
-    }
 }
 
 function safeDiagnosticId(value?: string) {

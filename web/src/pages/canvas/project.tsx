@@ -5,6 +5,7 @@ import { resolveCanvasRightPanel, useCanvasAssistant, useCanvasAssistantDockable
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, MouseEvent as ReactMouseEvent, SetStateAction } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
+import { appHref } from "@/lib/app-routing";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { uploadMediaFile } from "@/services/file-storage";
@@ -659,8 +660,7 @@ function InfiniteCanvasPage() {
     }, [currentProject, importCanvasProject, navigate]);
 
     const openCanvasInNewWindow = useCallback((canvasId: string) => {
-        const url = new URL(`/canvas/${canvasId}`, window.location.href);
-        window.open(url.href, "_blank", "noopener,noreferrer");
+        window.open(appHref(`/canvas/${canvasId}`), "_blank", "noopener,noreferrer");
     }, []);
 
     const renameCanvasFromMenu = useCallback(async (canvasId: string, canvasTitle: string) => {

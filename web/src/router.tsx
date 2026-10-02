@@ -1,6 +1,7 @@
 import { lazy, Suspense, type ReactNode } from "react";
-import { createBrowserRouter, Navigate, Outlet, useLocation, useParams } from "react-router";
+import { Navigate, Outlet, useLocation, useParams } from "react-router";
 
+import { createWorkspaceRouter } from "@/lib/app-routing";
 import { FullScreenLoader, WorkspaceRouteLoader } from "@/components/ui/aceternity/full-screen-loader";
 import { loadAgentsPage, loadAssetsPage, loadCanvasPage, loadCanvasProjectPage, loadCreatePage, loadHomePage, loadProjectDetailPage } from "@/lib/workspace-route-modules";
 import { CanvasRefreshShell } from "@/pages/canvas/canvas-refresh-shell";
@@ -68,7 +69,7 @@ function devRoutes() {
     ];
 }
 
-export const router = createBrowserRouter([
+export const router = createWorkspaceRouter([
     ...(import.meta.env.DEV ? devRoutes() : []),
     {
         element: <WorkspaceLayout />,

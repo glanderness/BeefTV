@@ -25,6 +25,7 @@ test("local workspace bootstrap is the product startup contract", () => {
     expect(router).not.toContain('path: "/login"');
     expect(router).not.toContain('path: "/register"');
     expect(router).not.toContain("AuthScene");
+    expect(router).toContain("createWorkspaceRouter");
     expect(router).toContain('path: "/tasks"');
     expect(router).toContain('path: "/projects"');
     expect(router).toContain('path: "/project"');
