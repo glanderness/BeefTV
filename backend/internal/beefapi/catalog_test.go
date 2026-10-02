@@ -122,6 +122,7 @@ func TestCatalogCapabilityMapsBeefAPIEndpointTypes(t *testing.T) {
 		{id: "hy-asr-3.0-preview", endpoints: []string{"audio.transcriptions"}, wantCap: "", wantProto: ""},
 		{id: "gpt-image-2", endpoints: []string{"image-generation"}, wantCap: "image", wantProto: "openai-image"},
 		{id: "seedance-2.0", endpoints: []string{"openai-video"}, wantCap: "video", wantProto: "newapi"},
+		{id: "seedance-2.0-fast", endpoints: []string{"openai"}, wantCap: "video", wantProto: "newapi"},
 		{id: "wan3.0-video", endpoints: []string{"openai-video"}, wantCap: "video", wantProto: "newapi-channel-2"},
 		{id: "explicit-image", modelType: "image", endpoints: []string{"openai"}, wantCap: "image", wantProto: "openai-image"},
 		{id: "explicit-video", modelType: "video", endpoints: []string{"openai"}, wantCap: "video", wantProto: "openai-videos"},

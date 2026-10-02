@@ -42,4 +42,15 @@ func TestVideoContractBoundaries(t *testing.T) {
 	if !IsBeefAPIEndpoint("https://enterprise.beefapi.com/v1") {
 		t.Fatal("canonical endpoint rejected")
 	}
+
+	capability, protocol, ok := HostedBeefAPIVideoProfile("https://enterprise.beefapi.com", "seedance-2.0-fast")
+	if !ok || capability != "video" || protocol != "newapi" {
+		t.Fatalf("hosted Fast overlay: cap=%q proto=%q ok=%v", capability, protocol, ok)
+	}
+	if _, _, ok := HostedBeefAPIVideoProfile("https://example.invalid/v1", "seedance-2.0-fast"); ok {
+		t.Fatal("custom gateway must keep its stored capability")
+	}
+	if _, _, ok := HostedBeefAPIVideoProfile("https://enterprise.beefapi.com", "gpt-image-2"); ok {
+		t.Fatal("hosted image SKU must not be rewritten as video")
+	}
 }
