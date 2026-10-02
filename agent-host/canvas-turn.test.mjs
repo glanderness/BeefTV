@@ -93,6 +93,12 @@ describe("付费生成提议", () => {
         expect(SYSTEM_PROMPT).toContain("canvas_generation_propose");
         expect(SYSTEM_PROMPT).toContain("你不能生成图片或视频");
     });
+
+    test("系统提示词用 content 改可编辑提示词，未改字段不要提交", () => {
+        expect(SYSTEM_PROMPT).toContain("改可编辑提示词或文本正文用 content");
+        expect(SYSTEM_PROMPT).toContain("未改的字段不要提交");
+        expect(SYSTEM_PROMPT).not.toMatch(/用 prompt/);
+    });
 });
 
 describe("会话标题", () => {

@@ -1,9 +1,24 @@
 // 操作桥：把已鉴权的共享 ops 能力变成官方 customTools。
 // 画布 scope、operationId 与回合身份只在这里注入；业务规则仍在 Go 操作层。
+// 内置助手对 canvas.node.update 做字段投影：模型只看到 title/content。
+// 遗留 patch.prompt 仍留给 CLI/MCP；模型若编造该字段，在本桥拒绝，避免清空可见草稿。
 
 import { collectTurnEffects } from './canvas-turn.mjs';
 import { toolOperationId } from './session-identity.mjs';
 import { budgetError, spendToolStep } from './request-budget.mjs';
+
+const CANVAS_NODE_UPDATE = 'canvas.node.update';
+
+export const ASSISTANT_CANVAS_NODE_UPDATE_PATCH = {
+  title: {
+    type: 'string',
+    description: '节点名称。只在要改名时提交。',
+  },
+  content: {
+    type: 'string',
+    description: '媒体节点的下次生成提示词草稿，或文本节点的正文。只提交要改的字段；省略的字段保持原样。',
+  },
+};
 
 export function createOperationBridge({
   opsUrl,
@@ -51,7 +66,7 @@ export function createOperationBridge({
       name: toolName,
       label: descriptor.id,
       description: `${descriptor.summary}（本会话 scope=canvas:${canvasId}）`,
-      parameters: scopedSchema(descriptor.params, descriptor.id === 'canvas.get'),
+      parameters: scopedSchema(descriptor.params, descriptor.id === 'canvas.get', descriptor.id),
       ...(descriptor.readOnly ? {} : { executionMode: 'sequential' }),
       execute: async (toolCallId, args, signal) => {
         if (generation.aborted || signal?.aborted) throw new Error('aborted');
@@ -80,6 +95,7 @@ export function createOperationBridge({
         }
         const started = Date.now();
         try {
+          assertAssistantNodeUpdateArgs(descriptor, params);
           const data = await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal, turn.turnId);
           log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: false, ms: Date.now() - started, replayed: !!data?.replayed });
           collectTurnEffects(turn, descriptor.id, data?.result, opId);
@@ -95,7 +111,12 @@ export function createOperationBridge({
   return { descriptors, opsRequest, loadDescriptors, buildTools };
 }
 
-export function scopedSchema(params, allowReferencedCanvasRead = false) {
+export function scopedSchema(params, allowReferencedCanvasRead = false, descriptorId = '') {
+  if (allowReferencedCanvasRead && typeof allowReferencedCanvasRead === 'object' && !Array.isArray(allowReferencedCanvasRead)) {
+    const options = allowReferencedCanvasRead;
+    descriptorId = options.descriptorId || descriptorId;
+    allowReferencedCanvasRead = options.allowReferencedCanvasRead === true;
+  }
   if (!params || typeof params !== 'object') return params;
   const clone = JSON.parse(JSON.stringify(params));
   if (clone.properties) {
@@ -103,5 +124,28 @@ export function scopedSchema(params, allowReferencedCanvasRead = false) {
     delete clone.properties.operationId;
   }
   if (Array.isArray(clone.required)) clone.required = clone.required.filter((name) => name !== 'canvasId' && name !== 'operationId');
+  if (descriptorId === CANVAS_NODE_UPDATE) projectCanvasNodeUpdateSchema(clone);
   return clone;
+}
+
+function projectCanvasNodeUpdateSchema(schema) {
+  if (!schema?.properties || typeof schema.properties !== 'object') return;
+  const patch = schema.properties.patch;
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return;
+  patch.properties = {
+    title: { ...ASSISTANT_CANVAS_NODE_UPDATE_PATCH.title },
+    content: { ...ASSISTANT_CANVAS_NODE_UPDATE_PATCH.content },
+  };
+  patch.additionalProperties = false;
+  if (Array.isArray(patch.required)) {
+    patch.required = patch.required.filter((name) => name === 'title' || name === 'content');
+  }
+}
+
+function assertAssistantNodeUpdateArgs(descriptor, params) {
+  if (descriptor.id !== CANVAS_NODE_UPDATE) return;
+  const patch = params?.patch;
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return;
+  if (!Object.hasOwn(patch, 'prompt')) return;
+  throw new Error('unsupported_patch_field: canvas.node.update 不能提交 patch.prompt。改可编辑提示词请用 content，未改的字段不要提交');
 }

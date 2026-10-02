@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createServer } from 'node:http';
 import { createTurnBudget } from './request-budget.mjs';
-import { createOperationBridge, scopedSchema } from './operation-bridge.mjs';
+import { ASSISTANT_CANVAS_NODE_UPDATE_PATCH, createOperationBridge, scopedSchema } from './operation-bridge.mjs';
 import { newTurnAccumulator, resetTurnAccumulator } from './canvas-turn.mjs';
 
 function listen(server) {
@@ -85,5 +85,175 @@ describe('操作桥', () => {
       opsServer.closeAllConnections();
       await new Promise((resolve) => opsServer.close(resolve));
     }
+  });
+});
+
+const NODE_UPDATE_PARAMS = {
+  type: 'object',
+  properties: {
+    canvasId: { type: 'string' },
+    nodeId: { type: 'string' },
+    expectedRevision: { type: 'integer' },
+    patch: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        prompt: { type: 'string' },
+        content: { type: 'string' },
+      },
+    },
+  },
+  required: ['canvasId', 'nodeId', 'patch', 'expectedRevision'],
+};
+
+const NODE_CREATE_PARAMS = {
+  type: 'object',
+  properties: {
+    canvasId: { type: 'string' },
+    expectedRevision: { type: 'integer' },
+    nodes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { title: { type: 'string' }, type: { type: 'string' }, prompt: { type: 'string' } },
+        required: ['title', 'type'],
+      },
+    },
+  },
+  required: ['canvasId', 'nodes', 'expectedRevision'],
+};
+
+function nodeUpdateOps() {
+  return [
+    { id: 'canvas.node.update', summary: '局部修改一个节点', readOnly: false, params: JSON.parse(JSON.stringify(NODE_UPDATE_PARAMS)) },
+    { id: 'canvas.nodes.create', summary: '批量创建节点', readOnly: false, params: JSON.parse(JSON.stringify(NODE_CREATE_PARAMS)) },
+  ];
+}
+
+async function withNodeUpdateBridge(run) {
+  const seen = [];
+  const opsServer = createServer(async (req, res) => {
+    res.setHeader('content-type', 'application/json');
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    const parsed = body ? JSON.parse(body) : {};
+    seen.push({ url: req.url, body: parsed });
+    if (req.url === '/ops') {
+      res.end(JSON.stringify({ code: 0, data: { ops: nodeUpdateOps() } }));
+      return;
+    }
+    res.end(JSON.stringify({
+      code: 0,
+      data: { op: req.url.slice('/ops/'.length), replayed: false, result: { revision: 4, nodeId: parsed.params?.nodeId } },
+    }));
+  });
+  const port = await listen(opsServer);
+  const turnBudgetContext = new AsyncLocalStorage();
+  try {
+    const bridge = createOperationBridge({
+      opsUrl: `http://127.0.0.1:${port}`,
+      hostToken: 'host-secret',
+      desktopToken: '',
+      readOnly: false,
+      turnBudgetContext,
+    });
+    await bridge.loadDescriptors();
+    await run({ bridge, seen, turnBudgetContext });
+  } finally {
+    opsServer.closeAllConnections();
+    await new Promise((resolve) => opsServer.close(resolve));
+  }
+}
+
+describe('内置助手节点更新投影', () => {
+  test('boolean 第二参数保持兼容：不声明 descriptor 时不隐藏 prompt', () => {
+    const snapshot = JSON.stringify(NODE_UPDATE_PARAMS);
+    expect(scopedSchema(NODE_UPDATE_PARAMS, false).properties.patch.properties.prompt).toEqual({ type: 'string' });
+    expect(scopedSchema(NODE_UPDATE_PARAMS).properties.canvasId).toBeUndefined();
+    expect(JSON.stringify(NODE_UPDATE_PARAMS)).toBe(snapshot);
+  });
+
+  test('投影只暴露 title/content，并可用对象第二参数向后兼容', () => {
+    const projected = scopedSchema(NODE_UPDATE_PARAMS, false, 'canvas.node.update');
+    expect(projected.properties.patch.properties).toEqual(ASSISTANT_CANVAS_NODE_UPDATE_PATCH);
+    expect(projected.properties.patch.additionalProperties).toBe(false);
+    expect(projected.properties.patch.properties.prompt).toBeUndefined();
+    expect(projected.properties.canvasId).toBeUndefined();
+    expect(projected.required).toEqual(['nodeId', 'patch', 'expectedRevision']);
+
+    const viaOptions = scopedSchema(NODE_UPDATE_PARAMS, { descriptorId: 'canvas.node.update' });
+    expect(viaOptions.properties.patch.properties).toEqual(ASSISTANT_CANVAS_NODE_UPDATE_PATCH);
+    expect(viaOptions.properties.canvasId).toBeUndefined();
+
+    const viaReadOptions = scopedSchema(NODE_UPDATE_PARAMS, {
+      allowReferencedCanvasRead: true,
+      descriptorId: 'canvas.node.update',
+    });
+    expect(viaReadOptions.properties.canvasId).toEqual({ type: 'string' });
+    expect(viaReadOptions.properties.patch.properties.prompt).toBeUndefined();
+  });
+
+  test('真实 customTools schema 隐藏 prompt，创建工具仍保留 prompt', async () => {
+    await withNodeUpdateBridge(async ({ bridge }) => {
+      const stored = bridge.descriptors.get('canvas_node_update');
+      const original = JSON.parse(JSON.stringify(stored));
+      const tools = bridge.buildTools('canvas-1', [], { aborted: false }, resetTurnAccumulator(newTurnAccumulator(), 3, 'turn-p'), 'sess-P');
+      const update = tools.find((tool) => tool.name === 'canvas_node_update');
+      const create = tools.find((tool) => tool.name === 'canvas_nodes_create');
+      expect(update.parameters.properties.patch.properties).toEqual(ASSISTANT_CANVAS_NODE_UPDATE_PATCH);
+      expect(update.parameters.properties.patch.properties.content.description).toContain('下次生成提示词草稿');
+      expect(update.parameters.properties.patch.properties.content.description).toContain('文本节点的正文');
+      expect(update.parameters.properties.patch.properties.content.description).toContain('省略的字段保持原样');
+      expect(update.parameters.properties.patch.properties.prompt).toBeUndefined();
+      expect(create.parameters.properties.nodes.items.properties.prompt).toEqual({ type: 'string' });
+      expect(bridge.descriptors.get('canvas_node_update')).toEqual(original);
+      expect(stored.params.properties.patch.properties.prompt).toEqual({ type: 'string' });
+      update.parameters.properties.patch.properties.title.description = 'mutated';
+      expect(stored.params.properties.patch.properties.title.description).toBeUndefined();
+      expect(stored.params).toEqual(original.params);
+    });
+  });
+
+  test('执行拒绝编造的 patch.prompt，且不转发到 ops', async () => {
+    await withNodeUpdateBridge(async ({ bridge, seen, turnBudgetContext }) => {
+      const tools = bridge.buildTools('canvas-1', [], { aborted: false }, resetTurnAccumulator(newTurnAccumulator(), 3, 'turn-p'), 'sess-P');
+      const update = tools.find((tool) => tool.name === 'canvas_node_update');
+      const budget = createTurnBudget({ maxToolSteps: 4 });
+      await expect(turnBudgetContext.run(budget, () => update.execute('call-repro', {
+        nodeId: 'img-1',
+        expectedRevision: 3,
+        patch: { content: '', prompt: '新的提示词', title: '新名字' },
+      }))).rejects.toThrow(/unsupported_patch_field: canvas\.node\.update 不能提交 patch\.prompt/);
+      expect(seen.filter((item) => item.url === '/ops/canvas.node.update')).toEqual([]);
+    });
+  });
+
+  test('content 原样转发，不改写字段，省略的字段不会被补上', async () => {
+    await withNodeUpdateBridge(async ({ bridge, seen, turnBudgetContext }) => {
+      const tools = bridge.buildTools('canvas-1', [], { aborted: false }, resetTurnAccumulator(newTurnAccumulator(), 3, 'turn-p'), 'sess-P');
+      const update = tools.find((tool) => tool.name === 'canvas_node_update');
+      const budget = createTurnBudget({ maxToolSteps: 4 });
+      await turnBudgetContext.run(budget, () => update.execute('call-content', {
+        nodeId: 'img-1',
+        expectedRevision: 3,
+        patch: { title: '新名字', content: '夜景：雨夜巷口对峙' },
+      }));
+      await turnBudgetContext.run(budget, () => update.execute('call-title-only', {
+        nodeId: 'img-1',
+        expectedRevision: 4,
+        patch: { title: '只改名' },
+      }));
+      const writes = seen.filter((item) => item.url === '/ops/canvas.node.update');
+      expect(writes[0].body.params).toEqual({
+        nodeId: 'img-1',
+        expectedRevision: 3,
+        patch: { title: '新名字', content: '夜景：雨夜巷口对峙' },
+        canvasId: 'canvas-1',
+      });
+      expect(writes[1].body.params.patch).toEqual({ title: '只改名' });
+      expect(Object.hasOwn(writes[1].body.params.patch, 'content')).toBe(false);
+      expect(Object.hasOwn(writes[1].body.params.patch, 'prompt')).toBe(false);
+      expect(writes[0].body.params.patch).not.toHaveProperty('prompt');
+    });
   });
 });
