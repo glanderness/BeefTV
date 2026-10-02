@@ -47,34 +47,28 @@ let databaseReady: Promise<void> | undefined;
 // Extra object stores on this IndexedDB name upgrade the whole database and
 // close other connections. Open the fixed store list once, sequentially, then
 // let ordinary get/set/iterate overlap so a stalled cache read cannot block
-// a durable draft write.
+// a durable draft write. ready() errors propagate and clear this barrier so
+// the next caller retries init; a missing driver is not an opened database.
+
+function createDefaultStore(storeName: string): LocalForage {
+    return storeName === APP_STATE_STORE_NAME
+        ? localforage
+        : localforage.createInstance({ name: INFINITE_CANVAS_DB_NAME, storeName });
+}
+
+let storeFactory = createDefaultStore;
 
 function forageForStore(storeName: string): LocalForage {
     const cached = stores.get(storeName);
     if (cached) return cached;
-    const instance = storeName === APP_STATE_STORE_NAME
-        ? localforage
-        : localforage.createInstance({ name: INFINITE_CANVAS_DB_NAME, storeName });
+    const instance = storeFactory(storeName);
     stores.set(storeName, instance);
     return instance;
 }
 
-function isUnavailableDriverError(error: unknown) {
-    return error instanceof Error && error.message === "No available storage method found.";
-}
-
-async function readyInstance(instance: LocalForage) {
-    if (typeof instance.ready !== "function") return;
-    try {
-        await instance.ready();
-    } catch (error) {
-        if (!isUnavailableDriverError(error)) throw error;
-    }
-}
-
 async function openInfiniteCanvasStores() {
     for (const storeName of INFINITE_CANVAS_OBJECT_STORES) {
-        await readyInstance(forageForStore(storeName));
+        await forageForStore(storeName).ready();
     }
 }
 
@@ -83,6 +77,7 @@ function ensureInfiniteCanvasDatabase(): Promise<void> {
         databaseReady = openInfiniteCanvasStores().then(
             () => undefined,
             (error) => {
+                stores.clear();
                 databaseReady = undefined;
                 throw error;
             },
@@ -133,4 +128,9 @@ export const localForageStorage: StateStorage = localForageStorageForScope();
 export function resetLocalForageDatabaseForTests() {
     stores.clear();
     databaseReady = undefined;
+}
+
+export function installLocalForageStoreFactoryForTests(factory?: (storeName: string) => LocalForage) {
+    storeFactory = factory ?? createDefaultStore;
+    resetLocalForageDatabaseForTests();
 }

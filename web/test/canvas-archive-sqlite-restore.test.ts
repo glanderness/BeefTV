@@ -14,6 +14,7 @@ function cacheInstance(namespace = "app_state") {
     if (!data) browserCaches.set(namespace, data = new Map());
     return {
         config: () => undefined,
+        ready: async () => undefined,
         createInstance: (options: { storeName?: string }) => cacheInstance(options.storeName),
         getItem: async (key: string) => data!.get(key) ?? null,
         setItem: async (key: string, value: unknown) => { data!.set(key, value); return value; },

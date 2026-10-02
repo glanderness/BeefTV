@@ -9,6 +9,7 @@ type Scenario = "image-cleanup" | "scope-cleanup-switch" | "scope-cleanup-late-c
 
 function installStorageHarness() {
     const originalCreateInstance = localforage.createInstance.bind(localforage);
+    const originalReady = localforage.ready.bind(localforage);
     const originalGetItem = localforage.getItem.bind(localforage);
     const originalSetItem = localforage.setItem.bind(localforage);
     const originalRemoveItem = localforage.removeItem.bind(localforage);
@@ -33,6 +34,7 @@ function installStorageHarness() {
         return values;
     };
 
+    localforage.ready = (async () => undefined) as typeof localforage.ready;
     localforage.getItem = (async (key: string) => defaultValues.get(key) ?? null) as typeof localforage.getItem;
     localforage.setItem = (async (key: string, value: unknown) => {
         defaultValues.set(key, value);
@@ -45,6 +47,7 @@ function installStorageHarness() {
         const storeName = options.storeName || "default";
         const values = storeValues(storeName);
         return {
+            ready: async () => undefined,
             getItem: async (key: string) => values.get(key) ?? null,
             setItem: async (key: string, value: unknown) => {
                 values.set(key, value);
@@ -124,6 +127,7 @@ function installStorageHarness() {
         realSetTimeout,
         restore() {
             localforage.createInstance = originalCreateInstance as typeof localforage.createInstance;
+            localforage.ready = originalReady;
             localforage.getItem = originalGetItem;
             localforage.setItem = originalSetItem;
             localforage.removeItem = originalRemoveItem;

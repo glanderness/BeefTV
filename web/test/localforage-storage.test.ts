@@ -6,13 +6,14 @@ import localforage from "localforage";
 import {
     APP_STATE_STORE_NAME,
     INFINITE_CANVAS_OBJECT_STORES,
+    installLocalForageStoreFactoryForTests,
     localForageInstance,
     localForageStorageForScope,
     resetLocalForageDatabaseForTests,
 } from "@/lib/localforage-storage";
 
 afterEach(() => {
-    resetLocalForageDatabaseForTests();
+    installLocalForageStoreFactoryForTests();
 });
 
 const wiredModules: Array<[string, string[]]> = [
@@ -41,6 +42,9 @@ test("infinite-canvas stores use the shared facade instead of a private createIn
     for (const storeName of INFINITE_CANVAS_OBJECT_STORES) {
         expect(facade).toContain(`"${storeName}"`);
     }
+    expect(facade).not.toContain("No available storage method found.");
+    expect(facade).not.toContain("isUnavailableDriverError");
+    expect(facade).not.toContain("typeof instance.ready");
 });
 
 function deferred<T = void>() {
@@ -51,6 +55,47 @@ function deferred<T = void>() {
         reject = rej;
     });
     return { promise, resolve, reject };
+}
+
+function memoryStore(storeName: string, options: {
+    ready?: () => Promise<void>;
+    jobs?: string[];
+    values?: Map<string, unknown>;
+    stallGet?: { match: (key: string) => boolean; entered: { resolve: () => void }; gate: Promise<void> };
+} = {}) {
+    const values = options.values ?? new Map<string, unknown>();
+    return {
+        ready: options.ready ?? (async () => undefined),
+        getItem: async (key: string) => {
+            if (options.stallGet?.match(key)) {
+                options.stallGet.entered.resolve();
+                await options.stallGet.gate;
+            }
+            options.jobs?.push(`get:${storeName}:${key}`);
+            return values.get(key) ?? null;
+        },
+        setItem: async (key: string, value: unknown) => {
+            options.jobs?.push(`set:${storeName}:${key}`);
+            values.set(key, value);
+            return value;
+        },
+        removeItem: async (key: string) => {
+            options.jobs?.push(`remove:${storeName}:${key}`);
+            values.delete(key);
+        },
+        keys: async () => [...values.keys()].map(String),
+        clear: async () => { values.clear(); },
+        length: async () => values.size,
+        iterate: async (iteratee: (value: unknown, key: string, iterationNumber: number) => unknown) => {
+            let index = 1;
+            for (const [key, value] of values) {
+                const result = iteratee(value, String(key), index);
+                index += 1;
+                if (result !== undefined) return result;
+            }
+            return undefined;
+        },
+    } as LocalForage;
 }
 
 test("first open readies object stores one at a time", async () => {
@@ -97,33 +142,66 @@ test("first open readies object stores one at a time", async () => {
     }
 });
 
+test("init failure rejects pending read/write without executing jobs", async () => {
+    const jobs: string[] = [];
+    installLocalForageStoreFactoryForTests((storeName) => memoryStore(storeName, {
+        jobs,
+        ready: async () => {
+            throw new Error("No available storage method found.");
+        },
+    }));
+    const read = localForageInstance(APP_STATE_STORE_NAME).getItem("cache");
+    const write = localForageInstance(APP_STATE_STORE_NAME).setItem("drafts", "edited");
+    const results = await Promise.allSettled([read, write]);
+    expect(results).toEqual([
+        { status: "rejected", reason: expect.objectContaining({ message: "No available storage method found." }) },
+        { status: "rejected", reason: expect.objectContaining({ message: "No available storage method found." }) },
+    ]);
+    expect(jobs).toEqual([]);
+});
+
+test("after init failure the next call retries init successfully", async () => {
+    const jobs: string[] = [];
+    let initFails = true;
+    installLocalForageStoreFactoryForTests((storeName) => memoryStore(storeName, {
+        jobs,
+        ready: async () => {
+            if (initFails) throw new Error("No available storage method found.");
+        },
+    }));
+    await expect(localForageInstance(APP_STATE_STORE_NAME).getItem("cache")).rejects.toThrow("No available storage method found.");
+    expect(jobs).toEqual([]);
+    initFails = false;
+    await localForageInstance(APP_STATE_STORE_NAME).setItem("drafts", "edited");
+    expect(jobs).toEqual(["set:app_state:drafts"]);
+});
+
 test("stalled app_state cache getItem does not block a draft setItem", async () => {
     const originalWindow = globalThis.window;
     globalThis.window = originalWindow ?? ({ localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } } as never);
     const entered = deferred();
     const gate = deferred();
-    const memory = new Map<string, string>();
-    const getItem = spyOn(localforage, "getItem").mockImplementation(async (key) => {
-        entered.resolve();
-        await gate.promise;
-        return memory.get(String(key)) ?? null;
-    });
-    const setItem = spyOn(localforage, "setItem").mockImplementation(async (key, value) => {
-        memory.set(String(key), String(value));
-        return value;
-    });
+    const values = new Map<string, unknown>();
+    installLocalForageStoreFactoryForTests((storeName) => memoryStore(storeName, {
+        values: storeName === APP_STATE_STORE_NAME ? values : undefined,
+        stallGet: storeName === APP_STATE_STORE_NAME
+            ? {
+                match: (key) => key.includes("asset_store") && !key.includes("asset_store_drafts"),
+                entered,
+                gate: gate.promise,
+            }
+            : undefined,
+    }));
     try {
         const storage = localForageStorageForScope("owner-a");
         const read = storage.getItem("infinite-canvas:asset_store");
         await entered.promise;
         await storage.setItem("infinite-canvas:asset_store_drafts", JSON.stringify({ drafts: { asset: { title: "编辑后" } } }));
-        expect([...memory.entries()].some(([key, value]) => key.includes("asset_store_drafts") && value.includes("编辑后"))).toBe(true);
+        expect([...values.entries()].some(([key, value]) => String(key).includes("asset_store_drafts") && String(value).includes("编辑后"))).toBe(true);
         gate.resolve();
         await read;
     } finally {
         gate.resolve();
-        getItem.mockRestore();
-        setItem.mockRestore();
         if (!originalWindow) delete (globalThis as { window?: unknown }).window;
         else globalThis.window = originalWindow;
         resetLocalForageDatabaseForTests();

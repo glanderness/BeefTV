@@ -90,6 +90,7 @@ mock.module("@/lib/user-scope", () => ({
 
 mock.module("@/services/api/request", () => ({
     ApiError,
+    apiBaseURL: "/api",
     http: {
         get: async (_path: string, config?: { expectedScope?: { userScope: string; epoch: number } }) => {
             if (server.holdDispatch) {
