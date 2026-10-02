@@ -317,3 +317,10 @@
 - 后端全量 `go test -p 1 ./...` 已退出 0（后端源码 `7d285f4`，此后仅前端及文档改动）。CPU 首次复测有 50,000 节点 serialize/parse 越线；后台测试结束后同脚本复测 regressions=[]，保留两份原始结果，未改阈值、未声称 UI 性能改善。
 - `9d8eb10` 设置组件集成浏览器 6 pass / 23 expect；`07f1b77` 节点编辑集成专项 33 pass / 166 expect、实际 hook 浏览器 10 pass / 39 expect。独立复审 `20261002-084522-continue-66b22372` 对两包 ACCEPT，无新增 P1/P2。
 - 唯一已知代码 HOLD：剪辑器 `editor-asset-ingest.importFiles` 的 probe/upload/link/retry/refresh 仍缺入口身份与生命周期。`20261002-084205-continue-8b435c42` 单独修补，不归入已完成的节点编辑包；待合入后复跑前端整套与最终结构验收。此前全量、宿主和媒体回执不冒充最终候选。
+
+### 本地代码验收完成，发布验收待执行
+
+- `c7f00ec` 将剪辑器导入钉住原账号与项目，覆盖 probe/upload/link/retry/refresh。Lead 复现旧 finally 清掉新项目忙碌状态后，`dcb7c95` 使用项目 ID 和现有账号 epoch 重建导入子组件，去掉重复项目计数；真实组件 17 pass / 67 expect，保留修补前失败证据。
+- `dcb7c95` 标准前端整套退出 0：3030 pass / 0 fail / 14 skip；类型检查、lint、Web 构建通过。独立复审 `20261002-085826-continue-47d46723` 关闭最后代码 HOLD，给出累计 whole LOCAL architecture ACCEPT，无新增 P1/P2。
+- `611882b` 修补发布 sourceDigest 遗漏 agent-host 的问题。Node 24 隔离 Git 回归逐项修改宿主源码、锁文件与清单，确认旧真实生成回执失效；既有十二条及豁免负向检查保留。独立复审 `20261002-090233-continue-035cee33` ACCEPT，无新 P1/P2。
+- 本地代码指纹为 `63f6af3ee98b9caa01921a3fd86be6a6ac1abf1b4d9213e1fc7794dcc4d7efd8`。后续实际发版 VERSION 或任何打包源码变更都须重新冻结。没有新增付费模型调用、真实数据库写入、正式应用替换、push 或发布；真实模型与跨平台发布门禁保持未完成。
