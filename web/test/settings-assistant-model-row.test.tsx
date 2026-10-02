@@ -52,7 +52,7 @@ describe("模型配置页的助手模型一行", () => {
         // 助手一行的三个选项顺序固定为：跟随默认文本模型、chat-1、chat-2。
         expect(assistantChecked(configWithTextChannel())).toEqual([true, false, false]);
         expect(assistantChecked(configWithTextChannel({ assistantModel: "a::chat-2" }))).toEqual([false, false, true]);
-        // 指向不存在的渠道时回到跟随默认，不会出现零选中。
-        expect(assistantChecked(configWithTextChannel({ assistantModel: "gone::chat-1" }))).toEqual([true, false, false]);
+        // 失效的显式选择不能悄悄改用默认模型。
+        expect(assistantChecked(configWithTextChannel({ assistantModel: "gone::chat-1" }))).toEqual([false, false, false]);
     });
 });

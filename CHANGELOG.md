@@ -9,6 +9,13 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.1
+
+- Choose the canvas assistant model directly beside the message input.
+- Start with GPT 6 Astra after connecting BeefAPI, and keep your chosen model when refreshing the catalog.
+- Offer Astra, Opus 5.5, DeepSeek V4.1 Flash, and GLM 5.3 when available on the connected account.
+- Save model changes before starting the next assistant request.
+
 ## v1.6.23
 
 - Add a canvas assistant for drafting scenes, editing nodes, connecting references, and proposing image or video generation for confirmation.

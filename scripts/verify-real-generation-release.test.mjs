@@ -125,6 +125,37 @@ function makeV2(version, sourceDigest, extra = {}) {
   };
 }
 
+test('v1.7.1 targeted acceptance preserves uncertainty and never carries forward', () => {
+  const { dir, run, save, commitVersion } = setupRepo('v1.7.1');
+  try {
+    const sourceDigest = run('--fingerprint').trim();
+    const requestIds = ['202610020816334239151708268d9d6eZ5lRPwt', '202610021242434383740578268d9d6BAoXA1u1'];
+    const instruction = '上线吧 1.7.1 值得一个大版本';
+    const valid = {
+      version: 'v1.7.1', sourceDigest, budgetCNY: 100, spentCNY: 43.74479, newSpentCNY: 0,
+      pendingCNY: null, knownPendingCNY: 0, cases: [], liveMatrixStatus: 'not_run_owner_waived',
+      liveTestWaiver: { approvedBy: 'Ender', instruction, scope: 'model-picker-targeted-acceptance' },
+      financialUncertainty: { status: 'unresolved', failedRequestIds: requestIds },
+      financialEvidenceException: { approvedBy: 'Ender', instruction, scope: 'two-failed-chat-refund-evidence-only', requestIds, evidence: ['audit.md'] },
+      review: { result: 'approved', reviewer: 'independent', sourceDigest, evidence: ['review.md'] },
+      upgrade: { preservedData: true },
+      verification: Object.fromEntries(['modelPicker', 'authorizationDefaultRecovery', 'saveBarrier', 'localReleaseGate', 'ci'].map(id => [id, { status: 'passed', evidence: ['targeted.md'] }])),
+    };
+    save(valid); assert.match(run(), /media matrix NOT run/);
+    for (const mutate of [r => r.pendingCNY = 0, r => r.newSpentCNY = 1,
+      r => r.financialUncertainty.failedRequestIds.push('other'), r => r.financialEvidenceException.evidence = [],
+      r => r.liveTestWaiver.instruction = '上线吧', r => r.review.sourceDigest = 'stale',
+      r => r.review.result = 'pending', r => r.upgrade.preservedData = false,
+      r => r.cases.push({status:'succeeded'}), r => r.liveMatrixStatus = 'passed',
+      r => r.verification.modelPicker.evidence = [], r => delete r.verification.ci]) {
+      const invalid = structuredClone(valid); mutate(invalid); save(invalid); assert.throws(() => run());
+    }
+    commitVersion('v1.7.2');
+    save({ ...valid, version: 'v1.7.2', sourceDigest: run('--fingerprint').trim() }, 'v1.7.2');
+    assert.throws(() => run());
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('v1.6.23 failed-chat evidence exception is exact and cannot waive media or future releases', () => {
   const { dir, run, save, commitVersion } = setupRepo('v1.6.23');
   try {

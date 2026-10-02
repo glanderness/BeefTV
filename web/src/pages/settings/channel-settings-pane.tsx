@@ -1,6 +1,6 @@
 import { App, Button, Form, Input, Popconfirm, Segmented, Select, Tooltip } from "antd";
 import { Pencil, Plus, RefreshCw, Trash2, Workflow } from "lucide-react";
-import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { ModelEditorModal } from "@/components/model-editor-modal";
 import { ChannelHeadersEditor, validateChannelHeaders } from "@/components/channel-headers-editor";
@@ -33,17 +33,33 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
     const [newChannelId, setNewChannelId] = useState<string | null>(null);
     const [beefConnection, setBeefConnection] = useState<BeefAPIConnectionSummary | null>(null);
     const [beefBusy, setBeefBusy] = useState(false);
+    const appliedConnectionState = useRef<string | undefined>(undefined);
+    const catalogSync = useRef<{ state: string; selection: string; adopt: boolean } | null>(null);
+    const [catalogSyncFailed, setCatalogSyncFailed] = useState(false);
 
     const applyBeefConnection = async (summary: BeefAPIConnectionSummary, previousState = beefConnection?.state) => {
         setBeefConnection(summary);
-        if (!shouldRefreshBeefAPICatalog(previousState, summary.state)) return;
+        const retry = catalogSync.current?.state === summary.state ? catalogSync.current : null;
+        if (appliedConnectionState.current === summary.state && !retry) return;
+        appliedConnectionState.current = summary.state;
+        if (!retry && !shouldRefreshBeefAPICatalog(previousState, summary.state)) {
+            catalogSync.current = null;
+            setCatalogSyncFailed(false);
+            return;
+        }
+        const intent = retry || { state: summary.state, selection: useConfigStore.getState().config.assistantModel, adopt: summary.state === "connected" && Boolean(previousState && previousState !== "connected") };
+        catalogSync.current = intent;
         try {
             const result = await getLocalModelConfig();
+            if (catalogSync.current !== intent) return;
             const current = useConfigStore.getState().config;
             replaceConfig(localWorkspaceConfig(normalizeConfigSnapshot({
-                config: mergeManagedBeefAPICatalog(current, result.config),
+                config: mergeManagedBeefAPICatalog(current, result.config, intent.adopt && current.assistantModel === intent.selection),
             }).config));
+            catalogSync.current = null;
+            setCatalogSyncFailed(false);
         } catch {
+            if (catalogSync.current === intent) setCatalogSyncFailed(true);
             // Keep the connection status even if the catalog refresh fails.
         }
     };
@@ -291,6 +307,7 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                                         </div>
                                     </div>
                                     <div className="flex w-full flex-wrap justify-end gap-2 sm:w-auto sm:shrink-0">
+                                        {builtinBeefAPI && catalogSyncFailed ? <Button loading={beefBusy} onClick={() => void runBeefAction(getBeefAPIConnection, "无法更新模型列表")}>重试更新模型列表</Button> : null}
                                         {builtinBeefAPI ? (
                                             <BeefAPIConnectionActions
                                                 connection={beefConnection}
@@ -537,7 +554,7 @@ export function shouldRefreshBeefAPICatalog(previous: string | undefined, next: 
     return next === "disconnected" && Boolean(previous) && previous !== "disconnected";
 }
 
-export function mergeManagedBeefAPICatalog(current: AiConfig, server: AiConfig): AiConfig {
+export function mergeManagedBeefAPICatalog(current: AiConfig, server: AiConfig, adoptAuthorizedAssistant = false): AiConfig {
     const serverBeef = server.channels.find((channel) => channel.id === "beefapi");
     let found = false;
     const channels = current.channels.map((channel) => {
@@ -567,7 +584,7 @@ export function mergeManagedBeefAPICatalog(current: AiConfig, server: AiConfig):
             modelProfiles: (serverBeef.modelProfiles || []).map((item) => ({ ...item })),
         });
     }
-    return withChannels(current, channels);
+    return withChannels(adoptAuthorizedAssistant ? { ...current, assistantModel: server.assistantModel } : current, channels);
 }
 
 export function modelConfigChannelStatusLabel(channel: ModelChannel, persistence: ModelConfigPersistenceState, connection?: BeefAPIConnectionSummary | null) {

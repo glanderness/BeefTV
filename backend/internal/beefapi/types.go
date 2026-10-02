@@ -75,22 +75,23 @@ type persistedDevice struct {
 }
 
 type persistedState struct {
-	SchemaVersion   int              `json:"schemaVersion"`
-	Status          string           `json:"status"`
-	Device          *persistedDevice `json:"device,omitempty"`
-	EncryptedAPIKey string           `json:"encryptedApiKey,omitempty"`
-	ProviderBaseURL string           `json:"providerBaseUrl,omitempty"`
-	Market          string           `json:"market,omitempty"`
-	Group           string           `json:"group,omitempty"`
-	Account         *Account         `json:"account,omitempty"`
-	KeyName         string           `json:"keyName,omitempty"`
-	TokenID         string           `json:"tokenId,omitempty"`
-	Acked           bool             `json:"acked"`
-	CatalogOK       bool             `json:"catalogOk"`
-	Balance         string           `json:"balance,omitempty"`
-	LastError       string           `json:"lastError,omitempty"`
-	ConnectedAt     string           `json:"connectedAt,omitempty"`
-	UpdatedAt       string           `json:"updatedAt,omitempty"`
+	SchemaVersion           int              `json:"schemaVersion"`
+	Status                  string           `json:"status"`
+	Device                  *persistedDevice `json:"device,omitempty"`
+	EncryptedAPIKey         string           `json:"encryptedApiKey,omitempty"`
+	ProviderBaseURL         string           `json:"providerBaseUrl,omitempty"`
+	Market                  string           `json:"market,omitempty"`
+	Group                   string           `json:"group,omitempty"`
+	Account                 *Account         `json:"account,omitempty"`
+	KeyName                 string           `json:"keyName,omitempty"`
+	TokenID                 string           `json:"tokenId,omitempty"`
+	Acked                   bool             `json:"acked"`
+	CatalogOK               bool             `json:"catalogOk"`
+	AssistantDefaultPending bool             `json:"assistantDefaultPending,omitempty"`
+	Balance                 string           `json:"balance,omitempty"`
+	LastError               string           `json:"lastError,omitempty"`
+	ConnectedAt             string           `json:"connectedAt,omitempty"`
+	UpdatedAt               string           `json:"updatedAt,omitempty"`
 }
 
 func (s persistedState) hasCredential() bool {

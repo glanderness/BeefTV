@@ -443,6 +443,7 @@ func (s *Service) acceptToken(ctx context.Context, deviceCode string, token toke
 	s.state.TokenID = tokenID
 	s.state.Acked = false
 	s.state.CatalogOK = false
+	s.state.AssistantDefaultPending = true
 	s.state.Status = StatePending
 	s.state.Balance = BalanceUnknown
 	s.state.LastError = ""
@@ -528,7 +529,11 @@ func (s *Service) finalizeSavedCredential(ctx context.Context, previousAccountID
 		nextAccount = s.state.Account.ID.String()
 	}
 	s.mu.Unlock()
-	if err := applyCatalog(s.provider, models, previousAccount, nextAccount); err != nil {
+	authorizationID := ""
+	if state.AssistantDefaultPending {
+		authorizationID = state.TokenID
+	}
+	if err := applyCatalog(s.provider, models, previousAccount, nextAccount, authorizationID); err != nil {
 		s.mu.Lock()
 		s.state.Status = StateCatalogFailed
 		s.state.CatalogOK = false
@@ -545,6 +550,7 @@ func (s *Service) finalizeSavedCredential(ctx context.Context, previousAccountID
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state.CatalogOK = true
+	s.state.AssistantDefaultPending = false
 	s.state.Status = StateConnected
 	s.state.LastError = ""
 	s.state.Device = nil

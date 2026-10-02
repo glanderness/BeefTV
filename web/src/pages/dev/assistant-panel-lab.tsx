@@ -48,6 +48,7 @@ function stubController(open: boolean, setOpen: (next: boolean) => void, width: 
         setWidth,
         status,
         statusBusy: false,
+        modelBusy: false,
         sessions: [
             { sessionId: "s1", title: "把剧本拆成三个镜头，并按顺序连起来", updatedAt: new Date().toISOString(), turnCount: 1 },
             { sessionId: "s2", title: "检查哪些镜头还缺参考图", updatedAt: new Date().toISOString(), turnCount: 3 },
