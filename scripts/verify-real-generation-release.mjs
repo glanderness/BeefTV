@@ -29,6 +29,32 @@ const downloadOnlyWaiver = version === 'v1.6.20' && receipt.liveTestWaiver?.appr
 // Keep unknown pending as null; this does not waive any paid media case.
 const financialException = receipt.financialEvidenceException;
 const acceptedFailedRequests = ['202610020816334239151708268d9d6eZ5lRPwt', '202610021242434383740578268d9d6BAoXA1u1'];
+// Ender selected the reviewed model-picker release and renamed it v1.7.1.
+// Only this version may use targeted acceptance instead of another media matrix.
+if (version === 'v1.7.1' && receipt.liveTestWaiver?.approvedBy === 'Ender'
+  && receipt.liveTestWaiver?.instruction === '上线吧 1.7.1 值得一个大版本'
+  && receipt.liveTestWaiver?.scope === 'model-picker-targeted-acceptance') {
+  const evidence = value => Array.isArray(value) && value.length > 0 && value.every(nonempty);
+  const exactRequests = value => Array.isArray(value) && JSON.stringify([...value].sort()) === JSON.stringify(acceptedFailedRequests);
+  if (receipt.budgetCNY !== 100 || receipt.spentCNY !== 43.74479 || receipt.newSpentCNY !== 0
+    || receipt.pendingCNY !== null || receipt.knownPendingCNY !== 0
+    || receipt.financialUncertainty?.status !== 'unresolved'
+    || !exactRequests(receipt.financialUncertainty?.failedRequestIds)
+    || financialException?.approvedBy !== 'Ender'
+    || financialException?.instruction !== receipt.liveTestWaiver.instruction
+    || financialException?.scope !== 'two-failed-chat-refund-evidence-only'
+    || !exactRequests(financialException?.requestIds) || !evidence(financialException?.evidence)) fail('v1.7.1 requires the exact disclosed prior financial gaps and no new paid calls');
+  if (receipt.review?.result !== 'approved' || receipt.review?.sourceDigest !== sourceDigest
+    || !nonempty(receipt.review?.reviewer) || !evidence(receipt.review?.evidence)
+    || !receipt.upgrade?.preservedData || !Array.isArray(receipt.cases) || receipt.cases.length !== 0
+    || receipt.liveMatrixStatus !== 'not_run_owner_waived') fail('v1.7.1 requires independent source review, preserved data and an explicitly unexecuted matrix');
+  for (const id of ['modelPicker', 'authorizationDefaultRecovery', 'saveBarrier', 'localReleaseGate', 'ci']) {
+    const check = receipt.verification?.[id];
+    if (check?.status !== 'passed' || !evidence(check.evidence)) fail(`v1.7.1 missing targeted evidence: ${id}`);
+  }
+  console.log('Owner authorized v1.7.1 targeted model-picker release; media matrix NOT run; new expense 0; two prior refund terminal states remain unknown.');
+  process.exit(0);
+}
 const financialEvidenceWaiver = version === 'v1.6.23'
   && financialException?.approvedBy === 'Ender' && financialException?.instruction === '上线吧'
   && financialException?.scope === 'two-failed-chat-refund-evidence-only'
