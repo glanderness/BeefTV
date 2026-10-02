@@ -28,7 +28,7 @@
     "evidence": ["v1.7.1-targeted.md#financial-and-coverage-boundaries"]
   },
   "upgrade": {"preservedData": true, "evidence": ["v1.7.1-targeted.md#targeted-results"]},
-  "review": {"result": "pending", "sourceDigest": "6ed971ef5f3e21ea90aed56cc8309e0796edd2e7f39a4073ac96cbe8749fa6eb", "reviewer": "/root/release_review", "evidence": []},
+  "review": {"result": "approved", "sourceDigest": "6ed971ef5f3e21ea90aed56cc8309e0796edd2e7f39a4073ac96cbe8749fa6eb", "reviewer": "/root/release_review", "evidence": ["v1.7.1-targeted.md#final-increment-review"]},
   "verification": {
     "modelPicker": {"status": "passed", "evidence": ["v1.7.1-targeted.md#targeted-results"]},
     "authorizationDefaultRecovery": {"status": "passed", "evidence": ["v1.7.1-targeted.md#targeted-results"]},
