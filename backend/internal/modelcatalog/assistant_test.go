@@ -27,8 +27,8 @@ func TestResolveAssistantGenerationModelPrefersNodeOverride(t *testing.T) {
 	}
 
 	unknown := ResolveAssistantGenerationModel(snapshot, "image", "beefapi::missing-image")
-	if unknown.FromNode || unknown.KindMismatch || unknown.ModelKey != "beefapi::gpt-image-2" {
-		t.Fatalf("unknown selection should fall back to default: %#v", unknown)
+	if unknown.FromNode || unknown.KindMismatch || unknown.ModelKey != "" {
+		t.Fatalf("unknown explicit selection must not use a paid default: %#v", unknown)
 	}
 }
 
@@ -86,8 +86,8 @@ func TestResolveAssistantGenerationModelNormalizesUnqualifiedKey(t *testing.T) {
 	}
 
 	unknown := ResolveAssistantGenerationModel(snapshot, "image", "not-in-channel-models")
-	if unknown.FromNode || unknown.KindMismatch || unknown.ModelKey != "beefapi::gpt-image-2" {
-		t.Fatalf("unknown unqualified model should fall back: %#v", unknown)
+	if unknown.FromNode || unknown.KindMismatch || unknown.ModelKey != "" {
+		t.Fatalf("unknown unqualified model must be rejected: %#v", unknown)
 	}
 }
 
@@ -111,7 +111,7 @@ func TestResolveAssistantGenerationModelInfersCapabilityFromProtocol(t *testing.
 	}
 
 	unknown := ResolveAssistantGenerationModel(snapshot, "image", "beefapi::mystery")
-	if unknown.FromNode || unknown.KindMismatch || unknown.ModelKey != "beefapi::gpt-image-2" {
-		t.Fatalf("empty capability without protocol should fall back: %#v", unknown)
+	if unknown.FromNode || unknown.KindMismatch || unknown.ModelKey != "" {
+		t.Fatalf("unresolved capability must not select another model: %#v", unknown)
 	}
 }

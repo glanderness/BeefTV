@@ -80,6 +80,17 @@ func TestOpGenerationProposeFallsBackToDefaultWithoutNodeModel(t *testing.T) {
 	}
 }
 
+func TestOpGenerationProposeRejectsUnavailableExplicitModel(t *testing.T) {
+	probe := &proposeProbe{doc: proposeCanvas(t, []map[string]any{imageNode("n1", "removed::image")})}
+	probe.resolve = func(string, string) (AssistantGenerationModel, error) {
+		return AssistantGenerationModel{Revision: 1}, nil
+	}
+	result, err := opCanvasGenerationPropose(&Context{UserID: "owner", Domain: probe}, json.RawMessage(`{"canvasId":"c1","nodeIds":["n1"],"kind":"image"}`))
+	if err == nil || result != nil || AsError(err).Reason != "generation_model_unavailable" {
+		t.Fatalf("unavailable explicit model must not produce a paid proposal: result=%v err=%v", result, err)
+	}
+}
+
 func TestOpGenerationProposeRejectsMixedNodeModels(t *testing.T) {
 	probe := &proposeProbe{doc: proposeCanvas(t, []map[string]any{
 		imageNode("n1", "beefapi::gpt-image-2.5-flare"),

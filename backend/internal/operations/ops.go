@@ -115,6 +115,9 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 			return nil, InvalidArg("generation_model_kind_mismatch", "这个节点当前的模型不能用来生成"+generationKindLabel(args.Kind))
 		}
 		if choice.Display == "" || choice.ModelKey == "" {
+			if nodeSelectedModel(node) != "" {
+				return nil, PreconditionFailed("generation_model_unavailable", "当前节点的模型暂不可用，请重新选择模型后再生成", nil)
+			}
 			return nil, PreconditionFailed("generation_model_not_configured", "还没有设置默认的"+generationKindLabel(args.Kind)+"模型", nil)
 		}
 		if resolved.ModelKey == "" {

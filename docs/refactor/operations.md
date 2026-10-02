@@ -54,7 +54,7 @@ listed := registry.List(operations.ManualCaller(false))
 
 `canvas.document.commit` 是顶层文档覆盖，必须带 `expectedRevision` 与稳定 `operationId`，在回执事务里校验并应用到当前画布。不创建画布，不接受任意数据库补丁语言。未触及的顶层字段、ID、资源引用校验、CAS 与回执原子性保持不变。助手范围默认拒绝该操作。
 
-`canvas.generation.propose` 只登记提议，不生成、不扣费；禁止携带 `opId`。确认用的模型是目标节点当前有效的选用：节点显式设置优先于全局默认，并按模型目录校验 kind。一批节点若有效模型不同，操作拒绝，由调用方按模型分开提议。同一批节点解析到不同 `modelConfigRevision` 时按配置已变动拒绝，请再提出一次。
+`canvas.generation.propose` 只登记提议，不生成、不扣费；禁止携带 `opId`。确认用的模型是目标节点当前有效的选用：节点显式设置优先于全局默认，并按模型目录校验 kind。只有没有节点模型时使用默认；无法解析显式模型时要求重新选择，不替换为另一个付费模型。一批节点若有效模型不同，操作拒绝，由调用方按模型分开提议。同一批节点解析到不同 `modelConfigRevision` 时按配置已变动拒绝，请再提出一次。客户端仍检查最终执行模型与提议一致；规格兼容解析若需要换模型，则拒绝该提议，不带着旧确认发送。
 
 ### HTTP
 

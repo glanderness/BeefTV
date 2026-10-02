@@ -224,6 +224,8 @@ func ResolveAssistantGenerationModel(snapshot AssistantConfigSnapshot, kind, sel
 				return AssistantGenerationChoice{Display: display, ModelKey: normalized, FromNode: true}
 			}
 		}
+		// An explicit but unresolved choice must never turn into a paid default.
+		return AssistantGenerationChoice{}
 	}
 	display, modelKey := AssistantGenerationModelKey(snapshot, kind)
 	return AssistantGenerationChoice{Display: display, ModelKey: modelKey}
