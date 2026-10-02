@@ -34,7 +34,7 @@ v1.6.19 在发布人说明“允许前台完成验收”与“本版豁免付费
 3. 冻结候选代码并构建；通过客户端画布导入固定素材、选择模型与参数，逐条点击生成。每次提交立即记录本地 task ID，避免盲重试产生重复扣款。
 4. 同一任务追踪到供应商完成、客户端下载、画布落图/落视频。打开图片；播放视频并核对时长、解码和画面。保留任务详情、画布截图、产物 SHA256、实际模型与参数、请求 ID、执行诊断和时间。
 5. 在生产只读账单核对每笔 task/request 的最终结算或退款。失败不计成功，超时先查询原任务；不得为凑成功率隐藏失败或不断重发。保存所有尝试及费用，两轮成功矩阵单独标明。
-6. 将脱敏证据写入 `docs/release-evidence/<VERSION>.json`。`sourceDigest` 来自提交候选代码后运行 `node scripts/verify-real-generation-release.mjs --fingerprint`。证据文件不进入摘要，因此可在后续提交加入；任何打包源码变化都使旧证据失效。
+6. 将脱敏证据写入 `docs/release-evidence/<VERSION>.json`。`sourceDigest` 来自提交候选代码后运行 `node scripts/verify-real-generation-release.mjs --fingerprint`。证据文件不进入摘要，因此可在后续提交加入；任何打包源码变化都使旧证据失效，包括 `agent-host/` 的宿主源码、依赖清单与锁文件。
 7. 本地及发布 workflow 必须通过 `node scripts/verify-real-generation-release.mjs`，再合入 main 并触发发布。发布后核对三平台产物、签名更新源和真实安装/升级；不能用发布前构建冒充已发布二进制。
 
 JSON 顶层字段为 `version, sourceDigest, budgetCNY, spentCNY, pendingCNY, upgrade, cases`。每个 case 保存 `round, path, taskId, providerRequestId, clientVersion, platform, fixtureDigest, model, status, clientSubmitted, canvasVerified, mediaDecoded, mediaOpened, billing, costCNY, artifactSHA256`。记录中禁止凭据、签名素材 URL 或私有提示词。证据真实性由发布人逐项核验；脚本负责完整性与版本绑定。

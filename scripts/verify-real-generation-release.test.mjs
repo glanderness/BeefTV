@@ -22,6 +22,16 @@ test('release receipt rejects incomplete, stale, reused and unbalanced evidence'
     for (const mutate of [r => r.cases.pop(), r => r.sourceDigest = 'old', r => r.cases[1].taskId = r.cases[0].taskId, r => r.cases[0].clientSubmitted = false, r => r.cases[0].clientVersion = 'v1.6.16', r => r.pendingCNY = 1, r => r.spentCNY = 51, r => r.spentCNY = 1]) {
       const invalid = structuredClone(valid); mutate(invalid); save(invalid); assert.throws(() => run());
     }
+    mkdirSync(join(dir, 'agent-host'));
+    for (const file of ['server.mjs', 'bun.lock', 'package.json']) {
+      const current = { ...valid, sourceDigest: run('--fingerprint').trim() };
+      save(current); assert.match(run(), /12\/12/);
+      writeFileSync(join(dir, 'agent-host', file), `changed ${file}\n`);
+      git('add', `agent-host/${file}`);
+      git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', `host ${file}`);
+      assert.notEqual(run('--fingerprint').trim(), current.sourceDigest);
+      assert.throws(() => run(), /receipt does not match this release source/);
+    }
     for (const version of ['v1.6.18', 'v1.6.19', 'v1.6.20']) {
       writeFileSync(join(dir, 'VERSION'), `${version}\n`);
       git('add', 'VERSION'); git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', version);
