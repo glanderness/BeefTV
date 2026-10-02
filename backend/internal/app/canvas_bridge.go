@@ -291,18 +291,6 @@ func (s *Service) CommitUserCanvasProjectAssets(userID string, raw json.RawMessa
 	return s.canvasDomain().CommitUserCanvasProjectAssets(userID, raw, assets)
 }
 
-func (s *Service) DeleteUserCanvasNode(userID, canvasID, nodeID string) (UserDataSummary, error) {
-	return s.canvasDomain().DeleteUserCanvasNode(userID, canvasID, nodeID)
-}
-
-func (s *Service) UpdateUserCanvasNode(userID, canvasID, nodeID string, patch map[string]json.RawMessage) (UserDataSummary, error) {
-	return s.canvasDomain().UpdateUserCanvasNode(userID, canvasID, nodeID, patch)
-}
-
-func (s *Service) ConnectUserCanvasNodes(userID, canvasID, fromNodeID, toNodeID string, connection map[string]json.RawMessage) (UserDataSummary, error) {
-	return s.canvasDomain().ConnectUserCanvasNodes(userID, canvasID, fromNodeID, toNodeID, connection)
-}
-
 func (s *Service) DeleteUserCanvasProject(userID string, id string) error {
 	return s.canvasDomain().DeleteUserCanvasProject(userID, id)
 }
