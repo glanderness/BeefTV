@@ -109,6 +109,7 @@ export function useCanvasProjectLifecycle({
     const viewportSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const observedContentRef = useRef<CanvasHistorySnapshot | null>(null);
+    const observedAtRender = observedContentRef.current;
     const loadLatestRef = useRef(false);
     const historyRestoreRef = useRef<{ snapshotId: string; revision: number; resolve: () => void; reject: (error: unknown) => void } | null>(null);
     const pendingReloadRef = useRef<{ resolve: () => void; reject: (error: unknown) => void } | null>(null);
@@ -290,6 +291,9 @@ export function useCanvasProjectLifecycle({
 
     useEffect(() => {
         if (!projectLoaded || editorProjectIdRef.current !== projectId || historyPausedRef.current) return;
+        // An earlier load/refresh effect can advance the baseline and enqueue new React state
+        // in this same effect batch. This render still owns the old graph, not a user deletion.
+        if (observedContentRef.current !== observedAtRender) return;
         const snapshot = { nodes, connections, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo };
         if (!observedContentRef.current || JSON.stringify(observedContentRef.current) === JSON.stringify(snapshot)) return;
         traceCanvasGraph("editor.autosave", { observed: { id: projectId, ...observedContentRef.current }, render: { id: projectId, ...snapshot }, live: { id: projectId, nodes: nodesRef.current, connections: connectionsRef.current }, stored: useCanvasStore.getState().openProject(projectId) });
@@ -300,7 +304,7 @@ export function useCanvasProjectLifecycle({
         if (stored && Object.entries(patch).every(([key, value]) => JSON.stringify(stored[key as keyof CanvasProject]) === JSON.stringify(value))) return;
         updateProject(projectId, patch);
         if (localMode) scheduleLocalCanvasBackendSync(projectId);
-    }, [activeChatId, backgroundMode, canvasAppearance, chatSessions, connections, historyPausedRef, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
+    }, [activeChatId, backgroundMode, canvasAppearance, chatSessions, connections, historyPausedRef, nodes, observedAtRender, projectId, projectLoaded, showImageInfo, updateProject]);
 
     useEffect(() => {
         if (!projectLoaded || editorProjectIdRef.current !== projectId) return;
