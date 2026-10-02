@@ -15,7 +15,7 @@ import { CachedResourceImage } from "@/components/cached-resource-image";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { MediaPlaceholder } from "@/components/ui/product/media-placeholder";
 import { cn } from "@/lib/utils";
-import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
+import { canvasSyncProgressKey, useSyncProgressStore } from "@/stores/use-sync-progress-store";
 
 type ProjectPreviewMedia = { node: CanvasNodeData; url: string; storageKey?: string; kind: "image" | "video" };
 const projectPreviewMediaCache = new WeakMap<CanvasNodeData[], { first: ProjectPreviewMedia[]; latest: ProjectPreviewMedia[] }>();
@@ -149,7 +149,7 @@ export function CanvasProjectCard({ project, projectName, variant = "library", r
 }
 
 export function ProjectPreview({ project, preferLatestImage = false, emptyVariant = "default" }: { project: Pick<CanvasProject, "id" | "nodes">; preferLatestImage?: boolean; emptyVariant?: "default" | "libtv" }) {
-    const syncProgress = useSyncProgressStore((state) => state.syncingProjects[project.id]);
+    const syncProgress = useSyncProgressStore((state) => state.syncingProjects[canvasSyncProgressKey(project.id)]);
     const isSyncing = Boolean(syncProgress && (syncProgress.phase === "uploading" || syncProgress.phase === "saving"));
     // The progress message can be stale while a canvas is rehydrating. Use the
     // persistence boundary as the source of truth so local workspaces never

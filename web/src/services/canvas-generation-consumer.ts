@@ -1,11 +1,17 @@
 import type { Dispatch, SetStateAction } from "react";
 
-import { applyMaterializedGenerationTaskResultToNodes } from "@/lib/canvas/canvas-generation-task-sync";
 import { parseCanvasStorageDocument, rebaseCanvasProjects, serializeCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
+import { assertUserScope, captureUserScope, isUserScopeAbandonedError, UserScopeAbandonedError, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
+import { bindCanvasTaskOutput, type CanvasTaskBindReceipt } from "@/services/api/operations";
 import type { GenerationTask, GenerationTaskOutput } from "@/services/api/task-center";
+import { CanvasBackendSubmitPausedError, CanvasStaleScopeError, isCanvasRevisionConflict } from "@/services/canvas-revision-conflict";
 import { generationEffectApplied } from "@/services/generation-consumer-dedupe";
+import { attachNodeEffectKey } from "@/services/generation-task-materializer";
+import { persistCanvasDocument } from "@/services/local-workspace-repository";
+import { hydrateBackendGeneratedOutputs } from "@/services/project-asset-sync";
+import { useAssetStore } from "@/stores/use-asset-store";
 import {
     CANVAS_STORE_KEY,
     canvasStoreStorageRevision,
@@ -40,6 +46,26 @@ export class CanvasGenerationDurableAckError extends Error {
 export function isCanvasGenerationDurableAckError(error: unknown): error is CanvasGenerationDurableAckError {
     return error instanceof CanvasGenerationDurableAckError;
 }
+
+export class CanvasBindFlushError extends Error {
+    readonly cause: unknown;
+
+    constructor(cause: unknown) {
+        super(cause instanceof Error ? cause.message : "本地草稿还没保存，生成结果没有写到画布");
+        this.name = "CanvasBindFlushError";
+        this.cause = cause;
+    }
+}
+
+export class CanvasBindProjectionAdoptionError extends Error {
+    constructor() {
+        super("这次生成结果没能写进画布。请再试一次。");
+        this.name = "CanvasBindProjectionAdoptionError";
+    }
+}
+
+export type AdoptServerConfirmedProjection = (project: CanvasProject, scope: string, entryCapturedScope?: CapturedUserScope) => Promise<CanvasProject | undefined>;
+type PersistCanvasDocumentWithScope = (id: string, patch: { nodes?: CanvasNodeData[]; connections?: CanvasConnection[] }, entryCapturedScope?: CapturedUserScope) => Promise<void>;
 
 type CanvasGenerationLiveProjectState = Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId">;
 type CanvasGenerationLiveProjectAdapter = {
@@ -113,19 +139,135 @@ export async function applyCanvasGenerationTaskNodeEffect(input: {
     nodesRef: { current: CanvasNodeData[] };
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
 }) {
-    throwIfAborted(input.signal);
-    const previousNodes = input.nodesRef.current;
-    const applied = await applyMaterializedGenerationTaskResultToNodes(previousNodes, input.task, input.output, input.effectKey, input.nodeId);
-    if (!applied.updated || !applied.node) throw new Error("画布中找不到对应任务节点");
-    const persistedProject = await persistCanvasGenerationEffect({
-        projectId: input.projectId,
-        effectKey: input.effectKey,
-        previousNodes,
-        nodes: applied.nodes,
+    await bindBackendCanvasGenerationResult({
+        canvasId: input.projectId,
+        nodeId: input.nodeId,
+        task: input.task,
+        outputIndex: input.output.outputIndex,
         signal: input.signal,
+        isCurrent: () => !input.signal?.aborted,
+        nodesRef: input.nodesRef,
+        setNodes: input.setNodes,
     });
-    input.nodesRef.current = persistedProject.nodes;
-    input.setNodes(persistedProject.nodes);
+}
+
+export type BindBackendCanvasGenerationRuntime = {
+    hydrateOutputs?: typeof hydrateBackendGeneratedOutputs;
+    persistDocument?: PersistCanvasDocumentWithScope;
+    bindOutput?: typeof bindCanvasTaskOutput;
+    adoptConfirmedProjection?: AdoptServerConfirmedProjection;
+    captureScope?: () => CapturedUserScope;
+    liveScope?: () => CapturedUserScope;
+};
+
+export async function bindBackendCanvasGenerationResult(input: {
+    canvasId: string;
+    nodeId: string;
+    task: GenerationTask;
+    outputIndex?: number;
+    signal?: AbortSignal;
+    isCurrent: () => boolean;
+    nodesRef: { current: CanvasNodeData[] };
+    setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
+    runtime?: BindBackendCanvasGenerationRuntime;
+}) {
+    if (input.task.status !== "succeeded") throw new Error("只有成功的任务才能绑定到画布");
+    const runtime = input.runtime ?? {};
+    const liveScope = runtime.liveScope ?? captureUserScope;
+    const capturedScope = (runtime.captureScope ?? captureUserScope)();
+    const capturedCanvasId = input.canvasId;
+    const outputIndex = input.outputIndex ?? 0;
+    const hydrateOutputs = runtime.hydrateOutputs ?? hydrateBackendGeneratedOutputs;
+    const persistDocument = runtime.persistDocument ?? (async (id, patch, entryCapturedScope) => {
+        const captured = entryCapturedScope ?? capturedScope;
+        assertUserScope(captured, liveScope());
+        await (persistCanvasDocument as PersistCanvasDocumentWithScope)(id, patch, captured);
+    });
+    const bindOutput = runtime.bindOutput ?? bindCanvasTaskOutput;
+    const adoptConfirmedProjection = runtime.adoptConfirmedProjection ?? defaultAdoptConfirmedProjection;
+
+    assertBindDispatchScope(capturedScope, liveScope);
+    await hydrateOutputs(input.task, input.signal, {
+        writeAsset: (asset) => {
+            if (!userScopeMatches(capturedScope, liveScope())) return;
+            useAssetStore.setState((state) => (state.assets.some((item) => item.id === asset.id) ? state : { assets: [asset, ...state.assets] }));
+        },
+    });
+    assertBindDispatchScope(capturedScope, liveScope);
+
+    const live = useCanvasStore.getState().projects.find((project) => project.id === capturedCanvasId);
+    if (live) {
+        try {
+            await persistDocument(capturedCanvasId, { nodes: live.nodes, connections: live.connections }, capturedScope);
+        } catch (error) {
+            if (error instanceof Error && error.name === "AbortError") throw error;
+            if (isUserScopeAbandonedError(error)) throw error;
+            if (error instanceof CanvasStaleScopeError) throw error;
+            assertBindDispatchScope(capturedScope, liveScope);
+            // 画布 document.commit 的陈旧 revision / 已暂停提交不能当成生成失败：
+            // 资源已落盘，bind 回执才是画布真相；继续绑定后由三路合并保留并发节点。
+            if (!(isCanvasRevisionConflict(error) || error instanceof CanvasBackendSubmitPausedError)) {
+                throw error instanceof CanvasBindFlushError ? error : new CanvasBindFlushError(error);
+            }
+        }
+    }
+    assertBindDispatchScope(capturedScope, liveScope);
+
+    const response = await bindOutput({
+        operationId: attachNodeEffectKey(input.task.id, input.nodeId, outputIndex),
+        canvasId: capturedCanvasId,
+        taskId: input.task.id,
+        nodeId: input.nodeId,
+        outputIndex,
+        signal: input.signal,
+        expectedScope: capturedScope,
+    });
+    assertBindDispatchScope(capturedScope, liveScope);
+
+    const receipt = response.result ?? {};
+    if (receipt.bindingStatus === "deleted" && !receipt.canvas) return;
+    const canonical = canonicalCanvasFromReceipt(capturedCanvasId, receipt);
+    const adopted = await adoptConfirmedProjection(canonical, capturedScope.userScope, capturedScope);
+    assertBindDispatchScope(capturedScope, liveScope);
+    if (adopted && input.isCurrent()) {
+        input.nodesRef.current = adopted.nodes;
+        input.setNodes(adopted.nodes);
+    }
+}
+
+function assertBindDispatchScope(expected: CapturedUserScope, live: () => CapturedUserScope) {
+    if (!userScopeMatches(expected, live())) throw new UserScopeAbandonedError();
+}
+
+async function defaultAdoptConfirmedProjection(project: CanvasProject, scope: string, entryCapturedScope?: CapturedUserScope) {
+    const captured = entryCapturedScope;
+    if (!captured || captured.userScope !== scope) throw new CanvasBindProjectionAdoptionError();
+    const repository = await import("@/services/local-workspace-repository");
+    assertUserScope(captured);
+    const adopt = (repository as { adoptServerConfirmedGenerationPatch?: AdoptServerConfirmedProjection }).adoptServerConfirmedGenerationPatch;
+    if (!adopt) throw new CanvasBindProjectionAdoptionError();
+    return adopt(project, captured.userScope, captured);
+}
+
+function canonicalCanvasFromReceipt(canvasId: string, receipt: CanvasTaskBindReceipt): CanvasProject {
+    if (receipt.bindingStatus !== "bound" && receipt.bindingStatus !== "replaced" && receipt.bindingStatus !== "deleted") {
+        throw new CanvasBindProjectionAdoptionError();
+    }
+    if (typeof receipt.revision !== "number" || !Number.isInteger(receipt.revision) || receipt.revision < 1) {
+        throw new CanvasBindProjectionAdoptionError();
+    }
+    const raw = receipt.canvas;
+    if (!raw || typeof raw !== "object") throw new CanvasBindProjectionAdoptionError();
+    const document = raw as CanvasProject;
+    if (typeof document.id === "string" && document.id && document.id !== canvasId) throw new CanvasBindProjectionAdoptionError();
+    if (!Array.isArray(document.nodes) || !Array.isArray(document.connections)) throw new CanvasBindProjectionAdoptionError();
+    return {
+        ...document,
+        id: canvasId,
+        revision: receipt.revision,
+        nodes: document.nodes as CanvasNodeData[],
+        connections: document.connections,
+    };
 }
 
 export async function persistCanvasOperationContinuationEffect(input: {
@@ -455,6 +597,8 @@ export async function persistCanvasGenerationEffect(input: CanvasGenerationEffec
     const unregisterAttempt = registerCanvasGenerationPersistenceAttempt(scope, input.projectId, input.effectKey, {
         previousNodes: input.previousNodes,
         nodes: input.nodes,
+        previousConnections: input.previousConnections,
+        connections: input.connections,
         previousChatSessions: input.previousChatSessions,
         chatSessions: input.chatSessions,
     });

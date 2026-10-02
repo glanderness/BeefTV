@@ -1,4 +1,5 @@
 import { mergeCanvasRefreshPatch } from "@/lib/canvas/canvas-patch-merge";
+import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
 import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { App } from "antd";
 import { useNavigate } from "react-router";
@@ -18,7 +19,7 @@ import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from 
 import { scheduleLocalCanvasBackendSync, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { useCanvasThemeStore } from "@/stores/canvas/use-canvas-theme-store";
-import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
+import { projectSyncProgress, useSyncProgressStore } from "@/stores/use-sync-progress-store";
 import { readCanvasSyncDrafts } from "@/services/canvas-sync-drafts";
 import { useUserStore } from "@/stores/use-user-store";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
@@ -57,6 +58,7 @@ type UseCanvasProjectLifecycleOptions = {
     setViewport: Dispatch<SetStateAction<ViewportTransform>>;
     setProjectLoaded: Dispatch<SetStateAction<boolean>>;
     resetHistory: (snapshot: CanvasHistorySnapshot) => void;
+    adoptExternalSnapshot: (overrides: Pick<CanvasHistorySnapshot, "nodes" | "connections">) => void;
     cleanupAssetImages: (options?: unknown) => void;
     cleanupCanvasFiles: (extra?: unknown) => void;
 };
@@ -88,6 +90,7 @@ export function useCanvasProjectLifecycle({
     setViewport,
     setProjectLoaded,
     resetHistory,
+    adoptExternalSnapshot,
     cleanupAssetImages,
     cleanupCanvasFiles,
 }: UseCanvasProjectLifecycleOptions) {
@@ -106,6 +109,7 @@ export function useCanvasProjectLifecycle({
     const viewportSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const observedContentRef = useRef<CanvasHistorySnapshot | null>(null);
+    const observedAtRender = observedContentRef.current;
     const loadLatestRef = useRef(false);
     const historyRestoreRef = useRef<{ snapshotId: string; revision: number; resolve: () => void; reject: (error: unknown) => void } | null>(null);
     const pendingReloadRef = useRef<{ resolve: () => void; reject: (error: unknown) => void } | null>(null);
@@ -136,6 +140,7 @@ export function useCanvasProjectLifecycle({
             observedContentRef.current = null;
         }
         const applyRestoredProject = (targetProject: CanvasProject) => {
+            traceCanvasGraph(cancelled ? "editor.restore.cancelled" : "editor.restore.apply", { target: targetProject, render: { id: projectId, nodes, connections }, live: { id: projectId, nodes: nodesRef.current, connections: connectionsRef.current } });
             if (cancelled || targetProject.id !== projectId) return;
             const fallbackTheme = useCanvasThemeStore.getState().theme;
             const restoredAppearance = targetProject.appearance
@@ -184,10 +189,12 @@ export function useCanvasProjectLifecycle({
         const load = async () => {
             const cachedProject = useCanvasStore.getState().projects.find((p) => p.id === projectId);
             if (!latest && !historyRestore && cachedProject) {
+                traceCanvasGraph("editor.load.cache", { cached: cachedProject });
                 // 本地已有该画布的持久化缓存：先以本地数据秒开渲染，彻底消除白屏与等待
                 applyRestoredProject(cachedProject);
             }
             const loadedProject = await loadCanvasProjectForEditing(projectId, { latest, historyRestore: historyRestore || undefined, onLoad: applyRestoredProject });
+            traceCanvasGraph("editor.load.return", { loaded: loadedProject, stored: useCanvasStore.getState().openProject(projectId) });
             if (cancelled) return;
             if (historyRestoreRef.current === historyRestore) {
                 historyRestoreRef.current = null;
@@ -233,7 +240,7 @@ export function useCanvasProjectLifecycle({
                     pendingReload?.reject(error);
                 }
                 const detail = error instanceof Error ? error.message : (localMode ? "读取本地画布失败，请重试" : "读取画布失败，请重试");
-                if (useSyncProgressStore.getState().syncingProjects[projectId]?.phase !== "conflict") useSyncProgressStore.getState().setProjectProgress(projectId, { phase: "error", message: localMode ? detail : (error instanceof Error ? error.message : "读取云端版本失败") });
+                if (projectSyncProgress(projectId)?.phase !== "conflict") useSyncProgressStore.getState().setProjectProgress(projectId, { phase: "error", message: localMode ? detail : (error instanceof Error ? error.message : "读取云端版本失败") });
                 if (keepEditor) message.error(detail);
                 else setLoadError(detail);
             });
@@ -266,6 +273,7 @@ export function useCanvasProjectLifecycle({
         // Merge only server-changed fields so dragging/editing other nodes can
         // continue while Agent media tasks complete. Same-field conflicts fail.
         const merged = previous ? mergeCanvasRefreshPatch(previous, project, nodesRef.current, connectionsRef.current) : project;
+        traceCanvasGraph("editor.refresh", { previous, incoming: project, live: { id: projectId, nodes: nodesRef.current, connections: connectionsRef.current }, merged });
         if (observedContentRef.current) {
             const observed = observedContentRef.current;
             // Advance only the observed server fields; edits in live refs still
@@ -277,12 +285,18 @@ export function useCanvasProjectLifecycle({
         connectionsRef.current = merged.connections;
         setNodes(merged.nodes);
         setConnections(merged.connections);
-    }), [projectId, projectLoaded, nodesRef, connectionsRef, setNodes, setConnections]);
+        // 外部投影不是用户手工编辑：采用为历史基线，Ctrl+Z 不会倒退外部新值。
+        adoptExternalSnapshot({ nodes: merged.nodes, connections: merged.connections });
+    }), [adoptExternalSnapshot, projectId, projectLoaded, nodesRef, connectionsRef, setNodes, setConnections]);
 
     useEffect(() => {
         if (!projectLoaded || editorProjectIdRef.current !== projectId || historyPausedRef.current) return;
+        // An earlier load/refresh effect can advance the baseline and enqueue new React state
+        // in this same effect batch. This render still owns the old graph, not a user deletion.
+        if (observedContentRef.current !== observedAtRender) return;
         const snapshot = { nodes, connections, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo };
         if (!observedContentRef.current || JSON.stringify(observedContentRef.current) === JSON.stringify(snapshot)) return;
+        traceCanvasGraph("editor.autosave", { observed: { id: projectId, ...observedContentRef.current }, render: { id: projectId, ...snapshot }, live: { id: projectId, nodes: nodesRef.current, connections: connectionsRef.current }, stored: useCanvasStore.getState().openProject(projectId) });
         observedContentRef.current = snapshot;
         const patch = { nodes, connections, chatSessions, activeChatId, appearance: canvasAppearance, backgroundMode, showImageInfo };
         const stored = useCanvasStore.getState().projects.find((project) => project.id === projectId);
@@ -290,7 +304,7 @@ export function useCanvasProjectLifecycle({
         if (stored && Object.entries(patch).every(([key, value]) => JSON.stringify(stored[key as keyof CanvasProject]) === JSON.stringify(value))) return;
         updateProject(projectId, patch);
         if (localMode) scheduleLocalCanvasBackendSync(projectId);
-    }, [activeChatId, backgroundMode, canvasAppearance, chatSessions, connections, historyPausedRef, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
+    }, [activeChatId, backgroundMode, canvasAppearance, chatSessions, connections, historyPausedRef, nodes, observedAtRender, projectId, projectLoaded, showImageInfo, updateProject]);
 
     useEffect(() => {
         if (!projectLoaded || editorProjectIdRef.current !== projectId) return;
@@ -357,6 +371,7 @@ export function useCanvasProjectLifecycle({
         if (!projectLoaded || editorProjectIdRef.current !== projectId) return;
         const snapshot = { nodes: nodesRef.current, connections: connectionsRef.current, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo };
         if (observedContentRef.current && JSON.stringify(observedContentRef.current) !== JSON.stringify(snapshot)) {
+            traceCanvasGraph("editor.explicitSave", { observed: { id: projectId, ...observedContentRef.current }, live: { id: projectId, ...snapshot }, stored: useCanvasStore.getState().openProject(projectId) });
             updateProject(projectId, {
                 nodes: nodesRef.current,
                 connections: connectionsRef.current,

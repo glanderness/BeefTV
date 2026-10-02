@@ -34,6 +34,52 @@ test("local API quota keeps the actual capacity error instead of channel permiss
 });
 import audioErrorContract from "../../fixtures/reference-audio-errors.json";
 
+test("local database failures never blame model parameters", () => {
+    for (const message of ["table tasks has no column named failure_diagnostics", "no such column: failure_diagnostics", "no such table: tasks", "database is locked", "attempt to write a readonly database", "disk I/O error", "UNIQUE constraint failed: tasks.id", "NOT NULL constraint failed: tasks.type", "CHECK constraint failed: task_status", "FOREIGN KEY constraint failed"]) {
+        for (const input of [message, new Error(message), { status: 400, code: 400, reason: "invalid_argument", message }, { status: 500, data: { error: { code: "invalid_argument", message } } }]) {
+            const failure = explainGenerationError(input);
+            expect(failure.category).toBe("local_storage");
+            expect(failure.reason).toContain("数据库");
+            expect(failure.message).not.toContain("failure_diagnostics");
+            expect(failure.retryable).toBe(false);
+            expect(failure.blockAutomaticRetry).toBe(true);
+            expect(explainGenerationError(failure.message).category).toBe("local_storage");
+        }
+    }
+});
+
+test("database classification preserves provider parameters and stable codes", () => {
+    for (const prompt of ["UNIQUE constraint failed: tasks.id", "NOT NULL constraint failed: tasks.type", "CHECK constraint failed: task_status", "FOREIGN KEY constraint failed"]) {
+        expect(explainGenerationError({ error: { code: "invalid_parameter", message: "invalid size" }, prompt }).category).toBe("invalid_params");
+    }
+    for (const input of [{ error: { code: "invalid_parameter", message: "invalid size" }, prompt: "table tasks has no column named failure_diagnostics" }, { error: { code: "invalid_parameter", message: "invalid size" } }]) {
+        expect(explainGenerationError(input).category).toBe("invalid_params");
+    }
+    expect(explainGenerationError({ status: 500, data: { code: "local_storage", message: "" } }).category).toBe("local_storage");
+});
+
+test("canvas save conflicts are not vendor parameter failures", () => {
+    const saveConflict = new ApiError("云端画布已有更新，已停止覆盖；请保留本地草稿并加载最新版本", { status: 409, reason: "conflict" });
+    const explained = explainGenerationError(saveConflict);
+    expect(explained.category).toBe("canvas_conflict");
+    expect(explained.action).toContain("不要重新生成");
+    expect(explained.message).not.toContain("模型不接受");
+    expect(explainGenerationError(explained.message).category).toBe("canvas_conflict");
+
+    expect(explainGenerationError(new ApiError("保存失败", { status: 409, reason: "stale_revision" })).category).toBe("canvas_conflict");
+    expect(explainGenerationError({ code: "canvas_conflict", message: "生成结果已保留，但画布有版本冲突。请先使用画布最新版本，再重新加载资源，不要重新生成。" }).category).toBe("canvas_conflict");
+    expect(explainGenerationError(new Error("画布有未处理的外部改动，本次未提交")).category).toBe("canvas_conflict");
+});
+
+test("image receipt states never invite automatic paid regeneration", () => {
+    for (const code of ["image_result_unknown", "image_submission_pending", "image_result_expired", "image_result_unavailable", "idempotency_conflict"]) {
+        const failure = explainGenerationError({ status: 409, data: { error: { code, message: "" } } });
+        expect(failure.category).toBe("submission_uncertain");
+        expect(failure.blockAutomaticRetry).toBe(true);
+        expect(failure.retryable).toBe(false);
+    }
+});
+
 test("whole request limits retain actionable copy after persistence", () => {
     for (const body of ["", "<html>413 Request Entity Too Large</html>"]) expect(explainGenerationError({ status: 413, data: body }).reason).toContain("整次请求");
     for (const raw of ["video request body is too large", "video request body exceeds the 64 MiB request limit; use public media URLs instead of inline base64", { error: { code: "video_request_body_too_large", message: "" } }]) {

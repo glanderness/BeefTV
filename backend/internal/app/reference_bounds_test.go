@@ -60,7 +60,7 @@ func TestReferenceDurationIndependentBounds(t *testing.T) {
 func TestSeedanceInlineVideoDimensionsOverrideForgedMetadata(t *testing.T) {
 	clip := syntheticVideoMP4(432, 768, 4833)
 	input := canvasGenerationInput{Mode: "video", Prompt: "test", Config: providerConfig{InterfaceType: "newapi-channel-2", Model: "seedance-2.0-mini", VideoSeconds: "5"}, ReferenceVideos: []providerMedia{{DataURL: "data:video/mp4;base64," + base64.StdEncoding.EncodeToString(clip), Width: 1920, Height: 1080, DurationMs: 4833}}}
-	if err := (&Service{}).hydrateVideoReferenceMetadata("user", &input); err != nil {
+	if err := (&Service{}).hydrateVideoReferenceMetadata(context.Background(), "user", &input); err != nil {
 		t.Fatal(err)
 	}
 	if input.ReferenceVideos[0].Width != 432 || input.ReferenceVideos[0].Height != 768 {

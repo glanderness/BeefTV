@@ -202,7 +202,6 @@
 .app-user-workspace .lib-tv-project-page .canvas-collection-actions { top: auto; right: 8px; bottom: 24px; opacity: 0; transition: opacity var(--user-motion); }
 .app-user-workspace .lib-tv-project-page .canvas-collection-actions > *,
 .app-user-workspace .lib-tv-project-page .canvas-collection-actions button { width: 24px; height: 24px; }
-.app-user-workspace .lib-tv-project-page .canvas-collection-select { display: none; }
 .app-user-workspace .lib-tv-project-page .canvas-collection-card:hover .canvas-collection-actions,
 .app-user-workspace .lib-tv-project-page .canvas-collection-card:focus-within .canvas-collection-actions,
 .app-user-workspace .lib-tv-project-page .canvas-collection-actions:has([aria-expanded="true"]) { opacity: 1; }

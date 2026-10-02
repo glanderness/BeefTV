@@ -6,21 +6,33 @@ import (
 	"reflect"
 	"testing"
 
-	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/model"
+	localproject "infinite-canvas/backend/internal/project"
 	localtask "infinite-canvas/backend/internal/task"
 )
 
 type fakePorts struct{}
 
-func (fakePorts) WorkspaceOwner(string) (*model.User, error)        { return &model.User{}, nil }
-func (fakePorts) ListProjects(string) ([]app.ProjectSummary, error) { return nil, nil }
-func (fakePorts) Resources(string, int) ([]model.Resource, error)   { return nil, nil }
+func (fakePorts) WorkspaceOwner(string) (*model.User, error)          { return &model.User{}, nil }
+func (fakePorts) ListProjects(string) ([]localproject.Summary, error) { return nil, nil }
+func (fakePorts) Resources(string, int) ([]model.Resource, error)     { return nil, nil }
 func (fakePorts) UploadLocalResource(string, *multipart.FileHeader, string, int, int, int64, ...string) (*model.Resource, error) {
 	return nil, nil
 }
 
 func (fakePorts) TasksWithOptions(string, localtask.ListOptions) ([]localtask.Summary, error) {
+	return nil, nil
+}
+
+func (fakePorts) CreateTimelineRenderTask(string, localtask.TimelineRenderCreateRequest) (*model.Task, error) {
+	return nil, nil
+}
+
+func (fakePorts) CreateTimelineTranscriptionTask(string, localtask.TimelineTranscriptionCreateRequest) (*model.Task, error) {
+	return nil, nil
+}
+
+func (fakePorts) CreateDepthCaptureTask(string, localtask.DepthCaptureCreateRequest) (*model.Task, error) {
 	return nil, nil
 }
 
@@ -30,6 +42,12 @@ func (fakePorts) SaveLocalModelConfig([]byte) error                             
 func (fakePorts) StartWorker()                                                    {}
 func (fakePorts) StopWorker(context.Context) error                                { return nil }
 func (fakePorts) Close() error                                                    { return nil }
+
+var (
+	_ TaskPort       = fakePorts{}
+	_ GenerationPort = fakePorts{}
+	_ TaskPort       = (*localtask.Service)(nil)
+)
 
 // 旧内置 Agent 的空端口已移除；这里锁定它不会以任何形式回到组合根。
 func TestLocalCompositionRootDoesNotExposeAgentPort(t *testing.T) {

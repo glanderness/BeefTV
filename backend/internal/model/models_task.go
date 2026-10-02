@@ -3,12 +3,15 @@ package model
 import "time"
 
 type Task struct {
-	CreationSubmissionID   *string    `json:"creationSubmissionId,omitempty" gorm:"size:36;uniqueIndex"`
-	ID                     string     `json:"id" gorm:"primaryKey;size:36"`
-	UserID                 string     `json:"userId" gorm:"index;size:36;index:idx_tasks_user_created,priority:1;index:idx_tasks_user_project_created,priority:1"`
-	TraceID                string     `json:"-" gorm:"index;size:96"`
-	RequestID              string     `json:"-" gorm:"index;size:96"`
-	ProjectID              string     `json:"projectId" gorm:"index;size:80;index:idx_tasks_user_project_created,priority:2"`
+	CreationSubmissionID *string `json:"creationSubmissionId,omitempty" gorm:"size:36;uniqueIndex"`
+	ID                   string  `json:"id" gorm:"primaryKey;size:36"`
+	UserID               string  `json:"userId" gorm:"index;size:36;index:idx_tasks_user_created,priority:1;index:idx_tasks_user_project_created,priority:1;uniqueIndex:idx_tasks_user_client_op,priority:1"`
+	TraceID              string  `json:"-" gorm:"index;size:96"`
+	RequestID            string  `json:"-" gorm:"index;size:96"`
+	ProjectID            string  `json:"projectId" gorm:"index;size:80;index:idx_tasks_user_project_created,priority:2"`
+	// ClientOperationID 是一次用户确认的稳定身份。空值不参与去重；同一个用户重复提交同一确认时回读原任务。
+	ClientOperationID      *string    `json:"clientOperationId,omitempty" gorm:"size:128;uniqueIndex:idx_tasks_user_client_op,priority:2"`
+	ClientOperationHash    string     `json:"-" gorm:"size:64"`
 	Type                   string     `json:"type" gorm:"index;size:64"`
 	Status                 TaskStatus `json:"status" gorm:"index;size:24;index:idx_tasks_status_created,priority:1;index:idx_tasks_claim,priority:1;index:idx_tasks_provider_cancel,priority:1"`
 	Stage                  string     `json:"stage" gorm:"size:80"`
@@ -39,6 +42,8 @@ type Task struct {
 	TextDraft                 string                  `json:"textDraft,omitempty" gorm:"type:text"`
 	Error                     string                  `json:"error"`
 	ErrorCode                 string                  `json:"errorCode,omitempty" gorm:"-"`
+	ResultState               string                  `json:"resultState,omitempty" gorm:"-"`
+	Outputs                   []TaskOutput            `json:"outputs,omitempty" gorm:"-"`
 	FailureDiagnostics        *TaskFailureDiagnostics `json:"failureDiagnostics,omitempty" gorm:"serializer:json;type:text"`
 	Attempts                  int                     `json:"attempts"`
 	StartedAt                 *time.Time              `json:"startedAt"`
@@ -138,4 +143,24 @@ type Result struct {
 	URL       string    `json:"url"`
 	Payload   string    `json:"payload" gorm:"type:text"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+// TaskOutput is the public generation product identity. It is projected from
+// durable Result rows and is not a database column.
+type TaskOutput struct {
+	OutputIndex              int               `json:"outputIndex"`
+	MediaType                string            `json:"mediaType"`
+	ProviderArtifactRef      string            `json:"providerArtifactRef,omitempty"`
+	MaterializedAssetID      string            `json:"materializedAssetId,omitempty"`
+	MaterializationErrorCode string            `json:"materializationErrorCode,omitempty"`
+	ResourceID               string            `json:"resourceId,omitempty"`
+	EffectKey                string            `json:"effectKey,omitempty"`
+	TargetBinding            *TaskOutputTarget `json:"targetBinding,omitempty"`
+}
+
+type TaskOutputTarget struct {
+	NodeID         string `json:"nodeId,omitempty"`
+	MessageID      string `json:"messageId,omitempty"`
+	ConversationID string `json:"conversationId,omitempty"`
+	Source         string `json:"source,omitempty"`
 }

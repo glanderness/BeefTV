@@ -24,7 +24,90 @@ tags:
   - name: assets
   - name: admin
   - name: beefapi
+  - name: agent-ops
+  - name: assistant
+  - name: creation-conversations
 paths:
+  /projects/{id}/chapter-apply-receipts:
+    get:
+      tags: [projects]
+      summary: 查询章节生成结果的持久化写入回执
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: taskIds
+          description: 逗号分隔的生成任务 ID，最多 100 个
+          schema: { type: string }
+      responses:
+        "200":
+          description: 信封 data.receipts 含 taskId、op、kind、applied；只返回本项目已提交回执
+        "404":
+          description: 项目不存在或不属于当前用户
+        "500":
+          description: 回执无法读取，不推断结果已应用
+  /creation-conversations:
+    get:
+      tags: [creation-conversations]
+      summary: 列出当前工作区未删除的创作对话
+      description: 返回已提交对话文档与墓碑 ID。IndexedDB 不是提交事实。
+      responses:
+        "200":
+          description: 信封 data 为 conversations 与 deletedIds
+  /creation-conversations/import:
+    post:
+      tags: [creation-conversations]
+      summary: 按稳定操作标识导入本地历史对话
+      description: 仅在没有后端记录或墓碑时导入；同一 operationId 与哈希可重放。
+      responses:
+        "200":
+          description: 信封 data 含 imported 与对话记录
+        "409":
+          description: 同一操作标识对应不同内容
+  /creation-conversations/{id}:
+    get:
+      tags: [creation-conversations]
+      summary: 读取一条未删除的创作对话
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 信封 data 为 revision 与 document
+        "404":
+          description: 不存在或已删除
+    put:
+      tags: [creation-conversations]
+      summary: 按 expectedRevision 提交一条创作对话
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 新 revision
+        "409":
+          description: 版本冲突或墓碑拒绝复活
+    delete:
+      tags: [creation-conversations]
+      summary: 为创作对话写入墓碑
+      description: 不删除关联任务或素材。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: expectedRevision
+          schema: { type: integer }
+      responses:
+        "200":
+          description: 墓碑已写入
   /beefapi/connection:
     get:
       tags: [beefapi]
@@ -61,6 +144,131 @@ paths:
       responses:
         "200":
           description: 已打开
+  /canvas-folders:
+    get:
+      tags: [canvas]
+      summary: 列出当前用户的画布文件夹
+      responses:
+        "200":
+          description: 信封 data.folders 为文件夹列表，封面为资源 ID
+  /canvas-folders/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    put:
+      tags: [canvas]
+      summary: 创建或更新画布文件夹
+      description: 已删除的文件夹 ID 不能重新导入。封面必须是当前用户已就绪的资源。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [folder]
+              properties:
+                folder:
+                  type: object
+                  required: [name]
+                  properties:
+                    id: { type: string }
+                    name: { type: string }
+                    coverResourceId: { type: string }
+      responses:
+        "200":
+          description: 信封 data.folder 为保存后的文件夹
+        "400":
+          description: 名称、ID 或封面资源不合法
+        "409":
+          description: 文件夹已删除，不能用原 ID 重建；本地草稿由前端保留并决定恢复方式
+    delete:
+      tags: [canvas]
+      summary: 删除画布文件夹并清空画布归属
+      description: 删除会递增仍指向该文件夹的画布 revision，并更新画布正文中的 folderId。重复删除已删除的文件夹返回成功。
+      responses:
+        "200":
+          description: 信封 data.id 为已删除的文件夹
+        "404":
+          description: 文件夹不存在或不属于当前用户
+  /canvas-projects/{id}/drawings:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [canvas]
+      summary: 列出画布下的画板摘要（不含快照正文）
+      responses:
+        "200":
+          description: 信封 data.drawings 为画板摘要
+        "404":
+          description: 画布不存在或无权访问
+  /canvas-projects/{id}/drawings/{drawingId}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+      - in: path
+        name: drawingId
+        required: true
+        schema: { type: string }
+    get:
+      tags: [canvas]
+      summary: 读取画板快照与 revision
+      responses:
+        "200":
+          description: 信封 data.drawing 含 snapshot、revision 与预览/成品资源 ID
+        "404":
+          description: 画布或画板不存在
+    put:
+      tags: [canvas]
+      summary: 按 revision 保存画板快照
+      description: 新建传 revision 0，更新传读取到的版本；成功原子加 1。丢失应答后用同一请求重试会回放已提交结果。已删除的画板不能用原 ID 重新导入；前端应保留可恢复草稿并决定恢复方式，不得自动按原 ID 写回。请求体上限为账号画布和素材数据上限加 JSON 信封余量，写入按同一上限核算字节，没有单独的 8MB 画板上限。预览和成品必须是当前用户已就绪的资源 ID。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [drawing]
+              properties:
+                drawing:
+                  type: object
+                  required: [revision]
+                  properties:
+                    drawingId: { type: string }
+                    engine: { type: string }
+                    revision: { type: integer, format: int64, minimum: 0 }
+                    snapshot: { type: object }
+                    previewResourceId: { type: string }
+                    render:
+                      type: object
+                      properties:
+                        resourceId: { type: string }
+      responses:
+        "200":
+          description: 信封 data.drawing 返回递增后的 revision
+        "400":
+          description: 画板、引擎或资源引用不合法，或 JSON 无法解析
+        "403":
+          description: 账号画布和素材数据已达上限
+        "409":
+          description: 版本冲突，或画板已删除不能用原 ID 重新导入；reason 为 conflict 表示 CAS，failed_precondition 表示已删除。已删除时前端保留可恢复草稿，不自动按原 ID 写回
+        "428":
+          description: 缺少 revision
+    delete:
+      tags: [canvas]
+      summary: 删除画板快照
+      description: 删除写入墓碑并释放预览/成品资源引用。重复删除已删除的画板返回成功。
+      responses:
+        "200":
+          description: 信封 data.id 为已删除的画板
+        "404":
+          description: 画布或画板不存在
   /canvas-projects/{id}:
     parameters:
       - in: path
@@ -201,6 +409,140 @@ paths:
           description: 当前版本或素材状态已变化，恢复未执行
         "428":
           description: 缺少当前 revision
+  /ops:
+    get:
+      tags: [agent-ops]
+      summary: 列出调用者身份可用的操作描述（含 JSON Schema）
+      description: |
+        能力模式只由调用者身份决定：已登记客户端的模式来自服务端登记，请求体或查询参数都不能提升权限。
+        只读客户端只会拿到 readOnly 操作；写操作在 /ops/{op} 上仍按登记权限强制拒绝。
+      responses:
+        "200":
+          description: 信封 data.ops 为操作描述数组，data.readOnly 表示本次调用的能力模式
+        "403":
+          description: 非本机同源，或身份不足（缺少已登记客户端凭据与 owner 凭据）
+  /ops/{op}:
+    post:
+      tags: [agent-ops]
+      summary: 执行单个操作（CLI、MCP 与内置 pi 会话共用）
+      description: |
+        写操作必须提供 opId 作为幂等键：同一 opId 同参数回读原结果，不同参数返回冲突。
+        写操作还必须在 params 里带上读取时的 expectedRevision：缺少或已过期都会被拒绝，
+        不会覆盖别人刚写入的内容。字段落点由画布能力描述符声明（例如生成类节点的可编辑
+        提示词落在 metadata.composerContent），操作层不自行拼文档形状。
+      parameters:
+        - name: op
+          in: path
+          required: true
+          schema:
+            type: string
+          description: 操作 ID，例如 canvas.get、canvas.nodes.create、canvas.node.update
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                opId:
+                  type: string
+                  description: 写操作的幂等键；只读操作不接受该字段
+                params:
+                  type: object
+                  description: 操作参数，形状以 GET /ops 返回的 JSON Schema 为准
+      responses:
+        "200":
+          description: 信封 data 为操作结果；data.replayed=true 表示命中了幂等回放
+        "400":
+          description: 参数错误；reason=unsupported_field 表示该节点类型没有这个可编辑字段（整批不写）
+        "409":
+          description: 同一 opId 用于不同请求内容，或 revision 已过期（reason=stale_revision）
+        "412":
+          description: 缺少读取时的 expectedRevision
+        "403":
+          description: 只读客户端尝试写操作（reason=read_only_client），或身份不足
+  /assistant/status:
+    get:
+      tags: [assistant]
+      security: []
+      summary: 内置创作助手宿主状态（免身份、不含凭据）
+      responses:
+        "200":
+          description: 信封 data 为 { available, reason?, url?, health? }；未就绪时给出明确原因
+  /assistant/ui-session:
+    post:
+      tags: [assistant]
+      summary: 签发短期限 UI 会话凭据
+      description: 需本机同源，并出示 owner 凭据（或本机显式的开发引导开关）。
+      responses:
+        "200":
+          description: 信封 data.token 为绑定当前 owner 的短期限凭据，data.expiresAt 为到期时间；只应保存在内存里并在到期前续签
+        "403":
+          description: 非本机同源，或既没有 owner 凭据也没有显式本地引导
+  /assistant/chat:
+    post:
+      tags: [assistant]
+      summary: 流式对话（NDJSON）
+      description: |
+        请求头 X-Beeftv-Ui-Session 由 /assistant/ui-session 签发。响应为 NDJSON：
+        若干 text_delta 增量，最后恰好一条 turn_end 结算（含 reply、toolCalls、error、cancelled）。
+        宿主凭据与模型密钥由后端注入，浏览器不接触。
+        X-Beeftv-Turn-Admission 响应头为 rejected（尚未尝试创建业务轮次）、unknown（已尝试创建）或 admitted（已创建）。
+        只有 rejected 可以确认未接纳；缺少标记、网络故障或接纳后失败仍需读取回执。续签凭据不会重放消息。
+      responses:
+        "200":
+          description: application/x-ndjson 事件流
+        "403":
+          description: 缺少或过期的 UI 会话凭据
+        "503":
+          description: 宿主未配置或不可达（reason=host_token_missing / host_unreachable）
+  /assistant/cancel:
+    post:
+      tags: [assistant]
+      summary: 取消指定画布正在进行的回合
+      description: 需要写权限，并且 canvasId 必须属于当前工作区。只读客户端不能取消。
+      responses:
+        "202":
+          description: 已受理取消
+        "403":
+          description: 只读客户端，或缺少写权限
+        "404":
+          description: 画布不存在或不属于当前工作区，或该画布没有正在进行的会话
+  /assistant/host/config:
+    get:
+      tags: [assistant]
+      summary: 读取宿主配置（需 owner 凭据 + 本机同源）
+      responses:
+        "200":
+          description: 信封 data 为 { config, configured, supervisorRunning }
+        "403":
+          description: 缺少 owner 凭据
+    put:
+      tags: [assistant]
+      summary: 写入宿主配置（当前文本模型与宿主启动命令）
+      description: 只写入本机配置文件；启动命令永远不来自请求体。
+      responses:
+        "200":
+          description: 信封 data.config 为写入后的配置
+        "403":
+          description: 缺少 owner 凭据
+  /assistant/host/start:
+    post:
+      tags: [assistant]
+      summary: 启动内置宿主（需 owner 凭据 + 本机同源）
+      responses:
+        "200":
+          description: 信封 data.pid 为本进程启动的宿主进程号
+        "503":
+          description: 未配置启动命令（reason=host_command_missing）或启动失败
+  /assistant/host/stop:
+    post:
+      tags: [assistant]
+      summary: 停止本进程启动的内置宿主
+      description: 只停止本进程启动过的子进程；应用关闭时会自动执行同样的清理。
+      responses:
+        "200":
+          description: 信封 data.stopped=true
   /openapi.yaml:
     get:
       tags: [meta]
@@ -314,6 +656,50 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+  /timeline/render-plan:
+    post:
+      tags: [tasks]
+      summary: 编译时间线语义渲染计划
+      description: |
+        只读规划：根据时间线快照与不透明源元数据返回版本化语义计划。
+        不排队、不落盘、不计费，不接受 ffmpeg 参数或本地路径。
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+  /timeline/renders:
+    post:
+      tags: [tasks]
+      summary: 创建本机时间线渲染任务
+      description: 接收时间线快照与输出选项（宽高、帧率、采样率、是否烧录字幕）。选项写入任务输入，由本机 ffmpeg 按语义计划执行。可选 clientOperationId：同一确认重复提交回读原任务。
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+  /timeline/transcriptions:
+    post:
+      tags: [tasks]
+      summary: 创建本机字幕转写任务
+      description: 接收待转写素材编号和可选语言。只接受当前用户已上传完成的音视频。可选 clientOperationId：同一确认重复提交回读原任务。
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+  /depth-captures:
+    post:
+      tags: [tasks]
+      summary: 创建本机深度动作捕捉任务
+      description: 接收待处理视频素材编号。只接受当前用户已上传完成的视频。可选 clientOperationId：同一确认重复提交回读原任务。
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
   /tasks:
     post:
       tags: [tasks]
@@ -346,6 +732,26 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/Envelope"
+  /assets/{id}:
+    delete:
+      tags: [assets]
+      summary: 删除无业务引用的素材
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: expectedStatus
+          schema: { type: string, enum: [archived] }
+          description: 清空回收站时传 archived；事务内核对状态，已还原的素材返回 409 并保留。
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          description: 无效的状态条件
+        "409":
+          description: 素材状态已变化或仍有业务引用，未删除
 components:
   parameters:
   securitySchemes:

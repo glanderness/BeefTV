@@ -20,7 +20,7 @@ import { computeSnap } from "@/lib/timeline/timeline-snap";
 import { DEFAULT_AUDIO_TRACK_ID, DEFAULT_VIDEO_TRACK_ID, normalizeTimelineProject } from "@/lib/timeline/timeline-tracks";
 import { formatTimelineTime, getTimelineTrackWidth, getFitTimelineZoom, zoomIn, zoomOut } from "@/lib/timeline/timeline-view";
 import { exportTimelineToMp4 } from "@/lib/timeline/timeline-export";
-import type { TimelineRenderSource } from "@/lib/timeline/timeline-to-ffmpeg";
+import { getVisibleMediaClips, type TimelineRenderSource } from "@/lib/timeline/timeline-to-ffmpeg";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { SrtEntry, TimelineClip, TimelineDirectMedia, TimelineProject } from "@/types/timeline";
 
@@ -95,6 +95,12 @@ export function CanvasTimelineDialog({
     const [snapEnabled, setSnapEnabled] = useState(true);
     const [previewPlaying, setPreviewPlaying] = useState(false);
     const [exporting, setExporting] = useState(false);
+    const [finalizingExport, setFinalizingExport] = useState(false);
+    const exportControllerRef = useRef<AbortController | null>(null);
+    useEffect(() => {
+        if (!open) exportControllerRef.current?.abort();
+        return () => exportControllerRef.current?.abort();
+    }, [open]);
     const [saving, setSaving] = useState(false);
     const [exportPercent, setExportPercent] = useState(0);
     const [exportDetail, setExportDetail] = useState("");
@@ -497,57 +503,76 @@ export function CanvasTimelineDialog({
 
     // 组装导出：把当前草稿按片段顺序合成一个 MP4 Blob（导出下载与生成新片段共用）。
     const runExport = async (): Promise<Blob> => {
-        const videoClips = draft.clips.filter((clip) => clip.kind === "video");
-        if (!videoClips.length) throw new Error("时间线没有视频片段，无法导出");
+        if (exportControllerRef.current) throw new Error("正在导出，请等待当前操作完成");
+        const mediaClips = getVisibleMediaClips(draft);
+        if (!mediaClips.length) throw new Error("时间线没有可渲染的媒体片段");
         const sources: TimelineRenderSource[] = [];
-        for (const clip of videoClips) {
+        for (const clip of mediaClips) {
             const sourceNode = nodes.find((item) => item.id === clip.nodeId);
             const media = clip.directMedia;
-            if (!sourceNode && !media) continue;
+            if (sources.some((source) => source.nodeId === clip.nodeId)) continue;
+            if (!sourceNode && !media) throw new Error("找不到素材：" + (clip.title || clip.nodeId));
             sources.push({
                 nodeId: clip.nodeId,
                 fileName: "input-" + sources.length + ".mp4",
                 durationMs: clip.sourceDurationMs || clip.durationMs,
-                storageKey: sourceNode?.metadata?.storageKey || media?.storageKey,
-                url: sourceNode?.metadata?.content || media?.url || undefined,
+                storageKey: media ? media.storageKey : sourceNode?.metadata?.storageKey,
+                url: media ? media.url || media.dataUrl || media.content : sourceNode?.metadata?.content || undefined,
             });
         }
-        if (!sources.length) throw new Error("找不到可导出的视频素材，请确认视频节点包含媒体");
+        if (!sources.length) throw new Error("找不到素材");
         setExporting(true);
+        const controller = new AbortController();
+        exportControllerRef.current = controller;
         setExportPercent(0);
         setExportDetail("准备导出");
         try {
             return await exportTimelineToMp4(normalizeTimelineProject(draft), sources, {
+                signal: controller.signal,
                 onProgress: ({ percent, detail }) => {
                     setExportPercent(percent);
                     setExportDetail(detail);
                 },
             });
         } finally {
-            setExporting(false);
-            setExportPercent(0);
-            setExportDetail("");
+            if (controller.signal.aborted) throw new DOMException("导出已取消", "AbortError");
         }
     };
 
+    const finishExport = () => {
+        exportControllerRef.current = null;
+        setExporting(false);
+        setFinalizingExport(false);
+        setExportPercent(0);
+        setExportDetail("");
+    };
+
     const handleExport = async () => {
+        if (exportControllerRef.current) return;
         try {
             const blob = await runExport();
             saveAs(blob, (node.title || "成片") + ".mp4");
             message.success("成片导出完成");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "导出失败");
+            if (!(error instanceof DOMException && error.name === "AbortError")) message.error(error instanceof Error ? error.message : "导出失败");
+        } finally {
+            finishExport();
         }
     };
 
     // 组装能力闭环：合成结果不落地下载，而是作为新视频节点放回画布，可继续编辑字幕与样式。
     const handleCreateAssembledNode = async () => {
+        if (exportControllerRef.current) return;
         try {
             const blob = await runExport();
+            setFinalizingExport(true);
+            setExportDetail("正在保存新片段");
             const created = await onCreateAssembledNode(blob, (node.title || "成片") + "-新片段");
             if (created) message.success("已生成新视频片段并放到画布，可继续编辑字幕与样式");
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "生成新片段失败");
+            if (!(error instanceof DOMException && error.name === "AbortError")) message.error(error instanceof Error ? error.message : "生成新片段失败");
+        } finally {
+            finishExport();
         }
     };
 
@@ -658,7 +683,10 @@ export function CanvasTimelineDialog({
             width="min(1160px, calc(100vw - 24px))"
             destroyOnHidden
             onCancel={() => {
-                if (!saving) onClose();
+                if (!saving && !finalizingExport) {
+                    exportControllerRef.current?.abort();
+                    onClose();
+                }
             }}
             afterOpenChange={(visible) => {
                 if (visible) ensureToolbarObserved();
@@ -843,6 +871,7 @@ export function CanvasTimelineDialog({
                 {exporting ? (
                     <div className="border-t px-4 py-2" style={{ borderColor: theme.toolbar.border, background: theme.toolbar.panel }}>
                         <Progress percent={exportPercent} size="small" format={() => exportDetail} />
+                        <Button size="small" disabled={finalizingExport} onClick={() => exportControllerRef.current?.abort()}>取消导出</Button>
                     </div>
                 ) : null}
 

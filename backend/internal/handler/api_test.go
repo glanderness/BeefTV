@@ -21,10 +21,11 @@ func TestRegisterCanvasAPIExposesOpenAPIAndProjects(t *testing.T) {
 	RegisterCanvasAPI(router.Group("/api"), &app.Service{})
 
 	wanted := map[string]bool{
-		"GET /api/openapi.yaml": false,
-		"GET /api/projects":     false,
-		"POST /api/tasks":       false,
-		"GET /api/resources":    false,
+		"GET /api/openapi.yaml":          false,
+		"GET /api/projects":              false,
+		"POST /api/tasks":                false,
+		"POST /api/timeline/render-plan": false,
+		"GET /api/resources":             false,
 	}
 	for _, route := range router.Routes() {
 		key := route.Method + " " + route.Path
@@ -65,13 +66,18 @@ func TestRegisterDesktopCanvasAPIExcludesHostedOnlyRoutes(t *testing.T) {
 	}
 
 	wanted := map[string]bool{
-		"GET /api/workspace/bootstrap":                  false,
-		"POST /api/resources":                           false,
-		"POST /api/tasks":                               false,
-		"POST /api/ai/models":                           false,
-		"GET /api/beefapi/connection":                   false,
-		"POST /api/beefapi/connection/start":            false,
-		"PUT /api/canvas-projects/:id/generated-assets": false,
+		"GET /api/workspace/bootstrap":                     false,
+		"POST /api/resources":                              false,
+		"POST /api/tasks":                                  false,
+		"POST /api/ai/models":                              false,
+		"GET /api/beefapi/connection":                      false,
+		"POST /api/beefapi/connection/start":               false,
+		"PUT /api/canvas-projects/:id/generated-assets":    false,
+		"GET /api/creation-conversations":                  false,
+		"PUT /api/creation-conversations/:id":              false,
+		"GET /api/canvas-folders":                          false,
+		"PUT /api/canvas-folders/:id":                      false,
+		"PUT /api/canvas-projects/:id/drawings/:drawingId": false,
 	}
 	for _, route := range router.Routes() {
 		key := route.Method + " " + route.Path
@@ -140,6 +146,34 @@ func TestRegisterDesktopCanvasAPIExcludesHostedOnlyRoutes(t *testing.T) {
 				t.Fatalf("desktop API must not expose hosted route %s %s", route.Method, route.Path)
 			}
 		}
+	}
+}
+
+func TestRegisterCanvasAPIOmitsLegacyNodeMutationRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for name, register := range map[string]func(*gin.RouterGroup, *app.Service){
+		"canvas":  RegisterCanvasAPI,
+		"desktop": RegisterDesktopCanvasAPI,
+	} {
+		t.Run(name, func(t *testing.T) {
+			router := gin.New()
+			register(router.Group("/api"), &app.Service{})
+			keptGeneratedAssets := false
+			for _, route := range router.Routes() {
+				key := route.Method + " " + route.Path
+				switch key {
+				case "DELETE /api/canvas-projects/:id/nodes/:nodeId",
+					"PATCH /api/canvas-projects/:id/nodes/:nodeId",
+					"POST /api/canvas-projects/:id/connections":
+					t.Fatalf("%s still registers retired node mutation route %s", name, key)
+				case "PUT /api/canvas-projects/:id/generated-assets":
+					keptGeneratedAssets = true
+				}
+			}
+			if !keptGeneratedAssets {
+				t.Fatalf("%s dropped PUT /api/canvas-projects/:id/generated-assets", name)
+			}
+		})
 	}
 }
 

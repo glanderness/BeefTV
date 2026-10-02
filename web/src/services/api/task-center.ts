@@ -1,5 +1,6 @@
 import { generationErrorMessage } from "@/lib/generation-error";
-import { http, apiBaseURL, type BackendEnvelope } from "@/services/api/request";
+import { assertUserScope, isUserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
+import { http, apiBaseURL, type BackendEnvelope, type HttpRequestConfig } from "@/services/api/request";
 import { consumeTaskTextStream, createTaskTextStreamParser, type TaskTextStreamEvent } from "@/services/api/task-text-stream";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
 
@@ -122,8 +123,8 @@ export type CreateTaskInput = {
 	logicalModelId?: string;
     input?: Record<string, unknown>;
 };
-export function createGenerationTask(input: CreateTaskInput) {
-    return http.post<GenerationTask>("/tasks", input).then((task) => {
+export function createGenerationTask(input: CreateTaskInput, config?: HttpRequestConfig) {
+    return http.post<GenerationTask>("/tasks", input, config).then((task) => {
         recordDiagnosticEvent({ level: "info", category: "task", message: "任务已创建", taskId: task.id, projectId: task.projectId });
         notifyCanvasTaskCreated(task);
         return task;
@@ -199,8 +200,8 @@ async function collectGenerationTaskPages<T>(readPage: (request: GenerationTaskP
     return items.slice(0, limit);
 }
 
-export function queryGenerationTask(id: string, options?: { signal?: AbortSignal }) {
-    return http.get<GenerationTask>(`/tasks/${encodeURIComponent(id)}`, { signal: options?.signal });
+export function queryGenerationTask(id: string, options?: { signal?: AbortSignal; expectedScope?: CapturedUserScope }) {
+    return http.get<GenerationTask>(`/tasks/${encodeURIComponent(id)}`, { signal: options?.signal, expectedScope: options?.expectedScope });
 }
 
 type GenerationTaskSubscriptionDependencies = {
@@ -375,6 +376,7 @@ export type WaitForGenerationTaskOptions = {
     onTaskUpdate?: (task: GenerationTask) => void;
     onTextDelta?: (text: string) => void;
     useTextEvents?: boolean;
+    expectedScope?: CapturedUserScope;
 };
 
 export function shouldUseTaskTextEvents(options?: Pick<WaitForGenerationTaskOptions, "onTextDelta" | "useTextEvents">) {
@@ -393,12 +395,14 @@ export async function waitForGenerationTask(id: string, options?: WaitForGenerat
             if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
             let task: GenerationTask;
             try {
-                task = await queryGenerationTask(id, { signal: options?.signal });
+                task = await queryGenerationTask(id, { signal: options?.signal, expectedScope: options?.expectedScope });
+                if (options?.expectedScope) assertUserScope(options.expectedScope);
                 lastTask = task;
                 lastQueryError = undefined;
                 consecutiveFailures = 0;
                 options?.onTaskUpdate?.(task);
             } catch (error) {
+                if (isUserScopeAbandonedError(error)) throw error;
                 lastQueryError = error;
                 consecutiveFailures += 1;
                 // 连续失败说明查询通道已不可用，继续轮询只会空转到整体超时；
@@ -436,12 +440,14 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
     let fullText = lastTask?.textDraft || "";
     let lastStreamError: unknown;
     if (!lastTask) {
-        lastTask = await queryGenerationTask(id, { signal: options.signal });
+        lastTask = await queryGenerationTask(id, { signal: options.signal, expectedScope: options.expectedScope });
+        if (options.expectedScope) assertUserScope(options.expectedScope);
         options.onTaskUpdate?.(lastTask);
     }
     const timeoutMs = options.timeoutMs || taskWaitTimeoutMs(lastTask);
     while (Date.now() - startedAt < timeoutMs) {
         if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        if (options.expectedScope) assertUserScope(options.expectedScope);
         let terminalReceived = false;
         try {
             const base = String(apiBaseURL).replace(/\/+$/, "");
@@ -461,6 +467,7 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             const decoder = new TextDecoder();
             const parser = createTaskTextStreamParser();
             const onEvent = (event: TaskTextStreamEvent) => {
+                if (options.expectedScope) assertUserScope(options.expectedScope);
                 const payload = asTaskTextStreamRecord(event.data);
                 if (event.event === "delta") {
                     const sequence = numberValue(payload.sequence) || event.id || 0;
@@ -497,14 +504,21 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
                 }
                 if (event.event === "error") throw new Error(typeof payload.message === "string" ? payload.message : "任务文本流不可用");
             };
-            for (;;) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                consumeTaskTextStream(parser, decoder.decode(value, { stream: true }), onEvent);
+            try {
+                for (;;) {
+                    const { done, value } = await reader.read();
+                    if (options.expectedScope) assertUserScope(options.expectedScope);
+                    if (done) break;
+                    consumeTaskTextStream(parser, decoder.decode(value, { stream: true }), onEvent);
+                }
+                consumeTaskTextStream(parser, decoder.decode(), onEvent, true);
+            } finally {
+                await reader.cancel().catch(() => undefined);
+                reader.releaseLock();
             }
-            consumeTaskTextStream(parser, decoder.decode(), onEvent, true);
             if (terminalReceived) {
-                const completed = await queryGenerationTask(id, { signal: options.signal });
+                const completed = await queryGenerationTask(id, { signal: options.signal, expectedScope: options.expectedScope });
+                if (options.expectedScope) assertUserScope(options.expectedScope);
                 options.onTaskUpdate?.(completed);
                 if (completed.status === "succeeded") return completed;
                 if (completed.status === "failed" || completed.status === "cancelled") {
@@ -514,6 +528,7 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             lastStreamError = new Error("任务文本流连接提前结束");
         } catch (error) {
             if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+            if (isUserScopeAbandonedError(error)) throw error;
             if (error instanceof TaskTextStreamFatalError) throw error;
             lastStreamError = error;
         }

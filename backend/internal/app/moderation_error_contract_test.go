@@ -22,7 +22,7 @@ func TestModerationFailurePersistsThroughTaskOutput(t *testing.T) {
 			svc, db := newTimelineTaskTestService(t)
 			task := seedRunningTimelineTask(t, db, `{}`)
 			raw, _ := json.Marshal(map[string]any{"error": map[string]string{"code": fixture.Code, "message": fixture.Message + " Request id: req_moderation_123"}})
-			upstreamErr := providerPayloadError{raw: string(raw), message: providerPayloadErrorMessage(string(raw))}
+			upstreamErr := newProviderPayloadError(string(raw))
 			_ = svc.terminalCoordinator().handleExecutionFailure(task, upstreamErr, false, false)
 			var stored model.Task
 			if err := db.First(&stored, "id = ?", task.ID).Error; err != nil {

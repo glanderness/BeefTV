@@ -3,6 +3,7 @@ package task
 import (
 	"time"
 
+	"infinite-canvas/backend/internal/editing"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -20,7 +21,75 @@ type CreateRequest struct {
 	Input          map[string]any `json:"input"`
 	TraceID        string         `json:"-"`
 	RequestID      string         `json:"-"`
+	// AdmissionID is a trusted internal identity. Transports cannot set it
+	// through public JSON; only in-process callers may populate it.
+	AdmissionID string `json:"-"`
+	// PrepareOnly builds the admitted row without persisting it. Creation
+	// quoting uses this so a quote cannot become an accepted generation.
+	PrepareOnly bool `json:"-"`
 }
+
+// TimelineTranscriptionCreateRequest is the HTTP/local-port command for a
+// whisper.cpp transcription task. ClientOperationID is optional.
+type TimelineTranscriptionCreateRequest struct {
+	ResourceID        string `json:"resourceId"`
+	Language          string `json:"language"`
+	ProjectID         string `json:"projectId"`
+	ClientOperationID string `json:"clientOperationId"`
+	TraceID           string `json:"-"`
+	RequestID         string `json:"-"`
+}
+
+// TimelineRenderCreateRequest is the HTTP/local-port command for a native
+// ffmpeg render task. ClientOperationID is optional.
+type TimelineRenderCreateRequest struct {
+	ProjectID         string          `json:"projectId"`
+	Timeline          editing.Project `json:"timeline"`
+	Options           editing.Options `json:"options"`
+	ClientOperationID string          `json:"clientOperationId"`
+	TraceID           string          `json:"-"`
+	RequestID         string          `json:"-"`
+}
+
+// DepthCaptureCreateRequest is the HTTP/local-port command for local depth
+// capture. ClientOperationID is optional.
+type DepthCaptureCreateRequest struct {
+	ProjectID         string `json:"projectId"`
+	ResourceID        string `json:"resourceId"`
+	ClientOperationID string `json:"clientOperationId"`
+	TraceID           string `json:"-"`
+	RequestID         string `json:"-"`
+}
+
+// TimelineRenderInput is the durable local-executor payload for render tasks.
+type TimelineRenderInput struct {
+	ProjectID string          `json:"projectId"`
+	Timeline  editing.Project `json:"timeline"`
+	Options   editing.Options `json:"options"`
+}
+
+// TimelineTranscriptionInput is the durable local-executor payload for
+// transcription tasks.
+type TimelineTranscriptionInput struct {
+	ResourceID string `json:"resourceId"`
+	Language   string `json:"language"`
+}
+
+const (
+	LocalExecutorRenderPrompt              = "时间线渲染"
+	LocalExecutorRenderProvider            = "local"
+	LocalExecutorRenderModel               = "ffmpeg"
+	LocalExecutorTranscriptionPrompt       = "字幕转写"
+	LocalExecutorTranscriptionProvider     = "local"
+	LocalExecutorTranscriptionModel        = "whisper.cpp"
+	LocalExecutorQueuedStage               = "等待队列调度"
+	TimelineTranscriptionFeature           = "timelineTranscription"
+	NeedTranscribableMediaMessage          = "必须指定待转写媒体"
+	MissingTranscribableMediaMessage       = "无法读取待转写媒体，可能已被删除"
+	OnlyAudioVideoTranscriptionMessage     = "仅支持音视频文件转写"
+	NoRenderableMediaMessage               = "时间线没有可渲染的媒体片段"
+	UnsupportedLocalExecutorTypeMessageFmt = "不支持的本地执行任务类型：%s"
+)
 
 type ListOptions struct {
 	Limit      int
@@ -59,6 +128,8 @@ type Summary struct {
 	CreatedAt                 time.Time                     `json:"createdAt"`
 	UpdatedAt                 time.Time                     `json:"updatedAt"`
 	ClientContext             *ClientContext                `json:"clientContext,omitempty"`
+	ResultState               string                        `json:"resultState,omitempty"`
+	Outputs                   []CanonicalOutput             `json:"outputs,omitempty"`
 }
 
 type ClientContext struct {

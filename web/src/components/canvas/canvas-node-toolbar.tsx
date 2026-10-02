@@ -343,7 +343,10 @@ export function CanvasNodeToolbar({
     const utilityTools = inGroup("utility");
     const imageSettingsTools = isImage ? allTools.filter((tool) => tool.id === "replace" || tool.id === "resize" || tool.id === "node-lock") : [];
     const processMenuLabel = compact ? "工具" : isVideo ? "提取素材" : isImage ? "图片工具" : isAudio ? "音频处理" : "文本调整";
-    const videoProcessingTools = registryToolbarTools.filter((tool) => tool.id === "trimRegenerate" || tool.id === "cropVideo" || tool.id === "depthCapture");
+    const videoProcessingTools = [
+        ...registryToolbarTools.filter((tool) => tool.id === "trimRegenerate" || tool.id === "cropVideo" || tool.id === "depthCapture"),
+        ...(narrow ? inGroup("workspace") : []),
+    ];
     const videoAudioTool = registryToolbarTools.find((tool) => tool.id === "extractAudio");
     const videoKeyframeTool = registryToolbarTools.find((tool) => tool.id === "extractFrames");
     const videoKeyframeTools: ToolbarTool[] = videoKeyframeTool
@@ -400,6 +403,9 @@ export function CanvasNodeToolbar({
                         {videoKeyframeTools.length ? (
                             <NodeDockMenuButton menuId="video-keyframes" label="关键帧截取" icon={<Images className="size-3.5" />} tools={videoKeyframeTools} openMenuId={openMenuId} onOpenChange={handleMenuOpenChange} placement="bottomLeft" />
                         ) : null}
+                        {workspaceTools.map((tool) => (
+                            <NodeDockToolButton key={tool.id} tool={tool} />
+                        ))}
                         {videoGlobalTools.length ? <span aria-hidden className="aceternity-dock-separator mx-1 h-5 w-px shrink-0" /> : null}
                         {videoGlobalTools.map((tool) => (
                             <NodeDockToolButton key={tool.id} tool={tool} iconOnly />

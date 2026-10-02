@@ -1,12 +1,13 @@
 import { expect, spyOn, test } from "bun:test";
 import localforage from "localforage";
 import { applyUserSession } from "../src/lib/user-session";
-import { getActiveUserScope } from "../src/lib/user-scope";
+import { getActiveUserScope, setActiveUserScope } from "../src/lib/user-scope";
 import { generateDirectorPanorama } from "../src/lib/canvas/director/director-panorama-generation";
 import { defaultConfig } from "../src/stores/use-config-store";
 import type { GenerationTask } from "../src/services/api/task-center";
 
 test("workspace hydration aborts and drains a panorama materializer before switching stores", async () => {
+    const previousScope = getActiveUserScope();
     const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
     const values = new Map([["infinite-canvas:active-user-scope", "owner-a"]]);
     Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: {
@@ -14,6 +15,7 @@ test("workspace hydration aborts and drains a panorama materializer before switc
         setItem: (key: string, value: string) => { values.set(key, value); },
         removeItem: (key: string) => { values.delete(key); },
     } } });
+    setActiveUserScope("owner-a");
     const get = spyOn(localforage, "getItem").mockResolvedValue(null);
     const set = spyOn(localforage, "setItem").mockImplementation(async (_key, value) => value);
     let release!: () => void;
@@ -58,5 +60,6 @@ test("workspace hydration aborts and drains a panorama materializer before switc
         get.mockRestore(); set.mockRestore();
         if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
         else Reflect.deleteProperty(globalThis, "window");
+        setActiveUserScope(previousScope);
     }
 });

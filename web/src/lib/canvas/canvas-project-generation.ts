@@ -36,6 +36,7 @@ export async function runBackendCanvasGenerationTask(
         clientOperationId,
         retryOf,
         attemptGroupId,
+        expectedScope,
     }: {
         projectId: string;
         nodeId: string;
@@ -52,6 +53,7 @@ export async function runBackendCanvasGenerationTask(
         clientOperationId?: string;
         retryOf?: string;
         attemptGroupId?: string;
+        expectedScope?: import("@/lib/user-scope-guard").CapturedUserScope;
     },
     dependencies?: GenerationTaskDependencies,
 ) {
@@ -72,6 +74,7 @@ export async function runBackendCanvasGenerationTask(
             clientOperationId,
             retryOf,
             attemptGroupId,
+            expectedScope,
         },
         dependencies,
     );

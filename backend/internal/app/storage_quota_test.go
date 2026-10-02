@@ -24,6 +24,20 @@ func TestValidateStructuredStorageQuotaRejectsBytesAndCounts(t *testing.T) {
 	}
 }
 
+func TestValidateStructuredCountQuotaRejectsBatchOverAssetLimit(t *testing.T) {
+	policy := defaultRuntimePolicy().Resource
+	policy.AssetCount = 2
+	usage := repository.UserStorageUsage{AssetCount: 1}
+	if err := validateStructuredCountQuotaWithPolicy(usage, "asset", 1, 0, policy); err != nil {
+		t.Fatalf("single create within limit = %v", err)
+	}
+	err := validateStructuredCountQuotaWithPolicy(usage, "asset", 2, 0, policy)
+	var quota *AppError
+	if err == nil || !errors.As(err, &quota) || quota.Code != CodeQuotaExceeded {
+		t.Fatalf("batch create error = %v", err)
+	}
+}
+
 func TestValidateStructuredStorageQuotaAllowsReplacementThatShrinksData(t *testing.T) {
 	policy := defaultRuntimePolicy().Resource
 	usage := repository.UserStorageUsage{AssetBytes: megabytes(policy.StructuredDataMB), AssetCount: policy.AssetCount}

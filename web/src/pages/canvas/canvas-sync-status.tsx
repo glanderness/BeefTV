@@ -1,19 +1,25 @@
 import { App, Button, Dropdown, Popover } from "antd";
-import { CheckCircle2, CloudCheck, CloudOff, LoaderCircle } from "lucide-react";
-import { useState } from "react";
+import { CheckCircle2, CloudCheck, CloudOff, LoaderCircle, RefreshCw } from "lucide-react";
+import { useState, useSyncExternalStore } from "react";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { readAllCanvasSyncDrafts, readCanvasSyncDrafts, type CanvasSyncDraft } from "@/services/canvas-sync-drafts";
 import { getActiveUserScope } from "@/lib/user-scope";
-import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
+import { acceptExternalCanvasRevision, pendingExternalCanvasRevision } from "@/services/local-workspace-repository";
+import { canvasExternalRevisionVersion, subscribeCanvasExternalRevision, useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { canvasSyncProgressKey, useSyncProgressStore } from "@/stores/use-sync-progress-store";
 import { workspaceCapabilities } from "@/services/workspace-mode";
 
 export function CanvasSyncStatus({ projectId, onLoadLatest, onOpenVersions }: { projectId: string; onLoadLatest: () => Promise<void>; onOpenVersions?: () => void }) {
     const { message } = App.useApp();
-    const progress = useSyncProgressStore((state) => state.syncingProjects[projectId]);
+    const progress = useSyncProgressStore((state) => state.syncingProjects[canvasSyncProgressKey(projectId)]);
     const localOnly = workspaceCapabilities().local;
     const [busy, setBusy] = useState(false);
     const [statusOpen, setStatusOpen] = useState(false);
+    // 外部改动被本地编辑挡住时必须在顶栏一直看得见：它以前藏在侧边面板里，
+    // 面板关着的时候用户根本不知道画布已经在别处变了。
+    const externalRevision = useSyncExternalStore(subscribeCanvasExternalRevision, canvasExternalRevisionVersion);
+    const externalConflict = pendingExternalCanvasRevision(projectId);
+    const [adopting, setAdopting] = useState(false);
     const phase = progress?.phase;
     const conflict = phase === "conflict";
     const failed = phase === "error" || conflict || !phase;
@@ -32,6 +38,25 @@ export function CanvasSyncStatus({ projectId, onLoadLatest, onOpenVersions }: { 
 
     return (
         <>
+            {externalConflict ? (
+                <Button
+                    size="small"
+                    type="text"
+                    data-canvas-external-revision={externalRevision}
+                    className="canvas-sync-external-notice"
+                    loading={adopting}
+                    aria-label="画布已在别处更新，使用最新版本"
+                    icon={<RefreshCw className="size-3.5" />}
+                    onClick={() => {
+                        setAdopting(true);
+                        void acceptExternalCanvasRevision(projectId)
+                            .catch(() => message.error("加载最新版本失败，请重试"))
+                            .finally(() => setAdopting(false));
+                    }}
+                >
+                    <span className="canvas-sync-status-label text-xs">画布已在别处更新 · 使用最新版本</span>
+                </Button>
+            ) : null}
             <Popover
                 trigger="click"
                 placement="bottom"

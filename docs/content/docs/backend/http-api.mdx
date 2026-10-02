@@ -13,7 +13,15 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 - 写入接口限制 body 大小并校验资源归属；不信任前端提供的文件路径、模型能力或 provider 状态。
 - 外部模型密钥由本地 provider config 管理，不在 API 日志或任务列表中返回。
 
+`POST /assistant/ui-session` 返回仅驻留内存、绑定当前 owner 的 `token` 与 `expiresAt`。界面在到期前 30 秒重新签发凭据，同一身份的并发请求共用签发结果；重置或切换身份后旧响应不能恢复旧凭据。签发仍要求原有本机同源与 owner/桌面引导校验。
+
+`POST /assistant/chat` 的响应头 `X-Beeftv-Turn-Admission` 区分 `rejected`（尚未调用业务轮次入口）、`unknown`（已经尝试开始轮次）与 `admitted`（已创建轮次）。仅明确的 `rejected` 或尚未发送消息的签发失败可按未接纳处理；缺少标记、网络错误或接纳后的断流仍需读取回执与画布确认。凭据续签和 403 失效处理都不会自动重放消息。
+
 ## 核心路由组
+
+`canvas.generation.propose` 是只读操作，返回的 `source` 包含 `canvasId`、`canvasRevision`、`modelConfigRevision`；模型键与配置版本来自同一次配置读取。提案不创建生成任务。
+
+首次确认同时核对这两个持久版本、未保存的编辑和确认期间的变化。旧历史中没有 `source` 的提案需要重新提出。通过核对后，生成沿用已有模型解析规则，并使用确认时复制的提示词、节点、连线和全局参数。此版本合同不包含素材库独立更新、hydrate 时解析的动态角色版本或任意远端 URL 的内容字节变化。
 
 | 路由组 | 用途 |
 | --- | --- |
@@ -21,18 +29,100 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 | `/beefapi/connection*` | 内置 BeefAPI 企业连接：开始、状态、取消、断开；页面只收到账号和状态，收不到密钥 |
 | `/canvas-projects/*`, `/projects/*` | 画布、项目、章节、分镜与快照 |
 | `/resources/*` | 本地素材、分片上传和媒体读取 |
+| `/timeline/render-plan` | 只读编译时间线语义渲染计划：不排队、不落盘、不计费 |
+| `/timeline/renders`、`/timeline/transcriptions` | 本机时间线成片任务与字幕转写任务 |
+| `/depth-captures` | 本机深度动作捕捉任务 |
 | `/tasks/*` | 生成任务创建、查询、取消、恢复与事件流 |
 | `/ai/*` | 外部模型目录和自定义协议转发 |
 | `/plugins/*`, `/skills/*` | 本地扩展包与技能 |
+| `/creation-conversations/*` | `/create` 页面对话的提交事实：按对话 CAS 读写、导入与墓碑删除 |
+| `/ops`, `/ops/:op` | 统一操作层：CLI、MCP 与内置 pi 会话共用同一组操作与校验 |
+| `/ops/clients*`, `/assistant/*` | 外部客户端登记、内置创作助手（同源代理）与宿主生命周期 |
 | `/health/*`, `/system/version` | 启动、就绪与版本诊断 |
 
+`POST /timeline/render-plan` 接收时间线快照、不透明源标识和输出选项，返回版本化语义计划。源标识是 nodeId 或 resource id，不是本地路径。请求不得携带 ffmpeg 参数。该接口不做生成、不写资源、不创建任务。
+
+`POST /timeline/renders` 接收同一套时间线快照和输出选项（宽高、帧率、采样率、是否烧录字幕），创建本机 ffmpeg 成片任务。选项进入任务输入并在执行时编译进语义计划。
+
+`POST /timeline/transcriptions` 接收待转写素材编号和可选语言，创建本机字幕转写任务。只接受当前用户已上传完成的音视频。
+
+`POST /depth-captures` 接收待处理视频素材编号，创建本机深度动作捕捉任务。只接受当前用户已上传完成的视频。
+
+这些任务在本机完成，提交时不用挑选模型。请求可以带 `clientOperationId`：同一确认重复提交会回到原来的任务；同一确认换成不同内容会被拒绝，不会再新建一条。
+
+## 统一操作层与内置创作助手
+
+`DELETE /assets/:id` 校验素材归属及业务引用。清空回收站时传 `expectedStatus=archived`，在删除事务内再次检查状态；期间已经还原的素材返回 409 并保留。该参数只接受 `archived`，其他值返回 400。省略参数保留普通删除语义，仍须通过引用检查。
+
+`GET /ops` 返回调用者当前身份可用的操作描述（含 JSON Schema）；`POST /ops/:op` 执行单个操作。
+写操作必须带 `opId` 作为幂等键（同一 `opId` 同参数回读原结果，不同参数返回冲突），并按操作声明的
+`expectedRevision` 做原子 CAS：缺少读取时的 revision、或 revision 已过期，都会被拒绝，不会覆盖别人刚写入的内容。
+字段落点由画布能力描述符声明（例如生成类节点的可编辑提示词落在 `metadata.composerContent`，也就是画布编辑器
+读取的字段），操作层不自行拼文档形状。
+
+参数解析在所有层上都严格：顶层以及 `patch`、`nodes` 等嵌套对象出现未知字段时整批拒绝（`unknown_field`），
+不会部分执行却推进 revision。schema 声明的 `params.operationId` 与请求信封的 `opId` 同时出现而又不一致时返回
+`operation_id_conflict`，不会自行挑选其中一个身份。外部 MCP/CLI 的能力描述保留 `operationId` 作为稳定幂等键；
+内置助手宿主自己生成幂等键，因此它看到的能力描述不含该字段。
+
+### 助手回合归属
+
+内置助手宿主调用 `/ops/:op` 时出示自己的宿主凭据 `X-Beeftv-Agent-Token`（由后端注入宿主进程，页面与
+外部客户端拿不到），并带上后端在 `/assistant/chat` 中签发、随转发体下发的 `X-Beeftv-Agent-Turn`。
+后端按该回合记录读取这一轮被验证过的范围，而不是信任任何调用方自报的列表：
+
+- 会话默认范围是当前画布，加上当前画布文档里真实关联的素材与生成任务（沿用画布既有的媒体引用解析）。
+- 界面上明确 @ 引用或附加的素材、画布在对话入口逐项校验归属后写入回合记录；额外画布只读。
+- 跨画布写、读取与当前画布无关的素材/任务都返回 `scope_denied`；工作区级列举（`asset.list`、`canvas.search`）不暴露给助手。
+- 已登记读写客户端与 owner 直连保持原有工作区读写能力；它们即使拿到 `turnId` 也不能出示归属，带上回合头会被拒绝。
+- 回合只在开启期间接受归属；结算或撤销之后不再接受新写入，模型侧也无法自己生成授权。
+
+内置创作助手的浏览器侧只使用同源代理：
+
+| 端点 | 说明 |
+| --- | --- |
+| `GET /assistant/status` | 免身份的宿主状态查询（不含任何凭据）；未就绪时返回明确原因而不是空回复 |
+| `POST /assistant/ui-session` | 签发短期限 UI 会话凭据；需本机同源，并且能出示 owner 凭据（或显式本地引导开关） |
+| `POST /assistant/chat` | NDJSON 流式对话：`text_delta` 增量 + 一次 `turn_end` 结算；可带 `references: [{kind,id}]` 追加已校验的素材/画布引用；宿主凭据与模型密钥由后端注入，页面不接触 |
+| `POST /assistant/cancel` | 取消指定画布正在进行的回合 |
+| `GET/PUT /assistant/host/config`、`POST /assistant/host/start|stop` | 宿主生命周期：需 owner 凭据 + 本机同源；启动命令只取本机配置，绝不接受请求体传入的可执行命令 |
+
+按轮撤销不依赖浏览器流或宿主的最后一条消息：轮前文档由后端在转发前落盘，变更摘要由该轮自己的写入回执重建，
+因此浏览器断流（没有 `turn_end`）、用户取消或后端在回合中途重启之后，已经落地的助手写入仍然可以撤销。
+宿主对模型请求与工具步骤各自有单轮上限（`BEEFTV_AGENT_MAX_REQUESTS_PER_TURN`、
+`BEEFTV_AGENT_MAX_TOOL_STEPS_PER_TURN`），按轮独立计数、下一轮从零开始；总预算
+`BEEFTV_AGENT_TOTAL_REQUEST_BUDGET` 默认关闭，只有显式配置才启用。
+
+### 只读边界
+
+桌面实例的已登记外部客户端使用自身 ID 与 Bearer 凭据访问 `/ops` 和 `/ops/:op`，不需要也不应持有桌面启动令牌。其凭据不能访问普通 REST 写接口或换取 UI 会话。内置 UI 会话签发另需 Wails 绑定提供的独立 `X-Beeftv-UI-Bootstrap` 凭据；仅有 `X-Desktop-Token` 不足以签发。
+
+只读是**操作层与 MCP 的策略边界，不是操作系统级隔离**：同一台机器上持有 owner 凭据的进程本来就能直接访问数据目录，
+因此只读模式的作用是「不让某个外部客户端或某个工具集拿到写能力」，而不是限制本机其他程序。
+
+- 能力模式只由身份决定：已登记客户端的模式来自服务端登记，请求体与查询参数都不能提升或放宽它。
+- `beeftv --read-only`（`ops list` 与 `mcp serve`）在客户端本地再次收紧：即使服务端返回了写操作，也只暴露 `readOnly` 操作。
+- 服务端对写操作始终按登记权限拒绝只读客户端（`read_only_client`），不依赖客户端自觉。
+
+## 生成确认与重放
+
+`GET /assistant/history` 的每个轮次包含 `undone`，从当前用户和画布的持久化撤销回执读取。页面重开后仍显示已撤销；回执不存在或不属于该用户/画布时不泄露其状态。
+
+`POST /tasks` 可在 `input.metadata.clientOperationId` 提交一次确认的稳定编号（8–128 个 ASCII 字母、数字、冒号、下划线或连字符）。相同用户、编号及完整原始请求返回已有任务；更换模型、提示词、素材、参数或项目时返回 409，不创建第二个任务。Trace ID 和 Request ID 不参与比较。任务回执丢失时以原编号和原请求重发；不要生成新编号猜测是否已接单。
+
+旧任务若没有请求摘要，不能凭编号推断内容相同，因此拒绝重放，应先查询已有任务。此编号仅保证本地任务不重复创建，不代表上游扣费或取消结算已经确认。
+
 ## 任务诊断
+
+章节分镜替换与角色候选写入可携带 `sourceTaskId`。服务端核对原任务、用户、项目、章节和生成类型，并将结果写入与稳定操作回执放在同一事务中。同一任务和内容重放返回原回执，不覆盖之后的人工编辑；更换内容返回 `409 operation_id_reused_with_different_payload`。分镜仍须提交批准时的 `expectedRevision` 与 `expectedShotIds`；冲突为 `409 project_revision_conflict` 或 `project_unit_shots_changed`。
+
+`GET /projects/:id/chapter-apply-receipts?taskIds=` 查询最多 100 个任务的已提交回执。页面不以更新时间猜测是否写入；没有回执的分镜结果保留待核对，确认后可直接写入，不重新生成。
 
 `POST /tasks/:id/query-provider` 用于取回失败视频任务的原有结果：校验归属、持久化的供应商任务 ID 和协议支持后，只查询状态及下载，不重新提交生成。恢复成功会保存任务结果并登记产物；正在处理时返回 `recovered=false`。没有原任务 ID 的记录不能凭本地 ID 自动找回。已发出但未取得回执的提交标记为 `submission_unknown`，阻止付费重试；明确限流、鉴权拒绝或尚未发送的请求保留对应错误类别。
 
 NewAPI Channel 2 与 BeefAPI 视频的暂时下载断连会保留原任务 ID 并继续后台取回，自动恢复最长到任务开始后 24 小时；超出窗口后可在失败任务详情手动取回。任务日志接口提供脱敏的 `summary`，不返回原始 `message` / `payload` 内容；摘要不写回数据库。
 
-任务列表与详情中的 `errorCode` 是 BeefTV 归类后的错误类别，不能当作上游原始代码。新记录的失败任务可包含 `failureDiagnostics`：`source` 区分本地校验、上游 HTTP / 业务响应、本地结果处理及未知来源；`summary` 保存脱敏后的错误摘要，另带实际记录到的 `providerCode`、`httpStatus`、`param`、`requestId`、`providerTaskId`、`stage` 和 `capturedAt`。缺失信息不推断或补造。`createdAt` 是任务创建时间，`completedAt` 是结束时间，均不等于错误记录时间。
+任务列表与详情中的 `errorCode` 是 BeefTV 归类后的错误类别，不能当作上游原始代码。已识别的 SQLite 缺表/列、锁定、只读、I/O 和约束失败使用 `local_storage`，提示本地数据库无法读写、不自动重试；不能因为外层 HTTP 400 把它归为模型参数错误。判断只读取实际错误消息，不读取请求或提示词回显。新记录的失败任务可包含 `failureDiagnostics`：`source` 区分本地校验、上游 HTTP / 业务响应、本地结果处理及未知来源；`summary` 保存脱敏后的错误摘要，另带实际记录到的 `providerCode`、`httpStatus`、`param`、`requestId`、`providerTaskId`、`stage` 和 `capturedAt`。缺失信息不推断或补造。`createdAt` 是任务创建时间，`completedAt` 是结束时间，均不等于错误记录时间。
 
 诊断字段在本地 schema v3 中以可空文本列保存，旧任务不补写原始错误，重试会清除上一轮诊断。任务列表、详情和画布的“复制排查信息”使用同一份诊断；复制内容不包含请求正文、提示词、凭据、素材 URL 或本地文件路径。`providerRequestId` 可能是供应商任务标识，在复制内容中标作“服务端关联 ID”，与 HTTP 请求 ID 分开。
 

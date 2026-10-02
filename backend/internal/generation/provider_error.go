@@ -90,7 +90,7 @@ var categoryCopies = map[FailureCategory]categoryCopy{
 	CategoryModerationReference: {Reason: "参考素材未通过内容安全审核", Action: "请检查并更换参考素材后重新生成"},
 	CategoryModerationOutput:    {Reason: "生成结果未通过内容安全审核", Action: "请调整提示词或参考素材后重新生成"},
 	CategoryInvalidParams:       {Reason: "模型不接受当前参数", Action: "请检查模型、尺寸、时长、格式或数量后重试"},
-	CategoryLocalStorage:        {Reason: "本地任务保存失败，尚未提交生成", Action: "请重启 BeefTV 后重试；若仍失败，请更新应用并联系支持"},
+	CategoryLocalStorage:        {Reason: "本地数据库无法读写", Action: "请重启应用；若仍失败，请保留排查信息并联系支持，不要重复生成"},
 	CategoryContextTooLong:      {Reason: "输入内容超出模型长度限制", Action: "请缩短提示词或减少参考内容后重试"},
 	CategoryInputInaccessible:   {Reason: "参考素材无法读取", Action: "请检查素材后重试"},
 	CategoryInputTooLarge:       {Reason: "参考素材过大", Action: "请压缩或更换素材后重试"},
@@ -112,6 +112,7 @@ var categoryCopies = map[FailureCategory]categoryCopy{
 }
 
 var (
+	localDatabaseErrorPattern = regexp.MustCompile(`(?i)(?:^|:\s*)(?:table\s+[a-z0-9_]+\s+has no column named\s+[a-z0-9_]+|no such (?:column|table):\s*[a-z0-9_.]+|(?:UNIQUE|NOT NULL|CHECK) constraint failed:\s*\S+|FOREIGN KEY constraint failed|database (?:is locked|is malformed)|database disk image is malformed|attempt to write a readonly database|disk I/O error)(?:\b|$)`)
 	htmlBodyPattern           = regexp.MustCompile(`(?is)^\s*(?:<!doctype|<html|<head|<body)`)
 	httpStatusPattern         = regexp.MustCompile(`(?i)(?:HTTP\s+|status(?:\s+code)?\s*[:：]?\s*)(\d{3})\b`)
 	wrappedHTTPStatusPattern  = regexp.MustCompile(`(?i)Request failed with status code\s+(\d{3})`)
@@ -218,6 +219,11 @@ var providerCodeCategories = map[string]FailureCategory{
 	"provider_submission_unknown":      CategorySubmissionUncertain,
 	"video_submission_unknown":         CategorySubmissionUncertain,
 	"video_delivery_failed":            CategoryDeliveryFailed,
+	"image_result_unknown":             CategorySubmissionUncertain,
+	"image_submission_pending":         CategorySubmissionUncertain,
+	"image_result_expired":             CategorySubmissionUncertain,
+	"image_result_unavailable":         CategorySubmissionUncertain,
+	"idempotency_conflict":             CategorySubmissionUncertain,
 	"provider_reference_invalid":       CategoryInputInaccessible,
 	"rate_limited":                     CategoryThrottled,
 	"bad_gateway":                      CategoryProviderUnavailable,
@@ -419,6 +425,27 @@ func ClassifyError(err error) Failure {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return normalizeFailure(Failure{Category: CategoryTimeout, Uncertain: true, Reason: "模型服务响应超时，请求可能仍在执行", Action: "请先查询原任务，不要立即重新提交"})
 	}
+	var circuit CircuitOpenError
+	if errors.As(err, &circuit) {
+		return CircuitOpenFailure()
+	}
+	var decode ResponseDecodeError
+	if errors.As(err, &decode) {
+		failure := ClassifyError(decode.Err)
+		if failure.Category == CategoryUnknown {
+			failure = ClassifyText(decode.Error())
+		}
+		if failure.Category == CategoryUnknown {
+			failure.Category = CategoryMalformedResponse
+			failure.Reason = ""
+			failure.Action = ""
+		}
+		return normalizeFailure(failure)
+	}
+	var unknown SubmissionUnknownError
+	if errors.As(err, &unknown) {
+		return normalizeFailure(Failure{Category: CategorySubmissionUncertain, Uncertain: true, Retryable: false})
+	}
 	var pending StatePendingError
 	if errors.As(err, &pending) {
 		failure := classifyHTTPErrorCause(pending.Cause)
@@ -478,6 +505,14 @@ func ClassifyText(raw string) Failure {
 		return normalizeFailure(Failure{Category: CategoryMalformedResponse})
 	}
 	fields := extractProviderFields(text)
+	// Inspect only the error message, never JSON request echoes or debug fields.
+	databaseMessage := text
+	if fields.hasStructured() || strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") {
+		databaseMessage = fields.Message
+	}
+	if localDatabaseErrorPattern.MatchString(databaseMessage) {
+		return normalizeFailure(Failure{Category: CategoryLocalStorage, FromCode: true, RequestID: sanitizeDebugID(fields.RequestID), TaskID: sanitizeDebugID(fields.TaskID)})
+	}
 	if fields.hasStructured() {
 		if strings.EqualFold(fields.Code, "invalid_reference_audio") {
 			copy, _ := referenceAudioCopy(fields.Message, true)

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/diagnostics"
 
 	"github.com/gin-gonic/gin"
 )
@@ -17,12 +18,12 @@ func RegisterDiagnosticsRoutes(r *gin.RouterGroup, svc *app.Service) {
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<20)
-		var req app.DiagnosticExportRequest
+		var req diagnostics.ExportRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		preview, err := svc.PreviewDiagnosticBundle(user.ID, req)
+		preview, err := requestDiagnostics(c, svc).Preview(user.ID, req)
 		if err != nil {
 			failService(c, err)
 			return
@@ -37,12 +38,12 @@ func RegisterDiagnosticsRoutes(r *gin.RouterGroup, svc *app.Service) {
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<20)
-		var req app.DiagnosticExportRequest
+		var req diagnostics.ExportRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		bundle, err := svc.ExportDiagnosticBundle(user.ID, req)
+		bundle, err := requestDiagnostics(c, svc).Export(user.ID, req)
 		if err != nil {
 			failService(c, err)
 			return
@@ -54,4 +55,14 @@ func RegisterDiagnosticsRoutes(r *gin.RouterGroup, svc *app.Service) {
 		c.Data(http.StatusOK, "application/zip", bundle.Data)
 	})
 
+}
+
+func requestDiagnostics(c *gin.Context, svc *app.Service) *diagnostics.Service {
+	if dependencies, ok := runtimeDependencies(c); ok && dependencies.Diagnostics != nil {
+		return dependencies.Diagnostics
+	}
+	if svc == nil {
+		return diagnostics.New(diagnostics.Dependencies{})
+	}
+	return svc.DiagnosticsDomain()
 }

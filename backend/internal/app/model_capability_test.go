@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -22,7 +23,7 @@ func TestSourcedSeedanceGenerationKeepsServerLimitsAndAudio(t *testing.T) {
 		t.Fatal("catalog audio false was restored by legacy repair")
 	}
 	input.Config.VideoCapabilitiesVersion = nil
-	restoreBeefAPISeedanceAudioControl(input.Config, input.VideoCapability)
+	restoreBeefAPISeedanceAudioControl(context.Background(), input.Config, input.VideoCapability)
 	if !input.VideoCapability.GenerateAudio.Supported {
 		t.Fatal("legacy saved profiles should retain the audio repair")
 	}

@@ -28,6 +28,7 @@ func RegisterDesktopUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 }
 
 func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
+	registerCanvasLibraryRoutes(r, svc)
 	r.POST("/assets/batch", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -290,7 +291,9 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			}
 			assets, pageErr := svc.UserAssetsPage(user.ID, page, pageSize, app.UserAssetPageFilter{
 				Kind: c.Query("kind"), Category: c.Query("category"), FolderID: folderID,
-				Uncategorized: c.Query("uncategorized") == "1", Status: c.Query("status"), Query: c.Query("q"),
+				Uncategorized: queryFlag(c, "uncategorized"), Status: c.Query("status"), Query: c.Query("q"),
+				Favorite: queryFlag(c, "favorite"), Recent: queryFlag(c, "recent"), Project: c.Query("project"),
+				Generated: queryFlag(c, "generated"),
 			})
 			if pageErr != nil {
 				failService(c, pageErr)
@@ -448,7 +451,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		if err := svc.DeleteUserAsset(user.ID, c.Param("id")); err != nil {
+		if err := svc.DeleteUserAsset(user.ID, c.Param("id"), strings.TrimSpace(c.Query("expectedStatus"))); err != nil {
 			failService(c, err)
 			return
 		}
@@ -678,61 +681,6 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 		}
 		ok(c, gin.H{"project": project})
 	})
-	r.DELETE("/canvas-projects/:id/nodes/:nodeId", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		project, err := svc.DeleteUserCanvasNode(user.ID, c.Param("id"), c.Param("nodeId"))
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"project": project})
-	})
-	r.PATCH("/canvas-projects/:id/nodes/:nodeId", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
-		var patch map[string]json.RawMessage
-		if err := c.ShouldBindJSON(&patch); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		project, err := svc.UpdateUserCanvasNode(user.ID, c.Param("id"), c.Param("nodeId"), patch)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"project": project})
-	})
-	r.POST("/canvas-projects/:id/connections", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32<<10)
-		var req struct {
-			FromNodeID string                     `json:"fromNodeId"`
-			ToNodeID   string                     `json:"toNodeId"`
-			Connection map[string]json.RawMessage `json:"connection"`
-		}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		project, err := svc.ConnectUserCanvasNodes(user.ID, c.Param("id"), req.FromNodeID, req.ToNodeID, req.Connection)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"project": project})
-	})
 	r.DELETE("/canvas-projects/:id", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -748,12 +696,17 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 }
 
 func hasUserAssetPageFilters(c *gin.Context) bool {
-	for _, key := range []string{"pageSize", "kind", "category", "folderId", "uncategorized", "status", "q"} {
+	for _, key := range []string{"pageSize", "kind", "category", "folderId", "uncategorized", "status", "q", "favorite", "recent", "project", "generated"} {
 		if _, present := c.GetQuery(key); present {
 			return true
 		}
 	}
 	return false
+}
+
+func queryFlag(c *gin.Context, key string) bool {
+	value := strings.TrimSpace(c.Query(key))
+	return value == "1" || strings.EqualFold(value, "true")
 }
 
 func resourceResponseETag(resource *model.Resource) string {

@@ -8,6 +8,7 @@ import (
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/platform"
+	"infinite-canvas/backend/internal/repository"
 )
 
 type (
@@ -101,6 +102,15 @@ func (s *Service) RuntimePolicy() (RuntimePolicySetting, error) {
 	return s.platformDomain().RuntimePolicy()
 }
 
+// Transactional quota checks must read policy through the same connection as
+// usage and mutation; the desktop database deliberately has one connection.
+func (s *Service) runtimePolicyWithRepo(repo *repository.Repository) (RuntimePolicySetting, error) {
+	if s.IsLocalMode() {
+		return platform.SelfUseRuntimePolicy(), nil
+	}
+	return platform.New(repo, nil, nil).RuntimePolicy()
+}
+
 func (s *Service) runtimeConcurrencySetting() (RuntimeTaskPolicy, error) {
 	return s.platformDomain().RuntimeConcurrencySetting()
 }
@@ -183,11 +193,6 @@ func (s *Service) RecordChannelResult(ctx context.Context, channelID string, fai
 }
 
 func (s *Service) Close() error {
-	if s != nil && s.workerID != "" {
-		providerAnalyticsServices.Lock()
-		delete(providerAnalyticsServices.services, s.workerID)
-		providerAnalyticsServices.Unlock()
-	}
 	return nil
 }
 

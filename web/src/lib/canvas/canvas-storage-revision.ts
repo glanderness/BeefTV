@@ -104,6 +104,26 @@ function normalizeProjectAssetCategories(projects: CanvasProject[]) {
     });
 }
 
+/**
+ * 补齐画布文档的图结构数组。
+ *
+ * 外部写入（内置助手、CLI/MCP 操作层）只写它需要的字段，产出的文档常常没有
+ * chatSessions，会话也可能没有 messages；本地合并按「缺失即空集合」处理，
+ * 否则一次外部改动就会让本地持久化整批失败。
+ */
+function normalizeProjectGraphArrays(project: CanvasProject): CanvasProject {
+    const nodes = Array.isArray(project.nodes) ? project.nodes : [];
+    const connections = Array.isArray(project.connections) ? project.connections : [];
+    const sessions = Array.isArray(project.chatSessions) ? project.chatSessions : [];
+    let changed = nodes !== project.nodes || connections !== project.connections || sessions !== project.chatSessions;
+    const chatSessions = sessions.map((session) => {
+        if (Array.isArray(session.messages)) return session;
+        changed = true;
+        return { ...session, messages: [] };
+    });
+    return changed ? { ...project, nodes, connections, chatSessions } : project;
+}
+
 export function serializeCanvasStorageDocument(document: CanvasStorageDocument) {
     return JSON.stringify(document);
 }
@@ -195,10 +215,15 @@ function mergeEntities<T extends { id: string }>(input: {
     conflict: (id: string) => CanvasStorageConflict;
     conflicts: CanvasStorageConflict[];
 }) {
-    const baseById = new Map(input.base.map((item) => [item.id, item]));
-    const localById = new Map(input.local.map((item) => [item.id, item]));
-    const durableById = new Map(input.durable.map((item) => [item.id, item]));
-    const result = [...input.durable];
+    // 外部写入（内置助手、CLI/MCP）产生的画布文档可能完全没有这些数组字段。
+    // 缺失等价于空集合，不能让它把整次本地持久化打挂。
+    const base = input.base ?? [];
+    const local = input.local ?? [];
+    const durable = input.durable ?? [];
+    const baseById = new Map(base.map((item) => [item.id, item]));
+    const localById = new Map(local.map((item) => [item.id, item]));
+    const durableById = new Map(durable.map((item) => [item.id, item]));
+    const result = [...durable];
     const resultPositions = new Map(result.map((item, index) => [item.id, index]));
 
     const remove = (id: string) => {
@@ -219,29 +244,29 @@ function mergeEntities<T extends { id: string }>(input: {
     };
 
     for (const id of new Set([...baseById.keys(), ...localById.keys()])) {
-        const base = baseById.get(id);
-        const local = localById.get(id);
-        const durable = durableById.get(id);
+        const baseItem = baseById.get(id);
+        const localItem = localById.get(id);
+        const durableItem = durableById.get(id);
 
-        if (base && !local) {
+        if (baseItem && !localItem) {
             remove(id);
             input.tombstones[id] = input.nextRevision;
             continue;
         }
-        if (!local || (base && deepEqual(base, local))) continue;
+        if (!localItem || (baseItem && deepEqual(baseItem, localItem))) continue;
 
-        if (!durable) {
-            if (base || (input.tombstones[id] ?? 0) > input.baseRevision) {
+        if (!durableItem) {
+            if (baseItem || (input.tombstones[id] ?? 0) > input.baseRevision) {
                 input.conflicts.push(input.conflict(id));
                 continue;
             }
             delete input.tombstones[id];
-            set(local);
+            set(localItem);
             continue;
         }
 
         delete input.tombstones[id];
-        set(input.merge(base, local, durable));
+        set(input.merge(baseItem, localItem, durableItem));
     }
 
     return result;
@@ -298,8 +323,9 @@ function mergeSessions(input: {
                 ...input,
                 sessionId: local.id,
                 base: base?.messages || [],
-                local: local.messages,
-                durable: durable.messages,
+                // 会话可能由外部写入创建，没有 messages 字段；缺失等价于空列表。
+                local: local.messages || [],
+                durable: durable.messages || [],
             });
             return merged;
         },
@@ -331,8 +357,8 @@ function mergeProject(base: CanvasProject | undefined, local: CanvasProject, dur
     merged.nodes = mergeEntities<CanvasNodeData>({
         ...common,
         base: base?.nodes || [],
-        local: local.nodes,
-        durable: durable.nodes,
+        local: local.nodes || [],
+        durable: durable.nodes || [],
         tombstones: nestedTombstones(document.tombstones.nodes, local.id),
         merge: (baseNode, localNode, durableNode) => {
             let conflictRecorded = false;
@@ -347,8 +373,8 @@ function mergeProject(base: CanvasProject | undefined, local: CanvasProject, dur
     merged.connections = mergeEntities<CanvasConnection>({
         ...common,
         base: base?.connections || [],
-        local: local.connections,
-        durable: durable.connections,
+        local: local.connections || [],
+        durable: durable.connections || [],
         tombstones: nestedTombstones(document.tombstones.connections, local.id),
         merge: (baseConnection, localConnection, durableConnection) =>
             mergeRecord(
@@ -363,8 +389,8 @@ function mergeProject(base: CanvasProject | undefined, local: CanvasProject, dur
     merged.chatSessions = mergeSessions({
         ...common,
         base: base?.chatSessions || [],
-        local: local.chatSessions,
-        durable: durable.chatSessions,
+        local: local.chatSessions || [],
+        durable: durable.chatSessions || [],
     });
     return merged;
 }
@@ -388,7 +414,7 @@ export function rebaseCanvasProjects(input: { document: CanvasStorageDocument; b
         merge: (base, local, durable) => mergeProject(base, local, durable, document, input.baseRevision, nextRevision, conflicts),
         conflict: (id) => ({ kind: "project", id }),
         conflicts,
-    });
+    }).map(normalizeProjectGraphArrays);
     document.storageRevision = nextRevision;
     return { document, conflicts };
 }

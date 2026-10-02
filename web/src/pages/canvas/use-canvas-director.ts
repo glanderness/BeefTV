@@ -14,6 +14,7 @@ import { nextDirectorNodeIndex } from "@/lib/canvas/director/director-node-namin
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
+import { captureUserScope, userScopeMatches, UserScopeAbandonedError } from "@/lib/user-scope-guard";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
 import type { DirectorScene, DirectorSceneOutput } from "@/types/director";
@@ -129,9 +130,11 @@ export function useCanvasDirector({
     const captureDirectorCover = useCallback(async ({ scene, shotId, beauty }: { scene: DirectorScene; shotId: string; beauty: Blob }) => {
         const sourceNodeId = directorNodeId;
         if (!sourceNodeId || !shouldCaptureCover(scene, shotId)) return;
+        const expectedScope = captureUserScope();
         const requestId = nanoid();
         coverRequestIdRef.current = requestId;
         const stillCurrent = () => {
+            if (!userScopeMatches(expectedScope)) return false;
             const project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
             return shouldCommitDirectorCover({
                 projectId,
@@ -145,7 +148,7 @@ export function useCanvasDirector({
             });
         };
         if (!stillCurrent()) return;
-        const image = await uploadImage(beauty);
+        const image = await uploadImage(beauty, undefined, expectedScope);
         if (!stillCurrent()) return;
         const nextNodes = nodesRef.current.map((item) => item.id === sourceNodeId
             ? { ...item, metadata: { ...item.metadata, ...directorCoverMetadata(image, scene.updatedAt) } }
@@ -160,10 +163,12 @@ export function useCanvasDirector({
         const sourceNodeAtStart = nodesRef.current.find((item) => item.id === directorNodeId);
         if (!sourceNodeAtStart || sourceNodeAtStart.metadata?.directorSceneId !== output.scene.id) throw new Error("镜头节点不存在或场景已切换");
         const sourceNodeId = sourceNodeAtStart.id;
+        const expectedScope = captureUserScope();
         const [image, videoUpload] = await Promise.all([
-            uploadImage(output.beauty),
-            output.clayVideo ? uploadMediaFile(output.clayVideo, "director-clay") : Promise.resolve(null),
+            uploadImage(output.beauty, undefined, expectedScope),
+            output.clayVideo ? uploadMediaFile(output.clayVideo, "director-clay", undefined, expectedScope) : Promise.resolve(null),
         ]);
+        if (!userScopeMatches(expectedScope)) throw new UserScopeAbandonedError();
         // 上传期间项目、节点和镜头都可能变化。以当前权威状态重新核验并合并，
         // 不允许旧输出写入另一项目，也不允许旧 scene 快照覆盖并发编辑。
         const outputProject = useCanvasStore.getState().projects.find((item) => item.id === outputProjectId);
@@ -220,10 +225,13 @@ export function useCanvasDirector({
 
         const mediaNodes = nextNodes.filter((item) => item.id === previewId || Boolean(clayVideoId && item.id === clayVideoId));
         const assetIds = new Map<string, string>();
+        let confirmed = true;
         for (const mediaNode of mediaNodes) {
-            const result = await ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId, node: mediaNode, source: "canvas-manual" });
+            const result = await ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId, node: mediaNode, source: "canvas-manual", expectedScope });
             assetIds.set(mediaNode.id, result.assetId);
+            if (!result.confirmed) confirmed = false;
         }
+        if (!userScopeMatches(expectedScope)) throw new UserScopeAbandonedError();
         // 素材登记同样会等待磁盘/网络。提交前再核验，并以最新画布为基底，
         // 避免在等待期间切换项目或编辑其他节点后写回过期快照。
         const commitProject = useCanvasStore.getState().projects.find((item) => item.id === outputProjectId);
@@ -269,6 +277,7 @@ export function useCanvasDirector({
         setNodes(finalizedNodes);
         setConnections(committedConnections);
         saveDirectorScene(committedScene);
+        return { confirmed };
     }, [connectionsRef, directorNodeId, domainProjectId, nodesRef, projectId, saveDirectorScene, setConnections, setNodes]);
 
     return { applyDirectorOutput, captureDirectorCover, createDirectorShot, openDirectorWorkbench, saveDirectorScene, shouldCaptureCover };

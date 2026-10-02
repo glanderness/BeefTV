@@ -11,7 +11,15 @@
 | video-video 视频生视频 | 提示词、reference.mp4 | 同上，参考生成模式 |
 | multi-video 多素材生视频 | 提示词、2 张图、1 段视频 | 同上，参考生成模式 |
 
-## 固定网络素材
+## 每版轮换主题与素材
+
+2026-10-02 Owner 更新验收要求：每次发版选择新的当期热门创作主题和素材，不再长期复用兔子。发布人先记录热点来源、查询日期、创作目标和素材来源，再冻结该版素材及提示词；同一候选的两轮使用同一套输入，不能每条随机更换。主题热度只是选题依据，不宣称素材本身是热点事件的真实记录。
+
+每版登记至少两张图和一段可用视频的来源、使用许可、SHA256、尺寸、时长及字节数。可使用本轮客户端已成功生成并核账的产物作为后续参考素材，但必须在第一轮参考路径开始前冻结，两轮复用，依赖关系和素材准备费用单独记录。素材准备的生成任务不得再次计作矩阵中另一次成功。
+
+以下兔子素材仅保留作历史回执核对和离线回归，不再是新版付费验收的默认输入。
+
+### 历史素材（v1.6.22 及以前）
 
 使用 Blender Foundation 广泛传播的《Big Buck Bunny》，来源 [官方下载](https://peach.blender.org/download/)，许可 CC BY 3.0，署名 `(c) 2008 Blender Foundation / www.bigbuckbunny.org`。固定下载 `https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_720p_h264.mov.zip`，不跟随每次搜索换素材。
 
@@ -20,6 +28,29 @@
 2026-10-01 固定素材 SHA256：源 ZIP `b0c9ade80b086179feee41514929de583966eec87c703575d97f051f88b33b67`；image-1.jpg `93701f45cf50d48de5ba452cd26eeafeba40a2fceef2e50fb98940ccb919250f`；image-2.jpg `5946874132e3e82d7c1ed74db2a97e39b08f58ba7dc3fa9129adffcdd714af84`；reference.mp4 `282ef9563a8dbad86470368bef7afa9fcfd1df7791cf38f4f5e803c9d535da60`。
 
 固定提示词：纯文字使用“清晨的森林里，一只白色兔子慢慢转头，柔和阳光，平稳镜头，无字幕”；有参考图使用“保持参考图的白色兔子外形与森林环境，兔子慢慢转头，柔和阳光，无字幕”；有参考视频使用“参考视频中的运动节奏，保持白色兔子与森林环境，平稳镜头，无字幕”。两轮保持相同参数，不使用第一轮产物替换输入。
+
+## Agent 联合验收
+
+包含内置助手的版本，六条生成路径的两轮验收通过真实客户端助手完成：界面导入素材并选择模型/参数 → 自然语言目标 → 读取授权画布与引用素材 → 产生节点/连线及生成提议 → 客户端点击助手提议卡片明确确认 → 原任务执行 → 结果落盘与画布绑定 → 打开或播放 → 最终结算。未确认前不得产生生成任务或媒体费用。模型聊天费用与媒体费用一起计入预算。节点工具栏的“生成”不算助手入口回执。
+
+当前内置助手只开放八项操作：画布读取、节点更新、批量建节点、连线、生成提议、任务产物绑定、单素材读取、单任务读取。模型目录浏览、切换模型/规格、上传文件和自由调整节点位置不是现有工具能力，不能靠自然语言回复宣称已完成；参数与素材准备须明确记为人工入口。六种生成路径由节点图及引用输入表达，生成提议的 kind 只有 image/video。
+
+同一次真实生成可同时证明该 Agent 路径与共享生成服务，不要求人工再付费重复生成。回执记录 `entrypoint=assistant`、会话 ID、轮次 ID、提议 ID、确认、operation ID、任务 ID 和账单关联。只发送一句话或出现工具卡片不算完成。
+
+完整助手专项按该版实际开放能力逐项验收，记录证据及未覆盖项：
+
+| 能力 | 必验行为 |
+| --- | --- |
+| 理解和读取 | 当前画布、选中节点、已有模型设置、引用素材与引用画布读取，禁止未授权跨画布写入 |
+| 创建和修改 | 分镜草案、批量节点自动布局、节点内容、连线、多轮追改；真实持久化与 UI 一致 |
+| 付费确认 | 六类生成、取消提议、过期提议、双击确认幂等、参数和参考素材一致；模型不能自授确认 |
+| 会话 | 新对话、历史切换、上下文延续、关闭重开、应用重启恢复；不同画布不串会话 |
+| 并发和撤销 | 人工与助手交错编辑、revision 冲突、撤销本轮不覆盖后续人工改动 |
+| 中断和失败 | 停止回答、宿主终止恢复、上游失败/超时；原任务状态可查、不盲目二次扣费 |
+| 预算和回执 | 聊天/工具预算生效、拒绝后无后续执行、所有尝试计费与退款核对、未结算为零 |
+| 外部 Agent | CLI/MCP 连接、权限与撤销、业务操作和回执一致；与内置助手分开登记 |
+
+无法经济地触发的供应商故障和长上下文压缩使用明确标注的确定性故障测试，不能伪装成实机真实供应商验收。原生保存框、手工上传和拖拽、媒体播放、剪辑输出、备份导入、旧数据升级与三平台发布验证继续独立执行，不能被助手聊天或 API 成功替代。
 
 ## 执行和记录
 
@@ -31,10 +62,20 @@ v1.6.19 在发布人说明“允许前台完成验收”与“本版豁免付费
 
 1. 检查当前模型目录、对应价格、测试账号余额和本次授权预算。预算只对本次有效；先计入本次已有诊断费用和全部未结算预扣。每次提交前保留预计最大费用余量；超预算或价格不确定时不提交。
 2. 备份现有数据库，在旧数据副本或已备份的真实客户端验证升级。覆盖正式旧版 v2、预览版 v3/v6 编号占用、已有项目和任务保留，以及新任务确实可入库。
-3. 冻结候选代码并构建；通过客户端画布导入固定素材、选择模型与参数，逐条点击生成。每次提交立即记录本地 task ID，避免盲重试产生重复扣款。
+3. 冻结候选代码并构建；通过客户端画布导入该版冻结素材、选择模型与参数。含助手的版本由助手搭图并提议，逐条点击助手提议卡片“生成”，不能用节点工具栏生成代替。每次提交立即记录本地 task ID，避免盲重试产生重复扣款。
 4. 同一任务追踪到供应商完成、客户端下载、画布落图/落视频。打开图片；播放视频并核对时长、解码和画面。保留任务详情、画布截图、产物 SHA256、实际模型与参数、请求 ID、执行诊断和时间。
 5. 在生产只读账单核对每笔 task/request 的最终结算或退款。失败不计成功，超时先查询原任务；不得为凑成功率隐藏失败或不断重发。保存所有尝试及费用，两轮成功矩阵单独标明。
-6. 将脱敏证据写入 `docs/release-evidence/<VERSION>.json`。`sourceDigest` 来自提交候选代码后运行 `node scripts/verify-real-generation-release.mjs --fingerprint`。证据文件不进入摘要，因此可在后续提交加入；任何打包源码变化都使旧证据失效。
+6. 将脱敏证据写入 `docs/release-evidence/<VERSION>.json`。`sourceDigest` 来自提交候选代码后运行 `node scripts/verify-real-generation-release.mjs --fingerprint`。证据文件不进入摘要，因此可在后续提交加入；任何打包源码变化都使旧证据失效，包括 `agent-host/` 的宿主源码、依赖清单与锁文件。
 7. 本地及发布 workflow 必须通过 `node scripts/verify-real-generation-release.mjs`，再合入 main 并触发发布。发布后核对三平台产物、签名更新源和真实安装/升级；不能用发布前构建冒充已发布二进制。
 
-JSON 顶层字段为 `version, sourceDigest, budgetCNY, spentCNY, pendingCNY, upgrade, cases`。每个 case 保存 `round, path, taskId, providerRequestId, clientVersion, platform, fixtureDigest, model, status, clientSubmitted, canvasVerified, mediaDecoded, mediaOpened, billing, costCNY, artifactSHA256`。记录中禁止凭据、签名素材 URL 或私有提示词。证据真实性由发布人逐项核验；脚本负责完整性与版本绑定。
+JSON 顶层字段为 `version, sourceDigest, budgetCNY, spentCNY, pendingCNY, upgrade, cases`。每个 case 保存 `round, path, taskId, providerRequestId, clientVersion, platform, fixtureDigest, model, status, clientSubmitted, canvasVerified, mediaDecoded, mediaOpened, billing, costCNY, artifactSHA256`。
+
+从 v1.6.23 起，额外要求 `contractVersion: 2`、`scenario` 和 `agentChecks`。`scenario` 包含 `id, title, source, queryDate, fixtures`；`source` 是选题来源 URL，`queryDate` 为查询日期，`fixtures` 是素材文件名到 SHA256 的映射。将文件名排序后紧凑 JSON 的 SHA256 作为所有 case 共用的 `fixtureDigest`。素材来源、许可和媒体规格另附证据。已有 v2 回执中的主题 ID 或整套素材摘要不得复用。
+
+每个 case 另存 `entrypoint: "assistant", sessionId, turnId, proposalId, confirmed: true, operationId`。`agentChecks` 必须逐项包含 `canvas_read, asset_reference, canvas_mutation, multi_turn, proposal_decline, proposal_stale, proposal_idempotency, session_history, session_restart, cancel, conflict_undo, host_recovery, scope_isolation, budget, cli_mcp`；每项记录 `status: "passed"`、`method`、非空 `evidence` 引用数组及本版 `sourceDigest`。`method` 通常为 `native`；只有预算、权限隔离、宿主恢复和并发撤销可标为 `deterministic`，证据中说明注入方式及未覆盖的实机边界。不能用一个布尔值代替专项回执。
+
+从 v1.6.23 起，`review` 必须包含 `result: "approved"`、与本版一致的 `sourceDigest`、非空 `reviewer` 和非空 `evidence` 引用数组。独立复审未完成、拒绝或源码变化后未复审时，门禁必须拒绝。字段只能记录实际复审结果，不能由生成矩阵通过自动填为批准。
+
+v1.6.23 的单版账务证据例外：Owner 在两条失败聊天的退款终态缺失已明确披露后授权「上线吧」。回执保留 `pendingCNY: null`、已知未结算为零及两条请求的未决事实；门禁校验精确版本、请求集合、授权和审计证据，不允许改写未知总预扣为零。该例外不豁免十二条正式媒体生成的最终结算、Agent 验收或独立复审，也不延续到后续版本。
+
+记录中禁止凭据、签名素材 URL 或私有提示词。证据真实性与复审独立性由发布人逐项核验；脚本负责完整性与版本绑定。

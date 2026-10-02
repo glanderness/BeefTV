@@ -14,7 +14,7 @@ import (
 func TestWanLocalReferencesUseVerifiedInlineContract(t *testing.T) {
 	input := canvasGenerationInput{Mode: "video", Config: providerConfig{BaseURL: "https://enterprise.beefapi.com", InterfaceType: "newapi-channel-2", Model: "wan3.0-video"}, ReferenceImages: []providerMedia{{DataURL: testGeminiReferenceImageDataURL}}}
 	policy := providerMediaHydrationPolicyFor(context.Background(), input)
-	if policy.requireURL || !policy.preferHTTPS {
+	if policy.RequireURL || !policy.PreferHTTPS {
 		t.Fatalf("Wan local media blocked: %#v", policy)
 	}
 	svc := newResourceTestService(t)
@@ -52,12 +52,12 @@ func TestWanLocalReferencesUseVerifiedInlineContract(t *testing.T) {
 		t.Fatalf("unsupported media silently accepted: %v", err)
 	}
 	input.Config.Model = "wan4.0-video"
-	if !providerMediaHydrationPolicyFor(context.Background(), input).requireURL {
+	if !providerMediaHydrationPolicyFor(context.Background(), input).RequireURL {
 		t.Fatal("unknown model inherited inline support")
 	}
 	input.Config.Model = "wan3.0-video"
 	input.Config.BaseURL = "https://another.example/enterprise.beefapi.com"
-	if !providerMediaHydrationPolicyFor(context.Background(), input).requireURL {
+	if !providerMediaHydrationPolicyFor(context.Background(), input).RequireURL {
 		t.Fatal("untrusted endpoint inherited inline support")
 	}
 }
@@ -66,16 +66,16 @@ func TestInstalledMediaContractOverridesLegacyGuess(t *testing.T) {
 	ctx := withProtocolRegistry(context.Background(), loadOfficialFallbackRegistry())
 	for _, protocol := range []string{"grok-image", "chat-completion", "openai-response", "claude-api"} {
 		policy := providerMediaHydrationPolicyFor(ctx, canvasGenerationInput{Config: providerConfig{InterfaceType: protocol}})
-		if policy.requireURL || !policy.preferURL {
+		if policy.RequireURL || !policy.PreferURL {
 			t.Fatalf("%s lost optional object-storage URL transport: %#v", protocol, policy)
 		}
 	}
 	inline := providerMediaHydrationPolicyFor(ctx, canvasGenerationInput{Config: providerConfig{InterfaceType: "newapi", Model: "future-model"}})
-	if inline.requireURL {
+	if inline.RequireURL {
 		t.Fatal("installed multipart contract ignored")
 	}
 	remote := providerMediaHydrationPolicyFor(ctx, canvasGenerationInput{Config: providerConfig{InterfaceType: "newapi-channel-2", Model: "future-model"}})
-	if !remote.requireURL {
+	if !remote.RequireURL {
 		t.Fatal("URL-only contract ignored")
 	}
 }
@@ -98,10 +98,10 @@ func TestSavedBeefAPISeedanceAudioControl(t *testing.T) {
 				if err := svc.validateResolvedVideoCapability(&input); err != nil {
 					t.Fatal(err)
 				}
-				if input.VideoCapability.GenerateAudio.Supported != isBeefAPIVideoConfig(input.Config) || input.VideoCapability.GenerateAudio.Default || input.VideoCapability.References.MaxImages != 2 {
+				if input.VideoCapability.GenerateAudio.Supported != isBeefAPIVideoConfig(context.Background(), input.Config) || input.VideoCapability.GenerateAudio.Default || input.VideoCapability.References.MaxImages != 2 {
 					t.Fatalf("unexpected profile: %#v", input.VideoCapability)
 				}
-				if isBeefAPIVideoConfig(input.Config) {
+				if isBeefAPIVideoConfig(context.Background(), input.Config) {
 					body, err := beefAPIVideoRequestBody(input)
 					if err != nil || body["generate_audio"] != false {
 						t.Fatalf("explicit false lost: %#v, %v", body, err)

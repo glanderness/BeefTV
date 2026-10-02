@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
 
 import { FullScreenLoader } from "@/components/ui/aceternity/full-screen-loader";
+import { appPathname } from "@/lib/app-routing";
 import { preloadWorkspaceRoute } from "@/lib/workspace-route-modules";
 import { applyUserSession, localWorkspaceConfig } from "@/lib/user-session";
 import { getWorkspaceBootstrap, type WorkspaceBootstrapPayload } from "@/services/api/workspace";
@@ -28,7 +29,7 @@ export function WorkspaceBootstrapHydrator({ children }: { children: ReactNode }
         })
             .then(() => {
                 modelConfigReady.current = true;
-                if (!cancelled) preloadWorkspaceRoute(window.location.pathname);
+                if (!cancelled) preloadWorkspaceRoute(appPathname());
             })
             .catch(() => {
                 if (cancelled) return;

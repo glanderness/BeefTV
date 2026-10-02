@@ -1,9 +1,11 @@
 import { canvasNodeToAsset, declaredCanvasNodeAssetCategory, findCanvasNodeAsset, type CanvasAssetSource } from "@/lib/canvas/canvas-node-asset";
 import { canvasVideoAssetPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { readImageMeta } from "@/lib/image-utils";
+import { parseAssetRecord } from "@/lib/asset-record";
 import { parseBackendGenerationResult, type BackendGenerationResult } from "@/services/api/generation-task";
 import { ApiError, http } from "@/services/api/request";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
+import { getWorkspaceAsset } from "@/services/api/workspace-data";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import type { GenerationTask, GenerationTaskOutput } from "@/services/api/task-center";
 import { getMediaBlob, resolveMediaUrl, setMediaBlob } from "@/services/file-storage";
@@ -14,16 +16,20 @@ import { getImageBlob, resolveImageUrl, setImageBlob } from "@/services/image-st
 import { generationArtifactStorageKey, loadOrStoreGenerationArtifact } from "@/services/generation-artifact-sink";
 import { createProviderNeutralGenerationTaskEffectStore } from "@/services/provider-neutral-generation-effects";
 import { getActiveUserScope } from "@/lib/user-scope";
+import { assertUserScope, captureUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { runGenerationConsumer } from "@/services/generation-consumer-lifecycle";
-import { useAssetStore, type Asset, type AssetCategory, type NewAsset } from "@/stores/use-asset-store";
+import { flushAssetStorePersistence, useAssetStore, type Asset, type AssetCategory, type NewAsset } from "@/stores/use-asset-store";
 import type { CanvasNodeData } from "@/types/canvas";
 import { persistWorkspaceAssetLink } from "@/services/workspace-asset-repository";
+import { usesBrowserLocalResourceStore, workspaceAssetHasCanonicalMediaPersist } from "@/services/workspace-resource-storage";
+import { bindBackendConversationMessageResult, type BindBackendConversationMessageRuntime } from "@/services/conversation-generation-consumer";
+import type { StoredCreationConversation } from "@/services/creation-conversation-store";
 
 function throwIfAborted(signal?: AbortSignal) {
     if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
 }
 
-type EnsureCanvasNodeAssetOptions = {
+export type EnsureCanvasNodeAssetOptions = {
     canvasId: string;
     domainProjectId?: string;
     node: CanvasNodeData;
@@ -32,23 +38,27 @@ type EnsureCanvasNodeAssetOptions = {
     category?: AssetCategory;
     folderId?: string;
     signal?: AbortSignal;
+    expectedScope?: CapturedUserScope;
 };
 
 export type CanvasNodeAssetResult = {
     assetId: string;
     created: boolean;
     linkedToProject: boolean;
+    confirmed: boolean;
 };
 
 type MaterializedLocalAssetDependencies = {
     localWorkspace: () => boolean;
-    putAsset: (id: string, asset: Asset) => Promise<void>;
+    putAsset: (id: string, asset: Asset, expectedScope?: CapturedUserScope) => Promise<void>;
 };
 
 const defaultMaterializedLocalAssetDependencies: MaterializedLocalAssetDependencies = {
     localWorkspace: isLocalWorkspaceMode,
-    putAsset: async (id, asset) => {
-        await http.put(`/assets/${encodeURIComponent(id)}`, { asset });
+    putAsset: async (id, asset, expectedScope) => {
+        const expected = expectedScope ?? captureUserScope();
+        assertUserScope(expected);
+        await http.put(`/assets/${encodeURIComponent(id)}`, { asset }, { expectedScope: expected });
     },
 };
 
@@ -56,11 +66,14 @@ const defaultMaterializedLocalAssetDependencies: MaterializedLocalAssetDependenc
 export async function registerMaterializedLocalAsset(
     asset: Asset,
     dependencies: MaterializedLocalAssetDependencies = defaultMaterializedLocalAssetDependencies,
+    expectedScope?: CapturedUserScope,
 ) {
+    const expected = expectedScope ?? captureUserScope();
+    assertUserScope(expected);
     if (!dependencies.localWorkspace()) return;
     const storageKey = "storageKey" in asset.data ? asset.data.storageKey : undefined;
     if (!storageKey || !resourceIdFromStorageKey(storageKey)) return;
-    await dependencies.putAsset(asset.id, asset);
+    await dependencies.putAsset(asset.id, asset, expected);
 }
 
 export async function registerMaterializedTaskAssets(
@@ -84,6 +97,7 @@ type CanvasAssetSyncRetryOptions = {
     signal?: AbortSignal;
     maxRetries?: number;
     wait?: (delayMs: number, signal?: AbortSignal) => Promise<void>;
+    expectedScope?: CapturedUserScope;
 };
 
 function waitForCanvasAssetSyncRetry(delayMs: number, signal?: AbortSignal) {
@@ -105,33 +119,38 @@ function waitForCanvasAssetSyncRetry(delayMs: number, signal?: AbortSignal) {
 }
 
 export async function retryCanvasAssetSyncAfterRateLimit<T>(operation: () => Promise<T>, options: CanvasAssetSyncRetryOptions = {}): Promise<T> {
+    const expected = options.expectedScope ?? captureUserScope();
     const maxRetries = Math.max(0, options.maxRetries ?? 2);
     const wait = options.wait ?? waitForCanvasAssetSyncRetry;
     for (let attempt = 0; ; attempt += 1) {
         throwIfAborted(options.signal);
+        assertUserScope(expected);
         try {
             return await operation();
         } catch (error) {
             if (!(error instanceof ApiError) || error.status !== 429 || attempt >= maxRetries) throw error;
             const delayMs = Math.min(MAX_RATE_LIMIT_RETRY_MS, Math.max(0, error.retryAfterMs ?? DEFAULT_RATE_LIMIT_RETRY_MS));
             await wait(delayMs, options.signal);
+            assertUserScope(expected);
         }
     }
 }
 
 export function ensureCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions) {
-    const scope = getActiveUserScope();
+    const expected = options.expectedScope ?? captureUserScope();
     const identity = options.taskId || options.node.metadata?.taskId || options.node.metadata?.storageKey || options.node.id;
-    const key = [scope, options.domainProjectId || "personal", options.canvasId, options.node.id, identity].join(":");
+    const key = [expected.userScope, String(expected.epoch), options.domainProjectId || "personal", options.canvasId, options.node.id, identity].join(":");
     const pending = pendingAssetSyncs.get(key);
     if (pending) return pending;
-    const request = runGenerationConsumer(options.signal, (signal) => persistCanvasNodeAsset({ ...options, signal })).finally(() => pendingAssetSyncs.delete(key));
+    const request = runGenerationConsumer(options.signal, (signal) => persistCanvasNodeAsset({ ...options, signal, expectedScope: expected })).finally(() => pendingAssetSyncs.delete(key));
     pendingAssetSyncs.set(key, request);
     return request;
 }
 
 async function persistCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions): Promise<CanvasNodeAssetResult> {
+    const expected = options.expectedScope ?? captureUserScope();
     throwIfAborted(options.signal);
+    assertUserScope(expected);
     const store = useAssetStore.getState();
     let asset = findCanvasNodeAsset(store.assets, options.node, options.canvasId, options.taskId);
     const declaredCategory = options.category || declaredCanvasNodeAssetCategory(options.node);
@@ -149,15 +168,32 @@ async function persistCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions): Pr
         asset = useAssetStore.getState().assets.find((item) => item.id === asset?.id) || asset;
     }
     const storageKey = "storageKey" in asset.data ? asset.data.storageKey : undefined;
-    // The local canvas repository validates every Resource reference against
-    // an owned backend Asset. Keep the local asset store and Go repository in
-    // sync before a canvas snapshot starts referencing this asset.
-    if (isLocalWorkspaceMode() && storageKey && resourceIdFromStorageKey(storageKey)) {
-        await http.put(`/assets/${encodeURIComponent(asset.id)}`, { asset });
-        throwIfAborted(options.signal);
+    const confirmed = workspaceAssetHasCanonicalMediaPersist(asset);
+    if (!confirmed) {
+        await flushAssetStorePersistence(expected);
+        assertUserScope(expected);
+        return { assetId: asset.id, created, linkedToProject: false, confirmed: false };
     }
-    await persistWorkspaceAssetLink({ asset, domainProjectId: options.domainProjectId, category: declaredCategory, folderId: options.folderId, signal: options.signal });
-    return { assetId: asset.id, created, linkedToProject: Boolean(options.domainProjectId) };
+    // Browser-local IndexedDB is the durable store, but a proxied Go canvas
+    // repository still requires an owned Asset for resource: keys. Desktop and
+    // hosted commits go through persistWorkspaceAssetLink's typed APIs instead.
+    if (usesBrowserLocalResourceStore() && isLocalWorkspaceMode() && storageKey && resourceIdFromStorageKey(storageKey)) {
+        assertUserScope(expected);
+        await http.put(`/assets/${encodeURIComponent(asset.id)}`, { asset }, { signal: options.signal, expectedScope: expected });
+        throwIfAborted(options.signal);
+        assertUserScope(expected);
+    }
+    await persistWorkspaceAssetLink({
+        asset,
+        domainProjectId: options.domainProjectId,
+        category: declaredCategory,
+        folderId: options.folderId,
+        source: "canvas",
+        signal: options.signal,
+        expectedScope: expected,
+    });
+    assertUserScope(expected);
+    return { assetId: asset.id, created, linkedToProject: Boolean(options.domainProjectId), confirmed: true };
 }
 
 function generationTaskResult(task: GenerationTask): BackendGenerationResult {
@@ -168,7 +204,7 @@ function generationTaskResult(task: GenerationTask): BackendGenerationResult {
 
 export function projectGenerationTaskResult(task: GenerationTask, result?: BackendGenerationResult): GenerationTask {
     const projectedResult = result ?? generationTaskResult(task);
-    const outputs: GenerationTaskOutput[] = projectedResult.images?.length
+    const projectedOutputs: GenerationTaskOutput[] = projectedResult.images?.length
         ? projectedResult.images.map((image, outputIndex) => ({
               outputIndex,
               mediaType: "image" as const,
@@ -191,6 +227,16 @@ export function projectGenerationTaskResult(task: GenerationTask, result?: Backe
                   },
               ]
             : (task.outputs?.map((output) => ({ ...output })) ?? []);
+    const delivered = new Map((task.outputs || []).map((output) => [output.outputIndex, output]));
+    const outputs = projectedOutputs.map((output) => {
+        const existing = delivered.get(output.outputIndex);
+        if (!existing?.materializedAssetId) return output;
+        return {
+            ...output,
+            materializedAssetId: existing.materializedAssetId,
+            materializationErrorCode: existing.materializationErrorCode,
+        };
+    });
 
     return {
         ...task,
@@ -198,6 +244,55 @@ export function projectGenerationTaskResult(task: GenerationTask, result?: Backe
         outputs,
         ...(task.status === "succeeded" && outputs.length && !outputs.every((output) => output.materializedAssetId) ? { resultState: "PENDING_MATERIALIZATION" as const } : {}),
     };
+}
+
+export function hasBackendDeliveredGenerationOutputs(task: Pick<GenerationTask, "outputs">) {
+    return (task.outputs || []).some((output) => Boolean(output.materializedAssetId));
+}
+
+export type HydrateBackendGeneratedAssetDependencies = {
+    getAsset?: (id: string, signal?: AbortSignal) => Promise<{ asset: Asset }>;
+    readAssets?: () => Asset[];
+    writeAsset?: (asset: Asset) => void;
+};
+
+const defaultHydrateBackendGeneratedAssetDependencies: HydrateBackendGeneratedAssetDependencies = {
+    getAsset: (id, signal) => getWorkspaceAsset(id, signal).then((payload) => ({ asset: payload.asset })),
+    readAssets: () => useAssetStore.getState().assets,
+    writeAsset: (asset) => {
+        useAssetStore.setState((state) => (state.assets.some((item) => item.id === asset.id) ? state : { assets: [asset, ...state.assets] }));
+    },
+};
+
+export async function hydrateBackendGeneratedAsset(
+    assetId: string,
+    signal?: AbortSignal,
+    dependencies: HydrateBackendGeneratedAssetDependencies = defaultHydrateBackendGeneratedAssetDependencies,
+) {
+    throwIfAborted(signal);
+    const id = assetId.trim();
+    if (!id) throw new Error("任务产物尚未由后端交付");
+    const getAsset = dependencies.getAsset ?? defaultHydrateBackendGeneratedAssetDependencies.getAsset!;
+    const readAssets = dependencies.readAssets ?? defaultHydrateBackendGeneratedAssetDependencies.readAssets!;
+    const writeAsset = dependencies.writeAsset ?? defaultHydrateBackendGeneratedAssetDependencies.writeAsset!;
+    const existing = readAssets().find((asset) => asset.id === id);
+    if (existing) return existing;
+    const payload = await getAsset(id, signal);
+    throwIfAborted(signal);
+    const asset = parseAssetRecord(payload.asset);
+    writeAsset(asset);
+    return asset;
+}
+
+export async function hydrateBackendGeneratedOutputs(
+    task: Pick<GenerationTask, "outputs">,
+    signal?: AbortSignal,
+    dependencies: HydrateBackendGeneratedAssetDependencies = defaultHydrateBackendGeneratedAssetDependencies,
+) {
+    for (const output of task.outputs || []) {
+        if (!output.materializedAssetId) continue;
+        await hydrateBackendGeneratedAsset(output.materializedAssetId, signal, dependencies);
+    }
 }
 
 async function storedGenerationImage(result: NonNullable<BackendGenerationResult["images"]>[number], effectKey: string, scope: string, signal?: AbortSignal) {
@@ -435,6 +530,11 @@ function generationTaskMaterializer(task: GenerationTask) {
 }
 
 export async function materializeGenerationTaskAssets(task: GenerationTask, signal?: AbortSignal): Promise<GenerationTask> {
+    if (hasBackendDeliveredGenerationOutputs(task)) {
+        await hydrateBackendGeneratedOutputs(task, signal);
+        throwIfAborted(signal);
+        return task;
+    }
     const materialized = await generationTaskMaterializer(task).materialize(projectGenerationTaskResult(task), signal);
     await registerMaterializedTaskAssets(materialized, useAssetStore.getState().assets);
     throwIfAborted(signal);
@@ -512,19 +612,58 @@ export async function consumeGenerationTaskAgent(
 export async function consumeGenerationTaskMessage(
     task: GenerationTask,
     messageId: string,
-    consumer: (input: { task: GenerationTask; resultUrls: string[]; effectKey: string; signal?: AbortSignal }) => Promise<void> | void,
+    consumer: (input: {
+        task: GenerationTask;
+        resultUrls: string[];
+        effectKey: string;
+        signal?: AbortSignal;
+        content?: string;
+        conversation?: StoredCreationConversation;
+        revision?: number;
+        bindingStatus?: string;
+    }) => Promise<void> | void,
     dependencies: {
         signal?: AbortSignal;
         managed?: true;
         materialize?: typeof materializeGenerationTaskAssets;
         materializedUrls?: typeof generationTaskMaterializedUrls;
         attachMessage?: typeof attachGenerationTaskMessage;
+        bindMessage?: BindBackendConversationMessageRuntime;
     } = {},
 ): Promise<GenerationTask> {
     if (!dependencies.managed) {
         return runGenerationConsumer(dependencies.signal, (signal) => consumeGenerationTaskMessage(task, messageId, consumer, { ...dependencies, signal, managed: true }));
     }
-    const materialized = await (dependencies.materialize ?? materializeGenerationTaskAssets)(task, dependencies.signal);
+    const materialized = hasBackendDeliveredGenerationOutputs(task)
+        ? await (async () => {
+              await hydrateBackendGeneratedOutputs(task, dependencies.signal);
+              return task;
+          })()
+        : await (dependencies.materialize ?? materializeGenerationTaskAssets)(task, dependencies.signal);
+    const conversationId = materialized.clientContext?.conversationId?.trim() || "";
+    if (conversationId && materialized.status === "succeeded") {
+        for (const outputIndex of conversationMessageAttachIndexes(materialized)) {
+            const bound = await bindBackendConversationMessageResult({
+                conversationId,
+                messageId,
+                task: materialized,
+                outputIndex,
+                signal: dependencies.signal,
+                runtime: dependencies.bindMessage,
+            });
+            await consumer({
+                task: materialized,
+                resultUrls: bound.resultUrls,
+                effectKey: bound.effectKey,
+                signal: dependencies.signal,
+                content: bound.content,
+                conversation: bound.conversation,
+                revision: bound.receipt.revision,
+                bindingStatus: bound.receipt.bindingStatus,
+            });
+        }
+        return materialized;
+    }
     const resultUrls = (dependencies.materializedUrls ?? generationTaskMaterializedUrls)(materialized);
     const attach = dependencies.attachMessage ?? attachGenerationTaskMessage;
     const outputs = materialized.outputs?.filter((output) => output.materializedAssetId) ?? [];
@@ -540,6 +679,19 @@ export async function consumeGenerationTaskMessage(
         );
     }
     return materialized;
+}
+
+function conversationMessageAttachIndexes(task: GenerationTask): number[] {
+    switch (task.type) {
+        case "text":
+        case "canvas_text":
+        case "text_replay":
+            return [0];
+        default:
+            break;
+    }
+    const indexes = (task.outputs || []).map((output) => output.outputIndex);
+    return indexes.length ? indexes : [0];
 }
 
 export function generationTaskMaterializedUrls(task: GenerationTask): string[] {

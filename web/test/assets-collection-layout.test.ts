@@ -117,7 +117,8 @@ describe("project card actions", () => {
         expect(styles).not.toContain(".recycle-bin-card.is-selected { border-color: var(--user-accent)");
         expect(styles).not.toContain(".libtv-recycle-modal-wrap");
         expect(canvasCard).not.toContain("canvas-collection-rename");
-        expect(styles).toContain(".app-user-workspace .lib-tv-project-page .canvas-collection-select");
+        expect(styles).toContain(".canvas-collection-card:focus-within .canvas-collection-select { opacity: 1; }");
+        expect(styles).not.toContain(".app-user-workspace .lib-tv-project-page .canvas-collection-select { display: none; }");
         expect(styles).toContain("top: auto; right: 8px; bottom: 24px");
         expect(styles).toContain("canvas-collection-preview");
         expect(styles).toContain(".libtv-folder-card-more { position: absolute; top: auto;");

@@ -358,6 +358,7 @@ SEO 标题、描述、可选关键词会投影到浏览器 metadata、Open Graph
 - `web/src/stores/editor/editor-store.ts`：编辑器状态与快照持久化。
 - `web/src/lib/plugins/editor-slot-registry.ts`、`web/src/lib/plugins/builtin/editor/`：插槽注册链与内置预设插件。
 - `web/src/lib/plugins/plugin-permission-check.ts`：命令执行权限与失败关闭策略。
-- `web/src/services/api/timeline-tasks.ts`：转写与渲染任务客户端。
-- `backend/internal/service/task_timeline.go`、`task_render.go`、`timeline_render_plan.go`、`transcription_whisper.go`：后端转写、渲染与渲染计划任务。
+- `web/src/services/api/timeline-tasks.ts`：转写、渲染任务与只读渲染计划客户端。
+- `backend/internal/editing`：语义渲染计划编译。
+- `backend/internal/task`：本机转写/渲染/深度捕捉准入。`task_timeline.go`、`task_render.go`：领取后的转写与 native 渲染执行。
 - `backend/internal/repository/project_workbench_read.go`：项目概览指标聚合（含成片完成度计数）。

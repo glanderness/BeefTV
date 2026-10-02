@@ -281,3 +281,110 @@ html:not(.dark) .app-product-overlays .creation-control-popover-surface {
 @media (max-width: 720px) {
     .creation-demo-banner { width: calc(100% - 28px); margin-top: 10px; }
 }
+
+.creation-conflict-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 10px 14px;
+    width: min(840px, calc(100% - 48px));
+    margin: 14px auto 8px;
+    padding: 12px 14px;
+    border: 1px solid color-mix(in srgb, var(--user-ink) 12%, transparent);
+    border-radius: 12px;
+    background: var(--user-surface);
+    color: var(--user-ink);
+    font-size: 13px;
+    line-height: 1.65;
+}
+.creation-conflict-banner p {
+    flex: 1 1 220px;
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.creation-conflict-banner-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.creation-conflict-banner-actions button,
+.creation-conflict-dialog-actions button {
+    min-height: 36px;
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 10px;
+    background: var(--user-surface-muted);
+    color: var(--user-ink);
+    font-size: 13px;
+    line-height: 1.45;
+    cursor: pointer;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+.creation-conflict-banner-actions button:hover,
+.creation-conflict-dialog-actions button:hover {
+    background: var(--user-surface-hover);
+}
+.creation-conflict-dialog {
+    padding: 8px 20px 20px;
+}
+.creation-conflict-lead {
+    margin: 0 0 16px;
+    color: var(--user-ink-muted);
+    font-size: 13px;
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+}
+.creation-conflict-cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+.creation-conflict-card {
+    min-width: 0;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: var(--user-surface-muted);
+}
+.creation-conflict-card h3 {
+    margin: 0 0 8px;
+    color: var(--user-ink-muted);
+    font-size: 12px;
+    font-weight: 600;
+}
+.creation-conflict-title {
+    margin: 0 0 6px;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+.creation-conflict-card p {
+    margin: 0;
+    color: var(--user-ink-muted);
+    font-size: 13px;
+    line-height: 1.6;
+}
+.creation-conflict-excerpt {
+    margin-top: 8px;
+    overflow-wrap: anywhere;
+}
+.creation-conflict-dialog-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 18px;
+}
+.creation-conflict-dialog-actions button.is-primary {
+    background: var(--user-ink);
+    color: var(--user-surface);
+}
+.creation-conflict-dialog-actions button.is-quiet {
+    background: transparent;
+    color: var(--user-ink-muted);
+}
+@media (max-width: 620px) {
+    .creation-conflict-banner { width: calc(100% - 28px); }
+    .creation-conflict-cards { grid-template-columns: 1fr; }
+}

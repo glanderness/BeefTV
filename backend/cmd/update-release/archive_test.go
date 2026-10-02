@@ -61,6 +61,9 @@ func TestPackageDarwinLayoutAndModes(t *testing.T) {
 	if !names["BeefTV.app/Contents/MacOS/BeefTV"] {
 		t.Fatalf("missing executable: %v", names)
 	}
+	if !names["BeefTV.app/Contents/Resources/agent-host/runtime/bin/node"] || !names["BeefTV.app/Contents/Resources/agent-host/server.mjs"] {
+		t.Fatalf("missing agent host: %v", names)
+	}
 	if names["BeefTV.app/.env"] || names["BeefTV.app/Contents/Resources/user.db"] {
 		t.Fatalf("secret or db leaked into zip: %v", names)
 	}
@@ -76,6 +79,9 @@ func TestPackageDarwinLayoutAndModes(t *testing.T) {
 	defer reader.Close()
 	var sawExec, sawSymlink bool
 	for _, file := range reader.File {
+		if file.Name == "BeefTV.app/Contents/Resources/agent-host/runtime/bin/node" && file.Mode()&0o111 == 0 {
+			t.Fatal("bundled Node executable mode not preserved")
+		}
 		if file.Mode()&os.ModeSymlink != 0 {
 			sawSymlink = true
 		}
@@ -128,7 +134,7 @@ func TestPackageWindowsLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	names := zipNames(t, out)
-	if !names["BeefTV.exe"] || !names["plugin-packages/core.beeftv-plugin"] {
+	if !names["BeefTV.exe"] || !names["plugin-packages/core.beeftv-plugin"] || !names["agent-host/runtime/node.exe"] || !names["agent-host/node_modules/@earendil-works/pi-coding-agent/package.json"] {
 		t.Fatalf("windows zip layout %v", names)
 	}
 	if names[".env.local"] || names["extra.dll"] {
@@ -189,6 +195,7 @@ func writeFakeDarwinApp(t *testing.T, app string) string {
 	if err := os.WriteFile(filepath.Join(plugins, "core.beeftv-plugin"), []byte("plugin"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	writeFakeAgentHost(t, filepath.Join(app, "Contents", "Resources", "agent-host"), "runtime/bin/node")
 	return app
 }
 
@@ -203,7 +210,31 @@ func writeFakeWindowsBin(t *testing.T, dir string) string {
 	if err := os.WriteFile(filepath.Join(dir, "plugin-packages", "core.beeftv-plugin"), []byte("plugin"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	writeFakeAgentHost(t, filepath.Join(dir, "agent-host"), "runtime/node.exe")
 	return dir
+}
+
+func writeFakeAgentHost(t *testing.T, root, node string) {
+	t.Helper()
+	for _, name := range []string{"server.mjs", "session-identity.mjs", "package.json", node, "node_modules/@earendil-works/pi-coding-agent/package.json"} {
+		file := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte("fixture"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestPackageRejectsMissingAgentRuntime(t *testing.T) {
+	bin := writeFakeWindowsBin(t, t.TempDir())
+	if err := os.Remove(filepath.Join(bin, "agent-host", "runtime", "node.exe")); err != nil {
+		t.Fatal(err)
+	}
+	if err := packageBundle(platformWindowsAMD64, bin, filepath.Join(t.TempDir(), "out.zip")); err == nil || !strings.Contains(err.Error(), "agent-host") {
+		t.Fatalf("missing runtime accepted: %v", err)
+	}
 }
 
 func zipNames(t *testing.T, path string) map[string]bool {

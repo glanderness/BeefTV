@@ -1,12 +1,101 @@
 package beefapi
 
 import (
+	"archive/zip"
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"testing"
 
+	"infinite-canvas/backend/internal/protocol"
 	"infinite-canvas/backend/internal/workspace"
 )
+
+func TestGeminiAppliedCatalogResolvesBundledProvider(t *testing.T) {
+	// Connect only to the existing loopback fixture. Its catalog runs through
+	// finalizeSavedCredential -> applyCatalog, then both stores are reopened.
+	svc, _, dir := testService(t, &fakeEnterprise{models: []map[string]any{
+		{"id": "gemini-test", "supported_endpoint_types": []string{"gemini"}},
+	}})
+	if _, err := svc.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, svc, StateConnected)
+	svc.Close()
+	store, err := workspace.NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := New(Options{DataDir: dir, Origin: svc.Origin(), Provider: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	credential, err := restarted.Resolve()
+	if err != nil || credential.APIKey == "" || credential.AccountID != "42" {
+		t.Fatal("persisted managed credential did not resolve after restart")
+	}
+	effective, _, err := store.LoadEffectiveModelConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The public config projection adds the managed credential reference; the
+	// canonical built-in channel deliberately does not persist that UI marker.
+	presented := restarted.RedactConfig(effective.Config)
+	channel := findChannel(presented["channels"].([]any), ChannelID)
+	plainKey, _ := channel["apiKey"].(string)
+	if channel["credentialRef"] != CredentialRef || plainKey != "" {
+		t.Fatal("catalog did not preserve the managed credential reference")
+	}
+	profiles := channel["modelProfiles"].([]any)
+	id := profiles[0].(map[string]any)["protocol"].(string)
+	manifest, err := os.ReadFile("../../../plugin-packages/google-gemini-generate-content/manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var archive bytes.Buffer
+	writer := zip.NewWriter(&archive)
+	entry, err := writer.Create("manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := entry.Write(manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := protocol.ParsePluginPackage(archive.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapters, err := protocol.LoadInstalledProviders(pkg.ManifestRaw, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := protocol.NewRegistry(adapters...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, persisted := range []string{id, "google-gemini-generate-content"} {
+		adapter, ok := registry.Resolve(persisted)
+		if !ok || adapter.Metadata().ID != "gemini-generate-content" {
+			t.Fatalf("persisted catalog protocol %q did not resolve bundled provider", persisted)
+		}
+		native, ok := adapter.(protocol.AgentAdapter)
+		if !ok {
+			t.Fatal("bundled provider has no native text adapter")
+		}
+		spec, err := native.BuildAgent(context.Background(), protocol.AgentRequestContext{
+			BaseURL: credential.BaseURL, Model: profiles[0].(map[string]any)["model"].(string),
+		})
+		if err != nil || spec.Path != "/v1beta/models/gemini-test:generateContent" {
+			t.Fatalf("persisted catalog and credential did not build a native request: %v", err)
+		}
+	}
+}
 
 func TestCatalogCapabilityMapsBeefAPIEndpointTypes(t *testing.T) {
 	cases := []struct {
@@ -20,7 +109,7 @@ func TestCatalogCapabilityMapsBeefAPIEndpointTypes(t *testing.T) {
 		{endpoints: []string{"openai-response"}, wantCap: "text", wantProto: "openai-response"},
 		{endpoints: []string{"openai-response-compact"}, wantCap: "text", wantProto: "openai-response"},
 		{endpoints: []string{"anthropic"}, wantCap: "text", wantProto: "claude-api"},
-		{endpoints: []string{"gemini"}, wantCap: "text", wantProto: "google-gemini-generate-content"},
+		{endpoints: []string{"gemini"}, wantCap: "text", wantProto: "gemini-generate-content"},
 		{endpoints: []string{"image-generation"}, wantCap: "image", wantProto: "openai-image"},
 		{endpoints: []string{"openai-video"}, wantCap: "video", wantProto: "openai-videos"},
 		{endpoints: []string{"openai", "image-generation"}, wantCap: "image", wantProto: "openai-image"},
@@ -33,6 +122,7 @@ func TestCatalogCapabilityMapsBeefAPIEndpointTypes(t *testing.T) {
 		{id: "hy-asr-3.0-preview", endpoints: []string{"audio.transcriptions"}, wantCap: "", wantProto: ""},
 		{id: "gpt-image-2", endpoints: []string{"image-generation"}, wantCap: "image", wantProto: "openai-image"},
 		{id: "seedance-2.0", endpoints: []string{"openai-video"}, wantCap: "video", wantProto: "newapi"},
+		{id: "seedance-2.0-fast", endpoints: []string{"openai"}, wantCap: "video", wantProto: "newapi"},
 		{id: "wan3.0-video", endpoints: []string{"openai-video"}, wantCap: "video", wantProto: "newapi-channel-2"},
 		{id: "explicit-image", modelType: "image", endpoints: []string{"openai"}, wantCap: "image", wantProto: "openai-image"},
 		{id: "explicit-video", modelType: "video", endpoints: []string{"openai"}, wantCap: "video", wantProto: "openai-videos"},

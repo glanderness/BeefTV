@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -243,5 +244,48 @@ func TestWorkerStartDoesNotScheduleRetiredAgentMemoryCompaction(t *testing.T) {
 	}
 	if upstreamHits.Load() != 0 {
 		t.Fatalf("旧 Agent 记忆压缩仍然调用了模型 %d 次", upstreamHits.Load())
+	}
+}
+
+func TestRetiredAgentRuntimeEntrypointsAreGone(t *testing.T) {
+	serviceType := reflect.TypeOf((*Service)(nil))
+	for _, name := range []string{
+		"CreateCloudAgentRun",
+		"CloudAgentRun",
+		"advanceCloudAgents",
+		"startAgentMemoryCompactScheduler",
+		"MCPSession",
+		"InterjectCloudAgent",
+		"CancelCloudAgent",
+		"DecideCloudAgentApproval",
+		"UndoCloudAgentCanvas",
+		"UpdateCloudAgentProfile",
+		"UserAgentMemories",
+		"CompactUserAgentMemories",
+	} {
+		if _, ok := serviceType.MethodByName(name); ok {
+			t.Fatalf("退场入口仍然存在: Service.%s", name)
+		}
+	}
+}
+
+func TestAgentRequestsWithoutCloudAgentMarkerAreNotRetired(t *testing.T) {
+	s, db := retiredAgentService(t)
+	_, err := s.CreateTask("user", CreateTaskRequest{
+		Type: "canvas_text", Operation: "text", Prompt: "点评这张图",
+		Input: map[string]any{
+			"mode": "text", "prompt": "点评这张图",
+			"agentRequests": map[string]any{"canonical": map[string]any{"messages": []any{map[string]any{"role": "user", "content": "点评"}}}},
+		},
+	})
+	if err != nil && strings.Contains(err.Error(), "已下线") {
+		t.Fatalf("普通工具文本任务被当成退场 Agent: %v", err)
+	}
+	var count int64
+	if err := db.Model(&model.Task{}).Where("operation LIKE ?", "cloud_agent%").Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("工具文本任务写了 %d 条旧 Agent operation", count)
 	}
 }

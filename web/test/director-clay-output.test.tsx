@@ -40,9 +40,12 @@ test("已导出的旧白膜节点仍识别为静音", () => {
 
 test("导演台导出成功与失败反馈均可在工作台内直接看到", () => {
     const success = renderToStaticMarkup(<DirectorExportNotice kind="success" text="白膜视频已导出，可在画布中预览播放" />);
+    const warning = renderToStaticMarkup(<DirectorExportNotice kind="warning" text="白膜视频已导出，文件目前只在这台设备上" />);
     const error = renderToStaticMarkup(<DirectorExportNotice kind="error" text="导出失败，请重试" />);
     expect(success).toContain('role="status"');
     expect(success).toContain("白膜视频已导出，可在画布中预览播放");
+    expect(warning).toContain('role="status"');
+    expect(warning).toContain("白膜视频已导出，文件目前只在这台设备上");
     expect(error).toContain('role="alert"');
     expect(error).toContain("导出失败，请重试");
 });

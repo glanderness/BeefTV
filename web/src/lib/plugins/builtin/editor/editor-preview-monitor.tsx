@@ -1,6 +1,5 @@
 // 浏览器内近似预览：真实媒体帧（storageKey → resolveMediaUrl）+ 播放头 + 时间码。
-// 预览与 buildTimelineRenderPlan 共享“片段→媒体”解析规则，但浏览器预览只保证时序一致；
-// 最终画面、编码和滤镜结果以后端导出任务为准。
+// 预览只保证时序一致；最终画面、编码和滤镜结果以语义计划导出为准。
 //
 // 播放模型：时间线 transport（store.transportMs）与监视器共享。
 // - 本地 playbackRef 以 rAF 逐帧推进（60fps 时间码），节流回写 store（~80ms），

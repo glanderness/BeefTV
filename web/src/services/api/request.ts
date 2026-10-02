@@ -1,5 +1,7 @@
 import axios, { type AxiosRequestConfig, type AxiosResponse } from "axios";
 
+import { assertUserScope, isUserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
+
 export type ApiParams = Record<string, string | string[] | number | number[] | undefined>;
 
 export type BackendEnvelope<T> = {
@@ -40,10 +42,12 @@ export let apiBaseURL = import.meta.env.VITE_CANVAS_BACKEND_URL || "/api";
 // 没有超时会让启动水合一直停留在 loading，Playwright 和用户都看不到页面。
 export const apiClient = axios.create({ baseURL: apiBaseURL, withCredentials: true, timeout: 4_000 });
 
-export function configureApiRuntime(baseURL: string, launchToken: string) {
+export function configureApiRuntime(baseURL: string, launchToken: string, uiBootstrapToken?: string) {
     apiBaseURL = baseURL;
     apiClient.defaults.baseURL = baseURL;
     apiClient.defaults.headers.common["X-Desktop-Token"] = launchToken;
+    if (uiBootstrapToken) apiClient.defaults.headers.common["X-Beeftv-UI-Bootstrap"] = uiBootstrapToken;
+    else delete apiClient.defaults.headers.common["X-Beeftv-UI-Bootstrap"];
 }
 
 /**
@@ -70,7 +74,7 @@ export async function request<T>(promise: Promise<{ data: BackendEnvelope<T>; st
 }
 
 function unwrapTransportError(error: unknown): never {
-    if (error instanceof ApiError || (error instanceof DOMException && error.name === "AbortError")) {
+    if (error instanceof ApiError || (error instanceof DOMException && error.name === "AbortError") || isUserScopeAbandonedError(error)) {
         throw error;
     }
     if (axios.isCancel(error) || (axios.isAxiosError(error) && error.code === axios.AxiosError.ERR_CANCELED)) {
@@ -123,10 +127,24 @@ function retryAfterMilliseconds(headers: unknown) {
     return Math.max(0, retryAt - Date.now());
 }
 
-export type HttpRequestConfig = Omit<AxiosRequestConfig, "method" | "url" | "data" | "baseURL">;
+export type HttpRequestConfig = Omit<AxiosRequestConfig, "method" | "url" | "data" | "baseURL"> & {
+    expectedScope?: CapturedUserScope;
+};
+
+function assertExpectedHttpScope(config?: { expectedScope?: CapturedUserScope }) {
+    if (config?.expectedScope) assertUserScope(config.expectedScope);
+}
+
+apiClient.interceptors.request.use((config) => {
+    assertExpectedHttpScope(config as HttpRequestConfig);
+    return config;
+});
 
 async function send<T>(method: string, url: string, data?: unknown, config?: HttpRequestConfig) {
-    return request<T>(apiClient.request<BackendEnvelope<T>>({ method, url, data, ...config }));
+    assertExpectedHttpScope(config);
+    const result = await request<T>(apiClient.request<BackendEnvelope<T>>({ method, url, data, ...config }));
+    assertExpectedHttpScope(config);
+    return result;
 }
 
 /**
@@ -139,9 +157,12 @@ export const http = {
     put: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => send<T>("put", url, data, config),
     patch: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => send<T>("patch", url, data, config),
     delete: <T>(url: string, config?: HttpRequestConfig) => send<T>("delete", url, undefined, config),
-    async raw<T>(config: AxiosRequestConfig): Promise<AxiosResponse<T>> {
+    async raw<T>(config: AxiosRequestConfig & { expectedScope?: CapturedUserScope }): Promise<AxiosResponse<T>> {
         try {
-            return await apiClient.request<T>(config);
+            assertExpectedHttpScope(config);
+            const result = await apiClient.request<T>(config);
+            assertExpectedHttpScope(config);
+            return result;
         } catch (error) {
             throw unwrapTransportError(error);
         }

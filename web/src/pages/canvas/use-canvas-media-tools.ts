@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { App } from "antd";
 import { nanoid } from "nanoid";
 
@@ -36,7 +36,8 @@ import { DEFAULT_PORTRAIT_TEXTURE_SETTINGS } from "@/lib/canvas/canvas-portrait-
 import { IMAGE_PROMPT_REVERSE } from "@/lib/prompts";
 import { createPortraitTextureNode } from "@/lib/canvas/canvas-image-source";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
-import { canvasNodesMissingResourceAssetBinding } from "@/lib/canvas/canvas-node-asset";
+import { recoverOwnedDepthCaptureNodes } from "@/lib/canvas/canvas-depth-recover";
+import { persistOwnedCanvasMediaNodes } from "@/lib/canvas/canvas-media-persist";
 import { captureVideoFrames } from "@/lib/canvas/canvas-video-frame";
 import { resolveCanvasVideoDurationMs } from "@/lib/canvas/canvas-video-duration";
 import { buildVideoFrameNodes } from "@/lib/canvas/canvas-video-frame-nodes";
@@ -56,9 +57,19 @@ import { syncLocalCanvasSnapshot } from "@/services/local-workspace-sync";
 import { openLocalCanvasProjectFromBackend } from "@/services/local-workspace-repository";
 import { http } from "@/services/api/request";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
-import { createDepthCaptureTask, type DepthCaptureResult } from "@/services/api/depth-capture";
-import { getResource, ownedResourceIdFromMediaRef, resourceFileUrl, resourceStorageKey } from "@/services/api/resources";
+import { type GenerationTask } from "@/services/api/task-center";
+import { ownedResourceIdFromMediaRef, resourceFileUrl, resourceStorageKey } from "@/services/api/resources";
+import {
+    attachLocalExecutorResult,
+    beginLocalExecutorSession,
+    isLocalExecutorSessionStop,
+    isUncertainLocalExecutorSubmit,
+    localExecutorFrozenInputKey,
+    localExecutorIntentAfterError,
+    nextLocalExecutorClientOperationId,
+    runOwnedDepthCapture,
+} from "@/lib/plugins/builtin/editor/local-executor-session";
+import { assertUserScope, captureUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
 
 function normalizeMaskEditQuality(quality: string | undefined, size: string | undefined) {
     const value = String(quality || "").trim().toLowerCase();
@@ -140,6 +151,13 @@ export function useCanvasMediaTools({
     const [inlineTrimRunning, setInlineTrimRunning] = useState(false);
     const inlineTrimRunningRef = useRef(false);
     const [panoramaConfigNodeId, setPanoramaConfigNodeId] = useState<string | null>(null);
+    const projectIdRef = useRef(projectId);
+    const depthObserversRef = useRef(new Set<AbortController>());
+    projectIdRef.current = projectId;
+    useEffect(() => () => {
+        for (const observer of depthObserversRef.current) observer.abort();
+        depthObserversRef.current.clear();
+    }, [projectId]);
 
     const resolveImageEditStyle = useCallback((node: CanvasNodeData, prompt: string, config: AiConfig) => {
         try {
@@ -154,75 +172,52 @@ export function useCanvasMediaTools({
         }
     }, [message, nodesRef]);
 
-    const persistMediaNodes = useCallback(async (mediaNodes: CanvasNodeData[], mediaConnections: CanvasConnection[] = []) => {
-        const assetIds = new Map<string, string>();
-        for (const mediaNode of mediaNodes) {
-            try {
-                const result = await ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId, node: mediaNode, source: "canvas-manual" });
-                assetIds.set(mediaNode.id, result.assetId);
-            } catch (error) {
-                message.warning(`媒体节点已创建，但素材库写入失败：${error instanceof Error ? error.message : "未知错误"}`);
-            }
+    const persistMediaNodes = useCallback(async (
+        mediaNodes: CanvasNodeData[],
+        mediaConnections: CanvasConnection[] = [],
+        options?: { expectedScope?: CapturedUserScope; signal?: AbortSignal },
+    ) => {
+        try {
+            return await persistOwnedCanvasMediaNodes({
+                canvasId: projectId,
+                domainProjectId,
+                mediaNodes,
+                mediaConnections,
+                expectedScope: options?.expectedScope ?? captureUserScope(),
+                signal: options?.signal,
+            }, {
+                ensureCanvasNodeAsset,
+                getStoredProject: (canvasId) => {
+                    const project = useCanvasStore.getState().projects.find((item) => item.id === canvasId);
+                    return project ? { nodes: project.nodes, connections: project.connections } : undefined;
+                },
+                hasProject: (canvasId) => useCanvasStore.getState().projects.some((item) => item.id === canvasId),
+                openProject: (id, expectedScope) => openLocalCanvasProjectFromBackend(id, expectedScope),
+                updateProject: (canvasId, patch) => useCanvasStore.getState().updateProject(canvasId, patch),
+                flushPersistence: async (expectedScope) => {
+                    assertUserScope(expectedScope);
+                    await flushCanvasStorePersistence();
+                },
+                syncSnapshot: (id, patch, expectedScope) => syncLocalCanvasSnapshot(id, patch, expectedScope),
+                readSavedProject: async (canvasId, expectedScope) => {
+                    const { project } = await http.get<{ project: { nodes: CanvasNodeData[] } }>(
+                        `/canvas-projects/${encodeURIComponent(canvasId)}`,
+                        { expectedScope, signal: options?.signal },
+                    );
+                    return project;
+                },
+                setNodes,
+                getLiveProjectId: () => projectIdRef.current,
+                getLiveNodes: () => nodesRef.current,
+                getLiveConnections: () => connectionsRef.current,
+                isLocalWorkspace: isLocalWorkspaceMode,
+                warn: (text) => { message.warning(text); },
+                error: (text) => { message.error(text); },
+            });
+        } catch (error) {
+            if (isLocalExecutorSessionStop(error)) return new Map<string, string>();
+            throw error;
         }
-        // State setters may still be queued when media processing finishes.
-        // Merge the explicit result into the live ref and use the project
-        // snapshot as a fallback so a persistence call cannot drop siblings.
-        const latestNodes = new Map(nodesRef.current.map((node) => [node.id, node]));
-        let storedProject = useCanvasStore.getState().projects.find((project) => project.id === projectId);
-        for (const node of storedProject?.nodes || []) {
-            if (!latestNodes.has(node.id)) latestNodes.set(node.id, node);
-        }
-        for (const mediaNode of mediaNodes) {
-            const assetId = assetIds.get(mediaNode.id);
-            latestNodes.set(mediaNode.id, assetId ? { ...mediaNode, metadata: { ...mediaNode.metadata, assetId } } : mediaNode);
-        }
-        // A legacy node can still reference a durable Resource without its
-        // required Asset binding. Since the backend validates the whole canvas
-        // snapshot, repair only those resource-backed siblings before syncing.
-        for (const node of canvasNodesMissingResourceAssetBinding([...latestNodes.values()])) {
-            try {
-                const result = await ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId, node, source: "canvas-manual" });
-                assetIds.set(node.id, result.assetId);
-                latestNodes.set(node.id, { ...node, metadata: { ...node.metadata, assetId: result.assetId } });
-            } catch (error) {
-                message.warning(`已有媒体节点尚未完成素材库绑定，无法保存本次结果：${error instanceof Error ? error.message : "未知错误"}`);
-                throw error;
-            }
-        }
-        if (assetIds.size > 0) {
-            setNodes((current) => current.map((item) => {
-                const assetId = assetIds.get(item.id);
-                return assetId ? { ...item, metadata: { ...item.metadata, assetId } } : item;
-            }));
-        }
-        if (!useCanvasStore.getState().projects.some((project) => project.id === projectId) && isLocalWorkspaceMode()) {
-            await openLocalCanvasProjectFromBackend(projectId);
-        }
-        const projectStore = useCanvasStore.getState();
-        storedProject = projectStore.projects.find((project) => project.id === projectId);
-        if (!projectStore.projects.some((project) => project.id === projectId)) {
-            throw new Error("当前画布未载入本地项目库，无法保存媒体结果");
-        }
-        {
-            const latestConnections = new Map((storedProject?.connections || []).map((connection) => [connection.id, connection]));
-            for (const connection of connectionsRef.current) latestConnections.set(connection.id, connection);
-            for (const connection of mediaConnections) latestConnections.set(connection.id, connection);
-            projectStore.updateProject(projectId, { nodes: [...latestNodes.values()], connections: [...latestConnections.values()] });
-            try {
-                await flushCanvasStorePersistence();
-                if (isLocalWorkspaceMode()) {
-                    await syncLocalCanvasSnapshot(projectId, { nodes: [...latestNodes.values()], connections: [...latestConnections.values()] });
-                    const { project: saved } = await http.get<{ project: { nodes: CanvasNodeData[] } }>(`/canvas-projects/${encodeURIComponent(projectId)}`);
-                    if (!saved || mediaNodes.some((node) => !saved.nodes.some((savedNode) => savedNode.id === node.id))) {
-                        throw new Error("本地项目库回读校验未包含刚生成的媒体节点");
-                    }
-                }
-            } catch (error) {
-                message.error(`媒体结果已生成，但本地画布保存失败：${error instanceof Error ? error.message : "未知错误"}`);
-                throw error;
-            }
-        }
-        return assetIds;
     }, [connectionsRef, domainProjectId, message, nodesRef, projectId, setNodes]);
 
     const createImageReversePromptNodes = useCallback((node: CanvasNodeData) => {
@@ -355,6 +350,13 @@ export function useCanvasMediaTools({
             message.error("请先等待视频保存到本地资源库，再进行深度动作捕捉");
             return;
         }
+        const expectedScope = captureUserScope();
+        const originalProjectId = projectId;
+        const persistOriginal = persistMediaNodes;
+        const observer = new AbortController();
+        depthObserversRef.current.add(observer);
+        const frozenInputKey = localExecutorFrozenInputKey(["depth_capture", originalProjectId, resourceId]);
+        const clientOperationId = nextLocalExecutorClientOperationId(null, frozenInputKey);
         const childId = nanoid();
         const connection = { id: nanoid(), fromNodeId: node.id, toNodeId: childId };
         const pendingChild: CanvasNodeData = {
@@ -371,55 +373,90 @@ export function useCanvasMediaTools({
                 taskProgress: 0,
                 prompt: `从「${node.title || "视频"}」生成深度动作参考`,
                 depthSourceNodeId: node.id,
+                taskClientOperationId: clientOperationId,
+                taskClientOperationInput: frozenInputKey,
             }),
         };
         setNodes((current) => [...current, pendingChild]);
         setConnections((current) => [...current, connection]);
         setSelectedNodeIds(new Set([childId]));
         setSelectedConnectionId(null);
+        let submittedTaskId: string | undefined;
         try {
-            const created = await createDepthCaptureTask({ projectId, resourceId });
-            setNodes((current) => current.map((item) => item.id === childId ? { ...item, metadata: { ...item.metadata, taskId: created.id, taskStatus: created.status } } : item));
-            const completed = await waitForGenerationTask(created.id, {
-                initialTask: created,
-                intervalMs: 1000,
-                onTaskUpdate: (task) => setNodes((current) => current.map((item) => item.id === childId ? {
+            const session = beginLocalExecutorSession(originalProjectId, {
+                controller: observer,
+                getLiveProjectId: () => projectIdRef.current,
+                expectedScope,
+            });
+            const { task, resource, capture } = await runOwnedDepthCapture({
+                session,
+                projectId: originalProjectId,
+                resourceId,
+                clientOperationId,
+                onCreated: (created) => {
+                    submittedTaskId = created.id;
+                    setNodes((current) => current.map((item) => item.id === childId ? { ...item, metadata: { ...item.metadata, taskId: created.id, taskStatus: created.status, taskClientOperationId: created.clientOperationId || clientOperationId } } : item));
+                },
+                onTaskUpdate: (next) => setNodes((current) => current.map((item) => item.id === childId ? {
                     ...item,
-                    metadata: { ...item.metadata, taskStatus: task.status, taskStage: task.stage, processingLabel: task.stage || "正在生成深度视频", taskProgress: task.progress },
+                    metadata: { ...item.metadata, taskStatus: next.status, taskStage: next.stage, processingLabel: next.stage || "正在生成深度视频", taskProgress: next.progress },
                 } : item)),
             });
-            const result = JSON.parse(completed.resultJson || "{}") as DepthCaptureResult;
-            if (!result.resourceId) throw new Error("任务完成但没有返回深度视频资源");
-            const resource = await getResource(result.resourceId);
-            const size = fitNodeSize(resource.width || result.width || 1920, resource.height || result.height || 1080, VIDEO_NODE_MAX_SIZE.width, VIDEO_NODE_MAX_SIZE.height);
+            const size = fitNodeSize(resource.width || capture.width || 1920, resource.height || capture.height || 1080, VIDEO_NODE_MAX_SIZE.width, VIDEO_NODE_MAX_SIZE.height);
             const completedChild: CanvasNodeData = {
                 ...pendingChild,
                 width: size.width,
                 height: size.height,
                 metadata: mediaResultMetadata("derived", {
-                    content: resourceFileUrl(result.resourceId),
-                    storageKey: resourceStorageKey(result.resourceId),
+                    content: resourceFileUrl(capture.resourceId),
+                    storageKey: resourceStorageKey(capture.resourceId),
                     mimeType: resource.mimeType || "video/mp4",
-                    bytes: resource.size || result.size,
-                    naturalWidth: resource.width || result.width || 1920,
-                    naturalHeight: resource.height || result.height || 1080,
-                    durationMs: resource.durationMs || result.durationMs,
+                    bytes: resource.size || capture.size,
+                    naturalWidth: resource.width || capture.width || 1920,
+                    naturalHeight: resource.height || capture.height || 1080,
+                    durationMs: resource.durationMs || capture.durationMs,
                     status: NODE_STATUS_SUCCESS,
                     videoPreview: undefined,
-                    taskId: completed.id,
-                    taskStatus: completed.status,
-                    taskStage: completed.stage,
+                    taskId: task.id,
+                    taskClientOperationId: task.clientOperationId || clientOperationId,
+                    taskClientOperationInput: frozenInputKey,
+                    taskStatus: task.status,
+                    taskStage: task.stage,
                     taskProgress: 100,
                     prompt: pendingChild.metadata?.prompt,
                     depthSourceNodeId: node.id,
                 }),
             };
-            setNodes((current) => current.map((item) => item.id === childId ? completedChild : item));
-            await persistMediaNodes([completedChild], [connection]);
+            await attachLocalExecutorResult(session, async () => {
+                setNodes((current) => current.map((item) => item.id === childId ? completedChild : item));
+                await persistOriginal([completedChild], [connection], { expectedScope, signal: observer.signal });
+            });
         } catch (error) {
+            if (isLocalExecutorSessionStop(error)) return;
             const details = error instanceof Error ? error.message : "深度动作捕捉失败";
-            setNodes((current) => current.map((item) => item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, taskStatus: "failed", errorDetails: details } } : item));
+            const intent = localExecutorIntentAfterError({
+                clientOperationId,
+                submittedTaskId,
+                frozenInputKey,
+            }, error);
+            const uncertain = isUncertainLocalExecutorSubmit(error, submittedTaskId);
+            setNodes((current) => current.map((item) => item.id === childId ? {
+                ...item,
+                metadata: {
+                    ...item.metadata,
+                    status: NODE_STATUS_ERROR,
+                    taskStatus: "failed",
+                    taskId: submittedTaskId,
+                    taskClientOperationId: intent.clientOperationId,
+                    taskClientOperationInput: frozenInputKey,
+                    taskClientOperationTerminal: intent.terminal,
+                    taskStage: uncertain ? "submission_unknown" : item.metadata?.taskStage,
+                    errorDetails: details,
+                },
+            } : item));
             message.error(details);
+        } finally {
+            depthObserversRef.current.delete(observer);
         }
     }, [message, persistMediaNodes, projectId, setConnections, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
 
@@ -433,6 +470,18 @@ export function useCanvasMediaTools({
             message.error(details);
             return;
         }
+        const expectedScope = captureUserScope();
+        const originalProjectId = projectId;
+        const persistOriginal = persistMediaNodes;
+        const observer = new AbortController();
+        depthObserversRef.current.add(observer);
+        const frozenInputKey = localExecutorFrozenInputKey(["depth_capture", originalProjectId, resourceId]);
+        const clientOperationId = nextLocalExecutorClientOperationId({
+            clientOperationId: node.metadata?.taskClientOperationId,
+            submittedTaskId: node.metadata?.taskId,
+            frozenInputKey: node.metadata?.taskClientOperationInput,
+            terminal: node.metadata?.taskClientOperationTerminal,
+        }, frozenInputKey);
         setNodes((current) => current.map((item) => item.id === node.id ? {
             ...item,
             metadata: {
@@ -442,115 +491,104 @@ export function useCanvasMediaTools({
                 taskStage: "检查深度处理组件",
                 taskProgress: 0,
                 taskStatus: "queued",
+                taskClientOperationId: clientOperationId,
+                taskClientOperationInput: frozenInputKey,
+                taskClientOperationTerminal: undefined,
                 errorDetails: undefined,
             },
         } : item));
+        let submittedTaskId: string | undefined;
         try {
-            const created = await createDepthCaptureTask({ projectId, resourceId });
-            setNodes((current) => current.map((item) => item.id === node.id ? { ...item, metadata: { ...item.metadata, taskId: created.id, taskStatus: created.status } } : item));
-            const completed = await waitForGenerationTask(created.id, {
-                initialTask: created,
-                intervalMs: 1000,
-                onTaskUpdate: (task) => setNodes((current) => current.map((item) => item.id === node.id ? {
+            const session = beginLocalExecutorSession(originalProjectId, {
+                controller: observer,
+                getLiveProjectId: () => projectIdRef.current,
+                expectedScope,
+            });
+            const { task, resource, capture } = await runOwnedDepthCapture({
+                session,
+                projectId: originalProjectId,
+                resourceId,
+                clientOperationId,
+                onCreated: (created) => {
+                    submittedTaskId = created.id;
+                    setNodes((current) => current.map((item) => item.id === node.id ? { ...item, metadata: { ...item.metadata, taskId: created.id, taskStatus: created.status, taskClientOperationId: created.clientOperationId || clientOperationId } } : item));
+                },
+                onTaskUpdate: (next) => setNodes((current) => current.map((item) => item.id === node.id ? {
                     ...item,
-                    metadata: { ...item.metadata, taskStatus: task.status, taskStage: task.stage, processingLabel: task.stage || "正在生成深度视频", taskProgress: task.progress },
+                    metadata: { ...item.metadata, taskStatus: next.status, taskStage: next.stage, processingLabel: next.stage || "正在生成深度视频", taskProgress: next.progress },
                 } : item)),
             });
-            const result = JSON.parse(completed.resultJson || "{}") as DepthCaptureResult;
-            if (!result.resourceId) throw new Error("任务完成但没有返回深度视频资源");
-            const resource = await getResource(result.resourceId);
-            const size = fitNodeSize(resource.width || result.width || 1920, resource.height || result.height || 1080, VIDEO_NODE_MAX_SIZE.width, VIDEO_NODE_MAX_SIZE.height);
+            const size = fitNodeSize(resource.width || capture.width || 1920, resource.height || capture.height || 1080, VIDEO_NODE_MAX_SIZE.width, VIDEO_NODE_MAX_SIZE.height);
             const completedNode: CanvasNodeData = {
                 ...node,
                 width: size.width,
                 height: size.height,
                 metadata: mediaResultMetadata("derived", {
-                    content: resourceFileUrl(result.resourceId),
-                    storageKey: resourceStorageKey(result.resourceId),
+                    content: resourceFileUrl(capture.resourceId),
+                    storageKey: resourceStorageKey(capture.resourceId),
                     mimeType: resource.mimeType || "video/mp4",
-                    bytes: resource.size || result.size,
-                    naturalWidth: resource.width || result.width || 1920,
-                    naturalHeight: resource.height || result.height || 1080,
-                    durationMs: resource.durationMs || result.durationMs,
+                    bytes: resource.size || capture.size,
+                    naturalWidth: resource.width || capture.width || 1920,
+                    naturalHeight: resource.height || capture.height || 1080,
+                    durationMs: resource.durationMs || capture.durationMs,
                     status: NODE_STATUS_SUCCESS,
                     videoPreview: undefined,
-                    taskId: completed.id,
-                    taskStatus: completed.status,
-                    taskStage: completed.stage,
+                    taskId: task.id,
+                    taskClientOperationId: task.clientOperationId || clientOperationId,
+                    taskClientOperationInput: frozenInputKey,
+                    taskStatus: task.status,
+                    taskStage: task.stage,
                     taskProgress: 100,
                     prompt: node.metadata?.prompt,
                     depthSourceNodeId: sourceNode.id,
                 }),
             };
-            setNodes((current) => current.map((item) => item.id === node.id ? completedNode : item));
-            await persistMediaNodes([completedNode]);
+            await attachLocalExecutorResult(session, async () => {
+                setNodes((current) => current.map((item) => item.id === node.id ? completedNode : item));
+                await persistOriginal([completedNode], [], { expectedScope, signal: observer.signal });
+            });
         } catch (error) {
+            if (isLocalExecutorSessionStop(error)) return;
             const details = error instanceof Error ? error.message : "深度动作捕捉失败";
-            setNodes((current) => current.map((item) => item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, taskStatus: "failed", errorDetails: details } } : item));
+            const intent = localExecutorIntentAfterError({
+                clientOperationId,
+                submittedTaskId,
+                frozenInputKey,
+            }, error);
+            const uncertain = isUncertainLocalExecutorSubmit(error, submittedTaskId);
+            setNodes((current) => current.map((item) => item.id === node.id ? {
+                ...item,
+                metadata: {
+                    ...item.metadata,
+                    status: NODE_STATUS_ERROR,
+                    taskStatus: "failed",
+                    taskId: submittedTaskId,
+                    taskClientOperationId: intent.clientOperationId,
+                    taskClientOperationInput: frozenInputKey,
+                    taskClientOperationTerminal: intent.terminal,
+                    taskStage: uncertain ? "submission_unknown" : item.metadata?.taskStage,
+                    errorDetails: details,
+                },
+            } : item));
             message.error(details);
+        } finally {
+            depthObserversRef.current.delete(observer);
         }
     }, [message, nodesRef, persistMediaNodes, projectId, setNodes]);
 
     const recoverDepthCaptureNodes = useCallback((signal: AbortSignal) => {
-        for (const node of nodesRef.current) {
-            if (!node.metadata?.depthSourceNodeId || node.metadata.status !== NODE_STATUS_LOADING) continue;
-            const taskId = node.metadata.taskId;
-            if (!taskId) {
-                setNodes((current) => current.map((item) => item.id === node.id ? {
-                    ...item,
-                    metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: "深度任务未成功提交，请重新生成" },
-                } : item));
-                continue;
-            }
-            void waitForGenerationTask(taskId, {
-                signal,
-                intervalMs: 1000,
-                onTaskUpdate: (task) => {
-                    if (signal.aborted) return;
-                    setNodes((current) => current.map((item) => item.id === node.id ? {
-                        ...item,
-                        metadata: { ...item.metadata, taskStatus: task.status, taskStage: task.stage, processingLabel: task.stage || "正在生成深度视频", taskProgress: task.progress },
-                    } : item));
-                },
-            }).then(async (completed) => {
-                if (signal.aborted || !nodesRef.current.some((item) => item.id === node.id)) return;
-                const result = JSON.parse(completed.resultJson || "{}") as DepthCaptureResult;
-                if (!result.resourceId) throw new Error("任务完成但没有返回深度视频资源");
-                const resource = await getResource(result.resourceId);
-                if (signal.aborted || !nodesRef.current.some((item) => item.id === node.id)) return;
-                const size = fitNodeSize(resource.width || result.width || 1920, resource.height || result.height || 1080, VIDEO_NODE_MAX_SIZE.width, VIDEO_NODE_MAX_SIZE.height);
-                const completedNode: CanvasNodeData = {
-                    ...node,
-                    width: size.width,
-                    height: size.height,
-                    metadata: mediaResultMetadata("derived", {
-                        ...node.metadata,
-                        content: resourceFileUrl(result.resourceId),
-                        storageKey: resourceStorageKey(result.resourceId),
-                        mimeType: resource.mimeType || "video/mp4",
-                        bytes: resource.size || result.size,
-                        naturalWidth: resource.width || result.width || 1920,
-                        naturalHeight: resource.height || result.height || 1080,
-                        durationMs: resource.durationMs || result.durationMs,
-                        status: NODE_STATUS_SUCCESS,
-                        videoPreview: undefined,
-                        taskId: completed.id,
-                        taskStatus: completed.status,
-                        taskStage: completed.stage,
-                        taskProgress: 100,
-                    }),
-                };
-                setNodes((current) => current.map((item) => item.id === node.id ? completedNode : item));
-                await persistMediaNodes([completedNode]);
-            }).catch((error) => {
-                if (signal.aborted) return;
-                setNodes((current) => current.map((item) => item.id === node.id ? {
-                    ...item,
-                    metadata: { ...item.metadata, status: NODE_STATUS_ERROR, taskStatus: "failed", errorDetails: generationErrorMessage(error) },
-                } : item));
-            });
-        }
-    }, [nodesRef, persistMediaNodes, setNodes]);
+        recoverOwnedDepthCaptureNodes({
+            nodes: nodesRef.current,
+            signal,
+            expectedScope: captureUserScope(),
+            projectId,
+            getLiveProjectId: () => projectIdRef.current,
+            observers: depthObserversRef.current,
+            persist: persistMediaNodes,
+            setNodes,
+            nodeStillMounted: (nodeId) => nodesRef.current.some((item) => item.id === nodeId),
+        });
+    }, [nodesRef, persistMediaNodes, projectId, setNodes]);
 
     const saveAnnotatedImageNode = useCallback(async (node: CanvasNodeData, dataUrl: string) => {
         const image = await uploadImage(dataUrl);
