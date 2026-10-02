@@ -4,18 +4,19 @@
   "state": "accepted_for_release_with_owner_financial_evidence_exception",
   "releaseComplete": false,
   "generatedAt": "2026-10-02T13:17:30.709478+00:00",
-  "sourceDigest": "72ebc1c9b36670d5cdb7726c3a10605aa7386e29bbec9b76ffd0ddb7ed415640",
-  "sourceCommit": "7b06014",
+  "sourceDigest": "eae6d0b614be9fb3aa3909e060d58320d4bb48fbbf176ed5a8cd7285afa96b31",
+  "sourceCommit": "d77231870dc3258a770e44fbe04788899a0e0e95",
   "sourceEquivalence": {
     "testedCommit": "2a7e2ba",
     "testedSourceDigest": "676007a92f0c04b7af1468d4ecc4dede721e4f1c76f4e7c9c4e3fc05ee3136e3",
-    "releaseCandidateCommit": "7b06014",
-    "releaseSourceDigest": "72ebc1c9b36670d5cdb7726c3a10605aa7386e29bbec9b76ffd0ddb7ed415640",
-    "difference": "Test fixture alias compatibility change plus exact v1.6.23 owner-authorized financial-evidence gate and its tests. Shipped application/backend/agent runtime and dependencies unchanged.",
+    "releaseCandidateCommit": "d77231870dc3258a770e44fbe04788899a0e0e95",
+    "releaseSourceDigest": "eae6d0b614be9fb3aa3909e060d58320d4bb48fbbf176ed5a8cd7285afa96b31",
+    "difference": "Test fixture alias compatibility change plus exact v1.6.23 owner-authorized financial-evidence gate and its tests. Shipped application/backend/agent runtime and dependencies unchanged. Release build toolchain Bun aligned from 1.3.9 to the native-tested 1.4.2 to read locked dependency format v2. This is build-toolchain equivalence, not a test-only change; all three packaging contracts and canonical builds must pass before publication.",
     "changedFiles": [
       "web/test/fixtures/canvas-lifecycle-restart-harness.tsx",
       "scripts/verify-real-generation-release.mjs",
-      "scripts/verify-real-generation-release.test.mjs"
+      "scripts/verify-real-generation-release.test.mjs",
+      ".github/workflows/release-desktop.yml"
     ],
     "productionDiffEmpty": true,
     "originalNativeReceiptsPreserved": true,
@@ -214,10 +215,10 @@
     "canvas_read": {
       "status": "passed",
       "method": "native",
-      "sourceDigest": "72ebc1c9b36670d5cdb7726c3a10605aa7386e29bbec9b76ffd0ddb7ed415640",
+      "sourceDigest": "eae6d0b614be9fb3aa3909e060d58320d4bb48fbbf176ed5a8cd7285afa96b31",
       "testedCommit": "2a7e2ba",
       "testedSourceDigest": "676007a92f0c04b7af1468d4ecc4dede721e4f1c76f4e7c9c4e3fc05ee3136e3",
-      "sourceBinding": "explicit_test_only_equivalence",
+      "sourceBinding": "explicit_runtime_and_build_toolchain_equivalence",
       "evidence": [
         "native-cancel-2a7e2ba-receipt.json",
         "candidate-equivalence-2a7e2ba-f6e23ba.json",
@@ -230,10 +231,10 @@
     "asset_reference": {
       "status": "passed",
       "method": "native",
-      "sourceDigest": "72ebc1c9b36670d5cdb7726c3a10605aa7386e29bbec9b76ffd0ddb7ed415640",
+      "sourceDigest": "eae6d0b614be9fb3aa3909e060d58320d4bb48fbbf176ed5a8cd7285afa96b31",
       "testedCommit": "2a7e2ba",
       "testedSourceDigest": "676007a92f0c04b7af1468d4ecc4dede721e4f1c76f4e7c9c4e3fc05ee3136e3",
-      "sourceBinding": "explicit_test_only_equivalence",
+      "sourceBinding": "explicit_runtime_and_build_toolchain_equivalence",
       "evidence": [
         "native-asset-reference-2a7e2ba-receipt.json",
         "candidate-equivalence-2a7e2ba-f6e23ba.json",
@@ -244,10 +245,10 @@
     "canvas_mutation": {
       "status": "passed",
       "method": "native",
-      "sourceDigest": "72ebc1c9b36670d5cdb7726c3a10605aa7386e29bbec9b76ffd0ddb7ed415640",
+      "sourceDigest": "eae6d0b614be9fb3aa3909e060d58320d4bb48fbbf176ed5a8cd7285afa96b31",
       "testedCommit": "2a7e2ba",
       "testedSourceDigest": "676007a92f0c04b7af1468d4ecc4dede721e4f1c76f4e7c9c4e3fc05ee3136e3",
-      "sourceBinding": "explicit_test_only_equivalence",
+      "sourceBinding": "explicit_runtime_and_build_toolchain_equivalence",
       "evidence": [
         "native-concurrent-mutation-2a7e2ba-receipt.json",
         "candidate-equivalence-2a7e2ba-f6e23ba.json",
@@ -259,10 +260,10 @@
     "multi_turn": {
       "status": "passed",
       "method": "native",
-      "sourceDigest": "72ebc1c9b36670d5cdb7726c3a10605aa7386e29bbec9b76ffd0ddb7ed415640",
+      "sourceDigest": "eae6d0b614be9fb3aa3909e060d58320d4bb48fbbf176ed5a8cd7285afa96b31",
       "testedCommit": "2a7e2ba",
       "testedSourceDigest": "676007a92f0c04b7af1468d4ecc4dede721e4f1c76f4e7c9c4e3fc05ee3136e3",
-      "sourceBinding": "explicit_test_only_equivalence",
+      "sourceBinding": "explicit_runtime_and_build_toolchain_equivalence",
       "evidence": [
         "native-concurrent-mutation-2a7e2ba-receipt.json",
         "r2-images-proposal.json",
@@ -281,10 +282,10 @@
     "proposal_decline": {
       "status": "passed",
       "method": "native",
-      "sourceDigest": "72ebc1c9b36670d5cdb7726c3a10605aa7386e29bbec9b76ffd0ddb7ed415640",
+      "sourceDigest": "eae6d0b614be9fb3aa3909e060d58320d4bb48fbbf176ed5a8cd7285afa96b31",
       "testedCommit": "2a7e2ba",
       "testedSourceDigest": "676007a92f0c04b7af1468d4ecc4dede721e4f1c76f4e7c9c4e3fc05ee3136e3",
-      "sourceBinding": "explicit_test_only_equivalence",
+      "sourceBinding": "explicit_runtime_and_build_toolchain_equivalence",
       "evidence": [
         "native-proposal-decline-2a7e2ba-receipt.json",
         "proposal-declined-2a7e2ba.json",
@@ -298,10 +299,10 @@
     "proposal_stale": {
       "status": "passed",
       "method": "native",
-      "sourceDigest": "72ebc1c9b36670d5cdb7726c3a10605aa7386e29bbec9b76ffd0ddb7ed415640",
+      "sourceDigest": "eae6d0b614be9fb3aa3909e060d58320d4bb48fbbf176ed5a8cd7285afa96b31",
       "testedCommit": "2a7e2ba",
       "testedSourceDigest": "676007a92f0c04b7af1468d4ecc4dede721e4f1c76f4e7c9c4e3fc05ee3136e3",
-      "sourceBinding": "explicit_test_only_equivalence",
+      "sourceBinding": "explicit_runtime_and_build_toolchain_equivalence",
       "evidence": [
         "native-proposal-stale-2a7e2ba-receipt.json",
         "candidate-equivalence-2a7e2ba-f6e23ba.json",
@@ -314,10 +315,10 @@
     "proposal_idempotency": {
       "status": "passed",
       "method": "native",
-      "sourceDigest": "72ebc1c9b36670d5cdb7726c3a10605aa7386e29bbec9b76ffd0ddb7ed415640",
+      "sourceDigest": "eae6d0b614be9fb3aa3909e060d58320d4bb48fbbf176ed5a8cd7285afa96b31",
       "testedCommit": "2a7e2ba",
       "testedSourceDigest": "676007a92f0c04b7af1468d4ecc4dede721e4f1c76f4e7c9c4e3fc05ee3136e3",
-      "sourceBinding": "explicit_test_only_equivalence",
+      "sourceBinding": "explicit_runtime_and_build_toolchain_equivalence",
       "evidence": [
         "native-proposal-idempotency-r2-2a7e2ba-receipt.json",
         "candidate-equivalence-2a7e2ba-f6e23ba.json",
@@ -330,10 +331,10 @@
     "session_history": {
       "status": "passed",
       "method": "native",
-      "sourceDigest": "72ebc1c9b36670d5cdb7726c3a10605aa7386e29bbec9b76ffd0ddb7ed415640",
+      "sourceDigest": "eae6d0b614be9fb3aa3909e060d58320d4bb48fbbf176ed5a8cd7285afa96b31",
       "testedCommit": "2a7e2ba",
       "testedSourceDigest": "676007a92f0c04b7af1468d4ecc4dede721e4f1c76f4e7c9c4e3fc05ee3136e3",
-      "sourceBinding": "explicit_test_only_equivalence",
+      "sourceBinding": "explicit_runtime_and_build_toolchain_equivalence",
       "evidence": [
         "native-session-history-2a7e2ba-receipt.json",
         "candidate-equivalence-2a7e2ba-f6e23ba.json",
@@ -346,10 +347,10 @@
     "cancel": {
       "status": "passed",
       "method": "native",
-      "sourceDigest": "72ebc1c9b36670d5cdb7726c3a10605aa7386e29bbec9b76ffd0ddb7ed415640",
+      "sourceDigest": "eae6d0b614be9fb3aa3909e060d58320d4bb48fbbf176ed5a8cd7285afa96b31",
       "testedCommit": "2a7e2ba",
       "testedSourceDigest": "676007a92f0c04b7af1468d4ecc4dede721e4f1c76f4e7c9c4e3fc05ee3136e3",
-      "sourceBinding": "explicit_test_only_equivalence",
+      "sourceBinding": "explicit_runtime_and_build_toolchain_equivalence",
       "evidence": [
         "native-cancel-2a7e2ba-receipt.json",
         "candidate-equivalence-2a7e2ba-f6e23ba.json",
@@ -362,10 +363,10 @@
     "session_restart": {
       "status": "passed",
       "method": "native",
-      "sourceDigest": "72ebc1c9b36670d5cdb7726c3a10605aa7386e29bbec9b76ffd0ddb7ed415640",
+      "sourceDigest": "eae6d0b614be9fb3aa3909e060d58320d4bb48fbbf176ed5a8cd7285afa96b31",
       "testedCommit": "2a7e2ba",
       "testedSourceDigest": "676007a92f0c04b7af1468d4ecc4dede721e4f1c76f4e7c9c4e3fc05ee3136e3",
-      "sourceBinding": "explicit_test_only_equivalence",
+      "sourceBinding": "explicit_runtime_and_build_toolchain_equivalence",
       "evidence": [
         "native-edge-restart-2a7e2ba-receipt.json",
         "six-edges-before-restart-2a7e2ba.json",
@@ -382,7 +383,7 @@
     "conflict_undo": {
       "status": "passed",
       "method": "deterministic",
-      "sourceDigest": "72ebc1c9b36670d5cdb7726c3a10605aa7386e29bbec9b76ffd0ddb7ed415640",
+      "sourceDigest": "eae6d0b614be9fb3aa3909e060d58320d4bb48fbbf176ed5a8cd7285afa96b31",
       "evidence": [
         "deterministic-agent-f6e23ba/receipt.json",
         "deterministic-agent-f6e23ba/conflict_undo-later-edits.log",
@@ -448,12 +449,13 @@
       ],
       "limitations": [
         "Not native undo-button or simultaneous multi-window UI verification; not paid-media cancellation/refund."
-      ]
+      ],
+      "sourceBinding": "explicit_runtime_and_build_toolchain_equivalence"
     },
     "host_recovery": {
       "status": "passed",
       "method": "deterministic",
-      "sourceDigest": "72ebc1c9b36670d5cdb7726c3a10605aa7386e29bbec9b76ffd0ddb7ed415640",
+      "sourceDigest": "eae6d0b614be9fb3aa3909e060d58320d4bb48fbbf176ed5a8cd7285afa96b31",
       "evidence": [
         "deterministic-agent-f6e23ba/receipt.json",
         "deterministic-agent-f6e23ba/host_recovery-sigkill.log"
@@ -473,12 +475,13 @@
       ],
       "limitations": [
         "Not OS-killed packaged desktop supervisor recovery, real-provider timeout, or billing verification."
-      ]
+      ],
+      "sourceBinding": "explicit_runtime_and_build_toolchain_equivalence"
     },
     "scope_isolation": {
       "status": "passed",
       "method": "deterministic",
-      "sourceDigest": "72ebc1c9b36670d5cdb7726c3a10605aa7386e29bbec9b76ffd0ddb7ed415640",
+      "sourceDigest": "eae6d0b614be9fb3aa3909e060d58320d4bb48fbbf176ed5a8cd7285afa96b31",
       "evidence": [
         "deterministic-agent-f6e23ba/receipt.json",
         "deterministic-agent-f6e23ba/scope_isolation-allows.log",
@@ -517,12 +520,13 @@
       ],
       "limitations": [
         "Host probe operation endpoint is synthetic; Go guard tests are separate, not one end-to-end desktop account flow."
-      ]
+      ],
+      "sourceBinding": "explicit_runtime_and_build_toolchain_equivalence"
     },
     "budget": {
       "status": "passed",
       "method": "deterministic",
-      "sourceDigest": "72ebc1c9b36670d5cdb7726c3a10605aa7386e29bbec9b76ffd0ddb7ed415640",
+      "sourceDigest": "eae6d0b614be9fb3aa3909e060d58320d4bb48fbbf176ed5a8cd7285afa96b31",
       "evidence": [
         "deterministic-agent-f6e23ba/receipt.json",
         "deterministic-agent-f6e23ba/scope_and_budget-host-probe.log",
@@ -565,15 +569,16 @@
       ],
       "limitations": [
         "No real provider requests, billing, or refunds. Tool-step exhaustion is counter-level; host probe exhausts the request limit first. Concurrent case is multiple canvases in one host, not multiple simultaneous host processes."
-      ]
+      ],
+      "sourceBinding": "explicit_runtime_and_build_toolchain_equivalence"
     },
     "cli_mcp": {
       "status": "passed",
       "method": "native",
-      "sourceDigest": "72ebc1c9b36670d5cdb7726c3a10605aa7386e29bbec9b76ffd0ddb7ed415640",
+      "sourceDigest": "eae6d0b614be9fb3aa3909e060d58320d4bb48fbbf176ed5a8cd7285afa96b31",
       "testedCommit": "606ec96",
       "testedSourceDigest": "63b029ccc8953dd9e7f1e7d314fdf174d06854e4f6cfd73cf35dfebb88f1b109",
-      "sourceBinding": "reviewed_unchanged_external_adapter_call_chain",
+      "sourceBinding": "explicit_runtime_and_build_toolchain_equivalence",
       "evidence": [
         "external-agent-receipt.json",
         "independent-codex-review.md"
@@ -1433,7 +1438,7 @@
   ],
   "review": {
     "result": "approved",
-    "sourceDigest": "72ebc1c9b36670d5cdb7726c3a10605aa7386e29bbec9b76ffd0ddb7ed415640",
+    "sourceDigest": "eae6d0b614be9fb3aa3909e060d58320d4bb48fbbf176ed5a8cd7285afa96b31",
     "reviewer": "independent Codex /root/release_review",
     "evidence": [
       "docs/release-evidence/v1.6.23-review.md",
@@ -1476,7 +1481,16 @@
     "windowsEvidence": "windows-native-continuation/RECEIPT-2a7e2ba.md",
     "ci": "passed",
     "noTestsOrPaidCallsRepeated": true,
-    "ciEvidence": "ci-f6e23ba.json"
+    "ciEvidence": "ci-f6e23ba.json",
+    "releaseToolchainRepair": {
+      "failedRun": "https://github.com/glanderness/BeefTV/actions/runs/37015889815",
+      "reason": "Bun 1.3.9 cannot parse agent-host lockfileVersion 2",
+      "bunVersion": "1.4.2",
+      "runtimeAndDependencyLocksUnchanged": true,
+      "localPackagingTests": "3 passed, 0 failed, 20 assertions",
+      "localEvidence": "bun142-packaging-test.log",
+      "requiresThreePlatformPackagingAndArtifactReadback": true
+    }
   },
   "pending": [],
   "knownPendingCNY": 0,
