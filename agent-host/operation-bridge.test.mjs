@@ -40,13 +40,22 @@ describe('操作桥', () => {
     try {
       const bridge = createOperationBridge({ opsUrl: `http://127.0.0.1:${port}`, hostToken: 'test-only', turnBudgetContext: new AsyncLocalStorage() });
       await bridge.loadDescriptors();
-      const tool = (session) => bridge.buildTools('canvas-1', [], { aborted: false }, resetTurnAccumulator(newTurnAccumulator(), 1, 'turn-1'), session)[0];
+      const turns = new Map();
+      const tool = (session) => {
+        const turn = resetTurnAccumulator(newTurnAccumulator(), 1, `turn-${session}`);
+        turns.set(session, turn);
+        return bridge.buildTools('canvas-1', [], { aborted: false }, turn, session)[0];
+      };
       const first = await tool('session-A').execute('call-A', { taskId: ' task-1 ', nodeId: ' node-1 ', operationId: 'forged' });
       const replay = await tool('session-B').execute('call-B', { taskId: 'task-1', nodeId: 'node-1', outputIndex: 0 });
       expect(JSON.parse(first.content[0].text).replayed).toBe(false);
       expect(JSON.parse(replay.content[0].text).replayed).toBe(true);
       expect(seen[0]).toEqual({ opId: 'attach-node:task-1:node-1:0', params: { taskId: 'task-1', nodeId: 'node-1', canvasId: 'canvas-1', outputIndex: 0 } });
       expect(seen[1]).toEqual(seen[0]);
+      expect(turns.get('session-A').updatedNodeIds).toEqual(['node-1']);
+      expect(turns.get('session-B').updatedNodeIds).toEqual([]);
+      expect(turns.get('session-B').operationIds).toEqual([]);
+      expect(turns.get('session-B').revisionAfter).toBe(0);
       for (const outputIndex of [-1, 0.5, '0']) {
         await expect(tool('session-A').execute('bad', { taskId: 'task-1', nodeId: 'node-1', outputIndex })).rejects.toThrow('invalid_params');
       }

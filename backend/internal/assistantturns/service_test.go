@@ -279,6 +279,53 @@ func TestHistoryCountsRepeatedEditsOnceAndRetainsEveryReceipt(t *testing.T) {
 	}
 }
 
+func TestTaskBindingHistoryAndUndoRetainOriginalReceiptOwnership(t *testing.T) {
+	fx := openTurnFixture(t)
+	fx.appendNode(t, "bound-image")
+	before := fx.readCanvas(t)
+	turnID := "aabbccdd11223400"
+	if _, err := fx.turns.Begin(fx.userID, fx.canvasID, turnID, assistantturns.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	after := fx.readCanvas(t)
+	for _, raw := range after["nodes"].([]any) {
+		node := raw.(map[string]any)
+		if node["id"] == "bound-image" {
+			node["metadata"] = map[string]any{"content": "resource:ready", "status": "success"}
+		}
+	}
+	revision := fx.writeCanvas(t, after)
+	fx.receipt(t, turnID, "attach-node:task:bound-image:0", "canvas.task.bind", map[string]any{
+		"canvasId": fx.canvasID, "revision": revision, "nodeId": "bound-image", "applied": true,
+	})
+	if err := fx.turns.Finalize(turnID); err != nil {
+		t.Fatal(err)
+	}
+	reopened := fx.reopen(t)
+	history, err := reopened.turns.History(fx.userID, fx.canvasID, turnID)
+	if err != nil || history == nil || history.Change == nil || !reflect.DeepEqual(history.Change.UpdatedNodeIDs, []string{"bound-image"}) {
+		t.Fatalf("binding update missing from durable history: %+v %v", history, err)
+	}
+	// A replay belongs to the original operation's turn; it must not make a later read-only turn undoable.
+	replayTurn := "aabbccdd11223401"
+	if _, err := reopened.turns.Begin(fx.userID, fx.canvasID, replayTurn, assistantturns.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.turns.Finalize(replayTurn); err != nil {
+		t.Fatal(err)
+	}
+	replay, err := reopened.turns.History(fx.userID, fx.canvasID, replayTurn)
+	if err != nil || replay == nil || replay.Change != nil {
+		t.Fatalf("prior binding must not become a later turn's change: %+v %v", replay, err)
+	}
+	if _, err := reopened.turns.Undo(fx.userID, fx.canvasID, turnID); err != nil {
+		t.Fatal(err)
+	}
+	if restored := reopened.readCanvas(t); !reflect.DeepEqual(restored["nodes"], before["nodes"]) {
+		t.Fatalf("binding undo did not restore original nodes: %+v", restored["nodes"])
+	}
+}
+
 func TestInterruptedFinalizeKeepsOpenSnapshot(t *testing.T) {
 	fx := openTurnFixture(t)
 	turnID := "aabbccdd11223349"

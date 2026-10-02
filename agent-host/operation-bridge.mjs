@@ -109,7 +109,10 @@ export function createOperationBridge({
           assertAssistantNodeUpdateArgs(descriptor, params);
           const data = await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal, turn.turnId);
           log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: false, ms: Date.now() - started, replayed: !!data?.replayed });
-          collectTurnEffects(turn, descriptor.id, data?.result, opId);
+          // A binding replay projects the current canvas, not a write by this turn.
+          if (descriptor.id !== 'canvas.task.bind' || !data?.replayed) {
+            collectTurnEffects(turn, descriptor.id, data?.result, opId);
+          }
           return { content: [{ type: 'text', text: JSON.stringify(data) }] };
         } catch (error) {
           log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: true, error: error.message, ms: Date.now() - started });

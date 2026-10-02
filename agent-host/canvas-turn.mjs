@@ -42,6 +42,7 @@ export function collectTurnEffects(turn, opID, result, operationId) {
       }
       break;
     case 'canvas.node.update':
+    case 'canvas.task.bind':
       if (result.nodeId) turn.updatedNodeIds.push(String(result.nodeId));
       break;
     case 'canvas.edge.create':

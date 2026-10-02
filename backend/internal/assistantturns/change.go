@@ -57,7 +57,7 @@ func changeFromReceipts(record Record, receipts []model.AgentOpRecord) (*Change,
 					change.CreatedNodeIDs = append(change.CreatedNodeIDs, id)
 				}
 			}
-		case "canvas.node.update":
+		case "canvas.node.update", "canvas.task.bind":
 			if id, _ := item.payload["nodeId"].(string); id != "" && !slices.Contains(change.UpdatedNodeIDs, id) {
 				change.UpdatedNodeIDs = append(change.UpdatedNodeIDs, id)
 			}
