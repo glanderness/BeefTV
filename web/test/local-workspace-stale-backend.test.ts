@@ -109,6 +109,7 @@ export const sameCanvasDocument = (left, right) => {
 };
 `);
 writeFileSync(rebaseStubPath, `
+export const settleInFlightGenerationOverlay = ({ local }) => local;
 export const rebaseCanvasDocumentThreeWay = ({ local, remote }) => ({
   project: { ...local, revision: remote.revision, updatedAt: remote.updatedAt, remoteContentHash: remote.remoteContentHash },
   conflict: false,

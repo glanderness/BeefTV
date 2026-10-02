@@ -178,6 +178,7 @@ export function isUserScopeAbandonedError() { return false; }
 `);
 const rebasePath = join(dir, "canvas-document-rebase.ts");
 writeFileSync(rebasePath, `
+export const settleInFlightGenerationOverlay = ({ local }) => local;
 export const rebaseCanvasDocumentThreeWay = ({ local, remote }) => ({
   project: { ...local, revision: remote.revision, updatedAt: remote.updatedAt, remoteContentHash: remote.remoteContentHash },
   conflict: false,
