@@ -101,6 +101,31 @@ func TestOpGenerationProposeRejectsMixedNodeModels(t *testing.T) {
 	}
 }
 
+func TestOpGenerationProposeRejectsConfigRevisionDrift(t *testing.T) {
+	probe := &proposeProbe{doc: proposeCanvas(t, []map[string]any{
+		imageNode("n1", "beefapi::gpt-image-2"),
+		imageNode("n2", "beefapi::gpt-image-2"),
+	})}
+	probe.resolve = func(string, string) (AssistantGenerationModel, error) {
+		return AssistantGenerationModel{
+			Display:  "gpt-image-2",
+			ModelKey: "beefapi::gpt-image-2",
+			Revision: int64(len(probe.calls)),
+		}, nil
+	}
+	_, err := opCanvasGenerationPropose(&Context{UserID: "owner", Domain: probe}, json.RawMessage(`{"canvasId":"c1","nodeIds":["n1","n2"],"kind":"image"}`))
+	if err == nil {
+		t.Fatal("same model keys with drifted config revision must be rejected")
+	}
+	opErr := AsError(err)
+	if opErr.Reason != "generation_config_changed" || opErr.Code != CodePreconditionFailed {
+		t.Fatalf("config revision drift: %v", err)
+	}
+	if len(probe.calls) != 2 {
+		t.Fatalf("both nodes must be resolved before reject: %#v", probe.calls)
+	}
+}
+
 func TestOpGenerationProposeRejectsKindMismatch(t *testing.T) {
 	videoNode := imageNode("n1", "beefapi::wan3.0-video")
 	videoNode["type"] = "video"

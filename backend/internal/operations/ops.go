@@ -121,6 +121,9 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 			resolved = choice
 			continue
 		}
+		if choice.Revision != resolved.Revision {
+			return nil, PreconditionFailed("generation_config_changed", "模型配置刚刚有变动，请再提出一次生成", nil)
+		}
 		if choice.ModelKey != resolved.ModelKey {
 			return nil, InvalidArg("mixed_generation_models", "这些节点当前选用了不同的模型，请按模型分开提出生成")
 		}

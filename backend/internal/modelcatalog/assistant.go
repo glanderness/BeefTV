@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/assistant"
+	"infinite-canvas/backend/internal/protocol"
 )
 
 const (
@@ -34,6 +35,8 @@ type AssistantChannel struct {
 	APIKey        string                  `json:"apiKey"`
 	CredentialRef string                  `json:"credentialRef"`
 	Enabled       bool                    `json:"enabled"`
+	Models        []string                `json:"models"`
+	ModelAliases  map[string]string       `json:"modelAliases"`
 	ModelProfiles []AssistantModelProfile `json:"modelProfiles"`
 }
 
@@ -211,12 +214,15 @@ func ResolveAssistantGenerationModel(snapshot AssistantConfigSnapshot, kind, sel
 	kind = normalizeCapability(kind)
 	selected := strings.TrimSpace(selectedModel)
 	if selected != "" {
-		if assistantGenerationModelConflictsKind(snapshot, selected, kind) {
-			return AssistantGenerationChoice{KindMismatch: true}
-		}
-		if assistantGenerationModelMatchesKind(snapshot, selected, kind) {
-			_, display := SplitModelKey(selected)
-			return AssistantGenerationChoice{Display: display, ModelKey: selected, FromNode: true}
+		normalized := normalizeAssistantGenerationModel(snapshot, selected)
+		if normalized != "" {
+			if assistantGenerationModelConflictsKind(snapshot, normalized, kind) {
+				return AssistantGenerationChoice{KindMismatch: true}
+			}
+			if assistantGenerationModelMatchesKind(snapshot, normalized, kind) {
+				_, display := SplitModelKey(normalized)
+				return AssistantGenerationChoice{Display: display, ModelKey: normalized, FromNode: true}
+			}
 		}
 	}
 	display, modelKey := AssistantGenerationModelKey(snapshot, kind)
@@ -262,6 +268,103 @@ func assistantGenerationModelConflictsKind(snapshot AssistantConfigSnapshot, mod
 	return capability != kind
 }
 
+func normalizeAssistantGenerationModel(snapshot AssistantConfigSnapshot, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	channelID, modelID := SplitModelKey(value)
+	if modelID == "" {
+		return ""
+	}
+	if channelID != "" {
+		channel, ok := findEnabledAssistantChannel(snapshot, channelID)
+		if !ok {
+			return ""
+		}
+		resolved := assistantModelAlias(channel, modelID)
+		if !assistantChannelHasModel(channel, resolved) {
+			return ""
+		}
+		return encodeAssistantModelKey(channel.ID, resolved)
+	}
+	channel, ok := findEnabledAssistantChannelForModel(snapshot, modelID)
+	if !ok {
+		return ""
+	}
+	resolved := assistantModelAlias(channel, modelID)
+	if !assistantChannelHasModel(channel, resolved) {
+		return ""
+	}
+	return encodeAssistantModelKey(channel.ID, resolved)
+}
+
+func encodeAssistantModelKey(channelID, modelID string) string {
+	channelID = strings.TrimSpace(channelID)
+	modelID = strings.TrimSpace(modelID)
+	if channelID == "" {
+		return modelID
+	}
+	return channelID + "::" + modelID
+}
+
+func assistantModelAlias(channel AssistantChannel, modelID string) string {
+	if alias := strings.TrimSpace(channel.ModelAliases[modelID]); alias != "" {
+		return alias
+	}
+	return strings.TrimSpace(modelID)
+}
+
+func findEnabledAssistantChannel(snapshot AssistantConfigSnapshot, channelID string) (AssistantChannel, bool) {
+	for _, channel := range snapshot.Channels {
+		if channel.Enabled && channel.ID == channelID {
+			return channel, true
+		}
+	}
+	return AssistantChannel{}, false
+}
+
+func findEnabledAssistantChannelForModel(snapshot AssistantConfigSnapshot, modelID string) (AssistantChannel, bool) {
+	for _, channel := range snapshot.Channels {
+		if !channel.Enabled {
+			continue
+		}
+		if assistantChannelHasModel(channel, assistantModelAlias(channel, modelID)) || assistantChannelHasModel(channel, modelID) {
+			return channel, true
+		}
+	}
+	return AssistantChannel{}, false
+}
+
+// assistantChannelHasModel 在渠道 models 有条目时按列表判定，与前端
+// normalizeModelOptionValue 一致；列表缺省时回退 modelProfiles，兼容不完整快照。
+func assistantChannelHasModel(channel AssistantChannel, modelID string) bool {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return false
+	}
+	listed := false
+	for _, name := range channel.Models {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		listed = true
+		if name == modelID {
+			return true
+		}
+	}
+	if listed {
+		return false
+	}
+	for _, profile := range channel.ModelProfiles {
+		if strings.TrimSpace(profile.Model) == modelID {
+			return true
+		}
+	}
+	return false
+}
+
 func assistantGenerationModelCapability(snapshot AssistantConfigSnapshot, modelKey string) (string, bool) {
 	channelID, modelID := SplitModelKey(modelKey)
 	if modelID == "" {
@@ -278,7 +381,7 @@ func assistantGenerationModelCapability(snapshot AssistantConfigSnapshot, modelK
 			if strings.TrimSpace(profile.Model) != modelID {
 				continue
 			}
-			capability := normalizeCapability(profile.Capability)
+			capability := assistantProfileCapability(profile)
 			if capability == "" {
 				return "", false
 			}
@@ -286,4 +389,22 @@ func assistantGenerationModelCapability(snapshot AssistantConfigSnapshot, modelK
 		}
 	}
 	return "", false
+}
+
+// assistantProfileCapability 显式 capability 优先；未标注时按协议推断。
+// openai-image 等已迁出 host builtin 的插件协议仍能通过协议 ID 映射到 image。
+func assistantProfileCapability(profile AssistantModelProfile) string {
+	if capability := normalizeCapability(profile.Capability); capability != "" {
+		return capability
+	}
+	protocolID := strings.TrimSpace(profile.Protocol)
+	if protocolID == "" {
+		return ""
+	}
+	if meta, ok := LookupFromRegistry(protocol.Builtins())(protocolID); ok {
+		if capability := normalizeCapability(protocolCapabilityFromMetadata(meta)); capability != "" {
+			return capability
+		}
+	}
+	return normalizeCapability(capabilityFromTaskType(protocolID))
 }

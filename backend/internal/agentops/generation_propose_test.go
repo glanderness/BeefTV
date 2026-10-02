@@ -14,7 +14,7 @@ import (
 // 并且只接受确实属于本画布的节点，否则模型可以借它把别处的对象写进提议。
 func writeGenerationModels(t *testing.T, dataDir string) {
 	t.Helper()
-	body := `{"schemaVersion":1,"revision":1,"config":{"imageModel":"beefapi::gpt-image-2","videoModel":"beefapi::wan3.0-video","channels":[{"id":"beefapi","name":"BeefAPI","enabled":true,"modelProfiles":[{"model":"gpt-image-2","capability":"image","protocol":"openai-image"},{"model":"gpt-image-2.5-flare","capability":"image","protocol":"openai-image"},{"model":"wan3.0-video","capability":"video","protocol":"newapi-channel-1"}]}]}}`
+	body := `{"schemaVersion":1,"revision":1,"config":{"imageModel":"beefapi::gpt-image-2","videoModel":"beefapi::wan3.0-video","channels":[{"id":"beefapi","name":"BeefAPI","enabled":true,"models":["gpt-image-2","gpt-image-2.5-flare","wan3.0-video"],"modelProfiles":[{"model":"gpt-image-2","capability":"image","protocol":"openai-image"},{"model":"gpt-image-2.5-flare","capability":"image","protocol":"openai-image"},{"model":"wan3.0-video","capability":"video","protocol":"newapi-channel-1"}]}]}}`
 	if err := os.WriteFile(filepath.Join(dataDir, "local-model-config.json"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -230,6 +230,22 @@ func TestGenerationProposeUsesNodeOverrideBeforeGlobalDefault(t *testing.T) {
 	source := payload["source"].(map[string]any)
 	if source["canvasId"] != h.canvasID || source["modelConfigRevision"] != float64(1) {
 		t.Fatalf("提案仍须绑定画布与配置版本: %#v", source)
+	}
+}
+
+func TestGenerationProposeNormalizesUnqualifiedNodeModel(t *testing.T) {
+	h := newHarness(t)
+	writeGenerationModels(t, h.dataDir)
+	h.setNodeModel(t, "n1", "gpt-image-2.5-flare")
+
+	result, err := h.run(t, "canvas.generation.propose", "", map[string]any{
+		"canvasId": h.canvasID, "nodeIds": []any{"n1"}, "kind": "image"}, true)
+	if err != nil {
+		t.Fatalf("提议应成功: %v", err)
+	}
+	payload := result.Result.(map[string]any)
+	if payload["model"] != "gpt-image-2.5-flare" || payload["modelKey"] != "beefapi::gpt-image-2.5-flare" {
+		t.Fatalf("未带渠道前缀的节点模型应归一为渠道模型键: %#v", payload)
 	}
 }
 

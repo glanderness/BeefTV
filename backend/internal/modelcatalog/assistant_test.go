@@ -60,3 +60,58 @@ func TestResolveAssistantGenerationModelRejectsKindMismatch(t *testing.T) {
 		t.Fatalf("matching video selection: %#v", okVideo)
 	}
 }
+
+func TestResolveAssistantGenerationModelNormalizesUnqualifiedKey(t *testing.T) {
+	snapshot := AssistantConfigSnapshot{
+		ImageModel: "beefapi::gpt-image-2",
+		Channels: []AssistantChannel{{
+			ID: "beefapi", Enabled: true,
+			Models:       []string{"gpt-image-2", "gpt-image-2.5-flare"},
+			ModelAliases: map[string]string{"legacy-flare": "gpt-image-2.5-flare"},
+			ModelProfiles: []AssistantModelProfile{
+				{Model: "gpt-image-2", Capability: "image"},
+				{Model: "gpt-image-2.5-flare", Capability: "image"},
+			},
+		}},
+	}
+
+	unqualified := ResolveAssistantGenerationModel(snapshot, "image", "gpt-image-2.5-flare")
+	if unqualified.KindMismatch || !unqualified.FromNode || unqualified.ModelKey != "beefapi::gpt-image-2.5-flare" || unqualified.Display != "gpt-image-2.5-flare" {
+		t.Fatalf("unqualified stored model should canonicalize: %#v", unqualified)
+	}
+
+	aliased := ResolveAssistantGenerationModel(snapshot, "image", "legacy-flare")
+	if aliased.KindMismatch || !aliased.FromNode || aliased.ModelKey != "beefapi::gpt-image-2.5-flare" {
+		t.Fatalf("alias should canonicalize like frontend: %#v", aliased)
+	}
+
+	unknown := ResolveAssistantGenerationModel(snapshot, "image", "not-in-channel-models")
+	if unknown.FromNode || unknown.KindMismatch || unknown.ModelKey != "beefapi::gpt-image-2" {
+		t.Fatalf("unknown unqualified model should fall back: %#v", unknown)
+	}
+}
+
+func TestResolveAssistantGenerationModelInfersCapabilityFromProtocol(t *testing.T) {
+	snapshot := AssistantConfigSnapshot{
+		ImageModel: "beefapi::gpt-image-2",
+		Channels: []AssistantChannel{{
+			ID: "beefapi", Enabled: true,
+			Models: []string{"gpt-image-2", "gpt-image-2.5-flare", "mystery"},
+			ModelProfiles: []AssistantModelProfile{
+				{Model: "gpt-image-2", Capability: "image"},
+				{Model: "gpt-image-2.5-flare", Protocol: "openai-image"},
+				{Model: "mystery"},
+			},
+		}},
+	}
+
+	inferred := ResolveAssistantGenerationModel(snapshot, "image", "beefapi::gpt-image-2.5-flare")
+	if inferred.KindMismatch || !inferred.FromNode || inferred.ModelKey != "beefapi::gpt-image-2.5-flare" {
+		t.Fatalf("empty capability with openai-image protocol should match image: %#v", inferred)
+	}
+
+	unknown := ResolveAssistantGenerationModel(snapshot, "image", "beefapi::mystery")
+	if unknown.FromNode || unknown.KindMismatch || unknown.ModelKey != "beefapi::gpt-image-2" {
+		t.Fatalf("empty capability without protocol should fall back: %#v", unknown)
+	}
+}
