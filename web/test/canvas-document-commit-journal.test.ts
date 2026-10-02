@@ -194,6 +194,7 @@ const { useCanvasStore, canvasDocumentBase, canvasExternalRevisionConflict, clea
 const { CanvasJournalError, clearCanvasPendingProjection, loadCanvasOperationJournal, peekCanvasOperationJournal, recordConfirmedCanvasCommit, resetCanvasOperationJournalMemory, saveCanvasOperationJournal, setCanvasJournalStorageDelay, updateCanvasOperationJournal } = await import("@/services/canvas-operation-journal");
 const { canvasBackendSubmitPaused, pauseCanvasBackendSubmit } = await import("@/services/canvas-revision-conflict");
 const { projectSyncProgress, useSyncProgressStore } = await import("@/stores/use-sync-progress-store");
+const { flushCanvasStorePersistence, canvasDurableSnapshot, registerCanvasGenerationPersistenceAttempt, withCanvasStorePersistenceSuppressed } = await import("@/stores/canvas/use-canvas-store");
 
 function canvas(title: string, revision = 1, patch: Record<string, unknown> = {}) {
     return {
@@ -292,6 +293,79 @@ beforeEach(() => {
 });
 
 describe("画布文档提交日记", () => {
+    test("revision 76 confirmed graph survives cache projection, restart and revision 77 ordinary save", async () => {
+        await useCanvasStore.persist.rehydrate();
+        const nodes = Array.from({ length: 10 }, (_, index) => node(`n${index}`, `Node ${index}`));
+        nodes[0]!.metadata = { generationEffectKeys: ["old-broken-result"], status: "error" } as never;
+        // Revision 69 precedes the Agent's node creation (70) and six edge writes (71-76).
+        const base = canvas("基线", 69, { nodes: nodes.slice(0, 4) });
+        await seedConfirmed(base);
+        await flushCanvasStorePersistence();
+        const edges = Array.from({ length: 6 }, (_, index) => connection(`e${index}`, `n${index}`, `n${index + 1}`));
+        const remoteNodes = structuredClone(nodes);
+        remoteNodes[2]!.metadata = { generationEffectKeys: ["attach-result"], content: "/api/resources/video/file", status: "success" } as never;
+        server.revision = 76;
+        server.document = canvas("基线", 76, { nodes: remoteNodes, connections: edges });
+        await openLocalCanvasProjectFromBackend("c1");
+        expect(canvasDurableSnapshot(activeScope, "c1")?.nodes).toHaveLength(10);
+        expect(canvasDurableSnapshot(activeScope, "c1")?.connections).toEqual(edges);
+        expect(canvasDurableSnapshot(activeScope, "c1")?.nodes[2]?.metadata).toEqual(remoteNodes[2]!.metadata);
+        // Restart consumes persisted browser data and the durable journal, not the old live store.
+        withCanvasStorePersistenceSuppressed(() => useCanvasStore.setState({ projects: [] }));
+        resetCanvasOperationJournalMemory();
+        resetLocalCanvasBackendSaveState();
+        await useCanvasStore.persist.rehydrate();
+        await openLocalCanvasProjectFromBackend("c1");
+        useCanvasStore.getState().updateProject("c1", { title: "人工改名" });
+        await syncLocalCanvasProjectToBackend("c1");
+        expect(server.revision).toBe(77);
+        expect(server.document?.connections).toEqual(edges);
+        expect((server.document?.nodes as typeof nodes)[2]!.metadata).toEqual(remoteNodes[2]!.metadata);
+        expect(peekCanvasOperationJournal("c1")?.confirmedRevision).toBe(77);
+    });
+
+    test("unconfirmed generation rolls back only its edges and nodes while keeping manual edits and deletions", async () => {
+        await useCanvasStore.persist.rehydrate();
+        const nodes = [node("n1", "One"), node("n2", "Two")];
+        const removed = connection("manual-delete", "n1", "n2");
+        const modified = connection("manual-edit", "n1", "n2");
+        await seedConfirmed(canvas("基线", 1, { nodes, connections: [removed, modified] }));
+        await flushCanvasStorePersistence();
+        const generated = node("generated", "Unconfirmed", { metadata: { generationEffectKeys: ["pending"] } });
+        const genEdge = connection("generation-existing-endpoints", "n1", "n2");
+        const unregister = registerCanvasGenerationPersistenceAttempt(activeScope, "c1", "pending", {
+            previousNodes: nodes as never, nodes: [...nodes, generated] as never,
+            previousConnections: [removed, modified], connections: [removed, modified, genEdge],
+        });
+        try {
+            const manual = { ...modified, toNodeId: "n1" };
+            const added = connection("manual-add", "n2", "n1");
+            useCanvasStore.getState().updateProject("c1", {
+                nodes: [{ ...nodes[0]!, title: "Manual title" }, nodes[1]!, generated] as never,
+                connections: [manual, added, genEdge, connection("rolled-back-endpoint", "n1", "generated"), connection("invalid", "missing", "n2")],
+            });
+            await flushCanvasStorePersistence();
+            const saved = canvasDurableSnapshot(activeScope, "c1")!;
+            expect(saved.connections).toEqual([manual, added]);
+            expect(saved.nodes.map((item) => item.id)).toEqual(["n1", "n2"]);
+            expect(saved.nodes[0]!.title).toBe("Manual title");
+        } finally { unregister(); }
+    });
+
+    test("an unrelated unconfirmed stamp cannot restore a manually deleted confirmed edge", async () => {
+        await useCanvasStore.persist.rehydrate();
+        const nodes = [node("n1", "One"), node("n2", "Two")];
+        await seedConfirmed(canvas("基线", 1, { nodes, connections: [connection("e", "n1", "n2")] }));
+        await flushCanvasStorePersistence();
+        useCanvasStore.getState().updateProject("c1", {
+            nodes: [{ ...nodes[0]!, metadata: { generationEffectKeys: ["not-confirmed"] } }, nodes[1]!] as never,
+            connections: [],
+        });
+        await flushCanvasStorePersistence();
+        expect(canvasDurableSnapshot(activeScope, "c1")?.connections).toEqual([]);
+        expect(canvasDurableSnapshot(activeScope, "c1")?.nodes[0]?.metadata?.generationEffectKeys).toBeUndefined();
+    });
+
     test("首次保存 200 但缺少画布回执不能确认成功，草稿保留可重试", async () => {
         clearCanvasDocumentBase("c1");
         useCanvasStore.setState({ projects: [canvas("新画布", 0)] });

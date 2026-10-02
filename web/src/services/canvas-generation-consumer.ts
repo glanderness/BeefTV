@@ -597,6 +597,8 @@ export async function persistCanvasGenerationEffect(input: CanvasGenerationEffec
     const unregisterAttempt = registerCanvasGenerationPersistenceAttempt(scope, input.projectId, input.effectKey, {
         previousNodes: input.previousNodes,
         nodes: input.nodes,
+        previousConnections: input.previousConnections,
+        connections: input.connections,
         previousChatSessions: input.previousChatSessions,
         chatSessions: input.chatSessions,
     });

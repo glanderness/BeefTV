@@ -155,6 +155,8 @@ const canvasPersistTokens = new Map<string, number>();
 type CanvasGenerationPersistenceAttempt = {
     previousNodes?: CanvasNodeData[];
     nodes?: CanvasNodeData[];
+    previousConnections?: CanvasConnection[];
+    connections?: CanvasConnection[];
     previousChatSessions?: CanvasAssistantSession[];
     chatSessions?: CanvasAssistantSession[];
 };
@@ -528,10 +530,45 @@ function pendingGenerationAttempt(scope: string, projectId: string, effectKeys?:
     return undefined;
 }
 
+function rollbackGenerationConnections(live: CanvasConnection[], attempt: CanvasGenerationPersistenceAttempt) {
+    if (!attempt.previousConnections || !attempt.connections) return live;
+    const previous = new Map(attempt.previousConnections.map((edge) => [edge.id, edge]));
+    const attempted = new Map(attempt.connections.map((edge) => [edge.id, edge]));
+    const liveIds = new Set(live.map((edge) => edge.id));
+    const result: CanvasConnection[] = [];
+    for (const edge of live) {
+        const before = previous.get(edge.id);
+        const after = attempted.get(edge.id);
+        if (samePersistenceValue(before, after)) result.push(edge);
+        else if (before) result.push(rollbackGenerationValue(before, after, edge, before) as CanvasConnection);
+        // An edge created by this uncommitted effect must not escape through ordinary persistence.
+    }
+    for (const edge of attempt.previousConnections) {
+        if (!attempted.has(edge.id) && !liveIds.has(edge.id)) result.push(edge);
+    }
+    return result;
+}
+
 function ordinaryCanvasProjectSnapshot(scope: string, project: CanvasProject, durableProject: CanvasProject | undefined) {
     if (!hasGenerationEffectKeys(project) && !hasGenerationEffectKeys(durableProject)) return project;
     const durableNodes = new Map((durableProject?.nodes || []).map((node) => [node.id, node]));
     const durableSessions = new Map((durableProject?.chatSessions || []).map((session) => [session.id, session]));
+    // A confirmed backend projection may be ahead of IndexedDB. Its stamps are committed too;
+    // treating them as speculative rolls the projection back while writing its new revision.
+    const confirmed = canvasDocumentBase(project.id, scope)?.snapshot;
+    for (const node of confirmed?.nodes || []) {
+        const cachedKeys = durableNodes.get(node.id)?.metadata?.generationEffectKeys;
+        if (hasUnconfirmedGenerationKey(node.metadata?.generationEffectKeys, cachedKeys)) {
+            durableNodes.set(node.id, { ...node, metadata: { ...node.metadata, generationEffectKeys: [...new Set([...(cachedKeys || []), ...(node.metadata?.generationEffectKeys || [])])] } });
+        }
+    }
+    for (const session of confirmed?.chatSessions || []) {
+        const cachedKeys = durableSessions.get(session.id)?.generationEffectKeys;
+        if (hasUnconfirmedGenerationKey(session.generationEffectKeys, cachedKeys)) {
+            durableSessions.set(session.id, { ...session, generationEffectKeys: [...new Set([...(cachedKeys || []), ...(session.generationEffectKeys || [])])] });
+        }
+    }
+    const unconfirmedAttempts = new Set<CanvasGenerationPersistenceAttempt>();
     let changed = false;
     let hasUnconfirmedGeneration = false;
     const nodes: CanvasNodeData[] = [];
@@ -542,8 +579,9 @@ function ordinaryCanvasProjectSnapshot(scope: string, project: CanvasProject, du
         if (durableProject && hasUnconfirmedGenerationKey(localKeys, durableKeys)) {
             hasUnconfirmedGeneration = true;
             changed = true;
+            const attempt = pendingGenerationAttempt(scope, project.id, localKeys);
+            if (attempt) unconfirmedAttempts.add(attempt);
             if (durableNode) {
-                const attempt = pendingGenerationAttempt(scope, project.id, localKeys);
                 const previousNode = attempt?.previousNodes?.find((candidate) => candidate.id === node.id);
                 const attemptedNode = attempt?.nodes?.find((candidate) => candidate.id === node.id);
                 // durableNode comes from the observed storage snapshot. Never mutate that snapshot while
@@ -575,8 +613,9 @@ function ordinaryCanvasProjectSnapshot(scope: string, project: CanvasProject, du
         if (durableProject && hasUnconfirmedGenerationKey(session.generationEffectKeys, durableKeys)) {
             hasUnconfirmedGeneration = true;
             changed = true;
+            const attempt = pendingGenerationAttempt(scope, project.id, session.generationEffectKeys);
+            if (attempt) unconfirmedAttempts.add(attempt);
             if (durableSession) {
-                const attempt = pendingGenerationAttempt(scope, project.id, session.generationEffectKeys);
                 const previousSession = attempt?.previousChatSessions?.find((candidate) => candidate.id === session.id);
                 const attemptedSession = attempt?.chatSessions?.find((candidate) => candidate.id === session.id);
                 const rolledBack = previousSession && attemptedSession
@@ -599,11 +638,13 @@ function ordinaryCanvasProjectSnapshot(scope: string, project: CanvasProject, du
         chatSessions.push(nextSession);
     }
     if (durableProject && hasUnconfirmedGeneration) {
+        let connections = project.connections;
+        for (const attempt of unconfirmedAttempts) connections = rollbackGenerationConnections(connections, attempt);
+        const nodeIds = new Set(nodes.map((node) => node.id));
         return {
             ...project,
             nodes,
-            // Connection/active-chat records carry no effect stamp provenance, so keep them fail-closed while any generation entity is unconfirmed.
-            connections: durableProject.connections,
+            connections: connections.filter((edge) => nodeIds.has(edge.fromNodeId) && nodeIds.has(edge.toNodeId)),
             chatSessions,
             activeChatId: durableProject.activeChatId,
         };
