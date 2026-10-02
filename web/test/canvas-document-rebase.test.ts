@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { rebaseCanvasDocumentThreeWay, settleInFlightGenerationOverlay } from "../src/lib/canvas/canvas-document-rebase";
 import type { CanvasProject } from "../src/stores/canvas/use-canvas-store";
@@ -27,6 +29,15 @@ function project(nodes: CanvasNodeData[], revision: number, title = "画布"): C
 }
 
 describe("settleInFlightGenerationOverlay", () => {
+    test("settle comment matches overlay empty-string exception", () => {
+        const source = readFileSync(resolve(import.meta.dir, "../src/lib/canvas/canvas-document-rebase.ts"), "utf8");
+        expect(source).not.toContain("人类写过的 content（含空串）保留");
+        expect(source).toContain("loading/error 上的空 content 是 overlay");
+        expect(source).toContain("人类写过的非空 content 保留");
+        expect(source).toContain("非 overlay 上的空串按真实编辑保留");
+        expect(source).toContain("不同 taskId 不会写回旧 storageKey");
+    });
+
     test("in-flight loading overlay adopts remote success and keeps Agent sibling nodes", () => {
         const original = node("image-origin", "原图", { taskId: "task-1", status: "idle", prompt: "猫" });
         const camp = node("node-camp", "秋日旅行·露营桌", { status: "idle" }, { x: 80, y: 40 });
@@ -210,5 +221,45 @@ describe("settleInFlightGenerationOverlay", () => {
         expect(settled.nodes[0]?.metadata?.generationErrorCode).toBeUndefined();
         const rebased = rebaseCanvasDocumentThreeWay({ base, local: settled, remote });
         expect(rebased.conflict).toBe(false);
+    });
+
+    test("new-task overlay does not adopt a different remote task's bound success", () => {
+        const original = node("node-dlu63hran9ns-43e87554d6", "秋日旅行", {
+            taskId: "e24cb37f0a7d146afc8560456d88a550",
+            status: "success",
+            taskStatus: "succeeded",
+            content: "/api/resources/8edbd8862c4714bbe42424d83e63bc08/file",
+            storageKey: "resource:8edbd8862c4714bbe42424d83e63bc08",
+        });
+        const base = project([original], 34);
+        const local = project([{
+            ...original,
+            metadata: { taskId: "task-new", status: "loading", taskStatus: "running", prompt: "新提示" },
+        }], 34);
+        const remote = project([original], 34);
+        expect(Object.prototype.hasOwnProperty.call(local.nodes[0]?.metadata || {}, "content")).toBe(false);
+        const settled = settleInFlightGenerationOverlay({ base, local, remote });
+        expect(settled.nodes[0]).toBe(local.nodes[0]);
+        expect(settled.nodes[0]?.metadata?.taskId).toBe("task-new");
+        expect(settled.nodes[0]?.metadata?.status).toBe("loading");
+        expect(settled.nodes[0]?.metadata?.storageKey).toBeUndefined();
+        expect(Object.prototype.hasOwnProperty.call(settled.nodes[0]?.metadata || {}, "content")).toBe(false);
+    });
+
+    test("real human empty-string clear on non-overlay is not settled as overlay", () => {
+        const original = node("image-origin", "原图", {
+            taskId: "task-1",
+            status: "success",
+            content: "旧图",
+            storageKey: "old-key",
+        });
+        const base = project([original], 10);
+        const local = project([{ ...original, metadata: { ...original.metadata, content: "" } }], 10);
+        const remote = project([original], 14);
+        const settled = settleInFlightGenerationOverlay({ base, local, remote });
+        expect(settled.nodes[0]).toBe(local.nodes[0]);
+        expect(settled.nodes[0]?.metadata?.status).toBe("success");
+        expect(settled.nodes[0]?.metadata?.content).toBe("");
+        expect(settled.nodes[0]?.metadata?.storageKey).toBe("old-key");
     });
 });

@@ -1,7 +1,15 @@
 import { generationTaskMode } from "@/lib/canvas/canvas-generation-task-sync";
+import { userScopeEpochMatches, type UserScopeEpoch } from "@/lib/user-scope";
 import type { GenerationTask } from "@/services/api/task-center";
 
 const INSERTABLE_HISTORY_MODES = new Set(["image", "video", "audio"]);
+
+export type CanvasGenerationHistorySelectGate = {
+    open: boolean;
+    projectId: string;
+    epoch: UserScopeEpoch;
+    mounted: boolean;
+};
 
 /** List filter for TaskSummary cards. Display uses previewUrl/previewKind; resultJson lives on detail. */
 export function insertableCanvasGenerationHistoryTasks(
@@ -9,6 +17,7 @@ export function insertableCanvasGenerationHistoryTasks(
     options: { projectId: string; keyword?: string },
 ) {
     const projectId = options.projectId.trim();
+    if (!projectId) return [];
     const keyword = (options.keyword || "").trim().toLocaleLowerCase();
     return tasks
         .filter((task) => task.projectId === projectId)
@@ -18,19 +27,34 @@ export function insertableCanvasGenerationHistoryTasks(
         .slice(0, 60);
 }
 
-export type ResolveCanvasGenerationHistoryTaskQuery = (id: string) => Promise<GenerationTask>;
+/** Close / canvas switch / user-scope / unmount after await must not apply the old detail. */
+export function canvasGenerationHistorySelectStillValid(
+    captured: CanvasGenerationHistorySelectGate,
+    live: CanvasGenerationHistorySelectGate,
+) {
+    if (!captured.mounted || !live.mounted) return false;
+    if (!captured.open || !live.open) return false;
+    const capturedProjectId = captured.projectId.trim();
+    const liveProjectId = live.projectId.trim();
+    if (!capturedProjectId || capturedProjectId !== liveProjectId) return false;
+    return userScopeEpochMatches(captured.epoch, live.epoch);
+}
 
-/** One detail fetch on select. Confirms success, same canvas, and a usable media result before insert. */
-export async function resolveCanvasGenerationHistoryTaskForInsert(
-    task: GenerationTask,
-    options: { projectId: string; queryTask?: ResolveCanvasGenerationHistoryTaskQuery },
-): Promise<GenerationTask> {
+/** Pure detail check: strict id + non-empty project match, success, and usable media. */
+export function assertCanvasGenerationHistoryTaskForInsert(
+    detail: GenerationTask,
+    options: { projectId: string; expectedId: string },
+): GenerationTask {
     const projectId = options.projectId.trim();
-    if (!task.id?.trim()) throw new Error("该任务没有可插入的生成结果");
-    if (task.projectId && task.projectId !== projectId) throw new Error("生成任务不属于当前画布");
-    const queryTask = options.queryTask ?? (async (id: string) => (await import("@/services/api/task-center")).queryGenerationTask(id));
-    const detail = await queryTask(task.id);
-    if (detail.projectId && detail.projectId !== projectId) throw new Error("生成任务不属于当前画布");
+    const expectedId = options.expectedId.trim();
+    const detailId = detail.id?.trim() ?? "";
+    const detailProjectId = detail.projectId?.trim() ?? "";
+    if (!expectedId || !detailId || detailId !== expectedId) {
+        throw new Error("该任务没有可插入的生成结果");
+    }
+    if (!projectId || !detailProjectId || detailProjectId !== projectId) {
+        throw new Error("生成任务不属于当前画布");
+    }
     if (detail.status === "failed" || detail.status === "cancelled") {
         throw new Error(detail.error || (detail.status === "cancelled" ? "任务已取消" : "任务失败"));
     }
@@ -44,6 +68,21 @@ export async function resolveCanvasGenerationHistoryTaskForInsert(
         throw new Error("该任务没有可插入的生成结果");
     }
     return detail;
+}
+
+/** Await an already-started detail query, then apply only if the picker is still the same canvas. */
+export async function awaitCanvasGenerationHistoryDetailIfValid(input: {
+    detail: Promise<GenerationTask>;
+    captured: CanvasGenerationHistorySelectGate;
+    live: () => CanvasGenerationHistorySelectGate;
+    expectedId: string;
+}): Promise<GenerationTask | undefined> {
+    const detail = await input.detail;
+    if (!canvasGenerationHistorySelectStillValid(input.captured, input.live())) return undefined;
+    return assertCanvasGenerationHistoryTaskForInsert(detail, {
+        projectId: input.captured.projectId,
+        expectedId: input.expectedId,
+    });
 }
 
 function historyDetailHasInsertableMedia(task: GenerationTask) {

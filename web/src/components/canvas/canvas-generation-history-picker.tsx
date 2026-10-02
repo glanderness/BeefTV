@@ -1,14 +1,19 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { App, Input, Modal, Spin } from "antd";
 import { FileAudio, FileVideo, Image as ImageIcon, Search } from "lucide-react";
 
 import { CachedResourceImage } from "@/components/cached-resource-image";
-import { insertableCanvasGenerationHistoryTasks, resolveCanvasGenerationHistoryTaskForInsert } from "@/lib/canvas/canvas-generation-history";
+import {
+    awaitCanvasGenerationHistoryDetailIfValid,
+    canvasGenerationHistorySelectStillValid,
+    insertableCanvasGenerationHistoryTasks,
+    type CanvasGenerationHistorySelectGate,
+} from "@/lib/canvas/canvas-generation-history";
 import { generationTaskMode } from "@/lib/canvas/canvas-generation-task-sync";
-import { getActiveUserScope } from "@/lib/user-scope";
+import { captureUserScopeEpoch, getActiveUserScope } from "@/lib/user-scope";
 import { ownedResourceIdFromMediaRef, resourceIdFromStorageKey, resourceStorageKey } from "@/services/api/resources";
-import { listGenerationTasks, type GenerationTask } from "@/services/api/task-center";
+import { listGenerationTasks, queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
 
 type CanvasGenerationHistoryPickerProps = {
     open: boolean;
@@ -21,11 +26,24 @@ export function CanvasGenerationHistoryPicker({ open, projectId, onClose, onSele
     const { message } = App.useApp();
     const [keyword, setKeyword] = useState("");
     const resolvingId = useRef<string | null>(null);
+    const openRef = useRef(open);
+    const projectIdRef = useRef(projectId);
+    const mountedRef = useRef(true);
+    const onSelectRef = useRef(onSelect);
+    openRef.current = open;
+    projectIdRef.current = projectId;
+    onSelectRef.current = onSelect;
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+        };
+    }, []);
     const scope = getActiveUserScope();
     const query = useQuery({
         queryKey: ["canvas-generation-history", scope, projectId],
         queryFn: ({ signal }) => listGenerationTasks(100, { projectId, activeOnly: false }, undefined, signal),
-        enabled: open && Boolean(projectId),
+        enabled: open && Boolean(projectId.trim()),
         staleTime: 15_000,
     });
     const tasks = useMemo(
@@ -33,12 +51,29 @@ export function CanvasGenerationHistoryPicker({ open, projectId, onClose, onSele
         [keyword, projectId, query.data],
     );
 
+    const liveSelectGate = (): CanvasGenerationHistorySelectGate => ({
+        open: openRef.current,
+        projectId: projectIdRef.current,
+        epoch: captureUserScopeEpoch(),
+        mounted: mountedRef.current,
+    });
+
     const selectSummary = async (task: GenerationTask) => {
-        if (resolvingId.current) return;
+        if (resolvingId.current || !task.id?.trim() || !projectId.trim()) return;
+        const captured = liveSelectGate();
+        if (!canvasGenerationHistorySelectStillValid(captured, captured)) return;
         resolvingId.current = task.id;
         try {
-            onSelect(await resolveCanvasGenerationHistoryTaskForInsert(task, { projectId }));
+            const resolved = await awaitCanvasGenerationHistoryDetailIfValid({
+                detail: queryGenerationTask(task.id),
+                captured,
+                live: liveSelectGate,
+                expectedId: task.id,
+            });
+            if (!resolved) return;
+            onSelectRef.current(resolved);
         } catch (error) {
+            if (!canvasGenerationHistorySelectStillValid(captured, liveSelectGate())) return;
             message.error(error instanceof Error ? error.message : "生成结果无法插入画布");
         } finally {
             resolvingId.current = null;

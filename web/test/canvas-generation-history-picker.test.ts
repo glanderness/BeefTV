@@ -3,10 +3,17 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { generationHistoryPreviewImageSrc } from "../src/components/canvas/canvas-generation-history-picker";
-import { insertableCanvasGenerationHistoryTasks, resolveCanvasGenerationHistoryTaskForInsert } from "../src/lib/canvas/canvas-generation-history";
+import {
+    assertCanvasGenerationHistoryTaskForInsert,
+    awaitCanvasGenerationHistoryDetailIfValid,
+    canvasGenerationHistorySelectStillValid,
+    insertableCanvasGenerationHistoryTasks,
+    type CanvasGenerationHistorySelectGate,
+} from "../src/lib/canvas/canvas-generation-history";
 import { reuseGeneratedMediaStorageKey } from "../src/lib/canvas/canvas-generation-task-sync";
 import { insertCanvasGenerationHistoryTask } from "../src/pages/canvas/canvas-generation-orchestration";
 import { localTaskHistoryFromProjects } from "../src/lib/local-task-history";
+import { captureUserScopeEpoch, setActiveUserScope } from "../src/lib/user-scope";
 import { listGenerationTasks, type GenerationTask } from "../src/services/api/task-center";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 import type { CanvasProject } from "../src/stores/canvas/use-canvas-store";
@@ -72,16 +79,43 @@ function wipedCanvasProject(): CanvasProject {
     } as CanvasProject;
 }
 
+function deferred<T>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((nextResolve, nextReject) => {
+        resolve = nextResolve;
+        reject = nextReject;
+    });
+    return { promise, resolve, reject };
+}
+
+function selectGate(partial: Partial<CanvasGenerationHistorySelectGate> = {}): CanvasGenerationHistorySelectGate {
+    return {
+        open: true,
+        projectId: "lelvpvjEnuJ98wD_f2FI7",
+        epoch: captureUserScopeEpoch(),
+        mounted: true,
+        ...partial,
+    };
+}
+
 describe("LibTV generation history picker", () => {
     test("queries and filters successful media generation tasks", () => {
         expect(picker).toContain('title="从生成历史选择"');
         expect(picker).toContain("listGenerationTasks(100, { projectId, activeOnly: false }, undefined, signal)");
         expect(picker).toContain("insertableCanvasGenerationHistoryTasks");
-        expect(picker).toContain("resolveCanvasGenerationHistoryTaskForInsert");
-        expect(picker).toContain("onSelect(await resolveCanvasGenerationHistoryTaskForInsert(task, { projectId }))");
-        expect(historySource).toContain("queryGenerationTask");
+        expect(picker).toContain("queryGenerationTask(task.id)");
+        expect(picker).toContain("awaitCanvasGenerationHistoryDetailIfValid");
+        expect(picker).toContain("canvasGenerationHistorySelectStillValid");
+        expect(picker).toContain("captureUserScopeEpoch");
+        expect(picker).not.toContain("resolveCanvasGenerationHistoryTaskForInsert");
+        expect(historySource).not.toContain("queryGenerationTask");
+        expect(historySource).not.toContain("queryTask");
+        expect(historySource).not.toContain("await import(");
+        expect(historySource).toContain('import type { GenerationTask } from "@/services/api/task-center"');
+        expect(historySource).toContain("assertCanvasGenerationHistoryTaskForInsert");
         expect(historySource).not.toContain("filter((task) => Boolean(task.resultJson");
-        expect(picker).toContain("enabled: open && Boolean(projectId)");
+        expect(picker).toContain("enabled: open && Boolean(projectId.trim())");
         expect(picker).not.toContain("localTaskHistoryFromProjects");
         expect(picker).not.toContain("isLocalWorkspaceMode");
         expect(picker).not.toContain("loadCanvasGenerationHistory");
@@ -108,34 +142,119 @@ describe("LibTV generation history picker", () => {
         expect(listed[0]?.clientContext?.nodeId).toBe("image-1790921196364-0djku");
     });
 
-    test("select fetches detail once and keeps list summaries free of resultJson", async () => {
+    test("select validates fetched detail strictly and keeps list summaries free of resultJson", () => {
         const summary = succeededImageSummary();
         const detail = succeededImageDetail();
-        let queries = 0;
-        const resolved = await resolveCanvasGenerationHistoryTaskForInsert(summary, {
+        expect(summary.resultJson).toBeUndefined();
+        const resolved = assertCanvasGenerationHistoryTaskForInsert(detail, {
             projectId: "lelvpvjEnuJ98wD_f2FI7",
-            queryTask: async (id) => {
-                queries += 1;
-                expect(id).toBe(summary.id);
-                expect(summary.resultJson).toBeUndefined();
-                return detail;
-            },
+            expectedId: summary.id,
         });
-        expect(queries).toBe(1);
         expect(resolved.resultJson).toContain("resource:generated-image");
 
-        await expect(resolveCanvasGenerationHistoryTaskForInsert(summary, {
+        expect(() => assertCanvasGenerationHistoryTaskForInsert({ ...detail, status: "failed", error: "上游内容审核未通过" }, {
             projectId: "lelvpvjEnuJ98wD_f2FI7",
-            queryTask: async () => ({ ...detail, status: "failed", error: "上游内容审核未通过" }),
-        })).rejects.toThrow("上游内容审核未通过");
-        await expect(resolveCanvasGenerationHistoryTaskForInsert(summary, {
+            expectedId: summary.id,
+        })).toThrow("上游内容审核未通过");
+        expect(() => assertCanvasGenerationHistoryTaskForInsert(detail, {
             projectId: "other-canvas",
-            queryTask: async () => detail,
-        })).rejects.toThrow("生成任务不属于当前画布");
-        await expect(resolveCanvasGenerationHistoryTaskForInsert(summary, {
+            expectedId: summary.id,
+        })).toThrow("生成任务不属于当前画布");
+        expect(() => assertCanvasGenerationHistoryTaskForInsert({ ...detail, resultJson: undefined }, {
             projectId: "lelvpvjEnuJ98wD_f2FI7",
-            queryTask: async () => ({ ...detail, resultJson: undefined }),
-        })).rejects.toThrow("该任务没有可插入的生成结果");
+            expectedId: summary.id,
+        })).toThrow("该任务没有可插入的生成结果");
+        expect(() => assertCanvasGenerationHistoryTaskForInsert({ ...detail, id: "other-task" }, {
+            projectId: "lelvpvjEnuJ98wD_f2FI7",
+            expectedId: summary.id,
+        })).toThrow("该任务没有可插入的生成结果");
+        expect(() => assertCanvasGenerationHistoryTaskForInsert({ ...detail, projectId: "" }, {
+            projectId: "lelvpvjEnuJ98wD_f2FI7",
+            expectedId: summary.id,
+        })).toThrow("生成任务不属于当前画布");
+        expect(() => assertCanvasGenerationHistoryTaskForInsert(detail, {
+            projectId: "   ",
+            expectedId: summary.id,
+        })).toThrow("生成任务不属于当前画布");
+        expect(() => assertCanvasGenerationHistoryTaskForInsert(detail, {
+            projectId: "",
+            expectedId: summary.id,
+        })).toThrow("生成任务不属于当前画布");
+        expect(insertableCanvasGenerationHistoryTasks([succeededImageSummary({ projectId: "" })], { projectId: "   " })).toEqual([]);
+    });
+
+    test("delayed detail is not inserted after picker close, canvas switch, user-scope change, or unmount", async () => {
+        const detail = succeededImageDetail();
+        const selected: GenerationTask[] = [];
+
+        const applyDelayed = async (
+            mutateLive: (live: CanvasGenerationHistorySelectGate) => void,
+        ) => {
+            const captured = selectGate();
+            const live = selectGate({ epoch: captured.epoch });
+            const pending = deferred<GenerationTask>();
+            const applied = awaitCanvasGenerationHistoryDetailIfValid({
+                detail: pending.promise,
+                captured,
+                live: () => live,
+                expectedId: detail.id,
+            }).then((resolved) => {
+                if (resolved) selected.push(resolved);
+            });
+            mutateLive(live);
+            pending.resolve(detail);
+            await applied;
+        };
+
+        await applyDelayed((live) => {
+            live.open = false;
+        });
+        expect(selected).toEqual([]);
+        expect(canvasGenerationHistorySelectStillValid(selectGate(), selectGate({ open: false }))).toBe(false);
+
+        await applyDelayed((live) => {
+            live.projectId = "other-canvas";
+        });
+        expect(selected).toEqual([]);
+        expect(canvasGenerationHistorySelectStillValid(
+            selectGate(),
+            selectGate({ projectId: "other-canvas" }),
+        )).toBe(false);
+
+        const beforeScope = captureUserScopeEpoch();
+        setActiveUserScope("other-user");
+        expect(canvasGenerationHistorySelectStillValid(
+            selectGate({ epoch: beforeScope }),
+            selectGate(),
+        )).toBe(false);
+        const scopePending = deferred<GenerationTask>();
+        const scopeCaptured = selectGate({ epoch: beforeScope });
+        const scopeApplied = awaitCanvasGenerationHistoryDetailIfValid({
+            detail: scopePending.promise,
+            captured: scopeCaptured,
+            live: () => selectGate(),
+            expectedId: detail.id,
+        });
+        scopePending.resolve(detail);
+        expect(await scopeApplied).toBeUndefined();
+
+        await applyDelayed((live) => {
+            live.mounted = false;
+        });
+        expect(selected).toEqual([]);
+        expect(canvasGenerationHistorySelectStillValid(selectGate(), selectGate({ mounted: false }))).toBe(false);
+
+        const validCaptured = selectGate();
+        const validPending = deferred<GenerationTask>();
+        const validApplied = awaitCanvasGenerationHistoryDetailIfValid({
+            detail: validPending.promise,
+            captured: validCaptured,
+            live: () => validCaptured,
+            expectedId: detail.id,
+        });
+        validPending.resolve(detail);
+        expect((await validApplied)?.id).toBe(detail.id);
+        setActiveUserScope("guest");
     });
 
     test("history API failure is not turned into an empty list", async () => {

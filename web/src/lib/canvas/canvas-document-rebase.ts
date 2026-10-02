@@ -142,7 +142,9 @@ function hasTrueGenerationContentConflict(base: CanvasNodeData | undefined, loca
 /**
  * 只结算同一任务仍在 loading/error 展示层上的生成字段。
  * 远端必须 status=success 且带有效 media；taskStatus=succeeded 或空 content 不能当已绑定完成。
- * 人类写过的 content（含空串）保留；新任务删除 content 键视为正常清旧结果。
+ * loading/error 上的空 content 是 overlay，不是人类清空，可被远端已绑定 success 结算。
+ * 人类写过的非空 content 保留；非 overlay 上的空串按真实编辑保留。
+ * 新任务删除 content 键视为正常清旧结果，不同 taskId 不会写回旧 storageKey。
  */
 export function settleInFlightGenerationOverlay(input: {
     base: CanvasProject;
