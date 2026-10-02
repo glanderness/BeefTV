@@ -314,3 +314,6 @@
 - `7d285f4` / `fe8c168` 合入上传原 scope、未确认草稿反馈与延迟 React updater 归属检查，专项 16 pass / 57 expect。项目设置初始归档状态冻结和 StrictMode mounted 标记经 Lead 复审发现，`20261002-083037-continue-75e0bee2` 继续修补并挂载真实组件验证；早期 upload/settings harness 仅覆盖辅助逻辑集成，不当作真实设置组件回执。节点编辑器两条手动保存回调由 `20261002-082937-continue-9730423c` 补同一归属规则。
 - `3233608` 对应标准前端全套退出 0：2988 pass / 0 fail / 14 skip；typecheck、lint、Web build 通过。真实原生 FFmpeg 4 pass / 77 expect，真实浏览器 Worker 8 pass / 94 expect，覆盖音轨、字幕、时长、取消与失败不交付。
 - 同一集成代码的官方 pi 宿主与随包 Node 检查 83 pass / 308 expect，含真实 SDK 会话往返、宿主进程退出和空 PATH 打包启动；模型请求计数为 0。发布器 Python 14 pass。以上是本地证据，待完成的 UI 修补仍须整体验证；后端全量与独立 review 正在运行，未冻结候选、未发布。
+- 后端全量 `go test -p 1 ./...` 已退出 0（后端源码 `7d285f4`，此后仅前端及文档改动）。CPU 首次复测有 50,000 节点 serialize/parse 越线；后台测试结束后同脚本复测 regressions=[]，保留两份原始结果，未改阈值、未声称 UI 性能改善。
+- `9d8eb10` 设置组件集成浏览器 6 pass / 23 expect；`07f1b77` 节点编辑集成专项 33 pass / 166 expect、实际 hook 浏览器 10 pass / 39 expect。独立复审 `20261002-084522-continue-66b22372` 对两包 ACCEPT，无新增 P1/P2。
+- 唯一已知代码 HOLD：剪辑器 `editor-asset-ingest.importFiles` 的 probe/upload/link/retry/refresh 仍缺入口身份与生命周期。`20261002-084205-continue-8b435c42` 单独修补，不归入已完成的节点编辑包；待合入后复跑前端整套与最终结构验收。此前全量、宿主和媒体回执不冒充最终候选。
