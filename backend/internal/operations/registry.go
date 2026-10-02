@@ -214,7 +214,12 @@ func (r *Registry) Execute(req Request) (Result, error) {
 	if runCtx == nil {
 		runCtx = context.Background()
 	}
-	hash := PayloadHash(op.ID, params)
+	canonicalHash := PayloadHash(op.ID, CanonicalJSON(params))
+	rawHash := PayloadHash(op.ID, params)
+	alternateHash := ""
+	if rawHash != canonicalHash {
+		alternateHash = rawHash
+	}
 	var target struct {
 		CanvasID string `json:"canvasId"`
 	}
@@ -224,7 +229,7 @@ func (r *Registry) Execute(req Request) (Result, error) {
 		}
 	}
 	outcome, err := r.store.RunDomain(runCtx, RunRequest{UserID: req.UserID, OpID: opID, Op: op.ID,
-		PayloadHash: hash, TurnID: req.TurnID, CanvasID: target.CanvasID}, r.binder, func(domain Domain) ([]byte, error) {
+		PayloadHash: canonicalHash, AlternatePayloadHash: alternateHash, TurnID: req.TurnID, CanvasID: target.CanvasID}, r.binder, func(domain Domain) ([]byte, error) {
 		execCtx := &Context{Context: runCtx, UserID: req.UserID, Caller: caller, Domain: domain}
 		value, runErr := op.Handler(execCtx, params)
 		if runErr != nil {

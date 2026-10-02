@@ -1,8 +1,10 @@
 package operations_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -94,6 +96,70 @@ func TestCanvasTaskBindReplayReturnsCurrentProjection(t *testing.T) {
 	}
 	if status, _ := payload["bindingStatus"].(string); status != "bound" {
 		t.Fatalf("replay bindingStatus = %#v", payload["bindingStatus"])
+	}
+}
+
+func TestCanvasTaskBindReplayIgnoresJSONKeyOrder(t *testing.T) {
+	h := newHarness(t)
+	task := h.seedReadyCanvasImageTask(t, "task-bind-key-order", "node-key-order", "键序", 3, 4)
+	first, err := h.bindTask(t, task.ID, "node-key-order", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsParams := frontendBindParams(h.canvasID, task.ID, "node-key-order", 0)
+	goParams, err := json.Marshal(map[string]any{
+		"canvasId": h.canvasID, "taskId": task.ID, "nodeId": "node-key-order", "outputIndex": 0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(jsParams, goParams) {
+		t.Fatal("fixture must keep JS insertion order different from encoding/json")
+	}
+	replay, err := h.executeRaw(t, "canvas.task.bind", localtask.AttachNodeEffectKey(task.ID, "node-key-order", 0), jsParams)
+	if err != nil || !replay.Replayed {
+		t.Fatalf("key-order replay = %#v err=%v", replay, err)
+	}
+	if replay.Revision != first.Revision {
+		t.Fatalf("key-order replay revision = %d want %d", replay.Revision, first.Revision)
+	}
+	if h.receiptCount(t, localtask.AttachNodeEffectKey(task.ID, "node-key-order", 0)) != 1 {
+		t.Fatal("key-order replay wrote a second receipt")
+	}
+}
+
+func TestCanvasTaskBindRejectsDifferentCanvasSameEffectKey(t *testing.T) {
+	h := newHarness(t)
+	task := h.seedReadyCanvasImageTask(t, "task-bind-canvas-conflict", "node-canvas-conflict", "冲突", 5, 6)
+	if _, err := h.bindTask(t, task.ID, "node-canvas-conflict", 0); err != nil {
+		t.Fatal(err)
+	}
+	_, err := h.executeRaw(t, "canvas.task.bind", localtask.AttachNodeEffectKey(task.ID, "node-canvas-conflict", 0), frontendBindParams("other-canvas", task.ID, "node-canvas-conflict", 0))
+	if got := opErr(t, err); got.Reason != "operation_id_reused_with_different_payload" {
+		t.Fatalf("different canvasId must conflict, got %v", err)
+	}
+}
+
+func TestCanvasTaskBindReplayAcceptsLegacyRawPayloadHash(t *testing.T) {
+	h := newHarness(t)
+	task := h.seedReadyCanvasImageTask(t, "task-bind-legacy-hash", "node-legacy-hash", "旧哈希", 7, 8)
+	if _, err := h.bindTask(t, task.ID, "node-legacy-hash", 0); err != nil {
+		t.Fatal(err)
+	}
+	jsParams := frontendBindParams(h.canvasID, task.ID, "node-legacy-hash", 0)
+	opID := localtask.AttachNodeEffectKey(task.ID, "node-legacy-hash", 0)
+	legacyHash := operations.PayloadHash("canvas.task.bind", jsParams)
+	if err := h.service.Database().Model(&model.AgentOpRecord{}).
+		Where("user_id = ? AND op_id = ?", h.userID, opID).
+		Update("payload_hash", legacyHash).Error; err != nil {
+		t.Fatal(err)
+	}
+	replay, err := h.executeRaw(t, "canvas.task.bind", opID, jsParams)
+	if err != nil || !replay.Replayed {
+		t.Fatalf("legacy raw hash replay = %#v err=%v", replay, err)
+	}
+	if h.receiptCount(t, opID) != 1 {
+		t.Fatal("legacy raw hash replay wrote a second receipt")
 	}
 }
 
@@ -527,6 +593,20 @@ func (h *harness) bindTask(t *testing.T, taskID, nodeID string, outputIndex int)
 	return h.execute(t, operations.ManualCaller(false), "canvas.task.bind", localtask.AttachNodeEffectKey(taskID, nodeID, outputIndex), map[string]any{
 		"canvasId": h.canvasID, "taskId": taskID, "nodeId": nodeID, "outputIndex": outputIndex,
 	})
+}
+
+func (h *harness) executeRaw(t *testing.T, op, opID string, params json.RawMessage) (operations.Result, error) {
+	t.Helper()
+	return h.registry.Execute(operations.Request{
+		Op: op, OpID: opID, UserID: h.userID, Caller: operations.ManualCaller(false), Params: params,
+	})
+}
+
+func frontendBindParams(canvasID, taskID, nodeID string, outputIndex int) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(
+		`{"canvasId":%q,"taskId":%q,"nodeId":%q,"outputIndex":%d}`,
+		canvasID, taskID, nodeID, outputIndex,
+	))
 }
 
 func bindParams(canvasID, taskID, nodeID string, outputIndex int) json.RawMessage {

@@ -1,9 +1,11 @@
 package operations
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -25,13 +27,14 @@ func (s *Store) Available() bool { return s != nil && s.db != nil }
 // RunRequest 是一次幂等执行的全部输入。
 // TurnID 为空表示这次写入不属于助手回合（CLI/MCP/owner 直连/手工 UI）。
 type RunRequest struct {
-	UserID      string
-	OpID        string
-	Op          string
-	PayloadHash string
-	TurnID      string
-	CanvasID    string
-	TurnGuard   TurnGuard
+	UserID               string
+	OpID                 string
+	Op                   string
+	PayloadHash          string
+	AlternatePayloadHash string
+	TurnID               string
+	CanvasID             string
+	TurnGuard            TurnGuard
 }
 
 // TurnGuard closes the preflight/settlement race on the same connection as
@@ -40,10 +43,36 @@ type TurnGuard interface {
 	VerifyOpenAssistantTurnInTx(tx *gorm.DB, userID, turnID, canvasID string) error
 }
 
+// CanonicalJSON 把 params 收成 encoding/json 的稳定字节：对象键按字母序、紧凑、无多余空白。
+// 非法 JSON 保持原字节，避免把无法解析的请求改写成另一个身份。
+func CanonicalJSON(payload []byte) []byte {
+	trimmed := bytes.TrimSpace(payload)
+	if len(trimmed) == 0 {
+		return []byte("{}")
+	}
+	var value any
+	if err := json.Unmarshal(trimmed, &value); err != nil {
+		return append([]byte(nil), payload...)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return append([]byte(nil), payload...)
+	}
+	return encoded
+}
+
 // PayloadHash 是幂等键的组成部分：同 opId 同 payload 才允许回读原结果。
 func PayloadHash(op string, payload []byte) string {
 	sum := sha256.Sum256(append([]byte(op+"\x00"), payload...))
 	return hex.EncodeToString(sum[:])
+}
+
+func payloadHashAccepted(stored string, req RunRequest) bool {
+	if stored == req.PayloadHash {
+		return true
+	}
+	alternate := strings.TrimSpace(req.AlternatePayloadHash)
+	return alternate != "" && stored == alternate
 }
 
 // RunOutcome 描述一次执行是真正执行了还是回读了历史结果。
@@ -82,7 +111,7 @@ func (s *Store) Run(ctx context.Context, req RunRequest, fn func(tx *gorm.DB) ([
 				return Conflict("operation_in_progress",
 					"同一操作正在执行或上次未成功，未回放结果", map[string]any{"opId": req.OpID, "status": existing.Status})
 			}
-			if existing.PayloadHash != req.PayloadHash || existing.Op != req.Op {
+			if !payloadHashAccepted(existing.PayloadHash, req) || existing.Op != req.Op {
 				return Conflict("operation_id_reused_with_different_payload",
 					"同一操作 ID 已用于不同的请求内容；请换用新的操作 ID",
 					map[string]any{"opId": req.OpID, "existingOp": existing.Op})
