@@ -22,12 +22,16 @@ export type PersistOwnedCanvasUploadNodeInput = {
     domainProjectId?: string;
     node: CanvasNodeData;
     signal?: AbortSignal;
+    source?: EnsureCanvasNodeAssetOptions["source"];
+    category?: EnsureCanvasNodeAssetOptions["category"];
 };
 
 export type PersistOwnedCanvasUploadNodeResult = {
     applied: boolean;
     confirmed: boolean;
     assetId?: string;
+    linkedToProject?: boolean;
+    error?: unknown;
 };
 
 export type PersistOwnedCanvasUploadNodeDeps = {
@@ -129,21 +133,25 @@ export async function persistOwnedCanvasUploadNode(
             canvasId: input.owner.canvasId,
             domainProjectId: input.domainProjectId,
             node: input.node,
-            source: "canvas-upload",
+            source: input.source ?? "canvas-upload",
+            category: input.category,
             signal: input.signal,
             expectedScope: input.expectedScope,
         });
         if (!stillOwned()) return { ...abandoned, assetId: result.assetId };
-        deps.setNodes((current) => !stillOwned() ? current : current.map((item) => (
-            item.id === input.node.id
-                ? { ...item, metadata: { ...item.metadata, assetId: result.assetId } }
-                : item
-        )));
+        deps.setNodes((current) => {
+            if (!stillOwned()) return current;
+            return current.map((item) => (
+                item.id === input.node.id
+                    ? { ...item, metadata: { ...item.metadata, assetId: result.assetId } }
+                    : item
+            ));
+        });
         if (result.confirmed && input.domainProjectId) {
             await deps.invalidateProject?.(input.domainProjectId);
-            if (!stillOwned()) return { applied: true, confirmed: false, assetId: result.assetId };
+            if (!stillOwned()) return { applied: true, confirmed: false, assetId: result.assetId, linkedToProject: result.linkedToProject };
         }
-        return { applied: true, confirmed: result.confirmed, assetId: result.assetId };
+        return { applied: true, confirmed: result.confirmed, assetId: result.assetId, linkedToProject: result.linkedToProject };
     } catch (error) {
         if (shouldSuppressOwnedCanvasCallback(error, {
             owner: input.owner,
@@ -156,6 +164,6 @@ export async function persistOwnedCanvasUploadNode(
             return abandoned;
         }
         deps.warn?.(error instanceof Error ? `媒体已添加到画布，但素材同步失败：${error.message}` : "媒体已添加到画布，但素材同步失败");
-        return abandoned;
+        return { ...abandoned, error };
     }
 }

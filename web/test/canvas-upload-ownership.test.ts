@@ -99,7 +99,7 @@ describe("persistOwnedCanvasUploadNode", () => {
                 },
                 invalidateProject: async (projectId) => { invalidated.push(projectId); },
             }));
-            expect(result).toEqual({ applied: true, confirmed: true, assetId: "asset-1" });
+            expect(result).toEqual({ applied: true, confirmed: true, assetId: "asset-1", linkedToProject: true });
             expect(setNodesCalls).toEqual([["asset-1"]]);
             expect(invalidated).toEqual(["project-a"]);
         } finally {
@@ -132,7 +132,7 @@ describe("persistOwnedCanvasUploadNode", () => {
                 invalidateProject: async () => { invalidated += 1; },
                 warn: (text) => warnings.push(text),
             }));
-            expect(result).toEqual({ applied: true, confirmed: false, assetId: "draft-1" });
+            expect(result).toEqual({ applied: true, confirmed: false, assetId: "draft-1", linkedToProject: false });
             expect(setNodesCalls).toEqual([["draft-1"]]);
             expect(invalidated).toBe(0);
             expect(warnings).toEqual([]);
@@ -279,8 +279,86 @@ describe("persistOwnedCanvasUploadNode", () => {
                 ensureCanvasNodeAsset: async () => { throw new Error("素材库不可用"); },
                 warn: (text) => warnings.push(text),
             }));
-            expect(result).toEqual({ applied: false, confirmed: false });
+            expect(result.applied).toBe(false);
+            expect(result.confirmed).toBe(false);
+            expect(result.error).toBeInstanceOf(Error);
+            expect((result.error as Error).message).toBe("素材库不可用");
             expect(warnings.some((text) => text.includes("素材库不可用"))).toBe(true);
+        } finally {
+            restore();
+        }
+    });
+
+    test("default source stays canvas-upload; editor source and category are forwarded", async () => {
+        const restore = switchScope("owner-a");
+        const lifetime = createCanvasOwnerLifetime();
+        const expectedScope = captureUserScope();
+        const owner = lifetime.capture("canvas-a", "owner-a");
+        const received: Array<{ source?: string; category?: string; hasScope: boolean; hasSignal: boolean }> = [];
+        try {
+            await persistOwnedCanvasUploadNode({
+                owner,
+                expectedScope,
+                getLiveCanvasId: () => "canvas-a",
+                getLiveLifetime: () => lifetime.current(),
+                canvasId: "canvas-a",
+                node: imageNode("media-1"),
+            }, persistDeps({
+                ensureCanvasNodeAsset: async (options) => {
+                    received.push({ source: options.source, category: options.category, hasScope: Boolean(options.expectedScope), hasSignal: Boolean(options.signal) });
+                    return { assetId: "asset-1", created: true, linkedToProject: true, confirmed: true };
+                },
+            }));
+            const controller = new AbortController();
+            await persistOwnedCanvasUploadNode({
+                owner,
+                expectedScope,
+                getLiveCanvasId: () => "canvas-a",
+                getLiveLifetime: () => lifetime.current(),
+                canvasId: "canvas-a",
+                node: imageNode("media-1"),
+                signal: controller.signal,
+                source: "canvas-manual",
+                category: "character",
+            }, persistDeps({
+                ensureCanvasNodeAsset: async (options) => {
+                    received.push({ source: options.source, category: options.category, hasScope: options.expectedScope === expectedScope, hasSignal: options.signal === controller.signal });
+                    return { assetId: "asset-2", created: true, linkedToProject: false, confirmed: true };
+                },
+            }));
+            expect(received).toEqual([
+                { source: "canvas-upload", category: undefined, hasScope: true, hasSignal: false },
+                { source: "canvas-manual", category: "character", hasScope: true, hasSignal: true },
+            ]);
+        } finally {
+            restore();
+        }
+    });
+
+    test("delayed setNodes updater after A to B to A does not overlay live nodes", async () => {
+        const restore = switchScope("owner-a");
+        const lifetime = createCanvasOwnerLifetime();
+        const expectedScope = captureUserScope();
+        const owner = lifetime.capture("canvas-a", "owner-a");
+        let queued: ((current: CanvasNodeData[]) => CanvasNodeData[]) | undefined;
+        try {
+            const result = await persistOwnedCanvasUploadNode({
+                owner,
+                expectedScope,
+                getLiveCanvasId: () => "canvas-a",
+                getLiveLifetime: () => lifetime.current(),
+                canvasId: "canvas-a",
+                domainProjectId: "project-a",
+                node: imageNode("media-1"),
+            }, persistDeps({
+                setNodes: (updater) => { queued = updater; },
+            }));
+            expect(result.applied).toBe(true);
+            expect(queued).toBeTypeOf("function");
+            setActiveUserScope("owner-b");
+            setActiveUserScope("owner-a");
+            const live = [imageNode("live-b")];
+            expect(queued!(live)).toBe(live);
         } finally {
             restore();
         }
@@ -350,4 +428,40 @@ test("upload hook threads owner scope through persist, file, image, chapter and 
     expect(timeline).toContain("uploadMediaFile(file, \"audio\", undefined, guard.expectedScope)");
     expect(timeline).toContain("persistTimelineMedia(media, guard.expectedScope, guard.signal)");
     expect(timeline).toContain("if (guard.suppress(error)) return []");
+});
+
+test("node editor threads owner scope through category change and save, and keeps confirmed=false draft copy", () => {
+    const editor = read("pages/canvas/use-canvas-node-editor.ts");
+    expect(editor).toContain("useCanvasOwnerLifetime(canvasId)");
+    expect(editor).toContain("createOwnedCanvasUploadGuard");
+    expect(editor).toContain("persistOwnedCanvasUploadNode");
+    expect(editor).toContain("source: \"canvas-manual\"");
+    expect(editor).toContain("category,");
+
+    const persist = editor.slice(editor.indexOf("const persistOwnedEditorNode"), editor.indexOf("const handleConfigNodeChange"));
+    expect(persist).toContain("expectedScope: guard.expectedScope");
+    expect(persist).toContain("signal: guard.signal");
+    expect(persist).not.toContain("warn:");
+
+    const config = editor.slice(editor.indexOf("const handleConfigNodeChange"), editor.indexOf("const downloadNodeImage"));
+    expect(config).toContain("applyNodeConfigPatch(node, patch)");
+    expect(config).toContain("nodesRef.current = next");
+    expect(config).toContain("persistOwnedEditorNode(updatedNode, patch.assetCategory)");
+    expect(config).toContain("if (!guard.alive()) return");
+    expect(config).toContain("message.success(\"资产分类已更新\")");
+    expect(config).toContain("文件目前只在这台设备上");
+    expect(config).toContain("资产分类更新失败");
+    expect(config.indexOf("if (!guard.alive())")).toBeLessThan(config.indexOf("message.success(\"资产分类已更新\")"));
+    expect(config.indexOf("if (!guard.alive())")).toBeLessThan(config.indexOf("资产分类更新失败"));
+
+    const save = editor.slice(editor.indexOf("const saveNodeAsset"), editor.indexOf("const handleFontSizeChange"));
+    expect(save).toContain("persistOwnedEditorNode(node)");
+    expect(save).toContain("if (!guard.alive()) return");
+    expect(save).toContain("if (!result.confirmed) message.warning");
+    expect(save).toContain("文件目前只在这台设备上");
+    expect(save).toContain("已加入项目资产");
+    expect(save).toContain("已加入我的素材");
+    expect(save).toContain("素材保存失败");
+    expect(save.indexOf("if (!guard.alive())")).toBeLessThan(save.indexOf("if (!result.confirmed) message.warning"));
+    expect(save.indexOf("if (!guard.alive())")).toBeLessThan(save.indexOf("素材保存失败"));
 });
