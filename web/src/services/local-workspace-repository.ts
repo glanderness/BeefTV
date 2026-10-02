@@ -930,11 +930,13 @@ async function restoreLocalCanvasProjectFromHistoryUnlocked(
         inFlight: null,
         pendingProjection: null,
     }));
+    assertDispatchGuard(expected, "账号已切换，未恢复画布");
     recordServerConfirmedCanvas(backendProject, scope);
     clearCanvasExternalRevisionConflict(scope, id);
     resumeCanvasBackendSubmit(id, scope);
     applyLiveCanvasProject(id, backendProject, true);
     await projectionStoreFlush();
+    assertDispatchGuard(expected, "账号已切换，未恢复画布");
     const live = openLocalCanvasProject(id);
     if (!live || (live.revision ?? 0) !== restoredRevision) throw restoreDidNotApply();
     return live;

@@ -120,8 +120,9 @@ mock.module("@/services/api/resources", () => ({
 
 const { restoreLocalCanvasProjectFromHistory, openLocalCanvasProjectFromBackend, resetLocalCanvasBackendSaveState, setCanvasProjectionStoreFlushForTest } = await import("@/services/local-workspace-repository");
 const { useCanvasStore, recordCanvasDocumentBase, canvasDocumentBase, clearCanvasExternalRevisionConflict } = await import("@/stores/canvas/use-canvas-store");
-const { loadCanvasOperationJournal, peekCanvasOperationJournal, resetCanvasOperationJournalMemory, saveCanvasOperationJournal } = await import("@/services/canvas-operation-journal");
+const { loadCanvasOperationJournal, peekCanvasOperationJournal, resetCanvasOperationJournalMemory, saveCanvasOperationJournal, setCanvasJournalStorageDelay } = await import("@/services/canvas-operation-journal");
 const { setActiveUserScope } = await import("@/lib/user-scope");
+const { canvasBackendSubmitPaused, pauseCanvasBackendSubmit } = await import("@/services/canvas-revision-conflict");
 const { useSyncProgressStore } = await import("@/stores/use-sync-progress-store");
 
 function canvas(title: string, revision: number, patch: Record<string, unknown> = {}) {
@@ -163,10 +164,35 @@ async function seedLive(doc: ReturnType<typeof canvas>, inFlight = false) {
     server.document = doc;
 }
 
+async function holdJournalWrite() {
+    let release = () => {};
+    let waiting = false;
+    let held = false;
+    setCanvasJournalStorageDelay({
+        beforeSet: async () => {
+            if (held) return;
+            held = true;
+            waiting = true;
+            await new Promise<void>((resolve) => { release = resolve; });
+        },
+    });
+    return {
+        wait: async () => {
+            for (let i = 0; i < 80 && !waiting; i += 1) await Promise.resolve();
+            expect(waiting).toBe(true);
+        },
+        resume: () => {
+            setCanvasJournalStorageDelay(null);
+            release();
+        },
+    };
+}
+
 beforeEach(() => {
     stored.clear();
     resetCanvasOperationJournalMemory();
     resetLocalCanvasBackendSaveState();
+    setCanvasJournalStorageDelay(null);
     setCanvasProjectionStoreFlushForTest(async () => {});
     activeScope = "guest";
     activeEpoch = 1;
@@ -283,6 +309,45 @@ describe("restoreLocalCanvasProjectFromHistory", () => {
         release();
         await expect(pending).rejects.toMatchObject({ name: "CanvasStaleScopeError" });
         expect(useCanvasStore.getState().projects[0].title).toBe("当前稿");
+    });
+
+    test("journal 写入等待期间切账号：不 applyLive、不清新账号状态", async () => {
+        const current = canvas("当前稿", 21);
+        await seedLive(current, true);
+        server.getAfterRestore = canvas("三节点", 22);
+        const hold = await holdJournalWrite();
+        const pending = restoreLocalCanvasProjectFromHistory("c1", { snapshotId: "snap-14", revision: 21 });
+        await hold.wait();
+
+        setActiveUserScope("user-b");
+        const other = canvas("新账号稿", 3);
+        await saveCanvasOperationJournal({
+            userScope: "user-b",
+            canvasId: "c1",
+            confirmedRevision: 3,
+            confirmedSnapshot: other,
+            inFlight: {
+                operationId: "op-b",
+                expectedRevision: 3,
+                payload: { canvasId: "c1", expectedRevision: 3, document: other },
+            },
+        });
+        recordCanvasDocumentBase(other as never, "user-b");
+        useCanvasStore.setState({ projects: [other as never] });
+        pauseCanvasBackendSubmit("c1", "user-b");
+
+        hold.resume();
+        await expect(pending).rejects.toMatchObject({ name: "CanvasStaleScopeError" });
+
+        expect(useCanvasStore.getState().projects[0].title).toBe("新账号稿");
+        expect(useCanvasStore.getState().projects[0].revision).toBe(3);
+        const otherJournal = await loadCanvasOperationJournal("c1", "user-b");
+        expect(otherJournal.confirmedRevision).toBe(3);
+        expect(otherJournal.confirmedSnapshot?.title).toBe("新账号稿");
+        expect(otherJournal.inFlight?.operationId).toBe("op-b");
+        expect(canvasDocumentBase("c1", "user-b")?.snapshot.title).toBe("新账号稿");
+        expect(canvasBackendSubmitPaused("c1", "user-b")).toBe(true);
+        expect(peekCanvasOperationJournal("c1", "guest")?.confirmedRevision).toBe(22);
     });
 
     test("openLocalCanvasProjectFromBackend 失败时仍可能退回当前稿；恢复路径不得走这条", async () => {
