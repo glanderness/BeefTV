@@ -30,11 +30,13 @@ function ProjectSettingsSession({ detail, refreshProject }: ProjectDetailViewPro
     const { project } = detail;
     const [entryScope] = useState(() => captureUserScope());
     const [mountedProjectId] = useState(project.id);
-    const [mountedStatus] = useState(project.status);
     const mountedRef = useRef(true);
     const liveProjectIdRef = useRef(project.id);
     liveProjectIdRef.current = project.id;
-    useEffect(() => () => { mountedRef.current = false; }, []);
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => { mountedRef.current = false; };
+    }, []);
     const personalAssets = useAssetStore((state) => state.assets);
     const addAsset = useAssetStore((state) => state.addAsset);
     const [name, setName] = useState(project.name);
@@ -228,7 +230,7 @@ function ProjectSettingsSession({ detail, refreshProject }: ProjectDetailViewPro
                 </div>
             </section>
 
-            <Modal className="workspace-modal workspace-modal-compact" title={project.status === "archived" ? "恢复项目" : "归档项目"} open={archiveOpen} okText={project.status === "archived" ? "确认恢复" : "确认归档"} cancelText="取消" okButtonProps={{ danger: project.status !== "archived", loading: archiveMutation.isPending }} onCancel={() => setArchiveOpen(false)} onOk={() => archiveMutation.mutate({ expectedScope: entryScope, projectId: mountedProjectId, status: mountedStatus === "archived" ? "active" : "archived", successMessage: mountedStatus === "archived" ? "项目已恢复" : "项目已归档" })} styles={{ body: { paddingTop: 12 } }}><p className="m-0 text-sm leading-6 text-foreground/65">{project.status === "archived" ? "恢复后项目会重新进入可编辑状态。" : "归档不会删除章节、画布或资产，画布文档仍可在创作画布中打开。"}</p></Modal>
+            <Modal className="workspace-modal workspace-modal-compact" title={project.status === "archived" ? "恢复项目" : "归档项目"} open={archiveOpen} okText={project.status === "archived" ? "确认恢复" : "确认归档"} cancelText="取消" okButtonProps={{ danger: project.status !== "archived", loading: archiveMutation.isPending }} onCancel={() => setArchiveOpen(false)} onOk={() => { const currentStatus = project.status; archiveMutation.mutate({ expectedScope: entryScope, projectId: mountedProjectId, status: currentStatus === "archived" ? "active" : "archived", successMessage: currentStatus === "archived" ? "项目已恢复" : "项目已归档" }); }} styles={{ body: { paddingTop: 12 } }}><p className="m-0 text-sm leading-6 text-foreground/65">{project.status === "archived" ? "恢复后项目会重新进入可编辑状态。" : "归档不会删除章节、画布或资产，画布文档仍可在创作画布中打开。"}</p></Modal>
             <AssetLibraryPickerModal
                 open={coverPickerOpen}
                 items={coverPickerItems}
