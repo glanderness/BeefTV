@@ -1080,6 +1080,104 @@ describe("画布文档提交日记", () => {
         expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(14);
     });
 
+    test("新任务删除 content 后绑定成功结果，store 与 adopted 一致", async () => {
+        const original = node("image-origin", "原图", { metadata: { taskId: "task-old", status: "success", content: "旧图", storageKey: "old-key" } });
+        await seedConfirmed(canvas("已有旧图", 10, { nodes: [original] }));
+        useCanvasStore.getState().updateProject("c1", {
+            nodes: [{ ...original, metadata: { taskId: "task-2", status: "loading", taskStatus: "running", prompt: "猫" } }] as never,
+        });
+
+        const adopted = await adoptServerConfirmedGenerationPatch(canvas("生成", 14, {
+            nodes: [{ ...original, metadata: { taskId: "task-2", status: "success", taskStatus: "succeeded", content: "https://media/new", storageKey: "res-new", prompt: "猫" } }],
+        }));
+
+        const live = useCanvasStore.getState().projects[0];
+        expect(adopted.nodes[0].metadata?.status).toBe("success");
+        expect(adopted.nodes[0].metadata?.content).toBe("https://media/new");
+        expect(live.nodes).toEqual(adopted.nodes);
+        expect(live.nodes[0].metadata?.storageKey).toBe("res-new");
+        expect(canvasBackendSubmitPaused("c1")).toBe(false);
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(14);
+    });
+
+    test("同一任务人类清空 content 空串时保留空值并说明冲突", async () => {
+        const original = node("image-origin", "原图", { metadata: { taskId: "task-1", status: "idle", content: "旧图" } });
+        await seedConfirmed(canvas("基线", 10, { nodes: [original] }));
+        useCanvasStore.getState().updateProject("c1", {
+            nodes: [{ ...original, metadata: { taskId: "task-1", status: "loading", content: "" } }] as never,
+        });
+
+        const adopted = await adoptServerConfirmedGenerationPatch(canvas("生成", 14, {
+            nodes: [{ ...original, metadata: { taskId: "task-1", status: "success", content: "https://media/gen", storageKey: "res-gen" } }],
+        }));
+
+        const live = useCanvasStore.getState().projects[0];
+        expect(live.nodes).toEqual(adopted.nodes);
+        expect(live.nodes[0].metadata?.content).toBe("");
+        expect(live.nodes[0].metadata?.status).not.toBe("success");
+        expect(canvasBackendSubmitPaused("c1")).toBe(true);
+        expect(canvasExternalRevisionConflict("guest", "c1")?.candidate.nodes[0].metadata?.content).toBe("https://media/gen");
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(14);
+    });
+
+    test("远端仅有 taskStatus succeeded、无绑定媒体时不得当成成功并清掉本地媒体", async () => {
+        const original = node("image-origin", "原图", { metadata: { taskId: "task-1", status: "idle", content: "旧图" } });
+        await seedConfirmed(canvas("基线", 10, { nodes: [original] }));
+        useCanvasStore.getState().updateProject("c1", {
+            nodes: [{ ...original, metadata: { taskId: "task-1", status: "loading", content: "https://local-kept", storageKey: "local-key", taskStatus: "running" } }] as never,
+        });
+
+        const adopted = await adoptServerConfirmedGenerationPatch(canvas("残缺远端", 21, {
+            nodes: [{ ...original, metadata: { taskId: "task-1", status: "loading", taskStatus: "succeeded", taskProgress: 100, content: "" } }],
+        }));
+
+        const live = useCanvasStore.getState().projects[0];
+        expect(live.nodes).toEqual(adopted.nodes);
+        expect(live.nodes[0].metadata?.status).not.toBe("success");
+        expect(live.nodes[0].metadata?.content).toBe("https://local-kept");
+        expect(live.nodes[0].metadata?.storageKey).toBe("local-key");
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(21);
+    });
+
+    test("idle 节点不被 settle 改写；未改的生成字段仍由三路合并采纳", async () => {
+        const original = node("image-origin", "原图", { metadata: { taskId: "task-1", status: "idle", content: "旧图", prompt: "原提示" } });
+        await seedConfirmed(canvas("基线", 10, { nodes: [original] }));
+        useCanvasStore.getState().updateProject("c1", {
+            nodes: [{ ...original, metadata: { taskId: "task-1", status: "idle", content: "旧图", prompt: "人类改了提示" } }] as never,
+        });
+
+        const adopted = await adoptServerConfirmedGenerationPatch(canvas("生成", 14, {
+            nodes: [{ ...original, metadata: { taskId: "task-1", status: "success", content: "https://media/gen", storageKey: "res-gen", prompt: "原提示" } }],
+        }));
+
+        const live = useCanvasStore.getState().projects[0];
+        expect(live.nodes).toEqual(adopted.nodes);
+        expect(live.nodes[0].metadata?.prompt).toBe("人类改了提示");
+        expect(live.nodes[0].metadata?.content).toBe("https://media/gen");
+        expect(live.nodes[0].metadata?.status).toBe("success");
+        expect(canvasBackendSubmitPaused("c1")).toBe(false);
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(14);
+    });
+
+    test("人类已把节点改成 success 时 settle 不覆盖，本地媒体保留", async () => {
+        const original = node("image-origin", "原图", { metadata: { taskId: "task-1", status: "idle", content: "旧图" } });
+        await seedConfirmed(canvas("基线", 10, { nodes: [original] }));
+        useCanvasStore.getState().updateProject("c1", {
+            nodes: [{ ...original, metadata: { taskId: "task-1", status: "success", content: "人类留下的图" } }] as never,
+        });
+
+        const adopted = await adoptServerConfirmedGenerationPatch(canvas("生成", 14, {
+            nodes: [{ ...original, metadata: { taskId: "task-1", status: "success", content: "https://media/gen", storageKey: "res-gen" } }],
+        }));
+
+        const live = useCanvasStore.getState().projects[0];
+        expect(live.nodes).toEqual(adopted.nodes);
+        expect(live.nodes[0].metadata?.content).toBe("人类留下的图");
+        expect(canvasBackendSubmitPaused("c1")).toBe(true);
+        expect(canvasExternalRevisionConflict("guest", "c1")?.candidate.nodes[0].metadata?.content).toBe("https://media/gen");
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(14);
+    });
+
     test("同一字段本地元数据与服务端元数据冲突时暂停，不猜胜者", async () => {
         const baseNode = node("n1", "镜头1", { metadata: { prompt: "基线提示" } });
         await seedConfirmed(canvas("基线", 1, { nodes: [baseNode] }));

@@ -65,4 +65,130 @@ describe("settleInFlightGenerationOverlay", () => {
         expect(rebased.project.nodes[0]?.metadata?.content).toBe("人类改过的内容");
         expect(rebased.project.nodes[0]?.metadata?.status).not.toBe("success");
     });
+
+    test("new task deleting content adopts remote success as a normal clear of the old result", () => {
+        const original = node("image-origin", "原图", { taskId: "task-old", status: "success", content: "旧图", storageKey: "old-key" });
+        const base = project([original], 10);
+        const local = project([{
+            ...original,
+            metadata: { taskId: "task-2", status: "loading", taskStatus: "running", taskProgress: 12, prompt: "猫" },
+        }], 10);
+        const remote = project([{
+            ...original,
+            metadata: { taskId: "task-2", status: "success", taskStatus: "succeeded", taskProgress: 100, content: "https://media/new", storageKey: "res-new", prompt: "猫" },
+        }], 14);
+        expect(Object.prototype.hasOwnProperty.call(local.nodes[0]?.metadata || {}, "content")).toBe(false);
+        const settled = settleInFlightGenerationOverlay({ base, local, remote });
+        expect(settled.nodes[0]?.metadata?.status).toBe("success");
+        expect(settled.nodes[0]?.metadata?.content).toBe("https://media/new");
+        expect(settled.nodes[0]?.metadata?.storageKey).toBe("res-new");
+        const rebased = rebaseCanvasDocumentThreeWay({ base, local: settled, remote });
+        expect(rebased.conflict).toBe(false);
+        expect(rebased.project.nodes[0]?.metadata?.content).toBe("https://media/new");
+    });
+
+    test("same-task explicit empty content is a human edit and is not overwritten by remote success", () => {
+        const original = node("image-origin", "原图", { taskId: "task-1", status: "idle", content: "旧图", storageKey: "old-key" });
+        const base = project([original], 10);
+        const local = project([{ ...original, metadata: { taskId: "task-1", status: "loading", content: "" } }], 10);
+        const remote = project([{ ...original, metadata: { taskId: "task-1", status: "success", content: "https://media/gen", storageKey: "res-gen" } }], 14);
+        const settled = settleInFlightGenerationOverlay({ base, local, remote });
+        expect(settled.nodes[0]?.metadata?.content).toBe("");
+        expect(settled.nodes[0]?.metadata?.status).toBe("loading");
+        const rebased = rebaseCanvasDocumentThreeWay({ base, local: settled, remote });
+        expect(rebased.conflict).toBe(true);
+        expect(rebased.project.nodes[0]?.metadata?.content).toBe("");
+        expect(rebased.project.nodes[0]?.metadata?.status).not.toBe("success");
+    });
+
+    test("baseline empty content on first generation is not treated as a human clear", () => {
+        const original = node("image-origin", "原图", { taskId: "task-1", status: "idle", content: "" });
+        const base = project([original], 10);
+        const local = project([{ ...original, metadata: { taskId: "task-1", status: "loading", content: "", taskStatus: "running" } }], 10);
+        const remote = project([{ ...original, metadata: { taskId: "task-1", status: "success", content: "https://media/gen", storageKey: "res-gen" } }], 14);
+        const settled = settleInFlightGenerationOverlay({ base, local, remote });
+        expect(settled.nodes[0]?.metadata?.status).toBe("success");
+        expect(settled.nodes[0]?.metadata?.content).toBe("https://media/gen");
+        const rebased = rebaseCanvasDocumentThreeWay({ base, local: settled, remote });
+        expect(rebased.conflict).toBe(false);
+    });
+
+    test("remote taskStatus succeeded without bound media is not authoritative completion", () => {
+        const original = node("image-origin", "原图", { taskId: "task-1", status: "idle", content: "旧图" });
+        const base = project([original], 10);
+        const local = project([{
+            ...original,
+            metadata: { taskId: "task-1", status: "loading", content: "https://local-kept", storageKey: "local-key", taskStatus: "running" },
+        }], 10);
+        const remote = project([{
+            ...original,
+            metadata: { taskId: "task-1", status: "loading", taskStatus: "succeeded", taskProgress: 100, content: "" },
+        }], 21);
+        const settled = settleInFlightGenerationOverlay({ base, local, remote });
+        expect(settled.nodes[0]).toBe(local.nodes[0]);
+        expect(settled.nodes[0]?.metadata?.status).toBe("loading");
+        expect(settled.nodes[0]?.metadata?.content).toBe("https://local-kept");
+        expect(settled.nodes[0]?.metadata?.storageKey).toBe("local-key");
+        expect(settled.nodes[0]?.metadata?.taskStatus).toBe("running");
+    });
+
+    test("remote success without media result does not clear local media fields", () => {
+        const original = node("image-origin", "原图", { taskId: "task-1", status: "idle", content: "旧图" });
+        const base = project([original], 10);
+        const local = project([{
+            ...original,
+            metadata: { taskId: "task-1", status: "error", content: "https://local-kept", storageKey: "local-key", errorDetails: "画布已在别处更新" },
+        }], 10);
+        const remote = project([{
+            ...original,
+            metadata: { taskId: "task-1", status: "success", taskStatus: "succeeded", content: "" },
+        }], 14);
+        const settled = settleInFlightGenerationOverlay({ base, local, remote });
+        expect(settled.nodes[0]).toBe(local.nodes[0]);
+        expect(settled.nodes[0]?.metadata?.content).toBe("https://local-kept");
+        expect(settled.nodes[0]?.metadata?.storageKey).toBe("local-key");
+        expect(settled.nodes[0]?.metadata?.status).toBe("error");
+    });
+
+    test("idle or human non-overlay status is not overwritten by remote bound success", () => {
+        const original = node("image-origin", "原图", { taskId: "task-1", status: "idle", content: "旧图" });
+        const base = project([original], 10);
+        const idleLocal = project([{ ...original, metadata: { taskId: "task-1", status: "idle", content: "旧图", prompt: "人类改了提示" } }], 10);
+        const successLocal = project([{ ...original, metadata: { taskId: "task-1", status: "success", content: "人类留下的图" } }], 10);
+        const remote = project([{ ...original, metadata: { taskId: "task-1", status: "success", content: "https://media/gen", storageKey: "res-gen" } }], 14);
+        const settledIdle = settleInFlightGenerationOverlay({ base, local: idleLocal, remote });
+        const settledSuccess = settleInFlightGenerationOverlay({ base, local: successLocal, remote });
+        expect(settledIdle.nodes[0]).toBe(idleLocal.nodes[0]);
+        expect(settledIdle.nodes[0]?.metadata?.status).toBe("idle");
+        expect(settledIdle.nodes[0]?.metadata?.content).toBe("旧图");
+        expect(settledIdle.nodes[0]?.metadata?.prompt).toBe("人类改了提示");
+        expect(settledSuccess.nodes[0]).toBe(successLocal.nodes[0]);
+        expect(settledSuccess.nodes[0]?.metadata?.content).toBe("人类留下的图");
+    });
+
+    test("error overlay of the same in-flight task adopts remote bound success", () => {
+        const original = node("image-origin", "原图", { taskId: "task-1", status: "idle", prompt: "猫" });
+        const base = project([original], 10);
+        const local = project([{
+            ...original,
+            metadata: {
+                taskId: "task-1",
+                status: "error",
+                generationErrorCode: "canvas_conflict",
+                errorDetails: "云端画布已有更新，已停止覆盖；请保留本地草稿并加载最新版本",
+                prompt: "猫",
+            },
+        }], 10);
+        const remote = project([{
+            ...original,
+            metadata: { taskId: "task-1", status: "success", taskStatus: "succeeded", content: "https://media/gen", storageKey: "res-gen", prompt: "猫" },
+        }], 14);
+        const settled = settleInFlightGenerationOverlay({ base, local, remote });
+        expect(settled.nodes[0]?.metadata?.status).toBe("success");
+        expect(settled.nodes[0]?.metadata?.content).toBe("https://media/gen");
+        expect(settled.nodes[0]?.metadata?.errorDetails).toBeUndefined();
+        expect(settled.nodes[0]?.metadata?.generationErrorCode).toBeUndefined();
+        const rebased = rebaseCanvasDocumentThreeWay({ base, local: settled, remote });
+        expect(rebased.conflict).toBe(false);
+    });
 });

@@ -686,6 +686,7 @@ export function syncLocalCanvasGenerationProjectToBackend(id: string, expectedSc
 /**
  * 采纳服务端已确认的生成结果。无基线时不静默并集。有已确认快照时按字段三路合并到
  * 当前 live：本地删除与未冲突编辑保留，未改动的服务端字段（含生成媒体）采纳。
+ * 这里只更新 store/journal；编辑器节点由 bind 调用方在 isCurrent 时 setNodes(adopted.nodes)，不 notifyCanvasRefresh。
  */
 export async function adoptServerConfirmedGenerationPatch(project: CanvasProject, scope?: string, expectedScope?: CapturedUserScope): Promise<CanvasProject | undefined> {
     const expected = resolveDispatchGuard(scope, expectedScope);

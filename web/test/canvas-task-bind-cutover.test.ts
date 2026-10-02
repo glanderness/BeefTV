@@ -479,6 +479,7 @@ describe("bindBackendCanvasGenerationResult", () => {
         expect(nodesRef.current.find((item) => item.id === "node-camp")?.title).toBe("秋日旅行·露营桌");
         expect(nodesRef.current.find((item) => item.id === "node-lake")?.title).toBe("秋日旅行·湖畔横移");
         expect(useCanvasStore.getState().projects[0]?.revision).toBe(14);
+        expect(nodesRef.current).toEqual(useCanvasStore.getState().projects[0]?.nodes);
     });
 
     test("画布提交已暂停时仍绑定成功结果，不把暂停当成生成失败", async () => {

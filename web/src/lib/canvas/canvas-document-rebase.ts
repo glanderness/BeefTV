@@ -72,10 +72,11 @@ function mergeObject(
     return merged;
 }
 
+const GENERATION_MEDIA_RESULT_KEYS = ["content", "storageKey", "assetId"] as const;
+const GENERATION_MEDIA_RESULT_KEY_SET = new Set<string>(GENERATION_MEDIA_RESULT_KEYS);
+
 const GENERATION_BIND_METADATA_KEYS = [
-    "content",
-    "storageKey",
-    "assetId",
+    ...GENERATION_MEDIA_RESULT_KEYS,
     "mimeType",
     "bytes",
     "naturalWidth",
@@ -107,20 +108,39 @@ function nodeTaskId(node: CanvasNodeData | undefined) {
     return typeof taskId === "string" ? taskId.trim() : "";
 }
 
-function remoteGenerationSucceeded(node: CanvasNodeData | undefined) {
-    return node?.metadata?.status === "success" || node?.metadata?.taskStatus === "succeeded";
+function ownMetadataString(metadata: CanvasNodeData["metadata"] | undefined, key: string): string | undefined {
+    if (!metadata || !Object.prototype.hasOwnProperty.call(metadata, key)) return undefined;
+    const value = (metadata as Record<string, unknown>)[key];
+    return typeof value === "string" ? value : undefined;
+}
+
+function nonemptyMediaRef(value: unknown): value is string {
+    return typeof value === "string" && value.trim().length > 0;
+}
+
+function isInFlightGenerationOverlay(node: CanvasNodeData) {
+    const status = node.metadata?.status;
+    return status === "loading" || status === "error";
+}
+
+function remoteHasBoundGenerationResult(node: CanvasNodeData | undefined) {
+    const meta = node?.metadata;
+    if (!meta || meta.status !== "success") return false;
+    return nonemptyMediaRef(meta.content) || nonemptyMediaRef(meta.storageKey) || nonemptyMediaRef(meta.assetId);
 }
 
 function hasTrueGenerationContentConflict(base: CanvasNodeData | undefined, local: CanvasNodeData, remote: CanvasNodeData) {
-    const localContent = typeof local.metadata?.content === "string" ? local.metadata.content : "";
-    const remoteContent = typeof remote.metadata?.content === "string" ? remote.metadata.content : "";
-    const baseContent = typeof base?.metadata?.content === "string" ? base.metadata.content : "";
-    return Boolean(localContent) && localContent !== remoteContent && localContent !== baseContent;
+    const localContent = ownMetadataString(local.metadata, "content");
+    if (localContent === undefined) return false;
+    const remoteContent = ownMetadataString(remote.metadata, "content") ?? "";
+    const baseContent = ownMetadataString(base?.metadata, "content") ?? "";
+    return localContent !== remoteContent && localContent !== baseContent;
 }
 
 /**
- * 进行中的生成 overlay（loading / 进度）对服务端已绑定成功的结果不是文档冲突。
- * 同一节点人类改过 content 时保留本地可见值，不把远端成功伪装进 live。
+ * 只结算同一任务仍在 loading/error 展示层上的生成字段。
+ * 远端必须 status=success 且带有效 media；taskStatus=succeeded 或空 content 不能当已绑定完成。
+ * 人类写过的 content（含空串）保留；新任务删除 content 键视为正常清旧结果。
  */
 export function settleInFlightGenerationOverlay(input: {
     base: CanvasProject;
@@ -133,11 +153,19 @@ export function settleInFlightGenerationOverlay(input: {
     const nodes = (input.local.nodes || []).map((localNode) => {
         const remoteNode = remoteById.get(localNode.id);
         const taskId = nodeTaskId(localNode);
-        if (!remoteNode || !taskId || nodeTaskId(remoteNode) !== taskId || !remoteGenerationSucceeded(remoteNode)) return localNode;
+        if (!remoteNode || !taskId || nodeTaskId(remoteNode) !== taskId) return localNode;
+        if (!isInFlightGenerationOverlay(localNode) || !remoteHasBoundGenerationResult(remoteNode)) return localNode;
         if (hasTrueGenerationContentConflict(baseById.get(localNode.id), localNode, remoteNode)) return localNode;
         const metadata: CanvasNodeData["metadata"] = { ...(localNode.metadata || {}) };
         const remoteMeta = remoteNode.metadata || {};
         for (const key of GENERATION_BIND_METADATA_KEYS) {
+            if (GENERATION_MEDIA_RESULT_KEY_SET.has(key)) {
+                const value = remoteMeta[key];
+                if (nonemptyMediaRef(value)) {
+                    (metadata as Record<string, unknown>)[key] = value;
+                }
+                continue;
+            }
             if (Object.prototype.hasOwnProperty.call(remoteMeta, key) && remoteMeta[key] !== undefined) {
                 (metadata as Record<string, unknown>)[key] = remoteMeta[key];
             } else {
