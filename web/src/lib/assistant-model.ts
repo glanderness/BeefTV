@@ -1,5 +1,7 @@
 import type { ModelProtocol } from "@/lib/model-protocols";
-import { decodeChannelModel, encodeChannelModel, normalizeModelOptionValue, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { decodeChannelModel, encodeChannelModel, isBuiltinBeefAPIChannel, normalizeModelOptionValue, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+
+export const MANAGED_ASSISTANT_MODELS = ["gpt-6-astra", "claude-opus-5-5", "deepseek-v4.1-flash", "glm-5.3"] as const;
 
 /**
  * 画布助手只能走这三种对话协议：它需要多轮工具调用，
@@ -16,11 +18,14 @@ function protocolSupported(protocol: ModelProtocol | undefined) {
 
 function channelAssistantModels(channel: ModelChannel) {
     if (channel.enabled === false) return [];
-    return (channel.modelProfiles || [])
+    const available = (channel.modelProfiles || [])
         .filter((profile) => profile.capability === "text" && protocolSupported(profile.protocol))
         .map((profile) => profile.model.trim())
-        .filter((model) => model && channel.models.includes(model))
-        .map((model) => encodeChannelModel(channel.id, model));
+        .filter((model) => model && channel.models.includes(model));
+    const models = isBuiltinBeefAPIChannel(channel)
+        ? MANAGED_ASSISTANT_MODELS.map((model) => channel.modelAliases?.[model] || model).filter((model) => available.includes(model))
+        : available;
+    return models.map((model) => encodeChannelModel(channel.id, model));
 }
 
 /** 助手可选模型：已启用渠道里声明为文本能力且协议受支持的模型，值形如 `channelId::modelId`。 */
@@ -39,7 +44,7 @@ export function assistantModelOptions(config: AiConfig): string[] {
 
 /**
  * 归一化已保存的助手模型：空值表示跟随默认文本模型，
- * 指向已删除渠道或已不受支持的协议时同样回落到空值。
+ * 无效值返回空值供界面提示，不代表可以改用另一模型。
  */
 export function normalizeAssistantModel(config: AiConfig, value: unknown): string {
     const candidate = normalizeModelOptionValue(value, config.channels);
@@ -49,5 +54,5 @@ export function normalizeAssistantModel(config: AiConfig, value: unknown): strin
 
 /** 助手实际使用的模型：未单独选择时跟随默认文本模型。 */
 export function resolveAssistantModel(config: AiConfig): string {
-    return normalizeAssistantModel(config, config.assistantModel) || config.textModel || "";
+    return normalizeAssistantModel(config, config.assistantModel || config.textModel);
 }

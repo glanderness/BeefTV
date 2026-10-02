@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/assistant"
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/protocol"
 )
 
@@ -22,6 +23,8 @@ var assistantProtocols = map[string]string{
 	"openai-response": "responses",
 }
 
+var managedAssistantModels = []string{beefapi.DefaultManagedAssistantModel, "claude-opus-5-5", "deepseek-v4.1-flash", "glm-5.3"}
+
 type AssistantModelProfile struct {
 	Model      string `json:"model"`
 	Capability string `json:"capability"`
@@ -35,6 +38,7 @@ type AssistantChannel struct {
 	APIKey        string                  `json:"apiKey"`
 	CredentialRef string                  `json:"credentialRef"`
 	Enabled       bool                    `json:"enabled"`
+	Pinned        bool                    `json:"pinned"`
 	Models        []string                `json:"models"`
 	ModelAliases  map[string]string       `json:"modelAliases"`
 	ModelProfiles []AssistantModelProfile `json:"modelProfiles"`
@@ -82,10 +86,11 @@ func AssistantUnavailable(reason, message string) error {
 // Credential lookup for hosted channels is injected; secrets never appear in
 // error messages.
 func ResolveAssistantProvider(snapshot AssistantConfigSnapshot, lookup ManagedCredentialLookup) (assistant.Provider, error) {
-	provider, reason := ResolveAssistantChannelModel(snapshot, strings.TrimSpace(snapshot.AssistantModel), lookup)
-	if reason == AssistantReasonModelNotConfigured {
-		provider, reason = ResolveAssistantChannelModel(snapshot, strings.TrimSpace(snapshot.TextModel), lookup)
+	selection := strings.TrimSpace(snapshot.AssistantModel)
+	if selection == "" {
+		selection = strings.TrimSpace(snapshot.TextModel)
 	}
+	provider, reason := ResolveAssistantChannelModel(snapshot, selection, lookup)
 	if reason != "" {
 		return assistant.Provider{}, AssistantUnavailable(reason, AssistantReasonMessage(reason))
 	}
@@ -103,6 +108,22 @@ func ResolveAssistantChannelModel(snapshot AssistantConfigSnapshot, modelKey str
 	channel, found := FindAssistantChannel(snapshot.Channels, channelID, modelID)
 	if !found {
 		return assistant.Provider{}, AssistantReasonModelNotConfigured
+	}
+	modelID = assistantModelAlias(channel, modelID)
+	if !assistantChannelHasModel(channel, modelID) {
+		return assistant.Provider{}, AssistantReasonModelNotConfigured
+	}
+	if channel.ID == "beefapi" && (channel.Pinned || channel.CredentialRef == "beefapi-enterprise") {
+		allowed := false
+		for _, candidate := range managedAssistantModels {
+			if assistantModelAlias(channel, candidate) == modelID {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return assistant.Provider{}, AssistantReasonModelNotConfigured
+		}
 	}
 	protocol, protocolOK := ChannelModelProtocol(channel, modelID)
 	if !protocolOK {

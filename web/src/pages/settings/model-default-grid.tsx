@@ -68,13 +68,14 @@ export function ModelDefaultGrid({ config, onChange, onOpenChannels }: { config:
                             <div role="radiogroup" aria-label={row.title} className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                                 {isAssistant ? (
                                     <ModelOptionButton
-                                        selected={!selected}
+                                        selected={!config.assistantModel}
                                         onSelect={() => onChange(row.modelKey, "")}
                                         icon={<MessageSquareText className="size-4 text-foreground/55" />}
                                         title="跟随默认文本模型"
                                         subtitle={followsDefaultText}
                                     />
                                 ) : null}
+                                {isAssistant && config.assistantModel && !selected ? <p role="status" className="text-xs text-foreground/50">已选模型不可用，请重新选择</p> : null}
                                 {models.map((model) => (
                                     <ModelOptionButton
                                         key={model}

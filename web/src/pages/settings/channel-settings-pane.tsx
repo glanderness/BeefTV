@@ -1,6 +1,6 @@
 import { App, Button, Form, Input, Popconfirm, Segmented, Select, Tooltip } from "antd";
 import { Pencil, Plus, RefreshCw, Trash2, Workflow } from "lucide-react";
-import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { ModelEditorModal } from "@/components/model-editor-modal";
 import { ChannelHeadersEditor, validateChannelHeaders } from "@/components/channel-headers-editor";
@@ -33,17 +33,23 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
     const [newChannelId, setNewChannelId] = useState<string | null>(null);
     const [beefConnection, setBeefConnection] = useState<BeefAPIConnectionSummary | null>(null);
     const [beefBusy, setBeefBusy] = useState(false);
+    const appliedConnectionState = useRef<string | undefined>(undefined);
 
     const applyBeefConnection = async (summary: BeefAPIConnectionSummary, previousState = beefConnection?.state) => {
         setBeefConnection(summary);
+        if (appliedConnectionState.current === summary.state) return;
+        appliedConnectionState.current = summary.state;
         if (!shouldRefreshBeefAPICatalog(previousState, summary.state)) return;
+        const selectionBeforeRefresh = useConfigStore.getState().config.assistantModel;
         try {
             const result = await getLocalModelConfig();
+            if (appliedConnectionState.current !== summary.state) return;
             const current = useConfigStore.getState().config;
             replaceConfig(localWorkspaceConfig(normalizeConfigSnapshot({
-                config: mergeManagedBeefAPICatalog(current, result.config),
+                config: mergeManagedBeefAPICatalog(current, result.config, summary.state === "connected" && Boolean(previousState && previousState !== "connected") && current.assistantModel === selectionBeforeRefresh),
             }).config));
         } catch {
+            if (appliedConnectionState.current === summary.state) appliedConnectionState.current = undefined;
             // Keep the connection status even if the catalog refresh fails.
         }
     };
@@ -537,7 +543,7 @@ export function shouldRefreshBeefAPICatalog(previous: string | undefined, next: 
     return next === "disconnected" && Boolean(previous) && previous !== "disconnected";
 }
 
-export function mergeManagedBeefAPICatalog(current: AiConfig, server: AiConfig): AiConfig {
+export function mergeManagedBeefAPICatalog(current: AiConfig, server: AiConfig, adoptAuthorizedAssistant = false): AiConfig {
     const serverBeef = server.channels.find((channel) => channel.id === "beefapi");
     let found = false;
     const channels = current.channels.map((channel) => {
@@ -567,7 +573,7 @@ export function mergeManagedBeefAPICatalog(current: AiConfig, server: AiConfig):
             modelProfiles: (serverBeef.modelProfiles || []).map((item) => ({ ...item })),
         });
     }
-    return withChannels(current, channels);
+    return withChannels(adoptAuthorizedAssistant ? { ...current, assistantModel: server.assistantModel } : current, channels);
 }
 
 export function modelConfigChannelStatusLabel(channel: ModelChannel, persistence: ModelConfigPersistenceState, connection?: BeefAPIConnectionSummary | null) {

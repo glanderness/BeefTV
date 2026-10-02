@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { CanvasAssistantModelPicker } from "./canvas-assistant-model-picker";
 
 const LINE_HEIGHT = 21;
 const MIN_LINES = 3;
@@ -21,7 +22,7 @@ type Props = {
     selectedCount: number;
     selectionAttached: boolean;
     onDetachSelection: () => void;
-    modelName?: string;
+    modelBusy?: boolean;
 };
 
 export function CanvasAssistantComposer({
@@ -36,7 +37,7 @@ export function CanvasAssistantComposer({
     selectedCount,
     selectionAttached,
     onDetachSelection,
-    modelName,
+    modelBusy,
 }: Props) {
     const [contentHeight, setContentHeight] = useState(LINE_HEIGHT);
     const height = Math.min(MAX_LINES * LINE_HEIGHT, Math.max(MIN_LINES * LINE_HEIGHT, contentHeight));
@@ -75,7 +76,7 @@ export function CanvasAssistantComposer({
             {disabled && disabledReason ? <span className="canvas-assistant-meta">{disabledReason}</span> : null}
 
             <div className="canvas-assistant-composer-footer">
-                <span className="canvas-assistant-model">{modelName || ""}</span>
+                <CanvasAssistantModelPicker busy={disabled || streaming || Boolean(modelBusy)} />
                 {streaming ? (
                     <Button size="small" icon={<Square className="size-3" />} onClick={onStop}>停止</Button>
                 ) : (

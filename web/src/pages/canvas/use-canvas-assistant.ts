@@ -2,6 +2,8 @@ import { Grid } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { scopedLocalStorage } from "@/lib/user-scope";
+import { flushModelConfig, getModelConfigPersistenceState } from "@/services/model-config-repository";
+import { workspaceCapabilities } from "@/services/workspace-mode";
 import {
     activateAssistantSession,
     agentAssistantFailureText,
@@ -244,6 +246,12 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         run.lastSent = { text: message, selectedNodeIds: selectedSnapshot, references: referenceSnapshot };
         rerenderIfActive(targetCanvas);
         try {
+            if (workspaceCapabilities().local) {
+                await flushModelConfig();
+                const persistence = getModelConfigPersistenceState();
+                if (persistence.dirty || persistence.status === "error") throw new Error("助手模型还没保存成功，请稍后重试");
+            }
+            controller.signal.throwIfAborted();
             const ready = await waitForAssistant(controller.signal);
             setStatus(ready);
             if (!run.historyLoaded && !await loadHistory(targetCanvas)) throw new Error("对话还没读回来，请重新读取后再发送");
@@ -459,6 +467,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         setWidth,
         status,
         statusBusy,
+        modelBusy: statusBusy || [...runsRef.current.values()].some((item) => item.streaming || item.sessionBusy),
         sessions: run.sessions,
         sessionId: run.sessionId,
         turns: run.turns,

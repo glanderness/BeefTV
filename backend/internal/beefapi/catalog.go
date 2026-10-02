@@ -9,7 +9,9 @@ import (
 	"infinite-canvas/backend/internal/workspace"
 )
 
-func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previousAccountID, nextAccountID string) error {
+const DefaultManagedAssistantModel = "gpt-6-astra"
+
+func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previousAccountID, nextAccountID string, initializeAssistant bool) error {
 	if store == nil {
 		return nil
 	}
@@ -77,6 +79,28 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 		}}, channels...)
 	}
 	config["channels"] = channels
+	if initializeAssistant {
+		preferred := DefaultManagedAssistantModel
+		for _, raw := range channels {
+			channel, _ := raw.(map[string]any)
+			if channel["id"] != ChannelID {
+				continue
+			}
+			if aliases, ok := channel["modelAliases"].(map[string]any); ok {
+				if alias, ok := aliases[preferred].(string); ok && strings.TrimSpace(alias) != "" {
+					preferred = strings.TrimSpace(alias)
+				}
+			}
+		}
+		// Only the freshly fetched catalog can establish availability, not a stale merged entry.
+		for _, model := range models {
+			capability, protocol := catalogCapabilityAndProtocol(model)
+			if model.ID == preferred && capability == "text" && (protocol == "chat-completion" || protocol == "claude-api" || protocol == "responses" || protocol == "openai-response") {
+				config["assistantModel"] = ChannelID + "::" + preferred
+				break
+			}
+		}
+	}
 	body, err := json.Marshal(config)
 	if err != nil {
 		return err

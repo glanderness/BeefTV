@@ -170,7 +170,7 @@ export function CanvasAssistantSidebar(props: Props) {
                 selectedCount={selectedNodeIds.length}
                 selectionAttached={selectionAttached}
                 onDetachSelection={() => setSelectionAttached(false)}
-                modelName={assistant.status?.model?.id}
+                modelBusy={assistant.modelBusy}
             />
         </div>
     );
