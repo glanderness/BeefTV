@@ -9,6 +9,7 @@ export type CanvasGenerationHistorySelectGate = {
     projectId: string;
     epoch: UserScopeEpoch;
     mounted: boolean;
+    selectionEpoch: number;
 };
 
 /** List filter for TaskSummary cards. Display uses previewUrl/previewKind; resultJson lives on detail. */
@@ -34,6 +35,7 @@ export function canvasGenerationHistorySelectStillValid(
 ) {
     if (!captured.mounted || !live.mounted) return false;
     if (!captured.open || !live.open) return false;
+    if (captured.selectionEpoch !== live.selectionEpoch) return false;
     const capturedProjectId = captured.projectId.trim();
     const liveProjectId = live.projectId.trim();
     if (!capturedProjectId || capturedProjectId !== liveProjectId) return false;

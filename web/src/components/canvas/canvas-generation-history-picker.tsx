@@ -25,7 +25,8 @@ type CanvasGenerationHistoryPickerProps = {
 export function CanvasGenerationHistoryPicker({ open, projectId, onClose, onSelect }: CanvasGenerationHistoryPickerProps) {
     const { message } = App.useApp();
     const [keyword, setKeyword] = useState("");
-    const resolvingId = useRef<string | null>(null);
+    const selectionRequest = useRef<AbortController | null>(null);
+    const selectionEpoch = useRef(0);
     const openRef = useRef(open);
     const projectIdRef = useRef(projectId);
     const mountedRef = useRef(true);
@@ -40,6 +41,12 @@ export function CanvasGenerationHistoryPicker({ open, projectId, onClose, onSele
         };
     }, []);
     const scope = getActiveUserScope();
+    const cancelSelection = () => {
+        selectionEpoch.current += 1;
+        selectionRequest.current?.abort();
+        selectionRequest.current = null;
+    };
+    useEffect(() => () => cancelSelection(), [open, projectId, scope]);
     const query = useQuery({
         queryKey: ["canvas-generation-history", scope, projectId],
         queryFn: ({ signal }) => listGenerationTasks(100, { projectId, activeOnly: false }, undefined, signal),
@@ -56,16 +63,18 @@ export function CanvasGenerationHistoryPicker({ open, projectId, onClose, onSele
         projectId: projectIdRef.current,
         epoch: captureUserScopeEpoch(),
         mounted: mountedRef.current,
+        selectionEpoch: selectionEpoch.current,
     });
 
     const selectSummary = async (task: GenerationTask) => {
-        if (resolvingId.current || !task.id?.trim() || !projectId.trim()) return;
+        if (selectionRequest.current || !task.id?.trim() || !projectId.trim()) return;
         const captured = liveSelectGate();
         if (!canvasGenerationHistorySelectStillValid(captured, captured)) return;
-        resolvingId.current = task.id;
+        const request = new AbortController();
+        selectionRequest.current = request;
         try {
             const resolved = await awaitCanvasGenerationHistoryDetailIfValid({
-                detail: queryGenerationTask(task.id),
+                detail: queryGenerationTask(task.id, { signal: request.signal }),
                 captured,
                 live: liveSelectGate,
                 expectedId: task.id,
@@ -76,12 +85,12 @@ export function CanvasGenerationHistoryPicker({ open, projectId, onClose, onSele
             if (!canvasGenerationHistorySelectStillValid(captured, liveSelectGate())) return;
             message.error(error instanceof Error ? error.message : "生成结果无法插入画布");
         } finally {
-            resolvingId.current = null;
+            if (selectionRequest.current === request) selectionRequest.current = null;
         }
     };
 
     return (
-        <Modal open={open} title="从生成历史选择" footer={null} onCancel={onClose} width={720} destroyOnHidden>
+        <Modal open={open} title="从生成历史选择" footer={null} onCancel={() => { cancelSelection(); onClose(); }} width={720} destroyOnHidden>
             <Input allowClear prefix={<Search className="size-3.5" />} value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索提示词或模型" aria-label="搜索生成历史" />
             <div className="mt-3 max-h-[min(560px,65vh)] overflow-y-auto pr-1">
                 {query.isLoading ? <div className="grid min-h-40 place-items-center"><Spin /></div> : tasks.length ? (

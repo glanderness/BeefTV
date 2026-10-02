@@ -95,6 +95,7 @@ function selectGate(partial: Partial<CanvasGenerationHistorySelectGate> = {}): C
         projectId: "lelvpvjEnuJ98wD_f2FI7",
         epoch: captureUserScopeEpoch(),
         mounted: true,
+        selectionEpoch: 0,
         ...partial,
     };
 }
@@ -104,7 +105,7 @@ describe("LibTV generation history picker", () => {
         expect(picker).toContain('title="从生成历史选择"');
         expect(picker).toContain("listGenerationTasks(100, { projectId, activeOnly: false }, undefined, signal)");
         expect(picker).toContain("insertableCanvasGenerationHistoryTasks");
-        expect(picker).toContain("queryGenerationTask(task.id)");
+        expect(picker).toContain("queryGenerationTask(task.id, { signal: request.signal })");
         expect(picker).toContain("awaitCanvasGenerationHistoryDetailIfValid");
         expect(picker).toContain("canvasGenerationHistorySelectStillValid");
         expect(picker).toContain("captureUserScopeEpoch");
@@ -211,6 +212,15 @@ describe("LibTV generation history picker", () => {
         });
         expect(selected).toEqual([]);
         expect(canvasGenerationHistorySelectStillValid(selectGate(), selectGate({ open: false }))).toBe(false);
+
+        // Closing and immediately reopening the same canvas must not resurrect
+        // the selection that the user cancelled, even if the transport resolves.
+        await applyDelayed((live) => {
+            live.open = false;
+            live.selectionEpoch += 1;
+            live.open = true;
+        });
+        expect(selected).toEqual([]);
 
         await applyDelayed((live) => {
             live.projectId = "other-canvas";
