@@ -120,6 +120,8 @@ export function agentAssistantFailureText(reason: string | undefined, fallback =
             return "这一轮已达到调用上限，已停止继续执行。可以发送新消息继续，已落地的改动会保留。";
         case "request_budget_exhausted":
             return "当前配置的总调用预算已用完，请检查助手运行配置。已落地的改动会保留。";
+        case "request_budget_storage_unavailable":
+            return "调用预算未能保存，已停止继续调用。请检查磁盘空间和数据目录权限，再重启助手。";
         case "model_request_failed":
             return "这一轮的模型调用失败，请核对已经落地的改动后再继续。";
         case "host_unreachable":
