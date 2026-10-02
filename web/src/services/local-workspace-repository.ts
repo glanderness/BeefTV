@@ -2,6 +2,7 @@ import { acceptCanvasExternalRevisionCandidate, applyExternalCanvasRevision, can
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { ApiError, http } from "@/services/api/request";
 import { commitCanvasDocument } from "@/services/api/operations";
+import { restoreCanvasHistory } from "@/services/api/workspace-data";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { notifyCanvasRefresh } from "@/services/local-workspace-sync";
 import { canvasBackendSubmitPaused, CanvasBackendSubmitPausedError, CanvasStaleScopeError, handleRejectedCanvasBackendSave, isCanvasRevisionConflict, isCanvasSubmitControlError, pauseCanvasBackendSubmit, resumeCanvasBackendSubmit } from "@/services/canvas-revision-conflict";
@@ -857,6 +858,86 @@ export async function openLocalCanvasProjectFromBackend(id: string, expectedScop
         if (isUserScopeAbandonedError(error) || error instanceof CanvasStaleScopeError) return openLocalCanvasProject(id);
         return openLocalCanvasProject(id);
     }
+}
+
+function restoreHistoryRequestError(snapshotId: unknown, revision: unknown) {
+    const identity = typeof snapshotId === "string" ? snapshotId.trim() : "";
+    if (!identity) throw new Error("历史版本不存在或已过期，请刷新历史列表");
+    if (typeof revision !== "number" || !Number.isInteger(revision) || revision < 0) {
+        throw new Error("请先刷新画布版本再恢复");
+    }
+    return { snapshotId: identity, revision };
+}
+
+function restoreDidNotApply() {
+    return new Error("恢复没有完成，画布内容没有被替换。");
+}
+
+/**
+ * 用户显式恢复历史版本。走服务端 RestoreCanvasHistory CAS；失败必须抛出，
+ * 不能退回 openLocalCanvasProjectFromBackend（它会吞错并打开当前稿）。
+ */
+export async function restoreLocalCanvasProjectFromHistory(
+    id: string,
+    historyRestore: { snapshotId: string; revision: number },
+    expectedScope?: CapturedUserScope,
+): Promise<CanvasProject> {
+    const expected = expectedScope ?? captureUserScope();
+    const canvasId = id.trim();
+    if (!canvasId) throw new Error("画布不存在或无权访问");
+    const { snapshotId, revision } = restoreHistoryRequestError(historyRestore.snapshotId, historyRestore.revision);
+    assertDispatchGuard(expected, "账号已切换，未恢复画布");
+    return withCanvasProjection(expected.userScope, canvasId, () => restoreLocalCanvasProjectFromHistoryUnlocked(canvasId, snapshotId, revision, expected));
+}
+
+async function restoreLocalCanvasProjectFromHistoryUnlocked(
+    id: string,
+    snapshotId: string,
+    revision: number,
+    expected: CapturedUserScope,
+): Promise<CanvasProject> {
+    const scope = expected.userScope;
+    if (canvasDeleting.has(saveKey(scope, id))) {
+        throw new CanvasBackendSubmitPausedError("画布正在删除，未提交");
+    }
+    assertDispatchGuard(expected, "账号已切换，未恢复画布");
+    let receipt;
+    try {
+        const response = await restoreCanvasHistory(id, snapshotId, revision, { expectedScope: expected });
+        receipt = response?.project;
+    } catch (error) {
+        rethrowIfAbandoned(error, "账号已切换，未恢复画布");
+        if (isCanvasRevisionConflict(error)) {
+            throw new Error("当前画布已有更新，这次没有恢复。请重新打开版本记录后再试。");
+        }
+        throw error;
+    }
+    if (!receipt || receipt.id !== id) throw restoreDidNotApply();
+    const restoredRevision = receipt.revision;
+    if (typeof restoredRevision !== "number" || !Number.isInteger(restoredRevision) || restoredRevision <= revision) {
+        throw restoreDidNotApply();
+    }
+    assertDispatchGuard(expected, "账号已切换，未恢复画布");
+    const backendProject = await readLocalCanvasProjectFromBackend(id, expected);
+    if (backendProject.id !== id || (backendProject.revision ?? 0) !== restoredRevision) {
+        throw new Error("恢复后没有读到新版本，请重试。");
+    }
+    assertDispatchGuard(expected, "账号已切换，未恢复画布");
+    await updateCanvasOperationJournal(id, scope, (current) => ({
+        ...current,
+        confirmedRevision: restoredRevision,
+        confirmedSnapshot: structuredClone(backendProject),
+        inFlight: null,
+        pendingProjection: null,
+    }));
+    recordServerConfirmedCanvas(backendProject, scope);
+    clearCanvasExternalRevisionConflict(scope, id);
+    resumeCanvasBackendSubmit(id, scope);
+    applyLiveCanvasProject(id, backendProject, true);
+    await projectionStoreFlush();
+    const live = openLocalCanvasProject(id);
+    if (!live || (live.revision ?? 0) !== restoredRevision) throw restoreDidNotApply();
+    return live;
 }
 
 /**

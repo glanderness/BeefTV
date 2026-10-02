@@ -149,3 +149,15 @@ export function listCanvasHistory(id: string, signal?: AbortSignal) {
 export function getCanvasHistoryEntry(id: string, snapshotId: string, signal?: AbortSignal) {
     return http.get<{ snapshot: CanvasHistoryEntry; project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(id)}/history/${encodeURIComponent(snapshotId)}`, { signal });
 }
+
+export type CanvasHistoryRestoreSummary = Pick<CanvasProject, "id" | "title" | "createdAt" | "updatedAt"> & {
+    revision: number;
+};
+
+export function restoreCanvasHistory(id: string, snapshotId: string, revision: number, config?: HttpRequestConfig) {
+    return http.post<{ project: CanvasHistoryRestoreSummary }>(
+        `/canvas-projects/${encodeURIComponent(id)}/history/${encodeURIComponent(snapshotId)}/restore`,
+        { revision },
+        config,
+    );
+}

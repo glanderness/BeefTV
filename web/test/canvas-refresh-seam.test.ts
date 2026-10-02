@@ -44,6 +44,7 @@ mock.module("@/lib/localforage-storage", () => ({
 mock.module("@/services/api/request", () => ({
     ApiError,
     apiBaseURL: "/api",
+    compactApiParams: (params: Record<string, unknown>) => params,
     http: {
         get: async () => {
             server.gets += 1;

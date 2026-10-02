@@ -12,3 +12,9 @@ test("syncLocalCanvasSnapshot 把文档字段合成一次提交，viewport 只�
     expect(source).not.toContain("await syncLocalCanvasProjectToBackend(id)");
     expect(source).not.toContain("documentPatch.nodes || documentPatch.connections");
 });
+
+test("loadCanvasProjectForEditing 对 historyRestore 走恢复而不是打开当前稿", () => {
+    expect(source).toContain("if (options.historyRestore)");
+    expect(source).toContain("restoreLocalCanvasProjectFromHistory(id, options.historyRestore, expected)");
+    expect(source).not.toContain("if (options.historyRestore) {\n    const project = await openLocalCanvasProjectFromBackend");
+});
