@@ -4,20 +4,149 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import {
+  THEME_AGENT_CONTRACT_VERSION,
+  THEME_AGENT_SINCE,
+  REQUIRED_AGENT_CHECK_IDS,
+  DETERMINISTIC_FAULT_CHECK_IDS,
+  fixtureDigestFromManifest,
+  inspectFixtureManifest,
+  requiresThemeAgentContract,
+  findCopiedPriorTheme,
+} from './real-generation-release-contract.mjs';
+
+const PATHS = ['text-image', 'image-image', 'image-video', 'text-video', 'video-video', 'multi-video'];
+const BUNNY_FIXTURES = {
+  'image-1.jpg': '93701f45cf50d48de5ba452cd26eeafeba40a2fceef2e50fb98940ccb919250f',
+  'image-2.jpg': '5946874132e3e82d7c1ed74db2a97e39b08f58ba7dc3fa9129adffcdd714af84',
+  'reference.mp4': '282ef9563a8dbad86470368bef7afa9fcfd1df7791cf38f4f5e803c9d535da60',
+};
+
+function copyGate(dir) {
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  mkdirSync(join(dir, 'docs/release-evidence'), { recursive: true });
+  for (const name of ['verify-real-generation-release.mjs', 'real-generation-release-contract.mjs']) {
+    writeFileSync(join(dir, 'scripts', name), readFileSync(new URL(`./${name}`, import.meta.url)));
+  }
+}
+
+function setupRepo(version) {
+  const dir = mkdtempSync(join(tmpdir(), 'beeftv-receipt-'));
+  const git = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' });
+  git('init');
+  copyGate(dir);
+  writeFileSync(join(dir, 'VERSION'), `${version}\n`);
+  git('add', '.');
+  git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'candidate');
+  const run = (...args) => execFileSync(process.execPath, ['scripts/verify-real-generation-release.mjs', ...args], { cwd: dir, stdio: 'pipe', encoding: 'utf8' });
+  const save = (value, name = version) => writeFileSync(join(dir, `docs/release-evidence/${name}.json`), JSON.stringify(value));
+  const commitVersion = next => {
+    writeFileSync(join(dir, 'VERSION'), `${next}\n`);
+    git('add', 'VERSION');
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', next);
+  };
+  return { dir, git, run, save, commitVersion };
+}
+
+function makeChecks(sourceDigest, tweak) {
+  const checks = Object.fromEntries(REQUIRED_AGENT_CHECK_IDS.map(id => [id, {
+    status: 'passed',
+    method: DETERMINISTIC_FAULT_CHECK_IDS.includes(id) ? 'deterministic' : 'native',
+    evidence: [`${id}.log`],
+    sourceDigest,
+  }]));
+  if (tweak) tweak(checks);
+  return checks;
+}
+
+function makeCases(version, fixtureDigest) {
+  return [1, 2].flatMap(round => PATHS.map(path => ({
+    round,
+    path,
+    taskId: `${round}/${path}`,
+    providerRequestId: `${round}/${path}`,
+    clientVersion: version,
+    platform: 'test-only',
+    fixtureDigest,
+    model: 'test-only',
+    status: 'succeeded',
+    clientSubmitted: true,
+    canvasVerified: true,
+    mediaDecoded: true,
+    mediaOpened: true,
+    billing: 'settled',
+    costCNY: 1,
+    artifactSHA256: 'b'.repeat(64),
+    entrypoint: 'assistant',
+    sessionId: `s-${round}-${path}`,
+    turnId: `t-${round}-${path}`,
+    proposalId: `p-${round}-${path}`,
+    confirmed: true,
+  })));
+}
+
+function makeScenario(fixtures, extra = {}) {
+  return {
+    id: 'autumn-lantern-2026',
+    title: 'city lantern night',
+    source: 'https://example.invalid/trends/lantern',
+    queryDate: '2026-10-02',
+    fixtures,
+    ...extra,
+  };
+}
+
+function themeFixtures(salt = 'c') {
+  return {
+    'theme-a.jpg': salt.repeat(64),
+    'theme-b.png': String.fromCharCode(salt.charCodeAt(0) + 1).repeat(64),
+    'theme-c.mp4': String.fromCharCode(salt.charCodeAt(0) + 2).repeat(64),
+  };
+}
+
+function makeV2(version, sourceDigest, extra = {}) {
+  const fixtures = extra.fixtures || themeFixtures();
+  const fixtureDigest = fixtureDigestFromManifest(fixtures);
+  const { fixtures: _ignored, ...rest } = extra;
+  return {
+    version,
+    sourceDigest,
+    contractVersion: THEME_AGENT_CONTRACT_VERSION,
+    budgetCNY: 50,
+    spentCNY: 12,
+    pendingCNY: 0,
+    upgrade: { preservedData: true, generationVerified: true },
+    scenario: makeScenario(fixtures),
+    agentChecks: makeChecks(sourceDigest),
+    cases: makeCases(version, fixtureDigest),
+    ...rest,
+  };
+}
+
+test('canonical fixture digest matches historical bunny receipts', () => {
+  assert.equal(fixtureDigestFromManifest(BUNNY_FIXTURES), '2714dc3b18420b1b9b266fef54883611185a71b2afb8fe78db13885fac07e2c6');
+  assert.equal(inspectFixtureManifest(BUNNY_FIXTURES).ok, true);
+  assert.equal(inspectFixtureManifest({ 'only.jpg': 'a'.repeat(64), 'clip.mp4': 'b'.repeat(64) }).ok, false);
+  assert.equal(inspectFixtureManifest({ 'a.jpg': 'a'.repeat(64), 'b.jpg': 'a'.repeat(64), 'c.mp4': 'b'.repeat(64) }).ok, false);
+});
+
+test('theme/agent contract starts at v1.6.23 and stays closed for unknown versions', () => {
+  assert.equal(requiresThemeAgentContract('v1.6.22'), false);
+  assert.equal(requiresThemeAgentContract(THEME_AGENT_SINCE), true);
+  assert.equal(requiresThemeAgentContract('v1.6.24'), true);
+  assert.equal(requiresThemeAgentContract('v1.7.0'), true);
+  assert.equal(requiresThemeAgentContract('v2.0.0'), true);
+  assert.throws(() => requiresThemeAgentContract('1.6.23'), /unparseable VERSION/);
+  const prior = { contractVersion: 2, version: 'v1.6.23', scenario: makeScenario(themeFixtures()) };
+  const digest = fixtureDigestFromManifest(themeFixtures());
+  assert.ok(findCopiedPriorTheme(makeScenario(themeFixtures()), digest, [prior]));
+  assert.equal(findCopiedPriorTheme(makeScenario(themeFixtures('a'), { id: 'new-theme' }), digest, [{ ...prior, contractVersion: 1 }]), null);
+});
 
 test('release receipt rejects incomplete, stale, reused and unbalanced evidence', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'beeftv-receipt-'));
+  const { dir, git, run, save } = setupRepo('v1.6.17');
   try {
-    const git = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' });
-    git('init');
-    mkdirSync(join(dir, 'scripts')); mkdirSync(join(dir, 'docs/release-evidence'), { recursive: true });
-    writeFileSync(join(dir, 'scripts/verify-real-generation-release.mjs'), readFileSync(new URL('./verify-real-generation-release.mjs', import.meta.url)));
-    writeFileSync(join(dir, 'VERSION'), 'v1.6.17\n');
-    git('add', '.'); git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'candidate');
-    const run = (...args) => execFileSync(process.execPath, ['scripts/verify-real-generation-release.mjs', ...args], { cwd: dir, stdio: 'pipe', encoding: 'utf8' });
-    const paths = ['text-image', 'image-image', 'image-video', 'text-video', 'video-video', 'multi-video'];
-    const valid = { version: 'v1.6.17', sourceDigest: run('--fingerprint').trim(), budgetCNY: 50, spentCNY: 12, pendingCNY: 0, upgrade: { preservedData: true, generationVerified: true }, cases: [1, 2].flatMap(round => paths.map(path => ({ round, path, taskId: `${round}/${path}`, providerRequestId: `${round}/${path}`, clientVersion: 'v1.6.17', platform: 'test-only', fixtureDigest: 'a'.repeat(64), model: 'test-only', status: 'succeeded', clientSubmitted: true, canvasVerified: true, mediaDecoded: true, mediaOpened: true, billing: 'settled', costCNY: 1, artifactSHA256: 'b'.repeat(64) }))) };
-    const save = value => writeFileSync(join(dir, 'docs/release-evidence/v1.6.17.json'), JSON.stringify(value));
+    const valid = { version: 'v1.6.17', sourceDigest: run('--fingerprint').trim(), budgetCNY: 50, spentCNY: 12, pendingCNY: 0, upgrade: { preservedData: true, generationVerified: true }, cases: [1, 2].flatMap(round => PATHS.map(path => ({ round, path, taskId: `${round}/${path}`, providerRequestId: `${round}/${path}`, clientVersion: 'v1.6.17', platform: 'test-only', fixtureDigest: 'a'.repeat(64), model: 'test-only', status: 'succeeded', clientSubmitted: true, canvasVerified: true, mediaDecoded: true, mediaOpened: true, billing: 'settled', costCNY: 1, artifactSHA256: 'b'.repeat(64) }))) };
     save(valid); assert.match(run(), /12\/12/);
     for (const mutate of [r => r.cases.pop(), r => r.sourceDigest = 'old', r => r.cases[1].taskId = r.cases[0].taskId, r => r.cases[0].clientSubmitted = false, r => r.cases[0].clientVersion = 'v1.6.16', r => r.pendingCNY = 1, r => r.spentCNY = 51, r => r.spentCNY = 1]) {
       const invalid = structuredClone(valid); mutate(invalid); save(invalid); assert.throws(() => run());
@@ -36,7 +165,7 @@ test('release receipt rejects incomplete, stale, reused and unbalanced evidence'
       writeFileSync(join(dir, 'VERSION'), `${version}\n`);
       git('add', 'VERSION'); git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', version);
       const waiver = { ...valid, version, sourceDigest: run('--fingerprint').trim(), cases: [], liveTestWaiver: { approvedBy: 'Ender', instruction: '没事 这轮就不用实测了' }, verification: { windowsNativeRegression: 'passed' }, review: { result: 'approved' } };
-      const saveWaiver = r => writeFileSync(join(dir, `docs/release-evidence/${version}.json`), JSON.stringify(r));
+      const saveWaiver = r => save(r, version);
       saveWaiver(waiver);
       if (version === 'v1.6.18') {
         assert.match(run(), /waived by owner.*live matrix NOT completed/);
@@ -52,8 +181,107 @@ test('release receipt rejects incomplete, stale, reused and unbalanced evidence'
           for (const mutate of [r => r.sourceDigest = 'old', r => r.pendingCNY = 1, r => r.spentCNY = 51, r => r.liveTestWaiver.approvedBy = 'unknown', r => r.review.result = 'pending', r => r.verification.errorRegression = 'unverified', r => r.verification.localReleaseGate = 'unverified', r => r.upgrade.preservedData = false]) {
             const invalid = structuredClone(directRelease); mutate(invalid); saveWaiver(invalid); assert.throws(() => run());
           }
-        } else assert.throws(() => run());
+        } else {
+          assert.throws(() => run());
+          const downloadOnly = { ...valid, version, sourceDigest: run('--fingerprint').trim(), budgetCNY: 0, spentCNY: 0, pendingCNY: 0, cases: [], liveTestWaiver: { approvedBy: 'Ender', instruction: '本版豁免付费生成矩阵，review 通过就发布（推荐）' }, verification: { windowsDownloads: 'passed', ci: 'passed' }, review: { result: 'approved' }, upgrade: { preservedData: true } };
+          saveWaiver(downloadOnly);
+          assert.match(run(), /waived by owner.*live matrix NOT completed/);
+          for (const mutate of [r => r.sourceDigest = 'old', r => r.pendingCNY = 1, r => r.spentCNY = 1, r => r.liveTestWaiver.approvedBy = 'unknown', r => r.review.result = 'pending', r => r.verification.windowsDownloads = 'unverified', r => r.verification.ci = 'unverified', r => r.upgrade.preservedData = false]) {
+            const invalid = structuredClone(downloadOnly); mutate(invalid); saveWaiver(invalid); assert.throws(() => run());
+          }
+        }
       }
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('v1.6.23+ requires theme, shared fixtures and native assistant evidence', () => {
+  const { dir, run, save, commitVersion } = setupRepo('v1.6.23');
+  try {
+    const sourceDigest = run('--fingerprint').trim();
+    const valid = makeV2('v1.6.23', sourceDigest);
+    save(valid);
+    assert.match(run(), /12\/12/);
+
+    for (const [mutate, pattern] of [
+      [r => { delete r.contractVersion; }, /explicit contractVersion=2 is required/],
+      [r => { r.contractVersion = 1; }, /explicit contractVersion=2 is required/],
+      [r => { r.contractVersion = 3; }, /explicit contractVersion=2 is required/],
+      [r => { r.contractVersion = '2'; }, /explicit contractVersion=2 is required/],
+      [r => { r.scenario.id = ''; }, /scenario must include nonempty id, title, source URL and query date/],
+      [r => { r.scenario.title = ' '; }, /scenario must include nonempty id, title, source URL and query date/],
+      [r => { r.scenario.source = 'ftp://example.invalid/trends'; }, /scenario must include nonempty id, title, source URL and query date/],
+      [r => { r.scenario.queryDate = '2026/10/02'; }, /scenario must include nonempty id, title, source URL and query date/],
+      [r => { r.scenario.fixtures = { 'only.jpg': 'c'.repeat(64), 'clip.mp4': 'd'.repeat(64) }; }, /fixture manifest must include at least two image and one video SHA256/],
+      [r => { r.scenario.fixtures = { 'a.jpg': 'c'.repeat(64), 'b.png': 'd'.repeat(64) }; }, /fixture manifest must include at least two image and one video SHA256/],
+      [r => { r.cases[0].fixtureDigest = 'f'.repeat(64); }, /cases must share the scenario fixtureDigest/],
+      [r => { r.cases.pop(); }, /expected exactly twelve successful cases/],
+      [r => { r.cases[1].taskId = r.cases[0].taskId; }, /missing or reused task/],
+      [r => { r.cases[0].entrypoint = 'canvas'; }, /incomplete assistant provenance/],
+      [r => { r.cases[0].sessionId = ''; }, /incomplete assistant provenance/],
+      [r => { r.cases[0].turnId = ' '; }, /incomplete assistant provenance/],
+      [r => { r.cases[0].proposalId = ''; }, /incomplete assistant provenance/],
+      [r => { r.cases[0].confirmed = false; }, /incomplete assistant provenance/],
+      [r => { r.sourceDigest = 'old'; }, /receipt does not match this release source/],
+      [r => { delete r.agentChecks; }, /boolean-only agent coverage is not accepted/],
+      [r => { r.agentChecks = true; }, /boolean-only agent coverage is not accepted/],
+      [r => { r.agentChecks.canvas_read = true; }, /boolean-only agent coverage is not accepted/],
+      [r => { delete r.agentChecks.cli_mcp; }, /agentChecks must include cli_mcp/],
+      [r => { r.agentChecks.budget.evidence = []; }, /agentChecks must include budget/],
+      [r => { r.agentChecks.canvas_read.method = 'deterministic'; }, /agent check canvas_read must use native method/],
+      [r => { r.agentChecks.multi_turn.method = 'deterministic'; }, /agent check multi_turn must use native method/],
+      [r => { r.agentChecks.cli_mcp.method = 'deterministic'; }, /agent check cli_mcp must use native method/],
+      [r => { r.agentChecks.session_history.sourceDigest = 'a'.repeat(64); }, /agent check session_history sourceDigest does not match this release source/],
+      [r => { r.liveTestWaiver = { approvedBy: 'Ender', instruction: '没事 这轮就不用实测了' }; r.cases = []; }, /expected exactly twelve successful cases/],
+    ]) {
+      const invalid = structuredClone(valid);
+      mutate(invalid);
+      save(invalid);
+      assert.throws(() => run(), pattern);
+    }
+
+    save(valid);
+    assert.match(run(), /12\/12/);
+
+    const bunny = makeV2('v1.6.23', sourceDigest, { fixtures: BUNNY_FIXTURES });
+    save({ version: 'v1.6.22', contractVersion: 1, scenario: makeScenario(BUNNY_FIXTURES, { id: 'big-buck-bunny' }), cases: [] }, 'v1.6.22');
+    save(bunny);
+    assert.match(run(), /12\/12/);
+
+    commitVersion('v1.6.24');
+    const nextDigest = run('--fingerprint').trim();
+    const copied = makeV2('v1.6.24', nextDigest, { fixtures: themeFixtures() });
+    copied.scenario = structuredClone(valid.scenario);
+    copied.cases = makeCases('v1.6.24', fixtureDigestFromManifest(valid.scenario.fixtures));
+    copied.agentChecks = makeChecks(nextDigest);
+    save(copied, 'v1.6.24');
+    save(valid, 'v1.6.23');
+    assert.throws(() => run(), /copied preceding release scenario or fixtures/);
+
+    copied.scenario.id = 'harbor-rain-2026';
+    save(copied, 'v1.6.24');
+    assert.throws(() => run(), /copied preceding release scenario or fixtures/);
+
+    const rotated = makeV2('v1.6.24', nextDigest, { fixtures: themeFixtures('a') });
+    rotated.scenario.id = 'harbor-rain-2026';
+    save(rotated, 'v1.6.24');
+    assert.match(run(), /12\/12/);
+
+    save(copied, 'v1.6.24');
+    rmSync(join(dir, 'docs/release-evidence/v1.6.23.json'));
+    assert.match(run(), /12\/12/);
+
+    for (const major of ['v1.7.0', 'v2.0.0']) {
+      commitVersion(major);
+      const digest = run('--fingerprint').trim();
+      const incomplete = { version: major, sourceDigest: digest, budgetCNY: 50, spentCNY: 12, pendingCNY: 0, upgrade: { preservedData: true, generationVerified: true }, cases: makeCases(major, 'a'.repeat(64)) };
+      incomplete.cases.forEach(item => { delete item.entrypoint; delete item.sessionId; delete item.turnId; delete item.proposalId; delete item.confirmed; });
+      save(incomplete, major);
+      assert.throws(() => run(), /explicit contractVersion=2 is required/);
+      const next = makeV2(major, digest, { fixtures: themeFixtures(major === 'v1.7.0' ? 'a' : '0') });
+      next.scenario.id = `${major}-theme`;
+      save(next, major);
+      assert.match(run(), /12\/12/);
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
