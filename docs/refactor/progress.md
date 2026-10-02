@@ -297,3 +297,12 @@
 - `00ae495` / `3665fd4` 合入专用任务资源查询、媒体持久化内部及深度恢复的原身份传递；取消请求不再与其他观察者共享在途 IO，输入变化更换确认 ID。Lead `f605df0` 在快照视口更新前与回读前再次断言身份。专项 42 pass / 158 expect，typecheck 通过。
 - `9b6147b` 修复生成复审 P1/P2：领域单次解析系统模型，普通正文与推理分离；声明式文本通过已有解析器处理 SSE。Lead app 专项 race 2.414s，通过真实 mock HTTP 检查目录 SKU 对应上游模型及只发一次请求。generation 完整 race 与全量 Go 后续单独记录。
 - 全量后端 `5adf3fb` 仍运行中；独立整体架构复审 `20261002-074335-continue-f7a73044` 仍执行。当前还没有最终候选或新付费/发布回执。
+
+### 整体复审与退场边界
+
+- 全量 Go `5adf3fb` 退出 1，唯一失败为 taskbinding 依赖边界：`taskbinding -> task -> generation -> creation -> canvas`。`259ab62` 把共用纯素材占位解析移入 protocol，删掉无调用方的 app 包装，原边界检查保留；Lead taskbinding/generation/creation/protocol race 1.999s / 5.338s / 3.501s / 4.415s 通过。`9b6147b` generation 完整 race 3.877s 通过。
+- `7f27341` / `0748229` 合入素材页与选择器入口 epoch、异步父回调身份及 3D 素材持久回执。真实 Chrome 挂载页面 2 pass / 13 expect：同页 A→B→A 清除旧内容，迟到普通网络错误不会提示或写入替换账号；相邻专项 23 pass / 151 expect，typecheck 通过。
+- 独立复审 `20261002-080819-continue-2a23cfbc` 固定 `0748229`，对生成 P1/P2、旧上传标记、绘图 GC、专用任务身份和素材页五包分别 ACCEPT，无新 P1/P2。实际读取 Lead 钉选 pi 包源码，确认 `noTools=builtin` 与全控装配吻合。剩余 app 方法经调用链区分为端口、组合和互补持久化；revision-0 创建 PUT 与 generated-assets 同事务保存是有效专用操作，不再凭方法名或 Service 存在继续搬迁。
+- `abeb058` / `56546bd` / `a23eef2` / `a450b0b` 删除未接线的自建 MCP、tar.gz helper、项目 Agent 工具及无前端调用的旧节点/连线 HTTP；官方 MCP SDK、产品 ZIP 与活跃画布保存保留。`44b6beb` 复用既有桌面 UI 身份校验到任务创建与专用任务创建；重试同样重新生成，继续由 `20261002-081908-continue-da38b192` 补齐。
+- IDB 初始化-only 实现 `a900049` 尚未接受：不得为 Bun 测试吞掉真实缺驱动错误。`20261002-081842-continue-65ad71b0` 改测试替身并恢复生产错误传播，同时保留慢缓存与持久草稿并发、九表首次打开与浏览器回归。
+- `20261002-080750-continue-3f6fad9c` 收口拖放/粘贴/章节插入的迟到回调，以及 `ensureCanvasNodeAsset.confirmed=false`、项目设置表单原身份。当前整体 verdict 仍为 REPAIR；未扩大到新 Agent 内核或替换合法专用事务。无新增付费、发布或真实数据写入。
