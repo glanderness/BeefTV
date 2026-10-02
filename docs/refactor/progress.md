@@ -306,3 +306,11 @@
 - `abeb058` / `56546bd` / `a23eef2` / `a450b0b` 删除未接线的自建 MCP、tar.gz helper、项目 Agent 工具及无前端调用的旧节点/连线 HTTP；官方 MCP SDK、产品 ZIP 与活跃画布保存保留。`44b6beb` 复用既有桌面 UI 身份校验到任务创建与专用任务创建；重试同样重新生成，继续由 `20261002-081908-continue-da38b192` 补齐。
 - IDB 初始化-only 实现 `a900049` 尚未接受：不得为 Bun 测试吞掉真实缺驱动错误。`20261002-081842-continue-65ad71b0` 改测试替身并恢复生产错误传播，同时保留慢缓存与持久草稿并发、九表首次打开与浏览器回归。
 - `20261002-080750-continue-3f6fad9c` 收口拖放/粘贴/章节插入的迟到回调，以及 `ensureCanvasNodeAsset.confirmed=false`、项目设置表单原身份。当前整体 verdict 仍为 REPAIR；未扩大到新 Agent 内核或替换合法专用事务。无新增付费、发布或真实数据写入。
+
+### 最后集成回归
+
+- `fa7b9b3` 将同一可信桌面身份规则接入重新付费的 retry；handler 重试专项 race 7.417s 通过，读取与取消保持独立。
+- `b9ee1bb` / `ffc2360` / `ee3d20e` 统一九个既有 IndexedDB store 的首次初始化，普通 IO 并发；生产缺驱动或 ready 失败向上传播并允许下一次显式重试。Bun ready 替身只在测试 preload，实际 Chrome 仍运行真实 IndexedDB。Lead 慢缓存/持久草稿/初始化失败 16 pass / 77 expect；真实浏览器九表写入重开 2 pass / 22 expect。
+- `7d285f4` / `fe8c168` 合入上传原 scope、未确认草稿反馈与延迟 React updater 归属检查，专项 16 pass / 57 expect。项目设置初始归档状态冻结和 StrictMode mounted 标记经 Lead 复审发现，`20261002-083037-continue-75e0bee2` 继续修补并挂载真实组件验证；早期 upload/settings harness 仅覆盖辅助逻辑集成，不当作真实设置组件回执。节点编辑器两条手动保存回调由 `20261002-082937-continue-9730423c` 补同一归属规则。
+- `3233608` 对应标准前端全套退出 0：2988 pass / 0 fail / 14 skip；typecheck、lint、Web build 通过。真实原生 FFmpeg 4 pass / 77 expect，真实浏览器 Worker 8 pass / 94 expect，覆盖音轨、字幕、时长、取消与失败不交付。
+- 同一集成代码的官方 pi 宿主与随包 Node 检查 83 pass / 308 expect，含真实 SDK 会话往返、宿主进程退出和空 PATH 打包启动；模型请求计数为 0。发布器 Python 14 pass。以上是本地证据，待完成的 UI 修补仍须整体验证；后端全量与独立 review 正在运行，未冻结候选、未发布。
