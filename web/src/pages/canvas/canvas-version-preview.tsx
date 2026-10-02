@@ -21,7 +21,7 @@ const noAction = () => undefined;
 const readOnlyActions = {};
 const previewNodeId = (id: string) => `version-preview:${id}`;
 
-export function CanvasVersionPreview({ preview, onReturn, onShowVersions }: { preview: CanvasVersionPreviewState; onReturn: () => void; onShowVersions: () => void }) {
+export function CanvasVersionPreview({ preview, busy = false, onReturn, onShowVersions }: { preview: CanvasVersionPreviewState; busy?: boolean; onReturn: () => void; onShowVersions: () => void }) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [viewport, setViewport] = useState<ViewportTransform>({ x: 0, y: 0, k: 1 });
     const [selectedId, setSelectedId] = useState<string>();
@@ -104,7 +104,7 @@ export function CanvasVersionPreview({ preview, onReturn, onShowVersions }: { pr
                 <Button type="text" className="lg:!hidden" icon={<History size={15} />} onClick={onShowVersions}>
                     版本
                 </Button>
-                <Button className="col-span-3" icon={<ArrowLeft size={15} />} onClick={onReturn}>
+                <Button className="col-span-3" icon={<ArrowLeft size={15} />} disabled={busy} onClick={onReturn}>
                     返回当前画布
                 </Button>
             </header>

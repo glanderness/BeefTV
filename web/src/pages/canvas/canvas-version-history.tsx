@@ -55,11 +55,11 @@ export function useCanvasVersionHistory(projectId: string, onRestore: (snapshotI
         setPreview(null);
     }, []);
     const close = useCallback(() => {
-        if (!restoring) {
+        if (!restoring && !confirming) {
             setOpen(false);
             returnToCurrent();
         }
-    }, [restoring, returnToCurrent]);
+    }, [restoring, confirming, returnToCurrent]);
 
     useEffect(() => {
         setOpen(false);
@@ -119,6 +119,7 @@ export function useCanvasVersionHistory(projectId: string, onRestore: (snapshotI
     );
 
     const selectVersion = (entry: CanvasHistoryEntry) => {
+        if (restoring || confirming) return;
         previewRequest.current?.abort();
         const controller = new AbortController();
         previewRequest.current = controller;
@@ -136,7 +137,7 @@ export function useCanvasVersionHistory(projectId: string, onRestore: (snapshotI
 
     const restore = () => {
         const selected = preview?.snapshot;
-        if (!selected || !preview.project || currentRevision === undefined || restoring) return;
+        if (!selected || !preview.project || currentRevision === undefined || restoring || confirming) return;
         setConfirming(true);
         modal.confirm({
             title: `恢复版本 ${selected.revision} 的内容？`,
@@ -218,27 +219,32 @@ export function useCanvasVersionHistory(projectId: string, onRestore: (snapshotI
             }
         },
         hideList: () => {
-            if (!restoring) {
+            if (!restoring && !confirming) {
                 setListOpen(false);
                 if (!preview) setOpen(false);
             }
         },
         close,
         changeTab: (next: "cloud" | "draft") => {
+            if (restoring || confirming) return;
             setTab(next);
             returnToCurrent();
         },
         refresh: () => {
+            if (restoring || confirming) return;
             returnToCurrent();
             setReload((value) => value + 1);
         },
         selectVersion,
         selectDraft: (draft: CanvasSyncDraft) => {
+            if (restoring || confirming) return;
             previewRequest.current?.abort();
             setPreview({ key: draft.id, label: "本地草稿", date: draft.savedAt, kind: "draft", project: draft.project });
             setListOpen(false);
         },
-        returnToCurrent,
+        returnToCurrent: () => {
+            if (!restoring && !confirming) returnToCurrent();
+        },
         restore,
         download,
     };
