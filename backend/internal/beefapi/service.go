@@ -529,7 +529,11 @@ func (s *Service) finalizeSavedCredential(ctx context.Context, previousAccountID
 		nextAccount = s.state.Account.ID.String()
 	}
 	s.mu.Unlock()
-	if err := applyCatalog(s.provider, models, previousAccount, nextAccount, state.AssistantDefaultPending); err != nil {
+	authorizationID := ""
+	if state.AssistantDefaultPending {
+		authorizationID = state.TokenID
+	}
+	if err := applyCatalog(s.provider, models, previousAccount, nextAccount, authorizationID); err != nil {
 		s.mu.Lock()
 		s.state.Status = StateCatalogFailed
 		s.state.CatalogOK = false

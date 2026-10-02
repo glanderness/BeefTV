@@ -151,6 +151,35 @@ func (s *ProviderConfig) SaveLocalModelConfigRevision(body []byte, expectedRevis
 	return existingDocument.Revision + 1, nil
 }
 
+// SaveCatalogWithAssistantDefault records initialization with the config atomically.
+// Connection-state retries and frontend snapshots cannot reset a later user choice.
+func (s *ProviderConfig) SaveCatalogWithAssistantDefault(body []byte, authorizationID, model string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	document, err := s.loadPrimaryDocument()
+	if err != nil {
+		return err
+	}
+	incoming, err := decodeIncomingConfig(body)
+	if err != nil {
+		return err
+	}
+	if authorizationID != "" && document.AssistantDefaultAuthorization != authorizationID {
+		if model != "" {
+			incoming["assistantModel"] = model
+		}
+		document.AssistantDefaultAuthorization = authorizationID
+	} else if document.Config != nil {
+		// A catalog read may predate a concurrent explicit selection.
+		incoming["assistantModel"] = document.Config["assistantModel"]
+	}
+	body, err = json.Marshal(incoming)
+	if err != nil {
+		return err
+	}
+	return s.saveLocalModelConfig(body, document)
+}
+
 func (s *ProviderConfig) saveLocalModelConfig(body []byte, existingDocument ProviderStateDocument) error {
 	if len(body) == 0 || len(body) > 2<<20 {
 		return errors.New("本地模型配置大小无效")
@@ -165,6 +194,7 @@ func (s *ProviderConfig) saveLocalModelConfig(body []byte, existingDocument Prov
 		}
 	}
 	document := newProviderState(incoming, existingDocument.Revision+1)
+	document.AssistantDefaultAuthorization = existingDocument.AssistantDefaultAuthorization
 	canonical, err := json.Marshal(document)
 	if err != nil {
 		return fmt.Errorf("编码本地模型配置失败: %w", err)

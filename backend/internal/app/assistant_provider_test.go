@@ -57,19 +57,17 @@ func TestResolveAssistantProviderPrefersAssistantModel(t *testing.T) {
 	}
 }
 
-// assistantModel 指向已被停用/删除的渠道时，等同于没设置助手模型：退回画布文本模型。
-func TestResolveAssistantProviderFallsBackWhenAssistantModelUnresolvable(t *testing.T) {
+// 显式选择失效时要求重新选择，不能静默发送给另一模型。
+func TestResolveAssistantProviderRejectsUnresolvableExplicitModel(t *testing.T) {
 	service := writeAssistantConfig(t, `{"schemaVersion":1,"revision":1,"config":{
 		"assistantModel":"gone::ghost-model","textModel":"custom::chat-x",
 		"channels":[{"id":"custom","enabled":true,"apiKey":"k","baseUrl":"https://relay.example.com",
 			"modelProfiles":[{"capability":"text","model":"chat-x","protocol":"chat-completion"}]}]}}`)
 
 	provider, err := service.ResolveAssistantProvider()
-	if err != nil {
-		t.Fatalf("应退回文本模型而不是报未配置: %v", err)
-	}
-	if provider.Model != "chat-x" {
-		t.Fatalf("应退回 textModel，得到 %#v", provider)
+	unavailable, ok := err.(*AssistantUnavailableError)
+	if !ok || unavailable.Reason != AssistantReasonModelNotConfigured || provider.Model != "" || provider.APIKey != "" {
+		t.Fatalf("显式失效模型应拒绝发送: %v", err)
 	}
 }
 

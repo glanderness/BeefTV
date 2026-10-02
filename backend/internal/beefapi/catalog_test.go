@@ -145,11 +145,11 @@ func TestApplyCatalogReplacesModelsOnAccountSwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := []CatalogModel{{ID: "model-a", SupportedEndpointTypes: []string{"image-generation"}}, {ID: "model-b", SupportedEndpointTypes: []string{"openai-video"}}}
-	if err := applyCatalog(store, first, "", "42", false); err != nil {
+	if err := applyCatalog(store, first, "", "42", ""); err != nil {
 		t.Fatal(err)
 	}
 	second := []CatalogModel{{ID: "model-b", SupportedEndpointTypes: []string{"openai-video"}}, {ID: "model-c", SupportedEndpointTypes: []string{"openai"}}}
-	if err := applyCatalog(store, second, "42", "99", false); err != nil {
+	if err := applyCatalog(store, second, "42", "99", ""); err != nil {
 		t.Fatal(err)
 	}
 	effective, _, err := store.LoadEffectiveModelConfig()
@@ -192,7 +192,7 @@ func TestApplyCatalogStoresVideoCapabilitiesAndVersion(t *testing.T) {
 	if err := applyCatalog(store, []CatalogModel{{
 		ID: "seedance-2.0", SupportedEndpointTypes: []string{"openai-video"},
 		VideoCapabilities: sampleCatalogVideo(t, 2, 1), VideoCapabilitiesVersion: "cap-v1",
-	}}, "", "42", false); err != nil {
+	}}, "", "42", ""); err != nil {
 		t.Fatal(err)
 	}
 	profile := catalogProfile(t, store, "seedance-2.0")
@@ -210,11 +210,11 @@ func TestApplyCatalogRefreshUpdatesManagedCapabilities(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := []CatalogModel{{ID: "seedance-2.0", SupportedEndpointTypes: []string{"openai-video"}, VideoCapabilities: sampleCatalogVideo(t, 3, 3), VideoCapabilitiesVersion: "v1"}}
-	if err := applyCatalog(store, first, "", "42", false); err != nil {
+	if err := applyCatalog(store, first, "", "42", ""); err != nil {
 		t.Fatal(err)
 	}
 	second := []CatalogModel{{ID: "seedance-2.0", SupportedEndpointTypes: []string{"openai-video"}, VideoCapabilities: sampleCatalogVideo(t, 1, 2), VideoCapabilitiesVersion: "v2"}}
-	if err := applyCatalog(store, second, "42", "42", false); err != nil {
+	if err := applyCatalog(store, second, "42", "42", ""); err != nil {
 		t.Fatal(err)
 	}
 	profile := catalogProfile(t, store, "seedance-2.0")
@@ -234,7 +234,7 @@ func TestApplyCatalogPreservesExplicitZeroLimits(t *testing.T) {
 	if err := applyCatalog(store, []CatalogModel{{
 		ID: "seedance-2.0", SupportedEndpointTypes: []string{"openai-video"},
 		VideoCapabilities: sampleCatalogVideo(t, 0, 0), VideoCapabilitiesVersion: "zero",
-	}}, "", "42", false); err != nil {
+	}}, "", "42", ""); err != nil {
 		t.Fatal(err)
 	}
 	refs := catalogVideoRefs(t, catalogProfile(t, store, "seedance-2.0"))
@@ -249,11 +249,11 @@ func TestApplyCatalogInvalidOrMissingVideoKeepsExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 	good := []CatalogModel{{ID: "seedance-2.0", SupportedEndpointTypes: []string{"openai-video"}, VideoCapabilities: sampleCatalogVideo(t, 2, 2), VideoCapabilitiesVersion: "keep"}}
-	if err := applyCatalog(store, good, "", "42", false); err != nil {
+	if err := applyCatalog(store, good, "", "42", ""); err != nil {
 		t.Fatal(err)
 	}
 	invalid := []CatalogModel{{ID: "seedance-2.0", SupportedEndpointTypes: []string{"openai-video"}, VideoCapabilities: json.RawMessage(`{"operations":[]}`), VideoCapabilitiesVersion: "bad"}}
-	if err := applyCatalog(store, invalid, "42", "42", false); err != nil {
+	if err := applyCatalog(store, invalid, "42", "42", ""); err != nil {
 		t.Fatal(err)
 	}
 	profile := catalogProfile(t, store, "seedance-2.0")
@@ -261,7 +261,7 @@ func TestApplyCatalogInvalidOrMissingVideoKeepsExisting(t *testing.T) {
 		t.Fatalf("invalid catalog cleared settings: %#v", profile)
 	}
 	missing := []CatalogModel{{ID: "seedance-2.0", SupportedEndpointTypes: []string{"openai-video"}}}
-	if err := applyCatalog(store, missing, "42", "42", false); err != nil {
+	if err := applyCatalog(store, missing, "42", "42", ""); err != nil {
 		t.Fatal(err)
 	}
 	profile = catalogProfile(t, store, "seedance-2.0")
@@ -276,11 +276,11 @@ func TestApplyCatalogAccountSwitchDoesNotLeakCapabilities(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := []CatalogModel{{ID: "seedance-2.0", SupportedEndpointTypes: []string{"openai-video"}, VideoCapabilities: sampleCatalogVideo(t, 3, 3), VideoCapabilitiesVersion: "acct-a"}}
-	if err := applyCatalog(store, first, "", "42", false); err != nil {
+	if err := applyCatalog(store, first, "", "42", ""); err != nil {
 		t.Fatal(err)
 	}
 	second := []CatalogModel{{ID: "wan3.0-video", SupportedEndpointTypes: []string{"openai-video"}}}
-	if err := applyCatalog(store, second, "42", "99", false); err != nil {
+	if err := applyCatalog(store, second, "42", "99", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := lookupCatalogProfile(t, store, "seedance-2.0"); ok {

@@ -34,22 +34,32 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
     const [beefConnection, setBeefConnection] = useState<BeefAPIConnectionSummary | null>(null);
     const [beefBusy, setBeefBusy] = useState(false);
     const appliedConnectionState = useRef<string | undefined>(undefined);
+    const catalogSync = useRef<{ state: string; selection: string; adopt: boolean } | null>(null);
+    const [catalogSyncFailed, setCatalogSyncFailed] = useState(false);
 
     const applyBeefConnection = async (summary: BeefAPIConnectionSummary, previousState = beefConnection?.state) => {
         setBeefConnection(summary);
-        if (appliedConnectionState.current === summary.state) return;
+        const retry = catalogSync.current?.state === summary.state ? catalogSync.current : null;
+        if (appliedConnectionState.current === summary.state && !retry) return;
         appliedConnectionState.current = summary.state;
-        if (!shouldRefreshBeefAPICatalog(previousState, summary.state)) return;
-        const selectionBeforeRefresh = useConfigStore.getState().config.assistantModel;
+        if (!retry && !shouldRefreshBeefAPICatalog(previousState, summary.state)) {
+            catalogSync.current = null;
+            setCatalogSyncFailed(false);
+            return;
+        }
+        const intent = retry || { state: summary.state, selection: useConfigStore.getState().config.assistantModel, adopt: summary.state === "connected" && Boolean(previousState && previousState !== "connected") };
+        catalogSync.current = intent;
         try {
             const result = await getLocalModelConfig();
-            if (appliedConnectionState.current !== summary.state) return;
+            if (catalogSync.current !== intent) return;
             const current = useConfigStore.getState().config;
             replaceConfig(localWorkspaceConfig(normalizeConfigSnapshot({
-                config: mergeManagedBeefAPICatalog(current, result.config, summary.state === "connected" && Boolean(previousState && previousState !== "connected") && current.assistantModel === selectionBeforeRefresh),
+                config: mergeManagedBeefAPICatalog(current, result.config, intent.adopt && current.assistantModel === intent.selection),
             }).config));
+            catalogSync.current = null;
+            setCatalogSyncFailed(false);
         } catch {
-            if (appliedConnectionState.current === summary.state) appliedConnectionState.current = undefined;
+            if (catalogSync.current === intent) setCatalogSyncFailed(true);
             // Keep the connection status even if the catalog refresh fails.
         }
     };
@@ -297,6 +307,7 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                                         </div>
                                     </div>
                                     <div className="flex w-full flex-wrap justify-end gap-2 sm:w-auto sm:shrink-0">
+                                        {builtinBeefAPI && catalogSyncFailed ? <Button loading={beefBusy} onClick={() => void runBeefAction(getBeefAPIConnection, "无法更新模型列表")}>重试更新模型列表</Button> : null}
                                         {builtinBeefAPI ? (
                                             <BeefAPIConnectionActions
                                                 connection={beefConnection}

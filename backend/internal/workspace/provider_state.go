@@ -20,10 +20,11 @@ const (
 )
 
 type ProviderStateDocument struct {
-	SchemaVersion  int            `json:"schemaVersion"`
-	Revision       int64          `json:"revision"`
-	PresetVersions map[string]int `json:"presetVersions"`
-	Config         map[string]any `json:"config"`
+	SchemaVersion                 int            `json:"schemaVersion"`
+	Revision                      int64          `json:"revision"`
+	PresetVersions                map[string]int `json:"presetVersions"`
+	Config                        map[string]any `json:"config"`
+	AssistantDefaultAuthorization string         `json:"assistantDefaultAuthorization,omitempty"`
 }
 
 type EffectiveModelConfig struct {
