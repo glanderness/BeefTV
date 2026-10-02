@@ -54,6 +54,29 @@ function persistDeps(overrides: Partial<PersistOwnedCanvasUploadNodeDeps> = {}):
 const read = (path: string) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../src", path), "utf8");
 
 describe("persistOwnedCanvasUploadNode", () => {
+    test("deferred React updater does not modify replacement canvas nodes", async () => {
+        const restore = switchScope("owner-a");
+        const lifetime = createCanvasOwnerLifetime();
+        let queued: ((current: CanvasNodeData[]) => CanvasNodeData[]) | undefined;
+        try {
+            await persistOwnedCanvasUploadNode({
+                owner: lifetime.capture("canvas-a"),
+                expectedScope: captureUserScope(),
+                getLiveCanvasId: () => "canvas-a",
+                getLiveLifetime: () => lifetime.current(),
+                canvasId: "canvas-a",
+                node: imageNode("media-1"),
+            }, persistDeps({ setNodes: (updater) => { queued = updater; } }));
+            expect(queued).toBeDefined();
+            lifetime.invalidate();
+            const replacement = [imageNode("media-1")];
+            expect(queued!(replacement)).toBe(replacement);
+            expect(replacement[0].metadata?.assetId).toBeUndefined();
+        } finally {
+            restore();
+        }
+    });
+
     test("confirmed persist writes assetId, invalidates project, and reports saved", async () => {
         const restore = switchScope("owner-a");
         const lifetime = createCanvasOwnerLifetime();

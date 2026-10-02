@@ -134,7 +134,7 @@ export async function persistOwnedCanvasUploadNode(
             expectedScope: input.expectedScope,
         });
         if (!stillOwned()) return { ...abandoned, assetId: result.assetId };
-        deps.setNodes((current) => current.map((item) => (
+        deps.setNodes((current) => !stillOwned() ? current : current.map((item) => (
             item.id === input.node.id
                 ? { ...item, metadata: { ...item.metadata, assetId: result.assetId } }
                 : item
