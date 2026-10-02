@@ -1,4 +1,4 @@
-import { assertUserScope, captureUserScope, type CapturedUserScope } from "../../src/lib/user-scope-guard";
+import { assertUserScope, captureUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
 import type { AssetCategory } from "../../src/lib/asset-category";
 import type { ProjectAsset } from "../../src/services/api/projects";
 

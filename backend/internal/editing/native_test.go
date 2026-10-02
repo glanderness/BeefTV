@@ -129,7 +129,9 @@ func (s fileSources) Open(_ context.Context, sourceID string) (io.ReadCloser, er
 
 func TestRendererMaterializeMissingSource(t *testing.T) {
 	plan := &Plan{Segments: []Segment{{Kind: KindVideo, ClipID: "missing", SourceID: "missing", DurationMs: 1000, Volume: 1}}}
-	renderer := &Renderer{}
+	// materialize runs only after the binary lookup. A sentinel path skips the
+	// host ffmpeg search, so a missing source still fails closed without ffmpeg.
+	renderer := &Renderer{FFmpeg: "/no/such/ffmpeg"}
 	if _, cleanup, err := renderer.Render(context.Background(), plan, nil); err == nil {
 		if cleanup != nil {
 			cleanup()
