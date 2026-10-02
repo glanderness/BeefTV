@@ -58,6 +58,19 @@ test("database classification preserves provider parameters and stable codes", (
     expect(explainGenerationError({ status: 500, data: { code: "local_storage", message: "" } }).category).toBe("local_storage");
 });
 
+test("canvas save conflicts are not vendor parameter failures", () => {
+    const saveConflict = new ApiError("云端画布已有更新，已停止覆盖；请保留本地草稿并加载最新版本", { status: 409, reason: "conflict" });
+    const explained = explainGenerationError(saveConflict);
+    expect(explained.category).toBe("canvas_conflict");
+    expect(explained.action).toContain("不要重新生成");
+    expect(explained.message).not.toContain("模型不接受");
+    expect(explainGenerationError(explained.message).category).toBe("canvas_conflict");
+
+    expect(explainGenerationError(new ApiError("保存失败", { status: 409, reason: "stale_revision" })).category).toBe("canvas_conflict");
+    expect(explainGenerationError({ code: "canvas_conflict", message: "生成结果已保留，但画布有版本冲突。请先使用画布最新版本，再重新加载资源，不要重新生成。" }).category).toBe("canvas_conflict");
+    expect(explainGenerationError(new Error("画布有未处理的外部改动，本次未提交")).category).toBe("canvas_conflict");
+});
+
 test("image receipt states never invite automatic paid regeneration", () => {
     for (const code of ["image_result_unknown", "image_submission_pending", "image_result_expired", "image_result_unavailable", "idempotency_conflict"]) {
         const failure = explainGenerationError({ status: 409, data: { error: { code, message: "" } } });

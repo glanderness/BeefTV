@@ -11,7 +11,7 @@ import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { captureUserScope, isUserScopeAbandonedError, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { sameCanvasDocument } from "@/lib/canvas/canvas-content";
-import { rebaseCanvasDocumentThreeWay } from "@/lib/canvas/canvas-document-rebase";
+import { rebaseCanvasDocumentThreeWay, settleInFlightGenerationOverlay } from "@/lib/canvas/canvas-document-rebase";
 
 export type { CapturedUserScope } from "@/lib/user-scope-guard";
 
@@ -245,10 +245,16 @@ function alignLiveAfterConfirmedRemote(input: {
         pauseForExternalCandidate(input.id, input.remote, input.scope);
         return live;
     }
-    const rebased = rebaseCanvasDocumentThreeWay({ base: input.base, local: live, remote: input.remote });
+    const settled = settleInFlightGenerationOverlay({ base: input.base, local: live, remote: input.remote });
+    const rebased = rebaseCanvasDocumentThreeWay({ base: input.base, local: settled, remote: input.remote });
     applyLiveCanvasProject(input.id, rebased.project, false);
     invokeProjectionListener(input.onApplied, rebased.project, live);
-    if (rebased.conflict) pauseForExternalCandidate(input.id, input.remote, input.scope);
+    if (rebased.conflict) {
+        pauseForExternalCandidate(input.id, input.remote, input.scope);
+    } else {
+        clearCanvasExternalRevisionConflict(input.scope, input.id);
+        resumeCanvasBackendSubmit(input.id, input.scope);
+    }
     return rebased.project;
 }
 

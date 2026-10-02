@@ -6,6 +6,7 @@ import { getActiveUserScope } from "@/lib/user-scope";
 import { assertUserScope, captureUserScope, isUserScopeAbandonedError, UserScopeAbandonedError, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { bindCanvasTaskOutput, type CanvasTaskBindReceipt } from "@/services/api/operations";
 import type { GenerationTask, GenerationTaskOutput } from "@/services/api/task-center";
+import { CanvasBackendSubmitPausedError, CanvasStaleScopeError, isCanvasRevisionConflict } from "@/services/canvas-revision-conflict";
 import { generationEffectApplied } from "@/services/generation-consumer-dedupe";
 import { attachNodeEffectKey } from "@/services/generation-task-materializer";
 import { persistCanvasDocument } from "@/services/local-workspace-repository";
@@ -201,8 +202,13 @@ export async function bindBackendCanvasGenerationResult(input: {
         } catch (error) {
             if (error instanceof Error && error.name === "AbortError") throw error;
             if (isUserScopeAbandonedError(error)) throw error;
+            if (error instanceof CanvasStaleScopeError) throw error;
             assertBindDispatchScope(capturedScope, liveScope);
-            throw error instanceof CanvasBindFlushError ? error : new CanvasBindFlushError(error);
+            // 画布 document.commit 的陈旧 revision / 已暂停提交不能当成生成失败：
+            // 资源已落盘，bind 回执才是画布真相；继续绑定后由三路合并保留并发节点。
+            if (!(isCanvasRevisionConflict(error) || error instanceof CanvasBackendSubmitPausedError)) {
+                throw error instanceof CanvasBindFlushError ? error : new CanvasBindFlushError(error);
+            }
         }
     }
     assertBindDispatchScope(capturedScope, liveScope);

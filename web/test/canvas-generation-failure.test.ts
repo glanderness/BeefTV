@@ -3,6 +3,7 @@ import { buildNodeGenerationContext } from "../src/components/canvas/canvas-node
 import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasTaskFailureMetadata } from "../src/pages/canvas/canvas-generation-failure";
 import { taskAttentionReason, taskRetryBlocked } from "../src/pages/tasks/task-shared";
 import { resolveMetadataReferences, generationTaskMetadata, resetGenerationTaskMetadata } from "../src/lib/canvas/canvas-project-generation";
+import { ApiError } from "../src/services/api/request";
 import { explainGenerationError, formatGenerationDiagnostics } from "../src/lib/generation-error";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 import type { GenerationTask } from "../src/services/api/task-center";
@@ -16,6 +17,18 @@ test("completed media with a canvas commit conflict offers reload without anothe
     expect(failure.errorDetails).not.toContain("模型不接受");
     expect(failure.resourceReloadAvailable).toBe(true);
     expect(canvasGenerationRetryBlocked(failure, { prompt: "red square", mode: "video" })).toBe(true);
+});
+
+test("backend canvas revision 409 offers reload without treating it as a model failure", () => {
+    const failure = canvasGenerationFailureMetadata(
+        new ApiError("云端画布已有更新，已停止覆盖；请保留本地草稿并加载最新版本", { status: 409, reason: "conflict" }),
+        { prompt: "red square", mode: "image" },
+    );
+    expect(failure.generationErrorCode).toBe("canvas_conflict");
+    expect(failure.resourceReloadAvailable).toBe(true);
+    expect(failure.errorDetails).toContain("生成结果已保留");
+    expect(failure.errorDetails).not.toContain("模型不接受");
+    expect(canvasGenerationRetryBlocked(failure, { prompt: "red square", mode: "image" })).toBe(true);
 });
 const task: GenerationTask = { id: "task-failure", type: "canvas_image", status: "failed", prompt: "draw", attempts: 1, createdAt: "2026-09-26T00:00:00Z", updatedAt: "2026-09-26T00:00:00Z", errorCode: "content_policy_violation", error: "opaque" };
 const image = (id: string, storageKey: string): CanvasNodeData => ({ id, type: CanvasNodeType.Image, title: id, position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { content: `https://example.test/${id}.png`, storageKey } });

@@ -446,6 +446,12 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
         if (record.name === "ApiError" && record.reason === "quota_exceeded") {
             return { category: "quota_limit", reason: sanitizeProviderText(String(record.message || "工作区用量已达到上限")), action: "请清理不需要的任务记录或素材后重试", fromCode: true, retryable: false };
         }
+        if (record.reason === "stale_revision" || record.code === "canvas_conflict") {
+            return { category: "canvas_conflict", fromCode: true, retryable: false };
+        }
+        if (typeof record.message === "string" && isCanvasSaveConflictText(record.message) && (record.reason === "conflict" || record.status === 409 || record.status === 428)) {
+            return { category: "canvas_conflict", fromCode: true, retryable: false };
+        }
         const response = record.response && typeof record.response === "object" ? (record.response as Record<string, unknown>) : undefined;
         const status = numericStatus(record.status) ?? numericStatus(record.statusCode) ?? numericStatus(response?.status);
         const data = record.data ?? record.body ?? response?.data ?? record.response;
@@ -509,6 +515,9 @@ function classifyText(raw: string): Classified {
     if (!text) return { category: "unknown", retryable: false };
     if (text === LOCAL_TASK_ADMISSION_FAILURE.reason || text.startsWith(`${LOCAL_TASK_ADMISSION_FAILURE.reason}。`)) {
         return { category: "local_storage", ...LOCAL_TASK_ADMISSION_FAILURE, fromCode: true, retryable: false };
+    }
+    if (isCanvasSaveConflictText(text)) {
+        return { category: "canvas_conflict", fromCode: true, retryable: false };
     }
     const taskCopy = persistedTaskConstraintCopy(text);
     if (taskCopy) return { category: "invalid_params", ...taskCopy, requestId: sanitizeDebugId(text.match(/请求 ([A-Za-z0-9._:-]{6,127})/)?.[1]), taskId: sanitizeDebugId(text.match(/任务 ([A-Za-z0-9._:-]{6,127})/)?.[1]), retryable: false };
@@ -1008,6 +1017,17 @@ function isCancelledText(value: string) {
 
 function isResultsMissingText(value: string) {
     return value.includes("没有返回图片") || value.includes("没有返回视频") || value.includes("没有可用结果") || value.includes("接口没有返回");
+}
+
+function isCanvasSaveConflictText(text: string) {
+    return (
+        text.includes("云端画布已有更新") ||
+        text.includes("已停止覆盖") ||
+        text.includes("画布有版本冲突") ||
+        text.includes("生成结果已保留，但画布有版本冲突") ||
+        text.includes("画布有未处理的外部改动") ||
+        text.startsWith(CATEGORY_COPY.canvas_conflict.reason)
+    );
 }
 
 function matchPersistedCategory(text: string): GenerationErrorCategory | "" {

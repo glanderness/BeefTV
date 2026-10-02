@@ -72,6 +72,87 @@ function mergeObject(
     return merged;
 }
 
+const GENERATION_BIND_METADATA_KEYS = [
+    "content",
+    "storageKey",
+    "assetId",
+    "mimeType",
+    "bytes",
+    "naturalWidth",
+    "naturalHeight",
+    "durationMs",
+    "nodeRole",
+    "resultOrigin",
+    "generationEffectKeys",
+    "status",
+    "taskStatus",
+    "taskProgress",
+    "taskStage",
+    "taskCompletedAt",
+    "taskUpdatedAt",
+] as const;
+
+const GENERATION_ERROR_METADATA_KEYS = [
+    "errorDetails",
+    "generationErrorCode",
+    "generationErrorSummary",
+    "resourceReloadAvailable",
+    "failedPromptFingerprint",
+    "failedInputFingerprint",
+    "processingLabel",
+] as const;
+
+function nodeTaskId(node: CanvasNodeData | undefined) {
+    const taskId = node?.metadata?.taskId;
+    return typeof taskId === "string" ? taskId.trim() : "";
+}
+
+function remoteGenerationSucceeded(node: CanvasNodeData | undefined) {
+    return node?.metadata?.status === "success" || node?.metadata?.taskStatus === "succeeded";
+}
+
+function hasTrueGenerationContentConflict(base: CanvasNodeData | undefined, local: CanvasNodeData, remote: CanvasNodeData) {
+    const localContent = typeof local.metadata?.content === "string" ? local.metadata.content : "";
+    const remoteContent = typeof remote.metadata?.content === "string" ? remote.metadata.content : "";
+    const baseContent = typeof base?.metadata?.content === "string" ? base.metadata.content : "";
+    return Boolean(localContent) && localContent !== remoteContent && localContent !== baseContent;
+}
+
+/**
+ * 进行中的生成 overlay（loading / 进度）对服务端已绑定成功的结果不是文档冲突。
+ * 同一节点人类改过 content 时保留本地可见值，不把远端成功伪装进 live。
+ */
+export function settleInFlightGenerationOverlay(input: {
+    base: CanvasProject;
+    local: CanvasProject;
+    remote: CanvasProject;
+}): CanvasProject {
+    const baseById = new Map((input.base.nodes || []).map((node) => [node.id, node]));
+    const remoteById = new Map((input.remote.nodes || []).map((node) => [node.id, node]));
+    let changed = false;
+    const nodes = (input.local.nodes || []).map((localNode) => {
+        const remoteNode = remoteById.get(localNode.id);
+        const taskId = nodeTaskId(localNode);
+        if (!remoteNode || !taskId || nodeTaskId(remoteNode) !== taskId || !remoteGenerationSucceeded(remoteNode)) return localNode;
+        if (hasTrueGenerationContentConflict(baseById.get(localNode.id), localNode, remoteNode)) return localNode;
+        const metadata: CanvasNodeData["metadata"] = { ...(localNode.metadata || {}) };
+        const remoteMeta = remoteNode.metadata || {};
+        for (const key of GENERATION_BIND_METADATA_KEYS) {
+            if (Object.prototype.hasOwnProperty.call(remoteMeta, key) && remoteMeta[key] !== undefined) {
+                (metadata as Record<string, unknown>)[key] = remoteMeta[key];
+            } else {
+                delete (metadata as Record<string, unknown>)[key];
+            }
+        }
+        for (const key of GENERATION_ERROR_METADATA_KEYS) {
+            delete (metadata as Record<string, unknown>)[key];
+        }
+        changed = true;
+        return { ...localNode, metadata };
+    });
+    return changed ? { ...input.local, nodes } : input.local;
+}
+
 function mergeEntityList<T extends { id: string }>(
     base: T[] | undefined,
     local: T[] | undefined,

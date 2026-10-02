@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, test } from "bun:test";
 
 import { bindBackendCanvasGenerationResult, CanvasBindFlushError, CanvasBindProjectionAdoptionError } from "@/services/canvas-generation-consumer";
 import { UserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
+import { ApiError } from "@/services/api/request";
+import { CanvasBackendSubmitPausedError } from "@/services/canvas-revision-conflict";
 import type { CanvasTaskBindReceipt } from "@/services/api/operations";
 import { hydrateBackendGeneratedAsset, hydrateBackendGeneratedOutputs } from "@/services/project-asset-sync";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
@@ -99,6 +101,8 @@ describe("backend canvas bind cutover", () => {
         expect(bind).toContain("expectedScope");
         expect(bind).toContain("capturedScope");
         expect(bind).toContain("persistDocument(capturedCanvasId, { nodes: live.nodes, connections: live.connections }, capturedScope)");
+        expect(bind).toContain("isCanvasRevisionConflict");
+        expect(bind).toContain("CanvasBackendSubmitPausedError");
         expect(bind).toContain("adoptConfirmedProjection(canonical, capturedScope.userScope, capturedScope)");
         expect(bind).not.toContain("overlayBoundGenerationOnLiveCanvas");
         expect(bind).not.toContain("overlayGenerationReceiptOnNode");
@@ -417,6 +421,115 @@ describe("bindBackendCanvasGenerationResult", () => {
         expect(adopted).toBe(0);
         expect(nodesRef.current[0]?.metadata?.prompt).toBe("精确草稿");
         expect(nodesRef.current[0]?.metadata?.status).toBe("loading");
+    });
+
+    test("Agent 加了其它节点后 persist 409 仍绑定成功结果并保留新节点", async () => {
+        const bound = canvasNode("image-origin", "原图", { taskId: "task-1", status: "loading", prompt: "猫", taskProgress: 42, taskStage: "出图中" });
+        const camp = canvasNode("node-camp", "秋日旅行·露营桌", { status: "idle" }, { x: 80, y: 40 });
+        const lake = canvasNode("node-lake", "秋日旅行·湖畔横移", { status: "idle" }, { x: 160, y: 40 });
+        const live = canvasProject("canvas-1", [bound, camp, lake], 10);
+        const server = canvasProject("canvas-1", [
+            { ...bound, metadata: { ...bound.metadata, status: "success", taskStatus: "succeeded", taskProgress: 100, content: "/api/resources/res-1/file", storageKey: "resource:res-1", assetId: "generation_abc" } },
+            camp,
+            lake,
+        ], 14);
+        useCanvasStore.setState({ projects: [live] });
+        const nodesRef = { current: [bound, camp, lake] };
+        const order: string[] = [];
+        const identity = captured("user-a", 1);
+
+        await bindBackendCanvasGenerationResult({
+            canvasId: "canvas-1",
+            nodeId: "image-origin",
+            task: succeededTask(),
+            isCurrent: () => true,
+            nodesRef,
+            setNodes: (value) => {
+                nodesRef.current = typeof value === "function" ? value(nodesRef.current) : value;
+            },
+            runtime: {
+                hydrateOutputs: async () => undefined,
+                persistDocument: async () => {
+                    order.push("flush");
+                    throw new ApiError("云端画布已有更新，已停止覆盖；请保留本地草稿并加载最新版本", { status: 409, reason: "conflict" });
+                },
+                bindOutput: async (input) => {
+                    order.push("bind");
+                    return {
+                        op: "canvas.task.bind",
+                        opId: input.operationId,
+                        replayed: false,
+                        revision: 14,
+                        result: bindReceipt(server, "image-origin", { effectKey: input.operationId, revision: 14 }),
+                    };
+                },
+                adoptConfirmedProjection: async (project) => {
+                    order.push("adopt");
+                    useCanvasStore.setState({ projects: [project] });
+                    return project;
+                },
+                captureScope: () => identity,
+                liveScope: () => identity,
+            },
+        });
+
+        expect(order).toEqual(["flush", "bind", "adopt"]);
+        expect(nodesRef.current.find((item) => item.id === "image-origin")?.metadata?.status).toBe("success");
+        expect(nodesRef.current.find((item) => item.id === "image-origin")?.metadata?.content).toBe("/api/resources/res-1/file");
+        expect(nodesRef.current.find((item) => item.id === "node-camp")?.title).toBe("秋日旅行·露营桌");
+        expect(nodesRef.current.find((item) => item.id === "node-lake")?.title).toBe("秋日旅行·湖畔横移");
+        expect(useCanvasStore.getState().projects[0]?.revision).toBe(14);
+    });
+
+    test("画布提交已暂停时仍绑定成功结果，不把暂停当成生成失败", async () => {
+        const bound = canvasNode("node-1", "原图", { taskId: "task-1", status: "loading" });
+        const sibling = canvasNode("node-2", "Agent 新镜头", { status: "idle" });
+        const live = canvasProject("canvas-1", [bound, sibling], 10);
+        const server = canvasProject("canvas-1", [
+            { ...bound, metadata: { ...bound.metadata, status: "success", content: "/api/resources/res-1/file" } },
+            sibling,
+        ], 11);
+        useCanvasStore.setState({ projects: [live] });
+        const nodesRef = { current: [bound, sibling] };
+        const identity = captured("user-a", 1);
+        let boundCalls = 0;
+
+        await bindBackendCanvasGenerationResult({
+            canvasId: "canvas-1",
+            nodeId: "node-1",
+            task: succeededTask(),
+            isCurrent: () => true,
+            nodesRef,
+            setNodes: (value) => {
+                nodesRef.current = typeof value === "function" ? value(nodesRef.current) : value;
+            },
+            runtime: {
+                hydrateOutputs: async () => undefined,
+                persistDocument: async () => {
+                    throw new CanvasBackendSubmitPausedError();
+                },
+                bindOutput: async (input) => {
+                    boundCalls += 1;
+                    return {
+                        op: "canvas.task.bind",
+                        opId: input.operationId,
+                        replayed: false,
+                        revision: 11,
+                        result: bindReceipt(server, "node-1", { revision: 11 }),
+                    };
+                },
+                adoptConfirmedProjection: async (project) => {
+                    useCanvasStore.setState({ projects: [project] });
+                    return project;
+                },
+                captureScope: () => identity,
+                liveScope: () => identity,
+            },
+        });
+
+        expect(boundCalls).toBe(1);
+        expect(nodesRef.current.find((item) => item.id === "node-1")?.metadata?.status).toBe("success");
+        expect(nodesRef.current.find((item) => item.id === "node-2")?.title).toBe("Agent 新镜头");
     });
 
     test("account switch after a deferred await does not write the next user canvas", async () => {

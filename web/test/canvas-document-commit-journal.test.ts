@@ -191,7 +191,7 @@ const { setActiveUserScope } = await import("@/lib/user-scope");
 const { captureUserScope } = await import("@/lib/user-scope-guard");
 const { useCanvasStore, canvasDocumentBase, canvasExternalRevisionConflict, clearCanvasDocumentBase, clearCanvasExternalRevisionConflict, recordCanvasDocumentBase } = await import("@/stores/canvas/use-canvas-store");
 const { CanvasJournalError, clearCanvasPendingProjection, loadCanvasOperationJournal, peekCanvasOperationJournal, recordConfirmedCanvasCommit, resetCanvasOperationJournalMemory, saveCanvasOperationJournal, setCanvasJournalStorageDelay, updateCanvasOperationJournal } = await import("@/services/canvas-operation-journal");
-const { canvasBackendSubmitPaused } = await import("@/services/canvas-revision-conflict");
+const { canvasBackendSubmitPaused, pauseCanvasBackendSubmit } = await import("@/services/canvas-revision-conflict");
 const { projectSyncProgress, useSyncProgressStore } = await import("@/stores/use-sync-progress-store");
 
 function canvas(title: string, revision = 1, patch: Record<string, unknown> = {}) {
@@ -1022,6 +1022,62 @@ describe("画布文档提交日记", () => {
         expect(liveNode.metadata?.storageKey).toBe("res-gen");
         expect(liveNode.title).toBe("镜头1");
         expect(canvasBackendSubmitPaused("c1")).toBe(false);
+    });
+
+    test("任务进行中 Agent 加了其它节点并加载最新后，成功结果绑定且新节点保留", async () => {
+        const original = node("image-origin", "原图", { metadata: { taskId: "task-1", status: "idle", prompt: "猫" } });
+        const camp = node("node-camp", "秋日旅行·露营桌");
+        const lake = node("node-lake", "秋日旅行·湖畔横移");
+        await seedConfirmed(canvas("已加载最新", 10, { nodes: [original, camp, lake] }));
+        useCanvasStore.getState().updateProject("c1", {
+            nodes: [
+                { ...original, metadata: { taskId: "task-1", status: "loading", taskStatus: "running", taskProgress: 42, taskStage: "出图中", prompt: "猫" } },
+                camp,
+                lake,
+            ] as never,
+        });
+        pauseCanvasBackendSubmit("c1");
+
+        const adopted = await adoptServerConfirmedGenerationPatch(canvas("生成", 14, {
+            nodes: [
+                { ...original, metadata: { taskId: "task-1", status: "success", taskStatus: "succeeded", taskProgress: 100, content: "https://media/gen", storageKey: "res-gen", prompt: "猫" } },
+                camp,
+                lake,
+            ],
+        }));
+
+        expect(adopted.nodes.map((item) => item.id)).toEqual(["image-origin", "node-camp", "node-lake"]);
+        const live = useCanvasStore.getState().projects[0];
+        const origin = live.nodes.find((item) => item.id === "image-origin");
+        expect(origin?.metadata?.status).toBe("success");
+        expect(origin?.metadata?.content).toBe("https://media/gen");
+        expect(origin?.metadata?.storageKey).toBe("res-gen");
+        expect(origin?.title).toBe("原图");
+        expect(live.nodes.find((item) => item.id === "node-camp")?.title).toBe("秋日旅行·露营桌");
+        expect(live.nodes.find((item) => item.id === "node-lake")?.title).toBe("秋日旅行·湖畔横移");
+        expect(canvasBackendSubmitPaused("c1")).toBe(false);
+        expect(canvasExternalRevisionConflict("guest", "c1")).toBeUndefined();
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(14);
+    });
+
+    test("同一节点人类改过生成内容时保留本地值并说明冲突，不伪装成功", async () => {
+        const original = node("image-origin", "原图", { metadata: { taskId: "task-1", status: "idle", content: "旧图" } });
+        await seedConfirmed(canvas("基线", 10, { nodes: [original] }));
+        useCanvasStore.getState().updateProject("c1", {
+            nodes: [{ ...original, metadata: { taskId: "task-1", status: "loading", content: "人类改过的内容" } }] as never,
+        });
+
+        await adoptServerConfirmedGenerationPatch(canvas("生成", 14, {
+            nodes: [{ ...original, metadata: { taskId: "task-1", status: "success", content: "https://media/gen", storageKey: "res-gen" } }],
+        }));
+
+        const live = useCanvasStore.getState().projects[0];
+        expect(live.nodes[0].metadata?.content).toBe("人类改过的内容");
+        expect(live.nodes[0].metadata?.status).not.toBe("success");
+        expect(canvasBackendSubmitPaused("c1")).toBe(true);
+        expect(canvasExternalRevisionConflict("guest", "c1")?.candidate.nodes[0].metadata?.content).toBe("https://media/gen");
+        expect(canvasExternalRevisionConflict("guest", "c1")?.candidate.nodes[0].metadata?.storageKey).toBe("res-gen");
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(14);
     });
 
     test("同一字段本地元数据与服务端元数据冲突时暂停，不猜胜者", async () => {
