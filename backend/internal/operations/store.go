@@ -44,14 +44,24 @@ type TurnGuard interface {
 }
 
 // CanonicalJSON 把 params 收成 encoding/json 的稳定字节：对象键按字母序、紧凑、无多余空白。
-// 非法 JSON 保持原字节，避免把无法解析的请求改写成另一个身份。
+// 数字用 json.Number 保原样十进制文本，避免 float64 把超过 2^53 的整数收成同一值。
+// 非法 JSON 或第一个值之后还有第二个文档时保持原字节，避免只解析前缀。
 func CanonicalJSON(payload []byte) []byte {
 	trimmed := bytes.TrimSpace(payload)
 	if len(trimmed) == 0 {
 		return []byte("{}")
 	}
+	dec := json.NewDecoder(bytes.NewReader(trimmed))
+	dec.UseNumber()
 	var value any
-	if err := json.Unmarshal(trimmed, &value); err != nil {
+	if err := dec.Decode(&value); err != nil {
+		return append([]byte(nil), payload...)
+	}
+	offset := int(dec.InputOffset())
+	if offset < 0 || offset > len(trimmed) {
+		return append([]byte(nil), payload...)
+	}
+	if rest := bytes.TrimSpace(trimmed[offset:]); len(rest) > 0 {
 		return append([]byte(nil), payload...)
 	}
 	encoded, err := json.Marshal(value)

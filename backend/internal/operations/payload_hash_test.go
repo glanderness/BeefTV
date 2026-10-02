@@ -50,6 +50,44 @@ func TestCanonicalJSONEmptyAndInvalid(t *testing.T) {
 	}
 }
 
+func TestCanonicalJSONKeepsIntegerPrecision(t *testing.T) {
+	left := CanonicalJSON([]byte(`{"outputIndex":9007199254740992}`))
+	right := CanonicalJSON([]byte(`{"outputIndex":9007199254740993}`))
+	if string(left) != `{"outputIndex":9007199254740992}` {
+		t.Fatalf("left = %s", left)
+	}
+	if string(right) != `{"outputIndex":9007199254740993}` {
+		t.Fatalf("right = %s", right)
+	}
+	if bytes.Equal(left, right) {
+		t.Fatal("integers above float64 exactness must not share a canonical payload")
+	}
+	if PayloadHash("canvas.task.bind", left) == PayloadHash("canvas.task.bind", right) {
+		t.Fatal("large integer payloads must not share a hash")
+	}
+}
+
+func TestCanonicalJSONSortsNestedObjectKeys(t *testing.T) {
+	input := []byte(`{"z":{"b":1,"a":2},"a":0}`)
+	want := []byte(`{"a":0,"z":{"a":2,"b":1}}`)
+	if got := CanonicalJSON(input); !bytes.Equal(got, want) {
+		t.Fatalf("canonical = %s", got)
+	}
+}
+
+func TestCanonicalJSONKeepsInvalidAndTrailingBytes(t *testing.T) {
+	for _, payload := range [][]byte{
+		[]byte(`{"canvasId":`),
+		[]byte(`{"canvasId":"c"}{"canvasId":"d"}`),
+		[]byte(`{"canvasId":"c"}  {"x":1}`),
+		[]byte(`{"canvasId":"c"} true`),
+	} {
+		if got := CanonicalJSON(payload); !bytes.Equal(got, payload) {
+			t.Fatalf("payload %s canonicalized to %s", payload, got)
+		}
+	}
+}
+
 func TestPayloadHashAcceptedMatchesCanonicalOrRaw(t *testing.T) {
 	op := "canvas.task.bind"
 	js := []byte(`{"canvasId":"c","taskId":"t","nodeId":"n","outputIndex":0}`)
