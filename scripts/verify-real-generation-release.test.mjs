@@ -135,12 +135,12 @@ test('v1.6.23 failed-chat evidence exception is exact and cannot waive media or 
       financialEvidenceException: { approvedBy: 'Ender', instruction: '上线吧', scope: 'two-failed-chat-refund-evidence-only', requestIds, evidence: ['financial-audit.json'] },
     });
     save(valid); assert.match(run(), /total pending remains unknown/);
-    for (const mutate of [r => delete r.financialEvidenceException, r => r.knownPendingCNY = 1, r => r.pendingCNY = 1, r => r.financialEvidenceException.requestIds = ['other'], r => r.financialUncertainty.failedRequestIds = [...requestIds, 'other'], r => r.financialEvidenceException.evidence = [], r => r.cases[0].billing = 'pending', r => r.cases.pop(), r => r.review.result = 'pending']) {
+    for (const mutate of [r => delete r.financialEvidenceException, r => r.knownPendingCNY = 1, r => r.pendingCNY = 1, r => r.pendingCNY = 0, r => delete r.financialEvidenceException.approvedBy, r => r.financialEvidenceException.requestIds = ['other'], r => r.financialUncertainty.failedRequestIds = [...requestIds, 'other'], r => r.financialEvidenceException.evidence = [], r => r.cases[0].billing = 'pending', r => r.cases.pop(), r => r.review.result = 'pending']) {
       const invalid = structuredClone(valid); mutate(invalid); save(invalid); assert.throws(() => run());
     }
     commitVersion('v1.6.24');
     save({ ...valid, version: 'v1.6.24', sourceDigest: run('--fingerprint').trim() }, 'v1.6.24');
-    assert.throws(() => run(), /billing not reconciled/);
+    assert.throws(() => run(), /unresolved billing/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

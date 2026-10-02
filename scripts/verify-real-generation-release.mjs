@@ -39,6 +39,7 @@ const financialEvidenceWaiver = version === 'v1.6.23'
   && receipt.financialUncertainty?.status === 'unresolved'
   && Array.isArray(receipt.financialUncertainty?.failedRequestIds)
   && JSON.stringify([...receipt.financialUncertainty.failedRequestIds].sort()) === JSON.stringify(acceptedFailedRequests);
+if ((financialException || receipt.financialUncertainty?.status === 'unresolved') && !financialEvidenceWaiver) fail('unresolved billing requires the exact owner exception with null total pending');
 if (!Number.isFinite(receipt.budgetCNY) || !Number.isFinite(receipt.spentCNY) || !((receipt.budgetCNY > 0 || (downloadOnlyWaiver && receipt.budgetCNY === 0)) && receipt.spentCNY >= 0 && receipt.spentCNY <= receipt.budgetCNY) || (receipt.pendingCNY !== 0 && !financialEvidenceWaiver)) fail('billing not reconciled within budget');
 // Ender waived only v1.6.20 paid generation after the Windows download smoke.
 // This release still requires the native download regression and independent review.
