@@ -10,7 +10,8 @@ import { providerRegistration, providerUnavailableReason,
   turnContextPrefix, modelTurnCompletion,
   unflushedSessionHistory,
   resetTurnAccumulator, turnChange } from './canvas-turn.mjs';
-import { budgetError, createLifetimeBudget, createTurnBudget, spendLifetimeRequest, spendModelRequest } from './request-budget.mjs';
+import { budgetError, createTurnBudget, spendModelRequest } from './request-budget.mjs';
+import { createDurableRequestBudget } from './durable-request-budget.mjs';
 import { createOperationBridge } from './operation-bridge.mjs';
 import { TURN_ENTRY_TYPE, createSessionStore } from './session-owner.mjs';
 
@@ -83,21 +84,7 @@ const ledgerPath = path.join(DATA_DIR, 'agent-requests.jsonl');
 let dispatched = 0;
 
 const lifetimeBudgetPath = path.join(DATA_DIR, 'agent-request-budget.json');
-function readLifetimeBudgetUsed() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(lifetimeBudgetPath, 'utf8'));
-    return Number(raw?.used || 0);
-  } catch { return 0; }
-}
-const lifetimeBudget = createLifetimeBudget({ limit: LIFETIME_REQUEST_BUDGET, used: readLifetimeBudgetUsed() });
-function persistLifetimeBudget() {
-  if (lifetimeBudget.limit <= 0) return;
-  try {
-    fs.writeFileSync(lifetimeBudgetPath, JSON.stringify({ limit: lifetimeBudget.limit, used: lifetimeBudget.used }), { mode: 0o600 });
-  } catch (error) {
-    console.error(`agent-host: 总预算计数写入失败 ${error?.message || error}`);
-  }
-}
+const lifetimeBudget = createDurableRequestBudget({ limit: LIFETIME_REQUEST_BUDGET, file: lifetimeBudgetPath });
 
 const turnBudgetContext = new AsyncLocalStorage();
 
@@ -115,7 +102,7 @@ globalThis.fetch = async (input, options = {}) => {
       if (budget) budget.failure = turn;
       throw budgetError(turn);
     }
-    const lifetime = spendLifetimeRequest(lifetimeBudget);
+    const lifetime = lifetimeBudget.reserve();
     if (!lifetime.allowed) {
       if (budget) { budget.requests -= 1; budget.failure = lifetime; }
       throw budgetError(lifetime);
@@ -358,7 +345,6 @@ const server = http.createServer(async (req, res) => {
         return;
       } finally {
         store.releaseChatSession(entry);
-        persistLifetimeBudget();
       }
     }
     respond(res, 404, { code: 404, reason: 'not_found' });
