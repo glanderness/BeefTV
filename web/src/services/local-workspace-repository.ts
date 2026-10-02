@@ -879,15 +879,16 @@ export async function refreshLocalCanvasProjectIfChanged(id: string, expectedSco
         if (!remote) return undefined;
         if (!matchesDispatchGuard(expected)) return undefined;
         if (existed && !openLocalCanvasProject(id)) return undefined;
-        const before = openLocalCanvasProject(id);
-        if (before && remote.revision === before.revision && !hasUnconfirmedCanvasEdits(id)) return undefined;
-        if (hasUnconfirmedCanvasEdits(id) || canvasSubmitBlocked(id, scope)) {
-            pauseForExternalCandidate(id, remote, scope);
-            return undefined;
-        }
         return withCanvasProjection(scope, id, async () => {
             if (!matchesDispatchGuard(expected)) return undefined;
             const journal = peekCanvasOperationJournal(id, scope);
+            // 读取可能早于本机提交回执；在同一投影锁内对照已确认版本，
+            // 相同或更旧的快照不能把尚未自动保存的编辑标成外部冲突。
+            if (journal?.confirmedSnapshot && typeof remote.revision === "number" && remote.revision <= journal.confirmedRevision) return undefined;
+            if (hasUnconfirmedCanvasEdits(id) || canvasSubmitBlocked(id, scope)) {
+                pauseForExternalCandidate(id, remote, scope);
+                return undefined;
+            }
             const base = journal?.pendingProjection?.base
                 ?? journal?.confirmedSnapshot
                 ?? canvasDocumentBase(id, scope)?.snapshot

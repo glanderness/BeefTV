@@ -1173,6 +1173,21 @@ describe("画布文档提交日记", () => {
         expect(journal.confirmedSnapshot?.revision).toBe(3);
     });
 
+    test.each([8, 9])("轮询读到已确认或更旧的版本 %i 时保留待保存编辑且不制造冲突", async (remoteRevision) => {
+        await seedConfirmed(canvas("已确认", 9));
+        server.revision = remoteRevision;
+        server.document = canvas("已确认", remoteRevision);
+        useCanvasStore.getState().updateProject("c1", { title: "尚未自动保存的编辑" });
+        expect(hasUnconfirmedCanvasEdits("c1")).toBe(true);
+
+        await refreshLocalCanvasProjectIfChanged("c1");
+
+        expect(canvasExternalRevisionConflict("guest", "c1")).toBeUndefined();
+        expect(canvasBackendSubmitPaused("c1")).toBe(false);
+        expect(useCanvasStore.getState().projects[0].title).toBe("尚未自动保存的编辑");
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(9);
+    });
+
     test("刷新在日记写入等待期间保留手工编辑并采纳未冲突的远端节点", async () => {
         await seedConfirmed(canvas("基线", 1));
         server.document = canvas("基线", 5, { nodes: [node("n-ext", "外部节点")] });
