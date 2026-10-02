@@ -4,12 +4,11 @@ import { Input, Modal, Spin } from "antd";
 import { FileAudio, FileVideo, Image as ImageIcon, Search } from "lucide-react";
 
 import { CachedResourceImage } from "@/components/cached-resource-image";
+import { insertableCanvasGenerationHistoryTasks, loadCanvasGenerationHistory } from "@/lib/canvas/canvas-generation-history";
 import { generationTaskMode } from "@/lib/canvas/canvas-generation-task-sync";
-import { localTaskHistoryFromProjects } from "@/lib/local-task-history";
+import { getActiveUserScope } from "@/lib/user-scope";
 import { ownedResourceIdFromMediaRef, resourceIdFromStorageKey, resourceStorageKey } from "@/services/api/resources";
-import { listGenerationTasks, type GenerationTask } from "@/services/api/task-center";
-import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { isLocalWorkspaceMode } from "@/services/workspace-mode";
+import type { GenerationTask } from "@/services/api/task-center";
 
 type CanvasGenerationHistoryPickerProps = {
     open: boolean;
@@ -20,23 +19,17 @@ type CanvasGenerationHistoryPickerProps = {
 
 export function CanvasGenerationHistoryPicker({ open, projectId, onClose, onSelect }: CanvasGenerationHistoryPickerProps) {
     const [keyword, setKeyword] = useState("");
-    const projects = useCanvasStore((state) => state.projects);
-    const localMode = isLocalWorkspaceMode();
+    const scope = getActiveUserScope();
     const query = useQuery({
-        queryKey: ["canvas-generation-history", projectId, localMode, projects.map((project) => project.updatedAt).join(",")],
-        queryFn: () => localMode ? Promise.resolve(localTaskHistoryFromProjects(projects).filter((task) => task.projectId === projectId)) : listGenerationTasks(100, { projectId, activeOnly: false }),
+        queryKey: ["canvas-generation-history", scope, projectId],
+        queryFn: ({ signal }) => loadCanvasGenerationHistory(projectId, { signal }),
         enabled: open && Boolean(projectId),
         staleTime: 15_000,
     });
-    const tasks = useMemo(() => {
-        const normalized = keyword.trim().toLocaleLowerCase();
-        return (query.data || [])
-            .filter((task) => task.status === "succeeded")
-            .filter((task) => ["image", "video", "audio"].includes(generationTaskMode(task)))
-            .filter((task) => localMode ? Boolean(task.previewUrl || task.textDraft) : Boolean(task.resultJson))
-            .filter((task) => !normalized || `${task.prompt} ${task.model || ""}`.toLocaleLowerCase().includes(normalized))
-            .slice(0, 60);
-    }, [keyword, localMode, query.data]);
+    const tasks = useMemo(
+        () => insertableCanvasGenerationHistoryTasks(query.data || [], { projectId, keyword }),
+        [keyword, projectId, query.data],
+    );
 
     return (
         <Modal open={open} title="从生成历史选择" footer={null} onCancel={onClose} width={720} destroyOnHidden>
