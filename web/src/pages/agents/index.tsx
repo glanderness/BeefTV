@@ -46,7 +46,7 @@ export default function AgentsPage() {
 
     return (
         <WorkspacePage>
-            <PageHeader title="外部 Agent" description="让 Codex、Claude Code、Cursor 直接读取和修改你的 BeefTV 画布。" />
+            <PageHeader title="外部 Agent" description="连接外部 AI 工具，读取和修改你的画布。" />
 
             {unsupported ? (
                 <EmptyState icon={Plug} title="当前版本还不支持" description="更新到新版本后就能在这里连接 Codex、Claude Code 和 Cursor。" />
