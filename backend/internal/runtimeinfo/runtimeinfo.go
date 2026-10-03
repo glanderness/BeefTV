@@ -1,8 +1,9 @@
 // Package runtimeinfo 描述「正在运行的本机工作区」这一事实：地址、进程、版本。
 //
 // 桌面后端监听的是动态端口，外部客户端没法猜。桌面运行时在开始监听后把地址写进
-// 数据目录里的 runtime.json（0600），干净退出时删掉；CLI 在没有显式 BEEFTV_BASE_URL
-// 时读它。进程已经不在了的文件视为过期，绝不拿它去连一个别的进程占用的端口。
+// 描述文件（0600），干净退出时删掉；CLI 在没有显式 BEEFTV_BASE_URL 时读它。
+// Windows 使用用户目录下、AppData 之外的唯一位置，避免 MSIX 的 AppData 影子文件。
+// 其他平台保留数据目录里的 runtime.json。已退出进程的描述文件视为过期。
 //
 // 这个包被桌面后端与 beeftv CLI 共用，所以只依赖标准库：CLI 不该因为读一个地址
 // 就把整个后端（数据库、服务层）链接进去。
@@ -18,32 +19,39 @@ import (
 	"time"
 )
 
-// FileName 是运行时描述文件在数据目录里的名字。
+// FileName 是非 Windows 平台数据目录里的描述文件名。
 const FileName = "runtime.json"
 
-// Info 是 runtime.json 的内容。
+// Info 是运行时描述文件的内容。
 type Info struct {
-	BaseURL   string    `json:"baseUrl"`
-	PID       int       `json:"pid"`
-	Version   string    `json:"version"`
-	StartedAt time.Time `json:"startedAt"`
+	BaseURL     string    `json:"baseUrl"`
+	PID         int       `json:"pid"`
+	Version     string    `json:"version"`
+	StartedAt   time.Time `json:"startedAt"`
+	DataDirHash string    `json:"dataDirHash,omitempty"`
 }
 
-// Path 给出运行时描述文件的路径。
-func Path(dataDir string) string { return filepath.Join(dataDir, FileName) }
+// Path 给出唯一的运行时描述文件路径。定位失败时不回退到数据目录或相对路径。
+func Path(dataDir string) (string, error) {
+	path, _, err := descriptorLocation(dataDir)
+	return path, err
+}
 
 // Write 在后端开始监听后记录地址。只对本机用户可读（0600）。
 func Write(dataDir, baseURL, version string) error {
-	if strings.TrimSpace(dataDir) == "" {
-		return errors.New("数据目录不能为空")
+	path, dataDirHash, err := descriptorLocation(dataDir)
+	if err != nil {
+		return err
 	}
-	payload := Info{BaseURL: baseURL, PID: os.Getpid(), Version: version, StartedAt: time.Now().UTC()}
+	payload := Info{BaseURL: baseURL, PID: os.Getpid(), Version: version, StartedAt: time.Now().UTC(), DataDirHash: dataDirHash}
 	encoded, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return err
 	}
-	path := Path(dataDir)
-	temp, err := os.CreateTemp(dataDir, ".runtime-*")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(filepath.Dir(path), ".runtime-*")
 	if err != nil {
 		return err
 	}
@@ -67,10 +75,20 @@ func Write(dataDir, baseURL, version string) error {
 // 只删本进程写的那份，避免把另一个还在跑的实例的地址抹掉。
 func Remove(dataDir string) error {
 	info, err := Load(dataDir)
-	if err == nil && info.PID != os.Getpid() {
+	if os.IsNotExist(err) {
 		return nil
 	}
-	if err := os.Remove(Path(dataDir)); err != nil && !os.IsNotExist(err) {
+	if err != nil {
+		return err
+	}
+	if info.PID != os.Getpid() {
+		return nil
+	}
+	path, err := Path(dataDir)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
@@ -78,13 +96,20 @@ func Remove(dataDir string) error {
 
 // Load 读出描述文件，不判断进程是否还活着。
 func Load(dataDir string) (Info, error) {
-	raw, err := os.ReadFile(Path(dataDir))
+	path, dataDirHash, err := descriptorLocation(dataDir)
+	if err != nil {
+		return Info{}, err
+	}
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return Info{}, err
 	}
 	var info Info
 	if err := json.Unmarshal(raw, &info); err != nil {
 		return Info{}, err
+	}
+	if dataDirHash != "" && info.DataDirHash != dataDirHash {
+		return Info{}, errors.New("运行时描述文件不属于指定工作区")
 	}
 	return info, nil
 }

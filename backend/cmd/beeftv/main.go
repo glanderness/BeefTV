@@ -29,7 +29,7 @@ const mcpStartupTimeout = 5 * time.Second
 // resolveBaseURL 决定连哪个工作区，并说明来源（诊断输出用，不含任何凭据）。
 //
 // 桌面应用监听的是动态端口，所以没有显式 BEEFTV_BASE_URL 时不去猜端口，而是读数据
-// 目录里的 runtime.json：那是正在运行的桌面后端自己写下的地址。文件里的进程已经退出
+// 目录对应的运行时描述文件：那是正在运行的桌面后端自己写下的地址。文件里的进程已经退出
 // 就当它不存在，绝不拿一个过期端口去连别的进程。
 func resolveBaseURL() (string, string) {
 	if base := strings.TrimSpace(os.Getenv("BEEFTV_BASE_URL")); base != "" {
@@ -362,8 +362,9 @@ func usage() {
   beeftv client register --label <label> --mode read-only|read-write [--kind codex|claude|cursor|other]
   beeftv mcp serve [--read-only]
 
-连接哪个工作区：不设 BEEFTV_BASE_URL 时自动连正在运行的 BeefTV 桌面应用（读数据目录里的
-runtime.json，端口是动态的）。BEEFTV_DATA_DIR 可以指向非默认数据目录。
+连接哪个工作区：不设 BEEFTV_BASE_URL 时自动连正在运行的 BeefTV 桌面应用，端口是动态的。
+BEEFTV_DATA_DIR 可以指向非默认数据目录。Windows 从用户目录下 .beeftv/runtime 读取对应
+工作区的运行信息，其他平台读取数据目录里的 runtime.json。升级后请重新打开 BeefTV。
 
 凭据：在 BeefTV 的设置里新建一个客户端，把它给出的 BEEFTV_CLIENT_ID 与 BEEFTV_CLIENT_TOKEN
 填进环境变量即可，不需要桌面令牌。读写权限在新建时就定下来，客户端自己改不了。

@@ -1,10 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 
@@ -181,10 +181,11 @@ func TestDesktopTokenHeaderIsSentWhenConfigured(t *testing.T) {
 	}
 }
 
-// 运行时发现：没有 BEEFTV_BASE_URL 时，CLI 要从数据目录里的 runtime.json 找到
+// 运行时发现：没有 BEEFTV_BASE_URL 时，CLI 要从工作区对应的运行时描述文件找到
 // 正在运行的桌面工作区，而不是去猜一个固定端口。外部 Agent 靠这条路径接入，
 // 手里只有自己的客户端凭据，没有桌面启动令牌。
 func TestBaseURLComesFromRuntimeDiscovery(t *testing.T) {
+	t.Setenv("USERPROFILE", t.TempDir())
 	var seenClient, seenAuth, seenDesktop string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seenClient = r.Header.Get("X-Beeftv-Client")
@@ -230,9 +231,25 @@ func TestBaseURLComesFromRuntimeDiscovery(t *testing.T) {
 
 // 运行时文件里的进程已经退出：视为过期，不猜测任何默认端口。
 func TestStaleRuntimeFileIsIgnored(t *testing.T) {
+	t.Setenv("USERPROFILE", t.TempDir())
 	dataDir := t.TempDir()
-	stale := `{"baseUrl":"http://127.0.0.1:59999/api","pid":987654321,"version":"v-old"}`
-	if err := os.WriteFile(filepath.Join(dataDir, runtimeinfo.FileName), []byte(stale), 0o600); err != nil {
+	if err := runtimeinfo.Write(dataDir, "http://127.0.0.1:59999/api", "v-old"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := runtimeinfo.Load(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info.PID = 987654321
+	stale, err := json.Marshal(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := runtimeinfo.Path(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, stale, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("BEEFTV_BASE_URL", "")
@@ -253,6 +270,7 @@ func TestStaleRuntimeFileIsIgnored(t *testing.T) {
 
 // 显式 BEEFTV_BASE_URL 优先于自动发现。
 func TestExplicitBaseURLWinsOverDiscovery(t *testing.T) {
+	t.Setenv("USERPROFILE", t.TempDir())
 	dataDir := t.TempDir()
 	if err := runtimeinfo.Write(dataDir, "http://127.0.0.1:53999/api", "v-test"); err != nil {
 		t.Fatal(err)
