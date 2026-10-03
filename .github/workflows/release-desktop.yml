@@ -294,6 +294,18 @@ jobs:
           python scripts/smoke-packaged-cli_test.py
           python scripts/smoke-packaged-cli.py --archive "dist/BeefTV-${VERSION}-${PLATFORM}.zip" --platform "$PLATFORM"
 
+      - name: Verify upgrades from released Windows clients
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python scripts/test-windows-published-upgrade.py --archive "dist/BeefTV-${{ needs.preflight.outputs.version }}-windows-amd64.zip" --version "${{ needs.preflight.outputs.version }}" --output dist/windows-upgrade-evidence.json
+
+      - name: Preserve Windows upgrade acceptance
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-upgrade-evidence
+          path: dist/windows-upgrade-evidence.json
+
       - name: Store platform zip for publication
         uses: actions/upload-artifact@v4
         with:
