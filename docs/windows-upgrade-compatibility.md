@@ -18,10 +18,12 @@ v1.6.20～v1.6.22 的旧 EXE 只接受 `BeefTV.exe` 和 `plugin-packages`，会�
 
 ## 发布验证
 
-`scripts/test-windows-published-upgrade.py` 固定已发布 EXE 的哈希，在 Windows 上执行旧 helper 的实际替换，并要求目标文件哈希、后端 ready、运行版本和既有 SQLite 哨兵都通过。还使用不能创建进程的新 EXE 验证原文件及 CLI 缺失状态恢复。测试不声称覆盖真实 GUI、用户 IndexedDB 或付费生成。
+`scripts/test-windows-published-upgrade.py` 固定已发布 EXE 的哈希，在 Windows 上启动实际旧桌面程序，由旧版初始化数据库，写入 projects 和 system_settings 业务记录，再关闭旧窗口，由旧 helper 执行替换。测试要求完整主程序、CLI、助手和插件文件树一致，后端连续两次 ready、实际运行版本及原有业务记录都正确。还使用不能创建进程的新 EXE 验证完整旧文件树恢复、业务记录保留及旧后端重新 ready。测试不声称覆盖画布 UI、用户 IndexedDB 或付费生成。
 
 正式发布工作流在上传 Windows ZIP 前执行上述门禁；可通过 Quality checks 的手动运行，用已发布 v1.7.2 重放验证测试本身。当前实现覆盖新布局客户端，不能作为过渡通道完成证明。
 
 [Windows 原生验证 37134998643](https://github.com/glanderness/BeefTV/actions/runs/37134998643) 已通过：v1.6.23、v1.7.1、v1.7.2 三个真实旧 helper 分别完成目标 v1.7.2 的替换、授权后端 ready、版本及 SQLite 哨兵保留检查，三组新进程无法启动时的回滚也通过。v1.7.2→自身是 helper 重放，不代表应用允许同版本更新。首次运行中的临时目录清理失败已通过显式关闭测试数据库连接和规范 Windows 短路径修正；未将失败运行计为整体通过。
+
+独立 review 指出上一版只检查非业务哨兵表、部分文件和未验证的进程清理，不能代表真实业务数据和完整回滚。上述更强断言已在 `7a26da8` 加入，新原生验证为 run `37136106745`；其结果单独记录，不继承旧回执的通过状态。
 
 过渡通道上线前必须增加：旧布局 EXE→过渡包→完整新版的连续验证；原安装路径和用户数据保留；中断/失败回滚；三平台签名和公网读回；旧、新和异常 User-Agent 的缓存隔离。没有这些证据，不应激活旧客户端分流。
