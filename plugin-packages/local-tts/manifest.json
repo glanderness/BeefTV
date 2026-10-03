@@ -1,0 +1,162 @@
+{
+  "apiVersion": "beeftv.plugin/v2",
+  "id": "local-tts",
+  "name": "本地 TTS（声音克隆）",
+  "version": "1.0.0",
+  "author": "BeefTV Contributors",
+  "description": "面向本机 TTS 服务的语音合成协议：支持参考音频克隆、参考文本与文字音色设计。",
+  "documentation": "# 本地 TTS（声音克隆）\n\n该目录是 BeefTV 声明式协议插件源码。后端从生成的 `local-tts.beeftv-plugin` 包加载，不依赖系统内置 `host:` 适配器。\n\n本插件面向在**本机**运行的语音合成服务（例如 MLX-Audio 提供的 OpenAI 兼容接口），在通用语音协议之外额外支持参考音频克隆与文字音色描述。\n\n完整接口见 [docs/interface.md](docs/interface.md)。\n\n---\n\n# 本地 TTS 接口字段\n\n## 协议身份\n\n- 插件 ID：`local-tts`。\n- Provider ID：`local-tts`。\n- 能力：`audio`。\n- 默认 Base URL：`http://127.0.0.1:8000`。\n- 鉴权驱动：`bearer`。\n- 创建：`POST /v1/audio/speech`。\n- 生命周期：同步，直接返回音频字节。\n\n## 请求字段\n\n| 字段 | 来源 | 说明 |\n| --- | --- | --- |\n| `model` | 请求模型 | 模型 ID；本机服务可用模型目录的绝对路径。 |\n| `input` | 待合成文本 | 必填。 |\n| `voice` | 音色设置 | 仅在填写时下发；克隆型模型不使用预设音色。 |\n| `response_format` | 音频格式 | 默认 `mp3`；`wav` 不需要 ffmpeg。 |\n| `speed` | 语速 | 默认 `1`。 |\n| `instruct` | 声音指令 | 文字描述音色，对应上游的 `instruct`。 |\n| `ref_audio` | 参考音频 | 声音克隆的参考音频路径。 |\n| `ref_text` | 参考文本 | 参考音频对应的转写，可选。 |\n\n`ref_audio` 与 `ref_text` 只在填写时出现在请求体里；未填写时行为与普通语音合成一致。\n\n## 参考音频要求\n\n- `ref_audio` 必须是**上游服务所在主机上可读的文件路径**。本插件默认指向回环地址，\n  因此该路径就是本机路径；它不会被上传到公网。\n- 建议使用 16kHz 单声道 wav；其他常见格式（mp3、48kHz wav）也能被上游读取。\n- 参考音频时长建议 3–15 秒，过短会降低相似度，过长会拖慢合成。\n\n## 部署要求\n\nBeefTV 默认拒绝本机与私网上游。要在部署环境里让该插件生效，需要精确放行：\n\n```bash\nexport CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS=127.0.0.1\n```\n\n不要使用「允许全部私网」的方式绕过 SSRF 防护。\n\n## 示例\n\n```bash\ncurl -X POST http://127.0.0.1:8000/v1/audio/speech \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"/Users/you/models/VoxCPM2\",\"input\":\"你好\",\"ref_audio\":\"/Users/you/voice.wav\",\"ref_text\":\"参考音频说的话\",\"response_format\":\"wav\"}' \\\n  --output out.wav\n```\n\n<!-- BEEFTV_PLUGIN_MANIFEST_START -->\n## Manifest 完整接口定义\n\n以下 JSON 与插件包内实际 `manifest.json` 逐字段一致，覆盖插件身份、权限、配置、鉴权、参数、创建与响应映射。`documentation` 字段的值就是当前完整文档；为避免文档在自身内部无限递归，JSON 中仅用等义占位文本表示正文。\n\n```json\n{\n  \"apiVersion\": \"beeftv.plugin/v2\",\n  \"id\": \"local-tts\",\n  \"name\": \"本地 TTS（声音克隆）\",\n  \"version\": \"1.0.0\",\n  \"author\": \"BeefTV Contributors\",\n  \"description\": \"面向本机 TTS 服务的语音合成协议：支持参考音频克隆、参考文本与文字音色设计。\",\n  \"documentation\": \"<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>\",\n  \"permissions\": [\n    \"generation.run\",\n    \"media.read\"\n  ],\n  \"configuration\": {\n    \"fields\": [\n      {\n        \"name\": \"apiKey\",\n        \"type\": \"secret\",\n        \"label\": \"API Key\",\n        \"required\": true\n      }\n    ]\n  },\n  \"contributes\": {\n    \"providers\": [\n      {\n        \"id\": \"local-tts\",\n        \"label\": \"本地 TTS（声音克隆）\",\n        \"capabilities\": [\n          \"audio\"\n        ],\n        \"scopes\": [\n          \"user.custom-channel\",\n          \"canvas\",\n          \"creation\"\n        ],\n        \"baseUrl\": \"http://127.0.0.1:8000\",\n        \"requiresPublicMediaUrls\": false,\n        \"auth\": {\n          \"type\": \"bearer\",\n          \"field\": \"apiKey\"\n        },\n        \"parameters\": [\n          {\n            \"name\": \"model\",\n            \"type\": \"string\",\n            \"required\": true,\n            \"mapping\": \"model\",\n            \"description\": \"音频模型 ID；本机服务可用模型目录的绝对路径。\"\n          },\n          {\n            \"name\": \"prompt\",\n            \"type\": \"string\",\n            \"required\": true,\n            \"mapping\": \"input\",\n            \"description\": \"待合成文本。\"\n          },\n          {\n            \"name\": \"providerOptions\",\n            \"type\": \"object\",\n            \"required\": false,\n            \"mapping\": \"provider-specific fields\",\n            \"description\": \"插件命名空间内的扩展字段。\"\n          }\n        ],\n        \"create\": {\n          \"method\": \"POST\",\n          \"path\": \"/v1/audio/speech\",\n          \"contentType\": \"application/json\",\n          \"body\": {\n            \"model\": {\n              \"$ref\": \"request.model\"\n            },\n            \"input\": {\n              \"$ref\": \"request.prompt\"\n            },\n            \"voice\": {\n              \"$omitEmpty\": {\n                \"$coalesce\": [\n                  {\n                    \"$ref\": \"request.extra.audioVoice\"\n                  },\n                  {\n                    \"$ref\": \"request.providerOptions.local-tts.voice\"\n                  }\n                ]\n              }\n            },\n            \"response_format\": {\n              \"$coalesce\": [\n                {\n                  \"$ref\": \"request.extra.audioFormat\"\n                },\n                {\n                  \"$ref\": \"request.providerOptions.local-tts.response_format\"\n                },\n                \"mp3\"\n              ]\n            },\n            \"speed\": {\n              \"$coalesce\": [\n                {\n                  \"$ref\": \"request.extra.audioSpeed\"\n                },\n                {\n                  \"$ref\": \"request.providerOptions.local-tts.speed\"\n                },\n                1\n              ]\n            },\n            \"instruct\": {\n              \"$omitEmpty\": {\n                \"$coalesce\": [\n                  {\n                    \"$ref\": \"request.extra.audioInstructions\"\n                  },\n                  {\n                    \"$ref\": \"request.providerOptions.local-tts.instruct\"\n                  }\n                ]\n              }\n            },\n            \"ref_audio\": {\n              \"$omitEmpty\": {\n                \"$coalesce\": [\n                  {\n                    \"$ref\": \"request.extra.audioRefAudio\"\n                  },\n                  {\n                    \"$ref\": \"request.providerOptions.local-tts.ref_audio\"\n                  }\n                ]\n              }\n            },\n            \"ref_text\": {\n              \"$omitEmpty\": {\n                \"$coalesce\": [\n                  {\n                    \"$ref\": \"request.extra.audioRefText\"\n                  },\n                  {\n                    \"$ref\": \"request.providerOptions.local-tts.ref_text\"\n                  }\n                ]\n              }\n            }\n          }\n        },\n        \"response\": {\n          \"binaryPayload\": true,\n          \"resultKind\": \"audio\",\n          \"status\": \"succeeded\",\n          \"errorPaths\": [\n            \"error.code\"\n          ],\n          \"messagePaths\": [\n            \"error.message\"\n          ]\n        }\n      }\n    ]\n  }\n}\n```\n\n<!-- BEEFTV_PLUGIN_MANIFEST_END -->",
+  "permissions": [
+    "generation.run",
+    "media.read"
+  ],
+  "configuration": {
+    "fields": [
+      {
+        "name": "apiKey",
+        "type": "secret",
+        "label": "API Key",
+        "required": true
+      }
+    ]
+  },
+  "contributes": {
+    "providers": [
+      {
+        "id": "local-tts",
+        "label": "本地 TTS（声音克隆）",
+        "capabilities": [
+          "audio"
+        ],
+        "scopes": [
+          "user.custom-channel",
+          "canvas",
+          "creation"
+        ],
+        "baseUrl": "http://127.0.0.1:8000",
+        "requiresPublicMediaUrls": false,
+        "auth": {
+          "type": "bearer",
+          "field": "apiKey"
+        },
+        "parameters": [
+          {
+            "name": "model",
+            "type": "string",
+            "required": true,
+            "mapping": "model",
+            "description": "音频模型 ID；本机服务可用模型目录的绝对路径。"
+          },
+          {
+            "name": "prompt",
+            "type": "string",
+            "required": true,
+            "mapping": "input",
+            "description": "待合成文本。"
+          },
+          {
+            "name": "providerOptions",
+            "type": "object",
+            "required": false,
+            "mapping": "provider-specific fields",
+            "description": "插件命名空间内的扩展字段。"
+          }
+        ],
+        "create": {
+          "method": "POST",
+          "path": "/v1/audio/speech",
+          "contentType": "application/json",
+          "body": {
+            "model": {
+              "$ref": "request.model"
+            },
+            "input": {
+              "$ref": "request.prompt"
+            },
+            "voice": {
+              "$omitEmpty": {
+                "$coalesce": [
+                  {
+                    "$ref": "request.extra.audioVoice"
+                  },
+                  {
+                    "$ref": "request.providerOptions.local-tts.voice"
+                  }
+                ]
+              }
+            },
+            "response_format": {
+              "$coalesce": [
+                {
+                  "$ref": "request.extra.audioFormat"
+                },
+                {
+                  "$ref": "request.providerOptions.local-tts.response_format"
+                },
+                "mp3"
+              ]
+            },
+            "speed": {
+              "$coalesce": [
+                {
+                  "$ref": "request.extra.audioSpeed"
+                },
+                {
+                  "$ref": "request.providerOptions.local-tts.speed"
+                },
+                1
+              ]
+            },
+            "instruct": {
+              "$omitEmpty": {
+                "$coalesce": [
+                  {
+                    "$ref": "request.extra.audioInstructions"
+                  },
+                  {
+                    "$ref": "request.providerOptions.local-tts.instruct"
+                  }
+                ]
+              }
+            },
+            "ref_audio": {
+              "$omitEmpty": {
+                "$coalesce": [
+                  {
+                    "$ref": "request.extra.audioRefAudio"
+                  },
+                  {
+                    "$ref": "request.providerOptions.local-tts.ref_audio"
+                  }
+                ]
+              }
+            },
+            "ref_text": {
+              "$omitEmpty": {
+                "$coalesce": [
+                  {
+                    "$ref": "request.extra.audioRefText"
+                  },
+                  {
+                    "$ref": "request.providerOptions.local-tts.ref_text"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "response": {
+          "binaryPayload": true,
+          "resultKind": "audio",
+          "status": "succeeded",
+          "errorPaths": [
+            "error.code"
+          ],
+          "messagePaths": [
+            "error.message"
+          ]
+        }
+      }
+    ]
+  }
+}
