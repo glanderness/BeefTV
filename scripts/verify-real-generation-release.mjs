@@ -29,6 +29,45 @@ const downloadOnlyWaiver = version === 'v1.6.20' && receipt.liveTestWaiver?.appr
 // Keep unknown pending as null; this does not waive any paid media case.
 const financialException = receipt.financialEvidenceException;
 const acceptedFailedRequests = ['202610020816334239151708268d9d6eZ5lRPwt', '202610021242434383740578268d9d6BAoXA1u1'];
+// v1.7.2 only: the owner waived paid generation, not targeted acceptance or
+// prior unknown refunds. Final release archives are built after this preflight.
+if (version === 'v1.7.2' && receipt.liveTestWaiver?.approvedBy === 'Ender'
+  && receipt.liveTestWaiver?.instruction === '本版豁免付费生成，专项验收通过后上线'
+  && receipt.liveTestWaiver?.scope === 'mcp-assistant-targeted-acceptance') {
+  const evidence = value => Array.isArray(value) && value.length > 0 && value.every(nonempty);
+  const exact = (value, expected) => Array.isArray(value) && JSON.stringify([...value].sort()) === JSON.stringify([...expected].sort());
+  if (receipt.budgetCNY !== 100 || receipt.spentCNY !== 43.74479 || receipt.newSpentCNY !== 0
+    || receipt.pendingCNY !== null || receipt.knownPendingCNY !== 0
+    || receipt.financialUncertainty?.status !== 'unresolved'
+    || receipt.financialUncertainty?.carriedFromVersion !== 'v1.7.1'
+    || !exact(receipt.financialUncertainty?.failedRequestIds, acceptedFailedRequests)
+    || !evidence(receipt.financialUncertainty?.evidence)) fail('v1.7.2 requires carried prior financial uncertainty and no new paid calls');
+  if (receipt.review?.result !== 'approved' || receipt.review?.sourceDigest !== sourceDigest
+    || receipt.review?.independent !== true || !nonempty(receipt.review?.reviewer) || !evidence(receipt.review?.evidence)
+    || receipt.upgrade?.preservedData !== true || receipt.upgrade?.sourceDigest !== sourceDigest || !evidence(receipt.upgrade?.evidence)
+    || !Array.isArray(receipt.cases) || receipt.cases.length !== 0
+    || receipt.liveMatrixStatus !== 'not_run_owner_waived') fail('v1.7.2 requires independent source review, preserved data evidence and an explicitly unexecuted matrix');
+  for (const id of ['mcpStartup', 'assistantRuntime', 'windowsNativeRuntime', 'packagedCLI', 'localReleaseGate', 'ci']) {
+    const check = receipt.verification?.[id];
+    if (check?.status !== 'passed' || check.sourceDigest !== sourceDigest || !evidence(check.evidence)) fail(`v1.7.2 missing source-bound targeted evidence: ${id}`);
+  }
+  if (receipt.verification.windowsNativeRuntime.method !== 'native') fail('v1.7.2 Windows runtime acceptance must be native');
+  const packaged = receipt.verification.packagedCLI;
+  const platforms = ['darwin-arm64', 'darwin-amd64', 'windows-amd64'];
+  if (packaged.method !== 'package-validator' || !exact(packaged.platforms, platforms)
+    || packaged.finalArchiveSmokeBeforeUpload !== true || !evidence(packaged.releaseWorkflowEvidence)) fail('v1.7.2 requires three-platform package validation and mandatory release archive smoke before upload');
+  if (packaged.finalArchivesStatus === 'passed') {
+    for (const platform of platforms) {
+      const archive = packaged.finalArchives?.[platform];
+      if (archive?.status !== 'passed' || archive.sourceDigest !== sourceDigest || !evidence(archive.evidence)
+        || !/^[a-f0-9]{64}$/.test(archive.sha256 || '')) fail(`v1.7.2 missing final archive evidence: ${platform}`);
+    }
+  } else if (packaged.finalArchivesStatus !== 'pending_release_workflow' || packaged.finalArchives != null || receipt.releaseComplete === true) {
+    fail('v1.7.2 final archives must remain pending until release workflow verification');
+  }
+  console.log(`Owner authorized v1.7.2 targeted MCP/assistant release; media matrix NOT run; new expense 0; two prior refund terminal states remain unknown; final archives: ${packaged.finalArchivesStatus}.`);
+  process.exit(0);
+}
 // Ender selected the reviewed model-picker release and renamed it v1.7.1.
 // Only this version may use targeted acceptance instead of another media matrix.
 if (version === 'v1.7.1' && receipt.liveTestWaiver?.approvedBy === 'Ender'
