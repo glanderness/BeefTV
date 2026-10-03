@@ -552,6 +552,11 @@ func ClassifyText(raw string) Failure {
 		failure.Structured = true
 		return normalizeFailure(failure)
 	}
+	if copy, ok := outboundPolicyCopy(text); ok {
+		requestID, taskID := persistedReferenceIDs(text)
+		return normalizeFailure(Failure{Category: CategoryNetwork, Reason: copy.Reason, Action: copy.Action,
+			Structured: true, RequestID: requestID, TaskID: taskID, HTTPStatus: extractExplicitHTTPStatus(text)})
+	}
 	if matched := matchPersistedCategory(text); matched != CategoryUnknown {
 		failure.Category = matched
 		failure.FromCode = true
@@ -1279,6 +1284,25 @@ func extractExplicitHTTPStatus(raw string) int {
 
 func isNetworkText(value string) bool {
 	return regexp.MustCompile(`(?i)\b(?:dial tcp|connection refused|connection reset|forcibly closed by the remote host|software caused connection abort|connection was aborted by the software in your host machine|wsaeconnreset|wsaeconnaborted|no such host|i/o timeout|network error|failed to fetch|fetch failed|socket hang up|econnrefused|econnreset|etimedout|连接模型服务失败)\b`).MatchString(value)
+}
+
+// Only canonical local error sentences qualify, after structured upstream errors
+// have been classified. Request echoes must never become local policy failures.
+func outboundPolicyCopy(message string) (categoryCopy, bool) {
+	message, _, _ = strings.Cut(strings.TrimSpace(message), "。")
+	switch message {
+	case "不允许访问本机或内网地址", "不允许访问本机、内网或链路本地地址", "不允许访问保留地址或特殊用途地址":
+		return categoryCopy{
+			Reason: "模型服务地址被出站安全策略拦截",
+			Action: "请检查渠道的服务地址；如需连接可信的本地或内网服务，请联系管理员仅将该主机加入允许列表后重启服务",
+		}, true
+	case "外部服务域名解析失败":
+		return categoryCopy{
+			Reason: "模型服务域名解析失败",
+			Action: "请检查渠道服务地址中的域名是否正确，并确认运行 BeefTV 的设备能够正常联网和解析该域名",
+		}, true
+	}
+	return categoryCopy{}, false
 }
 
 func isMalformedText(value string) bool {
