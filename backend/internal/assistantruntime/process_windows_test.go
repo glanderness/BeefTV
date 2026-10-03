@@ -24,8 +24,14 @@ func runWindowsNoConsoleFixture() int {
 	kernel := syscall.NewLazyDLL("kernel32.dll")
 	window, _, _ := kernel.NewProc("GetConsoleWindow").Call()
 	codePage, _, _ := kernel.NewProc("GetConsoleCP").Call()
-	if window != 0 || codePage != 0 {
-		fmt.Fprintf(os.Stderr, "child has console: window=%d codepage=%d\n", window, codePage)
+	fmt.Fprintf(os.Stderr, "child console state: window=%d codepage=%d\n", window, codePage)
+	// The product contract is no console window, not DETACHED_PROCESS semantics.
+	// CREATE_NO_WINDOW may retain a headless console (and a nonzero code page).
+	// GetConsoleWindow measures the window; GetConsoleCP is diagnostic only.
+	// https://learn.microsoft.com/en-us/windows/console/getconsolewindow
+	// https://github.com/openai/codex/issues/49760
+	if window != 0 {
+		fmt.Fprintln(os.Stderr, "child created a console window")
 		return 2
 	}
 	fmt.Fprintln(os.Stdout, "host-child-stdout")
