@@ -11,6 +11,8 @@ All notable public changes to BeefTV are documented in this file.
 
 ## v1.7.2
 
+- Automatically remove completed upgrade folders and lock files after the local workspace starts successfully, while preserving failed upgrades for recovery.
+
 - Fix the canvas assistant being unavailable when following a default text model from a custom local channel.
 - Keep explicit model capabilities, protocol restrictions, and channel credentials in effect when resolving assistant connections.
 

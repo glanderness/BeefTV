@@ -61,5 +61,17 @@ func lockInstall(path string) (func(), error) {
 		_ = file.Close()
 		return nil, err
 	}
-	return func() { _ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN); _ = file.Close() }, nil
+	// A contender may have opened the old inode just before its owner unlinked
+	// it. It must not proceed alongside a process locking the replacement inode.
+	opened, statErr := file.Stat()
+	current, pathErr := os.Lstat(path)
+	if statErr != nil || pathErr != nil || !current.Mode().IsRegular() || !os.SameFile(opened, current) {
+		_ = file.Close()
+		return nil, fmt.Errorf("更新锁已变更，请重试")
+	}
+	return func() {
+		_ = os.Remove(path)
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		_ = file.Close()
+	}, nil
 }

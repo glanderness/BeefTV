@@ -28,6 +28,7 @@ export type DesktopRuntimeBinding = {
     CheckForUpdate?: () => Promise<DesktopUpdateState>;
     DownloadUpdate?: () => Promise<DesktopUpdateState>;
     InstallUpdate?: () => Promise<void>;
+    ConfirmUpdateStartup?: () => Promise<void>;
 };
 
 declare global {

@@ -68,3 +68,13 @@ func (a *DesktopApp) InstallUpdate() error {
 	}
 	return a.updater().InstallUpdate(context.Background())
 }
+
+func (a *DesktopApp) ConfirmUpdateStartup() error {
+	ctx, err := a.dialogContext()
+	if err != nil || a.runtime() == nil {
+		return errors.New("本地工作区尚未就绪")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return a.updater().CleanupAfterStartup(ctx)
+}

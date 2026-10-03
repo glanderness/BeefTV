@@ -124,6 +124,8 @@ jobs:
           PY
       - name: Historical SQLite, schema repair and interrupted migration
         run: go test ./internal/database -count=1 -json | tee matrix-evidence/database.jsonl
+      - name: Native updater replacement, recovery, cleanup and install locks
+        run: go test ./internal/desktopupdate -count=1 -json | tee matrix-evidence/desktopupdate.jsonl
       - name: Local provider task persistence and restart matrix
         run: go test ./internal/app -run '^TestDBRuntime' -count=1 -json | tee matrix-evidence/runtime.jsonl
       - name: Actual CLI and MCP against isolated HTTP runtime
