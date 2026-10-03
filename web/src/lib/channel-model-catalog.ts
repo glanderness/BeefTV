@@ -1,6 +1,7 @@
 import { defaultModelCapabilityConfig, sanitizeServerVideoCapability, type ModelCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { modelProtocolCapability, protocolForModelCatalog, type ModelProtocol } from "@/lib/model-protocols";
-import type { ModelChannel } from "@/stores/use-config-store";
+import { CHATGPT_SUBSCRIPTION_INTERFACE } from "@/services/api/chatgpt-connection";
+import { MANAGED_CHATGPT_CREDENTIAL_REF, type ModelChannel } from "@/stores/use-config-store";
 
 export type ChannelModelCatalogOption = { value: string; label?: string };
 
@@ -124,14 +125,25 @@ function isBeefAPICatalogChannel(channel: ModelChannel) {
     }
 }
 
+function isChatGPTSubscriptionCatalogChannel(channel: ModelChannel) {
+    return channel.credentialRef === MANAGED_CHATGPT_CREDENTIAL_REF || channel.interfaceType === CHATGPT_SUBSCRIPTION_INTERFACE;
+}
+
 export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog: ChannelModelCatalogItem[]): ChannelModelProfile[] {
     const existingByModel = new Map((channel.modelProfiles || []).map((profile) => [profile.model, profile]));
+    // 订阅 catalog 不声明请求协议；宿主按事实固定为订阅协议与文本能力，
+    // 否则新拉取的模型会缺少能力归类而不出现在模型选择器里。
+    const subscriptionChannel = isChatGPTSubscriptionCatalogChannel(channel);
     const next: ChannelModelProfile[] = [];
     for (const item of catalog) {
         const existing = existingByModel.get(item.id);
         const mapped = catalogModelMapping(item, { providerNameFallback: isBeefAPICatalogChannel(channel) });
-        const inferredProtocol = mapped.protocol || protocolForModelCatalog(item.supportedEndpointTypes);
-        const inferredCapability = mapped.capability || modelProtocolCapability(inferredProtocol) || item.modelType;
+        const inferredProtocol = subscriptionChannel
+            ? CHATGPT_SUBSCRIPTION_INTERFACE
+            : mapped.protocol || protocolForModelCatalog(item.supportedEndpointTypes);
+        const inferredCapability = subscriptionChannel
+            ? "text"
+            : mapped.capability || modelProtocolCapability(inferredProtocol) || item.modelType;
         if (mapped.skipGeneration) {
             continue;
         }

@@ -3,7 +3,7 @@ import { createChannelTransport } from "@/services/api/channel-transport";
 import { readAxiosError, validateGeminiPayload } from "@/services/api/image-response";
 import { geminiApiUrl, geminiHeaders } from "@/services/api/image-transport";
 import { http } from "@/services/api/request";
-import { buildApiUrl, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { buildApiUrl, MANAGED_BEEFAPI_CREDENTIAL_REF, MANAGED_CHATGPT_CREDENTIAL_REF, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 
 const defaultGeminiConfig: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat" | "model" | "systemPrompt"> = {
     baseUrl: "https://generativelanguage.googleapis.com",
@@ -63,7 +63,9 @@ export type ChannelModelFetchResult = { models: string[]; catalog: ChannelModelC
 
 export async function fetchChannelModels(channel: ModelChannel, viaBackend = false): Promise<ChannelModelFetchResult> {
     const managed = channel.id === "beefapi" && (channel.pinned || Boolean(channel.credentialRef));
-    if (managed) {
+    // 订阅渠道的模型目录只能由后端代取：凭据在服务端，且 Codex catalog 不是 OpenAI 的 /v1/models。
+    const subscriptionManaged = channel.credentialRef === MANAGED_CHATGPT_CREDENTIAL_REF;
+    if (managed || subscriptionManaged) {
         viaBackend = true;
     }
     if (!viaBackend) {
@@ -78,11 +80,11 @@ export async function fetchChannelModels(channel: ModelChannel, viaBackend = fal
         // 登录态由同源后端代取模型目录，避免每个 OpenAI 兼容服务分别维护浏览器 CORS 白名单。
         const result = await http.post<{ models?: Array<string | ChannelModelCatalogItem> }>("/ai/models", {
             baseUrl: channel.baseUrl,
-            apiKey: managed ? "" : channel.apiKey,
-            apiFormat: channel.apiFormat,
+            apiKey: managed || subscriptionManaged ? "" : channel.apiKey,
+            apiFormat: subscriptionManaged ? "openai" : channel.apiFormat,
             headers: channel.headers,
             channelId: managed ? channel.id : undefined,
-            credentialRef: managed ? "beefapi-enterprise" : undefined,
+            credentialRef: subscriptionManaged ? MANAGED_CHATGPT_CREDENTIAL_REF : managed ? MANAGED_BEEFAPI_CREDENTIAL_REF : undefined,
         });
         const catalog = new Map<string, ChannelModelCatalogItem>();
         for (const item of result.models || []) {

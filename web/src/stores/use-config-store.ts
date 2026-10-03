@@ -598,6 +598,8 @@ export function configuredModelMatchesCapability(config: AiConfig, model: string
 }
 
 export const MANAGED_BEEFAPI_CREDENTIAL_REF = "beefapi-enterprise";
+// ChatGPT 订阅凭据由后端设备码登录持有，浏览器只保存这个引用。
+export const MANAGED_CHATGPT_CREDENTIAL_REF = "chatgpt-subscription";
 
 export function isBuiltinBeefAPIChannel(channel: Pick<ModelChannel, "id" | "pinned">) {
     return channel.id === "beefapi" && channel.pinned === true;
@@ -608,8 +610,12 @@ export function channelHasManagedBeefAPICredential(channel: Pick<ModelChannel, "
     return channel.credentialRef === MANAGED_BEEFAPI_CREDENTIAL_REF || channel.hasApiKey === true;
 }
 
+export function channelHasChatGPTSubscriptionCredential(channel: Pick<ModelChannel, "credentialRef" | "scope">) {
+    return channel.credentialRef === MANAGED_CHATGPT_CREDENTIAL_REF;
+}
+
 export function channelHasGenerationCredential(channel: Pick<ModelChannel, "id" | "pinned" | "credentialRef" | "hasApiKey" | "apiKey">) {
-    return channelHasManagedBeefAPICredential(channel) || Boolean(channel.apiKey?.trim());
+    return channelHasManagedBeefAPICredential(channel) || channelHasChatGPTSubscriptionCredential(channel) || Boolean(channel.apiKey?.trim());
 }
 
 function isAiConfigReady(config: AiConfig, model: string) {
