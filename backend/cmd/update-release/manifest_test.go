@@ -211,6 +211,7 @@ func packageNamed(t *testing.T, dir, platform, version string) string {
 		writer := zip.NewWriter(file)
 		for name, body := range map[string]string{
 			"BeefTV.app/Contents/MacOS/BeefTV":                                                                   "binary",
+			"BeefTV.app/Contents/MacOS/cli/beeftv":                                                               "cli",
 			"BeefTV.app/Contents/Info.plist":                                                                     "<plist></plist>",
 			"BeefTV.app/Contents/Resources/plugin-packages/core.beeftv-plugin":                                   "plugin",
 			"BeefTV.app/Contents/Resources/agent-host/server.mjs":                                                "host",

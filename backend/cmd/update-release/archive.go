@@ -91,10 +91,13 @@ func packageBundle(platform, input, output string) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
+	if err := validateArchive(platform, tmpName); err != nil {
+		return err
+	}
 	if err := os.Rename(tmpName, output); err != nil {
 		return err
 	}
-	return validateArchive(platform, output)
+	return nil
 }
 
 func resolveBundleRoot(platform, input string) (string, error) {
@@ -149,6 +152,9 @@ func addWindowsLayout(zw *zip.Writer, root string, visited map[string]struct{}) 
 		return fmt.Errorf("Windows bundle %s is not a directory", pluginDirName)
 	}
 	if err := addTree(zw, root, pluginDir, pluginDirName, visited); err != nil {
+		return err
+	}
+	if err := addTree(zw, root, filepath.Join(root, "cli"), "cli", visited); err != nil {
 		return err
 	}
 	return addTree(zw, root, filepath.Join(root, "agent-host"), "agent-host", visited)
@@ -274,6 +280,11 @@ func validateArchive(platform, zipPath string) error {
 	}
 	hasMacExec := false
 	hasWinExec := false
+	hasCLI := false
+	cliPath := "cli/beeftv.exe"
+	if strings.HasPrefix(platform, "darwin-") {
+		cliPath = "BeefTV.app/Contents/MacOS/cli/beeftv"
+	}
 	pluginCount := 0
 	agentPrefix := "agent-host/"
 	nodeRelative := "runtime/node.exe"
@@ -284,6 +295,15 @@ func validateArchive(platform, zipPath string) error {
 	requiredAgent := map[string]bool{"server.mjs": false, "session-identity.mjs": false, "package.json": false, nodeRelative: false, "node_modules/@earendil-works/pi-coding-agent/package.json": false}
 	for _, file := range reader.File {
 		name := filepath.ToSlash(file.Name)
+		if name == cliPath {
+			if !file.Mode().IsRegular() || file.UncompressedSize64 == 0 {
+				return fmt.Errorf("bundled CLI must be a nonempty regular file: %s", cliPath)
+			}
+			if strings.HasPrefix(platform, "darwin-") && file.Mode()&0o111 == 0 {
+				return fmt.Errorf("bundled CLI must retain executable mode: %s", cliPath)
+			}
+			hasCLI = true
+		}
 		if rel, ok := strings.CutPrefix(name, agentPrefix); ok {
 			if _, required := requiredAgent[rel]; required && file.Mode().IsRegular() && file.UncompressedSize64 > 0 {
 				requiredAgent[rel] = true
@@ -318,6 +338,9 @@ func validateArchive(platform, zipPath string) error {
 		case strings.HasPrefix(name, "BeefTV.app/Contents/Resources/"+pluginDirName+"/") && strings.HasSuffix(name, pluginSuffix) && file.Mode().IsRegular():
 			pluginCount++
 		}
+	}
+	if !hasCLI {
+		return fmt.Errorf("archive missing bundled CLI: %s", cliPath)
 	}
 	for name, found := range requiredAgent {
 		if !found {
