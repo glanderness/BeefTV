@@ -49,10 +49,58 @@ def wait_until(predicate, seconds):
 
 
 def stop_installed(executable):
-    # Scope process cleanup to this exact disposable install, never by image name.
-    path = str(executable).replace("'", "''")
-    command = "$p=Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq '" + path + "' }; foreach($x in $p){ taskkill /PID $x.ProcessId /T /F | Out-Null; if(Get-Process -Id $x.ProcessId -ErrorAction SilentlyContinue){ Wait-Process -Id $x.ProcessId -Timeout 10 -ErrorAction Stop } }; exit 0"
-    subprocess.run(['powershell', '-NoProfile', '-Command', command], check=True)
+    # Include orphaned bundled Node processes, but never kill by image name.
+    root = os.path.normcase(str(executable.parent.resolve())) + os.sep
+    def owned():
+        result = subprocess.run(['powershell', '-NoProfile', '-Command',
+            'Get-CimInstance Win32_Process | Select-Object ProcessId,ExecutablePath | ConvertTo-Json -Compress'],
+            capture_output=True, text=True, check=True)
+        rows = json.loads(result.stdout or '[]')
+        rows = rows if isinstance(rows, list) else [rows]
+        return [row['ProcessId'] for row in rows if row.get('ExecutablePath') and
+                os.path.normcase(os.path.realpath(row['ExecutablePath'])).startswith(root)]
+    for pid in owned():
+        # A child may already have exited with its parent; the final query is authority.
+        subprocess.run(['taskkill', '/PID', str(pid), '/T', '/F'], capture_output=True)
+    wait_until(lambda: not owned(), 15)
+
+
+def install_tree(root):
+    result = {}
+    for name in ['BeefTV.exe', 'cli', 'agent-host', 'plugin-packages']:
+        path = root/name
+        paths = [path] if path.is_file() else sorted(path.rglob('*')) if path.is_dir() else []
+        for item in paths:
+            if item.is_file():
+                result[item.relative_to(root).as_posix()] = digest(item)
+    return result
+
+
+def wait_ready(port, token, version):
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    consecutive = 0
+    def ready():
+        nonlocal consecutive
+        request = urllib.request.Request(f'http://127.0.0.1:{port}/api/health/ready', headers={'X-Desktop-Token':token})
+        try:
+            with opener.open(request, timeout=2) as response:
+                health = json.loads(response.read())
+                data = health.get('data', {})
+                ok = response.status == 200 and health.get('code') == 0 and data.get('ready') is True and data.get('build', {}).get('version') == version
+                consecutive = consecutive + 1 if ok else 0
+                return consecutive >= 2
+        except (OSError, ValueError):
+            consecutive = 0
+            return False
+    wait_until(ready, 60)
+
+
+def verify_product_rows(db):
+    with closing(sqlite3.connect(db)) as connection:
+        project = connection.execute("SELECT name, description, revision FROM projects WHERE id='upgrade-audit-project'").fetchone()
+        setting = connection.execute("SELECT value_json FROM system_settings WHERE key='upgrade-audit-setting'").fetchone()
+    if project != ('Upgrade acceptance project', 'Keep this project', 7) or setting != ('{"preserve":true}',):
+        raise RuntimeError('Existing product rows changed during upgrade or rollback')
 
 
 def exercise(source, candidate, version, directory, rollback=False):
@@ -64,9 +112,6 @@ def exercise(source, candidate, version, directory, rollback=False):
         (staged/'BeefTV.exe').write_bytes(b'not a Windows executable')
     data.mkdir()
     db = data/'open_ai_canvas.db'
-    with closing(sqlite3.connect(db)) as connection, connection:
-        connection.execute('CREATE TABLE upgrade_audit (id INTEGER PRIMARY KEY, value TEXT NOT NULL)')
-        connection.execute('INSERT INTO upgrade_audit VALUES (1, ?)', ('preserve-existing-data',))
     helper = directory/'BeefTV-update-helper.exe'
     shutil.copy2(install/'BeefTV.exe', helper)
     token = secrets.token_hex(32)
@@ -76,68 +121,63 @@ def exercise(source, candidate, version, directory, rollback=False):
     env = dict(os.environ, CANVAS_DESKTOP_DATA_DIR=str(data),
                CANVAS_DESKTOP_BACKEND_ADDR=f'127.0.0.1:{port}',
                CANVAS_DESKTOP_LAUNCH_TOKEN=token)
-    parent = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(180)'])
+    parent = subprocess.Popen([str(install/'BeefTV.exe')], env=env)
     request = directory/'request.json'
     request.write_text(json.dumps(dict(schema=1, parentPid=parent.pid, platform='windows-amd64',
         targetPath=str(install/'BeefTV.exe'), stagedPath=str(staged), backupPath=str(directory/'backup'),
-        preparedPath=str(directory/'prepared'), resultPath=str(directory/'result.json'), waitTimeoutSec=60)), encoding='utf-8')
+        preparedPath=str(directory/'prepared'), resultPath=str(directory/'result.json'), waitTimeoutSec=180)), encoding='utf-8')
     process = None
     try:
+        # Let the actual old application create its schema, then add product data.
+        wait_ready(port, token, source.name)
+        with closing(sqlite3.connect(db)) as connection, connection:
+            connection.execute("INSERT INTO projects (id,user_id,name,description,status,revision) VALUES (?,?,?,?,?,?)", ('upgrade-audit-project','upgrade-audit','Upgrade acceptance project','Keep this project','draft',7))
+            connection.execute('INSERT INTO system_settings (key,value_json) VALUES (?,?)', ('upgrade-audit-setting','{"preserve":true}'))
+        source_tree = install_tree(source)
+        candidate_tree = install_tree(candidate)
         process = subprocess.Popen([str(helper), '--beeftv-update-helper', str(request)], env=env)
         wait_until(lambda: (directory/'prepared').exists() or process.poll() is not None, 30)
         if not (directory/'prepared').exists():
             raise RuntimeError((directory/'result.json').read_text(encoding='utf-8'))
-        parent.terminate()
-        parent.wait(timeout=10)
-        process.wait(timeout=90)
+        close = '$p=Get-Process -Id '+str(parent.pid)+'; for($i=0;$i -lt 100;$i++){ $p.Refresh(); if($p.MainWindowHandle -ne 0){break}; Start-Sleep -Milliseconds 200 }; if(-not $p.CloseMainWindow()){throw "Old desktop did not accept close"}'
+        subprocess.run(['powershell', '-NoProfile', '-Command', close], check=True)
+        parent.wait(timeout=90)
+        process.wait(timeout=120)
         result = json.loads((directory/'result.json').read_text(encoding='utf-8'))
         if rollback:
             if result.get('status') != 'rolled_back' or not result.get('restored'):
                 raise RuntimeError('Failed update did not restore the old install: ' + json.dumps(result))
-            for relative in ['BeefTV.exe', 'agent-host/server.mjs', 'agent-host/runtime/node.exe']:
-                if digest(install/relative) != digest(source/relative):
-                    raise RuntimeError('Rollback changed original file: ' + relative)
-            if (install/'cli').exists() != (source/'cli').exists():
-                raise RuntimeError('Rollback did not preserve the original CLI presence')
-            with closing(sqlite3.connect(db)) as connection:
-                if connection.execute('SELECT value FROM upgrade_audit WHERE id=1').fetchone() != ('preserve-existing-data',):
-                    raise RuntimeError('Rollback changed existing data')
-            return dict(rollback=True, oldInstallRestored=True, sqlitePreserved=True)
+            if install_tree(install) != source_tree:
+                raise RuntimeError('Rollback did not restore the complete original file tree')
+            wait_ready(port, token, source.name)
+            verify_product_rows(db)
+            return dict(rollback=True, oldInstallRestored=True, oldBackendReady=True, productRowsPreserved=True)
         if process.returncode or result.get('status') != 'launched' or not result.get('parentExited'):
             raise RuntimeError(json.dumps(result))
-        for relative in ['BeefTV.exe', 'cli/beeftv.exe', 'agent-host/server.mjs', 'agent-host/runtime/node.exe']:
-            if digest(install/relative) != digest(candidate/relative):
-                raise RuntimeError('Installed payload differs: ' + relative)
-        health = None
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        def ready():
-            nonlocal health
-            request = urllib.request.Request(f'http://127.0.0.1:{port}/api/health/ready', headers={'X-Desktop-Token':token})
-            try:
-                with opener.open(request, timeout=2) as response:
-                    health = json.loads(response.read())
-                    return response.status == 200 and health.get('code') == 0
-            except (OSError, ValueError):
-                return False
-        wait_until(ready, 45)
-        with closing(sqlite3.connect(db)) as connection:
-            if connection.execute('SELECT value FROM upgrade_audit WHERE id=1').fetchone() != ('preserve-existing-data',):
-                raise RuntimeError('Existing SQLite data changed')
+        if install_tree(install) != candidate_tree:
+            raise RuntimeError('Installed payload differs from the complete candidate file tree')
+        wait_ready(port, token, version)
+        verify_product_rows(db)
         identity = hashlib.sha256(os.path.normpath(str(data)).lower().encode()).hexdigest()
         runtime_path = Path(os.environ['USERPROFILE'])/'.beeftv'/'runtime'/(identity+'.json')
         runtime = json.loads(runtime_path.read_text(encoding='utf-8'))
-        if runtime['version'] != version:
+        if runtime['version'] != version or runtime['baseUrl'] != f'http://127.0.0.1:{port}/api':
             raise RuntimeError('Wrong application version started')
-        return dict(replaced=True, backendReady=True, sqlitePreserved=True, version=version,
-                    boundary='released helper replacement and backend; no GUI or paid-generation acceptance')
+        return dict(replaced=True, backendReady=True, productRowsPreserved=True, completeFileTree=True, version=version,
+                    boundary='actual old desktop shutdown and helper replacement; backend and product rows; no canvas UI or paid-generation acceptance')
     finally:
-        if parent.poll() is None:
-            parent.terminate()
-            parent.wait(timeout=10)
         if process and process.poll() is None:
             process.terminate()
             process.wait(timeout=10)
-        stop_installed(install/'BeefTV.exe')
+        primary_error = sys.exc_info()[1]
+        try:
+            stop_installed(install/'BeefTV.exe')
+            parent.wait(timeout=10)
+        except Exception as cleanup_error:
+            if primary_error is not None:
+                primary_error.add_note('Process cleanup also failed: ' + str(cleanup_error))
+            else:
+                raise
 
 
 def main():
@@ -173,7 +213,7 @@ def main():
                 raise
             finally:
                 args.output.write_text(json.dumps(receipts, ensure_ascii=False, indent=2), encoding='utf-8')
-            print(f"PASS {fixture['version']} -> {args.version}: replacement, backend, SQLite", flush=True)
+            print(f"PASS {fixture['version']} -> {args.version}: full replacement, product rows, new backend and healthy rollback", flush=True)
 
 
 if __name__ == '__main__':
