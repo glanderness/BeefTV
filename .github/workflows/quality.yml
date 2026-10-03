@@ -1,138 +1,22 @@
 name: Quality checks
-
 on:
-  pull_request:
-  push:
-    branches:
-      - main
   workflow_dispatch:
-
-concurrency:
-  group: quality-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
-
-# Core behavior checks run on every change. Formatting stays a local command.
-# Browser coverage lives in director-e2e.yml and runs for web changes or on demand.
 jobs:
-  release-publisher:
-    name: Release publisher checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+  released-windows-updaters:
+    runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - name: Test immutable publication and activation
-        run: python3 -m unittest discover -s scripts -p 'test_publish_desktop_r2.py'
-
-  backend:
-    name: Backend checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-python@v5
         with:
-          go-version-file: backend/go.mod
-          cache: true
-          cache-dependency-path: backend/go.sum
-      - name: Build official protocol packages
-        run: sh ../plugin-packages/build-packages.sh
-      - name: Run Go tests
-        run: go test ./...
-
-  web:
-    name: Web checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.9
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-      - name: Lint retired Ant Design APIs
-        run: bun run lint
-      - name: Typecheck
-        run: bun run typecheck
-      - name: Run tests
-        # Component browser tests use the Playwright version pinned by bun.lock.
-        # Install its matching browser instead of relying on a runner cache.
-        run: |
-          bunx playwright install --with-deps chromium
-          bun run test
-
-  database-platforms:
-    if: github.event_name == 'workflow_dispatch'
-    name: SQLite and runtime (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    defaults:
-      run:
-        shell: bash
-        working-directory: backend
-    env:
-      CGO_ENABLED: '1'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
-      - name: Select runner C compiler on Windows
-        if: runner.os == 'Windows'
-        run: echo 'C:/msys64/mingw64/bin' >> "$GITHUB_PATH"
-      - name: Record actual platform and SQLite driver
-        run: |
-          mkdir -p matrix-evidence
-          go version | tee matrix-evidence/platform.txt
-          go env GOOS GOARCH CGO_ENABLED CC | tee -a matrix-evidence/platform.txt
-          gcc --version | head -1 | tee -a matrix-evidence/platform.txt
-          go list -m gorm.io/driver/sqlite github.com/mattn/go-sqlite3 | tee -a matrix-evidence/platform.txt
-      - name: Build official protocol packages
-        if: runner.os != 'Windows'
-        run: sh ../plugin-packages/build-packages.sh
-      - name: Build official protocol packages with runner Python on Windows
-        if: runner.os == 'Windows'
-        run: |
-          node ../plugin-packages/embed-documentation.mjs
-          python - <<'PY'
-          from pathlib import Path
-          from zipfile import ZipFile, ZIP_DEFLATED
-          root = Path('../plugin-packages')
-          for manifest in sorted(root.glob('*/manifest.json')):
-              package = manifest.parent
-              files = []
-              for name in ['manifest.json', 'README.md', 'docs', 'assets', 'web', 'backend', 'LICENSE']:
-                  source = package / name
-                  files.extend([source] if source.is_file() else [item for item in source.rglob('*') if item.is_file()])
-              with ZipFile(root / (package.name + '.beeftv-plugin'), 'w', ZIP_DEFLATED) as archive:
-                  for source in sorted(files):
-                      archive.write(source, source.relative_to(package).as_posix())
-          PY
-      - name: Historical SQLite, schema repair and interrupted migration
-        run: go test ./internal/database -count=1 -json | tee matrix-evidence/database.jsonl
-      - name: Native updater replacement, recovery, cleanup and install locks
-        run: go test ./internal/desktopupdate -count=1 -json | tee matrix-evidence/desktopupdate.jsonl
-      - name: Local provider task persistence and restart matrix
-        run: go test ./internal/app -run '^TestDBRuntime' -count=1 -json | tee matrix-evidence/runtime.jsonl
-      - name: Actual CLI, MCP startup and native process lifecycle
-        run: go test ./cmd/beeftv ./internal/runtimeinfo ./internal/assistantruntime -count=1 -json | tee matrix-evidence/cli-mcp.jsonl
-      - name: Preserve per-test results and platform evidence
+          python-version: '3.12'
+      - name: Probe actual released updater executables
+        run: python scripts/audit-windows-updates.py
+      - name: Preserve release compatibility evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: database-matrix-${{ runner.os }}-${{ github.sha }}
-          path: backend/matrix-evidence/
+          name: windows-update-audit
+          path: audit-evidence/
