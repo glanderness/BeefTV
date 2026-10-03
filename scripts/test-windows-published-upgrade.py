@@ -4,6 +4,7 @@ No product model calls. Uses disposable installs and SQLite data. An actual old
 EXE owns replacement; a healthy new backend and preserved data are required.
 """
 import argparse
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -50,7 +51,7 @@ def wait_until(predicate, seconds):
 def stop_installed(executable):
     # Scope process cleanup to this exact disposable install, never by image name.
     path = str(executable).replace("'", "''")
-    command = "$p=Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq '" + path + "' }; foreach($x in $p){ taskkill /PID $x.ProcessId /T /F | Out-Null }"
+    command = "$p=Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq '" + path + "' }; foreach($x in $p){ taskkill /PID $x.ProcessId /T /F | Out-Null; if(Get-Process -Id $x.ProcessId -ErrorAction SilentlyContinue){ Wait-Process -Id $x.ProcessId -Timeout 10 -ErrorAction Stop } }; exit 0"
     subprocess.run(['powershell', '-NoProfile', '-Command', command], check=True)
 
 
@@ -63,7 +64,7 @@ def exercise(source, candidate, version, directory, rollback=False):
         (staged/'BeefTV.exe').write_bytes(b'not a Windows executable')
     data.mkdir()
     db = data/'open_ai_canvas.db'
-    with sqlite3.connect(db) as connection:
+    with closing(sqlite3.connect(db)) as connection, connection:
         connection.execute('CREATE TABLE upgrade_audit (id INTEGER PRIMARY KEY, value TEXT NOT NULL)')
         connection.execute('INSERT INTO upgrade_audit VALUES (1, ?)', ('preserve-existing-data',))
     helper = directory/'BeefTV-update-helper.exe'
@@ -98,7 +99,7 @@ def exercise(source, candidate, version, directory, rollback=False):
                     raise RuntimeError('Rollback changed original file: ' + relative)
             if (install/'cli').exists() != (source/'cli').exists():
                 raise RuntimeError('Rollback did not preserve the original CLI presence')
-            with sqlite3.connect(db) as connection:
+            with closing(sqlite3.connect(db)) as connection:
                 if connection.execute('SELECT value FROM upgrade_audit WHERE id=1').fetchone() != ('preserve-existing-data',):
                     raise RuntimeError('Rollback changed existing data')
             return dict(rollback=True, oldInstallRestored=True, sqlitePreserved=True)
@@ -119,7 +120,7 @@ def exercise(source, candidate, version, directory, rollback=False):
             except (OSError, ValueError):
                 return False
         wait_until(ready, 45)
-        with sqlite3.connect(db) as connection:
+        with closing(sqlite3.connect(db)) as connection:
             if connection.execute('SELECT value FROM upgrade_audit WHERE id=1').fetchone() != ('preserve-existing-data',):
                 raise RuntimeError('Existing SQLite data changed')
         identity = hashlib.sha256(os.path.normpath(str(data)).lower().encode()).hexdigest()
@@ -151,7 +152,8 @@ def main():
     receipts = []
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='BeefTV-upgrade-') as temporary:
-        root = Path(temporary)
+        # Windows TEMP can contain an 8.3 alias; CIM reports full executable paths.
+        root = Path(temporary).resolve()
         candidate = root/'candidate'
         with zipfile.ZipFile(args.archive) as bundle:
             bundle.extractall(candidate)
