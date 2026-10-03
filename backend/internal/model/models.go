@@ -53,8 +53,11 @@ const (
 	ChannelScopeSystem ChannelScope = "system"
 	ChannelScopeUser   ChannelScope = "user"
 
-	ChannelInterfaceChatCompletion              ChannelInterfaceType = "chat-completion"
-	ChannelInterfaceOpenAIResponse              ChannelInterfaceType = "openai-response"
+	ChannelInterfaceChatCompletion ChannelInterfaceType = "chat-completion"
+	ChannelInterfaceOpenAIResponse ChannelInterfaceType = "openai-response"
+	// ChannelInterfaceChatGPTSubscription 复用 Responses 线协议，凭据来自
+	// ChatGPT 订阅的设备码 OAuth，而不是静态 API Key。
+	ChannelInterfaceChatGPTSubscription         ChannelInterfaceType = "chatgpt-subscription"
 	ChannelInterfaceClaudeAPI                   ChannelInterfaceType = "claude-api"
 	ChannelInterfaceOpenAIImage                 ChannelInterfaceType = "openai-image"
 	ChannelInterfaceGrokImage                   ChannelInterfaceType = "grok-image"

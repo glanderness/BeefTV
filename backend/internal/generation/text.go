@@ -725,6 +725,8 @@ func RunTextTask(ctx context.Context, input Input) (map[string]interface{}, erro
 		return RunChatCompletionsTextTask(ctx, input)
 	case "openai-response":
 		return RunResponsesTextTask(ctx, input)
+	case string(model.ChannelInterfaceChatGPTSubscription):
+		return RunChatGPTSubscriptionTextTask(ctx, input)
 	case string(model.ChannelInterfaceClaudeAPI):
 		return RunClaudeTextTask(ctx, input)
 	}
@@ -762,6 +764,31 @@ func RunResponsesTextTask(ctx context.Context, input Input) (map[string]interfac
 	ApplyTextThinking(body, input, "responses")
 	ApplyTextOutputLimit(body, input.MaxOutputTokens, "max_output_tokens")
 	result, err := RequestTextProvider(ctx, input.Config, "/responses", body, "responses", input.StreamText, input.OnTextDelta)
+	if err != nil {
+		return nil, err
+	}
+	return ProviderTextTaskResult(result), nil
+}
+
+// RunChatGPTSubscriptionTextTask 走 ChatGPT 订阅后端。该后端只接受流式 Responses
+// 请求，所以这里固定按流式发送，再按用户是否开启流式决定要不要推送增量。
+func RunChatGPTSubscriptionTextTask(ctx context.Context, input Input) (map[string]interface{}, error) {
+	responseInput, err := TextResponseInput(input)
+	if err != nil {
+		return nil, err
+	}
+	body := map[string]interface{}{
+		"model": input.Config.Model, "input": responseInput,
+		"stream": true, "store": false,
+		"include": []string{"reasoning.encrypted_content"},
+	}
+	if instructions := strings.TrimSpace(input.Config.SystemPrompt); instructions != "" {
+		body["instructions"] = instructions
+	}
+	ApplyTextThinking(body, input, "responses")
+	ApplyTextOutputLimit(body, input.MaxOutputTokens, "max_output_tokens")
+	// 上游强制流式；未开启流式时仍然请求事件流，只是不向外推送增量。
+	result, err := RequestTextProvider(ctx, input.Config, "/responses", body, "responses", true, input.OnTextDelta)
 	if err != nil {
 		return nil, err
 	}

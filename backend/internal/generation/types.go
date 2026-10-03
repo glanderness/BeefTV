@@ -74,15 +74,20 @@ type TextMessage struct {
 }
 
 type Config struct {
-	ChannelID                string                    `json:"channelId"`
-	ChannelModelKey          string                    `json:"channelModelKey,omitempty"`
-	VariantID                string                    `json:"variantId,omitempty"`
-	ProviderModelKey         string                    `json:"providerModelKey,omitempty"`
-	APIFormat                string                    `json:"apiFormat"`
-	InterfaceType            string                    `json:"interfaceType"`
-	BaseURL                  string                    `json:"baseUrl"`
-	APIKey                   string                    `json:"apiKey"`
-	SecretKey                string                    `json:"secretKey"`
+	ChannelID        string `json:"channelId"`
+	ChannelModelKey  string `json:"channelModelKey,omitempty"`
+	VariantID        string `json:"variantId,omitempty"`
+	ProviderModelKey string `json:"providerModelKey,omitempty"`
+	APIFormat        string `json:"apiFormat"`
+	InterfaceType    string `json:"interfaceType"`
+	BaseURL          string `json:"baseUrl"`
+	APIKey           string `json:"apiKey"`
+	SecretKey        string `json:"secretKey"`
+	// CredentialRef 指向服务端托管凭据（例如 ChatGPT 订阅）。它不是密钥本身：
+	// apiKey 为空时由执行期解析补全，且解析结果绝不回写任务载荷。
+	CredentialRef            string                    `json:"credentialRef,omitempty"`
+	ChatGPTAccountID         string                    `json:"-"`
+	ChatGPTFedRAMP           bool                      `json:"-"`
 	Headers                  []outbound.OutboundHeader `json:"headers"`
 	Model                    string                    `json:"model"`
 	Size                     string                    `json:"size"`

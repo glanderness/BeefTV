@@ -629,6 +629,15 @@ func ApplyProtocolAuth(req *http.Request, config Config, auth protocol.ManifestA
 		}
 		req.Header.Set(header, prefix+credential)
 		return nil
+	case "chatgpt-oauth":
+		// ChatGPT 订阅沿用 Codex 客户端的鉴权头：Bearer access_token 加账号隔离头。
+		// 账号 id 由执行期的凭据解析写入，不来自渠道自定义 header，避免明文落库。
+		if strings.TrimSpace(credential) == "" {
+			return errors.New("ChatGPT 订阅凭据缺失，请重新连接")
+		}
+		req.Header.Set("Authorization", "Bearer "+credential)
+		ApplyChatGPTSubscriptionHeaders(req, config)
+		return nil
 	case "header", "api-key", "apikey":
 		header := strings.TrimSpace(auth.Header)
 		if header == "" {
