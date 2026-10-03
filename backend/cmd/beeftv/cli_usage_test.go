@@ -228,7 +228,7 @@ func TestBaseURLComesFromRuntimeDiscovery(t *testing.T) {
 	}
 }
 
-// 运行时文件里的进程已经退出：视为过期，回落到默认地址，绝不拿这个端口去连别的进程。
+// 运行时文件里的进程已经退出：视为过期，不猜测任何默认端口。
 func TestStaleRuntimeFileIsIgnored(t *testing.T) {
 	dataDir := t.TempDir()
 	stale := `{"baseUrl":"http://127.0.0.1:59999/api","pid":987654321,"version":"v-old"}`
@@ -238,8 +238,16 @@ func TestStaleRuntimeFileIsIgnored(t *testing.T) {
 	t.Setenv("BEEFTV_BASE_URL", "")
 	t.Setenv("BEEFTV_DATA_DIR", dataDir)
 	base, _ := resolveBaseURL()
-	if base != defaultBaseURL {
+	if base != "" {
 		t.Fatalf("过期运行时文件应被忽略，得到 %q", base)
+	}
+	c, err := newClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.listOps(false)
+	if cliErr, ok := err.(*cliError); !ok || cliErr.reason != "runtime_not_found" {
+		t.Fatalf("expected actionable missing runtime error, got %v", err)
 	}
 }
 

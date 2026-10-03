@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
 	"time"
 
@@ -23,7 +24,7 @@ import (
 	"infinite-canvas/backend/internal/runtimeinfo"
 )
 
-const defaultBaseURL = "http://127.0.0.1:8080/api"
+const mcpStartupTimeout = 5 * time.Second
 
 // resolveBaseURL 决定连哪个工作区，并说明来源（诊断输出用，不含任何凭据）。
 //
@@ -37,7 +38,7 @@ func resolveBaseURL() (string, string) {
 	if info, found := runtimeinfo.Discover(""); found {
 		return info.BaseURL, "运行中的桌面工作区"
 	}
-	return defaultBaseURL, "默认地址"
+	return "", "未发现运行中的工作区"
 }
 
 // 退出码：机器可读的失败分类，stderr 输出诊断，stdout 只放业务结果。
@@ -92,6 +93,10 @@ type opDescriptor struct {
 func newClient() (*client, error) {
 	base, _ := resolveBaseURL()
 	parsedBase, parseErr := url.Parse(base)
+	if base == "" {
+		// Defer discovery errors until an operation so --help remains available offline.
+		return &client{}, nil
+	}
 	if parseErr != nil || (parsedBase.Scheme != "http" && parsedBase.Scheme != "https") {
 		return nil, &cliError{code: exitUsage, reason: "invalid_base_url", msg: "BEEFTV_BASE_URL 不是合法 URL"}
 	}
@@ -118,6 +123,9 @@ func newClient() (*client, error) {
 }
 
 func (c *client) do(ctx context.Context, method, path string, body any) (json.RawMessage, error) {
+	if c.baseURL == "" {
+		return nil, &cliError{code: exitTransportFailure, reason: "runtime_not_found", msg: "未发现运行中的 BeefTV 工作区。请先打开 BeefTV；若使用自定义目录，请检查 BEEFTV_DATA_DIR；独立服务请显式设置 BEEFTV_BASE_URL"}
+	}
 	var payload io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -210,7 +218,11 @@ func mapEnvelopeError(status int, reason, msg string, details map[string]any) er
 // 只做本地收紧：即使服务端因为任何原因返回了写操作，只读模式也绝不把它们交给
 // MCP 或调用方。查询参数不能用于放宽权限，所以客户端不再发送它。
 func (c *client) listOps(readOnly bool) ([]opDescriptor, error) {
-	raw, err := c.do(context.Background(), http.MethodGet, "/ops", nil)
+	return c.listOpsCtx(context.Background(), readOnly)
+}
+
+func (c *client) listOpsCtx(ctx context.Context, readOnly bool) ([]opDescriptor, error) {
+	raw, err := c.do(ctx, http.MethodGet, "/ops", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +264,7 @@ func main() {
 			payload = cliErr.machineError()
 		}
 		payload["exitCode"] = code
-		if wantsJSON(args) {
+		if wantsJSON(args) && !(len(args) > 0 && args[0] == "mcp") {
 			// --json 时失败也要机器可读：结构写 stdout，人话留 stderr。
 			if encoded, marshalErr := json.Marshal(payload); marshalErr == nil {
 				fmt.Println(string(encoded))
@@ -639,7 +651,15 @@ func runMCP(c *client, args []string) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return flagError(err)
 	}
-	ops, err := c.listOps(*readOnly)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	startupCtx, cancel := context.WithTimeout(ctx, mcpStartupTimeout)
+	ops, err := c.listOpsCtx(startupCtx, *readOnly)
+	timedOut := errors.Is(startupCtx.Err(), context.DeadlineExceeded)
+	cancel()
+	if timedOut {
+		return &cliError{code: exitTransportFailure, reason: "mcp_startup_timeout", msg: "连接 BeefTV 工作区超过 5 秒，请确认 BeefTV 已启动且工作区可以访问"}
+	}
 	if err != nil {
 		return err
 	}
@@ -684,7 +704,7 @@ func runMCP(c *client, args []string) error {
 	}
 	_, baseSource := resolveBaseURL()
 	fmt.Fprintf(os.Stderr, "beeftv mcp serve: %d 个工具，base=%s（%s），client=%s\n", len(ops), c.baseURL, baseSource, orNone(c.clientID))
-	return server.Run(context.Background(), &mcp.StdioTransport{})
+	return server.Run(ctx, &mcp.StdioTransport{})
 }
 
 func orNone(value string) string {

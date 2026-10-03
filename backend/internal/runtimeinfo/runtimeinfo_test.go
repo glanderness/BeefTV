@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -30,7 +31,7 @@ func TestWriteDiscoverRemove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stat.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && stat.Mode().Perm() != 0o600 {
 		t.Fatalf("运行时文件权限应为 0600，得到 %v", stat.Mode().Perm())
 	}
 	if err := Remove(dir); err != nil {
@@ -112,6 +113,31 @@ func TestDefaultDataDirHonorsOverrides(t *testing.T) {
 	}
 	if got != filepath.Join("tmp", "cli-data") {
 		t.Fatalf("BEEFTV_DATA_DIR 应优先，得到 %q", got)
+	}
+}
+
+func TestExplicitDataDirIgnoresHostAppData(t *testing.T) {
+	realDir := t.TempDir()
+	shadowDir := t.TempDir()
+	t.Setenv("APPDATA", shadowDir)
+	t.Setenv("XDG_CONFIG_HOME", shadowDir)
+	t.Setenv("CANVAS_DESKTOP_DATA_DIR", shadowDir)
+	t.Setenv("BEEFTV_DATA_DIR", realDir)
+	if err := Write(realDir, "http://127.0.0.1:53211/api", "real"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Write(shadowDir, "http://127.0.0.1:53212/api", "shadow"); err != nil {
+		t.Fatal(err)
+	}
+	info, ok := Discover("")
+	if !ok || info.Version != "real" {
+		t.Fatalf("explicit workspace must beat inherited host paths: %+v, found=%v", info, ok)
+	}
+	if err := os.Remove(Path(realDir)); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := Discover(""); ok {
+		t.Fatal("missing explicit runtime must not fall back to host workspace")
 	}
 }
 

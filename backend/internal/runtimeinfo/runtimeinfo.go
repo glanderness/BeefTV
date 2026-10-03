@@ -15,7 +15,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -126,26 +125,4 @@ func DefaultDataDir() (string, error) {
 		return "", fmt.Errorf("定位用户应用数据目录: %w", err)
 	}
 	return filepath.Join(root, "BeefTV"), nil
-}
-
-// ProcessAlive 判断 PID 是否还在。
-// Unix 上用 0 号信号探活：ESRCH 表示进程已退出，EPERM 表示进程存在但不属于当前用户。
-// Windows 上 os.FindProcess 本身就会在进程不存在时报错，信号不受支持时保守当作存活，
-// 之后的 HTTP 请求会以连接失败收尾，不会连到错误的工作区。
-func ProcessAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	err = process.Signal(syscall.Signal(0))
-	if err == nil {
-		return true
-	}
-	if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
-		return false
-	}
-	return true
 }
