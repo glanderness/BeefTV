@@ -66,10 +66,18 @@ describe("外部 Agent 接入 API", () => {
 });
 
 describe("接入内容按客户端类型选命令或配置", () => {
+    test("Claude Desktop 使用配置文件而非 Claude Code 命令", () => {
+        const block = agentClientSetupBlock({ kind: "claude-desktop", title: "T", json: '{"mcpServers":{"beeftv":{}}}' });
+        expect(block?.format).toBe("json");
+        expect(block?.instruction).toContain("保留已有服务");
+        expect(block?.instruction).toContain("完全退出");
+        expect(block?.instruction).not.toContain("终端运行");
+    });
     test("codex / claude 展示终端命令", () => {
         for (const kind of ["codex", "claude"] as const) {
             const block = agentClientSetupBlock({ kind, title: "T", command: "beeftv mcp add", json: '{"mcpServers":{}}' });
-            expect(block).toMatchObject({ text: "beeftv mcp add", format: "command", instruction: "粘贴到终端运行。" });
+            expect(block).toMatchObject({ text: "beeftv mcp add", format: "command" });
+            expect(block?.instruction).toContain("PowerShell");
         }
     });
 
@@ -86,7 +94,7 @@ describe("接入内容按客户端类型选命令或配置", () => {
 
     test("只给到另一种形式时按实际内容展示，不留空白", () => {
         expect(agentClientSetupBlock({ kind: "codex", title: "T", json: '{"mcpServers":{}}' })).toMatchObject({ format: "json" });
-        expect(agentClientSetupBlock({ kind: "cursor", title: "T", command: "beeftv mcp add" })).toMatchObject({ format: "command", instruction: "粘贴到终端运行。" });
+        expect(agentClientSetupBlock({ kind: "cursor", title: "T", command: "beeftv mcp add" })).toMatchObject({ format: "command" });
         expect(agentClientSetupBlock({ kind: "codex", title: "T" })).toBeNull();
         expect(agentClientSetupBlock(undefined)).toBeNull();
     });

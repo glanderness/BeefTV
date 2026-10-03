@@ -24,6 +24,8 @@ import (
 
 const fixtureEnv = "BEEFTV_ASSISTANT_RUNTIME_FIXTURE"
 
+var platformProcessFixtures = map[string]func() int{}
+
 func TestMain(m *testing.M) {
 	if mode := strings.TrimSpace(os.Getenv(fixtureEnv)); mode != "" {
 		os.Exit(runProcessFixture(mode))
@@ -47,6 +49,9 @@ func runProcessFixture(mode string) int {
 	case "supervisor":
 		return runSupervisorFixture()
 	default:
+		if run := platformProcessFixtures[mode]; run != nil {
+			return run()
+		}
 		fmt.Fprintf(os.Stderr, "unknown fixture %q\n", mode)
 		return 1
 	}
@@ -62,6 +67,7 @@ func runHTTPFixture() int {
 		buf := make([]byte, 1)
 		for {
 			if _, err := os.Stdin.Read(buf); err != nil {
+				fmt.Fprintf(os.Stderr, "fixture lifetime stdin ended: %v\n", err)
 				os.Exit(0)
 			}
 		}
@@ -102,6 +108,7 @@ func runHTTPFixture() int {
 		fmt.Fprintln(os.Stderr, "missing BEEFTV_AGENT_PORT")
 		return 2
 	}
+	fmt.Fprintln(os.Stderr, "fixture listening on allocated loopback port")
 	if err := http.ListenAndServe("127.0.0.1:"+port, mux); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1

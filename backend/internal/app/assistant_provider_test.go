@@ -1,10 +1,40 @@
 package app
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestResolveAssistantProviderFromModelsOnlyLocalChannel(t *testing.T) {
+	for _, selection := range []string{"deepseek-v4-flash:free", "newapi-local::deepseek-v4-flash:free"} {
+		t.Run(selection, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{
+				"schemaVersion": 1, "revision": 1,
+				"config": map[string]any{
+					"textModel": selection,
+					"channels": []any{map[string]any{
+						"id": "newapi-local", "enabled": true, "apiFormat": "openai",
+						"baseUrl": "http://127.0.0.1:3000/v1", "apiKey": "synthetic-local-key",
+						"models": []string{"deepseek-v4-flash:free"},
+					}},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			service := writeAssistantConfig(t, string(body))
+			provider, err := service.ResolveAssistantProvider()
+			if err != nil {
+				t.Fatalf("local models-only text selection must resolve without database rows: %v", err)
+			}
+			if provider.ChannelID != "newapi-local" || provider.Model != "deepseek-v4-flash:free" || provider.Protocol != "chat-completion" || provider.BaseURL != "http://127.0.0.1:3000/v1" || provider.APIKey != "synthetic-local-key" {
+				t.Fatal("resolved provider does not match the persisted local channel")
+			}
+		})
+	}
+}
 
 // 用户在设置里选的是「渠道内的某个模型」：凭据必须按那个渠道解析。
 // 顶层 apiKey 在托管形态下永远是空串，只读顶层就会把可用的助手判成不可用（P1 缺陷）。

@@ -13,6 +13,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import { appQueryClient } from "@/lib/query-client";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { getActiveUserScope } from "@/lib/user-scope";
+import { confirmDesktopUpdateStartup } from "@/services/desktop-update-startup";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
     const config = useConfigStore((state) => state.config);
@@ -29,6 +30,20 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const setPluginStates = usePluginStore((state) => state.setPluginStates);
     const pluginStoreHydrated = usePluginStore((state) => state.hydrated);
     const localMediaCleanupScope = useRef("");
+    const updateStartupConfirmed = useRef(false);
+
+    useEffect(() => {
+        if (!localMode) return;
+        const confirm = () => {
+            if (updateStartupConfirmed.current || !useAssetStore.persist.hasHydrated() || !useCanvasStore.persist.hasHydrated()) return;
+            updateStartupConfirmed.current = true;
+            void confirmDesktopUpdateStartup().catch((error) => console.warn("升级文件清理将在下次启动时重试", error));
+        };
+        const stopAssets = useAssetStore.persist.onFinishHydration(confirm);
+        const stopCanvases = useCanvasStore.persist.onFinishHydration(confirm);
+        confirm();
+        return () => { stopAssets(); stopCanvases(); };
+    }, [localMode]);
 
     useEffect(() => () => {
         usePluginStore.getState().setRuntimeStatuses({});

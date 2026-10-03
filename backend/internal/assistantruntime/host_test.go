@@ -151,6 +151,9 @@ func TestAgentHostReapsExitAndRestartsWithSpacedPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	helper := filepath.Join(dir, "host-helper")
+	if runtime.GOOS == "windows" {
+		helper += ".exe"
+	}
 	src, err := os.ReadFile(os.Args[0])
 	if err != nil {
 		t.Fatal(err)

@@ -82,6 +82,27 @@ test("picker keyboard selection persists, respects busy and fits both themes at 
     await page.close();
 }, 30000);
 
+test("models-only local default is selectable and survives reload", async () => {
+    saved = { ...defaultConfig, assistantModel: "", textModel: "newapi-local::deepseek-v4-flash:free", channels: [createModelChannel({ id: "newapi-local", models: ["deepseek-v4-flash:free"], apiFormat: "openai" })] };
+    const page = await browser.newPage({ viewport: { width: 390, height: 700 } });
+    await page.goto(server.url.toString());
+    const picker = page.getByRole("combobox", { name: "助手模型" });
+    for (let i = 0; i < 2; i++) {
+        await picker.click();
+        expect(await picker.isDisabled()).toBe(false);
+        const option = page.locator('.ant-select-item-option-content');
+        expect(await option.allTextContents()).toEqual(["deepseek-v4-flash:free"]);
+        await option.click();
+        await page.waitForFunction(() => !document.querySelector('.ant-select-dropdown:not(.ant-select-dropdown-hidden)'));
+        await page.getByRole("button", { name: "切换主题" }).click();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        await page.reload();
+    }
+    expect(saved.assistantModel).toBe("");
+    expect(saved.textModel).toBe("newapi-local::deepseek-v4-flash:free");
+    await page.close();
+}, 30000);
+
 test("next turn waits for saved selection; failed save cannot dispatch", async () => {
     const page = await browser.newPage(); await page.goto(server.url.toString());
     holdSave = true;

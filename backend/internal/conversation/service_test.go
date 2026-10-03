@@ -50,6 +50,10 @@ func openConversationFixture(t *testing.T) (*gorm.DB, string, *conversation.Serv
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Match the desktop's shared SQLite pool before racing service writers.
+	if err := database.ConfigurePool(db); err != nil {
+		t.Fatal(err)
+	}
 	sqlDB, err := db.DB()
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +70,9 @@ func reopenConversationFixture(t *testing.T, path string) (*gorm.DB, *conversati
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(path+"?_busy_timeout=5000&_journal_mode=WAL"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.ConfigurePool(db); err != nil {
 		t.Fatal(err)
 	}
 	sqlDB, err := db.DB()

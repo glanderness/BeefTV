@@ -58,6 +58,9 @@ func TestPackageDarwinLayoutAndModes(t *testing.T) {
 	}
 
 	names := zipNames(t, out)
+	if !names["BeefTV.app/Contents/MacOS/cli/beeftv"] {
+		t.Fatal("missing bundled CLI")
+	}
 	if !names["BeefTV.app/Contents/MacOS/BeefTV"] {
 		t.Fatalf("missing executable: %v", names)
 	}
@@ -134,6 +137,9 @@ func TestPackageWindowsLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	names := zipNames(t, out)
+	if !names["cli/beeftv.exe"] {
+		t.Fatal("missing bundled CLI")
+	}
 	if !names["BeefTV.exe"] || !names["plugin-packages/core.beeftv-plugin"] || !names["agent-host/runtime/node.exe"] || !names["agent-host/node_modules/@earendil-works/pi-coding-agent/package.json"] {
 		t.Fatalf("windows zip layout %v", names)
 	}
@@ -196,6 +202,7 @@ func writeFakeDarwinApp(t *testing.T, app string) string {
 		t.Fatal(err)
 	}
 	writeFakeAgentHost(t, filepath.Join(app, "Contents", "Resources", "agent-host"), "runtime/bin/node")
+	writeFakeCLI(t, filepath.Join(macOS, "cli", "beeftv"))
 	return app
 }
 
@@ -211,7 +218,66 @@ func writeFakeWindowsBin(t *testing.T, dir string) string {
 		t.Fatal(err)
 	}
 	writeFakeAgentHost(t, filepath.Join(dir, "agent-host"), "runtime/node.exe")
+	writeFakeCLI(t, filepath.Join(dir, "cli", "beeftv.exe"))
 	return dir
+}
+
+func writeFakeCLI(t *testing.T, file string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("cli"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPackageRejectsInvalidCLI(t *testing.T) {
+	for _, platform := range []string{platformWindowsAMD64, platformDarwinARM64} {
+		for _, defect := range []string{"missing", "empty", "directory", "not-executable"} {
+			t.Run(platform+"/"+defect, func(t *testing.T) {
+				if platform == platformDarwinARM64 && runtime.GOOS == "windows" {
+					t.Skip("requires Unix modes")
+				}
+				if defect == "not-executable" && platform == platformWindowsAMD64 {
+					t.Skip("Windows executable mode is not significant")
+				}
+				root := t.TempDir()
+				var cli string
+				if platform == platformWindowsAMD64 {
+					writeFakeWindowsBin(t, root)
+					cli = filepath.Join(root, "cli", "beeftv.exe")
+				} else {
+					root = writeFakeDarwinApp(t, filepath.Join(root, "BeefTV.app"))
+					cli = filepath.Join(root, "Contents", "MacOS", "cli", "beeftv")
+				}
+				if err := os.Remove(cli); err != nil {
+					t.Fatal(err)
+				}
+				switch defect {
+				case "empty":
+					if err := os.WriteFile(cli, nil, 0o755); err != nil {
+						t.Fatal(err)
+					}
+				case "directory":
+					if err := os.Mkdir(cli, 0o755); err != nil {
+						t.Fatal(err)
+					}
+				case "not-executable":
+					if err := os.WriteFile(cli, []byte("cli"), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				out := filepath.Join(t.TempDir(), "out.zip")
+				if err := packageBundle(platform, root, out); err == nil {
+					t.Fatal("invalid CLI accepted")
+				}
+				if _, err := os.Stat(out); !os.IsNotExist(err) {
+					t.Fatalf("invalid package was published: %v", err)
+				}
+			})
+		}
+	}
 }
 
 func writeFakeAgentHost(t *testing.T, root, node string) {

@@ -24,6 +24,10 @@ func main() {
 		}
 		return
 	}
+	if err := validateDesktopArgs(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	dataDir, err := defaultDataDir()
 	if err != nil {
 		log.Fatal(err)

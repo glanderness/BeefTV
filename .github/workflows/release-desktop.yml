@@ -281,6 +281,19 @@ jobs:
             --input "$input" \
             --output "../dist/BeefTV-${VERSION}-${PLATFORM}.zip"
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify MCP from final packaged CLI
+        shell: bash
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          python scripts/smoke-packaged-cli_test.py
+          python scripts/smoke-packaged-cli.py --archive "dist/BeefTV-${VERSION}-${PLATFORM}.zip" --platform "$PLATFORM"
+
       - name: Store platform zip for publication
         uses: actions/upload-artifact@v4
         with:

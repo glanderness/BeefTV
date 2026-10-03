@@ -9,6 +9,19 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.2
+
+- Restore the bundled Windows MCP command-line tool and prevent MCP connections from accidentally opening another desktop window.
+- Add separate Claude Desktop setup instructions and stop offering connections when installation files are incomplete.
+- Keep Windows runtime discovery outside AppData so packaged MCP clients cannot reuse an old virtualized runtime file.
+- Start the Windows assistant in the background without opening a Node console window.
+- Explain blocked model-service addresses and DNS failures with actionable connection guidance.
+
+- Automatically remove completed upgrade folders after the local workspace starts successfully, while preserving failed upgrades for recovery. Windows also removes its released lock file; macOS retains the empty lock for compatibility with older update helpers.
+
+- Fix the canvas assistant being unavailable when following a default text model from a custom local channel.
+- Keep explicit model capabilities, protocol restrictions, and channel credentials in effect when resolving assistant connections.
+
 ## v1.7.1
 
 - Choose the canvas assistant model directly beside the message input.

@@ -4,8 +4,53 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
+
+func TestMain(m *testing.M) {
+	if runtime.GOOS != "windows" {
+		os.Exit(m.Run())
+	}
+	home, err := os.MkdirTemp("", "beeftv-runtime-home-")
+	if err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("USERPROFILE", home); err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	os.RemoveAll(home)
+	os.Exit(code)
+}
+
+func testPath(t *testing.T, dataDir string) string {
+	t.Helper()
+	path, err := Path(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func writeTestInfo(t *testing.T, dataDir string, info Info) {
+	t.Helper()
+	_, hash, err := descriptorLocation(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info.DataDirHash = hash
+	encoded, err := json.Marshal(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(testPath(t, dataDir), encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestWriteDiscoverRemove(t *testing.T) {
 	dir := t.TempDir()
@@ -26,11 +71,11 @@ func TestWriteDiscoverRemove(t *testing.T) {
 		t.Fatalf("PID 应为写入进程，得到 %d", info.PID)
 	}
 	// 只给本机用户读：里面是当前工作区的入口地址。
-	stat, err := os.Stat(Path(dir))
+	stat, err := os.Stat(testPath(t, dir))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stat.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && stat.Mode().Perm() != 0o600 {
 		t.Fatalf("运行时文件权限应为 0600，得到 %v", stat.Mode().Perm())
 	}
 	if err := Remove(dir); err != nil {
@@ -49,13 +94,7 @@ func TestWriteDiscoverRemove(t *testing.T) {
 func TestDiscoverIgnoresDeadProcess(t *testing.T) {
 	dir := t.TempDir()
 	stale := Info{BaseURL: "http://127.0.0.1:53211/api", PID: deadPID(t), Version: "v1.0.0"}
-	encoded, err := json.Marshal(stale)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(Path(dir), encoded, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeTestInfo(t, dir, stale)
 	if _, found := Discover(dir); found {
 		t.Fatal("进程已退出的运行时文件应被忽略")
 	}
@@ -65,30 +104,30 @@ func TestDiscoverIgnoresDeadProcess(t *testing.T) {
 func TestRemoveLeavesAnotherInstanceAlone(t *testing.T) {
 	dir := t.TempDir()
 	other := Info{BaseURL: "http://127.0.0.1:53212/api", PID: os.Getpid() + 1}
-	encoded, _ := json.Marshal(other)
-	if err := os.WriteFile(Path(dir), encoded, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeTestInfo(t, dir, other)
 	if err := Remove(dir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(Path(dir)); err != nil {
+	if _, err := os.Stat(testPath(t, dir)); err != nil {
 		t.Fatal("另一个实例的运行时文件被删掉了")
 	}
 }
 
 func TestDiscoverIgnoresGarbageAndEmptyBaseURL(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(Path(dir), []byte("not json"), 0o600); err != nil {
+	if err := os.WriteFile(testPath(t, dir), []byte("not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, found := Discover(dir); found {
 		t.Fatal("损坏的运行时文件应被忽略")
 	}
-	encoded, _ := json.Marshal(Info{PID: os.Getpid()})
-	if err := os.WriteFile(Path(dir), encoded, 0o600); err != nil {
-		t.Fatal(err)
+	if err := Remove(dir); err == nil {
+		t.Fatal("损坏文件不能证明属于本进程，不应删除")
 	}
+	if _, err := os.Stat(testPath(t, dir)); err != nil {
+		t.Fatal("损坏文件被误删")
+	}
+	writeTestInfo(t, dir, Info{PID: os.Getpid()})
 	if _, found := Discover(dir); found {
 		t.Fatal("没有地址的运行时文件应被忽略")
 	}
@@ -112,6 +151,31 @@ func TestDefaultDataDirHonorsOverrides(t *testing.T) {
 	}
 	if got != filepath.Join("tmp", "cli-data") {
 		t.Fatalf("BEEFTV_DATA_DIR 应优先，得到 %q", got)
+	}
+}
+
+func TestExplicitDataDirIgnoresHostAppData(t *testing.T) {
+	realDir := t.TempDir()
+	shadowDir := t.TempDir()
+	t.Setenv("APPDATA", shadowDir)
+	t.Setenv("XDG_CONFIG_HOME", shadowDir)
+	t.Setenv("CANVAS_DESKTOP_DATA_DIR", shadowDir)
+	t.Setenv("BEEFTV_DATA_DIR", realDir)
+	if err := Write(realDir, "http://127.0.0.1:53211/api", "real"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Write(shadowDir, "http://127.0.0.1:53212/api", "shadow"); err != nil {
+		t.Fatal(err)
+	}
+	info, ok := Discover("")
+	if !ok || info.Version != "real" {
+		t.Fatalf("explicit workspace must beat inherited host paths: %+v, found=%v", info, ok)
+	}
+	if err := os.Remove(testPath(t, realDir)); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := Discover(""); ok {
+		t.Fatal("missing explicit runtime must not fall back to host workspace")
 	}
 }
 

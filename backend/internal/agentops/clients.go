@@ -25,10 +25,11 @@ const (
 type ClientKind string
 
 const (
-	ClientKindCodex  ClientKind = "codex"
-	ClientKindClaude ClientKind = "claude"
-	ClientKindCursor ClientKind = "cursor"
-	ClientKindOther  ClientKind = "other"
+	ClientKindCodex         ClientKind = "codex"
+	ClientKindClaude        ClientKind = "claude"
+	ClientKindClaudeDesktop ClientKind = "claude-desktop"
+	ClientKindCursor        ClientKind = "cursor"
+	ClientKindOther         ClientKind = "other"
 )
 
 // NormalizeClientKind 把未知或历史空值统一收敛成 other：老的登记文件没有 kind 字段。
@@ -38,6 +39,8 @@ func NormalizeClientKind(kind string) ClientKind {
 		return ClientKindCodex
 	case ClientKindClaude:
 		return ClientKindClaude
+	case ClientKindClaudeDesktop:
+		return ClientKindClaudeDesktop
 	case ClientKindCursor:
 		return ClientKindCursor
 	default:

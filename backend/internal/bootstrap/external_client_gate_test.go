@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -20,6 +23,27 @@ type desktopHarness struct {
 
 func newDesktopHarness(t *testing.T) *desktopHarness {
 	t.Helper()
+	// The production route requires the packaged CLI before issuing credentials.
+	// This fixture is beside Go's disposable test executable, never an installed app.
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "beeftv"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	cliDir := filepath.Join(filepath.Dir(executable), "cli")
+	cliPath := filepath.Join(cliDir, name)
+	if _, err := os.Stat(cliPath); os.IsNotExist(err) {
+		if err := os.MkdirAll(cliDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(cliPath, []byte("test CLI fixture"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Remove(cliPath); _ = os.Remove(cliDir) })
+	}
 	dir := t.TempDir()
 	rt, err := Open(context.Background(), Config{Profile: ProfileDesktop, DataDir: dir, ListenAddr: "127.0.0.1:0", AutoMigrate: true})
 	if err != nil {
@@ -279,6 +303,27 @@ func TestAgentClientIssueUseAndRevoke(t *testing.T) {
 }
 
 // 读写模式的接入命令不带 --read-only，cursor/other 给的是 JSON 配置。
+func TestAgentClientMissingCLIRejectsBeforeIssuingCredentials(t *testing.T) {
+	harness := newDesktopHarness(t)
+	listing := harness.desktopUI("GET", "/agent-clients", "")
+	data, _ := decodeEnvelope(t, listing)
+	cli := data["cli"].(map[string]any)
+	cliPath := cli["path"].(string)
+	if err := os.Remove(cliPath); err != nil {
+		t.Fatal(err)
+	}
+	response := harness.desktopUI("POST", "/agent-clients", `{"kind":"claude-desktop","mode":"read-only"}`)
+	if _, reason := decodeEnvelope(t, response); response.Code != http.StatusPreconditionFailed || reason != "cli_unavailable" {
+		t.Fatalf("missing CLI must fail closed: %d %s", response.Code, response.Body.String())
+	}
+	listing = harness.desktopUI("GET", "/agent-clients", "")
+	data, _ = decodeEnvelope(t, listing)
+	cli = data["cli"].(map[string]any)
+	if cli["available"] != false || cli["installCommand"] != "" || len(data["clients"].([]any)) != 0 {
+		t.Fatalf("missing CLI must not issue credentials or a PATH fallback: %s", listing.Body.String())
+	}
+}
+
 func TestAgentClientSetupShapes(t *testing.T) {
 	harness := newDesktopHarness(t)
 	for _, item := range []struct {
@@ -288,6 +333,7 @@ func TestAgentClientSetupShapes(t *testing.T) {
 		wantInner string
 	}{
 		{"claude", "read-write", "command", "claude mcp add"},
+		{"claude-desktop", "read-only", "json", "mcpServers"},
 		{"cursor", "read-write", "json", "mcpServers"},
 		{"other", "read-only", "json", "mcpServers"},
 	} {
@@ -300,6 +346,24 @@ func TestAgentClientSetupShapes(t *testing.T) {
 		value, _ := setup[item.wantKey].(string)
 		if !strings.Contains(value, item.wantInner) {
 			t.Fatalf("%s 的 setup.%s 不可用：%q", item.kind, item.wantKey, value)
+		}
+		if item.wantKey == "json" {
+			var config struct {
+				Servers map[string]struct {
+					Command string            `json:"command"`
+					Env     map[string]string `json:"env"`
+				} `json:"mcpServers"`
+			}
+			if err := json.Unmarshal([]byte(value), &config); err != nil {
+				t.Fatal(err)
+			}
+			entry := config.Servers["beeftv"]
+			if !filepath.IsAbs(entry.Command) || filepath.Base(filepath.Dir(entry.Command)) != "cli" {
+				t.Fatalf("unsafe CLI command: %q", entry.Command)
+			}
+			if entry.Env["BEEFTV_DATA_DIR"] != harness.dataDir {
+				t.Fatalf("wrong workspace directory: %q", entry.Env["BEEFTV_DATA_DIR"])
+			}
 		}
 		if title, _ := setup["title"].(string); title == "" {
 			t.Fatalf("%s 的 setup 缺少标题", item.kind)

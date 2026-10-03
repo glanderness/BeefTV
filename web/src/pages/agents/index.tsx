@@ -46,7 +46,7 @@ export default function AgentsPage() {
 
     return (
         <WorkspacePage>
-            <PageHeader title="外部 Agent" description="让 Codex、Claude Code、Cursor 直接读取和修改你的 BeefTV 画布。" />
+            <PageHeader title="外部 Agent" description="连接外部 AI 工具，读取和修改你的画布。" />
 
             {unsupported ? (
                 <EmptyState icon={Plug} title="当前版本还不支持" description="更新到新版本后就能在这里连接 Codex、Claude Code 和 Cursor。" />
@@ -61,10 +61,11 @@ export default function AgentsPage() {
                                         <p className="truncate text-[13px] leading-5 font-semibold">{agentClientKindLabel(kind)}</p>
                                         <p className="mt-1.5 text-xs leading-5 text-foreground/55">{agentClientKindSummary(kind)}</p>
                                     </div>
-                                    <Button className="mt-auto self-start" size="small" icon={<Plug className="size-3.5" />} onClick={() => setConnecting(kind)}>连接</Button>
+                                    <Button className="mt-auto self-start" size="small" icon={<Plug className="size-3.5" />} disabled={!cli?.available} onClick={() => setConnecting(kind)}>连接</Button>
                                 </div>
                             ))}
                         </div>
+                        {cli && !cli.available ? <p role="alert" className="mt-3 text-xs leading-5 text-foreground/60">安装文件不完整，无法连接外部工具。请重新下载并完整解压 BeefTV。</p> : null}
                     </section>
 
                     <section aria-labelledby="agent-connected-title">

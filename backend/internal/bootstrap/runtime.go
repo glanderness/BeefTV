@@ -305,7 +305,7 @@ func (r *Runtime) Start() error {
 	// 关闭时由 Runtime.Close 收尾，保证「应用启动链」而不是手工点按钮。
 	if r.cfg.Profile == ProfileDesktop {
 		opsURL := "http://" + r.listener.Addr().String() + "/api"
-		// 运行时发现：端口是动态的，外部客户端靠数据目录里的 runtime.json 找到当前地址，
+		// 运行时发现：端口是动态的，外部客户端靠工作区对应的运行时描述文件找到当前地址，
 		// 而不是靠猜端口或拿到桌面启动令牌。写失败不影响应用启动。
 		if err := runtimeinfo.Write(r.cfg.DataDir, opsURL, buildinfo.Current().Version); err != nil {
 			log.Printf("未能写入运行时地址（外部 Agent 需手动指定 BEEFTV_BASE_URL）：%v", err)

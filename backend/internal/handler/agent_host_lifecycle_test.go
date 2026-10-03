@@ -79,6 +79,47 @@ func TestHostConfigResponseOmitsProviderSecret(t *testing.T) {
 	}
 }
 
+func TestHostConfigResolvesPersistedModelsOnlyDefault(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, key := range []string{"BEEFTV_AGENT_API_KEY", "BEEFTV_AGENT_BASE_URL", "BEEFTV_AGENT_MODEL", "BEEFTV_AGENT_PROTOCOL"} {
+		t.Setenv(key, "")
+	}
+	dataDir := t.TempDir()
+	svc := app.NewLocal(nil, dataDir)
+	if err := svc.SaveLocalModelConfig([]byte(`{"textModel":"newapi-local::deepseek-v4-flash:free","channels":[{"id":"newapi-local","enabled":true,"apiFormat":"openai","baseUrl":"http://127.0.0.1:3000/v1","apiKey":"synthetic-provider-secret","models":["deepseek-v4-flash:free"]}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := agentops.EnsureOwnerToken(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := assistantruntime.New(assistantruntime.OptionsFromService(svc))
+	router := gin.New()
+	RegisterAgentHostLifecycleRoutes(router.Group("/api"), svc, host)
+	response := lifecycleRequest(router, http.MethodGet, "/api/assistant/host/config", owner, "")
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "synthetic-provider-secret") {
+		t.Fatal("provider projection failed or exposed its key")
+	}
+	var envelope struct {
+		Data struct {
+			Provider struct {
+				Model     string `json:"model"`
+				ChannelID string `json:"channelId"`
+				Protocol  string `json:"protocol"`
+				HasKey    bool   `json:"hasKey"`
+				Reason    string `json:"reason"`
+			} `json:"provider"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	p := envelope.Data.Provider
+	if p.Model != "deepseek-v4-flash:free" || p.ChannelID != "newapi-local" || p.Protocol != "chat-completion" || !p.HasKey || p.Reason != "" {
+		t.Fatalf("incorrect persisted provider projection: %+v", p)
+	}
+}
+
 func TestHostStartWithoutCommandReturnsMissingReason(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	dataDir := t.TempDir()
