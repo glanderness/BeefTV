@@ -176,7 +176,7 @@ func cliInstallCommand(cliPath string) string {
 }
 
 // clientSetup 生成可直接粘贴的接入配置。命令里带的是客户端自己的凭据，
-// 不含桌面启动令牌；地址由 CLI 在运行时从数据目录里的 runtime.json 发现。
+// 不含桌面启动令牌；CLI 按工作区路径通过共享运行实例发现逻辑读取地址。
 func clientSetup(kind agentops.ClientKind, cliPath, dataDir string, reg agentops.ClientRegistration, token string) gin.H {
 	serveArgs := []string{"mcp", "serve"}
 	if reg.Mode == agentops.ClientReadOnly {

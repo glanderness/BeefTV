@@ -13,6 +13,7 @@ All notable public changes to BeefTV are documented in this file.
 
 - Restore the bundled Windows MCP command-line tool and prevent MCP connections from accidentally opening another desktop window.
 - Add separate Claude Desktop setup instructions and stop offering connections when installation files are incomplete.
+- Keep Windows runtime discovery outside AppData so packaged MCP clients cannot reuse an old virtualized runtime file.
 - Start the Windows assistant in the background without opening a Node console window.
 - Explain blocked model-service addresses and DNS failures with actionable connection guidance.
 
