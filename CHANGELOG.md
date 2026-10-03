@@ -11,7 +11,7 @@ All notable public changes to BeefTV are documented in this file.
 
 ## v1.7.2
 
-- Automatically remove completed upgrade folders and lock files after the local workspace starts successfully, while preserving failed upgrades for recovery.
+- Automatically remove completed upgrade folders after the local workspace starts successfully, while preserving failed upgrades for recovery. Windows also removes its released lock file; macOS retains the empty lock for compatibility with older update helpers.
 
 - Fix the canvas assistant being unavailable when following a default text model from a custom local channel.
 - Keep explicit model capabilities, protocol restrictions, and channel credentials in effect when resolving assistant connections.

@@ -47,7 +47,7 @@ func writeCleanupJSON(t *testing.T, path string, value any) {
 	}
 }
 
-func TestStartupCleansCompletedUpdateAndLegacyLock(t *testing.T) {
+func TestStartupCleansCompletedUpdate(t *testing.T) {
 	target, work, _, _ := completedUpdateFixture(t)
 	lock := filepath.Join(filepath.Dir(target.Path), ".BeefTV.update.lock")
 	if err := os.WriteFile(lock, nil, 0o600); err != nil {
@@ -63,7 +63,7 @@ func TestStartupCleansCompletedUpdateAndLegacyLock(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if pathExists(work) || pathExists(lock) {
+	if pathExists(work) || (runtime.GOOS == "windows" && pathExists(lock)) {
 		t.Fatal("successful upgrade left installation debris")
 	}
 	if data, err := os.ReadFile(marker); err != nil || string(data) != "user-data" {
@@ -145,7 +145,7 @@ func TestStartupWaitsForInstallingHelper(t *testing.T) {
 	}
 }
 
-func TestInstallLockConcurrentRemoval(t *testing.T) {
+func TestInstallLockConcurrentRelease(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".BeefTV.update.lock")
 	var active, overlaps, acquired atomic.Int32
 	var wg sync.WaitGroup
@@ -167,7 +167,7 @@ func TestInstallLockConcurrentRemoval(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	if acquired.Load() == 0 || overlaps.Load() != 0 || pathExists(path) {
+	if acquired.Load() == 0 || overlaps.Load() != 0 || (runtime.GOOS == "windows" && pathExists(path)) {
 		t.Fatalf("acquired=%d overlaps=%d lock remains=%v", acquired.Load(), overlaps.Load(), pathExists(path))
 	}
 }

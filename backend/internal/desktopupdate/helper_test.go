@@ -136,7 +136,7 @@ func TestSpawnedHelperReplacesInstall(t *testing.T) {
 	if err := cleanupCompletedUpdates(Target{Path: req.TargetPath, Platform: req.Platform}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if pathExists(work) || pathExists(filepath.Join(oldDir, ".BeefTV.update.lock")) {
+	if pathExists(work) || (runtime.GOOS == "windows" && pathExists(filepath.Join(oldDir, ".BeefTV.update.lock"))) {
 		t.Fatal("confirmed startup retained update files")
 	}
 }
