@@ -17,6 +17,31 @@ permissions:
 # Core behavior checks run on every change. Formatting stays a local command.
 # Browser coverage lives in director-e2e.yml and runs for web changes or on demand.
 jobs:
+  released-windows-upgrades:
+    if: github.event_name == 'workflow_dispatch'
+    name: Published Windows upgrade and rollback
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download known final package
+        shell: pwsh
+        run: |
+          curl.exe -fLsS --retry 2 https://github.com/glanderness/BeefTV/releases/download/v1.7.2/BeefTV-v1.7.2-windows-amd64.zip -o candidate.zip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ((Get-FileHash candidate.zip -Algorithm SHA256).Hash.ToLower() -ne 'bb2cb4e152c7b2eb1d54adb7553c69d59aef755b242d2cbf0c14e7472a8b4f65') { throw 'Candidate hash mismatch' }
+      - name: Real released helpers, backend startup, SQLite and rollback
+        run: python scripts/test-windows-published-upgrade.py --archive candidate.zip --version v1.7.2 --output upgrade-evidence/results.json
+      - name: Preserve acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: released-windows-upgrade-evidence
+          path: upgrade-evidence/
+
   release-publisher:
     name: Release publisher checks
     runs-on: ubuntu-latest
