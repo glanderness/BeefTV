@@ -1,0 +1,89 @@
+---
+title: ChatGPT 订阅接入
+description: 用设备码 OAuth 把 ChatGPT Plus/Pro 订阅接入 BeefTV 文本生成，包括凭据存储、协议边界与失败恢复
+---
+
+# ChatGPT 订阅接入
+
+BeefTV 支持用 ChatGPT 订阅（Plus/Pro 等）作为文本生成来源。它和「填写 API Key」不是同一件事：订阅没有官方 API，宿主复刻的是 OpenAI Codex CLI 使用的设备码 OAuth 与 ChatGPT 后端接口。
+
+> 使用前必须确认：这条链路依赖未公开端点，随时可能被上游调整；订阅条款是否允许第三方客户端使用需要自行核对。失败时请回退到官方 API Key 渠道。
+
+## 为什么不复用 API Key 渠道
+
+ChatGPT 订阅不会签发长期 API Key。可用的凭据是一次 OAuth 登录得到的三件套：
+
+- `access_token`：调用模型接口的 Bearer 令牌，有效期通常在一小时量级；
+- `refresh_token`：用于续期，长期有效；
+- `account_id`：从 `id_token` 的 JWT 声明解出的账号隔离标识。
+
+因此订阅渠道在渠道配置里**不保存任何密钥**，只保存一个托管凭据引用。刷新令牌由后端按工作区用户隔离、加密保存在本地数据目录，`access_token` 只在任务执行期存在于内存。
+
+## 登录流程
+
+1. 在渠道设置里把「凭据来源」切换为 **ChatGPT 订阅**。BeefTV 会把 Base URL 固定为 `https://chatgpt.com/backend-api/codex`，请求协议固定为 `chatgpt-subscription`。
+2. 点击「连接 ChatGPT 订阅」。后端向授权服务申请设备码，返回一个一次性用户码和验证地址。
+3. 在浏览器打开验证地址并登录 ChatGPT 账号，输入用户码确认。
+4. 后端后台轮询确认结果；确认后立即用授权码换取令牌并加密落盘。
+
+设备码在 15 分钟后失效。取消或超时不会留下半成品凭据；再次连接会重新申请。
+
+## 模型目录
+
+订阅后端不提供 OpenAI 的 `/v1/models`，而是 Codex 自己的 catalog：`GET {base_url}/models?client_version=<版本>`，响应里模型标识字段是 `slug`、展示名是 `display_name`。
+
+`client_version` 必须是纯数字三级版本（例如 `1.6.22`）。上游对这个参数校验很严：带 `v` 前缀或 pre-release 后缀会直接返回 `400 Invalid client_version format`，宿主会自动把产品版本规范化后再发送。
+
+点「拉取模型」时请求由本机后端代发，订阅访问令牌只在服务端使用，不下发到浏览器。返回的模型一律按文本能力登记；`supported_in_api=false` 的客户端内部模型会被过滤，但如果上游把整个目录都标记为内部模型，则保留原始列表以免目录变空。
+
+拉取失败时可以直接在「模型列表」手动输入模型 ID，手工输入与拉取结果等价。
+
+## 协议与请求形状
+
+`chatgpt-subscription` 复用 OpenAI Responses 线协议，端点相对路径是 `POST /responses`，但请求形状按 ChatGPT 后端约束固定：
+
+- `stream: true` 是强制的。宿主始终以流式请求上游，按用户是否开启流式决定要不要向前端推送增量；关闭前端流式不会改变上游请求形状。
+- `store: false` 固定发送。
+- `include: ["reasoning.encrypted_content"]` 固定发送。
+- `instructions` 来自渠道系统提示词；为空时由协议补一个最小默认值，因为该后端要求请求带指令。
+
+鉴权头由后端在执行期注入：
+
+```http
+Authorization: Bearer <access_token>
+chatgpt-account-id: <account_id>
+originator: codex_cli_rs
+```
+
+账号头来自执行期解析出的凭据。宿主把 `chatgpt-account-id` 列为渠道自定义请求头的保留项，配置该头会被直接拒绝，避免静态配置冒充账号身份。**不要**把令牌手工填进渠道的 API Key 或自定义 Header：前者会在一小时后失效，后者的明文会进入任务输入。
+
+## 安全边界
+
+- 授权源默认只允许 `https://auth.openai.com`。只有显式配置的本机环回测试源可以在本地验证中替换，避免把任意主机变成凭据出口。
+- 刷新令牌用工作区 `.settings-key` 做 AES-GCM 加密后写入 `chatgpt-subscription.json`，与其它本地凭据共用同一信任根。
+- 连接摘要接口只返回状态、设备码、账号标识和订阅计划，从不返回 `access_token` 或 `refresh_token`。
+- 上游永久拒绝刷新（例如 `refresh_token_expired`）时，该用户的本地凭据会被标记失效并要求重新连接，不会静默回退到其它渠道或继续重试付费调用。
+
+## 适用范围与已知边界
+
+- 只覆盖**文本**生成。图片、视频和音频不使用该凭据。
+- 只作为**用户级自定义渠道**。凭据与个人账号绑定，不应配置成多用户共享的系统渠道。
+- 托管（多租户）部署下该协议不出现在协议目录中；它是本地工作区的能力。
+- 上游对必需请求头的要求并未公开。当前实现注入的是有源码依据的最小集合；如果上游收紧校验，需要在后端补头，而不是让用户在渠道里手工绕过。
+
+## 失败排查
+
+| 现象 | 常见原因 |
+| --- | --- |
+| 连接时提示设备码登录未启用 | 授权源不支持设备码，或被测试源覆盖配置错误 |
+| 生成时提示凭据无效，请重新连接 | 刷新令牌被上游撤销或过期，需要重新连接 |
+| 生成时提示订阅服务尚未初始化 | 后端未装配订阅服务，通常是构建或启动配置问题 |
+| 上游返回账号或模型不可用 | 订阅不含该模型，或账号缺少对应套餐 |
+| 请求被上游拒绝 | 上游调整了端点或必需请求头，需要更新后端实现 |
+
+## 相关实现
+
+- 凭据与登录：`backend/internal/chatgptauth/`
+- 执行期凭据解析：`backend/internal/app/chatgpt_credential.go`
+- 协议适配与鉴权头：`backend/internal/protocol/builtin.go`、`backend/internal/app/provider_http_client.go`
+- HTTP 合同：`GET/POST /api/chatgpt/connection*`
