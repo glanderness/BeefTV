@@ -1,6 +1,5 @@
 import { http } from "@/services/api/request";
 import type { ModelProtocolDefinition, ProtocolCapability } from "@/lib/model-protocols";
-import { workspaceCapabilities } from "@/services/workspace-mode";
 
 type PluginProviderCatalogItem = {
     id: string;
@@ -26,22 +25,20 @@ type PluginProviderCatalogItem = {
 };
 
 export async function fetchPluginProviderCatalog(scope: string, capability?: ProtocolCapability) {
-    if (workspaceCapabilities().local && scope === "user.custom-channel") {
-        return BUILTIN_OPENAI_PROTOCOLS.filter((item) => !capability || item.capability === capability);
-    }
+    const fallbackProtocols = () => BUILTIN_OPENAI_PROTOCOLS.filter((item) => !capability || item.capability === capability);
     try {
+        // 本地与托管共用后端插件目录：音频（openai-audio / async-audio）等官方协议
+        // 只存在于插件包里，本地模式短路会让这些协议在选择器中彻底消失。
         const result = await http.get<{ providers: PluginProviderCatalogItem[] }>("/plugins/catalog", { params: { scope, capability } });
-        return result.providers.filter((item) => item.enabled && !item.unavailableReason).map(toProviderDefinition);
+        const providers = result.providers.filter((item) => item.enabled && !item.unavailableReason).map(toProviderDefinition);
+        if (providers.length) return providers;
     } catch (error) {
-        // The local desktop profile can run without the optional plugin center.
-        // Keep the built-in OpenAI-compatible protocols available so a custom
-        // channel remains usable even when protocol metadata is unavailable.
-        if (scope === "user.custom-channel") {
-            const fallback = BUILTIN_OPENAI_PROTOCOLS.filter((item) => !capability || item.capability === capability);
-            if (fallback.length) return fallback;
-        }
+        // 桌面 profile 可能在插件中心不可用时启动；保底协议让自定义渠道仍可用。
+        if (scope === "user.custom-channel" && fallbackProtocols().length) return fallbackProtocols();
         throw error;
     }
+    // 目录可用但没有匹配项时，自定义渠道仍退回保底协议。
+    return scope === "user.custom-channel" ? fallbackProtocols() : [];
 }
 
 const BUILTIN_OPENAI_PROTOCOLS: ModelProtocolDefinition[] = [
