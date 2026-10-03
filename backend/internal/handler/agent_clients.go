@@ -31,9 +31,13 @@ func RegisterAgentClientRoutes(r gin.IRouter, svc *app.Service, clients *agentop
 			return
 		}
 		cliPath, cliAvailable := bundledCLIPath()
+		installCommand := ""
+		if cliAvailable {
+			installCommand = cliInstallCommand(cliPath)
+		}
 		ok(c, gin.H{
 			"clients": clientViews(clients.List()),
-			"cli":     gin.H{"path": cliPath, "available": cliAvailable, "installCommand": cliInstallCommand(cliPath)},
+			"cli":     gin.H{"path": cliPath, "available": cliAvailable, "installCommand": installCommand},
 		})
 	})
 
@@ -51,15 +55,24 @@ func RegisterAgentClientRoutes(r gin.IRouter, svc *app.Service, clients *agentop
 			return
 		}
 		kind := agentops.NormalizeClientKind(req.Kind)
+		cliPath, available := bundledCLIPath()
+		if !available {
+			failAgentOps(c, agentops.PreconditionFailed("cli_unavailable", "安装文件不完整，无法连接外部工具。请重新下载并完整解压 BeefTV。", nil))
+			return
+		}
+		dataDir, err := filepath.Abs(svc.DataDir())
+		if err != nil {
+			failInternal(c, http.StatusInternalServerError, err)
+			return
+		}
 		reg, token, err := clients.RegisterKind(string(kind), req.Label, agentops.ClientMode(strings.TrimSpace(req.Mode)))
 		if err != nil {
 			failAgentOps(c, err)
 			return
 		}
-		cliPath, _ := bundledCLIPath()
 		// token 只在这一次响应里出现；服务端只保存哈希，之后任何接口都取不回来。
 		ok(c, gin.H{"client": clientView(reg), "token": token,
-			"setup": clientSetup(kind, cliPath, reg, token)})
+			"setup": clientSetup(kind, cliPath, dataDir, reg, token)})
 	})
 
 	r.DELETE("/agent-clients/:id", func(c *gin.Context) {
@@ -132,7 +145,7 @@ func clientView(item agentops.ClientRegistration) gin.H {
 // 它不能直接放在主程序同一层：macOS 与 Windows 的文件名都不分大小写，beeftv 会和
 // BeefTV / BeefTV.exe 变成同一个文件，把主程序覆盖掉。
 //
-// 开发形态没有随包 CLI，退回裸命令名，由 available=false 告诉界面要先自己装一次。
+// 缺失时不回退 PATH：Windows 会把 beeftv.exe 解析成桌面主程序 BeefTV.exe。
 func bundledCLIPath() (string, bool) {
 	name := "beeftv"
 	if runtime.GOOS == "windows" {
@@ -140,15 +153,15 @@ func bundledCLIPath() (string, bool) {
 	}
 	executable, err := os.Executable()
 	if err != nil {
-		return name, false
+		return "", false
 	}
 	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
 		executable = resolved
 	}
 	candidate := filepath.Join(filepath.Dir(executable), "cli", name)
 	info, err := os.Stat(candidate)
-	if err != nil || !info.Mode().IsRegular() {
-		return name, false
+	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 || (runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0) {
+		return candidate, false
 	}
 	return candidate, true
 }
@@ -157,14 +170,14 @@ func bundledCLIPath() (string, bool) {
 func cliInstallCommand(cliPath string) string {
 	if runtime.GOOS == "windows" {
 		dir := filepath.Dir(cliPath)
-		return `[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";` + dir + `", "User")`
+		return `[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ` + shellQuote(";"+dir) + `, "User")`
 	}
 	return "ln -sf " + shellQuote(cliPath) + " /usr/local/bin/beeftv"
 }
 
 // clientSetup 生成可直接粘贴的接入配置。命令里带的是客户端自己的凭据，
 // 不含桌面启动令牌；地址由 CLI 在运行时从数据目录里的 runtime.json 发现。
-func clientSetup(kind agentops.ClientKind, cliPath string, reg agentops.ClientRegistration, token string) gin.H {
+func clientSetup(kind agentops.ClientKind, cliPath, dataDir string, reg agentops.ClientRegistration, token string) gin.H {
 	serveArgs := []string{"mcp", "serve"}
 	if reg.Mode == agentops.ClientReadOnly {
 		serveArgs = append(serveArgs, "--read-only")
@@ -172,30 +185,35 @@ func clientSetup(kind agentops.ClientKind, cliPath string, reg agentops.ClientRe
 	switch kind {
 	case agentops.ClientKindCodex:
 		command := "codex mcp add beeftv" +
+			" --env BEEFTV_DATA_DIR=" + shellQuote(dataDir) +
 			" --env BEEFTV_CLIENT_ID=" + shellQuote(reg.ID) +
 			" --env BEEFTV_CLIENT_TOKEN=" + shellQuote(token) +
 			" -- " + shellQuote(cliPath) + " " + strings.Join(serveArgs, " ")
 		return gin.H{"kind": string(kind), "title": "在 Codex 里加上 BeefTV", "command": command}
 	case agentops.ClientKindClaude:
 		command := "claude mcp add beeftv" +
+			" -e BEEFTV_DATA_DIR=" + shellQuote(dataDir) +
 			" -e BEEFTV_CLIENT_ID=" + shellQuote(reg.ID) +
 			" -e BEEFTV_CLIENT_TOKEN=" + shellQuote(token) +
 			" -- " + shellQuote(cliPath) + " " + strings.Join(serveArgs, " ")
 		return gin.H{"kind": string(kind), "title": "在 Claude Code 里加上 BeefTV", "command": command}
+	case agentops.ClientKindClaudeDesktop:
+		return gin.H{"kind": string(kind), "title": "在 Claude Desktop 的开发者设置中编辑配置",
+			"json": mcpServersJSON(cliPath, dataDir, serveArgs, reg.ID, token)}
 	case agentops.ClientKindCursor:
 		return gin.H{"kind": string(kind), "title": "把这段写进 ~/.cursor/mcp.json",
-			"json": mcpServersJSON(cliPath, serveArgs, reg.ID, token)}
+			"json": mcpServersJSON(cliPath, dataDir, serveArgs, reg.ID, token)}
 	default:
 		return gin.H{"kind": string(kind), "title": "把这段写进该客户端的 MCP 配置",
-			"json": mcpServersJSON(cliPath, serveArgs, reg.ID, token)}
+			"json": mcpServersJSON(cliPath, dataDir, serveArgs, reg.ID, token)}
 	}
 }
 
-func mcpServersJSON(cliPath string, args []string, clientID, token string) string {
+func mcpServersJSON(cliPath, dataDir string, args []string, clientID, token string) string {
 	payload := map[string]any{"mcpServers": map[string]any{"beeftv": map[string]any{
 		"command": cliPath,
 		"args":    args,
-		"env":     map[string]string{"BEEFTV_CLIENT_ID": clientID, "BEEFTV_CLIENT_TOKEN": token},
+		"env":     map[string]string{"BEEFTV_DATA_DIR": dataDir, "BEEFTV_CLIENT_ID": clientID, "BEEFTV_CLIENT_TOKEN": token},
 	}}}
 	encoded, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
@@ -206,5 +224,8 @@ func mcpServersJSON(cliPath string, args []string, clientID, token string) strin
 
 // shellQuote 用单引号包裹，路径或凭据里的空格与元字符都不会被 shell 再解释一遍。
 func shellQuote(value string) string {
+	if runtime.GOOS == "windows" {
+		return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+	}
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }

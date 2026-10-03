@@ -61,10 +61,11 @@ export default function AgentsPage() {
                                         <p className="truncate text-[13px] leading-5 font-semibold">{agentClientKindLabel(kind)}</p>
                                         <p className="mt-1.5 text-xs leading-5 text-foreground/55">{agentClientKindSummary(kind)}</p>
                                     </div>
-                                    <Button className="mt-auto self-start" size="small" icon={<Plug className="size-3.5" />} onClick={() => setConnecting(kind)}>连接</Button>
+                                    <Button className="mt-auto self-start" size="small" icon={<Plug className="size-3.5" />} disabled={!cli?.available} onClick={() => setConnecting(kind)}>连接</Button>
                                 </div>
                             ))}
                         </div>
+                        {cli && !cli.available ? <p role="alert" className="mt-3 text-xs leading-5 text-foreground/60">安装文件不完整，无法连接外部工具。请重新下载并完整解压 BeefTV。</p> : null}
                     </section>
 
                     <section aria-labelledby="agent-connected-title">

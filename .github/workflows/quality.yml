@@ -128,8 +128,8 @@ jobs:
         run: go test ./internal/desktopupdate -count=1 -json | tee matrix-evidence/desktopupdate.jsonl
       - name: Local provider task persistence and restart matrix
         run: go test ./internal/app -run '^TestDBRuntime' -count=1 -json | tee matrix-evidence/runtime.jsonl
-      - name: Actual CLI and MCP against isolated HTTP runtime
-        run: go test ./cmd/beeftv -run '^TestCLIAndMCPAgainstIsolatedIntegratedRuntime$' -count=1 -json | tee matrix-evidence/cli-mcp.jsonl
+      - name: Actual CLI, MCP startup and native process lifecycle
+        run: go test ./cmd/beeftv ./internal/runtimeinfo ./internal/assistantruntime -count=1 -json | tee matrix-evidence/cli-mcp.jsonl
       - name: Preserve per-test results and platform evidence
         if: always()
         uses: actions/upload-artifact@v4

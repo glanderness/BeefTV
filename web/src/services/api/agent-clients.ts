@@ -1,7 +1,7 @@
 import { http } from "@/services/api/request";
 
 /** 外部编辑器/CLI 接入 BeefTV 画布的客户端类型。 */
-export type AgentClientKind = "codex" | "claude" | "cursor" | "other";
+export type AgentClientKind = "codex" | "claude" | "claude-desktop" | "cursor" | "other";
 
 /** 授予外部客户端的画布权限。 */
 export type AgentClientMode = "read-only" | "read-write";

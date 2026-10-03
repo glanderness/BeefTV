@@ -1,10 +1,11 @@
 import type { AgentClient, AgentClientKind, AgentClientMode, AgentClientSetup } from "@/services/api/agent-clients";
 
-export const agentClientKinds: AgentClientKind[] = ["codex", "claude", "cursor", "other"];
+export const agentClientKinds: AgentClientKind[] = ["codex", "claude", "claude-desktop", "cursor", "other"];
 
 const kindLabels: Record<AgentClientKind, string> = {
     codex: "Codex",
     claude: "Claude Code",
+    "claude-desktop": "Claude Desktop",
     cursor: "Cursor",
     other: "其他 MCP 客户端",
 };
@@ -12,6 +13,7 @@ const kindLabels: Record<AgentClientKind, string> = {
 const kindSummaries: Record<AgentClientKind, string> = {
     codex: "在终端里连接 Codex。",
     claude: "在终端里连接 Claude Code。",
+    "claude-desktop": "在 Claude 桌面应用里连接。",
     cursor: "在 Cursor 的配置里连接。",
     other: "支持 MCP 的工具都能连。",
 };
@@ -49,11 +51,12 @@ export type AgentClientSetupBlock = {
     instruction: string;
 };
 
-const COMMAND_INSTRUCTION = "粘贴到终端运行。";
+const COMMAND_INSTRUCTION = "粘贴到终端运行；Windows 请使用 PowerShell。连接时请保持 BeefTV 开启。";
 
 const configInstructions: Record<AgentClientKind, string> = {
     codex: "粘贴到你使用的工具的 MCP 配置文件里。",
     claude: "粘贴到你使用的工具的 MCP 配置文件里。",
+    "claude-desktop": "打开 Claude Desktop 的设置 → 开发者 → 编辑配置，将 beeftv 项合并到 mcpServers，保留已有服务，然后完全退出并重新打开 Claude。连接时请保持 BeefTV 开启。",
     cursor: "粘贴到 ~/.cursor/mcp.json。",
     other: "粘贴到你使用的工具的 MCP 配置文件里。",
 };
