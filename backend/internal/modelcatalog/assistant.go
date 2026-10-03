@@ -39,6 +39,9 @@ type AssistantChannel struct {
 	CredentialRef string                  `json:"credentialRef"`
 	Enabled       bool                    `json:"enabled"`
 	Pinned        bool                    `json:"pinned"`
+	Scope         string                  `json:"scope"`
+	APIFormat     string                  `json:"apiFormat"`
+	InterfaceType string                  `json:"interfaceType"`
 	Models        []string                `json:"models"`
 	ModelAliases  map[string]string       `json:"modelAliases"`
 	ModelProfiles []AssistantModelProfile `json:"modelProfiles"`
@@ -127,6 +130,9 @@ func ResolveAssistantChannelModel(snapshot AssistantConfigSnapshot, modelKey str
 	}
 	protocol, protocolOK := ChannelModelProtocol(channel, modelID)
 	if !protocolOK {
+		protocol, protocolOK = defaultTextModelProtocol(snapshot, channel, modelID)
+	}
+	if !protocolOK {
 		return assistant.Provider{}, AssistantReasonModelNotConfigured
 	}
 	if protocol == "" {
@@ -172,13 +178,41 @@ func FindAssistantChannel(channels []AssistantChannel, channelID, modelID string
 		if !channel.Enabled {
 			continue
 		}
-		for _, profile := range channel.ModelProfiles {
-			if profile.Model == modelID {
-				return channel, true
-			}
+		if assistantChannelHasModel(channel, assistantModelAlias(channel, modelID)) {
+			return channel, true
 		}
 	}
 	return AssistantChannel{}, false
+}
+
+// A custom channel may only persist a models list. The user's default text
+// selection supplies the capability in that case; explicit profiles still win.
+func defaultTextModelProtocol(snapshot AssistantConfigSnapshot, channel AssistantChannel, modelID string) (string, bool) {
+	if channel.Scope == "system" || channel.Pinned || channel.CredentialRef != "" {
+		return "", false
+	}
+	for _, profile := range channel.ModelProfiles {
+		if strings.TrimSpace(profile.Model) == modelID {
+			return "", false
+		}
+	}
+	textChannelID, textModelID := SplitModelKey(snapshot.TextModel)
+	textChannel, found := FindAssistantChannel(snapshot.Channels, textChannelID, textModelID)
+	if !found || textChannel.ID != channel.ID || assistantModelAlias(channel, textModelID) != modelID {
+		return "", false
+	}
+	declared := strings.TrimSpace(channel.InterfaceType)
+	if declared == "" {
+		switch strings.TrimSpace(channel.APIFormat) {
+		case "", "openai":
+			declared = "chat-completion"
+		case "claude":
+			declared = "claude-api"
+		default:
+			return "", true
+		}
+	}
+	return assistantProtocols[declared], true
 }
 
 func ChannelModelProtocol(channel AssistantChannel, modelID string) (string, bool) {

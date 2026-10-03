@@ -9,6 +9,11 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.2
+
+- Fix the canvas assistant being unavailable when following a default text model from a custom local channel.
+- Keep explicit model capabilities, protocol restrictions, and channel credentials in effect when resolving assistant connections.
+
 ## v1.7.1
 
 - Choose the canvas assistant model directly beside the message input.

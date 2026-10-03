@@ -7,6 +7,32 @@ const models = [...MANAGED_ASSISTANT_MODELS, "gpt-6.1-sol", "qwen3.8-flash"];
 const channel = createModelChannel({ id: "beefapi", pinned: true, models, modelProfiles: models.map(model => ({ model, capability: "text", protocol: "chat-completion" })) });
 const config = { ...defaultConfig, channels: [channel], textModel: "beefapi::qwen3.8-flash" };
 
+test("assistant follows a custom default text model without modelProfiles", () => {
+    const custom = createModelChannel({ id: "newapi-local", apiFormat: "openai", models: ["deepseek-v4-flash:free", "unclassified-model"] });
+    for (const textModel of ["deepseek-v4-flash:free", "newapi-local::deepseek-v4-flash:free"]) {
+        const c = { ...defaultConfig, channels: [custom], textModel };
+        expect(assistantModelOptions(c)).toEqual(["newapi-local::deepseek-v4-flash:free"]);
+        expect(resolveAssistantModel(c)).toBe("newapi-local::deepseek-v4-flash:free");
+        expect(resolveAssistantModel({ ...c, assistantModel: "newapi-local::unclassified-model" })).toBe("");
+    }
+});
+
+test("models-only fallback keeps channel and explicit profile restrictions", () => {
+    const custom = createModelChannel({ id: "custom", models: ["local-text"] });
+    const c = { ...defaultConfig, channels: [custom], textModel: "custom::local-text" };
+    for (const update of [
+        { enabled: false }, { scope: "system" as const }, { pinned: true }, { credentialRef: "managed" },
+        { apiFormat: "gemini" as const }, { interfaceType: "openai-image" },
+        { modelProfiles: [{ model: "local-text", capability: "image" as const, protocol: "openai-image" }] },
+        { modelProfiles: [{ model: "local-text", capability: "text" as const, protocol: "unsupported" }] },
+    ]) {
+        expect(resolveAssistantModel({ ...c, channels: [{ ...custom, ...update }] })).toBe("");
+    }
+    for (const update of [{ apiFormat: "claude" as const }, { interfaceType: "responses" }]) {
+        expect(resolveAssistantModel({ ...c, channels: [{ ...custom, ...update }] })).toBe("custom::local-text");
+    }
+});
+
 test("managed assistant list is curated and requires actual catalog membership", () => {
     expect(assistantModelOptions(config)).toEqual(MANAGED_ASSISTANT_MODELS.map(m => `beefapi::${m}`));
     expect(assistantModelOptions({ ...config, channels: [{ ...channel, models: models.filter(m => m !== "gpt-6.1-sol") }] })).not.toContain("beefapi::gpt-6.1-sol");

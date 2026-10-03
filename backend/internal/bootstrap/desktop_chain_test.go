@@ -49,7 +49,7 @@ func TestDesktopProfileStartupChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{
-		"server.mjs", "session-identity.mjs", "canvas-turn.mjs", "request-budget.mjs",
+		"server.mjs", "session-identity.mjs", "canvas-turn.mjs", "request-budget.mjs", "durable-request-budget.mjs",
 		"operation-bridge.mjs", "session-owner.mjs", "full-control-loader.mjs",
 		"session-settings.mjs", "lifecycle-events.mjs", "package.json", "run-agent-host.sh",
 	} {
@@ -99,13 +99,14 @@ func TestDesktopProfileStartupChain(t *testing.T) {
 		}
 		modelID, modelURL, modelKey = cred.Model, cred.BaseURL, cred.APIKey
 	}
-	// ResolveAssistantProvider requires an enabled channel and a declared text model.
+	// Issue #68: a models-only custom channel must feed the real host from the
+	// persisted default text selection, without modelProfiles or database rows.
 	modelConfig := map[string]any{
 		"schemaVersion": 1, "revision": 1,
 		"config": map[string]any{"apiKey": "", "textModel": "desktop-fixture::" + modelID,
 			"channels": []any{map[string]any{"id": "desktop-fixture", "name": "Desktop fixture", "enabled": true,
-				"apiKey": modelKey, "baseUrl": modelURL,
-				"modelProfiles": []any{map[string]any{"model": modelID, "capability": "text", "protocol": "chat-completion"}}}}},
+				"apiKey": modelKey, "baseUrl": modelURL, "apiFormat": "openai",
+				"models": []string{modelID}}}},
 	}
 	writeJSON(t, filepath.Join(dataDir, "local-model-config.json"), modelConfig)
 

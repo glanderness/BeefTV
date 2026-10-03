@@ -16,24 +16,32 @@ function protocolSupported(protocol: ModelProtocol | undefined) {
     return ASSISTANT_MODEL_PROTOCOLS.includes(protocol?.trim() || DEFAULT_TEXT_PROTOCOL);
 }
 
-function channelAssistantModels(channel: ModelChannel) {
+function channelAssistantModels(channel: ModelChannel, defaultTextModel: string) {
     if (channel.enabled === false) return [];
     const available = (channel.modelProfiles || [])
         .filter((profile) => profile.capability === "text" && protocolSupported(profile.protocol))
         .map((profile) => profile.model.trim())
         .filter((model) => model && channel.models.includes(model));
+    const textSelection = decodeChannelModel(defaultTextModel);
+    if (channel.scope !== "system" && !channel.pinned && !channel.credentialRef &&
+        textSelection?.channelId === channel.id && channel.models.includes(textSelection.model) &&
+        !channel.modelProfiles?.some((profile) => profile.model === textSelection.model)) {
+        const protocol = channel.interfaceType || (channel.apiFormat === "claude" ? "claude-api" : channel.apiFormat === "openai" ? DEFAULT_TEXT_PROTOCOL : "unsupported");
+        if (protocolSupported(protocol)) available.push(textSelection.model);
+    }
     const models = isBuiltinBeefAPIChannel(channel)
         ? MANAGED_ASSISTANT_MODELS.map((model) => channel.modelAliases?.[model] || model).filter((model) => available.includes(model))
         : available;
     return models.map((model) => encodeChannelModel(channel.id, model));
 }
 
-/** 助手可选模型：已启用渠道里声明为文本能力且协议受支持的模型，值形如 `channelId::modelId`。 */
+/** 助手可选模型包含自定义渠道里没有能力档案的默认文本模型。 */
 export function assistantModelOptions(config: AiConfig): string[] {
     const seen = new Set<string>();
     const options: string[] = [];
+    const defaultTextModel = normalizeModelOptionValue(config.textModel, config.channels);
     for (const channel of config.channels) {
-        for (const option of channelAssistantModels(channel)) {
+        for (const option of channelAssistantModels(channel, defaultTextModel)) {
             if (seen.has(option)) continue;
             seen.add(option);
             options.push(option);
