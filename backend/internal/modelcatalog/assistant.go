@@ -21,6 +21,9 @@ var assistantProtocols = map[string]string{
 	"claude-api":      "claude-api",
 	"responses":       "responses",
 	"openai-response": "responses",
+	// ChatGPT 订阅复用 Responses 会话回路；凭据与账号隔离头由宿主在执行期注入，
+	// 因此这里必须保留独立协议名，宿主才能识别需要额外请求头。
+	"chatgpt-subscription": "chatgpt-subscription",
 }
 
 var managedAssistantModels = []string{beefapi.DefaultManagedAssistantModel, "claude-opus-5-5", "deepseek-v4.1-flash", "glm-5.3"}

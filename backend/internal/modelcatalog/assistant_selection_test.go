@@ -29,6 +29,11 @@ func TestModelsOnlyDefaultTextSelectionBoundaries(t *testing.T) {
 		{name: "explicit supported profile wins", change: func(s *AssistantConfigSnapshot) {
 			s.Channels[0].ModelProfiles = []AssistantModelProfile{{Model: "local-text", Capability: "text", Protocol: "claude-api"}}
 		}, protocol: "claude-api"},
+		// ChatGPT 订阅保留独立协议名：宿主据此注入账号隔离头，但走 Responses 回路。
+		{name: "chatgpt subscription profile", change: func(s *AssistantConfigSnapshot) {
+			s.Channels[0].CredentialRef = "chatgpt-subscription"
+			s.Channels[0].ModelProfiles = []AssistantModelProfile{{Model: "local-text", Capability: "text", Protocol: "chatgpt-subscription"}}
+		}, protocol: "chatgpt-subscription"},
 		{name: "other channel default", change: func(s *AssistantConfigSnapshot) {
 			s.TextModel = "other::local-text"
 			s.Channels = append(s.Channels, AssistantChannel{ID: "other", Enabled: true, Models: []string{"local-text"}})

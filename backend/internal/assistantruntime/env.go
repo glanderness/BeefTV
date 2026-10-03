@@ -1,11 +1,13 @@
 package assistantruntime
 
 import (
+	"encoding/json"
 	"os"
 	"strconv"
 	"strings"
 
 	"infinite-canvas/backend/internal/assistant"
+	"infinite-canvas/backend/internal/chatgptauth"
 )
 
 type childPin struct {
@@ -30,6 +32,17 @@ func (h *Host) buildEnv(provider assistant.Provider, pin childPin) []string {
 	set("BEEFTV_AGENT_HOST_TOKEN", h.hostToken())
 	set("BEEFTV_AGENT_DESKTOP_TOKEN", pin.DesktopTok)
 	set("BEEFTV_AGENT_API_KEY", provider.APIKey)
+	// 额外请求头以 JSON 传递：订阅渠道需要账号隔离头，而 agent-host 只接收
+	// baseUrl + apiKey。头里只有非敏感标识，密钥仍只走 BEEFTV_AGENT_API_KEY。
+	if len(provider.Headers) > 0 {
+		if encoded, err := json.Marshal(provider.Headers); err == nil {
+			set("BEEFTV_AGENT_HEADERS", string(encoded))
+		} else {
+			set("BEEFTV_AGENT_HEADERS", "")
+		}
+	} else {
+		set("BEEFTV_AGENT_HEADERS", "")
+	}
 	if pin.Port > 0 {
 		set("BEEFTV_AGENT_PORT", strconv.Itoa(pin.Port))
 	} else {
@@ -140,7 +153,8 @@ func hostAPI(protocol string) string {
 	switch protocol {
 	case "claude-api":
 		return "anthropic-messages"
-	case "responses":
+	case "responses", chatgptauth.CredentialRef:
+		// 订阅渠道与 Responses 共用 pi 的 openai-responses 会话回路。
 		return "openai-responses"
 	default:
 		return "openai-completions"
@@ -161,6 +175,10 @@ func hostBaseURL(baseURL, protocol string) string {
 			return strings.TrimSuffix(trimmed, "/v1")
 		}
 		return trimmed
+	}
+	// ChatGPT 订阅的端点在 /backend-api/codex 下直接拼 /responses，不经过 /v1。
+	if strings.TrimSpace(protocol) == chatgptauth.CredentialRef {
+		return strings.TrimSuffix(trimmed, "/v1")
 	}
 	if hasV1 {
 		return trimmed

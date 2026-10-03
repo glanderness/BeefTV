@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
-import { collectTurnEffects, newTurnAccumulator, providerRegistration, providerUnavailableReason,
+import { collectTurnEffects, newTurnAccumulator, parseModelHeaders, providerRegistration, providerUnavailableReason,
   resetTurnAccumulator, sessionTitle, turnChange, turnContextPrefix, unflushedSessionHistory } from "./canvas-turn.mjs";
 import { SYSTEM_PROMPT } from "./full-control-loader.mjs";
 
@@ -144,6 +144,32 @@ describe("供应商定义", () => {
         expect(registration.models).toEqual([{ id: "claude-fable-5", name: "claude-fable-5", reasoning: false,
             input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             contextWindow: 200000, maxTokens: 4096 }]);
+    });
+
+    test("订阅渠道的账号隔离头随供应商定义传递，密钥仍只走环境变量", () => {
+        const registration = providerRegistration({ api: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex",
+            modelId: "gpt-6-sol", maxTokens: 4096, contextWindow: 200000,
+            headers: { "chatgpt-account-id": "acct-1", originator: "codex_cli_rs" } });
+
+        expect(registration.apiKey).toBe("$BEEFTV_AGENT_API_KEY");
+        expect(registration.headers).toEqual({ "chatgpt-account-id": "acct-1", originator: "codex_cli_rs" });
+        // 密钥不得因为带头而泄漏进正文。
+        expect(JSON.stringify(registration)).not.toContain("sk-");
+    });
+
+    test("没有额外请求头时不产生空的 headers 字段", () => {
+        const registration = providerRegistration({ api: "openai-responses", baseUrl: "https://x/v1",
+            modelId: "m", maxTokens: 1, contextWindow: 1 });
+
+        expect("headers" in registration).toBe(false);
+    });
+
+    test("额外请求头只接受合法字符串键值", () => {
+        expect(parseModelHeaders("")).toEqual({});
+        expect(parseModelHeaders("   ")).toEqual({});
+        expect(parseModelHeaders("not json")).toEqual({});
+        expect(parseModelHeaders("[\"a\"]")).toEqual({});
+        expect(parseModelHeaders('{"ok":"v","num":1,"empty":"","":"x"}')).toEqual({ ok: "v" });
     });
 
     test("宿主不再硬编码 OpenAI 目录，模型与协议只来自后端下发的环境变量", () => {

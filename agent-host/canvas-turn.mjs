@@ -105,13 +105,36 @@ export function turnContextPrefix({ canvasId, selectedNodeIds = [], references =
 
 // providerRegistration 构造要登记给 pi 的供应商：
 // 密钥以环境变量引用形式传入，宿主进程内解析，不写进 auth.json。
-export function providerRegistration({ api, baseUrl, modelId, maxTokens, contextWindow }) {
+export function providerRegistration({ api, baseUrl, modelId, maxTokens, contextWindow, headers }) {
   return {
     name: 'BeefTV', baseUrl, apiKey: '$BEEFTV_AGENT_API_KEY', api,
+    // headers 只承载非敏感标识（例如订阅渠道的账号隔离头）；
+    // 密钥仍以环境变量引用形式交给 pi，不进入这里。
+    ...(headers && Object.keys(headers).length > 0 ? { headers } : {}),
     models: [{ id: modelId, name: modelId, reasoning: false, input: ['text'],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow, maxTokens }],
   };
+}
+
+// parseModelHeaders 解析宿主注入的额外请求头。只接受字符串键值，
+// 非法输入返回空对象：宁可让上游报错，也不要猜测或改写请求。
+export function parseModelHeaders(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const headers = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      const name = String(key || '').trim();
+      if (!name || typeof value !== 'string' || !value) continue;
+      headers[name] = value;
+    }
+    return headers;
+  } catch {
+    return {};
+  }
 }
 
 // providerUnavailableReason 给出机器可读原因，交给后端的状态投影使用。
