@@ -13,21 +13,24 @@ import (
 	"time"
 )
 
-// Run in the actual supervised child, before TestMain's generic fixtures.
+// Register during init, but run only after all runtime/package initialization
+// has completed, through the same TestMain dispatch as the other child modes.
 func init() {
-	if os.Getenv(fixtureEnv) != "windows-no-console" {
-		return
-	}
+	platformProcessFixtures["windows-no-console"] = runWindowsNoConsoleFixture
+}
+
+func runWindowsNoConsoleFixture() int {
+	fmt.Fprintln(os.Stderr, "fixture checking native console state")
 	kernel := syscall.NewLazyDLL("kernel32.dll")
 	window, _, _ := kernel.NewProc("GetConsoleWindow").Call()
 	codePage, _, _ := kernel.NewProc("GetConsoleCP").Call()
 	if window != 0 || codePage != 0 {
 		fmt.Fprintf(os.Stderr, "child has console: window=%d codepage=%d\n", window, codePage)
-		os.Exit(2)
+		return 2
 	}
 	fmt.Fprintln(os.Stdout, "host-child-stdout")
 	fmt.Fprintln(os.Stderr, "host-child-stderr")
-	os.Exit(runHTTPFixture())
+	return runHTTPFixture()
 }
 
 func TestWindowsHostHasNoConsoleAndPreservesPipes(t *testing.T) {
@@ -41,6 +44,13 @@ func TestWindowsHostHasNoConsoleAndPreservesPipes(t *testing.T) {
 	os.Stderr = log
 	t.Cleanup(func() { os.Stderr = originalStderr; _ = log.Close() })
 	host := fixtureHost(t, "windows-no-console")
+	// Registered after Stop cleanup so diagnostics are read while the file is open.
+	t.Cleanup(func() {
+		if t.Failed() {
+			raw, readErr := os.ReadFile(logPath)
+			t.Logf("supervised child stdout/stderr (read error: %v):\n%s", readErr, raw)
+		}
+	})
 	if err := host.Launch(fixtureProvider(), "http://127.0.0.1:18090/api", "desktop-shell-token"); err != nil {
 		t.Fatalf("console-free child failed readiness: %v", err)
 	}
