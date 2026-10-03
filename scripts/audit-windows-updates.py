@@ -40,7 +40,7 @@ for source,target in edges:
         prepared=(case/'prepared').exists()
         if p.poll() is None: p.terminate()
         p.wait(timeout=10)
-    recovery=json.loads((case/'result.json').read_text()) if (case/'result.json').exists() else None
+    recovery=json.loads((case/'result.json').read_text(encoding='utf-8')) if (case/'result.json').exists() else None
     result=dict(source=source,target=target,acceptedLayout=prepared,recovery=recovery,exitCode=p.returncode,boundary='actual released EXE helper validation; stopped before replacement')
     results.append(result)
     save()
