@@ -404,6 +404,9 @@ export type AiConfig = {
     audioPitch: string;
     audioVolume: string;
     audioInstructions: string;
+    /** 本机 TTS 的声音克隆参考；路径必须对上游服务可读。 */
+    audioRefAudio: string;
+    audioRefText: string;
     videoSeconds: string;
     vquality: string;
     videoGenerateAudio: string;
@@ -450,6 +453,8 @@ export const defaultConfig: AiConfig = {
     audioPitch: "0",
     audioVolume: "1",
     audioInstructions: "",
+    audioRefAudio: "",
+    audioRefText: "",
     videoSeconds: "6",
     vquality: "720",
     videoGenerateAudio: "true",
@@ -734,6 +739,8 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
             audioPitch: config.audioPitch || defaultConfig.audioPitch,
             audioVolume: config.audioVolume || defaultConfig.audioVolume,
             audioInstructions: config.audioInstructions || "",
+            audioRefAudio: typeof config.audioRefAudio === "string" ? config.audioRefAudio.trim() : "",
+            audioRefText: typeof config.audioRefText === "string" ? config.audioRefText.trim() : "",
             // 旧版全局 systemPrompt 会跨任务污染请求；提示词定制现已按 operation 由服务端编译。
             systemPrompt: "",
             videoSeconds: normalizeVideoDuration(config.videoSeconds),

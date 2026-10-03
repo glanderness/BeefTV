@@ -5,7 +5,7 @@ import { audioPitchLabel, audioSpeedLabel, audioSpeechProfile, audioVolumeLabel,
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import type { AiConfig } from "@/stores/use-config-store";
 
-type AudioSettingKey = "audioVoice" | "audioFormat" | "audioSpeed" | "audioPitch" | "audioVolume" | "audioInstructions";
+type AudioSettingKey = "audioVoice" | "audioFormat" | "audioSpeed" | "audioPitch" | "audioVolume" | "audioInstructions" | "audioRefAudio" | "audioRefText";
 
 type AudioSettingsPanelProps = {
     config: AiConfig;
@@ -97,6 +97,29 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             onChange={(event) => onConfigChange("audioInstructions", event.target.value)}
                             onMouseDown={(event) => event.stopPropagation()}
                         />
+                    </SettingGroup>
+                ) : null}
+                {profile.showClone ? (
+                    <SettingGroup title="声音克隆" color={theme.node.muted}>
+                        <textarea
+                            value={config.audioRefAudio || ""}
+                            placeholder="参考音频的完整路径，例如 /Users/you/voice.wav"
+                            className="thin-scrollbar h-16 w-full resize-none rounded-xl border bg-transparent px-3 py-2 text-sm leading-5 outline-none"
+                            style={{ borderColor: theme.node.stroke, color: theme.node.text }}
+                            onChange={(event) => onConfigChange("audioRefAudio", event.target.value)}
+                            onMouseDown={(event) => event.stopPropagation()}
+                        />
+                        <textarea
+                            value={config.audioRefText || ""}
+                            placeholder="这段参考音频里说的内容（可选，填写能提高相似度）"
+                            className="thin-scrollbar mt-2 h-16 w-full resize-none rounded-xl border bg-transparent px-3 py-2 text-sm leading-5 outline-none"
+                            style={{ borderColor: theme.node.stroke, color: theme.node.text }}
+                            onChange={(event) => onConfigChange("audioRefText", event.target.value)}
+                            onMouseDown={(event) => event.stopPropagation()}
+                        />
+                        <p className="mt-1.5 text-[var(--fs-tiny)] leading-4 text-foreground/45">
+                            路径要指向本机 TTS 服务能读到的文件（wav/mp3 均可，建议 16kHz 单声道）。留空则使用模型默认音色。
+                        </p>
                     </SettingGroup>
                 ) : null}
             </div>

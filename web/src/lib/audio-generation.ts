@@ -62,6 +62,8 @@ export type AudioSpeechProfile = {
     showPitch: boolean;
     showVolume: boolean;
     showInstructions: boolean;
+    /** 是否用参考音频/文字描述控制音色；预设音色对克隆型本机模型没有意义。 */
+    showClone: boolean;
 };
 
 const OPENAI_SPEECH_VOICES = new Set(audioVoiceOptions.map((item) => item.value));
@@ -77,6 +79,12 @@ export function audioSpeechKind(model: string): AudioSpeechKind {
     if (id.includes("minimax-speech")) return "minimax-speech";
     if (id.includes("minimax-music")) return "minimax-music";
     return "openai";
+}
+
+// 本机 TTS 通常用绝对路径或带本机标记的模型标识，据此判断是否展示克隆入口。
+function usesLocalTtsClone(model: string) {
+    const id = audioModelId(model).trim().toLowerCase();
+    return id.startsWith("/") || id.includes("voxcpm") || id.includes("local-tts");
 }
 
 export function audioSpeechProfile(model = ""): AudioSpeechProfile {
@@ -96,6 +104,7 @@ export function audioSpeechProfile(model = ""): AudioSpeechProfile {
             showPitch: false,
             showVolume: false,
             showInstructions: false,
+            showClone: false,
         };
     }
     if (kind === "minimax-music") {
@@ -113,6 +122,7 @@ export function audioSpeechProfile(model = ""): AudioSpeechProfile {
             showPitch: false,
             showVolume: false,
             showInstructions: false,
+            showClone: false,
         };
     }
     return {
@@ -129,6 +139,7 @@ export function audioSpeechProfile(model = ""): AudioSpeechProfile {
         showPitch: false,
         showVolume: false,
         showInstructions: true,
+        showClone: usesLocalTtsClone(model),
     };
 }
 
@@ -206,6 +217,8 @@ export function resolveAudioSpeechSettings(
         audioPitch?: string;
         audioVolume?: string;
         audioInstructions?: string;
+        audioRefAudio?: string;
+        audioRefText?: string;
     },
 ) {
     const profile = audioSpeechProfile(model);
@@ -216,6 +229,8 @@ export function resolveAudioSpeechSettings(
         audioPitch: profile.showPitch ? normalizeAudioPitchValue(values.audioPitch || "") : "0",
         audioVolume: profile.showVolume ? normalizeAudioVolumeValue(values.audioVolume || "") : "1",
         audioInstructions: profile.showInstructions ? String(values.audioInstructions || "") : "",
+        audioRefAudio: profile.showClone ? String(values.audioRefAudio || "").trim() : "",
+        audioRefText: profile.showClone ? String(values.audioRefText || "").trim() : "",
     };
 }
 
@@ -252,7 +267,15 @@ export function buildAudioSpeechRequest(
     if (profile.showVoice) payload.voice = settings.audioVoice;
     if (profile.showSpeed) payload.speed = Number(settings.audioSpeed);
     const instructions = settings.audioInstructions.trim();
-    if (profile.showInstructions && instructions) payload.instructions = instructions;
+    if (profile.showInstructions && instructions) {
+        // 本机 TTS 用 instruct 表达音色描述，OpenAI 兼容接口用 instructions。
+        if (profile.showClone) payload.instruct = instructions;
+        else payload.instructions = instructions;
+    }
+    if (profile.showClone && settings.audioRefAudio) {
+        payload.ref_audio = settings.audioRefAudio;
+        if (settings.audioRefText) payload.ref_text = settings.audioRefText;
+    }
     return payload;
 }
 
