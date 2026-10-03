@@ -64,7 +64,7 @@ for source,target in [('v1.6.20','v1.6.21'),('v1.6.21','v1.6.22'),('v1.6.23','v1
     parent=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'])
     req=case/'request.json'
     req.write_text(json.dumps(dict(schema=1,parentPid=parent.pid,platform='windows-amd64',targetPath=str(install/'BeefTV.exe'),stagedPath=str(staged),backupPath=str(case/'backup'),preparedPath=str(case/'prepared'),resultPath=str(case/'result.json'),waitTimeoutSec=60)),encoding='utf-8')
-    env=dict(os.environ,CANVAS_BACKEND_DATA_DIR=str(data))
+    env=dict(os.environ,CANVAS_DESKTOP_DATA_DIR=str(data))
     process=subprocess.Popen([str(helper),'--beeftv-update-helper',str(req)],env=env)
     deadline=time.monotonic()+30
     while time.monotonic()<deadline and process.poll() is None and not (case/'prepared').exists(): time.sleep(.2)
@@ -84,7 +84,7 @@ for source,target in [('v1.6.20','v1.6.21'),('v1.6.21','v1.6.22'),('v1.6.23','v1
     if runtime_info:
         for suffix in ['/health/ready','/api/health/ready']:
             try:
-                with urllib.request.urlopen(runtime_info['baseURL']+suffix,timeout=5) as response:
+                with urllib.request.urlopen(runtime_info['baseUrl']+suffix,timeout=5) as response:
                     health={'status':response.status,'body':response.read().decode()}
                 break
             except Exception as error: health={'error':str(error)}
