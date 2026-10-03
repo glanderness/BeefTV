@@ -31,7 +31,26 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
         return () => { active = false; };
     }, []);
 
-    if (!channel.models.length) return null;
+    if (!channel.models.length) {
+        // 模型列表为空时不能整段消失：用户会找不到能力与请求协议的配置入口，
+        // 也不知道「模型列表」是回车成标签的输入框。
+        return (
+            <div className="mt-4">
+                <div className="mb-2">
+                    <div className="text-xs font-medium">模型能力与请求协议</div>
+                    <div className="mt-0.5 text-[var(--fs-tiny)] text-foreground/42">与运营后台使用同一能力目录；测试会发起真实请求并可能产生供应商费用</div>
+                </div>
+                <div className="flex min-w-0 items-start gap-3 rounded-md bg-surface-active px-3 py-3">
+                    <span className="mt-0.5 shrink-0 text-foreground/45" aria-hidden="true">
+                        <Settings2 className="size-4" />
+                    </span>
+                    <p className="m-0 min-w-0 text-xs leading-5 text-foreground/58">
+                        先在上方「模型列表」添加模型：输入模型名后按回车。添加完成后，这里会为每个模型显示能力与请求协议的配置入口。
+                    </p>
+                </div>
+            </div>
+        );
+    }
 
     const updateProfile = (model: string, patch: Partial<ModelProfile>) => {
         const defaultProtocol = defaultProtocolForModel(model, availableProtocols);
