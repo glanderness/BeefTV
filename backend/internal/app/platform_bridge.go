@@ -193,6 +193,9 @@ func (s *Service) RecordChannelResult(ctx context.Context, channelID string, fai
 }
 
 func (s *Service) Close() error {
+	if s != nil && s.chatGPTAuth != nil {
+		_ = s.chatGPTAuth.Close()
+	}
 	return nil
 }
 

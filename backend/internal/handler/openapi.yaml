@@ -24,10 +24,41 @@ tags:
   - name: assets
   - name: admin
   - name: beefapi
+  - name: chatgpt
   - name: agent-ops
   - name: assistant
   - name: creation-conversations
 paths:
+  /chatgpt/connection:
+    get:
+      tags: [chatgpt]
+      summary: 读取当前用户的 ChatGPT 订阅连接状态
+      description: 只返回状态、设备码和账号元数据，永不返回 access_token 或 refresh_token。
+      responses:
+        "200":
+          description: 信封 data 为连接摘要
+  /chatgpt/connection/start:
+    post:
+      tags: [chatgpt]
+      summary: 申请设备码并开始后台轮询确认结果
+      description: 返回 pending 摘要，包含 user_code 与验证地址；前端轮询 GET /chatgpt/connection 获取结果。
+      responses:
+        "200":
+          description: pending 连接摘要
+  /chatgpt/connection/cancel:
+    post:
+      tags: [chatgpt]
+      summary: 取消尚未完成的设备码登录
+      responses:
+        "200":
+          description: 当前连接摘要
+  /chatgpt/connection/disconnect:
+    post:
+      tags: [chatgpt]
+      summary: 断开订阅并尽力撤销上游刷新令牌
+      responses:
+        "200":
+          description: disconnected 连接摘要
   /projects/{id}/chapter-apply-receipts:
     get:
       tags: [projects]

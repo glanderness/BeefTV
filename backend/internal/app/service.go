@@ -15,6 +15,7 @@ import (
 	"infinite-canvas/backend/internal/assistantturns"
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/canvas"
+	"infinite-canvas/backend/internal/chatgptauth"
 	"infinite-canvas/backend/internal/depthcapture"
 	"infinite-canvas/backend/internal/diagnostics"
 	"infinite-canvas/backend/internal/kernel"
@@ -80,6 +81,7 @@ type Service struct {
 	depthCapture             *depthcapture.Service
 	depthCaptureOnce         sync.Once
 	beefAPI                  *beefapi.Service
+	chatGPTAuth              *chatgptauth.Service
 	generationDeliveryMedia  taskdelivery.Media
 	generationDelivery       *taskdelivery.Deliverer
 	deliveryMu               sync.Mutex
