@@ -18,6 +18,7 @@ import (
 	"infinite-canvas/backend/internal/assistantruntime"
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/buildinfo"
+	"infinite-canvas/backend/internal/chatgptauth"
 	"infinite-canvas/backend/internal/conversation"
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/eagle"
@@ -138,6 +139,12 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 		return nil, beefAPIErr
 	}
 	svc.SetBeefAPI(beefAPIConnection)
+	chatGPTAuth, chatGPTErr := chatgptauth.New(chatgptauth.Options{DataDir: cfg.DataDir})
+	if chatGPTErr != nil {
+		cleanupService()
+		return nil, chatGPTErr
+	}
+	svc.SetChatGPTAuth(chatGPTAuth)
 	localKernel := app.NewLocalKernel(svc)
 	assetService := svc.ResourceService()
 	projectService := svc.ProjectService()

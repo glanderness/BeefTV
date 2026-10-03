@@ -10,7 +10,8 @@ import { type ModelCapabilityChoice } from "@/components/model-protocol-picker";
 import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
 import { defaultProtocolForCapability, defaultProtocolForModel, inferProtocolCapabilityFromModel, modelProtocolCapability, modelProtocolDefinition, type ModelProtocol, type ModelProtocolDefinition } from "@/lib/model-protocols";
 import { fetchPluginProviderCatalog } from "@/services/api/plugin-catalog";
-import { modelOptionName, type ModelChannel } from "@/stores/use-config-store";
+import { CHATGPT_SUBSCRIPTION_INTERFACE } from "@/services/api/chatgpt-connection";
+import { modelOptionName, MANAGED_CHATGPT_CREDENTIAL_REF, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelProfile = NonNullable<ModelChannel["modelProfiles"]>[number];
 
@@ -23,6 +24,10 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
     const [activeModel, setActiveModel] = useState<string | null>(null);
     const [availableProtocols, setAvailableProtocols] = useState<ModelProtocolDefinition[]>([]);
 
+    // 订阅渠道的模型必须走订阅协议；否则新增模型会退回默认兼容协议并绕过订阅凭据。
+    const subscriptionChannel = channel.credentialRef === MANAGED_CHATGPT_CREDENTIAL_REF || channel.interfaceType === CHATGPT_SUBSCRIPTION_INTERFACE;
+    const fallbackProtocolForModel = (model: string) => (subscriptionChannel ? CHATGPT_SUBSCRIPTION_INTERFACE : defaultProtocolForModel(model, availableProtocols));
+
     useEffect(() => {
         let active = true;
         void fetchPluginProviderCatalog("user.custom-channel").then((items) => { if (active) setAvailableProtocols(items); })
@@ -34,7 +39,7 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
     if (!channel.models.length) return null;
 
     const updateProfile = (model: string, patch: Partial<ModelProfile>) => {
-        const defaultProtocol = defaultProtocolForModel(model, availableProtocols);
+        const defaultProtocol = fallbackProtocolForModel(model);
         const defaultCap = modelProtocolCapability(defaultProtocol, availableProtocols) || inferProtocolCapabilityFromModel(model);
         const current = channel.modelProfiles?.find((item) => item.model === model) || {
             model,
@@ -49,8 +54,8 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
     const testModel = async (model: string, capability: ModelProfile["capability"], protocol: ModelProtocol) => {
         setTestingModel(model);
         try {
-            const result = await testChannelModelConnection(channel, model, capability, protocol);
-            message.info(result.detail);
+            const detail = await testChannelModelConnection(channel, model, capability, protocol);
+            message.success(`模型测试通过：${detail}`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "模型测试失败");
         } finally {
@@ -59,7 +64,7 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
     };
 
     const activeModelProfile = activeModel ? channel.modelProfiles?.find((item) => item.model === activeModel) : undefined;
-    const inferredProtocol = activeModel ? defaultProtocolForModel(activeModel, availableProtocols) : "";
+    const inferredProtocol = activeModel ? fallbackProtocolForModel(activeModel) : "";
     const activeProtocol = activeModelProfile?.protocol || inferredProtocol;
     const activeCapability = activeModelProfile?.capability || modelProtocolCapability(activeProtocol, availableProtocols) || (activeModel ? inferProtocolCapabilityFromModel(activeModel) : "text");
 
@@ -76,7 +81,7 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
                 {channel.models.map((rawModel) => {
                     const model = modelOptionName(rawModel);
                     const profile = channel.modelProfiles?.find((item) => item.model === model);
-                    const protocol = profile?.protocol || defaultProtocolForModel(model, availableProtocols);
+                    const protocol = profile?.protocol || fallbackProtocolForModel(model);
                     const capability = profile?.capability || modelProtocolCapability(protocol, availableProtocols) || inferProtocolCapabilityFromModel(model);
                     const displayName = profile?.displayName?.trim() || model;
                     return (

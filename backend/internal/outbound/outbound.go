@@ -241,7 +241,8 @@ func validOutboundHeaderValue(value string) bool {
 
 func blockedOutboundHeader(name string) bool {
 	switch name {
-	case "authorization", "proxy-authorization", "cookie", "set-cookie", "host", "content-length", "content-type", "accept", "connection", "proxy-connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade", "forwarded", "x-goog-api-key":
+	// chatgpt-account-id 必须从托管凭据派生，不能由渠道静态配置覆盖。
+	case "authorization", "proxy-authorization", "cookie", "set-cookie", "host", "content-length", "content-type", "accept", "connection", "proxy-connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade", "forwarded", "x-goog-api-key", "chatgpt-account-id":
 		return true
 	}
 	return strings.HasPrefix(name, "x-canvas-") || strings.HasPrefix(name, "x-forwarded-")

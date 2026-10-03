@@ -127,6 +127,13 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		input.OnTextDelta = textPublisher.Publish
 		defer textPublisher.Close()
 	}
+	// 托管凭据（ChatGPT 订阅）在解析渠道之后、校验之前换成短期 access_token。
+	// 只有文本模式使用该凭据，因此不会影响图片、视频和音频路径。
+	if input.Mode == "text" {
+		if err := s.resolveChatGPTSubscriptionCredential(ctx, userID, &input.Config); err != nil {
+			return nil, err
+		}
+	}
 	return generation.Execute(ctx, input)
 }
 

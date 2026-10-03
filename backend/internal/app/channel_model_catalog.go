@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"infinite-canvas/backend/internal/chatgptauth"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 )
@@ -17,6 +18,9 @@ type ChannelModelsRequest struct {
 	Headers       []OutboundHeader `json:"headers"`
 	ChannelID     string           `json:"channelId"`
 	CredentialRef string           `json:"credentialRef"`
+	// 以下字段只由服务端解析托管凭据时填充，客户端传入会被忽略。
+	ChatGPTAccountID string `json:"-"`
+	ChatGPTFedRAMP   bool   `json:"-"`
 }
 
 func (s *Service) FetchChannelModels(ctx context.Context, actor *model.User, input ChannelModelsRequest) ([]string, error) {
@@ -33,6 +37,13 @@ func (s *Service) FetchChannelModelCatalog(ctx context.Context, actor *model.Use
 	}
 	if err := s.resolveChannelModelsRequest(&input); err != nil {
 		return nil, err
+	}
+	if err := s.resolveChatGPTModelsCredential(ctx, actor.ID, &input); err != nil {
+		return nil, err
+	}
+	// ChatGPT 订阅后端没有 OpenAI 的 /v1/models，而是 Codex 自己的 catalog。
+	if strings.TrimSpace(input.CredentialRef) == chatgptauth.CredentialRef {
+		return fetchChatGPTSubscriptionModelCatalog(ctx, input)
 	}
 	headers, err := NormalizeOutboundHeaders(input.Headers)
 	if err != nil {

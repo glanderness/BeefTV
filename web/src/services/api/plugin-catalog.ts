@@ -1,4 +1,5 @@
 import { http } from "@/services/api/request";
+import { CHATGPT_SUBSCRIPTION_BASE_URL, CHATGPT_SUBSCRIPTION_INTERFACE } from "@/services/api/chatgpt-connection";
 import type { ModelProtocolDefinition, ProtocolCapability } from "@/lib/model-protocols";
 import { workspaceCapabilities } from "@/services/workspace-mode";
 
@@ -47,6 +48,8 @@ export async function fetchPluginProviderCatalog(scope: string, capability?: Pro
 const BUILTIN_OPENAI_PROTOCOLS: ModelProtocolDefinition[] = [
     { value: "chat-completion", label: "OpenAI Chat Completions", vendor: "OpenAI", capability: "text", create: "POST /v1/chat/completions", contentType: "application/json", media: "内置协议", enabled: true },
     { value: "openai-response", label: "OpenAI Responses", vendor: "OpenAI", capability: "text", create: "POST /v1/responses", contentType: "application/json", media: "内置协议", enabled: true },
+    // 订阅协议没有静态 API Key，凭据由后端设备码登录持有。
+    { value: CHATGPT_SUBSCRIPTION_INTERFACE, label: "ChatGPT 订阅", vendor: "OpenAI", capability: "text", create: "POST /responses", contentType: "application/json", media: "内置协议 · 订阅登录", enabled: true, baseUrl: CHATGPT_SUBSCRIPTION_BASE_URL },
     { value: "openai-image", label: "OpenAI Images", vendor: "OpenAI", capability: "image", create: "POST /v1/images/generations", contentType: "application/json", media: "内置协议", enabled: true },
     { value: "newapi", label: "OpenAI Videos", vendor: "OpenAI compatible", capability: "video", create: "POST /v1/videos", poll: "GET /v1/videos/{task_id}", contentType: "multipart/form-data", media: "内置协议", enabled: true },
 ];

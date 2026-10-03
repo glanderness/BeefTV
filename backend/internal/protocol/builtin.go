@@ -72,7 +72,7 @@ func Builtins() *Registry {
 		return builtinRegistry
 	}
 	registry, err := NewRegistry(
-		openAIChatAdapter(), openAIResponsesAdapter(), claudeAdapter(),
+		openAIChatAdapter(), openAIResponsesAdapter(), chatGPTSubscriptionAdapter(), claudeAdapter(),
 		openAIVideosAdapter(), newAPIChannel1Adapter(), newAPIVideosAdapter(), xAIVideosAdapter(), arkVideosAdapter(), jimengVideosAdapter(), geminiVeoAdapter(), novitaVideosAdapter(), miniMaxVideosAdapter(),
 		agnesAdapter(),
 	)
@@ -155,6 +155,32 @@ func openAIResponsesAdapter() Adapter {
 			body := map[string]any{"model": r.Model, "input": input}
 			mergeExtra(body, r.Extra, "input", "instructions", "temperature", "top_p", "max_output_tokens", "stream", "tools", "text")
 			return jsonSpec(http.MethodPost, "/v1/responses", body), nil
+		},
+		parseCreate: parseResponsesResponse,
+	}
+}
+
+// chatGPTSubscriptionAdapter 复用 Responses 线协议，但请求形状按 ChatGPT 后端约束
+// 固定：store=false、必须流式、并带上 reasoning.encrypted_content。凭据不是静态
+// API Key，而是执行期注入的订阅 access_token。
+func chatGPTSubscriptionAdapter() Adapter {
+	info := metadata("chatgpt-subscription", "ChatGPT 订阅", "OpenAI", CapabilityText, "POST /responses", "", "application/json")
+	info.Parameters = []Parameter{
+		{Name: "model", Type: "string", Required: true, Mapping: "model", Description: "订阅可用的上游模型标识，例如 gpt-5-codex。"},
+		{Name: "prompt", Type: "string", Required: true, Mapping: "input", Description: "默认作为 input；extra.input 可提供结构化输入。"},
+		{Name: "stream", Type: "boolean", Mapping: "stream", Description: "ChatGPT 后端要求流式响应，该参数固定为 true。"},
+	}
+	return builtinAdapter{info: info,
+		create: func(r GenerationRequest) (RequestSpec, error) {
+			input := any(r.Prompt)
+			body := map[string]any{
+				"model": r.Model, "input": input, "stream": true, "store": false,
+				"include": []any{"reasoning.encrypted_content"},
+			}
+			mergeExtra(body, r.Extra, "input", "instructions", "temperature", "top_p", "max_output_tokens", "stream", "tools", "text")
+			// 订阅后端不接受非流式请求，extra 不能把它关掉。
+			body["stream"] = true
+			return jsonSpec(http.MethodPost, "/responses", body), nil
 		},
 		parseCreate: parseResponsesResponse,
 	}

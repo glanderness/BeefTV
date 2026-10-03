@@ -67,6 +67,8 @@ func TestNormalizeOutboundHeadersRejectsUnsafeAndDuplicateValues(t *testing.T) {
 		{{Name: "Authorization", Value: "Bearer attacker"}},
 		{{Name: "X-Test", Value: "safe\r\ninjected: true"}},
 		{{Name: "X-Test", Value: "one"}, {Name: "x-test", Value: "two"}},
+		// 托管订阅的账号身份头必须由凭据派生，不能被渠道静态配置覆盖。
+		{{Name: "ChatGPT-Account-ID", Value: "attacker-account"}},
 	}
 	for _, headers := range tests {
 		if _, err := NormalizeOutboundHeaders(headers); err == nil {

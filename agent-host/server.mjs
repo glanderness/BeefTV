@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ModelRuntime, SessionManager } from '@earendil-works/pi-coding-agent';
-import { providerRegistration, providerUnavailableReason,
+import { providerRegistration, providerUnavailableReason, parseModelHeaders,
   turnContextPrefix, modelTurnCompletion,
   unflushedSessionHistory,
   resetTurnAccumulator, turnChange } from './canvas-turn.mjs';
@@ -34,6 +34,9 @@ const MODEL_API = (process.env.BEEFTV_AGENT_API || 'openai-completions').trim();
 const BASE_URL = (process.env.BEEFTV_AGENT_BASE_URL || '').replace(/\/+$/, '');
 const API_KEY = process.env.BEEFTV_AGENT_API_KEY || '';
 const MAX_OUTPUT_TOKENS = Number(process.env.BEEFTV_AGENT_MAX_TOKENS || 4096);
+// 额外上游请求头（订阅渠道的账号隔离头等）。解析失败按空处理，
+// 由上游返回真实错误，不静默改成别的模型。
+const MODEL_HEADERS = parseModelHeaders(process.env.BEEFTV_AGENT_HEADERS);
 const CONTEXT_WINDOW = Number(process.env.BEEFTV_AGENT_CONTEXT_WINDOW || 200000);
 const TURN_TIMEOUT_MS = Number(process.env.BEEFTV_AGENT_TURN_TIMEOUT_MS || 180000);
 const MAX_REQUESTS_PER_TURN = Number(process.env.BEEFTV_AGENT_MAX_REQUESTS_PER_TURN || 40);
@@ -69,6 +72,7 @@ async function initializeModel() {
     modelRuntime.registerProvider(PROVIDER_ID, providerRegistration({
       api: MODEL_API, baseUrl: BASE_URL, modelId: MODEL_ID,
       maxTokens: MAX_OUTPUT_TOKENS, contextWindow: CONTEXT_WINDOW,
+      headers: MODEL_HEADERS,
     }));
     MODEL = modelRuntime.getModel(PROVIDER_ID, MODEL_ID);
     if (!MODEL) { providerReason = 'model_not_configured'; return; }

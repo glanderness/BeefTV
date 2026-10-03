@@ -8,15 +8,17 @@ import { WorkspaceState } from "@/components/layout/workspace-state";
 import { mergeFetchedChannelModelProfiles } from "@/lib/channel-model-catalog";
 import { ensureModelProfilesWithUiDefaults } from "@/lib/model-protocols";
 import { fetchChannelModels, type ChannelModelFetchResult } from "@/services/api/image";
-import { channelHasGenerationCredential, channelHasManagedBeefAPICredential, createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, isBuiltinBeefAPIChannel, modelOptionsFromChannels, normalizeConfigSnapshot, useConfigStore, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { channelHasChatGPTSubscriptionCredential, channelHasGenerationCredential, channelHasManagedBeefAPICredential, createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, isBuiltinBeefAPIChannel, MANAGED_CHATGPT_CREDENTIAL_REF, modelOptionsFromChannels, normalizeConfigSnapshot, useConfigStore, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { ChannelModelSettings } from "./channel-model-settings";
 import { workspaceCapabilities } from "@/services/workspace-mode";
 import { localWorkspaceConfig } from "@/lib/user-session";
 import { getLocalModelConfig } from "@/services/api/workspace";
 import { getModelConfigPersistenceState, subscribeModelConfigPersistence, type ModelConfigPersistenceState } from "@/services/model-config-repository";
 import { beefAPIConnectionLabel, cancelBeefAPIConnection, disconnectBeefAPIConnection, getBeefAPIConnection, openBeefAPIWallet, startBeefAPIConnection, type BeefAPIConnectionSummary } from "@/services/api/beefapi-connection";
+import { CHATGPT_SUBSCRIPTION_BASE_URL, CHATGPT_SUBSCRIPTION_INTERFACE, cancelChatGPTConnection, chatGPTConnectionLabel, disconnectChatGPTConnection, getChatGPTConnection, startChatGPTConnection, type ChatGPTConnectionSummary } from "@/services/api/chatgpt-connection";
 
 type UserChannelConnection = "openai" | "gemini";
+type ChannelCredentialSource = "apiKey" | "chatgpt";
 type ChannelSettingsPaneProps = {
     onOpenModels?: () => void;
     onOpenRunningHub?: () => void;
@@ -33,6 +35,41 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
     const [newChannelId, setNewChannelId] = useState<string | null>(null);
     const [beefConnection, setBeefConnection] = useState<BeefAPIConnectionSummary | null>(null);
     const [beefBusy, setBeefBusy] = useState(false);
+    const [chatGPTConnection, setChatGPTConnection] = useState<ChatGPTConnectionSummary | null>(null);
+    const [chatGPTBusy, setChatGPTBusy] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        void getChatGPTConnection()
+            .then((summary) => {
+                if (!cancelled) setChatGPTConnection(summary);
+            })
+            .catch(() => undefined);
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    useEffect(() => {
+        if (chatGPTConnection?.state !== "pending") return;
+        const timer = window.setInterval(() => {
+            void getChatGPTConnection()
+                .then((summary) => setChatGPTConnection(summary))
+                .catch(() => undefined);
+        }, 2000);
+        return () => window.clearInterval(timer);
+    }, [chatGPTConnection?.state]);
+
+    const runChatGPTAction = async (action: () => Promise<ChatGPTConnectionSummary>, fallback: string) => {
+        setChatGPTBusy(true);
+        try {
+            setChatGPTConnection(await action());
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : fallback);
+        } finally {
+            setChatGPTBusy(false);
+        }
+    };
     const appliedConnectionState = useRef<string | undefined>(undefined);
     const catalogSync = useRef<{ state: string; selection: string; adopt: boolean } | null>(null);
     const [catalogSyncFailed, setCatalogSyncFailed] = useState(false);
@@ -140,6 +177,29 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
         const baseUrl = isKnownDefaultBaseUrl(channel.baseUrl) ? defaultBaseUrl : channel.baseUrl;
         // 渠道只负责连接类型；具体模型能力和请求协议由下方共享能力卡片维护。
         updateChannel(channel.id, { apiFormat, interfaceType: undefined, baseUrl });
+    };
+
+    // 凭据来源决定渠道走静态 API Key 还是 ChatGPT 订阅登录。两者互斥：
+    // 订阅渠道不保存任何密钥，只保留一个后端托管的凭据引用。
+    const setChannelCredentialSource = (channel: ModelChannel, source: ChannelCredentialSource) => {
+        if (source === "chatgpt") {
+            updateChannel(channel.id, {
+                credentialRef: MANAGED_CHATGPT_CREDENTIAL_REF,
+                apiKey: "",
+                secretKey: "",
+                interfaceType: CHATGPT_SUBSCRIPTION_INTERFACE,
+                apiFormat: "openai",
+                baseUrl: CHATGPT_SUBSCRIPTION_BASE_URL,
+                modelProfiles: (channel.modelProfiles || []).map((item) => ({ ...item, protocol: CHATGPT_SUBSCRIPTION_INTERFACE })),
+            });
+            return;
+        }
+        updateChannel(channel.id, {
+            credentialRef: undefined,
+            interfaceType: undefined,
+            apiKey: "",
+            modelProfiles: (channel.modelProfiles || []).map((item) => (item.protocol === CHATGPT_SUBSCRIPTION_INTERFACE ? { ...item, protocol: "openai-response" } : item)),
+        });
     };
 
     const addChannel = () => {
@@ -293,6 +353,7 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                     {userChannels.map((channel) => {
                         const editing = editingChannelId === channel.id;
                         const builtinBeefAPI = isBuiltinBeefAPIChannel(channel);
+                        const chatGPTChannel = isChatGPTSubscriptionChannel(channel);
                         return (
                             <section key={channel.id} aria-labelledby={`channel-${channel.id}-title`} className="settings-channel p-2.5 sm:p-3">
                                 <div className="mb-2.5 flex flex-wrap items-start justify-between gap-2.5">
@@ -308,6 +369,15 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                                     </div>
                                     <div className="flex w-full flex-wrap justify-end gap-2 sm:w-auto sm:shrink-0">
                                         {builtinBeefAPI && catalogSyncFailed ? <Button loading={beefBusy} onClick={() => void runBeefAction(getBeefAPIConnection, "无法更新模型列表")}>重试更新模型列表</Button> : null}
+                                        {chatGPTChannel ? (
+                                            <ChatGPTConnectionActions
+                                                connection={chatGPTConnection}
+                                                busy={chatGPTBusy}
+                                                onConnect={() => void runChatGPTAction(startChatGPTConnection, "无法开始连接")}
+                                                onCancel={() => void runChatGPTAction(cancelChatGPTConnection, "无法取消连接")}
+                                                onDisconnect={() => void runChatGPTAction(disconnectChatGPTConnection, "无法断开连接")}
+                                            />
+                                        ) : null}
                                         {builtinBeefAPI ? (
                                             <BeefAPIConnectionActions
                                                 connection={beefConnection}
@@ -393,10 +463,22 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                                                             onBlur={(event) => updateChannel(channel.id, { name: event.target.value.trim() || "未命名渠道" })}
                                                         />
                                                     </Form.Item>
-                                                    <Form.Item label="目录连接类型" className="mb-0 sm:col-span-1" extra={builtinBeefAPI ? "应用内置适配" : "仅影响模型目录拉取。"}>
-                                                        <Segmented<UserChannelConnection>
+                                                    <Form.Item label="凭据来源" className="mb-0 sm:col-span-2" extra={builtinBeefAPI ? "应用内置适配" : "ChatGPT 订阅由后端设备码登录授权，浏览器不保存任何密钥。"}>
+                                                        <Segmented<ChannelCredentialSource>
                                                             block
                                                             disabled={builtinBeefAPI}
+                                                            value={channelCredentialSource(channel)}
+                                                            options={[
+                                                                { label: "API Key", value: "apiKey" },
+                                                                { label: "ChatGPT 订阅", value: "chatgpt" },
+                                                            ]}
+                                                            onChange={(value) => setChannelCredentialSource(channel, value)}
+                                                        />
+                                                    </Form.Item>
+                                                    <Form.Item label="目录连接类型" className="mb-0 sm:col-span-1" extra={builtinBeefAPI ? "应用内置适配" : chatGPTChannel ? "订阅渠道由后端拉取 Codex 模型目录" : "仅影响模型目录拉取。"}>
+                                                        <Segmented<UserChannelConnection>
+                                                            block
+                                                            disabled={builtinBeefAPI || chatGPTChannel}
                                                             value={channelConnectionMode(channel)}
                                                             options={[
                                                                 { label: "OpenAI", value: "openai" },
@@ -410,7 +492,7 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                                                             id={`channel-${channel.id}-base-url`}
                                                             inputMode="url"
                                                             value={channel.baseUrl}
-                                                            disabled={builtinBeefAPI}
+                                                            disabled={builtinBeefAPI || chatGPTChannel}
                                                             placeholder={localMode ? "填写本地服务 Base URL" : "填写云端渠道 Base URL"}
                                                             onChange={(event) => updateChannel(channel.id, { baseUrl: event.target.value })}
                                                             onBlur={(event) => updateChannel(channel.id, { baseUrl: event.target.value.trim().replace(/\/+$/u, "") })}
@@ -420,6 +502,26 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                                                         <Form.Item label="账号连接" className="mb-0 sm:col-span-2">
                                                             <p className="m-0 text-sm leading-6 text-foreground/80">{beefAPIConnectionLabel(beefConnection)}</p>
                                                             {beefConnection?.balance === "zero" ? <p className="mt-1 text-xs leading-5 text-foreground/55">余额为 0 时仍可查看模型。生成时会提示余额不足。</p> : null}
+                                                        </Form.Item>
+                                                    ) : chatGPTChannel ? (
+                                                        <Form.Item label="账号连接" className="mb-0 sm:col-span-2">
+                                                            <div className="flex flex-wrap items-center gap-2">
+                                                                <ChatGPTConnectionActions
+                                                                    connection={chatGPTConnection}
+                                                                    busy={chatGPTBusy}
+                                                                    onConnect={() => void runChatGPTAction(startChatGPTConnection, "无法开始连接")}
+                                                                    onCancel={() => void runChatGPTAction(cancelChatGPTConnection, "无法取消连接")}
+                                                                    onDisconnect={() => void runChatGPTAction(disconnectChatGPTConnection, "无法断开连接")}
+                                                                />
+                                                                <span className="text-sm leading-6 text-foreground/80">{chatGPTConnectionLabel(chatGPTConnection)}</span>
+                                                            </div>
+                                                            {chatGPTConnection?.state === "pending" && chatGPTConnection.userCode ? (
+                                                                <p className="mt-1 text-xs leading-5 text-foreground/55">
+                                                                    在 {chatGPTConnection.verificationUri || "浏览器"} 输入设备码 {chatGPTConnection.userCode} 完成授权。
+                                                                </p>
+                                                            ) : (
+                                                                <p className="mt-1 text-xs leading-5 text-foreground/55">生成时由后端按需换取短期访问令牌，刷新令牌加密保存在本地工作区。</p>
+                                                            )}
                                                         </Form.Item>
                                                     ) : (
                                                         <>
@@ -595,6 +697,7 @@ export function modelConfigChannelStatusLabel(channel: ModelChannel, persistence
         return "未连接";
     }
     if (!channelHasGenerationCredential(channel)) return "待配置";
+    if (isChatGPTSubscriptionChannel(channel)) return "ChatGPT 订阅";
     if (persistence.status === "saving") return "保存中";
     if (persistence.status === "error") return "保存失败";
     if (persistence.status === "saved") return "已保存";
@@ -667,6 +770,42 @@ function BeefAPIConnectionActions({
     );
 }
 
+function ChatGPTConnectionActions({
+    connection,
+    busy,
+    onConnect,
+    onCancel,
+    onDisconnect,
+}: {
+    connection: ChatGPTConnectionSummary | null;
+    busy: boolean;
+    onConnect: () => void;
+    onCancel: () => void;
+    onDisconnect: () => void;
+}) {
+    const state = connection?.state || "disconnected";
+    const buttonClass = "h-10 sm:h-8";
+    if (state === "pending") {
+        return (
+            <Button className={buttonClass} size="small" loading={busy} onClick={onCancel}>
+                取消
+            </Button>
+        );
+    }
+    if (state === "connected") {
+        return (
+            <Button className={buttonClass} size="small" loading={busy} onClick={onDisconnect}>
+                断开连接
+            </Button>
+        );
+    }
+    return (
+        <Button className={buttonClass} size="small" type="primary" loading={busy} onClick={onConnect}>
+            连接 ChatGPT 订阅
+        </Button>
+    );
+}
+
 export function modelConfigChannelPresentation(channel: ModelChannel) {
     const builtin = isBuiltinBeefAPIChannel(channel);
     return {
@@ -718,6 +857,15 @@ function channelConnectionMode(channel: ModelChannel): UserChannelConnection {
     return channel.apiFormat === "gemini" ? "gemini" : "openai";
 }
 
+// 订阅渠道既可能由凭据引用标记，也可能只体现在请求协议上；两者任一成立即视为订阅渠道。
+function isChatGPTSubscriptionChannel(channel: ModelChannel) {
+    return channelHasChatGPTSubscriptionCredential(channel) || channel.interfaceType === CHATGPT_SUBSCRIPTION_INTERFACE;
+}
+
+function channelCredentialSource(channel: ModelChannel): ChannelCredentialSource {
+    return isChatGPTSubscriptionChannel(channel) ? "chatgpt" : "apiKey";
+}
+
 function channelConnectionError(channel: ModelChannel, connection?: BeefAPIConnectionSummary | null) {
     const baseUrl = channel.baseUrl.trim();
     if (!baseUrl) return "请填写 Base URL";
@@ -731,6 +879,10 @@ function channelConnectionError(channel: ModelChannel, connection?: BeefAPIConne
         if (connection?.state === "connected" || channelHasManagedBeefAPICredential(channel)) return "";
         return "请先连接 BeefAPI";
     }
+    if (isChatGPTSubscriptionChannel(channel)) {
+        if (!channelHasChatGPTSubscriptionCredential(channel)) return "请先连接 ChatGPT 订阅";
+        return "";
+    }
     if (!channelHasGenerationCredential(channel)) return "请填写 API Key / Access Key";
     if (requiresSecretKey(channel) && !channel.secretKey?.trim()) return "当前协议需要填写 Secret Key";
     return "";
@@ -741,6 +893,7 @@ function channelConnectionSignature(channel: ModelChannel) {
 }
 
 function channelProtocolLabel(channel: ModelChannel) {
+    if (isChatGPTSubscriptionChannel(channel)) return "ChatGPT 订阅";
     return channelConnectionMode(channel) === "gemini" ? "Gemini 原生" : "OpenAI 兼容";
 }
 

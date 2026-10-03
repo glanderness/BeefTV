@@ -1,14 +1,20 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"infinite-canvas/backend/internal/assistant"
 	"infinite-canvas/backend/internal/beefapi"
+	"infinite-canvas/backend/internal/chatgptauth"
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/workspace"
 )
+
+// assistantCredentialTimeout 限制助手凭据换取，避免宿主启动被上游拖死。
+const assistantCredentialTimeout = 30 * time.Second
 
 const (
 	AssistantReasonModelNotConfigured  = assistant.ReasonModelNotConfigured
@@ -61,11 +67,73 @@ func (s *Service) ResolveAssistantProvider() (AssistantProvider, error) {
 			snapshot.Channels[index].Name = "BeefAPI"
 		}
 	}
-	return modelcatalog.ResolveAssistantProvider(snapshot, s.assistantManagedCredentialLookup())
+	provider, err := modelcatalog.ResolveAssistantProvider(snapshot, s.assistantManagedCredentialLookup())
+	if err != nil {
+		return provider, err
+	}
+	s.applyAssistantSubscriptionHeaders(&provider)
+	return provider, nil
+}
+
+// applyAssistantSubscriptionHeaders 为订阅渠道补上账号隔离头。助手请求由
+// agent-host 直连上游，只带 baseUrl + apiKey，所以账号头必须在这里从凭据派生。
+func (s *Service) applyAssistantSubscriptionHeaders(provider *assistant.Provider) {
+	if provider == nil || strings.TrimSpace(provider.Protocol) != chatgptauth.CredentialRef {
+		return
+	}
+	accountID, fedramp, ok := s.assistantChatGPTAccount()
+	if !ok {
+		return
+	}
+	headers := map[string]string{"originator": "codex_cli_rs"}
+	if accountID != "" {
+		headers["chatgpt-account-id"] = accountID
+	}
+	if fedramp {
+		headers["X-OpenAI-Fedramp"] = "true"
+	}
+	provider.Headers = headers
+}
+
+// assistantChatGPTAccount 从托管凭据解出账号 id。令牌本身已由凭据 lookup 注入，
+// 这里只取非敏感元数据，失败时不阻断启动（账号头缺失会由上游明确拒绝）。
+func (s *Service) assistantChatGPTAccount() (accountID string, fedramp bool, ok bool) {
+	credential, credentialOK := s.assistantChatGPTCredential()
+	if !credentialOK {
+		return "", false, false
+	}
+	return credential.AccountID, credential.FedRAMP, true
+}
+
+// assistantChatGPTCredential 换取订阅短期令牌。凭据服务按工作区 owner 隔离，
+// 与生成任务共用同一份存储，因此不存在第二套信任根。
+func (s *Service) assistantChatGPTCredential() (chatgptauth.Credential, bool) {
+	if s.chatGPTAuth == nil {
+		return chatgptauth.Credential{}, false
+	}
+	owner, err := s.LocalWorkspaceOwner()
+	if err != nil || strings.TrimSpace(owner.ID) == "" {
+		return chatgptauth.Credential{}, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), assistantCredentialTimeout)
+	defer cancel()
+	credential, err := s.chatGPTAuth.AccessToken(ctx, owner.ID)
+	if err != nil || strings.TrimSpace(credential.AccessToken) == "" {
+		return chatgptauth.Credential{}, false
+	}
+	return credential, true
 }
 
 func (s *Service) assistantManagedCredentialLookup() modelcatalog.ManagedCredentialLookup {
 	return func(channelID, credentialRef, baseURL string) (string, string, bool) {
+		// ChatGPT 订阅：用同一套凭据服务在执行期换取短期令牌。
+		if strings.TrimSpace(credentialRef) == chatgptauth.CredentialRef {
+			credential, ok := s.assistantChatGPTCredential()
+			if !ok {
+				return "", "", false
+			}
+			return credential.AccessToken, chatgptauth.CodexBaseURL, true
+		}
 		if !(beefapi.IsManagedChannel(channelID, credentialRef, baseURL) || channelID == beefapi.ChannelID) {
 			return "", "", false
 		}
