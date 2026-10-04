@@ -298,6 +298,7 @@ async function createBackendGenerationTask(options: BackendGenerationTaskOptions
         groups.forEach((group, kind) => prepared[group].forEach((media, index) => {
             if (media.storageKey || !isReferenceHTTPSLink(media.url || "")) references.push({ key: `${group}:${index}`, label: `${labels[kind]} ${index + 1}`, name: media.name });
         }));
+        if (prepared.mask && (prepared.mask.storageKey || !isReferenceHTTPSLink(prepared.mask.url || ""))) references.push({ key: "mask:0", label: "遮罩", name: prepared.mask.name });
         if (!references.length) throw error;
         const links = await options.resolveReferenceLinks(references, options.signal);
         throwIfAborted(options.signal);
@@ -315,6 +316,7 @@ async function createBackendGenerationTask(options: BackendGenerationTaskOptions
         prepared.referenceImages = replace(prepared.referenceImages, "referenceImages");
         prepared.referenceVideos = replace(prepared.referenceVideos, "referenceVideos");
         prepared.referenceAudios = replace(prepared.referenceAudios, "referenceAudios");
+        if (prepared.mask) prepared.mask = replace([prepared.mask], "mask")[0];
         assertPreparedVideoCapability(options.mode, options.config, prepared);
         task = await submit();
     }

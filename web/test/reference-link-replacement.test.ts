@@ -47,3 +47,33 @@ for (const action of ["replace", "cancel", "abort", "switch", "invalid", "upstre
         expect(prompts).toBe(action === "upstream-error" ? 0 : 1);
     });
 }
+
+test("concurrent submissions retain reference order and replace mask without changing originals", async () => {
+    const inputs: any[] = [];
+    const references = [options.referenceImages[0], { ...options.referenceImages[0], id: "two", storageKey: "resource:two", name: "two.png" }];
+    await Promise.all([0, 1].map(async () => {
+        let attempt = 0;
+        await submitBackendGenerationTask({ ...options, referenceImages: references, mask: { ...references[0], id: "mask", storageKey: "resource:mask" }, resolveReferenceLinks: async (refs) => {
+            expect(refs.map((ref) => ref.key)).toEqual(["referenceImages:0", "referenceImages:1", "mask:0"]);
+            return { "referenceImages:0": "https://cdn.example/one", "referenceImages:1": "https://cdn.example/two", "mask:0": "https://cdn.example/mask" };
+        } }, {
+            createTask: async (input) => { if (attempt++ === 0) throw rejected; inputs.push(input.input); return { id: "accepted" } as GenerationTask; },
+            waitTask: async () => { throw new Error("must not poll"); }, createId: () => "unused",
+        });
+    }));
+    expect(inputs).toHaveLength(2);
+    for (const input of inputs) {
+        expect(input.referenceImages.map((media: any) => [media.id, media.url])).toEqual([["one", "https://cdn.example/one"], ["two", "https://cdn.example/two"]]);
+        expect(input.mask.url).toBe("https://cdn.example/mask");
+        expect(input.mask.storageKey).toBeUndefined();
+    }
+    expect(references.map((media) => media.storageKey)).toEqual(["resource:one", "resource:two"]);
+});
+
+test("second admission rejection propagates without a third submission", async () => {
+    let calls = 0;
+    await expect(submitBackendGenerationTask({ ...options, resolveReferenceLinks: async () => ({ "referenceImages:0": "https://cdn.example/one" }) }, {
+        createTask: async () => { calls++; throw rejected; }, waitTask: async () => { throw new Error("must not poll"); }, createId: () => "unused",
+    })).rejects.toBe(rejected);
+    expect(calls).toBe(2);
+});

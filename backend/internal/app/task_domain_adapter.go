@@ -147,7 +147,7 @@ func (a taskMediaAdapter) ValidateTransport(userID string, input map[string]any)
 	if err := json.Unmarshal(raw, &prepared); err != nil {
 		return BadAuthRequest("任务参数格式无效，请检查模型设置后重新提交")
 	}
-	if len(prepared.ReferenceImages)+len(prepared.ReferenceVideos)+len(prepared.ReferenceAudios) == 0 {
+	if len(prepared.ReferenceImages)+len(prepared.ReferenceVideos)+len(prepared.ReferenceAudios) == 0 && prepared.Mask == nil {
 		return nil
 	}
 	if isWorkflowProviderInterface(prepared.Config.InterfaceType) {

@@ -24,6 +24,12 @@ func ValidateMediaTransport(ctx context.Context, input Input) error {
 	}{
 		{"参考图片", input.ReferenceImages}, {"参考视频", input.ReferenceVideos}, {"参考音频", input.ReferenceAudios},
 	}
+	if input.Mask != nil {
+		groups = append(groups, struct {
+			label string
+			items []Media
+		}{"遮罩", []Media{*input.Mask}})
+	}
 	for _, group := range groups {
 		for i, media := range group.items {
 			if strings.HasPrefix(media.StorageKey, "resource:") {

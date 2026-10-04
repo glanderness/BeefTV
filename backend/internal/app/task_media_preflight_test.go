@@ -37,6 +37,14 @@ func TestCreateTaskMediaTransportAdmission(t *testing.T) {
 		t.Fatalf("rejected task persisted: %d %v", count, err)
 	}
 	request.Input["referenceImages"] = []any{map[string]any{"url": "https://cdn.example/image.png"}}
+	request.Input["mask"] = map[string]any{"storageKey": "resource:local-mask"}
+	if _, err := svc.CreateTask("user", request); !errors.As(err, &appErr) || appErr.Reason != "reference_media_requires_url" {
+		t.Fatalf("mask-only rejection missing: %v", err)
+	}
+	if err := db.Model(&model.Task{}).Count(&count).Error; err != nil || count != 0 {
+		t.Fatalf("mask rejection persisted: %d %v", count, err)
+	}
+	request.Input["mask"] = map[string]any{"url": "https://cdn.example/mask.png"}
 	task, err := svc.CreateTask("user", request)
 	if err != nil || task.Status != model.TaskStatusQueued {
 		t.Fatalf("HTTPS task not accepted: %v", err)
