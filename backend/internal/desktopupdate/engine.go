@@ -43,43 +43,49 @@ type Host struct {
 }
 
 type Options struct {
-	CurrentVersion  string
-	DataDir         string
-	FeedURL         string
-	PublicKey       string
-	Platform        string
-	Client          *http.Client
-	StagingRoot     string
-	FeedTimeout     time.Duration
-	DownloadTimeout time.Duration
-	Locate          func() (Target, error)
-	Helper          func(HelperRequest) error
-	Quit            func() error
-	ParentPID       int
+	CurrentVersion string
+	DataDir        string
+	FeedURL        string
+	PublicKey      string
+	Platform       string
+	Client         *http.Client
+	StagingRoot    string
+	FeedTimeout    time.Duration
+	IdleTimeout    time.Duration
+	RetryBackoff   func(stall int) time.Duration
+	Locate         func() (Target, error)
+	Helper         func(HelperRequest) error
+	Quit           func() error
+	ParentPID      int
 }
 
 type Engine struct {
-	mu              sync.Mutex
-	action          string
-	state           UpdateState
-	enabled         bool
-	currentVersion  string
-	feedURL         string
-	publicKey       ed25519.PublicKey
-	platform        string
-	client          *http.Client
-	stagingRoot     string
-	feedTimeout     time.Duration
-	downloadTimeout time.Duration
-	locate          func() (Target, error)
-	helper          func(HelperRequest) error
-	quit            func() error
-	parentPID       int
-	verified        *verifiedUpdate
-	staged          *stagedUpdate
-	helperProc      *os.Process
-	helperDone      <-chan error
-	dataDir         string
+	mu             sync.Mutex
+	action         string
+	state          UpdateState
+	enabled        bool
+	currentVersion string
+	feedURL        string
+	publicKey      ed25519.PublicKey
+	platform       string
+	client         *http.Client
+	stagingRoot    string
+	feedTimeout    time.Duration
+	idleTimeout    time.Duration
+	retryBackoff   func(stall int) time.Duration
+	systemClient   bool
+	meter          rateMeter
+	logMu          sync.Mutex
+	logPath        string
+	locate         func() (Target, error)
+	helper         func(HelperRequest) error
+	quit           func() error
+	parentPID      int
+	verified       *verifiedUpdate
+	staged         *stagedUpdate
+	helperProc     *os.Process
+	helperDone     <-chan error
+	dataDir        string
 }
 
 func New(host Host) *Engine {
@@ -96,25 +102,31 @@ func New(host Host) *Engine {
 func NewWithOptions(opts Options) *Engine {
 	current := stringsOr(opts.CurrentVersion, buildinfo.Current().Version)
 	engine := &Engine{
-		currentVersion:  current,
-		client:          opts.Client,
-		stagingRoot:     opts.StagingRoot,
-		feedTimeout:     opts.FeedTimeout,
-		downloadTimeout: opts.DownloadTimeout,
-		locate:          opts.Locate,
-		helper:          opts.Helper,
-		quit:            opts.Quit,
-		parentPID:       opts.ParentPID,
-		dataDir:         opts.DataDir,
+		currentVersion: current,
+		client:         opts.Client,
+		stagingRoot:    opts.StagingRoot,
+		feedTimeout:    opts.FeedTimeout,
+		idleTimeout:    opts.IdleTimeout,
+		retryBackoff:   opts.RetryBackoff,
+		locate:         opts.Locate,
+		helper:         opts.Helper,
+		quit:           opts.Quit,
+		parentPID:      opts.ParentPID,
+		dataDir:        opts.DataDir,
+		logPath:        updateLogPath(opts.DataDir),
 	}
 	if engine.client == nil {
 		engine.client = newHTTPClient()
+		engine.systemClient = true
+	}
+	if engine.retryBackoff == nil {
+		engine.retryBackoff = defaultRetryBackoff
 	}
 	if engine.feedTimeout <= 0 {
 		engine.feedTimeout = 30 * time.Second
 	}
-	if engine.downloadTimeout <= 0 {
-		engine.downloadTimeout = 10 * time.Minute
+	if engine.idleTimeout <= 0 {
+		engine.idleTimeout = 60 * time.Second
 	}
 	if engine.locate == nil {
 		engine.locate = func() (Target, error) {
@@ -162,9 +174,7 @@ func NewWithOptions(opts Options) *Engine {
 }
 
 func (e *Engine) Status() UpdateState {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.state.clone()
+	return e.snapshot()
 }
 
 func (e *Engine) CheckForUpdate(ctx context.Context) (UpdateState, error) {
@@ -191,6 +201,7 @@ func (e *Engine) CheckForUpdate(ctx context.Context) (UpdateState, error) {
 	})
 	payload, err := e.fetchFeed(ctx)
 	if err != nil {
+		e.logf("check failed route=%s: %v", e.route(e.feedURL), rawCause(err))
 		e.fail(publicError(err))
 		return e.snapshot(), wrapPublic(err)
 	}
@@ -267,15 +278,21 @@ func (e *Engine) DownloadUpdate(ctx context.Context) (UpdateState, error) {
 	}
 	archivePath := filepath.Join(stageRoot, "update.zip")
 	if err := e.downloadArchive(ctx, verified.artifact, archivePath); err != nil {
+		// The staging directory is still empty here; resumable bytes live in
+		// the shared downloads directory.
+		_ = os.RemoveAll(stageRoot)
+		e.logf("download failed: %v", rawCause(err))
 		e.fail(publicError(err))
 		return e.snapshot(), wrapPublic(err)
 	}
 	extracted := filepath.Join(stageRoot, "extracted")
 	if err := extractSecureZip(archivePath, extracted, defaultExtractLimits()); err != nil {
+		e.logf("extract failed: %v", err)
 		e.fail(publicError(ErrInvalidArchive))
 		return e.snapshot(), ErrInvalidArchive
 	}
 	if err := validateExtractedLayout(extracted, verified.platform); err != nil {
+		e.logf("layout invalid: %v", err)
 		e.fail(publicError(ErrInvalidArchive))
 		return e.snapshot(), ErrInvalidArchive
 	}
@@ -295,6 +312,7 @@ func (e *Engine) DownloadUpdate(ctx context.Context) (UpdateState, error) {
 		state.ReleaseNotes = verified.payload.Notes
 		state.DownloadedBytes = verified.artifact.Size
 		state.TotalBytes = verified.artifact.Size
+		state.Reconnecting = false
 		state.Error = ""
 	})
 	return e.snapshot(), nil
@@ -391,7 +409,11 @@ func (e *Engine) end() {
 func (e *Engine) snapshot() UpdateState {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.state.clone()
+	state := e.state.clone()
+	if state.Status == StatusDownloading {
+		state.BytesPerSecond = e.meter.current(time.Now())
+	}
+	return state
 }
 
 func (e *Engine) set(fn func(*UpdateState)) {
@@ -405,19 +427,11 @@ func (e *Engine) fail(message string) {
 	e.set(func(state *UpdateState) {
 		state.Status = StatusError
 		state.Error = message
+		state.Reconnecting = false
 	})
 }
 
-func (e *Engine) addDownloaded(n int64) {
-	e.mu.Lock()
-	e.state.DownloadedBytes += n
-	if e.state.TotalBytes > 0 && e.state.DownloadedBytes > e.state.TotalBytes {
-		e.state.DownloadedBytes = e.state.TotalBytes
-	}
-	e.mu.Unlock()
-}
-
-func (e *Engine) prepareStaging(version string) (string, error) {
+func (e *Engine) updatesRoot() (string, error) {
 	root := e.stagingRoot
 	if root == "" {
 		cache, err := os.UserCacheDir()
@@ -427,6 +441,14 @@ func (e *Engine) prepareStaging(version string) (string, error) {
 		root = filepath.Join(cache, "BeefTV", "updates")
 	}
 	if err := os.MkdirAll(root, 0o700); err != nil {
+		return "", err
+	}
+	return root, nil
+}
+
+func (e *Engine) prepareStaging(version string) (string, error) {
+	root, err := e.updatesRoot()
+	if err != nil {
 		return "", err
 	}
 	return os.MkdirTemp(root, version+"-")
@@ -454,6 +476,8 @@ func publicError(err error) string {
 		return ErrUnsupported.Error()
 	case isError(err, ErrDisabled):
 		return ErrDisabled.Error()
+	case networkSentinel(err) != nil:
+		return networkSentinel(err).Error()
 	default:
 		if err != nil {
 			msg := err.Error()
@@ -487,6 +511,8 @@ func wrapPublic(err error) error {
 		return ErrNotReady
 	case isError(err, ErrUnsupported):
 		return ErrUnsupported
+	case networkSentinel(err) != nil:
+		return networkSentinel(err)
 	default:
 		return fmt.Errorf("%s", publicError(err))
 	}

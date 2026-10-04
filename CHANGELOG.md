@@ -9,6 +9,17 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.5
+
+- 桌面更新支持断点续传与自动重试，显示下载进度、速度和剩余时间，并提供更明确的网络错误提示。
+- 修复桌面端资产详情中的音视频无法播放：通过本地资源鉴权后读取媒体，重启后仍可播放已保存的作品。
+- 修复视频生成完成后，相对下载地址被误判为无效地址的问题。
+- 新增可由用户配置地址的全参视频协议，支持图片、视频与音频参考素材。
+- 改进自定义模型目录的能力识别与加载超时。
+- 修复 macOS 保存媒体时改名丢失扩展名的问题。
+
+Windows v1.6.20–v1.6.22 的旧更新器无法识别新版目录结构，请关闭应用后手工解压新版完整安装包；保留原用户数据目录。v1.6.23 及后续版本可使用应用内更新。
+
 ## v1.7.3
 
 - Add guided setup for OpenAI, Google Gemini, Volcano Ark and compatible model services, with searchable catalogs and manual model entry.

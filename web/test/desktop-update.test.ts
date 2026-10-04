@@ -5,7 +5,10 @@ import { prepareDesktopEditorsForUpdate, registerDesktopUpdatePreparation } from
 import {
     createDesktopUpdateController,
     desktopUpdateActionLabel,
+    desktopUpdateDetailLabel,
     desktopUpdateProgressLabel,
+    formatDesktopUpdateRemaining,
+    hasResumableDesktopUpdate,
     formatDesktopVersionLabel,
     hasDesktopUpdateBinding,
     parseDesktopUpdateState,
@@ -96,6 +99,8 @@ function state(partial: Partial<DesktopUpdateState> & Pick<DesktopUpdateState, "
         releaseNotes: "",
         downloadedBytes: 0,
         totalBytes: 0,
+        bytesPerSecond: 0,
+        reconnecting: false,
         error: "",
         ...partial,
     };
@@ -170,6 +175,39 @@ function collect(controller: ReturnType<typeof createDesktopUpdateController>) {
     };
 }
 
+describe("desktop update progress", () => {
+    test("reads speed and reconnect state from the native contract", () => {
+        const parsed = parseDesktopUpdateState({ status: "downloading", downloadedBytes: 10, totalBytes: 20, bytesPerSecond: "2048", reconnecting: true });
+        expect(parsed.bytesPerSecond).toBe(2048);
+        expect(parsed.reconnecting).toBe(true);
+        expect(parseDesktopUpdateState({ status: "downloading", reconnecting: "yes" }).reconnecting).toBe(false);
+    });
+
+    test("shows speed with time left, then falls back to amounts or connecting", () => {
+        const mb = 1024 * 1024;
+        expect(desktopUpdateDetailLabel(state({ status: "downloading", downloadedBytes: 30 * mb, totalBytes: 150 * mb, bytesPerSecond: 2 * mb }))).toBe("2.0 MB/s · 剩余约 1 分钟");
+        expect(desktopUpdateDetailLabel(state({ status: "downloading", downloadedBytes: 30 * mb, totalBytes: 150 * mb, bytesPerSecond: 512 * 1024 }))).toBe("512 KB/s · 剩余约 4 分钟");
+        expect(desktopUpdateDetailLabel(state({ status: "downloading", downloadedBytes: 30 * mb, totalBytes: 150 * mb }))).toBe("30 MB / 150 MB");
+        expect(desktopUpdateDetailLabel(state({ status: "downloading", totalBytes: 150 * mb }))).toBe("正在连接");
+        expect(desktopUpdateDetailLabel(state({ status: "downloading", downloadedBytes: 30 * mb, totalBytes: 150 * mb, bytesPerSecond: mb, reconnecting: true }))).toBe("网络中断，正在重新连接");
+        expect(desktopUpdateDetailLabel(state({ status: "error", error: "网络不稳定，已保留下载进度" }))).toBe("网络不稳定，已保留下载进度");
+    });
+
+    test("formats remaining time without false precision", () => {
+        expect(formatDesktopUpdateRemaining(null)).toBe("");
+        expect(formatDesktopUpdateRemaining(20)).toBe("剩余不到 1 分钟");
+        expect(formatDesktopUpdateRemaining(61)).toBe("剩余约 2 分钟");
+        expect(formatDesktopUpdateRemaining(3600)).toBe("剩余约 1 小时");
+        expect(formatDesktopUpdateRemaining(5400)).toBe("剩余约 1 小时 30 分钟");
+    });
+
+    test("only a failed partial download is resumable", () => {
+        expect(hasResumableDesktopUpdate(state({ status: "error", downloadedBytes: 5, totalBytes: 10 }))).toBe(true);
+        expect(hasResumableDesktopUpdate(state({ status: "error", downloadedBytes: 0, totalBytes: 10 }))).toBe(false);
+        expect(hasResumableDesktopUpdate(state({ status: "downloading", downloadedBytes: 5, totalBytes: 10 }))).toBe(false);
+    });
+});
+
 describe("desktop update parsing", () => {
     test("reads the frozen JSON contract fields and ignores unknown status", () => {
         expect(
@@ -189,6 +227,8 @@ describe("desktop update parsing", () => {
             releaseNotes: "修复保存",
             downloadedBytes: 12,
             totalBytes: 40,
+            bytesPerSecond: 0,
+            reconnecting: false,
             error: "",
         });
         expect(parseDesktopUpdateState({ status: "nope", error: "boom" }).status).toBe("error");

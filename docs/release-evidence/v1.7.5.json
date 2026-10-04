@@ -1,0 +1,126 @@
+{
+  "budgetCNY": 0,
+  "spentCNY": 0,
+  "newSpentCNY": 0,
+  "pendingCNY": 0,
+  "priorFinancialUncertainty": {
+    "status": "unresolved",
+    "carriedFromVersion": "v1.7.2",
+    "pendingCNY": null,
+    "failedRequestIds": [
+      "202610020816334239151708268d9d6eZ5lRPwt",
+      "202610021242434383740578268d9d6BAoXA1u1"
+    ],
+    "evidence": [
+      "docs/release-evidence/v1.7.2.json"
+    ]
+  },
+  "liveMatrixStatus": "not_run_owner_waived",
+  "cases": [],
+  "version": "v1.7.5",
+  "sourceDigest": "d7b2ab1073318f40eeaf726d85cffbfaa713ee3026c845d9b8aa750c1548b192",
+  "releaseComplete": false,
+  "liveTestWaiver": {
+    "approvedBy": "Ender",
+    "instruction": "合了一起发布吧",
+    "scope": "byok-download-resume-targeted-acceptance"
+  },
+  "review": {
+    "result": "approved",
+    "independent": true,
+    "reviewer": "Grok Companion independent review and follow-up",
+    "sourceDigest": "d7b2ab1073318f40eeaf726d85cffbfaa713ee3026c845d9b8aa750c1548b192",
+    "evidence": [
+      "docs/release-evidence/v1.7.5-targeted.md#独立复审"
+    ]
+  },
+  "upgrade": {
+    "preservedData": true,
+    "sourceDigest": "d7b2ab1073318f40eeaf726d85cffbfaa713ee3026c845d9b8aa750c1548b192",
+    "evidence": [
+      "docs/release-evidence/v1.7.5-targeted.md#专项范围与证据"
+    ]
+  },
+  "verification": {
+    "modelServiceFlow": {
+      "status": "passed",
+      "sourceDigest": "d7b2ab1073318f40eeaf726d85cffbfaa713ee3026c845d9b8aa750c1548b192",
+      "evidence": [
+        "docs/release-evidence/v1.7.5-targeted.md#专项范围与证据"
+      ]
+    },
+    "credentialPersistence": {
+      "status": "passed",
+      "sourceDigest": "d7b2ab1073318f40eeaf726d85cffbfaa713ee3026c845d9b8aa750c1548b192",
+      "evidence": [
+        "docs/release-evidence/v1.7.5-targeted.md#专项范围与证据"
+      ]
+    },
+    "saveBarrier": {
+      "status": "passed",
+      "sourceDigest": "d7b2ab1073318f40eeaf726d85cffbfaa713ee3026c845d9b8aa750c1548b192",
+      "evidence": [
+        "docs/release-evidence/v1.7.5-targeted.md#专项范围与证据"
+      ]
+    },
+    "localReleaseGate": {
+      "status": "passed",
+      "sourceDigest": "d7b2ab1073318f40eeaf726d85cffbfaa713ee3026c845d9b8aa750c1548b192",
+      "evidence": [
+        "docs/release-evidence/v1.7.5-targeted.md#专项范围与证据"
+      ]
+    },
+    "fullReferenceContract": {
+      "status": "passed",
+      "sourceDigest": "d7b2ab1073318f40eeaf726d85cffbfaa713ee3026c845d9b8aa750c1548b192",
+      "evidence": [
+        "docs/release-evidence/v1.7.5-targeted.md#专项范围与证据"
+      ]
+    },
+    "relativeDownload": {
+      "status": "passed",
+      "sourceDigest": "d7b2ab1073318f40eeaf726d85cffbfaa713ee3026c845d9b8aa750c1548b192",
+      "evidence": [
+        "docs/release-evidence/v1.7.5-targeted.md#专项范围与证据"
+      ]
+    },
+    "nativePlaybackAndSave": {
+      "status": "passed",
+      "sourceDigest": "d7b2ab1073318f40eeaf726d85cffbfaa713ee3026c845d9b8aa750c1548b192",
+      "evidence": [
+        "docs/release-evidence/v1.7.5-targeted.md#专项范围与证据"
+      ],
+      "method": "native"
+    },
+    "updaterResume": {
+      "status": "passed",
+      "sourceDigest": "d7b2ab1073318f40eeaf726d85cffbfaa713ee3026c845d9b8aa750c1548b192",
+      "evidence": [
+        "docs/release-evidence/v1.7.5-targeted.md#专项范围与证据"
+      ]
+    },
+    "privacyScan": {
+      "status": "passed",
+      "sourceDigest": "d7b2ab1073318f40eeaf726d85cffbfaa713ee3026c845d9b8aa750c1548b192",
+      "evidence": [
+        "docs/release-evidence/v1.7.5-targeted.md#专项范围与证据"
+      ]
+    },
+    "ci": {
+      "status": "passed",
+      "sourceDigest": "d7b2ab1073318f40eeaf726d85cffbfaa713ee3026c845d9b8aa750c1548b192",
+      "evidence": [
+        "https://github.com/glanderness/BeefTV/actions/runs/37205069995",
+        "https://github.com/glanderness/BeefTV/actions/runs/37205069985"
+      ]
+    }
+  },
+  "packages": {
+    "status": "pending_release_workflow",
+    "finalArchiveSmokeBeforeUpload": true,
+    "windowsReleasedUpgradeAndRollbackBeforeUpload": true,
+    "workflowEvidence": [
+      ".github/workflows/release-desktop.yml"
+    ]
+  }
+}

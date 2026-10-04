@@ -496,6 +496,23 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         operations: ["text_to_video", "image_to_video"],
         defaultOperation: "text_to_video",
     };
+    if (protocol === "full-video") {
+        const is25 = model.endsWith("2.5");
+        video.references.promptMaxChars = 4000;
+        video.references.maxImages = is25 ? 30 : 9;
+        video.references.maxVideos = is25 ? 10 : 3;
+        video.references.maxAudios = is25 ? 10 : 3;
+        video.references.maxVideoBytes = 100_000_000;
+        video.references.maxAudioBytes = 100_000_000;
+        video.references.minVideoDurationSeconds = 2;
+        video.references.minAudioDurationSeconds = 2;
+        video.references.maxVideoDurationSeconds = is25 ? 30 : 15;
+        video.references.maxAudioDurationSeconds = is25 ? 30 : 15;
+        video.duration = { selection: "range", min: 4, max: is25 ? 30 : 15, step: 1, default: 5 };
+        video.resolutions = is25 ? ["480p", "720p"] : ["480p", "720p", "1080p"];
+        video.defaultResolution = "480p";
+        video.operations = ["text_to_video", "image_to_video", "reference_to_video"];
+    }
     if (protocol === "volcengine-jimeng-video") {
         video.duration = { selection: "enum", values: [5, 10], default: 5 };
         video.resolutions = ["720p"];

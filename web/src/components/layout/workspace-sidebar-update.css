@@ -108,6 +108,96 @@
     transition: width 160ms ease;
 }
 
+.app-workspace-update-progress-bar.is-paused > span {
+    background: var(--user-ink-soft, var(--muted-foreground));
+}
+
+.app-workspace-update-status {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    min-height: 36px;
+    flex: 1;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1px;
+    padding: 4px 8px 7px;
+    color: var(--user-ink, var(--foreground));
+    cursor: default;
+}
+
+.app-workspace-update-status-title {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 5px;
+    font-size: var(--fs-caption);
+    line-height: 16px;
+}
+
+.app-workspace-update-status-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.app-workspace-update-status-percent {
+    margin-left: auto;
+    color: var(--user-ink-muted, var(--muted-foreground));
+    font-variant-numeric: tabular-nums;
+}
+
+.app-workspace-update-status-detail {
+    overflow: hidden;
+    color: var(--user-ink-muted, var(--muted-foreground));
+    font-size: var(--fs-label);
+    font-variant-numeric: tabular-nums;
+    line-height: 14px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.app-workspace-update-status.is-action {
+    border: 0;
+    border-radius: var(--r-md);
+    background: transparent;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.app-workspace-update-status.is-action:hover,
+.app-workspace-update-status.is-action:focus-visible {
+    background: var(--user-surface-hover, color-mix(in srgb, var(--foreground) 8%, transparent));
+}
+
+.app-workspace-update-status.is-action:focus-visible {
+    outline: 2px solid var(--user-accent, var(--ring));
+    outline-offset: 2px;
+}
+
+.app-workspace-update-status-icon {
+    width: 13px;
+    height: 13px;
+    flex: none;
+    color: var(--user-accent, var(--primary));
+}
+
+.app-workspace-update-status.is-paused .app-workspace-update-status-detail {
+    display: -webkit-box;
+    white-space: normal;
+    text-wrap: balance;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
+.app-workspace-update-status .app-workspace-update-progress-bar {
+    right: 8px;
+    bottom: 2px;
+    left: 8px;
+}
+
 @media (prefers-reduced-motion: reduce) {
     .app-workspace-update-progress-bar > span,
     .app-workspace-update-action .animate-spin {
