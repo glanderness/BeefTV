@@ -13,7 +13,7 @@ import {
 
 // Tree identities survive squash/merge commits, but change whenever shipped
 // code, protocol packages, release scripts, dependencies or VERSION change.
-const sourceTree = execFileSync('git', ['ls-tree', '-r', 'HEAD', '--', 'backend', 'web', 'agent-host', 'plugin-packages', 'scripts', 'VERSION', '.github/workflows'], { encoding: 'utf8' });
+const sourceTree = execFileSync('git', ['ls-tree', '-r', 'HEAD', '--', 'backend', 'web', 'agent-host', 'plugin-packages', 'scripts', 'assets/app-icon.png', 'VERSION', '.github/workflows'], { encoding: 'utf8' });
 const sourceDigest = createHash('sha256').update(sourceTree).digest('hex');
 if (process.argv.includes('--fingerprint')) {
   console.log(sourceDigest);
@@ -33,6 +33,7 @@ const acceptedFailedRequests = ['202610020816334239151708268d9d6eZ5lRPwt', '2026
 const targetedWaivers = {
   'v1.7.3': ['本版豁免付费矩阵，专项验收、独立复审和 CI 通过后发布', 'byok-updater-targeted-acceptance'],
   'v1.7.5': ['合了一起发布吧', 'byok-download-resume-targeted-acceptance'],
+  'v1.7.6': ['本版豁免付费矩阵，专项验收、独立复审和 CI 通过后发布', 'workspace-assets-targeted-acceptance'],
 };
 const targetedWaiver = targetedWaivers[version];
 if (targetedWaiver && receipt.liveTestWaiver?.approvedBy === 'Ender'
@@ -48,7 +49,10 @@ if (targetedWaiver && receipt.liveTestWaiver?.approvedBy === 'Ender'
   if (receipt.review?.result !== 'approved' || receipt.review?.independent !== true
     || receipt.review?.sourceDigest !== sourceDigest || !nonempty(receipt.review?.reviewer) || !evidence(receipt.review?.evidence)
     || receipt.upgrade?.preservedData !== true || receipt.upgrade?.sourceDigest !== sourceDigest || !evidence(receipt.upgrade?.evidence)) fail('v1.7.3 requires independent review and upgrade evidence for the current source');
-  for (const id of ['modelServiceFlow', 'credentialPersistence', 'saveBarrier', 'localReleaseGate', 'ci']) {
+  const requiredChecks = version === 'v1.7.6'
+    ? ['uploadLifecycle', 'deleteConfirmation', 'archivedRecovery', 'mediaPreview', 'localReleaseGate', 'ci']
+    : ['modelServiceFlow', 'credentialPersistence', 'saveBarrier', 'localReleaseGate', 'ci'];
+  for (const id of requiredChecks) {
     const check = receipt.verification?.[id];
     if (check?.status !== 'passed' || check.sourceDigest !== sourceDigest || !evidence(check.evidence)) fail(`v1.7.3 missing source-bound targeted evidence: ${id}`);
   }

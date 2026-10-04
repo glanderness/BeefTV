@@ -2570,9 +2570,6 @@ function InfiniteCanvasPage() {
                                             containerRef={containerRef}
                                             viewport={viewport}
                                             theme={theme}
-                                            displayConnections={renderedConnections}
-                                            selectedConnectionId={selectedConnectionId}
-                                            relatedConnectionIds={relatedHighlight.connectionIds}
                                             scriptScrollTopById={scriptScrollTopById}
                                             connectingParams={connectingParams}
                                             batchConnectionPreview={batchConnectionPreview}
@@ -2600,6 +2597,7 @@ function InfiniteCanvasPage() {
                                     <CanvasNodeActionContext.Provider value={canvasNodeActions}>
                                         <CanvasNodeGraphContext.Provider value={nodeGraphContext}>
                                             <CanvasProjectWorldLayers
+                                                containerRef={containerRef}
                                                 connectionApproach={connectionApproach}
                                                 projectId={projectId}
                                                 viewportScale={viewport.k}
@@ -2634,7 +2632,6 @@ function InfiniteCanvasPage() {
                                                 selectedNodeBounds={selectedNodeBounds}
                                                 batchSourceNodeIds={batchSourceNodeIds}
                                                 batchConnectionPreview={batchConnectionPreview}
-                                                isNodeDragging={isNodeDragging}
                                                 selectionBoundsElementRef={selectionBoundsElementRef}
                                                 renderCanvasNodeContent={renderCanvasNodeContent}
                                                 onConnectionSelect={(connectionId) => {

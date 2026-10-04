@@ -102,7 +102,7 @@ export default function SettingsPage() {
     };
 
     return (
-        <main className="settings-page app-workspace-page app-user-workspace flex h-full min-h-0 flex-col text-foreground">
+        <main className="settings-page app-workspace-page app-user-workspace app-section-page flex h-full min-h-0 flex-col text-foreground">
             {shouldPromptContinue ? (
                 <div className="settings-topbar shrink-0">
                     <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
@@ -113,7 +113,7 @@ export default function SettingsPage() {
             ) : null}
             <div className="settings-library-frame flex min-h-0 flex-1 flex-col md:flex-row">
                 <section className="settings-content flex min-h-0 min-w-0 flex-1 flex-col">
-                    <div className="app-workspace-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 md:px-6 md:py-5">
+                    <div className="app-workspace-scroll app-section-page-content min-h-0 flex-1 overflow-y-auto overscroll-contain">
                         <div className="settings-pane-root mx-auto w-full max-w-none">
                             {panes[activeTab]}
                         </div>

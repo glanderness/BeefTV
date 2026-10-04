@@ -76,6 +76,9 @@ fi
 
 echo "Building BeefTV $VERSION_VALUE ($COMMIT_VALUE)"
 
+mkdir -p "$DESKTOP_DIR/build"
+cp "$ROOT_DIR/assets/app-icon.png" "$DESKTOP_DIR/build/appicon.png"
+
 (
   cd "$DESKTOP_DIR"
   if [[ -n "${BEEFTV_WAILS_PLATFORM:-}" ]]; then

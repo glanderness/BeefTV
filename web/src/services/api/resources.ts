@@ -359,6 +359,21 @@ export function playbackVariantUrl(id: string) {
     return `${base}/resources/${encodeURIComponent(id)}/file?variant=playback`;
 }
 
+/**
+ * Load a browser-compatible video through the authenticated API client. Native
+ * media elements cannot attach the desktop launch token, and large videos must
+ * not inherit the API client's short JSON-request timeout.
+ */
+export async function getResourcePlaybackBlob(storageKey: string) {
+    const id = resourceIdFromStorageKey(storageKey);
+    if (!id) return null;
+    const response = await apiClient.get<Blob>(`/resources/${encodeURIComponent(id)}/file?variant=playback&proxy=1`, {
+        responseType: "blob",
+        timeout: 0,
+    });
+    return response.data instanceof Blob ? response.data : new Blob([response.data]);
+}
+
 export async function getResourceBlob(storageKey: string) {
     const id = resourceIdFromStorageKey(storageKey);
     if (!id) return null;
@@ -370,6 +385,9 @@ export async function getResourceBlob(storageKey: string) {
     try {
         const response = await apiClient.get<Blob>(`/resources/${encodeURIComponent(id)}/file?proxy=1`, {
             responseType: "blob",
+            // Images may be much larger than JSON responses; keep the shared
+            // authenticated media path independent of the 4 s JSON timeout.
+            timeout: 0,
         });
         return response.data instanceof Blob ? response.data : new Blob([response.data]);
     } catch {

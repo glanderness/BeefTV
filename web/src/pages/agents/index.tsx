@@ -46,7 +46,7 @@ export default function AgentsPage() {
 
     return (
         <WorkspacePage>
-            <PageHeader title="外部 Agent" description="连接外部 AI 工具，读取和修改你的画布。" />
+            <PageHeader title="外部 Agent" />
 
             {unsupported ? (
                 <EmptyState icon={Plug} title="当前版本还不支持" description="更新到新版本后就能在这里连接 Codex、Claude Code 和 Cursor。" />

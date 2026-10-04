@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 import { ModelEditorModal } from "@/components/model-editor-modal";
 import { ChannelHeadersEditor, validateChannelHeaders } from "@/components/channel-headers-editor";
 import { WorkspaceState } from "@/components/layout/workspace-state";
+import { PageHeader } from "@/components/layout/workspace-page";
 import { mergeFetchedChannelModelProfiles } from "@/lib/channel-model-catalog";
 import { ensureModelProfilesWithUiDefaults } from "@/lib/model-protocols";
 import { fetchChannelModels, type ChannelModelFetchResult } from "@/services/api/image";
@@ -269,20 +270,19 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
 
     return (
         <Form layout="vertical" requiredMark={false}>
-            <div className="settings-pane-header">
-                <div className="min-w-0">
-                    <h2>模型服务</h2>
-                    <p className="mt-1 text-xs text-foreground/55">连接自己的 API，选择适合创作的模型。</p>
-                </div>
-                <div className="flex w-full gap-2 sm:w-auto sm:shrink-0">
+            <PageHeader
+                title={localMode ? "本地模型渠道" : "个人渠道"}
+                actions={(
+                    <div className="settings-pane-header-actions flex w-full gap-2 sm:w-auto sm:shrink-0">
                     <Button className="h-10 flex-1 sm:h-8 sm:flex-none" icon={<RefreshCw className="size-4" />} loading={loadingChannelIds.includes("all")} disabled={loadingChannelIds.some((id) => id !== "all")} onClick={() => void refreshAllModels()}>
                         更新目录
                     </Button>
                     <Button type="primary" className="h-10 flex-1 sm:h-8 sm:flex-none" icon={<Plus className="size-4" />} onClick={addChannel}>
                         添加模型服务
                     </Button>
-                </div>
-            </div>
+                    </div>
+                )}
+            />
             {onOpenRunningHub ? (
                 <section className="settings-section mb-3">
                     <div className="mb-3">
@@ -317,8 +317,14 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                                             {channel.name || "未命名渠道"}
                                         </h3>
                                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-foreground/55">
-                                            已选择 {channel.models.length} 个模型
-                                            {!builtinBeefAPI ? <span>费用由服务商结算</span> : null}
+                                            {builtinBeefAPI ? (
+                                                <>
+                                                    <span>已保存 {channel.models.length} 个模型</span>
+                                                    <span>应用内置适配</span>
+                                                </>
+                                            ) : (
+                                                <span>{channelProtocolLabel(channel)} · 已保存 {channel.models.length} 个模型</span>
+                                            )}
                                             <ChannelStatus channel={channel} persistence={persistence} connection={builtinBeefAPI ? beefConnection : null} />
                                         </div>
                                     </div>
@@ -699,7 +705,7 @@ export function modelConfigChannelPresentation(channel: ModelChannel) {
     return {
         builtin,
         deletable: !builtin,
-        adapterLabel: builtin ? `应用内置适配 · v${channel.presetVersion || 1}` : "",
+        adapterLabel: builtin ? "应用内置适配" : "",
     };
 }
 

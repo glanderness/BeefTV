@@ -8,8 +8,8 @@ describe("asset library category sidebar", () => {
         const css = readFileSync(resolve(import.meta.dir, "../src/styles/workspace-product.css"), "utf8");
         expect(page).toContain("assets-collection-layout");
         expect(page).toContain('aria-label="素材分类"');
-        expect(page).toContain('title="素材类型"');
-        expect(page).toContain('title="标签与分类"');
+        expect(page).toContain('title="默认标签"');
+        expect(page).not.toContain('title="标签与分类"');
         expect(page).toContain("我的分类");
         expect(page).not.toContain("全部自定义分类");
         expect(css).toContain(".assets-library-source-rail");
@@ -18,14 +18,17 @@ describe("asset library category sidebar", () => {
 });
 
 describe("asset upload entry points", () => {
-    test("empty state opens regular image/video upload instead of the ZIP importer", () => {
+    test("empty state opens the native image/video picker and uploads without an intermediate modal", () => {
         const page = readFileSync(resolve(import.meta.dir, "../src/pages/assets/index.tsx"), "utf8");
-        const modal = readFileSync(resolve(import.meta.dir, "../src/pages/assets/asset-batch-upload-modal.tsx"), "utf8");
-        expect(page).toContain("<AssetsEmptyState onImport={() => setBatchUploadOpen(true)} />");
-        expect(modal).toContain('accept="image/*,video/*"');
-        expect(modal).toContain("uploadMediaFile");
-        expect(modal).toContain('message.warning(\"请选择图片或视频文件\")');
-        expect(modal).not.toContain('title="批量上传图片"');
+        const handler = readFileSync(resolve(import.meta.dir, "../src/services/workspace-asset-upload.ts"), "utf8");
+        expect(page).toContain("<AssetsEmptyState onImport={() => assetUploadInputRef.current?.click()} />");
+        expect(page).toContain('accept="image/*,video/*"');
+        expect(page).toContain("await uploadWorkspaceAssetFiles(files, folderId, entryScope)");
+        expect(page).toContain('label: "上传资产"');
+        expect(handler).toContain("uploadMediaFile(file, \"video\"");
+        expect(handler).toContain("请选择图片或视频文件");
+        expect(page).not.toContain("AssetBatchUploadModal");
+        expect(page).not.toContain("batchUploadOpen");
     });
 
     test("matches LibTV personal-library new menu", () => {
@@ -149,12 +152,18 @@ describe("asset card actions", () => {
 });
 
 describe("generation history card actions", () => {
-    test("matches LibTV hover controls for download and recycle", () => {
+    test("matches LibTV hover controls for download and permanent deletion", () => {
         const page = readFileSync(resolve(import.meta.dir, "../src/pages/assets/index.tsx"), "utf8");
         const css = readFileSync(resolve(import.meta.dir, "../src/styles/assets-reference-baseline.css"), "utf8");
         expect(page).toContain('aria-label="生成结果操作"');
         expect(page).toContain('aria-label={`下载 ${asset.title}`}');
-        expect(page).toContain('aria-label={`移入回收站 ${asset.title}`}');
+        expect(page).toContain('aria-label={`彻底删除 ${asset.title}`}');
+        expect(page).toContain("setPendingDelete([asset])");
+        expect(page).toContain("setPendingDelete(selectedHistoryAssets)");
+        expect(page).toContain("if (!await onDelete(asset)) continue");
+        expect(page).toContain("onOk={() => void confirmHistoryDelete()}");
+        expect(page).not.toContain("selectedHistoryAssets.forEach(onDelete)");
+        expect(page).not.toContain('aria-label={`移入回收站 ${asset.title}`}');
         expect(css).toContain(".generation-history-hover-actions");
         expect(css).toContain(".generation-history-card:hover .generation-history-hover-actions");
     });

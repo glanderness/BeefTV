@@ -48,6 +48,18 @@ function setupRepo(version) {
   return { dir, git, run, save, commitVersion };
 }
 
+test('release fingerprint binds the packaged app icon', () => {
+  const { dir, git, run } = setupRepo('v1.7.6');
+  try {
+    const before = run('--fingerprint').trim();
+    mkdirSync(join(dir, 'assets'), { recursive: true });
+    writeFileSync(join(dir, 'assets/app-icon.png'), 'test icon bytes');
+    git('add', 'assets/app-icon.png');
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'change packaged icon');
+    assert.notEqual(run('--fingerprint').trim(), before);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 function makeChecks(sourceDigest, tweak) {
   const checks = Object.fromEntries(REQUIRED_AGENT_CHECK_IDS.map(id => [id, {
     status: 'passed',
@@ -125,7 +137,7 @@ function makeV2(version, sourceDigest, extra = {}) {
   };
 }
 
-for (const version of ['v1.7.3', 'v1.7.5']) test(`${version} waiver requires current targeted evidence and cannot carry forward`, () => {
+for (const version of ['v1.7.3', 'v1.7.5', 'v1.7.6']) test(`${version} waiver requires current targeted evidence and cannot carry forward`, () => {
   const { dir, run, save, commitVersion } = setupRepo(version);
   try {
     const sourceDigest = run('--fingerprint').trim();
@@ -149,18 +161,25 @@ for (const version of ['v1.7.3', 'v1.7.5']) test(`${version} waiver requires cur
       const nonNative = structuredClone(valid); nonNative.verification.nativePlaybackAndSave.method = 'static'; save(nonNative); assert.throws(() => run());
       const oldWaiver = structuredClone(valid); oldWaiver.liveTestWaiver.instruction = '本版豁免付费矩阵，专项验收、独立复审和 CI 通过后发布'; save(oldWaiver); assert.throws(() => run());
     }
+    if (version === 'v1.7.6') {
+      valid.liveTestWaiver.scope = 'workspace-assets-targeted-acceptance';
+      valid.verification = Object.fromEntries(['uploadLifecycle', 'deleteConfirmation', 'archivedRecovery', 'mediaPreview', 'localReleaseGate', 'ci'].map(id => [id, { ...proof }]));
+      for (const id of Object.keys(valid.verification)) {
+        const missing = structuredClone(valid); delete missing.verification[id]; save(missing); assert.throws(() => run());
+      }
+    }
     save(valid); assert.match(run(), /paid matrix NOT run/);
     for (const mutate of [
       r => r.liveTestWaiver.approvedBy = 'other', r => r.review.independent = false,
       r => r.review.sourceDigest = 'stale', r => r.upgrade.preservedData = false,
       r => r.newSpentCNY = 1, r => r.cases = [{}], r => r.priorFinancialUncertainty.pendingCNY = 0,
-      r => r.verification.credentialPersistence.status = 'failed', r => r.verification.ci.sourceDigest = 'stale',
+      r => r.verification[version === 'v1.7.6' ? 'archivedRecovery' : 'credentialPersistence'].status = 'failed', r => r.verification.ci.sourceDigest = 'stale',
       r => r.packages.windowsReleasedUpgradeAndRollbackBeforeUpload = false,
       r => r.releaseComplete = true, r => r.packages.status = 'passed',
     ]) {
       const changed = structuredClone(valid); mutate(changed); save(changed); assert.throws(() => run());
     }
-    const next = version === 'v1.7.3' ? 'v1.7.4' : 'v1.7.6';
+    const next = version === 'v1.7.3' ? 'v1.7.4' : version === 'v1.7.5' ? 'v1.7.6' : 'v1.7.7';
     commitVersion(next);
     save({ ...valid, version: next, sourceDigest: run('--fingerprint').trim() }, next);
     assert.throws(() => run());

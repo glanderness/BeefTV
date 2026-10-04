@@ -204,10 +204,10 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
                 paddingInline: 14,
                 paddingInlineLG: 16,
                 paddingInlineSM: 10,
-                colorPrimary: color.solidBg,
-                colorPrimaryHover: color.solidHoverBg,
-                colorPrimaryActive: color.solidActiveBg,
-                primaryColor: color.solidFg,
+                colorPrimary: "var(--btn-solid-bg)",
+                colorPrimaryHover: "var(--btn-solid-hover-bg)",
+                colorPrimaryActive: "var(--btn-solid-active-bg)",
+                primaryColor: "var(--btn-solid-fg)",
                 defaultBg: skin.controlSurface || "transparent",
                 defaultColor: color.selectedFg,
                 defaultBorderColor: color.controlBorder,
@@ -389,6 +389,8 @@ export function getWorkspaceAntThemeConfig(): ThemeConfig {
         components: {
             Button: {
                 borderRadius: 12, borderRadiusSM: 8, borderRadiusLG: 14, fontWeight: 550,
+                colorPrimary: "var(--user-action-bg)", colorPrimaryHover: "var(--user-action-bg-hover)",
+                colorPrimaryActive: "var(--user-action-bg-active)", primaryColor: "var(--user-action-foreground)",
                 defaultBg: "var(--user-surface-muted)", defaultColor: "var(--user-ink)", defaultBorderColor: "transparent",
                 defaultHoverBg: "var(--user-surface-hover)", defaultHoverColor: "var(--user-ink)", defaultHoverBorderColor: "transparent",
                 defaultActiveBg: "var(--user-control-pressed)", defaultActiveColor: "var(--user-ink)", defaultActiveBorderColor: "transparent",

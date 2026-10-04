@@ -10,12 +10,14 @@ import { assertUserScope, type CapturedUserScope } from "../../src/lib/user-scop
 import { http } from "../../src/services/api/request";
 import { useUserStore } from "../../src/stores/use-user-store";
 import AssetsPage from "../../src/pages/assets/index";
+import { saveLocalMedia } from "@/services/local-media-repository";
 
 type HarnessWindow = Window & {
     __assetViewHarness?: {
         writes: string[];
         toasts: string[];
         switchABA: () => Promise<void>;
+        seedLocalVideo: () => Promise<string>;
     };
 };
 
@@ -66,7 +68,9 @@ async function switchABA() {
     setActiveUserScope("owner-a");
 }
 
-harnessWindow.__assetViewHarness = { writes: [], toasts: [], switchABA };
+harnessWindow.__assetViewHarness = { writes: [], toasts: [], switchABA,
+    seedLocalVideo: () => saveLocalMedia("video:owner-a:local-fixture", new Blob(["persisted-local-video"], { type: "video/mp4" })),
+};
 
 function Harness() {
     const { message } = App.useApp();

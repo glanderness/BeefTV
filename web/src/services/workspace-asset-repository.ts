@@ -5,6 +5,7 @@ import { deleteWorkspaceAssetRecord, putWorkspaceAsset } from "@/services/api/wo
 import { normalizeAssetCategory } from "@/lib/asset-category";
 import { assertUserScope, captureUserScope, userScopeMatches, UserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { usesBrowserLocalResourceStore, workspaceAssetHasCanonicalMediaPersist } from "@/services/workspace-resource-storage";
+import { loadWorkspaceAssetsForUse } from "@/services/workspace-asset-read";
 import {
     ackAssetStoreDraft,
     flushAssetStorePersistence,
@@ -288,6 +289,30 @@ export async function deleteWorkspaceAsset(id: string, expectedScope?: CapturedU
 }
 
 export const WORKSPACE_ASSET_CLEAR_TRASH_PAGE_SIZE = 40;
+
+export async function restoreWorkspaceArchivedAsset(id: string, expected: CapturedUserScope) {
+    assertUserScope(expected);
+    await loadWorkspaceAssetsForUse([id], expected);
+    assertUserScope(expected);
+    if (usesBrowserLocalResourceStore()) {
+        useAssetStore.getState().updateAsset(id, { status: "confirmed" });
+        await persistWorkspaceAssetChanges(expected);
+        return;
+    }
+    await enqueueAssetCommit(expected.userScope, id, expected.epoch, async () => {
+        assertUserScope(expected);
+        const live = useAssetStore.getState().assets.find((asset) => asset.id === id);
+        if (!live) throw new Error("素材不存在，请刷新后重试");
+        const draft = peekAssetStoreDraft(expected.userScope, id);
+        if (draft?.kind === "delete") throw new Error("素材正在删除，无法恢复");
+        // Keep it in the recovery list until the backend confirms the restore.
+        const saved = await putWorkspaceAsset(id, { ...live, status: "confirmed" }, { expectedScope: expected });
+        assertUserScope(expected);
+        assertAssetWriteReceipt(saved?.asset, id);
+        if (draft) ackAssetStoreDraft(expected, id, draft.version);
+        applyReceiptProjection(id, live, saved.asset);
+    });
+}
 
 export type ClearWorkspaceArchivedAssetsResult = {
     deleted: number;
