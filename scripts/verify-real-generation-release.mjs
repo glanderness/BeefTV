@@ -29,6 +29,38 @@ const downloadOnlyWaiver = version === 'v1.6.20' && receipt.liveTestWaiver?.appr
 // Keep unknown pending as null; this does not waive any paid media case.
 const financialException = receipt.financialEvidenceException;
 const acceptedFailedRequests = ['202610020816334239151708268d9d6eZ5lRPwt', '202610021242434383740578268d9d6BAoXA1u1'];
+// This owner instruction applies only to the BYOK/Windows-updater v1.7.3 release.
+if (version === 'v1.7.3' && receipt.liveTestWaiver?.approvedBy === 'Ender'
+  && receipt.liveTestWaiver?.instruction === '本版豁免付费矩阵，专项验收、独立复审和 CI 通过后发布'
+  && receipt.liveTestWaiver?.scope === 'byok-updater-targeted-acceptance') {
+  const evidence = value => Array.isArray(value) && value.length > 0 && value.every(nonempty);
+  if (receipt.budgetCNY !== 0 || receipt.spentCNY !== 0 || receipt.newSpentCNY !== 0 || receipt.pendingCNY !== 0
+    || receipt.liveMatrixStatus !== 'not_run_owner_waived' || !Array.isArray(receipt.cases) || receipt.cases.length !== 0) fail('v1.7.3 requires zero new paid calls and explicitly unexecuted media matrix');
+  const prior = receipt.priorFinancialUncertainty;
+  if (prior?.status !== 'unresolved' || prior?.carriedFromVersion !== 'v1.7.2' || prior.pendingCNY !== null
+    || JSON.stringify([...(prior.failedRequestIds || [])].sort()) !== JSON.stringify([...acceptedFailedRequests].sort())
+    || !evidence(prior.evidence)) fail('v1.7.3 must retain prior unresolved refund evidence separately from this zero-spend release');
+  if (receipt.review?.result !== 'approved' || receipt.review?.independent !== true
+    || receipt.review?.sourceDigest !== sourceDigest || !nonempty(receipt.review?.reviewer) || !evidence(receipt.review?.evidence)
+    || receipt.upgrade?.preservedData !== true || receipt.upgrade?.sourceDigest !== sourceDigest || !evidence(receipt.upgrade?.evidence)) fail('v1.7.3 requires independent review and upgrade evidence for the current source');
+  for (const id of ['modelServiceFlow', 'credentialPersistence', 'saveBarrier', 'localReleaseGate', 'ci']) {
+    const check = receipt.verification?.[id];
+    if (check?.status !== 'passed' || check.sourceDigest !== sourceDigest || !evidence(check.evidence)) fail(`v1.7.3 missing source-bound targeted evidence: ${id}`);
+  }
+  const packages = receipt.packages;
+  if (packages?.windowsReleasedUpgradeAndRollbackBeforeUpload !== true || packages?.finalArchiveSmokeBeforeUpload !== true
+    || !evidence(packages?.workflowEvidence)) fail('v1.7.3 requires final archive and released Windows upgrade gates');
+  if (packages.status === 'passed') {
+    for (const platform of ['darwin-arm64', 'darwin-amd64', 'windows-amd64']) {
+      const item = packages.archives?.[platform];
+      if (item?.sourceDigest !== sourceDigest || !/^[a-f0-9]{64}$/.test(item.sha256 || '') || !evidence(item.evidence)) fail(`v1.7.3 missing final package: ${platform}`);
+    }
+  } else if (packages.status !== 'pending_release_workflow' || packages.archives != null || receipt.releaseComplete === true) {
+    fail('v1.7.3 final packages must remain pending until the release workflow completes');
+  }
+  console.log(`Owner authorized v1.7.3 targeted BYOK/updater release; paid matrix NOT run; new expense 0; historical refund uncertainty retained; final packages: ${packages.status}.`);
+  process.exit(0);
+}
 // v1.7.2 only: the owner waived paid generation, not targeted acceptance or
 // prior unknown refunds. Final release archives are built after this preflight.
 if (version === 'v1.7.2' && receipt.liveTestWaiver?.approvedBy === 'Ender'
