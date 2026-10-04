@@ -13,6 +13,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
 func main() {
@@ -45,6 +46,7 @@ func main() {
 		Title:  "BeefTV",
 		Width:  1440,
 		Height: 960,
+		Mac:    &mac.Options{},
 		AssetServer: &assetserver.Options{
 			Assets:  assets,
 			Handler: desktopAssetHandler{app: app},

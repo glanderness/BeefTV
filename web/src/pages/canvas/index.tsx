@@ -5,7 +5,7 @@ import { App, Button, Dropdown, Input, Modal } from "antd";
 import { Select } from "@/components/ui/base/select";
 import { ArrowLeft, Download, FolderPlus, Image as ImageIcon, MoreHorizontal, Pencil, Plus, Search, Trash2, Upload } from "lucide-react";
 
-import { CollectionGrid, WorkspacePage } from "@/components/layout/workspace-page";
+import { CollectionGrid, PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceLoadingState, WorkspaceState } from "@/components/layout/workspace-state";
 
 import { CanvasFolderCard } from "@/components/canvas/canvas-folder-card";
@@ -281,17 +281,16 @@ export default function CanvasPage() {
 
     return (
         <WorkspacePage className="studio-collection-page lib-tv-project-page">
-            <header className="libtv-project-header">
-                <div className="libtv-project-heading">
-                    <button type="button" className="libtv-project-back" onClick={() => navigate("/")}><ArrowLeft aria-hidden="true" />返回首页</button>
-                    <span className="libtv-project-divider" aria-hidden="true" />
-                    {activeFolder ? <>
-                        <button type="button" className="libtv-project-breadcrumb-button" onClick={() => setFolderFilter("all")}>全部项目</button>
-                        <span className="libtv-project-breadcrumb-separator" aria-hidden="true">/</span>
-                        <h1 title={activeFolder.name}>{activeFolder.name}</h1>
-                    </> : <h1>全部项目</h1>}
-                </div>
-                <div className="libtv-project-actions">
+            <PageHeader
+                title={activeFolder?.name || "全部项目"}
+                leading={(
+                    <>
+                        <button type="button" className="libtv-project-back" onClick={() => navigate("/")} aria-label="返回首页" title="返回首页"><ArrowLeft aria-hidden="true" /></button>
+                        {activeFolder ? <button type="button" className="libtv-project-breadcrumb-button" onClick={() => setFolderFilter("all")}>全部项目 /</button> : null}
+                    </>
+                )}
+                actions={(
+                    <div className="libtv-project-actions">
                     <Input prefix={<Search />} value={keyword} allowClear placeholder="搜索项目" aria-label="搜索项目" onChange={(event) => setKeyword(event.target.value)} />
                     <Button icon={<Upload />} disabled={!hydrated} onClick={() => inputRef.current?.click()}>导入画布</Button>
                     <Button icon={<Trash2 />} onClick={() => setHistoryOpen(true)}>回收站</Button>
@@ -300,8 +299,9 @@ export default function CanvasPage() {
                             message.error(error instanceof Error ? error.message : "文件夹没有保存成功");
                         });
                     }}>新建文件夹</Button>
-                </div>
-            </header>
+                    </div>
+                )}
+            />
 
             <div className="collection-content">
                 {selectedIds.length ? (

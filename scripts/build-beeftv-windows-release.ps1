@@ -391,6 +391,14 @@ if (-not [string]::IsNullOrWhiteSpace($env:BEEFTV_EXTRA_LDFLAGS)) {
 }
 
 Write-Step "Building BeefTV $versionValue ($commitValue) for windows/amd64"
+$appIconSource = Join-Path $repoRoot "assets\app-icon.png"
+$buildDir = Join-Path $desktopDir "build"
+New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+Copy-Item -LiteralPath $appIconSource -Destination (Join-Path $buildDir "appicon.png") -Force
+$generatedWindowsIcon = Join-Path $buildDir "windows\icon.ico"
+if (Test-Path -LiteralPath $generatedWindowsIcon) {
+    Remove-Item -LiteralPath $generatedWindowsIcon -Force
+}
 Push-Location $desktopDir
 try {
     $wailsArgs = @(

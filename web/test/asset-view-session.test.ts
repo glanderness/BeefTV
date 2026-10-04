@@ -214,7 +214,8 @@ describe("asset page and picker wiring", () => {
         expect(page).toContain("canonicalHasMore");
         expect(page).toContain("generated: true");
         expect(page).toContain("加载更多");
-        expect(page).toContain("清空回收站");
+        expect(page).not.toContain("回收站");
+        expect(page).toContain('okText="彻底删除"');
         expect(page).toContain("runAssetViewAction(entryScope");
         expect(page).toContain("shouldSuppressAssetViewError(error, entryScope)");
         expect(page).toContain("entryScope={entryScope}");
@@ -236,10 +237,10 @@ describe("asset page and picker wiring", () => {
         expect(picker).toContain("key={generation}");
         expect(picker).toContain("assetPickerQueryKey(entryScope");
         expect(picker).toContain("expectedScope: expectedScopeFromQueryKey(queryKey)");
-        expect(picker).toContain("persistWorkspaceAssetChanges(scope)");
-        expect(picker).toContain("deleteWorkspaceAsset(id, scope)");
-        expect(picker).toContain("clearWorkspaceArchivedAssets({ expectedScope: scope })");
-        expect(picker).toContain("清空回收站");
+        expect(picker).toContain("runAssetViewAction(entryScope");
+        expect(picker).toContain("await onConfirm(selectedIds, scope)");
+        expect(picker).not.toContain("clearWorkspaceArchivedAssets");
+        expect(picker).not.toContain("回收站");
         expect(picker).toContain("onConfirm: (ids: string[], expectedScope: CapturedUserScope)");
         expect(picker).toContain("onUpload: (files: FileList, expectedScope: CapturedUserScope)");
         expect(picker).toContain("await onConfirm(selectedIds, scope)");
@@ -250,17 +251,17 @@ describe("asset page and picker wiring", () => {
         expect(picker).not.toContain("isLocalWorkspaceMode");
     });
 
-    test("batch upload uses the page entry scope instead of recapturing at click", () => {
-        const modal = read("../src/pages/assets/asset-batch-upload-modal.tsx");
-        expect(modal).toContain("entryScope?: CapturedUserScope");
-        expect(modal).toContain("const [sessionScope] = useState(() => entryScope ?? captureUserScope())");
-        expect(modal).toContain("const expected = sessionScope");
-        expect(modal).toContain("uploadMediaFile(item.file, \"video\"");
-        expect(modal).toContain("expected);");
-        expect(modal).toContain("uploadImage(item.file, undefined, expected)");
-        expect(modal).toContain("persistWorkspaceAssetChanges(expected)");
-        expect(modal).toContain("if (!userScopeMatches(expected)) return");
-        expect(modal).toContain("isUserScopeAbandonedError(error) || !userScopeMatches(expected)");
+    test("direct upload handler retains the page entry scope", () => {
+        const page = read("../src/pages/assets/index.tsx");
+        const handler = read("../src/pages/assets/asset-upload-handler.tsx");
+        expect(page).toContain("<AssetUploadHandler entryScope={entryScope}");
+        expect(handler).toContain("entryScope?: CapturedUserScope");
+        expect(handler).toContain("const expected = entryScope ?? captureUserScope()");
+        expect(handler).toContain("uploadMediaFile(file, \"video\", undefined, expected)");
+        expect(handler).toContain("uploadImage(file, undefined, expected)");
+        expect(handler).toContain("persistWorkspaceAssetChanges(expected)");
+        expect(handler).toContain("if (!userScopeMatches(expected)) return");
+        expect(handler).toContain("isUserScopeAbandonedError(error) || !userScopeMatches(expected)");
     });
 
     test("picker parents carry expectedScope into async confirm, upload, and insert work", () => {

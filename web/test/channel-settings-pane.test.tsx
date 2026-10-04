@@ -12,7 +12,7 @@ test("pinned BeefAPI is visible and cannot be deleted before models are fetched"
         pinned: true,
         presetVersion: 1,
     });
-    expect(modelConfigChannelPresentation(channel)).toEqual({ builtin: true, deletable: false, adapterLabel: "应用内置适配 · v1" });
+    expect(modelConfigChannelPresentation(channel)).toEqual({ builtin: true, deletable: false, adapterLabel: "应用内置适配" });
     expect(modelConfigChannelStatusLabel(channel, { status: "idle", revision: 0, dirty: false, error: "" })).toBe("未连接");
 });
 
