@@ -172,13 +172,15 @@ func TestSaveOwnedMediaCancelReturnsNoError(t *testing.T) {
 
 func TestMediaSaveDialogSuppliesDefaultFileType(t *testing.T) {
 	for _, ext := range []string{"mp4", "png", "jpg", "webp", "mov", "wav", "m4a", "zip", "glb"} {
-		t.Run(ext, func(t *testing.T) {
-			name := "中文素材_20261001." + ext
-			options := mediaSaveDialogOptions(name, "windows")
-			if options.DefaultFilename != name || options.Title != "保存文件" || len(options.Filters) != 1 || options.Filters[0].Pattern != "*."+ext || options.Filters[0].DisplayName == "" {
-				t.Fatalf("save dialog must supply the actual format as its default filter: %+v", options)
-			}
-		})
+		for _, platform := range []string{"windows", "darwin"} {
+			t.Run(platform+"/"+ext, func(t *testing.T) {
+				name := "中文素材_20261001." + ext
+				options := mediaSaveDialogOptions(name, platform)
+				if options.DefaultFilename != name || options.Title != "保存文件" || len(options.Filters) != 1 || options.Filters[0].Pattern != "*."+ext || options.Filters[0].DisplayName == "" {
+					t.Fatalf("save dialog must supply the actual format as its default filter: %+v", options)
+				}
+			})
+		}
 	}
 	for _, tc := range []struct{ input, name, pattern string }{
 		{`../clip:name.MP4`, "clip_name.MP4", "*.MP4"},
@@ -194,7 +196,7 @@ func TestMediaSaveDialogSuppliesDefaultFileType(t *testing.T) {
 	if len(options.Filters) != 0 {
 		t.Fatalf("must not invent a format for an extensionless artifact: %+v", options)
 	}
-	for _, platform := range []string{"darwin", "linux"} {
+	for _, platform := range []string{"linux"} {
 		options := mediaSaveDialogOptions("clip.mp4", platform)
 		if options.DefaultFilename != "clip.mp4" || len(options.Filters) != 0 {
 			t.Fatalf("must preserve the existing %s dialog options: %+v", platform, options)

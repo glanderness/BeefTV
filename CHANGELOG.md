@@ -14,6 +14,7 @@ All notable public changes to BeefTV are documented in this file.
 - Recognize image and video capabilities from compatible service catalogs even when model names are opaque.
 - Add Laoli full-parameter 2.0 / 2.5 video support with local reference uploads and authenticated original-video downloads.
 - Allow slower model catalogs to finish loading without changing generation timeouts.
+- Preserve media file extensions when renaming downloads in the macOS save dialog.
 
 ## v1.7.3
 
