@@ -10,7 +10,7 @@ import { assertUserScope, type CapturedUserScope } from "../../src/lib/user-scop
 import { http } from "../../src/services/api/request";
 import { useUserStore } from "../../src/stores/use-user-store";
 import AssetsPage from "../../src/pages/assets/index";
-import { saveLocalMedia } from "../../src/services/local-media-repository";
+import { saveLocalMedia } from "@/services/local-media-repository";
 
 type HarnessWindow = Window & {
     __assetViewHarness?: {
