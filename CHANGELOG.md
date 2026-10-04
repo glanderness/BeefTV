@@ -9,6 +9,14 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.3
+
+- Add guided setup for OpenAI, Google Gemini, Volcano Ark and compatible model services, with searchable catalogs and manual model entry.
+- Preserve selected models and explicit protocol settings when refreshing custom catalogs.
+- Wait for completed generation results during model tests and preserve actionable authentication errors.
+- Encrypt local provider settings, backup settings and custom task headers; omit credentials from the browser's persisted configuration cache.
+- Require upgrades from released Windows installers and failed-launch rollback tests against the final Windows package before publication.
+
 ## v1.7.2
 
 - Restore the bundled Windows MCP command-line tool and prevent MCP connections from accidentally opening another desktop window.

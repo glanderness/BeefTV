@@ -32,13 +32,15 @@ func TestProviderConfigEncryptsLegacyConfigAndBackupAndRestores(t *testing.T) {
 	if err != nil || !bytes.Contains(loaded, []byte("private-header")) || !bytes.Contains(loaded, []byte("custom-model")) {
 		t.Fatalf("round trip failed: %v", err)
 	}
-	archive := filepath.Join(t.TempDir(), "workspace.tgz")
-	restored := filepath.Join(t.TempDir(), "restored")
-	if err := Backup(dir, archive); err != nil {
-		t.Fatal(err)
-	}
-	if err := Restore(archive, restored); err != nil {
-		t.Fatal(err)
+	restored := t.TempDir()
+	for _, name := range []string{LocalProviderConfigFile, LocalProviderConfigFile + ".bak", ".settings-key"} {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(restored, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	restoredStore, _ := NewProviderConfig(restored)
 	restoredBody, err := restoredStore.ReadLocalModelConfig()

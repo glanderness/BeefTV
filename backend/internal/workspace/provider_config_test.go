@@ -429,7 +429,7 @@ func TestProviderConfigReorderedIDsPreserveOwnSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	document, _, err := decodeProviderDocument(body)
+	document, _, err := store.decodeStoredDocument(body)
 	if err != nil {
 		t.Fatal(err)
 	}
