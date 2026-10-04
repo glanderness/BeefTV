@@ -1766,7 +1766,11 @@ function AssetVideoPreview({ storageKey, url, title, className }: { storageKey?:
         setSource("");
         setError(false);
         if (!storageKey?.startsWith("resource:")) {
-            setSource(url);
+            void resolveMediaUrl(storageKey, url).then((resolved) => {
+                if (!cancelled) setSource(resolved);
+            }).catch(() => {
+                if (!cancelled) setError(true);
+            });
             return () => { cancelled = true; };
         }
         void getResourcePlaybackBlob(storageKey).then((blob) => {

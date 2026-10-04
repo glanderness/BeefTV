@@ -11,6 +11,7 @@ let failConfirm = false;
 let gateConfirm = false;
 let confirmHits = 0;
 let videoFixture = false;
+let localVideoFixture = false;
 let writesAfterSwitch = 0;
 let confirmGate: { promise: Promise<void>; resolve: () => void } | undefined;
 
@@ -27,7 +28,7 @@ function libraryAsset(title: string) {
     if (videoFixture) return {
         id, kind: "video", title, coverUrl: "", tags: [], status: "confirmed", category: "material",
         createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z",
-        data: { url: `/api/resources/${id}/file`, storageKey: `resource:${id}`, width: 64, height: 64, bytes: 8, mimeType: "video/mp4" },
+        data: { url: localVideoFixture ? "blob:expired-previous-page" : `/api/resources/${id}/file`, storageKey: localVideoFixture ? "video:owner-a:local-fixture" : `resource:${id}`, width: 64, height: 64, bytes: 8, mimeType: "video/mp4" },
     };
     return {
         id,
@@ -143,6 +144,7 @@ beforeEach(async () => {
     await page?.close();
     switched = false;
     videoFixture = false;
+    localVideoFixture = false;
     failConfirm = false;
     gateConfirm = false;
     confirmHits = 0;
@@ -160,6 +162,21 @@ test("asset detail resolves owned video for native playback instead of loading t
     await page.getByRole("button", { name: "查看素材：A-PRIVATE-SECRET", exact: true }).click({ timeout: 5000 });
     await page.waitForFunction(() => document.querySelector<HTMLVideoElement>(".asset-archive-preview video")?.getAttribute("src")?.startsWith("blob:"));
     expect(await page.locator(".asset-archive-preview video").getAttribute("src")).toStartWith("blob:");
+}, 15_000);
+
+test("local video detail restores persisted bytes after a page reload", async () => {
+    videoFixture = true;
+    localVideoFixture = true;
+    await page.evaluate(() => (window as Window & { __assetViewHarness: { seedLocalVideo: () => Promise<string> } }).__assetViewHarness.seedLocalVideo());
+    await page.reload();
+    await page.getByRole("dialog").waitFor();
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "查看素材：A-PRIVATE-SECRET", exact: true }).click({ timeout: 5000 });
+    await page.waitForFunction(() => {
+        const src = document.querySelector<HTMLVideoElement>(".asset-archive-preview video")?.getAttribute("src");
+        return src?.startsWith("blob:") && src !== "blob:expired-previous-page";
+    });
+    expect(await page.locator(".asset-archive-preview video").evaluate(async (video) => (await fetch((video as HTMLVideoElement).src)).text())).toBe("persisted-local-video");
 }, 15_000);
 
 afterAll(async () => {
