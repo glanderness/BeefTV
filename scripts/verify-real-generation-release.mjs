@@ -164,6 +164,14 @@ let themeAgent = false;
 try { themeAgent = requiresThemeAgentContract(version); }
 catch { fail('unparseable VERSION'); }
 let scenarioDigest = '';
+// This version's owner explicitly requested manual, direct-provider acceptance.
+// Keep the twelve paid cases, media/billing checks and source-bound review.
+const manualBYOK = version === 'v1.7.4'
+  && receipt.manualAcceptance?.approvedBy === 'Ender'
+  && receipt.manualAcceptance?.instruction === '你直接拿老李的api去手动配置模拟用户操作 看看能不能跑通闭环 给你预算50块钱 有问题旧修 review没问题就上线'
+  && receipt.manualAcceptance?.scope === 'laoli-direct-manual-client'
+  && receipt.budgetCNY === 50;
+if (receipt.manualAcceptance && !manualBYOK) fail('manual BYOK acceptance is authorized only for v1.7.4');
 if (themeAgent) {
   if (!Number.isInteger(receipt.contractVersion) || receipt.contractVersion !== THEME_AGENT_CONTRACT_VERSION) fail(`explicit contractVersion=${THEME_AGENT_CONTRACT_VERSION} is required`);
   const review = receipt.review;
@@ -174,6 +182,13 @@ if (themeAgent) {
   const inspected = inspectFixtureManifest(scenario.fixtures);
   if (!inspected.ok) fail('fixture manifest must include at least two image and one video SHA256');
   scenarioDigest = inspected.digest;
+  if (manualBYOK) {
+    if (receipt.agentChecks?.status !== 'not_run_owner_requested_manual') fail('manual acceptance must not claim assistant provenance');
+    for (const id of ['manualConnection', 'savedCredentialRecovery', 'nativeMediaSave', 'localReleaseGate', 'ci']) {
+      const check = receipt.verification?.[id];
+      if (check?.status !== 'passed' || check.sourceDigest !== sourceDigest || !Array.isArray(check.evidence) || !check.evidence.length || check.evidence.some(item => !nonempty(item))) fail(`missing manual BYOK verification: ${id}`);
+    }
+  } else {
   const checks = receipt.agentChecks;
   if (!checks || typeof checks !== 'object' || Array.isArray(checks)) fail('boolean-only agent coverage is not accepted');
   const allowedDeterministic = new Set(DETERMINISTIC_FAULT_CHECK_IDS);
@@ -183,6 +198,7 @@ if (themeAgent) {
     if (!check || typeof check !== 'object' || Array.isArray(check) || check.status !== 'passed' || (check.method !== 'native' && check.method !== 'deterministic') || !Array.isArray(check.evidence) || !check.evidence.length || check.evidence.some(item => !nonempty(item))) fail(`agentChecks must include ${id} with passed native or deterministic evidence`);
     if (check.sourceDigest !== sourceDigest) fail(`agent check ${id} sourceDigest does not match this release source`);
     if (check.method === 'deterministic' && !allowedDeterministic.has(id)) fail(`agent check ${id} must use native method`);
+  }
   }
 }
 if (!Array.isArray(receipt.cases) || receipt.cases.length !== 12) fail('expected exactly twelve successful cases');
@@ -198,7 +214,11 @@ for (const round of [1, 2]) for (const path of paths) {
   if (!item.providerRequestId || item.clientVersion !== version || !item.platform || !/^[a-f0-9]{64}$/.test(item.fixtureDigest || '') || !item.model) fail(`incomplete provenance for ${round}/${path}`);
   if (item.status !== 'succeeded' || !item.clientSubmitted || !item.canvasVerified || !item.mediaDecoded || !item.mediaOpened || item.billing !== 'settled' || !(item.costCNY >= 0) || !/^[a-f0-9]{64}$/.test(item.artifactSHA256 || '')) fail(`incomplete acceptance for ${round}/${path}`);
   if (themeAgent) {
+    if (manualBYOK) {
+      if (item.entrypoint !== 'manual' || item.providerHost !== 'video.laoliimage2.win' || !nonempty(item.evidence) || item.confirmed !== true) fail(`incomplete manual BYOK provenance for ${round}/${path}`);
+    } else {
     if (item.entrypoint !== 'assistant' || !nonempty(item.sessionId) || !nonempty(item.turnId) || !nonempty(item.proposalId) || !nonempty(item.operationId) || item.confirmed !== true) fail(`incomplete assistant provenance for ${round}/${path}`);
+    }
     caseDigests.add(item.fixtureDigest);
   }
 }

@@ -2,7 +2,7 @@ import type { ModelChannel, ModelCapability } from "@/stores/use-config-store";
 import { buildApiUrl } from "@/stores/use-config-store";
 import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
 import { inferProtocolCapabilityFromModel, type ModelProtocolDefinition } from "@/lib/model-protocols";
-import type { ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
+import { catalogEndpointCapability, type ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
 
 export const MODEL_SERVICE_PRESETS = [
     { id: "compatible", name: "自定义服务", subtitle: "OpenAI 兼容 API · 中转服务", icon: "OpenAI", baseUrl: "", apiFormat: "openai" },
@@ -27,7 +27,11 @@ export function servicePresetFor(channel: ModelChannel): ModelServicePresetId {
 export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCatalogItem, protocols: ModelProtocolDefinition[], explicitCapability?: ModelCapability): NonNullable<ModelChannel["modelProfiles"]>[number] {
     const existing = channel.modelProfiles?.find((profile) => profile.model === item.id);
     if (existing?.protocol && !explicitCapability) return existing;
-    const capability = explicitCapability || existing?.capability || item.modelType || inferProtocolCapabilityFromModel(item.id);
+    let laoliHost = false;
+    try { laoliHost = new URL(channel.baseUrl).hostname === "video.laoliimage2.win"; }
+    catch { /* Connection validation reports unfinished URLs. */ }
+    const laoliFull = laoliHost && ["sd-native-full-2.0", "sd-native-full-2.5", "原生不卡人脸-全参2.0", "原生不卡人脸-全参2.5"].includes(item.id);
+    const capability = explicitCapability || existing?.capability || item.modelType || catalogEndpointCapability(item) || (laoliFull ? "video" : inferProtocolCapabilityFromModel(item.id));
     const preset = channel.apiFormat === "gemini" ? "gemini" : servicePresetFor(channel);
     const candidates: Record<ModelServicePresetId, Partial<Record<ModelCapability, string>>> = {
         compatible: { text: "chat-completion", image: "openai-image", video: "newapi", audio: "openai-audio" },
@@ -37,7 +41,8 @@ export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCat
     };
     const endpoints: Record<string, string> = { "responses": "openai-response", "openai-responses": "openai-response", "chat.completions": "chat-completion", "chat-completions": "chat-completion", "images.generations": "openai-image", "image-generation": "openai-image", "audio.speech": "openai-audio" };
     const endpoint = item.supportedEndpointTypes?.map((value) => endpoints[value.toLowerCase()]).find((id) => protocols.some((p) => p.value === id && p.capability === capability));
-    const proposed = endpoint || candidates[preset][capability];
+    let proposed = endpoint || candidates[preset][capability];
+    if (laoliHost && capability === "video") proposed = laoliFull ? "laoli-video" : undefined;
     const protocol = protocols.find((p) => p.value === proposed && p.capability === capability && p.enabled !== false)?.value;
     return { ...existing, model: item.id, displayName: existing?.displayName || item.displayName, capability, protocol, capabilityConfig: existing?.capability === capability && existing.capabilityConfig ? existing.capabilityConfig : (capability === "image" || capability === "video") && protocol ? defaultModelCapabilityConfig(protocol, item.id) : undefined };
 }

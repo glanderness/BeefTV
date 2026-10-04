@@ -98,6 +98,9 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 		if err := PrepareBeefAPISeedanceReferences(ctx, input.Config, &input, ownedSeedanceMediaReader(ctx, userID)); err != nil {
 			return nil, err
 		}
+		if err := prepareLaoliReferences(ctx, &input, ownedLaoliMediaReader(ctx, userID)); err != nil {
+			return nil, err
+		}
 	}
 	if input.Mode == "video" && input.VideoCapability != nil && !resumed {
 		if err := validateVideoTask(input.VideoCapability, input); err != nil {

@@ -6,6 +6,18 @@ import { DEFAULT_VIDEO_PROMPT_MAX_CHARS, defaultModelCapabilityConfig, modelCapa
 import { modelCompatibilityError } from "../src/lib/model-selection.ts";
 import type { AiConfig } from "../src/stores/use-config-store.ts";
 
+test("Laoli full models accept one or two image references as well as mixed video references", () => {
+    for (const name of ["sd-native-full-2.0", "sd-native-full-2.5", "原生不卡人脸-全参2.0", "原生不卡人脸-全参2.5"]) {
+        const config = { channels: [{ id: "laoli", baseUrl: "https://video.laoliimage2.win/v1", models: [name], modelProfiles: [{ model: name, capability: "video", protocol: "laoli-video" }] }] } as AiConfig;
+        for (const [imageCount, videoCount] of [[1, 0], [2, 0], [0, 1], [2, 1]]) {
+            assert.equal(modelCompatibilityError(config, `laoli::${name}`, {
+                capability: "video", videoSeconds: "5",
+                input: { textCount: 1, imageCount, videoCount, audioCount: 0, characterCount: 0 },
+            }), "");
+        }
+    }
+});
+
 test("switching to MiniMax H3 replaces an unsupported 720p value with 768P", () => {
     const profile = defaultModelCapabilityConfig("minimax-video", "MiniMax-H3").video!;
 
