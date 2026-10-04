@@ -31,6 +31,10 @@ test("native provider models use installed native adapters and never invent a mi
     expect(serviceModelProfile(gemini, { id: "veo-video" }, protocols).protocol).toBeUndefined();
     const ark = createModelChannel({ baseUrl: "https://ark.cn-beijing.volces.com/api/v3" });
     expect(serviceModelProfile(ark, { id: "endpoint-abc" }, protocols, "video").protocol).toBe("volcengine-ark-video");
+    const regionalArk = { ...ark, baseUrl: "https://ark.cn-shanghai.volces.com/api/v3" };
+    expect(serviceModelProfile(regionalArk, { id: "endpoint-abc" }, protocols, "video").protocol).toBe("volcengine-ark-video");
+    const unrelated = { ...ark, baseUrl: "https://ark.cn-shanghai.volces.com.example.org/api/v3" };
+    expect(serviceModelProfile(unrelated, { id: "endpoint-abc" }, protocols, "video").protocol).toBe("newapi");
 });
 
 test("refresh keeps selected/manual models and user capability limits", () => {
@@ -78,4 +82,16 @@ test("generation test uses production config including headers and waits for a f
     expect(await testResult).toContain("已完成视频生成");
     expect(() => modelConnectionResultDetail({}, "video")).toThrow("没有返回可用结果");
     expect(() => modelConnectionResultDetail({ text: " " }, "text")).toThrow();
+});
+
+test("video test uses configured range defaults and ranks K resolutions above ordinary P tiers", async () => {
+    const capabilityConfig = defaultModelCapabilityConfig("newapi", "test-video")!;
+    capabilityConfig.video!.resolutions = ["2K", "768P"];
+    const channel = createModelChannel({ apiKey: "synthetic", modelProfiles: [{ model: "test-video", capability: "video", protocol: "newapi", capabilityConfig }] });
+    await testChannelModelConnection(channel, "test-video", "video", "newapi", async ({ config }) => {
+        expect(config.videoSeconds).toBe(String(capabilityConfig.video!.duration.default));
+        expect(config.videoSeconds).not.toBe("1");
+        expect(config.vquality).toBe("768P");
+        return { video: { storageKey: "fixture", dataUrl: "" } };
+    });
 });

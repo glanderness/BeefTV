@@ -13,8 +13,8 @@ export async function testChannelModelConnection(channel: ModelChannel, model: s
     const limits = modelProfile?.capabilityConfig || defaultModelCapabilityConfig(protocol, model);
     const duration = limits?.video?.duration;
     const durations = duration?.values?.filter((value) => Number.isFinite(value) && value > 0) || [];
-    const seconds = duration?.selection === "enum" && durations.length ? Math.min(...durations) : duration?.min || duration?.default;
-    const resolution = [...(limits?.video?.resolutions || [])].sort((a, b) => parseInt(a) - parseInt(b))[0];
+    const seconds = duration?.selection === "enum" && durations.length ? Math.min(...durations) : duration?.default;
+    const resolution = [...(limits?.video?.resolutions || [])].sort((a, b) => resolutionRank(a) - resolutionRank(b))[0];
     const testProtocol = channel.apiFormat === "gemini" && !modelProfile?.protocol ? undefined : protocol;
     const testChannel: ModelChannel = {
         ...channel,
@@ -66,4 +66,12 @@ export function modelConnectionResultDetail(result: BackendGenerationResult, cap
         throw new Error("任务已结束，但没有返回可用结果。请在任务中心查看详情。");
     }
     return capability === "text" ? "已收到文本响应" : `已完成${{ image: "图片", video: "视频", audio: "音频" }[capability]}生成，可在任务中心查看结果`;
+}
+
+function resolutionRank(value: string) {
+    const normalized = value.trim().toUpperCase();
+    const standard = normalized.match(/^(\d+)(P)?$/);
+    if (standard) return Number(standard[1]);
+    const kilo = normalized.match(/^(\d+(?:\.\d+)?)K$/);
+    return kilo ? Number(kilo[1]) * 540 : Number.POSITIVE_INFINITY;
 }
