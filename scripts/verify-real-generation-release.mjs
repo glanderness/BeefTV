@@ -13,7 +13,7 @@ import {
 
 // Tree identities survive squash/merge commits, but change whenever shipped
 // code, protocol packages, release scripts, dependencies or VERSION change.
-const sourceTree = execFileSync('git', ['ls-tree', '-r', 'HEAD', '--', 'backend', 'web', 'agent-host', 'plugin-packages', 'scripts', 'VERSION', '.github/workflows'], { encoding: 'utf8' });
+const sourceTree = execFileSync('git', ['ls-tree', '-r', 'HEAD', '--', 'backend', 'web', 'agent-host', 'plugin-packages', 'scripts', 'assets/app-icon.png', 'VERSION', '.github/workflows'], { encoding: 'utf8' });
 const sourceDigest = createHash('sha256').update(sourceTree).digest('hex');
 if (process.argv.includes('--fingerprint')) {
   console.log(sourceDigest);

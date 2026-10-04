@@ -48,6 +48,18 @@ function setupRepo(version) {
   return { dir, git, run, save, commitVersion };
 }
 
+test('release fingerprint binds the packaged app icon', () => {
+  const { dir, git, run } = setupRepo('v1.7.6');
+  try {
+    const before = run('--fingerprint').trim();
+    mkdirSync(join(dir, 'assets'), { recursive: true });
+    writeFileSync(join(dir, 'assets/app-icon.png'), 'test icon bytes');
+    git('add', 'assets/app-icon.png');
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'change packaged icon');
+    assert.notEqual(run('--fingerprint').trim(), before);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 function makeChecks(sourceDigest, tweak) {
   const checks = Object.fromEntries(REQUIRED_AGENT_CHECK_IDS.map(id => [id, {
     status: 'passed',
