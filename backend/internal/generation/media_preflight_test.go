@@ -65,3 +65,14 @@ func TestMediaTransportNamesOnlyBlockedReferences(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMaskOnlyDisablesURLTransportForImageEditing(t *testing.T) {
+	input := Input{Mode: "video", Config: Config{InterfaceType: "newapi-channel-2"}, Mask: &Media{StorageKey: "resource:mask"}}
+	if err := ValidateMediaTransport(context.Background(), input); err == nil || !strings.Contains(err.Error(), "遮罩") {
+		t.Fatalf("video mask bypassed admission: %v", err)
+	}
+	input.Mode = "image"
+	if MediaHydrationPolicyFor(context.Background(), input).RequireURL {
+		t.Fatal("image mask must retain byte transport for multipart editing")
+	}
+}
