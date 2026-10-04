@@ -239,11 +239,9 @@ func (e *Engine) fetchRange(ctx context.Context, artifact PlatformArtifact, path
 		return offset, classifyTransportError(readErr, watch.fired())
 	}
 	if offset < artifact.Size {
-		// Truncated transfers surface as read errors above. A clean end of
-		// body short of the signed size means the server holds other bytes.
-		_ = os.Remove(path)
-		e.setProgress(0)
-		return 0, ErrTampered
+		// A chunked response can end cleanly before all signed bytes arrive.
+		// Keep its prefix for retry; only the final size/hash authorizes use.
+		return offset, failure(ErrConnectionDropped, io.ErrUnexpectedEOF, true)
 	}
 	return offset, nil
 }

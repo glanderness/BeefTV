@@ -3,8 +3,10 @@ package desktopupdate
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"infinite-canvas/backend/internal/desktopnet"
@@ -108,8 +110,17 @@ func (e *Engine) logf(format string, args ...any) {
 		return
 	}
 	defer file.Close()
-	_, _ = fmt.Fprintf(file, "%s %s "+format+"\n", append([]any{time.Now().UTC().Format(time.RFC3339), e.currentVersion}, args...)...)
+	message := logURL.ReplaceAllStringFunc(fmt.Sprintf(format, args...), func(raw string) string {
+		u, err := url.Parse(raw)
+		if err != nil || u.Host == "" {
+			return "[redacted-url]"
+		}
+		return u.Scheme + "://" + u.Host
+	})
+	_, _ = fmt.Fprintf(file, "%s %s %s\n", time.Now().UTC().Format(time.RFC3339), e.currentVersion, message)
 }
+
+var logURL = regexp.MustCompile(`(?i)[a-z][a-z0-9+.-]*://[^\s"'<>]+`)
 
 func updateLogPath(dataDir string) string {
 	if dataDir == "" {

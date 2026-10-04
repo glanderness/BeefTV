@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -71,7 +72,7 @@ func TestFullVideoOwnedAudioPreservesMoreThanLegacy15MiB(t *testing.T) {
 
 func TestFullVideoUploadPreservesBytesAndVerifiesReceipt(t *testing.T) {
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
-	for _, bad := range []string{"", "hash", "origin", "incomplete", "chunk", "partial-complete", "invalid-json", "invalid-chunk-index"} {
+	for _, bad := range []string{"", "hash", "origin", "incomplete", "chunk", "partial-complete", "invalid-json", "invalid-chunk-index", "dot-id", "newline-id", "second-reference"} {
 		t.Run(bad, func(t *testing.T) {
 			data := []byte("local reference bytes")
 			sum := sha256.Sum256(data)
@@ -85,6 +86,9 @@ func TestFullVideoUploadPreservesBytesAndVerifiesReceipt(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
 				case r.Method == "PUT":
+					if bad == "dot-id" || bad == "newline-id" {
+						t.Error("invalid upload ID reached chunk transport")
+					}
 					if bad == "chunk" {
 						http.Error(w, "upload failed", 500)
 						return
@@ -116,6 +120,12 @@ func TestFullVideoUploadPreservesBytesAndVerifiesReceipt(t *testing.T) {
 					json.NewEncoder(w).Encode(fullvideoUpload{ID: "fixture", Status: status, Kind: "video", MIME: "video/mp4", Bytes: int64(len(data)), SHA256: h, Source: source, Duration: 3})
 				default:
 					initial := fullvideoUpload{ID: "fixture", Status: "uploading", ChunkSize: 7}
+					if bad == "dot-id" {
+						initial.ID = ".."
+					}
+					if bad == "newline-id" {
+						initial.ID = "bad\nname"
+					}
 					if bad == "partial-complete" {
 						initial.Kind, initial.MIME, initial.Bytes, initial.SHA256, initial.Duration = "video", "video/mp4", int64(len(data)), digest, 3
 						initial.Source = "https://" + strings.TrimPrefix(server.URL, "http://") + "/v1/media/assets/fixture"
@@ -128,7 +138,15 @@ func TestFullVideoUploadPreservesBytesAndVerifiesReceipt(t *testing.T) {
 			}))
 			defer server.Close()
 			input := Input{Mode: "video", Config: Config{BaseURL: server.URL, APIKey: "fixture-key", InterfaceType: "full-video", Model: "sd-native-full-2.5"}, ReferenceVideos: []Media{{StorageKey: "resource:owned"}}}
-			err := prepareFullVideoReferences(context.Background(), &input, func(kind string, m Media) ([]byte, string, bool, error) { return data, "video/mp4", false, nil })
+			if bad == "second-reference" {
+				input.ReferenceVideos = append(input.ReferenceVideos, Media{StorageKey: "resource:second"})
+			}
+			err := prepareFullVideoReferences(context.Background(), &input, func(kind string, m Media) ([]byte, string, bool, error) {
+				if m.StorageKey == "resource:second" {
+					return nil, "", false, errors.New("second reference unavailable")
+				}
+				return data, "video/mp4", false, nil
+			})
 			if bad != "" {
 				if err == nil {
 					t.Fatal("invalid upload accepted")

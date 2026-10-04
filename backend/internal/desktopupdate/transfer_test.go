@@ -398,3 +398,52 @@ func TestRateMeterIgnoresStaleSamples(t *testing.T) {
 		t.Fatalf("stale rate = %d", got)
 	}
 }
+
+func TestDownloadResumesAfterCleanChunkedEOF(t *testing.T) {
+	f := newTransferFixture(t, 5*time.Second, func(w http.ResponseWriter, r *http.Request, zip []byte, call int) {
+		if call == 1 {
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			_, _ = w.Write(zip[:8192])
+			return
+		}
+		serveRange(w, r, zip)
+	})
+	requireReady(t, f)
+	if ranges := f.requestedRanges(); len(ranges) != 2 || ranges[1] != "bytes=8192-" {
+		t.Fatalf("ranges = %q", ranges)
+	}
+}
+
+func TestDownloadParentCancellationDoesNotRetry(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := newTransferFixture(t, 5*time.Second, func(w http.ResponseWriter, r *http.Request, zip []byte, call int) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(zip)))
+		_, _ = w.Write(zip[:8192])
+		w.(http.Flusher).Flush()
+		cancel()
+		<-r.Context().Done()
+	})
+	_, err := f.engine.DownloadUpdate(ctx)
+	if errors.Is(err, ErrTimeout) || len(f.requestedRanges()) != 1 {
+		t.Fatalf("cancellation retried or timed out: %v ranges=%v", err, f.requestedRanges())
+	}
+}
+
+func TestUpdateLogRedactsTransportURLs(t *testing.T) {
+	e := &Engine{logPath: filepath.Join(t.TempDir(), "update.log"), currentVersion: "test"}
+	e.logf("failed: %v", &url.Error{Op: "Get", URL: "https://user:private-password@updates.example/private-path?token=private-token#private-fragment", Err: errors.New("proxy socks5://proxy-user:proxy-password@proxy.example:1080")})
+	data, err := os.ReadFile(e.logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"user", "private-", "token=", "proxy-password"} {
+		if strings.Contains(string(data), secret) {
+			t.Fatalf("log retained secret %q", secret)
+		}
+	}
+	if !strings.Contains(string(data), "updates.example") {
+		t.Fatal("log lost destination host")
+	}
+}

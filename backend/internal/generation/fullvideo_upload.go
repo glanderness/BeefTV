@@ -77,7 +77,11 @@ func prepareFullVideoReferences(ctx context.Context, input *Input, read BeefAPIS
 	if len(input.ReferenceImages)+len(input.ReferenceVideos)+len(input.ReferenceAudios) > maxTotal {
 		return fmt.Errorf("当前模型最多支持 %d 个参考素材", maxTotal)
 	}
-	for _, group := range BeefAPISeedanceMediaGroups(input) {
+	prepared := *input
+	prepared.ReferenceImages = append([]Media(nil), input.ReferenceImages...)
+	prepared.ReferenceVideos = append([]Media(nil), input.ReferenceVideos...)
+	prepared.ReferenceAudios = append([]Media(nil), input.ReferenceAudios...)
+	for _, group := range BeefAPISeedanceMediaGroups(&prepared) {
 		for i := range group.items {
 			media := &group.items[i]
 			if raw := strings.TrimSpace(media.URL); strings.HasPrefix(raw, "https://") && media.StorageKey == "" {
@@ -121,7 +125,7 @@ func prepareFullVideoReferences(ctx context.Context, input *Input, read BeefAPIS
 				return err
 			}
 			if receipt.Status != "complete" {
-				if receipt.ID == "" || strings.ContainsAny(receipt.ID, "/?#%\\") || receipt.ChunkSize <= 0 || receipt.ChunkSize > 16<<20 {
+				if !validFullVideoUploadID(receipt.ID) || receipt.ChunkSize <= 0 || receipt.ChunkSize > 16<<20 {
 					return errors.New("素材上传回执无效")
 				}
 				path := "/v1/media/uploads/" + receipt.ID
@@ -165,7 +169,20 @@ func prepareFullVideoReferences(ctx context.Context, input *Input, read BeefAPIS
 			}
 		}
 	}
+	*input = prepared
 	return nil
+}
+
+func validFullVideoUploadID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func trustedFullVideoAssetSource(baseURL, sourceURL, assetOrigin string) bool {
