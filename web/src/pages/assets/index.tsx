@@ -33,7 +33,7 @@ import { resourceStorageLabel, resourceStorageLocation, resourceStorageTitle } f
 import { formatBytes, readFileAsDataUrl, readImageMeta } from "@/lib/image-utils";
 import { assertUserScope, captureUserScope, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { uploadImage } from "@/services/image-storage";
-import { uploadMediaFile } from "@/services/file-storage";
+import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { flushAssetStorePersistence, useAssetStore, type Asset, type AssetCategory, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
 import { assetStorageUsageQueryKey } from "./asset-storage-usage";
@@ -1900,6 +1900,23 @@ function AssetFilterGroup({
 }
 
 function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: LibraryAsset | null; onClose: () => void; onCopy: (asset: LibraryAsset) => void; onDownload: (asset: LibraryAsset) => void }) {
+    const [playable, setPlayable] = useState<{ asset: LibraryAsset; url: string } | null>(null);
+    useEffect(() => {
+        if (!asset || (asset.kind !== "video" && asset.kind !== "audio")) {
+            setPlayable(null);
+            return;
+        }
+        let cancelled = false;
+        // Native media elements cannot attach the desktop session token.
+        // Resolve the owned resource just as the library thumbnails do.
+        void resolveMediaUrl(asset.data.storageKey, asset.data.url).then((url) => {
+            if (!cancelled) setPlayable({ asset, url });
+        }).catch(() => {
+            if (!cancelled) setPlayable(null);
+        });
+        return () => { cancelled = true; };
+    }, [asset]);
+    const mediaUrl = playable?.asset === asset ? playable?.url : undefined;
     const facts = asset ? assetArchiveFacts(asset) : [];
     const kind = asset && isKnownAssetKind(asset.kind) ? asset.kind : undefined;
     const KindIcon = asset ? (kind ? assetKindIcons[kind] : FileText) : Clapperboard;
@@ -1923,7 +1940,7 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: LibraryAss
                             <div className="asset-archive-preview-note">{asset.data.content}</div>
                         ) : asset.kind === "audio" ? (
                             <div className="asset-archive-audio">
-                                <audio src={asset.data.url} controls />
+                                <audio src={mediaUrl} controls />
                             </div>
                         ) : asset.kind === "model" ? (
                             <div className="asset-archive-preview-model">
@@ -1933,7 +1950,7 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: LibraryAss
                                 </span>
                             </div>
                         ) : asset.kind === "video" ? (
-                            <video src={asset.data.url} controls className="asset-archive-preview-media" />
+                            <video src={mediaUrl} controls className="asset-archive-preview-media" />
                         ) : (
                             <AssetImageZoom asset={asset} />
                         )}
