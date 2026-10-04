@@ -19,7 +19,7 @@
   "cases": [],
   "version": "v1.7.5",
   "sourceDigest": "d7b2ab1073318f40eeaf726d85cffbfaa713ee3026c845d9b8aa750c1548b192",
-  "releaseComplete": false,
+  "releaseComplete": true,
   "liveTestWaiver": {
     "approvedBy": "Ender",
     "instruction": "合了一起发布吧",
@@ -116,11 +116,51 @@
     }
   },
   "packages": {
-    "status": "pending_release_workflow",
+    "status": "passed",
     "finalArchiveSmokeBeforeUpload": true,
     "windowsReleasedUpgradeAndRollbackBeforeUpload": true,
     "workflowEvidence": [
-      ".github/workflows/release-desktop.yml"
-    ]
+      ".github/workflows/release-desktop.yml",
+      "https://github.com/glanderness/BeefTV/actions/runs/37205672112"
+    ],
+    "archives": {
+      "darwin-amd64": {
+        "sourceDigest": "d7b2ab1073318f40eeaf726d85cffbfaa713ee3026c845d9b8aa750c1548b192",
+        "sha256": "e641310b3546eadef1a220f859b800abe3fb213f4624c97c81f2efed24e12caa",
+        "size": 158381842,
+        "evidence": [
+          "https://updates.beefapi.com/beeftv/v1.7.5/BeefTV-v1.7.5-darwin-amd64.zip",
+          "https://github.com/glanderness/BeefTV/actions/runs/37205672112"
+        ]
+      },
+      "darwin-arm64": {
+        "sourceDigest": "d7b2ab1073318f40eeaf726d85cffbfaa713ee3026c845d9b8aa750c1548b192",
+        "sha256": "b2bdf1ddea27b729dc62e1895cac1724dd25fa1bd45380d11ccc076de3ee4173",
+        "size": 154012452,
+        "evidence": [
+          "https://updates.beefapi.com/beeftv/v1.7.5/BeefTV-v1.7.5-darwin-arm64.zip",
+          "https://github.com/glanderness/BeefTV/actions/runs/37205672112"
+        ]
+      },
+      "windows-amd64": {
+        "sourceDigest": "d7b2ab1073318f40eeaf726d85cffbfaa713ee3026c845d9b8aa750c1548b192",
+        "sha256": "2b2363d6881ae7f8944dda32c3df79b40e0805b2a97a81d2226afcd6134b2d14",
+        "size": 145140034,
+        "evidence": [
+          "https://updates.beefapi.com/beeftv/v1.7.5/BeefTV-v1.7.5-windows-amd64.zip",
+          "https://github.com/glanderness/BeefTV/actions/runs/37205672112"
+        ]
+      }
+    }
+  },
+  "publishedCommit": "572ebd641a4c0618f5502047eb66f8a1018bbb53",
+  "publication": {
+    "status": "passed",
+    "release": "https://github.com/glanderness/BeefTV/releases/tag/v1.7.5",
+    "feed": "https://updates.beefapi.com/beeftv/desktop-update.json",
+    "signatureVerified": true,
+    "allPublicArchivesDownloadedAndHashVerified": true,
+    "githubAndPublicFeedIdentical": true,
+    "binaryPrivacyScan": "passed"
   }
 }
