@@ -606,6 +606,9 @@
 .app-user-workspace.app-product-workspace .app-workspace-update-progress-bar > span {
     background: var(--user-ink-muted);
 }
+.app-user-workspace.app-product-workspace .app-workspace-update-progress-bar.is-paused > span {
+    background: var(--user-ink-soft);
+}
 .app-user-workspace.app-product-workspace .app-workspace-sidebar-checkin,
 .app-user-workspace.app-product-workspace .app-workspace-sidebar-storage { display:none; }
 .app-user-workspace.app-product-workspace .app-workspace-sidebar-profile { color:var(--user-ink-muted); }

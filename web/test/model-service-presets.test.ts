@@ -13,6 +13,24 @@ const protocols = [
     ["volcengine-ark-video", "video"], ["newapi", "video"],
 ].map(([value, capability]) => ({ value, capability, enabled: true } as ModelProtocolDefinition));
 
+test("catalog endpoint metadata classifies opaque video names and selects only installed provider contracts", () => {
+    const channel = createModelChannel({ baseUrl: "https://video.example.com/v1" });
+    const item = { id: "原生不卡人脸-全参2.5", supportedEndpointTypes: ["full-video"] };
+    expect(serviceModelProfile(channel, item, protocols).protocol).toBeUndefined();
+    const installed = [...protocols, { value: "full-video", capability: "video", enabled: true } as ModelProtocolDefinition];
+    const profile = serviceModelProfile(channel, item, installed);
+    expect(profile.capability).toBe("video");
+    expect(profile.protocol).toBe("full-video");
+    for (const id of ["sd-native-full-2.0", "sd-native-full-2.5", "原生不卡人脸-全参2.0", "原生不卡人脸-全参2.5"]) {
+        expect(serviceModelProfile(channel, { id }, installed)).toMatchObject({ capability: "video", protocol: undefined });
+    }
+    expect(serviceModelProfile({ ...channel, baseUrl: "https://other.example" }, { id: "sd-native-full-2.5" }, installed).protocol).not.toBe("full-video");
+    expect(profile.capabilityConfig?.video).toMatchObject({ duration: { min: 4, max: 30 }, resolutions: ["480p", "720p"], references: { maxVideos: 10 } });
+    expect(serviceModelProfile(channel, { id: "H3-KS", supportedEndpointTypes: ["openai-video"] }, installed).protocol).toBe("newapi");
+    expect(serviceModelProfile({ ...channel, baseUrl: "https://other.example" }, item, installed).protocol).toBe("full-video");
+    expect(serviceModelProfile(channel, item, installed.map(p => ({ ...p, enabled: false }))).protocol).toBeUndefined();
+});
+
 test("test receipts apply only to the exact tested connection and model profile", () => {
     const channel = createModelChannel({ id: "receipt-channel", apiKey: "synthetic-key", modelProfiles: [{ model: "test", capability: "text", protocol: "chat-completion" }] });
     useModelConnectionTests.getState().record(channel, "test", { success: true, detail: "OK" });
@@ -20,6 +38,7 @@ test("test receipts apply only to the exact tested connection and model profile"
     expect(currentModelConnectionReceipt(receipts, channel, "test")?.success).toBe(true);
     expect(currentModelConnectionReceipt(receipts, { ...channel, apiKey: "changed" }, "test")).toBeUndefined();
     expect(currentModelConnectionReceipt(receipts, { ...channel, baseUrl: "https://other.example" }, "test")).toBeUndefined();
+    expect(currentModelConnectionReceipt(receipts, { ...channel, referenceAssetOrigin: "https://assets.example.com" }, "test")).toBeUndefined();
     expect(currentModelConnectionReceipt(receipts, { ...channel, headers: [{ name: "X-Key", value: "other" }] }, "test")).toBeUndefined();
     expect(currentModelConnectionReceipt(receipts, { ...channel, modelProfiles: [{ model: "test", capability: "text", protocol: "openai-response" }] }, "test")).toBeUndefined();
 });
@@ -51,6 +70,17 @@ test("connection validation rejects full endpoints and embedded credentials", ()
     expect(modelCatalogRequestURL(channel)).toBe("https://api.example.com/v1/models");
     expect(serviceConnectionError({ ...channel, baseUrl: "https://api.example.com/v1/chat/completions" })).not.toBe("");
     expect(serviceConnectionError({ ...channel, baseUrl: "https://secret@api.example.com" })).not.toBe("");
+    expect(serviceConnectionError({ ...channel, referenceAssetOrigin: "https://assets.example.com" })).toBe("");
+    for (const referenceAssetOrigin of ["http://assets.example.com", "https://assets.example.com/path", "https://user@assets.example.com", "https://assets.example.com?key=value"]) {
+        expect(serviceConnectionError({ ...channel, referenceAssetOrigin })).not.toBe("");
+    }
+});
+
+test("explicit asset origin survives channel creation and generation request assembly", () => {
+    const channel = createModelChannel({ id: "custom", baseUrl: "https://api.example.com/v1", referenceAssetOrigin: " https://assets.example.com ", models: ["sd-native-full-2.5"], modelProfiles: [{ model: "sd-native-full-2.5", capability: "video", protocol: "full-video" }] });
+    const config = { ...defaultConfig, channels: [channel], model: "custom::sd-native-full-2.5" };
+    expect(channel.referenceAssetOrigin).toBe("https://assets.example.com");
+    expect(backendProviderConfig(config, "video")).toMatchObject({ referenceAssetOrigin: channel.referenceAssetOrigin, interfaceType: "full-video" });
 });
 
 test("saved credentials do not imply tested generation and browser cache omits all credential copies", () => {

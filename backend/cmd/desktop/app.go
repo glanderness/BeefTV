@@ -173,9 +173,9 @@ func mediaSaveDialogOptions(fileName, platform string) wailsruntime.SaveDialogOp
 		DefaultFilename: fileName,
 		Title:           "保存文件",
 	}
-	// Windows uses the first filter to set the default extension. Without it,
-	// hiding known extensions or renaming the file can produce an extensionless file.
-	if ext := filepath.Ext(fileName); platform == "windows" && len(ext) > 1 {
+	// Native save panels use this filter to preserve the format when a user
+	// renames a file. Let the panel resolve the extension before overwrite checks.
+	if ext := filepath.Ext(fileName); (platform == "windows" || platform == "darwin") && len(ext) > 1 {
 		options.Filters = []wailsruntime.FileFilter{{
 			DisplayName: strings.ToUpper(ext[1:]) + " 文件 (*" + ext + ")",
 			Pattern:     "*" + ext,

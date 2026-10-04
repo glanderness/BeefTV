@@ -9,6 +9,9 @@ import (
 )
 
 func MediaHydrationPolicyFor(ctx context.Context, input Input) MediaHydrationPolicy {
+	if input.Config.InterfaceType == "full-video" {
+		return MediaHydrationPolicy{KeepLocal: true}
+	}
 	policy := MediaHydrationPolicy{PreferURL: PrefersMediaURLs(input.Config.InterfaceType, input)}
 	if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(input.Config.InterfaceType)) {
 		return MediaHydrationPolicy{PreferHTTPS: true}

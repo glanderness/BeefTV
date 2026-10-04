@@ -5,6 +5,7 @@ import { defaultConfig, type AiConfig } from "@/stores/use-config-store";
 import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
 import { buildGenerationConfig, runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
 import type { GenerationTask } from "@/services/api/task-center";
+import { backendProviderConfig } from "@/services/api/generation-task";
 
 const node: CanvasNodeData = { id: "node-1", title: "Image", type: CanvasNodeType.Image, position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { prompt: "test image" } };
 const proposal = { proposalId: "proposal-1", kind: "image" as const, nodeIds: [node.id], model: "Confirmed", modelKey: "channel::confirmed" };
@@ -157,6 +158,13 @@ function modelConfig(): AiConfig {
         channels: [{ id: "channel", name: "Test", baseUrl: "https://example.invalid", apiKey: "", apiFormat: "openai", models: ["image-a", "image-b"], modelProfiles: ["image-a", "image-b"].map((model) => ({ model, displayName: model, capability: "image", billingMode: "fixed_request", unitPriceMicrocredits: 1 })) }],
     };
 }
+
+test("confirmed generation preserves the channel's explicit reference asset origin", () => {
+    const config = modelConfig();
+    config.channels![0].referenceAssetOrigin = "https://assets.example.com";
+    const confirmed = buildConfirmedGenerationConfig(config, node, "image", undefined, config.imageModel);
+    expect(backendProviderConfig(confirmed, "image").referenceAssetOrigin).toBe("https://assets.example.com");
+});
 
 test("F02: changed defaults or node model stop before the paid execution boundary", async () => {
     const config = modelConfig();

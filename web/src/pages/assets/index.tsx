@@ -33,7 +33,7 @@ import { resourceStorageLabel, resourceStorageTitle } from "@/lib/canvas/resourc
 import { formatBytes, readFileAsDataUrl, readImageMeta } from "@/lib/image-utils";
 import { assertUserScope, captureUserScope, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { uploadImage } from "@/services/image-storage";
-import { uploadMediaFile } from "@/services/file-storage";
+import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { flushAssetStorePersistence, useAssetStore, type Asset, type AssetCategory, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
 import { assetStorageUsageQueryKey } from "./asset-storage-usage";
@@ -1875,6 +1875,23 @@ function AssetVideoPreview({ storageKey, url, title, className }: { storageKey?:
 }
 
 function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: LibraryAsset | null; onClose: () => void; onCopy: (asset: LibraryAsset) => void; onDownload: (asset: LibraryAsset) => void }) {
+    const [playable, setPlayable] = useState<{ asset: LibraryAsset; url: string } | null>(null);
+    useEffect(() => {
+        if (!asset || asset.kind !== "audio") {
+            setPlayable(null);
+            return;
+        }
+        let cancelled = false;
+        // Native media elements cannot attach the desktop session token.
+        // Resolve the owned resource just as the library thumbnails do.
+        void resolveMediaUrl(asset.data.storageKey, asset.data.url).then((url) => {
+            if (!cancelled) setPlayable({ asset, url });
+        }).catch(() => {
+            if (!cancelled) setPlayable(null);
+        });
+        return () => { cancelled = true; };
+    }, [asset]);
+    const mediaUrl = playable?.asset === asset ? playable?.url : undefined;
     const facts = asset ? assetArchiveFacts(asset) : [];
     return (
         <Drawer className="library-drawer asset-detail-drawer" title={null} closable={false} open={Boolean(asset)} size="large" onClose={onClose}>
@@ -1889,7 +1906,7 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: LibraryAss
                             <div className="asset-archive-preview-note">{asset.data.content}</div>
                         ) : asset.kind === "audio" ? (
                             <div className="asset-archive-audio">
-                                <audio src={asset.data.url} controls />
+                                <audio src={mediaUrl} controls />
                             </div>
                         ) : asset.kind === "model" ? (
                             <div className="asset-archive-preview-model">

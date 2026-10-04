@@ -83,7 +83,7 @@ export async function fetchChannelModels(channel: ModelChannel, viaBackend = fal
             headers: channel.headers,
             channelId: managed ? channel.id : undefined,
             credentialRef: managed ? "beefapi-enterprise" : undefined,
-        });
+        }, { timeout: 30_000 });
         const catalog = new Map<string, ChannelModelCatalogItem>();
         for (const item of result.models || []) {
             const entry = typeof item === "string" ? sanitizeChannelModelCatalogItem({ id: item }) : sanitizeChannelModelCatalogItem(item);

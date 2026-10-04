@@ -81,6 +81,7 @@ type Config struct {
 	APIFormat                string                    `json:"apiFormat"`
 	InterfaceType            string                    `json:"interfaceType"`
 	BaseURL                  string                    `json:"baseUrl"`
+	ReferenceAssetOrigin     string                    `json:"referenceAssetOrigin,omitempty"`
 	APIKey                   string                    `json:"apiKey"`
 	SecretKey                string                    `json:"secretKey"`
 	Headers                  []outbound.OutboundHeader `json:"headers"`

@@ -350,6 +350,7 @@ export type ModelChannel = {
     publicAlias?: string;
     sortOrder?: number;
     baseUrl: string;
+    referenceAssetOrigin?: string;
     apiKey: string;
     secretKey?: string;
     headers?: ChannelHeader[];
@@ -890,6 +891,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         name: channel?.name?.trim() || "新渠道",
         sortOrder: channel?.sortOrder ?? 0,
         baseUrl: providedBaseUrl || (interfaceType ? defaultBaseUrlForChannelInterface(interfaceType) : defaultBaseUrlForApiFormat(apiFormat)),
+        referenceAssetOrigin: channel?.referenceAssetOrigin?.trim() || undefined,
         apiKey: channel?.apiKey || "",
         secretKey: channel?.secretKey || "",
         headers: Array.isArray(channel?.headers) ? channel.headers.map((header) => ({ name: String(header.name || ""), value: String(header.value || "") })) : [],
@@ -992,7 +994,7 @@ export function logicalModelIDForConfig(config: AiConfig) {
 }
 
 export function channelConnectionSignature(channel: ModelChannel) {
-    return [channel.baseUrl.trim(), channel.apiKey.trim(), channel.secretKey?.trim() || "", channel.apiFormat, channel.interfaceType || "auto", JSON.stringify(channel.headers || [])].join("\n");
+    return [channel.baseUrl.trim(), channel.referenceAssetOrigin?.trim() || "", channel.apiKey.trim(), channel.secretKey?.trim() || "", channel.apiFormat, channel.interfaceType || "auto", JSON.stringify(channel.headers || [])].join("\n");
 }
 
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
@@ -1009,6 +1011,7 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         ...config,
         model,
         baseUrl: channel.baseUrl,
+        referenceAssetOrigin: channel.referenceAssetOrigin,
         apiKey: channel.credentialRef ? "" : channel.apiKey,
         secretKey: channel.credentialRef ? "" : channel.secretKey,
         headers: channel.headers,
