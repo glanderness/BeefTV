@@ -511,7 +511,7 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.duration = { selection: "range", min: 4, max: is25 ? 30 : 15, step: 1, default: 5 };
         video.resolutions = is25 ? ["480p", "720p"] : ["480p", "720p", "1080p"];
         video.defaultResolution = "480p";
-        video.operations = ["text_to_video", "reference_to_video"];
+        video.operations = ["text_to_video", "image_to_video", "reference_to_video"];
     }
     if (protocol === "volcengine-jimeng-video") {
         video.duration = { selection: "enum", values: [5, 10], default: 5 };
