@@ -21,6 +21,10 @@ test("catalog endpoint metadata classifies opaque video names and selects only i
     const profile = serviceModelProfile(channel, item, installed);
     expect(profile.capability).toBe("video");
     expect(profile.protocol).toBe("laoli-video");
+    for (const id of ["sd-native-full-2.0", "sd-native-full-2.5", "原生不卡人脸-全参2.0", "原生不卡人脸-全参2.5"]) {
+        expect(serviceModelProfile(channel, { id }, installed)).toMatchObject({ capability: "video", protocol: "laoli-video" });
+    }
+    expect(serviceModelProfile({ ...channel, baseUrl: "https://other.example" }, { id: "sd-native-full-2.5" }, installed).protocol).not.toBe("laoli-video");
     expect(profile.capabilityConfig?.video).toMatchObject({ duration: { min: 4, max: 30 }, resolutions: ["480p", "720p"], references: { maxVideos: 10 } });
     expect(serviceModelProfile(channel, { ...item, id: "H3-KS" }, installed).protocol).toBeUndefined();
     expect(serviceModelProfile({ ...channel, baseUrl: "https://other.example" }, item, installed).protocol).toBe("newapi");
