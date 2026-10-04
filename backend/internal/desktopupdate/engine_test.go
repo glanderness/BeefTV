@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -345,6 +346,7 @@ func signedFeedServer(t *testing.T, priv ed25519.PrivateKey, payload Payload, zi
 			}
 			_, _ = w.Write(body)
 		case "/BeefTV.zip":
+			w.Header().Set("Content-Length", strconv.Itoa(len(zipBytes)))
 			_, _ = w.Write(zipBytes)
 		default:
 			http.NotFound(w, r)
