@@ -33,7 +33,10 @@ export function WorkspaceBootstrapHydrator({ children }: { children: ReactNode }
             })
             .catch(() => {
                 if (cancelled) return;
-                modelConfigReady.current = true;
+                // The browser cache deliberately has no credentials. If the
+                // canonical file could not be read, never autosave that cache
+                // over the existing workspace when the backend comes back.
+                modelConfigReady.current = false;
                 useUserStore.getState().setHydrated(true);
             });
         return () => {

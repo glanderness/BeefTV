@@ -652,7 +652,7 @@ export const useConfigStore = create<ConfigStore>()(
         {
             name: CONFIG_STORE_KEY,
             storage: createJSONStorage(() => scopedLocalStorage),
-            partialize: (state) => ({ config: state.config }),
+            partialize: (state) => ({ config: configWithoutCachedSecrets(state.config) }),
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<ConfigStore>;
                 return {
@@ -663,6 +663,17 @@ export const useConfigStore = create<ConfigStore>()(
         },
     ),
 );
+
+// The canonical local workspace restores credentials at startup. Browser
+// storage only caches presentation/preferences, never an extra plaintext copy.
+export function configWithoutCachedSecrets(config: AiConfig): AiConfig {
+    return {
+        ...config,
+        apiKey: "",
+        channels: config.channels.map((channel) => ({ ...channel, apiKey: "", secretKey: "", headers: [] })),
+        runningHub: { ...config.runningHub, apiKey: "", walletApiKey: "", uploadApiKey: "" },
+    };
+}
 
 export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefined = {}) {
     // 坏存储/旧版本快照可能是 undefined 或缺 config，兜底为 defaultConfig，保证渲染不崩溃

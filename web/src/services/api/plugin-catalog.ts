@@ -1,6 +1,5 @@
 import { http } from "@/services/api/request";
 import type { ModelProtocolDefinition, ProtocolCapability } from "@/lib/model-protocols";
-import { workspaceCapabilities } from "@/services/workspace-mode";
 
 type PluginProviderCatalogItem = {
     id: string;
@@ -26,9 +25,6 @@ type PluginProviderCatalogItem = {
 };
 
 export async function fetchPluginProviderCatalog(scope: string, capability?: ProtocolCapability) {
-    if (workspaceCapabilities().local && scope === "user.custom-channel") {
-        return BUILTIN_OPENAI_PROTOCOLS.filter((item) => !capability || item.capability === capability);
-    }
     try {
         const result = await http.get<{ providers: PluginProviderCatalogItem[] }>("/plugins/catalog", { params: { scope, capability } });
         return result.providers.filter((item) => item.enabled && !item.unavailableReason).map(toProviderDefinition);

@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"infinite-canvas/backend/internal/localcrypto"
 )
 
 const (
@@ -195,7 +196,7 @@ func (s *ProviderConfig) saveLocalModelConfig(body []byte, existingDocument Prov
 	}
 	document := newProviderState(incoming, existingDocument.Revision+1)
 	document.AssistantDefaultAuthorization = existingDocument.AssistantDefaultAuthorization
-	canonical, err := json.Marshal(document)
+	canonical, err := s.encodeStoredDocument(document)
 	if err != nil {
 		return fmt.Errorf("编码本地模型配置失败: %w", err)
 	}
@@ -268,7 +269,7 @@ func (s *ProviderConfig) loadDocument() (ProviderStateDocument, ConfigHealth, er
 	if err != nil {
 		return ProviderStateDocument{}, ConfigHealthReady, fmt.Errorf("读取本地模型配置失败: %w", err)
 	}
-	document, migrated, decodeErr := decodeProviderDocument(body)
+	document, migrated, decodeErr := s.decodeStoredDocument(body)
 	if decodeErr == nil {
 		if migrated {
 			return document, ConfigHealthMigrated, nil
@@ -279,7 +280,7 @@ func (s *ProviderConfig) loadDocument() (ProviderStateDocument, ConfigHealth, er
 	if backupErr != nil {
 		return ProviderStateDocument{}, ConfigHealthReady, fmt.Errorf("本地模型配置损坏且无可用备份: %w", decodeErr)
 	}
-	document, _, backupDecodeErr := decodeProviderDocument(backup)
+	document, _, backupDecodeErr := s.decodeStoredDocument(backup)
 	if backupDecodeErr != nil {
 		return ProviderStateDocument{}, ConfigHealthReady, fmt.Errorf("本地模型配置及备份均损坏: %w", decodeErr)
 	}
@@ -294,7 +295,7 @@ func (s *ProviderConfig) loadPrimaryDocument() (ProviderStateDocument, error) {
 	if err != nil {
 		return ProviderStateDocument{}, fmt.Errorf("读取本地模型配置失败: %w", err)
 	}
-	document, _, decodeErr := decodeProviderDocument(body)
+	document, _, decodeErr := s.decodeStoredDocument(body)
 	if decodeErr != nil {
 		return ProviderStateDocument{}, fmt.Errorf("本地模型配置损坏: %w", decodeErr)
 	}
@@ -380,21 +381,57 @@ func decodeIncomingConfig(body []byte) (map[string]any, error) {
 	return document.Config, nil
 }
 
+// Keep the public/in-memory config shape unchanged; only its disk envelope is
+// encrypted. This also protects custom header credentials and legacy fields.
+func (s *ProviderConfig) encodeStoredDocument(document ProviderStateDocument) ([]byte, error) {
+	body, err := json.Marshal(document)
+	if err != nil {
+		return nil, err
+	}
+	ciphertext, err := localcrypto.Encrypt(s.dataDir, string(body))
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(map[string]any{"schemaVersion": 2, "encryptedConfig": ciphertext})
+}
+
+func (s *ProviderConfig) decodeStoredDocument(body []byte) (ProviderStateDocument, bool, error) {
+	var envelope struct {
+		SchemaVersion   int    `json:"schemaVersion"`
+		EncryptedConfig string `json:"encryptedConfig"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return ProviderStateDocument{}, false, err
+	}
+	if envelope.EncryptedConfig == "" {
+		if envelope.SchemaVersion == 2 {
+			return ProviderStateDocument{}, false, errors.New("本地模型配置密文缺失")
+		}
+		document, _, err := decodeProviderDocument(body)
+		return document, true, err // The next canonical save migrates plaintext.
+	}
+	plain, err := localcrypto.Decrypt(s.dataDir, envelope.EncryptedConfig)
+	if err != nil {
+		return ProviderStateDocument{}, false, err
+	}
+	return decodeProviderDocument([]byte(plain))
+}
+
 func (s *ProviderConfig) rotateBackup() error {
-	source, err := os.Open(s.path())
+	source, err := os.ReadFile(s.path())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("读取旧模型配置失败: %w", err)
 	}
-	defer source.Close()
-	var value any
-	if err := json.NewDecoder(source).Decode(&value); err != nil {
+	document, _, err := s.decodeStoredDocument(source)
+	if err != nil {
 		return nil
 	}
-	if _, err := source.Seek(0, 0); err != nil {
-		return fmt.Errorf("重读旧模型配置失败: %w", err)
+	canonical, err := s.encodeStoredDocument(document)
+	if err != nil {
+		return err
 	}
 	tmp, err := os.CreateTemp(s.dataDir, ".local-model-config-backup-*")
 	if err != nil {
@@ -406,7 +443,7 @@ func (s *ProviderConfig) rotateBackup() error {
 		_ = tmp.Close()
 		return err
 	}
-	if _, err := io.Copy(tmp, source); err != nil {
+	if _, err := tmp.Write(canonical); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("写入模型配置备份失败: %w", err)
 	}
@@ -427,6 +464,15 @@ func redactSecrets(value any) {
 	switch typed := value.(type) {
 	case map[string]any:
 		for key, child := range typed {
+			if key == "headers" {
+				headers, _ := child.([]any)
+				for _, raw := range headers {
+					if header, ok := raw.(map[string]any); ok && header["value"] != nil && header["value"] != "" {
+						header["value"] = RedactedSecret
+					}
+				}
+				continue
+			}
 			if isSecretKey(key) && child != nil && fmt.Sprint(child) != "" {
 				typed[key] = RedactedSecret
 				continue
@@ -445,6 +491,29 @@ func preserveSecrets(incoming, existing any) error {
 	case map[string]any:
 		previous, _ := existing.(map[string]any)
 		for key, value := range next {
+			if key == "headers" {
+				incomingHeaders, _ := value.([]any)
+				oldHeaders, _ := previous[key].([]any)
+				for _, raw := range incomingHeaders {
+					header, ok := raw.(map[string]any)
+					if !ok || header["value"] != RedactedSecret {
+						continue
+					}
+					matched := false
+					for _, old := range oldHeaders {
+						oldHeader, ok := old.(map[string]any)
+						if ok && strings.EqualFold(fmt.Sprint(header["name"]), fmt.Sprint(oldHeader["name"])) && usableStoredSecret(oldHeader["value"]) {
+							header["value"] = oldHeader["value"]
+							matched = true
+							break
+						}
+					}
+					if !matched {
+						return ErrUnmatchedRedactedSecret
+					}
+				}
+				continue
+			}
 			if isSecretKey(key) && isRedactedMarker(value) {
 				if previous == nil {
 					return ErrUnmatchedRedactedSecret
@@ -566,5 +635,5 @@ func usableStoredSecret(value any) bool {
 
 func isSecretKey(key string) bool {
 	key = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(key), "_", ""))
-	return key == "apikey" || key == "token" || key == "secret" || strings.HasSuffix(key, "token") || strings.HasSuffix(key, "secret")
+	return key == "apikey" || key == "secretkey" || key == "token" || key == "secret" || strings.HasSuffix(key, "token") || strings.HasSuffix(key, "secret")
 }

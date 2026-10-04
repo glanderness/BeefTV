@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { App, Button, Segmented, Tag } from "antd";
+import { Alert, App, Button, Popconfirm, Segmented, Tag } from "antd";
 import { ChevronRight, FlaskConical, Settings2 } from "lucide-react";
 
 import { ModelEditorModal } from "@/components/model-editor-modal";
@@ -11,10 +11,11 @@ import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
 import { defaultProtocolForCapability, defaultProtocolForModel, inferProtocolCapabilityFromModel, modelProtocolCapability, modelProtocolDefinition, type ModelProtocol, type ModelProtocolDefinition } from "@/lib/model-protocols";
 import { fetchPluginProviderCatalog } from "@/services/api/plugin-catalog";
 import { modelOptionName, type ModelChannel } from "@/stores/use-config-store";
+import { currentModelConnectionReceipt, useModelConnectionTests } from "@/stores/use-model-connection-tests";
 
 type ModelProfile = NonNullable<ModelChannel["modelProfiles"]>[number];
 
-export function ChannelModelSettings({ channel, onChange }: { channel: ModelChannel; onChange: (profiles: ModelProfile[]) => void }) {
+export function ChannelModelSettings({ channel, onChange, draft = false }: { channel: ModelChannel; onChange: (profiles: ModelProfile[]) => void; draft?: boolean }) {
     const { message } = App.useApp();
     const [testingModel, setTestingModel] = useState("");
     const [editorTab, setEditorTab] = useState("protocol");
@@ -22,6 +23,8 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
     const [protocolError, setProtocolError] = useState("");
     const [activeModel, setActiveModel] = useState<string | null>(null);
     const [availableProtocols, setAvailableProtocols] = useState<ModelProtocolDefinition[]>([]);
+    const { receipts, record } = useModelConnectionTests();
+    const testResult = activeModel ? currentModelConnectionReceipt(receipts, channel, activeModel) : undefined;
 
     useEffect(() => {
         let active = true;
@@ -49,10 +52,13 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
     const testModel = async (model: string, capability: ModelProfile["capability"], protocol: ModelProtocol) => {
         setTestingModel(model);
         try {
-            const result = await testChannelModelConnection(channel, model, capability, protocol);
-            message.info(result.detail);
+            const detail = await testChannelModelConnection(channel, model, capability, protocol);
+            record(channel, model, { success: true, detail });
+            message.success(`模型测试通过：${detail}`);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "模型测试失败");
+            const detail = error instanceof Error ? error.message : "模型测试失败";
+            record(channel, model, { success: false, detail });
+            message.error(detail);
         } finally {
             setTestingModel("");
         }
@@ -68,7 +74,7 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
             <div className="mb-2 flex items-center justify-between gap-3">
                 <div>
                     <div className="text-xs font-medium">模型能力与请求协议</div>
-                    <div className="mt-0.5 text-[var(--fs-tiny)] text-foreground/42">与运营后台使用同一能力目录；测试会发起真实请求并可能产生供应商费用</div>
+                    <div className="mt-0.5 text-[var(--fs-tiny)] text-foreground/42">按服务商要求调整参数，也可以生成一次来验证连接。</div>
                 </div>
                 <span className="text-[var(--fs-tiny)] text-foreground/35">{channel.models.length} 个模型</span>
             </div>
@@ -114,16 +120,17 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
                 onClose={() => setActiveModel(null)}
                 footer={
                     <div className="model-editor-footer">
-                        <span className="text-xs text-foreground/50">更改实时保存到本地工作区</span>
+                        <span className="text-xs text-foreground/50">{draft ? "完成后，点击「保存并使用」保存更改" : "更改实时保存到本地工作区"}</span>
                         <div className="model-editor-footer-actions">
+                            <Popconfirm title="生成一次测试结果？" description="会向当前服务商提交真实生成任务，费用由服务商收取。结果可在任务中心查看。" okText="开始生成" cancelText="取消" onConfirm={() => { if (activeModel && activeProtocol) void testModel(activeModel, activeCapability, activeProtocol); }}>
                             <Button
                                 icon={<FlaskConical className="size-4" />}
                                 loading={Boolean(testingModel)}
                                 disabled={!activeProtocol || protocolLoading || Boolean(protocolError)}
-                                onClick={() => { if (activeModel && activeProtocol) void testModel(activeModel, activeCapability, activeProtocol); }}
                             >
-                                测试模型
+                                生成测试
                             </Button>
+                            </Popconfirm>
                             <Button disabled={Boolean(testingModel)} onClick={() => setActiveModel(null)}>完成</Button>
                         </div>
                     </div>
@@ -133,6 +140,7 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
                         key: "protocol",
                         label: "基本信息",
                         children: <div className="space-y-4" inert={Boolean(testingModel)}>
+                            {!testingModel && testResult && <Alert type={testResult.success ? "success" : "error"} title={testResult.detail} showIcon />}
                             <section className="space-y-2">
                                 <div className="text-xs font-medium">模型能力</div>
                                 <Segmented<ModelCapabilityChoice>
