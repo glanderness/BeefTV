@@ -1,7 +1,9 @@
 package generation
 
 import (
+	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"infinite-canvas/backend/internal/model"
@@ -81,5 +83,36 @@ func TestApplyAuth(t *testing.T) {
 	ApplyAuth(req, Config{APIKey: "tok"})
 	if req.Header.Get("Authorization") != "Bearer tok" {
 		t.Fatalf("bearer auth = %v", req.Header)
+	}
+}
+
+func TestProviderDownloadURLRootRelativeResult(t *testing.T) {
+	base := "https://api.example.com/v1"
+	for _, test := range []struct{ raw, want string }{
+		{"/v1/videos/task-fixture/content?alt=media", "https://api.example.com/v1/videos/task-fixture/content?alt=media"},
+		{"//external.example/file", "//external.example/file"},
+		{"video", "video"},
+		{"/file#fragment", "/file#fragment"},
+		{"https://cdn.example/file", "https://cdn.example/file"},
+	} {
+		if got := ProviderDownloadURL(base, test.raw); got != test.want {
+			t.Errorf("result %q: got %q, want %q", test.raw, got, test.want)
+		}
+	}
+}
+
+func TestProviderRelativeResultDownloadsWithSameOriginAuth(t *testing.T) {
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/videos/task-fixture/content" || r.Header.Get("Authorization") != "Bearer fixture-key" {
+			t.Errorf("same-origin download path or authentication lost")
+		}
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("fixture-video"))
+	}))
+	defer server.Close()
+	body, _, err := GetProviderExternalBinary(context.Background(), Config{BaseURL: server.URL + "/v1", APIKey: "fixture-key"}, "/v1/videos/task-fixture/content")
+	if err != nil || string(body) != "fixture-video" {
+		t.Fatalf("relative output download failed: %v", err)
 	}
 }
