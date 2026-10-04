@@ -45,6 +45,10 @@ func (unusedGenerationSecrets) DecryptInputJSON(string) (string, error) {
 
 type unusedGenerationMedia struct{}
 
+func (unusedGenerationMedia) ValidateTransport(string, map[string]any) error {
+	panic("unexpected generation media validation")
+}
+
 func (unusedGenerationMedia) ContainsInlineData(map[string]any) bool {
 	panic("local executor admission must not inspect generation inline media")
 }

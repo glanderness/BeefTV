@@ -14,7 +14,7 @@ import (
 )
 
 func (s *Service) Retry(userID, id string) (*model.Task, error) {
-	if s.deps.Runtime == nil || s.deps.Images == nil || s.deps.Failures == nil || s.deps.Secrets == nil || s.deps.Catalog == nil || s.deps.Policy == nil || s.deps.Projects == nil || s.deps.Present == nil {
+	if s.deps.Runtime == nil || s.deps.Images == nil || s.deps.Failures == nil || s.deps.Secrets == nil || s.deps.Catalog == nil || s.deps.Media == nil || s.deps.Policy == nil || s.deps.Projects == nil || s.deps.Present == nil {
 		return nil, unavailable()
 	}
 	if s.deps.Runtime.IsDraining() {
@@ -68,6 +68,13 @@ func (s *Service) Retry(userID, id string) (*model.Task, error) {
 	}
 	if err := s.deps.Catalog.RequireCustomChannels(taskInput); err != nil {
 		return nil, err
+	}
+	// A resumed provider task already owns its uploaded references. Only fresh
+	// submissions should be blocked by the current local-media contract.
+	if task.ProviderRequestID == "" {
+		if err := s.deps.Media.ValidateTransport(userID, taskInput); err != nil {
+			return nil, err
+		}
 	}
 	limit, err := s.deps.Policy.ActiveTaskLimit()
 	if err != nil {

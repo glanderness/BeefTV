@@ -72,6 +72,7 @@ type Secrets interface {
 // Media rejects embedded payloads that must live in resource storage first.
 type Media interface {
 	ContainsInlineData(input map[string]any) bool
+	ValidateTransport(userID string, input map[string]any) error
 }
 
 // Projects confirms the canvas/project scope is still writable.

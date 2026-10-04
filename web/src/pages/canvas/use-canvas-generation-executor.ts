@@ -16,6 +16,7 @@ import { resolveCanvasStyleExecution } from "@/lib/canvas/canvas-style-execution
 import { generationErrorMessage } from "@/lib/generation-error";
 import { modelCompatibilityError, modelGroupReferenceLimits, modelPromptLengthError, modelRequestOptions, type ModelRequirements } from "@/lib/model-selection";
 import { navigateToSettings } from "@/lib/settings-navigation";
+import { ApiError } from "@/services/api/request";
 import type { Skill } from "@/services/api/skills";
 import { skillRuntime } from "@/services/skill-runtime";
 import type { GenerationTask } from "@/services/api/task-center";
@@ -397,7 +398,23 @@ export function useCanvasGenerationExecutor({
                             );
                             return;
                         }
-                        message.error(failure.errorDetails);
+                        if (error instanceof ApiError && error.reason === "reference_media_requires_url") {
+                            modal.confirm({
+                                title: "当前渠道需要在线素材链接",
+                                content: error.message,
+                                okText: "切换渠道",
+                                cancelText: "检查参考素材",
+                                closable: true,
+                                centered: true,
+                                onOk: () => navigateToSettings({ section: "channels", continueCreation: true }),
+                                onCancel: () => {
+                                    setSelectedNodeIds(new Set([nodeId]));
+                                    setDialogNodeId(nodeId);
+                                },
+                            });
+                        } else {
+                            message.error(failure.errorDetails);
+                        }
                         setNodes((current) =>
                             current.map((node) => {
                                 if (node.id !== nodeId && !pendingNodeIds.includes(node.id)) return node;

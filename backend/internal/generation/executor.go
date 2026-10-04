@@ -77,6 +77,9 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 
 	resumed := ResumedProviderRequestID(ctx) != ""
 	if !resumed {
+		if err := ValidateMediaTransport(ctx, input); err != nil {
+			return nil, err
+		}
 		if input.Mode == "video" {
 			if err := HydrateVideoReferenceMetadata(ctx, userID, &input); err != nil {
 				return nil, err

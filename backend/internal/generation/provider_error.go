@@ -1111,6 +1111,10 @@ func specializeMediaConstraints(failure *Failure, fields extractedFields) {
 }
 
 func referenceMediaConstraintCopy(text string) (categoryCopy, bool) {
+	if strings.HasPrefix(text, "当前渠道需要在线素材链接：") {
+		reason, action, _ := strings.Cut(text, "。")
+		return categoryCopy{Reason: reason, Action: action}, true
+	}
 	if strings.Contains(text, "当前模型协议要求公网素材地址") || strings.Contains(text, "当前 JSON 视频协议的参考素材不能使用内嵌数据") {
 		return categoryCopy{Reason: "当前渠道暂不支持直接使用本地素材", Action: "请使用可访问的 HTTPS 素材链接，或选择支持本地素材的渠道"}, true
 	}

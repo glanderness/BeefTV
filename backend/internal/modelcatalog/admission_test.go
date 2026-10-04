@@ -389,6 +389,21 @@ func imageSelectionLookup(t *testing.T) (*model.ModelChannel, *model.ChannelMode
 	})
 }
 
+func TestSystemSelectionSerializesTypedCapabilityOptions(t *testing.T) {
+	channel, selectedModel, lookup := imageSelectionLookup(t)
+	result, err := SelectTaskModel(TaskSelectRequest{Type: "canvas_image", Input: map[string]any{
+		"mode": "image", "config": map[string]any{"channelId": channel.ID, "model": selectedModel.ModelKey},
+		"capabilityOptions": map[string]any{"transparentBackground": false, "count": 1},
+	}}, lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := result.Input["config"].(map[string]any)
+	if config["transparentBackground"] != "false" || config["count"] != "1" {
+		t.Fatalf("non-executable options: %#v", config)
+	}
+}
+
 func selectionLookup(t *testing.T, capability string, protocol model.ChannelInterfaceType, profile *ModelCapabilityConfig, tiers []model.ChannelModelVariant) (*model.ModelChannel, *model.ChannelModel, TaskSelectLookup) {
 	t.Helper()
 	raw, err := json.Marshal(profile)
