@@ -137,9 +137,7 @@ func prepareLaoliReferences(ctx context.Context, input *Input, read BeefAPISeeda
 					return err
 				}
 			}
-			base, baseErr := url.Parse(input.Config.BaseURL)
-			source, sourceErr := url.Parse(receipt.Source)
-			if receipt.Status != "complete" || receipt.Bytes != int64(len(data)) || receipt.SHA256 != digest || receipt.Kind != group.kind || baseErr != nil || sourceErr != nil || source.Scheme != "https" || source.Host != base.Host || source.User != nil || !strings.HasPrefix(source.Path, "/v1/media/assets/") {
+			if receipt.Status != "complete" || receipt.Bytes != int64(len(data)) || receipt.SHA256 != digest || receipt.Kind != group.kind || !trustedLaoliAssetSource(input.Config.BaseURL, receipt.Source) {
 				return errors.New("素材上传未通过完整性校验")
 			}
 			if group.kind != "image" && receipt.Duration <= 0 {
@@ -156,6 +154,17 @@ func prepareLaoliReferences(ctx context.Context, input *Input, read BeefAPISeeda
 		}
 	}
 	return nil
+}
+
+func trustedLaoliAssetSource(baseURL, sourceURL string) bool {
+	base, baseErr := url.Parse(baseURL)
+	source, sourceErr := url.Parse(sourceURL)
+	if baseErr != nil || sourceErr != nil || source.Scheme != "https" || source.User != nil || source.Fragment != "" || !strings.HasPrefix(source.Path, "/v1/media/assets/") {
+		return false
+	}
+	// Live completed uploads use this signed-media origin. API keys remain on
+	// the configured API origin; the source is only passed back as a reference.
+	return source.Host == base.Host || (base.Host == "video.laoliimage2.win" && source.Host == "accept-auth.laoliimage2.win")
 }
 
 func laoliFullModel(name string) bool {

@@ -19,6 +19,30 @@ type laoliReaderResources struct {
 	t    *testing.T
 }
 
+func TestLaoliSignedAssetOrigin(t *testing.T) {
+	base := "https://video.laoliimage2.win/v1"
+	for _, host := range []string{"video.laoliimage2.win", "accept-auth.laoliimage2.win"} {
+		if !trustedLaoliAssetSource(base, "https://"+host+"/v1/media/assets/fixture?signature=test") {
+			t.Fatal("provider signed asset rejected", host)
+		}
+	}
+	for _, source := range []string{
+		"https://accept-auth.laoliimage2.win.evil.example/v1/media/assets/fixture",
+		"https://other.laoliimage2.win/v1/media/assets/fixture",
+		"https://accept-auth.laoliimage2.win:444/v1/media/assets/fixture",
+		"http://accept-auth.laoliimage2.win/v1/media/assets/fixture",
+		"https://user@accept-auth.laoliimage2.win/v1/media/assets/fixture",
+		"https://accept-auth.laoliimage2.win/other",
+	} {
+		if trustedLaoliAssetSource(base, source) {
+			t.Fatal("unexpected asset origin accepted", source)
+		}
+	}
+	if trustedLaoliAssetSource("https://unrelated.example", "https://accept-auth.laoliimage2.win/v1/media/assets/fixture") {
+		t.Fatal("unrelated service inherited Laoli media origin")
+	}
+}
+
 func (r laoliReaderResources) Open(userID, resourceID string) (ResourceInfo, io.ReadCloser, error) {
 	if userID != "owner" || resourceID != "audio" {
 		r.t.Fatal("resource ownership was not forwarded")
