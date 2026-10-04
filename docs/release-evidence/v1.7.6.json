@@ -7,7 +7,7 @@
   "pendingCNY": 0,
   "liveMatrixStatus": "not_run_owner_waived",
   "cases": [],
-  "releaseComplete": false,
+  "releaseComplete": true,
   "liveTestWaiver": {
     "approvedBy": "Ender",
     "instruction": "本版豁免付费矩阵，专项验收、独立复审和 CI 通过后发布",
@@ -87,11 +87,52 @@
     }
   },
   "packages": {
-    "status": "pending_release_workflow",
+    "status": "passed",
     "finalArchiveSmokeBeforeUpload": true,
     "windowsReleasedUpgradeAndRollbackBeforeUpload": true,
     "workflowEvidence": [
-      ".github/workflows/release-desktop.yml"
-    ]
+      ".github/workflows/release-desktop.yml",
+      "https://github.com/glanderness/BeefTV/actions/runs/37212214281",
+      "docs/release-evidence/v1.7.6-windows-upgrade.json"
+    ],
+    "archives": {
+      "darwin-amd64": {
+        "sourceDigest": "08a4049b08253c00469c6a717ea8afdf54b99dc05ea52d57cf9d24bdb448fc59",
+        "sha256": "4115f3b7adf6fb58329c9945afd1daac3a164b9b879d55514e479b8f9eac2c3c",
+        "size": 158189559,
+        "evidence": [
+          "https://updates.beefapi.com/beeftv/v1.7.6/BeefTV-v1.7.6-darwin-amd64.zip",
+          "https://github.com/glanderness/BeefTV/actions/runs/37212214281"
+        ]
+      },
+      "darwin-arm64": {
+        "sourceDigest": "08a4049b08253c00469c6a717ea8afdf54b99dc05ea52d57cf9d24bdb448fc59",
+        "sha256": "721b9708cb749087a099f2d4ecd30bb2f957e3f855c469bf1df5515f3f659b17",
+        "size": 153818916,
+        "evidence": [
+          "https://updates.beefapi.com/beeftv/v1.7.6/BeefTV-v1.7.6-darwin-arm64.zip",
+          "https://github.com/glanderness/BeefTV/actions/runs/37212214281"
+        ]
+      },
+      "windows-amd64": {
+        "sourceDigest": "08a4049b08253c00469c6a717ea8afdf54b99dc05ea52d57cf9d24bdb448fc59",
+        "sha256": "c0f0bd5714c0799b7622ed951761ce9adce77d21aa374479d360dd409686b41e",
+        "size": 145135656,
+        "evidence": [
+          "https://updates.beefapi.com/beeftv/v1.7.6/BeefTV-v1.7.6-windows-amd64.zip",
+          "https://github.com/glanderness/BeefTV/actions/runs/37212214281"
+        ]
+      }
+    }
+  },
+  "publishedCommit": "885e0c1866707ec08a782e1cde49dad4d7e0012b",
+  "publication": {
+    "status": "passed",
+    "publishedAt": "2026-10-04T15:32:16Z",
+    "release": "https://github.com/glanderness/BeefTV/releases/tag/v1.7.6",
+    "feed": "https://updates.beefapi.com/beeftv/desktop-update.json",
+    "signatureVerified": true,
+    "allPublicArchivesDownloadedAndHashVerified": true,
+    "githubAndPublicFeedIdentical": true
   }
 }
