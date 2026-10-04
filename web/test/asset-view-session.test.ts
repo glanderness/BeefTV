@@ -253,10 +253,10 @@ describe("asset page and picker wiring", () => {
 
     test("direct upload handler retains the page entry scope", () => {
         const page = read("../src/pages/assets/index.tsx");
-        const handler = read("../src/pages/assets/asset-upload-handler.tsx");
-        expect(page).toContain("<AssetUploadHandler entryScope={entryScope}");
-        expect(handler).toContain("entryScope?: CapturedUserScope");
-        expect(handler).toContain("const expected = entryScope ?? captureUserScope()");
+        const handler = read("../src/services/workspace-asset-upload.ts");
+        expect(page).toContain("await uploadWorkspaceAssetFiles(files, folderId, entryScope)");
+        expect(handler).toContain("expected: CapturedUserScope");
+        expect(handler).not.toContain("useEffect");
         expect(handler).toContain("uploadMediaFile(file, \"video\", undefined, expected)");
         expect(handler).toContain("uploadImage(file, undefined, expected)");
         expect(handler).toContain("persistWorkspaceAssetChanges(expected)");

@@ -52,7 +52,8 @@ import { workspaceCapabilities } from "@/services/workspace-mode";
 import { normalizeLocalAsset } from "@/lib/local-workspace-migration";
 import { useUserStore } from "@/stores/use-user-store";
 import type { AssetFolder } from "@/services/api/workspace-data";
-import { AssetUploadHandler, type AssetUploadRequest } from "./asset-upload-handler";
+import { uploadWorkspaceAssetFiles } from "@/services/workspace-asset-upload";
+import { ArchivedAssetRecovery } from "./archived-asset-recovery";
 import "@/styles/assets-reference-baseline.css";
 import "@/styles/assets-frame-lock.css";
 import "@/styles/assets-final-lock.css";
@@ -154,7 +155,6 @@ function AssetsPageSession() {
     const [deletingAsset, setDeletingAsset] = useState<LibraryAsset | null>(null);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
-    const [assetUploadRequest, setAssetUploadRequest] = useState<AssetUploadRequest | null>(null);
     const [folderEditor, setFolderEditor] = useState<AssetFolder | "new" | null>(null);
     const [folderName, setFolderName] = useState("");
     const [folderSaving, setFolderSaving] = useState(false);
@@ -361,6 +361,22 @@ function AssetsPageSession() {
             queryClient.invalidateQueries({ queryKey: assetLibraryQueryKey(expected) }),
             queryClient.invalidateQueries({ queryKey: assetFolderQueryKey(expected) }),
         ]);
+    };
+
+    const uploadFiles = async (files: File[], folderId: string) => {
+        const hideLoading = message.loading("正在上传素材…", 0);
+        try {
+            const result = await uploadWorkspaceAssetFiles(files, folderId, entryScope);
+            if (!userScopeMatches(entryScope)) return;
+            if (result.persistenceError) message.warning(localSavedRemotePendingMessage("部分素材已保存在本地", result.persistenceError));
+            else if (result.completed) message.success(`已上传 ${result.completed} 个素材`);
+            if (result.failed) message.error(`${result.failed} 个素材上传失败`);
+            await invalidateAssetLibrary(entryScope);
+        } catch (error) {
+            if (!shouldSuppressAssetViewError(error, entryScope)) message.error(error instanceof Error ? error.message : "上传失败");
+        } finally {
+            hideLoading();
+        }
     };
 
     const saveFolder = async () => {
@@ -712,10 +728,11 @@ function AssetsPageSession() {
             });
             if (!deleted) return;
             setHistoryAssets((current) => current.filter((item) => item.id !== asset.id));
-            message.success("素材已彻底删除");
+            return true;
         } catch (error) {
             if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.error(error instanceof Error ? error.message : "素材删除失败");
+            return false;
         }
     };
 
@@ -809,7 +826,7 @@ function AssetsPageSession() {
                 } : undefined}
                 onSelectPersonal={() => navigate("/assets?tab=personal")}
                 onDownload={downloadImage}
-                onDelete={(asset) => void deleteHistoryAsset(asset)}
+                onDelete={deleteHistoryAsset}
             />
         );
     }
@@ -826,7 +843,7 @@ function AssetsPageSession() {
                     const files = Array.from(event.currentTarget.files || []);
                     event.currentTarget.value = "";
                     if (!files.length) return;
-                    setAssetUploadRequest({ id: Date.now(), files, folderId: folderFilter !== "all" && folderFilter !== "uncategorized" ? folderFilter : "" });
+                    void uploadFiles(files, folderFilter !== "all" && folderFilter !== "uncategorized" ? folderFilter : "");
                 }}
             />
             <WorkspacePage grid className="library-page assets-library-page canvas-library-page">
@@ -836,6 +853,7 @@ function AssetsPageSession() {
                         actions={
                             <div className="assets-header-actions">
                                 <div className="assets-header-action-buttons">
+                                    <ArchivedAssetRecovery entryScope={entryScope} ready={sessionHydrated} />
                                     <div className="assets-header-compact-actions">
                                         {inlineSearchVisible ? (
                                             <Input
@@ -1264,16 +1282,6 @@ function AssetsPageSession() {
 
             <AssetDrawer asset={previewAsset} onClose={() => setPreviewAsset(null)} onCopy={copyAssetText} onDownload={downloadImage} />
 
-            <AssetUploadHandler entryScope={entryScope} request={assetUploadRequest} onComplete={async () => {
-                if (!userScopeMatches(entryScope)) return;
-                setAssetUploadRequest(null);
-                try {
-                    await invalidateAssetLibrary(entryScope);
-                } catch (error) {
-                    if (!shouldSuppressAssetViewError(error, entryScope)) throw error;
-                }
-            }} />
-
             <Modal
                 className="library-modal library-confirm-modal assets-folder-create-modal"
                 title="新建分类"
@@ -1539,12 +1547,35 @@ function GenerationHistorySurface({
     onLoadMore?: () => void;
     onSelectPersonal: () => void;
     onDownload: (asset: LibraryAsset) => void;
-    onDelete: (asset: LibraryAsset) => void;
+    onDelete: (asset: LibraryAsset) => Promise<boolean | undefined>;
 }) {
     const [localKind, setLocalKind] = useState<GenerationHistoryKind>("all");
     const [sortDescending, setSortDescending] = useState(true);
     const [previewAsset, setPreviewAsset] = useState<LibraryAsset | null>(null);
     const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
+    const [pendingDelete, setPendingDelete] = useState<LibraryAsset[]>([]);
+    const [deleting, setDeleting] = useState(false);
+    const deleteInFlight = useRef(false);
+    const confirmHistoryDelete = async () => {
+        if (deleteInFlight.current || !pendingDelete.length) return;
+        deleteInFlight.current = true;
+        setDeleting(true);
+        try {
+            for (const asset of pendingDelete) {
+                if (!await onDelete(asset)) continue;
+                setPendingDelete((current) => current.filter((item) => item.id !== asset.id));
+                setSelectedHistoryIds((current) => {
+                    const next = new Set(current);
+                    next.delete(asset.id);
+                    return next;
+                });
+                setPreviewAsset((current) => current?.id === asset.id ? null : current);
+            }
+        } finally {
+            deleteInFlight.current = false;
+            setDeleting(false);
+        }
+    };
     const activeType = kind ?? localKind;
     const setActiveType = onKindChange ?? setLocalKind;
     const historyAssets = assets
@@ -1594,7 +1625,7 @@ function GenerationHistorySurface({
                 {selectedHistoryAssets.length ? <div className="generation-history-batch-bar" role="toolbar" aria-label="生成历史批量操作">
                     <span>已选择 {selectedHistoryAssets.length} 项</span>
                     <button type="button" onClick={() => selectedHistoryAssets.forEach(onDownload)}><Download className="size-3.5" />下载</button>
-                    <button type="button" className="is-danger" onClick={() => { selectedHistoryAssets.forEach(onDelete); clearHistorySelection(); }}><Trash2 className="size-3.5" />彻底删除</button>
+                    <button type="button" className="is-danger" onClick={() => setPendingDelete(selectedHistoryAssets)}><Trash2 className="size-3.5" />彻底删除</button>
                     <button type="button" className="is-clear" onClick={clearHistorySelection}>取消选择</button>
                 </div> : null}
                 {visibleGroups.length ? visibleGroups.map((date) => (
@@ -1610,7 +1641,7 @@ function GenerationHistorySurface({
                                         <button type="button" className={cn("generation-history-select", selectedHistoryIds.has(asset.id) && "is-selected")} aria-label={`选择 ${asset.title}`} aria-pressed={selectedHistoryIds.has(asset.id)} onClick={(event) => { event.stopPropagation(); toggleHistorySelection(asset.id); }}>{selectedHistoryIds.has(asset.id) ? <Check className="size-4" /> : null}</button>
                                         <div className="generation-history-hover-actions" aria-label="生成结果操作">
                                             <button type="button" aria-label={`下载 ${asset.title}`} title="下载" onClick={(event) => { event.stopPropagation(); onDownload(asset); }}><Download className="size-4" /></button>
-                                            <button type="button" aria-label={`彻底删除 ${asset.title}`} title="彻底删除" onClick={(event) => { event.stopPropagation(); onDelete(asset); }}><Trash2 className="size-4" /></button>
+                                            <button type="button" aria-label={`彻底删除 ${asset.title}`} title="彻底删除" onClick={(event) => { event.stopPropagation(); setPendingDelete([asset]); }}><Trash2 className="size-4" /></button>
                                         </div>
                                     </div>
                                     <div className="generation-history-card-meta"><strong>{asset.title}</strong><span>{asset.kind === "video" ? "视频" : asset.kind === "audio" ? "音频" : "图片"} · 本地</span></div>
@@ -1644,6 +1675,21 @@ function GenerationHistorySurface({
                 </div>
             </aside>
         </WorkspacePage>
+        <Modal
+            className="library-modal library-confirm-modal"
+            title="彻底删除生成素材"
+            open={pendingDelete.length > 0}
+            onCancel={() => { if (!deleteInFlight.current) setPendingDelete([]); }}
+            onOk={() => void confirmHistoryDelete()}
+            confirmLoading={deleting}
+            closable={!deleting}
+            cancelButtonProps={{ disabled: deleting }}
+            okButtonProps={{ danger: true }}
+            okText="彻底删除"
+            cancelText="取消"
+        >
+            {pendingDelete.length === 1 ? `确定彻底删除「${pendingDelete[0].title}」吗？` : `确定彻底删除已选择的 ${pendingDelete.length} 个素材吗？`}未被其他内容引用的文件也会删除，操作不可恢复。
+        </Modal>
         <Drawer className="assets-generation-preview-drawer" open={Boolean(previewAsset)} title={previewAsset?.title || "生成结果预览"} onClose={() => setPreviewAsset(null)} size="default">
             {previewAsset ? <div className="generation-history-preview"><AssetMediaPreview asset={previewAsset} alt={previewAsset.title} className="generation-history-preview-media" fallback={<GenerationHistoryMissingPreview asset={previewAsset} />} /><div className="generation-history-preview-meta"><strong>{previewAsset.title}</strong><span>{previewAsset.kind === "video" ? "视频" : previewAsset.kind === "audio" ? "音频" : "图片"} · 本地生成</span><span>来源：{previewAsset.source || "生成任务"}</span>{typeof previewAsset.metadata?.taskId === "string" ? <span>任务 ID：{previewAsset.metadata.taskId}</span> : null}{typeof previewAsset.metadata?.generationEffectKey === "string" ? <span>生成标识：{previewAsset.metadata.generationEffectKey}</span> : null}</div></div> : null}
         </Drawer>

@@ -6,7 +6,7 @@ import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import { captureUserScope } from "@/lib/user-scope-guard";
 import { apiClient } from "@/services/api/request";
 import * as localWorkspaceSync from "@/services/local-workspace-sync";
-import { persistWorkspaceAssetChanges, persistWorkspaceAssetLink, deleteWorkspaceAsset, resetWorkspaceAssetCommitStateForTests } from "@/services/workspace-asset-repository";
+import { persistWorkspaceAssetChanges, persistWorkspaceAssetLink, deleteWorkspaceAsset, resetWorkspaceAssetCommitStateForTests, restoreWorkspaceArchivedAsset } from "@/services/workspace-asset-repository";
 import { resetAssetStoreDraftsForTests, useAssetStore, type Asset } from "@/stores/use-asset-store";
 
 function deferred<T = void>() {
@@ -81,6 +81,72 @@ afterEach(async () => {
 });
 
 describe("workspace asset repository runtime boundary", () => {
+    test("restores an archived backend asset from an empty browser cache without losing its metadata", async () => {
+        const restore = switchScope("restore-cold-cache");
+        desktopBackend();
+        const asset = { ...sampleAsset(), status: "archived" as const };
+        let saved: Asset | undefined;
+        try {
+            await withAdapter(async (config) => {
+                if (config.url === "/assets/batch") return envelope({ assets: [asset] });
+                if (config.method === "put" && config.url === "/assets/asset-1") {
+                    const body = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
+                    saved = body.asset;
+                    return envelope({ asset: body.asset });
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, () => restoreWorkspaceArchivedAsset(asset.id, captureUserScope()));
+            expect(saved?.status).toBe("confirmed");
+            expect(saved?.data).toEqual(asset.data);
+            expect(saved?.metadata).toEqual(asset.metadata);
+            expect(useAssetStore.getState().assets.find((item) => item.id === asset.id)?.status).toBe("confirmed");
+        } finally { restore(); }
+    });
+
+    test("restore does not recreate a backend asset deleted since the recovery list was loaded", async () => {
+        const restore = switchScope("restore-missing");
+        desktopBackend();
+        const asset = { ...sampleAsset(), status: "archived" as const };
+        useAssetStore.setState({ assets: [asset] });
+        let writes = 0;
+        try {
+            await withAdapter(async (config) => {
+                if (config.url === "/assets/batch") return envelope({ assets: [] });
+                writes++;
+                throw new Error("unexpected write");
+            }, async () => {
+                await expect(restoreWorkspaceArchivedAsset(asset.id, captureUserScope())).rejects.toThrow();
+            });
+            expect(writes).toBe(0);
+        } finally { restore(); }
+    });
+
+    test("failed restoration stays archived and only acknowledges a successful retry", async () => {
+        const restore = switchScope("restore-retry");
+        desktopBackend();
+        const asset = { ...sampleAsset(), status: "archived" as const };
+        let attempts = 0;
+        try {
+            await withAdapter(async (config) => {
+                if (config.url === "/assets/batch") return envelope({ assets: [asset] });
+                if (config.method === "put") {
+                    attempts++;
+                    if (attempts === 1) throw new Error("offline");
+                    const body = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
+                    return envelope({ asset: body.asset });
+                }
+                throw new Error(`unexpected ${config.method} ${config.url}`);
+            }, async () => {
+                const scope = captureUserScope();
+                await expect(restoreWorkspaceArchivedAsset(asset.id, scope)).rejects.toThrow("offline");
+                expect(useAssetStore.getState().assets.find((item) => item.id === asset.id)?.status).toBe("archived");
+                await restoreWorkspaceArchivedAsset(asset.id, scope);
+            });
+            expect(attempts).toBe(2);
+            expect(useAssetStore.getState().assets.find((item) => item.id === asset.id)?.status).toBe("confirmed");
+        } finally { restore(); }
+    });
+
     test("browser-local linking writes projectIds locally and does not call project APIs", async () => {
         const restore = switchScope("owner-a");
         browserLocal();
