@@ -2,7 +2,7 @@ import { sanitizeChannelModelCatalogItem, type ChannelModelCatalogItem } from "@
 import { createChannelTransport } from "@/services/api/channel-transport";
 import { readAxiosError, validateGeminiPayload } from "@/services/api/image-response";
 import { geminiApiUrl, geminiHeaders } from "@/services/api/image-transport";
-import { http } from "@/services/api/request";
+import { ApiError, http } from "@/services/api/request";
 import { buildApiUrl, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 
 const defaultGeminiConfig: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat" | "model" | "systemPrompt"> = {
@@ -25,7 +25,7 @@ type OpenAIModelRecord = {
 };
 type OpenAIModelPayload = { data?: OpenAIModelRecord[]; error?: { message?: string } };
 
-async function fetchOpenAIModelCatalog(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {
+async function fetchOpenAIModelCatalog(config: Pick<ModelChannel, "baseUrl" | "apiKey" | "apiFormat" | "headers" | "credentialRef">) {
     const payload = await createChannelTransport(config, "image").get<OpenAIModelPayload>(buildApiUrl(config.baseUrl, "/models"));
     return (payload.data || [])
         .map((model) =>
@@ -68,10 +68,10 @@ export async function fetchChannelModels(channel: ModelChannel, viaBackend = fal
     }
     if (!viaBackend) {
         if (channel.apiFormat !== "gemini") {
-            const catalog = await fetchOpenAIModelCatalog({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat });
+            const catalog = await fetchOpenAIModelCatalog(channel);
             return { models: catalog.map((item) => item.id).sort((a, b) => a.localeCompare(b)), catalog };
         }
-        const models = await fetchImageModels({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat });
+        const models = await fetchImageModels(channel);
         return { models, catalog: models.map((id) => ({ id })) };
     }
     try {
@@ -95,6 +95,10 @@ export async function fetchChannelModels(channel: ModelChannel, viaBackend = fal
         const sortedCatalog = Array.from(catalog.values()).sort((a, b) => a.id.localeCompare(b.id));
         return { models, catalog: sortedCatalog };
     } catch (error) {
+        // The backend has already classified and sanitized catalogue errors.
+        // Running generation-error classification again turns a precise 502
+        // auth/unsupported-catalog message into a generic unavailable message.
+        if (error instanceof ApiError) throw error;
         throw new Error(readAxiosError(error, "读取模型失败"));
     }
 }

@@ -1,47 +1,29 @@
-import { beforeEach, expect, mock, test } from "bun:test";
+import { expect, test } from "bun:test";
+import { testChannelModelConnection } from "@/lib/model-connection-test";
+import { createModelChannel } from "@/stores/use-config-store";
+import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
 
-let text = "OK";
-let audio = new Blob(["audio"]);
-let taskId = "task-1";
-let received: Record<string, unknown> = {};
-mock.module("@/services/api/image", () => ({
-    requestToolResponse: async () => ({ content: text }),
-    requestGeneration: async () => [{ dataUrl: "https://example.invalid/image.png" }],
-}));
-mock.module("@/services/api/audio", () => ({ requestAudioGeneration: async () => audio }));
-mock.module("@/services/api/video", () => ({ createVideoGenerationTask: async (config: Record<string, unknown>) => { received = config; return { id: taskId }; } }));
-
-const { testChannelModelConnection } = await import("@/lib/model-connection-test");
-const { createModelChannel } = await import("@/stores/use-config-store");
-const { defaultModelCapabilityConfig } = await import("@/lib/model-capabilities");
 const channel = createModelChannel({ id: "test", apiKey: "fake", baseUrl: "https://example.invalid", models: ["test-model"] });
-beforeEach(() => { text = "OK"; audio = new Blob(["audio"]); taskId = "task-1"; });
 
-test("text proves content and rejects empty responses", async () => {
-    expect(await testChannelModelConnection(channel, "test-model", "text", "chat-completion")).toMatchObject({ stage: "response", canvasWritebackVerified: false });
-    text = " ";
-    await expect(testChannelModelConnection(channel, "test-model", "text", "chat-completion")).rejects.toThrow("有效内容");
+test("text requires final nonempty content", async () => {
+    expect(await testChannelModelConnection(channel, "test-model", "text", "chat-completion", async () => ({ text: "OK" }))).toContain("文本响应");
+    await expect(testChannelModelConnection(channel, "test-model", "text", "chat-completion", async () => ({ text: " " }))).rejects.toThrow("没有返回可用结果");
 });
-test("image URLs do not prove download or canvas writeback", async () => {
-    const result = await testChannelModelConnection(channel, "test-model", "image", "openai-image");
-    expect(result.stage).toBe("response");
-    expect(result.detail).toContain("未验证图片下载与画布回填");
+test("media requires a final result, not only a submitted task", async () => {
+    expect(await testChannelModelConnection(channel, "test-model", "image", "openai-image", async () => ({ images: [{ dataUrl: "https://example.invalid/image.png" }] }))).toContain("已完成图片生成");
+    await expect(testChannelModelConnection(channel, "test-model", "audio", "openai-audio", async () => ({}))).rejects.toThrow("没有返回可用结果");
+    await expect(testChannelModelConnection(channel, "test-model", "video", "openai-videos", async () => ({}))).rejects.toThrow("没有返回可用结果");
 });
-test("audio requires a nonempty downloaded file", async () => {
-    expect((await testChannelModelConnection(channel, "test-model", "audio", "openai-audio")).stage).toBe("downloaded");
-    audio = new Blob([]);
-    await expect(testChannelModelConnection(channel, "test-model", "audio", "openai-audio")).rejects.toThrow("空文件");
-});
-test("video submission uses profile defaults and does not claim completion", async () => {
+test("video waits for completion with the lowest supported test specification", async () => {
     const capabilityConfig = defaultModelCapabilityConfig("openai-videos", "test-model");
-    capabilityConfig.video!.duration.default = 8;
+    capabilityConfig.video!.duration = { selection: "enum", values: [8, 4, 12], default: 8 };
     capabilityConfig.video!.defaultRatio = "9:16";
-    capabilityConfig.video!.defaultResolution = "1080";
+    capabilityConfig.video!.resolutions = ["1080", "720"];
     const configured = { ...channel, modelProfiles: [{ model: "test-model", capability: "video" as const, protocol: "openai-videos", capabilityConfig }] };
-    const result = await testChannelModelConnection(configured, "test-model", "video", "openai-videos");
-    expect(result.stage).toBe("submitted");
-    expect(result.detail).toContain("未验证生成完成、下载与画布回填");
-    expect(received).toMatchObject({ videoSeconds: "8", size: "9:16", vquality: "1080" });
-    taskId = "";
-    await expect(testChannelModelConnection(configured, "test-model", "video", "openai-videos")).rejects.toThrow("任务 ID");
+    const result = await testChannelModelConnection(configured, "test-model", "video", "openai-videos", async ({ config }) => {
+        expect(config).toMatchObject({ videoSeconds: "4", size: "9:16", vquality: "720" });
+        return { video: { storageKey: "test-video", dataUrl: "" } };
+    });
+    expect(result).toContain("已完成视频生成");
+    expect(result).not.toContain("画布");
 });

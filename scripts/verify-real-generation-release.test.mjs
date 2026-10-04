@@ -125,6 +125,38 @@ function makeV2(version, sourceDigest, extra = {}) {
   };
 }
 
+test('v1.7.3 waiver requires current targeted evidence and cannot carry forward', () => {
+  const { dir, run, save, commitVersion } = setupRepo('v1.7.3');
+  try {
+    const sourceDigest = run('--fingerprint').trim();
+    const proof = { status: 'passed', sourceDigest, evidence: ['synthetic-test-evidence'] };
+    const valid = {
+      version: 'v1.7.3', sourceDigest, budgetCNY: 0, spentCNY: 0, newSpentCNY: 0, pendingCNY: 0,
+      liveMatrixStatus: 'not_run_owner_waived', cases: [], releaseComplete: false,
+      liveTestWaiver: { approvedBy: 'Ender', instruction: '本版豁免付费矩阵，专项验收、独立复审和 CI 通过后发布', scope: 'byok-updater-targeted-acceptance' },
+      priorFinancialUncertainty: { status: 'unresolved', carriedFromVersion: 'v1.7.2', pendingCNY: null, failedRequestIds: ['202610020816334239151708268d9d6eZ5lRPwt', '202610021242434383740578268d9d6BAoXA1u1'], evidence: ['prior.json'] },
+      review: { result: 'approved', independent: true, reviewer: 'test-only', sourceDigest, evidence: ['review.md'] },
+      upgrade: { preservedData: true, sourceDigest, evidence: ['upgrade.md'] },
+      verification: Object.fromEntries(['modelServiceFlow', 'credentialPersistence', 'saveBarrier', 'localReleaseGate', 'ci'].map(id => [id, { ...proof }])),
+      packages: { status: 'pending_release_workflow', finalArchiveSmokeBeforeUpload: true, windowsReleasedUpgradeAndRollbackBeforeUpload: true, workflowEvidence: ['workflow.yml'] },
+    };
+    save(valid); assert.match(run(), /paid matrix NOT run/);
+    for (const mutate of [
+      r => r.liveTestWaiver.approvedBy = 'other', r => r.review.independent = false,
+      r => r.review.sourceDigest = 'stale', r => r.upgrade.preservedData = false,
+      r => r.newSpentCNY = 1, r => r.cases = [{}], r => r.priorFinancialUncertainty.pendingCNY = 0,
+      r => r.verification.credentialPersistence.status = 'failed', r => r.verification.ci.sourceDigest = 'stale',
+      r => r.packages.windowsReleasedUpgradeAndRollbackBeforeUpload = false,
+      r => r.releaseComplete = true, r => r.packages.status = 'passed',
+    ]) {
+      const changed = structuredClone(valid); mutate(changed); save(changed); assert.throws(() => run());
+    }
+    commitVersion('v1.7.4');
+    save({ ...valid, version: 'v1.7.4', sourceDigest: run('--fingerprint').trim() }, 'v1.7.4');
+    assert.throws(() => run());
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('v1.7.2 paid-generation waiver requires targeted evidence and preserves prior uncertainty', () => {
   const { dir, run, save, commitVersion } = setupRepo('v1.7.2');
   try {

@@ -437,6 +437,7 @@ export function backendProviderConfig(config: AiConfig, mode: BackendGenerationM
         baseUrl: requestConfig.baseUrl,
         apiKey: requestConfig.credentialRef ? "" : requestConfig.apiKey,
         secretKey: requestConfig.credentialRef ? "" : requestConfig.secretKey,
+        headers: requestConfig.headers,
         credentialRef: requestConfig.credentialRef,
         model: requestConfig.model,
         ...generationOptions,

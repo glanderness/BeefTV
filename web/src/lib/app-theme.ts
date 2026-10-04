@@ -246,6 +246,7 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
                 controlOutline: color.controlFocus,
             },
             Checkbox: {
+                colorWhite: color.checkFg,
                 borderRadiusSM: skin.checkboxRadius || 4,
                 colorBgContainer: color.controlSurface,
                 colorBgContainerDisabled: color.controlDisabledBg,

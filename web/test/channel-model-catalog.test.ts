@@ -66,6 +66,25 @@ function formEntries(body: unknown) {
 }
 
 describe("public channel model catalog", () => {
+    test("backend catalogue authentication failure keeps its actionable message", async () => {
+        apiClient.request = (async () => ({ status: 502, data: { code: 502, data: null, msg: "模型服务鉴权失败，请检查 API Key", reason: "bad_gateway" } })) as typeof apiClient.request;
+        await expect(fetchChannelModels(createModelChannel({ apiKey: "synthetic-invalid" }), true)).rejects.toThrow("模型服务鉴权失败，请检查 API Key");
+    });
+    test("direct discovery forwards custom headers for OpenAI and Gemini", async () => {
+        const requests: Array<Record<string, unknown>> = [];
+        axios.request = (async (request: Record<string, unknown>) => {
+            requests.push(request);
+            return { status: 200, data: { data: [{ id: "custom-model" }], models: [{ name: "models/gemini-pro" }] } };
+        }) as typeof axios.request;
+        for (const apiFormat of ["openai", "gemini"] as const) {
+            await fetchChannelModels(createModelChannel({ baseUrl: "https://provider.example", apiFormat, apiKey: "synthetic-key", headers: [{ name: "X-Project-Key", value: "synthetic-header" }] }));
+        }
+        expect(requests).toHaveLength(2);
+        for (const request of requests) {
+            const headers = request.headers as Record<string, string>;
+            expect(JSON.parse(atob(headers["x-canvas-upstream-headers"]))).toEqual([{ name: "X-Project-Key", value: "synthetic-header" }]);
+        }
+    });
     test("keeps the fetched BeefAPI catalog dynamic while normalizing discovered image profiles", () => {
         const channel = createModelChannel({
             id: "beefapi",

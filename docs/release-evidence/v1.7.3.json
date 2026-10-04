@@ -1,0 +1,92 @@
+{
+  "version": "v1.7.3",
+  "sourceDigest": "8f33daa33fc86858fcee25d4e3855d38791402999dbb295661afea8798d5dc28",
+  "releaseComplete": false,
+  "budgetCNY": 0,
+  "spentCNY": 0,
+  "newSpentCNY": 0,
+  "pendingCNY": 0,
+  "liveTestWaiver": {
+    "approvedBy": "Ender",
+    "instruction": "本版豁免付费矩阵，专项验收、独立复审和 CI 通过后发布",
+    "scope": "byok-updater-targeted-acceptance"
+  },
+  "priorFinancialUncertainty": {
+    "status": "unresolved",
+    "carriedFromVersion": "v1.7.2",
+    "pendingCNY": null,
+    "failedRequestIds": [
+      "202610020816334239151708268d9d6eZ5lRPwt",
+      "202610021242434383740578268d9d6BAoXA1u1"
+    ],
+    "evidence": [
+      "docs/release-evidence/v1.7.2.json"
+    ]
+  },
+  "review": {
+    "result": "approved",
+    "independent": true,
+    "reviewer": "Grok independent review and follow-up",
+    "sourceDigest": "8f33daa33fc86858fcee25d4e3855d38791402999dbb295661afea8798d5dc28",
+    "evidence": [
+      "docs/release-evidence/v1.7.3-targeted.md#独立复审"
+    ]
+  },
+  "upgrade": {
+    "preservedData": true,
+    "sourceDigest": "8f33daa33fc86858fcee25d4e3855d38791402999dbb295661afea8798d5dc28",
+    "evidence": [
+      "docs/release-evidence/v1.7.3-targeted.md#安装升级与发布产物"
+    ]
+  },
+  "liveMatrixStatus": "not_run_owner_waived",
+  "cases": [],
+  "verification": {
+    "modelServiceFlow": {
+      "status": "passed",
+      "sourceDigest": "8f33daa33fc86858fcee25d4e3855d38791402999dbb295661afea8798d5dc28",
+      "evidence": [
+        "docs/release-evidence/v1.7.3-targeted.md"
+      ]
+    },
+    "credentialPersistence": {
+      "status": "passed",
+      "sourceDigest": "8f33daa33fc86858fcee25d4e3855d38791402999dbb295661afea8798d5dc28",
+      "evidence": [
+        "docs/release-evidence/v1.7.3-targeted.md"
+      ]
+    },
+    "saveBarrier": {
+      "status": "passed",
+      "sourceDigest": "8f33daa33fc86858fcee25d4e3855d38791402999dbb295661afea8798d5dc28",
+      "evidence": [
+        "docs/release-evidence/v1.7.3-targeted.md"
+      ]
+    },
+    "localReleaseGate": {
+      "status": "passed",
+      "sourceDigest": "8f33daa33fc86858fcee25d4e3855d38791402999dbb295661afea8798d5dc28",
+      "evidence": [
+        "docs/release-evidence/v1.7.3-targeted.md"
+      ]
+    },
+    "ci": {
+      "status": "passed",
+      "sourceDigest": "8f33daa33fc86858fcee25d4e3855d38791402999dbb295661afea8798d5dc28",
+      "evidence": [
+        "docs/release-evidence/v1.7.3-targeted.md",
+        "https://github.com/glanderness/BeefTV/actions/runs/37172023033",
+        "https://github.com/glanderness/BeefTV/actions/runs/37172023069"
+      ]
+    }
+  },
+  "packages": {
+    "status": "pending_release_workflow",
+    "finalArchiveSmokeBeforeUpload": true,
+    "windowsReleasedUpgradeAndRollbackBeforeUpload": true,
+    "workflowEvidence": [
+      ".github/workflows/release-desktop.yml",
+      "https://github.com/glanderness/BeefTV/pull/74"
+    ]
+  }
+}
