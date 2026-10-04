@@ -3,7 +3,7 @@
   "contractVersion": 2,
   "sourceDigest": "2c6a220a53cd7fffeb860beab3b62d2e74a6b6515d7f122c3a741412ac377c91",
   "validatedCommit": "6979cf09ba7d74c0ae9f31eb263c990e0ae93ba4",
-  "releaseComplete": false,
+  "releaseComplete": true,
   "budgetCNY": 50,
   "spentCNY": 48.7,
   "newSpentCNY": 48.7,
@@ -42,7 +42,8 @@
     "reviewer": "Grok Companion independent read-only review",
     "evidence": [
       "docs/release-evidence/v1.7.4-manual-byok.md#独立复审与验证",
-      "Grok job 20261004-172556-continue-f3261372 approved commit 6979cf0"
+      "Grok job 20261004-172556-continue-f3261372 approved commit 6979cf0",
+      "Grok job 20261004-175610-continue-838dfb24 approved final receipt, billing and source binding at cf081cb"
     ]
   },
   "verification": {
@@ -80,7 +81,9 @@
       "evidence": [
         "docs/release-evidence/v1.7.4-manual-byok.md#独立复审与验证",
         "https://github.com/glanderness/BeefTV/actions/runs/37192117424",
-        "https://github.com/glanderness/BeefTV/actions/runs/37192117425"
+        "https://github.com/glanderness/BeefTV/actions/runs/37192117425",
+        "https://github.com/glanderness/BeefTV/actions/runs/37193750271",
+        "https://github.com/glanderness/BeefTV/actions/runs/37193750298"
       ]
     }
   },
@@ -111,6 +114,87 @@
         "before": 13,
         "after": 16,
         "missingOriginalIDs": 0
+      }
+    },
+    "publishedNativeUpgrade": {
+      "fromVersion": "v1.7.3",
+      "toVersion": "v1.7.4",
+      "method": "native desktop updater against public signed feed",
+      "platform": "darwin-arm64",
+      "version": "1.7.4",
+      "publicArchiveBinaryMatches": {
+        "Contents/MacOS/BeefTV": "1c3670e596e4838473e850a8124812b0c13bb6ae54dba8c25982be8e013553b4",
+        "Contents/MacOS/cli/beeftv": "91162a18265dee6abbb6ab7f02c86a6bc77494d520ff64b95556571c823506ff",
+        "Contents/Resources/agent-host/package.json": "eb784ca29b6d903450e2f8712505a9ee3b19624a457207728cc701c3f2cbe029"
+      },
+      "codesignVerified": true,
+      "preservedData": {
+        "tasks": {
+          "before": 134,
+          "after": 134,
+          "missingOriginalIDs": 0
+        },
+        "assets": {
+          "before": 158,
+          "after": 158,
+          "missingOriginalIDs": 0
+        },
+        "projects": {
+          "before": 0,
+          "after": 0,
+          "missingOriginalIDs": 0
+        },
+        "canvas_projects": {
+          "before": 16,
+          "after": 16,
+          "missingOriginalIDs": 0
+        }
+      },
+      "newPaidTasks": 0
+    },
+    "historicalConflictHandling": {
+      "count": 5,
+      "method": "Export each current draft, verify archive integrity and compare with persisted canvas; preserve the fifth canvas differing image in an extra product canvas copy; use normal latest-version UI and restart before native upgrade",
+      "firstFourCreativeContentDifferences": false,
+      "fifthCanvasDifferentImagePreserved": true,
+      "preservedCopyId": "vq-3EGXFrDSoKz6Qj8HLH",
+      "preservedCopyTitle": "白兔素材备份",
+      "backups": {
+        "DKJ": {
+          "projectId": "DKJslTk_eCADx4qPEbkpm",
+          "file": "upgrade-draft-DKJ.zip",
+          "bytes": 3368051,
+          "sha256": "390296c1bf083b5dd1f723b5c49c882105cf96593af8ab7bcafd1032339c2043",
+          "zipIntegrity": true
+        },
+        "W3": {
+          "projectId": "W3bdUyN0jFrcnBZAtgl13",
+          "file": "upgrade-draft-W3.zip",
+          "bytes": 9996893,
+          "sha256": "d68038e9f8c9a9f1370cb6f1bd51fde0fef682b9579be84252eac21f1ef58363",
+          "zipIntegrity": true
+        },
+        "IhR": {
+          "projectId": "IhRmdc0y3KUatiASd2oi_",
+          "file": "upgrade-draft-IhR.zip",
+          "bytes": 3874961,
+          "sha256": "b3d0cbb1b61862f229c9be64b871bbca3a1587453548442bfc35403c8cf3528f",
+          "zipIntegrity": true
+        },
+        "v8": {
+          "projectId": "v8DkdNpqOkSztrBDMafip",
+          "file": "upgrade-draft-v8.zip",
+          "bytes": 14866765,
+          "sha256": "178362c143af94f858fcff5224bea615b4401c3816bae03db5fff1ecdad575a1",
+          "zipIntegrity": true
+        },
+        "Dxz": {
+          "projectId": "Dxzhizn0yd6SNrcp0SakP",
+          "file": "upgrade-draft-Dxz.zip",
+          "bytes": 8449313,
+          "sha256": "ca806a201c1f685ffe6ab963aa6aae224a484cd8705c6dbf99c18af411241bfd",
+          "zipIntegrity": true
+        }
       }
     }
   },
@@ -446,11 +530,50 @@
     ]
   },
   "packages": {
-    "status": "pending_release_workflow",
+    "status": "passed",
     "finalArchiveSmokeBeforeUpload": true,
     "windowsReleasedUpgradeAndRollbackBeforeUpload": true,
     "workflowEvidence": [
-      ".github/workflows/release-desktop.yml"
-    ]
+      ".github/workflows/release-desktop.yml",
+      "https://github.com/glanderness/BeefTV/actions/runs/37194441122"
+    ],
+    "archives": {
+      "darwin-amd64": {
+        "sourceDigest": "2c6a220a53cd7fffeb860beab3b62d2e74a6b6515d7f122c3a741412ac377c91",
+        "sha256": "7ab2c7ae780338996bed5df00749334d02c65cf1f86f61fe5dc11056458f676f",
+        "size": 158380553,
+        "evidence": [
+          "https://updates.beefapi.com/beeftv/v1.7.4/BeefTV-v1.7.4-darwin-amd64.zip",
+          "https://github.com/glanderness/BeefTV/actions/runs/37194441122"
+        ]
+      },
+      "darwin-arm64": {
+        "sourceDigest": "2c6a220a53cd7fffeb860beab3b62d2e74a6b6515d7f122c3a741412ac377c91",
+        "sha256": "5eedecad479e1ab3bc76fcd0cabe6f3dcdf69de75952b61fd77f04676a1cd05c",
+        "size": 154005243,
+        "evidence": [
+          "https://updates.beefapi.com/beeftv/v1.7.4/BeefTV-v1.7.4-darwin-arm64.zip",
+          "https://github.com/glanderness/BeefTV/actions/runs/37194441122"
+        ]
+      },
+      "windows-amd64": {
+        "sourceDigest": "2c6a220a53cd7fffeb860beab3b62d2e74a6b6515d7f122c3a741412ac377c91",
+        "sha256": "0b8213bd337276aef559f1065e496925083624af053cbde48bc9799b2a5a4cd2",
+        "size": 145133364,
+        "evidence": [
+          "https://updates.beefapi.com/beeftv/v1.7.4/BeefTV-v1.7.4-windows-amd64.zip",
+          "https://github.com/glanderness/BeefTV/actions/runs/37194441122"
+        ]
+      }
+    }
+  },
+  "publishedCommit": "03a97525a36b9b9d2c77061d5e36116527e616fe",
+  "publication": {
+    "status": "passed",
+    "release": "https://github.com/glanderness/BeefTV/releases/tag/v1.7.4",
+    "feed": "https://updates.beefapi.com/beeftv/desktop-update.json",
+    "signatureVerified": true,
+    "allPublicArchivesDownloadedAndHashVerified": true,
+    "workflow": "https://github.com/glanderness/BeefTV/actions/runs/37194441122"
   }
 }
