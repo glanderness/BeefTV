@@ -253,11 +253,35 @@ func (flagReplay) Finalize(string, model.TaskStatus) error { return nil }
 
 type allowMedia struct{}
 
-func (allowMedia) ContainsInlineData(map[string]any) bool { return false }
+type blockedTransportMedia struct{ allowMedia }
+
+func (blockedTransportMedia) ValidateTransport(string, map[string]any) error {
+	return &kernel.AppError{Status: 400, Code: 400, Reason: "reference_media_requires_url", Message: "当前渠道需要在线素材链接：参考图片 1无法直接读取"}
+}
+
+func TestMediaTransportRejectedBeforeQueueAndOnFreshRetry(t *testing.T) {
+	store := newMemStore()
+	svc := domainService(store, func(d *Dependencies) { d.Media = blockedTransportMedia{} })
+	_, err := svc.CreateTask("user", imageReq("draw", "transport-test"))
+	if err == nil || len(store.tasks) != 0 {
+		t.Fatalf("task queued: err=%v tasks=%d", err, len(store.tasks))
+	}
+	store.tasks["failed"] = model.Task{ID: "failed", UserID: "user", Type: "canvas_image", Status: model.TaskStatusFailed, InputJSON: `{"mode":"image"}`}
+	if _, err := svc.Retry("user", "failed"); err == nil {
+		t.Fatal("retry queued")
+	}
+	if store.tasks["failed"].Status != model.TaskStatusFailed {
+		t.Fatal("rejected retry changed task")
+	}
+}
+
+func (allowMedia) ContainsInlineData(map[string]any) bool         { return false }
+func (allowMedia) ValidateTransport(string, map[string]any) error { return nil }
 
 type rejectMedia struct{}
 
-func (rejectMedia) ContainsInlineData(map[string]any) bool { return true }
+func (rejectMedia) ContainsInlineData(map[string]any) bool         { return true }
+func (rejectMedia) ValidateTransport(string, map[string]any) error { return nil }
 
 type allowProjects struct{}
 

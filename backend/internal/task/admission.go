@@ -91,6 +91,9 @@ func (s *Service) admit(userID string, req CreateRequest) (*model.Task, error) {
 	if s.deps.Media.ContainsInlineData(normalizedInput) {
 		return nil, kernel.BadAuthRequest(InlineMediaRejectedMessage)
 	}
+	if err := s.deps.Media.ValidateTransport(userID, normalizedInput); err != nil {
+		return nil, err
+	}
 
 	textReplay := s.deps.TextReplay.IsRequest(normalizedInput)
 	limit, err := s.deps.Policy.ActiveTaskLimit()

@@ -13,6 +13,14 @@ const protocols = [
     ["volcengine-ark-video", "video"], ["newapi", "video"],
 ].map(([value, capability]) => ({ value, capability, enabled: true } as ModelProtocolDefinition));
 
+test("persisted boolean video options are normalized without turning false back on", () => {
+    const channel = createModelChannel({ id: "custom", models: ["seedance-2.0-mini"], modelProfiles: [{ model: "seedance-2.0-mini", capability: "video", protocol: "newapi" }] });
+    for (const enabled of [true, false]) {
+        const persisted = JSON.parse(JSON.stringify({ ...defaultConfig, channels: [channel], model: "custom::seedance-2.0-mini", videoGenerateAudio: enabled, videoWatermark: false, videoArkPrivateAssetUpload: true }));
+        expect(backendProviderConfig(persisted, "video")).toMatchObject({ videoGenerateAudio: String(enabled), videoWatermark: "false", videoArkPrivateAssetUpload: "true" });
+    }
+});
+
 test("catalog endpoint metadata classifies opaque video names and selects only installed provider contracts", () => {
     const channel = createModelChannel({ baseUrl: "https://video.example.com/v1" });
     const item = { id: "原生不卡人脸-全参2.5", supportedEndpointTypes: ["full-video"] };

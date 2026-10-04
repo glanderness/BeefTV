@@ -15,6 +15,7 @@ const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 
 export async function executeVideoGeneration({
+    resolveReferenceLinks,
     nodeId,
     sourceNode,
     prompt,
@@ -106,6 +107,7 @@ export async function executeVideoGeneration({
                 ...retryContext,
                 ...(clientOperationId ? { clientOperationId } : {}),
                 mode: "video",
+                resolveReferenceLinks,
                 prompt: effectivePrompt,
                 config: generationConfig,
                 referenceImages: generationContext.referenceImages,

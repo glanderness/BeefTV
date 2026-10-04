@@ -2,6 +2,16 @@ import referenceVideoErrors from "./fixtures/reference-video-errors.json";
 import { describe, expect, test } from "bun:test";
 import { ApiError } from "../src/services/api/request";
 
+test("reference transport admission identifies blocked inputs and survives persisted display", () => {
+    const message = "当前渠道需要在线素材链接：参考图片 2、参考视频 1无法直接读取。请替换为可访问的 HTTPS 链接，或切换支持本地素材的渠道";
+    const failure = explainGenerationError(new ApiError(message, { status: 400, reason: "reference_media_requires_url" }));
+    expect(failure.category).toBe("invalid_params");
+    expect(failure.message).toContain("参考图片 2、参考视频 1");
+    expect(failure.action).toContain("HTTPS");
+    expect(failure.blockAutomaticRetry).toBe(true);
+    expect(explainGenerationError(failure.message).reason).toBe(failure.reason);
+});
+
 test("Windows socket disconnects explain saved historical errors without exposing network details", () => {
     for (const detail of ["An existing connection was forcibly closed by the remote host.", "An established connection was aborted by the software in your host machine."]) {
         const failure = explainGenerationError(`Get "https://private.example/task?token=secret": read tcp: wsarecv: ${detail}`);

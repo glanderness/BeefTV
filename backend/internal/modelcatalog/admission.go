@@ -119,7 +119,7 @@ func ResolveSystemChannelModelSelection(input map[string]any, taskType string, o
 		for key, value := range options {
 			canonical := canonicalCapabilityOptionName(key)
 			if isCapabilityOptionFor(channelModel.Capability, canonical) {
-				nextConfig[canonical] = value
+				nextConfig[canonical] = providerConfigOptionValue(value)
 			}
 		}
 	}

@@ -14,8 +14,8 @@ import { buildCameraPrompt } from "@/lib/canvas/camera-prompt-library";
 import { buildTextRewritePrompt } from "@/lib/prompts";
 import { resolveCanvasStyleExecution } from "@/lib/canvas/canvas-style-execution";
 import { generationErrorMessage } from "@/lib/generation-error";
-import { modelCompatibilityError, modelGroupReferenceLimits, modelPromptLengthError, modelRequestOptions, type ModelRequirements } from "@/lib/model-selection";
 import { navigateToSettings } from "@/lib/settings-navigation";
+import { modelCompatibilityError, modelGroupReferenceLimits, modelPromptLengthError, modelRequestOptions, type ModelRequirements } from "@/lib/model-selection";
 import type { Skill } from "@/services/api/skills";
 import { skillRuntime } from "@/services/skill-runtime";
 import type { GenerationTask } from "@/services/api/task-center";
@@ -28,6 +28,7 @@ import { executeImageGeneration } from "./canvas-image-generation-executor";
 import { executeAudioGeneration, executeVideoGeneration } from "./canvas-media-generation-executors";
 import { executeTextGeneration } from "./canvas-text-generation-executor";
 import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked } from "./canvas-generation-failure";
+import { createReferenceLinkResolver } from "./canvas-reference-links";
 
 type UseCanvasGenerationExecutorOptions = {
     projectId: string;
@@ -365,6 +366,7 @@ export function useCanvasGenerationExecutor({
                         },
                         applyGenerationTaskResult,
                         showError: (content: string) => message.error(content),
+                        resolveReferenceLinks: createReferenceLinkResolver(modal),
                         registerPendingNodeIds: (nodeIds: string[]) => {
                             pendingNodeIds = nodeIds;
                         },

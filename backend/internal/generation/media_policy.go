@@ -35,7 +35,7 @@ func MediaHydrationPolicyFor(ctx context.Context, input Input) MediaHydrationPol
 		policy.RequireURL = adapter.Metadata().RequiresPublicMediaURLs
 		policy.PreferURL = policy.PreferURL || policy.RequireURL
 	}
-	if input.Mask != nil {
+	if input.Mode == "image" && input.Mask != nil {
 		policy.RequireURL = false
 		policy.PreferURL = false
 	}
@@ -45,7 +45,7 @@ func MediaHydrationPolicyFor(ctx context.Context, input Input) MediaHydrationPol
 // PrefersMediaURLs lists protocols that accept remote URLs. Multipart/byte
 // protocols keep the byte path so a smaller download cannot change the request.
 func PrefersMediaURLs(interfaceType string, input Input) bool {
-	if input.Mask != nil {
+	if input.Mode == "image" && input.Mask != nil {
 		return false
 	}
 	switch strings.TrimSpace(interfaceType) {

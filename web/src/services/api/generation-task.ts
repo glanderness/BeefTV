@@ -14,6 +14,9 @@ import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { buildBackendToolRequests, type ResponseFunctionTool, type ResponseInputMessage, type ToolChoice, type ToolResponseResult } from "@/services/api/image";
 import { assertAgentExchangeBudget } from "@/lib/canvas/agent-context-budget";
 import { assertVideoCapability } from "@/services/api/video-validation";
+import { ApiError } from "@/services/api/request";
+import { assertUserScope, captureUserScope } from "@/lib/user-scope-guard";
+import { isReferenceHTTPSLink, type ResolveReferenceLinks, type ReferenceLinkRequest } from "./reference-link-replacement";
 
 export { logicalModelIDForConfig };
 
@@ -43,6 +46,7 @@ type BackendGenerationTaskOptions = {
     metadata?: Record<string, unknown>;
     onTaskUpdate?: (task: GenerationTask) => void;
     onTextDelta?: (text: string) => void;
+    resolveReferenceLinks?: ResolveReferenceLinks;
     streamText?: boolean;
     enableThinking?: boolean;
     clientOperationId?: string;
@@ -92,6 +96,8 @@ export async function runBackendGenerationTask(
         clientOperationId,
         retryOf,
         attemptGroupId,
+        expectedScope = captureUserScope(),
+        resolveReferenceLinks,
     }: BackendGenerationTaskOptions,
     dependencies: GenerationTaskDependencies = defaultDependencies,
 ) {
@@ -102,7 +108,7 @@ export async function runBackendGenerationTask(
     throwIfAborted(signal);
     assertPreparedVideoCapability(mode, config, prepared);
     return createAndWaitGenerationTask(
-        { projectId, mode, prompt, config, referenceImages, referenceVideos, referenceAudios, textHistory, signal, metadata, onTaskUpdate, onTextDelta, streamText, enableThinking, clientOperationId, retryOf, attemptGroupId },
+        { projectId, mode, prompt, config, referenceImages, referenceVideos, referenceAudios, textHistory, signal, metadata, onTaskUpdate, onTextDelta, streamText, enableThinking, clientOperationId, retryOf, attemptGroupId, expectedScope, resolveReferenceLinks },
         prepared,
         dependencies,
     );
@@ -274,7 +280,46 @@ async function createAndWaitGenerationTask(options: BackendGenerationTaskOptions
 }
 
 async function createBackendGenerationTask(options: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences, dependencies: GenerationTaskDependencies) {
-    const task = await dependencies.createTask(backendGenerationTaskInput(options, prepared), options.expectedScope ? { expectedScope: options.expectedScope } : undefined);
+    const expectedScope = options.expectedScope ?? captureUserScope();
+    const submit = () => {
+        throwIfAborted(options.signal);
+        assertUserScope(expectedScope);
+        return dependencies.createTask(backendGenerationTaskInput(options, prepared), { expectedScope });
+    };
+    let task: GenerationTask;
+    try {
+        task = await submit();
+    } catch (error) {
+        // Only this admission error guarantees that no task/upstream submission exists.
+        if (!(error instanceof ApiError) || error.reason !== "reference_media_requires_url" || !options.resolveReferenceLinks) throw error;
+        const groups = ["referenceImages", "referenceVideos", "referenceAudios"] as const;
+        const labels = ["参考图片", "参考视频", "参考音频"];
+        const references: ReferenceLinkRequest[] = [];
+        groups.forEach((group, kind) => prepared[group].forEach((media, index) => {
+            if (media.storageKey || !isReferenceHTTPSLink(media.url || "")) references.push({ key: `${group}:${index}`, label: `${labels[kind]} ${index + 1}`, name: media.name });
+        }));
+        if (prepared.mask && (prepared.mask.storageKey || !isReferenceHTTPSLink(prepared.mask.url || ""))) references.push({ key: "mask:0", label: "遮罩", name: prepared.mask.name });
+        if (!references.length) throw error;
+        const links = await options.resolveReferenceLinks(references, options.signal);
+        throwIfAborted(options.signal);
+        assertUserScope(expectedScope);
+        if (!links) throw error;
+        for (const reference of references) {
+            if (!isReferenceHTTPSLink(links[reference.key] || "")) throw new Error(`${reference.label}需要有效的 HTTPS 链接`);
+        }
+        const replace = <T extends { id?: string; name?: string; url?: string }>(items: T[], group: string): T[] =>
+            items.map((media, index) => {
+                const url = links[`${group}:${index}`];
+                // The dialog requests an online address for the same reference asset.
+                return url ? { ...media, storageKey: undefined, dataUrl: "", url: url.trim() } : media;
+            });
+        prepared.referenceImages = replace(prepared.referenceImages, "referenceImages");
+        prepared.referenceVideos = replace(prepared.referenceVideos, "referenceVideos");
+        prepared.referenceAudios = replace(prepared.referenceAudios, "referenceAudios");
+        if (prepared.mask) prepared.mask = replace([prepared.mask], "mask")[0];
+        assertPreparedVideoCapability(options.mode, options.config, prepared);
+        task = await submit();
+    }
     options.onTaskUpdate?.(task);
     return task;
 }
@@ -418,9 +463,9 @@ export function backendProviderConfig(config: AiConfig, mode: BackendGenerationM
         count: config.count,
         videoSeconds: config.videoSeconds,
         vquality: config.vquality,
-        videoGenerateAudio: config.videoGenerateAudio,
-        videoWatermark: config.videoWatermark,
-        videoArkPrivateAssetUpload: config.videoArkPrivateAssetUpload,
+        videoGenerateAudio: config.videoGenerateAudio == null ? undefined : String(config.videoGenerateAudio),
+        videoWatermark: config.videoWatermark == null ? undefined : String(config.videoWatermark),
+        videoArkPrivateAssetUpload: config.videoArkPrivateAssetUpload == null ? undefined : String(config.videoArkPrivateAssetUpload),
         audioVoice: config.audioVoice,
         audioFormat: config.audioFormat,
         audioSpeed: config.audioSpeed,

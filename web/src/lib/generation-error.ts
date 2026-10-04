@@ -798,6 +798,10 @@ function categoryFromProviderCode(...values: string[]): GenerationErrorCategory 
 
 function referenceMediaConstraintCopy(text: string): CategoryCopy | undefined {
     text = text.split("。排查编号：", 1)[0];
+    if (text.startsWith("当前渠道需要在线素材链接：")) {
+        const [reason, ...action] = text.split("。");
+        return { reason, action: action.join("。") };
+    }
     const unreadableFps = text.match(/^(第 \d+ 个参考视频帧率无法读取)/);
     if (unreadableFps) return {reason:unreadableFps[1],action:"请重新导出 MP4/MOV 视频后上传，确保文件完整且包含有效的视频轨"};
     const measuredFps = text.match(/^(第 \d+ 个参考视频平均帧率为 \d+(?:\.\d+)? FPS)[，。](?:需要 |请将参考视频重新导出为 )(\d+)–(\d+) FPS/);
