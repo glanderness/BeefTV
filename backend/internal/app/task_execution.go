@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 )
@@ -23,6 +24,9 @@ func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]
 	task.InputJSON = decryptedInput
 	ctx = withTaskExecutionID(ctx, task.ID)
 	ctx = withProviderAnalytics(ctx, s, task)
+	runtime, _ := generation.RuntimeFromContext(ctx)
+	runtime.Stages = appTaskStagePort{service: s, task: task}
+	ctx = generation.WithRuntime(ctx, runtime)
 	ctx = context.WithValue(ctx, imageTaskContext{}, task)
 	if result, recovered, err := s.recoverImageSubmission(ctx, task); recovered {
 		return result, nil, err

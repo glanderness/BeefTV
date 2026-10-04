@@ -9,6 +9,12 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.7
+
+- 生成前检查渠道能否读取参考素材，需要在线链接时可直接填写并继续生成，或切换渠道。
+- 处理参考素材时显示准备阶段，完成后再提交生成任务。
+- 修复部分视频渠道的音频、水印等开关参数导致任务无法解析的问题。
+
 ## v1.7.6
 
 - 统一素材库、生成历史与画布素材选择的布局，改进窄窗口显示和应用加载画面。

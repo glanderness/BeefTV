@@ -37,6 +37,7 @@ export async function runBackendCanvasGenerationTask(
         retryOf,
         attemptGroupId,
         expectedScope,
+        resolveReferenceLinks,
     }: {
         projectId: string;
         nodeId: string;
@@ -54,6 +55,7 @@ export async function runBackendCanvasGenerationTask(
         retryOf?: string;
         attemptGroupId?: string;
         expectedScope?: import("@/lib/user-scope-guard").CapturedUserScope;
+        resolveReferenceLinks?: import("@/services/api/reference-link-replacement").ResolveReferenceLinks;
     },
     dependencies?: GenerationTaskDependencies,
 ) {
@@ -75,6 +77,7 @@ export async function runBackendCanvasGenerationTask(
             retryOf,
             attemptGroupId,
             expectedScope,
+            resolveReferenceLinks,
         },
         dependencies,
     );

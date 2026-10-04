@@ -85,6 +85,18 @@ func (p appLimitsPort) RecordChannelResult(ctx context.Context, channelID string
 
 type appReceiptPort struct{ service *Service }
 
+type appTaskStagePort struct {
+	service *Service
+	task    model.Task
+}
+
+func (p appTaskStagePort) SetStage(ctx context.Context, stage string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return p.service.repo.WithContext(ctx).UpdateTaskStageForLease(p.task.ID, p.task.LeaseOwner, stage)
+}
+
 func (p appReceiptPort) Observe(observation generation.TransportObservation) {
 	if observation.Request == nil {
 		return
@@ -286,6 +298,7 @@ func (s *Service) applyGenerationRuntime(ctx context.Context, meta generation.Ca
 	}
 	if existing, ok := generation.RuntimeFromContext(ctx); ok {
 		runtime.Endpoints = existing.Endpoints
+		runtime.Stages = existing.Stages
 		if !replaceCall {
 			runtime.Call = generation.IdentityCallMeta(existing.Call, meta)
 		}

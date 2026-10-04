@@ -22,6 +22,7 @@ const NODE_STATUS_ERROR = "error" as const;
 const NODE_STATUS_IDLE = "idle" as const;
 
 export async function executeImageGeneration({
+    resolveReferenceLinks,
     nodeId,
     sourceNode,
     canvasNodes,
@@ -199,6 +200,7 @@ export async function executeImageGeneration({
                         ...retryContext,
                         ...(operationId ? { clientOperationId: operationId } : {}),
                         mode: "image",
+                        resolveReferenceLinks,
                         prompt: effectivePrompt,
                         config: { ...generationConfig, count: "1" },
                         referenceImages,

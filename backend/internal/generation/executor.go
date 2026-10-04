@@ -76,9 +76,15 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 	}
 
 	resumed := ResumedProviderRequestID(ctx) != ""
+	preparing := !resumed && hasReferenceMedia(input)
 	if !resumed {
 		if err := ValidateMediaTransport(ctx, input); err != nil {
 			return nil, err
+		}
+		if preparing {
+			if err := setExecutionStage(ctx, runtime, "正在准备参考素材"); err != nil {
+				return nil, err
+			}
 		}
 		if input.Mode == "video" {
 			if err := HydrateVideoReferenceMetadata(ctx, userID, &input); err != nil {
@@ -118,6 +124,11 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 		input = resolved
 	}
 
+	if preparing {
+		if err := setExecutionStage(ctx, runtime, "正在提交生成任务"); err != nil {
+			return nil, err
+		}
+	}
 	result, taskErr := dispatch(ctx, input)
 	if taskErr == nil && input.Mode == "text" && promptTemplateOperation != "" {
 		if runtime.Prompt == nil {
@@ -158,6 +169,12 @@ func executeWorkflow(ctx context.Context, runtime Runtime, userID string, input 
 	if err := mapWorkflowConfigError(workflow.ValidateConfig(input.Mode, workflowConfig(input.Config))); err != nil {
 		return nil, err
 	}
+	preparing := ResumedProviderRequestID(ctx) == "" && hasReferenceMedia(input)
+	if preparing {
+		if err := setExecutionStage(ctx, runtime, "正在准备参考素材"); err != nil {
+			return nil, err
+		}
+	}
 	if ResumedProviderRequestID(ctx) == "" {
 		if err := HydrateMedia(ctx, userID, &input, MediaHydrationPolicy{}); err != nil {
 			return nil, err
@@ -166,7 +183,26 @@ func executeWorkflow(ctx context.Context, runtime Runtime, userID string, input 
 	if runtime.Workflow == nil {
 		return nil, errors.New("无法执行工作流任务，请重试")
 	}
+	if preparing {
+		if err := setExecutionStage(ctx, runtime, "正在提交生成任务"); err != nil {
+			return nil, err
+		}
+	}
 	return runtime.Workflow.Execute(ctx, input)
+}
+
+func hasReferenceMedia(input Input) bool {
+	return len(input.ReferenceImages)+len(input.ReferenceVideos)+len(input.ReferenceAudios) > 0 || input.Mask != nil
+}
+
+func setExecutionStage(ctx context.Context, runtime Runtime, stage string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if runtime.Stages != nil {
+		return runtime.Stages.SetStage(ctx, stage)
+	}
+	return nil
 }
 
 func applyCanvasTextStreaming(taskType string, input *Input) {

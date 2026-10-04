@@ -75,6 +75,12 @@ type ReceiptPort interface {
 	SyncProgress(taskID string, body []byte)
 }
 
+// StagePort reports execution stages without inventing provider progress.
+// The adapter owns task identity and lease fencing.
+type StagePort interface {
+	SetStage(ctx context.Context, stage string) error
+}
+
 type ImageSubmissionPort interface {
 	Intercept(req *http.Request) (handled bool, data []byte, mimeType string, err error)
 }
@@ -141,6 +147,7 @@ type Runtime struct {
 	Resources ResourcePort
 	Limits    LimitsPort
 	Receipts  ReceiptPort
+	Stages    StagePort
 	Images    ImageSubmissionPort
 	Workflow  WorkflowPort
 	Prompt    PromptPort

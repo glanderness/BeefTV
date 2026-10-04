@@ -394,6 +394,20 @@ func (r *Repository) UpdateTaskProgressForLease(id string, owner string, stage s
 	return nil
 }
 
+// UpdateTaskStageForLease preserves the last provider-reported percentage.
+func (r *Repository) UpdateTaskStageForLease(id string, owner string, stage string) error {
+	result := taskLeaseWriter(r.db.Model(&model.Task{}), owner).
+		Where("id = ? AND status = ?", id, model.TaskStatusRunning).
+		Updates(map[string]any{"stage": stage, "updated_at": time.Now()})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrTaskStateConflict
+	}
+	return nil
+}
+
 // 无租约任务仅能写无租约记录；有租约的执行者必须仍持有本次领取的有效 owner。
 func taskLeaseWriter(db *gorm.DB, owner string) *gorm.DB {
 	if owner == "" {

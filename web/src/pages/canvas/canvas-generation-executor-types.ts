@@ -19,6 +19,7 @@ export type CanvasGenerationExecutorDependencies = {
     bindGenerationTask: (targetNodeId: string, task: GenerationTask) => void;
     applyGenerationTaskResult: (targetNodeId: string, task: GenerationTask) => Promise<void>;
     showError: (content: string) => void;
+    resolveReferenceLinks?: import("@/services/api/reference-link-replacement").ResolveReferenceLinks;
 };
 
 export type CanvasGenerationExecution = CanvasGenerationExecutorDependencies & {
