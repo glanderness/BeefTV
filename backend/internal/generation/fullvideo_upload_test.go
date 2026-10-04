@@ -71,7 +71,7 @@ func TestFullVideoOwnedAudioPreservesMoreThanLegacy15MiB(t *testing.T) {
 
 func TestFullVideoUploadPreservesBytesAndVerifiesReceipt(t *testing.T) {
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
-	for _, bad := range []string{"", "hash", "origin", "incomplete", "chunk"} {
+	for _, bad := range []string{"", "hash", "origin", "incomplete", "chunk", "partial-complete", "invalid-json", "invalid-chunk-index"} {
 		t.Run(bad, func(t *testing.T) {
 			data := []byte("local reference bytes")
 			sum := sha256.Sum256(data)
@@ -93,6 +93,14 @@ func TestFullVideoUploadPreservesBytesAndVerifiesReceipt(t *testing.T) {
 					uploaded = append(uploaded, b...)
 					w.Write([]byte(`{}`))
 				case strings.HasSuffix(r.URL.Path, "/complete"):
+					if bad == "partial-complete" {
+						_, _ = w.Write([]byte(`{"status":"complete"}`))
+						return
+					}
+					if bad == "invalid-json" {
+						_, _ = w.Write([]byte(`not json`))
+						return
+					}
 					h := digest
 					if bad == "hash" {
 						h = "invalid"
@@ -107,7 +115,15 @@ func TestFullVideoUploadPreservesBytesAndVerifiesReceipt(t *testing.T) {
 					}
 					json.NewEncoder(w).Encode(fullvideoUpload{ID: "fixture", Status: status, Kind: "video", MIME: "video/mp4", Bytes: int64(len(data)), SHA256: h, Source: source, Duration: 3})
 				default:
-					json.NewEncoder(w).Encode(fullvideoUpload{ID: "fixture", Status: "uploading", ChunkSize: 7})
+					initial := fullvideoUpload{ID: "fixture", Status: "uploading", ChunkSize: 7}
+					if bad == "partial-complete" {
+						initial.Kind, initial.MIME, initial.Bytes, initial.SHA256, initial.Duration = "video", "video/mp4", int64(len(data)), digest, 3
+						initial.Source = "https://" + strings.TrimPrefix(server.URL, "http://") + "/v1/media/assets/fixture"
+					}
+					if bad == "invalid-chunk-index" {
+						initial.Received = []int{-1, 100}
+					}
+					json.NewEncoder(w).Encode(initial)
 				}
 			}))
 			defer server.Close()

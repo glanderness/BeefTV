@@ -110,7 +110,12 @@ func prepareFullVideoReferences(ctx context.Context, input *Input, read BeefAPIS
 				if method == "PUT" {
 					return nil
 				}
-				return json.Unmarshal(raw, &receipt)
+				var next fullvideoUpload
+				if e := json.Unmarshal(raw, &next); e != nil {
+					return e
+				}
+				receipt = next
+				return nil
 			}
 			if err = call("POST", "/v1/media/uploads", "application/json", map[string]any{"size": len(data), "sha256": digest, "mime_type": mime}); err != nil {
 				return err
@@ -121,7 +126,11 @@ func prepareFullVideoReferences(ctx context.Context, input *Input, read BeefAPIS
 				}
 				path := "/v1/media/uploads/" + receipt.ID
 				received := map[int]bool{}
+				chunkCount := (len(data) + receipt.ChunkSize - 1) / receipt.ChunkSize
 				for _, n := range receipt.Received {
+					if n < 0 || n >= chunkCount || received[n] {
+						return errors.New("素材上传分片回执无效")
+					}
 					received[n] = true
 				}
 				for start, n := 0, 0; start < len(data); start, n = start+receipt.ChunkSize, n+1 {
