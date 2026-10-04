@@ -329,6 +329,13 @@ func ProtocolRequestFromInput(input Input) protocol.GenerationRequest {
 	if instructions := strings.TrimSpace(input.Config.AudioInstructions); instructions != "" {
 		request.Extra["audioInstructions"] = instructions
 	}
+	// 参考音频/参考文本只在填写时下发，未填写时不占用请求体。
+	if refAudio := strings.TrimSpace(input.Config.AudioRefAudio); refAudio != "" {
+		request.Extra["audioRefAudio"] = refAudio
+	}
+	if refText := strings.TrimSpace(input.Config.AudioRefText); refText != "" {
+		request.Extra["audioRefText"] = refText
+	}
 	request.ProviderOptions = make(map[string]map[string]any)
 	if configured, ok := input.Metadata["providerOptions"].(map[string]any); ok {
 		for namespace, raw := range configured {
