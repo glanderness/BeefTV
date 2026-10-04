@@ -205,6 +205,7 @@ func TestCheckRejectsDowngradeEqualWrongPlatformTimeoutAndHash(t *testing.T) {
 			Platform:       "darwin-arm64",
 			Client:         server.Client(),
 			FeedTimeout:    200 * time.Millisecond,
+			RetryBackoff:   func(int) time.Duration { return time.Millisecond },
 		})
 		_, err := engine.CheckForUpdate(context.Background())
 		if !errors.Is(err, ErrTimeout) {

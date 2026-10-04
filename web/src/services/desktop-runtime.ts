@@ -17,6 +17,8 @@ export type DesktopUpdateState = {
     releaseNotes: string;
     downloadedBytes: number;
     totalBytes: number;
+    bytesPerSecond: number;
+    reconnecting: boolean;
     error: string;
 };
 
