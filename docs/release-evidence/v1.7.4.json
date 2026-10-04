@@ -1,0 +1,456 @@
+{
+  "version": "v1.7.4",
+  "contractVersion": 2,
+  "sourceDigest": "2c6a220a53cd7fffeb860beab3b62d2e74a6b6515d7f122c3a741412ac377c91",
+  "validatedCommit": "6979cf09ba7d74c0ae9f31eb263c990e0ae93ba4",
+  "releaseComplete": false,
+  "budgetCNY": 50,
+  "spentCNY": 48.7,
+  "newSpentCNY": 48.7,
+  "pendingCNY": 0,
+  "manualAcceptance": {
+    "approvedBy": "Ender",
+    "instruction": "你直接拿老李的api去手动配置模拟用户操作 看看能不能跑通闭环 给你预算50块钱 有问题旧修 review没问题就上线",
+    "scope": "laoli-direct-manual-client"
+  },
+  "agentChecks": {
+    "status": "not_run_owner_requested_manual"
+  },
+  "scenario": {
+    "id": "v174-national-day-bronze-bird-museum",
+    "title": "国庆博物馆夜游原创宣传片",
+    "source": "https://www.js.gov.cn/art/2026/10/2/art_60095_11838077.html",
+    "queryDate": "2026-10-04",
+    "fixtures": {
+      "image-1.png": "683fe4609a69a425059f120ecc2206c267be036c63b8d604934d304bff4cca1e",
+      "image-2.jpg": "294a34689421311d6c56a9808c49eb10604f16be88675d40427852cac2a984b2",
+      "reference.mp4": "e224e2750406123eeb080924b0688740374efbed43c142c87e3940c06a40f6e5"
+    }
+  },
+  "supplementalFixtures": {
+    "reference-audio.wav": {
+      "sha256": "7b15645e385c2f29444aa5bac4f9ad1bfe9930127d51d7f5524d318e149b0c29",
+      "durationSeconds": 5.056,
+      "bytes": 647246,
+      "origin": "Audio extracted from client-generated reference.mp4"
+    }
+  },
+  "review": {
+    "result": "approved",
+    "independent": true,
+    "sourceDigest": "2c6a220a53cd7fffeb860beab3b62d2e74a6b6515d7f122c3a741412ac377c91",
+    "reviewer": "Grok Companion independent read-only review",
+    "evidence": [
+      "docs/release-evidence/v1.7.4-manual-byok.md#独立复审与验证",
+      "Grok job 20261004-172556-continue-f3261372 approved commit 6979cf0"
+    ]
+  },
+  "verification": {
+    "manualConnection": {
+      "status": "passed",
+      "sourceDigest": "2c6a220a53cd7fffeb860beab3b62d2e74a6b6515d7f122c3a741412ac377c91",
+      "evidence": [
+        "docs/release-evidence/v1.7.4-manual-byok.md#授权与范围"
+      ]
+    },
+    "savedCredentialRecovery": {
+      "status": "passed",
+      "sourceDigest": "2c6a220a53cd7fffeb860beab3b62d2e74a6b6515d7f122c3a741412ac377c91",
+      "evidence": [
+        "docs/release-evidence/v1.7.4-manual-byok.md#原生保存与升级"
+      ]
+    },
+    "nativeMediaSave": {
+      "status": "passed",
+      "sourceDigest": "2c6a220a53cd7fffeb860beab3b62d2e74a6b6515d7f122c3a741412ac377c91",
+      "evidence": [
+        "docs/release-evidence/v1.7.4-manual-byok.md#原生保存与升级"
+      ]
+    },
+    "localReleaseGate": {
+      "status": "passed",
+      "sourceDigest": "2c6a220a53cd7fffeb860beab3b62d2e74a6b6515d7f122c3a741412ac377c91",
+      "evidence": [
+        "docs/release-evidence/v1.7.4-manual-byok.md#独立复审与验证"
+      ]
+    },
+    "ci": {
+      "status": "passed",
+      "sourceDigest": "2c6a220a53cd7fffeb860beab3b62d2e74a6b6515d7f122c3a741412ac377c91",
+      "evidence": [
+        "docs/release-evidence/v1.7.4-manual-byok.md#独立复审与验证",
+        "https://github.com/glanderness/BeefTV/actions/runs/37192117424",
+        "https://github.com/glanderness/BeefTV/actions/runs/37192117425"
+      ]
+    }
+  },
+  "upgrade": {
+    "preservedData": true,
+    "generationVerified": true,
+    "sourceDigest": "2c6a220a53cd7fffeb860beab3b62d2e74a6b6515d7f122c3a741412ac377c91",
+    "evidence": [
+      "docs/release-evidence/v1.7.4-manual-byok.md#原生保存与升级"
+    ],
+    "originalData": {
+      "tasks": {
+        "before": 102,
+        "after": 134,
+        "missingOriginalIDs": 0
+      },
+      "assets": {
+        "before": 122,
+        "after": 158,
+        "missingOriginalIDs": 0
+      },
+      "projects": {
+        "before": 0,
+        "after": 0,
+        "missingOriginalIDs": 0
+      },
+      "canvas_projects": {
+        "before": 13,
+        "after": 16,
+        "missingOriginalIDs": 0
+      }
+    }
+  },
+  "cases": [
+    {
+      "round": 1,
+      "path": "image-image",
+      "taskId": "cd432bc03c4f062a03850293ba1eaba5",
+      "providerRequestId": "202610040929256646874518268d9d6PTtYQiF3",
+      "status": "succeeded",
+      "artifactSHA256": "29b38be74148fd01cb3111448eea68fd2edf1007bf9266f2bba80467ead670a8",
+      "mediaDecoded": true,
+      "bytes": 2451128,
+      "clientVersion": "v1.7.4",
+      "platform": "darwin-arm64",
+      "fixtureDigest": "fd624c8fb566241346999a889021009cb84925eb85b8bef93ccf96a2620caaaa",
+      "model": "gpt-image-2.5-flare",
+      "clientSubmitted": true,
+      "canvasVerified": true,
+      "canvasNodeId": "image-1791104695977-l37vw",
+      "mediaOpened": true,
+      "billing": "settled",
+      "costCNY": 0.12,
+      "entrypoint": "manual",
+      "providerHost": "video.laoliimage2.win",
+      "confirmed": true,
+      "evidence": "docs/release-evidence/v1.7.4-manual-byok.md#最终两轮矩阵"
+    },
+    {
+      "round": 1,
+      "path": "image-video",
+      "taskId": "85849d2cc4b2f1edafc772cbee3315e3",
+      "providerRequestId": "task_f1009bfd4562d68a7f50debe3d3e91ea",
+      "status": "succeeded",
+      "artifactSHA256": "c17dd8aa0de667decefb099016ce2aab24ac3e7377cafb5c74571629064603f8",
+      "mediaDecoded": true,
+      "bytes": 865314,
+      "clientVersion": "v1.7.4",
+      "platform": "darwin-arm64",
+      "fixtureDigest": "fd624c8fb566241346999a889021009cb84925eb85b8bef93ccf96a2620caaaa",
+      "model": "原生不卡人脸-全参2.5",
+      "clientSubmitted": true,
+      "canvasVerified": true,
+      "canvasNodeId": "video-1791105292268-37phz",
+      "mediaOpened": true,
+      "billing": "settled",
+      "costCNY": 2.5,
+      "entrypoint": "manual",
+      "providerHost": "video.laoliimage2.win",
+      "confirmed": true,
+      "evidence": "docs/release-evidence/v1.7.4-manual-byok.md#最终两轮矩阵"
+    },
+    {
+      "round": 1,
+      "path": "multi-video",
+      "taskId": "0a2a613fb39aa1706ddd4e00ff28730b",
+      "providerRequestId": "task_8794239b4d44eddeaba25ed028a20b35",
+      "status": "succeeded",
+      "artifactSHA256": "60a4804376286b3df8385c976593009c700e070094f5698f1ce4f72201995cc9",
+      "mediaDecoded": true,
+      "bytes": 853181,
+      "clientVersion": "v1.7.4",
+      "platform": "darwin-arm64",
+      "fixtureDigest": "fd624c8fb566241346999a889021009cb84925eb85b8bef93ccf96a2620caaaa",
+      "model": "原生不卡人脸-全参2.5",
+      "clientSubmitted": true,
+      "canvasVerified": true,
+      "canvasNodeId": "video-1791105579166-ww0kv",
+      "mediaOpened": true,
+      "billing": "settled",
+      "costCNY": 2.5,
+      "entrypoint": "manual",
+      "providerHost": "video.laoliimage2.win",
+      "confirmed": true,
+      "evidence": "docs/release-evidence/v1.7.4-manual-byok.md#最终两轮矩阵",
+      "referenceCounts": {
+        "images": 2,
+        "videos": 1,
+        "audio": 1
+      },
+      "supplementalAudioSHA256": "7b15645e385c2f29444aa5bac4f9ad1bfe9930127d51d7f5524d318e149b0c29"
+    },
+    {
+      "round": 1,
+      "path": "text-image",
+      "taskId": "bc55a0e5fcf34c5aae53d726c5549f24",
+      "providerRequestId": "202610040934053916115418268d9d6zLZI4lnQ",
+      "status": "succeeded",
+      "artifactSHA256": "c3fc06f899cd5defb5a5134770ca1a60d6b9b046453b2a31753badc6cb0f8ac2",
+      "mediaDecoded": true,
+      "bytes": 2187190,
+      "clientVersion": "v1.7.4",
+      "platform": "darwin-arm64",
+      "fixtureDigest": "fd624c8fb566241346999a889021009cb84925eb85b8bef93ccf96a2620caaaa",
+      "model": "gpt-image-2.5-flare",
+      "clientSubmitted": true,
+      "canvasVerified": true,
+      "canvasNodeId": "image-1791105352006-pflcr",
+      "mediaOpened": true,
+      "billing": "settled",
+      "costCNY": 0.12,
+      "entrypoint": "manual",
+      "providerHost": "video.laoliimage2.win",
+      "confirmed": true,
+      "evidence": "docs/release-evidence/v1.7.4-manual-byok.md#最终两轮矩阵"
+    },
+    {
+      "round": 1,
+      "path": "text-video",
+      "taskId": "ac79f33ac2c2a85cdbbe40aeb9c05c44",
+      "providerRequestId": "task_f74377f38fc6b419a22fe7ec87a0de66",
+      "status": "succeeded",
+      "artifactSHA256": "56b9e2600c86ba0eed9dec9f373c8bd48b75d77fe99ed9c5fecc2411805bb213",
+      "mediaDecoded": true,
+      "bytes": 552894,
+      "clientVersion": "v1.7.4",
+      "platform": "darwin-arm64",
+      "fixtureDigest": "fd624c8fb566241346999a889021009cb84925eb85b8bef93ccf96a2620caaaa",
+      "model": "原生不卡人脸-全参2.5",
+      "clientSubmitted": true,
+      "canvasVerified": true,
+      "canvasNodeId": "video-1791105371712-9eqi6",
+      "mediaOpened": true,
+      "billing": "settled",
+      "costCNY": 2.5,
+      "entrypoint": "manual",
+      "providerHost": "video.laoliimage2.win",
+      "confirmed": true,
+      "evidence": "docs/release-evidence/v1.7.4-manual-byok.md#最终两轮矩阵"
+    },
+    {
+      "round": 1,
+      "path": "video-video",
+      "taskId": "0513b2b3e424d70c0321cc969a67ac7b",
+      "providerRequestId": "task_e57ddf9375bf186dc46eb85c697f654c",
+      "status": "succeeded",
+      "artifactSHA256": "74bbc8e5c919438c002adb3424b0c6174011504f67270d549e276a8401525867",
+      "mediaDecoded": true,
+      "bytes": 812730,
+      "clientVersion": "v1.7.4",
+      "platform": "darwin-arm64",
+      "fixtureDigest": "fd624c8fb566241346999a889021009cb84925eb85b8bef93ccf96a2620caaaa",
+      "model": "原生不卡人脸-全参2.5",
+      "clientSubmitted": true,
+      "canvasVerified": true,
+      "canvasNodeId": "video-1791105406393-xf7ma",
+      "mediaOpened": true,
+      "billing": "settled",
+      "costCNY": 2.5,
+      "entrypoint": "manual",
+      "providerHost": "video.laoliimage2.win",
+      "confirmed": true,
+      "evidence": "docs/release-evidence/v1.7.4-manual-byok.md#最终两轮矩阵"
+    },
+    {
+      "round": 2,
+      "path": "image-image",
+      "taskId": "55ffc6ba2da8dea6b5e4bd94fad88e2f",
+      "providerRequestId": "202610040935082600604348268d9d6SnOALiEJ",
+      "status": "succeeded",
+      "artifactSHA256": "cb7d8352c0afc9976d4eb12d19ed38e6d006f82118c8fae6a9f3684c1f43469b",
+      "mediaDecoded": true,
+      "bytes": 2425936,
+      "clientVersion": "v1.7.4",
+      "platform": "darwin-arm64",
+      "fixtureDigest": "fd624c8fb566241346999a889021009cb84925eb85b8bef93ccf96a2620caaaa",
+      "model": "gpt-image-2.5-flare",
+      "clientSubmitted": true,
+      "canvasVerified": true,
+      "canvasNodeId": "image-1791105329607-phunw",
+      "mediaOpened": true,
+      "billing": "settled",
+      "costCNY": 0.12,
+      "entrypoint": "manual",
+      "providerHost": "video.laoliimage2.win",
+      "confirmed": true,
+      "evidence": "docs/release-evidence/v1.7.4-manual-byok.md#最终两轮矩阵"
+    },
+    {
+      "round": 2,
+      "path": "image-video",
+      "taskId": "d8acac9d7d53794d64da431539295f86",
+      "providerRequestId": "task_f70625d1a1ecd048103eef77849f15b5",
+      "status": "succeeded",
+      "artifactSHA256": "592595a49e50555fbfb974a8d7ae169aa5a7935ddc21cb7af5b2027079d0acec",
+      "mediaDecoded": true,
+      "bytes": 876891,
+      "clientVersion": "v1.7.4",
+      "platform": "darwin-arm64",
+      "fixtureDigest": "fd624c8fb566241346999a889021009cb84925eb85b8bef93ccf96a2620caaaa",
+      "model": "原生不卡人脸-全参2.5",
+      "clientSubmitted": true,
+      "canvasVerified": true,
+      "canvasNodeId": "video-1791104654617-fajqh",
+      "mediaOpened": true,
+      "billing": "settled",
+      "costCNY": 2.5,
+      "entrypoint": "manual",
+      "providerHost": "video.laoliimage2.win",
+      "confirmed": true,
+      "evidence": "docs/release-evidence/v1.7.4-manual-byok.md#最终两轮矩阵"
+    },
+    {
+      "round": 2,
+      "path": "multi-video",
+      "taskId": "8fbf2c29401de5fb521298f76dba03e8",
+      "providerRequestId": "task_4e921bfb828420fde4bc347614cdecd4",
+      "status": "succeeded",
+      "artifactSHA256": "8118500c8c67c301ac014d2be6c4e3f2f4292e42434f4dbc3092169479ff9fa2",
+      "mediaDecoded": true,
+      "bytes": 866617,
+      "clientVersion": "v1.7.4",
+      "platform": "darwin-arm64",
+      "fixtureDigest": "fd624c8fb566241346999a889021009cb84925eb85b8bef93ccf96a2620caaaa",
+      "model": "原生不卡人脸-全参2.5",
+      "clientSubmitted": true,
+      "canvasVerified": true,
+      "canvasNodeId": "video-1791105007034-w92yu",
+      "mediaOpened": true,
+      "billing": "settled",
+      "costCNY": 2.5,
+      "entrypoint": "manual",
+      "providerHost": "video.laoliimage2.win",
+      "confirmed": true,
+      "evidence": "docs/release-evidence/v1.7.4-manual-byok.md#最终两轮矩阵",
+      "referenceCounts": {
+        "images": 2,
+        "videos": 1,
+        "audio": 1
+      },
+      "supplementalAudioSHA256": "7b15645e385c2f29444aa5bac4f9ad1bfe9930127d51d7f5524d318e149b0c29"
+    },
+    {
+      "round": 2,
+      "path": "text-image",
+      "taskId": "771df3f534f3547ab1044b4817cdcbcb",
+      "providerRequestId": "202610040934273877137828268d9d6jO6GmcRZ",
+      "status": "succeeded",
+      "artifactSHA256": "1fec7f596a66b93ee52728f26aa464cc370667668b79a0b1a7f21cddcc638088",
+      "mediaDecoded": true,
+      "bytes": 2121295,
+      "clientVersion": "v1.7.4",
+      "platform": "darwin-arm64",
+      "fixtureDigest": "fd624c8fb566241346999a889021009cb84925eb85b8bef93ccf96a2620caaaa",
+      "model": "gpt-image-2.5-flare",
+      "clientSubmitted": true,
+      "canvasVerified": true,
+      "canvasNodeId": "image-1791105095408-ggjf7",
+      "mediaOpened": true,
+      "billing": "settled",
+      "costCNY": 0.12,
+      "entrypoint": "manual",
+      "providerHost": "video.laoliimage2.win",
+      "confirmed": true,
+      "evidence": "docs/release-evidence/v1.7.4-manual-byok.md#最终两轮矩阵"
+    },
+    {
+      "round": 2,
+      "path": "text-video",
+      "taskId": "45bd2abe09deb5af1023a1d5c8e8ac59",
+      "providerRequestId": "task_4a1de5587b509c6ba209ef71a4e8b93f",
+      "status": "succeeded",
+      "artifactSHA256": "e1ae7269842f2e0d6550e6cae56bb57ed849abf99387ea054ee58b04685c3b40",
+      "mediaDecoded": true,
+      "bytes": 761269,
+      "clientVersion": "v1.7.4",
+      "platform": "darwin-arm64",
+      "fixtureDigest": "fd624c8fb566241346999a889021009cb84925eb85b8bef93ccf96a2620caaaa",
+      "model": "原生不卡人脸-全参2.5",
+      "clientSubmitted": true,
+      "canvasVerified": true,
+      "canvasNodeId": "video-1791105068051-zvhk9",
+      "mediaOpened": true,
+      "billing": "settled",
+      "costCNY": 2.5,
+      "entrypoint": "manual",
+      "providerHost": "video.laoliimage2.win",
+      "confirmed": true,
+      "evidence": "docs/release-evidence/v1.7.4-manual-byok.md#最终两轮矩阵"
+    },
+    {
+      "round": 2,
+      "path": "video-video",
+      "taskId": "75854e3e0af2a3244c02cb17da97cc01",
+      "providerRequestId": "task_687683b75abf67fde8591d97569da1ec",
+      "status": "succeeded",
+      "artifactSHA256": "be698e372e72dd61626776a65877b15788a6342d5e5a9f7e13940bfcb95f9acd",
+      "mediaDecoded": true,
+      "bytes": 594994,
+      "clientVersion": "v1.7.4",
+      "platform": "darwin-arm64",
+      "fixtureDigest": "fd624c8fb566241346999a889021009cb84925eb85b8bef93ccf96a2620caaaa",
+      "model": "原生不卡人脸-全参2.5",
+      "clientSubmitted": true,
+      "canvasVerified": true,
+      "canvasNodeId": "video-1791105202892-0rzc8",
+      "mediaOpened": true,
+      "billing": "settled",
+      "costCNY": 2.5,
+      "entrypoint": "manual",
+      "providerHost": "video.laoliimage2.win",
+      "confirmed": true,
+      "evidence": "docs/release-evidence/v1.7.4-manual-byok.md#最终两轮矩阵"
+    }
+  ],
+  "budgetBreakdown": {
+    "diagnosticAndFixturePreparationCNY": 7.74,
+    "supersededPreSaveFixMatrixCNY": 20.48,
+    "finalSourceMatrixCNY": 20.48,
+    "failedFinalAttemptGrossCNY": 2.5,
+    "failedFinalAttemptRefundCNY": 2.5,
+    "netCNY": 48.7
+  },
+  "refundedAttempt": {
+    "taskId": "9e114a623b82cfeec0835a25a346acd3",
+    "providerRequestId": "task_4a07c1b5d0502b4bedf4896bdcb92613",
+    "reason": "生成音频受版权限制，请重试",
+    "refundRequestId": "202610040939143472645628268d9d6WrKiOgS2",
+    "refundCNY": 2.5,
+    "netCNY": 0,
+    "manualRetryTaskId": "85849d2cc4b2f1edafc772cbee3315e3"
+  },
+  "priorFinancialUncertainty": {
+    "status": "unresolved",
+    "carriedFromVersion": "v1.7.2",
+    "pendingCNY": null,
+    "failedRequestIds": [
+      "202610020816334239151708268d9d6eZ5lRPwt",
+      "202610021242434383740578268d9d6BAoXA1u1"
+    ],
+    "evidence": [
+      "docs/release-evidence/v1.7.2.json"
+    ]
+  },
+  "packages": {
+    "status": "pending_release_workflow",
+    "finalArchiveSmokeBeforeUpload": true,
+    "windowsReleasedUpgradeAndRollbackBeforeUpload": true,
+    "workflowEvidence": [
+      ".github/workflows/release-desktop.yml"
+    ]
+  }
+}
