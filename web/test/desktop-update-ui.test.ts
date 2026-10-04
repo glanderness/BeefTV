@@ -28,6 +28,9 @@ describe("desktop update UI contract", () => {
         expect(update).not.toContain("AppModal");
         expect(update).not.toContain("检查更新");
         expect(update).toContain('aria-live="polite"');
+        expect(update).toContain("desktopUpdateDetailLabel");
+        expect(update).toContain("hasResumableDesktopUpdate");
+        expect(update).toContain('role="progressbar"');
         expect(update).toContain("useReducedMotion");
         expect(update).not.toContain("Modal.confirm");
         expect(update).not.toContain("所有修改已保存");
