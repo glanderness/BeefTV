@@ -9,6 +9,12 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.4
+
+- Recognize image and video capabilities from compatible service catalogs even when model names are opaque.
+- Add Laoli full-parameter 2.0 / 2.5 video support with local reference uploads and authenticated original-video downloads.
+- Allow slower model catalogs to finish loading without changing generation timeouts.
+
 ## v1.7.3
 
 - Add guided setup for OpenAI, Google Gemini, Volcano Ark and compatible model services, with searchable catalogs and manual model entry.

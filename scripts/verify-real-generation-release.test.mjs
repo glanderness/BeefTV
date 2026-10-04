@@ -125,6 +125,26 @@ function makeV2(version, sourceDigest, extra = {}) {
   };
 }
 
+test('v1.7.4 manual BYOK still requires twelve settled cases and cannot carry forward', () => {
+  const { dir, run, save, commitVersion } = setupRepo('v1.7.4');
+  try {
+    const sourceDigest = run('--fingerprint').trim();
+    const valid = makeV2('v1.7.4', sourceDigest, {
+      manualAcceptance: { approvedBy: 'Ender', scope: 'laoli-direct-manual-client', instruction: '你直接拿老李的api去手动配置模拟用户操作 看看能不能跑通闭环 给你预算50块钱 有问题旧修 review没问题就上线' },
+      agentChecks: { status: 'not_run_owner_requested_manual' },
+      verification: Object.fromEntries(['manualConnection', 'savedCredentialRecovery', 'nativeMediaSave', 'localReleaseGate', 'ci'].map(id => [id, { status: 'passed', sourceDigest, evidence: [`${id}.md`] }])),
+    });
+    valid.cases = valid.cases.map(item => ({ ...item, entrypoint: 'manual', providerHost: 'video.laoliimage2.win', evidence: 'native.md' }));
+    save(valid); assert.match(run(), /12\/12/);
+    for (const mutate of [r => r.cases.pop(), r => r.cases[0].billing = 'pending', r => r.cases[0].entrypoint = 'assistant', r => r.cases[0].providerHost = 'other.example', r => r.cases[0].mediaOpened = false, r => r.pendingCNY = 1, r => r.review.result = 'pending', r => r.verification.nativeMediaSave.status = 'pending', r => r.agentChecks = true, r => r.manualAcceptance.approvedBy = 'other']) {
+      const invalid = structuredClone(valid); mutate(invalid); save(invalid); assert.throws(() => run());
+    }
+    commitVersion('v1.7.5');
+    save({ ...valid, version: 'v1.7.5', sourceDigest: run('--fingerprint').trim() }, 'v1.7.5');
+    assert.throws(() => run());
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('v1.7.3 waiver requires current targeted evidence and cannot carry forward', () => {
   const { dir, run, save, commitVersion } = setupRepo('v1.7.3');
   try {

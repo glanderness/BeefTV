@@ -93,6 +93,13 @@ export function catalogModelMapping(
     return {};
 }
 
+export function catalogEndpointCapability(item: ChannelModelCatalogItem): ChannelModelProfile["capability"] | undefined {
+    const endpoints = (item.supportedEndpointTypes || []).map(value => value.trim().toLowerCase());
+    if (endpoints.includes("openai-video") || endpoints.includes("video")) return "video";
+    if (endpoints.includes("image-generation") || endpoints.includes("images.generations")) return "image";
+    return catalogModelMapping(item).capability;
+}
+
 function catalogNameTokens(id: string) {
     return id
         .trim()

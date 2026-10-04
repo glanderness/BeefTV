@@ -13,6 +13,20 @@ const protocols = [
     ["volcengine-ark-video", "video"], ["newapi", "video"],
 ].map(([value, capability]) => ({ value, capability, enabled: true } as ModelProtocolDefinition));
 
+test("catalog endpoint metadata classifies opaque video names and selects only installed provider contracts", () => {
+    const channel = createModelChannel({ baseUrl: "https://video.laoliimage2.win/v1" });
+    const item = { id: "原生不卡人脸-全参2.5", supportedEndpointTypes: ["openai-video"] };
+    expect(serviceModelProfile(channel, item, protocols).protocol).toBeUndefined();
+    const installed = [...protocols, { value: "laoli-video", capability: "video", enabled: true } as ModelProtocolDefinition];
+    const profile = serviceModelProfile(channel, item, installed);
+    expect(profile.capability).toBe("video");
+    expect(profile.protocol).toBe("laoli-video");
+    expect(profile.capabilityConfig?.video).toMatchObject({ duration: { min: 4, max: 30 }, resolutions: ["480p", "720p"], references: { maxVideos: 10 } });
+    expect(serviceModelProfile(channel, { ...item, id: "H3-KS" }, installed).protocol).toBeUndefined();
+    expect(serviceModelProfile({ ...channel, baseUrl: "https://other.example" }, item, installed).protocol).toBe("newapi");
+    expect(serviceModelProfile(channel, item, installed.map(p => ({ ...p, enabled: false }))).protocol).toBeUndefined();
+});
+
 test("test receipts apply only to the exact tested connection and model profile", () => {
     const channel = createModelChannel({ id: "receipt-channel", apiKey: "synthetic-key", modelProfiles: [{ model: "test", capability: "text", protocol: "chat-completion" }] });
     useModelConnectionTests.getState().record(channel, "test", { success: true, detail: "OK" });
