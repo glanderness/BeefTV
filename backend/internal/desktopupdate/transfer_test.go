@@ -30,6 +30,25 @@ type transferFixture struct {
 	ranges  []string
 }
 
+func TestVerifyDownloadedFileSyncsValidArchive(t *testing.T) {
+	body := []byte("complete downloaded archive")
+	sum := sha256.Sum256(body)
+	path := filepath.Join(t.TempDir(), "archive.part")
+	if err := os.WriteFile(path, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	artifact := PlatformArtifact{Size: int64(len(body)), SHA256: hex.EncodeToString(sum[:])}
+	if err := verifyDownloadedFile(path, artifact); err != nil {
+		t.Fatalf("sync verified download: %v", err)
+	}
+	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), len(body)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyDownloadedFile(path, artifact); !errors.Is(err, ErrTampered) {
+		t.Fatalf("corrupt archive accepted: %v", err)
+	}
+}
+
 func (f *transferFixture) requestedRanges() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
