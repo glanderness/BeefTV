@@ -137,7 +137,7 @@ function makeV2(version, sourceDigest, extra = {}) {
   };
 }
 
-for (const version of ['v1.7.3', 'v1.7.5', 'v1.7.6', 'v1.7.7']) test(`${version} waiver requires current targeted evidence and cannot carry forward`, () => {
+for (const version of ['v1.7.3', 'v1.7.5', 'v1.7.6', 'v1.7.7', 'v1.7.8']) test(`${version} waiver requires current targeted evidence and cannot carry forward`, () => {
   const { dir, run, save, commitVersion } = setupRepo(version);
   try {
     const sourceDigest = run('--fingerprint').trim();
@@ -175,18 +175,25 @@ for (const version of ['v1.7.3', 'v1.7.5', 'v1.7.6', 'v1.7.7']) test(`${version}
         const missing = structuredClone(valid); delete missing.verification[id]; save(missing); assert.throws(() => run());
       }
     }
+    if (version === 'v1.7.8') {
+      valid.liveTestWaiver = { approvedBy: 'Ender', instruction: '豁免  你只要复现并且保证修复  同时你现在让一个子agent去看看还有没有这类bug 审计一下', scope: 'video-preview-audio-targeted-acceptance' };
+      valid.verification = Object.fromEntries(['previewRegression', 'configRecovery', 'typeAudit', 'localReleaseGate', 'ci'].map(id => [id, { ...proof }]));
+      for (const id of Object.keys(valid.verification)) {
+        const missing = structuredClone(valid); delete missing.verification[id]; save(missing); assert.throws(() => run());
+      }
+    }
     save(valid); assert.match(run(), /paid matrix NOT run/);
     for (const mutate of [
       r => r.liveTestWaiver.approvedBy = 'other', r => r.review.independent = false,
       r => r.review.sourceDigest = 'stale', r => r.upgrade.preservedData = false,
       r => r.newSpentCNY = 1, r => r.cases = [{}], r => r.priorFinancialUncertainty.pendingCNY = 0,
-      r => r.verification[version === 'v1.7.7' ? 'referenceLinks' : version === 'v1.7.6' ? 'archivedRecovery' : 'credentialPersistence'].status = 'failed', r => r.verification.ci.sourceDigest = 'stale',
+      r => r.verification[version === 'v1.7.8' ? 'previewRegression' : version === 'v1.7.7' ? 'referenceLinks' : version === 'v1.7.6' ? 'archivedRecovery' : 'credentialPersistence'].status = 'failed', r => r.verification.ci.sourceDigest = 'stale',
       r => r.packages.windowsReleasedUpgradeAndRollbackBeforeUpload = false,
       r => r.releaseComplete = true, r => r.packages.status = 'passed',
     ]) {
       const changed = structuredClone(valid); mutate(changed); save(changed); assert.throws(() => run());
     }
-    const next = version === 'v1.7.3' ? 'v1.7.4' : version === 'v1.7.5' ? 'v1.7.6' : version === 'v1.7.6' ? 'v1.7.7' : 'v1.7.8';
+    const next = version === 'v1.7.3' ? 'v1.7.4' : version === 'v1.7.5' ? 'v1.7.6' : version === 'v1.7.6' ? 'v1.7.7' : version === 'v1.7.7' ? 'v1.7.8' : 'v1.7.9';
     commitVersion(next);
     save({ ...valid, version: next, sourceDigest: run('--fingerprint').trim() }, next);
     assert.throws(() => run());

@@ -35,6 +35,7 @@ const targetedWaivers = {
   'v1.7.5': ['合了一起发布吧', 'byok-download-resume-targeted-acceptance'],
   'v1.7.6': ['本版豁免付费矩阵，专项验收、独立复审和 CI 通过后发布', 'workspace-assets-targeted-acceptance'],
   'v1.7.7': ['本版豁免付费矩阵，专项验收、review 和 CI 通过后发布', 'reference-media-targeted-acceptance'],
+  'v1.7.8': ['豁免  你只要复现并且保证修复  同时你现在让一个子agent去看看还有没有这类bug 审计一下', 'video-preview-audio-targeted-acceptance'],
 };
 const targetedWaiver = targetedWaivers[version];
 if (targetedWaiver && receipt.liveTestWaiver?.approvedBy === 'Ender'
@@ -50,7 +51,9 @@ if (targetedWaiver && receipt.liveTestWaiver?.approvedBy === 'Ender'
   if (receipt.review?.result !== 'approved' || receipt.review?.independent !== true
     || receipt.review?.sourceDigest !== sourceDigest || !nonempty(receipt.review?.reviewer) || !evidence(receipt.review?.evidence)
     || receipt.upgrade?.preservedData !== true || receipt.upgrade?.sourceDigest !== sourceDigest || !evidence(receipt.upgrade?.evidence)) fail('v1.7.3 requires independent review and upgrade evidence for the current source');
-  const requiredChecks = version === 'v1.7.7'
+  const requiredChecks = version === 'v1.7.8'
+    ? ['previewRegression', 'configRecovery', 'typeAudit', 'localReleaseGate', 'ci']
+    : version === 'v1.7.7'
     ? ['mediaAdmission', 'referenceLinks', 'preparationStage', 'configScalars', 'localReleaseGate', 'ci']
     : version === 'v1.7.6'
     ? ['uploadLifecycle', 'deleteConfirmation', 'archivedRecovery', 'mediaPreview', 'localReleaseGate', 'ci']
