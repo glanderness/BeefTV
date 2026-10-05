@@ -319,7 +319,8 @@ func truncatePartial(path string) error {
 }
 
 func verifyDownloadedFile(path string, artifact PlatformArtifact) error {
-	file, err := os.Open(path)
+	// Windows FlushFileBuffers requires a writable handle even after hashing.
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		return err
 	}

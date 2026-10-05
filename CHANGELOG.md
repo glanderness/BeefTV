@@ -9,6 +9,12 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.8
+
+- 修复部分视频点击预览后页面崩溃、无法播放的问题。
+- 修复恢复设置时已关闭的视频声音开关被重新开启的问题。
+- 修复 Windows 下载更新包后无法完成校验的问题。
+
 ## v1.7.7
 
 - 生成前检查渠道能否读取参考素材，需要在线链接时可直接填写并继续生成，或切换渠道。
