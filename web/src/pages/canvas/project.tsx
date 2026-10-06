@@ -984,7 +984,7 @@ function InfiniteCanvasPage() {
         getCanvasCenter,
     });
 
-    const { runAssistantProposal, assistantProposalFeedback } = useCanvasAssistantProposal({
+    const { runAssistantProposal, assistantProposalFeedback, runningProposalIds } = useCanvasAssistantProposal({
         projectId,
         addedSkills,
         nodesRef,
@@ -3302,6 +3302,7 @@ function InfiniteCanvasPage() {
                 {rightPanel === "assistant" && !focusMode && !versions.preview ? (
                     <CanvasAssistantSidebar
                         proposalFeedback={assistantProposalFeedback}
+                        runningProposalIds={runningProposalIds}
                         assistant={assistant}
                         canvasTitle={workspaceProject?.title === "未命名项目" || !workspaceProject?.title ? "未命名工作区" : workspaceProject.title}
                         dockable={assistantDockable}

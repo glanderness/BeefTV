@@ -10,8 +10,12 @@ import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
 import type { ProposalSourceState } from "./canvas-assistant-proposal-snapshot";
 
+export function modelConfigHasUnconfirmedEdits(input: { modelConfigDirty: boolean; modelConfigStatus: string }) {
+    return input.modelConfigDirty || !["idle", "saved"].includes(input.modelConfigStatus);
+}
+
 export function assistantProposalHasUnconfirmedEdits(input: { canvasDirty: boolean; modelConfigDirty: boolean; modelConfigStatus: string }) {
-    return input.canvasDirty || input.modelConfigDirty || !["idle", "saved"].includes(input.modelConfigStatus);
+    return input.canvasDirty || modelConfigHasUnconfirmedEdits(input);
 }
 
 export function readAssistantProposalSourceState(projectId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], skills: Skill[]): ProposalSourceState {
@@ -21,11 +25,8 @@ export function readAssistantProposalSourceState(projectId: string, nodes: Canva
         canvasId: projectId,
         canvasRevision: project?.revision ?? -1,
         modelConfigRevision: persistence.revision,
-        hasUnconfirmedEdits: assistantProposalHasUnconfirmedEdits({
-            canvasDirty: hasUnconfirmedCanvasEdits(projectId),
-            modelConfigDirty: persistence.dirty,
-            modelConfigStatus: persistence.status,
-        }),
+        canvasHasUnconfirmedEdits: hasUnconfirmedCanvasEdits(projectId),
+        modelConfigHasUnconfirmedEdits: modelConfigHasUnconfirmedEdits({ modelConfigDirty: persistence.dirty, modelConfigStatus: persistence.status }),
         nodes,
         connections,
         config: effectiveConfigForCustomChannels(useConfigStore.getState().config, useUserStore.getState().features.customChannelsEnabled),

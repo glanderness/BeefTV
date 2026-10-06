@@ -2,7 +2,7 @@ import type { AssistantGenerationProposal } from "@/services/api/agent-assistant
 import type { CanvasNodeData } from "@/types/canvas";
 import type { CanvasNodeGenerationOptions } from "./use-canvas-generation-executor";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-project-generation";
-import { STALE_PROPOSAL_MESSAGE, type ConfirmedGenerationInputs } from "./canvas-assistant-proposal-snapshot";
+import { ASSISTANT_PROPOSAL_BLOCKED_TEXT, AssistantProposalBlockedError, type ConfirmedGenerationInputs } from "./canvas-assistant-proposal-snapshot";
 
 export const CANVAS_OWNER_CHANGED_PROPOSAL_MESSAGE = "画布或账号已切换，未提交生成。请重新确认提案。";
 
@@ -65,7 +65,7 @@ export async function executeAssistantProposal({ proposal, nodes, claims, isHand
                 notify(CANVAS_OWNER_CHANGED_PROPOSAL_MESSAGE);
                 return;
             }
-            notify(error instanceof Error && error.message === STALE_PROPOSAL_MESSAGE ? error.message : "无法核对提案的最新内容，请检查连接后重试。");
+            notify(error instanceof AssistantProposalBlockedError ? ASSISTANT_PROPOSAL_BLOCKED_TEXT[error.reason] : "无法核对提案的最新内容，请检查连接后重试。");
             return;
         }
         if (stillOwns && !stillOwns()) {
@@ -74,7 +74,7 @@ export async function executeAssistantProposal({ proposal, nodes, claims, isHand
         }
         const confirmedTargets = [...new Set(proposal.nodeIds)].map((id) => confirmedInputs.nodes.find((node) => node.id === id));
         if (confirmedTargets.some((node) => !node)) {
-            notify(STALE_PROPOSAL_MESSAGE);
+            notify(ASSISTANT_PROPOSAL_BLOCKED_TEXT.canvas_changed);
             return;
         }
         await Promise.allSettled(confirmedTargets.map(async (node) => {

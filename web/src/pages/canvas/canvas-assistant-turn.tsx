@@ -12,6 +12,8 @@ type Props = {
     status?: AssistantTurnStatus;
     handledProposals: Set<string>;
     proposalFeedback?: Record<string, string>;
+    /** Proposals whose 生成 click is still being checked or submitted. */
+    runningProposalIds?: ReadonlySet<string>;
     onLocate: (nodeIds: string[]) => void;
     onUndo: (turnId: string) => void;
     onRunProposal: (proposal: AssistantGenerationProposal) => void;
@@ -38,7 +40,7 @@ export function CanvasAssistantUserMessage({ text, selectedCount }: { text: stri
     );
 }
 
-export function CanvasAssistantTurnView({ turn, status, handledProposals, proposalFeedback, onLocate, onUndo, onRunProposal, onDismissProposal }: Props) {
+export function CanvasAssistantTurnView({ turn, status, handledProposals, proposalFeedback, runningProposalIds, onLocate, onUndo, onRunProposal, onDismissProposal }: Props) {
     const summary = assistantChangeSummary(turn.change);
     const changedNodeIds = assistantChangedNodeIds(turn.change);
     const failedActions = assistantUnresolvedFailures(turn.toolCalls);
@@ -87,18 +89,28 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
             {(turn.proposals || []).map((proposal) => {
                 const started = handledProposals.has(proposal.proposalId);
                 const skipped = handledProposals.has(dismissedProposalKey(proposal.proposalId));
+                const running = Boolean(runningProposalIds?.has(proposal.proposalId));
+                const feedback = proposalFeedback?.[proposal.proposalId];
                 return (
                     <div key={proposal.proposalId} className="canvas-assistant-card">
                         <span style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{assistantProposalText(proposal)}</span>
-                        {!skipped && proposalFeedback?.[proposal.proposalId] ? <span className="canvas-assistant-meta" role="status">{proposalFeedback[proposal.proposalId]}</span> : null}
+                        {!skipped && !running && feedback ? (
+                            <span className="canvas-assistant-failed" role="status" style={{ overflowWrap: "anywhere" }}>
+                                {feedback}
+                            </span>
+                        ) : null}
                         {started ? (
                             <span className="canvas-assistant-meta">已开始生成</span>
                         ) : skipped ? (
                             <span className="canvas-assistant-meta">这次没有生成</span>
                         ) : (
                             <div className="canvas-assistant-card-actions">
-                                <Button size="small" type="primary" autoInsertSpace={false} onClick={() => onRunProposal(proposal)}>生成</Button>
-                                <Button size="small" onClick={() => onDismissProposal(proposal.proposalId)}>先不用</Button>
+                                <Button size="small" type="primary" autoInsertSpace={false} loading={running} onClick={() => onRunProposal(proposal)}>
+                                    生成
+                                </Button>
+                                <Button size="small" disabled={running} onClick={() => onDismissProposal(proposal.proposalId)}>
+                                    先不用
+                                </Button>
                             </div>
                         )}
                     </div>
