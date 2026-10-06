@@ -185,11 +185,19 @@ export function settleInFlightGenerationOverlay(input: {
     return changed ? { ...input.local, nodes } : input.local;
 }
 
+// 节点级 createdAt/updatedAt 由编辑器在打开和编辑时补写，服务端写入的节点常常没有；
+// 它们不是用户编辑，远端删掉的节点不能只因为这两个字段不同就被留下。
+function sameNodeIgnoringTimestamps(left: CanvasNodeData, right: CanvasNodeData) {
+    const strip = ({ createdAt: _createdAt, updatedAt: _updatedAt, ...rest }: CanvasNodeData) => rest;
+    return equal(strip(left), strip(right));
+}
+
 function mergeEntityList<T extends { id: string }>(
     base: T[] | undefined,
     local: T[] | undefined,
     remote: T[] | undefined,
     conflict: { value: boolean },
+    sameAsBase: (local: T, base: T) => boolean = equal,
 ): T[] {
     const baseItems = Array.isArray(base) ? base : [];
     const localItems = Array.isArray(local) ? local : [];
@@ -211,7 +219,7 @@ function mergeEntityList<T extends { id: string }>(
             return;
         }
         if (baseItem && !remoteItem) {
-            if (localItem && !equal(localItem, baseItem)) {
+            if (localItem && !sameAsBase(localItem, baseItem)) {
                 conflict.value = true;
                 result.push(localItem);
             }
@@ -261,7 +269,7 @@ export function rebaseCanvasDocumentThreeWay(input: {
         ...generic,
         id: input.local.id,
         title: (generic.title as string | undefined) ?? input.local.title,
-        nodes: mergeEntityList<CanvasNodeData>(input.base.nodes, input.local.nodes, input.remote.nodes, conflict),
+        nodes: mergeEntityList<CanvasNodeData>(input.base.nodes, input.local.nodes, input.remote.nodes, conflict, sameNodeIgnoringTimestamps),
         connections: mergeEntityList<CanvasConnection>(input.base.connections, input.local.connections, input.remote.connections, conflict),
         chatSessions: mergeEntityList(input.base.chatSessions, input.local.chatSessions, input.remote.chatSessions, conflict),
         viewport: input.local.viewport || input.remote.viewport,

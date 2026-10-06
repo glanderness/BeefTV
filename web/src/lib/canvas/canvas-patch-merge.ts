@@ -42,13 +42,41 @@ function mergeValue(current: unknown, before: unknown, after: unknown): unknown 
     throw new Error("Agent 画布增量与本地内容冲突，需要校准；已保留本地编辑");
 }
 
-function mergeItems<T extends { id: string }>(items: T[], changes: Change<T>[]): T[] {
+// Node-level createdAt/updatedAt are stamped by the editor on load and on every
+// edit; server-written nodes often carry none. They are bookkeeping, not user
+// edits, so they never make a node "locally changed" or conflict on their own.
+const NODE_TIMESTAMP_KEYS = ["createdAt", "updatedAt"] as const;
+
+function withoutNodeTimestamps(value: unknown): unknown {
+    if (!record(value) || !NODE_TIMESTAMP_KEYS.some((key) => key in value)) return value;
+    const rest = { ...value };
+    for (const key of NODE_TIMESTAMP_KEYS) delete rest[key];
+    return rest;
+}
+
+function mergeNodeValue(current: unknown, before: unknown, after: unknown): unknown {
+    if (!record(current)) return mergeValue(current, before, after);
+    const stripped = withoutNodeTimestamps(current);
+    const merged = mergeValue(stripped, withoutNodeTimestamps(before), withoutNodeTimestamps(after));
+    if (merged === stripped) return current;
+    if (!record(merged)) return merged;
+    const next = { ...merged };
+    for (const key of NODE_TIMESTAMP_KEYS) {
+        const remote = record(after) ? after[key] : undefined;
+        const base = record(before) ? before[key] : undefined;
+        const value = remote !== undefined && !equal(remote, base) ? remote : current[key] ?? remote;
+        if (value !== undefined) next[key] = value;
+    }
+    return next;
+}
+
+function mergeItems<T extends { id: string }>(items: T[], changes: Change<T>[], merge: typeof mergeValue = mergeValue): T[] {
     if (!changes.length) return items;
     const next = new Map(items.map((item) => [item.id, item]));
     for (const { before, after } of changes) {
         const id = after?.id || before?.id;
         if (!id || (before && after && before.id !== after.id)) throw new Error("无效的画布增量节点");
-        const merged = mergeValue(next.get(id) ?? null, before, after) as T | null;
+        const merged = merge(next.get(id) ?? null, before, after) as T | null;
         if (merged === null) next.delete(id);
         else next.set(id, merged);
     }
@@ -77,7 +105,7 @@ export function applyCanvasPatch(project: CanvasProject, patch: CanvasPatch): Ca
         }
         return { ...change, before: { ...change.before!, metadata } };
     });
-    const nodes = mergeItems(project.nodes, nodeChanges);
+    const nodes = mergeItems(project.nodes, nodeChanges, mergeNodeValue);
     const connections = mergeItems(project.connections, patch.connections);
     if (nodes === project.nodes && connections === project.connections) return project;
     return { ...project, nodes, connections, updatedAt: patch.updatedAt || project.updatedAt };

@@ -77,3 +77,23 @@ test("full Agent refresh removes unchanged nodes but preserves conflicting local
     expect(() => mergeCanvasRefreshPatch(previous, incoming, [local, remaining], [])).toThrow("冲突");
     expect(local.title).toBe("Unsaved local title");
 });
+
+test("remote delete applies when the editor copy only gained node timestamps", () => {
+    // Server-written nodes carry no createdAt/updatedAt; the editor stamps them on load.
+    const text: CanvasNodeData = { id: "text-1", title: "文本", type: CanvasNodeType.Text, position: { x: 0, y: 0 }, width: 240, height: 120, metadata: { content: "助手写的文字" } };
+    const stamped = { ...text, createdAt: "2026-09-13T00:00:00.000Z", updatedAt: "2026-09-13T00:00:00.000Z" };
+    const previous = { ...project, nodes: [text] };
+    const incoming = { ...project, nodes: [] };
+    expect(mergeCanvasRefreshPatch(previous, incoming, [stamped], []).nodes).toEqual([]);
+    expect(() => mergeCanvasRefreshPatch(previous, incoming, [{ ...stamped, title: "本地改过的标题" }], [])).toThrow("冲突");
+    expect(() => mergeCanvasRefreshPatch(previous, incoming, [{ ...stamped, metadata: { ...text.metadata, updatedAt: "2026-09-14T00:00:00.000Z" } as never }], [])).toThrow("冲突");
+});
+
+test("remote update applies when the editor copy only gained node timestamps", () => {
+    const stamped = { ...node, createdAt: "2026-09-13T00:00:00.000Z", updatedAt: "2026-09-13T00:00:00.000Z" };
+    const remote = { ...node, title: "助手改的标题", position: { x: 50, y: 60 } };
+    const merged = mergeCanvasRefreshPatch(project, { ...project, nodes: [remote] }, [stamped], []);
+    expect(merged.nodes[0]).toEqual({ ...remote, createdAt: stamped.createdAt, updatedAt: stamped.updatedAt });
+    const unchanged = mergeCanvasRefreshPatch(project, { ...project, nodes: [node] }, [stamped], []);
+    expect(unchanged.nodes[0]).toBe(stamped);
+});

@@ -16,7 +16,7 @@ import { listAddedSkills, type Skill } from "@/services/api/skills";
 import { forceOverwriteRemoteCanvasSync, hasRemoteUserDataSyncSession, loadCanvasProjectForEditing, saveRemoteUserDataNow, subscribeCanvasRefresh } from "@/services/local-workspace-sync";
 import { createWorkspaceCanvasProject, deleteWorkspaceCanvasProjects } from "@/services/workspace-project-repository";
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
-import { scheduleLocalCanvasBackendSync, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
+import { holdExternalCanvasRevisionForEditor, scheduleLocalCanvasBackendSync, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { useCanvasThemeStore } from "@/stores/canvas/use-canvas-theme-store";
 import { projectSyncProgress, useSyncProgressStore } from "@/stores/use-sync-progress-store";
@@ -272,14 +272,26 @@ export function useCanvasProjectLifecycle({
         if (!projectLoaded || editorProjectIdRef.current !== projectId || project.id !== projectId) return;
         // Merge only server-changed fields so dragging/editing other nodes can
         // continue while Agent media tasks complete. Same-field conflicts fail.
-        const merged = previous ? mergeCanvasRefreshPatch(previous, project, nodesRef.current, connectionsRef.current) : project;
-        traceCanvasGraph("editor.refresh", { previous, incoming: project, live: { id: projectId, nodes: nodesRef.current, connections: connectionsRef.current }, merged });
-        if (observedContentRef.current) {
-            const observed = observedContentRef.current;
+        let merged: CanvasProject;
+        let baseline: CanvasProject | null = null;
+        try {
+            merged = previous ? mergeCanvasRefreshPatch(previous, project, nodesRef.current, connectionsRef.current) : project;
             // Advance only the observed server fields; edits in live refs still
             // differ from this baseline and must be persisted by the effect below.
-            const baseline = previous ? mergeCanvasRefreshPatch(previous, project, observed.nodes, observed.connections) : project;
-            observedContentRef.current = { ...observed, nodes: baseline.nodes, connections: baseline.connections };
+            const observed = observedContentRef.current;
+            if (observed) baseline = previous ? mergeCanvasRefreshPatch(previous, project, observed.nodes, observed.connections) : project;
+        } catch (error) {
+            // Keep the local edits on screen, but never let autosave silently
+            // write this stale graph over the server: surface the newer version
+            // and pause submits until the user picks it.
+            traceCanvasGraph("editor.refresh.conflict", { previous, incoming: project, live: { id: projectId, nodes: nodesRef.current, connections: connectionsRef.current } });
+            console.warn("画布外部改动与本地编辑冲突，已保留本地编辑", { id: projectId, error });
+            holdExternalCanvasRevisionForEditor(project);
+            return;
+        }
+        traceCanvasGraph("editor.refresh", { previous, incoming: project, live: { id: projectId, nodes: nodesRef.current, connections: connectionsRef.current }, merged });
+        if (observedContentRef.current && baseline) {
+            observedContentRef.current = { ...observedContentRef.current, nodes: baseline.nodes, connections: baseline.connections };
         }
         nodesRef.current = merged.nodes;
         connectionsRef.current = merged.connections;
