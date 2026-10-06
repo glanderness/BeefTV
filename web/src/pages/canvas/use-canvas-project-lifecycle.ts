@@ -1,6 +1,6 @@
 import { mergeCanvasRefreshPatch } from "@/lib/canvas/canvas-patch-merge";
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
-import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { App } from "antd";
 import { useNavigate } from "react-router";
 
@@ -17,6 +17,7 @@ import { forceOverwriteRemoteCanvasSync, hasRemoteUserDataSyncSession, loadCanva
 import { createWorkspaceCanvasProject, deleteWorkspaceCanvasProjects } from "@/services/workspace-project-repository";
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { holdExternalCanvasRevisionForEditor, scheduleLocalCanvasBackendSync, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
+import { isCanvasSubmitControlError } from "@/services/canvas-revision-conflict";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { useCanvasThemeStore } from "@/stores/canvas/use-canvas-theme-store";
 import { projectSyncProgress, useSyncProgressStore } from "@/stores/use-sync-progress-store";
@@ -336,6 +337,57 @@ export function useCanvasProjectLifecycle({
         if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
         updateProject(projectId, { viewport: viewportRef.current });
     }, [projectId, projectLoaded, updateProject, viewportRef]);
+
+    // Non-ref editor state for the leave flush. Synced in a layout effect, not
+    // during render, so the route-change render cannot hand B's state to A's flush.
+    const leaveFlushStateRef = useRef({ chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo });
+    useLayoutEffect(() => {
+        leaveFlushStateRef.current = { chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo };
+    }, [activeChatId, backgroundMode, canvasAppearance, chatSessions, showImageInfo]);
+
+    // Leaving the canvas (route change, project switch, unmount) or hiding the
+    // page must not depend on the 400 ms store timer or the 500 ms backend timer.
+    useEffect(() => {
+        if (!projectLoaded) return;
+        const flushOnLeave = (reason: string) => {
+            if (editorProjectIdRef.current !== projectId) return;
+            if (!useCanvasStore.getState().openProject(projectId)) return;
+            const live = leaveFlushStateRef.current;
+            const snapshot = { nodes: nodesRef.current, connections: connectionsRef.current, ...live };
+            if (observedContentRef.current && JSON.stringify(observedContentRef.current) !== JSON.stringify(snapshot)) {
+                traceCanvasGraph("editor.leaveFlush", { observed: { id: projectId, ...observedContentRef.current }, live: { id: projectId, ...snapshot }, stored: useCanvasStore.getState().openProject(projectId) });
+                updateProject(projectId, {
+                    nodes: snapshot.nodes,
+                    connections: snapshot.connections,
+                    chatSessions: live.chatSessions,
+                    activeChatId: live.activeChatId,
+                    appearance: live.canvasAppearance,
+                    backgroundMode: live.backgroundMode,
+                    showImageInfo: live.showImageInfo,
+                });
+                observedContentRef.current = snapshot;
+            }
+            updateProject(projectId, { viewport: viewportRef.current });
+            void (async () => {
+                await flushCanvasStorePersistence();
+                if (localMode) await syncLocalCanvasProjectToBackend(projectId);
+            })().catch((error) => {
+                if (isCanvasSubmitControlError(error)) return;
+                console.error("离开画布时保存失败", { projectId, reason, error });
+            });
+        };
+        const handlePageHide = () => flushOnLeave("pagehide");
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === "hidden") flushOnLeave("hidden");
+        };
+        window.addEventListener("pagehide", handlePageHide);
+        document.addEventListener("visibilitychange", handleVisibilityChange);
+        return () => {
+            window.removeEventListener("pagehide", handlePageHide);
+            document.removeEventListener("visibilitychange", handleVisibilityChange);
+            flushOnLeave("leave");
+        };
+    }, [connectionsRef, localMode, nodesRef, projectId, projectLoaded, updateProject, viewportRef]);
 
     const createAndOpenCanvas = useCallback(() => {
         const workspaceProjectId = currentProject ? canvasWorkspaceProjectId(currentProject) : undefined;
