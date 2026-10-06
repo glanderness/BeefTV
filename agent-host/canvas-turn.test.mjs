@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
-import { collectTurnEffects, newTurnAccumulator, providerRegistration, providerUnavailableReason,
+import { collectTurnEffects, extendWriteChain, newTurnAccumulator, rebaseOntoWriteChain, providerRegistration, providerUnavailableReason,
   resetTurnAccumulator, sessionTitle, turnChange, turnContextPrefix, unflushedSessionHistory } from "./canvas-turn.mjs";
 import { SYSTEM_PROMPT } from "./full-control-loader.mjs";
 
@@ -55,6 +55,30 @@ describe("本轮画布变更", () => {
             createdNodeIds: [], updatedNodeIds: ["video", "image"], createdEdgeIds: [],
             operationIds: ["first-edit", "second-edit", "third-edit"],
         });
+    });
+
+    test("本轮写入链：连续写入延长链头，断开时重新起链，换轮清空", () => {
+        const turn = resetTurnAccumulator(newTurnAccumulator(), 9);
+        expect([turn.writeChainStart, turn.writeChainHead]).toEqual([null, null]);
+        expect(rebaseOntoWriteChain(turn, 9)).toBe(9);
+        extendWriteChain(turn, 9, 10);
+        extendWriteChain(turn, 10, 11);
+        expect([turn.writeChainStart, turn.writeChainHead]).toEqual([9, 11]);
+        expect(rebaseOntoWriteChain(turn, 9)).toBe(11);
+        expect(rebaseOntoWriteChain(turn, 10)).toBe(11);
+        expect(rebaseOntoWriteChain(turn, 11)).toBe(11);
+        expect(rebaseOntoWriteChain(turn, 8)).toBe(8);
+        expect(rebaseOntoWriteChain(turn, 12)).toBe(12);
+        expect(rebaseOntoWriteChain(turn, "9")).toBe("9");
+        expect(rebaseOntoWriteChain(turn, 9.5)).toBe(9.5);
+        extendWriteChain(turn, 11, 11); // 幂等返回没有推进版本
+        expect(turn.writeChainHead).toBe(11);
+        extendWriteChain(turn, 13, 14); // 中间有别人的写入
+        expect([turn.writeChainStart, turn.writeChainHead]).toEqual([13, 14]);
+        expect(rebaseOntoWriteChain(turn, 11)).toBe(11);
+        resetTurnAccumulator(turn, 14);
+        expect([turn.writeChainStart, turn.writeChainHead]).toEqual([null, null]);
+        expect(newTurnAccumulator()).toMatchObject({ writeChainStart: null, writeChainHead: null });
     });
 
     test("只读了画布的一轮没有变更摘要", () => {

@@ -8,7 +8,8 @@ export const SUPPORTED_APIS = ['openai-completions', 'openai-responses', 'anthro
 
 export function newTurnAccumulator() {
   return { turnId: '', seq: 0, toolSeq: 0, revisionBefore: 0, revisionAfter: 0,
-    createdNodeIds: [], updatedNodeIds: [], createdEdgeIds: [], operationIds: [], proposals: [] };
+    createdNodeIds: [], updatedNodeIds: [], createdEdgeIds: [], operationIds: [], proposals: [],
+    writeChainStart: null, writeChainHead: null };
 }
 
 export function resetTurnAccumulator(turn, revisionBefore, turnId = '') {
@@ -22,7 +23,34 @@ export function resetTurnAccumulator(turn, revisionBefore, turnId = '') {
   turn.createdEdgeIds.length = 0;
   turn.operationIds.length = 0;
   turn.proposals.length = 0;
+  turn.writeChainStart = null;
+  turn.writeChainHead = null;
   return turn;
+}
+
+// 本轮自己的连续写入链 [writeChainStart, writeChainHead]：
+// 每一步都是本轮带 expectedRevision 的写入，从上一步的结果版本接着写。
+// 链内的每个版本都有本轮回执，所以模型拿链内旧版本发来的写入可以安全地接到链头上；
+// 链外的版本（中间可能夹着别人的写入）照常交给后端 CAS 拒绝。
+export function extendWriteChain(turn, expectedRevision, revision) {
+  if (!turn || !Number.isSafeInteger(expectedRevision) || !Number.isSafeInteger(revision)) return turn;
+  if (revision <= expectedRevision) return turn;
+  if (turn.writeChainHead !== null && expectedRevision === turn.writeChainHead) {
+    turn.writeChainHead = revision;
+  } else {
+    turn.writeChainStart = expectedRevision;
+    turn.writeChainHead = revision;
+  }
+  return turn;
+}
+
+// 返回应发送的 expectedRevision：落在本轮链内且落后于链头时换成链头，否则原样返回。
+export function rebaseOntoWriteChain(turn, expectedRevision) {
+  if (!turn || !Number.isSafeInteger(expectedRevision)) return expectedRevision;
+  const { writeChainStart: start, writeChainHead: head } = turn;
+  if (start === null || head === null) return expectedRevision;
+  if (start <= expectedRevision && expectedRevision < head) return head;
+  return expectedRevision;
 }
 
 function asStringList(value) {

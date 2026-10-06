@@ -3,11 +3,15 @@
 // 内置助手对 canvas.node.update 做字段投影：模型只看到 title/content。
 // 遗留 patch.prompt 仍留给 CLI/MCP；模型若编造该字段，在本桥拒绝，避免清空可见草稿。
 
-import { collectTurnEffects } from './canvas-turn.mjs';
+import { collectTurnEffects, extendWriteChain, rebaseOntoWriteChain } from './canvas-turn.mjs';
 import { toolOperationId } from './session-identity.mjs';
 import { budgetError, spendToolStep } from './request-budget.mjs';
 
 const CANVAS_NODE_UPDATE = 'canvas.node.update';
+
+// 局部写入：模型从同一份旧版本并行发出的几次写入，可以接到本轮自己的最新版本上。
+// canvas.document.commit 提交的是整份文档，旧版本的整份文档会覆盖本轮刚写的内容，所以不改写。
+const REBASABLE_WRITES = new Set(['canvas.nodes.create', 'canvas.edge.create', CANVAS_NODE_UPDATE]);
 
 export const ASSISTANT_CANVAS_NODE_UPDATE_PATCH = {
   title: {
@@ -104,18 +108,31 @@ export function createOperationBridge({
             opId = `attach-node:${params.taskId}:${params.nodeId}:${params.outputIndex}`;
           }
         }
+        let rebasedFrom;
+        if (REBASABLE_WRITES.has(descriptor.id)) {
+          const rebased = rebaseOntoWriteChain(turn, params.expectedRevision);
+          if (rebased !== params.expectedRevision) {
+            rebasedFrom = params.expectedRevision;
+            params.expectedRevision = rebased;
+          }
+        }
+        const rebaseNote = rebasedFrom === undefined ? {} : { rebasedFrom };
         const started = Date.now();
         try {
           assertAssistantNodeUpdateArgs(descriptor, params);
           const data = await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal, turn.turnId);
-          log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: false, ms: Date.now() - started, replayed: !!data?.replayed });
+          log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: false, ms: Date.now() - started, replayed: !!data?.replayed, ...rebaseNote });
+          // A replay returns an earlier result, not a write made just now on top of the chain head.
+          if (!descriptor.readOnly && !data?.replayed) {
+            extendWriteChain(turn, params.expectedRevision, data?.result?.revision);
+          }
           // A binding replay projects the current canvas, not a write by this turn.
           if (descriptor.id !== 'canvas.task.bind' || !data?.replayed) {
             collectTurnEffects(turn, descriptor.id, data?.result, opId);
           }
           return { content: [{ type: 'text', text: JSON.stringify(data) }] };
         } catch (error) {
-          log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: true, error: error.message, ms: Date.now() - started });
+          log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: true, error: error.message, ms: Date.now() - started, ...rebaseNote });
           throw error;
         }
       },
