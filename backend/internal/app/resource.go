@@ -25,6 +25,7 @@ import (
 	localasset "infinite-canvas/backend/internal/asset"
 	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 
 	"gorm.io/gorm"
 )
@@ -35,6 +36,22 @@ const directResourceURLTTL = 5 * time.Minute
 type ResourceStream = assets.ResourceStream
 type ResourceDeliveryOptions = assets.ResourceDeliveryOptions
 type ResourceDelivery = assets.ResourceDelivery
+
+// operationUploadDomain 返回绑到操作事务连接的资源域服务：
+// 仓储、配额（含策略读取）全部走同一条连接，磁盘写入走本地文件存储。
+func (s *Service) operationUploadDomain(repo *repository.Repository) *localasset.Service {
+	if s == nil || repo == nil {
+		return s.resourceDomain()
+	}
+	return localasset.NewService(localasset.Dependencies{
+		Repository:   localasset.NewRepository(repo),
+		Blobs:        localasset.NewFileStore(s.dataDir),
+		Quota:        txResourceQuota{svc: s, repo: repo},
+		Lifecycle:    resourceLifecycle{svc: s},
+		LocalStorage: s.localResourceStorage || s.IsLocalMode(),
+		DataDir:      s.dataDir,
+	})
+}
 
 func (s *Service) resourceDomain() *localasset.Service {
 	if s == nil {

@@ -491,10 +491,11 @@ func (s *operationSession) DeleteUserAsset(userID string, id string, expectedSta
 	return s.canvas.DeleteUserAsset(userID, id, expectedStatus...)
 }
 
-// UploadLocalFile 走资源域自身的配额与存储事务，不绑操作记录事务：
-// 素材登记失败时可原样重试（同上传身份返回已就绪资源），磁盘不会产生孤儿写入。
+// UploadLocalFile 必须绑到操作事务的连接执行：桌面库只有一条 SQLite 连接，
+// 操作写事务持有它时，任何走根仓储的上传（配额、资源落库）都会互相等待直到
+// 客户端超时。仓储、配额与策略读取全部换成同一条连接（SavePoint 嵌套）。
 func (s *operationSession) UploadLocalFile(userID string, fileName string, size int64, kind string, width int, height int, durationMs int64, file io.ReadSeeker, uploadIdentity ...string) (*model.Resource, error) {
-	return s.service.UploadLocalResourceFile(userID, fileName, size, kind, width, height, durationMs, file, uploadIdentity...)
+	return s.service.operationUploadDomain(s.repo).UploadLocalFile(userID, fileName, size, kind, width, height, durationMs, file, uploadIdentity...)
 }
 
 func (s *operationSession) Task(userID string, id string) (*model.Task, error) {
