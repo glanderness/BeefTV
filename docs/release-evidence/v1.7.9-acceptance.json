@@ -309,7 +309,7 @@
       "limits": [
         "Read-only SDK/current-artifact review; root owns original native UI observation.",
         "No original event prompts or credentials copied.",
-        "Original source carry-forward remains proposed, not user-approved.",
+        "Owner accepted carry-forward for v1.7.9 only; original execution identity is retained.",
         "Original creation happened before4219; continued use/persistence on4219 and7e is distinct evidence."
       ]
     },

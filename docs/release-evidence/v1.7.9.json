@@ -1,7 +1,7 @@
 {
   "version": "v1.7.9",
   "contractVersion": 2,
-  "sourceDigest": "pending-final-commit",
+  "sourceDigest": "109df656d676b27aef4967ab5941a279939ab407b4639ca3c5b7ecda2eccece3",
   "releaseComplete": false,
   "ownerException": {
     "scope": "portrait-release-evidence-20261007",
@@ -540,7 +540,7 @@
   "review": {
     "result": "pending",
     "independent": true,
-    "sourceDigest": "pending-final-commit",
+    "sourceDigest": "109df656d676b27aef4967ab5941a279939ab407b4639ca3c5b7ecda2eccece3",
     "reviewer": "Independent Codex /root/tv_release_audit",
     "evidence": [
       "docs/release-evidence/v1.7.9-acceptance.json#review"
