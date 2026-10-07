@@ -24,6 +24,35 @@ const receipt = JSON.parse(readFileSync(`docs/release-evidence/${version}.json`,
 const fail = message => { throw new Error(`Real generation release gate: ${message}`); };
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
+// This exact waiver applies only to the unified Seedance presentation release.
+if (version === 'v1.7.12' && receipt.liveTestWaiver?.scope === 'seedance-unified-display') {
+  const evidence = value => Array.isArray(value) && value.length > 0 && value.every(nonempty);
+  const bound = value => value?.sourceDigest === sourceDigest && evidence(value.evidence);
+  if (receipt.liveTestWaiver.approvedBy !== 'Ender'
+    || receipt.liveTestWaiver.instruction !== '上线吧 豁免了 飞书文档你再看看还要不要更新'
+    || !evidence(receipt.liveTestWaiver.evidence)) fail('v1.7.12 requires exact owner waiver');
+  if (receipt.newSpentCNY !== 0 || receipt.newPendingCNY !== 0
+    || receipt.liveMatrixStatus !== 'not_run_owner_waived' || !Array.isArray(receipt.cases)
+    || receipt.cases.length !== 0) fail('v1.7.12 must record no new paid calls and an unexecuted matrix');
+  if (receipt.budgetCNY !== null || receipt.spentCNY !== null || receipt.pendingCNY !== null
+    || receipt.priorFinancialUncertainty?.status !== 'unresolved'
+    || receipt.priorFinancialUncertainty.carriedFromVersion !== 'v1.7.11'
+    || receipt.priorFinancialUncertainty.pendingCNY !== null
+    || !evidence(receipt.priorFinancialUncertainty.evidence)) fail('v1.7.12 must retain historical financial uncertainty');
+  if (receipt.review?.result !== 'approved' || receipt.review.independent !== true
+    || !nonempty(receipt.review.reviewer) || !bound(receipt.review)
+    || receipt.upgrade?.preservedData !== true || !bound(receipt.upgrade)) fail('v1.7.12 requires source-bound independent review and preserved data');
+  for (const id of ['displayNames', 'nativeNames', 'localReleaseGate', 'ci']) {
+    if (receipt.verification?.[id]?.status !== 'passed' || !bound(receipt.verification[id])) fail(`v1.7.12 missing targeted evidence: ${id}`);
+  }
+  if (receipt.verification.nativeNames.method !== 'native') fail('v1.7.12 requires native name acceptance');
+  const packages = receipt.packages;
+  if (packages?.status !== 'pending_release_workflow' || packages.archives != null || receipt.releaseComplete !== false
+    || packages.windowsReleasedUpgradeAndRollbackBeforeUpload !== true || packages.finalArchiveSmokeBeforeUpload !== true
+    || !evidence(packages.workflowEvidence)) fail('v1.7.12 final package gates must remain enforced');
+  console.log('v1.7.12 unified Seedance release; paid matrix NOT run; new expense 0; historical uncertainty retained; final packages pending.');
+  process.exit(0);
+}
 // One-image regression authorized for this version only; no matrix carry-forward.
 if (version === 'v1.7.11' && receipt.ownerException?.scope === 'canvas-image-bind-regression-20261007') {
   const evidence = value => Array.isArray(value) && value.length > 0 && value.every(nonempty);
