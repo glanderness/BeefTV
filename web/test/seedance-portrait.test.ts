@@ -5,7 +5,7 @@ import { ModelPicker } from "../src/components/model-picker";
 import { portraitPriceLines, portraitTaskRetryError, seedancePortraitLabel } from "../src/lib/seedance-portrait";
 import { initialWorkbenchModel, refreshedWorkbenchModel } from "../src/pages/projects/detail/workflow-model-selection";
 import { applyFetchedChannelModelCatalog } from "../src/pages/settings/channel-settings-pane";
-import { groupModelsByDisplayName, modelCompatibilityError, resolveCompatibleModel } from "../src/lib/model-selection";
+import { compatibleModelInGroup, groupModelsByDisplayName, modelCompatibilityError, resolveCompatibleModel } from "../src/lib/model-selection";
 import { resolveCanvasGenerationModel } from "../src/lib/canvas/canvas-project-generation";
 import { defaultModelCapabilityConfig } from "../src/lib/model-capabilities";
 import { defaultConfig, normalizeConfigSnapshot, normalizeModelOptionValue, type AiConfig } from "../src/stores/use-config-store";
@@ -15,9 +15,10 @@ function fixture(): AiConfig {
     return { ...defaultConfig, channels: [{ id: "beefapi", name: "BeefAPI", apiFormat: "openai", baseUrl: "https://beefapi.com", apiKey: "", models: ids, modelProfiles: ids.map((id) => ({ model: id, displayName: "Seedance 2.0 真人素材版", capability: "video", protocol: "newapi", capabilityConfig: defaultModelCapabilityConfig("newapi", id), videoPricing: { currency: "CNY", mode: "tokens", rates: { "720p": { output: 69, reference_video: 42 } } } })) }], models: ids.map((id) => `beefapi::${id}`), videoModels: ids.map((id) => `beefapi::${id}`) };
 }
 
-test("same display labels cannot merge or auto-upgrade portrait and standard", () => {
+test("legacy and canonical models share one menu entry without silently switching saved IDs", () => {
     const config = fixture();
-    expect(groupModelsByDisplayName(config, config.models)).toHaveLength(2);
+    expect(groupModelsByDisplayName(config, config.models)).toHaveLength(1);
+    expect(groupModelsByDisplayName(config, [...config.models].reverse())[0].models[0]).toBe(config.models[0]);
     config.channels[0].modelProfiles![0].capabilityConfig!.video!.references.maxImages = 0;
     const requirements = { capability: "video" as const, input: { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 0, characterCount: 0 } };
     expect(resolveCompatibleModel(config, config.models[0], requirements)).toBe("");
@@ -28,6 +29,16 @@ test("unavailable saved portrait selection never becomes the default standard mo
     const config = fixture();
     config.channels[0].models = ["seedance-2.0"];
     expect(resolveCanvasGenerationModel(config, "beefapi::seedance-2.0-portrait", "video")).toBe("beefapi::seedance-2.0-portrait");
+});
+
+test("explicit menu selection can recover to canonical while automatic generation keeps a missing-quote alias blocked", () => {
+    const config = fixture();
+    const [canonical, alias] = config.models;
+    config.channels[0].modelProfiles![1].videoPricing = null;
+    const requirements = { capability: "video" as const };
+    const group = groupModelsByDisplayName(config, config.models)[0];
+    expect(resolveCompatibleModel(config, alias, requirements)).toBe("");
+    expect(compatibleModelInGroup(config, group.models, requirements, alias)).toBe(canonical);
 });
 
 test("workbench retains unavailable portrait defaults and explicit choices across catalog refresh", () => {
@@ -80,19 +91,28 @@ test("missing quote blocks portrait generation and never fabricates a price", ()
     config.channels[0].modelProfiles![1].videoPricing = null;
     expect(modelCompatibilityError(config, config.models[1], { capability: "video" })).toContain("价格暂不可用");
     expect(portraitPriceLines(undefined)).toEqual([]);
-    expect(seedancePortraitLabel("beefapi::seedance-2.5-portrait")).toBe("Seedance 2.5-真人");
+    expect(seedancePortraitLabel("beefapi::seedance-2.5-portrait")).toBe("Seedance 2.5");
 });
 
 test("selected portrait option visibly shows account-sourced prices before generation", () => {
     const config = fixture();
     config.channels[0].modelProfiles![1].displayName = "Seedance 2.0-Pro";
     const html = renderToStaticMarkup(createElement(ModelPicker, { config, value: config.models[1], capability: "video", onChange() {} }));
-    expect(html).toContain("Seedance 2.0-真人");
+    expect(html).toContain("Seedance 2.0");
     expect(html).not.toContain("Seedance 2.0-Pro");
-    expect(html).toContain("真人素材版参考单价");
+    expect(html).toContain("视频参考单价");
     expect(html).toContain("¥69");
     expect(html).toContain("¥42");
     expect(html).not.toContain("必过");
+});
+
+test("canonical Seedance choice shows the returned official quote", () => {
+    const config = fixture();
+    config.channels[0].modelProfiles![0].videoPricing!.rates["720p"] = { output: 46, reference_video: 28 };
+    const html = renderToStaticMarkup(createElement(ModelPicker, { config, value: config.models[0], capability: "video", onChange() {} }));
+    expect(html).toContain("Seedance 2.0");
+    expect(html).toContain("¥46");
+    expect(html).toContain("¥28");
 });
 
 
