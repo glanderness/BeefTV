@@ -39,6 +39,15 @@ func (unusedDomain) CreateUserCanvasNodes(string, string, []canvas.NodeDraft, in
 func (unusedDomain) UpdateUserCanvasNodeFields(string, string, string, map[string]any, int64) (canvas.UserDataSummary, error) {
 	panic("unused")
 }
+func (unusedDomain) AppendUserCanvasStoryboardRows(string, string, string, []canvas.StoryboardRowDraft, int64) (canvas.UserDataSummary, []canvas.StoryboardRowIdentity, error) {
+	panic("unused")
+}
+func (unusedDomain) UpdateUserCanvasStoryboardRows(string, string, string, []canvas.StoryboardRowPatch, int64) (canvas.UserDataSummary, []canvas.StoryboardRowIdentity, error) {
+	panic("unused")
+}
+func (unusedDomain) RemoveUserCanvasStoryboardRows(string, string, string, []string, int64) (canvas.UserDataSummary, int, error) {
+	panic("unused")
+}
 func (unusedDomain) ConnectUserCanvasNodesAtRevision(string, string, string, string, int64) (canvas.UserDataSummary, error) {
 	panic("unused")
 }
