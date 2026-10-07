@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"time"
 
@@ -488,6 +489,12 @@ func (s *operationSession) UpsertUserAsset(userID string, raw json.RawMessage) (
 
 func (s *operationSession) DeleteUserAsset(userID string, id string, expectedStatus ...string) error {
 	return s.canvas.DeleteUserAsset(userID, id, expectedStatus...)
+}
+
+// UploadLocalFile 走资源域自身的配额与存储事务，不绑操作记录事务：
+// 素材登记失败时可原样重试（同上传身份返回已就绪资源），磁盘不会产生孤儿写入。
+func (s *operationSession) UploadLocalFile(userID string, fileName string, size int64, kind string, width int, height int, durationMs int64, file io.ReadSeeker, uploadIdentity ...string) (*model.Resource, error) {
+	return s.service.UploadLocalResourceFile(userID, fileName, size, kind, width, height, durationMs, file, uploadIdentity...)
 }
 
 func (s *operationSession) Task(userID string, id string) (*model.Task, error) {

@@ -24,6 +24,9 @@ type Context struct {
 	UserID  string
 	Caller  Caller
 	Domain  Domain
+	// OpID 是写操作的幂等键（只读操作为空）；需要二级幂等的领域写入
+	// （如资源上传的上传身份）应复用它，保证重试不产生重复存储。
+	OpID string
 }
 
 // Handler 实现一个操作；返回值必须是可 JSON 序列化的业务结果。
@@ -232,7 +235,7 @@ func (r *Registry) Execute(req Request) (Result, error) {
 	}
 	outcome, err := r.store.RunDomain(runCtx, RunRequest{UserID: req.UserID, OpID: opID, Op: op.ID,
 		PayloadHash: canonicalHash, AlternatePayloadHash: alternateHash, TurnID: req.TurnID, CanvasID: target.CanvasID}, r.binder, func(domain Domain) ([]byte, error) {
-		execCtx := &Context{Context: runCtx, UserID: req.UserID, Caller: caller, Domain: domain}
+		execCtx := &Context{Context: runCtx, UserID: req.UserID, Caller: caller, Domain: domain, OpID: opID}
 		value, runErr := op.Handler(execCtx, params)
 		if runErr != nil {
 			return nil, AsError(runErr)

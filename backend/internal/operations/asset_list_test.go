@@ -2,6 +2,7 @@ package operations
 
 import (
 	"encoding/json"
+	"io"
 	"testing"
 
 	"infinite-canvas/backend/internal/canvas"
@@ -77,6 +78,9 @@ func (unusedDomain) UpsertUserAsset(string, json.RawMessage) (canvas.UserDataSum
 	panic("unused")
 }
 func (unusedDomain) DeleteUserAsset(string, string, ...string) error { panic("unused") }
+func (unusedDomain) UploadLocalFile(string, string, int64, string, int, int, int64, io.ReadSeeker, ...string) (*model.Resource, error) {
+	panic("unused")
+}
 
 type assetListProbe struct {
 	unusedDomain

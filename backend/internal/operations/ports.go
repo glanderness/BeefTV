@@ -2,6 +2,7 @@ package operations
 
 import (
 	"encoding/json"
+	"io"
 
 	"gorm.io/gorm"
 
@@ -20,6 +21,7 @@ type Domain interface {
 	UserAsset(userID string, id string) (json.RawMessage, error)
 	UpsertUserAsset(userID string, raw json.RawMessage) (canvas.UserDataSummary, error)
 	DeleteUserAsset(userID string, id string, expectedStatus ...string) error
+	UploadLocalFile(userID string, fileName string, size int64, kind string, width int, height int, durationMs int64, file io.ReadSeeker, uploadIdentity ...string) (*model.Resource, error)
 	Task(userID string, id string) (*model.Task, error)
 	ResolveAssistantGenerationModel(kind, selectedModel string) (AssistantGenerationModel, error)
 	CreateUserCanvasNodes(userID string, canvasID string, drafts []canvas.NodeDraft, expectedRevision int64) (canvas.UserDataSummary, []canvas.CreatedNode, error)

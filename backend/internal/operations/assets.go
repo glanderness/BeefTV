@@ -2,8 +2,17 @@ package operations
 
 import (
 	"encoding/json"
+	"image"
+	// 注册标准库图片格式解码器，用于上传前读取图片宽高并校验文件确实是图片。
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"infinite-canvas/backend/internal/model"
 )
 
 // maxAssetTitleRunes 对齐 model.Asset 的 Title 长度约束（size:240）。
@@ -90,12 +99,28 @@ func buildMediaAssetDocument(ctx *Context, args assetCreateArgs, resourceID stri
 	if err != nil {
 		return nil, mapDomainError(err)
 	}
+	if declared := strings.TrimSpace(args.Kind); declared != "" && declared != strings.ToLower(strings.TrimSpace(resource.Kind)) {
+		return nil, InvalidArg("kind_mismatch", "kind 与资源实际类型不一致（资源是 "+resource.Kind+"）")
+	}
+	return mediaAssetDocumentFromResource(*resource, assetMetaFields{
+		Title: args.Title, Tags: args.Tags, Category: args.Category, FolderID: args.FolderID, Note: args.Note,
+	})
+}
+
+// assetMetaFields 是登记素材时调用方可给的元字段（title 必填，其余可选）。
+type assetMetaFields struct {
+	Title    string
+	Tags     []string
+	Category string
+	FolderID string
+	Note     string
+}
+
+// mediaAssetDocumentFromResource 用资源记录构造媒体素材文档；kind 以资源类型为准。
+func mediaAssetDocumentFromResource(resource model.Resource, meta assetMetaFields) (json.RawMessage, error) {
 	kind := strings.ToLower(strings.TrimSpace(resource.Kind))
 	if _, ok := assetMediaKinds[kind]; !ok {
 		return nil, InvalidArg("unsupported_kind", "资源类型不支持登记为素材: "+resource.Kind)
-	}
-	if declared := strings.TrimSpace(args.Kind); declared != "" && declared != kind {
-		return nil, InvalidArg("kind_mismatch", "kind 与资源实际类型不一致（资源是 "+kind+"）")
 	}
 	resourceURL := "/api/resources/" + resource.ID + "/file"
 	data := map[string]any{
@@ -121,21 +146,21 @@ func buildMediaAssetDocument(ctx *Context, args assetCreateArgs, resourceID stri
 		}
 		data["fileName"] = fileName
 	}
-	tags := args.Tags
+	tags := meta.Tags
 	if tags == nil {
 		tags = []string{}
 	}
 	document := map[string]any{
-		"kind": kind, "title": args.Title, "coverUrl": resourceURL, "tags": tags, "data": data,
+		"kind": kind, "title": meta.Title, "coverUrl": resourceURL, "tags": tags, "data": data,
 	}
-	if value := strings.TrimSpace(args.Category); value != "" {
+	if value := strings.TrimSpace(meta.Category); value != "" {
 		document["category"] = value
 	}
-	if value := strings.TrimSpace(args.FolderID); value != "" {
+	if value := strings.TrimSpace(meta.FolderID); value != "" {
 		document["folderId"] = value
 	}
-	if strings.TrimSpace(args.Note) != "" {
-		document["note"] = args.Note
+	if strings.TrimSpace(meta.Note) != "" {
+		document["note"] = meta.Note
 	}
 	encoded, marshalErr := json.Marshal(document)
 	if marshalErr != nil {
@@ -149,6 +174,88 @@ func positiveDimension(value int) int {
 		return 1
 	}
 	return value
+}
+
+// opAssetUpload 把本机文件上传进资源库并自动登记为素材：
+// MCP/CLI 与 BeefTV 后端同机，调用方只传文件路径，文件内容不经过模型上下文。
+// 上传身份沿用操作幂等键——同一 operationId 重试时资源域直接返回已就绪资源。
+func opAssetUpload(ctx *Context, params json.RawMessage) (any, error) {
+	var args struct {
+		FilePath string   `json:"filePath"`
+		Title    string   `json:"title"`
+		Tags     []string `json:"tags"`
+		Category string   `json:"category"`
+		FolderID string   `json:"folderId"`
+		Note     string   `json:"note"`
+	}
+	if err := decodeParams(params, &args); err != nil {
+		return nil, err
+	}
+	if err := validateAssetTitle(args.Title); err != nil {
+		return nil, err
+	}
+	file, width, height, size, closeErr := openLocalImage(args.FilePath)
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	defer file.Close()
+	resource, err := ctx.Domain.UploadLocalFile(ctx.UserID, filepath.Base(args.FilePath), size,
+		"image", width, height, 0, file, string(ctx.Caller.Kind)+":"+ctx.OpID)
+	if err != nil {
+		return nil, mapDomainError(err)
+	}
+	document, err := mediaAssetDocumentFromResource(*resource, assetMetaFields{
+		Title: args.Title, Tags: args.Tags, Category: args.Category, FolderID: args.FolderID, Note: args.Note,
+	})
+	if err != nil {
+		return nil, err
+	}
+	summary, err := ctx.Domain.UpsertUserAsset(ctx.UserID, document)
+	if err != nil {
+		return nil, mapDomainError(err)
+	}
+	return map[string]any{
+		"assetId": summary.ID, "resourceId": resource.ID, "kind": summary.Kind,
+		"category": summary.Category, "title": summary.Title,
+		"createdAt": summary.CreatedAt, "updatedAt": summary.UpdatedAt,
+	}, nil
+}
+
+// openLocalImage 打开本机图片文件并读取宽高：必须是可以解码的图片，其余格式拒绝。
+// 路径必须是绝对路径——相对路径的基准进程不明，宁可拒绝也不猜。
+func openLocalImage(rawPath string) (*os.File, int, int, int64, error) {
+	path := strings.TrimSpace(rawPath)
+	if path == "" {
+		return nil, 0, 0, 0, InvalidArg("invalid_params", "filePath 必填")
+	}
+	if !filepath.IsAbs(path) {
+		return nil, 0, 0, 0, InvalidArg("invalid_params", "filePath 必须是绝对路径")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, 0, 0, 0, NotFound("file_not_found", "文件不存在或不可访问: "+path)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, 0, 0, 0, InvalidArg("invalid_params", "filePath 必须指向普通文件")
+	}
+	if info.Size() <= 0 {
+		return nil, 0, 0, 0, InvalidArg("invalid_params", "文件为空")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, 0, 0, 0, NotFound("file_not_found", "文件无法打开: "+path)
+	}
+	config, _, decodeErr := image.DecodeConfig(file)
+	if decodeErr != nil {
+		file.Close()
+		return nil, 0, 0, 0, InvalidArg("unsupported_kind",
+			"asset.upload 当前只支持 png/jpeg/gif 图片；其他媒体请先经上传或生成链路进入资源库，再用 asset.create 的 resourceId 登记")
+	}
+	if _, err := file.Seek(0, 0); err != nil {
+		file.Close()
+		return nil, 0, 0, 0, AsError(err)
+	}
+	return file, config.Width, config.Height, info.Size(), nil
 }
 
 func opAssetUpdate(ctx *Context, params json.RawMessage) (any, error) {

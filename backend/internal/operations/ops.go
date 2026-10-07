@@ -87,6 +87,9 @@ func RegisterDefaultOps(r *Registry) {
 	r.Register(Op{ID: "asset.update", Summary: "按 ID 局部更新素材元字段（标题、标签、收藏、分类、文件夹、备注；媒体内容不开放，画布引用守卫由服务端复检）", Scope: ScopeAsset,
 		Params:  json.RawMessage(`{"type":"object","properties":{"assetId":{"type":"string"},"title":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}},"favorite":{"type":"boolean"},"category":{"type":"string"},"folderId":{"type":"string"},"note":{"type":"string"}},"required":["assetId"]}`),
 		Handler: opAssetUpdate})
+	r.Register(Op{ID: "asset.upload", Summary: "把本机文件上传进资源库并登记为素材（当前支持 png/jpeg/gif 图片；filePath 用绝对路径，文件由本机服务直接读取，不经过模型）", Scope: ScopeAsset,
+		Params:  json.RawMessage(`{"type":"object","properties":{"filePath":{"type":"string","description":"本机文件的绝对路径，例如外部工具生成图片的输出路径"},"title":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}},"category":{"type":"string"},"folderId":{"type":"string"},"note":{"type":"string"}},"required":["filePath","title"]}`),
+		Handler: opAssetUpload})
 	r.Register(Op{ID: "asset.delete", Summary: "按 ID 删除素材（素材仍被引用时拒绝并返回来源；expectedTitle 必须与素材当前标题一致）", Scope: ScopeAsset,
 		Params:  json.RawMessage(`{"type":"object","properties":{"assetId":{"type":"string"},"expectedTitle":{"type":"string"}},"required":["assetId","expectedTitle"]}`),
 		Handler: opAssetDelete})

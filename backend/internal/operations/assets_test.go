@@ -1,7 +1,14 @@
 package operations
 
 import (
+	"bytes"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/png"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,10 +19,20 @@ import (
 // assetWriteProbe 记录 handler 写入素材库的文档，模拟真实领域的 upsert 行为。
 type assetWriteProbe struct {
 	unusedDomain
-	stored   map[string]json.RawMessage
-	deleted  []string
-	upserts  int
-	resource *model.Resource
+	stored      map[string]json.RawMessage
+	deleted     []string
+	upserts     int
+	resource    *model.Resource
+	uploadCalls []uploadCall
+}
+
+type uploadCall struct {
+	fileName string
+	size     int64
+	kind     string
+	width    int
+	height   int
+	identity []string
 }
 
 func (p *assetWriteProbe) UserAsset(_ string, id string) (json.RawMessage, error) {
@@ -45,6 +62,21 @@ func (p *assetWriteProbe) UpsertUserAsset(_ string, raw json.RawMessage) (canvas
 func (p *assetWriteProbe) DeleteUserAsset(_ string, id string, _ ...string) error {
 	p.deleted = append(p.deleted, id)
 	return nil
+}
+
+func (p *assetWriteProbe) UploadLocalFile(_ string, fileName string, size int64, kind string, width int, height int, _ int64, file io.ReadSeeker, identity ...string) (*model.Resource, error) {
+	p.uploadCalls = append(p.uploadCalls, uploadCall{fileName: fileName, size: size, kind: kind, width: width, height: height, identity: identity})
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) != int(size) {
+		return nil, InvalidArg("invalid_params", "读取字节数与 size 不一致")
+	}
+	resource := &model.Resource{ID: "res-up", Kind: kind, Status: model.ResourceStatusReady,
+		MimeType: "image/png", Size: size, Width: width, Height: height}
+	p.resource = resource
+	return resource, nil
 }
 
 func (p *assetWriteProbe) OwnedReadyResource(_ string, resourceID string) (*model.Resource, error) {
@@ -262,5 +294,87 @@ func TestOpAssetDeleteRequiresTitleConfirmation(t *testing.T) {
 	}
 	if len(probe.deleted) != 1 || probe.deleted[0] != "a1" {
 		t.Fatalf("deleted = %#v", probe.deleted)
+	}
+}
+
+// writeTestPNG 在临时目录生成一张真实 PNG，返回绝对路径与文件字节。
+func writeTestPNG(t *testing.T, width, height int) string {
+	t.Helper()
+	picture := image.NewRGBA(image.Rect(0, 0, width, height))
+	for x := 0; x < width; x++ {
+		picture.Set(x, 0, color.RGBA{R: 255, A: 255})
+	}
+	var buffer bytes.Buffer
+	if err := png.Encode(&buffer, picture); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "codex-output.png")
+	if err := os.WriteFile(path, buffer.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// asset.upload：本机图片 → 资源库 → 素材，宽高由服务端解码文件得到。
+func TestOpAssetUploadRegistersLocalImage(t *testing.T) {
+	probe := newAssetWriteProbe()
+	path := writeTestPNG(t, 16, 9)
+	result, err := opAssetUpload(&Context{UserID: "owner", Domain: probe, OpID: "op-1"},
+		json.RawMessage(`{"filePath":"`+path+`","title":"Codex 生成图","tags":["AI"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(probe.uploadCalls) != 1 {
+		t.Fatalf("uploadCalls = %#v", probe.uploadCalls)
+	}
+	call := probe.uploadCalls[0]
+	if call.kind != "image" || call.width != 16 || call.height != 9 || call.fileName != "codex-output.png" {
+		t.Fatalf("upload call = %#v", call)
+	}
+	if call.size <= 0 || len(call.identity) == 0 || !strings.Contains(call.identity[0], "op-1") {
+		t.Fatalf("upload identity/size = %#v", call)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(probe.stored["asset-new"], &document); err != nil {
+		t.Fatal(err)
+	}
+	if document["kind"] != "image" {
+		t.Fatalf("document = %#v", document)
+	}
+	data, _ := document["data"].(map[string]any)
+	if data["storageKey"] != "resource:res-up" || data["width"] != float64(16) {
+		t.Fatalf("data = %#v", data)
+	}
+	payload := result.(map[string]any)
+	if payload["assetId"] != "asset-new" || payload["resourceId"] != "res-up" {
+		t.Fatalf("回执 = %#v", payload)
+	}
+}
+
+func TestOpAssetUploadRejectsBadPathsAndNonImages(t *testing.T) {
+	probe := newAssetWriteProbe()
+	// 缺路径 / 相对路径 / 不存在。
+	if _, err := opAssetUpload(&Context{UserID: "owner", Domain: probe}, json.RawMessage(`{"filePath":"  ","title":"x"}`)); err == nil {
+		t.Fatal("空路径应被拒绝")
+	}
+	if _, err := opAssetUpload(&Context{UserID: "owner", Domain: probe}, json.RawMessage(`{"filePath":"relative.png","title":"x"}`)); err == nil {
+		t.Fatal("相对路径应被拒绝")
+	}
+	if _, err := opAssetUpload(&Context{UserID: "owner", Domain: probe}, json.RawMessage(`{"filePath":"/tmp/no-such-file.png","title":"x"}`)); err == nil {
+		t.Fatal("不存在的文件应被拒绝")
+	}
+	// 存在但不是图片。
+	textFile := filepath.Join(t.TempDir(), "note.txt")
+	if err := os.WriteFile(textFile, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := opAssetUpload(&Context{UserID: "owner", Domain: probe},
+		json.RawMessage(`{"filePath":"`+textFile+`","title":"x"}`))
+	opErr, ok := err.(*Error)
+	if !ok || opErr.Reason != "unsupported_kind" {
+		t.Fatalf("非图片应被拒绝，实际 %v", err)
+	}
+	if len(probe.uploadCalls) != 0 {
+		t.Fatal("不应触达上传")
 	}
 }
