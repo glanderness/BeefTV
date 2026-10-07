@@ -12,7 +12,8 @@ import (
 	"infinite-canvas/backend/internal/canvas/capability"
 )
 
-// RegisterDefaultOps 注册首版全部操作。生成/付费入口不在本轮暴露：
+// RegisterDefaultOps 注册全部对外操作（手工 UI、CLI、MCP 与内置助手共用）。
+// 付费生成只经 canvas.generation.propose 提议、由界面确认后执行；
 // 未经参数与费用风险验收的能力明确不注册，而不是提供 stub 伪成功。
 func RegisterDefaultOps(r *Registry) {
 	r.Register(Op{ID: "canvas.get", Summary: "读取指定画布的完整内容（节点与连线）", ReadOnly: true, Scope: ScopeCanvas,
@@ -39,6 +40,16 @@ func RegisterDefaultOps(r *Registry) {
 	r.Register(Op{ID: "canvas.edge.create", Summary: "连接两个节点（重复连接幂等返回）", Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"fromNodeId":{"type":"string"},"toNodeId":{"type":"string"},"expectedRevision":{"type":"integer"}},"required":["canvasId","fromNodeId","toNodeId","expectedRevision"]}`),
 		Handler: opCanvasEdgeCreate})
+	// 分镜脚本节点的行级写入：行 ID 与镜号由服务端分配，字段白名单见 canvas.StoryboardRowDraft。
+	r.Register(Op{ID: "canvas.script.rows.append", Summary: "向分镜脚本节点批量追加分镜行（行 ID 与镜号由服务端分配，行结构对齐界面默认值）", Scope: ScopeCanvas,
+		Params:  storyboardRowsAppendSchema(),
+		Handler: opStoryboardRowsAppend})
+	r.Register(Op{ID: "canvas.script.row.update", Summary: "按行 ID 批量局部更新分镜行（只覆盖给出的字段，未知行整批拒绝）", Scope: ScopeCanvas,
+		Params:  storyboardRowUpdateSchema(),
+		Handler: opStoryboardRowUpdate})
+	r.Register(Op{ID: "canvas.script.row.remove", Summary: "按行 ID 批量删除分镜行并重排镜号（未知行整批拒绝）", Scope: ScopeCanvas,
+		Params:  storyboardRowRemoveSchema(),
+		Handler: opStoryboardRowRemove})
 	r.Register(Op{ID: "canvas.document.commit", Summary: "按已知服务端 revision 提交整份画布文档（保留未触及字段，带 CAS）", Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"expectedRevision":{"type":"integer"},"document":{"type":"object"}},"required":["canvasId","expectedRevision","document"]}`),
 		Handler: opCanvasDocumentCommit})
@@ -52,6 +63,36 @@ func RegisterDefaultOps(r *Registry) {
 	r.Register(Op{ID: "conversation.message.attach", Summary: "把已交付的任务产物绑定到原对话消息（校验归属与就绪资源，带 revision CAS，幂等回执）", Scope: ScopeConversation,
 		Params:  json.RawMessage(`{"type":"object","properties":{"conversationId":{"type":"string"},"taskId":{"type":"string"},"messageId":{"type":"string"},"outputIndex":{"type":"integer"}},"required":["conversationId","taskId","messageId"]}`),
 		Handler: opConversationMessageAttach, ProjectReplay: projectConversationMessageAttachReplay})
+	// 项目的增删改查：读属工作区级，写属项目域。删除是高危不可逆操作，必须带项目当前名称确认。
+	r.Register(Op{ID: "project.list", Summary: "分页列出工作区内的项目（含画布、素材、单元计数）", ReadOnly: true, Scope: ScopeWorkspaceRead,
+		Params:  json.RawMessage(`{"type":"object","properties":{"page":{"type":"integer"},"pageSize":{"type":"integer"}}}`),
+		Handler: opProjectList})
+	r.Register(Op{ID: "project.get", Summary: "按 ID 读取项目本体、单元列表与关联画布", ReadOnly: true, Scope: ScopeWorkspaceRead,
+		Params:  json.RawMessage(`{"type":"object","properties":{"projectId":{"type":"string"}},"required":["projectId"]}`),
+		Handler: opProjectGet})
+	r.Register(Op{ID: "project.create", Summary: "创建项目（name 必填；type/aspectRatio/sourceType 缺省为 short-drama/9:16/blank）", Scope: ScopeProject,
+		Params:  json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"},"type":{"type":"string"},"aspectRatio":{"type":"string"},"sourceType":{"type":"string"},"description":{"type":"string"},"defaultImageModel":{"type":"string"},"defaultVideoModel":{"type":"string"}},"required":["name"]}`),
+		Handler: opProjectCreate})
+	r.Register(Op{ID: "project.update", Summary: "按 ID 局部更新项目（只覆盖给出的字段，带 revision CAS）", Scope: ScopeProject,
+		Params:  json.RawMessage(`{"type":"object","properties":{"projectId":{"type":"string"},"expectedRevision":{"type":"integer"},"name":{"type":"string"},"type":{"type":"string"},"aspectRatio":{"type":"string"},"sourceType":{"type":"string"},"description":{"type":"string"},"status":{"type":"string","enum":["active","archived"]},"defaultImageModel":{"type":"string"},"defaultVideoModel":{"type":"string"}},"required":["projectId","expectedRevision"]}`),
+		Handler: opProjectUpdate})
+	r.Register(Op{ID: "project.delete", Summary: "删除项目及其单元、分镜等工作区生产数据（先解绑画布；有进行中任务则拒绝；expectedName 必须与项目当前名称一致）", Scope: ScopeProject,
+		Params:  json.RawMessage(`{"type":"object","properties":{"projectId":{"type":"string"},"expectedName":{"type":"string"}},"required":["projectId","expectedName"]}`),
+		Handler: opProjectDelete})
+	// 素材库写：内容型素材（text/entity）直接创建；媒体类素材（image/video/audio/model）
+	// 必须携带 resourceId，由服务端从已就绪且归属当前用户的资源记录构造元数据。
+	r.Register(Op{ID: "asset.create", Summary: "创建素材：内容型用 kind=text/entity + content/definition；媒体型（图片/视频/音频/模型）用 resourceId 指向已上传或生成产物落库的资源，元数据由服务端取自资源记录", Scope: ScopeAsset,
+		Params:  json.RawMessage(`{"type":"object","properties":{"kind":{"type":"string","description":"素材类型；带 resourceId 时可省略，由资源类型推导"},"resourceId":{"type":"string","description":"媒体素材的资源 ID（上传或生成产物）；给出后 width/bytes/mimeType 等全部取自资源记录"},"title":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}},"category":{"type":"string"},"folderId":{"type":"string"},"note":{"type":"string"},"content":{"type":"string","description":"text 素材正文"},"definition":{"type":"object","description":"entity 素材定义"}},"required":["title"]}`),
+		Handler: opAssetCreate})
+	r.Register(Op{ID: "asset.update", Summary: "按 ID 局部更新素材元字段（标题、标签、收藏、分类、文件夹、备注；媒体内容不开放，画布引用守卫由服务端复检）", Scope: ScopeAsset,
+		Params:  json.RawMessage(`{"type":"object","properties":{"assetId":{"type":"string"},"title":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}},"favorite":{"type":"boolean"},"category":{"type":"string"},"folderId":{"type":"string"},"note":{"type":"string"}},"required":["assetId"]}`),
+		Handler: opAssetUpdate})
+	r.Register(Op{ID: "asset.upload", Summary: "把本机文件上传进资源库并登记为素材（当前支持 png/jpeg/gif 图片；filePath 用绝对路径，文件由本机服务直接读取，不经过模型）", Scope: ScopeAsset,
+		Params:  json.RawMessage(`{"type":"object","properties":{"filePath":{"type":"string","description":"本机文件的绝对路径，例如外部工具生成图片的输出路径"},"title":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}},"category":{"type":"string"},"folderId":{"type":"string"},"note":{"type":"string"}},"required":["filePath","title"]}`),
+		Handler: opAssetUpload})
+	r.Register(Op{ID: "asset.delete", Summary: "按 ID 删除素材（素材仍被引用时拒绝并返回来源；expectedTitle 必须与素材当前标题一致）", Scope: ScopeAsset,
+		Params:  json.RawMessage(`{"type":"object","properties":{"assetId":{"type":"string"},"expectedTitle":{"type":"string"}},"required":["assetId","expectedTitle"]}`),
+		Handler: opAssetDelete})
 }
 
 func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error) {

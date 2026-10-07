@@ -571,6 +571,43 @@ add({
 });
 
 add({
+  id: "rightapi-image", providerId: "rightapi-image", name: "RightAPI Draw Image", vendor: "RightAPI", capability: "image",
+  baseUrl: "https://www.right.codes", auth: bearer, params: imageParams,
+  notes: "提交固定 async:true 并立即返回 task_id；任务查询走站点级 /v1/tasks/{task_id}（不带 /draw 前缀）。size 支持比例（1:1/16:9/9:16/4:3）或像素（1024x1024），imageSize 为 1K/2K/4K 档位且上限取决于模型。参考图 image 为 data URL 数组。结果 URL 是短期地址，由宿主立即下载持久化。",
+  create: jsonCreate("/draw/v1/images/generations", {
+    $merge: [
+      {
+        model: ref("request.model"),
+        prompt: ref("request.prompt"),
+        async: true,
+        n: conditional(gt(toInt(ref("request.imageCount")), 0), toInt(ref("request.imageCount")), 1),
+        size: omit(conditional(eq(ref("request.aspectRatio"), "auto"), null, ref("request.aspectRatio"))),
+        imageSize: omit({
+          $switch: {
+            cases: [
+              { when: eq(lower(trim(ref("request.quality"))), "low"), then: "1K" },
+              { when: eq(lower(trim(ref("request.quality"))), "1k"), then: "1K" },
+              { when: eq(lower(trim(ref("request.quality"))), "medium"), then: "2K" },
+              { when: eq(lower(trim(ref("request.quality"))), "2k"), then: "2K" },
+              { when: eq(lower(trim(ref("request.quality"))), "high"), then: "4K" },
+              { when: eq(lower(trim(ref("request.quality"))), "4k"), then: "4K" }
+            ],
+            default: null
+          }
+        }),
+        image: omit(map(filter(sorted(ref("request.images")), "media", ne(ref("media.role"), "mask")), "media", coalesce(ref("media.dataUrl"), ref("media.url"))))
+      },
+      coalesce(ref("request.providerOptions.rightapi-image.body"), ref("request.providerOptions.rightapi-image.extra_body"), {})
+    ]
+  }, { originPath: true }),
+  poll: { method: "GET", path: "/v1/tasks/{{taskId}}", originPath: true },
+  response: asyncResponse("image", {
+    images: ref("response.data"),
+    errorPaths: ["error.code", "error.type"]
+  })
+});
+
+add({
   id: "openai-audio", providerId: "openai-audio", name: "OpenAI Audio Speech", vendor: "OpenAI", capability: "audio",
   baseUrl: "https://api.openai.com", auth: bearer, params: audioParams,
   notes: "同步 /v1/audio/speech 返回原始音频流，由 binaryPayload 包装为统一音频结果。",

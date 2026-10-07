@@ -409,6 +409,14 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
         image.responseFormat.supported = false;
         image.outputFormat.supported = false;
     }
+    if (protocol === "rightapi-image") {
+        // RightAPI 画图：size 支持比例或像素；quality 档位映射 imageSize（1K/2K/4K，上限取决于模型）。
+        // 无蒙版、透明背景和响应格式参数，协议由声明式插件 rightapi-image 承载。
+        image.references.maskSupported = false;
+        image.transparentBackground.supported = false;
+        image.responseFormat.supported = false;
+        image.outputFormat.supported = false;
+    }
     if (protocol === "gemini-image") {
         image.references.maskSupported = false;
         // Gemini Images uses imageConfig.aspectRatio, not the OpenAI-style pixel size field.

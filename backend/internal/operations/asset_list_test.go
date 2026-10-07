@@ -2,6 +2,7 @@ package operations
 
 import (
 	"encoding/json"
+	"io"
 	"testing"
 
 	"infinite-canvas/backend/internal/canvas"
@@ -39,6 +40,15 @@ func (unusedDomain) CreateUserCanvasNodes(string, string, []canvas.NodeDraft, in
 func (unusedDomain) UpdateUserCanvasNodeFields(string, string, string, map[string]any, int64) (canvas.UserDataSummary, error) {
 	panic("unused")
 }
+func (unusedDomain) AppendUserCanvasStoryboardRows(string, string, string, []canvas.StoryboardRowDraft, int64) (canvas.UserDataSummary, []canvas.StoryboardRowIdentity, error) {
+	panic("unused")
+}
+func (unusedDomain) UpdateUserCanvasStoryboardRows(string, string, string, []canvas.StoryboardRowPatch, int64) (canvas.UserDataSummary, []canvas.StoryboardRowIdentity, error) {
+	panic("unused")
+}
+func (unusedDomain) RemoveUserCanvasStoryboardRows(string, string, string, []string, int64) (canvas.UserDataSummary, int, error) {
+	panic("unused")
+}
 func (unusedDomain) ConnectUserCanvasNodesAtRevision(string, string, string, string, int64) (canvas.UserDataSummary, error) {
 	panic("unused")
 }
@@ -52,6 +62,23 @@ func (unusedDomain) GenerationOutputs(string) ([]localtask.CanonicalOutput, erro
 func (unusedDomain) OwnedReadyResource(string, string) (*model.Resource, error) { panic("unused") }
 func (unusedDomain) OwnedAsset(string, string) (*model.Asset, error)            { panic("unused") }
 func (unusedDomain) BindExistingCanvasNode(string, canvas.TaskOutputBind) (canvas.TaskOutputBindResult, error) {
+	panic("unused")
+}
+func (unusedDomain) ListProjectsPage(string, int, int) (ProjectListPage, error) { panic("unused") }
+func (unusedDomain) ProjectDetail(string, string) (ProjectDetail, error)        { panic("unused") }
+func (unusedDomain) CreateProject(string, ProjectCreateInput) (model.Project, error) {
+	panic("unused")
+}
+func (unusedDomain) UpdateProject(string, string, ProjectUpdateInput) (model.Project, error) {
+	panic("unused")
+}
+func (unusedDomain) DeleteProject(string, string) error                  { panic("unused") }
+func (unusedDomain) OwnedProject(string, string) (*model.Project, error) { panic("unused") }
+func (unusedDomain) UpsertUserAsset(string, json.RawMessage) (canvas.UserDataSummary, error) {
+	panic("unused")
+}
+func (unusedDomain) DeleteUserAsset(string, string, ...string) error { panic("unused") }
+func (unusedDomain) UploadLocalFile(string, string, int64, string, int, int, int64, io.ReadSeeker, ...string) (*model.Resource, error) {
 	panic("unused")
 }
 

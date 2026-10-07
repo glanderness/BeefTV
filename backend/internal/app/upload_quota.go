@@ -31,11 +31,15 @@ func (s *Service) reserveUserUploadQuota(userID string, size int64) (string, err
 }
 
 func (s *Service) reserveUserUploadQuotaFor(userID string, size int64, identity string) (string, error) {
-	policy, err := s.RuntimePolicy()
+	return s.reserveUserUploadQuotaForWithRepo(s.repo, userID, size, identity)
+}
+
+func (s *Service) reserveUserUploadQuotaForWithRepo(repo *repository.Repository, userID string, size int64, identity string) (string, error) {
+	policy, err := s.runtimePolicyWithRepo(repo)
 	if err != nil {
 		return "", err
 	}
-	return s.reserveUserStoredFileQuota(userID, size, megabytes(policy.Resource.ResourceUploadMB), megabytes(policy.Resource.DailyUploadMB), gigabytes(policy.Resource.StoredFileGB), fmt.Sprintf("单个上传文件必须小于 %dMB", policy.Resource.ResourceUploadMB), identity)
+	return s.reserveUserStoredFileQuotaWithRepo(repo, userID, size, megabytes(policy.Resource.ResourceUploadMB), megabytes(policy.Resource.DailyUploadMB), gigabytes(policy.Resource.StoredFileGB), fmt.Sprintf("单个上传文件必须小于 %dMB", policy.Resource.ResourceUploadMB), identity)
 }
 
 // reserveChunkedUploadQuota 用于分片上传完成时预留额度：单文件上限对分片会话不适用（每片已独立校验），
@@ -45,11 +49,15 @@ func (s *Service) reserveChunkedUploadQuota(userID string, size int64) (string, 
 }
 
 func (s *Service) reserveChunkedUploadQuotaFor(userID string, size int64, identity string) (string, error) {
-	policy, err := s.RuntimePolicy()
+	return s.reserveChunkedUploadQuotaForWithRepo(s.repo, userID, size, identity)
+}
+
+func (s *Service) reserveChunkedUploadQuotaForWithRepo(repo *repository.Repository, userID string, size int64, identity string) (string, error) {
+	policy, err := s.runtimePolicyWithRepo(repo)
 	if err != nil {
 		return "", err
 	}
-	return s.reserveUserStoredFileQuota(userID, size, size+1, megabytes(policy.Resource.DailyUploadMB), gigabytes(policy.Resource.StoredFileGB), "", identity)
+	return s.reserveUserStoredFileQuotaWithRepo(repo, userID, size, size+1, megabytes(policy.Resource.DailyUploadMB), gigabytes(policy.Resource.StoredFileGB), "", identity)
 }
 
 func (s *Service) reserveGeneratedResourceQuota(userID string, size int64) (string, error) {
@@ -57,11 +65,15 @@ func (s *Service) reserveGeneratedResourceQuota(userID string, size int64) (stri
 }
 
 func (s *Service) reserveGeneratedResourceQuotaFor(userID string, size int64, identity string) (string, error) {
-	policy, err := s.RuntimePolicy()
+	return s.reserveGeneratedResourceQuotaForWithRepo(s.repo, userID, size, identity)
+}
+
+func (s *Service) reserveGeneratedResourceQuotaForWithRepo(repo *repository.Repository, userID string, size int64, identity string) (string, error) {
+	policy, err := s.runtimePolicyWithRepo(repo)
 	if err != nil {
 		return "", err
 	}
-	return s.reserveUserStoredFileQuota(userID, size, megabytes(policy.Resource.GeneratedFileMB)+1, megabytes(policy.Resource.DailyUploadMB), gigabytes(policy.Resource.StoredFileGB), fmt.Sprintf("单个生成文件不能超过 %dMB", policy.Resource.GeneratedFileMB), identity)
+	return s.reserveUserStoredFileQuotaWithRepo(repo, userID, size, megabytes(policy.Resource.GeneratedFileMB)+1, megabytes(policy.Resource.DailyUploadMB), gigabytes(policy.Resource.StoredFileGB), fmt.Sprintf("单个生成文件不能超过 %dMB", policy.Resource.GeneratedFileMB), identity)
 }
 
 // 失败资源的记录已经计入账号存储用量；重试只重新预留当日上传额度，避免重复计算存储容量。
@@ -70,7 +82,11 @@ func (s *Service) reserveRetryUploadQuota(userID string, size int64) (string, er
 }
 
 func (s *Service) reserveRetryUploadQuotaFor(userID string, size int64, identity string) (string, error) {
-	policy, err := s.RuntimePolicy()
+	return s.reserveRetryUploadQuotaForWithRepo(s.repo, userID, size, identity)
+}
+
+func (s *Service) reserveRetryUploadQuotaForWithRepo(repo *repository.Repository, userID string, size int64, identity string) (string, error) {
+	policy, err := s.runtimePolicyWithRepo(repo)
 	if err != nil {
 		return "", err
 	}
@@ -83,7 +99,7 @@ func (s *Service) reserveRetryUploadQuotaFor(userID string, size int64, identity
 	day := time.Now().UTC().Format("2006-01-02")
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
-	if err := s.repo.ReserveIdentifiedDailyUpload(userID, day, identity, size, megabytes(policy.Resource.DailyUploadMB)); err != nil {
+	if err := repo.ReserveIdentifiedDailyUpload(userID, day, identity, size, megabytes(policy.Resource.DailyUploadMB)); err != nil {
 		if errors.Is(err, repository.ErrDailyUploadLimitExceeded) {
 			return "", QuotaExceeded(fmt.Sprintf("每个账号 UTC 自然日上传总量必须小于 %s", formatStorageLimit(megabytes(policy.Resource.DailyUploadMB))))
 		}
@@ -100,7 +116,11 @@ func (s *Service) reserveRetryGeneratedQuota(userID string, size int64) (string,
 }
 
 func (s *Service) reserveRetryGeneratedQuotaFor(userID string, size int64, identity string) (string, error) {
-	policy, err := s.RuntimePolicy()
+	return s.reserveRetryGeneratedQuotaForWithRepo(s.repo, userID, size, identity)
+}
+
+func (s *Service) reserveRetryGeneratedQuotaForWithRepo(repo *repository.Repository, userID string, size int64, identity string) (string, error) {
+	policy, err := s.runtimePolicyWithRepo(repo)
 	if err != nil {
 		return "", err
 	}
@@ -113,7 +133,7 @@ func (s *Service) reserveRetryGeneratedQuotaFor(userID string, size int64, ident
 	day := time.Now().UTC().Format("2006-01-02")
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
-	if err := s.repo.ReserveIdentifiedDailyUpload(userID, day, identity, size, megabytes(policy.Resource.DailyUploadMB)); err != nil {
+	if err := repo.ReserveIdentifiedDailyUpload(userID, day, identity, size, megabytes(policy.Resource.DailyUploadMB)); err != nil {
 		if errors.Is(err, repository.ErrDailyUploadLimitExceeded) {
 			return "", QuotaExceeded(fmt.Sprintf("每个账号 UTC 自然日上传总量必须小于 %s", formatStorageLimit(megabytes(policy.Resource.DailyUploadMB))))
 		}
@@ -126,6 +146,12 @@ func (s *Service) reserveRetryGeneratedQuotaFor(userID string, size int64, ident
 }
 
 func (s *Service) reserveUserStoredFileQuota(userID string, size int64, exclusiveSingleFileLimit int64, dailyLimit int64, storedLimit int64, singleFileMessage string, identity string) (string, error) {
+	return s.reserveUserStoredFileQuotaWithRepo(s.repo, userID, size, exclusiveSingleFileLimit, dailyLimit, storedLimit, singleFileMessage, identity)
+}
+
+// reserveUserStoredFileQuotaWithRepo 是配额预留的事务连接版：操作层写事务持有
+// 桌面库唯一连接时，配额读写必须走同一条连接，否则互相等待直到客户端超时。
+func (s *Service) reserveUserStoredFileQuotaWithRepo(repo *repository.Repository, userID string, size int64, exclusiveSingleFileLimit int64, dailyLimit int64, storedLimit int64, singleFileMessage string, identity string) (string, error) {
 	if size <= 0 {
 		return "", BadAuthRequest("上传文件不能为空")
 	}
@@ -135,7 +161,7 @@ func (s *Service) reserveUserStoredFileQuota(userID string, size int64, exclusiv
 	day := time.Now().UTC().Format("2006-01-02")
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
-	storedBytes, err := s.repo.UserStoredFileBytes(userID)
+	storedBytes, err := repo.UserStoredFileBytes(userID)
 	if err != nil {
 		return "", err
 	}
@@ -147,7 +173,7 @@ func (s *Service) reserveUserStoredFileQuota(userID string, size int64, exclusiv
 		return "", QuotaExceeded(fmt.Sprintf("账号资源和会话附件已达到 %s 上限，请联系管理员清理历史文件", formatStorageLimit(storedLimit)))
 	}
 	s.pendingStorage[key] += size
-	if err := s.repo.ReserveIdentifiedDailyUpload(userID, day, identity, size, dailyLimit); err != nil {
+	if err := repo.ReserveIdentifiedDailyUpload(userID, day, identity, size, dailyLimit); err != nil {
 		s.decreasePendingStorage(key, size)
 		if errors.Is(err, repository.ErrDailyUploadLimitExceeded) {
 			return "", QuotaExceeded(fmt.Sprintf("每个账号 UTC 自然日上传总量必须小于 %s", formatStorageLimit(dailyLimit)))
@@ -172,12 +198,16 @@ func (s *Service) releaseUserUploadQuota(userID string, day string, size int64) 
 }
 
 func (s *Service) releaseUserUploadQuotaFor(userID string, day string, size int64, identity string) {
+	s.releaseUserUploadQuotaForWithRepo(s.repo, userID, day, size, identity)
+}
+
+func (s *Service) releaseUserUploadQuotaForWithRepo(repo *repository.Repository, userID string, day string, size int64, identity string) {
 	if day == "" || size <= 0 {
 		return
 	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
-	if err := s.repo.ReleaseIdentifiedDailyUpload(userID, day, identity, size); err != nil {
+	if err := repo.ReleaseIdentifiedDailyUpload(userID, day, identity, size); err != nil {
 		log.Printf("release upload quota failed: user=%s day=%s size=%d error=%v", userID, day, size, err)
 		return
 	}
@@ -189,12 +219,16 @@ func (s *Service) releaseRetryUploadQuota(userID string, day string, size int64)
 }
 
 func (s *Service) releaseRetryUploadQuotaFor(userID string, day string, size int64, identity string) {
+	s.releaseRetryUploadQuotaForWithRepo(s.repo, userID, day, size, identity)
+}
+
+func (s *Service) releaseRetryUploadQuotaForWithRepo(repo *repository.Repository, userID string, day string, size int64, identity string) {
 	if day == "" || size <= 0 {
 		return
 	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
-	if err := s.repo.ReleaseIdentifiedDailyUpload(userID, day, identity, size); err != nil {
+	if err := repo.ReleaseIdentifiedDailyUpload(userID, day, identity, size); err != nil {
 		log.Printf("release retry upload quota failed: user=%s day=%s size=%d error=%v", userID, day, size, err)
 		return
 	}
@@ -205,13 +239,17 @@ func (s *Service) commitUserUploadQuota(userID string, size int64) {
 }
 
 func (s *Service) commitUserUploadQuotaFor(userID string, size int64, identity string) {
+	s.commitUserUploadQuotaForWithRepo(s.repo, userID, size, identity)
+}
+
+func (s *Service) commitUserUploadQuotaForWithRepo(repo *repository.Repository, userID string, size int64, identity string) {
 	if size <= 0 {
 		return
 	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
-	if s.repo != nil {
-		if err := s.repo.ClearUploadReservation(userID, identity); err != nil {
+	if repo != nil {
+		if err := repo.ClearUploadReservation(userID, identity); err != nil {
 			log.Printf("clear upload reservation failed: user=%s identity=%s error=%v", userID, identity, err)
 			return
 		}
