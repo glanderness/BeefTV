@@ -9,6 +9,12 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.11
+
+- 图片生成前先保存画布节点，保存冲突时停止提交，避免生成完成后找不到结果节点。
+- 图片已生成但画布更新失败时保留原任务，可重新加载资源，无需再次生成。
+- 修复桌面端“重新加载资源”不可用，以及恢复任务后一直显示生成中的问题。
+
 ## v1.7.10
 
 - 真人视频模型统一显示为 Seedance 2.0-真人、Seedance 2.5-真人，模型选择、设置和名称搜索保持一致。

@@ -292,13 +292,9 @@ export function useCanvasResourceHandoff({
         async (node: CanvasNodeData) => {
             const taskId = node.metadata?.taskId;
             if (!taskId || !node.metadata?.resourceReloadAvailable) return;
-            if (isLocalWorkspaceMode() || import.meta.env.VITE_CANVAS_LOCAL_MODE !== "false") {
-                message.info("本地工作区不会从云端重新加载任务资源，请直接在画布中重新生成");
-                return;
-            }
             const owner = lifetime.capture(projectId);
             const targetNodeId = node.id;
-            setNodes((current) => current.map((item) => (item.id === targetNodeId ? { ...item, metadata: { ...item.metadata, status: "loading", taskStage: "正在重新加载资源", errorDetails: undefined } } : item)));
+            // 查询旧任务不改变可恢复状态，切换画布后仍可再次重新加载。
             try {
                 const task = await queryGenerationTask(taskId);
                 if (!lifetime.matches(owner, projectIdRef.current)) return;

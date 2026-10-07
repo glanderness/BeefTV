@@ -46,6 +46,7 @@ test("F04: only an accepted task receipt marks handled, before completion and on
         generate: async (_id, _mode, _prompt, options) => {
             expect(events).toEqual([]);
             await runCanvasGenerationTaskToConsumer({ projectId: "test", nodeId: node.id, mode: "image", prompt: "test", config: defaultConfig }, {
+                prepareTarget: async () => undefined,
                 bindTask: (receipt) => options?.onTaskUpdate?.(receipt),
                 consumeTask: async () => { events.push("consumed"); },
                 runTask: async ({ onTaskCreated }) => {

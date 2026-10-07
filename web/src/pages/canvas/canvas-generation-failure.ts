@@ -1,6 +1,8 @@
 import { explainGenerationError, generationFailureMetadata, generationPromptFingerprint, shouldBlockAutomaticRetry, unchangedModeratedPrompt } from "@/lib/generation-error";
-import type { CanvasNodeMetadata } from "@/types/canvas";
+import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 import type { GenerationTask } from "@/services/api/task-center";
+import { CanvasGenerationTargetSaveError } from "@/services/canvas-generation-errors";
+import { generationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 
 type GenerationReference = { id?: string; storageKey?: string; url?: string; dataUrl?: string };
 export type CanvasGenerationFailureInput = {
@@ -25,6 +27,7 @@ function submittedReferences(input: CanvasGenerationFailureInput) {
 
 export function canvasGenerationFailureMetadata(error: unknown, input: CanvasGenerationFailureInput) {
     const failure = generationFailureMetadata(error, input.prompt, submittedReferences(input));
+    if (error instanceof CanvasGenerationTargetSaveError) return { ...failure, errorDetails: error.message, generationErrorSummary: error.message };
     return { ...failure, ...(failure.generationErrorCode === "canvas_conflict" ? { resourceReloadAvailable: true } : {}) };
 }
 
@@ -44,11 +47,13 @@ export function canvasTaskFailureMetadata(task: GenerationTask, metadata?: Canva
         failure.failedInputFingerprint = metadata.failedInputFingerprint;
         failure.failedPromptFingerprint = metadata.failedPromptFingerprint;
     }
-    const diagnostics = task.status === "succeeded" ? { ...task.failureDiagnostics, source: "client_result" as const, summary: failure.generationErrorSummary, stage: "画布应用结果", capturedAt: new Date().toISOString() } : task.failureDiagnostics;
+    const cause = error instanceof Error && error.cause instanceof Error ? error.cause : error;
+    const diagnostics = task.status === "succeeded" ? { ...task.failureDiagnostics, source: "client_result" as const, executionResult: "completed" as const, summary: cause instanceof Error ? cause.message : failure.generationErrorSummary, stage: "画布应用结果", capturedAt: new Date().toISOString() } : task.failureDiagnostics;
     return { ...failure, taskFailureDiagnostics: diagnostics, taskProviderRequestId: task.providerRequestId };
 }
 
 export function canvasGenerationRetryBlocked(metadata: CanvasNodeMetadata | undefined, input?: CanvasGenerationFailureInput) {
+    if (metadata?.resourceReloadAvailable) return true;
     const error = { code: metadata?.generationErrorCode || metadata?.taskErrorCode, message: metadata?.errorDetails };
     if (!shouldBlockAutomaticRetry(error, metadata?.taskStage)) return false;
     // Only a resolved submission can prove that moderated input was changed.
@@ -58,4 +63,33 @@ export function canvasGenerationRetryBlocked(metadata: CanvasNodeMetadata | unde
     }
     if (input) return metadata?.taskStage === "submission_unknown" || ["submission_uncertain", "timeout", "download_failed", "results_missing", "partial_success", "canvas_conflict"].includes(explainGenerationError(error).category);
     return true;
+}
+
+export function canvasImageGenerationHasPendingResult(node: CanvasNodeData | undefined, nodes: CanvasNodeData[]) {
+    return Boolean(node?.metadata?.resourceReloadAvailable || node?.metadata?.generationErrorCode === "canvas_conflict"
+        || node?.metadata?.batchChildIds?.some((id) => {
+            const child = nodes.find((item) => item.id === id);
+            return child?.metadata?.resourceReloadAvailable || child?.metadata?.generationErrorCode === "canvas_conflict";
+        }));
+}
+
+export function canvasGenerationTaskNodes(nodes: CanvasNodeData[], targetNodeId: string, task: GenerationTask): CanvasNodeData[] {
+    return nodes.map((node) => {
+        if (node.id !== targetNodeId) return node;
+        const failed = task.status === "failed" || task.status === "cancelled";
+        const hasCompletedContent = task.status === "succeeded" && Boolean(node.metadata?.content || node.metadata?.storageKey);
+        const retainRecovery = task.status === "succeeded" && !hasCompletedContent && Boolean(node.metadata?.resourceReloadAvailable || node.metadata?.generationErrorCode === "canvas_conflict");
+        const failure = failed ? canvasTaskFailureMetadata(task, node.metadata) : undefined;
+        return {
+            ...node,
+            metadata: {
+                ...node.metadata,
+                ...generationTaskMetadata(task),
+                status: failed || retainRecovery ? "error" : hasCompletedContent ? "success" : "loading",
+                ...(failure || (retainRecovery
+                    ? { resourceReloadAvailable: true, generationErrorCode: "canvas_conflict", errorDetails: node.metadata?.errorDetails || "生成结果已保留，请重新加载资源" }
+                    : { errorDetails: undefined, generationErrorCode: undefined, resourceReloadAvailable: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined })),
+            },
+        };
+    });
 }

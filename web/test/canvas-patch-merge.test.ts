@@ -53,7 +53,9 @@ test("deleted nodes and a newer task binding are not overwritten", () => {
 
 test("task state covers Agent, manual submissions and historical terminal tasks", () => {
     for (const status of ["queued", "running"]) expect(isCanvasNodeGenerating({ ...node, metadata: { status: "idle", taskId: "task", taskStatus: status } })).toBe(true);
-    for (const status of ["succeeded", "failed", "cancelled"]) expect(isCanvasNodeGenerating({ ...node, metadata: { status: "loading", taskId: "old", taskStatus: status } })).toBe(false);
+    for (const status of ["failed", "cancelled"]) expect(isCanvasNodeGenerating({ ...node, metadata: { status: "loading", taskId: "old", taskStatus: status } })).toBe(false);
+    expect(isCanvasNodeGenerating({ ...node, metadata: { status: "loading", taskId: "old", taskStatus: "succeeded" } })).toBe(true);
+    expect(isCanvasNodeGenerating({ ...node, metadata: { status: "success", taskId: "old", taskStatus: "succeeded", storageKey: "resource:done" } })).toBe(false);
     expect(isCanvasNodeGenerating({ ...node, metadata: { status: "loading" } })).toBe(true);
     expect(isCanvasNodeGenerating({ ...node, metadata: { status: "success", taskId: "historical" } })).toBe(false);
     expect(isCanvasNodeGenerating({ ...node, metadata: { status: "idle" } }, node.id)).toBe(true);

@@ -1,4 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
+import { CanvasGenerationDurableAckError } from "./canvas-generation-errors";
+export { CanvasGenerationDurableAckError, CanvasGenerationTargetSaveError } from "./canvas-generation-errors";
 
 import { parseCanvasStorageDocument, rebaseCanvasProjects, serializeCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
@@ -33,15 +35,7 @@ function throwIfAborted(signal?: AbortSignal) {
     if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
 }
 
-export class CanvasGenerationDurableAckError extends Error {
-    readonly cause: unknown;
-
-    constructor(cause: unknown) {
-        super(cause instanceof Error ? cause.message : "画布生成副作用持久化失败");
-        this.name = "CanvasGenerationDurableAckError";
-        this.cause = cause;
-    }
-}
+export { persistCanvasGenerationTarget } from "./canvas-generation-target";
 
 export function isCanvasGenerationDurableAckError(error: unknown): error is CanvasGenerationDurableAckError {
     return error instanceof CanvasGenerationDurableAckError;

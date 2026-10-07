@@ -235,6 +235,46 @@ async function seedConfirmed(doc: ReturnType<typeof canvas> = canvas("基线", 1
     useCanvasStore.setState({ projects: [doc as never] });
 }
 
+test("真实保存途中删除图片节点会再次提交删除，且不启动生成", async () => {
+    const { persistCanvasGenerationTarget } = await import("@/services/canvas-generation-target");
+    const target = node("image-target", "新图片");
+    await seedConfirmed(canvas("基线"));
+    useCanvasStore.getState().updateProject("c1", { nodes: [target as never] });
+    let release!: () => void;
+    server.hold = new Promise<void>((resolve) => { release = resolve; });
+    const saving = persistCanvasGenerationTarget({ projectId: "c1", nodeId: target.id, expectedScope: captureUserScope() });
+    // Attach rejection before releasing the held HTTP acknowledgement.
+    const rejected = saving.catch((error: unknown) => error);
+    await waitUntil(() => server.postStarted === 1);
+    useCanvasStore.getState().updateProject("c1", { nodes: [] });
+    release();
+    expect(await rejected).toMatchObject({ message: "生成节点已不存在，未开始生成" });
+    expect((server.document as { nodes: unknown[] }).nodes).toEqual([]);
+    expect(useCanvasStore.getState().openProject("c1")?.nodes).toEqual([]);
+});
+
+test("多张图片的真实保存串行读取最新画布，不覆盖已完成的另一张图", async () => {
+    const { persistCanvasGenerationTarget } = await import("@/services/canvas-generation-target");
+    const first = node("image-a", "A");
+    const second = node("image-b", "B");
+    await seedConfirmed(canvas("基线"));
+    const connections = [connection("ab", first.id, second.id)];
+    useCanvasStore.getState().updateProject("c1", { nodes: [first, second] as never, connections });
+    let release!: () => void;
+    server.hold = new Promise<void>((resolve) => { release = resolve; });
+    const expectedScope = captureUserScope();
+    const savingA = persistCanvasGenerationTarget({ projectId: "c1", nodeId: first.id, expectedScope });
+    const savingB = persistCanvasGenerationTarget({ projectId: "c1", nodeId: second.id, expectedScope });
+    await waitUntil(() => server.postStarted === 1);
+    useCanvasStore.getState().updateProject("c1", { nodes: [node(first.id, "A", { metadata: { taskId: "task-a", status: "success", content: "/a.png" } }), second] as never });
+    release();
+    await Promise.all([savingA, savingB]);
+    const document = server.document as { nodes: Array<{ id: string; metadata: Record<string, unknown> }>; connections: unknown[] };
+    expect(document.nodes.find((item) => item.id === first.id)?.metadata).toMatchObject({ taskId: "task-a", status: "success", content: "/a.png" });
+    expect(document.connections).toEqual(connections);
+    expect(document.nodes.map((item) => item.id)).toEqual([first.id, second.id]);
+});
+
 async function holdJournalWrite() {
     let release = () => {};
     let waiting = false;
