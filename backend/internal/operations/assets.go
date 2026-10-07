@@ -9,18 +9,27 @@ import (
 // maxAssetTitleRunes 对齐 model.Asset 的 Title 长度约束（size:240）。
 const maxAssetTitleRunes = 240
 
-// assetWritableKinds 是外部入口可创建的素材类型：只有不依赖媒体资源的
-// 内容型素材可以由 MCP/CLI 直接创建。image/video/audio/model 必须有真实
-// 媒体定位符（资源存储的 storageKey/URL），伪造元数据会造出界面与生成
-// 链路都无法消费的坏素材——这类素材只能经上传或画布保存进入素材库。
-var assetWritableKinds = map[string]struct{}{
+// assetContentKinds 是无需媒体资源即可创建的内容型素材。
+// 媒体类素材（image/video/audio/model）必须携带 resourceId：元数据全部
+// 取自资源记录，外部不能伪造 width/bytes/mimeType 等定位信息。
+var assetContentKinds = map[string]struct{}{
 	"text":   {},
 	"entity": {},
 }
 
-// assetCreateArgs 是创建内容型素材的入参；data 部分按 kind 取 content 或 definition。
+// assetMediaKinds 是可以从已就绪资源登记为素材的媒体类型（对齐 Resource.Kind）。
+var assetMediaKinds = map[string]struct{}{
+	"image": {},
+	"video": {},
+	"audio": {},
+	"model": {},
+}
+
+// assetCreateArgs 是创建素材的入参：内容型走 kind+content/definition，
+// 媒体型走 resourceId（kind 可省略，由资源类型推导）。
 type assetCreateArgs struct {
 	Kind       string         `json:"kind"`
+	ResourceID string         `json:"resourceId"`
 	Title      string         `json:"title"`
 	Tags       []string       `json:"tags"`
 	Category   string         `json:"category"`
@@ -35,18 +44,31 @@ func opAssetCreate(ctx *Context, params json.RawMessage) (any, error) {
 	if err := decodeParams(params, &args); err != nil {
 		return nil, err
 	}
-	kind := strings.TrimSpace(args.Kind)
-	if _, ok := assetWritableKinds[kind]; !ok {
-		return nil, InvalidArg("unsupported_kind",
-			"MCP 只能创建 text/entity 内容型素材；图片、视频、音频与模型素材需要真实媒体文件，请通过画布保存或上传入口进入素材库")
-	}
 	if err := validateAssetTitle(args.Title); err != nil {
 		return nil, err
+	}
+	resourceID := strings.TrimSpace(args.ResourceID)
+	if resourceID != "" {
+		document, err := buildMediaAssetDocument(ctx, args, resourceID)
+		if err != nil {
+			return nil, err
+		}
+		return persistAssetDocument(ctx, document)
+	}
+	kind := strings.TrimSpace(args.Kind)
+	if _, ok := assetContentKinds[kind]; !ok {
+		return nil, InvalidArg("unsupported_kind",
+			"内容型素材只支持 text/entity；创建图片、视频、音频或模型素材请提供 resourceId（上传或生成产物的资源 ID），由服务端从资源记录构造")
 	}
 	document, err := buildAssetDocument(kind, args)
 	if err != nil {
 		return nil, err
 	}
+	return persistAssetDocument(ctx, document)
+}
+
+// persistAssetDocument 走全量 upsert 落库并返回统一回执。
+func persistAssetDocument(ctx *Context, document json.RawMessage) (any, error) {
 	summary, err := ctx.Domain.UpsertUserAsset(ctx.UserID, document)
 	if err != nil {
 		return nil, mapDomainError(err)
@@ -55,6 +77,78 @@ func opAssetCreate(ctx *Context, params json.RawMessage) (any, error) {
 		"assetId": summary.ID, "kind": summary.Kind, "category": summary.Category,
 		"title": summary.Title, "createdAt": summary.CreatedAt, "updatedAt": summary.UpdatedAt,
 	}, nil
+}
+
+// buildMediaAssetDocument 从已就绪且归属当前用户的资源构造媒体素材文档：
+// 元数据（尺寸、大小、MIME、时长）全部取自资源记录，对齐工作流产物落素材
+// 的文档形状（storageKey=resource:<id>，coverUrl/URL 指向资源服务）。
+func buildMediaAssetDocument(ctx *Context, args assetCreateArgs, resourceID string) (json.RawMessage, error) {
+	if strings.TrimSpace(args.Content) != "" || len(args.Definition) > 0 {
+		return nil, InvalidArg("invalid_params", "resourceId 与 content/definition 互斥，媒体素材元数据由资源记录决定")
+	}
+	resource, err := ctx.Domain.OwnedReadyResource(ctx.UserID, resourceID)
+	if err != nil {
+		return nil, mapDomainError(err)
+	}
+	kind := strings.ToLower(strings.TrimSpace(resource.Kind))
+	if _, ok := assetMediaKinds[kind]; !ok {
+		return nil, InvalidArg("unsupported_kind", "资源类型不支持登记为素材: "+resource.Kind)
+	}
+	if declared := strings.TrimSpace(args.Kind); declared != "" && declared != kind {
+		return nil, InvalidArg("kind_mismatch", "kind 与资源实际类型不一致（资源是 "+kind+"）")
+	}
+	resourceURL := "/api/resources/" + resource.ID + "/file"
+	data := map[string]any{
+		"storageKey": "resource:" + resource.ID,
+		"mimeType":   resource.MimeType,
+		"bytes":      resource.Size,
+	}
+	if kind == "image" {
+		width, height := positiveDimension(resource.Width), positiveDimension(resource.Height)
+		data["width"], data["height"] = width, height
+		data["dataUrl"] = resourceURL
+	} else {
+		data["width"], data["height"] = resource.Width, resource.Height
+		data["url"] = resourceURL
+		if resource.DurationMs > 0 {
+			data["durationMs"] = resource.DurationMs
+		}
+	}
+	if kind == "model" {
+		fileName := strings.TrimSpace(resource.ObjectKey)
+		if fileName == "" {
+			return nil, PreconditionFailed("model_file_name_missing", "模型资源缺少文件名，无法登记为素材", nil)
+		}
+		data["fileName"] = fileName
+	}
+	tags := args.Tags
+	if tags == nil {
+		tags = []string{}
+	}
+	document := map[string]any{
+		"kind": kind, "title": args.Title, "coverUrl": resourceURL, "tags": tags, "data": data,
+	}
+	if value := strings.TrimSpace(args.Category); value != "" {
+		document["category"] = value
+	}
+	if value := strings.TrimSpace(args.FolderID); value != "" {
+		document["folderId"] = value
+	}
+	if strings.TrimSpace(args.Note) != "" {
+		document["note"] = args.Note
+	}
+	encoded, marshalErr := json.Marshal(document)
+	if marshalErr != nil {
+		return nil, AsError(marshalErr)
+	}
+	return encoded, nil
+}
+
+func positiveDimension(value int) int {
+	if value <= 0 {
+		return 1
+	}
+	return value
 }
 
 func opAssetUpdate(ctx *Context, params json.RawMessage) (any, error) {

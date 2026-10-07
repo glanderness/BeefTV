@@ -6,14 +6,16 @@ import (
 	"testing"
 
 	"infinite-canvas/backend/internal/canvas"
+	"infinite-canvas/backend/internal/model"
 )
 
 // assetWriteProbe 记录 handler 写入素材库的文档，模拟真实领域的 upsert 行为。
 type assetWriteProbe struct {
 	unusedDomain
-	stored  map[string]json.RawMessage
-	deleted []string
-	upserts int
+	stored   map[string]json.RawMessage
+	deleted  []string
+	upserts  int
+	resource *model.Resource
 }
 
 func (p *assetWriteProbe) UserAsset(_ string, id string) (json.RawMessage, error) {
@@ -43,6 +45,13 @@ func (p *assetWriteProbe) UpsertUserAsset(_ string, raw json.RawMessage) (canvas
 func (p *assetWriteProbe) DeleteUserAsset(_ string, id string, _ ...string) error {
 	p.deleted = append(p.deleted, id)
 	return nil
+}
+
+func (p *assetWriteProbe) OwnedReadyResource(_ string, resourceID string) (*model.Resource, error) {
+	if p.resource != nil && resourceID == p.resource.ID {
+		return p.resource, nil
+	}
+	return nil, NotFound("not_found", "资源不存在")
 }
 
 func newAssetWriteProbe() *assetWriteProbe {
@@ -80,17 +89,93 @@ func TestOpAssetCreateBuildsTextDocument(t *testing.T) {
 	}
 }
 
-// 媒体类素材必须拒绝：外部入口不伪造媒体定位符。
-func TestOpAssetCreateRejectsMediaKinds(t *testing.T) {
+// 不带 resourceId 的媒体类素材必须拒绝：外部入口不伪造媒体定位符。
+func TestOpAssetCreateRejectsMediaKindsWithoutResource(t *testing.T) {
 	probe := newAssetWriteProbe()
 	_, err := opAssetCreate(&Context{UserID: "owner", Domain: probe},
 		json.RawMessage(`{"kind":"image","title":"假图","content":"x"}`))
 	opErr, ok := err.(*Error)
 	if !ok || opErr.Reason != "unsupported_kind" {
-		t.Fatalf("媒体类素材应被拒绝，实际 %v", err)
+		t.Fatalf("无资源 ID 的媒体类素材应被拒绝，实际 %v", err)
 	}
 	if probe.upserts != 0 {
 		t.Fatal("不应写入素材库")
+	}
+}
+
+// 带 resourceId 的媒体素材：元数据全部取自资源记录，构造对齐工作流产物落素材的形状。
+func TestOpAssetCreateRegistersMediaAssetFromResource(t *testing.T) {
+	probe := newAssetWriteProbe()
+	probe.resource = &model.Resource{ID: "res-1", Kind: "image", Status: model.ResourceStatusReady,
+		MimeType: "image/png", Size: 2048, Width: 1024, Height: 768}
+	result, err := opAssetCreate(&Context{UserID: "owner", Domain: probe},
+		json.RawMessage(`{"resourceId":"res-1","title":"夜巷首帧","tags":["分镜"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(probe.stored["asset-new"], &document); err != nil {
+		t.Fatal(err)
+	}
+	if document["kind"] != "image" || document["coverUrl"] != "/api/resources/res-1/file" {
+		t.Fatalf("document = %#v", document)
+	}
+	data, _ := document["data"].(map[string]any)
+	if data["storageKey"] != "resource:res-1" || data["mimeType"] != "image/png" {
+		t.Fatalf("data = %#v", data)
+	}
+	if data["width"] != float64(1024) || data["height"] != float64(768) || data["bytes"] != float64(2048) {
+		t.Fatalf("尺寸/大小未取自资源记录: %#v", data)
+	}
+	if data["dataUrl"] != "/api/resources/res-1/file" {
+		t.Fatalf("dataUrl = %#v", data["dataUrl"])
+	}
+	payload := result.(map[string]any)
+	if payload["kind"] != "image" || payload["assetId"] != "asset-new" {
+		t.Fatalf("回执 = %#v", payload)
+	}
+}
+
+func TestOpAssetCreateMediaValidatesResource(t *testing.T) {
+	probe := newAssetWriteProbe()
+	// 资源不存在。
+	_, err := opAssetCreate(&Context{UserID: "owner", Domain: probe},
+		json.RawMessage(`{"resourceId":"missing","title":"x"}`))
+	if !isNotFoundError(err) {
+		t.Fatalf("未知资源应 404，实际 %v", err)
+	}
+	// kind 与资源类型不一致。
+	probe.resource = &model.Resource{ID: "res-1", Kind: "video", Status: model.ResourceStatusReady,
+		MimeType: "video/mp4", Size: 1, Width: 0, Height: 0, DurationMs: 6400}
+	_, err = opAssetCreate(&Context{UserID: "owner", Domain: probe},
+		json.RawMessage(`{"resourceId":"res-1","kind":"image","title":"x"}`))
+	opErr, ok := err.(*Error)
+	if !ok || opErr.Reason != "kind_mismatch" {
+		t.Fatalf("kind 不一致应拒绝，实际 %v", err)
+	}
+	// resourceId 与 content 互斥。
+	_, err = opAssetCreate(&Context{UserID: "owner", Domain: probe},
+		json.RawMessage(`{"resourceId":"res-1","title":"x","content":"正文"}`))
+	opErr, ok = err.(*Error)
+	if !ok || opErr.Reason != "invalid_params" {
+		t.Fatalf("互斥参数应拒绝，实际 %v", err)
+	}
+	// 视频资源：宽高未知时保留 0，时长并入 data。
+	result, err := opAssetCreate(&Context{UserID: "owner", Domain: probe},
+		json.RawMessage(`{"resourceId":"res-1","title":"镜头视频"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(probe.stored["asset-new"], &document); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := document["data"].(map[string]any)
+	if data["url"] != "/api/resources/res-1/file" || data["durationMs"] != float64(6400) {
+		t.Fatalf("video data = %#v", data)
+	}
+	if result.(map[string]any)["kind"] != "video" {
+		t.Fatal("kind 应由资源类型推导为 video")
 	}
 }
 

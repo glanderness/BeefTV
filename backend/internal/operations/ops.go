@@ -79,10 +79,10 @@ func RegisterDefaultOps(r *Registry) {
 	r.Register(Op{ID: "project.delete", Summary: "删除项目及其单元、分镜等工作区生产数据（先解绑画布；有进行中任务则拒绝；expectedName 必须与项目当前名称一致）", Scope: ScopeProject,
 		Params:  json.RawMessage(`{"type":"object","properties":{"projectId":{"type":"string"},"expectedName":{"type":"string"}},"required":["projectId","expectedName"]}`),
 		Handler: opProjectDelete})
-	// 素材库写：只有内容型素材（text/entity）可由外部入口直接创建，
-	// 媒体类素材必须经上传或画布保存进入素材库，外部不伪造媒体定位符。
-	r.Register(Op{ID: "asset.create", Summary: "创建内容型素材（kind=text 带 content，kind=entity 带 definition；图片/视频/音频/模型素材请走上传或画布保存）", Scope: ScopeAsset,
-		Params:  json.RawMessage(`{"type":"object","properties":{"kind":{"type":"string","enum":["text","entity"]},"title":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}},"category":{"type":"string"},"folderId":{"type":"string"},"note":{"type":"string"},"content":{"type":"string","description":"text 素材正文"},"definition":{"type":"object","description":"entity 素材定义"}},"required":["kind","title"]}`),
+	// 素材库写：内容型素材（text/entity）直接创建；媒体类素材（image/video/audio/model）
+	// 必须携带 resourceId，由服务端从已就绪且归属当前用户的资源记录构造元数据。
+	r.Register(Op{ID: "asset.create", Summary: "创建素材：内容型用 kind=text/entity + content/definition；媒体型（图片/视频/音频/模型）用 resourceId 指向已上传或生成产物落库的资源，元数据由服务端取自资源记录", Scope: ScopeAsset,
+		Params:  json.RawMessage(`{"type":"object","properties":{"kind":{"type":"string","description":"素材类型；带 resourceId 时可省略，由资源类型推导"},"resourceId":{"type":"string","description":"媒体素材的资源 ID（上传或生成产物）；给出后 width/bytes/mimeType 等全部取自资源记录"},"title":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}},"category":{"type":"string"},"folderId":{"type":"string"},"note":{"type":"string"},"content":{"type":"string","description":"text 素材正文"},"definition":{"type":"object","description":"entity 素材定义"}},"required":["title"]}`),
 		Handler: opAssetCreate})
 	r.Register(Op{ID: "asset.update", Summary: "按 ID 局部更新素材元字段（标题、标签、收藏、分类、文件夹、备注；媒体内容不开放，画布引用守卫由服务端复检）", Scope: ScopeAsset,
 		Params:  json.RawMessage(`{"type":"object","properties":{"assetId":{"type":"string"},"title":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}},"favorite":{"type":"boolean"},"category":{"type":"string"},"folderId":{"type":"string"},"note":{"type":"string"}},"required":["assetId"]}`),
