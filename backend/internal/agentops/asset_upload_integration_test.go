@@ -64,6 +64,15 @@ func TestAssetUploadRegistersLocalFileWithinOperationTransaction(t *testing.T) {
 	if raw == nil || raw["total"] != float64(1) {
 		t.Fatalf("asset.list 应包含 1 条图片素材: %#v", listed.Result)
 	}
+	// 文档必须带 id：前端列表页对缺 id 的记录静默隔离，表现为"总量增加但看不到行"。
+	if items, _ := raw["items"].([]any); len(items) == 1 {
+		item, _ := items[0].(map[string]any)
+		if item != nil {
+			if id, _ := item["id"].(string); id == "" {
+				t.Fatalf("素材文档缺 id，前端会隔离该记录: %#v", item)
+			}
+		}
+	}
 
 	// 同一 operationId 重试幂等：不重复占存储。
 	replayed, err := h.run(t, "asset.upload", "upload-op-1", map[string]any{

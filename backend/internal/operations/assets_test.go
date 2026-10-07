@@ -24,6 +24,7 @@ type assetWriteProbe struct {
 	upserts     int
 	resource    *model.Resource
 	uploadCalls []uploadCall
+	lastID      string
 }
 
 type uploadCall struct {
@@ -55,6 +56,7 @@ func (p *assetWriteProbe) UpsertUserAsset(_ string, raw json.RawMessage) (canvas
 	if payload.ID == "" {
 		payload.ID = "asset-new"
 	}
+	p.lastID = payload.ID
 	p.stored[payload.ID] = raw
 	return canvas.UserDataSummary{ID: payload.ID, Kind: payload.Kind, Title: payload.Title}, nil
 }
@@ -103,11 +105,14 @@ func TestOpAssetCreateBuildsTextDocument(t *testing.T) {
 		t.Fatalf("upserts = %d", probe.upserts)
 	}
 	var document map[string]any
-	if err := json.Unmarshal(probe.stored["asset-new"], &document); err != nil {
+	if err := json.Unmarshal(probe.stored[probe.lastID], &document); err != nil {
 		t.Fatal(err)
 	}
 	if document["kind"] != "text" || document["title"] != "夜巷台词" {
 		t.Fatalf("document = %#v", document)
+	}
+	if id, _ := document["id"].(string); strings.TrimSpace(id) == "" {
+		t.Fatalf("文档必须写入 id，否则会被前端列表静默隔离: %#v", document)
 	}
 	if content, _ := document["data"].(map[string]any); content["content"] != "你终于回来了" {
 		t.Fatalf("data = %#v", document["data"])
@@ -116,7 +121,7 @@ func TestOpAssetCreateBuildsTextDocument(t *testing.T) {
 		t.Fatalf("coverUrl = %#v", document["coverUrl"])
 	}
 	payload := result.(map[string]any)
-	if payload["assetId"] != "asset-new" || payload["kind"] != "text" {
+	if payload["assetId"] != probe.lastID || payload["kind"] != "text" {
 		t.Fatalf("回执 = %#v", payload)
 	}
 }
@@ -146,11 +151,14 @@ func TestOpAssetCreateRegistersMediaAssetFromResource(t *testing.T) {
 		t.Fatal(err)
 	}
 	var document map[string]any
-	if err := json.Unmarshal(probe.stored["asset-new"], &document); err != nil {
+	if err := json.Unmarshal(probe.stored[probe.lastID], &document); err != nil {
 		t.Fatal(err)
 	}
 	if document["kind"] != "image" || document["coverUrl"] != "/api/resources/res-1/file" {
 		t.Fatalf("document = %#v", document)
+	}
+	if id, _ := document["id"].(string); strings.TrimSpace(id) == "" {
+		t.Fatalf("媒体文档必须写入 id: %#v", document)
 	}
 	data, _ := document["data"].(map[string]any)
 	if data["storageKey"] != "resource:res-1" || data["mimeType"] != "image/png" {
@@ -163,7 +171,7 @@ func TestOpAssetCreateRegistersMediaAssetFromResource(t *testing.T) {
 		t.Fatalf("dataUrl = %#v", data["dataUrl"])
 	}
 	payload := result.(map[string]any)
-	if payload["kind"] != "image" || payload["assetId"] != "asset-new" {
+	if payload["kind"] != "image" || payload["assetId"] != probe.lastID {
 		t.Fatalf("回执 = %#v", payload)
 	}
 }
@@ -199,7 +207,7 @@ func TestOpAssetCreateMediaValidatesResource(t *testing.T) {
 		t.Fatal(err)
 	}
 	var document map[string]any
-	if err := json.Unmarshal(probe.stored["asset-new"], &document); err != nil {
+	if err := json.Unmarshal(probe.stored[probe.lastID], &document); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := document["data"].(map[string]any)
@@ -238,8 +246,12 @@ func TestOpAssetUpdatePatchesOnlyMetaFields(t *testing.T) {
 	if err := json.Unmarshal(probe.stored["a1"], &document); err != nil {
 		t.Fatal(err)
 	}
-	if document["title"] != "新标题" || document["favorite"] != true {
+	if document["title"] != "新标题" {
 		t.Fatalf("patch 未生效: %#v", document)
+	}
+	metadata, _ := document["metadata"].(map[string]any)
+	if metadata == nil || metadata["favorite"] != true {
+		t.Fatalf("favorite 必须落在 metadata.favorite（服务端过滤口径）: %#v", document)
 	}
 	if data, _ := document["data"].(map[string]any); data["content"] != "旧正文" {
 		t.Fatalf("媒体/内容 data 必须逐字保留: %#v", document["data"])
@@ -335,7 +347,7 @@ func TestOpAssetUploadRegistersLocalImage(t *testing.T) {
 		t.Fatalf("upload identity/size = %#v", call)
 	}
 	var document map[string]any
-	if err := json.Unmarshal(probe.stored["asset-new"], &document); err != nil {
+	if err := json.Unmarshal(probe.stored[probe.lastID], &document); err != nil {
 		t.Fatal(err)
 	}
 	if document["kind"] != "image" {
@@ -346,7 +358,7 @@ func TestOpAssetUploadRegistersLocalImage(t *testing.T) {
 		t.Fatalf("data = %#v", data)
 	}
 	payload := result.(map[string]any)
-	if payload["assetId"] != "asset-new" || payload["resourceId"] != "res-up" {
+	if payload["assetId"] != probe.lastID || payload["resourceId"] != "res-up" {
 		t.Fatalf("回执 = %#v", payload)
 	}
 }

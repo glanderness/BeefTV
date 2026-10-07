@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -151,7 +152,7 @@ func mediaAssetDocumentFromResource(resource model.Resource, meta assetMetaField
 		tags = []string{}
 	}
 	document := map[string]any{
-		"kind": kind, "title": meta.Title, "coverUrl": resourceURL, "tags": tags, "data": data,
+		"id": kernel.NewID(), "kind": kind, "title": meta.Title, "coverUrl": resourceURL, "tags": tags, "data": data,
 	}
 	if value := strings.TrimSpace(meta.Category); value != "" {
 		document["category"] = value
@@ -299,7 +300,14 @@ func opAssetUpdate(ctx *Context, params json.RawMessage) (any, error) {
 		document["tags"] = *args.Tags
 	}
 	if args.Favorite != nil {
-		document["favorite"] = *args.Favorite
+		// 服务端收藏过滤读 metadata.favorite（json_extract '$.metadata.favorite'），
+		// 写在顶层不会被过滤命中。
+		metadata, _ := document["metadata"].(map[string]any)
+		if metadata == nil {
+			metadata = map[string]any{}
+			document["metadata"] = metadata
+		}
+		metadata["favorite"] = *args.Favorite
 	}
 	if args.Category != nil {
 		document["category"] = *args.Category
@@ -383,7 +391,9 @@ func buildAssetDocument(kind string, args assetCreateArgs) (json.RawMessage, err
 		tags = []string{}
 	}
 	document := map[string]any{
-		"kind": kind, "title": args.Title, "coverUrl": "", "tags": tags, "data": data,
+		// id 必须写进文档：前端 parseAssetRecord 首个校验就是 id 字段，
+		// 缺失的记录会被列表页静默隔离（计数增加但看不到行）。
+		"id": kernel.NewID(), "kind": kind, "title": args.Title, "coverUrl": "", "tags": tags, "data": data,
 	}
 	if value := strings.TrimSpace(args.Category); value != "" {
 		document["category"] = value
