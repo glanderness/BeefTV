@@ -25,13 +25,13 @@ const fail = message => { throw new Error(`Real generation release gate: ${messa
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
 // One-image regression authorized for this version only; no matrix carry-forward.
-if (version === 'v1.7.10' && receipt.ownerException?.scope === 'canvas-image-bind-regression-20261007') {
+if (version === 'v1.7.11' && receipt.ownerException?.scope === 'canvas-image-bind-regression-20261007') {
   const evidence = value => Array.isArray(value) && value.length > 0 && value.every(nonempty);
   const bound = value => value?.sourceDigest === sourceDigest && evidence(value.evidence);
   if (receipt.ownerException.approvedBy !== 'Ender'
     || receipt.ownerException.instruction !== '只复测一次生成图片看看会不会复现报错即可上线'
     || !evidence(receipt.ownerException.evidence) || receipt.liveMatrixStatus !== 'not_run_owner_limited_to_one_image'
-    || receipt.paidSubmissionLimit !== 1 || receipt.cases?.length !== 1) fail('v1.7.10 requires exact one-image owner authorization');
+    || receipt.paidSubmissionLimit !== 1 || receipt.cases?.length !== 1) fail('v1.7.11 requires exact one-image owner authorization');
   const item = receipt.cases[0];
   if (!['text-image', 'image-image'].includes(item.path) || !/gpt-image-2\.5/.test(item.model || '')
     || item.attempts !== 1 || item.status !== 'succeeded' || item.clientSubmitted !== true
@@ -40,23 +40,51 @@ if (version === 'v1.7.10' && receipt.ownerException?.scope === 'canvas-image-bin
     || item.executedSourceDigest !== sourceDigest || item.clientVersion !== version
     || !nonempty(item.taskId) || !nonempty(item.providerRequestId)
     || !/^[a-f0-9]{64}$/.test(item.artifactSHA256 || '') || !evidence(item.evidence)
-    || receipt.newSpentCNY !== item.costCNY || receipt.newPendingCNY !== 0) fail('v1.7.10 requires one settled image from the current native client and bound canvas');
+    || receipt.newSpentCNY !== item.costCNY || receipt.newPendingCNY !== 0) fail('v1.7.11 requires one settled image from the current native client and bound canvas');
   const prior = receipt.priorFinancialUncertainty;
-  if (prior?.status !== 'unresolved' || prior.carriedFromVersion !== 'v1.7.9'
+  if (prior?.status !== 'unresolved' || prior.carriedFromVersion !== 'v1.7.10'
     || prior.pendingCNY !== null || !evidence(prior.evidence)
     || receipt.budgetCNY !== null || receipt.spentCNY !== null || receipt.pendingCNY !== null
-    || receipt.financialUncertainty?.status !== 'unresolved' || !evidence(receipt.financialUncertainty.evidence)) fail('v1.7.10 must retain historical financial uncertainty');
+    || receipt.financialUncertainty?.status !== 'unresolved' || !evidence(receipt.financialUncertainty.evidence)) fail('v1.7.11 must retain historical financial uncertainty');
   if (receipt.review?.result !== 'approved' || receipt.review.independent !== true
     || !nonempty(receipt.review.reviewer) || !bound(receipt.review)
-    || receipt.upgrade?.preservedData !== true || !bound(receipt.upgrade)) fail('v1.7.10 requires source-bound independent review and preserved data');
+    || receipt.upgrade?.preservedData !== true || !bound(receipt.upgrade)) fail('v1.7.11 requires source-bound independent review and preserved data');
   for (const id of ['saveBarrier', 'resultRecovery', 'scopeIsolation', 'localReleaseGate', 'ci']) {
-    if (receipt.verification?.[id]?.status !== 'passed' || !bound(receipt.verification[id])) fail(`v1.7.10 missing targeted evidence: ${id}`);
+    if (receipt.verification?.[id]?.status !== 'passed' || !bound(receipt.verification[id])) fail(`v1.7.11 missing targeted evidence: ${id}`);
   }
   const packages = receipt.packages;
   if (packages?.status !== 'pending_release_workflow' || packages.archives != null || receipt.releaseComplete !== false
     || packages.windowsReleasedUpgradeAndRollbackBeforeUpload !== true || packages.finalArchiveSmokeBeforeUpload !== true
+    || !evidence(packages.workflowEvidence)) fail('v1.7.11 final package gates must remain enforced');
+  console.log('v1.7.11 owner-authorized single-image regression passed; full matrix NOT run; independent review and targeted checks passed; final package gates pending.');
+  process.exit(0);
+}
+// Exact one-release authorization; a naming change does not prove generation.
+if (version === 'v1.7.10' && receipt.liveTestWaiver?.scope === 'seedance-display-names-only') {
+  const evidence = value => Array.isArray(value) && value.length > 0 && value.every(nonempty);
+  if (receipt.liveTestWaiver.approvedBy !== 'Ender'
+    || receipt.liveTestWaiver.instruction !== 'beeftv本次豁免 直接上线'
+    || !evidence(receipt.liveTestWaiver.evidence)) fail('v1.7.10 requires exact owner waiver');
+  if (receipt.budgetCNY !== 0 || receipt.spentCNY !== 0 || receipt.newSpentCNY !== 0 || receipt.pendingCNY !== 0
+    || receipt.liveMatrixStatus !== 'not_run_owner_waived' || !Array.isArray(receipt.cases) || receipt.cases.length !== 0) fail('v1.7.10 must record no new paid calls and an unexecuted matrix');
+  if (receipt.priorFinancialUncertainty?.status !== 'unresolved'
+    || receipt.priorFinancialUncertainty.carriedFromVersion !== 'v1.7.9'
+    || receipt.priorFinancialUncertainty.pendingCNY !== null
+    || !evidence(receipt.priorFinancialUncertainty.evidence)) fail('v1.7.10 must retain historical uncertainty');
+  if (receipt.review?.result !== 'approved' || receipt.review.independent !== true
+    || receipt.review.sourceDigest !== sourceDigest || !nonempty(receipt.review.reviewer) || !evidence(receipt.review.evidence)
+    || receipt.upgrade?.preservedData !== true || receipt.upgrade.sourceDigest !== sourceDigest
+    || !evidence(receipt.upgrade.evidence)) fail('v1.7.10 requires current independent review and data preservation');
+  for (const id of ['displayNames', 'nativeNames', 'localReleaseGate', 'ci']) {
+    const check = receipt.verification?.[id];
+    if (check?.status !== 'passed' || check.sourceDigest !== sourceDigest || !evidence(check.evidence)) fail(`v1.7.10 missing targeted evidence: ${id}`);
+  }
+  if (receipt.verification.nativeNames.method !== 'native') fail('v1.7.10 requires native name acceptance');
+  const packages = receipt.packages;
+  if (packages?.status !== 'pending_release_workflow' || packages.archives != null || receipt.releaseComplete !== false
+    || packages.windowsReleasedUpgradeAndRollbackBeforeUpload !== true || packages.finalArchiveSmokeBeforeUpload !== true
     || !evidence(packages.workflowEvidence)) fail('v1.7.10 final package gates must remain enforced');
-  console.log('v1.7.10 owner-authorized single-image regression passed; full matrix NOT run; independent review and targeted checks passed; final package gates pending.');
+  console.log('Owner authorized v1.7.10 display-name release; paid matrix NOT run; new expense 0; historical gaps retained; final packages pending.');
   process.exit(0);
 }
 // v1.7.9 only: Ender accepted the disclosed evidence carry-forward and gaps.

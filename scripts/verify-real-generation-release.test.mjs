@@ -48,6 +48,45 @@ function setupRepo(version) {
   return { dir, git, run, save, commitVersion };
 }
 
+test('v1.7.10 name-only waiver retains native, review, financial and package gates', () => {
+  const { dir, run, save, commitVersion } = setupRepo('v1.7.10');
+  try {
+    const sourceDigest = run('--fingerprint').trim();
+    const evidence = ['synthetic test receipt'];
+    const value = {
+      version: 'v1.7.10', sourceDigest, budgetCNY: 0, spentCNY: 0, newSpentCNY: 0, pendingCNY: 0,
+      liveMatrixStatus: 'not_run_owner_waived', cases: [], releaseComplete: false,
+      liveTestWaiver: { approvedBy: 'Ender', instruction: 'beeftv本次豁免 直接上线', scope: 'seedance-display-names-only', evidence },
+      priorFinancialUncertainty: { status: 'unresolved', carriedFromVersion: 'v1.7.9', pendingCNY: null, evidence },
+      review: { result: 'approved', independent: true, reviewer: 'fixture', sourceDigest, evidence },
+      upgrade: { preservedData: true, sourceDigest, evidence },
+      verification: Object.fromEntries(['displayNames', 'nativeNames', 'localReleaseGate', 'ci'].map(id => [id, { status: 'passed', method: id === 'nativeNames' ? 'native' : 'test', sourceDigest, evidence }])),
+      packages: { status: 'pending_release_workflow', windowsReleasedUpgradeAndRollbackBeforeUpload: true, finalArchiveSmokeBeforeUpload: true, workflowEvidence: evidence },
+    };
+    save(value);
+    assert.match(run(), /display-name release; paid matrix NOT run/);
+    for (const mutate of [
+      r => { r.liveTestWaiver.instruction = '上线吧'; },
+      r => { r.spentCNY = 1; },
+      r => { r.liveMatrixStatus = 'passed'; },
+      r => { r.priorFinancialUncertainty.pendingCNY = 0; },
+      r => { r.review.independent = false; },
+      r => { r.upgrade.preservedData = false; },
+      r => { r.verification.nativeNames.method = 'static'; },
+      r => { r.verification.displayNames.sourceDigest = 'old'; },
+      r => { r.verification.ci.status = 'pending'; },
+      r => { r.packages.windowsReleasedUpgradeAndRollbackBeforeUpload = false; },
+      r => { r.releaseComplete = true; },
+    ]) {
+      const invalid = structuredClone(value); mutate(invalid); save(invalid);
+      assert.throws(() => run());
+    }
+    commitVersion('v1.7.11');
+    value.version = 'v1.7.11'; value.sourceDigest = run('--fingerprint').trim(); save(value, 'v1.7.11');
+    assert.throws(() => run());
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('v1.7.9 accepted evidence cannot hide gaps, skip native cases, or carry to another version', () => {
   const { dir, git, run, save, commitVersion } = setupRepo('v1.7.9');
   try {
@@ -91,20 +130,20 @@ test('v1.7.9 accepted evidence cannot hide gaps, skip native cases, or carry to 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('v1.7.10 one-image authorization rejects additional calls, stale source, missing recovery or review', () => {
-  const { dir, run, save, commitVersion } = setupRepo('v1.7.10');
+test('v1.7.11 one-image authorization rejects additional calls, stale source, missing recovery or review', () => {
+  const { dir, run, save, commitVersion } = setupRepo('v1.7.11');
   try {
     const digest = run('--fingerprint').trim();
     const bound = { sourceDigest: digest, evidence: ['synthetic.log'] };
     const valid = {
-      version: 'v1.7.10', sourceDigest: digest, releaseComplete: false,
+      version: 'v1.7.11', sourceDigest: digest, releaseComplete: false,
       ownerException: { scope: 'canvas-image-bind-regression-20261007', approvedBy: 'Ender', instruction: '只复测一次生成图片看看会不会复现报错即可上线', evidence: ['owner.log'] },
       liveMatrixStatus: 'not_run_owner_limited_to_one_image', paidSubmissionLimit: 1,
-      cases: [{ path: 'image-image', model: 'beefapi::gpt-image-2.5', attempts: 1, status: 'succeeded', clientSubmitted: true, canvasVerified: true, mediaDecoded: true, mediaOpened: true, billing: 'settled', costCNY: 0.42, executedSourceDigest: digest, clientVersion: 'v1.7.10', taskId: 'synthetic-task', providerRequestId: 'synthetic-request', artifactSHA256: 'a'.repeat(64), evidence: ['native.log'] }],
+      cases: [{ path: 'image-image', model: 'beefapi::gpt-image-2.5', attempts: 1, status: 'succeeded', clientSubmitted: true, canvasVerified: true, mediaDecoded: true, mediaOpened: true, billing: 'settled', costCNY: 0.42, executedSourceDigest: digest, clientVersion: 'v1.7.11', taskId: 'synthetic-task', providerRequestId: 'synthetic-request', artifactSHA256: 'a'.repeat(64), evidence: ['native.log'] }],
       newSpentCNY: 0.42, newPendingCNY: 0,
       budgetCNY: null, spentCNY: null, pendingCNY: null,
       financialUncertainty: { status: 'unresolved', evidence: ['prior.json'] },
-      priorFinancialUncertainty: { status: 'unresolved', carriedFromVersion: 'v1.7.9', pendingCNY: null, evidence: ['prior.json'] },
+      priorFinancialUncertainty: { status: 'unresolved', carriedFromVersion: 'v1.7.10', pendingCNY: null, evidence: ['prior.json'] },
       review: { ...bound, result: 'approved', independent: true, reviewer: 'synthetic-reviewer' },
       upgrade: { ...bound, preservedData: true },
       verification: Object.fromEntries(['saveBarrier', 'resultRecovery', 'scopeIsolation', 'localReleaseGate', 'ci'].map(id => [id, { ...bound, status: 'passed' }])),
@@ -122,8 +161,8 @@ test('v1.7.10 one-image authorization rejects additional calls, stale source, mi
       r => { r.cases[0].costCNY = 0; r.newSpentCNY = 0; },
       r => r.packages.finalArchiveSmokeBeforeUpload = false, r => r.releaseComplete = true,
     ]) { const invalid = structuredClone(valid); mutate(invalid); save(invalid); assert.throws(() => run()); }
-    commitVersion('v1.7.11');
-    valid.version = 'v1.7.11'; valid.sourceDigest = run('--fingerprint').trim(); save(valid, 'v1.7.11');
+    commitVersion('v1.7.12');
+    valid.version = 'v1.7.12'; valid.sourceDigest = run('--fingerprint').trim(); save(valid, 'v1.7.12');
     assert.throws(() => run());
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

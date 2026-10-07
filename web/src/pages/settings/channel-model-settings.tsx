@@ -5,6 +5,7 @@ import { ChevronRight, FlaskConical, Settings2 } from "lucide-react";
 import { ModelEditorModal } from "@/components/model-editor-modal";
 import { ModelProtocolBrowser } from "@/components/model-protocol-browser";
 import { testChannelModelConnection } from "@/lib/model-connection-test";
+import { seedancePortraitLabel } from "@/lib/seedance-portrait";
 import { ModelCapabilityEditor } from "@/components/model-capability-editor";
 import { type ModelCapabilityChoice } from "@/components/model-protocol-picker";
 import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
@@ -84,7 +85,7 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
                     const profile = channel.modelProfiles?.find((item) => item.model === model);
                     const protocol = profile?.protocol || defaultProtocolForModel(model, availableProtocols);
                     const capability = profile?.capability || modelProtocolCapability(protocol, availableProtocols) || inferProtocolCapabilityFromModel(model);
-                    const displayName = profile?.displayName?.trim() || model;
+                    const displayName = seedancePortraitLabel(model) || profile?.displayName?.trim() || model;
                     return (
                         <div key={model} className="flex min-w-0 items-center gap-3 rounded-md bg-surface-active px-3 py-2.5 transition-colors hover:bg-surface-hover">
                             <span className="grid size-8 shrink-0 place-items-center rounded-md bg-foreground/[.045] text-foreground/65">

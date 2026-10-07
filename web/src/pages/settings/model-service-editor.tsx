@@ -9,6 +9,7 @@ import { fetchPluginProviderCatalog } from "@/services/api/plugin-catalog";
 import { mergeFetchedChannelModelProfiles, type ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
 import { CAPABILITY_LABELS, MODEL_SERVICE_PRESETS, modelCatalogRequestURL, serviceConnectionError, serviceModelProfile, servicePresetFor, type ModelServicePresetId } from "@/lib/model-service-presets";
 import type { ModelProtocolDefinition } from "@/lib/model-protocols";
+import { seedancePortraitLabel } from "@/lib/seedance-portrait";
 import { createModelChannel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ChannelModelSettings } from "./channel-model-settings";
 import { currentModelConnectionReceipt, useModelConnectionTests } from "@/stores/use-model-connection-tests";
@@ -132,7 +133,7 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
     };
     const visibleModels = catalog.filter((item) => {
         const profile = serviceModelProfile(draft, item, protocols);
-        return `${item.id} ${item.displayName || ""}`.toLowerCase().includes(query.toLowerCase()) && (filter === "all" || profile.capability === filter);
+        return `${item.id} ${seedancePortraitLabel(item.id) || item.displayName || ""}`.toLowerCase().includes(query.toLowerCase()) && (filter === "all" || profile.capability === filter);
     });
     const selectedPreset = MODEL_SERVICE_PRESETS.find((item) => item.id === presetId)!;
 
@@ -179,7 +180,8 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
                     {protocolLoading ? <Spin /> : visibleModels.length ? visibleModels.map((item) => {
                         const profile = serviceModelProfile(draft, item, protocols);
                         const receipt = currentModelConnectionReceipt(receipts, draft, item.id);
-                        return <label key={item.id} className="model-service-model"><Checkbox disabled={busy} checked={draft.models.includes(item.id)} onChange={(event) => toggleModel(item.id, event.target.checked)} /><span><strong>{item.displayName || item.id}</strong>{item.displayName && item.displayName !== item.id && <small>{item.id}</small>}</span><span className="model-service-kind">{CAPABILITY_LABELS[profile.capability]}</span><small title={receipt?.detail}>{receipt ? receipt.success ? "测试通过" : "测试失败" : "未测试"}</small></label>;
+                        const displayName = seedancePortraitLabel(item.id) || item.displayName || item.id;
+                        return <label key={item.id} className="model-service-model"><Checkbox disabled={busy} checked={draft.models.includes(item.id)} onChange={(event) => toggleModel(item.id, event.target.checked)} /><span><strong>{displayName}</strong>{displayName !== item.id && <small>{item.id}</small>}</span><span className="model-service-kind">{CAPABILITY_LABELS[profile.capability]}</span><small title={receipt?.detail}>{receipt ? receipt.success ? "测试通过" : "测试失败" : "未测试"}</small></label>;
                     }) : <div className="model-service-empty"><Search size={23} /><strong>{query ? "没有找到匹配的模型" : "添加你的第一个模型"}</strong><p>{query ? "换个关键词，或在下方手动添加。" : "读取服务商的模型目录，或填写准确的模型 ID。"}</p></div>}
                 </div>
                 <div className="model-service-manual"><Input aria-label="模型 ID" placeholder="手动输入模型 ID" value={manualName} disabled={busy} onChange={(event) => setManualName(event.target.value)} onPressEnter={addManual} /><Select aria-label="模型类型" value={manualCapability} disabled={busy} onChange={setManualCapability} options={Object.entries(CAPABILITY_LABELS).map(([value, label]) => ({ value, label }))} /><Button disabled={busy || protocolLoading || !manualName.trim()} onClick={addManual}>添加</Button></div>
