@@ -1,6 +1,7 @@
 import { explainGenerationError, generationFailureMetadata, generationPromptFingerprint, shouldBlockAutomaticRetry, unchangedModeratedPrompt } from "@/lib/generation-error";
-import type { CanvasNodeMetadata } from "@/types/canvas";
+import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 import type { GenerationTask } from "@/services/api/task-center";
+import { CanvasGenerationTargetSaveError } from "@/services/canvas-generation-errors";
 
 type GenerationReference = { id?: string; storageKey?: string; url?: string; dataUrl?: string };
 export type CanvasGenerationFailureInput = {
@@ -25,6 +26,7 @@ function submittedReferences(input: CanvasGenerationFailureInput) {
 
 export function canvasGenerationFailureMetadata(error: unknown, input: CanvasGenerationFailureInput) {
     const failure = generationFailureMetadata(error, input.prompt, submittedReferences(input));
+    if (error instanceof CanvasGenerationTargetSaveError) return { ...failure, errorDetails: error.message, generationErrorSummary: error.message };
     return { ...failure, ...(failure.generationErrorCode === "canvas_conflict" ? { resourceReloadAvailable: true } : {}) };
 }
 
@@ -50,6 +52,7 @@ export function canvasTaskFailureMetadata(task: GenerationTask, metadata?: Canva
 }
 
 export function canvasGenerationRetryBlocked(metadata: CanvasNodeMetadata | undefined, input?: CanvasGenerationFailureInput) {
+    if (metadata?.resourceReloadAvailable) return true;
     const error = { code: metadata?.generationErrorCode || metadata?.taskErrorCode, message: metadata?.errorDetails };
     if (!shouldBlockAutomaticRetry(error, metadata?.taskStage)) return false;
     // Only a resolved submission can prove that moderated input was changed.
@@ -59,4 +62,12 @@ export function canvasGenerationRetryBlocked(metadata: CanvasNodeMetadata | unde
     }
     if (input) return metadata?.taskStage === "submission_unknown" || ["submission_uncertain", "timeout", "download_failed", "results_missing", "partial_success", "canvas_conflict"].includes(explainGenerationError(error).category);
     return true;
+}
+
+export function canvasImageGenerationHasPendingResult(node: CanvasNodeData | undefined, nodes: CanvasNodeData[]) {
+    return Boolean(node?.metadata?.resourceReloadAvailable || node?.metadata?.generationErrorCode === "canvas_conflict"
+        || node?.metadata?.batchChildIds?.some((id) => {
+            const child = nodes.find((item) => item.id === id);
+            return child?.metadata?.resourceReloadAvailable || child?.metadata?.generationErrorCode === "canvas_conflict";
+        }));
 }

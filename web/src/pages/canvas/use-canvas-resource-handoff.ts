@@ -294,7 +294,7 @@ export function useCanvasResourceHandoff({
             if (!taskId || !node.metadata?.resourceReloadAvailable) return;
             const owner = lifetime.capture(projectId);
             const targetNodeId = node.id;
-            setNodes((current) => current.map((item) => (item.id === targetNodeId ? { ...item, metadata: { ...item.metadata, status: "loading", taskStage: "正在重新加载资源", errorDetails: undefined } } : item)));
+            // 查询旧任务不改变可恢复状态，切换画布后仍可再次重新加载。
             try {
                 const task = await queryGenerationTask(taskId);
                 if (!lifetime.matches(owner, projectIdRef.current)) return;

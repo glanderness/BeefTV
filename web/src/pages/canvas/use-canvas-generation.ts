@@ -221,8 +221,8 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
 
     const bindGenerationTask = useCallback(
         (targetNodeId: string, task: GenerationTask) => {
-            setNodes((current) =>
-                current.map((node) => {
+            const current = useCanvasStore.getState().openProject(projectId)?.nodes ?? nodesRef.current;
+            const next = current.map((node) => {
                     if (node.id !== targetNodeId) return node;
                     const failed = task.status === "failed" || task.status === "cancelled";
                     const hasCompletedContent = task.status === "succeeded" && Boolean(node.metadata?.content);
@@ -236,10 +236,13 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                             ...(failure || { errorDetails: undefined, generationErrorCode: undefined, resourceReloadAvailable: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined }),
                         },
                     };
-                }),
-            );
+                });
+            // 成功终态可能在同一轮到达；消费结果前就要让保存器看见 taskId。
+            useCanvasStore.getState().updateProject(projectId, { nodes: next });
+            nodesRef.current = next;
+            setNodes(next);
         },
-        [setNodes],
+        [nodesRef, projectId, setNodes],
     );
 
     const saveGeneratedAsset = useCallback(
@@ -276,7 +279,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                 });
             } catch (error) {
                 if (error instanceof Error && error.name === "AbortError") throw error;
-                if (isUserScopeAbandonedError(error)) return;
+                if (isUserScopeAbandonedError(error)) throw error;
                 throw error instanceof CanvasGenerationDurableAckError ? error : new CanvasGenerationDurableAckError(error);
             }
         },
@@ -354,7 +357,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                 const pendingAgentContinuation = node.metadata?.agentGenerationContinuation?.status === "pending";
                 const aggregateBatchRoot = node.metadata?.isBatchRoot && node.metadata.batchChildIds?.length && !node.metadata.taskId;
                 if (aggregateBatchRoot && !pendingAgentContinuation) return false;
-                return pendingAgentContinuation || node.metadata?.status === NODE_STATUS_LOADING || node.metadata?.errorDetails === "页面刷新后生成已中断，请重新生成。" || Boolean(node.metadata?.taskId && node.metadata.status !== NODE_STATUS_SUCCESS);
+                return pendingAgentContinuation || node.metadata?.status === NODE_STATUS_LOADING || node.metadata?.errorDetails === "页面刷新后生成已中断，请重新生成。" || Boolean(node.metadata?.taskId && (node.metadata.status !== NODE_STATUS_SUCCESS || (node.metadata.taskStatus === "succeeded" && !node.metadata.content && !node.metadata.storageKey)));
             });
             const needsDiscovery = recoveryNodes.some((node) => !node.metadata?.taskId && !node.metadata?.agentGenerationContinuation?.taskId);
             const projectTasks = needsDiscovery && !localMode

@@ -1,4 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
+import { CanvasGenerationDurableAckError } from "./canvas-generation-errors";
+export { CanvasGenerationDurableAckError, CanvasGenerationTargetSaveError } from "./canvas-generation-errors";
 
 import { parseCanvasStorageDocument, rebaseCanvasProjects, serializeCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
@@ -33,38 +35,7 @@ function throwIfAborted(signal?: AbortSignal) {
     if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
 }
 
-export class CanvasGenerationDurableAckError extends Error {
-    readonly code = "canvas_conflict";
-    readonly cause: unknown;
-
-    constructor(cause: unknown) {
-        super("生成结果已保留，画布尚未更新");
-        this.name = "CanvasGenerationDurableAckError";
-        this.cause = cause;
-    }
-}
-
-export async function persistCanvasGenerationTarget(input: {
-    projectId: string;
-    nodeId: string;
-    signal?: AbortSignal;
-    expectedScope: CapturedUserScope;
-}, persist: typeof persistCanvasDocument = persistCanvasDocument) {
-    throwIfAborted(input.signal);
-    assertUserScope(input.expectedScope);
-    const project = useCanvasStore.getState().projects.find((item) => item.id === input.projectId);
-    if (!project?.nodes.some((node) => node.id === input.nodeId)) throw new Error("生成节点已不存在，未开始生成");
-    try {
-        await persist(input.projectId, { nodes: project.nodes, connections: project.connections }, input.expectedScope);
-    } catch (error) {
-        if (isUserScopeAbandonedError(error) || error instanceof CanvasStaleScopeError || (error instanceof Error && error.name === "AbortError")) throw error;
-        throw new Error("画布尚未保存，未开始生成。请先处理画布保存提示后重试。", { cause: error });
-    }
-    throwIfAborted(input.signal);
-    assertUserScope(input.expectedScope);
-    const current = useCanvasStore.getState().projects.find((item) => item.id === input.projectId);
-    if (!current?.nodes.some((node) => node.id === input.nodeId)) throw new Error("生成节点已不存在，未开始生成");
-}
+export { persistCanvasGenerationTarget } from "./canvas-generation-target";
 
 export function isCanvasGenerationDurableAckError(error: unknown): error is CanvasGenerationDurableAckError {
     return error instanceof CanvasGenerationDurableAckError;

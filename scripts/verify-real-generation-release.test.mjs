@@ -102,6 +102,8 @@ test('v1.7.10 one-image authorization rejects additional calls, stale source, mi
       liveMatrixStatus: 'not_run_owner_limited_to_one_image', paidSubmissionLimit: 1,
       cases: [{ path: 'image-image', model: 'beefapi::gpt-image-2.5', attempts: 1, status: 'succeeded', clientSubmitted: true, canvasVerified: true, mediaDecoded: true, mediaOpened: true, billing: 'settled', costCNY: 0.42, executedSourceDigest: digest, clientVersion: 'v1.7.10', taskId: 'synthetic-task', providerRequestId: 'synthetic-request', artifactSHA256: 'a'.repeat(64), evidence: ['native.log'] }],
       newSpentCNY: 0.42, newPendingCNY: 0,
+      budgetCNY: null, spentCNY: null, pendingCNY: null,
+      financialUncertainty: { status: 'unresolved', evidence: ['prior.json'] },
       priorFinancialUncertainty: { status: 'unresolved', carriedFromVersion: 'v1.7.9', pendingCNY: null, evidence: ['prior.json'] },
       review: { ...bound, result: 'approved', independent: true, reviewer: 'synthetic-reviewer' },
       upgrade: { ...bound, preservedData: true },
@@ -115,6 +117,9 @@ test('v1.7.10 one-image authorization rejects additional calls, stale source, mi
       r => r.cases[0].executedSourceDigest = 'b'.repeat(64),
       r => r.ownerException.instruction = 'yes', r => r.review.result = 'pending',
       r => r.verification.resultRecovery.status = 'pending', r => r.priorFinancialUncertainty.pendingCNY = 0,
+      r => r.budgetCNY = 0, r => r.spentCNY = 0, r => r.pendingCNY = 0,
+      r => delete r.financialUncertainty, r => r.financialUncertainty.evidence = [],
+      r => { r.cases[0].costCNY = 0; r.newSpentCNY = 0; },
       r => r.packages.finalArchiveSmokeBeforeUpload = false, r => r.releaseComplete = true,
     ]) { const invalid = structuredClone(valid); mutate(invalid); save(invalid); assert.throws(() => run()); }
     commitVersion('v1.7.11');

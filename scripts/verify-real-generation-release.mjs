@@ -36,14 +36,16 @@ if (version === 'v1.7.10' && receipt.ownerException?.scope === 'canvas-image-bin
   if (!['text-image', 'image-image'].includes(item.path) || !/gpt-image-2\.5/.test(item.model || '')
     || item.attempts !== 1 || item.status !== 'succeeded' || item.clientSubmitted !== true
     || item.canvasVerified !== true || item.mediaDecoded !== true || item.mediaOpened !== true
-    || item.billing !== 'settled' || !Number.isFinite(item.costCNY) || item.costCNY < 0
+    || item.billing !== 'settled' || !Number.isFinite(item.costCNY) || item.costCNY <= 0
     || item.executedSourceDigest !== sourceDigest || item.clientVersion !== version
     || !nonempty(item.taskId) || !nonempty(item.providerRequestId)
     || !/^[a-f0-9]{64}$/.test(item.artifactSHA256 || '') || !evidence(item.evidence)
     || receipt.newSpentCNY !== item.costCNY || receipt.newPendingCNY !== 0) fail('v1.7.10 requires one settled image from the current native client and bound canvas');
   const prior = receipt.priorFinancialUncertainty;
   if (prior?.status !== 'unresolved' || prior.carriedFromVersion !== 'v1.7.9'
-    || prior.pendingCNY !== null || !evidence(prior.evidence)) fail('v1.7.10 must retain historical financial uncertainty');
+    || prior.pendingCNY !== null || !evidence(prior.evidence)
+    || receipt.budgetCNY !== null || receipt.spentCNY !== null || receipt.pendingCNY !== null
+    || receipt.financialUncertainty?.status !== 'unresolved' || !evidence(receipt.financialUncertainty.evidence)) fail('v1.7.10 must retain historical financial uncertainty');
   if (receipt.review?.result !== 'approved' || receipt.review.independent !== true
     || !nonempty(receipt.review.reviewer) || !bound(receipt.review)
     || receipt.upgrade?.preservedData !== true || !bound(receipt.upgrade)) fail('v1.7.10 requires source-bound independent review and preserved data');

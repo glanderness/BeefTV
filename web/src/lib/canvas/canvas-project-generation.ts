@@ -20,7 +20,8 @@ import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, typ
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { assertUserScope, captureUserScope, isUserScopeAbandonedError } from "@/lib/user-scope-guard";
-import { CanvasGenerationDurableAckError, persistCanvasGenerationTarget } from "@/services/canvas-generation-consumer";
+import { CanvasGenerationDurableAckError } from "@/services/canvas-generation-errors";
+import type { persistCanvasGenerationTarget } from "@/services/canvas-generation-target";
 
 export async function runBackendCanvasGenerationTask(
     {
@@ -138,7 +139,10 @@ export async function runCanvasGenerationTaskToConsumer(
 ) {
     return runGenerationOperationOnce(input.clientOperationId, async () => {
         const expectedScope = input.expectedScope ?? captureUserScope();
-        if (input.mode === "image") await (dependencies.prepareTarget ?? persistCanvasGenerationTarget)({ ...input, expectedScope });
+        if (input.mode === "image") {
+            const prepare = dependencies.prepareTarget ?? (await import("@/services/canvas-generation-target")).persistCanvasGenerationTarget;
+            await prepare({ ...input, expectedScope });
+        }
         if (input.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
         assertUserScope(expectedScope);
         let completedTask: GenerationTask | undefined;
@@ -146,17 +150,23 @@ export async function runCanvasGenerationTaskToConsumer(
             ...input,
             expectedScope,
             onTaskCreated: (task) => {
+                if (input.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+                assertUserScope(expectedScope);
                 input.onTaskCreated?.(task);
                 dependencies.bindTask(task);
                 if (task.status === "succeeded") completedTask = task;
             },
         });
+        if (input.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+        assertUserScope(expectedScope);
         if (!completedTask) throw new Error("生成任务缺少成功终态");
         const taskForConsumer = input.mode === "text" && completedTask.type === "canvas_text" && result.text
             ? hydrateCompletedTextTask(completedTask, result.text)
             : completedTask;
         try {
             await dependencies.consumeTask(taskForConsumer);
+            if (input.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+            assertUserScope(expectedScope);
         } catch (error) {
             if (isUserScopeAbandonedError(error) || (error instanceof Error && error.name === "AbortError")) throw error;
             const cause = error instanceof CanvasGenerationDurableAckError ? error.cause : error;

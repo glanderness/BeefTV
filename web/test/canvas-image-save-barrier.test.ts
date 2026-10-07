@@ -8,6 +8,8 @@ import { CanvasBackendSubmitPausedError } from "@/services/canvas-revision-confl
 import type { GenerationTask } from "@/services/api/task-center";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType } from "@/types/canvas";
+import { executeImageGeneration } from "@/pages/canvas/canvas-image-generation-executor";
+import type { CanvasGenerationExecution } from "@/pages/canvas/canvas-generation-executor-types";
 
 const project: CanvasProject = { id: "canvas-1", title: "画布", createdAt: "2026-01-01", updatedAt: "2026-01-01", revision: 3, nodes: [{ id: "new-image", type: CanvasNodeType.Image, title: "新结果", position: { x: 0, y: 0 }, width: 320, height: 320, metadata: { status: "loading" } }], connections: [], chatSessions: [], activeChatId: null, backgroundMode: "grid", showImageInfo: false, viewport: { x: 0, y: 0, k: 1 }, directorScenes: [] };
 const input = { projectId: project.id, nodeId: "new-image", mode: "image" as const, prompt: "小猫", config: {} as never, clientOperationId: "test-image-save" };
@@ -61,6 +63,38 @@ test("abort and abandoned account saves cannot proceed to a paid task", async ()
     const controller = new AbortController();
     await expect(persistCanvasGenerationTarget({ ...input, signal: controller.signal, expectedScope: captureUserScope() }, async () => { controller.abort(); })).rejects.toMatchObject({ name: "AbortError" });
     await expect(persistCanvasGenerationTarget({ ...input, expectedScope: captureUserScope() }, async () => { throw new UserScopeAbandonedError(); })).rejects.toBeInstanceOf(UserScopeAbandonedError);
+});
+
+test("account abandonment or cancellation during result consumption cannot report success", async () => {
+    for (const error of [new UserScopeAbandonedError(), new DOMException("Aborted", "AbortError")]) {
+        let binds = 0;
+        await expect(runCanvasGenerationTaskToConsumer(input, {
+            prepareTarget: async () => undefined,
+            bindTask: () => { binds++; },
+            runTask: async (options) => { options.onTaskCreated?.(task); return { images: [] }; },
+            consumeTask: async () => { throw error; },
+        })).rejects.toBe(error);
+        expect(binds).toBe(1);
+    }
+});
+
+test("main generation and batch generation stop before changing nodes when a paid result awaits recovery", async () => {
+    for (const batch of [false, true]) {
+        const target = { ...project.nodes[0], metadata: { taskId: task.id, taskStatus: "succeeded" as const, status: "error" as const, resourceReloadAvailable: true, generationErrorCode: "canvas_conflict" as const } };
+        const root = batch ? { ...target, id: "batch-root", metadata: { batchChildIds: [target.id], status: "success" as const } } : target;
+        let mutations = 0;
+        const notices: string[] = [];
+        const unexpected = () => { mutations++; };
+        await executeImageGeneration({
+            sourceNode: root, nodeId: root.id, canvasNodes: batch ? [root, target] : [target], canvasConnections: [],
+            prompt: "修改后再点生成", effectivePrompt: "修改后再点生成", projectId: project.id,
+            generationConfig: { count: batch ? "2" : "1" }, generationContext: { referenceImages: [] }, controller: new AbortController(),
+            setNodes: unexpected, setConnections: unexpected, registerPendingNodeIds: unexpected,
+            showError: (value: string) => notices.push(value),
+        } as unknown as CanvasGenerationExecution);
+        expect(mutations).toBe(0);
+        expect(notices).toEqual(["生成结果已保留，请重新加载资源"]);
+    }
 });
 
 test("a succeeded image with a bind failure keeps its original task and HTTP evidence and blocks another paid generation", async () => {

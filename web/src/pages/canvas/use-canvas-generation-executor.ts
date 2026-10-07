@@ -27,7 +27,7 @@ import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/ty
 import { executeImageGeneration } from "./canvas-image-generation-executor";
 import { executeAudioGeneration, executeVideoGeneration } from "./canvas-media-generation-executors";
 import { executeTextGeneration } from "./canvas-text-generation-executor";
-import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked } from "./canvas-generation-failure";
+import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasImageGenerationHasPendingResult } from "./canvas-generation-failure";
 import { createReferenceLinkResolver } from "./canvas-reference-links";
 
 type UseCanvasGenerationExecutorOptions = {
@@ -117,6 +117,10 @@ export function useCanvasGenerationExecutor({
                     const inputAssets = options?.confirmedInputs?.assets ?? assets;
                     const inputSkills = options?.confirmedInputs?.skills ?? addedSkills;
                     const sourceNode = inputNodes.find((node) => node.id === nodeId);
+                    if (mode === "image" && canvasImageGenerationHasPendingResult(sourceNode, inputNodes)) {
+                        message.warning("生成结果已保留，请重新加载资源");
+                        return;
+                    }
                     if (isCanvasNodeGenerating(nodesRef.current.find((node) => node.id === nodeId))) {
                         message.info("该节点的生成任务仍在进行中，请等待完成后再生成");
                         return;
@@ -224,7 +228,7 @@ export function useCanvasGenerationExecutor({
                         return;
                     }
                     const generationContext = { ...rawGenerationContext, prompt: effectivePrompt };
-                    if ((options?.retryContext || sourceNode?.metadata?.failedInputFingerprint || sourceNode?.metadata?.failedPromptFingerprint) && canvasGenerationRetryBlocked(sourceNode?.metadata, { ...generationContext, mode })) {
+                    if (canvasGenerationRetryBlocked(sourceNode?.metadata, { ...generationContext, mode })) {
                         message.warning(sourceNode?.metadata?.errorDetails || "请先查看失败原因并调整输入，再重新生成");
                         return;
                     }
