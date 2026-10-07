@@ -123,6 +123,14 @@ paths:
       responses:
         "200":
           description: 进入 pending 或返回已连接状态
+  /beefapi/connection/models:
+    post:
+      tags: [beefapi]
+      summary: 使用当前企业连接刷新并保存模型目录
+      description: 不接受客户端密钥或价格；读取上游目录并保存可信能力和报价。连接改变或读取失败时返回错误。
+      responses:
+        "200":
+          description: 信封 data.models 为已保存的上游目录项
   /beefapi/connection/cancel:
     post:
       tags: [beefapi]

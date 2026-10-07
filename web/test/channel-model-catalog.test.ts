@@ -12,6 +12,8 @@ import { defaultModelCapabilityConfig, pluginWorkflowCapabilityConfig } from "..
 import { ChannelModelSettings } from "../src/pages/settings/channel-model-settings";
 import { applyFetchedChannelModelCatalog } from "../src/pages/settings/channel-settings-pane";
 import { fetchChannelModels } from "../src/services/api/image";
+import { disconnectBeefAPIConnection } from "../src/services/api/beefapi-connection";
+import { getActiveUserScope, setActiveUserScope } from "../src/lib/user-scope";
 import { apiClient } from "../src/services/api/request";
 import { createVideoGenerationTask } from "../src/services/api/video";
 import { createModelChannel, defaultConfig, modelDisplayName, normalizeConfigSnapshot, resolveModelRequestConfig, selectableModelsByCapability, type AiConfig } from "../src/stores/use-config-store";
@@ -66,6 +68,38 @@ function formEntries(body: unknown) {
 }
 
 describe("public channel model catalog", () => {
+    test("managed catalog drops delayed results after user or enterprise connection changes", async () => {
+        const originalScope = getActiveUserScope();
+        try {
+            for (const change of [() => { setActiveUserScope("catalog-other-user"); }, () => disconnectBeefAPIConnection()]) {
+                let release!: () => void;
+                apiClient.request = (async (request) => {
+                    if (request.url === "/beefapi/connection/models") await new Promise<void>((resolve) => { release = resolve; });
+                    return { status: 200, data: { code: 0, data: { models: [{ id: "seedance-2.0-portrait" }] }, msg: "" } };
+                }) as typeof apiClient.request;
+                const pending = fetchChannelModels(createModelChannel({ id: "beefapi", credentialRef: "beefapi-enterprise" }), true);
+                const outcome = pending.catch((error) => error);
+                await change();
+                release();
+                expect(await outcome).toMatchObject({ name: "UserScopeAbandonedError" });
+            }
+        } finally {
+            setActiveUserScope(originalScope);
+        }
+    });
+    test("managed catalog refresh persists through the trusted endpoint without accepting client credentials or prices", async () => {
+        const requests: Array<{ url?: string; data?: unknown }> = [];
+        apiClient.request = (async (request) => {
+            requests.push(request);
+            return { status: 200, data: { code: 0, data: { models: [{ id: "seedance-2.0-portrait" }] }, msg: "" } };
+        }) as typeof apiClient.request;
+        await fetchChannelModels(createModelChannel({ id: "beefapi", credentialRef: "beefapi-enterprise", apiKey: "synthetic-ignored", baseUrl: "https://ignored.example" }), true);
+        expect(requests[0]?.url).toBe("/beefapi/connection/models");
+        expect(requests[0]?.data).toEqual({});
+        await fetchChannelModels(createModelChannel({ id: "manual", apiKey: "synthetic-local", baseUrl: "https://manual.example" }), true);
+        expect(requests[1]?.url).toBe("/ai/models");
+        expect(requests[1]?.data).toMatchObject({ baseUrl: "https://manual.example", apiKey: "synthetic-local" });
+    });
     test("backend catalogue authentication failure keeps its actionable message", async () => {
         apiClient.request = (async () => ({ status: 502, data: { code: 502, data: null, msg: "模型服务鉴权失败，请检查 API Key", reason: "bad_gateway" } })) as typeof apiClient.request;
         await expect(fetchChannelModels(createModelChannel({ apiKey: "synthetic-invalid" }), true)).rejects.toThrow("模型服务鉴权失败，请检查 API Key");

@@ -8,7 +8,8 @@ import { Tooltip } from "@/components/ui/base/tooltip";
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 
 import { Captions, Clapperboard, FolderOpen, Library, Lock, LockOpen, Maximize2, MoreHorizontal, Music2, Plus, Scissors, Trash2, Upload, Video, Wand2, ZoomIn, ZoomOut } from "lucide-react";
-import { saveAs } from "file-saver";
+import { saveOwnedOrBrowserVideoBlob } from "@/services/desktop-media-save";
+import { captureUserScope } from "@/lib/user-scope-guard";
 
 import { CanvasTimelineRuler } from "./canvas-timeline-ruler";
 import { CanvasTimelinePreview } from "./canvas-timeline-preview";
@@ -96,6 +97,7 @@ export function CanvasTimelineDialog({
     const [previewPlaying, setPreviewPlaying] = useState(false);
     const [exporting, setExporting] = useState(false);
     const [finalizingExport, setFinalizingExport] = useState(false);
+    const finalizingExportRef = useRef(false);
     const exportControllerRef = useRef<AbortController | null>(null);
     useEffect(() => {
         if (!open) exportControllerRef.current?.abort();
@@ -472,8 +474,15 @@ export function CanvasTimelineDialog({
         for (const media of medias) addDirectMediaToTimeline(media);
     };
 
+    const handleClose = () => {
+        if (saving || finalizingExportRef.current) return;
+        exportControllerRef.current?.abort();
+        onClose();
+    };
+
     const handleSave = async () => {
         if (saving) return;
+        if (exportControllerRef.current) return;
         // 互通修复：时间线草稿只在打开时初始化，期间节点字幕可能在字幕弹窗中被清空（或节点数据被外部更新）。
         // 保存前以节点当前字幕为准做定向校准：节点字幕已为空时，剔除草稿残留的旧字幕片段并回写空数组，
         // 避免「清空后重开视频节点旧字幕复活」；节点仍有字幕时保留草稿内用户的时间线编辑（拖动/删减/文本）。
@@ -541,6 +550,7 @@ export function CanvasTimelineDialog({
 
     const finishExport = () => {
         exportControllerRef.current = null;
+        finalizingExportRef.current = false;
         setExporting(false);
         setFinalizingExport(false);
         setExportPercent(0);
@@ -549,10 +559,14 @@ export function CanvasTimelineDialog({
 
     const handleExport = async () => {
         if (exportControllerRef.current) return;
+        const expectedScope = captureUserScope();
         try {
             const blob = await runExport();
-            saveAs(blob, (node.title || "成片") + ".mp4");
-            message.success("成片导出完成");
+            finalizingExportRef.current = true;
+            setFinalizingExport(true);
+            setExportDetail("正在保存成片");
+            const saved = await saveOwnedOrBrowserVideoBlob((node.title || "成片") + ".mp4", blob, expectedScope);
+            if (saved === "saved") message.success("成片导出完成");
         } catch (error) {
             if (!(error instanceof DOMException && error.name === "AbortError")) message.error(error instanceof Error ? error.message : "导出失败");
         } finally {
@@ -565,6 +579,7 @@ export function CanvasTimelineDialog({
         if (exportControllerRef.current) return;
         try {
             const blob = await runExport();
+            finalizingExportRef.current = true;
             setFinalizingExport(true);
             setExportDetail("正在保存新片段");
             const created = await onCreateAssembledNode(blob, (node.title || "成片") + "-新片段");
@@ -682,12 +697,7 @@ export function CanvasTimelineDialog({
             // fixed-width modal.
             width="min(1160px, calc(100vw - 24px))"
             destroyOnHidden
-            onCancel={() => {
-                if (!saving && !finalizingExport) {
-                    exportControllerRef.current?.abort();
-                    onClose();
-                }
-            }}
+            onCancel={handleClose}
             afterOpenChange={(visible) => {
                 if (visible) ensureToolbarObserved();
             }}
@@ -819,10 +829,10 @@ export function CanvasTimelineDialog({
                         <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedClipId} onClick={deleteSelectedClip}>
                             删除片段
                         </Button>
-                        <Button size="small" disabled={saving || !draft.clips.length} onClick={onClose}>
+                        <Button size="small" disabled={saving || finalizingExport || !draft.clips.length} onClick={handleClose}>
                             取消
                         </Button>
-                        <Button size="small" type="primary" loading={saving} disabled={saving || !draft.clips.length} onClick={() => void handleSave()}>
+                        <Button size="small" type="primary" loading={saving} disabled={saving || exporting || !draft.clips.length} onClick={() => void handleSave()}>
                             保存
                         </Button>
                     </div>
@@ -871,7 +881,7 @@ export function CanvasTimelineDialog({
                 {exporting ? (
                     <div className="border-t px-4 py-2" style={{ borderColor: theme.toolbar.border, background: theme.toolbar.panel }}>
                         <Progress percent={exportPercent} size="small" format={() => exportDetail} />
-                        <Button size="small" disabled={finalizingExport} onClick={() => exportControllerRef.current?.abort()}>取消导出</Button>
+                        <Button size="small" disabled={finalizingExport} onClick={() => { if (!finalizingExportRef.current) exportControllerRef.current?.abort(); }}>取消导出</Button>
                     </div>
                 ) : null}
 

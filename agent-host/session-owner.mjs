@@ -151,7 +151,13 @@ export function createSessionStore({ sessionRoot, workspaceRoot, agentDir, runId
       if (!file) { const error = new Error('session_not_found'); error.reason = 'session_not_found'; throw error; }
       return { manager: SessionManager.open(file, sessionDir, cwd), persistence: `restored:${sessionId}` };
     }
-    return { manager: SessionManager.create(cwd, sessionDir), persistence: 'created' };
+    const manager = SessionManager.create(cwd, sessionDir);
+    // SDK defers its first write until an assistant message. Persist its own header
+    // before publishing current.json so an empty new chat survives a host restart.
+    const file = manager.getSessionFile();
+    fs.writeFileSync(file, `${JSON.stringify(manager.getHeader())}\n`, { flag: 'wx', mode: 0o600 });
+    // Reopening lets the SDK own all subsequent appends, including pre-reply entries.
+    return { manager: SessionManager.open(file, sessionDir, cwd), persistence: 'created' };
   }
 
   async function createLiveSession({ canvasId, sessionId, buildTools }) {

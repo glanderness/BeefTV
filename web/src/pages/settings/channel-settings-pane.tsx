@@ -7,6 +7,7 @@ import { ChannelHeadersEditor, validateChannelHeaders } from "@/components/chann
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { PageHeader } from "@/components/layout/workspace-page";
 import { mergeFetchedChannelModelProfiles } from "@/lib/channel-model-catalog";
+import { seedancePortraitModel } from "@/lib/seedance-portrait";
 import { ensureModelProfilesWithUiDefaults } from "@/lib/model-protocols";
 import { fetchChannelModels, type ChannelModelFetchResult } from "@/services/api/image";
 import { channelHasGenerationCredential, channelHasManagedBeefAPICredential, createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, isBuiltinBeefAPIChannel, modelOptionsFromChannels, normalizeConfigSnapshot, useConfigStore, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
@@ -522,7 +523,16 @@ export function applyFetchedChannelModelCatalog(channel: ModelChannel, result: C
     if (channel.id === "beefapi") return { ...channel, models: uniqueModels(result.models), modelProfiles: profiles };
     const existing = new Map((channel.modelProfiles || []).map((profile) => [profile.model, profile]));
     // Refresh updates the catalog without silently enabling new models or removing manual ones.
-    return { ...channel, models: channel.models.length ? channel.models : uniqueModels(result.models), modelProfiles: profiles.map((profile) => existing.get(profile.model) || profile).concat((channel.modelProfiles || []).filter((profile) => !profiles.some((item) => item.model === profile.model))) };
+    return {
+        ...channel,
+        models: channel.models.length ? channel.models : uniqueModels(result.models),
+        modelProfiles: profiles.map((profile) => {
+            const previous = existing.get(profile.model);
+            if (!previous) return profile;
+            return seedancePortraitModel(profile.model) ? { ...previous, videoPricing: profile.videoPricing ?? null } : previous;
+        }).concat((channel.modelProfiles || []).filter((profile) => !profiles.some((item) => item.model === profile.model))
+            .map((profile) => seedancePortraitModel(profile.model) ? { ...profile, videoPricing: null } : profile)),
+    };
 }
 
 function WorkflowChannelEntry({ icon, title, description, status, ready, onOpen }: { icon: ReactNode; title: string; description: string; status: string; ready: boolean; onOpen?: () => void }) {

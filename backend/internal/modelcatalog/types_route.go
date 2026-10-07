@@ -196,6 +196,7 @@ type ChannelModelCatalogItem struct {
 	MaxImages                *int                                 `json:"maxImages,omitempty"`
 	VideoCapabilities        json.RawMessage                      `json:"videoCapabilities,omitempty"`
 	VideoCapabilitiesVersion *string                              `json:"videoCapabilitiesVersion,omitempty"`
+	VideoPricing             json.RawMessage                      `json:"videoPricing,omitempty"`
 }
 
 type ChannelModelCatalogDefaultParameters struct {

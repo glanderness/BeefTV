@@ -69,6 +69,7 @@ type modelsPayload struct {
 		SupportedEndpointTypes   []string        `json:"supported_endpoint_types"`
 		VideoCapabilities        json.RawMessage `json:"video_capabilities"`
 		VideoCapabilitiesVersion string          `json:"video_capabilities_version"`
+		VideoPricing             json.RawMessage `json:"video_pricing"`
 	} `json:"data"`
 }
 
@@ -302,6 +303,7 @@ func (s *Service) fetchModels(apiKey string) ([]CatalogModel, error) {
 			SupportedEndpointTypes:   item.SupportedEndpointTypes,
 			VideoCapabilities:        append(json.RawMessage(nil), item.VideoCapabilities...),
 			VideoCapabilitiesVersion: strings.TrimSpace(item.VideoCapabilitiesVersion),
+			VideoPricing:             append(json.RawMessage(nil), item.VideoPricing...),
 		})
 	}
 	return models, nil

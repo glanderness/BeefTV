@@ -107,7 +107,12 @@ func (a taskCatalogAdapter) Select(userID string, req localtask.SelectRequest) (
 }
 
 func (a taskCatalogAdapter) PrepareRetry(task *model.Task, input map[string]any) error {
-	return a.s.prepareLogicalTaskRetry(task, input)
+	if err := a.s.prepareLogicalTaskRetry(task, input); err != nil {
+		return err
+	}
+	// RetryTask clears the provider ID and submits again. Poll/download recovery
+	// uses a separate path and must not depend on current catalog availability.
+	return a.s.validatePortraitTaskQuote(input)
 }
 
 func (a taskCatalogAdapter) RequireCustomChannels(input map[string]any) error {
@@ -115,7 +120,10 @@ func (a taskCatalogAdapter) RequireCustomChannels(input map[string]any) error {
 }
 
 func (a taskCatalogAdapter) ValidateCapability(input map[string]any) error {
-	return a.s.ValidateTaskCapability(input)
+	if err := a.s.ValidateTaskCapability(input); err != nil {
+		return err
+	}
+	return a.s.validatePortraitTaskQuote(input)
 }
 
 func (taskCatalogAdapter) HasExecutableVideoConfig(input map[string]any) bool {

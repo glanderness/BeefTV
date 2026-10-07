@@ -304,12 +304,14 @@ func (s *Service) Disconnect(ctx context.Context) (Summary, error) {
 			_ = s.revokeRemote(apiKey)
 		}
 	}
-	if err := clearBeefAPIModels(s.provider); err != nil {
-		s.setError(StateStoreError, "保存连接失败，请重试")
-		return s.Status(), errStore
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Catalog removal and credential invalidation must be atomic to refreshes.
+	if err := clearBeefAPIModels(s.provider); err != nil {
+		s.state.Status = StateStoreError
+		s.state.LastError = "保存连接失败，请重试"
+		return s.summaryLocked(), errStore
+	}
 	s.state = persistedState{SchemaVersion: connectionSchema, Status: StateDisconnected, Balance: BalanceUnknown}
 	if err := s.persistState(s.state); err != nil {
 		s.state.Status = StateStoreError

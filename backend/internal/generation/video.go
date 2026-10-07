@@ -312,14 +312,19 @@ func SeedancePollStatusAndURL(state map[string]interface{}) (string, string) {
 // beefAPIVideoRequestBody implements BeefAPI Enterprise's model-specific
 // /v1/videos contract. Seedance reference mode uses top-level content items;
 // image/reference_images are Grok fields and must not be reused for Seedance.
-// 2.5 uses explicit roles even for one frame; legacy 2.0 retains its image field.
+// 2.5 uses explicit roles even for one frame; 2.0 retains the legacy image field
+// only when the single image has explicit frame intent.
 func BeefAPIVideoRequestBody(input Input) (map[string]interface{}, error) {
 	options := SeedanceTaskOptions(input)
 	resolution := videoResolutionNameRequest(input.VideoCapability, input.Config.VQuality)
 	if resolution == "" {
 		resolution = NormalizeVideoResolution(input.Config.VQuality)
 	}
-	referenceMode := metadataString(input.Metadata, "videoEditOperation") == "reference_to_video" ||
+	// A regular single reference must not become a first frame: that would
+	// silently replace the selected output ratio with the image's ratio.
+	singleReference := len(input.ReferenceImages) == 1 && modelcatalog.IsSeedance2Family("newapi", input.Config.Model) &&
+		SeedanceTaskImageRole(input, input.ReferenceImages[0]) == "reference_image"
+	referenceMode := singleReference || metadataString(input.Metadata, "videoEditOperation") == "reference_to_video" ||
 		len(input.ReferenceImages) > 1 || len(input.ReferenceVideos) > 0 || len(input.ReferenceAudios) > 0 || (modelcatalog.IsSeedance25Model(input.Config.Model) && len(input.ReferenceImages) > 0)
 	if referenceMode {
 		content := make([]map[string]interface{}, 0, len(input.ReferenceImages)+len(input.ReferenceVideos)+len(input.ReferenceAudios))

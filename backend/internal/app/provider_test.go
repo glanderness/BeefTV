@@ -1780,11 +1780,26 @@ func TestSeedancePayloadPreservesRequestedResolutionAndDuration(t *testing.T) {
 		VideoCapability: capability,
 		ReferenceImages: []providerMedia{{ID: "image-1", DataURL: testReferenceImageDataURL}},
 	}
+	assertReferenceContract := func(body map[string]interface{}) {
+		t.Helper()
+		content, ok := body["content"].([]map[string]interface{})
+		if !ok || len(content) != 1 || content[0]["type"] != "image_url" || content[0]["role"] != "reference_image" {
+			t.Fatalf("single image reference payload = %#v", body)
+		}
+		metadata, ok := body["metadata"].(map[string]interface{})
+		if !ok || metadata["ratio"] != "16:9" {
+			t.Fatalf("selected reference ratio lost: %#v", body)
+		}
+		if _, legacy := body["duration"]; legacy {
+			t.Fatalf("reference request contains legacy duration: %#v", body)
+		}
+	}
 	body, err := beefAPIVideoRequestBody(input)
 	if err != nil {
 		t.Fatalf("beefAPIVideoRequestBody() error = %v", err)
 	}
-	if fmt.Sprint(body["resolution"]) != "1080p" || fmt.Sprint(body["duration"]) != "20" {
+	assertReferenceContract(body)
+	if fmt.Sprint(body["resolution"]) != "1080p" || fmt.Sprint(body["seconds"]) != "20" {
 		t.Fatalf("fast 1080/20 payload = %#v", body)
 	}
 	input.Config.VQuality = "2k"
@@ -1793,7 +1808,8 @@ func TestSeedancePayloadPreservesRequestedResolutionAndDuration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("2k/30 body error = %v", err)
 	}
-	if fmt.Sprint(body["resolution"]) != "1440p" || fmt.Sprint(body["duration"]) != "30" {
+	assertReferenceContract(body)
+	if fmt.Sprint(body["resolution"]) != "1440p" || fmt.Sprint(body["seconds"]) != "30" {
 		t.Fatalf("2k/30 payload = %#v", body)
 	}
 	videos, err := seedanceVideosRequestBody(canvasGenerationInput{

@@ -48,6 +48,49 @@ function setupRepo(version) {
   return { dir, git, run, save, commitVersion };
 }
 
+test('v1.7.9 accepted evidence cannot hide gaps, skip native cases, or carry to another version', () => {
+  const { dir, git, run, save, commitVersion } = setupRepo('v1.7.9');
+  try {
+    // Reuse Git objects only: no working files, accounts or private test media.
+    git('fetch', '--quiet', '--depth=1', decodeURIComponent(new URL('..', import.meta.url).pathname), 'HEAD');
+    git('update-ref', 'HEAD', 'FETCH_HEAD');
+    const value = JSON.parse(readFileSync(new URL('../docs/release-evidence/v1.7.9.json', import.meta.url)));
+    value.sourceDigest = run('--fingerprint').trim();
+    value.review.sourceDigest = value.sourceDigest;
+    value.review.result = 'approved'; // Synthetic isolated test fixture, not a release approval.
+    save(value);
+    assert.match(run(), /owner-authorized evidence carry-forward/);
+    for (const mutate of [
+      r => { r.ownerException.instruction = 'yes'; },
+      r => { r.pendingCNY = 0; },
+      r => { r.budgetCNY = 200; },
+      r => { r.portraitAcceptance.cases[1].billing = 'pending'; },
+      r => { r.portraitAcceptance.cases[0].attempts = 2; },
+      r => { r.cases[0].executedSourceDigest = r.sourceDigest; },
+      r => { r.cases[0].confirmed = false; },
+      r => { delete r.agentChecks.cli_mcp; },
+      r => { r.agentChecks.session_restart.status = 'pending'; },
+      r => { r.review.result = 'pending'; },
+      r => { r.packages.windowsReleasedUpgradeAndRollbackBeforeUpload = false; },
+      r => { r.releaseComplete = true; },
+    ]) {
+      const invalid = structuredClone(value);
+      mutate(invalid); save(invalid);
+      assert.throws(() => run());
+    }
+    // Product changes cannot be hidden by updating the outer receipt digest.
+    mkdirSync(join(dir, 'backend'), { recursive: true });
+    writeFileSync(join(dir, 'backend/unaccepted-change.txt'), 'changed runtime');
+    git('add', 'backend/unaccepted-change.txt');
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'unaccepted runtime');
+    value.sourceDigest = run('--fingerprint').trim(); value.review.sourceDigest = value.sourceDigest; save(value);
+    assert.throws(() => run());
+    commitVersion('v1.7.10');
+    value.version = 'v1.7.10'; value.sourceDigest = run('--fingerprint').trim(); save(value, 'v1.7.10');
+    assert.throws(() => run());
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('release fingerprint binds the packaged app icon', () => {
   const { dir, git, run } = setupRepo('v1.7.6');
   try {
