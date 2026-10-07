@@ -16,7 +16,7 @@ export async function persistCanvasGenerationTarget(input: {
     };
     assertCurrent();
     const project = useCanvasStore.getState().openProject(input.projectId);
-    if (!project?.nodes.some((node) => node.id === input.nodeId)) throw new Error("生成节点已不存在，未开始生成");
+    if (!project?.nodes.some((node) => node.id === input.nodeId)) throw new CanvasGenerationTargetSaveError(undefined, "生成节点已不存在，未开始生成");
     try {
         await persist(input.projectId, { nodes: project.nodes, connections: project.connections }, input.expectedScope);
     } catch (error) {
@@ -28,6 +28,6 @@ export async function persistCanvasGenerationTarget(input: {
     if (!current?.nodes.some((node) => node.id === input.nodeId)) {
         // 保存期间的删除也必须提交；旧快照的回执不能让节点在下次打开时重现。
         if (current) await persist(input.projectId, { nodes: current.nodes, connections: current.connections }, input.expectedScope);
-        throw new Error("生成节点已不存在，未开始生成");
+        throw new CanvasGenerationTargetSaveError(undefined, "生成节点已不存在，未开始生成");
     }
 }

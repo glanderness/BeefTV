@@ -125,6 +125,33 @@ describe("backend canvas bind cutover", () => {
     });
 });
 
+test("late bind after switching canvases never projects the old graph into the new canvas", async () => {
+    const oldNode = canvasNode("node-1", "旧画布", { taskId: "task-1" });
+    const replacement = canvasNode("node-2", "当前画布", {});
+    const server = canvasProject("canvas-1", [oldNode], 4);
+    useCanvasStore.setState({ projects: [server] });
+    const nodesRef = { current: [replacement] };
+    let current = true;
+    let uiWrites = 0;
+    const identity = captured("user-a", 1);
+    await bindBackendCanvasGenerationResult({
+        canvasId: "canvas-1", nodeId: oldNode.id, task: succeededTask(), nodesRef,
+        isCurrent: () => current, setNodes: () => { uiWrites++; },
+        runtime: {
+            hydrateOutputs: async () => undefined, persistDocument: async () => undefined,
+            bindOutput: async (input) => {
+                current = false;
+                return { op: "canvas.task.bind", opId: input.operationId, replayed: false, revision: 4,
+                    result: { applied: true, canvasId: "canvas-1", nodeId: oldNode.id, taskId: "task-1", canvas: server, revision: 4 } };
+            },
+            adoptConfirmedProjection: async () => server,
+            captureScope: () => identity, liveScope: () => identity,
+        },
+    });
+    expect(uiWrites).toBe(0);
+    expect(nodesRef.current).toEqual([replacement]);
+});
+
 describe("hydrateBackendGeneratedAsset", () => {
     test("inserts the backend asset without downloading or uploading a blob", async () => {
         const written: Asset[] = [];

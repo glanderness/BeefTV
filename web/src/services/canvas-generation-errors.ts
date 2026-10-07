@@ -10,8 +10,8 @@ export class CanvasGenerationDurableAckError extends Error {
 }
 
 export class CanvasGenerationTargetSaveError extends Error {
-    constructor(cause?: unknown) {
-        super("画布尚未保存，未开始生成。请先处理画布保存提示后重试。", { cause });
+    constructor(cause?: unknown, message = "画布尚未保存，未开始生成。请先处理画布保存提示后重试。") {
+        super(message, { cause });
         this.name = "CanvasGenerationTargetSaveError";
     }
 }

@@ -13,6 +13,7 @@ import { CONTENT_MODERATION_ERROR_CODE, type GenerationFailureMetadata } from "@
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { captureUserScope, isUserScopeAbandonedError, userScopeMatches } from "@/lib/user-scope-guard";
+import { CanvasGenerationTargetSaveError } from "@/services/canvas-generation-errors";
 
 import type { CanvasGenerationExecution } from "./canvas-generation-executor-types";
 import { canvasGenerationFailureMetadata, canvasImageGenerationHasPendingResult } from "./canvas-generation-failure";
@@ -192,6 +193,7 @@ export async function executeImageGeneration({
     let failureCount = 0;
     let representativeFailure: GenerationFailureMetadata | undefined;
     let abandoned = false;
+    let saveFailureMessage: string | undefined;
     await Promise.all(
         targetIds.map(async (targetId, index) => {
             try {
@@ -273,6 +275,7 @@ export async function executeImageGeneration({
                     return false;
                 }
                 if (!isCurrent() || isGenerationCanceled(error)) return false;
+                if (error instanceof CanvasGenerationTargetSaveError) saveFailureMessage = error.message;
                 const failure = canvasGenerationFailureMetadata(error, { prompt: effectivePrompt, referenceImages });
                 if (!representativeFailure || failure.generationErrorCode === CONTENT_MODERATION_ERROR_CODE) representativeFailure = failure;
                 hasFailure = true;
@@ -301,7 +304,7 @@ export async function executeImageGeneration({
         });
         return;
     }
-    if (hasFailure) showError(representativeFailure?.generationErrorCode === "canvas_conflict" ? "生成结果已保留，请重新加载资源" : representativeFailure?.errorDetails?.includes("未开始生成") ? representativeFailure.errorDetails : hasSuccess ? "部分图片生成失败" : "全部图片生成失败");
+    if (hasFailure) showError(representativeFailure?.generationErrorCode === "canvas_conflict" ? "生成结果已保留，请重新加载资源" : saveFailureMessage || (hasSuccess ? "部分图片生成失败" : "全部图片生成失败"));
     setNodes((current) => {
         const next = current.map((node) => {
             if (node.id === nodeId && isConfigNode) {

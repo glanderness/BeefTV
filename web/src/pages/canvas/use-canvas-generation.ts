@@ -177,6 +177,8 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
     const recoveringTaskIdsRef = useRef(new Set<string>());
     const autoSavedTaskIdsRef = useRef(new Set<string>());
     const consumerControllerRef = useRef(new AbortController());
+    const projectIdRef = useRef(projectId);
+    projectIdRef.current = projectId;
     const recoveryCoordinatorRef = useRef<ReturnType<typeof createCanvasGenerationRecoveryCoordinator> | null>(null);
     if (!recoveryCoordinatorRef.current) recoveryCoordinatorRef.current = createCanvasGenerationRecoveryCoordinator();
     const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
@@ -221,6 +223,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
 
     const bindGenerationTask = useCallback(
         (targetNodeId: string, task: GenerationTask) => {
+            if (projectIdRef.current !== projectId) return;
             const current = useCanvasStore.getState().openProject(projectId)?.nodes ?? nodesRef.current;
             const next = current.map((node) => {
                     if (node.id !== targetNodeId) return node;
@@ -259,7 +262,8 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
             const capturedScope = captureUserScope();
             const capturedCanvasId = projectId;
             const controller = consumerControllerRef.current;
-            const isCurrentCanvas = () => !controller.signal.aborted && userScopeMatches(capturedScope);
+            const isCurrentCanvas = () => projectIdRef.current === capturedCanvasId && !controller.signal.aborted && userScopeMatches(capturedScope);
+            if (!isCurrentCanvas()) throw new DOMException("The canvas operation was abandoned", "AbortError");
             if (task.status !== "succeeded") {
                 if (generationTaskCanReloadResource(task) && isCurrentCanvas()) {
                     setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, resourceReloadAvailable: true } } : node)));
@@ -277,6 +281,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                     nodesRef,
                     setNodes,
                 });
+                if (!isCurrentCanvas()) throw new DOMException("The canvas operation was abandoned", "AbortError");
             } catch (error) {
                 if (error instanceof Error && error.name === "AbortError") throw error;
                 if (isUserScopeAbandonedError(error)) throw error;
@@ -521,7 +526,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
             generationRequestsRef.current.forEach((request) => request.controller.abort());
             generationRequestsRef.current.clear();
         },
-        [],
+        [projectId],
     );
 
     useEffect(() => {
