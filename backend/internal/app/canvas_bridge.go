@@ -482,6 +482,14 @@ func (s *operationSession) UserAsset(userID string, id string) (json.RawMessage,
 	return s.canvas.UserAsset(userID, id)
 }
 
+func (s *operationSession) UpsertUserAsset(userID string, raw json.RawMessage) (canvas.UserDataSummary, error) {
+	return s.canvas.UpsertUserAsset(userID, raw)
+}
+
+func (s *operationSession) DeleteUserAsset(userID string, id string, expectedStatus ...string) error {
+	return s.canvas.DeleteUserAsset(userID, id, expectedStatus...)
+}
+
 func (s *operationSession) Task(userID string, id string) (*model.Task, error) {
 	return s.service.Task(userID, id)
 }

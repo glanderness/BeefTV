@@ -18,6 +18,8 @@ type Domain interface {
 	UserCanvasProjectsPage(userID string, page int, pageSize int, projectID string, search string, sort string) (canvas.CanvasLibraryPage, error)
 	UserAssetsPage(userID string, page int, pageSize int, filter canvas.UserAssetPageFilter) (canvas.UserAssetPage, error)
 	UserAsset(userID string, id string) (json.RawMessage, error)
+	UpsertUserAsset(userID string, raw json.RawMessage) (canvas.UserDataSummary, error)
+	DeleteUserAsset(userID string, id string, expectedStatus ...string) error
 	Task(userID string, id string) (*model.Task, error)
 	ResolveAssistantGenerationModel(kind, selectedModel string) (AssistantGenerationModel, error)
 	CreateUserCanvasNodes(userID string, canvasID string, drafts []canvas.NodeDraft, expectedRevision int64) (canvas.UserDataSummary, []canvas.CreatedNode, error)

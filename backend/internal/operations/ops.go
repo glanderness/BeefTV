@@ -79,6 +79,17 @@ func RegisterDefaultOps(r *Registry) {
 	r.Register(Op{ID: "project.delete", Summary: "删除项目及其单元、分镜等工作区生产数据（先解绑画布；有进行中任务则拒绝；expectedName 必须与项目当前名称一致）", Scope: ScopeProject,
 		Params:  json.RawMessage(`{"type":"object","properties":{"projectId":{"type":"string"},"expectedName":{"type":"string"}},"required":["projectId","expectedName"]}`),
 		Handler: opProjectDelete})
+	// 素材库写：只有内容型素材（text/entity）可由外部入口直接创建，
+	// 媒体类素材必须经上传或画布保存进入素材库，外部不伪造媒体定位符。
+	r.Register(Op{ID: "asset.create", Summary: "创建内容型素材（kind=text 带 content，kind=entity 带 definition；图片/视频/音频/模型素材请走上传或画布保存）", Scope: ScopeAsset,
+		Params:  json.RawMessage(`{"type":"object","properties":{"kind":{"type":"string","enum":["text","entity"]},"title":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}},"category":{"type":"string"},"folderId":{"type":"string"},"note":{"type":"string"},"content":{"type":"string","description":"text 素材正文"},"definition":{"type":"object","description":"entity 素材定义"}},"required":["kind","title"]}`),
+		Handler: opAssetCreate})
+	r.Register(Op{ID: "asset.update", Summary: "按 ID 局部更新素材元字段（标题、标签、收藏、分类、文件夹、备注；媒体内容不开放，画布引用守卫由服务端复检）", Scope: ScopeAsset,
+		Params:  json.RawMessage(`{"type":"object","properties":{"assetId":{"type":"string"},"title":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}},"favorite":{"type":"boolean"},"category":{"type":"string"},"folderId":{"type":"string"},"note":{"type":"string"}},"required":["assetId"]}`),
+		Handler: opAssetUpdate})
+	r.Register(Op{ID: "asset.delete", Summary: "按 ID 删除素材（素材仍被引用时拒绝并返回来源；expectedTitle 必须与素材当前标题一致）", Scope: ScopeAsset,
+		Params:  json.RawMessage(`{"type":"object","properties":{"assetId":{"type":"string"},"expectedTitle":{"type":"string"}},"required":["assetId","expectedTitle"]}`),
+		Handler: opAssetDelete})
 }
 
 func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error) {

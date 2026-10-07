@@ -73,6 +73,10 @@ func (unusedDomain) UpdateProject(string, string, ProjectUpdateInput) (model.Pro
 }
 func (unusedDomain) DeleteProject(string, string) error                  { panic("unused") }
 func (unusedDomain) OwnedProject(string, string) (*model.Project, error) { panic("unused") }
+func (unusedDomain) UpsertUserAsset(string, json.RawMessage) (canvas.UserDataSummary, error) {
+	panic("unused")
+}
+func (unusedDomain) DeleteUserAsset(string, string, ...string) error { panic("unused") }
 
 type assetListProbe struct {
 	unusedDomain

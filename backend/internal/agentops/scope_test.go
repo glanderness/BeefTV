@@ -92,8 +92,8 @@ func TestNilAssistantScopeDoesNotFilterCatalog(t *testing.T) {
 	agentops.RegisterDefaultOps(registry)
 	var typedNil *agentops.AssistantScope
 	listed := registry.List(agentops.Caller{Kind: agentops.CallerManual, Scope: typedNil})
-	if len(listed) != 20 {
-		t.Fatalf("空指针范围不应收窄目录（20 项），得到 %d", len(listed))
+	if len(listed) != 23 {
+		t.Fatalf("空指针范围不应收窄目录（23 项），得到 %d", len(listed))
 	}
 	empty := registry.List(agentops.AssistantCaller(&agentops.AssistantScope{}, false))
 	if len(empty) != 11 {

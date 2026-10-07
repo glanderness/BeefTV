@@ -49,7 +49,7 @@ func TestOpsListingKeepsOwnerAndExternalCatalogFull(t *testing.T) {
 	for _, descriptor := range registry.List(operations.ManualCaller(false)) {
 		// 宿主回合外只看受控白名单：工作区级列举、整页写、对话与项目域操作不在其中
 		//（项目列举没有单资源归属校验，项目写超出画布范围，与 asset.list 同理不可见）。
-		if descriptor.Scope != operations.ScopeConversation && descriptor.Scope != operations.ScopeProject &&
+		if descriptor.Scope != operations.ScopeConversation && descriptor.Scope != operations.ScopeProject && descriptor.Scope != operations.ScopeAsset &&
 			descriptor.ID != "asset.list" && descriptor.ID != "canvas.search" &&
 			descriptor.ID != "canvas.document.commit" && descriptor.ID != "project.list" && descriptor.ID != "project.get" {
 			wantHost = append(wantHost, descriptor.ID)

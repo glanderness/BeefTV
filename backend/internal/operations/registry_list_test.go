@@ -20,7 +20,7 @@ func TestTypedNilAuthorizerDoesNotFilterOwnerCatalog(t *testing.T) {
 	RegisterDefaultOps(registry)
 
 	listed := registry.List(Caller{Kind: CallerManual, Scope: scope})
-	if len(listed) != 20 {
+	if len(listed) != 23 {
 		t.Fatalf("带类型的空范围不应收窄 owner 目录（15 项），得到 %d: %v", len(listed), descriptorIDs(listed))
 	}
 	if !containsOp(listed, "conversation.message.attach") {
@@ -39,7 +39,7 @@ func TestTypedNilAuthorizerDoesNotFilterOwnerCatalog(t *testing.T) {
 	}
 
 	external := registry.List(ExternalCaller(false))
-	if len(external) != 20 {
+	if len(external) != 23 {
 		t.Fatalf("外部调用方应看到完整目录 %d: %v", len(external), descriptorIDs(external))
 	}
 	for _, descriptor := range external {

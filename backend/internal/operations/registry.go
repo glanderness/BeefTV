@@ -15,6 +15,7 @@ const (
 	ScopeConversation  Scope = "conversation"
 	ScopeWorkspaceRead Scope = "workspace_read"
 	ScopeProject       Scope = "project"
+	ScopeAsset         Scope = "asset"
 )
 
 // Context 是一次操作执行时可用的上下文。Domain 已经绑在当前事务上。
