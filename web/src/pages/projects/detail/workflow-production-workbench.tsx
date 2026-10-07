@@ -13,6 +13,7 @@ import { Link, useNavigate } from "react-router";
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { ModelPicker } from "@/components/model-picker";
+import { initialWorkbenchModel, refreshedWorkbenchModel } from "./workflow-model-selection";
 import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationOptions } from "@/lib/model-capabilities";
 import { customShotTitle, formatShotOrdinal, normalizeDefaultShotTitle } from "@/lib/shot-label";
 import { modelCompatibilityError, resolveCompatibleModel, resolveModelVideoBooleanOptions, type ModelRequirements } from "@/lib/model-selection";
@@ -36,7 +37,7 @@ import {
 } from "@/services/api/projects";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { skillRuntime } from "@/services/skill-runtime";
-import { configuredModelMatchesCapability, modelDisplayName, modelOptionName, resolveModelChannel, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { modelDisplayName, modelOptionName, resolveModelChannel, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { SkillRuntimePicker, useSkillRuntimeCatalog } from "@/components/skills/skill-runtime-picker";
 
 import {
@@ -109,13 +110,12 @@ export default function WorkflowProductionWorkbench(props: Props) {
     const newestArtifact = artifacts.find((item) => item.selected) || artifacts[0];
     const previewArtifact = artifacts.find((item) => item.id === previewArtifactId) || newestArtifact;
     const generationCapability = activeStage === "video" ? "video" as const : "image" as const;
-    const modelOptions = useMemo(() => selectableModelsByCapability(effectiveConfig, generationCapability), [effectiveConfig, generationCapability]);
     const projectDefaultModel = generationCapability === "video" ? detail.project.defaultVideoModel : detail.project.defaultImageModel;
-    const globalDefaultModel = generationCapability === "video" ? effectiveConfig.videoModel : effectiveConfig.imageModel;
-    const defaultModel = projectDefaultModel && configuredModelMatchesCapability(effectiveConfig, projectDefaultModel, generationCapability) ? projectDefaultModel : globalDefaultModel;
-    const initialModel = defaultModel || modelOptions[0] || "";
+    const initialModel = initialWorkbenchModel(effectiveConfig, projectDefaultModel, generationCapability);
     const [selectedModel, setSelectedModel] = useState(initialModel);
     const selectedModelRef = useRef(initialModel);
+    const modelScope = `${projectId}:${generationCapability}`;
+    const modelScopeRef = useRef(modelScope);
     const [aspectRatio, setAspectRatio] = useState(detail.project.aspectRatio || "16:9");
     const [resolution, setResolution] = useState(effectiveConfig.vquality || "720");
     const [imageQuality, setImageQuality] = useState(effectiveConfig.quality || "auto");
@@ -169,10 +169,12 @@ export default function WorkflowProductionWorkbench(props: Props) {
     const resolutionSummary = generationCapability === "video" ? formatVideoResolutionLabel(resolution) : imageQuality.toUpperCase();
 
     useEffect(() => {
-        selectedModelRef.current = initialModel;
-        setSelectedModel(initialModel);
-        if (!initialModel) return;
-        const profile = modelCapabilityConfigFor(effectiveConfig, initialModel);
+        const nextModel = refreshedWorkbenchModel(selectedModelRef.current, initialModel, modelScopeRef.current === modelScope);
+        modelScopeRef.current = modelScope;
+        selectedModelRef.current = nextModel;
+        setSelectedModel(nextModel);
+        if (!nextModel) return;
+        const profile = modelCapabilityConfigFor(effectiveConfig, nextModel);
         if (generationCapability === "video" && profile.video) {
             const normalized = normalizeVideoValue(profile.video, {
                 seconds: effectiveConfig.videoSeconds,
@@ -187,7 +189,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
             setAspectRatio(normalized.size);
             setImageQuality(normalized.quality);
         }
-    }, [detail.project.aspectRatio, effectiveConfig, form, generationCapability, initialModel]);
+    }, [detail.project.aspectRatio, effectiveConfig, form, generationCapability, initialModel, modelScope]);
 
     useEffect(() => {
         const shotDurationSeconds = Math.max(0.5, (revision?.durationMs || selectedShot?.durationMs || 3000) / 1000);

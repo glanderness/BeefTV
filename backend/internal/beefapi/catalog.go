@@ -31,6 +31,12 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 	for _, model := range models {
 		nextModels = append(nextModels, model.ID)
 		profile := map[string]any{"model": model.ID}
+		// A refreshed catalog owns this quote. Clear a stale quote when the
+		// current account/model no longer supplies one.
+		profile["videoPricing"] = nil
+		if pricing, ok := NormalizeCatalogVideoPricing(model.VideoPricing); ok {
+			profile["videoPricing"] = pricing
+		}
 		if model.DisplayName != "" {
 			profile["displayName"] = model.DisplayName
 		}
@@ -63,6 +69,9 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 			channel["models"] = nextModels
 			channel["modelProfiles"] = nextProfiles
 		} else {
+			// Paid portrait availability and prices belong to the current catalog.
+			// Retain other legacy/custom entries under the existing merge contract.
+			channel["models"], channel["modelProfiles"] = withoutPortraitCatalogEntries(channel["models"], channel["modelProfiles"])
 			channel["models"] = mergeModelIDs(channel["models"], nextModels)
 			channel["modelProfiles"] = mergeProfiles(channel["modelProfiles"], nextProfiles)
 		}
@@ -470,4 +479,26 @@ func findChannel(channels []any, id string) map[string]any {
 		}
 	}
 	return nil
+}
+
+func withoutPortraitCatalogEntries(models, profiles any) ([]any, []any) {
+	isPortrait := func(id string) bool { return id == "seedance-2.0-portrait" || id == "seedance-2.5-portrait" }
+	keptModels := make([]any, 0)
+	for _, raw := range mergeModelIDs(models, nil) {
+		id, _ := raw.(string)
+		if !isPortrait(id) {
+			keptModels = append(keptModels, raw)
+		}
+	}
+	keptProfiles := make([]any, 0)
+	if items, ok := profiles.([]any); ok {
+		for _, raw := range items {
+			profile, _ := raw.(map[string]any)
+			id, _ := profile["model"].(string)
+			if !isPortrait(id) {
+				keptProfiles = append(keptProfiles, raw)
+			}
+		}
+	}
+	return keptModels, keptProfiles
 }

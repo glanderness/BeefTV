@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { modelDisplayName, modelIcon, PUBLIC_MODEL_CATALOG_ID, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { ModelLogo } from "@/components/model-logo";
+import { portraitPriceLines, seedancePortraitLabel, seedancePortraitModel } from "@/lib/seedance-portrait";
 
 type ModelPickerProps = {
     config: AiConfig;
@@ -71,10 +72,13 @@ export function ModelPicker({
     const resolvedCurrent = resolveCompatibleModel(config, storedCurrent, selectionRequirements) || storedCurrent;
     // 旧画布可能保存过已下架或前端历史内置模型；它们不能重新进入当前可选目录。
     const current = options.includes(resolvedCurrent) ? resolvedCurrent : "";
+    const portrait = seedancePortraitModel(current || storedCurrent);
+    const portraitQuote = portrait && current ? resolveModelChannel(config, current).modelProfiles?.find((item) => item.model === portrait)?.videoPricing : undefined;
+    const priceLines = portraitPriceLines(portraitQuote);
     const creationVariant = variant === "creation";
     const triggerLabel = current
         ? (creationVariant ? pickerModelDisplayName(config, current, showConfiguredModelName) : pickerModelOptionLabel(config, current, showConfiguredModelName))
-        : placeholder;
+        : portrait ? `${seedancePortraitLabel(storedCurrent)}（不可用）` : placeholder;
 
     useLayoutEffect(() => {
         const trigger = triggerRef.current;
@@ -270,6 +274,9 @@ export function ModelPicker({
                     <ChevronDown className={cn("canvas-model-picker-chevron", open && "is-open")} aria-hidden="true" />
                 </button>
             </Popover>
+            {portrait ? <div className="mt-2 max-w-full text-xs leading-relaxed" style={{ color: theme.node.muted }} role="note">
+                {priceLines.length ? <><p>真人素材版参考单价</p>{priceLines.map((line) => <p key={line}>{line}</p>)}<p>实际费用见生成账单。素材仍需通过审核。</p></> : <p>价格暂不可用，请刷新模型列表后再生成。</p>}
+            </div> : null}
         </div>
     );
 }

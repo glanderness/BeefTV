@@ -63,6 +63,7 @@ type CatalogModel struct {
 	SupportedEndpointTypes   []string
 	VideoCapabilities        json.RawMessage
 	VideoCapabilitiesVersion string
+	VideoPricing             json.RawMessage
 }
 
 type persistedDevice struct {

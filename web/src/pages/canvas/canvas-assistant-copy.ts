@@ -1,6 +1,7 @@
 // 助手面板里所有用户可见文案的唯一来源：机器可读原因、操作名和改动摘要都在这里
 // 翻译成用户语。组件只负责排版，不自己拼文案，避免同一种状态在两处写出两句话。
 import type { AgentLifecycleEvent, AgentToolCall, AssistantGenerationProposal, AssistantTurnChange, AssistantUndoFailure } from "@/services/api/agent-assistant";
+import { seedancePortraitLabel } from "@/lib/seedance-portrait";
 
 export type AssistantStatusAction = "model-settings" | "retry";
 
@@ -98,10 +99,10 @@ export function assistantUndoFailureText(failure: AssistantUndoFailure): string 
 }
 
 /** 提议可能来自自建渠道，不能把所有费用都归到 BeefAPI。 */
-export function assistantProposalText(proposal: AssistantGenerationProposal): string {
+export function assistantProposalText(proposal: AssistantGenerationProposal, priceLines: string[] = []): string {
     const count = proposal.nodeIds?.length ?? 0;
     const target = proposal.kind === "video" ? "视频" : "图片";
-    return `生成 ${count} ${target === "视频" ? "段视频" : "张参考图片"} · ${proposal.model}\n确认后开始，按所选渠道计费。`;
+    return `生成 ${count} ${target === "视频" ? "段视频" : "张参考图片"} · ${seedancePortraitLabel(proposal.model) || proposal.model}\n${priceLines.length ? priceLines.join("\n") + "\n" : ""}确认后开始，按所选渠道计费。`;
 }
 
 export const ASSISTANT_STARTER_PROMPTS = [

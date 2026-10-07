@@ -128,6 +128,7 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 				models = append(models, beefapi.CatalogModel{
 					ID: item.ID, DisplayName: item.DisplayName, ModelType: item.ModelType, SupportedEndpointTypes: item.SupportedEndpointTypes,
 					VideoCapabilities: item.VideoCapabilities, VideoCapabilitiesVersion: version,
+					VideoPricing: item.VideoPricing,
 				})
 			}
 			return models, nil

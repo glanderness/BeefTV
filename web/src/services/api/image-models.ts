@@ -22,6 +22,7 @@ type OpenAIModelRecord = {
     supported_endpoint_types?: string[];
     video_capabilities?: unknown;
     video_capabilities_version?: string;
+    video_pricing?: unknown;
 };
 type OpenAIModelPayload = { data?: OpenAIModelRecord[]; error?: { message?: string } };
 
@@ -36,6 +37,7 @@ async function fetchOpenAIModelCatalog(config: Pick<ModelChannel, "baseUrl" | "a
                 supportedEndpointTypes: model.supported_endpoint_types,
                 videoCapabilities: model.video_capabilities,
                 videoCapabilitiesVersion: model.video_capabilities_version,
+                videoPricing: model.video_pricing,
             }),
         )
         .filter((item): item is ChannelModelCatalogItem => Boolean(item));
