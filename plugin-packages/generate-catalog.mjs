@@ -599,8 +599,8 @@ add({
       },
       coalesce(ref("request.providerOptions.rightapi-image.body"), ref("request.providerOptions.rightapi-image.extra_body"), {})
     ]
-  }),
-  poll: { method: "GET", path: "/v1/tasks/{{taskId}}" },
+  }, { originPath: true }),
+  poll: { method: "GET", path: "/v1/tasks/{{taskId}}", originPath: true },
   response: asyncResponse("image", {
     images: ref("response.data"),
     errorPaths: ["error.code", "error.type"]

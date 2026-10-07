@@ -24,6 +24,11 @@ func TestRightAPIImageCreateSubmitsAsyncTask(t *testing.T) {
 	if create.Method != "POST" || create.Path != "/draw/v1/images/generations" {
 		t.Fatalf("create = %s %s", create.Method, create.Path)
 	}
+	// RightAPI 的版本段在路径中间（/draw/v1/...），宿主默认拼接规则识别不了；
+	// originPath 让请求路径整体替换 Base URL 的路径段，渠道 base 填不填 /v1 都能命中正确地址。
+	if !create.OriginPath {
+		t.Fatal("create 必须声明 originPath")
+	}
 
 	body := manifestTestBody(t, create)
 	if body["async"] != true {
@@ -76,6 +81,9 @@ func TestRightAPIImagePollPathIsSiteLevel(t *testing.T) {
 	}
 	if poll.Method != "GET" || poll.Path != "/v1/tasks/task-abc123" {
 		t.Fatalf("poll = %s %s，任务查询是站点级接口不带 /draw 前缀", poll.Method, poll.Path)
+	}
+	if !poll.OriginPath {
+		t.Fatal("poll 必须声明 originPath")
 	}
 }
 

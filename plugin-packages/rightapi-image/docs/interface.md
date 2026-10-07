@@ -376,11 +376,13 @@
                 ]
               }
             ]
-          }
+          },
+          "originPath": true
         },
         "poll": {
           "method": "GET",
-          "path": "/v1/tasks/{{taskId}}"
+          "path": "/v1/tasks/{{taskId}}",
+          "originPath": true
         },
         "response": {
           "taskId": {
