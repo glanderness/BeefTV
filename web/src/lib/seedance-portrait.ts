@@ -10,8 +10,8 @@ export function seedancePortraitModel(value: string): string {
 }
 
 export function seedancePortraitLabel(value: string): string {
-    const id = seedancePortraitModel(value);
-    return id ? `Seedance ${id.includes("2.5") ? "2.5" : "2.0"}-真人` : "";
+    const id = value.split("::").at(-1) || "";
+    return /^(seedance-2\.[05])(-portrait)?$/.test(id) ? `Seedance ${id.includes("2.5") ? "2.5" : "2.0"}` : "";
 }
 
 export function portraitTaskRetryError(inputJson?: string, model?: string): string {
@@ -20,7 +20,7 @@ export function portraitTaskRetryError(inputJson?: string, model?: string): stri
     const portrait = [model, input.videoParameters?.model, input.config?.model].some((value) => typeof value === "string" && seedancePortraitModel(value));
     // Sanitized task detail contains no unique provider or account identity.
     // A current channel with the same bare model ID cannot establish its price.
-    return portrait ? "请回到原画布重新选择真人素材版，确认当前价格后重新生成" : "";
+    return portrait ? "请回到原画布重新选择视频模型，确认当前价格后重新生成" : "";
 }
 
 export function sanitizeVideoPriceQuote(value: unknown): VideoPriceQuote | null {

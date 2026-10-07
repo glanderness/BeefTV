@@ -38,12 +38,12 @@ export function groupModelsByDisplayName(config: AiConfig, models: string[]): Di
     models.forEach((model) => {
         const channel = resolveModelChannel(config, model);
         const label = configuredModelDisplayName(config, model);
-        const key = `${channel.id}\u0000${label.toLocaleLowerCase()}\u0000${seedancePortraitModel(model)}`;
+        const key = `${channel.id}\u0000${label.toLocaleLowerCase()}`;
         const current = groups.get(key);
         if (current) current.models.push(model);
         else groups.set(key, { key, label, models: [model] });
     });
-    return Array.from(groups.values());
+    return Array.from(groups.values()).map((group) => ({ ...group, models: [...group.models].sort((a, b) => Number(Boolean(seedancePortraitModel(a))) - Number(Boolean(seedancePortraitModel(b)))) }));
 }
 
 export function configuredModelDisplayName(config: AiConfig, value: string) {
@@ -227,6 +227,9 @@ export function compatibleModelInGroup(config: AiConfig, models: string[], requi
 
 export function resolveCompatibleModel(config: AiConfig, selected: string, requirements?: ModelRequirements) {
     if (!requirements?.capability) return selected;
+    // Automatic resolution keeps the saved identity. Explicit menu selection
+    // may choose the usable canonical entry and refresh its parameters/quote.
+    if (seedancePortraitLabel(selected)) return modelCompatibilityError(config, selected, requirements) ? "" : selected;
     const options = selectableModelsByCapability(config, requirements.capability);
     if (!options.length) return selected;
     const selectedGroup = groupModelsByDisplayName(config, options).find((group) => group.models.includes(selected));

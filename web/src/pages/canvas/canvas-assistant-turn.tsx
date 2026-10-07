@@ -7,7 +7,7 @@ import { agentAssistantFailureText, type AgentToolCall, type AssistantGeneration
 import { assistantChangeSummary, assistantChangedNodeIds, assistantProposalText, assistantUnresolvedFailures, assistantUndoFailureText, assistantVisibleReply } from "./canvas-assistant-copy";
 import { dismissedProposalKey, type AssistantTurnStatus } from "./use-canvas-assistant";
 import { modelOptionName, resolveModelChannel, useEffectiveConfig } from "@/stores/use-config-store";
-import { portraitPriceLines, seedancePortraitModel } from "@/lib/seedance-portrait";
+import { portraitPriceLines, seedancePortraitModel, seedancePortraitLabel } from "@/lib/seedance-portrait";
 import { portraitGenerationError } from "@/lib/model-selection";
 
 type Props = {
@@ -93,7 +93,7 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
                 const skipped = handledProposals.has(dismissedProposalKey(proposal.proposalId));
                 const selectedModel = proposal.modelKey || proposal.model;
                 const portrait = seedancePortraitModel(selectedModel);
-                const profile = portrait ? resolveModelChannel(config, selectedModel).modelProfiles?.find((item) => item.model === modelOptionName(selectedModel)) : undefined;
+                const profile = seedancePortraitLabel(selectedModel) ? resolveModelChannel(config, selectedModel).modelProfiles?.find((item) => item.model === modelOptionName(selectedModel)) : undefined;
                 const priceError = portrait ? portraitGenerationError(config, selectedModel) : "";
                 return (
                     <div key={proposal.proposalId} className="canvas-assistant-card">
