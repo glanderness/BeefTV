@@ -12,9 +12,8 @@ import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { isDepthCaptureResultNode } from "@/lib/canvas/canvas-depth-capture";
-import { generationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 import { generationFailureMetadata } from "@/lib/generation-error";
-import { canvasTaskFailureMetadata } from "./canvas-generation-failure";
+import { canvasGenerationTaskNodes, canvasTaskFailureMetadata } from "./canvas-generation-failure";
 import { runGenerationConsumer } from "@/services/generation-consumer-lifecycle";
 import { consumeCanvasGenerationContinuation } from "./use-canvas-operation-history";
 
@@ -224,22 +223,10 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
     const bindGenerationTask = useCallback(
         (targetNodeId: string, task: GenerationTask) => {
             if (projectIdRef.current !== projectId) return;
-            const current = useCanvasStore.getState().openProject(projectId)?.nodes ?? nodesRef.current;
-            const next = current.map((node) => {
-                    if (node.id !== targetNodeId) return node;
-                    const failed = task.status === "failed" || task.status === "cancelled";
-                    const hasCompletedContent = task.status === "succeeded" && Boolean(node.metadata?.content);
-                    const failure = failed ? canvasTaskFailureMetadata(task, node.metadata) : undefined;
-                    return {
-                        ...node,
-                        metadata: {
-                            ...node.metadata,
-                            ...generationTaskMetadata(task),
-                            status: failed ? NODE_STATUS_ERROR : hasCompletedContent ? NODE_STATUS_SUCCESS : NODE_STATUS_LOADING,
-                            ...(failure || { errorDetails: undefined, generationErrorCode: undefined, resourceReloadAvailable: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined }),
-                        },
-                    };
-                });
+            const current = task.type === "canvas_image" || nodesRef.current.some((node) => node.id === targetNodeId)
+                ? nodesRef.current
+                : useCanvasStore.getState().openProject(projectId)?.nodes ?? nodesRef.current;
+            const next = canvasGenerationTaskNodes(current, targetNodeId, task);
             // 成功终态可能在同一轮到达；消费结果前就要让保存器看见 taskId。
             useCanvasStore.getState().updateProject(projectId, { nodes: next });
             nodesRef.current = next;

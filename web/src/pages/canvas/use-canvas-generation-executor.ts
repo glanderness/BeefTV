@@ -337,6 +337,7 @@ export function useCanvasGenerationExecutor({
                     let pendingNodeIds: string[] = [];
                     const execution = {
                         projectId,
+                        nodesRef,
                         nodeId,
                         sourceNode,
                         canvasNodes: inputNodes,

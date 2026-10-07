@@ -1,7 +1,8 @@
 import { beforeEach, expect, test } from "bun:test";
 import { runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
 import { captureUserScope, UserScopeAbandonedError } from "@/lib/user-scope-guard";
-import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasTaskFailureMetadata } from "@/pages/canvas/canvas-generation-failure";
+import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasGenerationTaskNodes, canvasTaskFailureMetadata } from "@/pages/canvas/canvas-generation-failure";
+import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
 import { ApiError } from "@/services/api/request";
 import { CanvasGenerationDurableAckError, persistCanvasGenerationTarget } from "@/services/canvas-generation-consumer";
 import { CanvasBackendSubmitPausedError } from "@/services/canvas-revision-conflict";
@@ -16,6 +17,27 @@ const input = { projectId: project.id, nodeId: "new-image", mode: "image" as con
 const task: GenerationTask = { id: "task-original", type: "canvas_image", status: "succeeded", prompt: input.prompt, attempts: 1, createdAt: "2026-01-01", updatedAt: "2026-01-01", failureDiagnostics: { source: "unknown", requests: [{ operation: "image_generate", method: "POST", dispatched: true, outcome: "response_received", httpStatus: 200, startedAt: "2026-01-01", durationMs: 10 }] } };
 
 beforeEach(() => useCanvasStore.setState({ projects: [structuredClone(project)] }));
+
+test("restoring a completed image retains recovery flags and cannot open a second paid generation", () => {
+    const target = { ...project.nodes[0], metadata: { taskId: task.id, taskStatus: "succeeded" as const, status: "error" as const, resourceReloadAvailable: true, generationErrorCode: "canvas_conflict" as const, errorDetails: "生成结果已保留，请重新加载资源" } };
+    const restored = canvasGenerationTaskNodes([target], target.id, task)[0];
+    expect(restored.metadata).toMatchObject({ status: "error", taskStatus: "succeeded", resourceReloadAvailable: true, generationErrorCode: "canvas_conflict" });
+    expect(isCanvasNodeGenerating(restored)).toBe(true);
+    expect(canvasGenerationRetryBlocked(restored.metadata, { prompt: "已经修改", mode: "image" })).toBe(true);
+    const firstTerminal = canvasGenerationTaskNodes(project.nodes, input.nodeId, task)[0];
+    expect(isCanvasNodeGenerating(firstTerminal)).toBe(true);
+});
+
+test("task polling preserves unsaved movement, prompt edits and a newly added sibling, and never recreates deleted targets", () => {
+    const target = { ...project.nodes[0], position: { x: 500, y: 600 }, metadata: { prompt: "刚修改的提示词" } };
+    const sibling = { ...target, id: "new-sibling" };
+    const live = canvasGenerationTaskNodes([target, sibling], target.id, task);
+    expect(live[0].position).toEqual(target.position);
+    expect(live[0].metadata?.prompt).toBe("刚修改的提示词");
+    expect(live[0].metadata?.taskId).toBe(task.id);
+    expect(live[1]).toBe(sibling);
+    expect(canvasGenerationTaskNodes([sibling], target.id, task)).toEqual([sibling]);
+});
 
 test("image submission waits for the target node save and shares one submission for a rapid double click", async () => {
     const events: string[] = [];

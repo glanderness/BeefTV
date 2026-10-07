@@ -35,6 +35,7 @@ export async function executeImageGeneration({
     generationContext,
     controller,
     projectId,
+    nodesRef,
     setNodes,
     setConnections,
     setSelectedNodeIds,
@@ -180,6 +181,7 @@ export async function executeImageGeneration({
     const removed = new Set(retired.removedIds);
     const nextConnections = [...canvasConnections.filter((connection) => !removed.has(connection.fromNodeId) && !removed.has(connection.toNodeId)), ...batchConnections];
     if (projectId) useCanvasStore.getState().updateProject(projectId, { nodes: nextNodes, connections: nextConnections });
+    nodesRef.current = nextNodes;
     setNodes(nextNodes);
     setConnections(nextConnections);
     setSelectedNodeIds(new Set([nodeId]));

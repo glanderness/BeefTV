@@ -2,6 +2,7 @@ import { explainGenerationError, generationFailureMetadata, generationPromptFing
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 import type { GenerationTask } from "@/services/api/task-center";
 import { CanvasGenerationTargetSaveError } from "@/services/canvas-generation-errors";
+import { generationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 
 type GenerationReference = { id?: string; storageKey?: string; url?: string; dataUrl?: string };
 export type CanvasGenerationFailureInput = {
@@ -70,4 +71,25 @@ export function canvasImageGenerationHasPendingResult(node: CanvasNodeData | und
             const child = nodes.find((item) => item.id === id);
             return child?.metadata?.resourceReloadAvailable || child?.metadata?.generationErrorCode === "canvas_conflict";
         }));
+}
+
+export function canvasGenerationTaskNodes(nodes: CanvasNodeData[], targetNodeId: string, task: GenerationTask): CanvasNodeData[] {
+    return nodes.map((node) => {
+        if (node.id !== targetNodeId) return node;
+        const failed = task.status === "failed" || task.status === "cancelled";
+        const hasCompletedContent = task.status === "succeeded" && Boolean(node.metadata?.content || node.metadata?.storageKey);
+        const retainRecovery = task.status === "succeeded" && !hasCompletedContent && Boolean(node.metadata?.resourceReloadAvailable || node.metadata?.generationErrorCode === "canvas_conflict");
+        const failure = failed ? canvasTaskFailureMetadata(task, node.metadata) : undefined;
+        return {
+            ...node,
+            metadata: {
+                ...node.metadata,
+                ...generationTaskMetadata(task),
+                status: failed || retainRecovery ? "error" : hasCompletedContent ? "success" : "loading",
+                ...(failure || (retainRecovery
+                    ? { resourceReloadAvailable: true, generationErrorCode: "canvas_conflict", errorDetails: node.metadata?.errorDetails || "生成结果已保留，请重新加载资源" }
+                    : { errorDetails: undefined, generationErrorCode: undefined, resourceReloadAvailable: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined })),
+            },
+        };
+    });
 }
