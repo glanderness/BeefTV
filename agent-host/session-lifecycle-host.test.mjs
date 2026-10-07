@@ -87,15 +87,25 @@ async function withHost(run, envExtra = {}) {
       BEEFTV_AGENT_TURN_TIMEOUT_MS: '20000',
       ...envExtra,
     };
-    child = spawn('node', [path.join(root, 'agent-host/server.mjs')], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    child.stdout.on('data', (chunk) => { log += chunk; });
-    child.stderr.on('data', (chunk) => { log += chunk; });
-    await waitFor(async () => {
-      if (child.exitCode !== null) throw new Error('host exited: ' + log);
-      try { return (await fetch(base + '/health', { signal: AbortSignal.timeout(500) })).ok; }
-      catch { return false; }
-    }, 10000);
-    await run({ api, waitFor, directory, child, getLog: () => log, getModelCalls: () => modelCalls });
+    const start = async () => {
+      child = spawn('node', [path.join(root, 'agent-host/server.mjs')], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      child.stdout.on('data', (chunk) => { log += chunk; });
+      child.stderr.on('data', (chunk) => { log += chunk; });
+      await waitFor(async () => {
+        if (child.exitCode !== null) throw new Error('host exited: ' + log);
+        try { return (await fetch(base + '/health', { signal: AbortSignal.timeout(500) })).ok; }
+        catch { return false; }
+      }, 10000);
+    };
+    const restart = async (modelId) => {
+      const exited = new Promise((resolve) => child.once('close', resolve));
+      child.kill('SIGTERM');
+      await exited;
+      if (modelId) env.BEEFTV_AGENT_MODEL = modelId;
+      await start();
+    };
+    await start();
+    await run({ api, waitFor, directory, child, restart, getLog: () => log, getModelCalls: () => modelCalls });
   } finally {
     if (child && child.exitCode === null) {
       const exited = new Promise((resolve) => child.once('close', resolve));
@@ -112,6 +122,28 @@ async function withHost(run, envExtra = {}) {
     rmSync(directory, { recursive: true, force: true });
   }
 }
+
+test('真实宿主：空新会话跨进程重启和模型切换仍可激活，零模型请求', async () => {
+  await withHost(async ({ api, restart, getModelCalls }) => {
+    const old = await api('/sessions', { canvasId: 'empty-restart' });
+    const fresh = await api('/sessions', { canvasId: 'empty-restart' });
+    expect(fresh.status).toBe(200);
+    expect(fresh.payload.sessionId).not.toBe(old.payload.sessionId);
+    const sessionId = fresh.payload.sessionId;
+    for (const modelId of [undefined, 'synthetic-after-switch']) {
+      await restart(modelId);
+      const activated = await api('/sessions/activate', { canvasId: 'empty-restart', sessionId });
+      expect(activated.status).toBe(200);
+      expect(activated.payload.sessionId).toBe(sessionId);
+      const history = await api('/history?canvasId=empty-restart');
+      expect(history.payload).toEqual({ sessionId, turns: [] });
+      const listed = await api('/sessions?canvasId=empty-restart');
+      expect(listed.payload.currentSessionId).toBe(sessionId);
+      expect((await api('/health')).payload.model).toBe(modelId || 'synthetic');
+    }
+    expect(getModelCalls()).toBe(0);
+  });
+}, 35000);
 
 test('真实宿主：新建会话替换会释放上一条，忙碌时拒绝替换', async () => {
   await withHost(async ({ api, waitFor, getModelCalls }) => {

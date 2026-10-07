@@ -6,20 +6,60 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { TURN_ENTRY_TYPE, createSessionStore } from './session-owner.mjs';
 
-function scratchStore() {
-  const root = mkdtempSync(join(tmpdir(), 'beeftv-session-owner-'));
+function scratchStore(root = mkdtempSync(join(tmpdir(), 'beeftv-session-owner-')), model) {
   const store = createSessionStore({
     sessionRoot: join(root, 'sessions'),
     workspaceRoot: join(root, 'workspace'),
     agentDir: join(root, 'pi-agent'),
     runId: 'run-test',
     getModelRuntime: () => undefined,
-    getModel: () => undefined,
+    getModel: () => model,
   });
   return { root, store, buildTools: () => [] };
 }
 
 describe('官方 SDK 会话创建、替换、释放与持久化', () => {
+  test('空新会话在重启及切换模型后保持身份，不恢复旧对话', async () => {
+    const { root, store, buildTools } = scratchStore();
+    let restarted;
+    try {
+      const old = await store.ensureSession('canvas-empty', buildTools);
+      old.manager.appendCustomEntry(TURN_ENTRY_TYPE, {
+        turnId: 'old-turn', userText: '旧对话', reply: '已记录', toolCalls: [], proposals: [],
+        error: null, cancelled: false, createdAt: new Date().toISOString(),
+      });
+      old.manager.appendMessage({ role: 'assistant', content: [{ type: 'text', text: '已记录' }] });
+      const fresh = await store.replaceSession('canvas-empty', () => store.createLiveSession({
+        canvasId: 'canvas-empty', sessionId: '', buildTools,
+      }));
+      const freshId = fresh.sessionId;
+      const file = SessionManager.findById(store.canvasWorkspace('canvas-empty'), freshId, store.canvasSessionDir('canvas-empty'));
+      expect(file).toBe(fresh.manager.getSessionFile());
+      expect(store.turnEntries(SessionManager.open(file))).toEqual([]);
+      expect(fresh.manager.getEntries().filter((entry) => entry.type === 'message')).toEqual([]);
+      await store.disposeAll();
+
+      // Host model changes recreate the store; creating/acquiring sessions must not call a model.
+      for (const id of ['model-before', 'model-after']) {
+        const model = { id, name: id, api: 'openai-completions', provider: 'synthetic',
+          baseUrl: 'http://127.0.0.1:1', reasoning: false, input: ['text'],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 1000, maxTokens: 100 };
+        restarted = scratchStore(root, model).store;
+        const restored = await restarted.acquireChatSession('canvas-empty', buildTools, freshId);
+        expect(restored.sessionId).toBe(freshId);
+        expect(restored.session.model.id).toBe(id);
+        expect(restarted.turnEntries(restored.manager)).toEqual([]);
+        expect(restored.manager.getEntries().filter((entry) => entry.type === 'message')).toEqual([]);
+        restarted.releaseChatSession(restored);
+        await restarted.disposeAll();
+      }
+    } finally {
+      await store.disposeAll();
+      await restarted?.disposeAll();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('replace 会 abort+dispose 上一条官方会话，SessionManager 文件仍保留', async () => {
     const { root, store, buildTools } = scratchStore();
     try {
