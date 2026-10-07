@@ -41,6 +41,15 @@ func New(repo *repository.Repository, deps Dependencies) *Service {
 	return service
 }
 
+// WithRepository 返回绑定到另一仓储（通常是操作层事务连接）的服务副本，
+// 与 canvas.Service 的同名方法同构：保证业务写入与操作记录同事务提交。
+func (s *Service) WithRepository(repo *repository.Repository) *Service {
+	if s == nil {
+		return New(repo, Dependencies{})
+	}
+	return &Service{repo: repo, workflows: s.workflows}
+}
+
 // Default workflow records belong to the project domain. The host need not
 // call back through app to obtain records from this same service.
 type builtinWorkflows struct{ service *Service }

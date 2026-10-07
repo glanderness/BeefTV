@@ -63,6 +63,16 @@ func (unusedDomain) OwnedAsset(string, string) (*model.Asset, error)            
 func (unusedDomain) BindExistingCanvasNode(string, canvas.TaskOutputBind) (canvas.TaskOutputBindResult, error) {
 	panic("unused")
 }
+func (unusedDomain) ListProjectsPage(string, int, int) (ProjectListPage, error) { panic("unused") }
+func (unusedDomain) ProjectDetail(string, string) (ProjectDetail, error)        { panic("unused") }
+func (unusedDomain) CreateProject(string, ProjectCreateInput) (model.Project, error) {
+	panic("unused")
+}
+func (unusedDomain) UpdateProject(string, string, ProjectUpdateInput) (model.Project, error) {
+	panic("unused")
+}
+func (unusedDomain) DeleteProject(string, string) error                  { panic("unused") }
+func (unusedDomain) OwnedProject(string, string) (*model.Project, error) { panic("unused") }
 
 type assetListProbe struct {
 	unusedDomain

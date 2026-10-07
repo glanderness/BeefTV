@@ -13,6 +13,7 @@ import (
 	"infinite-canvas/backend/internal/conversation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/operations"
+	localproject "infinite-canvas/backend/internal/project"
 	"infinite-canvas/backend/internal/repository"
 	localtask "infinite-canvas/backend/internal/task"
 	"infinite-canvas/backend/internal/taskbinding"
@@ -443,20 +444,26 @@ func (s *Service) ConnectUserCanvasNodesWithTx(tx *gorm.DB, userID, canvasID, fr
 	return s.canvasDomainWithTx(tx).ConnectUserCanvasNodesAtRevision(userID, canvasID, fromNodeID, toNodeID, expectedRevision)
 }
 
-// BindDomain 把当前事务绑成操作层 Domain：画布读写走同一条连接，任务/模型快照仍由组合根提供。
+// BindDomain 把当前事务绑成操作层 Domain：画布与项目读写走同一条连接，任务/模型快照仍由组合根提供。
 // 对话写入必须 WithTx(tx)，不能只换仓储再开第二层 Transaction，SQLite 会自锁。
 func (s *Service) BindDomain(tx *gorm.DB) operations.Domain {
 	if tx == nil {
-		return &operationSession{canvas: s.canvasDomain(), service: s, repo: s.repo}
+		return &operationSession{canvas: s.canvasDomain(), projects: s.projectDomain(), service: s, repo: s.repo}
 	}
-	return &operationSession{canvas: s.canvasDomainWithTx(tx), service: s, repo: s.repo.WithTx(tx), tx: tx}
+	return &operationSession{canvas: s.canvasDomainWithTx(tx), projects: s.projectDomainWithTx(tx), service: s, repo: s.repo.WithTx(tx), tx: tx}
 }
 
 type operationSession struct {
-	canvas  *canvas.Service
-	service *Service
-	repo    *repository.Repository
-	tx      *gorm.DB
+	canvas   *canvas.Service
+	projects *localproject.Service
+	service  *Service
+	repo     *repository.Repository
+	tx       *gorm.DB
+}
+
+// projectDomainWithTx 返回绑定到操作事务的项目领域服务：项目写入与操作记录同事务提交。
+func (s *Service) projectDomainWithTx(tx *gorm.DB) *localproject.Service {
+	return s.projectDomain().WithRepository(s.repo.WithTx(tx))
 }
 
 func (s *operationSession) UserCanvasProject(userID string, id string) (json.RawMessage, error) {
@@ -636,6 +643,68 @@ func (s *operationSession) AttachConversationMessage(userID string, input taskbi
 		Deleted:  record.Deleted,
 		Document: record.Document,
 	}, nil
+}
+
+func (s *operationSession) ListProjectsPage(userID string, page int, pageSize int) (operations.ProjectListPage, error) {
+	result, err := s.projects.ListProjectsPage(userID, page, pageSize)
+	if err != nil {
+		return operations.ProjectListPage{}, err
+	}
+	projects := make([]operations.ProjectSummary, len(result.Projects))
+	for index, summary := range result.Projects {
+		projects[index] = operations.ProjectSummary{
+			Project: summary.Project, CanvasCount: summary.CanvasCount,
+			AssetCount: summary.AssetCount, UnitCount: summary.UnitCount,
+			CompletedUnitCount: summary.CompletedUnitCount,
+		}
+	}
+	return operations.ProjectListPage{
+		Projects: projects, Page: result.Page, PageSize: result.PageSize,
+		Total: result.Total, HasMore: result.HasMore,
+	}, nil
+}
+
+func (s *operationSession) ProjectDetail(userID string, projectID string) (operations.ProjectDetail, error) {
+	core, err := s.projects.ProjectCore(userID, projectID)
+	if err != nil {
+		return operations.ProjectDetail{}, err
+	}
+	units, err := s.projects.ProjectUnitSummaries(userID, projectID)
+	if err != nil {
+		return operations.ProjectDetail{}, err
+	}
+	canvases, err := s.projects.ProjectCanvasesPage(userID, projectID, 1, 50)
+	if err != nil {
+		return operations.ProjectDetail{}, err
+	}
+	return operations.ProjectDetail{
+		Project: core.Project, Units: units.Units, CanvasCounts: units.CanvasCounts,
+		Canvases: canvases.Canvases, CanvasUnitLinks: canvases.CanvasUnitLinks,
+	}, nil
+}
+
+func (s *operationSession) CreateProject(userID string, input operations.ProjectCreateInput) (model.Project, error) {
+	return s.projects.CreateProject(userID, localproject.CreateProjectRequest{
+		Name: input.Name, Type: input.Type, AspectRatio: input.AspectRatio,
+		SourceType: input.SourceType, Description: input.Description,
+		DefaultImageModel: input.DefaultImageModel, DefaultVideoModel: input.DefaultVideoModel,
+	})
+}
+
+func (s *operationSession) UpdateProject(userID string, projectID string, input operations.ProjectUpdateInput) (model.Project, error) {
+	return s.projects.UpdateProject(userID, projectID, localproject.UpdateProjectRequest{
+		Name: input.Name, Type: input.Type, AspectRatio: input.AspectRatio, SourceType: input.SourceType,
+		Status: input.Status, Description: input.Description,
+		DefaultImageModel: input.DefaultImageModel, DefaultVideoModel: input.DefaultVideoModel,
+	})
+}
+
+func (s *operationSession) DeleteProject(userID string, projectID string) error {
+	return s.projects.DeleteProject(userID, projectID)
+}
+
+func (s *operationSession) OwnedProject(userID string, projectID string) (*model.Project, error) {
+	return s.projects.Owned(userID, projectID)
 }
 
 func mapConversationAttachError(err error) error {

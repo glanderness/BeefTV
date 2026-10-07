@@ -63,6 +63,22 @@ func RegisterDefaultOps(r *Registry) {
 	r.Register(Op{ID: "conversation.message.attach", Summary: "把已交付的任务产物绑定到原对话消息（校验归属与就绪资源，带 revision CAS，幂等回执）", Scope: ScopeConversation,
 		Params:  json.RawMessage(`{"type":"object","properties":{"conversationId":{"type":"string"},"taskId":{"type":"string"},"messageId":{"type":"string"},"outputIndex":{"type":"integer"}},"required":["conversationId","taskId","messageId"]}`),
 		Handler: opConversationMessageAttach, ProjectReplay: projectConversationMessageAttachReplay})
+	// 项目的增删改查：读属工作区级，写属项目域。删除是高危不可逆操作，必须带项目当前名称确认。
+	r.Register(Op{ID: "project.list", Summary: "分页列出工作区内的项目（含画布、素材、单元计数）", ReadOnly: true, Scope: ScopeWorkspaceRead,
+		Params:  json.RawMessage(`{"type":"object","properties":{"page":{"type":"integer"},"pageSize":{"type":"integer"}}}`),
+		Handler: opProjectList})
+	r.Register(Op{ID: "project.get", Summary: "按 ID 读取项目本体、单元列表与关联画布", ReadOnly: true, Scope: ScopeWorkspaceRead,
+		Params:  json.RawMessage(`{"type":"object","properties":{"projectId":{"type":"string"}},"required":["projectId"]}`),
+		Handler: opProjectGet})
+	r.Register(Op{ID: "project.create", Summary: "创建项目（name 必填；type/aspectRatio/sourceType 缺省为 short-drama/9:16/blank）", Scope: ScopeProject,
+		Params:  json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"},"type":{"type":"string"},"aspectRatio":{"type":"string"},"sourceType":{"type":"string"},"description":{"type":"string"},"defaultImageModel":{"type":"string"},"defaultVideoModel":{"type":"string"}},"required":["name"]}`),
+		Handler: opProjectCreate})
+	r.Register(Op{ID: "project.update", Summary: "按 ID 局部更新项目（只覆盖给出的字段，带 revision CAS）", Scope: ScopeProject,
+		Params:  json.RawMessage(`{"type":"object","properties":{"projectId":{"type":"string"},"expectedRevision":{"type":"integer"},"name":{"type":"string"},"type":{"type":"string"},"aspectRatio":{"type":"string"},"sourceType":{"type":"string"},"description":{"type":"string"},"status":{"type":"string","enum":["active","archived"]},"defaultImageModel":{"type":"string"},"defaultVideoModel":{"type":"string"}},"required":["projectId","expectedRevision"]}`),
+		Handler: opProjectUpdate})
+	r.Register(Op{ID: "project.delete", Summary: "删除项目及其单元、分镜等工作区生产数据（先解绑画布；有进行中任务则拒绝；expectedName 必须与项目当前名称一致）", Scope: ScopeProject,
+		Params:  json.RawMessage(`{"type":"object","properties":{"projectId":{"type":"string"},"expectedName":{"type":"string"}},"required":["projectId","expectedName"]}`),
+		Handler: opProjectDelete})
 }
 
 func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error) {
