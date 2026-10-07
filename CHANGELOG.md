@@ -9,6 +9,11 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.10
+
+- 真人视频模型统一显示为 Seedance 2.0-真人、Seedance 2.5-真人，模型选择、设置和名称搜索保持一致。
+- API 模型 ID、价格与渠道路由保持不变。
+
 ## v1.7.9
 
 - 新增 Seedance 2.0、2.5 真人素材版，选择模型时显示价格，标准版保留原价。

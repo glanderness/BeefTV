@@ -24,6 +24,34 @@ const receipt = JSON.parse(readFileSync(`docs/release-evidence/${version}.json`,
 const fail = message => { throw new Error(`Real generation release gate: ${message}`); };
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
+// Exact one-release authorization; a naming change does not prove generation.
+if (version === 'v1.7.10' && receipt.liveTestWaiver?.scope === 'seedance-display-names-only') {
+  const evidence = value => Array.isArray(value) && value.length > 0 && value.every(nonempty);
+  if (receipt.liveTestWaiver.approvedBy !== 'Ender'
+    || receipt.liveTestWaiver.instruction !== 'beeftv本次豁免 直接上线'
+    || !evidence(receipt.liveTestWaiver.evidence)) fail('v1.7.10 requires exact owner waiver');
+  if (receipt.budgetCNY !== 0 || receipt.spentCNY !== 0 || receipt.newSpentCNY !== 0 || receipt.pendingCNY !== 0
+    || receipt.liveMatrixStatus !== 'not_run_owner_waived' || !Array.isArray(receipt.cases) || receipt.cases.length !== 0) fail('v1.7.10 must record no new paid calls and an unexecuted matrix');
+  if (receipt.priorFinancialUncertainty?.status !== 'unresolved'
+    || receipt.priorFinancialUncertainty.carriedFromVersion !== 'v1.7.9'
+    || receipt.priorFinancialUncertainty.pendingCNY !== null
+    || !evidence(receipt.priorFinancialUncertainty.evidence)) fail('v1.7.10 must retain historical uncertainty');
+  if (receipt.review?.result !== 'approved' || receipt.review.independent !== true
+    || receipt.review.sourceDigest !== sourceDigest || !nonempty(receipt.review.reviewer) || !evidence(receipt.review.evidence)
+    || receipt.upgrade?.preservedData !== true || receipt.upgrade.sourceDigest !== sourceDigest
+    || !evidence(receipt.upgrade.evidence)) fail('v1.7.10 requires current independent review and data preservation');
+  for (const id of ['displayNames', 'nativeNames', 'localReleaseGate', 'ci']) {
+    const check = receipt.verification?.[id];
+    if (check?.status !== 'passed' || check.sourceDigest !== sourceDigest || !evidence(check.evidence)) fail(`v1.7.10 missing targeted evidence: ${id}`);
+  }
+  if (receipt.verification.nativeNames.method !== 'native') fail('v1.7.10 requires native name acceptance');
+  const packages = receipt.packages;
+  if (packages?.status !== 'pending_release_workflow' || packages.archives != null || receipt.releaseComplete !== false
+    || packages.windowsReleasedUpgradeAndRollbackBeforeUpload !== true || packages.finalArchiveSmokeBeforeUpload !== true
+    || !evidence(packages.workflowEvidence)) fail('v1.7.10 final package gates must remain enforced');
+  console.log('Owner authorized v1.7.10 display-name release; paid matrix NOT run; new expense 0; historical gaps retained; final packages pending.');
+  process.exit(0);
+}
 // v1.7.9 only: Ender accepted the disclosed evidence carry-forward and gaps.
 // The original execution identities and unknown finances must remain explicit.
 if (version === 'v1.7.9' && receipt.ownerException?.scope === 'portrait-release-evidence-20261007') {

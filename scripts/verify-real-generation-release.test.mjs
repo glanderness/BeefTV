@@ -48,11 +48,50 @@ function setupRepo(version) {
   return { dir, git, run, save, commitVersion };
 }
 
+test('v1.7.10 name-only waiver retains native, review, financial and package gates', () => {
+  const { dir, run, save, commitVersion } = setupRepo('v1.7.10');
+  try {
+    const sourceDigest = run('--fingerprint').trim();
+    const evidence = ['synthetic test receipt'];
+    const value = {
+      version: 'v1.7.10', sourceDigest, budgetCNY: 0, spentCNY: 0, newSpentCNY: 0, pendingCNY: 0,
+      liveMatrixStatus: 'not_run_owner_waived', cases: [], releaseComplete: false,
+      liveTestWaiver: { approvedBy: 'Ender', instruction: 'beeftv本次豁免 直接上线', scope: 'seedance-display-names-only', evidence },
+      priorFinancialUncertainty: { status: 'unresolved', carriedFromVersion: 'v1.7.9', pendingCNY: null, evidence },
+      review: { result: 'approved', independent: true, reviewer: 'fixture', sourceDigest, evidence },
+      upgrade: { preservedData: true, sourceDigest, evidence },
+      verification: Object.fromEntries(['displayNames', 'nativeNames', 'localReleaseGate', 'ci'].map(id => [id, { status: 'passed', method: id === 'nativeNames' ? 'native' : 'test', sourceDigest, evidence }])),
+      packages: { status: 'pending_release_workflow', windowsReleasedUpgradeAndRollbackBeforeUpload: true, finalArchiveSmokeBeforeUpload: true, workflowEvidence: evidence },
+    };
+    save(value);
+    assert.match(run(), /display-name release; paid matrix NOT run/);
+    for (const mutate of [
+      r => { r.liveTestWaiver.instruction = '上线吧'; },
+      r => { r.spentCNY = 1; },
+      r => { r.liveMatrixStatus = 'passed'; },
+      r => { r.priorFinancialUncertainty.pendingCNY = 0; },
+      r => { r.review.independent = false; },
+      r => { r.upgrade.preservedData = false; },
+      r => { r.verification.nativeNames.method = 'static'; },
+      r => { r.verification.displayNames.sourceDigest = 'old'; },
+      r => { r.verification.ci.status = 'pending'; },
+      r => { r.packages.windowsReleasedUpgradeAndRollbackBeforeUpload = false; },
+      r => { r.releaseComplete = true; },
+    ]) {
+      const invalid = structuredClone(value); mutate(invalid); save(invalid);
+      assert.throws(() => run());
+    }
+    commitVersion('v1.7.11');
+    value.version = 'v1.7.11'; value.sourceDigest = run('--fingerprint').trim(); save(value, 'v1.7.11');
+    assert.throws(() => run());
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('v1.7.9 accepted evidence cannot hide gaps, skip native cases, or carry to another version', () => {
   const { dir, git, run, save, commitVersion } = setupRepo('v1.7.9');
   try {
     // Reuse Git objects only: no working files, accounts or private test media.
-    git('fetch', '--quiet', '--depth=1', decodeURIComponent(new URL('..', import.meta.url).pathname), 'HEAD');
+    git('fetch', '--quiet', '--depth=1', decodeURIComponent(new URL('..', import.meta.url).pathname), 'refs/tags/v1.7.9');
     git('update-ref', 'HEAD', 'FETCH_HEAD');
     const value = JSON.parse(readFileSync(new URL('../docs/release-evidence/v1.7.9.json', import.meta.url)));
     value.sourceDigest = run('--fingerprint').trim();

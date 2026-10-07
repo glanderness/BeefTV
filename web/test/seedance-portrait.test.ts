@@ -80,12 +80,15 @@ test("missing quote blocks portrait generation and never fabricates a price", ()
     config.channels[0].modelProfiles![1].videoPricing = null;
     expect(modelCompatibilityError(config, config.models[1], { capability: "video" })).toContain("价格暂不可用");
     expect(portraitPriceLines(undefined)).toEqual([]);
-    expect(seedancePortraitLabel("beefapi::seedance-2.5-portrait")).toBe("Seedance 2.5 真人素材版");
+    expect(seedancePortraitLabel("beefapi::seedance-2.5-portrait")).toBe("Seedance 2.5-真人");
 });
 
 test("selected portrait option visibly shows account-sourced prices before generation", () => {
     const config = fixture();
+    config.channels[0].modelProfiles![1].displayName = "Seedance 2.0-Pro";
     const html = renderToStaticMarkup(createElement(ModelPicker, { config, value: config.models[1], capability: "video", onChange() {} }));
+    expect(html).toContain("Seedance 2.0-真人");
+    expect(html).not.toContain("Seedance 2.0-Pro");
     expect(html).toContain("真人素材版参考单价");
     expect(html).toContain("¥69");
     expect(html).toContain("¥42");
