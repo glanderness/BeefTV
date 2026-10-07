@@ -15,7 +15,7 @@
     ]
   },
   "review": {
-    "status": "pending_final_bookkeeping_review",
+    "status": "approved",
     "applicationReview": {
       "status": "approved_layered",
       "evidence": [
@@ -25,7 +25,13 @@
       ],
       "testOnlyFixReview": "9620a1c authored by tv_release_audit and independently diff-reviewed by root; catalog7e70798 authored by tv_quote_guard and independently reviewed by tv_release_audit."
     },
-    "unchangedApplicationSHA256": "6f1fa51c6770ef60b24511d4b65e39e268f096f57b18b5c9351588185194eb7a"
+    "unchangedApplicationSHA256": "6f1fa51c6770ef60b24511d4b65e39e268f096f57b18b5c9351588185194eb7a",
+    "reviewer": "Independent Codex /root/tv_release_audit",
+    "sourceDigest": "109df656d676b27aef4967ab5941a279939ab407b4639ca3c5b7ecda2eccece3",
+    "reviewedCommit": "b1162a7",
+    "artifactSHA256": "fa0839d92b81bdd177c40bbae81f414bdeaba27772e7a6834161adcfb098b2e8",
+    "result": "approved",
+    "validation": "Independent gate tests14/14 passed; application source objects unchanged; final source and exact owner exceptions reviewed"
   },
   "matrix": {
     "recordedAt": "2026-10-07T07:30:03.400442+00:00",

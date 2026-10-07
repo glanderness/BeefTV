@@ -538,7 +538,7 @@
     }
   },
   "review": {
-    "result": "pending",
+    "result": "approved",
     "independent": true,
     "sourceDigest": "109df656d676b27aef4967ab5941a279939ab407b4639ca3c5b7ecda2eccece3",
     "reviewer": "Independent Codex /root/tv_release_audit",
