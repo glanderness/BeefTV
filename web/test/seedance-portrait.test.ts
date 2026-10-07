@@ -104,13 +104,14 @@ test("missing quote blocks portrait generation and never fabricates a price", ()
     expect(seedancePortraitLabel("beefapi::seedance-2.5-portrait")).toBe("Seedance 2.5");
 });
 
-test("selected portrait option visibly shows account-sourced prices before generation", () => {
+test("selected portrait option offers account-sourced prices before generation", () => {
     const config = fixture();
     config.channels[0].modelProfiles![1].displayName = "Seedance 2.0-Pro";
     const html = renderToStaticMarkup(createElement(ModelPicker, { config, value: config.models[1], capability: "video", onChange() {} }));
     expect(html).toContain("Seedance 2.0");
     expect(html).not.toContain("Seedance 2.0-Pro");
     expect(html).toContain("视频参考单价");
+    expect(html).toContain('aria-label="视频参考单价"');
     expect(html).toContain("¥69");
     expect(html).toContain("¥42");
     expect(html).not.toContain("必过");

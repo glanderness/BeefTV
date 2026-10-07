@@ -244,7 +244,7 @@ export function ModelPicker({
     );
 
     return (
-        <div className={cn(fullWidth ? "w-full min-w-0" : "w-fit max-w-full")} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+        <div className={cn("flex items-center gap-2", fullWidth ? "w-full min-w-0" : "w-fit max-w-full")} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
             <Popover
                 open={open}
                 onOpenChange={setPickerOpen}
@@ -274,9 +274,15 @@ export function ModelPicker({
                     <ChevronDown className={cn("canvas-model-picker-chevron", open && "is-open")} aria-hidden="true" />
                 </button>
             </Popover>
-            {portrait || priceLines.length > 0 ? <div className="mt-2 max-w-full text-xs leading-relaxed" style={{ color: theme.node.muted }} role="note">
-                {priceLines.length ? <><p>视频参考单价</p>{priceLines.map((line) => <p key={line}>{line}</p>)}<p>实际费用见生成账单。素材仍需通过审核。</p></> : <p>价格暂不可用，请刷新模型列表后再生成。</p>}
-            </div> : null}
+            {portrait || priceLines.length > 0 ? <Popover trigger="click" placement="topLeft" content={
+                <div className="max-w-[min(26rem,calc(100vw-3rem))] text-xs leading-relaxed" role="note">
+                    {priceLines.length ? <><p>视频参考单价</p>{priceLines.map((line) => <p key={line}>{line}</p>)}<p>实际费用见生成账单。素材仍需通过审核。</p></> : <p>价格暂不可用，请刷新模型列表后再生成。</p>}
+                </div>
+            }>
+                <button type="button" className="shrink-0 rounded px-1 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ color: theme.node.muted }} aria-label="视频参考单价" title={priceLines.join("\n") || "价格暂不可用，请刷新模型列表后再生成。"}>
+                    {priceLines.length ? "价格" : "价格暂不可用"}
+                </button>
+            </Popover> : null}
         </div>
     );
 }
