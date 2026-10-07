@@ -19,6 +19,8 @@ import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-p
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata, type CanvasVideoEditOperation } from "@/types/canvas";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+import { assertUserScope, captureUserScope, isUserScopeAbandonedError } from "@/lib/user-scope-guard";
+import { CanvasGenerationDurableAckError, persistCanvasGenerationTarget } from "@/services/canvas-generation-consumer";
 
 export async function runBackendCanvasGenerationTask(
     {
@@ -131,12 +133,18 @@ export async function runCanvasGenerationTaskToConsumer(
         bindTask(task: GenerationTask): void;
         consumeTask(task: GenerationTask): Promise<void>;
         runTask?: (options: Parameters<typeof runBackendCanvasGenerationTask>[0]) => ReturnType<typeof runBackendCanvasGenerationTask>;
+        prepareTarget?: typeof persistCanvasGenerationTarget;
     },
 ) {
     return runGenerationOperationOnce(input.clientOperationId, async () => {
+        const expectedScope = input.expectedScope ?? captureUserScope();
+        if (input.mode === "image") await (dependencies.prepareTarget ?? persistCanvasGenerationTarget)({ ...input, expectedScope });
+        if (input.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+        assertUserScope(expectedScope);
         let completedTask: GenerationTask | undefined;
         const result = await (dependencies.runTask ?? runBackendCanvasGenerationTask)({
             ...input,
+            expectedScope,
             onTaskCreated: (task) => {
                 input.onTaskCreated?.(task);
                 dependencies.bindTask(task);
@@ -147,7 +155,17 @@ export async function runCanvasGenerationTaskToConsumer(
         const taskForConsumer = input.mode === "text" && completedTask.type === "canvas_text" && result.text
             ? hydrateCompletedTextTask(completedTask, result.text)
             : completedTask;
-        await dependencies.consumeTask(taskForConsumer);
+        try {
+            await dependencies.consumeTask(taskForConsumer);
+        } catch (error) {
+            if (isUserScopeAbandonedError(error) || (error instanceof Error && error.name === "AbortError")) throw error;
+            const cause = error instanceof CanvasGenerationDurableAckError ? error.cause : error;
+            dependencies.bindTask({
+                ...taskForConsumer,
+                failureDiagnostics: { ...taskForConsumer.failureDiagnostics, source: "client_result", executionResult: "completed", stage: "画布应用结果", summary: cause instanceof Error ? cause.message : "画布应用结果失败", capturedAt: new Date().toISOString() },
+            });
+            throw error instanceof CanvasGenerationDurableAckError ? error : new CanvasGenerationDurableAckError(error);
+        }
         return result;
     });
 }

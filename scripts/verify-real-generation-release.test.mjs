@@ -52,7 +52,7 @@ test('v1.7.9 accepted evidence cannot hide gaps, skip native cases, or carry to 
   const { dir, git, run, save, commitVersion } = setupRepo('v1.7.9');
   try {
     // Reuse Git objects only: no working files, accounts or private test media.
-    git('fetch', '--quiet', '--depth=1', decodeURIComponent(new URL('..', import.meta.url).pathname), 'HEAD');
+    git('fetch', '--quiet', '--depth=1', decodeURIComponent(new URL('..', import.meta.url).pathname), 'refs/tags/v1.7.9');
     git('update-ref', 'HEAD', 'FETCH_HEAD');
     const value = JSON.parse(readFileSync(new URL('../docs/release-evidence/v1.7.9.json', import.meta.url)));
     value.sourceDigest = run('--fingerprint').trim();
@@ -87,6 +87,38 @@ test('v1.7.9 accepted evidence cannot hide gaps, skip native cases, or carry to 
     assert.throws(() => run());
     commitVersion('v1.7.10');
     value.version = 'v1.7.10'; value.sourceDigest = run('--fingerprint').trim(); save(value, 'v1.7.10');
+    assert.throws(() => run());
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('v1.7.10 one-image authorization rejects additional calls, stale source, missing recovery or review', () => {
+  const { dir, run, save, commitVersion } = setupRepo('v1.7.10');
+  try {
+    const digest = run('--fingerprint').trim();
+    const bound = { sourceDigest: digest, evidence: ['synthetic.log'] };
+    const valid = {
+      version: 'v1.7.10', sourceDigest: digest, releaseComplete: false,
+      ownerException: { scope: 'canvas-image-bind-regression-20261007', approvedBy: 'Ender', instruction: '只复测一次生成图片看看会不会复现报错即可上线', evidence: ['owner.log'] },
+      liveMatrixStatus: 'not_run_owner_limited_to_one_image', paidSubmissionLimit: 1,
+      cases: [{ path: 'image-image', model: 'beefapi::gpt-image-2.5', attempts: 1, status: 'succeeded', clientSubmitted: true, canvasVerified: true, mediaDecoded: true, mediaOpened: true, billing: 'settled', costCNY: 0.42, executedSourceDigest: digest, clientVersion: 'v1.7.10', taskId: 'synthetic-task', providerRequestId: 'synthetic-request', artifactSHA256: 'a'.repeat(64), evidence: ['native.log'] }],
+      newSpentCNY: 0.42, newPendingCNY: 0,
+      priorFinancialUncertainty: { status: 'unresolved', carriedFromVersion: 'v1.7.9', pendingCNY: null, evidence: ['prior.json'] },
+      review: { ...bound, result: 'approved', independent: true, reviewer: 'synthetic-reviewer' },
+      upgrade: { ...bound, preservedData: true },
+      verification: Object.fromEntries(['saveBarrier', 'resultRecovery', 'scopeIsolation', 'localReleaseGate', 'ci'].map(id => [id, { ...bound, status: 'passed' }])),
+      packages: { status: 'pending_release_workflow', windowsReleasedUpgradeAndRollbackBeforeUpload: true, finalArchiveSmokeBeforeUpload: true, workflowEvidence: ['workflow.yml'] },
+    };
+    save(valid); assert.match(run(), /single-image regression passed/);
+    for (const mutate of [
+      r => r.cases.push(r.cases[0]), r => r.cases[0].attempts = 2,
+      r => r.cases[0].canvasVerified = false, r => r.cases[0].billing = 'pending',
+      r => r.cases[0].executedSourceDigest = 'b'.repeat(64),
+      r => r.ownerException.instruction = 'yes', r => r.review.result = 'pending',
+      r => r.verification.resultRecovery.status = 'pending', r => r.priorFinancialUncertainty.pendingCNY = 0,
+      r => r.packages.finalArchiveSmokeBeforeUpload = false, r => r.releaseComplete = true,
+    ]) { const invalid = structuredClone(valid); mutate(invalid); save(invalid); assert.throws(() => run()); }
+    commitVersion('v1.7.11');
+    valid.version = 'v1.7.11'; valid.sourceDigest = run('--fingerprint').trim(); save(valid, 'v1.7.11');
     assert.throws(() => run());
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

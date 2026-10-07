@@ -168,6 +168,8 @@ export async function executeImageGeneration({
         ...childNodes,
     ];
 
+    // 任务提交前的保存屏障读取 store；不能等 React updater 执行后才发布新节点。
+    if (projectId) useCanvasStore.getState().updateProject(projectId, { nodes: nextNodes });
     setNodes(nextNodes);
     setConnections((current) => {
         const removed = new Set(retired.removedIds);
@@ -289,7 +291,7 @@ export async function executeImageGeneration({
         });
         return;
     }
-    if (hasFailure) showError(hasSuccess ? "部分图片生成失败" : "全部图片生成失败");
+    if (hasFailure) showError(representativeFailure?.generationErrorCode === "canvas_conflict" ? "生成结果已保留，请重新加载资源" : hasSuccess ? "部分图片生成失败" : "全部图片生成失败");
     setNodes((current) => {
         const next = current.map((node) => {
             if (node.id === nodeId && isConfigNode) {
