@@ -142,7 +142,7 @@ test("late bind after switching canvases never projects the old graph into the n
             bindOutput: async (input) => {
                 current = false;
                 return { op: "canvas.task.bind", opId: input.operationId, replayed: false, revision: 4,
-                    result: { applied: true, canvasId: "canvas-1", nodeId: oldNode.id, taskId: "task-1", canvas: server, revision: 4 } };
+                    result: { applied: true, bindingStatus: "bound", canvasId: "canvas-1", nodeId: oldNode.id, taskId: "task-1", canvas: server, revision: 4 } };
             },
             adoptConfirmedProjection: async () => server,
             captureScope: () => identity, liveScope: () => identity,
