@@ -48,6 +48,47 @@ function setupRepo(version) {
   return { dir, git, run, save, commitVersion };
 }
 
+test('v1.7.12 unified-name waiver cannot waive evidence or carry forward', () => {
+  const { dir, run, save, commitVersion } = setupRepo('v1.7.12');
+  try {
+    const sourceDigest = run('--fingerprint').trim();
+    const evidence = ['synthetic test receipt'];
+    const value = {
+      version: 'v1.7.12', sourceDigest, budgetCNY: null, spentCNY: null, pendingCNY: null,
+      newSpentCNY: 0, newPendingCNY: 0, cases: [], liveMatrixStatus: 'not_run_owner_waived', releaseComplete: false,
+      liveTestWaiver: { approvedBy: 'Ender', instruction: '上线吧 豁免了 飞书文档你再看看还要不要更新', scope: 'seedance-unified-display', evidence },
+      priorFinancialUncertainty: { status: 'unresolved', carriedFromVersion: 'v1.7.11', pendingCNY: null, evidence },
+      review: { result: 'approved', independent: true, reviewer: 'fixture', sourceDigest, evidence },
+      upgrade: { preservedData: true, sourceDigest, evidence },
+      verification: Object.fromEntries(['displayNames', 'nativeNames', 'localReleaseGate', 'ci'].map(id => [id, { status: 'passed', method: id === 'nativeNames' ? 'native' : 'test', sourceDigest, evidence }])),
+      packages: { status: 'pending_release_workflow', windowsReleasedUpgradeAndRollbackBeforeUpload: true, finalArchiveSmokeBeforeUpload: true, workflowEvidence: evidence },
+    };
+    save(value); assert.match(run(), /unified Seedance release; paid matrix NOT run/);
+    const mutations = [
+      r => r.liveTestWaiver.instruction = '上线吧', r => r.liveTestWaiver.approvedBy = 'other',
+      r => r.liveTestWaiver.evidence = [], r => r.liveTestWaiver.scope = 'other',
+      r => r.newSpentCNY = 1, r => r.newPendingCNY = null, r => r.cases.push({}),
+      r => r.liveMatrixStatus = 'passed', r => r.budgetCNY = 0, r => r.spentCNY = 0, r => r.pendingCNY = 0,
+      r => r.priorFinancialUncertainty.pendingCNY = 0, r => r.priorFinancialUncertainty.evidence = [],
+      r => r.priorFinancialUncertainty.carriedFromVersion = 'v1.7.10', r => r.review.independent = false,
+      r => r.review.sourceDigest = 'old', r => r.review.result = 'pending', r => r.upgrade.preservedData = false,
+      r => r.upgrade.sourceDigest = 'old', r => r.verification.nativeNames.method = 'static',
+      r => r.packages.windowsReleasedUpgradeAndRollbackBeforeUpload = false,
+      r => r.packages.finalArchiveSmokeBeforeUpload = false, r => r.packages.workflowEvidence = [],
+      r => r.packages.status = 'passed', r => r.packages.archives = {}, r => r.releaseComplete = true,
+    ];
+    for (const id of Object.keys(value.verification)) mutations.push(
+      r => delete r.verification[id], r => r.verification[id].status = 'pending',
+      r => r.verification[id].sourceDigest = 'old', r => r.verification[id].evidence = []);
+    for (const mutate of mutations) {
+      const invalid = structuredClone(value); mutate(invalid); save(invalid); assert.throws(() => run());
+    }
+    commitVersion('v1.7.13');
+    save({ ...value, version: 'v1.7.13', sourceDigest: run('--fingerprint').trim() }, 'v1.7.13');
+    assert.throws(() => run());
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('v1.7.10 name-only waiver retains native, review, financial and package gates', () => {
   const { dir, run, save, commitVersion } = setupRepo('v1.7.10');
   try {

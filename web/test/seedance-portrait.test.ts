@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { ModelPicker } from "../src/components/model-picker";
+import { ModelDefaultGrid } from "../src/pages/settings/model-default-grid";
 import { portraitPriceLines, portraitTaskRetryError, seedancePortraitLabel } from "../src/lib/seedance-portrait";
 import { initialWorkbenchModel, refreshedWorkbenchModel } from "../src/pages/projects/detail/workflow-model-selection";
 import { applyFetchedChannelModelCatalog } from "../src/pages/settings/channel-settings-pane";
@@ -14,6 +15,15 @@ function fixture(): AiConfig {
     const ids = ["seedance-2.0", "seedance-2.0-portrait"];
     return { ...defaultConfig, channels: [{ id: "beefapi", name: "BeefAPI", apiFormat: "openai", baseUrl: "https://beefapi.com", apiKey: "", models: ids, modelProfiles: ids.map((id) => ({ model: id, displayName: "Seedance 2.0 真人素材版", capability: "video", protocol: "newapi", capabilityConfig: defaultModelCapabilityConfig("newapi", id), videoPricing: { currency: "CNY", mode: "tokens", rates: { "720p": { output: 69, reference_video: 42 } } } })) }], models: ids.map((id) => `beefapi::${id}`), videoModels: ids.map((id) => `beefapi::${id}`) };
 }
+
+test("settings show one Seedance option and retain the selected legacy ID", () => {
+    const config = fixture();
+    config.videoModel = config.models[1];
+    const html = renderToStaticMarkup(createElement(ModelDefaultGrid, { config, onChange: () => {} }));
+    expect(html.match(/Seedance 2\.0/g)).toHaveLength(1);
+    expect(html.match(/aria-checked="true"/g)).toHaveLength(2); // Video and follow-default assistant.
+    expect(config.videoModel).toBe("beefapi::seedance-2.0-portrait");
+});
 
 test("legacy and canonical models share one menu entry without silently switching saved IDs", () => {
     const config = fixture();
@@ -94,13 +104,14 @@ test("missing quote blocks portrait generation and never fabricates a price", ()
     expect(seedancePortraitLabel("beefapi::seedance-2.5-portrait")).toBe("Seedance 2.5");
 });
 
-test("selected portrait option visibly shows account-sourced prices before generation", () => {
+test("selected portrait option offers account-sourced prices before generation", () => {
     const config = fixture();
     config.channels[0].modelProfiles![1].displayName = "Seedance 2.0-Pro";
     const html = renderToStaticMarkup(createElement(ModelPicker, { config, value: config.models[1], capability: "video", onChange() {} }));
     expect(html).toContain("Seedance 2.0");
     expect(html).not.toContain("Seedance 2.0-Pro");
     expect(html).toContain("视频参考单价");
+    expect(html).toContain('aria-label="视频参考单价"');
     expect(html).toContain("¥69");
     expect(html).toContain("¥42");
     expect(html).not.toContain("必过");

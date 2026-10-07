@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import { ModelIcon } from "@/components/model-picker";
 import { assistantModelOptions, normalizeAssistantModel } from "@/lib/assistant-model";
+import { groupModelsByDisplayName } from "@/lib/model-selection";
 import { cn } from "@/lib/utils";
 import {
     filterModelsByCapability,
@@ -54,6 +55,9 @@ export function ModelDefaultGrid({ config, onChange, onOpenChannels }: { config:
                 const isAssistant = row.kind === "assistant";
                 const models = isAssistant ? assistantOptions : filterModelsByCapability(config.models, row.capability, config.channels);
                 const selected = isAssistant ? assistantModel : config[row.modelKey];
+                const groups = !isAssistant && row.capability === "video"
+                    ? groupModelsByDisplayName(config, models)
+                    : models.map((model) => ({ key: model, models: [model] }));
                 const Icon = row.icon;
                 return (
                     <section key={row.id} className="py-5 first:pt-0 last:pb-0" aria-labelledby={`default-${row.id}-title`}>
@@ -76,16 +80,19 @@ export function ModelDefaultGrid({ config, onChange, onOpenChannels }: { config:
                                     />
                                 ) : null}
                                 {isAssistant && config.assistantModel && !selected ? <p role="status" className="text-xs text-foreground/50">已选模型不可用，请重新选择</p> : null}
-                                {models.map((model) => (
+                                {groups.map((group) => {
+                                    const model = group.models.includes(selected) ? selected : group.models[0];
+                                    return (
                                     <ModelOptionButton
-                                        key={model}
-                                        selected={selected === model}
+                                        key={group.key}
+                                        selected={group.models.includes(selected)}
                                         onSelect={() => onChange(row.modelKey, model)}
                                         icon={<ModelIcon config={config} model={model} />}
                                         title={modelDisplayName(config, model)}
                                         subtitle={resolveModelChannel(config, model).name || "未命名渠道"}
                                     />
-                                ))}
+                                    );
+                                })}
                             </div>
                         ) : (
                             <div className="px-1 py-3 text-xs text-foreground/45">
