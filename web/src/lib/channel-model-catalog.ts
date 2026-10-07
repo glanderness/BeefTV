@@ -141,7 +141,10 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
         const existing = existingByModel.get(item.id);
         const mapped = catalogModelMapping(item, { providerNameFallback: isBeefAPICatalogChannel(channel) });
         const inferredProtocol = mapped.protocol || protocolForModelCatalog(item.supportedEndpointTypes);
-        const inferredCapability = mapped.capability || modelProtocolCapability(inferredProtocol) || item.modelType;
+        const catalogVideo = isBeefAPICatalogChannel(channel) ? sanitizeServerVideoCapability(item.videoCapabilities) : null;
+        // BeefAPI may advertise generic OpenAI endpoints without modelType.
+        // Its explicit video contract still identifies the profile and its quote.
+        const inferredCapability = mapped.capability || modelProtocolCapability(inferredProtocol) || item.modelType || (catalogVideo ? "video" : undefined);
         if (mapped.skipGeneration) {
             continue;
         }
@@ -149,7 +152,7 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
             const protocol = inferredProtocol || existing.protocol;
             const capability = inferredCapability || existing.capability;
             const capabilityChanged = capability !== existing.capability;
-            const sourcedVideo = isBeefAPICatalogChannel(channel) && capability === "video" ? sanitizeServerVideoCapability(item.videoCapabilities) : null;
+            const sourcedVideo = capability === "video" ? catalogVideo : null;
             const keepSourced = isBeefAPICatalogChannel(channel) && existing.videoCapabilitiesVersion !== undefined && !sourcedVideo;
             const patchCapabilityConfig = !keepSourced && !sourcedVideo && hasCatalogCapabilityConfig(item) && (capability === "image" || capability === "video");
             const capabilityConfig = sourcedVideo
@@ -176,7 +179,7 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
         const capability = inferredCapability || modelProtocolCapability(channel.interfaceType);
         const protocol = inferredProtocol || protocolTemplateForNewCatalogModel(capability, channel.interfaceType);
         if (!protocol || !capability) continue;
-        const sourcedVideo = isBeefAPICatalogChannel(channel) && capability === "video" ? sanitizeServerVideoCapability(item.videoCapabilities) : null;
+        const sourcedVideo = capability === "video" ? catalogVideo : null;
         const capabilityConfig = sourcedVideo
             ? { version: 1, video: sourcedVideo }
             : capability === "image" || capability === "video"

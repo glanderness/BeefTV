@@ -1,4 +1,6 @@
 import { sanitizeChannelModelCatalogItem, type ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
+import { captureUserScope, isUserScopeAbandonedError, UserScopeAbandonedError } from "@/lib/user-scope-guard";
+import { getBeefAPIConnectionEpoch } from "@/services/api/beefapi-connection";
 import { createChannelTransport } from "@/services/api/channel-transport";
 import { readAxiosError, validateGeminiPayload } from "@/services/api/image-response";
 import { geminiApiUrl, geminiHeaders } from "@/services/api/image-transport";
@@ -64,6 +66,8 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
 export type ChannelModelFetchResult = { models: string[]; catalog: ChannelModelCatalogItem[] };
 
 export async function fetchChannelModels(channel: ModelChannel, viaBackend = false): Promise<ChannelModelFetchResult> {
+    const expectedScope = captureUserScope();
+    const connectionEpoch = getBeefAPIConnectionEpoch();
     const managed = channel.id === "beefapi" && (channel.pinned || Boolean(channel.credentialRef));
     if (managed) {
         viaBackend = true;
@@ -78,14 +82,15 @@ export async function fetchChannelModels(channel: ModelChannel, viaBackend = fal
     }
     try {
         // 登录态由同源后端代取模型目录，避免每个 OpenAI 兼容服务分别维护浏览器 CORS 白名单。
-        const result = await http.post<{ models?: Array<string | ChannelModelCatalogItem> }>("/ai/models", {
+        const result = await http.post<{ models?: Array<string | ChannelModelCatalogItem> }>(managed ? "/beefapi/connection/models" : "/ai/models", managed ? {} : {
             baseUrl: channel.baseUrl,
             apiKey: managed ? "" : channel.apiKey,
             apiFormat: channel.apiFormat,
             headers: channel.headers,
             channelId: managed ? channel.id : undefined,
             credentialRef: managed ? "beefapi-enterprise" : undefined,
-        }, { timeout: 30_000 });
+        }, { timeout: 30_000, expectedScope });
+        if (managed && connectionEpoch !== getBeefAPIConnectionEpoch()) throw new UserScopeAbandonedError();
         const catalog = new Map<string, ChannelModelCatalogItem>();
         for (const item of result.models || []) {
             const entry = typeof item === "string" ? sanitizeChannelModelCatalogItem({ id: item }) : sanitizeChannelModelCatalogItem(item);
@@ -100,7 +105,7 @@ export async function fetchChannelModels(channel: ModelChannel, viaBackend = fal
         // The backend has already classified and sanitized catalogue errors.
         // Running generation-error classification again turns a precise 502
         // auth/unsupported-catalog message into a generic unavailable message.
-        if (error instanceof ApiError) throw error;
+        if (error instanceof ApiError || isUserScopeAbandonedError(error)) throw error;
         throw new Error(readAxiosError(error, "读取模型失败"));
     }
 }

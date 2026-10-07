@@ -32,7 +32,7 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 | 路由组 | 用途 |
 | --- | --- |
 | `/workspace/*` | 本地工作区启动和模型配置 |
-| `/beefapi/connection*` | 内置 BeefAPI 企业连接：开始、状态、取消、断开；页面只收到账号和状态，收不到密钥 |
+| `/beefapi/connection*` | 内置 BeefAPI 企业连接：开始、状态、取消、断开；`POST /beefapi/connection/models` 使用已保存凭据刷新并持久化模型目录与报价，不接受客户端报价，页面收不到密钥 |
 | `/canvas-projects/*`, `/projects/*` | 画布、项目、章节、分镜与快照 |
 | `/resources/*` | 本地素材、分片上传和媒体读取 |
 | `/timeline/render-plan` | 只读编译时间线语义渲染计划：不排队、不落盘、不计费 |

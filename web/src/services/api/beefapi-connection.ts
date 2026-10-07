@@ -1,5 +1,10 @@
 import { http } from "@/services/api/request";
 
+let connectionEpoch = 0;
+export function getBeefAPIConnectionEpoch() {
+    return connectionEpoch;
+}
+
 export type BeefAPIAccount = {
     id: string;
     username?: string;
@@ -32,14 +37,17 @@ export function getBeefAPIConnection(signal?: AbortSignal) {
 }
 
 export function startBeefAPIConnection(signal?: AbortSignal) {
+    connectionEpoch++;
     return http.post<BeefAPIConnectionSummary>("/beefapi/connection/start", {}, { signal });
 }
 
 export function cancelBeefAPIConnection(signal?: AbortSignal) {
+    connectionEpoch++;
     return http.post<BeefAPIConnectionSummary>("/beefapi/connection/cancel", {}, { signal });
 }
 
 export function disconnectBeefAPIConnection(signal?: AbortSignal) {
+    connectionEpoch++;
     return http.post<BeefAPIConnectionSummary>("/beefapi/connection/disconnect", {}, { signal });
 }
 

@@ -57,13 +57,13 @@ type Credential struct {
 }
 
 type CatalogModel struct {
-	ID                       string
-	DisplayName              string
-	ModelType                string
-	SupportedEndpointTypes   []string
-	VideoCapabilities        json.RawMessage
-	VideoCapabilitiesVersion string
-	VideoPricing             json.RawMessage
+	ID                       string          `json:"id"`
+	DisplayName              string          `json:"displayName,omitempty"`
+	ModelType                string          `json:"modelType,omitempty"`
+	SupportedEndpointTypes   []string        `json:"supportedEndpointTypes,omitempty"`
+	VideoCapabilities        json.RawMessage `json:"videoCapabilities,omitempty"`
+	VideoCapabilitiesVersion string          `json:"videoCapabilitiesVersion,omitempty"`
+	VideoPricing             json.RawMessage `json:"videoPricing,omitempty"`
 }
 
 type persistedDevice struct {
