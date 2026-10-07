@@ -11,7 +11,7 @@ export function seedancePortraitModel(value: string): string {
 
 export function seedancePortraitLabel(value: string): string {
     const id = seedancePortraitModel(value);
-    return id ? `Seedance ${id.includes("2.5") ? "2.5" : "2.0"} 真人素材版` : "";
+    return id ? `Seedance ${id.includes("2.5") ? "2.5" : "2.0"}-真人` : "";
 }
 
 export function portraitTaskRetryError(inputJson?: string, model?: string): string {
