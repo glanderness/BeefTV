@@ -91,6 +91,23 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
   async function update(entry, mutate) {
     return entry.harness.commit(async (tx) => mutate(await tx.doc(STATE)), CTX);
   }
+  async function turnModel(entry, active) {
+    const agent = await entry.root.agent(CTX);
+    // Only the backend-launched host chooses a NEW round's model. An unfinished
+    // round retains its official model, including old rounds without this pin.
+    const ref = active ? (active.modelRef || agent.model) : await getModelRef(entry);
+    if (!ref?.provider || !ref?.modelId) throw fail('model_not_configured');
+    const modelRef = { provider: ref.provider, modelId: ref.modelId };
+    if (!(await getModels(entry)).getModel(modelRef.provider, modelRef.modelId)) {
+      throw fail(active ? 'model_unavailable_for_resume' : 'model_not_configured');
+    }
+    if (active) {
+      if (agent.model?.provider !== modelRef.provider || agent.model?.modelId !== modelRef.modelId) throw fail('turn_model_frozen');
+    } else {
+      await entry.root.configure({ model: modelRef }, CTX);
+    }
+    return modelRef;
+  }
   function hydrate(entry, active) {
     entry.busy = Boolean(active);
     if (!active) return;
@@ -253,7 +270,8 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       if (finished) return entry.harness.submission(finished.submissionId, CTX);
       if (existing.active && (existing.active.turnId !== input.turnId || JSON.stringify(existing.active.content) !== JSON.stringify(input.content))) throw fail('submission_request_conflict');
       const auth=await authorization(entry, input.turnId);
-      input={...input,permissionMode:auth?.permissionMode || 'canvas'};
+      const modelRef = await turnModel(entry, existing.active);
+      input={...input,modelRef,permissionMode:auth?.permissionMode || 'canvas'};
       if (!existing.active) {
         entry.budget = null;
         resetTurnAccumulator(entry.turn, input.revisionBefore, input.turnId);
@@ -294,6 +312,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       await settleLocal(entry, active, active.result);
       return entry.harness.submission(active.submissionId, CTX);
     }
+    await turnModel(entry, active);
     // Re-admit persisted supplements by stable request ID before scheduling the
     // original submission. The official queue deduplicates already placed ones.
     for (const input of active.supplementContents || []) {
