@@ -703,3 +703,85 @@ test('v1.6.23+ requires theme, shared fixtures and native assistant evidence', (
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+function makeDeferredV1713(sourceDigest) {
+  const value = makeV3('v1.7.13', sourceDigest);
+  value.ownerException = { scope: 'release-before-remaining-acceptance-20261008', approvedBy: 'Ender', instruction: '提高到100元 你可以先上线 补测剩下的', evidence: ['owner-authorization.md'] };
+  Object.assign(value, { budgetCNY: 100, historicalSpentCNY: 42.413106, spentCNY: 42.413106, newSpentCNY: 0, pendingCNY: 0, knownPendingCNY: 0, liveMatrixStatus: 'pending_after_release', agentAcceptanceStatus: 'pending_after_release', releasePublished: false, acceptanceComplete: false, releaseComplete: false, cases: [] });
+  const historicalDigest = 'a'.repeat(64);
+  value.billingAttempts = [{ id: 'historic-cost', kind: 'other', phase: 'historical', executedSourceDigest: historicalDigest, billing: 'settled', costCNY: 42.413106, evidence: ['historical-ledger.json'] }, { id: 'historic-chat', kind: 'chat', phase: 'historical', executedSourceDigest: historicalDigest, billing: 'settled', costCNY: 0, evidence: ['historical-ledger.json'] }];
+  const ids = [...REQUIRED_AGENT_CHECK_IDS, ...DURABLE_AGENT_CHECK_IDS];
+  value.agentChecks = Object.fromEntries(ids.map(id => [id, { status: 'pending_after_release' }]));
+  value.deferredAcceptance = { status: 'pending_after_release', caseKeys: [1, 2].flatMap(round => PATHS.map(path => `${round}/${path}`)), agentCheckIds: ids, historicalEvidence: ['media_matrix', 'agent_checks'].map(kind => ({ kind, sourceDigest: historicalDigest, evidence: ['historical-source-receipt.json'] })) };
+  value.upgrade = { preservedData: true, sourceDigest, evidence: ['data-preservation.json'] };
+  value.verification = Object.fromEntries(['localReleaseGate', 'ci'].map(id => [id, { status: 'passed', sourceDigest, evidence: [`${id}.json`] }]));
+  value.packages = { status: 'pending_release_workflow', archives: null, platforms: ['darwin-arm64', 'darwin-amd64', 'windows-amd64'], windowsReleasedUpgradeAndRollbackBeforeUpload: true, finalArchiveSmokeBeforeUpload: true, signedManifestBeforePublish: true, publicReadbackAfterPublish: true, workflowEvidence: ['release-desktop.yml'] };
+  return value;
+}
+
+test('v1.7.13 exact owner authorization defers only live acceptance and keeps CNY100 total and release gates', () => {
+  const { dir, run, save } = setupRepo('v1.7.13');
+  try {
+    const valid = makeDeferredV1713(run('--fingerprint').trim());
+    save(valid); assert.match(run(), /acceptance PENDING/);
+    const mutations = [
+      r => r.ownerException.approvedBy = 'model', r => r.ownerException.instruction = '上线吧', r => r.ownerException.evidence = [], r => r.ownerException.scope = 'anything',
+      r => r.budgetCNY = 101, r => r.historicalSpentCNY = 0, r => r.spentCNY = 0, r => r.newSpentCNY = 42.413106, r => r.pendingCNY = 1, r => r.knownPendingCNY = null,
+      r => r.billingAttempts[0].billing = 'pending', r => r.billingAttempts[0].phase = 'current', r => r.billingAttempts[0].executedSourceDigest = r.sourceDigest, r => r.billingAttempts.push(r.billingAttempts[0]),
+      r => r.liveMatrixStatus = 'passed', r => r.acceptanceComplete = true, r => r.releaseComplete = true,
+      r => r.deferredAcceptance.caseKeys.pop(), r => r.deferredAcceptance.agentCheckIds.pop(), r => r.agentChecks.cancel.status = 'passed',
+      r => r.deferredAcceptance.historicalEvidence[0].sourceDigest = r.sourceDigest, r => r.deferredAcceptance.historicalEvidence[0].kind = 'anything',
+      r => r.review.independent = false, r => r.review.sourceDigest = 'old', r => r.upgrade.preservedData = false, r => r.verification.ci.status = 'pending',
+      r => r.packages.platforms.pop(), r => r.packages.signedManifestBeforePublish = false, r => r.packages.windowsReleasedUpgradeAndRollbackBeforeUpload = false, r => r.packages.publicReadbackAfterPublish = false,
+    ];
+    for (const mutate of mutations) { const invalid = structuredClone(valid); mutate(invalid); save(invalid); assert.throws(() => run()); }
+    for (const status of ['unknown', 'not_app_execution']) {
+      const honest = structuredClone(valid); honest.billingAttempts[0].executedSourceDigest = null; honest.billingAttempts[0].executionSourceStatus = status;
+      save(honest); assert.match(run(), /acceptance PENDING/);
+      delete honest.billingAttempts[0].executionSourceStatus; save(honest); assert.throws(() => run());
+      honest.billingAttempts[0].executionSourceStatus = status; honest.billingAttempts[0].phase = 'current'; save(honest); assert.throws(() => run());
+    }
+    const currentReview = structuredClone(valid); currentReview.spentCNY += 0.02; currentReview.newSpentCNY = 0.02;
+    currentReview.billingAttempts.push({ id: 'current-independent-review', kind: 'other', phase: 'current', executedSourceDigest: null, executionSourceStatus: 'not_app_execution', reviewedSourceDigest: valid.sourceDigest, billing: 'settled', costCNY: 0.02, evidence: ['actual-review-bill.json'] });
+    save(currentReview); assert.match(run(), /acceptance PENDING/);
+    for (const mutate of [r => r.billingAttempts.at(-1).kind = 'media', r => r.billingAttempts.at(-1).kind = 'chat', r => delete r.billingAttempts.at(-1).reviewedSourceDigest, r => r.billingAttempts.at(-1).reviewedSourceDigest = 'a'.repeat(64), r => r.billingAttempts.at(-1).executionSourceStatus = 'unknown', r => r.billingAttempts.at(-1).evidence = []]) {
+      const invalid = structuredClone(currentReview); mutate(invalid); save(invalid); assert.throws(() => run());
+    }
+    const partial = structuredClone(valid);
+    const item = makeCases('v1.7.13', fixtureDigestFromManifest(valid.scenario.fixtures))[0];
+    Object.assign(item, { executedSourceDigest: valid.sourceDigest, evidence: ['current-media.json'] });
+    partial.cases = [item]; partial.deferredAcceptance.caseKeys = partial.deferredAcceptance.caseKeys.filter(key => key !== '1/text-image');
+    partial.billingAttempts.push({ id: 'current-media', taskId: item.taskId, kind: 'media', phase: 'current', executedSourceDigest: valid.sourceDigest, billing: 'settled', costCNY: 1, evidence: ['current-media-bill.json'] });
+    partial.spentCNY += 1; partial.newSpentCNY = 1; save(partial); assert.match(run(), /11\/12 cases/);
+    for (const mutate of [r => r.cases[0].executedSourceDigest = 'a'.repeat(64), r => r.cases[0].confirmed = false, r => r.cases[0].mediaOpened = false, r => r.cases[0].costCNY = 2, r => r.deferredAcceptance.caseKeys.push('1/text-image')]) {
+      const invalid = structuredClone(partial); mutate(invalid); save(invalid); assert.throws(() => run());
+    }
+    const published = structuredClone(valid); published.releasePublished = true; published.packages.status = 'verified';
+    published.packages.archives = published.packages.platforms.map(platform => ({ platform, sha256: 'b'.repeat(64), sourceDigest: valid.sourceDigest, evidence: ['actual-archive.json'] }));
+    for (const id of ['signature', 'publicReadback', 'windowsReleasedUpgradeAndRollback', 'finalArchiveSmoke']) published.packages[id] = { status: 'passed', sourceDigest: valid.sourceDigest, evidence: [`actual-${id}.json`] };
+    save(published); assert.match(run(), /acceptance PENDING/);
+    for (const mutate of [r => r.packages.archives.pop(), r => r.packages.signature.status = 'pending', r => r.packages.windowsReleasedUpgradeAndRollback.sourceDigest = 'old']) {
+      const invalid = structuredClone(published); mutate(invalid); save(invalid); assert.throws(() => run());
+    }
+    const completed = structuredClone(published);
+    completed.deferredAcceptance.status = 'completed_after_release'; completed.deferredAcceptance.caseKeys = []; completed.deferredAcceptance.agentCheckIds = [];
+    completed.liveMatrixStatus = 'passed'; completed.agentAcceptanceStatus = 'passed'; completed.acceptanceComplete = true; completed.releaseComplete = true;
+    completed.cases = makeCases('v1.7.13', fixtureDigestFromManifest(valid.scenario.fixtures)).map(item => ({ ...item, executedSourceDigest: valid.sourceDigest, evidence: ['actual-current-case.json'] }));
+    completed.agentChecks = Object.fromEntries([...REQUIRED_AGENT_CHECK_IDS, ...DURABLE_AGENT_CHECK_IDS].map(id => [id, { status: 'passed', method: 'native', sourceDigest: valid.sourceDigest, evidence: ['actual-current-check.json'] }]));
+    completed.billingAttempts.push(...completed.cases.map(item => ({ id: item.taskId, taskId: item.taskId, kind: 'media', phase: 'current', executedSourceDigest: valid.sourceDigest, billing: 'settled', costCNY: item.costCNY, evidence: ['actual-current-bill.json'] })));
+    completed.spentCNY += 12; completed.newSpentCNY = 12; save(completed); assert.match(run(), /acceptance COMPLETE: 12\/12 cases, 23\/23 checks/);
+    for (const mutate of [r => { r.cases.pop(); r.deferredAcceptance.caseKeys = ['2/multi-video']; }, r => { r.agentChecks.native_audio.status = 'pending_after_release'; r.deferredAcceptance.agentCheckIds = ['native_audio']; }, r => r.releasePublished = false, r => r.budgetCNY = 101, r => r.packages.status = 'pending_release_workflow']) {
+      const invalid = structuredClone(completed); mutate(invalid); save(invalid); assert.throws(() => run());
+    }
+    const checked = structuredClone(valid); checked.agentChecks.budget = { status: 'passed', sourceDigest: valid.sourceDigest, method: 'deterministic', evidence: ['budget.json'] }; checked.deferredAcceptance.agentCheckIds = checked.deferredAcceptance.agentCheckIds.filter(id => id !== 'budget'); save(checked); assert.match(run(), /acceptance PENDING/);
+    checked.agentChecks.native_audio = { status: 'passed', sourceDigest: valid.sourceDigest, method: 'deterministic', evidence: ['audio.json'] }; checked.deferredAcceptance.agentCheckIds = checked.deferredAcceptance.agentCheckIds.filter(id => id !== 'native_audio'); save(checked); assert.throws(() => run());
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('v1.7.13 post-release acceptance authorization never carries into another version', () => {
+  for (const version of ['v1.7.12', 'v1.7.14', 'v2.0.0']) {
+    const { dir, run, save } = setupRepo(version);
+    try { const value = makeDeferredV1713(run('--fingerprint').trim()); value.version = version; save(value); assert.throws(() => run()); }
+    finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+});

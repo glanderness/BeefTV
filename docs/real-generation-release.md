@@ -1,6 +1,6 @@
 # 每次桌面发版的真实生成验收
 
-发布人必须在候选版本的真实客户端完成下表，连续两轮全部成功后才发布。CI、mock、HTTP 200、直接请求供应商以及旧版本结果不能代替客户端验收。失败先定位并修复；候选代码变化后重新核对受影响路径，再完成两轮最终验收。
+除下文逐版明确授权的例外外，发布人必须在候选版本的真实客户端完成下表，连续两轮全部成功后才发布。CI、mock、HTTP 200、直接请求供应商以及旧版本结果不能代替客户端验收。失败先定位并修复；候选代码变化后重新核对受影响路径，再完成两轮最终验收。
 
 | 固定路径 | 输入 | 默认模型与规格 |
 | --- | --- | --- |
@@ -18,6 +18,49 @@ v1.7.6 的单版专项验收例外：Owner 在得知本版尚无付费预算、�
 v1.7.11 的单版图片回归例外：Owner 于 2026-10-07 明确要求“只复测一次生成图片看看会不会复现报错即可上线”。本版仅提交一次 Image 2.5 图片生成，确认图片解码、画布节点绑定和原任务恢复；完整十二次矩阵记为未执行。保留保存冲突、重复提交、账号切换和成功结果恢复的确定性回归、独立 review、CI、数据保留、三平台安装包、Windows 升级/回滚和签名更新源读回。历史账务未知不归零。本例外不延续到下一版，也不授权失败后再提交付费生成。原计划 v1.7.10 已被主线名称修复使用，因此本次顺延为 v1.7.11，付费次数不增加。
 
 v1.7.10 的单版专项验收例外：Owner 于 2026-10-07 明确回复「beeftv本次豁免 直接上线」，授权本次 Seedance 展示名称调整不重跑付费矩阵。本版新付费调用与费用均为零，十二项矩阵记为未执行；保留名称与搜索专项测试、原生界面和数据保留验收、独立复审、CI、三平台最终包与 Windows 升级/回滚门禁。v1.7.9 历史账务未知与未验证事项仍保留，不标记为已解决。本例外只用于 v1.7.10，不延续到后续版本。
+
+## v1.7.13：先发布、后补齐本次验收
+
+2026-10-08 Owner 明确授权「提高到100元 你可以先上线 补测剩下的」。仅 v1.7.13 可以把尚未完成的当前候选双轮生成、23 项实际助手验收及其中的成片质量检查留到发布后；它们仍记 `pending_after_release`，不能把旧源码上的成功或缺测记成当前源码通过。其他版本及未使用这项精确授权的 contract 3 收据继续使用完整十二条、23 项和原 50 元上限。
+
+本次累计预算是 **100 元**，包括授权时本次已结算的 **42.413106 元**；不是追加100元。后续聊天、媒体、审片、失败和退款全部进入同一 `billingAttempts`。总 `spentCNY` 必须等于全部逐笔净结算，`newSpentCNY = spentCNY - historicalSpentCNY`，总额不能超过100；发布前 `pendingCNY` 与 `knownPendingCNY` 都必须为0。退款已完成也保留请求与证据，不把未核账改成0。
+
+精确授权收据字段如下（是字段说明，不是可直接通过检查的完整收据）：
+
+```json
+{
+  "ownerException": {
+    "scope": "release-before-remaining-acceptance-20261008",
+    "approvedBy": "Ender",
+    "instruction": "提高到100元 你可以先上线 补测剩下的",
+    "evidence": ["实际授权记录"]
+  },
+  "budgetCNY": 100,
+  "historicalSpentCNY": 42.413106,
+  "liveMatrixStatus": "pending_after_release",
+  "agentAcceptanceStatus": "pending_after_release",
+  "releasePublished": false,
+  "acceptanceComplete": false,
+  "releaseComplete": false,
+  "deferredAcceptance": {
+    "status": "pending_after_release",
+    "caseKeys": ["1/text-image"],
+    "agentCheckIds": ["media_film_review"],
+    "historicalEvidence": [
+      {"kind": "media_matrix", "sourceDigest": "实际旧源码SHA256", "evidence": ["原双轮记录"]},
+      {"kind": "agent_checks", "sourceDigest": "实际旧源码SHA256", "evidence": ["原专项记录"]}
+    ]
+  }
+}
+```
+
+`cases` 只收当前源码实际通过的条目，并要求 `executedSourceDigest`、真实助手确认/任务/结算/解码/打开证据；旧 ff5、c459、17fd 等实测保持各自原始执行 SHA，只放进 `historicalEvidence`，不能重标。gate 脚本变化同样改变发布源码指纹，应用源码树未变的说明可以附在旧证据中，不能代替实际执行来源。`billingAttempts` 每笔记录 `phase=historical|current`；来源已证明时保留实际 `executedSourceDigest`。历史聊天执行源码未证明时显式写 `executedSourceDigest=null, executionSourceStatus=unknown`；独立review等不属于应用执行的费用写 `executionSourceStatus=not_app_execution` 并附原费用证据。不能用“记录在某源码账本下”的来源冒充实际执行源码。当前阶段的media/chat仍必须真实当前执行digest。新增的非应用独立review只允许 `kind=other, executedSourceDigest=null, executionSourceStatus=not_app_execution, reviewedSourceDigest=当前真实被review源码` 并附逐笔费用证据；仍纳入 `newSpentCNY`，不能让媒体或聊天借此免除执行来源检查；历史阶段净额必须准确等于42.413106，当前阶段净额必须纳入新增花费。
+
+十二个 `round/path` 中未出现在当前 `cases` 的项目必须完整、无重复地列在 `deferredAcceptance.caseKeys`。全部23项 `agentChecks` 逐项为当前源码 `passed`（仍按各项要求使用 native 或允许的 deterministic）或 `pending_after_release`；所有待补项必须准确列进 `agentCheckIds`。历史证据 kind 仅限 `media_matrix`、`agent_checks`、`native_film`、`targeted_native`，摘要必须保留原 sourceDigest 和证据路径。
+
+例外不豁免当前源码独立审查、数据保留、本地发布检查或CI。最终三平台包、包内CLI烟测、Windows实际旧版升级/失败回滚、更新签名及公开更新源读回仍由现有发布workflow执行。发布前 `packages.status=pending_release_workflow`、`archives=null`，明确列齐 `darwin-arm64/darwin-amd64/windows-amd64`；`windowsReleasedUpgradeAndRollbackBeforeUpload`、`finalArchiveSmokeBeforeUpload`、`signedManifestBeforePublish`、`publicReadbackAfterPublish` 必须为true并附workflow证据，不能伪造已完成包。
+
+实际发布后单独更新 `releasePublished=true`，此时包字段必须改为 `verified` 并提供三平台实际 archive SHA/当前源证据，以及 `signature`、`publicReadback`、`windowsReleasedUpgradeAndRollback`、`finalArchiveSmoke` 的真实通过证据。只要补验仍未完成，`acceptanceComplete` 和 `releaseComplete` 都保持false；发布完成与验收完成是两个状态。后补实际成功才从待补列表移除对应项目；补齐全部当前源12条与23项后，`deferredAcceptance.status=completed_after_release`、两项列表为空、`liveMatrixStatus/agentAcceptanceStatus=passed`、`acceptanceComplete/releaseComplete=true`；此时同一精确100元授权仍有效，但必须已经实际发布、三平台最终包/签名/升级回滚/读回证据齐全，gate才输出12/12与23/23完成。只补完其中一类不能标完成。
 
 ## 每版轮换主题与素材
 

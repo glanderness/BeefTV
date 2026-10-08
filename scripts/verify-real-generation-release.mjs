@@ -11,6 +11,7 @@ import {
   releaseContractVersion,
   releaseAgentChecks,
   releaseDeterministicChecks,
+  validateDeferredV1713,
 } from './real-generation-release-contract.mjs';
 
 // Tree identities survive squash/merge commits, but change whenever shipped
@@ -26,6 +27,13 @@ const receipt = JSON.parse(readFileSync(`docs/release-evidence/${version}.json`,
 const fail = message => { throw new Error(`Real generation release gate: ${message}`); };
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
+// Explicit 2026-10-08 authorization changes release order for v1.7.13 only.
+if (receipt.ownerException?.scope === 'release-before-remaining-acceptance-20261008') {
+  const pending = validateDeferredV1713(receipt, sourceDigest);
+  if (pending.complete) console.log(`v1.7.13 post-release acceptance COMPLETE: 12/12 cases, 23/23 checks; CNY ${receipt.spentCNY}/100; published packages verified.`);
+  else console.log(`v1.7.13 owner authorized publish before remaining tests; acceptance PENDING (${pending.pendingCases}/12 cases, ${pending.pendingChecks}/23 checks); CNY ${receipt.spentCNY}/100; final package gates ${receipt.releasePublished ? 'verified' : 'pending'}.`);
+  process.exit(0);
+}
 // This exact waiver applies only to the unified Seedance presentation release.
 if (version === 'v1.7.12' && receipt.liveTestWaiver?.scope === 'seedance-unified-display') {
   const evidence = value => Array.isArray(value) && value.length > 0 && value.every(nonempty);
