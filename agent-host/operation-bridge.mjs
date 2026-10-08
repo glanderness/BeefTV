@@ -98,7 +98,15 @@ export function createOperationBridge({
         if (descriptor.id === 'canvas.get') delete params.readView;
         delete params.operationId;
         delete params.opId;
-        if (Object.hasOwn(descriptor.params?.properties || {}, 'canvasId')) {
+        if (descriptor.id === 'canvas.search') {
+          // The public operation's legacy canvasId is a PROJECT filter, not a
+          // canvas scope. Keep explicit old callers compatible; never inject it.
+          if (params.projectId !== undefined) {
+            if (typeof params.projectId !== 'string' || (params.canvasId !== undefined && params.canvasId !== params.projectId)) throw new Error('invalid_project_filter');
+            params.canvasId = params.projectId;
+            delete params.projectId;
+          }
+        } else if (Object.hasOwn(descriptor.params?.properties || {}, 'canvasId')) {
           if ((generation.permissionMode || 'canvas') === 'canvas' && descriptor.id !== 'canvas.get' && params.canvasId !== undefined && params.canvasId !== canvasId) {
             throw new Error(`scope_denied: 画布参数与当前会话不一致（${params.canvasId} ≠ ${canvasId}）`);
           }
@@ -158,6 +166,11 @@ export function scopedSchema(params, allowReferencedCanvasRead = false, descript
   }
   if (Array.isArray(clone.required)) clone.required = clone.required.filter((name) => name !== 'canvasId' && name !== 'operationId');
   if (descriptorId === CANVAS_NODE_UPDATE) projectCanvasNodeUpdateSchema(clone);
+  if (descriptorId === 'canvas.search') {
+    clone.properties ||= {};
+    clone.properties.projectId = { type: 'string', description: '可选项目 ID；省略搜索本账号全部画布。不是画布 ID。' };
+    delete clone.properties.canvasId;
+  }
   if (descriptorId === 'canvas.get') {
     clone.properties ||= {};
     clone.properties.readView = JSON.parse(JSON.stringify(CANVAS_READ_VIEW_SCHEMA));

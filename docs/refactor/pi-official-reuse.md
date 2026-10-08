@@ -86,6 +86,15 @@
 
 `createSessionStore` 接受可选 `createResourceLoader({ canvasId, cwd, agentDir })`。工厂返回官方 loader，宿主在创建会话前调用 `reload()`；默认使用 `createFullControlLoader({ cwd, agentDir })`。显式扩展可由 `extensionFactories` 装配；本次媒体转换直接在宿主 HTTP dispatch 执行，不依赖 hook 的异常处理，同一会话只保留官方执行循环。
 
+## 本地补丁候选的工具与模型修复
+
+以下为本地候选实现，正式发布与原生验收状态以对应版本回执为准。
+
+- `canvas_get` 的模型读取采用有界分页，完整字段读取和 revision 校验见 [`canvas-read-view.md`](../../agent-host/canvas-read-view.md)。Go 原始画布内容与授权校验不变。
+- 新轮次通过官方 Durable 根 Agent 的 `configure` 同步宿主选定模型；未完成轮次按活动轮次中固定的模型恢复。原模型不可用时拒绝调度，不切换模型或假称完成。
+- 内置 `canvas_search` 的可选 `projectId` 表示项目过滤条件，省略时搜索本账号全部画布；宿主转为现有公开操作的 `canvasId` 项目过滤字段，且不注入当前画布 ID。公开 MCP/CLI 参数保持原样。`project_canvas_search` 的 `canvasId` 仍表示用于确定项目的真实画布。
+- 搜索回归覆盖内置工具实际 HTTP 参数、同账号未归项目的两张画布、显式项目过滤、跨账号隔离和原有 scope/CAS。测试路径为 `agent-host/operation-bridge-search.test.mjs` 与 `backend/internal/app/operations_workspace_canvas_search_test.go`；替身测试不能代替原生助手验收。
+
 ## 限制
 
 - 未接官方 web-ui / TUI / 实验服务器。

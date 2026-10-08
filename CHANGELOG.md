@@ -9,6 +9,12 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.14 (Unreleased)
+
+- 修复大画布读取被截断的问题，助手可分页读取完整节点、连线和时间线。
+- 修复切换助手模型后仍使用旧模型的问题；恢复未完成轮次时继续使用原模型。
+- 修复完全访问模式下工作区画布搜索错误过滤，导致找不到其他画布的问题。
+
 ## v1.7.13
 
 - 连接入口改为「连接 BeefTV」，新登录授权和钱包控制台使用 beeftv.app；保留已连接企业账号。
