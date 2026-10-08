@@ -77,7 +77,9 @@ jobs:
       - name: Install native media test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg fontconfig fonts-noto-cjk
+          fc-cache -f
+          fc-match ':lang=zh-cn'
           ffmpeg -version
           ffprobe -version
       - name: Build official protocol packages

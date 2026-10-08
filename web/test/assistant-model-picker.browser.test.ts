@@ -58,7 +58,7 @@ afterAll(async () => { release?.(); await browser?.close(); server?.stop(true); 
 test("settings retries failed connected catalog read and retains authorization default intent", async () => {
     connectionState = "disconnected"; catalogReadFailures = 0;
     const page = await browser.newPage(); await page.goto(new URL("/settings", server.url).toString());
-    await page.getByRole("button", { name: "连接 BeefAPI", exact: true }).click();
+    await page.getByRole("button", { name: "连接 BeefTV", exact: true }).click();
     const retry = page.getByRole("button", { name: "重试更新模型列表" });
     await retry.waitFor(); await retry.click();
     await retry.waitFor({ state: "hidden" });
