@@ -23,6 +23,18 @@ function Harness() {
         oldPoster: () => setNode((n) => ({ ...n, metadata: { content: "/red.mp4", videoPreview: { content: "/poster.svg", captureVersion: 2, sourceKey: "/red.mp4" } } })),
         cycle: () => { setActiveUserScope("B"); setActiveUserScope("A"); },
         unmount: () => setVisible(false),
+        retry: async () => {
+            const node = { ...initial, metadata: { content: "/retry.mp4" } };
+            const a = acquireCanvasVideoPreview(node);
+            const failed = await a.promise;
+            const b = acquireCanvasVideoPreview(node);
+            const success = await b.promise;
+            a.release();
+            const c = acquireCanvasVideoPreview(node);
+            const shared = await c.promise;
+            b.release(); c.release();
+            return { failed, succeeded: Boolean(success), sameAfterOldRelease: shared === success };
+        },
         releaseRace: async () => {
             const create = URL.createObjectURL;
             const lease = acquireCanvasVideoPreview(initial);

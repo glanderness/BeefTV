@@ -34,12 +34,16 @@ export function acquireCanvasVideoPreview(node: CanvasNodeData) {
     if (!entry && sourceKey && previewRequests.size < MAX_ACTIVE_PREVIEWS) {
         const controller = new AbortController();
         const created: PreviewEntry = { refs: 0, controller, promise: Promise.resolve(null) };
+        const forgetFailedRequest = () => {
+            // Existing consumers still own their leases; never remove a newer retry.
+            if (previewRequests.get(requestKey) === created) previewRequests.delete(requestKey);
+        };
         created.promise = generateCanvasVideoPreview(node, controller.signal).then((preview) => {
-            if (!preview) return null;
+            if (!preview) { forgetFailedRequest(); return null; }
             if (controller.signal.aborted || !userScopeEpochMatches(epoch)) { URL.revokeObjectURL(preview.content); return null; }
             created.url = preview.content;
             return preview;
-        }).catch(() => null);
+        }).catch(() => { forgetFailedRequest(); return null; });
         entry = created;
         previewRequests.set(requestKey, entry);
     }

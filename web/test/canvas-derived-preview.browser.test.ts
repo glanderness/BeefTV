@@ -5,6 +5,7 @@ import { chromium, type Browser, type Page } from "playwright";
 
 let browser: Browser, page: Page, server: ReturnType<typeof Bun.serve>, dir: string;
 let writes = 0, videoReads = 0;
+let retryReads = 0;
 let releaseSlow: (() => void) | undefined;
 let slow: Promise<void>;
 beforeAll(async () => {
@@ -22,7 +23,7 @@ beforeAll(async () => {
     server = Bun.serve({ port: 0, async fetch(request) {
         const path = new URL(request.url).pathname;
         if (request.method !== "GET") writes += 1;
-        if (path.endsWith(".mp4")) { videoReads += 1; if (path === "/slow.mp4") await slow; return new Response(Bun.file(`${dir}/${path === "/blue.mp4" ? "blue" : "red"}.mp4`), { headers: { "Content-Type": "video/mp4" } }); }
+        if (path.endsWith(".mp4")) { videoReads += 1; if (path === "/retry.mp4" && ++retryReads === 1) return new Response("unavailable", { status: 404 }); if (path === "/slow.mp4") await slow; return new Response(Bun.file(`${dir}/${path === "/blue.mp4" ? "blue" : "red"}.mp4`), { headers: { "Content-Type": "video/mp4" } }); }
         if (path === "/harness.js") return new Response(script, { headers: { "Content-Type": "text/javascript" } });
         if (path === "/poster.svg") return new Response('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="green"/></svg>', { headers: { "Content-Type": "image/svg+xml" } });
         if (path.startsWith("/api/")) return Response.json({ code: 0, data: [] });
@@ -31,9 +32,15 @@ beforeAll(async () => {
     const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((p): p is string => Boolean(p && existsSync(p)));
     browser = await chromium.launch({ executablePath, headless: true });
 }, 60000);
-beforeEach(async () => { await page?.close(); writes = videoReads = 0; slow = new Promise((resolve) => { releaseSlow = resolve; }); page = await browser.newPage(); await page.goto(server.url.toString()); await page.waitForFunction(() => Boolean((window as any).previewHarness)); });
+beforeEach(async () => { await page?.close(); writes = videoReads = retryReads = 0; slow = new Promise((resolve) => { releaseSlow = resolve; }); page = await browser.newPage(); await page.goto(server.url.toString()); await page.waitForFunction(() => Boolean((window as any).previewHarness)); });
 afterAll(async () => { releaseSlow?.(); await browser?.close(); server?.stop(true); rmSync(dir, { recursive: true, force: true }); });
 async function enter() { await page.evaluate(() => window.scrollTo(0, 3000)); }
+test("failed first decode retries for the next consumer; old release cannot erase success", async () => {
+    expect(await page.evaluate(() => (window as any).previewHarness.retry())).toEqual({ failed: null, succeeded: true, sameAfterOldRelease: true });
+    expect(retryReads).toBe(2); expect(writes).toBe(0);
+    const state = await page.evaluate(() => (window as any).previewHarness.state());
+    expect(state.created).toHaveLength(1); expect(state.revoked).toEqual(state.created);
+});
 async function ready() { await page.waitForFunction(() => { const image = document.querySelector("img"); return image?.src.startsWith("blob:") && image.complete && image.naturalWidth === 320; }); }
 async function color() { return page.evaluate(() => { const canvas = document.createElement("canvas"); canvas.width = canvas.height = 1; const ctx = canvas.getContext("2d")!; ctx.drawImage(document.querySelector("img")!, 0, 0, 1, 1); return Array.from(ctx.getImageData(0, 0, 1, 1).data); }); }
 test("real near-viewport MP4 poster makes no node or backend writes and releases on unmount", async () => {
