@@ -368,7 +368,7 @@ func usage() {
   beeftv asset list [--query <q>] [--kind <kind>] [--favorite] [--recent] [--project <name>] [--generated] [--json]
   beeftv asset get --asset <id> [--json]
   beeftv task get --task <id> [--json]
-  beeftv client register --label <label> --mode read-only|read-write [--kind codex|claude|cursor|other]
+  beeftv client register --label <label> [--kind codex|claude|cursor|other] [--mode read-only|read-write]
   beeftv mcp serve [--read-only]
 
 连接哪个工作区：不设 BEEFTV_BASE_URL 时自动连正在运行的 BeefTV 桌面应用，端口是动态的。
@@ -376,7 +376,8 @@ BEEFTV_DATA_DIR 可以指向非默认数据目录。Windows 从用户目录下 .
 工作区的运行信息，其他平台读取数据目录里的 runtime.json。升级后请重新打开 BeefTV。
 
 凭据：在 BeefTV 的设置里新建一个客户端，把它给出的 BEEFTV_CLIENT_ID 与 BEEFTV_CLIENT_TOKEN
-填进环境变量即可，不需要桌面令牌。读写权限在新建时就定下来，客户端自己改不了。
+填进环境变量即可，不需要桌面令牌。新连接默认开放全部业务工具，操作审批由外部 Agent 管理。
+历史只读凭据继续保持只读；CLI 仍支持显式签发只读凭据。
 
 写操作必须带幂等键（CLI 的 --op-id，MCP 工具参数里的 operationId）：重试同一操作要复用同一个值。
 
