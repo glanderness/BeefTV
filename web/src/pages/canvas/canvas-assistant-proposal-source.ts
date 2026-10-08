@@ -10,22 +10,31 @@ import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
 import type { ProposalSourceState } from "./canvas-assistant-proposal-snapshot";
 
+export function assistantProposalUnconfirmedReason(input: { canvasDirty: boolean; modelConfigDirty: boolean; modelConfigStatus: string }): ProposalSourceState["unconfirmedReason"] {
+    if (input.canvasDirty) return "canvas-dirty";
+    if (input.modelConfigDirty) return "model-dirty";
+    if (!["idle", "saved"].includes(input.modelConfigStatus)) return "model-status";
+    return undefined;
+}
+
 export function assistantProposalHasUnconfirmedEdits(input: { canvasDirty: boolean; modelConfigDirty: boolean; modelConfigStatus: string }) {
-    return input.canvasDirty || input.modelConfigDirty || !["idle", "saved"].includes(input.modelConfigStatus);
+    return assistantProposalUnconfirmedReason(input) !== undefined;
 }
 
 export function readAssistantProposalSourceState(projectId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], skills: Skill[]): ProposalSourceState {
     const project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
     const persistence = getModelConfigPersistenceState();
+    const unconfirmedReason = assistantProposalUnconfirmedReason({
+        canvasDirty: hasUnconfirmedCanvasEdits(projectId),
+        modelConfigDirty: persistence.dirty,
+        modelConfigStatus: persistence.status,
+    });
     return {
         canvasId: projectId,
         canvasRevision: project?.revision ?? -1,
         modelConfigRevision: persistence.revision,
-        hasUnconfirmedEdits: assistantProposalHasUnconfirmedEdits({
-            canvasDirty: hasUnconfirmedCanvasEdits(projectId),
-            modelConfigDirty: persistence.dirty,
-            modelConfigStatus: persistence.status,
-        }),
+        hasUnconfirmedEdits: unconfirmedReason !== undefined,
+        unconfirmedReason,
         nodes,
         connections,
         config: effectiveConfigForCustomChannels(useConfigStore.getState().config, useUserStore.getState().features.customChannelsEnabled),
