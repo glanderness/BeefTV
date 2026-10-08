@@ -22,12 +22,14 @@ const ops = createServer(async (req, res) => {
   if (turn) { if (turn[2]) closed.add(turn[1]); res.end(JSON.stringify({ code: 0, data: { turnId: turn[1], canvasId: 'canvas', open: !closed.has(turn[1]), revision: 1 } })); return; }
   if (req.url === '/api/ops') { res.end(JSON.stringify({ code: 0, data: { ops: [{ id: 'canvas.node.update', summary: 'update', readOnly: false, params: { type: 'object', properties: { nodeId: { type: 'string' }, expectedRevision: { type: 'integer' }, patch: { type: 'object' } } } }] } })); return; }
   const body = await read(req);
+  if(req.url.endsWith('/bind-session')) {assert.match(body.sessionId,/^durable:/);res.end(JSON.stringify({code:0,data:{bound:true}}));return;}
   if (req.url === '/api/ops/media.overview') { res.end(JSON.stringify({ code: 0, data: { result: { source: { version: 'owned-fixture-version' } } } })); return; }
   if (req.url === '/api/ops/media.inspect') {
     assert.equal(body.params.expectedVersion, 'owned-fixture-version');
     imageArrived(); await new Promise(resolve => { releaseImage = resolve; });
     res.end(JSON.stringify({ code: 0, data: { result: { content: [{ type: 'image', mimeType: 'image/png', data: png }] } } })); return;
   }
+  assert.equal(req.url,'/api/ops/canvas.node.update','unhandled fixture route must not count as a canvas write');
   assert(!closed.has('http-steer-turn'), 'Go turn closed before final supplemental write');
   writes++; res.end(JSON.stringify({ code: 0, data: { result: { nodeId: 'n1', revision: 2 } } }));
 });

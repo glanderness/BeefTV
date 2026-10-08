@@ -18,7 +18,7 @@ func TestV14PermissionMigrationPreservesOpenTurnAndUnknownColumns(t *testing.T) 
 	if err := MigrateLocalSchema(db); err != nil {
 		t.Fatal(err)
 	}
-	for _, query := range []string{"DELETE FROM local_schema_migrations WHERE version=15", "ALTER TABLE assistant_turns DROP COLUMN permission_mode", "ALTER TABLE assistant_turns DROP COLUMN canvas_snapshots_json", "ALTER TABLE assistant_turns ADD COLUMN private_preview_note TEXT", `INSERT INTO assistant_turns(turn_id,user_id,canvas_id,state,document,private_preview_note) VALUES('aabbccdd','owner','canvas','open','{"nodes":[]}','keep')`} {
+	for _, query := range []string{"DELETE FROM local_schema_migrations WHERE version>=15", "ALTER TABLE assistant_turns DROP COLUMN permission_mode", "ALTER TABLE assistant_turns DROP COLUMN canvas_snapshots_json", "ALTER TABLE assistant_turns ADD COLUMN private_preview_note TEXT", `INSERT INTO assistant_turns(turn_id,user_id,canvas_id,state,document,private_preview_note) VALUES('aabbccdd','owner','canvas','open','{"nodes":[]}','keep')`} {
 		if err := db.Exec(query).Error; err != nil {
 			t.Fatal(err)
 		}
@@ -45,7 +45,7 @@ func TestV14PermissionMigrationPreservesOpenTurnAndUnknownColumns(t *testing.T) 
 	}
 	var after []localSchemaMigration
 	db.Order("version").Find(&after)
-	if len(after) != len(before)+1 {
+	if len(after) != len(before)+2 {
 		t.Fatal("ledger count")
 	}
 	for i, v := range before {

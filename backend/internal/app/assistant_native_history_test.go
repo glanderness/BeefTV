@@ -6,10 +6,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/assistantturns"
 	"infinite-canvas/backend/internal/editing"
+	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/operations"
+	"infinite-canvas/backend/internal/repository"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -125,5 +130,61 @@ func TestNativeHistoryAudioKeepsExactSessionPinAcrossCanvasPermission(t *testing
 	}
 	if _, err := svc.RevalidateAssistantNativeSource(context.Background(), "local", current, origin, session, source); err == nil {
 		t.Fatal("closed current turn allowed dispatch")
+	}
+}
+
+// Store boundary test: the host has already verified each opaque source pin.
+// This checks persistence/cap policy, not additional media-understanding proof.
+func TestNativeHistoryPinCapDedupAndDatabaseReopen(t *testing.T) {
+	svc, canvasID, _ := newAssistantTurnService(t)
+	const turn = "cccccccccccccccc"
+	const session = "durable:33333333-3333-3333-3333-333333333333"
+	if _, err := svc.BeginAssistantTurn("local", canvasID, turn, AssistantTurnInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.BindAssistantDurableSession("local", turn, session, false); err != nil {
+		t.Fatal(err)
+	}
+	store := svc.assistantTurnsOrInit()
+	for i := 0; i < 128; i++ {
+		if err := store.RegisterNativeSource("local", turn, session, fmt.Sprintf("verified-pin-%03d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.RegisterNativeSource("local", turn, session, "verified-pin-000"); err != nil {
+		t.Fatal("duplicate rejected at cap", err)
+	}
+	if err := store.RegisterNativeSource("local", turn, session, "verified-pin-129"); err == nil {
+		t.Fatal("129th pin accepted")
+	}
+	db := svc.Database()
+	file := db.Dialector.(*sqlite.Dialector).DSN
+	sql, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sql.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := gorm.Open(sqlite.Open(file), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newSQL, _ := reopened.DB()
+	defer newSQL.Close()
+	fresh := NewLocal(repository.New(reopened), svc.dataDir)
+	var row model.AssistantTurn
+	if err := reopened.First(&row, "turn_id = ?", turn).Error; err != nil {
+		t.Fatal(err)
+	}
+	var pins []string
+	if json.Unmarshal([]byte(row.DurableNativeSources), &pins) != nil || len(pins) != 128 {
+		t.Fatalf("persisted cap changed: %d", len(pins))
+	}
+	if !fresh.assistantTurnsOrInit().HasNativeSource("local", turn, session, "verified-pin-000") {
+		t.Fatal("pin lost after database reopen")
+	}
+	if err := fresh.BindAssistantDurableSession("local", turn, "durable:44444444-4444-4444-4444-444444444444", false); err == nil {
+		t.Fatal("session changed after reopen")
 	}
 }
