@@ -50,6 +50,25 @@ func TestModelsOnlyDefaultTextSelectionBoundaries(t *testing.T) {
 	}
 }
 
+func TestManagedGeminiAssistantUsesCatalogAndPreservesExplicitSelection(t *testing.T) {
+	c := AssistantChannel{ID: "beefapi", Pinned: true, Enabled: true, APIKey: "synthetic", BaseURL: "https://example.test", Models: []string{"gemini-3.8-flash", "claude-opus-5-5"}, ModelProfiles: []AssistantModelProfile{{Model: "gemini-3.8-flash", Capability: "text", Protocol: "chat-completion"}, {Model: "claude-opus-5-5", Capability: "text"}}}
+	s := AssistantConfigSnapshot{TextModel: "beefapi::gemini-3.8-flash", Channels: []AssistantChannel{c}}
+	got, err := ResolveAssistantProvider(s, nil)
+	if err != nil || got.Model != "gemini-3.8-flash" || got.Protocol != "chat-completion" {
+		t.Fatalf("Gemini default unavailable: %v %#v", err, got)
+	}
+	s.AssistantModel = "beefapi::claude-opus-5-5"
+	got, err = ResolveAssistantProvider(s, nil)
+	if err != nil || got.Model != "claude-opus-5-5" {
+		t.Fatalf("explicit selection replaced: %v %#v", err, got)
+	}
+	s.AssistantModel = ""
+	s.Channels[0].Models = []string{"claude-opus-5-5"}
+	if _, err := ResolveAssistantProvider(s, nil); err == nil {
+		t.Fatal("removed Gemini silently used another model")
+	}
+}
+
 func TestManagedAssistantSelectionDoesNotBypassCuratedModels(t *testing.T) {
 	c := AssistantChannel{ID: "beefapi", Pinned: true, Enabled: true, APIKey: "synthetic", BaseURL: "https://example.test", Models: []string{"qwen", "claude-opus-5-5"}, ModelProfiles: []AssistantModelProfile{{Model: "qwen", Capability: "text"}, {Model: "claude-opus-5-5", Capability: "text"}}}
 	s := AssistantConfigSnapshot{TextModel: "beefapi::qwen", Channels: []AssistantChannel{c}}

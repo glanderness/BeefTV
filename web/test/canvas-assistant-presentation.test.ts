@@ -28,7 +28,7 @@ describe("助手不可用原因映射成一句用户语加一个出路", () => {
 
     test("缺凭据指向去连接", () => {
         const notice = assistantStatusNotice("credential_missing");
-        expect(notice.text).toBe("BeefAPI 还没连接好");
+        expect(notice.text).toBe("BeefTV 还没连接好");
         expect(notice.action).toBe("model-settings");
     });
 
