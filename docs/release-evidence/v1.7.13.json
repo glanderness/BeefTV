@@ -1,7 +1,7 @@
 {
   "version": "v1.7.13",
   "contractVersion": 3,
-  "sourceDigest": "68c16ec79f029dc458e539dfe333669a6b091359178ae1046b24896ea8c4ed6f",
+  "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
   "ownerException": {
     "scope": "release-before-remaining-acceptance-20261008",
     "approvedBy": "Ender",
@@ -12,8 +12,8 @@
   },
   "budgetCNY": 100,
   "historicalSpentCNY": 42.413106,
-  "spentCNY": 42.413106,
-  "newSpentCNY": 0,
+  "spentCNY": 42.546788,
+  "newSpentCNY": 0.133682,
   "pendingCNY": 0,
   "knownPendingCNY": 0,
   "billingAttempts": [
@@ -1253,6 +1253,45 @@
       "recordedUnderSourceDigest": "65b31193569c11318ea664a5199651c1766184e306e91a4b1151533f567cc3a8"
     },
     {
+      "id": "chat-b5defef0df53de759b7be017",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.01487,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "superseded_candidate",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "68c16ec79f029dc458e539dfe333669a6b091359178ae1046b24896ea8c4ed6f",
+      "recordedUnderSourceDigest": "68c16ec79f029dc458e539dfe333669a6b091359178ae1046b24896ea8c4ed6f"
+    },
+    {
+      "id": "chat-bc922d9b79bc170baf914a59",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.023764,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "superseded_candidate",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "68c16ec79f029dc458e539dfe333669a6b091359178ae1046b24896ea8c4ed6f",
+      "recordedUnderSourceDigest": "68c16ec79f029dc458e539dfe333669a6b091359178ae1046b24896ea8c4ed6f"
+    },
+    {
+      "id": "chat-2fdd33ee52cd9e67491fbc81",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.031576,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "superseded_candidate",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "68c16ec79f029dc458e539dfe333669a6b091359178ae1046b24896ea8c4ed6f",
+      "recordedUnderSourceDigest": "68c16ec79f029dc458e539dfe333669a6b091359178ae1046b24896ea8c4ed6f"
+    },
+    {
       "id": "media-924e738439fd320c6df32881",
       "kind": "media",
       "billing": "settled",
@@ -1507,20 +1546,46 @@
       "phase": "historical",
       "executedSourceDigest": null,
       "executionSourceStatus": "not_app_execution"
+    },
+    {
+      "id": "chat-b7a478efe1fb90de5b59c273",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.03204,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "recordedUnderSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-9143c1a2596c6d76d2b2ceed",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.031432,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "recordedUnderSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
     }
   ],
   "review": {
     "result": "approved",
     "independent": true,
-    "reviewer": "Root independent release gate review; assistant_ux critical paths with author recusal; pi_upgrade independent output changes review",
-    "sourceDigest": "68c16ec79f029dc458e539dfe333669a6b091359178ae1046b24896ea8c4ed6f",
+    "reviewer": "Root independent review of pi_upgrade smoke and billing gate plus assistant_ux failure copy; base independent reviews retained with author recusal",
+    "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
     "evidence": [
       "docs/release-evidence/v1.7.13-targeted.md"
     ]
   },
   "upgrade": {
     "preservedData": true,
-    "sourceDigest": "68c16ec79f029dc458e539dfe333669a6b091359178ae1046b24896ea8c4ed6f",
+    "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
     "evidence": [
       "docs/release-evidence/v1.7.13-targeted.md"
     ]
@@ -1528,17 +1593,17 @@
   "verification": {
     "localReleaseGate": {
       "status": "passed",
-      "sourceDigest": "68c16ec79f029dc458e539dfe333669a6b091359178ae1046b24896ea8c4ed6f",
+      "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
       "evidence": [
         "docs/release-evidence/v1.7.13-targeted.md"
       ]
     },
     "ci": {
       "status": "passed",
-      "sourceDigest": "68c16ec79f029dc458e539dfe333669a6b091359178ae1046b24896ea8c4ed6f",
+      "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
       "evidence": [
-        "https://github.com/glanderness/BeefTV/actions/runs/37746818128",
-        "https://github.com/glanderness/BeefTV/actions/runs/37746818201"
+        "https://github.com/glanderness/BeefTV/actions/runs/37750883483",
+        "https://github.com/glanderness/BeefTV/actions/runs/37750883493"
       ]
     }
   },
@@ -1580,7 +1645,7 @@
     "session_history": {
       "status": "passed",
       "method": "native",
-      "sourceDigest": "68c16ec79f029dc458e539dfe333669a6b091359178ae1046b24896ea8c4ed6f",
+      "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
       "evidence": [
         "docs/release-evidence/v1.7.13-targeted.md"
       ]
@@ -1588,7 +1653,7 @@
     "session_restart": {
       "status": "passed",
       "method": "native",
-      "sourceDigest": "68c16ec79f029dc458e539dfe333669a6b091359178ae1046b24896ea8c4ed6f",
+      "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
       "evidence": [
         "docs/release-evidence/v1.7.13-targeted.md"
       ]
@@ -1597,33 +1662,68 @@
       "status": "pending_after_release"
     },
     "conflict_undo": {
-      "status": "pending_after_release"
+      "status": "passed",
+      "method": "deterministic",
+      "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md"
+      ]
     },
     "host_recovery": {
-      "status": "pending_after_release"
+      "status": "passed",
+      "method": "deterministic",
+      "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md"
+      ]
     },
     "scope_isolation": {
-      "status": "pending_after_release"
+      "status": "passed",
+      "method": "deterministic",
+      "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md"
+      ]
     },
     "budget": {
-      "status": "pending_after_release"
+      "status": "passed",
+      "method": "deterministic",
+      "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md"
+      ]
     },
     "cli_mcp": {
       "status": "passed",
       "method": "native",
-      "sourceDigest": "68c16ec79f029dc458e539dfe333669a6b091359178ae1046b24896ea8c4ed6f",
+      "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
       "evidence": [
         "docs/release-evidence/v1.7.13-targeted.md"
       ]
     },
     "durable_resume": {
-      "status": "pending_after_release"
+      "status": "passed",
+      "method": "deterministic",
+      "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md"
+      ]
     },
     "native_video": {
-      "status": "pending_after_release"
+      "status": "passed",
+      "method": "native",
+      "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md"
+      ]
     },
     "native_audio": {
-      "status": "pending_after_release"
+      "status": "passed",
+      "method": "native",
+      "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md"
+      ]
     },
     "skill_version": {
       "status": "pending_after_release"
@@ -1637,7 +1737,7 @@
     "external_business": {
       "status": "passed",
       "method": "native",
-      "sourceDigest": "68c16ec79f029dc458e539dfe333669a6b091359178ae1046b24896ea8c4ed6f",
+      "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
       "evidence": [
         "docs/release-evidence/v1.7.13-targeted.md"
       ]
@@ -1676,13 +1776,6 @@
       "proposal_stale",
       "proposal_idempotency",
       "cancel",
-      "conflict_undo",
-      "host_recovery",
-      "scope_isolation",
-      "budget",
-      "durable_resume",
-      "native_video",
-      "native_audio",
       "skill_version",
       "skill_files",
       "permission_modes",
@@ -1706,6 +1799,13 @@
       {
         "kind": "targeted_native",
         "sourceDigest": "58d8aa7bb7e213213eaadd14defaf5ed9deb638b89ac8a6e57b2187cb1762a5d",
+        "evidence": [
+          "docs/release-evidence/v1.7.13-targeted.md"
+        ]
+      },
+      {
+        "kind": "targeted_native",
+        "sourceDigest": "68c16ec79f029dc458e539dfe333669a6b091359178ae1046b24896ea8c4ed6f",
         "evidence": [
           "docs/release-evidence/v1.7.13-targeted.md"
         ]

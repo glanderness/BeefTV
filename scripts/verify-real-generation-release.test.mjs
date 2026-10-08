@@ -724,6 +724,19 @@ test('v1.7.13 exact owner authorization defers only live acceptance and keeps CN
   try {
     const valid = makeDeferredV1713(run('--fingerprint').trim());
     save(valid); assert.match(run(), /acceptance PENDING/);
+    const superseded = structuredClone(valid);
+    superseded.billingAttempts.push({ id: 'superseded-chat', kind: 'chat', phase: 'superseded_candidate', executionSourceStatus: 'known', executedSourceDigest: 'b'.repeat(64), billing: 'settled', costCNY: 0.070210, evidence: ['actual-superseded-chat-bill.json'] });
+    superseded.spentCNY += 0.070210; superseded.newSpentCNY = 0.070210;
+    save(superseded); assert.match(run(), /acceptance PENDING/);
+    for (const mutate of [r => r.billingAttempts.at(-1).executedSourceDigest = r.sourceDigest,
+      r => r.billingAttempts.at(-1).executedSourceDigest = null,
+      r => r.billingAttempts.at(-1).executionSourceStatus = 'unknown',
+      r => delete r.billingAttempts.at(-1).executionSourceStatus,
+      r => r.billingAttempts.at(-1).billing = 'pending', r => r.billingAttempts.at(-1).evidence = [],
+      r => { r.billingAttempts.at(-1).costCNY = 60; r.spentCNY = 102.413106; r.newSpentCNY = 60; },
+      r => r.newSpentCNY = 0, r => r.historicalSpentCNY += 0.070210]) {
+      const invalid = structuredClone(superseded); mutate(invalid); save(invalid); assert.throws(() => run());
+    }
     const mutations = [
       r => r.ownerException.approvedBy = 'model', r => r.ownerException.instruction = '上线吧', r => r.ownerException.evidence = [], r => r.ownerException.scope = 'anything',
       r => r.budgetCNY = 101, r => r.historicalSpentCNY = 0, r => r.spentCNY = 0, r => r.newSpentCNY = 42.413106, r => r.pendingCNY = 1, r => r.knownPendingCNY = null,
@@ -753,6 +766,9 @@ test('v1.7.13 exact owner authorization defers only live acceptance and keeps CN
     partial.cases = [item]; partial.deferredAcceptance.caseKeys = partial.deferredAcceptance.caseKeys.filter(key => key !== '1/text-image');
     partial.billingAttempts.push({ id: 'current-media', taskId: item.taskId, kind: 'media', phase: 'current', executedSourceDigest: valid.sourceDigest, billing: 'settled', costCNY: 1, evidence: ['current-media-bill.json'] });
     partial.spentCNY += 1; partial.newSpentCNY = 1; save(partial); assert.match(run(), /11\/12 cases/);
+    const obsoleteBill = structuredClone(partial);
+    Object.assign(obsoleteBill.billingAttempts.at(-1), { phase: 'superseded_candidate', executionSourceStatus: 'known', executedSourceDigest: 'b'.repeat(64) });
+    save(obsoleteBill); assert.throws(() => run());
     for (const mutate of [r => r.cases[0].executedSourceDigest = 'a'.repeat(64), r => r.cases[0].confirmed = false, r => r.cases[0].mediaOpened = false, r => r.cases[0].costCNY = 2, r => r.deferredAcceptance.caseKeys.push('1/text-image')]) {
       const invalid = structuredClone(partial); mutate(invalid); save(invalid); assert.throws(() => run());
     }

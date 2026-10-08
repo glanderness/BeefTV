@@ -25,6 +25,8 @@ v1.7.10 的单版专项验收例外：Owner 于 2026-10-07 明确回复「beeftv
 
 本次累计预算是 **100 元**，包括授权时本次已结算的 **42.413106 元**；不是追加100元。后续聊天、媒体、审片、失败和退款全部进入同一 `billingAttempts`。总 `spentCNY` 必须等于全部逐笔净结算，`newSpentCNY = spentCNY - historicalSpentCNY`，总额不能超过100；发布前 `pendingCNY` 与 `knownPendingCNY` 都必须为0。退款已完成也保留请求与证据，不把未核账改成0。
 
+本版中间候选产生的已结算费用用 `phase=superseded_candidate` 保留实际执行摘要，要求 `executionSourceStatus=known`、非当前源码的64位SHA及证据。它计入总费用和 `newSpentCNY`，不计入授权前固定的42.413106元；不能用于当前矩阵通过项的账单或替代当前 Agent 验收证据。未知执行摘要、未结算费用或当前摘要不能使用此分类。此分类仅适用于本版精确 Owner 例外。
+
 精确授权收据字段如下（是字段说明，不是可直接通过检查的完整收据）：
 
 ```json

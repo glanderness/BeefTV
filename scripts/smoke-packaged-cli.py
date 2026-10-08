@@ -11,6 +11,8 @@ import stat
 import subprocess
 import tempfile
 import threading
+import urllib.error
+import urllib.request
 import zipfile
 
 
@@ -40,19 +42,25 @@ def smoke(archive, platform):
 
         class Backend(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
-                authorized = (self.path == "/api/ops" and
+                authorized = (self.path in ("/api/ops", "/api/business/tools") and
                               self.headers.get("X-Beeftv-Client") == "release-smoke" and
                               self.headers.get("Authorization") == "Bearer " + token and
                               not self.headers.get("X-Beeftv-Owner") and
                               not self.headers.get("X-Desktop-Token"))
-                requests.append(authorized)
+                requests.append((self.path, authorized))
                 self.send_response(200 if authorized else 403)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(json.dumps({"code": 0 if authorized else 403, "data": {
+                data = {
                     "ops": [{"id": "release.smoke", "summary": "Isolated release smoke",
                              "readOnly": True, "params": {"type": "object"}}]
-                }}).encode())
+                } if self.path == "/api/ops" else {
+                    "tools": [{"id": "release.business.smoke", "summary": "Isolated business catalog",
+                               "readOnly": True, "method": "GET", "path": "/release-smoke",
+                               "params": {"type": "object", "properties": {}}}]
+                }
+                self.wfile.write(json.dumps({"code": 0 if authorized else 403,
+                                             "data": data if authorized else {}}).encode())
 
             def log_message(self, *_args):
                 pass
@@ -88,7 +96,10 @@ def smoke(archive, platform):
                 def receive(request_id):
                     line = messages.get(timeout=20)
                     if line is None:
-                        raise RuntimeError("packaged CLI exited before MCP response")
+                        stderr.flush()
+                        stderr.seek(0)
+                        detail = stderr.read(4096).replace(token, "[redacted]").strip()
+                        raise RuntimeError("packaged CLI exited before MCP response: " + detail)
                     message = json.loads(line)
                     if message.get("id") != request_id or "error" in message:
                         raise RuntimeError("unexpected MCP response: " + line)
@@ -103,10 +114,33 @@ def smoke(archive, platform):
                 send({"method": "notifications/initialized"})
                 send({"id": 2, "method": "tools/list", "params": {}})
                 tools = receive(2).get("tools", [])
-                if [tool.get("name") for tool in tools] != ["release.smoke"]:
+                if sorted(tool.get("name") for tool in tools) != ["release.business.smoke", "release.smoke"]:
                     raise RuntimeError("tools/list did not return the authenticated mock catalog")
-                if not requests or not all(requests):
+                if ({route for route, _ in requests} != {"/api/ops", "/api/business/tools"}
+                        or not all(authorized for _, authorized in requests)):
                     raise RuntimeError("catalog request did not use isolated client credentials")
+                headers = {"X-Beeftv-Client": "release-smoke", "Authorization": "Bearer " + token}
+                for route in ("/api/ops", "/api/business/tools"):
+                    for invalid in ({}, {**headers, "Authorization": "Bearer invalid"},
+                                    {**headers, "X-Beeftv-Owner": "owner"},
+                                    {**headers, "X-Desktop-Token": "desktop"}):
+                        request = urllib.request.Request(env["BEEFTV_BASE_URL"][:-4] + route,
+                                                         headers=invalid)
+                        try:
+                            urllib.request.urlopen(request, timeout=5).close()
+                        except urllib.error.HTTPError as error:
+                            if error.code != 403:
+                                raise RuntimeError("unexpected credential rejection") from error
+                        else:
+                            raise RuntimeError("mock catalog accepted invalid credentials")
+                request = urllib.request.Request(env["BEEFTV_BASE_URL"] + "/unknown", headers=headers)
+                try:
+                    urllib.request.urlopen(request, timeout=5).close()
+                except urllib.error.HTTPError as error:
+                    if error.code != 403:
+                        raise RuntimeError("unexpected route rejection") from error
+                else:
+                    raise RuntimeError("mock catalog accepted unknown route")
                 process.stdin.close()
                 if process.wait(timeout=10) != 0:
                     raise RuntimeError("packaged CLI exited unsuccessfully")
@@ -114,6 +148,9 @@ def smoke(archive, platform):
             if process is not None and process.poll() is None:
                 process.kill()
                 process.wait(timeout=10)
+            if process is not None:
+                process.stdin.close()
+                process.stdout.close()
             server.shutdown()
             server.server_close()
             worker.join(timeout=5)
