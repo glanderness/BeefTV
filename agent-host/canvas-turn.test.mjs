@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
-import { collectTurnEffects, newTurnAccumulator, providerRegistration, providerUnavailableReason,
+import { collectTurnEffects, extendWriteChain, newTurnAccumulator, rebaseOntoWriteChain, providerRegistration, providerUnavailableReason,
   resetTurnAccumulator, sessionTitle, turnChange, turnContextPrefix, unflushedSessionHistory } from "./canvas-turn.mjs";
 import { SYSTEM_PROMPT } from "./full-control-loader.mjs";
 
@@ -67,6 +67,32 @@ describe("本轮画布变更", () => {
             createdNodeIds: [], updatedNodeIds: ["video", "image"], createdEdgeIds: [],
             operationIds: ["first-edit", "second-edit", "third-edit"],
         });
+    });
+
+    test("本轮写入链：连续写入延长链头，断开时重新起链，换轮清空", () => {
+        const turn = resetTurnAccumulator(newTurnAccumulator(), 9);
+        expect(turn.writeChains).toEqual([]);
+        expect(rebaseOntoWriteChain(turn, "a", 9)).toBe(9);
+        extendWriteChain(turn, "a", 9, 10);
+        extendWriteChain(turn, "a", 10, 11);
+        expect(turn.writeChains).toEqual([{ canvasId: "a", start: 9, head: 11 }]);
+        expect(rebaseOntoWriteChain(turn, "a", 9)).toBe(11);
+        expect(rebaseOntoWriteChain(turn, "a", 10)).toBe(11);
+        expect(rebaseOntoWriteChain(turn, "a", 11)).toBe(11);
+        expect(rebaseOntoWriteChain(turn, "a", 8)).toBe(8);
+        expect(rebaseOntoWriteChain(turn, "a", 12)).toBe(12);
+        expect(rebaseOntoWriteChain(turn, "a", "9")).toBe("9");
+        expect(rebaseOntoWriteChain(turn, "a", 9.5)).toBe(9.5);
+        expect(rebaseOntoWriteChain(turn, "b", 9)).toBe(9);
+        extendWriteChain(turn, "a", 11, 11); // 幂等返回没有推进版本
+        expect(turn.writeChains[0].head).toBe(11);
+        extendWriteChain(turn, "a", 13, 14); // 中间有别人的写入
+        expect(turn.writeChains).toEqual([{ canvasId: "a", start: 13, head: 14 }]);
+        expect(rebaseOntoWriteChain(turn, "a", 11)).toBe(11);
+        resetTurnAccumulator(turn, 14);
+        expect(turn.writeChains).toEqual([]);
+        expect(turn.writeRequests).toEqual([]);
+        expect(newTurnAccumulator()).toMatchObject({ writeChains: [], writeRequests: [] });
     });
 
     test("只读了画布的一轮没有变更摘要", () => {

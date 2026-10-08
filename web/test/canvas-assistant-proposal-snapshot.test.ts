@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { AssistantProposalChangedError, prepareAssistantProposalSnapshot, type ProposalSourceState } from "@/pages/canvas/canvas-assistant-proposal-snapshot";
+import { ASSISTANT_PROPOSAL_BLOCKED_TEXT, AssistantProposalBlockedError, prepareAssistantProposalSnapshot, type AssistantProposalBlockedReason, type ProposalSourceState } from "@/pages/canvas/canvas-assistant-proposal-snapshot";
 import { buildNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import { executeAssistantProposal } from "@/pages/canvas/canvas-assistant-proposal-execution";
 import { defaultConfig } from "@/stores/use-config-store";
@@ -12,7 +12,7 @@ import { resourceFileUrl } from "@/services/api/resources";
 const proposal = { proposalId: "p", kind: "image" as const, model: "m", modelKey: "c::m", nodeIds: ["n"],
     source: { canvasId: "canvas", canvasRevision: 4, modelConfigRevision: 2 } };
 function fixture(): ProposalSourceState {
-    return structuredClone({ ...proposal.source, hasUnconfirmedEdits: false,
+    return structuredClone({ ...proposal.source, canvasHasUnconfirmedEdits: false, modelConfigHasUnconfirmedEdits: false,
         nodes: [{ id: "n", title: "Image", type: CanvasNodeType.Image, position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { prompt: "original" } },
             { id: "ref", title: "Reference", type: CanvasNodeType.Image, position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { storageKey: "resource:r1" } }],
         connections: [{ id: "edge", fromNodeId: "ref", toNodeId: "n" }], config: defaultConfig, assets: [], skills: [] });
@@ -30,6 +30,8 @@ test("normal freshly loaded React nodes pass against raw server nodes", async ()
     expect(result.nodes[0].metadata?.prompt).toBe("original");
 });
 
+const noWait = { sleep: async () => {} };
+
 const mutations: [string, (state: ProposalSourceState) => void][] = [
     ["prompt before persistence", s => { s.nodes[0].metadata!.prompt = "changed"; }],
     ["reference resource", s => { s.nodes[1].metadata!.storageKey = "resource:r2"; }],
@@ -37,7 +39,8 @@ const mutations: [string, (state: ProposalSourceState) => void][] = [
     ["reference connection", s => { s.connections = []; }],
     ["saved canvas revision", s => { s.canvasRevision++; }],
     ["global settings with unchanged model", s => { s.modelConfigRevision++; }],
-    ["unsaved settings", s => { s.hasUnconfirmedEdits = true; }],
+    ["unsaved settings", s => { s.modelConfigHasUnconfirmedEdits = true; }],
+    ["canvas save that never settles", s => { s.canvasHasUnconfirmedEdits = true; }],
     ["different canvas", s => { s.canvasId = "other"; }],
 ];
 for (const [label, change] of mutations) test(`F02 rejects ${label} before any task is submitted`, async () => {
@@ -49,7 +52,7 @@ for (const [label, change] of mutations) test(`F02 rejects ${label} before any t
     const claims = new Set<string>();
     const notices: string[] = [];
     await executeAssistantProposal({ proposal, nodes: live.nodes, claims, isHandled: false,
-        prepare: () => prepareAssistantProposalSnapshot(proposal, () => live, async () => persisted),
+        prepare: () => prepareAssistantProposalSnapshot(proposal, () => live, async () => persisted, noWait),
         generate: async () => { submissions++; }, markHandled: () => { handled++; }, notify: text => { notices.push(text); } });
     expect(submissions).toBe(0);
     expect(handled).toBe(0);
@@ -121,37 +124,90 @@ test("the generation boundary receives the confirmed prompt and reference after 
     expect(submitted).toBe(true);
 });
 
-for (const reason of ["missing-source", "unsaved", "canvas-dirty", "model-dirty", "model-status", "version-changed", "saved-content-mismatch", "changed-during-confirmation"] as const) {
-    test(`confirmation distinguishes ${reason} and does not submit or retain a claim`, async () => {
-        const live = fixture();
-        const saved = fixture();
-        const selectedProposal = reason === "missing-source" ? { ...proposal, source: undefined } : proposal;
-        if (reason === "unsaved") live.hasUnconfirmedEdits = true;
-        if (reason === "canvas-dirty" || reason === "model-dirty" || reason === "model-status") {
-            live.hasUnconfirmedEdits = true;
-            live.unconfirmedReason = reason;
-        }
-        if (reason === "version-changed") saved.modelConfigRevision++;
-        if (reason === "saved-content-mismatch") saved.nodes[1].metadata!.storageKey = "resource:different";
-        let captured: unknown;
-        let submissions = 0;
-        const notices: string[] = [];
-        const claims = new Set<string>();
-        await executeAssistantProposal({ proposal: selectedProposal, nodes: live.nodes, claims, isHandled: false,
-            prepare: async () => {
-                try {
-                    return await prepareAssistantProposalSnapshot(selectedProposal, () => live, async () => {
-                        if (reason === "changed-during-confirmation") live.config.canvasImageCount = "4";
-                        return saved;
-                    });
-                } catch (error) { captured = error; throw error; }
-            }, generate: async () => { submissions++; }, markHandled: () => { throw Error("must not mark handled"); }, notify: message => notices.push(message) });
-        expect(captured).toBeInstanceOf(AssistantProposalChangedError);
-        expect((captured as AssistantProposalChangedError).reason).toBe(reason);
-        expect(notices).toEqual([(captured as Error).message]);
-        expect(notices[0]).not.toContain("版本");
-        expect(notices[0]).not.toContain("hash");
-        expect(submissions).toBe(0);
-        expect(claims.size).toBe(0);
-    });
+async function blockedReason(run: Promise<unknown>): Promise<AssistantProposalBlockedReason | "passed" | "other"> {
+    try {
+        await run;
+        return "passed";
+    } catch (error) {
+        return error instanceof AssistantProposalBlockedError ? error.reason : "other";
+    }
 }
+
+const reasonCases: [string, AssistantProposalBlockedReason, (live: ProposalSourceState, persisted: ProposalSourceState) => void][] = [
+    ["canvas save still pending after the wait", "canvas_saving", live => { live.canvasHasUnconfirmedEdits = true; }],
+    ["generation settings unsaved or saving", "settings_unsaved", live => { live.modelConfigHasUnconfirmedEdits = true; }],
+    ["editor canvas revision moved", "canvas_changed", live => { live.canvasRevision++; }],
+    ["editor on a different canvas", "canvas_changed", live => { live.canvasId = "other"; }],
+    ["saved canvas revision moved", "canvas_changed", (_live, persisted) => { persisted.canvasRevision++; }],
+    ["editor settings revision moved", "settings_changed", live => { live.modelConfigRevision++; }],
+    ["saved settings revision moved", "settings_changed", (_live, persisted) => { persisted.modelConfigRevision++; }],
+    ["editor shows nodes the server no longer has", "content_mismatch", (_live, persisted) => { persisted.nodes = persisted.nodes.slice(0, 1); persisted.connections = []; }],
+    ["editor prompt differs from the saved canvas", "content_mismatch", live => { live.nodes[0].metadata!.prompt = "changed"; }],
+];
+for (const [label, reason, change] of reasonCases) test(`blocked reason: ${label} -> ${reason}`, async () => {
+    const live = fixture();
+    const persisted = fixture();
+    change(live, persisted);
+    expect(await blockedReason(prepareAssistantProposalSnapshot(proposal, () => live, async () => persisted, noWait))).toBe(reason);
+});
+
+test("blocked reason: malformed or missing source -> invalid_source", async () => {
+    for (const source of [undefined, null, {}, { ...proposal.source, canvasRevision: "4" }, { ...proposal.source, modelConfigRevision: -1 }]) {
+        expect(await blockedReason(prepareAssistantProposalSnapshot({ ...proposal, source } as typeof proposal, fixture, async () => fixture(), noWait))).toBe("invalid_source");
+    }
+});
+
+test("blocked reason: a canvas edit during the server read -> canvas_changed; a settings edit -> settings_changed", async () => {
+    const editPrompt = fixture();
+    expect(await blockedReason(prepareAssistantProposalSnapshot(proposal, () => editPrompt, async () => {
+        const persisted = fixture(); editPrompt.nodes[0].metadata!.prompt = "new"; return persisted;
+    }, noWait))).toBe("canvas_changed");
+    const editSettings = fixture();
+    expect(await blockedReason(prepareAssistantProposalSnapshot(proposal, () => editSettings, async () => {
+        const persisted = fixture(); editSettings.config.canvasImageCount = "4"; return persisted;
+    }, noWait))).toBe("settings_changed");
+});
+
+test("blocked error message is the user copy for its reason", () => {
+    for (const reason of Object.keys(ASSISTANT_PROPOSAL_BLOCKED_TEXT) as AssistantProposalBlockedReason[]) {
+        expect(new AssistantProposalBlockedError(reason).message).toBe(ASSISTANT_PROPOSAL_BLOCKED_TEXT[reason]);
+    }
+});
+
+test("a pending canvas save that settles within the wait continues to confirmation", async () => {
+    const live = fixture();
+    live.canvasHasUnconfirmedEdits = true;
+    const sleeps: number[] = [];
+    const confirmed = await prepareAssistantProposalSnapshot(proposal, () => live, async () => fixture(), {
+        saveWaitMs: 3000, pollMs: 250,
+        sleep: async (ms) => { sleeps.push(ms); if (sleeps.length === 3) live.canvasHasUnconfirmedEdits = false; },
+    });
+    expect(sleeps).toEqual([250, 250, 250]);
+    expect(confirmed.nodes[0].metadata?.prompt).toBe("original");
+});
+
+test("a pending canvas save gives up after the wait budget with canvas_saving", async () => {
+    const live = fixture();
+    live.canvasHasUnconfirmedEdits = true;
+    let reads = 0;
+    let slept = 0;
+    let persistedReads = 0;
+    const reason = await blockedReason(prepareAssistantProposalSnapshot(proposal, () => { reads++; return live; }, async () => { persistedReads++; return fixture(); }, {
+        saveWaitMs: 3000, pollMs: 250, sleep: async (ms) => { slept += ms; },
+    }));
+    expect(reason).toBe("canvas_saving");
+    expect(slept).toBe(3000);
+    expect(reads).toBe(13);
+    expect(persistedReads).toBe(0);
+});
+
+test("unsaved generation settings fail at once without waiting", async () => {
+    const live = fixture();
+    live.modelConfigHasUnconfirmedEdits = true;
+    live.canvasHasUnconfirmedEdits = true;
+    let slept = 0;
+    expect(await blockedReason(prepareAssistantProposalSnapshot(proposal, () => live, async () => fixture(), {
+        sleep: async (ms) => { slept += ms; },
+    }))).toBe("settings_unsaved");
+    expect(slept).toBe(0);
+});

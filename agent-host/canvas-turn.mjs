@@ -8,7 +8,8 @@ export const SUPPORTED_APIS = ['openai-completions', 'openai-responses', 'anthro
 
 export function newTurnAccumulator() {
   return { turnId: '', seq: 0, toolSeq: 0, revisionBefore: 0, revisionAfter: 0,
-    createdNodeIds: [], updatedNodeIds: [], createdEdgeIds: [], operationIds: [], proposals: [], timelineUpdated: false };
+    createdNodeIds: [], updatedNodeIds: [], createdEdgeIds: [], operationIds: [], proposals: [],
+    timelineUpdated: false, writeChains: [], writeRequests: [] };
 }
 
 export function resetTurnAccumulator(turn, revisionBefore, turnId = '') {
@@ -27,7 +28,39 @@ export function resetTurnAccumulator(turn, revisionBefore, turnId = '') {
   turn.deletedEdgeIds=[];
   turn.documentUpdated=false;
   turn.canvasChanges = {};
+  turn.writeChains = [];
+  turn.writeRequests = [];
   return turn;
+}
+
+// 每张画布只接续本轮自己的写入回执，不能借用另一张画布的版本。
+// 每一步都是本轮带 expectedRevision 的写入，从上一步的结果版本接着写。
+// 链内的每个版本都有本轮回执，所以模型拿链内旧版本发来的写入可以安全地接到链头上；
+// 链外的版本（中间可能夹着别人的写入）照常交给后端 CAS 拒绝。
+export function extendWriteChain(turn, canvasId, expectedRevision, revision) {
+  if (!turn || !canvasId || !Number.isSafeInteger(expectedRevision) || !Number.isSafeInteger(revision)) return turn;
+  if (revision <= expectedRevision) return turn;
+  turn.writeChains ||= [];
+  const chain = turn.writeChains.find(item => item.canvasId === canvasId);
+  if (chain && expectedRevision === chain.head) {
+    chain.head = revision;
+  } else if (chain) {
+    chain.start = expectedRevision;
+    chain.head = revision;
+  } else {
+    turn.writeChains.push({ canvasId, start: expectedRevision, head: revision });
+  }
+  return turn;
+}
+
+// 返回应发送的 expectedRevision：落在本轮链内且落后于链头时换成链头，否则原样返回。
+export function rebaseOntoWriteChain(turn, canvasId, expectedRevision) {
+  if (!turn || !Number.isSafeInteger(expectedRevision)) return expectedRevision;
+  const chain = turn.writeChains?.find(item => item.canvasId === canvasId);
+  if (!chain) return expectedRevision;
+  const { start, head } = chain;
+  if (start <= expectedRevision && expectedRevision < head) return head;
+  return expectedRevision;
 }
 
 function asStringList(value) {

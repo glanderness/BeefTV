@@ -12,6 +12,8 @@ import { applyGenerationConsumerEffect } from "../../src/services/generation-con
 import { attachNodeEffectKey } from "../../src/services/generation-task-materializer";
 import { hasUnconfirmedCanvasEdits } from "../../src/services/local-workspace-repository";
 import { syncLocalCanvasProjectToBackend } from "../../src/services/local-workspace-repository";
+import { refreshLocalCanvasProjectIfChanged } from "../../src/services/local-workspace-repository";
+import { getActiveUserScope, setActiveUserScope } from "../../src/lib/user-scope";
 import type { CanvasNodeData, CanvasConnection, CanvasAssistantSession } from "../../src/types/canvas";
 
 const noop = () => {};
@@ -29,6 +31,9 @@ useUserStore.getState().setHydrated(true);
 useCanvasStore.subscribe((state) => { const p = state.projects.find(p => p.id === "c1"); if (p) harness.updates.push({ edges: p.connections.length, revision: p.revision }); });
 
 function Harness() {
+    const [projectId, setProjectId] = useState("c1");
+    (harness as any).switchCanvas = setProjectId;
+    (harness as any).scopeCycle = () => { const scope = getActiveUserScope(); setActiveUserScope("leave-owner-b"); setActiveUserScope(scope); };
     const [, unrelatedRender] = useState(0);
     (harness as any).pulse = () => new Promise<void>(resolve => {
         let count = 0;
@@ -48,7 +53,7 @@ function Harness() {
     const [projectLoaded, setProjectLoaded] = useState(false);
     const nodesRef = useRef(nodes), connectionsRef = useRef(connections), chatSessionsRef = useRef(chatSessions), activeChatIdRef = useRef(activeChatId), viewportRef = useRef(viewport);
     const history = useCanvasHistory({ projectLoaded, nodes, connections, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo, setNodes, setConnections, setChatSessions, setActiveChatId, applyCanvasAppearance: setCanvasAppearance, setBackgroundMode, setShowImageInfo, setSelectedNodeIds: noop, setSelectedConnectionId: noop, setContextMenu: noop });
-    useCanvasProjectLifecycle({ projectId: "c1", projectLoaded, nodes, connections, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo, viewport, nodesRef, connectionsRef, chatSessionsRef, activeChatIdRef, viewportRef, historyPausedRef: history.historyPausedRef, setNodes, setConnections, setChatSessions, setActiveChatId, setCanvasAppearance, setBackgroundMode, setShowImageInfo, setViewport, setProjectLoaded, resetHistory: history.resetHistory, adoptExternalSnapshot: history.adoptExternalSnapshot, cleanupAssetImages: noop, cleanupCanvasFiles: noop });
+    useCanvasProjectLifecycle({ projectId, projectLoaded, nodes, connections, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo, viewport, nodesRef, connectionsRef, chatSessionsRef, activeChatIdRef, viewportRef, historyPausedRef: history.historyPausedRef, setNodes, setConnections, setChatSessions, setActiveChatId, setCanvasAppearance, setBackgroundMode, setShowImageInfo, setViewport, setProjectLoaded, resetHistory: history.resetHistory, adoptExternalSnapshot: history.adoptExternalSnapshot, cleanupAssetImages: noop, cleanupCanvasFiles: noop });
     useLayoutEffect(() => { nodesRef.current = nodes; connectionsRef.current = connections; chatSessionsRef.current = chatSessions; activeChatIdRef.current = activeChatId; viewportRef.current = viewport; }, [nodes, connections, chatSessions, activeChatId, viewport]);
     useEffect(() => { harness.renders.push({ nodes: nodes.length, edges: connections.length, projectLoaded }); });
     (harness as any).dirty = () => hasUnconfirmedCanvasEdits("c1");
@@ -66,7 +71,15 @@ function Harness() {
     harness.media = () => setNodes(current => current.map((node, i) => i === 1 ? { ...node, width: node.width + 1 } : node));
     harness.restartLoad = async (remote: unknown) => { await recordConfirmedCanvasCommit(remote as never); useCanvasStore.setState({ projects: [remote as never] }); useUserStore.getState().setHydrated(false); harness.media(); };
     harness.deleteEdges = () => setConnections([]);
+    (harness as any).editTitle = () => setNodes(current => current.map(node => node.id === "n0" ? { ...node, title: "Local unsaved text" } : node));
+    (harness as any).title = () => nodesRef.current.find(node => node.id === "n0")?.title;
+    (harness as any).refresh = () => refreshLocalCanvasProjectIfChanged(projectId);
     harness.save = async () => { await flushCanvasStorePersistence(); await syncLocalCanvasProjectToBackend("c1"); };
     return <div data-testid="graph">{`${projectLoaded}:${nodes.length}:${connections.length}`}</div>;
 }
-createRoot(document.getElementById("root")!).render(<MemoryRouter><App><Harness /></App></MemoryRouter>);
+function MountController() {
+    const [mounted, setMounted] = useState(true);
+    (harness as any).unmount = () => setMounted(false);
+    return mounted ? <Harness /> : <div data-testid="unmounted">Left canvas</div>;
+}
+createRoot(document.getElementById("root")!).render(<MemoryRouter><App><MountController /></App></MemoryRouter>);

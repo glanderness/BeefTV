@@ -146,6 +146,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       budgetDirectory: path.join(dir, `${uuid}.budget`) };
     fs.mkdirSync(entry.budgetDirectory, { recursive: true, mode: 0o700 });
     const registry = createRegistry();
+    entry.generation.persistEffects = () => persistEffects(entry);
     entry.generation.permissionMode='full-access';
     const tools = buildTools(canvasId, entry.log, entry.generation, entry.turn, sessionId).map((tool) => defineTool({
       name: tool.name, description: tool.description, parameters: tool.parameters,

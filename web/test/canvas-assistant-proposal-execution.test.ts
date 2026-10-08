@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { buildConfirmedGenerationConfig, executeAssistantProposal } from "@/pages/canvas/canvas-assistant-proposal-execution";
+import { AssistantProposalBlockedError, type AssistantProposalBlockedReason } from "@/pages/canvas/canvas-assistant-proposal-snapshot";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { defaultConfig, type AiConfig } from "@/stores/use-config-store";
 import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
@@ -35,6 +36,24 @@ test("proposal read failures are not reported as proven input drift", async () =
     expect(submissions).toBe(0);
     expect(args.claims.size).toBe(0);
     expect(notices).toEqual(["无法核对提案的最新内容，请检查连接后重试。"]);
+});
+
+const blockedCopy: [AssistantProposalBlockedReason, string][] = [
+    ["canvas_saving", "画布还在保存。稍等几秒再点生成。"],
+    ["settings_unsaved", "生成设置还没保存。保存后再点生成。"],
+    ["canvas_changed", "画布在提出方案后改过。请让助手重新提出方案。"],
+    ["settings_changed", "生成设置在提出方案后改过。请让助手重新提出方案。"],
+    ["content_mismatch", "画布显示的内容和已保存的不一致。请重新打开这个画布，再让助手重新提出方案。"],
+    ["invalid_source", "这项方案缺少核对信息。请让助手重新提出方案。"],
+];
+for (const [reason, copy] of blockedCopy) test(`blocked proposal (${reason}) tells the user why and what to do`, async () => {
+    const notices: string[] = [];
+    let submissions = 0;
+    const args = input({ prepare: async () => { throw new AssistantProposalBlockedError(reason); }, generate: async () => { submissions++; }, notify: text => { notices.push(text); } });
+    await executeAssistantProposal(args);
+    expect(submissions).toBe(0);
+    expect(args.claims.size).toBe(0);
+    expect(notices).toEqual([copy]);
 });
 
 const task: GenerationTask = { id: "task-1", type: "canvas_image", status: "queued", prompt: "test image", createdAt: "2026-09-30T00:00:00Z", updatedAt: "2026-09-30T00:00:00Z" };

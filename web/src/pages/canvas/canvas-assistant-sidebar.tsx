@@ -30,6 +30,7 @@ type Props = {
     onRunProposal: (proposal: AssistantGenerationProposal) => void;
     onOpenModelSettings: () => void;
     proposalFeedback?: Record<string, string>;
+    runningProposalIds?: ReadonlySet<string>;
 };
 
 export function CanvasAssistantSidebar(props: Props) {
@@ -218,6 +219,7 @@ export function CanvasAssistantSidebar(props: Props) {
                         status={assistant.turnStatus[turn.turnId]}
                         handledProposals={assistant.handledProposals}
                         proposalFeedback={props.proposalFeedback}
+                        runningProposalIds={props.runningProposalIds}
                         onLocate={onLocateNodes}
                         onUndo={(turnId) => void assistant.undoTurn(turnId)}
                         onRunProposal={onRunProposal}
