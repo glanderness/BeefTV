@@ -1,5 +1,6 @@
 import { http, ApiError } from "@/services/api/request";
 import type { ClientDiagnosticEvent } from "./client-diagnostics";
+import { saveOwnedOrBrowserBlob } from "@/services/desktop-media-save";
 
 export type DiagnosticExportInput = {
     from: string;
@@ -82,15 +83,7 @@ async function readErrorBody(data: unknown) {
 }
 
 export function downloadDiagnosticBundle(download: DiagnosticDownload) {
-    const url = URL.createObjectURL(download.blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = download.fileName;
-    anchor.style.display = "none";
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    return saveOwnedOrBrowserBlob(download.fileName, download.blob);
 }
 
 function readHeader(headers: unknown, name: string) {

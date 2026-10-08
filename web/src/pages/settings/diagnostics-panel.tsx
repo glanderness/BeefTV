@@ -51,9 +51,10 @@ export default function DiagnosticsPanel({ taskId, projectId }: DiagnosticsPanel
         setExporting(true);
         try {
             const download = await exportDiagnosticBundle(buildInput(range, description, taskId, projectId));
-            downloadDiagnosticBundle(download);
+            const saved = await downloadDiagnosticBundle(download);
+            if (saved !== "saved") return;
             setBundleId(download.bundleId);
-            message.success("诊断包已下载，请连同诊断编号提交给支持人员");
+            message.success("诊断包已保存，请连同诊断编号提交给支持人员");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "导出诊断包失败");
         } finally {
