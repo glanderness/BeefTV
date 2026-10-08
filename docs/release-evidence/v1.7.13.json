@@ -12,8 +12,8 @@
   },
   "budgetCNY": 100,
   "historicalSpentCNY": 42.413106,
-  "spentCNY": 42.546788,
-  "newSpentCNY": 0.133682,
+  "spentCNY": 51.645948,
+  "newSpentCNY": 9.232842,
   "pendingCNY": 0,
   "knownPendingCNY": 0,
   "billingAttempts": [
@@ -1292,6 +1292,380 @@
       "recordedUnderSourceDigest": "68c16ec79f029dc458e539dfe333669a6b091359178ae1046b24896ea8c4ed6f"
     },
     {
+      "id": "chat-b7a478efe1fb90de5b59c273",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.03204,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "recordedUnderSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-9143c1a2596c6d76d2b2ceed",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.031432,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "recordedUnderSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-f13d6e1a6699032c81ce1f74",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.015512,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-695d0e0ca119b35883c4e8d8",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.058468,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-63ce5d6ad19f1bda19f9acc0",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.111244,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-9073d09bff3477afdb42a7b1",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.091794,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-32ef0b68cea4aa8d2d514c48",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.086898,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-a1b80f4dd56801ae08b8e376",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.086634,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-b3b85d78008d17a0b34da457",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.117116,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-7cc328c6ca18ae428518871b",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.11907,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-02dd6a5ec787eca09c371bd8",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.119072,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-0623a9f89d1653945bc73959",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.119978,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-f0cb7d7fa2581bf2e4e9eadf",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.120914,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-befeb2e9d5d278da52308f80",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.12159,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-13a8a6d8fd3326a2c111fd6b",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.12198,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-08951e0be0337746f5f32f96",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.122378,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-4c491acefbd656eaa5b686cb",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.122766,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-24c383eb925eb738173ae534",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.123186,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-08e5be851c43b29d4294a96e",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.123592,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-a4cd4a50272d07d7acdcdae4",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.12419,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-a0bae9cd977a88f70e40baf1",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.022376,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-c1314747253777af1b87e3eb",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.128202,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-af502302e72f61a2b6332e95",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.124934,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-4bacf211faf742befd96c6df",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.15645,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-7e4fdd05edf4e0d41ca65de6",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.157668,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-2397feedb5ff31ee929fc124",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.158044,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-5914d253e9a59c8670b540b9",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.159072,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-afb39ea15e3e7b0f5fe1ac44",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.161652,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-9951c394811985f83e956acd",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.159568,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-b818531f3b32f299016e24c7",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.19608,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
+      "id": "chat-6aa1bf173ff2cfe840a5ad77",
+      "kind": "chat",
+      "billing": "settled",
+      "costCNY": 0.198048,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
+    },
+    {
       "id": "media-924e738439fd320c6df32881",
       "kind": "media",
       "billing": "settled",
@@ -1500,6 +1874,84 @@
       "executionSourceStatus": "known"
     },
     {
+      "id": "media-03c80c14de717bf4a6b6782f",
+      "kind": "media",
+      "billing": "settled",
+      "costCNY": 0.42,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "taskId": "1755efa42256a9c5b9dcbf16fdd754df"
+    },
+    {
+      "id": "media-d1cb7fc72fa0a196156efba4",
+      "kind": "media",
+      "billing": "settled",
+      "costCNY": 0.42,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "taskId": "f8412f3a5c5cb8d4ab713dac3e750af7"
+    },
+    {
+      "id": "media-225add08802ca75efe95c942",
+      "kind": "media",
+      "billing": "settled",
+      "costCNY": 1.139354,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "taskId": "2d6325504f90c1c3eae9679e0a04992d"
+    },
+    {
+      "id": "media-3f4106c5502230f12d31a90e",
+      "kind": "media",
+      "billing": "settled",
+      "costCNY": 1.139354,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "taskId": "1a12310159b6658918bba65c51f3bebc"
+    },
+    {
+      "id": "media-200bb6ac96eae68741727551",
+      "kind": "media",
+      "billing": "settled",
+      "costCNY": 1.225988,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "taskId": "4c856424eae12dc094b59c11f1ad8a54"
+    },
+    {
+      "id": "media-e962a164680522384c86973c",
+      "kind": "media",
+      "billing": "settled",
+      "costCNY": 1.225988,
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md#billing"
+      ],
+      "phase": "current",
+      "executionSourceStatus": "known",
+      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "taskId": "60f1bd4fac8189736fdb7324ed5513b6"
+    },
+    {
       "id": "other-ce0f46059099dde7c48fe694",
       "kind": "other",
       "billing": "settled",
@@ -1546,32 +1998,6 @@
       "phase": "historical",
       "executedSourceDigest": null,
       "executionSourceStatus": "not_app_execution"
-    },
-    {
-      "id": "chat-b7a478efe1fb90de5b59c273",
-      "kind": "chat",
-      "billing": "settled",
-      "costCNY": 0.03204,
-      "evidence": [
-        "docs/release-evidence/v1.7.13-targeted.md#billing"
-      ],
-      "phase": "current",
-      "executionSourceStatus": "known",
-      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
-      "recordedUnderSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
-    },
-    {
-      "id": "chat-9143c1a2596c6d76d2b2ceed",
-      "kind": "chat",
-      "billing": "settled",
-      "costCNY": 0.031432,
-      "evidence": [
-        "docs/release-evidence/v1.7.13-targeted.md#billing"
-      ],
-      "phase": "current",
-      "executionSourceStatus": "known",
-      "executedSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
-      "recordedUnderSourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a"
     }
   ],
   "review": {
@@ -1748,7 +2174,7 @@
   },
   "liveMatrixStatus": "pending_after_release",
   "agentAcceptanceStatus": "pending_after_release",
-  "releasePublished": false,
+  "releasePublished": true,
   "acceptanceComplete": false,
   "releaseComplete": false,
   "deferredAcceptance": {
@@ -1813,7 +2239,7 @@
     ]
   },
   "packages": {
-    "status": "pending_release_workflow",
+    "status": "verified",
     "platforms": [
       "darwin-arm64",
       "darwin-amd64",
@@ -1824,8 +2250,82 @@
     "signedManifestBeforePublish": true,
     "publicReadbackAfterPublish": true,
     "workflowEvidence": [
-      ".github/workflows/release-desktop.yml"
-    ]
+      ".github/workflows/release-desktop.yml",
+      "https://github.com/glanderness/BeefTV/actions/runs/37753378008"
+    ],
+    "archives": [
+      {
+        "platform": "darwin-amd64",
+        "url": "https://updates.beefapi.com/beeftv/v1.7.13/BeefTV-v1.7.13-darwin-amd64.zip",
+        "sha256": "1e9c98c007520af8d3cff449fa2f068edff46ef75284afd0a51cdc8c6cd7220c",
+        "sizeBytes": 160677701,
+        "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+        "evidence": [
+          "docs/release-evidence/v1.7.13-targeted.md",
+          "https://github.com/glanderness/BeefTV/actions/runs/37753378008"
+        ]
+      },
+      {
+        "platform": "darwin-arm64",
+        "url": "https://updates.beefapi.com/beeftv/v1.7.13/BeefTV-v1.7.13-darwin-arm64.zip",
+        "sha256": "833bbf3dbb3ca911ca616257fb07c6485bdaada7c7cd02dadf7b77442358df19",
+        "sizeBytes": 156268347,
+        "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+        "evidence": [
+          "docs/release-evidence/v1.7.13-targeted.md",
+          "https://github.com/glanderness/BeefTV/actions/runs/37753378008"
+        ]
+      },
+      {
+        "platform": "windows-amd64",
+        "url": "https://updates.beefapi.com/beeftv/v1.7.13/BeefTV-v1.7.13-windows-amd64.zip",
+        "sha256": "0f85b0adf4d6c561a8358c87f8909e41c9674a1b278688b33277f86aec5578c3",
+        "sizeBytes": 147454246,
+        "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+        "evidence": [
+          "docs/release-evidence/v1.7.13-targeted.md",
+          "https://github.com/glanderness/BeefTV/actions/runs/37753378008"
+        ]
+      }
+    ],
+    "signature": {
+      "status": "passed",
+      "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md",
+        "https://github.com/glanderness/BeefTV/actions/runs/37753378008"
+      ]
+    },
+    "publicReadback": {
+      "status": "passed",
+      "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md",
+        "https://github.com/glanderness/BeefTV/actions/runs/37753378008"
+      ],
+      "releaseURL": "https://github.com/glanderness/BeefTV/releases/tag/v1.7.13",
+      "publishedAt": "2026-10-08T09:14:19Z",
+      "feedURL": "https://updates.beefapi.com/beeftv/desktop-update.json",
+      "feedSHA256": "813543d5c1984415ba4b2de3574b3a4418d7ac75c9b9f889b13cd54211c630f3",
+      "websiteURL": "https://beeftv.app/data/releases.json",
+      "websiteLatestVersion": "v1.7.13"
+    },
+    "windowsReleasedUpgradeAndRollback": {
+      "status": "passed",
+      "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md",
+        "https://github.com/glanderness/BeefTV/actions/runs/37753378008"
+      ]
+    },
+    "finalArchiveSmoke": {
+      "status": "passed",
+      "sourceDigest": "3a190aaf93eb2f72bf2331e7f302cd01c3f31e6dd9ceb0b407542b9d8284cc0a",
+      "evidence": [
+        "docs/release-evidence/v1.7.13-targeted.md",
+        "https://github.com/glanderness/BeefTV/actions/runs/37753378008"
+      ]
+    }
   },
   "priorFinancialUncertainty": {
     "status": "unresolved",
