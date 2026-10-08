@@ -53,6 +53,14 @@ test("managed aliases must resolve to an available text profile", () => {
     expect(assistantModelOptions({ ...config, channels: [alias] })).toEqual(["beefapi::opus-catalog"]);
 });
 
+test("managed Gemini can follow the default text model without replacing an explicit assistant choice", () => {
+    const gemini = { ...config, textModel: "beefapi::gemini-3.8-flash", assistantModel: "" };
+    expect(resolveAssistantModel(gemini)).toBe("beefapi::gemini-3.8-flash");
+    expect(resolveAssistantModel({ ...gemini, assistantModel: "beefapi::claude-opus-5-5" })).toBe("beefapi::claude-opus-5-5");
+    const removed = { ...channel, models: models.filter(model => model !== "gemini-3.8-flash") };
+    expect(resolveAssistantModel({ ...gemini, channels: [removed] })).toBe("");
+});
+
 test("authorization adopts server default once while ordinary refresh preserves user choice", () => {
     const current = { ...config, assistantModel: "beefapi::claude-opus-5-5" };
     const server = { ...config, assistantModel: "beefapi::gpt-6-astra" };
