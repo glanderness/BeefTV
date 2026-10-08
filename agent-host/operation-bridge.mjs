@@ -162,9 +162,21 @@ export function createOperationBridge({
           assertToolGeneration(generation, descriptor, signal);
           const data = await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal, turn.turnId);
           log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: false, ms: Date.now() - started, replayed: !!data?.replayed, ...rebaseNote });
-          // A replay returns an earlier result, not a write made just now on top of the chain head.
+          // A replay can recover the receipt lost between business commit and
+          // the durable checkpoint. Only our persisted request may advance
+          // its own canvas chain by exactly one; older replays never reset it.
           if (!descriptor.readOnly && !data?.replayed) {
             extendWriteChain(turn, params.canvasId, params.expectedRevision, data?.result?.revision);
+          } else if (chainWrite && data?.replayed) {
+            const request = turn.writeRequests?.find(item => item.opId === opId);
+            const chain = turn.writeChains?.find(item => item.canvasId === params.canvasId);
+            if (request?.opID === descriptor.id && request.canvasId === params.canvasId &&
+                request.sentRevision === params.expectedRevision &&
+                data?.result?.canvasId === params.canvasId &&
+                data?.result?.revision === request.sentRevision + 1 &&
+                (!chain || chain.head === request.sentRevision)) {
+              extendWriteChain(turn, params.canvasId, request.sentRevision, data.result.revision);
+            }
           }
           // A binding replay projects the current canvas, not a write by this turn.
           if (descriptor.id !== 'canvas.task.bind' || !data?.replayed) {

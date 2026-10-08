@@ -105,6 +105,26 @@ test('JSON persisted pre-send effects retain all wire revisions across bridge re
     expect(state.posts.map(p => p.params.expectedRevision)).toEqual([9, 10, 11, 9, 10, 11]);
     expect(state.writes).toBe(3);
     expect(state.revisions.A).toBe(12);
+    await replay('fourth');
+    expect(state.posts.at(-1).params.expectedRevision).toBe(12);
+    expect(state.writes).toBe(4);
+    expect(restored.writeChains[0].head).toBe(13);
+  });
+});
+
+test('first write replay restores an absent chain without swallowing later foreign edits', async () => {
+  await fixture(async ({ state, build, turn }) => {
+    let persisted;
+    await build(turn, { persistEffects: async () => { persisted = JSON.stringify(turn); } })('first');
+    const restored = JSON.parse(persisted);
+    expect(restored.writeChains).toEqual([]);
+    const replay = build(restored);
+    await replay('first');
+    expect(restored.writeChains).toEqual([{ canvasId: 'A', start: 9, head: 10 }]);
+    state.revisions.A = 11; // A user edit after the committed first operation.
+    await expect(replay('second')).rejects.toThrow('stale_revision');
+    expect(state.posts.at(-1).params.expectedRevision).toBe(10);
+    expect(state.writes).toBe(1);
   });
 });
 
