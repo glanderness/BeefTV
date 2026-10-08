@@ -19,6 +19,7 @@ import { createDurableRequestBudget } from './durable-request-budget.mjs';
 import { createOperationBridge } from './operation-bridge.mjs';
 import { TURN_ENTRY_TYPE, createSessionStore } from './session-owner.mjs';
 import { adaptMediaRequest, trustedMediaSources } from './media-content.mjs';
+import {nativeSourceKey} from './native-history.mjs';
 import { createNativePartStore } from './native-part-store.mjs';
 
 const OPS_URL = (process.env.BEEFTV_OPS_URL || 'http://127.0.0.1:18090/api').replace(/\/+$/, '');
@@ -106,16 +107,33 @@ globalThis.fetch = async (input, options = {}) => {
   if (isModelCall) {
     // Transform at the real dispatch boundary; extension errors are caught by pi.
     const budget = turnBudgetContext.getStore();
+    let historicalKind='素材';
+    try {
     if (options.body) {
       const payload = JSON.parse(options.body);
       const mediaOptions = {api:MODEL_API,modelId:MODEL_ID,nativePartStore};
       for (const source of trustedMediaSources(payload,mediaOptions)) {
+        historicalKind=source.mediaKind;
         if (!budget?.turnId || !budget.canvasId) throw new Error('media_authorization_missing');
-        const overview = await ops.opsRequest('POST','/ops/media.overview',{params:{canvasId:source.canvasId,
-          ...(source.nodeId ? {nodeId:source.nodeId}:{assetId:source.assetId}),resourceId:source.resourceId}},undefined,budget.turnId);
-        if (overview.result.source.version !== source.version) throw new Error('media_content_changed');
+        let actual;
+        if(budget.sessionId) {
+          const pinned=budget.nativeHistory?.origins.get(`${source.toolCallId}:${nativeSourceKey(source)}`);
+          if(!pinned || (source.originTurnId && source.originTurnId!==pinned.originTurnId)) throw new Error('native_history_requires_reference');
+          const {toolCallId,originTurnId,...nativeSource}=source;
+          await ops.opsRequest('POST',`/assistant/runtime/turns/${encodeURIComponent(pinned.originTurnId)}/bind-session`,{sessionId:budget.sessionId,historical:pinned.historical,currentTurnId:budget.turnId,source:nativeSource});
+          actual=await ops.opsRequest('POST',`/assistant/runtime/turns/${encodeURIComponent(budget.turnId)}/native-rehydrate`,{sessionId:budget.sessionId,originTurnId:pinned.originTurnId,source:nativeSource});
+        } else {
+          actual=(await ops.opsRequest('POST','/ops/media.overview',{params:{canvasId:source.canvasId,
+            ...(source.nodeId ? {nodeId:source.nodeId}:{assetId:source.assetId}),resourceId:source.resourceId}},undefined,budget.turnId)).result;
+        }
+        if (actual.source.version !== source.version) throw new Error('media_content_changed');
       }
       options = {...options,body:JSON.stringify(adaptMediaRequest(payload,mediaOptions))};
+    }
+    } catch(error) {
+      const failure={reason:error.reason || 'native_history_unavailable',message:`历史${historicalKind}已不可用，请在新对话重新添加这份素材后再试。`};
+      if(budget) budget.failure=failure;
+      return new Response(JSON.stringify({error:{message:failure.message,type:'invalid_request_error',code:failure.reason}}),{status:400,headers:{'Content-Type':'application/json'}});
     }
     if (budget?.generation?.aborted || options.signal?.aborted) {
       throw Object.assign(new Error('aborted'),{name:'AbortError'});
@@ -166,7 +184,8 @@ const durable = createDurableSessionStore({
     const models = createModels(); const provider = modelRuntime.getProvider(PROVIDER_ID);
     const budgeted = fn => (...args) => {
       if (!entry.budget) entry.budget = createDurableTurnBudget(entry,{maxRequests:MAX_REQUESTS_PER_TURN,maxToolSteps:MAX_TOOL_STEPS_PER_TURN});
-      entry.budget.generation = entry.generation;
+      entry.budget.sessionId=entry.sessionId; entry.budget.nativeHistory=entry.nativeHistory;
+    entry.budget.generation = entry.generation;
       entry.budget.turnId = entry.turn.turnId; entry.budget.canvasId = entry.canvasId;
       return turnBudgetContext.run(entry.budget,()=>fn.call(provider,...args));
     };
@@ -177,14 +196,16 @@ const durable = createDurableSessionStore({
   extensions: entry => [createDurableSkillExtension({getPins:()=>entry.skillPins || [],
     readVersion:async (pin,signal) => (await ops.opsRequest('POST','/ops/skill.get',{params:pin},signal,entry.turn.turnId)).result,
   })],
-  authorizeTurn: async ({canvasId, turnId}) => {
+  authorizeTurn: async ({canvasId, turnId,sessionId}) => {
     const state = await ops.opsRequest('GET', `/assistant/runtime/turns/${encodeURIComponent(turnId)}`);
+    if(sessionId && state.open) await ops.opsRequest('POST',`/assistant/runtime/turns/${encodeURIComponent(turnId)}/bind-session`,{sessionId});
     if (state.canvasId !== canvasId) throw Object.assign(new Error('turn_not_open'), {reason:'turn_not_open', details:state});
     return state;
   },
   completeTurn: ({turnId}) => ops.opsRequest('POST', `/assistant/runtime/turns/${encodeURIComponent(turnId)}/complete`, {}),
   runWithBudget: (entry, fn) => {
     if (!entry.budget) entry.budget = createDurableTurnBudget(entry,{maxRequests:MAX_REQUESTS_PER_TURN,maxToolSteps:MAX_TOOL_STEPS_PER_TURN});
+    entry.budget.sessionId=entry.sessionId; entry.budget.nativeHistory=entry.nativeHistory;
     entry.budget.generation = entry.generation;
     entry.budget.turnId = entry.turn.turnId; entry.budget.canvasId = entry.canvasId;
     return turnBudgetContext.run(entry.budget, fn);

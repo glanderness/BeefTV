@@ -107,23 +107,25 @@ type HistoryState struct {
 // Record is the in-memory business round. Document is the pre-turn canvas
 // snapshot, not a chat transcript.
 type Record struct {
-	PermissionMode      string
-	CanvasSnapshots     map[string]CanvasSnapshot
-	TurnID              string
-	UserID              string
-	CanvasID            string
-	RevisionBefore      int64
-	CreatedAt           time.Time
-	State               string
-	SelectedNodeIDs     []string
-	ReferencedAssetIDs  []string
-	ReferencedCanvasIDs []string
-	AssociatedAssetIDs  []string
-	AssociatedTaskIDs   []string
-	SkillPins           []skills.Pin
-	Undone              bool
-	Change              *Change
-	Document            json.RawMessage
+	DurableNativeSources string
+	DurableSessionID     string
+	PermissionMode       string
+	CanvasSnapshots      map[string]CanvasSnapshot
+	TurnID               string
+	UserID               string
+	CanvasID             string
+	RevisionBefore       int64
+	CreatedAt            time.Time
+	State                string
+	SelectedNodeIDs      []string
+	ReferencedAssetIDs   []string
+	ReferencedCanvasIDs  []string
+	AssociatedAssetIDs   []string
+	AssociatedTaskIDs    []string
+	SkillPins            []skills.Pin
+	Undone               bool
+	Change               *Change
+	Document             json.RawMessage
 }
 
 func (r Record) effectiveState() string {

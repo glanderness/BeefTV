@@ -340,8 +340,10 @@ export function useCanvasGenerationExecutor({
                         nodesRef,
                         nodeId,
                         sourceNode,
-                        canvasNodes: inputNodes,
-                        canvasConnections: inputConnections,
+                        // 收费输入保持确认时的快照；目标节点写回必须使用当前画布。
+                        // 另一目标可能已在重复生成确认等待期间完成，不能把整图回滚到旧结果。
+                        canvasNodes: nodesRef.current,
+                        canvasConnections: connectionsRef.current,
                         prompt,
                         effectivePrompt,
                         generationConfig,

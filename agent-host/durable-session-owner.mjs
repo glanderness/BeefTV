@@ -1,6 +1,7 @@
 // New conversations have one official Durable owner. Legacy JSONL sessions are
 // deliberately never imported or run here. Go remains the business authority.
 import fs from 'node:fs';
+import {officialNativeHistory} from './native-history.mjs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
@@ -150,7 +151,10 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
           if (entry.generation.pendingInput?.state === 'pending') await entry.generation.pendingInput.promise;
           if (entry.generation.aborted) throw fail('aborted');
           await authorization(entry, entry.turn.turnId);
-          const active = (await state(entry)).active;
+          const nativeDoc = await state(entry);
+          const active = nativeDoc.active;
+          entry.nativeHistory = await officialNativeHistory(entry,nativeDoc,CTX);
+          if(entry.budget) {entry.budget.nativeHistory=entry.nativeHistory;entry.budget.sessionId=entry.sessionId;}
           if (entry.generation.pendingInput?.state === 'pending') continue;
           if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
           let messages = request.messages;

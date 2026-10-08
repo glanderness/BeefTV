@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 15
+const CurrentSchemaVersion int64 = 16
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -89,6 +89,7 @@ func canonicalLocalMigrations() []localMigration {
 		{version: 13, name: "upload-reservation-witness", apply: migrateUploadReservationWitness},
 		{version: 14, name: "assistant-skill-version-pins", apply: migrateAssistantSkillPins},
 		{version: 15, name: "assistant-permission-and-canvas-snapshots", apply: migrateAssistantPermissions},
+		{version: 16, name: "assistant-durable-session-binding", apply: migrateAssistantSessions},
 	}
 }
 
@@ -476,7 +477,12 @@ func requireReconciledSchema(db *gorm.DB) error {
 		}
 	}
 	if version >= 15 {
-		return requireAssistantPermissions(db)
+		if err := requireAssistantPermissions(db); err != nil {
+			return err
+		}
+	}
+	if version >= 16 {
+		return requireAssistantSessions(db)
 	}
 	return nil
 }

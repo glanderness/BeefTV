@@ -18,7 +18,7 @@ function validatePart(part) {
   return bytes.length;
 }
 
-export function mediaToolResult(data, operation, { api, modelId, nativePartStore }) {
+export function mediaToolResult(data, operation, { api, modelId, nativePartStore, originTurnId }) {
   if (!operation.startsWith('media.')) return { content: [{ type: 'text', text: JSON.stringify(data) }] };
   const parts = data?.result?.content || [];
   const native = parts.some((p) => p.type === 'media');
@@ -35,7 +35,7 @@ export function mediaToolResult(data, operation, { api, modelId, nativePartStore
     if (part.type === 'image' && part.mimeType.startsWith('image/')) {
       content.push({ type: 'image', mimeType: part.mimeType, data: part.data });
     } else if (part.type === 'media' && ['video/mp4', 'audio/wav'].includes(part.mimeType)) {
-      content.push({ type: 'text', text: nativePartStore ? REFERENCE_MARKER + JSON.stringify(nativePartStore.write(part)) : MARKER + JSON.stringify(part) });
+      content.push({ type: 'text', text: nativePartStore ? REFERENCE_MARKER + JSON.stringify(nativePartStore.write(originTurnId ? {...part,source:{...part.source,originTurnId}} : part)) : MARKER + JSON.stringify(part) });
     } else throw new Error('invalid_media_content');
   }
   return { content };
@@ -67,7 +67,7 @@ export function trustedMediaSources(payload, { api, modelId, nativePartStore }) 
       bytes += validatePart(part); if (bytes > MAX_REQUEST_BYTES) throw new Error('media_request_too_large');
       const source = part.source;
       if (!source.canvasId || (!source.nodeId === !source.assetId) || !source.version) throw new Error('missing_media_authorization_source');
-      sources.push({ ...source });
+      sources.push(Object.defineProperties({...source},{toolCallId:{value:message.tool_call_id},mediaKind:{value:part.mimeType.startsWith('audio/')?'音频':'视频'}}));
     }
   }
   return sources;
