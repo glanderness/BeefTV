@@ -80,7 +80,10 @@ describe("large canvas media rendering", () => {
 
     test("keeps inactive video nodes on a viewport-gated static first frame", () => {
         const inactivePreviewSource = canvasNodeContentSource.match(/function InactiveVideoPreview[\s\S]*?\n}\n\nfunction VideoPreviewPlayButton/)?.[0] || "";
-        expect(canvasNodeContentSource).toContain("if (!previewNeedsHydration || !nearViewport || (!node.metadata?.content && !node.metadata?.storageKey) || !updateMetadataRef.current)");
+        expect(inactivePreviewSource).toContain("!previewNeedsHydration || !nearViewport");
+        expect(inactivePreviewSource).toContain("!node.metadata?.storageKey && !node.metadata?.content");
+        expect(inactivePreviewSource).not.toContain("updateMetadata");
+        expect(canvasVideoPreviewSource).not.toContain("uploadImage");
         expect(canvasNodeContentSource).toContain("canvasVideoPreviewNeedsHydration(node)");
         expect(canvasNodeContentSource).not.toContain("hydrateMediaPreview");
         expect(inactivePreviewSource).not.toContain("<video");
@@ -92,8 +95,9 @@ describe("large canvas media rendering", () => {
     });
 
     test("allows failed or empty first-frame requests to retry", () => {
-        expect(canvasVideoPreviewSource).toContain("if (!preview) previewRequests.delete(requestKey)");
-        expect(canvasVideoPreviewSource).toContain("previewRequests.delete(requestKey);");
+        expect(canvasVideoPreviewSource).toContain("if (!preview) { forgetFailedRequest(); return null; }");
+        expect(canvasVideoPreviewSource).toContain("if (previewRequests.get(requestKey) === created) previewRequests.delete(requestKey)");
+        expect(canvasVideoPreviewSource).toContain(".catch(() => { forgetFailedRequest(); return null; })");
     });
 });
 

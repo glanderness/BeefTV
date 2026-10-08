@@ -21,6 +21,7 @@ import { TURN_ENTRY_TYPE, createSessionStore } from './session-owner.mjs';
 import { adaptMediaRequest, trustedMediaSources } from './media-content.mjs';
 import {nativeSourceKey} from './native-history.mjs';
 import { createNativePartStore } from './native-part-store.mjs';
+import { fetchModelWithProgressIdle } from './model-stream-idle.mjs';
 
 const OPS_URL = (process.env.BEEFTV_OPS_URL || 'http://127.0.0.1:18090/api').replace(/\/+$/, '');
 const HOST_TOKEN = process.env.BEEFTV_AGENT_HOST_TOKEN || '';
@@ -156,7 +157,7 @@ globalThis.fetch = async (input, options = {}) => {
     outbound.push(entry);
     fs.appendFileSync(ledgerPath, JSON.stringify(entry) + '\n');
   }
-  return realFetch(input, options);
+  return isModelCall ? fetchModelWithProgressIdle(input, options, {fetch: realFetch}) : realFetch(input, options);
 };
 
 const ops = createOperationBridge({
