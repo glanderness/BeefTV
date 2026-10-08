@@ -7,6 +7,7 @@ import {
     assistantChangeSummary,
     assistantChangedNodeIds,
     assistantLifecycleText,
+    assistantTurnCanContinue,
     assistantFailedActionText,
     assistantProposalText,
     assistantStatusNotice,
@@ -59,11 +60,15 @@ describe("工具调用翻译成做了什么", () => {
     test("已知操作说人话", () => {
         expect(assistantActionLabel("canvas.nodes.create")).toBe("新建节点");
         expect(assistantActionLabel("canvas.node.update")).toBe("修改节点");
+        expect(assistantActionLabel("canvas.timeline.update")).toBe("修改时间线");
         expect(assistantActionLabel("canvas.edge.create")).toBe("连线");
         expect(assistantActionLabel("canvas.get")).toBe("读取画布");
         expect(assistantActionLabel("canvas.search")).toBe("读取画布");
         expect(assistantActionLabel("asset.list")).toBe("读取素材");
         expect(assistantActionLabel("asset.get")).toBe("读取素材");
+        expect(assistantActionLabel("media.overview")).toBe("浏览素材");
+        expect(assistantActionLabel("media.inspect")).toBe("查看和听取素材");
+        expect(assistantActionLabel("media.check")).toBe("检查媒体文件");
     });
 
     test("没见过的操作也不把内部名字露出去", () => {
@@ -89,12 +94,27 @@ describe("按轮改动摘要", () => {
     test("只报告真实落地的对象", () => {
         expect(assistantChangeSummary(change({ createdNodeIds: ["a", "b", "c"], createdEdgeIds: ["e1", "e2"] }))).toBe("新建 3 个节点，连了 2 条线");
         expect(assistantChangeSummary(change({ updatedNodeIds: ["a", "b"] }))).toBe("修改 2 个节点");
+        expect(assistantChangeSummary(change({ timelineUpdated: true }))).toBe("修改时间线");
+        expect(assistantChangeSummary(change({ timelineUpdated: false }))).toBeNull();
     });
 
     test("没有改动时不出卡片", () => {
         expect(assistantChangeSummary(null)).toBeNull();
         expect(assistantChangeSummary(undefined)).toBeNull();
         expect(assistantChangeSummary(change({}))).toBeNull();
+    });
+
+    test("跨画布摘要按全部真实回执计数，定位仍只使用主画布未删除的节点", () => {
+        const receipt = change({ createdNodeIds: ["main"], deletedNodeIds: ["gone"], canvasChanges: [
+            { ...change({ createdNodeIds: ["main"], deletedNodeIds: ["gone"], deletedEdgeIds: ["edge"] }), canvasId: "c1", operationIds: ["op1"] },
+            { ...change({ createdNodeIds: ["other"], updatedNodeIds: ["existing"], timelineUpdated: true }), canvasId: "c2", operationIds: ["op2"] },
+        ] });
+        expect(assistantChangeSummary(receipt)).toBe("修改了 2 个画布，新建 2 个节点，修改 1 个节点，删除 1 个节点，删除 1 条线，修改时间线");
+        expect(assistantChangedNodeIds(receipt)).toEqual(["main"]);
+        expect(assistantChangedNodeIds(change({ updatedNodeIds: ["gone", "kept"], deletedNodeIds: ["gone"] }))).toEqual(["kept"]);
+        expect(assistantChangeSummary(change({ revisionAfter: 0, canvasChanges: [
+            { ...change({ documentUpdated: true }), canvasId: "other", operationIds: ["op3"] },
+        ] }))).toBe("修改了 1 个画布，修改画布内容");
     });
 
     test("定位的对象包含新建和被改过的，且不重复", () => {
@@ -151,6 +171,13 @@ describe("右侧栏位互斥", () => {
 });
 
 describe("官方生命周期进度", () => {
+    test("媒体工具显示真实进行中的工作，结束不伪造已成功", () => {
+        expect(assistantLifecycleText({ phase: "tool", toolName: "media_overview" })).toBe("正在浏览素材，确认画面和声音。");
+        expect(assistantLifecycleText({ phase: "tool", toolName: "media_inspect" })).toBe("正在查看和听取选定片段。");
+        expect(assistantLifecycleText({ phase: "tool", toolName: "media_check" })).toBe("正在检查黑屏、音轨和文件信息。");
+        expect(assistantLifecycleText({ phase: "tool", toolName: "unknown_tool" })).toBeNull();
+        expect(assistantLifecycleText({ phase: "tool_end", toolName: "media_check" })).toBeNull();
+    });
     test("压缩和重试各用一句完整的话，结束事件不再显示进度", () => {
         expect(assistantLifecycleText({ phase: "compaction" })).toBe("正在整理对话内容，方便继续。");
         expect(assistantLifecycleText({ phase: "retry" })).toBe("模型暂时没响应，正在再试一次。");
@@ -158,6 +185,17 @@ describe("官方生命周期进度", () => {
         expect(assistantLifecycleText({ phase: "retry_end" })).toBeNull();
         expect(assistantLifecycleText({ phase: "compaction" })).not.toContain("compaction");
         expect(assistantLifecycleText({ phase: "retry" })).not.toContain("retry");
+    });
+});
+
+describe("中断后继续的范围", () => {
+    test("阶段中断和模型响应失败提供继续要求入口，永久配置问题不重试", () => {
+        for (const reason of ["turn_timeout", "turn_interrupted", "model_request_failed", "turn_request_budget_exhausted", "turn_tool_step_budget_exhausted"]) {
+            expect(assistantTurnCanContinue(reason)).toBe(true);
+        }
+        for (const reason of ["request_budget_exhausted", "request_budget_storage_unavailable", "forbidden", "credential_missing", undefined]) {
+            expect(assistantTurnCanContinue(reason)).toBe(false);
+        }
     });
 });
 
@@ -249,6 +287,12 @@ describe("assistantVisibleReply", () => {
 });
 
 describe("assistantUnresolvedFailures", () => {
+    test("媒体工具仍未成功时如实报告，后来成功则不留下旧失败", async () => {
+        const { assistantUnresolvedFailures } = await import("@/pages/canvas/canvas-assistant-copy");
+        const failed = { tool: "media.inspect", args: { nodeId: "a", start: 2, end: 4 }, isError: true };
+        expect(assistantUnresolvedFailures([failed])).toEqual(["查看和听取素材没有成功"]);
+        expect(assistantUnresolvedFailures([failed, { ...failed, isError: false }])).toEqual([]);
+    });
     test("重试成功的步骤不提示，仍失败的同类合并计数", async () => {
         const { assistantUnresolvedFailures } = await import("@/pages/canvas/canvas-assistant-copy");
         const calls = [

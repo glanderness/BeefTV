@@ -76,6 +76,7 @@ type persistedDevice struct {
 }
 
 type persistedState struct {
+	AuthorizationOrigin     string           `json:"authorizationOrigin,omitempty"`
 	SchemaVersion           int              `json:"schemaVersion"`
 	Status                  string           `json:"status"`
 	Device                  *persistedDevice `json:"device,omitempty"`

@@ -1,6 +1,7 @@
 import { defaultModelCapabilityConfig, sanitizeServerVideoCapability, type ModelCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { modelProtocolCapability, protocolForModelCatalog, type ModelProtocol } from "@/lib/model-protocols";
 import type { ModelChannel } from "@/stores/use-config-store";
+import { isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
 import { sanitizeVideoPriceQuote, seedancePortraitModel, type VideoPriceQuote } from "@/lib/seedance-portrait";
 
 export type ChannelModelCatalogOption = { value: string; label?: string };
@@ -128,7 +129,7 @@ function catalogIsSpeechOrMusic(id: string) {
 function isBeefAPICatalogChannel(channel: ModelChannel) {
     if (channel.id === "beefapi" || channel.credentialRef === "beefapi-enterprise") return true;
     try {
-        return new URL(channel.baseUrl || "").hostname.toLowerCase() === "enterprise.beefapi.com";
+        return isBeefAPIEndpoint(channel.baseUrl || "");
     } catch {
         return false;
     }

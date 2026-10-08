@@ -1,0 +1,259 @@
+package operations
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"infinite-canvas/backend/internal/model"
+)
+
+type mediaDomain struct {
+	unusedDomain
+	data         []byte
+	owner        string
+	opens        int
+	document     json.RawMessage
+	assetPayload string
+}
+
+func (d *mediaDomain) UserCanvasProject(user, id string) (json.RawMessage, error) {
+	if user != d.owner || id != "canvas" {
+		return nil, PermissionDenied("foreign_canvas", "foreign")
+	}
+	if len(d.document) > 0 {
+		return d.document, nil
+	}
+	return json.RawMessage(`{"nodes":[{"id":"node","metadata":{"resourceId":"resource"}}]}`), nil
+}
+func (d *mediaDomain) OwnedAsset(user, id string) (*model.Asset, error) {
+	if user != d.owner || id != "asset" {
+		return nil, PermissionDenied("foreign_asset", "foreign")
+	}
+	if d.assetPayload != "" {
+		return &model.Asset{ID: id, PayloadJSON: d.assetPayload}, nil
+	}
+	return &model.Asset{ID: id, PayloadJSON: `{"resourceId":"resource"}`}, nil
+}
+func (d *mediaDomain) OwnedReadyResource(user, id string) (*model.Resource, error) {
+	if user != d.owner || id != "resource" {
+		return nil, PermissionDenied("foreign_resource", "foreign")
+	}
+	return &model.Resource{ID: id, MimeType: "video/mp4", Size: int64(len(d.data))}, nil
+}
+func (d *mediaDomain) OpenMediaResource(_ context.Context, user, id string) (io.ReadCloser, error) {
+	if _, err := d.OwnedReadyResource(user, id); err != nil {
+		return nil, err
+	}
+	d.opens++
+	return io.NopCloser(bytes.NewReader(d.data)), nil
+}
+
+func TestMediaScopeAndReferenceCannotBeWidened(t *testing.T) {
+	d := &mediaDomain{owner: "owner"}
+	ctx := &Context{Context: context.Background(), UserID: "owner", Domain: d}
+	for _, args := range []mediaArgs{
+		{CanvasID: "foreign", NodeID: "node"}, {CanvasID: "canvas", NodeID: "missing"},
+		{CanvasID: "canvas", NodeID: "node", ResourceID: "other"}, {CanvasID: "canvas", AssetID: "foreign"},
+		{CanvasID: "canvas", NodeID: "node", AssetID: "asset"},
+	} {
+		if _, err := resolveMediaResource(ctx, args); err == nil {
+			t.Fatalf("accepted %+v", args)
+		}
+	}
+	if d.opens != 0 {
+		t.Fatal("unauthorized targets opened bytes")
+	}
+	if _, err := runMedia(ctx, "media.overview", json.RawMessage(`{"canvasId":"canvas","nodeId":"node","path":"/etc/passwd"}`)); err == nil {
+		t.Fatal("accepted model filesystem path")
+	}
+}
+
+func TestMediaResourceLocatorsUseStrictOwnedReferences(t *testing.T) {
+	for _, raw := range []string{
+		`{"metadata":{"storageKey":"resource:resource"}}`,
+		`{"metadata":{"content":"resource:resource"}}`,
+		`{"data":{"storageKey":"resource:resource"}}`,
+	} {
+		var target any
+		_ = json.Unmarshal([]byte(raw), &target)
+		ids := map[string]bool{}
+		collectMediaResourceIDs(target, ids)
+		if len(ids) != 1 || !ids["resource"] {
+			t.Fatalf("missed %s: %+v", raw, ids)
+		}
+	}
+	for _, value := range []string{"https://example.com/resource:x", "/tmp/resource", "resource:", "resource:../secret", "resource:https://example.com/x", "resource:foreign?token=x", "reference resource:resource", "resource:resource/file"} {
+		ids := map[string]bool{}
+		collectMediaResourceIDs(map[string]any{"metadata": map[string]any{"storageKey": value, "content": value}}, ids)
+		if len(ids) != 0 {
+			t.Fatalf("accepted unsafe locator %q", value)
+		}
+	}
+}
+
+func TestNativeMediaNormalCanvasAndAssetLocators(t *testing.T) {
+	data := nativeMediaFixture(t, true, false)
+	for _, locator := range []string{"storageKey", "content"} {
+		d := &mediaDomain{owner: "owner", data: data, document: json.RawMessage(`{"nodes":[{"id":"node","metadata":{"` + locator + `":"resource:resource"}}]}`), assetPayload: `{"data":{"storageKey":"resource:resource"}}`}
+		for _, args := range []mediaArgs{{CanvasID: "canvas", NodeID: "node"}, {CanvasID: "canvas", AssetID: "asset"}} {
+			overview, err := mediaTestCall(t, d, "media.overview", args)
+			if err != nil {
+				t.Fatalf("%s %+v %v", locator, args, err)
+			}
+			args.ExpectedVersion = overview.Source.Version
+			args.Mode = "audio"
+			args.EndMs = 1000
+			result, err := mediaTestCall(t, d, "media.inspect", args)
+			if err != nil || len(result.Content) != 1 {
+				t.Fatalf("inspect %s %+v %v", locator, result, err)
+			}
+			args.ResourceID = "foreign"
+			if _, err := mediaTestCall(t, d, "media.inspect", args); AsError(err).Reason != "media_not_referenced" {
+				t.Fatalf("foreign accepted %v", err)
+			}
+		}
+	}
+}
+
+func TestMediaMeasurementsKeepSourceTime(t *testing.T) {
+	intervals, mean, peak := parseMediaChecks("black_start:1.25 black_end:1.75 black_duration:0.5\nmean_volume: -21.1 dB\nmax_volume: -13.7 dB", 3000)
+	if len(intervals) != 1 || intervals[0].StartMs != 4250 || intervals[0].EndMs != 4750 || mean == nil || *mean != -21.1 || peak == nil || *peak != -13.7 {
+		t.Fatalf("%+v %v %v", intervals, mean, peak)
+	}
+}
+
+func TestMediaRejectsPlaylistsBeforeDecoder(t *testing.T) {
+	d := &mediaDomain{owner: "owner", data: []byte("#EXTM3U\nfile:///etc/passwd")}
+	_, err := runMedia(&Context{Context: context.Background(), UserID: "owner", Domain: d}, "media.overview", json.RawMessage(`{"canvasId":"canvas","nodeId":"node"}`))
+	if e := AsError(err); e == nil || e.Reason != "media_format_unsupported" {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func nativeMediaFixture(t *testing.T, audio, black bool) []byte {
+	t.Helper()
+	bin, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg unavailable")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe unavailable")
+	}
+	path := filepath.Join(t.TempDir(), "fixture.mp4")
+	args := []string{"-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=white:s=160x120:r=24:d=2"}
+	if audio {
+		args = append(args, "-f", "lavfi", "-i", "sine=frequency=1000:duration=2", "-c:a", "aac")
+	}
+	if black {
+		args = append(args, "-vf", "drawbox=enable='between(t,0.5,1)':x=0:y=0:w=iw:h=ih:color=black:t=fill")
+	}
+	args = append(args, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-t", "2", "-y", path)
+	if out, err := exec.Command(bin, args...).CombinedOutput(); err != nil {
+		t.Fatalf("fixture: %v %s", err, out)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func mediaTestCall(t *testing.T, d *mediaDomain, op string, args mediaArgs) (MediaResult, error) {
+	t.Helper()
+	raw, _ := json.Marshal(args)
+	value, err := runMedia(&Context{Context: context.Background(), UserID: "owner", Domain: d}, op, raw)
+	if err != nil {
+		return MediaResult{}, err
+	}
+	return value.(MediaResult), nil
+}
+
+func TestNativeMediaReadCheckVersionAndBounds(t *testing.T) {
+	d := &mediaDomain{owner: "owner", data: nativeMediaFixture(t, true, true)}
+	args := mediaArgs{CanvasID: "canvas", NodeID: "node"}
+	overview, err := mediaTestCall(t, d, "media.overview", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !overview.HasAudio || !overview.HasVideo || len(overview.Content) != 3 {
+		t.Fatalf("overview=%+v", overview)
+	}
+	for _, part := range overview.Content {
+		data, err := base64.StdEncoding.DecodeString(part.Data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(data)
+		if part.MimeType != "image/jpeg" || part.SHA256 != hex.EncodeToString(sum[:]) || !strings.HasPrefix(string(data), "\xff\xd8") || part.Source.TimestampKind != "requested_seek" {
+			t.Fatal("invalid real image payload")
+		}
+	}
+	args.ExpectedVersion = overview.Source.Version
+	check, err := mediaTestCall(t, d, "media.check", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(check.BlackIntervals) != 1 || check.BlackIntervals[0].StartMs < 450 || check.BlackIntervals[0].EndMs > 1100 || check.MeanDB == nil || *check.MeanDB > -10 || *check.MeanDB < -30 {
+		t.Fatalf("check=%+v", check)
+	}
+	args.Mode = "audio"
+	args.StartMs = 500
+	args.EndMs = 1500
+	audio, err := mediaTestCall(t, d, "media.inspect", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := base64.StdEncoding.DecodeString(audio.Content[0].Data)
+	if string(data[:4]) != "RIFF" || audio.Content[0].MimeType != "audio/wav" || audio.Content[0].Source.StartMs != 500 {
+		t.Fatal("audio did not retain real bytes/source interval")
+	}
+	args.Mode = "video"
+	video, err := mediaTestCall(t, d, "media.inspect", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ = base64.StdEncoding.DecodeString(video.Content[0].Data)
+	if len(data) < 12 || string(data[4:8]) != "ftyp" || video.Content[0].MimeType != "video/mp4" {
+		t.Fatal("video did not retain real MP4 payload")
+	}
+	args.ExpectedVersion = "stale"
+	if _, err := mediaTestCall(t, d, "media.inspect", args); AsError(err).Reason != "stale_media_version" {
+		t.Fatalf("stale=%v", err)
+	}
+	args.ExpectedVersion = ""
+	if _, err := mediaTestCall(t, d, "media.inspect", args); AsError(err).Reason != "media_version_required" {
+		t.Fatalf("missing version=%v", err)
+	}
+	args.ExpectedVersion = overview.Source.Version
+	args.EndMs = 3000
+	if _, err := mediaTestCall(t, d, "media.inspect", args); AsError(err).Reason != "invalid_media_interval" {
+		t.Fatalf("bounds=%v", err)
+	}
+}
+
+func TestNativeMediaCleanNegative(t *testing.T) {
+	d := &mediaDomain{owner: "owner", data: nativeMediaFixture(t, false, false)}
+	args := mediaArgs{CanvasID: "canvas", AssetID: "asset"}
+	overview, err := mediaTestCall(t, d, "media.overview", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args.ExpectedVersion = overview.Source.Version
+	check, err := mediaTestCall(t, d, "media.check", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if check.HasAudio || check.MeanDB != nil || len(check.BlackIntervals) != 0 {
+		t.Fatalf("false positives=%+v", check)
+	}
+}

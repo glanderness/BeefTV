@@ -273,7 +273,7 @@ func publicTaskInputJSON(raw string) string {
 		if u != nil {
 			host = strings.ToLower(u.Hostname())
 		}
-		parameters["affectedChannel"] = config["credentialRef"] == "beefapi-enterprise" || host == "enterprise.beefapi.com" || host == "whatstoken.ai" || host == "www.whatstoken.ai"
+		parameters["affectedChannel"] = config["credentialRef"] == "beefapi-enterprise" || host == "beeftv.app" || host == "enterprise.beefapi.com" || host == "whatstoken.ai" || host == "www.whatstoken.ai"
 		public["videoParameters"] = parameters
 	}
 	// 任务完成后仍需依靠这些非敏感 ID 恢复项目产物归属；密钥等配置继续被过滤。

@@ -3,6 +3,9 @@
 
 export function mapSessionEvent(event) {
   if (!event || typeof event !== 'object') return null;
+  if (event.type === 'tool_execution_start' || event.type === 'tool_execution_end') {
+    return { type: 'lifecycle', phase: event.type === 'tool_execution_start' ? 'tool' : 'tool_end', toolName: event.toolName };
+  }
   if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta') {
     return { type: 'text_delta', delta: event.assistantMessageEvent.delta };
   }

@@ -9,6 +9,8 @@ type AssistantTurn struct {
 	TurnID              string    `json:"turnId" gorm:"primaryKey;size:64"`
 	UserID              string    `json:"userId" gorm:"size:36;not null;index:idx_assistant_turns_user_canvas,priority:1"`
 	CanvasID            string    `json:"canvasId" gorm:"size:80;not null;index:idx_assistant_turns_user_canvas,priority:2"`
+	PermissionMode      string    `json:"permissionMode" gorm:"size:16"`
+	CanvasSnapshotsJSON string    `json:"-" gorm:"type:text"`
 	RevisionBefore      int64     `json:"revisionBefore"`
 	CreatedAt           time.Time `json:"createdAt"`
 	UpdatedAt           time.Time `json:"updatedAt"`
@@ -18,6 +20,7 @@ type AssistantTurn struct {
 	ReferencedCanvasIDs string    `json:"-" gorm:"type:text"`
 	AssociatedAssetIDs  string    `json:"-" gorm:"type:text"`
 	AssociatedTaskIDs   string    `json:"-" gorm:"type:text"`
+	SkillPinsJSON       string    `json:"-" gorm:"type:text"`
 	Undone              bool      `json:"undone"`
 	ChangeJSON          string    `json:"-" gorm:"type:text"`
 	Document            string    `json:"-" gorm:"type:text"`

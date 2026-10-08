@@ -8,7 +8,7 @@ export const SUPPORTED_APIS = ['openai-completions', 'openai-responses', 'anthro
 
 export function newTurnAccumulator() {
   return { turnId: '', seq: 0, toolSeq: 0, revisionBefore: 0, revisionAfter: 0,
-    createdNodeIds: [], updatedNodeIds: [], createdEdgeIds: [], operationIds: [], proposals: [] };
+    createdNodeIds: [], updatedNodeIds: [], createdEdgeIds: [], operationIds: [], proposals: [], timelineUpdated: false };
 }
 
 export function resetTurnAccumulator(turn, revisionBefore, turnId = '') {
@@ -22,6 +22,11 @@ export function resetTurnAccumulator(turn, revisionBefore, turnId = '') {
   turn.createdEdgeIds.length = 0;
   turn.operationIds.length = 0;
   turn.proposals.length = 0;
+  turn.timelineUpdated = false;
+  turn.deletedNodeIds=[];
+  turn.deletedEdgeIds=[];
+  turn.documentUpdated=false;
+  turn.canvasChanges = {};
   return turn;
 }
 
@@ -31,20 +36,38 @@ function asStringList(value) {
 
 export function collectTurnEffects(turn, opID, result, operationId) {
   if (!turn || !result || typeof result !== 'object') return turn;
+  if (opID==='canvas.timeline.render') return turn;
+  if (turn.canvasId && result.canvasId && typeof result.revision==='number') {
+    turn.canvasChanges ||= {};
+    const target=turn.canvasChanges[result.canvasId] ||= {...newTurnAccumulator(),revisionBefore:result.canvasId===turn.canvasId ? turn.revisionBefore : result.revision-1};
+    collectTurnEffects(target,opID,result,operationId);
+    if(result.canvasId!==turn.canvasId) return turn;
+  }
   if (typeof result.revision === 'number' && result.revision > turn.revisionAfter) {
     turn.revisionAfter = result.revision;
     if (operationId) turn.operationIds.push(String(operationId));
   }
   switch (opID) {
+    case 'canvas.timeline.update':
+      if (result.timelineUpdated === true) turn.timelineUpdated = true;
+      break;
     case 'canvas.nodes.create':
       for (const node of Array.isArray(result.created) ? result.created : []) {
         if (node && node.id) turn.createdNodeIds.push(String(node.id));
       }
       break;
     case 'canvas.node.update':
+    case 'canvas.node.configure':
+    case 'canvas.node.move':
     case 'canvas.task.bind':
       if (result.nodeId) turn.updatedNodeIds.push(String(result.nodeId));
       break;
+    case 'canvas.node.delete':
+    case 'canvas.edge.delete':
+      turn.deletedNodeIds=[...new Set([...(turn.deletedNodeIds || []),...asStringList(result.deletedNodeIds)])];
+      turn.deletedEdgeIds=[...new Set([...(turn.deletedEdgeIds || []),...asStringList(result.deletedEdgeIds)])];
+      break;
+    case 'canvas.document.commit': turn.documentUpdated=true; break;
     case 'canvas.edge.create':
       // 重复连线会幂等返回（没有新增），这时不能算作本轮新建了连线。
       if (result.created && result.edgeId) turn.createdEdgeIds.push(String(result.edgeId));
@@ -74,11 +97,18 @@ export function unflushedSessionHistory(sessionId, activeSessionId) {
 
 // turnChange 只在这一轮真的推进了画布版本时给出变更摘要；没写过画布时是 null。
 export function turnChange(turn) {
-  if (!turn || turn.revisionAfter <= turn.revisionBefore) return null;
+  if (!turn) return null;
+  const canvasChanges=Object.entries(turn.canvasChanges || {}).map(([canvasId,effect])=>({canvasId,...turnChange(effect)})).filter(c=>c.revisionAfter>c.revisionBefore);
+  if (turn.revisionAfter <= turn.revisionBefore && !canvasChanges.length) return null;
   const change = { revisionBefore: turn.revisionBefore, revisionAfter: turn.revisionAfter,
     createdNodeIds: [...new Set(turn.createdNodeIds)], updatedNodeIds: [...new Set(turn.updatedNodeIds)],
     createdEdgeIds: [...new Set(turn.createdEdgeIds)] };
   if (turn.operationIds.length) change.operationIds = [...turn.operationIds];
+  if (turn.timelineUpdated) change.timelineUpdated = true;
+  if(turn.deletedNodeIds?.length) change.deletedNodeIds=[...turn.deletedNodeIds];
+  if(turn.deletedEdgeIds?.length) change.deletedEdgeIds=[...turn.deletedEdgeIds];
+  if(turn.documentUpdated) change.documentUpdated=true;
+  if(canvasChanges.length) change.canvasChanges=canvasChanges;
   return change;
 }
 
@@ -92,14 +122,15 @@ export function sessionTitle(turns) {
 // turnContextPrefix 把后端验证过、随 Chat 信封下发的范围交给模型当固定上下文。
 // 这里只是「告诉模型可以引用什么」，真正的授权仍在后端按回合记录裁决：
 // 模型即使编造别的 assetId/canvasId，工具调用也会在共享操作层被 scope_denied 拒绝。
-export function turnContextPrefix({ canvasId, selectedNodeIds = [], references = [] }) {
+export function turnContextPrefix({ canvasId, selectedNodeIds = [], references = [], permissionMode = 'canvas' }) {
   const parts = [`当前画布 ${canvasId}`];
+  parts.push(permissionMode==='read-only' ? '只能读取工作区内容，不能修改或生成' : permissionMode==='full-access' ? '可以读取和修改本工作区的画布；付费生成仍需用户确认' : '可修改当前画布，其他画布只读');
   const selected = selectedNodeIds.map((id) => String(id)).filter(Boolean);
   if (selected.length > 0) parts.push(`选中对象: ${selected.join(', ')}`);
   const assets = references.filter((item) => item?.kind === 'asset' && item.id).map((item) => String(item.id));
   const canvases = references.filter((item) => item?.kind === 'canvas' && item.id).map((item) => String(item.id));
   if (assets.length > 0) parts.push(`已引用素材: ${assets.join(', ')}`);
-  if (canvases.length > 0) parts.push(`已引用画布（只读）: ${canvases.join(', ')}`);
+  if (canvases.length > 0) parts.push(`已引用画布${permissionMode==='full-access'?'':'（只读）'}: ${canvases.join(', ')}`);
   return `[${parts.join('｜')}]`;
 }
 
@@ -108,7 +139,7 @@ export function turnContextPrefix({ canvasId, selectedNodeIds = [], references =
 export function providerRegistration({ api, baseUrl, modelId, maxTokens, contextWindow }) {
   return {
     name: 'BeefTV', baseUrl, apiKey: '$BEEFTV_AGENT_API_KEY', api,
-    models: [{ id: modelId, name: modelId, reasoning: false, input: ['text'],
+    models: [{ id: modelId, name: modelId, reasoning: false, input: ['text', 'image'],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow, maxTokens }],
   };
@@ -140,9 +171,16 @@ export function modelTurnCompletion(lastAssistantMessage, promptError = null, bu
 // A missing completion after restart is an interrupted turn, not an empty history.
 export function projectTurnHistory(entries, turnType, activeTurnId = '') {
   const turns = new Map();
+  const supplements = new Map();
   for (const entry of entries) {
     if (entry.type !== 'custom' || !entry.data?.turnId) continue;
     const data = entry.data;
+    if (entry.customType === `${turnType}.supplement`) {
+      const list = supplements.get(data.turnId) || [];
+      list.push(data.message);
+      supplements.set(data.turnId, list);
+      continue;
+    }
     if (entry.customType === turnType) {
       turns.set(data.turnId, { finished: true, data });
     } else if (entry.customType === `${turnType}.started` && !turns.has(data.turnId)) {
@@ -154,5 +192,8 @@ export function projectTurnHistory(entries, turnType, activeTurnId = '') {
   }
   return [...turns.values()]
     .filter((entry) => entry.finished || entry.data.turnId !== activeTurnId)
-    .map((entry) => entry.data);
+    .map((entry) => {
+      const accepted = supplements.get(entry.data.turnId) || entry.data.supplements;
+      return accepted ? { ...entry.data, supplements: accepted } : entry.data;
+    });
 }

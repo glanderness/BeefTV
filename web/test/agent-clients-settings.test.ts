@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { assistantModelOptions, normalizeAssistantModel, resolveAssistantModel } from "@/lib/assistant-model";
-import { agentClientLastUsedLabel, agentClientSetupBlock } from "@/pages/agents/agent-client-presentation";
+import { agentClientLastUsedLabel, agentClientModeLabel, agentClientModeSummary, agentClientSetupBlock } from "@/pages/agents/agent-client-presentation";
 import { createAgentClient, listAgentClients, revokeAgentClient } from "@/services/api/agent-clients";
 import { ApiError, apiClient } from "@/services/api/request";
 import { createModelChannel, defaultConfig, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
@@ -26,6 +26,11 @@ async function withStubbedApi<T>(envelope: unknown, status: number, run: (record
 }
 
 describe("外部 Agent 接入 API", () => {
+    test("旧版只读连接保持只读提示，新连接使用全部创作工具", () => {
+        expect(agentClientModeLabel("read-only")).toBe("旧版只读连接");
+        expect(agentClientModeSummary("read-only")).toContain("重新连接");
+        expect(agentClientModeLabel("read-write")).toBe("全部创作工具");
+    });
     test("列表按信封解包，并同时给出已连接客户端和命令行工具状态", async () => {
         const data = {
             clients: [{ id: "c-1", label: "Codex", kind: "codex", mode: "read-only", createdAt: "2026-09-20T02:00:00Z", lastUsedAt: null }],
@@ -37,15 +42,15 @@ describe("外部 Agent 接入 API", () => {
         });
     });
 
-    test("创建只提交类型和权限，并解包出一次性接入内容", async () => {
+    test("创建只提交类型，并解包出一次性接入内容", async () => {
         const data = {
             client: { id: "c-2", label: "Cursor", kind: "cursor", mode: "read-write", createdAt: "2026-09-20T02:00:00Z", lastUsedAt: null },
             token: "secret-token",
             setup: { kind: "cursor", title: "Cursor", json: '{"mcpServers":{}}' },
         };
         await withStubbedApi({ code: 0, data, msg: "ok" }, 200, async (recorded) => {
-            await expect(createAgentClient({ kind: "cursor", mode: "read-write" })).resolves.toEqual(data);
-            expect(recorded[0]).toMatchObject({ method: "post", url: "/agent-clients", data: { kind: "cursor", mode: "read-write" } });
+            await expect(createAgentClient({ kind: "cursor" })).resolves.toEqual(data);
+            expect(recorded[0]).toMatchObject({ method: "post", url: "/agent-clients", data: { kind: "cursor" } });
         });
     });
 

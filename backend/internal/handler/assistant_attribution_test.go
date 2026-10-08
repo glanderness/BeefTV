@@ -175,7 +175,7 @@ func TestAgentOpsRejectsUnknownParamsOverHTTP(t *testing.T) {
 }
 
 // 浏览器断流（没有 turn_end）时，已经落地的助手写入仍必须可撤销：
-// 结算不依赖宿主最后一条消息，只依赖与业务写入同事务的回执。
+// 回合继续开放以允许恢复；撤销仍从与业务写入同事务的回执重建。
 func TestAssistantUndoRecoversAfterStreamBreakWithoutTurnEnd(t *testing.T) {
 	var captured struct {
 		TurnID string `json:"turnId"`
@@ -203,7 +203,7 @@ func TestAssistantUndoRecoversAfterStreamBreakWithoutTurnEnd(t *testing.T) {
 				return
 			}
 			w.Header().Set("Content-Type", "application/x-ndjson")
-			// 只发一个增量就断开：没有 turn_end，结算必须仍然发生。
+			// 没有完成回执的 EOF 不得撤销仍在恢复中的写入授权。
 			_, _ = w.Write([]byte(`{"type":"text_delta","delta":"写好了"}` + "\n"))
 		})
 	})
@@ -220,6 +220,13 @@ func TestAssistantUndoRecoversAfterStreamBreakWithoutTurnEnd(t *testing.T) {
 	if _, nodes := env.canvasSnapshot(t); nodes != 2 {
 		t.Fatalf("宿主写入应当落地，得到 %d 个节点", nodes)
 	}
+	owner, err := env.service.LocalWorkspaceOwner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, open, err := env.service.AssistantTurnScopeForHost(owner.ID, captured.TurnID); err != nil || !open {
+		t.Fatalf("宿主断流后应保留恢复权限: open=%v err=%v", open, err)
+	}
 
 	undo := decodeEnvelope(t, env.call(t, http.MethodPost, "/assistant/turns/"+captured.TurnID+"/undo",
 		`{"canvasId":"`+env.canvasID+`"}`))
@@ -228,6 +235,9 @@ func TestAssistantUndoRecoversAfterStreamBreakWithoutTurnEnd(t *testing.T) {
 	}
 	if _, nodes := env.canvasSnapshot(t); nodes != 1 {
 		t.Fatalf("撤销后应回到轮前节点集合，得到 %d 个节点", nodes)
+	}
+	if _, open, err := env.service.AssistantTurnScopeForHost(owner.ID, captured.TurnID); err != nil || open {
+		t.Fatalf("明确撤销后不得恢复写入: open=%v err=%v", open, err)
 	}
 }
 

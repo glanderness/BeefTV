@@ -64,6 +64,7 @@ try{
   const reservation=createServer();const hostPort=await listen(reservation);await new Promise(resolve=>reservation.close(resolve));
   base=`http://127.0.0.1:${hostPort}`;
   const env={...process.env,BEEFTV_AGENT_DATA_DIR:scratch,BEEFTV_AGENT_PORT:String(hostPort),BEEFTV_OPS_URL:`http://127.0.0.1:${opsPort}/api`,BEEFTV_AGENT_HOST_TOKEN:hostAuth,BEEFTV_AGENT_API_KEY:'synthetic-model-key',BEEFTV_AGENT_MODEL:'synthetic-model',BEEFTV_AGENT_API:'openai-completions',BEEFTV_AGENT_BASE_URL:`http://127.0.0.1:${modelPort}/v1`,BEEFTV_AGENT_MAX_REQUESTS_PER_TURN:'1',BEEFTV_AGENT_MAX_TOOL_STEPS_PER_TURN:'4',BEEFTV_AGENT_TURN_TIMEOUT_MS:'15000'};
+  env.BEEFTV_AGENT_NEW_SESSION_RUNTIME = 'sdk';
   child=spawn(process.execPath,[path.join(root,'agent-host/server.mjs')],{cwd:root,env,stdio:['ignore','pipe','pipe']});
   child.stdout.on('data',c=>{hostLog+=c});child.stderr.on('data',c=>{hostLog+=c});
   const deadline=Date.now()+15000;let healthy=false;

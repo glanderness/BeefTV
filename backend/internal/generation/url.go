@@ -112,7 +112,7 @@ func IsBeefAPIHost(host string) bool {
 
 func isBeefAPIHost(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
-	return host == "beefapi.com" || strings.HasSuffix(host, ".beefapi.com")
+	return host == "beeftv.app" || host == "beefapi.com" || strings.HasSuffix(host, ".beefapi.com")
 }
 
 func SameProviderOrigin(baseURL string, rawURL string) bool {

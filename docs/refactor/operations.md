@@ -34,11 +34,11 @@ listed := registry.List(operations.ManualCaller(false))
 
 | 构造 | Kind | 能力发现 |
 | --- | --- | --- |
-| `ManualCaller(readOnly)` | `manual` | 10 项，写操作 schema 带必填 `operationId` |
+| `ManualCaller(readOnly)` | `manual` | 26 项（未启用只读过滤时），写操作 schema 带必填 `operationId` |
 | `ExternalCaller(readOnly)` | `external` | 同上 |
-| `AssistantCaller(scope, readOnly)` | `assistant` | 7 项（无 `asset.list` / `canvas.search` / `canvas.document.commit`）；写操作 schema 不暴露 `operationId` |
+| `AssistantCaller(scope, readOnly)` | `assistant` | 按回合权限分别为13/22/25项（只读/当前画布/完全访问）；写操作 schema 不暴露 `operationId` |
 
-`Caller.Scope` 是 `Authorizer`（`Visible` / `Allows`）。空指针不能赋给该接口，否则会变成带类型的 nil。手工/外部调用方遇到带类型的空范围时仍发现完整 10 项。显式 `assistant` 且没有活范围时，能力发现为空、执行拒绝；宿主在回合外应传入空的 `AssistantScope` 适配器，才能发现 7 项且执行全部拒绝。未知 `Kind` 失败关闭。桌面 React 没有 owner token：操作入口用 `RuntimeDependencies.DesktopTrust` 加 loopback/同源识别受信任手工 UI，记为 `caller=manual`。未授信的 loopback 客户端没有整页写权限。
+`Caller.Scope` 是 `Authorizer`（`Visible` / `Allows`）。空指针不能赋给该接口，否则会变成带类型的 nil。手工/外部调用方遇到带类型的空范围时仍发现完整26项。显式 `assistant` 且没有活范围时，能力发现为空、执行拒绝；宿主在回合外应传入空的 `AssistantScope` 适配器，才能按缺省当前画布模式发现22项且执行全部拒绝。未知 `Kind` 失败关闭。桌面 React 没有 owner token：操作入口用 `RuntimeDependencies.DesktopTrust` 加 loopback/同源识别受信任手工 UI，记为 `caller=manual`。未授信的 loopback 客户端没有整页写权限。
 
 ### 结果信封
 
@@ -48,11 +48,11 @@ listed := registry.List(operations.ManualCaller(false))
 
 ### 操作目录
 
-只读：`canvas.get`、`canvas.search`、`asset.list`、`asset.get`、`task.get`、`canvas.generation.propose`
+共享目录的只读操作：`canvas.get`、`canvas.search`、`asset.list`、`asset.get`、`task.get`、`model.catalog`、`media.overview`、`media.inspect`、`media.check`、`skill.get`、`skill.file`、`project.media.search`、`project.canvas.search`、`canvas.generation.propose`。生成提议虽不直接生成或扣费，仍不向内置只读模式开放。
 
-写入：`canvas.node.update`、`canvas.nodes.create`、`canvas.edge.create`、`canvas.document.commit`
+写入：`canvas.node.update`、`canvas.node.configure`、`canvas.node.move`、`canvas.node.delete`、`canvas.nodes.create`、`canvas.edge.create`、`canvas.edge.delete`、`canvas.document.commit`、`canvas.task.bind`、`conversation.message.attach`、`canvas.timeline.update`、`canvas.timeline.render`
 
-`canvas.document.commit` 是顶层文档覆盖，必须带 `expectedRevision` 与稳定 `operationId`，在回执事务里校验并应用到当前画布。不创建画布，不接受任意数据库补丁语言。未触及的顶层字段、ID、资源引用校验、CAS 与回执原子性保持不变。助手范围默认拒绝该操作。
+`canvas.document.commit` 是顶层文档覆盖，必须带 `expectedRevision` 与稳定 `operationId`，在回执事务里校验并应用到当前画布。不创建画布，不接受任意数据库补丁语言。未触及的顶层字段、ID、资源引用校验、CAS 与回执原子性保持不变。内置当前画布与只读模式拒绝该操作；完全访问模式允许，但仍校验归属与 CAS，并保存跨画布撤销快照。
 
 `canvas.generation.propose` 只登记提议，不生成、不扣费；禁止携带 `opId`。确认用的模型是目标节点当前有效的选用：节点显式设置优先于全局默认，并按模型目录校验 kind。只有没有节点模型时使用默认；无法解析显式模型时要求重新选择，不替换为另一个付费模型。一批节点若有效模型不同，操作拒绝，由调用方按模型分开提议。同一批节点解析到不同 `modelConfigRevision` 时按配置已变动拒绝，请再提出一次。客户端仍检查最终执行模型与提议一致；规格兼容解析若需要换模型，则拒绝该提议，不带着旧确认发送。
 

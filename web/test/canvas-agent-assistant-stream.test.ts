@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 
 /**
  * NDJSON 回合流的确定性边界用例：分片切割、末尾无换行、中途断流。
@@ -9,35 +9,19 @@ const requests: Array<{ url: string; method: string; body: string }> = [];
 let chatResponse: (() => Response | Promise<Response>) | null = null;
 let sessionResponse: (() => Response) | null = null;
 
-mock.module("@/services/api/request", () => ({
-	apiBaseURL: "http://127.0.0.1:54321/api",
-    ApiError: class ApiError extends Error {
-        status?: number;
-        reason?: string;
-        constructor(message: string, options: { status?: number; reason?: string } = {}) {
-            super(message);
-            this.status = options.status;
-            this.reason = options.reason;
-        }
-    },
-    http: {
-        get: async () => ({ available: true }),
-        post: async () => {
-            const response = sessionResponse ? sessionResponse() : new Response(JSON.stringify({ code: 0, data: { token: "ui-token" } }), { status: 200, headers: { "Content-Type": "application/json" } });
-            if (!response.ok) throw new (class extends Error { status = response.status; })("session failed");
-            const payload = await response.json();
-            return payload.data;
-        },
-    },
-}));
-
-const { ApiError } = await import("@/services/api/request");
+const { ApiError, http, apiClient, configureApiRuntime } = await import("@/services/api/request");
+const requestRuntime = await import("@/services/api/request");
+let previousFetch: typeof fetch;
+let previousBaseURL: string;
+let previousDesktopToken: unknown, previousBootstrapToken: unknown;
+let httpGetSpy: ReturnType<typeof spyOn>, httpPostSpy: ReturnType<typeof spyOn>;
 const { setActiveUserScope } = await import("@/lib/user-scope");
 const {
     AgentChatNotAdmittedError,
     AGENT_STREAM_INCOMPLETE_MESSAGE,
     assistantUndoFailure,
     cancelAgentChat,
+    steerAgentChat,
     ensureAgentUiSession,
     resetAgentUiSession,
     streamAgentChat,
@@ -64,29 +48,81 @@ function installFetch() {
         requests.push({ url, method: init?.method || "GET", body: String(init?.body || "") });
         if (url.includes("/api/assistant/chat")) return chatResponse ? chatResponse() : new Response(null, { status: 500 });
         if (url.includes("/api/assistant/cancel")) return cancelResponse();
+        if (url.includes("/api/assistant/steer")) return steerResponse();
         if (url.includes("/api/assistant/ui-session")) return new Response(JSON.stringify({ code: 0, data: { token: "ui-token" } }), { status: 200 });
         return new Response("{}", { status: 200 });
     }) as typeof fetch;
 }
 
 let cancelResponse: () => Response = () => new Response(JSON.stringify({ code: 0, accepted: true }), { status: 202 });
+let steerResponse = () => new Response(JSON.stringify({ code: 0, data: { accepted: true } }), { status: 200 });
 
 beforeEach(() => {
+    previousFetch = globalThis.fetch;
+    previousBaseURL = requestRuntime.apiBaseURL;
+    previousDesktopToken = apiClient.defaults.headers.common["X-Desktop-Token"];
+    previousBootstrapToken = apiClient.defaults.headers.common["X-Beeftv-UI-Bootstrap"];
+    configureApiRuntime("http://127.0.0.1:54321/api", "");
+    httpGetSpy = spyOn(http, "get").mockImplementation(async () => ({ available: true }) as never);
+    httpPostSpy = spyOn(http, "post").mockImplementation(async () => {
+        const response = sessionResponse ? sessionResponse() : new Response(JSON.stringify({ code: 0, data: { token: "ui-token" } }), { status: 200, headers: { "Content-Type": "application/json" } });
+        if (!response.ok) throw new ApiError("session failed", { status: response.status });
+        const payload = await response.json();
+        return payload.data;
+    });
     requests.length = 0;
     chatResponse = null;
     sessionResponse = null;
     cancelResponse = () => new Response(JSON.stringify({ code: 0, accepted: true }), { status: 202 });
     resetAgentUiSession();
+    steerResponse = () => new Response(JSON.stringify({ code: 0, data: { accepted: true } }), { status: 200 });
     installFetch();
 });
 
 afterEach(() => {
     resetAgentUiSession();
+    globalThis.fetch = previousFetch;
+    httpGetSpy.mockRestore();
+    httpPostSpy.mockRestore();
+    configureApiRuntime(previousBaseURL, String(previousDesktopToken || ""), previousBootstrapToken ? String(previousBootstrapToken) : undefined);
+    if (previousDesktopToken === undefined) delete apiClient.defaults.headers.common["X-Desktop-Token"];
 });
 
 const TURN_END = JSON.stringify({ type: "turn_end", reply: "完成", toolCalls: [], error: null, cancelled: false });
 
 describe("创作助手回合流边界", () => {
+    test("运行中补充只发文字和当前会话，不创建新回合或附加素材", async () => {
+        await steerAgentChat("c1", "s1", "结尾换成蛋糕");
+        const calls = requests.filter(item => item.url.includes("/assistant/steer"));
+        expect(calls).toHaveLength(1);
+        expect(JSON.parse(calls[0]!.body)).toEqual({ canvasId: "c1", sessionId: "s1", message: "结尾换成蛋糕" });
+        expect(requests.some(item => item.url.includes("/assistant/chat"))).toBe(false);
+    });
+    test("附件和技能只发送保存后的描述，chat 与 steer 不携带本地预览或内容", async () => {
+        const attachment = { resourceId: "r1", assetId: "a1", kind: "image" as const, name: "参考.png", mimeType: "image/png", bytes: 100, purpose: "style" as const, dataUrl: "data:image/png;base64,DO_NOT_SEND", file: "local-file" };
+        const skill = { skillId: "s1", versionId: "v1", contentHash: "a".repeat(64), skillName: "分镜", version: "1" };
+        chatResponse = () => chatResponseOf([`${TURN_END}\n`]);
+        await streamAgentChat("c1", "", {}, { attachments: [attachment], skills: [skill], references: [{ kind: "asset", id: "a1" }] });
+        const body = JSON.parse(requests.find(item => item.url.includes("/assistant/chat"))!.body);
+        expect(body.message).toBe(""); expect(body.attachments[0].dataUrl).toBeUndefined(); expect(body.attachments[0].file).toBeUndefined();
+        expect(body.skills).toEqual([{ skillId: "s1", versionId: "v1", contentHash: "a".repeat(64) }]);
+        await steerAgentChat("c1", "current", "", { attachments: [attachment], skills: [skill], references: [{ kind: "asset", id: "a1" }] });
+        const supplement = JSON.parse(requests.find(item => item.url.includes("/assistant/steer"))!.body);
+        expect(supplement.attachments).toEqual(body.attachments); expect(supplement.skills).toEqual(body.skills); expect(supplement.references).toEqual(body.references);
+    });
+
+    test("补充要求只有明确收到才报告成功，拒绝或断线不自动重发", async () => {
+        for (const response of [
+            () => new Response(JSON.stringify({ code: 409, reason: "session_not_running" }), { status: 409 }),
+            () => new Response(JSON.stringify({ code: 0, data: {} }), { status: 200 }),
+            () => new Response("not JSON", { status: 200 }),
+        ]) {
+            requests.length = 0;
+            steerResponse = response;
+            await expect(steerAgentChat("c1", "s1", "只改结尾")).rejects.toThrow();
+            expect(requests.filter(item => item.url.includes("/assistant/steer"))).toHaveLength(1);
+        }
+    });
     test("身份切换后不会复用凭据，旧签发也不能跨身份回写", async () => {
         let issued = 0;
         sessionResponse = () => new Response(JSON.stringify({ data: { token: `token-${++issued}`, expiresAt: new Date(Date.now() + 1_800_000).toISOString() } }));
@@ -318,18 +354,28 @@ describe("创作助手回合流边界", () => {
         chatResponse = () => chatResponseOf([`${TURN_END}\n`]);
         await streamAgentChat("c1", "hi", {}, { sessionId: "s-1", selectedNodeIds: ["n1"] });
         const chat = requests.find((item) => item.url.includes("/assistant/chat"));
-        expect(JSON.parse(chat!.body)).toEqual({ canvasId: "c1", message: "hi", selectedNodeIds: ["n1"], sessionId: "s-1" });
+        expect(JSON.parse(chat!.body)).toEqual({ canvasId: "c1", message: "hi", selectedNodeIds: ["n1"], sessionId: "s-1", permissionMode: "canvas" });
 
         requests.length = 0;
         await streamAgentChat("c1", "hi", {});
         const plain = requests.find((item) => item.url.includes("/assistant/chat"));
-        expect(JSON.parse(plain!.body)).toEqual({ canvasId: "c1", message: "hi", selectedNodeIds: [] });
+        expect(JSON.parse(plain!.body)).toEqual({ canvasId: "c1", message: "hi", selectedNodeIds: [], permissionMode: "canvas" });
+    });
+
+    test("每次新回合冻结明确权限，补充不能发送更改权限字段", async () => {
+        chatResponse = () => chatResponseOf([`${TURN_END}\n`]);
+        for (const permissionMode of ["read-only", "canvas", "full-access"] as const) {
+            await streamAgentChat("c1", "hi", {}, { permissionMode });
+            expect(JSON.parse(requests.filter(item => item.url.includes("/assistant/chat")).at(-1)!.body).permissionMode).toBe(permissionMode);
+        }
+        await steerAgentChat("c1", "s1", "补充", { permissionMode: "full-access" } as any);
+        expect(JSON.parse(requests.find(item => item.url.includes("/assistant/steer"))!.body)).toEqual({ canvasId: "c1", sessionId: "s1", message: "补充" });
     });
 });
 
 describe("撤销失败原因", () => {
     test("三种 409 各自可分辨，未知原因归到 unknown", () => {
-        // 必须用同一个 ApiError 类，instanceof 才会命中（这里是被替换掉的那个）。
+        // 必须用同一个 ApiError 类，instanceof 才会命中（这里复用真实 API 错误类）。
         const failure = (reason?: string) => new ApiError("failed", { status: 409, reason });
         expect(assistantUndoFailure(failure("canvas_changed_since_turn"))).toBe("canvas_changed");
         expect(assistantUndoFailure(failure("turn_already_undone"))).toBe("already_undone");

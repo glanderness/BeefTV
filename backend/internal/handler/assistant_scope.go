@@ -9,6 +9,7 @@ import (
 
 	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/skills"
 )
 
 // 共享操作层上的助手身份与回合归属。
@@ -97,7 +98,7 @@ func assistantScopeForRequest(c *gin.Context, svc *app.Service, userID string, h
 	turnID := strings.TrimSpace(c.GetHeader(assistantTurnHeader))
 	if turnID == "" {
 		// 宿主在回合之外（例如能力发现）没有画布范围：可见能力仍是助手集合，但执行全部拒绝。
-		return &agentops.AssistantScope{}, "", nil
+		return &agentops.AssistantScope{PermissionMode: "full-access"}, "", nil
 	}
 	if !app.ValidAssistantTurnID(turnID) {
 		return nil, "", errors.New("回合标识非法")
@@ -110,11 +111,24 @@ func assistantScopeForRequest(c *gin.Context, svc *app.Service, userID string, h
 		return nil, "", errors.New("这一轮对话不存在、不属于当前工作区或已经结束")
 	}
 	return &agentops.AssistantScope{
-		CanvasID:  scope.CanvasID,
-		AssetIDs:  assistantIDSet(scope.AssetIDs),
-		CanvasIDs: assistantIDSet(scope.CanvasIDs),
-		TaskIDs:   assistantIDSet(scope.TaskIDs),
+		PermissionMode: scope.PermissionMode,
+		CanvasID:       scope.CanvasID,
+		AssetIDs:       assistantIDSet(scope.AssetIDs),
+		CanvasIDs:      assistantIDSet(scope.CanvasIDs),
+		TaskIDs:        assistantIDSet(scope.TaskIDs),
+		SkillPins:      assistantSkillPinSet(scope.SkillPins),
+		ProjectReference: func(kind, id string) error {
+			return svc.ValidateAgentProjectReference(userID, scope.CanvasID, kind, id)
+		},
 	}, turnID, nil
+}
+
+func assistantSkillPinSet(pins []skills.Pin) map[string]skills.Pin {
+	result := map[string]skills.Pin{}
+	for _, pin := range pins {
+		result[pin.SkillID] = pin
+	}
+	return result
 }
 
 func assistantIDSet(ids []string) map[string]bool {

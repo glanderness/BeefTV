@@ -19,6 +19,35 @@ function scratchStore(root = mkdtempSync(join(tmpdir(), 'beeftv-session-owner-')
 }
 
 describe('官方 SDK 会话创建、替换、释放与持久化', () => {
+  test('读取升级前 JSONL v3 的用户消息和 BeefTV 轮次，不改会话身份', async () => {
+    const { root, store, buildTools } = scratchStore();
+    try {
+      const canvasId = 'legacy-v3';
+      const cwd = store.canvasWorkspace(canvasId);
+      mkdirSync(cwd, { recursive: true });
+      const sessionDir = store.canvasSessionDir(canvasId);
+      const sessionId = 'legacy-pi-0871-session';
+      const timestamp = '2026-10-07T12:00:00.000Z';
+      const file = join(sessionDir, `2026-10-07T12-00-00-000Z_${sessionId}.jsonl`);
+      const rows = [
+        { type: 'session', version: 3, id: sessionId, timestamp, cwd },
+        { type: 'message', id: 'user-old', parentId: null, timestamp, message: { role: 'user', content: [{ type: 'text', text: '旧会话原话' }], timestamp: 1791374400000 } },
+        { type: 'custom', id: 'turn-old', parentId: 'user-old', timestamp, customType: TURN_ENTRY_TYPE,
+          data: { turnId: 'turn-legacy', userText: '旧会话原话', reply: '旧回执', toolCalls: [], proposals: [], error: null, cancelled: false, createdAt: timestamp } },
+      ];
+      writeFileSync(file, rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
+      store.writeCurrentSessionId(canvasId, sessionId);
+      const entry = await store.ensureSession(canvasId, buildTools);
+      expect(entry.sessionId).toBe(sessionId);
+      expect(store.turnEntries(entry.manager)[0].reply).toBe('旧回执');
+      expect(entry.manager.buildSessionContext().messages[0].content[0].text).toBe('旧会话原话');
+      expect(entry.persistence).toBe(`restored:${sessionId}`);
+    } finally {
+      await store.disposeAll();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('空新会话在重启及切换模型后保持身份，不恢复旧对话', async () => {
     const { root, store, buildTools } = scratchStore();
     let restarted;
@@ -163,6 +192,33 @@ function fakeEntry(id) {
   };
   return entry;
 }
+
+test('resolved SDK prompt with a final error is a failed turn; retry success replaces the earlier error', async () => {
+  const { root, store } = scratchStore();
+  try {
+    for (const recovered of [false, true]) {
+      let handler;
+      const entry = {
+        generation: { aborted: false },
+        session: {
+          subscribe: (callback) => { handler = callback; return () => {}; },
+          abort: async () => {},
+          prompt: async () => {
+            handler({ type: 'message_end', message: { role: 'assistant', stopReason: 'error', errorMessage: 'upstream failed' } });
+            if (recovered) handler({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } });
+            handler({ type: 'agent_settled' });
+          },
+        },
+      };
+      const result = await store.runOwnedPrompt(entry, 'review', { onEvent: () => {}, runWithBudget: (fn) => fn(), timeoutMs: 1000 });
+      expect(result.error).toBe(recovered ? null : 'Error: upstream failed');
+      expect(result.timedOut).toBe(false);
+    }
+  } finally {
+    await store.disposeAll();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 describe('画布预约、指针回滚与 chat 占位', () => {
   test('并发 replaceSession 工厂不重叠，旧会话只 dispose 一次，落败候选被释放', async () => {

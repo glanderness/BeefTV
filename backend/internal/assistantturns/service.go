@@ -3,10 +3,13 @@ package assistantturns
 import (
 	"encoding/json"
 	"errors"
+	"infinite-canvas/backend/internal/skills"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+	"infinite-canvas/backend/internal/model"
 )
 
 // Service owns assistant business-round algorithms. pi owns model session
@@ -78,6 +81,19 @@ func beginCollision() *Error {
 // snapshot revision. A different scope on that ID is refused. Legacy files
 // are read-only migration inputs; this method never writes them.
 func (s *Service) Begin(userID, canvasID, turnID string, input Input) (int64, error) {
+	if len(input.SkillPins) > 4 {
+		return 0, errors.New("每轮最多选择 4 个技能")
+	}
+	seenSkill := map[string]bool{}
+	for _, pin := range input.SkillPins {
+		if err := skills.ValidatePin(pin); err != nil {
+			return 0, err
+		}
+		if seenSkill[pin.SkillID] {
+			return 0, errors.New("技能版本选择重复")
+		}
+		seenSkill[pin.SkillID] = true
+	}
 	if err := requireActor(userID, canvasID); err != nil {
 		return 0, err
 	}
@@ -92,6 +108,9 @@ func (s *Service) Begin(userID, canvasID, turnID string, input Input) (int64, er
 		return 0, storeUnavailable()
 	}
 	var rec Record
+	if !ValidMode(input.PermissionMode) {
+		return 0, &Error{Reason: "invalid_permission_mode", Message: "助手权限无效"}
+	}
 	err := s.store.DB().Transaction(func(tx *gorm.DB) error {
 		existing, found, resolveErr := s.resolveIdentity(tx, id)
 		if resolveErr != nil {
@@ -121,6 +140,7 @@ func (s *Service) Begin(userID, canvasID, turnID string, input Input) (int64, er
 		}
 		associatedAssets, associatedTasks := AssociatedReferences(raw)
 		rec = Record{
+			PermissionMode:      Mode(input.PermissionMode),
 			TurnID:              id,
 			UserID:              userID,
 			CanvasID:            canvasID,
@@ -133,6 +153,7 @@ func (s *Service) Begin(userID, canvasID, turnID string, input Input) (int64, er
 			ReferencedCanvasIDs: uniqueSorted(input.CanvasIDs),
 			AssociatedAssetIDs:  associatedAssets,
 			AssociatedTaskIDs:   associatedTasks,
+			SkillPins:           SortedSkillPins(input.SkillPins),
 		}
 		inserted, insErr := s.store.Insert(tx, recordToModel(rec, s.now()))
 		if insErr != nil {
@@ -186,11 +207,33 @@ func (s *Service) ScopeForHost(userID, turnID string) (Scope, bool, error) {
 	if rec.UserID != userID || rec.Undone || rec.effectiveState() != StateOpen {
 		return Scope{}, false, nil
 	}
+	taskIDs := append([]string{}, rec.AssociatedTaskIDs...)
+	receipts, err := s.store.SucceededByTurn(nil, rec.UserID, rec.TurnID)
+	if err != nil {
+		return Scope{}, false, err
+	}
+	for _, receipt := range receipts {
+		if receipt.Op != "canvas.timeline.render" {
+			continue
+		}
+		var result struct {
+			CanvasID string `json:"canvasId"`
+			TaskID   string `json:"taskId"`
+		}
+		if json.Unmarshal([]byte(receipt.ResultJSON), &result) != nil {
+			return Scope{}, false, errors.New("本地渲染回执损坏")
+		}
+		if (result.CanvasID == rec.CanvasID || Mode(rec.PermissionMode) == PermissionFullAccess) && strings.TrimSpace(result.TaskID) != "" {
+			taskIDs = append(taskIDs, result.TaskID)
+		}
+	}
 	return Scope{
-		CanvasID:  rec.CanvasID,
-		AssetIDs:  uniqueSorted(append(append([]string{}, rec.ReferencedAssetIDs...), rec.AssociatedAssetIDs...)),
-		CanvasIDs: uniqueSorted(rec.ReferencedCanvasIDs),
-		TaskIDs:   uniqueSorted(rec.AssociatedTaskIDs),
+		PermissionMode: Mode(rec.PermissionMode),
+		CanvasID:       rec.CanvasID,
+		AssetIDs:       uniqueSorted(append(append([]string{}, rec.ReferencedAssetIDs...), rec.AssociatedAssetIDs...)),
+		CanvasIDs:      uniqueSorted(rec.ReferencedCanvasIDs),
+		TaskIDs:        uniqueSorted(taskIDs),
+		SkillPins:      SortedSkillPins(rec.SkillPins),
 	}, true, nil
 }
 
@@ -213,6 +256,11 @@ func (s *Service) Finalize(turnID string) error {
 		return storeUnavailable()
 	}
 	return s.store.DB().Transaction(func(tx *gorm.DB) error {
+		// Share the operation guard's root-row lock before reading receipts.
+		var locked model.AssistantTurn
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("turn_id = ?", id).Find(&locked).Error; err != nil {
+			return err
+		}
 		rec, err := s.load(tx, id)
 		if err != nil {
 			if isMissing(err) {
@@ -239,9 +287,13 @@ func (s *Service) Finalize(turnID string) error {
 			return err
 		}
 		rec.State = StateSettled
+		if err := s.declareDocumentChanges(tx, rec, change); err != nil {
+			return err
+		}
 		rec.Change = change
 		if change == nil {
 			rec.Document = nil
+			rec.CanvasSnapshots = nil
 		}
 		return s.persist(tx, rec)
 	})
@@ -284,7 +336,7 @@ func (s *Service) History(userID, canvasID, turnID string) (*HistoryState, error
 			return nil, err
 		}
 	}
-	return &HistoryState{Change: change, Undone: rec.Undone}, nil
+	return &HistoryState{Change: change, Undone: rec.Undone, PermissionMode: Mode(rec.PermissionMode)}, nil
 }
 
 // Undone reports whether the owner-scoped round carries a durable undo marker.
@@ -364,6 +416,28 @@ func (s *Service) VerifyOpenTurnInTx(tx *gorm.DB, userID, turnID, canvasID strin
 	if err != nil {
 		return err
 	}
-	_ = rec
+	if Mode(rec.PermissionMode) == PermissionReadOnly {
+		return &Error{Reason: "scope_denied", Message: "本轮助手只能读取"}
+	}
+	if rec.CanvasSnapshots == nil {
+		rec.CanvasSnapshots = map[string]CanvasSnapshot{}
+	}
+	if _, exists := rec.CanvasSnapshots[canvasID]; !exists {
+		raw, err := s.canvas.BoundTo(tx).UserCanvasProject(userID, canvasID)
+		if err != nil {
+			return err
+		}
+		var doc map[string]any
+		if json.Unmarshal(raw, &doc) != nil {
+			return errCorruptStored()
+		}
+		if canvasID == rec.CanvasID {
+			raw = rec.Document
+			rec.CanvasSnapshots[canvasID] = CanvasSnapshot{rec.RevisionBefore, raw}
+		} else {
+			rec.CanvasSnapshots[canvasID] = CanvasSnapshot{DocumentRevision(doc), raw}
+		}
+		return s.persist(tx, rec)
+	}
 	return nil
 }

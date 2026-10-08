@@ -19,6 +19,8 @@ import (
 	"infinite-canvas/backend/internal/agentops"
 	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/assistantruntime"
+	"infinite-canvas/backend/internal/assistantturns"
+	"infinite-canvas/backend/internal/skills"
 	httptransport "infinite-canvas/backend/internal/transport/http"
 )
 
@@ -48,6 +50,7 @@ func newTurnID() string {
 // 页面只发业务消息，宿主凭据由后端注入；宿主不可用时返回明确状态而不是空回复。
 func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops.ClientRegistry, ui *uiSessionStore, host *assistantruntime.Host) {
 	client := agentHostClient(10 * time.Minute)
+	registerAssistantRuntimeRoutes(r, svc)
 
 	guard := func(c *gin.Context, requireWrite bool) bool {
 		// 与 /agent-ops 完全相同的来源校验：Host/RemoteAddr/Origin 都必须是本机且同源。
@@ -220,6 +223,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 						if state != nil {
 							turn["undone"] = state.Undone
 							turn["change"] = state.Change
+							turn["permissionMode"] = state.PermissionMode
 						}
 					}
 				}
@@ -352,19 +356,35 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			return
 		}
 		var payload struct {
-			CanvasID        string               `json:"canvasId"`
-			Message         string               `json:"message"`
-			SelectedNodeIDs []string             `json:"selectedNodeIds"`
-			SessionID       string               `json:"sessionId"`
-			References      []assistantReference `json:"references"`
+			PermissionMode  string                    `json:"permissionMode"`
+			CanvasID        string                    `json:"canvasId"`
+			Message         string                    `json:"message"`
+			SelectedNodeIDs []string                  `json:"selectedNodeIds"`
+			SessionID       string                    `json:"sessionId"`
+			References      []assistantReference      `json:"references"`
+			Attachments     []app.AssistantAttachment `json:"attachments"`
+			Skills          []skills.Pin              `json:"skills"`
 		}
-		if err := json.Unmarshal(body, &payload); err != nil || strings.TrimSpace(payload.CanvasID) == "" || strings.TrimSpace(payload.Message) == "" {
+		if err := json.Unmarshal(body, &payload); err != nil || strings.TrimSpace(payload.CanvasID) == "" || (strings.TrimSpace(payload.Message) == "" && len(payload.Attachments) == 0) {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("canvasId 与 message 必填"))
 			return
 		}
 		canvasRaw, allowed := requireOwnedCanvas(c, payload.CanvasID)
 		if !allowed {
 			return
+		}
+		if !assistantturns.ValidMode(payload.PermissionMode) {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("助手权限无效"))
+			return
+		}
+		if err := svc.ValidateAssistantAttachments(c.GetString("agentUserId"), payload.CanvasID, payload.Attachments); err != nil {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest(err.Error()))
+			return
+		}
+		for _, attachment := range payload.Attachments {
+			if attachment.AssetID != "" {
+				payload.References = append(payload.References, assistantReference{Kind: "asset", ID: attachment.AssetID})
+			}
 		}
 		// 额外素材/画布引用必须由界面明确请求：这里校验归属，校验不过就整轮拒绝，
 		// 不把「模型说可以读」当成授权。
@@ -400,8 +420,15 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		// 之后的操作入口按这条记录读授权，宿主与模型都无法自报。
 		turnID := newTurnID()
 		c.Header("X-Beeftv-Turn-Admission", "unknown")
-		revisionBefore, snapshotErr := svc.BeginAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, turnID,
-			assistantTurnInput(payload.SelectedNodeIDs, references))
+		pins, pinErr := svc.ValidateAgentSkills(c.GetString("agentUserId"), payload.Skills)
+		if pinErr != nil {
+			failService(c, pinErr)
+			return
+		}
+		input := assistantTurnInput(payload.SelectedNodeIDs, references)
+		input.PermissionMode = assistantturns.Mode(payload.PermissionMode)
+		input.SkillPins = pins
+		revisionBefore, snapshotErr := svc.BeginAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, turnID, input)
 		if snapshotErr != nil {
 			failService(c, snapshotErr)
 			return
@@ -409,9 +436,21 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		c.Header("X-Beeftv-Turn-Admission", "admitted")
 		// 回合状态由自己的回执结算，和浏览器流是两件事：无论下面走哪条返回路径
 		// （宿主不可达、宿主拒绝、浏览器中途断开、正常结束），都已经落地的操作都要可追溯。
-		defer settleAssistantTurn(turnID, svc)
+		settle := false
+		defer func() {
+			if settle {
+				settleAssistantTurn(turnID, svc)
+			}
+		}()
 		forwarded, err := withTurnEnvelope(body, turnID, revisionBefore, references)
+		if err == nil {
+			var trusted map[string]any
+			_ = json.Unmarshal(forwarded, &trusted)
+			trusted["permissionMode"] = input.PermissionMode
+			forwarded, err = json.Marshal(trusted)
+		}
 		if err != nil {
+			settle = true
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("请求体不是合法 JSON"))
 			return
 		}
@@ -419,6 +458,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		upstream, err := host.NewChildRequest(context.WithoutCancel(c.Request.Context()), http.MethodPost, "/chat",
 			strings.NewReader(string(forwarded)))
 		if err != nil {
+			settle = true
 			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_unreachable",
 				"msg": "内置创作助手宿主未运行"})
 			return
@@ -432,6 +472,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode/100 != 2 {
+			settle = true
 			// 宿主拒绝这次对话时没有流可转：按统一失败信封回，reason 保持宿主给的机器可读原因。
 			payload, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 			var rejection struct {
@@ -453,6 +494,11 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		clientGone := false
 		for {
 			line, readErr := reader.ReadBytes('\n')
+			// EOF is an observer failure, not proof that the durable task ended.
+			// A matching terminal receipt or the host-only completion endpoint settles.
+			if assistantTerminalLine(line, turnID) {
+				settle = true
+			}
 			if len(line) > 0 && !clientGone {
 				if _, writeErr := c.Writer.Write(line); writeErr != nil {
 					clientGone = true
@@ -481,6 +527,102 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		}
 		hostJSON(c, http.MethodPost, "/cancel", body)
 	})
+
+	r.POST("/assistant/steer", func(c *gin.Context) {
+		if !guard(c, true) {
+			return
+		}
+		body, payload, valid := readAssistantBody(c, struct {
+			CanvasID    string                    `json:"canvasId"`
+			SessionID   string                    `json:"sessionId"`
+			Message     string                    `json:"message"`
+			Attachments []app.AssistantAttachment `json:"attachments"`
+			References  []assistantReference      `json:"references"`
+			RequestID   string                    `json:"requestId"`
+			Skills      []skills.Pin              `json:"skills"`
+		}{})
+		if !valid {
+			return
+		}
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(body, &fields) != nil {
+			return
+		}
+		for key := range fields {
+			if key != "canvasId" && key != "sessionId" && key != "message" && key != "attachments" && key != "references" && key != "requestId" && key != "skills" {
+				fail(c, http.StatusBadRequest, app.BadAuthRequest("补充消息包含不支持的信息"))
+				return
+			}
+		}
+		if strings.TrimSpace(payload.SessionID) == "" || (strings.TrimSpace(payload.Message) == "" && len(payload.Attachments) == 0) || len(payload.Message) > 20000 {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("sessionId 与 message 必填，补充消息不能超过 20000 字节"))
+			return
+		}
+		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
+			return
+		}
+		if err := svc.ValidateAssistantAttachments(c.GetString("agentUserId"), payload.CanvasID, payload.Attachments); err != nil {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest(err.Error()))
+			return
+		}
+		for _, a := range payload.Attachments {
+			if a.AssetID != "" {
+				payload.References = append(payload.References, assistantReference{Kind: "asset", ID: a.AssetID})
+			}
+		}
+		refs, err := normalizeAssistantReferences(svc, c.GetString("agentUserId"), payload.References)
+		if err != nil {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest(err.Error()))
+			return
+		}
+		pins, pinErr := svc.ValidateAgentSkills(c.GetString("agentUserId"), payload.Skills)
+		if pinErr != nil {
+			failService(c, pinErr)
+			return
+		}
+		if len(refs) > 0 || len(pins) > 0 {
+			if missingAssistantHost(c, host) {
+				return
+			}
+			query := url.Values{"canvasId": {payload.CanvasID}, "sessionId": {payload.SessionID}}
+			request, err := host.NewChildRequest(c.Request.Context(), http.MethodGet, "/active?"+query.Encode(), nil)
+			if err != nil {
+				fail(c, http.StatusServiceUnavailable, app.BadAuthRequest("助手尚未就绪"))
+				return
+			}
+			response, err := client.Do(request)
+			if err != nil {
+				fail(c, http.StatusServiceUnavailable, app.BadAuthRequest("无法确认正在执行的任务"))
+				return
+			}
+			var active struct {
+				SessionID string `json:"sessionId"`
+				TurnID    string `json:"turnId"`
+				Busy      bool   `json:"busy"`
+			}
+			decodeErr := json.NewDecoder(io.LimitReader(response.Body, 8192)).Decode(&active)
+			response.Body.Close()
+			if response.StatusCode != 200 || decodeErr != nil || active.SessionID != payload.SessionID || !active.Busy || active.TurnID == "" {
+				fail(c, http.StatusConflict, app.BadAuthRequest("这一轮已经结束，请发送新消息"))
+				return
+			}
+			input := assistantTurnInput(nil, refs)
+			input.SkillPins = pins
+			if err := svc.ExtendAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, active.TurnID, input); err != nil {
+				failService(c, err)
+				return
+			}
+		}
+		hostJSON(c, http.MethodPost, "/steer", body)
+	})
+}
+
+func assistantTerminalLine(line []byte, turnID string) bool {
+	var event struct {
+		Type   string `json:"type"`
+		TurnID string `json:"turnId"`
+	}
+	return json.Unmarshal(line, &event) == nil && event.Type == "turn_end" && event.TurnID == turnID
 }
 
 // readAssistantBody 读取并解析小型 JSON 请求体，返回原文与解析结果（原文用于原样转给宿主）。

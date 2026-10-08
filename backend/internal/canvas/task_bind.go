@@ -15,22 +15,24 @@ const bindRevisionAttempts = 4
 // TaskOutputBind is the generation-field overlay applied to an existing node.
 // Title, position and unrelated metadata stay on the node.
 type TaskOutputBind struct {
-	CanvasID    string
-	NodeID      string
-	TaskID      string
-	OutputIndex int
-	EffectKey   string
-	MediaType   string
-	AssetID     string
-	ResourceID  string
-	StorageKey  string
-	Content     string
-	MimeType    string
-	Bytes       int64
-	Width       int
-	Height      int
-	DurationMs  int64
-	Storyboard  map[string]any
+	// Set only by the transaction-bound composition root after local render ownership validation.
+	AllowEmptyVideo bool `json:"-"`
+	CanvasID        string
+	NodeID          string
+	TaskID          string
+	OutputIndex     int
+	EffectKey       string
+	MediaType       string
+	AssetID         string
+	ResourceID      string
+	StorageKey      string
+	Content         string
+	MimeType        string
+	Bytes           int64
+	Width           int
+	Height          int
+	DurationMs      int64
+	Storyboard      map[string]any
 }
 
 // TaskOutputBindResult is the canvas write outcome after a generation bind.
@@ -74,7 +76,7 @@ func (s *Service) bindTaskOutputOnce(userID string, patch TaskOutputBind) (TaskO
 			Message: "原任务节点已删除，未重新创建节点",
 		}
 	}
-	if got := nodeString(nodeMetadata(node), "taskId"); got != strings.TrimSpace(patch.TaskID) {
+	if got := nodeString(nodeMetadata(node), "taskId"); got != strings.TrimSpace(patch.TaskID) && !canBindEmptyRenderNode(node, patch) {
 		return TaskOutputBindResult{}, &kernel.AppError{
 			Status: http.StatusConflict, Reason: kernel.ErrorReason("node_task_mismatch"),
 			Message: "节点已绑定到其他任务，未覆盖该节点",
@@ -95,6 +97,23 @@ func (s *Service) bindTaskOutputOnce(userID string, patch TaskOutputBind) (TaskO
 		return TaskOutputBindResult{}, err
 	}
 	return TaskOutputBindResult{Revision: summary.Revision, Node: cloneNode(node)}, nil
+}
+
+func canBindEmptyRenderNode(node map[string]any, patch TaskOutputBind) bool {
+	if !patch.AllowEmptyVideo || patch.MediaType != "video" || nodeString(node, "type") != "video" {
+		return false
+	}
+	metadata := nodeMetadata(node)
+	for _, fields := range []map[string]any{node, metadata} {
+		for _, key := range []string{"taskId", "content", "storageKey", "assetId", "resourceId", "url", "dataUrl"} {
+			if value, exists := fields[key]; exists && value != nil {
+				if text, ok := value.(string); !ok || text != "" {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 func alreadyBound(metadata map[string]any, patch TaskOutputBind) bool {

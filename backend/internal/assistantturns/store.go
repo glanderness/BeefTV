@@ -3,6 +3,7 @@ package assistantturns
 import (
 	"encoding/json"
 	"errors"
+	"infinite-canvas/backend/internal/skills"
 	"strings"
 	"time"
 
@@ -128,7 +129,24 @@ func recordFromModel(row *model.AssistantTurn) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
+	var pins []skills.Pin
+	if strings.TrimSpace(row.SkillPinsJSON) != "" {
+		if err := json.Unmarshal([]byte(row.SkillPinsJSON), &pins); err != nil {
+			return Record{}, errCorruptStored()
+		}
+	}
+	if len(pins) > 4 {
+		return Record{}, errCorruptStored()
+	}
+	seen := map[string]bool{}
+	for _, pin := range pins {
+		if skills.ValidatePin(pin) != nil || seen[pin.SkillID] {
+			return Record{}, errCorruptStored()
+		}
+		seen[pin.SkillID] = true
+	}
 	rec := Record{
+		PermissionMode:      Mode(row.PermissionMode),
 		TurnID:              row.TurnID,
 		UserID:              row.UserID,
 		CanvasID:            row.CanvasID,
@@ -140,7 +158,16 @@ func recordFromModel(row *model.AssistantTurn) (Record, error) {
 		ReferencedCanvasIDs: referencedCanvas,
 		AssociatedAssetIDs:  associatedAssets,
 		AssociatedTaskIDs:   associatedTasks,
+		SkillPins:           SortedSkillPins(pins),
 		Undone:              row.Undone,
+	}
+	if !ValidMode(rec.PermissionMode) {
+		return Record{}, errCorruptStored()
+	}
+	if strings.TrimSpace(row.CanvasSnapshotsJSON) != "" {
+		if json.Unmarshal([]byte(row.CanvasSnapshotsJSON), &rec.CanvasSnapshots) != nil {
+			return Record{}, errCorruptStored()
+		}
 	}
 	if strings.TrimSpace(row.Document) != "" {
 		if !json.Valid([]byte(row.Document)) {
@@ -159,7 +186,11 @@ func recordFromModel(row *model.AssistantTurn) (Record, error) {
 }
 
 func recordToModel(rec Record, now time.Time) *model.AssistantTurn {
+	pinsJSON, _ := json.Marshal(SortedSkillPins(rec.SkillPins))
+	snapshotsJSON, _ := json.Marshal(rec.CanvasSnapshots)
 	row := &model.AssistantTurn{
+		PermissionMode:      Mode(rec.PermissionMode),
+		CanvasSnapshotsJSON: string(snapshotsJSON),
 		TurnID:              rec.TurnID,
 		UserID:              rec.UserID,
 		CanvasID:            rec.CanvasID,
@@ -172,6 +203,7 @@ func recordToModel(rec Record, now time.Time) *model.AssistantTurn {
 		ReferencedCanvasIDs: encodeStringList(rec.ReferencedCanvasIDs),
 		AssociatedAssetIDs:  encodeStringList(rec.AssociatedAssetIDs),
 		AssociatedTaskIDs:   encodeStringList(rec.AssociatedTaskIDs),
+		SkillPinsJSON:       string(pinsJSON),
 		Undone:              rec.Undone,
 		Document:            string(rec.Document),
 	}

@@ -101,3 +101,29 @@ func TestResolveManagedBeefAPISecretsUsesStoredKeyAndDropsClientSentinel(t *test
 		t.Fatalf("credentialRef = %#v", config["credentialRef"])
 	}
 }
+
+func TestChannelCatalogManagedCredentialPinsOrigin(t *testing.T) {
+	s, _, _, _ := creationTestService(t)
+	if err := s.SaveLocalModelConfig([]byte(`{"channels":[{"id":"beefapi","baseUrl":"https://enterprise.beefapi.com","apiKey":"test-only-key"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []ChannelModelsRequest{
+		{CredentialRef: beefapi.CredentialRef, ChannelID: "other", BaseURL: "https://attacker.example/v1"},
+		{ChannelID: beefapi.ChannelID, BaseURL: "https://attacker.example/v1"},
+		{BaseURL: "https://enterprise.beefapi.com/v1"},
+	} {
+		if err := s.resolveChannelModelsRequest(&input); err != nil {
+			t.Fatal(err)
+		}
+		if input.BaseURL != "https://enterprise.beefapi.com" || input.APIKey != "test-only-key" {
+			t.Fatal("stored credential not bound to configured origin")
+		}
+	}
+	input := ChannelModelsRequest{ChannelID: "other", BaseURL: "https://custom.example/v1", APIKey: "custom-key"}
+	if err := s.resolveChannelModelsRequest(&input); err != nil {
+		t.Fatal(err)
+	}
+	if input.BaseURL != "https://custom.example/v1" || input.APIKey != "custom-key" {
+		t.Fatal("unrelated custom channel changed")
+	}
+}

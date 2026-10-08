@@ -18,6 +18,12 @@ export type AssistantModelInfo = {
     channelName: string;
 };
 
+export type AssistantPermissionMode = "read-only" | "canvas" | "full-access";
+
+export function assistantPermissionMode(value: unknown): AssistantPermissionMode {
+    return value === "read-only" || value === "full-access" ? value : "canvas";
+}
+
 export type AgentHostStatus = {
     available: boolean;
     reason?: string;
@@ -42,7 +48,14 @@ export type AssistantTurnChange = {
     createdNodeIds: string[];
     updatedNodeIds: string[];
     createdEdgeIds: string[];
+    timelineUpdated?: boolean;
+    deletedNodeIds?: string[];
+    deletedEdgeIds?: string[];
+    documentUpdated?: boolean;
+    canvasChanges?: AssistantCanvasChange[];
 };
+
+export type AssistantCanvasChange = Omit<AssistantTurnChange, "canvasChanges"> & { canvasId: string; operationIds: string[] };
 
 /** 付费生成提议：后端只登记，不生成、不扣费，执行发生在画布既有生成链路。 */
 export type AssistantGenerationProposal = {
@@ -58,6 +71,7 @@ export type AssistantGenerationProposal = {
 export type AgentTurnEnd = {
     type: "turn_end";
     turnId?: string;
+    permissionMode?: AssistantPermissionMode;
     reply: string;
     toolCalls: AgentToolCall[];
     change?: AssistantTurnChange | null;
@@ -65,12 +79,17 @@ export type AgentTurnEnd = {
     error: string | null;
     errorReason?: string | null;
     cancelled: boolean;
+    supplements?: string[];
+    attachments?: AssistantAttachment[];
+    skills?: AssistantSkillSelection[];
+    supplementInputs?: AssistantSupplementInput[];
     persistence?: string;
     metrics?: { firstTokenMs: number | null; totalMs: number };
 };
 
 export type AssistantTurn = {
     turnId: string;
+    permissionMode?: AssistantPermissionMode;
     userText: string;
     selectedNodeIds: string[];
     reply: string;
@@ -80,6 +99,10 @@ export type AssistantTurn = {
     error: string | null;
     errorReason?: string | null;
     cancelled: boolean;
+    supplements?: string[];
+    attachments?: AssistantAttachment[];
+    skills?: AssistantSkillSelection[];
+    supplementInputs?: AssistantSupplementInput[];
     createdAt: string;
 };
 
@@ -98,6 +121,8 @@ export type AssistantSessionList = {
 export type AssistantHistory = {
     sessionId: string;
     turns: (AssistantTurn & { undone?: boolean })[];
+    active?: { turnId: string; userText: string; selectedNodeIds: string[]; attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[];
+        references?: AgentChatReference[]; supplements?: string[]; supplementInputs?: AssistantSupplementInput[]; permissionMode?: AssistantPermissionMode; createdAt: string; status: "running" } | null;
 };
 
 // UI 会话凭据只保存在内存里：刷新页面即重新签发，不写入 localStorage。
@@ -112,7 +137,7 @@ let uiSessionGeneration = 0;
 export function agentAssistantFailureText(reason: string | undefined, fallback = "创作助手暂时不可用，请稍后再试") {
     switch (reason) {
         case "turn_timeout":
-            return "这一轮处理超时，已停止继续执行。已落地的改动会保留，可以缩小要求后继续。";
+            return "模型响应时间过长，这一轮尚未完成。已完成的改动会保留，可以继续处理。";
         case "turn_interrupted":
             return "上一轮执行中断，已经落地的改动已保留。请查看画布和改动记录后再继续。";
         case "turn_request_budget_exhausted":
@@ -123,7 +148,7 @@ export function agentAssistantFailureText(reason: string | undefined, fallback =
         case "request_budget_storage_unavailable":
             return "预算记录无法读取或保存，已停止继续调用。请检查磁盘空间和数据目录权限；仍失败时，请从有效备份恢复预算记录后重启助手。";
         case "model_request_failed":
-            return "这一轮的模型调用失败，请核对已经落地的改动后再继续。";
+            return "模型暂时没有完成响应。已完成的改动会保留，可以继续处理。";
         case "host_unreachable":
         case "host_unhealthy":
         case "host_token_missing":
@@ -138,6 +163,8 @@ export function agentAssistantFailureText(reason: string | undefined, fallback =
             return "上一条消息还在处理中，请等它结束";
         case "session_not_current":
             return "你已经换到别的对话了，请重新发送这条消息";
+        case "session_not_running":
+            return "这一轮已经结束，请查看最新结果后发送新消息";
         default:
             return fallback;
     }
@@ -181,7 +208,7 @@ export async function getAssistantHistory(canvasId: string, sessionId?: string):
     if (sessionId) query.set("sessionId", sessionId);
     const data = await http.get<AssistantHistory>(`/assistant/history?${query.toString()}`, await uiSessionConfig());
     if (!data || !Array.isArray(data.turns)) throw new Error("没能读取对话，请重试");
-    return { sessionId: data.sessionId || sessionId || "", turns: data.turns.map((turn) => ({
+    return { sessionId: data.sessionId || sessionId || "", active: data.active, turns: data.turns.map((turn) => ({
         ...turn,
         error: turn.error ? agentAssistantFailureText(turn.errorReason ?? undefined, "这一轮没有全部完成，请核对已经落地的改动。") : null,
     })) };
@@ -261,7 +288,8 @@ export function resetAgentUiSession() {
 
 export type AgentLifecycleEvent = {
     type: "lifecycle";
-    phase: "compaction" | "compaction_end" | "retry" | "retry_end";
+    phase: "compaction" | "compaction_end" | "retry" | "retry_end" | "tool" | "tool_end";
+    toolName?: string;
     reason?: string;
     aborted?: boolean;
     willRetry?: boolean;
@@ -293,13 +321,37 @@ export type AgentChatReference = {
     id: string;
 };
 
+export type AssistantAttachmentPurpose = "analysis" | "character" | "scene" | "style" | "motion" | "first-frame" | "last-frame" | "rhythm" | "sound";
+export type AssistantAttachment = {
+    resourceId: string;
+    kind: "image" | "video" | "audio";
+    name: string;
+    mimeType: string;
+    bytes: number;
+    purpose: AssistantAttachmentPurpose;
+    start?: number;
+    end?: number;
+    durationMs?: number;
+    nodeId?: string;
+    assetId?: string;
+};
+/** Only persisted resource descriptors cross HTTP; never copy local preview/File data. */
+function attachmentRequestValue({ resourceId, kind, name, mimeType, bytes, purpose, start, end, durationMs, nodeId, assetId }: AssistantAttachment): AssistantAttachment {
+    return { resourceId, kind, name, mimeType, bytes, purpose, start, end, durationMs, nodeId, assetId };
+}
+export type AssistantSkillSelection = { skillId: string; versionId: string; contentHash: string; skillName?: string; version?: string };
+export type AssistantSupplementInput = { message: string; attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[] };
+
 export type AgentChatRequest = {
+    permissionMode?: AssistantPermissionMode;
     signal?: AbortSignal;
     selectedNodeIds?: string[];
     /** 当前消息里 @ 引用到的资源；后端逐项校验归属，任何一项非法都整轮拒绝。 */
     references?: AgentChatReference[];
     /** 只发当前会话；后端发现它已不是该画布的当前会话会整回合拒绝。 */
     sessionId?: string;
+    attachments?: AssistantAttachment[];
+    skills?: AssistantSkillSelection[];
 };
 
 /** 已收到回合终态的业务失败，不等同于断流后的「执行结果未知」。 */
@@ -325,7 +377,7 @@ export async function streamAgentChat(
     handlers: StreamHandlers,
     request: AgentChatRequest = {},
 ): Promise<void> {
-    const { signal, selectedNodeIds = [], references = [], sessionId } = request;
+    const { signal, selectedNodeIds = [], references = [], sessionId, attachments = [], skills = [] } = request;
     const scope = captureUserScope();
     let token: string;
     try {
@@ -335,9 +387,11 @@ export async function streamAgentChat(
         throw new AgentChatNotAdmittedError(error instanceof Error ? error.message : "消息未发送，请重试");
     }
     signal?.throwIfAborted();
-    const body: Record<string, unknown> = { canvasId, message, selectedNodeIds };
+    const body: Record<string, unknown> = { canvasId, message, selectedNodeIds, permissionMode: assistantPermissionMode(request.permissionMode) };
     if (references.length) body.references = references;
     if (sessionId) body.sessionId = sessionId;
+    if (attachments.length) body.attachments = attachments.map(attachmentRequestValue);
+    if (skills.length) body.skills = skills.map(({ skillId, versionId, contentHash }) => ({ skillId, versionId, contentHash }));
     const response = await fetch(`${apiBaseURL}/assistant/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Beeftv-Ui-Session": token },
@@ -454,5 +508,21 @@ export async function cancelAgentChat(canvasId: string): Promise<void> {
     const businessFailed = payload !== null && typeof payload.code === "number" && payload.code !== 0;
     if (!response.ok || businessFailed) {
         throw new Error(agentAssistantFailureText(payload?.reason, "停止失败，请再试一次"));
+    }
+}
+
+/** 补充已有回合，新增素材仍由后端校验授权，不创建新生成请求。 */
+export async function steerAgentChat(canvasId: string, sessionId: string, message: string, input: Pick<AgentChatRequest, "attachments" | "references" | "skills"> = {}): Promise<void> {
+    const token = await ensureAgentUiSession();
+    const response = await fetch(`${apiBaseURL}/assistant/steer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Beeftv-Ui-Session": token },
+        body: JSON.stringify({ canvasId, sessionId, message, ...(input.references?.length ? { references: input.references } : {}), ...(input.attachments?.length ? { attachments: input.attachments.map(attachmentRequestValue) } : {}), ...(input.skills?.length ? { skills: input.skills.map(({ skillId, versionId, contentHash }) => ({ skillId, versionId, contentHash })) } : {}) }),
+    });
+    let payload: { code?: number; reason?: string; data?: { accepted?: boolean } } | null = null;
+    try { payload = await response.json(); } catch { payload = null; }
+    if (response.status === 403 && uiSession?.token === token) resetAgentUiSession();
+    if (!response.ok || payload?.code !== 0 || payload?.data?.accepted !== true) {
+        throw new Error(agentAssistantFailureText(payload?.reason, "未能确认助手收到补充要求，原任务仍会保留。请查看最新回复后再决定是否发送。"));
     }
 }

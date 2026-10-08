@@ -47,8 +47,8 @@ export function listAgentClients(signal?: AbortSignal) {
     return http.get<AgentClientList>("/agent-clients", { signal });
 }
 
-export function createAgentClient(body: { kind: AgentClientKind; mode: AgentClientMode; label?: string }) {
-    return http.post<AgentClientRegistration>("/agent-clients", body);
+export function createAgentClient(body: { kind: AgentClientKind; label?: string }) {
+    return http.post<AgentClientRegistration>("/agent-clients", { kind: body.kind, ...(body.label ? { label: body.label } : {}) });
 }
 
 export function revokeAgentClient(id: string) {

@@ -59,5 +59,6 @@ type UserAssetPageFilter struct {
 	Favorite      bool
 	Recent        bool
 	Project       string
+	ProjectID     string
 	Generated     bool
 }

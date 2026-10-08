@@ -13,6 +13,8 @@ import {
   inspectFixtureManifest,
   requiresThemeAgentContract,
   findCopiedPriorTheme,
+  releaseContractVersion,
+  DURABLE_AGENT_CHECK_IDS,
 } from './real-generation-release-contract.mjs';
 
 const PATHS = ['text-image', 'image-image', 'image-video', 'text-video', 'video-video', 'multi-video'];
@@ -296,6 +298,55 @@ function makeV2(version, sourceDigest, extra = {}) {
     ...rest,
   };
 }
+
+function makeV3(version, sourceDigest, extra = {}) {
+  const fixtures = extra.fixtures || { ...themeFixtures(), 'voice.wav': 'f'.repeat(64) };
+  const value = makeV2(version, sourceDigest, { ...extra, fixtures, contractVersion: 3 });
+  value.review.independent = true;
+  for (const id of DURABLE_AGENT_CHECK_IDS) value.agentChecks[id] = { status: 'passed', method: 'native', sourceDigest, evidence: [`${id}.log`] };
+  value.billingAttempts = value.cases.map(item => ({ id: item.taskId, taskId: item.taskId, kind: 'media', billing: 'settled', costCNY: item.costCNY, evidence: ['billing.json'] }));
+  value.billingAttempts.push({ id: 'chat-1', kind: 'chat', billing: 'settled', costCNY: 1, evidence: ['chat-billing.json'] });
+  value.spentCNY = value.billingAttempts.reduce((sum, item) => sum + item.costCNY, 0);
+  return value;
+}
+
+test('v1.7.13 contract 3 preserves twelve cases, adds native capabilities and reconciles CNY50', () => {
+  const { dir, run, save } = setupRepo('v1.7.13');
+  try {
+    const digest = run('--fingerprint').trim();
+    const valid = makeV3('v1.7.13', digest);
+    save(valid); assert.match(run(), /12\/12/);
+    assert.equal(releaseContractVersion('v1.7.12'), 2);
+    assert.equal(releaseContractVersion('v1.7.13'), 3);
+    assert.equal(releaseContractVersion('v2.0.0'), 3);
+    assert.equal(inspectFixtureManifest(valid.scenario.fixtures, 3).ok, true);
+    assert.equal(inspectFixtureManifest(valid.scenario.fixtures, 2).ok, false);
+    const mutations = [
+      r => r.contractVersion = 2, r => r.contractVersion = 4,
+      r => r.budgetCNY = 51, r => r.spentCNY = 51, r => r.pendingCNY = 1,
+      r => r.review.independent = false, r => delete r.scenario.fixtures['voice.wav'],
+      r => r.cases.pop(), r => r.cases[0].confirmed = false,
+      r => delete r.billingAttempts, r => r.billingAttempts.pop(),
+      r => r.billingAttempts[0].billing = 'pending', r => r.billingAttempts[0].costCNY = null,
+      r => r.billingAttempts[0].evidence = [], r => r.billingAttempts[0].taskId = 'unrelated',
+      r => r.billingAttempts.push(r.billingAttempts[0]),
+      r => r.liveTestWaiver = { approvedBy: 'Ender', instruction: '上线吧 豁免了 飞书文档你再看看还要不要更新', scope: 'seedance-unified-display' },
+      r => r.ownerException = { approvedBy: 'Ender', instruction: '上线吧' },
+    ];
+    for (const id of DURABLE_AGENT_CHECK_IDS) mutations.push(r => delete r.agentChecks[id], r => r.agentChecks[id].sourceDigest = 'old', r => r.agentChecks[id].method = 'fixture');
+    // Historical waivers cannot excuse v3 evidence or a missing matrix.
+    for (const mutate of mutations) {
+      const invalid = structuredClone(valid); mutate(invalid); save(invalid); assert.throws(() => run());
+    }
+    const waived = structuredClone(valid); waived.cases = []; waived.liveTestWaiver = { approvedBy: 'Ender', instruction: '上线吧 豁免了 飞书文档你再看看还要不要更新', scope: 'seedance-unified-display' };
+    save(waived); assert.throws(() => run());
+    for (const id of ['native_video', 'native_audio', 'skill_version', 'skill_files', 'permission_modes', 'external_business', 'media_film_review']) {
+      const invalid = structuredClone(valid); invalid.agentChecks[id].method = 'deterministic'; save(invalid); assert.throws(() => run());
+    }
+    const fault = structuredClone(valid); fault.agentChecks.durable_resume.method = 'deterministic'; save(fault); assert.match(run(), /12\/12/);
+    const refunds = structuredClone(valid); refunds.billingAttempts.push({ id: 'failed-refunded', kind: 'chat', billing: 'refunded', costCNY: 0, evidence: ['refund.json'] }); save(refunds); assert.match(run(), /12\/12/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
 for (const version of ['v1.7.3', 'v1.7.5', 'v1.7.6', 'v1.7.7', 'v1.7.8']) test(`${version} waiver requires current targeted evidence and cannot carry forward`, () => {
   const { dir, run, save, commitVersion } = setupRepo(version);
@@ -643,8 +694,9 @@ test('v1.6.23+ requires theme, shared fixtures and native assistant evidence', (
       const incomplete = { version: major, sourceDigest: digest, budgetCNY: 50, spentCNY: 12, pendingCNY: 0, upgrade: { preservedData: true, generationVerified: true }, cases: makeCases(major, 'a'.repeat(64)) };
       incomplete.cases.forEach(item => { delete item.entrypoint; delete item.sessionId; delete item.turnId; delete item.proposalId; delete item.confirmed; });
       save(incomplete, major);
-      assert.throws(() => run(), /explicit contractVersion=2 is required/);
-      const next = makeV2(major, digest, { fixtures: themeFixtures(major === 'v1.7.0' ? 'a' : '0') });
+      assert.throws(() => run(), new RegExp(`explicit contractVersion=${releaseContractVersion(major)} is required`));
+      const fixtures = themeFixtures(major === 'v1.7.0' ? 'a' : '0');
+      const next = releaseContractVersion(major) === 3 ? makeV3(major, digest, { fixtures: { ...fixtures, 'voice.wav': 'f'.repeat(64) } }) : makeV2(major, digest, { fixtures });
       next.scenario.id = `${major}-theme`;
       save(next, major);
       assert.match(run(), /12\/12/);

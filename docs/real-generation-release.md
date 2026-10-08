@@ -47,7 +47,9 @@ v1.7.7 的单版专项验收例外：Owner 明确选择「本版豁免付费矩�
 
 包含内置助手的版本，六条生成路径的两轮验收通过真实客户端助手完成：界面导入素材并选择模型/参数 → 自然语言目标 → 读取授权画布与引用素材 → 产生节点/连线及生成提议 → 客户端点击助手提议卡片明确确认 → 原任务执行 → 结果落盘与画布绑定 → 打开或播放 → 最终结算。未确认前不得产生生成任务或媒体费用。模型聊天费用与媒体费用一起计入预算。节点工具栏的“生成”不算助手入口回执。
 
-当前内置助手只开放八项操作：画布读取、节点更新、批量建节点、连线、生成提议、任务产物绑定、单素材读取、单任务读取。模型目录浏览、切换模型/规格、上传文件和自由调整节点位置不是现有工具能力，不能靠自然语言回复宣称已完成；参数与素材准备须明确记为人工入口。六种生成路径由节点图及引用输入表达，生成提议的 kind 只有 image/video。
+从 v1.7.13 起，能力按候选实际目录验收，不再固定为八项操作。助手可以查询模型、配置节点参数、移动或删除节点与边、读取原生图片/视频/音频、搜索当前项目素材、编辑时间线并本地渲染、读取用户明确选择的固定 Skill 版本及包内辅助文件。文件粘贴/选择和运行中补充均走真实界面，不用文字回复代替实际素材输入。Skill 不等于任意磁盘扫描或脚本执行授权。
+
+内置 Pi 有只读、当前画布、完整业务访问三种执行权限；各自可发现能力、实际写入拒绝/放行、恢复后权限保持必须分别验证。完整访问仍保留归属、余额、参数与 CAS 校验。外部 CLI/MCP 自行审批，调用既有业务 handler，不要求 BeefTV 再次确认；旧只读连接不会自动升级。六生成路径的正式双轮矩阵继续使用内置助手当前画布模式和提议卡片确认，外部业务专项用免费本地渲染等真实任务验证，不能伪造 proposalId。
 
 同一次真实生成可同时证明该 Agent 路径与共享生成服务，不要求人工再付费重复生成。回执记录 `entrypoint=assistant`、会话 ID、轮次 ID、提议 ID、确认、operation ID、任务 ID 和账单关联。只发送一句话或出现工具卡片不算完成。
 
@@ -63,6 +65,21 @@ v1.7.7 的单版专项验收例外：Owner 明确选择「本版豁免付费矩�
 | 中断和失败 | 停止回答、宿主终止恢复、上游失败/超时；原任务状态可查、不盲目二次扣费 |
 | 预算和回执 | 聊天/工具预算生效、拒绝后无后续执行、所有尝试计费与退款核对、未结算为零 |
 | 外部 Agent | CLI/MCP 连接、权限与撤销、业务操作和回执一致；与内置助手分开登记 |
+
+从 v1.7.13 起额外覆盖以下专项，可复用上述十二次生成的素材、对话和产物，不增加重复媒体调用：
+
+| 专项 ID | 必验行为 |
+| --- | --- |
+| durable_resume | 正式默认 Durable 的历史/重启恢复；故障注入检查已完成工具不重复、停止不恢复执行、准备失败保留实际正文 |
+| native_video | 正式客户端添加视频，助手读取指定片段并回答可人工核对的画面/剪点事实；网络载荷、素材版本和输出事实分别登记 |
+| native_audio | 粘贴/选择音频、运行中补充附件；助手读取并回答真实听觉事实，不能以文件名/摘要冒充听过 |
+| skill_version | 真实选择安装版本，重启后 pin 不变；改版/卸载/错误 hash 必须拒绝，不能静默换版本 |
+| skill_files | 实际业务使用包内辅助文本；未选 Skill、越界文件和缺失脚本能力拒绝 |
+| permission_modes | 只读不写、当前画布不跨写、完整访问可修改同 owner 其他画布；拒绝 foreign owner、CAS 冲突与恢复后权限漂移 |
+| external_business | 随包 CLI/MCP 完整目录、真实图片/音频/视频上传、跨画布业务、免费本地任务、撤销连接和旧只读限制；无需 BeefTV 二次审批，敏感凭据/发行/宿主管理不开放 |
+| media_film_review | 同一素材生成可播放短片，核对镜头顺序、字幕时间、声音和导出；用本地黑场/音量实测与人工观看共同验收 |
+
+真实模型理解与正式桌面专项必须记录 native；Go/SQLite + loopback 模型 fixture 只证明接线，不是模型理解或实机体验。durable_resume 可以附明确标记的确定性故障注入；现有宿主恢复、预算、隔离、冲突撤销同样允许确定性证据。其余新增专项不能拿 fixture 替代 native。
 
 无法经济地触发的供应商故障和长上下文压缩使用明确标注的确定性故障测试，不能伪装成实机真实供应商验收。原生保存框、手工上传和拖拽、媒体播放、剪辑输出、备份导入、旧数据升级与三平台发布验证继续独立执行，不能被助手聊天或 API 成功替代。
 
@@ -89,6 +106,12 @@ v1.6.19 在发布人说明“允许前台完成验收”与“本版豁免付费
 JSON 顶层字段为 `version, sourceDigest, budgetCNY, spentCNY, pendingCNY, upgrade, cases`。每个 case 保存 `round, path, taskId, providerRequestId, clientVersion, platform, fixtureDigest, model, status, clientSubmitted, canvasVerified, mediaDecoded, mediaOpened, billing, costCNY, artifactSHA256`。
 
 从 v1.6.23 起，额外要求 `contractVersion: 2`、`scenario` 和 `agentChecks`。`scenario` 包含 `id, title, source, queryDate, fixtures`；`source` 是选题来源 URL，`queryDate` 为查询日期，`fixtures` 是素材文件名到 SHA256 的映射。将文件名排序后紧凑 JSON 的 SHA256 作为所有 case 共用的 `fixtureDigest`。素材来源、许可和媒体规格另附证据。已有 v2 回执中的主题 ID 或整套素材摘要不得复用。
+
+v1.7.13 及以后使用 `contractVersion: 3`，旧版本仍按 v2 和原有精确单版例外核验，历史证据不升级为 v3。v3 的冻结素材清单增加至少一段 WAV（仍须两张图和一段视频）；主题与素材摘要不得复用任何旧 v2/v3 回执。新增专项 ID 与原十五项一并保存 status、method、evidence 和 sourceDigest；独立 review 必须显式 `independent: true`。
+
+本次新增媒体、聊天、素材准备与失败尝试总预算上限 50 元，v3 门禁接受正预算且不超过 50。建议媒体预留 35 元、聊天 10 元、失败/预扣余量 5 元；这是分配上限，不是现价承诺。执行前按当前目录逐条取最大报价，若八段视频各不超过 4 元、四张图各不超过 0.75 元，媒体才能放入 35 元预留。报价未知或全部最大费用超过剩余预算则不提交，不把旧豁免套进新版。每轮 reuse 素材和对话以节省聊天费用；runtime 请求次数预算不是人民币预算，仍需每次提交前核账。
+
+v3 新增 `billingAttempts`，记录所有成功/失败/退款的媒体与聊天调用：`id, kind: media|chat|other, billing: settled|refunded, costCNY, evidence`，媒体另记 taskId。十二个通过 case 各对应唯一已结算媒体 attempt，所有 attempt 的净实际费用之和等于 spentCNY，最终 pendingCNY 必须为 0。报价、采购成本和钱包消费分开；未知采购成本不能当钱包消费，退款未知不能标 refunded。旧版未决账务保留在 priorFinancialUncertainty，禁止归零或与本版已结算新费用混淆。50 元授权不豁免任何矩阵、实机、复审或正式包门禁。
 
 每个 case 另存 `entrypoint: "assistant", sessionId, turnId, proposalId, confirmed: true, operationId`。`agentChecks` 必须逐项包含 `canvas_read, asset_reference, canvas_mutation, multi_turn, proposal_decline, proposal_stale, proposal_idempotency, session_history, session_restart, cancel, conflict_undo, host_recovery, scope_isolation, budget, cli_mcp`；每项记录 `status: "passed"`、`method`、非空 `evidence` 引用数组及本版 `sourceDigest`。`method` 通常为 `native`；只有预算、权限隔离、宿主恢复和并发撤销可标为 `deterministic`，证据中说明注入方式及未覆盖的实机边界。不能用一个布尔值代替专项回执。
 

@@ -19,13 +19,13 @@ const kindSummaries: Record<AgentClientKind, string> = {
 };
 
 const modeLabels: Record<AgentClientMode, string> = {
-    "read-only": "只能读取",
-    "read-write": "可以修改画布",
+    "read-only": "旧版只读连接",
+    "read-write": "全部创作工具",
 };
 
 const modeSummaries: Record<AgentClientMode, string> = {
-    "read-only": "能看画布上的内容，不会改动。",
-    "read-write": "能新建和修改画布上的内容。",
+    "read-only": "此连接保持只读；重新连接后可使用全部创作工具。",
+    "read-write": "可使用 BeefTV 的全部创作工具，操作审批由连接的 Agent 负责。",
 };
 
 export function agentClientKindLabel(kind: AgentClientKind | string) {

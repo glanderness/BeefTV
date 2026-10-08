@@ -162,7 +162,7 @@ func TestOpsGateRejectsBogusClientCredentials(t *testing.T) {
 	}
 }
 
-// 豁免只覆盖操作层：客户端凭据在其他任何路由上都还要桌面启动令牌。
+// 凭据发行与助手运行面继续要求桌面身份，完整业务客户端不能进入。
 func TestClientCredentialsOnOtherRoutesStillNeedLaunchToken(t *testing.T) {
 	harness := newDesktopHarness(t)
 	registration, token, err := agentops.NewClientRegistry(harness.dataDir).Register("codex", agentops.ClientReadWrite)
@@ -177,11 +177,6 @@ func TestClientCredentialsOnOtherRoutesStillNeedLaunchToken(t *testing.T) {
 		{"GET", "/ops/clients"},
 		{"POST", "/assistant/ui-session"},
 		{"POST", "/assistant/chat"},
-		{"GET", "/canvas-projects"},
-		{"POST", "/creation-runs"},
-		{"POST", "/creation-runs/run-1/claim"},
-		{"POST", "/creation-runs/run-1/submissions/approve"},
-		{"POST", "/creation-runs/run-1/execute"},
 	} {
 		recorder := harness.call(requestOptions{method: item.method, path: item.path, clientID: registration.ID, clientToken: token})
 		if recorder.Code != http.StatusForbidden {

@@ -340,7 +340,7 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                                                 onRetry={() => void runBeefAction(retryBeefConnection, "无法重新连接")}
                                                 onDisconnect={() => void runBeefAction(disconnectBeefAPIConnection, "无法断开连接")}
                                                 onWallet={() => {
-                                                    void openBeefAPIWallet().catch((error) => message.error(error instanceof Error ? error.message : "无法打开企业钱包"));
+                                                    void openBeefAPIWallet().catch((error) => message.error(error instanceof Error ? error.message : "无法管理钱包"));
                                                 }}
                                             />
                                         ) : null}
@@ -676,7 +676,7 @@ function BeefAPIConnectionActions({
         return (
             <>
                 <Button className={buttonClass} size="small" onClick={onWallet}>
-                    打开企业钱包
+                    管理钱包
                 </Button>
                 <Button className={buttonClass} size="small" loading={busy} onClick={onDisconnect}>
                     断开连接
@@ -705,7 +705,7 @@ function BeefAPIConnectionActions({
     }
     return (
         <Button className={buttonClass} size="small" type="primary" loading={busy} onClick={onConnect}>
-            连接 BeefAPI
+            连接 BeefTV
         </Button>
     );
 }
@@ -772,7 +772,7 @@ function channelConnectionError(channel: ModelChannel, connection?: BeefAPIConne
     }
     if (isBuiltinBeefAPIChannel(channel)) {
         if (connection?.state === "connected" || channelHasManagedBeefAPICredential(channel)) return "";
-        return "请先连接 BeefAPI";
+        return "请先连接 BeefTV";
     }
     if (!channelHasGenerationCredential(channel)) return "请填写 API Key / Access Key";
     if (requiresSecretKey(channel) && !channel.secretKey?.trim()) return "当前协议需要填写 Secret Key";

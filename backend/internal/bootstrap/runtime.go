@@ -213,27 +213,67 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 		Eagle:              eagle.New(),
 		DesktopTrust:       desktopTrust(launchToken, uiBootstrapToken),
 	})
+	businessCatalog := canvasHandler.NewBusinessCatalog(router.Routes())
+	canvasHandler.RegisterBusinessDiscovery(api, businessCatalog, svc)
 	router.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"code": http.StatusNotFound, "msg": "请求不存在"})
 	})
 
 	rootHandler := http.Handler(router)
+	protected := rootHandler
 	if launchToken != "" {
-		protected := httptransport.RequireLaunchToken(launchToken)(rootHandler)
-		clients := agentops.NewClientRegistry(svc.DataDir())
-		rootHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// External clients receive only their own capability token, never shell credentials.
-			// 唯一的启动令牌豁免：本机来源 + 操作层入口 + 登记表认可的客户端凭据。
-			// 其他任何路径（包括凭据的签发与吊销）都还要桌面启动令牌。
-			if isOpsEntryPath(r) && isLoopbackRemote(r.RemoteAddr) {
-				if _, ok := clients.Lookup(r.Header.Get("X-Beeftv-Client"), strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))); ok {
-					router.ServeHTTP(w, r)
+		protected = httptransport.RequireLaunchToken(launchToken)(rootHandler)
+	}
+	clients := agentops.NewClientRegistry(svc.DataDir())
+	rootHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if tool, allowed := businessCatalog.Match(r.Method, r.URL.Path); allowed && isLoopbackRemote(r.RemoteAddr) {
+			if reg, valid := clients.Lookup(r.Header.Get("X-Beeftv-Client"), strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))); valid {
+				if reg.Mode == agentops.ClientReadOnly && !tool.ReadOnly {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusForbidden)
+					_, _ = w.Write([]byte(`{"code":403,"reason":"read_only_client","msg":"此连接仅支持读取"}`))
 					return
 				}
+				if r.Header.Get("X-Beeftv-Agent-Turn") != "" || r.Header.Get("X-Beeftv-Agent-Token") != "" || !canvasHandler.IsLocalBusinessRequest(r) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusForbidden)
+					_, _ = w.Write([]byte(`{"code":403,"reason":"invalid_external_identity","msg":"外部调用不能使用助手身份"}`))
+					return
+				}
+				router.ServeHTTP(w, canvasHandler.WithExternalBusinessPrincipal(r, reg.Mode == agentops.ClientReadOnly))
+				return
 			}
-			protected.ServeHTTP(w, r)
-		})
-	}
+			if r.Header.Get("X-Beeftv-Client") == "" && agentops.OwnerTokenMatches(svc.DataDir(), strings.TrimSpace(r.Header.Get("X-Beeftv-Owner"))) && canvasHandler.IsLocalBusinessRequest(r) {
+				if launchToken != "" && r.Header.Get("X-Desktop-Token") != launchToken {
+					protected.ServeHTTP(w, r)
+					return
+				}
+				router.ServeHTTP(w, canvasHandler.WithExternalBusinessPrincipal(r, false))
+				return
+			}
+		}
+		// External clients receive only their own capability token, never shell credentials.
+		// Shared operations also accept registered local clients. Business handlers
+		// above use the same mounted catalog for discovery and authorization.
+		// Credential issuance and runtime administration retain desktop trust.
+		if isOpsEntryPath(r) && isLoopbackRemote(r.RemoteAddr) {
+			if _, ok := clients.Lookup(r.Header.Get("X-Beeftv-Client"), strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))); ok {
+				router.ServeHTTP(w, r)
+				return
+			}
+		}
+		if r.Header.Get("X-Beeftv-Client") != "" {
+			if launchToken != "" && r.Header.Get("X-Desktop-Token") != launchToken {
+				protected.ServeHTTP(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"code":403,"reason":"external_business_forbidden","msg":"该接口不支持外部调用"}`))
+			return
+		}
+		protected.ServeHTTP(w, r)
+	})
 	return &Runtime{
 		cfg:              cfg,
 		db:               db,

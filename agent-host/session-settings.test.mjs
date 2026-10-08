@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { createHostSettingsManager, HOST_SESSION_SETTINGS } from './session-settings.mjs';
 
 describe('官方 SettingsManager 显式值（真实 SDK）', () => {
-  test('压缩与重试钉在 0.87.1 默认值，不提高次数或保留量', () => {
+  test('升级到 1.0.4 保留原宿主压缩与重试上限', () => {
     const settings = createHostSettingsManager();
     expect(settings.getCompactionSettings()).toEqual({
       enabled: true,

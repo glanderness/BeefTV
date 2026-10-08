@@ -277,6 +277,15 @@ func (e *Engine) DownloadUpdate(ctx context.Context) (UpdateState, error) {
 		return e.snapshot(), err
 	}
 	archivePath := filepath.Join(stageRoot, "update.zip")
+	stagingAccepted := false
+	defer func() {
+		// This invocation exclusively created stageRoot. Failed extraction or
+		// layout verification must not leave a whole installer after each retry.
+		// Installation recovery copies are created later and remain protected.
+		if !stagingAccepted {
+			_ = os.RemoveAll(stageRoot)
+		}
+	}()
 	if err := e.downloadArchive(ctx, verified.artifact, archivePath); err != nil {
 		// The staging directory is still empty here; resumable bytes live in
 		// the shared downloads directory.
@@ -306,6 +315,7 @@ func (e *Engine) DownloadUpdate(ctx context.Context) (UpdateState, error) {
 		artifact: verified.artifact,
 	}
 	e.mu.Unlock()
+	stagingAccepted = true
 	e.set(func(state *UpdateState) {
 		state.Status = StatusReady
 		state.LatestVersion = verified.payload.Version

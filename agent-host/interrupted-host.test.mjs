@@ -62,6 +62,7 @@ test('SIGKILL after a tool receipt preserves the original turn in history after 
     const reservation=createServer(),port=await listen(reservation);await new Promise(resolve=>reservation.close(resolve));
     base=`http://127.0.0.1:${port}`;
     env={...process.env,BEEFTV_AGENT_DATA_DIR:directory,BEEFTV_AGENT_HOST_TOKEN:hostToken,BEEFTV_AGENT_PORT:String(port),BEEFTV_OPS_URL:`http://127.0.0.1:${opsPort}/api`,BEEFTV_AGENT_API:'openai-completions',BEEFTV_AGENT_MODEL:'synthetic',BEEFTV_AGENT_API_KEY:'synthetic-only',BEEFTV_AGENT_BASE_URL:`http://127.0.0.1:${modelPort}/v1`,BEEFTV_AGENT_TOTAL_REQUEST_BUDGET:'0',BEEFTV_AGENT_MAX_REQUESTS_PER_TURN:'40',BEEFTV_AGENT_TURN_TIMEOUT_MS:'180000'};
+    env.BEEFTV_AGENT_NEW_SESSION_RUNTIME = 'sdk';
     await launch();
     const chat=api('/chat',{canvasId:'crash-canvas',message:'Keep this original user request.',turnId:'abcddc10',revisionBefore:1}).then(r=>r.text()).catch(()=>null);
     await waitFor(()=>writes===1,12000);

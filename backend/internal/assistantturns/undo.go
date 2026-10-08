@@ -3,6 +3,7 @@ package assistantturns
 import (
 	"encoding/json"
 	"errors"
+	"sort"
 
 	"infinite-canvas/backend/internal/model"
 
@@ -33,11 +34,11 @@ func (s *Service) lockOpenTurn(tx *gorm.DB, userID, turnID, canvasID string) (Re
 		}
 		rec = decoded
 	}
-	if rec.UserID != userID || rec.CanvasID != canvasID || rec.Undone || rec.effectiveState() != StateOpen {
+	if rec.UserID != userID || (rec.CanvasID != canvasID && Mode(rec.PermissionMode) != PermissionFullAccess) || rec.Undone || rec.effectiveState() != StateOpen {
 		return Record{}, &Error{Reason: ReasonNotOpen, Message: "这一轮不存在或已结束"}
 	}
 	result := tx.Model(&model.AssistantTurn{}).
-		Where("turn_id = ? AND user_id = ? AND canvas_id = ? AND state = ? AND undone = ?", id, userID, canvasID, StateOpen, false).
+		Where("turn_id = ? AND user_id = ? AND state = ? AND undone = ?", id, userID, StateOpen, false).
 		Update("updated_at", s.now())
 	if result.Error != nil {
 		return Record{}, result.Error
@@ -67,6 +68,10 @@ func (s *Service) Undo(userID, canvasID, turnID string) (int64, error) {
 	}
 	var restoredRevision int64
 	err := s.store.DB().Transaction(func(tx *gorm.DB) error {
+		var locked model.AssistantTurn
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("turn_id = ?", id).First(&locked).Error; err != nil {
+			return errNotFound()
+		}
 		rec, err := s.load(tx, id)
 		if err != nil {
 			if isMissing(err) {
@@ -90,6 +95,9 @@ func (s *Service) Undo(userID, canvasID, turnID string) (int64, error) {
 				return receiptErr
 			}
 			if change != nil {
+				if err := s.declareDocumentChanges(tx, rec, change); err != nil {
+					return err
+				}
 				rec.Change = change
 				if err := s.persist(tx, rec); err != nil {
 					return err
@@ -100,45 +108,72 @@ func (s *Service) Undo(userID, canvasID, turnID string) (int64, error) {
 			return &Error{Reason: ReasonNoChange, Message: "这一轮没有改动画布"}
 		}
 		session := s.canvas.BoundTo(tx)
-		current, err := session.UserCanvasProject(userID, canvasID)
-		if err != nil {
-			return err
+		changes := rec.Change.CanvasChanges
+		if len(changes) == 0 {
+			one := *rec.Change
+			one.CanvasID = canvasID
+			changes = []Change{one}
 		}
-		var currentDoc map[string]any
-		if err := json.Unmarshal(current, &currentDoc); err != nil {
-			return err
+		sort.Slice(changes, func(i, j int) bool { return changes[i].CanvasID < changes[j].CanvasID })
+		type restore struct {
+			id       string
+			document json.RawMessage
 		}
-		currentRevision := DocumentRevision(currentDoc)
-		if currentRevision != rec.Change.RevisionAfter || rec.Change.RevisionBefore != rec.RevisionBefore {
-			return &Error{Reason: ReasonCanvasChanged, Message: "画布在这一轮之后又被改过，已停止撤销"}
-		}
-		var restored map[string]any
-		if err := json.Unmarshal(rec.Document, &restored); err != nil {
-			return err
-		}
-		singleWrite := currentRevision == rec.RevisionBefore+1
-		if singleWrite {
-			if !MatchesChange(restored, currentDoc, rec.Change) {
+		restores := make([]restore, 0, len(changes))
+		for _, change := range changes {
+			targetID := change.CanvasID
+			snapshot, exists := rec.CanvasSnapshots[targetID]
+			if !exists {
+				if targetID != rec.CanvasID {
+					return errCorruptStored()
+				}
+				snapshot = CanvasSnapshot{rec.RevisionBefore, rec.Document}
+			}
+			current, err := session.UserCanvasProject(userID, targetID)
+			if err != nil {
+				return err
+			}
+			var currentDoc map[string]any
+			if err := json.Unmarshal(current, &currentDoc); err != nil {
+				return err
+			}
+			currentRevision := DocumentRevision(currentDoc)
+			if currentRevision != change.RevisionAfter || change.RevisionBefore != snapshot.RevisionBefore {
+				return &Error{Reason: ReasonCanvasChanged, Message: "画布在这一轮之后又被改过，已停止撤销"}
+			}
+			var restored map[string]any
+			if err := json.Unmarshal(snapshot.Document, &restored); err != nil {
+				return err
+			}
+			if !MatchesChange(restored, currentDoc, &change) {
 				return &Error{Reason: ReasonCanvasChanged, Message: "无法安全撤销这一轮，画布内容已保留"}
 			}
-		} else {
-			ops, opErr := s.store.OpsByIDs(tx, rec.UserID, rec.Change.OperationIDs)
-			if opErr != nil {
-				return opErr
+			if currentRevision != snapshot.RevisionBefore+1 || change.DocumentUpdated {
+				ops, opErr := s.store.OpsByIDs(tx, rec.UserID, change.OperationIDs)
+				if opErr != nil {
+					return opErr
+				}
+				if !OperationsCoverSpan(ops, targetID, change.OperationIDs, snapshot.RevisionBefore, currentRevision) {
+					return &Error{Reason: ReasonCanvasChanged, Message: "无法安全撤销这一轮，画布内容已保留"}
+				}
 			}
-			if !OperationsCoverSpan(ops, rec.CanvasID, rec.Change.OperationIDs, rec.RevisionBefore, currentRevision) {
-				return &Error{Reason: ReasonCanvasChanged, Message: "无法安全撤销这一轮，画布内容已保留"}
+			restored["id"] = targetID
+			restored["revision"] = currentRevision
+			encoded, err := json.Marshal(restored)
+			if err != nil {
+				return err
 			}
+			restores = append(restores, restore{targetID, encoded})
 		}
-		restored["id"] = canvasID
-		restored["revision"] = currentRevision
-		encoded, err := json.Marshal(restored)
-		if err != nil {
-			return err
-		}
-		revision, err := session.UpsertUserCanvasProject(userID, encoded)
-		if err != nil {
-			return err
+		// All targets pass before the first restore. Any later error rolls the group back.
+		for _, item := range restores {
+			revision, err := session.UpsertUserCanvasProject(userID, item.document)
+			if err != nil {
+				return err
+			}
+			if item.id == canvasID || restoredRevision == 0 {
+				restoredRevision = revision
+			}
 		}
 		if s.undoMarkerHook != nil {
 			if hookErr := s.undoMarkerHook(); hookErr != nil {
@@ -149,7 +184,6 @@ func (s *Service) Undo(userID, canvasID, turnID string) (int64, error) {
 		if err := s.persist(tx, rec); err != nil {
 			return err
 		}
-		restoredRevision = revision
 		return nil
 	})
 	if err != nil {

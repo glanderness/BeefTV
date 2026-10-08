@@ -11,10 +11,11 @@ const hostConfigFile = "agent_config.json"
 
 // HostConfig 记录当前使用的文本模型与宿主启动命令；由本机用户在设置里配置。
 type HostConfig struct {
-	Model       string   `json:"model"`
-	HostCommand string   `json:"hostCommand"`
-	HostArgs    []string `json:"hostArgs,omitempty"`
-	UpdatedAt   string   `json:"updatedAt,omitempty"`
+	Model             string   `json:"model"`
+	NewSessionRuntime string   `json:"newSessionRuntime,omitempty"`
+	HostCommand       string   `json:"hostCommand"`
+	HostArgs          []string `json:"hostArgs,omitempty"`
+	UpdatedAt         string   `json:"updatedAt,omitempty"`
 }
 
 func (h *Host) EffectiveConfig() (HostConfig, bool) {

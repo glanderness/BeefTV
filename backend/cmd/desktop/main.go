@@ -65,6 +65,16 @@ func prepareDesktopApp(app *DesktopApp) error {
 }
 
 func defaultDataDir() (string, error) {
+	for _, arg := range os.Args[1:] {
+		if strings.HasPrefix(arg, "--data-dir=") {
+			dir := strings.TrimSpace(strings.TrimPrefix(arg, "--data-dir="))
+			clean := filepath.Clean(dir)
+			if !filepath.IsAbs(dir) || filepath.Dir(clean) == clean {
+				return "", fmt.Errorf("--data-dir 需要明确的绝对目录")
+			}
+			return clean, nil
+		}
+	}
 	if override := strings.TrimSpace(os.Getenv("CANVAS_DESKTOP_DATA_DIR")); override != "" {
 		return override, nil
 	}

@@ -6,6 +6,7 @@
 import { collectTurnEffects } from './canvas-turn.mjs';
 import { toolOperationId } from './session-identity.mjs';
 import { budgetError, spendToolStep } from './request-budget.mjs';
+import { mediaToolResult } from './media-content.mjs';
 
 const CANVAS_NODE_UPDATE = 'canvas.node.update';
 
@@ -26,10 +27,13 @@ export function createOperationBridge({
   desktopToken = '',
   readOnly = false,
   turnBudgetContext,
+  mediaModel = { api: '', modelId: '' },
+  nativePartStore,
 }) {
   const descriptors = new Map();
 
   async function opsRequest(method, apiPath, body, signal, turnId) {
+    const timeoutMs = apiPath.startsWith('/ops/media.') ? 95000 : 30000;
     const response = await fetch(`${opsUrl}${apiPath}`, {
       method,
       headers: {
@@ -39,7 +43,7 @@ export function createOperationBridge({
         ...(desktopToken ? { 'X-Desktop-Token': desktopToken } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
     });
     const text = await response.text();
     let envelope = null;
@@ -62,14 +66,23 @@ export function createOperationBridge({
   }
 
   function buildTools(canvasId, log, generation, turn, identityPrefix) {
-    return [...descriptors.entries()].map(([toolName, descriptor]) => ({
+    const mode = generation.permissionMode || 'canvas';
+    const canvasTools = new Set(['canvas.get','canvas.node.update','canvas.node.configure','canvas.node.move','canvas.node.delete','canvas.edge.delete','canvas.nodes.create','canvas.edge.create','canvas.timeline.update','canvas.timeline.render','canvas.generation.propose','canvas.task.bind','asset.get','task.get','media.overview','media.inspect','media.check','skill.get','skill.file','project.media.search','project.canvas.search','model.catalog']);
+    return [...descriptors.entries()].filter(([,d])=>mode==='read-only' ? d.readOnly && d.id!=='canvas.generation.propose' : mode==='full-access' ? d.scope!=='conversation' : canvasTools.has(d.id)).map(([toolName, descriptor]) => ({
       name: toolName,
       label: descriptor.id,
-      description: `${descriptor.summary}（本会话 scope=canvas:${canvasId}）`,
-      parameters: scopedSchema(descriptor.params, descriptor.id === 'canvas.get', descriptor.id),
+      readOnly: descriptor.readOnly === true,
+      description: descriptor.summary,
+      parameters: scopedSchema(descriptor.params, mode !== 'canvas' || descriptor.id === 'canvas.get', descriptor.id),
       ...(descriptor.readOnly ? {} : { executionMode: 'sequential' }),
       execute: async (toolCallId, args, signal) => {
         if (generation.aborted || signal?.aborted) throw new Error('aborted');
+        if (generation.permissionMode==='read-only' && (!descriptor.readOnly || descriptor.id==='canvas.generation.propose')) throw new Error('scope_denied: 本轮助手只能读取');
+        if ((!descriptor.readOnly || descriptor.id === 'canvas.generation.propose') &&
+            (generation.pendingInput?.state === 'pending' || generation.pendingInputError ||
+             generation.modelEpoch !== generation.intentEpoch)) {
+          throw new Error('turn_intent_changed: 已收到新的要求，先读取新要求再修改');
+        }
         const budget = turnBudgetContext.getStore();
         const step = spendToolStep(budget);
         if (!step.allowed) {
@@ -81,7 +94,7 @@ export function createOperationBridge({
         delete params.operationId;
         delete params.opId;
         if (Object.hasOwn(descriptor.params?.properties || {}, 'canvasId')) {
-          if (descriptor.id !== 'canvas.get' && params.canvasId !== undefined && params.canvasId !== canvasId) {
+          if ((generation.permissionMode || 'canvas') === 'canvas' && descriptor.id !== 'canvas.get' && params.canvasId !== undefined && params.canvasId !== canvasId) {
             throw new Error(`scope_denied: 画布参数与当前会话不一致（${params.canvasId} ≠ ${canvasId}）`);
           }
           if (params.canvasId === undefined) params.canvasId = canvasId;
@@ -113,7 +126,8 @@ export function createOperationBridge({
           if (descriptor.id !== 'canvas.task.bind' || !data?.replayed) {
             collectTurnEffects(turn, descriptor.id, data?.result, opId);
           }
-          return { content: [{ type: 'text', text: JSON.stringify(data) }] };
+          return mediaToolResult(data, descriptor.id, { ...mediaModel,
+            ...(generation.durable ? {nativePartStore} : {}) });
         } catch (error) {
           log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: true, error: error.message, ms: Date.now() - started });
           throw error;

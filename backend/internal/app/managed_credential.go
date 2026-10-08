@@ -100,7 +100,7 @@ func (s *Service) lookupBeefAPICredential() (apiKey, baseURL, accountID, tokenID
 		if channel.ID == beefapi.ChannelID && strings.TrimSpace(channel.APIKey) != "" {
 			base := strings.TrimSpace(channel.BaseURL)
 			if base == "" {
-				base = beefapi.ProductionOrigin
+				base = beefapi.LegacyOrigin
 			}
 			return channel.APIKey, base, "", "", nil
 		}
@@ -131,9 +131,8 @@ func (s *Service) resolveChannelModelsRequest(input *ChannelModelsRequest) error
 		return nil
 	}
 	input.APIKey = apiKey
-	if strings.TrimSpace(input.BaseURL) == "" || beefapi.IsEnterpriseBaseURL(input.BaseURL) || input.ChannelID == beefapi.ChannelID {
-		input.BaseURL = baseURL
-	}
+	// Stored credentials must only be sent to their configured origin.
+	input.BaseURL = baseURL
 	input.CredentialRef = managedBeefAPIRef
 	return nil
 }

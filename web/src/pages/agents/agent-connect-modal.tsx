@@ -1,25 +1,21 @@
-import { App, Button, Radio } from "antd";
+import { App, Button } from "antd";
 import { Copy } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AppModal } from "@/components/ui/product/app-modal";
 import { useCopyText } from "@/hooks/use-copy-text";
-import { createAgentClient, type AgentClientKind, type AgentClientMode, type AgentClientRegistration } from "@/services/api/agent-clients";
+import { createAgentClient, type AgentClientKind, type AgentClientRegistration } from "@/services/api/agent-clients";
 
-import { agentClientKindLabel, agentClientModeLabel, agentClientModeSummary, agentClientSetupBlock } from "./agent-client-presentation";
-
-const modes: AgentClientMode[] = ["read-only", "read-write"];
+import { agentClientKindLabel, agentClientSetupBlock } from "./agent-client-presentation";
 
 export function AgentConnectModal({ kind, onClose, onConnected }: { kind: AgentClientKind | null; onClose: () => void; onConnected: () => void }) {
     const { message } = App.useApp();
     const copyText = useCopyText();
-    const [mode, setMode] = useState<AgentClientMode>("read-only");
     const [submitting, setSubmitting] = useState(false);
     const [registration, setRegistration] = useState<AgentClientRegistration | null>(null);
 
     useEffect(() => {
         if (!kind) return;
-        setMode("read-only");
         setSubmitting(false);
         setRegistration(null);
     }, [kind]);
@@ -28,7 +24,7 @@ export function AgentConnectModal({ kind, onClose, onConnected }: { kind: AgentC
         if (!kind) return;
         setSubmitting(true);
         try {
-            const result = await createAgentClient({ kind, mode });
+            const result = await createAgentClient({ kind });
             setRegistration(result);
             onConnected();
         } catch (error) {
@@ -70,17 +66,7 @@ export function AgentConnectModal({ kind, onClose, onConnected }: { kind: AgentC
                 <p className="py-2 text-xs leading-5 text-foreground/60">没有拿到接入内容，请断开后重新连接。</p>
             ) : (
                 <div className="flex flex-col gap-3 py-1">
-                    <p className="text-xs leading-5 text-foreground/60">选择它在你的画布上能做什么。</p>
-                    <Radio.Group value={mode} onChange={(event) => setMode(event.target.value as AgentClientMode)} className="flex flex-col gap-2.5">
-                        {modes.map((item) => (
-                            <Radio key={item} value={item} className="items-start">
-                                <span className="block pl-0.5">
-                                    <span className="block text-[13px] leading-5 font-medium">{agentClientModeLabel(item)}</span>
-                                    <span className="mt-0.5 block text-xs leading-5 text-foreground/50">{agentClientModeSummary(item)}</span>
-                                </span>
-                            </Radio>
-                        ))}
-                    </Radio.Group>
+                    <p className="text-xs leading-5 text-foreground/60">连接后可使用 BeefTV 的全部创作工具。每次操作的审批由 {agentClientKindLabel(kind || "other")} 负责。</p>
                 </div>
             )}
         </AppModal>
