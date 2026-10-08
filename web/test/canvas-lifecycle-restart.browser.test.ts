@@ -1,13 +1,14 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { chromium, type Browser } from "playwright";
+import { canvasAppearanceForTheme } from "../src/lib/canvas/canvas-appearance";
 
 let browser: Browser;
 let server: ReturnType<typeof Bun.serve>;
 let release: () => void;
 let gate: Promise<void>;
 let commits: any[] = [];
-const remote = { id: "c1", revision: 111, title: "Restart", createdAt: "2026-10-02", updatedAt: "2026-10-02", nodes: Array.from({ length: 10 }, (_, i) => ({ id: `n${i}`, type: "image", title: `Node ${i}`, width: 320, height: 200, position: { x: i * 400, y: 0 }, metadata: {} })), connections: Array.from({ length: 6 }, (_, i) => ({ id: `e${i}`, fromNodeId: `n${i}`, toNodeId: `n${i + 1}` })), chatSessions: [], activeChatId: null, backgroundMode: "grid", showImageInfo: false, viewport: { x: 0, y: 0, k: 1 }, directorScenes: [] };
+const remote = { id: "c1", revision: 111, title: "Restart", createdAt: "2026-10-02", updatedAt: "2026-10-02", nodes: Array.from({ length: 10 }, (_, i) => ({ id: `n${i}`, type: "image", title: `Node ${i}`, width: 320, height: 200, position: { x: i * 400, y: 0 }, metadata: {} })), connections: Array.from({ length: 6 }, (_, i) => ({ id: `e${i}`, fromNodeId: `n${i}`, toNodeId: `n${i + 1}` })), chatSessions: [], activeChatId: null, appearance: canvasAppearanceForTheme("dark"), backgroundMode: "grid", showImageInfo: false, viewport: { x: 0, y: 0, k: 1 }, directorScenes: [] };
 let backend = structuredClone(remote);
 
 beforeAll(async () => {
@@ -30,7 +31,7 @@ beforeAll(async () => {
             return json({ revision: backend.revision, result: { canvasId: "c1", revision: backend.revision, title: backend.title, updatedAt: backend.updatedAt } });
         }
         if (path.startsWith("/api/")) return json([]);
-        return new Response('<div id="root"></div><script type="module" src="/harness.js"></script>', { headers: { "Content-Type": "text/html" } });
+        return new Response('<div id="root"></div>' + (['reopen-stamp', 'startup-stamp'].includes(new URL(request.url).searchParams.get('scenario') || '') ? '<script>window.__reopenProject=' + JSON.stringify(backend).replaceAll('<', '\\u003c') + '</script>' : '') + '<script type="module" src="/harness.js"></script>', { headers: { "Content-Type": "text/html" } });
     } });
     const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((path): path is string => Boolean(path && existsSync(path)));
     browser = await chromium.launch({ executablePath, headless: true });
@@ -77,7 +78,7 @@ test("manual deletion after a completed projection is still saved and survives r
     await page.evaluate(() => (window as any).__lifecycle.save());
     expect(backend.connections).toEqual([]);
     expect(commits.at(-1).params.document.connections).toEqual([]);
-    await page.reload();
+    await page.goto(`${server.url}?scenario=reopen-stamp`);
     await page.waitForFunction(() => document.querySelector('[data-testid="graph"]')?.textContent === "true:10:0");
     expect(backend.connections).toEqual([]);
     await page.close();
@@ -105,5 +106,48 @@ test("dirty cached graph with a stale journal does not overwrite a newer backend
     expect(error).not.toBeNull();
     expect(backend.connections).toHaveLength(6);
     expect(commits).toHaveLength(0);
+    await page.close();
+}, 30000);
+
+
+test("completed task acknowledgement prepublished in store is autosaved through CAS and survives reopen", async () => {
+    const page = await browser.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", e => errors.push(e.message));
+    release();
+    await page.goto(server.url.toString());
+    await page.waitForFunction(() => document.querySelector('[data-testid="graph"]')?.textContent === "true:10:6");
+    expect(await page.evaluate(() => (window as any).__lifecycle.dirty())).toBe(false);
+    const key = await page.evaluate(() => (window as any).__lifecycle.hydrateCompletedTaskStamp());
+    // Do not invoke explicit Save: reproduce the actual consumer/store → editor path.
+    await page.evaluate(() => (window as any).__lifecycle.pulse());
+    expect(commits).toHaveLength(1);
+    expect(commits[0].params.expectedRevision).toBe(111);
+    expect(backend.revision).toBe(112);
+    expect((backend.nodes[0].metadata as any).generationEffectKeys).toEqual([key]);
+    expect(await page.evaluate(() => (window as any).__lifecycle.dirty())).toBe(false);
+    await page.goto(`${server.url}?scenario=reopen-stamp`);
+    await page.waitForFunction(() => document.querySelector('[data-testid="graph"]')?.textContent === "true:10:6");
+    expect(await page.evaluate(() => (window as any).__lifecycle.dirty())).toBe(false);
+    expect((backend.nodes[0].metadata as any).generationEffectKeys).toEqual([key]);
+    expect(commits).toHaveLength(1);
+    expect(errors).toEqual([]);
+    await page.close();
+}, 30000);
+
+
+test("already observed task stamps schedule a CAS save on initial load, without resubmitting after confirmation", async () => {
+    const page = await browser.newPage();
+    release();
+    await page.goto(`${server.url}?scenario=startup-stamp`);
+    await page.waitForFunction(() => document.querySelector('[data-testid="graph"]')?.textContent === "true:10:6");
+    await page.evaluate(() => (window as any).__lifecycle.pulse());
+    expect(commits).toHaveLength(1);
+    expect(commits[0].params.expectedRevision).toBe(111);
+    expect(backend.revision).toBe(112);
+    expect((backend.nodes[0].metadata as any).generationEffectKeys).toEqual(["attach-node:completed-task-receipt:n0:0"]);
+    expect(await page.evaluate(() => (window as any).__lifecycle.dirty())).toBe(false);
+    await page.evaluate(() => (window as any).__lifecycle.pulse());
+    expect(commits).toHaveLength(1);
     await page.close();
 }, 30000);
