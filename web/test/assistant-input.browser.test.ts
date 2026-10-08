@@ -341,13 +341,13 @@ test("external Agent connection has no permission chooser and submits only the c
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
     await page.getByRole("button", { name: "连接外部 Agent", exact: true }).click();
-    const dialog = page.getByRole("dialog");
-    await dialog.getByText("连接后可使用 BeefTV 的全部创作工具。每次操作的审批由 Codex 负责。", { exact: true }).waitFor();
-    expect(await dialog.getByRole("radio").count()).toBe(0);
+    const panel = page.locator(".agent-connect-panel");
+    await panel.getByText("连接后可使用 BeefTV 的全部创作工具。每次操作的审批由 Codex 负责。", { exact: true }).waitFor();
+    expect(await panel.getByRole("radio").count()).toBe(0);
     const connected = page.waitForResponse(response => response.url().endsWith("/agent-clients"));
-    await dialog.getByRole("button", { name: /^连\s*接$/ }).click(); await connected;
+    await panel.getByRole("button", { name: "生成连接配置", exact: true }).click(); await connected;
     expect(externalConnections.at(-1)).toEqual({ kind: "codex" });
-    await dialog.getByRole("button", { name: "我已粘贴好", exact: true }).waitFor();
+    await panel.getByRole("status").filter({ hasText: "等待工具连接" }).waitFor();
     await page.screenshot({ path: "/tmp/beeftv-external-agent-connect.png" });
     await page.close();
 }, 15000);

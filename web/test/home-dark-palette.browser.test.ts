@@ -29,7 +29,7 @@ async function readPalette({ dark, home, width = 1440 }: { dark: boolean; home: 
                 <div class="app-workspace-stage"><main class="beeftv-home">
                     <div class="beeftv-home-hero"></div><div class="beeftv-capability-icon"></div><div class="beeftv-recent-card"></div>
                     <div class="project-library-card"></div><div class="libtv-create-project-card"></div><div class="libtv-folder-card-cover"></div>
-                    <div class="assets-library-page"><div class="canvas-library-frame"></div><div class="assets-inline-search"></div></div>
+                    <div class="assets-library-page"><div class="canvas-library-frame"></div><div class="workspace-expandable-search-input"></div></div>
                     <div class="settings-page"><div class="settings-library-frame"><div class="settings-channel"></div></div></div>
                 </main></div>
             </div>
@@ -81,7 +81,7 @@ test("dark project folder and asset search do not keep the brighter gray fills",
     await readPalette({ dark: true, home: false });
     const colors = await page.evaluate(() => ({
         folder: getComputedStyle(document.querySelector(".libtv-folder-card-cover")!).backgroundImage,
-        search: getComputedStyle(document.querySelector(".assets-inline-search")!).backgroundColor,
+        search: getComputedStyle(document.querySelector(".workspace-expandable-search-input")!).backgroundColor,
     }));
     const folderTop = colors.folder.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
     expect(folderTop).not.toBeNull();

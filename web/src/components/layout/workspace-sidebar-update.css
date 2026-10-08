@@ -9,6 +9,29 @@
     flex-direction: column;
 }
 
+.app-workspace-sidebar-utility-row:not(.is-collapsed) .app-workspace-update:not(.has-status) {
+    flex: 0 1 auto;
+}
+
+.app-workspace-social-links {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 4px;
+}
+
+.app-workspace-sidebar-utility-row:not(.is-collapsed) .app-workspace-social-links {
+    margin-left: auto;
+}
+
+.app-workspace-sidebar-utility-row.is-collapsed .app-workspace-social-links {
+    flex-direction: column;
+}
+
+.app-workspace-sidebar-utility-row:not(.is-collapsed) > .app-workspace-theme-action {
+    margin-left: 8px;
+}
+
 .app-workspace-update {
     display: flex;
     min-width: 0;
@@ -45,6 +68,8 @@
 .app-workspace-update-version:focus-visible,
 .app-workspace-update-action:hover,
 .app-workspace-update-action:focus-visible,
+.app-workspace-social-action:hover,
+.app-workspace-social-action:focus-visible,
 .app-workspace-theme-action:hover,
 .app-workspace-theme-action:focus-visible {
     background: var(--user-surface-hover, color-mix(in srgb, var(--foreground) 8%, transparent));
@@ -59,6 +84,7 @@
 }
 
 .app-workspace-update-action,
+.app-workspace-social-action,
 .app-workspace-theme-action {
     display: inline-flex;
     width: 36px;
@@ -74,6 +100,23 @@
     cursor: pointer;
 }
 
+.app-workspace-social-action svg {
+    width: 16px;
+    height: 16px;
+}
+
+.app-workspace-wechat-popover .ant-popover-inner {
+    padding: 8px;
+    border-radius: 12px;
+    background: #fff;
+}
+
+.app-workspace-wechat-popover .ant-popover-inner-content img {
+    display: block;
+    width: 180px;
+    height: 180px;
+}
+
 .app-workspace-update-action:not(.is-busy) {
     color: var(--user-accent, var(--primary));
 }
@@ -84,6 +127,7 @@
 
 .app-workspace-update-version:focus-visible,
 .app-workspace-update-action:focus-visible,
+.app-workspace-social-action:focus-visible,
 .app-workspace-theme-action:focus-visible {
     outline: 2px solid var(--user-accent, var(--ring));
     outline-offset: 2px;

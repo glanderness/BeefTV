@@ -1,11 +1,12 @@
-import { ArrowDownUp, AudioLines, Box, Check, CheckCheck, Clapperboard, Copy, Download, FileText, FileUp, FileX2, FolderOpen, FolderPlus, History, Image as ImageIcon, Images, LayoutGrid, List, Maximize2, MoreHorizontal, Pause, PencilLine, Play, Plus, RotateCcw, Search, SlidersHorizontal, Star, Trash2, Upload, Volume2, VolumeX, X, ZoomIn, ZoomOut, type LucideIcon } from "lucide-react";
+import { ArrowDownUp, AudioLines, Box, Check, CheckCheck, Clapperboard, Copy, Download, FileText, FileUp, FileX2, FolderOpen, FolderPlus, History, Image as ImageIcon, LayoutGrid, List, Maximize2, MoreHorizontal, Pause, PencilLine, Play, Plus, RotateCcw, SlidersHorizontal, Star, Trash2, Upload, Volume2, VolumeX, X, ZoomIn, ZoomOut, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { App, Button, Drawer, Dropdown, Form, Input, Modal, Progress, Select, Space, Tag, Typography } from "antd";
+import { App, Button, Drawer, Dropdown, Form, Input, Modal, Popover, Progress, Select, Space, Tag, Typography } from "antd";
 import type { MenuProps } from "antd";
 import { useNavigate, useSearchParams } from "react-router";
 
 import { CollectionGrid, PageHeader, PaginationBar, WorkspacePage } from "@/components/layout/workspace-page";
+import { ExpandableSearch } from "@/components/layout/expandable-search";
 import { WorkspaceErrorState, WorkspaceLoadingState, WorkspaceState } from "@/components/layout/workspace-state";
 import { AssetMediaPreview } from "@/components/asset-media-preview";
 import { CachedResourceImage } from "@/components/cached-resource-image";
@@ -13,6 +14,7 @@ import { AssetLibraryCard, AssetLibraryCardMedia } from "@/components/assets/ass
 import {
     assetFolderQueryKey,
     assetLibraryQueryKey,
+    assetPickerQueryKey,
     expectedScopeFromQueryKey,
     keepAssetViewPlaceholder,
     mergeHistoryLibraryAssets,
@@ -53,7 +55,6 @@ import { normalizeLocalAsset } from "@/lib/local-workspace-migration";
 import { useUserStore } from "@/stores/use-user-store";
 import type { AssetFolder } from "@/services/api/workspace-data";
 import { uploadWorkspaceAssetFiles } from "@/services/workspace-asset-upload";
-import { ArchivedAssetRecovery } from "./archived-asset-recovery";
 import "@/styles/assets-reference-baseline.css";
 import "@/styles/assets-frame-lock.css";
 import "@/styles/assets-final-lock.css";
@@ -145,7 +146,6 @@ function AssetsPageSession() {
     const [historyAssets, setHistoryAssets] = useState<LibraryAsset[]>([]);
     const [assetViewMode, setAssetViewMode] = useState<"grid" | "list">(readAssetViewMode);
     const [filtersOpen, setFiltersOpen] = useState(false);
-    const [searchOpen, setSearchOpen] = useState(false);
     const [sortOrder, setSortOrder] = useState<AssetSortOrder>("updated_desc");
     const [editingAsset, setEditingAsset] = useState<LibraryAsset | null>(null);
     const [tagEditingAsset, setTagEditingAsset] = useState<LibraryAsset | null>(null);
@@ -153,6 +153,8 @@ function AssetsPageSession() {
     const [isAssetOpen, setIsAssetOpen] = useState(false);
     const [previewAsset, setPreviewAsset] = useState<LibraryAsset | null>(null);
     const [deletingAsset, setDeletingAsset] = useState<LibraryAsset | null>(null);
+    const [deletePending, setDeletePending] = useState(false);
+    const deleteInFlight = useRef(false);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
     const [folderEditor, setFolderEditor] = useState<AssetFolder | "new" | null>(null);
@@ -313,7 +315,6 @@ function AssetsPageSession() {
     const libraryEmpty = remoteReady
         ? totalAssets === 0 && visibleAssets.length === 0 && !hasNarrowingFilters
         : validAssets.length === 0 && totalAssets === 0;
-    const inlineSearchVisible = searchOpen;
 
     const kindCounts = useMemo(() => assetCountMap(kindOptions, remoteReady ? assetPageQuery.data?.kindCounts : undefined, activeAssets, (asset) => asset.kind), [activeAssets, assetPageQuery.data?.kindCounts, remoteReady]);
     const categoryCounts = useMemo(() => assetCountMap(categoryOptions, remoteReady ? assetPageQuery.data?.categoryCounts : undefined, activeAssets, (asset) => asset.category || "other"), [activeAssets, assetPageQuery.data?.categoryCounts, remoteReady]);
@@ -360,6 +361,30 @@ function AssetsPageSession() {
         await Promise.all([
             queryClient.invalidateQueries({ queryKey: assetLibraryQueryKey(expected) }),
             queryClient.invalidateQueries({ queryKey: assetFolderQueryKey(expected) }),
+        ]);
+    };
+
+    const reflectDeletedAssets = (ids: string[], expected: CapturedUserScope) => {
+        assertUserScope(expected);
+        const deletedIds = new Set(ids);
+        queryClient.setQueriesData<Awaited<ReturnType<typeof loadAssetLibraryPage>>>(
+            { queryKey: assetLibraryQueryKey(expected) },
+            (current) => {
+                if (!current) return current;
+                const assets = current.assets.filter((asset) => !deletedIds.has(asset.id));
+                const removed = current.assets.length - assets.length;
+                if (!removed) return current;
+                return { ...current, assets, total: Math.max(0, current.total - removed), canonicalTotal: Math.max(0, current.canonicalTotal - removed) };
+            },
+        );
+        setHistoryAssets((current) => current.filter((asset) => !deletedIds.has(asset.id)));
+        setSelectedIds((current) => current.filter((id) => !deletedIds.has(id)));
+    };
+
+    const refreshDeletedAssets = async (expected: CapturedUserScope) => {
+        await Promise.all([
+            invalidateAssetLibrary(expected),
+            queryClient.invalidateQueries({ queryKey: assetPickerQueryKey(expected) }),
         ]);
     };
 
@@ -724,10 +749,11 @@ function AssetsPageSession() {
         try {
             const deleted = await runAssetViewAction(entryScope, async (scope) => {
                 await deleteWorkspaceAsset(asset.id, scope);
+                reflectDeletedAssets([asset.id], scope);
+                await refreshDeletedAssets(scope);
                 return true;
             });
             if (!deleted) return;
-            setHistoryAssets((current) => current.filter((item) => item.id !== asset.id));
             return true;
         } catch (error) {
             if (shouldSuppressAssetViewError(error, entryScope)) return;
@@ -737,10 +763,14 @@ function AssetsPageSession() {
     };
 
     const confirmDelete = async () => {
-        if (!deletingAsset) return;
+        if (!deletingAsset || deleteInFlight.current) return;
+        deleteInFlight.current = true;
+        setDeletePending(true);
         try {
             const deleted = await runAssetViewAction(entryScope, async (scope) => {
                 await deleteWorkspaceAsset(deletingAsset.id, scope);
+                reflectDeletedAssets([deletingAsset.id], scope);
+                await refreshDeletedAssets(scope);
                 return true;
             });
             if (!deleted) return;
@@ -749,6 +779,9 @@ function AssetsPageSession() {
         } catch (error) {
             if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.error(error instanceof Error ? error.message : "素材删除失败");
+        } finally {
+            deleteInFlight.current = false;
+            setDeletePending(false);
         }
     };
 
@@ -758,11 +791,19 @@ function AssetsPageSession() {
     };
 
     const confirmBatchDelete = async () => {
-        if (!selectedAssets.length) return;
+        if (!selectedAssets.length || deleteInFlight.current) return;
+        deleteInFlight.current = true;
+        setDeletePending(true);
         const deleting = [...selectedAssets];
+        const deletedIds: string[] = [];
         try {
             const deleted = await runAssetViewAction(entryScope, async (scope) => {
-                for (const asset of deleting) await deleteWorkspaceAsset(asset.id, scope);
+                for (const asset of deleting) {
+                    await deleteWorkspaceAsset(asset.id, scope);
+                    deletedIds.push(asset.id);
+                    reflectDeletedAssets([asset.id], scope);
+                }
+                await refreshDeletedAssets(scope);
                 return deleting.length;
             });
             if (!deleted) return;
@@ -771,7 +812,12 @@ function AssetsPageSession() {
             setBatchDeleteOpen(false);
         } catch (error) {
             if (shouldSuppressAssetViewError(error, entryScope)) return;
-            message.error(error instanceof Error ? error.message : "批量删除失败");
+            if (deletedIds.length) await refreshDeletedAssets(entryScope);
+            const reason = error instanceof Error ? error.message : "批量删除失败";
+            message.error(deletedIds.length ? `已删除 ${deletedIds.length} 个素材，剩余素材删除失败：${reason}` : reason);
+        } finally {
+            deleteInFlight.current = false;
+            setDeletePending(false);
         }
     };
 
@@ -853,30 +899,13 @@ function AssetsPageSession() {
                         actions={
                             <div className="assets-header-actions">
                                 <div className="assets-header-action-buttons">
-                                    <ArchivedAssetRecovery entryScope={entryScope} ready={sessionHydrated} />
                                     <div className="assets-header-compact-actions">
-                                        {inlineSearchVisible ? (
-                                            <Input
-                                                autoFocus
-                                                allowClear
-                                                className="assets-inline-search"
-                                                prefix={<Search className="size-4" />}
-                                                value={keyword}
-                                                placeholder="搜索资产"
-                                                aria-label="搜索资产"
-                                                onChange={(event) => {
-                                                    setPage(1);
-                                                    setKeyword(event.target.value);
-                                                }}
-                                            />
-                                        ) : (
-                                            <button type="button" className="assets-header-compact-button" aria-label="搜索资产" title="搜索资产" onClick={() => setSearchOpen(true)}><Search className="size-4" /></button>
-                                        )}
+                                        <ExpandableSearch value={keyword} placeholder="搜索资产" onChange={(value) => { setPage(1); setKeyword(value); }} />
                                         <button type="button" className={cn("assets-header-compact-button", filtersOpen && "is-active")} aria-label="筛选资产" title="筛选资产" aria-pressed={filtersOpen} onClick={() => setFiltersOpen((open) => !open)}><SlidersHorizontal className="size-4" /></button>
                                     </div>
                                     <Dropdown trigger={["click"]} menu={{ items: [
-                                        { key: "image", icon: <Images />, label: "上传资产", onClick: () => assetUploadInputRef.current?.click() },
-                                        { key: "folder", icon: <FolderPlus />, label: "新建文件夹", onClick: () => { setFolderName(""); setFolderEditor("new"); } },
+                                        { key: "image", label: "上传资产", onClick: () => assetUploadInputRef.current?.click() },
+                                        { key: "folder", label: "新建文件夹", onClick: () => { setFolderName(""); setFolderEditor("new"); } },
                                     ] }}>
                                         <Button className="assets-new-button" style={{ backgroundColor: "#fff", color: "#171717", borderColor: "rgba(255,255,255,.82)" }} icon={<Plus />}>新建</Button>
                                     </Dropdown>
@@ -1082,6 +1111,8 @@ function AssetsPageSession() {
                                                     key={asset.id}
                                                     asset={asset}
                                                     selected={selectedIds.includes(asset.id)}
+                                                    deleting={deletingAsset?.id === asset.id}
+                                                    deletePending={deletePending}
                                                     onSelect={(selected) => setSelectedIds((current) => (selected ? [...new Set([...current, asset.id])] : current.filter((id) => id !== asset.id)))}
                                                     onOpen={() => setPreviewAsset(asset)}
                                                     onToggleFavorite={() => void toggleFavorite(asset)}
@@ -1090,6 +1121,8 @@ function AssetsPageSession() {
                                                     onCopy={copyAssetText}
                                                     onDownload={downloadImage}
                                                     onDelete={() => setDeletingAsset(asset)}
+                                                    onConfirmDelete={confirmDelete}
+                                                    onCancelDelete={() => setDeletingAsset(null)}
                                                     folderOptions={folderSelectOptions}
                                                     onMoveToFolder={(folderId) => void moveSelectedAssetsToFolder([asset.id], folderId)}
                                                 />
@@ -1310,27 +1343,17 @@ function AssetsPageSession() {
 
             <Modal
                 className="library-modal library-confirm-modal"
-                title="彻底删除素材"
-                open={Boolean(deletingAsset)}
-                onCancel={() => setDeletingAsset(null)}
-                onOk={() => void confirmDelete()}
-                okText="彻底删除"
-                okButtonProps={{ danger: true }}
-                cancelText="取消"
-            >
-                确定彻底删除「{deletingAsset?.title}」吗？{localWorkspace ? "未被其他内容引用的本地文件也会同步删除，操作不可恢复。" : "未被其他内容引用的服务器本地或对象存储文件也会同步删除，操作不可恢复。"}
-            </Modal>
-            <Modal
-                className="library-modal library-confirm-modal"
-                title="批量彻底删除素材"
+                title="永久删除素材"
                 open={batchDeleteOpen}
-                onCancel={() => setBatchDeleteOpen(false)}
+                onCancel={() => { if (!deleteInFlight.current) setBatchDeleteOpen(false); }}
                 onOk={() => void confirmBatchDelete()}
-                okText="彻底删除"
+                confirmLoading={deletePending}
+                okText="永久删除"
                 okButtonProps={{ danger: true }}
+                cancelButtonProps={{ disabled: deletePending }}
                 cancelText="取消"
             >
-                确定彻底删除已选择的 {selectedAssets.length} 个素材吗？未被复用的服务器文件会同步删除，操作不可恢复。
+                删除已选择的 {selectedAssets.length} 个素材后将无法恢复。仍被画布或任务引用的文件会保留，其余文件将同步清理。
             </Modal>
         </>
     );
@@ -1339,6 +1362,8 @@ function AssetsPageSession() {
 function AssetCard({
     asset,
     selected,
+    deleting,
+    deletePending,
     onSelect,
     onOpen,
     onToggleFavorite,
@@ -1347,11 +1372,15 @@ function AssetCard({
     onCopy,
     onDownload,
     onDelete,
+    onConfirmDelete,
+    onCancelDelete,
     folderOptions,
     onMoveToFolder,
 }: {
     asset: LibraryAsset;
     selected: boolean;
+    deleting: boolean;
+    deletePending: boolean;
     onSelect: (selected: boolean) => void;
     onOpen: () => void;
     onToggleFavorite: () => void;
@@ -1360,9 +1389,23 @@ function AssetCard({
     onCopy: (asset: LibraryAsset) => void;
     onDownload: (asset: LibraryAsset) => void;
     onDelete: () => void;
+    onConfirmDelete: () => Promise<void>;
+    onCancelDelete: () => void;
     folderOptions: Array<{ label: string; value: string }>;
     onMoveToFolder: (folderId: string) => void;
 }) {
+    const [menuOpen, setMenuOpen] = useState(false);
+    const deleteConfirmRequested = useRef(false);
+    const openDeleteConfirm = () => {
+        deleteConfirmRequested.current = true;
+        setMenuOpen(true);
+        onDelete();
+    };
+    const closeDeleteConfirm = () => {
+        if (deletePending) return;
+        deleteConfirmRequested.current = false;
+        onCancelDelete();
+    };
     const menuItems: MenuProps["items"] = [
         ...(asset.kind === "text" || asset.kind === "image" ? [{ key: "edit", icon: <PencilLine className="size-3.5" />, label: "编辑", onClick: onEdit }] : []),
         { key: "tags", icon: <PencilLine className="size-3.5" />, label: "编辑标签", onClick: onEditTags },
@@ -1371,11 +1414,40 @@ function AssetCard({
         { key: "favorite", icon: <Star className="size-3.5" />, label: asset.metadata?.favorite === true ? "取消收藏" : "收藏", onClick: onToggleFavorite },
         { key: "move", icon: <FolderOpen className="size-3.5" />, label: "移动到分类", children: folderOptions.map((folder) => ({ key: folder.value || "uncategorized", label: folder.label, onClick: () => onMoveToFolder(folder.value) })) },
         { type: "divider" as const },
-        { key: "delete", danger: true, icon: <Trash2 className="size-3.5" />, label: "彻底删除", onClick: onDelete },
+        { key: "delete", danger: true, icon: <Trash2 className="size-3.5" />, label: (
+            <Popover
+                open={deleting}
+                onOpenChange={(open) => { if (open) openDeleteConfirm(); else closeDeleteConfirm(); }}
+                afterOpenChange={(open) => { if (!open && !deleteConfirmRequested.current) setMenuOpen(false); }}
+                trigger="click"
+                placement="rightBottom"
+                arrow={false}
+                overlayClassName="asset-delete-confirm-popover"
+                content={(
+                    <div className="asset-delete-confirm-content" onClick={(event) => event.stopPropagation()}>
+                        <p>确定删除该资产吗？删除后不可恢复。</p>
+                        <div className="asset-delete-confirm-actions">
+                            <Button size="small" disabled={deletePending} onClick={closeDeleteConfirm}>取消</Button>
+                            <Button size="small" danger loading={deletePending} onClick={() => void onConfirmDelete()}>永久删除</Button>
+                        </div>
+                    </div>
+                )}
+            >
+                <span className="asset-delete-confirm-trigger">永久删除</span>
+            </Popover>
+        ), onClick: openDeleteConfirm },
     ];
     return (
         <AssetLibraryCard selected={selected}>
-            <AssetCover asset={asset} selected={selected} onSelect={onSelect} onOpen={onOpen} onToggleFavorite={onToggleFavorite} menuItems={menuItems} />
+            <AssetCover asset={asset} selected={selected} onSelect={onSelect} onOpen={onOpen} onToggleFavorite={onToggleFavorite} menuItems={menuItems} menuOpen={menuOpen} onMenuOpenChange={(open) => {
+                if (!open && deleteConfirmRequested.current) return;
+                setMenuOpen(open);
+            }} onMenuAction={(key) => {
+                if (key === "delete") return;
+                deleteConfirmRequested.current = false;
+                setMenuOpen(false);
+                onCancelDelete();
+            }} />
             <button type="button" className="asset-collection-body is-compact block w-full px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--workspace-accent)]" onClick={onOpen}>
                 <div className="asset-card-meta">
                     <h2 className="truncate text-[var(--fs-body)] font-semibold text-foreground" title={asset.title}>{asset.title}</h2>
@@ -1390,7 +1462,7 @@ function isKnownAssetKind(kind: unknown): kind is AssetKind {
     return kind === "image" || kind === "video" || kind === "audio" || kind === "model" || kind === "text";
 }
 
-function AssetCover({ asset, selected, onSelect, onOpen, onToggleFavorite, menuItems }: { asset: LibraryAsset; selected: boolean; onSelect: (selected: boolean) => void; onOpen: () => void; onToggleFavorite: () => void; menuItems: MenuProps["items"] }) {
+function AssetCover({ asset, selected, onSelect, onOpen, onToggleFavorite, menuItems, menuOpen, onMenuOpenChange, onMenuAction }: { asset: LibraryAsset; selected: boolean; onSelect: (selected: boolean) => void; onOpen: () => void; onToggleFavorite: () => void; menuItems: MenuProps["items"]; menuOpen: boolean; onMenuOpenChange: (open: boolean) => void; onMenuAction: (key: string) => void }) {
     const kind = isKnownAssetKind(asset.kind) ? asset.kind : undefined;
     const KindIcon = kind ? assetKindIcons[kind] : FileText;
     const clock = asset.kind === "video" || asset.kind === "audio" ? formatAssetClock(asset.data.durationMs) : null;
@@ -1427,7 +1499,7 @@ function AssetCover({ asset, selected, onSelect, onOpen, onToggleFavorite, menuI
             {clock ? <span className="assets-cover-clock">{clock}</span> : null}
             <input type="checkbox" checked={selected} onClick={(event) => event.stopPropagation()} onChange={(event) => onSelect(event.target.checked)} className="assets-select-check" aria-label={`选择 ${asset.title}`} />
             <button type="button" className={`assets-cover-favorite ${asset.metadata?.favorite === true ? "is-active" : ""}`} aria-pressed={asset.metadata?.favorite === true} aria-label={asset.metadata?.favorite === true ? `取消收藏 ${asset.title}` : `收藏 ${asset.title}`} title={asset.metadata?.favorite === true ? "取消收藏" : "收藏"} onClick={(event) => { event.stopPropagation(); onToggleFavorite(); }}><Star className="size-3.5" /></button>
-            <Dropdown trigger={["click"]} menu={{ items: menuItems }}>
+            <Dropdown trigger={["click"]} open={menuOpen} onOpenChange={onMenuOpenChange} menu={{ items: menuItems, onClick: ({ key }) => onMenuAction(key) }}>
                 <button
                     type="button"
                     className="assets-cover-more"
@@ -1513,7 +1585,7 @@ function AssetsBatchBar({
                     <Button size="small" icon={<FolderOpen className="size-3.5" />}>移动到文件夹</Button>
                 </Dropdown>
                 <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={onDelete}>
-                    彻底删除
+                    永久删除
                 </Button>
             </div>
         </div>
@@ -1625,7 +1697,7 @@ function GenerationHistorySurface({
                 {selectedHistoryAssets.length ? <div className="generation-history-batch-bar" role="toolbar" aria-label="生成历史批量操作">
                     <span>已选择 {selectedHistoryAssets.length} 项</span>
                     <button type="button" onClick={() => selectedHistoryAssets.forEach(onDownload)}><Download className="size-3.5" />下载</button>
-                    <button type="button" className="is-danger" onClick={() => setPendingDelete(selectedHistoryAssets)}><Trash2 className="size-3.5" />彻底删除</button>
+                    <button type="button" className="is-danger" onClick={() => setPendingDelete(selectedHistoryAssets)}><Trash2 className="size-3.5" />永久删除</button>
                     <button type="button" className="is-clear" onClick={clearHistorySelection}>取消选择</button>
                 </div> : null}
                 {visibleGroups.length ? visibleGroups.map((date) => (
@@ -1641,7 +1713,7 @@ function GenerationHistorySurface({
                                         <button type="button" className={cn("generation-history-select", selectedHistoryIds.has(asset.id) && "is-selected")} aria-label={`选择 ${asset.title}`} aria-pressed={selectedHistoryIds.has(asset.id)} onClick={(event) => { event.stopPropagation(); toggleHistorySelection(asset.id); }}>{selectedHistoryIds.has(asset.id) ? <Check className="size-4" /> : null}</button>
                                         <div className="generation-history-hover-actions" aria-label="生成结果操作">
                                             <button type="button" aria-label={`下载 ${asset.title}`} title="下载" onClick={(event) => { event.stopPropagation(); onDownload(asset); }}><Download className="size-4" /></button>
-                                            <button type="button" aria-label={`彻底删除 ${asset.title}`} title="彻底删除" onClick={(event) => { event.stopPropagation(); setPendingDelete([asset]); }}><Trash2 className="size-4" /></button>
+                                            <button type="button" aria-label={`永久删除 ${asset.title}`} title="永久删除" onClick={(event) => { event.stopPropagation(); setPendingDelete([asset]); }}><Trash2 className="size-4" /></button>
                                         </div>
                                     </div>
                                     <div className="generation-history-card-meta"><strong>{asset.title}</strong><span>{asset.kind === "video" ? "视频" : asset.kind === "audio" ? "音频" : "图片"} · 本地</span></div>
@@ -1677,7 +1749,7 @@ function GenerationHistorySurface({
         </WorkspacePage>
         <Modal
             className="library-modal library-confirm-modal"
-            title="彻底删除生成素材"
+            title="永久删除生成素材"
             open={pendingDelete.length > 0}
             onCancel={() => { if (!deleteInFlight.current) setPendingDelete([]); }}
             onOk={() => void confirmHistoryDelete()}
@@ -1685,10 +1757,10 @@ function GenerationHistorySurface({
             closable={!deleting}
             cancelButtonProps={{ disabled: deleting }}
             okButtonProps={{ danger: true }}
-            okText="彻底删除"
+            okText="永久删除"
             cancelText="取消"
         >
-            {pendingDelete.length === 1 ? `确定彻底删除「${pendingDelete[0].title}」吗？` : `确定彻底删除已选择的 ${pendingDelete.length} 个素材吗？`}未被其他内容引用的文件也会删除，操作不可恢复。
+            {pendingDelete.length === 1 ? `删除「${pendingDelete[0].title}」后将无法恢复。` : `删除已选择的 ${pendingDelete.length} 个素材后将无法恢复。`}仍被画布或任务引用的文件会保留，其余文件将同步清理。
         </Modal>
         <Drawer className="assets-generation-preview-drawer" open={Boolean(previewAsset)} title={previewAsset?.title || "生成结果预览"} onClose={() => setPreviewAsset(null)} size="default">
             {previewAsset ? <div className="generation-history-preview"><AssetMediaPreview asset={previewAsset} alt={previewAsset.title} className="generation-history-preview-media" fallback={<GenerationHistoryMissingPreview asset={previewAsset} />} /><div className="generation-history-preview-meta"><strong>{previewAsset.title}</strong><span>{previewAsset.kind === "video" ? "视频" : previewAsset.kind === "audio" ? "音频" : "图片"} · 本地生成</span><span>来源：{previewAsset.source || "生成任务"}</span>{typeof previewAsset.metadata?.taskId === "string" ? <span>任务 ID：{previewAsset.metadata.taskId}</span> : null}{typeof previewAsset.metadata?.generationEffectKey === "string" ? <span>生成标识：{previewAsset.metadata.generationEffectKey}</span> : null}</div></div> : null}

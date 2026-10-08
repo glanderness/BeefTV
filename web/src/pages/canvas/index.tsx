@@ -3,9 +3,10 @@ import { useNavigate, useSearchParams } from "react-router";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { App, Button, Dropdown, Input, Modal } from "antd";
 import { Select } from "@/components/ui/base/select";
-import { ArrowLeft, Download, FolderPlus, Image as ImageIcon, MoreHorizontal, Pencil, Plus, Search, Trash2, Upload } from "lucide-react";
+import { Download, FolderPlus, Image as ImageIcon, MoreHorizontal, Pencil, Plus, Trash2, Upload } from "lucide-react";
 
 import { CollectionGrid, PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
+import { ExpandableSearch } from "@/components/layout/expandable-search";
 import { WorkspaceLoadingState, WorkspaceState } from "@/components/layout/workspace-state";
 
 import { CanvasFolderCard } from "@/components/canvas/canvas-folder-card";
@@ -283,15 +284,10 @@ export default function CanvasPage() {
         <WorkspacePage className="studio-collection-page lib-tv-project-page">
             <PageHeader
                 title={activeFolder?.name || "全部项目"}
-                leading={(
-                    <>
-                        <button type="button" className="libtv-project-back" onClick={() => navigate("/")} aria-label="返回首页" title="返回首页"><ArrowLeft aria-hidden="true" /></button>
-                        {activeFolder ? <button type="button" className="libtv-project-breadcrumb-button" onClick={() => setFolderFilter("all")}>全部项目 /</button> : null}
-                    </>
-                )}
+                leading={activeFolder ? <button type="button" className="libtv-project-breadcrumb-button" onClick={() => setFolderFilter("all")}>全部项目 /</button> : undefined}
                 actions={(
                     <div className="libtv-project-actions">
-                    <Input prefix={<Search />} value={keyword} allowClear placeholder="搜索项目" aria-label="搜索项目" onChange={(event) => setKeyword(event.target.value)} />
+                    <ExpandableSearch value={keyword} placeholder="搜索项目" onChange={setKeyword} />
                     <Button icon={<Upload />} disabled={!hydrated} onClick={() => inputRef.current?.click()}>导入画布</Button>
                     <Button icon={<Trash2 />} onClick={() => setHistoryOpen(true)}>回收站</Button>
                     <Button icon={<FolderPlus />} disabled={!hydrated} onClick={() => {

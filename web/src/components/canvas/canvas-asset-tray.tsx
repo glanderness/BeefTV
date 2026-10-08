@@ -1,6 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { CircleUserRound, Crosshair, FolderOpen, ImageIcon, Images, PanelLeftClose, Plus, Search, X } from "lucide-react";
+import { ChevronDown, CircleUserRound, Crosshair, ImageIcon, Images, Plus, Search, X } from "lucide-react";
 
 import { FloatingDock, type FloatingDockEntry } from "@/components/ui/aceternity/floating-dock";
 import { CachedResourceImage } from "@/components/cached-resource-image";
@@ -205,14 +205,9 @@ export function CanvasAssetTray({ assetImages, canvasImages, showLibrary = true,
                             <span className="h-1 w-12 rounded-full bg-current" />
                         </button>
 
-                        <div className="flex items-center justify-between gap-2 px-1 pb-2.5 pt-1.5">
-                            <div className="flex min-w-0 items-center gap-2">
-                                <span className="grid size-8 shrink-0 place-items-center rounded-[var(--dock-item-radius)]" style={{ background: theme.spatial.surface, color: theme.accent.primary }}>
-                                    <FolderOpen className="size-3.5" />
-                                </span>
-                            </div>
+                        <div className="flex justify-end px-1 pb-2.5 pt-1.5">
                             <motion.button type="button" whileHover={motionEnabled ? { rotate: -5, scale: 1.05 } : undefined} whileTap={motionEnabled ? { scale: 0.92 } : undefined} className="grid size-7 shrink-0 place-items-center rounded-full outline-none focus-visible:ring-2" style={{ background: theme.spatial.surface, color: theme.node.muted }} onClick={() => setOpen(false)} aria-label="收起素材空间">
-                                <PanelLeftClose className="size-3" />
+                                <ChevronDown className="size-4" />
                             </motion.button>
                         </div>
 
@@ -227,7 +222,7 @@ export function CanvasAssetTray({ assetImages, canvasImages, showLibrary = true,
                             {keyword ? <button type="button" className="grid size-6 shrink-0 place-items-center rounded-full opacity-55 hover:opacity-100" onClick={() => setKeyword("")} aria-label="清空搜索"><X className="size-3" /></button> : null}
                         </label>
 
-                        <div className="thin-scrollbar mt-2.5 min-h-0 flex-1 overflow-y-auto pr-1">
+                        <div className="thin-scrollbar mt-2.5 min-h-0 flex-1 overflow-x-hidden overflow-y-auto pr-1">
                             {showLibrary && tab === "library" ? (
                                 filteredAssets.length ? (
                                     <div className="space-y-1.5">
@@ -288,6 +283,7 @@ function AssetTrayRow({ title, imageUrl, storageKey, icon, active = false, dragg
         <motion.button
             type="button"
             data-canvas-asset-row
+            aria-label={`${title}，${active ? "当前已选择" : draggable ? "拖入画布或点击插入" : "点击定位到画布"}`}
             draggable={draggable}
             whileHover={motionEnabled ? { x: 4, scale: 1.008 } : undefined}
             whileTap={motionEnabled ? { scale: 0.985 } : undefined}
@@ -302,7 +298,6 @@ function AssetTrayRow({ title, imageUrl, storageKey, icon, active = false, dragg
             </span>
             <span className="min-w-0">
                 <span className="block truncate text-[var(--fs-tiny)] font-semibold">{title}</span>
-                <span className="mt-0.5 block text-[var(--fs-micro)] opacity-45">{active ? "当前已选择" : draggable ? "拖入画布或点击插入" : "点击定位到画布"}</span>
             </span>
             <span className="grid size-6 place-items-center rounded-full opacity-45 transition-opacity group-hover:opacity-90" style={{ background: theme.node.panel }}>{icon}</span>
         </motion.button>

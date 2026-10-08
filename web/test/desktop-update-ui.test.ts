@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { appChangelogZh } from "../src/components/layout/app-changelog.zh";
 
 const root = resolve(import.meta.dir, "..");
 
@@ -9,6 +10,12 @@ function read(path: string) {
 }
 
 describe("desktop update UI contract", () => {
+    test("installed release has published notes in both the release and in-app changelogs", () => {
+        const version = read("../VERSION").trim();
+        expect(read("../CHANGELOG.md")).toContain(`## ${version}\n`);
+        expect(appChangelogZh.find((entry) => entry.version === version)?.changes.length).toBeGreaterThan(0);
+        expect(new Set(appChangelogZh.map((entry) => entry.version)).size).toBe(appChangelogZh.length);
+    });
     test("sidebar version area is desktop-gated and keeps changelog access", () => {
         const sidebar = read("src/components/layout/workspace-sidebar-nav.tsx");
         const update = read("src/components/layout/workspace-sidebar-update.tsx");
