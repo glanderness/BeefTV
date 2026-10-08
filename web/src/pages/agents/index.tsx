@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { App, Button, Popconfirm } from "antd";
-import { Plug, Terminal, Unplug } from "lucide-react";
+import { Plug } from "lucide-react";
 import { useState } from "react";
 
 import { PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
@@ -9,8 +9,8 @@ import { useCopyText } from "@/hooks/use-copy-text";
 import { ApiError } from "@/services/api/request";
 import { listAgentClients, revokeAgentClient, type AgentClientKind } from "@/services/api/agent-clients";
 
-import { agentClientDisplayLabel, agentClientKindLabel, agentClientKindSummary, agentClientKinds, agentClientLastUsedLabel, agentClientModeLabel } from "./agent-client-presentation";
-import { AgentConnectModal } from "./agent-connect-modal";
+import { agentClientDisplayLabel, agentClientKindLabel, agentClientKinds, agentClientLastUsedLabel, agentClientModeLabel } from "./agent-client-presentation";
+import { AgentConnectPanel } from "./agent-connect-panel";
 
 const AGENT_CLIENTS_QUERY_KEY = ["agent-clients"] as const;
 
@@ -18,12 +18,15 @@ export default function AgentsPage() {
     const { message } = App.useApp();
     const copyText = useCopyText();
     const [connecting, setConnecting] = useState<AgentClientKind | null>(null);
+    const [managing, setManaging] = useState<AgentClientKind | null>(null);
+    const [setupBusy, setSetupBusy] = useState(false);
     const [revoking, setRevoking] = useState("");
 
     const clientsQuery = useQuery({
         queryKey: AGENT_CLIENTS_QUERY_KEY,
         queryFn: ({ signal }) => listAgentClients(signal),
         retry: false,
+        refetchInterval: 5000,
     });
 
     // 后端还没带上这个能力时（404）不报错，也不留一个坏掉的页面。
@@ -46,79 +49,49 @@ export default function AgentsPage() {
 
     return (
         <WorkspacePage>
-            <PageHeader title="外部 Agent" />
+            <PageHeader title="BeefTV MCP" />
 
             {unsupported ? (
                 <EmptyState icon={Plug} title="当前版本还不支持" description="更新到新版本后就能在这里连接 Codex、Claude Code 和 Cursor。" />
             ) : (
-                <div className="mt-4 flex flex-col gap-7 pb-6">
-                    <section aria-labelledby="agent-connect-title">
-                        <h2 id="agent-connect-title" className="text-sm font-semibold">选择要连接的工具</h2>
-                        <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                            {agentClientKinds.map((kind) => (
-                                <div key={kind} data-agent-client-kind={kind} className="flex min-w-0 flex-col gap-3 rounded-[var(--r-md)] border border-border bg-surface px-4 py-4">
-                                    <div className="min-w-0">
-                                        <p className="truncate text-[13px] leading-5 font-semibold">{agentClientKindLabel(kind)}</p>
-                                        <p className="mt-1.5 text-xs leading-5 text-foreground/55">{agentClientKindSummary(kind)}</p>
+                <div className="agents-settings mt-4 pb-6">
+                    {clientsQuery.isPending ? <p className="text-xs text-foreground/55">正在读取…</p> : null}
+                    {clientsQuery.error ? <div role="alert" className="mb-4 text-sm">无法读取连接状态。<Button type="link" onClick={() => void clientsQuery.refetch()}>重试</Button></div> : null}
+                    <div className="agent-tool-list">
+                        {agentClientKinds.map((kind) => {
+                            const registered = clients.filter((client) => client.kind === kind);
+                            const expanded = connecting === kind || managing === kind;
+                            const status = clientsQuery.isPending || clientsQuery.error ? "状态未知" : registered.some((client) => client.lastUsedAt) ? "已验证连接" : registered.length ? "等待连接" : "未连接";
+                            return <section key={kind} data-agent-client-kind={kind} className="agent-tool">
+                                <div className="agent-tool-row">
+                                    <h2>{agentClientKindLabel(kind)}</h2>
+                                    <div className="agent-tool-actions">
+                                        <span className="agent-tool-status">{status}</span>
+                                        <Button aria-expanded={expanded} disabled={setupBusy || !cli?.available || clientsQuery.isPending || Boolean(clientsQuery.error)} onClick={() => {
+                                            if (expanded) { setConnecting(null); setManaging(null); return; }
+                                            setConnecting(registered.length ? null : kind);
+                                            setManaging(registered.length ? kind : null);
+                                        }}>{expanded ? "收起" : registered.length ? "管理" : "连接"}</Button>
                                     </div>
-                                    <Button className="mt-auto self-start" size="small" icon={<Plug className="size-3.5" />} disabled={!cli?.available} onClick={() => setConnecting(kind)}>连接</Button>
                                 </div>
-                            ))}
-                        </div>
-                        {cli && !cli.available ? <p role="alert" className="mt-3 text-xs leading-5 text-foreground/60">安装文件不完整，无法连接外部工具。请重新下载并完整解压 BeefTV。</p> : null}
-                    </section>
-
-                    <section aria-labelledby="agent-connected-title">
-                        <h2 id="agent-connected-title" className="text-sm font-semibold">已连接</h2>
-                        {clientsQuery.isPending ? (
-                            <p className="mt-3 px-1 text-xs leading-5 text-foreground/45">正在读取…</p>
-                        ) : clientsQuery.error ? (
-                            <div className="mt-3 px-1 text-xs leading-5 text-foreground/55">
-                                <p>没能读到已连接的工具。</p>
-                                <Button type="link" size="small" className="mt-1 h-auto p-0 text-xs" onClick={() => void clientsQuery.refetch()}>重试</Button>
-                            </div>
-                        ) : clients.length ? (
-                            <ul className="mt-3 flex flex-col gap-2">
-                                {clients.map((client) => (
-                                    <li key={client.id} data-agent-client-id={client.id} className="flex min-w-0 flex-col gap-3 rounded-[var(--r-md)] border border-border bg-surface px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
-                                        <div className="min-w-0">
-                                            <p className="truncate text-[13px] leading-5 font-medium">{agentClientDisplayLabel(client)}</p>
-                                            <p className="mt-1 text-xs leading-5 text-foreground/50">
-                                                {[agentClientDisplayLabel(client) === agentClientKindLabel(client.kind) ? "" : agentClientKindLabel(client.kind), agentClientModeLabel(client.mode), `最近使用 ${agentClientLastUsedLabel(client.lastUsedAt)}`].filter(Boolean).join(" · ")}
-                                            </p>
-                                        </div>
-                                        <Popconfirm
-                                            title="断开这个工具？"
-                                            description="断开后它不能再读取或修改画布，需要重新连接。"
-                                            okText="断开"
-                                            cancelText="取消"
-                                            okButtonProps={{ danger: true }}
-                                            onConfirm={() => void disconnect(client.id)}
-                                        >
-                                            <Button className="shrink-0 self-start sm:self-auto" size="small" icon={<Unplug className="size-3.5" />} loading={revoking === client.id}>断开</Button>
+                                {managing === kind ? <div className="agent-management">
+                                    {registered.map((client) => <div key={client.id} data-agent-client-id={client.id} className="agent-registration">
+                                        <div className="agent-registration-info"><p className="text-sm font-medium break-words">{agentClientDisplayLabel(client)}</p><p className="text-xs text-foreground/55">{agentClientModeLabel(client.mode)} · 最近使用：{agentClientLastUsedLabel(client.lastUsedAt)}</p></div>
+                                        <Popconfirm title="断开这个工具？" description="断开后它不能再读取或修改画布，需要重新连接。" okText="断开" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => void disconnect(client.id)}>
+                                            <Button loading={revoking === client.id}>断开</Button>
                                         </Popconfirm>
-                                    </li>
-                                ))}
-                            </ul>
-                        ) : (
-                            <EmptyState size="compact" icon={Plug} title="还没有连接任何工具" description="从上面选一个工具，连接后会出现在这里。" />
-                        )}
-                    </section>
-
-                    {cli?.available ? (
-                        <section aria-labelledby="agent-cli-title">
-                            <h2 id="agent-cli-title" className="text-sm font-semibold">命令行工具</h2>
-                            <div className="mt-3 flex min-w-0 flex-col gap-3 rounded-[var(--r-md)] border border-border bg-surface px-4 py-4">
-                                <p className="text-xs leading-5 text-foreground/55">安装后可以在终端直接用 beeftv 命令。</p>
-                                <p className="min-w-0 break-all rounded-md bg-surface-active px-3.5 py-2.5 text-[12px] leading-5 font-mono text-foreground/80">{cli.path}</p>
-                                <Button className="self-start" size="small" icon={<Terminal className="size-3.5" />} onClick={() => copyText(cli.installCommand)}>复制安装命令</Button>
-                            </div>
-                        </section>
-                    ) : null}
+                                    </div>)}
+                                    <Button className="agent-add-connection mt-3" onClick={() => { setManaging(null); setConnecting(kind); }}>新增连接</Button>
+                                </div> : null}
+                                {connecting === kind ? <AgentConnectPanel key={kind} kind={kind} onClose={() => setConnecting(null)} onConfigured={() => void clientsQuery.refetch()} verifiedClientIds={clients.filter((client) => client.lastUsedAt).map((client) => client.id)} onBusyChange={setSetupBusy} /> : null}
+                            </section>;
+                        })}
+                    </div>
+                    {cli && !cli.available ? <p role="alert" className="mt-4 text-sm text-foreground/60">安装文件不完整，无法连接外部工具。请重新下载并完整解压 BeefTV。</p> : null}
+                    {cli?.available ? <details className="agent-cli-details"><summary>命令行工具</summary><div className="mt-3 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-foreground/55">在终端使用 beeftv 命令</p><Button size="small" onClick={() => copyText(cli.installCommand)}>复制安装命令</Button></div></details> : null}
                 </div>
             )}
 
-            <AgentConnectModal kind={connecting} onClose={() => setConnecting(null)} onConnected={() => void clientsQuery.refetch()} />
         </WorkspacePage>
     );
 }

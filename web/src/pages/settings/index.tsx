@@ -79,10 +79,10 @@ export default function SettingsPage() {
         channels: (
             <SettingsPane>
                 <ChannelSettingsPane />
-                <div className="settings-section mt-4">
+                <div className="settings-section model-default-section">
                     <div className="settings-pane-header">
                         <div className="min-w-0">
-                            <h2>模型选择</h2>
+                            <h2>默认模型</h2>
                         </div>
                     </div>
                     <ModelDefaultGrid config={effectiveConfig} onChange={(key, model) => updateConfig(key, model)} />

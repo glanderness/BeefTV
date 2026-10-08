@@ -156,14 +156,10 @@ func (s *Service) DeleteUserAssetWithResources(userID string, assetID string, ex
 		if snapshotErr != nil {
 			return snapshotErr
 		}
-		sharedAssetResourceIDs := map[string]struct{}{}
+		retainedResourceIDs := map[string]struct{}{}
 		for _, reference := range snapshot.Direct {
 			if _, exists := ownedIDSet[reference.ResourceID]; exists {
-				if reference.Kind == "素材" {
-					sharedAssetResourceIDs[reference.ResourceID] = struct{}{}
-					continue
-				}
-				usages = append(usages, ResourceUsage{Kind: reference.Kind, ID: reference.ID, Title: reference.Title})
+				retainedResourceIDs[reference.ResourceID] = struct{}{}
 			}
 		}
 		for _, document := range snapshot.Documents {
@@ -181,19 +177,15 @@ func (s *Service) DeleteUserAssetWithResources(userID string, assetID string, ex
 				referencedIDs[resourceID] = struct{}{}
 			}
 			if len(referencedIDs) > 0 {
-				if document.Kind == "素材" {
-					for resourceID := range referencedIDs {
-						sharedAssetResourceIDs[resourceID] = struct{}{}
-					}
-					continue
+				for resourceID := range referencedIDs {
+					retainedResourceIDs[resourceID] = struct{}{}
 				}
-				usages = append(usages, ResourceUsage{Kind: document.Kind, ID: document.ID, Title: document.Title})
 			}
 		}
-		if len(sharedAssetResourceIDs) > 0 {
+		if len(retainedResourceIDs) > 0 {
 			deletableOwnedIDs := ownedIDs[:0]
 			for _, resourceID := range ownedIDs {
-				if _, shared := sharedAssetResourceIDs[resourceID]; !shared {
+				if _, retained := retainedResourceIDs[resourceID]; !retained {
 					deletableOwnedIDs = append(deletableOwnedIDs, resourceID)
 				}
 			}
@@ -218,11 +210,14 @@ func (s *Service) DeleteUserAssetWithResources(userID string, assetID string, ex
 	}
 	deletionJobs := DeletionJobs(userID, physicalObjects)
 	if err := s.repo.DeleteAssetAndResources(userID, assetID, ownedIDs, deletionJobs, expected); err != nil {
-		if errors.Is(err, repository.ErrCanvasHistoryResourceReferenced) {
-			return HistoryReferenced()
-		}
-		if errors.Is(err, repository.ErrResourceCleanupStillReferenced) {
-			return StillReferenced()
+		if errors.Is(err, repository.ErrCanvasHistoryResourceReferenced) || errors.Is(err, repository.ErrResourceCleanupStillReferenced) {
+			// A reference appeared after the snapshot. Keep every resource and
+			// remove only the asset record in a fresh guarded transaction.
+			if retryErr := s.repo.DeleteAssetAndResources(userID, assetID, nil, nil, expected); retryErr == nil {
+				return nil
+			} else {
+				err = retryErr
+			}
 		}
 		if errors.Is(err, repository.ErrAssetExpectedStatusMismatch) {
 			return TrashStatusConflict()

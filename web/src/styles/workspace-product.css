@@ -73,7 +73,7 @@
 .libtv-project-breadcrumb-button:hover { color: var(--user-ink); }
 .libtv-project-count { color: var(--user-ink-soft); font-size: 12px; }
 .libtv-project-actions { position: relative; max-width: 100%; flex-wrap: wrap; gap: 8px; }
-.libtv-project-actions .ant-input-affix-wrapper { width: 200px; max-width: 100%; height: 32px; }
+.libtv-project-actions > .ant-input-affix-wrapper { width: 200px; max-width: 100%; height: 32px; }
 .libtv-project-actions > .ant-btn { height: 32px; flex-shrink: 0; padding-inline: 10px; }
 .libtv-project-actions > .ant-dropdown-trigger,
 .libtv-project-actions > .ant-dropdown-trigger:nth-of-type(3) { position: absolute; top: 0; right: 0; width: 38px; min-width: 38px; padding-inline: 7px; }
@@ -354,6 +354,11 @@
 .assets-empty-secondary button { border: 0; background: transparent; color: inherit; cursor: pointer; }
 .assets-empty-secondary button:hover { color: var(--user-ink-muted); }
 .assets-header-compact-actions { display: inline-flex; align-items: center; gap: 6px; }
+.asset-delete-confirm-trigger { display: block; width: 100%; }
+.asset-delete-confirm-popover .ant-popover-inner { width: 252px; padding: 14px; border: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent); border-radius: 10px; background: var(--popover); box-shadow: 0 14px 36px rgba(0, 0, 0, .34); }
+.asset-delete-confirm-content { color: var(--popover-foreground); font-size: 13px; line-height: 1.5; }
+.asset-delete-confirm-content p { margin: 0; }
+.asset-delete-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .assets-header-compact-button { display: grid; width: 36px; height: 36px; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--user-ink-muted); cursor: pointer; }
 .assets-header-compact-button:hover,
 .assets-header-compact-button.is-active { background: var(--user-surface-muted); color: var(--user-ink); }
@@ -361,7 +366,11 @@
 .assets-new-button.ant-btn { height: 36px !important; border-color: #fff !important; border-radius: 8px !important; background: #fff !important; color: #171717 !important; }
 .assets-new-button.ant-btn:hover,
 .assets-new-button.ant-btn:focus { border-color: #f1f1f1 !important; background: #f1f1f1 !important; color: #111 !important; }
-.assets-inline-search {
+.workspace-expandable-search { flex: 0 0 auto; }
+.workspace-expandable-search-button { display: grid; width: 36px; height: 36px; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--user-ink-muted); cursor: pointer; }
+.workspace-expandable-search-button:hover,
+.workspace-expandable-search-button.is-active { background: var(--user-surface-muted); color: var(--user-ink); }
+.workspace-expandable-search-input {
     width: 216px;
     height: 36px;
     border: 0 !important;
@@ -370,12 +379,12 @@
     box-shadow: none !important;
     color: #ededed;
 }
-.dark .app-user-workspace .assets-inline-search { background: var(--user-surface-muted) !important; }
-.assets-inline-search:focus-within { outline: 2px solid rgba(255,255,255,.12); }
-.assets-inline-search .ant-input { color: #ededed; font-size: 13px; }
-.assets-inline-search .ant-input::placeholder { color: #858585; }
-.assets-inline-search .ant-input-prefix,
-.assets-inline-search .ant-input-clear-icon { color: #8f8f8f; }
+.dark .app-user-workspace .workspace-expandable-search-input { background: var(--user-surface-muted) !important; }
+.workspace-expandable-search-input:focus-within { outline: 2px solid rgba(255,255,255,.12); }
+.workspace-expandable-search-input .ant-input { color: #ededed; font-size: 13px; }
+.workspace-expandable-search-input .ant-input::placeholder { color: #858585; }
+.workspace-expandable-search-input .ant-input-prefix,
+.workspace-expandable-search-input .ant-input-clear-icon { color: #8f8f8f; }
 .assets-secondary-controls { display: none; }
 .assets-secondary-controls.is-open { display: block; }
 .assets-collection-filters {
@@ -1077,157 +1086,84 @@
     .app-product-workspace .story-launcher-panel { padding: 16px; border-radius: 16px; }
 }
 
-/* Changelog Modal Styles */
+/* Changelog: one quiet column, with the installed release open by default. */
 .app-changelog-modal .ant-modal-container {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    max-height: min(84vh, 760px);
     border: 1px solid var(--user-border);
-    border-radius: 20px;
+    border-radius: 16px;
     background: var(--user-page-bg);
     box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
-    max-height: min(84vh, 780px);
 }
 
 .app-changelog-modal .ant-modal-header {
     margin-bottom: 0;
-    padding: 20px 24px 16px;
-    border-bottom: 1px solid var(--user-border);
-    background: var(--user-surface);
+    padding: 24px 28px 12px;
+    background: var(--user-page-bg);
 }
 
 .app-changelog-modal .ant-modal-body { padding: 0 !important; }
 
 .app-changelog-heading {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: 12px;
-    width: 100%;
-}
-
-.app-changelog-heading-icon {
-    display: grid;
-    width: 38px;
-    height: 38px;
-    flex: 0 0 38px;
-    place-items: center;
-    border-radius: 11px;
-    background: color-mix(in srgb, var(--user-accent) 14%, var(--user-surface));
-    color: var(--user-accent);
-}
-
-.app-changelog-heading-copy {
-    display: grid;
-    min-width: 0;
-    flex: 1 1 auto;
-    gap: 2px;
-}
-
-.app-changelog-heading-title {
     color: var(--user-ink);
     font-size: 16px;
-    font-weight: 650;
-    line-height: 1.3;
+    font-weight: 500;
+    line-height: 1.4;
 }
 
-.app-changelog-heading-description {
+.app-changelog-heading-version {
     color: var(--user-ink-muted);
     font-size: 12px;
     font-weight: 400;
-}
-
-.app-changelog-current-version {
-    margin-right: 28px;
-    border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--user-accent) 25%, transparent);
-    background: color-mix(in srgb, var(--user-accent) 10%, var(--user-surface));
-    padding: 3px 10px;
-    color: var(--user-accent);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 11px;
-    font-weight: 600;
-    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
 
 .app-changelog-scroll {
-    max-height: min(66vh, 600px);
+    max-height: min(70vh, 640px);
     overflow-y: auto;
-    padding: 20px 28px 32px;
-    color: var(--user-ink);
+    padding: 4px 28px 24px;
 }
 
-.app-changelog-section-heading {
+.app-changelog-release { margin: 0; }
+.app-changelog-release-summary {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin: 24px 0 12px;
-    padding-bottom: 6px;
-    border-bottom: 1px solid var(--user-border);
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 0;
     color: var(--user-ink);
-    font-size: 15px;
-    font-weight: 650;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    list-style: none;
 }
-
-.app-changelog-section-heading:first-child {
-    margin-top: 0;
-}
-
-.app-changelog-section-marker {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--user-ink-muted);
-}
-
-.app-changelog-section-heading.is-latest .app-changelog-section-marker {
-    background: var(--user-accent);
-}
-
-.app-changelog-latest-badge {
-    border-radius: 999px;
-    background: var(--user-accent);
-    padding: 1px 7px;
-    color: var(--user-accent-foreground, #fff);
-    font-size: 10px;
-    font-weight: 600;
-}
+.app-changelog-release-summary::-webkit-details-marker { display: none; }
+.app-changelog-release-summary:focus-visible { outline: 2px solid var(--user-accent); outline-offset: 2px; border-radius: 4px; }
+.app-changelog-chevron { width: 16px; height: 16px; flex: none; color: var(--user-ink-muted); transition: transform 160ms ease; }
+.app-changelog-release[open] .app-changelog-chevron { transform: rotate(180deg); }
 
 .app-changelog-list {
-    margin: 8px 0 16px 20px;
-    padding: 0;
-    list-style-type: disc;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+    display: grid;
+    gap: 10px;
+    margin: 0;
+    padding: 0 28px 18px 0;
+    list-style: none;
 }
-
 .app-changelog-list li {
-    color: color-mix(in srgb, var(--user-ink) 88%, transparent);
+    color: var(--user-ink-muted);
     font-size: 13px;
     line-height: 1.65;
 }
 
-.app-changelog-paragraph {
-    margin: 6px 0;
-    color: color-mix(in srgb, var(--user-ink) 78%, transparent);
-    font-size: 13px;
-    line-height: 1.6;
-}
-
-.app-changelog-code {
-    border-radius: 5px;
-    border: 1px solid var(--user-border);
-    background: var(--user-surface-muted);
-    padding: 1px 5px;
-    color: var(--user-accent);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 11.5px;
-}
-
 @media (max-width: 620px) {
-    .app-changelog-heading-description { display: none; }
-    .app-changelog-current-version { display: none; }
-    .app-changelog-scroll { padding: 14px 16px 24px; }
+    .app-changelog-modal .ant-modal-header { padding: 20px 20px 10px; }
+    .app-changelog-scroll { padding: 4px 20px 20px; }
+    .app-changelog-list { padding-right: 8px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1530,3 +1466,45 @@
         justify-content: flex-start;
     }
 }
+
+/* Default model preferences share one compact selector layout. */
+.model-default-settings { display: flex; flex-direction: column; }
+.model-default-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px 0; }
+.model-default-setting-label { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.model-default-setting-label h3 { margin: 0; font-size: 14px; font-weight: 500; }
+.model-default-setting-control { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; width: min(360px, 48%); }
+.model-default-select { width: 100%; }
+.model-default-select.ant-select { height: 40px; }
+.model-default-select-popup .ant-select-item { padding: 10px 12px; }
+.model-default-select-option { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.model-default-select-option > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-default-select-channel { font-size: 11px; color: var(--muted-foreground); }
+.settings-page .model-default-section { margin-top: 32px; }
+.settings-page .model-default-section .settings-pane-header { margin-bottom: 4px; }
+.settings-page .model-default-section .settings-pane-header h2 { font-size: 16px; font-weight: 500; line-height: 22px; }
+@media (max-width: 640px) {
+    .model-default-setting-row { align-items: stretch; flex-direction: column; gap: 12px; padding: 16px 0; }
+    .model-default-setting-control { width: 100%; }
+}
+
+/* External Agent settings share the workspace title and content gutters. */
+.agent-tool-list { display: flex; flex-direction: column; gap: 8px; }
+.agent-tool { min-width: 0; border-radius: var(--r-md); background: var(--surface); }
+.agent-tool-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; }
+.agent-tool-row h2 { margin: 0; font-size: 14px; font-weight: 500; }
+.agent-tool-actions { display: flex; align-items: center; gap: 20px; flex-shrink: 0; }
+.agent-tool-status { font-size: 12px; color: var(--muted-foreground); }
+.agent-connect-panel, .agent-management { padding: 4px 20px 20px; }
+.agent-registration { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; }
+.agent-registration-info { display: flex; align-items: center; flex-wrap: wrap; min-width: 0; gap: 8px 20px; }
+.agent-cli-details { margin-top: 24px; padding: 0 20px; }
+.agent-cli-details summary { cursor: pointer; font-size: 13px; color: var(--muted-foreground); }
+@media (max-width: 640px) {
+    .agent-tool-row { padding: 14px 16px; gap: 12px; }
+    .agent-tool-actions { gap: 12px; }
+    .agent-connect-panel, .agent-management { padding: 4px 16px 16px; }
+    .agent-tool-row h2 { min-width: 0; }
+}
+
+.agent-permissions.ant-radio-group { display: flex; flex-direction: column; gap: 12px; }
+.agent-management .agent-add-connection.ant-btn { padding-inline: 0; }

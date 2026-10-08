@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Alert, Button, Checkbox, Form, Input, Segmented, Select, Spin } from "antd";
-import { ArrowLeft, ArrowRight, Check, ChevronDown, KeyRound, Search, Settings2, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, KeyRound, Search, Settings2, ShieldCheck } from "lucide-react";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { ModelLogo } from "@/components/model-logo";
 import { ChannelHeadersEditor, validateChannelHeaders } from "@/components/channel-headers-editor";
@@ -139,9 +139,7 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
 
     return <AppModal open centered width={1000} flush footer={null} title={null} closable={!busy} keyboard={!busy} mask={{ closable: false }} onCancel={onClose} rootClassName="model-service-modal">
         <div className="model-service-header">
-            <span className="model-service-eyebrow">模型服务</span>
             <h2>{initial ? `管理 ${initial.name}` : "连接你的模型服务"}</h2>
-            <p>使用自己的 API，在画布里自由创作。</p>
             <ol className="model-service-steps" aria-label="接入步骤">
                 <li aria-current={step === 0 ? "step" : undefined}><span>{step > 0 ? <Check size={13} /> : "1"}</span>连接服务</li>
                 <li aria-current={step === 1 ? "step" : undefined}><span>2</span>选择模型</li>
@@ -156,10 +154,10 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
                         <span><strong>{preset.name}</strong><small>{preset.subtitle}</small></span>
                         {presetId === preset.id && <Check size={15} />}
                     </button>)}
-                    <div className="model-service-note"><ShieldCheck size={16} /><p>密钥保存在这台设备上。生成费用由服务商结算。</p></div>
+                    <div className="model-service-note"><ShieldCheck size={16} /><p>密钥保存在这台设备上。<br />生成费用由服务商结算。</p></div>
                 </aside>
                 <Form layout="vertical" requiredMark={false} className="model-service-fields" disabled={busy} onFinish={() => void fetchModels()}>
-                    <div className="model-service-form-title"><ModelLogo icon={selectedPreset.icon} size={28} /><div><h3>{selectedPreset.name}</h3><p>{presetId === "compatible" ? "连接你已有的 API 服务" : "填写该服务商提供的 API Key"}</p></div></div>
+                    <div className="model-service-form-title"><ModelLogo icon={selectedPreset.icon} size={28} /><div><h3>{selectedPreset.name}</h3>{presetId === "compatible" && <p>用户可以自行添加第三方模型服务，但是 BeefTV 无法确保所有第三方模型服务的兼容性</p>}</div></div>
                     <Form.Item label="连接名称"><Input aria-label="连接名称" placeholder="例如：我的创作账号" value={draft.name} onChange={(event) => patch({ name: event.target.value })} /></Form.Item>
                     <Form.Item label="API Key"><Input.Password prefix={<KeyRound size={15} />} aria-label="API Key" autoComplete="new-password" placeholder="粘贴你的 API Key" value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} /></Form.Item>
                     <Form.Item label="服务地址"><Input aria-label="服务地址" inputMode="url" placeholder="https://api.example.com/v1" value={draft.baseUrl} onChange={(event) => patch({ baseUrl: event.target.value })} /></Form.Item>
@@ -189,8 +187,8 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
             </div>}
             {(error || notice) && <div className="model-service-feedback">{error && <Alert type="error" showIcon title={error} />}{notice && <Alert type="info" showIcon title={notice} />}</div>}
         </div>
-        <div className="model-service-footer"><span>{step === 0 ? "读取模型不会提交生成任务" : "保存后，可在创作页选择这些模型"}</span><div>
-            {step === 0 ? <><Button disabled={busy} onClick={() => { if (validateConnection()) { setNotice(""); setStep(1); } }}>手动添加模型</Button><Button type="primary" loading={busy} disabled={protocolLoading} icon={<ArrowRight size={15} />} iconPosition="end" onClick={() => void fetchModels()}>读取模型</Button></> : <><Button disabled={busy} icon={<ArrowLeft size={15} />} onClick={() => { setStep(0); setError(""); }}>连接信息</Button><Button type="primary" loading={busy} disabled={!draft.models.length || protocolLoading} icon={<Check size={15} />} onClick={() => void save()}>保存并使用</Button></>}
+        <div className="model-service-footer">{step === 1 && <span>保存后，可在创作页选择这些模型</span>}<div>
+            {step === 0 ? <><Button disabled={busy} onClick={() => { if (validateConnection()) { setNotice(""); setStep(1); } }}>手动添加模型</Button><Button type="primary" loading={busy} disabled={protocolLoading} onClick={() => void fetchModels()}>读取模型</Button></> : <><Button disabled={busy} icon={<ArrowLeft size={15} />} onClick={() => { setStep(0); setError(""); }}>连接信息</Button><Button type="primary" loading={busy} disabled={!draft.models.length || protocolLoading} icon={<Check size={15} />} onClick={() => void save()}>保存并使用</Button></>}
         </div></div>
     </AppModal>;
 }

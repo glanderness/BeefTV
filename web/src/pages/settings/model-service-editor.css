@@ -1,9 +1,8 @@
 .model-service-modal .ant-modal-container { display:flex; flex-direction:column; max-height:calc(100dvh - 48px); }
 .model-service-modal .ant-modal-body { display:flex; flex-direction:column; min-height:0; }
 .model-service-header { padding:28px 32px 20px; border-bottom:1px solid var(--workspace-border); }
-.model-service-eyebrow { color:var(--workspace-accent); font-size:12px; font-weight:600; letter-spacing:.08em; }
-.model-service-header h2 { margin:8px 0; font-size:24px; line-height:1.4; font-weight:650; letter-spacing:-.025em; }
-.model-service-header p,.model-service-form-title p,.model-service-catalog-header p { color:var(--muted-foreground); font-size:13px; margin:4px 0 0; line-height:1.7; }
+.model-service-header h2 { margin:0; font-size:24px; line-height:1.4; font-weight:650; letter-spacing:-.025em; }
+.model-service-form-title p,.model-service-catalog-header p { color:var(--muted-foreground); font-size:13px; margin:4px 0 0; line-height:1.7; }
 .model-service-steps { display:flex; list-style:none; padding:0; margin:20px 0 0; gap:28px; font-size:12px; color:var(--muted-foreground); }
 .model-service-steps li { display:flex; align-items:center; gap:8px; }
 .model-service-steps li > span { display:grid; place-items:center; width:22px; height:22px; border-radius:50%; background:var(--surface-active); }
@@ -33,7 +32,7 @@
 .model-service-advanced-fields { padding-top:18px; }
 .model-service-footer { padding:18px 32px; border-top:1px solid var(--workspace-border); display:flex; justify-content:space-between; align-items:center; gap:16px; }
 .model-service-footer > span { color:var(--muted-foreground); font-size:12px; }
-.model-service-footer > div { display:flex; gap:10px; flex-shrink:0; }
+.model-service-footer > div { display:flex; gap:10px; flex-shrink:0; margin-left:auto; }
 .model-service-feedback { padding:0 32px 20px; display:grid; gap:8px; }
 .model-service-models { padding:24px 32px; }
 .model-service-catalog-header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:20px; }
