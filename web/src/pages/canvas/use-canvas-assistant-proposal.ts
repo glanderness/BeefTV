@@ -5,8 +5,8 @@ import type { Skill } from "@/services/api/skills";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
 import { executeAssistantProposal } from "./canvas-assistant-proposal-execution";
-import { prepareAssistantProposalSnapshot } from "./canvas-assistant-proposal-snapshot";
-import { readAssistantProposalSourceState, readPersistedAssistantProposalSource } from "./canvas-assistant-proposal-source";
+import { AssistantProposalChangedError, prepareAssistantProposalSnapshot } from "./canvas-assistant-proposal-snapshot";
+import { recordAssistantProposalCanvasRejection, readAssistantProposalSourceState, readPersistedAssistantProposalSource } from "./canvas-assistant-proposal-source";
 import { useCanvasOwnerLifetime } from "./canvas-owner-epoch";
 import type { CanvasNodeGenerationOptions } from "./use-canvas-generation-executor";
 
@@ -60,7 +60,10 @@ export function useCanvasAssistantProposal({
                         proposal,
                         () => readAssistantProposalSourceState(owner.canvasId, nodesRef.current, connectionsRef.current, addedSkillsRef.current),
                         () => readPersistedAssistantProposalSource(owner.canvasId),
-                    ),
+                    ).catch(error => {
+                        if (error instanceof AssistantProposalChangedError && error.reason === "canvas-dirty" && lifetime.matches(owner, projectIdRef.current)) recordAssistantProposalCanvasRejection(owner.canvasId);
+                        throw error;
+                    }),
                 generate: generateForThisRun,
                 stillOwns: () => lifetime.matches(owner, projectIdRef.current),
                 markHandled: (proposalId) => markHandledRef.current(proposalId),

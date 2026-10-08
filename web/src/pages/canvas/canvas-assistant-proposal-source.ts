@@ -1,6 +1,7 @@
 import type { Skill } from "@/services/api/skills";
 import { getLocalModelConfig } from "@/services/api/workspace";
-import { hasUnconfirmedCanvasEdits, readLocalCanvasProjectFromBackend } from "@/services/local-workspace-repository";
+import { getUnconfirmedCanvasDiagnostic, hasUnconfirmedCanvasEdits, readLocalCanvasProjectFromBackend } from "@/services/local-workspace-repository";
+import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
 import { getModelConfigPersistenceState } from "@/services/model-config-repository";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
@@ -52,4 +53,15 @@ export async function readPersistedAssistantProposalSource(projectId: string) {
         nodes: canvas.nodes,
         connections: canvas.connections,
     };
+}
+
+export function recordAssistantProposalCanvasRejection(projectId: string) {
+    try {
+        const diagnostic = getUnconfirmedCanvasDiagnostic(projectId);
+        if (!diagnostic) return;
+        recordDiagnosticEvent({ level: "warning", category: "action", code: `assistant_proposal_canvas_${diagnostic.reason}`,
+            message: JSON.stringify(diagnostic) });
+    } catch {
+        // Diagnostic collection must never replace the original confirmation rejection.
+    }
 }
