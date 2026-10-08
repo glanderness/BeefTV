@@ -263,3 +263,30 @@ describe("settleInFlightGenerationOverlay", () => {
         expect(settled.nodes[0]?.metadata?.storageKey).toBe("old-key");
     });
 });
+
+describe("rebaseCanvasDocumentThreeWay node timestamps", () => {
+    const stamp = (item: CanvasNodeData): CanvasNodeData => ({ ...item, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" });
+
+    test("remote delete drops a node whose local copy only gained createdAt/updatedAt", () => {
+        const assistant = node("a1", "助手文本");
+        const kept = node("k1", "保留");
+        const result = rebaseCanvasDocumentThreeWay({
+            base: project([assistant, kept], 7),
+            local: project([stamp(assistant), kept], 7),
+            remote: project([kept], 8),
+        });
+        expect(result.conflict).toBe(false);
+        expect(result.project.nodes.map((item) => item.id)).toEqual(["k1"]);
+    });
+
+    test("remote delete of a locally retitled node is still a conflict and keeps the local node", () => {
+        const assistant = node("a1", "助手文本");
+        const result = rebaseCanvasDocumentThreeWay({
+            base: project([assistant], 7),
+            local: project([{ ...stamp(assistant), title: "本地改过的标题" }], 7),
+            remote: project([], 8),
+        });
+        expect(result.conflict).toBe(true);
+        expect(result.project.nodes.map((item) => item.title)).toEqual(["本地改过的标题"]);
+    });
+});

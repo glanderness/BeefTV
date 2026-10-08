@@ -265,13 +265,14 @@ function alignLiveAfterConfirmedRemote(input: {
     const settled = settleInFlightGenerationOverlay({ base: input.base, local: live, remote: input.remote });
     const rebased = rebaseCanvasDocumentThreeWay({ base: input.base, local: settled, remote: input.remote });
     applyLiveCanvasProject(input.id, rebased.project, false);
-    invokeProjectionListener(input.onApplied, rebased.project, live);
-    if (rebased.conflict) {
-        pauseForExternalCandidate(input.id, input.remote, input.scope);
-    } else {
+    // Clear before notifying: the editor may hold this revision from inside the
+    // listener when its own unsaved edits conflict, and that hold must survive.
+    if (!rebased.conflict) {
         clearCanvasExternalRevisionConflict(input.scope, input.id);
         resumeCanvasBackendSubmit(input.id, input.scope);
     }
+    invokeProjectionListener(input.onApplied, rebased.project, live);
+    if (rebased.conflict) pauseForExternalCandidate(input.id, input.remote, input.scope);
     return rebased.project;
 }
 
@@ -325,6 +326,17 @@ export function selectPreferredCanvasProject(local: CanvasProject | null | undef
 function pauseForExternalCandidate(id: string, remote: CanvasProject, scope: string) {
     applyExternalCanvasRevision(remote, { hasUnsyncedEdits: true, scope });
     pauseCanvasBackendSubmit(id, scope);
+}
+
+/**
+ * 编辑器里的未保存编辑与刚投影的外部内容冲突时调用：编辑器保留本地内容，
+ * 服务端内容留作候选（顶栏出现「使用最新版本」），并暂停自动提交，
+ * 避免下一次自动保存把旧画面写回服务端。
+ */
+export function holdExternalCanvasRevisionForEditor(project: CanvasProject, scope = getActiveUserScope()) {
+    const confirmed = canvasDocumentBase(project.id, scope);
+    const candidate = confirmed && confirmed.revision >= (project.revision ?? 0) ? confirmed.snapshot : project;
+    pauseForExternalCandidate(project.id, candidate, scope);
 }
 
 async function applyBackendCanvasRead(

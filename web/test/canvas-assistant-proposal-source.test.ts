@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { assistantProposalHasUnconfirmedEdits, assistantProposalUnconfirmedReason } from "@/pages/canvas/canvas-assistant-proposal-source";
+import { assistantProposalHasUnconfirmedEdits, modelConfigHasUnconfirmedEdits } from "@/pages/canvas/canvas-assistant-proposal-source";
 
 describe("assistantProposalHasUnconfirmedEdits", () => {
     test("blocks confirmation while the canvas or model config is still dirty", () => {
@@ -15,10 +15,10 @@ describe("assistantProposalHasUnconfirmedEdits", () => {
     });
 
     test("separates canvas edits, model edits and model save/read failure without relaxing the gate", () => {
-        expect(assistantProposalUnconfirmedReason({ canvasDirty: true, modelConfigDirty: true, modelConfigStatus: "saving" })).toBe("canvas-dirty");
-        expect(assistantProposalUnconfirmedReason({ canvasDirty: false, modelConfigDirty: true, modelConfigStatus: "saved" })).toBe("model-dirty");
+        expect(modelConfigHasUnconfirmedEdits({ modelConfigDirty: true, modelConfigStatus: "saving" })).toBe(true);
+        expect(modelConfigHasUnconfirmedEdits({ modelConfigDirty: true, modelConfigStatus: "saved" })).toBe(true);
         for (const status of ["saving", "hydrating", "error"]) {
-            expect(assistantProposalUnconfirmedReason({ canvasDirty: false, modelConfigDirty: false, modelConfigStatus: status })).toBe("model-status");
+            expect(modelConfigHasUnconfirmedEdits({ modelConfigDirty: false, modelConfigStatus: status })).toBe(true);
             expect(assistantProposalHasUnconfirmedEdits({ canvasDirty: false, modelConfigDirty: false, modelConfigStatus: status })).toBe(true);
         }
     });

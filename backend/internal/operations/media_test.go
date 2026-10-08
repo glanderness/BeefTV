@@ -24,6 +24,7 @@ type mediaDomain struct {
 	opens        int
 	document     json.RawMessage
 	assetPayload string
+	mimeType     string
 }
 
 func (d *mediaDomain) UserCanvasProject(user, id string) (json.RawMessage, error) {
@@ -48,7 +49,11 @@ func (d *mediaDomain) OwnedReadyResource(user, id string) (*model.Resource, erro
 	if user != d.owner || id != "resource" {
 		return nil, PermissionDenied("foreign_resource", "foreign")
 	}
-	return &model.Resource{ID: id, MimeType: "video/mp4", Size: int64(len(d.data))}, nil
+	mimeType := d.mimeType
+	if mimeType == "" {
+		mimeType = "video/mp4"
+	}
+	return &model.Resource{ID: id, MimeType: mimeType, Size: int64(len(d.data))}, nil
 }
 func (d *mediaDomain) OpenMediaResource(_ context.Context, user, id string) (io.ReadCloser, error) {
 	if _, err := d.OwnedReadyResource(user, id); err != nil {
@@ -129,6 +134,101 @@ func TestMediaMeasurementsKeepSourceTime(t *testing.T) {
 	intervals, mean, peak := parseMediaChecks("black_start:1.25 black_end:1.75 black_duration:0.5\nmean_volume: -21.1 dB\nmax_volume: -13.7 dB", 3000)
 	if len(intervals) != 1 || intervals[0].StartMs != 4250 || intervals[0].EndMs != 4750 || mean == nil || *mean != -21.1 || peak == nil || *peak != -13.7 {
 		t.Fatalf("%+v %v %v", intervals, mean, peak)
+	}
+}
+
+func TestNativeMediaSilenceIntervalsUseBoundedSourceTime(t *testing.T) {
+	bin, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Fatal("real ffmpeg required")
+	}
+	for _, test := range []struct {
+		name, expression string
+		expected         []MediaInterval
+	}{
+		{"multiple-leading-trailing", "if(between(t,0.5,1)+between(t,1.4,2)+between(t,2.3,2.9),0.3*sin(2*PI*440*t),0)", []MediaInterval{{200, 500}, {1000, 1400}, {2000, 2300}, {2900, 3300}}},
+		{"all-silent", "0", []MediaInterval{{200, 3300}}},
+		{"continuous-tone", "0.3*sin(2*PI*440*t)", nil},
+		{"gap-under-minimum", "if(between(t,1,1.05),0,0.3*sin(2*PI*440*t))", nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			output := filepath.Join(t.TempDir(), "source.wav")
+			cmd := exec.Command(bin, "-nostdin", "-v", "error", "-f", "lavfi", "-i", "aevalsrc='"+test.expression+"':s=24000:d=3.5", "-c:a", "pcm_s16le", output)
+			if raw, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("fixture %v %s", err, raw)
+			}
+			data, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := &mediaDomain{owner: "owner", data: data, mimeType: "audio/wav"}
+			args := mediaArgs{CanvasID: "canvas", NodeID: "node"}
+			overview, err := mediaTestCall(t, d, "media.overview", args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			args.ExpectedVersion = overview.Source.Version
+			args.StartMs = 200
+			args.EndMs = 3300
+			check, err := mediaTestCall(t, d, "media.check", args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, _ := json.Marshal(check)
+			var measured struct {
+				SilenceIntervals []MediaInterval `json:"silenceIntervals"`
+				SilenceDetection *struct {
+					NoiseDB           float64 `json:"noiseDb"`
+					MinimumDurationMs int64   `json:"minimumDurationMs"`
+					TimestampKind     string  `json:"timestampKind"`
+				} `json:"silenceDetection"`
+			}
+			if err := json.Unmarshal(raw, &measured); err != nil {
+				t.Fatal(err)
+			}
+			if measured.SilenceDetection == nil || measured.SilenceDetection.NoiseDB != -35 || measured.SilenceDetection.MinimumDurationMs != 120 || measured.SilenceDetection.TimestampKind != "source_time" {
+				t.Fatalf("missing fixed detection facts %s", raw)
+			}
+			if len(measured.SilenceIntervals) != len(test.expected) {
+				t.Fatalf("intervals %+v want %+v", measured.SilenceIntervals, test.expected)
+			}
+			for i, interval := range measured.SilenceIntervals {
+				want := test.expected[i]
+				if interval.StartMs < 200 || interval.EndMs > 3300 || interval.StartMs < want.StartMs-3 || interval.StartMs > want.StartMs+3 || interval.EndMs < want.EndMs-3 || interval.EndMs > want.EndMs+3 {
+					t.Fatalf("source interval %+v want %+v", interval, want)
+				}
+			}
+			if check.MeanDB == nil && test.name != "all-silent" {
+				t.Fatal("volume behavior lost")
+			}
+		})
+	}
+}
+
+func TestMediaSilenceParserClosesAndClampsRequestedEdges(t *testing.T) {
+	if got := parseMediaSilence("silence_start: -0.5", 0, 2000); len(got) != 1 || got[0] != (MediaInterval{0, 2000}) {
+		t.Fatalf("negative decoder padding lost unclosed leading silence: %+v", got)
+	}
+	for _, test := range []struct {
+		log      string
+		expected []MediaInterval
+	}{
+		{"silence_start: 1.25", []MediaInterval{{4250, 5500}}},
+		{"silence_end: 0.75", []MediaInterval{{3000, 3750}}},
+		{"silence_end: 7.5e-1", []MediaInterval{{3000, 3750}}},
+		{"silence_start: -0.5\nsilence_end: 5", []MediaInterval{{3000, 5500}}},
+		{"silence_start: 3\nsilence_end: 4", nil},
+		{"mean_volume: -21 dB", nil},
+	} {
+		got := parseMediaSilence(test.log, 3000, 5500)
+		if len(got) != len(test.expected) {
+			t.Fatalf("%q: %+v want %+v", test.log, got, test.expected)
+		}
+		for i := range got {
+			if got[i] != test.expected[i] {
+				t.Fatalf("%q: %+v want %+v", test.log, got, test.expected)
+			}
+		}
 	}
 }
 
@@ -253,7 +353,7 @@ func TestNativeMediaCleanNegative(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if check.HasAudio || check.MeanDB != nil || len(check.BlackIntervals) != 0 {
+	if check.HasAudio || check.MeanDB != nil || len(check.BlackIntervals) != 0 || len(check.SilenceIntervals) != 0 || check.SilenceDetection != nil {
 		t.Fatalf("false positives=%+v", check)
 	}
 }

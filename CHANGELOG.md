@@ -9,6 +9,20 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.14
+
+- 修复画布上按 Backspace 意外离开，以及离开或切换画布时删除内容未及时保存的问题。
+- 生成方案显示未能开始的具体原因与等待状态；长任务显示已等待时间。
+- 同轮多次局部编辑按各画布接续版本，恢复时保留原操作身份；外部删除与本地编辑冲突时保留本地内容并提示处理。
+- 修复大画布读取被截断的问题，助手可分页读取完整节点、连线和时间线。
+- 修复切换助手模型后仍使用旧模型的问题；恢复未完成轮次时继续使用原模型。
+- 修复完全访问模式下工作区画布搜索错误过滤，导致找不到其他画布的问题。
+- 旁白剪辑可检测实际停顿，并再次听取裁剪后的音频核对尾字与保留内容。
+- 修复素材读取补齐资源后已成功，助手仍显示先前失败提示的问题。
+- 删除素材记录时保留画布和历史仍在使用的资源，避免影响已有作品。
+- 模型配置支持搜索选择，保留自定义服务和暂不可用的模型设置。
+- 改进 BeefTV MCP 的连接状态和管理入口、侧栏收起与社交入口，并提供应用内中文更新说明。
+
 ## v1.7.13
 
 - 连接入口改为「连接 BeefTV」，新登录授权和钱包控制台使用 beeftv.app；保留已连接企业账号。
