@@ -242,8 +242,12 @@ export function assistantUnresolvedFailures(calls: AgentToolCall[] | undefined):
         if (!target) return;
         const resolved = list.slice(index + 1).some((later) => !later.isError && later.tool === call.tool && assistantActionTarget(later) === target);
         if (resolved) return;
-        const label = assistantActionLabel(call.tool);
+        const label = call.tool.replace("_", ".") === "media.inspect"
+            ? call.args?.mode === "audio" ? "有音频片段听取未完成"
+                : call.args?.mode === "video" ? "有视频片段查看未完成"
+                    : !call.args?.mode || call.args.mode === "frames" ? "有素材的画面查看未完成" : `${assistantActionLabel(call.tool)}没有成功`
+            : `${assistantActionLabel(call.tool)}没有成功`;
         counts.set(label, (counts.get(label) ?? 0) + 1);
     });
-    return [...counts.entries()].map(([label, count]) => (count > 1 ? `${label}没有成功（${count} 处）` : `${label}没有成功`));
+    return [...counts.entries()].map(([label, count]) => (count > 1 ? `${label}（${count} 处）` : label));
 }

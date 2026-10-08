@@ -290,8 +290,30 @@ describe("assistantUnresolvedFailures", () => {
     test("媒体工具仍未成功时如实报告，后来成功则不留下旧失败", async () => {
         const { assistantUnresolvedFailures } = await import("@/pages/canvas/canvas-assistant-copy");
         const failed = { tool: "media.inspect", args: { nodeId: "a", start: 2, end: 4 }, isError: true };
-        expect(assistantUnresolvedFailures([failed])).toEqual(["查看和听取素材没有成功"]);
+        expect(assistantUnresolvedFailures([failed])).toEqual(["有素材的画面查看未完成"]);
         expect(assistantUnresolvedFailures([failed, { ...failed, isError: false }])).toEqual([]);
+    });
+    test("图片 inspect 失败不冒充另两个素材的原生视频和音频失败，overview 不清掉失败", async () => {
+        const { assistantUnresolvedFailures } = await import("@/pages/canvas/canvas-assistant-copy");
+        const failed = { tool: "media.inspect", args: { assetId: "image", mode: "frames" }, isError: true, error: "media_version_required" };
+        const calls = [
+            failed,
+            { tool: "media.overview", args: { assetId: "image" }, isError: false },
+            { tool: "media.inspect", args: { assetId: "video", mode: "video", startMs: 0, endMs: 3000, expectedVersion: "video-version" }, isError: false },
+            { tool: "media.inspect", args: { assetId: "audio", mode: "audio", startMs: 0, endMs: 6611, expectedVersion: "audio-version" }, isError: false },
+        ];
+        expect(assistantUnresolvedFailures(calls)).toEqual(["有素材的画面查看未完成"]);
+        expect(calls[0]).toEqual(failed);
+        expect(assistantUnresolvedFailures(calls.map(call => ({ ...call, tool: call.tool.replace(".", "_") })))).toEqual(["有素材的画面查看未完成"]);
+    });
+    test("失败媒体按实际模式提示，并保留其它素材、区间及版本的失败", async () => {
+        const { assistantUnresolvedFailures } = await import("@/pages/canvas/canvas-assistant-copy");
+        const failed = { tool: "media.inspect", args: { assetId: "video", mode: "video", startMs: 0, endMs: 3000, expectedVersion: "v1" }, isError: true };
+        for (const args of [{ ...failed.args, assetId: "other" }, { ...failed.args, endMs: 6000 }, { ...failed.args, expectedVersion: "v2" }]) {
+            expect(assistantUnresolvedFailures([failed, { ...failed, args, isError: false }])).toEqual(["有视频片段查看未完成"]);
+        }
+        expect(assistantUnresolvedFailures([failed, { ...failed, isError: false }])).toEqual([]);
+        expect(assistantUnresolvedFailures([{ tool: "media_inspect", args: { mode: "audio" }, isError: true }])).toEqual(["有音频片段听取未完成"]);
     });
     test("重试成功的步骤不提示，仍失败的同类合并计数", async () => {
         const { assistantUnresolvedFailures } = await import("@/pages/canvas/canvas-assistant-copy");

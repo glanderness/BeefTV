@@ -135,10 +135,12 @@ export function validateDeferredV1713(receipt, sourceDigest) {
     const sourceValid = item.phase === 'current'
       ? item.executedSourceDigest === sourceDigest
         || (item.kind === 'other' && item.executedSourceDigest === null && item.executionSourceStatus === 'not_app_execution' && item.reviewedSourceDigest === sourceDigest)
+      : item.phase === 'superseded_candidate'
+        ? item.executionSourceStatus === 'known' && hash(item.executedSourceDigest) && item.executedSourceDigest !== sourceDigest
       : (hash(item.executedSourceDigest) && item.executedSourceDigest !== sourceDigest)
         || (item.executedSourceDigest === null && ['unknown', 'not_app_execution'].includes(item.executionSourceStatus));
     if (!nonempty(item.id) || ids.has(item.id) || !['media', 'chat', 'other'].includes(item.kind)
-      || !['settled', 'refunded'].includes(item.billing) || !['historical', 'current'].includes(item.phase)
+      || !['settled', 'refunded'].includes(item.billing) || !['historical', 'current', 'superseded_candidate'].includes(item.phase)
       || !sourceValid || !evidence(item.evidence) || !Number.isFinite(item.costCNY) || item.costCNY < 0) fail('invalid, unresolved or relabeled billing attempt');
     ids.add(item.id); total += item.costCNY;
     if (item.phase === 'historical') historical += item.costCNY;
