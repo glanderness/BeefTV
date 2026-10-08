@@ -34,7 +34,7 @@ test("Wan uses shared protocol and supported reference limits across reloads", (
 test("saved BeefAPI Seedance profiles restore audio control without changing explicit defaults or custom endpoints", async () => {
     const model = "seedance-2.0-fast";
     for (const legacy of [false, true]) {
-        for (const baseUrl of ["https://enterprise.beefapi.com", "https://custom.example"]) {
+        for (const baseUrl of ["https://beeftv.app", "https://enterprise.beefapi.com", "https://custom.example"]) {
             const capabilityConfig = defaultModelCapabilityConfig("newapi", model);
             capabilityConfig.video!.generateAudio = {supported: false, default: false};
             capabilityConfig.video!.references.maxImages = legacy ? 9 : 2;

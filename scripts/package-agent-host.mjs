@@ -8,6 +8,7 @@ export const NODE_VERSION = '24.15.0';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const targets = { 'darwin/arm64': ['darwin', 'arm64'], 'darwin/amd64': ['darwin', 'x64'], 'windows/amd64': ['win32', 'x64'] };
 const runtimeModules = ['session-identity.mjs', 'canvas-turn.mjs', 'request-budget.mjs', 'durable-request-budget.mjs',
+  'durable-session-owner.mjs', 'durable-turn-budget.mjs', 'media-content.mjs', 'native-part-store.mjs', 'native-history.mjs', 'skill-resource.mjs',
   'operation-bridge.mjs', 'session-owner.mjs', 'full-control-loader.mjs',
   'session-settings.mjs', 'lifecycle-events.mjs'];
 const sourceFiles = ['server.mjs', ...runtimeModules, 'package.json', 'bun.lock'];
@@ -51,6 +52,7 @@ export function packageAgentHost({ runtime, target, destination, source = path.j
     chmodSync(bundledNode, 0o755);
     // Resolve precisely the host imports under the shipped Node and shipped dependency tree.
     const imports = ['@earendil-works/pi-coding-agent', '@earendil-works/pi-ai',
+      '@earendil-works/pi-durable', '@earendil-works/pi-durable/storage/sqlite/node',
       '@earendil-works/pi-ai/providers/openai', ...runtimeModules.map(name => `./${name}`)];
     run(bundledNode, ['--input-type=module', '-e',
       imports.map(name => `await import(${JSON.stringify(name)});`).join('\n')], stage);

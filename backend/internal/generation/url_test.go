@@ -46,6 +46,8 @@ func TestProviderDownloadURLNormalizesBeefAPIResultToConfiguredOrigin(t *testing
 		name, baseURL, resultURL, want string
 	}{
 		{name: "same origin", baseURL: "https://provider.example", resultURL: "https://provider.example/files/video.mp4", want: "https://provider.example/files/video.mp4"},
+		{name: "BeefTV uses configured origin", baseURL: "https://beeftv.app", resultURL: "https://beefapi.com/v1/videos/task-1/content", want: "https://beeftv.app/v1/videos/task-1/content"},
+		{name: "BeefTV lookalike stays external", baseURL: "https://beeftv.app", resultURL: "https://beeftv.app.attacker.example/video.mp4", want: "https://beeftv.app.attacker.example/video.mp4"},
 		{name: "beef enterprise uses configured origin", baseURL: "https://enterprise.beefapi.com", resultURL: "https://beefapi.com/v1/videos/task-1/content", want: "https://enterprise.beefapi.com/v1/videos/task-1/content"},
 		{name: "beef subdomain uses configured origin", baseURL: "https://api.beefapi.com", resultURL: "https://cdn.beefapi.com/video.mp4?token=result", want: "https://api.beefapi.com/video.mp4?token=result"},
 		{name: "lookalike host stays external", baseURL: "https://enterprise.beefapi.com", resultURL: "https://beefapi.com.attacker.example/video.mp4", want: "https://beefapi.com.attacker.example/video.mp4"},

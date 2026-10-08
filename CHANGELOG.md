@@ -9,6 +9,19 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.13
+
+- 连接入口改为「连接 BeefTV」，新登录授权和钱包控制台使用 beeftv.app；保留已连接企业账号。
+- 创作助手支持图片、视频和音频参考、运行中补充内容与固定版本技能，并使用持久会话恢复中断工作。
+- 助手可将已上传素材绑定到画布参考节点；技能选择器支持直接安装 ZIP 和 Markdown 技能。
+- 内置助手可选择只读、当前画布或完全访问；跨画布编辑可整轮撤销。
+- 切换助手权限后仍可读取已授权的会话素材；修复多图再次生成时新结果被旧画布覆盖的问题。
+- 助手可裁剪、排列素材，添加旁白和字幕，并在本地渲染视频预览。
+- 助手对话直接显示成片版本，可播放、下载，并在重开对话后恢复。
+- 模型回复失败时保留已完成操作，提供继续处理入口。
+- 外部 Agent 通过 MCP／CLI 使用完整业务工具，无需在 BeefTV 重复选择执行权限。
+- 补齐节点移动、删除、移除连线和模型目录；修复失败更新留下安装缓存的问题。
+
 ## v1.7.12
 
 - Seedance 2.0、2.5 统一名称，模型列表不再重复展示真人素材型号。

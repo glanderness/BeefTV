@@ -104,11 +104,12 @@ type TimelineRenderPlanRequest struct {
 }
 
 type timelineRenderResult struct {
-	ResourceID  string `json:"resourceId"`
-	FileName    string `json:"fileName"`
-	Size        int64  `json:"size"`
-	DurationMs  int64  `json:"durationMs"`
-	SubtitleSRT string `json:"subtitleSrt,omitempty"`
+	Video       map[string]any `json:"video,omitempty"`
+	ResourceID  string         `json:"resourceId"`
+	FileName    string         `json:"fileName"`
+	Size        int64          `json:"size"`
+	DurationMs  int64          `json:"durationMs"`
+	SubtitleSRT string         `json:"subtitleSrt,omitempty"`
 }
 
 func (s *Service) CreateTimelineRenderTask(userID string, req TimelineRenderCreateRequest) (*model.Task, error) {

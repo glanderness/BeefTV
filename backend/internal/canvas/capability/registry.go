@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const SetVersion = "canvas-capabilities/v4"
+const SetVersion = "canvas-capabilities/v5"
 
 type Registry struct{ descriptors map[string]Descriptor }
 

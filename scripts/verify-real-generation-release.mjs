@@ -2,13 +2,16 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import {
-  THEME_AGENT_CONTRACT_VERSION,
   REQUIRED_AGENT_CHECK_IDS,
   DETERMINISTIC_FAULT_CHECK_IDS,
   requiresThemeAgentContract,
   inspectFixtureManifest,
   findCopiedPriorTheme,
   compareReleaseVersions,
+  releaseContractVersion,
+  releaseAgentChecks,
+  releaseDeterministicChecks,
+  validateDeferredV1713,
 } from './real-generation-release-contract.mjs';
 
 // Tree identities survive squash/merge commits, but change whenever shipped
@@ -24,6 +27,13 @@ const receipt = JSON.parse(readFileSync(`docs/release-evidence/${version}.json`,
 const fail = message => { throw new Error(`Real generation release gate: ${message}`); };
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
+// Explicit 2026-10-08 authorization changes release order for v1.7.13 only.
+if (receipt.ownerException?.scope === 'release-before-remaining-acceptance-20261008') {
+  const pending = validateDeferredV1713(receipt, sourceDigest);
+  if (pending.complete) console.log(`v1.7.13 post-release acceptance COMPLETE: 12/12 cases, 23/23 checks; CNY ${receipt.spentCNY}/100; published packages verified.`);
+  else console.log(`v1.7.13 owner authorized publish before remaining tests; acceptance PENDING (${pending.pendingCases}/12 cases, ${pending.pendingChecks}/23 checks); CNY ${receipt.spentCNY}/100; final package gates ${receipt.releasePublished ? 'verified' : 'pending'}.`);
+  process.exit(0);
+}
 // This exact waiver applies only to the unified Seedance presentation release.
 if (version === 'v1.7.12' && receipt.liveTestWaiver?.scope === 'seedance-unified-display') {
   const evidence = value => Array.isArray(value) && value.length > 0 && value.every(nonempty);
@@ -341,19 +351,38 @@ try { themeAgent = requiresThemeAgentContract(version); }
 catch { fail('unparseable VERSION'); }
 let scenarioDigest = '';
 if (themeAgent) {
-  if (!Number.isInteger(receipt.contractVersion) || receipt.contractVersion !== THEME_AGENT_CONTRACT_VERSION) fail(`explicit contractVersion=${THEME_AGENT_CONTRACT_VERSION} is required`);
+  const contractVersion = releaseContractVersion(version);
+  if (!Number.isInteger(receipt.contractVersion) || receipt.contractVersion !== contractVersion) fail(`explicit contractVersion=${contractVersion} is required`);
+  if (contractVersion === 3) {
+    if (receipt.liveTestWaiver || receipt.ownerException || receipt.financialEvidenceException) fail('contract 3 cannot use historical release waivers');
+    if (receipt.budgetCNY > 50 || receipt.review?.independent !== true) fail('contract 3 requires budget <= CNY 50 and independent review');
+    const attempts = receipt.billingAttempts;
+    if (!Array.isArray(attempts) || !attempts.length) fail('contract 3 requires all media/chat billing attempts');
+    const ids = new Set();
+    for (const item of attempts) {
+      if (!nonempty(item.id) || ids.has(item.id) || !['media', 'chat', 'other'].includes(item.kind)
+        || !['settled', 'refunded'].includes(item.billing) || !Number.isFinite(item.costCNY) || item.costCNY < 0
+        || !Array.isArray(item.evidence) || !item.evidence.length || !item.evidence.every(nonempty)) fail('invalid or unresolved billing attempt');
+      ids.add(item.id);
+    }
+    if (!attempts.some(item => item.kind === 'chat') || Math.abs(attempts.reduce((sum, item) => sum + item.costCNY, 0) - receipt.spentCNY) > 0.000001) fail('all media/chat costs must reconcile to spentCNY');
+    for (const item of receipt.cases || []) {
+      const matching = attempts.filter(attempt => attempt.kind === 'media' && attempt.taskId === item.taskId);
+      if (matching.length !== 1 || matching[0].billing !== 'settled' || Math.abs(matching[0].costCNY - item.costCNY) > 0.000001) fail('each accepted task requires its settled billing attempt');
+    }
+  }
   const review = receipt.review;
   if (!review || review.result !== 'approved' || review.sourceDigest !== sourceDigest || !nonempty(review.reviewer) || !Array.isArray(review.evidence) || !review.evidence.length || review.evidence.some(item => !nonempty(item))) fail('independent review must approve this release source with reviewer and evidence');
   if (receipt.agentChecks === true || receipt.agentChecks === false) fail('boolean-only agent coverage is not accepted');
   const scenario = receipt.scenario;
   if (!scenario || typeof scenario !== 'object' || Array.isArray(scenario) || !nonempty(scenario.id) || !nonempty(scenario.title) || !nonempty(scenario.source) || !nonempty(scenario.queryDate) || !/^https?:\/\/\S+$/.test(scenario.source.trim()) || !/^\d{4}-\d{2}-\d{2}$/.test(scenario.queryDate.trim())) fail('scenario must include nonempty id, title, source URL and query date');
-  const inspected = inspectFixtureManifest(scenario.fixtures);
-  if (!inspected.ok) fail('fixture manifest must include at least two image and one video SHA256');
+  const inspected = inspectFixtureManifest(scenario.fixtures, contractVersion);
+  if (!inspected.ok) fail(`fixture manifest must include at least two image and one video SHA256${contractVersion === 3 ? ' and one WAV audio SHA256' : ''}`);
   scenarioDigest = inspected.digest;
   const checks = receipt.agentChecks;
   if (!checks || typeof checks !== 'object' || Array.isArray(checks)) fail('boolean-only agent coverage is not accepted');
-  const allowedDeterministic = new Set(DETERMINISTIC_FAULT_CHECK_IDS);
-  for (const id of REQUIRED_AGENT_CHECK_IDS) {
+  const allowedDeterministic = new Set(releaseDeterministicChecks(version));
+  for (const id of releaseAgentChecks(version)) {
     const check = checks[id];
     if (check === true || check === false) fail('boolean-only agent coverage is not accepted');
     if (!check || typeof check !== 'object' || Array.isArray(check) || check.status !== 'passed' || (check.method !== 'native' && check.method !== 'deterministic') || !Array.isArray(check.evidence) || !check.evidence.length || check.evidence.some(item => !nonempty(item))) fail(`agentChecks must include ${id} with passed native or deterministic evidence`);

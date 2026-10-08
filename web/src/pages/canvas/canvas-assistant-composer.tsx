@@ -1,9 +1,10 @@
-import { Button, Tooltip } from "antd";
-import { ArrowUp, Square, X } from "lucide-react";
-import { useState } from "react";
+import { Button, Select, Tooltip } from "antd";
+import { ArrowUp, Square, X, Paperclip, Sparkles } from "lucide-react";
+import { useRef, useState } from "react";
 
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import type { AssistantPermissionMode } from "@/services/api/agent-assistant";
 import { CanvasAssistantModelPicker } from "./canvas-assistant-model-picker";
 
 const LINE_HEIGHT = 21;
@@ -23,6 +24,17 @@ type Props = {
     selectionAttached: boolean;
     onDetachSelection: () => void;
     modelBusy?: boolean;
+    canSupplement?: boolean;
+    supplementBusy?: boolean;
+    hasAttachments?: boolean;
+    inputBusy?: boolean;
+    onFiles?: (files: File[]) => void;
+    onOpenSkills?: () => void;
+    onOpenReferences?: () => void;
+    inputContent?: React.ReactNode;
+    permissionMode?: AssistantPermissionMode;
+    permissionLocked?: boolean;
+    onPermissionChange?: (mode: AssistantPermissionMode) => void;
 };
 
 export function CanvasAssistantComposer({
@@ -38,16 +50,38 @@ export function CanvasAssistantComposer({
     selectionAttached,
     onDetachSelection,
     modelBusy,
+    canSupplement,
+    supplementBusy,
+    hasAttachments,
+    inputBusy,
+    onFiles,
+    onOpenSkills,
+    onOpenReferences,
+    inputContent,
+    permissionMode = "canvas",
+    permissionLocked,
+    onPermissionChange,
 }: Props) {
     const [contentHeight, setContentHeight] = useState(LINE_HEIGHT);
+    const fileInput = useRef<HTMLInputElement>(null);
     const height = Math.min(MAX_LINES * LINE_HEIGHT, Math.max(MIN_LINES * LINE_HEIGHT, contentHeight));
-    const canSend = !disabled && !streaming && Boolean(value.trim());
+    const canSend = !disabled && (!streaming || canSupplement) && !supplementBusy && !inputBusy && (Boolean(value.trim()) || Boolean(hasAttachments));
 
     return (
-        <footer className="canvas-assistant-composer">
+        <footer className="canvas-assistant-composer" onDragOver={event => { if (onFiles && !disabled && event.dataTransfer.types.includes("Files")) { event.preventDefault(); event.stopPropagation(); } }}
+            onDrop={event => { if (onFiles && !disabled && event.dataTransfer.files.length) { event.preventDefault(); event.stopPropagation(); onFiles([...event.dataTransfer.files]); } }}
+            onPasteCapture={event => { const files = [...event.clipboardData.files]; if (onFiles && !disabled && files.length) { event.preventDefault(); event.stopPropagation(); onFiles(files); const text = event.clipboardData.getData("text/plain"); if (text) onChange(value + text); } }}>
+            <input ref={fileInput} type="file" accept="image/*,video/*,audio/*" multiple hidden aria-label="添加参考素材文件" onChange={event => { onFiles?.([...event.target.files || []]); event.target.value = ""; }} />
+            {onPermissionChange ? <div className="canvas-assistant-meta flex items-start gap-2 px-3 py-1.5">
+                <Select size="small" aria-label="助手权限" value={permissionMode} disabled={disabled || permissionLocked}
+                    style={{ width: 112, flexShrink: 0 }} onChange={onPermissionChange} options={[
+                        { value: "read-only", label: "只读" }, { value: "canvas", label: "当前画布" }, { value: "full-access", label: "完全访问" },
+                    ]} />
+                <span role="status">{permissionLocked ? "这一轮的权限已固定，结束后可更改。" : permissionMode === "read-only" ? "查看和分析，不修改内容。" : permissionMode === "full-access" ? "查看素材，可修改所有画布。" : "查看素材并修改当前画布。"}</span>
+            </div> : null}
             <div className="canvas-assistant-chips">
                 <span className="canvas-assistant-chip">当前画布</span>
-                {selectionAttached && selectedCount > 0 ? (
+                {!streaming && selectionAttached && selectedCount > 0 ? (
                     <span className="canvas-assistant-chip">
                         已选 {selectedCount} 个节点
                         <button type="button" aria-label="这条消息不带已选节点" onClick={onDetachSelection}>
@@ -56,6 +90,8 @@ export function CanvasAssistantComposer({
                     </span>
                 ) : null}
             </div>
+
+            {inputContent}
 
             <div className="canvas-assistant-input" style={{ height: height + 14 }}>
                 <CanvasResourceMentionTextarea
@@ -68,7 +104,7 @@ export function CanvasAssistantComposer({
                     className="thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent px-3 py-1.5 text-[var(--fs-caption)] leading-[21px] !shadow-none !outline-none !ring-0 focus:!shadow-none focus:!outline-none focus:!ring-0 placeholder:text-[var(--muted-foreground)]"
                     onContentSizeChange={setContentHeight}
                     disabled={disabled}
-                    placeholder="描述你的想法，或用 @ 引用素材"
+                    placeholder={streaming ? "补充这次创作的要求" : "描述你的想法，或用 @ 引用素材"}
                     aria-label="给助手的消息"
                 />
             </div>
@@ -76,9 +112,15 @@ export function CanvasAssistantComposer({
             {disabled && disabledReason ? <span className="canvas-assistant-meta">{disabledReason}</span> : null}
 
             <div className="canvas-assistant-composer-footer">
+                {onFiles ? <Tooltip title="添加参考素材"><Button type="text" size="small" aria-label="添加参考素材" disabled={disabled || inputBusy} icon={<Paperclip size={15} />} onClick={() => fileInput.current?.click()} /></Tooltip> : null}
+                {onOpenSkills ? <Tooltip title="选择技能"><Button type="text" size="small" aria-label="选择技能" disabled={disabled} icon={<Sparkles size={15} />} onClick={onOpenSkills} /></Tooltip> : null}
+                {onOpenReferences ? <Button type="text" size="small" disabled={disabled} onClick={onOpenReferences}>画布素材</Button> : null}
                 <CanvasAssistantModelPicker busy={disabled || streaming || Boolean(modelBusy)} />
                 {streaming ? (
-                    <Button size="small" icon={<Square className="size-3" />} onClick={onStop}>停止</Button>
+                    <>
+                        <Button size="small" disabled={!canSend} loading={supplementBusy} onClick={onSend}>补充</Button>
+                        <Button size="small" icon={<Square className="size-3" />} onClick={onStop}>停止</Button>
+                    </>
                 ) : (
                     <Tooltip title="Enter 发送 · Shift + Enter 换行" placement="topRight">
                         <Button className="canvas-assistant-send" shape="circle" type="primary" aria-label="发送" disabled={!canSend} icon={<ArrowUp className="size-4" />} onClick={onSend} />

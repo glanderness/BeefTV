@@ -78,7 +78,7 @@ func (s *Service) postJSON(path string, payload any, header http.Header) (*http.
 	if err != nil {
 		return nil, nil, err
 	}
-	request, err := http.NewRequest(http.MethodPost, s.origin+path, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(s.lifecycle, http.MethodPost, s.Origin()+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -125,13 +125,13 @@ func (s *Service) requestDeviceCode() (deviceCodeResponse, error) {
 		result.Interval = 5
 	}
 	if result.VerificationURI == "" {
-		result.VerificationURI = s.origin + "/desktop-auth"
+		result.VerificationURI = s.Origin() + "/desktop-auth"
 	}
-	if _, err := ValidateVerificationURL(s.origin, result.VerificationURI); err != nil {
+	if _, err := ValidateVerificationURL(s.Origin(), result.VerificationURI); err != nil {
 		return deviceCodeResponse{}, err
 	}
 	if result.VerificationURIComplete != "" {
-		if _, err := ValidateVerificationURL(s.origin, result.VerificationURIComplete); err != nil {
+		if _, err := ValidateVerificationURL(s.Origin(), result.VerificationURIComplete); err != nil {
 			return deviceCodeResponse{}, err
 		}
 	}
@@ -216,7 +216,7 @@ func (s *Service) cancelRemote(deviceCode string) error {
 }
 
 func (s *Service) remoteConnection(apiKey string) (connectionView, int, error) {
-	request, err := http.NewRequest(http.MethodGet, TokenBaseURL(s.origin)+"/beeftv/connection", nil)
+	request, err := http.NewRequestWithContext(s.lifecycle, http.MethodGet, TokenBaseURL(s.Origin())+"/beeftv/connection", nil)
 	if err != nil {
 		return connectionView{}, 0, err
 	}
@@ -239,7 +239,7 @@ func (s *Service) remoteConnection(apiKey string) (connectionView, int, error) {
 }
 
 func (s *Service) revokeRemote(apiKey string) error {
-	request, err := http.NewRequest(http.MethodDelete, TokenBaseURL(s.origin)+"/beeftv/connection", nil)
+	request, err := http.NewRequestWithContext(s.lifecycle, http.MethodDelete, TokenBaseURL(s.Origin())+"/beeftv/connection", nil)
 	if err != nil {
 		return err
 	}
@@ -258,9 +258,9 @@ func (s *Service) revokeRemote(apiKey string) error {
 
 func (s *Service) fetchModels(apiKey string) ([]CatalogModel, error) {
 	if s.fetchCatalog != nil {
-		return s.fetchCatalog(apiKey, ProviderBaseURL(s.origin))
+		return s.fetchCatalog(apiKey, ProviderBaseURL(s.Origin()))
 	}
-	request, err := http.NewRequest(http.MethodGet, TokenBaseURL(s.origin)+"/models", nil)
+	request, err := http.NewRequestWithContext(s.lifecycle, http.MethodGet, TokenBaseURL(s.Origin())+"/models", nil)
 	if err != nil {
 		return nil, err
 	}

@@ -30,13 +30,13 @@ func BuiltinRegistry() *Registry {
 			SummaryFields: []string{"content"}, DetailFields: []string{"content"},
 			PatchFields: editableNodeFields("metadata.content", "Markdown 正文", "Markdown 正文"),
 		},
-		generatedMediaDescriptor("image", "2", "图片", 720, 405, "image", ConnectionPolicy{
+		generatedMediaDescriptor("image", "3", "图片", 720, 405, "image", ConnectionPolicy{
 			CanSource: true, CanTarget: true, CanReference: true, AcceptedInputKinds: []string{"text", "image"},
 		}),
-		generatedMediaDescriptor("video", "2", "视频", 720, 405, "video", ConnectionPolicy{
+		generatedMediaDescriptor("video", "3", "视频", 720, 405, "video", ConnectionPolicy{
 			CanSource: true, CanTarget: true, CanReference: true, AcceptedInputKinds: []string{"text", "image", "video", "audio"},
 		}),
-		generatedMediaDescriptor("audio", "2", "音频", 340, 120, "audio", ConnectionPolicy{
+		generatedMediaDescriptor("audio", "3", "音频", 340, 120, "audio", ConnectionPolicy{
 			CanSource: true, CanTarget: true, CanReference: true, MaxInputCount: 1, AcceptedInputKinds: []string{"text"},
 		}),
 		{
@@ -106,9 +106,32 @@ func generatedMediaDescriptor(nodeType, version, label string, width, height flo
 		InputKind: nodeType, GenerationMode: generationMode, Connection: connection, CanUpdate: true,
 		SummaryFields:  []string{"prompt", "composerContent", "assetTags", "referenceNodeIds"},
 		DetailFields:   []string{"prompt", "composerContent", "assetTags", "referenceNodeIds"},
-		PatchFields:    editableNodeFields("metadata.composerContent", "下一版提示词", "下次生成使用的提示词草稿；不覆盖已提交提示词或媒体结果"),
+		PatchFields:    generatedDraftFields(nodeType),
 		CreateMetadata: generatedMetadata,
 	}
+}
+
+func generatedDraftFields(kind string) map[string]PatchField {
+	fields := editableNodeFields("metadata.composerContent", "下一版提示词", "下次生成使用的提示词草稿；不覆盖已提交提示词或媒体结果")
+	names := []string{"model"}
+	switch kind {
+	case "image":
+		names = append(names, "size", "quality", "transparentBackground")
+		fields["count"] = PatchField{Path: "metadata.count", Kind: patchKindNumber, Label: "生成数量", Order: 30}
+	case "video":
+		names = append(names, "size", "seconds", "vquality", "generateAudio", "watermark")
+	case "audio":
+		names = append(names, "audioVoice", "audioFormat", "audioSpeed", "audioPitch", "audioVolume", "audioInstructions")
+	}
+	for index, name := range names {
+		max := 256
+		if name == "audioInstructions" {
+			max = 4096
+		}
+		fields[name] = PatchField{Path: "metadata." + name, Kind: patchKindString, Label: name, Order: 40 + index,
+			Description: "下次生成使用的草稿参数；提交生成时仍会校验模型能力", MaxRunes: max}
+	}
+	return fields
 }
 
 type generatedMediaCapabilitySemantics struct {

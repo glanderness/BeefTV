@@ -30,6 +30,7 @@ type UserAssetPageFilter struct {
 	Favorite      bool
 	Recent        bool
 	Project       string
+	ProjectID     string // Verified domain-project relation; distinct from display-label Project.
 	Generated     bool
 }
 
@@ -146,6 +147,9 @@ func userAssetFilteredQuery(query *gorm.DB, filter UserAssetPageFilter, includeS
 	}
 	if value := strings.TrimSpace(filter.Project); value != "" {
 		query = query.Where(userAssetProjectLabelSQL()+" = ?", value)
+	}
+	if value := strings.TrimSpace(filter.ProjectID); value != "" {
+		query = query.Where("EXISTS (SELECT 1 FROM project_asset_links WHERE project_asset_links.asset_id = assets.id AND project_asset_links.project_id = ?)", value)
 	}
 	if filter.Generated {
 		query = query.Where(userAssetGeneratedSQL())

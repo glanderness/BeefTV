@@ -3,8 +3,9 @@ package app
 // AssistantTurnHistoryState supplements pi's conversation history with authoritative business receipts.
 // It is a read projection: reading history never settles or cancels an active turn.
 type AssistantTurnHistoryState struct {
-	Change *AssistantTurnChange
-	Undone bool
+	PermissionMode string `json:"permissionMode"`
+	Change         *AssistantTurnChange
+	Undone         bool
 }
 
 func (s *Service) ReadAssistantTurnHistoryState(userID, canvasID, turnID string) (*AssistantTurnHistoryState, error) {
@@ -12,5 +13,5 @@ func (s *Service) ReadAssistantTurnHistoryState(userID, canvasID, turnID string)
 	if err != nil || state == nil {
 		return nil, err
 	}
-	return &AssistantTurnHistoryState{Change: state.Change, Undone: state.Undone}, nil
+	return &AssistantTurnHistoryState{Change: state.Change, Undone: state.Undone, PermissionMode: state.PermissionMode}, nil
 }

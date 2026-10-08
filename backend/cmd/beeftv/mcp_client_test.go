@@ -56,8 +56,16 @@ func TestMCPClientLoop(t *testing.T) {
 	registry := operations.NewRegistry(nil, nil)
 	operations.RegisterDefaultOps(registry)
 	expected := registry.List(operations.ManualCaller(false))
-	if len(tools.Tools) != len(expected) {
-		t.Fatalf("MCP tools = %d, workspace operations = %d", len(tools.Tools), len(expected))
+	apiClient, clientErr := newClient()
+	if clientErr != nil {
+		t.Fatal(clientErr)
+	}
+	business, discoveryErr := apiClient.businessTools(ctx)
+	if discoveryErr != nil {
+		t.Fatal(discoveryErr)
+	}
+	if len(tools.Tools) != len(expected)+len(business) {
+		t.Fatalf("MCP tools = %d, workspace operations = %d, business handlers = %d", len(tools.Tools), len(expected), len(business))
 	}
 	for _, operation := range expected {
 		found := false

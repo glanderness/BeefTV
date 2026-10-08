@@ -81,7 +81,7 @@ export function beefAPIConnectionLabel(summary: BeefAPIConnectionSummary | null 
 
 function connectedAccountLabel(summary: BeefAPIConnectionSummary | null | undefined) {
     const account = summary?.account;
-    const name = account?.display_name || account?.username || account?.email;
+    const name = account?.email || account?.display_name || account?.username;
     if (name && summary?.balance === "zero") return `已连接 ${name}，余额为 0`;
     if (name) return `已连接 ${name}`;
     if (summary?.balance === "zero") return "已连接，余额为 0";

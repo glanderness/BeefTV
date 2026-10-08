@@ -19,7 +19,7 @@ func RecoverableImageEndpoint(req *http.Request) bool {
 		return false
 	}
 	switch strings.ToLower(req.URL.Hostname()) {
-	case "beefapi.com", "enterprise.beefapi.com", "global.beefapi.com":
+	case "beeftv.app", "beefapi.com", "enterprise.beefapi.com", "global.beefapi.com":
 	default:
 		return false
 	}

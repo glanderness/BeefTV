@@ -42,6 +42,7 @@ function stubController(open: boolean, setOpen: (next: boolean) => void, width: 
     const noop = () => {};
     const asyncNoop = async () => {};
     return {
+        canvasId: "lab",
         open,
         setOpen,
         width,
@@ -61,8 +62,17 @@ function stubController(open: boolean, setOpen: (next: boolean) => void, width: 
         reloadHistory: async () => true,
         pendingUserText: null,
         pendingSelectedNodeIds: [],
+        pendingAttachments: [],
+        pendingSkills: [],
+        permissionMode: "canvas",
+        permissionLocked: false,
+        setPermissionMode: noop,
         streamed: "",
         streaming: false,
+        awaitingReceipt: false,
+        supplements: [],
+        supplementBusy: false,
+        canSupplement: false,
 		lifecycleNotice: null,
         error: null,
         canRetry: false,
@@ -105,6 +115,17 @@ export default function AssistantPanelLab() {
                 : { available: true, model: { id: "deepseek-v3", channelId: "beefapi", channelName: "BeefAPI" } };
 
     const assistant = stubController(open, setOpen, width, setWidth, status);
+    if (state === "interrupted") {
+        assistant.turns = [{ ...TURNS[0], proposals: [], error: "本轮达到等待上限", errorReason: "turn_timeout", change: { ...TURNS[0].change!, timelineUpdated: true } }];
+    }
+    if (state === "streaming") {
+        assistant.streaming = true;
+        assistant.canSupplement = true;
+        assistant.pendingUserText = "检查参考视频的声音，去掉中间黑屏，保留咖啡和蛋糕的结尾";
+        assistant.streamed = "已找到中间的黑屏，正在检查这段声音。";
+        assistant.supplements = [{ text: "不要删除片尾的两秒停顿", status: "accepted" }];
+        assistant.lifecycleNotice = "正在检查媒体";
+    }
 
     return (
         <div className="flex h-screen min-h-0" style={{ background: "var(--background)", color: "var(--foreground)" }}>

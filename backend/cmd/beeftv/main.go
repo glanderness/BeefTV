@@ -310,6 +310,9 @@ func run(args []string) error {
 	}
 	switch args[0] {
 	case "ops":
+		if len(args) > 1 && args[1] == "call" {
+			return runOpsCall(c, args[2:])
+		}
 		fs := flag.NewFlagSet("ops", flag.ContinueOnError)
 		readOnly := fs.Bool("read-only", false, "只列出只读操作")
 		jsonOut := fs.Bool("json", false, "输出 JSON")
@@ -341,6 +344,8 @@ func run(args []string) error {
 		return runClient(c, args[1:])
 	case "mcp":
 		return runMCP(c, args[1:])
+	case "business":
+		return runBusiness(c, args[1:])
 	default:
 		usage()
 		return &cliError{code: exitUsage, reason: "unknown_command", msg: "未知子命令: " + args[0]}
@@ -351,6 +356,10 @@ func usage() {
 	fmt.Fprint(os.Stderr, `beeftv — BeefTV 业务操作命令行（连接正在运行的本地工作区）
 
   beeftv ops [--read-only] [--json]
+  beeftv ops call <operation> --params '<json>' [--operation-id <id>] [--json]
+  beeftv business discover
+  beeftv business call --tool <id> --params '<path/query/body json>'
+  beeftv business upload --file <path> [--target resource|skill|plugin] [--params '<json>']
   beeftv canvas get --canvas <id> [--json]
   beeftv canvas search [--query <q>] [--page N] [--page-size N] [--json]
   beeftv canvas node update --canvas <id> --node <id> --expected-revision N [--title T] [--prompt P] [--content C] --op-id <id>
@@ -359,7 +368,7 @@ func usage() {
   beeftv asset list [--query <q>] [--kind <kind>] [--favorite] [--recent] [--project <name>] [--generated] [--json]
   beeftv asset get --asset <id> [--json]
   beeftv task get --task <id> [--json]
-  beeftv client register --label <label> --mode read-only|read-write [--kind codex|claude|cursor|other]
+  beeftv client register --label <label> [--kind codex|claude|cursor|other] [--mode read-only|read-write]
   beeftv mcp serve [--read-only]
 
 连接哪个工作区：不设 BEEFTV_BASE_URL 时自动连正在运行的 BeefTV 桌面应用，端口是动态的。
@@ -367,7 +376,8 @@ BEEFTV_DATA_DIR 可以指向非默认数据目录。Windows 从用户目录下 .
 工作区的运行信息，其他平台读取数据目录里的 runtime.json。升级后请重新打开 BeefTV。
 
 凭据：在 BeefTV 的设置里新建一个客户端，把它给出的 BEEFTV_CLIENT_ID 与 BEEFTV_CLIENT_TOKEN
-填进环境变量即可，不需要桌面令牌。读写权限在新建时就定下来，客户端自己改不了。
+填进环境变量即可，不需要桌面令牌。新连接默认开放全部业务工具，操作审批由外部 Agent 管理。
+历史只读凭据继续保持只读；CLI 仍支持显式签发只读凭据。
 
 写操作必须带幂等键（CLI 的 --op-id，MCP 工具参数里的 operationId）：重试同一操作要复用同一个值。
 
@@ -630,7 +640,7 @@ func runClient(c *client, args []string) error {
 	}
 	fs := flag.NewFlagSet("client register", flag.ContinueOnError)
 	label := fs.String("label", "", "客户端名称")
-	mode := fs.String("mode", "read-only", "read-only 或 read-write")
+	mode := fs.String("mode", "read-write", "read-only 或 read-write")
 	kind := fs.String("kind", "other", "codex、claude、cursor 或 other")
 	jsonOut := fs.Bool("json", false, "输出 JSON")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -665,6 +675,21 @@ func runMCP(c *client, args []string) error {
 		return err
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "beeftv", Version: "1.0.0"}, nil)
+	registeredTools := len(ops)
+	business, businessErr := c.businessTools(ctx)
+	if businessErr != nil {
+		var unavailable *cliError
+		if !errors.As(businessErr, &unavailable) || unavailable.code != exitNotFound {
+			return businessErr
+		}
+	} else {
+		registerBusinessMCP(server, c, business, *readOnly)
+		for _, tool := range business {
+			if !*readOnly || tool.ReadOnly {
+				registeredTools++
+			}
+		}
+	}
 	for _, op := range ops {
 		descriptor := op
 		server.AddTool(&mcp.Tool{Name: descriptor.ID, Description: descriptor.Summary, InputSchema: descriptor.Params,
@@ -704,7 +729,7 @@ func runMCP(c *client, args []string) error {
 			})
 	}
 	_, baseSource := resolveBaseURL()
-	fmt.Fprintf(os.Stderr, "beeftv mcp serve: %d 个工具，base=%s（%s），client=%s\n", len(ops), c.baseURL, baseSource, orNone(c.clientID))
+	fmt.Fprintf(os.Stderr, "beeftv mcp serve: %d 个工具，base=%s（%s），client=%s\n", registeredTools, c.baseURL, baseSource, orNone(c.clientID))
 	return server.Run(ctx, &mcp.StdioTransport{})
 }
 

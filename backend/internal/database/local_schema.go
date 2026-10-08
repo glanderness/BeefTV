@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 13
+const CurrentSchemaVersion int64 = 16
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -87,6 +87,9 @@ func canonicalLocalMigrations() []localMigration {
 		{version: 11, name: "creation-conversations", apply: migrateCreationConversations},
 		{version: 12, name: "canvas-library-drawings", apply: migrateCanvasLibrarySchema},
 		{version: 13, name: "upload-reservation-witness", apply: migrateUploadReservationWitness},
+		{version: 14, name: "assistant-skill-version-pins", apply: migrateAssistantSkillPins},
+		{version: 15, name: "assistant-permission-and-canvas-snapshots", apply: migrateAssistantPermissions},
+		{version: 16, name: "assistant-durable-session-binding", apply: migrateAssistantSessions},
 	}
 }
 
@@ -464,7 +467,22 @@ func requireReconciledSchema(db *gorm.DB) error {
 		}
 	}
 	if version >= 12 {
-		return requireCanvasLibrarySchema(db)
+		if err := requireCanvasLibrarySchema(db); err != nil {
+			return err
+		}
+	}
+	if version >= 14 {
+		if err := requireAssistantSkillPins(db); err != nil {
+			return err
+		}
+	}
+	if version >= 15 {
+		if err := requireAssistantPermissions(db); err != nil {
+			return err
+		}
+	}
+	if version >= 16 {
+		return requireAssistantSessions(db)
 	}
 	return nil
 }

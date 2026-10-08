@@ -8,6 +8,10 @@ import (
 // RefreshCatalog fetches and persists prices through the saved connection. A
 // client config write must never supply the managed catalog's trusted prices.
 func (s *Service) RefreshCatalog(ctx context.Context) ([]CatalogModel, error) {
+	if err := s.beginWork(); err != nil {
+		return nil, err
+	}
+	defer s.workers.Done()
 	s.mu.Lock()
 	state := s.state
 	closed := s.closed

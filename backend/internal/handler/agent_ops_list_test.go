@@ -47,15 +47,15 @@ func TestOpsListingKeepsOwnerAndExternalCatalogFull(t *testing.T) {
 	hostListing := getOps(t, env, map[string]string{"X-Beeftv-Agent-Token": assistantTestHostToken})
 	wantHost := make([]string, 0)
 	for _, descriptor := range registry.List(operations.ManualCaller(false)) {
-		if descriptor.Scope != operations.ScopeConversation && descriptor.ID != "asset.list" && descriptor.ID != "canvas.search" && descriptor.ID != "canvas.document.commit" {
+		if descriptor.Scope != operations.ScopeConversation {
 			wantHost = append(wantHost, descriptor.ID)
 		}
 	}
 	if !reflect.DeepEqual(hostListing, wantHost) {
 		t.Fatalf("宿主回合外能力发现应为 %v，得到 %v", wantHost, hostListing)
 	}
-	if listingHas(hostListing, "asset.list") || listingHas(hostListing, "canvas.search") || listingHas(hostListing, "canvas.document.commit") {
-		t.Fatalf("助手不应看到工作区级或整页写操作: %v", hostListing)
+	if !listingHas(hostListing, "asset.list") || !listingHas(hostListing, "canvas.search") || !listingHas(hostListing, "canvas.document.commit") {
+		t.Fatalf("宿主应能装载完整画布能力，回合内再按Go权限选择: %v", hostListing)
 	}
 }
 

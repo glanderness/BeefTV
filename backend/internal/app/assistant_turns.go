@@ -65,6 +65,14 @@ func (s *Service) FinalizeAssistantTurn(turnID string) error {
 	return s.assistantTurnsOrInit().Finalize(turnID)
 }
 
+func (s *Service) AssistantTurnRuntimeState(userID, turnID string) (*assistantturns.RuntimeState, error) {
+	return s.assistantTurnsOrInit().RuntimeState(userID, turnID)
+}
+
+func (s *Service) ExtendAssistantTurn(userID, canvasID, turnID string, input AssistantTurnInput) error {
+	return s.assistantTurnsOrInit().Extend(userID, canvasID, turnID, input)
+}
+
 func (s *Service) AssistantTurnUndone(userID, canvasID, turnID string) bool {
 	return s.assistantTurnsOrInit().Undone(userID, canvasID, turnID)
 }

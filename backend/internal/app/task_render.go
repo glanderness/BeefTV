@@ -71,6 +71,7 @@ func (w *taskWorkerCoordinator) processTimelineRender(task *model.Task, ctx cont
 	}
 
 	result := timelineRenderResult{
+		Video:       map[string]any{"resourceId": resource.ID, "mimeType": "video/mp4", "fileName": timelineRenderFileName, "durationMs": resource.DurationMs},
 		ResourceID:  resource.ID,
 		FileName:    timelineRenderFileName,
 		Size:        resource.Size,
@@ -89,6 +90,9 @@ func (w *taskWorkerCoordinator) processTimelineRender(task *model.Task, ctx cont
 	task.CompletedAt = &completedAt
 	if err := s.repo.SaveTaskCompletion(task, model.TaskStatusRunning, nil); err != nil {
 		return fmt.Errorf("写入渲染完成态失败: %w", err)
+	}
+	if err := s.DeliverSucceededTask(*task); err != nil {
+		return fmt.Errorf("本地渲染完成后的素材交付失败：%w", err)
 	}
 	s.logInfo(task.UserID, task.ID, fmt.Sprintf("时间线渲染完成，时长 %.1fs", float64(resource.DurationMs)/1000), "")
 	return nil

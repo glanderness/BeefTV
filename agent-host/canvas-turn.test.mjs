@@ -9,6 +9,18 @@ import { SYSTEM_PROMPT } from "./full-control-loader.mjs";
 const serverSource = readFileSync(new URL("./server.mjs", import.meta.url), "utf8");
 
 describe("本轮画布变更", () => {
+    test("真实素材绑定回执保留改动节点与撤销操作身份", () => {
+        const turn = resetTurnAccumulator(newTurnAccumulator(), 7);
+        collectTurnEffects(turn, "canvas.node.bind_asset", { revision: 8, nodeId: "reference", referenceBound: true }, "bind-op");
+        expect(turnChange(turn)).toEqual({ revisionBefore: 7, revisionAfter: 8,
+            createdNodeIds: [], updatedNodeIds: ["reference"], createdEdgeIds: [], operationIds: ["bind-op"] });
+    });
+    test("参数配置保留真实节点与操作回执供查看和撤销", () => {
+        const turn = resetTurnAccumulator(newTurnAccumulator(), 7);
+        collectTurnEffects(turn, "canvas.node.configure", { revision: 8, nodeId: "video-draft" }, "configure-op");
+        expect(turnChange(turn)).toEqual({ revisionBefore: 7, revisionAfter: 8,
+            createdNodeIds: [], updatedNodeIds: ["video-draft"], createdEdgeIds: [], operationIds: ["configure-op"] });
+    });
     test("从成功的工具结果累计新建节点、改动节点与新建连线", () => {
         const turn = resetTurnAccumulator(newTurnAccumulator(), 7);
 
@@ -103,7 +115,7 @@ describe("付费生成提议", () => {
 
     test("系统提示词必须禁止宣称已生成，并指向提议工具", () => {
         expect(SYSTEM_PROMPT).toContain("canvas_generation_propose");
-        expect(SYSTEM_PROMPT).toContain("你不能生成图片或视频");
+        expect(SYSTEM_PROMPT).toContain("不能直接开始付费图片或视频生成");
     });
 
     test("系统提示词用 content 改可编辑提示词，未改字段不要提交", () => {
@@ -142,13 +154,15 @@ describe("供应商定义", () => {
         expect(registration.api).toBe("anthropic-messages");
         expect(registration.baseUrl).toBe("https://enterprise.example.com");
         expect(registration.models).toEqual([{ id: "claude-fable-5", name: "claude-fable-5", reasoning: false,
-            input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            input: ["text", "image"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             contextWindow: 200000, maxTokens: 4096 }]);
     });
 
     test("宿主不再硬编码 OpenAI 目录，模型与协议只来自后端下发的环境变量", () => {
         expect(serverSource).not.toContain("openaiProvider");
-        expect(serverSource).not.toContain("createModels");
+        // Durable 的官方 registry 工厂可以使用；供应商与模型仍只登记 Go 下发的配置。
+        expect(serverSource).toContain("const models = createModels(); const provider = modelRuntime.getProvider(PROVIDER_ID)");
+        expect(serverSource).toContain("getModelRef: () => ({ provider: PROVIDER_ID, modelId: MODEL_ID })");
         expect(serverSource).toContain("BEEFTV_AGENT_API");
     });
 
@@ -170,12 +184,12 @@ describe("回合上下文", () => {
     });
 
     test("引用只作为模型可见上下文，素材与额外画布分别标注", () => {
-        expect(turnContextPrefix({ canvasId: "c1" })).toBe("[当前画布 c1]");
+        expect(turnContextPrefix({ canvasId: "c1" })).toBe("[当前画布 c1｜可修改当前画布，其他画布只读]");
         expect(turnContextPrefix({ canvasId: "c1", selectedNodeIds: ["n1", "n2"] }))
-            .toBe("[当前画布 c1｜选中对象: n1, n2]");
+            .toBe("[当前画布 c1｜可修改当前画布，其他画布只读｜选中对象: n1, n2]");
         expect(turnContextPrefix({ canvasId: "c1", references: [
             { kind: "asset", id: "a1" }, { kind: "canvas", id: "c2" }, { kind: "asset", id: "a2" }, { kind: "unknown", id: "x" },
-        ] })).toBe("[当前画布 c1｜已引用素材: a1, a2｜已引用画布（只读）: c2]");
+        ] })).toBe("[当前画布 c1｜可修改当前画布，其他画布只读｜已引用素材: a1, a2｜已引用画布（只读）: c2]");
     });
 });
 

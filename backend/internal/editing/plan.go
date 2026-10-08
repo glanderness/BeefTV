@@ -79,6 +79,7 @@ func (clip *Clip) UnmarshalJSON(data []byte) error {
 
 type DirectMedia struct {
 	ID         string `json:"id"`
+	AssetID    string `json:"assetId,omitempty"`
 	Kind       string `json:"kind"`
 	StorageKey string `json:"storageKey"`
 }

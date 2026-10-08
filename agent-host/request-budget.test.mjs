@@ -92,6 +92,6 @@ describe("server 接线", () => {
     });
 
     test("Chat 信封里的引用进入模型上下文", () => {
-        expect(serverSource).toContain("turnContextPrefix({ canvasId, selectedNodeIds: selected, references })");
+        expect(serverSource).toContain("turnContextPrefix({ canvasId, selectedNodeIds: selected, references,permissionMode:body.permissionMode })");
     });
 });

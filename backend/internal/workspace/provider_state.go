@@ -221,6 +221,15 @@ func presetChannelMap(preset providerpreset.ChannelPreset, local map[string]any)
 			result[key] = value
 		}
 	}
+	if preset.ID == "beefapi" {
+		base, _ := local["baseUrl"].(string)
+		if base == "https://enterprise.beefapi.com" || base == "https://beeftv.app" {
+			result["baseUrl"] = base
+		} else if key, _ := local["apiKey"].(string); base == "" && key != "" {
+			// Pre-brand manual credentials without an origin were issued by BeefAPI.
+			result["baseUrl"] = "https://enterprise.beefapi.com"
+		}
+	}
 	return result, nil
 }
 

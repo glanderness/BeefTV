@@ -1,4 +1,4 @@
-// 官方 SettingsManager.inMemory 的显式值：与 0.87.1 文档默认值对齐，不提高重试次数或压缩保留量。
+// 升级 1.0.4 后保留宿主原有的压缩与重试上限。
 // cacheWarming 显式关闭：官方默认 streaming 会额外打模型请求，不能叠在本宿主的单轮/总预算之上。
 import { SettingsManager } from '@earendil-works/pi-coding-agent';
 

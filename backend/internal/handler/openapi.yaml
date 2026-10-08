@@ -28,6 +28,33 @@ tags:
   - name: assistant
   - name: creation-conversations
 paths:
+  /business/tools:
+    get:
+      tags: [agent-ops]
+      summary: Discover mounted business tools available to external clients
+      description: |
+        A registered external client uses X-Beeftv-Client and its Bearer token.
+        The response lists mounted business handlers and their method, path, query,
+        body schemas, readOnly flag, and generation cost hints. External clients
+        manage execution approval. Identity, ownership, balance, validation and
+        revision checks still run in the existing handlers. Legacy read-only
+        credentials cannot execute writes. A listed handler may return
+        FeatureUnavailable when its feature is disabled.
+      parameters:
+        - in: header
+          name: X-Beeftv-Client
+          required: true
+          schema: { type: string }
+        - in: header
+          name: Authorization
+          required: true
+          description: Bearer registered-client token
+          schema: { type: string }
+      responses:
+        "200":
+          description: Envelope data contains tools, readOnly, authentication and approval
+        "403":
+          description: Invalid client, forbidden origin or unavailable local identity
   /projects/{id}/chapter-apply-receipts:
     get:
       tags: [projects]

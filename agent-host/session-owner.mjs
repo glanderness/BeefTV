@@ -31,10 +31,10 @@ function storeClosedError() {
   return error;
 }
 
-export function createSessionStore({ sessionRoot, workspaceRoot, agentDir, runId, getModelRuntime, getModel }) {
+export function createSessionStore({ sessionRoot, workspaceRoot, agentDir, runId, getModelRuntime, getModel,
+  createResourceLoader = ({ cwd, agentDir }) => createFullControlLoader({ cwd, agentDir }) }) {
   const sessions = new Map();
   const canvasLocks = new Map();
-  const resourceLoader = createFullControlLoader();
   let closed = false;
   let inFlightLocks = 0;
   let idleResolvers = [];
@@ -163,7 +163,7 @@ export function createSessionStore({ sessionRoot, workspaceRoot, agentDir, runId
   async function createLiveSession({ canvasId, sessionId, buildTools }) {
     const cwd = canvasWorkspace(canvasId);
     const log = [];
-    const generation = { aborted: false };
+    const generation = { aborted: false, permissionMode:'full-access' };
     const turn = newTurnAccumulator();
     let opened;
     try {
@@ -178,6 +178,9 @@ export function createSessionStore({ sessionRoot, workspaceRoot, agentDir, runId
     const identity = sessionActionIdentity({ persistedId, runId });
     console.error(`agent-host: 会话 ${canvasId} 的动作身份来源 = ${identity.source}（persistence=${persistence}）`);
     const tools = buildTools(canvasId, log, generation, turn, identity.prefix);
+    generation.permissionMode='canvas';
+    const resourceLoader = await createResourceLoader({ canvasId, cwd, agentDir });
+    await resourceLoader.reload();
     const { session } = await createAgentSession({
       cwd,
       agentDir,
@@ -316,6 +319,11 @@ export function createSessionStore({ sessionRoot, workspaceRoot, agentDir, runId
     }
     if (!observer.settled && !error) {
       error = 'Error: agent run did not settle';
+    }
+    // Official prompt() may resolve normally while the final assistant is an error.
+    const finalMessage = observer.lastAssistantMessage;
+    if (!error && (finalMessage?.stopReason === 'error' || finalMessage?.stopReason === 'aborted')) {
+      error = `Error: ${finalMessage.errorMessage || (finalMessage.stopReason === 'aborted' ? 'agent run aborted' : 'provider request failed')}`;
     }
     return { observer, error, timedOut };
   }

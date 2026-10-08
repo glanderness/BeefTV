@@ -6,6 +6,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ModelRuntime, SessionManager } from '@earendil-works/pi-coding-agent';
+import { createModels } from '@earendil-works/pi-ai/models';
+import { createDurableSessionStore, isDurableSessionId } from './durable-session-owner.mjs';
+import { createDurableTurnBudget } from './durable-turn-budget.mjs';
+import { createDurableSkillExtension } from './skill-resource.mjs';
 import { providerRegistration, providerUnavailableReason,
   turnContextPrefix, modelTurnCompletion,
   unflushedSessionHistory,
@@ -14,6 +18,9 @@ import { budgetError, createTurnBudget, spendModelRequest } from './request-budg
 import { createDurableRequestBudget } from './durable-request-budget.mjs';
 import { createOperationBridge } from './operation-bridge.mjs';
 import { TURN_ENTRY_TYPE, createSessionStore } from './session-owner.mjs';
+import { adaptMediaRequest, trustedMediaSources } from './media-content.mjs';
+import {nativeSourceKey} from './native-history.mjs';
+import { createNativePartStore } from './native-part-store.mjs';
 
 const OPS_URL = (process.env.BEEFTV_OPS_URL || 'http://127.0.0.1:18090/api').replace(/\/+$/, '');
 const HOST_TOKEN = process.env.BEEFTV_AGENT_HOST_TOKEN || '';
@@ -41,6 +48,7 @@ const MAX_TOOL_STEPS_PER_TURN = Number(process.env.BEEFTV_AGENT_MAX_TOOL_STEPS_P
 const LIFETIME_REQUEST_BUDGET = Number(process.env.BEEFTV_AGENT_TOTAL_REQUEST_BUDGET || 0);
 const MAX_BODY_BYTES = 64 * 1024;
 const READ_ONLY_MODE = process.env.BEEFTV_AGENT_READ_ONLY === '1';
+const NEW_SESSION_RUNTIME = process.env.BEEFTV_AGENT_NEW_SESSION_RUNTIME || 'durable';
 const PROVIDER_ID = 'beeftv';
 
 for (const [name, value] of Object.entries({ BEEFTV_AGENT_HOST_TOKEN: HOST_TOKEN,
@@ -87,6 +95,7 @@ const lifetimeBudgetPath = path.join(DATA_DIR, 'agent-request-budget.json');
 const lifetimeBudget = createDurableRequestBudget({ limit: LIFETIME_REQUEST_BUDGET, file: lifetimeBudgetPath });
 
 const turnBudgetContext = new AsyncLocalStorage();
+const nativePartStore = createNativePartStore({directory:path.join(DATA_DIR,'native-parts')});
 
 const BASE_ORIGIN = BASE_URL ? new URL(BASE_URL).origin : '';
 const realFetch = globalThis.fetch;
@@ -96,7 +105,40 @@ globalThis.fetch = async (input, options = {}) => {
   try { parsed = new URL(raw); } catch { parsed = null; }
   const isModelCall = !!BASE_ORIGIN && parsed && parsed.origin === BASE_ORIGIN;
   if (isModelCall) {
+    // Transform at the real dispatch boundary; extension errors are caught by pi.
     const budget = turnBudgetContext.getStore();
+    let historicalKind='素材';
+    try {
+    if (options.body) {
+      const payload = JSON.parse(options.body);
+      const mediaOptions = {api:MODEL_API,modelId:MODEL_ID,nativePartStore};
+      for (const source of trustedMediaSources(payload,mediaOptions)) {
+        historicalKind=source.mediaKind;
+        if (!budget?.turnId || !budget.canvasId) throw new Error('media_authorization_missing');
+        let actual;
+        if(budget.sessionId) {
+          const pinned=budget.nativeHistory?.origins.get(`${source.toolCallId}:${nativeSourceKey(source)}`);
+          if(!pinned || (source.originTurnId && source.originTurnId!==pinned.originTurnId)) throw new Error('native_history_requires_reference');
+          const {toolCallId,originTurnId,...nativeSource}=source;
+          await ops.opsRequest('POST',`/assistant/runtime/turns/${encodeURIComponent(pinned.originTurnId)}/bind-session`,{sessionId:budget.sessionId,historical:pinned.historical,currentTurnId:budget.turnId,source:nativeSource});
+          actual=await ops.opsRequest('POST',`/assistant/runtime/turns/${encodeURIComponent(budget.turnId)}/native-rehydrate`,{sessionId:budget.sessionId,originTurnId:pinned.originTurnId,source:nativeSource});
+        } else {
+          actual=(await ops.opsRequest('POST','/ops/media.overview',{params:{canvasId:source.canvasId,
+            ...(source.nodeId ? {nodeId:source.nodeId}:{assetId:source.assetId}),resourceId:source.resourceId}},undefined,budget.turnId)).result;
+        }
+        if (actual.source.version !== source.version) throw new Error('media_content_changed');
+      }
+      options = {...options,body:JSON.stringify(adaptMediaRequest(payload,mediaOptions))};
+    }
+    } catch(error) {
+      const failure={reason:error.reason || 'native_history_unavailable',message:`历史${historicalKind}已不可用，请在新对话重新添加这份素材后再试。`};
+      if(budget) budget.failure=failure;
+      return new Response(JSON.stringify({error:{message:failure.message,type:'invalid_request_error',code:failure.reason}}),{status:400,headers:{'Content-Type':'application/json'}});
+    }
+    if (budget?.generation?.aborted || options.signal?.aborted) {
+      throw Object.assign(new Error('aborted'),{name:'AbortError'});
+    }
+    if (budget?.generation && !budget.generation.durable) budget.generation.modelEpoch = budget.generation.intentEpoch;
     const turn = spendModelRequest(budget);
     if (!turn.allowed) {
       if (budget) budget.failure = turn;
@@ -123,6 +165,8 @@ const ops = createOperationBridge({
   desktopToken: DESKTOP_TOKEN,
   readOnly: READ_ONLY_MODE,
   turnBudgetContext,
+  mediaModel: { api: MODEL_API, modelId: MODEL_ID },
+  nativePartStore,
 });
 
 const store = createSessionStore({
@@ -133,6 +177,90 @@ const store = createSessionStore({
   getModelRuntime: () => modelRuntime,
   getModel: () => MODEL,
 });
+
+const durable = createDurableSessionStore({
+  sessionRoot: SESSION_ROOT, workspaceRoot: WORKSPACE_ROOT, buildTools: ops.buildTools,
+  getModels: entry => {
+    const models = createModels(); const provider = modelRuntime.getProvider(PROVIDER_ID);
+    const budgeted = fn => (...args) => {
+      if (!entry.budget) entry.budget = createDurableTurnBudget(entry,{maxRequests:MAX_REQUESTS_PER_TURN,maxToolSteps:MAX_TOOL_STEPS_PER_TURN});
+      entry.budget.sessionId=entry.sessionId; entry.budget.nativeHistory=entry.nativeHistory;
+    entry.budget.generation = entry.generation;
+      entry.budget.turnId = entry.turn.turnId; entry.budget.canvasId = entry.canvasId;
+      return turnBudgetContext.run(entry.budget,()=>fn.call(provider,...args));
+    };
+    models.setProvider({...provider,stream:budgeted(provider.stream),streamSimple:budgeted(provider.streamSimple)});
+    return models;
+  },
+  getModelRef: () => ({ provider: PROVIDER_ID, modelId: MODEL_ID }),
+  extensions: entry => [createDurableSkillExtension({getPins:()=>entry.skillPins || [],
+    readVersion:async (pin,signal) => (await ops.opsRequest('POST','/ops/skill.get',{params:pin},signal,entry.turn.turnId)).result,
+  })],
+  authorizeTurn: async ({canvasId, turnId,sessionId}) => {
+    const state = await ops.opsRequest('GET', `/assistant/runtime/turns/${encodeURIComponent(turnId)}`);
+    if(sessionId && state.open) await ops.opsRequest('POST',`/assistant/runtime/turns/${encodeURIComponent(turnId)}/bind-session`,{sessionId});
+    if (state.canvasId !== canvasId) throw Object.assign(new Error('turn_not_open'), {reason:'turn_not_open', details:state});
+    return state;
+  },
+  completeTurn: ({turnId}) => ops.opsRequest('POST', `/assistant/runtime/turns/${encodeURIComponent(turnId)}/complete`, {}),
+  runWithBudget: (entry, fn) => {
+    if (!entry.budget) entry.budget = createDurableTurnBudget(entry,{maxRequests:MAX_REQUESTS_PER_TURN,maxToolSteps:MAX_TOOL_STEPS_PER_TURN});
+    entry.budget.sessionId=entry.sessionId; entry.budget.nativeHistory=entry.nativeHistory;
+    entry.budget.generation = entry.generation;
+    entry.budget.turnId = entry.turn.turnId; entry.budget.canvasId = entry.canvasId;
+    return turnBudgetContext.run(entry.budget, fn);
+  },
+});
+
+function currentId(canvasId) {
+  try { return store.readCurrentSessionId(canvasId) || ''; }
+  catch (error) {
+    // Failed pointer publication must not erase a previously owned live chat.
+    const entry = durable.sessions.get(canvasId) || store.sessions.get(canvasId);
+    if (entry) return entry.sessionId;
+    throw error;
+  }
+}
+function liveEntry(canvasId) {
+  const id = currentId(canvasId);
+  return isDurableSessionId(id) ? durable.sessions.get(canvasId) : store.sessions.get(canvasId);
+}
+function emitDurable(entry, event) {
+  const mapped = [];
+  if (event.type === 'message_update') {
+    for (const change of event.changes || []) if (change.type === 'text_delta') mapped.push({type:'text_delta',delta:change.delta});
+  }
+  if (event.type === 'tool_execution_start' || event.type === 'tool_execution_end') mapped.push({
+    type:'lifecycle', phase:event.type === 'tool_execution_start' ? 'tool' : 'tool_end',toolName:event.toolName,
+  });
+  for (const payload of mapped) for (const listener of entry.listeners || []) listener(payload);
+}
+function followDurable(entry, submission) {
+  if (!entry.running) {
+    entry.listeners = new Set();
+    entry.running = durable.wait(entry, submission, {onEvent:event=>emitDurable(entry,event)})
+      .finally(()=>{entry.running=null;});
+    // Observers may disconnect; the official task and its completion persist.
+    entry.running.catch(error=>console.error(`agent-host: durable wait ${error.reason || error.message}`));
+  }
+  return entry.running;
+}
+
+async function attachmentContent(body, turnId) {
+  const content = [{type:'text',text:body.message || '请分析所提供的素材，并说明适合如何使用。'}];
+  for (const attachment of body.attachments || []) {
+    content.push({type:'text',text:`用户提供素材：${JSON.stringify(attachment)}。使用 media.inspect 读取实际画面或音频后再判断；片段秒数转换为 startMs/endMs。`});
+    if (attachment.kind === 'image') {
+      const reference = {canvasId:body.canvasId,
+        ...(attachment.nodeId ? {nodeId:attachment.nodeId}:{assetId:attachment.assetId}),resourceId:attachment.resourceId};
+      const overview = await ops.opsRequest('POST','/ops/media.overview',{params:reference},undefined,turnId);
+      const data = await ops.opsRequest('POST','/ops/media.inspect',{params:{...reference,
+        expectedVersion:overview.result.source.version,mode:'frames'}},undefined,turnId);
+      content.push(...data.result.content.filter(part=>part.type==='image').map(part=>({type:'image',data:part.data,mimeType:part.mimeType})));
+    }
+  }
+  return content;
+}
 
 function sendLine(res, payload) { res.write(JSON.stringify(payload) + '\n'); }
 
@@ -194,6 +322,7 @@ function respondStoreError(res, error) {
 }
 
 function anySessionBusy() {
+  for (const entry of durable.sessions.values()) if (entry.busy) return true;
   for (const entry of store.sessions.values()) if (entry.busy) return true;
   return false;
 }
@@ -225,11 +354,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   try {
+    if (req.method === 'GET' && url.pathname === '/active') {
+      const canvasId = String(url.searchParams.get('canvasId') || '');
+      const sessionId = String(url.searchParams.get('sessionId') || currentId(canvasId));
+      let entry = liveEntry(canvasId);
+      if (isDurableSessionId(sessionId)) entry = await durable.ensureSession(canvasId,sessionId);
+      respond(res,200,{sessionId:entry?.sessionId || null,turnId:entry?.turn.turnId || null,busy:Boolean(entry?.busy)}); return;
+    }
     if (req.method === 'GET' && url.pathname === '/sessions') {
       const canvasId = String(url.searchParams.get('canvasId') || '').trim();
       if (!canvasId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
-      const list = await store.listCanvasSessions(canvasId);
-      const active = store.sessions.get(canvasId)?.sessionId || store.readCurrentSessionId(canvasId) || null;
+      const list = [...await store.listCanvasSessions(canvasId), ...await durable.listCanvasSessions(canvasId)];
+      const active = currentId(canvasId) || null;
       if (active && !list.some((item) => item.sessionId === active)) {
         list.unshift({ sessionId: active, title: '', updatedAt: new Date().toISOString(), turnCount: 0 });
       }
@@ -240,6 +376,11 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse((await readBody(req)) || '{}');
       const canvasId = String(body.canvasId || '').trim();
       if (!canvasId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
+      if (liveEntry(canvasId)?.busy) { respond(res,409,{reason:'session_busy'}); return; }
+      if (NEW_SESSION_RUNTIME === 'durable') {
+        const entry = await durable.createSession(canvasId);
+        respond(res,200,{sessionId:entry.sessionId}); return;
+      }
       const entry = await store.replaceSession(canvasId, () => store.createLiveSession({
         canvasId, sessionId: '', buildTools: ops.buildTools,
       }));
@@ -251,6 +392,13 @@ const server = http.createServer(async (req, res) => {
       const canvasId = String(body.canvasId || '').trim();
       const sessionId = String(body.sessionId || '').trim();
       if (!canvasId || !sessionId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
+      if (liveEntry(canvasId)?.busy) { respond(res,409,{reason:'session_busy'}); return; }
+      if (isDurableSessionId(sessionId)) {
+        const entry = await durable.activateSession(canvasId,sessionId);
+        const submission = await durable.recover(entry);
+        if (submission) followDurable(entry,submission);
+        respond(res,200,{sessionId:entry.sessionId}); return;
+      }
       const entry = await store.replaceSession(canvasId, () => store.createLiveSession({
         canvasId, sessionId, buildTools: ops.buildTools,
       }));
@@ -265,9 +413,18 @@ const server = http.createServer(async (req, res) => {
       const sessionDir = store.canvasSessionDir(canvasId);
       let sessionId = requested;
       if (!sessionId) {
-        sessionId = store.sessions.get(canvasId)?.sessionId || store.readCurrentSessionId(canvasId) || '';
+        sessionId = currentId(canvasId);
       }
       if (!sessionId) { respond(res, 200, { sessionId: null, turns: [] }); return; }
+      if (isDurableSessionId(sessionId)) {
+        if (requested && sessionId !== currentId(canvasId)) {
+          respond(res,200,await durable.history(canvasId,sessionId)); return;
+        }
+        const entry = await durable.ensureSession(canvasId,sessionId);
+        const submission = await durable.recover(entry);
+        if (submission) followDurable(entry,submission);
+        respond(res,200,await durable.history(canvasId,sessionId)); return;
+      }
       const file = SessionManager.findById(cwd, sessionId, sessionDir);
       if (!file) {
         const active = store.sessions.get(canvasId)?.sessionId || store.readCurrentSessionId(canvasId) || '';
@@ -280,11 +437,60 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/cancel') {
       const body = JSON.parse((await readBody(req)) || '{}');
-      const entry = store.sessions.get(body.canvasId);
+      const entry = liveEntry(body.canvasId);
       if (!entry) { respond(res, 404, { code: 404, reason: 'session_not_found' }); return; }
+      if (entry.kind === 'durable') {
+        // Persist stop intent before the Go fence so a crash can still journal it.
+        await durable.fenceStop(entry);
+        await ops.opsRequest('POST',`/assistant/runtime/turns/${encodeURIComponent(entry.turn.turnId)}/complete`,{});
+        await durable.stop(entry);
+        respond(res,202,{accepted:true,busy:entry.busy}); return;
+      }
       entry.generation.aborted = true;
       try { await entry.session.abort(); } catch (error) { console.error(`agent-host: abort 失败 ${error.message}`); }
       respond(res, 202, { accepted: true, busy: entry.busy });
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/steer') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const canvasId = String(body.canvasId || '').trim();
+      const message = String(body.message || '').trim();
+      const sessionId = String(body.sessionId || '').trim();
+      const entry = liveEntry(canvasId);
+      if (!canvasId || !sessionId || (!message && !body.attachments?.length) || message.length > 16000) {
+        respond(res, 400, { code: 400, reason: 'invalid_request' }); return;
+      }
+      if (!entry || entry.sessionId !== sessionId) {
+        respond(res, 409, { code: 409, reason: 'session_not_current' }); return;
+      }
+      if (entry.kind === 'durable') {
+        if (!entry.busy || entry.completing || entry.generation.aborted) {
+          respond(res,409,{code:409,reason:'session_not_running'}); return;
+        }
+        const pending = durable.beginPendingInput(entry);
+        try {
+          const content = await attachmentContent(body,entry.turn.turnId);
+          await durable.supplement(entry,{requestId:body.requestId || crypto.randomUUID(),content,input:body});
+          pending.resolve();
+          respond(res,202,{accepted:true}); return;
+        } catch (error) { pending.reject(error); throw error; }
+      }
+      if (!entry.busy || entry.generation.aborted || !entry.session.isStreaming) {
+        respond(res, 409, { code: 409, reason: 'session_not_running' }); return;
+      }
+      // Block stale writes immediately; only journal a supplement after the
+      // official queue accepts it. A rejected supplement is never acknowledged.
+      entry.generation.intentEpoch += 1;
+      try {
+        await entry.session.steer(message);
+      } catch {
+        respond(res, 409, { code: 409, reason: 'steer_failed' }); return;
+      }
+      entry.manager.appendCustomEntry(`${TURN_ENTRY_TYPE}.supplement`, {
+        turnId: entry.turn.turnId, message, createdAt: new Date().toISOString(),
+      });
+      entry.turn.supplements.push(message);
+      respond(res, 202, { accepted: true });
       return;
     }
     if (req.method === 'POST' && url.pathname === '/chat') {
@@ -294,6 +500,30 @@ const server = http.createServer(async (req, res) => {
       const turnId = String(body.turnId || '').trim();
       const revisionBefore = Number(body.revisionBefore || 0);
       const requestedSessionId = String(body.sessionId || '').trim();
+      const chosen = requestedSessionId || currentId(canvasId);
+      if(isDurableSessionId(chosen) || (!chosen && NEW_SESSION_RUNTIME === 'durable') || body.permissionMode) {
+        const authority=await ops.opsRequest('GET',`/assistant/runtime/turns/${encodeURIComponent(turnId)}`);
+        if(authority.canvasId!==canvasId || authority.open===false) throw Object.assign(new Error('turn_not_open'),{reason:'turn_not_open'});
+        body.permissionMode=authority.permissionMode || 'canvas';
+      } else {body.permissionMode='canvas';} // Legacy unannotated sessions never gain workspace access.
+      if (isDurableSessionId(chosen) || (!chosen && NEW_SESSION_RUNTIME === 'durable')) {
+        if (!canvasId || (!userText && !body.attachments?.length) || !turnId) { respond(res,400,{reason:'invalid_request'}); return; }
+        if (providerReason) { respond(res,503,{reason:providerReason}); return; }
+        const entry = await durable.ensureSession(canvasId,chosen);
+        const content = await attachmentContent(body,turnId);
+        content[0].text = `${turnContextPrefix(body)}\n${content[0].text}`;
+        const submission = await durable.submit(entry,{...body,content,userText,revisionBefore,requestId:body.requestId || turnId});
+        res.durableTurn = true;
+        res.writeHead(200,{'Content-Type':'application/x-ndjson'});
+        const result = followDurable(entry,submission);
+        const listener = payload=>{ if (!res.destroyed) sendLine(res,payload); };
+        entry.listeners.add(listener);
+        try {
+          const record = await result;
+          if (!res.destroyed) { sendLine(res,{...record,type:'turn_end',persistence:entry.persistence}); res.end(); }
+        } finally { entry.listeners.delete(listener); }
+        return;
+      }
       let message = userText;
       const selected = Array.isArray(body.selectedNodeIds) ? body.selectedNodeIds.map((v) => String(v)) : [];
       const references = Array.isArray(body.references)
@@ -301,16 +531,23 @@ const server = http.createServer(async (req, res) => {
           .map((item) => ({ kind: String(item.kind || ''), id: String(item.id) }))
         : [];
       if (selected.length > 0 || references.length > 0) {
-        message = `${turnContextPrefix({ canvasId, selectedNodeIds: selected, references })}\n${userText}`;
+        message = `${turnContextPrefix({ canvasId, selectedNodeIds: selected, references,permissionMode:body.permissionMode })}\n${userText}`;
       }
       if (!canvasId || !message) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
       if (providerReason) { respond(res, 503, { code: 503, reason: providerReason }); return; }
       const entry = await store.acquireChatSession(canvasId, ops.buildTools, requestedSessionId);
+      entry.generation.permissionMode=body.permissionMode;
+      entry.session.setActiveToolsByName(ops.buildTools(canvasId,entry.log,entry.generation,entry.turn,entry.identity.prefix).map(tool=>tool.name));
       const budget = createTurnBudget({ maxRequests: MAX_REQUESTS_PER_TURN, maxToolSteps: MAX_TOOL_STEPS_PER_TURN });
+      entry.generation.intentEpoch = 0;
+      entry.generation.modelEpoch = 0;
+      budget.generation = entry.generation;
       try {
         resetTurnAccumulator(entry.turn, revisionBefore, turnId);
+        entry.turn.canvasId=canvasId;
+        entry.turn.supplements = [];
         entry.manager.appendCustomEntry(`${TURN_ENTRY_TYPE}.started`, {
-          turnId, userText, selectedNodeIds: selected, references, createdAt: new Date().toISOString(),
+          turnId, userText, permissionMode:body.permissionMode, selectedNodeIds: selected, references, createdAt: new Date().toISOString(),
         });
         res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
         const before = entry.log.length;
@@ -333,11 +570,12 @@ const server = http.createServer(async (req, res) => {
         const toolCalls = entry.log.slice(before);
         const change = turnChange(entry.turn);
         const proposals = [...entry.turn.proposals];
-        const record = { turnId, userText, selectedNodeIds: selected, references, reply, toolCalls, change, proposals,
+        const supplements = [...entry.turn.supplements];
+        const record = { turnId, userText, permissionMode:body.permissionMode, supplements, selectedNodeIds: selected, references, reply, toolCalls, change, proposals,
           error, errorReason, cancelled: entry.generation.aborted, createdAt: new Date().toISOString() };
         try { entry.manager.appendCustomEntry(TURN_ENTRY_TYPE, record); }
         catch (persistError) { console.error(`agent-host: 轮次记录写入失败 ${persistError?.message || persistError}`); }
-        sendLine(res, { type: 'turn_end', turnId, reply, toolCalls, change, proposals, error, errorReason,
+        sendLine(res, { type: 'turn_end', turnId, reply, supplements, toolCalls, change, proposals, error, errorReason,
           cancelled: entry.generation.aborted, persistence: entry.persistence,
           sessionId: entry.sessionId, metrics: { firstTokenMs, totalMs: Date.now() - started,
             requests: budget.requests, toolSteps: budget.toolSteps } });
@@ -353,7 +591,13 @@ const server = http.createServer(async (req, res) => {
     if (!res.headersSent && respondStoreError(res, error)) return;
     console.error(`agent-host: 请求失败 ${error?.message || error}`);
     if (!res.headersSent) { respond(res, 500, { code: 500, reason: 'internal_error', message: String(error?.message || error) }); }
-    else { sendLine(res, { type: 'turn_end', reply: '', toolCalls: [], change: null, proposals: [], error: String(error?.message || error), cancelled: false }); res.end(); }
+    else {
+      if (!res.destroyed) {
+        sendLine(res, res.durableTurn ? {type:'observer_error',reason:error.reason || 'interrupted'} :
+          { type: 'turn_end', reply: '', toolCalls: [], change: null, proposals: [], error: String(error?.message || error), cancelled: false });
+        res.end();
+      }
+    }
   }
 });
 
@@ -362,6 +606,7 @@ async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
   try {
+    await durable.disposeAll();
     const released = await store.disposeAll();
     console.error(`agent-host: 关闭，释放 ${released} 个会话`);
   } catch (error) {

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { prepareAssistantProposalSnapshot, type ProposalSourceState } from "@/pages/canvas/canvas-assistant-proposal-snapshot";
+import { AssistantProposalChangedError, prepareAssistantProposalSnapshot, type ProposalSourceState } from "@/pages/canvas/canvas-assistant-proposal-snapshot";
 import { buildNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import { executeAssistantProposal } from "@/pages/canvas/canvas-assistant-proposal-execution";
 import { defaultConfig } from "@/stores/use-config-store";
@@ -120,3 +120,38 @@ test("the generation boundary receives the confirmed prompt and reference after 
         }, markHandled: () => {}, notify: () => {} });
     expect(submitted).toBe(true);
 });
+
+for (const reason of ["missing-source", "unsaved", "canvas-dirty", "model-dirty", "model-status", "version-changed", "saved-content-mismatch", "changed-during-confirmation"] as const) {
+    test(`confirmation distinguishes ${reason} and does not submit or retain a claim`, async () => {
+        const live = fixture();
+        const saved = fixture();
+        const selectedProposal = reason === "missing-source" ? { ...proposal, source: undefined } : proposal;
+        if (reason === "unsaved") live.hasUnconfirmedEdits = true;
+        if (reason === "canvas-dirty" || reason === "model-dirty" || reason === "model-status") {
+            live.hasUnconfirmedEdits = true;
+            live.unconfirmedReason = reason;
+        }
+        if (reason === "version-changed") saved.modelConfigRevision++;
+        if (reason === "saved-content-mismatch") saved.nodes[1].metadata!.storageKey = "resource:different";
+        let captured: unknown;
+        let submissions = 0;
+        const notices: string[] = [];
+        const claims = new Set<string>();
+        await executeAssistantProposal({ proposal: selectedProposal, nodes: live.nodes, claims, isHandled: false,
+            prepare: async () => {
+                try {
+                    return await prepareAssistantProposalSnapshot(selectedProposal, () => live, async () => {
+                        if (reason === "changed-during-confirmation") live.config.canvasImageCount = "4";
+                        return saved;
+                    });
+                } catch (error) { captured = error; throw error; }
+            }, generate: async () => { submissions++; }, markHandled: () => { throw Error("must not mark handled"); }, notify: message => notices.push(message) });
+        expect(captured).toBeInstanceOf(AssistantProposalChangedError);
+        expect((captured as AssistantProposalChangedError).reason).toBe(reason);
+        expect(notices).toEqual([(captured as Error).message]);
+        expect(notices[0]).not.toContain("版本");
+        expect(notices[0]).not.toContain("hash");
+        expect(submissions).toBe(0);
+        expect(claims.size).toBe(0);
+    });
+}

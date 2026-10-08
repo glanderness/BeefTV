@@ -9,7 +9,8 @@ import (
 )
 
 const (
-	ProductionOrigin = "https://enterprise.beefapi.com"
+	ProductionOrigin = "https://beeftv.app"
+	LegacyOrigin     = "https://enterprise.beefapi.com"
 	PreviewLocalHost = "enterprise.localhost"
 	ClientID         = "beeftv-enterprise-v1"
 	ClientScope      = "inference"
@@ -19,8 +20,8 @@ const (
 	WalletPath       = "/console/topup"
 )
 
-// CanonicalOrigin is the immutable production enterprise origin unless an
-// explicit loopback test origin is configured for local verification.
+// CanonicalOrigin defaults to BeefTV and only accepts the legacy enterprise
+// origin or an explicit loopback test origin.
 func CanonicalOrigin(explicit string) (string, error) {
 	candidate := strings.TrimRight(strings.TrimSpace(explicit), "/")
 	if candidate == "" {
@@ -28,6 +29,9 @@ func CanonicalOrigin(explicit string) (string, error) {
 	}
 	if candidate == "" || strings.EqualFold(candidate, ProductionOrigin) {
 		return ProductionOrigin, nil
+	}
+	if strings.EqualFold(candidate, LegacyOrigin) {
+		return LegacyOrigin, nil
 	}
 	origin, err := parseSafeTestOrigin(candidate)
 	if err != nil {
@@ -142,5 +146,5 @@ func IsEnterpriseBaseURL(baseURL string) bool {
 		return false
 	}
 	host := strings.ToLower(parsed.Hostname())
-	return host == "enterprise.beefapi.com"
+	return parsed.Scheme == "https" && parsed.User == nil && (parsed.Port() == "" || parsed.Port() == "443") && (host == "enterprise.beefapi.com" || host == "beeftv.app")
 }

@@ -76,6 +76,7 @@ async function waitPidExit(pid, ms) {
 function syntheticHostEnv(directory, extra = {}) {
   return {
     ...process.env,
+    BEEFTV_AGENT_NEW_SESSION_RUNTIME: 'sdk',
     BEEFTV_AGENT_DATA_DIR: directory,
     BEEFTV_AGENT_HOST_TOKEN: extra.hostToken || 'lifecycle-host-token',
     BEEFTV_AGENT_PORT: String(extra.port),
@@ -120,6 +121,7 @@ test('health requires instance nonce and omits the secret; stdin EOF shuts down'
     const port = await reservePort();
     const env = {
       ...process.env,
+      BEEFTV_AGENT_NEW_SESSION_RUNTIME: 'sdk',
       BEEFTV_AGENT_DATA_DIR: directory,
       BEEFTV_AGENT_HOST_TOKEN: hostToken,
       BEEFTV_AGENT_PORT: String(port),
@@ -212,6 +214,7 @@ test('stdio ignore without lifetime flag does not exit immediately', async () =>
     const port = await reservePort();
     const spawned = spawnHost({
       ...process.env,
+      BEEFTV_AGENT_NEW_SESSION_RUNTIME: 'sdk',
       BEEFTV_AGENT_DATA_DIR: directory,
       BEEFTV_AGENT_HOST_TOKEN: 'lifecycle-host-token',
       BEEFTV_AGENT_PORT: String(port),

@@ -198,6 +198,13 @@ func trustedDesktopUI(c *gin.Context) bool {
 // take these writes even when a launch token is also present.
 // Hosted runtimes leave DesktopTrust unset and still allow the workspace owner.
 func requireTrustedDesktopWritePrincipal(c *gin.Context, message string) bool {
+	if principal, valid := externalBusiness(c); valid {
+		if !principal.ReadOnly {
+			return true
+		}
+		fail(c, http.StatusForbidden, app.Forbidden("此连接仅支持读取"))
+		return false
+	}
 	if strings.TrimSpace(c.GetHeader("X-Beeftv-Client")) != "" {
 		fail(c, http.StatusForbidden, app.Forbidden(message))
 		return false
@@ -221,6 +228,9 @@ func resolveClientMode(c *gin.Context, svc *app.Service, clients *agentops.Clien
 func withRequestScope(caller agentops.Caller, scope *agentops.AssistantScope) agentops.Caller {
 	if scope != nil {
 		caller.Scope = scope
+		if scope.PermissionMode == "read-only" {
+			caller.ReadOnly = true
+		}
 	}
 	return caller
 }

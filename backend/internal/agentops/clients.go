@@ -108,6 +108,9 @@ func (r *ClientRegistry) Register(label string, mode ClientMode) (ClientRegistra
 
 // RegisterKind 与 Register 相同，额外记录来源分类（仅用于展示与生成接入说明）。
 func (r *ClientRegistry) RegisterKind(kind, label string, mode ClientMode) (ClientRegistration, string, error) {
+	if mode == "" {
+		mode = ClientReadWrite
+	}
 	if mode != ClientReadOnly && mode != ClientReadWrite {
 		return ClientRegistration{}, "", InvalidArg("invalid_mode", "mode 必须是 read-only 或 read-write")
 	}

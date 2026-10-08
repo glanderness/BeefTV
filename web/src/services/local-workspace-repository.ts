@@ -12,6 +12,7 @@ import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { captureUserScope, isUserScopeAbandonedError, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { sameCanvasDocument } from "@/lib/canvas/canvas-content";
+import { canvasUnconfirmedReason, canvasUnconfirmedDiagnostic, type CanvasUnconfirmedState } from "@/lib/canvas/canvas-unconfirmed-edits";
 import { rebaseCanvasDocumentThreeWay, settleInFlightGenerationOverlay } from "@/lib/canvas/canvas-document-rebase";
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
 
@@ -154,17 +155,30 @@ function throwIfCanvasNotWritable(id: string, expected: CapturedUserScope) {
  * 3. 没有服务端确认基线时，退回本机已落盘快照；两者都没有则保守判为有编辑。
  */
 export function hasUnconfirmedCanvasEdits(id: string) {
+    return canvasUnconfirmedReason(readCanvasUnconfirmedState(id)) !== undefined;
+}
+
+function readCanvasUnconfirmedState(id: string): CanvasUnconfirmedState {
     const scope = getActiveUserScope();
-    const live = openLocalCanvasProject(id);
-    if (!live) return false;
-    if (canvasBackendSubmitPending(id, scope) || canvasSubmitBlocked(id, scope)) return true;
+    const live = openLocalCanvasProject(id) ?? undefined;
+    const state: CanvasUnconfirmedState = { live, pending: false, blocked: false, inFlight: false, pendingProjection: false };
+    if (!live) return state;
+    state.pending = canvasBackendSubmitPending(id, scope);
+    if (state.pending) return state;
+    state.blocked = canvasSubmitBlocked(id, scope);
+    if (state.blocked) return state;
     const journal = peekCanvasOperationJournal(id, scope);
-    if (journal?.inFlight || journal?.pendingProjection) return true;
-    const confirmed = canvasDocumentBase(id, scope)?.snapshot ?? serverConfirmedCanvasSnapshots.get(saveKey(scope, id));
-    if (confirmed) return !sameCanvasDocument(confirmed, live);
-    const durable = canvasDurableSnapshot(scope, id);
-    if (durable) return !sameCanvasDocument(durable, live);
-    return true;
+    state.inFlight = Boolean(journal?.inFlight);
+    if (state.inFlight) return state;
+    state.pendingProjection = Boolean(journal?.pendingProjection);
+    if (state.pendingProjection) return state;
+    state.confirmed = canvasDocumentBase(id, scope)?.snapshot ?? serverConfirmedCanvasSnapshots.get(saveKey(scope, id));
+    if (!state.confirmed) state.durable = canvasDurableSnapshot(scope, id);
+    return state;
+}
+
+export function getUnconfirmedCanvasDiagnostic(id: string) {
+    return canvasUnconfirmedDiagnostic(readCanvasUnconfirmedState(id));
 }
 
 function resourceIdFromLocator(value?: string) {

@@ -76,6 +76,7 @@ async function withHost(run, envExtra = {}) {
     base = `http://127.0.0.1:${port}`;
     const env = {
       ...process.env,
+      BEEFTV_AGENT_NEW_SESSION_RUNTIME: 'sdk',
       BEEFTV_AGENT_DATA_DIR: directory,
       BEEFTV_AGENT_HOST_TOKEN: hostToken,
       BEEFTV_AGENT_PORT: String(port),
