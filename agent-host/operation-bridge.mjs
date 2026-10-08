@@ -7,6 +7,7 @@ import { collectTurnEffects } from './canvas-turn.mjs';
 import { toolOperationId } from './session-identity.mjs';
 import { budgetError, spendToolStep } from './request-budget.mjs';
 import { mediaToolResult } from './media-content.mjs';
+import { canvasReadView, CANVAS_READ_VIEW_SCHEMA } from './canvas-read-view.mjs';
 
 const CANVAS_NODE_UPDATE = 'canvas.node.update';
 
@@ -72,7 +73,9 @@ export function createOperationBridge({
       name: toolName,
       label: descriptor.id,
       readOnly: descriptor.readOnly === true,
-      description: descriptor.summary,
+      description: descriptor.summary + (descriptor.id === 'canvas.get'
+        ? '。返回有界只读视图：revision 与真实节点/连线；readView 标明完整或部分。沿 nextOffset 分页，长字段按 nodeId/fieldPath/textOffset 读取，不把 preview 当完整原文；后续读取带 expectedRevision。'
+        : ''),
       parameters: scopedSchema(descriptor.params, mode !== 'canvas' || descriptor.id === 'canvas.get', descriptor.id),
       ...(descriptor.readOnly ? {} : { executionMode: 'sequential' }),
       execute: async (toolCallId, args, signal) => {
@@ -91,6 +94,8 @@ export function createOperationBridge({
           throw budgetError(step);
         }
         const params = { ...(args || {}) };
+        const readView = descriptor.id === 'canvas.get' ? params.readView : undefined;
+        if (descriptor.id === 'canvas.get') delete params.readView;
         delete params.operationId;
         delete params.opId;
         if (Object.hasOwn(descriptor.params?.properties || {}, 'canvasId')) {
@@ -126,7 +131,7 @@ export function createOperationBridge({
           if (descriptor.id !== 'canvas.task.bind' || !data?.replayed) {
             collectTurnEffects(turn, descriptor.id, data?.result, opId);
           }
-          return mediaToolResult(data, descriptor.id, { ...mediaModel, originTurnId:turn.turnId,
+          return mediaToolResult(descriptor.id === 'canvas.get' ? canvasReadView(data, readView) : data, descriptor.id, { ...mediaModel, originTurnId:turn.turnId,
             ...(generation.durable ? {nativePartStore} : {}) });
         } catch (error) {
           log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: true, error: error.message, ms: Date.now() - started });
@@ -153,6 +158,10 @@ export function scopedSchema(params, allowReferencedCanvasRead = false, descript
   }
   if (Array.isArray(clone.required)) clone.required = clone.required.filter((name) => name !== 'canvasId' && name !== 'operationId');
   if (descriptorId === CANVAS_NODE_UPDATE) projectCanvasNodeUpdateSchema(clone);
+  if (descriptorId === 'canvas.get') {
+    clone.properties ||= {};
+    clone.properties.readView = JSON.parse(JSON.stringify(CANVAS_READ_VIEW_SCHEMA));
+  }
   return clone;
 }
 
