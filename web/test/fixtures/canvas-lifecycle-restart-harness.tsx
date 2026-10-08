@@ -13,7 +13,7 @@ import { attachNodeEffectKey } from "../../src/services/generation-task-material
 import { hasUnconfirmedCanvasEdits } from "../../src/services/local-workspace-repository";
 import { syncLocalCanvasProjectToBackend } from "../../src/services/local-workspace-repository";
 import { refreshLocalCanvasProjectIfChanged } from "../../src/services/local-workspace-repository";
-import { getActiveUserScope, setActiveUserScope } from "../../src/lib/user-scope";
+import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import type { CanvasNodeData, CanvasConnection, CanvasAssistantSession } from "../../src/types/canvas";
 
 const noop = () => {};
