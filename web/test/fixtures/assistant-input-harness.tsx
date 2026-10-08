@@ -1,7 +1,7 @@
 import { createRoot } from "react-dom/client";
 import { useState } from "react";
 import { App } from "antd";
-import { AgentConnectModal } from "@/pages/agents/agent-connect-modal";
+import { AgentConnectPanel } from "@/pages/agents/agent-connect-panel";
 import { useCanvasAssistant } from "@/pages/canvas/use-canvas-assistant";
 import { CanvasAssistantSidebar } from "@/pages/canvas/canvas-assistant-sidebar";
 import { configureApiRuntime } from "@/services/api/request";
@@ -37,7 +37,7 @@ function Harness() {
         selectedNodeIds={[]} references={[{ id: "node:n1", nodeId: "n1", kind: "image", label: "画布人像", title: "画布人像", active: true, storageKey: resourceStorageKey("existing"), previewUrl: resourceFileUrl("existing") }]}
         onLocateNodes={nodeIds => { locatedNodes.push(nodeIds); }} onRunProposal={() => {}} onOpenModelSettings={() => {}} /></div>
         <button style={{ position: "fixed", left: 4, top: 4 }} onClick={() => setExternalOpen(true)}>连接外部 Agent</button>
-        <AgentConnectModal kind={externalOpen ? "codex" : null} onClose={() => setExternalOpen(false)} onConnected={() => {}} />
+        {externalOpen ? <AgentConnectPanel kind="codex" onClose={() => setExternalOpen(false)} onConfigured={() => {}} verifiedClientIds={[]} onBusyChange={() => {}} /> : null}
     </App>;
 }
 createRoot(document.getElementById("root")!).render(<Harness />);

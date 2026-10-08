@@ -6,7 +6,7 @@ import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import { captureUserScope } from "@/lib/user-scope-guard";
 import { apiClient } from "@/services/api/request";
 import * as localWorkspaceSync from "@/services/local-workspace-sync";
-import { persistWorkspaceAssetChanges, persistWorkspaceAssetLink, deleteWorkspaceAsset, resetWorkspaceAssetCommitStateForTests, restoreWorkspaceArchivedAsset } from "@/services/workspace-asset-repository";
+import { persistWorkspaceAssetChanges, persistWorkspaceAssetLink, deleteWorkspaceAsset, resetWorkspaceAssetCommitStateForTests } from "@/services/workspace-asset-repository";
 import { resetAssetStoreDraftsForTests, useAssetStore, type Asset } from "@/stores/use-asset-store";
 
 function deferred<T = void>() {
@@ -81,69 +81,67 @@ afterEach(async () => {
 });
 
 describe("workspace asset repository runtime boundary", () => {
-    test("restores an archived backend asset from an empty browser cache without losing its metadata", async () => {
-        const restore = switchScope("restore-cold-cache");
+    test("archived deletion passes its status guard to the backend before removing the projection", async () => {
+        const restore = switchScope("delete-archived");
         desktopBackend();
-        const asset = { ...sampleAsset(), status: "archived" as const };
-        let saved: Asset | undefined;
+        const asset = { ...sampleAsset(), kind: "text" as const, data: { content: "archived text" }, status: "archived" as const };
+        useAssetStore.setState({ assets: [asset] });
+        let deletes = 0;
         try {
             await withAdapter(async (config) => {
-                if (config.url === "/assets/batch") return envelope({ assets: [asset] });
-                if (config.method === "put" && config.url === "/assets/asset-1") {
-                    const body = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
-                    saved = body.asset;
-                    return envelope({ asset: body.asset });
+                if (config.method === "delete" && config.url === "/assets/asset-1") {
+                    expect(config.params).toEqual({ expectedStatus: "archived" });
+                    expect(useAssetStore.getState().assets).toHaveLength(1);
+                    deletes++;
+                    return envelope({ id: asset.id });
                 }
                 throw new Error(`unexpected ${config.method} ${config.url}`);
-            }, () => restoreWorkspaceArchivedAsset(asset.id, captureUserScope()));
-            expect(saved?.status).toBe("confirmed");
-            expect(saved?.data).toEqual(asset.data);
-            expect(saved?.metadata).toEqual(asset.metadata);
-            expect(useAssetStore.getState().assets.find((item) => item.id === asset.id)?.status).toBe("confirmed");
+            }, () => deleteWorkspaceAsset(asset.id, captureUserScope(), { expectedStatus: "archived" }));
+            expect(deletes).toBe(1);
+            expect(useAssetStore.getState().assets).toEqual([]);
         } finally { restore(); }
     });
 
-    test("restore does not recreate a backend asset deleted since the recovery list was loaded", async () => {
-        const restore = switchScope("restore-missing");
-        desktopBackend();
-        const asset = { ...sampleAsset(), status: "archived" as const };
+    test("browser-local archived deletion refuses an asset that has become active", async () => {
+        const restore = switchScope("delete-status-conflict");
+        browserLocal();
+        const asset = sampleAsset();
         useAssetStore.setState({ assets: [asset] });
         let writes = 0;
         try {
             await withAdapter(async (config) => {
-                if (config.url === "/assets/batch") return envelope({ assets: [] });
                 writes++;
                 throw new Error("unexpected write");
             }, async () => {
-                await expect(restoreWorkspaceArchivedAsset(asset.id, captureUserScope())).rejects.toThrow();
+                await expect(deleteWorkspaceAsset(asset.id, captureUserScope(), { expectedStatus: "archived" })).rejects.toMatchObject({ status: 409 });
             });
             expect(writes).toBe(0);
+            expect(useAssetStore.getState().assets).toEqual([asset]);
         } finally { restore(); }
     });
 
-    test("failed restoration stays archived and only acknowledges a successful retry", async () => {
-        const restore = switchScope("restore-retry");
+    test("failed archived deletion keeps its projection until a successful retry", async () => {
+        const restore = switchScope("delete-retry");
         desktopBackend();
-        const asset = { ...sampleAsset(), status: "archived" as const };
+        const asset = { ...sampleAsset(), kind: "text" as const, data: { content: "archived text" }, status: "archived" as const };
+        useAssetStore.setState({ assets: [asset] });
         let attempts = 0;
         try {
             await withAdapter(async (config) => {
-                if (config.url === "/assets/batch") return envelope({ assets: [asset] });
-                if (config.method === "put") {
+                if (config.method === "delete") {
                     attempts++;
                     if (attempts === 1) throw new Error("offline");
-                    const body = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
-                    return envelope({ asset: body.asset });
+                    return envelope({ id: asset.id });
                 }
                 throw new Error(`unexpected ${config.method} ${config.url}`);
             }, async () => {
                 const scope = captureUserScope();
-                await expect(restoreWorkspaceArchivedAsset(asset.id, scope)).rejects.toThrow("offline");
+                await expect(deleteWorkspaceAsset(asset.id, scope, { expectedStatus: "archived" })).rejects.toThrow("offline");
                 expect(useAssetStore.getState().assets.find((item) => item.id === asset.id)?.status).toBe("archived");
-                await restoreWorkspaceArchivedAsset(asset.id, scope);
+                await deleteWorkspaceAsset(asset.id, scope, { expectedStatus: "archived" });
             });
             expect(attempts).toBe(2);
-            expect(useAssetStore.getState().assets.find((item) => item.id === asset.id)?.status).toBe("confirmed");
+            expect(useAssetStore.getState().assets).toEqual([]);
         } finally { restore(); }
     });
 

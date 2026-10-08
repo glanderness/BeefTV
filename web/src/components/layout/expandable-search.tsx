@@ -16,7 +16,6 @@ export function ExpandableSearch({ value, onChange, placeholder, className }: Ex
     return (
         <div
             className={cn("workspace-expandable-search", className)}
-            onMouseLeave={() => setExpanded(false)}
             onBlur={(event) => {
                 if (!event.currentTarget.contains(event.relatedTarget)) setExpanded(false);
             }}

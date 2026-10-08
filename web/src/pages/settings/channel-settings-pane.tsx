@@ -339,6 +339,7 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                                                 onConnect={() => void runBeefAction(startBeefAPIConnection, "无法开始连接")}
                                                 onCancel={() => void runBeefAction(cancelBeefAPIConnection, "无法取消连接")}
                                                 onRetry={() => void runBeefAction(retryBeefConnection, "无法重新连接")}
+                                                onDisconnect={() => void runBeefAction(disconnectBeefAPIConnection, "无法断开连接")}
                                                 onWallet={() => {
                                                     void openBeefAPIWallet().catch((error) => message.error(error instanceof Error ? error.message : "无法打开 BeefTV 账户"));
                                                 }}
@@ -650,6 +651,7 @@ function BeefAPIConnectionActions({
     onConnect,
     onCancel,
     onRetry,
+    onDisconnect,
     onWallet,
 }: {
     connection: BeefAPIConnectionSummary | null;
@@ -657,6 +659,7 @@ function BeefAPIConnectionActions({
     onConnect: () => void;
     onCancel: () => void;
     onRetry: () => void;
+    onDisconnect: () => void;
     onWallet: () => void;
 }) {
     const state = connection?.state || "disconnected";
@@ -676,6 +679,9 @@ function BeefAPIConnectionActions({
                 <Button className={buttonClass} size="small" onClick={onWallet}>
                     打开 BeefTV 账户
                 </Button>
+                <Button className={buttonClass} size="small" loading={busy} onClick={onDisconnect}>
+                    断开连接
+                </Button>
             </>
         );
     }
@@ -684,6 +690,9 @@ function BeefAPIConnectionActions({
             <>
                 <Button className={buttonClass} size="small" type="primary" loading={busy} onClick={onRetry}>
                     重新连接
+                </Button>
+                <Button className={buttonClass} size="small" loading={busy} onClick={onDisconnect}>
+                    断开连接
                 </Button>
             </>
         );
