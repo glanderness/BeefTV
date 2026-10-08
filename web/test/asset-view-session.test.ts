@@ -215,10 +215,10 @@ describe("asset page and picker wiring", () => {
         expect(page).toContain("generated: true");
         expect(page).toContain("加载更多");
         expect(page).not.toContain("回收站");
-        expect(page).toContain('okText="彻底删除"');
+        expect(page).toContain('okText="永久删除"');
         expect(page).toContain("runAssetViewAction(entryScope");
         expect(page).toContain("shouldSuppressAssetViewError(error, entryScope)");
-        expect(page).toContain("entryScope={entryScope}");
+        expect(page).toContain("refreshDeletedAssets(scope)");
         expect(page).not.toContain("runAssetViewAction(captureUserScope()");
         expect(page).not.toContain("keepPreviousData");
         expect(page).not.toContain('queryKey: [...ASSET_LIBRARY_QUERY_KEY');

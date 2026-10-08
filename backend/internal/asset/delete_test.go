@@ -77,7 +77,7 @@ func TestDeleteLocalObjectRemovesOnlyResourceDirectoryFile(t *testing.T) {
 	}
 }
 
-func TestDeleteAssetKeepsLiveCanvasReference(t *testing.T) {
+func TestDeleteAssetKeepsLiveCanvasResource(t *testing.T) {
 	svc, db, _ := newDeletionDomain(t)
 	resource := model.Resource{ID: "resource-canvas", UserID: "user-1", Provider: "local", ObjectKey: "users/user-1/image/canvas.png", Status: model.ResourceStatusReady}
 	asset := model.Asset{ID: "asset-canvas", UserID: "user-1", Title: "画布素材", PayloadJSON: `{"data":{"storageKey":"resource:resource-canvas"}}`}
@@ -87,9 +87,8 @@ func TestDeleteAssetKeepsLiveCanvasReference(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	err := svc.DeleteUserAssetWithResources("user-1", asset.ID)
-	if err == nil || !strings.Contains(err.Error(), "画布「仍在使用的画布」") {
-		t.Fatalf("DeleteUserAssetWithResources() error = %v, want live canvas reference", err)
+	if err := svc.DeleteUserAssetWithResources("user-1", asset.ID); err != nil {
+		t.Fatalf("DeleteUserAssetWithResources() error = %v", err)
 	}
 	var assetCount, resourceCount int64
 	if err := db.Model(&model.Asset{}).Where("id = ?", asset.ID).Count(&assetCount).Error; err != nil {
@@ -98,8 +97,8 @@ func TestDeleteAssetKeepsLiveCanvasReference(t *testing.T) {
 	if err := db.Model(&model.Resource{}).Where("id = ?", resource.ID).Count(&resourceCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if assetCount != 1 || resourceCount != 1 {
-		t.Fatalf("blocked delete changed data: asset=%d resource=%d", assetCount, resourceCount)
+	if assetCount != 0 || resourceCount != 1 {
+		t.Fatalf("delete must retain referenced resource: asset=%d resource=%d", assetCount, resourceCount)
 	}
 }
 

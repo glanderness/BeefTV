@@ -1,11 +1,9 @@
 import { linkProjectAsset, moveProjectAsset, updateProjectAssetCategory } from "@/services/api/projects";
 import { ApiError } from "@/services/api/request";
-import { listWorkspaceAssetsPage } from "@/services/api/workspace-assets";
 import { deleteWorkspaceAssetRecord, putWorkspaceAsset } from "@/services/api/workspace-data";
 import { normalizeAssetCategory } from "@/lib/asset-category";
 import { assertUserScope, captureUserScope, userScopeMatches, UserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { usesBrowserLocalResourceStore, workspaceAssetHasCanonicalMediaPersist } from "@/services/workspace-resource-storage";
-import { loadWorkspaceAssetsForUse } from "@/services/workspace-asset-read";
 import {
     ackAssetStoreDraft,
     flushAssetStorePersistence,
@@ -286,127 +284,6 @@ export async function deleteWorkspaceAsset(id: string, expectedScope?: CapturedU
             await runAssetStoreProjection(() => useAssetStore.getState().removeAsset(assetId));
         }
     });
-}
-
-export const WORKSPACE_ASSET_CLEAR_TRASH_PAGE_SIZE = 40;
-
-export async function restoreWorkspaceArchivedAsset(id: string, expected: CapturedUserScope) {
-    assertUserScope(expected);
-    await loadWorkspaceAssetsForUse([id], expected);
-    assertUserScope(expected);
-    if (usesBrowserLocalResourceStore()) {
-        useAssetStore.getState().updateAsset(id, { status: "confirmed" });
-        await persistWorkspaceAssetChanges(expected);
-        return;
-    }
-    await enqueueAssetCommit(expected.userScope, id, expected.epoch, async () => {
-        assertUserScope(expected);
-        const live = useAssetStore.getState().assets.find((asset) => asset.id === id);
-        if (!live) throw new Error("素材不存在，请刷新后重试");
-        const draft = peekAssetStoreDraft(expected.userScope, id);
-        if (draft?.kind === "delete") throw new Error("素材正在删除，无法恢复");
-        // Keep it in the recovery list until the backend confirms the restore.
-        const saved = await putWorkspaceAsset(id, { ...live, status: "confirmed" }, { expectedScope: expected });
-        assertUserScope(expected);
-        assertAssetWriteReceipt(saved?.asset, id);
-        if (draft) ackAssetStoreDraft(expected, id, draft.version);
-        applyReceiptProjection(id, live, saved.asset);
-    });
-}
-
-export type ClearWorkspaceArchivedAssetsResult = {
-    deleted: number;
-    remaining: number;
-    error?: Error;
-};
-
-export async function clearWorkspaceArchivedAssets(options?: {
-    expectedScope?: CapturedUserScope;
-    signal?: AbortSignal;
-    pageSize?: number;
-}): Promise<ClearWorkspaceArchivedAssetsResult> {
-    const expected = options?.expectedScope ?? captureUserScope();
-    const pageSize = Math.min(120, Math.max(1, options?.pageSize ?? WORKSPACE_ASSET_CLEAR_TRASH_PAGE_SIZE));
-    throwIfAborted(options?.signal);
-    assertUserScope(expected);
-
-    if (usesBrowserLocalResourceStore()) {
-        const trash = useAssetStore.getState().assets.filter((asset) => asset.kind !== "entity" && asset.status === "archived");
-        for (const asset of trash) {
-            throwIfAborted(options?.signal);
-            assertUserScope(expected);
-            await deleteWorkspaceAsset(asset.id, expected, { expectedStatus: "archived" });
-        }
-        const remaining = useAssetStore.getState().assets.filter((asset) => asset.kind !== "entity" && asset.status === "archived").length;
-        return { deleted: trash.length - remaining, remaining };
-    }
-
-    let deleted = 0;
-    const attempted = new Set<string>();
-    while (true) {
-        throwIfAborted(options?.signal);
-        assertUserScope(expected);
-        const page = await loadCanonicalArchivedPage(1, pageSize, expected, options?.signal);
-        const batch = page.ids.filter((id) => !attempted.has(id));
-        if (!batch.length) {
-            return { deleted, remaining: page.total };
-        }
-        for (const id of batch) {
-            throwIfAborted(options?.signal);
-            assertUserScope(expected);
-            attempted.add(id);
-            let attemptVersion: number | undefined;
-            try {
-                await deleteWorkspaceAsset(id, expected, {
-                    expectedStatus: "archived",
-                    onDraftRecorded: (version) => {
-                        attemptVersion = version;
-                    },
-                });
-                deleted += 1;
-            } catch (error) {
-                if (error instanceof UserScopeAbandonedError || (error instanceof DOMException && error.name === "AbortError")) throw error;
-                if (attemptVersion !== undefined) {
-                    const latest = peekAssetStoreDraft(expected.userScope, id);
-                    if (latest?.kind === "delete" && latest.version === attemptVersion) ackAssetStoreDraft(expected, id, attemptVersion);
-                }
-                const remainingPage = await loadCanonicalArchivedPage(1, 1, expected, options?.signal);
-                return {
-                    deleted,
-                    remaining: remainingPage.total,
-                    error: error instanceof Error ? error : new Error(String(error)),
-                };
-            }
-        }
-    }
-}
-
-export function workspaceClearTrashMessage(result: ClearWorkspaceArchivedAssetsResult) {
-    if (!result.error && result.remaining <= 0) {
-        return { type: "success" as const, text: `已彻底清空回收站 ${result.deleted} 个素材` };
-    }
-    const remaining = `已删除 ${result.deleted} 个素材，回收站还剩 ${result.remaining} 个。`;
-    const detail = result.error?.message?.trim();
-    return { type: "error" as const, text: detail ? `${remaining}${detail}` : remaining };
-}
-
-async function loadCanonicalArchivedPage(page: number, pageSize: number, expected: CapturedUserScope, signal?: AbortSignal) {
-    const remote = await listWorkspaceAssetsPage({ page, pageSize, status: "archived" }, { signal, expectedScope: expected });
-    assertUserScope(expected);
-    if (!remote || !Array.isArray(remote.assets)) throw new Error("素材列表无效");
-    const ids: string[] = [];
-    const seen = new Set<string>();
-    for (const item of remote.assets) {
-        if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-        const record = item as Record<string, unknown>;
-        const id = typeof record.id === "string" ? record.id.trim() : "";
-        const kind = typeof record.kind === "string" ? record.kind : "";
-        const status = typeof record.status === "string" ? record.status : "";
-        if (!id || seen.has(id) || kind === "entity" || status !== "archived") continue;
-        seen.add(id);
-        ids.push(id);
-    }
-    return { ids, total: Math.max(0, Number(remote.total) || 0) };
 }
 
 export async function persistWorkspaceAssetChanges(expectedScope?: CapturedUserScope) {

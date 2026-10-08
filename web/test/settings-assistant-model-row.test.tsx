@@ -19,14 +19,13 @@ function configWithTextChannel(overrides: Partial<AiConfig> = {}): AiConfig {
     return normalizeConfigSnapshot({ config: { ...defaultConfig, channels, textModel: "a::chat-1", ...overrides } }).config;
 }
 
-/** 取出助手一行内各个选项的选中态，顺序即渲染顺序。 */
-function assistantChecked(config: AiConfig) {
+function assistantSelection(config: AiConfig) {
     const markup = renderToStaticMarkup(<ModelDefaultGrid config={config} onChange={() => {}} />);
     const start = markup.indexOf('id="default-assistant-title"');
     const end = markup.indexOf('id="default-audio-title"');
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
-    return [...markup.slice(start, end).matchAll(/aria-checked="(true|false)"/g)].map((match) => match[1] === "true");
+    return markup.slice(start, end).match(/class="ant-select-content[^"]*" title="([^"]*)"/)?.[1];
 }
 
 describe("模型配置页的助手模型一行", () => {
@@ -40,19 +39,19 @@ describe("模型配置页的助手模型一行", () => {
         expect(audioIndex).toBeGreaterThan(assistantIndex);
     });
 
-    test("默认选中跟随默认文本模型，并说明助手会做什么", () => {
+    test("默认显示跟随默认文本模型，并提供可访问的助手模型选择框", () => {
         const markup = renderToStaticMarkup(<ModelDefaultGrid config={configWithTextChannel()} onChange={() => {}} />);
         expect(markup).toContain("跟随默认文本模型");
-        expect(markup).toContain("画布助手用这个模型理解你的要求并修改画布。");
+        expect(markup).toContain('aria-label="助手模型"');
         expect(markup).toContain("chat-1");
-        expect(markup).toContain("chat-2");
     });
 
     test("选中态跟着 assistantModel 走：为空选中跟随项，有值选中对应模型", () => {
-        // 助手一行的三个选项顺序固定为：跟随默认文本模型、chat-1、chat-2。
-        expect(assistantChecked(configWithTextChannel())).toEqual([true, false, false]);
-        expect(assistantChecked(configWithTextChannel({ assistantModel: "a::chat-2" }))).toEqual([false, false, true]);
+        expect(assistantSelection(configWithTextChannel())).toBe("跟随默认文本模型");
+        expect(assistantSelection(configWithTextChannel({ assistantModel: "a::chat-2" }))).toBe("chat-2");
         // 失效的显式选择不能悄悄改用默认模型。
-        expect(assistantChecked(configWithTextChannel({ assistantModel: "gone::chat-1" }))).toEqual([false, false, false]);
+        expect(assistantSelection(configWithTextChannel({ assistantModel: "gone::chat-1" }))).toBeUndefined();
+        const unavailable = renderToStaticMarkup(<ModelDefaultGrid config={configWithTextChannel({ assistantModel: "gone::chat-1" })} onChange={() => {}} />);
+        expect(unavailable).toContain("已选模型不可用，请重新选择");
     });
 });

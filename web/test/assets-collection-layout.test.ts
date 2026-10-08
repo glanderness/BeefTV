@@ -157,7 +157,7 @@ describe("generation history card actions", () => {
         const css = readFileSync(resolve(import.meta.dir, "../src/styles/assets-reference-baseline.css"), "utf8");
         expect(page).toContain('aria-label="生成结果操作"');
         expect(page).toContain('aria-label={`下载 ${asset.title}`}');
-        expect(page).toContain('aria-label={`彻底删除 ${asset.title}`}');
+        expect(page).toContain('aria-label={`永久删除 ${asset.title}`}');
         expect(page).toContain("setPendingDelete([asset])");
         expect(page).toContain("setPendingDelete(selectedHistoryAssets)");
         expect(page).toContain("if (!await onDelete(asset)) continue");

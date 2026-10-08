@@ -20,8 +20,10 @@ test("settings show one Seedance option and retain the selected legacy ID", () =
     const config = fixture();
     config.videoModel = config.models[1];
     const html = renderToStaticMarkup(createElement(ModelDefaultGrid, { config, onChange: () => {} }));
-    expect(html.match(/Seedance 2\.0/g)).toHaveLength(1);
-    expect(html.match(/aria-checked="true"/g)).toHaveLength(2); // Video and follow-default assistant.
+    const videoRow = html.slice(html.indexOf('id="default-video-title"'), html.indexOf('id="default-text-title"'));
+    expect(videoRow.match(/role="combobox"/g)).toHaveLength(1);
+    expect(groupModelsByDisplayName(config, config.videoModels)).toHaveLength(1);
+    expect(videoRow).toContain('title="Seedance 2.0"');
     expect(config.videoModel).toBe("beefapi::seedance-2.0-portrait");
 });
 

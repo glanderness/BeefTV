@@ -581,7 +581,7 @@ describe("workspace asset canonical reads", () => {
         expect(page).toContain("canonicalHasMore");
         expect(page).toContain("generatedTotal");
         expect(page).toContain("generated: true");
-        expect(page).toContain('title="彻底删除素材"');
+        expect(page).toContain('title="永久删除素材"');
         expect(page).not.toContain("回收站");
         expect(page).toContain("加载更多");
         expect(page).not.toContain("删除当前页");
