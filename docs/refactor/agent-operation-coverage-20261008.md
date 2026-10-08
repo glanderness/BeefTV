@@ -14,6 +14,7 @@
 | 配置镜头模型和参数 | canvas.node.configure | 草稿metadata类型化配置，实际model kind/可用性校验；image/video/audio字段与界面一致，真实回执/CAS/撤销；capabilities/v5、descriptor3；不生成不付费 |
 | 把创意变成镜头草稿 | canvas.nodes.create、canvas.node.update | 新建 title/type/prompt；更新 title/prompt/content，revision 校验；保存回执可恢复/撤销 |
 | 移动、删除镜头或移除参考线 | canvas.node.move、canvas.node.delete、canvas.edge.delete | revision 校验、原子回执和撤销；删除节点不删除素材库原件或任务 |
+| 将素材绑定成可用参考节点 | canvas.node.bind_asset | 指定已引用或当前项目授权的素材；校验同 owner、素材资源关联、READY 与媒体类型，CAS 保存真实 content/storageKey/assetId；不生成不付费 |
 | 给镜头关联参考节点 | canvas.edge.create | 当前画布节点，重复边幂等 |
 | 将已生成产物放回草稿 | task.get、canvas.task.bind | 本轮/明确引用任务，资源 READY 且归属正确；恢复不重复付费 |
 | 剪裁、排序、调音量、字幕 | canvas.timeline.update | 当前画布已关联素材；revision 校验、时间区间验证；不接受任意路径 |
@@ -47,4 +48,4 @@
 
 `app/operations_project_search_test.go` 使用真实SQLite项目与assetlinks、真实上传PNG、共享operation registry及Go scope callback。验证search→media.overview→media.inspect可读；模拟伪造metadata项目标签与foreign owner不能泄露；删除项目关系后inspect拒绝，切换当前画布所属项目后旧asset.get拒绝。无项目画布只列自己的direct resource node并分页。`operations/project_search_test.go` 拒绝模型提交projectId、任意kind及大页码/每页>20。
 
-内部 `UserAssetPageFilter.ProjectID` 是真实关系筛选，与原有展示标签 `Project` 分开；只给分页素材，不返回整库facets。当前画布模式不开放通用 `asset.list` / `canvas.search`；只读与完全访问可读取本用户工作区。Go-only `ProjectReference(kind,id)` callback每次从当前DB验证，不把模型返回ID写进任何授权列表，因此恢复不延续已撤销的搜索权限。当前共有26项共享操作；内置只读、当前画布、完全访问分别可发现13、22、25项。只读不含生成提议；完全访问不含对话消息产物绑定。
+内部 `UserAssetPageFilter.ProjectID` 是真实关系筛选，与原有展示标签 `Project` 分开；只给分页素材，不返回整库facets。当前画布模式不开放通用 `asset.list` / `canvas.search`；只读与完全访问可读取本用户工作区。Go-only `ProjectReference(kind,id)` callback每次从当前DB验证，不把模型返回ID写进任何授权列表，因此恢复不延续已撤销的搜索权限。当前共有27项共享操作；内置只读、当前画布、完全访问分别可发现13、23、26项。只读不含生成提议；完全访问不含对话消息产物绑定。

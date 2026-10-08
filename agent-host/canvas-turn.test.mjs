@@ -9,6 +9,12 @@ import { SYSTEM_PROMPT } from "./full-control-loader.mjs";
 const serverSource = readFileSync(new URL("./server.mjs", import.meta.url), "utf8");
 
 describe("本轮画布变更", () => {
+    test("真实素材绑定回执保留改动节点与撤销操作身份", () => {
+        const turn = resetTurnAccumulator(newTurnAccumulator(), 7);
+        collectTurnEffects(turn, "canvas.node.bind_asset", { revision: 8, nodeId: "reference", referenceBound: true }, "bind-op");
+        expect(turnChange(turn)).toEqual({ revisionBefore: 7, revisionAfter: 8,
+            createdNodeIds: [], updatedNodeIds: ["reference"], createdEdgeIds: [], operationIds: ["bind-op"] });
+    });
     test("参数配置保留真实节点与操作回执供查看和撤销", () => {
         const turn = resetTurnAccumulator(newTurnAccumulator(), 7);
         collectTurnEffects(turn, "canvas.node.configure", { revision: 8, nodeId: "video-draft" }, "configure-op");

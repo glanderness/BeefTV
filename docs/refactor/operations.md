@@ -34,11 +34,11 @@ listed := registry.List(operations.ManualCaller(false))
 
 | 构造 | Kind | 能力发现 |
 | --- | --- | --- |
-| `ManualCaller(readOnly)` | `manual` | 26 项（未启用只读过滤时），写操作 schema 带必填 `operationId` |
+| `ManualCaller(readOnly)` | `manual` | 27 项（未启用只读过滤时），写操作 schema 带必填 `operationId` |
 | `ExternalCaller(readOnly)` | `external` | 同上 |
-| `AssistantCaller(scope, readOnly)` | `assistant` | 按回合权限分别为13/22/25项（只读/当前画布/完全访问）；写操作 schema 不暴露 `operationId` |
+| `AssistantCaller(scope, readOnly)` | `assistant` | 按回合权限分别为13/23/26项（只读/当前画布/完全访问）；写操作 schema 不暴露 `operationId` |
 
-`Caller.Scope` 是 `Authorizer`（`Visible` / `Allows`）。空指针不能赋给该接口，否则会变成带类型的 nil。手工/外部调用方遇到带类型的空范围时仍发现完整26项。显式 `assistant` 且没有活范围时，能力发现为空、执行拒绝；宿主在回合外应传入空的 `AssistantScope` 适配器，才能按缺省当前画布模式发现22项且执行全部拒绝。未知 `Kind` 失败关闭。桌面 React 没有 owner token：操作入口用 `RuntimeDependencies.DesktopTrust` 加 loopback/同源识别受信任手工 UI，记为 `caller=manual`。未授信的 loopback 客户端没有整页写权限。
+`Caller.Scope` 是 `Authorizer`（`Visible` / `Allows`）。空指针不能赋给该接口，否则会变成带类型的 nil。手工/外部调用方遇到带类型的空范围时仍发现完整27项。显式 `assistant` 且没有活范围时，能力发现为空、执行拒绝；宿主在回合外应传入空的 `AssistantScope` 适配器，才能按缺省当前画布模式发现23项且执行全部拒绝。未知 `Kind` 失败关闭。桌面 React 没有 owner token：操作入口用 `RuntimeDependencies.DesktopTrust` 加 loopback/同源识别受信任手工 UI，记为 `caller=manual`。未授信的 loopback 客户端没有整页写权限。
 
 ### 结果信封
 
@@ -50,7 +50,7 @@ listed := registry.List(operations.ManualCaller(false))
 
 共享目录的只读操作：`canvas.get`、`canvas.search`、`asset.list`、`asset.get`、`task.get`、`model.catalog`、`media.overview`、`media.inspect`、`media.check`、`skill.get`、`skill.file`、`project.media.search`、`project.canvas.search`、`canvas.generation.propose`。生成提议虽不直接生成或扣费，仍不向内置只读模式开放。
 
-写入：`canvas.node.update`、`canvas.node.configure`、`canvas.node.move`、`canvas.node.delete`、`canvas.nodes.create`、`canvas.edge.create`、`canvas.edge.delete`、`canvas.document.commit`、`canvas.task.bind`、`conversation.message.attach`、`canvas.timeline.update`、`canvas.timeline.render`
+写入：`canvas.node.update`、`canvas.node.configure`、`canvas.node.bind_asset`、`canvas.node.move`、`canvas.node.delete`、`canvas.nodes.create`、`canvas.edge.create`、`canvas.edge.delete`、`canvas.document.commit`、`canvas.task.bind`、`conversation.message.attach`、`canvas.timeline.update`、`canvas.timeline.render`
 
 `canvas.document.commit` 是顶层文档覆盖，必须带 `expectedRevision` 与稳定 `operationId`，在回执事务里校验并应用到当前画布。不创建画布，不接受任意数据库补丁语言。未触及的顶层字段、ID、资源引用校验、CAS 与回执原子性保持不变。内置当前画布与只读模式拒绝该操作；完全访问模式允许，但仍校验归属与 CAS，并保存跨画布撤销快照。
 

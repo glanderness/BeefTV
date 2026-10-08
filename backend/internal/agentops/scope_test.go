@@ -98,14 +98,34 @@ func TestNilAssistantScopeDoesNotFilterCatalog(t *testing.T) {
 	agentops.RegisterDefaultOps(registry)
 	var typedNil *agentops.AssistantScope
 	listed := registry.List(agentops.Caller{Kind: agentops.CallerManual, Scope: typedNil})
-	if len(listed) != 26 {
+	if len(listed) != 27 {
 		t.Fatalf("空指针范围不应收窄目录，得到 %d", len(listed))
 	}
 	empty := registry.List(agentops.AssistantCaller(&agentops.AssistantScope{}, false))
-	if len(empty) != 22 {
+	if len(empty) != 23 {
 		t.Fatalf("空助手范围应只露出助手集合，得到 %d", len(empty))
 	}
 	if got := registry.List(agentops.AssistantCaller(nil, false)); len(got) != 0 {
 		t.Fatalf("助手缺少范围时能力发现必须为空，得到 %d", len(got))
+	}
+}
+
+func TestReferenceBindingCatalogPermissionModes(t *testing.T) {
+	registry := agentops.NewRegistry(nil, nil)
+	agentops.RegisterDefaultOps(registry)
+	for mode, want := range map[string]int{"read-only": 13, "canvas": 23, "full-access": 26} {
+		descriptors := registry.List(agentops.AssistantCaller(&agentops.AssistantScope{PermissionMode: mode}, false))
+		if len(descriptors) != want {
+			t.Fatalf("%s catalog=%d want=%d", mode, len(descriptors), want)
+		}
+		bound := false
+		for _, d := range descriptors {
+			if d.ID == "canvas.node.bind_asset" {
+				bound = true
+			}
+		}
+		if bound != (mode != "read-only") {
+			t.Fatalf("%s binding visibility=%v", mode, bound)
+		}
 	}
 }

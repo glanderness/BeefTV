@@ -67,7 +67,7 @@ export function createOperationBridge({
 
   function buildTools(canvasId, log, generation, turn, identityPrefix) {
     const mode = generation.permissionMode || 'canvas';
-    const canvasTools = new Set(['canvas.get','canvas.node.update','canvas.node.configure','canvas.node.move','canvas.node.delete','canvas.edge.delete','canvas.nodes.create','canvas.edge.create','canvas.timeline.update','canvas.timeline.render','canvas.generation.propose','canvas.task.bind','asset.get','task.get','media.overview','media.inspect','media.check','skill.get','skill.file','project.media.search','project.canvas.search','model.catalog']);
+    const canvasTools = new Set(['canvas.get','canvas.node.update','canvas.node.bind_asset','canvas.node.configure','canvas.node.move','canvas.node.delete','canvas.edge.delete','canvas.nodes.create','canvas.edge.create','canvas.timeline.update','canvas.timeline.render','canvas.generation.propose','canvas.task.bind','asset.get','task.get','media.overview','media.inspect','media.check','skill.get','skill.file','project.media.search','project.canvas.search','model.catalog']);
     return [...descriptors.entries()].filter(([,d])=>mode==='read-only' ? d.readOnly && d.id!=='canvas.generation.propose' : mode==='full-access' ? d.scope!=='conversation' : canvasTools.has(d.id)).map(([toolName, descriptor]) => ({
       name: toolName,
       label: descriptor.id,

@@ -24,6 +24,9 @@ let wav: Buffer, longWav: Buffer, video: Buffer, jpeg: Buffer;
 const mediaRequests: { path: string; token: string | null }[] = [];
 let holdFirstPreview = true, releaseFirstPreview: (() => void) | null = null;
 const selectedSkill = { skillId: "story", versionId: "story-v1", contentHash: "a".repeat(64), skillName: "分镜", version: "1.0", status: 1, isAdded: true };
+let installedSkills = [selectedSkill];
+const skillInstalls: { sourceType: string; isPrivate: string; fileName: string }[] = [];
+let holdSkillInstall = false, releaseSkillInstall: (() => void) | null = null;
 beforeAll(async () => {
     scratch = mkdtempSync(tmpdir() + "/assistant-input-");
     execFileSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=24000:duration=0.25", scratch + "/beat.wav"]);
@@ -76,7 +79,15 @@ beforeAll(async () => {
             registeredAssets.push(body.asset);
             return ok({ asset: { id: body.asset.id } });
         }
-        if (pathname.endsWith("/skills/added")) return ok({ skills: [selectedSkill] });
+        if (pathname.endsWith("/skills/install")) {
+            const form = await req.formData();
+            skillInstalls.push({ sourceType: String(form.get("sourceType")), isPrivate: String(form.get("isPrivate")), fileName: (form.get("file") as File).name });
+            if (holdSkillInstall) await new Promise<void>(resolve => { releaseSkillInstall = resolve; });
+            const skill = { ...selectedSkill, skillId: "coffee", skillName: "咖啡审片", versionId: "coffee-v2", version: "2.0", contentHash: "b".repeat(64) };
+            installedSkills = [skill];
+            return ok({ skill });
+        }
+        if (pathname.endsWith("/skills/added")) return ok({ skills: installedSkills });
         if (pathname.endsWith("/assistant/ui-session")) return ok({ token: "synthetic-only", expiresAt: new Date(Date.now() + 1800000).toISOString() });
         if (pathname.endsWith("/assistant/status")) return ok({ available: true });
         if (pathname.endsWith("/assistant/sessions")) return ok({ currentSessionId: "s1", sessions: [] });
@@ -369,3 +380,56 @@ test("cross-canvas receipts report every target and one atomic undo refreshes al
     await page.screenshot({ path: "/tmp/beeftv-assistant-cross-canvas-undo.png" });
     await page.close();
 }, 15000);
+
+for (const mode of ["markdown", "zip"] as const) {
+    test(`assistant installs ${mode} privately and sends the installed version pin`, async () => {
+        running = false; installedSkills = [];
+        const page = await browser.newPage();
+        await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
+        await page.getByRole("button", { name: "选择技能", exact: true }).click();
+        await page.getByText("还没有已安装的技能。", { exact: true }).waitFor();
+        await page.getByRole("button", { name: "安装技能", exact: true }).click();
+        const dialog = page.getByRole("dialog", { name: "安装技能" });
+        expect(await dialog.getByText("公开状态", { exact: true }).isVisible()).toBe(false);
+        expect(await dialog.getByRole("button", { name: "从空白创建单文件技能" }).count()).toBe(0);
+        if (mode === "zip") await dialog.getByText("ZIP 技能包", { exact: true }).click();
+        await dialog.locator('input[type="file"]').setInputFiles({ name: mode === "zip" ? "coffee.zip" : "SKILL.md", mimeType: mode === "zip" ? "application/zip" : "text/markdown", buffer: Buffer.from("# Coffee review\nCheck the actual video.") });
+        await dialog.getByRole("button", { name: "安装技能", exact: true }).click();
+        await dialog.waitFor({ state: "hidden" });
+        await page.getByRole("button", { name: "移除技能 咖啡审片", exact: true }).waitFor();
+        await page.getByRole("button", { name: "咖啡审片 · 2.0", exact: true }).waitFor();
+        expect(skillInstalls.at(-1)).toEqual({ sourceType: mode, isPrivate: "true", fileName: mode === "zip" ? "coffee.zip" : "SKILL.md" });
+        await page.getByRole("textbox", { name: "给助手的消息" }).fill("请审查咖啡短片");
+        const sent = page.waitForResponse(response => response.url().endsWith("/assistant/chat"));
+        await page.getByRole("button", { name: "发送", exact: true }).click(); await sent;
+        expect(chats.at(-1)?.skills).toEqual([{ skillId: "coffee", versionId: "coffee-v2", contentHash: "b".repeat(64) }]);
+        await page.close();
+    }, 20000);
+}
+
+test("an installation completing after an account switch cannot select a skill in the replacement draft", async () => {
+    running = false; installedSkills = []; holdSkillInstall = true;
+    const page = await browser.newPage();
+    try {
+        await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
+        await page.getByRole("button", { name: "选择技能", exact: true }).click();
+        await page.getByText("还没有已安装的技能。", { exact: true }).waitFor();
+        await page.getByRole("button", { name: "安装技能", exact: true }).click();
+        const dialog = page.getByRole("dialog", { name: "安装技能" });
+        await dialog.locator('input[type="file"]').setInputFiles({ name: "SKILL.md", mimeType: "text/markdown", buffer: Buffer.from("# Coffee") });
+        const held = page.waitForRequest(request => request.url().endsWith("/skills/install"));
+        await dialog.getByRole("button", { name: "安装技能", exact: true }).click(); await held;
+        await page.evaluate(() => (window as any).assistantInputFixture.switchScope("replacement"));
+        await dialog.waitFor({ state: "hidden" });
+        const completed = page.waitForResponse(response => response.url().endsWith("/skills/install"));
+        releaseSkillInstall?.(); await completed;
+        await page.getByRole("textbox", { name: "给助手的消息" }).fill("新账号的草稿");
+        const sent = page.waitForResponse(response => response.url().endsWith("/assistant/chat"));
+        await page.getByRole("button", { name: "发送", exact: true }).click(); await sent;
+        expect(chats.at(-1)?.skills).toBeUndefined();
+        expect(await page.getByRole("button", { name: "移除技能 咖啡审片" }).count()).toBe(0);
+    } finally {
+        holdSkillInstall = false; releaseSkillInstall?.(); releaseSkillInstall = null;
+        await page.close();
+    }
+}, 20000);

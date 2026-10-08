@@ -57,6 +57,7 @@ export function collectTurnEffects(turn, opID, result, operationId) {
       }
       break;
     case 'canvas.node.update':
+    case 'canvas.node.bind_asset':
     case 'canvas.node.configure':
     case 'canvas.node.move':
     case 'canvas.task.bind':

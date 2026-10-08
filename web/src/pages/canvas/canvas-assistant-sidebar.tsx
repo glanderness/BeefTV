@@ -8,6 +8,7 @@ import { appQueryClient } from "@/lib/query-client";
 import { referencedAssetIdsInPrompt, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { AssistantAttachment, AssistantGenerationProposal, AssistantSkillSelection } from "@/services/api/agent-assistant";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
+import { SkillInstallModal } from "@/pages/skills/skill-install-modal";
 import { captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
 import { getActiveUserScope, getActiveUserScopeEpoch, subscribeUserScope } from "@/lib/user-scope";
 import { attachmentFromCanvasReference, attachmentRangeError, readAssistantInputDraft, saveAssistantInputDraft, uploadAssistantAttachment } from "@/services/assistant-attachments";
@@ -47,6 +48,8 @@ export function CanvasAssistantSidebar(props: Props) {
     const [draftSaved, setDraftSaved] = useState(false);
     const draftWriteVersion = useRef(0);
     const [skillsOpen, setSkillsOpen] = useState(false);
+    const [skillInstallOpen, setSkillInstallOpen] = useState(false);
+    const [skillInstallGeneration, setSkillInstallGeneration] = useState(0);
     const [referencePickerOpen, setReferencePickerOpen] = useState(false);
     const [availableSkills, setAvailableSkills] = useState<Skill[]>([]);
     const [skillsLoading, setSkillsLoading] = useState(false);
@@ -62,7 +65,7 @@ export function CanvasAssistantSidebar(props: Props) {
 
     useEffect(() => {
         const generation = ++inputGeneration.current, expected = captureUserScope(); inputScope.current = expected;
-        setDraftLoaded(false); setLoadedDraftIdentity(null); setDraft(""); setAttachments([]); setSelectedSkills([]); setUploads([]); setInputError(""); setAvailableSkills([]); setSkillsOpen(false); setReferencePickerOpen(false);
+        setDraftLoaded(false); setLoadedDraftIdentity(null); setDraft(""); setAttachments([]); setSelectedSkills([]); setUploads([]); setInputError(""); setAvailableSkills([]); setSkillsOpen(false); setSkillInstallOpen(false); setReferencePickerOpen(false);
         void readAssistantInputDraft(assistant.canvasId, expected).then(saved => {
             if (generation !== inputGeneration.current || !userScopeMatches(expected)) return;
             if (saved) { setDraft(saved.text || ""); setAttachments(saved.attachments || []); setSelectedSkills(saved.skills || []); }
@@ -289,10 +292,22 @@ export function CanvasAssistantSidebar(props: Props) {
                     {draftLoaded && loadedDraftIdentity !== draftIdentity ? <Button size="small" onClick={() => setDraftReadAttempt(value => value + 1)}>重新读取草稿</Button> : null}
                     {inputReady && (draft || attachments.length || selectedSkills.length) ? <span className="canvas-assistant-meta" role="status">{draftSaving ? "正在保存草稿…" : draftSaved ? "草稿已保存在本机" : "草稿尚未保存，请保持窗口打开"}</span> : null}
                     {(inputReady ? selectedSkills : []).map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>技能：{skill.skillName || skill.skillId} · {skill.version || skill.versionId}<button aria-label={`移除技能 ${skill.skillName || skill.skillId}`} onClick={() => setSelectedSkills(items => items.filter(item => item.skillId !== skill.skillId))}><X size={12} /></button></span>)}
-                    {skillsOpen && inputReady ? <div className="canvas-assistant-picker" aria-label="已安装技能">{skillsLoading ? <span>正在读取技能…</span> : skillsError ? <><span role="status">{skillsError}</span><Button size="small" onClick={() => void loadSkills()}>重新读取</Button></> : availableSkills.length ? availableSkills.map(skill => <button key={skill.skillId} type="button" aria-pressed={selectedSkills.some(item => item.skillId === skill.skillId)} onClick={() => setSelectedSkills(items => items.some(item => item.skillId === skill.skillId) ? items.filter(item => item.skillId !== skill.skillId) : [...items, { skillId: skill.skillId, versionId: skill.versionId, contentHash: skill.contentHash, skillName: skill.skillName, version: skill.version }])}>{skill.skillName} · {skill.version}</button>) : <span>还没有已安装的技能，可先到技能库添加。</span>}</div> : null}
+                    {skillsOpen && inputReady ? <div className="canvas-assistant-picker" aria-label="已安装技能">{skillsLoading ? <span>正在读取技能…</span> : skillsError ? <><span role="status">{skillsError}</span><Button size="small" onClick={() => void loadSkills()}>重新读取</Button></> : availableSkills.length ? availableSkills.map(skill => <button key={skill.skillId} type="button" aria-pressed={selectedSkills.some(item => item.skillId === skill.skillId)} onClick={() => setSelectedSkills(items => items.some(item => item.skillId === skill.skillId) ? items.filter(item => item.skillId !== skill.skillId) : [...items, { skillId: skill.skillId, versionId: skill.versionId, contentHash: skill.contentHash, skillName: skill.skillName, version: skill.version }])}>{skill.skillName} · {skill.version}</button>) : <span>还没有已安装的技能。</span>}<Button size="small" disabled={readOnly} onClick={() => { setSkillInstallGeneration(inputGeneration.current); setSkillInstallOpen(true); }}>安装技能</Button></div> : null}
                     {referencePickerOpen && inputReady ? <div className="canvas-assistant-picker" aria-label="画布参考素材">{references.filter(item => ["image", "video", "audio"].includes(item.kind)).map(reference => <button type="button" key={reference.id} onClick={() => { try { if (attachmentCount.current >= 8) throw new Error("一次最多添加 8 份参考素材"); const item = attachmentFromCanvasReference(reference); attachmentCount.current++; setAttachments(items => [...items, item]); setReferencePickerOpen(false); } catch (error) { setInputError(error instanceof Error ? error.message : "无法添加素材"); } }}>{reference.title || reference.label}</button>)}</div> : null}
                 </>}
             />
+            <SkillInstallModal open={skillInstallOpen} onClose={() => setSkillInstallOpen(false)} onInstalled={skill => {
+                if (skillInstallGeneration !== inputGeneration.current || !userScopeMatches(inputScope.current)) return;
+                setSkillInstallOpen(false);
+                if (!skill.versionId || !/^[a-f0-9]{64}$/i.test(skill.contentHash)) {
+                    setInputError("技能已安装，但没有读到可用版本，请重新读取技能。");
+                    void loadSkills();
+                    return;
+                }
+                setSelectedSkills(items => [...items.filter(item => item.skillId !== skill.skillId), { skillId: skill.skillId, versionId: skill.versionId, contentHash: skill.contentHash, skillName: skill.skillName, version: skill.version }]);
+                setSkillsOpen(true);
+                void loadSkills();
+            }} />
         </div>
     );
 
