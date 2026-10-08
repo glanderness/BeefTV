@@ -240,7 +240,19 @@ export function assistantUnresolvedFailures(calls: AgentToolCall[] | undefined):
         if (!call.isError) return;
         const target = assistantActionTarget(call);
         if (!target) return;
-        const resolved = list.slice(index + 1).some((later) => !later.isError && later.tool === call.tool && assistantActionTarget(later) === target);
+        const resolved = list.slice(index + 1).some((later) => {
+            if (later.isError || later.tool !== call.tool) return false;
+            if (assistantActionTarget(later) === target) return true;
+            // 同一节点的 overview 补齐缺失 resourceId 后成功，属于原步骤的重试。
+            // 不合并不同素材、片段、版本，也不让 overview 代替 inspect。
+            if (!['media.overview', 'media_overview'].includes(call.tool)) return false;
+            const before = call.args || {};
+            const after = later.args || {};
+            if (before.resourceId || !after.resourceId || (!before.nodeId && !before.assetId)) return false;
+            const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+            keys.delete('resourceId');
+            return [...keys].every(key => JSON.stringify(before[key]) === JSON.stringify(after[key]));
+        });
         if (resolved) return;
         const label = call.tool.replace("_", ".") === "media.inspect"
             ? call.args?.mode === "audio" ? "有音频片段听取未完成"

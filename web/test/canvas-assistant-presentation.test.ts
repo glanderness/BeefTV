@@ -287,6 +287,18 @@ describe("assistantVisibleReply", () => {
 });
 
 describe("assistantUnresolvedFailures", () => {
+    test("同一素材 overview 补齐资源重试成功不留下误报，其他素材仍报告", async () => {
+        const { assistantUnresolvedFailures } = await import("@/pages/canvas/canvas-assistant-copy");
+        for (const tool of ["media.overview", "media_overview"]) {
+            const failed = { tool, args: { canvasId: "canvas", nodeId: "video" }, isError: true };
+            const success = { tool, args: { resourceId: "resource", nodeId: "video", canvasId: "canvas" }, isError: false };
+            expect(assistantUnresolvedFailures([failed, success])).toEqual([]);
+            expect(assistantUnresolvedFailures([failed, { ...success, args: { ...success.args, nodeId: "other" } }])).toEqual(["浏览素材没有成功"]);
+            expect(assistantUnresolvedFailures([failed, { ...success, args: { ...success.args, startMs: 1000 } }])).toEqual(["浏览素材没有成功"]);
+            expect(assistantUnresolvedFailures([failed, { ...success, tool: "media_inspect" }])).toEqual(["浏览素材没有成功"]);
+            expect(assistantUnresolvedFailures([{ ...failed, args: { ...failed.args, resourceId: "old" } }, success])).toEqual(["浏览素材没有成功"]);
+        }
+    });
     test("媒体工具仍未成功时如实报告，后来成功则不留下旧失败", async () => {
         const { assistantUnresolvedFailures } = await import("@/pages/canvas/canvas-assistant-copy");
         const failed = { tool: "media.inspect", args: { nodeId: "a", start: 2, end: 4 }, isError: true };

@@ -46,15 +46,23 @@ type MediaPart struct {
 }
 
 type MediaResult struct {
-	Source         MediaSource     `json:"source"`
-	DurationMs     int64           `json:"durationMs"`
-	HasVideo       bool            `json:"hasVideo"`
-	HasAudio       bool            `json:"hasAudio"`
-	Content        []MediaPart     `json:"content"`
-	BlackIntervals []MediaInterval `json:"blackIntervals,omitempty"`
-	MeanDB         *float64        `json:"meanDb,omitempty"`
-	PeakDB         *float64        `json:"peakDb,omitempty"`
-	Note           string          `json:"note,omitempty"`
+	Source           MediaSource            `json:"source"`
+	DurationMs       int64                  `json:"durationMs"`
+	HasVideo         bool                   `json:"hasVideo"`
+	HasAudio         bool                   `json:"hasAudio"`
+	Content          []MediaPart            `json:"content"`
+	BlackIntervals   []MediaInterval        `json:"blackIntervals,omitempty"`
+	SilenceIntervals []MediaInterval        `json:"silenceIntervals,omitempty"`
+	SilenceDetection *MediaSilenceDetection `json:"silenceDetection,omitempty"`
+	MeanDB           *float64               `json:"meanDb,omitempty"`
+	PeakDB           *float64               `json:"peakDb,omitempty"`
+	Note             string                 `json:"note,omitempty"`
+}
+
+type MediaSilenceDetection struct {
+	NoiseDB           float64 `json:"noiseDb"`
+	MinimumDurationMs int64   `json:"minimumDurationMs"`
+	TimestampKind     string  `json:"timestampKind"`
 }
 
 type MediaInterval struct {
@@ -93,7 +101,7 @@ func registerMediaOps(r *Registry) {
 	summaries := map[string]string{
 		"media.overview": "获取已关联媒体的版本、时长与静态预览；用于选择检查区间，不能替代连续视频或声音内容审查。",
 		"media.inspect":  "实际读取指定区间，每次最多 15 秒：frames 看静态截图，video 看连续原生视频，audio 听原生音频；按问题选择，不把抽帧当作完整影音审查。",
-		"media.check":    "客观测量指定区间的黑屏与音量；不能判断画面含义、运镜、说话或音乐内容，不能替代实际查看和听取。",
+		"media.check":    "客观测量指定区间的黑屏、音量与静音停顿（固定 -35 dB、最少 120 ms，返回原素材坐标）；音量与停顿不能判断声音内容。停顿仅是候选切点，随后用 media.inspect audio 裁剪并实际听取确认，不能当作词时间戳或语义切点，不能替代实际查看和听取。",
 	}
 	for _, id := range []string{"media.overview", "media.inspect", "media.check"} {
 		operation := id
@@ -322,14 +330,18 @@ func runMedia(opCtx *Context, operation string, raw json.RawMessage) (any, error
 			command = append(command, "-vf", "blackdetect=d=0.15:pix_th=0.1")
 		}
 		if facts.HasAudio {
-			command = append(command, "-af", "volumedetect")
+			command = append(command, "-af", "volumedetect,silencedetect=noise=-35dB:d=0.12")
 		}
 		output, err := mediaCommand(ctx, bin, append(command, "-f", "null", "-")...)
 		if err != nil {
 			return nil, err
 		}
 		result.BlackIntervals, result.MeanDB, result.PeakDB = parseMediaChecks(string(output), args.StartMs)
-		result.Note = "客观测量：黑屏可能是有意设计；存在音轨不代表有声音；音量数值不能判断声音内容。"
+		if facts.HasAudio {
+			result.SilenceIntervals = parseMediaSilence(string(output), args.StartMs, args.EndMs)
+			result.SilenceDetection = &MediaSilenceDetection{NoiseDB: -35, MinimumDurationMs: 120, TimestampKind: "source_time"}
+		}
+		result.Note = "客观测量：黑屏可能是有意设计；存在音轨不代表有声音；音量不能判断声音内容。静音区间限定在本次请求内，以原素材时间表示，仅供寻找候选停顿，不是词时间戳；裁剪后用 media.inspect audio 实际听取再确认切点。"
 		return result, nil
 	}
 	mode := args.Mode
@@ -466,6 +478,58 @@ func selfContainedMedia(path string) bool {
 
 var mediaBlackPattern = regexp.MustCompile(`black_start:([\d.]+) black_end:([\d.]+) black_duration:([\d.]+)`)
 var mediaVolumePattern = regexp.MustCompile(`(mean|max)_volume: ([-\d.]+) dB`)
+var mediaSilencePattern = regexp.MustCompile(`silence_(start|end):\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)`)
+
+func parseMediaSilence(log string, startMs, endMs int64) []MediaInterval {
+	intervals := []MediaInterval{}
+	start := int64(-1)
+	appendInterval := func(from, to int64) {
+		if from < startMs {
+			from = startMs
+		}
+		if to > endMs {
+			to = endMs
+		}
+		if to > from {
+			intervals = append(intervals, MediaInterval{from, to})
+		}
+	}
+	for _, match := range mediaSilencePattern.FindAllStringSubmatch(log, -1) {
+		seconds, err := strconv.ParseFloat(match[2], 64)
+		if err != nil {
+			continue
+		}
+		if seconds < 0 {
+			seconds = 0
+		}
+		if maximum := float64(endMs-startMs) / 1000; seconds > maximum {
+			seconds = maximum
+		}
+		// FFmpeg processes a seeked interval with local timestamps. Clamp any
+		// decoder padding to the authorized requested source interval.
+		at := startMs + int64(seconds*1000)
+		if at < startMs {
+			at = startMs
+		}
+		if match[1] == "start" {
+			if start < 0 {
+				start = at
+			}
+		} else {
+			if start < 0 {
+				start = startMs
+			}
+			appendInterval(start, at)
+			start = -1
+		}
+	}
+	// Some decoders omit the final end event; a reported silence_start has
+	// already met FFmpeg's minimum duration, so close it at the request end.
+	if start >= 0 {
+		appendInterval(start, endMs)
+	}
+	return intervals
+}
 
 func parseMediaChecks(log string, startMs int64) ([]MediaInterval, *float64, *float64) {
 	intervals := []MediaInterval{}
