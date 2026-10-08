@@ -76,6 +76,7 @@ export type AgentTurnEnd = {
     toolCalls: AgentToolCall[];
     change?: AssistantTurnChange | null;
     proposals?: AssistantGenerationProposal[];
+    outputs?: AssistantTurnOutput[];
     error: string | null;
     errorReason?: string | null;
     cancelled: boolean;
@@ -96,6 +97,7 @@ export type AssistantTurn = {
     toolCalls: AgentToolCall[];
     change: AssistantTurnChange | null;
     proposals: AssistantGenerationProposal[];
+    outputs?: AssistantTurnOutput[];
     error: string | null;
     errorReason?: string | null;
     cancelled: boolean;
@@ -105,6 +107,9 @@ export type AssistantTurn = {
     supplementInputs?: AssistantSupplementInput[];
     createdAt: string;
 };
+
+/** Trusted render receipts in creation order; task/resource access still uses owned APIs. */
+export type AssistantTurnOutput = { taskId: string; kind: "video"; sourceRevision?: number };
 
 export type AssistantSessionSummary = {
     sessionId: string;

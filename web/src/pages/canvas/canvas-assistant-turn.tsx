@@ -10,6 +10,7 @@ import { modelOptionName, resolveModelChannel, useEffectiveConfig } from "@/stor
 import { portraitPriceLines, seedancePortraitModel, seedancePortraitLabel } from "@/lib/seedance-portrait";
 import { portraitGenerationError } from "@/lib/model-selection";
 import { CanvasAssistantAttachments } from "./canvas-assistant-attachments";
+import { CanvasAssistantOutputs } from "./canvas-assistant-outputs";
 
 type Props = {
     turn: AssistantTurn;
@@ -63,6 +64,7 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
                 {(input.skills || []).map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>技能：{skill.skillName || skill.skillId} · {skill.version || skill.versionId}</span>)}
             </div>) : (turn.supplements || []).map((text, index) => <CanvasAssistantUserMessage key={`supplement:${index}`} text={text} selectedCount={0} />)}
             {turn.reply ? <CanvasAssistantReply text={turn.reply} /> : null}
+            {turn.outputs?.length ? <CanvasAssistantOutputs outputs={turn.outputs} /> : null}
             {turn.cancelled ? <p className="canvas-assistant-meta">这一条已经停下了。</p> : null}
             {turn.error ? (
                 <div className={canContinue ? "canvas-assistant-incomplete" : "canvas-assistant-feedback"} role="status">

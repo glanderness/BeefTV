@@ -90,10 +90,15 @@ func ValidateMediaReference(domain Domain, userID, canvasID, nodeID, assetID, re
 }
 
 func registerMediaOps(r *Registry) {
+	summaries := map[string]string{
+		"media.overview": "获取已关联媒体的版本、时长与静态预览；用于选择检查区间，不能替代连续视频或声音内容审查。",
+		"media.inspect":  "实际读取指定区间，每次最多 15 秒：frames 看静态截图，video 看连续原生视频，audio 听原生音频；按问题选择，不把抽帧当作完整影音审查。",
+		"media.check":    "客观测量指定区间的黑屏与音量；不能判断画面含义、运镜、说话或音乐内容，不能替代实际查看和听取。",
+	}
 	for _, id := range []string{"media.overview", "media.inspect", "media.check"} {
 		operation := id
-		r.Register(Op{ID: operation, Summary: "读取已关联媒体：overview 获取版本与预览；inspect 查看或听指定片段；check 测量黑屏与音量", ReadOnly: true, Scope: ScopeCanvas,
-			Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeId":{"type":"string"},"assetId":{"type":"string"},"resourceId":{"type":"string"},"expectedVersion":{"type":"string"},"startMs":{"type":"integer","minimum":0},"endMs":{"type":"integer","minimum":0},"mode":{"type":"string","enum":["frames","video","audio"]}},"required":["canvasId"]}`),
+		r.Register(Op{ID: operation, Summary: summaries[operation], ReadOnly: true, Scope: ScopeCanvas,
+			Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeId":{"type":"string"},"assetId":{"type":"string"},"resourceId":{"type":"string"},"expectedVersion":{"type":"string"},"startMs":{"type":"integer","minimum":0},"endMs":{"type":"integer","minimum":0},"mode":{"type":"string","description":"frames：离散静态截图，用于构图与画面内容，不能判断连续运动或声音；video：连续原生视频片段，用于运镜、动作、转场与音画关系，保留可用音轨；audio：原生音频片段，用于说话、对白、音乐和声音内容。按检查目标选择；inspect 每次最多 15 秒。","enum":["frames","video","audio"]}},"required":["canvasId"]}`),
 			Handler: func(ctx *Context, raw json.RawMessage) (any, error) { return runMedia(ctx, operation, raw) }})
 	}
 }

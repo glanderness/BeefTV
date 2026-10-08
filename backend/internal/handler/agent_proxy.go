@@ -215,6 +215,12 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 				for _, value := range turns {
 					if turn, ok := value.(map[string]any); ok {
 						turnID, _ := turn["turnId"].(string)
+						outputs, err := svc.AssistantTurnOutputs(c.GetString("agentUserId"), strings.TrimSpace(c.Query("canvasId")), turnID)
+						if err != nil {
+							failService(c, err)
+							return
+						}
+						turn["outputs"] = outputs
 						state, err := svc.ReadAssistantTurnHistoryState(c.GetString("agentUserId"), strings.TrimSpace(c.Query("canvasId")), turnID)
 						if err != nil {
 							failService(c, err)
@@ -499,6 +505,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			if assistantTerminalLine(line, turnID) {
 				settle = true
 			}
+			line = assistantOutputsLine(line, svc, c.GetString("agentUserId"), payload.CanvasID, turnID)
 			if len(line) > 0 && !clientGone {
 				if _, writeErr := c.Writer.Write(line); writeErr != nil {
 					clientGone = true

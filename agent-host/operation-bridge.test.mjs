@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
 import { createTurnBudget } from './request-budget.mjs';
 import { ASSISTANT_CANVAS_NODE_UPDATE_PATCH, createOperationBridge, scopedSchema } from './operation-bridge.mjs';
 import { newTurnAccumulator, resetTurnAccumulator } from './canvas-turn.mjs';
@@ -311,4 +312,41 @@ describe('内置助手节点更新投影', () => {
       expect(writes[0].body.params.patch).not.toHaveProperty('prompt');
     });
   });
+});
+
+
+test('media discovery descriptions reach actual model-facing bridge tools without changing modes', async () => {
+  // The Go registry test checks these real descriptors. Reuse their source schema
+  // over HTTP here so a fixture cannot silently retain an outdated mode contract.
+  const source = readFileSync(new URL('../backend/internal/operations/media.go', import.meta.url), 'utf8');
+  const params = JSON.parse(source.match(/Params:\s*json.RawMessage\(`([^`]+)`\)/)[1]);
+  const ops = [...source.matchAll(/"(media\.(?:overview|inspect|check))":\s*("[^"\n]+")/g)].map(match => ({
+    id: match[1], summary: JSON.parse(match[2]), readOnly: true, scope: 'canvas', params,
+  }));
+  expect(ops).toHaveLength(3);
+  const server = createServer((_req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ code: 0, data: { ops } }));
+  });
+  const port = await listen(server);
+  try {
+    const bridge = createOperationBridge({ opsUrl: `http://127.0.0.1:${port}`, hostToken: 'test-only', turnBudgetContext: new AsyncLocalStorage() });
+    await bridge.loadDescriptors();
+    const tools = bridge.buildTools('canvas', [], { aborted: false }, newTurnAccumulator(), 'session');
+    expect(new Set(tools.map(tool => tool.description)).size).toBe(3);
+    for (const tool of tools) {
+      const original = ops.find(op => op.id === tool.label);
+      expect(tool.description).toBe(original.summary);
+      expect(tool.parameters.properties.mode).toEqual(params.properties.mode);
+      expect(tool.parameters.properties.mode.description).toContain('不能判断连续运动或声音');
+      expect(tool.parameters.properties.mode.enum).toEqual(['frames', 'video', 'audio']);
+      expect(tool.parameters.properties.canvasId).toBeUndefined();
+    }
+    expect(tools.find(tool => tool.name === 'media_inspect').description).toContain('15 秒');
+    expect(tools.find(tool => tool.name === 'media_overview').description).toContain('不能替代');
+    expect(tools.find(tool => tool.name === 'media_check').description).toContain('不能判断');
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
 });

@@ -257,3 +257,50 @@ func TestNativeMediaCleanNegative(t *testing.T) {
 		t.Fatalf("false positives=%+v", check)
 	}
 }
+
+func TestMediaDiscoveryExplainsEvidenceAndInspectionModes(t *testing.T) {
+	r := NewRegistry(nil, nil)
+	registerMediaOps(r)
+	seen := map[string]bool{}
+	for _, descriptor := range r.List(Caller{Kind: CallerManual}) {
+		if seen[descriptor.Summary] {
+			t.Fatal("media operations share an ambiguous summary")
+		}
+		seen[descriptor.Summary] = true
+		var schema struct {
+			Properties map[string]struct {
+				Description string   `json:"description"`
+				Enum        []string `json:"enum"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal(descriptor.Params, &schema); err != nil {
+			t.Fatal(err)
+		}
+		mode := schema.Properties["mode"]
+		for _, word := range []string{"frames", "静态", "video", "连续", "audio", "声音"} {
+			if !strings.Contains(mode.Description, word) {
+				t.Fatalf("%s mode omitted %s: %s", descriptor.ID, word, mode.Description)
+			}
+		}
+		if strings.Join(mode.Enum, ",") != "frames,video,audio" {
+			t.Fatal("mode behavior contract changed")
+		}
+		switch descriptor.ID {
+		case "media.overview":
+			if !strings.Contains(descriptor.Summary, "不能替代") {
+				t.Fatal("preview claims full inspection")
+			}
+		case "media.inspect":
+			if !strings.Contains(descriptor.Summary, "15 秒") {
+				t.Fatal("inspection interval not discoverable")
+			}
+		case "media.check":
+			if !strings.Contains(descriptor.Summary, "不能判断") {
+				t.Fatal("measurements imply sound understanding")
+			}
+		}
+	}
+	if len(seen) != 3 {
+		t.Fatal("incomplete media discovery")
+	}
+}

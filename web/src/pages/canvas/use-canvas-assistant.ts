@@ -411,6 +411,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                         toolCalls: end.toolCalls || [],
                         change: end.change ?? null,
                         proposals: end.proposals || [],
+                        outputs: end.outputs || [],
                         error: end.error ? agentAssistantFailureText(end.errorReason ?? undefined, "这一轮没有全部完成，请核对已经落地的改动。") : null,
                         errorReason: end.errorReason,
                         cancelled: Boolean(end.cancelled),
