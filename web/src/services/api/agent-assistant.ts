@@ -147,6 +147,9 @@ export function agentAssistantFailureText(reason: string | undefined, fallback =
             return "当前配置的总调用预算已用完，请检查助手运行配置。已落地的改动会保留。";
         case "request_budget_storage_unavailable":
             return "预算记录无法读取或保存，已停止继续调用。请检查磁盘空间和数据目录权限；仍失败时，请从有效备份恢复预算记录后重启助手。";
+        case "model_error":
+        case "provider_error":
+            return "模型没有完成回复。已经完成的操作会保留，请检查结果后再继续。";
         case "model_request_failed":
             return "模型暂时没有完成响应。已完成的改动会保留，可以继续处理。";
         case "host_unreachable":
