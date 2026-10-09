@@ -1,6 +1,6 @@
 import { assertUserScope, captureUserScope, isUserScopeAbandonedError, UserScopeAbandonedError, waitForRetryDelay, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
-import { http, apiClient, apiBaseURL, ApiError, type HttpRequestConfig } from "@/services/api/request";
+import { http, apiBaseURL, ApiError, type HttpRequestConfig } from "@/services/api/request";
 
 export type RemoteResource = {
     id: string;
@@ -376,18 +376,33 @@ export function playbackVariantUrl(id: string) {
  * media elements cannot attach the desktop launch token, and large videos must
  * not inherit the API client's short JSON-request timeout.
  */
-export async function getResourcePlaybackBlob(storageKey: string, config?: HttpRequestConfig) {
+export type ResourcePlayback = { blob: Blob; compatible: boolean };
+
+export async function getResourcePlayback(storageKey: string, config?: HttpRequestConfig): Promise<ResourcePlayback | null> {
     const id = resourceIdFromStorageKey(storageKey);
     if (!id) return null;
-    const response = await apiClient.get<Blob>(`/resources/${encodeURIComponent(id)}/file?variant=playback&proxy=1`, {
+    const response = await http.raw<Blob>({
         ...config,
+        method: "get",
+        url: `/resources/${encodeURIComponent(id)}/file?variant=playback&proxy=1`,
+        expectedScope: config?.expectedScope ?? captureUserScope(),
         responseType: "blob",
         timeout: 0,
     });
-    return response.data instanceof Blob ? response.data : new Blob([response.data]);
+    return {
+        blob: response.data instanceof Blob ? response.data : new Blob([response.data]),
+        // A ready database row may outlive its copy. The file endpoint then
+        // serves the original with its original ETag; it must remain eligible
+        // for decoder-error recovery.
+        compatible: String(response.headers.etag || "").endsWith(':pb"'),
+    };
 }
 
-export async function getResourceBlob(storageKey: string) {
+export async function getResourcePlaybackBlob(storageKey: string, config?: HttpRequestConfig) {
+    return (await getResourcePlayback(storageKey, config))?.blob ?? null;
+}
+
+export async function getResourceBlob(storageKey: string, config?: HttpRequestConfig) {
     const id = resourceIdFromStorageKey(storageKey);
     if (!id) return null;
     // Do not use a bare fetch here. Desktop mode protects resource routes with
@@ -396,14 +411,19 @@ export async function getResourceBlob(storageKey: string) {
     // first be downloaded through this authenticated path and exposed as a
     // local object URL by resource-blob-cache.
     try {
-        const response = await apiClient.get<Blob>(`/resources/${encodeURIComponent(id)}/file?proxy=1`, {
+        const response = await http.raw<Blob>({
+            ...config,
+            method: "get",
+            url: `/resources/${encodeURIComponent(id)}/file?proxy=1`,
+            expectedScope: config?.expectedScope ?? captureUserScope(),
             responseType: "blob",
             // Images may be much larger than JSON responses; keep the shared
             // authenticated media path independent of the 4 s JSON timeout.
             timeout: 0,
         });
         return response.data instanceof Blob ? response.data : new Blob([response.data]);
-    } catch {
+    } catch (error) {
+        if (isUserScopeAbandonedError(error) || (error instanceof DOMException && error.name === "AbortError")) throw error;
         return null;
     }
 }

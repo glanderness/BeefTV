@@ -20,7 +20,7 @@ import { resourceIdFromStorageKey } from "@/services/api/resources";
 import type { GenerationTask } from "@/services/api/task-center";
 import { cacheResourceObjectUrl, getCachedResourceObjectUrl, peekCachedResourceObjectUrl, scheduleResourceBlobCache } from "@/services/resource-blob-cache";
 import { resolveMediaUrl } from "@/services/file-storage";
-import { resolveCanvasVideoPlayback } from "@/services/canvas-video-playback";
+import { useResourceVideoPlayback } from "@/hooks/use-resource-video-playback";
 import { resolveImageUrl } from "@/services/image-storage";
 import { acquireCanvasVideoPreview, canvasDerivedPreviewSourceKey, canvasVideoPreviewNeedsHydration } from "@/services/canvas-video-preview";
 import { getActiveUserScopeEpoch, subscribeUserScope } from "@/lib/user-scope";
@@ -667,49 +667,7 @@ function useVideoPlaybackUrl(node: CanvasNodeData, active: boolean) {
     const rawContent = node.metadata?.content || "";
     const fallback = node.metadata?.importSource?.provider === "libtv" ? buildLibTVVideoSourceUrl(rawContent) : rawContent;
     const storageKey = node.metadata?.storageKey || "";
-    const [url, setUrl] = useState("");
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState("");
-    const [compatible, setCompatible] = useState(false);
-    const [needsCompatible, setNeedsCompatible] = useState(false);
-    const [retryEpoch, setRetryEpoch] = useState(0);
-    useEffect(() => setNeedsCompatible(false), [active, storageKey, fallback]);
-    const [scopeEpoch, setScopeEpoch] = useState(getActiveUserScopeEpoch);
-    useEffect(() => subscribeUserScope((epoch) => setScopeEpoch(epoch.generation)), []);
-
-    useEffect(() => {
-        let cancelled = false;
-        const controller = new AbortController();
-        let ownedUrl = "";
-        setError("");
-        setCompatible(false);
-        if (!active) {
-            setUrl("");
-            setLoading(false);
-            return;
-        }
-        setLoading(true);
-        setUrl("");
-        void resolveCanvasVideoPlayback(storageKey, fallback, controller.signal, needsCompatible)
-            .then((resolved) => {
-                if (cancelled) return;
-                if (resolved instanceof Blob) {
-                    ownedUrl = URL.createObjectURL(resolved);
-                    setCompatible(true);
-                    setUrl(ownedUrl);
-                } else setUrl(resolved);
-            })
-            .catch((error) => { if (!cancelled) { setUrl(""); setError(error instanceof Error ? error.message : "视频加载失败，请重新打开"); } })
-            .finally(() => { if (!cancelled) setLoading(false); });
-        return () => { cancelled = true; controller.abort(); if (ownedUrl) URL.revokeObjectURL(ownedUrl); };
-    }, [active, fallback, storageKey, scopeEpoch, needsCompatible, retryEpoch]);
-
-    const requestCompatible = () => {
-        if (needsCompatible || compatible || !storageKey.startsWith("resource:")) return false;
-        setNeedsCompatible(true);
-        return true;
-    };
-    return { url, loading, error, compatible, requestCompatible, retryEpoch, retry: () => setRetryEpoch((value) => value + 1) };
+    return useResourceVideoPlayback(storageKey, fallback, active);
 }
 
 function InactiveMediaCard({ icon, title, hint, theme }: { icon: ReactNode; title: string; hint: string; theme: CanvasTheme }) {

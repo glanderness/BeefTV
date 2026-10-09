@@ -23,7 +23,8 @@ import {
     useAssetViewGeneration,
 } from "@/components/assets/asset-view-session";
 import { Switch } from "@/components/ui/base/switch";
-import { getResourcePlaybackBlob, ownedResourceIdFromMediaRef } from "@/services/api/resources";
+import { ownedResourceIdFromMediaRef } from "@/services/api/resources";
+import { useResourceVideoPlayback } from "@/hooks/use-resource-video-playback";
 import { downloadOwnedOrBrowserMedia, reportOwnedMediaSave } from "@/services/desktop-media-save";
 import { mediaFileExtension, sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
 import { cn } from "@/lib/utils";
@@ -1822,43 +1823,16 @@ function AssetFilterGroup({
     );
 }
 
-function AssetVideoPreview({ storageKey, url, title, className }: { storageKey?: string; url: string; title: string; className: string }) {
+export function AssetVideoPreview({ storageKey, url, title, className }: { storageKey?: string; url: string; title: string; className: string }) {
     const videoRef = useRef<HTMLVideoElement | null>(null);
-    const [source, setSource] = useState("");
-    const [error, setError] = useState(false);
-    const [retry, setRetry] = useState(0);
+    const playback = useResourceVideoPlayback(storageKey || "", url);
+    const source = playback.url;
+    const error = Boolean(playback.error);
     const [playing, setPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
     const [volume, setVolume] = useState(1);
     const [muted, setMuted] = useState(false);
-    useEffect(() => {
-        let cancelled = false;
-        let objectUrl = "";
-        setSource("");
-        setError(false);
-        if (!storageKey?.startsWith("resource:")) {
-            void resolveMediaUrl(storageKey, url).then((resolved) => {
-                if (!cancelled) setSource(resolved);
-            }).catch(() => {
-                if (!cancelled) setError(true);
-            });
-            return () => { cancelled = true; };
-        }
-        void getResourcePlaybackBlob(storageKey).then((blob) => {
-            if (cancelled) return;
-            if (!blob) throw new Error("视频资源不存在");
-            objectUrl = URL.createObjectURL(blob);
-            setSource(objectUrl);
-        }).catch(() => {
-            if (!cancelled) setError(true);
-        });
-        return () => {
-            cancelled = true;
-            if (objectUrl) URL.revokeObjectURL(objectUrl);
-        };
-    }, [storageKey, url, retry]);
-
     return (
         <div className="asset-video-player">
             {source ? (
@@ -1870,7 +1844,7 @@ function AssetVideoPreview({ storageKey, url, title, className }: { storageKey?:
                         preload="metadata"
                         aria-label={title}
                         className={className}
-                        onError={() => setError(true)}
+                        onError={() => { if (!playback.requestCompatible()) playback.fail(); }}
                         onPlay={() => setPlaying(true)}
                         onPause={() => setPlaying(false)}
                         onLoadedMetadata={(event) => setDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0)}
@@ -1884,7 +1858,7 @@ function AssetVideoPreview({ storageKey, url, title, className }: { storageKey?:
                         <button type="button" className="asset-video-control-button" aria-label={playing ? "暂停" : "播放"} onClick={() => {
                             const video = videoRef.current;
                             if (!video) return;
-                            if (video.paused) void video.play().catch(() => setError(true));
+                            if (video.paused) void video.play().catch(() => playback.fail());
                             else video.pause();
                         }}>
                             {playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
@@ -1943,7 +1917,7 @@ function AssetVideoPreview({ storageKey, url, title, className }: { storageKey?:
             {error ? (
                 <div className="absolute inset-0 grid place-content-center justify-items-center gap-3 bg-black px-4 text-center text-sm text-white/80">
                     <span>视频加载失败，请检查资源服务后重试。</span>
-                    <Button size="small" onClick={() => setRetry((value) => value + 1)}>重试</Button>
+                    <Button size="small" onClick={playback.retry}>重试</Button>
                 </div>
             ) : null}
         </div>

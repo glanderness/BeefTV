@@ -331,7 +331,7 @@ func (r *Runtime) Start() error {
 	r.background.Add(1)
 	go func() {
 		defer r.background.Done()
-		r.service.BackfillPlaybackTranscodes()
+		r.service.RecoverPlaybackTranscodes()
 	}()
 	// The assistant loads its operation catalog from this server before becoming
 	// healthy. Accept requests before synchronously waiting for child readiness.

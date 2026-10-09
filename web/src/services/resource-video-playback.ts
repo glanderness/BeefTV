@@ -1,13 +1,13 @@
 import { captureUserScope, assertUserScope } from "@/lib/user-scope-guard";
-import { refreshResource, prepareResourcePlayback, getResourcePlaybackBlob, resourceIdFromStorageKey } from "@/services/api/resources";
+import { refreshResource, prepareResourcePlayback, getResourcePlayback, resourceIdFromStorageKey, type ResourcePlayback } from "@/services/api/resources";
 import { resolveMediaUrl } from "@/services/file-storage";
 
-export async function resolveCanvasVideoPlayback(storageKey: string, fallback: string, signal: AbortSignal, needsCompatible = false): Promise<string | Blob> {
+export async function resolveResourceVideoPlayback(storageKey: string, fallback: string, signal: AbortSignal, needsCompatible = false): Promise<string | ResourcePlayback> {
     const expectedScope = captureUserScope();
     const id = resourceIdFromStorageKey(storageKey);
     if (id) {
         let resource = await refreshResource(id, { signal, expectedScope });
-        if (needsCompatible && resource.playbackStatus !== "ready" && resource.playbackStatus !== "processing") {
+        if (needsCompatible && resource.playbackStatus !== "processing") {
             resource = await prepareResourcePlayback(id, { signal, expectedScope });
         }
         for (let attempt = 0; resource.playbackStatus === "processing"; attempt += 1) {
@@ -16,10 +16,10 @@ export async function resolveCanvasVideoPlayback(storageKey: string, fallback: s
             resource = await refreshResource(id, { signal, expectedScope });
         }
         if (resource.playbackStatus === "ready") {
-            const blob = await getResourcePlaybackBlob(storageKey, { signal, expectedScope });
+            const playback = await getResourcePlayback(storageKey, { signal, expectedScope });
             assertUserScope(expectedScope);
-            if (!blob) throw new Error("视频预览不可用，请重试");
-            return blob;
+            if (!playback) throw new Error("视频预览不可用，请重试");
+            return playback;
         }
         if (needsCompatible && resource.playbackStatus !== "ready") throw new Error("视频已导入，暂时无法准备预览，请重试。原文件仍可下载。");
     }

@@ -131,6 +131,9 @@ beforeAll(async () => {
                 return json(assetsPayload(switched ? "REPLACEMENT-VISIBLE" : "A-PRIVATE-SECRET"));
             }
             if (path === "/api/asset-folders") return json({ folders: [] });
+            if (/^\/api\/resources\/[^/]+(?:\/playback)?$/.test(path)) return json({ resource: {
+                id: path.split("/")[3], kind: "video", provider: "local", playbackStatus: "ready",
+            } });
             if (/^\/api\/resources\/[^/]+\/file$/.test(path)) return new Response(new Uint8Array(8), { headers: { "Content-Type": "video/mp4" } });
             if (path.startsWith("/api/")) return json([]);
             return new Response('<meta name="viewport" content="width=device-width, initial-scale=1"><div id="root"></div><script type="module" src="/harness.js"></script>', { headers: { "Content-Type": "text/html" } });

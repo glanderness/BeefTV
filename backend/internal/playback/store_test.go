@@ -1,9 +1,7 @@
 package playback
 
 import (
-	"sort"
 	"sync"
-	"time"
 
 	"infinite-canvas/backend/internal/model"
 )
@@ -109,46 +107,6 @@ func (s *memStore) ResetStuckPlaybackTranscodes() error {
 		}
 	}
 	return nil
-}
-
-func (s *memStore) PlaybackPendingVideos(afterCreatedAt time.Time, afterID string, limit int) ([]model.Resource, error) {
-	return s.list(afterCreatedAt, afterID, limit, func(resource *model.Resource) bool {
-		return resource.Kind == "video" && resource.Status == model.ResourceStatusReady && resource.Provider == "local" && resource.PlaybackStatus == ""
-	})
-}
-
-func (s *memStore) PlaybackNoneVideos(afterCreatedAt time.Time, afterID string, limit int) ([]model.Resource, error) {
-	return s.list(afterCreatedAt, afterID, limit, func(resource *model.Resource) bool {
-		return resource.Kind == "video" && resource.Status == model.ResourceStatusReady && resource.Provider == "local" &&
-			resource.PlaybackStatus == model.PlaybackStatusNone
-	})
-}
-
-func (s *memStore) list(afterCreatedAt time.Time, afterID string, limit int, match func(*model.Resource) bool) ([]model.Resource, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.init()
-	var out []model.Resource
-	for _, resource := range s.resources {
-		if !match(resource) {
-			continue
-		}
-		if resource.CreatedAt.Before(afterCreatedAt) || (resource.CreatedAt.Equal(afterCreatedAt) && resource.ID <= afterID) {
-			continue
-		}
-		copy := *resource
-		out = append(out, copy)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
-			return out[i].CreatedAt.Before(out[j].CreatedAt)
-		}
-		return out[i].ID < out[j].ID
-	})
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out, nil
 }
 
 func (s *memStore) get(id string) *model.Resource {

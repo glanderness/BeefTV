@@ -10,21 +10,20 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
 	"infinite-canvas/backend/internal/model"
 )
 
 type syncRunner struct{}
 
-func TestBackfillDoesNotResetClaimStartedByThisRuntime(t *testing.T) {
+func TestRecoverDoesNotResetClaimStartedByThisRuntime(t *testing.T) {
 	store := &memStore{}
 	svc := New(Deps{Store: store})
 	if err := svc.Recover(); err != nil {
 		t.Fatal(err)
 	}
 	store.put(model.Resource{ID: "in-flight", UserID: "user-1", Status: model.ResourceStatusReady, Kind: "video", Provider: "local", PlaybackStatus: model.PlaybackStatusProcessing})
-	if err := svc.Backfill(context.Background()); err != nil {
+	if err := svc.Recover(); err != nil {
 		t.Fatal(err)
 	}
 	row, _ := store.ResourceForUser("user-1", "in-flight")
@@ -34,18 +33,27 @@ func TestBackfillDoesNotResetClaimStartedByThisRuntime(t *testing.T) {
 }
 
 func TestRuntimeContextRefusesWorkBeforeStartAndAfterStop(t *testing.T) {
+	dataDir := t.TempDir()
 	store := &memStore{}
+	for _, id := range []string{"before-start", "after-stop"} {
+		writeCodecMP4(t, filepath.Join(dataDir, "resources", id+".mp4"), "hvc1")
+		store.put(model.Resource{ID: id, UserID: "user-1", Kind: "video", Status: model.ResourceStatusReady, Provider: "local", ObjectKey: id + ".mp4"})
+	}
 	var owned context.Context
-	svc := New(Deps{Store: store, RuntimeContext: func() context.Context { return owned }})
-	if !errors.Is(svc.Backfill(nil), context.Canceled) {
+	runner := &rejectRunner{}
+	svc := New(Deps{DataDir: dataDir, Store: store, Runner: runner, RuntimeContext: func() context.Context { return owned }, LookPath: func(string) (string, error) { return "ffmpeg", nil }})
+	svc.MaybeStart(store.get("before-start"))
+	if runner.calls != 0 {
 		t.Fatal("work accepted before start")
 	}
 	owned = context.Background()
-	if err := svc.Backfill(nil); err != nil {
-		t.Fatal(err)
+	svc.MaybeStart(store.get("before-start"))
+	if runner.calls != 1 {
+		t.Fatal("active runtime refused work")
 	}
 	owned = nil
-	if !errors.Is(svc.Backfill(nil), context.Canceled) {
+	svc.MaybeStart(store.get("after-stop"))
+	if runner.calls != 1 || store.get("after-stop").PlaybackStatus != "" {
 		t.Fatal("work accepted after stop")
 	}
 }
@@ -156,7 +164,7 @@ func TestOpenRangeRequiresReadyLocalCopy(t *testing.T) {
 	}
 }
 
-func TestBackfillResetsCrashLeftoverClaim(t *testing.T) {
+func TestRecoverResetsCrashLeftoverClaim(t *testing.T) {
 	dataDir := t.TempDir()
 	store := &memStore{}
 	rel := filepath.Join("clips", "stuck.mp4")
@@ -170,7 +178,7 @@ func TestBackfillResetsCrashLeftoverClaim(t *testing.T) {
 	svc := New(Deps{DataDir: dataDir, Store: store, Runner: syncRunner{}, LookPath: func(string) (string, error) {
 		return "ffmpeg", nil
 	}})
-	if err := svc.Backfill(context.Background()); err != nil {
+	if err := svc.Recover(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -178,15 +186,15 @@ func TestBackfillResetsCrashLeftoverClaim(t *testing.T) {
 	if got == nil {
 		t.Fatal("missing resource")
 	}
-	if got.PlaybackStatus != model.PlaybackStatusNone {
-		t.Fatalf("stuck claim after backfill = %q, want none (H.264 rejudged)", got.PlaybackStatus)
+	if got.PlaybackStatus != "" {
+		t.Fatalf("stuck claim after recovery = %q, want unclaimed", got.PlaybackStatus)
 	}
 	if got.PlaybackError != "" {
 		t.Fatalf("leftover error = %q", got.PlaybackError)
 	}
 }
 
-func TestBackfillRejudgesLegacyNoneMPEG4(t *testing.T) {
+func TestPrepareRejudgesLegacyNoneMPEG4(t *testing.T) {
 	dataDir := t.TempDir()
 	store := &memStore{}
 	rel := filepath.Join("clips", "legacy-mpeg4.mp4")
@@ -210,7 +218,7 @@ func TestBackfillRejudgesLegacyNoneMPEG4(t *testing.T) {
 			return nil
 		},
 	})
-	if err := svc.Backfill(context.Background()); err != nil {
+	if err := svc.Prepare(store.get("legacy-mpeg4")); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -461,91 +469,6 @@ func TestSuccessfulTranscodeDoesNotResurrectDeletedResource(t *testing.T) {
 	}
 }
 
-func TestBackfillResetErrorStopsScan(t *testing.T) {
-	store := &resetFailStore{err: errors.New("reset failed")}
-	pending := 0
-	store.pending = func() { pending++ }
-	svc := New(Deps{Store: store, Runner: syncRunner{}})
-	if err := svc.Backfill(context.Background()); err == nil {
-		t.Fatal("expected reset error")
-	}
-	if pending != 0 {
-		t.Fatalf("pending listed after reset failure: %d", pending)
-	}
-}
-
-func TestBackfillPendingFetchError(t *testing.T) {
-	store := &pageFailStore{pendingErr: errors.New("pending query failed")}
-	svc := New(Deps{Store: store, Runner: syncRunner{}})
-	if err := svc.Backfill(context.Background()); err == nil {
-		t.Fatal("expected pending fetch error")
-	}
-}
-
-func TestBackfillNoneCursorCoversMoreThanOneBatch(t *testing.T) {
-	dataDir := t.TempDir()
-	store := &memStore{}
-	probed := 0
-	for i := 0; i < backfillBatch+5; i++ {
-		id := "none-" + string(rune('a'+i))
-		rel := filepath.Join("clips", id+".mp4")
-		writeCodecMP4(t, filepath.Join(dataDir, "resources", rel), "avc1")
-		store.put(model.Resource{
-			ID: id, UserID: "user-1", Kind: "video", Status: model.ResourceStatusReady,
-			Provider: "local", ObjectKey: rel, PlaybackStatus: model.PlaybackStatusNone,
-			CreatedAt: time.Unix(int64(i+1), 0),
-		})
-	}
-	svc := New(Deps{
-		DataDir: dataDir,
-		Store:   store,
-		Runner:  syncRunner{},
-		LookPath: func(string) (string, error) {
-			probed++
-			return "ffmpeg", nil
-		},
-	})
-	if err := svc.Backfill(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if probed != backfillBatch+5 {
-		t.Fatalf("probed = %d, want %d", probed, backfillBatch+5)
-	}
-}
-
-func TestBackfillMarkNoneFailureStillAdvances(t *testing.T) {
-	dataDir := t.TempDir()
-	inner := &memStore{}
-	for i, id := range []string{"p1", "p2"} {
-		rel := filepath.Join("clips", id+".mp4")
-		writeCodecMP4(t, filepath.Join(dataDir, "resources", rel), "avc1")
-		inner.put(model.Resource{
-			ID: id, UserID: "user-1", Kind: "video", Status: model.ResourceStatusReady,
-			Provider: "local", ObjectKey: rel, CreatedAt: time.Unix(int64(i+1), 0),
-		})
-	}
-	store := &markNoneFailStore{memStore: inner, pages: 0}
-	svc := New(Deps{
-		DataDir:  dataDir,
-		Store:    store,
-		Runner:   syncRunner{},
-		LookPath: func(string) (string, error) { return "ffmpeg", nil },
-	})
-	done := make(chan error, 1)
-	go func() { done <- svc.Backfill(context.Background()) }()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("backfill looped on mark-none failure")
-	}
-	if store.pages < 2 {
-		t.Fatalf("pages = %d, want cursor to fetch a following empty page", store.pages)
-	}
-}
-
 func TestMaybeStartCanceledContextDoesNotClaim(t *testing.T) {
 	dataDir := t.TempDir()
 	store := &memStore{}
@@ -616,142 +539,30 @@ func TestRunnerNilDoesNotClaim(t *testing.T) {
 	}
 }
 
-func TestBackfillRejectRunnerReleasesClaimsAndAdvances(t *testing.T) {
-	dataDir := t.TempDir()
-	store := &memStore{}
-	for i, id := range []string{"hevc-a", "hevc-b"} {
-		rel := filepath.Join("clips", id+".mp4")
-		writeCodecMP4(t, filepath.Join(dataDir, "resources", rel), "hvc1")
-		store.put(model.Resource{
-			ID: id, UserID: "user-1", Kind: "video", Status: model.ResourceStatusReady,
-			Provider: "local", ObjectKey: rel, CreatedAt: time.Unix(int64(i+1), 0),
-		})
-	}
-	runner := &rejectRunner{}
-	svc := New(Deps{
-		DataDir: dataDir,
-		Store:   store,
-		Runner:  runner,
-		LookPath: func(string) (string, error) {
-			return "ffmpeg", nil
-		},
-		Transcode: func(ctx context.Context, src, dst string) error {
-			t.Fatal("rejected runner must not transcode")
-			return nil
-		},
-	})
-	done := make(chan error, 1)
-	go func() { done <- svc.Backfill(context.Background()) }()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("backfill looped after runner rejection")
-	}
-	if runner.calls != 2 {
-		t.Fatalf("runner calls = %d, want 2", runner.calls)
-	}
-	for _, id := range []string{"hevc-a", "hevc-b"} {
-		got := store.get(id)
-		if got.PlaybackStatus != "" {
-			t.Fatalf("%s status = %q, want released claim", id, got.PlaybackStatus)
-		}
-	}
-}
-
-type claimFailStore struct {
-	*memStore
-	err   error
-	calls int
-}
-
-func (s *claimFailStore) ClaimPlaybackTranscode(id string) (bool, error) {
-	s.calls++
-	return false, s.err
-}
-
-func TestBackfillClaimErrorDoesNotLoop(t *testing.T) {
-	dataDir := t.TempDir()
-	inner := &memStore{}
-	rel := filepath.Join("clips", "hevc-claim.mp4")
-	writeCodecMP4(t, filepath.Join(dataDir, "resources", rel), "hvc1")
-	inner.put(model.Resource{
-		ID: "hevc-claim", UserID: "user-1", Kind: "video", Status: model.ResourceStatusReady,
-		Provider: "local", ObjectKey: rel, CreatedAt: time.Unix(1, 0),
-	})
-	store := &claimFailStore{memStore: inner, err: errors.New("claim refused")}
-	svc := New(Deps{
-		DataDir: dataDir,
-		Store:   store,
-		Runner:  syncRunner{},
-		LookPath: func(string) (string, error) {
-			return "ffmpeg", nil
-		},
-	})
-	done := make(chan error, 1)
-	go func() { done <- svc.Backfill(context.Background()) }()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("backfill looped on claim error")
-	}
-	if store.calls == 0 {
-		t.Fatal("claim was not attempted")
-	}
-	got := store.get("hevc-claim")
-	if got.PlaybackStatus == model.PlaybackStatusProcessing || got.PlaybackStatus == model.PlaybackStatusReady {
-		t.Fatalf("status = %q after claim error", got.PlaybackStatus)
-	}
-}
-
-func TestBackfillHonorsCancel(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	store := &memStore{}
-	svc := New(Deps{Store: store, Runner: syncRunner{}, Context: ctx})
-	if err := svc.Backfill(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("err = %v", err)
-	}
-}
-
 type resetFailStore struct {
 	memStore
-	err     error
-	pending func()
+	err error
 }
 
 func (s *resetFailStore) ResetStuckPlaybackTranscodes() error { return s.err }
-func (s *resetFailStore) PlaybackPendingVideos(afterCreatedAt time.Time, afterID string, limit int) ([]model.Resource, error) {
-	if s.pending != nil {
-		s.pending()
+
+func TestRecoverReportsResetError(t *testing.T) {
+	store := &resetFailStore{err: errors.New("reset failed")}
+	svc := New(Deps{Store: store})
+	if !errors.Is(svc.Recover(), store.err) {
+		t.Fatal("expected reset error")
 	}
-	return s.memStore.PlaybackPendingVideos(afterCreatedAt, afterID, limit)
 }
 
-type pageFailStore struct {
-	memStore
-	pendingErr error
-}
-
-func (s *pageFailStore) PlaybackPendingVideos(time.Time, string, int) ([]model.Resource, error) {
-	return nil, s.pendingErr
-}
-
-type markNoneFailStore struct {
-	*memStore
-	pages int
-}
-
-func (s *markNoneFailStore) MarkPlaybackNone(id string) (bool, error) {
-	return false, errors.New("db busy")
-}
-
-func (s *markNoneFailStore) PlaybackPendingVideos(afterCreatedAt time.Time, afterID string, limit int) ([]model.Resource, error) {
-	s.pages++
-	return s.memStore.PlaybackPendingVideos(afterCreatedAt, afterID, limit)
+func TestRecoverDoesNotPrepareLibrary(t *testing.T) {
+	store := &memStore{}
+	store.put(model.Resource{ID: "untouched", UserID: "user-1", Kind: "video", Status: model.ResourceStatusReady, Provider: "local"})
+	probes := 0
+	svc := New(Deps{Store: store, Runner: syncRunner{}, LookPath: func(string) (string, error) { probes++; return "ffmpeg", nil }})
+	if err := svc.Recover(); err != nil {
+		t.Fatal(err)
+	}
+	if probes != 0 || store.get("untouched").PlaybackStatus != "" {
+		t.Fatal("startup prepared library without a preview request")
+	}
 }

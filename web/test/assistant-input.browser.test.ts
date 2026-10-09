@@ -72,6 +72,10 @@ beforeAll(async () => {
             const file = resources.get(pathname.split("/")[3]) || { bytes: png, mimeType: "image/png" };
             return new Response(file.bytes, { headers: { "content-type": file.mimeType } });
         }
+        if (/^\/api\/resources\/[^/]+$/.test(pathname)) {
+            const id = pathname.split("/")[3], file = resources.get(id);
+            return ok({ resource: { id, status: "ready", provider: "local", kind: file?.kind || "video", playbackStatus: file?.kind === "video" ? "ready" : "none" } });
+        }
         if (pathname.startsWith("/api/assets/") && req.method === "PUT") {
             if (failNextAsset) { failNextAsset = false; return Response.json({ code: 500, message: "素材登记失败" }, { status: 500 }); }
             const body = await req.json();

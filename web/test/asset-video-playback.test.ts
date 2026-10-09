@@ -4,21 +4,21 @@ import { apiClient } from "../src/services/api/request";
 import { getResourcePlaybackBlob } from "../src/services/api/resources";
 
 describe("asset video playback resource", () => {
-    const originalGet = apiClient.get;
+    const originalAdapter = apiClient.defaults.adapter;
 
     afterEach(() => {
-        apiClient.get = originalGet;
+        apiClient.defaults.adapter = originalAdapter;
     });
 
     test("loads the browser playback variant through the authenticated proxy without a short timeout", async () => {
         const media = new Blob(["video-bytes"], { type: "video/mp4" });
         let requestUrl = "";
         let requestConfig: Record<string, unknown> | undefined;
-        apiClient.get = (async (url, config) => {
-            requestUrl = url;
+        apiClient.defaults.adapter = async (config) => {
+            requestUrl = config.url || "";
             requestConfig = config as Record<string, unknown>;
-            return { data: media };
-        }) as typeof apiClient.get;
+            return { data: media, status: 200, statusText: "OK", headers: {}, config };
+        };
 
         await expect(getResourcePlaybackBlob("resource:video 1")).resolves.toBe(media);
         expect(requestUrl).toBe("/resources/video%201/file?variant=playback&proxy=1");
@@ -30,10 +30,10 @@ describe("asset video playback resource", () => {
 
     test("does not request a playback variant without a resource storage key", async () => {
         let requested = false;
-        apiClient.get = (async () => {
+        apiClient.defaults.adapter = async (config) => {
             requested = true;
-            return { data: new Blob() };
-        }) as typeof apiClient.get;
+            return { data: new Blob(), status: 200, statusText: "OK", headers: {}, config };
+        };
 
         await expect(getResourcePlaybackBlob("local:video-1")).resolves.toBeNull();
         expect(requested).toBe(false);

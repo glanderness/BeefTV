@@ -71,8 +71,25 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
   }
   function publish(entry) {
     const temporary = `${currentPath(entry.canvasId)}.${crypto.randomUUID()}.tmp`;
-    fs.writeFileSync(temporary, JSON.stringify({ sessionId: entry.sessionId, kind: 'durable', version: DURABLE_VERSION }), { mode: 0o600 });
-    fs.renameSync(temporary, currentPath(entry.canvasId));
+    try {
+      fs.writeFileSync(temporary, JSON.stringify({ sessionId: entry.sessionId, kind: 'durable', version: DURABLE_VERSION }), { mode: 0o600 });
+      fs.renameSync(temporary, currentPath(entry.canvasId));
+    } catch (cause) {
+      try { fs.rmSync(temporary, { force: true }); } catch (cleanup) { cause = new AggregateError([cause, cleanup], 'session_pointer_cleanup_failed'); }
+      throw Object.assign(fail('session_pointer_failed'), { cause });
+    }
+  }
+  async function install(entry) {
+    try { publish(entry); }
+    catch (error) {
+      try { await entry.harness.close(CTX); }
+      catch (cleanup) { error.cause = new AggregateError([error.cause, cleanup], 'session_candidate_cleanup_failed'); }
+      throw error;
+    }
+    const previous = sessions.get(entry.canvasId);
+    sessions.set(entry.canvasId, entry);
+    if (previous) await previous.harness.close(CTX);
+    return entry;
   }
   async function state(entry) { return await entry.harness.snapshot(STATE, CTX); }
   async function authorization(entry, turnId, allowClosed = false) {
@@ -233,11 +250,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       fs.writeFileSync(file, JSON.stringify({ sessionId, canvasId, version: DURABLE_VERSION, createdAt: new Date().toISOString() }), { flag: 'wx', mode: 0o600 });
       const entry = await open(canvasId, sessionId);
       entry.persistence = 'created';
-      publish(entry);
-      const previous = sessions.get(canvasId);
-      sessions.set(canvasId, entry);
-      if (previous) await previous.harness.close(CTX);
-      return entry;
+      return install(entry);
     });
   }
   async function activateSession(canvasId, sessionId) {
@@ -246,10 +259,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       if (previous?.sessionId === sessionId) { publish(previous); return previous; }
       if (previous?.busy) throw fail('session_busy');
       const entry = await open(canvasId, sessionId);
-      publish(entry);
-      sessions.set(canvasId, entry);
-      if (previous) await previous.harness.close(CTX);
-      return entry;
+      return install(entry);
     });
   }
   async function ensureSession(canvasId, sessionId = '') {

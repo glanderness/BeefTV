@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"log"
-	"time"
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/playback"
@@ -80,20 +79,6 @@ func (s playbackStore) ResetStuckPlaybackTranscodes() error {
 	return s.repo.ResetStuckPlaybackTranscodes()
 }
 
-func (s playbackStore) PlaybackPendingVideos(afterCreatedAt time.Time, afterID string, limit int) ([]model.Resource, error) {
-	if s.repo == nil {
-		return nil, nil
-	}
-	return s.repo.PlaybackPendingVideos(afterCreatedAt, afterID, limit)
-}
-
-func (s playbackStore) PlaybackNoneVideos(afterCreatedAt time.Time, afterID string, limit int) ([]model.Resource, error) {
-	if s.repo == nil {
-		return nil, nil
-	}
-	return s.repo.PlaybackNoneVideos(afterCreatedAt, afterID, limit)
-}
-
 type playbackRunner struct {
 	svc *Service
 }
@@ -122,8 +107,8 @@ func (r playbackRunner) Context() context.Context {
 	return w.Context()
 }
 
-func logPlaybackBackfill(err error) {
+func logPlaybackRecovery(err error) {
 	if err != nil {
-		log.Printf("playback backfill: %v", err)
+		log.Printf("playback recovery: %v", err)
 	}
 }

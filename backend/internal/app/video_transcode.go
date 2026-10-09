@@ -39,10 +39,10 @@ func (s *Service) OpenResourcePlaybackRange(userID string, resourceID string) (*
 	return s.playbackRuntime().OpenRange(userID, resourceID)
 }
 
-// BackfillPlaybackTranscodes recovers interrupted claims without eagerly
+// RecoverPlaybackTranscodes recovers interrupted claims without eagerly
 // converting the library. The browser requests a copy only when needed.
-func (s *Service) BackfillPlaybackTranscodes() {
-	logPlaybackBackfill(s.playbackRuntime().Recover())
+func (s *Service) RecoverPlaybackTranscodes() {
+	logPlaybackRecovery(s.playbackRuntime().Recover())
 }
 
 func (s *Service) PrepareResourcePlayback(userID, resourceID string) (*model.Resource, error) {
@@ -50,13 +50,9 @@ func (s *Service) PrepareResourcePlayback(userID, resourceID string) (*model.Res
 	if err != nil {
 		return nil, err
 	}
-	if resource.PlaybackStatus == model.PlaybackStatusFailed {
-		if err := s.repo.ResetPlaybackCopy(userID, resourceID, resource.PlaybackObjectKey); err != nil {
-			return nil, err
-		}
-		resource.PlaybackStatus = model.PlaybackStatusNone
+	if err := s.playbackRuntime().Prepare(resource); err != nil {
+		return nil, err
 	}
-	s.playbackRuntime().MaybeStart(resource)
 	return s.Resource(userID, resourceID)
 }
 

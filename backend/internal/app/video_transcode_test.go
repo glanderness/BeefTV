@@ -94,7 +94,7 @@ func TestProbeGeneratedVideoMediaReadsQAGrokImagineFile(t *testing.T) {
 	}
 }
 
-func TestBackfillRejudgesLegacyNoneVideos(t *testing.T) {
+func TestStartupDoesNotPrepareLegacyVideos(t *testing.T) {
 	service, db := newProjectAssetLinkTestService(t)
 	dataDir := t.TempDir()
 	service.dataDir = dataDir
@@ -114,7 +114,7 @@ func TestBackfillRejudgesLegacyNoneVideos(t *testing.T) {
 	seedLegacy("legacy-h264", "avc1")
 	seedLegacy("legacy-mpeg4", "mp4v")
 
-	service.BackfillPlaybackTranscodes()
+	service.RecoverPlaybackTranscodes()
 
 	var h264 model.Resource
 	if err := db.First(&h264, "id = ?", "legacy-h264").Error; err != nil {
@@ -179,7 +179,7 @@ func TestMediaDomainsAreRuntimeOwned(t *testing.T) {
 	}
 }
 
-func TestBackfillResetsStuckProcessingThroughService(t *testing.T) {
+func TestRecoverResetsStuckProcessingThroughService(t *testing.T) {
 	service, db := newProjectAssetLinkTestService(t)
 	service.backgroundWorkers().Start()
 	t.Cleanup(func() { _ = service.StopWorker(context.Background()) })
@@ -195,7 +195,7 @@ func TestBackfillResetsStuckProcessingThroughService(t *testing.T) {
 	if err := db.Create(&res).Error; err != nil {
 		t.Fatal(err)
 	}
-	service.BackfillPlaybackTranscodes()
+	service.RecoverPlaybackTranscodes()
 	var got model.Resource
 	if err := db.First(&got, "id = ?", "stuck-claim").Error; err != nil {
 		t.Fatal(err)

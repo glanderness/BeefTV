@@ -3,7 +3,6 @@ package repository
 import (
 	"path/filepath"
 	"testing"
-	"time"
 
 	"infinite-canvas/backend/internal/model"
 
@@ -134,30 +133,5 @@ func TestReleasePlaybackTranscodeClaimRequiresReady(t *testing.T) {
 	}
 	if got.PlaybackStatus != model.PlaybackStatusProcessing {
 		t.Fatalf("non-READY claim was reset: %q", got.PlaybackStatus)
-	}
-}
-
-func TestPlaybackNoneCursorPagesPastFirstBatch(t *testing.T) {
-	repo := newPlaybackRepo(t)
-	now := time.Now()
-	for i := 0; i < 3; i++ {
-		res := model.Resource{
-			ID: string(rune('a' + i)), UserID: "u1", Kind: "video", Status: model.ResourceStatusReady,
-			Provider: "local", PlaybackStatus: model.PlaybackStatusNone, CreatedAt: now.Add(time.Duration(i) * time.Second),
-		}
-		if err := repo.CreateResource(&res); err != nil {
-			t.Fatal(err)
-		}
-	}
-	first, err := repo.PlaybackNoneVideos(time.Time{}, "", 2)
-	if err != nil || len(first) != 2 {
-		t.Fatalf("first page = %d err=%v", len(first), err)
-	}
-	second, err := repo.PlaybackNoneVideos(first[len(first)-1].CreatedAt, first[len(first)-1].ID, 2)
-	if err != nil || len(second) != 1 {
-		t.Fatalf("second page = %d err=%v", len(second), err)
-	}
-	if second[0].ID == first[0].ID || second[0].ID == first[1].ID {
-		t.Fatal("cursor returned a row from the first page")
 	}
 }

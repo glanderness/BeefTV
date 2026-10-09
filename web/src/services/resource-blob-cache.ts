@@ -1,6 +1,6 @@
 import { RESOURCE_BLOB_META_STORE_NAME, RESOURCE_BLOBS_STORE_NAME, localForageInstance } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
-import { assertUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
+import { assertUserScope, captureUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { getResourceBlob, resourceIdFromStorageKey } from "@/services/api/resources";
 
 type ResourceCacheMeta = {
@@ -34,9 +34,10 @@ const BUDGET_REFRESH_MS = 5 * 60 * 1000;
 const MAX_CONCURRENT_DOWNLOADS = 16;
 
 export async function getCachedResourceObjectUrl(storageKey: string) {
-    const target = await cacheTarget(storageKey);
+    const expected = captureUserScope();
+    const target = cacheTarget(storageKey, expected.userScope);
     if (!target) return "";
-    return readCachedObjectUrl(target);
+    return readCachedObjectUrl(target, expected);
 }
 
 /** 同步读取本会话内存中的 Blob URL，命中时节点首帧即可上屏，不必等 IndexedDB 异步读取。 */
@@ -48,12 +49,16 @@ export function peekCachedResourceObjectUrl(storageKey: string) {
 }
 
 export async function cacheResourceObjectUrl(storageKey: string, reload = false) {
-    const target = await cacheTarget(storageKey);
+    const expected = captureUserScope();
+    const target = cacheTarget(storageKey, expected.userScope);
     if (!target) return "";
+    const requestKey = `${target.key}:${expected.epoch}`;
     if (reload) {
         // Explicit image decode recovery must bypass both memory and IndexedDB.
-        await inFlight.get(target.key)?.catch(() => undefined);
-        const blob = await withDownloadSlot(() => downloadResourceBlob(storageKey, target));
+        await inFlight.get(requestKey)?.catch(() => undefined);
+        assertUserScope(expected);
+        const blob = await withDownloadSlot(() => downloadResourceBlob(storageKey, target, expected));
+        assertUserScope(expected);
         if (!blob) return "";
         const oldUrl = objectUrls.get(target.key);
         objectUrls.delete(target.key);
@@ -61,13 +66,14 @@ export async function cacheResourceObjectUrl(storageKey: string, reload = false)
         if (oldUrl) URL.revokeObjectURL(oldUrl);
         return url;
     }
-    const cached = await readCachedObjectUrl(target);
+    const cached = await readCachedObjectUrl(target, expected);
+    assertUserScope(expected);
     if (cached) return cached;
-    const pending = inFlight.get(target.key);
+    const pending = inFlight.get(requestKey);
     if (pending) return pending;
 
-    const task = withDownloadSlot(() => downloadAndCacheResource(storageKey, target)).finally(() => inFlight.delete(target.key));
-    inFlight.set(target.key, task);
+    const task = withDownloadSlot(() => downloadAndCacheResource(storageKey, target, expected)).finally(() => inFlight.delete(requestKey));
+    inFlight.set(requestKey, task);
     return task;
 }
 
@@ -76,16 +82,21 @@ export async function cacheResourceObjectUrl(storageKey: string, reload = false)
  * 这样不会让 IndexedDB 缓存阻塞首帧，同时后续打开可直接复用本地 Object URL。
  */
 export function scheduleResourceBlobCache(storageKey: string, delayMs = 4_000) {
-    if (!resourceIdFromStorageKey(storageKey) || scheduled.has(storageKey)) return;
-    scheduled.add(storageKey);
+    const expected = captureUserScope();
+    const requestKey = `${expected.userScope}:${expected.epoch}:${storageKey}`;
+    if (!resourceIdFromStorageKey(storageKey) || scheduled.has(requestKey)) return;
+    scheduled.add(requestKey);
     const run = () => {
-        void cacheResourceObjectUrl(storageKey)
+        void Promise.resolve().then(() => {
+            assertUserScope(expected);
+            return cacheResourceObjectUrl(storageKey);
+        })
             .catch((error) => {
                 // 这是播放后的后台缓存优化，不应让播放器失败；但下载/持久化异常必须可观测。
                 console.warn("后台缓存资源 Blob 失败", { storageKey, error });
                 return "";
             })
-            .finally(() => scheduled.delete(storageKey));
+            .finally(() => scheduled.delete(requestKey));
     };
     if (typeof window === "undefined") {
         run();
@@ -112,8 +123,9 @@ function runDownloadQueue() {
 }
 
 export async function primeResourceBlobCache(storageKey: string, blob: Blob, expectedScope?: CapturedUserScope) {
-    if (expectedScope) assertUserScope(expectedScope);
-    const target = await cacheTarget(storageKey, expectedScope?.userScope);
+    const expected = expectedScope ?? captureUserScope();
+    assertUserScope(expected);
+    const target = cacheTarget(storageKey, expected.userScope);
     if (!target) return "";
     sessionBlobs.set(target.key, blob);
     const url = objectUrl(target.key, blob);
@@ -122,32 +134,39 @@ export async function primeResourceBlobCache(storageKey: string, blob: Blob, exp
 }
 
 export async function getCachedResourceBlob(storageKey: string) {
-    const target = await cacheTarget(storageKey);
+    const expected = captureUserScope();
+    const target = cacheTarget(storageKey, expected.userScope);
     if (!target) return null;
     const sessionBlob = sessionBlobs.get(target.key);
     if (sessionBlob) return sessionBlob;
     const cached = await readPersistedBlob(target);
+    assertUserScope(expected);
     if (cached) {
         touchCacheMetaSafely(target);
         return cached;
     }
-    const pending = inFlight.get(target.key);
+    const pending = inFlight.get(`${target.key}:${expected.epoch}`);
     if (pending) {
         await pending;
-        return sessionBlobs.get(target.key) || readPersistedBlob(target);
+    } else {
+        await cacheResourceObjectUrl(storageKey);
     }
-    await cacheResourceObjectUrl(storageKey);
-    return sessionBlobs.get(target.key) || readPersistedBlob(target);
+    assertUserScope(expected);
+    const result = sessionBlobs.get(target.key) || await readPersistedBlob(target);
+    assertUserScope(expected);
+    return result;
 }
 
-async function downloadAndCacheResource(storageKey: string, target: ResourceCacheMeta) {
-    const blob = await downloadResourceBlob(storageKey, target);
+async function downloadAndCacheResource(storageKey: string, target: ResourceCacheMeta, expected: CapturedUserScope) {
+    const blob = await downloadResourceBlob(storageKey, target, expected);
+    assertUserScope(expected);
     if (!blob) return "";
     return objectUrl(target.key, blob);
 }
 
-async function downloadResourceBlob(storageKey: string, target: ResourceCacheMeta) {
-    const blob = await getResourceBlob(storageKey);
+async function downloadResourceBlob(storageKey: string, target: ResourceCacheMeta, expected: CapturedUserScope) {
+    const blob = await getResourceBlob(storageKey, { expectedScope: expected });
+    assertUserScope(expected);
     if (!blob) return null;
     sessionBlobs.set(target.key, blob);
     if (blob.size <= MAX_CACHE_BYTES) await enqueuePersist(target, blob);
@@ -209,13 +228,14 @@ async function persistBlob(target: ResourceCacheMeta, blob: Blob) {
     }
 }
 
-async function readCachedObjectUrl(target: ResourceCacheMeta) {
+async function readCachedObjectUrl(target: ResourceCacheMeta, expected: CapturedUserScope) {
     const existing = objectUrls.get(target.key);
     if (existing) {
         touchCacheMetaSafely(target);
         return existing;
     }
     const blob = sessionBlobs.get(target.key) || await readPersistedBlob(target);
+    assertUserScope(expected);
     if (!blob) return "";
     touchCacheMetaSafely(target);
     return objectUrl(target.key, blob);
@@ -230,7 +250,7 @@ async function readPersistedBlob(target: ResourceCacheMeta) {
     }
 }
 
-async function cacheTarget(storageKey: string, userScope = getActiveUserScope()): Promise<ResourceCacheMeta | null> {
+function cacheTarget(storageKey: string, userScope: string): ResourceCacheMeta | null {
     const resourceId = resourceIdFromStorageKey(storageKey);
     if (!resourceId) return null;
     // 本地桌面工作区没有登录用户，guest 只是本地命名空间，不代表

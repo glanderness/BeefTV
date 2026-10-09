@@ -224,9 +224,22 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 		// 副本就绪时用独立 ETag 后缀，避免浏览器拿原件缓存命中 304 而继续黑屏。
 		usePlayback := c.Query("variant") == "playback" && resource.Provider == "local" &&
 			resource.PlaybackStatus == model.PlaybackStatusReady && resource.PlaybackObjectKey != ""
+		var stream *app.ResourceStream
+		if usePlayback {
+			stream, err = svc.OpenResourcePlaybackRange(user.ID, resource.ID)
+			if errors.Is(err, app.ErrPlaybackNotReady) {
+				usePlayback = false
+			} else if err != nil {
+				failService(c, err)
+				return
+			} else {
+				defer stream.Body.Close()
+				resource = stream.Resource
+			}
+		}
 		serveETag := etag
 		if usePlayback {
-			serveETag = etag + ":pb"
+			serveETag = playbackResponseETag(etag)
 		}
 		// 资源 ID 内容不可变（上传永远生成新 ID，不会原地覆盖）：图片可以放心交给浏览器
 		// 磁盘强缓存 30 天，大画布二次打开零请求直读磁盘缓存。视频/音频涉及转码副本
@@ -251,36 +264,14 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 		if ifRange := strings.TrimSpace(c.GetHeader("If-Range")); ifRange != "" && ifRange != serveETag {
 			rangeHeader = ""
 		}
-		var stream *app.ResourceStream
-		if usePlayback {
-			stream, err = svc.OpenResourcePlaybackRange(user.ID, resource.ID)
-			if err == nil {
-				resource = stream.Resource // MimeType 已置 video/mp4
-			} else if errors.Is(err, app.ErrPlaybackNotReady) {
-				// 副本尚未就绪：回退原件，并撤销 :pb 后缀，保证副本就绪后
-				// 浏览器不会拿原件缓存命中 304 而继续黑屏。
-				c.Header("ETag", etag)
-				stream, err = svc.OpenResourceRange(user.ID, resource.ID, rangeHeader)
-				if err != nil {
-					failService(c, err)
-					return
-				}
-			} else {
-				failService(c, err)
-				return
-			}
-		} else {
+		if stream == nil {
 			stream, err = svc.OpenResourceRange(user.ID, resource.ID, rangeHeader)
 			if err != nil {
 				failService(c, err)
 				return
 			}
+			defer stream.Body.Close()
 		}
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		defer stream.Body.Close()
 		if resource.MimeType == "" {
 			resource.MimeType = "application/octet-stream"
 		}
@@ -751,4 +742,8 @@ func ifNoneMatch(header string, etag string) bool {
 		}
 	}
 	return false
+}
+
+func playbackResponseETag(original string) string {
+	return strings.TrimSuffix(original, `"`) + `:pb"`
 }

@@ -5,9 +5,51 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { Harness } from '@earendil-works/pi-durable';
+import { modelFixture } from './test-support/durable-model-switch-probe.mjs';
 import { durableCompletion, durableToolReplay, publicDurableTurn } from './durable-session-owner.mjs';
 const worker = fileURLToPath(new URL('./durable-owner-fixture.mjs', import.meta.url));
 const processTest = (name, fn) => test(name, { timeout: 60000 }, fn);
+for (const action of ['create', 'activate']) processTest(`failed Durable ${action} closes candidate and preserves the current owner`, async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'beeftv-durable-pointer-'));
+  const fixture = await modelFixture(directory, 'fixture', ['fixture']);
+  try {
+    let current = await fixture.store.createSession('canvas');
+    let target;
+    if (action === 'activate') {
+      target = current.sessionId;
+      current = await fixture.store.createSession('canvas');
+    }
+    const files = fs.readdirSync(path.join(directory, 'sessions'));
+    const canvasDir = path.join(directory, 'sessions', files[0]);
+    const pointer = path.join(canvasDir, 'current.json');
+    const originalPointer = fs.readFileSync(pointer, 'utf8');
+    let closed = 0;
+    const open = Harness.open.bind(Harness);
+    t.mock.method(Harness, 'open', async (...args) => {
+      const harness = await open(...args);
+      const close = harness.close.bind(harness);
+      harness.close = async (...args) => { closed++; return close(...args); };
+      return harness;
+    });
+    const rename = fs.renameSync;
+    t.mock.method(fs, 'renameSync', (source, destination) => {
+      if (destination === pointer) throw Object.assign(new Error('fixture pointer denied'), { code: 'EACCES' });
+      return rename(source, destination);
+    });
+    await assert.rejects(action === 'create' ? fixture.store.createSession('canvas') : fixture.store.activateSession('canvas', target),
+      { reason: 'session_pointer_failed' });
+    assert.equal(closed, 1);
+    assert.equal(fixture.store.sessions.get('canvas'), current);
+    assert.equal(fs.readFileSync(pointer, 'utf8'), originalPointer);
+    assert(!fs.readdirSync(canvasDir).some(name => name.endsWith('.tmp')));
+    assert.deepEqual(fixture.requests, []);
+  } finally {
+    t.mock.restoreAll();
+    await fixture.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
 test('failed or unanswered submission cannot reuse a prior assistant as a successful reply', () => {
   const prior = { stopReason: 'stop', content: [{ type: 'text', text: 'old reply' }] };
   const failed = durableCompletion({ status: 'unanswered', reason: 'model_error', detail: 'fixture failure' }, prior);

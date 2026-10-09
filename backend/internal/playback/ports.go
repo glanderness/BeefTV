@@ -2,7 +2,6 @@ package playback
 
 import (
 	"context"
-	"time"
 
 	"infinite-canvas/backend/internal/model"
 )
@@ -16,8 +15,6 @@ const (
 	CodecMPEG4      = "mpeg4"
 	PersistAttempts = 3
 	probeMaxMoov    = 128 << 20
-	backfillBatch   = 20
-	backfillMaxScan = 10_000
 )
 
 // Store is the durable playback-status port. Adapters wrap the existing
@@ -31,8 +28,6 @@ type Store interface {
 	FinishPlaybackTranscode(id, status, objectKey, errText string) (bool, error)
 	MarkPlaybackNone(id string) (bool, error)
 	ResetStuckPlaybackTranscodes() error
-	PlaybackPendingVideos(afterCreatedAt time.Time, afterID string, limit int) ([]model.Resource, error)
-	PlaybackNoneVideos(afterCreatedAt time.Time, afterID string, limit int) ([]model.Resource, error)
 }
 
 // Runner starts background transcode on the runtime-owned worker.
@@ -44,7 +39,7 @@ type Runner interface {
 }
 
 // Deps constructs the playback domain. DataDir is the workspace root.
-// Context is the runtime-owned cancellation scope for Backfill and for
+// Context is the runtime-owned cancellation scope for transcodes and for
 // refusing new claims during Stop. Lead injects worker.Context().
 type Deps struct {
 	DataDir        string

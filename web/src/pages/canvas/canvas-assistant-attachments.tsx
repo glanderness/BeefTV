@@ -1,7 +1,8 @@
 import { Button, InputNumber, Select } from "antd";
 import { X } from "lucide-react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { resourceStorageKey, getResourcePlaybackBlob } from "@/services/api/resources";
+import { resourceStorageKey } from "@/services/api/resources";
+import { useResourceVideoPlayback } from "@/hooks/use-resource-video-playback";
 import { cacheResourceObjectUrl, peekCachedResourceObjectUrl } from "@/services/resource-blob-cache";
 import { getActiveUserScope, getActiveUserScopeEpoch, subscribeUserScope } from "@/lib/user-scope";
 import { captureUserScope, userScopeMatches, assertUserScope } from "@/lib/user-scope-guard";
@@ -12,36 +13,32 @@ function AttachmentPreview({ attachment }: { attachment: AssistantAttachment }) 
     const accountIdentity = useSyncExternalStore(subscribeUserScope, () => JSON.stringify([getActiveUserScope(), getActiveUserScopeEpoch()]), () => "");
     const expected = useMemo(() => captureUserScope(), [accountIdentity]);
     const storageKey = resourceStorageKey(attachment.resourceId);
+    const video = useResourceVideoPlayback(storageKey, "", attachment.kind === "video");
     const identity = `${accountIdentity}:${attachment.kind}:${attachment.resourceId}`;
     const [retry, setRetry] = useState(0);
     const [preview, setPreview] = useState<{ identity: string; url: string; error: boolean } | null>(null);
     useEffect(() => {
-        let cancelled = false, ownedUrl = "";
+        let cancelled = false;
         setPreview(null);
+        if (attachment.kind === "video") return;
         const load = async () => {
             assertUserScope(expected);
-            if (attachment.kind !== "video") return cacheResourceObjectUrl(storageKey);
-            // A playback variant has a separate lifecycle; never overwrite the original resource cache.
-            const blob = await getResourcePlaybackBlob(storageKey);
-            assertUserScope(expected);
-            if (cancelled || !blob) return "";
-            ownedUrl = URL.createObjectURL(blob);
-            return ownedUrl;
+            return cacheResourceObjectUrl(storageKey);
         };
         void load().then(url => {
             if (!cancelled && userScopeMatches(expected)) setPreview({ identity, url, error: !url });
         }).catch(() => {
             if (!cancelled && userScopeMatches(expected)) setPreview({ identity, url: "", error: true });
         });
-        return () => { cancelled = true; if (ownedUrl) URL.revokeObjectURL(ownedUrl); };
+        return () => { cancelled = true; };
     }, [attachment.kind, expected, identity, retry, storageKey]);
     const current = preview?.identity === identity ? preview : null;
-    const url = current?.url || (attachment.kind !== "video" ? peekCachedResourceObjectUrl(storageKey) : "");
-    if (current?.error) return <span className="canvas-assistant-meta" role="status">预览暂时无法显示<Button size="small" onClick={() => setRetry(value => value + 1)}>重读预览</Button></span>;
+    const url = attachment.kind === "video" ? video.url : current?.url || peekCachedResourceObjectUrl(storageKey);
+    if (current?.error || video.error) return <span className="canvas-assistant-meta" role="status">预览暂时无法显示<Button size="small" onClick={() => attachment.kind === "video" ? video.retry() : setRetry(value => value + 1)}>重读预览</Button></span>;
     if (!url) return <span className="canvas-assistant-meta" role="status">正在读取预览…</span>;
     const onError = () => setPreview({ identity, url: "", error: true });
     return attachment.kind === "image" ? <img src={url} alt={attachment.name} loading="lazy" onError={onError} />
-        : attachment.kind === "video" ? <video src={url} aria-label={attachment.name} controls preload="metadata" onError={onError} /> : <audio src={url} aria-label={attachment.name} controls preload="metadata" onError={onError} />;
+        : attachment.kind === "video" ? <video src={url} aria-label={attachment.name} controls preload="metadata" onError={() => { if (!video.requestCompatible()) video.fail(); }} /> : <audio src={url} aria-label={attachment.name} controls preload="metadata" onError={onError} />;
 }
 
 export function CanvasAssistantAttachments({ attachments, onChange, onRemove }: {

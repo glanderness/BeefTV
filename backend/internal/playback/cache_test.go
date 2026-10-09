@@ -2,6 +2,7 @@ package playback
 
 import (
 	"context"
+	"errors"
 	"infinite-canvas/backend/internal/model"
 	"os"
 	"path/filepath"
@@ -12,6 +13,54 @@ import (
 )
 
 type cacheTestStore struct{ memStore }
+
+type resetCopyFailStore struct{ cacheTestStore }
+
+func (s *resetCopyFailStore) ResetPlaybackCopy(string, string, string) error {
+	return errors.New("database unavailable")
+}
+
+func TestClearCacheResetFailurePreservesPlayableCopy(t *testing.T) {
+	store := &resetCopyFailStore{}
+	root := t.TempDir()
+	path := filepath.Join(root, "playback", "mine.mp4")
+	writeCodecMP4(t, path, "avc1")
+	store.put(model.Resource{ID: "mine", UserID: "one", Status: model.ResourceStatusReady, Kind: "video", Provider: "local", PlaybackStatus: model.PlaybackStatusReady, PlaybackObjectKey: "mine.mp4"})
+	svc := New(Deps{DataDir: root, Store: store})
+	if n, err := svc.ClearCache("one"); n != 0 || err == nil {
+		t.Fatalf("clear = %d %v", n, err)
+	}
+	stream, err := svc.OpenRange("one", "mine")
+	if err != nil {
+		t.Fatal("reset failure lost playable copy", err)
+	}
+	stream.Body.Close()
+}
+
+func TestPrepareRebuildsReadyRowWithMissingCopy(t *testing.T) {
+	store := &cacheTestStore{}
+	root := t.TempDir()
+	writeCodecMP4(t, filepath.Join(root, "resources", "mine.mp4"), "hvc1")
+	store.put(model.Resource{ID: "mine", UserID: "one", Status: model.ResourceStatusReady, Kind: "video", Provider: "local", ObjectKey: "mine.mp4", PlaybackStatus: model.PlaybackStatusReady, PlaybackObjectKey: "mine.mp4"})
+	var calls int
+	svc := New(Deps{DataDir: root, Store: store, Runner: syncRunner{}, LookPath: func(string) (string, error) { return "fixture", nil },
+		Transcode: func(_ context.Context, _, dst string) error { calls++; writeCodecMP4(t, dst, "avc1"); return nil }})
+	if _, err := svc.OpenRange("one", "mine"); !errors.Is(err, ErrNotReady) {
+		t.Fatalf("missing copy = %v", err)
+	}
+	resource, _ := store.ResourceForUser("one", "mine")
+	if err := svc.Prepare(resource); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("transcodes = %d", calls)
+	}
+	stream, err := svc.OpenRange("one", "mine")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream.Body.Close()
+}
 
 func (s *cacheTestStore) PlaybackCopiesForUser(userID string) ([]model.Resource, error) {
 	s.mu.Lock()
