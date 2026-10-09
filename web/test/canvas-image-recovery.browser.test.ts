@@ -13,11 +13,12 @@ test("生成图片拉取失败显示重试，点击后恢复图片，明暗主�
     if (!build.success) throw new Error(build.logs.join("\n"));
     const script = await build.outputs[0].text();
     let downloads = 0;
+    let failureMode = "transport";
     const server = Bun.serve({ port: 0, fetch: (request) => {
         const path = new URL(request.url).pathname;
         if (path === "/harness.js") return new Response(script, { headers: { "Content-Type": "text/javascript" } });
         if (path === "/api/resources/preview/file") {
-            if (++downloads === 1) return new Response("temporarily unavailable", { status: 503 });
+            if (++downloads === 1) return failureMode === "transport" ? new Response("temporarily unavailable", { status: 503 }) : new Response("invalid image bytes", { headers: { "Content-Type": "image/png" } });
             return new Response('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="red"/></svg>', { headers: { "Content-Type": "image/svg+xml" } });
         }
         if (path.startsWith("/api/")) return Response.json({ code: 0, data: {}, msg: "" });
@@ -26,7 +27,9 @@ test("生成图片拉取失败显示重试，点击后恢复图片，明暗主�
     const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((path) => path && existsSync(path));
     const browser = await chromium.launch({ executablePath, headless: true });
     try {
-        for (const theme of ["light", "dark"]) {
+        for (const scenario of [{ theme: "light", mode: "transport" }, { theme: "dark", mode: "decode" }]) {
+            const { theme, mode } = scenario;
+            failureMode = mode;
             downloads = 0;
             const context = await browser.newContext({ viewport: { width: 390, height: 500 } });
             const page = await context.newPage();
