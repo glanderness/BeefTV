@@ -26,10 +26,14 @@ type authorizationTransport struct {
 }
 
 func defaultHTTPClient(onFallback func()) *http.Client {
-	primary := http.DefaultTransport.(*http.Transport).Clone()
-	primary.DialContext = (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext
-	primary.TLSHandshakeTimeout = 8 * time.Second
-	primary.ResponseHeaderTimeout = 15 * time.Second
+	// Authorization owns its timeout and proxy policy. The global transport may
+	// be wrapped by runtime instrumentation and is not necessarily a Transport.
+	primary := &http.Transport{
+		DialContext:       (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2: true, MaxIdleConns: 100, IdleConnTimeout: 90 * time.Second,
+		TLSHandshakeTimeout: 8 * time.Second, ExpectContinueTimeout: time.Second,
+		ResponseHeaderTimeout: 15 * time.Second,
+	}
 	primary.Proxy = func(r *http.Request) (*url.URL, error) {
 		proxy, _ := r.Context().Value(authorizationProxyKey{}).(*url.URL)
 		return proxy, nil

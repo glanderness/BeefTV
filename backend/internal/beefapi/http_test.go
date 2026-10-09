@@ -14,6 +14,19 @@ import (
 	"time"
 )
 
+func TestAuthorizationClientWithWrappedGlobalTransport(t *testing.T) {
+	previous := http.DefaultTransport
+	http.DefaultTransport = brandTransport(func(*http.Request) (*http.Response, error) {
+		t.Fatal("authorization constructor made an outbound request")
+		return nil, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	client := defaultHTTPClient(nil)
+	if client == nil || client.Timeout <= 0 {
+		t.Fatal("authorization client is not usable with global instrumentation")
+	}
+}
+
 func TestAuthorizationFallbackReplaysUnsentBody(t *testing.T) {
 	var calls int
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
