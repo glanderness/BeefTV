@@ -148,6 +148,36 @@ func TestPackageWindowsLayout(t *testing.T) {
 	}
 }
 
+func TestPackageWindowsMediaRuntime(t *testing.T) {
+	bin := writeFakeWindowsBin(t, t.TempDir())
+	media := filepath.Join(bin, "media-runtime")
+	if err := os.MkdirAll(media, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	names := []string{"ffmpeg.exe", "LICENSE", "README.txt", "manifest.json"}
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(media, name), []byte("fixture"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := filepath.Join(t.TempDir(), "out.zip")
+	if err := packageBundle(platformWindowsAMD64, bin, out); err != nil {
+		t.Fatal(err)
+	}
+	entries := zipNames(t, out)
+	for _, name := range names {
+		if !entries["media-runtime/"+name] {
+			t.Fatalf("media runtime omitted %s", name)
+		}
+	}
+	if err := os.Remove(filepath.Join(media, "LICENSE")); err != nil {
+		t.Fatal(err)
+	}
+	if err := packageBundle(platformWindowsAMD64, bin, filepath.Join(t.TempDir(), "bad.zip")); err == nil || !strings.Contains(err.Error(), "media-runtime") {
+		t.Fatalf("incomplete media runtime accepted: %v", err)
+	}
+}
+
 func TestPackageRejectsInvalidInputs(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "out.zip")
