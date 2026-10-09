@@ -27,7 +27,7 @@ const (
 func cmdPackage(args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("package", stderr)
 	platform := fs.String("platform", "", "darwin-arm64, darwin-amd64, windows-amd64, or linux-amd64")
-	input := fs.String("input", "", "BeefTV.app, a directory containing it, or a Windows bin directory with BeefTV.exe")
+	input := fs.String("input", "", "BeefTV.app, BeefTV-linux, or a Windows bin directory with BeefTV.exe")
 	output := fs.String("output", "", "output zip path")
 	if err := fs.Parse(args); err != nil {
 		return err
