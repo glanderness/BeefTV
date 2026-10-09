@@ -800,10 +800,11 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean) {
     const [loading, setLoading] = useState(() => !initialUrl && isRemoteResource && eager);
     const [error, setError] = useState(false);
     const [attempt, setAttempt] = useState(0);
+    const reloadRequested = useRef(false);
     const [scopeEpoch, setScopeEpoch] = useState(getActiveUserScopeEpoch);
     useEffect(() => subscribeUserScope((epoch) => setScopeEpoch(epoch.generation)), []);
     const fail = useCallback(() => setError(true), []);
-    const retry = useCallback(() => { setError(false); setAttempt((current) => current + 1); }, []);
+    const retry = useCallback(() => { reloadRequested.current = true; setError(false); setAttempt((current) => current + 1); }, []);
 
     useEffect(() => {
         let cancelled = false;
@@ -832,7 +833,9 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean) {
             setLoading(false);
             return;
         }
-        const cachedSync = peekCachedResourceObjectUrl(storageKey);
+        const reload = reloadRequested.current;
+        reloadRequested.current = false;
+        const cachedSync = reload ? "" : peekCachedResourceObjectUrl(storageKey);
         if (cachedSync) {
             setUrl(cachedSync);
             setLoading(false);
@@ -841,7 +844,7 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean) {
         setUrl("");
         setLoading(eager);
         // 只有进入视口或被激活的节点才下载远程媒体；缓存层会复用已有 Blob URL 和 in-flight 请求。
-        const resolve = eager ? cacheResourceObjectUrl(storageKey) : getCachedResourceObjectUrl(storageKey);
+        const resolve = eager ? cacheResourceObjectUrl(storageKey, reload) : getCachedResourceObjectUrl(storageKey);
         void resolve.then((cached) => {
             if (!cancelled && cached) setUrl(cached);
             if (!cancelled && eager && !cached) setError(true);

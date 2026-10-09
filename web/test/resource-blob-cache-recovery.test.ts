@@ -42,3 +42,18 @@ test("首次资源请求失败后能重新下载，不缓存失败结果", async
     expect((await cacheResourceObjectUrl("resource:retry-preview")).startsWith("blob:")).toBe(true);
     expect(requests).toBe(2);
 });
+
+test("解码失败后的显式重试绕过已发布的坏 Blob 和持久缓存", async () => {
+    const stored = new Map<string, unknown>();
+    installLocalForageStoreFactoryForTests(() => ({ ready: async () => undefined, getItem: async (key: string) => stored.get(key) || null, setItem: async (key: string, value: unknown) => { stored.set(key, value); return value; }, keys: async () => [], iterate: async () => undefined }) as unknown as LocalForage);
+    let requests = 0;
+    apiClient.defaults.adapter = async (config) => ({ data: new Blob([++requests === 1 ? "broken" : "valid"]), status: 200, statusText: "OK", headers: {}, config });
+    const key = "resource:decode-retry-preview";
+    const first = await cacheResourceObjectUrl(key);
+    expect(await (await fetch(first)).text()).toBe("broken");
+    const recovered = await cacheResourceObjectUrl(key, true);
+    expect(recovered).not.toBe(first);
+    expect(await (await fetch(recovered)).text()).toBe("valid");
+    expect(await cacheResourceObjectUrl(key)).toBe(recovered);
+    expect(requests).toBe(2);
+});

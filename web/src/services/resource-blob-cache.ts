@@ -47,9 +47,20 @@ export function peekCachedResourceObjectUrl(storageKey: string) {
     return objectUrls.get(`${userScope}:${resourceId}:file`) || "";
 }
 
-export async function cacheResourceObjectUrl(storageKey: string) {
+export async function cacheResourceObjectUrl(storageKey: string, reload = false) {
     const target = await cacheTarget(storageKey);
     if (!target) return "";
+    if (reload) {
+        // Explicit image decode recovery must bypass both memory and IndexedDB.
+        await inFlight.get(target.key)?.catch(() => undefined);
+        const blob = await withDownloadSlot(() => downloadResourceBlob(storageKey, target));
+        if (!blob) return "";
+        const oldUrl = objectUrls.get(target.key);
+        objectUrls.delete(target.key);
+        const url = objectUrl(target.key, blob);
+        if (oldUrl) URL.revokeObjectURL(oldUrl);
+        return url;
+    }
     const cached = await readCachedObjectUrl(target);
     if (cached) return cached;
     const pending = inFlight.get(target.key);
