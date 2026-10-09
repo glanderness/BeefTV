@@ -2,13 +2,12 @@ package editing
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
+	"infinite-canvas/backend/internal/mediatools"
 	"strings"
 )
 
 const (
-	FFmpegPathEnv    = "CANVAS_FFMPEG_PATH"
+	FFmpegPathEnv    = mediatools.FFmpegPathEnv
 	SubtitleFileName = "render-subtitles.srt"
 )
 
@@ -16,14 +15,7 @@ const (
 // A configured CANVAS_FFMPEG_PATH is used as-is so tests can inject a missing binary
 // without LookPath succeeding on a different ffmpeg.
 func ResolveFFmpegBinary() (string, error) {
-	if configured := strings.TrimSpace(os.Getenv(FFmpegPathEnv)); configured != "" {
-		return configured, nil
-	}
-	path, err := exec.LookPath("ffmpeg")
-	if err != nil {
-		return "", fmt.Errorf("渲染依赖未安装（需要 ffmpeg，可通过 %s 指定）", FFmpegPathEnv)
-	}
-	return path, nil
+	return mediatools.ResolveFFmpeg()
 }
 
 // BuildFFmpegArgs lowers a compiled plan into one native ffmpeg filter_complex graph.

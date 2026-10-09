@@ -81,7 +81,7 @@ func (l resourceLifecycle) AfterResourceReady(resource *model.Resource) {
 	if l.svc == nil {
 		return
 	}
-	l.svc.playbackRuntime().MaybeStart(resource)
+	// Conversion is requested only after the browser cannot decode the original.
 }
 
 func (l resourceLifecycle) AppearanceReferencedIDs(resourceIDs []string) map[string]struct{} {

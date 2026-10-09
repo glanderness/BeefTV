@@ -67,7 +67,7 @@ def stop_installed(executable):
 
 def install_tree(root):
     result = {}
-    for name in ['BeefTV.exe', 'cli', 'agent-host', 'plugin-packages']:
+    for name in ['BeefTV.exe', 'cli', 'agent-host', 'plugin-packages', 'media-runtime']:
         path = root/name
         paths = [path] if path.is_file() else sorted(path.rglob('*')) if path.is_dir() else []
         for item in paths:

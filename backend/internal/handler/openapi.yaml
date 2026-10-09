@@ -675,6 +675,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+  /resources/{id}/playback:
+    post:
+      tags: [resources]
+      summary: 按需准备当前用户视频预览
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /resources/playback-cache:
+    delete:
+      tags: [resources]
+      summary: 清理当前用户已完成的视频预览缓存
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
   /resources/{id}/file:
     get:
       tags: [resources]

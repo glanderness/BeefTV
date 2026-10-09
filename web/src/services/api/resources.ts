@@ -31,6 +31,18 @@ export type AccountFileStorageUsage = {
     totalBytes: number;
 };
 
+export async function prepareResourcePlayback(id: string, config?: HttpRequestConfig) {
+    const data = await http.post<{ resource: RemoteResource }>(`/resources/${encodeURIComponent(id)}/playback`, {}, config);
+    return data.resource;
+}
+
+export async function clearVideoPreviewCache(config?: HttpRequestConfig) {
+    const expectedScope = config?.expectedScope ?? captureUserScope();
+    const result = await http.delete<{ cleared: number }>("/resources/playback-cache", { ...config, expectedScope });
+    assertUserScope(expectedScope);
+    return result;
+}
+
 export type ArkPrivateAssetSync = {
     resourceId: string;
     status: "active" | string;

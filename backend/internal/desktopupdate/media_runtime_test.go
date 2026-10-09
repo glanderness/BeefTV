@@ -1,0 +1,56 @@
+package desktopupdate
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestWindowsMediaRuntimeSwapAndRollback(t *testing.T) {
+	for _, previousHasMedia := range []bool{false, true} {
+		root := t.TempDir()
+		old, next := filepath.Join(root, "old"), filepath.Join(root, "new")
+		for _, dir := range []string{old, next} {
+			if err := WriteWindowsLayout(dir, "app"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		write := func(dir, marker string) {
+			media := filepath.Join(dir, "media-runtime")
+			if err := os.MkdirAll(media, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"ffmpeg.exe", "LICENSE", "README.txt", "manifest.json"} {
+				if err := os.WriteFile(filepath.Join(media, name), []byte(marker), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		if previousHasMedia {
+			write(old, "old")
+		}
+		write(next, "new")
+		if err := validateWindowsLayout(next); err != nil {
+			t.Fatal(err)
+		}
+		req := HelperRequest{Platform: "windows-amd64", TargetPath: filepath.Join(old, windowsExeName), StagedPath: next, BackupPath: filepath.Join(root, "backup")}
+		if err := SwapInstall(req); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(old, "media-runtime", "ffmpeg.exe")
+		if b, err := os.ReadFile(path); err != nil || string(b) != "new" {
+			t.Fatalf("media not installed: %q %v", b, err)
+		}
+		if err := RestoreBackup(req); err != nil {
+			t.Fatal(err)
+		}
+		b, err := os.ReadFile(path)
+		if previousHasMedia {
+			if err != nil || string(b) != "old" {
+				t.Fatalf("media not restored: %q %v", b, err)
+			}
+		} else if !os.IsNotExist(err) {
+			t.Fatal("new media survived rollback")
+		}
+	}
+}

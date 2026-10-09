@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { exportDiagnosticBundle, downloadDiagnosticBundle, previewDiagnosticBundle, type DiagnosticExportInput, type DiagnosticPreview } from "@/services/diagnostics/diagnostics-api";
 import { getClientDiagnosticEvents, getDiagnosticRuntime } from "@/services/diagnostics/client-diagnostics";
+import { clearVideoPreviewCache } from "@/services/api/resources";
 
 type DiagnosticsPanelProps = {
     taskId?: string;
@@ -28,6 +29,7 @@ export default function DiagnosticsPanel({ taskId, projectId }: DiagnosticsPanel
     const [loadingPreview, setLoadingPreview] = useState(false);
     const [exporting, setExporting] = useState(false);
     const [bundleId, setBundleId] = useState("");
+    const [clearingPreviews, setClearingPreviews] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -88,6 +90,16 @@ export default function DiagnosticsPanel({ taskId, projectId }: DiagnosticsPanel
                 </header>
 
                 <div className="mt-6 space-y-4">
+                    <section className="rounded-xl border border-border/70 bg-background/55 p-4 sm:p-5">
+                        <h3 className="text-sm font-semibold">视频预览缓存</h3>
+                        <p className="mt-2 text-xs leading-5 text-foreground/55">清理已准备的视频预览以释放磁盘空间。原文件保留，下次播放时会按需重新准备。</p>
+                        <Button className="mt-3" loading={clearingPreviews} onClick={async () => {
+                            setClearingPreviews(true);
+                            try { const result = await clearVideoPreviewCache(); message.success(`已清理 ${result.cleared} 个视频预览`); }
+                            catch (error) { message.error(error instanceof Error ? error.message : "清理失败，请重试"); }
+                            finally { setClearingPreviews(false); }
+                        }}>清理预览缓存</Button>
+                    </section>
                     <section className="rounded-xl border border-border/70 bg-background/55 p-4 sm:p-5" aria-labelledby="diagnostic-window-heading">
                         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border/55 pb-4">
                             <div>

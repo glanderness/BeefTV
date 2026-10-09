@@ -125,6 +125,19 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 		}
 		ok(c, gin.H{"usage": usage})
 	})
+	r.DELETE("/resources/playback-cache", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		cleared, err := svc.ClearVideoPreviewCache(user.ID)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"cleared": cleared})
+	})
 	r.POST("/resources", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -166,6 +179,19 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 		resource, err := svc.Resource(user.ID, c.Param("id"))
 		if err != nil {
 			fail(c, http.StatusNotFound, err)
+			return
+		}
+		ok(c, gin.H{"resource": resource})
+	})
+	r.POST("/resources/:id/playback", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		resource, err := svc.PrepareResourcePlayback(user.ID, c.Param("id"))
+		if err != nil {
+			failService(c, err)
 			return
 		}
 		ok(c, gin.H{"resource": resource})

@@ -99,6 +99,18 @@ func validateWindowsLayout(root string) error {
 		return err
 	}
 	exe := filepath.Join(root, windowsExeName)
+	// Historical signed archives predate the media runtime. When present it
+	// must be complete, and is moved/rolled back with the other sidecars.
+	media := filepath.Join(root, "media-runtime")
+	if _, err := os.Lstat(media); err == nil {
+		for _, name := range []string{"ffmpeg.exe", "LICENSE", "README.txt", "manifest.json"} {
+			if err := requireRegularFile(filepath.Join(media, name), false); err != nil {
+				return fmt.Errorf("更新包视频工具不完整: %w", err)
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	if err := requireRegularFile(exe, false); err != nil {
 		return fmt.Errorf("更新包缺少 BeefTV.exe")
 	}
@@ -137,6 +149,9 @@ func validateWindowsLayout(root string) error {
 			return nil
 		}
 		if rel == pluginDirName || strings.HasPrefix(rel, pluginDirName+string(filepath.Separator)) {
+			return nil
+		}
+		if rel == "media-runtime" || strings.HasPrefix(rel, "media-runtime"+string(filepath.Separator)) {
 			return nil
 		}
 		if rel == "agent-host" || strings.HasPrefix(rel, "agent-host"+string(filepath.Separator)) {
