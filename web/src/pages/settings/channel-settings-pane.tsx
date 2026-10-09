@@ -85,33 +85,44 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
     }, []);
 
     useEffect(() => {
-        if (beefConnection?.state !== "pending") return;
+        if (beefConnection?.state !== "pending" && beefConnection?.state !== "connecting") return;
+        let active = true;
         const timer = window.setInterval(() => {
             void getBeefAPIConnection()
-                .then((summary) => applyBeefConnection(summary, "pending"))
+                .then((summary) => { if (active) void applyBeefConnection(summary, beefConnection?.state); })
                 .catch(() => undefined);
         }, 2000);
-        return () => window.clearInterval(timer);
+        return () => { active = false; window.clearInterval(timer); };
     }, [beefConnection?.state]);
 
     const runBeefAction = async (action: () => Promise<BeefAPIConnectionSummary>, fallback: string) => {
         setBeefBusy(true);
+        const previousConnection = beefConnection;
         const previousState = beefConnection?.state;
         try {
             const summary = await action();
             await applyBeefConnection(summary, previousState);
         } catch (error) {
+            try {
+                await applyBeefConnection(await getBeefAPIConnection(), previousState);
+            } catch {
+                setBeefConnection(previousConnection);
+            }
             message.error(error instanceof Error ? error.message : fallback);
         } finally {
             setBeefBusy(false);
         }
+    };
+    const beginBeefConnection = () => {
+        setBeefConnection({ state: "connecting", hasCredential: beefConnection?.hasCredential || false });
+        return startBeefAPIConnection();
     };
     const retryBeefConnection = async () => {
         const state = beefConnection?.state;
         if (state === "expired" || state === "revoked" || state === "rejected") {
             await disconnectBeefAPIConnection();
         }
-        return startBeefAPIConnection();
+        return beginBeefConnection();
     };
     const userChannels = config.channels.filter((channel) => channel.scope !== "system");
     const runningHubReady = Boolean(config.runningHub.enabled && config.runningHub.baseUrl.trim() && config.runningHub.apiKey.trim() && config.runningHub.workflowId.trim());
@@ -336,7 +347,7 @@ export function ChannelSettingsPane({ onOpenModels, onOpenRunningHub }: ChannelS
                                             <BeefAPIConnectionActions
                                                 connection={beefConnection}
                                                 busy={beefBusy}
-                                                onConnect={() => void runBeefAction(startBeefAPIConnection, "无法开始连接")}
+                                                onConnect={() => void runBeefAction(beginBeefConnection, "无法开始连接")}
                                                 onCancel={() => void runBeefAction(cancelBeefAPIConnection, "无法取消连接")}
                                                 onRetry={() => void runBeefAction(retryBeefConnection, "无法重新连接")}
                                                 onDisconnect={() => void runBeefAction(disconnectBeefAPIConnection, "无法断开连接")}
@@ -645,7 +656,7 @@ export function modelConfigChannelStatusLabel(channel: ModelChannel, persistence
     return "尚未测试";
 }
 
-function BeefAPIConnectionActions({
+export function BeefAPIConnectionActions({
     connection,
     busy,
     onConnect,
@@ -664,6 +675,9 @@ function BeefAPIConnectionActions({
 }) {
     const state = connection?.state || "disconnected";
     const buttonClass = "h-10 sm:h-8";
+    if (state === "connecting") {
+        return <Button className={buttonClass} size="small" loading disabled>正在连接</Button>;
+    }
     if (state === "pending") {
         return (
             <>
@@ -697,7 +711,7 @@ function BeefAPIConnectionActions({
             </>
         );
     }
-    if (state === "expired" || state === "revoked" || state === "rejected" || state === "store_error" || state === "cancelled") {
+    if (state === "expired" || state === "revoked" || state === "rejected" || state === "store_error" || state === "connection_error" || state === "cancelled") {
         return (
             <Button className={buttonClass} size="small" type="primary" loading={busy} onClick={onRetry}>
                 重新连接

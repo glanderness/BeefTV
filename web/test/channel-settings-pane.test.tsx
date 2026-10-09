@@ -1,6 +1,19 @@
 import { expect, test } from "bun:test";
-import { mergeManagedBeefAPICatalog, modelConfigChannelPresentation, modelConfigChannelStatusLabel, shouldRefreshBeefAPICatalog } from "../src/pages/settings/channel-settings-pane";
+import { BeefAPIConnectionActions, mergeManagedBeefAPICatalog, modelConfigChannelPresentation, modelConfigChannelStatusLabel, shouldRefreshBeefAPICatalog } from "../src/pages/settings/channel-settings-pane";
+import { renderToStaticMarkup } from "react-dom/server";
 import { createModelChannel, defaultConfig } from "../src/stores/use-config-store";
+
+test("connection actions render immediate progress and a retry after network failure", () => {
+    const noop = () => {};
+    const props = { busy: false, onConnect: noop, onCancel: noop, onRetry: noop, onDisconnect: noop, onWallet: noop };
+    const connecting = renderToStaticMarkup(<BeefAPIConnectionActions {...props} connection={{ state: "connecting", hasCredential: false }} />);
+    expect(connecting).toContain("正在连接");
+    expect(connecting).toContain("disabled");
+    expect(connecting).not.toContain("重新连接");
+    const failed = renderToStaticMarkup(<BeefAPIConnectionActions {...props} connection={{ state: "connection_error", hasCredential: false }} />);
+    expect(failed).toContain("重新连接");
+    expect(failed).not.toContain("disabled");
+});
 
 test("pinned BeefAPI is visible and cannot be deleted before models are fetched", () => {
     const channel = createModelChannel({

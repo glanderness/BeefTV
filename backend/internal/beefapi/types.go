@@ -7,20 +7,22 @@ import (
 )
 
 const (
-	StateDisconnected   = "disconnected"
-	StatePending        = "pending"
-	StateConnected      = "connected"
-	StateExpired        = "expired"
-	StateCancelled      = "cancelled"
-	StateRejected       = "rejected"
-	StateStoreError     = "store_error"
-	StateCatalogFailed  = "catalog_failed"
-	StateRevoked        = "revoked"
-	BalanceUnknown      = "unknown"
-	BalanceZero         = "zero"
-	BalanceAvailable    = "available"
-	connectionSchema    = 1
-	connectionStoreFile = "beefapi-connection.json"
+	StateDisconnected    = "disconnected"
+	StateConnecting      = "connecting"
+	StateConnectionError = "connection_error"
+	StatePending         = "pending"
+	StateConnected       = "connected"
+	StateExpired         = "expired"
+	StateCancelled       = "cancelled"
+	StateRejected        = "rejected"
+	StateStoreError      = "store_error"
+	StateCatalogFailed   = "catalog_failed"
+	StateRevoked         = "revoked"
+	BalanceUnknown       = "unknown"
+	BalanceZero          = "zero"
+	BalanceAvailable     = "available"
+	connectionSchema     = 1
+	connectionStoreFile  = "beefapi-connection.json"
 )
 
 type Account struct {

@@ -105,7 +105,7 @@ export async function uploadMediaFile(input: Blob, prefix = "file", onProgress?:
         // The native desktop Go resource service is the canonical local store.
         // Browser local mode keeps IndexedDB as its offline/development store.
         try {
-            const kind = blob.type.startsWith("video/") ? "video" : blob.type.startsWith("audio/") ? "audio" : "file";
+            const kind = prefix === "video" || blob.type.startsWith("video/") ? "video" : prefix === "audio" || blob.type.startsWith("audio/") ? "audio" : "file";
             const resource = await uploadResourceFile(blob, kind, { ...meta, fileName: input instanceof File ? input.name : undefined, idempotencyKey: storageKey, expectedScope: expected }, onProgress);
             assertUserScope(expected);
             try {

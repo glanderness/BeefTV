@@ -113,20 +113,20 @@ export async function primeResourceBlobCache(storageKey: string, blob: Blob, exp
 export async function getCachedResourceBlob(storageKey: string) {
     const target = await cacheTarget(storageKey);
     if (!target) return null;
-    const cached = await blobStore.getItem<Blob>(target.key);
+    const sessionBlob = sessionBlobs.get(target.key);
+    if (sessionBlob) return sessionBlob;
+    const cached = await readPersistedBlob(target);
     if (cached) {
         touchCacheMetaSafely(target);
         return cached;
     }
-    const sessionBlob = sessionBlobs.get(target.key);
-    if (sessionBlob) return sessionBlob;
     const pending = inFlight.get(target.key);
     if (pending) {
         await pending;
-        return sessionBlobs.get(target.key) || blobStore.getItem<Blob>(target.key);
+        return sessionBlobs.get(target.key) || readPersistedBlob(target);
     }
     await cacheResourceObjectUrl(storageKey);
-    return sessionBlobs.get(target.key) || blobStore.getItem<Blob>(target.key);
+    return sessionBlobs.get(target.key) || readPersistedBlob(target);
 }
 
 async function downloadAndCacheResource(storageKey: string, target: ResourceCacheMeta) {
@@ -204,10 +204,19 @@ async function readCachedObjectUrl(target: ResourceCacheMeta) {
         touchCacheMetaSafely(target);
         return existing;
     }
-    const blob = await blobStore.getItem<Blob>(target.key);
+    const blob = sessionBlobs.get(target.key) || await readPersistedBlob(target);
     if (!blob) return "";
     touchCacheMetaSafely(target);
     return objectUrl(target.key, blob);
+}
+
+async function readPersistedBlob(target: ResourceCacheMeta) {
+    try {
+        return await blobStore.getItem<Blob>(target.key);
+    } catch (error) {
+        console.warn("媒体缓存读取失败，重新下载资源", { resourceId: target.resourceId, error });
+        return null;
+    }
 }
 
 async function cacheTarget(storageKey: string, userScope = getActiveUserScope()): Promise<ResourceCacheMeta | null> {

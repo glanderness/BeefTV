@@ -364,10 +364,11 @@ export function playbackVariantUrl(id: string) {
  * media elements cannot attach the desktop launch token, and large videos must
  * not inherit the API client's short JSON-request timeout.
  */
-export async function getResourcePlaybackBlob(storageKey: string) {
+export async function getResourcePlaybackBlob(storageKey: string, config?: HttpRequestConfig) {
     const id = resourceIdFromStorageKey(storageKey);
     if (!id) return null;
     const response = await apiClient.get<Blob>(`/resources/${encodeURIComponent(id)}/file?variant=playback&proxy=1`, {
+        ...config,
         responseType: "blob",
         timeout: 0,
     });
