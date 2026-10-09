@@ -113,4 +113,17 @@ describe("canvas resource mention editor", () => {
         expect(component).toContain('if (reference.kind !== "skill" && reference.kind !== "text") chip.appendChild(createInlinePreview(reference));');
         expect(component).toContain('chip.style.setProperty("--canvas-skill-mention-color", skillMentionColor(reference))');
     });
+
+    test("protects mention menu from blur and outside pointer misfires when clicking asset library folders", () => {
+        const component = source("../src/components/canvas/canvas-resource-mention-textarea.tsx");
+
+        expect(component).toContain("interactingWithMenuRef = useRef(false)");
+        expect(component).toContain("if (interactingWithMenuRef.current) return;");
+        expect(component).toContain('if (target?.tagName !== "INPUT")');
+        expect(component).toContain("event.preventDefault();");
+        expect(component).toContain("className=\"canvas-resource-mention-folder\"");
+        expect(component).toContain("className=\"canvas-resource-mention-back\"");
+        expect(component).toContain("event.composedPath");
+    });
 });
+
