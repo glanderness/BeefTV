@@ -54,3 +54,34 @@ func TestWindowsMediaRuntimeSwapAndRollback(t *testing.T) {
 		}
 	}
 }
+
+func TestWindowsHistoricalPayloadPreservesInstalledMediaRuntime(t *testing.T) {
+	root := t.TempDir()
+	old, next := filepath.Join(root, "old"), filepath.Join(root, "new")
+	for _, dir := range []string{old, next} {
+		if err := WriteWindowsLayout(dir, "app"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	media := filepath.Join(old, "media-runtime")
+	if err := os.MkdirAll(media, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(media, "ffmpeg.exe")
+	if err := os.WriteFile(path, []byte("installed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req := HelperRequest{Platform: "windows-amd64", TargetPath: filepath.Join(old, windowsExeName), StagedPath: next, BackupPath: filepath.Join(root, "backup")}
+	if err := SwapInstall(req); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(path); err != nil || string(b) != "installed" {
+		t.Fatal("installed runtime lost", err)
+	}
+	if err := RestoreBackup(req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal("preserved runtime lost during rollback", err)
+	}
+}

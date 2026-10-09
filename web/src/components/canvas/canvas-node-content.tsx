@@ -487,7 +487,7 @@ function VideoNodeContent({ node, theme, mediaActive = false, onMediaPlayRequest
     }
     const playerBoxRef = useRef<HTMLDivElement>(null);
     const { updateMediaNode } = useCanvasNodeActions();
-    const { url, loading, error, compatible, requestCompatible, retry } = useVideoPlaybackUrl(node, mediaActive);
+    const { url, loading, error, compatible, requestCompatible, retry, retryEpoch } = useVideoPlaybackUrl(node, mediaActive);
     const subtitleEntries = node.metadata?.subtitleEntries || [];
     const subtitleStyle = node.metadata?.subtitleStyle || createDefaultSubtitleStyle();
     const [currentTimeMs, setCurrentTimeMs] = useState(0);
@@ -532,7 +532,10 @@ function VideoNodeContent({ node, theme, mediaActive = false, onMediaPlayRequest
     const presentation = canvasVideoPresentationState({ active: mediaActive, hasSource: Boolean(url), firstFramePresented });
 
     return (
-        <div ref={playerBoxRef} className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-[var(--node-radius)] bg-black">
+        <div ref={playerBoxRef} className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-[var(--node-radius)] bg-black" onErrorCapture={(event) => {
+            // A failed <source> does not bubble a video error to Vidstack.
+            if (event.target instanceof HTMLSourceElement && !requestCompatible()) setPlaybackError(true);
+        }}>
             {node.metadata?.outputParameterWarning ? <div role="status" className="absolute left-2 right-2 top-2 z-[var(--node-z-overlay)] rounded-md px-3 py-2 text-xs leading-relaxed" style={{ background: theme.node.panel, color: theme.node.text }}>{node.metadata.outputParameterWarning}</div> : null}
             <div className={`absolute inset-0 ${presentation.showPoster ? "opacity-100" : "opacity-0"}`}>
                 <InactiveVideoPreview node={node} theme={theme} onPlay={() => onMediaPlayRequest?.(node.id)} hoverEnabled={!mediaActive} showPlayButton={!mediaActive} />
@@ -542,7 +545,7 @@ function VideoNodeContent({ node, theme, mediaActive = false, onMediaPlayRequest
             {playbackError ? <div role="status" className="absolute inset-0 z-[var(--node-z-overlay)] grid place-items-center bg-black/80 px-4 text-center text-xs text-white/80">视频已导入，当前无法播放预览。原文件仍可下载和使用。</div> : null}
             {mediaActive && url ? (
                 <div className={`absolute ${presentation.showVideo ? "opacity-100" : "pointer-events-none opacity-0"}`} style={{ width: fitWidth, height: Math.round(fitHeight) }}>
-                    <VideoPlayer src={url} mimeType={compatible ? "video/mp4" : node.metadata?.mimeType} title={node.title || "视频"} hasAudio={inferVideoHasAudio(node.metadata)} autoPlay preload="metadata" brandColor={theme.accent.primary} className="h-full w-full rounded-[var(--node-radius)] bg-black" dataCanvasNoZoom compactControls onFirstFramePresented={() => setFirstFramePresented(true)} onError={() => { if (!requestCompatible()) setPlaybackError(true); }} onPlay={() => scheduleResourceBlobCache(node.metadata?.storageKey || "")} />
+                    <VideoPlayer key={retryEpoch} src={url} mimeType={compatible ? "video/mp4" : node.metadata?.mimeType} title={node.title || "视频"} hasAudio={inferVideoHasAudio(node.metadata)} autoPlay preload="metadata" brandColor={theme.accent.primary} className="h-full w-full rounded-[var(--node-radius)] bg-black" dataCanvasNoZoom compactControls onFirstFramePresented={() => setFirstFramePresented(true)} onError={() => { if (!requestCompatible()) setPlaybackError(true); }} onPlay={() => scheduleResourceBlobCache(node.metadata?.storageKey || "")} />
                     {activeEntry && activeEntry.text.trim() ? <CanvasSubtitleOverlay text={activeEntry.text} highlight={activeHighlight} style={subtitleStyle} /> : null}
                 </div>
             ) : null}
@@ -706,7 +709,7 @@ function useVideoPlaybackUrl(node: CanvasNodeData, active: boolean) {
         setNeedsCompatible(true);
         return true;
     };
-    return { url, loading, error, compatible, requestCompatible, retry: () => setRetryEpoch((value) => value + 1) };
+    return { url, loading, error, compatible, requestCompatible, retryEpoch, retry: () => setRetryEpoch((value) => value + 1) };
 }
 
 function InactiveMediaCard({ icon, title, hint, theme }: { icon: ReactNode; title: string; hint: string; theme: CanvasTheme }) {

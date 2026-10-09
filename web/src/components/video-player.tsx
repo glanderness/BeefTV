@@ -141,7 +141,9 @@ export function VideoPlayer({
         // access consistent when an audio-track probe resolves asynchronously.
         const muteButton = player.querySelector<HTMLButtonElement>(".vds-mute-button");
         if (muteButton) {
-            muteButton.disabled = noAudio;
+            // Vidstack may render a custom element whose disabled property is
+            // a reactive accessor. An attribute also works for native buttons.
+            muteButton.toggleAttribute("disabled", noAudio);
             muteButton.setAttribute("aria-disabled", String(noAudio));
         }
         const volumeSlider = player.querySelector<HTMLElement>(".vds-volume-slider");

@@ -39,7 +39,8 @@ func (s *Service) OpenResourcePlaybackRange(userID string, resourceID string) (*
 	return s.playbackRuntime().OpenRange(userID, resourceID)
 }
 
-// BackfillPlaybackTranscodes uses the same runtime instance as ready callbacks.
+// BackfillPlaybackTranscodes recovers interrupted claims without eagerly
+// converting the library. The browser requests a copy only when needed.
 func (s *Service) BackfillPlaybackTranscodes() {
 	logPlaybackBackfill(s.playbackRuntime().Recover())
 }

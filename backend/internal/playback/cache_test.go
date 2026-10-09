@@ -70,6 +70,25 @@ func TestClearCachePreservesOriginalOtherUserAndInFlight(t *testing.T) {
 
 type asyncTestRunner struct{ wg sync.WaitGroup }
 
+func TestClearCacheRejectsAnotherResourcesCopyKey(t *testing.T) {
+	store := &cacheTestStore{}
+	root := t.TempDir()
+	path := filepath.Join(root, "playback", "other.mp4")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("other user's preview"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store.put(model.Resource{ID: "mine", UserID: "one", Status: model.ResourceStatusReady, Kind: "video", Provider: "local", PlaybackStatus: model.PlaybackStatusReady, PlaybackObjectKey: "other.mp4"})
+	if _, err := New(Deps{DataDir: root, Store: store}).ClearCache("one"); err == nil {
+		t.Fatal("foreign key accepted")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal("foreign preview removed", err)
+	}
+}
+
 func (r *asyncTestRunner) Go(fn func(context.Context)) bool {
 	r.wg.Add(1)
 	go func() { defer r.wg.Done(); fn(context.Background()) }()

@@ -27,6 +27,10 @@ func (s *Service) ClearCache(userID string) (int, error) {
 	cleared := 0
 	for _, row := range rows {
 		if row.PlaybackObjectKey != "" {
+			key, err := copyObjectKey(row.ID)
+			if err != nil || key != row.PlaybackObjectKey {
+				return cleared, fmt.Errorf("视频预览缓存记录无效，无法清理")
+			}
 			path, err := s.copyPath(row.PlaybackObjectKey)
 			if err != nil {
 				return cleared, err
