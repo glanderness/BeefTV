@@ -2,34 +2,39 @@
     display: flex;
     min-width: 0;
     align-items: center;
+    gap: 8px;
+}
+
+.app-workspace-sidebar-contact-row {
+    display: flex;
+    min-height: 36px;
+    align-items: center;
+    justify-content: flex-end;
     gap: 4px;
+    margin-bottom: 4px;
+}
+
+.app-workspace-sidebar-contact-row.is-collapsed {
+    justify-content: center;
 }
 
 .app-workspace-sidebar-utility-row.is-collapsed {
     flex-direction: column;
 }
 
-.app-workspace-sidebar-utility-row:not(.is-collapsed) .app-workspace-update:not(.has-status) {
-    flex: 0 1 auto;
-}
-
 .app-workspace-social-links {
     display: flex;
     flex: none;
     align-items: center;
-    gap: 4px;
+    gap: 8px;
 }
 
-.app-workspace-sidebar-utility-row:not(.is-collapsed) .app-workspace-social-links {
-    margin-left: auto;
-}
-
-.app-workspace-sidebar-utility-row.is-collapsed .app-workspace-social-links {
+.app-workspace-sidebar-contact-row.is-collapsed .app-workspace-social-links {
     flex-direction: column;
 }
 
 .app-workspace-sidebar-utility-row:not(.is-collapsed) > .app-workspace-theme-action {
-    margin-left: 8px;
+    margin-left: 0;
 }
 
 .app-workspace-update {
@@ -37,7 +42,7 @@
     min-width: 0;
     flex: 1;
     align-items: center;
-    gap: 4px;
+    gap: 8px;
 }
 
 .app-workspace-update.is-collapsed {
@@ -87,8 +92,8 @@
 .app-workspace-social-action,
 .app-workspace-theme-action {
     display: inline-flex;
-    width: 36px;
-    height: 36px;
+    width: 32px;
+    height: 32px;
     flex: none;
     align-items: center;
     justify-content: center;
@@ -105,10 +110,46 @@
     height: 16px;
 }
 
+.app-workspace-github-tooltip .ant-tooltip-inner {
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 7px 10px;
+    background: var(--popover);
+    box-shadow: var(--elevation-overlay);
+}
+
+.app-workspace-github-tooltip .ant-tooltip-arrow::before {
+    background: var(--popover);
+}
+
+.app-workspace-github-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--user-ink, var(--foreground));
+    font-size: var(--fs-caption);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.app-workspace-github-hint svg {
+    width: 13px;
+    height: 13px;
+    flex: none;
+    fill: currentColor;
+}
+
 .app-workspace-wechat-popover .ant-popover-inner {
     padding: 8px;
     border-radius: 12px;
     background: #fff;
+}
+
+.app-workspace-donation-popover .ant-popover-container {
+    padding: 12px;
+    border-radius: var(--r-lg);
+    background: var(--popover);
+    color: var(--foreground);
 }
 
 .app-workspace-wechat-popover .ant-popover-inner-content img {
@@ -117,7 +158,28 @@
     height: 180px;
 }
 
-.app-workspace-update-action:not(.is-busy) {
+.app-workspace-donation-content {
+    width: 328px;
+    max-width: calc(100vw - 40px);
+    text-align: center;
+}
+
+.app-workspace-donation-content p {
+    margin: 4px 0 12px;
+    color: var(--foreground);
+    font-size: 14px;
+    line-height: 22px;
+}
+
+.app-workspace-donation-content img {
+    display: block;
+    width: 220px;
+    max-width: 100%;
+    height: auto;
+    margin: 0 auto;
+}
+
+.app-workspace-update-action.has-update:not(.is-busy) {
     color: var(--user-accent, var(--primary));
 }
 

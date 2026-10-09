@@ -25,6 +25,7 @@ export function useDesktopUpdate(controller: DesktopUpdateController = getShared
         persistBusy: snapshot.persistBusy,
         actionBusy: snapshot.actionBusy,
         runtime: snapshot.runtime,
+        check: controller.check,
         download: controller.download,
         install: controller.install,
         downloadAndInstall: controller.downloadAndInstall,

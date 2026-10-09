@@ -72,24 +72,14 @@ export function CanvasAssistantComposer({
             onDrop={event => { if (onFiles && !disabled && event.dataTransfer.files.length) { event.preventDefault(); event.stopPropagation(); onFiles([...event.dataTransfer.files]); } }}
             onPasteCapture={event => { const files = [...event.clipboardData.files]; if (onFiles && !disabled && files.length) { event.preventDefault(); event.stopPropagation(); onFiles(files); const text = event.clipboardData.getData("text/plain"); if (text) onChange(value + text); } }}>
             <input ref={fileInput} type="file" accept="image/*,video/*,audio/*" multiple hidden aria-label="添加参考素材文件" onChange={event => { onFiles?.([...event.target.files || []]); event.target.value = ""; }} />
-            {onPermissionChange ? <div className="canvas-assistant-meta flex items-start gap-2 px-3 py-1.5">
-                <Select size="small" aria-label="助手权限" value={permissionMode} disabled={disabled || permissionLocked}
-                    style={{ width: 112, flexShrink: 0 }} onChange={onPermissionChange} options={[
-                        { value: "read-only", label: "只读" }, { value: "canvas", label: "当前画布" }, { value: "full-access", label: "完全访问" },
-                    ]} />
-                <span role="status">{permissionLocked ? "这一轮的权限已固定，结束后可更改。" : permissionMode === "read-only" ? "查看和分析，不修改内容。" : permissionMode === "full-access" ? "查看素材，可修改所有画布。" : "查看素材并修改当前画布。"}</span>
-            </div> : null}
-            <div className="canvas-assistant-chips">
-                <span className="canvas-assistant-chip">当前画布</span>
-                {!streaming && selectionAttached && selectedCount > 0 ? (
+            {!streaming && selectionAttached && selectedCount > 0 ? <div className="canvas-assistant-chips">
                     <span className="canvas-assistant-chip">
                         已选 {selectedCount} 个节点
                         <button type="button" aria-label="这条消息不带已选节点" onClick={onDetachSelection}>
                             <X className="size-3" />
                         </button>
                     </span>
-                ) : null}
-            </div>
+            </div> : null}
 
             {inputContent}
 
@@ -111,11 +101,24 @@ export function CanvasAssistantComposer({
 
             {disabled && disabledReason ? <span className="canvas-assistant-meta">{disabledReason}</span> : null}
 
-            <div className="canvas-assistant-composer-footer">
+            <div className="canvas-assistant-composer-tools">
                 {onFiles ? <Tooltip title="添加参考素材"><Button type="text" size="small" aria-label="添加参考素材" disabled={disabled || inputBusy} icon={<Paperclip size={15} />} onClick={() => fileInput.current?.click()} /></Tooltip> : null}
                 {onOpenSkills ? <Tooltip title="选择技能"><Button type="text" size="small" aria-label="选择技能" disabled={disabled} icon={<Sparkles size={15} />} onClick={onOpenSkills} /></Tooltip> : null}
                 {onOpenReferences ? <Button type="text" size="small" disabled={disabled} onClick={onOpenReferences}>画布素材</Button> : null}
+            </div>
+            <div className="canvas-assistant-composer-footer">
+                <div className="canvas-assistant-composer-settings">
                 <CanvasAssistantModelPicker busy={disabled || streaming || Boolean(modelBusy)} />
+                {onPermissionChange ? <Tooltip title={permissionLocked ? "本轮权限已固定，结束后可更改" : "选择助手可访问和修改的范围"}>
+                    <Select className="canvas-assistant-permission" size="small" variant="borderless" aria-label="助手权限" value={permissionMode} disabled={disabled || permissionLocked}
+                        placement="topRight" popupMatchSelectWidth={false} onChange={onPermissionChange} options={[
+                            { value: "read-only", label: "只读", title: "查看和分析，不修改内容" },
+                            { value: "canvas", label: "当前画布", title: "查看素材并修改当前画布" },
+                            { value: "full-access", label: "完全访问", title: "查看素材，可修改所有画布" },
+                        ]} />
+                </Tooltip> : null}
+                </div>
+                <div className="canvas-assistant-composer-actions">
                 {streaming ? (
                     <>
                         <Button size="small" disabled={!canSend} loading={supplementBusy} onClick={onSend}>补充</Button>
@@ -126,6 +129,7 @@ export function CanvasAssistantComposer({
                         <Button className="canvas-assistant-send" shape="circle" type="primary" aria-label="发送" disabled={!canSend} icon={<ArrowUp className="size-4" />} onClick={onSend} />
                     </Tooltip>
                 )}
+                </div>
             </div>
         </footer>
     );

@@ -819,18 +819,7 @@ function nodeTypeIcon(type: CanvasNodeTypeId) {
 
 // 节点状态徽章（对应 #97 决策2：左上角状态指示，loading/success/error）
 function NodeStatusBadge({ status, resultPending }: { status: "loading" | "success" | "error"; resultPending?: boolean }) {
-    if (status === "loading") {
-        return (
-            <div
-                className="pointer-events-none absolute left-2 top-2 z-20 flex items-center gap-1 rounded-full px-2 py-0.5 backdrop-blur-sm"
-                style={{ background: "color-mix(in oklch, var(--status-loading) 20%, transparent)", color: "var(--status-loading)" }}
-                aria-label="生成中"
-            >
-                <span className="size-1.5 animate-pulse rounded-full" style={{ background: "var(--status-loading)" }} />
-                <span className="text-[var(--fs-micro)] font-medium leading-none">生成中</span>
-            </div>
-        );
-    }
+    if (status === "loading") return null;
     if (status === "error") {
         return (
             <div

@@ -105,7 +105,7 @@ export function useCanvasKeyboard({
             if (target?.closest(".canvas-node-toolbar, .canvas-node-toolbar-menu")) return;
             const key = event.key.toLowerCase();
             const isModifierShortcut = event.metaKey || event.ctrlKey;
-            const isTextEditingTarget = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || Boolean(target?.closest("[contenteditable='true']"));
+            const isTextEditingTarget = isTextEditableTarget(event.target) || isTextEditableTarget(document.activeElement);
 
             if (isModifierShortcut && !event.altKey && (key === "+" || key === "=" || event.code === "NumpadAdd")) {
                 event.preventDefault();

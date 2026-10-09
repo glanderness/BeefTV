@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -23,6 +24,9 @@ func runH264Transcode(ctx context.Context, src string, dst string) error {
 	}
 	binary, err := mediatools.ResolveFFmpeg()
 	if err != nil {
+		if runtime.GOOS == "darwin" {
+			return runNativeH264Transcode(ctx, src, dst)
+		}
 		return err
 	}
 	cmd := exec.CommandContext(ctx, binary, "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
@@ -49,6 +53,24 @@ func runH264Transcode(ctx context.Context, src string, dst string) error {
 		return err
 	}
 	return nil
+}
+
+func runNativeH264Transcode(ctx context.Context, src string, dst string) error {
+	output := dst + ".m4v"
+	defer os.Remove(output)
+	cmd := exec.CommandContext(ctx, "avconvert", "--source", src, "--preset", "PresetHighestQuality", "--output", output, "--replace")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("系统视频转换失败：%s", clipText(strings.TrimSpace(stderr.String()), 800))
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return os.Rename(output, dst)
 }
 
 func clipText(s string, max int) string {

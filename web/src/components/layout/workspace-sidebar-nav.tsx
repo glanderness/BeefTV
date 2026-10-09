@@ -303,9 +303,11 @@ export function WorkspaceSidebarNav({ collapsed, onNavigate, onOpenSearch, onExp
                         ))}
                     </div>
                 ) : null}
+                <div className={cn("app-workspace-sidebar-contact-row", collapsed && "is-collapsed")}>
+                    <WorkspaceSidebarSocialLinks />
+                </div>
                 <div className={cn("app-workspace-sidebar-utility-row", collapsed && "is-collapsed")}>
                     <WorkspaceSidebarUpdate collapsed={collapsed} />
-                    <WorkspaceSidebarSocialLinks />
                     <AnimatedThemeToggler theme={theme} onThemeChange={setTheme} aria-label={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"} title={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"} className="app-workspace-theme-action">
                         {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
                     </AnimatedThemeToggler>

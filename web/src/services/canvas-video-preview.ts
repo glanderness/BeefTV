@@ -1,5 +1,5 @@
 import { captureVideoPoster } from "@/lib/video-poster";
-import { resolveMediaUrl } from "@/services/file-storage";
+import { acquireCanvasVideoSource } from "@/services/canvas-video-source";
 import { captureUserScopeEpoch, subscribeUserScope, userScopeEpochMatches } from "@/lib/user-scope";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 
@@ -67,9 +67,14 @@ export function canvasVideoPreviewNeedsHydration(node: CanvasNodeData) {
 async function generateCanvasVideoPreview(node: CanvasNodeData, signal?: AbortSignal): Promise<VideoPreview | null> {
     await waitForBrowserIdle(signal);
     throwIfAborted(signal);
-    const source = await resolveMediaUrl(node.metadata?.storageKey, node.metadata?.content || "");
-    if (!source) return null;
-    const captured = await captureVideoPoster(source, { signal, maxWidth: 400 });
+    const source = await acquireCanvasVideoSource(node.metadata?.storageKey, node.metadata?.content || "", signal);
+    if (!source.url) { source.release(); return null; }
+    let captured: Awaited<ReturnType<typeof captureVideoPoster>>;
+    try {
+        captured = await captureVideoPoster(source.url, { signal, maxWidth: 400 });
+    } finally {
+        source.release();
+    }
     throwIfAborted(signal);
     if (!captured.poster) return null;
     return {

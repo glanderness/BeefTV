@@ -254,6 +254,7 @@ export function CanvasNodeContextMenu({
                                             <MenuButton icon={<Copy />} label="复制节点" shortcut="⌘C" onClick={() => runAction(onCopyNode)} />
                                         </>
                                     )}
+                                    <MenuButton icon={<Trash2 />} label="删除节点" danger onClick={() => runAction(onDelete)} />
                                 </>
                             ) : (
                                 <>

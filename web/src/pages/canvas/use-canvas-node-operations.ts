@@ -19,6 +19,9 @@ import { workflowProviderPluginEnabled } from "@/lib/plugins/builtin/workflows";
 import { usePluginStore } from "@/stores/use-plugin-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import type { DirectorScene } from "@/types/director";
+import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
+import { cancelGenerationTask } from "@/services/api/task-center";
+import { canvasTaskConfirmation } from "./canvas-task-confirmation";
 
 type CanvasClipboard = {
     nodes: CanvasNodeData[];
@@ -63,7 +66,8 @@ export function useCanvasNodeOperations({
     setDialogNodeId,
     onNodesDeleted,
 }: UseCanvasNodeOperationsOptions) {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
+    const deleteConfirmationOpen = useRef(false);
     const effectiveConfig = useEffectiveConfig();
     const runtimeStatuses = usePluginStore((state) => state.runtimeStatuses);
     const clipboardRef = useRef<CanvasClipboard | null>(null);
@@ -365,7 +369,7 @@ export function useCanvasNodeOperations({
         message.success(locked ? "节点已锁定位置和尺寸" : "节点已解锁");
     }, [commitNodes, message, nodesRef]);
 
-    const deleteNodes = useCallback((ids: Set<string>) => {
+    const removeNodes = useCallback((ids: Set<string>) => {
         if (!ids.size) return;
         const previousNodes = nodesRef.current;
         const previousConnections = connectionsRef.current;
@@ -378,6 +382,44 @@ export function useCanvasNodeOperations({
         selectNodes(new Set());
         onNodesDeleted(result.removedIds, nextNodes, removedNodes);
     }, [commitConnections, commitNodes, connectionsRef, nodesRef, onNodesDeleted, selectNodes]);
+
+    const deleteNodes = useCallback((ids: Set<string>) => {
+        if (!ids.size || deleteConfirmationOpen.current) return;
+        const requestedIds = new Set(ids);
+        const removedIds = removeCanvasNodes(nodesRef.current, requestedIds).removedIds;
+        const removedNodes = nodesRef.current.filter((node) => removedIds.has(node.id));
+        const activeBatchItems = removedNodes.flatMap((node) => node.metadata?.generationBatches?.flatMap((batch) =>
+            batch.items.filter((item) => ["waiting", "submitting", "queued", "running"].includes(item.status))) || []);
+        if (!removedNodes.some((node) => isCanvasNodeGenerating(node)) && !activeBatchItems.length) {
+            removeNodes(requestedIds);
+            return;
+        }
+        deleteConfirmationOpen.current = true;
+        modal.confirm({
+            ...canvasTaskConfirmation,
+            title: "删除正在生成的节点？",
+            content: "任务已提交后可能产生费用。",
+            okText: "确认删除",
+            cancelText: "取消",
+            afterClose: () => { deleteConfirmationOpen.current = false; },
+            onOk: async () => {
+                const currentRemovedIds = removeCanvasNodes(nodesRef.current, requestedIds).removedIds;
+                const currentRemovedNodes = nodesRef.current.filter((node) => currentRemovedIds.has(node.id));
+                const taskIds = new Set([
+                    ...currentRemovedNodes.filter((node) => isCanvasNodeGenerating(node)).map((node) => node.metadata?.taskId),
+                    ...currentRemovedNodes.flatMap((node) => node.metadata?.generationBatches?.flatMap((batch) =>
+                        batch.items.filter((item) => ["submitting", "queued", "running"].includes(item.status)).map((item) => item.taskId)) || []),
+                ].filter((id): id is string => Boolean(id)));
+                // Start cancellation before removing nodes; failures must not block deletion.
+                const cancellations = [...taskIds].map((id) => cancelGenerationTask(id));
+                removeNodes(requestedIds);
+                const results = await Promise.allSettled(cancellations);
+                if (results.some((result) => result.status === "rejected")) {
+                    message.warning("节点已删除，未能取消的任务将继续运行。");
+                }
+            },
+        });
+    }, [message, modal, nodesRef, removeNodes]);
 
     const deleteConnection = useCallback((connectionId: string) => {
         const previousNodes = nodesRef.current;

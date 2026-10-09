@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 
 	"infinite-canvas/backend/internal/assets"
@@ -103,8 +104,14 @@ func (s *Service) maybeStart(resource *model.Resource) {
 		return
 	}
 	if _, err := s.lookPath("ffmpeg"); err != nil {
-		markNone(s.store, resource.ID, resource.PlaybackStatus)
-		return
+		if runtime.GOOS != "darwin" {
+			markNone(s.store, resource.ID, resource.PlaybackStatus)
+			return
+		}
+		if _, nativeErr := s.lookPath("avconvert"); nativeErr != nil {
+			markNone(s.store, resource.ID, resource.PlaybackStatus)
+			return
+		}
 	}
 	src, err := s.sourcePath(resource.ObjectKey)
 	if err != nil {
