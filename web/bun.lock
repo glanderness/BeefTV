@@ -86,6 +86,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "@vidstack/react@1.15.6": "patches/@vidstack%2Freact@1.15.6.patch",
+  },
   "overrides": {
     "@babel/core": "7.29.7",
     "@tiptap/core": "3.28.0",

@@ -437,6 +437,8 @@ if ($copied.Count -eq 0) {
 
 Invoke-NativeExecutable -FilePath "bun" -ArgumentList @((Join-Path $repoRoot "scripts\package-agent-host.mjs"), "windows/amd64", (Join-Path $binDir "agent-host")) -FailureMessage "Agent host packaging failed" | Out-Null
 
+& (Join-Path $repoRoot "scripts\package-media-runtime-windows.ps1") -Destination (Join-Path $binDir "media-runtime")
+
 # The beeftv CLI ships with the app. External agents (Codex, Claude Code,
 # Cursor) connect through it with their own client credential, so the installed
 # app must carry it; it is not expected on the user PATH.

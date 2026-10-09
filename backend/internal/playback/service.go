@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"infinite-canvas/backend/internal/assets"
+	"infinite-canvas/backend/internal/mediatools"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -26,12 +26,14 @@ type Service struct {
 	recoveryErr    error
 	lookPath       func(file string) (string, error)
 	transcode      func(ctx context.Context, src string, dst string) error
+	slots          chan struct{}
+	cacheMu        sync.Mutex
 }
 
 func New(deps Deps) *Service {
 	lookPath := deps.LookPath
 	if lookPath == nil {
-		lookPath = exec.LookPath
+		lookPath = func(string) (string, error) { return mediatools.ResolveFFmpeg() }
 	}
 	transcode := deps.Transcode
 	if transcode == nil {
@@ -49,6 +51,7 @@ func New(deps Deps) *Service {
 		runtimeContext: deps.RuntimeContext,
 		lookPath:       lookPath,
 		transcode:      transcode,
+		slots:          make(chan struct{}, 1),
 	}
 }
 
@@ -78,6 +81,8 @@ func (s *Service) MaybeStart(resource *model.Resource) {
 	if s == nil || resource == nil || resource.Kind != "video" {
 		return
 	}
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
 	if s.runContext(nil).Err() != nil {
 		return
 	}
@@ -133,6 +138,13 @@ func (s *Service) launch(resourceID, src string) {
 
 func (s *Service) runTranscode(ctx context.Context, resourceID string, src string) {
 	ctx = s.runContext(ctx)
+	select {
+	case s.slots <- struct{}{}:
+		defer func() { <-s.slots }()
+	case <-ctx.Done():
+		releaseClaim(s.store, resourceID)
+		return
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			if ctx.Err() != nil {

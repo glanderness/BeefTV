@@ -200,7 +200,7 @@ func TestBackfillResetsStuckProcessingThroughService(t *testing.T) {
 	if err := db.First(&got, "id = ?", "stuck-claim").Error; err != nil {
 		t.Fatal(err)
 	}
-	if got.PlaybackStatus != model.PlaybackStatusNone {
-		t.Fatalf("stuck claim after backfill = %q, want none", got.PlaybackStatus)
+	if got.PlaybackStatus != "" {
+		t.Fatalf("stuck claim after recovery = %q, want pending until playback requested", got.PlaybackStatus)
 	}
 }

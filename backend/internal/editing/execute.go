@@ -3,6 +3,7 @@ package editing
 import (
 	"context"
 	"fmt"
+	"infinite-canvas/backend/internal/mediatools"
 	"io"
 	"os"
 	"os/exec"
@@ -98,6 +99,7 @@ func (r *Renderer) Render(ctx context.Context, plan *Plan, progress Progress) (R
 		return fail(err)
 	}
 	cmd := exec.CommandContext(ctx, ffmpegBin, args...)
+	mediatools.HideConsole(cmd)
 	cmd.Dir = workDir
 	log := &ffmpegLogTail{max: ffmpegLogTailMax}
 	cmd.Stdout = log

@@ -30,6 +30,14 @@ type playbackStore struct {
 	repo *repository.Repository
 }
 
+func (s playbackStore) PlaybackCopiesForUser(userID string) ([]model.Resource, error) {
+	return s.repo.PlaybackCopiesForUser(userID)
+}
+
+func (s playbackStore) ResetPlaybackCopy(userID, id, objectKey string) error {
+	return s.repo.ResetPlaybackCopy(userID, id, objectKey)
+}
+
 func (s playbackStore) ResourceForUser(userID, id string) (*model.Resource, error) {
 	if s.repo == nil {
 		return nil, nil

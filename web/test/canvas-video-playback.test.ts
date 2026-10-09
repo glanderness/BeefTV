@@ -36,6 +36,18 @@ test("兼容副本失败保留原文件地址并返回可读错误，不下载�
         requests++;
         return { data: { code: 0, data: { resource: { id: "hevc-failed", playbackStatus: "failed" } } }, status: 200, statusText: "OK", headers: {}, config };
     };
-    await expect(resolveCanvasVideoPlayback("resource:hevc-failed", "original", new AbortController().signal)).rejects.toThrow("视频已导入");
-    expect(requests).toBe(1);
+    await expect(resolveCanvasVideoPlayback("resource:hevc-failed", "original", new AbortController().signal, true)).rejects.toThrow("视频已导入");
+    expect(requests).toBe(2);
+});
+
+test("浏览器解码失败后才申请兼容预览", async () => {
+    const urls: string[] = [];
+    const compatible = new Blob(["H264"], { type: "video/mp4" });
+    apiClient.defaults.adapter = async (config) => {
+        urls.push(config.url!);
+        const resource = { id: "hevc-demand", playbackStatus: config.method === "post" ? "ready" : "none" };
+        return { data: config.url!.includes("/file") ? compatible : { code: 0, data: { resource } }, status: 200, statusText: "OK", headers: {}, config };
+    };
+    expect(await resolveCanvasVideoPlayback("resource:hevc-demand", "original", new AbortController().signal, true)).toBe(compatible);
+    expect(urls).toEqual(["/resources/hevc-demand", "/resources/hevc-demand/playback", "/resources/hevc-demand/file?variant=playback&proxy=1"]);
 });

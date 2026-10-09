@@ -36,6 +36,7 @@ Wails / local dev
 | Seedance 参考素材预上传 | `backend/internal/app/beefapi_seedance_preupload.go` | 仅内置 BeefAPI Seedance：本机后端把参考图片/视频/音频换成短期 HTTPS 链接后再提交 `/v1/videos`；本机文件在上传完成前保持本地引用 |
 | 数据 | `backend/internal/database`, `repository` | SQLite schema、迁移和持久化 |
 | 剪辑语义计划 | `backend/internal/editing` | 版本化时间线渲染计划：选择、顺序、空隙、裁剪、音量、字幕与输出宽高/帧率/采样率。不依赖 `internal/app`，不接受本地路径或 ffmpeg 参数 |
+| 视频预览与工具 | `backend/internal/playback`、`backend/internal/mediatools` | 按需 H.264 预览、单任务转码、用户预览缓存清理；播放和剪辑共用随包 FFmpeg 解析，显式路径优先于随包工具，最后查 PATH |
 | HTTP | `backend/internal/handler` | 本地 `/api` 合同、输入限制和响应封装 |
 | 企业连接 | `backend/internal/beefapi` | 设备授权、本机密钥和连接状态 |
 | 本机 MCP | `backend/cmd/beeftv` | `beeftv mcp serve` 使用官方 MCP SDK，经 `/api/ops` 访问本机工作区 |
