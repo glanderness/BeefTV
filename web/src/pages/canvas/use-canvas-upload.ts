@@ -269,8 +269,15 @@ export function useCanvasUpload({
                 progress.done("上传完成，画布占位已移除");
                 return null;
             }
+            const videoSize = placeholder.type === CanvasNodeType.Video && metadata.naturalWidth && metadata.naturalHeight
+                ? fitNodeSize(metadata.naturalWidth, metadata.naturalHeight)
+                : null;
             const node: CanvasNodeData = {
                 ...currentNode, type: placeholder.type,
+                ...(videoSize ? { ...videoSize, position: {
+                    x: currentNode.position.x + (currentNode.width - videoSize.width) / 2,
+                    y: currentNode.position.y + (currentNode.height - videoSize.height) / 2,
+                } } : {}),
                 metadata: mediaResultMetadata("upload", {
                     ...currentNode.metadata, ...metadata,
                     fileUpload: undefined, fileUploadProgress: undefined, errorDetails: undefined,
@@ -287,7 +294,7 @@ export function useCanvasUpload({
                     } : {}),
                 }),
             };
-            setNodes((current) => current.map((item) => item.id === id ? { ...item, type: node.type, metadata: node.metadata } : item));
+            setNodes((current) => current.map((item) => item.id === id ? { ...item, type: node.type, width: node.width, height: node.height, position: node.position, metadata: node.metadata } : item));
             if (domainProjectId) progress.update("写入项目资产", 4);
             const persisted = await persistMediaNode(node, guard.expectedScope, guard.signal);
             if (!guard.alive()) return null;

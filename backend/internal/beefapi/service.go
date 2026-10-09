@@ -66,9 +66,6 @@ func New(opts Options) (*Service, error) {
 		return nil, errors.New("本地工作区数据目录不能为空")
 	}
 	httpClient := opts.HTTPClient
-	if httpClient == nil {
-		httpClient = defaultHTTPClient()
-	}
 	openURL := opts.OpenURL
 	if openURL == nil {
 		openURL = browser.OpenURL
@@ -97,12 +94,22 @@ func New(opts Options) (*Service, error) {
 		state = persistedState{SchemaVersion: connectionSchema, Status: StateStoreError, LastError: "读取已保存的连接失败", Balance: BalanceUnknown}
 	}
 	lifecycle, shutdown := context.WithCancel(context.Background())
-	return &Service{
+	svc := &Service{
 		dataDir: dataDir, origin: origin, httpClient: httpClient, openURL: openURL,
 		now: now, sleep: sleep, provider: opts.Provider, clientVersion: clientVersion,
 		hostname: hostname, fetchCatalog: opts.FetchCatalog, persistFn: opts.Persist, state: state,
 		lifecycle: lifecycle, shutdown: shutdown,
-	}, nil
+	}
+	if svc.httpClient == nil {
+		svc.httpClient = defaultHTTPClient(func() {
+			svc.mu.Lock()
+			defer svc.mu.Unlock()
+			if !svc.closed && svc.state.Status == StateConnecting {
+				svc.state.LastError = "正在尝试其他连接方式"
+			}
+		})
+	}
+	return svc, nil
 }
 
 func (s *Service) persistState(state persistedState) error {
@@ -274,6 +281,11 @@ func (s *Service) Start(ctx context.Context) (Summary, error) {
 		s.mu.Unlock()
 		return Summary{}, errors.New("企业连接服务已关闭")
 	}
+	if s.state.Status == StateConnecting {
+		summary := s.summaryLocked()
+		s.mu.Unlock()
+		return summary, nil
+	}
 	if s.needsFinalizeLocked() {
 		s.mu.Unlock()
 		if err := s.finalizeSavedCredential(ctx, ""); err == nil {
@@ -304,6 +316,8 @@ func (s *Service) Start(ctx context.Context) (Summary, error) {
 	}
 	s.state.AuthorizationOrigin = s.origin
 	s.state.ProviderBaseURL = ""
+	s.state.Status = StateConnecting
+	s.state.LastError = "正在连接 BeefTV"
 	s.mu.Unlock()
 
 	device, err := s.requestDeviceCode()
@@ -311,7 +325,7 @@ func (s *Service) Start(ctx context.Context) (Summary, error) {
 		return s.Status(), s.lifecycle.Err()
 	}
 	if err != nil {
-		s.setError(StateStoreError, err.Error())
+		s.setError(StateConnectionError, err.Error())
 		return s.Status(), err
 	}
 	expiresAt := s.now().Add(time.Duration(device.ExpiresIn) * time.Second).UTC().Format(time.RFC3339Nano)
@@ -506,6 +520,7 @@ func (s *Service) pollLoop(ctx context.Context, deviceCode string, interval time
 			return
 		}
 		if err != nil {
+			s.updatePollMessage(deviceCode, "连接中断，正在重试")
 			if !s.pause(ctx, interval) {
 				return
 			}
@@ -524,6 +539,7 @@ func (s *Service) pollLoop(ctx context.Context, deviceCode string, interval time
 			}
 			return
 		case "authorization_pending":
+			s.updatePollMessage(deviceCode, "")
 			if !s.pause(ctx, interval) {
 				return
 			}
@@ -539,10 +555,19 @@ func (s *Service) pollLoop(ctx context.Context, deviceCode string, interval time
 			s.setError(StateRejected, "授权被拒绝")
 			return
 		default:
+			s.updatePollMessage(deviceCode, "授权状态读取失败，正在重试")
 			if !s.pause(ctx, interval) {
 				return
 			}
 		}
+	}
+}
+
+func (s *Service) updatePollMessage(deviceCode, message string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.closed && s.state.Status == StatePending && s.state.Device != nil && s.state.Device.DeviceCode == deviceCode {
+		s.state.LastError = message
 	}
 }
 
@@ -626,6 +651,10 @@ func (s *Service) finalizeSavedCredential(ctx context.Context, previousAccountID
 			s.markDoomedCredential(StateExpired, "授权已过期，请重新连接")
 			return errAckExpired
 		}
+		s.mu.Lock()
+		s.state.Status = StatePending
+		s.state.LastError = "正在完成连接确认"
+		s.mu.Unlock()
 		if err := s.acknowledgeWithRetry(deviceCode); err != nil {
 			if s.lifecycle.Err() != nil {
 				return s.lifecycle.Err()
@@ -752,10 +781,10 @@ func (s *Service) noteAckFailure(err error) {
 	default:
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		s.state.Status = StatePending
+		s.state.Status = StateConnectionError
 		s.state.Acked = false
 		s.state.CatalogOK = false
-		s.state.LastError = "正在完成连接确认"
+		s.state.LastError = "连接确认失败，请重试"
 		if persistErr := s.persistState(s.state); persistErr != nil {
 			s.state.Status = StateStoreError
 			s.state.LastError = "保存连接失败，请重试"

@@ -20,12 +20,20 @@ type systemProxySettings struct {
 // on each request so retry also works after the user changes their proxy.
 func Proxy(req *http.Request) (*url.URL, error) {
 	config := httpproxy.FromEnvironment()
-	for _, name := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"} {
-		if _, explicit := os.LookupEnv(name); explicit {
-			return config.ProxyFunc()(req.URL)
-		}
+	if ExplicitProxyConfigured() {
+		return config.ProxyFunc()(req.URL)
 	}
 	return proxyWithSystem(req.URL, *config, readSystemProxy())
+}
+
+// Explicit environment configuration must never be bypassed automatically.
+func ExplicitProxyConfigured() bool {
+	for _, name := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"} {
+		if _, explicit := os.LookupEnv(name); explicit {
+			return true
+		}
+	}
+	return false
 }
 
 func proxyWithSystem(target *url.URL, env httpproxy.Config, system systemProxySettings) (*url.URL, error) {

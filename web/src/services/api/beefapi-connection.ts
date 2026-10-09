@@ -12,7 +12,7 @@ export type BeefAPIAccount = {
     email?: string;
 };
 
-export type BeefAPIConnectionState = "disconnected" | "pending" | "connected" | "expired" | "cancelled" | "rejected" | "store_error" | "catalog_failed" | "revoked";
+export type BeefAPIConnectionState = "disconnected" | "connecting" | "connection_error" | "pending" | "connected" | "expired" | "cancelled" | "rejected" | "store_error" | "catalog_failed" | "revoked";
 
 export type BeefAPIConnectionSummary = {
     state: BeefAPIConnectionState | string;
@@ -38,7 +38,8 @@ export function getBeefAPIConnection(signal?: AbortSignal) {
 
 export function startBeefAPIConnection(signal?: AbortSignal) {
     connectionEpoch++;
-    return http.post<BeefAPIConnectionSummary>("/beefapi/connection/start", {}, { signal });
+    // Authorization may need a proxy handshake and one safe direct attempt.
+    return http.post<BeefAPIConnectionSummary>("/beefapi/connection/start", {}, { signal, timeout: 35_000 });
 }
 
 export function cancelBeefAPIConnection(signal?: AbortSignal) {
@@ -58,8 +59,12 @@ export function openBeefAPIWallet(signal?: AbortSignal) {
 export function beefAPIConnectionLabel(summary: BeefAPIConnectionSummary | null | undefined) {
     const state = summary?.state || "disconnected";
     switch (state) {
+        case "connecting":
+            return summary?.errorReason || "正在连接 BeefTV";
+        case "connection_error":
+            return summary?.errorReason || "无法连接 BeefTV 服务，请检查网络后重试";
         case "pending":
-            return summary?.userCode ? `请在浏览器中确认 ${summary.userCode}` : "请在浏览器中确认授权";
+            return summary?.errorReason || (summary?.userCode ? `请在浏览器中确认 ${summary.userCode}` : "请在浏览器中确认授权");
         case "connected":
             return connectedAccountLabel(summary);
         case "expired":

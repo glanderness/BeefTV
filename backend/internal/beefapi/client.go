@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 )
 
 type deviceCodeRequest struct {
@@ -109,10 +108,16 @@ func (s *Service) requestDeviceCode() (deviceCodeResponse, error) {
 		Hostname:      s.hostname,
 	}, nil)
 	if err != nil {
-		return deviceCodeResponse{}, fmt.Errorf("无法开始企业授权")
+		return deviceCodeResponse{}, fmt.Errorf("无法连接 BeefTV 服务，请检查网络后重试")
 	}
 	if response.StatusCode >= 300 {
-		return deviceCodeResponse{}, fmt.Errorf("无法开始企业授权")
+		if response.StatusCode == http.StatusTooManyRequests {
+			return deviceCodeResponse{}, fmt.Errorf("连接尝试过于频繁，请稍后重试")
+		}
+		if response.StatusCode >= 500 {
+			return deviceCodeResponse{}, fmt.Errorf("BeefTV 连接服务暂时不可用，请稍后重试")
+		}
+		return deviceCodeResponse{}, fmt.Errorf("BeefTV 服务未接受连接，请更新应用后重试")
 	}
 	var result deviceCodeResponse
 	if err := json.Unmarshal(raw, &result); err != nil || strings.TrimSpace(result.DeviceCode) == "" || strings.TrimSpace(result.UserCode) == "" {
@@ -344,10 +349,6 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func defaultHTTPClient() *http.Client {
-	return &http.Client{Timeout: 20 * time.Second}
 }
 
 func validateTokenSuccess(origin string, token tokenSuccess) (accountID, tokenID string, err error) {
