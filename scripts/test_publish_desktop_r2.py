@@ -113,10 +113,10 @@ class PublicationTests(unittest.TestCase):
         manifest = self.manifest()
         self.publisher.stage(manifest, self.root)
         self.assertNotIn(release.LATEST, self.store.objects)
-        self.assertEqual(len(self.store.writes), 4)
+        self.assertEqual(len(self.store.writes), len(release.PLATFORMS) + 1)
         self.assertTrue(all(agent == "BeefTV-Desktop-Updater/v1.5.7" for _, agent in self.public_requests))
         self.publisher.stage(manifest, self.root)
-        self.assertEqual(len(self.store.writes), 4)
+        self.assertEqual(len(self.store.writes), len(release.PLATFORMS) + 1)
         self.assertEqual(self.verify_command.call_args.args[0], ["/tmp/update-release", "verify", "--envelope", str(manifest)])
 
     def test_public_readback_uses_updater_user_agent_instead_of_urllib_default(self):
@@ -131,7 +131,7 @@ class PublicationTests(unittest.TestCase):
 
     def test_incomplete_platform_set_cannot_activate(self):
         manifest = self.manifest(omit="windows-amd64")
-        with self.assertRaisesRegex(release.PublishError, "three"):
+        with self.assertRaisesRegex(release.PublishError, "four"):
             self.publisher.activate(manifest)
         self.assertFalse(self.store.writes)
 

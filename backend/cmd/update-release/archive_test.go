@@ -151,7 +151,7 @@ func TestPackageWindowsLayout(t *testing.T) {
 func TestPackageRejectsInvalidInputs(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "out.zip")
-	if err := run([]string{"package", "--platform", "linux-amd64", "--input", dir, "--output", out}, ioDiscard{}, ioDiscard{}); err == nil {
+	if err := run([]string{"package", "--platform", "linux-arm64", "--input", dir, "--output", out}, ioDiscard{}, ioDiscard{}); err == nil {
 		t.Fatal("expected unknown platform to fail")
 	}
 	if err := run([]string{"package", "--platform", "windows-amd64", "--input", dir, "--output", out}, ioDiscard{}, ioDiscard{}); err == nil {

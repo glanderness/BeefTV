@@ -79,6 +79,10 @@ func BundledConfig(executable, goos string) HostConfig {
 	}
 	root := filepath.Join(filepath.Dir(executable), "..", "Resources", "agent-host")
 	node := filepath.Join(root, "runtime", "bin", "node")
+	if goos == "linux" {
+		root = filepath.Join(filepath.Dir(executable), "agent-host")
+		node = filepath.Join(root, "runtime", "bin", "node")
+	}
 	if goos == "windows" {
 		root = filepath.Join(filepath.Dir(executable), "agent-host")
 		node = filepath.Join(root, "runtime", "node.exe")

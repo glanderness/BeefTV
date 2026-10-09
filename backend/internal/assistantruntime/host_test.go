@@ -111,12 +111,17 @@ func TestStartIsNoopWithoutConfig(t *testing.T) {
 // 打包布局：能从 Contents/MacOS/<exe> 推导出 Contents/Resources/agent-host，
 // 不需要用户配置任何开发路径。
 func TestBundledAgentHostCommandFollowsAppLayout(t *testing.T) {
-	for _, goos := range []string{"darwin", "windows"} {
+	for _, goos := range []string{"darwin", "windows", "linux"} {
 		t.Run(goos, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "Program Files", "BeefTV")
 			executable := filepath.Join(root, "Contents", "MacOS", "BeefTV")
 			hostDir := filepath.Join(root, "Contents", "Resources", "agent-host")
 			node := filepath.Join(hostDir, "runtime", "bin", "node")
+			if goos == "linux" {
+				executable = filepath.Join(root, "BeefTV")
+				hostDir = filepath.Join(root, "agent-host")
+				node = filepath.Join(hostDir, "runtime", "bin", "node")
+			}
 			if goos == "windows" {
 				executable = filepath.Join(root, "BeefTV.exe")
 				hostDir = filepath.Join(root, "agent-host")

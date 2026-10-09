@@ -195,15 +195,17 @@ export BEEFTV_UPDATER_PUBLIC_KEY="$(tr -d '[:space:]' < /path/to/beeftv-updater.
 BeefTV-vX.Y.Z-darwin-arm64.zip
 BeefTV-vX.Y.Z-darwin-amd64.zip
 BeefTV-vX.Y.Z-windows-amd64.zip
+BeefTV-vX.Y.Z-linux-amd64.zip
 desktop-update.json
 ```
 
-Actions 中的 `desktop-*` 临时安装包保留 7 天，用于发布任务之间传递文件及短期排查。正式 GitHub Release 和 Cloudflare R2 下载文件不受此期限影响。清理历史临时包前，应确认对应发布任务成功，且正式 Release 中的三平台安装包和更新清单齐全；未确认发布成功的包和升级验证报告保留。
+Actions 中的 `desktop-*` 临时安装包保留 7 天，用于发布任务之间传递文件及短期排查。正式 GitHub Release 和 Cloudflare R2 下载文件不受此期限影响。清理历史临时包前，应确认对应发布任务成功，且对应版本的平台安装包和更新清单齐全；未确认发布成功的包和升级验证报告保留。
 
 zip 里的布局：
 
 - macOS：`BeefTV.app/...`，保留可执行权限；内部安全符号链接会被解成普通文件，不会写成 zip 符号链接项。
 - Windows：根目录的 `BeefTV.exe` 和 `plugin-packages/*.beeftv-plugin`。
+- Linux x64：`BeefTV-linux/` 内包含 `BeefTV`、`cli/beeftv`、`agent-host/` 和 `plugin-packages/`。在 Ubuntu 24.04 原生构建，使用 GTK3 和 WebKitGTK 4.1；安装依赖和启动方法见 [Linux 安装说明](linux-install.md)。更新和回滚替换整个程序目录，用户数据留在配置目录。
 
 从 v1.5.7 起，更新清单和安装包托管在 Cloudflare R2：
 
@@ -211,7 +213,9 @@ zip 里的布局：
 https://updates.beefapi.com/beeftv/desktop-update.json
 ```
 
-流水线先建 draft，三个平台构建任务把包保存为 Actions 产物。收齐后生成签名清单，先将版本包和版本清单写入 R2 不可变路径并从公开域名读回校验。之后发布 GitHub Release，最后原子替换 CF 的最新清单。失败或缺包不会激活 CF 更新源。GitHub 同时保留同一份签名清单，供旧客户端迁移。
+流水线先建 draft，四个平台构建任务把包保存为 Actions 产物。收齐后生成签名清单，先将版本包和版本清单写入 R2 不可变路径并从公开域名读回校验。之后发布 GitHub Release，最后原子替换 CF 的最新清单。失败或缺包不会激活 CF 更新源。GitHub 同时保留同一份签名清单，供旧客户端迁移。
+
+Linux 发布任务会从最终 ZIP 解压执行随包 CLI，并在 Xvfb 中启动桌面程序，确认本地后端和可见窗口。PR 的 `Linux desktop package checks` 提前执行同一构建与启动检查，不发布版本，也不调用付费模型。
 
 v1.5.6 及以前的更新器仍内置 GitHub 清单地址。如果旧客户端无法连接 GitHub，需要先手动安装 v1.5.7 或更高版本；远端清单无法改写尚未更新的程序。完成这一次迁移后，检查及下载更新均使用 CF 地址。
 
@@ -237,7 +241,7 @@ v1.5.6 及以前的更新器仍内置 GitHub 清单地址。如果旧客户端�
 - 缺少密钥或公私钥不匹配
 - 标签或 Release 已经存在（包括 draft）
 - 新版本不高于已经发布的稳定版本
-- 三个系统包还没齐就签名
+- 四个平台包还没齐就签名
 
 Apple 公证不在这条工作流里。macOS 作业沿用现有脚本的 ad hoc 签名。Windows 作业安装 MSYS2 UCRT64 GCC，并核对 binutils ≥ 2.37，以符合 Go 1.25 的 DWARF 5 要求；不要用 Chocolatey mingw 或旧版 TDM-GCC。
 
@@ -257,10 +261,11 @@ go run ./cmd/update-release sign \
   --changelog ../CHANGELOG.md \
   --private-key /path/to/beeftv-updater.private \
   --expect-public-key "$(tr -d '[:space:]' < /path/to/beeftv-updater.public)" \
-  --require-platforms darwin-arm64,darwin-amd64,windows-amd64 \
+  --require-platforms darwin-arm64,darwin-amd64,windows-amd64,linux-amd64 \
   --asset darwin-arm64=/tmp/BeefTV-vX.Y.Z-darwin-arm64.zip \
   --asset darwin-amd64=/tmp/BeefTV-vX.Y.Z-darwin-amd64.zip \
   --asset windows-amd64=/tmp/BeefTV-vX.Y.Z-windows-amd64.zip \
+  --asset linux-amd64=/tmp/BeefTV-vX.Y.Z-linux-amd64.zip \
   --output /tmp/desktop-update.json
 ```
 
