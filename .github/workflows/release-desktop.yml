@@ -311,6 +311,7 @@ jobs:
         with:
           name: desktop-${{ matrix.platform }}
           path: dist/BeefTV-${{ needs.preflight.outputs.version }}-${{ matrix.platform }}.zip
+          retention-days: 7
           if-no-files-found: error
 
   publish:

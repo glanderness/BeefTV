@@ -198,6 +198,8 @@ BeefTV-vX.Y.Z-windows-amd64.zip
 desktop-update.json
 ```
 
+Actions 中的 `desktop-*` 临时安装包保留 7 天，用于发布任务之间传递文件及短期排查。正式 GitHub Release 和 Cloudflare R2 下载文件不受此期限影响。清理历史临时包前，应确认对应发布任务成功，且正式 Release 中的三平台安装包和更新清单齐全；未确认发布成功的包和升级验证报告保留。
+
 zip 里的布局：
 
 - macOS：`BeefTV.app/...`，保留可执行权限；内部安全符号链接会被解成普通文件，不会写成 zip 符号链接项。
