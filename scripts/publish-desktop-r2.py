@@ -19,7 +19,7 @@ import tempfile
 import urllib.request
 from urllib.parse import urlsplit
 
-PLATFORMS = {"darwin-arm64", "darwin-amd64", "windows-amd64"}
+PLATFORMS = {"darwin-arm64", "darwin-amd64", "windows-amd64", "linux-amd64"}
 PREFIX = "beeftv"
 LATEST = f"{PREFIX}/desktop-update.json"
 IMMUTABLE = "public, max-age=31536000, immutable"
@@ -155,7 +155,7 @@ class Publisher:
     def load(self, manifest):
         payload = signed_payload(manifest, self.verifier)
         if set(payload["platforms"]) != PLATFORMS:
-            raise PublishError("Manifest must contain exactly all three desktop platforms")
+            raise PublishError("Manifest must contain exactly all four desktop platforms")
         for platform, asset in payload["platforms"].items():
             name = f"BeefTV-{payload['version']}-{platform}.zip"
             if asset["url"] != f"{self.public_base}/{payload['version']}/{name}":

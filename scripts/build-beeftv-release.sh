@@ -6,8 +6,14 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DESKTOP_DIR="$ROOT_DIR/backend/cmd/desktop"
 GO_DIR="${BEEFTV_GO_DIR:-/tmp/beeftv-go.rpIfVN/go}"
 
-AGENT_TARGET="${BEEFTV_WAILS_PLATFORM:-darwin/$(uname -m)}"
+HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+AGENT_TARGET="${BEEFTV_WAILS_PLATFORM:-$HOST_OS/$(uname -m)}"
 [[ "$AGENT_TARGET" != "darwin/x86_64" ]] || AGENT_TARGET="darwin/amd64"
+[[ "$AGENT_TARGET" != "linux/x86_64" ]] || AGENT_TARGET="linux/amd64"
+if [[ "$AGENT_TARGET" == linux/* && ( "$HOST_OS" != linux || "$AGENT_TARGET" != linux/amd64 || "$(uname -m)" != x86_64 ) ]]; then
+  echo "Linux releases require a native Linux x64 host" >&2
+  exit 1
+fi
 bun "$ROOT_DIR/scripts/package-agent-host.mjs" "$AGENT_TARGET" --verify-runtime
 
 if [[ ! -f "$ROOT_DIR/VERSION" ]]; then
@@ -81,7 +87,10 @@ cp "$ROOT_DIR/assets/app-icon.png" "$DESKTOP_DIR/build/appicon.png"
 
 (
   cd "$DESKTOP_DIR"
-  if [[ -n "${BEEFTV_WAILS_PLATFORM:-}" ]]; then
+  if [[ "$AGENT_TARGET" == linux/amd64 ]]; then
+    go run github.com/wailsapp/wails/v2/cmd/wails@v2.16.0 build \
+      -clean -trimpath -platform linux/amd64 -tags webkit2_41 -ldflags "$LDFLAGS"
+  elif [[ -n "${BEEFTV_WAILS_PLATFORM:-}" ]]; then
     go run github.com/wailsapp/wails/v2/cmd/wails@v2.16.0 build \
       -clean \
       -trimpath \
@@ -94,6 +103,22 @@ cp "$ROOT_DIR/assets/app-icon.png" "$DESKTOP_DIR/build/appicon.png"
       -ldflags "$LDFLAGS"
   fi
 )
+
+if [[ "$AGENT_TARGET" == linux/amd64 ]]; then
+  LINUX_BUNDLE="$DESKTOP_DIR/build/bin/BeefTV-linux"
+  mkdir -p "$LINUX_BUNDLE/plugin-packages" "$LINUX_BUNDLE/cli"
+  mv "$DESKTOP_DIR/build/bin/BeefTV" "$LINUX_BUNDLE/BeefTV"
+  cp "$ROOT_DIR/plugin-packages/"*.beeftv-plugin "$LINUX_BUNDLE/plugin-packages/"
+  cp "$ROOT_DIR/docs/linux-install.md" "$LINUX_BUNDLE/README.md"
+  bun "$ROOT_DIR/scripts/package-agent-host.mjs" "$AGENT_TARGET" "$LINUX_BUNDLE/agent-host"
+  (
+    cd "$ROOT_DIR/backend"
+    go build -trimpath -ldflags "$LDFLAGS" -o "$LINUX_BUNDLE/cli/beeftv" ./cmd/beeftv
+  )
+  chmod 755 "$LINUX_BUNDLE/BeefTV" "$LINUX_BUNDLE/cli/beeftv"
+  echo "Release bundle: $LINUX_BUNDLE"
+  exit 0
+fi
 
 # Official protocol packages are runtime dependencies. Finder launches use the
 # bundle Resources directory and must never depend on the caller's cwd.

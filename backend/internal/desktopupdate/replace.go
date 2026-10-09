@@ -16,7 +16,9 @@ var relaunchInstall = relaunchTarget
 func SwapInstall(req HelperRequest) error {
 	switch {
 	case strings.HasPrefix(req.Platform, "darwin"):
-		return swapDarwin(req)
+		return swapBundle(req, appBundleName)
+	case req.Platform == "linux-amd64":
+		return swapBundle(req, linuxBundleName)
 	case strings.HasPrefix(req.Platform, "windows"):
 		return swapWindows(req)
 	default:
@@ -28,8 +30,8 @@ func backupRoot(req HelperRequest) string {
 	return req.BackupPath
 }
 
-func swapDarwin(req HelperRequest) error {
-	stagedApp := filepath.Join(req.StagedPath, appBundleName)
+func swapBundle(req HelperRequest, name string) error {
+	stagedApp := filepath.Join(req.StagedPath, name)
 	if err := os.MkdirAll(filepath.Dir(req.BackupPath), 0o755); err != nil {
 		return err
 	}
@@ -122,7 +124,7 @@ func restoreWindows(req HelperRequest) error {
 
 func RestoreBackup(req HelperRequest) error {
 	switch {
-	case strings.HasPrefix(req.Platform, "darwin"):
+	case strings.HasPrefix(req.Platform, "darwin") || req.Platform == "linux-amd64":
 		if !pathExists(req.BackupPath) {
 			if pathExists(req.TargetPath) {
 				return nil
@@ -192,6 +194,13 @@ func retryIO(op func() error) error {
 
 func relaunchTarget(req HelperRequest) error {
 	switch {
+	case req.Platform == "linux-amd64":
+		cmd := exec.Command(filepath.Join(req.TargetPath, "BeefTV"))
+		cmd.Dir = req.TargetPath
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		return cmd.Process.Release()
 	case strings.HasPrefix(req.Platform, "darwin"):
 		cmd := exec.Command(filepath.Join(req.TargetPath, "Contents", "MacOS", "BeefTV"))
 		cmd.Dir = filepath.Dir(req.TargetPath)

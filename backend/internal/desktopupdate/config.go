@@ -16,10 +16,11 @@ var (
 )
 
 const (
-	helperFlag     = "--beeftv-update-helper"
-	appBundleName  = "BeefTV.app"
-	windowsExeName = "BeefTV.exe"
-	pluginDirName  = "plugin-packages"
+	helperFlag      = "--beeftv-update-helper"
+	appBundleName   = "BeefTV.app"
+	linuxBundleName = "BeefTV-linux"
+	windowsExeName  = "BeefTV.exe"
+	pluginDirName   = "plugin-packages"
 	// 随包 CLI：外部 Agent 的接入入口，升级包里必须带上，否则升级一次就断了接入。
 	// 它必须待在自己的 cli 目录里：macOS 与 Windows 的文件名都不分大小写，
 	// beeftv 直接放在主程序旁边会和 BeefTV / BeefTV.exe 撞成同一个文件。
@@ -58,6 +59,8 @@ func CurrentPlatform() (string, error) {
 		return "darwin-amd64", nil
 	case "windows-amd64":
 		return "windows-amd64", nil
+	case "linux-amd64":
+		return "linux-amd64", nil
 	default:
 		return "", ErrUnsupported
 	}

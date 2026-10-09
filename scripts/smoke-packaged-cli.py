@@ -18,6 +18,7 @@ import zipfile
 
 def smoke(archive, platform):
     relative = ("cli/beeftv.exe" if platform == "windows-amd64" else
+                "BeefTV-linux/cli/beeftv" if platform == "linux-amd64" else
                 "BeefTV.app/Contents/MacOS/cli/beeftv")
     with tempfile.TemporaryDirectory(prefix="beeftv-package-smoke-") as directory:
         root = Path(directory)
@@ -31,7 +32,7 @@ def smoke(archive, platform):
             mode = entry.external_attr >> 16
             if not stat.S_ISREG(mode):
                 raise RuntimeError("shipped CLI is not a regular file")
-            if platform.startswith("darwin-") and not mode & 0o111:
+            if platform != "windows-amd64" and not mode & 0o111:
                 raise RuntimeError("shipped CLI lost executable mode")
             cli.parent.mkdir(parents=True)
             cli.write_bytes(bundle.read(entry))
@@ -160,6 +161,6 @@ def smoke(archive, platform):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archive", type=Path, required=True)
-    parser.add_argument("--platform", choices=["darwin-arm64", "darwin-amd64", "windows-amd64"], required=True)
+    parser.add_argument("--platform", choices=["darwin-arm64", "darwin-amd64", "windows-amd64", "linux-amd64"], required=True)
     args = parser.parse_args()
     smoke(args.archive, args.platform)

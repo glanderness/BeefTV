@@ -10,14 +10,15 @@ import { packageAgentHost, verifyRuntime, NODE_VERSION } from './package-agent-h
 
 test('release rejects missing runtime and unsupported target', () => {
   expect(() => verifyRuntime('', 'darwin/arm64')).toThrow('required');
-  expect(() => verifyRuntime('/missing', 'linux/amd64')).toThrow('Unsupported');
+  expect(() => verifyRuntime('/missing', 'linux/arm64')).toThrow('Unsupported');
+  expect(() => verifyRuntime('/missing', 'linux/amd64')).toThrow('Missing bundled Node');
   expect(() => verifyRuntime('/missing', 'windows/amd64')).toThrow('Missing bundled Node');
 });
 
 test('bundled runtime, locked dependencies, and paths with spaces', () => {
   const runtime = process.env.BEEFTV_NODE_RUNTIME;
   expect(runtime).toBeTruthy();
-  const target = process.platform === 'win32' ? 'windows/amd64' : `darwin/${process.arch === 'x64' ? 'amd64' : 'arm64'}`;
+  const target = `${process.platform === 'win32' ? 'windows' : process.platform}/${process.arch === 'x64' ? 'amd64' : 'arm64'}`;
   const scratch = mkdtempSync(path.join(tmpdir(), 'beeftv package test '));
   try {
     const runtimeCopy = path.join(scratch, 'runtime source with spaces');
@@ -43,7 +44,7 @@ test('bundled runtime, locked dependencies, and paths with spaces', () => {
 test('packaged server starts with local imports and makes zero model requests', async () => {
   const runtime = process.env.BEEFTV_NODE_RUNTIME;
   expect(runtime).toBeTruthy();
-  const target = process.platform === 'win32' ? 'windows/amd64' : `darwin/${process.arch === 'x64' ? 'amd64' : 'arm64'}`;
+  const target = `${process.platform === 'win32' ? 'windows' : process.platform}/${process.arch === 'x64' ? 'amd64' : 'arm64'}`;
   const scratch = mkdtempSync(path.join(tmpdir(), 'beeftv packaged server '));
   const requests = [];
   let modelRequests = 0;

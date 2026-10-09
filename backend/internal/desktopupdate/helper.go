@@ -177,6 +177,10 @@ func validateHelperRequest(req HelperRequest) error {
 		if filepath.Base(req.TargetPath) != windowsExeName {
 			return fmt.Errorf("当前应用名称不支持自动更新")
 		}
+	case req.Platform == "linux-amd64":
+		if filepath.Base(req.TargetPath) != linuxBundleName {
+			return fmt.Errorf("当前应用包名称不支持自动更新")
+		}
 	default:
 		return ErrUnsupported
 	}
