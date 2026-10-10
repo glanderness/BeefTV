@@ -2,6 +2,7 @@ Unicode true
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "StrFunc.nsh"
+!include "FileFunc.nsh"
 ${StrStr}
 ${UnStrStr}
 Name "BeefTV"
@@ -9,6 +10,9 @@ OutFile "${OUTPUT}"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
 InstallDir "$LOCALAPPDATA\Programs\BeefTV"
+Var StageDir
+Var BackupDir
+Var CleanDir
 VIProductVersion "${VERSION}.0"
 VIAddVersionKey "ProductName" "BeefTV"
 VIAddVersionKey "FileVersion" "${VERSION}"
@@ -51,6 +55,50 @@ FunctionEnd
 !insertmacro RequireClosed ""
 !insertmacro RequireClosed "un."
 
+# Clean only shipped root files and runtime directories. Unknown user files remain.
+!macro RemovePayload PREFIX
+Function ${PREFIX}RemovePayload
+  FileOpen $0 "$CleanDir\.installed-root-files.txt" r
+  ${If} $0 != ""
+    loop_${PREFIX}:
+      ClearErrors
+      FileRead $0 $1
+      IfErrors done_${PREFIX}
+      ${TrimNewLines} $1 $1
+!if "${PREFIX}" == "un."
+      ${UnStrStr} $2 $1 "\"
+      ${UnStrStr} $3 $1 "/"
+      ${UnStrStr} $4 $1 ":"
+      ${UnStrStr} $5 $1 ".."
+!else
+      ${StrStr} $2 $1 "\"
+      ${StrStr} $3 $1 "/"
+      ${StrStr} $4 $1 ":"
+      ${StrStr} $5 $1 ".."
+!endif
+      ${If} $1 != ""
+      ${AndIf} $2 == ""
+      ${AndIf} $3 == ""
+      ${AndIf} $4 == ""
+      ${AndIf} $5 == ""
+        Delete "$CleanDir\$1"
+      ${EndIf}
+      Goto loop_${PREFIX}
+    done_${PREFIX}:
+    FileClose $0
+  ${EndIf}
+  Delete "$CleanDir\.installed-root-files.txt"
+  Delete "$CleanDir\Uninstall.exe"
+  RMDir /r "$CleanDir\agent-host"
+  RMDir /r "$CleanDir\plugin-packages"
+  RMDir /r "$CleanDir\cli"
+  RMDir /r "$CleanDir\media-runtime"
+  RMDir "$CleanDir"
+FunctionEnd
+!macroend
+!insertmacro RemovePayload ""
+!insertmacro RemovePayload "un."
+
 Function .onInit
   SetShellVarContext current
   # A fixed app-owned directory prevents /D from targeting the user's project data.
@@ -66,20 +114,55 @@ FunctionEnd
 
 Section "BeefTV (required)" SEC_APP
   SectionIn RO
-  SetOutPath "$INSTDIR"
-  # Replace only shipped runtime directories; never touch AppData\BeefTV.
-  RMDir /r "$INSTDIR\agent-host"
-  RMDir /r "$INSTDIR\plugin-packages"
-  RMDir /r "$INSTDIR\cli"
-  RMDir /r "$INSTDIR\media-runtime"
+  ClearErrors
+  CreateDirectory "$LOCALAPPDATA\Programs"
+  GetTempFileName $StageDir "$LOCALAPPDATA\Programs"
+  IfErrors prepare_failed
+  Delete "$StageDir"
+  IfErrors prepare_failed
+  GetTempFileName $BackupDir "$LOCALAPPDATA\Programs"
+  IfErrors prepare_failed
+  Delete "$BackupDir"
+  IfErrors prepare_failed
+  Goto stage_ready
+  prepare_failed:
+  MessageBox MB_OK|MB_ICONSTOP "Cannot prepare the installation. Check available disk space and try again. Your existing installation is unchanged." /SD IDOK
+  SetErrorLevel 1
+  Abort
+  stage_ready:
+  SetOutPath "$StageDir"
   ClearErrors
   File /r "${PAYLOAD}\*"
+  File /oname=.installed-root-files.txt "${ROOTFILES}"
+  WriteUninstaller "$StageDir\Uninstall.exe"
   ${If} ${Errors}
+    SetOutPath "$LOCALAPPDATA\Programs"
+    RMDir /r "$StageDir"
     MessageBox MB_OK|MB_ICONSTOP "Installation failed. Please run the installer again. Your projects have been preserved." /SD IDOK
     SetErrorLevel 1
     Abort
   ${EndIf}
-  WriteUninstaller "$INSTDIR\Uninstall.exe"
+  # Directory renames stay on the same volume. No old payload is removed until
+  # all new files have been extracted successfully.
+  SetOutPath "$LOCALAPPDATA\Programs"
+  ClearErrors
+  IfFileExists "$INSTDIR\*.*" 0 install_new
+  Rename "$INSTDIR" "$BackupDir"
+  IfErrors install_failed
+  install_new:
+  Rename "$StageDir" "$INSTDIR"
+  IfErrors install_restore
+  StrCpy $CleanDir "$BackupDir"
+  Call RemovePayload
+  Goto install_registered
+  install_restore:
+  Rename "$BackupDir" "$INSTDIR"
+  install_failed:
+  RMDir /r "$StageDir"
+  MessageBox MB_OK|MB_ICONSTOP "Installation could not replace the application. Close programs using BeefTV and try again. The previous application is kept at $INSTDIR or $BackupDir." /SD IDOK
+  SetErrorLevel 1
+  Abort
+  install_registered:
   CreateDirectory "$SMPROGRAMS\BeefTV"
   CreateShortcut "$SMPROGRAMS\BeefTV\BeefTV.lnk" "$INSTDIR\BeefTV.exe"
   CreateShortcut "$SMPROGRAMS\BeefTV\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
@@ -98,13 +181,8 @@ Section /o "Desktop shortcut" SEC_DESKTOP
 SectionEnd
 
 Section "Uninstall"
-  Delete "$INSTDIR\BeefTV.exe"
-  Delete "$INSTDIR\Uninstall.exe"
-  RMDir /r "$INSTDIR\agent-host"
-  RMDir /r "$INSTDIR\plugin-packages"
-  RMDir /r "$INSTDIR\cli"
-  RMDir /r "$INSTDIR\media-runtime"
-  RMDir "$INSTDIR"
+  StrCpy $CleanDir "$INSTDIR"
+  Call un.RemovePayload
   Delete "$DESKTOP\BeefTV.lnk"
   Delete "$SMPROGRAMS\BeefTV\BeefTV.lnk"
   Delete "$SMPROGRAMS\BeefTV\Uninstall.lnk"

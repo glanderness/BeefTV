@@ -100,6 +100,8 @@ def smoke(args):
             def uninstall():
                 # _?= keeps NSIS in-process so wait means uninstall really finished.
                 subprocess.run([str(installed / 'Uninstall.exe'), '/S', '_?=' + str(installed)], check=True, timeout=90)
+                assert not (installed / 'BeefTV.exe').exists()
+                assert not list(installed.glob('*.dll')), 'shipped DLL left after uninstall'
         elif args.platform.startswith('darwin-'):
             data = home / 'Library/Application Support/BeefTV'
             installed = root / 'Applications/BeefTV.app'
@@ -177,6 +179,7 @@ def smoke(args):
         stop(process)
         verify_data(data)
         uninstall()
+        verify_data(data)
         print('PASS: portable migration, native installed startup, full payload, overwrite, uninstall and reinstall preserve project rows, settings, files and draft sentinels; no paid generation')
 
 

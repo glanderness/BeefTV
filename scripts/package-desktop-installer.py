@@ -36,8 +36,11 @@ def package(version, platform, payload, output):
                             '-format', 'UDZO', '-ov', str(output)], check=True)
     elif platform == 'windows-amd64':
         compiler = shutil.which('makensis') or r'C:\Program Files (x86)\NSIS\makensis.exe'
-        subprocess.run([compiler, f'/DPAYLOAD={payload}', f'/DOUTPUT={output}',
-                        f'/DVERSION={version[1:]}', str(ROOT / 'scripts/installers/windows.nsi')], check=True)
+        with tempfile.TemporaryDirectory(prefix='beeftv-nsis-') as directory:
+            manifest = Path(directory) / 'installed-root-files.txt'
+            manifest.write_text(''.join(path.name + '\n' for path in sorted(payload.iterdir()) if path.is_file()), encoding='utf-8')
+            subprocess.run([compiler, f'/DPAYLOAD={payload}', f'/DOUTPUT={output}', f'/DROOTFILES={manifest}',
+                            f'/DVERSION={version[1:]}', str(ROOT / 'scripts/installers/windows.nsi')], check=True)
     else:
         with tempfile.TemporaryDirectory(prefix='beeftv-deb-') as directory:
             stage = Path(directory)
