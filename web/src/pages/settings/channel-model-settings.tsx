@@ -35,7 +35,14 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
         return () => { active = false; };
     }, []);
 
-    if (!channel.models.length) return null;
+    if (!channel.models.length) return (
+        <div className="mt-4">
+            <div className="text-xs font-medium">模型能力与请求协议</div>
+            <p className="mt-2 text-xs leading-5 text-foreground/58">
+                先在上方「模型列表」输入模型名并按回车，再为模型选择能力与请求协议。
+            </p>
+        </div>
+    );
 
     const updateProfile = (model: string, patch: Partial<ModelProfile>) => {
         const defaultProtocol = defaultProtocolForModel(model, availableProtocols);

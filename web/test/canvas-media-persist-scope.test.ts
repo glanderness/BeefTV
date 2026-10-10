@@ -400,12 +400,11 @@ describe("recoverOwnedDepthCaptureNodes ownership", () => {
                 const pending = recoverOwnedDepthCaptureNode({
                     node,
                     session,
-                    persist: async () => { persistCalls += 1; },
+                    nodesRef: { current: [depthNode("depth-1")] },
                     setNodes: (updater) => {
                         const next = updater([node]);
                         nodeWrites.push(next.find((item) => item.id === node.id)?.metadata?.status || "");
                     },
-                    nodeStillMounted: () => true,
                 });
                 await pollEntered.promise;
                 liveProject = "proj-b";
@@ -448,15 +447,13 @@ describe("recoverOwnedDepthCaptureNodes ownership", () => {
                 throw new Error(`unexpected ${path}`);
             }, async () => {
                 recoverOwnedDepthCaptureNodes({
-                    nodes: [depthNode("depth-1")],
                     signal: signal.signal,
                     expectedScope,
                     projectId: "proj-a",
                     getLiveProjectId: () => "proj-a",
                     observers,
-                    persist: async () => { persistCalls += 1; },
+                    nodesRef: { current: [depthNode("depth-1")] },
                     setNodes: () => undefined,
-                    nodeStillMounted: () => true,
                 });
                 await pollEntered.promise;
                 expect(observers.size).toBe(1);
@@ -472,7 +469,7 @@ describe("recoverOwnedDepthCaptureNodes ownership", () => {
         }
     });
 
-    test("ordinary getResource error after project switch does not write failed metadata", async () => {
+    test("ordinary binding error after project switch does not write failed metadata", async () => {
         const restore = switchScope("owner-a");
         const expectedScope = captureUserScope();
         const lookupEntered = deferred();
@@ -506,12 +503,15 @@ describe("recoverOwnedDepthCaptureNodes ownership", () => {
                 const pending = recoverOwnedDepthCaptureNode({
                     node,
                     session,
-                    persist: async () => undefined,
+                    nodesRef: { current: [node] },
                     setNodes: (updater) => {
                         const next = updater([node]);
                         nodeWrites.push(next.find((item) => item.id === node.id)?.metadata?.status || "");
                     },
-                    nodeStillMounted: () => true,
+                }, async () => {
+                    lookupEntered.resolve();
+                    await lookupGate.promise;
+                    throw new Error("binding failed");
                 });
                 await lookupEntered.promise;
                 liveProject = "proj-b";
@@ -528,6 +528,63 @@ describe("recoverOwnedDepthCaptureNodes ownership", () => {
 });
 
 describe("owned canvas persist and recover callbacks", () => {
+    test("reopening after an attachment failure retries the same task, preserving concurrent edits", async () => {
+        const restore = switchScope("owner-a");
+        const node = depthNode("depth-1");
+        node.metadata = { ...node.metadata, status: "error", taskStatus: "failed" };
+        const nodesRef = { current: [{ ...node, title: "用户改名", position: { x: 99, y: 88 } }] };
+        const methods: string[] = [];
+        let binds = 0;
+        try {
+            await withAdapter(async config => {
+                methods.push(String(config.method));
+                if (config.url === "/tasks/depth-task") return envelope(generationTask({ id: "depth-task", status: "succeeded", resultJson: JSON.stringify({ resourceId: "depth-out" }) }));
+                throw new Error(`unexpected ${config.url}`);
+            }, async () => {
+                const input = { node, nodesRef,
+                    session: beginLocalExecutorSession("proj-a", { controller: new AbortController(), getLiveProjectId: () => "proj-a" }),
+                    setNodes: (updater: (current: CanvasNodeData[]) => CanvasNodeData[]) => { nodesRef.current = updater(nodesRef.current); },
+                };
+                const bind: Parameters<typeof recoverOwnedDepthCaptureNode>[1] = async args => {
+                    binds++;
+                    expect(args.task.id).toBe("depth-task");
+                    expect(args.nodesRef.current[0]?.title).toBe("用户改名");
+                    if (binds === 1) throw new Error("canvas conflict");
+                    args.setNodes(current => current.map(item => ({ ...item, metadata: { ...item.metadata, status: "success", storageKey: "resource:depth-out" } })));
+                };
+                await recoverOwnedDepthCaptureNode(input, bind);
+                expect(nodesRef.current[0]?.metadata?.status).toBe("error");
+                expect(nodesRef.current[0]?.metadata?.taskStatus).toBe("succeeded");
+                await recoverOwnedDepthCaptureNode(input, bind);
+                expect(nodesRef.current[0]?.metadata?.status).toBe("success");
+                expect(nodesRef.current[0]?.position).toEqual({ x: 99, y: 88 });
+                expect(binds).toBe(2);
+                expect(methods.every(method => method === "get")).toBe(true);
+            });
+        } finally { restore(); }
+    });
+    test("recovery ignores deleted or replaced targets after polling", async () => {
+        for (const replaced of [false, true]) {
+            const restore = switchScope("owner-a");
+            const node = depthNode("depth-1");
+            const nodesRef: { current: CanvasNodeData[] } = { current: [node] };
+            let binds = 0;
+            try {
+                await withAdapter(async () => {
+                    nodesRef.current = replaced ? [{ ...node, metadata: { ...node.metadata, taskId: "new-task" } }] : [];
+                    return envelope(generationTask({ id: "depth-task", status: "succeeded" }));
+                }, async () => {
+                    await recoverOwnedDepthCaptureNode({
+                        node, nodesRef, session: beginLocalExecutorSession("proj-a", { controller: new AbortController(), getLiveProjectId: () => "proj-a" }),
+                        setNodes: updater => { nodesRef.current = updater(nodesRef.current); },
+                    }, async () => { binds++; });
+                    expect(binds).toBe(0);
+                    expect(nodesRef.current.length).toBe(replaced ? 1 : 0);
+                    if (replaced) expect(nodesRef.current[0]?.metadata?.taskId).toBe("new-task");
+                });
+            } finally { restore(); }
+        }
+    });
     test("canvas media tools persist and recover through the owned helpers", () => {
         const here = dirname(fileURLToPath(import.meta.url));
         const tools = readFileSync(join(here, "../src/pages/canvas/use-canvas-media-tools.ts"), "utf8");

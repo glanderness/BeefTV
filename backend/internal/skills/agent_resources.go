@@ -98,9 +98,6 @@ func (s *Service) AgentVersion(userID string, pin Pin) (*AgentResource, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(entry.Content) > 64<<10 {
-		return nil, kernel.BadAuthRequest("技能正文超过 64 KiB，请缩小正文并使用参考文件")
-	}
 	result.Instruction = entry.Content
 	return result, nil
 }
@@ -120,6 +117,9 @@ func (s *Service) AgentFile(userID string, pin Pin, filePath string) (*AgentFile
 	for _, file := range files {
 		if file.Path != normalized {
 			continue
+		}
+		if file.Size > 256<<10 && file.Path == version.EntryPath {
+			return nil, &kernel.AppError{Status: 400, Code: 400, Reason: "skill_instruction_too_large", Message: "技能正文超过 256 KiB，请将部分内容移到参考文件"}
 		}
 		if file.Size > 256<<10 || !isPreviewText(file.MimeType, file.Path) {
 			return nil, kernel.BadAuthRequest("辅助文件只支持 256 KiB 以内的文本")
@@ -154,8 +154,8 @@ func (s *Service) ValidateAgentSkills(userID string, pins []Pin) ([]Pin, error) 
 			return nil, err
 		}
 		total += len(resource.Instruction)
-		if total > 128<<10 {
-			return nil, kernel.BadAuthRequest(fmt.Sprintf("所选技能正文总量超过 %d KiB", 128))
+		if total > 512<<10 {
+			return nil, &kernel.AppError{Status: 400, Code: 400, Reason: "skill_instruction_too_large", Message: fmt.Sprintf("所选技能正文总量超过 %d KiB，请减少所选技能", 512)}
 		}
 		result = append(result, pin)
 	}

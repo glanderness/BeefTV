@@ -573,12 +573,19 @@ func (s *operationSession) OwnedAsset(userID, assetID string) (*model.Asset, err
 
 func (s *operationSession) BindExistingCanvasNode(userID string, patch canvas.TaskOutputBind) (canvas.TaskOutputBindResult, error) {
 	patch.AllowEmptyVideo = false
+	patch.DepthClientOperationID = ""
 	task, err := s.repo.TaskForUser(userID, patch.TaskID)
 	if err != nil {
 		return canvas.TaskOutputBindResult{}, err
 	}
 	if task != nil && task.UserID == userID && task.ProjectID == patch.CanvasID && task.Type == model.TaskTypeTimelineRender && task.Provider == "local" && task.Model == "ffmpeg" && task.Status == model.TaskStatusSucceeded {
 		patch.AllowEmptyVideo = true
+	}
+	if task != nil && task.UserID == userID && task.ProjectID == patch.CanvasID && task.Type == model.TaskTypeDepthCapture && task.Status == model.TaskStatusSucceeded && task.ClientOperationID != nil {
+		target := localtask.TargetBindingFromInput(task.InputJSON)
+		if target.NodeID == patch.NodeID && target.Source == "canvas" {
+			patch.DepthClientOperationID = strings.TrimSpace(*task.ClientOperationID)
+		}
 	}
 	return s.canvas.BindTaskOutputToExistingNode(userID, patch)
 }

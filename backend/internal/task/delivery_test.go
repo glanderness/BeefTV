@@ -39,20 +39,31 @@ func TestOutputVersionIDMatchesWorkflowSlotZero(t *testing.T) {
 	}
 }
 
+func TestDepthCanonicalOutputRequiresDepthTaskType(t *testing.T) {
+	raw := `{"resourceId":"depth-result","width":1920,"height":1080}`
+	outputs := CanonicalOutputs(raw, model.TaskTypeDepthCapture)
+	if len(outputs) != 1 || outputs[0].MediaType != "video" || outputs[0].ResourceID != "depth-result" {
+		t.Fatalf("depth outputs: %#v", outputs)
+	}
+	if len(CanonicalOutputs(raw, "canvas_image")) != 0 || DeliveryComplete(raw, nil, model.TaskTypeDepthCapture) {
+		t.Fatal("untyped resource accepted or undelivered depth considered complete")
+	}
+}
+
 func TestCanonicalOutputsPreferImagesThenVideoThenAudio(t *testing.T) {
-	images := CanonicalOutputs(`{"images":[{"resourceId":"img-1","storageKey":"resource:img-1"},{"url":"/api/resources/img-2/file"}],"video":{"resourceId":"vid-1"}}`)
+	images := CanonicalOutputs(`{"images":[{"resourceId":"img-1","storageKey":"resource:img-1"},{"url":"/api/resources/img-2/file"}],"video":{"resourceId":"vid-1"}}`, "")
 	if len(images) != 2 || images[0].ResourceID != "img-1" || images[1].ResourceID != "img-2" || images[1].OutputIndex != 1 {
 		t.Fatalf("images = %#v", images)
 	}
-	video := CanonicalOutputs(`{"mode":"video","video":{"storageKey":"resource:video-1","url":"/api/resources/video-1/file"}}`)
+	video := CanonicalOutputs(`{"mode":"video","video":{"storageKey":"resource:video-1","url":"/api/resources/video-1/file"}}`, "")
 	if len(video) != 1 || video[0].MediaType != "video" || video[0].ResourceID != "video-1" {
 		t.Fatalf("video = %#v", video)
 	}
-	audio := CanonicalOutputs(`{"audio":{"dataUrl":"/api/resources/audio-1/file"}}`)
+	audio := CanonicalOutputs(`{"audio":{"dataUrl":"/api/resources/audio-1/file"}}`, "")
 	if len(audio) != 1 || audio[0].MediaType != "audio" || audio[0].ResourceID != "audio-1" {
 		t.Fatalf("audio = %#v", audio)
 	}
-	if outs := CanonicalOutputs(`{"text":"hello"}`); len(outs) != 0 {
+	if outs := CanonicalOutputs(`{"text":"hello"}`, ""); len(outs) != 0 {
 		t.Fatalf("text outputs = %#v", outs)
 	}
 }
@@ -88,32 +99,32 @@ func TestResultStateAndDeliveryComplete(t *testing.T) {
 	if state := ResultState(model.TaskStatusFailed, nil, true); state != ResultStateFailedPermanent {
 		t.Fatalf("blocked failure state = %q", state)
 	}
-	if DeliveryComplete(`{"images":[{"resourceId":"r1"}]}`, pending) {
+	if DeliveryComplete(`{"images":[{"resourceId":"r1"}]}`, pending, "") {
 		t.Fatal("pending delivery reported complete")
 	}
-	if !DeliveryComplete(`{"images":[{"resourceId":"r1"}]}`, ready) {
+	if !DeliveryComplete(`{"images":[{"resourceId":"r1"}]}`, ready, "") {
 		t.Fatal("ready delivery reported incomplete")
 	}
-	if !DeliveryComplete(`{"text":"ok"}`, nil) {
+	if !DeliveryComplete(`{"text":"ok"}`, nil, "") {
 		t.Fatal("text result should not require media delivery")
 	}
 	missing := []CanonicalOutput{{OutputIndex: 0, MediaType: "image", ResourceID: "r1", MaterializationErrorCode: MaterializeErrorResourceMissing}}
-	if DeliveryComplete(`{"images":[{"resourceId":"r1"}]}`, missing) {
+	if DeliveryComplete(`{"images":[{"resourceId":"r1"}]}`, missing, "") {
 		t.Fatal("retryable resource gap reported complete")
 	}
 	foreign := []CanonicalOutput{{OutputIndex: 0, MediaType: "image", ResourceID: "r1", MaterializationErrorCode: MaterializeErrorResourceForeign}}
-	if !DeliveryComplete(`{"images":[{"resourceId":"r1"}]}`, foreign) {
+	if !DeliveryComplete(`{"images":[{"resourceId":"r1"}]}`, foreign, "") {
 		t.Fatal("foreign resource should not keep rewriting")
 	}
 	failedPersist := []CanonicalOutput{{OutputIndex: 0, MediaType: "image", ResourceID: "r1", MaterializationErrorCode: MaterializeErrorPersistFailed}}
-	if DeliveryComplete(`{"images":[{"resourceId":"r1"}]}`, failedPersist) {
+	if DeliveryComplete(`{"images":[{"resourceId":"r1"}]}`, failedPersist, "") {
 		t.Fatal("transient persist_failed reported complete")
 	}
-	if DeliveryComplete(`{"images":[{"url":"https://upstream.example/a.png"}]}`, []CanonicalOutput{{OutputIndex: 0, MediaType: "image", ProviderArtifactRef: "https://upstream.example/a.png"}}) {
+	if DeliveryComplete(`{"images":[{"url":"https://upstream.example/a.png"}]}`, []CanonicalOutput{{OutputIndex: 0, MediaType: "image", ProviderArtifactRef: "https://upstream.example/a.png"}}, "") {
 		t.Fatal("leftover remote URL still needs persistence")
 	}
 	unsupported := []CanonicalOutput{{OutputIndex: 0, MediaType: "image", ProviderArtifactRef: "blob:local", MaterializationErrorCode: MaterializeErrorUnsupportedShape}}
-	if !DeliveryComplete(`{"images":[{"url":"blob:local"}]}`, unsupported) {
+	if !DeliveryComplete(`{"images":[{"url":"blob:local"}]}`, unsupported, "") {
 		t.Fatal("recorded unsupported shape should stop rewriting")
 	}
 	if OutputSettled(pending[0]) || !OutputSettled(ready[0]) || !OutputSettled(foreign[0]) || OutputSettled(failedPersist[0]) {
@@ -122,14 +133,14 @@ func TestResultStateAndDeliveryComplete(t *testing.T) {
 }
 
 func TestInspectResultJSONAndUnsupportedShapes(t *testing.T) {
-	outputs, unusable := InspectResultJSON(`{"images":[{"resourceId":"r1"}]}`)
+	outputs, unusable := InspectResultJSON(`{"images":[{"resourceId":"r1"}]}`, "")
 	if len(outputs) != 1 || unusable != "" || outputs[0].ResourceID != "r1" {
 		t.Fatalf("usable images = %#v %q", outputs, unusable)
 	}
-	if _, unusable := InspectResultJSON(`{"images":[1]}`); unusable != "unusable_images" {
+	if _, unusable := InspectResultJSON(`{"images":[1]}`, ""); unusable != "unusable_images" {
 		t.Fatalf("unusable images = %q", unusable)
 	}
-	if _, unusable := InspectResultJSON(`{`); unusable != "invalid_result_json" {
+	if _, unusable := InspectResultJSON(`{`, ""); unusable != "invalid_result_json" {
 		t.Fatalf("invalid json = %q", unusable)
 	}
 	if shape := UnsupportedResultShape(CanonicalOutput{ProviderArtifactRef: "blob:local"}); shape != "blob_url" {

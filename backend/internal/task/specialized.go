@@ -168,6 +168,12 @@ func (s *Service) CreateDepthCaptureTask(userID string, req DepthCaptureCreateRe
 	if err != nil {
 		return nil, err
 	}
+	if nodeID := strings.TrimSpace(req.NodeID); nodeID != "" {
+		if strings.TrimSpace(req.ProjectID) == "" {
+			return nil, kernel.BadAuthRequest("指定深度结果节点时必须提供画布 ID")
+		}
+		input["metadata"] = map[string]any{"nodeId": nodeID, "source": "canvas"}
+	}
 	return s.admitSpecialized(userID, specializedAdmission{
 		kind:      kind,
 		projectID: strings.TrimSpace(req.ProjectID),

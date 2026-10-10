@@ -425,7 +425,6 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		// 否则撤销会拿不到「这轮开始之前」的文档。范围也只在这里验证并持久化：
 		// 之后的操作入口按这条记录读授权，宿主与模型都无法自报。
 		turnID := newTurnID()
-		c.Header("X-Beeftv-Turn-Admission", "unknown")
 		pins, pinErr := svc.ValidateAgentSkills(c.GetString("agentUserId"), payload.Skills)
 		if pinErr != nil {
 			failService(c, pinErr)
@@ -434,8 +433,12 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		input := assistantTurnInput(payload.SelectedNodeIDs, references)
 		input.PermissionMode = assistantturns.Mode(payload.PermissionMode)
 		input.SkillPins = pins
+		c.Header("X-Beeftv-Turn-Admission", "unknown")
 		revisionBefore, snapshotErr := svc.BeginAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, turnID, input)
 		if snapshotErr != nil {
+			// No request has reached the host, even if saving the turn snapshot
+			// failed ambiguously. There can be no model or operation to recover.
+			c.Header("X-Beeftv-Turn-Admission", "rejected")
 			failService(c, snapshotErr)
 			return
 		}
@@ -486,6 +489,11 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			}
 			_ = json.Unmarshal(payload, &rejection)
 			reason := strings.TrimSpace(rejection.Reason)
+			// The host can prove it rejected the body before reading a turn or
+			// executing any operation. Preserve uncertainty for other failures.
+			if resp.StatusCode == http.StatusRequestEntityTooLarge && reason == "body_too_large" {
+				c.Header("X-Beeftv-Turn-Admission", "rejected")
+			}
 			if reason == "" {
 				reason = "host_unreachable"
 			}

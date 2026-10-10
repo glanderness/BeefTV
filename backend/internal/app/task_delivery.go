@@ -50,7 +50,7 @@ func (s *Service) ensureSucceededTaskDelivery(task *model.Task) error {
 	if err != nil {
 		return err
 	}
-	if localtask.DeliveryComplete(task.ResultJSON, stored) {
+	if localtask.DeliveryComplete(task.ResultJSON, stored, task.Type) {
 		return nil
 	}
 	return s.DeliverSucceededTask(*task)
