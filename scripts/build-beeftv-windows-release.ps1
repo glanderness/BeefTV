@@ -437,7 +437,8 @@ if ($copied.Count -eq 0) {
 
 Invoke-NativeExecutable -FilePath "bun" -ArgumentList @((Join-Path $repoRoot "scripts\package-agent-host.mjs"), "windows/amd64", (Join-Path $binDir "agent-host")) -FailureMessage "Agent host packaging failed" | Out-Null
 
-& (Join-Path $repoRoot "scripts\package-media-runtime-windows.ps1") -Destination (Join-Path $binDir "media-runtime")
+# Keep media inside the sidecar tree accepted by already released updaters.
+& (Join-Path $repoRoot "scripts\package-media-runtime-windows.ps1") -Destination (Join-Path $binDir "agent-host\media-runtime")
 
 # The beeftv CLI ships with the app. External agents (Codex, Claude Code,
 # Cursor) connect through it with their own client credential, so the installed

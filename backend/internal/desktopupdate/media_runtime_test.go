@@ -85,3 +85,48 @@ func TestWindowsHistoricalPayloadPreservesInstalledMediaRuntime(t *testing.T) {
 		t.Fatal("preserved runtime lost during rollback", err)
 	}
 }
+
+func TestWindowsNestedMediaRuntimeSwapAndRollback(t *testing.T) {
+	root := t.TempDir()
+	old, next := filepath.Join(root, "old"), filepath.Join(root, "new")
+	for _, dir := range []string{old, next} {
+		if err := WriteWindowsLayout(dir, "app"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	media := filepath.Join(next, "agent-host", "media-runtime")
+	if err := os.MkdirAll(media, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"ffmpeg.exe", "LICENSE", "README.txt", "manifest.json"} {
+		if err := os.WriteFile(filepath.Join(media, name), []byte("new"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := validateWindowsLayout(next); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(media, "LICENSE")); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateWindowsLayout(next); err == nil {
+		t.Fatal("incomplete nested media accepted")
+	}
+	if err := os.WriteFile(filepath.Join(media, "LICENSE"), []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req := HelperRequest{Platform: "windows-amd64", TargetPath: filepath.Join(old, windowsExeName), StagedPath: next, BackupPath: filepath.Join(root, "backup")}
+	if err := SwapInstall(req); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(old, "agent-host", "media-runtime", "ffmpeg.exe")
+	if b, err := os.ReadFile(path); err != nil || string(b) != "new" {
+		t.Fatalf("nested media not installed: %q %v", b, err)
+	}
+	if err := RestoreBackup(req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("nested media survived rollback", err)
+	}
+}

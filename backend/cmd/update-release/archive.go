@@ -303,8 +303,7 @@ func validateArchive(platform, zipPath string) error {
 	hasWinExec := false
 	hasLinuxExec := false
 	hasCLI := false
-	hasMedia := false
-	requiredMedia := map[string]bool{"ffmpeg.exe": false, "LICENSE": false, "README.txt": false, "manifest.json": false}
+	requiredMedia := map[string]map[string]bool{}
 	cliPath := "cli/beeftv.exe"
 	if strings.HasPrefix(platform, "darwin-") {
 		cliPath = "BeefTV.app/Contents/MacOS/cli/beeftv"
@@ -326,11 +325,15 @@ func validateArchive(platform, zipPath string) error {
 	requiredAgent := map[string]bool{"server.mjs": false, "session-identity.mjs": false, "package.json": false, nodeRelative: false, "node_modules/@earendil-works/pi-coding-agent/package.json": false}
 	for _, file := range reader.File {
 		name := filepath.ToSlash(file.Name)
-		if platform == platformWindowsAMD64 && strings.HasPrefix(name, "media-runtime/") {
-			hasMedia = true
-			if rel := strings.TrimPrefix(name, "media-runtime/"); file.Mode().IsRegular() && file.UncompressedSize64 > 0 {
-				if _, required := requiredMedia[rel]; required {
-					requiredMedia[rel] = true
+		if platform == platformWindowsAMD64 {
+			for _, prefix := range []string{"agent-host/media-runtime/", "media-runtime/"} {
+				if rel, found := strings.CutPrefix(name, prefix); found {
+					if requiredMedia[prefix] == nil {
+						requiredMedia[prefix] = map[string]bool{"ffmpeg.exe": false, "LICENSE": false, "README.txt": false, "manifest.json": false}
+					}
+					if _, required := requiredMedia[prefix][rel]; required && file.Mode().IsRegular() && file.UncompressedSize64 > 0 {
+						requiredMedia[prefix][rel] = true
+					}
 				}
 			}
 		}
@@ -385,10 +388,10 @@ func validateArchive(platform, zipPath string) error {
 	if !hasCLI {
 		return fmt.Errorf("archive missing bundled CLI: %s", cliPath)
 	}
-	if hasMedia {
-		for name, found := range requiredMedia {
+	for prefix, resources := range requiredMedia {
+		for name, found := range resources {
 			if !found {
-				return fmt.Errorf("archive missing media-runtime resource: %s", name)
+				return fmt.Errorf("archive missing media-runtime resource: %s%s", prefix, name)
 			}
 		}
 	}

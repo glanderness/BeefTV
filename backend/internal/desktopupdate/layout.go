@@ -99,17 +99,18 @@ func validateWindowsLayout(root string) error {
 		return err
 	}
 	exe := filepath.Join(root, windowsExeName)
-	// Historical signed archives predate the media runtime. When present it
-	// must be complete, and is moved/rolled back with the other sidecars.
-	media := filepath.Join(root, "media-runtime")
-	if _, err := os.Lstat(media); err == nil {
-		for _, name := range []string{"ffmpeg.exe", "LICENSE", "README.txt", "manifest.json"} {
-			if err := requireRegularFile(filepath.Join(media, name), false); err != nil {
-				return fmt.Errorf("更新包视频工具不完整: %w", err)
+	// Nest new media in agent-host so old helpers replace it with that sidecar.
+	// Accept the earlier standalone layout too, but require complete resources.
+	for _, media := range []string{filepath.Join(root, "agent-host", "media-runtime"), filepath.Join(root, "media-runtime")} {
+		if _, err := os.Lstat(media); err == nil {
+			for _, name := range []string{"ffmpeg.exe", "LICENSE", "README.txt", "manifest.json"} {
+				if err := requireRegularFile(filepath.Join(media, name), false); err != nil {
+					return fmt.Errorf("更新包视频工具不完整: %w", err)
+				}
 			}
+		} else if !os.IsNotExist(err) {
+			return err
 		}
-	} else if !os.IsNotExist(err) {
-		return err
 	}
 	if err := requireRegularFile(exe, false); err != nil {
 		return fmt.Errorf("更新包缺少 BeefTV.exe")
