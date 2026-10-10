@@ -8,11 +8,15 @@ import { useUserStore } from "@/stores/use-user-store";
 import { ChannelSettingsPane, channelValidationError, focusInvalidChannelField, isChannelReady } from "./channel-settings-pane";
 import { ModelDefaultGrid } from "./model-default-grid";
 import DiagnosticsPanel from "./diagnostics-panel";
+import { StorageSettingsPane } from "./storage-settings-pane";
+import { ReferenceStoragePane } from "./reference-storage-pane";
+import { getDesktopAppBinding } from "@/services/desktop-runtime";
 
-type ConfigSectionKey = "channels" | "models" | "diagnostics";
+type ConfigSectionKey = "channels" | "models" | "storage" | "diagnostics";
 
 const configSections: Array<{ key: ConfigSectionKey; label: string; description: string; icon: ReactNode }> = [
     { key: "channels", label: "个人渠道", description: "模型服务与个人工作流", icon: <RadioTower className="size-4" /> },
+    { key: "storage", label: "存储设置", description: "本地目录和参考素材存储", icon: null },
     { key: "diagnostics", label: "问题诊断", description: "导出问题记录", icon: <Bug className="size-4" /> },
 ];
 
@@ -33,7 +37,8 @@ export default function SettingsPage() {
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const shouldPromptContinue = searchParams.get("continue") === "1";
     const userChannels = config.channels.filter((channel) => channel.scope !== "system");
-    const visibleConfigSections = useMemo(() => customChannelsEnabled ? configSections : configSections.filter((section) => section.key !== "channels"), [customChannelsEnabled]);
+    const nativeStorage = Boolean(getDesktopAppBinding()?.StorageSettings);
+    const visibleConfigSections = useMemo(() => configSections.filter(section => (section.key !== "channels" || customChannelsEnabled) && (section.key !== "storage" || nativeStorage)), [customChannelsEnabled,nativeStorage]);
 
     const isVisibleConfigSection = (value: string | null): value is ConfigSectionKey => isConfigSection(value) && visibleConfigSections.some((section) => section.key === value);
 
@@ -88,6 +93,7 @@ export default function SettingsPage() {
                 </div>
             </SettingsPane>
         ),
+        storage: <SettingsPane><StorageSettingsPane /><ReferenceStoragePane /></SettingsPane>,
         models: (
             <SettingsPane>
                 <div className="settings-pane-header">
@@ -105,6 +111,7 @@ export default function SettingsPage() {
 
     return (
         <main className="settings-page app-workspace-page app-user-workspace app-section-page flex h-full min-h-0 flex-col text-foreground">
+            {nativeStorage ? <nav aria-label="设置栏目" className="flex shrink-0 flex-wrap gap-2 px-4 py-3">{visibleConfigSections.map(section=><Button key={section.key} aria-pressed={activeTab===section.key} onClick={()=>selectSection(section.key)}>{section.label}</Button>)}</nav> : null}
                 {shouldPromptContinue ? <div className="settings-topbar shrink-0">
                     <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                         {shouldPromptContinue ? <>

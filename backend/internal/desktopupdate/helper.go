@@ -18,6 +18,7 @@ import (
 const helperRequestSchema = 1
 
 type HelperRequest struct {
+	DataDir        string `json:"dataDir,omitempty"`
 	Schema         int    `json:"schema"`
 	ParentPID      int    `json:"parentPid"`
 	Platform       string `json:"platform"`
@@ -245,6 +246,7 @@ func (e *Engine) prepareAndStartHelper(ctx context.Context, staged *stagedUpdate
 		return err
 	}
 	req := HelperRequest{
+		DataDir:        e.dataDir,
 		Schema:         helperRequestSchema,
 		ParentPID:      parentPID,
 		Platform:       staged.platform,

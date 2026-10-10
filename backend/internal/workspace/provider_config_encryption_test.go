@@ -60,3 +60,31 @@ func TestProviderConfigEncryptsLegacyConfigAndBackupAndRestores(t *testing.T) {
 		t.Fatal("decrypt created a replacement key")
 	}
 }
+
+func TestProviderConfigReadEncryptsLegacyWithoutChangingRevision(t *testing.T) {
+	dir := t.TempDir()
+	legacy := []byte(`{"schemaVersion":1,"revision":7,"config":{"channels":[{"id":"personal","apiKey":"fixture-legacy-secret","enabled":true}]}}`)
+	if err := os.WriteFile(filepath.Join(dir, LocalProviderConfigFile), legacy, 0600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	effective, health, err := store.LoadEffectiveModelConfig()
+	if err != nil || health != ConfigHealthMigrated || effective.Revision != 7 {
+		t.Fatalf("legacy load: %+v %s %v", effective, health, err)
+	}
+	if requireEffectiveChannel(t, effective, "personal")["apiKey"] != "fixture-legacy-secret" {
+		t.Fatal("secret lost")
+	}
+	for _, name := range []string{LocalProviderConfigFile, LocalProviderConfigFile + ".bak"} {
+		body, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil || bytes.Contains(body, []byte("fixture-legacy-secret")) || !bytes.Contains(body, []byte("encryptedConfig")) {
+			t.Fatalf("plaintext remains in %s: %v", name, err)
+		}
+	}
+	if _, health, err = store.LoadEffectiveModelConfig(); err != nil || health != ConfigHealthReady {
+		t.Fatalf("restart: %s %v", health, err)
+	}
+}

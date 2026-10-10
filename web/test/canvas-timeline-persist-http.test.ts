@@ -187,6 +187,7 @@ export const rebaseCanvasDocumentThreeWay = ({ local, remote }) => ({
 writeFileSync(
     join(dir, "repository.ts"),
     repositorySource
+        .replace('"./canvas-hydration-health"', JSON.stringify(new URL("../src/services/canvas-hydration-health.ts", import.meta.url).href))
         .replace('"@/stores/canvas/use-canvas-store"', JSON.stringify(pathToFileURL(storePath).href))
         .replace('"@/stores/canvas/use-canvas-history-store"', JSON.stringify(pathToFileURL(historyPath).href))
         .replace('"@/services/api/request"', JSON.stringify(pathToFileURL(requestPath).href))

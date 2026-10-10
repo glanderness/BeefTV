@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"infinite-canvas/backend/internal/desktopstorage"
 	"infinite-canvas/backend/internal/desktopupdate"
 
 	"github.com/wailsapp/wails/v2"
@@ -34,6 +35,9 @@ func main() {
 		log.Fatal(err)
 	}
 	app := newDesktopApp(dataDir)
+	if err := configureDesktopTemp(dataDir); err != nil {
+		log.Fatal(err)
+	}
 	startupErrorPath := filepath.Join(dataDir, "startup-error.log")
 	if err := prepareDesktopApp(app); err != nil {
 		_ = os.MkdirAll(dataDir, 0o755)
@@ -78,9 +82,22 @@ func defaultDataDir() (string, error) {
 	if override := strings.TrimSpace(os.Getenv("CANVAS_DESKTOP_DATA_DIR")); override != "" {
 		return override, nil
 	}
-	root, err := os.UserConfigDir()
+	root, err := desktopstorage.DefaultRoot()
 	if err != nil {
 		return "", fmt.Errorf("定位用户应用数据目录: %w", err)
 	}
-	return filepath.Join(root, "BeefTV"), nil
+	return desktopstorage.Resolve(root)
+}
+
+func configureDesktopTemp(dataDir string) error {
+	path := filepath.Join(dataDir, "cache", "tmp")
+	if err := os.MkdirAll(path, 0700); err != nil {
+		return err
+	}
+	for _, name := range []string{"TMPDIR", "TEMP", "TMP"} {
+		if err := os.Setenv(name, path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
