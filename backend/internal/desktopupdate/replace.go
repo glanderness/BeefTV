@@ -199,23 +199,27 @@ func retryIO(op func() error) error {
 }
 
 func relaunchTarget(req HelperRequest) error {
+	args := []string{}
+	if req.DataDir != "" {
+		args = append(args, "--data-dir="+req.DataDir)
+	}
 	switch {
 	case req.Platform == "linux-amd64":
-		cmd := exec.Command(filepath.Join(req.TargetPath, "BeefTV"))
+		cmd := exec.Command(filepath.Join(req.TargetPath, "BeefTV"), args...)
 		cmd.Dir = req.TargetPath
 		if err := cmd.Start(); err != nil {
 			return err
 		}
 		return cmd.Process.Release()
 	case strings.HasPrefix(req.Platform, "darwin"):
-		cmd := exec.Command(filepath.Join(req.TargetPath, "Contents", "MacOS", "BeefTV"))
+		cmd := exec.Command(filepath.Join(req.TargetPath, "Contents", "MacOS", "BeefTV"), args...)
 		cmd.Dir = filepath.Dir(req.TargetPath)
 		if err := cmd.Start(); err != nil {
 			return err
 		}
 		return cmd.Process.Release()
 	case strings.HasPrefix(req.Platform, "windows"):
-		cmd := exec.Command(req.TargetPath)
+		cmd := exec.Command(req.TargetPath, args...)
 		cmd.Dir = filepath.Dir(req.TargetPath)
 		if err := cmd.Start(); err != nil {
 			return err

@@ -5,14 +5,14 @@
 // Windows 使用用户目录下、AppData 之外的唯一位置，避免 MSIX 的 AppData 影子文件。
 // 其他平台保留数据目录里的 runtime.json。已退出进程的描述文件视为过期。
 //
-// 这个包被桌面后端与 beeftv CLI 共用，所以只依赖标准库：CLI 不该因为读一个地址
-// 就把整个后端（数据库、服务层）链接进去。
+// 桌面后端与 CLI 共用路径与存储定位，不依赖数据库或服务层。
 package runtimeinfo
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"infinite-canvas/backend/internal/desktopstorage"
 	"os"
 	"path/filepath"
 	"strings"
@@ -137,7 +137,7 @@ func Discover(dataDir string) (Info, bool) {
 // DefaultDataDir 与桌面应用的 defaultDataDir（backend/cmd/desktop/main.go）保持同一套规则：
 // CANVAS_DESKTOP_DATA_DIR 覆盖优先，否则用户配置目录下的 BeefTV
 // （macOS ~/Library/Application Support/BeefTV，Windows %AppData%\BeefTV）。
-// 这里刻意重复这一小段路径逻辑，而不是让 CLI 依赖桌面 main 包。
+// 使用与桌面相同的已选存储目录指针，不依赖桌面 main 包。
 // BEEFTV_DATA_DIR 是 CLI 侧的显式指定，用来连非默认目录的工作区。
 func DefaultDataDir() (string, error) {
 	for _, name := range []string{"BEEFTV_DATA_DIR", "CANVAS_DESKTOP_DATA_DIR"} {
@@ -149,5 +149,5 @@ func DefaultDataDir() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("定位用户应用数据目录: %w", err)
 	}
-	return filepath.Join(root, "BeefTV"), nil
+	return desktopstorage.Resolve(filepath.Join(root, "BeefTV"))
 }
