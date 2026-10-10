@@ -79,3 +79,30 @@ func TestAssistantHostBodyRejectionIsNotAdmitted(t *testing.T) {
 		t.Fatalf("body rejection: %d %v", response.Code, response.Header())
 	}
 }
+
+func TestAssistantSnapshotFailureIsRejectedAndCanRetry(t *testing.T) {
+	hits := 0
+	env := newAssistantTestEnv(t, func(env *assistantTestEnv) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits++
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"reason":"unauthenticated"}`))
+		})
+	})
+	db := env.service.Database()
+	if err := db.Exec(`CREATE TRIGGER reject_turn BEFORE INSERT ON assistant_turns BEGIN SELECT RAISE(ABORT, 'test write failure'); END`).Error; err != nil {
+		t.Fatal(err)
+	}
+	body := `{"canvasId":"` + env.canvasID + `","message":"hello"}`
+	response := env.call(t, http.MethodPost, "/assistant/chat", body)
+	if response.Code < 400 || response.Header().Get("X-Beeftv-Turn-Admission") != "rejected" || hits != 0 {
+		t.Fatalf("snapshot failure left recovery pending: %d %v hits=%d", response.Code, response.Header(), hits)
+	}
+	if err := db.Exec(`DROP TRIGGER reject_turn`).Error; err != nil {
+		t.Fatal(err)
+	}
+	response = env.call(t, http.MethodPost, "/assistant/chat", body)
+	if response.Header().Get("X-Beeftv-Turn-Admission") != "admitted" || hits != 1 {
+		t.Fatalf("retry not admitted: %d %v hits=%d", response.Code, response.Header(), hits)
+	}
+}

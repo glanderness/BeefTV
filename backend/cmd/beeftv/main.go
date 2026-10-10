@@ -138,6 +138,7 @@ func (c *client) currentBaseURL() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.fixedBaseURL {
+		c.baseURL = ""
 		if info, found := runtimeinfo.Discover(""); found && validateBaseURL(info.BaseURL) == nil {
 			c.baseURL = strings.TrimRight(info.BaseURL, "/")
 		}

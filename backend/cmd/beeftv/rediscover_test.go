@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"infinite-canvas/backend/internal/runtimeinfo"
 	"net/http"
 	"net/http/httptest"
@@ -56,6 +58,52 @@ func TestClientFollowsRuntimeForOperationsAndBusiness(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestClientDoesNotUseCachedEndpointAfterRuntimeDisappears(t *testing.T) {
+	for _, invalid := range []bool{false, true} {
+		t.Run(fmt.Sprint(invalid), func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("BEEFTV_DATA_DIR", dir)
+			t.Setenv("BEEFTV_BASE_URL", "")
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				_, _ = w.Write([]byte(`{"code":0,"data":{}}`))
+			}))
+			defer server.Close()
+			if err := runtimeinfo.Write(dir, server.URL, "test"); err != nil {
+				t.Fatal(err)
+			}
+			c, err := newClient()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = c.do(context.Background(), "GET", "/ops", nil); err != nil {
+				t.Fatal(err)
+			}
+			if invalid {
+				if err = runtimeinfo.Write(dir, "https://example.com", "test"); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err = runtimeinfo.Remove(dir); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, opErr := c.do(context.Background(), "POST", "/ops", map[string]any{})
+			_, businessErr := c.callBusiness(context.Background(), businessTool{Method: "POST", Path: "/projects"}, businessArgs{})
+			for _, err := range []error{opErr, businessErr} {
+				var cli *cliError
+				if !errors.As(err, &cli) || cli.reason != "runtime_not_found" {
+					t.Fatalf("expected runtime_not_found, got %v", err)
+				}
+			}
+			if calls != 1 {
+				t.Fatalf("stale endpoint received %d requests", calls)
+			}
+		})
+	}
 }
 
 func TestClientFixedAddressDoesNotFollowRuntime(t *testing.T) {

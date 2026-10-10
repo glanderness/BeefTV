@@ -68,6 +68,11 @@ func TestTaskLeaseFencesExpiredAndReclaimedWriters(t *testing.T) {
 	if err := repo.UpdateTaskProgressForLease(current.ID, current.LeaseOwner, "current", 60); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Model(&model.Task{}).Where("id = ?", current.ID).Updates(map[string]any{
+		"provider_request_id": "provider-receipt", "provider_cancel_attempts": 3, "route_run": 2,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	current.Status = model.TaskStatusSucceeded
 	if err := repo.SaveTaskCompletion(current, model.TaskStatusRunning, []model.Result{{ID: "valid", TaskID: current.ID}}); err != nil {
 		t.Fatal(err)
@@ -78,5 +83,8 @@ func TestTaskLeaseFencesExpiredAndReclaimedWriters(t *testing.T) {
 	}
 	if stored.LeaseExpiresAt == nil || !stored.LeaseExpiresAt.Equal(*renewed.LeaseExpiresAt) {
 		t.Fatal("completion overwrote the renewed lease with the original claim expiry")
+	}
+	if stored.ProviderRequestID != "provider-receipt" || stored.ProviderCancelAttempts != 3 || stored.RouteRun != 2 {
+		t.Fatal("completion overwrote independently updated runtime fields")
 	}
 }

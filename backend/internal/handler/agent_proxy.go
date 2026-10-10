@@ -436,6 +436,9 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		c.Header("X-Beeftv-Turn-Admission", "unknown")
 		revisionBefore, snapshotErr := svc.BeginAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, turnID, input)
 		if snapshotErr != nil {
+			// No request has reached the host, even if saving the turn snapshot
+			// failed ambiguously. There can be no model or operation to recover.
+			c.Header("X-Beeftv-Turn-Admission", "rejected")
 			failService(c, snapshotErr)
 			return
 		}
