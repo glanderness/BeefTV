@@ -34,6 +34,7 @@ import (
 )
 
 type Runtime struct {
+	workspaceLock    *os.File
 	cfg              Config
 	db               *gorm.DB
 	service          *app.Service
@@ -54,7 +55,7 @@ type Runtime struct {
 	closeErr         error
 }
 
-func Open(_ context.Context, raw Config) (*Runtime, error) {
+func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 	cfg := raw.withDefaults()
 	if cfg.Profile != ProfileServer && cfg.Profile != ProfileDesktop {
 		return nil, fmt.Errorf("不支持的运行模式：%s", cfg.Profile)
@@ -67,6 +68,19 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 	}
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return nil, err
+	}
+	var workspaceLock *os.File
+	if cfg.Profile == ProfileDesktop {
+		var err error
+		workspaceLock, err = runtimeinfo.LockWorkspace(cfg.DataDir)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if openErr != nil {
+				_ = workspaceLock.Close()
+			}
+		}()
 	}
 	db, err := database.Open(database.Config{Driver: cfg.DatabaseDriver, DSN: cfg.DatabaseURL, DataDir: cfg.DataDir})
 	if err != nil {
@@ -275,6 +289,7 @@ func Open(_ context.Context, raw Config) (*Runtime, error) {
 		protected.ServeHTTP(w, r)
 	})
 	return &Runtime{
+		workspaceLock:    workspaceLock,
 		cfg:              cfg,
 		db:               db,
 		service:          svc,
@@ -461,6 +476,9 @@ func (r *Runtime) Close(ctx context.Context) error {
 			}
 		}
 		r.closeErr = errors.Join(failures...)
+		if r.workspaceLock != nil {
+			_ = r.workspaceLock.Close()
+		}
 	})
 	return r.closeErr
 }

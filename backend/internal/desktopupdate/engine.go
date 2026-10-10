@@ -92,6 +92,7 @@ func New(host Host) *Engine {
 	opts := Options{
 		CurrentVersion: host.CurrentVersion,
 		DataDir:        host.DataDir,
+		StagingRoot:    filepath.Join(host.DataDir, "cache", "updates"),
 		Quit:           host.Quit,
 		FeedURL:        FeedURL,
 		PublicKey:      PublicKey,

@@ -13,11 +13,24 @@ func TestEffectiveConfigOverlaysStaleHostedSeedanceProfiles(t *testing.T) {
 	if err := os.WriteFile(path, staleHostedSeedanceConfig(), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.ReadFile(path)
+	store, err := NewProviderConfig(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := NewProviderConfig(dir)
+	// A canonical encrypted snapshot lets this test still assert that computing
+	// the effective overlay does not persist catalog edits.
+	document, _, err := decodeProviderDocument(staleHostedSeedanceConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := store.encodeStoredDocument(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, canonical, 0600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}

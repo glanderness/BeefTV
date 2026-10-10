@@ -101,6 +101,7 @@ import type { CanvasImageEmotionPayload } from "@/components/canvas/canvas-node-
 import { CanvasEmotionWorkspace } from "@/components/canvas/canvas-emotion-workspace";
 import { removeCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
 import { persistCanvasTimeline, refreshLocalCanvasProjectIfChanged } from "@/services/local-workspace-repository";
+import { CanvasUploadModal } from "@/components/canvas/canvas-upload-modal";
 import { syncLocalCanvasSnapshot } from "@/services/local-workspace-sync";
 import { useCanvasConnectionController } from "./use-canvas-connection-controller";
 import { useCanvasActiveTasks } from "./use-canvas-active-tasks";
@@ -998,6 +999,9 @@ function InfiniteCanvasPage() {
 
     const {
         assetPickerOpen,
+        uploadModalOpen,
+        closeUploadModal,
+        handleImportUrl,
         closeAssetPicker,
         createVideoNodeFromBlob,
         createAssetPayloadNodes,
@@ -3052,6 +3056,7 @@ function InfiniteCanvasPage() {
                             onDeleteSelection={() => deleteNodes(selectedNodeIds)}
                         />
 
+                        <CanvasUploadModal open={uploadModalOpen} onClose={closeUploadModal} onUpload={handleUploadFiles} onImportUrl={handleImportUrl} />
                         <input ref={imageInputRef} type="file" accept="image/*,video/*,.mp4,.mov,.m4v,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav,.txt,.md,.markdown" multiple className="hidden" onChange={handleImageInputChange} />
 
                         <CanvasProjectEditorDialogs

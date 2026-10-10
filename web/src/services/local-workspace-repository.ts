@@ -1,6 +1,7 @@
 import { acceptCanvasExternalRevisionCandidate, applyExternalCanvasRevision, canvasDocumentBase, canvasDurableSnapshot, canvasExternalRevisionConflict, clearCanvasDocumentBase, clearCanvasExternalRevisionConflict, flushCanvasStorePersistence, recordCanvasDocumentBase, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { ApiError, http } from "@/services/api/request";
+import { beginCanvasHydration,finishCanvasHydration } from "./canvas-hydration-health";
 import { commitCanvasDocument } from "@/services/api/operations";
 import { restoreCanvasHistory } from "@/services/api/workspace-data";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
@@ -818,6 +819,8 @@ export function openLocalCanvasProject(id: string) {
 export async function hydrateLocalCanvasProjectsFromBackend() {
     const expected = captureUserScope();
     const scope = expected.userScope;
+    const attempt=beginCanvasHydration();
+    let failure="";
     try {
         const response = await http.get<{ projects: Array<Pick<CanvasProject, "id">> }>("/canvas-projects", {
             params: { page: 1, pageSize: 500, sort: "updated" },
@@ -826,13 +829,9 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
         const summaries = Array.isArray(response.projects) ? response.projects : [];
         if (summaries.length === 0) return false;
         const projects = (await Promise.all(summaries.map(async (summary) => {
-            try {
-                const detail = await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(summary.id)}`, { expectedScope: expected });
-                return detail.project;
-            } catch (error) {
-                if (isUserScopeAbandonedError(error)) throw error;
-                return undefined;
-            }
+            const detail = await http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(summary.id)}`, { expectedScope: expected });
+            if (!detail.project) throw new Error("项目内容未返回");
+            return detail.project;
         }))).filter((project): project is CanvasProject => Boolean(project));
         if (projects.length === 0) return false;
         if (!matchesDispatchGuard(expected)) return false;
@@ -860,7 +859,10 @@ export async function hydrateLocalCanvasProjectsFromBackend() {
         return true;
     } catch (error) {
         if (isUserScopeAbandonedError(error) || error instanceof CanvasStaleScopeError) return false;
+        if (matchesDispatchGuard(expected)) failure="项目暂时无法读取，现有数据已保留。请重试或在设置中导出问题记录。";
         return false;
+    } finally {
+        finishCanvasHydration(attempt,failure);
     }
 }
 
