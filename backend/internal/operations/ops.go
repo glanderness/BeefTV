@@ -34,9 +34,7 @@ func RegisterDefaultOps(r *Registry) {
 	r.Register(Op{ID: "asset.list", Summary: "分页列出用户素材库中的素材", ReadOnly: true, Scope: ScopeWorkspaceRead,
 		Params:  json.RawMessage(`{"type":"object","properties":{"page":{"type":"integer"},"pageSize":{"type":"integer"},"query":{"type":"string"},"kind":{"type":"string"},"category":{"type":"string"},"favorite":{"type":"boolean"},"recent":{"type":"boolean"},"project":{"type":"string"},"generated":{"type":"boolean"}}}`),
 		Handler: opAssetList})
-	r.Register(Op{AssistantCanvas: true, ID: "asset.get", Summary: "按 ID 读取单个素材", ReadOnly: true, Scope: ScopeWorkspaceRead,
-		Params:  json.RawMessage(`{"type":"object","properties":{"assetId":{"type":"string"}},"required":["assetId"]}`),
-		Handler: opAssetGet})
+	r.Register(assetGetOperation())
 	r.Register(Op{AssistantCanvas: true, ID: "task.get", Summary: "按 ID 查询任务状态与产物引用", ReadOnly: true, Scope: ScopeWorkspaceRead,
 		Params:  json.RawMessage(`{"type":"object","properties":{"taskId":{"type":"string"}},"required":["taskId"]}`),
 		Handler: opTaskGet})
@@ -287,6 +285,13 @@ func opAssetList(ctx *Context, params json.RawMessage) (any, error) {
 		return nil, mapDomainError(err)
 	}
 	return sanitizeForClient(result), nil
+}
+
+// Binding and direct reads must authorize against the same operation definition.
+func assetGetOperation() Op {
+	return Op{AssistantCanvas: true, ID: "asset.get", Summary: "按 ID 读取单个素材", ReadOnly: true, Scope: ScopeWorkspaceRead,
+		Params:  json.RawMessage(`{"type":"object","properties":{"assetId":{"type":"string"}},"required":["assetId"]}`),
+		Handler: opAssetGet}
 }
 
 func opAssetGet(ctx *Context, params json.RawMessage) (any, error) {

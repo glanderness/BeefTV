@@ -28,7 +28,8 @@ func opCanvasNodeBindAsset(ctx *Context, raw json.RawMessage) (any, error) {
 	// into a new authorization. The scope resolver rechecks project membership.
 	if ctx.Caller.Scope != nil {
 		p, _ := json.Marshal(map[string]string{"assetId": args.AssetID})
-		if err := ctx.Caller.Scope.Allows(&Op{ID: "asset.get", ReadOnly: true, Scope: ScopeWorkspaceRead}, p); err != nil {
+		read := assetGetOperation()
+		if err := ctx.Caller.Scope.Allows(&read, p); err != nil {
 			return nil, err
 		}
 	}
