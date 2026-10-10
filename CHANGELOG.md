@@ -9,6 +9,18 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.15
+
+- 调整工作区侧栏、画布工具与素材面板，保留主题、更新和帮助入口。
+- 删除生成中节点时增加确认；切换画布或账号后，旧确认不会误删其他画布内容。
+- 版本记录保留本机草稿，可预览和下载；恢复历史版本前先保留当前草稿。
+- 修复素材引用菜单意外关闭、点击穿透与键盘导航问题。
+- 历史视频仅在悬停或聚焦时加载预览，离开后取消下载。
+- Windows 随包提供视频转码工具；无法直接播放的视频按需准备兼容预览，保留原件。
+- 改善国内网络下的视频结果取回；正常线路失败后读取同一任务的备用接口，无需重新生成。
+- 修复 Windows 连接、画布媒体和滚轮交互问题。
+- 新增 Ubuntu 24.04 x64 桌面包，支持随包 CLI 和 MCP。
+
 ## v1.7.14
 
 - 兼容通道的助手回复长时间没有新内容时自动尝试恢复，保留已完成操作，仍可随时停止。

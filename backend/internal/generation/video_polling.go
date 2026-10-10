@@ -156,6 +156,10 @@ func NormalizeVideoPollPolicy(policy VideoPollPolicy) VideoPollPolicy {
 }
 
 func RunVideoDownload(ctx context.Context, taskID string, policy VideoPollPolicy, download func(context.Context) ([]byte, string, error)) ([]byte, string, error) {
+	runtime, _ := RuntimeFromContext(ctx)
+	if err := setExecutionStage(ctx, runtime, "正在取回生成结果"); err != nil {
+		return nil, "", err
+	}
 	policy = NormalizeVideoPollPolicy(policy)
 	var lastErr error
 	for attempt := 1; attempt <= policy.MaxDownloadTries; attempt++ {

@@ -27,6 +27,36 @@ const receipt = JSON.parse(readFileSync(`docs/release-evidence/${version}.json`,
 const fail = message => { throw new Error(`Real generation release gate: ${message}`); };
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
+// Exact owner authorization for this release; package gates remain mandatory.
+if (version === 'v1.7.15' && receipt.ownerException?.scope === 'workspace-media-domestic-targeted-20261010') {
+  const evidence = value => Array.isArray(value) && value.length > 0 && value.every(nonempty);
+  const bound = value => value?.sourceDigest === sourceDigest && evidence(value.evidence);
+  if (receipt.ownerException.approvedBy !== 'Ender'
+    || receipt.ownerException.instruction !== '一起合入并发布，本版豁免付费矩阵（推荐）'
+    || !evidence(receipt.ownerException.evidence)) fail('v1.7.15 requires exact owner authorization');
+  if (receipt.newSpentCNY !== 0 || receipt.newPendingCNY !== 0
+    || receipt.liveMatrixStatus !== 'not_run_owner_waived' || !Array.isArray(receipt.cases)
+    || receipt.cases.length !== 0 || receipt.acceptanceComplete !== false) fail('v1.7.15 must not claim paid matrix acceptance');
+  if (receipt.priorFinancialUncertainty?.status !== 'unresolved'
+    || receipt.priorFinancialUncertainty.pendingCNY !== null
+    || !evidence(receipt.priorFinancialUncertainty.evidence)) fail('v1.7.15 must retain historical financial uncertainty');
+  if (receipt.review?.result !== 'approved' || receipt.review.independent !== true
+    || !nonempty(receipt.review.reviewer) || !bound(receipt.review)
+    || receipt.upgrade?.preservedData !== true || !bound(receipt.upgrade)) fail('v1.7.15 requires current-source review and data-preservation evidence');
+  for (const id of ['workspaceRegression', 'videoRecovery', 'networkPolicy', 'localReleaseGate', 'ci']) {
+    if (receipt.verification?.[id]?.status !== 'passed' || !bound(receipt.verification[id])) fail(`v1.7.15 missing targeted evidence: ${id}`);
+  }
+  const packages = receipt.packages;
+  const platforms = ['darwin-arm64', 'darwin-amd64', 'windows-amd64', 'linux-amd64'];
+  if (!Array.isArray(packages?.platforms) || JSON.stringify([...packages.platforms].sort()) !== JSON.stringify([...platforms].sort())
+    || packages.status !== 'pending_release_workflow' || packages.archives != null
+    || receipt.releasePublished !== false || receipt.releaseComplete !== false
+    || packages.windowsReleasedUpgradeAndRollbackBeforeUpload !== true || packages.finalArchiveSmokeBeforeUpload !== true
+    || packages.linuxNativeWindowBeforeUpload !== true || packages.signedManifestBeforePublish !== true
+    || packages.publicReadbackAfterPublish !== true || !evidence(packages.workflowEvidence)) fail('v1.7.15 must enforce all four final-package gates');
+  console.log('v1.7.15 owner-authorized targeted release; paid matrix NOT run; new generation expense 0; four-platform package gates pending.');
+  process.exit(0);
+}
 // Explicit 2026-10-08 authorization changes release order for v1.7.13 only.
 if (receipt.ownerException?.scope === 'release-before-remaining-acceptance-20261008') {
   const pending = validateDeferredV1713(receipt, sourceDigest);

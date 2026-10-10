@@ -50,6 +50,53 @@ function setupRepo(version) {
   return { dir, git, run, save, commitVersion };
 }
 
+test('v1.7.15 waiver keeps source review and all four package gates and cannot carry forward', () => {
+  const { dir, run, save, commitVersion } = setupRepo('v1.7.15');
+  try {
+    const sourceDigest = run('--fingerprint').trim();
+    const evidence = ['synthetic test receipt'];
+    const value = {
+      version: 'v1.7.15', sourceDigest, newSpentCNY: 0, newPendingCNY: 0, cases: [],
+      liveMatrixStatus: 'not_run_owner_waived', acceptanceComplete: false, releasePublished: false, releaseComplete: false,
+      ownerException: { approvedBy: 'Ender', instruction: '一起合入并发布，本版豁免付费矩阵（推荐）', scope: 'workspace-media-domestic-targeted-20261010', evidence },
+      priorFinancialUncertainty: { status: 'unresolved', pendingCNY: null, evidence },
+      review: { result: 'approved', independent: true, reviewer: 'fixture', sourceDigest, evidence },
+      upgrade: { preservedData: true, sourceDigest, evidence },
+      verification: Object.fromEntries(['workspaceRegression', 'videoRecovery', 'networkPolicy', 'localReleaseGate', 'ci'].map(id => [id, { status: 'passed', sourceDigest, evidence }])),
+      packages: {
+        status: 'pending_release_workflow', archives: null, platforms: ['darwin-arm64', 'darwin-amd64', 'windows-amd64', 'linux-amd64'],
+        windowsReleasedUpgradeAndRollbackBeforeUpload: true, finalArchiveSmokeBeforeUpload: true,
+        linuxNativeWindowBeforeUpload: true, signedManifestBeforePublish: true, publicReadbackAfterPublish: true, workflowEvidence: evidence,
+      },
+    };
+    save(value); assert.match(run(), /paid matrix NOT run.*four-platform package gates pending/);
+    const mutations = [
+      r => r.ownerException.instruction = '发包吧', r => r.ownerException.approvedBy = 'other',
+      r => r.ownerException.evidence = [], r => r.ownerException.scope = 'other',
+      r => r.newSpentCNY = 1, r => r.newPendingCNY = null, r => r.cases.push({}),
+      r => r.liveMatrixStatus = 'passed', r => r.acceptanceComplete = true,
+      r => r.priorFinancialUncertainty.pendingCNY = 0, r => r.priorFinancialUncertainty.evidence = [],
+      r => r.review.independent = false, r => r.review.sourceDigest = 'old', r => r.review.result = 'pending',
+      r => r.upgrade.preservedData = false, r => r.upgrade.sourceDigest = 'old',
+      r => r.packages.platforms.pop(), r => r.packages.platforms.push('linux-amd64'),
+      r => r.packages.windowsReleasedUpgradeAndRollbackBeforeUpload = false,
+      r => r.packages.finalArchiveSmokeBeforeUpload = false, r => r.packages.linuxNativeWindowBeforeUpload = false,
+      r => r.packages.signedManifestBeforePublish = false, r => r.packages.publicReadbackAfterPublish = false,
+      r => r.packages.workflowEvidence = [], r => r.packages.status = 'passed', r => r.packages.archives = {},
+      r => r.releasePublished = true, r => r.releaseComplete = true,
+    ];
+    for (const id of Object.keys(value.verification)) mutations.push(
+      r => delete r.verification[id], r => r.verification[id].status = 'pending',
+      r => r.verification[id].sourceDigest = 'old', r => r.verification[id].evidence = []);
+    for (const mutate of mutations) {
+      const invalid = structuredClone(value); mutate(invalid); save(invalid); assert.throws(() => run());
+    }
+    commitVersion('v1.7.16');
+    save({ ...value, version: 'v1.7.16', sourceDigest: run('--fingerprint').trim() }, 'v1.7.16');
+    assert.throws(() => run());
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('v1.7.12 unified-name waiver cannot waive evidence or carry forward', () => {
   const { dir, run, save, commitVersion } = setupRepo('v1.7.12');
   try {
