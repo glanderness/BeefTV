@@ -159,6 +159,30 @@ def probe_self_test():
         for operation in ['write', 'read']:
             probe_cache(helper, root / 'profile', operation, dict(os.environ), root, cleanup)
         print('PASS: isolated WebView probe writes, closes fully, reopens and reads committed IndexedDB')
+        # Exercise the real NSIS failure branch with a tiny payload before the
+        # expensive desktop build. This fixture is never a published artifact.
+        installed = Path(os.environ['LOCALAPPDATA']) / 'Programs/BeefTV'
+        if installed.exists():
+            raise RuntimeError('Unexpected existing app on disposable CI runner')
+        payload = root / 'fixture-payload'
+        payload.mkdir()
+        (payload / 'BeefTV.exe').write_bytes(b'installer fixture payload')
+        version = (Path(__file__).resolve().parent.parent / 'VERSION').read_text().strip()
+        installer = root / 'fixture-output' / f'BeefTV-{version}-windows-amd64-setup.exe'
+        subprocess.run(['python', str(Path(__file__).with_name('package-desktop-installer.py')), '--platform', 'windows-amd64',
+                        '--input', str(payload), '--output-dir', str(installer.parent)], check=True, timeout=90)
+        try:
+            subprocess.run([str(installer), '/S'], check=True, timeout=90)
+            (installed / 'BeefTV.exe').write_bytes(b'previous app must survive failed replacement')
+            locked_windows_upgrade(installer, installed)
+        finally:
+            if (installed / 'Uninstall.exe').is_file():
+                subprocess.run([str(installed / 'Uninstall.exe'), '/S'], check=True, timeout=90)
+                deadline = time.monotonic() + 90
+                while installed.exists() and time.monotonic() < deadline:
+                    time.sleep(.5)
+                assert not installed.exists(), 'fixture uninstall did not finish'
+        print('PASS: native NSIS rejects a proven directory lock and preserves different previous bytes')
 
 
 def verify_data(data):
@@ -176,14 +200,23 @@ def locked_windows_upgrade(installer, installed):
     kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
     kernel.CreateFileW.restype = wintypes.HANDLE
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
-    # Deny FILE_SHARE_DELETE to exercise the actual directory-swap failure path.
-    handle = kernel.CreateFileW(str(installed), 0, 3, None, 3, 0x02000000, None)
+    # A read handle denying FILE_SHARE_DELETE must prevent a directory rename.
+    handle = kernel.CreateFileW(str(installed), 0x80000000, 3, None, 3, 0x02000000, None)
     if handle == ctypes.c_void_p(-1).value:
         raise ctypes.WinError(ctypes.get_last_error())
     before = {str(path.relative_to(installed)): digest(path) for path in installed.rglob('*') if path.is_file()}
     try:
+        # Prove the fixture denies a real rename before judging the installer.
+        control = installed.with_name(installed.name + '-rename-control')
+        try:
+            installed.rename(control)
+        except OSError as error:
+            assert getattr(error, 'winerror', None) in (5, 32), repr(error)
+        else:
+            control.rename(installed)
+            raise RuntimeError('Directory lock fixture did not prevent rename')
         result = subprocess.run([str(installer), '/S'], timeout=180)
-        assert result.returncode == 1, 'locked application directory was not rejected'
+        assert result.returncode == 1, f'locked application directory: expected failure code 1, got {result.returncode}'
     finally:
         kernel.CloseHandle(handle)
     after = {str(path.relative_to(installed)): digest(path) for path in installed.rglob('*') if path.is_file()}
