@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
+import postcss from "postcss";
+import tailwindcss from "@tailwindcss/postcss";
 import { chromium, type Browser } from "playwright";
 let browser: Browser;
 let server: ReturnType<typeof Bun.serve>;
@@ -25,8 +27,8 @@ beforeAll(async () => {
     });
     if (!build.success) throw new Error(build.logs.join("\n"));
     const script = await build.outputs[0].text();
-    const cssFiles = readdirSync(import.meta.dir + "/../dist/static").filter((file) => /^(index|application|settings)-.*\.css$/.test(file));
-    const css = (await Promise.all(cssFiles.map((file) => Bun.file(import.meta.dir + "/../dist/static/" + file).text()))).join("\n");
+    const stylesheet = import.meta.dir + "/../src/styles/globals.css";
+    const css = (await postcss([tailwindcss({ base: import.meta.dir + "/.." })]).process(await Bun.file(stylesheet).text(), { from: stylesheet })).css;
     server = Bun.serve({
         port: 0,
         fetch: (req) => {
@@ -38,7 +40,8 @@ beforeAll(async () => {
             });
         },
     });
-    browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true });
+    const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((path): path is string => Boolean(path && existsSync(path)));
+    browser = await chromium.launch({ executablePath, headless: true });
 }, 60000);
 afterAll(async () => {
     await browser?.close();
