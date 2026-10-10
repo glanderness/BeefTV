@@ -9,22 +9,41 @@ import (
 )
 
 func TestDepthDeliveryRepairsAndBindsOnlyOriginalNode(t *testing.T) {
-	for _, target := range []string{"live", "deleted", "replaced", "legacy"} {
+	for _, target := range []string{"live", "deleted", "replaced", "legacy", "pending", "pending-other-operation", "pending-other-target", "pending-has-media"} {
 		t.Run(target, func(t *testing.T) {
 			h := newHarness(t)
 			now := time.Now()
+			operationID := "depth:pending-operation"
 			task := model.Task{ID: "depth-task", UserID: h.userID, ProjectID: h.canvasID,
-				Type: model.TaskTypeDepthCapture, Status: model.TaskStatusSucceeded,
+				ClientOperationID: &operationID,
+				Type:              model.TaskTypeDepthCapture, Status: model.TaskStatusSucceeded,
 				InputJSON:  `{"metadata":{"source":"canvas","nodeId":"depth-node"}}`,
 				ResultJSON: `{"resourceId":"depth-result","width":1920,"height":1080}`,
 				CreatedAt:  now, UpdatedAt: now, CompletedAt: &now}
 			if target == "legacy" {
 				task.InputJSON = `{"resourceId":"source-video"}`
 			}
+			if target == "pending-other-target" {
+				task.InputJSON = `{"metadata":{"source":"canvas","nodeId":"different-node"}}`
+			}
 			if err := h.service.Database().Create(&task).Error; err != nil {
 				t.Fatal(err)
 			}
-			h.addNode(t, "depth-node", "video", "Keep title", map[string]any{"taskId": task.ID, "status": "loading"})
+			h.addNode(t, "depth-node", "video", "Keep title", map[string]any{"taskId": task.ID, "status": "loading", "depthSourceNodeId": "source-node", "taskClientOperationId": operationID})
+			if target == "pending" || target == "pending-other-operation" || target == "pending-other-target" || target == "pending-has-media" {
+				node := h.node(t, "depth-node")
+				metadata := nodeMeta(node)
+				delete(metadata, "taskId")
+				metadata["depthSourceNodeId"] = "source-node"
+				metadata["taskClientOperationId"] = operationID
+				if target == "pending-other-operation" {
+					metadata["taskClientOperationId"] = "depth:other-operation"
+				}
+				if target == "pending-has-media" {
+					metadata["assetId"] = "existing-asset"
+				}
+				h.replaceNode(t, "depth-node", node)
+			}
 			if target == "deleted" {
 				h.deleteNode(t, "depth-node")
 			}
@@ -54,6 +73,17 @@ func TestDepthDeliveryRepairsAndBindsOnlyOriginalNode(t *testing.T) {
 				}
 			}
 			switch target {
+			case "pending-other-operation", "pending-other-target", "pending-has-media":
+				wantReason := "node_task_mismatch"
+				if target == "pending-other-target" {
+					wantReason = "node_mismatch"
+				}
+				if _, err := h.bindTask(t, task.ID, "depth-node", 0); opErr(t, err).Reason != wantReason {
+					t.Fatalf("unsafe pending bind: %v", err)
+				}
+				if h.nodeMetaString(t, "depth-node", "taskId") != "" {
+					t.Fatal("unrelated pending node bound")
+				}
 			case "deleted":
 				if h.findNode(t, "depth-node") != nil {
 					t.Fatal("deleted node revived")
