@@ -33,7 +33,7 @@ describe("desktop update UI contract", () => {
         expect(update).toContain("showVersion");
         expect(update).toContain("updater.downloadAndInstall()");
         expect(update).not.toContain("AppModal");
-        expect(update).not.toContain("检查更新");
+        expect(update).toContain("updater.check()");
         expect(update).toContain('aria-live="polite"');
         expect(update).toContain("desktopUpdateDetailLabel");
         expect(update).toContain("hasResumableDesktopUpdate");

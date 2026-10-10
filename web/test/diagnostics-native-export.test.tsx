@@ -1,18 +1,16 @@
 import { afterEach, expect, test } from "bun:test";
-import { App } from "antd";
-import { renderToStaticMarkup } from "react-dom/server";
-import { MemoryRouter } from "react-router";
-import SettingsPage from "@/pages/settings";
+import { readFileSync } from "node:fs";
 import { downloadDiagnosticBundle } from "@/services/diagnostics/diagnostics-api";
 
 const originalWindow = globalThis.window;
 afterEach(() => { globalThis.window = originalWindow; });
 
-test("the existing task diagnostic URL opens the diagnostic pane", () => {
-    const html = renderToStaticMarkup(<MemoryRouter initialEntries={["/settings?section=diagnostics&taskId=task-1&projectId=canvas-1"]}><App><SettingsPage /></App></MemoryRouter>);
-    expect(html).toContain("导出诊断包");
-    expect(html).toContain("返回模型配置");
-    expect(html).not.toContain("默认生图模型");
+test("the existing diagnostic URL passes its task and canvas to the modal", () => {
+    const settings = readFileSync(new URL("../src/pages/settings/index.tsx", import.meta.url), "utf8");
+    expect(settings).toContain('open={activeTab === "diagnostics"}');
+    expect(settings).toContain('taskId={searchParams.get("taskId") || undefined}');
+    expect(settings).toContain('projectId={searchParams.get("projectId") || undefined}');
+    expect(settings).toContain('onClose={() => selectSection("channels")}');
 });
 
 test("native diagnostic ZIP bytes reach the chosen-file binding and cancellation is preserved", async () => {

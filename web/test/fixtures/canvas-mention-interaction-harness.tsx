@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { appQueryClient } from "../../src/lib/query-client";
 import { CanvasResourceMentionTextarea } from "../../src/components/canvas/canvas-resource-mention-textarea";
 import { useAssetStore, type Asset } from "../../src/stores/use-asset-store";
 import type { CanvasResourceReference } from "../../src/lib/canvas/canvas-resource-references";
@@ -120,6 +122,7 @@ function TestApp() {
             <div style={{ background: "#27272a", borderRadius: "8px", padding: "12px", minHeight: "100px", position: "relative" }}>
                 <CanvasResourceMentionTextarea
                     id="rich-mention-input"
+                    aria-label="rich-editor"
                     value={richPrompt}
                     references={mockReferences}
                     includeAssetLibrary
@@ -150,6 +153,7 @@ function TestApp() {
                 <div style={{ background: "#27272a", borderRadius: "8px", padding: "12px", minHeight: "100px" }}>
                     <CanvasResourceMentionTextarea
                         id="plain-mention-input"
+                    aria-label="secondary-editor"
                         value={plainPrompt}
                         references={mockReferences}
                         includeAssetLibrary
@@ -167,5 +171,5 @@ function TestApp() {
 
 const rootElement = document.getElementById("root");
 if (rootElement) {
-    createRoot(rootElement).render(<TestApp />);
+    createRoot(rootElement).render(<QueryClientProvider client={appQueryClient}><TestApp /></QueryClientProvider>);
 }

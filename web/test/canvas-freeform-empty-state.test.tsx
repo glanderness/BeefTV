@@ -66,7 +66,7 @@ describe("BeefTV freeform canvas empty state", () => {
             },
         };
         const labels = resolveAddNodeMenuCommands(context).filter((command) => command.section === "node").slice(0, 8).map((command) => command.label);
-        expect(labels).toEqual(["文本", "图片", "视频", "音频", "智能剪辑", "导演台", "逐帧拉片", "脚本"]);
+        expect(labels).toEqual(["文本", "图片", "视频", "音频", "导演台", "智能剪辑", "逐帧拉片", "脚本"]);
         const commandsByLabel = new Map(resolveAddNodeMenuCommands(context).map((command) => [command.label, command]));
         for (const label of ["智能剪辑", "逐帧拉片", "脚本"]) {
             expect(commandsByLabel.get(label)?.disabledReason).toBe("正在开发");

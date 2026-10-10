@@ -1,4 +1,5 @@
 import { createRoot } from "react-dom/client";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { App } from "antd";
 import { AgentConnectPanel } from "@/pages/agents/agent-connect-panel";
@@ -28,7 +29,7 @@ Object.assign(window, { assistantInputFixture: {
     libraryInvalidated: () => appQueryClient.getQueryState(initialAssetQuery)?.isInvalidated,
     changedCanvases: () => [...changedCanvases],
     locatedNodes: () => [...locatedNodes],
-    switchScope: (scope = "other-workspace") => { setActiveUserScope(scope); useAssetStore.setState({ assets: [] }); },
+    switchScope: async (scope = "other-workspace") => { await fetch("/test/asset-scope", { method: "POST", body: JSON.stringify({ scope }) }); setActiveUserScope(scope); useAssetStore.setState({ assets: [] }); },
 } });
 function Harness() {
     const [externalOpen, setExternalOpen] = useState(false);
@@ -40,4 +41,4 @@ function Harness() {
         {externalOpen ? <AgentConnectPanel kind="codex" onClose={() => setExternalOpen(false)} onConfigured={() => {}} verifiedClientIds={[]} onBusyChange={() => {}} /> : null}
     </App>;
 }
-createRoot(document.getElementById("root")!).render(<Harness />);
+createRoot(document.getElementById("root")!).render(<QueryClientProvider client={appQueryClient}><Harness /></QueryClientProvider>);

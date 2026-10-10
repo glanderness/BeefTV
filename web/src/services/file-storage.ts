@@ -36,12 +36,13 @@ export async function uploadMediaFile(input: Blob, prefix = "file", onProgress?:
     const expected = expectedScope ?? captureUserScope();
     const storageKey = `${prefix}:${expected.userScope}:${nanoid()}`;
     const blob = input;
+    const isVideo = prefix === "video" || blob.type.startsWith("video/");
     const previewUrl = URL.createObjectURL(blob);
     let retainPreviewUrl = false;
 
     try {
         let captured: Awaited<ReturnType<typeof captureVideoPoster>> | undefined;
-        if (blob.type.startsWith("video/")) {
+        if (isVideo) {
             try {
                 captured = await captureVideoPoster(previewUrl);
             } catch (error) {
@@ -55,7 +56,7 @@ export async function uploadMediaFile(input: Blob, prefix = "file", onProgress?:
         // 浏览器轨道探测对部分 MP4/MOV 会误报；只有未确认存在音轨时才做二次解析，
         // 避免正常上传重复读取整个文件。
         let parsedHasAudio: boolean | undefined;
-        if (blob.type.startsWith("video/") && captured?.hasAudio !== true) {
+        if (isVideo && captured?.hasAudio !== true) {
             try {
                 parsedHasAudio = await detectVideoAudioTrackFromBlob(blob);
             } catch (error) {
@@ -68,7 +69,7 @@ export async function uploadMediaFile(input: Blob, prefix = "file", onProgress?:
 
         let meta: { width?: number; height?: number; durationMs?: number; hasAudio?: boolean };
         if (captured) {
-            meta = { width: captured.width, height: captured.height, durationMs: captured.durationMs, hasAudio: resolvedHasAudio };
+            meta = { width: captured.poster ? captured.width : undefined, height: captured.poster ? captured.height : undefined, durationMs: captured.durationMs, hasAudio: resolvedHasAudio };
         } else if (blob.type.startsWith("audio/")) {
             try {
                 meta = await readAudioMeta(previewUrl);
@@ -105,7 +106,7 @@ export async function uploadMediaFile(input: Blob, prefix = "file", onProgress?:
         // The native desktop Go resource service is the canonical local store.
         // Browser local mode keeps IndexedDB as its offline/development store.
         try {
-            const kind = prefix === "video" || blob.type.startsWith("video/") ? "video" : prefix === "audio" || blob.type.startsWith("audio/") ? "audio" : "file";
+            const kind = isVideo ? "video" : prefix === "audio" || blob.type.startsWith("audio/") ? "audio" : "file";
             const resource = await uploadResourceFile(blob, kind, { ...meta, fileName: input instanceof File ? input.name : undefined, idempotencyKey: storageKey, expectedScope: expected }, onProgress);
             assertUserScope(expected);
             try {

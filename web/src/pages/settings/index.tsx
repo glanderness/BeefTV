@@ -74,11 +74,10 @@ export default function SettingsPage() {
         navigate(-1);
     };
 
-    const panes: Record<ConfigSectionKey, ReactNode> = {
-        diagnostics: <DiagnosticsPanel taskId={searchParams.get("taskId") || undefined} projectId={searchParams.get("projectId") || undefined} />,
+    const panes: Record<Exclude<ConfigSectionKey, "diagnostics">, ReactNode> = {
         channels: (
             <SettingsPane>
-                <ChannelSettingsPane />
+                <ChannelSettingsPane onOpenDiagnostics={() => selectSection("diagnostics")} />
                 <div className="settings-section model-default-section">
                     <div className="settings-pane-header">
                         <div className="min-w-0">
@@ -106,28 +105,29 @@ export default function SettingsPage() {
 
     return (
         <main className="settings-page app-workspace-page app-user-workspace app-section-page flex h-full min-h-0 flex-col text-foreground">
-                <div className="settings-topbar shrink-0">
+                {shouldPromptContinue ? <div className="settings-topbar shrink-0">
                     <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-                        {activeTab === "diagnostics" ? (
-                            <Button icon={<ArrowLeft className="size-4" />} onClick={() => selectSection("channels")}>返回模型配置</Button>
-                        ) : (
-                            <Button icon={<Bug className="size-4" />} onClick={() => selectSection("diagnostics")}>问题诊断</Button>
-                        )}
                         {shouldPromptContinue ? <>
                         <Button icon={<ArrowLeft className="size-4" />} onClick={() => navigate(-1)}>返回创作</Button>
                         <Button type="primary" onClick={finishConfig}>保存并返回</Button>
                         </> : null}
                     </div>
-                </div>
+                </div> : null}
             <div className="settings-library-frame flex min-h-0 flex-1 flex-col md:flex-row">
                 <section className="settings-content flex min-h-0 min-w-0 flex-1 flex-col">
                     <div className="app-workspace-scroll app-section-page-content min-h-0 flex-1 overflow-y-auto overscroll-contain">
                         <div className="settings-pane-root mx-auto w-full max-w-none">
-                            {panes[activeTab]}
+                            {panes[activeTab === "diagnostics" ? "channels" : activeTab]}
                         </div>
                     </div>
                 </section>
             </div>
+            <DiagnosticsPanel
+                open={activeTab === "diagnostics"}
+                onClose={() => selectSection("channels")}
+                taskId={searchParams.get("taskId") || undefined}
+                projectId={searchParams.get("projectId") || undefined}
+            />
         </main>
     );
 }

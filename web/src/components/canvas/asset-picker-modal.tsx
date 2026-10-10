@@ -96,7 +96,7 @@ export function assetPickerItemsToInsertPayloads(ids: string[], items: AssetLibr
     });
 }
 
-function localAssetToInsertPayload(asset: InsertableAsset): InsertAssetPayload {
+export function localAssetToInsertPayload(asset: InsertableAsset): InsertAssetPayload {
     if (asset.kind === "text") return { kind: "text", content: asset.data.content, title: asset.title, assetId: asset.id };
     if (asset.kind === "audio") return { kind: "audio", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, durationMs: asset.data.durationMs, bytes: asset.data.bytes, mimeType: asset.data.mimeType, assetId: asset.id };
     if (asset.kind === "video")

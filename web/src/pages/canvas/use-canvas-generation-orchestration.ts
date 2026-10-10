@@ -6,6 +6,7 @@ import { nanoid } from "nanoid";
 import { promoteLegacyBatchTableSize } from "@/lib/canvas/canvas-batch-table";
 import { persistCanvasDocument } from "@/services/local-workspace-repository";
 import { cancelGenerationTask, type GenerationTask } from "@/services/api/task-center";
+import { canvasTaskConfirmation } from "./canvas-task-confirmation";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import type { Skill } from "@/services/api/skills";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
@@ -212,10 +213,10 @@ export function useCanvasGenerationOrchestration({
     const cancelCanvasTask = useCallback(
         (task: GenerationTask) => {
             modal.confirm({
+                ...canvasTaskConfirmation,
                 title: "取消生成任务？",
                 content: localOnly ? "任务会立即停止本地执行。" : "任务会立即停止本地执行；如果已经提交到上游，系统会继续核对取消结果和积分状态。",
                 okText: "取消任务",
-                okButtonProps: { danger: true },
                 cancelText: "继续等待",
                 onOk: async () => {
                     try {

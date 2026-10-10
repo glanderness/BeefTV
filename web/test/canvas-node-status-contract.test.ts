@@ -8,7 +8,7 @@ test("canvas nodes expose a stable generation status for visual audits", () => {
     expect(nodeSource).toContain('data-node-status={data.metadata?.status || "idle"}');
     expect(nodeSource).toContain("data-task-id={data.metadata?.taskId || undefined}");
     expect(nodeSource).toContain("data-task-cancellable=");
-    expect(nodeSource).toContain('aria-label="生成中"');
+    expect(contentSource).toContain("生成中");
     expect(nodeSource).toContain('aria-label={resultPending ? "结果待放入画布" : "生成失败"}');
     expect(nodeSource).toContain('aria-label="生成完成"');
 });

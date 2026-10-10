@@ -1,5 +1,5 @@
 import { Button, Dropdown, Tooltip } from "antd";
-import { History, MessageSquarePlus, X, Clapperboard, ArrowUpRight } from "lucide-react";
+import { History, MessageSquarePlus, X, ArrowUpRight } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { AppDrawer } from "@/components/ui/product/app-drawer";
@@ -34,7 +34,7 @@ type Props = {
 };
 
 export function CanvasAssistantSidebar(props: Props) {
-    const { assistant, canvasTitle, dockable, readOnly, selectedNodeIds, references, onLocateNodes, onRunProposal, onOpenModelSettings } = props;
+    const { assistant, dockable, readOnly, selectedNodeIds, references, onLocateNodes, onRunProposal, onOpenModelSettings } = props;
     const [draft, setDraft] = useState("");
     const [attachments, setAttachments] = useState<AssistantAttachment[]>([]);
     const [selectedSkills, setSelectedSkills] = useState<AssistantSkillSelection[]>([]);
@@ -45,8 +45,6 @@ export function CanvasAssistantSidebar(props: Props) {
     const [draftLoaded, setDraftLoaded] = useState(false);
     const [draftReadAttempt, setDraftReadAttempt] = useState(0);
     const [loadedDraftIdentity, setLoadedDraftIdentity] = useState<string | null>(null);
-    const [draftSaving, setDraftSaving] = useState(false);
-    const [draftSaved, setDraftSaved] = useState(false);
     const draftWriteVersion = useRef(0);
     const [skillsOpen, setSkillsOpen] = useState(false);
     const [skillInstallOpen, setSkillInstallOpen] = useState(false);
@@ -63,6 +61,7 @@ export function CanvasAssistantSidebar(props: Props) {
     const logRef = useRef<HTMLDivElement | null>(null);
     const sidebarRef = useRef<HTMLDivElement | null>(null);
     const followLatestRef = useRef(true);
+    const mediaReferences = references.filter(item => ["image", "video", "audio"].includes(item.kind));
 
     useEffect(() => {
         const generation = ++inputGeneration.current, expected = captureUserScope(); inputScope.current = expected;
@@ -79,12 +78,8 @@ export function CanvasAssistantSidebar(props: Props) {
         if (!draftLoaded || loadedDraftIdentity !== draftIdentity) return;
         const generation = inputGeneration.current;
         const version = ++draftWriteVersion.current;
-        setDraftSaving(true);
-        setDraftSaved(false);
         void saveAssistantInputDraft(assistant.canvasId, { text: draft, attachments, skills: selectedSkills }, inputScope.current)
-            .then(() => { if (generation === inputGeneration.current && version === draftWriteVersion.current) setDraftSaved(true); })
-            .catch(() => { if (generation === inputGeneration.current) setInputError("未发送内容暂时无法保存，请保持窗口打开。"); })
-            .finally(() => { if (generation === inputGeneration.current && version === draftWriteVersion.current) setDraftSaving(false); });
+            .catch(() => { if (generation === inputGeneration.current && version === draftWriteVersion.current) setInputError("未发送内容暂时无法保存，请保持窗口打开。"); });
     }, [assistant.canvasId, attachments, draft, draftIdentity, draftLoaded, loadedDraftIdentity, selectedSkills]);
 
     const upload = useCallback(async (id: string, file: File) => {
@@ -174,15 +169,15 @@ export function CanvasAssistantSidebar(props: Props) {
     const content = (
         <div className="canvas-assistant-panel" data-canvas-no-zoom>
             <header className="canvas-assistant-header">
-                <div className="canvas-assistant-heading"><h2>创作助手</h2><span title={canvasTitle}>{canvasTitle}</span></div>
+                <div className="canvas-assistant-heading"><h2>BeefTV Agent</h2></div>
                 <Tooltip title="新对话">
                     <Button type="text" size="small" aria-label="新对话" disabled={assistant.streaming || assistant.sessionBusy} icon={<MessageSquarePlus className="size-4" />} onClick={() => void assistant.startNewSession()} />
                 </Tooltip>
                 <Dropdown trigger={["click"]} placement="bottomRight" menu={{ items: sessionItems, selectedKeys: assistant.sessionId ? [assistant.sessionId] : [] }}>
                     <Button type="text" size="small" aria-label="历史对话" disabled={assistant.streaming || assistant.sessionBusy} icon={<History className="size-4" />} />
                 </Dropdown>
-                <Tooltip title="关闭助手">
-                    <Button type="text" size="small" aria-label="关闭助手" icon={<X className="size-4" />} onClick={() => assistant.setOpen(false)} />
+                <Tooltip title="关闭 Agent">
+                    <Button type="text" size="small" aria-label="关闭 Agent" icon={<X className="size-4" />} onClick={() => assistant.setOpen(false)} />
                 </Tooltip>
             </header>
 
@@ -201,12 +196,10 @@ export function CanvasAssistantSidebar(props: Props) {
                 {assistant.historyError ? <div className="canvas-assistant-notice" role="status"><span>{assistant.historyError}</span><Button size="small" onClick={() => void assistant.reloadHistory()}>重新读取</Button></div> : !assistant.historyLoaded && assistant.status?.reason !== "model_not_configured" ? <p className="canvas-assistant-meta" role="status">正在读取对话…</p> : null}
                 {assistant.historyLoaded && turnCount === 0 && !assistant.pendingUserText && !assistant.pendingAttachments.length ? (
                     <div className="canvas-assistant-empty">
-                        <Clapperboard className="canvas-assistant-empty-icon" aria-hidden="true" />
-                        <h3>让想法成为画面</h3>
-                        <p>从一句灵感开始，一起完善这张画布。</p>
-                        {ASSISTANT_STARTER_PROMPTS.map((prompt) => (
+                        <h3>想在这张画布上做什么？</h3>
+                        {ASSISTANT_STARTER_PROMPTS.slice(0, 3).map((prompt, index) => (
                             <button key={prompt} type="button" className="canvas-assistant-starter" onClick={() => setDraft(prompt)}>
-                                <span>{prompt}</span><ArrowUpRight size={14} aria-hidden="true" />
+                                <span>{["拆分分镜", "完善选中镜头", "整理画布"][index]}</span><ArrowUpRight size={14} aria-hidden="true" />
                             </button>
                         ))}
                     </div>
@@ -284,18 +277,17 @@ export function CanvasAssistantSidebar(props: Props) {
                 hasAttachments={inputReady && attachments.length > 0}
                 inputBusy={!draftLoaded || loadedDraftIdentity !== draftIdentity || assistant.awaitingReceipt || uploads.length > 0 || attachments.some(item => Boolean(attachmentRangeError(item)))}
                 onFiles={addFiles}
-                onOpenReferences={() => setReferencePickerOpen(value => !value)}
-                onOpenSkills={() => { setSkillsOpen(value => !value); void loadSkills(); }}
+                onOpenReferences={() => { setReferencePickerOpen(value => !value); setSkillsOpen(false); }}
+                onOpenSkills={() => { setSkillsOpen(value => !value); setReferencePickerOpen(false); void loadSkills(); }}
                 inputContent={<>
                     <CanvasAssistantAttachments attachments={inputReady ? attachments : []} onChange={(index, value) => setAttachments(items => items.map((item, i) => i === index ? value : item))} onRemove={index => setAttachments(items => items.filter((_, i) => i !== index))} />
                     {(inputReady ? uploads : []).map(item => <div key={item.id} className="canvas-assistant-notice" role="status"><span>{item.file.name} · {item.busy ? "正在保存素材…" : item.error}</span>
                         {!item.busy ? <><Button size="small" onClick={() => void upload(item.id, item.file)}>重试上传</Button><Button size="small" onClick={() => setUploads(items => items.filter(value => value.id !== item.id))}>移除</Button></> : null}</div>)}
                     {inputError ? <p className="canvas-assistant-meta" role="status">{inputError}</p> : null}
                     {draftLoaded && loadedDraftIdentity !== draftIdentity ? <Button size="small" onClick={() => setDraftReadAttempt(value => value + 1)}>重新读取草稿</Button> : null}
-                    {inputReady && (draft || attachments.length || selectedSkills.length) ? <span className="canvas-assistant-meta" role="status">{draftSaving ? "正在保存草稿…" : draftSaved ? "草稿已保存在本机" : "草稿尚未保存，请保持窗口打开"}</span> : null}
                     {(inputReady ? selectedSkills : []).map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>技能：{skill.skillName || skill.skillId} · {skill.version || skill.versionId}<button aria-label={`移除技能 ${skill.skillName || skill.skillId}`} onClick={() => setSelectedSkills(items => items.filter(item => item.skillId !== skill.skillId))}><X size={12} /></button></span>)}
                     {skillsOpen && inputReady ? <div className="canvas-assistant-picker" aria-label="已安装技能">{skillsLoading ? <span>正在读取技能…</span> : skillsError ? <><span role="status">{skillsError}</span><Button size="small" onClick={() => void loadSkills()}>重新读取</Button></> : availableSkills.length ? availableSkills.map(skill => <button key={skill.skillId} type="button" aria-pressed={selectedSkills.some(item => item.skillId === skill.skillId)} onClick={() => setSelectedSkills(items => items.some(item => item.skillId === skill.skillId) ? items.filter(item => item.skillId !== skill.skillId) : [...items, { skillId: skill.skillId, versionId: skill.versionId, contentHash: skill.contentHash, skillName: skill.skillName, version: skill.version }])}>{skill.skillName} · {skill.version}</button>) : <span>还没有已安装的技能。</span>}<Button size="small" disabled={readOnly} onClick={() => { setSkillInstallGeneration(inputGeneration.current); setSkillInstallOpen(true); }}>安装技能</Button></div> : null}
-                    {referencePickerOpen && inputReady ? <div className="canvas-assistant-picker" aria-label="画布参考素材">{references.filter(item => ["image", "video", "audio"].includes(item.kind)).map(reference => <button type="button" key={reference.id} onClick={() => { try { if (attachmentCount.current >= 8) throw new Error("一次最多添加 8 份参考素材"); const item = attachmentFromCanvasReference(reference); attachmentCount.current++; setAttachments(items => [...items, item]); setReferencePickerOpen(false); } catch (error) { setInputError(error instanceof Error ? error.message : "无法添加素材"); } }}>{reference.title || reference.label}</button>)}</div> : null}
+                    {referencePickerOpen && inputReady ? <div className="canvas-assistant-picker" aria-label="画布参考素材">{mediaReferences.length ? mediaReferences.map(reference => <button type="button" key={reference.id} onClick={() => { try { if (attachmentCount.current >= 8) throw new Error("一次最多添加 8 份参考素材"); const item = attachmentFromCanvasReference(reference); attachmentCount.current++; setAttachments(items => [...items, item]); setReferencePickerOpen(false); } catch (error) { setInputError(error instanceof Error ? error.message : "无法添加素材"); } }}>{reference.title || reference.label}</button>) : <span className="canvas-assistant-meta">当前画布暂无可用素材</span>}</div> : null}
                 </>}
             />
             <SkillInstallModal open={skillInstallOpen} onClose={() => setSkillInstallOpen(false)} onInstalled={skill => {
@@ -323,7 +315,7 @@ export function CanvasAssistantSidebar(props: Props) {
                 closable={false}
                 onClose={() => assistant.setOpen(false)}
                 size="min(380px, 92vw)"
-                aria-label="助手"
+                aria-label="BeefTV Agent"
             >
                 {content}
             </AppDrawer>
@@ -331,11 +323,11 @@ export function CanvasAssistantSidebar(props: Props) {
     }
 
     return (
-        <aside ref={sidebarRef} className="canvas-assistant-sidebar" aria-label="助手" style={{ width: assistant.width, flexBasis: assistant.width }}>
+        <aside ref={sidebarRef} className="canvas-assistant-sidebar" aria-label="BeefTV Agent" style={{ width: assistant.width, flexBasis: assistant.width }}>
             <button
                 type="button"
                 className="canvas-assistant-resize"
-                aria-label="调整助手宽度"
+                aria-label="调整 Agent 宽度"
                 onPointerDown={startResize}
                 onKeyDown={(event) => {
                     if (event.key === "ArrowLeft") assistant.setWidth(Math.min(ASSISTANT_MAX_WIDTH, assistant.width + 16));

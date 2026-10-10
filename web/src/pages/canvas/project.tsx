@@ -1,3 +1,4 @@
+import { localAssetToInsertPayload } from "@/components/canvas/asset-picker-modal";
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
 import { CanvasAssistantSidebar } from "./canvas-assistant-sidebar";
 import { highlightAssistantNodes } from "./canvas-assistant-highlight";
@@ -26,6 +27,7 @@ import { persistCanvasMediaPerformanceMode, readCanvasMediaPerformanceMode } fro
 import { summarizeCanvasContext } from "@/lib/canvas/canvas-context-summary";
 import { DEFAULT_DRAWING_ENGINE } from "@/lib/canvas/canvas-drawing-engine";
 import { useAssetStore } from "@/stores/use-asset-store";
+import { usePersonalAssetLibrary } from "@/hooks/use-personal-asset-library";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { useCanvasThemeStore, useCanvasThemeScope } from "@/stores/canvas/use-canvas-theme-store";
@@ -187,7 +189,7 @@ function InfiniteCanvasPage() {
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
-    const assets = useAssetStore((state) => state.assets);
+    const assets = usePersonalAssetLibrary();
     const assetsHydrated = useAssetStore((state) => state.hydrated);
     const cleanupAssetImages = useAssetStore((state) => state.cleanupImages);
     const colorTheme = useCanvasThemeStore((state) => state.theme);
@@ -999,7 +1001,6 @@ function InfiniteCanvasPage() {
         closeAssetPicker,
         createVideoNodeFromBlob,
         createAssetPayloadNodes,
-        createImageAssetNode,
         fileDropActive,
         handleAssetsInsert,
         handleDrop,
@@ -1664,7 +1665,6 @@ function InfiniteCanvasPage() {
         contextMenuNode,
         displayConnections,
         frameChildrenById,
-        imageAssets,
         infoNode,
         maskEditNode,
         mentionReferencesByNodeId,
@@ -2535,7 +2535,6 @@ function InfiniteCanvasPage() {
                                 onImportTapNow={() => setTapNowImportOpen(true)}
                                 onUndo={undoCanvas}
                                 onRedo={redoCanvas}
-                                shortcutRequestNonce={shortcutRequestNonce}
                                 mediaPerformanceMode={mediaPerformanceMode}
                                 onMediaPerformanceModeChange={setMediaPerformanceMode}
                                 onOpenSearch={() => setNodeSearchOpen(true)}
@@ -2762,7 +2761,7 @@ function InfiniteCanvasPage() {
                                         }}
                                         onOpenProjectCharacters={() => openProjectAssets("character")}
                                         onOpenGenerationHistory={() => setGenerationHistoryOpen(true)}
-                                        onOpenShortcuts={() => setShortcutRequestNonce((value) => value + 1)}
+                                        shortcutRequestNonce={shortcutRequestNonce}
                                     />
                                 ) : null}
                             </div>
@@ -2957,11 +2956,11 @@ function InfiniteCanvasPage() {
                                 onWheel={(event) => event.stopPropagation()}
                             >
                                 <CanvasAssetTray
-                                    assetImages={imageAssets}
+                                    libraryAssets={assets.filter((asset): asset is Extract<typeof asset, { kind: "image" | "video" | "audio" | "text" }> => ["image", "video", "audio", "text"].includes(asset.kind))}
                                     canvasImages={canvasImageNodes}
                                     showLibrary={!currentProject?.projectId}
                                     activeNodeId={selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null}
-                                    onInsertAssetImage={(asset) => void createImageAssetNode(asset)}
+                                    onInsertAsset={(asset) => void handleAssetsInsert([localAssetToInsertPayload(asset)], canvasCapturedScope)}
                                     onFocusCanvasImage={focusCanvasImageNode}
                                 />
                                 <CanvasZoomControls
@@ -3053,7 +3052,7 @@ function InfiniteCanvasPage() {
                             onDeleteSelection={() => deleteNodes(selectedNodeIds)}
                         />
 
-                        <input ref={imageInputRef} type="file" accept="image/*,video/*,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav,.txt,.md,.markdown" multiple className="hidden" onChange={handleImageInputChange} />
+                        <input ref={imageInputRef} type="file" accept="image/*,video/*,.mp4,.mov,.m4v,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav,.txt,.md,.markdown" multiple className="hidden" onChange={handleImageInputChange} />
 
                         <CanvasProjectEditorDialogs
                             projectId={projectId}

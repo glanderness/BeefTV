@@ -102,7 +102,7 @@ function selectGate(partial: Partial<CanvasGenerationHistorySelectGate> = {}): C
 
 describe("LibTV generation history picker", () => {
     test("queries and filters successful media generation tasks", () => {
-        expect(picker).toContain('title="从生成历史选择"');
+        expect(picker).toContain('title="生成历史"');
         expect(picker).toContain("listGenerationTasks(100, { projectId, activeOnly: false }, undefined, signal)");
         expect(picker).toContain("insertableCanvasGenerationHistoryTasks");
         expect(picker).toContain("queryGenerationTask(task.id, { signal: request.signal })");
@@ -120,7 +120,7 @@ describe("LibTV generation history picker", () => {
         expect(picker).not.toContain("localTaskHistoryFromProjects");
         expect(picker).not.toContain("isLocalWorkspaceMode");
         expect(picker).not.toContain("loadCanvasGenerationHistory");
-        expect(picker).toContain("query.isError ? \"生成历史暂时无法读取\"");
+        expect(picker).toContain("query.isError ? <>生成历史暂时无法读取");
         expect(picker).toContain('queryKey: ["canvas-generation-history", scope, projectId]');
         expect(historySource).toContain("export function insertableCanvasGenerationHistoryTasks");
         expect(historySource).not.toContain("loadCanvasGenerationHistory");
@@ -273,8 +273,9 @@ describe("LibTV generation history picker", () => {
                 throw new Error("backend down");
             },
         })).rejects.toThrow("backend down");
-        expect(picker).not.toContain(".catch(");
-        expect(picker).toContain("query.isError ? \"生成历史暂时无法读取\"");
+        const listQuery = picker.slice(picker.indexOf("const query = useQuery"), picker.indexOf("const tasks = useMemo"));
+        expect(listQuery).not.toContain(".catch(");
+        expect(picker).toContain("query.isError ? <>生成历史暂时无法读取");
     });
 
     test("keeps project scope when listing insertable history", () => {

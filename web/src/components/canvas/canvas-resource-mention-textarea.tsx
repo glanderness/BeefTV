@@ -4,10 +4,10 @@ import { createPortal } from "react-dom";
 import { ArrowLeft, ChevronRight, FileText, Folder, Image as ImageIcon, Music2, Pencil, Search, UserRound, Video, Workflow } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { ASSET_CATEGORY_LABELS } from "@/lib/asset-category";
+import { usePersonalAssetLibrary } from "@/hooks/use-personal-asset-library";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { buildAssetMentionReferences, canvasResourceMentionToken, findCanvasResourceAutoLinkMatch, type CanvasResourceAutoLinkMatch, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
-import { useAssetStore, type AssetCategory } from "@/stores/use-asset-store";
+import type { AssetCategory } from "@/stores/use-asset-store";
 import { CanvasNodeType } from "@/types/canvas";
 import { useResolvedCanvasResourceReferences } from "./use-resolved-canvas-resource-references";
 
@@ -55,7 +55,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     forwardedRef,
 ) {
     const rawTheme = useActiveTheme();
-    const assets = useAssetStore((state) => state.assets);
+    const assets = usePersonalAssetLibrary();
     const theme = canvasThemes[rawTheme as keyof typeof canvasThemes] ?? canvasThemes.dark;
     const containerRef = useRef<HTMLDivElement | null>(null);
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -126,7 +126,9 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         if (!highlightLabels) return [];
         return [...activeCanvasReferences, ...assetReferences.filter((item) => value.includes(canvasResourceMentionToken(item)))];
     }, [activeCanvasReferences, assetReferences, highlightLabels, value]);
-    const useRichEditor = Boolean(activeReferences.length);
+    // Keep the same editing surface when the first/last mention changes.
+    // Replacing textarea/contenteditable loses focus and leaks subsequent keys to the canvas.
+    const useRichEditor = highlightLabels;
     const autoLinkMatch = useMemo<CanvasResourceAutoLinkMatch | null>(() => autoLinkEnabled && autoLinkCursor !== null ? findCanvasResourceAutoLinkMatch(value, autoLinkCursor, activeCanvasReferences) : null, [activeCanvasReferences, autoLinkCursor, autoLinkEnabled, value]);
     const reportContentSize = useCallback((element: HTMLElement | null) => {
         if (!element || !onContentSizeChange) return;
@@ -452,6 +454,40 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                         props.onDrop?.(event as unknown as React.DragEvent<HTMLTextAreaElement>);
                     }}
                     onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+                        if ((event.key === "Backspace" || event.key === "Delete") && !event.nativeEvent.isComposing && !composingRef.current) {
+                            event.stopPropagation();
+                            const editor = editorRef.current;
+                            const selection = getEditableSelection(editor);
+                            if (editor && selection) {
+                                const current = serializeEditableValue(editor);
+                                let start = selection.start;
+                                let end = selection.end;
+                                let offset = 0;
+                                let removesMention = false;
+                                for (const part of splitMentionText(current, activeReferences)) {
+                                    const length = part.type === "mention" ? part.token.length : part.text.length;
+                                    const next = offset + length;
+                                    // Mention insertion appends one separator space. Delete
+                                    // it together with the chip on the first Backspace.
+                                    const afterMentionSpace = event.key === "Backspace" && start === end && start === next + 1 && current[next] === " ";
+                                    const touches = start === end
+                                        ? event.key === "Backspace" ? (start > offset && start <= next) || afterMentionSpace : start >= offset && start < next
+                                        : start < next && end > offset;
+                                    if (part.type === "mention" && touches) {
+                                        start = Math.min(start, offset);
+                                        end = Math.max(end, next);
+                                        removesMention = true;
+                                    }
+                                    offset = next;
+                                }
+                                if (removesMention) {
+                                    event.preventDefault();
+                                    closeMention();
+                                    updateValue(current.slice(0, start) + current.slice(end), start);
+                                    return;
+                                }
+                            }
+                        }
 if (event.key === "Enter" && (event.nativeEvent.isComposing || composingRef.current || event.keyCode === 229)) return;
                         if (autoLinkMatch && event.key === "Tab" && !event.shiftKey && !event.nativeEvent.isComposing && !composingRef.current) {
                             event.preventDefault();
@@ -519,9 +555,11 @@ if (event.key === "Enter" && (event.nativeEvent.isComposing || composingRef.curr
                     onFocus={(event) => props.onFocus?.(event as unknown as React.FocusEvent<HTMLTextAreaElement>)}
                     onBlur={(event) => {
                         setAutoLinkCursor(null);
+                        const anchor = event.currentTarget;
                         if (interactingWithMenuRef.current) return;
                         if (event.relatedTarget instanceof Element && event.relatedTarget.closest("[data-canvas-resource-mention-menu]")) return;
                         window.setTimeout(() => {
+                            if (document.activeElement === anchor) return;
                             if (interactingWithMenuRef.current) return;
                             if (document.activeElement?.closest("[data-canvas-resource-mention-menu]")) return;
                             closeMention();
@@ -620,9 +658,11 @@ if (event.key === "Enter" && (event.nativeEvent.isComposing || composingRef.curr
                 }}
                 onBlur={(event) => {
                     setAutoLinkCursor(null);
+                    const anchor = event.currentTarget;
                     if (interactingWithMenuRef.current) return;
                     if (event.relatedTarget instanceof Element && event.relatedTarget.closest("[data-canvas-resource-mention-menu]")) return;
                     window.setTimeout(() => {
+                        if (document.activeElement === anchor) return;
                         if (interactingWithMenuRef.current) return;
                         if (document.activeElement?.closest("[data-canvas-resource-mention-menu]")) return;
                         closeMention();
@@ -786,15 +826,12 @@ function MentionMenu({ anchor, connectedReferences, assetReferences, filteredRef
         selectedRef.current = true;
         onSelect(reference);
     };
-    const categoryItems = Object.entries(ASSET_CATEGORY_LABELS)
-        .map(([value, label]) => ({ value: value as AssetCategory, label, count: assetReferences.filter((item) => item.category === value).length }))
-        .filter((item) => item.count > 0);
     const connectedNodes = connectedReferences.filter((item) => item.kind !== "skill");
     const skillReferences = connectedReferences.filter((item) => item.kind === "skill");
     const visibleReferences = query
         ? filteredReferences
         : category
-          ? assetReferences.filter((item) => item.category === category)
+          ? assetReferences
           : [];
 
     useLayoutEffect(() => {
@@ -825,7 +862,12 @@ function MentionMenu({ anchor, connectedReferences, assetReferences, filteredRef
             data-placement={position.showAbove ? "top" : "bottom"}
             style={{ left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight, transform: position.showAbove ? "translateY(-100%)" : undefined }}
             onPointerDown={stopCanvasInteraction}
-            onMouseDown={stopCanvasInteraction}
+            onMouseDown={(event) => {
+                stopCanvasInteraction(event);
+                // Category buttons are replaced when navigating. Keep focus in
+                // the editor/search so its blur timer cannot dismiss the menu.
+                if (event.target instanceof Element && event.target.closest("button")) event.preventDefault();
+            }}
             onClick={(event) => event.stopPropagation()}
         >
             <div className="canvas-resource-mention-search">
@@ -881,7 +923,7 @@ function MentionMenu({ anchor, connectedReferences, assetReferences, filteredRef
                             }}
                         >
                             <ArrowLeft aria-hidden />
-                            <span>{ASSET_CATEGORY_LABELS[category]}</span>
+                            <span>个人资产库</span>
                             <small>{visibleReferences.length}</small>
                         </button>
                         <MentionReferenceList references={visibleReferences} activeReferenceId={activeReferenceId} onSelect={selectReference} />
@@ -900,12 +942,9 @@ function MentionMenu({ anchor, connectedReferences, assetReferences, filteredRef
                                 <MentionReferenceList references={skillReferences} activeReferenceId={activeReferenceId} onSelect={selectReference} />
                             </section>
                         ) : null}
-                        {categoryItems.length ? (
+                        {assetReferences.length ? (
                             <section className="canvas-resource-mention-section">
-                                <h4><span>素材库</span><small>{assetReferences.length}</small></h4>
-                                {categoryItems.map((item) => (
                                     <button
-                                        key={item.value}
                                         type="button"
                                         className="canvas-resource-mention-folder"
                                         onPointerDown={(event) => {
@@ -915,15 +954,14 @@ function MentionMenu({ anchor, connectedReferences, assetReferences, filteredRef
                                         onClick={(event) => {
                                             event.preventDefault();
                                             event.stopPropagation();
-                                            setCategory(item.value);
+                                            setCategory("other");
                                         }}
                                     >
                                         <Folder aria-hidden />
-                                        <span>{item.label}</span>
-                                        <small>{item.count}</small>
+                                        <span>个人资产库</span>
+                                        <small>{assetReferences.length}</small>
                                         <ChevronRight aria-hidden />
                                     </button>
-                                ))}
                             </section>
                         ) : null}
                     </>

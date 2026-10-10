@@ -43,57 +43,32 @@ export function WorkspaceSidebarUpdate({ collapsed }: { collapsed: boolean }) {
     const installed = formatDesktopVersionLabel(state.currentVersion || APP_VERSION);
     const latest = formatDesktopVersionLabel(state.latestVersion);
     const showControls = shouldShowDesktopUpdaterControls(updater.snapshot);
-    const busy = persistBusy || actionBusy || state.status === "downloading" || state.status === "installing";
+    const busy = persistBusy || actionBusy || state.status === "checking" || state.status === "downloading" || state.status === "installing";
     const percent = desktopUpdateProgressPercent(state);
     const resumable = hasResumableDesktopUpdate(state);
-    const actionLabel = persistBusy ? "正在保存" : state.status === "available" ? "下载并安装更新" : desktopUpdateActionLabel(state.status);
+    const enabled = runtime === "desktop" && state.status !== "disabled";
+    const actionLabel = !enabled ? "当前环境不支持自动更新" : persistBusy ? "正在保存" : state.status === "available" ? "下载并安装更新" : showControls ? desktopUpdateActionLabel(state.status) : state.status === "checking" ? "正在检查更新" : state.status === "error" ? "重试检查更新" : "检查更新";
     const errorText = state.status === "error" ? userFacingDesktopUpdateError(state.error) : "";
     const updateLabel = state.status === "error" ? `${errorText}，${resumable ? "点击继续下载" : "点击重试"}` : latest ? `${actionLabel} ${latest}` : actionLabel;
-    const line = showControls && !collapsed ? statusLine(state, persistBusy, latest, percent) : null;
+    const line = showControls ? statusLine(state, persistBusy, latest, percent) : null;
     const amount = state.totalBytes > 0 ? desktopUpdateProgressLabel(state) : "";
     const tooltip = line ? [line.title, amount, line.detail].filter(Boolean).join("\n") : updateLabel;
     const showBar = state.status === "downloading" || (line?.tone === "paused" && line.percent !== null);
-    const lineContent = line ? (
-        <>
-            <span className="app-workspace-update-status-title">
-                {line.tone === "paused" ? <RotateCcw className="app-workspace-update-status-icon" strokeWidth={2} aria-hidden="true" /> : null}
-                <span className="app-workspace-update-status-name">{line.title}</span>
-                {line.percent !== null ? <span className="app-workspace-update-status-percent">{line.percent}%</span> : null}
-            </span>
-            {line.detail ? <span className="app-workspace-update-status-detail">{line.detail}</span> : null}
-            {showBar ? <UpdateProgressBar state={state} percent={percent} reducedMotion={Boolean(reducedMotion)} paused={line.tone === "paused"} /> : null}
-        </>
-    ) : null;
+    const handleUpdate = () => {
+        if (state.status === "error") return showControls ? updater.downloadAndInstall() : updater.retry();
+        return showControls ? updater.downloadAndInstall() : updater.check();
+    };
 
     return (
-        <div className={cn("app-workspace-update", collapsed && "is-collapsed", line && "has-status")} data-desktop-update-status={state.status} data-desktop-update-runtime={runtime}>
-            {line && state.status === "error" ? (
-                <button type="button" className="app-workspace-update-status is-paused is-action" onClick={() => void updater.downloadAndInstall()} aria-label={updateLabel} title={tooltip}>
-                    {lineContent}
-                </button>
-            ) : line ? (
-                <div className="app-workspace-update-status" title={tooltip}>
-                    {lineContent}
-                </div>
-            ) : (
-                <AppChangelogButton className="app-workspace-update-version" showIcon={false} showVersion version={installed} versionClassName="tabular-nums" ariaLabel={installed ? `当前版本 ${installed}，查看更新日志` : "查看更新日志"} />
-            )}
-
-            {showControls ? (
+        <div className={cn("app-workspace-update", collapsed && "is-collapsed")} data-desktop-update-status={state.status} data-desktop-update-runtime={runtime}>
+            <AppChangelogButton className="app-workspace-update-version" showIcon={false} showVersion version={installed} versionClassName="tabular-nums" ariaLabel={installed ? `当前版本 ${installed}，查看更新日志` : "查看更新日志"} />
                 <div className="app-workspace-update-progress" role="status" aria-live="polite">
                     <span className="sr-only">{line && state.status !== "error" ? line.title : updateLabel}</span>
-                    {collapsed && showBar ? <UpdateProgressBar state={state} percent={percent} reducedMotion={Boolean(reducedMotion)} paused={state.status === "error"} /> : null}
-                    {line && (state.status === "downloading" || state.status === "error") ? null : busy ? (
-                        <span className="app-workspace-update-action is-busy" aria-label={actionLabel} title={collapsed ? tooltip : actionLabel}>
-                            <LoaderCircle className="size-4 animate-spin" strokeWidth={1.8} aria-hidden="true" />
-                        </span>
-                    ) : (
-                        <button type="button" className="app-workspace-update-action" onClick={() => void updater.downloadAndInstall()} aria-label={updateLabel} title={updateLabel}>
-                            {state.status === "error" ? <RotateCcw className="size-4" strokeWidth={1.8} aria-hidden="true" /> : <Download className="size-4" strokeWidth={1.8} aria-hidden="true" />}
-                        </button>
-                    )}
+                    {showBar ? <UpdateProgressBar state={state} percent={percent} reducedMotion={Boolean(reducedMotion)} paused={state.status === "error"} /> : null}
+                    <button type="button" className={cn("app-workspace-update-action", showControls && "has-update", busy && "is-busy")} disabled={!enabled || busy} onClick={() => void handleUpdate()} aria-label={updateLabel} title={tooltip}>
+                        {busy ? <LoaderCircle className="size-4 animate-spin" strokeWidth={1.8} aria-hidden="true" /> : state.status === "error" ? <RotateCcw className="size-4" strokeWidth={1.8} aria-hidden="true" /> : <Download className="size-4" strokeWidth={1.8} aria-hidden="true" />}
+                    </button>
                 </div>
-            ) : null}
         </div>
     );
 }
