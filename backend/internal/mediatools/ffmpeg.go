@@ -35,10 +35,12 @@ func bundledFFmpeg(executable string) string {
 	if filepath.Base(dir) == "cli" {
 		dir = filepath.Dir(dir)
 	}
-	for _, name := range []string{"ffmpeg.exe", "ffmpeg"} {
-		candidate := filepath.Join(dir, "media-runtime", name)
-		if info, err := os.Lstat(candidate); err == nil && info.Mode().IsRegular() {
-			return candidate
+	for _, media := range []string{filepath.Join(dir, "agent-host", "media-runtime"), filepath.Join(dir, "media-runtime")} {
+		for _, name := range []string{"ffmpeg.exe", "ffmpeg"} {
+			candidate := filepath.Join(media, name)
+			if info, err := os.Lstat(candidate); err == nil && info.Mode().IsRegular() {
+				return candidate
+			}
 		}
 	}
 	return ""

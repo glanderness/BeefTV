@@ -2,14 +2,14 @@
   "version": "v1.7.15",
   "contractVersion": 3,
   "receiptPhase": "preflight_before_release_workflow",
-  "sourceDigest": "81f00d123477cdc6ed29b6bf49c022c4c7b3ac0229fe66c0827cc9d4918ff14e",
-  "testedSourceCommit": "0de1470467ad975606fbb96087f33d2916f31408",
+  "sourceDigest": "b324f0a0b1bac66414978b91f1717149bbe2e7adaa9ea9b3806b5c656658c970",
+  "testedSourceCommit": "a1c5d27f6e23aef3a21ce3c4973d47f6482b8724",
   "budgetCNY": null,
   "spentCNY": null,
   "pendingCNY": null,
   "newSpentCNY": 0,
   "newPendingCNY": 0,
-  "externalReviewSpendUSD": 0.92646464,
+  "externalReviewSpendUSD": 1.23429180,
   "externalReviewCostMethod": "runtime_reported",
   "liveMatrixStatus": "not_run_owner_waived",
   "agentAcceptanceStatus": "targeted_only",
@@ -34,22 +34,22 @@
     "result": "approved",
     "independent": true,
     "reviewer": "Grok 4.7 Build",
-    "sourceDigest": "81f00d123477cdc6ed29b6bf49c022c4c7b3ac0229fe66c0827cc9d4918ff14e",
+    "sourceDigest": "b324f0a0b1bac66414978b91f1717149bbe2e7adaa9ea9b3806b5c656658c970",
     "evidence": ["docs/release-evidence/v1.7.15-targeted.md"]
   },
   "upgrade": {
     "preservedData": true,
     "method": "deterministic_sqlite_backup_restore",
-    "sourceDigest": "81f00d123477cdc6ed29b6bf49c022c4c7b3ac0229fe66c0827cc9d4918ff14e",
+    "sourceDigest": "b324f0a0b1bac66414978b91f1717149bbe2e7adaa9ea9b3806b5c656658c970",
     "limitations": "No schema migration changed; final Windows old-client upgrade and rollback remain required by the release workflow. This is not a current Mac profile upgrade claim.",
     "evidence": ["docs/release-evidence/v1.7.15-targeted.md"]
   },
   "verification": {
-    "workspaceRegression": {"status": "passed", "method": "browser", "sourceDigest": "81f00d123477cdc6ed29b6bf49c022c4c7b3ac0229fe66c0827cc9d4918ff14e", "evidence": ["docs/release-evidence/v1.7.15-targeted.md"]},
-    "videoRecovery": {"status": "passed", "method": "deterministic", "sourceDigest": "81f00d123477cdc6ed29b6bf49c022c4c7b3ac0229fe66c0827cc9d4918ff14e", "evidence": ["docs/release-evidence/v1.7.15-targeted.md"]},
-    "networkPolicy": {"status": "passed", "method": "deterministic", "sourceDigest": "81f00d123477cdc6ed29b6bf49c022c4c7b3ac0229fe66c0827cc9d4918ff14e", "evidence": ["docs/release-evidence/v1.7.15-targeted.md"]},
-    "localReleaseGate": {"status": "passed", "sourceDigest": "81f00d123477cdc6ed29b6bf49c022c4c7b3ac0229fe66c0827cc9d4918ff14e", "evidence": ["docs/release-evidence/v1.7.15-targeted.md"]},
-    "ci": {"status": "passed", "sourceDigest": "81f00d123477cdc6ed29b6bf49c022c4c7b3ac0229fe66c0827cc9d4918ff14e", "evidence": ["https://github.com/glanderness/BeefTV/actions/runs/38031359095", "https://github.com/glanderness/BeefTV/actions/runs/38031359126", "https://github.com/glanderness/BeefTV/actions/runs/38031359113"]}
+    "workspaceRegression": {"status": "passed", "method": "browser", "sourceDigest": "b324f0a0b1bac66414978b91f1717149bbe2e7adaa9ea9b3806b5c656658c970", "evidence": ["docs/release-evidence/v1.7.15-targeted.md"]},
+    "videoRecovery": {"status": "passed", "method": "deterministic", "sourceDigest": "b324f0a0b1bac66414978b91f1717149bbe2e7adaa9ea9b3806b5c656658c970", "evidence": ["docs/release-evidence/v1.7.15-targeted.md"]},
+    "networkPolicy": {"status": "passed", "method": "deterministic", "sourceDigest": "b324f0a0b1bac66414978b91f1717149bbe2e7adaa9ea9b3806b5c656658c970", "evidence": ["docs/release-evidence/v1.7.15-targeted.md"]},
+    "localReleaseGate": {"status": "passed", "sourceDigest": "b324f0a0b1bac66414978b91f1717149bbe2e7adaa9ea9b3806b5c656658c970", "evidence": ["docs/release-evidence/v1.7.15-targeted.md"]},
+    "ci": {"status": "passed", "sourceDigest": "b324f0a0b1bac66414978b91f1717149bbe2e7adaa9ea9b3806b5c656658c970", "evidence": ["https://github.com/glanderness/BeefTV/actions/runs/38033997094", "https://github.com/glanderness/BeefTV/actions/runs/38033997207"]}
   },
   "packages": {
     "status": "pending_release_workflow",

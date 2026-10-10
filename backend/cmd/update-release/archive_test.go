@@ -208,6 +208,47 @@ func TestPackageRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestPackageWindowsNestedMediaRuntimeUsesReleasedRootLayout(t *testing.T) {
+	bin := writeFakeWindowsBin(t, t.TempDir())
+	media := filepath.Join(bin, "agent-host", "media-runtime")
+	names := []string{"ffmpeg.exe", "LICENSE", "README.txt", "manifest.json"}
+	writeMedia := func(dir string) {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range names {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte("fixture"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	writeMedia(media)
+	out := filepath.Join(t.TempDir(), "out.zip")
+	if err := packageBundle(platformWindowsAMD64, bin, out); err != nil {
+		t.Fatal(err)
+	}
+	entries := zipNames(t, out)
+	for _, name := range names {
+		if !entries["agent-host/media-runtime/"+name] {
+			t.Fatalf("nested media runtime omitted %s", name)
+		}
+	}
+	for name := range entries {
+		switch strings.Split(name, "/")[0] {
+		case "BeefTV.exe", "cli", "agent-host", "plugin-packages":
+		default:
+			t.Fatalf("released updater rejects root entry %s", name)
+		}
+	}
+	if err := os.Remove(filepath.Join(media, "LICENSE")); err != nil {
+		t.Fatal(err)
+	}
+	writeMedia(filepath.Join(bin, "media-runtime"))
+	if err := packageBundle(platformWindowsAMD64, bin, filepath.Join(t.TempDir(), "bad.zip")); err == nil || !strings.Contains(err.Error(), "agent-host/media-runtime/LICENSE") {
+		t.Fatalf("standalone media masked an incomplete nested runtime: %v", err)
+	}
+}
+
 func writeFakeDarwinApp(t *testing.T, app string) string {
 	t.Helper()
 	macOS := filepath.Join(app, "Contents", "MacOS")
