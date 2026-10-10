@@ -136,6 +136,23 @@ def probe_cache(helper, profile, operation, env, root, cleanup):
         stop(process)
 
 
+def build_cache_probe(helper):
+    subprocess.run(['go', 'build', '-ldflags=-H=windowsgui', '-o', str(helper), str(Path(__file__).with_name('webview-cache-probe_windows.go').resolve())],
+                   cwd=Path(__file__).resolve().parent.parent / 'backend', check=True, timeout=180)
+
+
+def probe_self_test():
+    if os.environ.get('GITHUB_ACTIONS') != 'true' or os.name != 'nt':
+        raise RuntimeError('WebView probe self-test requires a disposable Windows CI runner')
+    with tempfile.TemporaryDirectory(prefix='beeftv-probe-') as directory, ExitStack() as cleanup:
+        root = Path(directory)
+        helper = root / 'webview-cache-probe.exe'
+        build_cache_probe(helper)
+        for operation in ['write', 'read']:
+            probe_cache(helper, root / 'profile', operation, dict(os.environ), root, cleanup)
+        print('PASS: isolated WebView probe writes, closes fully, reopens and reads committed IndexedDB')
+
+
 def verify_data(data):
     with closing(sqlite3.connect(data / 'open_ai_canvas.db')) as db:
         assert db.execute("SELECT name,revision FROM projects WHERE id='installer-project'").fetchone() == ('Keep my project', 7)
@@ -185,8 +202,7 @@ def smoke(args):
             relative_exe = Path('BeefTV.exe')
             profile = Path(env['APPDATA']) / 'BeefTV.exe'
             helper = root / 'webview-cache-probe.exe'
-            subprocess.run(['go', 'build', '-ldflags=-H=windowsgui', '-o', str(helper), str(Path(__file__).with_name('webview-cache-probe_windows.go').resolve())],
-                           cwd=Path(__file__).resolve().parent.parent / 'backend', check=True, timeout=180)
+            build_cache_probe(helper)
             def install():
                 subprocess.run([str(installer), '/S'], check=True, timeout=180)
                 import winreg
@@ -288,7 +304,14 @@ def smoke(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--platform', required=True)
-    parser.add_argument('--installer', type=Path, required=True)
-    parser.add_argument('--payload', type=Path, required=True)
-    smoke(parser.parse_args())
+    parser.add_argument('--probe-only', action='store_true', help='Check the Windows CI probe before the full desktop build')
+    parser.add_argument('--platform')
+    parser.add_argument('--installer', type=Path)
+    parser.add_argument('--payload', type=Path)
+    args = parser.parse_args()
+    if args.probe_only:
+        probe_self_test()
+    else:
+        if not all([args.platform, args.installer, args.payload]):
+            parser.error('native lifecycle requires --platform, --installer and --payload')
+        smoke(args)

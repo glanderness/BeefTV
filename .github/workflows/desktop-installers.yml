@@ -83,6 +83,10 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\assert-windows-dwarf5-cgo.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (!(Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) { choco install nsis --no-progress -y; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
+      - name: Verify Windows cache probe before full desktop build
+        if: runner.os == 'Windows'
+        shell: bash
+        run: python scripts/smoke-desktop-installer.py --probe-only
       - name: Build Unix desktop
         if: runner.os != 'Windows'
         env:
