@@ -298,9 +298,9 @@ async function createBackendGenerationTask(options: BackendGenerationTaskOptions
         const labels = ["参考图片", "参考视频", "参考音频"];
         const references: ReferenceLinkRequest[] = [];
         groups.forEach((group, kind) => prepared[group].forEach((media, index) => {
-            if (media.storageKey || !isReferenceHTTPSLink(media.url || "")) references.push({ key: `${group}:${index}`, label: `${labels[kind]} ${index + 1}`, name: media.name });
+            if (media.storageKey || !isReferenceHTTPSLink(media.url || "")) references.push({ key: `${group}:${index}`, label: `${labels[kind]} ${index + 1}`, name: media.name, resourceID: resourceIdFromStorageKey(media.storageKey) || undefined });
         }));
-        if (prepared.mask && (prepared.mask.storageKey || !isReferenceHTTPSLink(prepared.mask.url || ""))) references.push({ key: "mask:0", label: "遮罩", name: prepared.mask.name });
+        if (prepared.mask && (prepared.mask.storageKey || !isReferenceHTTPSLink(prepared.mask.url || ""))) references.push({ key: "mask:0", label: "遮罩", name: prepared.mask.name, resourceID: resourceIdFromStorageKey(prepared.mask.storageKey) || undefined });
         if (!references.length) throw error;
         const links = await options.resolveReferenceLinks(references, options.signal);
         throwIfAborted(options.signal);

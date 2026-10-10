@@ -94,7 +94,7 @@ class S3:
         condition = ["--if-match", etag] if etag else ["--if-none-match", "*"]
         result = run(self.base + ["put-object", "--bucket", self.bucket, "--key", key,
                                   "--body", str(source), "--cache-control", cache_control,
-                                  "--content-type", "application/json" if key.endswith(".json") else "application/zip"] + condition)
+                                  "--content-type", {".json": "application/json", ".zip": "application/zip", ".dmg": "application/x-apple-diskimage", ".exe": "application/vnd.microsoft.portable-executable", ".deb": "application/vnd.debian.binary-package"}.get(Path(key).suffix, "application/octet-stream")] + condition)
         if result.returncode:
             if re.search(r"\((412|PreconditionFailed|ConditionalRequestConflict)\)", result.stderr):
                 return False
@@ -184,7 +184,24 @@ class Publisher:
         size, sha = fingerprint(manifest)
         self.public.check(f"{self.public_base}/{payload['version']}/desktop-update.json", size, sha, version=payload["version"])
 
-    def stage(self, manifest, assets_dir):
+    def installer_sources(self, payload, assets_dir):
+        suffixes = {"darwin-arm64": ".dmg", "darwin-amd64": ".dmg",
+                    "windows-amd64": "-setup.exe", "linux-amd64": ".deb"}
+        sources = []
+        for platform, suffix in suffixes.items():
+            name = f"BeefTV-{payload['version']}-{platform}{suffix}"
+            source = Path(assets_dir) / name
+            if not source.is_file() or source.stat().st_size == 0:
+                raise PublishError(f"Installer missing: {name}")
+            sources.append((f"{PREFIX}/{payload['version']}/{name}", source))
+        return sources
+
+    def check_installers(self, payload, sources):
+        for key, source in sources:
+            self.public.check(f"{self.public_base}/{payload['version']}/{source.name}",
+                              *fingerprint(source), version=payload['version'])
+
+    def stage(self, manifest, assets_dir, with_installers=False):
         payload = self.load(manifest)
         sources = []
         for platform, asset in payload["platforms"].items():
@@ -193,14 +210,18 @@ class Publisher:
             if not source.is_file() or fingerprint(source) != (asset["size"], asset["sha256"]):
                 raise PublishError(f"Local archive missing or size/hash mismatch: {name}")
             sources.append((f"{PREFIX}/{payload['version']}/{name}", source))
-        for key, source in sources:
+        installers = self.installer_sources(payload, assets_dir) if with_installers else []
+        for key, source in sources + installers:
             self.immutable_put(key, source)
+        self.check_installers(payload, installers)
         self.immutable_put(f"{PREFIX}/{payload['version']}/desktop-update.json", manifest)
         self.public_check(payload, manifest)
         return payload["version"]
 
-    def activate(self, manifest):
+    def activate(self, manifest, installer_dir=None):
         payload = self.load(manifest)
+        if installer_dir is not None:
+            self.check_installers(payload, self.installer_sources(payload, installer_dir))
         self.release_check(payload, manifest, self.public)
         self.public_check(payload, manifest)
         with tempfile.TemporaryDirectory(prefix="beeftv-r2-latest-") as directory:
@@ -232,6 +253,7 @@ def main():
     parser.add_argument("command", choices=["stage", "activate"])
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--assets-dir", type=Path)
+    parser.add_argument("--with-installers", action="store_true")
     parser.add_argument("--verifier", type=Path, required=True, help="Binary built from backend/cmd/update-release")
     parser.add_argument("--endpoint-url", required=True)
     parser.add_argument("--bucket", default="beeftv-releases")
@@ -251,8 +273,9 @@ def main():
             if args.manifest.stat().st_size > MAX_MANIFEST:
                 raise PublishError("Manifest is too large")
             manifest.write_bytes(args.manifest.read_bytes())
-            version = (publisher.stage(manifest, args.assets_dir or args.manifest.parent)
-                       if args.command == "stage" else publisher.activate(manifest))
+            assets_dir = args.assets_dir or args.manifest.parent
+            version = (publisher.stage(manifest, assets_dir, args.with_installers)
+                       if args.command == "stage" else publisher.activate(manifest, assets_dir if args.with_installers else None))
         print(f"{args.command} verified: {version}")
     except PublishError as error:
         print(f"Desktop R2 publication failed: {error}", file=sys.stderr)

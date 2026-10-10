@@ -15,6 +15,8 @@ description: 签名清单、打包布局、密钥、发布工作流、回滚和�
 
 浏览器构建不会请求更新源。
 
+新安装可使用 Windows Setup、macOS DMG 或 Ubuntu 24.04 DEB，旧版本仍保留 ZIP 下载。详见仓库的 `docs/desktop-install.md`。Windows 安装器按当前用户安装，macOS 将应用拖到 Applications；两者沿用现有 ZIP 更新器。Linux DEB 通过安装新版 DEB 升级，应用内更新入口会提示使用安装包，避免替换包管理器维护的系统文件。
+
 下载时，侧栏显示目标版本、百分比、速度和预计剩余时间。下载不设总时长上限：60 秒内一个字节都没收到才算一次中断。中断后会按 1、2、4、8 秒退避自动重连，并用 HTTP Range 从已下载的位置继续；连续 5 次尝试都没有新进度时停止，侧栏显示「继续下载」。已下载的部分按包的 SHA-256 保存在缓存目录的 `BeefTV/updates/downloads/` 下，再次点击或重启应用后仍从断点继续；新版本发布后，旧版本的残留文件会被清掉。续传不降低校验强度：完整文件仍按签名清单核对大小和 SHA-256，续传的文件校验失败时，会自动从头重下一次。
 
 失败提示会区分代理连不上、网络不通、安全连接失败、服务器暂时不可用和网络不稳定。原始网络错误、每次重试，以及请求是直连还是经过哪个代理地址，都写入数据目录下的 `update.log`（超过 256 KB 时轮转为 `update.log.1`），不记录代理账号密码。
@@ -28,9 +30,10 @@ description: 签名清单、打包布局、密钥、发布工作流、回滚和�
 | 系统 | 更新包内容 | 数据目录（不会进包、不会被替换） |
 | --- | --- | --- |
 | macOS | `BeefTV.app` | `~/Library/Application Support/BeefTV` |
-| Windows | `BeefTV.exe` 与 `plugin-packages/*.beeftv-plugin` | `%AppData%\BeefTV` |
+| Windows | `BeefTV.exe`、官方插件、Agent 和 CLI | `%AppData%\BeefTV` |
+| Linux | `BeefTV-linux` 整个程序目录 | `~/.config/BeefTV`（遵循 `XDG_CONFIG_HOME`） |
 
-应用包身份和可执行文件路径保持稳定，前端 IndexedDB 可以继续用。官方插件随应用包更新；装在数据目录里的自定义插件会留下来。打包时遇到 `.env`、数据库或用户数据目录会失败。
+应用包身份和可执行文件名称保持稳定。Windows WebView2 默认缓存仍在 `%AppData%\BeefTV.exe`，不会因从解压目录移到安装目录而更名。安装、覆盖安装和卸载不会删除用户数据目录；自定义数据目录需要继续使用原配置。官方插件随应用包更新；装在数据目录里的自定义插件会留下来。ZIP 打包时遇到 `.env`、数据库或用户数据目录会失败。
 
 ## 两种签名
 

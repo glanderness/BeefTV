@@ -17,6 +17,7 @@ import { isAudioFile } from "@/lib/canvas/canvas-project-generation";
 import { fitNodeSize, VIDEO_NODE_MAX_SIZE } from "@/lib/canvas/canvas-node-size";
 import { CANVAS_UPLOAD_ACCEPT, createFileUploadPlaceholder, uploadNodeType, uploadPercent } from "@/lib/canvas/canvas-file-upload";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
+import { isReferenceHTTPSLink } from "@/services/api/reference-link-replacement";
 import { http } from "@/services/api/request";
 import { uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
@@ -90,6 +91,7 @@ export function useCanvasUpload({
     const statusTimersRef = useRef<Set<number>>(new Set());
     const fileDragDepthRef = useRef(0);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
+    const [uploadModalOpen,setUploadModalOpen] = useState(false);
     const [uploadStatus, setUploadStatus] = useState<CanvasUploadStatus | null>(null);
     const [fileDropActive, setFileDropActive] = useState(false);
 
@@ -465,7 +467,8 @@ export function useCanvasUpload({
                     : target?.type === CanvasNodeType.Text ? "text/plain,text/markdown,.txt,.md,.markdown" : CANVAS_UPLOAD_ACCEPT;
             imageInputRef.current.multiple = !nodeId;
         }
-        imageInputRef.current?.click();
+        if(nodeId) imageInputRef.current?.click();
+        else setUploadModalOpen(true);
     }, [nodesRef]);
 
     const handleUploadReferenceRequest = useCallback((targetNodeId: string, position: Position) => {
@@ -474,7 +477,7 @@ export function useCanvasUpload({
             imageInputRef.current.accept = "image/*";
             imageInputRef.current.multiple = true;
         }
-        imageInputRef.current?.click();
+        setUploadModalOpen(true);
     }, []);
 
     const handleUploadFiles = useCallback(async (files: File[]) => {
@@ -535,6 +538,34 @@ export function useCanvasUpload({
         else message.success(`已添加 ${createdIds.length} 个文件到画布`);
         return true;
     }, [canvasId, lifetime, connectionsRef, createFileNode, getCanvasCenter, message, mountedRef, nodesRef, setConnections, setDialogNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
+
+    const handleImportUrl = useCallback(async (url: string,kind: "image" | "video" | "audio") => {
+        if(!isReferenceHTTPSLink(url)) throw new Error("请填写不含账号密码的 HTTPS 素材网址");
+        const target=uploadTargetRef.current;
+        if(target?.referenceToNodeId && kind!=="image") throw new Error("导演台参考素材请选择图片");
+        const type=kind==="image" ? CanvasNodeType.Image : kind==="video" ? CanvasNodeType.Video : CanvasNodeType.Audio;
+        const existing=target?.nodeId ? nodesRef.current.find(node=>node.id===target.nodeId) : undefined;
+        if(existing && existing.type!==type) throw new Error("素材类型须与当前节点一致");
+        const guard=createOwnedCanvasUploadGuard({lifetime,canvasId,getLiveCanvasId:()=>canvasIdRef.current,mounted:()=>mountedRef.current});
+        const node=existing ? {...existing,metadata:{...existing.metadata,content:url,storageKey:undefined,assetId:undefined}} : createCanvasNode(type,target?.position || getCanvasCenter(),{content:url});
+        if(!existing) node.title=new URL(url).pathname.split("/").pop() || "在线素材";
+        if(!guard.alive()) return false;
+        setNodes(current=>existing ? current.map(item=>item.id===node.id ? node : item) : [...current,node]);
+        const persisted = await persistMediaNode(node,guard.expectedScope,guard.signal);
+        if(!guard.alive()) return false;
+        if (!persisted) {
+            // Keep the local node visible for recovery, without claiming it was saved.
+            selectInsertedNode(node.id,"close");
+            return true;
+        }
+        if(target?.referenceToNodeId) {
+            const linked=connectDirectorReferenceNodes([...nodesRef.current.filter(item=>item.id!==node.id),node],connectionsRef.current,[node.id],target.referenceToNodeId,()=>crypto.randomUUID());
+            setNodes(linked.nodes); setConnections(linked.connections);
+        }
+        selectInsertedNode(node.id,"close");
+        message.success("已添加在线素材");
+        return true;
+    },[canvasId,connectionsRef,getCanvasCenter,lifetime,message,mountedRef,nodesRef,persistMediaNode,selectInsertedNode,setConnections,setNodes]);
 
     // 时间线专用：把本地音视频文件上传为直连媒体（仅时间线作用域，不创建画布节点），返回媒体描述数组。
     const uploadTimelineMedia = useCallback(async (files: File[]): Promise<TimelineDirectMedia[]> => {
@@ -962,6 +993,9 @@ export function useCanvasUpload({
 
     return {
         assetPickerOpen,
+        uploadModalOpen,
+        closeUploadModal:()=>setUploadModalOpen(false),
+        handleImportUrl,
         closeAssetPicker,
         createVideoNodeFromBlob,
         createAssetPayloadNode,

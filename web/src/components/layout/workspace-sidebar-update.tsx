@@ -47,7 +47,7 @@ export function WorkspaceSidebarUpdate({ collapsed }: { collapsed: boolean }) {
     const percent = desktopUpdateProgressPercent(state);
     const resumable = hasResumableDesktopUpdate(state);
     const enabled = runtime === "desktop" && state.status !== "disabled";
-    const actionLabel = !enabled ? "当前环境不支持自动更新" : persistBusy ? "正在保存" : state.status === "available" ? "下载并安装更新" : showControls ? desktopUpdateActionLabel(state.status) : state.status === "checking" ? "正在检查更新" : state.status === "error" ? "重试检查更新" : "检查更新";
+    const actionLabel = !enabled ? (state.error || "当前环境不支持自动更新") : persistBusy ? "正在保存" : state.status === "available" ? "下载并安装更新" : showControls ? desktopUpdateActionLabel(state.status) : state.status === "checking" ? "正在检查更新" : state.status === "error" ? "重试检查更新" : "检查更新";
     const errorText = state.status === "error" ? userFacingDesktopUpdateError(state.error) : "";
     const updateLabel = state.status === "error" ? `${errorText}，${resumable ? "点击继续下载" : "点击重试"}` : latest ? `${actionLabel} ${latest}` : actionLabel;
     const line = showControls ? statusLine(state, persistBusy, latest, percent) : null;

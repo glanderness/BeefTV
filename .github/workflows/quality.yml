@@ -49,7 +49,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Test immutable publication and activation
-        run: python3 -m unittest discover -s scripts -p 'test_publish_desktop_r2.py'
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_publish_desktop_r2.py'
+          python3 -m unittest discover -s scripts -p 'test_smoke_desktop_installer.py'
 
   backend:
     name: Backend checks

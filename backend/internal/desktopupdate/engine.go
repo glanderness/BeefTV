@@ -43,6 +43,7 @@ type Host struct {
 }
 
 type Options struct {
+	PackageManaged bool
 	CurrentVersion string
 	DataDir        string
 	FeedURL        string
@@ -92,9 +93,11 @@ func New(host Host) *Engine {
 	opts := Options{
 		CurrentVersion: host.CurrentVersion,
 		DataDir:        host.DataDir,
+		StagingRoot:    filepath.Join(host.DataDir, "cache", "updates"),
 		Quit:           host.Quit,
 		FeedURL:        FeedURL,
 		PublicKey:      PublicKey,
+		PackageManaged: packageManagedExecutable(),
 	}
 	return NewWithOptions(opts)
 }
@@ -160,6 +163,10 @@ func NewWithOptions(opts Options) *Engine {
 		engine.platform = opts.Platform
 	} else if platform, err := CurrentPlatform(); err == nil {
 		engine.platform = platform
+	}
+	if opts.PackageManaged {
+		engine.enabled = false
+		engine.state.Error = "请下载新版 DEB 安装包更新。"
 	}
 	status := StatusIdle
 	if !engine.enabled {
