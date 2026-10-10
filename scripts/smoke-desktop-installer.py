@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """CI-only native installer lifecycle with a real desktop-created database."""
 import argparse
+import errno
 from contextlib import closing
 import hashlib
 import json
@@ -68,8 +69,10 @@ def stop(process):
         while time.monotonic() < deadline:
             try:
                 opener.open(f'http://127.0.0.1:{process.webview_port}/json/list', timeout=1).close()
-            except OSError:
-                return
+            except OSError as error:
+                reason = getattr(error, 'reason', error)
+                if isinstance(reason, OSError) and (reason.errno in (errno.ECONNREFUSED, 10061) or getattr(reason, 'winerror', None) == 10061):
+                    return
             time.sleep(.5)
         raise RuntimeError('Old WebView remained running; cannot verify a fresh profile startup')
 
