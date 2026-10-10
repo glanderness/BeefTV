@@ -56,6 +56,17 @@ func AssetFromJSON(userID string, raw json.RawMessage) (model.Asset, error) {
 	if err := ValidateDocument(raw); err != nil {
 		return model.Asset{}, err
 	}
+	// Keep the document identity identical to the database key without decoding
+	// extension fields into a lossy, closed payload type.
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return model.Asset{}, kernel.BadAuthRequest("素材数据格式错误")
+	}
+	document["id"], _ = json.Marshal(id)
+	normalized, err := json.Marshal(document)
+	if err != nil {
+		return model.Asset{}, kernel.BadAuthRequest("素材数据格式错误")
+	}
 	category := model.NormalizeAssetCategory(model.AssetCategory(payload.Category), payload.Kind)
 	status := model.AssetVersionStatus(strings.TrimSpace(payload.Status))
 	if status == "" {
@@ -70,7 +81,7 @@ func AssetFromJSON(userID string, raw json.RawMessage) (model.Asset, error) {
 		Status:           status,
 		PrimaryVersionID: primaryVersionID,
 		Title:            strings.TrimSpace(payload.Title),
-		PayloadJSON:      string(raw),
+		PayloadJSON:      string(normalized),
 		CreatedAt:        createdAt,
 		UpdatedAt:        updatedAt,
 	}, nil
