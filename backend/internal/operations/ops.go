@@ -12,7 +12,8 @@ import (
 	"infinite-canvas/backend/internal/canvas/capability"
 )
 
-// RegisterDefaultOps 注册首版全部操作。生成/付费入口不在本轮暴露：
+// RegisterDefaultOps 注册全部对外操作（手工 UI、CLI、MCP 与内置助手共用）。
+// 付费生成只经 canvas.generation.propose 提议、由界面确认后执行；
 // 未经参数与费用风险验收的能力明确不注册，而不是提供 stub 伪成功。
 func RegisterDefaultOps(r *Registry) {
 	registerCanvasEditOps(r)
@@ -48,6 +49,16 @@ func RegisterDefaultOps(r *Registry) {
 	r.Register(Op{ID: "canvas.edge.create", Summary: "连接两个节点（重复连接幂等返回）", Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"fromNodeId":{"type":"string"},"toNodeId":{"type":"string"},"expectedRevision":{"type":"integer"}},"required":["canvasId","fromNodeId","toNodeId","expectedRevision"]}`),
 		Handler: opCanvasEdgeCreate})
+	// 分镜脚本节点的行级写入：行 ID 与镜号由服务端分配，字段白名单见 canvas.StoryboardRowDraft。
+	r.Register(Op{ID: "canvas.script.rows.append", Summary: "向分镜脚本节点批量追加分镜行（行 ID 与镜号由服务端分配，行结构对齐界面默认值）", Scope: ScopeCanvas,
+		Params:  storyboardRowsAppendSchema(),
+		Handler: opStoryboardRowsAppend})
+	r.Register(Op{ID: "canvas.script.row.update", Summary: "按行 ID 批量局部更新分镜行（只覆盖给出的字段，未知行整批拒绝）", Scope: ScopeCanvas,
+		Params:  storyboardRowUpdateSchema(),
+		Handler: opStoryboardRowUpdate})
+	r.Register(Op{ID: "canvas.script.row.remove", Summary: "按行 ID 批量删除分镜行并重排镜号（未知行整批拒绝）", Scope: ScopeCanvas,
+		Params:  storyboardRowRemoveSchema(),
+		Handler: opStoryboardRowRemove})
 	r.Register(Op{ID: "canvas.document.commit", Summary: "按已知服务端 revision 提交整份画布文档（保留未触及字段，带 CAS）", Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"expectedRevision":{"type":"integer"},"document":{"type":"object"}},"required":["canvasId","expectedRevision","document"]}`),
 		Handler: opCanvasDocumentCommit})

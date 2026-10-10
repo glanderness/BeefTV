@@ -34,6 +34,7 @@ func assistantVisible(op *operations.Op) bool {
 	}
 	switch op.ID {
 	case "canvas.get", "canvas.node.update", "canvas.node.configure", "canvas.node.move", "canvas.node.bind_asset", "canvas.node.delete", "canvas.edge.delete", "canvas.nodes.create", "canvas.edge.create", "canvas.timeline.update",
+		"canvas.script.rows.append", "canvas.script.row.update", "canvas.script.row.remove",
 		"canvas.timeline.render", "canvas.generation.propose", "canvas.task.bind", "asset.get", "task.get":
 		return true
 	case "media.overview", "media.inspect", "media.check":
@@ -111,7 +112,8 @@ func (s *AssistantScope) Allows(op *operations.Op, params json.RawMessage) error
 			return nil
 		}
 		return denied("只能读取当前画布或已在界面里引用的画布")
-	case "canvas.node.update", "canvas.node.configure", "canvas.node.move", "canvas.node.bind_asset", "canvas.node.delete", "canvas.edge.delete", "canvas.nodes.create", "canvas.edge.create", "canvas.generation.propose", "canvas.task.bind", "canvas.timeline.update", "canvas.timeline.render":
+	case "canvas.node.update", "canvas.node.configure", "canvas.node.move", "canvas.node.bind_asset", "canvas.node.delete", "canvas.edge.delete", "canvas.nodes.create", "canvas.edge.create", "canvas.generation.propose", "canvas.task.bind", "canvas.timeline.update", "canvas.timeline.render",
+		"canvas.script.rows.append", "canvas.script.row.update", "canvas.script.row.remove":
 		// 写只允许落在当前画布：跨画布写即便带上合法 canvasId 也必须拒绝。
 		if args.CanvasID == s.CanvasID {
 			return nil
