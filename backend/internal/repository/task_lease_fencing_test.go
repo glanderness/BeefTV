@@ -61,6 +61,10 @@ func TestTaskLeaseFencesExpiredAndReclaimedWriters(t *testing.T) {
 	if err := repo.RenewTaskLease(current.ID, current.LeaseOwner, time.Minute); err != nil {
 		t.Fatal(err)
 	}
+	renewed, err := repo.Task(current.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := repo.UpdateTaskProgressForLease(current.ID, current.LeaseOwner, "current", 60); err != nil {
 		t.Fatal(err)
 	}
@@ -71,5 +75,8 @@ func TestTaskLeaseFencesExpiredAndReclaimedWriters(t *testing.T) {
 	stored, err := repo.Task(current.ID)
 	if err != nil || stored.Status != model.TaskStatusSucceeded || stored.LeaseOwner != current.LeaseOwner {
 		t.Fatalf("current completion: %v %v", stored, err)
+	}
+	if stored.LeaseExpiresAt == nil || !stored.LeaseExpiresAt.Equal(*renewed.LeaseExpiresAt) {
+		t.Fatal("completion overwrote the renewed lease with the original claim expiry")
 	}
 }

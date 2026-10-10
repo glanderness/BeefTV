@@ -5,6 +5,7 @@ import { chromium, type Browser } from "playwright";
 let browser: Browser, server: ReturnType<typeof Bun.serve>;
 let cancelled = false, historyFailure = false, settle = false;
 let chatRequests = 0, cancelRequests = 0;
+let rejectChat = false;
 let scopeTest = false, holdOldHistory = false, configurationBlocked = false, seedHistoricalTurn = false, historyFailureReason = "host_unreachable", historyReads = 0;
 let oldHistoryResolve: ((response: Response) => void) | null = null, oldSteerResolve: ((response: Response) => void) | null = null;
 const steerUsers: string[] = [];
@@ -48,6 +49,7 @@ beforeAll(async () => {
         if (pathname.endsWith("/assistant/cancel")) { cancelled = true; cancelRequests++; return ok({ accepted: true }); }
         if (pathname.endsWith("/assistant/chat")) {
             chatRequests++;
+            if (rejectChat) return Response.json({ code: 413, reason: "body_too_large" }, { status: 413, headers: { "X-Beeftv-Turn-Admission": "rejected" } });
             return new Response(new ReadableStream({ start(controller) {
                 controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: "text_delta", delta: "两个草案已创建。" }) + "\n"));
             } }), { headers: { "content-type": "application/x-ndjson" } });
@@ -59,6 +61,21 @@ beforeAll(async () => {
     browser = await chromium.launch({ executablePath, headless: true });
 }, 60000);
 afterAll(async () => { await browser?.close(); server?.stop(true); });
+
+test("rejected oversized input leaves the real hook able to send another message", async () => {
+    const page = await browser.newPage();
+    try {
+        rejectChat = true;
+        await page.goto(server.url.toString());
+        await page.getByRole("button", { name: "开始", exact: true }).click();
+        await page.getByTestId("error").filter({ hasText: "本次消息内容过大" }).waitFor();
+        expect(await page.getByTestId("streaming").innerText()).toBe("false");
+        rejectChat = false;
+        await page.getByRole("button", { name: "开始", exact: true }).click();
+        await page.getByTestId("streamed").filter({ hasText: "两个草案已创建" }).waitFor();
+        expect(chatRequests).toBe(2);
+    } finally { rejectChat = false; await page.close(); }
+});
 
 test("real hook keeps received text after Stop until the matching durable receipt replaces it", async () => {
     const page = await browser.newPage(); await page.goto(server.url.toString());

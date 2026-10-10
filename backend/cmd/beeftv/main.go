@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -74,6 +75,8 @@ func (e *cliError) machineError() map[string]any {
 }
 
 type client struct {
+	mu           sync.Mutex
+	fixedBaseURL bool
 	baseURL      string
 	clientID     string
 	token        string
@@ -90,28 +93,35 @@ type opDescriptor struct {
 	Params   json.RawMessage `json:"params"`
 }
 
-func newClient() (*client, error) {
-	base, _ := resolveBaseURL()
+func validateBaseURL(base string) error {
 	parsedBase, parseErr := url.Parse(base)
 	if base == "" {
-		// Defer discovery errors until an operation so --help remains available offline.
-		return &client{}, nil
+		return nil
 	}
 	if parseErr != nil || (parsedBase.Scheme != "http" && parsedBase.Scheme != "https") {
-		return nil, &cliError{code: exitUsage, reason: "invalid_base_url", msg: "BEEFTV_BASE_URL 不是合法 URL"}
+		return &cliError{code: exitUsage, reason: "invalid_base_url", msg: "工作区地址不是合法 URL"}
 	}
 	if parsedBase.User != nil {
-		return nil, &cliError{code: exitUsage, reason: "credentials_in_url", msg: "拒绝对带凭据的 URL 发请求"}
+		return &cliError{code: exitUsage, reason: "credentials_in_url", msg: "拒绝对带凭据的 URL 发请求"}
 	}
 	host := parsedBase.Hostname()
 	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
-		return nil, &cliError{code: exitUsage, reason: "base_url_not_local", msg: "首版仅支持连接本机工作区，拒绝 " + host}
+		return &cliError{code: exitUsage, reason: "base_url_not_local", msg: "首版仅支持连接本机工作区，拒绝 " + host}
+	}
+	return nil
+}
+
+func newClient() (*client, error) {
+	base, source := resolveBaseURL()
+	if err := validateBaseURL(base); err != nil {
+		return nil, err
 	}
 	return &client{
-		baseURL:    strings.TrimRight(base, "/"),
-		clientID:   strings.TrimSpace(os.Getenv("BEEFTV_CLIENT_ID")),
-		token:      strings.TrimSpace(os.Getenv("BEEFTV_CLIENT_TOKEN")),
-		ownerToken: strings.TrimSpace(os.Getenv("BEEFTV_OWNER_TOKEN")),
+		fixedBaseURL: source == "BEEFTV_BASE_URL",
+		baseURL:      strings.TrimRight(base, "/"),
+		clientID:     strings.TrimSpace(os.Getenv("BEEFTV_CLIENT_ID")),
+		token:        strings.TrimSpace(os.Getenv("BEEFTV_CLIENT_TOKEN")),
+		ownerToken:   strings.TrimSpace(os.Getenv("BEEFTV_OWNER_TOKEN")),
 		// 桌面形态整个 API 由桌面启动令牌把关：CLI/MCP 要接同一个桌面工作区就必须出示它。
 		// 它只是通过守卫，不改变能力模式——能力仍由 owner/已登记客户端凭据决定。
 		desktopToken: strings.TrimSpace(os.Getenv("BEEFTV_DESKTOP_TOKEN")),
@@ -122,8 +132,22 @@ func newClient() (*client, error) {
 	}, nil
 }
 
+// Re-read the runtime before dispatch, including business uploads. A failed
+// write is never replayed: it may already have reached the previous process.
+func (c *client) currentBaseURL() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.fixedBaseURL {
+		if info, found := runtimeinfo.Discover(""); found && validateBaseURL(info.BaseURL) == nil {
+			c.baseURL = strings.TrimRight(info.BaseURL, "/")
+		}
+	}
+	return c.baseURL
+}
+
 func (c *client) do(ctx context.Context, method, path string, body any) (json.RawMessage, error) {
-	if c.baseURL == "" {
+	base := c.currentBaseURL()
+	if base == "" {
 		return nil, &cliError{code: exitTransportFailure, reason: "runtime_not_found", msg: "未发现运行中的 BeefTV 工作区。请先打开 BeefTV；若使用自定义目录，请检查 BEEFTV_DATA_DIR；独立服务请显式设置 BEEFTV_BASE_URL"}
 	}
 	var payload io.Reader
@@ -134,7 +158,7 @@ func (c *client) do(ctx context.Context, method, path string, body any) (json.Ra
 		}
 		payload = bytes.NewReader(encoded)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, payload)
+	req, err := http.NewRequestWithContext(ctx, method, base+path, payload)
 	if err != nil {
 		return nil, &cliError{code: exitUsage, reason: "bad_request", msg: err.Error()}
 	}
@@ -151,7 +175,7 @@ func (c *client) do(ctx context.Context, method, path string, body any) (json.Ra
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, &cliError{code: exitTransportFailure, reason: "transport_failed", msg: fmt.Sprintf("无法连接本地工作区 %s：%v", c.baseURL, err)}
+		return nil, &cliError{code: exitTransportFailure, reason: "transport_failed", msg: fmt.Sprintf("无法连接本地工作区 %s：%v", base, err)}
 	}
 	defer resp.Body.Close()
 	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
@@ -729,7 +753,7 @@ func runMCP(c *client, args []string) error {
 			})
 	}
 	_, baseSource := resolveBaseURL()
-	fmt.Fprintf(os.Stderr, "beeftv mcp serve: %d 个工具，base=%s（%s），client=%s\n", registeredTools, c.baseURL, baseSource, orNone(c.clientID))
+	fmt.Fprintf(os.Stderr, "beeftv mcp serve: %d 个工具，base=%s（%s），client=%s\n", registeredTools, c.currentBaseURL(), baseSource, orNone(c.clientID))
 	return server.Run(ctx, &mcp.StdioTransport{})
 }
 

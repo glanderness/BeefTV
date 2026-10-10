@@ -431,7 +431,7 @@ func (r *Repository) SaveTaskCompletion(task *model.Task, expected model.TaskSta
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		updated := taskLeaseWriter(tx.Model(&model.Task{}), task.LeaseOwner).
 			Where("id = ? AND status = ?", task.ID, expected).
-			Select("*").Omit("id", "created_at").Updates(task)
+			Select("*").Omit("id", "created_at", "lease_expires_at").Updates(task)
 		if updated.Error != nil {
 			return updated.Error
 		}

@@ -54,3 +54,28 @@ func TestAssistantAdmissionRejectionAndHostFailure(t *testing.T) {
 		t.Fatalf("post-admission host failure lost uncertainty: %d %v hits=%d", forwarded.Code, forwarded.Header(), chatHits)
 	}
 }
+
+func TestAssistantInvalidSkillIsNotAdmitted(t *testing.T) {
+	hits := 0
+	env := newAssistantTestEnv(t, func(env *assistantTestEnv) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++; _, _ = w.Write([]byte(`{}`)) })
+	})
+	body := `{"canvasId":"` + env.canvasID + `","message":"hello","skills":[{"skillId":"missing","versionId":"v1","contentHash":"bad"}]}`
+	response := env.call(t, http.MethodPost, "/assistant/chat", body)
+	if response.Code != 400 || response.Header().Get("X-Beeftv-Turn-Admission") != "rejected" || hits != 0 {
+		t.Fatalf("invalid skill left an unknown turn: %d %v hits=%d", response.Code, response.Header(), hits)
+	}
+}
+
+func TestAssistantHostBodyRejectionIsNotAdmitted(t *testing.T) {
+	env := newAssistantTestEnv(t, func(env *assistantTestEnv) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			_, _ = w.Write([]byte(`{"reason":"body_too_large"}`))
+		})
+	})
+	response := env.call(t, http.MethodPost, "/assistant/chat", `{"canvasId":"`+env.canvasID+`","message":"hello"}`)
+	if response.Code != 413 || response.Header().Get("X-Beeftv-Turn-Admission") != "rejected" {
+		t.Fatalf("body rejection: %d %v", response.Code, response.Header())
+	}
+}

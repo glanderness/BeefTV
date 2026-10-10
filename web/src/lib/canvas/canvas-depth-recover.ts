@@ -79,6 +79,7 @@ export async function recoverOwnedDepthCaptureNode(input: {
                 naturalHeight: resource.height || result.height || 1080,
                 durationMs: resource.durationMs || result.durationMs,
                 status: NODE_STATUS_SUCCESS,
+                errorDetails: undefined,
                 videoPreview: undefined,
                 taskId: completed.id,
                 taskStatus: completed.status,
@@ -103,7 +104,7 @@ export async function recoverOwnedDepthCaptureNode(input: {
         }
         input.setNodes((current) => current.map((item) => item.id === node.id ? {
             ...item,
-            metadata: { ...item.metadata, status: NODE_STATUS_ERROR, taskStatus: "failed", errorDetails: generationErrorMessage(error) },
+            metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: generationErrorMessage(error) },
         } : item));
     }
 }
@@ -120,7 +121,9 @@ export function recoverOwnedDepthCaptureNodes(input: {
     nodeStillMounted: (nodeId: string) => boolean;
 }): void {
     for (const node of input.nodes) {
-        if (!node.metadata?.depthSourceNodeId || node.metadata.status !== NODE_STATUS_LOADING) continue;
+        // A failed canvas save is not a failed depth task. Re-read its saved
+        // result on reopen, including nodes written by older clients as errors.
+        if (!node.metadata?.depthSourceNodeId || (node.metadata.status !== NODE_STATUS_LOADING && !(node.metadata.status === NODE_STATUS_ERROR && node.metadata.taskId))) continue;
         if (!node.metadata?.taskId) {
             input.setNodes((current) => current.map((item) => item.id === node.id ? {
                 ...item,

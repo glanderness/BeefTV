@@ -5,6 +5,13 @@ import { createDurableSkillExtension, loadPinnedSkills, normalizeSkillPins, read
 const pin = { skillId: 'user-skill', versionId: 'v1', contentHash: 'a'.repeat(64) };
 const resource = { pin, name: '采访切片', version: '1', description: '保留原话', instruction: '先读取 references/interview.md，再按原话整理三个镜头。', files: [{ path: 'references/interview.md' }], unsupportedCapabilities: [] };
 
+test('large Chinese instructions remain complete and oversized instructions are rejected', async () => {
+  const instruction = '镜头'.repeat(13000);
+  const loaded = await loadPinnedSkills({ pins: [pin], readVersion: async () => ({ ...resource, instruction }) });
+  assert.equal(loaded[0].instruction, instruction);
+  await assert.rejects(loadPinnedSkills({ pins: [pin], readVersion: async () => ({ ...resource, instruction: '字'.repeat(90000) }) }), /skill_instruction_too_large/);
+});
+
 test('official Durable prompt section loads only explicitly pinned remote packages and revalidates after restore', async () => {
   let calls = 0;
   const extension = createDurableSkillExtension({ getPins: () => [pin], readVersion: async (selected) => { calls++; assert.deepEqual(selected, pin); return resource; } });

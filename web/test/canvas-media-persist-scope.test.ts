@@ -528,6 +528,30 @@ describe("recoverOwnedDepthCaptureNodes ownership", () => {
 });
 
 describe("owned canvas persist and recover callbacks", () => {
+    test("reopening a depth node after a canvas save failure attaches the existing result without generating again", async () => {
+        const restore = switchScope("owner-a");
+        const saved = deferred();
+        const node = depthNode("depth-1");
+        node.metadata = { ...node.metadata, status: "error", taskStatus: "failed" };
+        let live = [node];
+        const methods: string[] = [];
+        try {
+            await withAdapter(async (config) => {
+                methods.push(String(config.method));
+                if (config.url === "/tasks/depth-task") return envelope(generationTask({ id: "depth-task", status: "succeeded", resultJson: JSON.stringify({ resourceId: "depth-out" }) }));
+                if (config.url === "/resources/depth-out") return envelope({ resource: { id: "depth-out", mimeType: "video/mp4", width: 16, height: 9, size: 1 } });
+                throw new Error(`unexpected ${config.url}`);
+            }, async () => {
+                recoverOwnedDepthCaptureNodes({ nodes: live, signal: new AbortController().signal, expectedScope: captureUserScope(), projectId: "proj-a", getLiveProjectId: () => "proj-a", observers: new Set(),
+                    persist: async (nodes) => { expect(nodes[0]?.metadata?.storageKey).toBe("resource:depth-out"); saved.resolve(); },
+                    setNodes: updater => { live = updater(live); }, nodeStillMounted: () => true });
+                await saved.promise;
+                expect(live[0]?.metadata?.status).toBe("success");
+                expect(live[0]?.metadata?.taskStatus).toBe("succeeded");
+                expect(methods.every(method => method === "get")).toBe(true);
+            });
+        } finally { restore(); }
+    });
     test("canvas media tools persist and recover through the owned helpers", () => {
         const here = dirname(fileURLToPath(import.meta.url));
         const tools = readFileSync(join(here, "../src/pages/canvas/use-canvas-media-tools.ts"), "utf8");

@@ -445,7 +445,6 @@ export function useCanvasMediaTools({
                 metadata: {
                     ...item.metadata,
                     status: NODE_STATUS_ERROR,
-                    taskStatus: "failed",
                     taskId: submittedTaskId,
                     taskClientOperationId: intent.clientOperationId,
                     taskClientOperationInput: frozenInputKey,
@@ -561,7 +560,6 @@ export function useCanvasMediaTools({
                 metadata: {
                     ...item.metadata,
                     status: NODE_STATUS_ERROR,
-                    taskStatus: "failed",
                     taskId: submittedTaskId,
                     taskClientOperationId: intent.clientOperationId,
                     taskClientOperationInput: frozenInputKey,

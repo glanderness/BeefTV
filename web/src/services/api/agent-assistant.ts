@@ -141,6 +141,11 @@ let uiSessionGeneration = 0;
  */
 export function agentAssistantFailureText(reason: string | undefined, fallback = "创作助手暂时不可用，请稍后再试") {
     switch (reason) {
+        case "skill_instruction_too_large":
+            return "所选技能正文过大，请减少所选技能或将部分内容移到参考文件后重试。";
+        case "body_too_large":
+        case "http_413":
+            return "本次消息内容过大，请缩短消息或减少附件后重试。";
         case "turn_timeout":
             return "模型响应时间过长，这一轮尚未完成。已完成的改动会保留，可以继续处理。";
         case "turn_interrupted":

@@ -34,7 +34,7 @@ export async function loadPinnedSkills({ pins = [], readVersion, signal } = {}) 
     if (!sameSkillPin(pin, resource?.pin) || typeof resource.instruction !== 'string' || !resource.instruction.trim()) throw fail('skill_version_unavailable');
     const size = Buffer.byteLength(resource.instruction, 'utf8');
     total += size;
-    if (size > 64 * 1024 || total > 128 * 1024) throw fail('skill_instruction_too_large');
+    if (size > 256 * 1024 || total > 512 * 1024) throw fail('skill_instruction_too_large');
     if (!Array.isArray(resource.files) || !Array.isArray(resource.unsupportedCapabilities)) throw fail('skill_package_unreadable');
     resources.push(resource);
   }

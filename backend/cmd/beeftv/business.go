@@ -136,7 +136,11 @@ func (c *client) callBusiness(ctx context.Context, tool businessTool, args busin
 			contentType = writer.FormDataContentType()
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, tool.Method, c.baseURL+path, reader)
+	base := c.currentBaseURL()
+	if base == "" {
+		return nil, &cliError{code: exitTransportFailure, reason: "runtime_not_found", msg: "未发现运行中的 BeefTV 工作区，请先打开 BeefTV"}
+	}
+	req, err := http.NewRequestWithContext(ctx, tool.Method, base+path, reader)
 	if err != nil {
 		return nil, err
 	}
