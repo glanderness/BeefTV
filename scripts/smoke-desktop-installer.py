@@ -37,7 +37,7 @@ def launch(exe, env, data, log_path):
                 request = urllib.request.Request(f'http://127.0.0.1:{port}/api/health/ready', headers={'X-Desktop-Token': token})
                 with opener.open(request, timeout=2) as response:
                     result = json.load(response)
-                    if result.get('code') == 0 and (data / 'open_ai_canvas.db').is_file():
+                    if result.get('code') == 0 and result.get('data', {}).get('ready') is True and (data / 'open_ai_canvas.db').is_file():
                         return process
             except (OSError, ValueError):
                 pass
@@ -85,8 +85,18 @@ def smoke(args):
             data = Path(env['APPDATA']) / 'BeefTV'
             installed = Path(os.environ['LOCALAPPDATA']) / 'Programs/BeefTV'
             relative_exe = Path('BeefTV.exe')
+            with socket.socket() as listener:
+                listener.bind(('127.0.0.1', 0))
+                webview_port = listener.getsockname()[1]
+            env['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = f'--remote-debugging-port={webview_port}'
             def install():
                 subprocess.run([str(installer), '/S'], check=True, timeout=180)
+                import winreg
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Software\Microsoft\Windows\CurrentVersion\Uninstall\BeefTV') as key:
+                    assert winreg.QueryValueEx(key, 'InstallLocation')[0] == str(installed)
+                menu = Path(os.environ['APPDATA']) / 'Microsoft/Windows/Start Menu/Programs/BeefTV'
+                assert (menu / 'BeefTV.lnk').is_file()
+                assert (menu / 'Uninstall.lnk').is_file()
             def uninstall():
                 # _?= keeps NSIS in-process so wait means uninstall really finished.
                 subprocess.run([str(installed / 'Uninstall.exe'), '/S', '_?=' + str(installed)], check=True, timeout=90)
@@ -125,6 +135,8 @@ def smoke(args):
         portable = root / ('BeefTV.app' if args.platform.startswith('darwin-') else 'portable')
         shutil.copytree(payload, portable, symlinks=True)
         process = launch(portable / relative_exe, env, data, root / 'portable.log')
+        if args.platform == 'windows-amd64':
+            subprocess.run(['node', str(Path(__file__).with_name('smoke-webview-cache.mjs')), str(webview_port), 'write'], check=True, timeout=90)
         stop(process)
         with closing(sqlite3.connect(data / 'open_ai_canvas.db')) as db, db:
             db.execute("INSERT INTO projects (id,user_id,name,description,status,revision) VALUES ('installer-project','installer-user','Keep my project','Migration acceptance','draft',7)")
@@ -144,6 +156,12 @@ def smoke(args):
                 if source.is_file() and not source.is_symlink():
                     assert digest(source) == digest(installed / source.relative_to(payload)), str(source)
             process = launch(installed / relative_exe, env, data, root / f'installed-{iteration}.log')
+            if args.platform == 'windows-amd64':
+                subprocess.run(['node', str(Path(__file__).with_name('smoke-webview-cache.mjs')), str(webview_port), 'read'], check=True, timeout=90)
+                blocked = subprocess.run([str(installer), '/S'], timeout=60)
+                assert blocked.returncode == 2, 'installer did not reject a running app'
+                blocked = subprocess.run([str(installed / 'Uninstall.exe'), '/S', '_?=' + str(installed)], timeout=60)
+                assert blocked.returncode == 2, 'uninstaller did not reject a running app'
             stop(process)
             verify_data(data)
             assert cache.read_bytes() == b'keep webview cache'
@@ -154,6 +172,8 @@ def smoke(args):
         assert cache.read_bytes() == b'keep webview cache'
         install()
         process = launch(installed / relative_exe, env, data, root / 'reinstalled.log')
+        if args.platform == 'windows-amd64':
+            subprocess.run(['node', str(Path(__file__).with_name('smoke-webview-cache.mjs')), str(webview_port), 'read'], check=True, timeout=90)
         stop(process)
         verify_data(data)
         uninstall()

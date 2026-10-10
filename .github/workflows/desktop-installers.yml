@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'scripts/*installer*'
+      - 'scripts/smoke-webview-cache.mjs'
       - 'scripts/installers/**'
       - 'scripts/build-beeftv*'
       - 'backend/internal/desktopupdate/**'

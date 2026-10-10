@@ -42,7 +42,7 @@ Function ${PREFIX}RequireClosed
   ${EndIf}
   ${If} $0 != 0
   ${OrIf} $2 != ""
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Please close BeefTV and its CLI before installing or uninstalling."
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Please close BeefTV and its CLI before installing or uninstalling." /SD IDOK
     SetErrorLevel 2
     Abort
   ${EndIf}
@@ -75,7 +75,7 @@ Section "BeefTV (required)" SEC_APP
   ClearErrors
   File /r "${PAYLOAD}\*"
   ${If} ${Errors}
-    MessageBox MB_OK|MB_ICONSTOP "Installation failed. Please run the installer again. Your projects have been preserved."
+    MessageBox MB_OK|MB_ICONSTOP "Installation failed. Please run the installer again. Your projects have been preserved." /SD IDOK
     SetErrorLevel 1
     Abort
   ${EndIf}
