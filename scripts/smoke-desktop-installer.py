@@ -30,6 +30,8 @@ def launch(exe, env, data, log_path):
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with log_path.open('w') as log:
         process = subprocess.Popen([str(exe)], env=env, stdout=log, stderr=log)
+    if 'WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS' in env:
+        process.webview_port = int(env['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'].split('=')[-1])
     try:
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
@@ -51,12 +53,25 @@ def launch(exe, env, data, log_path):
 
 
 def stop(process):
-    process.terminate()
+    if os.name == 'nt' and process.poll() is None:
+        subprocess.run(['powershell', '-NoProfile', '-Command', f'$p=Get-Process -Id {process.pid} -ErrorAction SilentlyContinue; if ($p) {{ $p.CloseMainWindow() | Out-Null }}'], check=True)
+    else:
+        process.terminate()
     try:
         process.wait(timeout=15)
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait(timeout=10)
+    if hasattr(process, 'webview_port'):
+        deadline = time.monotonic() + 30
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        while time.monotonic() < deadline:
+            try:
+                opener.open(f'http://127.0.0.1:{process.webview_port}/json/list', timeout=1).close()
+            except OSError:
+                return
+            time.sleep(.5)
+        raise RuntimeError('Old WebView remained running; cannot verify a fresh profile startup')
 
 
 def verify_data(data):
@@ -119,10 +134,12 @@ def smoke(args):
                 assert (menu / 'BeefTV.lnk').is_file()
                 assert (menu / 'Uninstall.lnk').is_file()
             def uninstall():
-                # _?= keeps NSIS in-process so wait means uninstall really finished.
-                subprocess.run([str(installed / 'Uninstall.exe'), '/S', '_?=' + str(installed)], check=True, timeout=90)
-                assert not (installed / 'BeefTV.exe').exists()
-                assert not list(installed.glob('*.dll')), 'shipped DLL left after uninstall'
+                # Normal NSIS uninstall runs a temporary copy so it can delete itself.
+                subprocess.run([str(installed / 'Uninstall.exe'), '/S'], check=True, timeout=90)
+                deadline = time.monotonic() + 90
+                while installed.exists() and time.monotonic() < deadline:
+                    time.sleep(.5)
+                assert not installed.exists(), 'uninstall left shipped files or runtime directories'
         elif args.platform.startswith('darwin-'):
             data = home / 'Library/Application Support/BeefTV'
             installed = root / 'Applications/BeefTV.app'

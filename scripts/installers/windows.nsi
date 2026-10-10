@@ -182,6 +182,7 @@ Section /o "Desktop shortcut" SEC_DESKTOP
 SectionEnd
 
 Section "Uninstall"
+  SetOutPath "$LOCALAPPDATA\Programs"
   StrCpy $CleanDir "$INSTDIR"
   Call un.RemovePayload
   Delete "$DESKTOP\BeefTV.lnk"
