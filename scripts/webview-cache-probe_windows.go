@@ -58,7 +58,7 @@ func main() {
 	}
 	view = edge.NewChromium()
 	view.DataPath = os.Args[1]
-	view.AdditionalBrowserArgs = []string{"--remote-debugging-port=" + os.Args[2]}
+	view.AdditionalBrowserArgs = []string{"--disable-features=msSmartScreenProtection", "--remote-debugging-port=" + os.Args[2]}
 	if !view.Embed(hwnd) {
 		panic("cannot embed probe WebView")
 	}

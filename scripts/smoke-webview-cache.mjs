@@ -18,6 +18,23 @@ await new Promise((resolve, reject) => {
   socket.addEventListener('open', resolve, { once: true });
   socket.addEventListener('error', reject, { once: true });
 });
+let requestId = 0;
+function evaluate(expression) {
+  const id = ++requestId;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { socket.removeEventListener('message', onMessage); reject(new Error('WebView cache probe timed out')); }, 20000);
+    function onMessage(event) {
+      const message = JSON.parse(event.data);
+      if (message.id !== id) return;
+      clearTimeout(timer);
+      socket.removeEventListener('message', onMessage);
+      if (message.error || message.result?.exceptionDetails) reject(new Error('WebView cache evaluation failed: ' + JSON.stringify(message.error || message.result.exceptionDetails)));
+      else resolve(message.result?.result?.value);
+    }
+    socket.addEventListener('message', onMessage);
+    socket.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, awaitPromise: true, returnByValue: true } }));
+  });
+}
 const expression = `(async () => {
   const db = await new Promise((resolve, reject) => {
     const request = indexedDB.open('beeftv-installer-acceptance', 1);
@@ -38,17 +55,16 @@ const expression = `(async () => {
   } finally { db.close(); }
 })()`;
 try {
-  const result = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('WebView cache probe timed out')), 20000);
-    socket.addEventListener('message', event => {
-      const message = JSON.parse(event.data);
-      if (message.id !== 1) return;
-      clearTimeout(timer);
-      if (message.error || message.result?.exceptionDetails) reject(new Error('WebView cache evaluation failed'));
-      else resolve(message.result?.result?.value);
-    });
-    socket.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression, awaitPromise: true, returnByValue: true } }));
-  });
+  // A target URL can change before its new JavaScript context has loaded.
+  let document;
+  const loadedBy = Date.now() + 30000;
+  do {
+    document = await evaluate('({ origin: location.origin, href: location.href, ready: document.readyState, secure: isSecureContext })');
+    if (document?.origin === 'http://wails.localhost' && document.ready === 'complete') break;
+    await new Promise(resolve => setTimeout(resolve, 500));
+  } while (Date.now() < loadedBy);
+  if (document?.origin !== 'http://wails.localhost' || document.ready !== 'complete') throw new Error('Probe document did not load: ' + JSON.stringify(document));
+  const result = await evaluate(expression);
   if (result !== true) throw new Error('Actual WebView IndexedDB draft was lost');
   console.log('PASS actual Windows WebView IndexedDB:', operation);
 } finally { socket.close(); }

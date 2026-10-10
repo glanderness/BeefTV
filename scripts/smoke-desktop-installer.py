@@ -129,11 +129,16 @@ def probe_cache(helper, profile, operation, env, root, cleanup):
         process = subprocess.Popen([str(helper), str(profile), str(port)], env=env, stdout=log, stderr=log)
     cleanup.callback(cleanup_process, process)
     process.webview_port = port
+    process.webview_profile = profile
     try:
         subprocess.run(['node', str(Path(__file__).with_name('smoke-webview-cache.mjs')), str(port), operation], check=True, timeout=90)
     except BaseException:
         print((root / f'cache-{operation}.log').read_text(errors='replace')[-3000:])
-        cleanup_process(process)
+        try:
+            stop(process)
+        except Exception as error:
+            print('Probe cleanup failed:', error)
+            cleanup_process(process)
         raise
     else:
         stop(process)
