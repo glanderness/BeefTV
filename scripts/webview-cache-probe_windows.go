@@ -11,6 +11,7 @@ import (
 	"unsafe"
 
 	"github.com/wailsapp/go-webview2/pkg/edge"
+	"github.com/wailsapp/go-webview2/pkg/webview2"
 	"golang.org/x/sys/windows"
 )
 
@@ -32,7 +33,18 @@ func main() {
 		panic("cannot create probe window")
 	}
 	var previous uintptr
+	var view *edge.Chromium
 	callback := windows.NewCallback(func(window uintptr, message uint32, wparam, lparam uintptr) uintptr {
+		if message == 0x10 && view != nil { // WM_CLOSE
+			view.ShuttingDown()
+			// Both wrappers represent the same ICoreWebView2Controller COM ABI;
+			// edge's wrapper omits Close. Close before destroying its parent.
+			controller := (*webview2.ICoreWebView2Controller)(unsafe.Pointer(view.GetController()))
+			if err := controller.Close(); err != nil {
+				panic(err)
+			}
+			view.GetController().Release()
+		}
 		if message == 2 { // WM_DESTROY
 			call("PostQuitMessage", 0)
 		}
@@ -42,12 +54,13 @@ func main() {
 	if previous == 0 {
 		panic("cannot subclass probe window")
 	}
-	view := edge.NewChromium()
+	view = edge.NewChromium()
 	view.DataPath = os.Args[1]
 	view.AdditionalBrowserArgs = []string{"--remote-debugging-port=" + os.Args[2]}
 	if !view.Embed(hwnd) {
 		panic("cannot embed probe WebView")
 	}
+	view.Resize()
 	view.WebResourceRequestedCallback = func(_ *edge.ICoreWebView2WebResourceRequest, args *edge.ICoreWebView2WebResourceRequestedEventArgs) {
 		response, err := view.Environment().CreateWebResourceResponse([]byte("<!doctype html><title>BeefTV cache probe</title>"), 200, "OK", "Content-Type: text/html\r\n")
 		if err != nil {

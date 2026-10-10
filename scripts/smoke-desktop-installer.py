@@ -105,15 +105,18 @@ def stop(process):
     if hasattr(process, 'webview_port'):
         deadline = time.monotonic() + 30
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        last_result = 'no inspection'
         while time.monotonic() < deadline:
             try:
                 opener.open(f'http://127.0.0.1:{process.webview_port}/json/list', timeout=1).close()
+                last_result = 'debug endpoint still responds'
             except OSError as error:
+                last_result = repr(error)
                 reason = getattr(error, 'reason', error)
                 if isinstance(reason, OSError) and (reason.errno in (errno.ECONNREFUSED, 10061) or getattr(reason, 'winerror', None) == 10061):
                     return
             time.sleep(.5)
-        raise RuntimeError('Old WebView remained running; cannot verify a fresh profile startup')
+        raise RuntimeError('Old WebView remained running; cannot verify a fresh profile startup: ' + last_result)
 
 
 def probe_cache(helper, profile, operation, env, root, cleanup):
@@ -182,7 +185,7 @@ def smoke(args):
             relative_exe = Path('BeefTV.exe')
             profile = Path(env['APPDATA']) / 'BeefTV.exe'
             helper = root / 'webview-cache-probe.exe'
-            subprocess.run(['go', 'build', '-o', str(helper), str(Path(__file__).with_name('webview-cache-probe_windows.go').resolve())],
+            subprocess.run(['go', 'build', '-ldflags=-H=windowsgui', '-o', str(helper), str(Path(__file__).with_name('webview-cache-probe_windows.go').resolve())],
                            cwd=Path(__file__).resolve().parent.parent / 'backend', check=True, timeout=180)
             def install():
                 subprocess.run([str(installer), '/S'], check=True, timeout=180)
