@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""CI-only native installer lifecycle with a real desktop-created database."""
+import argparse
+from contextlib import closing
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import secrets
+import socket
+import sqlite3
+import subprocess
+import tempfile
+import time
+import urllib.request
+
+
+def digest(path):
+    with path.open('rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def launch(exe, env, data, log_path):
+    token = secrets.token_hex(24)
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+    env = dict(env, CANVAS_DESKTOP_BACKEND_ADDR=f'127.0.0.1:{port}', CANVAS_DESKTOP_LAUNCH_TOKEN=token)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with log_path.open('w') as log:
+        process = subprocess.Popen([str(exe)], env=env, stdout=log, stderr=log)
+    try:
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            try:
+                request = urllib.request.Request(f'http://127.0.0.1:{port}/api/health/ready', headers={'X-Desktop-Token': token})
+                with opener.open(request, timeout=2) as response:
+                    result = json.load(response)
+                    if result.get('code') == 0 and (data / 'open_ai_canvas.db').is_file():
+                        return process
+            except (OSError, ValueError):
+                pass
+            if process.poll() is not None:
+                raise RuntimeError('desktop exited: ' + log_path.read_text(errors='replace')[-3000:])
+            time.sleep(.5)
+        raise RuntimeError('installed desktop backend did not start')
+    except BaseException:
+        stop(process)
+        raise
+
+
+def stop(process):
+    process.terminate()
+    try:
+        process.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=10)
+
+
+def verify_data(data):
+    with closing(sqlite3.connect(data / 'open_ai_canvas.db')) as db:
+        assert db.execute("SELECT name,revision FROM projects WHERE id='installer-project'").fetchone() == ('Keep my project', 7)
+        assert db.execute("SELECT value_json FROM system_settings WHERE key='installer-setting'").fetchone() == ('{"preserve":true}',)
+    for name in ['assets/original.png', 'drafts/unsaved.json']:
+        assert (data / name).read_bytes() == b'preserve installer data'
+
+
+def smoke(args):
+    # Never install into or uninstall from a developer's real machine.
+    if os.environ.get('GITHUB_ACTIONS') != 'true':
+        raise RuntimeError('Native installer lifecycle is restricted to disposable GitHub runners')
+    installer = args.installer.resolve()
+    payload = args.payload.resolve()
+    with tempfile.TemporaryDirectory(prefix='beeftv-installer-') as directory:
+        root = Path(directory)
+        env = {k: v for k, v in os.environ.items() if not k.startswith(('CANVAS_', 'BEEFTV_'))}
+        home = root / 'home'
+        home.mkdir()
+        env['HOME'] = str(home)
+        env['LIBGL_ALWAYS_SOFTWARE'] = '1'
+        if args.platform == 'windows-amd64':
+            env['APPDATA'] = str(home / 'AppData/Roaming')
+            data = Path(env['APPDATA']) / 'BeefTV'
+            installed = Path(os.environ['LOCALAPPDATA']) / 'Programs/BeefTV'
+            relative_exe = Path('BeefTV.exe')
+            def install():
+                subprocess.run([str(installer), '/S'], check=True, timeout=180)
+            def uninstall():
+                # _?= keeps NSIS in-process so wait means uninstall really finished.
+                subprocess.run([str(installed / 'Uninstall.exe'), '/S', '_?=' + str(installed)], check=True, timeout=90)
+        elif args.platform.startswith('darwin-'):
+            data = home / 'Library/Application Support/BeefTV'
+            installed = root / 'Applications/BeefTV.app'
+            relative_exe = Path('Contents/MacOS/BeefTV')
+            def install():
+                mount = root / 'mounted'
+                subprocess.run(['hdiutil', 'attach', '-readonly', '-nobrowse', '-mountpoint', str(mount), str(installer)], check=True)
+                try:
+                    assert (mount / 'Applications').is_symlink()
+                    assert os.readlink(mount / 'Applications') == '/Applications'
+                    if installed.exists():
+                        shutil.rmtree(installed)
+                    subprocess.run(['ditto', str(mount / 'BeefTV.app'), str(installed)], check=True)
+                    subprocess.run(['codesign', '--verify', '--deep', '--strict', str(installed)], check=True)
+                finally:
+                    subprocess.run(['hdiutil', 'detach', str(mount)], check=True)
+            def uninstall():
+                shutil.rmtree(installed)
+        else:
+            env['XDG_CONFIG_HOME'] = str(home / '.config')
+            data = home / '.config/BeefTV'
+            installed = Path('/opt/beeftv/BeefTV-linux')
+            relative_exe = Path('BeefTV')
+            def install():
+                subprocess.run(['sudo', 'apt-get', 'install', '-y', '--reinstall', str(installer)], check=True, timeout=240)
+                assert (installed / '.package-managed').read_text() == 'deb\n'
+                assert Path('/usr/bin/beeftv').resolve() == installed / 'cli/beeftv'
+                assert Path('/usr/share/applications/beeftv.desktop').is_file()
+            def uninstall():
+                subprocess.run(['sudo', 'dpkg', '--remove', 'beeftv'], check=True)
+                assert not (installed / relative_exe).exists()
+
+        portable = root / ('BeefTV.app' if args.platform.startswith('darwin-') else 'portable')
+        shutil.copytree(payload, portable, symlinks=True)
+        process = launch(portable / relative_exe, env, data, root / 'portable.log')
+        stop(process)
+        with closing(sqlite3.connect(data / 'open_ai_canvas.db')) as db, db:
+            db.execute("INSERT INTO projects (id,user_id,name,description,status,revision) VALUES ('installer-project','installer-user','Keep my project','Migration acceptance','draft',7)")
+            db.execute("INSERT INTO system_settings (key,value_json) VALUES ('installer-setting','{\"preserve\":true}')")
+        for name in ['assets/original.png', 'drafts/unsaved.json']:
+            path = data / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'preserve installer data')
+        # Existing WebView draft storage must also survive installer operations.
+        cache = Path(env.get('APPDATA', str(home))) / 'BeefTV.exe/cache-sentinel'
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_bytes(b'keep webview cache')
+        install()
+        shutil.rmtree(portable)
+        for iteration in range(2):
+            for source in payload.rglob('*'):
+                if source.is_file() and not source.is_symlink():
+                    assert digest(source) == digest(installed / source.relative_to(payload)), str(source)
+            process = launch(installed / relative_exe, env, data, root / f'installed-{iteration}.log')
+            stop(process)
+            verify_data(data)
+            assert cache.read_bytes() == b'keep webview cache'
+            if iteration == 0:
+                install()
+        uninstall()
+        verify_data(data)
+        assert cache.read_bytes() == b'keep webview cache'
+        install()
+        process = launch(installed / relative_exe, env, data, root / 'reinstalled.log')
+        stop(process)
+        verify_data(data)
+        uninstall()
+        print('PASS: portable migration, native installed startup, full payload, overwrite, uninstall and reinstall preserve project rows, settings, files and draft sentinels; no paid generation')
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--platform', required=True)
+    parser.add_argument('--installer', type=Path, required=True)
+    parser.add_argument('--payload', type=Path, required=True)
+    smoke(parser.parse_args())

@@ -296,6 +296,16 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) { choco install nsis --no-progress -y; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
+
+      - name: Package native installer
+        shell: bash
+        run: python scripts/package-desktop-installer.py --platform '${{ matrix.platform }}'
+
       - name: Verify MCP from final packaged CLI
         shell: bash
         env:
@@ -325,7 +335,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.platform }}
-          path: dist/BeefTV-${{ needs.preflight.outputs.version }}-${{ matrix.platform }}.zip
+          path: dist/BeefTV-${{ needs.preflight.outputs.version }}-${{ matrix.platform }}*
           retention-days: 7
           if-no-files-found: error
 
@@ -383,6 +393,9 @@ jobs:
             printf '%s\n' "${zips[@]}"
             exit 1
           fi
+          for name in "darwin-arm64.dmg" "darwin-amd64.dmg" "windows-amd64-setup.exe" "linux-amd64.deb"; do
+            test -s "dist/BeefTV-${VERSION}-${name}"
+          done
 
       - name: Sign and verify desktop-update.json
         working-directory: backend
@@ -407,18 +420,18 @@ jobs:
       - name: Stage and verify immutable Cloudflare assets
         run: |
           python3 scripts/publish-desktop-r2.py stage \
-            --manifest dist/desktop-update.json --assets-dir dist \
+            --manifest dist/desktop-update.json --assets-dir dist --with-installers \
             --verifier "$RUNNER_TEMP/update-release" --endpoint-url "$R2_ENDPOINT"
 
       - name: Publish signed GitHub release
         run: |
           set -euo pipefail
-          gh release upload "$VERSION" "dist/desktop-update.json" dist/BeefTV-"$VERSION"-*.zip
+          gh release upload "$VERSION" "dist/desktop-update.json" dist/BeefTV-"$VERSION"-*.zip dist/BeefTV-"$VERSION"-*.dmg dist/BeefTV-"$VERSION"-*-setup.exe dist/BeefTV-"$VERSION"-*.deb
           gh release edit "$VERSION" --draft=false --latest
 
       - name: Activate verified Cloudflare update feed
         run: |
           python3 scripts/publish-desktop-r2.py activate \
-            --manifest dist/desktop-update.json --assets-dir dist \
+            --manifest dist/desktop-update.json --assets-dir dist --with-installers \
             --verifier "$RUNNER_TEMP/update-release" --endpoint-url "$R2_ENDPOINT"
           echo "Published $VERSION at $BEEFTV_UPDATER_FEED_URL."
