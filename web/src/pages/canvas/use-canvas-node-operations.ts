@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { App } from "antd";
 import copyToClipboard from "copy-to-clipboard";
 import { nanoid } from "nanoid";
@@ -22,6 +22,8 @@ import type { DirectorScene } from "@/types/director";
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
 import { cancelGenerationTask } from "@/services/api/task-center";
 import { canvasTaskConfirmation } from "./canvas-task-confirmation";
+import { subscribeUserScope } from "@/lib/user-scope";
+import { captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
 
 type CanvasClipboard = {
     nodes: CanvasNodeData[];
@@ -67,7 +69,24 @@ export function useCanvasNodeOperations({
     onNodesDeleted,
 }: UseCanvasNodeOperationsOptions) {
     const { message, modal } = App.useApp();
-    const deleteConfirmationOpen = useRef(false);
+    const deletionContext = useRef({ projectId });
+    if (deletionContext.current.projectId !== projectId) deletionContext.current = { projectId };
+    const mounted = useRef(true);
+    const deleteConfirmation = useRef<{ destroy?: () => void } | null>(null);
+    useLayoutEffect(() => {
+        mounted.current = true;
+        const dismiss = () => {
+            const pending = deleteConfirmation.current;
+            deleteConfirmation.current = null;
+            pending?.destroy?.();
+        };
+        const unsubscribe = subscribeUserScope(dismiss);
+        return () => {
+            mounted.current = false;
+            unsubscribe();
+            dismiss();
+        };
+    }, [projectId]);
     const effectiveConfig = useEffectiveConfig();
     const runtimeStatuses = usePluginStore((state) => state.runtimeStatuses);
     const clipboardRef = useRef<CanvasClipboard | null>(null);
@@ -384,7 +403,7 @@ export function useCanvasNodeOperations({
     }, [commitConnections, commitNodes, connectionsRef, nodesRef, onNodesDeleted, selectNodes]);
 
     const deleteNodes = useCallback((ids: Set<string>) => {
-        if (!ids.size || deleteConfirmationOpen.current) return;
+        if (!ids.size || deleteConfirmation.current || !mounted.current) return;
         const requestedIds = new Set(ids);
         const removedIds = removeCanvasNodes(nodesRef.current, requestedIds).removedIds;
         const removedNodes = nodesRef.current.filter((node) => removedIds.has(node.id));
@@ -394,15 +413,20 @@ export function useCanvasNodeOperations({
             removeNodes(requestedIds);
             return;
         }
-        deleteConfirmationOpen.current = true;
-        modal.confirm({
+        const context = deletionContext.current;
+        const expectedScope = captureUserScope();
+        const pending: { destroy?: () => void } = {};
+        deleteConfirmation.current = pending;
+        const isCurrent = () => mounted.current && deletionContext.current === context && userScopeMatches(expectedScope);
+        const confirmation = modal.confirm({
             ...canvasTaskConfirmation,
             title: "删除正在生成的节点？",
             content: "任务已提交后可能产生费用。",
             okText: "确认删除",
             cancelText: "取消",
-            afterClose: () => { deleteConfirmationOpen.current = false; },
+            afterClose: () => { if (deleteConfirmation.current === pending) deleteConfirmation.current = null; },
             onOk: async () => {
+                if (deleteConfirmation.current !== pending || !isCurrent()) return;
                 const currentRemovedIds = removeCanvasNodes(nodesRef.current, requestedIds).removedIds;
                 const currentRemovedNodes = nodesRef.current.filter((node) => currentRemovedIds.has(node.id));
                 const taskIds = new Set([
@@ -414,11 +438,12 @@ export function useCanvasNodeOperations({
                 const cancellations = [...taskIds].map((id) => cancelGenerationTask(id));
                 removeNodes(requestedIds);
                 const results = await Promise.allSettled(cancellations);
-                if (results.some((result) => result.status === "rejected")) {
+                if (isCurrent() && results.some((result) => result.status === "rejected")) {
                     message.warning("节点已删除，未能取消的任务将继续运行。");
                 }
             },
         });
+        pending.destroy = confirmation.destroy;
     }, [message, modal, nodesRef, removeNodes]);
 
     const deleteConnection = useCallback((connectionId: string) => {

@@ -555,9 +555,11 @@ if (event.key === "Enter" && (event.nativeEvent.isComposing || composingRef.curr
                     onFocus={(event) => props.onFocus?.(event as unknown as React.FocusEvent<HTMLTextAreaElement>)}
                     onBlur={(event) => {
                         setAutoLinkCursor(null);
+                        const anchor = event.currentTarget;
                         if (interactingWithMenuRef.current) return;
                         if (event.relatedTarget instanceof Element && event.relatedTarget.closest("[data-canvas-resource-mention-menu]")) return;
                         window.setTimeout(() => {
+                            if (document.activeElement === anchor) return;
                             if (interactingWithMenuRef.current) return;
                             if (document.activeElement?.closest("[data-canvas-resource-mention-menu]")) return;
                             closeMention();
@@ -656,9 +658,11 @@ if (event.key === "Enter" && (event.nativeEvent.isComposing || composingRef.curr
                 }}
                 onBlur={(event) => {
                     setAutoLinkCursor(null);
+                    const anchor = event.currentTarget;
                     if (interactingWithMenuRef.current) return;
                     if (event.relatedTarget instanceof Element && event.relatedTarget.closest("[data-canvas-resource-mention-menu]")) return;
                     window.setTimeout(() => {
+                        if (document.activeElement === anchor) return;
                         if (interactingWithMenuRef.current) return;
                         if (document.activeElement?.closest("[data-canvas-resource-mention-menu]")) return;
                         closeMention();

@@ -67,6 +67,20 @@
     color: var(--muted-foreground);
     font-variant-numeric: tabular-nums;
 }
+.canvas-version-tabs {
+    display: flex;
+    gap: 8px;
+    padding: 0 20px 8px;
+}
+.canvas-version-tabs button {
+    flex: 1;
+    border-radius: var(--radius-lg);
+    padding: 8px;
+    white-space: nowrap;
+}
+.canvas-version-tabs button[aria-selected="true"] {
+    background: var(--accent);
+}
 .canvas-version-tag {
     border-radius: var(--radius-sm);
     background: var(--muted);

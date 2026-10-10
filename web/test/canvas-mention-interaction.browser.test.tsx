@@ -111,14 +111,12 @@ afterAll(async () => {
 });
 
 async function clearRichEditor(page: Page, input: ReturnType<Page["locator"]>) {
-    await input.click();
-    await page.keyboard.press("Meta+A");
-    await page.keyboard.press("Backspace");
+    await input.fill("");
     await page.waitForTimeout(50);
 }
 
-test("Scenario 1: Asset library multi-level folder navigation, back button, selection and no ghost clicks", async () => {
-    const input = page.locator('[role="textbox"]');
+test("Scenario 1: Personal asset library navigation, back button, selection and no ghost clicks", async () => {
+    const input = page.getByRole("textbox", { name: "rich-editor" });
     await clearRichEditor(page, input);
     await input.pressSequentially("@");
 
@@ -127,7 +125,7 @@ test("Scenario 1: Asset library multi-level folder navigation, back button, sele
     expect(await menu.isVisible()).toBe(true);
 
     // 1. 点击素材分类文件夹
-    const materialFolder = menu.locator(".canvas-resource-mention-folder", { hasText: "素材" });
+    const materialFolder = menu.locator(".canvas-resource-mention-folder", { hasText: "个人资产库" });
     await materialFolder.waitFor({ state: "visible", timeout: 5000 });
     await materialFolder.click();
 
@@ -138,13 +136,13 @@ test("Scenario 1: Asset library multi-level folder navigation, back button, sele
     // 3. 点击返回按钮
     const backBtn = menu.locator(".canvas-resource-mention-back");
     await backBtn.waitFor({ state: "visible", timeout: 5000 });
-    expect(await backBtn.innerText()).toContain("素材");
+    expect(await backBtn.innerText()).toContain("个人资产库");
     await backBtn.click();
     await page.waitForTimeout(200);
     expect(await menu.isVisible()).toBe(true);
 
     // 4. 点击道具分类文件夹
-    const propFolder = menu.locator(".canvas-resource-mention-folder", { hasText: "道具" });
+    const propFolder = menu.locator(".canvas-resource-mention-folder", { hasText: "个人资产库" });
     await propFolder.waitFor({ state: "visible", timeout: 5000 });
     await propFolder.click();
     await page.waitForTimeout(200);
@@ -166,7 +164,7 @@ test("Scenario 1: Asset library multi-level folder navigation, back button, sele
 }, 30000);
 
 test("Scenario 2: Primary menu nodes and skill buttons direct selection", async () => {
-    const input = page.locator('[role="textbox"]');
+    const input = page.getByRole("textbox", { name: "rich-editor" });
     await clearRichEditor(page, input);
     await input.pressSequentially("Node test: @");
 
@@ -201,7 +199,7 @@ test("Scenario 2: Primary menu nodes and skill buttons direct selection", async 
 }, 30000);
 
 test("Scenario 3: Search filter and keyboard navigation (ArrowDown, ArrowUp, Enter)", async () => {
-    const input = page.locator('[role="textbox"]');
+    const input = page.getByRole("textbox", { name: "rich-editor" });
     await clearRichEditor(page, input);
     await input.pressSequentially("Search: @");
 
@@ -228,7 +226,7 @@ test("Scenario 3: Search filter and keyboard navigation (ArrowDown, ArrowUp, Ent
 }, 30000);
 
 test("Scenario 4: Search input Tab key completion", async () => {
-    const input = page.locator('[role="textbox"]');
+    const input = page.getByRole("textbox", { name: "rich-editor" });
     await clearRichEditor(page, input);
     await input.pressSequentially("Tab complete: @");
 
@@ -236,9 +234,9 @@ test("Scenario 4: Search input Tab key completion", async () => {
     await menu.waitFor({ state: "visible", timeout: 5000 });
 
     const searchInput = menu.locator(".canvas-resource-mention-search input");
-    await searchInput.fill("角色");
+    await searchInput.fill("道具");
 
-    const charItem = menu.locator(".canvas-resource-mention-item", { hasText: "角色主角" });
+    const charItem = menu.locator(".canvas-resource-mention-item", { hasText: "道具钥匙" });
     await charItem.waitFor({ state: "visible", timeout: 5000 });
 
     // 按 Tab 键选中
@@ -246,13 +244,12 @@ test("Scenario 4: Search input Tab key completion", async () => {
 
     await menu.waitFor({ state: "hidden", timeout: 5000 });
     const promptText = await page.locator("#rich-prompt-display").innerText();
-    expect(promptText).toContain("@[asset:asset-char-1]");
+    expect(promptText).toContain("@[asset:asset-prop-1]");
 }, 30000);
 
-test("Scenario 5: Plain textarea mode keyboard navigation and Tab selection", async () => {
-    const textarea = page.locator("textarea");
-    await textarea.click();
-    await textarea.fill("");
+test("Scenario 5: Plain textarea keyboard navigation and Tab selection", async () => {
+    const textarea = page.getByRole("textbox", { name: "secondary-editor" });
+    await clearRichEditor(page, textarea);
     await textarea.pressSequentially("Plain: @");
 
     const menu = page.locator("[data-canvas-resource-mention-menu]");
@@ -268,7 +265,7 @@ test("Scenario 5: Plain textarea mode keyboard navigation and Tab selection", as
 }, 30000);
 
 test("Scenario 6: Click internal menu space does not close; outside click closes", async () => {
-    const input = page.locator('[role="textbox"]');
+    const input = page.getByRole("textbox", { name: "rich-editor" });
     await clearRichEditor(page, input);
     await input.pressSequentially("Click test: @");
 
@@ -288,7 +285,7 @@ test("Scenario 6: Click internal menu space does not close; outside click closes
 }, 30000);
 
 test("Scenario 7: Escape key dismisses menu and re-focuses anchor", async () => {
-    const input = page.locator('[role="textbox"]');
+    const input = page.getByRole("textbox", { name: "rich-editor" });
     await clearRichEditor(page, input);
     await input.pressSequentially("Escape test: @");
 
@@ -305,7 +302,7 @@ test("Scenario 7: Escape key dismisses menu and re-focuses anchor", async () => 
 }, 30000);
 
 test("Scenario 8: Backspacing '@' automatically dismisses menu", async () => {
-    const input = page.locator('[role="textbox"]');
+    const input = page.getByRole("textbox", { name: "rich-editor" });
     await clearRichEditor(page, input);
     await input.pressSequentially("Typing @");
 
@@ -318,3 +315,20 @@ test("Scenario 8: Backspacing '@' automatically dismisses menu", async () => {
     await menu.waitFor({ state: "hidden", timeout: 5000 });
     expect(await menu.isVisible()).toBe(false);
 }, 30000);
+
+test("returning to either editor before its blur timer expires keeps a new mention menu open", async () => {
+    for (const name of ["rich-editor", "secondary-editor"]) {
+        const input = page.getByRole("textbox", { name });
+        await input.fill("");
+        await input.evaluate(element => (element as HTMLElement).blur());
+        await input.focus();
+        await input.pressSequentially("@");
+        const menu = page.locator("[data-canvas-resource-mention-menu]");
+        await menu.waitFor({ state: "visible", timeout: 5000 });
+        await page.waitForTimeout(200);
+        expect(await menu.isVisible()).toBe(true);
+        expect(await input.evaluate(element => document.activeElement === element)).toBe(true);
+        await input.fill("");
+        await menu.waitFor({ state: "hidden", timeout: 5000 });
+    }
+}, 15000);
