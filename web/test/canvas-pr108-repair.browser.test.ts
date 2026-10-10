@@ -12,15 +12,18 @@ let playbackRequests = 0;
 let aborted = 0;
 let releases: (() => void)[] = [];
 let errors: string[];
+let diagnosticInputs: any[];
 
 beforeAll(async () => {
     const plugin: BunPlugin = { name: "repair-harness", setup(builder) {
         builder.onResolve({ filter: /^@\// }, args => ({ path: Bun.resolveSync("../src/" + args.path.slice(2), import.meta.dir) }));
+        builder.onLoad({ filter: /src\/components\/model-logo\.tsx$/ }, () => ({ contents: "export function ModelLogo() { return null; }", loader: "js" }));
         builder.onLoad({ filter: /src\/lib\/canvas\/canvas-export\.ts$/ }, () => ({ loader: "js", contents: `export async function exportCanvasProjects(projects, title, options) { window.__repairHarness.downloads.push({projects, title, options}); return "saved"; }` }));
         builder.onLoad({ filter: /\.(svg|png|jpe?g|gif|webp|woff2?)$/ }, () => ({ contents: "export default ''", loader: "js" }));
     } };
     const build = await Bun.build({ entrypoints: [import.meta.dir + "/fixtures/canvas-pr108-repair-harness.tsx"], plugins: [plugin], target: "browser",
         define: { "process.env.NODE_ENV": '"production"', "import.meta.env.DEV": "false", "import.meta.env.PROD": "true", "import.meta.env.MODE": '"production"',
+            "import.meta.env.VITE_APP_VERSION": '"test"', "import.meta.env.VITE_BUILD_COMMIT": '"test"',
             "import.meta.env.VITE_CANVAS_LOCAL_MODE": '"false"', "import.meta.env.VITE_CANVAS_BACKEND_URL": '"/api"' } });
     if (!build.success) throw new Error(build.logs.join("\n"));
     const script = await build.outputs.find(output => output.path.endsWith(".js"))!.text();
@@ -30,6 +33,10 @@ beforeAll(async () => {
         const url = new URL(request.url), path = url.pathname;
         if (path === "/harness.js") return new Response(script, { headers: { "Content-Type": "text/javascript" } });
         if (path === "/harness.css") return new Response(css, { headers: { "Content-Type": "text/css" } });
+        if (path === "/api/diagnostics/preview") {
+            diagnosticInputs.push(await request.json());
+            return json({ clientEventLimit: 100, taskCount: 1, taskLogCount: 1, apiCallCount: 0, estimatedBytes: 100, willTruncate: false });
+        }
         if (path.endsWith("/cancel")) { const id = path.split("/")[3]!; cancels.push(id); return json({ id, status: "cancelled" }); }
         if (path.startsWith("/api/tasks/video-")) {
             const id = path.split("/")[3]!; details.push(id);
@@ -51,9 +58,9 @@ beforeAll(async () => {
 beforeEach(async () => {
     await page?.close();
     releases.splice(0).forEach(release => release());
-    cancels = []; details = []; playbackRequests = 0; aborted = 0; errors = [];
+    cancels = []; details = []; playbackRequests = 0; aborted = 0; errors = []; diagnosticInputs = [];
     page = await browser.newPage();
-    page.on("pageerror", error => errors.push(error.message));
+    page.on("pageerror", error => { errors.push(error.message); console.error(error.message); });
 });
 afterAll(async () => { releases.splice(0).forEach(release => release()); await browser?.close(); server?.stop(true); });
 async function run(action: string) { await page.evaluate(async name => { await (window as any).__repairHarness[name](); }, action); }
@@ -136,6 +143,20 @@ test("persisted drafts survive reload and can be previewed and downloaded withou
     expect(state.downloads[0].options.includeLocalDrawings).toBe(false);
     expect(state.restored).toEqual([]);
     expect(await page.getByRole("button", { name: "恢复此版本" }).count()).toBe(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    expect(errors).toEqual([]);
+}, 15000);
+
+test("the task diagnostic URL opens a scoped modal and closes back to model settings", async () => {
+    await page.setViewportSize({ width: 390, height: 700 });
+    await page.goto(`${server.url}?mode=diagnostics&section=diagnostics&taskId=task-1&projectId=canvas-1`);
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "导出诊断包" }).waitFor();
+    await waitFor(() => diagnosticInputs.length > 0);
+    expect(diagnosticInputs[0]).toMatchObject({ taskId: "task-1", projectId: "canvas-1" });
+    await dialog.getByRole("button", { name: "关闭问题诊断" }).click();
+    await dialog.waitFor({ state: "hidden" });
+    await page.getByText("本地模型渠道", { exact: true }).waitFor();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     expect(errors).toEqual([]);
 }, 15000);

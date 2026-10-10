@@ -10,6 +10,8 @@ import { preserveCanvasSyncDraft } from "../../src/services/canvas-sync-drafts";
 import { CanvasNodeType, type CanvasNodeData } from "../../src/types/canvas";
 import type { CanvasProject } from "../../src/stores/canvas/use-canvas-store";
 import type { GenerationTask } from "../../src/services/api/task-center";
+import { MemoryRouter } from "react-router";
+import SettingsPage from "../../src/pages/settings";
 
 const harness = (window as any).__repairHarness = { deleted: [], destroyed: 0, confirmation: null, downloads: [], restored: [] };
 setActiveUserScope("owner-a");
@@ -59,6 +61,7 @@ function Harness() {
     harness.unmountEditor = () => setMounted(false);
     harness.closeHistory = () => setActive(false);
     const mode = new URLSearchParams(location.search).get("mode");
+    if (mode === "diagnostics") return <MemoryRouter initialEntries={[`/settings${location.search}`]}><SettingsPage /></MemoryRouter>;
     return mode === "versions" ? <Versions /> : mode === "videos" ? <div>{tasks.map(task => <div key={task.id} style={{ width: 142, height: 100 }}><HistoryTaskCard task={task} active={active} selecting={false} onSelect={() => {}} /></div>)}</div> : mounted ? <Editor /> : <p>unmounted</p>;
 }
 createRoot(document.getElementById("root")!).render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><App><Harness /></App></QueryClientProvider>);
