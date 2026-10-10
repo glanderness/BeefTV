@@ -34,7 +34,12 @@ const send = (res, tool, text = 'fixture complete') => {
   frame({}, tool ? 'tool_calls' : 'stop'); res.end('data: [DONE]\n\n');
 };
 const unsafe = phase.startsWith('unsafe');
-const descriptors = [unsafe ? 'future.paid.submit' : 'canvas.nodes.create', 'canvas.edge.create'].map((id) => ({ id, summary: id, params: { type: 'object', properties: { canvasId: { type: 'string' } } }, readOnly: false }));
+const policies = JSON.parse(fs.readFileSync(new URL('./operation-descriptors.fixture.json', import.meta.url), 'utf8'));
+const descriptors = [unsafe ? 'future.paid.submit' : 'canvas.nodes.create', 'canvas.edge.create'].map((id) => ({
+  ...policies.find(descriptor => descriptor.id === id),
+  ...(id === 'future.paid.submit' ? { assistantModes: ['full-access'], replay: 'unsafe' } : {}),
+  id, summary: id, params: { type: 'object', properties: { canvasId: { type: 'string' } } }, readOnly: false,
+}));
 const server = createServer(async (req, res) => {
   let raw = ''; for await (const chunk of req) raw += chunk;
   if (req.url === '/ops') { res.end(JSON.stringify({ code: 0, data: { ops: descriptors } })); return; }

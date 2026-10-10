@@ -45,8 +45,8 @@ const provider = createServer(async (req, res) => {
 });
 const params = { type: 'object', properties: { nodeId: { type: 'string' }, title: { type: 'string' }, mode: { type: 'string' }, start: { type: 'number' }, end: { type: 'number' } }, required: ['nodeId'] };
 const descriptors = [
-  { id: 'canvas.node.update', readOnly: false, scope: 'canvas', summary: 'Update node', params },
-  ...['media.overview', 'media.inspect'].map(id => ({ id, readOnly: true, scope: 'canvas', summary: id, params })),
+  { id: 'canvas.node.update', assistantModes: ['canvas', 'full-access'], replay: 'safe', readOnly: false, scope: 'canvas', summary: 'Update node', params },
+  ...['media.overview', 'media.inspect'].map(id => ({ id, assistantModes: ['canvas', 'full-access', 'read-only'], replay: 'safe', readOnly: true, scope: 'canvas', summary: id, params })),
 ];
 let jpeg, wav, video;
 function part(bytes, mimeType, type, bad = false) {

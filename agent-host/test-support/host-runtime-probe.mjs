@@ -18,8 +18,8 @@ let providerCount = 0;
 let child;
 let hostLog = '';
 const descriptors = [
-  { id:'canvas.get',readOnly:true,scope:'canvas',summary:'Read canvas',params:{type:'object',properties:{canvasId:{type:'string'}},required:['canvasId']} },
-  { id:'asset.get',readOnly:true,scope:'workspace_read',summary:'Read allowed asset',params:{type:'object',properties:{assetId:{type:'string'}},required:['assetId']} },
+  { id:'canvas.get',assistantModes: ['canvas', 'full-access', 'read-only'], replay: 'safe', readOnly:true,scope:'canvas',summary:'Read canvas',params:{type:'object',properties:{canvasId:{type:'string'}},required:['canvasId']} },
+  { id:'asset.get',assistantModes: ['canvas', 'full-access', 'read-only'], replay: 'safe', readOnly:true,scope:'workspace_read',summary:'Read allowed asset',params:{type:'object',properties:{assetId:{type:'string'}},required:['assetId']} },
 ];
 const listen = server => new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',()=>resolve(server.address().port));});
 const readJSON = async req => { let body='';for await(const chunk of req)body+=chunk;return JSON.parse(body||'{}'); };

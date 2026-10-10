@@ -13,7 +13,7 @@ type SkillResources interface {
 func registerSkillOps(r *Registry) {
 	for _, id := range []string{"skill.get", "skill.file"} {
 		operation := id
-		r.Register(Op{ID: operation, Summary: "读取当前对话选定技能的固定版本正文或包内辅助文本；不执行脚本", ReadOnly: true, Scope: ScopeCanvas,
+		r.Register(Op{AssistantCanvas: true, ID: operation, Summary: "读取当前对话选定技能的固定版本正文或包内辅助文本；不执行脚本", ReadOnly: true, Scope: ScopeCanvas,
 			Params: json.RawMessage(`{"type":"object","properties":{"skillId":{"type":"string"},"versionId":{"type":"string"},"contentHash":{"type":"string"},"path":{"type":"string"}},"required":["skillId","versionId","contentHash"]}`),
 			Handler: func(ctx *Context, raw json.RawMessage) (any, error) {
 				var args struct {

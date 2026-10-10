@@ -3,6 +3,7 @@ package canvas
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,6 +18,9 @@ const maxStoryboardRowsPerCall = 32
 
 // defaultStoryboardShotSeconds 对齐前端 createStoryboardRow 的默认镜头时长。
 const defaultStoryboardShotSeconds = float64(6)
+
+const StoryboardMinShotSeconds = 1
+const StoryboardMaxShotSeconds = 60
 
 // storyboardNodeType 是承载分镜表的节点类型；分镜行操作只接受它。
 const storyboardNodeType = "script"
@@ -152,22 +156,7 @@ func (s *Service) RemoveUserCanvasStoryboardRows(userID, canvasID, nodeID string
 			row["shotNumber"] = float64(index + 1)
 		}
 	}
-	connections, _ := doc["connections"].([]any)
-	keptConnections := make([]any, 0, len(connections))
-	for _, raw := range connections {
-		edge, ok := raw.(map[string]any)
-		if ok {
-			rowID, _ := edge["storyboardRowId"].(string)
-			fromHandle, _ := edge["fromHandleId"].(string)
-			toHandle, _ := edge["toHandleId"].(string)
-			from, to := edge["fromNodeId"] == nodeID, edge["toNodeId"] == nodeID
-			if (from || to) && remove[rowID] || from && strings.HasPrefix(fromHandle, "row:") && remove[strings.TrimPrefix(fromHandle, "row:")] || to && strings.HasPrefix(toHandle, "row:") && remove[strings.TrimPrefix(toHandle, "row:")] {
-				continue
-			}
-		}
-		keptConnections = append(keptConnections, raw)
-	}
-	doc["connections"] = keptConnections
+	removeStoryboardConnections(doc, nodeID, remove)
 	summary, err := s.saveStoryboardRows(userID, canvasID, doc, storyboard, kept, expectedRevision)
 	if err != nil {
 		return UserDataSummary{}, 0, err
@@ -242,6 +231,8 @@ func buildStoryboardRow(shotNumber int, draft StoryboardRowDraft) map[string]any
 
 // applyStoryboardRowDraft 只覆盖草稿非 nil 的字段，其余逐字保留。
 func applyStoryboardRowDraft(row map[string]any, draft StoryboardRowDraft) {
+	previousPrompts := map[string]any{"imageGenerationPrompt": row["imageGenerationPrompt"], "videoMotionPrompt": row["videoMotionPrompt"]}
+	defer invalidateStoryboardPromptTemplates(previousPrompts, row)
 	if draft.DurationSeconds != nil {
 		row["durationSeconds"] = *draft.DurationSeconds
 	}
@@ -256,15 +247,7 @@ func applyStoryboardRowDraft(row map[string]any, draft StoryboardRowDraft) {
 		"negativePrompt": draft.NegativePrompt,
 	} {
 		if value != nil {
-			// Match manual editing: an explicit new prompt replaces its template.
-			if row[field] != *value {
-				if field == "imageGenerationPrompt" {
-					delete(row, "imagePromptTemplateVariables")
-				}
-				if field == "videoMotionPrompt" {
-					delete(row, "videoPromptTemplateVariables")
-				}
-			}
+
 			row[field] = *value
 		}
 	}
@@ -320,6 +303,21 @@ func requireStoryboardRows(drafts []StoryboardRowDraft) error {
 		return kernel.NewAppError(http.StatusBadRequest,
 			"rows 必须是 1.."+strconv.Itoa(maxStoryboardRowsPerCall)+" 项的数组")
 	}
+	for _, draft := range drafts {
+		if err := validateStoryboardDraft(draft); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateStoryboardDraft(draft StoryboardRowDraft) error {
+	if draft.DurationSeconds != nil {
+		seconds := *draft.DurationSeconds
+		if math.IsNaN(seconds) || math.IsInf(seconds, 0) || seconds < StoryboardMinShotSeconds || seconds > StoryboardMaxShotSeconds {
+			return kernel.NewAppError(http.StatusBadRequest, "镜头时长必须为 1 至 60 秒")
+		}
+	}
 	return nil
 }
 
@@ -329,6 +327,9 @@ func requireStoryboardPatches(patches []StoryboardRowPatch) error {
 			"patches 必须是 1.."+strconv.Itoa(maxStoryboardRowsPerCall)+" 项的数组")
 	}
 	for _, patch := range patches {
+		if err := validateStoryboardDraft(patch.StoryboardRowDraft); err != nil {
+			return err
+		}
 		if strings.TrimSpace(patch.RowID) == "" {
 			return kernel.NewAppError(http.StatusBadRequest, "每个 patch 都需要 rowId")
 		}

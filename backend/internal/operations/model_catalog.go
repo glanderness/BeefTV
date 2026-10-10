@@ -10,7 +10,7 @@ type ModelCatalogReader interface {
 }
 
 func registerModelCatalogOp(r *Registry) {
-	r.Register(Op{ID: "model.catalog", Summary: "查询公开模型目录、类型和参考能力；实际可用性仍由节点配置校验；不含密钥", ReadOnly: true, Scope: ScopeWorkspaceRead,
+	r.Register(Op{AssistantCanvas: true, ID: "model.catalog", Summary: "查询公开模型目录、类型和参考能力；实际可用性仍由节点配置校验；不含密钥", ReadOnly: true, Scope: ScopeWorkspaceRead,
 		Params: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
 		Handler: func(ctx *Context, raw json.RawMessage) (any, error) {
 			var args struct{}

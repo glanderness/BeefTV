@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"infinite-canvas/backend/internal/agentops"
+	"infinite-canvas/backend/internal/operations"
 )
 
 // 内置助手的范围裁决：当前画布可读写，显式引用/画布关联的素材与任务只读，
@@ -46,7 +47,7 @@ func TestAssistantScopeAllowsOnlyVerifiedResources(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := scope.Allows(&agentops.Op{ID: tc.op}, json.RawMessage(tc.params))
+			err := scope.Allows(registeredScopeOp(t, tc.op), json.RawMessage(tc.params))
 			if tc.denied {
 				if err == nil {
 					t.Fatal("越界调用必须被拒绝")
@@ -61,6 +62,23 @@ func TestAssistantScopeAllowsOnlyVerifiedResources(t *testing.T) {
 			}
 		})
 	}
+}
+
+func registeredScopeOp(t *testing.T, id string) *agentops.Op {
+	t.Helper()
+	registry := operations.NewRegistry(nil, nil)
+	operations.RegisterDefaultOps(registry)
+	descriptor, ok := registry.Descriptor(id)
+	if !ok {
+		t.Fatalf("unregistered operation %s", id)
+	}
+	op := &agentops.Op{ID: id, ReadOnly: descriptor.ReadOnly, Scope: descriptor.Scope}
+	for _, mode := range descriptor.AssistantModes {
+		if mode == "canvas" {
+			op.AssistantCanvas = true
+		}
+	}
+	return op
 }
 
 // 没有绑定画布的空范围（宿主在回合之外做能力发现时）不允许执行任何操作。

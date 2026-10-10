@@ -19,10 +19,10 @@ const (
 // Context 是一次操作执行时可用的上下文。Domain 已经绑在当前事务上。
 type Context struct {
 	OperationID string
-	Context context.Context
-	UserID  string
-	Caller  Caller
-	Domain  Domain
+	Context     context.Context
+	UserID      string
+	Caller      Caller
+	Domain      Domain
 }
 
 // Handler 实现一个操作；返回值必须是可 JSON 序列化的业务结果。
@@ -33,22 +33,27 @@ type ReplayProjection func(ctx *Context, params json.RawMessage, stored any) (an
 
 // Op 是操作的唯一定义，手工 UI、CLI、MCP 与内置助手都由它派生。
 type Op struct {
-	ID            string
-	Summary       string
-	ReadOnly      bool
-	Scope         Scope
-	Params        json.RawMessage
-	Handler       Handler
-	ProjectReplay ReplayProjection
+	ID                string
+	Summary           string
+	ReadOnly          bool
+	Scope             Scope
+	Params            json.RawMessage
+	Handler           Handler
+	ProjectReplay     ReplayProjection
+	AssistantCanvas   bool
+	AssistantProposal bool
+	ReplaySafe        bool
 }
 
 // Descriptor 是给客户端做能力发现用的稳定描述。
 type Descriptor struct {
-	ID       string          `json:"id"`
-	Summary  string          `json:"summary"`
-	ReadOnly bool            `json:"readOnly"`
-	Scope    Scope           `json:"scope"`
-	Params   json.RawMessage `json:"params"`
+	ID             string          `json:"id"`
+	Summary        string          `json:"summary"`
+	ReadOnly       bool            `json:"readOnly"`
+	Scope          Scope           `json:"scope"`
+	Params         json.RawMessage `json:"params"`
+	AssistantModes []string        `json:"assistantModes"`
+	Replay         string          `json:"replay"`
 }
 
 // Registry 持有全部操作定义；写操作必须在事务里执行，保证与操作记录同提交。
@@ -106,7 +111,35 @@ func (r *Registry) Descriptor(id string) (Descriptor, bool) {
 }
 
 func (op *Op) Descriptor() Descriptor {
-	return Descriptor{ID: op.ID, Summary: op.Summary, ReadOnly: op.ReadOnly, Scope: op.Scope, Params: op.writeAwareParams()}
+	replay := "unsafe"
+	if op.ReadOnly || op.ReplaySafe {
+		replay = "safe"
+	}
+	return Descriptor{ID: op.ID, Summary: op.Summary, ReadOnly: op.ReadOnly, Scope: op.Scope, Params: op.writeAwareParams(), AssistantModes: op.assistantModes(), Replay: replay}
+}
+
+func (op *Op) assistantModes() []string {
+	modes := []string{}
+	if op.Scope != ScopeConversation {
+		modes = append(modes, "full-access")
+	}
+	if op.ReadOnly && !op.AssistantProposal {
+		modes = append(modes, "read-only")
+	}
+	if op.AssistantCanvas {
+		modes = append(modes, "canvas")
+	}
+	return modes
+}
+
+// AssistantVisible is shared by backend authorization and host capability discovery.
+func (op *Op) AssistantVisible(mode string) bool {
+	for _, allowed := range op.assistantModes() {
+		if allowed == mode {
+			return true
+		}
+	}
+	return false
 }
 
 func (op *Op) writeAwareParams() json.RawMessage {

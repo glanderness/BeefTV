@@ -20,7 +20,7 @@ describe('操作桥', () => {
     const server = createServer(async (req, res) => {
       res.setHeader('content-type', 'application/json');
       if (req.url === '/ops') {
-        res.end(JSON.stringify({ code: 0, data: { ops: [{ id: 'canvas.task.bind', readOnly: false,
+        res.end(JSON.stringify({ code: 0, data: { ops: [{ id: 'canvas.task.bind', assistantModes: ['canvas', 'full-access'], replay: 'safe', readOnly: false,
           params: { type: 'object', properties: { canvasId: { type: 'string' }, taskId: { type: 'string' }, nodeId: { type: 'string' }, outputIndex: { type: 'integer' } } } }] } }));
         return;
       }
@@ -103,7 +103,7 @@ describe('操作桥', () => {
             ops: [{
               id: 'canvas.nodes.create',
               summary: 'Create node',
-              readOnly: false,
+              assistantModes: ['canvas', 'full-access'], replay: 'safe', readOnly: false,
               params: { type: 'object', properties: { canvasId: { type: 'string' }, nodes: { type: 'array' } }, required: ['canvasId', 'nodes'] },
             }],
           },
@@ -119,7 +119,7 @@ describe('操作桥', () => {
         opsUrl: `http://127.0.0.1:${port}`,
         hostToken: 'host-secret',
         desktopToken: '',
-        readOnly: false,
+        assistantModes: ['canvas', 'full-access'], replay: 'safe', readOnly: false,
         turnBudgetContext,
       });
       await bridge.loadDescriptors();
@@ -181,8 +181,8 @@ const NODE_CREATE_PARAMS = {
 
 function nodeUpdateOps() {
   return [
-    { id: 'canvas.node.update', summary: '局部修改一个节点', readOnly: false, params: JSON.parse(JSON.stringify(NODE_UPDATE_PARAMS)) },
-    { id: 'canvas.nodes.create', summary: '批量创建节点', readOnly: false, params: JSON.parse(JSON.stringify(NODE_CREATE_PARAMS)) },
+    { id: 'canvas.node.update', summary: '局部修改一个节点', assistantModes: ['canvas', 'full-access'], replay: 'safe', readOnly: false, params: JSON.parse(JSON.stringify(NODE_UPDATE_PARAMS)) },
+    { id: 'canvas.nodes.create', summary: '批量创建节点', assistantModes: ['canvas', 'full-access'], replay: 'safe', readOnly: false, params: JSON.parse(JSON.stringify(NODE_CREATE_PARAMS)) },
   ];
 }
 
@@ -210,7 +210,7 @@ async function withNodeUpdateBridge(run) {
       opsUrl: `http://127.0.0.1:${port}`,
       hostToken: 'host-secret',
       desktopToken: '',
-      readOnly: false,
+      assistantModes: ['canvas', 'full-access'], replay: 'safe', readOnly: false,
       turnBudgetContext,
     });
     await bridge.loadDescriptors();
@@ -321,7 +321,7 @@ test('media discovery descriptions reach actual model-facing bridge tools withou
   const source = readFileSync(new URL('../backend/internal/operations/media.go', import.meta.url), 'utf8');
   const params = JSON.parse(source.match(/Params:\s*json.RawMessage\(`([^`]+)`\)/)[1]);
   const ops = [...source.matchAll(/"(media\.(?:overview|inspect|check))":\s*("[^"\n]+")/g)].map(match => ({
-    id: match[1], summary: JSON.parse(match[2]), readOnly: true, scope: 'canvas', params,
+    id: match[1], summary: JSON.parse(match[2]), assistantModes: ['canvas', 'full-access', 'read-only'], replay: 'safe', readOnly: true, scope: 'canvas', params,
   }));
   expect(ops).toHaveLength(3);
   const server = createServer((_req, res) => {
@@ -372,10 +372,10 @@ async function withCasBridge(run, { revision = 9 } = {}) {
     const parsed = body ? JSON.parse(body) : {};
     if (req.url === '/ops') {
       res.end(JSON.stringify({ code: 0, data: { ops: [
-        { id: 'canvas.edge.create', summary: '连接两个节点', readOnly: false, params: EDGE_CREATE_PARAMS },
-        { id: 'canvas.node.update', summary: '局部修改一个节点', readOnly: false, params: NODE_UPDATE_PARAMS },
-        { id: 'canvas.nodes.create', summary: '批量创建节点', readOnly: false, params: NODE_CREATE_PARAMS },
-        { id: 'canvas.document.commit', summary: '提交整份画布文档', readOnly: false, params: DOCUMENT_COMMIT_PARAMS },
+        { id: 'canvas.edge.create', summary: '连接两个节点', assistantModes: ['canvas', 'full-access'], replay: 'safe', readOnly: false, params: EDGE_CREATE_PARAMS },
+        { id: 'canvas.node.update', summary: '局部修改一个节点', assistantModes: ['canvas', 'full-access'], replay: 'safe', readOnly: false, params: NODE_UPDATE_PARAMS },
+        { id: 'canvas.nodes.create', summary: '批量创建节点', assistantModes: ['canvas', 'full-access'], replay: 'safe', readOnly: false, params: NODE_CREATE_PARAMS },
+        { id: 'canvas.document.commit', summary: '提交整份画布文档', assistantModes: ['canvas', 'full-access'], replay: 'safe', readOnly: false, params: DOCUMENT_COMMIT_PARAMS },
       ] } }));
       return;
     }

@@ -10,7 +10,7 @@ import (
 // storyboardRowFieldSchemas 是分镜行可写字段的白名单（与 canvas.StoryboardRowDraft 一一对应）。
 // append 与 update 的 JSON Schema 共用这份字段表，避免两处定义漂移。
 var storyboardRowFieldSchemas = map[string]map[string]any{
-	"durationSeconds":       {"type": "number", "description": "镜头时长（秒），缺省 6"},
+	"durationSeconds":       {"type": "number", "minimum": canvas.StoryboardMinShotSeconds, "maximum": canvas.StoryboardMaxShotSeconds, "description": "镜头时长（秒），缺省 6"},
 	"plotDescription":       {"type": "string", "description": "本镜剧情描述"},
 	"dialogue":              {"type": "string", "description": "本镜台词"},
 	"narrativeIntent":       {"type": "string", "description": "叙事意图"},

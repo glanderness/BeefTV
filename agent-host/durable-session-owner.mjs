@@ -23,13 +23,8 @@ function supplementContent(id, content) {
 const idPattern = /^durable:([a-f0-9-]{36})$/;
 const fail = (reason) => Object.assign(new Error(reason), { reason });
 export const isDurableSessionId = (id) => idPattern.test(String(id || ''));
-const SAFE_WRITES = new Set(['canvas.nodes.create', 'canvas.node.update', 'canvas.node.configure', 'canvas.edge.create',
-  'canvas.node.move','canvas.node.delete','canvas.edge.delete','canvas.document.commit',
-  'canvas.task.bind', 'canvas.timeline.update', 'canvas.timeline.render']);
 export function durableToolReplay(tool) {
-  return tool.readOnly === true || SAFE_WRITES.has(tool.label) ||
-    ['canvas.get', 'canvas.search', 'asset.get', 'asset.list', 'task.get', 'canvas.generation.propose',
-      'media.overview', 'media.inspect', 'media.check', 'skill.get', 'skill.file'].includes(tool.label) ? 'safe' : 'unsafe';
+  return tool.replay === 'safe' ? 'safe' : 'unsafe';
 }
 export function publicDurableTurn(active, running = false) {
   if (!active) return null;
