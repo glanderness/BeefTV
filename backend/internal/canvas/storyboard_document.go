@@ -44,9 +44,12 @@ func reconcileStoryboardDocument(before, after json.RawMessage) (json.RawMessage
 				return nil, kernel.NewAppError(http.StatusBadRequest, "分镜行格式错误")
 			}
 			rowID := rowIDOf(row)
+			if rowID == "" || remaining[rowID] {
+				return nil, kernel.NewAppError(http.StatusBadRequest, "分镜行 ID 为空或重复")
+			}
+			remaining[rowID] = true
 			old := findStoryboardRow(oldRows, rowID)
 			if reflect.DeepEqual(old, row) {
-				remaining[rowID] = true
 				continue
 			}
 			seconds, ok := row["durationSeconds"].(float64)
@@ -56,10 +59,6 @@ func reconcileStoryboardDocument(before, after json.RawMessage) (json.RawMessage
 			if err := validateStoryboardDraft(StoryboardRowDraft{DurationSeconds: &seconds}); err != nil {
 				return nil, err
 			}
-			if rowID == "" || remaining[rowID] {
-				return nil, kernel.NewAppError(http.StatusBadRequest, "分镜行 ID 为空或重复")
-			}
-			remaining[rowID] = true
 			if old != nil {
 				invalidateStoryboardPromptTemplates(old, row)
 			}

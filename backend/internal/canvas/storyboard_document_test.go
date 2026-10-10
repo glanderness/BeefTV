@@ -38,6 +38,14 @@ func TestStoryboardLegacyRowDoesNotBlockUnrelatedEdits(t *testing.T) {
 	}
 }
 
+func TestStoryboardDocumentRejectsDuplicatedUnchangedRow(t *testing.T) {
+	before := json.RawMessage(`{"nodes":[{"id":"script","type":"script","metadata":{"storyboard":{"rows":[{"id":"old","durationSeconds":6}]}}}]}`)
+	after := json.RawMessage(`{"nodes":[{"id":"script","type":"script","metadata":{"storyboard":{"rows":[{"id":"old","durationSeconds":6},{"id":"old","durationSeconds":6}]}}}]}`)
+	if _, err := reconcileStoryboardDocument(before, after); err == nil {
+		t.Fatal("duplicated unchanged row bypassed identity validation")
+	}
+}
+
 func TestDocumentCommitSharesStoryboardPromptAndRemovalRules(t *testing.T) {
 	svc, id, _, revision := storyboardFixture(t)
 	user := "owner"
