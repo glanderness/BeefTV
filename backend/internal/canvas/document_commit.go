@@ -37,6 +37,10 @@ func (s *Service) CommitUserCanvasDocument(userID, canvasID string, expectedRevi
 	if err != nil {
 		return UserDataSummary{}, nil, err
 	}
+	merged, err = reconcileStoryboardDocument(current, merged)
+	if err != nil {
+		return UserDataSummary{}, nil, err
+	}
 	summary, err := s.UpsertUserCanvasProject(userID, merged)
 	if err != nil {
 		return UserDataSummary{}, nil, err

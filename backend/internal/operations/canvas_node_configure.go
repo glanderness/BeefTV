@@ -33,7 +33,7 @@ func registerCanvasNodeConfigureOps(r *Registry) {
 			"kind": map[string]any{"type": "string", "enum": []string{"image", "video", "audio"}}, "expectedRevision": map[string]any{"type": "integer", "minimum": 1},
 			"patch": map[string]any{"type": "object", "additionalProperties": false, "minProperties": 1, "properties": properties}},
 		"required": []string{"canvasId", "nodeId", "kind", "expectedRevision", "patch"}})
-	r.Register(Op{ID: "canvas.node.configure", Summary: "设置已有媒体节点的生成草稿参数；不生成、不扣费，不改任务或现有成品", Scope: ScopeCanvas, Params: params, Handler: opCanvasNodeConfigure})
+	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.node.configure", Summary: "设置已有媒体节点的生成草稿参数；不生成、不扣费，不改任务或现有成品", Scope: ScopeCanvas, Params: params, Handler: opCanvasNodeConfigure})
 }
 
 func opCanvasNodeConfigure(ctx *Context, raw json.RawMessage) (any, error) {

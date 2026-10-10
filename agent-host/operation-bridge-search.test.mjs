@@ -8,7 +8,7 @@ test('workspace search project filter never inherits canvas; canvas project sear
   const calls = [];
   const server = createServer(async (req, res) => {
     if (req.url === '/ops') {
-      res.end(JSON.stringify({ code: 0, data: { ops: ['canvas.search', 'project.canvas.search', 'unknown.read'].map(id => ({ id, readOnly: true, summary: id,
+      res.end(JSON.stringify({ code: 0, data: { ops: ['canvas.search', 'project.canvas.search', 'unknown.read'].map(id => ({ id, assistantModes: ['canvas', 'full-access', 'read-only'], replay: 'safe', readOnly: true, summary: id,
         params: { type: 'object', properties: { canvasId: { type: 'string' }, query: { type: 'string' } } } })) } })); return;
     }
     let raw = ''; for await (const chunk of req) raw += chunk;

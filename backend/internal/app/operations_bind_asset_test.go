@@ -85,6 +85,8 @@ func TestBindAssetRealCanvasRegistryPermissionsReplayAndUndo(t *testing.T) {
 		}
 		if _, err := run("canvas.node.bind_asset", "deny-"+test.name, "", p, operations.AssistantCaller(test.scope, test.ro)); err == nil {
 			t.Fatalf("accepted %s", test.name)
+		} else if test.name == "unreferenced" && operations.AsError(err).Reason != "scope_denied" {
+			t.Fatalf("unreferenced asset must fail secondary scope authorization: %v", err)
 		}
 		if got := canvasRevisionOf(t, svc, canvasID); got != revision {
 			t.Fatalf("denial changed revision %s", test.name)

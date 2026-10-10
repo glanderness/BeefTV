@@ -12,7 +12,8 @@ import (
 	"infinite-canvas/backend/internal/canvas/capability"
 )
 
-// RegisterDefaultOps 注册首版全部操作。生成/付费入口不在本轮暴露：
+// RegisterDefaultOps 注册全部对外操作（手工 UI、CLI、MCP 与内置助手共用）。
+// 付费生成只经 canvas.generation.propose 提议、由界面确认后执行；
 // 未经参数与费用风险验收的能力明确不注册，而不是提供 stub 伪成功。
 func RegisterDefaultOps(r *Registry) {
 	registerCanvasEditOps(r)
@@ -24,7 +25,7 @@ func RegisterDefaultOps(r *Registry) {
 	registerCanvasTimelineOps(r)
 	registerCanvasRenderOps(r)
 	registerCanvasNodeConfigureOps(r)
-	r.Register(Op{ID: "canvas.get", Summary: "读取指定画布的完整内容（节点与连线）", ReadOnly: true, Scope: ScopeCanvas,
+	r.Register(Op{AssistantCanvas: true, ID: "canvas.get", Summary: "读取指定画布的完整内容（节点与连线）", ReadOnly: true, Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"}},"required":["canvasId"]}`),
 		Handler: opCanvasGet})
 	r.Register(Op{ID: "canvas.search", Summary: "按关键字分页搜索工作区内的画布", ReadOnly: true, Scope: ScopeWorkspaceRead,
@@ -33,29 +34,37 @@ func RegisterDefaultOps(r *Registry) {
 	r.Register(Op{ID: "asset.list", Summary: "分页列出用户素材库中的素材", ReadOnly: true, Scope: ScopeWorkspaceRead,
 		Params:  json.RawMessage(`{"type":"object","properties":{"page":{"type":"integer"},"pageSize":{"type":"integer"},"query":{"type":"string"},"kind":{"type":"string"},"category":{"type":"string"},"favorite":{"type":"boolean"},"recent":{"type":"boolean"},"project":{"type":"string"},"generated":{"type":"boolean"}}}`),
 		Handler: opAssetList})
-	r.Register(Op{ID: "asset.get", Summary: "按 ID 读取单个素材", ReadOnly: true, Scope: ScopeWorkspaceRead,
-		Params:  json.RawMessage(`{"type":"object","properties":{"assetId":{"type":"string"}},"required":["assetId"]}`),
-		Handler: opAssetGet})
-	r.Register(Op{ID: "task.get", Summary: "按 ID 查询任务状态与产物引用", ReadOnly: true, Scope: ScopeWorkspaceRead,
+	r.Register(assetGetOperation())
+	r.Register(Op{AssistantCanvas: true, ID: "task.get", Summary: "按 ID 查询任务状态与产物引用", ReadOnly: true, Scope: ScopeWorkspaceRead,
 		Params:  json.RawMessage(`{"type":"object","properties":{"taskId":{"type":"string"}},"required":["taskId"]}`),
 		Handler: opTaskGet})
-	r.Register(Op{ID: "canvas.node.update", Summary: "局部修改一个节点（只提交目标字段，其余数据保持原样，带 revision CAS）", Scope: ScopeCanvas,
+	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.node.update", Summary: "局部修改一个节点（只提交目标字段，其余数据保持原样，带 revision CAS）", Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeId":{"type":"string"},"expectedRevision":{"type":"integer"},"patch":{"type":"object","properties":{"title":{"type":"string"},"prompt":{"type":"string"},"content":{"type":"string"}}}},"required":["canvasId","nodeId","patch","expectedRevision"]}`),
 		Handler: opCanvasNodeUpdate})
-	r.Register(Op{ID: "canvas.nodes.create", Summary: "在画布上批量创建节点（整批校验，带 revision CAS）", Scope: ScopeCanvas,
+	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.nodes.create", Summary: "在画布上批量创建节点（整批校验，带 revision CAS）", Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"expectedRevision":{"type":"integer"},"nodes":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"type":{"type":"string"},"prompt":{"type":"string"}},"required":["title","type"]}}},"required":["canvasId","nodes","expectedRevision"]}`),
 		Handler: opCanvasNodesCreate})
-	r.Register(Op{ID: "canvas.edge.create", Summary: "连接两个节点（重复连接幂等返回）", Scope: ScopeCanvas,
+	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.edge.create", Summary: "连接两个节点（重复连接幂等返回）", Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"fromNodeId":{"type":"string"},"toNodeId":{"type":"string"},"expectedRevision":{"type":"integer"}},"required":["canvasId","fromNodeId","toNodeId","expectedRevision"]}`),
 		Handler: opCanvasEdgeCreate})
-	r.Register(Op{ID: "canvas.document.commit", Summary: "按已知服务端 revision 提交整份画布文档（保留未触及字段，带 CAS）", Scope: ScopeCanvas,
+	// 分镜脚本节点的行级写入：行 ID 与镜号由服务端分配，字段白名单见 canvas.StoryboardRowDraft。
+	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.script.rows.append", Summary: "向分镜脚本节点批量追加分镜行（行 ID 与镜号由服务端分配，行结构对齐界面默认值）", Scope: ScopeCanvas,
+		Params:  storyboardRowsAppendSchema(),
+		Handler: opStoryboardRowsAppend})
+	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.script.row.update", Summary: "按行 ID 批量局部更新分镜行（只覆盖给出的字段，未知行整批拒绝）", Scope: ScopeCanvas,
+		Params:  storyboardRowUpdateSchema(),
+		Handler: opStoryboardRowUpdate})
+	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.script.row.remove", Summary: "按行 ID 批量删除分镜行并重排镜号（未知行整批拒绝）", Scope: ScopeCanvas,
+		Params:  storyboardRowRemoveSchema(),
+		Handler: opStoryboardRowRemove})
+	r.Register(Op{ReplaySafe: true, ID: "canvas.document.commit", Summary: "按已知服务端 revision 提交整份画布文档（保留未触及字段，带 CAS）", Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"expectedRevision":{"type":"integer"},"document":{"type":"object"}},"required":["canvasId","expectedRevision","document"]}`),
 		Handler: opCanvasDocumentCommit})
 	// 付费生成只提议不执行：这里校验目标并给出用户要确认的模型，真正的生成由界面在用户确认后发起。
-	r.Register(Op{ID: "canvas.generation.propose", Summary: "提议对选中节点做付费图片/视频生成（只登记提议，不生成、不扣费）", ReadOnly: true, Scope: ScopeCanvas,
+	r.Register(Op{AssistantProposal: true, AssistantCanvas: true, ID: "canvas.generation.propose", Summary: "提议对选中节点做付费图片/视频生成（只登记提议，不生成、不扣费）", ReadOnly: true, Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":8},"kind":{"type":"string","enum":["image","video"]},"note":{"type":"string"}},"required":["canvasId","nodeIds","kind"]}`),
 		Handler: opCanvasGenerationPropose})
-	r.Register(Op{ID: "canvas.task.bind", Summary: "把已交付的任务产物绑定到原画布节点（校验归属与就绪资源，带 revision CAS，幂等回执）", Scope: ScopeCanvas,
+	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.task.bind", Summary: "把已交付的任务产物绑定到原画布节点（校验归属与就绪资源，带 revision CAS，幂等回执）", Scope: ScopeCanvas,
 		Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"taskId":{"type":"string"},"nodeId":{"type":"string"},"outputIndex":{"type":"integer"}},"required":["canvasId","taskId","nodeId"]}`),
 		Handler: opCanvasTaskBind, ProjectReplay: projectCanvasTaskBindReplay})
 	r.Register(Op{ID: "conversation.message.attach", Summary: "把已交付的任务产物绑定到原对话消息（校验归属与就绪资源，带 revision CAS，幂等回执）", Scope: ScopeConversation,
@@ -276,6 +285,13 @@ func opAssetList(ctx *Context, params json.RawMessage) (any, error) {
 		return nil, mapDomainError(err)
 	}
 	return sanitizeForClient(result), nil
+}
+
+// Binding and direct reads must authorize against the same operation definition.
+func assetGetOperation() Op {
+	return Op{AssistantCanvas: true, ID: "asset.get", Summary: "按 ID 读取单个素材", ReadOnly: true, Scope: ScopeWorkspaceRead,
+		Params:  json.RawMessage(`{"type":"object","properties":{"assetId":{"type":"string"}},"required":["assetId"]}`),
+		Handler: opAssetGet}
 }
 
 func opAssetGet(ctx *Context, params json.RawMessage) (any, error) {

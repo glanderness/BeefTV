@@ -13,7 +13,7 @@ func registerCanvasEditOps(r *Registry) {
 		{"canvas.edge.delete", "移除指定连接，保留两个节点及素材", `"edgeId":{"type":"string"}`, `"edgeId"`},
 	} {
 		id := action.id
-		r.Register(Op{ID: id, Summary: action.summary, Scope: ScopeCanvas,
+		r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: id, Summary: action.summary, Scope: ScopeCanvas,
 			Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"expectedRevision":{"type":"integer","minimum":0},` + action.properties + `},"required":["canvasId","expectedRevision",` + action.required + `],"additionalProperties":false}`),
 			Handler: func(ctx *Context, params json.RawMessage) (any, error) { return editCanvas(ctx, params, id) },
 		})

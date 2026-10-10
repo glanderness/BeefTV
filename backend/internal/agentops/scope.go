@@ -24,45 +24,12 @@ type AssistantScope struct {
 	ProjectReference func(kind, id string) error // Go-only DB resolver, never model supplied.
 }
 
-// assistantVisible 是内置助手可见的能力集合：
-// 当前画布读写、单个素材/任务读取与付费生成提议。
-// 工作区级列举（asset.list、canvas.search）不在其中——它们没有可校验的单资源归属，
-// 不能用提示词代替授权。
-func assistantVisible(op *operations.Op) bool {
-	if op == nil {
-		return false
-	}
-	switch op.ID {
-	case "canvas.get", "canvas.node.update", "canvas.node.configure", "canvas.node.move", "canvas.node.bind_asset", "canvas.node.delete", "canvas.edge.delete", "canvas.nodes.create", "canvas.edge.create", "canvas.timeline.update",
-		"canvas.timeline.render", "canvas.generation.propose", "canvas.task.bind", "asset.get", "task.get":
-		return true
-	case "media.overview", "media.inspect", "media.check":
-		return true
-	case "skill.get", "skill.file":
-		return true
-	case "project.media.search", "project.canvas.search", "model.catalog":
-		return true
-	default:
-		return false
-	}
-}
-
-// Allows 判断一次调用是否落在助手范围内；越界返回结构化的 scope_denied。
+// Visible uses the same operation policy published to the official Pi host.
 func (s *AssistantScope) Visible(op *operations.Op) bool {
 	if s == nil {
 		return true
 	}
-	if op == nil {
-		return false
-	}
-	switch assistantturns.Mode(s.PermissionMode) {
-	case assistantturns.PermissionFullAccess:
-		return op.Scope != operations.ScopeConversation
-	case assistantturns.PermissionReadOnly:
-		return op.ReadOnly && op.ID != "canvas.generation.propose"
-	default:
-		return assistantVisible(op)
-	}
+	return op != nil && op.AssistantVisible(assistantturns.Mode(s.PermissionMode))
 }
 
 func (s *AssistantScope) Allows(op *operations.Op, params json.RawMessage) error {
@@ -92,6 +59,12 @@ func (s *AssistantScope) Allows(op *operations.Op, params json.RawMessage) error
 	if assistantturns.Mode(s.PermissionMode) != assistantturns.PermissionCanvas && op.ID != "skill.get" && op.ID != "skill.file" {
 		return nil
 	}
+	if !op.ReadOnly && op.Scope == operations.ScopeCanvas {
+		if args.CanvasID == s.CanvasID {
+			return nil
+		}
+		return denied("只能修改当前画布")
+	}
 	switch op.ID {
 	case "model.catalog":
 		return nil
@@ -111,7 +84,7 @@ func (s *AssistantScope) Allows(op *operations.Op, params json.RawMessage) error
 			return nil
 		}
 		return denied("只能读取当前画布或已在界面里引用的画布")
-	case "canvas.node.update", "canvas.node.configure", "canvas.node.move", "canvas.node.bind_asset", "canvas.node.delete", "canvas.edge.delete", "canvas.nodes.create", "canvas.edge.create", "canvas.generation.propose", "canvas.task.bind", "canvas.timeline.update", "canvas.timeline.render":
+	case "canvas.generation.propose":
 		// 写只允许落在当前画布：跨画布写即便带上合法 canvasId 也必须拒绝。
 		if args.CanvasID == s.CanvasID {
 			return nil

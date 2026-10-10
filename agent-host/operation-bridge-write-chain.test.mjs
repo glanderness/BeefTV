@@ -14,8 +14,8 @@ async function fixture(run) {
       const properties = { canvasId: { type: 'string' }, expectedRevision: { type: 'integer' },
         nodeId: { type: 'string' }, patch: { type: 'object' }, document: { type: 'object' } };
       res.end(JSON.stringify({ code: 0, data: { ops: [
-        { id: 'canvas.node.update', summary: 'patch', readOnly: false, params: { type: 'object', properties } },
-        { id: 'canvas.document.commit', summary: 'document', readOnly: false, params: { type: 'object', properties } },
+        { id: 'canvas.node.update', summary: 'patch', assistantModes: ['canvas', 'full-access'], replay: 'safe', readOnly: false, params: { type: 'object', properties } },
+        { id: 'canvas.document.commit', summary: 'document', assistantModes: ['canvas', 'full-access'], replay: 'safe', readOnly: false, params: { type: 'object', properties } },
       ] } }));
       return;
     }

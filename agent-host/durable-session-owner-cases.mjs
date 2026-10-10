@@ -82,7 +82,7 @@ test('history projection excludes native media bytes and replay defaults unknown
     supplementInputs: [{ message: '', attachments: [{ resourceId: 'r' }], skills: [] }] }, true);
   assert(!JSON.stringify(projected).includes('large-native-image'));
   assert.equal(projected.status, 'running'); assert.equal(projected.supplementInputs[0].message, '');
-  assert.equal(durableToolReplay({ label: 'canvas.nodes.create' }), 'safe');
+  assert.equal(durableToolReplay({ label: 'canvas.nodes.create', replay: 'safe' }), 'safe');
   assert.equal(durableToolReplay({ label: 'future.paid.submit' }), 'unsafe');
 });
 const run = (directory, phase) => new Promise((resolve, reject) => {

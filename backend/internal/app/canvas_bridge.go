@@ -501,6 +501,18 @@ func (s *operationSession) ConnectUserCanvasNodesAtRevision(userID string, canva
 	return s.canvas.ConnectUserCanvasNodesAtRevision(userID, canvasID, fromNodeID, toNodeID, expectedRevision)
 }
 
+func (s *operationSession) AppendUserCanvasStoryboardRows(userID string, canvasID string, nodeID string, drafts []canvas.StoryboardRowDraft, expectedRevision int64) (canvas.UserDataSummary, []canvas.StoryboardRowIdentity, error) {
+	return s.canvas.AppendUserCanvasStoryboardRows(userID, canvasID, nodeID, drafts, expectedRevision)
+}
+
+func (s *operationSession) UpdateUserCanvasStoryboardRows(userID string, canvasID string, nodeID string, patches []canvas.StoryboardRowPatch, expectedRevision int64) (canvas.UserDataSummary, []canvas.StoryboardRowIdentity, error) {
+	return s.canvas.UpdateUserCanvasStoryboardRows(userID, canvasID, nodeID, patches, expectedRevision)
+}
+
+func (s *operationSession) RemoveUserCanvasStoryboardRows(userID string, canvasID string, nodeID string, rowIDs []string, expectedRevision int64) (canvas.UserDataSummary, int, error) {
+	return s.canvas.RemoveUserCanvasStoryboardRows(userID, canvasID, nodeID, rowIDs, expectedRevision)
+}
+
 func (s *operationSession) CommitUserCanvasDocument(userID string, canvasID string, expectedRevision int64, document json.RawMessage) (canvas.UserDataSummary, json.RawMessage, error) {
 	return s.canvas.CommitUserCanvasDocument(userID, canvasID, expectedRevision, document)
 }

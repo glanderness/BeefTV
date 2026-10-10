@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"infinite-canvas/backend/internal/agentops"
+	"infinite-canvas/backend/internal/operations"
 )
 
 // 内置助手的范围裁决：当前画布可读写，显式引用/画布关联的素材与任务只读，
@@ -27,6 +28,10 @@ func TestAssistantScopeAllowsOnlyVerifiedResources(t *testing.T) {
 		{"未引用的画布不可读", "canvas.get", `{"canvasId":"canvas-c"}`, true},
 		{"当前画布可写", "canvas.nodes.create", `{"canvasId":"canvas-a"}`, false},
 		{"额外画布不可写", "canvas.nodes.create", `{"canvasId":"canvas-b"}`, true},
+		{"当前分镜可追加", "canvas.script.rows.append", `{"canvasId":"canvas-a"}`, false},
+		{"额外分镜不可追加", "canvas.script.rows.append", `{"canvasId":"canvas-b"}`, true},
+		{"额外分镜不可修改", "canvas.script.row.update", `{"canvasId":"canvas-b"}`, true},
+		{"额外分镜不可删除", "canvas.script.row.remove", `{"canvasId":"canvas-b"}`, true},
 		{"当前时间线可写", "canvas.timeline.update", `{"canvasId":"canvas-a"}`, false},
 		{"额外时间线不可写", "canvas.timeline.update", `{"canvasId":"canvas-b"}`, true},
 		{"引用素材可读", "asset.get", `{"assetId":"asset-ref"}`, false},
@@ -42,7 +47,7 @@ func TestAssistantScopeAllowsOnlyVerifiedResources(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := scope.Allows(&agentops.Op{ID: tc.op}, json.RawMessage(tc.params))
+			err := scope.Allows(registeredScopeOp(t, tc.op), json.RawMessage(tc.params))
 			if tc.denied {
 				if err == nil {
 					t.Fatal("越界调用必须被拒绝")
@@ -57,6 +62,23 @@ func TestAssistantScopeAllowsOnlyVerifiedResources(t *testing.T) {
 			}
 		})
 	}
+}
+
+func registeredScopeOp(t *testing.T, id string) *agentops.Op {
+	t.Helper()
+	registry := operations.NewRegistry(nil, nil)
+	operations.RegisterDefaultOps(registry)
+	descriptor, ok := registry.Descriptor(id)
+	if !ok {
+		t.Fatalf("unregistered operation %s", id)
+	}
+	op := &agentops.Op{ID: id, ReadOnly: descriptor.ReadOnly, Scope: descriptor.Scope}
+	for _, mode := range descriptor.AssistantModes {
+		if mode == "canvas" {
+			op.AssistantCanvas = true
+		}
+	}
+	return op
 }
 
 // 没有绑定画布的空范围（宿主在回合之外做能力发现时）不允许执行任何操作。
@@ -98,11 +120,11 @@ func TestNilAssistantScopeDoesNotFilterCatalog(t *testing.T) {
 	agentops.RegisterDefaultOps(registry)
 	var typedNil *agentops.AssistantScope
 	listed := registry.List(agentops.Caller{Kind: agentops.CallerManual, Scope: typedNil})
-	if len(listed) != 27 {
+	if len(listed) != 30 {
 		t.Fatalf("空指针范围不应收窄目录，得到 %d", len(listed))
 	}
 	empty := registry.List(agentops.AssistantCaller(&agentops.AssistantScope{}, false))
-	if len(empty) != 23 {
+	if len(empty) != 26 {
 		t.Fatalf("空助手范围应只露出助手集合，得到 %d", len(empty))
 	}
 	if got := registry.List(agentops.AssistantCaller(nil, false)); len(got) != 0 {
@@ -113,7 +135,7 @@ func TestNilAssistantScopeDoesNotFilterCatalog(t *testing.T) {
 func TestReferenceBindingCatalogPermissionModes(t *testing.T) {
 	registry := agentops.NewRegistry(nil, nil)
 	agentops.RegisterDefaultOps(registry)
-	for mode, want := range map[string]int{"read-only": 13, "canvas": 23, "full-access": 26} {
+	for mode, want := range map[string]int{"read-only": 13, "canvas": 26, "full-access": 29} {
 		descriptors := registry.List(agentops.AssistantCaller(&agentops.AssistantScope{PermissionMode: mode}, false))
 		if len(descriptors) != want {
 			t.Fatalf("%s catalog=%d want=%d", mode, len(descriptors), want)

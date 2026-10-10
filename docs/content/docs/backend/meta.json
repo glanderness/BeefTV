@@ -5,6 +5,7 @@
   "pages": [
     "local-development",
     "http-api",
+    "storyboard-operations",
     "code-map",
     "backend-database",
     "task-runtime-stability",
