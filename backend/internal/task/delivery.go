@@ -105,12 +105,18 @@ func OutputRole(outputIndex int) string {
 	return "output:" + strconv.Itoa(outputIndex)
 }
 
-func CanonicalOutputs(resultJSON string) []CanonicalOutput {
+func CanonicalOutputs(resultJSON string, taskType string) []CanonicalOutput {
 	if strings.TrimSpace(resultJSON) == "" {
 		return nil
 	}
 	var payload map[string]any
 	if json.Unmarshal([]byte(resultJSON), &payload) != nil {
+		return nil
+	}
+	if taskType == model.TaskTypeDepthCapture {
+		if output, ok := outputFromValue(payload, "video", 0); ok && output.ResourceID != "" {
+			return []CanonicalOutput{output}
+		}
 		return nil
 	}
 	if images, ok := payload["images"]; ok {
@@ -256,8 +262,8 @@ func OutputSettled(output CanonicalOutput) bool {
 	return strings.TrimSpace(output.MaterializedAssetID) != "" || terminalMaterializeError(output.MaterializationErrorCode)
 }
 
-func DeliveryComplete(resultJSON string, stored []CanonicalOutput) bool {
-	expected := CanonicalOutputs(resultJSON)
+func DeliveryComplete(resultJSON string, stored []CanonicalOutput, taskType string) bool {
+	expected := CanonicalOutputs(resultJSON, taskType)
 	if len(expected) == 0 {
 		return true
 	}
@@ -305,8 +311,8 @@ func UnsupportedResultShape(output CanonicalOutput) string {
 	return "unrecognized_artifact"
 }
 
-func InspectResultJSON(resultJSON string) (outputs []CanonicalOutput, unusable string) {
-	outputs = CanonicalOutputs(resultJSON)
+func InspectResultJSON(resultJSON string, taskType string) (outputs []CanonicalOutput, unusable string) {
+	outputs = CanonicalOutputs(resultJSON, taskType)
 	if len(outputs) > 0 {
 		return outputs, ""
 	}

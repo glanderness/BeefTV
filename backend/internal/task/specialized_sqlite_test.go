@@ -253,10 +253,14 @@ func TestSQLiteForeignOwnerCannotReuseClientOperation(t *testing.T) {
 	seedSQLiteUser(t, db, "owner", "prj-owner", "res-owner", "video/mp4")
 	seedSQLiteUser(t, db, "intruder", "prj-intruder", "res-intruder", "video/mp4")
 	created, err := svc.CreateDepthCaptureTask("owner", DepthCaptureCreateRequest{
-		ProjectID: "prj-owner", ResourceID: "res-owner", ClientOperationID: "depth:shared-key",
+		ProjectID: "prj-owner", ResourceID: "res-owner", ClientOperationID: "depth:shared-key", NodeID: " node-depth ",
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	stored, err := repository.New(db).Task(created.ID)
+	if err != nil || TargetBindingFromInput(stored.InputJSON).NodeID != "node-depth" || TargetBindingFromInput(stored.InputJSON).Source != "canvas" {
+		t.Fatalf("depth binding not persisted: %#v %v", stored, err)
 	}
 	intruder, err := svc.CreateDepthCaptureTask("intruder", DepthCaptureCreateRequest{
 		ProjectID: "prj-intruder", ResourceID: "res-intruder", ClientOperationID: "depth:shared-key",

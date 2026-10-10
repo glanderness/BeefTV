@@ -13,7 +13,7 @@ type Projection struct {
 
 func Project(task model.Task, stored []localtask.CanonicalOutput, loadErr error, failedRetryBlocked bool) Projection {
 	binding := localtask.TargetBindingFromInput(task.InputJSON)
-	parsed, _ := localtask.InspectResultJSON(task.ResultJSON)
+	parsed, _ := localtask.InspectResultJSON(task.ResultJSON, task.Type)
 	if loadErr != nil {
 		outputs := parsed
 		if len(outputs) == 0 {

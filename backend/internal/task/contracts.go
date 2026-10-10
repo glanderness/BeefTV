@@ -55,6 +55,7 @@ type TimelineRenderCreateRequest struct {
 // capture. ClientOperationID is optional.
 type DepthCaptureCreateRequest struct {
 	ProjectID         string `json:"projectId"`
+	NodeID            string `json:"nodeId,omitempty"`
 	ResourceID        string `json:"resourceId"`
 	ClientOperationID string `json:"clientOperationId"`
 	TraceID           string `json:"-"`

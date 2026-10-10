@@ -88,5 +88,8 @@ func (t depthTasks) Complete(task *model.Task, result depthcapture.Result) error
 	if err := t.w.service.repo.SaveTaskCompletion(task, model.TaskStatusRunning, nil); err != nil {
 		return fmt.Errorf("写入深度处理完成态失败: %w", err)
 	}
+	if err := t.w.service.DeliverSucceededTask(*task); err != nil {
+		_ = t.w.service.log(task.UserID, task.ID, "error", "深度处理成功但结果交付失败", err.Error())
+	}
 	return nil
 }
