@@ -130,8 +130,9 @@ Section "BeefTV (required)" SEC_APP
   SetErrorLevel 1
   Abort
   stage_ready:
-  SetOutPath "$StageDir"
   ClearErrors
+  SetOutPath "$StageDir"
+  IfErrors prepare_failed
   File /r "${PAYLOAD}\*"
   File /oname=.installed-root-files.txt "${ROOTFILES}"
   WriteUninstaller "$StageDir\Uninstall.exe"

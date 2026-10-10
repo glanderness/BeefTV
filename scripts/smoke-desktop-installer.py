@@ -67,6 +67,27 @@ def verify_data(data):
         assert (data / name).read_bytes() == b'preserve installer data'
 
 
+def locked_windows_upgrade(installer, installed):
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    # Deny FILE_SHARE_DELETE to exercise the actual directory-swap failure path.
+    handle = kernel.CreateFileW(str(installed), 0, 3, None, 3, 0x02000000, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    before = {str(path.relative_to(installed)): digest(path) for path in installed.rglob('*') if path.is_file()}
+    try:
+        result = subprocess.run([str(installer), '/S'], timeout=180)
+        assert result.returncode == 1, 'locked application directory was not rejected'
+    finally:
+        kernel.CloseHandle(handle)
+    after = {str(path.relative_to(installed)): digest(path) for path in installed.rglob('*') if path.is_file()}
+    assert before == after, 'failed installer changed the previous application'
+
+
 def smoke(args):
     # Never install into or uninstall from a developer's real machine.
     if os.environ.get('GITHUB_ACTIONS') != 'true':
@@ -168,6 +189,8 @@ def smoke(args):
             verify_data(data)
             assert cache.read_bytes() == b'keep webview cache'
             if iteration == 0:
+                if args.platform == 'windows-amd64':
+                    locked_windows_upgrade(installer, installed)
                 install()
         uninstall()
         verify_data(data)
