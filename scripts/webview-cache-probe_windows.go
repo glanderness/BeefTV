@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"syscall"
 	"unsafe"
 
 	"github.com/wailsapp/go-webview2/pkg/edge"
-	"github.com/wailsapp/go-webview2/pkg/webview2"
 	"golang.org/x/sys/windows"
 )
 
@@ -37,13 +37,15 @@ func main() {
 	callback := windows.NewCallback(func(window uintptr, message uint32, wparam, lparam uintptr) uintptr {
 		if message == 0x10 && view != nil { // WM_CLOSE
 			view.ShuttingDown()
-			// Both wrappers represent the same ICoreWebView2Controller COM ABI;
-			// edge's wrapper omits Close. Close before destroying its parent.
-			controller := (*webview2.ICoreWebView2Controller)(unsafe.Pointer(view.GetController()))
-			if err := controller.Close(); err != nil {
-				panic(err)
+			// ICoreWebView2Controller::Close is COM slot 24 (after IUnknown and
+			// NotifyParentWindowPositionChanged). The edge wrapper omits Close;
+			// call the documented ABI without importing the broken webview2 package.
+			controller := view.GetController()
+			vtable := *(**[26]uintptr)(unsafe.Pointer(controller))
+			if result, _, _ := syscall.SyscallN(vtable[24], uintptr(unsafe.Pointer(controller))); result != 0 {
+				panic(fmt.Sprintf("WebView Close failed: %x", result))
 			}
-			view.GetController().Release()
+			controller.Release()
 		}
 		if message == 2 { // WM_DESTROY
 			call("PostQuitMessage", 0)

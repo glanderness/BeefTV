@@ -108,7 +108,9 @@ def stop(process):
         last_result = 'no inspection'
         while time.monotonic() < deadline:
             try:
-                opener.open(f'http://127.0.0.1:{process.webview_port}/json/list', timeout=1).close()
+                # Winsock can take more than one second to report refusal even
+                # on localhost. A timeout is never evidence that it is closed.
+                opener.open(f'http://127.0.0.1:{process.webview_port}/json/list', timeout=5).close()
                 last_result = 'debug endpoint still responds'
             except OSError as error:
                 last_result = repr(error)
@@ -131,8 +133,9 @@ def probe_cache(helper, profile, operation, env, root, cleanup):
         subprocess.run(['node', str(Path(__file__).with_name('smoke-webview-cache.mjs')), str(port), operation], check=True, timeout=90)
     except BaseException:
         print((root / f'cache-{operation}.log').read_text(errors='replace')[-3000:])
+        cleanup_process(process)
         raise
-    finally:
+    else:
         stop(process)
 
 
