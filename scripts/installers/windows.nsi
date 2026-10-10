@@ -2,7 +2,7 @@ Unicode true
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "StrFunc.nsh"
-!include "FileFunc.nsh"
+!include "TextFunc.nsh"
 ${StrStr}
 ${UnStrStr}
 Name "BeefTV"

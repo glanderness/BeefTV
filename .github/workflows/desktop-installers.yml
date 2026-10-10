@@ -113,6 +113,18 @@ jobs:
           if [[ "$platform" == linux-* ]]; then payload="$payload/BeefTV-linux"; suffix='.deb'; fi
           command=(python scripts/smoke-desktop-installer.py --platform "$platform" --installer "dist/BeefTV-${version}-${platform}${suffix}" --payload "$payload")
           if [[ "$platform" == linux-* ]]; then xvfb-run -a dbus-run-session -- "${command[@]}"; else "${command[@]}"; fi
+      - name: Verify DEB dependencies on clean Ubuntu
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm -v "${PWD}/dist:/packages:ro" ubuntu:24.04 sh -ec '
+            apt-get update
+            apt-get install -y /packages/BeefTV-*.deb
+            dpkg --audit
+            dpkg --verify beeftv
+            ldd /opt/beeftv/BeefTV-linux/BeefTV > /tmp/links
+            cat /tmp/links
+            ! grep -q "not found" /tmp/links
+          '
       - name: Preserve installer artifacts
         uses: actions/upload-artifact@v4
         with:

@@ -306,6 +306,20 @@ jobs:
         shell: bash
         run: python scripts/package-desktop-installer.py --platform '${{ matrix.platform }}'
 
+      - name: Verify native installer lifecycle
+        shell: bash
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          payload='backend/cmd/desktop/build/bin'
+          suffix='-setup.exe'
+          if [[ "$PLATFORM" == darwin-* ]]; then payload="$payload/BeefTV.app"; suffix='.dmg'; fi
+          if [[ "$PLATFORM" == linux-* ]]; then payload="$payload/BeefTV-linux"; suffix='.deb'; fi
+          command=(python scripts/smoke-desktop-installer.py --platform "$PLATFORM" --installer "dist/BeefTV-${VERSION}-${PLATFORM}${suffix}" --payload "$payload")
+          if [[ "$PLATFORM" == linux-* ]]; then xvfb-run -a dbus-run-session -- "${command[@]}"; else "${command[@]}"; fi
+
       - name: Verify MCP from final packaged CLI
         shell: bash
         env:
