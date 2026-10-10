@@ -2,7 +2,15 @@
 
 Linux x64 包面向 Ubuntu 24.04，使用 GTK 3 和 WebKitGTK 4.1。其他发行版尚未完成运行验证；ARM64 不在当前发行范围内。
 
-安装运行依赖：
+推荐下载 `BeefTV-vX.Y.Z-linux-amd64.deb`，安装时会自动补齐依赖：
+
+```bash
+sudo apt install ./BeefTV-vX.Y.Z-linux-amd64.deb
+```
+
+安装完成后从应用菜单启动 BeefTV。新版仍用上述命令安装；卸载使用 `sudo apt remove beeftv`，不会删除用户数据。DEB 由包管理器管理，不使用应用内自动更新。
+
+使用便携 ZIP 时，先安装运行依赖：
 
 ```bash
 sudo apt-get update
