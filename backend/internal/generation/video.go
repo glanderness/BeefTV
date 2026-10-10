@@ -132,7 +132,7 @@ func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPo
 		if status == "completed" || status == "succeeded" || status == "success" || status == "done" {
 			if videoURL := NewAPIVideoResultURL(state); videoURL != "" {
 				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, func(ctx context.Context) ([]byte, string, error) {
-					return GetProviderExternalBinary(WithRequestKind(ctx, "download"), input.Config, videoURL)
+					return getVideoResultWithGatewayFallback(ctx, input.Config, videoURL, id)
 				})
 				if err != nil {
 					return VideoPollOutcome{}, fmt.Errorf("视频结果下载失败（任务 %s）：%w", id, err)
@@ -141,7 +141,7 @@ func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPo
 				return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}}, nil
 			}
 			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, func(ctx context.Context) ([]byte, string, error) {
-				return GetBinary(WithRequestKind(ctx, "download"), input.Config, "/videos/"+id+"/content")
+				return getVideoResultWithGatewayFallback(ctx, input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id)
 			})
 			if err != nil {
 				return VideoPollOutcome{}, err
@@ -270,7 +270,7 @@ func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPol
 					// Enterprise BeefAPI result URLs require the same channel
 					// credential as the poll request; an anonymous external fetch
 					// returns 401 even though generation itself succeeded.
-					return GetProviderExternalBinary(WithRequestKind(ctx, "download"), input.Config, videoURL)
+					return getVideoResultWithGatewayFallback(ctx, input.Config, videoURL, id)
 				})
 				if err != nil {
 					return VideoPollOutcome{}, fmt.Errorf("视频结果下载失败：%w", err)
@@ -278,7 +278,7 @@ func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPol
 				return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}}, nil
 			}
 			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, func(ctx context.Context) ([]byte, string, error) {
-				return GetBinary(WithRequestKind(ctx, "download"), input.Config, "/videos/"+id+"/content")
+				return getVideoResultWithGatewayFallback(ctx, input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id)
 			})
 			if err != nil {
 				return VideoPollOutcome{}, fmt.Errorf("Seedance 任务成功但未返回视频 URL，备用内容下载失败：%w", err)

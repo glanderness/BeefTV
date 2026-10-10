@@ -1,0 +1,65 @@
+{
+  "version": "v1.7.15",
+  "contractVersion": 3,
+  "receiptPhase": "preflight_before_release_workflow",
+  "sourceDigest": "81f00d123477cdc6ed29b6bf49c022c4c7b3ac0229fe66c0827cc9d4918ff14e",
+  "testedSourceCommit": "0de1470467ad975606fbb96087f33d2916f31408",
+  "budgetCNY": null,
+  "spentCNY": null,
+  "pendingCNY": null,
+  "newSpentCNY": 0,
+  "newPendingCNY": 0,
+  "externalReviewSpendUSD": 0.92646464,
+  "externalReviewCostMethod": "runtime_reported",
+  "liveMatrixStatus": "not_run_owner_waived",
+  "agentAcceptanceStatus": "targeted_only",
+  "cases": [],
+  "acceptanceComplete": false,
+  "releasePublished": false,
+  "releaseComplete": false,
+  "ownerException": {
+    "scope": "workspace-media-domestic-targeted-20261010",
+    "approvedBy": "Ender",
+    "instruction": "一起合入并发布，本版豁免付费矩阵（推荐）",
+    "evidence": ["docs/real-generation-release.md", "docs/release-evidence/v1.7.15-targeted.md"]
+  },
+  "priorFinancialUncertainty": {
+    "status": "unresolved",
+    "carriedFromVersion": "v1.7.12",
+    "pendingCNY": null,
+    "explanation": "Historical failed-chat refund terminal states were not re-verified in this release; no resolution or zero total is claimed.",
+    "evidence": ["docs/release-evidence/v1.7.12.json", "docs/release-evidence/v1.7.15-targeted.md"]
+  },
+  "review": {
+    "result": "approved",
+    "independent": true,
+    "reviewer": "Grok 4.7 Build",
+    "sourceDigest": "81f00d123477cdc6ed29b6bf49c022c4c7b3ac0229fe66c0827cc9d4918ff14e",
+    "evidence": ["docs/release-evidence/v1.7.15-targeted.md"]
+  },
+  "upgrade": {
+    "preservedData": true,
+    "method": "deterministic_sqlite_backup_restore",
+    "sourceDigest": "81f00d123477cdc6ed29b6bf49c022c4c7b3ac0229fe66c0827cc9d4918ff14e",
+    "limitations": "No schema migration changed; final Windows old-client upgrade and rollback remain required by the release workflow. This is not a current Mac profile upgrade claim.",
+    "evidence": ["docs/release-evidence/v1.7.15-targeted.md"]
+  },
+  "verification": {
+    "workspaceRegression": {"status": "passed", "method": "browser", "sourceDigest": "81f00d123477cdc6ed29b6bf49c022c4c7b3ac0229fe66c0827cc9d4918ff14e", "evidence": ["docs/release-evidence/v1.7.15-targeted.md"]},
+    "videoRecovery": {"status": "passed", "method": "deterministic", "sourceDigest": "81f00d123477cdc6ed29b6bf49c022c4c7b3ac0229fe66c0827cc9d4918ff14e", "evidence": ["docs/release-evidence/v1.7.15-targeted.md"]},
+    "networkPolicy": {"status": "passed", "method": "deterministic", "sourceDigest": "81f00d123477cdc6ed29b6bf49c022c4c7b3ac0229fe66c0827cc9d4918ff14e", "evidence": ["docs/release-evidence/v1.7.15-targeted.md"]},
+    "localReleaseGate": {"status": "passed", "sourceDigest": "81f00d123477cdc6ed29b6bf49c022c4c7b3ac0229fe66c0827cc9d4918ff14e", "evidence": ["docs/release-evidence/v1.7.15-targeted.md"]},
+    "ci": {"status": "passed", "sourceDigest": "81f00d123477cdc6ed29b6bf49c022c4c7b3ac0229fe66c0827cc9d4918ff14e", "evidence": ["https://github.com/glanderness/BeefTV/actions/runs/38031359095", "https://github.com/glanderness/BeefTV/actions/runs/38031359126", "https://github.com/glanderness/BeefTV/actions/runs/38031359113"]}
+  },
+  "packages": {
+    "status": "pending_release_workflow",
+    "platforms": ["darwin-arm64", "darwin-amd64", "windows-amd64", "linux-amd64"],
+    "archives": null,
+    "windowsReleasedUpgradeAndRollbackBeforeUpload": true,
+    "finalArchiveSmokeBeforeUpload": true,
+    "linuxNativeWindowBeforeUpload": true,
+    "signedManifestBeforePublish": true,
+    "publicReadbackAfterPublish": true,
+    "workflowEvidence": [".github/workflows/release-desktop.yml", "docs/release-evidence/v1.7.15-targeted.md"]
+  }
+}

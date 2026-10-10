@@ -27,6 +27,11 @@ const (
 var ErrVideoJSONRequestTooLarge = errors.New("video request body exceeds the 64 MiB request limit; use public media URLs instead of inline base64")
 
 type submissionKeyContext struct{}
+type binaryNoRedirectContext struct{}
+
+func doBinaryWithoutRedirect(req *http.Request) ([]byte, string, error) {
+	return DoBinary(req.WithContext(context.WithValue(req.Context(), binaryNoRedirectContext{}, true)))
+}
 
 func WithSubmissionKey(ctx context.Context, key string) context.Context {
 	key = strings.TrimSpace(key)
@@ -255,15 +260,11 @@ func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 			runtime.Receipts.Observe(observation)
 		}
 	}()
-	requestTimeout := HTTPTimeout
-	if deadline, ok := req.Context().Deadline(); ok {
-		if remaining := time.Until(deadline); remaining > 0 {
-			requestTimeout = remaining
-		}
-	}
+	requestTimeout := generationRequestTimeout(req)
 	responseLimit := MaxResponseBytes
 	channelID := ""
 	runtime, hasRuntime := RuntimeFromContext(req.Context())
+	usesGenerationCircuit := hasRuntime && runtime.Limits != nil && runtime.Call.RequestKind != "download"
 	if hasRuntime && runtime.Limits != nil {
 		channelID = runtime.Call.ChannelID
 		limit, err := runtime.Limits.GeneratedFileBytes(req.Context())
@@ -272,12 +273,16 @@ func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 		}
 		responseLimit = limit
 		observation.ResponseLimitBytes = responseLimit
-		open, err := runtime.Limits.CircuitOpen(req.Context(), channelID)
-		if err != nil {
-			return nil, "", fmt.Errorf("读取渠道熔断状态失败：%w", err)
-		}
-		if open {
-			return nil, "", CircuitOpenError{}
+		// A completed asset's delivery route must not open or be blocked by
+		// the model generation circuit. File and concurrency limits still apply.
+		if usesGenerationCircuit {
+			open, err := runtime.Limits.CircuitOpen(req.Context(), channelID)
+			if err != nil {
+				return nil, "", fmt.Errorf("读取渠道熔断状态失败：%w", err)
+			}
+			if open {
+				return nil, "", CircuitOpenError{}
+			}
 		}
 		slotID := channelID
 		if slotID == "" {
@@ -297,10 +302,13 @@ func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 	}
 	outbound.ApplyDefaultOutboundHeaders(req)
 	client := outbound.OutboundHTTPClient(requestTimeout)
+	if noRedirect, _ := req.Context().Value(binaryNoRedirectContext{}).(bool); noRedirect {
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	}
 	observation.Dispatched = true
 	resp, err := client.Do(req)
 	if err != nil {
-		if hasRuntime && runtime.Limits != nil {
+		if usesGenerationCircuit {
 			_ = runtime.Limits.RecordChannelResult(req.Context(), channelID, !errors.Is(err, context.Canceled))
 		}
 		return nil, "", err
@@ -343,7 +351,7 @@ func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 		return nil, "", fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if hasRuntime && runtime.Limits != nil {
+		if usesGenerationCircuit {
 			_ = runtime.Limits.RecordChannelResult(req.Context(), channelID, resp.StatusCode >= 500)
 		}
 		httpErr := HTTPError{
@@ -358,10 +366,28 @@ func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) (resp
 		return nil, "", httpErr
 	}
 	observation.StatusCode = resp.StatusCode
-	if hasRuntime && runtime.Limits != nil {
+	if usesGenerationCircuit {
 		_ = runtime.Limits.RecordChannelResult(req.Context(), channelID, false)
 	}
 	return data, mimeType, nil
+}
+
+func generationRequestTimeout(req *http.Request) time.Duration {
+	timeout := HTTPTimeout
+	if deadline, ok := req.Context().Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 {
+			timeout = remaining
+		}
+	}
+	// A generation may run for an hour; an individual GET must not inherit
+	// that entire window and prevent the poll/download recovery loop from running.
+	if req.Method == http.MethodGet {
+		timeout = min(timeout, HTTPTimeout)
+		if meta, ok := CallMetaFromContext(req.Context()); ok && meta.RequestKind != "download" && !strings.HasSuffix(req.URL.Path, "/content") {
+			timeout = min(timeout, 45*time.Second)
+		}
+	}
+	return timeout
 }
 
 func ParseRetryAfter(value string, now time.Time) time.Duration {
