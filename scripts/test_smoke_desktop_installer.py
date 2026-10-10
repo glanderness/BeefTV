@@ -12,7 +12,7 @@ spec.loader.exec_module(smoke)
 
 class WebViewCloseTests(unittest.TestCase):
     def test_timeout_keeps_waiting_until_connection_is_refused(self):
-        process = MagicMock()
+        process = MagicMock(spec=['webview_port', 'pid', 'poll', 'terminate', 'kill', 'wait'])
         process.webview_port = 12345
         opener = MagicMock()
         opener.open.side_effect = [urllib.error.URLError(TimeoutError('slow endpoint')),
@@ -22,7 +22,7 @@ class WebViewCloseTests(unittest.TestCase):
         self.assertEqual(opener.open.call_count, 2)
 
     def test_only_timeouts_fail_instead_of_crediting_an_old_webview(self):
-        process = MagicMock()
+        process = MagicMock(spec=['webview_port', 'pid', 'poll', 'terminate', 'kill', 'wait'])
         process.webview_port = 12345
         opener = MagicMock()
         opener.open.side_effect = urllib.error.URLError(TimeoutError('still listening'))

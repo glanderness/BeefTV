@@ -1,16 +1,18 @@
-// Probe the actual Windows WebView profile without a model request or UI login.
+// Read/write the production Windows profile through the CI-only WebView host.
 const [port, operation] = process.argv.slice(2);
 const deadline = Date.now() + 60000;
 let target;
+let inspection = 'no response';
 while (Date.now() < deadline) {
   try {
     const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-    target = targets.find(item => item.type === 'page' && item.url.startsWith('http://wails.localhost/'));
+    inspection = JSON.stringify(targets.map(item => ({ type: item.type, url: item.url })));
+    target = targets.find(item => item.type === 'page' && new URL(item.url).hostname === 'wails.localhost');
     if (target?.webSocketDebuggerUrl) break;
-  } catch { /* WebView is still starting. */ }
+  } catch (error) { inspection = String(error.cause || error); }
   await new Promise(resolve => setTimeout(resolve, 500));
 }
-if (!target?.webSocketDebuggerUrl) throw new Error('Actual BeefTV WebView did not start');
+if (!target?.webSocketDebuggerUrl) throw new Error('Actual BeefTV WebView did not start: ' + inspection);
 const socket = new WebSocket(target.webSocketDebuggerUrl);
 await new Promise((resolve, reject) => {
   socket.addEventListener('open', resolve, { once: true });

@@ -5,6 +5,7 @@ on:
     paths:
       - 'scripts/*installer*'
       - 'scripts/smoke-webview-cache.mjs'
+      - 'scripts/webview-cache-probe_windows.go'
       - 'scripts/installers/**'
       - 'scripts/build-beeftv*'
       - 'backend/internal/desktopupdate/**'
@@ -126,6 +127,7 @@ jobs:
             ! grep -q "not found" /tmp/links
           '
       - name: Preserve installer artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: installer-check-${{ matrix.platform }}

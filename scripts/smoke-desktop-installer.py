@@ -2,7 +2,7 @@
 """CI-only native installer lifecycle with a real desktop-created database."""
 import argparse
 import errno
-from contextlib import closing
+from contextlib import closing, ExitStack
 import hashlib
 import json
 import os
@@ -22,7 +22,21 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
-def launch(exe, env, data, log_path):
+def cleanup_process(process):
+    if process.poll() is not None:
+        return
+    if os.name == 'nt':
+        subprocess.run(['taskkill', '/F', '/T', '/PID', str(process.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=10)
+
+
+def launch(exe, env, data, log_path, cleanup):
     token = secrets.token_hex(24)
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', 0))
@@ -31,8 +45,7 @@ def launch(exe, env, data, log_path):
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with log_path.open('w') as log:
         process = subprocess.Popen([str(exe)], env=env, stdout=log, stderr=log)
-    if 'WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS' in env:
-        process.webview_port = int(env['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'].split('=')[-1])
+    cleanup.callback(cleanup_process, process)
     try:
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
@@ -41,6 +54,13 @@ def launch(exe, env, data, log_path):
                 with opener.open(request, timeout=2) as response:
                     result = json.load(response)
                     if result.get('code') == 0 and result.get('data', {}).get('ready') is True and (data / 'open_ai_canvas.db').is_file():
+                        if os.name == 'nt':
+                            process.webview_profile = Path(env['APPDATA']) / 'BeefTV.exe'
+                            deadline_webview = time.monotonic() + 45
+                            while not webview_profile_running(process.webview_profile, process.pid):
+                                if time.monotonic() >= deadline_webview:
+                                    raise RuntimeError('Production WebView did not open the expected profile')
+                                time.sleep(.5)
                         return process
             except (OSError, ValueError):
                 pass
@@ -53,6 +73,19 @@ def launch(exe, env, data, log_path):
         raise
 
 
+def webview_profile_running(profile, parent=None):
+    profile = str(profile).replace("'", "''")
+    condition = f"$_.Name -eq 'msedgewebview2.exe' -and $_.CommandLine -and $_.CommandLine.Contains('{profile}')"
+    if parent is not None:
+        condition += f' -and $_.ParentProcessId -eq {parent}'
+    result = subprocess.run(['powershell', '-NoProfile', '-Command',
+                             f"$ErrorActionPreference='Stop'; try {{ if (@(Get-CimInstance Win32_Process | Where-Object {{ {condition} }}).Count -gt 0) {{ exit 0 }} else {{ exit 1 }} }} catch {{ exit 3 }}"],
+                            check=False, timeout=30)
+    if result.returncode not in (0, 1):
+        raise RuntimeError('Cannot inspect the actual WebView profile')
+    return result.returncode == 0
+
+
 def stop(process):
     if os.name == 'nt' and process.poll() is None:
         subprocess.run(['powershell', '-NoProfile', '-Command', f'$p=Get-Process -Id {process.pid} -ErrorAction SilentlyContinue; if ($p) {{ $p.CloseMainWindow() | Out-Null }}'], check=True)
@@ -63,6 +96,12 @@ def stop(process):
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait(timeout=10)
+    if hasattr(process, 'webview_profile'):
+        deadline = time.monotonic() + 30
+        while webview_profile_running(process.webview_profile):
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Old production WebView profile is still open')
+            time.sleep(.5)
     if hasattr(process, 'webview_port'):
         deadline = time.monotonic() + 30
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -75,6 +114,23 @@ def stop(process):
                     return
             time.sleep(.5)
         raise RuntimeError('Old WebView remained running; cannot verify a fresh profile startup')
+
+
+def probe_cache(helper, profile, operation, env, root, cleanup):
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+    with (root / f'cache-{operation}.log').open('w') as log:
+        process = subprocess.Popen([str(helper), str(profile), str(port)], env=env, stdout=log, stderr=log)
+    cleanup.callback(cleanup_process, process)
+    process.webview_port = port
+    try:
+        subprocess.run(['node', str(Path(__file__).with_name('smoke-webview-cache.mjs')), str(port), operation], check=True, timeout=90)
+    except BaseException:
+        print((root / f'cache-{operation}.log').read_text(errors='replace')[-3000:])
+        raise
+    finally:
+        stop(process)
 
 
 def verify_data(data):
@@ -112,7 +168,7 @@ def smoke(args):
         raise RuntimeError('Native installer lifecycle is restricted to disposable GitHub runners')
     installer = args.installer.resolve()
     payload = args.payload.resolve()
-    with tempfile.TemporaryDirectory(prefix='beeftv-installer-') as directory:
+    with tempfile.TemporaryDirectory(prefix='beeftv-installer-') as directory, ExitStack() as cleanup:
         root = Path(directory)
         env = {k: v for k, v in os.environ.items() if not k.startswith(('CANVAS_', 'BEEFTV_'))}
         home = root / 'home'
@@ -124,10 +180,10 @@ def smoke(args):
             data = Path(env['APPDATA']) / 'BeefTV'
             installed = Path(os.environ['LOCALAPPDATA']) / 'Programs/BeefTV'
             relative_exe = Path('BeefTV.exe')
-            with socket.socket() as listener:
-                listener.bind(('127.0.0.1', 0))
-                webview_port = listener.getsockname()[1]
-            env['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = f'--remote-debugging-port={webview_port}'
+            profile = Path(env['APPDATA']) / 'BeefTV.exe'
+            helper = root / 'webview-cache-probe.exe'
+            subprocess.run(['go', 'build', '-o', str(helper), str(Path(__file__).with_name('webview-cache-probe_windows.go').resolve())],
+                           cwd=Path(__file__).resolve().parent.parent / 'backend', check=True, timeout=180)
             def install():
                 subprocess.run([str(installer), '/S'], check=True, timeout=180)
                 import winreg
@@ -177,10 +233,10 @@ def smoke(args):
 
         portable = root / ('BeefTV.app' if args.platform.startswith('darwin-') else 'portable')
         shutil.copytree(payload, portable, symlinks=True)
-        process = launch(portable / relative_exe, env, data, root / 'portable.log')
-        if args.platform == 'windows-amd64':
-            subprocess.run(['node', str(Path(__file__).with_name('smoke-webview-cache.mjs')), str(webview_port), 'write'], check=True, timeout=90)
+        process = launch(portable / relative_exe, env, data, root / 'portable.log', cleanup)
         stop(process)
+        if args.platform == 'windows-amd64':
+            probe_cache(helper, profile, 'write', env, root, cleanup)
         with closing(sqlite3.connect(data / 'open_ai_canvas.db')) as db, db:
             db.execute("INSERT INTO projects (id,user_id,name,description,status,revision) VALUES ('installer-project','installer-user','Keep my project','Migration acceptance','draft',7)")
             db.execute("INSERT INTO system_settings (key,value_json) VALUES ('installer-setting','{\"preserve\":true}')")
@@ -198,14 +254,15 @@ def smoke(args):
             for source in payload.rglob('*'):
                 if source.is_file() and not source.is_symlink():
                     assert digest(source) == digest(installed / source.relative_to(payload)), str(source)
-            process = launch(installed / relative_exe, env, data, root / f'installed-{iteration}.log')
+            process = launch(installed / relative_exe, env, data, root / f'installed-{iteration}.log', cleanup)
             if args.platform == 'windows-amd64':
-                subprocess.run(['node', str(Path(__file__).with_name('smoke-webview-cache.mjs')), str(webview_port), 'read'], check=True, timeout=90)
                 blocked = subprocess.run([str(installer), '/S'], timeout=60)
                 assert blocked.returncode == 2, 'installer did not reject a running app'
                 blocked = subprocess.run([str(installed / 'Uninstall.exe'), '/S', '_?=' + str(installed)], timeout=60)
                 assert blocked.returncode == 2, 'uninstaller did not reject a running app'
             stop(process)
+            if args.platform == 'windows-amd64':
+                probe_cache(helper, profile, 'read', env, root, cleanup)
             verify_data(data)
             assert cache.read_bytes() == b'keep webview cache'
             if iteration == 0:
@@ -216,10 +273,10 @@ def smoke(args):
         verify_data(data)
         assert cache.read_bytes() == b'keep webview cache'
         install()
-        process = launch(installed / relative_exe, env, data, root / 'reinstalled.log')
-        if args.platform == 'windows-amd64':
-            subprocess.run(['node', str(Path(__file__).with_name('smoke-webview-cache.mjs')), str(webview_port), 'read'], check=True, timeout=90)
+        process = launch(installed / relative_exe, env, data, root / 'reinstalled.log', cleanup)
         stop(process)
+        if args.platform == 'windows-amd64':
+            probe_cache(helper, profile, 'read', env, root, cleanup)
         verify_data(data)
         uninstall()
         verify_data(data)
