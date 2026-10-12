@@ -7,7 +7,53 @@ import (
 	"infinite-canvas/backend/internal/operations"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 )
+
+// assistantMcpServers 从本机模型配置读取用户添加的 MCP 服务器。
+// 只给已鉴权的宿主进程：密钥原样返回，不经过浏览器；无效条目直接跳过。
+func assistantMcpServers(svc *app.Service, includeDisabled bool) ([]map[string]any, error) {
+	body, err := svc.ReadLocalModelConfig()
+	if err != nil {
+		return nil, err
+	}
+	if len(body) == 0 {
+		return []map[string]any{}, nil
+	}
+	var snapshot struct {
+		McpServers []map[string]any `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(body, &snapshot); err != nil {
+		return nil, app.BadAuthRequest("本地模型配置损坏")
+	}
+	servers := make([]map[string]any, 0, len(snapshot.McpServers))
+	for _, server := range snapshot.McpServers {
+		if !includeDisabled && server["enabled"] == false {
+			continue
+		}
+		id, _ := server["id"].(string)
+		if strings.TrimSpace(id) == "" {
+			continue
+		}
+		switch transport, _ := server["transport"].(string); transport {
+		case "stdio":
+			if command, _ := server["command"].(string); strings.TrimSpace(command) == "" {
+				continue
+			}
+		case "http":
+			raw, _ := server["url"].(string)
+			parsed, parseErr := url.Parse(strings.TrimSpace(raw))
+			if parseErr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+				continue
+			}
+		default:
+			continue
+		}
+		servers = append(servers, server)
+	}
+	return servers, nil
+}
 
 // Runtime lifecycle is a host capability, never a model-discoverable operation.
 func registerAssistantRuntimeRoutes(r gin.IRouter, svc *app.Service) {
@@ -100,4 +146,16 @@ func registerAssistantRuntimeRoutes(r gin.IRouter, svc *app.Service) {
 	})
 	r.GET("/assistant/runtime/turns/:turnId", handle)
 	r.POST("/assistant/runtime/turns/:turnId/complete", handle)
+	r.GET("/assistant/runtime/mcp-servers", func(c *gin.Context) {
+		if !isLoopbackRequest(c.Request) || !isAssistantHostRequest(c, svc) {
+			fail(c, http.StatusForbidden, app.Forbidden("仅内置助手宿主可以读取 MCP 服务器"))
+			return
+		}
+		servers, err := assistantMcpServers(svc, c.Query("includeDisabled") == "1")
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"servers": servers})
+	})
 }

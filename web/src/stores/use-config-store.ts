@@ -18,6 +18,22 @@ export type ChannelHeader = { name: string; value: string };
 export type RunningHubCapability = "image" | "video" | "audio";
 export type RunningHubWorkflowKind = "workflow" | "app";
 
+/** MCP 服务器里的一行环境变量或请求头；value 是密钥，只在本地后端保存，不进浏览器缓存。 */
+export type McpKeyValue = { id: string; name: string; value: string };
+export type McpTransport = "stdio" | "http";
+export type McpServerConfig = {
+    id: string;
+    name: string;
+    enabled: boolean;
+    transport: McpTransport;
+    command?: string;
+    args?: string[];
+    env?: McpKeyValue[];
+    url?: string;
+    headers?: McpKeyValue[];
+    disabledTools?: string[];
+};
+
 export type WorkflowFieldMapping = {
     id?: string;
     nodeId: string;
@@ -392,6 +408,8 @@ export type AiConfig = {
     apiFormat: ApiCallFormat;
     channels: ModelChannel[];
     runningHub: RunningHubConfig;
+    /** 用户自行添加的 MCP 服务器；添加即视为信任，工具默认全部启用。 */
+    mcpServers: McpServerConfig[];
     /** 仅用于单次生成任务路由，不属于全局渠道启用状态。 */
     taskWorkflowProvider?: "model" | "runninghub";
     model: string;
@@ -439,6 +457,7 @@ export const defaultConfig: AiConfig = {
     apiFormat: "openai",
     // 创作端模型目录只能来自后台公开逻辑模型和用户自定义渠道，不能内置供应商模型。
     channels: [],
+    mcpServers: [],
     runningHub: { enabled: false, baseUrl: "https://www.runninghub.cn", apiKey: "", walletApiKey: "", uploadApiKey: "", useWallet: false, capability: "image", selectedKind: "workflow", workflowId: "", workflows: [] },
     taskWorkflowProvider: "model",
     model: "",
@@ -477,6 +496,10 @@ type ConfigStore = {
     replaceConfig: (config: AiConfig) => void;
     mergeSystemChannels: (channels: ModelChannel[]) => void;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
+    addMcpServer: (server: McpServerConfig) => void;
+    updateMcpServer: (id: string, patch: Partial<McpServerConfig>) => void;
+    deleteMcpServer: (id: string) => void;
+    setMcpToolDisabled: (serverId: string, toolName: string, disabled: boolean) => void;
 };
 
 export type ConfigStoreSnapshot = {
@@ -651,6 +674,30 @@ export const useConfigStore = create<ConfigStore>()(
                     return normalizeConfigSnapshot({ config: { ...state.config, channels: [...systemChannels, ...userChannels] } });
                 }),
             isAiConfigReady: (config, model) => isAiConfigReady(config, model),
+            addMcpServer: (server) =>
+                set((state) => ({ config: { ...state.config, mcpServers: [...state.config.mcpServers, server] } })),
+            updateMcpServer: (id, patch) =>
+                set((state) => ({
+                    config: {
+                        ...state.config,
+                        mcpServers: state.config.mcpServers.map((server) => (server.id === id ? { ...server, ...patch } : server)),
+                    },
+                })),
+            deleteMcpServer: (id) =>
+                set((state) => ({ config: { ...state.config, mcpServers: state.config.mcpServers.filter((server) => server.id !== id) } })),
+            setMcpToolDisabled: (serverId, toolName, disabled) =>
+                set((state) => ({
+                    config: {
+                        ...state.config,
+                        mcpServers: state.config.mcpServers.map((server) => {
+                            if (server.id !== serverId) return server;
+                            const disabledTools = new Set(server.disabledTools || []);
+                            if (disabled) disabledTools.add(toolName);
+                            else disabledTools.delete(toolName);
+                            return { ...server, disabledTools: [...disabledTools] };
+                        }),
+                    },
+                })),
         }),
         {
             name: CONFIG_STORE_KEY,
@@ -674,8 +721,48 @@ export function configWithoutCachedSecrets(config: AiConfig): AiConfig {
         ...config,
         apiKey: "",
         channels: config.channels.map((channel) => ({ ...channel, apiKey: "", secretKey: "", headers: [] })),
+        mcpServers: config.mcpServers.map((server) => ({ ...server, env: [], headers: [] })),
         runningHub: { ...config.runningHub, apiKey: "", walletApiKey: "", uploadApiKey: "" },
     };
+}
+
+function normalizeMcpKeyValues(value: unknown): McpKeyValue[] {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+        const raw = item as Record<string, unknown>;
+        const name = String(raw.name ?? "").trim();
+        if (!name) return [];
+        return [{ id: String(raw.id ?? "").trim() || nanoid(), name, value: String(raw.value ?? "") }];
+    });
+}
+
+/** 保留合法 MCP 服务器，丢掉缺字段或协议不支持的条目；坏数据不能让设置页崩溃。 */
+export function normalizeMcpServers(value: unknown): McpServerConfig[] {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((item): McpServerConfig[] => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+        const raw = item as Record<string, unknown>;
+        const id = String(raw.id ?? "").trim();
+        const transport: McpTransport | "" = raw.transport === "http" ? "http" : raw.transport === "stdio" ? "stdio" : "";
+        if (!id || !transport) return [];
+        const base = {
+            id,
+            name: String(raw.name ?? "").trim() || id,
+            enabled: raw.enabled !== false,
+            transport,
+            disabledTools: Array.isArray(raw.disabledTools) ? raw.disabledTools.map((tool) => String(tool)).filter(Boolean) : [],
+        };
+        if (transport === "stdio") {
+            const command = String(raw.command ?? "").trim();
+            if (!command) return [];
+            const args = Array.isArray(raw.args) ? raw.args.map((arg) => String(arg)).filter((arg) => arg.trim()) : [];
+            return [{ ...base, command, args, env: normalizeMcpKeyValues(raw.env) }];
+        }
+        const url = String(raw.url ?? "").trim();
+        if (!url) return [];
+        return [{ ...base, url, headers: normalizeMcpKeyValues(raw.headers) }];
+    });
 }
 
 export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefined = {}) {
@@ -733,6 +820,7 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
             channelMode: "remote" as const,
             apiFormat: normalizeApiFormat(config.apiFormat),
             channels,
+            mcpServers: normalizeMcpServers(persistedConfig.mcpServers),
             models,
             model,
             imageModel: normalizeSelectedModel(config.imageModel || model, channels, imageModels),

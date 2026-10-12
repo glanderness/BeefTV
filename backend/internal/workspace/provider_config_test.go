@@ -234,6 +234,50 @@ func TestProviderConfigRedactedUpdatePreservesCredentialsAcrossHandles(t *testin
 	}
 }
 
+func TestProviderConfigRedactsAndPreservesMcpEnvAndHeaderSecrets(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"mcpServers":[` +
+		`{"id":"srv-a","name":"Alpha","enabled":true,"transport":"stdio","command":"node","env":[{"id":"e1","name":"API_TOKEN","value":"env-secret"}]},` +
+		`{"id":"srv-b","name":"Beta","enabled":true,"transport":"http","url":"https://mcp.example.test/mcp","headers":[{"id":"h1","name":"Authorization","value":"header-secret"}]}]}`)
+	if err := store.SaveLocalModelConfig(body); err != nil {
+		t.Fatal(err)
+	}
+
+	redacted, err := store.ReadRedactedModelConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(redacted, []byte(RedactedSecret)) {
+		t.Fatal("mcp env/header values were not redacted")
+	}
+	for _, secret := range []string{"env-secret", "header-secret"} {
+		if bytes.Contains(redacted, []byte(secret)) {
+			t.Fatalf("redacted config leaked %s", secret)
+		}
+	}
+
+	// Re-saving the redacted snapshot must restore the stored values, not wipe them.
+	if err := store.SaveLocalModelConfig(redacted); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := store.ReadLocalModelConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"env-secret", "header-secret"} {
+		if !bytes.Contains(raw, []byte(secret)) {
+			t.Fatalf("re-save lost %s", secret)
+		}
+	}
+	if bytes.Contains(raw, []byte(RedactedSecret)) {
+		t.Fatal("redaction marker was persisted to disk")
+	}
+}
+
 func TestProviderConfigCorruptExistingFileIsUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewProviderConfig(dir)

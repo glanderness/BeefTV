@@ -6,16 +6,18 @@ import { useNavigate, useSearchParams } from "react-router";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { ChannelSettingsPane, channelValidationError, focusInvalidChannelField, isChannelReady } from "./channel-settings-pane";
+import { McpSettingsPane } from "./mcp-settings-pane";
 import { ModelDefaultGrid } from "./model-default-grid";
 import DiagnosticsPanel from "./diagnostics-panel";
 import { StorageSettingsPane } from "./storage-settings-pane";
 import { ReferenceStoragePane } from "./reference-storage-pane";
 import { getDesktopAppBinding } from "@/services/desktop-runtime";
 
-type ConfigSectionKey = "channels" | "models" | "storage" | "diagnostics";
+type ConfigSectionKey = "channels" | "models" | "storage" | "diagnostics" | "mcp";
 
 const configSections: Array<{ key: ConfigSectionKey; label: string; description: string; icon: ReactNode }> = [
     { key: "channels", label: "个人渠道", description: "模型服务与个人工作流", icon: <RadioTower className="size-4" /> },
+    { key: "mcp", label: "MCP 工具", description: "给内置助手接入外部工具", icon: null },
     { key: "storage", label: "存储设置", description: "本地目录和参考素材存储", icon: null },
     { key: "diagnostics", label: "问题诊断", description: "导出问题记录", icon: <Bug className="size-4" /> },
 ];
@@ -94,6 +96,7 @@ export default function SettingsPage() {
             </SettingsPane>
         ),
         storage: <SettingsPane><StorageSettingsPane /><ReferenceStoragePane /></SettingsPane>,
+        mcp: <SettingsPane><McpSettingsPane /></SettingsPane>,
         models: (
             <SettingsPane>
                 <div className="settings-pane-header">

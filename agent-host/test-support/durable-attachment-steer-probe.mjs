@@ -21,6 +21,7 @@ const ops = createServer(async (req, res) => {
   const turn = req.url.match(/\/assistant\/runtime\/turns\/([^/]+)(\/complete)?$/);
   if (turn) { if (turn[2]) closed.add(turn[1]); res.end(JSON.stringify({ code: 0, data: { turnId: turn[1], canvasId: 'canvas', open: !closed.has(turn[1]), revision: 1 } })); return; }
   if (req.url === '/api/ops') { res.end(JSON.stringify({ code: 0, data: { ops: [{ id: 'canvas.node.update', summary: 'update', assistantModes: ['canvas', 'full-access'], replay: 'safe', readOnly: false, params: { type: 'object', properties: { nodeId: { type: 'string' }, expectedRevision: { type: 'integer' }, patch: { type: 'object' } } } }] } })); return; }
+  if (req.method === 'GET' && req.url === '/api/assistant/runtime/mcp-servers') { res.end(JSON.stringify({ code: 0, data: { servers: [] } })); return; }
   const body = await read(req);
   if(req.url.endsWith('/bind-session')) {assert.match(body.sessionId,/^durable:/);res.end(JSON.stringify({code:0,data:{bound:true}}));return;}
   if (req.url === '/api/ops/media.overview') { res.end(JSON.stringify({ code: 0, data: { result: { source: { version: 'owned-fixture-version' } } } })); return; }

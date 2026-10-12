@@ -17,6 +17,7 @@ import { budgetError, spendModelRequest } from './request-budget.mjs';
 import { createDurableRequestBudget } from './durable-request-budget.mjs';
 import { createOperationBridge } from './operation-bridge.mjs';
 import { createLegacyHistory } from './session-owner.mjs';
+import { createMcpToolSource } from './mcp-tools.mjs';
 import { adaptMediaRequest, trustedMediaSources } from './media-content.mjs';
 import {nativeSourceKey} from './native-history.mjs';
 import { createNativePartStore } from './native-part-store.mjs';
@@ -169,6 +170,11 @@ const ops = createOperationBridge({
 
 const legacy = createLegacyHistory({ sessionRoot: SESSION_ROOT, workspaceRoot: WORKSPACE_ROOT });
 
+// 用户添加的 MCP 服务器来自 Go 的本地配置；宿主只按当前回合权限装配，不自己存配置。
+const mcpTools = createMcpToolSource({
+  loadServers: () => ops.opsRequest('GET', '/assistant/runtime/mcp-servers').then((data) => data.servers || []),
+});
+
 const durable = createDurableSessionStore({
   sessionRoot: SESSION_ROOT, workspaceRoot: WORKSPACE_ROOT, buildTools: ops.buildTools,
   getModels: entry => {
@@ -184,6 +190,7 @@ const durable = createDurableSessionStore({
     return models;
   },
   getModelRef: () => ({ provider: PROVIDER_ID, modelId: MODEL_ID }),
+  externalTools: entry => mcpTools.tools({ permissionMode: entry.generation.permissionMode }),
   extensions: entry => [createDurableSkillExtension({getPins:()=>entry.skillPins || [],
     readVersion:async (pin,signal) => (await ops.opsRequest('POST','/ops/skill.get',{params:pin},signal,entry.turn.turnId)).result,
   })],
@@ -483,6 +490,21 @@ const server = http.createServer(async (req, res) => {
       } finally { entry.listeners.delete(listener); }
       return;
     }
+    if (req.method === 'POST' && url.pathname === '/mcp/probe') {
+      // 只接受服务器 id：配置与密钥由 Go 从本地模型配置读取，浏览器不能自带。
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const serverId = String(body.serverId || '').trim();
+      if (!serverId) { respond(res, 400, { code: 400, reason: 'invalid_request' }); return; }
+      const list = await ops.opsRequest('GET', '/assistant/runtime/mcp-servers?includeDisabled=1');
+      const server = (list.servers || []).find((item) => item.id === serverId);
+      if (!server) { respond(res, 404, { code: 404, reason: 'mcp_server_not_found' }); return; }
+      try {
+        respond(res, 200, await mcpTools.probe(server));
+      } catch (error) {
+        respond(res, 400, { code: 400, reason: error.reason || 'mcp_probe_failed', message: String(error.message || error) });
+      }
+      return;
+    }
     respond(res, 404, { code: 404, reason: 'not_found' });
   } catch (error) {
     if (error?.tooLarge) { respond(res, 413, { code: 413, reason: 'body_too_large' }); return; }
@@ -509,6 +531,7 @@ async function shutdown() {
   } catch (error) {
     console.error(`agent-host: 关闭时释放会话失败 ${error?.message || error}`);
   }
+  await mcpTools.close().catch(() => {});
   await new Promise((resolve) => server.close(() => resolve()));
   process.exit(0);
 }

@@ -39,6 +39,7 @@
 | `SettingsManager.inMemory` | 不采用 | 旧运行时设置已删除；Durable 的 `settings.stream` / `retry` / `toolExecution` 在 `durable-session-owner.mjs` 显式钉值。 |
 | 全控 `DefaultResourceLoader` | 不采用 | 旧运行时 loader 已删除；Durable 把产品 `SYSTEM_PROMPT` 作为 instructions，工具由 `registry.install` 显式装配，不发现宿主机资源。 |
 | `Harness.open` / `openNodeSqliteStorage` / `defineDoc` / `defineExtension` / `defineTool` / `watchEvents` | 采用 | 新会话唯一的执行装配与持久事件来源。 |
+| `@earendil-works/pi-mcp`（`McpClient` / `StdioTransport` / `StreamableHttpTransport` / `toLlmContent`） | 采用 | 用户添加的 MCP 服务器工具来源（`mcp-tools.mjs`）：官方客户端负责协议、连接与结果转换，宿主只做配置校验、连接缓存、名称约束与权限过滤。 |
 | `root.reset(handoff)` | 采用 | 旧会话退役交接：把旧会话文本写成新上下文开头的官方 reset 条目。 |
 | `root.submit` / `submission.wait` / `root.abort` | 采用 | 回合提交、终态结算与停止；`whenBusy: "steer"` 用于运行中补充。 |
 | `GenerationTask.beforeRequest` hook | 采用 | 准备请求前重读 Go 授权、历史素材归属与补充输入，并在实际 HTTP dispatch 前转换已验证的媒体结果。 |
@@ -54,6 +55,7 @@
 | `durable-session-owner.mjs` | 官方 Durable 会话装配、按画布预约队列、提交/恢复/停止、原子指针、官方 SQLite 持久事件。 |
 | `session-owner.mjs` | 旧 JSONL 会话只读历史、`current.json` 指针读取，以及旧会话 → Durable 的交接说明提取。 |
 | `operation-bridge.mjs` | 已鉴权 `/api/ops`、scope 注入、`customTools`。 |
+| `mcp-tools.mjs` | 用户添加的 MCP 服务器连接缓存、权限过滤与工具名约束；协议走官方 `@earendil-works/pi-mcp`。 |
 | `server.mjs` | 本机 HTTP、鉴权、预算 fetch 包装、NDJSON、SIGTERM/SIGINT 释放会话。 |
 
 ## 会话所有权
@@ -68,6 +70,7 @@
 ## 仍由本产品持有
 
 - 画布 scope、operationId、用户确认后的生成、单轮/总预算、中断回执、按画布身份。
+- MCP 工具没有单独的审批弹窗：是否暴露、能否执行都复用该回合的助手权限（只读时只暴露 `readOnlyHint` 工具，执行时再校验 `scope_denied`）。
 - React 只消费 `/api/assistant/*` 流，不在浏览器建 Agent 或 SessionManager。
 
 ## 已验证（钉选 1.0.4，本地替身，无付费模型）
@@ -79,6 +82,8 @@
 - `durable-request-budget.test.mjs`：总预算跨真实宿主崩溃与文件系统故障。
 - `host-runtime-probe.test.mjs`：预算耗尽、素材参数、引用画布读取。
 - `system-prompt.test.mjs`：媒体策略与产品 system prompt 约束。
+- `mcp-tools.test.mjs`：官方 pi-mcp 客户端（内存管道与真实 stdio 子进程）的连接缓存、名称约束、只读过滤、结果映射与宿主令牌不外泄。
+- `durable-external-tools.test.mjs`：外部工具在两轮之间新增后生效、只读回合只装配只读工具、调用计入工具步数预算、移除后同名工具返回 `mcp_tool_removed`。
 - React：`lifecycle` 与 `agent_end` 都不结算回合；压缩/重试文案不出现内部事件名。
 
 2026-10-11 退役验证：`bun install --frozen-lockfile` 通过；完整 `agent-host` suite 119 项通过、0 失败（约 220 秒）。真实媒体/steer 探针仍为本机替身、没有付费模型调用。

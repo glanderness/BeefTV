@@ -543,6 +543,39 @@ paths:
           description: 只读客户端，或缺少写权限
         "404":
           description: 画布不存在或不属于当前工作区，或该画布没有正在进行的会话
+  /assistant/mcp/probe:
+    post:
+      tags: [assistant]
+      summary: 检测用户添加的 MCP 服务器可用的工具
+      description: 需要写权限。请求体只有 serverId；命令、地址和密钥由后端从本机配置读取，浏览器不能自带。
+      responses:
+        "200":
+          description: 信封 data 为工具列表，每项含 name、title、description、readOnly
+        "400":
+          description: serverId 缺失，或配置不完整/无法连接（reason=mcp_server_invalid / mcp_probe_failed）
+        "403":
+          description: 只读客户端，或缺少写权限
+        "404":
+          description: 找不到该 serverId（reason=mcp_server_not_found）
+        "503":
+          description: 宿主未运行（reason=host_unreachable）
+  /assistant/runtime/mcp-servers:
+    get:
+      tags: [assistant]
+      summary: 内置助手宿主读取用户添加的 MCP 服务器（仅宿主）
+      description: 需本机同源并出示宿主凭据。默认只返回启用的服务器；includeDisabled=1 时包含停用的。密钥原样返回给宿主进程，不经过浏览器。
+      parameters:
+        - name: includeDisabled
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["1"]
+      responses:
+        "200":
+          description: 信封 data 为服务器列表 servers
+        "403":
+          description: 非本机同源，或缺少宿主凭据
   /assistant/host/config:
     get:
       tags: [assistant]

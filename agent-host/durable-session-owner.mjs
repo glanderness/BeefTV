@@ -11,6 +11,7 @@ import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite
 import { canvasKey } from './session-owner.mjs';
 import { newTurnAccumulator, resetTurnAccumulator, turnChange, sessionTitle } from './canvas-turn.mjs';
 import { SYSTEM_PROMPT } from './system-prompt.mjs';
+import { budgetError, spendToolStep } from './request-budget.mjs';
 
 export const DURABLE_VERSION = '1.0.4';
 const STATE = defineDoc({ kind: 'beeftv.host', version: 1, scope: 'session',
@@ -48,9 +49,15 @@ export function durableCompletion(settled, assistant, budgetFailure, stopped = f
     cancelled: false, error: null, errorReason: null };
 }
 
+// 外部工具（用户添加的 MCP 服务器）每次装配前由 externalTools(entry) 给出，权限过滤由它负责。
+function removedExternalTool(name) {
+  return defineTool({ name, description: 'MCP 工具已移除', parameters: { type: 'object', properties: {} }, replay: 'unsafe', executionMode: 'sequential',
+    execute: async () => { throw fail('mcp_tool_removed'); } });
+}
+
 export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModels, getModelRef,
   buildTools, authorizeTurn, completeTurn = async () => {}, runWithBudget = (_entry, fn) => fn(),
-  extensions = () => [], settings = {} }) {
+  extensions = () => [], externalTools = async () => [], settings = {} }) {
   if (typeof authorizeTurn !== 'function') throw fail('durable_authorizer_required');
   const sessions = new Map();
   const locks = new Map();
@@ -209,14 +216,67 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       },
     })] });
     registry.install(operationExtension);
+    // 工具集 = 按权限过滤的操作工具 + 外部 MCP 工具。签名（模式 + 工具名与参数）不变时不重新配置。
+    entry.toolSignature = null;
+    entry.externalNames = new Set();
+    entry.externalDescriptors = [];
+    const wrapExternalTool = (tool) => defineTool({
+      name: tool.name, description: tool.description, parameters: tool.parameters,
+      replay: 'unsafe', executionMode: 'sequential',
+      execute: async (args, api, context) => {
+        if (entry.generation.aborted) throw fail('aborted');
+        if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
+        if (entry.generation.pendingInput?.state === 'pending') throw fail('supplement_preparation_pending');
+        await authorization(entry, entry.turn.turnId);
+        try {
+          return await runWithBudget(entry, async () => {
+            const callId = String(api.taskId);
+            const step = spendToolStep(entry.budget);
+            if (!step.allowed) {
+              if (entry.budget) entry.budget.failure = step;
+              entry.log.push({ toolCallId: callId, tool: tool.name, args: args || {}, isError: true, error: step.message });
+              throw budgetError(step);
+            }
+            const started = Date.now();
+            try {
+              const result = await tool.execute(callId, args, context.abortSignal);
+              entry.log.push({ toolCallId: callId, tool: tool.name, args: args || {}, isError: result?.isError === true, ms: Date.now() - started });
+              return result;
+            } catch (error) {
+              entry.log.push({ toolCallId: callId, tool: tool.name, args: args || {}, isError: true, error: error.message, ms: Date.now() - started });
+              throw error;
+            }
+          });
+        } finally { await persistEffects(entry); }
+      },
+    });
+    async function loadExternalTools() {
+      // 读取失败时保留上一轮的工具集：一次列表失败不该把已有工具全变成占位错误。
+      try { entry.externalDescriptors = (typeof externalTools === 'function' ? await externalTools(entry) : []) || []; }
+      catch { /* 保留 entry.externalDescriptors */ }
+      const current = entry.externalDescriptors.map(wrapExternalTool);
+      for (const tool of current) entry.externalNames.add(tool.name);
+      const currentNames = new Set(current.map((tool) => tool.name));
+      // 会话里出现过、现在已移除的 MCP 工具保留一个报错占位，避免恢复会话时模型调用到不存在的名字。
+      const removedNames = [...entry.externalNames].filter((name) => !currentNames.has(name));
+      return { tools: [...current, ...removedNames.map(removedExternalTool)], removedNames };
+    }
     entry.configurePermission=async mode=>{
       entry.generation.permissionMode=mode;
       const projected=buildTools(canvasId,entry.log,entry.generation,entry.turn,sessionId);
       const byName=new Map(projected.map(t=>[t.name,t]));
-      const selected=tools.filter(t=>byName.has(t.name)).map(t=>({...t,parameters:byName.get(t.name).parameters}));
+      const operation=tools.filter(t=>byName.has(t.name)).map(t=>({...t,parameters:byName.get(t.name).parameters}));
+      const external=await loadExternalTools();
+      const selected=[...operation,...external.tools];
+      // 签名必须区分同名工具是真实 MCP 工具还是已移除占位：名字与参数相同但实现不同时仍要重新配置。
+      const signature=JSON.stringify({mode,tools:selected.map(t=>[t.name,t.parameters]),removed:external.removedNames});
       entry.toolNames = selected.map((tool) => tool.name);
+      // 每次都重装扩展，让重连或配置变化后的新工具实现立即生效（registry 按扩展名替换）。
       registry.install(defineExtension({...operationExtension,tools:selected}));
-      if(entry.root) await entry.root.configure({tools:selected,instructions:`${SYSTEM_PROMPT}\n${mode==='read-only'?'只能读取工作区内容，不能修改或生成。':mode==='full-access'?'可读取和修改本工作区的所有画布。付费生成必须等待用户确认。':'仅修改当前画布；其他画布只读。'}`},CTX);
+      // 根 Agent 尚未创建时不能记签名跳过：先装好扩展，等根就绪后的下一次调用再配置。
+      if(!entry.root || signature===entry.toolSignature) return;
+      entry.toolSignature=signature;
+      await entry.root.configure({tools:selected,instructions:`${SYSTEM_PROMPT}\n${mode==='read-only'?'只能读取工作区内容，不能修改或生成。':mode==='full-access'?'可读取和修改本工作区的所有画布。付费生成必须等待用户确认。':'仅修改当前画布；其他画布只读。'}`},CTX);
     };
     for (const extension of await extensions(entry)) registry.install(extension);
     entry.harness = await Harness.open(await openNodeSqliteStorage(path.join(dir, `${uuid}.sqlite`)), {
@@ -235,6 +295,8 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       if (hostState.canvasId !== canvasId || hostState.sessionId !== sessionId || hostState.version !== DURABLE_VERSION) throw fail('durable_version_mismatch');
       hydrate(entry, hostState.active);
       entry.log.push(...(hostState.active?.log || []));
+      // 恢复未完成的回合：先按该回合权限装配外部工具，恢复中的模型请求才能看到它们。
+      if (hostState.active) await entry.configurePermission(entry.generation.permissionMode);
       return entry;
     } catch (error) { await entry.harness.close(CTX); throw error; }
   }
@@ -297,6 +359,8 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       const auth=await authorization(entry, input.turnId);
       const modelRef = await turnModel(entry, existing.active);
       input={...input,modelRef,permissionMode:auth?.permissionMode || 'canvas'};
+      // 每个新消息开始前重新装配工具：新增或删除的 MCP 服务器从这一轮起生效。
+      await entry.configurePermission(input.permissionMode);
       if (!existing.active) {
         entry.budget = null;
         resetTurnAccumulator(entry.turn, input.revisionBefore, input.turnId);

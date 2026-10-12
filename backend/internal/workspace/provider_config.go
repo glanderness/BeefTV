@@ -484,7 +484,8 @@ func redactSecrets(value any) {
 	switch typed := value.(type) {
 	case map[string]any:
 		for key, child := range typed {
-			if key == "headers" {
+			// headers 与 env 都是 [{name,value}] 形式的密钥清单，value 一律按密钥脱敏。
+			if key == "headers" || key == "env" {
 				headers, _ := child.([]any)
 				for _, raw := range headers {
 					if header, ok := raw.(map[string]any); ok && header["value"] != nil && header["value"] != "" {
@@ -511,7 +512,7 @@ func preserveSecrets(incoming, existing any) error {
 	case map[string]any:
 		previous, _ := existing.(map[string]any)
 		for key, value := range next {
-			if key == "headers" {
+			if key == "headers" || key == "env" {
 				incomingHeaders, _ := value.([]any)
 				oldHeaders, _ := previous[key].([]any)
 				for _, raw := range incomingHeaders {

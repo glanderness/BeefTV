@@ -107,6 +107,7 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 | `POST /assistant/ui-session` | 签发短期限 UI 会话凭据；需本机同源，并且能出示 owner 凭据（或显式本地引导开关） |
 | `POST /assistant/chat` | NDJSON 流式对话：`text_delta` 增量 + 一次 `turn_end` 结算；可带 `references: [{kind,id}]` 追加已校验的素材/画布引用；宿主凭据与模型密钥由后端注入，页面不接触 |
 | `POST /assistant/cancel` | 取消指定画布正在进行的回合 |
+| `POST /assistant/mcp/probe` | 检测用户添加的 MCP 服务器可用的工具；请求体只有 `serverId`，命令、地址和密钥由后端从本机配置读取，页面不能自带 |
 | `GET/PUT /assistant/host/config`、`POST /assistant/host/start|stop` | 宿主生命周期：需 owner 凭据 + 本机同源；启动命令只取本机配置，绝不接受请求体传入的可执行命令 |
 
 按轮撤销不依赖浏览器流或宿主的最后一条消息：轮前文档由后端在转发前落盘，变更摘要由该轮自己的写入回执重建，
@@ -114,6 +115,10 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 宿主对模型请求与工具步骤各自有单轮上限（`BEEFTV_AGENT_MAX_REQUESTS_PER_TURN`、
 `BEEFTV_AGENT_MAX_TOOL_STEPS_PER_TURN`），按轮独立计数、下一轮从零开始；总预算
 `BEEFTV_AGENT_TOTAL_REQUEST_BUDGET` 默认关闭，只有显式配置才启用。
+
+宿主还通过一条仅宿主可见的运行时接口读取用户添加的 MCP 服务器：`GET /assistant/runtime/mcp-servers`
+要求本机同源并出示宿主凭据，默认只返回启用的服务器，`?includeDisabled=1` 时包含停用的；密钥原样交给宿主进程，
+不经过浏览器。无效条目（stdio 缺少命令、http 地址不是 `http://`/`https://`）会被跳过。
 
 ### 外部客户端连接
 

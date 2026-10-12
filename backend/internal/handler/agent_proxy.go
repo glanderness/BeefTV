@@ -296,6 +296,30 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		hostJSON(c, http.MethodPost, "/sessions/activate", body)
 	})
 
+	// 只接受服务器 id：配置与密钥由宿主从本机配置读取，浏览器不能自带。
+	r.POST("/assistant/mcp/probe", func(c *gin.Context) {
+		if !guard(c, true) {
+			return
+		}
+		_, payload, valid := readAssistantBody(c, struct {
+			ServerID string `json:"serverId"`
+		}{})
+		if !valid {
+			return
+		}
+		serverID := strings.TrimSpace(payload.ServerID)
+		if serverID == "" {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("serverId 必填"))
+			return
+		}
+		forwarded, err := json.Marshal(map[string]string{"serverId": serverID})
+		if err != nil {
+			fail(c, http.StatusInternalServerError, app.BadAuthRequest("请求体编码失败"))
+			return
+		}
+		hostJSON(c, http.MethodPost, "/mcp/probe", forwarded)
+	})
+
 	r.GET("/assistant/history", func(c *gin.Context) {
 		if !guard(c, false) {
 			return

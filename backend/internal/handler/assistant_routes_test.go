@@ -201,6 +201,42 @@ func decodeEnvelope(t *testing.T, recorder *httptest.ResponseRecorder) map[strin
 	return envelope.Data
 }
 
+// 检测工具只转发服务器 id：命令、地址和密钥都必须由后端/宿主从本机配置读取，浏览器不能自带。
+func TestAssistantMcpProbeForwardsOnlyServerID(t *testing.T) {
+	var captured map[string]any
+	env := newAssistantTestEnv(t, func(env *assistantTestEnv) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			env.hostHits[r.URL.Path]++
+			if r.URL.Path != "/mcp/probe" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_ = json.NewDecoder(r.Body).Decode(&captured)
+			_, _ = w.Write([]byte(`{"tools":[{"name":"ping","readOnly":true}]}`))
+		})
+	})
+
+	if got := env.call(t, http.MethodPost, "/assistant/mcp/probe", `{"serverId":""}`); got.Code != http.StatusBadRequest {
+		t.Fatalf("空 serverId 应被拒绝: %d", got.Code)
+	}
+	recorder := env.call(t, http.MethodPost, "/assistant/mcp/probe",
+		`{"serverId":"srv-1","command":"rm -rf /","url":"http://attacker.test","env":[{"name":"X","value":"secret"}]}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("检测工具应成功: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if captured["serverId"] != "srv-1" {
+		t.Fatalf("serverId 未转发: %#v", captured)
+	}
+	for _, forbidden := range []string{"command", "url", "env"} {
+		if _, leaked := captured[forbidden]; leaked {
+			t.Fatalf("浏览器自带的 %s 被转发", forbidden)
+		}
+	}
+	if !strings.Contains(recorder.Body.String(), `"readOnly":true`) {
+		t.Fatalf("检测结果未回传: %s", recorder.Body.String())
+	}
+}
+
 // 状态在模型/凭据/宿主任一环节缺失时都要给出机器可读原因，而不是一句「不可用」。
 func TestAssistantStatusReportsResolvedModelAndReasons(t *testing.T) {
 	env := newAssistantTestEnv(t, func(env *assistantTestEnv) http.Handler {

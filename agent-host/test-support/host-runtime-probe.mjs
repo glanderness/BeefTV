@@ -48,6 +48,7 @@ const ops=createServer(async(req,res)=>{
     const turnId=decodeURIComponent(req.url.split('/')[5]||'');
     res.end(JSON.stringify({code:0,data:{turnId,canvasId:turnCanvas.get(turnId)||'canvas',permissionMode:'canvas',open:true}}));return;
   }
+  if(req.method==='GET'&&req.url==='/api/assistant/runtime/mcp-servers'){res.end(JSON.stringify({code:0,data:{servers:[]}}));return;}
   const body=await readJSON(req);seen.push({path:req.url,body,turn:req.headers['x-beeftv-agent-turn']});
   if(req.url==='/api/ops/asset.get'&&Object.keys(body.params||{}).some(k=>k!=='assetId')){
     res.writeHead(400).end(JSON.stringify({code:400,reason:'invalid_params',msg:'unknown field in asset.get'}));return;
