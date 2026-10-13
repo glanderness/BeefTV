@@ -1,8 +1,10 @@
-# 官方 Pi SDK 复用矩阵（钉选 1.0.4）
+# 官方 Pi SDK 复用矩阵（钉选 1.2.0）
 
-本页记录 BeefTV 内置助手宿主对官方 Pi 1.0.4 的复用。执行运行时只有 `@earendil-works/pi-durable` 一套：新会话走 Durable，已有 JSONL 会话只保留只读历史，不再在其上执行新回合。在旧会话里发新消息会为该画布新建一条 Durable 会话，并用旧会话最后的 user/assistant 文本作为交接说明开头。实现以本仓库 `agent-host/` 与钉选包内声明、示例、文档为准；`pi.dev` 最新文档可能对应更高版本。
+本页记录 BeefTV 内置助手宿主对官方 Pi 1.2.0 的复用。执行运行时只有 `@earendil-works/pi-durable` 一套：新会话走 Durable，已有 JSONL 会话只保留只读历史，不再在其上执行新回合。在旧会话里发新消息会为该画布新建一条 Durable 会话，并用旧会话最后的 user/assistant 文本作为交接说明开头。实现以本仓库 `agent-host/` 与钉选包内声明、示例、文档为准；`pi.dev` 最新文档可能对应更高版本。
 
-本地钉选版本：`pi-durable`、`pi-coding-agent`、`pi-ai` 与 chord 1.0.4。配套 agent-core、codemode、mcp、tui、telemetry 通过 overrides 同钉 1.0.4，避免上游范围依赖自动选择未经验证的版本。锁文件由 Bun 生成；没有修改官方包或另建模型执行循环。Durable 接入验证见 [持久宿主验收](durable-host-verification-20261008.md)。
+本地钉选版本：`pi-durable`、`pi-coding-agent`、`pi-ai` 与 chord 1.2.0。配套 agent-core、codemode、mcp、tui、telemetry 通过 overrides 同钉 1.2.0，避免上游范围依赖自动选择未经验证的版本。锁文件由 Bun 生成；没有修改官方包或另建模型执行循环。Durable 接入验证见 [持久宿主验收](durable-host-verification-20261008.md)。
+
+从 1.0.4 升到 1.2.0 时已适配破坏性改动：业务工具的结果改用 `output` 字段返回；已有会话的磁盘格式标记仍是 1.0.4，旧会话照常打开。
 
 ## 新会话的官方 Durable 路径
 
@@ -70,7 +72,7 @@
 - 画布 scope、operationId、用户确认后的生成、单轮/总预算、中断回执、按画布身份。
 - React 只消费 `/api/assistant/*` 流，不在浏览器建 Agent 或 SessionManager。
 
-## 已验证（钉选 1.0.4，本地替身，无付费模型）
+## 已验证（钉选 1.2.0，本地替身，无付费模型）
 
 - `session-owner.test.mjs`：旧 JSONL v3 历史（用户消息、BeefTV 轮次）仍可读取；`handoffNote` 只取最近 20 条、总长截断到约 8000 字符；`readHandoffNote` 含旧会话文本，找不到会话时返回空说明。
 - `session-identity.test.mjs`：同一 toolCallId 在两条会话不撞 operationId；旧 JSONL 会话仍能按 id 找回。

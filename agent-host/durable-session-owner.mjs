@@ -12,6 +12,8 @@ import { canvasKey } from './session-owner.mjs';
 import { newTurnAccumulator, resetTurnAccumulator, turnChange, sessionTitle } from './canvas-turn.mjs';
 import { SYSTEM_PROMPT } from './system-prompt.mjs';
 
+// On-disk format tag written into manifests and host state since 1.0.4; not the
+// package version. Changing it rejects every existing session as mismatched.
 export const DURABLE_VERSION = '1.0.4';
 const STATE = defineDoc({ kind: 'beeftv.host', version: 1, scope: 'session',
   initial: () => ({ version: DURABLE_VERSION, canvasId: '', sessionId: '', active: null, turns: [] }) });
@@ -170,7 +172,9 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         if (entry.generation.pendingInput?.state === 'pending') throw fail('supplement_preparation_pending');
         await authorization(entry, entry.turn.turnId);
         try {
-          return await runWithBudget(entry, () => tool.execute(String(api.taskId), args, context.abortSignal));
+          // Bridge tools return {content}; Durable's ToolExecutionResult names it output.
+          const { content, ...result } = await runWithBudget(entry, () => tool.execute(String(api.taskId), args, context.abortSignal));
+          return { ...result, output: content };
         } finally { await persistEffects(entry); }
       },
     }));

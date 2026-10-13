@@ -1,13 +1,13 @@
 // Bound SSE inactivity on real text/tool progress, without aborting the official
 // agent's signal or adding a retry loop.
 //
-// 为什么不改用 pi 自己的空闲超时（钉选 1.0.4）：
+// 为什么不改用 pi 自己的空闲超时（钉选 1.2.0）：
 // - pi-ai 把 timeoutMs 交给 OpenAI SDK 的 `timeout`（pi-ai/dist/api/openai-completions.js:194），
 //   而 SDK 在 fetch 解析出响应头后立刻 clearTimeout（openai/client.js:996 setTimeout、
 //   :1023 finally clearTimeout）——只覆盖到响应头，不约束流正文的空闲。
 // - pi-coding-agent 另有 undici bodyTimeout/headersTimeout 级别的 httpIdleTimeoutMs
-//   （dist/core/http-dispatcher.js:68-84，docs/settings.md:123），但它只在 CLI/RPC 入口安装
-//   （cli/setup.js、rpc-entry.js、modes/interactive/interactive-mode.js:1558），本宿主的
+//   （dist/core/http-dispatcher.js:77-81，docs/settings.md:125），但它只在 CLI/RPC 入口安装
+//   （cli/setup.js、rpc-entry.js、modes/interactive/interactive-mode.js:1562），本宿主的
 //   Durable 路径不会安装它；即便安装，undici bodyTimeout 按「每收到一段 body 就重置」，
 //   SSE 心跳（`: ping`）同样算一段，识别不出「只有心跳、没有内容」。
 // 因此保留本实现：只有实际文本/工具进展才重置计时（Durable 路径经 globalThis.fetch 包装生效）。
