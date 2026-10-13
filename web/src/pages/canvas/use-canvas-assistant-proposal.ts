@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 
-import type { AssistantGenerationProposal } from "@/services/api/agent-assistant";
+import { confirmAssistantProposalRunnable, type AssistantGenerationProposal } from "@/services/api/agent-assistant";
 import type { Skill } from "@/services/api/skills";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
@@ -47,7 +47,7 @@ export function useCanvasAssistantProposal({
     const { lifetime } = useCanvasOwnerLifetime(projectId);
 
     const runAssistantProposal = useCallback(
-        (proposal: AssistantGenerationProposal) => {
+        (proposal: AssistantGenerationProposal, turnId: string) => {
             const owner = lifetime.capture(projectId);
             const generateForThisRun = handleGenerateNodeRef.current;
             const proposalId = proposal.proposalId;
@@ -58,6 +58,7 @@ export function useCanvasAssistantProposal({
                 nodes: nodesRef.current,
                 claims: claimsRef.current,
                 isHandled: handledRef.current.has(proposal.proposalId),
+                confirmRunnable: () => confirmAssistantProposalRunnable(turnId, proposal.proposalId, owner.canvasId),
                 prepare: () =>
                     prepareAssistantProposalSnapshot(
                         proposal,

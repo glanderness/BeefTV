@@ -128,7 +128,7 @@ $env:CANVAS_DESKTOP_DATA_DIR = 'D:\BeefTV-tests\candidate-workspace'
 | `canvas_drawings` | 画板快照与 revision | 主键 `(user_id, canvas_id, drawing_id)`；写入按 revision CAS，丢失应答且正文相同可回放已提交结果；预览和成品字节走资源 ID，参与资源删除引用检查；删除写入墓碑并清空快照与资源引用。未保存草稿由前端保留为可恢复内容，禁止按原 ID 自动重建；后端不另存一份正文。快照计入账号画布和素材数据上限（`StructuredDataMB`），HTTP 请求体为该上限加 JSON 信封余量，没有单独的 8MB 画板上限 |
 | `canvas_snapshots`、`canvas_snapshot_resources` | 画布历史快照与快照引用的资源 | 快照读写按归属校验；历史恢复同样走 revision 前置条件 |
 | `agent_op_records` | 统一操作层的幂等记录：`(user_id, op_id)` 主键、payload 哈希、状态与可空 `turn_id` | 同一 `opId` 同参数回读原结果、不同参数返回冲突；失败操作回滚且不留幂等记录；只在本用户命名空间内回放，不跨用户读取；`turn_id` 与业务写入同事务提交，只有后端鉴权的内置宿主能写入归属 |
-| `assistant_turns` | 助手业务回合：范围、权限、轮前画布快照、结算摘要与撤销标记 | 主键 `turn_id`；必须带用户和画布身份；open 回合才接受写入归属。v15 `permission_mode` 按回合固定，`canvas_snapshots_json` 保存所有写入目标的轮前文档与版本；撤销先检查全部目标，再将旧文档写成新 revision，与 undone 标记同事务提交。v14 `skill_pins_json` 保存用户选定的技能 ID、版本 ID 与内容摘要；恢复不得自动替换版本。不保存模型对话稿 |
+| `assistant_turns` | 助手业务回合：范围、权限、轮前画布快照、结算摘要与撤销标记 | 主键 `turn_id`；必须带用户和画布身份；open 回合才接受写入归属。v15 `permission_mode` 按回合固定，`canvas_snapshots_json` 保存所有写入目标的轮前文档与版本；撤销先检查全部目标，再将旧文档写成新 revision，与 undone 标记同事务提交。v14 `skill_pins_json` 保存用户选定的技能 ID、版本 ID 与内容摘要，并附带选定时记下的显示名 `skillName` 与版本号 `version`（只用于显示，不参与身份比较；旧记录可能没有）；恢复不得自动替换版本。不保存模型对话稿 |
 | `creation_conversations` | `/create` 页面对话与消息文档 | 主键 `(user_id, conversation_id)`；按 revision CAS 写入；删除写墓碑，稳定 ID 不会被 IndexedDB 缓存复活。导入操作在 `(user_id, import_operation_id)` 上有部分唯一索引。不保存密钥。临时媒体只从附件/结果 URL 字段去掉，正文保留。删除对话不删除任务或素材 |
 
 版本 10 `assistant-business-turns` 为既有 v9 工作区创建 `assistant_turns`。旧 JSON 文件 `assistant-turns/<hexID>.json` 是只读迁移输入，按被访问的 ID 校验后导入，导入后不再作为竞争事实；生产路径不改写、不删除原文件。保留策略只压缩超龄大快照、留下身份墓碑，不会删掉进行中的回合、回执引用的回合或操作回执。操作层若要把回执记到某一轮，必须在该操作自己的事务里校验回合仍为 open；只做事务外预检无法关闭结算与写入的竞态。

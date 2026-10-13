@@ -247,6 +247,25 @@ export async function undoAssistantTurn(turnId: string, canvasId: string): Promi
     }
 }
 
+/** 已撤销的一轮不再开始生成；这是后端给出的唯一判定，界面隐藏按钮只是提示。 */
+export const ASSISTANT_PROPOSAL_UNDONE_TEXT = "这一轮已撤销，不会生成。";
+
+/**
+ * 开始生成前由后端确认生成建议所属的一轮仍然有效。
+ * 返回 null 表示可以继续；否则返回给用户看的一句话，不会提交任何生成。
+ */
+export async function confirmAssistantProposalRunnable(turnId: string, proposalId: string, canvasId: string): Promise<string | null> {
+    try {
+        await http.post<{ runnable: boolean }>(`/assistant/turns/${encodeURIComponent(turnId)}/proposals/${encodeURIComponent(proposalId)}/run`, { canvasId }, await uiSessionConfig());
+        return null;
+    } catch (error) {
+        const reason = error instanceof ApiError ? error.reason : undefined;
+        if (reason === "turn_undone") return ASSISTANT_PROPOSAL_UNDONE_TEXT;
+        if (reason === "turn_not_found") return "找不到这一轮对话，未提交生成。请让助手重新提出方案。";
+        return "无法确认这项生成是否还能进行，未提交生成。请检查连接后重试。";
+    }
+}
+
 export function assistantUndoFailure(error: unknown): AssistantUndoFailure {
     const reason = error instanceof ApiError ? error.reason : undefined;
     switch (reason) {
@@ -355,6 +374,7 @@ export type AssistantAttachment = {
 function attachmentRequestValue({ resourceId, kind, name, mimeType, bytes, purpose, start, end, durationMs, nodeId, assetId }: AssistantAttachment): AssistantAttachment {
     return { resourceId, kind, name, mimeType, bytes, purpose, start, end, durationMs, nodeId, assetId };
 }
+/** skillName/version 是后端在选定时记下的显示名；缺失表示技能已不可识别，界面不得退回显示标识。 */
 export type AssistantSkillSelection = { skillId: string; versionId: string; contentHash: string; skillName?: string; version?: string };
 export type AssistantSupplementInput = { message: string; attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[] };
 

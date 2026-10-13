@@ -11,6 +11,8 @@ type ProposalExecution = {
     nodes: CanvasNodeData[];
     claims: Set<string>;
     isHandled: boolean;
+    /** 后端确认这一轮仍有效；返回的文案表示拒绝，不会提交任何生成。 */
+    confirmRunnable?: () => Promise<string | null>;
     prepare: () => Promise<ConfirmedGenerationInputs>;
     generate: (nodeId: string, mode: "image" | "video", prompt: string, options?: CanvasNodeGenerationOptions) => Promise<unknown>;
     markHandled: (proposalId: string) => void;
@@ -37,7 +39,7 @@ export function buildConfirmedGenerationConfig(
     return result;
 }
 
-export async function executeAssistantProposal({ proposal, nodes, claims, isHandled, prepare, generate, markHandled, notify, stillOwns }: ProposalExecution) {
+export async function executeAssistantProposal({ proposal, nodes, claims, isHandled, confirmRunnable, prepare, generate, markHandled, notify, stillOwns }: ProposalExecution) {
     if (isHandled || claims.has(proposal.proposalId)) {
         notify("这项提案已提交或正在提交，请在任务列表查看进度。");
         return;
@@ -57,6 +59,11 @@ export async function executeAssistantProposal({ proposal, nodes, claims, isHand
     let receivedTask = false;
     const started = new Set<string>();
     try {
+        const rejection = confirmRunnable ? await confirmRunnable() : null;
+        if (rejection) {
+            notify(rejection);
+            return;
+        }
         let confirmedInputs: ConfirmedGenerationInputs;
         try {
             confirmedInputs = await prepare();

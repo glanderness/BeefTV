@@ -57,3 +57,46 @@ describe("处理未完成仍保留可检查的结果", () => {
         expect(html).toContain("结尾改成蛋糕");
     });
 });
+
+const proposalTurn: AssistantTurn = {
+    ...interrupted, turnId: "with-proposal", error: null, errorReason: null,
+    proposals: [{ proposalId: "gp-1", kind: "image", nodeIds: ["a"], model: "图片模型", modelKey: "channel::image" }],
+};
+function buttons(html: string) {
+    return (html.match(/<button\b[^>]*>[\s\S]*?<\/button>/g) || []).map(button => button.replace(/<[^>]+>/g, "").replace(/\s+/g, ""));
+}
+
+describe("撤销后的生成建议不再可用", () => {
+    test("未撤销时仍提供生成与先不用", () => {
+        const labels = buttons(render(proposalTurn));
+        expect(labels).toContain("生成");
+        expect(labels).toContain("先不用");
+    });
+    test("撤销后未开始的建议只说明不会生成，没有按钮", () => {
+        const html = render(proposalTurn, { undone: true });
+        expect(html).toContain("这一轮已撤销，不会生成。");
+        expect(buttons(html)).not.toContain("生成");
+        expect(buttons(html)).not.toContain("先不用");
+    });
+    test("撤销前已经开始的生成仍显示已开始生成", () => {
+        const html = renderToStaticMarkup(<CanvasAssistantTurnView turn={proposalTurn} status={{ undone: true }} handledProposals={new Set(["gp-1"])}
+            onLocate={() => {}} onUndo={() => {}} onRunProposal={() => {}} onDismissProposal={() => {}} />);
+        expect(html).toContain("已开始生成");
+        expect(html).not.toContain("这一轮已撤销，不会生成。");
+    });
+});
+
+describe("技能标签只显示名称", () => {
+    const hash = "352590bd".repeat(8);
+    test("有名称时显示名称和版本", () => {
+        const html = render({ ...interrupted, skills: [{ skillId: "s1", versionId: "cc4bb169", contentHash: hash, skillName: "短剧资产分批流程", version: "1" }] });
+        expect(html).toContain("技能：短剧资产分批流程 · 1");
+    });
+    test("名称不可识别时说明已移除，不显示标识", () => {
+        const html = render({ ...interrupted, skills: [{ skillId: "352590bd", versionId: "cc4bb169", contentHash: hash }],
+            supplementInputs: [{ message: "补充", skills: [{ skillId: "352590bd", versionId: "cc4bb169", contentHash: hash }] }] });
+        expect(html).toContain("技能：已移除的技能");
+        expect(html).not.toContain("352590bd");
+        expect(html).not.toContain("cc4bb169");
+    });
+});

@@ -1,6 +1,6 @@
 // 助手面板里所有用户可见文案的唯一来源：机器可读原因、操作名和改动摘要都在这里
 // 翻译成用户语。组件只负责排版，不自己拼文案，避免同一种状态在两处写出两句话。
-import type { AgentLifecycleEvent, AgentToolCall, AssistantGenerationProposal, AssistantTurnChange, AssistantUndoFailure } from "@/services/api/agent-assistant";
+import type { AgentLifecycleEvent, AgentToolCall, AssistantGenerationProposal, AssistantSkillSelection, AssistantTurnChange, AssistantUndoFailure } from "@/services/api/agent-assistant";
 import { seedancePortraitLabel } from "@/lib/seedance-portrait";
 
 export type AssistantStatusAction = "model-settings" | "retry";
@@ -262,4 +262,12 @@ export function assistantUnresolvedFailures(calls: AgentToolCall[] | undefined):
         counts.set(label, (counts.get(label) ?? 0) + 1);
     });
     return [...counts.entries()].map(([label, count]) => (count > 1 ? `${label}（${count} 处）` : label));
+}
+
+/** 技能标签只显示名称和版本；名称不可识别时说明已移除，不显示内部标识。 */
+export function assistantSkillLabel(skill: Pick<AssistantSkillSelection, "skillName" | "version">): string {
+    const name = skill.skillName?.trim();
+    if (!name) return "技能：已移除的技能";
+    const version = skill.version?.trim();
+    return version ? `技能：${name} · ${version}` : `技能：${name}`;
 }

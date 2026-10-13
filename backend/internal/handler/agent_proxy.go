@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -226,12 +227,28 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 							failService(c, err)
 							return
 						}
+						var pins []skills.Pin
 						if state != nil {
 							turn["undone"] = state.Undone
 							turn["change"] = state.Change
 							turn["permissionMode"] = state.PermissionMode
+							pins = state.SkillPins
 						}
+						labelAssistantSkills(turn, pins)
 					}
+				}
+				if active, ok := history["active"].(map[string]any); ok {
+					turnID, _ := active["turnId"].(string)
+					state, err := svc.ReadAssistantTurnHistoryState(c.GetString("agentUserId"), strings.TrimSpace(c.Query("canvasId")), turnID)
+					if err != nil {
+						failService(c, err)
+						return
+					}
+					var pins []skills.Pin
+					if state != nil {
+						pins = state.SkillPins
+					}
+					labelAssistantSkills(active, pins)
 				}
 			}
 		}
@@ -339,6 +356,41 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			return
 		}
 		ok(c, gin.H{"revision": revision})
+	})
+
+	// 生成建议在画布既有生成链路执行；开始前先由这里确认所属的一轮还有效，
+	// 已撤销的一轮不能再开始付费生成。
+	r.POST("/assistant/turns/:turnId/proposals/:proposalId/run", func(c *gin.Context) {
+		if !guard(c, true) {
+			return
+		}
+		_, payload, valid := readAssistantBody(c, struct {
+			CanvasID string `json:"canvasId"`
+		}{})
+		if !valid {
+			return
+		}
+		if !assistantProposalIDPattern.MatchString(c.Param("proposalId")) {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("生成建议标识无效"))
+			return
+		}
+		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
+			return
+		}
+		if err := svc.CheckAssistantProposalRunnable(c.GetString("agentUserId"), payload.CanvasID, c.Param("turnId")); err != nil {
+			var turnErr *app.AssistantTurnError
+			if errors.As(err, &turnErr) {
+				status := http.StatusConflict
+				if turnErr.Reason == app.AssistantTurnReasonNotFound {
+					status = http.StatusNotFound
+				}
+				c.JSON(status, gin.H{"code": status, "reason": turnErr.Reason, "msg": turnErr.Error()})
+				return
+			}
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"runnable": true})
 	})
 
 	r.POST("/assistant/chat", func(c *gin.Context) {
@@ -631,6 +683,8 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		hostJSON(c, http.MethodPost, "/steer", body)
 	})
 }
+
+var assistantProposalIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
 
 func assistantTerminalLine(line []byte, turnID string) bool {
 	var event struct {

@@ -13,7 +13,7 @@ import { captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
 import { getActiveUserScope, getActiveUserScopeEpoch, subscribeUserScope } from "@/lib/user-scope";
 import { attachmentFromCanvasReference, attachmentRangeError, readAssistantInputDraft, saveAssistantInputDraft, uploadAssistantAttachment } from "@/services/assistant-attachments";
 import { CanvasAssistantAttachments } from "./canvas-assistant-attachments";
-import { ASSISTANT_CONTINUE_PROMPT, ASSISTANT_STARTER_PROMPTS, assistantStatusNotice, assistantVisibleReply } from "./canvas-assistant-copy";
+import { ASSISTANT_CONTINUE_PROMPT, ASSISTANT_STARTER_PROMPTS, assistantSkillLabel, assistantStatusNotice, assistantVisibleReply } from "./canvas-assistant-copy";
 import { CanvasAssistantComposer } from "./canvas-assistant-composer";
 import { CanvasAssistantReply, CanvasAssistantTurnView, CanvasAssistantUserMessage } from "./canvas-assistant-turn";
 import { ASSISTANT_MAX_WIDTH, ASSISTANT_MIN_WIDTH, type CanvasAssistantController } from "./use-canvas-assistant";
@@ -27,7 +27,7 @@ type Props = {
     selectedNodeIds: string[];
     references: CanvasResourceReference[];
     onLocateNodes: (nodeIds: string[]) => void;
-    onRunProposal: (proposal: AssistantGenerationProposal) => void;
+    onRunProposal: (proposal: AssistantGenerationProposal, turnId: string) => void;
     onOpenModelSettings: () => void;
     proposalFeedback?: Record<string, string>;
     runningProposalIds?: ReadonlySet<string>;
@@ -226,7 +226,7 @@ export function CanvasAssistantSidebar(props: Props) {
                         <CanvasAssistantUserMessage text={assistant.pendingUserText || ""} selectedCount={assistant.pendingSelectedNodeIds.length} />
                         <CanvasAssistantAttachments attachments={assistant.pendingAttachments} />
                         {assistant.awaitingReceipt ? <p className="canvas-assistant-meta" role="status">正在读取这次处理的最终结果，已有内容仍然保留。</p> : null}
-                        {assistant.pendingSkills.map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>技能：{skill.skillName || skill.skillId} · {skill.version || skill.versionId}</span>)}
+                        {assistant.pendingSkills.map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>{assistantSkillLabel(skill)}</span>)}
                         {assistant.supplements.map((item, index) => <div key={index}>
                             <CanvasAssistantUserMessage text={item.text} selectedCount={0} />
                             <CanvasAssistantAttachments attachments={item.attachments || []} />

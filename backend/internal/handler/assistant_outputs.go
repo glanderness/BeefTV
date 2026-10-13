@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"infinite-canvas/backend/internal/app"
+	"infinite-canvas/backend/internal/skills"
 )
 
 // Always replace the host field, including cancelled/error terminals. A model
@@ -14,12 +15,17 @@ func assistantOutputsLine(line []byte, svc *app.Service, userID, canvasID, turnI
 		return line
 	}
 	outputs := []app.AssistantOutput{}
+	var pins []skills.Pin
 	if event["turnId"] == turnID {
 		if verified, err := svc.AssistantTurnOutputs(userID, canvasID, turnID); err == nil {
 			outputs = verified
 		}
+		if state, err := svc.ReadAssistantTurnHistoryState(userID, canvasID, turnID); err == nil && state != nil {
+			pins = state.SkillPins
+		}
 	}
 	event["outputs"] = outputs
+	labelAssistantSkills(event, pins)
 	raw, err := json.Marshal(event)
 	if err != nil {
 		return line

@@ -336,7 +336,33 @@ func (s *Service) History(userID, canvasID, turnID string) (*HistoryState, error
 			return nil, err
 		}
 	}
-	return &HistoryState{Change: change, Undone: rec.Undone, PermissionMode: Mode(rec.PermissionMode)}, nil
+	return &HistoryState{Change: change, Undone: rec.Undone, PermissionMode: Mode(rec.PermissionMode), SkillPins: SortedSkillPins(rec.SkillPins)}, nil
+}
+
+// CheckProposalRunnable is the server gate before a generation the round
+// suggested is started: an undone round must not start paid generation for
+// nodes it no longer owns. Missing or foreign rounds read as not found.
+func (s *Service) CheckProposalRunnable(userID, canvasID, turnID string) error {
+	if err := requireActor(userID, canvasID); err != nil {
+		return err
+	}
+	if NormalizeTurnID(turnID) == "" {
+		return errNotFound()
+	}
+	rec, err := s.load(nil, turnID)
+	if err != nil {
+		if isMissing(err) {
+			return errNotFound()
+		}
+		return err
+	}
+	if rec.UserID != userID || rec.CanvasID != canvasID {
+		return errNotFound()
+	}
+	if rec.Undone {
+		return &Error{Reason: ReasonUndone, Message: "这一轮已撤销，不会生成。"}
+	}
+	return nil
 }
 
 // Undone reports whether the owner-scoped round carries a durable undo marker.

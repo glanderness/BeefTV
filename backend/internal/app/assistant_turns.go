@@ -17,6 +17,7 @@ const (
 	AssistantTurnReasonNoChange      = assistantturns.ReasonNoChange
 	AssistantTurnReasonAlreadyUndone = assistantturns.ReasonAlreadyUndone
 	AssistantTurnReasonCanvasChanged = assistantturns.ReasonCanvasChanged
+	AssistantTurnReasonUndone        = assistantturns.ReasonUndone
 )
 
 type (

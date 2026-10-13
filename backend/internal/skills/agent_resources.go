@@ -19,6 +19,16 @@ type Pin struct {
 	SkillID     string `json:"skillId"`
 	VersionID   string `json:"versionId"`
 	ContentHash string `json:"contentHash"`
+	// SkillName and Version are display labels captured by ValidateAgentSkills,
+	// so a round still names its skill after the package is uninstalled.
+	// They never take part in identity or authorization.
+	SkillName string `json:"skillName,omitempty"`
+	Version   string `json:"version,omitempty"`
+}
+
+// Identity drops display labels; compare pins only through it.
+func (p Pin) Identity() Pin {
+	return Pin{SkillID: p.SkillID, VersionID: p.VersionID, ContentHash: p.ContentHash}
 }
 
 type AgentResource struct {
@@ -83,6 +93,7 @@ func (s *Service) agentPackage(userID string, pin Pin) (*model.Skill, *model.Ski
 }
 
 func (s *Service) AgentVersion(userID string, pin Pin) (*AgentResource, error) {
+	pin = pin.Identity()
 	skill, version, files, err := s.agentPackage(userID, pin)
 	if err != nil {
 		return nil, err
@@ -103,6 +114,7 @@ func (s *Service) AgentVersion(userID string, pin Pin) (*AgentResource, error) {
 }
 
 func (s *Service) AgentFile(userID string, pin Pin, filePath string) (*AgentFile, error) {
+	pin = pin.Identity()
 	_, version, files, err := s.agentPackage(userID, pin)
 	if err != nil {
 		return nil, err
@@ -157,7 +169,10 @@ func (s *Service) ValidateAgentSkills(userID string, pins []Pin) ([]Pin, error) 
 		if total > 512<<10 {
 			return nil, &kernel.AppError{Status: 400, Code: 400, Reason: "skill_instruction_too_large", Message: fmt.Sprintf("所选技能正文总量超过 %d KiB，请减少所选技能", 512)}
 		}
-		result = append(result, pin)
+		labeled := pin.Identity()
+		labeled.SkillName = resource.Name
+		labeled.Version = resource.Version
+		result = append(result, labeled)
 	}
 	return result, nil
 }

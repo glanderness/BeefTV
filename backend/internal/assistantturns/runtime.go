@@ -56,7 +56,7 @@ func (s *Service) Extend(userID, canvasID, turnID string, input Input) error {
 			found := false
 			for _, existing := range rec.SkillPins {
 				if existing.SkillID == pin.SkillID {
-					if existing != pin {
+					if existing.Identity() != pin.Identity() {
 						return &Error{Reason: "skill_version_conflict", Message: "执行中不能替换同一技能的版本，请在新对话中选择"}
 					}
 					found = true

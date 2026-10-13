@@ -3,8 +3,8 @@ import { Crosshair, Undo2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { agentAssistantFailureText, type AgentToolCall, type AssistantGenerationProposal, type AssistantTurn } from "@/services/api/agent-assistant";
-import { ASSISTANT_UNDONE_INCOMPLETE_TEXT, assistantChangeSummary, assistantChangedNodeIds, assistantProposalText, assistantTurnCanContinue, assistantUnresolvedFailures, assistantUndoFailureText, assistantVisibleReply } from "./canvas-assistant-copy";
+import { ASSISTANT_PROPOSAL_UNDONE_TEXT, agentAssistantFailureText, type AgentToolCall, type AssistantGenerationProposal, type AssistantTurn } from "@/services/api/agent-assistant";
+import { ASSISTANT_UNDONE_INCOMPLETE_TEXT, assistantChangeSummary, assistantSkillLabel, assistantChangedNodeIds, assistantProposalText, assistantTurnCanContinue, assistantUnresolvedFailures, assistantUndoFailureText, assistantVisibleReply } from "./canvas-assistant-copy";
 import { dismissedProposalKey, type AssistantTurnStatus } from "./use-canvas-assistant";
 import { modelOptionName, resolveModelChannel, useEffectiveConfig } from "@/stores/use-config-store";
 import { portraitPriceLines, seedancePortraitModel, seedancePortraitLabel } from "@/lib/seedance-portrait";
@@ -21,7 +21,7 @@ type Props = {
     runningProposalIds?: ReadonlySet<string>;
     onLocate: (nodeIds: string[]) => void;
     onUndo: (turnId: string) => void;
-    onRunProposal: (proposal: AssistantGenerationProposal) => void;
+    onRunProposal: (proposal: AssistantGenerationProposal, turnId: string) => void;
     onDismissProposal: (proposalId: string) => void;
     onContinue?: () => void;
 };
@@ -60,10 +60,10 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
         <div className="canvas-assistant-turn">
             <CanvasAssistantUserMessage text={turn.userText} selectedCount={turn.selectedNodeIds?.length ?? 0} />
             <CanvasAssistantAttachments attachments={turn.attachments || []} />
-            {(turn.skills || []).map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>技能：{skill.skillName || skill.skillId} · {skill.version || skill.versionId}</span>)}
+            {(turn.skills || []).map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>{assistantSkillLabel(skill)}</span>)}
             {turn.supplementInputs?.length ? turn.supplementInputs.map((input, index) => <div key={`supplement:${index}`}>
                 <CanvasAssistantUserMessage text={input.message} selectedCount={0} /><CanvasAssistantAttachments attachments={input.attachments || []} />
-                {(input.skills || []).map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>技能：{skill.skillName || skill.skillId} · {skill.version || skill.versionId}</span>)}
+                {(input.skills || []).map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>{assistantSkillLabel(skill)}</span>)}
             </div>) : (turn.supplements || []).map((text, index) => <CanvasAssistantUserMessage key={`supplement:${index}`} text={text} selectedCount={0} />)}
             {turn.reply ? <CanvasAssistantReply text={turn.reply} /> : null}
             {turn.outputs?.length ? <CanvasAssistantOutputs outputs={turn.outputs} /> : null}
@@ -124,15 +124,17 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
                 return (
                     <div key={proposal.proposalId} className="canvas-assistant-card">
                         <span style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{assistantProposalText(proposal, portraitPriceLines(profile?.videoPricing))}</span>
-                        {priceError && !started && !skipped ? <span className="canvas-assistant-meta" role="status">{priceError}</span> : null}
-                        {!skipped && !running && proposalFeedback?.[proposal.proposalId] ? <span className="canvas-assistant-meta" role="status" style={{ overflowWrap: "anywhere" }}>{proposalFeedback[proposal.proposalId]}</span> : null}
+                        {priceError && !started && !skipped && !undone ? <span className="canvas-assistant-meta" role="status">{priceError}</span> : null}
+                        {!skipped && !running && (!undone || started) && proposalFeedback?.[proposal.proposalId] ? <span className="canvas-assistant-meta" role="status" style={{ overflowWrap: "anywhere" }}>{proposalFeedback[proposal.proposalId]}</span> : null}
                         {started ? (
                             <span className="canvas-assistant-meta">已开始生成</span>
+                        ) : undone ? (
+                            <span className="canvas-assistant-meta">{ASSISTANT_PROPOSAL_UNDONE_TEXT}</span>
                         ) : skipped ? (
                             <span className="canvas-assistant-meta">这次没有生成</span>
                         ) : (
                             <div className="canvas-assistant-card-actions">
-                                <Button size="small" type="primary" autoInsertSpace={false} loading={running} disabled={Boolean(priceError)} onClick={() => onRunProposal(proposal)}>
+                                <Button size="small" type="primary" autoInsertSpace={false} loading={running} disabled={Boolean(priceError)} onClick={() => onRunProposal(proposal, turn.turnId)}>
                                     生成
                                 </Button>
                                 <Button size="small" disabled={running} onClick={() => onDismissProposal(proposal.proposalId)}>

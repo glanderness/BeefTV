@@ -231,3 +231,26 @@ test("F02: workflow substitution and blank confirmation keys fail closed", () =>
     const workflow = { ...node, type: CanvasNodeType.Config, metadata: { workflowProvider: "runninghub" as const } };
     expect(() => buildConfirmedGenerationConfig(config, workflow, "image", undefined, config.imageModel)).toThrow();
 });
+
+test("a round the server reports as undone never reads or submits the proposal", async () => {
+    let prepared = 0;
+    let submissions = 0;
+    const notices: string[] = [];
+    const args = input({
+        confirmRunnable: async () => "这一轮已撤销，不会生成。",
+        prepare: async () => { prepared++; throw new Error("must not read"); },
+        generate: async () => { submissions++; },
+        notify: text => { notices.push(text); },
+    });
+    await executeAssistantProposal(args);
+    expect(prepared).toBe(0);
+    expect(submissions).toBe(0);
+    expect(args.claims.size).toBe(0);
+    expect(notices).toEqual(["这一轮已撤销，不会生成。"]);
+});
+
+test("a confirmed round continues to the normal submission path", async () => {
+    let submissions = 0;
+    await executeAssistantProposal(input({ confirmRunnable: async () => null, generate: async () => { submissions++; } }));
+    expect(submissions).toBe(1);
+});
