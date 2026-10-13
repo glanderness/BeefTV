@@ -95,6 +95,9 @@ type Scope struct {
 	CanvasIDs      []string
 	TaskIDs        []string
 	SkillPins      []skills.Pin
+	// SessionSkillPins are pins of earlier rounds of the same Durable
+	// conversation and owner. Their bodies are already in that transcript.
+	SessionSkillPins []skills.Pin
 }
 
 // HistoryState supplements pi conversation history with business receipts.

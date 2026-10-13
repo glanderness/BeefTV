@@ -23,6 +23,7 @@ const ops = createServer(async (req, res) => {
   if (req.url === '/api/ops') { res.end(JSON.stringify({ code: 0, data: { ops: [{ id: 'canvas.node.update', summary: 'update', assistantModes: ['canvas', 'full-access'], replay: 'safe', readOnly: false, params: { type: 'object', properties: { nodeId: { type: 'string' }, expectedRevision: { type: 'integer' }, patch: { type: 'object' } } } }] } })); return; }
   const body = await read(req);
   if(req.url.endsWith('/bind-session')) {assert.match(body.sessionId,/^durable:/);res.end(JSON.stringify({code:0,data:{bound:true}}));return;}
+  if (req.url === '/api/ops/skill.catalog') { res.end(JSON.stringify({ code: 0, data: { result: { skills: [], total: 0 } } })); return; }
   if (req.url === '/api/ops/media.overview') { res.end(JSON.stringify({ code: 0, data: { result: { source: { version: 'owned-fixture-version' } } } })); return; }
   if (req.url === '/api/ops/media.inspect') {
     assert.equal(body.params.expectedVersion, 'owned-fixture-version');

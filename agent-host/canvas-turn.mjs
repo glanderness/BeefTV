@@ -170,10 +170,13 @@ export function turnContextPrefix({ canvasId, selectedNodeIds = [], references =
 
 // providerRegistration 构造要登记给 pi 的供应商：
 // 密钥以环境变量引用形式传入，宿主进程内解析，不写进 auth.json。
+// Anthropic 协议打开 reasoning，由会话的 thinkingLevel 决定思考预算（off 时显式关闭）。
+// OpenAI 兼容协议保持关闭：pi-ai 对 reasoning 模型会改发 developer 角色和 reasoning_effort，
+// 这些未在实际接入的兼容服务上验证过。
 export function providerRegistration({ api, baseUrl, modelId, maxTokens, contextWindow }) {
   return {
     name: 'BeefTV', baseUrl, apiKey: '$BEEFTV_AGENT_API_KEY', api,
-    models: [{ id: modelId, name: modelId, reasoning: false, input: ['text', 'image'],
+    models: [{ id: modelId, name: modelId, reasoning: api === 'anthropic-messages', input: ['text', 'image'],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow, maxTokens }],
   };

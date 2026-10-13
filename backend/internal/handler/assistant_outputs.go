@@ -25,7 +25,7 @@ func assistantOutputsLine(line []byte, svc *app.Service, userID, canvasID, turnI
 		}
 	}
 	event["outputs"] = outputs
-	labelAssistantSkills(event, pins)
+	labelAssistantSkills(event, pins, installedSkillLabels(svc, userID))
 	raw, err := json.Marshal(event)
 	if err != nil {
 		return line

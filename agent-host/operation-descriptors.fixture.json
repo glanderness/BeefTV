@@ -1515,6 +1515,23 @@
     "replay": "safe"
   },
   {
+    "id": "skill.catalog",
+    "summary": "列出当前用户已安装技能的名称、说明和当前版本；不含正文",
+    "readOnly": true,
+    "scope": "workspace_read",
+    "params": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "assistantModes": [
+      "full-access",
+      "read-only",
+      "canvas"
+    ],
+    "replay": "safe"
+  },
+  {
     "id": "skill.file",
     "summary": "读取当前对话选定技能的固定版本正文或包内辅助文本；不执行脚本",
     "readOnly": true,

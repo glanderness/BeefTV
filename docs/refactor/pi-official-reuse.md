@@ -12,7 +12,7 @@
 - 旧 JSONL 会话退役交接：每个画布内的旧会话固定对应一条 Durable 接续会话，身份写入清单，交接完成状态写入官方 SQLite；`handoffSession` 仅首次用官方 `root.reset(handoffNote)` 写入旧文本，再发布当前指针。失败、断线或重启后的旧 ID 重试复用该会话，不重置已有上下文；显式新建仍创建独立会话，切换旧会话仍可只读历史。NDJSON 在首轮开始时发送 `session` 行，让界面及断流恢复立即使用实际会话 ID；未收到此行也不影响服务端幂等。不调用模型生成摘要，也不把旧 JSONL 导入 Durable。
 - Go 拥有业务回合、素材归属、权限、付费批准、操作去重与撤销。宿主开始或恢复执行前读取 Go 回合记录；HTTP 客户端离开不自动结算持久执行。
 - 每轮工具通过官方 `registry.install` 和 `root.configure` 配置。内置“只读 / 当前画布 / 完全访问”由 Go 持久记录决定，补充消息和恢复不能升权；具体合同见 [Agent 权限与外部工具](agent-access-20261008.md)。
-- 媒体短引用保存在会话中，实际发出模型请求前读取已校验的文件并重新核对当前业务归属。Skills 使用明确选定的版本与内容摘要，经官方扩展展开正文，不自动扫描宿主机文件或执行包内脚本。
+- 媒体短引用保存在会话中，实际发出模型请求前读取已校验的文件并重新核对当前业务归属。技能的用法照官方 pi：系统提示里常驻一份已安装技能目录（名称、说明和 id，最多 50 个，说明截到约 300 字），只有安装的技能变了这段才变；用户在输入框选中的技能，按选定的版本和内容摘要读取正文，写进这条用户消息的开头（同官方 `/skill:name`）；模型发现要求符合某个技能时，用 `skill_load` 读取，正文作为工具结果进入对话。两种方式都只读一次，记在宿主状态 `loadedSkills` 里，重启和恢复后仍然有效，后续每一轮都能从对话记录里看到同一份步骤；不再每轮增删系统提示段。Go 允许读取的技能是：本轮选择的、同一对话之前轮次选择过的、以及用户当前安装的版本，都按版本精确匹配并只限本人。界面历史只显示用户自己输入的文字。不自动扫描宿主机文件，也不执行包内脚本。
 - 以下 SDK 矩阵和 JSONL 所有权规则仅说明已有 JSONL 会话的只读读取，不是新 Durable 会话的数据格式。
 
 ## 官方来源
@@ -43,6 +43,8 @@
 | `Harness.open` / `openNodeSqliteStorage` / `defineDoc` / `defineExtension` / `defineTool` / `watchEvents` | 采用 | 新会话唯一的执行装配与持久事件来源。 |
 | `root.reset(handoff)` | 采用 | 旧会话退役交接：把旧会话文本写成新上下文开头的官方 reset 条目。 |
 | `root.submit` / `submission.wait` / `root.abort` | 采用 | 回合提交、终态结算与停止；`whenBusy: "steer"` 用于运行中补充。 |
+| pi-coding-agent 技能（`formatSkillsForPrompt` / `/skill:name` 展开） | 照样实现 | Durable 没有技能组件。目录按 `<available_skills>` 的格式写成常驻系统提示段，正文按官方 `<skill name=…>` 块写进用户消息或 `skill_load` 工具结果；目录函数要求本机文件路径，不直接复用。 |
+| `thinkingLevel`（根会话） | 采用 | 默认 `low`（约 2048 个思考 token），可用 `BEEFTV_AGENT_THINKING` 改为 off、minimal、low、medium 或 high；已有对话在下一轮开始时跟上。只对 Anthropic 协议的模型打开思考，思考和回答共用 `BEEFTV_AGENT_MAX_TOKENS`（默认 16384）。 |
 | `GenerationTask.beforeRequest` hook | 采用 | 准备请求前重读 Go 授权、历史素材归属与补充输入，并在实际 HTTP dispatch 前转换已验证的媒体结果。 |
 | pi 的字节级空闲超时（undici `bodyTimeout` / `httpIdleTimeoutMs`） | 不采用 | 只按“收到任意字节”重置，SSE 心跳会把它续上；且不在 Durable 路径安装。宿主保留按实际文本/工具进展计时的空闲上限，见 `model-stream-idle.mjs`。 |
 | `compaction_*` / `auto_retry_*` | 不映射到面板 | Durable 的压缩与重试在官方任务内部完成；宿主 NDJSON 只发 `text_delta` 与工具 `lifecycle` 行。 |

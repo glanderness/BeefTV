@@ -3,6 +3,7 @@ package operations
 import (
 	"encoding/json"
 	"infinite-canvas/backend/internal/skills"
+	"unicode/utf8"
 )
 
 type SkillResources interface {
@@ -10,7 +11,51 @@ type SkillResources interface {
 	AgentSkillFile(string, skills.Pin, string) (*skills.AgentFile, error)
 }
 
+// SkillCatalog lists the caller's installed skills at their current versions.
+type SkillCatalog interface {
+	AgentSkillCatalog(string) ([]skills.AgentCatalogItem, error)
+}
+
+// SkillCatalogLimit and SkillDescriptionLimit keep the advertised catalog
+// bounded; the full instructions are loaded only on demand.
+const (
+	SkillCatalogLimit     = 50
+	SkillDescriptionLimit = 300
+)
+
+func truncateSkillDescription(value string) string {
+	if utf8.RuneCountInString(value) <= SkillDescriptionLimit {
+		return value
+	}
+	runes := []rune(value)
+	return string(runes[:SkillDescriptionLimit]) + "…"
+}
+
 func registerSkillOps(r *Registry) {
+	r.Register(Op{AssistantCanvas: true, ID: "skill.catalog", Summary: "列出当前用户已安装技能的名称、说明和当前版本；不含正文", ReadOnly: true, Scope: ScopeWorkspaceRead,
+		Params: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+		Handler: func(ctx *Context, raw json.RawMessage) (any, error) {
+			var args struct{}
+			if err := decodeParams(raw, &args); err != nil {
+				return nil, err
+			}
+			port, ok := ctx.Domain.(SkillCatalog)
+			if !ok {
+				return nil, Unsupported("skill_unavailable", "当前工作区无法读取技能")
+			}
+			items, err := port.AgentSkillCatalog(ctx.UserID)
+			if err != nil {
+				return nil, mapDomainError(err)
+			}
+			total := len(items)
+			if len(items) > SkillCatalogLimit {
+				items = items[:SkillCatalogLimit]
+			}
+			for i := range items {
+				items[i].Description = truncateSkillDescription(items[i].Description)
+			}
+			return map[string]any{"skills": items, "total": total}, nil
+		}})
 	for _, id := range []string{"skill.get", "skill.file"} {
 		operation := id
 		r.Register(Op{AssistantCanvas: true, ID: operation, Summary: "读取当前对话选定技能的固定版本正文或包内辅助文本；不执行脚本", ReadOnly: true, Scope: ScopeCanvas,

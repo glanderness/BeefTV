@@ -179,9 +179,12 @@ describe("供应商定义", () => {
         expect(registration.apiKey).toBe("$BEEFTV_AGENT_API_KEY");
         expect(registration.api).toBe("anthropic-messages");
         expect(registration.baseUrl).toBe("https://enterprise.example.com");
-        expect(registration.models).toEqual([{ id: "claude-fable-5", name: "claude-fable-5", reasoning: false,
+        expect(registration.models).toEqual([{ id: "claude-fable-5", name: "claude-fable-5", reasoning: true,
             input: ["text", "image"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             contextWindow: 200000, maxTokens: 4096 }]);
+        for (const api of ["openai-completions", "openai-responses"]) {
+            expect(providerRegistration({ api, baseUrl: "https://relay.example.com/v1", modelId: "m", maxTokens: 16384, contextWindow: 200000 }).models[0].reasoning).toBe(false);
+        }
     });
 
     test("宿主不再硬编码 OpenAI 目录，模型与协议只来自后端下发的环境变量", () => {

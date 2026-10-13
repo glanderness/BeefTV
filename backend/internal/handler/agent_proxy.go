@@ -212,6 +212,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		}
 		if strings.HasPrefix(path, "/history?") {
 			if history, ok := decoded.(map[string]any); ok {
+				installed := installedSkillLabels(svc, c.GetString("agentUserId"))
 				turns, _ := history["turns"].([]any)
 				for _, value := range turns {
 					if turn, ok := value.(map[string]any); ok {
@@ -234,7 +235,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 							turn["permissionMode"] = state.PermissionMode
 							pins = state.SkillPins
 						}
-						labelAssistantSkills(turn, pins)
+						labelAssistantSkills(turn, pins, installed)
 					}
 				}
 				if active, ok := history["active"].(map[string]any); ok {
@@ -248,7 +249,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 					if state != nil {
 						pins = state.SkillPins
 					}
-					labelAssistantSkills(active, pins)
+					labelAssistantSkills(active, pins, installed)
 				}
 			}
 		}

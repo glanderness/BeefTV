@@ -47,10 +47,11 @@ function meaningful(protocol, data) {
   }
   if (event.type === 'message_stop') return true;
   if (event.type === 'message_delta') return !!event.delta?.stop_reason;
-  if (event.type === 'content_block_start') return text(event.content_block?.text) || text(event.content_block?.thinking) ||
+  if (event.type === 'content_block_start') return text(event.content_block?.text) || text(event.content_block?.thinking) || text(event.content_block?.data) ||
     (event.content_block?.type === 'tool_use' && (text(event.content_block.name) || text(event.content_block.id)));
   if (event.type !== 'content_block_delta') return false;
-  return text(event.delta?.text) || text(event.delta?.thinking) || text(event.delta?.partial_json);
+  // Thinking text and its closing signature are model progress, as text is.
+  return text(event.delta?.text) || text(event.delta?.thinking) || text(event.delta?.signature) || text(event.delta?.partial_json);
 }
 
 // Observe complete SSE records, forwarding the original bytes unchanged. A

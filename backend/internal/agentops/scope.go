@@ -15,12 +15,17 @@ import (
 // 这个范围只能由后端从回合记录构造；模型给的工具参数无法扩大它，
 // 所以「提示词里说可以读」不会变成真实权限。
 type AssistantScope struct {
-	PermissionMode   string
-	CanvasID         string
-	AssetIDs         map[string]bool
-	CanvasIDs        map[string]bool
-	TaskIDs          map[string]bool
-	SkillPins        map[string]skills.Pin
+	PermissionMode string
+	CanvasID       string
+	AssetIDs       map[string]bool
+	CanvasIDs      map[string]bool
+	TaskIDs        map[string]bool
+	// SkillPins holds exact pin identities selected in this round or in an
+	// earlier round of the same conversation; a loaded skill stays readable.
+	SkillPins map[skills.Pin]bool
+	// SkillInstalled reports whether a pin is the caller's currently installed
+	// version (Go-only resolver), so the assistant can load an advertised skill.
+	SkillInstalled   func(skills.Pin) bool
 	ProjectReference func(kind, id string) error // Go-only DB resolver, never model supplied.
 }
 
@@ -56,7 +61,7 @@ func (s *AssistantScope) Allows(op *operations.Op, params json.RawMessage) error
 	}
 	// Broad modes rely on each shared domain handler's current ownership check.
 	// Skills remain pinned rather than discovering filesystem instructions.
-	if assistantturns.Mode(s.PermissionMode) != assistantturns.PermissionCanvas && op.ID != "skill.get" && op.ID != "skill.file" {
+	if assistantturns.Mode(s.PermissionMode) != assistantturns.PermissionCanvas && op.ID != "skill.get" && op.ID != "skill.file" && op.ID != "skill.catalog" {
 		return nil
 	}
 	if !op.ReadOnly && op.Scope == operations.ScopeCanvas {
@@ -73,12 +78,14 @@ func (s *AssistantScope) Allows(op *operations.Op, params json.RawMessage) error
 			return nil
 		}
 		return denied("只能搜索当前画布所属项目")
+	case "skill.catalog":
+		return nil
 	case "skill.get", "skill.file":
-		pin, ok := s.SkillPins[args.SkillID]
-		if ok && pin.VersionID == args.VersionID && pin.ContentHash == args.ContentHash {
+		pin := skills.Pin{SkillID: args.SkillID, VersionID: args.VersionID, ContentHash: args.ContentHash}
+		if s.SkillPins[pin] || (s.SkillInstalled != nil && s.SkillInstalled(pin)) {
 			return nil
 		}
-		return denied("只能读取本轮明确选择的技能版本")
+		return denied("只能读取本对话选择或已安装的技能版本")
 	case "canvas.get":
 		if s.canvasAllowed(args.CanvasID) || s.projectReferenceAllowed("canvas", args.CanvasID) {
 			return nil

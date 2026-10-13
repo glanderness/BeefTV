@@ -10,7 +10,6 @@ import { ModelRuntime, SessionManager } from '@earendil-works/pi-coding-agent';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { createDurableSessionStore, isDurableSessionId } from './durable-session-owner.mjs';
 import { createDurableTurnBudget } from './durable-turn-budget.mjs';
-import { createDurableSkillExtension } from './skill-resource.mjs';
 import { providerRegistration, providerUnavailableReason,
   turnContextPrefix, unflushedSessionHistory } from './canvas-turn.mjs';
 import { budgetError, spendModelRequest } from './request-budget.mjs';
@@ -40,7 +39,8 @@ const MODEL_ID = (process.env.BEEFTV_AGENT_MODEL || '').trim();
 const MODEL_API = (process.env.BEEFTV_AGENT_API || 'openai-completions').trim();
 const BASE_URL = (process.env.BEEFTV_AGENT_BASE_URL || '').replace(/\/+$/, '');
 const API_KEY = process.env.BEEFTV_AGENT_API_KEY || '';
-const MAX_OUTPUT_TOKENS = Number(process.env.BEEFTV_AGENT_MAX_TOKENS || 4096);
+// Thinking shares this ceiling with the answer (pi-ai adds its budget within it).
+const MAX_OUTPUT_TOKENS = Number(process.env.BEEFTV_AGENT_MAX_TOKENS || 16384);
 const CONTEXT_WINDOW = Number(process.env.BEEFTV_AGENT_CONTEXT_WINDOW || 200000);
 const MAX_REQUESTS_PER_TURN = Number(process.env.BEEFTV_AGENT_MAX_REQUESTS_PER_TURN || 40);
 const MAX_TOOL_STEPS_PER_TURN = Number(process.env.BEEFTV_AGENT_MAX_TOOL_STEPS_PER_TURN || 40);
@@ -184,9 +184,10 @@ const durable = createDurableSessionStore({
     return models;
   },
   getModelRef: () => ({ provider: PROVIDER_ID, modelId: MODEL_ID }),
-  extensions: entry => [createDurableSkillExtension({getPins:()=>entry.skillPins || [],
-    readVersion:async (pin,signal) => (await ops.opsRequest('POST','/ops/skill.get',{params:pin},signal,entry.turn.turnId)).result,
-  })],
+  skills: {
+    readVersion:async (entry,pin,signal,turnId) => (await ops.opsRequest('POST','/ops/skill.get',{params:pin},signal,turnId || entry.turn.turnId)).result,
+    readCatalog:async (entry,signal,turnId) => (await ops.opsRequest('POST','/ops/skill.catalog',{params:{}},signal,turnId || entry.turn.turnId)).result,
+  },
   authorizeTurn: async ({canvasId, turnId,sessionId}) => {
     const state = await ops.opsRequest('GET', `/assistant/runtime/turns/${encodeURIComponent(turnId)}`);
     if(sessionId && state.open) await ops.opsRequest('POST',`/assistant/runtime/turns/${encodeURIComponent(turnId)}/bind-session`,{sessionId});

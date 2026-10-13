@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -174,5 +175,44 @@ func (s *Service) ValidateAgentSkills(userID string, pins []Pin) ([]Pin, error) 
 		labeled.Version = resource.Version
 		result = append(result, labeled)
 	}
+	return result, nil
+}
+
+// AgentCatalogItem advertises one installed skill to the assistant by its
+// current version. The model loads the full instructions on demand.
+type AgentCatalogItem struct {
+	Pin         Pin    `json:"pin"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// AgentCatalog lists the caller's installed, enabled skills at their current
+// versions, in a stable order. Pins carry display labels; identity is exact.
+func (s *Service) AgentCatalog(userID string) ([]AgentCatalogItem, error) {
+	if s == nil || s.repo == nil || strings.TrimSpace(userID) == "" {
+		return nil, kernel.Forbidden("无法读取当前用户技能")
+	}
+	items, err := s.AddedSkills(userID)
+	if err != nil {
+		return nil, err
+	}
+	result := []AgentCatalogItem{}
+	for _, item := range items {
+		pin := Pin{SkillID: item.SkillID, VersionID: item.VersionID, ContentHash: item.ContentHash}
+		if item.Status != skillStatusEnabled || ValidatePin(pin) != nil {
+			continue
+		}
+		state, err := s.repo.UserSkillState(userID, item.SkillID)
+		if err != nil {
+			return nil, err
+		}
+		if state == nil || !state.Added {
+			continue
+		}
+		pin.SkillName = item.SkillName
+		pin.Version = item.Version
+		result = append(result, AgentCatalogItem{Pin: pin, Name: item.SkillName, Description: item.Description})
+	}
+	sort.SliceStable(result, func(i, j int) bool { return result[i].Pin.SkillID < result[j].Pin.SkillID })
 	return result, nil
 }

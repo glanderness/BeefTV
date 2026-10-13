@@ -227,14 +227,49 @@ func (s *Service) ScopeForHost(userID, turnID string) (Scope, bool, error) {
 			taskIDs = append(taskIDs, result.TaskID)
 		}
 	}
+	sessionPins, err := s.sessionSkillPins(rec)
+	if err != nil {
+		return Scope{}, false, err
+	}
 	return Scope{
-		PermissionMode: Mode(rec.PermissionMode),
-		CanvasID:       rec.CanvasID,
-		AssetIDs:       uniqueSorted(append(append([]string{}, rec.ReferencedAssetIDs...), rec.AssociatedAssetIDs...)),
-		CanvasIDs:      uniqueSorted(rec.ReferencedCanvasIDs),
-		TaskIDs:        uniqueSorted(taskIDs),
-		SkillPins:      SortedSkillPins(rec.SkillPins),
+		PermissionMode:   Mode(rec.PermissionMode),
+		CanvasID:         rec.CanvasID,
+		AssetIDs:         uniqueSorted(append(append([]string{}, rec.ReferencedAssetIDs...), rec.AssociatedAssetIDs...)),
+		CanvasIDs:        uniqueSorted(rec.ReferencedCanvasIDs),
+		TaskIDs:          uniqueSorted(taskIDs),
+		SkillPins:        SortedSkillPins(rec.SkillPins),
+		SessionSkillPins: sessionPins,
 	}, true, nil
+}
+
+// sessionSkillPins returns the exact pins of other rounds bound to the same
+// Durable conversation and owner. Undone rounds still count: their skill text
+// remains in the conversation transcript.
+func (s *Service) sessionSkillPins(rec Record) ([]skills.Pin, error) {
+	if strings.TrimSpace(rec.DurableSessionID) == "" || s.store.DB() == nil {
+		return nil, nil
+	}
+	var rows []model.AssistantTurn
+	if err := s.store.DB().Select("turn_id", "skill_pins_json").
+		Where("user_id = ? AND durable_session_id = ? AND turn_id <> ? AND skill_pins_json <> ''", rec.UserID, rec.DurableSessionID, rec.TurnID).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	seen := map[skills.Pin]bool{}
+	pins := []skills.Pin{}
+	for _, row := range rows {
+		var stored []skills.Pin
+		if json.Unmarshal([]byte(row.SkillPinsJSON), &stored) != nil {
+			return nil, errCorruptStored()
+		}
+		for _, pin := range stored {
+			if identity := pin.Identity(); !seen[identity] {
+				seen[identity] = true
+				pins = append(pins, pin)
+			}
+		}
+	}
+	return SortedSkillPins(pins), nil
 }
 
 // Finalize settles an open round from this round's succeeded receipts.

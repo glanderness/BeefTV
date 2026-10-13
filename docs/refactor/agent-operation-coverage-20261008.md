@@ -20,7 +20,7 @@
 | 剪裁、排序、调音量、字幕 | canvas.timeline.update | 当前画布已关联素材；revision 校验、时间区间验证；不接受任意路径 |
 | 输出可检查的本地成片 | canvas.timeline.render、task.get | 本地 FFmpeg，不付费；时间线参数校验，通过任务查产物，再用媒体工具审片 |
 | 请求付费镜头生成 | canvas.generation.propose | 只提议，由界面显示模型/费用并让用户确认后提交 |
-| 按自己的流程工作 | skill.get、skill.file | 用户明确选择固定安装版本；只读包内声明的文本辅助文件。重启保留 pin；重新验证安装授权与文件 SHA256；未提供脚本执行能力 |
+| 按自己的流程工作 | skill.catalog、skill.get、skill.file | 目录只列本人已安装、已启用技能的当前版本（名称、说明，不含正文）；正文读取限本轮选择、同一对话之前选择过或当前安装的版本，按版本精确匹配。只读包内声明的文本辅助文件。重启保留 pin；重新验证安装授权与文件 SHA256；未提供脚本执行能力 |
 
 `canvas.search`、`asset.list`、`canvas.document.commit` 不在当前画布模式白名单内；只读模式开放本用户工作区读取，完全访问还开放整文档提交与跨画布写入，仍校验归属、revision 和整组撤销。`conversation.message.attach` 不向内置助手开放。
 

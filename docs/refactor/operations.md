@@ -48,7 +48,7 @@ listed := registry.List(operations.ManualCaller(false))
 
 ### 操作目录
 
-共享目录的只读操作：`canvas.get`、`canvas.search`、`asset.list`、`asset.get`、`task.get`、`model.catalog`、`media.overview`、`media.inspect`、`media.check`、`skill.get`、`skill.file`、`project.media.search`、`project.canvas.search`、`canvas.generation.propose`。生成提议虽不直接生成或扣费，仍不向内置只读模式开放。
+共享目录的只读操作：`canvas.get`、`canvas.search`、`asset.list`、`asset.get`、`task.get`、`model.catalog`、`media.overview`、`media.inspect`、`media.check`、`skill.catalog`、`skill.get`、`skill.file`、`project.media.search`、`project.canvas.search`、`canvas.generation.propose`。生成提议虽不直接生成或扣费，仍不向内置只读模式开放。
 
 写入：`canvas.node.update`、`canvas.node.configure`、`canvas.node.bind_asset`、`canvas.node.move`、`canvas.node.delete`、`canvas.nodes.create`、`canvas.edge.create`、`canvas.edge.delete`、`canvas.document.commit`、`canvas.task.bind`、`conversation.message.attach`、`canvas.timeline.update`、`canvas.timeline.render`
 

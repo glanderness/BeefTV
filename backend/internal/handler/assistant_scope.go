@@ -116,19 +116,39 @@ func assistantScopeForRequest(c *gin.Context, svc *app.Service, userID string, h
 		AssetIDs:       assistantIDSet(scope.AssetIDs),
 		CanvasIDs:      assistantIDSet(scope.CanvasIDs),
 		TaskIDs:        assistantIDSet(scope.TaskIDs),
-		SkillPins:      assistantSkillPinSet(scope.SkillPins),
+		SkillPins:      assistantSkillPinSet(scope.SkillPins, scope.SessionSkillPins),
+		SkillInstalled: func(pin skills.Pin) bool {
+			return assistantSkillInstalled(svc, userID, pin)
+		},
 		ProjectReference: func(kind, id string) error {
 			return svc.ValidateAgentProjectReference(userID, scope.CanvasID, kind, id)
 		},
 	}, turnID, nil
 }
 
-func assistantSkillPinSet(pins []skills.Pin) map[string]skills.Pin {
-	result := map[string]skills.Pin{}
-	for _, pin := range pins {
-		result[pin.SkillID] = pin
+func assistantSkillPinSet(groups ...[]skills.Pin) map[skills.Pin]bool {
+	result := map[skills.Pin]bool{}
+	for _, pins := range groups {
+		for _, pin := range pins {
+			result[pin.Identity()] = true
+		}
 	}
 	return result
+}
+
+// assistantSkillInstalled is true only for the caller's currently installed
+// version of a skill, compared by exact identity.
+func assistantSkillInstalled(svc *app.Service, userID string, pin skills.Pin) bool {
+	catalog, err := svc.AgentSkillCatalog(userID)
+	if err != nil {
+		return false
+	}
+	for _, item := range catalog {
+		if item.Pin.Identity() == pin.Identity() {
+			return true
+		}
+	}
+	return false
 }
 
 func assistantIDSet(ids []string) map[string]bool {

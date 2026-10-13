@@ -18,14 +18,20 @@ function send(res, model, tool, args = {}) {
 const provider = createServer(async (req, res) => {
   try {
     const request = await readBody(req); modelCalls++;
-    const system = request.messages.filter(m => m.role === 'system').map(m => m.content).join('\n');
-    assert(system.includes(config.instruction), 'selected fixed Skill body absent from real model payload');
-    assert(system.includes(config.pin.versionId), 'version absent from real model payload');
+    const content = m => typeof m.content === 'string' ? m.content : (m.content || []).map(part => part.text || '').join('');
+    const system = request.messages.filter(m => m.role === 'system' || m.role === 'developer').map(content).join('\n');
+    const user = request.messages.filter(m => m.role === 'user').map(content).join('\n');
+    // The selected body lives in the user message (transcript), like official /skill:name.
+    const block = new RegExp(`<skill name="[^"]+" version="[^"]*" skillId="${config.pin.skillId}" versionId="${config.pin.versionId}" contentHash="${config.pin.contentHash}">[\\s\\S]*${config.instruction.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\n</skill>`);
+    assert(block.test(user), 'selected fixed Skill block absent from the real user message');
+    assert(!system.includes(config.instruction), 'Skill body must not be a system section');
+    assert(system.includes('<available_skills>') && system.includes(`<id>${config.pin.skillId}</id>`), 'installed catalog absent from system prompt');
+    assert(!JSON.stringify(request.messages).includes('Removed system prompt section'));
     const results = request.messages.filter(m => m.role === 'tool');
     if (!results.length) return send(res, request.model, 'skill_file', { ...config.pin, path: config.path });
     assert(results[0].content.includes(config.reference), 'auxiliary file missing from tool result');
     if (config.script) {
-      assert(system.includes('script_execution'));
+      assert(user.includes('script_execution'));
       return send(res, request.model);
     }
     if (results.length === 1) return send(res, request.model, 'canvas_nodes_create', {

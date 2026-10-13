@@ -223,6 +223,7 @@ func TestBuildEnvStripsInheritedSecretsAndClearsBlankAuthority(t *testing.T) {
 				"ANTHROPIC_API_KEY=sk-ant",
 				"GEMINI_API_KEY=stolen-gemini",
 				"BEEFTV_AGENT_MAX_TOKENS=1234",
+				"BEEFTV_AGENT_THINKING=medium",
 			}
 		},
 	})
@@ -265,6 +266,9 @@ func TestBuildEnvStripsInheritedSecretsAndClearsBlankAuthority(t *testing.T) {
 	}
 	if envValue(env, "BEEFTV_AGENT_MAX_TOKENS") != "1234" {
 		t.Fatalf("非权威可调参数应保留，得到 %q", envValue(env, "BEEFTV_AGENT_MAX_TOKENS"))
+	}
+	if envValue(env, "BEEFTV_AGENT_THINKING") != "medium" {
+		t.Fatalf("思考强度应保留，得到 %q", envValue(env, "BEEFTV_AGENT_THINKING"))
 	}
 }
 

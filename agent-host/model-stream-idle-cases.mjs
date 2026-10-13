@@ -40,6 +40,7 @@ for(const [path,body,progress,empty,terminal] of [
   ['/chat/completions',{messages:[],stream:true},{choices:[{delta:{reasoning_content:'thinking',tool_calls:[{function:{arguments:'{"x":'}}]}}]}, {choices:[{delta:{role:'assistant'}}]}, {choices:[{delta:{},finish_reason:'stop'}]}],
   ['/responses',{input:[],stream:true},{type:'response.function_call_arguments.delta',delta:'value'}, {type:'response.created'}, {type:'response.completed'}],
   ['/messages',{messages:[],stream:true},{type:'content_block_delta',delta:{type:'thinking_delta',thinking:'think'}},{type:'ping'},{type:'message_stop'}],
+  ['/messages',{messages:[],stream:true},{type:'content_block_delta',delta:{type:'signature_delta',signature:'sig'}},{type:'ping'},{type:'message_stop'}],
 ]) test(`actual ${path} progress permits a stream longer than total timeout`,async t=>{
   const f=await fixture(t,res=>{let count=0;res.write(event(empty));const timer=setInterval(()=>{if(count++<5)res.write(event(progress));else{clearInterval(timer);res.end(event(terminal));}},40);res.on('close',()=>clearInterval(timer));});
   const req=request(path,body);const begin=Date.now(); const result=await read(await fetchModelWithProgressIdle(f.url+path,req.options,{timeoutMs:120}));
