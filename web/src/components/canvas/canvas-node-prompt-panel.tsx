@@ -6,7 +6,12 @@ import { ArrowLeftRight, ArrowUp, AtSign, Boxes, Camera, ChevronDown, FileText, 
 import { ModelPicker } from "@/components/model-picker";
 import { defaultConfig, modelOptionName, resolveModelChannel, selectableModelsByCapability, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { resolveAudioSpeechSettings } from "@/lib/audio-generation";
-import { resolveCanvasGenerationModel } from "@/lib/canvas/canvas-project-generation";
+import { buildGenerationConfig, resolveCanvasGenerationModel } from "@/lib/canvas/canvas-project-generation";
+import { CanvasWorkflowControls } from "./canvas-workflow-controls";
+import { normalizeRunningHubCapability } from "@/stores/use-config-store";
+import { workflowProviderPluginEnabled } from "@/lib/plugins/builtin/workflows";
+import { canvasWorkflowInputError } from "@/lib/canvas/canvas-workflow-inputs";
+import { resolveGenerationWorkflowExecution } from "@/lib/generation-workflow-execution";
 import { clampPromptEditorModalSize, PROMPT_EDITOR_VIEWPORT_MARGIN } from "@/lib/canvas/canvas-prompt-editor-size";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
@@ -124,6 +129,20 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         }, mode),
     };
     const config = buildNodeConfig(globalConfig, node, mode, requirements);
+    const workflowActive = config.taskWorkflowProvider === "runninghub";
+    const workflowStatuses = usePluginStore((state) => state.runtimeStatuses);
+    const videoWorkflows = mode === "video" && (workflowActive || workflowProviderPluginEnabled(workflowStatuses, "runninghub")) ? globalConfig.runningHub.workflows.filter((item) => normalizeRunningHubCapability(item.capability, normalizeRunningHubCapability(globalConfig.runningHub.capability)) === "video") : [];
+    const workflowOptionValue = (item: (typeof videoWorkflows)[number]) => `workflow:runninghub:${item.kind === "app" ? "app" : "workflow"}:${item.workflowId}`;
+    const selectedWorkflow = videoWorkflows.find((item) => item.workflowId === node.metadata?.runningHubWorkflowId && (item.kind === "app" ? "app" : "workflow") === (node.metadata?.runningHubWorkflowKind || "workflow"));
+    const workflowGroups = mode === "video" && (workflowActive || workflowProviderPluginEnabled(workflowStatuses, "runninghub")) ? [{key:"workflow:runninghub",label:"RunningHub",options:videoWorkflows.map((item) => ({value:workflowOptionValue(item),label:item.title || item.workflowId}))}] : [];
+    let workflowError = "";
+    if (workflowActive) {
+        try {
+            if (!node.metadata?.runningHubWorkflowId) throw new Error("请选择视频工作流或 AI 应用");
+            const execution = resolveGenerationWorkflowExecution(config, mode);
+            workflowError = canvasWorkflowInputError(execution?.workflowFields || [], activeReferences, node.metadata?.workflowParameters || {});
+        } catch (error) { workflowError = error instanceof Error ? error.message : "工作流配置不可用"; }
+    }
     const availableModels = selectableModelsByCapability(config, mode);
     const resolvedRequirements: ModelRequirements = {
         ...requirements,
@@ -137,7 +156,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const priceChannel = resolveModelChannel(config, config.model);
     const activeReferenceCount = activeReferences.length;
     const videoFrameOptions = resolvedMentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl }));
-    const hasVideoPromptTools = mode === "video" && !simpleMode && videoFrameOptions.length > 0;
+    const hasVideoPromptTools = mode === "video" && !workflowActive && !simpleMode && videoFrameOptions.length > 0;
     const monochromeAccent = theme.node.activeStroke;
     const composerTokens = {
         "--canvas-composer-surface": theme.node.panel,
@@ -162,7 +181,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         if (!rect?.width || !rect.height) return { width: PROMPT_EDITOR_MODAL_DEFAULT_WIDTH, height: PROMPT_EDITOR_MODAL_DEFAULT_HEIGHT };
         return { width: Math.round(rect.width), height: Math.round(rect.height) };
     };
-    const isSubmitDisabled = !isRunning && !prompt.trim();
+    const isSubmitDisabled = !isRunning && (Boolean(workflowError) || !workflowActive && !prompt.trim());
     const canExpandPrompt = mode === "image" || mode === "video";
     const canOptimizePrompt = Boolean(promptOptimizerProvider) && canExpandPrompt;
     const isPortraitTexture = mode === "image" && Boolean(node.metadata?.portraitTexture);
@@ -225,7 +244,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
 
     const submit = () => {
         const text = prompt.trim();
-        if (!text || isRunning) return false;
+        if ((!text && !workflowActive) || workflowError || isRunning) return false;
         onGenerate(node.id, mode, text);
         return true;
     };
@@ -329,7 +348,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     };
 
     const renderComposerControls = (expanded: boolean) =>
-        simpleMode ? (
+        simpleMode && mode !== "video" ? (
             <div className="canvas-node-composer-footer">
                 <span className="min-w-0 truncate px-2 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>
                     {activeReferenceCount ? `已连接 ${activeReferenceCount} 个素材` : "将使用默认模型与参数"}
@@ -348,13 +367,19 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         ) : (
             <div className="canvas-node-composer-footer">
                 <div className={expanded ? "min-w-0 flex-1" : "canvas-node-composer-model"}>
-                    {availableModels.length ? (
+                    {availableModels.length || workflowGroups.length ? (
                         <ModelPicker
                             className="!h-7 !w-full !min-w-0 !text-[var(--fs-tiny)] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3"
                             fullWidth
                             config={config}
-                            value={config.model}
-                            onChange={(model) => onConfigChange(node.id, mode === "image" ? { model, ...defaultImageParamsForModel(config, model) } : { model })}
+                            value={workflowActive ? selectedWorkflow ? workflowOptionValue(selectedWorkflow) : "" : config.model}
+                            placeholder={workflowActive ? "选择 RunningHub 工作流" : "选择模型"}
+                            additionalGroups={workflowGroups}
+                            onChange={(model) => {
+                                const workflow = videoWorkflows.find((item) => workflowOptionValue(item) === model);
+                                if (workflow && workflow === selectedWorkflow) return;
+                                onConfigChange(node.id, workflow ? { model:undefined,workflowProvider:"runninghub",runningHubWorkflowId:workflow.workflowId,runningHubWorkflowKind:workflow.kind === "app" ? "app" : "workflow",workflowParameters:{},videoStartFrameNodeId:undefined,videoEndFrameNodeId:undefined } : mode === "image" ? { model, ...defaultImageParamsForModel(config, model) } : { model, workflowProvider:"model",runningHubWorkflowId:undefined,runningHubWorkflowKind:undefined,workflowParameters:{} });
+                            }}
                             capability={mode}
                             requirements={resolvedRequirements}
                             onMissingConfig={() => navigateToSettings({ section: "channels", continueCreation: true })}
@@ -413,7 +438,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                                 onOpenChange={expanded ? undefined : onImageSettingsOpenChange}
                             />
                         </>
-                    ) : mode === "video" ? (
+                    ) : mode === "video" && workflowActive ? <CanvasWorkflowControls node={node} config={globalConfig} theme={theme} references={activeReferences} onConfigChange={onConfigChange} /> : mode === "video" ? (
                         <>
                             <CanvasCameraControlPopover
                                 cameraControl={node.metadata?.cameraControl}
@@ -555,6 +580,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                 </div>
             ) : null}
 
+            {workflowError ? <p role="status" className="px-2 text-xs" style={{ color: theme.accent.danger }}>{workflowError}</p> : null}
             {renderComposerControls(false)}
 
             <Modal
@@ -1047,14 +1073,15 @@ function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
 }
 
 export function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasNodeGenerationMode, requirements: ModelRequirements): AiConfig {
-    const defaultModel = mode === "image" ? globalConfig.imageModel : mode === "video" ? globalConfig.videoModel : mode === "audio" ? globalConfig.audioModel : globalConfig.textModel;
-    const fallbackModel = mode === "image" ? defaultConfig.imageModel : mode === "video" ? defaultConfig.videoModel : mode === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
+    if (mode === "video") return buildGenerationConfig(globalConfig, node, mode, requirements);
+    const defaultModel = mode === "image" ? globalConfig.imageModel : mode === "audio" ? globalConfig.audioModel : globalConfig.textModel;
+    const fallbackModel = mode === "image" ? defaultConfig.imageModel : mode === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
     const preferredModel = resolveCanvasGenerationModel(globalConfig, node.metadata?.model, mode) || resolveCanvasGenerationModel(globalConfig, defaultModel, mode) || fallbackModel;
     const model = resolveCompatibleModel(globalConfig, preferredModel, mode === "image" ? { ...requirements, imageSize: node.metadata?.size || globalConfig.size || defaultConfig.size } : requirements) || preferredModel;
     const defaults = resolveModelGenerationDefaults(
         globalConfig,
         model,
-        mode === "image" ? "image" : mode === "video" ? "video" : undefined,
+        mode === "image" ? "image" : undefined,
         mode === "image"
             ? {
                   size: node.metadata?.size,

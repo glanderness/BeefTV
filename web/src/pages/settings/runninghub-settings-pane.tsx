@@ -3,12 +3,18 @@ import { Switch } from "@/components/ui/base/switch";
 import { Select } from "@/components/ui/base/select";
 import { SegmentedControl } from "@/components/ui/base/segmented-control";
 import { RefreshCw, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { WorkflowFieldMappingEditor } from "@/components/workflow-field-mapping-editor";
+import { WorkflowVideoControlsEditor } from "@/components/workflow-video-controls-editor";
 import { WorkflowGraphEditor } from "@/components/workflow-graph-editor";
 import { WorkflowTestWorkbench } from "@/components/workflow-test-workbench";
 import { fetchRunningHubApp, fetchRunningHubWorkflow } from "@/services/api/runninghub";
+import { fetchPluginRuntimeState, setUserPluginEnabled } from "@/services/api/plugins";
+import { RUNNINGHUB_PLUGIN_ID } from "@/lib/plugins/builtin/workflows";
+import { usePluginStore } from "@/stores/use-plugin-store";
+import { flushModelConfig, getModelConfigPersistenceState, subscribeModelConfigPersistence } from "@/services/model-config-repository";
+import { observeRunningHubMetadataRequest } from "./runninghub-metadata-request";
 import {
     normalizeRunningHubCapability,
     normalizeRunningHubWorkflowKind,
@@ -44,23 +50,16 @@ function capabilityLabel(capability: RunningHubCapability) {
     return capability === "video" ? "视频" : capability === "audio" ? "音频" : "图片";
 }
 
-function workflowNeedsMediaUpload(fields: WorkflowFieldMapping[]) {
-    return fields.some((field) => {
-        const source = String(field.source || "")
-            .trim()
-            .toLowerCase();
-        const fieldType = String(field.fieldType || "")
-            .trim()
-            .toUpperCase();
-        return ["referenceimage", "referencevideo", "referenceaudio", "mask"].includes(source) || ["IMAGE", "VIDEO", "AUDIO"].includes(fieldType);
-    });
-}
-
 export function RunningHubSettingsPane() {
     const { message } = App.useApp();
     const config = useConfigStore((state) => state.config);
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const runningHub = config.runningHub;
+    const pluginState = usePluginStore((state) => state.pluginStates[RUNNINGHUB_PLUGIN_ID]);
+    const persistence = useSyncExternalStore(subscribeModelConfigPersistence, getModelConfigPersistenceState, getModelConfigPersistenceState);
+    const [activating, setActivating] = useState(false);
+    const [loadingPlugin, setLoadingPlugin] = useState(true);
+    const [pluginError, setPluginError] = useState("");
     const selected = runningHub.workflows.find((item) => item.workflowId.trim() === runningHub.workflowId.trim() && workflowKind(item) === runningHub.selectedKind);
     const selectedKey = selected ? workflowEntryKey(selected) : undefined;
     const [draftId, setDraftId] = useState(selected?.workflowId || "");
@@ -69,7 +68,28 @@ export function RunningHubSettingsPane() {
     const [title, setTitle] = useState(selected?.title || "");
     const [capability, setCapability] = useState<RunningHubCapability>(workflowCapability(selected, runningHub.capability));
     const [fetching, setFetching] = useState(false);
+    const fetchController = useRef<AbortController | null>(null);
     const [workspaceMode, setWorkspaceMode] = useState<"fields" | "test">("fields");
+
+    useEffect(() => () => {
+        const controller = fetchController.current;
+        fetchController.current = null;
+        controller?.abort();
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+        void fetchPluginRuntimeState().then((runtime) => {
+            if (cancelled) return;
+            usePluginStore.getState().setPluginStates(runtime.states);
+            usePluginStore.getState().setRuntimeStatuses(runtime.statuses);
+        }).catch((error) => {
+            if (!cancelled) setPluginError(error instanceof Error ? error.message : "读取 RunningHub 插件状态失败");
+        }).finally(() => {
+            if (!cancelled) setLoadingPlugin(false);
+        });
+        return () => { cancelled = true; };
+    }, []);
 
     useEffect(() => {
         if (!selected) return;
@@ -80,8 +100,29 @@ export function RunningHubSettingsPane() {
         setCapability(workflowCapability(selected, runningHub.capability));
     }, [selectedKey, selected?.workflowJson, selected?.title, selected?.capability, runningHub.capability]);
 
-    const update = (patch: Partial<RunningHubConfig>) => updateConfig("runningHub", { ...runningHub, ...patch });
+    const update = (patch: Partial<RunningHubConfig>) => updateConfig("runningHub", { ...useConfigStore.getState().config.runningHub, ...patch });
     const draftMatchesSelected = Boolean(selected && workflowEntryKey(selected) === `${kind}:${draftId.trim()}`);
+
+    const toggleEnabled = async (enabled: boolean) => {
+        if (!enabled) fetchController.current?.abort();
+        setActivating(true);
+        try {
+            const next = await setUserPluginEnabled(RUNNINGHUB_PLUGIN_ID, enabled);
+            const store = usePluginStore.getState();
+            store.setPluginStates({ ...store.pluginStates, [next.pluginId]: next });
+            store.setRuntimeStatuses({ ...store.runtimeStatuses, [next.pluginId]: next.effectiveEnabled ? "enabled" : "disabled" });
+            update({ enabled });
+            await flushModelConfig();
+            const saved = getModelConfigPersistenceState();
+            if (saved.status === "error" || saved.dirty) throw new Error(saved.error || "RunningHub 配置尚未保存，请重试");
+            setPluginError("");
+            message.success(enabled ? "RunningHub 已启用" : "RunningHub 已停用");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "更新 RunningHub 状态失败");
+        } finally {
+            setActivating(false);
+        }
+    };
 
     const persistWorkflow = (workflow: RunningHubWorkflow, nextCapability = capability) => {
         const workflowId = workflow.workflowId.trim();
@@ -94,6 +135,7 @@ export function RunningHubSettingsPane() {
             capability: normalizeRunningHubCapability(nextCapability, capability),
             fields: normalizeWorkflowFieldMappings(workflow.fields, normalizeRunningHubCapability(nextCapability, capability)),
         };
+        delete next.raw;
         if (nextKind === "app") {
             // AI 应用只保存其公开参数，绝不能继续携带之前 Workflow 的 JSON。
             delete next.workflowJson;
@@ -106,27 +148,40 @@ export function RunningHubSettingsPane() {
             workflowId,
             selectedKind: nextKind,
             capability: next.capability || capability,
-            workflows: [...runningHub.workflows.filter((item) => workflowEntryKey(item) !== nextKey), next],
+            workflows: [...useConfigStore.getState().config.runningHub.workflows.filter((item) => workflowEntryKey(item) !== nextKey), next],
         });
     };
 
     const fetchWorkflow = async () => {
+        if (!runningHub.enabled || !pluginState?.effectiveEnabled) return message.warning("请先启用 RunningHub");
         const id = draftId.trim();
         if (!id) return message.warning(kind === "app" ? "请先填写 webappId" : "请先填写 workflowId");
-        if (!runningHub.apiKey.trim()) return message.warning("请先填写积分 API Key");
+        if (!runningHub.apiKey.trim()) return message.warning("请先填写消费级 API Key");
+        fetchController.current?.abort();
+        const controller = new AbortController();
+        fetchController.current = controller;
+        const request = observeRunningHubMetadataRequest(controller);
+        controller.signal.addEventListener("abort", () => {
+            if (fetchController.current === controller) {
+                fetchController.current = null;
+                setFetching(false);
+            }
+        }, { once: true });
         setFetching(true);
         try {
+            if (!request.isCurrent()) return;
             // 管理接口只接受拉取参数所需的小请求，不能把已保存工作流及大段 JSON 一并提交。
             const fetchConfig = {
-                baseUrl: runningHub.baseUrl,
-                apiKey: runningHub.apiKey,
+                baseUrl: request.connection.baseUrl,
+                apiKey: request.connection.apiKey,
                 walletApiKey: "",
                 useWallet: false,
                 title: title.trim(),
                 capability,
             };
-            const result = kind === "app" ? await fetchRunningHubApp({ ...fetchConfig, webappId: id }) : await fetchRunningHubWorkflow({ ...fetchConfig, workflowId: id });
-            const existing = runningHub.workflows.find((workflow) => workflowEntryKey(workflow) === `${kind}:${id}`);
+            const result = kind === "app" ? await fetchRunningHubApp({ ...fetchConfig, webappId: id }, controller.signal, request.expectedScope) : await fetchRunningHubWorkflow({ ...fetchConfig, workflowId: id }, controller.signal, request.expectedScope);
+            if (!request.isCurrent()) return;
+            const existing = useConfigStore.getState().config.runningHub.workflows.find((workflow) => workflowEntryKey(workflow) === `${kind}:${id}`);
             const item: RunningHubWorkflow = {
                 ...result,
                 kind,
@@ -134,28 +189,46 @@ export function RunningHubSettingsPane() {
                 webappId: kind === "app" ? result.webappId || id : undefined,
                 title: result.title || title.trim() || id,
                 fields: existing ? mergeWorkflowFieldMappings(existing.fields, result.fields, capability) : normalizeWorkflowFieldMappings(result.fields, capability),
+                videoControls: existing?.videoControls,
                 workflowJson: kind === "workflow" ? result.workflowJson || {} : undefined,
             };
             persistWorkflow(item, capability);
             setWorkflowText(item.workflowJson ? JSON.stringify(item.workflowJson, null, 2) : "");
             setTitle(item.title || "");
+            await flushModelConfig();
+            if (!request.isCurrent()) return;
+            const saved = getModelConfigPersistenceState();
+            if (saved.status === "error" || saved.dirty) throw new Error(saved.error || "参数尚未保存到本地后端，请重试");
             message.success(
-                workflowNeedsMediaUpload(item.fields || []) ? `${kind === "app" ? "RunningHub App" : "RunningHub 工作流"}参数已保存；生成时会调用 RunningHub 素材上传接口` : `${kind === "app" ? "RunningHub App" : "RunningHub 工作流"}参数已重新拉取并保存`,
+                `${kind === "app" ? "RunningHub App" : "RunningHub 工作流"}参数已重新拉取并保存`,
             );
         } catch (error) {
+            if (!request.isCurrent()) return;
             message.error(error instanceof Error ? `拉取失败：${error.message}` : "拉取 RunningHub 参数失败");
         } finally {
-            setFetching(false);
+            request.dispose();
+            if (fetchController.current === controller) {
+                fetchController.current = null;
+                setFetching(false);
+            }
         }
     };
 
-    const removeWorkflow = (workflow: RunningHubWorkflow) => {
+    const removeWorkflow = async (workflow: RunningHubWorkflow) => {
+        fetchController.current?.abort();
         const targetKey = workflowEntryKey(workflow);
         const remaining = runningHub.workflows.filter((item) => workflowEntryKey(item) !== targetKey);
         update({ workflowId: "", selectedKind: workflowKind(workflow), workflows: remaining });
         setDraftId("");
         setWorkflowText("");
         setTitle("");
+        await flushModelConfig();
+        const saved = getModelConfigPersistenceState();
+        if (saved.status === "error" || saved.dirty) {
+            const error = new Error(saved.error || "删除尚未保存，请重试");
+            message.error(error.message);
+            throw error;
+        }
         message.success(`已删除${workflowKind(workflow) === "app" ? " App" : " Workflow"}：${workflow.title || workflow.workflowId}`);
     };
 
@@ -166,6 +239,7 @@ export function RunningHubSettingsPane() {
     };
 
     const selectWorkflow = (entryKey: string | undefined) => {
+        fetchController.current?.abort();
         if (!entryKey) {
             update({ workflowId: "" });
             setDraftId("");
@@ -185,6 +259,7 @@ export function RunningHubSettingsPane() {
     };
 
     const changeKind = (nextKind: RunningHubWorkflowKind) => {
+        fetchController.current?.abort();
         setKind(nextKind);
         setDraftId("");
         setWorkflowText("");
@@ -219,10 +294,14 @@ export function RunningHubSettingsPane() {
             <div className="settings-pane-header">
                 <div className="min-w-0">
                     <h2>RunningHub 工作流</h2>
-                    <p>独立于系统渠道配置。工作流提交使用积分 API Key，参考素材上传使用企业级 API Key。</p>
+                    <p>素材上传、工作流提交和结果查询共用消费级 API Key。</p>
                 </div>
-                <Switch checked={runningHub.enabled} checkedChildren="启用" unCheckedChildren="停用" onChange={(enabled) => update({ enabled })} />
+                <Switch aria-label="启用 RunningHub" checked={runningHub.enabled && Boolean(pluginState?.effectiveEnabled)} loading={activating || loadingPlugin} disabled={loadingPlugin || !pluginState?.canToggle} checkedChildren="启用" unCheckedChildren="停用" onChange={(enabled) => void toggleEnabled(enabled)} />
             </div>
+            {pluginError || pluginState?.blockedReason ? <p role="alert" className="mb-3 text-sm text-foreground/65">{pluginError || pluginState?.blockedReason}</p> : null}
+            <p role="status" className="mb-3 text-xs text-foreground/55">
+                {persistence.status === "error" ? `配置尚未保存到本地后端：${persistence.error}` : persistence.dirty ? "正在保存到本地后端…" : "配置由本地后端保存，密钥不写入浏览器持久缓存。"}
+            </p>
             <div className="settings-section grid gap-3 lg:grid-cols-12">
                 <Form.Item label="Base URL" className="mb-0 lg:col-span-6">
                     <AutoComplete
@@ -238,11 +317,8 @@ export function RunningHubSettingsPane() {
                         <Input placeholder="选择官方站点或填写兼容网关地址" />
                     </AutoComplete>
                 </Form.Item>
-                <Form.Item label="积分 API Key（工作流提交）" className="mb-0 lg:col-span-6" extra="用于拉取工作流参数、创建任务和查询结果；最终提交固定使用这把 Key。若提示企业版余额不足，请检查这里没有填企业级上传 Key。">
+                <Form.Item label="消费级 API Key" className="mb-0 lg:col-span-6" extra="填写官方「消费级-会员」API Key，用于拉取参数、上传素材、运行工作流和查询结果。请确认会员权益有效，并与所选站点一致。">
                     <Input.Password autoComplete="new-password" value={runningHub.apiKey} onChange={(event) => update({ apiKey: event.target.value })} />
-                </Form.Item>
-                <Form.Item label="素材上传 API Key（企业级）" className="mb-0 lg:col-span-6" extra="仅用于上传参考图片、视频、音频和蒙版；没有参考素材时可以留空。">
-                    <Input.Password autoComplete="new-password" value={runningHub.uploadApiKey || ""} onChange={(event) => update({ uploadApiKey: event.target.value })} />
                 </Form.Item>
                 <Form.Item label="工作流用途" className="mb-0 lg:col-span-6">
                     <Select className="w-full" value={capability} options={capabilityOptions} onChange={(value) => updateCapability(value as RunningHubCapability)} />
@@ -272,14 +348,14 @@ export function RunningHubSettingsPane() {
                     />
                 </Form.Item>
                 <Form.Item label={kind === "app" ? "webappId" : "workflowId"} className="mb-0 lg:col-span-3">
-                    <Input value={draftId} placeholder={kind === "app" ? "RunningHub webappId" : "RunningHub workflowId"} onChange={(event) => setDraftId(event.target.value)} />
+                    <Input value={draftId} placeholder={kind === "app" ? "RunningHub webappId" : "RunningHub workflowId"} onChange={(event) => { fetchController.current?.abort(); setDraftId(event.target.value); }} />
                 </Form.Item>
                 <Form.Item label="显示名称" className="mb-0 lg:col-span-6">
                     <Input value={title} placeholder="可选" onChange={(event) => setTitle(event.target.value)} onBlur={updateTitle} />
                 </Form.Item>
                 <Form.Item label="操作" className="workflow-entry-actions-field mb-0 lg:col-span-6">
                     <div className="workflow-entry-actions">
-                        <Button type="primary" icon={<RefreshCw className="size-4" />} loading={fetching} onClick={() => void fetchWorkflow()}>
+                        <Button type="primary" icon={<RefreshCw className="size-4" />} disabled={!runningHub.enabled || !pluginState?.effectiveEnabled || activating || loadingPlugin} loading={fetching} onClick={() => void fetchWorkflow()}>
                             拉取参数
                         </Button>
                         <Popconfirm
@@ -306,6 +382,7 @@ export function RunningHubSettingsPane() {
                         onChange={(value) => setWorkspaceMode(value as "fields" | "test")}
                     />
                 </div>
+                {workspaceMode === "fields" && capability === "video" ? <div className="lg:col-span-12"><WorkflowVideoControlsEditor fields={selected?.fields || []} value={selected?.videoControls} disabled={!selected || !draftMatchesSelected} onChange={(videoControls) => selected && persistWorkflow({ ...selected, videoControls })} /></div> : null}
                 {workspaceMode === "fields" && kind === "workflow" ? (
                     <>
                         <div className="lg:col-span-12">
@@ -341,8 +418,8 @@ export function RunningHubSettingsPane() {
                             title={selected?.title || title || draftId}
                             capability={selected ? workflowCapability(selected, capability) : capability}
                             fields={selected?.fields || []}
-                            disabled={!selected || !draftMatchesSelected || !runningHub.baseUrl.trim() || !runningHub.apiKey.trim()}
-                            disabledReason={!selected || !draftMatchesSelected ? "请先拉取或选择一个已保存的 RunningHub 条目" : !runningHub.baseUrl.trim() ? "请先填写 RunningHub Base URL" : "请先填写积分 API Key"}
+                            disabled={!runningHub.enabled || !pluginState?.effectiveEnabled || !selected || !draftMatchesSelected || !runningHub.baseUrl.trim() || !runningHub.apiKey.trim()}
+                            disabledReason={!runningHub.enabled || !pluginState?.effectiveEnabled ? "请先启用 RunningHub" : !selected || !draftMatchesSelected ? "请先拉取或选择一个已保存的 RunningHub 条目" : !runningHub.baseUrl.trim() ? "请先填写 RunningHub Base URL" : "请先填写消费级 API Key"}
                         />
                     </div>
                 ) : null}

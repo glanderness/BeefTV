@@ -41,11 +41,14 @@ func (s *Service) FetchRunningHubAppInfo(ctx context.Context, req RunningHubWork
 		return nil, fmt.Errorf("拉取 RunningHub App 参数失败：%s", runningHubFailureMessage(response))
 	}
 	rawData, _ := response["data"].(map[string]any)
-	result := map[string]any{"kind": "app", "webappId": webappID, "workflowId": webappID, "title": firstNonEmptyString(req.Title, webappID), "fields": []map[string]any{}, "raw": response}
-	if rawData != nil {
-		result["fields"] = workflow.CollectAppFields(rawData["nodeInfoList"], req.Capability)
+	if rawData == nil {
+		return nil, fmt.Errorf("RunningHub App 参数响应缺少 data")
 	}
-	return result, nil
+	nodes, valid := rawData["nodeInfoList"].([]any)
+	if !valid {
+		return nil, fmt.Errorf("RunningHub App 参数响应缺少有效的 nodeInfoList")
+	}
+	return map[string]any{"kind": "app", "webappId": webappID, "workflowId": webappID, "title": firstNonEmptyString(req.Title, webappID), "fields": workflow.CollectAppFields(nodes, req.Capability)}, nil
 }
 
 func runningHubManagementConfig(req RunningHubWorkflowFetchRequest) (providerConfig, error) {
@@ -57,7 +60,7 @@ func runningHubManagementConfig(req RunningHubWorkflowFetchRequest) (providerCon
 		return config, err
 	}
 	if runningHubAPIKey(config) == "" {
-		return config, BadAuthRequest("请先填写 RunningHub 积分 API Key")
+		return config, BadAuthRequest("请先填写 RunningHub 消费级 API Key")
 	}
 	return config, nil
 }

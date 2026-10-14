@@ -14,6 +14,9 @@ import { uploadMediaFile } from "@/services/file-storage";
 import { getActiveUserScope, scopedLocalStorage } from "@/lib/user-scope";
 import { assertUserScope, captureUserScope, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { findWorkspaceAssetIdByStorageKey } from "@/lib/canvas/director/director-library-persist";
+import { addGenerationOutputNodes, generationOutputMetadata } from "@/lib/canvas/canvas-generation-outputs";
+import { resolveCanvasGenerationOutputs } from "@/services/canvas-generation-outputs";
+import type { GenerationOutput } from "@/lib/generation-outputs";
 import { resourceFileUrl, resourceIdFromStorageKey, syncResourceToArkPrivateAsset } from "@/services/api/resources";
 import { uploadImage } from "@/services/image-storage";
 import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
@@ -1762,6 +1765,20 @@ function InfiniteCanvasPage() {
         nodesRef,
         setNodesState,
     });
+    const applyGenerationOutputs = useCallback(async (node: CanvasNodeData, outputs: GenerationOutput[], selectPrimary: boolean, signal?: AbortSignal) => {
+        const taskId = node.metadata?.generationOutputTaskId;
+        if (!taskId) throw new Error("节点缺少生成任务记录，请刷新结果后重试");
+        const resolved = await resolveCanvasGenerationOutputs(taskId, outputs, canvasCapturedScope, signal);
+        const source = nodesRef.current.find((item) => item.id === node.id);
+        if (!source || source.metadata?.generationOutputTaskId !== taskId) throw new Error("节点已删除或生成结果已更新，请重新选择");
+        if (selectPrimary) {
+            if (resolved.length !== 1 || resolved[0].mediaType !== source.type) throw new Error("主输出类型与节点不匹配");
+            const patch = generationOutputMetadata(resolved[0]);
+            setNodes(nodesRef.current.map((item) => item.id === source.id ? { ...item, metadata: { ...item.metadata, ...patch } } : item));
+        } else {
+            setNodes(addGenerationOutputNodes(nodesRef.current, source, resolved));
+        }
+    }, [canvasCapturedScope.epoch, canvasCapturedScope.userScope, nodesRef, setNodes]);
     const canvasNodeActions = useMemo<CanvasNodeActionContextValue>(
         () => ({
             upload: replaceCanvasNodeMedia,
@@ -1771,10 +1788,12 @@ function InfiniteCanvasPage() {
             updateMetadata: updateNodeMetadataFromContent,
             updateNode: updateNodeFromContent,
             updateMediaNode: updateMediaNodeFromContent,
+            addGenerationOutputs: (node, outputs, signal) => applyGenerationOutputs(node, outputs, false, signal),
+            selectGenerationOutput: (node, output, signal) => applyGenerationOutputs(node, [output], true, signal),
             openArtCritique,
             addPanoramaCaptureNode,
         }),
-        [addPanoramaCaptureNode, deleteNodeFromContent, downloadNodeImage, duplicateNodeFromContent, openArtCritique, replaceCanvasNodeMedia, updateMediaNodeFromContent, updateNodeFromContent, updateNodeMetadataFromContent],
+        [addPanoramaCaptureNode, applyGenerationOutputs, deleteNodeFromContent, downloadNodeImage, duplicateNodeFromContent, openArtCritique, replaceCanvasNodeMedia, updateMediaNodeFromContent, updateNodeFromContent, updateNodeMetadataFromContent],
     );
     const { selectCanvasStyle, applyCanvasStyleAsync, styleApplying } = useCanvasStyleWorkflow({
         canvasId: projectId,

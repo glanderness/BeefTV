@@ -43,6 +43,8 @@ export type NodeGenerationContext = {
     referenceVideos: ReferenceVideo[];
     referenceAudios: ReferenceAudio[];
     characterReferences: CharacterGenerationReference[];
+    // 工作流每张角色卡只占一个图片槽位；保留混排顺序供解析角色图片后物化。
+    workflowImageSlots?: Array<{ image: ReferenceImage } | { character: CharacterGenerationReference }>;
     resolvedCharacterVersions: Array<{ assetId: string; versionId: string }>;
     resolvedCharacterVoices: ResolvedCharacterVoice[];
     textCount: number;
@@ -86,9 +88,9 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     const storyboardInputs = getConnectedStoryboardRows(nodeId, nodes, connections);
     assertResolvableGenerationMentions(prompt, mentionInputs);
     const hasExplicitResourceMention = hasResolvableGenerationMention(prompt, mentionInputs);
-    const isWorkflowSource = sourceNode?.type === CanvasNodeType.Config && isCanvasWorkflowProvider(sourceNode.metadata);
+    const isWorkflowSource = Boolean(sourceNode && isCanvasWorkflowProvider(sourceNode.metadata));
     const hasConnectedMedia = connectedInputs.some((input) => input.type === "image" || input.type === "video" || input.type === "audio" || input.type === "character");
-    if ((promptOnly && hasConnectedMedia) || (Boolean(sourceNode?.metadata?.composerContent?.trim()) && (sourceNode?.type === CanvasNodeType.Config || isWorkflowSource)) || hasExplicitResourceMention) {
+    if (isWorkflowSource || (promptOnly && hasConnectedMedia) || (Boolean(sourceNode?.metadata?.composerContent?.trim()) && sourceNode?.type === CanvasNodeType.Config) || hasExplicitResourceMention) {
         const autoIncludeWorkflowMedia = isWorkflowSource;
         return buildComposerGenerationContext(
             mentionInputs,
@@ -98,6 +100,7 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
             promptOnly,
             autoIncludeWorkflowMedia || (promptOnly && hasConnectedMedia),
             connectedInputs,
+            isWorkflowSource,
         );
     }
 
@@ -119,6 +122,7 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
         referenceVideos,
         referenceAudios,
         characterReferences,
+        workflowImageSlots: isWorkflowSource ? workflowImageSlotsFromInputs(connectedInputs) : undefined,
         resolvedCharacterVersions: [],
         resolvedCharacterVoices: [],
         textCount: textInputs.length,
@@ -187,6 +191,7 @@ function buildComposerGenerationContext(
     promptOnly = false,
     autoIncludeWorkflowMedia = false,
     workflowMediaInputs: NodeGenerationInput[] = [],
+    preserveWorkflowImageSlots = false,
 ): NodeGenerationContext {
     const normalizedPrompt = normalizeGenerationNodeMentionTokens(prompt, inputs);
     const slotInputByToken = new Map(generationSlotEntries(inputs).map(({ token, input }) => [token, input]));
@@ -230,11 +235,19 @@ function buildComposerGenerationContext(
     }
 
     nextPrompt += normalizedPrompt.slice(lastIndex);
-    // 显式 @文本 引用是用户写进输入框的内容，必须内联真实文本；promptOnly 只拦自动上游文本。
-    if (textBlocks.length) nextPrompt = `${nextPrompt.trim()}\n\n${textBlocks.join("\n\n")}`;
+    if (preserveWorkflowImageSlots) {
+        // 工作流接收连线文字；已显式 @ 的文字已展开，不再重复追加。
+        workflowMediaInputs.forEach((input) => {
+            if (input.type !== "text" || labelByNodeId.has(input.nodeId) || !input.text?.trim()) return;
+            textBlocks.push(input.text.trim());
+            labelByNodeId.set(input.nodeId, generationLabel("text", counts.text++));
+        });
+    }
+    // 显式 @文本 引用必须内联真实内容；普通模型的 promptOnly 仍拦自动上游文本。
+    if (textBlocks.length) nextPrompt = [nextPrompt.trim(), ...textBlocks].filter(Boolean).join("\n\n");
     if (autoIncludeWorkflowMedia) {
         // RunningHub/ComfyUI 工作流按保存的字段槽位接收图片、视频和音频；
-        // 配置节点不能因为提示词里没有逐个 @ 就丢失已连接媒体。
+        // 工作流生成节点不能因为提示词里没有逐个 @ 就丢失已连接媒体。
         // 先按连线顺序放入媒体，避免用户在提示词里 @图片2 后改变工作流槽位的索引；
         // 素材库中的显式 @ 引用仍保留在后面，不会被自动模式吞掉。
         const explicitInputs = selectedInputs.splice(0);
@@ -285,6 +298,7 @@ function buildComposerGenerationContext(
         referenceVideos,
         referenceAudios,
         characterReferences,
+        workflowImageSlots: preserveWorkflowImageSlots ? workflowImageSlotsFromInputs(selectedInputs) : undefined,
         resolvedCharacterVersions: [],
         resolvedCharacterVoices: [],
         textCount: counts.text,
@@ -292,6 +306,14 @@ function buildComposerGenerationContext(
         videoCount: referenceVideos.length,
         audioCount: referenceAudios.length,
     };
+}
+
+function workflowImageSlotsFromInputs(inputs: NodeGenerationInput[]): NonNullable<NodeGenerationContext["workflowImageSlots"]> {
+    return inputs.flatMap((input): NonNullable<NodeGenerationContext["workflowImageSlots"]> => {
+        if (input.image) return [{ image: input.image }];
+        if (input.character) return [{ character: input.character }];
+        return [];
+    });
 }
 
 const GENERATION_MENTION_PATTERN = /@\[(node|asset):([^\]]+)\]|@(图片|视频|音频|文本|角色|绘图)(\d+)/g;
@@ -503,14 +525,16 @@ export async function hydrateNodeGenerationContext(context: NodeGenerationContex
     const { getProjectCharacter } = await import("@/services/api/projects");
     const { getResource, resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey } = await import("@/services/api/resources");
     const details = await Promise.all(context.characterReferences.map((reference) => getProjectCharacter(domainProjectId, reference.assetId)));
-    const remainingBudget = Math.max(0, (referenceLimits?.maxImages ?? 9) - referenceImages.length);
+    const workflowSlots = context.workflowImageSlots;
+    const remainingBudget = workflowSlots ? Infinity : Math.max(0, (referenceLimits?.maxImages ?? 9) - referenceImages.length);
     const selected = details.flatMap((detail) => {
         const representation = preferredCharacterRepresentation(detail.character.representations);
+        if (workflowSlots && !representation) throw new Error(`角色卡“${detail.asset.title}”没有可用的主参考图，请先完善角色素材`);
         return representation ? [representation] : [];
     });
     if (selected.length > remainingBudget) throw new Error(`当前模型参考图容量不足：角色至少需要 ${selected.length} 张主参考图`);
     const usedResourceIds = new Set(selected.map((item) => item.resourceId));
-    const supplements = details.flatMap((detail) => detail.character.representations.filter((item) => {
+    const supplements = workflowSlots ? [] : details.flatMap((detail) => detail.character.representations.filter((item) => {
         if (!["front", "side", "back", "turnaround_sheet"].includes(item.role) || usedResourceIds.has(item.resourceId)) return false;
         usedResourceIds.add(item.resourceId);
         return true;
@@ -523,7 +547,15 @@ export async function hydrateNodeGenerationContext(context: NodeGenerationContex
         storageKey: resourceStorageKey(representation.resourceId),
     } satisfies ReferenceImage));
     const hydratedCharacterImages = await Promise.all(characterImages.map(async (image) => ({ ...image, dataUrl: await imageToDataUrl(image) })));
-    referenceImages = [...referenceImages, ...hydratedCharacterImages];
+    if (workflowSlots) {
+        const imagesById = new Map(referenceImages.map((image) => [image.id, image]));
+        const characterImagesByNodeId = new Map(context.characterReferences.map((reference, index) => [reference.nodeId, hydratedCharacterImages[index]]));
+        referenceImages = workflowSlots.map((slot) => {
+            const image = "image" in slot ? imagesById.get(slot.image.id) : characterImagesByNodeId.get(slot.character.nodeId);
+            if (!image) throw new Error("工作流图片槽位无法解析，请检查连接的图片或角色卡");
+            return image;
+        });
+    } else referenceImages = [...referenceImages, ...hydratedCharacterImages];
     const characterBlocks = details.map((detail) => compileCharacterReferencePrompt(detail.asset.title, detail.character.definition));
     const resolvedCharacterVersions = details.map((detail) => ({ assetId: detail.asset.id, versionId: detail.character.versionId }));
     const resolvedCharacterVoices = details.flatMap((detail): ResolvedCharacterVoice[] => {
@@ -550,14 +582,14 @@ export async function hydrateNodeGenerationContext(context: NodeGenerationContex
     const usedAudioResourceIds = new Set(context.referenceAudios.map((audio) => resourceIdFromStorageKey(audio.storageKey)).filter(Boolean));
     const voiceSamples: ResolvedCharacterVoice[] = [];
     // 视频模型接收声音样本；独立配音任务仍通过 voiceKey 选音色，不能把两种协议混用。
-    if (mode === "video" && includeCharacterVoiceSamples) {
+    if (mode === "video" && includeCharacterVoiceSamples && !workflowSlots) {
         resolvedCharacterVoices.forEach((voice) => {
             if (!voice.sampleResourceId || usedAudioResourceIds.has(voice.sampleResourceId)) return;
             usedAudioResourceIds.add(voice.sampleResourceId);
             voiceSamples.push(voice);
         });
     }
-    const maxAudios = referenceLimits?.maxAudios ?? 3;
+    const maxAudios = workflowSlots ? Infinity : referenceLimits?.maxAudios ?? 3;
     if (context.referenceAudios.length + voiceSamples.length > maxAudios) throw new Error(`当前模型参考音频容量不足：已连接 ${context.referenceAudios.length} 个音频，角色声音样本还需要 ${voiceSamples.length} 个名额`);
     const characterVoiceAudios = await Promise.all(voiceSamples.map(async (voice) => {
         const resource = await getResource(voice.sampleResourceId!);

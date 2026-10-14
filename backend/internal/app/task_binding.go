@@ -196,11 +196,34 @@ func canvasBindTargets(task model.Task, intents []localtask.CanvasBindingIntent)
 		seen[key] = true
 		targets = append(targets, canvasBindTarget{nodeID: nodeID, outputIndex: outputIndex})
 	}
+	primary := -1
+	var result struct {
+		Outputs []struct {
+			MediaType string `json:"mediaType"`
+		} `json:"outputs"`
+	}
+	if json.Unmarshal([]byte(task.ResultJSON), &result) == nil && len(result.Outputs) > 0 {
+		primary = 0
+		mode := strings.TrimPrefix(task.Type, "canvas_")
+		for index, output := range result.Outputs {
+			if output.MediaType == mode {
+				primary = index
+				break
+			}
+		}
+	}
 	for _, intent := range intents {
 		if intent.TargetBinding == nil {
 			continue
 		}
+		// Bind one primary output; other workflow outputs remain available separately.
+		if primary >= 0 && intent.OutputIndex != primary {
+			continue
+		}
 		add(intent.TargetBinding.NodeID, intent.OutputIndex)
+	}
+	if primary >= 0 && len(targets) == 0 {
+		add(localtask.TargetBindingFromInput(task.InputJSON).NodeID, primary)
 	}
 	switch strings.TrimSpace(task.Type) {
 	case "canvas_text", "text_replay":

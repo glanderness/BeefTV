@@ -255,6 +255,9 @@ export type CanvasNodeMetadata = {
     runningHubWorkflowKind?: "workflow" | "app";
     /** 当前画布节点覆盖的工作流动态字段，键为 source:* 或 field:nodeId:fieldName。 */
     workflowParameters?: Record<string, unknown>;
+    generationOutputs?: import("@/lib/generation-outputs").GenerationOutput[];
+    primaryOutputId?: string;
+    generationOutputTaskId?: string;
     size?: string;
     quality?: string;
     transparentBackground?: string;

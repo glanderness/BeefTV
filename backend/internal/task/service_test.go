@@ -23,6 +23,30 @@ func TestNewServiceAdmitsWithoutFacade(t *testing.T) {
 	}
 }
 
+func TestWorkflowAdmissionAllowsEmptyPromptOnlyForWorkflowConfig(t *testing.T) {
+	for _, mode := range []string{"image", "video", "audio"} {
+		t.Run(mode, func(t *testing.T) {
+			svc := domainService(newMemStore(), nil)
+			input := map[string]any{"mode": mode, "prompt": "", "config": map[string]any{"interfaceType": "runninghub-workflow-" + mode}}
+			task, err := svc.CreateTask("user", CreateRequest{Type: "canvas_" + mode, Prompt: "  ", Input: input})
+			if err != nil || task.Prompt != "" {
+				t.Fatalf("empty workflow prompt: task=%+v err=%v", task, err)
+			}
+		})
+	}
+	for _, config := range []map[string]any{
+		{},
+		{"interfaceType": "openai-image"},
+		{"interfaceType": "runninghub-workflow-image", "channelId": "system-channel"},
+	} {
+		svc := domainService(newMemStore(), nil)
+		_, err := svc.CreateTask("user", CreateRequest{Type: "canvas_image", Provider: "runninghub", Input: map[string]any{"config": config}})
+		if err == nil || !strings.Contains(err.Error(), PromptRequiredMessage) {
+			t.Fatalf("ordinary or untrusted config bypassed prompt validation: config=%+v err=%v", config, err)
+		}
+	}
+}
+
 func TestRetryOfRejectsNonStringAndPreservesStringContract(t *testing.T) {
 	store := newMemStore()
 	svc := domainService(store, nil)

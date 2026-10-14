@@ -204,7 +204,9 @@ function generationTaskResult(task: GenerationTask): BackendGenerationResult {
 
 export function projectGenerationTaskResult(task: GenerationTask, result?: BackendGenerationResult): GenerationTask {
     const projectedResult = result ?? generationTaskResult(task);
-    const projectedOutputs: GenerationTaskOutput[] = projectedResult.images?.length
+    const projectedOutputs: GenerationTaskOutput[] = projectedResult.outputs?.length
+        ? projectedResult.outputs.map((output) => ({ outputIndex: output.outputIndex, mediaType: output.mediaType, resourceId: output.resourceId || resourceIdFromStorageKey(output.storageKey), providerArtifactRef: output.storageKey || output.url || output.dataUrl }))
+        : projectedResult.images?.length
         ? projectedResult.images.map((image, outputIndex) => ({
               outputIndex,
               mediaType: "image" as const,
@@ -242,7 +244,7 @@ export function projectGenerationTaskResult(task: GenerationTask, result?: Backe
         ...task,
         ...(result ? { resultJson: JSON.stringify(result) } : {}),
         outputs,
-        ...(task.status === "succeeded" && outputs.length && !outputs.every((output) => output.materializedAssetId) ? { resultState: "PENDING_MATERIALIZATION" as const } : {}),
+        ...(task.status === "succeeded" && outputs.length && !outputs.every((output) => output.materializedAssetId || output.mediaType === "file" && output.resourceId) ? { resultState: "PENDING_MATERIALIZATION" as const } : {}),
     };
 }
 
@@ -376,7 +378,7 @@ async function generationOutputAsset(input: Parameters<MaterializeGenerationTask
     };
 
     if (input.output.mediaType === "image") {
-        const image = result.images?.[input.output.outputIndex];
+        const image = result.outputs?.find((output) => output.outputIndex === input.output.outputIndex && output.mediaType === "image") || result.images?.[input.output.outputIndex];
         if (!image) throw new Error("生成任务缺少图片输出");
         const stored = await storedGenerationImage(image, input.effectKey, scope, input.signal);
         return {
@@ -399,7 +401,7 @@ async function generationOutputAsset(input: Parameters<MaterializeGenerationTask
     }
 
     if (input.output.mediaType === "video") {
-        const video = result.video;
+        const video = result.outputs?.find((output) => output.outputIndex === input.output.outputIndex && output.mediaType === "video") || result.video;
         if (!video) throw new Error("生成任务缺少视频输出");
         const stored = video.storageKey
             ? {
@@ -446,7 +448,7 @@ async function generationOutputAsset(input: Parameters<MaterializeGenerationTask
         };
     }
 
-    const audio = result.audio;
+    const audio = result.outputs?.find((output) => output.outputIndex === input.output.outputIndex && output.mediaType === "audio") || result.audio;
     if (!audio) throw new Error("生成任务缺少音频输出");
     const stored = audio.storageKey
         ? {

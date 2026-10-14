@@ -6,18 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 )
 
-func runningHubWorkflowFailureMessage(response map[string]any) string {
-	message := runningHubFailureMessage(response)
-	normalized := strings.ToLower(message)
-	if strings.Contains(message, "企业版余额不足") || (strings.Contains(normalized, "enterprise") && strings.Contains(normalized, "balance")) {
-		return message + "；工作流提交固定使用积分 API Key，请确认提交 Key 不是企业级素材上传 Key"
-	}
-	return message
-}
 func runningHubUploadAuthFailure(err error) string {
 	var httpErr StatusError
 	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusUnauthorized {
@@ -26,10 +19,10 @@ func runningHubUploadAuthFailure(err error) string {
 	if !strings.Contains(strings.ToLower(httpErr.Body), "apikey verification failed") {
 		return ""
 	}
-	return "RunningHub 参考素材上传接口认证失败（HTTP 401）：ApiKey verification failed。请确认“素材上传 API Key（企业级）”有效，并且它与 Base URL 属于同一个 RunningHub 站点"
+	return "RunningHub 参考素材上传接口认证失败（HTTP 401）：ApiKey verification failed。请确认“消费级 API Key”有效，并且它与 Base URL 属于同一个 RunningHub 站点"
 }
 
-// RunningHub 工作流的管理、提交和轮询固定使用积分 API Key；企业级 Key 仅由上传接口单独读取。
+// Workflow metadata, media upload, submission and polling share one credential.
 func runningHubAPIKey(config Config) string {
 	return strings.TrimSpace(config.APIKey)
 }
@@ -134,33 +127,60 @@ func runningHubTaskID(payload map[string]any) string {
 }
 
 func runningHubOutputURLs(value interface{}) []string {
-	result := make([]string, 0)
-	var visit func(interface{})
-	visit = func(current interface{}) {
+	outputs := runningHubOutputs(value)
+	urls := make([]string, 0, len(outputs))
+	for _, output := range outputs {
+		urls = append(urls, output.URL)
+	}
+	return urls
+}
+
+type workflowOutput struct {
+	URL    string
+	NodeID string
+}
+
+// Keep provider order and origin metadata; a workflow may emit several media kinds.
+func runningHubOutputs(value interface{}) []workflowOutput {
+	result := make([]workflowOutput, 0)
+	var visit func(interface{}, string)
+	visit = func(current interface{}, nodeID string) {
 		switch item := current.(type) {
 		case string:
 			if strings.HasPrefix(item, "http://") || strings.HasPrefix(item, "https://") || strings.HasPrefix(item, "data:") || (strings.HasPrefix(item, "/") && !strings.HasPrefix(item, "//")) || runningHubRelativeOutputPath(item) {
-				result = append(result, item)
+				result = append(result, workflowOutput{URL: item, NodeID: nodeID})
 			}
 		case []interface{}:
 			for _, child := range item {
-				visit(child)
+				visit(child, nodeID)
 			}
 		case map[string]interface{}:
-			for key, child := range item {
-				lowerKey := strings.ToLower(strings.TrimSpace(key))
-				if lowerKey == "fileurl" || lowerKey == "file_url" || lowerKey == "url" || lowerKey == "downloadurl" || lowerKey == "download_url" || lowerKey == "src" || lowerKey == "output" || lowerKey == "outputs" || lowerKey == "results" || lowerKey == "files" || lowerKey == "data" || lowerKey == "images" || lowerKey == "videos" || lowerKey == "audio" || lowerKey == "audios" || lowerKey == "result" {
-					visit(child)
+			if id := stringValue(item["nodeId"]); id != "" {
+				nodeID = id
+			}
+			keys := make([]string, 0, len(item))
+			for key := range item {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, preferred := range []string{"fileUrl", "file_url", "url", "downloadUrl", "download_url", "src", "output", "outputs", "results", "files", "data", "images", "videos", "audio", "audios", "result"} {
+				visit(item[preferred], nodeID)
+				// 精确键优先，其他旧拼写按原键排序，兼容网关且不依赖 map 遍历顺序。
+				for _, key := range keys {
+					if key != preferred && strings.EqualFold(strings.TrimSpace(key), preferred) {
+						visit(item[key], nodeID)
+					}
 				}
 			}
 		}
 	}
-	visit(value)
+	visit(value, "")
 	seen := map[string]bool{}
-	deduped := make([]string, 0, len(result))
+	deduped := make([]workflowOutput, 0, len(result))
 	for _, item := range result {
-		if !seen[item] {
-			seen[item] = true
+		identity := item.NodeID + ":" + item.URL
+		if !seen[identity] {
+			seen[identity] = true
 			deduped = append(deduped, item)
 		}
 	}

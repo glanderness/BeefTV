@@ -3,6 +3,7 @@ package taskbinding
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"infinite-canvas/backend/internal/assets"
@@ -86,6 +87,23 @@ func durablePatch(ports Ports, userID string, task model.Task, req Request) (Nod
 	if err != nil {
 		return NodePatch{}, mapPortError(err)
 	}
+	workflowOutputs, err := workflowOutputReferences(ports, userID, task.ResultJSON, outputs)
+	if err != nil {
+		return NodePatch{}, err
+	}
+	if len(workflowOutputs) > 0 {
+		mode := strings.TrimPrefix(task.Type, "canvas_")
+		matched := false
+		for _, output := range outputs {
+			if output.MediaType == mode {
+				matched = true
+				break
+			}
+		}
+		if !matched && (mode == "image" || mode == "video" || mode == "audio") {
+			return NodePatch{CanvasID: req.CanvasID, NodeID: req.NodeID, TaskID: req.TaskID, OutputIndex: req.OutputIndex, EffectKey: req.EffectKey, GenerationOutputs: workflowOutputs, CollectionOnly: true}, nil
+		}
+	}
 	var output localtask.CanonicalOutput
 	found := false
 	for _, item := range outputs {
@@ -135,22 +153,63 @@ func durablePatch(ports Ports, userID string, task model.Task, req Request) (Nod
 		mediaType = strings.TrimSpace(resource.Kind)
 	}
 	return NodePatch{
-		CanvasID:    req.CanvasID,
-		NodeID:      req.NodeID,
-		TaskID:      req.TaskID,
-		OutputIndex: req.OutputIndex,
-		EffectKey:   req.EffectKey,
-		MediaType:   mediaType,
-		AssetID:     output.MaterializedAssetID,
-		ResourceID:  resource.ID,
-		StorageKey:  "resource:" + resource.ID,
-		Content:     assets.FileURL(resource.ID),
-		MimeType:    resource.MimeType,
-		Bytes:       resource.Size,
-		Width:       resource.Width,
-		Height:      resource.Height,
-		DurationMs:  resource.DurationMs,
+		GenerationOutputs: workflowOutputs,
+		CanvasID:          req.CanvasID,
+		NodeID:            req.NodeID,
+		TaskID:            req.TaskID,
+		OutputIndex:       req.OutputIndex,
+		EffectKey:         req.EffectKey,
+		MediaType:         mediaType,
+		AssetID:           output.MaterializedAssetID,
+		ResourceID:        resource.ID,
+		StorageKey:        "resource:" + resource.ID,
+		Content:           assets.FileURL(resource.ID),
+		MimeType:          resource.MimeType,
+		Bytes:             resource.Size,
+		Width:             resource.Width,
+		Height:            resource.Height,
+		DurationMs:        resource.DurationMs,
 	}, nil
+}
+
+// Only owned, delivered resources may be copied into the canvas result list.
+func workflowOutputReferences(ports Ports, userID, resultJSON string, outputs []localtask.CanonicalOutput) ([]any, error) {
+	var result struct {
+		Outputs []map[string]any `json:"outputs"`
+	}
+	if json.Unmarshal([]byte(resultJSON), &result) != nil || len(result.Outputs) == 0 {
+		return nil, nil
+	}
+	byIndex := map[int]localtask.CanonicalOutput{}
+	for _, output := range outputs {
+		byIndex[output.OutputIndex] = output
+	}
+	refs := make([]any, 0, len(result.Outputs))
+	for index, item := range result.Outputs {
+		output, exists := byIndex[index]
+		if !exists || output.ResourceID == "" {
+			return nil, precondition("output_not_ready", "工作流输出资源尚未就绪")
+		}
+		resource, err := ports.OwnedReadyResource(userID, output.ResourceID)
+		if err != nil {
+			return nil, mapPortError(err)
+		}
+		if resource == nil || resource.Status != model.ResourceStatusReady {
+			return nil, precondition("resource_not_ready", "工作流输出资源尚未就绪")
+		}
+		if resource.UserID != userID {
+			return nil, forbidden("resource_foreign", "工作流输出资源不属于当前用户")
+		}
+		if resource.ID != output.ResourceID {
+			return nil, precondition("resource_mismatch", "工作流输出资源与交付记录不一致")
+		}
+		ref := map[string]any{"id": fmt.Sprintf("output:%d", index), "outputIndex": index, "mediaType": output.MediaType, "dataUrl": assets.FileURL(resource.ID), "url": assets.FileURL(resource.ID), "storageKey": "resource:" + resource.ID, "resourceId": resource.ID, "mimeType": resource.MimeType, "bytes": resource.Size, "width": resource.Width, "height": resource.Height, "durationMs": resource.DurationMs}
+		if source, ok := item["sourceNodeId"].(string); ok && source != "" {
+			ref["sourceNodeId"] = source
+		}
+		refs = append(refs, ref)
+	}
+	return refs, nil
 }
 
 func textPatch(task model.Task, req Request) (NodePatch, error) {

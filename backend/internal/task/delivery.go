@@ -119,6 +119,23 @@ func CanonicalOutputs(resultJSON string, taskType string) []CanonicalOutput {
 		}
 		return nil
 	}
+	if items, ok := payload["outputs"].([]any); ok {
+		outputs := make([]CanonicalOutput, 0, len(items))
+		for index, item := range items {
+			value, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			kind := stringValue(value["mediaType"])
+			if kind != "image" && kind != "video" && kind != "audio" && kind != "file" {
+				continue
+			}
+			if output, ok := outputFromValue(value, kind, index); ok {
+				outputs = append(outputs, output)
+			}
+		}
+		return outputs
+	}
 	if images, ok := payload["images"]; ok {
 		if outputs := outputsFromList(images, "image"); len(outputs) > 0 {
 			return outputs
@@ -223,7 +240,7 @@ func ResultState(status model.TaskStatus, outputs []CanonicalOutput, failedRetry
 		retryable := false
 		permanent := false
 		for _, output := range outputs {
-			if output.MaterializedAssetID != "" {
+			if output.MaterializedAssetID != "" || output.MediaType == "file" && output.ResourceID != "" && output.MaterializationErrorCode == "" {
 				continue
 			}
 			ready = false
@@ -259,7 +276,7 @@ func ResultState(status model.TaskStatus, outputs []CanonicalOutput, failedRetry
 }
 
 func OutputSettled(output CanonicalOutput) bool {
-	return strings.TrimSpace(output.MaterializedAssetID) != "" || terminalMaterializeError(output.MaterializationErrorCode)
+	return strings.TrimSpace(output.MaterializedAssetID) != "" || terminalMaterializeError(output.MaterializationErrorCode) || output.MediaType == "file" && strings.TrimSpace(output.ResourceID) != "" && output.MaterializationErrorCode == ""
 }
 
 func DeliveryComplete(resultJSON string, stored []CanonicalOutput, taskType string) bool {
@@ -348,6 +365,9 @@ type CanvasBindingIntent struct {
 func CanvasBindingIntents(taskID string, outputs []CanonicalOutput) []CanvasBindingIntent {
 	intents := make([]CanvasBindingIntent, 0, len(outputs))
 	for _, output := range outputs {
+		if output.MediaType == "file" {
+			continue
+		}
 		if output.TargetBinding == nil || output.TargetBinding.Empty() {
 			continue
 		}

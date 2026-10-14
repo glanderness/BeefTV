@@ -43,10 +43,37 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 | `/tasks/*` | 生成任务创建、查询、取消、恢复与事件流 |
 | `/ai/*` | 外部模型目录和自定义协议转发 |
 | `/plugins/*`, `/skills/*` | 本地扩展包与技能 |
+| `/runninghub/workflow-info`, `/runninghub/app-info` | 已启用插件的 Workflow / App 参数查询，不创建生成任务 |
 | `/creation-conversations/*` | `/create` 页面对话的提交事实：按对话 CAS 读写、导入与墓碑删除 |
 | `/ops`, `/ops/:op` | 统一操作层：CLI、MCP 与内置 pi 会话共用同一组操作与校验 |
 | `/ops/clients*`, `/assistant/*` | 外部客户端登记、内置创作助手（同源代理）与宿主生命周期 |
 | `/health/*`, `/system/version` | 启动、就绪与版本诊断 |
+
+### RunningHub 工作流配置
+
+模型配置页提供 RunningHub 独立入口。启用开关通过 `PUT /plugins/runninghub-workflow-provider/activation` 更新当前 owner 的插件状态，同时保存本地配置；画布依据后端有效状态决定是否允许使用。
+
+`POST /runninghub/workflow-info` 接收 `baseUrl`、消费级 `apiKey`（官方「消费级-会员」）、`workflowId`、可选 `title` 和 `capability`，返回字段映射与 ComfyUI API JSON。`POST /runninghub/app-info` 使用 `webappId`，只返回 App 公开参数。二者限制请求体为 128 KiB，保留出站地址校验和插件权限校验，不返回原始响应。Workflow 的只读 metadata 拉取沿用按 schema 校验的合同：提供有效 `data.prompt` 时允许网关外层 `code` 非零；空字符串是有效空 schema，缺失、null、数字或不可解析的 JSON 返回失败。App 参数拉取仍拒绝上游非零业务码。
+
+配置及字段映射由本地后端持久保存；浏览器缓存不保存密钥。独立企业级上传 Key 输入暂时隐藏，上传不读取旧的 `uploadApiKey`。参数查询不会创建生成任务。测试画布和正式生成仍通过正常任务入口，可能产生供应商费用；ComfyUI API JSON 编辑不代表已经接入本机 ComfyUI 服务。
+
+参数拉取使用发起时的站点、凭据和账号身份；这些身份发生变化时立即取消当前请求，写回前再次检查。即使站点或凭据在同一轮修改后又恢复原值，旧请求也不能更新当前工作流配置。
+
+带参考图片、视频、音频或蒙版的任务先保存为本地资源，后端通过 owner 归属校验读取字节，再调用 RunningHub `/openapi/v2/media/upload/binary`（multipart `file`、`Authorization: Bearer <apiKey>`）。上传必须返回业务码 `0` 和有效的 `data.fileName`；上传失败不提交工作流。返回的 `fileName` 按字段槽位填入 `nodeInfoList[].fieldValue`，不使用 `download_url` 替代 ComfyUI 加载节点路径。Workflow 提交至 `/task/openapi/create`，App 提交至 `/task/openapi/ai-app/run`；上传、参数查询、提交和轮询共用配置中的 `apiKey`。恢复已有上游任务只查询原任务，不重新上传或创建。上传资源用于任务输入，不作为永久云端资源库。
+
+工作流任务的 `resultJson.outputs` 为按上游顺序保留的完整产物数组，每项包含 `id`（`output:<index>`）、`outputIndex`、`mediaType`（`image`、`video`、`audio` 或 `file`）、资源引用与媒体元数据；仅在上游提供时保留 `sourceNodeId`，不从文件顺序推断节点。产物字节逐项写入当前 owner 的资源存储，结果中使用本地资源 URL、`storageKey` 和 `resourceId`，不重复保存主输出的内联副本。原有普通模型结果仍使用对应的 `images`、`video` 或 `audio` 合同。
+
+上游输出解析保留数组顺序，字段名接受已有的大小写和首尾空白变体；同一对象按固定字段优先级读取，精确拼写优先，同名变体按原键排序，避免 Go map 的遍历顺序改变输出索引。
+
+任务交付按任务 ID 与输出索引复用物化身份；图片、视频、音频进入素材库，附带文件保留为可下载资源，其就绪状态不要求媒体素材 ID。画布自动回填第一份匹配生成类型的输出，同时保存 `generationOutputs`、`generationOutputTaskId` 和 `primaryOutputId`；其他输出不覆盖当前节点。绑定结果集合时逐项核验资源归属与就绪状态。未返回匹配类型的媒体时，画布只保存结果集合并清除旧媒体预览。重新读取已有任务及展开输出不调用上游创建接口。
+
+结果面板添加媒体及选择主输出时，从 `GET /tasks/:id` 的交付记录取得 `outputs[].materializedAssetId`，与对应 `resourceId` 一起写入画布节点；素材未就绪或资源不匹配时拒绝修改节点。普通画布提交继续校验素材、资源归属及两者的关联，不接受只有资源地址的媒体节点。
+
+工作流轮询将 `submitted` / `pending`、`queued`、`running`、`downloading` 映射为任务展示阶段；产物下载完毕后显示保存阶段，由任务交付流程确认最终成功。阶段更新受当前 worker 租约和取消状态约束，不伪造上游未提供的进度百分比。
+
+运行时接受带端口的 Wails 开发窗口 Origin `wails://wails.localhost:<port>`，仍要求本机连接、已验证的启动令牌和 UI 引导凭据。桌面任务创建或重试未通过界面身份校验时返回 HTTP 403、`reason=desktop_ui_required`，表示任务尚未提交，与上游模型权限不足分别显示。
+
+### 本机媒体任务
 
 `POST /timeline/render-plan` 接收时间线快照、不透明源标识和输出选项，返回版本化语义计划。源标识是 nodeId 或 resource id，不是本地路径。请求不得携带 ffmpeg 参数。该接口不做生成、不写资源、不创建任务。
 
@@ -155,6 +182,8 @@ Windows 的运行地址描述文件位于用户目录的 `.beeftv/runtime/`，�
 历史轮次与流式 `turn_end` 均包含 `outputs: [{taskId, kind: "video", sourceRevision?}]`，用于展示本轮提交的免费本地渲染。Go 从成功的渲染操作回执恢复列表，重新校验任务用户、画布、类型及稳定操作编号，并覆盖宿主提供的同名字段。列表按回执创建时间排序，同时间以操作编号保持确定顺序；首版与后续修正版都保留。`sourceRevision` 来自提交渲染时记录的源画布版本，未知时省略。回执成功表示任务已接纳，不能代表成片已完成：页面继续使用已有的所属任务查询与认证资源播放接口。取消、回复失败或重开会话不会抹掉已经提交的渲染；读取列表不扩大助手工具权限。
 
 `POST /tasks` 可在 `input.metadata.clientOperationId` 提交一次确认的稳定编号（8–128 个 ASCII 字母、数字、冒号、下划线或连字符）。相同用户、编号及完整原始请求返回已有任务；更换模型、提示词、素材、参数或项目时返回 409，不创建第二个任务。Trace ID 和 Request ID 不参与比较。任务回执丢失时以原编号和原请求重发；不要生成新编号猜测是否已接单。
+
+RunningHub 工作流任务允许 `prompt` 为空，任务创建和执行均按有效工作流配置识别此例外，不以客户端 `provider` 标签作为判断依据。空提示词不填充占位内容，也不覆盖工作流原有提示词；提示词内容是否满足工作流要求由上游执行决定。普通模型仍要求非空提示词。此例外不会绕过插件启用、配置、素材归属或其他字段校验。
 
 旧任务若没有请求摘要，不能凭编号推断内容相同，因此拒绝重放，应先查询已有任务。此编号仅保证本地任务不重复创建，不代表上游扣费或取消结算已经确认。
 

@@ -105,7 +105,6 @@ export default function PluginsPage() {
     const reloadBackendPlugins = async () => {
         if (localRuntime) {
             setBackendPlugins([]);
-            setPluginStates({});
             return;
         }
         setBackendPluginsLoading(true);

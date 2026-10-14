@@ -10,6 +10,20 @@ BeefTV 是单用户、本地优先的桌面应用。项目、画布、素材和�
 
 模型服务设置由 `web/src/pages/settings/model-service-editor.tsx` 管理添加和编辑草稿；`model-service-presets.ts` 依据已启用的协议插件填写初始配置。`model-connection-test.ts` 通过正常后端生成任务验证结果。`internal/workspace/provider_config.go` 持有配置版本、保存冲突和文件读写，`internal/localcrypto` 统一工作区凭据加解密格式。
 
+RunningHub 设置由 `web/src/pages/settings/runninghub-settings-pane.tsx` 管理，与普通模型渠道分开。参数读取经过 `handler/runninghub.go` 的本地身份和插件校验，再进入 `app/runninghub_management.go` 与 `provider/workflow`；画布选择由 `generation-workflow-execution.ts` 解析，生成沿用持久任务入口。参考素材经 `generation/media.go` 的归属校验与字节读取，再由 `provider/workflow/client.go` 用工作流 Key 上传并映射 `fileName`。本机 ComfyUI 服务尚未接通。
+
+正式视频节点在 `ModelPicker` 的附加分组中选择 RunningHub 条目，`canvas-workflow-controls.tsx` 将映射后的分辨率、比例、时长放进原有底栏，其余字段与素材检查放进参数弹层。`workflow-video-controls.ts` 提供供应商无关的字段识别、具体字段映射、摘要和默认值规则；设置页的 `workflow-video-controls-editor.tsx` 保存每个条目的映射与显示开关。`canvas-workflow-inputs.ts` 核对素材槽位和参数。工作流产物由 `provider/workflow` 保留为完整 `outputs` 数组，`taskdelivery` 逐项写入资源与媒体素材，`taskbinding` 核验资源并回填主输出及结果集合。前端 `generation-outputs.ts` 与 `canvas-generation-outputs.ts` 定义供应商无关的结果引用、主输出选择与展开规则，`canvas-generation-results.tsx` 提供预览和添加到画布操作。
+
+`canvas-connection-policy.ts` 根据目标节点的工作流渠道跳过普通模型容量检查，保留节点输入类型检查。`canvas-node-generation.ts` 在生成上下文中保留工作流的图片与角色卡混排槽位，解析时每张角色卡只物化一张主参考图，再按原槽位顺序组装任务输入；普通模型仍按容量追加角色多视图。角色卡没有参考图时明确拒绝提交，不压缩后续槽位。
+
+工作流生成上下文自动合并连接的文字，去除已显式引用的重复追加。`task/admission.go` 按模型目录解析后的有效配置判断是否允许空提示词，`generation/executor.go` 在配置解析和工作流分流后保留普通模型的非空校验。`provider/workflow/mapping.go` 对空提示词省略覆盖，即使字段标为必填也由上游判断，不伪造提示词或覆盖默认值；其他字段校验保持有效。
+
+`generation-output-media.ts` 通过共享鉴权客户端读取输出字节，并按运行环境选择浏览器 Blob 下载或 Wails 的 owner 资源保存接口；音频预览在结果面板管理取消、账号切换和 Blob URL 释放。展开输出复用 `canvas-generation-layout.ts` 的空位计算，避免分次添加时覆盖已有节点。
+
+`services/canvas-generation-outputs.ts` 在添加媒体或选择主输出前查询任务交付记录，按输出索引核对资源并取得对应素材 ID；`canvas-generation-outputs.ts` 同时写入素材与资源引用，随后沿用普通画布保存流程。`app/workflow_adapter.go` 将上游排队、运行和下载状态交给租约约束的生成阶段端口，不修改任务进度或终态；`provider/workflow/client.go` 在读取产物前记录下载阶段。
+
+设置页私有的 `runninghub-metadata-request.ts` 在请求存续期间订阅站点、Key 和账号变化，立即取消旧请求并在写回前复核身份；订阅在取消或完成后释放。`provider/workflow/protocol.go` 按固定顺序识别规范化的输出字段。`task.CanonicalOutputs` 保留主线的 `taskType` 参数，深度捕获任务使用独立结果结构，工作流任务使用多输出数组；交付、恢复和绑定继续共用现有任务机制。
+
 ```text
 Wails / local dev
   -> internal/bootstrap        组合根、数据库、HTTP 生命周期

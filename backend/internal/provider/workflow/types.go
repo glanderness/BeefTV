@@ -32,7 +32,6 @@ type Config struct {
 	WebappID              string
 	WorkflowJSON          map[string]interface{}
 	WorkflowFields        []Field
-	RunningHubUploadKey   string
 }
 
 // Media is the workflow-needed slice of providerMedia.
@@ -55,7 +54,6 @@ type Input struct {
 	ReferenceAudios  []Media
 	Mask             *Media
 	ResumedRequestID string
-	LocalWorkspace   bool
 }
 
 // FetchRequest is the exported workflow-settings fetch contract.
@@ -119,7 +117,7 @@ func ValidateConfig(mode string, config Config) error {
 	}
 	if isRunningHubInterface(config.InterfaceType) {
 		if APIKey(config) == "" {
-			return errText("RunningHub 工作流缺少积分 API Key")
+			return errText("RunningHub 工作流缺少消费级 API Key")
 		}
 		if _, err := outbound.ValidateOutboundURL(RootURL(config.BaseURL)); err != nil {
 			return err

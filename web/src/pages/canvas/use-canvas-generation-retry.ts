@@ -114,7 +114,7 @@ export function useCanvasGenerationRetry({
             const retryContextPrompt = retryMode === "image" && sourceNode.metadata?.portraitTexture ? buildPortraitTexturePrompt(retryPromptSource, sourceNode.metadata.portraitTexture) : retryPromptSource;
             let rawContext: Awaited<ReturnType<typeof hydrateNodeGenerationContext>> | null;
             try {
-                const promptOnly = retryMode === "video";
+                const promptOnly = retryMode === "video" && generationConfig.taskWorkflowProvider !== "runninghub";
                 if (useStoredSource) rawContext = null;
                 else {
                     const baseContext = buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, retryContextPrompt, assets, promptOnly);
@@ -143,7 +143,7 @@ export function useCanvasGenerationRetry({
                 }
             }
             const prompt = (context?.prompt || savedImageMetadata?.prompt || "").trim();
-            if (!prompt) {
+            if (!prompt && generationConfig.taskWorkflowProvider !== "runninghub") {
                 message.warning("找不到提示词，无法重试");
                 return;
             }

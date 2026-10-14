@@ -1,4 +1,5 @@
 import { getMediaBlob } from "@/services/file-storage";
+import { primaryGenerationOutput, type GenerationOutput } from "@/lib/generation-outputs";
 import { resolveReferenceMediaDuration } from "@/lib/reference-media-metadata";
 import { getImageBlob } from "@/services/image-storage";
 import { resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
@@ -23,7 +24,8 @@ export { logicalModelIDForConfig };
 export type BackendGenerationMode = "text" | "image" | "video" | "audio";
 
 export type BackendGenerationResult = {
-    mode?: BackendGenerationMode;
+    outputs?: GenerationOutput[];
+    mode?: BackendGenerationMode | "file";
     images?: Array<{ dataUrl: string; url?: string; storageKey?: string; width?: number; height?: number; bytes?: number; mimeType?: string }>;
     video?: { dataUrl: string; url?: string; storageKey?: string; previewUrl?: string; width?: number; height?: number; durationMs?: number; bytes?: number; mimeType?: string };
     audio?: { dataUrl: string; url?: string; storageKey?: string; durationMs?: number; bytes?: number; mimeType?: string; format?: string };
@@ -257,7 +259,7 @@ async function prepareGenerationReferences({
     const portraitError = mode === "video" ? portraitGenerationError(config, config.model, config.vquality) : "";
     if (portraitError) throw new Error(portraitError);
     // asset:// 仅视频生成可用；Agent Plan Seedream 与 Seedance 共用 /api/plan/v3，不能按 BaseURL 误判。
-    const preferArkAssetUrl = mode === "video" && usesArkVideoAssetReference(config);
+    const preferArkAssetUrl = mode === "video" && (config.taskWorkflowProvider || "model") === "model" && usesArkVideoAssetReference(config);
     const preparedImages = await Promise.all(referenceImages.map((image) => prepareBackendImageReference(image, preferArkAssetUrl)));
     const preparedVideos = await Promise.all(referenceVideos.map(prepareBackendMediaReference));
     const preparedAudios = await Promise.all(referenceAudios.map(prepareBackendMediaReference));
@@ -337,7 +339,7 @@ export async function prepareBackendGenerationTask(options: BackendGenerationTas
 }
 
 function assertPreparedVideoCapability(mode: BackendGenerationMode, config: AiConfig, prepared: PreparedGenerationReferences) {
-    if (mode !== "video") return;
+    if (mode !== "video" || config.taskWorkflowProvider === "runninghub") return;
     const profile = modelCapabilityConfigFor(config, config.model).video;
     if (!profile) return;
     // Owned workflow resources can carry only a key; the backend reads their
@@ -381,6 +383,7 @@ function backendGenerationTaskInput(options: BackendGenerationTaskOptions, prepa
 }
 
 function generationMetadata(config: AiConfig, metadata?: Record<string, unknown>) {
+    if ((config.taskWorkflowProvider || "model") !== "model") return metadata;
     const channel = resolveModelChannel(config, config.model);
     const model = modelOptionName(config.model);
     const modelProfile = channel.modelProfiles?.find((item) => item.model === model);
@@ -528,7 +531,6 @@ function workflowProviderConfig(config: AiConfig, requestConfig: ReturnType<type
         workflowFields: workflow.workflowFields,
         runningHubUseWallet: false,
         runningHubWalletApiKey: "",
-        runningHubUploadApiKey: runningHubActive ? config.runningHub.uploadApiKey || "" : "",
         capabilityConfig: modelCapabilityConfigFor(config, requestConfig.model),
         videoCapabilitiesVersion: resolveModelChannel(config, config.model).modelProfiles?.find((item) => item.model === requestConfig.model)?.videoCapabilitiesVersion,
         systemPrompt: config.systemPrompt,
@@ -574,5 +576,11 @@ export function parseBackendGenerationResult(task: GenerationTask): BackendGener
     if (!task.resultJson) throw new Error("后端任务没有返回结果");
     const result = JSON.parse(task.resultJson) as BackendGenerationResult;
     if (!result || typeof result !== "object") throw new Error("后端任务结果格式错误");
+    if (result.outputs) {
+        // Derive existing consumer views without duplicating persisted media bytes.
+        result.images = result.outputs.filter((item) => item.mediaType === "image");
+        result.video = primaryGenerationOutput(result.outputs, "video");
+        result.audio = primaryGenerationOutput(result.outputs, "audio");
+    }
     return result;
 }

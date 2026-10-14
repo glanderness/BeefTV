@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/agentops"
@@ -78,6 +79,32 @@ func TestOpsAcceptanceUIBootstrapCredentialIsolation(t *testing.T) {
 	}
 	if w := h.desktopUI("POST", "/assistant/ui-session", ""); w.Code != http.StatusOK {
 		t.Fatalf("valid UI rejected: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDesktopDevelopmentOriginCanReachTaskValidation(t *testing.T) {
+	h := newDesktopHarness(t)
+	for _, tc := range []struct {
+		name, origin, bootstrap string
+		want                    int
+	}{
+		{"Wails development", "wails://wails.localhost:34115", h.rt.UIBootstrapToken(), http.StatusBadRequest},
+		{"missing UI bootstrap", "wails://wails.localhost:34115", "", http.StatusForbidden},
+		{"foreign Wails host", "wails://attacker:34115", h.rt.UIBootstrapToken(), http.StatusForbidden},
+		{"Wails host suffix", "wails://wails.localhost.attacker.example:34115", h.rt.UIBootstrapToken(), http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Invalid JSON proves admission authorization without creating a task
+			// or contacting any provider.
+			w := h.call(requestOptions{method: http.MethodPost, path: "/tasks", body: "{", origin: tc.origin,
+				launchToken: h.rt.LaunchToken(), uiBootstrap: tc.bootstrap})
+			if w.Code != tc.want {
+				t.Fatalf("status=%d want=%d body=%s", w.Code, tc.want, w.Body.String())
+			}
+			if tc.want == http.StatusForbidden && !strings.Contains(w.Body.String(), `"reason":"desktop_ui_required"`) {
+				t.Fatalf("desktop admission lost its structured reason: %s", w.Body.String())
+			}
+		})
 	}
 }
 

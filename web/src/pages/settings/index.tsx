@@ -8,15 +8,25 @@ import { useUserStore } from "@/stores/use-user-store";
 import { ChannelSettingsPane, channelValidationError, focusInvalidChannelField, isChannelReady } from "./channel-settings-pane";
 import { ModelDefaultGrid } from "./model-default-grid";
 import DiagnosticsPanel from "./diagnostics-panel";
+import { RunningHubSettingsPane } from "./runninghub-settings-pane";
+import { isRunningHubReady } from "@/lib/generation-workflow-execution";
+import { usePluginStore } from "@/stores/use-plugin-store";
+import { flushModelConfig, getModelConfigPersistenceState } from "@/services/model-config-repository";
+
 import { StorageSettingsPane } from "./storage-settings-pane";
 import { ReferenceStoragePane } from "./reference-storage-pane";
 import { getDesktopAppBinding } from "@/services/desktop-runtime";
 import { PageHeader } from "@/components/layout/workspace-page";
 
-type ConfigSectionKey = "channels" | "models" | "storage" | "diagnostics";
+type ConfigSectionKey = "channels" | "models" | "storage" | "diagnostics" | "runninghub";
 
 export function isConfigSection(value: string | null): value is ConfigSectionKey {
-    return value === "channels" || value === "storage" || value === "diagnostics";
+    return value === "channels" || value === "storage" || value === "diagnostics" || value === "runninghub";
+}
+
+export function resolveSettingsSection(value: string | null, nativeStorage: boolean, customChannelsEnabled: boolean): ConfigSectionKey {
+    if (!isConfigSection(value) || value === "storage" && !nativeStorage || value === "runninghub" && !customChannelsEnabled) return "channels";
+    return value;
 }
 
 export default function SettingsPage() {
@@ -25,22 +35,23 @@ export default function SettingsPage() {
     const [searchParams, setSearchParams] = useSearchParams();
     const requestedSection = searchParams.get("section");
     const customChannelsEnabled = useUserStore((state) => state.features.customChannelsEnabled);
-    const initialSection = isConfigSection(requestedSection) ? requestedSection : "channels";
-    const [activeTab, setActiveTab] = useState<ConfigSectionKey>(initialSection === "models" ? "channels" : initialSection);
+    const nativeStorage = Boolean(getDesktopAppBinding()?.StorageSettings);
+    const [activeTab, setActiveTab] = useState<ConfigSectionKey>(() => resolveSettingsSection(requestedSection, nativeStorage, customChannelsEnabled));
     const config = useConfigStore((state) => state.config);
+    const runtimeStatuses = usePluginStore((state) => state.runtimeStatuses);
+    const [saving, setSaving] = useState(false);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const shouldPromptContinue = searchParams.get("continue") === "1";
     const userChannels = config.channels.filter((channel) => channel.scope !== "system");
-    const nativeStorage = Boolean(getDesktopAppBinding()?.StorageSettings);
     useLayoutEffect(() => {
         document.body.classList.add("app-user-overlays");
         return () => document.body.classList.remove("app-user-overlays");
     }, []);
 
     useEffect(() => {
-        setActiveTab(isConfigSection(requestedSection) && (requestedSection !== "storage" || nativeStorage) ? requestedSection : "channels");
-    }, [requestedSection, nativeStorage]);
+        setActiveTab(resolveSettingsSection(requestedSection, nativeStorage, customChannelsEnabled));
+    }, [requestedSection, nativeStorage, customChannelsEnabled]);
 
     const selectSection = (section: ConfigSectionKey) => {
         setActiveTab(section);
@@ -49,7 +60,7 @@ export default function SettingsPage() {
         setSearchParams(next, { replace: true });
     };
 
-    const finishConfig = () => {
+    const finishConfig = async () => {
         const invalidChannel = customChannelsEnabled ? userChannels.find((channel) => channelValidationError(channel)) : undefined;
         if (invalidChannel) {
             selectSection("channels");
@@ -57,19 +68,30 @@ export default function SettingsPage() {
             focusInvalidChannelField(invalidChannel);
             return;
         }
-        if (!effectiveConfig.channels.some(isChannelReady)) {
+        if (!effectiveConfig.channels.some(isChannelReady) && !(customChannelsEnabled && isRunningHubReady(config.runningHub, runtimeStatuses))) {
             selectSection("channels");
             message.error(customChannelsEnabled ? (shouldPromptContinue ? "请先完成至少一个渠道的 Base URL、API Key 和模型配置" : "当前没有可用渠道，请先完成连接信息和模型配置") : "当前没有可用的系统模型，请联系管理员配置系统渠道");
             return;
         }
-        message.success("配置已保存，正在返回创作页面");
-        navigate(-1);
+        setSaving(true);
+        try {
+            await flushModelConfig();
+            const persistence = getModelConfigPersistenceState();
+            if (persistence.status === "error" || persistence.dirty) throw new Error(persistence.error || "配置尚未保存，请重试");
+            message.success("配置已保存，正在返回创作页面");
+            navigate(-1);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "保存配置失败");
+        } finally {
+            setSaving(false);
+        }
     };
 
     const panes: Record<Exclude<ConfigSectionKey, "diagnostics">, ReactNode> = {
+        runninghub: <SettingsPane><RunningHubSettingsPane /></SettingsPane>,
         channels: (
             <SettingsPane>
-                <ChannelSettingsPane onOpenDiagnostics={() => selectSection("diagnostics")} />
+                <ChannelSettingsPane onOpenDiagnostics={() => selectSection("diagnostics")} onOpenRunningHub={() => selectSection("runninghub")} />
                 <div className="settings-section model-default-section">
                     <div className="settings-pane-header">
                         <div className="min-w-0">
@@ -106,11 +128,14 @@ export default function SettingsPage() {
 
     return (
         <main className="settings-page app-workspace-page app-user-workspace app-section-page flex h-full min-h-0 flex-col text-foreground">
-                {shouldPromptContinue ? <div className="settings-topbar shrink-0">
+                {shouldPromptContinue || activeTab === "runninghub" ? <div className="settings-topbar shrink-0">
                     <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                        {activeTab === "runninghub" ? (
+                            <Button icon={<ArrowLeft className="size-4" />} onClick={() => selectSection("channels")}>返回模型配置</Button>
+                        ) : null}
                         {shouldPromptContinue ? <>
                         <Button icon={<ArrowLeft className="size-4" />} onClick={() => navigate(-1)}>返回创作</Button>
-                        <Button type="primary" onClick={finishConfig}>保存并返回</Button>
+                        <Button type="primary" loading={saving} onClick={() => void finishConfig()}>保存并返回</Button>
                         </> : null}
                     </div>
                 </div> : null}

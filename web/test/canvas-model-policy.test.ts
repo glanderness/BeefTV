@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { canvasConnectionError } from "../src/lib/canvas/canvas-connection-policy";
 import { assertCanvasImageReferenceLimit, buildGenerationConfig, canvasImageReferenceLimitError, resolveCanvasGenerationModel } from "../src/lib/canvas/canvas-project-generation";
 import { defaultModelCapabilityConfig } from "../src/lib/model-capabilities";
-import { groupModelsByDisplayName, inferVideoOperation, modelCompatibilityError, modelGroupReferenceLimits, modelPromptLengthError, resolveCompatibleModel, resolveModelGenerationDefaults, resolveModelVideoBooleanOptions } from "../src/lib/model-selection";
+import { groupModelsByDisplayName, inferVideoOperation, modelCompatibilityError, modelGroupReferenceLimits, modelPromptLengthError, portraitGenerationError, resolveCompatibleModel, resolveModelGenerationDefaults, resolveModelVideoBooleanOptions } from "../src/lib/model-selection";
 import { defaultConfig, normalizeModelOptionValue, type AiConfig, type ModelChannel } from "../src/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../src/types/canvas";
 
@@ -53,6 +53,16 @@ function node(id: string, type: CanvasNodeType, generationMode?: "image" | "vide
 }
 
 describe("逻辑模型选择", () => {
+    test("工作流不继承残留普通模型的提示词和真人素材版限制，切回普通模型后仍校验", () => {
+        const ordinary = policyConfig();
+        const model = ordinary.videoModels[0]!;
+        ordinary.channels[0]!.modelProfiles![0]!.capabilityConfig!.video!.references.promptMaxChars = 10;
+        const workflow = { ...ordinary, taskWorkflowProvider: "runninghub" as const };
+        expect(modelPromptLengthError(workflow, model, "video", "镜".repeat(100))).toBe("");
+        expect(modelPromptLengthError(ordinary, model, "video", "镜".repeat(100))).toContain("最多 10");
+        expect(portraitGenerationError(workflow, "seedance-2.0-portrait", "1080p")).toBe("");
+        expect(portraitGenerationError(ordinary, "seedance-2.0-portrait", "1080p")).toContain("真人素材版当前不可用");
+    });
     test("技能上下文展开后按最终视频模型字符上限拒绝提交", () => {
         const config = policyConfig();
         const model = config.videoModels[0]!;
@@ -363,6 +373,32 @@ describe("逻辑模型选择", () => {
 });
 
 describe("画布连线能力", () => {
+    test("工作流目标不受普通模型图片、视频和音频容量限制，切回模型后恢复校验", () => {
+        const config = policyConfig();
+        for (const profile of config.channels[0]!.modelProfiles!) profile.capabilityConfig!.video!.references.maxAudios = 0;
+        const inputs = [node("image-a", CanvasNodeType.Image), node("image-b", CanvasNodeType.Image), node("video", CanvasNodeType.Video), node("audio", CanvasNodeType.Audio)];
+        for (const type of [CanvasNodeType.Video, CanvasNodeType.Config]) {
+            const target = node("target", type, "video");
+            const nodes = [...inputs, target];
+            const connections: CanvasConnection[] = [{ id: "existing", fromNodeId: "image-a", toNodeId: "target" }];
+            for (const metadata of [{ workflowProvider: "runninghub" as const }, { runningHubWorkflowId: "workflow-id" }]) {
+                target.metadata = { generationMode: "video", model: config.videoModels[0], ...metadata };
+                for (const source of inputs.slice(1)) expect(canvasConnectionError(config, nodes, connections, { fromNodeId: source.id, toNodeId: target.id })).toBe("");
+            }
+            target.metadata = { generationMode: "video", workflowProvider: "model", runningHubWorkflowId: "workflow-id" };
+            const globalWorkflowConfig = { ...config, taskWorkflowProvider: "runninghub" as const };
+            expect(canvasConnectionError(globalWorkflowConfig, nodes, connections, { fromNodeId: "image-b", toNodeId: target.id })).toContain("最多支持 1");
+            expect(canvasConnectionError(config, nodes, [], { fromNodeId: "video", toNodeId: target.id })).toContain("不支持参考视频");
+            expect(canvasConnectionError(config, nodes, [], { fromNodeId: "audio", toNodeId: target.id })).toContain("不支持参考音频");
+        }
+    });
+
+    test("工作流跳过模型容量后仍保留节点媒体类型检查", () => {
+        const target = node("target", CanvasNodeType.Image);
+        target.metadata = { workflowProvider: "runninghub" };
+        expect(canvasConnectionError(policyConfig(), [node("video", CanvasNodeType.Video), target], [], { fromNodeId: "video", toNodeId: target.id })).toContain("不能连接参考视频");
+    });
+
     test("超过所有视频模型的参考图上限时拒绝连线", () => {
         const config = policyConfig();
         const nodes = [node("image-a", CanvasNodeType.Image), node("image-b", CanvasNodeType.Image), node("target", CanvasNodeType.Config, "video")];

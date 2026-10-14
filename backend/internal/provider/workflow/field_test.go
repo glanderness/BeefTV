@@ -2,9 +2,34 @@ package workflow
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestImageSlotsPreserveInputOrderAndH3Prompt(t *testing.T) {
+	fields := []Field{
+		{NodeID: "35", FieldName: "image", Source: "referenceImage", ImageOrder: 2, SourceIndex: 0},
+		{NodeID: "6", FieldName: "image", Source: "referenceImage", ImageOrder: 1, SourceIndex: 1},
+		{NodeID: "36", FieldName: "image", Source: "referenceImage", ImageOrder: 3},
+		{NodeID: "28", FieldName: "prompt", Source: "prompt"},
+	}
+	prompt := "subject_definitions:\n<Subject 1> is the woman in <Picture 2>.\n<Subject 2> is the man in <Picture 1>."
+	input := Input{Mode: "video", Prompt: prompt, ReferenceImages: []Media{{ID: "uploaded-photo"}, {ID: "generated-image"}}}
+	files := map[string]string{"generated-image": "openapi/second.png", "uploaded-photo": "openapi/first.png"}
+	items, err := runningHubNodeInfoWithWorkflow(fields, files, input, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, item := range items {
+		got[item["nodeId"].(string)] = item["fieldValue"].(string)
+	}
+	want := map[string]string{"6": "openapi/first.png", "35": "openapi/second.png", "28": prompt}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("mapping = %#v, want %#v", got, want)
+	}
+}
 
 func TestFieldUnmarshalDistinguishesAbsentSourceFromExplicitDefault(t *testing.T) {
 	var inferred Field
@@ -89,6 +114,25 @@ func TestConnectedInputsAreNotOverridden(t *testing.T) {
 	}
 	if len(items) != 0 {
 		t.Fatalf("linked input was sent: %#v", items)
+	}
+}
+
+func TestEmptyPromptDoesNotOverrideWorkflowDefaultsOrFailRequiredMapping(t *testing.T) {
+	workflowJSON := map[string]interface{}{"1": map[string]interface{}{"class_type": "CLIPTextEncode", "inputs": map[string]interface{}{"text": "workflow default"}}}
+	for _, source := range []string{"prompt", "text", "positive_prompt", "positive"} {
+		fields := []Field{{NodeID: "1", FieldName: "text", Source: source, Required: true}}
+		items, err := runningHubNodeInfoWithWorkflow(fields, nil, Input{Mode: "image"}, workflowJSON)
+		if err != nil || len(items) != 0 {
+			t.Fatalf("blank prompt source=%s overrides=%+v err=%v", source, items, err)
+		}
+		items, err = runningHubNodeInfoWithWorkflow(fields, nil, Input{Mode: "image", Prompt: "connected text"}, workflowJSON)
+		if err != nil || len(items) != 1 || items[0]["fieldValue"] != "connected text" {
+			t.Fatalf("connected text source=%s overrides=%+v err=%v", source, items, err)
+		}
+	}
+	_, err := runningHubNodeInfoWithWorkflow([]Field{{NodeID: "1", FieldName: "image", Source: "referenceImage", Required: true}}, nil, Input{Mode: "image"}, nil)
+	if err == nil {
+		t.Fatal("required media validation was removed with prompt validation")
 	}
 }
 

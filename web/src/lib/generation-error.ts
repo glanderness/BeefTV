@@ -444,6 +444,9 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
     if (!error) return { category: "unknown", retryable: false };
     if (typeof error === "object" && error) {
     const record = error as Record<string, unknown>;
+        if (record.name === "ApiError" && record.reason === "desktop_ui_required") {
+            return { category: "permission", reason: "当前桌面界面的身份校验失败，任务尚未提交", action: "请重新加载应用；若仍失败，请重启开发服务", fromCode: true, retryable: false };
+        }
         if (record.reason === "local_storage_failed") return { category: "local_storage", ...LOCAL_TASK_ADMISSION_FAILURE, fromCode: true, retryable: false };
         if (record.name === "ApiError" && record.reason === "quota_exceeded") {
             return { category: "quota_limit", reason: sanitizeProviderText(String(record.message || "工作区用量已达到上限")), action: "请清理不需要的任务记录或素材后重试", fromCode: true, retryable: false };

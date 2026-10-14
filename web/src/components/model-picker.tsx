@@ -11,6 +11,7 @@ import { ModelLogo } from "@/components/model-logo";
 import { portraitPriceLines, seedancePortraitLabel, seedancePortraitModel } from "@/lib/seedance-portrait";
 
 type ModelPickerProps = {
+    additionalGroups?: Array<{ key: string; label: string; scope?: string; options: Array<{ value: string; label: string }> }>;
     config: AiConfig;
     value?: string;
     onChange: (model: string) => void;
@@ -38,6 +39,7 @@ export function ModelPicker({
     variant = "creation",
     requirements,
     showConfiguredModelName = false,
+    additionalGroups = [],
 }: ModelPickerProps) {
     const pickerId = useId();
     // 双保险：即使 store merge 写出非法 theme，这里也兜底到 dark，避免 "reading 'node'" 崩溃
@@ -50,6 +52,7 @@ export function ModelPicker({
     const menuRef = useRef<HTMLDivElement>(null);
     const triggerRef = useRef<HTMLButtonElement>(null);
     const options = useMemo(() => Array.from(new Set(selectableModelsByCapability(config, capability).filter(Boolean))), [capability, config]);
+    const additionalOptions = new Map(additionalGroups.flatMap((group) => group.options.map((option) => [option.value, { ...option, group: group.label }] as const)));
     const optionGroups = useMemo(() => {
         const channelGroups = config.channels
             .map((channel) => ({
@@ -63,19 +66,23 @@ export function ModelPicker({
             .filter((group) => group.models.length);
         // options 已由当前有效渠道重建；任何无法解析渠道的旧值都直接丢弃，
         // 不再显示“其他模型 / 未指定渠道”这种不可用入口。
-        return channelGroups;
-    }, [config, options]);
+        return [...channelGroups.map((group) => ({ ...group, optionLabel: "模型" })), ...additionalGroups.map((group) => ({
+            key: group.key, label: group.label, scope: group.scope || "工作流", optionLabel: "工作流",
+            models: group.options.map((option) => ({ key: option.value, models: [option.value] })),
+        }))];
+    }, [config, options, additionalGroups]);
     const storedCurrent = value?.trim() || "";
     // 参数档位会在选中模型后由调用方归一到其能力配置，不能因为旧模型留下的参数而禁止切换。
     const selectionRequirements = requirements ? { ...requirements, videoSeconds: undefined, imageSize: undefined, options: undefined } : undefined;
     const resolvedCurrent = resolveCompatibleModel(config, storedCurrent, selectionRequirements) || storedCurrent;
     // 旧画布可能保存过已下架或前端历史内置模型；它们不能重新进入当前可选目录。
-    const current = options.includes(resolvedCurrent) ? resolvedCurrent : "";
+    const current = additionalOptions.has(storedCurrent) ? storedCurrent : options.includes(resolvedCurrent) ? resolvedCurrent : "";
     const portrait = seedancePortraitModel(current || storedCurrent);
     const portraitQuote = current ? resolveModelChannel(config, current).modelProfiles?.find((item) => item.model === modelOptionName(current))?.videoPricing : undefined;
     const priceLines = portraitPriceLines(portraitQuote);
     const creationVariant = variant === "creation";
-    const triggerLabel = current
+    const additionalCurrent = additionalOptions.get(current);
+    const triggerLabel = additionalCurrent ? `${additionalCurrent.group} · ${additionalCurrent.label}` : current
         ? (creationVariant ? pickerModelDisplayName(config, current, showConfiguredModelName) : pickerModelOptionLabel(config, current, showConfiguredModelName))
         : portrait ? `${seedancePortraitLabel(storedCurrent)}（不可用）` : placeholder;
 
@@ -111,7 +118,7 @@ export function ModelPicker({
     }, [open]);
 
     const setPickerOpen = (nextOpen: boolean) => {
-        if (nextOpen && !options.length) onMissingConfig?.();
+        if (nextOpen && !options.length && !additionalGroups.length) onMissingConfig?.();
         if (nextOpen) window.dispatchEvent(new CustomEvent("model-picker-open", { detail: pickerId }));
         if (nextOpen) {
             setPreviewedModel(current || options[0] || "");
@@ -198,9 +205,11 @@ export function ModelPicker({
                     </div>
                     {optionGroups.filter((group) => group.key === activeGroupKey).map((group) => <section key={group.key} className="canvas-model-picker-group canvas-model-picker-model-pane min-w-0 overflow-hidden">
                         <div className="canvas-model-picker-options grid min-w-0 gap-1">
+                            {!group.models.length ? <p className="p-2 text-xs" style={{ color: theme.node.muted }}>请先在设置中保存视频工作流</p> : null}
                             {group.models.map((modelGroup) => {
                                 const selected = modelGroup.models.includes(current);
-                                const model = compatibleModelInGroup(config, modelGroup.models, selectionRequirements, selected ? current : undefined);
+                                const additional = additionalOptions.get(modelGroup.models[0]);
+                                const model = additional ? additional.value : compatibleModelInGroup(config, modelGroup.models, selectionRequirements, selected ? current : undefined);
                                 const displayModel = model || (selected ? current : modelGroup.models[0]);
                                 const disabledReason = model ? "" : modelCompatibilityError(config, modelGroup.models[0], selectionRequirements) || "当前输入不符合该模型能力";
                                 return (
@@ -211,7 +220,7 @@ export function ModelPicker({
                                         aria-selected={selected}
                                         aria-disabled={Boolean(disabledReason)}
                                         disabled={Boolean(disabledReason)}
-                                        title={disabledReason || pickerModelOptionLabel(config, displayModel, showConfiguredModelName)}
+                                        title={disabledReason || additional?.label || pickerModelOptionLabel(config, displayModel, showConfiguredModelName)}
                                         className={cn("canvas-model-picker-option disabled:cursor-not-allowed disabled:opacity-45", previewedModel === displayModel && "is-previewed")}
                                         style={{ background: selected ? theme.toolbar.activeBg : "transparent", color: theme.node.text }}
                                         onMouseEnter={() => setPreviewedModel(displayModel)}
@@ -223,11 +232,11 @@ export function ModelPicker({
                                             window.requestAnimationFrame(() => triggerRef.current?.focus());
                                         }}
                                     >
-                                        <ModelLabel
+                                        {additional ? <span className="canvas-model-picker-option-content flex w-full min-w-0"><span className="canvas-model-picker-option-name truncate text-[var(--fs-label)] font-medium">{additional.label}</span></span> : <ModelLabel
                                             config={config}
                                             model={displayModel}
                                             showConfiguredModelName={showConfiguredModelName}
-                                        />
+                                        />}
                                         {selected ? <Check className="canvas-model-picker-option-check ml-1 shrink-0" style={{ color: theme.node.activeStroke }} /> : null}
                                     </button>
                                 );
@@ -265,7 +274,7 @@ export function ModelPicker({
                     aria-haspopup="listbox"
                     aria-expanded={open}
                     aria-label={triggerLabel}
-                    title={current ? pickerModelOptionLabel(config, current, showConfiguredModelName) : placeholder}
+                    title={additionalCurrent ? triggerLabel : current ? pickerModelOptionLabel(config, current, showConfiguredModelName) : placeholder}
                     onKeyDown={handleTriggerKeyDown}
                 >
                     <span className="canvas-model-picker-label flex min-w-0 items-center gap-1.5">
@@ -274,7 +283,7 @@ export function ModelPicker({
                     <ChevronDown className={cn("canvas-model-picker-chevron", open && "is-open")} aria-hidden="true" />
                 </button>
             </Popover>
-            {portrait || priceLines.length > 0 ? <Popover trigger="click" placement="topLeft" content={
+            {!additionalCurrent && (portrait || priceLines.length > 0) ? <Popover trigger="click" placement="topLeft" content={
                 <div className="max-w-[min(26rem,calc(100vw-3rem))] text-xs leading-relaxed" role="note">
                     {priceLines.length ? <><p>视频参考单价</p>{priceLines.map((line) => <p key={line}>{line}</p>)}<p>实际费用见生成账单。素材仍需通过审核。</p></> : <p>价格暂不可用，请刷新模型列表后再生成。</p>}
                 </div>

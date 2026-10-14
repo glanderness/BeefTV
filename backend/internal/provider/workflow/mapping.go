@@ -141,7 +141,8 @@ func runningHubNodeInfoWithWorkflow(fields []Field, files map[string]string, inp
 			return nil, err
 		}
 		if !present {
-			if field.Required {
+			// 空提示词保留工作流原值；内容要求由上游工作流判断，素材必填仍在本地检查。
+			if field.Required && !isWorkflowPromptSource(normalizeWorkflowFieldSource(field)) {
 				return nil, fmt.Errorf("工作流字段 %s 缺少值", firstNonEmpty(field.ID, field.FieldName))
 			}
 			continue
@@ -960,13 +961,20 @@ func workflowFieldsBindPrompt(fields []Field) bool {
 		if field.Enabled != nil && !*field.Enabled || strings.TrimSpace(field.NodeID) == "" || strings.TrimSpace(field.FieldName) == "" {
 			continue
 		}
-		source := strings.ReplaceAll(strings.ReplaceAll(normalizeWorkflowFieldSource(field), "_", ""), "-", "")
-		switch source {
-		case "prompt", "text", "positiveprompt", "positive":
+		if isWorkflowPromptSource(normalizeWorkflowFieldSource(field)) {
 			return true
 		}
 	}
 	return false
+}
+
+func isWorkflowPromptSource(source string) bool {
+	switch strings.ReplaceAll(strings.ReplaceAll(source, "_", ""), "-", "") {
+	case "prompt", "text", "positiveprompt", "positive":
+		return true
+	default:
+		return false
+	}
 }
 
 func upsertRunningHubNodeInfo(items []map[string]any, overrides []map[string]any) []map[string]any {

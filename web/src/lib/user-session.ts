@@ -89,7 +89,6 @@ export function localWorkspaceConfig(config: AiConfig): AiConfig {
         config: {
             ...config,
             channels: config.channels.filter((channel) => channel.scope !== "system" && !isSystemProxyBaseUrl(channel.baseUrl)),
-            runningHub: { ...defaultConfig.runningHub },
         },
     }).config;
 }

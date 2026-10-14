@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
 import { buildNodeGenerationContext } from "../src/components/canvas/canvas-node-generation";
+import { buildNodeMentionReferences, reorderCanvasResourceConnections } from "../src/lib/canvas/canvas-resource-references";
+import { workflowSlotReference } from "../src/lib/canvas/canvas-workflow-inputs";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../src/types/canvas";
 
 function node(id: string, type: CanvasNodeType, content: string): CanvasNodeData {
@@ -32,6 +34,42 @@ function connection(fromNodeId: string): CanvasConnection {
 }
 
 describe("canvas node generation position mentions", () => {
+    test("工作流合并节点提示词与全部连线文字，文字顺序跟随连线且不重复显式引用", () => {
+        const target = targetNode();
+        target.metadata = { workflowProvider: "runninghub", runningHubWorkflowId: "workflow-id", composerContent: "" };
+        const image = node("image", CanvasNodeType.Image, "data:image/png;base64,YQ==");
+        const first = node("first", CanvasNodeType.Text, "subject_definitions:\n<Subject 1> is in <Picture 1>.");
+        const second = node("second", CanvasNodeType.Text, "integrated_multimodal_description:\nThe subject walks.");
+        for (const withImage of [false, true]) {
+            const connected = [...(withImage ? [image] : []), first, second].map((input) => connection(input.id));
+            const nodes = [target, image, first, second];
+            for (const prompt of ["", "生成视频"]) {
+                target.metadata.composerContent = prompt;
+                const context = buildNodeGenerationContext(target.id, nodes, connected, prompt, [], true);
+                expect(context.prompt).toBe([prompt, first.metadata.content, second.metadata.content].filter(Boolean).join("\n\n"));
+                expect(context.textCount).toBe(2);
+                expect(context.referenceImages).toHaveLength(withImage ? 1 : 0);
+            }
+            const explicit = buildNodeGenerationContext(target.id, nodes, connected, "使用 @文本1 和 @文本1", [], true);
+            expect(explicit.prompt.split(first.metadata.content!).length - 1).toBe(1);
+            expect(explicit.prompt).toContain(second.metadata.content!);
+            expect(explicit.textCount).toBe(2);
+            const repeatedConnection = buildNodeGenerationContext(target.id, nodes, [...connected, { ...connection(first.id), id: "other-handle" }], "", [], true);
+            expect(repeatedConnection.prompt.split(first.metadata.content!).length - 1).toBe(1);
+            expect(repeatedConnection.textCount).toBe(2);
+            const reordered = reorderCanvasResourceConnections(target.id, [second.id, first.id, ...(withImage ? [image.id] : [])], nodes, connected);
+            expect(buildNodeGenerationContext(target.id, nodes, reordered, "", [], true).prompt).toBe(`${second.metadata.content}\n\n${first.metadata.content}`);
+        }
+    });
+
+    test("工作流没有提示词或连线文字时保留空值，不填占位内容", () => {
+        const target = targetNode();
+        target.metadata = { workflowProvider: "runninghub", runningHubWorkflowId: "workflow-id", composerContent: "" };
+        const context = buildNodeGenerationContext(target.id, [target], [], "", [], true);
+        expect(context.prompt).toBe("");
+        expect(context.textCount).toBe(0);
+    });
+
     test("已有图片节点显式引用自身时作为图生图参考图提交", () => {
         const source = node("image-self", CanvasNodeType.Image, "data:image/png;base64,a");
         source.metadata.composerContent = "将 @图片1 图片变清晰";
@@ -139,5 +177,74 @@ describe("canvas node generation video text references", () => {
 
         expect(buildNodeGenerationContext(target.id, nodes, connections, "跳舞", [], true).prompt).toBe("跳舞");
         expect(buildNodeGenerationContext(target.id, nodes, connections, "跳舞", [], false).prompt).toBe("跳舞\n\n角色设定：禾禾");
+    });
+});
+
+describe("workflow media slot order", () => {
+    test("switching back to model uses the original model rules even if a workflow id remains", () => {
+        const target = targetNode();
+        const modelTarget = { ...target, metadata: { ...target.metadata, workflowProvider: "model" as const, runningHubWorkflowId: "old-workflow" } };
+        const images = ["a", "b"].map((id) => node(`image-${id}`, CanvasNodeType.Image, `data:image/png;base64,${id}`));
+        const connections = images.map((image) => connection(image.id));
+        for (const promptOnly of [false, true]) {
+            const original = buildNodeGenerationContext(target.id, [...images, target], connections, "使用 @图片2", [], promptOnly);
+            const switched = buildNodeGenerationContext(modelTarget.id, [...images, modelTarget], connections, "使用 @图片2", [], promptOnly);
+            expect(switched).toEqual(original);
+        }
+    });
+
+    test("RunningHub video keeps all connected images and their numbers when picture 2 is mentioned first", () => {
+        const target = targetNode();
+        target.metadata = { ...target.metadata, workflowProvider: "runninghub", runningHubWorkflowId: "h3-flow" };
+        const images = ["a", "b", "c"].map((id) => node(`image-${id}`, CanvasNodeType.Image, `data:image/png;base64,${id}`));
+        const prompt = "让 @图片2 看向 @图片1，然后再次出现 @图片2";
+        const context = buildNodeGenerationContext(target.id, [...images, target], images.map((image) => connection(image.id)), prompt, []);
+
+        expect(context.referenceImages.map((image) => image.id)).toEqual(images.map((image) => image.id));
+        expect(context.prompt).toBe(prompt);
+    });
+
+    test("an existing H3 prompt uses connection order without rewriting Picture labels", () => {
+        const target = targetNode();
+        target.metadata = { ...target.metadata, workflowProvider: "runninghub", runningHubWorkflowId: "h3-flow" };
+        const images = ["a", "b"].map((id) => node(`image-${id}`, CanvasNodeType.Image, `data:image/png;base64,${id}`));
+        const prompt = "subject_definitions:\n<Subject 1> is the woman in <Picture 2>.\n<Subject 2> is the man in <Picture 1>.";
+        const context = buildNodeGenerationContext(target.id, [...images, target], [connection(images[1].id), connection(images[0].id)], prompt, []);
+
+        expect(context.referenceImages.map((image) => image.id)).toEqual(["image-b", "image-a"]);
+        expect(context.prompt).toBe(prompt);
+    });
+
+    test("reordering uploaded or generated images agrees with the displayed labels and workflow slots", () => {
+        const target = targetNode();
+        target.metadata = { ...target.metadata, runningHubWorkflowId: "h3-flow" };
+        const imageA = node("image-a", CanvasNodeType.Image, "data:image/png;base64,a");
+        imageA.metadata = { ...imageA.metadata, nodeRole: "result", resultOrigin: "upload" };
+        const imageB = node("image-b", CanvasNodeType.Image, "data:image/png;base64,b");
+        imageB.metadata = { ...imageB.metadata, nodeRole: "result", resultOrigin: "generated" };
+        const nodes = [imageA, imageB, target];
+        const connections = reorderCanvasResourceConnections(target.id, [imageB.id, imageA.id], nodes, [connection(imageA.id), connection(imageB.id)]);
+        const references = buildNodeMentionReferences(target, nodes, connections);
+        const context = buildNodeGenerationContext(target.id, nodes, connections, "@图片2 与 @图片1", []);
+
+        expect(references.map(({ label, nodeId }) => [label, nodeId])).toEqual([["图片1", imageB.id], ["图片2", imageA.id]]);
+        expect(context.referenceImages.map(({ id }) => id)).toEqual([imageB.id, imageA.id]);
+        expect(context.prompt).toBe("@图片2 与 @图片1");
+        expect(workflowSlotReference({ nodeId: "35", fieldName: "image", source: "referenceImage", imageOrder: 2, sourceIndex: 0 }, references)?.nodeId).toBe(imageA.id);
+    });
+
+    test("workflow config and ordinary video both retain unmentioned video and audio inputs", () => {
+        const images = ["a", "b"].map((id) => node(`image-${id}`, CanvasNodeType.Image, `data:image/png;base64,${id}`));
+        const video = node("video-a", CanvasNodeType.Video, "data:video/mp4;base64,a");
+        const audio = node("audio-a", CanvasNodeType.Audio, "data:audio/mpeg;base64,a");
+        for (const type of [CanvasNodeType.Config, CanvasNodeType.Video]) {
+            const target = { ...targetNode(), type, metadata: { workflowProvider: "runninghub" as const, runningHubWorkflowId: "workflow", composerContent: "使用 @图片2" } };
+            const media = [images[0], video, images[1], audio];
+            const context = buildNodeGenerationContext(target.id, [...media, target], media.map((item) => connection(item.id)), target.metadata.composerContent, []);
+            expect(context.referenceImages.map(({ id }) => id)).toEqual(images.map(({ id }) => id));
+            expect(context.referenceVideos.map(({ id }) => id)).toEqual([video.id]);
+            expect(context.referenceAudios.map(({ id }) => id)).toEqual([audio.id]);
+            expect(context.prompt).toBe(target.metadata.composerContent);
+        }
     });
 });

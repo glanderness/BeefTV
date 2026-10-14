@@ -37,3 +37,19 @@ func TestEmptyRenderBindingRequiresTrustedFlagAndEmptyVideo(t *testing.T) {
 		t.Fatal("internal flag accepted from JSON")
 	}
 }
+
+func TestGenerationBindKeepsWorkflowAndAllResults(t *testing.T) {
+	metadata := map[string]any{"workflowProvider": "runninghub", "runningHubWorkflowId": "wf", "workflowParameters": map[string]any{"steps": 16}}
+	outputs := []any{map[string]any{"id": "output:0", "mediaType": "image"}, map[string]any{"id": "output:1", "mediaType": "video"}}
+	applyGenerationBindMetadata(metadata, TaskOutputBind{TaskID: "task-mixed", OutputIndex: 1, MediaType: "video", GenerationOutputs: outputs})
+	if metadata["primaryOutputId"] != "output:1" || metadata["generationOutputTaskId"] != "task-mixed" || metadata["runningHubWorkflowId"] != "wf" {
+		t.Fatalf("metadata=%#v", metadata)
+	}
+	if len(metadata["generationOutputs"].([]any)) != 2 {
+		t.Fatal("lost results")
+	}
+	applyGenerationBindMetadata(metadata, TaskOutputBind{TaskID: "ordinary-task", MediaType: "video"})
+	if _, ok := metadata["generationOutputs"]; ok {
+		t.Fatal("old result list leaked to new task")
+	}
+}

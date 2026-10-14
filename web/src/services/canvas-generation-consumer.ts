@@ -1,11 +1,12 @@
 import type { Dispatch, SetStateAction } from "react";
-import { CanvasGenerationDurableAckError, CanvasGenerationMaterializationError } from "./canvas-generation-errors";
+import { CanvasGenerationDurableAckError } from "./canvas-generation-errors";
 export { CanvasGenerationDurableAckError, CanvasGenerationMaterializationError, CanvasGenerationTargetSaveError } from "./canvas-generation-errors";
 
 import { assertUserScope, captureUserScope, isUserScopeAbandonedError, UserScopeAbandonedError, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { bindCanvasTaskOutput, type CanvasTaskBindReceipt } from "@/services/api/operations";
 import { ApiError } from "@/services/api/request";
 import { queryGenerationTask, type GenerationTask, type GenerationTaskDeliveryProgress, type GenerationTaskOutput } from "@/services/api/task-center";
+import { generationTaskOutputMaterialized, sleepWithSignal, waitForMaterializedGenerationOutputs, type RefreshGenerationTask, type SleepWithSignal } from "./canvas-generation-output-delivery";
 import { CanvasBackendSubmitPausedError, CanvasStaleScopeError, isCanvasRevisionConflict } from "@/services/canvas-revision-conflict";
 import { generationEffectApplied } from "@/services/generation-consumer-dedupe";
 import { attachNodeEffectKey } from "@/services/generation-task-materializer";
@@ -68,9 +69,6 @@ export async function applyCanvasGenerationTaskNodeEffect(input: {
     });
 }
 
-type RefreshGenerationTask = (taskId: string, options: { signal?: AbortSignal; expectedScope: CapturedUserScope }) => Promise<GenerationTask>;
-type SleepWithSignal = (ms: number, signal?: AbortSignal) => Promise<void>;
-
 export type BindBackendCanvasGenerationRuntime = {
     hydrateOutputs?: typeof hydrateBackendGeneratedOutputs;
     persistDocument?: PersistCanvasDocumentWithScope;
@@ -84,121 +82,13 @@ export type BindBackendCanvasGenerationRuntime = {
     publishDeliveryProgress?: (taskId: string, progress: GenerationTaskDeliveryProgress | undefined) => void;
 };
 
-// Delivery downloads the remote artifact after the task is already succeeded.
-// While that runs the output has no materialized asset id, so binding would be
-// refused with output_not_ready. Wait for the delivered output instead of
-// reporting the transient state as a canvas conflict.
-const GENERATION_MATERIALIZATION_BUDGET_MS = 15 * 60 * 1000;
-
-const PERMANENT_MATERIALIZATION_ERROR_CODES = new Set(["resource_foreign", "asset_foreign", "unsupported_result_shape"]);
-
-function materializationPollDelay(attempt: number) {
-    const schedule = [1000, 2000, 3000, 5000];
-    return schedule[Math.min(attempt, schedule.length - 1)];
-}
-
-function sleepWithSignal(ms: number, signal?: AbortSignal) {
-    return new Promise<void>((resolve, reject) => {
-        if (signal?.aborted) {
-            reject(new DOMException("The operation was aborted", "AbortError"));
-            return;
-        }
-        const onAbort = () => {
-            clearTimeout(timer);
-            reject(new DOMException("The operation was aborted", "AbortError"));
-        };
-        const timer = setTimeout(() => {
-            signal?.removeEventListener("abort", onAbort);
-            resolve();
-        }, ms);
-        signal?.addEventListener("abort", onAbort, { once: true });
-    });
-}
-
 function isMediaGenerationTask(task: GenerationTask) {
     return task.type !== "canvas_text" && task.type !== "text_replay";
-}
-
-function generationTaskOutput(task: GenerationTask, outputIndex: number): GenerationTaskOutput | undefined {
-    return task.outputs?.find((output) => output.outputIndex === outputIndex) ?? task.outputs?.[outputIndex];
-}
-
-function generationTaskOutputMaterialized(task: GenerationTask, outputIndex: number) {
-    return Boolean(generationTaskOutput(task, outputIndex)?.materializedAssetId);
-}
-
-function generationTaskOutputPermanentlyFailed(task: GenerationTask, outputIndex: number) {
-    if (task.resultState === "FAILED_PERMANENT") return true;
-    const code = generationTaskOutput(task, outputIndex)?.materializationErrorCode;
-    return Boolean(code && PERMANENT_MATERIALIZATION_ERROR_CODES.has(code));
-}
-
-function generationTaskDeliveryProgress(task: GenerationTask, outputIndex: number): GenerationTaskDeliveryProgress | undefined {
-    return task.delivery?.outputs.find((output) => output.outputIndex === outputIndex);
 }
 
 function isOutputNotReadyError(error: unknown) {
     const reason = error instanceof ApiError ? error.reason : error && typeof error === "object" && "reason" in error ? (error as { reason?: unknown }).reason : undefined;
     return reason === "output_not_ready" || reason === "resource_not_ready";
-}
-
-async function waitForMaterializedGenerationOutput(
-    state: {
-        task: GenerationTask;
-        outputIndex: number;
-        signal?: AbortSignal;
-        expectedScope: CapturedUserScope;
-        isCurrent: () => boolean;
-        liveScope: () => CapturedUserScope;
-        refreshTask: RefreshGenerationTask;
-        sleep: SleepWithSignal;
-        now: () => number;
-        startedAt: number;
-        publishDeliveryProgress: (taskId: string, progress: GenerationTaskDeliveryProgress | undefined) => void;
-    },
-    forceRefresh = false,
-): Promise<GenerationTask> {
-    let task = state.task;
-    try {
-        return await pollMaterializedGenerationOutput(state, forceRefresh, (next) => {
-            task = next;
-            state.publishDeliveryProgress(task.id, generationTaskDeliveryProgress(task, state.outputIndex));
-        });
-    } finally {
-        state.publishDeliveryProgress(task.id, undefined);
-    }
-}
-
-async function pollMaterializedGenerationOutput(
-    state: Parameters<typeof waitForMaterializedGenerationOutput>[0],
-    forceRefresh: boolean,
-    observe: (task: GenerationTask) => void,
-): Promise<GenerationTask> {
-    let task = state.task;
-    let attempt = 0;
-    let skipCheck = forceRefresh;
-    observe(task);
-    for (;;) {
-        if (state.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
-        if (!state.isCurrent()) throw new DOMException("The canvas operation was abandoned", "AbortError");
-        assertBindDispatchScope(state.expectedScope, state.liveScope);
-        // A materialized ID can outlive its resource. Repeated bind refusals
-        // share this deadline even when the task still reports that ID.
-        if (state.now() - state.startedAt >= GENERATION_MATERIALIZATION_BUDGET_MS) throw new CanvasGenerationMaterializationError(new Error("生成结果取回或写入画布超时，请继续取回"));
-        if (!skipCheck) {
-            if (generationTaskOutputMaterialized(task, state.outputIndex)) return task;
-            const deliveryCode = generationTaskOutput(task, state.outputIndex)?.materializationErrorCode || task.stage;
-            if (deliveryCode === "delivery_paused" || deliveryCode === "delivery_timed_out") {
-                throw new CanvasGenerationMaterializationError(new Error(deliveryCode === "delivery_paused" ? "已停止取回，可继续取回原结果" : "结果取回超时，可继续取回原结果"));
-            }
-            if (generationTaskOutputPermanentlyFailed(task, state.outputIndex)) throw new CanvasGenerationMaterializationError(new Error(task.resultState || task.error || "生成结果下载失败"));
-        }
-        await state.sleep(materializationPollDelay(attempt), state.signal);
-        attempt += 1;
-        task = await state.refreshTask(task.id, { signal: state.signal, expectedScope: state.expectedScope });
-        observe(task);
-        skipCheck = false;
-    }
 }
 
 export async function bindBackendCanvasGenerationResult(input: {
@@ -217,7 +107,12 @@ export async function bindBackendCanvasGenerationResult(input: {
     const liveScope = runtime.liveScope ?? captureUserScope;
     const capturedScope = (runtime.captureScope ?? captureUserScope)();
     const capturedCanvasId = input.canvasId;
-    const outputIndex = input.outputIndex ?? 0;
+    const workflowOutputs = input.task.resultJson ? (JSON.parse(input.task.resultJson) as { outputs?: Array<{ id?: string; mediaType: string }> }).outputs : undefined;
+    const mode = input.task.type.replace("canvas_", "");
+    const workflowPrimaryIndex = workflowOutputs?.findIndex((item) => item.mediaType === mode) ?? -1;
+    const node = input.nodesRef.current.find((item) => item.id === input.nodeId);
+    const selectedIndex = node?.metadata?.generationOutputTaskId === input.task.id ? workflowOutputs?.findIndex((item) => item.id === node.metadata?.primaryOutputId) ?? -1 : -1;
+    const outputIndex = input.outputIndex ?? (selectedIndex >= 0 ? selectedIndex : workflowOutputs?.length ? Math.max(0, workflowPrimaryIndex) : 0);
     const hydrateOutputs = runtime.hydrateOutputs ?? hydrateBackendGeneratedOutputs;
     const persistDocument = runtime.persistDocument ?? (async (id, patch, entryCapturedScope) => {
         const captured = entryCapturedScope ?? capturedScope;
@@ -233,10 +128,10 @@ export async function bindBackendCanvasGenerationResult(input: {
     const startedAt = now();
 
     const waitForMaterialization = (task: GenerationTask, forceRefresh = false) =>
-        waitForMaterializedGenerationOutput(
+        waitForMaterializedGenerationOutputs(
             {
                 task,
-                outputIndex,
+                outputIndices: [outputIndex],
                 signal: input.signal,
                 expectedScope: capturedScope,
                 isCurrent: input.isCurrent,

@@ -27,7 +27,48 @@ tags:
   - name: agent-ops
   - name: assistant
   - name: creation-conversations
+  - name: runninghub
 paths:
+  /runninghub/workflow-info:
+    post:
+      tags: [runninghub]
+      summary: 读取 RunningHub Workflow 参数与 ComfyUI API JSON
+      description: 本地工作区入口，要求当前 owner 已启用 RunningHub 插件。请求体最多 128 KiB，出站地址执行 SSRF 校验；只读取参数，不创建生成任务。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunningHubMetadataRequest"
+      responses:
+        "200":
+          description: 信封 data 包含 kind、workflowId、title、fields 和 workflowJson；不返回上游原始响应
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /runninghub/app-info:
+    post:
+      tags: [runninghub]
+      summary: 读取 RunningHub App 公开参数
+      description: 要求当前 owner 已启用 RunningHub 插件；请求体最多 128 KiB。只读取公开字段，不创建生成任务，也不返回完整 ComfyUI 拓扑。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunningHubMetadataRequest"
+      responses:
+        "200":
+          description: 信封 data 包含 kind、workflowId、webappId、title 和 fields
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
   /business/tools:
     get:
       tags: [agent-ops]
@@ -800,6 +841,34 @@ components:
       in: cookie
       name: open_ai_canvas_session
   schemas:
+    RunningHubMetadataRequest:
+      type: object
+      required: [apiKey]
+      properties:
+        baseUrl:
+          type: string
+          default: https://www.runninghub.cn
+        apiKey:
+          type: string
+          writeOnly: true
+          description: 消费级 API Key（官方消费级-会员）；工作流参数、素材上传、执行和查询共用，不进入日志或浏览器持久缓存
+        walletApiKey:
+          type: string
+          writeOnly: true
+        useWallet:
+          type: boolean
+          default: false
+        workflowId:
+          type: string
+          description: workflow-info 必填
+        webappId:
+          type: string
+          description: app-info 必填
+        title:
+          type: string
+        capability:
+          type: string
+          enum: [image, video, audio]
     Envelope:
       type: object
       required: [code, msg]
@@ -829,6 +898,7 @@ components:
                 - invalid_argument
                 - unauthorized
                 - forbidden
+                - desktop_ui_required
                 - not_found
                 - conflict
                 - failed_precondition

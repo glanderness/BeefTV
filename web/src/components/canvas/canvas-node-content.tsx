@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { AlertCircle, BookOpenCheck, Clock3, Download, FileText, Image as ImageIcon, LoaderCircle, Music2, Pencil, Play, RefreshCw, Square, Video } from "lucide-react";
 
 import { VideoPlayer } from "@/components/video-player";
+import { CanvasGenerationResults } from "./canvas-generation-results";
 import { CachedResourceImage } from "@/components/cached-resource-image";
 import { GenerationFailureNotice } from "@/components/generation/generation-failure-notice";
 import { generationDeliveryProgressView, generationTaskFetchingResult } from "@/lib/generation-delivery-progress";
@@ -96,7 +97,7 @@ export function CanvasNodeContent(props: CanvasNodeContentProps) {
     const pluginDefinition = getNodeDefinition(props.node.type)?.plugin;
     if (pluginDefinition) return <PluginCanvasNodeContent {...props} renderer={pluginDefinition.renderer} schema={pluginDefinition.schema} />;
     const Renderer = nodeContentRenderers[props.node.type];
-    return Renderer ? <Renderer {...props} /> : <UnknownNodeContent theme={props.theme} />;
+    return Renderer ? <div className="relative h-full w-full"><Renderer {...props} />{!props.node.metadata?.content && props.node.metadata?.outputParameterWarning ? <p className="absolute left-2 right-2 top-2 text-xs" style={{color:props.theme.node.muted}}>{props.node.metadata.outputParameterWarning}</p> : null}<CanvasGenerationResults node={props.node} /></div> : <UnknownNodeContent theme={props.theme} />;
 }
 
 function PluginCanvasNodeContent({ node, theme, renderer, schema }: CanvasNodeContentProps & { renderer: "declarative" | "sandbox"; schema: Record<string, unknown> }) {

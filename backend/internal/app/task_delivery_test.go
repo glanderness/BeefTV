@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -19,6 +20,49 @@ import (
 )
 
 const tinyPNGDataURL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+
+func TestMixedWorkflowDeliveryKeepsFilesOutsideMediaLibrary(t *testing.T) {
+	svc, db := newGenerationDeliveryService(t, filepath.Join(t.TempDir(), "mixed.db"))
+	defer closeDB(t, db)
+	now := time.Now()
+	kinds := []string{"image", "video", "video", "audio", "file"}
+	values := []map[string]any{}
+	for index, kind := range kinds {
+		id := fmt.Sprintf("mixed-resource-%d", index)
+		resource := model.Resource{ID: id, UserID: "user-1", Kind: kind, Status: model.ResourceStatusReady, MimeType: "application/octet-stream", Size: 12, Width: 64, Height: 64, CreatedAt: now, UpdatedAt: now}
+		if err := db.Create(&resource).Error; err != nil {
+			t.Fatal(err)
+		}
+		values = append(values, map[string]any{"mediaType": kind, "resourceId": id, "storageKey": "resource:" + id})
+	}
+	raw, _ := json.Marshal(map[string]any{"outputs": values})
+	task := model.Task{ID: "mixed-task", UserID: "user-1", Type: "canvas_video", Status: model.TaskStatusSucceeded, InputJSON: `{"metadata":{"source":"canvas","nodeId":"video-node"}}`, ResultJSON: string(raw), CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := svc.generationDeliverer().Deliver(task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stored, err := svc.generationDeliverer().LoadedOutputs(task.ID)
+	if err != nil || len(stored) != 5 || localtask.ResultState(task.Status, stored, false) != localtask.ResultStateReady {
+		t.Fatalf("outputs=%#v err=%v", stored, err)
+	}
+	for _, output := range stored {
+		if output.MediaType == "file" && (output.MaterializedAssetID != "" || output.ResourceID == "") {
+			t.Fatal("file must be an owned downloadable resource")
+		}
+	}
+	intents := canvasBindTargets(task, localtask.CanvasBindingIntents(task.ID, stored))
+	if len(intents) != 1 || intents[0].outputIndex != 1 {
+		t.Fatalf("bindings=%#v", intents)
+	}
+	var count int64
+	if err := db.Model(&model.Asset{}).Where("user_id = ?", "user-1").Count(&count).Error; err != nil || count != 4 {
+		t.Fatalf("assets=%d err=%v", count, err)
+	}
+}
 
 func TestGenerationDeliverySurvivesSQLiteReopenAndUIClose(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "generation-delivery.db")

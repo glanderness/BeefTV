@@ -26,6 +26,21 @@ func TestMaterializedAssetIDMatchesFrontendGenerationIdentity(t *testing.T) {
 	}
 }
 
+func TestCanonicalWorkflowOutputsKeepMixedIndices(t *testing.T) {
+	outputs := CanonicalOutputs(`{"outputs":[{"mediaType":"image","storageKey":"resource:preview"},{"mediaType":"video","storageKey":"resource:clip-a"},{"mediaType":"video","storageKey":"resource:clip-b"},{"mediaType":"audio","storageKey":"resource:sound"},{"mediaType":"file","storageKey":"resource:metadata"}]}`, "canvas_video")
+	if len(outputs) != 5 {
+		t.Fatalf("outputs=%#v", outputs)
+	}
+	for index, output := range outputs {
+		if output.OutputIndex != index || output.ResourceID == "" {
+			t.Fatalf("output=%#v", output)
+		}
+	}
+	if outputs[2].MediaType != "video" || outputs[4].MediaType != "file" {
+		t.Fatal("mixed media was discarded")
+	}
+}
+
 func TestOutputVersionIDMatchesWorkflowSlotZero(t *testing.T) {
 	taskID := "ac745990450a86d3365eb92ec26f378e"
 	if got, want := OutputVersionID(taskID, 0), StableEntityID("version", taskID); got != want {
@@ -47,6 +62,18 @@ func TestDepthCanonicalOutputRequiresDepthTaskType(t *testing.T) {
 	}
 	if len(CanonicalOutputs(raw, "canvas_image")) != 0 || DeliveryComplete(raw, nil, model.TaskTypeDepthCapture) {
 		t.Fatal("untyped resource accepted or undelivered depth considered complete")
+	}
+}
+
+func TestDepthTaskOutputDoesNotUseWorkflowArray(t *testing.T) {
+	raw := `{"resourceId":"depth-result","outputs":[{"mediaType":"image","resourceId":"workflow-image"}]}`
+	depth := CanonicalOutputs(raw, model.TaskTypeDepthCapture)
+	workflow := CanonicalOutputs(raw, "canvas_video")
+	if len(depth) != 1 || depth[0].MediaType != "video" || depth[0].ResourceID != "depth-result" {
+		t.Fatalf("depth result was replaced by workflow outputs: %#v", depth)
+	}
+	if len(workflow) != 1 || workflow[0].ResourceID != "workflow-image" {
+		t.Fatalf("workflow output branch lost after main merge: %#v", workflow)
 	}
 }
 

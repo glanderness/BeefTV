@@ -101,7 +101,7 @@ func (s *Service) fetchRunningHubWorkflowJSON(ctx context.Context, root string, 
 }
 
 func (s *Service) uploadRunningHubMedia(ctx context.Context, root string, config providerConfig, media providerMedia) (string, error) {
-	return s.workflowClient(nil).UploadMedia(ctx, root, workflowConfigFromProvider(config), workflowMedia(media), s.IsLocalMode())
+	return s.workflowClient(nil).UploadMedia(ctx, root, workflowConfigFromProvider(config), workflowMedia(media))
 }
 
 func (s *Service) runningHubJSON(ctx context.Context, config providerConfig, endpoint string, body interface{}, target *map[string]any) error {

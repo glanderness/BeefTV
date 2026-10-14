@@ -61,7 +61,7 @@ func registerDesktopCanvasAPI(api *gin.RouterGroup, svc *app.Service, dependenci
 	RegisterChannelModelRoutes(api, svc)
 	RegisterCustomRelayRoutes(api, svc)
 	RegisterTaskRoutes(api, svc, false)
-	RegisterRunningHubRoutes(api, svc, false)
+	RegisterRunningHubRoutes(api, svc)
 	RegisterDesktopSkillRoutes(api, svc)
 	RegisterDesktopUserDataRoutes(api, svc)
 	// 登记表在进程内单实例（避免每请求新建导致并发丢记录）。

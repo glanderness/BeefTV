@@ -244,7 +244,7 @@ export function useCanvasGenerationExecutor({
                         }
                         generationConfig = { ...generationConfig, audioVoice: voice.voiceKey, audioInstructions: [voice.instructions, generationConfig.audioInstructions].filter(Boolean).join("；") };
                     }
-                    if (!effectivePrompt && (mode === "text" || mode === "audio")) {
+                    if (!effectivePrompt && !usesWorkflowProvider && (mode === "text" || mode === "audio")) {
                         return;
                     }
 

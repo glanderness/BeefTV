@@ -81,7 +81,7 @@ export function canOpenCanvasNodePromptPanel(node: CanvasNodeData | null | undef
     if (!node) return false;
     if (isCanvasMediaNode(node)) {
         return canvasMediaNodeRole(node) === "generator"
-            || (canvasMediaNodeOrigin(node) === "generated" && Boolean((node.metadata?.composerContent || node.metadata?.prompt)?.trim()));
+            || (canvasMediaNodeOrigin(node) === "generated" && (node.metadata?.workflowProvider === "runninghub" || Boolean((node.metadata?.composerContent || node.metadata?.prompt)?.trim())));
     }
     return node.type !== CanvasNodeType.Script
         && node.type !== CanvasNodeType.Drawing

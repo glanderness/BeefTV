@@ -1,4 +1,5 @@
 import { maxModelInputCapacity, type ModelInputSummary } from "@/lib/model-selection";
+import { isCanvasWorkflowProvider } from "@/lib/canvas/canvas-workflow";
 import { getNodeAcceptedInputKinds, getNodeGenerationMode, getNodeInputKind, getNodeMaxInputCount } from "@/lib/canvas/node-registry";
 import type { AiConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
@@ -39,14 +40,15 @@ export function canvasConnectionError(config: AiConfig, nodes: CanvasNodeData[],
     if (!mode) return "";
     const input = connectionInputSummary(target.id, nodes, connections, candidate);
     const visualInputCount = input.imageCount + input.characterCount;
+    const ignoreModelCapacity = options.ignoreCapacity || isCanvasWorkflowProvider(target.metadata);
 
     if (mode === "image") {
         if (input.videoCount > 0) return "图片生成节点不能连接参考视频";
         if (input.audioCount > 0) return "图片生成节点不能连接参考音频";
-        return options.ignoreCapacity ? "" : capacityError(config, mode, "image", visualInputCount, "参考图");
+        return ignoreModelCapacity ? "" : capacityError(config, mode, "image", visualInputCount, "参考图");
     }
     if (mode === "video") {
-        return options.ignoreCapacity ? "" : capacityError(config, mode, "image", visualInputCount, "参考图") || capacityError(config, mode, "video", input.videoCount, "参考视频") || capacityError(config, mode, "audio", input.audioCount, "参考音频");
+        return ignoreModelCapacity ? "" : capacityError(config, mode, "image", visualInputCount, "参考图") || capacityError(config, mode, "video", input.videoCount, "参考视频") || capacityError(config, mode, "audio", input.audioCount, "参考音频");
     }
     if (mode === "text" && input.audioCount > 0) return "文本生成节点不能连接参考音频";
     if (mode === "audio" && input.characterCount > 1) return "角色配音一次只能连接一个角色卡";

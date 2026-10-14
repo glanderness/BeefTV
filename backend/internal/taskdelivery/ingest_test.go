@@ -23,6 +23,33 @@ import (
 
 const tinyPNGDataURL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 
+func TestCanonicalWorkflowIngestPersistsEveryOutputOnce(t *testing.T) {
+	ingestor, _, repo, _, _ := newIngestHarness(t, ingestNopQuota{})
+	input := map[string]interface{}{"outputs": []any{
+		map[string]any{"mediaType": "image", "dataUrl": tinyPNGDataURL},
+		map[string]any{"mediaType": "audio", "dataUrl": dataURL("audio/wav", []byte("audio-a"))},
+		map[string]any{"mediaType": "audio", "dataUrl": dataURL("audio/wav", []byte("audio-b"))},
+		map[string]any{"mediaType": "file", "dataUrl": dataURL("application/json", []byte(`{"seed":1}`))},
+	}}
+	first, err := ingestor.IngestResult("user-1", input, IngestOptions{EnforceQuota: true, IdentityPrefix: "workflow-mixed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ingestor.IngestResult("user-1", input, IngestOptions{EnforceQuota: true, IdentityPrefix: "workflow-mixed"}); err != nil {
+		t.Fatal(err)
+	}
+	resources, err := repo.Resources("user-1", 20)
+	if err != nil || len(resources) != 4 {
+		t.Fatalf("resources=%d err=%v", len(resources), err)
+	}
+	for _, output := range first["outputs"].([]interface{}) {
+		item := output.(map[string]interface{})
+		if !strings.HasPrefix(item["storageKey"].(string), "resource:") || strings.HasPrefix(item["dataUrl"].(string), "data:") {
+			t.Fatalf("not persisted: %#v", item)
+		}
+	}
+}
+
 func TestIngestIdentityDoesNotAliasJSONKeys(t *testing.T) {
 	ingestor, _, repo, _, _ := newIngestHarness(t, ingestNopQuota{})
 	image := func() map[string]interface{} { return map[string]interface{}{"dataUrl": tinyPNGDataURL} }

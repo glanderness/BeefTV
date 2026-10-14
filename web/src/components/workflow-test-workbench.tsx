@@ -5,6 +5,7 @@ import { FileAudio, FileImage, Film, Grip, Play, RotateCcw, Square, Upload, Wand
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { generationErrorMessage } from "@/lib/generation-error";
+import { useResourceVideoPlayback } from "@/hooks/use-resource-video-playback";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { runBackendGenerationTask, type BackendGenerationResult } from "@/services/api/generation-task";
 import { useConfigStore, type AiConfig, type RunningHubCapability, type WorkflowFieldMapping } from "@/stores/use-config-store";
@@ -258,7 +259,7 @@ export function WorkflowTestWorkbench({ provider, workflowId, workflowKind = "wo
                         position={positions.output}
                         onMove={(point) => setPositions((current) => ({ ...current, output: point }))}
                     >
-                        <div className="workflow-test-output">{resultUrls.length ? <ResultPreview capability={capability} urls={resultUrls} /> : <EmptyState size="compact" title={error || stage} />}</div>
+                        <div className="workflow-test-output">{resultUrls.length ? <ResultPreview capability={capability} urls={resultUrls} video={result?.video} /> : <EmptyState size="compact" title={error || stage} />}</div>
                         <Progress percent={progress} size="small" status={error ? "exception" : running ? "active" : undefined} showInfo={running || progress > 0} />
                     </WorkflowNode>
                 </div>
@@ -383,8 +384,8 @@ function WorkflowParameter({ field, value, onChange }: { field: WorkflowFieldMap
     );
 }
 
-function ResultPreview({ capability, urls }: { capability: RunningHubCapability; urls: string[] }) {
-    if (capability === "video") return <video src={urls[0]} controls playsInline />;
+function ResultPreview({ capability, urls, video }: { capability: RunningHubCapability; urls: string[]; video?: BackendGenerationResult["video"] }) {
+    if (capability === "video") return <VideoResultPreview storageKey={video?.storageKey || ""} fallback={video?.dataUrl || video?.url || urls[0]} />;
     if (capability === "audio") return <audio src={urls[0]} controls />;
     return (
         <div className="workflow-test-image-results">
@@ -392,6 +393,27 @@ function ResultPreview({ capability, urls }: { capability: RunningHubCapability;
                 <img key={url} src={url} alt="工作流测试输出" />
             ))}
         </div>
+    );
+}
+
+function VideoResultPreview({ storageKey, fallback }: { storageKey: string; fallback: string }) {
+    const playback = useResourceVideoPlayback(storageKey, fallback);
+    if (playback.error) return (
+        <div>
+            <EmptyState size="compact" title={playback.error} />
+            <Button onClick={playback.retry}>重新加载视频</Button>
+        </div>
+    );
+    if (playback.loading || !playback.url) return <EmptyState size="compact" title="正在加载视频" />;
+    return (
+        <video
+            src={playback.url}
+            controls
+            playsInline
+            preload="auto"
+            aria-label="工作流测试视频输出"
+            onError={() => { if (!playback.requestCompatible()) playback.fail(); }}
+        />
     );
 }
 
@@ -508,7 +530,7 @@ function generationResultUrls(result: BackendGenerationResult | null, capability
     return media
         .map((item) => {
             const resourceId = resourceIdFromStorageKey(item.storageKey);
-            return resourceId ? resourceFileUrl(resourceId) : item.dataUrl || "";
+            return resourceId ? resourceFileUrl(resourceId) : item.dataUrl || item.url || "";
         })
         .filter(Boolean);
 }

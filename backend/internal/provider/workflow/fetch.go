@@ -9,7 +9,7 @@ import (
 )
 
 // FetchSettingsWorkflow loads settings-page workflow JSON. Empty prompt is a
-// valid empty schema, not a parse error. Payload code is not treated as failure.
+// valid empty schema. Settings metadata is validated by schema, including gateways with nonzero codes.
 func (c *Client) FetchSettingsWorkflow(ctx context.Context, config Config, req FetchRequest) (map[string]any, error) {
 	exec := c.prepared()
 	if exec.Requests == nil {
@@ -31,6 +31,9 @@ func (c *Client) FetchSettingsWorkflow(ctx context.Context, config Config, req F
 	if data == nil {
 		return nil, errors.New("RunningHub 工作流参数响应缺少 data")
 	}
+	if _, exists := data["prompt"]; !exists {
+		return nil, errors.New("RunningHub 工作流参数响应缺少 prompt")
+	}
 	workflowJSON, err := parseWorkflowPrompt(data["prompt"], false)
 	if err != nil {
 		return nil, err
@@ -41,7 +44,6 @@ func (c *Client) FetchSettingsWorkflow(ctx context.Context, config Config, req F
 		"title":        firstNonEmpty(req.Title, workflowID),
 		"fields":       CollectFields(workflowJSON, req.Capability),
 		"workflowJson": workflowJSON,
-		"raw":          response,
 	}, nil
 }
 
@@ -70,6 +72,11 @@ func parseWorkflowPrompt(raw any, required bool) (map[string]any, error) {
 		}
 	} else if prompt, ok := raw.(map[string]any); ok {
 		workflowJSON = prompt
+	} else if _, ok := raw.(string); !ok {
+		return nil, errors.New("RunningHub 工作流参数格式无效")
+	}
+	if workflowJSON == nil {
+		return nil, errors.New("RunningHub 工作流参数格式无效")
 	}
 	return workflowJSON, nil
 }

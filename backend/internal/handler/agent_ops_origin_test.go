@@ -42,7 +42,8 @@ func TestIsLoopbackRequestOriginRules(t *testing.T) {
 }
 
 func TestWailsOriginRequiresAuthenticatedDesktopTransport(t *testing.T) {
-	for _, origin := range []string{"wails://wails", "http://wails.localhost", "https://wails.localhost", "wails://attacker", "https://evil.example"} {
+	validOrigins := map[string]bool{"wails://wails": true, "http://wails.localhost": true, "https://wails.localhost": true, "wails://wails.localhost:34115": true}
+	for _, origin := range []string{"wails://wails", "http://wails.localhost", "https://wails.localhost", "wails://wails.localhost:34115", "wails://attacker", "https://evil.example", "wails://wails.localhost.attacker.example:34115", "http://wails.localhost:34115", "wails://user@wails.localhost:34115", "wails://wails.localhost:34115/path", "wails://wails.localhost:65536", "wails://wails.localhost:34115?x=1", "wails://wails.localhost:34115#x"} {
 		for _, token := range []string{"", "wrong", "test-desktop-token"} {
 			req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:54321/api/assistant/ui-session", nil)
 			req.RemoteAddr = "127.0.0.1:12345"
@@ -55,7 +56,7 @@ func TestWailsOriginRequiresAuthenticatedDesktopTransport(t *testing.T) {
 			httptransport.RequireLaunchToken("test-desktop-token")(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 				accepted = isLoopbackRequest(r)
 			})).ServeHTTP(httptest.NewRecorder(), req)
-			want := token == "test-desktop-token" && (origin == "wails://wails" || origin == "http://wails.localhost" || origin == "https://wails.localhost")
+			want := token == "test-desktop-token" && validOrigins[origin]
 			if accepted != want {
 				t.Fatalf("origin=%s token-present=%v accepted=%v want=%v", origin, token != "", accepted, want)
 			}

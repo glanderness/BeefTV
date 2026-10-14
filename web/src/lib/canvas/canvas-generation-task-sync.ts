@@ -15,6 +15,7 @@ import { applyGenerationConsumerEffect, generationEffectApplied } from "@/servic
 import { attachNodeEffectKey } from "@/services/generation-task-materializer";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
+import { primaryGenerationOutput } from "@/lib/generation-outputs";
 
 export function generationTaskInput(task: GenerationTask) {
     if (!task.inputJson) return null;
@@ -123,7 +124,7 @@ function workflowMetadataForResultNode(): Partial<CanvasNodeMetadata> {
 export function applyGeneratedMediaResultMetadata(node: CanvasNodeData, media: CanvasNodeMetadata, extra: Partial<CanvasNodeMetadata> = {}): CanvasNodeMetadata {
     return mediaResultMetadata("generated", {
         ...node.metadata,
-        ...workflowMetadataForResultNode(),
+        ...(node.type === CanvasNodeType.Config ? workflowMetadataForResultNode() : {}),
         ...media,
         ...extra,
         errorDetails: undefined,
@@ -154,6 +155,10 @@ export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: 
     const mode = generationTaskMode(task, node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "image");
     const prompt = node.metadata?.prompt || task.prompt;
     const result = parseBackendGenerationResult(task);
+
+    if (result.outputs?.length && !primaryGenerationOutput(result.outputs, mode)) {
+        return { ...node, metadata: applyGeneratedMediaResultMetadata(node, { content: undefined, storageKey: undefined, videoPreview: undefined, status: "success", outputParameterWarning: "工作流未返回当前节点类型的媒体，请在结果列表中预览或添加其他输出" }, { prompt, ...completedTaskMetadata(task) }) };
+    }
 
     if (mode === "image") {
         const image = result.images?.[0];
@@ -345,7 +350,11 @@ function findGenerationTaskNode(nodes: CanvasNodeData[], task: GenerationTask, t
 }
 
 function completedTaskMetadata(task: GenerationTask): CanvasNodeMetadata {
+    const result = parseBackendGenerationResult(task);
     return {
+        generationOutputs: result.outputs,
+        generationOutputTaskId: result.outputs ? task.id : undefined,
+        primaryOutputId: result.outputs ? primaryGenerationOutput(result.outputs, generationTaskMode(task))?.id : undefined,
         taskFailureDiagnostics: task.failureDiagnostics,
         taskProviderRequestId: task.providerRequestId,
         taskId: task.id,

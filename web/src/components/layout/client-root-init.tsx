@@ -51,9 +51,9 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     }, []);
 
     useEffect(() => {
-        if (!userId || localMode || !pluginStoreHydrated) return;
+        if (!userId || !pluginStoreHydrated) return;
         let cancelled = false;
-        void appQueryClient.fetchQuery({ queryKey: ["plugin-runtime", userId], queryFn: fetchPluginRuntimeState, staleTime: 30_000 })
+        void appQueryClient.fetchQuery({ queryKey: ["plugin-runtime", userId], queryFn: fetchPluginRuntimeState, staleTime: 0 })
             .then(async (runtime) => {
                 if (cancelled || useUserStore.getState().user?.id !== userId) return;
                 const statuses = { ...runtime.statuses };
@@ -62,7 +62,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
                     .getState()
                     .installations.filter((installation) => installation.enabled && states[installation.manifest.id]?.canToggle && !states[installation.manifest.id]?.userConfigured)
                     .map((installation) => installation.manifest.id);
-                if (legacyEnabledIds.length) {
+                if (!localMode && legacyEnabledIds.length) {
                     try {
                         const migrated = await Promise.all(legacyEnabledIds.map((pluginId) => setUserPluginEnabled(pluginId, true)));
                         for (const state of migrated) states[state.pluginId] = state;

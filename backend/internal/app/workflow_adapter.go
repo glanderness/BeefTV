@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/provider/workflow"
 )
 
@@ -48,7 +49,6 @@ func workflowConfigFromProvider(config providerConfig) workflow.Config {
 		WebappID:              config.WebappID,
 		WorkflowJSON:          config.WorkflowJSON,
 		WorkflowFields:        config.WorkflowFields,
-		RunningHubUploadKey:   config.RunningHubUploadKey,
 	}
 }
 
@@ -61,7 +61,6 @@ func (s *Service) workflowInputFromCanvas(ctx context.Context, input canvasGener
 		ReferenceVideos:  workflowMediaList(input.ReferenceVideos),
 		ReferenceAudios:  workflowMediaList(input.ReferenceAudios),
 		ResumedRequestID: resumedProviderRequestID(ctx),
-		LocalWorkspace:   s.IsLocalMode(),
 	}
 	if input.Mask != nil {
 		media := workflowMedia(*input.Mask)
@@ -172,14 +171,48 @@ func (r workflowReceipt) RecordAccepted(ctx context.Context, requestID, stage st
 	if r.service == nil {
 		return errors.New("工作流缺少受理回执端口")
 	}
-	return r.service.recordWorkflowProviderRequest(ctx, requestID, stage, nextPollAt)
+	if err := r.service.recordWorkflowProviderRequest(ctx, requestID, stage, nextPollAt); err != nil {
+		return err
+	}
+	r.syncDisplayStage(ctx, stage)
+	return nil
 }
 
 func (r workflowReceipt) UpdateStage(ctx context.Context, requestID, stage string, nextPollAt *time.Time) error {
 	if r.service == nil {
 		return errors.New("工作流缺少受理回执端口")
 	}
-	return r.service.updateWorkflowProviderState(ctx, requestID, stage, nextPollAt)
+	if err := r.service.updateWorkflowProviderState(ctx, requestID, stage, nextPollAt); err != nil {
+		return err
+	}
+	r.syncDisplayStage(ctx, stage)
+	return nil
+}
+
+func (r workflowReceipt) syncDisplayStage(ctx context.Context, stage string) {
+	runtime, ok := generation.RuntimeFromContext(ctx)
+	if !ok || runtime.Stages == nil {
+		return
+	}
+	var display string
+	switch stage {
+	case "submitted", "pending":
+		display = "上游已受理，等待生成"
+	case "queued":
+		display = "上游排队中"
+	case "running":
+		display = "正在生成"
+	case "downloading":
+		display = "正在下载生成结果"
+	case "succeeded":
+		display = "正在保存生成结果"
+	default:
+		return
+	}
+	// 展示更新不能把已受理的付费任务变成失败；StagePort 保留租约和取消校验。
+	if err := runtime.Stages.SetStage(ctx, display); err != nil {
+		workflowProgress{service: r.service}.Log(ctx, "warn", "工作流展示阶段更新失败", "")
+	}
 }
 
 type workflowProgress struct{ service *Service }

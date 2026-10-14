@@ -202,7 +202,10 @@ func findTaskMediaPreview(value any, hint string) (string, string) {
 			}
 		}
 	case map[string]any:
-		for _, key := range []string{"images", "image", "video", "dataUrl", "url", "resultUrl", "outputUrl"} {
+		if kind, ok := item["mediaType"].(string); ok {
+			hint = kind
+		}
+		for _, key := range []string{"outputs", "images", "image", "video", "dataUrl", "url", "resultUrl", "outputUrl"} {
 			child, exists := item[key]
 			if !exists {
 				continue

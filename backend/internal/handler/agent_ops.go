@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -206,7 +207,7 @@ func requireTrustedDesktopWritePrincipal(c *gin.Context, message string) bool {
 		return false
 	}
 	if strings.TrimSpace(c.GetHeader("X-Beeftv-Client")) != "" {
-		fail(c, http.StatusForbidden, app.Forbidden(message))
+		writeFailure(c, http.StatusForbidden, http.StatusForbidden, "desktop_ui_required", message)
 		return false
 	}
 	dependencies, ok := runtimeDependencies(c)
@@ -214,7 +215,7 @@ func requireTrustedDesktopWritePrincipal(c *gin.Context, message string) bool {
 		return true
 	}
 	if !trustedDesktopUI(c) {
-		fail(c, http.StatusForbidden, app.Forbidden(message))
+		writeFailure(c, http.StatusForbidden, http.StatusForbidden, "desktop_ui_required", message)
 		return false
 	}
 	return true
@@ -270,7 +271,7 @@ func isLoopbackRequest(r *http.Request) bool {
 		return false
 	}
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
-	if httptransport.DesktopAuthenticated(r) && (origin == "wails://wails" || origin == "http://wails.localhost" || origin == "https://wails.localhost") {
+	if httptransport.DesktopAuthenticated(r) && isWailsUIOrigin(origin) {
 		return true
 	}
 	if origin == "" {
@@ -290,6 +291,20 @@ func isLoopbackRequest(r *http.Request) bool {
 		}
 	}
 	return false
+}
+
+func isWailsUIOrigin(origin string) bool {
+	if origin == "wails://wails" || origin == "http://wails.localhost" || origin == "https://wails.localhost" {
+		return true
+	}
+	// Wails dev adds its server port to the native WebView origin. Accept only
+	// that exact native host; launch and UI bootstrap credentials still apply.
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme != "wails" || parsed.Hostname() != "wails.localhost" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	return err == nil && port > 0 && port <= 65535
 }
 
 // allowedOrigins 允许显式配置的正式前端 Origin（例如 Wails 宿主页面）。
