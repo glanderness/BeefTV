@@ -95,22 +95,29 @@ export async function executeVideoGeneration({
             { ...videoNode, metadata: { ...videoNode.metadata, versionOfNodeId: rootId, versionLabel: nextLabel, versionPrimary: false } },
         ];
     };
+    const storedVideoProject = projectId ? useCanvasStore.getState().projects.find((project) => project.id === projectId) : undefined;
+    const workingVideoConnections = storedVideoProject?.connections?.length ? storedVideoProject.connections : canvasConnections;
     const newVideoConnections: CanvasConnection[] = reuseSourceNode
         ? []
         : !isExistingVideoNode
           ? [{ id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }]
-          : canvasConnections.filter((connection) => connection.toNodeId === nodeId).map((connection) => ({ ...connection, id: nanoid(), toNodeId: videoId }));
-    const workingNodes = nodesRef?.current?.length ? nodesRef.current : canvasNodes;
+          : workingVideoConnections.filter((connection) => connection.toNodeId === nodeId).map((connection) => ({ ...connection, id: nanoid(), toNodeId: videoId }));
+    const workingNodes = nodesRef?.current?.length ? nodesRef.current : storedVideoProject?.nodes?.length ? storedVideoProject.nodes : canvasNodes;
     if (workingNodes?.length) {
         const nextNodes = applyVideoNodes(workingNodes);
-        const nextConnections = reuseSourceNode ? canvasConnections : [...(canvasConnections || []), ...newVideoConnections];
-        if (projectId) useCanvasStore.getState().updateProject(projectId, { nodes: nextNodes, connections: nextConnections });
+        const nextConnections = [...(workingVideoConnections || []), ...newVideoConnections];
+        if (projectId) {
+            useCanvasStore.getState().updateProject(projectId, reuseSourceNode ? { nodes: nextNodes } : { nodes: nextNodes, connections: nextConnections });
+        }
         if (nodesRef) nodesRef.current = nextNodes;
-    }
-    setNodes(applyVideoNodes);
-    // 重新生成已有视频时，新节点继承源视频的上游连接，与源视频保持并行关系，而不是作为其下游子节点。
-    if (!reuseSourceNode) {
-        setConnections((current) => [...current, ...newVideoConnections]);
+        setNodes(nextNodes);
+        if (!reuseSourceNode) setConnections(nextConnections);
+    } else {
+        setNodes(applyVideoNodes);
+        // 重新生成已有视频时，新节点继承源视频的上游连接，与源视频保持并行关系，而不是作为其下游子节点。
+        if (!reuseSourceNode) {
+            setConnections((current) => [...current, ...newVideoConnections]);
+        }
     }
 
     startGenerationRequest(videoId, nodeId, nodeId, controller);
@@ -200,15 +207,22 @@ export async function executeAudioGeneration({
     const applyAudioNodes = (current: CanvasNodeData[]): CanvasNodeData[] =>
         reuseSourceNode ? current.map((node) => (node.id === nodeId ? { ...node, ...audioNode } : node)) : [...current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), audioNode];
     const newAudioConnection: CanvasConnection | null = !reuseSourceNode && !isExistingAudioNode ? { id: nanoid(), fromNodeId: nodeId, toNodeId: audioId } : null;
-    const workingNodes = nodesRef?.current?.length ? nodesRef.current : canvasNodes;
+    const storedAudioProject = projectId ? useCanvasStore.getState().projects.find((project) => project.id === projectId) : undefined;
+    const workingAudioConnections = storedAudioProject?.connections?.length ? storedAudioProject.connections : canvasConnections;
+    const workingNodes = nodesRef?.current?.length ? nodesRef.current : storedAudioProject?.nodes?.length ? storedAudioProject.nodes : canvasNodes;
     if (workingNodes?.length) {
         const nextNodes = applyAudioNodes(workingNodes);
-        const nextConnections = newAudioConnection ? [...(canvasConnections || []), newAudioConnection] : canvasConnections;
-        if (projectId) useCanvasStore.getState().updateProject(projectId, { nodes: nextNodes, connections: nextConnections });
+        const nextConnections = newAudioConnection ? [...(workingAudioConnections || []), newAudioConnection] : workingAudioConnections;
+        if (projectId) {
+            useCanvasStore.getState().updateProject(projectId, newAudioConnection ? { nodes: nextNodes, connections: nextConnections } : { nodes: nextNodes });
+        }
         if (nodesRef) nodesRef.current = nextNodes;
+        setNodes(nextNodes);
+        if (newAudioConnection) setConnections(nextConnections);
+    } else {
+        setNodes(applyAudioNodes);
+        if (newAudioConnection) setConnections((current) => [...current, newAudioConnection]);
     }
-    setNodes(applyAudioNodes);
-    if (newAudioConnection) setConnections((current) => [...current, newAudioConnection]);
 
     startGenerationRequest(audioId, nodeId, nodeId, controller);
     try {

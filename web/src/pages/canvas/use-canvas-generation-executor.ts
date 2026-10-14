@@ -410,10 +410,12 @@ export function useCanvasGenerationExecutor({
                         setNodes((current) =>
                             current.map((node) => {
                                 if (node.id !== nodeId && !pendingNodeIds.includes(node.id)) return node;
-                                if (node.id === nodeId && hasPreviousResult && !pendingNodeIds.includes(node.id)) {
-                                    return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined } };
+                                if (node.id === nodeId && !pendingNodeIds.includes(node.id)) {
+                                    if (hasPreviousResult) {
+                                        return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined } };
+                                    }
+                                    if (!markSourceStatus) return node;
                                 }
-                                if (node.id === nodeId && !markSourceStatus) return node;
                                 return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, ...failure } };
                             }),
                         );

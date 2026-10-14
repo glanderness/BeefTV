@@ -91,7 +91,7 @@ export async function executeImageGeneration({
     const rootId = reuseSourceNode ? nodeId : nanoid();
     const childIds = count > 1 ? Array.from({ length: count }, () => nanoid()) : [];
     const targetIds = count > 1 ? childIds : [rootId];
-    registerPendingNodeIds(reuseSourceNode ? childIds : [rootId, ...childIds]);
+    registerPendingNodeIds(reuseSourceNode && count > 1 ? childIds : [rootId, ...childIds]);
     const rootWidth = outputNodeSize.width;
     const rootHeight = outputNodeSize.height;
     const preferredPosition = {
