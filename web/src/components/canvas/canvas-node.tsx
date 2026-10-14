@@ -586,6 +586,17 @@ export const CanvasNode = React.memo(function CanvasNode({
     );
 }, areCanvasNodePropsEqual);
 
+function usesCustomNodeContentRenderer(node: CanvasNodeData) {
+    return (
+        node.type === CanvasNodeType.Config ||
+        node.type === CanvasNodeType.Script ||
+        node.type === CanvasNodeType.BatchTable ||
+        node.type === CanvasNodeType.Director ||
+        Boolean(node.metadata?.directorSceneId) ||
+        Boolean(node.metadata?.workflowKind)
+    );
+}
+
 function areCanvasNodePropsEqual(previous: CanvasNodeProps, next: CanvasNodeProps) {
     return (
         previous.data === next.data &&
@@ -605,7 +616,7 @@ function areCanvasNodePropsEqual(previous: CanvasNodeProps, next: CanvasNodeProp
         previous.readOnly === next.readOnly &&
         previous.resourceLabel === next.resourceLabel &&
         previous.mentionReferences === next.mentionReferences &&
-        previous.renderNodeContent === next.renderNodeContent &&
+        (!usesCustomNodeContentRenderer(next.data) || previous.renderNodeContent === next.renderNodeContent) &&
         previous.drawingProjectId === next.drawingProjectId &&
         previous.batchCount === next.batchCount &&
         previous.batchPreviewNodes === next.batchPreviewNodes &&
@@ -636,18 +647,13 @@ function areCanvasNodePropsEqual(previous: CanvasNodeProps, next: CanvasNodeProp
         previous.onOpenTextEditor === next.onOpenTextEditor &&
         previous.onOpenDrawing === next.onOpenDrawing &&
         previous.imageCropActive === next.imageCropActive &&
-        previous.onCancelImageCrop === next.onCancelImageCrop &&
-        previous.onConfirmImageCrop === next.onConfirmImageCrop &&
+        (!next.imageCropActive || (previous.onCancelImageCrop === next.onCancelImageCrop && previous.onConfirmImageCrop === next.onConfirmImageCrop)) &&
         previous.annotationActive === next.annotationActive &&
-        previous.onCancelAnnotation === next.onCancelAnnotation &&
-        previous.onConfirmAnnotation === next.onConfirmAnnotation &&
+        (!next.annotationActive || (previous.onCancelAnnotation === next.onCancelAnnotation && previous.onConfirmAnnotation === next.onConfirmAnnotation)) &&
         previous.maskEditActive === next.maskEditActive &&
-        previous.maskEditConfig === next.maskEditConfig &&
-        previous.onCancelMaskEdit === next.onCancelMaskEdit &&
-        previous.onConfirmMaskEdit === next.onConfirmMaskEdit &&
+        (!next.maskEditActive || (previous.maskEditConfig === next.maskEditConfig && previous.onCancelMaskEdit === next.onCancelMaskEdit && previous.onConfirmMaskEdit === next.onConfirmMaskEdit)) &&
         previous.videoCropActive === next.videoCropActive &&
-        previous.onCancelVideoCrop === next.onCancelVideoCrop &&
-        previous.onConfirmVideoCrop === next.onConfirmVideoCrop &&
+        (!next.videoCropActive || (previous.onCancelVideoCrop === next.onCancelVideoCrop && previous.onConfirmVideoCrop === next.onConfirmVideoCrop)) &&
         previous.onContextMenu === next.onContextMenu
     );
 }

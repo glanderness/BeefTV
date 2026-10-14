@@ -254,6 +254,24 @@ export function resetGenerationTaskMetadata(metadata: CanvasNodeMetadata | undef
     return next;
 }
 
+export function clearInPlaceMediaOutputMetadata(metadata: CanvasNodeMetadata | undefined, status: CanvasNodeMetadata["status"] = "loading"): CanvasNodeMetadata {
+    const next = resetGenerationTaskMetadata(metadata, status);
+    delete next.content;
+    delete next.storageKey;
+    delete next.assetId;
+    delete next.previewContent;
+    delete next.videoPreview;
+    delete next.naturalWidth;
+    delete next.naturalHeight;
+    delete next.durationMs;
+    delete next.hasAudio;
+    delete next.bytes;
+    delete next.mimeType;
+    delete next.generationEffectKeys;
+    delete next.outputParameterWarning;
+    return next;
+}
+
 function normalizeTaskProgress(progress: number | undefined, status: GenerationTask["status"]) {
     if (typeof progress === "number" && Number.isFinite(progress)) return Math.max(0, Math.min(100, Math.round(progress)));
     if (status === "queued") return 0;

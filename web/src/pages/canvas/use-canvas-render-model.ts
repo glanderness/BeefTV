@@ -172,6 +172,7 @@ export function useCanvasRenderModel({
         return index;
     }, [nodes]);
     const renderedNodeIdsRef = useRef<Set<string>>(new Set());
+    const visibleNodesRef = useRef<CanvasNodeData[]>([]);
     const visibleNodes = useMemo(() => {
         const frames: CanvasNodeData[] = [];
         const regular: CanvasNodeData[] = [];
@@ -197,7 +198,13 @@ export function useCanvasRenderModel({
             if (!retained && !insideEnterBounds) return;
             (isFrameNode(node) ? frames : regular).push(node);
         });
-        return [...frames, ...regular];
+        const next = [...frames, ...regular];
+        const previous = visibleNodesRef.current;
+        if (previous.length === next.length && next.every((node, index) => node === previous[index])) {
+            return previous;
+        }
+        visibleNodesRef.current = next;
+        return next;
     }, [dragPreview, nodeById, nodeSpatialIndex, renderBounds, renderHiddenNodeIds, selectedNodeIds]);
     useEffect(() => {
         renderedNodeIdsRef.current = new Set(visibleNodes.map((node) => node.id));
@@ -296,6 +303,7 @@ export function useCanvasRenderModel({
         });
         return { index: buildCanvasSpatialIndex(entries), connectionIdsByNodeId, entriesById: new Map(entries.map((entry) => [entry.id, entry.value])) };
     }, [collapsedBatchChildIds, connections, nodeById]);
+    const displayConnectionsRef = useRef<CanvasDisplayConnection[]>([]);
     const displayConnections = useMemo(() => {
         const candidateById = new Map<string, CanvasDisplayConnection>();
         connectionSpatialIndex.index.query(renderBounds.retain, CANVAS_MAX_RENDERED_CONNECTIONS).forEach((display) => candidateById.set(display.connection.id, display));
@@ -305,7 +313,7 @@ export function useCanvasRenderModel({
                 if (display) candidateById.set(connectionId, display);
             });
         });
-        return [...candidateById.values()].flatMap(({ connection, from: sourceFrom, to: sourceTo }) => {
+        const next = [...candidateById.values()].flatMap(({ connection, from: sourceFrom, to: sourceTo }) => {
             const from = dragPreview?.nodeIds.has(sourceFrom.id) ? { ...sourceFrom, position: { x: sourceFrom.position.x + dragPreview.x, y: sourceFrom.position.y + dragPreview.y } } : sourceFrom;
             const to = dragPreview?.nodeIds.has(sourceTo.id) ? { ...sourceTo, position: { x: sourceTo.position.x + dragPreview.x, y: sourceTo.position.y + dragPreview.y } } : sourceTo;
             const connectionLeft = Math.min(from.position.x, to.position.x);
@@ -315,6 +323,18 @@ export function useCanvasRenderModel({
             if (connectionRight <= renderBounds.retain.left || connectionLeft >= renderBounds.retain.right || connectionBottom <= renderBounds.retain.top || connectionTop >= renderBounds.retain.bottom) return [];
             return [{ connection, from, to }];
         });
+        const previous = displayConnectionsRef.current;
+        if (
+            previous.length === next.length &&
+            next.every((item, index) => {
+                const prev = previous[index];
+                return prev.connection === item.connection && prev.from === item.from && prev.to === item.to;
+            })
+        ) {
+            return previous;
+        }
+        displayConnectionsRef.current = next;
+        return next;
     }, [connectionSpatialIndex, dragPreview, renderBounds]);
 
     const configInputsById = useMemo(() => {

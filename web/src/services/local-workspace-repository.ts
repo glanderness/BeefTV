@@ -215,7 +215,10 @@ function alignLiveAfterConfirmedRemote(input: {
         const decision = applyExternalCanvasRevision(input.remote, {
             scope: input.scope,
             hasUnsyncedEdits: false,
-            onApplied: (project, previous) => invokeProjectionListener(input.onApplied, project, previous),
+            onApplied: (project, previous) => {
+                resumeCanvasBackendSubmit(input.id, input.scope);
+                invokeProjectionListener(input.onApplied, project, previous);
+            },
         });
         return decision.kind === "apply" ? decision.project : live;
     }

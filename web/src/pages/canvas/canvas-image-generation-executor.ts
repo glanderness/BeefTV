@@ -5,7 +5,7 @@ import { canGenerateImageInPlace, findAvailableGenerationGroupPosition, imageGen
 import { cancelIncompleteImageBatch, retireImageBatchChildren } from "@/lib/canvas/canvas-image-batch-retry";
 import { buildImageGenerationNodeTitle } from "@/lib/canvas/canvas-generation-title";
 import { nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
-import { canvasImageReferenceLimitError, buildImageGenerationMetadata, getGenerationCount, isGenerationCanceled, runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
+import { canvasImageReferenceLimitError, buildImageGenerationMetadata, clearInPlaceMediaOutputMetadata, getGenerationCount, isGenerationCanceled, resetGenerationTaskMetadata, runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
 import { imageGenerationReferenceConnections } from "@/lib/canvas/canvas-resource-references";
 import { canvasGenerationPromptMetadata } from "@/lib/canvas/canvas-generation-submission";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
@@ -100,6 +100,11 @@ export async function executeImageGeneration({
     };
     const rootPosition = reuseSourceNode ? parentPosition : findAvailableGenerationGroupPosition(workingNodes, preferredPosition, imageGenerationGroupSize({ width: rootWidth, height: rootHeight }, outputNodeSize, childIds.length));
 
+    const reusableRootMetadata = reuseSourceNode
+        ? count > 1
+            ? resetGenerationTaskMetadata(sourceNode?.metadata, NODE_STATUS_LOADING)
+            : clearInPlaceMediaOutputMetadata(sourceNode?.metadata)
+        : {};
     const rootNode: CanvasNodeData = {
         id: rootId,
         type: CanvasNodeType.Image,
@@ -108,7 +113,7 @@ export async function executeImageGeneration({
         width: rootWidth,
         height: rootHeight,
         metadata: mediaResultMetadata("generated", {
-            ...(reuseSourceNode ? sourceNode?.metadata || {} : {}),
+            ...reusableRootMetadata,
             ...canvasGenerationPromptMetadata(prompt, effectivePrompt),
             status: NODE_STATUS_LOADING,
             size: generationConfig.size,
@@ -117,7 +122,7 @@ export async function executeImageGeneration({
             batchFailedCount: count > 1 ? 0 : undefined,
             batchUsesReferenceImages: referenceImages.length > 0,
             primaryImageId: undefined,
-            content: reuseSourceNode ? sourceNode?.metadata?.content : undefined,
+            ...(reuseSourceNode && count > 1 && sourceNode?.metadata?.content ? { content: sourceNode.metadata.content } : {}),
             ...generationMetadata,
             ...styleMetadata,
             ...skillMetadata,
@@ -162,7 +167,7 @@ export async function executeImageGeneration({
         ...workingNodes.map((node) => {
             if (node.id !== nodeId) return node;
             if (isConfigNode) return { ...node, metadata: { ...node.metadata, ...canvasGenerationPromptMetadata(prompt, effectivePrompt), status: NODE_STATUS_LOADING, errorDetails: undefined } };
-            if (reuseSourceNode) return { ...node, position: rootNode.position, width: rootNode.width, height: rootNode.height, title: rootNode.title, metadata: { ...node.metadata, ...rootNode.metadata, errorDetails: undefined } };
+            if (reuseSourceNode) return { ...node, position: rootNode.position, width: rootNode.width, height: rootNode.height, title: rootNode.title, metadata: { ...rootNode.metadata, errorDetails: undefined } };
             if (isImageNode) return node.metadata?.content ? node : { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } };
             return {
                 ...node,

@@ -2395,6 +2395,59 @@ function InfiniteCanvasPage() {
         },
         [openNodeTaskDetails],
     );
+    const activeTasksRef = useRef(activeTasks);
+    activeTasksRef.current = activeTasks;
+    const handleCancelNodeTask = useCallback(
+        async (node: CanvasNodeData) => {
+            const taskId = node.metadata?.taskId;
+            if (!taskId) return;
+            const scope = captureUserScope();
+            try {
+                const task = activeTasksRef.current.find((item) => item.id === taskId) ?? (await queryGenerationTask(taskId));
+                assertUserScope(scope);
+                cancelCanvasTask(task);
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "读取任务失败");
+            }
+        },
+        [cancelCanvasTask, message],
+    );
+    const handleConnectionSelect = useCallback(
+        (connectionId: string) => {
+            setSelectedConnectionId(connectionId);
+            selectedNodeIdsRef.current = new Set();
+            setSelectedNodeIds(new Set());
+            setContextMenu(null);
+        },
+        [selectedNodeIdsRef, setContextMenu, setSelectedConnectionId, setSelectedNodeIds],
+    );
+    const handleConnectionContextMenu = useCallback(
+        (event: ReactMouseEvent<SVGPathElement>, connectionId: string) => {
+            setSelectedConnectionId(connectionId);
+            selectedNodeIdsRef.current = new Set();
+            setSelectedNodeIds(new Set());
+            closeConnectionCreateMenu();
+            setContextMenu({ type: "connection", x: event.clientX, y: event.clientY, connectionId });
+        },
+        [closeConnectionCreateMenu, selectedNodeIdsRef, setContextMenu, setSelectedConnectionId, setSelectedNodeIds],
+    );
+    const handleCancelImageCrop = useCallback(() => setCropNodeId(null), [setCropNodeId]);
+    const handleConfirmImageCrop = useCallback((node: CanvasNodeData, crop: Parameters<typeof cropImageNode>[1]) => cropImageNode(node, crop), [cropImageNode]);
+    const handleCancelAnnotation = useCallback(() => setAnnotationNodeId(null), [setAnnotationNodeId]);
+    const handleConfirmAnnotation = useCallback(
+        async (node: CanvasNodeData, dataUrl: string) => {
+            await saveAnnotatedImageNode(node, dataUrl);
+            setAnnotationNodeId(null);
+        },
+        [saveAnnotatedImageNode, setAnnotationNodeId],
+    );
+    const handleCancelMaskEdit = useCallback(() => setMaskEditNodeId(null), [setMaskEditNodeId]);
+    const handleConfirmMaskEdit = useCallback((node: CanvasNodeData, payload: Parameters<typeof maskEditImageNode>[1]) => maskEditImageNode(node, payload), [maskEditImageNode]);
+    const handleCancelVideoCrop = useCallback(() => setVideoCropNodeId(null), [setVideoCropNodeId]);
+    const handleConfirmVideoCrop = useCallback(
+        (node: CanvasNodeData, crop: Parameters<typeof cropVideoNode>[1], sourceDimensions: Parameters<typeof cropVideoNode>[2]) => cropVideoNode(node, crop, sourceDimensions),
+        [cropVideoNode],
+    );
     const openCanvasNodeVersions = useCallback((node: CanvasNodeData) => setVersionCompareRootId(node.metadata?.versionOfNodeId || node.id), []);
     const viewCanvasNodeImage = useCallback((node: CanvasNodeData) => setPreviewNodeId(node.id), []);
     const locateProjectStyleNode = useCallback(() => {
@@ -2654,19 +2707,8 @@ function InfiniteCanvasPage() {
                                                 batchConnectionPreview={batchConnectionPreview}
                                                 selectionBoundsElementRef={selectionBoundsElementRef}
                                                 renderCanvasNodeContent={renderCanvasNodeContent}
-                                                onConnectionSelect={(connectionId) => {
-                                                    setSelectedConnectionId(connectionId);
-                                                    selectedNodeIdsRef.current = new Set();
-                                                    setSelectedNodeIds(new Set());
-                                                    setContextMenu(null);
-                                                }}
-                                                onConnectionContextMenu={(event, connectionId) => {
-                                                    setSelectedConnectionId(connectionId);
-                                                    selectedNodeIdsRef.current = new Set();
-                                                    setSelectedNodeIds(new Set());
-                                                    closeConnectionCreateMenu();
-                                                    setContextMenu({ type: "connection", x: event.clientX, y: event.clientY, connectionId });
-                                                }}
+                                                onConnectionSelect={handleConnectionSelect}
+                                                onConnectionContextMenu={handleConnectionContextMenu}
                                                 onNodeMouseDown={handleNodeMouseDown}
                                                 onNodeHoverStart={handleCanvasNodeHoverStart}
                                                 onNodeHoverEnd={handleCanvasNodeHoverEnd}
@@ -2683,18 +2725,7 @@ function InfiniteCanvasPage() {
                                                 onRetry={retryCanvasNode}
                                                 onReloadResource={reloadCanvasNodeResource}
                                                 onOpenTaskDetails={openCanvasNodeTaskDetails}
-                                                onCancelTask={async (node) => {
-                                                    const taskId = node.metadata?.taskId;
-                                                    if (!taskId) return;
-                                                    const scope = captureUserScope();
-                                                    try {
-                                                        const task = activeTasks.find((item) => item.id === taskId) ?? await queryGenerationTask(taskId);
-                                                        assertUserScope(scope);
-                                                        cancelCanvasTask(task);
-                                                    } catch (error) {
-                                                        message.error(error instanceof Error ? error.message : "读取任务失败");
-                                                    }
-                                                }}
+                                                onCancelTask={handleCancelNodeTask}
                                                 onOpenVersions={openCanvasNodeVersions}
                                                 onViewImage={viewCanvasNodeImage}
                                                 onReplaceMedia={replaceCanvasNodeMedia}
@@ -2702,18 +2733,18 @@ function InfiniteCanvasPage() {
                                                 onOpenDrawing={openDrawingNode}
                                                 onStartBatchConnection={startBatchConnection}
                                                 imageCropNodeId={cropNodeId}
-                                                onCancelImageCrop={() => setCropNodeId(null)}
-                                                onConfirmImageCrop={(node, crop) => cropImageNode(node, crop)}
+                                                onCancelImageCrop={handleCancelImageCrop}
+                                                onConfirmImageCrop={handleConfirmImageCrop}
                                                 annotationNodeId={annotationNodeId}
-                                                onCancelAnnotation={() => setAnnotationNodeId(null)}
-                                                onConfirmAnnotation={async (node, dataUrl) => { await saveAnnotatedImageNode(node, dataUrl); setAnnotationNodeId(null); }}
+                                                onCancelAnnotation={handleCancelAnnotation}
+                                                onConfirmAnnotation={handleConfirmAnnotation}
                                                 maskEditNodeId={maskEditNodeId}
                                                 maskEditConfig={maskEditNode ? { ...effectiveConfig, model: maskEditNode.metadata?.model || effectiveConfig.model, imageModel: maskEditNode.metadata?.model || effectiveConfig.imageModel, size: maskEditNode.metadata?.size || effectiveConfig.size, quality: maskEditNode.metadata?.quality || effectiveConfig.quality, count: String(maskEditNode.metadata?.count || effectiveConfig.count) } : effectiveConfig}
-                                                onCancelMaskEdit={() => setMaskEditNodeId(null)}
-                                                onConfirmMaskEdit={(node, payload) => maskEditImageNode(node, payload)}
+                                                onCancelMaskEdit={handleCancelMaskEdit}
+                                                onConfirmMaskEdit={handleConfirmMaskEdit}
                                                 videoCropNodeId={videoCropNodeId}
-                                                onCancelVideoCrop={() => setVideoCropNodeId(null)}
-                                                onConfirmVideoCrop={(node, crop, sourceDimensions) => cropVideoNode(node, crop, sourceDimensions)}
+                                                onCancelVideoCrop={handleCancelVideoCrop}
+                                                onConfirmVideoCrop={handleConfirmVideoCrop}
                                             />
                                         </CanvasNodeGraphContext.Provider>
                                     </CanvasNodeActionContext.Provider>
