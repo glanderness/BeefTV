@@ -6,7 +6,6 @@ import { FullScreenLoader, WorkspaceRouteLoader } from "@/components/ui/aceterni
 import { loadAgentsPage, loadAssetsPage, loadCanvasPage, loadCanvasProjectPage, loadCreatePage, loadHomePage, loadProjectDetailPage } from "@/lib/workspace-route-modules";
 import { CanvasRefreshShell } from "@/pages/canvas/canvas-refresh-shell";
 import RouteErrorPage from "@/pages/route-error";
-import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 
 const AgentsPage = lazy(loadAgentsPage);
 const AssetsPage = lazy(loadAssetsPage);
@@ -38,10 +37,16 @@ function WorkspaceLayout() {
     return <Suspense fallback={fallback}><UserLayout><Outlet /></UserLayout></Suspense>;
 }
 
+/**
+ * 项目详情路由。
+ *
+ * `/projects/:projectId*` 里的 ID 属于后端项目域，不是画布 ID。本地工作区曾经把这里
+ * 一律重定向到 `/canvas/:projectId`，结果把项目域 ID 塞进画布命名空间：画布页按画布
+ * ID 找不到记录，章节、分镜、工作台、剪辑成片和交付面板全部失去入口，而画布侧栏与
+ * 顶栏又一直在生成这些链接。本地工作区的项目 API 仍然可用，因此这里直接渲染项目详情，
+ * 由页面自己处理项目不存在或不可访问的情况。
+ */
 function LocalAwareProjectRoute() {
-    const { projectId } = useParams();
-    const localMode = isLocalWorkspaceMode();
-    if (localMode && projectId) return <Navigate to={`/canvas/${projectId}`} replace />;
     return deferred(<ProjectDetailPage />);
 }
 
