@@ -294,3 +294,29 @@ Windows 安装包自带视频处理工具，无需另外安装 FFmpeg。预览�
 - `backend/internal/editing`：语义渲染计划编译。
 - `backend/internal/task`：本机转写/渲染/深度捕捉准入。`backend/internal/app/task_timeline.go`、`backend/internal/app/task_render.go`：领取后的转写与 native 渲染执行。
 - `backend/internal/repository/project_workbench_read.go`：项目概览指标聚合（含成片完成度计数）。
+
+## 一键成片（交付与打包）
+
+“交付与打包”是短剧工作流的最后一个阶段，把本章已就绪的分镜视频按镜头顺序拼成整集 MP4，并导出与片段对齐的 SRT 字幕。它复用编辑器同一条服务端渲染链路，不引入第二套拼接语义。
+
+### 使用入口
+
+- 项目详情“制作流程 → 交付与打包”步骤卡，或地址栏直接访问 `/projects/:id/workflow/:unitId/delivery`。
+
+### 当前能力
+
+- **按镜头顺序拼接**：按 `position` 升序排列本章镜头，片段时长依次累积，时间线不留空隙。
+- **SRT 字幕**：取每个镜头当前修订版本的对白生成字幕片段，与对应视频片段同起点、同时长；换行会被压成单行，避免 SRT 条目断裂。
+- **缺片即禁用**：缺视频产物、产物未就绪或时长为零的镜头会列出名称并禁用成片入口。这里不补黑场，否则成片时长会与分镜对不上，缺片也容易被忽略。
+- **产物回写阶段**：成片是单元级产物（不属于任何镜头），渲染成功后写回交付阶段的 `outputJson`，供面板预览、下载 MP4 与下载 SRT。
+
+### 相关实现
+
+- `web/src/lib/timeline/shot-sequence-timeline.ts`：把镜头、视频产物和修订版本编成服务端渲染用的 `TimelineProject`，并报告缺片等阻塞项。
+- `web/src/pages/projects/detail/use-delivery-render.ts`：提交 `timeline_render` 任务并轮询到终态。
+- `web/src/pages/projects/detail/workflow-delivery.tsx`：交付面板，含就绪统计、缺片提示、进度与产物预览下载。
+- `web/src/pages/projects/detail/workflow.tsx`、`workflow-stage-views.tsx`：交付阶段入口接线。
+- `web/src/services/api/timeline-tasks.ts`：`metadata` 透传产物登记所需的 `workflowStepId`、`unitId` 与 `artifactType`。
+- `backend/internal/task/contracts.go`：渲染任务的 `metadata` 契约，随任务输入持久化。
+- `backend/internal/app/task_timeline.go`、`task_render.go`：渲染执行与任务终态。
+- `backend/internal/project/workflow_task_output.go`：单元级产物登记（无 `shotId`，因此写 `ProductionTaskLink` 与阶段 `outputJson`，不写 `ShotArtifact`）。

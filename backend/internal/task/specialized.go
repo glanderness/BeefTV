@@ -90,6 +90,7 @@ func (s *Service) CreateTimelineRenderTask(userID string, req TimelineRenderCrea
 		ProjectID: strings.TrimSpace(req.ProjectID),
 		Timeline:  req.Timeline,
 		Options:   req.Options,
+		Metadata:  req.Metadata,
 	})
 	if err != nil {
 		return nil, err
