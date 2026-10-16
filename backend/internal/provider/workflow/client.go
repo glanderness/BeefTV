@@ -17,7 +17,7 @@ import (
 	"infinite-canvas/backend/internal/outbound"
 )
 
-// Client executes RunningHub workflow create/poll/download through typed ports.
+// Client executes workflow create/poll/download through typed ports.
 type Client struct {
 	Requests RequestExecutor
 	Media    MediaLoader
@@ -61,9 +61,12 @@ func (c *Client) requirePaidCreate(ctx context.Context) error {
 	return c.Receipt.Ready(ctx)
 }
 
-// Run is the workflow-provider entry. Plugin authorization is required.
+// Run is the workflow-provider entry. Optional providers require plugin authorization.
 func (c *Client) Run(ctx context.Context, input Input) (map[string]interface{}, error) {
 	exec := c.prepared()
+	if IsComfyUIInterface(input.Config.InterfaceType) {
+		return exec.runComfyUI(ctx, input)
+	}
 	if isRunningHubInterface(input.Config.InterfaceType) {
 		return exec.runRunningHub(ctx, input)
 	}
@@ -337,6 +340,9 @@ func (c *Client) PollVideo(ctx context.Context, config Config, root string, task
 // never enters the workflow/app creation or schema discovery paths.
 func (c *Client) QueryVideo(ctx context.Context, config Config, root, taskID string) (map[string]interface{}, string, error) {
 	c = c.prepared()
+	if IsComfyUIInterface(config.InterfaceType) {
+		return c.queryComfyUI(ctx, config, taskID, "video")
+	}
 	if err := c.requireActor(ctx, config.InterfaceType); err != nil {
 		return nil, "", err
 	}

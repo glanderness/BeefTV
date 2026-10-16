@@ -14,6 +14,9 @@ export function modelProtocolLabel(value: string | undefined, definitions: Model
 // catalog. Runtime definitions win; unknown/custom ids stay unresolved so a
 // user's own contract is never silently rewritten.
 const BUILTIN_PROTOCOL_CAPABILITIES: Record<ModelProtocol, ProtocolCapability> = {
+    "comfyui-image": "image",
+    "comfyui-video": "video",
+    "comfyui-audio": "audio",
     "chat-completion": "text",
     "openai-response": "text",
     responses: "text",

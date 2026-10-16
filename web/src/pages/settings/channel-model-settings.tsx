@@ -7,6 +7,8 @@ import { ModelProtocolBrowser } from "@/components/model-protocol-browser";
 import { testChannelModelConnection } from "@/lib/model-connection-test";
 import { seedancePortraitLabel } from "@/lib/seedance-portrait";
 import { ModelCapabilityEditor } from "@/components/model-capability-editor";
+import { ComfyUIWorkflowEditor } from "./comfyui-workflow-editor";
+import { comfyUICapabilityConfig } from "@/lib/comfyui-workflow";
 import { type ModelCapabilityChoice } from "@/components/model-protocol-picker";
 import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
 import { defaultProtocolForCapability, defaultProtocolForModel, inferProtocolCapabilityFromModel, modelProtocolCapability, modelProtocolDefinition, type ModelProtocol, type ModelProtocolDefinition } from "@/lib/model-protocols";
@@ -19,6 +21,7 @@ type ModelProfile = NonNullable<ModelChannel["modelProfiles"]>[number];
 export function ChannelModelSettings({ channel, onChange, draft = false }: { channel: ModelChannel; onChange: (profiles: ModelProfile[]) => void; draft?: boolean }) {
     const { message } = App.useApp();
     const [testingModel, setTestingModel] = useState("");
+    const [workflowLoading, setWorkflowLoading] = useState(false);
     const [editorTab, setEditorTab] = useState("protocol");
     const [protocolLoading, setProtocolLoading] = useState(true);
     const [protocolError, setProtocolError] = useState("");
@@ -76,6 +79,7 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
     const inferredProtocol = activeModel ? (inferProtocolCapabilityFromModel(activeModel) === "video" ? channel.interfaceType || "" : defaultProtocolForModel(activeModel, availableProtocols)) : "";
     const activeProtocol = activeModelProfile ? activeModelProfile.protocol || channel.interfaceType || "" : inferredProtocol;
     const activeCapability = activeModelProfile?.capability || modelProtocolCapability(activeProtocol, availableProtocols) || (activeModel ? inferProtocolCapabilityFromModel(activeModel) : "text");
+    const nativeComfyUI = channel.provider === "comfyui" || activeProtocol.startsWith("comfyui-");
 
     return (
         <div className="mt-4">
@@ -111,7 +115,7 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
                                     </span>
                                 </div>
                             </div>
-                            <Button type="text" size="small" icon={<ChevronRight className="size-4" />} iconPosition="end" onClick={() => { setEditorTab("protocol"); setActiveModel(model); }}>
+                            <Button type="text" size="small" icon={<ChevronRight className="size-4" />} iconPosition="end" onClick={() => { setEditorTab(protocol.startsWith("comfyui-") ? "workflow" : "protocol"); setActiveModel(model); }}>
                                 配置使用
                             </Button>
                         </div>
@@ -130,11 +134,11 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
                     <div className="model-editor-footer">
                         <span className="text-xs text-foreground/50">{draft ? "完成后，点击「保存并使用」保存更改" : "更改实时保存到本地工作区"}</span>
                         <div className="model-editor-footer-actions">
-                            <Popconfirm title="生成一次测试结果？" description="会向当前服务商提交真实生成任务，费用由服务商收取。结果可在任务中心查看。" okText="开始生成" cancelText="取消" onConfirm={() => { if (activeModel && activeProtocol) void testModel(activeModel, activeCapability, activeProtocol); }}>
+                            <Popconfirm title="生成一次测试结果？" description={nativeComfyUI ? "将运行当前工作流并占用 ComfyUI 算力，远程服务可能计费。结果可在任务中心查看。" : "会向当前服务商提交真实生成任务，费用由服务商收取。结果可在任务中心查看。"} okText="开始生成" cancelText="取消" onConfirm={() => { if (activeModel && activeProtocol) void testModel(activeModel, activeCapability, activeProtocol); }}>
                             <Button
                                 icon={<FlaskConical className="size-4" />}
                                 loading={Boolean(testingModel)}
-                                disabled={!activeProtocol || protocolLoading || Boolean(protocolError)}
+                                disabled={!activeProtocol || protocolLoading || Boolean(protocolError) || workflowLoading || (nativeComfyUI && !activeModelProfile?.comfyui)}
                             >
                                 生成测试
                             </Button>
@@ -153,14 +157,14 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
                                 <div className="text-xs font-medium">模型能力</div>
                                 <Segmented<ModelCapabilityChoice>
                                     block
-                                    options={[{ label: "文本", value: "text" }, { label: "图片", value: "image" }, { label: "视频", value: "video" }, { label: "音频", value: "audio" }]}
+                                    options={[...(!nativeComfyUI ? [{ label: "文本", value: "text" as const }] : []), { label: "图片", value: "image" }, { label: "视频", value: "video" }, { label: "音频", value: "audio" }]}
                                     value={activeCapability}
                                     onChange={(nextCapability) => {
-                                        const nextProtocol = availableProtocols.find((item) => item.value === activeProtocol && item.capability === nextCapability && item.enabled !== false)?.value || (nextCapability === "video" ? undefined : defaultProtocolForCapability(nextCapability, availableProtocols));
+                                        const nextProtocol = nativeComfyUI ? `comfyui-${nextCapability}` : availableProtocols.find((item) => item.value === activeProtocol && item.capability === nextCapability && item.enabled !== false)?.value || (nextCapability === "video" ? undefined : defaultProtocolForCapability(nextCapability, availableProtocols));
                                         updateProfile(activeModel, {
                                             protocol: nextProtocol,
                                             capability: nextCapability,
-                                            capabilityConfig: nextCapability === "image" || nextCapability === "video" ? defaultModelCapabilityConfig(nextProtocol, activeModel) : undefined,
+                                            capabilityConfig: nativeComfyUI && nextCapability !== "text" ? comfyUICapabilityConfig(nextCapability, activeModelProfile?.comfyui?.fields || []) : nextCapability === "image" || nextCapability === "video" ? defaultModelCapabilityConfig(nextProtocol, activeModel) : undefined,
                                         });
                                     }}
                                 />
@@ -172,7 +176,7 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
                                     error={protocolError}
                                     capability={activeCapability}
                                     value={activeProtocol}
-                                    protocols={availableProtocols}
+                                    protocols={channel.provider === "comfyui" ? availableProtocols.filter((item) => item.value.startsWith("comfyui-")) : availableProtocols}
                                     onChange={(nextProtocol) => updateProfile(activeModel, {
                                         protocol: nextProtocol,
                                         capabilityConfig: activeCapability === "image" || activeCapability === "video" ? defaultModelCapabilityConfig(nextProtocol, activeModel) : undefined,
@@ -181,6 +185,14 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
                             </section>
                         </div>,
                     },
+                    ...(nativeComfyUI && activeCapability !== "text" ? [{
+                        key: "workflow",
+                        label: "ComfyUI 工作流",
+                        children: <ComfyUIWorkflowEditor key={`${activeModel}:${activeCapability}`} channel={channel} capability={activeCapability} value={activeModelProfile?.comfyui} disabled={Boolean(testingModel)} onBusyChange={setWorkflowLoading} onChange={(comfyui) => updateProfile(activeModel, {
+                            comfyui,
+                            capabilityConfig: comfyUICapabilityConfig(activeCapability, comfyui.fields, activeModelProfile?.capabilityConfig),
+                        })} />,
+                    }] : []),
                     {
                         key: "capabilities",
                         label: "能力与参数",

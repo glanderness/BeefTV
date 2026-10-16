@@ -26,6 +26,7 @@ export async function testChannelModelConnection(channel: ModelChannel, model: s
                 capability,
                 protocol: testProtocol,
                 capabilityConfig: modelProfile?.capabilityConfig,
+                comfyui: modelProfile?.comfyui,
             },
             ...(channel.modelProfiles || []).filter((item) => item.model !== model),
         ],

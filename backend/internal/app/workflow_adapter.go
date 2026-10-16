@@ -124,7 +124,13 @@ func (workflowRequestExecutor) Execute(ctx context.Context, req workflow.Request
 		httpReq.Header.Set("Content-Type", req.ContentType)
 	}
 	ApplyOutboundHeaders(httpReq, req.Headers)
-	data, mimeType, err := doBinary(httpReq)
+	var data []byte
+	var mimeType string
+	if req.CustomRelay {
+		data, mimeType, err = generation.DoCustomRelayBinary(withHTTPRequestRuntime(httpReq))
+	} else {
+		data, mimeType, err = doBinary(httpReq)
+	}
 	if err != nil {
 		var httpErr providerHTTPError
 		if errors.As(err, &httpErr) {

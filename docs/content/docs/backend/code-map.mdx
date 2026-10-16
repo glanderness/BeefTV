@@ -10,6 +10,8 @@ BeefTV 是单用户、本地优先的桌面应用。项目、画布、素材和�
 
 模型服务设置由 `web/src/pages/settings/model-service-editor.tsx` 管理添加和编辑草稿；`model-service-presets.ts` 依据已启用的协议插件填写初始配置。`model-connection-test.ts` 通过正常后端生成任务验证结果。`internal/workspace/provider_config.go` 持有配置版本、保存冲突和文件读写，`internal/localcrypto` 统一工作区凭据加解密格式。
 
+原生 ComfyUI 的每个工作流保存在模型条目的 `comfyui` 配置中。`comfyui-workflow-editor.tsx` 负责 API JSON 导入和映射编辑；`POST /comfyui/workflow-info` 通过 `internal/app/comfyui.go` 读取节点信息。`internal/provider/workflow/comfyui.go` 实现上传、提交、回执、原任务查询和媒体读取，传输沿用 generation 的受保护执行器与精确主机策略，结果交给现有 taskdelivery 保存。
+
 ```text
 Wails / local dev
   -> internal/bootstrap        组合根、数据库、HTTP 生命周期

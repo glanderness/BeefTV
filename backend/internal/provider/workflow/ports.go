@@ -17,6 +17,9 @@ type Request struct {
 	Headers     []outbound.OutboundHeader
 	ContentType string
 	Body        []byte
+	// CustomRelay selects exact-host validation and rejects redirects, including
+	// downloads that carry self-hosted provider credentials.
+	CustomRelay bool
 }
 
 // RequestExecutor runs JSON and binary provider calls through the existing

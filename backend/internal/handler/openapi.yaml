@@ -28,6 +28,44 @@ tags:
   - name: assistant
   - name: creation-conversations
 paths:
+  /comfyui/workflow-info:
+    post:
+      tags: [meta]
+      summary: 校验原生 ComfyUI 工作流并读取节点与模型选项
+      description: |
+        只读取 object_info，不提交生成。要求当前本地工作区身份。
+        请求体最多 8 MiB，工作流最多 4096 个节点，必须为 API JSON。
+        本机、私网与 HTTP 上游须通过 CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS 精确放行。
+        API Key 可为空；填写后以 Bearer 认证发送。自定义请求头遵循渠道白名单，不能覆盖 Authorization。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [baseUrl, capability, workflowJson]
+              properties:
+                baseUrl: { type: string }
+                apiKey: { type: string, writeOnly: true }
+                capability: { type: string, enum: [image, video, audio] }
+                headers:
+                  type: array
+                  items:
+                    type: object
+                    required: [name, value]
+                    properties:
+                      name: { type: string }
+                      value: { type: string, writeOnly: true }
+                workflowJson: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: 信封 data 含 workflowJson 和 fields（来源、类型、枚举及数值范围）
+        "400":
+          description: 工作流、用途、节点或服务地址无效
+        "403":
+          description: 本地工作区身份不可用或请求来源不受信任
+        "502":
+          description: ComfyUI 节点信息无法读取
   /business/tools:
     get:
       tags: [agent-ops]

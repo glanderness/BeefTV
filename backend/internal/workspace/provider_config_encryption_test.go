@@ -2,10 +2,53 @@ package workspace
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestProviderConfigEncryptsAndRestoresLargeWorkflow(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Repeat("workflow-default-", 200_000)
+	body, err := json.Marshal(map[string]any{"channels": []any{map[string]any{
+		"id": "comfyui", "provider": "comfyui",
+		"modelProfiles": []any{map[string]any{"model": "large-workflow", "comfyui": map[string]any{"workflowJson": map[string]any{
+			"1": map[string]any{"class_type": "CLIPTextEncode", "inputs": map[string]any{"text": text}},
+		}}}},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveLocalModelConfig(body); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := os.ReadFile(filepath.Join(dir, LocalProviderConfigFile))
+	if err != nil || bytes.Contains(stored, []byte("workflow-default-")) || !bytes.Contains(stored, []byte("enc:v1:")) {
+		t.Fatalf("large workflow was not encrypted: %v", err)
+	}
+	reopened, err := NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := reopened.ReadLocalModelConfig()
+	if err != nil || !bytes.Contains(loaded, []byte(text)) {
+		t.Fatalf("large workflow was not restored: %v", err)
+	}
+	if err := reopened.SaveLocalModelConfig(bytes.Repeat([]byte(" "), LocalProviderConfigMaxBytes+1)); !errors.Is(err, ErrProviderConfigTooLarge) {
+		t.Fatalf("oversized config error=%v", err)
+	}
+	effective, _, err := reopened.LoadEffectiveModelConfig()
+	if err != nil || effective.Revision != 1 {
+		t.Fatalf("rejected save changed revision=%d err=%v", effective.Revision, err)
+	}
+}
 
 func TestProviderConfigEncryptsLegacyConfigAndBackupAndRestores(t *testing.T) {
 	dir := t.TempDir()

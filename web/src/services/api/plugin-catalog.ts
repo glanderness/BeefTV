@@ -27,13 +27,14 @@ type PluginProviderCatalogItem = {
 export async function fetchPluginProviderCatalog(scope: string, capability?: ProtocolCapability) {
     try {
         const result = await http.get<{ providers: PluginProviderCatalogItem[] }>("/plugins/catalog", { params: { scope, capability } });
-        return result.providers.filter((item) => item.enabled && !item.unavailableReason).map(toProviderDefinition);
+        const native = scope === "user.custom-channel" ? COMFYUI_PROTOCOLS.filter((item) => !capability || item.capability === capability) : [];
+        return [...result.providers.filter((item) => item.enabled && !item.unavailableReason).map(toProviderDefinition), ...native];
     } catch (error) {
         // The local desktop profile can run without the optional plugin center.
         // Keep the built-in OpenAI-compatible protocols available so a custom
         // channel remains usable even when protocol metadata is unavailable.
         if (scope === "user.custom-channel") {
-            const fallback = BUILTIN_OPENAI_PROTOCOLS.filter((item) => !capability || item.capability === capability);
+            const fallback = [...BUILTIN_OPENAI_PROTOCOLS, ...COMFYUI_PROTOCOLS].filter((item) => !capability || item.capability === capability);
             if (fallback.length) return fallback;
         }
         throw error;
@@ -46,6 +47,11 @@ const BUILTIN_OPENAI_PROTOCOLS: ModelProtocolDefinition[] = [
     { value: "openai-image", label: "OpenAI Images", vendor: "OpenAI", capability: "image", create: "POST /v1/images/generations", contentType: "application/json", media: "内置协议", enabled: true },
     { value: "newapi", label: "OpenAI Videos", vendor: "OpenAI compatible", capability: "video", create: "POST /v1/videos", poll: "GET /v1/videos/{task_id}", contentType: "multipart/form-data", media: "内置协议", enabled: true },
 ];
+
+const COMFYUI_PROTOCOLS: ModelProtocolDefinition[] = (["image", "video", "audio"] as const).map((capability) => ({
+    value: `comfyui-${capability}`, label: `ComfyUI · ${{ image: "图片", video: "视频", audio: "音频" }[capability]}`,
+    vendor: "ComfyUI", capability, create: "POST /prompt", poll: "GET /history/{prompt_id}", contentType: "application/json", media: "原生工作流", enabled: true,
+}));
 
 function toProviderDefinition(item: PluginProviderCatalogItem): ModelProtocolDefinition {
     return {
