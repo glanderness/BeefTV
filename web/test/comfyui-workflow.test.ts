@@ -39,6 +39,22 @@ test("ComfyUI uses optional credentials and native capability protocols", () => 
     expect(serviceConnectionError({ ...channel, provider: undefined })).toContain("API Key");
 });
 
+test("keyless ComfyUI and Ollama keep their independent generation credentials", () => {
+    const channel = createModelChannel({
+        baseUrl: "http://127.0.0.1:11434", models: ["llama3", "gpt"],
+        modelProfiles: [
+            { model: "llama3", capability: "text", protocol: "ollama-chat", authType: "none" },
+            { model: "gpt", capability: "text", protocol: "chat-completion", authType: "bearer" },
+        ],
+    });
+    expect(channelHasGenerationCredential(channel, "llama3")).toBe(true);
+    expect(channelHasGenerationCredential(channel, "gpt")).toBe(false);
+    expect(serviceConnectionError(channel)).toContain("API Key");
+    expect(serviceConnectionError({ ...channel, models: ["llama3"] })).toBe("");
+    expect(serviceConnectionError(channel, { requireCredential: false })).toBe("");
+    expect(channelHasGenerationCredential(comfyUIChannel(), "workflow")).toBe(true);
+});
+
 test("ComfyUI capability limits follow mapped reference slots", () => {
     const fields: WorkflowFieldMapping[] = [
         { nodeId: "8", fieldName: "image", source: "referenceImage", imageOrder: 2, enabled: true },

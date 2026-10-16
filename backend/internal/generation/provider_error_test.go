@@ -26,7 +26,8 @@ func TestNoAvailableChannelIsNotUserRateLimiting(t *testing.T) {
 func TestOutboundPolicyErrorsHaveActionableCopyAndDiagnostics(t *testing.T) {
 	for _, message := range []string{
 		"不允许访问本机或内网地址", "不允许访问本机、内网或链路本地地址",
-		"不允许访问保留地址或特殊用途地址", "外部服务域名解析失败",
+		"不允许访问保留地址或特殊用途地址", "不允许访问链路本地、未指定或组播地址",
+		"外部服务域名解析失败",
 	} {
 		raw := message + "。HTTP 400。排查编号：任务 job-outbound · 请求 req-outbound。"
 		for _, failure := range []generation.Failure{
@@ -38,7 +39,11 @@ func TestOutboundPolicyErrorsHaveActionableCopyAndDiagnostics(t *testing.T) {
 			if strings.Contains(failure.Action, "CANVAS_ALLOW_PRIVATE_UPSTREAMS") {
 				t.Fatalf("unsafe global bypass advice: %+v", failure)
 			}
-			if strings.Contains(message, "不允许") && (!strings.Contains(failure.Action, "管理员") || !strings.Contains(failure.Action, "仅将该主机")) {
+			if strings.Contains(message, "链路本地、未指定") {
+				if !strings.Contains(failure.Action, "允许列表也不能放行") || strings.Contains(failure.Action, "仅将该主机") {
+					t.Fatalf("metadata block should not suggest an allowlist bypass: %+v", failure)
+				}
+			} else if strings.Contains(message, "不允许") && (!strings.Contains(failure.Action, "管理员") || !strings.Contains(failure.Action, "仅将该主机")) {
 				t.Fatalf("missing bounded administrator guidance: %+v", failure)
 			}
 			if strings.Contains(message, "解析失败") && !strings.Contains(failure.Action, "域名是否正确") {

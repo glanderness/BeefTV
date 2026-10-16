@@ -35,7 +35,8 @@ paths:
       description: |
         只读取 object_info，不提交生成。要求当前本地工作区身份。
         请求体最多 8 MiB，工作流最多 4096 个节点，必须为 API JSON。
-        本机、私网与 HTTP 上游须通过 CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS 精确放行。
+        默认允许本机和局域网 HTTP 上游；设置 CANVAS_ALLOW_PRIVATE_UPSTREAMS=false 时，
+        可信私网主机须通过 CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS 精确放行。
         API Key 可为空；填写后以 Bearer 认证发送。自定义请求头遵循渠道白名单，不能覆盖 Authorization。
       requestBody:
         required: true

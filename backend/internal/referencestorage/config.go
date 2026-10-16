@@ -1,6 +1,7 @@
 package referencestorage
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -126,9 +127,16 @@ func (c Config) Validate() error {
 	}
 	for _, address := range []string{c.Endpoint, c.PublicBaseURL} {
 		parsed, err := outbound.ValidateOutboundURL(address)
-		if err != nil || parsed.Scheme != "https" || parsed.RawQuery != "" || parsed.Fragment != "" {
-			return errors.New("对象存储端点和公网地址须为可访问的 HTTPS 地址，不含认证信息或查询参数")
+		if err != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return errors.New("对象存储端点和公网地址须为可访问的地址，不含认证信息或查询参数")
 		}
+		if parsed.Scheme == "https" {
+			continue
+		}
+		if parsed.Scheme == "http" && outbound.HostAllowsLocalHTTP(context.Background(), parsed.Hostname()) {
+			continue
+		}
+		return errors.New("对象存储端点和公网地址须为 HTTPS；仅本机、局域网或 CGNAT 地址可使用 HTTP。云端模型无法拉取局域网链接")
 	}
 	return nil
 }

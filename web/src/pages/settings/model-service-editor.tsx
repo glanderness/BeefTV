@@ -65,8 +65,8 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
         setError("");
         setNotice("");
     };
-    const validateConnection = () => {
-        const problem = serviceConnectionError(draft) || validateChannelHeaders(draft.headers);
+    const validateConnection = (requireCredential = true) => {
+        const problem = serviceConnectionError(draft, { protocols, requireCredential }) || validateChannelHeaders(draft.headers);
         if (problem) setError(problem);
         return !problem;
     };
@@ -184,12 +184,12 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
                 <Form layout="vertical" requiredMark={false} className="model-service-fields" disabled={busy} onFinish={() => void fetchModels()}>
                     <div className="model-service-form-title"><ModelLogo icon={selectedPreset.icon} size={28} /><div><h3>{selectedPreset.name}</h3>{presetId === "compatible" && <p>用户可以自行添加第三方模型服务，但是 BeefTV 无法确保所有第三方模型服务的兼容性</p>}</div></div>
                     <Form.Item label="连接名称"><Input aria-label="连接名称" placeholder="例如：我的创作账号" value={draft.name} onChange={(event) => patch({ name: event.target.value })} /></Form.Item>
-                    <Form.Item label={nativeComfyUI ? "API Key（可选）" : "API Key"}><Input.Password prefix={<KeyRound size={15} />} aria-label="API Key" autoComplete="new-password" placeholder={nativeComfyUI ? "无鉴权的本机服务可留空" : "粘贴你的 API Key"} value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} /></Form.Item>
-                    <Form.Item label="服务地址" help={nativeComfyUI ? "填写 BeefTV 后端可访问的 ComfyUI 地址。本机和内网主机需在后端配置精确主机放行，详见 ComfyUI 接入文档。" : undefined}><Input aria-label="服务地址" inputMode="url" placeholder={nativeComfyUI ? "http://127.0.0.1:8188" : "https://api.example.com/v1"} value={draft.baseUrl} onChange={(event) => patch({ baseUrl: event.target.value })} /></Form.Item>
+                    <Form.Item label={nativeComfyUI ? "API Key（可选）" : "API Key"} help={nativeComfyUI ? undefined : "选择无鉴权协议（例如 Ollama）后可以留空。读取模型目录仍需要密钥。"}><Input.Password prefix={<KeyRound size={15} />} aria-label="API Key" autoComplete="new-password" placeholder={nativeComfyUI ? "无鉴权的本机服务可留空" : "粘贴你的 API Key"} value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} /></Form.Item>
+                    <Form.Item label="服务地址" help={nativeComfyUI ? "填写 BeefTV 后端可访问的 ComfyUI 地址。本机和局域网地址默认可用，严格网络模式请参阅 ComfyUI 接入文档。" : undefined}><Input aria-label="服务地址" inputMode="url" placeholder={nativeComfyUI ? "http://127.0.0.1:8188" : "https://api.example.com/v1"} value={draft.baseUrl} onChange={(event) => patch({ baseUrl: event.target.value })} /></Form.Item>
                     {modelCatalogRequestURL(draft) && <div className="model-service-url"><span>模型目录地址</span><code>{modelCatalogRequestURL(draft).split("/").map((part, index) => <Fragment key={index}>{index > 0 && <>/<wbr /></>}{part}</Fragment>)}</code></div>}
                     <button type="button" className="model-service-advanced" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}><Settings2 size={15} />高级设置<ChevronDown size={14} /></button>
                     {advanced && <div className="model-service-advanced-fields">
-                        {!nativeComfyUI && <><Form.Item label="素材服务地址（可选）" help="仅在服务商使用独立素材域名时填写。留空时只接受同域素材。"><Input aria-label="素材服务地址" inputMode="url" placeholder="https://assets.example.com" value={draft.referenceAssetOrigin || ""} onChange={(event) => patch({ referenceAssetOrigin: event.target.value })} /></Form.Item>
+                        {!nativeComfyUI && <><Form.Item label="素材服务地址（可选）" help="公网素材域名使用 HTTPS。本机、局域网或 CGNAT 可填写 HTTP，并可带端口。留空时只接受与 API 同主机的素材。"><Input aria-label="素材服务地址" inputMode="url" placeholder="https://assets.example.com" value={draft.referenceAssetOrigin || ""} onChange={(event) => patch({ referenceAssetOrigin: event.target.value })} /></Form.Item>
                         <Form.Item label="目录接口格式"><Select aria-label="目录接口格式" value={draft.apiFormat} options={[{ value: "openai", label: "OpenAI 兼容" }, { value: "gemini", label: "Gemini 原生" }]} onChange={(apiFormat) => patch({ apiFormat })} /></Form.Item>
                         <Form.Item label="Secret Key（按需填写）"><Input.Password aria-label="Secret Key" autoComplete="new-password" value={draft.secretKey} onChange={(event) => patch({ secretKey: event.target.value })} /></Form.Item></>}
                         <ChannelHeadersEditor value={draft.headers} onChange={(headers) => patch({ headers })} />
@@ -213,7 +213,7 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
             {(error || notice) && <div className="model-service-feedback">{error && <Alert type="error" showIcon title={error} />}{notice && <Alert type="info" showIcon title={notice} />}</div>}
         </div>
         <div className="model-service-footer">{step === 1 && <span>保存后，可在创作页选择这些模型</span>}<div>
-            {step === 0 ? <>{!nativeComfyUI && <Button disabled={busy} onClick={() => { if (validateConnection()) { setNotice(""); setStep(1); } }}>手动添加模型</Button>}<Button type="primary" loading={busy} disabled={protocolLoading} onClick={() => void fetchModels()}>{nativeComfyUI ? "配置工作流" : "读取模型"}</Button></> : <><Button disabled={busy} icon={<ArrowLeft size={15} />} onClick={() => { setStep(0); setError(""); }}>连接信息</Button><Button type="primary" loading={busy} disabled={!draft.models.length || protocolLoading} icon={<Check size={15} />} onClick={() => void save()}>保存并使用</Button></>}
+            {step === 0 ? <>{!nativeComfyUI && <Button disabled={busy} onClick={() => { if (validateConnection(false)) { setNotice(""); setStep(1); } }}>手动添加模型</Button>}<Button type="primary" loading={busy} disabled={protocolLoading} onClick={() => void fetchModels()}>{nativeComfyUI ? "配置工作流" : "读取模型"}</Button></> : <><Button disabled={busy} icon={<ArrowLeft size={15} />} onClick={() => { setStep(0); setError(""); }}>连接信息</Button><Button type="primary" loading={busy} disabled={!draft.models.length || protocolLoading} icon={<Check size={15} />} onClick={() => void save()}>保存并使用</Button></>}
         </div></div>
     </AppModal>;
 }

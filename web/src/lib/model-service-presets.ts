@@ -28,7 +28,11 @@ export function servicePresetFor(channel: ModelChannel): ModelServicePresetId {
 // Endpoint metadata is a hint, only resolve to protocols the host actually offers.
 export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCatalogItem, protocols: ModelProtocolDefinition[], explicitCapability?: ModelCapability): NonNullable<ModelChannel["modelProfiles"]>[number] {
     const existing = channel.modelProfiles?.find((profile) => profile.model === item.id);
-    if (existing?.protocol && !explicitCapability) return existing;
+    if (existing?.protocol && !explicitCapability) {
+        const definition = protocols.find((protocol) => protocol.value === existing.protocol && protocol.enabled !== false);
+        if (definition && definition.authType !== existing.authType) return { ...existing, authType: definition.authType };
+        return existing;
+    }
     const fullvideoFull = ["sd-native-full-2.0", "sd-native-full-2.5", "原生不卡人脸-全参2.0", "原生不卡人脸-全参2.5"].includes(item.id);
     const capability = explicitCapability || existing?.capability || item.modelType || catalogEndpointCapability(item) || (fullvideoFull ? "video" : inferProtocolCapabilityFromModel(item.id));
     const preset = channel.apiFormat === "gemini" ? "gemini" : servicePresetFor(channel);
@@ -46,23 +50,37 @@ export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCat
     // Model names identify a family, not a provider's wire protocol. Ask the
     // user to select its contract unless the catalog explicitly declares it.
     if (fullvideoFull && capability === "video" && !inherited) proposed = item.supportedEndpointTypes?.includes("full-video") ? "full-video" : undefined;
-    const protocol = protocols.find((p) => p.value === proposed && p.capability === capability && p.enabled !== false)?.value;
-    return { ...existing, model: item.id, displayName: existing?.displayName || item.displayName, capability, protocol, capabilityConfig: existing?.capability === capability && existing.capabilityConfig ? existing.capabilityConfig : (capability === "image" || capability === "video") && protocol ? defaultModelCapabilityConfig(protocol, item.id) : undefined };
+    const definition = protocols.find((p) => p.value === proposed && p.capability === capability && p.enabled !== false);
+    const protocol = definition?.value;
+    return { ...existing, model: item.id, displayName: existing?.displayName || item.displayName, capability, protocol, authType: definition ? definition.authType : existing?.authType, capabilityConfig: existing?.capability === capability && existing.capabilityConfig ? existing.capabilityConfig : (capability === "image" || capability === "video") && protocol ? defaultModelCapabilityConfig(protocol, item.id) : undefined };
 }
 
-export function serviceConnectionError(channel: ModelChannel): string {
+export function channelAllowsEmptyAPIKey(channel: Pick<ModelChannel, "models" | "modelProfiles" | "interfaceType">, protocols?: ModelProtocolDefinition[]) {
+    const models = (channel.models || []).map((model) => model.trim()).filter(Boolean);
+    if (!models.length) return false;
+    return models.every((model) => {
+        const profile = channel.modelProfiles?.find((item) => item.model === model);
+        const protocolId = profile?.protocol || channel.interfaceType;
+        if (!protocolId) return false;
+        const listed = protocols?.find((item) => item.value === protocolId);
+        const auth = listed ? listed.authType : profile?.authType;
+        return auth === "none";
+    });
+}
+
+export function serviceConnectionError(channel: ModelChannel, options?: { protocols?: ModelProtocolDefinition[]; requireCredential?: boolean }): string {
     if (channel.referenceAssetOrigin?.trim()) {
         try {
             const origin = new URL(channel.referenceAssetOrigin.trim());
-            if (origin.protocol !== "https:" || origin.username || origin.password || origin.search || origin.hash || origin.pathname !== "/" || origin.port) return "素材服务地址请填写 HTTPS 域名，不包含路径、账号或查询参数";
-        } catch { return "请填写完整的 HTTPS 素材服务地址"; }
+            if (!["https:", "http:"].includes(origin.protocol) || origin.username || origin.password || origin.search || origin.hash || origin.pathname !== "/") return "素材服务地址只填写源站，不包含路径、账号或查询参数。公网请使用 HTTPS；本机、局域网或 CGNAT 可使用 HTTP 和端口";
+        } catch { return "请填写完整的素材服务地址"; }
     }
     try {
         const url = new URL(channel.baseUrl.trim());
         if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) return "请填写不含账号、查询参数或片段的 HTTP(S) 服务地址";
         if (/\/(chat\/completions|responses|images\/generations|models)\/?$/i.test(url.pathname)) return "请填写服务的基础地址，不要包含模型或生成接口路径";
     } catch { return "请填写完整的服务地址，例如 https://api.example.com/v1"; }
-    if (channel.provider !== "comfyui" && !channel.apiKey.trim() && !channel.hasApiKey) return "请填写 API Key";
+    if (channel.provider !== "comfyui" && options?.requireCredential !== false && !channel.apiKey.trim() && !channel.hasApiKey && !channelAllowsEmptyAPIKey(channel, options?.protocols)) return "请填写 API Key";
     return "";
 }
 

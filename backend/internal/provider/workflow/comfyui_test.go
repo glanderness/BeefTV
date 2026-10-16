@@ -327,7 +327,7 @@ func TestComfyUIDistinguishesRejectedAndUncertainCreates(t *testing.T) {
 	}
 }
 
-func TestComfyUIRequiresAPIJSONAndExactPrivateHostAllowlist(t *testing.T) {
+func TestComfyUIRequiresAPIJSONAndRespectsOutboundPolicy(t *testing.T) {
 	for _, raw := range []string{`{}`, `{"nodes":[],"links":[]}`, `{"1":{"class_type":"SaveImage","inputs":{"images":["missing",0]}}}`, `{"1":{"class_type":"SaveImage","inputs":{"images":["1",-1]}}}`} {
 		var prompt map[string]any
 		_ = json.Unmarshal([]byte(raw), &prompt)
@@ -336,8 +336,18 @@ func TestComfyUIRequiresAPIJSONAndExactPrivateHostAllowlist(t *testing.T) {
 		}
 	}
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "")
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "")
+	for _, address := range []string{"http://127.0.0.1:8188", "http://localhost:8188", "http://192.168.1.8:8188"} {
+		if _, err := ComfyUIRootURL(address); err != nil {
+			t.Fatalf("local upstream rejected by default: %v", err)
+		}
+	}
+	if _, err := ComfyUIRootURL("http://169.254.169.254:8188"); err == nil {
+		t.Fatal("link-local host accepted")
+	}
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "false")
 	if _, err := ComfyUIRootURL("http://127.0.0.1:8188"); err == nil {
-		t.Fatal("private host allowed by default")
+		t.Fatal("private host accepted in strict mode without an allowlist")
 	}
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
 	input := comfyUIInput()

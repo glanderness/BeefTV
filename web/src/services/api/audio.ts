@@ -138,7 +138,7 @@ export function assertAudioConfig(config: AiConfig, selectedModel: string) {
     if (!selectedModel.trim() && !config.model.trim()) throw new Error("请先配置音频模型");
     if (!config.baseUrl.trim()) throw new Error("请先配置 Base URL");
     const channel = resolveModelChannel(config, selectedModel || config.model);
-    if (!channelHasGenerationCredential(channel)) {
+    if (!channelHasGenerationCredential(channel, selectedModel || config.model)) {
         throw new Error(isBuiltinBeefAPIChannel(channel) ? "请先连接 BeefTV" : "请先配置 API Key");
     }
     if (config.apiFormat === "gemini") throw new Error("Gemini 调用格式暂不支持音频生成，请使用 OpenAI 格式渠道");

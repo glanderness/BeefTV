@@ -64,8 +64,8 @@ func ValidateOutboundURL(rawURL string) (*url.URL, error) {
 	return parsed, nil
 }
 
-// 用户自定义渠道必须使用更严格的出口策略：不接受 URL 凭据，且仅部署者精确配置的
-// 主机可以路由到私网或使用会明文传输 API Key 的 HTTP。
+// 用户自定义渠道不接受 URL 凭据；默认允许本机与局域网 HTTP/HTTPS 模型服务，
+// 当部署显式关闭私网出站（CANVAS_ALLOW_PRIVATE_UPSTREAMS=false）时仅允许白名单主机使用 HTTP。
 func ValidateCustomRelayURL(rawURL string) (*url.URL, error) {
 	if len(strings.TrimSpace(rawURL)) > 4096 {
 		return nil, BadAuthRequest("自定义渠道地址过长")
@@ -78,7 +78,7 @@ func ValidateCustomRelayURL(rawURL string) (*url.URL, error) {
 	if scheme != "https" && scheme != "http" {
 		return nil, BadAuthRequest("自定义渠道地址只支持 http/https")
 	}
-	if scheme == "http" && !AllowedPrivateUpstreamHost(parsed.Hostname()) {
+	if scheme == "http" && !(allowPrivateUpstreams() || AllowedPrivateUpstreamHost(parsed.Hostname())) {
 		return nil, BadAuthRequest("自定义渠道 HTTP 仅允许访问已配置的可信上游主机")
 	}
 	if parsed.User != nil {
@@ -360,7 +360,7 @@ func resolveOutboundHost(ctx context.Context, host string) ([]net.IP, error) {
 
 func resolveCustomRelayHost(ctx context.Context, host string) ([]net.IP, error) {
 	host = normalizeOutboundHost(host)
-	allowPrivateHost := AllowedPrivateUpstreamHost(host)
+	allowPrivateHost := allowPrivateUpstreams() || AllowedPrivateUpstreamHost(host)
 	addresses, err := resolveOutboundHostWithPolicy(ctx, host, allowPrivateHost)
 	if err != nil {
 		return nil, err
@@ -384,23 +384,36 @@ func resolveOutboundHostWithPolicy(ctx context.Context, host string, allowPrivat
 	}
 	addresses, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
 	if err != nil {
+		if allowPrivateHost && (host == "localhost" || strings.HasSuffix(host, ".localhost")) {
+			return []net.IP{net.IPv4(127, 0, 0, 1)}, nil
+		}
 		return nil, BadAuthRequest("外部服务域名解析失败")
 	}
 	if len(addresses) == 0 {
+		if allowPrivateHost && (host == "localhost" || strings.HasSuffix(host, ".localhost")) {
+			return []net.IP{net.IPv4(127, 0, 0, 1)}, nil
+		}
 		return nil, BadAuthRequest("外部服务域名没有可用地址")
 	}
-	if !allowPrivateHost {
-		for _, ip := range addresses {
-			if blockedOutboundIP(ip) {
-				return nil, BadAuthRequest("不允许访问本机、内网或链路本地地址")
-			}
+	for _, ip := range addresses {
+		// Link-local includes cloud metadata (169.254.169.254). An operator
+		// allowlist may pin a LAN host, but it must not reopen that range.
+		if blockedLinkLocalOrSpecialIP(ip) {
+			return nil, BadAuthRequest("不允许访问链路本地、未指定或组播地址")
+		}
+		if !allowPrivateHost && blockedOutboundIP(ip) {
+			return nil, BadAuthRequest("不允许访问本机、内网或链路本地地址")
 		}
 	}
 	return addresses, nil
 }
 
+func blockedLinkLocalOrSpecialIP(ip net.IP) bool {
+	return ip == nil || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.IsMulticast()
+}
+
 func blockedOutboundIP(ip net.IP) bool {
-	return ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.IsMulticast()
+	return blockedLinkLocalOrSpecialIP(ip) || ip.IsLoopback() || ip.IsPrivate()
 }
 
 func blockedCustomRelayIP(ip net.IP) bool {
@@ -420,9 +433,58 @@ func blockedCustomRelayIP(ip net.IP) bool {
 	return false
 }
 
+var cgnatPrefix = netip.MustParsePrefix("100.64.0.0/10")
+
+// localUpstreamIP is loopback, RFC1918/ULA, or CGNAT. Link-local (including
+// cloud metadata), unspecified, multicast, and public addresses are not local.
+func localUpstreamIP(ip net.IP) bool {
+	if blockedLinkLocalOrSpecialIP(ip) {
+		return false
+	}
+	if ip.IsLoopback() || ip.IsPrivate() {
+		return true
+	}
+	address, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	return cgnatPrefix.Contains(address.Unmap())
+}
+
+func addressesAllowLocalHTTP(addresses []net.IP, allowPrivate bool) bool {
+	if !allowPrivate || len(addresses) == 0 {
+		return false
+	}
+	for _, ip := range addresses {
+		if !localUpstreamIP(ip) {
+			return false
+		}
+	}
+	return true
+}
+
+// HostAllowsLocalHTTP reports whether every resolved address is loopback,
+// RFC1918/ULA, or CGNAT, and private upstreams are enabled. An operator
+// allowlist does not make this true while CANVAS_ALLOW_PRIVATE_UPSTREAMS=false.
+// Link-local and metadata addresses stay false.
+func HostAllowsLocalHTTP(ctx context.Context, host string) bool {
+	if !allowPrivateUpstreams() {
+		return false
+	}
+	addresses, err := resolveOutboundHost(ctx, host)
+	if err != nil {
+		return false
+	}
+	return addressesAllowLocalHTTP(addresses, true)
+}
+
 func allowPrivateUpstreams() bool {
-	value := strings.ToLower(strings.TrimSpace(os.Getenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS")))
-	return value == "1" || value == "true" || value == "yes"
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS"))) {
+	case "0", "false", "no":
+		return false
+	default:
+		return true
+	}
 }
 
 // allowedPrivateUpstreamHost lets operators pin only explicitly trusted upstream

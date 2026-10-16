@@ -133,6 +133,22 @@ func TestProviderCatalogCustomPluginUsesManifestUntilRegistryOverlay(t *testing.
 	}
 }
 
+func TestProviderCatalogProjectsAuthType(t *testing.T) {
+	runtime, err := NewRuntime(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(runtime, nil)
+	raw := []byte(`{"apiVersion":"beeftv.plugin/v1","id":"catalog-auth-none","version":"1.0.0","name":"catalog-auth-none","author":"Test","documentation":"# catalog-auth-none","contributes":{"providers":[{"id":"catalog-auth-none","label":"catalog-auth-none","capabilities":["text"],"scopes":["canvas"],"auth":{"type":"none","field":"apiKey"},"create":{"method":"POST","path":"/api/chat","fields":{"prompt":"request.prompt"}},"response":{"statusPaths":["status"]}}]}}`)
+	if _, err := svc.Install(testPluginPackage(t, raw), "catalog-auth-none.beeftv-plugin"); err != nil {
+		t.Fatal(err)
+	}
+	item := findProvider(svc.ProviderCatalog(string(protocol.SurfaceCanvas), string(protocol.CapabilityText), false), "catalog-auth-none")
+	if item == nil || item.AuthType != "none" {
+		t.Fatalf("auth catalog = %#v", item)
+	}
+}
+
 func findProvider(items []ProviderCatalogItem, id string) *ProviderCatalogItem {
 	for index := range items {
 		if items[index].ID == id {

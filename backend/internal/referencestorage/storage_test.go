@@ -100,10 +100,33 @@ func TestUploadSignsPUTAndRequiresAnonymousReadableMedia(t *testing.T) {
 }
 
 func TestConfigRefusesPrivateURLs(t *testing.T) {
-	for _, address := range []string{"http://cdn.example.com", "https://127.0.0.1", "https://10.0.0.1", "https://user:secret@example.com", "https://example.com?token=secret"} {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "false")
+	for _, address := range []string{"http://cdn.example.com", "http://127.0.0.1:9000", "https://127.0.0.1", "https://10.0.0.1", "https://user:secret@example.com", "https://example.com?token=secret"} {
 		config := Config{Endpoint: address, PublicBaseURL: address, Bucket: "fixture", Region: "auto", AccessKeyID: "access", SecretAccessKey: "secret"}
 		if err := config.Validate(); err == nil {
 			t.Fatalf("accepted unsafe storage URL %s", address)
 		}
+	}
+}
+
+func TestConfigAllowsLocalHTTPWhenPrivateUpstreamsEnabled(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	for _, address := range []string{"http://127.0.0.1:9000", "http://10.0.0.1", "http://172.16.0.2:9000", "http://192.168.1.10:9000", "http://100.64.0.1:9000", "http://[::1]:9000", "https://10.0.0.1"} {
+		config := Config{Endpoint: address, PublicBaseURL: address, Bucket: "fixture", Region: "auto", AccessKeyID: "access", SecretAccessKey: "secret"}
+		if err := config.Validate(); err != nil {
+			t.Fatalf("rejected local storage URL %s: %v", address, err)
+		}
+	}
+	for _, address := range []string{"http://1.1.1.1", "http://169.254.169.254", "http://user:secret@10.0.0.1", "http://10.0.0.1?token=secret", "http://198.18.0.1:9000"} {
+		config := Config{Endpoint: address, PublicBaseURL: address, Bucket: "fixture", Region: "auto", AccessKeyID: "access", SecretAccessKey: "secret"}
+		if err := config.Validate(); err == nil {
+			t.Fatalf("accepted unsafe storage URL %s", address)
+		}
+	}
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "false")
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	config := Config{Endpoint: "http://127.0.0.1:9000", PublicBaseURL: "http://127.0.0.1:9000", Bucket: "fixture", Region: "auto", AccessKeyID: "access", SecretAccessKey: "secret"}
+	if err := config.Validate(); err == nil {
+		t.Fatal("strict mode accepted allowlisted loopback HTTP")
 	}
 }

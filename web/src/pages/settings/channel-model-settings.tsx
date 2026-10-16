@@ -56,7 +56,9 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
             protocol: defaultProtocol,
             capabilityConfig: defaultModelCapabilityConfig(defaultProtocol, model),
         };
-        const next = [...(channel.modelProfiles || []).filter((item) => item.model !== model), { ...current, ...patch, model }];
+        const nextProfile = { ...current, ...patch, model };
+        if ("protocol" in patch) nextProfile.authType = modelProtocolDefinition(nextProfile.protocol, availableProtocols)?.authType;
+        const next = [...(channel.modelProfiles || []).filter((item) => item.model !== model), nextProfile];
         onChange(next.filter((item) => channel.models.includes(item.model)));
     };
 

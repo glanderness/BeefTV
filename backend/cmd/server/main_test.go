@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"infinite-canvas/backend/internal/bootstrap"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -71,5 +73,24 @@ func TestAllowedOriginConfiguredListDoesNotFallbackToArbitraryLocalhost(t *testi
 	context.Request = httptest.NewRequest("GET", "http://backend/api/health", nil)
 	if allowedOrigin(context, "http://localhost:3000") {
 		t.Fatal("configured CORS list should disable the implicit localhost fallback")
+	}
+}
+
+func TestServerListenAddrDefaultsToLoopback(t *testing.T) {
+	t.Setenv("CANVAS_BACKEND_ADDR", "")
+	if got := env("CANVAS_BACKEND_ADDR", bootstrap.DefaultServerListenAddr); got != "127.0.0.1:8080" {
+		t.Fatalf("empty CANVAS_BACKEND_ADDR = %q", got)
+	}
+	t.Setenv("CANVAS_BACKEND_ADDR", ":8080")
+	if got := env("CANVAS_BACKEND_ADDR", bootstrap.DefaultServerListenAddr); got != ":8080" {
+		t.Fatalf("explicit CANVAS_BACKEND_ADDR = %q", got)
+	}
+	if listenAddrBeyondLoopback("127.0.0.1:8080") || listenAddrBeyondLoopback("[::1]:8080") {
+		t.Fatal("loopback listen should not be reported as exposed")
+	}
+	for _, addr := range []string{":8080", "0.0.0.0:8080", "192.168.1.8:8080", "localhost:8080"} {
+		if !listenAddrBeyondLoopback(addr) {
+			t.Fatalf("%s should be reported as beyond loopback", addr)
+		}
 	}
 }

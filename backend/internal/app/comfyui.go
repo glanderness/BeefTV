@@ -22,7 +22,7 @@ func (s *Service) InspectComfyUI(ctx context.Context, req ComfyUIInspectRequest)
 		return nil, mapOutboundError(err)
 	}
 	if _, err := workflow.ComfyUIRootURL(req.BaseURL); err != nil {
-		return nil, WrapAppError(http.StatusBadRequest, "ComfyUI 地址不可用；本机和内网主机须通过 CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS 精确放行", err)
+		return nil, WrapAppError(http.StatusBadRequest, "ComfyUI 地址不可用，请检查服务地址和后端出站网络配置", err)
 	}
 	config := workflow.Config{BaseURL: req.BaseURL, APIKey: req.APIKey, Headers: headers, WorkflowJSON: req.WorkflowJSON}
 	result, err := s.workflowClient(nil).InspectComfyUI(ctx, config, req.Capability)

@@ -115,9 +115,26 @@ test("connection validation rejects full endpoints and embedded credentials", ()
     expect(serviceConnectionError({ ...channel, baseUrl: "https://api.example.com/v1/chat/completions" })).not.toBe("");
     expect(serviceConnectionError({ ...channel, baseUrl: "https://secret@api.example.com" })).not.toBe("");
     expect(serviceConnectionError({ ...channel, referenceAssetOrigin: "https://assets.example.com" })).toBe("");
-    for (const referenceAssetOrigin of ["http://assets.example.com", "https://assets.example.com/path", "https://user@assets.example.com", "https://assets.example.com?key=value"]) {
+    expect(serviceConnectionError({ ...channel, referenceAssetOrigin: "http://10.0.0.8:9000" })).toBe("");
+    expect(serviceConnectionError({ ...channel, referenceAssetOrigin: "https://assets.example.com:444" })).toBe("");
+    for (const referenceAssetOrigin of ["https://assets.example.com/path", "https://user@assets.example.com", "https://assets.example.com?key=value", "http://assets.example.com#sig"]) {
         expect(serviceConnectionError({ ...channel, referenceAssetOrigin })).not.toBe("");
     }
+});
+
+test("API key is optional only when every selected protocol auth is none", () => {
+    const channel = createModelChannel({ baseUrl: "http://127.0.0.1:11434", apiKey: "", models: ["llama3"], modelProfiles: [{ model: "llama3", capability: "text", protocol: "ollama-chat", authType: "none" }] });
+    const ollama = { value: "ollama-chat", capability: "text", enabled: true, authType: "none" } as ModelProtocolDefinition;
+    const bearer = { value: "ollama-chat", capability: "text", enabled: true, authType: "bearer" } as ModelProtocolDefinition;
+    expect(serviceConnectionError(channel)).toBe("");
+    expect(serviceConnectionError(channel, { protocols: [ollama] })).toBe("");
+    expect(serviceConnectionError(channel, { protocols: [bearer] })).not.toBe("");
+    expect(serviceConnectionError({ ...channel, apiKey: "" }, { requireCredential: false })).toBe("");
+    expect(serviceConnectionError(createModelChannel({ baseUrl: "https://api.example.com/v1", apiKey: "" }))).toBe("请填写 API Key");
+    expect(serviceConnectionError(createModelChannel({ baseUrl: "https://api.example.com/v1", apiKey: "" }), { requireCredential: false })).toBe("");
+    const mixed = createModelChannel({ baseUrl: "http://127.0.0.1:11434", apiKey: "", models: ["llama3", "gpt"], modelProfiles: [{ model: "llama3", capability: "text", protocol: "ollama-chat", authType: "none" }, { model: "gpt", capability: "text", protocol: "chat-completion" }] });
+    expect(serviceConnectionError(mixed, { protocols: [ollama, ...protocols] })).toBe("请填写 API Key");
+    expect(modelConfigChannelStatusLabel(channel, { status: "saved", revision: 1, dirty: false, error: "" })).toBe("已保存 · 尚未测试");
 });
 
 test("explicit asset origin survives channel creation and generation request assembly", () => {

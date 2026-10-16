@@ -21,6 +21,7 @@ type ProviderCatalogItem struct {
 	Poll              string                      `json:"poll,omitempty"`
 	ContentType       string                      `json:"contentType,omitempty"`
 	BaseURL           string                      `json:"baseUrl,omitempty"`
+	AuthType          string                      `json:"authType,omitempty"`
 	Enabled           bool                        `json:"enabled"`
 	UnavailableReason string                      `json:"unavailableReason,omitempty"`
 	Workflows         []protocol.ManifestWorkflow `json:"workflows,omitempty"`
@@ -41,7 +42,8 @@ func (s *Service) ProviderCatalog(scope, capability string, includeUnavailable b
 			item := ProviderCatalogItem{
 				ID: provider.ID, Version: plugin.Manifest.Version, Name: provider.Label, Vendor: plugin.Manifest.Author,
 				Categories: provider.Capabilities, Scopes: provider.Scopes, BaseURL: provider.BaseURL,
-				Enabled: plugin.Status == StatusEnabled, UnavailableReason: plugin.Error,
+				AuthType: provider.Auth.Type,
+				Enabled:  plugin.Status == StatusEnabled, UnavailableReason: plugin.Error,
 				Workflows: workflowsForProvider(plugin.Manifest.Contributes.Workflows, provider.ID),
 			}
 			item.Create, item.Poll, item.ContentType = operationSummary(provider.Create), operationSummaryPtr(provider.Poll), provider.Create.ContentType

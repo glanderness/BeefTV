@@ -58,6 +58,8 @@ bun run dev
 
 前端默认监听 `0.0.0.0:3000`，Vite 将 `/api` 和 OAuth 回调代理到 `127.0.0.1:8080`。如需修改代理目标，可设置 `VITE_API_PROXY_TARGET`。
 
+`cmd/server` 在未设置 `CANVAS_BACKEND_ADDR` 时只监听 `127.0.0.1:8080`。服务端 profile 没有桌面启动令牌，默认不把工作区 API 暴露到局域网。需要同一台机器上的其他网卡、局域网客户端，或容器网络访问时，显式设置 `CANVAS_BACKEND_ADDR=:8080` 或 `0.0.0.0:8080`。只给本机用时保持 `127.0.0.1:8080`。镜像默认也是容器内回环；Compose 文件里的 `:8080` 是给同网络的 web 容器用的，不要把后端 `8080` 发布到宿主机的所有网卡。
+
 ## 时间线字幕转写（whisper.cpp）
 
 时间线“字幕转写”由**本地 whisper.cpp server** 执行：后端将片段音频预处理为 16k mono wav 后，POST 到 `CANVAS_WHISPER_BASE_URL/inference`（whisper server 原生接口，`response_format=verbose_json`）。未配置该地址时，转写任务会立即明确失败，提示“撰写失败未配置本地转写服务”。
@@ -139,7 +141,7 @@ LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
   docker compose -f docker-compose.dev.yml up --build
 ```
 
-Docker 开发编排也使用 `.local/project-workbench-debug`，并默认暴露前端 `3000` 和后端 `8080`。端口冲突时，可通过 `CANVAS_WEB_HOST_PORT` 和 `CANVAS_BACKEND_HOST_PORT` 调整宿主机端口。
+Docker 开发编排也使用 `.local/project-workbench-debug`。前端宿主机端口默认 `3000`。后端在容器内监听所有接口，供同网络的 web 容器访问；宿主机只把 `127.0.0.1:${CANVAS_BACKEND_HOST_PORT:-8080}` 转到容器。端口冲突时，可通过 `CANVAS_WEB_HOST_PORT` 和 `CANVAS_BACKEND_HOST_PORT` 调整宿主机端口。
 
 ### 时间线成片完整性
 

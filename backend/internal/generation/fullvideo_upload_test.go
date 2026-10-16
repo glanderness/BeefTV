@@ -49,6 +49,54 @@ func TestFullVideoSignedAssetOrigin(t *testing.T) {
 	}
 }
 
+func TestFullVideoPrivateAssetOrigin(t *testing.T) {
+	base := "https://video.example.com/v1"
+	origin := "http://10.0.0.8:9000"
+	source := "http://10.0.0.8:9000/v1/media/assets/fixture?signature=test"
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	if !trustedFullVideoAssetSource(base, source, origin) {
+		t.Fatal("configured private HTTP origin rejected")
+	}
+	if !trustedFullVideoAssetSource(base, "https://10.0.0.8:9443/v1/media/assets/fixture", "https://10.0.0.8:9443") {
+		t.Fatal("configured private non-443 HTTPS origin rejected")
+	}
+	if !trustedFullVideoAssetSource(base, "http://[::1]:9000/v1/media/assets/fixture", "http://[::1]:9000") {
+		t.Fatal("configured loopback HTTP origin rejected")
+	}
+	for _, source := range []string{
+		"http://10.0.0.9:9000/v1/media/assets/fixture",
+		"https://10.0.0.8:9000/v1/media/assets/fixture",
+		"http://10.0.0.8/v1/media/assets/fixture",
+		"http://user@10.0.0.8:9000/v1/media/assets/fixture",
+	} {
+		if trustedFullVideoAssetSource(base, source, origin) {
+			t.Fatal("private origin accepted a different source", source)
+		}
+	}
+	if trustedFullVideoAssetSource(base, source, "") {
+		t.Fatal("empty origin accepted a LAN URL")
+	}
+	if trustedFullVideoAssetSource(base, "http://169.254.169.254/v1/media/assets/fixture", "http://169.254.169.254") {
+		t.Fatal("metadata origin accepted")
+	}
+	if trustedFullVideoAssetSource(base, "http://1.1.1.1/v1/media/assets/fixture", "http://1.1.1.1") {
+		t.Fatal("public HTTP origin accepted")
+	}
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "false")
+	if trustedFullVideoAssetSource(base, source, origin) {
+		t.Fatal("strict mode accepted private HTTP origin")
+	}
+	if trustedFullVideoAssetSource(base, "https://10.0.0.8:9443/v1/media/assets/fixture", "https://10.0.0.8:9443") {
+		t.Fatal("strict mode accepted non-443 private HTTPS")
+	}
+	if !trustedFullVideoAssetSource(base, "https://assets.example.com/v1/media/assets/fixture", "https://assets.example.com") {
+		t.Fatal("public https origin rejected in strict mode")
+	}
+	if !trustedFullVideoAssetSource("http://10.0.0.8:8080/v1", "http://10.0.0.8:8080/v1/media/assets/fixture", "") {
+		t.Fatal("same-host HTTP should stay allowed without a configured origin")
+	}
+}
+
 func (r fullvideoReaderResources) Open(userID, resourceID string) (ResourceInfo, io.ReadCloser, error) {
 	if userID != "owner" || resourceID != "audio" {
 		r.t.Fatal("resource ownership was not forwarded")

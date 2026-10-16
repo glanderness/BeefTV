@@ -28,7 +28,7 @@ func IsComfyUIInterface(value string) bool {
 	return false
 }
 
-// Native ComfyUI uses the same exact-host outbound policy as custom channels.
+// Native ComfyUI uses the same outbound network policy as custom channels.
 func ComfyUIRootURL(value string) (string, error) {
 	u, err := outbound.ValidateCustomRelayURL(strings.TrimSpace(value))
 	if err != nil {
