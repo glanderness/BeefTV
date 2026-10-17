@@ -11,6 +11,7 @@ import (
 
 // Runtime lifecycle is a host capability, never a model-discoverable operation.
 func registerAssistantRuntimeRoutes(r gin.IRouter, svc *app.Service) {
+	registerAssistantRuntimeSkillContextRoutes(r, svc)
 	handle := func(c *gin.Context) {
 		if !isLoopbackRequest(c.Request) || !isAssistantHostRequest(c, svc) {
 			fail(c, http.StatusForbidden, app.Forbidden("仅内置助手宿主可以恢复或结束任务"))

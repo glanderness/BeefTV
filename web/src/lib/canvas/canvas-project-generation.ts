@@ -13,6 +13,7 @@ import { resolveVideoOperation } from "@/lib/model-selection";
 import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { ensureMediaNodeMinimumSize } from "@/lib/canvas/canvas-node-size";
 import { interruptFileUpload } from "@/lib/canvas/canvas-file-upload";
+import { isDepthCaptureResultNode } from "@/lib/canvas/canvas-depth-capture";
 import { isCanvasWorkflowProvider } from "@/lib/canvas/canvas-workflow";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata, type CanvasVideoEditOperation } from "@/types/canvas";
@@ -537,6 +538,47 @@ export function supportsVideoReferenceAudio(config: AiConfig) {
     return interfaceType === "newapi-channel-1" || interfaceType === "newapi-channel-2" || isSeedanceVideoConfig(config);
 }
 
+const LEGACY_INTERRUPTED_GENERATION_DETAILS = "页面刷新后生成已中断，请重新生成。";
+
+/** 节点是否还要和任务中心对账。首次打开画布和之后才载入的快照共用这一条判定。 */
+export function canvasNodeNeedsGenerationRecovery(node: CanvasNodeData) {
+    const metadata = node.metadata;
+    if (!metadata || metadata.fileUpload === "uploading" || isDepthCaptureResultNode(node)) return false;
+    const pendingAgentContinuation = metadata.agentGenerationContinuation?.status === "pending";
+    const aggregateBatchRoot = metadata.isBatchRoot && metadata.batchChildIds?.length && !metadata.taskId;
+    if (aggregateBatchRoot && !pendingAgentContinuation) return false;
+    return pendingAgentContinuation || ["submitting", "unknown"].includes(metadata.generationSubmissionState || "") || metadata.status === "loading" || metadata.errorDetails === LEGACY_INTERRUPTED_GENERATION_DETAILS || Boolean(metadata.taskId && (metadata.status !== "success" || (metadata.taskStatus === "succeeded" && !metadata.content && !metadata.storageKey)));
+}
+
+// 快照恢复交给任务对账的节点，在 metadata 上挂一个只存在于本页面内存里的记号（symbol 键）。
+// JSON 序列化、保存和内容对比都看不到它；节点被复制时随之带走，恢复器读过后作废，普通刷新合并进来的节点没有它。
+const GENERATION_RECOVERY_RESTORE = Symbol("generationRecoveryRestore");
+type RestoreTaggedMetadata = CanvasNodeMetadata & { [GENERATION_RECOVERY_RESTORE]?: object };
+const consumedRestoreTokens = new WeakSet<object>();
+
+function generationRecoveryRestoreToken(node: CanvasNodeData) {
+    return (node.metadata as RestoreTaggedMetadata | undefined)?.[GENERATION_RECOVERY_RESTORE];
+}
+
+export function isGenerationRecoveryRestored(node: CanvasNodeData) {
+    const token = generationRecoveryRestoreToken(node);
+    return Boolean(token && !consumedRestoreTokens.has(token));
+}
+
+/** 恢复器读过这些节点后调用：同一次恢复只交出一次。 */
+export function consumeGenerationRecoveryRestore(nodes: readonly CanvasNodeData[]) {
+    nodes.forEach((node) => {
+        const token = generationRecoveryRestoreToken(node);
+        if (token) consumedRestoreTokens.add(token);
+    });
+}
+
+function markGenerationRecoveryRestore(node: CanvasNodeData): CanvasNodeData {
+    if (!canvasNodeNeedsGenerationRecovery(node)) return node;
+    const metadata: RestoreTaggedMetadata = { ...node.metadata, [GENERATION_RECOVERY_RESTORE]: {} };
+    return { ...node, metadata };
+}
+
 export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
     const configWidth = NODE_DEFAULT_SIZE[CanvasNodeType.Config].width;
     const configHeight = NODE_DEFAULT_SIZE[CanvasNodeType.Config].height;
@@ -549,7 +591,7 @@ export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
                 : mediaNode.type === CanvasNodeType.Script && mediaNode.height < NODE_DEFAULT_SIZE[CanvasNodeType.Script].height
                   ? { ...mediaNode, height: NODE_DEFAULT_SIZE[CanvasNodeType.Script].height }
                   : mediaNode;
-        const restoredNode = resizedNode.metadata?.status === "loading" ? { ...resizedNode, metadata: { ...resizedNode.metadata, errorDetails: "正在从任务中心恢复生成状态..." } } : resizedNode;
+        const restoredNode = markGenerationRecoveryRestore(resizedNode.metadata?.status === "loading" ? { ...resizedNode, metadata: { ...resizedNode.metadata, errorDetails: "正在从任务中心恢复生成状态..." } } : resizedNode);
         if (restoredNode !== node) changed = true;
         return restoredNode;
     });

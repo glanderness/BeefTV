@@ -38,6 +38,23 @@ func agentHostClient(timeout time.Duration) *http.Client {
 	}}
 }
 
+// assistantChatHeaderTimeout 只限制等宿主开始回应的时间：此前宿主要读取附件并确认回合归属。
+const assistantChatHeaderTimeout = 10 * time.Minute
+
+// assistantChatClient 不设整体超时：http.Client.Timeout 也会截断响应体，而 NDJSON 流要持续到
+// 官方回合结束（含模型自动重试与退避）。浏览器离开不取消上游，宿主进程结束时连接随之关闭。
+func assistantChatClient(headerTimeout time.Duration) *http.Client {
+	client := agentHostClient(0)
+	client.Transport = http.DefaultTransport
+	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+		clone := transport.Clone()
+		clone.ResponseHeaderTimeout = headerTimeout
+		client.Transport = clone
+	}
+	// 自定义 RoundTripper 可能承担审计或测试拦截，保留其行为与超时策略。
+	return client
+}
+
 // newTurnID 是一轮对话的稳定标识：按轮撤销与历史都用它对齐。
 func newTurnID() string {
 	buf := make([]byte, 12)
@@ -50,7 +67,7 @@ func newTurnID() string {
 // RegisterAgentProxyRoutes 让浏览器通过同源后端使用内置创作助手：
 // 页面只发业务消息，宿主凭据由后端注入；宿主不可用时返回明确状态而不是空回复。
 func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops.ClientRegistry, ui *uiSessionStore, host *assistantruntime.Host) {
-	client := agentHostClient(10 * time.Minute)
+	client := assistantChatClient(assistantChatHeaderTimeout)
 	registerAssistantRuntimeRoutes(r, svc)
 
 	guard := func(c *gin.Context, requireWrite bool) bool {
@@ -270,6 +287,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		return raw, true
 	}
 
+	registerAssistantSkillContextRoutes(r, svc, guard, hostJSON)
 	r.GET("/assistant/sessions", func(c *gin.Context) {
 		if !guard(c, false) {
 			return
@@ -420,12 +438,18 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			Message         string                    `json:"message"`
 			SelectedNodeIDs []string                  `json:"selectedNodeIds"`
 			SessionID       string                    `json:"sessionId"`
+			RequestID       *string                   `json:"requestId"`
 			References      []assistantReference      `json:"references"`
 			Attachments     []app.AssistantAttachment `json:"attachments"`
 			Skills          []skills.Pin              `json:"skills"`
 		}
 		if err := json.Unmarshal(body, &payload); err != nil || strings.TrimSpace(payload.CanvasID) == "" || (strings.TrimSpace(payload.Message) == "" && len(payload.Attachments) == 0) {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("canvasId 与 message 必填"))
+			return
+		}
+		// requestId 只是这次发送的停止与重发键，由宿主按会话去重；回合身份与授权仍由下面生成的 turnId 决定。
+		if payload.RequestID != nil && !assistantRequestIDPattern.MatchString(*payload.RequestID) {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("requestId 无效"))
 			return
 		}
 		canvasRaw, allowed := requireOwnedCanvas(c, payload.CanvasID)
@@ -584,13 +608,32 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		if !guard(c, true) {
 			return
 		}
-		body, payload, valid := readAssistantBody(c, struct {
-			CanvasID string `json:"canvasId"`
+		_, payload, valid := readAssistantBody(c, struct {
+			CanvasID  string  `json:"canvasId"`
+			SessionID *string `json:"sessionId"`
+			RequestID *string `json:"requestId"`
 		}{})
 		if !valid {
 			return
 		}
 		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
+			return
+		}
+		// 停止指向一次具体发送：会话与请求标识必须成对且格式有效，宿主再核对会话属于这块画布。
+		// 只转发校验过的字段；不带这两个字段的旧调用仍按画布停止当前回合。
+		target := map[string]string{"canvasId": payload.CanvasID}
+		if payload.SessionID != nil || payload.RequestID != nil {
+			if payload.SessionID == nil || payload.RequestID == nil ||
+				!assistantSessionIDPattern.MatchString(*payload.SessionID) || !assistantRequestIDPattern.MatchString(*payload.RequestID) {
+				fail(c, http.StatusBadRequest, app.BadAuthRequest("sessionId 与 requestId 无效"))
+				return
+			}
+			target["sessionId"] = *payload.SessionID
+			target["requestId"] = *payload.RequestID
+		}
+		body, err := json.Marshal(target)
+		if err != nil {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("请求体不是合法 JSON"))
 			return
 		}
 		hostJSON(c, http.MethodPost, "/cancel", body)
@@ -658,7 +701,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 				fail(c, http.StatusServiceUnavailable, app.BadAuthRequest("助手尚未就绪"))
 				return
 			}
-			response, err := client.Do(request)
+			response, err := agentHostClient(30 * time.Second).Do(request)
 			if err != nil {
 				fail(c, http.StatusServiceUnavailable, app.BadAuthRequest("无法确认正在执行的任务"))
 				return
@@ -686,6 +729,12 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 }
 
 var assistantProposalIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
+
+// assistantRequestIDPattern 是浏览器为每次发送生成的请求标识；不含冒号，不会与补充消息的内部键混淆。
+var assistantRequestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
+// assistantSessionIDPattern 覆盖 durable:<uuid> 与旧会话标识；归属由宿主按画布目录核对。
+var assistantSessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9_:-]{1,128}$`)
 
 func assistantTerminalLine(line []byte, turnID string) bool {
 	var event struct {

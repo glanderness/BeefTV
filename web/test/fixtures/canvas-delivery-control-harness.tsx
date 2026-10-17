@@ -23,8 +23,14 @@ function Harness() {
     const generation = useCanvasGenerationOrchestration({ projectId, projectLoaded: false, localOnly: true, addedSkills: [], assets: [], nodes, connections: [], nodesRef, connectionsRef, setNodes, setConnections: noop, setSelectedNodeIds: noop, setSelectedConnectionId: noop, setDialogNodeId: noop, setGenerationHistoryOpen: noop, getCanvasCenter: () => ({ x: 0, y: 0 }) });
     // Applying a fully downloaded asset is outside this test. Keep the actual
     // resume hook and task metadata projection, then stop at resumed delivery.
-    const handoff = useCanvasResourceHandoff({ projectId, linkedProjectId: "", projectLoaded: false, assets: [], assetsHydrated: false, nodesRef, searchParams: new URLSearchParams(), setSearchParams: noop, setNodes, getCanvasCenter: () => ({ x: 0, y: 0 }), createHandoffNodes: async () => [], applyGenerationTaskResult: async (id, task) => { generation.bindGenerationTask(id, task); } });
+    const handoff = useCanvasResourceHandoff({ projectId, linkedProjectId: "", projectLoaded: false, assets: [], assetsHydrated: false, nodesRef, searchParams: new URLSearchParams(), setSearchParams: noop, setNodes, getCanvasCenter: () => ({ x: 0, y: 0 }), createHandoffNodes: async () => [], applyGenerationTaskResult: async (id, task) => { generation.bindGenerationTask(id, task); }, startGenerationRequest: generation.startGenerationRequest, finishGenerationRequest: generation.finishGenerationRequest });
+    // Another generation path claims the same node through the shared request registry.
+    const takeOver = () => {
+        generation.startGenerationRequest("node-test", "node-test", "node-test");
+        setNodes((current) => current.map((node) => ({ ...node, metadata: { ...node.metadata, status: "loading", taskStage: "接管" } })));
+    };
     return <>
+        <button id="take-over" onClick={takeOver}>接管节点</button>
         <button id="switch-canvas" onClick={() => setProjectId("canvas-other")}>切换画布</button>
         <button id="switch-account" onClick={() => { setActiveUserScope("other"); refresh((value) => value + 1); }}>切换账号</button>
         <div style={{ width: 560, height: 320 }}>

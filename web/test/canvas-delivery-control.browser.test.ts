@@ -8,6 +8,8 @@ let stage = "正在取回结果";
 let writes: string[] = [];
 let releaseCancellation: (() => void) | undefined;
 let holdCancellation = false;
+let releaseQuery: (() => void) | undefined;
+let holdQuery = false;
 
 beforeAll(async () => {
     const build = await Bun.build({ entrypoints: [import.meta.dir + "/fixtures/canvas-delivery-control-harness.tsx"], target: "browser", define: { "import.meta.env": "{}", "process.env.NODE_ENV": '"production"' }, plugins: [{ name: "source-alias", setup(builder) {
@@ -26,6 +28,9 @@ beforeAll(async () => {
                     stage = "delivery_paused";
                 }
                 if (path.endsWith("/retry")) stage = "正在取回结果";
+            } else if (holdQuery) {
+                holdQuery = false;
+                await new Promise<void>((resolve) => { releaseQuery = resolve; });
             }
             return Response.json({ code: 0, data: { id: "task-test", type: "canvas_video", status: "succeeded", stage, progress: 100, prompt: "test", attempts: 1, createdAt: new Date().toISOString(), outputs: [{ outputIndex: 0, mediaType: "video", materializationErrorCode: stage === "delivery_paused" ? stage : undefined }] } });
         }
@@ -35,8 +40,8 @@ beforeAll(async () => {
     browser = await chromium.launch({ headless: true });
 }, 30_000);
 
-beforeEach(async () => { await page?.close(); stage = "正在取回结果"; writes = []; holdCancellation = false; releaseCancellation = undefined; page = await browser.newPage(); });
-afterAll(async () => { releaseCancellation?.(); await browser?.close(); server?.stop(true); });
+beforeEach(async () => { await page?.close(); stage = "正在取回结果"; writes = []; holdCancellation = false; releaseCancellation = undefined; holdQuery = false; releaseQuery = undefined; page = await browser.newPage(); });
+afterAll(async () => { releaseCancellation?.(); releaseQuery?.(); await browser?.close(); server?.stop(true); });
 
 for (const oldContent of [false, true]) {
     test(`stop and resume original delivery with retained old content=${oldContent}`, async () => {
@@ -55,6 +60,27 @@ for (const oldContent of [false, true]) {
         expect(writes).toEqual(["/api/tasks/task-test/cancel", "/api/tasks/task-test/retry"]);
     }, 15_000);
 }
+
+test("resume delivery yields the node when another request takes it over", async () => {
+    await page.goto(server.url.toString());
+    await page.getByRole("button", { name: "停止取回结果", exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "停止取回", exact: true }).click();
+    await page.getByRole("button", { name: "继续取回", exact: true }).waitFor();
+    holdQuery = true;
+    await page.getByRole("button", { name: "继续取回", exact: true }).click();
+    const deadline = Date.now() + 3000;
+    while (!releaseQuery && Date.now() < deadline) await Bun.sleep(10);
+    expect(releaseQuery).toBeDefined();
+    await page.evaluate(() => document.getElementById("take-over")!.click());
+    releaseQuery?.();
+    // The superseded resume must neither restart delivery nor overwrite the new owner.
+    const settle = Date.now() + 1000;
+    while (!writes.includes("/api/tasks/task-test/retry") && Date.now() < settle) await Bun.sleep(20);
+    expect(writes).toEqual(["/api/tasks/task-test/cancel"]);
+    const metadata = JSON.parse(await page.locator("#snapshot").innerText()).nodes[0].metadata;
+    expect(metadata.status).toBe("loading");
+    expect(metadata.taskStage).toBe("接管");
+}, 15_000);
 
 for (const owner of ["canvas", "account"]) {
     for (const afterRequest of [false, true]) {

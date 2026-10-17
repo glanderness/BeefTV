@@ -18,12 +18,16 @@ function Harness() {
         <output data-testid="supplements">{assistant.supplements.map(item => item.text + ":" + item.status).join(",")}</output>
         <button onClick={() => void assistant.send("只创建草案", [])}>开始</button>
         <button onClick={() => void assistant.stop()}>停止</button>
+        <button onClick={() => assistant.retryLast()}>重试</button>
+        <output data-testid="can-retry">{String(assistant.canRetry)}</output>
         <button onClick={() => void assistant.reloadHistory()}>重新读取</button>
         <output data-testid="pending">{assistant.pendingUserText || ""}</output>
         <output data-testid="streamed">{assistant.streamed}</output>
         <output data-testid="error">{assistant.error || ""}</output>
         <output data-testid="history-error">{assistant.historyError || ""}</output>
         <output data-testid="streaming">{String(assistant.streaming)}</output>
+        <output data-testid="awaiting">{String(assistant.awaitingReceipt)}</output>
+        <output data-testid="lifecycle">{assistant.lifecycleNotice || ""}</output>
         <output data-testid="history">{assistant.turns.map(turn => turn.reply).join("\n")}</output>
     </main>;
 }

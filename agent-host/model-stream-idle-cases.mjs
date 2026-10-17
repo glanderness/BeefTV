@@ -7,7 +7,7 @@ import path from 'node:path';
 import {ModelRuntime} from '@earendil-works/pi-coding-agent';
 import {createModels} from '@earendil-works/pi-ai/models';
 import {BACKGROUND_CONTEXT} from '@earendil-works/chord/context';
-import {createDurableSessionStore} from './durable-session-owner.mjs';
+import {createDurableSessionStore, durableStreamEvents} from './durable-session-owner.mjs';
 import {fetchModelWithProgressIdle, DEFAULT_MODEL_STREAM_IDLE_MS} from './model-stream-idle.mjs';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const event = data => `data: ${JSON.stringify(data)}\n\n`;
@@ -106,7 +106,13 @@ test('official Durable retries idle body with partial retained, one completed to
     authorizeTurn:async()=>({turnId:'idle-turn',canvasId:'canvas',permissionMode:'canvas',open:true}),completeTurn:async()=>{},settings:{retry:{maxRetries:1,baseDelayMs:1}}});
   store=makeStore();const entry=await store.ensureSession('canvas');
   const submission=await store.submit(entry,{turnId:'idle-turn',permissionMode:'canvas',content:'write once then summarize',userText:'write once then summarize',revisionBefore:1});
-  const record=await store.wait(entry,submission);assert.equal(record.reply,'completed after official retry');assert.equal(record.error,null);assert.equal(calls,3);assert.equal(toolIds.length,1);
+  const events=[];const record=await store.wait(entry,submission,{onEvent:event=>{events.push(event);}});
+  assert.equal(record.reply,'completed after official retry');assert.equal(record.error,null);assert.equal(calls,3);assert.equal(toolIds.length,1);
+  // The official retry reaches the panel as classified progress, never as the upstream error text.
+  assert(events.some(event=>event.type==='auto_retry_start'&&/idle timeout/.test(event.errorMessage)));
+  const progress=events.flatMap(durableStreamEvents).filter(line=>line.type==='lifecycle'&&line.phase.startsWith('retry'));
+  assert.deepEqual(progress,[{type:'lifecycle',phase:'retry',attempt:1,reason:'timeout'},{type:'lifecycle',phase:'retry_end',attempt:1}]);
+  assert(!JSON.stringify(progress).includes('idle'));
   const view=await entry.root.context(BACKGROUND_CONTEXT);const errors=view.entries.flatMap(item=>item.model||[]).filter(message=>message.role==='assistant'&&message.stopReason==='error');
   assert(errors.some(message=>JSON.stringify(message.content).includes('retained current partial')&&/idle timeout/.test(message.errorMessage)));
   const sessionId=entry.sessionId;await store.disposeAll();store=makeStore();const history=await store.history('canvas',sessionId);assert.equal(history.turns[0].reply,record.reply);assert.equal(calls,3);assert.equal(toolIds.length,1);

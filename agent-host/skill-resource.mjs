@@ -1,10 +1,9 @@
-// Go's installed package service is the only source. Like official pi skills,
-// installed skills are advertised by name and description in a stable system
-// section, and a skill's full instructions enter the conversation transcript:
-// expanded into the user message when the user selects it, or returned by the
-// skill_load tool when the model loads an advertised one. Either way it stays
-// in context for every later turn instead of a per-turn system section.
+// Go owns both installed packages and the active version selection. The
+// transcript records explicit selections; an official section reconstructs
+// active rules after compaction and process restart.
 import { section } from '@earendil-works/pi-durable';
+import { createModels } from '@earendil-works/pi-ai/models';
+import { createAssistantMessageEventStream } from '@earendil-works/pi-ai/utils/event-stream';
 
 const fail = (reason) => Object.assign(new Error(reason), { reason });
 const hashPattern = /^[a-f0-9]{64}$/;
@@ -83,7 +82,60 @@ export function expandSkillContent(content, resources) {
 }
 
 export function skillsToLoad(pins, loaded = []) {
-  return normalizeSkillPins(pins).filter((pin) => !loaded.some((item) => sameSkillPin(item, pin)));
+  // A fresh explicit request must re-read even a historically loaded pin.
+  // Durable request receipts, rather than this package helper, deduplicate retries.
+  return normalizeSkillPins(pins);
+}
+
+export async function activeSkillProjection({ context, readVersion, model, signal }) {
+  if (!context || context.lifecycle !== 'active' || typeof context.scopeId !== 'string' || !Number.isSafeInteger(context.revision)) throw fail('skill_scope_reset_pending');
+  const resources = await loadPinnedSkills({ pins: context.activePins, readVersion, signal });
+  if (!resources.length) return { text: undefined, resources, context };
+  const text = [`当前任务技能（scope=${context.scopeId}, revision=${context.revision}）。只有以下固定版本是活动技能。`,
+    ...resources.map(formatSkillBlock)].join('\n\n');
+  // The SDK has no model tokenizer API. UTF-8 bytes are a conservative token
+  // upper bound; reserve at least 75% of the selected window for conversation,
+  // tools and output. Never truncate instructions to satisfy this admission.
+  const window = Number(model?.contextWindow);
+  if (!Number.isFinite(window) || window <= 0) throw fail('skill_context_model_unavailable');
+  const budget = Math.max(0, Math.min(Math.floor(window / 4), window - Number(model?.maxTokens || 8192)));
+  if (Buffer.byteLength(text, 'utf8') > budget) throw fail('skill_context_budget_exceeded');
+  return { text, resources, context };
+}
+
+export function createActiveSkillSection(resolve) {
+  return section('beeftv_active_skills', async (input, context) => (await resolve(input.agent.model, context?.abortSignal || context?.signal)).text);
+}
+
+// Section and hook exceptions are deliberately contained by Durable. Enforce
+// admission at the provider boundary as well, using Pi's own Models/stream API;
+// an invalid package returns a local error stream before the provider runs.
+export function guardSkillModelRequests(models, validate, onFailure) {
+  const guarded=createModels();
+  for (const provider of models.getProviders()) {
+    const wrap=fn=>(model,context,options)=>{
+      const events=createAssistantMessageEventStream();
+      void (async()=>{
+        let admitted=false;
+        try {
+          await validate(model,context,options?.signal);
+          admitted=true;
+          const source=fn.call(provider,model,context,options);
+          for await(const event of source)events.push(event);
+          events.end(await source.result());
+        } catch(error) {
+          if(!admitted)onFailure(error);
+          events.push({type:'error',reason:'error',error:{role:'assistant',content:[],api:model.api,provider:model.provider,model:model.id,
+            usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},
+            stopReason:'error',errorMessage:error?.reason || error?.message || 'skill_context_unavailable',timestamp:Date.now()}});
+          events.end();
+        }
+      })();
+      return events;
+    };
+    guarded.setProvider({...provider,stream:wrap(provider.stream),streamSimple:wrap(provider.streamSimple)});
+  }
+  return guarded;
 }
 
 export function loadedSkillRecord(resource, source, turnId) {
@@ -109,13 +161,14 @@ export function normalizeSkillCatalog(value) {
 // Mirrors official formatSkillsForPrompt's <available_skills> layout. Only
 // id, name and description appear, so the text changes only when the
 // installed set changes (prompt-cache friendly).
-export function formatSkillCatalog(items) {
+export function formatSkillCatalog(items,{total=items?.length || 0}={}) {
   if (!items?.length) return undefined;
   const lines = [
-    '用户已安装下列技能，每个技能提供特定任务的步骤。用户的要求符合某个技能的说明时，先调用 skill_load 并传入它的 id 读取完整步骤，再按步骤执行。对话里已有的技能不用重复读取。',
+    '用户已安装下列技能，每个技能提供特定任务的步骤。用户明确选用技能，或要求完成该技能描述的整体任务时，先调用 skill_load 并传入它的 id 读取完整步骤，再按步骤执行。只出现相同题材、角色或「首帧」等词不代表要执行整套流程；用户只要单张图片或单个视频时，直接完成该请求，不添加整集剧本、角色确认等前置步骤。对话里已有的技能不用重复读取；用户明确缩小范围或改要求时按最新要求执行。',
     '',
     '<available_skills>',
   ];
+  if(total>items.length)lines.splice(1,0,`当前共安装 ${total} 个技能，此处显示前 ${items.length} 个；可调用 skill_catalog，传 q 搜索名称和说明，或用 offset、limit 翻页。找到 id 后调用 skill_load 读取。`);
   for (const item of items) {
     lines.push('  <skill>', `    <id>${escapeXml(item.pin.skillId)}</id>`, `    <name>${escapeXml(item.name)}</name>`,
       `    <description>${escapeXml(item.description)}</description>`, '  </skill>');
@@ -130,8 +183,9 @@ export function createSkillCatalogSection({ readCatalog, cache = {} }) {
   if (typeof readCatalog !== 'function') throw fail('skill_service_unavailable');
   return section('beeftv_skill_catalog', async (_input, context) => {
     try {
-      cache.items = normalizeSkillCatalog(await readCatalog(context?.signal));
-      cache.text = formatSkillCatalog(cache.items);
+      const catalog=await readCatalog(context?.signal);
+      cache.items = normalizeSkillCatalog(catalog);
+      cache.text = formatSkillCatalog(cache.items,{total:Number(catalog?.total) || cache.items.length});
     } catch (error) {
       if (cache.text === undefined) cache.items = [];
       console.error(`agent-host: 技能目录读取失败 ${error?.reason || error?.message || error}`);

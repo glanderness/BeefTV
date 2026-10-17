@@ -19,6 +19,9 @@ import (
 func TestCanvasTaskBindAppliesReceiptInSameTransaction(t *testing.T) {
 	h := newHarness(t)
 	task := h.seedReadyCanvasImageTask(t, "task-bind-ok", "node-bind", "镜头原名", 11, 22)
+	pending := h.node(t, "node-bind")
+	nodeMeta(pending)["taskStage"] = "delivery_timed_out"
+	h.replaceNode(t, "node-bind", pending)
 	beforeAssets := h.count(t, &model.Asset{})
 	if beforeAssets != 1 {
 		t.Fatalf("delivery should persist the asset before bind, got %d", beforeAssets)
@@ -46,6 +49,9 @@ func TestCanvasTaskBindAppliesReceiptInSameTransaction(t *testing.T) {
 		t.Fatalf("position overwritten: %#v", position)
 	}
 	meta := nodeMeta(node)
+	if meta["taskStage"] != nil {
+		t.Fatalf("completed bind kept stale stage: %#v", meta["taskStage"])
+	}
 	if meta["status"] != "success" || meta["assetId"] != localtask.MaterializedAssetID(task.ID, 0) {
 		t.Fatalf("bound metadata = %#v", meta)
 	}

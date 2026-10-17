@@ -101,6 +101,14 @@ export function collectTurnEffects(turn, opID, result, operationId) {
       turn.deletedNodeIds=[...new Set([...(turn.deletedNodeIds || []),...asStringList(result.deletedNodeIds)])];
       turn.deletedEdgeIds=[...new Set([...(turn.deletedEdgeIds || []),...asStringList(result.deletedEdgeIds)])];
       break;
+    case 'canvas.script.rows.append':
+    case 'canvas.script.row.update':
+    case 'canvas.script.row.remove':
+      // 行绑定会改写产出连线；回执里的连线增删与 Go 撤销用的变更摘要保持一致。
+      if (result.nodeId) turn.updatedNodeIds.push(String(result.nodeId));
+      turn.createdEdgeIds.push(...asStringList(result.createdEdgeIds));
+      turn.deletedEdgeIds=[...new Set([...(turn.deletedEdgeIds || []),...asStringList(result.deletedEdgeIds)])];
+      break;
     case 'canvas.document.commit': turn.documentUpdated=true; break;
     case 'canvas.edge.create':
       // 重复连线会幂等返回（没有新增），这时不能算作本轮新建了连线。

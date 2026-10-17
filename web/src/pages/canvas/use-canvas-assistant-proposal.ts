@@ -65,7 +65,7 @@ export function useCanvasAssistantProposal({
                         () => readAssistantProposalSourceState(owner.canvasId, nodesRef.current, connectionsRef.current, addedSkillsRef.current),
                         () => readPersistedAssistantProposalSource(owner.canvasId),
                     ).catch(error => {
-                        if (error instanceof AssistantProposalBlockedError && error.reason === "canvas_saving" && lifetime.matches(owner, projectIdRef.current)) recordAssistantProposalCanvasRejection(owner.canvasId);
+                        if (error instanceof AssistantProposalBlockedError && (error.reason === "canvas_saving" || error.reason === "canvas_conflict") && lifetime.matches(owner, projectIdRef.current)) recordAssistantProposalCanvasRejection(owner.canvasId);
                         throw error;
                     }),
                 generate: generateForThisRun,

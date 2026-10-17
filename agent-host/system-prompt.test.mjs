@@ -10,7 +10,20 @@ test('media policy chooses minimum evidence and never presents frames as watched
 });
 
 test('skills are followed step by step across turns and loaded before acting when they match', () => {
-  for (const instruction of ['之后每一轮都按它的步骤顺序执行', '每次只做当前这一步或这一批', '等用户确认后再做下一步', '数量、画幅、类别', '先用 skill_load 读取该技能', '没做的步骤不能说成已完成']) {
+  for (const instruction of ['之后每一轮都按它的步骤顺序执行', '每次只做当前这一步或这一批', '等用户确认后再做下一步', '数量、画幅、类别', '先用 skill_load 读取', '没做的步骤不能说成已完成']) {
+    expect(SYSTEM_PROMPT).toContain(instruction);
+  }
+  expect(SYSTEM_PROMPT).toContain('不要因题材相同而把单张图片、单个视频扩展成整套流程');
+});
+
+test('storyboard image and video nodes are bound back to their rows with the row prompts', () => {
+  for (const instruction of ['imageNodeId', 'videoNodeId', 'imageGenerationPrompt', 'videoMotionPrompt']) {
+    expect(SYSTEM_PROMPT).toContain(instruction);
+  }
+});
+
+test('producer workflow respects studio changes, maintains plan_update, and inspects generated media', () => {
+  for (const instruction of ['制作现场摘要', '不要用旧草稿覆盖用户的改动', 'plan_update', 'needs_user', '查看产物是否符合分镜要求', '只针对失败或缺失的节点重新提议']) {
     expect(SYSTEM_PROMPT).toContain(instruction);
   }
 });

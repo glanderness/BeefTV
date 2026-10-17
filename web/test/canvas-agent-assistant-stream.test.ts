@@ -18,6 +18,7 @@ let httpGetSpy: ReturnType<typeof spyOn>, httpPostSpy: ReturnType<typeof spyOn>;
 const { setActiveUserScope } = await import("@/lib/user-scope");
 const {
     AgentChatNotAdmittedError,
+    AgentStreamDetachedError,
     AGENT_STREAM_INCOMPLETE_MESSAGE,
     assistantUndoFailure,
     cancelAgentChat,
@@ -104,6 +105,21 @@ describe("创作助手回合流边界", () => {
         })).rejects.toThrow(AGENT_STREAM_INCOMPLETE_MESSAGE);
         expect(sessionId).toBe("durable:successor");
         expect(ended).toBe(false);
+    });
+    test("observer_error 说明只是观察断开，界面据此改为读取结果，而不是当成断流失败", async () => {
+        chatResponse = () => chatResponseOf([
+            JSON.stringify({ type: "session", sessionId: "durable:s1" }) + "\n",
+            JSON.stringify({ type: "text_delta", delta: "已开始" }) + "\n",
+            JSON.stringify({ type: "observer_error", reason: "interrupted" }) + "\n",
+        ]);
+        const error = await streamAgentChat("c1", "继续", {}).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(AgentStreamDetachedError);
+        expect((error as InstanceType<typeof AgentStreamDetachedError>).reason).toBe("interrupted");
+        expect((error as Error).message).toBe(AGENT_STREAM_INCOMPLETE_MESSAGE);
+        chatResponse = () => chatResponseOf([JSON.stringify({ type: "text_delta", delta: "半截" }) + "\n"]);
+        const cut = await streamAgentChat("c1", "继续", {}).catch((caught: unknown) => caught);
+        expect(cut).toBeInstanceOf(Error);
+        expect(cut).not.toBeInstanceOf(AgentStreamDetachedError);
     });
     test("运行中补充只发文字和当前会话，不创建新回合或附加素材", async () => {
         await steerAgentChat("c1", "s1", "结尾换成蛋糕");
@@ -327,6 +343,18 @@ describe("创作助手回合流边界", () => {
 
     test("停止成功时不抛错", async () => {
         await expect(cancelAgentChat("c1")).resolves.toBeUndefined();
+    });
+
+    test("停止指向这一次发送：带上会话和请求标识，并读回这条请求的停止结果", async () => {
+        cancelResponse = () => new Response(JSON.stringify({ code: 0, data: { accepted: true, state: "pending" } }), { status: 200 });
+        await expect(cancelAgentChat("c1", { sessionId: "durable:s1", requestId: "req-1" })).resolves.toBe("pending");
+        expect(JSON.parse(requests.at(-1)!.body)).toEqual({ canvasId: "c1", sessionId: "durable:s1", requestId: "req-1" });
+    });
+
+    test("每次发送都带上自己的请求标识", async () => {
+        chatResponse = () => chatResponseOf([TURN_END + "\n"]);
+        await streamAgentChat("c1", "hi", {}, { requestId: "req-2" });
+        expect(JSON.parse(requests.find((request) => request.url.endsWith("/chat"))!.body).requestId).toBe("req-2");
     });
 
     test("最终回合带回 turnId、改动清单与生成提议", async () => {

@@ -18,7 +18,7 @@ func TestV16SessionMigrationPreservesV15RoundAndUnknownColumns(t *testing.T) {
 	if err := MigrateLocalSchema(db); err != nil {
 		t.Fatal(err)
 	}
-	for _, query := range []string{"DELETE FROM local_schema_migrations WHERE version=16", "ALTER TABLE assistant_turns DROP COLUMN durable_session_id", "ALTER TABLE assistant_turns DROP COLUMN durable_native_sources", "ALTER TABLE assistant_turns ADD COLUMN private_note TEXT", `INSERT INTO assistant_turns(turn_id,user_id,canvas_id,state,permission_mode,document,private_note) VALUES('abcd1234','owner','canvas','open','read-only','{"nodes":[]}','keep')`} {
+	for _, query := range []string{"DELETE FROM local_schema_migrations WHERE version>=16", "ALTER TABLE assistant_turns DROP COLUMN durable_session_id", "ALTER TABLE assistant_turns DROP COLUMN durable_native_sources", "ALTER TABLE assistant_turns ADD COLUMN private_note TEXT", `INSERT INTO assistant_turns(turn_id,user_id,canvas_id,state,permission_mode,document,private_note) VALUES('abcd1234','owner','canvas','open','read-only','{"nodes":[]}','keep')`} {
 		if err := db.Exec(query).Error; err != nil {
 			t.Fatal(err)
 		}
@@ -45,7 +45,7 @@ func TestV16SessionMigrationPreservesV15RoundAndUnknownColumns(t *testing.T) {
 	}
 	var after []localSchemaMigration
 	db.Order("version").Find(&after)
-	if len(after) != len(before)+1 {
+	if len(after) != len(before)+2 {
 		t.Fatal("migration ledger count")
 	}
 	for i, v := range before {

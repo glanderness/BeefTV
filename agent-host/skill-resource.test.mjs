@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createSkillCatalogSection, expandSkillContent, formatSkillBlock, formatSkillCatalog, loadPinnedSkills, normalizeSkillCatalog,
-  normalizeSkillPins, readPinnedSkillFile, skillsToLoad } from './skill-resource.mjs';
+  normalizeSkillPins, readPinnedSkillFile, skillsToLoad, activeSkillProjection } from './skill-resource.mjs';
 
 const pin = { skillId: 'user-skill', versionId: 'v1', contentHash: 'a'.repeat(64) };
 const resource = { pin, name: '采访切片', version: '1', description: '保留原话', instruction: '先读取 references/interview.md，再按原话整理三个镜头。', files: [{ path: 'references/interview.md' }], unsupportedCapabilities: [] };
@@ -30,10 +30,18 @@ test('selected skill expands into the user message in the official skill block s
   assert.match(formatSkillBlock({ ...resource, name: 'a"<b>' }), /name="a&quot;&lt;b&gt;"/);
 });
 
-test('an identical pin already in the conversation is not loaded again; a new version is', () => {
+test('fresh explicit selection reads even a historically loaded exact pin', () => {
   const loaded = [{ ...pin, name: '采访切片', source: 'selected' }];
-  assert.deepEqual(skillsToLoad([pin], loaded), []);
+  assert.deepEqual(skillsToLoad([pin], loaded), [pin]);
   assert.deepEqual(skillsToLoad([{ ...pin, versionId: 'v2' }], loaded), [{ ...pin, versionId: 'v2' }]);
+});
+
+test('active projection restores full fixed rules and refuses a small model window without truncation', async () => {
+  const context={scopeId:'scope',revision:2,lifecycle:'active',activePins:[pin]};
+  const projected=await activeSkillProjection({context,readVersion:async()=>resource,model:{contextWindow:200000,maxTokens:16000}});
+  assert(projected.text.includes(resource.instruction));
+  await assert.rejects(activeSkillProjection({context,readVersion:async()=>({...resource,instruction:'规则'.repeat(400)}),model:{contextWindow:4096,maxTokens:2048}}),/skill_context_budget_exceeded/);
+  await assert.rejects(activeSkillProjection({context:{...context,lifecycle:'reset_pending'},readVersion:async()=>resource,model:{contextWindow:200000}}),/skill_scope_reset_pending/);
 });
 
 test('update does not replace a pinned version and uninstall cannot silently use cached instructions', async () => {

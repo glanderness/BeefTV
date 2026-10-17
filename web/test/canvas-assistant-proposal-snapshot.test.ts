@@ -201,6 +201,53 @@ test("a pending canvas save gives up after the wait budget with canvas_saving", 
     expect(persistedReads).toBe(0);
 });
 
+test("a clean stale local model revision accepts an identical authoritative config", async () => {
+    const live = fixture();
+    live.modelConfigRevision = 1;
+    const confirmed = await prepareAssistantProposalSnapshot(proposal, () => live, async () => fixture());
+    expect(confirmed.config).toEqual(live.config);
+});
+
+test("a stale local model revision cannot generate using stale settings", async () => {
+    const live = fixture();
+    live.modelConfigRevision = 1;
+    const saved = fixture();
+    saved.config.canvasImageCount = "4";
+    expect(await blockedReason(prepareAssistantProposalSnapshot(proposal, () => live, async () => saved))).toBe("settings_changed");
+});
+
+test("an unrelated asset finishing during confirmation does not invalidate the proposal", async () => {
+    const live = fixture();
+    const result = await prepareAssistantProposalSnapshot(proposal, () => live, async () => {
+        live.assets.push({ id: "unrelated", kind: "text", title: "Other result", coverUrl: "", tags: [], createdAt: "", updatedAt: "", data: { content: "elsewhere" } });
+        return fixture();
+    });
+    expect(result.assets).toHaveLength(1);
+    live.assets[0].title = "later";
+    expect(result.assets[0].title).toBe("Other result");
+});
+
+test("a referenced asset changing during confirmation still blocks generation", async () => {
+    const live = fixture();
+    live.nodes[0].metadata!.prompt = "使用 @[asset:script]";
+    live.assets.push({ id: "script", kind: "text", title: "剧本", coverUrl: "", tags: [], createdAt: "", updatedAt: "", data: { content: "原剧情" } });
+    const saved = structuredClone(live);
+    expect(await blockedReason(prepareAssistantProposalSnapshot(proposal, () => live, async () => {
+        const asset = live.assets[0];
+        if (asset.kind === "text") asset.data.content = "已改剧情";
+        return saved;
+    }))).toBe("content_mismatch");
+});
+
+test("a paused conflict reports recovery instead of waiting for a nonexistent save", async () => {
+    const live = { ...fixture(), canvasHasUnconfirmedEdits: true, canvasUnconfirmedReason: "blocked" };
+    let slept = 0;
+    expect(await blockedReason(prepareAssistantProposalSnapshot(proposal, () => live, async () => fixture(), {
+        sleep: async (ms) => { slept += ms; },
+    }))).toBe("canvas_conflict");
+    expect(slept).toBe(0);
+});
+
 test("unsaved generation settings fail at once without waiting", async () => {
     const live = fixture();
     live.modelConfigHasUnconfirmedEdits = true;

@@ -36,6 +36,21 @@ func TestProjectNeverReadyOnUnreadableRecords(t *testing.T) {
 	}
 }
 
+func TestProjectKeepsDeliveryStageUntilEveryOutputIsReady(t *testing.T) {
+	for _, unreadable := range []bool{false, true} {
+		task := model.Task{Status: model.TaskStatusSucceeded, Stage: "delivery_timed_out", Type: "canvas_image", ResultJSON: `{"images":[{"resourceId":"r1"},{"resourceId":"r2"}]}`}
+		stored := []localtask.CanonicalOutput{{OutputIndex: 0, MediaType: "image", ResourceID: "r1", MaterializedAssetID: "asset-1"}}
+		var loadErr error
+		if unreadable {
+			loadErr = errors.New("unreadable")
+		}
+		proj := Project(task, stored, loadErr, false)
+		if proj.Stage != task.Stage || proj.ResultState == localtask.ResultStateReady {
+			t.Fatalf("incomplete delivery reported complete: %+v", proj)
+		}
+	}
+}
+
 func TestDecodeStoredOutputsFailsOnCorruptPayload(t *testing.T) {
 	_, err := DecodeStoredOutputs([]model.Result{{ID: "result-1", TaskID: "task-1", Kind: localtask.ResultKindGenerationOutput, Payload: "{"}})
 	if err == nil {

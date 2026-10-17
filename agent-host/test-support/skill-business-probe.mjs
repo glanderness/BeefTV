@@ -21,12 +21,19 @@ const provider = createServer(async (req, res) => {
     const content = m => typeof m.content === 'string' ? m.content : (m.content || []).map(part => part.text || '').join('');
     const system = request.messages.filter(m => m.role === 'system' || m.role === 'developer').map(content).join('\n');
     const user = request.messages.filter(m => m.role === 'user').map(content).join('\n');
-    // The selected body lives in the user message (transcript), like official /skill:name.
+    const latest=request.messages.filter(m=>m.role==='user').at(-1);
+    if(content(latest).includes('FRESH_TASK')) {
+      assert(!JSON.stringify(request.messages).includes(config.instruction),'official reset leaked old instructions');
+      return send(res,request.model);
+    }
+    // The transcript records explicit selection; active rules are reconstructed
+    // from the real Go database in the official section on every request.
     const block = new RegExp(`<skill name="[^"]+" version="[^"]*" skillId="${config.pin.skillId}" versionId="${config.pin.versionId}" contentHash="${config.pin.contentHash}">[\\s\\S]*${config.instruction.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\n</skill>`);
     assert(block.test(user), 'selected fixed Skill block absent from the real user message');
-    assert(!system.includes(config.instruction), 'Skill body must not be a system section');
+    assert(system.includes(config.instruction) && system.includes('<beeftv_active_skills>'), 'active rules absent from official section');
     assert(system.includes('<available_skills>') && system.includes(`<id>${config.pin.skillId}</id>`), 'installed catalog absent from system prompt');
     assert(!JSON.stringify(request.messages).includes('Removed system prompt section'));
+    if(content(latest).includes('CONTINUE_ACTIVE') || content(latest).includes('RESELECT_SAME')) return send(res,request.model);
     const results = request.messages.filter(m => m.role === 'tool');
     if (!results.length) return send(res, request.model, 'skill_file', { ...config.pin, path: config.path });
     assert(results[0].content.includes(config.reference), 'auxiliary file missing from tool result');
@@ -79,7 +86,22 @@ try {
   await until(async () => { history = await (await api('/history?canvasId=' + config.canvasId)).json(); return history.turns?.length === 1; });
   assert.equal(history.turns[0].error, null, JSON.stringify(history));
   assert.equal((await backend('/assistant/runtime/turns/' + config.turnId)).value.data.open, false);
-  assert.equal(modelCalls, config.script ? 2 : 3);
+  const initialCalls=config.script?2:3;assert.equal(modelCalls,initialCalls);
   if (config.script) assert(JSON.stringify(history).includes('尚未执行'), 'unsupported script must not claim completion');
-  fs.writeFileSync(path.join(config.directory, 'host-result.json'), JSON.stringify({ modelCalls, history, passed: true }));
+  const firstPid=child.pid;await kill('SIGKILL');await start();assert.notEqual(child.pid,firstPid);
+  async function extra(turnId,message,skills=[]) {
+    const response=await api('/chat',{canvasId:config.canvasId,turnId,message,revisionBefore:1,skills});
+    assert.equal(response.status,200,await response.text());
+    await until(async()=>{history=await(await api('/history?canvasId='+config.canvasId)).json();return history.turns?.some(turn=>turn.turnId===turnId);});
+    assert.equal(history.turns.find(turn=>turn.turnId===turnId).error,null,JSON.stringify(history));
+  }
+  await extra(config.continueTurnId,'CONTINUE_ACTIVE');
+  await extra(config.reselectTurnId,'RESELECT_SAME',[config.pin]);
+  const state=await(await api('/skill-context?canvasId='+config.canvasId)).json();
+  assert.equal(state.activePins[0].versionId,config.pin.versionId);
+  const reset=await api('/skill-context',{canvasId:config.canvasId,action:'new_scope',expectedRevision:state.revision,requestId:'independent'});
+  assert.equal(reset.status,200,await reset.text());
+  await extra(config.freshTurnId,'FRESH_TASK');assert.equal(modelCalls,initialCalls+3);
+  assert.equal(history.turns.length,4,'official reset must preserve UI turn history');
+  fs.writeFileSync(path.join(config.directory, 'host-result.json'), JSON.stringify({ modelCalls, history, passed: true,hardkill:{firstPid,resumedPid:child.pid} }));
 } finally { await kill('SIGTERM'); provider.closeAllConnections(); await new Promise((resolve) => provider.close(resolve)); }

@@ -13,6 +13,7 @@ import (
 
 func RegisterProjectRoutes(r *gin.RouterGroup, svc *app.Service) {
 	RegisterStyleProfileRoutes(r, svc)
+	registerCanvasProductionRoutes(r, svc)
 	r.GET("/project-folders", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

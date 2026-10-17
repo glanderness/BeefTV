@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/kernel"
@@ -193,6 +194,113 @@ func TestUpdateUserCanvasStoryboardRowsPartialPatch(t *testing.T) {
 	var appError *kernel.AppError
 	if !errors.As(err, &appError) || appError.Status != http.StatusNotFound {
 		t.Fatalf("未知行应整批拒绝，实际 %v", err)
+	}
+}
+
+// 绑定后本行同类产出只剩一条指向绑定节点的连线；另一类产出、其他行、素材引用和
+// 指向已删除节点的连线保持原样；回执列出的连线增删与文档实际变化一致。
+func TestUpdateUserCanvasStoryboardRowsBindKeepsOneOutputPerKind(t *testing.T) {
+	svc := newCanvasHistoryTestService(t)
+	created, err := svc.UpsertUserCanvasProject("owner", json.RawMessage(`{
+		"id":"canvas-bind","revision":0,"title":"分镜",
+		"nodes":[
+			{"id":"script","type":"script","metadata":{"storyboard":{"rows":[{"id":"r1","shotNumber":1,"imageNodeId":"img-a"},{"id":"r2","shotNumber":2,"imageNodeId":"img-a"}]}}},
+			{"id":"img-a","type":"image"},{"id":"img-b","type":"image"},{"id":"vid","type":"video"},{"id":"txt","type":"text"}
+		],"connections":[
+			{"id":"drag","fromNodeId":"script","toNodeId":"img-a","fromHandleId":"row:r1"},
+			{"id":"gen","fromNodeId":"script","toNodeId":"img-b","fromHandleId":"row:r1","relation":"storyboard-output","storyboardRowId":"r1"},
+			{"id":"dup","fromNodeId":"script","toNodeId":"img-b","fromHandleId":"row:r1"},
+			{"id":"video-out","fromNodeId":"script","toNodeId":"vid","fromHandleId":"row:r1"},
+			{"id":"orphan","fromNodeId":"script","toNodeId":"gone","fromHandleId":"row:r1"},
+			{"id":"text-out","fromNodeId":"script","toNodeId":"txt","fromHandleId":"row:r1"},
+			{"id":"other-row","fromNodeId":"script","toNodeId":"img-a","fromHandleId":"row:r2"},
+			{"id":"ref","fromNodeId":"txt","toNodeId":"img-a","relation":"storyboard-asset-reference","storyboardRowId":"r1"}
+		]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, update, err := svc.UpdateUserCanvasStoryboardRows("owner", "canvas-bind", "script", []StoryboardRowPatch{{RowID: "r1", ImageNodeID: strPtr("img-b")}}, created.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(update.CreatedEdgeIDs) != 0 || strings.Join(update.DeletedEdgeIDs, ",") != "drag,dup" {
+		t.Fatalf("edge receipt = %#v", update)
+	}
+	ids := func() string {
+		raw, err := svc.UserCanvasProject("owner", "canvas-bind")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Connections []struct {
+				ID string `json:"id"`
+			} `json:"connections"`
+		}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatal(err)
+		}
+		out := make([]string, 0, len(doc.Connections))
+		for _, edge := range doc.Connections {
+			out = append(out, edge.ID)
+		}
+		return strings.Join(out, ",")
+	}
+	if got := ids(); got != "gen,video-out,orphan,text-out,other-row,ref" {
+		t.Fatalf("connections = %s", got)
+	}
+	rows := storyboardRowsOf(t, svc, "canvas-bind", "script")
+	if rows[0]["imageNodeId"] != "img-b" || rows[1]["imageNodeId"] != "img-a" {
+		t.Fatalf("rows = %#v", rows)
+	}
+
+	_, update, err = svc.UpdateUserCanvasStoryboardRows("owner", "canvas-bind", "script", []StoryboardRowPatch{{RowID: "r1", ImageNodeID: strPtr("")}}, summary.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(update.DeletedEdgeIDs, ",") != "gen" || len(update.CreatedEdgeIDs) != 0 {
+		t.Fatalf("unbind receipt = %#v", update)
+	}
+	if got := ids(); got != "video-out,orphan,text-out,other-row,ref" {
+		t.Fatalf("connections after unbind = %s", got)
+	}
+	if _, exists := storyboardRowsOf(t, svc, "canvas-bind", "script")[0]["imageNodeId"]; exists {
+		t.Fatal("unbind left imageNodeId")
+	}
+}
+
+// 绑定目标无效或 revision 过期时整批拒绝，画布和 revision 都不变。
+func TestUpdateUserCanvasStoryboardRowsRejectsInvalidBindingWithoutWrite(t *testing.T) {
+	svc, canvasID, nodeID, revision := storyboardFixture(t)
+	summary, created, err := svc.AppendUserCanvasStoryboardRows("owner", canvasID, nodeID, []StoryboardRowDraft{{}, {}}, revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := svc.UserCanvasProject("owner", canvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, test := range map[string]struct {
+		patches  []StoryboardRowPatch
+		revision int64
+		status   int
+	}{
+		"wrong type": {[]StoryboardRowPatch{{RowID: created[0].ID, VideoNodeID: strPtr("txt")}}, summary.Revision, http.StatusBadRequest},
+		"missing":    {[]StoryboardRowPatch{{RowID: created[0].ID, ImageNodeID: strPtr("ghost")}}, summary.Revision, http.StatusNotFound},
+		"batch":      {[]StoryboardRowPatch{{RowID: created[1].ID, StoryboardRowDraft: StoryboardRowDraft{Dialogue: strPtr("x")}}, {RowID: created[0].ID, ImageNodeID: strPtr("script")}}, summary.Revision, http.StatusBadRequest},
+		"stale":      {[]StoryboardRowPatch{{RowID: created[0].ID, ImageNodeID: strPtr("")}}, revision, http.StatusConflict},
+	} {
+		_, _, err := svc.UpdateUserCanvasStoryboardRows("owner", canvasID, nodeID, test.patches, test.revision)
+		var appError *kernel.AppError
+		if !errors.As(err, &appError) || appError.Status != test.status {
+			t.Fatalf("%s: err = %v", name, err)
+		}
+		after, err := svc.UserCanvasProject("owner", canvasID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != string(before) {
+			t.Fatalf("%s wrote canvas", name)
+		}
 	}
 }
 

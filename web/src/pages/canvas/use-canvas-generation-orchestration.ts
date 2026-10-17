@@ -197,6 +197,8 @@ export function useCanvasGenerationOrchestration({
         setConnections,
         setSelectedNodeIds,
         enqueueGenerationBatch,
+        startGenerationRequest,
+        finishGenerationRequest,
     });
 
     const handleRetryNode = useCanvasGenerationRetry({

@@ -6,19 +6,22 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
 import { Harness, createRegistry, defineDoc, defineExtension, defineTool, watchEvents,
-  GenerationTask, hook } from '@earendil-works/pi-durable';
+  GenerationTask, hook, section } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
+import { getCurrentSystemMessage } from '@earendil-works/pi-ai/utils/transcript';
 import { canvasKey } from './session-owner.mjs';
 import { newTurnAccumulator, resetTurnAccumulator, turnChange, sessionTitle } from './canvas-turn.mjs';
 import { SYSTEM_PROMPT } from './system-prompt.mjs';
 import { SKILL_LOAD_PARAMETERS, createSkillCatalogSection, expandSkillContent, loadPinnedSkills, loadedSkillRecord,
-  normalizeSkillCatalog, sameSkillPin, skillsToLoad } from './skill-resource.mjs';
+  normalizeSkillCatalog, sameSkillPin, skillsToLoad, activeSkillProjection, createActiveSkillSection, guardSkillModelRequests } from './skill-resource.mjs';
+import { PLAN_UPDATE_PARAMETERS, applyPlanUpdate, emptyPlan, planContinuation, publicPlan, renderPlanSection } from './plan.mjs';
+import { buildStudioDigest, describeChangesSince } from './studio-digest.mjs';
 
 // On-disk format tag written into manifests and host state since 1.0.4; not the
 // package version. Changing it rejects every existing session as mismatched.
 export const DURABLE_VERSION = '1.0.4';
 const STATE = defineDoc({ kind: 'beeftv.host', version: 1, scope: 'session',
-  initial: () => ({ version: DURABLE_VERSION, canvasId: '', sessionId: '', active: null, turns: [], loadedSkills: [] }) });
+  initial: () => ({ version: DURABLE_VERSION, canvasId: '', sessionId: '', active: null, turns: [], loadedSkills: [], plan: emptyPlan(), studioDigestText: '', lastStudioSnapshot: null }) });
 export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high'];
 // The root agent's reasoning level; budgets follow pi-ai's DEFAULT_THINKING_BUDGETS.
 export function agentThinkingLevel(env = process.env) {
@@ -30,8 +33,15 @@ const supplementMarker = (id) => `[BEEFTV_INPUT:${id}]`;
 function supplementContent(id, content) {
   return [{ type: 'text', text: supplementMarker(id) }, ...(typeof content === 'string' ? [{ type: 'text', text: content }] : content)];
 }
+function prependStudioChanges(content, diffText) {
+  if (!diffText) return content;
+  const text = `<canvas_changes>\n${diffText}\n</canvas_changes>`;
+  if (typeof content === 'string') return `${text}\n\n${content}`;
+  return [{ type: 'text', text }, ...content];
+}
 const idPattern = /^durable:([a-f0-9-]{36})$/;
 const fail = (reason) => Object.assign(new Error(reason), { reason });
+const requestSignature = messages => crypto.createHash('sha256').update(JSON.stringify(messages)).digest('hex');
 export const isDurableSessionId = (id) => idPattern.test(String(id || ''));
 export function durableToolReplay(tool) {
   return tool.replay === 'safe' ? 'safe' : 'unsafe';
@@ -39,7 +49,7 @@ export function durableToolReplay(tool) {
 export function publicDurableTurn(active, running = false) {
   if (!active) return null;
   const keys = ['permissionMode','turnId', 'requestId', 'submissionId', 'userText', 'selectedNodeIds', 'attachments', 'skills',
-    'references', 'supplements', 'supplementInputs', 'createdAt', 'reply', 'toolCalls', 'change', 'proposals',
+    'references', 'supplements', 'supplementInputs', 'createdAt', 'reply', 'toolCalls', 'change', 'proposals', 'plan',
     'cancelled', 'error', 'errorReason', 'sessionId', 'status'];
   const result = Object.fromEntries(keys.filter((key) => active[key] !== undefined).map((key) => [key, active[key]]));
   if (running) { delete result.toolCalls; result.status = 'running'; }
@@ -58,13 +68,75 @@ export function durableCompletion(settled, assistant, budgetFailure, stopped = f
     cancelled: false, error: null, errorReason: null };
 }
 
+// Official retry text can carry upstream bodies. The panel only receives one of these reasons.
+const RETRY_REASONS = [
+  ['rate_limited', /rate.?limit|too many requests|\b429\b|resource.?exhausted/i],
+  ['timeout', /timed? out|timeout/i],
+  ['provider_unavailable', /overloaded|server.?busy|currently busy|high demand|at capacity|\b5\d\d\b|service.?unavailable|server.?error|internal.?error|provider.?returned/i],
+  ['network', /network|connection|other side closed|fetch failed|getaddrinfo|ENOTFOUND|EAI_AGAIN|upstream.?connect|reset before headers|socket|terminated|websocket|ended without|ended before|did not get a response|canceled/i],
+];
+export function durableRetryReason(message) {
+  const text = String(message || '');
+  return RETRY_REASONS.find(([, pattern]) => pattern.test(text))?.[0] || 'model_error';
+}
+const retryLifecycle = (attempt, error) => ({ type: 'lifecycle', phase: 'retry', attempt, reason: durableRetryReason(error) });
+function snapshotLifecycle(event) {
+  if (event.generation?.retry) return retryLifecycle(event.generation.attempt, event.generation.retry.error);
+  const tool = (event.tools || []).find((slot) => slot.status === 'running');
+  return tool ? { type: 'lifecycle', phase: 'tool', toolName: tool.name } : null;
+}
+// Official Durable AgentEvent -> host NDJSON lines (existing text_delta / lifecycle shapes).
+export function durableStreamEvents(event) {
+  switch (event?.type) {
+    case 'message_update':
+      return (event.changes || []).filter((change) => change.type === 'text_delta').map((change) => ({ type: 'text_delta', delta: change.delta }));
+    case 'tool_execution_start': return [{ type: 'lifecycle', phase: 'tool', toolName: event.toolName }];
+    case 'tool_execution_end': return [{ type: 'lifecycle', phase: 'tool_end', toolName: event.toolName }];
+    case 'auto_retry_start': return [retryLifecycle(event.attempt, event.errorMessage)];
+    case 'auto_retry_end': return [{ type: 'lifecycle', phase: 'retry_end', attempt: event.attempt }];
+    case 'snapshot': { const progress = snapshotLifecycle(event); return progress ? [progress] : []; }
+    default: return [];
+  }
+}
+// Latest transient progress of a live turn, kept in memory for history reads; never persisted.
+export function durableLifecycleState(current, event) {
+  switch (event?.type) {
+    case 'snapshot': return snapshotLifecycle(event);
+    case 'auto_retry_start': case 'tool_execution_start': return durableStreamEvents(event)[0];
+    case 'auto_retry_end': return current?.phase === 'retry' ? null : current;
+    case 'tool_execution_end': return current?.phase === 'tool' ? null : current;
+    default: return current;
+  }
+}
+
 export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModels, getModelRef,
   buildTools, authorizeTurn, completeTurn = async () => {}, runWithBudget = (_entry, fn) => fn(),
-  extensions = () => [], settings = {}, skills = null, thinkingLevel = agentThinkingLevel() }) {
+  extensions = () => [], settings = {}, skills = null, readCanvas = null, maxPlanContinuations = 6, thinkingLevel = agentThinkingLevel() }) {
   if (!THINKING_LEVELS.includes(thinkingLevel)) throw fail('invalid_thinking_level');
   if (typeof authorizeTurn !== 'function') throw fail('durable_authorizer_required');
   const sessions = new Map();
   const locks = new Map();
+  // A Stop names one request ID and may arrive before that request reaches this host.
+  // Memory covers this process synchronously (a submit holding the canvas lock still sees
+  // it); STATE.stopRequests and active.stopped carry it across restarts (cancelRequest).
+  const STOP_INTENT_LIMIT = 64;
+  const stopIntents = new Map();
+  const stopIntentKey = (sessionId, requestId) => JSON.stringify([sessionId, requestId]);
+  function rememberStop(canvasId, sessionId, requestId) {
+    const ids = stopIntents.get(canvasId) || new Set();
+    const key = stopIntentKey(sessionId, requestId);
+    ids.delete(key); ids.add(key);
+    while (ids.size > STOP_INTENT_LIMIT) ids.delete(ids.values().next().value);
+    stopIntents.set(canvasId, ids);
+  }
+  function forgetStop(canvasId, sessionId, requestId) {
+    const ids = stopIntents.get(canvasId);
+    if (ids?.delete(stopIntentKey(sessionId, requestId)) && !ids.size) stopIntents.delete(canvasId);
+  }
+  function stopIntended(entry, doc, requestId) {
+    return Boolean(stopIntents.get(entry.canvasId)?.has(stopIntentKey(entry.sessionId, requestId)) || (doc?.stopRequests || []).includes(requestId)
+      || (doc?.active?.requestId === requestId && doc.active.stopped));
+  }
   let closed = false;
   const directory = (canvasId) => path.join(sessionRoot, canvasKey(canvasId));
   const durableDirectory = (canvasId) => path.join(directory(canvasId), 'durable');
@@ -114,6 +186,23 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
   async function update(entry, mutate) {
     return entry.harness.commit(async (tx) => mutate(await tx.doc(STATE)), CTX);
   }
+  async function refreshStudioDigest(entry, turnId = entry.turn.turnId, { selectedNodeIds = [], computeDiff = false, signal } = {}) {
+    if (typeof readCanvas !== 'function') return '';
+    try {
+      const canvas = await readCanvas(entry, signal, turnId);
+      if (!canvas || typeof canvas !== 'object') return '';
+      const digest = buildStudioDigest(canvas, { selectedNodeIds });
+      let diffText = '';
+      await update(entry, (doc) => {
+        if (computeDiff) diffText = describeChangesSince(doc.lastStudioSnapshot, digest.snapshot);
+        doc.studioDigestText = digest.text;
+        doc.lastStudioSnapshot = digest.snapshot;
+      });
+      return diffText;
+    } catch {
+      return '';
+    }
+  }
   async function turnModel(entry, active) {
     const agent = await entry.root.agent(CTX);
     // Only the backend-launched host chooses a NEW round's model. An unfinished
@@ -154,9 +243,8 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       }
     });
   }
-  // A selected skill not yet in this conversation is expanded once into the
-  // submitted user message (official `/skill:name` behaviour) and recorded,
-  // so later rounds keep following it from the transcript.
+  // Every fresh explicit selection expands its fixed version into the user
+  // message, as official `/skill:name` does. Request receipts own retry dedup.
   async function expandSelectedSkills(entry, doc, pins, content, turnId) {
     if (!skills || !Array.isArray(pins) || !pins.length) return { content, records: [] };
     const missing = skillsToLoad(pins, doc?.loadedSkills || []);
@@ -164,27 +252,97 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     const resources = await loadPinnedSkills({ pins: missing, readVersion: (pin, signal) => skills.readVersion(entry, pin, signal, turnId) });
     return { content: expandSkillContent(content, resources), records: resources.map((resource) => loadedSkillRecord(resource, 'selected', turnId)) };
   }
+  async function readSkillContext(entry, turnId = entry.turn.turnId) {
+    if (typeof skills?.readContext !== 'function') throw fail('skill_context_service_unavailable');
+    const context = await skills.readContext(entry, turnId);
+    if (context.canvasId !== entry.canvasId || context.sessionId !== entry.sessionId) throw fail('skill_context_identity_mismatch');
+    return context;
+  }
+  async function resolveActiveSkills(entry, ref, signal) {
+    const context = await readSkillContext(entry);
+    const model = (await getModels(entry)).getModel(ref.provider, ref.modelId);
+    return activeSkillProjection({context,model,signal,
+      readVersion:(pin,readSignal)=>skills.readVersion(entry,pin,readSignal,entry.turn.turnId)});
+  }
+  async function resetPendingScope(entry, context) {
+    if (context.lifecycle !== 'reset_pending') return context;
+    // Repeating reset after a crash before acknowledgement is safe: no model
+    // request can pass until the same Go-owned scope has been acknowledged.
+    await entry.root.reset('用户开始一个独立任务。只使用当前明确选择的技能和本轮提供的资源。', CTX);
+    return skills.changeContext(entry,{action:'ack_reset',scopeId:context.scopeId,expectedRevision:context.revision},'');
+  }
+  async function prepareSkillContext(entry, pins, requestId, turnId, {append=false}={}) {
+    let context = await resetPendingScope(entry,await readSkillContext(entry,turnId));
+    if (pins?.length) {
+      const values=append?[...context.activePins.filter(pin=>!pins.some(next=>next.skillId===pin.skillId)),...pins]:pins;
+      context=await skills.changeContext(entry,{action:'activate',pins:values,expectedRevision:context.revision,requestId:`select:${requestId}`},turnId);
+      const current=await readSkillContext(entry,turnId);
+      if (current.scopeId!==context.scopeId || current.revision!==context.revision) throw fail('skill_context_changed');
+    }
+    return context;
+  }
+  async function skillContext(entry) {
+    return lock(entry.canvasId,()=>readSkillContext(entry,''));
+  }
+  async function changeSkillContext(entry, change) {
+    return lock(entry.canvasId,async()=>{
+      if (entry.busy || (await state(entry)).active) throw fail('session_busy');
+      await resetPendingScope(entry,await readSkillContext(entry,''));
+      await skills.changeContext(entry,change,'');
+      // A replayed new_scope receipt may predate an already acknowledged reset
+      // or later tasks. Only the live Go record can request another reset.
+      return resetPendingScope(entry,await readSkillContext(entry,''));
+    });
+  }
   function hostTools(entry) {
-    if (!skills) return [];
-    return [{
-      name: 'skill_load', label: 'skill.load', readOnly: true, replay: 'safe',
-      description: '按技能目录里的 id 读取一个已安装技能的完整步骤；读取后的步骤会留在对话里，后续按它执行。',
-      parameters: SKILL_LOAD_PARAMETERS,
-      execute: async (_toolCallId, args, signal) => {
-        const id = String(args?.id || '').trim();
-        const find = (items) => (items || []).find((item) => item.pin.skillId === id);
-        let item = find(entry.skillCatalog.items);
-        if (!item) item = find(normalizeSkillCatalog(await skills.readCatalog(entry, signal, entry.turn.turnId)));
-        if (!item) throw fail('skill_not_installed: 技能目录里没有这个 id');
-        const [resource] = await loadPinnedSkills({ pins: [item.pin], signal,
-          readVersion: (pin, readSignal) => skills.readVersion(entry, pin, readSignal, entry.turn.turnId) });
-        await update(entry, (doc) => {
-          const loaded = doc.loadedSkills || [];
-          if (!loaded.some((record) => sameSkillPin(record, resource.pin))) doc.loadedSkills = [...loaded, loadedSkillRecord(resource, 'tool', entry.turn.turnId)];
-        });
-        return { content: [{ type: 'text', text: expandSkillContent('按上面技能的步骤继续当前任务。', [resource]) }] };
+    const items = [{
+      name: 'plan_update', label: 'plan.update', readOnly: true, replay: 'safe',
+      description: '维护当前对话的创作制作计划（整体替换步骤清单；每完成一步及时更新状态）。',
+      parameters: PLAN_UPDATE_PARAMETERS,
+      execute: async (toolCallId, args) => {
+        const started = Date.now();
+        let nextPlan;
+        try {
+          await update(entry, (doc) => {
+            nextPlan = applyPlanUpdate(doc.plan, args);
+            doc.plan = nextPlan;
+            if (doc.active) doc.active.plan = publicPlan(nextPlan);
+          });
+          entry.turn.plan = publicPlan(nextPlan);
+          entry.generation.planTouchedInTurn = true;
+          entry.log.push({ toolCallId: toolCallId || null, tool: 'plan.update', args: args || {}, isError: false, ms: Date.now() - started });
+          return { content: [{ type: 'text', text: renderPlanSection(nextPlan) || '当前制作计划已清空。' }] };
+        } catch (error) {
+          entry.log.push({ toolCallId: toolCallId || null, tool: 'plan.update', args: args || {}, isError: true, error: error.message, ms: Date.now() - started });
+          throw error;
+        }
       },
     }];
+    if (skills) {
+      items.push({
+        name: 'skill_load', label: 'skill.load', readOnly: true, replay: 'safe',
+        description: '按技能目录里的 id 读取一个已安装技能的完整步骤；读取后的步骤会留在对话里，后续按它执行。',
+        parameters: SKILL_LOAD_PARAMETERS,
+        execute: async (_toolCallId, args, signal) => {
+          const id = String(args?.id || '').trim();
+          const find = (list) => (list || []).find((item) => item.pin.skillId === id);
+          const active=await readSkillContext(entry);
+          const pinned=active.activePins.find(pin=>pin.skillId===id);
+          let item = pinned ? {pin:pinned} : find(entry.skillCatalog.items);
+          if (!item) item = find(normalizeSkillCatalog(await skills.readCatalog(entry, signal, entry.turn.turnId,{id})));
+          if (!item) throw fail('skill_not_installed: 技能目录里没有这个 id');
+          const [resource] = await loadPinnedSkills({ pins: [item.pin], signal,
+            readVersion: (pin, readSignal) => skills.readVersion(entry, pin, readSignal, entry.turn.turnId) });
+          await prepareSkillContext(entry,[item.pin],`tool:${_toolCallId}`,entry.turn.turnId,{append:true});
+          await update(entry, (doc) => {
+            const loaded = doc.loadedSkills || [];
+            if (!loaded.some((record) => sameSkillPin(record, resource.pin))) doc.loadedSkills = [...loaded, loadedSkillRecord(resource, 'tool', entry.turn.turnId)];
+          });
+          return { content: [{ type: 'text', text: expandSkillContent('按上面技能的步骤继续当前任务。', [resource]) }] };
+        },
+      });
+    }
+    return items;
   }
   async function open(canvasId, sessionId) {
     if (!isDurableSessionId(sessionId)) throw fail('session_not_found');
@@ -198,7 +356,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     fs.mkdirSync(cwd, { recursive: true });
     const entry = { kind: 'durable', canvasId, sessionId, identity: { prefix: sessionId, source: 'durable-session-id' },
       log: [], generation: { durable: true, aborted: false, intentEpoch: 0, modelEpoch: 0 }, turn: newTurnAccumulator(), busy: false, persistence: 'restored',
-      budgetDirectory: path.join(dir, `${uuid}.budget`), skillCatalog: {} };
+      budgetDirectory: path.join(dir, `${uuid}.budget`), skillCatalog: {}, waiters: 0, recovering: null, submittedRequest: null };
     fs.mkdirSync(entry.budgetDirectory, { recursive: true, mode: 0o700 });
     const registry = createRegistry();
     entry.generation.persistEffects = () => persistEffects(entry);
@@ -215,12 +373,20 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         try {
           // Bridge tools return {content}; Durable's ToolExecutionResult names it output.
           const { content, ...result } = await runWithBudget(entry, () => tool.execute(String(api.taskId), args, context.abortSignal));
+          entry.generation.toolCalledSinceYield = true;
+          if (!tool.readOnly && typeof readCanvas === 'function') {
+            await refreshStudioDigest(entry, entry.turn.turnId, { selectedNodeIds: entry.input?.selectedNodeIds || [], computeDiff: false, signal: context.abortSignal });
+          }
           return { ...result, output: content };
         } finally { await persistEffects(entry); }
       },
     }));
     entry.toolNames = tools.map((tool) => tool.name);
-    const operationExtension=defineExtension({ name: 'beeftv.operations.v1', tools, hooks: [hook(GenerationTask, {
+    const operationSections = [
+      section('beeftv_plan', async () => renderPlanSection((await state(entry))?.plan)),
+      ...(typeof readCanvas === 'function' ? [section('beeftv_studio', async () => (await state(entry))?.studioDigestText || undefined)] : []),
+    ];
+    const operationExtension=defineExtension({ name: 'beeftv.operations.v1', tools, sections: operationSections, hooks: [hook(GenerationTask, {
       beforeRequest: async (request) => {
         for (;;) {
           if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
@@ -248,9 +414,72 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
           if (entry.generation.pendingInput?.state === 'pending') continue;
           if ((active?.intentEpoch || 0) !== entry.generation.intentEpoch) continue;
           if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
+          // Identify generation requests without treating the SDK's separate
+          // compaction summarizer request as a user-generation prompt.
+          entry.generation.preparedRequests ||= new Set();
+          entry.generation.preparedRequests.add(requestSignature(messages));
           if (messages !== request.messages) return { messages };
           return;
         }
+      },
+      onYield: async () => {
+        if (entry.generation.aborted || entry.generation.pendingInput?.state === 'pending' || entry.generation.pendingInputError) return;
+        if (entry.turn.proposals?.length) return;
+        const doc = await state(entry);
+        if (doc?.active?.stopped || (doc?.active?.supplementIds?.length || 0) > 0) return;
+        if (!entry.generation.unboundReminderSent && entry.turn.createdNodeIds?.length > 0 && typeof readCanvas === 'function') {
+          const canvas = await readCanvas(entry, undefined, entry.turn.turnId).catch(() => null);
+          const nodes = Array.isArray(canvas?.nodes) ? canvas.nodes : [];
+          const connections = Array.isArray(canvas?.connections) ? canvas.connections : [];
+          const byId = new Map(nodes.map((n) => [n.id, n]));
+          const scriptNodes = nodes.filter((n) => n.type === 'script' && (n.metadata?.storyboard?.rows?.length || 0) > 0);
+          if (scriptNodes.length > 0) {
+            const boundIds = new Set();
+            for (const s of scriptNodes) {
+              for (const r of s.metadata?.storyboard?.rows || []) {
+                if (r.imageNodeId) boundIds.add(r.imageNodeId);
+                if (r.videoNodeId) boundIds.add(r.videoNodeId);
+              }
+            }
+            const createdSet = new Set(entry.turn.createdNodeIds);
+            const unboundMedia = nodes.filter(
+              (n) => createdSet.has(n.id) && (n.type === 'image' || n.type === 'video') && !boundIds.has(n.id),
+            );
+            const createdImages = nodes.filter((n) => createdSet.has(n.id) && n.type === 'image');
+            const unlinkedVideos = createdImages.length > 0
+              ? nodes.filter(
+                  (n) =>
+                    createdSet.has(n.id) &&
+                    n.type === 'video' &&
+                    !connections.some((e) => e.toNodeId === n.id && byId.get(e.fromNodeId)?.type === 'image'),
+                )
+              : [];
+            if (unboundMedia.length > 0 || unlinkedVideos.length > 0) {
+              entry.generation.unboundReminderSent = true;
+              const hints = [];
+              if (unboundMedia.length > 0) {
+                const list = unboundMedia.map((n) => `${n.id}「${n.title || n.type}」`).join('、');
+                hints.push(`本轮新建的媒体节点（${list}）尚未通过 canvas_script_row_update 的 imageNodeId/videoNodeId 写回对应分镜行`);
+              }
+              if (unlinkedVideos.length > 0) {
+                const vList = unlinkedVideos.map((n) => `${n.id}「${n.title || n.type}」`).join('、');
+                hints.push(`本轮新建的视频节点（${vList}）尚未通过 canvas_edge_create 连接对应的首帧图节点`);
+              }
+              return {
+                continue: `[制作现场检查] ${hints.join('；')}（当前画布 expectedRevision=${canvas.revision}）。请先补齐上述绑定/连线后再回复用户。`,
+              };
+            }
+          }
+        }
+        if (!entry.generation.planTouchedInTurn || !entry.generation.toolCalledSinceYield) return;
+        const prompt = planContinuation(doc?.plan, {
+          continuations: entry.generation.planContinuations || 0,
+          maxContinuations: maxPlanContinuations,
+        });
+        if (!prompt) return;
+        entry.generation.planContinuations = (entry.generation.planContinuations || 0) + 1;
+        entry.generation.toolCalledSinceYield = false;
+        return { continue: prompt };
       },
     })] });
     registry.install(operationExtension);
@@ -264,10 +493,21 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       if(entry.root) await entry.root.configure({tools:selected,instructions:`${SYSTEM_PROMPT}\n${mode==='read-only'?'只能读取工作区内容，不能修改或生成。':mode==='full-access'?'可读取和修改本工作区的所有画布。付费生成必须等待用户确认。':'仅修改当前画布；其他画布只读。'}`},CTX);
     };
     if (skills) registry.install(defineExtension({ name: 'beeftv.skills.v1', sections: [createSkillCatalogSection({
-      readCatalog: (signal) => skills.readCatalog(entry, signal, entry.turn.turnId), cache: entry.skillCatalog })] }));
+      readCatalog: (signal) => skills.readCatalog(entry, signal, entry.turn.turnId), cache: entry.skillCatalog }),
+      createActiveSkillSection((ref,signal)=>resolveActiveSkills(entry,ref,signal))] }));
     for (const extension of await extensions(entry)) registry.install(extension);
+    let models=await getModels(entry);
+    if(skills) models=guardSkillModelRequests(models,async(model,request,signal)=>{
+      await authorization(entry,entry.turn.turnId);
+      const projection=await resolveActiveSkills(entry,{provider:model.provider,modelId:model.id},signal);
+      if(entry.generation.preparedRequests?.has(requestSignature(request.messages))){
+        const shown=getCurrentSystemMessage(request.messages)?.sections?.beeftv_active_skills;
+        const expected=projection.text?`<beeftv_active_skills>\n${projection.text}\n</beeftv_active_skills>`:undefined;
+        if(shown!==expected)throw fail('skill_context_changed');
+      }
+    },error=>{entry.generation.skillContextFailure={reason:error?.reason || 'skill_context_unavailable',message:error?.message || '技能状态不可用'};});
     entry.harness = await Harness.open(await openNodeSqliteStorage(path.join(dir, `${uuid}.sqlite`)), {
-      models: await getModels(entry), registry,
+      models, registry,
       settings: { stream: { timeoutMs: 95000, maxRetries: 0 }, retry: { maxRetries: 2 },
         toolExecution: 'sequential', steeringMode: 'all', ...settings },
     }, CTX);
@@ -285,13 +525,23 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       return entry;
     } catch (error) { await entry.harness.close(CTX); throw error; }
   }
+  function handoffSessionId(canvasId, handoffSourceId) {
+    const digest = crypto.createHash('sha256').update(JSON.stringify([canvasId, handoffSourceId])).digest('hex');
+    return `durable:${digest.slice(0,8)}-${digest.slice(8,12)}-${digest.slice(12,16)}-${digest.slice(16,20)}-${digest.slice(20,32)}`;
+  }
+  // Whether this durable session was created for this canvas (its manifest lives in that canvas).
+  function hasSession(canvasId, sessionId) {
+    if (!isDurableSessionId(sessionId)) return false;
+    try {
+      const manifest = JSON.parse(fs.readFileSync(path.join(durableDirectory(canvasId), `${idPattern.exec(sessionId)[1]}.json`), 'utf8'));
+      return manifest.canvasId === canvasId && manifest.sessionId === sessionId;
+    } catch { return false; }
+  }
   // 新建候选：写清单、打开官方 Harness，但不发布指针、不写入 sessions。
   async function prepareSession(canvasId, handoffSourceId = '') {
     // A legacy source has one durable successor even if the process dies before
     // publishing current.json or the client receives no response.
-    const digest = handoffSourceId && crypto.createHash('sha256').update(JSON.stringify([canvasId, handoffSourceId])).digest('hex');
-    const uuid = digest ? `${digest.slice(0,8)}-${digest.slice(8,12)}-${digest.slice(12,16)}-${digest.slice(16,20)}-${digest.slice(20,32)}` : crypto.randomUUID();
-    const sessionId = `durable:${uuid}`;
+    const sessionId = handoffSourceId ? handoffSessionId(canvasId, handoffSourceId) : `durable:${crypto.randomUUID()}`;
     fs.mkdirSync(durableDirectory(canvasId), { recursive: true, mode: 0o700 });
     const file = path.join(durableDirectory(canvasId), `${idPattern.exec(sessionId)[1]}.json`);
     const created = !handoffSourceId || !fs.existsSync(file);
@@ -358,42 +608,161 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       if (!requestId || !input.turnId || !input.content) throw fail('invalid_request');
       if (existing.active && existing.active.requestId !== requestId) throw fail('session_busy');
       const finished = existing.turns.find((turn) => turn.requestId === requestId);
-      if (finished) return entry.harness.submission(finished.submissionId, CTX);
-      if (existing.active && (existing.active.turnId !== input.turnId || JSON.stringify(existing.active.content) !== JSON.stringify(input.content))) throw fail('submission_request_conflict');
+      if (finished) {
+        if (JSON.stringify(skillsToLoad(finished.skills || [])) !== JSON.stringify(skillsToLoad(input.skills || []))) throw fail('submission_request_conflict');
+        // The same request sent again never runs again. Go opened a new turn for this send;
+        // nothing can use it, so it is closed here and the original record answers.
+        if (finished.turnId !== input.turnId) await completeTurn({ canvasId: entry.canvasId, turnId: input.turnId, sessionId: entry.sessionId, record: finished });
+        // A request stopped before submit has a record but no official submission.
+        return finished.submissionId === undefined ? null : entry.harness.submission(finished.submissionId, CTX);
+      }
+      // A Stop named this request before it got here: record it stopped, with no model request.
+      if (stopIntended(entry, existing, requestId)) {
+        return existing.active ? stoppedRequest(entry, existing.active)
+          : stopBeforeSubmit(entry, { ...input, requestId, createdAt: new Date().toISOString() });
+      }
+      if (existing.active && (existing.active.turnId !== input.turnId || JSON.stringify(existing.active.content) !== JSON.stringify(input.content) ||
+        JSON.stringify(skillsToLoad(existing.active.skills || [])) !== JSON.stringify(skillsToLoad(input.skills || [])))) throw fail('submission_request_conflict');
       const auth=await authorization(entry, input.turnId);
       const modelRef = await turnModel(entry, existing.active);
       input={...input,modelRef,permissionMode:auth?.permissionMode || 'canvas'};
+      if (stopIntended(entry, await state(entry), requestId)) {
+        return existing.active ? stoppedRequest(entry, existing.active)
+          : stopBeforeSubmit(entry, { ...input, requestId, createdAt: new Date().toISOString() });
+      }
       if (!existing.active) {
         entry.budget = null;
         resetTurnAccumulator(entry.turn, input.revisionBefore, input.turnId);
         entry.turn.canvasId=entry.canvasId;
         entry.turn.supplements = [];
+        entry.turn.plan = publicPlan(existing.plan);
         entry.log.length = 0;
-        entry.generation = Object.assign(entry.generation, { aborted: false, intentEpoch: 0, modelEpoch: 0, pendingInput: null, pendingInputError: null });
+        entry.generation = Object.assign(entry.generation, { aborted: false, intentEpoch: 0, modelEpoch: 0, pendingInput: null, pendingInputError: null, skillContextFailure: null, preparedRequests: new Set(), planTouchedInTurn: false, toolCalledSinceYield: false, planContinuations: 0, unboundReminderSent: false });
+        entry.submittedRequest = null;
+        if (skills) await prepareSkillContext(entry, input.skills, requestId, input.turnId);
         const expansion = await expandSelectedSkills(entry, existing, input.skills, input.content, input.turnId);
+        const studioDiff = await refreshStudioDigest(entry, input.turnId, { selectedNodeIds: input.selectedNodeIds || [], computeDiff: true });
+        const submittedContent = prependStudioChanges(expansion.content, studioDiff);
         await update(entry, (doc) => {
           // content stays the client's own input (idempotency and history);
           // submittedContent is what the transcript receives, skills included.
           doc.active = { ...input, requestId, createdAt: new Date().toISOString(), stopped: false,
             effects: JSON.parse(JSON.stringify(entry.turn)), log: [], supplements: [], intentEpoch: 0, modelEpoch: 0,
-            ...(expansion.records.length ? { submittedContent: expansion.content } : {}) };
+            ...(publicPlan(doc.plan) ? { plan: publicPlan(doc.plan) } : {}),
+            ...((expansion.records.length || studioDiff) ? { submittedContent } : {}) };
           if (expansion.records.length) doc.loadedSkills = [...(doc.loadedSkills || []), ...expansion.records];
         });
       }
-      const admitted = (await state(entry)).active;
+      const current = await state(entry);
+      const admitted = current.active;
       hydrate(entry, admitted);
+      // The reset above must not swallow a Stop sent while this request was being prepared.
+      // Checked synchronously before the official submit; a later Stop finds it running.
+      if (stopIntended(entry, current, requestId)) return stoppedRequest(entry, admitted);
+      entry.submittedRequest = requestId;
       const submission = await entry.root.submit({ type: 'input', requestId, content: admitted.submittedContent ?? admitted.content, whenBusy: 'reject' }, CTX);
       await update(entry, (doc) => { if (doc.active) doc.active.submissionId = submission.id; });
       return submission;
     });
   }
+  async function officialSubmission(entry, requestId) {
+    const admitted = await entry.harness.commit((tx) => tx.submissionByRequest(entry.root.id, requestId), CTX);
+    return admitted ? entry.harness.submission(admitted.id, CTX) : null;
+  }
+  // A stopped admitted request: if the official queue already has it (e.g. just before a
+  // crash), it is fenced and aborted and its settlement records it; otherwise nothing ran.
+  async function stoppedRequest(entry, active) {
+    const submission = await officialSubmission(entry, active.requestId);
+    if (!submission) return stopBeforeSubmit(entry, active);
+    await fenceStop(entry);
+    await entry.root.abort(CTX);
+    return submission;
+  }
+  // Never submitted: no model request, tool or canvas write. Recorded as stopped so
+  // history (and a waiting panel) shows it; skills it would have loaded are not kept.
+  async function stopBeforeSubmit(entry, active) {
+    const record = { ...publicDurableTurn(active), reply: '', cancelled: true, error: null, errorReason: null,
+      toolCalls: [], change: null, proposals: [], status: 'unanswered', sessionId: entry.sessionId };
+    let pending = null;
+    // Use the same acknowledgement ordering as a submitted turn. A crash or failed
+    // Go completion leaves active.result available to recovery, even without a submission.
+    await update(entry, (doc) => {
+      if (doc.active && doc.active.requestId !== active.requestId) return;
+      if (doc.turns.some((turn) => turn.requestId === active.requestId)) return;
+      doc.loadedSkills = (doc.loadedSkills || []).filter((skill) => !(skill.source === 'selected' && skill.turnId === active.turnId));
+      pending = JSON.parse(JSON.stringify({ ...(doc.active || active), stopped: true, result: doc.active?.result || record }));
+      doc.active = pending;
+    });
+    if (pending) {
+      hydrate(entry, pending);
+      await completeTurn({ canvasId: entry.canvasId, turnId: pending.turnId, sessionId: entry.sessionId, record: pending.result });
+      await settleLocal(entry, pending, pending.result);
+    }
+    return null;
+  }
+  // One commit: a settled request reports finished; otherwise the intent is journaled so a
+  // later /chat, a resend or recovery after a restart records it stopped instead of running it.
+  async function recordStopIntent(entry, requestId) {
+    let finished = false;
+    await update(entry, (doc) => {
+      finished = doc.turns.some((turn) => turn.requestId === requestId);
+      if (finished) return;
+      doc.stopRequests = [...(doc.stopRequests || []).filter((id) => id !== requestId), requestId].slice(-STOP_INTENT_LIMIT);
+      if (doc.active?.requestId === requestId) doc.active.stopped = true;
+    });
+    return finished;
+  }
+  // A Stop that names one request of one conversation. Other requests are never touched.
+  // running: the caller fences Go and aborts (as a canvas Stop does); finished: already
+  // settled; pending: not running here, and it will not run when it arrives or recovers.
+  async function cancelRequest(canvasId, sessionId, requestId) {
+    const target = isDurableSessionId(sessionId) ? sessionId : handoffSessionId(canvasId, sessionId);
+    rememberStop(canvasId, target, requestId);
+    const live = sessions.get(canvasId);
+    if (live?.sessionId === target && live.busy && live.input?.requestId === requestId && live.submittedRequest === requestId) {
+      live.generation.aborted = true;
+      live.generation.pendingInput?.cancel?.();
+      return { state: 'running', entry: live };
+    }
+    // The live owner is written without the canvas lock: a submit preparing this very
+    // request holds that lock, and it reads the in-memory intent before its official submit.
+    const finished = live?.sessionId === target ? await recordStopIntent(live, requestId)
+      : await lock(canvasId, async () => {
+        const current = sessions.get(canvasId);
+        if (current?.sessionId === target) return recordStopIntent(current, requestId);
+        // A legacy conversation not handed off yet has no durable state: memory only.
+        if (!hasSession(canvasId, target)) return false;
+        const entry = await open(canvasId, target);
+        try { return await recordStopIntent(entry, requestId); }
+        finally { await entry.harness.close(CTX); }
+      });
+    if (finished) { forgetStop(canvasId, target, requestId); return { state: 'finished' }; }
+    return { state: 'pending' };
+  }
   async function recover(entry) {
-    const active = (await state(entry)).active;
+    // A live official wait already owns the turn: a read must not hydrate over its
+    // in-memory effects, re-authorize, or re-submit. Concurrent reads share one recovery.
+    if (entry.waiters > 0) return null;
+    if (!entry.recovering) entry.recovering = recoverOnce(entry).finally(() => { entry.recovering = null; });
+    return entry.recovering;
+  }
+  async function recoverOnce(entry) {
+    const doc = await state(entry);
+    const active = doc.active;
     if (!active) return null;
     hydrate(entry, active);
     // Opening/reading never schedules pending work. Only validated recovery does.
     const auth = await authorization(entry, active.turnId, true);
-    if (active.stopped) { await stop(entry); return null; }
+    if (entry.waiters > 0) return null;
+    // Completion is already committed: only acknowledge it, never re-run or rebuild it.
+    // Pre-submit stops have no official submission, including after Go has already closed.
+    if (active.result) {
+      if (auth?.open !== false) await completeTurn({ canvasId: entry.canvasId, turnId: active.turnId, sessionId: entry.sessionId, record: active.result });
+      await settleLocal(entry, active, active.result);
+      return active.submissionId == null ? null : entry.harness.submission(active.submissionId, CTX);
+    }
+    // A stopped request is settled as stopped, never (re)submitted.
+    if (stopIntended(entry, doc, active.requestId)) { await stop(entry, active.requestId); return null; }
     if (auth?.open === false) {
       const admitted = await entry.harness.commit((tx) => tx.submissionByRequest(entry.root.id, active.requestId), CTX);
       const submission = admitted ? await entry.harness.submission(admitted.id, CTX) : null;
@@ -403,11 +772,6 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       const record = active.result || await completionRecord(entry, active, settled);
       await settleLocal(entry, active, record);
       return submission;
-    }
-    if (active.result) {
-      await completeTurn({ canvasId: entry.canvasId, turnId: active.turnId, sessionId: entry.sessionId, record: active.result });
-      await settleLocal(entry, active, active.result);
-      return entry.harness.submission(active.submissionId, CTX);
     }
     await turnModel(entry, active);
     // Re-admit persisted supplements by stable request ID before scheduling the
@@ -428,8 +792,11 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       if (entry.generation.aborted) throw fail('session_not_running');
       const previous = (active.supplementContents || []).find((input) => input.requestId === requestId);
       if (previous && JSON.stringify(previous.rawContent ?? previous.content) !== JSON.stringify(content)) throw fail('submission_request_conflict');
+      const previousInput=(active.supplementInputs || []).find(item=>item.requestId===requestId);
+      if(previous && previousInput && JSON.stringify(skillsToLoad(previousInput.skills || []))!==JSON.stringify(skillsToLoad(input.skills || [])))throw fail('submission_request_conflict');
       if (previous) return entry.root.submit({ type: 'input', requestId: `supplement:${requestId}`, content: supplementContent(requestId, previous.content), whenBusy: 'steer' }, CTX);
       const expansion = await expandSelectedSkills(entry, await state(entry), input.skills, content, active.turnId);
+      if (skills) await prepareSkillContext(entry,input.skills,`supplement:${requestId}`,active.turnId,{append:true});
       if (entry.generation.aborted) throw fail('session_not_running');
       entry.generation.intentEpoch += 1;
       await update(entry, (doc) => {
@@ -488,7 +855,13 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       },
     };
   }
-  async function wait(entry, submission, { onEvent = () => {}, signal } = {}) {
+  async function wait(entry, submission, options = {}) {
+    // Counted before the first await so a recovery read in the same tick sees the live owner.
+    entry.waiters += 1;
+    try { return await observe(entry, submission, options); }
+    finally { entry.waiters -= 1; }
+  }
+  async function observe(entry, submission, { onEvent = () => {}, signal } = {}) {
     const context = signal ? withAbortSignal(signal, CTX) : CTX;
     const stream = await watchEvents(entry.harness, entry.root.id, context);
     await onEvent({ type: 'snapshot', ...stream.snapshot, sessionId: entry.sessionId });
@@ -501,7 +874,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         const pending = entry.generation.pendingInput;
         if (pending?.state === 'pending') await pending.promise.catch(() => {});
         const snapshot = await state(entry);
-        if (!snapshot.active) return snapshot.turns.find((turn) => turn.submissionId === submission.id) || null;
+        if (snapshot.active?.requestId !== original.requestId) return snapshot.turns.find((turn) => turn.submissionId === submission.id) || null;
         const ids = [...(snapshot.active.supplementIds || [])];
         let settled = original;
         for (const id of ids) {
@@ -518,7 +891,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         }
         const result = await lock(entry.canvasId, async () => {
           const current = await state(entry);
-          if (!current.active) return { done: true, record: current.turns.find((turn) => turn.submissionId === submission.id) || null };
+          if (current.active?.requestId !== original.requestId) return { done: true, record: current.turns.find((turn) => turn.submissionId === submission.id) || null };
           if (entry.generation.pendingInput?.state === 'pending' || JSON.stringify(current.active.supplementIds || []) !== JSON.stringify(ids)) return { done: false };
           entry.completing = true;
           try {
@@ -554,47 +927,90 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         if (partial) assistant = partial;
       }
     }
-    const preparationError = entry.generation.pendingInputError;
+    const preparationError = entry.generation.pendingInputError || entry.generation.skillContextFailure;
     const completion = preparationError ? { reply: assistant?.content?.filter(block => block.type === 'text').map(block => block.text).join('') || '', cancelled: false, error: preparationError.message, errorReason: preparationError.reason } : durableCompletion(settled, assistant, entry.budget?.failure, active.stopped);
+    const planView = entry.turn.plan || active.plan || null;
     return { ...publicDurableTurn(active), ...completion,
       toolCalls: [...entry.log], change: turnChange(entry.turn), proposals: [...entry.turn.proposals],
+      ...(planView ? { plan: planView } : {}),
       status: settled.status, sessionId: entry.sessionId };
   }
   async function settleLocal(entry, active, record) {
     await update(entry, (doc) => {
       if (doc.active?.requestId === active.requestId) { doc.turns = [...doc.turns, record]; doc.active = null; }
+      if (doc.stopRequests?.includes(active.requestId)) doc.stopRequests = doc.stopRequests.filter((id) => id !== active.requestId);
     });
+    forgetStop(entry.canvasId, entry.sessionId, active.requestId);
     entry.busy = false;
   }
-  async function fenceStop(entry) {
-    entry.generation.aborted = true;
-    // A user stop owns cancellation; it must not wait for an unrelated image
-    // decoder/network response, nor turn a late prep failure into a run error.
-    entry.generation.pendingInput?.cancel?.();
-    await update(entry, (doc) => { if (doc.active) doc.active.stopped = true; });
-  }
-  async function stop(entry) {
-    await fenceStop(entry);
-    await entry.root.abort(CTX);
-    const active = (await state(entry)).active;
-    if (active?.submissionId) {
-      const submission = await entry.harness.submission(active.submissionId, CTX);
-      if (submission) return wait(entry, submission);
+  async function fenceStop(entry, requestId = entry.input?.requestId) {
+    if (!requestId) return null;
+    // Fence only the captured request, before awaiting storage. A later request may
+    // reuse this entry while a caller waits for the Go completion response.
+    if (entry.busy && entry.input?.requestId === requestId) {
+      entry.generation.aborted = true;
+      entry.generation.pendingInput?.cancel?.();
     }
+    let turnId = null;
+    await update(entry, (doc) => {
+      if (doc.active?.requestId === requestId) {
+        doc.active.stopped = true;
+        turnId = doc.active.turnId;
+      }
+    });
+    return turnId;
+  }
+  async function stop(entry, requestId = entry.input?.requestId) {
+    if (!requestId || !await fenceStop(entry, requestId)) return;
+    // Official abort is conversation-wide. Keep admission locked until it finishes
+    // so it cannot abort a newer request, then observe only this exact submission.
+    const submission = await lock(entry.canvasId, async () => {
+      if (!await fenceStop(entry, requestId)) return null;
+      await entry.root.abort(CTX);
+      const active = (await state(entry)).active;
+      if (active?.requestId !== requestId) return null;
+      const official = active.submissionId != null ? await entry.harness.submission(active.submissionId, CTX)
+        : await officialSubmission(entry, requestId);
+      return official || stopBeforeSubmit(entry, active);
+    });
+    if (submission) return wait(entry, submission);
   }
   async function history(canvasId, sessionId) {
     const cached = sessions.get(canvasId);
     const entry = cached?.sessionId === sessionId ? cached : await open(canvasId, sessionId);
-    try { const value = await state(entry); return { sessionId, turns: value.turns.map((turn) => publicDurableTurn(turn)), active: publicDurableTurn(value.active, true) }; }
+    try { const value = await state(entry); const plan = publicPlan(value.plan); return { sessionId, turns: value.turns.map((turn) => publicDurableTurn(turn)), active: publicDurableTurn(value.active, true), ...(plan ? { plan } : {}) }; }
     finally { if (entry !== cached) await entry.harness.close(CTX); }
   }
   async function status(entry) {
     const value = await state(entry);
     const inspection = await entry.harness.inspect(CTX);
-    return { sessionId: entry.sessionId, kind: 'durable', active: publicDurableTurn(value.active, true),
+    return { sessionId: entry.sessionId, kind: 'durable', active: publicDurableTurn(value.active, true), plan: publicPlan(value.plan),
       inspection: { scheduling: inspection.scheduling,
         tasks: inspection.tasks.map((task) => ({ id: task.record.id, state: task.state.kind })),
         submissions: inspection.submissions.map((submission) => ({ id: submission.id, status: submission.status })) } };
+  }
+  async function recordEvent(canvasId, { sessionId = '', requestId = crypto.randomUUID(), kind = 'event', message = '', data = {} } = {}) {
+    const cleanCanvasId = String(canvasId || '').trim();
+    const cleanKind = String(kind || 'event').trim();
+    const cleanMessage = String(message || '').trim();
+    if (!cleanCanvasId || !cleanKind || !cleanMessage) throw fail('invalid_request');
+    const entry = await ensureSession(cleanCanvasId, String(sessionId || '').trim());
+    return lock(cleanCanvasId, async () => {
+      const submission = await entry.root.submit({
+        type: 'write',
+        requestId: `event:${requestId}`,
+        entry: {
+          kind: `beeftv.${cleanKind}`,
+          data,
+          model: [{
+            role: 'user',
+            content: [{ type: 'text', text: `<canvas_event kind="${cleanKind}">\n${cleanMessage}\n</canvas_event>` }],
+            timestamp: Date.now(),
+          }],
+        },
+      }, CTX);
+      return { accepted: true, sessionId: entry.sessionId, submissionId: submission.id, requestId: `event:${requestId}` };
+    });
   }
   async function listCanvasSessions(canvasId) {
     const dir = durableDirectory(canvasId);
@@ -616,5 +1032,5 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     return entries.length;
   }
   return { sessions, createSession, handoffSession, activateSession, ensureSession, submit, recover, supplement, beginPendingInput, fenceStop, wait,
-    stop, history, status, listCanvasSessions, disposeAll };
+    stop, cancelRequest, hasSession, history, status, recordEvent, listCanvasSessions, disposeAll, skillContext, changeSkillContext };
 }

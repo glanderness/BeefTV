@@ -13,7 +13,16 @@ const CANVAS_NODE_UPDATE = 'canvas.node.update';
 
 // 局部写入：模型从同一份旧版本并行发出的几次写入，可以接到本轮自己的最新版本上。
 // canvas.document.commit 提交的是整份文档，旧版本的整份文档会覆盖本轮刚写的内容，所以不改写。
-const REBASABLE_WRITES = new Set(['canvas.nodes.create', 'canvas.edge.create', CANVAS_NODE_UPDATE]);
+const REBASABLE_WRITES = new Set([
+  'canvas.nodes.create',
+  'canvas.edge.create',
+  CANVAS_NODE_UPDATE,
+  'canvas.node.configure',
+  'canvas.node.move',
+  'canvas.script.rows.append',
+  'canvas.script.row.update',
+  'canvas.script.row.remove',
+]);
 
 function assertToolGeneration(generation, descriptor, signal) {
   if (generation.aborted || signal?.aborted) throw new Error('aborted');

@@ -239,7 +239,7 @@ try {
     fs.writeFileSync(path.join(directory, 'denied.json'), JSON.stringify({ modelRequests, state: read() }));
   } else {
     const input = { turnId: 'fixture-turn', permissionMode:'full-access', content: 'Create two nodes and connect references', userText: 'Create two nodes and connect references', revisionBefore: 1,
-      skills: [{ skillId: 'selected', versionId: 'v1', contentHash: 'fixture-hash' }] };
+      skills: [{ skillId: 'selected', versionId: 'v1', contentHash: 'f'.repeat(64) }] };
     const submission = ['resume', 'closed-resume', 'unsafe-resume', 'supplement-resume'].includes(phase) ? await store.recover(entry) : await store.submit(entry, input);
     const originalPath = path.join(directory, 'submission-id');
     if (fs.existsSync(originalPath)) assert.equal(String(submission.id), fs.readFileSync(originalPath, 'utf8'));

@@ -676,7 +676,7 @@
         },
         "patches": {
           "items": {
-            "description": "只覆盖给出的字段；任何一个 rowId 不存在则整批拒绝",
+            "description": "只覆盖给出的字段；任何一个 rowId 不存在、绑定节点不在本画布或类型不符则整批拒绝",
             "properties": {
               "audioEffects": {
                 "description": "音效要求",
@@ -706,6 +706,10 @@
               },
               "imageGenerationPrompt": {
                 "description": "首帧图片生成提示词",
+                "type": "string"
+              },
+              "imageNodeId": {
+                "description": "把同一画布的 image 节点绑定为本行首帧图片；空字符串解除绑定。本行只保留一条指向它的产出连线",
                 "type": "string"
               },
               "lightingAndAtmosphere": {
@@ -759,6 +763,10 @@
               },
               "videoMotionPrompt": {
                 "description": "视频运动提示词",
+                "type": "string"
+              },
+              "videoNodeId": {
+                "description": "把同一画布的 video 节点绑定为本行镜头视频；空字符串解除绑定。本行只保留一条指向它的产出连线",
                 "type": "string"
               },
               "viewerPOV": {
@@ -1521,7 +1529,25 @@
     "scope": "workspace_read",
     "params": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "精确技能 id"
+        },
+        "q": {
+          "type": "string",
+          "description": "按名称或说明搜索"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        }
+      },
       "additionalProperties": false
     },
     "assistantModes": [

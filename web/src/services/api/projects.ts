@@ -630,3 +630,25 @@ export function updateWorkflowStep(projectId: string, stepId: string, input: { s
 export function registerProjectTaskOutput(projectId: string, stepId: string, input: { taskId: string; canvasId?: string; unitId?: string; shotId?: string; artifactType?: string; assetVersionId?: string; resourceId?: string; mediaType?: string; role?: string; metadataJson?: string; outputJson?: string }) {
     return http.post<{ step: WorkflowStep }>(`/projects/${encodeURIComponent(projectId)}/workflow-steps/${encodeURIComponent(stepId)}/task-output`, input);
 }
+
+export type CanvasProductionStep = "storyboard" | "previz" | "video" | "delivery";
+export type CanvasProductionContext = {
+    projectId: string;
+    canvasId: string;
+    unitId: string;
+    shotId: string;
+    shotRevisionId: string;
+    stepKey: CanvasProductionStep;
+    workflowStepId: string;
+    artifactType: string;
+    linked: boolean;
+    workflowAvailable: boolean;
+};
+
+export function getCanvasProductionContext(projectId: string, canvasId: string, selection: { unitId: string; shotId: string; stepKey: CanvasProductionStep }) {
+    return http.get<{ context: CanvasProductionContext }>(`/projects/${encodeURIComponent(projectId)}/canvases/${encodeURIComponent(canvasId)}/production-context`, { params: selection });
+}
+
+export function registerCanvasProductionTask(projectId: string, canvasId: string, input: { unitId: string; shotId: string; shotRevisionId: string; stepKey: CanvasProductionStep; taskId: string; resourceId?: string }) {
+    return http.post<{ context: CanvasProductionContext; step: WorkflowStep; taskId: string; resourceId: string }>(`/projects/${encodeURIComponent(projectId)}/canvases/${encodeURIComponent(canvasId)}/production-context`, input);
+}

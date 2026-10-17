@@ -58,6 +58,30 @@ describe("处理未完成仍保留可检查的结果", () => {
     });
 });
 
+describe("停下的回合按实际结果给出下一步", () => {
+    const stopped: AssistantTurn = { ...interrupted, turnId: "stopped", error: null, errorReason: null, cancelled: true };
+    const continueButtons = (html: string) => (html.match(/<button\b[^>]*>[\s\S]*?<\/button>/g) || []).filter(button => button.includes("继续处理"));
+    test("停下前已经改动画布：保留改动和撤销，并提供继续入口", () => {
+        const html = render(stopped);
+        expect(html).toContain("这一条已经停下了");
+        expect(html).toContain("新建 2 个节点");
+        expect(html).toContain("撤销这一轮");
+        expect(continueButtons(html)).toHaveLength(1);
+        expect(html).toContain("在输入框里确认或补充要求后发送。");
+    });
+    test("停下时还没有任何改动：只说明已停下，不提供继续，也不显示为完成", () => {
+        const html = render({ ...stopped, reply: "", change: null });
+        expect(html).toContain("这一条已经停下了。");
+        expect(continueButtons(html)).toHaveLength(0);
+        expect(html).not.toContain("canvas-assistant-change");
+        expect(html).not.toContain("已完成");
+    });
+    test("已撤销、旧回合或只读时，停下的回合不提供继续", () => {
+        expect(continueButtons(render(stopped, { undone: true }))).toHaveLength(0);
+        expect(continueButtons(render(stopped, { continue: false }))).toHaveLength(0);
+    });
+});
+
 const proposalTurn: AssistantTurn = {
     ...interrupted, turnId: "with-proposal", error: null, errorReason: null,
     proposals: [{ proposalId: "gp-1", kind: "image", nodeIds: ["a"], model: "图片模型", modelKey: "channel::image" }],

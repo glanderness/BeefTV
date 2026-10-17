@@ -72,6 +72,7 @@ func (s *Service) attachTaskDelivery(task *model.Task) {
 	proj := taskdelivery.Project(*task, stored, loadErr, persistedFailureBlocksRetry(task.Error, task.Stage))
 	task.Outputs = modelTaskOutputs(proj.Outputs)
 	task.ResultState = proj.ResultState
+	task.Stage = proj.Stage
 	task.Delivery = s.deliveryProgressRegistry().forTask(task.ID)
 }
 
@@ -98,6 +99,7 @@ func (s *Service) attachTaskSummaryDeliveries(tasks []model.Task, summaries []Ta
 		proj := taskdelivery.Project(task, byTask[task.ID], taskLoadErr, persistedFailureBlocksRetry(task.Error, task.Stage))
 		summaries[index].Outputs = proj.Outputs
 		summaries[index].ResultState = proj.ResultState
+		summaries[index].Stage = proj.Stage
 		summaries[index].Delivery = s.deliveryProgressRegistry().forTask(task.ID)
 	}
 }
@@ -243,10 +245,10 @@ func (s generationDeliveryStore) CommitOwned(item taskdelivery.OwnedDelivery) er
 	})); err != nil {
 		return err
 	}
-	// A stop can race with the final local commit after all network bytes arrived.
-	// Completing every output wins over a now-unnecessary delivery pause.
+	// Completing every output clears both a resumed download and a concurrent
+	// pause. Leave unrelated generation stages untouched.
 	task, err := s.repo.Task(item.Result.TaskID)
-	if err != nil || (!deliveryPaused(task.Stage) && !strings.Contains(task.InputJSON, `"imageDeliveryCipher"`)) {
+	if err != nil || (!deliveryPaused(task.Stage) && task.Stage != "正在取回结果" && !strings.Contains(task.InputJSON, `"imageDeliveryCipher"`)) {
 		return err
 	}
 	rows, err := s.repo.GenerationOutputResults(task.ID)
@@ -360,6 +362,11 @@ func (a generationDeliveryMediaAdapter) decodeGenerationArtifact(userID, identit
 			return "", nil, "", "", 0, 0, 0, downloadErr
 		}
 		mimeType, data = result.MimeType, result.Data
+		if kind == "image" {
+			if validationErr := generation.ValidateImageArtifact(data, mimeType); validationErr != nil {
+				return "", nil, "", "", 0, 0, 0, validationErr
+			}
+		}
 		kind = normalizeResourceKind(kind, mimeType)
 		fileName = result.FileName
 		if fileName == "" {

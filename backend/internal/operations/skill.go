@@ -3,6 +3,7 @@ package operations
 import (
 	"encoding/json"
 	"infinite-canvas/backend/internal/skills"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -33,11 +34,22 @@ func truncateSkillDescription(value string) string {
 
 func registerSkillOps(r *Registry) {
 	r.Register(Op{AssistantCanvas: true, ID: "skill.catalog", Summary: "列出当前用户已安装技能的名称、说明和当前版本；不含正文", ReadOnly: true, Scope: ScopeWorkspaceRead,
-		Params: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+		Params: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string","description":"精确技能 id"},"q":{"type":"string","description":"按名称或说明搜索"},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":50}},"additionalProperties":false}`),
 		Handler: func(ctx *Context, raw json.RawMessage) (any, error) {
-			var args struct{}
+			var args struct {
+				ID     string `json:"id"`
+				Query  string `json:"q"`
+				Offset int    `json:"offset"`
+				Limit  int    `json:"limit"`
+			}
 			if err := decodeParams(raw, &args); err != nil {
 				return nil, err
+			}
+			if args.Offset < 0 || args.Limit < 0 || args.Limit > SkillCatalogLimit || len(args.ID) > 80 || len(args.Query) > 300 {
+				return nil, InvalidArg("invalid_skill_catalog_query", "技能查询参数无效")
+			}
+			if args.Limit == 0 {
+				args.Limit = SkillCatalogLimit
 			}
 			port, ok := ctx.Domain.(SkillCatalog)
 			if !ok {
@@ -47,14 +59,31 @@ func registerSkillOps(r *Registry) {
 			if err != nil {
 				return nil, mapDomainError(err)
 			}
-			total := len(items)
-			if len(items) > SkillCatalogLimit {
-				items = items[:SkillCatalogLimit]
+			filtered := make([]skills.AgentCatalogItem, 0, len(items))
+			query := strings.ToLower(strings.TrimSpace(args.Query))
+			for _, item := range items {
+				if args.ID != "" && item.Pin.SkillID != args.ID {
+					continue
+				}
+				if query != "" && !strings.Contains(strings.ToLower(item.Name+"\n"+item.Description), query) {
+					continue
+				}
+				filtered = append(filtered, item)
 			}
+			total := len(filtered)
+			offset := args.Offset
+			if offset > total {
+				offset = total
+			}
+			end := offset + args.Limit
+			if end > total {
+				end = total
+			}
+			items = filtered[offset:end]
 			for i := range items {
 				items[i].Description = truncateSkillDescription(items[i].Description)
 			}
-			return map[string]any{"skills": items, "total": total}, nil
+			return map[string]any{"skills": items, "total": total, "offset": offset, "limit": args.Limit}, nil
 		}})
 	for _, id := range []string{"skill.get", "skill.file"} {
 		operation := id

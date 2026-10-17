@@ -501,7 +501,7 @@ func (s *operationSession) AppendUserCanvasStoryboardRows(userID string, canvasI
 	return s.canvas.AppendUserCanvasStoryboardRows(userID, canvasID, nodeID, drafts, expectedRevision)
 }
 
-func (s *operationSession) UpdateUserCanvasStoryboardRows(userID string, canvasID string, nodeID string, patches []canvas.StoryboardRowPatch, expectedRevision int64) (canvas.UserDataSummary, []canvas.StoryboardRowIdentity, error) {
+func (s *operationSession) UpdateUserCanvasStoryboardRows(userID string, canvasID string, nodeID string, patches []canvas.StoryboardRowPatch, expectedRevision int64) (canvas.UserDataSummary, canvas.StoryboardRowUpdate, error) {
 	return s.canvas.UpdateUserCanvasStoryboardRows(userID, canvasID, nodeID, patches, expectedRevision)
 }
 

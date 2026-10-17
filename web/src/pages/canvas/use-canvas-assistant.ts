@@ -1,6 +1,7 @@
 import { Grid } from "antd";
 import { useCallback, useEffect, useRef, useState, useMemo, useSyncExternalStore } from "react";
 
+import { createClientId } from "@/lib/client-id";
 import { ApiError } from "@/services/api/request";
 import { scopedLocalStorage, getActiveUserScope, getActiveUserScopeEpoch, subscribeUserScope } from "@/lib/user-scope";
 import { captureUserScope, userScopeMatches, assertUserScope } from "@/lib/user-scope-guard";
@@ -12,6 +13,7 @@ import {
     assistantPermissionMode,
     AgentTurnFailedError,
     AgentChatNotAdmittedError,
+    AgentStreamDetachedError,
     cancelAgentChat,
     createAssistantSession,
     getAgentHostStatus,
@@ -75,6 +77,8 @@ export type AssistantTurnStatus = {
 
 type CanvasRun = {
     sessionId: string | null;
+    /** 当前这次发送的标识：停止只指向它。 */
+    requestId: string | null;
     sessions: AssistantSessionSummary[];
     turns: AssistantTurn[];
     historyLoaded: boolean;
@@ -101,8 +105,25 @@ type CanvasRun = {
     turnStatus: Record<string, AssistantTurnStatus>;
 };
 
+const ASSISTANT_STOPPED_BEFORE_SEND_TEXT = "已停下，这条消息没有发出。";
+const ASSISTANT_STOPPED_UNPROCESSED_TEXT = "已停下，这条消息没有被处理。";
+
+/** 消息还没发出、或助手还没开始处理就停下：不会执行，不留待发送内容；「重试」仍可原样再发。 */
+function markStoppedBeforeSend(run: CanvasRun, text = ASSISTANT_STOPPED_BEFORE_SEND_TEXT) {
+    run.pendingUserText = null;
+    run.pendingSelectedNodeIds = [];
+    run.pendingAttachments = [];
+    run.pendingSkills = [];
+    run.pendingPermissionMode = null;
+    run.streamed = "";
+    run.lifecycleNotice = null;
+    run.recovery = null;
+    run.error = text;
+}
+
 const createRun = (): CanvasRun => ({
     sessionId: null,
+    requestId: null,
     sessions: [],
     turns: [],
     historyLoaded: false,
@@ -276,7 +297,8 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                 run.pendingPermissionMode = assistantPermissionMode(active.permissionMode);
                 run.supplements = active.supplementInputs?.length ? active.supplementInputs.map(input => ({ text: input.message, attachments: input.attachments, skills: input.skills, status: "accepted" })) : (active.supplements || []).map(text => ({ text, status: "accepted" }));
                 run.recovery = { sessionId: nextSession, turnId: active.turnId, knownTurnIds: history.turns.map(turn => turn.turnId), text: active.userText, selectedNodeIds: active.selectedNodeIds || [] };
-                run.lifecycleNotice = "这次创作仍在继续，正在读取最新结果。";
+                run.requestId = active.requestId ?? null;
+                run.lifecycleNotice = assistantLifecycleText(active.lifecycle) || "这次创作仍在继续，正在读取最新结果。";
                 run.error = null;
             }
             run.sessions = sessionList.sessions;
@@ -368,6 +390,9 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         run.backgroundActive = false;
         run.recovery = null;
         run.lastSent = { text: message, selectedNodeIds: selectedSnapshot, references: referenceSnapshot, attachments, skills, permissionMode };
+        // A new identity per send: Stop names exactly this one, and a retry is a new request.
+        const requestId = createClientId();
+        run.requestId = requestId;
         rerenderIfActive(targetCanvas);
         try {
             if (workspaceCapabilities().local) {
@@ -446,9 +471,15 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                     } else onCanvasChangedRef.current?.(targetCanvas, assistantChangedNodeIds(turn.change));
                     rerenderIfActive(targetCanvas);
                 },
-            }, { signal: controller.signal, selectedNodeIds: selectedSnapshot, references: referenceSnapshot, sessionId: run.sessionId ?? undefined, attachments, skills, permissionMode });
+            }, { signal: controller.signal, selectedNodeIds: selectedSnapshot, references: referenceSnapshot, sessionId: run.sessionId ?? undefined, requestId, attachments, skills, permissionMode });
         } catch (streamError) {
             if (!userScopeMatches(expectedScope)) return;
+            if (controller.signal.aborted && !runFor(targetCanvas).dispatched) {
+                // 发出前点了停止：不论停在哪一步（就绪检查、读取对话），都按「没有发出」收尾。
+                markStoppedBeforeSend(runFor(targetCanvas));
+                rerenderIfActive(targetCanvas);
+                return;
+            }
             if (streamError instanceof AgentTurnFailedError) {
                 // onTurnEnd 已保存真实失败及画布变化，不再额外显示「结果未知」或触发重放。
                 runFor(targetCanvas).error = null;
@@ -458,6 +489,14 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             // 用户点「停止」会以 AbortError 结束这次请求：这是预期结果，不当成失败。
             const aborted = streamError instanceof DOMException && streamError.name === "AbortError";
             const current = runFor(targetCanvas);
+            if (streamError instanceof AgentStreamDetachedError) {
+                // 只是观察断开，这一轮仍在宿主上：保留已显示内容，改为读取结果，轮询接着读进度或最终回执。
+                current.error = null;
+                onCanvasChangedRef.current?.(targetCanvas, []);
+                void loadHistory(targetCanvas);
+                rerenderIfActive(targetCanvas);
+                return;
+            }
             if (streamError instanceof AgentChatNotAdmittedError) {
                 current.dispatched = false;
                 current.recovery = null;
@@ -494,12 +533,27 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         if (!userScopeMatches(expectedScope)) return;
         const targetCanvas = activeCanvasRef.current;
         const run = runFor(targetCanvas);
+        const sending = Boolean(run.controller);
         run.controller?.abort();
-        if (!run.dispatched) return;
+        if (!run.dispatched) {
+            // 还没发出：没有要取消的回合，立刻清掉待发送内容，不等发送流程退出。
+            if (sending) { markStoppedBeforeSend(run); rerenderIfActive(targetCanvas); }
+            return;
+        }
         try {
-            await cancelAgentChat(targetCanvas);
+            const target = run.sessionId && run.requestId ? { sessionId: run.sessionId, requestId: run.requestId } : undefined;
+            const state = await cancelAgentChat(targetCanvas, target);
             if (!userScopeMatches(expectedScope)) return;
             await loadHistory(targetCanvas);
+            if (!userScopeMatches(expectedScope)) return;
+            const current = runFor(targetCanvas);
+            // The assistant had not started on it and history holds no receipt for it:
+            // it will not run, so end the wait here instead of polling for a receipt.
+            if (state === "pending" && current.recovery && !current.backgroundActive && current.requestId === target?.requestId) {
+                markStoppedBeforeSend(current, ASSISTANT_STOPPED_UNPROCESSED_TEXT);
+                current.dispatched = false;
+                rerenderIfActive(targetCanvas);
+            }
         } catch (cancelError) {
             if (!userScopeMatches(expectedScope)) return;
             run.error = cancelError instanceof Error ? cancelError.message : String(cancelError);

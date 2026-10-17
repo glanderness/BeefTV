@@ -6,5 +6,5 @@ export function rebaseCanvasGenerationTarget(live: CanvasNodeData, planned: Canv
     for (const key of ["prompt", "composerContent"] as const) {
         if (live.metadata?.[key] !== captured?.metadata?.[key]) metadata[key] = live.metadata?.[key];
     }
-    return { ...live, metadata, title: live.title !== captured?.title ? live.title : planned.title };
+    return { ...live, metadata };
 }

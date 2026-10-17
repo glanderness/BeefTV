@@ -34,6 +34,18 @@ describe("本轮画布变更", () => {
         });
     });
 
+    test("分镜行写入记脚本节点，绑定改写的产出连线进入变更摘要", () => {
+        const turn = resetTurnAccumulator(newTurnAccumulator(), 3);
+        collectTurnEffects(turn, "canvas.script.rows.append", { canvasId: "c1", revision: 4, nodeId: "script", created: [{ id: "shot-1", shotNumber: 1 }] }, "append-op");
+        collectTurnEffects(turn, "canvas.script.row.update", { canvasId: "c1", revision: 5, nodeId: "script",
+            createdEdgeIds: ["edge-img", "edge-vid"], deletedEdgeIds: ["edge-old"] }, "bind-op");
+        collectTurnEffects(turn, "canvas.script.row.update", { canvasId: "c1", revision: 6, nodeId: "script",
+            createdEdgeIds: [], deletedEdgeIds: ["edge-vid"] }, "unbind-op");
+        expect(turnChange(turn)).toEqual({ revisionBefore: 3, revisionAfter: 6,
+            createdNodeIds: [], updatedNodeIds: ["script"], createdEdgeIds: ["edge-img", "edge-vid"],
+            deletedEdgeIds: ["edge-old", "edge-vid"], operationIds: ["append-op", "bind-op", "unbind-op"] });
+    });
+
     test("未落盘的当前会话按空历史读取，别的会话仍然缺失", () => {
         expect(unflushedSessionHistory("s1", "s1")).toEqual({ sessionId: "s1", turns: [] });
         expect(unflushedSessionHistory("", "s1")).toEqual({ sessionId: null, turns: [] });

@@ -55,6 +55,8 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
     const failedActions = assistantUnresolvedFailures(turn.toolCalls);
     const undone = Boolean(status?.undone);
     const canContinue = Boolean(turn.error && assistantTurnCanContinue(turn.errorReason));
+    // 停下前已经改了画布：保留改动，可在输入框确认后接着做；不自动重发。
+    const stoppedWithChanges = Boolean(turn.cancelled && !turn.error && summary && !undone);
 
     return (
         <div className="canvas-assistant-turn">
@@ -67,7 +69,16 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
             </div>) : (turn.supplements || []).map((text, index) => <CanvasAssistantUserMessage key={`supplement:${index}`} text={text} selectedCount={0} />)}
             {turn.reply ? <CanvasAssistantReply text={turn.reply} /> : null}
             {turn.outputs?.length ? <CanvasAssistantOutputs outputs={turn.outputs} /> : null}
-            {turn.cancelled ? <p className="canvas-assistant-meta">这一条已经停下了。</p> : null}
+            {turn.cancelled && stoppedWithChanges ? (
+                <div className="canvas-assistant-incomplete" role="status">
+                    <strong>这一条已经停下了</strong>
+                    <span>停下前的改动保留在画布上。</span>
+                    {onContinue ? <>
+                        <Button size="small" onClick={onContinue}>继续处理</Button>
+                        <span className="canvas-assistant-meta">在输入框里确认或补充要求后发送。</span>
+                    </> : null}
+                </div>
+            ) : turn.cancelled ? <p className="canvas-assistant-meta">这一条已经停下了。</p> : null}
             {turn.error ? (
                 <div className={canContinue ? "canvas-assistant-incomplete" : "canvas-assistant-feedback"} role="status">
                     <strong>{canContinue ? "尚未完成" : "这一步没有完成"}</strong>

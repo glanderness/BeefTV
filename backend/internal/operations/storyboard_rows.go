@@ -66,14 +66,17 @@ func storyboardRowUpdateSchema() json.RawMessage {
 		"items": map[string]any{
 			"type": "object",
 			"properties": func() map[string]any {
-				properties := map[string]any{"rowId": map[string]any{"type": "string"}}
+				properties := map[string]any{"rowId": map[string]any{"type": "string"},
+					"imageNodeId": map[string]any{"type": "string", "description": "把同一画布的 image 节点绑定为本行首帧图片；空字符串解除绑定。本行只保留一条指向它的产出连线"},
+					"videoNodeId": map[string]any{"type": "string", "description": "把同一画布的 video 节点绑定为本行镜头视频；空字符串解除绑定。本行只保留一条指向它的产出连线"},
+				}
 				for name, schema := range storyboardRowFieldSchemas {
 					properties[name] = schema
 				}
 				return properties
 			}(),
 			"required":    []string{"rowId"},
-			"description": "只覆盖给出的字段；任何一个 rowId 不存在则整批拒绝",
+			"description": "只覆盖给出的字段；任何一个 rowId 不存在、绑定节点不在本画布或类型不符则整批拒绝",
 		},
 	}, []string{"patches"})
 }
@@ -121,12 +124,13 @@ func opStoryboardRowUpdate(ctx *Context, params json.RawMessage) (any, error) {
 	if strings.TrimSpace(args.CanvasID) == "" || strings.TrimSpace(args.NodeID) == "" {
 		return nil, InvalidArg("invalid_params", "canvasId 与 nodeId 必填")
 	}
-	_, updated, err := ctx.Domain.UpdateUserCanvasStoryboardRows(ctx.UserID, args.CanvasID, args.NodeID, args.Patches, args.ExpectedRevision)
+	_, update, err := ctx.Domain.UpdateUserCanvasStoryboardRows(ctx.UserID, args.CanvasID, args.NodeID, args.Patches, args.ExpectedRevision)
 	if err != nil {
 		return nil, mapDomainError(err)
 	}
 	return canvasWriteResult(ctx, args.CanvasID, func(doc map[string]any) map[string]any {
-		return map[string]any{"canvasId": args.CanvasID, "nodeId": args.NodeID, "updated": updated, "rowCount": len(docStoryboardRows(doc, args.NodeID))}
+		return map[string]any{"canvasId": args.CanvasID, "nodeId": args.NodeID, "updated": update.Updated, "rowCount": len(docStoryboardRows(doc, args.NodeID)),
+			"createdEdgeIds": update.CreatedEdgeIDs, "deletedEdgeIds": update.DeletedEdgeIDs}
 	})
 }
 

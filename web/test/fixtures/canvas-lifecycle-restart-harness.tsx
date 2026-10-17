@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import { App } from "antd";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useCanvasGeneration } from "../../src/pages/canvas/use-canvas-generation";
 import { useCanvasProjectLifecycle } from "../../src/pages/canvas/use-canvas-project-lifecycle";
 import { useCanvasHistory } from "../../src/pages/canvas/use-canvas-history";
 import { canvasAppearanceForTheme } from "../../src/lib/canvas/canvas-appearance";
@@ -10,7 +12,8 @@ import { useUserStore } from "@/stores/use-user-store";
 import { recordConfirmedCanvasCommit } from "../../src/services/canvas-operation-journal";
 import { applyGenerationConsumerEffect } from "../../src/services/generation-consumer-dedupe";
 import { attachNodeEffectKey } from "../../src/services/generation-task-materializer";
-import { hasUnconfirmedCanvasEdits } from "../../src/services/local-workspace-repository";
+import { hasUnconfirmedCanvasEdits, pendingExternalCanvasRevision } from "../../src/services/local-workspace-repository";
+import { canvasBackendSubmitPaused } from "../../src/services/canvas-revision-conflict";
 import { syncLocalCanvasProjectToBackend } from "../../src/services/local-workspace-repository";
 import { refreshLocalCanvasProjectIfChanged } from "../../src/services/local-workspace-repository";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
@@ -20,6 +23,12 @@ const noop = () => {};
 const cached = (window as any).__reopenProject ?? { id: "c1", revision: 105, title: "Restart", createdAt: "2026-10-02", updatedAt: "2026-10-02", nodes: Array.from({ length: 10 }, (_, i) => ({ id: `n${i}`, type: "image", title: `Node ${i}`, width: 320, height: 200, position: { x: i * 400, y: 0 }, metadata: {} })), connections: [], chatSessions: [], activeChatId: null, appearance: canvasAppearanceForTheme("dark"), backgroundMode: "grid", showImageInfo: false, viewport: { x: 0, y: 0, k: 1 }, directorScenes: [] };
 const harness = (window as any).__lifecycle = { renders: [], updates: [], media: noop, deleteEdges: noop, save: async () => {}, restartLoad: async (_remote: unknown) => {}, setSession: (ready: boolean) => useUserStore.getState().setHydrated(ready) };
 const scenario = new URLSearchParams(location.search).get("scenario");
+if (scenario === "interrupted") {
+    // The canvas was closed mid-work: a generation was running on n2 and uploads on n3 and n4.
+    cached.nodes[2].metadata = { status: "loading", taskId: "task-done" };
+    cached.nodes[3].metadata = { fileUpload: "uploading", fileUploadProgress: 40 };
+    cached.nodes[4].metadata = { fileUpload: "uploading", fileUploadProgress: 40 };
+}
 await useCanvasStore.persist.rehydrate();
 if (scenario !== "missing-cache-and-journal") await recordConfirmedCanvasCommit(cached as never);
 const local = structuredClone(cached);
@@ -30,6 +39,11 @@ useCanvasStore.setState({ projects: scenario?.startsWith("missing-cache") ? [] :
 await flushCanvasStorePersistence();
 useUserStore.getState().setHydrated(true);
 useCanvasStore.subscribe((state) => { const p = state.projects.find(p => p.id === "c1"); if (p) harness.updates.push({ edges: p.connections.length, revision: p.revision }); });
+
+function Recovery({ projectId, projectLoaded, nodes, nodesRef, setNodes }: Parameters<typeof useCanvasGeneration>[0]) {
+    useCanvasGeneration({ projectId, projectLoaded, nodes, nodesRef, setNodes });
+    return null;
+}
 
 function Harness() {
     const [projectId, setProjectId] = useState("c1");
@@ -73,12 +87,36 @@ function Harness() {
     harness.restartLoad = async (remote: unknown) => { await recordConfirmedCanvasCommit(remote as never); useCanvasStore.setState({ projects: [remote as never] }); useUserStore.getState().setHydrated(false); harness.media(); };
     harness.deleteEdges = () => setConnections([]);
     (harness as any).editTitle = () => setNodes(current => current.map(node => node.id === "n0" ? { ...node, title: "Local unsaved text" } : node));
+    // Same pattern as the canvas page: the live ref moves synchronously with the edit.
+    const editTitleNow = () => {
+        const next = nodesRef.current.map(node => node.id === "n0" ? { ...node, title: "Local unsaved text" } : node);
+        nodesRef.current = next;
+        setNodes(next);
+    };
+    (harness as any).editTitleNow = editTitleNow;
+    // Edit exactly when the backend graph lands in the store, while the editor still shows the cached graph.
+    (harness as any).editWhenBackendProjects = () => {
+        const stop = useCanvasStore.subscribe((state) => {
+            const project = state.projects.find(p => p.id === "c1");
+            if (!project || project.connections.length !== 6 || connectionsRef.current.length !== 0) return;
+            stop();
+            editTitleNow();
+        });
+    };
+    (harness as any).chatIds = () => chatSessionsRef.current.map(session => session.id);
+    (harness as any).held = () => ({ paused: canvasBackendSubmitPaused("c1"), candidateTitle: (pendingExternalCanvasRevision("c1")?.candidate.nodes[0] as CanvasNodeData | undefined)?.title ?? null });
     (harness as any).title = () => nodesRef.current.find(node => node.id === "n0")?.title;
+    (harness as any).nodeState = (id: string) => { const node = nodesRef.current.find(item => item.id === id); return node ? { title: node.title, metadata: node.metadata } : null; };
+    // Another writer adds a node to the stored canvas without telling the editor.
+    (harness as any).addStoredNode = (node: CanvasNodeData) => { const project = useCanvasStore.getState().projects.find(p => p.id === "c1")!; useCanvasStore.getState().updateProject("c1", { nodes: [...project.nodes, node] }); };
+    // A node drag holds history (and with it autosave) until the drag ends.
+    (harness as any).pauseHistory = (paused: boolean) => { history.historyPausedRef.current = paused; };
     (harness as any).refresh = () => refreshLocalCanvasProjectIfChanged(projectId);
     harness.save = async () => { await flushCanvasStorePersistence(); await syncLocalCanvasProjectToBackend("c1"); };
     return <>
         <button onClick={() => setNodes(current => current.map(node => node.id === "n0" ? { ...node, metadata: { ...node.metadata, model: "beefapi::seedance-2.0-mini" } } : node))}>Switch video model</button>
         <div data-testid="graph">{`${projectLoaded}:${nodes.length}:${connections.length}`}</div>
+        {scenario === "late-recovery" && <Recovery projectId={projectId} projectLoaded={projectLoaded} nodes={nodes} nodesRef={nodesRef} setNodes={setNodes} />}
     </>;
 }
 function MountController() {
@@ -86,4 +124,4 @@ function MountController() {
     (harness as any).unmount = () => setMounted(false);
     return mounted ? <Harness /> : <div data-testid="unmounted">Left canvas</div>;
 }
-createRoot(document.getElementById("root")!).render(<MemoryRouter><App><MountController /></App></MemoryRouter>);
+createRoot(document.getElementById("root")!).render(<MemoryRouter><QueryClientProvider client={new QueryClient()}><App><MountController /></App></QueryClientProvider></MemoryRouter>);

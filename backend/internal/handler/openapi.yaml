@@ -489,6 +489,8 @@ paths:
         宿主凭据与模型密钥由后端注入，浏览器不接触。
         X-Beeftv-Turn-Admission 响应头为 rejected（尚未尝试创建业务轮次）、unknown（已尝试创建）或 admitted（已创建）。
         只有 rejected 可以确认未接纳；缺少标记、网络故障或接纳后失败仍需读取回执。续签凭据不会重放消息。
+        可选 requestId（[A-Za-z0-9_-]{1,128}）标识这次发送：停止可以指向它，同一会话里同一 requestId 重发不会再执行。
+        它不代替后端生成的 turnId；格式不对返回 400（rejected）。
       responses:
         "200":
           description: application/x-ndjson 事件流
@@ -499,15 +501,21 @@ paths:
   /assistant/cancel:
     post:
       tags: [assistant]
-      summary: 取消指定画布正在进行的回合
-      description: 需要写权限，并且 canvasId 必须属于当前工作区。只读客户端不能取消。
+      summary: 停止一次发送，或指定画布正在进行的回合
+      description: |
+        需要写权限，并且 canvasId 必须属于当前工作区。只读客户端不能取消。
+        带 sessionId 与 requestId（必须成对）时只停止这次发送，即使它还没到达宿主；
+        信封 data.state 为 stopped（正在执行，已停下）、finished（已经结束）或 pending（还没开始执行，之后也不会执行）。
+        不带这两个字段时停止该画布正在进行的回合。
       responses:
         "202":
           description: 已受理取消
+        "400":
+          description: sessionId 与 requestId 不成对或格式无效
         "403":
           description: 只读客户端，或缺少写权限
         "404":
-          description: 画布不存在或不属于当前工作区，或该画布没有正在进行的会话
+          description: 画布不存在或不属于当前工作区；会话不属于该画布；或不带请求标识时该画布没有正在进行的会话
   /assistant/host/config:
     get:
       tags: [assistant]

@@ -12,7 +12,7 @@ import { useTaskDetails } from "@/hooks/use-task-details";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
-import { isDepthCaptureResultNode } from "@/lib/canvas/canvas-depth-capture";
+import { canvasNodeNeedsGenerationRecovery, consumeGenerationRecoveryRestore, isGenerationRecoveryRestored } from "@/lib/canvas/canvas-project-generation";
 import { generationFailureMetadata } from "@/lib/generation-error";
 import { canvasGenerationTaskNodes, canvasTaskFailureMetadata } from "./canvas-generation-failure";
 import { runGenerationConsumer } from "@/services/generation-consumer-lifecycle";
@@ -37,6 +37,14 @@ type UseCanvasGenerationOptions = {
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
+const INTERRUPTED_GENERATION_DETAILS = "页面刷新后本地生成已中断，请重新生成。";
+
+function recoveryTaskIdentity(node: CanvasNodeData) {
+    return node.metadata?.taskId || node.metadata?.agentGenerationContinuation?.taskId || "";
+}
+
+// 恢复器对一个节点的认领：只有认领还在、节点仍是认领时的任务身份，恢复结果才写回这个节点。
+type GenerationRecoveryClaim = { node: CanvasNodeData; identity: string };
 
 export function subscribeCanvasGenerationRecoveryTasks(ids: readonly string[], listener: (task: GenerationTask) => void, subscribe: (ids: readonly string[], listener: (task: GenerationTask) => void) => () => void = subscribeGenerationTasks) {
     return subscribe(Array.from(new Set(ids)), listener);
@@ -174,6 +182,9 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
     const queryClient = useQueryClient();
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
     const recoveringTaskIdsRef = useRef(new Set<string>());
+    // 正在恢复的节点及其认领：同一节点同一任务同时只交给恢复器一次；新认领或新请求会顶掉旧认领。
+    const recoveringNodesRef = useRef(new Map<string, GenerationRecoveryClaim>());
+    const lateRecoveryRef = useRef<(() => void) | null>(null);
     const autoSavedTaskIdsRef = useRef(new Set<string>());
     const consumerControllerRef = useRef(new AbortController());
     const projectIdRef = useRef(projectId);
@@ -192,6 +203,8 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
     const startGenerationRequest = useCallback((targetNodeId: string, originNodeId: string, runningId = originNodeId, controller = new AbortController()) => {
         const previous = generationRequestsRef.current.get(targetNodeId);
         if (previous?.controller !== controller) previous?.controller.abort();
+        // 用户在这些节点上开始了新请求：之前的恢复不再拥有它们，旧任务的结果不会写回。
+        [targetNodeId, originNodeId, runningId].forEach((id) => recoveringNodesRef.current.delete(id));
         generationRequestsRef.current.set(targetNodeId, { targetNodeId, originNodeId, runningNodeId: runningId, controller });
         return controller;
     }, []);
@@ -245,11 +258,11 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
     );
 
     const applyGenerationTaskResult = useCallback(
-        async (nodeId: string, task: GenerationTask) => {
+        async (nodeId: string, task: GenerationTask, isNodeOwned: () => boolean = () => true) => {
             const capturedScope = captureUserScope();
             const capturedCanvasId = projectId;
             const controller = consumerControllerRef.current;
-            const isCurrentCanvas = () => projectIdRef.current === capturedCanvasId && !controller.signal.aborted && userScopeMatches(capturedScope);
+            const isCurrentCanvas = () => projectIdRef.current === capturedCanvasId && !controller.signal.aborted && userScopeMatches(capturedScope) && isNodeOwned();
             if (!isCurrentCanvas()) throw new DOMException("The canvas operation was abandoned", "AbortError");
             if (task.status !== "succeeded") {
                 if (generationTaskCanReloadResource(task) && isCurrentCanvas()) {
@@ -265,6 +278,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                     outputIndex: nodesRef.current.find((node) => node.id === nodeId)?.metadata?.taskOutputIndex ?? 0,
                     signal: controller.signal,
                     isCurrent: isCurrentCanvas,
+                    isNodeOwned,
                     nodesRef,
                     setNodes,
                 });
@@ -341,16 +355,40 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
         [],
     );
 
+    // 本次会话里正在执行的生成请求（目标、配置、运行节点）由它自己的消费者负责，恢复器不碰，避免误停、误标错或重复订阅。
+    const isLiveRequestNode = useCallback((nodeId: string) => Array.from(generationRequestsRef.current.values()).some((request) => request.targetNodeId === nodeId || request.originNodeId === nodeId || request.runningNodeId === nodeId), []);
+
+    const selectRecoveryNodes = useCallback(
+        (candidates: CanvasNodeData[]) =>
+            candidates.filter((node) => {
+                if (!canvasNodeNeedsGenerationRecovery(node) || isLiveRequestNode(node.id)) return false;
+                const identity = recoveryTaskIdentity(node);
+                return recoveringNodesRef.current.get(node.id)?.identity !== identity && !(identity && recoveringTaskIdsRef.current.has(identity));
+            }),
+        [isLiveRequestNode],
+    );
+
+    const claimRecoveryNodes = useCallback(
+        (selected: CanvasNodeData[]) =>
+            selected.map((node) => {
+                const claim: GenerationRecoveryClaim = { node, identity: recoveryTaskIdentity(node) };
+                recoveringNodesRef.current.set(node.id, claim);
+                return claim;
+            }),
+        [],
+    );
+
     const recoverInterruptedGenerationTasks = useCallback(
-        async (startedProjectId: string, signal: AbortSignal, isCurrentProject: () => boolean) => {
+        async (startedProjectId: string, signal: AbortSignal, isCurrentProject: () => boolean, lateClaims?: GenerationRecoveryClaim[]) => {
             if (!isCurrentProject()) return;
-            const recoveryNodes = nodesRef.current.filter((node) => {
-                if (isDepthCaptureResultNode(node)) return false;
-                const pendingAgentContinuation = node.metadata?.agentGenerationContinuation?.status === "pending";
-                const aggregateBatchRoot = node.metadata?.isBatchRoot && node.metadata.batchChildIds?.length && !node.metadata.taskId;
-                if (aggregateBatchRoot && !pendingAgentContinuation) return false;
-                return pendingAgentContinuation || ["submitting", "unknown"].includes(node.metadata?.generationSubmissionState || "") || node.metadata?.status === NODE_STATUS_LOADING || node.metadata?.errorDetails === "页面刷新后生成已中断，请重新生成。" || Boolean(node.metadata?.taskId && (node.metadata.status !== NODE_STATUS_SUCCESS || (node.metadata.taskStatus === "succeeded" && !node.metadata.content && !node.metadata.storageKey)));
-            });
+            let claims = lateClaims;
+            if (!claims) {
+                claims = claimRecoveryNodes(selectRecoveryNodes(nodesRef.current));
+                // 首次扫描已覆盖当前全部节点，这次恢复的记录不再交给后到补扫。
+                consumeGenerationRecoveryRestore(nodesRef.current);
+            }
+            const recoveryNodes = claims.map((claim) => claim.node);
+            const recoveredNodeIds = new Set(recoveryNodes.map((node) => node.id));
             const needsDiscovery = recoveryNodes.some((node) => !node.metadata?.taskId && !node.metadata?.agentGenerationContinuation?.taskId);
             const projectTasks = needsDiscovery && !localMode
                 ? (
@@ -362,74 +400,103 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                 : [];
             if (!isCurrentProject()) return;
             await Promise.all(
-                recoveryNodes.map(async (node) => {
-                    let discoveredTask = projectTasks.find((task) => generationTaskNodeId(task) === node.id);
-                    if (!node.metadata?.taskId && node.metadata?.taskClientOperationId) {
-                        try {
-                            discoveredTask = await findGenerationTaskByOperation(node.metadata.taskClientOperationId, startedProjectId, signal);
-                            if (discoveredTask && generationTaskNodeId(discoveredTask) !== node.id) discoveredTask = undefined;
-                        } catch {
-                            // A failed lookup cannot prove that the paid submission was rejected.
-                        }
-                    }
-                    const taskId = node.metadata?.taskId || node.metadata?.agentGenerationContinuation?.taskId || discoveredTask?.id;
-                    if (!taskId) {
-                        if (!isCurrentProject()) return;
-                        setNodes((current) =>
-                            isCurrentProject() ? current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, ...(item.metadata?.taskClientOperationId ? { generationSubmissionState: "unknown" as const, taskStage: "提交结果待确认", errorDetails: "尚未查到上次提交的任务，请稍后重新打开画布查询，暂勿重新生成" } : { errorDetails: "页面刷新后找不到对应任务，请重新生成。" }) } } : item)) : current,
-                        );
-                        return;
-                    }
-                    if (recoveringTaskIdsRef.current.has(taskId)) return;
-                    recoveringTaskIdsRef.current.add(taskId);
-                    const continuationOnly = !node.metadata?.taskId && node.metadata?.agentGenerationContinuation?.taskId === taskId && !discoveredTask;
+                claims.map(async (claim) => {
+                    const { node } = claim;
+                    // 节点只接受认领时的任务（或为它找到的任务）的结果；任务身份变了、用户又发起了请求或认领被顶掉，就不再写回。
+                    const allowedIdentities = new Set([claim.identity]);
+                    const ownsNode = (item: CanvasNodeData) => isCurrentProject() && !isLiveRequestNode(item.id) && allowedIdentities.has(recoveryTaskIdentity(item));
+                    const owns = () => {
+                        if (!isCurrentProject() || recoveringNodesRef.current.get(node.id) !== claim) return false;
+                        const current = nodesRef.current.find((item) => item.id === node.id);
+                        return Boolean(current && ownsNode(current));
+                    };
                     try {
-                        const completed = await observeSubscribedGenerationTask(taskId, signal, (task) => {
-                            if (isCurrentProject() && !continuationOnly) bindGenerationTask(node.id, task);
-                        });
-                        if (!isCurrentProject()) return;
-                        await recoverCanvasGenerationTaskNode({
-                            projectId: startedProjectId,
-                            node,
-                            completed,
-                            continuationOnly,
-                            nodesRef,
-                            setNodes,
-                            applyGenerationTaskResult,
-                            signal,
-                            isCurrentProject,
-                        });
-                    } catch (error) {
-                        if (!isCurrentProject() || (error instanceof Error && error.name === "AbortError")) return;
-                        const currentMetadata = nodesRef.current.find((item) => item.id === node.id)?.metadata || node.metadata;
-                        const failure = generationFailureMetadata(error, currentMetadata?.prompt || "", currentMetadata?.references || []);
-                        if (failure.failedInputFingerprint && currentMetadata?.failedInputFingerprint) {
-                            failure.failedInputFingerprint = currentMetadata.failedInputFingerprint;
-                            failure.failedPromptFingerprint = currentMetadata.failedPromptFingerprint;
+                        let discoveredTask = projectTasks.find((task) => generationTaskNodeId(task) === node.id);
+                        if (!node.metadata?.taskId && node.metadata?.taskClientOperationId) {
+                            try {
+                                discoveredTask = await findGenerationTaskByOperation(node.metadata.taskClientOperationId, startedProjectId, signal);
+                                if (discoveredTask && generationTaskNodeId(discoveredTask) !== node.id) discoveredTask = undefined;
+                            } catch {
+                                // A failed lookup cannot prove that the paid submission was rejected.
+                            }
                         }
-                        setNodes((current) =>
-                            isCurrentProject()
-                                ? current.map((item) =>
-                                      item.id === node.id
-                                          ? {
-                                                ...item,
-                                                metadata: {
-                                                    ...item.metadata,
-                                                    status: continuationOnly ? item.metadata?.status : NODE_STATUS_ERROR,
-                                                    ...(continuationOnly ? {} : failure),
-                                                    ...(item.metadata?.agentGenerationContinuation?.status === "pending"
-                                                        ? {
-                                                              agentGenerationContinuation: { ...item.metadata.agentGenerationContinuation, status: "failed" as const },
-                                                          }
-                                                        : {}),
-                                                },
-                                            }
-                                          : item,
-                                  )
-                                : current,
-                        );
+                        const taskId = node.metadata?.taskId || node.metadata?.agentGenerationContinuation?.taskId || discoveredTask?.id;
+                        if (!taskId) {
+                            if (!owns()) return;
+                            setNodes((current) =>
+                                current.map((item) =>
+                                    item.id === node.id && ownsNode(item)
+                                        ? {
+                                              ...item,
+                                              metadata: {
+                                                  ...item.metadata,
+                                                  status: NODE_STATUS_ERROR,
+                                                  ...(item.metadata?.taskClientOperationId
+                                                      ? {
+                                                            generationSubmissionState: "unknown" as const,
+                                                            taskStage: "提交结果待确认",
+                                                            errorDetails: "尚未查到上次提交的任务，请稍后重新打开画布查询，暂勿重新生成",
+                                                        }
+                                                      : { errorDetails: INTERRUPTED_GENERATION_DETAILS }),
+                                              },
+                                          }
+                                        : item,
+                                ),
+                            );
+                            return;
+                        }
+                        allowedIdentities.add(taskId);
+                        if (recoveringTaskIdsRef.current.has(taskId)) return;
+                        recoveringTaskIdsRef.current.add(taskId);
+                        const continuationOnly = !node.metadata?.taskId && node.metadata?.agentGenerationContinuation?.taskId === taskId && !discoveredTask;
+                        try {
+                            const completed = await observeSubscribedGenerationTask(taskId, signal, (task) => {
+                                if (owns() && !continuationOnly) bindGenerationTask(node.id, task);
+                            });
+                            if (!owns()) return;
+                            await recoverCanvasGenerationTaskNode({
+                                projectId: startedProjectId,
+                                node,
+                                completed,
+                                continuationOnly,
+                                nodesRef,
+                                setNodes,
+                                applyGenerationTaskResult: (nodeId, task) => applyGenerationTaskResult(nodeId, task, owns),
+                                signal,
+                                isCurrentProject: owns,
+                            });
+                        } catch (error) {
+                            if (!owns() || (error instanceof Error && error.name === "AbortError")) return;
+                            const currentMetadata = nodesRef.current.find((item) => item.id === node.id)?.metadata || node.metadata;
+                            const failure = generationFailureMetadata(error, currentMetadata?.prompt || "", currentMetadata?.references || []);
+                            if (failure.failedInputFingerprint && currentMetadata?.failedInputFingerprint) {
+                                failure.failedInputFingerprint = currentMetadata.failedInputFingerprint;
+                                failure.failedPromptFingerprint = currentMetadata.failedPromptFingerprint;
+                            }
+                            setNodes((current) =>
+                                current.map((item) =>
+                                    item.id === node.id && ownsNode(item)
+                                        ? {
+                                              ...item,
+                                              metadata: {
+                                                  ...item.metadata,
+                                                  status: continuationOnly ? item.metadata?.status : NODE_STATUS_ERROR,
+                                                  ...(continuationOnly ? {} : failure),
+                                                  ...(item.metadata?.agentGenerationContinuation?.status === "pending"
+                                                      ? {
+                                                            agentGenerationContinuation: { ...item.metadata.agentGenerationContinuation, status: "failed" as const },
+                                                        }
+                                                      : {}),
+                                              },
+                                          }
+                                        : item,
+                                ),
+                            );
+                        } finally {
+                            recoveringTaskIdsRef.current.delete(taskId);
+                        }
                     } finally {
-                        recoveringTaskIdsRef.current.delete(taskId);
+                        if (recoveringNodesRef.current.get(node.id) === claim) recoveringNodesRef.current.delete(node.id);
                     }
                 }),
             );
@@ -438,6 +505,8 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                 isCurrentProject()
                     ? current.map((node) => {
                           if (!node.metadata?.isBatchRoot || !node.metadata.batchChildIds?.length || node.metadata.taskId) return node;
+                          // 本次会话正在生成的批次由它自己的请求维护；后到快照只重算含本轮恢复节点的批次。
+                          if (isLiveRequestNode(node.id) || (lateClaims && !node.metadata.batchChildIds.some((id) => recoveredNodeIds.has(id)))) return node;
                           const children = node.metadata.batchChildIds.map((id) => current.find((item) => item.id === id)).filter(Boolean) as CanvasNodeData[];
                           const primary = children.find((item) => item.id === node.metadata?.primaryImageId && item.metadata?.content) || children.find((item) => item.metadata?.content);
                           const loading = children.some((item) => item.metadata?.status === NODE_STATUS_LOADING);
@@ -479,7 +548,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                     : current,
             );
         },
-        [applyGenerationTaskResult, bindGenerationTask, localMode, nodesRef, observeSubscribedGenerationTask, setNodes],
+        [applyGenerationTaskResult, bindGenerationTask, claimRecoveryNodes, isLiveRequestNode, localMode, nodesRef, observeSubscribedGenerationTask, selectRecoveryNodes, setNodes],
     );
 
     useEffect(() => {
@@ -491,8 +560,44 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
         void coordinator
             .switchProject(projectId, async (context) => {
                 recoveringTaskIdsRef.current.clear();
+                recoveringNodesRef.current.clear();
                 consumerControllerRef.current = context.controller;
-                await runGenerationConsumer(context.signal, async (signal) => recoverInterruptedGenerationTasks(context.projectId, signal, () => !signal.aborted && context.isCurrentProject()));
+                const scans = new Set<Promise<void>>();
+                const scan = (lateClaims?: GenerationRecoveryClaim[]) => {
+                    const run = runGenerationConsumer(context.signal, async (signal) => recoverInterruptedGenerationTasks(context.projectId, signal, () => !signal.aborted && context.isCurrentProject(), lateClaims));
+                    scans.add(run);
+                    void run.then(
+                        () => scans.delete(run),
+                        () => scans.delete(run),
+                    );
+                    return run;
+                };
+                // 画布先用缓存打开、云端版本随后才到时，后到快照里待恢复的节点沿用同一个恢复上下文补订阅；
+                // 切换画布或卸载时随这个上下文一起中止，并在下一画布开始恢复前等它们收尾。
+                // 只看这次快照恢复交来的节点：普通刷新合并的节点、本次会话里分镜等流程自己维护的节点都不在其中。
+                const recoverLateNodes = () => {
+                    if (!context.isCurrentProject()) return;
+                    const restored = nodesRef.current.filter(isGenerationRecoveryRestored);
+                    if (!restored.length) return;
+                    const claims = claimRecoveryNodes(selectRecoveryNodes(restored));
+                    // 只交出一次；跳过的节点（本次会话的请求、已在恢复的同一任务）也一并清掉。
+                    consumeGenerationRecoveryRestore(restored);
+                    if (!claims.length) return;
+                    scan(claims).catch((error) => {
+                        if (!(error instanceof Error && error.name === "AbortError")) throw error;
+                    });
+                };
+                lateRecoveryRef.current = recoverLateNodes;
+                try {
+                    await scan();
+                    await new Promise<void>((resolve) => {
+                        if (context.signal.aborted) resolve();
+                        else context.signal.addEventListener("abort", () => resolve(), { once: true });
+                    });
+                } finally {
+                    if (lateRecoveryRef.current === recoverLateNodes) lateRecoveryRef.current = null;
+                    await Promise.allSettled(scans);
+                }
             })
             .catch((error) => {
                 if (!(error instanceof Error && error.name === "AbortError")) throw error;
@@ -500,7 +605,11 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
         return () => {
             void coordinator.abortAndDrain();
         };
-    }, [projectId, projectLoaded, recoverInterruptedGenerationTasks]);
+    }, [claimRecoveryNodes, nodesRef, projectId, projectLoaded, recoverInterruptedGenerationTasks, selectRecoveryNodes]);
+
+    useEffect(() => {
+        if (projectLoaded) lateRecoveryRef.current?.();
+    }, [nodes, projectLoaded]);
 
     // 本地任务同样持久化在任务表中，优先由上面的任务恢复流程按 taskId 对账。
     // 这里只把没有持久任务身份的孤立 loading 快照标记为中断，避免覆盖已完成任务。
@@ -520,7 +629,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                         taskStatus: "failed" as const,
                         taskStage: undefined,
                         taskUpdatedAt: new Date().toISOString(),
-                        errorDetails: "页面刷新后本地生成已中断，请重新生成。",
+                        errorDetails: INTERRUPTED_GENERATION_DETAILS,
                     },
                 };
             });

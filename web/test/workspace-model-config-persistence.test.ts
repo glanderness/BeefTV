@@ -20,6 +20,16 @@ test("an unacknowledged config write remains dirty and can be retried", async ()
     expect(repository.getState()).toMatchObject({ status: "saved", dirty: false, revision: 2 });
 });
 
+test("an acknowledged no-op save can keep its revision", async () => {
+    const repository = createModelConfigRepository({
+        read: async () => ({ config: defaultConfig, revision: 3, health: "ready", source: "builtin+local" }),
+        write: async () => ({ saved: true, revision: 3 }),
+    });
+    await repository.hydrate();
+    await repository.commit(defaultConfig);
+    expect(repository.getState()).toMatchObject({ status: "saved", dirty: false, revision: 3 });
+});
+
 test("a deleted custom channel stays absent after a new repository hydrates", async () => {
     let stored = { ...defaultConfig, channels: [createModelChannel({ id: "custom", apiKey: "dummy", models: ["chat"] })] };
     let revision = 3;

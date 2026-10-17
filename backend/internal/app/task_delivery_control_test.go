@@ -2,11 +2,13 @@ package app
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,7 +32,8 @@ func TestGenerationDownloadCanPauseAndResumeWithoutRegenerating(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write([]byte("completed"))
+		image, _ := base64.StdEncoding.DecodeString(strings.SplitN(tinyPNGDataURL, ",", 2)[1])
+		_, _ = w.Write(image)
 	}))
 	defer server.Close()
 	svc, db := newGenerationDeliveryMediaService(t, filepath.Join(t.TempDir(), "delivery.db"), t.TempDir())
@@ -86,10 +89,50 @@ func TestGenerationDownloadCanPauseAndResumeWithoutRegenerating(t *testing.T) {
 	if calls.Load() != 2 {
 		t.Fatalf("download calls: %d", calls.Load())
 	}
+	got, err = svc.Task(task.UserID, task.ID)
+	if err != nil || got.Stage != "生成完成" {
+		t.Fatalf("resumed delivery kept a downloading stage: %+v %v", got, err)
+	}
 	var count int64
 	db.Model(&model.Task{}).Count(&count)
 	if count != 1 {
 		t.Fatalf("retry created generation task: %d", count)
+	}
+}
+
+func TestGenerationDownloadCompletedProjectionClearsStaleStage(t *testing.T) {
+	for _, stage := range []string{"正在取回结果", "delivery_paused", "delivery_timed_out", "任务完成"} {
+		t.Run(stage, func(t *testing.T) {
+			svc, db := newGenerationDeliveryMediaService(t, filepath.Join(t.TempDir(), "delivery.db"), t.TempDir())
+			defer closeDB(t, db)
+			task := seedSucceededImageTask(t, db, "completed", "{}")
+			if err := db.Create(&model.Resource{ID: "res-shared", UserID: task.UserID, Kind: "image", Status: model.ResourceStatusReady, MimeType: "image/png"}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := svc.DeliverSucceededTask(task); err != nil {
+				t.Fatal(err)
+			}
+			if err := svc.repo.SetGenerationDeliveryStage(task.UserID, task.ID, stage); err != nil {
+				t.Fatal(err)
+			}
+			task.Stage = stage
+			want := "生成完成"
+			if stage == "任务完成" {
+				want = stage
+			}
+			got, err := svc.Task(task.UserID, task.ID)
+			if err != nil || got.Stage != want || got.ResultState != "READY" {
+				t.Fatalf("completed detail: %+v %v", got, err)
+			}
+			summaries := (taskPresenterAdapter{s: svc}).Summaries([]model.Task{task})
+			if len(summaries) != 1 || summaries[0].Stage != want || summaries[0].ResultState != "READY" {
+				t.Fatalf("completed summary: %+v", summaries)
+			}
+			stored, err := svc.repo.Task(task.ID)
+			if err != nil || stored.Stage != stage {
+				t.Fatalf("projection changed stored task: %+v %v", stored, err)
+			}
+		})
 	}
 }
 

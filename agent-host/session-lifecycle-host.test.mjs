@@ -1,14 +1,16 @@
 import { expect, test } from 'bun:test';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { canvasKey } from './session-owner.mjs';
+import { serveEmptySkillContext } from './test-support/skill-context-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const UPSTREAM_SECRET = 'sk-synthetic-upstream-secret';
 
 async function withHost(run, envExtra = {}, options = {}) {
   const { slowFirstModel = true } = options;
@@ -19,6 +21,10 @@ async function withHost(run, envExtra = {}, options = {}) {
   let log = '';
   let modelCalls = 0;
   const modelPayloads = [];
+  const opsRequests = [];
+  // holdTurnReads: { [turnId]: n } holds the n-th Go turn read until the test releases it.
+  const turnReads = {};
+  const heldTurnReads = {};
   const listen = (server) => new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', () => resolve(server.address().port));
@@ -43,6 +49,8 @@ async function withHost(run, envExtra = {}, options = {}) {
   const ops = createServer(async (req, res) => {
     res.setHeader('content-type', 'application/json');
     if (req.headers['x-beeftv-agent-token'] !== hostToken) { res.writeHead(403).end('{}'); return; }
+    opsRequests.push(`${req.method} ${req.url}`);
+    if (serveEmptySkillContext(req, res)) return;
     if (req.url === '/api/ops') {
       res.end(JSON.stringify({ code: 0, data: { ops: [{ id: 'canvas.get', summary: 'Read', readOnly: true, scope: 'canvas', params: { type: 'object', properties: { canvasId: { type: 'string' } }, required: ['canvasId'] } }] } }));
       return;
@@ -50,6 +58,11 @@ async function withHost(run, envExtra = {}, options = {}) {
     // Go 回合记录：宿主在开始/恢复前读取它，并按 canvasId 校验归属。
     if (req.url.startsWith('/api/assistant/runtime/turns/')) {
       const turnId = decodeURIComponent(req.url.split('/')[5] || '');
+      if (req.method === 'GET' && options.holdTurnReads?.[turnId]) {
+        turnReads[turnId] = (turnReads[turnId] || 0) + 1;
+        if (turnReads[turnId] === options.holdTurnReads[turnId]) await new Promise((resolve) => { heldTurnReads[turnId] = resolve; });
+      }
+      if (req.method === 'POST' && req.url.endsWith('/complete')) await options.completeTurn?.(turnId);
       res.end(JSON.stringify({ code: 0, data: { turnId, canvasId: options.canvasId || 'canvas', permissionMode: 'canvas', open: true } }));
       return;
     }
@@ -58,9 +71,16 @@ async function withHost(run, envExtra = {}, options = {}) {
   const model = createServer(async (req, res) => {
     modelPayloads.push(await jsonBody(req));
     modelCalls += 1;
+    await options.beforeModelReply?.(modelCalls);
     if (options.failFirstModel && modelCalls === 1) {
       res.writeHead(400, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: { message: 'synthetic provider rejection', type: 'invalid_request_error' } }));
+      return;
+    }
+    if (options.retryFirstModel && modelCalls === 1) {
+      // Transient upstream failure: the official policy retries it. Its text must never reach the panel.
+      res.writeHead(503, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: `upstream detail ${UPSTREAM_SECRET}`, type: 'server_error' } }));
       return;
     }
     if (slowFirstModel && modelCalls === 1) {
@@ -118,7 +138,9 @@ async function withHost(run, envExtra = {}, options = {}) {
       await start();
     };
     await start();
-    await run({ api, waitFor, directory, child, restart, base, hostToken, getLog: () => log, getModelCalls: () => modelCalls, getModelPayloads: () => modelPayloads });
+    await run({ api, waitFor, directory, child, restart, base, hostToken, getLog: () => log, getModelCalls: () => modelCalls, getModelPayloads: () => modelPayloads,
+      getOpsRequests: () => [...opsRequests], heldTurnRead: (turnId) => Boolean(heldTurnReads[turnId]),
+      releaseTurnRead: (turnId) => heldTurnReads[turnId]?.() });
   } finally {
     if (child && child.exitCode === null) {
       const exited = new Promise((resolve) => child.once('close', resolve));
@@ -334,4 +356,181 @@ test('真实宿主：旧会话交接首轮断线，重启后重发原请求复�
     expect(again.text).toContain(successor);
     expect(getModelCalls()).toBe(2);
   });
+}, 35000);
+
+test('真实宿主：运行中反复读取历史不重放恢复写入，也不重写当前指针', async () => {
+  await withHost(async ({ api, waitFor, directory, getModelCalls, getOpsRequests }) => {
+    const canvasId = 'poll-canvas';
+    const created = await api('/sessions', { canvasId });
+    const sessionId = created.payload.sessionId;
+    const chat = api('/chat', { canvasId, message: 'Keep this turn busy.', turnId: 'pollturn1', revisionBefore: 1, sessionId });
+    await waitFor(() => getModelCalls() >= 1, 8000);
+    const pointer = path.join(directory, 'sessions', canvasKey(canvasId), 'current.json');
+    const pointerBefore = statSync(pointer).ino;
+    const turnRequests = () => getOpsRequests().filter((line) => line.includes('/assistant/runtime/turns/'));
+    const before = turnRequests();
+    for (let poll = 0; poll < 3; poll += 1) {
+      const current = await api(`/history?canvasId=${canvasId}`);
+      expect(current.status).toBe(200);
+      expect(current.payload.active).toMatchObject({ turnId: 'pollturn1', status: 'running' });
+      const explicit = await api(`/history?canvasId=${canvasId}&sessionId=${encodeURIComponent(sessionId)}`);
+      expect(explicit.payload.active?.turnId).toBe('pollturn1');
+      await delay(200);
+    }
+    // Reading progress must not re-authorize, re-bind or re-submit the live turn.
+    expect(turnRequests()).toEqual(before);
+    expect(statSync(pointer).ino).toBe(pointerBefore);
+    expect(getModelCalls()).toBe(1);
+    await api('/cancel', { canvasId });
+    const end = (await chat).text.trim().split('\n').map((line) => JSON.parse(line)).find((line) => line.type === 'turn_end');
+    expect(end.cancelled).toBe(true);
+    expect((await api(`/history?canvasId=${canvasId}`)).payload.active).toBeNull();
+  }, {}, { canvasId: 'poll-canvas' });
+}, 35000);
+
+test('真实宿主：官方自动重试在流和历史里显示为分类后的进度，不带上游原文', async () => {
+  await withHost(async ({ api, waitFor, getModelCalls }) => {
+    const canvasId = 'retry-canvas';
+    const created = await api('/sessions', { canvasId });
+    const chat = api('/chat', { canvasId, message: 'Retry once.', turnId: 'retryturn1', revisionBefore: 1, sessionId: created.payload.sessionId });
+    let during;
+    await waitFor(async () => {
+      during = await api(`/history?canvasId=${canvasId}`);
+      return during.payload.active?.lifecycle?.phase === 'retry';
+    }, 6000);
+    const progress = during.payload.active.lifecycle;
+    expect(progress).toMatchObject({ type: 'lifecycle', phase: 'retry', reason: 'provider_unavailable' });
+    expect(Object.keys(progress).sort()).toEqual(['attempt', 'phase', 'reason', 'type']);
+    expect(Number.isInteger(progress.attempt) && progress.attempt > 0).toBe(true);
+    expect(during.text).not.toContain(UPSTREAM_SECRET);
+    const result = await chat;
+    const lines = result.text.trim().split('\n').map((line) => JSON.parse(line));
+    expect(lines).toContainEqual(progress);
+    expect(lines.filter((line) => line.type === 'lifecycle' && line.phase === 'retry_end')).toEqual([{ type: 'lifecycle', phase: 'retry_end', attempt: progress.attempt }]);
+    expect(lines.find((line) => line.type === 'turn_end')).toMatchObject({ reply: 'ok', error: null, cancelled: false });
+    expect(result.text).not.toContain(UPSTREAM_SECRET);
+    expect(getModelCalls()).toBe(2);
+    const after = await api(`/history?canvasId=${canvasId}`);
+    expect(after.payload.active).toBeNull();
+    expect(after.text).not.toContain(UPSTREAM_SECRET);
+  }, {}, { canvasId: 'retry-canvas', slowFirstModel: false, retryFirstModel: true });
+}, 35000);
+
+test('真实宿主：准备阶段（官方提交前）停止的请求不调用模型、不写画布，历史记为已停下；之后的新请求照常执行', async () => {
+  await withHost(async ({ api, waitFor, getModelCalls, getOpsRequests, heldTurnRead, releaseTurnRead }) => {
+    const canvasId = 'prep-stop-canvas';
+    const created = await api('/sessions', { canvasId });
+    const sessionId = created.payload.sessionId;
+    const turnEnd = (text) => text.trim().split('\n').map((line) => JSON.parse(line)).find((line) => line.type === 'turn_end');
+    // prepstop1: stop while /chat reads the Go turn; prepstop2: stop inside submit's own authorization read.
+    for (const turnId of ['prepstop1', 'prepstop2']) {
+      const requestId = `${turnId}-request`;
+      const chat = api('/chat', { canvasId, message: `Stop ${turnId} before submit.`, turnId, requestId, revisionBefore: 1, sessionId });
+      await waitFor(() => heldTurnRead(turnId), 8000);
+      const cancel = await api('/cancel', { canvasId, sessionId, requestId });
+      expect(cancel.status).toBe(202);
+      expect(cancel.payload).toEqual({ accepted: true, state: 'pending' });
+      releaseTurnRead(turnId);
+      const result = await chat;
+      expect(result.status).toBe(200);
+      expect(turnEnd(result.text)).toMatchObject({ turnId, requestId, cancelled: true, error: null, reply: '', change: null });
+    }
+    expect(getModelCalls()).toBe(0);
+    expect(getOpsRequests().filter((line) => line.includes('/api/ops/'))).toEqual([]);
+    // Go closes exactly the stopped turns, never a stale or empty turn ID of the idle session.
+    expect(getOpsRequests().filter((line) => line.endsWith('/complete'))).toEqual([
+      'POST /api/assistant/runtime/turns/prepstop1/complete', 'POST /api/assistant/runtime/turns/prepstop2/complete']);
+    const history = await api(`/history?canvasId=${canvasId}`);
+    expect(history.payload.active).toBeNull();
+    expect(history.payload.turns.map((turn) => [turn.turnId, turn.cancelled])).toEqual([['prepstop1', true], ['prepstop2', true]]);
+    // A stop covers only the request it names: the next message runs normally.
+    const next = await api('/chat', { canvasId, message: 'Run normally.', turnId: 'prepnext', requestId: 'prepnext-request', revisionBefore: 1, sessionId });
+    expect(turnEnd(next.text)).toMatchObject({ turnId: 'prepnext', reply: 'ok', cancelled: false, error: null });
+    expect(getModelCalls()).toBe(1);
+  }, {}, { canvasId: 'prep-stop-canvas', slowFirstModel: false, holdTurnReads: { prepstop1: 1, prepstop2: 2 } });
+}, 35000);
+
+test('真实宿主：停止先于 /chat 到达时只停这一条请求；同一请求重发、重启后都不执行，其他请求照常执行', async () => {
+  await withHost(async ({ api, restart, getModelCalls, getOpsRequests }) => {
+    const canvasId = 'early-stop-canvas';
+    const sessionId = (await api('/sessions', { canvasId })).payload.sessionId;
+    const turnEnd = (text) => text.trim().split('\n').map((line) => JSON.parse(line)).find((line) => line.type === 'turn_end');
+    const chat = async (turnId, requestId) => turnEnd((await api('/chat', { canvasId, sessionId, turnId, requestId, message: `Request ${requestId}.`, revisionBefore: 1 })).text);
+    const completed = () => getOpsRequests().filter((line) => line.endsWith('/complete')).map((line) => line.split('/')[5]);
+    // The stop reaches the host while its /chat is still in Go.
+    expect(await api('/cancel', { canvasId, sessionId, requestId: 'early-req' })).toMatchObject({ status: 202, payload: { accepted: true, state: 'pending' } });
+    expect(await chat('early-turn-1', 'early-req')).toMatchObject({ turnId: 'early-turn-1', requestId: 'early-req', cancelled: true, error: null, reply: '' });
+    // The same request again under a new Go turn: nothing runs, and that turn is closed as well.
+    expect(await chat('early-turn-2', 'early-req')).toMatchObject({ turnId: 'early-turn-1', requestId: 'early-req', cancelled: true });
+    // Another request on the same conversation is not affected.
+    expect(await chat('other-turn', 'other-req')).toMatchObject({ turnId: 'other-turn', reply: 'ok', cancelled: false, error: null });
+    expect((await api('/cancel', { canvasId, sessionId, requestId: 'other-req' })).payload).toEqual({ accepted: true, state: 'finished' });
+    // After a restart nothing is live: the stop is still accepted, not a 404, and survives another restart.
+    await restart();
+    expect(await api('/cancel', { canvasId, sessionId, requestId: 'late-req' })).toMatchObject({ status: 202, payload: { accepted: true, state: 'pending' } });
+    await restart();
+    expect(await chat('late-turn', 'late-req')).toMatchObject({ turnId: 'late-turn', requestId: 'late-req', cancelled: true });
+    expect(await chat('early-turn-3', 'early-req')).toMatchObject({ turnId: 'early-turn-1', cancelled: true });
+    expect(getModelCalls()).toBe(1);
+    // Only the one request that ran read the skill catalog for its model request; stopped ones did nothing.
+    expect(getOpsRequests().filter((line) => line.includes('/api/ops/'))).toEqual(['POST /api/ops/skill.catalog']);
+    expect(completed()).toEqual(['early-turn-1', 'early-turn-2', 'other-turn', 'late-turn', 'early-turn-3']);
+    const history = await api(`/history?canvasId=${canvasId}&sessionId=${encodeURIComponent(sessionId)}`);
+    expect(history.payload.active).toBeNull();
+    expect(history.payload.turns.map((turn) => [turn.turnId, turn.cancelled])).toEqual([['early-turn-1', true], ['other-turn', false], ['late-turn', true]]);
+    // The target must be well formed and belong to this canvas.
+    expect((await api('/cancel', { canvasId, sessionId: 'durable:00000000-0000-4000-8000-000000000000', requestId: 'x' })).status).toBe(404);
+    expect((await api('/cancel', { canvasId: 'another-canvas', sessionId, requestId: 'x' })).status).toBe(404);
+    expect((await api('/cancel', { canvasId, sessionId, requestId: '' })).status).toBe(400);
+  }, {}, { canvasId: 'early-stop-canvas', slowFirstModel: false });
+}, 45000);
+
+test('真实宿主：旧请求的停止确认延迟，不会误停随后开始的新请求', async () => {
+  const latch = () => { let release; const promise = new Promise((resolve) => { release = resolve; }); return { promise, release }; };
+  const finishing = latch(), oldDone = latch(), cancelWaiting = latch(), cancelDone = latch(), nextStarted = latch(), nextReply = latch();
+  let completions = 0;
+  await withHost(async ({ api }) => {
+    try {
+      const canvasId = 'delayed-stop-canvas';
+      const sessionId = (await api('/sessions', { canvasId })).payload.sessionId;
+      const first = api('/chat', { canvasId, sessionId, turnId: 'old-turn', requestId: 'old-request', message: 'First', revisionBefore: 1 });
+      await finishing.promise;
+      const cancelling = api('/cancel', { canvasId, sessionId, requestId: 'old-request' });
+      await cancelWaiting.promise;
+      oldDone.release();
+      expect((await first).status).toBe(200);
+      const next = api('/chat', { canvasId, sessionId, turnId: 'new-turn', requestId: 'new-request', message: 'Second', revisionBefore: 1 });
+      await nextStarted.promise;
+      cancelDone.release();
+      expect((await cancelling).status).toBe(202);
+      expect((await api(`/history?canvasId=${canvasId}`)).payload.active?.requestId).toBe('new-request');
+      nextReply.release();
+      const end = (await next).text.trim().split('\n').map((line) => JSON.parse(line)).find((line) => line.type === 'turn_end');
+      expect(end).toMatchObject({ requestId: 'new-request', turnId: 'new-turn', cancelled: false, reply: 'ok' });
+    } finally { oldDone.release(); cancelDone.release(); nextReply.release(); }
+  }, {}, {
+    canvasId: 'delayed-stop-canvas', slowFirstModel: false,
+    completeTurn: async (turnId) => {
+      if (turnId !== 'old-turn') return;
+      if (++completions === 1) { finishing.release(); await oldDone.promise; }
+      else { cancelWaiting.release(); await cancelDone.promise; }
+    },
+    beforeModelReply: async (call) => { if (call === 2) { nextStarted.release(); await nextReply.promise; } },
+  });
+}, 35000);
+
+test('真实宿主：运行中按请求停止只停这一条；指向别的请求的停止不影响它', async () => {
+  await withHost(async ({ api, waitFor, getModelCalls }) => {
+    const canvasId = 'targeted-stop-canvas';
+    const sessionId = (await api('/sessions', { canvasId })).payload.sessionId;
+    const chat = api('/chat', { canvasId, sessionId, turnId: 'run-turn', requestId: 'run-req', message: 'Keep running.', revisionBefore: 1 });
+    await waitFor(() => getModelCalls() >= 1, 8000);
+    expect((await api('/cancel', { canvasId, sessionId, requestId: 'not-this-one' })).payload).toEqual({ accepted: true, state: 'pending' });
+    expect((await api(`/history?canvasId=${canvasId}`)).payload.active).toMatchObject({ turnId: 'run-turn', requestId: 'run-req', status: 'running' });
+    expect((await api('/cancel', { canvasId, sessionId, requestId: 'run-req' })).payload).toEqual({ accepted: true, state: 'stopped' });
+    const end = (await chat).text.trim().split('\n').map((line) => JSON.parse(line)).find((line) => line.type === 'turn_end');
+    expect(end).toMatchObject({ turnId: 'run-turn', requestId: 'run-req', cancelled: true });
+    expect((await api(`/history?canvasId=${canvasId}`)).payload.active).toBeNull();
+    expect(getModelCalls()).toBe(1);
+  }, {}, { canvasId: 'targeted-stop-canvas' });
 }, 35000);

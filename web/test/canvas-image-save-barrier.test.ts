@@ -10,6 +10,7 @@ import type { GenerationTask } from "@/services/api/task-center";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType } from "@/types/canvas";
 import { executeImageGeneration } from "@/pages/canvas/canvas-image-generation-executor";
+import { executeAudioGeneration, executeVideoGeneration } from "@/pages/canvas/canvas-media-generation-executors";
 import type { CanvasGenerationExecution } from "@/pages/canvas/canvas-generation-executor-types";
 
 const project: CanvasProject = { id: "canvas-1", title: "画布", createdAt: "2026-01-01", updatedAt: "2026-01-01", revision: 3, nodes: [{ id: "new-image", type: CanvasNodeType.Image, title: "新结果", position: { x: 0, y: 0 }, width: 320, height: 320, metadata: { status: "loading" } }], connections: [], chatSessions: [], activeChatId: null, backgroundMode: "grid", showImageInfo: false, viewport: { x: 0, y: 0, k: 1 }, directorScenes: [] };
@@ -192,6 +193,30 @@ test("main generation and batch generation stop before changing nodes when a pai
         } as unknown as CanvasGenerationExecution);
         expect(mutations).toBe(0);
         expect(notices).toEqual(["生成结果已保留，请点击「继续取回」"]);
+    }
+});
+
+test("in-place media generation preserves the existing shot name before submission", async () => {
+    for (const [type, execute] of [[CanvasNodeType.Image, executeImageGeneration], [CanvasNodeType.Video, executeVideoGeneration], [CanvasNodeType.Audio, executeAudioGeneration]] as const) {
+        const target = { ...project.nodes[0], type, title: `镜1-${type}`, metadata: { status: "idle" as const } };
+        useCanvasStore.setState({ projects: [{ ...structuredClone(project), nodes: [target] }] });
+        const nodesRef = { current: [target] };
+        const stopBeforeSubmission = new Error("test stops before paid submission");
+        await expect(execute({
+            sourceNode: target, nodeId: target.id, canvasNodes: [target], canvasConnections: [], nodesRef,
+            prompt: "新的完整动作提示词", effectivePrompt: "新的完整动作提示词", projectId: project.id,
+            generationConfig: { model: "test-model", count: "1", size: "9:16", channels: [] },
+            generationContext: { referenceImages: [], referenceVideos: [], referenceAudios: [], resolvedCharacterVersions: [], resolvedCharacterVoices: [] },
+            controller: new AbortController(),
+            setNodes: () => undefined, setConnections: () => undefined, registerPendingNodeIds: () => undefined,
+            setSelectedNodeIds: () => undefined, setSelectedConnectionId: () => undefined, setDialogNodeId: () => undefined,
+            startGenerationRequest: () => { throw stopBeforeSubmission; },
+        } as unknown as CanvasGenerationExecution)).rejects.toBe(stopBeforeSubmission);
+        const saved = useCanvasStore.getState().projects[0]!.nodes;
+        expect(saved).toHaveLength(1);
+        expect(saved[0]?.title).toBe(target.title);
+        expect(saved[0]?.metadata?.prompt).toBe("新的完整动作提示词");
+        expect(nodesRef.current[0]?.title).toBe(target.title);
     }
 });
 

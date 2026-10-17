@@ -133,6 +133,45 @@ func TestProviderConfigCommittedRevisionOnlyAdvancesAfterValidWrite(t *testing.T
 	}
 }
 
+func TestProviderConfigIdenticalSaveKeepsRevision(t *testing.T) {
+	store, err := NewProviderConfig(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"channels":[{"id":"custom","apiKey":"test-secret","enabled":true}]}`)
+	revision, err := store.SaveLocalModelConfigRevision(body, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := store.SaveLocalModelConfigRevision([]byte(`{"channels":[{"enabled":true,"apiKey":"__BEEFTV_REDACTED__","id":"custom"}]}`), revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeated != revision {
+		t.Fatalf("unchanged settings advanced revision: %d -> %d", revision, repeated)
+	}
+	if err := store.SaveCatalogWithAssistantDefault(body, "connection", ""); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := store.loadPrimaryDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Revision != revision || doc.AssistantDefaultAuthorization != "connection" {
+		t.Fatalf("no-op catalog lost initialization or changed revision: revision=%d marker=%q", doc.Revision, doc.AssistantDefaultAuthorization)
+	}
+	if err := store.SaveCatalogWithAssistantDefault(body, "connection", ""); err != nil {
+		t.Fatal(err)
+	}
+	doc, err = store.loadPrimaryDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Revision != revision {
+		t.Fatalf("repeated catalog advanced revision: %d -> %d", revision, doc.Revision)
+	}
+}
+
 func TestProviderConfigSeparateHandlesSharePathMutexAndCAS(t *testing.T) {
 	dir := t.TempDir()
 	first, err := NewProviderConfig(dir)

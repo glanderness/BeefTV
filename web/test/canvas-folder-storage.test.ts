@@ -20,7 +20,7 @@ import {
 } from "@/lib/canvas/canvas-folder-storage";
 import { scopedStorageKey } from "@/lib/user-scope";
 import { apiClient } from "@/services/api/request";
-import { resetCanvasOperationJournalMemory } from "@/services/canvas-operation-journal";
+import { peekCanvasOperationJournal, resetCanvasOperationJournalMemory } from "@/services/canvas-operation-journal";
 import { resetLocalCanvasBackendSaveState } from "@/services/local-workspace-repository";
 import {
     canvasExternalRevisionConflict,
@@ -580,7 +580,7 @@ describe("canvas folder storage", () => {
         }
     });
 
-    test("folder delete keeps a newer unsaved canvas edit and records the remote receipt", async () => {
+    test("folder delete keeps a newer unsaved canvas edit, merges the disjoint remote receipt and records it", async () => {
         const restore = switchScope("owner-a");
         const restoreWindow = installWindow();
         desktopBackend();
@@ -610,11 +610,13 @@ describe("canvas folder storage", () => {
             }, async () => {
                 await deleteCanvasLibraryFolder("folder-1", captureUserScope());
             });
+            // The local node edit and the server's folder removal touch different fields: both survive.
             const kept = useCanvasStore.getState().projects.find((project) => project.id === "c1");
-            expect(kept?.nodes).toEqual(localNodes);
-            expect(kept?.folderId).toBe("folder-1");
-            expect(canvasExternalRevisionConflict("owner-a", "c1")?.remoteRevision).toBe(4);
-            expect(canvasExternalRevisionConflict("owner-a", "c1")?.candidate.folderId).toBeUndefined();
+            expect(kept?.nodes.map((node) => node.id)).toEqual(["n-local", "n-remote"]);
+            expect(kept?.nodes[0]).toEqual(localNodes[0]);
+            expect(kept?.folderId).toBeUndefined();
+            expect(canvasExternalRevisionConflict("owner-a", "c1")).toBeUndefined();
+            expect(peekCanvasOperationJournal("c1", "owner-a")?.confirmedRevision).toBe(4);
         } finally {
             restoreWindow();
             restore();

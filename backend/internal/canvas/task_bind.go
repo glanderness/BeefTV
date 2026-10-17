@@ -457,6 +457,7 @@ func applyGenerationBindMetadata(metadata map[string]any, patch TaskOutputBind) 
 	metadata["taskId"] = patch.TaskID
 	metadata["taskStatus"] = "succeeded"
 	metadata["taskProgress"] = 100
+	metadata["taskStage"] = nil
 	metadata["errorDetails"] = nil
 	metadata["generationErrorCode"] = nil
 	metadata["resourceReloadAvailable"] = nil
