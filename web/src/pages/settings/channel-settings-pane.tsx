@@ -229,6 +229,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
     };
 
     const refreshChannelModels = async (channel: ModelChannel) => {
+        if (channel.provider === "comfyui") { setServiceEditor(channel); return; }
         const connectionError = channelConnectionError(channel, isBuiltinBeefAPIChannel(channel) ? beefConnection : null);
         if (connectionError) {
             message.error(`${channel.name || "当前渠道"}：${connectionError}`);
@@ -264,8 +265,13 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
     };
 
     const refreshAllModels = async () => {
-        const runnable = userChannels.filter((channel) => !channelConnectionError(channel, isBuiltinBeefAPIChannel(channel) ? beefConnection : null));
-        const skipped = userChannels.filter((channel) => channelConnectionError(channel, isBuiltinBeefAPIChannel(channel) ? beefConnection : null));
+        const catalogChannels = userChannels.filter((channel) => channel.provider !== "comfyui");
+        if (!catalogChannels.length && userChannels.some((channel) => channel.provider === "comfyui")) {
+            message.info("请在 ComfyUI 的工作流配置中刷新节点与模型选项");
+            return;
+        }
+        const runnable = catalogChannels.filter((channel) => !channelConnectionError(channel, isBuiltinBeefAPIChannel(channel) ? beefConnection : null));
+        const skipped = catalogChannels.filter((channel) => channelConnectionError(channel, isBuiltinBeefAPIChannel(channel) ? beefConnection : null));
         if (!runnable.length) {
             const detail = skipped.map((channel) => `${channel.name || "未命名渠道"}：${channelConnectionError(channel, isBuiltinBeefAPIChannel(channel) ? beefConnection : null)}`).join("；");
             message.error(detail || "没有可拉取的个人模型渠道，请先填写有效 Base URL 和 API Key");
@@ -409,7 +415,7 @@ export function ChannelSettingsPane({ onOpenDiagnostics, onOpenModels, onOpenRun
                                             disabled={loadingChannelIds.includes("all") || (builtinBeefAPI && beefConnection?.state !== "connected")}
                                             onClick={() => void refreshChannelModels(channel)}
                                         >
-                                            拉取模型
+                                            {channel.provider === "comfyui" ? "配置工作流" : "拉取模型"}
                                         </Button>
                                         <Button
                                             size="small"

@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	LocalProviderConfigFile = "local-model-config.json"
-	RedactedSecret          = "__BEEFTV_REDACTED__"
+	LocalProviderConfigFile     = "local-model-config.json"
+	LocalProviderConfigMaxBytes = 32 << 20
+	RedactedSecret              = "__BEEFTV_REDACTED__"
 )
 
 // ProviderConfig owns the local provider snapshot. It has no database or
@@ -33,6 +34,7 @@ var (
 	ErrInvalidProviderIdentity        = errors.New("本地模型配置包含无效或重复的渠道 ID")
 	ErrMalformedProviderConfig        = errors.New("本地模型配置损坏")
 	ErrProviderConfigNotObject        = errors.New("本地模型配置必须是 JSON 对象")
+	ErrProviderConfigTooLarge         = errors.New("本地模型配置不能超过 32 MiB")
 )
 
 var providerConfigGuards sync.Map // canonical data dir -> *sync.Mutex
@@ -182,8 +184,11 @@ func (s *ProviderConfig) SaveCatalogWithAssistantDefault(body []byte, authorizat
 }
 
 func (s *ProviderConfig) saveLocalModelConfig(body []byte, existingDocument ProviderStateDocument) error {
-	if len(body) == 0 || len(body) > 2<<20 {
+	if len(body) == 0 {
 		return errors.New("本地模型配置大小无效")
+	}
+	if len(body) > LocalProviderConfigMaxBytes {
+		return ErrProviderConfigTooLarge
 	}
 	incoming, err := decodeIncomingConfig(body)
 	if err != nil {

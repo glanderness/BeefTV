@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/app"
@@ -12,6 +13,61 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+func TestWorkspaceModelConfigPersistsLargeComfyUIWorkflow(t *testing.T) {
+	router, store := newModelConfigTestRouter(t)
+	text := strings.Repeat("workflow-default-", 200_000)
+	workflow := map[string]any{"1": map[string]any{"class_type": "CLIPTextEncode", "inputs": map[string]any{"text": text}}}
+	body, err := json.Marshal(map[string]any{
+		"expectedRevision": 0,
+		"config": map[string]any{"channels": []any{map[string]any{
+			"id": "comfyui", "provider": "comfyui", "baseUrl": "http://127.0.0.1:8188", "models": []string{"large-workflow"},
+			"modelProfiles": []any{map[string]any{"model": "large-workflow", "protocol": "comfyui-image", "capability": "image", "comfyui": map[string]any{"workflowJson": workflow, "fields": []any{}}}},
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/workspace/model-config", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("large workflow save status=%d", recorder.Code)
+	}
+	effective, _, err := store.LoadEffectiveModelConfig()
+	if err != nil || effective.Revision != 1 {
+		t.Fatalf("reload revision=%d err=%v", effective.Revision, err)
+	}
+	channels := effective.Config["channels"].([]any)
+	for _, raw := range channels {
+		channel := raw.(map[string]any)
+		if channel["id"] != "comfyui" {
+			continue
+		}
+		profile := channel["modelProfiles"].([]any)[0].(map[string]any)
+		node := profile["comfyui"].(map[string]any)["workflowJson"].(map[string]any)["1"].(map[string]any)
+		if node["inputs"].(map[string]any)["text"] != text {
+			t.Fatal("large workflow contents were not restored")
+		}
+		return
+	}
+	t.Fatal("ComfyUI channel was not restored")
+}
+
+func TestWorkspaceModelConfigRejectsOversizedBody(t *testing.T) {
+	router, store := newModelConfigTestRouter(t)
+	body := strings.NewReader(strings.Repeat(" ", workspace.LocalProviderConfigMaxBytes+(64<<10)+1))
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPut, "/api/workspace/model-config", body))
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized config status=%d", recorder.Code)
+	}
+	effective, _, err := store.LoadEffectiveModelConfig()
+	if err != nil || effective.Revision != 0 {
+		t.Fatalf("oversized config changed revision=%d err=%v", effective.Revision, err)
+	}
+}
 
 func TestWorkspaceModelConfigReturnsBuiltinBeefAPIAndPersistenceMetadata(t *testing.T) {
 	router, _ := newModelConfigTestRouter(t)

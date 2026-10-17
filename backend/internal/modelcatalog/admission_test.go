@@ -18,6 +18,8 @@ func TestTaskInputUsesWorkflowProvider(t *testing.T) {
 		want  bool
 	}{
 		{name: "runninghub workflow", input: map[string]any{"config": map[string]any{"interfaceType": "runninghub-workflow-video"}}, want: true},
+		{name: "native comfyui", input: map[string]any{"config": map[string]any{"interfaceType": "comfyui-image"}}, want: true},
+		{name: "system channel cannot forge native workflow", input: map[string]any{"config": map[string]any{"interfaceType": "comfyui-image", "channelId": "system-1"}}, want: false},
 		{name: "case insensitive", input: map[string]any{"config": map[string]any{"interfaceType": "RunningHub-Workflow-Audio"}}, want: true},
 		{name: "ordinary model", input: map[string]any{"config": map[string]any{"interfaceType": "openai-image", "channelId": "system-1", "model": "image-model"}}, want: false},
 		{name: "system channel cannot forge workflow", input: map[string]any{"config": map[string]any{"interfaceType": "runninghub-workflow-image", "channelId": "system-1"}}, want: false},

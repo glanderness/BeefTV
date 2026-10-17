@@ -96,8 +96,13 @@ func RegisterWorkspaceRoutes(r *gin.RouterGroup, svc *app.Service) {
 			fail(c, http.StatusUnauthorized, err)
 			return
 		}
-		body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20))
+		body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, workspace.LocalProviderConfigMaxBytes+(64<<10)))
 		if err != nil {
+			var oversized *http.MaxBytesError
+			if errors.As(err, &oversized) {
+				fail(c, http.StatusRequestEntityTooLarge, workspace.ErrProviderConfigTooLarge)
+				return
+			}
 			fail(c, http.StatusBadRequest, errors.New("本地模型配置读取失败"))
 			return
 		}
@@ -107,6 +112,10 @@ func RegisterWorkspaceRoutes(r *gin.RouterGroup, svc *app.Service) {
 		}
 		if err := json.Unmarshal(body, &envelope); err != nil || len(envelope.Config) == 0 || string(envelope.Config) == "null" {
 			fail(c, http.StatusBadRequest, errors.New("本地模型配置格式错误"))
+			return
+		}
+		if len(envelope.Config) > workspace.LocalProviderConfigMaxBytes {
+			fail(c, http.StatusRequestEntityTooLarge, workspace.ErrProviderConfigTooLarge)
 			return
 		}
 		if _, external := externalBusiness(c); external && envelope.ExpectedRevision == nil {
