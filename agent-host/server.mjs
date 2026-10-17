@@ -185,8 +185,10 @@ const durable = createDurableSessionStore({
   },
   getModelRef: () => ({ provider: PROVIDER_ID, modelId: MODEL_ID }),
   skills: {
+    readContext:async (entry,turnId) => ops.opsRequest('GET',`/assistant/runtime/canvases/${encodeURIComponent(entry.canvasId)}/skill-context?sessionId=${encodeURIComponent(entry.sessionId)}${turnId?`&turnId=${encodeURIComponent(turnId)}`:''}`),
+    changeContext:async (entry,change,turnId) => ops.opsRequest('POST',`/assistant/runtime/canvases/${encodeURIComponent(entry.canvasId)}/skill-context`,{...change,sessionId:entry.sessionId,...(turnId?{turnId}:{})}),
     readVersion:async (entry,pin,signal,turnId) => (await ops.opsRequest('POST','/ops/skill.get',{params:pin},signal,turnId || entry.turn.turnId)).result,
-    readCatalog:async (entry,signal,turnId) => (await ops.opsRequest('POST','/ops/skill.catalog',{params:{}},signal,turnId || entry.turn.turnId)).result,
+    readCatalog:async (entry,signal,turnId,query={}) => (await ops.opsRequest('POST','/ops/skill.catalog',{params:query},signal,turnId || entry.turn.turnId)).result,
   },
   authorizeTurn: async ({canvasId, turnId,sessionId}) => {
     const state = await ops.opsRequest('GET', `/assistant/runtime/turns/${encodeURIComponent(turnId)}`);
@@ -298,6 +300,12 @@ function respond(res, status, payload) {
 }
 
 function respondStoreError(res, error) {
+  if (['skill_context_revision_conflict','skill_context_request_conflict','skill_scope_reset_pending','skill_context_changed'].includes(error?.reason)) {
+    respond(res,409,{code:409,reason:error.reason});return true;
+  }
+  if (['invalid_skill_context_action','invalid_skill_context_request','invalid_skill_selection','skill_selection_limit','skill_context_budget_exceeded'].includes(error?.reason)) {
+    respond(res,400,{code:400,reason:error.reason});return true;
+  }
   if (error?.reason === 'session_busy') { respond(res, 409, { code: 409, reason: 'session_busy' }); return true; }
   if (error?.reason === 'session_not_current') { respond(res, 409, { code: 409, reason: 'session_not_current' }); return true; }
   if (error?.reason === 'session_not_found') { respond(res, 404, { code: 404, reason: 'session_not_found' }); return true; }
@@ -344,6 +352,15 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   try {
+    if (url.pathname === '/skill-context' && ['GET','POST'].includes(req.method)) {
+      const body=req.method==='POST'?JSON.parse((await readBody(req)) || '{}'):Object.fromEntries(url.searchParams);
+      const canvasId=String(body.canvasId || '').trim();
+      if (!canvasId) {respond(res,400,{reason:'invalid_request'});return;}
+      const entry=await durable.ensureSession(canvasId,String(body.sessionId || ''));
+      const result=req.method==='GET'?await durable.skillContext(entry):await durable.changeSkillContext(entry,{
+        action:body.action,expectedRevision:body.expectedRevision,requestId:body.requestId,...(body.pins?{pins:body.pins}:{})});
+      respond(res,200,result);return;
+    }
     if (req.method === 'GET' && url.pathname === '/active') {
       const canvasId = String(url.searchParams.get('canvasId') || '');
       const sessionId = String(url.searchParams.get('sessionId') || currentId(canvasId));

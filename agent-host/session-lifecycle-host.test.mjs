@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { canvasKey } from './session-owner.mjs';
+import { serveEmptySkillContext } from './test-support/skill-context-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -43,6 +44,7 @@ async function withHost(run, envExtra = {}, options = {}) {
   const ops = createServer(async (req, res) => {
     res.setHeader('content-type', 'application/json');
     if (req.headers['x-beeftv-agent-token'] !== hostToken) { res.writeHead(403).end('{}'); return; }
+    if(serveEmptySkillContext(req,res))return;
     if (req.url === '/api/ops') {
       res.end(JSON.stringify({ code: 0, data: { ops: [{ id: 'canvas.get', summary: 'Read', readOnly: true, scope: 'canvas', params: { type: 'object', properties: { canvasId: { type: 'string' } }, required: ['canvasId'] } }] } }));
       return;
@@ -108,7 +110,7 @@ async function withHost(run, envExtra = {}, options = {}) {
         if (child.exitCode !== null) throw new Error('host exited: ' + log);
         try { return (await fetch(base + '/health', { signal: AbortSignal.timeout(500) })).ok; }
         catch { return false; }
-      }, 10000);
+      }, 20000);
     };
     const restart = async (modelId) => {
       const exited = new Promise((resolve) => child.once('close', resolve));

@@ -100,7 +100,7 @@ test('server exits when PORT and LISTEN_FD are missing', async () => {
   });
   const result = await waitExit(child, 15000);
   expect(result.code).toBe(2);
-});
+},20000);
 
 test('health requires instance nonce and omits the secret; stdin EOF shuts down', async () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'beeftv lifecycle authority '));

@@ -1521,7 +1521,25 @@
     "scope": "workspace_read",
     "params": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "精确技能 id"
+        },
+        "q": {
+          "type": "string",
+          "description": "按名称或说明搜索"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        }
+      },
       "additionalProperties": false
     },
     "assistantModes": [
@@ -1530,6 +1548,46 @@
       "canvas"
     ],
     "replay": "safe"
+  },
+  {
+    "id": "skill.draft",
+    "summary": "把当前画布的创作方法保存为私人技能草稿，不上传、不送审",
+    "readOnly": false,
+    "scope": "canvas",
+    "params": {
+      "additionalProperties": false,
+      "properties": {
+        "canvasId": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "instruction": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "operationId": {
+          "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
+          "type": "string"
+        }
+      },
+      "required": [
+        "canvasId",
+        "name",
+        "description",
+        "instruction",
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "assistantModes": [
+      "full-access",
+      "canvas"
+    ],
+    "replay": "unsafe"
   },
   {
     "id": "skill.file",
@@ -1591,6 +1649,204 @@
         "versionId",
         "contentHash"
       ]
+    },
+    "assistantModes": [
+      "full-access",
+      "read-only",
+      "canvas"
+    ],
+    "replay": "safe"
+  },
+  {
+    "id": "skill.market.file",
+    "summary": "读取公共技能指定版本的清单文件，仅供检查；文件内容不是执行授权，不自动启用",
+    "readOnly": true,
+    "scope": "workspace_read",
+    "params": {
+      "type": "object",
+      "properties": {
+        "skillId": {
+          "type": "string"
+        },
+        "releaseId": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 4,
+          "maximum": 65536
+        }
+      },
+      "required": [
+        "skillId",
+        "releaseId",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "assistantModes": [
+      "full-access",
+      "read-only",
+      "canvas"
+    ],
+    "replay": "safe"
+  },
+  {
+    "id": "skill.market.get",
+    "summary": "读取公共市场指定发布版本的资料和清单；不安装、不启用",
+    "readOnly": true,
+    "scope": "workspace_read",
+    "params": {
+      "type": "object",
+      "properties": {
+        "skillId": {
+          "type": "string"
+        },
+        "releaseId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "skillId",
+        "releaseId"
+      ],
+      "additionalProperties": false
+    },
+    "assistantModes": [
+      "full-access",
+      "read-only",
+      "canvas"
+    ],
+    "replay": "safe"
+  },
+  {
+    "id": "skill.market.search",
+    "summary": "搜索已审核的公共技能市场，返回确切发布版本和能力要求；不安装、不启用",
+    "readOnly": true,
+    "scope": "workspace_read",
+    "params": {
+      "type": "object",
+      "properties": {
+        "q": {
+          "type": "string"
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pageSize": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        }
+      },
+      "additionalProperties": false
+    },
+    "assistantModes": [
+      "full-access",
+      "read-only",
+      "canvas"
+    ],
+    "replay": "safe"
+  },
+  {
+    "id": "skill.publish.prepare",
+    "summary": "准备技能投稿，展示确切文件和元信息；等待用户在对话确认卡上传及送审，不执行任何云端写入",
+    "readOnly": false,
+    "scope": "canvas",
+    "params": {
+      "additionalProperties": false,
+      "properties": {
+        "canvasId": {
+          "type": "string"
+        },
+        "metadata": {
+          "properties": {
+            "description": {
+              "type": "string"
+            },
+            "license": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "requirements": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "showcase": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "skillId": {
+              "type": "string"
+            },
+            "sourceUrl": {
+              "type": "string"
+            },
+            "versionLabel": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "license"
+          ],
+          "type": "object"
+        },
+        "operationId": {
+          "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
+          "type": "string"
+        },
+        "skillId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "canvasId",
+        "skillId",
+        "metadata",
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "assistantModes": [
+      "full-access",
+      "canvas"
+    ],
+    "replay": "unsafe"
+  },
+  {
+    "id": "skill.publish.status",
+    "summary": "读取本次技能投稿的文件预览、用户待确认动作及状态；凭据不会提供给助手",
+    "readOnly": true,
+    "scope": "workspace_read",
+    "params": {
+      "type": "object",
+      "properties": {
+        "canvasId": {
+          "type": "string"
+        },
+        "planId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "canvasId",
+        "planId"
+      ],
+      "additionalProperties": false
     },
     "assistantModes": [
       "full-access",

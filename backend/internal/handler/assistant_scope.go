@@ -116,7 +116,7 @@ func assistantScopeForRequest(c *gin.Context, svc *app.Service, userID string, h
 		AssetIDs:       assistantIDSet(scope.AssetIDs),
 		CanvasIDs:      assistantIDSet(scope.CanvasIDs),
 		TaskIDs:        assistantIDSet(scope.TaskIDs),
-		SkillPins:      assistantSkillPinSet(scope.SkillPins, scope.SessionSkillPins),
+		SkillPins:      assistantSkillPinSet(scope.SkillPins, scope.SessionSkillPins, scope.ActiveSkillPins),
 		SkillInstalled: func(pin skills.Pin) bool {
 			return assistantSkillInstalled(svc, userID, pin)
 		},

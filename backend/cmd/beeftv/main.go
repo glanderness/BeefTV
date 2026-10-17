@@ -1,5 +1,5 @@
-// beeftv 是 BeefTV 的常规命令行入口：与内置 pi、MCP 共用同一套业务操作层，
-// 连接同一个正在运行的本地工作区，不各自打开数据库或另起 worker。
+// beeftv 的工作区命令与内置 pi/MCP 共用本地业务操作层，不另开数据库或 worker。
+// skills 子命令直接访问远程技能市场，不要求安装或运行桌面应用。
 package main
 
 import (
@@ -329,6 +329,9 @@ func run(args []string) error {
 		usage()
 		return nil
 	}
+	if args[0] == "skills" {
+		return runSkills(args[1:])
+	}
 	c, err := newClient()
 	if err != nil {
 		return err
@@ -380,6 +383,7 @@ func run(args []string) error {
 func usage() {
 	fmt.Fprint(os.Stderr, `beeftv — BeefTV 业务操作命令行（连接正在运行的本地工作区）
 
+  beeftv skills help  （远程技能市场，无需运行桌面应用）
   beeftv ops [--read-only] [--json]
   beeftv ops call <operation> --params '<json>' [--operation-id <id>] [--json]
   beeftv business discover

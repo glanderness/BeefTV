@@ -231,6 +231,25 @@ func (s *Service) ScopeForHost(userID, turnID string) (Scope, bool, error) {
 	if err != nil {
 		return Scope{}, false, err
 	}
+	// Active pins authorize exact resources on a continued round without
+	// confusing the historical transcript union with the current selection.
+	activePins := []skills.Pin{}
+	if rec.DurableSessionID != "" {
+		var contextRow model.AssistantSkillContext
+		queryErr := s.store.DB().Where(&model.AssistantSkillContext{UserID: userID, CanvasID: rec.CanvasID, DurableSessionID: rec.DurableSessionID}).First(&contextRow).Error
+		if queryErr == nil {
+			current, decodeErr := contextProjection(contextRow)
+			if decodeErr != nil {
+				return Scope{}, false, decodeErr
+			}
+			if current.Lifecycle != "active" {
+				return Scope{}, false, contextError("skill_scope_reset_pending", "独立任务正在准备")
+			}
+			activePins = current.ActivePins
+		} else if !errors.Is(queryErr, gorm.ErrRecordNotFound) {
+			return Scope{}, false, queryErr
+		}
+	}
 	return Scope{
 		PermissionMode:   Mode(rec.PermissionMode),
 		CanvasID:         rec.CanvasID,
@@ -238,6 +257,7 @@ func (s *Service) ScopeForHost(userID, turnID string) (Scope, bool, error) {
 		CanvasIDs:        uniqueSorted(rec.ReferencedCanvasIDs),
 		TaskIDs:          uniqueSorted(taskIDs),
 		SkillPins:        SortedSkillPins(rec.SkillPins),
+		ActiveSkillPins:  activePins,
 		SessionSkillPins: sessionPins,
 	}, true, nil
 }

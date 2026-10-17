@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 16
+const CurrentSchemaVersion int64 = 18
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -59,6 +59,7 @@ func LocalModels() []any {
 		&model.WorkflowTemplateVersion{}, &model.WorkflowInstance{}, &model.WorkflowStepInstance{}, &model.WorkflowStepTask{}, &model.ProductionTaskLink{},
 		&model.CanvasProject{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{}, &model.AgentOpRecord{},
 		&model.AssistantTurn{},
+		&model.AssistantSkillContext{}, &model.AssistantSkillContextMutation{},
 		&model.CreationConversation{},
 		&model.CanvasLibraryFolder{}, &model.CanvasDrawing{},
 		&model.PromptTemplate{}, &model.UserPromptCustomization{},
@@ -90,6 +91,8 @@ func canonicalLocalMigrations() []localMigration {
 		{version: 14, name: "assistant-skill-version-pins", apply: migrateAssistantSkillPins},
 		{version: 15, name: "assistant-permission-and-canvas-snapshots", apply: migrateAssistantPermissions},
 		{version: 16, name: "assistant-durable-session-binding", apply: migrateAssistantSessions},
+		{version: 17, name: "assistant-active-skill-context", apply: migrateAssistantSkillContexts},
+		{version: 18, name: "skill-market-release-metadata", apply: migrateSkillMarketReleaseMetadata},
 	}
 }
 
@@ -384,7 +387,7 @@ func migrateLegacyCreationSubmissions(db *gorm.DB) error {
 }
 
 func RequireLocalSchema(db *gorm.DB) error {
-	for _, table := range []any{&model.Workspace{}, &model.Resource{}, &model.Project{}, &model.CanvasProject{}, &model.Task{}, &model.AgentOpRecord{}, &model.ImageSubmission{}, &model.AssistantTurn{}, &model.CreationConversation{}, &model.CanvasLibraryFolder{}, &model.CanvasDrawing{}} {
+	for _, table := range []any{&model.Workspace{}, &model.Resource{}, &model.Project{}, &model.CanvasProject{}, &model.Task{}, &model.AgentOpRecord{}, &model.ImageSubmission{}, &model.AssistantTurn{}, &model.CreationConversation{}, &model.CanvasLibraryFolder{}, &model.CanvasDrawing{}, &model.AssistantSkillContext{}, &model.AssistantSkillContextMutation{}} {
 		if !db.Migrator().HasTable(table) {
 			return fmt.Errorf("本地工作区数据库结构缺失，请启用自动迁移")
 		}
@@ -482,7 +485,12 @@ func requireReconciledSchema(db *gorm.DB) error {
 		}
 	}
 	if version >= 16 {
-		return requireAssistantSessions(db)
+		if err := requireAssistantSessions(db); err != nil {
+			return err
+		}
+	}
+	if version >= 18 {
+		return requireSkillMarketReleaseMetadata(db)
 	}
 	return nil
 }
