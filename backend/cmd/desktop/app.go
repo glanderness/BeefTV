@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/bootstrap"
+	"infinite-canvas/backend/internal/desktopstorage"
+	"infinite-canvas/backend/internal/model"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -25,16 +27,18 @@ type DesktopRuntimeConfig struct {
 }
 
 type DesktopApp struct {
-	mu              sync.RWMutex
-	migrationMu     sync.Mutex
-	migrating       bool
-	migrationCancel context.CancelFunc
-	closing         bool
-	storageRoot     string
-	dataDir         string
-	wailsCtx        context.Context
-	chooseSavePath  func(ctx context.Context, fileName string) (string, error)
-	copyOwnedMedia  func(resourceID, destPath string) error
+	mu                      sync.RWMutex
+	migrationMu             sync.Mutex
+	migrating               bool
+	migrationCancel         context.CancelFunc
+	migrationProgress       desktopstorage.Progress
+	referenceUploadProgress model.TaskReferenceProgress
+	closing                 bool
+	storageRoot             string
+	dataDir                 string
+	wailsCtx                context.Context
+	chooseSavePath          func(ctx context.Context, fileName string) (string, error)
+	copyOwnedMedia          func(resourceID, destPath string) error
 }
 
 // Wails reflects every field type reachable from a bound object. Keeping the

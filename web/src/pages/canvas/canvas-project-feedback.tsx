@@ -47,7 +47,7 @@ export function CanvasUploadStatusToast({ status, theme }: { status: CanvasUploa
                 </motion.span>
                 <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-semibold">{status.title}</span>
-                    <span className="mt-1 block truncate text-[var(--fs-label)]" style={{ color: theme.node.muted }}>
+                    <span className="mt-1 block break-words text-[var(--fs-label)]" style={{ color: theme.node.muted }}>
                         {status.detail}
                     </span>
                 </span>
@@ -82,8 +82,9 @@ export function TaskDetailItem({ label, value }: { label: string; value: string 
 }
 
 export function CanvasMergeStatusToast({ progress, theme }: { progress: MergeVideoProgress; theme: CanvasTheme }) {
-    const detail = progress.phase === "loading" ? "加载视频工具" : progress.phase === "reading" ? "读取选中视频" : "正在编码合并成片";
+    const detail = progress.phase === "loading" ? "加载视频工具" : progress.phase === "reading" ? "读取选中视频" : progress.phase === "saving" ? "编码已完成，正在保存视频" : progress.phase === "binding" ? "正在加入画布并保存项目" : progress.phase === "done" ? "成片已保存并加入画布" : "正在编码合并成片";
     const percent = Math.max(0, Math.min(100, Math.round(progress.progress)));
+    const showPercent = progress.phase === "encoding" || progress.phase === "done";
     return (
         <div
             data-canvas-no-zoom
@@ -102,11 +103,11 @@ export function CanvasMergeStatusToast({ progress, theme }: { progress: MergeVid
                     </span>
                 </span>
                 <span className="shrink-0 text-[var(--fs-tiny)] tabular-nums" style={{ color: theme.node.faint }}>
-                    {percent}%
+                    {showPercent ? percent + "%" : "处理中"}
                 </span>
             </div>
             <div className="mt-2 h-1 overflow-hidden rounded-full" style={{ background: theme.toolbar.itemHover }}>
-                <div className="h-full rounded-full transition-all duration-300" style={{ width: `${percent}%`, background: theme.node.activeStroke }} />
+                <div className="h-full rounded-full transition-all duration-300" style={{ width: showPercent ? `${percent}%` : "30%", background: theme.node.activeStroke }} />
             </div>
         </div>
     );

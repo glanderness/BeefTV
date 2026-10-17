@@ -1,6 +1,7 @@
 import { assertUserScope, captureUserScope, isUserScopeAbandonedError, UserScopeAbandonedError, waitForRetryDelay, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
 import { http, apiBaseURL, ApiError, type HttpRequestConfig } from "@/services/api/request";
+import { startOperation } from "@/stores/use-operation-progress";
 
 export type RemoteResource = {
     id: string;
@@ -152,12 +153,15 @@ export async function uploadResourceFile(
 ): Promise<RemoteResource> {
     const expected = meta?.expectedScope ?? captureUserScope();
     const name = meta?.fileName || (file instanceof File ? file.name : `${kind}.${extensionFromMime(file.type, kind)}`);
+    const progress = startOperation(name, { owner: expected, totalBytes: file.size, detail: isLocalRuntimeMode() ? "正在保存到本地资源目录" : "正在准备上传" });
+    const report = (loaded: number, total: number) => { progress.progress(loaded, total); onProgress?.(loaded, total); };
     // 分片与 multipart 两条路径的失败都要归一成 ResourceUploadError，
     // 否则调用方只能靠文案猜测该重试还是该报错。
     try {
         if (file.size > CHUNK_UPLOAD_THRESHOLD) {
-            const resource = await uploadFileInChunks(file, name, kind, meta, expected, onProgress);
+            const resource = await uploadFileInChunks(file, name, kind, meta, expected, report);
             rememberResource(resource, expected);
+            progress.done("文件已确认并保存");
             return resource;
         }
         const formData = new FormData();
@@ -168,13 +172,17 @@ export async function uploadResourceFile(
         if (meta?.durationMs) formData.append("durationMs", String(Math.round(meta.durationMs)));
         const data = await http.post<{ resource: RemoteResource }>("/resources", formData, {
             ...scopedUploadConfig(expected, meta?.idempotencyKey),
-            onUploadProgress: onProgress ? ({ loaded, total }) => {
-                if (total && total > 0) onProgress(Math.min(file.size, file.size * loaded / total), file.size);
-            } : undefined,
+            onUploadProgress: ({ loaded, total }) => {
+                if (total && total > 0) report(Math.min(file.size, file.size * loaded / total), file.size);
+                else progress.progress(loaded);
+            },
         });
         rememberResource(data.resource, expected);
+        progress.done("文件已确认并保存");
         return data.resource;
     } catch (error) {
+        if (isUserScopeAbandonedError(error)) progress.dismiss();
+        else progress.fail("文件保存未完成，请查看上传提示后重试");
         throw normalizeUploadError(error);
     }
 }

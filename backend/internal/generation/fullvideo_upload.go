@@ -106,8 +106,9 @@ func prepareFullVideoReferences(ctx context.Context, input *Input, read BeefAPIS
 			sum := sha256.Sum256(data)
 			digest := hex.EncodeToString(sum[:])
 			var receipt fullvideoUpload
+			uploadCtx, reporter := beginReferenceProgress(ctx, referenceMediaLabel(group.kind, i), int64(len(data)))
 			call := func(method, path, contentType string, body any) error {
-				raw, e := ExecuteProtocolRequest(WithRequestKind(ctx, "media_upload"), input.Config, protocol.RequestSpec{Method: method, Path: path, ContentType: contentType, Body: body, Auth: protocol.ManifestAuth{Type: "bearer", Field: "apiKey"}})
+				raw, e := ExecuteProtocolRequest(WithRequestKind(uploadCtx, "media_upload"), input.Config, protocol.RequestSpec{Method: method, Path: path, ContentType: contentType, Body: body, Auth: protocol.ManifestAuth{Type: "bearer", Field: "apiKey"}})
 				if e != nil {
 					return e
 				}
@@ -139,13 +140,16 @@ func prepareFullVideoReferences(ctx context.Context, input *Input, read BeefAPIS
 				}
 				for start, n := 0, 0; start < len(data); start, n = start+receipt.ChunkSize, n+1 {
 					if received[n] {
+						reporter.resumeAt(int64(min(start+receipt.ChunkSize, len(data))))
 						continue
 					}
 					end := min(start+receipt.ChunkSize, len(data))
 					if err = call("PUT", fmt.Sprintf("%s/chunks/%d", path, n), "application/octet-stream", data[start:end]); err != nil {
 						return err
 					}
+					reporter.report("transferring", int64(end))
 				}
+				reporter.report("processing", int64(len(data)))
 				if err = call("POST", path+"/complete", "application/json", map[string]any{}); err != nil {
 					return err
 				}

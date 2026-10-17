@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"infinite-canvas/backend/internal/generation"
 	"io"
 	"os"
 	"path/filepath"
@@ -54,5 +55,5 @@ func (p appReferenceStoragePort) Upload(ctx context.Context, userID, resourceID 
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	return referencestorage.Upload(ctx, config, file.Name())
+	return referencestorage.Upload(ctx, config, file.Name(), generation.ReferenceUploadObserver(ctx, "参考素材"))
 }

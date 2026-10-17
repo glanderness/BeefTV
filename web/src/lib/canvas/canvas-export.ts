@@ -11,6 +11,7 @@ import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { archiveFileExtension, assertUniqueArchiveNames, ExportIntegrityError, type MissingExportFile } from "@/lib/export-integrity";
 import { assertUserScope, captureUserScope } from "@/lib/user-scope-guard";
 import { http } from "@/services/api/request";
+import { startOperation } from "@/stores/use-operation-progress";
 
 export const ARCHIVE_STORAGE_KEY_PATTERN = /^(image|video|audio|file|resource|model|video-reference|audio-reference):/;
 
@@ -22,6 +23,9 @@ export function isArchiveStorageKey(value: string) {
 
 export async function exportCanvasProjects(projects: CanvasProject[], fileName = "画布", options: { includeLocalDrawings?: boolean; folders?: CanvasFolder[] } = {}): Promise<OwnedMediaSaveResult> {
     const scope = captureUserScope();
+    const progress = startOperation("导出画布", { owner: scope, detail: "正在读取画布与媒体文件", totalFiles: projects.reduce((sum, project) => sum + collectStorageKeys(project).length, 0) });
+    let completed = 0;
+    try {
     const zipFiles: { name: string; data: BlobPart }[] = [];
     const missingFiles: MissingExportFile[] = [];
     const exportedProjects = await Promise.all(
@@ -43,6 +47,7 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
                     const path = `projects/${encodeURIComponent(project.id)}/files/${encodeURIComponent(storageKey)}.${archiveFileExtension(blob.type, storageKey.startsWith("image:") ? "png" : "bin")}`;
                     files.push({ storageKey, path, mimeType: blob.type || "application/octet-stream", bytes: blob.size });
                     zipFiles.push({ name: path, data: blob });
+                    progress.update({ completedFiles: ++completed });
                 }),
             );
             const drawingDocuments = (await Promise.all(project.nodes.filter((node) => options.includeLocalDrawings !== false && node.type === "drawing" && node.metadata?.drawingId).map(async (node): Promise<CanvasDrawingExport | null> => {
@@ -106,9 +111,14 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
     }
 
     const data: CanvasExportFile = { app: "infinite-canvas", version: 4, exportedAt: new Date().toISOString(), ...(folders?.length ? { folders } : {}), projects: exportedProjects };
+    progress.update({ phase: "processing", detail: "正在打包画布与媒体文件" });
     const zip = await createZip([{ name: "projects.json", data: JSON.stringify(data, null, 2) }, ...zipFiles]);
     assertUserScope(scope);
-    return saveOwnedOrBrowserBlob(`${safeFileName(fileName)}.zip`, zip);
+    progress.update({ detail: "压缩包已准备好，等待选择保存位置", loadedBytes: zip.size, totalBytes: zip.size });
+    const result = await saveOwnedOrBrowserBlob(`${safeFileName(fileName)}.zip`, zip);
+    if (result === "cancelled") progress.dismiss(); else progress.done("画布备份已保存");
+    return result;
+    } catch (error) { progress.fail("画布导出未完成，请查看错误后重试"); throw error; }
 }
 
 export type OpenCanvasArchive = {

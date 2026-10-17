@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { App } from "antd";
+import { startOperation } from "@/stores/use-operation-progress";
 
 import { generationTaskCanReloadResource, generationTaskNodeId } from "@/lib/canvas/canvas-generation-task-sync";
 import { canvasNodeResourceId } from "@/lib/canvas/canvas-resource-id";
@@ -257,6 +258,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                 }
                 throw new Error(task.error || (task.status === "cancelled" ? "任务已取消" : "任务失败"));
             }
+            let saving: ReturnType<typeof startOperation> | undefined;
             try {
                 await bindBackendCanvasGenerationResult({
                     canvasId: capturedCanvasId,
@@ -267,12 +269,21 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                     isCurrent: isCurrentCanvas,
                     nodesRef,
                     setNodes,
+                    onPhaseChange: task.type === "canvas_video" ? (phase) => {
+                        saving?.dismiss();
+                        saving = undefined;
+                        if (phase !== "saving" || !isCurrentCanvas()) return;
+                        saving = startOperation("保存生成结果", { owner: capturedScope, target: { projectId: capturedCanvasId, nodeId, taskId: task.id }, detail: "正在保存视频并更新画布" });
+                        saving.update({ phase: "processing" });
+                    } : undefined,
                 });
                 if (!isCurrentCanvas()) throw new DOMException("The canvas operation was abandoned", "AbortError");
             } catch (error) {
                 if (error instanceof Error && error.name === "AbortError") throw error;
                 if (isUserScopeAbandonedError(error)) throw error;
                 throw error instanceof CanvasGenerationDurableAckError || error instanceof CanvasGenerationMaterializationError || error instanceof CanvasGenerationOutputMissingError ? error : new CanvasGenerationDurableAckError(error);
+            } finally {
+                saving?.dismiss();
             }
         },
         [nodesRef, projectId, setNodes],

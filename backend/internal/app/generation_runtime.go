@@ -336,6 +336,7 @@ func (s *Service) applyGenerationRuntime(ctx context.Context, meta generation.Ca
 		runtime.Endpoints = existing.Endpoints
 		runtime.Stages = existing.Stages
 		runtime.Delivery = existing.Delivery
+		runtime.ReferenceProgress = existing.ReferenceProgress
 		if !replaceCall {
 			runtime.Call = generation.IdentityCallMeta(existing.Call, meta)
 		}

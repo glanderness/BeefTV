@@ -85,6 +85,7 @@ type Service struct {
 	deliveryMu               sync.Mutex
 	deliveryProgress         *deliveryProgressRegistry
 	deliveryProgressOnce     sync.Once
+	referenceProgress        sync.Map
 	deliveryControlMu        sync.Mutex
 	deliveryCancels          map[string]context.CancelFunc
 	deliveryDeadlines        map[string]time.Time

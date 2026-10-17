@@ -141,6 +141,9 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 	}
 
 	if preparing {
+		if runtime.ReferenceProgress != nil {
+			runtime.ReferenceProgress.ClearReference()
+		}
 		if err := setExecutionStage(ctx, runtime, "正在提交生成任务"); err != nil {
 			return nil, err
 		}

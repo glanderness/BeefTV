@@ -15,19 +15,8 @@ import { applyGenerationConsumerEffect, generationEffectApplied } from "@/servic
 import { attachNodeEffectKey } from "@/services/generation-task-materializer";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
-
-export function generationTaskInput(task: GenerationTask) {
-    if (!task.inputJson) return null;
-    try {
-        return JSON.parse(task.inputJson) as { mode?: CanvasGenerationMode; metadata?: { nodeId?: string; sourceNodeId?: string; domainProjectId?: string }; prompt?: string };
-    } catch {
-        return null;
-    }
-}
-
-export function generationTaskNodeId(task: GenerationTask) {
-    return task.clientContext?.nodeId || generationTaskInput(task)?.metadata?.nodeId || "";
-}
+import { generationTaskInput, generationTaskNodeId } from "@/lib/canvas/canvas-generation-task-identity";
+export { generationTaskInput, generationTaskNodeId } from "@/lib/canvas/canvas-generation-task-identity";
 
 export function generationTaskMode(task: GenerationTask, fallback?: CanvasGenerationMode): CanvasGenerationMode {
     const inputMode = generationTaskInput(task)?.mode;

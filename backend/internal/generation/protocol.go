@@ -458,6 +458,9 @@ func ExecuteProtocolBinaryRequestWithConsumer(ctx context.Context, config Config
 	if err != nil {
 		return nil, "", err
 	}
+	if method == http.MethodPut && contentType == "application/octet-stream" && req.Body != nil {
+		req.Body = io.NopCloser(referenceUploadReader(ctx, req.Body))
+	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}

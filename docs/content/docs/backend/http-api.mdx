@@ -198,7 +198,9 @@ NewAPI Channel 2 与 BeefAPI 视频的暂时下载断连会保留原任务 ID �
 
 `failureDiagnostics` 同时保留本轮执行证据：运行版本和平台、任务配置中的模型/尺寸/质量/数量、提示词长度、参考素材数量与图片大小、本地参考图限制，以及最多 8 次请求（首次及最近 7 次，省略数量另计）的发起状态、HTTP 状态、请求 ID、开始时间、耗时和字节数。任务配置不等于最终出站参数；协议可能转换或省略字段，核对实际发送值须凭请求 ID 关联请求日志。HTTP 200 仅表示收到响应；`executionResult=completed` 才表示生成处理完成。转后台回查时状态为 `pending`，同一次任务继续累积有界轨迹并保留首次请求。成功任务也保存这些证据，以便区分后续本地保存失败或画布应用失败（复制内容来源为 `client_result`）。请求轨迹覆盖统一 Provider HTTP 客户端；旧记录、未经过该客户端的插件请求或上游未提供的 ID 仍可能缺失，不能仅凭空轨迹推断未发送。
 
-生成结果正在取回时，任务详情与列表的 `delivery.outputs[]` 给出该任务每个输出的 `downloadedBytes`、`totalBytes`（未知为 -1）、`bytesPerSecond` 和 `state`（`downloading` / `retrying`），供页面显示进度。它只存在进程内存中，不写数据库，取回结束即消失，重启后不保留；没有取回中的下载时该字段省略。
+生成结果正在取回时，任务详情与列表的 `delivery.outputs[]` 给出该任务每个输出的 `downloadedBytes`、`totalBytes`（未知为 -1）、`bytesPerSecond`、`updatedAt`（Unix 毫秒采样时间）和 `state`（`downloading` / `retrying` / `waiting`），供页面显示进度。页面在采样超过 3 秒后隐藏速度与剩余时间。它只存在进程内存中，不写数据库，取回结束即消失，重启后不保留；没有取回中的下载时该字段省略。
+
+生成前正在上传参考素材时，任务详情和列表可返回临时的 `referenceProgress`：`label` 标识当前素材，`phase` 为 `preparing`、`transferring` 或 `processing`，并提供 `loadedBytes`、`totalBytes`、`bytesPerSecond`、`startedAt` 和 `updatedAt`（Unix 毫秒）。字节传完后仍需等待上传回执与可用性确认；只有确认完成才进入生成提交阶段。进度绑定 BeefTV 自己的任务 ID，不包含上传地址、票据或本地路径，不写数据库；准备结束或任务退出后清除。
 
 生成成功后仍在下载的结果，可用 `POST /tasks/:id/cancel` 停止取回：生成状态保持 `succeeded`，`stage=delivery_paused`；单次下载满 15 分钟则停止并记为 `delivery_timed_out`。尚未取回的输出使用相同的 `materializationErrorCode`。暂停跨应用重启保留，后台不会自动重启；`POST /tasks/:id/retry` 对这两种成功任务只解除暂停，由交付 worker 继续取回原结果，不重新生成或取消上游任务。应用关闭会停止当前下载，未手动暂停或超时的任务在下次启动后恢复。
 

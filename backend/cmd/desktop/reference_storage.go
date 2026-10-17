@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/outbound"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -70,22 +72,46 @@ func (a *DesktopApp) UploadReferenceMedia(ids []string) (map[string]string, erro
 	a.mu.Unlock()
 	defer func() { a.mu.Lock(); a.migrationCancel = nil; a.mu.Unlock() }()
 	links := map[string]string{}
+	defer func() { a.mu.Lock(); a.referenceUploadProgress = model.TaskReferenceProgress{}; a.mu.Unlock() }()
 	for index, id := range ids {
 		if _, exists := links[id]; exists {
 			continue
 		}
 		// CopyOwnedResourceTo checks ownership; arbitrary paths never reach the uploader.
+		started := time.Now().UnixMilli()
+		label := "参考素材 " + strconv.Itoa(index+1)
+		a.mu.Lock()
+		a.referenceUploadProgress = model.TaskReferenceProgress{Label: label, Phase: "preparing", StartedAt: started, UpdatedAt: started}
+		a.mu.Unlock()
 		path := filepath.Join(staging, strconv.Itoa(index))
 		if err = runtime.CopyOwnedResourceTo(id, path); err != nil {
 			return nil, fmt.Errorf("参考素材 %d 读取失败：%w", index+1, err)
 		}
-		link, err := referencestorage.Upload(ctx, config, path)
+		var rate outbound.ProgressRate
+		link, err := referencestorage.Upload(ctx, config, path, func(loaded, total int64, phase string) {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			if ctx.Err() != nil || a.referenceUploadProgress.Label != label || a.referenceUploadProgress.StartedAt != started {
+				return
+			}
+			now := time.Now()
+			rate.Observe(now, loaded)
+			a.referenceUploadProgress.LoadedBytes, a.referenceUploadProgress.TotalBytes = loaded, total
+			a.referenceUploadProgress.Phase, a.referenceUploadProgress.UpdatedAt = phase, now.UnixMilli()
+			a.referenceUploadProgress.BytesPerSecond = rate.Rate(now, loaded)
+		})
 		if err != nil {
 			return nil, fmt.Errorf("参考素材 %d 上传失败：%w", index+1, err)
 		}
 		links[id] = link
 	}
 	return links, nil
+}
+
+func (a *DesktopApp) ReferenceUploadStatus() model.TaskReferenceProgress {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.referenceUploadProgress
 }
 
 func (a *DesktopApp) TestReferenceStorage() error {

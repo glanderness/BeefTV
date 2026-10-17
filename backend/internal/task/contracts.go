@@ -135,6 +135,7 @@ type Summary struct {
 	ResultState               string                        `json:"resultState,omitempty"`
 	Outputs                   []CanonicalOutput             `json:"outputs,omitempty"`
 	Delivery                  *model.TaskDeliveryProgress   `json:"delivery,omitempty"`
+	ReferenceProgress         *model.TaskReferenceProgress  `json:"referenceProgress,omitempty"`
 }
 
 type ClientContext struct {

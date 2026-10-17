@@ -73,6 +73,7 @@ func (s *Service) attachTaskDelivery(task *model.Task) {
 	task.Outputs = modelTaskOutputs(proj.Outputs)
 	task.ResultState = proj.ResultState
 	task.Delivery = s.deliveryProgressRegistry().forTask(task.ID)
+	task.ReferenceProgress = s.referenceProgressForTask(task.ID)
 }
 
 func (s *Service) attachTaskSummaryDeliveries(tasks []model.Task, summaries []TaskSummary) {
@@ -99,6 +100,7 @@ func (s *Service) attachTaskSummaryDeliveries(tasks []model.Task, summaries []Ta
 		summaries[index].Outputs = proj.Outputs
 		summaries[index].ResultState = proj.ResultState
 		summaries[index].Delivery = s.deliveryProgressRegistry().forTask(task.ID)
+		summaries[index].ReferenceProgress = s.referenceProgressForTask(task.ID)
 	}
 }
 

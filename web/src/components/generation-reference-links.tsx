@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Alert, Button, Input, type App } from "antd";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { isUserScopeAbandonedError } from "@/lib/user-scope-guard";
+import { startOperation } from "@/stores/use-operation-progress";
 import { isReferenceHTTPSLink, uploadReferenceLinks, type ReferenceLinkRequest, type ResolveReferenceLinks } from "@/services/api/reference-link-replacement";
 
 type ModalAPI = ReturnType<typeof App.useApp>["modal"];
@@ -41,16 +42,20 @@ export function ReferenceLinkFields({ references, onChange }: { references: Refe
 // One generation may submit several images concurrently; share one decision for identical inputs.
 export function createReferenceLinkResolver(modal: ModalAPI): ResolveReferenceLinks {
     const requests = new Map<string, Promise<Record<string, string> | null>>();
-    return (references, signal) => {
+    return (references, signal, target) => {
         if (signal?.aborted) return Promise.resolve(null);
         const key = JSON.stringify(references);
         const existing = requests.get(key);
-        if (existing) return existing;
+        if (existing) {
+            if (!target) return existing;
+            const waiting = startOperation("准备参考素材", { target, detail: "正在等待参考素材确认" });
+            return existing.finally(() => waiting.dismiss());
+        }
         const pending = (async () => {
             let uploaded: Record<string, string> = {};
             let uploadError = "";
             try {
-                uploaded = await uploadReferenceLinks(references, signal);
+                uploaded = await uploadReferenceLinks(references, signal, target);
             } catch (error) {
                 if (isUserScopeAbandonedError(error)) throw error;
                 if (signal?.aborted) return null;

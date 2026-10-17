@@ -29,6 +29,9 @@ func TestTaskDeliveryPortRecordsUnderTaskIdentityAndClears(t *testing.T) {
 		t.Fatalf("progress not projected: %#v", got)
 	}
 	output := got.Outputs[0]
+	if output.UpdatedAt <= 0 {
+		t.Fatal("download snapshot has no sampling timestamp")
+	}
 	if output.OutputIndex != 0 || output.DownloadedBytes != 512 || output.TotalBytes != 2048 || output.State != "downloading" {
 		t.Fatalf("unexpected projection: %+v", output)
 	}

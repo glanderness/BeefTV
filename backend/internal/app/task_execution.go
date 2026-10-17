@@ -27,6 +27,8 @@ func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]
 	runtime, _ := generation.RuntimeFromContext(ctx)
 	runtime.Stages = appTaskStagePort{service: s, task: task}
 	runtime.Delivery = appTaskDeliveryPort{service: s, taskID: task.ID}
+	runtime.ReferenceProgress = s.newReferenceProgressPort(task.ID)
+	defer runtime.ReferenceProgress.ClearReference()
 	ctx = generation.WithRuntime(ctx, runtime)
 	ctx = context.WithValue(ctx, imageTaskContext{}, task)
 	if result, recovered, err := s.recoverImageSubmission(ctx, task); recovered {

@@ -1,4 +1,4 @@
-import { unzipSync, zipSync } from "fflate";
+import { unzip, zip } from "fflate";
 
 type ZipFile = {
     name: string;
@@ -37,7 +37,8 @@ export async function createZip(files: ZipFile[]) {
             return [confinedArchivePath(file.name), data] as const;
         }),
     );
-    return new Blob([zipSync(Object.fromEntries(entries), { level: 0 })], { type: "application/zip" });
+    const bytes = await new Promise<Uint8Array>((resolve, reject) => zip(Object.fromEntries(entries), { level: 0 }, (error, result) => error ? reject(error) : resolve(result)));
+    return new Blob([new Uint8Array(bytes)], { type: "application/zip" });
 }
 
 export async function readZip(file: Blob) {
@@ -45,7 +46,8 @@ export async function readZip(file: Blob) {
     let count = 0;
     let entries: Record<string, Uint8Array>;
     try {
-        entries = unzipSync(new Uint8Array(await file.arrayBuffer()), {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        entries = await new Promise<Record<string, Uint8Array>>((resolve, reject) => unzip(bytes, {
             filter(info) {
                 confinedArchivePath(info.name);
                 count += 1;
@@ -56,7 +58,7 @@ export async function readZip(file: Blob) {
                 if (total > ARCHIVE_MAX_TOTAL_BYTES) throw new Error("压缩包体积超出限制");
                 return true;
             },
-        });
+        }, (error, result) => error ? reject(error) : resolve(result)));
     } catch (error) {
         if (error instanceof Error && /非法路径|越界路径|超出限制|文件过大/.test(error.message)) throw error;
         throw new Error("画布备份已损坏，无法导入");

@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
-import { AlertCircle, BookOpenCheck, Clock3, Download, FileText, Image as ImageIcon, LoaderCircle, Music2, Pencil, Play, RefreshCw, Square, Video } from "lucide-react";
+import { AlertCircle, BookOpenCheck, Download, Image as ImageIcon, LoaderCircle, Music2, Pencil, Play, RefreshCw, Video } from "lucide-react";
 
 import { VideoPlayer } from "@/components/video-player";
 import { CachedResourceImage } from "@/components/cached-resource-image";
 import { GenerationFailureNotice } from "@/components/generation/generation-failure-notice";
-import { generationDeliveryProgressView, generationTaskFetchingResult } from "@/lib/generation-delivery-progress";
 import { explainGenerationError } from "@/lib/generation-error";
 import { canvasNodeFailureExplanation, canRecoverOrRetryDepthCapture } from "@/lib/canvas/canvas-depth-capture";
-import { formatGenerationElapsed, generationProgressDisplay, generationTaskShowsProgress, isGenerationTaskSubmissionUncertain, trackGenerationProgressChange, type GenerationProgressRecord } from "@/lib/generation-task-display";
+import { isGenerationTaskSubmissionUncertain } from "@/lib/generation-task-display";
+import { canvasNodeOperation } from "@/lib/operation-progress";
+import { useOperationProgress } from "@/stores/use-operation-progress";
 import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { loadCanvasDrawingPreview } from "@/lib/canvas/canvas-drawing-storage";
@@ -28,7 +29,6 @@ import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics
 import { acquireCanvasVideoPreview, canvasDerivedPreviewSourceKey, canvasVideoPreviewNeedsHydration } from "@/services/canvas-video-preview";
 import { acquireCanvasVideoSource } from "@/services/canvas-video-source";
 import { getActiveUserScopeEpoch, subscribeUserScope } from "@/lib/user-scope";
-import { useGenerationDeliveryProgress } from "@/stores/use-generation-delivery-progress";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { ART_CRITIQUE_NODE_TYPE } from "@/lib/art-critique/contracts";
@@ -38,6 +38,7 @@ import { CanvasAudioPlayer } from "./canvas-audio-player";
 import { useCanvasNodeActions } from "./canvas-node-action-context";
 import { CanvasSubtitleOverlay } from "./canvas-subtitle-overlay";
 import { CanvasFileUploadContent } from "./canvas-file-upload-content";
+import { CanvasNodeGenerationProgress } from "./canvas-node-generation-progress";
 import { MarkdownNodeContent } from "./nodes/markdown-node";
 import { ChartNodeContent } from "./nodes/chart-node";
 import { CompareNodeContent } from "./nodes/compare-node";
@@ -62,6 +63,7 @@ export type CanvasNodeContentProps = {
     batchRecovering: boolean;
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
     drawingProjectId?: string;
+    projectId?: string;
     onContentChange: (nodeId: string, content: string) => void;
     onStopEditing: () => void;
     mentionReferences: CanvasResourceReference[];
@@ -77,7 +79,9 @@ export type CanvasNodeContentProps = {
 };
 
 export function CanvasNodeContent(props: CanvasNodeContentProps) {
+    const operation = useOperationProgress(state => canvasNodeOperation(state.entries, props.projectId, props.node.id, props.node.metadata?.taskId));
     if (props.node.metadata?.fileUpload) return <CanvasFileUploadContent node={props.node} theme={props.theme} reduceMotion={props.reduceMediaEffects} />;
+    if (operation) return <CanvasNodeGenerationProgress node={props.node} theme={props.theme} operation={operation} onOpenTaskDetails={props.onOpenTaskDetails} onCancelTask={props.onCancelTask} />;
     const hasCustomContent = props.node.type === CanvasNodeType.Config
         || props.node.type === CanvasNodeType.Script
         || props.node.type === CanvasNodeType.BatchTable
@@ -90,7 +94,7 @@ export function CanvasNodeContent(props: CanvasNodeContentProps) {
     if (props.node.type === ART_CRITIQUE_NODE_TYPE) return <ArtCritiqueNodeContent node={props.node} />;
     if (props.node.type === MEDIA_CONVERSION_NODE_TYPE) return <MediaConversionNodeContent node={props.node} theme={props.theme} />;
     if (props.isBatchRoot) return <ImageNodeContent {...props} />;
-    if (props.node.metadata?.status === "loading") return <LoadingContent node={props.node} theme={props.theme} onOpenTaskDetails={props.onOpenTaskDetails} onCancelTask={props.onCancelTask} />;
+    if (props.node.metadata?.status === "loading") return <CanvasNodeGenerationProgress node={props.node} theme={props.theme} onOpenTaskDetails={props.onOpenTaskDetails} onCancelTask={props.onCancelTask} />;
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} onReloadResource={props.onReloadResource} onOpenTaskDetails={props.onOpenTaskDetails} />;
 
     const pluginDefinition = getNodeDefinition(props.node.type)?.plugin;
@@ -190,109 +194,6 @@ function DrawingContent({ node, theme, drawingProjectId }: CanvasNodeContentProp
         </div>
     );
 }
-
-function LoadingContent({ node, theme, onOpenTaskDetails, onCancelTask }: Pick<CanvasNodeContentProps, "node" | "theme" | "onOpenTaskDetails" | "onCancelTask">) {
-    const taskId = node.metadata?.taskId;
-    // Visual/audit fixtures intentionally run without a backend task row. Keep
-    // their loading affordances identical to a real running task while
-    // leaving production nodes gated by the persisted task id.
-    const hasTaskIdentity = Boolean(taskId) || node.metadata?.fixture === "libtv-generating";
-    const displayTask = {
-        provider: node.metadata?.taskProvider,
-        status: (node.metadata?.taskStatus || "running") as GenerationTask["status"],
-        stage: node.metadata?.taskStage,
-        officialStatus: node.metadata?.taskOfficialStatus,
-        errorCode: node.metadata?.taskErrorCode,
-    };
-    const submissionUncertain = Boolean(taskId) && isGenerationTaskSubmissionUncertain(displayTask);
-    const showsProgress = Boolean(taskId) && generationTaskShowsProgress(displayTask);
-    const progress = showsProgress && typeof node.metadata?.taskProgress === "number" ? Math.max(0, Math.min(100, Math.round(node.metadata.taskProgress))) : null;
-    const now = useSecondTick(hasTaskIdentity);
-    const createdAt = node.metadata?.taskCreatedAt;
-    const createdAtMs = createdAt ? new Date(createdAt).getTime() : Number.NaN;
-    const elapsed = Number.isFinite(createdAtMs) ? `已用 ${formatGenerationElapsed(now - createdAtMs)}` : "刚刚开始";
-    const progressKey = taskId || node.id;
-    const progressRecord = progress !== null ? rememberProgressChange(progressKey, progress, now) : undefined;
-    const generationView = generationProgressDisplay({
-        status: displayTask.status,
-        progress,
-        progressChangedAt: progressRecord?.changedAt,
-        now,
-        isVideo: node.type === CanvasNodeType.Video,
-    });
-    const deliveryProgress = useGenerationDeliveryProgress((state) => (taskId ? state.byTask[taskId] : undefined));
-    const delivery = deliveryProgress ? generationDeliveryProgressView(deliveryProgress) : null;
-    const fetchingResult = generationTaskFetchingResult(displayTask, Boolean(deliveryProgress));
-    const progressView = delivery
-        ? { percent: delivery.percent, bar: delivery.percent !== null ? "determinate" : "indeterminate" }
-        : fetchingResult && displayTask.status === "running" ? { percent: null, bar: "indeterminate" } : generationView;
-    return (
-        <div className="flex h-full w-full flex-col items-center justify-center gap-2.5 px-5 text-center" style={{ background: theme.node.fill, color: theme.node.activeStroke }}>
-            {submissionUncertain ? <AlertCircle className="size-10" /> : <div className="size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />}
-            <span className="text-[var(--fs-tiny)] font-semibold">{delivery?.title || (fetchingResult ? "正在取回结果" : "生成中")}</span>
-            {hasTaskIdentity ? (
-                <div className="flex w-full max-w-[210px] flex-col items-center gap-1.5">
-                    {fetchingResult ? null : (
-                        <div className="max-w-full truncate text-sm font-semibold tabular-nums" style={{ color: theme.node.text }}>
-                            <Clock3 className="mr-1 inline size-3.5 align-[-2px]" />{elapsed}
-                        </div>
-                    )}
-                    {progressView.percent !== null ? <div className="max-w-full truncate text-[var(--fs-label)] font-medium" style={{ color: theme.node.text }}>{progressView.percent}%</div> : null}
-                    {progressView.bar === "determinate" && progressView.percent !== null ? (
-                        <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: theme.node.stroke }}>
-                            <div className="h-full rounded-full transition-[width]" style={{ width: `${progressView.percent}%`, background: theme.node.activeStroke }} />
-                        </div>
-                    ) : null}
-                    {progressView.bar === "indeterminate" ? (
-                        <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: theme.node.stroke }} role="progressbar" aria-label={fetchingResult ? "正在取回结果" : "仍在生成"}>
-                            <div className="canvas-node-progress-indeterminate h-full rounded-full" style={{ background: theme.node.activeStroke }} />
-                        </div>
-                    ) : null}
-                    {delivery?.detail ? <div className="max-w-full truncate text-[var(--fs-tiny)] tabular-nums" style={{ color: theme.node.muted }}>{delivery.detail}</div> : null}
-                    <div className="mt-0.5 flex items-center gap-1.5">
-                        <button type="button" className="inline-flex h-7 items-center gap-1 rounded-[var(--r-sm)] px-2 text-[var(--fs-tiny)] font-medium transition-colors" style={{ background: theme.toolbar.itemHover, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onOpenTaskDetails?.(node); }}><FileText className="size-3" />详情</button>
-                        {onCancelTask && (displayTask.status === "queued" || displayTask.status === "running" || displayTask.status === "succeeded") ? (
-                            <button type="button" className="inline-flex h-7 items-center gap-1 rounded-[var(--r-sm)] px-2 text-[var(--fs-tiny)] font-medium transition-colors" style={{ background: theme.toolbar.itemHover, color: theme.node.muted }} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onCancelTask(node); }} aria-label={displayTask.status === "succeeded" ? "停止取回结果" : "取消生成任务"}>
-                                <Square className="size-3" />{displayTask.status === "succeeded" ? "停止取回" : "取消"}
-                            </button>
-                        ) : null}
-                    </div>
-                </div>
-            ) : null}
-        </div>
-    );
-}
-
-function useSecondTick(active: boolean) {
-    const [, setTick] = useState(0);
-    useEffect(() => {
-        if (!active) return;
-        const timer = window.setInterval(() => setTick((value) => value + 1), 1000);
-        return () => window.clearInterval(timer);
-    }, [active]);
-    return Date.now();
-}
-
-// 上游百分比最后一次变化的时间，按任务记在内存里。节点滚出视口再回来
-// 重新挂载时不会把「久未变化」清零；上限防止长会话里无限增长。
-const progressChangeByTask = new Map<string, GenerationProgressRecord>();
-const PROGRESS_CHANGE_LIMIT = 200;
-
-function rememberProgressChange(key: string, progress: number, now: number) {
-    const previous = progressChangeByTask.get(key);
-    const next = trackGenerationProgressChange(previous, progress, now);
-    if (next !== previous) {
-        progressChangeByTask.delete(key);
-        progressChangeByTask.set(key, next);
-        if (progressChangeByTask.size > PROGRESS_CHANGE_LIMIT) {
-            const oldest = progressChangeByTask.keys().next().value;
-            if (oldest !== undefined) progressChangeByTask.delete(oldest);
-        }
-    }
-    return next;
-}
-
-
 
 function ErrorContent({ node, theme, onRetry, onReloadResource, onOpenTaskDetails }: Pick<CanvasNodeContentProps, "node" | "theme" | "onRetry" | "onReloadResource" | "onOpenTaskDetails">) {
     const explanation = canvasNodeFailureExplanation(node);
@@ -454,7 +355,7 @@ function skillOutputModeLabel(mode?: string) {
 function ImageNodeContent(props: CanvasNodeContentProps) {
     if (!props.node.metadata?.content && props.isBatchRoot) {
         const content = props.node.metadata?.status === "loading"
-            ? <LoadingContent node={props.node} theme={props.theme} />
+            ? <CanvasNodeGenerationProgress node={props.node} theme={props.theme} />
             : props.node.metadata?.status === "error"
                 ? <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} onReloadResource={props.onReloadResource} />
                 : <EmptyImageContent {...props} isBatchRoot={false} />;

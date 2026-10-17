@@ -726,7 +726,7 @@ export function useCanvasMediaTools({
                 { url: node.metadata.content, storageKey: node.metadata.storageKey },
                 range,
                 sourceDurationMs,
-                (status) => progress.update(status.phase === "loading" ? "加载 FFmpeg" : status.phase === "reading" ? "读取视频资源" : "正在裁切片段", status.phase === "encoding" ? 3 : 2),
+                (status) => progress.update(status.phase === "loading" ? "加载 FFmpeg" : status.phase === "reading" ? "读取视频资源" : "正在裁切片段 · " + Math.round(status.progress) + "%", status.phase === "encoding" ? 3 : 2),
             );
             progress.update("保存剪辑结果", 4);
             const uploaded = await uploadMediaFile(output, "video");
@@ -780,11 +780,11 @@ export function useCanvasMediaTools({
             const source = { url: node.metadata?.content, storageKey: node.metadata?.storageKey };
             const range = { startMs: params.startMs, endMs: params.endMs };
             const audio = await extractVideoAudio(source, range, node.metadata?.durationMs, (status) => {
-                progress.update(status.phase === "loading" ? "加载 FFmpeg" : status.phase === "reading" ? "检查视频音轨" : "正在提取音轨", status.phase === "encoding" ? 2 : 1);
+                progress.update(status.phase === "loading" ? "加载 FFmpeg" : status.phase === "reading" ? "检查视频音轨" : "正在提取音轨 · " + Math.round(status.progress) + "%", status.phase === "encoding" ? 2 : 1);
             });
             progress.update("正在生成无声视频", 3);
             const mutedVideo = await removeAudioFromVideo(source, range, node.metadata?.durationMs, (status) => {
-                progress.update(status.phase === "reading" ? "读取视频资源" : "正在生成无声视频", status.phase === "encoding" ? 4 : 3);
+                progress.update(status.phase === "reading" ? "读取视频资源" : "正在生成无声视频 · " + Math.round(status.progress) + "%", status.phase === "encoding" ? 4 : 3);
             });
             progress.update("保存两个独立结果", 5);
             const [uploadedVideo, uploadedAudio] = await Promise.all([uploadMediaFile(mutedVideo, "video"), uploadMediaFile(audio, "audio")]);
@@ -865,7 +865,7 @@ export function useCanvasMediaTools({
         setMergeVideoProgress({ phase: "reading", progress: 0 });
         try {
             const blob = await mergeVideos(videos.map((node) => ({ id: node.id, url: node.metadata?.content, storageKey: node.metadata?.storageKey })), setMergeVideoProgress);
-            setMergeVideoProgress({ phase: "encoding", progress: 98 });
+            setMergeVideoProgress({ phase: "saving", progress: 98 });
             const uploaded = await storeGeneratedVideo({ blob });
             const size = fitNodeSize(uploaded.width || 1280, uploaded.height || 720, VIDEO_NODE_MAX_SIZE.width, VIDEO_NODE_MAX_SIZE.height);
             const left = Math.max(...videos.map((node) => node.position.x + node.width)) + 120;
@@ -895,8 +895,9 @@ export function useCanvasMediaTools({
             setSelectedNodeIds(selection);
             setSelectedConnectionId(null);
             setDialogNodeId(null);
+            setMergeVideoProgress({ phase: "binding", progress: 98 });
             await persistMediaNodes([mergedNode]);
-            setMergeVideoProgress({ phase: "encoding", progress: 100 });
+            setMergeVideoProgress({ phase: "done", progress: 100 });
             message.success(`已合并 ${videos.length} 段视频，成片节点已添加`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "视频合并失败");

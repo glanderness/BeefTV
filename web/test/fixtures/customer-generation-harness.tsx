@@ -12,6 +12,10 @@ import { useCanvasStore } from "../../src/stores/canvas/use-canvas-store";
 import { useUserStore } from "../../src/stores/use-user-store";
 import type { CanvasNodeData } from "../../src/types/canvas";
 import { customerGenerationProject, type CustomerGenerationScenario } from "./customer-generation-scenarios";
+import { CanvasNodeGenerationProgress } from "../../src/components/canvas/canvas-node-generation-progress";
+import { canvasThemes } from "../../src/lib/canvas-theme";
+import { canvasNodeOperation } from "../../src/lib/operation-progress";
+import { useOperationProgress } from "../../src/stores/use-operation-progress";
 
 const params = new URLSearchParams(location.search);
 const scenario = (params.get("scenario") || "five-images") as CustomerGenerationScenario;
@@ -36,6 +40,8 @@ new MutationObserver(changes => {
 
 function Harness() {
     const [nodes, setNodesState] = useState<CanvasNodeData[]>(project.nodes);
+    const target = nodes.find(node => node.id === "target")!;
+    const preparation = useOperationProgress(state => canvasNodeOperation(state.entries, project.id, target.id, target.metadata?.taskId));
     const nodesRef = useRef(nodes);
     nodesRef.current = nodes;
     const connectionsRef = useRef(project.connections);
@@ -63,6 +69,7 @@ function Harness() {
         <button onClick={() => void harness.generate()}>生成视频</button>
         <button onClick={() => harness.edit()}>准备期间修改画布</button>
         <button onClick={() => harness.cancel()}>取消准备</button>
+        {preparation ? <section aria-label="视频节点"><CanvasNodeGenerationProgress node={target} theme={canvasThemes.dark} operation={preparation} /></section> : null}
         <output data-testid="stage">{nodes.find(node => node.id === "target")?.metadata?.taskStage || "尚未提交"}</output>
         <pre data-testid="snapshot">{JSON.stringify(nodes)}</pre>
     </>;

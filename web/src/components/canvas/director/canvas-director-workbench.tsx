@@ -14,6 +14,7 @@ import { DirectorScreenshotGallery } from "@/components/canvas/director/director
 import { DirectorCameraScreenshotTabs, type DirectorCameraInspectorTab } from "@/components/canvas/director/director-camera-screenshot-tabs";
 import { DirectorCameraProperties } from "@/components/canvas/director/director-camera-properties";
 import { DirectorPanoramaAIModal } from "@/components/canvas/director/director-panorama-ai-modal";
+import { startOperation } from "@/stores/use-operation-progress";
 import { DirectorWorkbenchRail, type DirectorWorkbenchTab } from "@/components/canvas/director/director-workbench-rail";
 import { DirectorViewport, type DirectorViewportHandle } from "@/components/canvas/director/director-viewport";
 import { DirectorViewportDock } from "@/components/canvas/director/director-viewport-dock";
@@ -1506,6 +1507,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
         const expected = { scene: current, shotId: activeShot.id };
         const previousViewMode = useDirectorWorkbenchStore.getState().viewMode;
         const session = directorAsyncSession(sessionRef.current.signal);
+        const progress = startOperation("导出白膜视频", { owner: session.expectedScope, detail: "正在准备录制镜头" });
         setRecording(true);
         const wasPlaying = playing;
         const previousPlayhead = playhead;
@@ -1525,19 +1527,24 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
             setPlaying(true);
             await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
             session.assertCurrent();
+            progress.update({ phase: "processing", detail: "正在录制白膜视频" });
             const clayVideo = await viewportRef.current.recordVideo(activeShot.duration, activeShot.fps);
             session.assertCurrent();
             if (!isDirectorOutputSnapshotCurrent(draftRef.current, expected)) throw new Error("录制期间场景或镜头已变化，请重试");
             const next = touchDirectorScene(draftRef.current || current);
             writeAndPublish(next);
             if (!isDirectorOutputSnapshotCurrent(draftRef.current, { scene: next, shotId: expected.shotId })) throw new Error("输出期间场景或镜头已变化，请重试");
+            progress.update({ detail: "正在保存视频与截图并加入画布", totalBytes: clayVideo.size });
             const applyResult = await onApply({ scene: next, shot: activeShot, prompt: compileDirectorPrompt(next, activeShot), beauty, clayVideo, clayVideoMimeType: clayVideo.type });
             session.assertCurrent();
+            if (applyResult?.confirmed === false) progress.fail("视频已保存在本机，项目保存待重试");
+            else progress.done("白膜视频已保存并加入画布");
             setExportNotice(applyResult?.confirmed === false
                 ? { kind: "warning", text: "白膜视频已导出，文件目前只在这台设备上" }
                 : { kind: "success", text: "白膜视频已导出，可在画布中预览播放" });
         } catch (error) {
-            if (session.current()) setExportNotice({ kind: "error", text: error instanceof Error ? error.message : "白膜视频导出失败" });
+            if (session.current()) { progress.fail("白膜视频导出未完成，请查看错误后重试"); setExportNotice({ kind: "error", text: error instanceof Error ? error.message : "白膜视频导出失败" }); }
+            else progress.dismiss();
         } finally {
             restorePlayback();
             if (session.current()) setRecording(false);

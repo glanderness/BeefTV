@@ -315,9 +315,11 @@ async function createBackendGenerationTask(options: BackendGenerationTaskOptions
         }));
         if (prepared.mask && needsURL("image", 0, true) && (prepared.mask.storageKey || !isReferenceHTTPSLink(prepared.mask.url || ""))) references.push({ key: "mask:0", label: "遮罩", name: prepared.mask.name, resourceID: resourceIdFromStorageKey(prepared.mask.storageKey) || undefined, upload: transport?.image !== "link" });
         if (!references.length) throw error;
+        const nodeId = options.metadata?.nodeId;
+        const target = options.projectId && typeof nodeId === "string" && nodeId ? { projectId: options.projectId, nodeId } : undefined;
         const links = options.resolveReferenceLinks
-            ? await options.resolveReferenceLinks(references, options.signal)
-            : await uploadReferenceLinks(references, options.signal);
+            ? await options.resolveReferenceLinks(references, options.signal, target)
+            : await uploadReferenceLinks(references, options.signal, target);
         throwIfAborted(options.signal);
         assertUserScope(expectedScope);
         if (!links || references.some((reference) => !links[reference.key])) throw error;

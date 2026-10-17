@@ -140,7 +140,8 @@ func PrepareBeefAPISeedanceReferences(ctx context.Context, config Config, input 
 			}
 			digest := sha256.Sum256(data)
 			hexDigest := hex.EncodeToString(digest[:])
-			session, err := CreateBeefAPISeedanceUpload(ctx, config, BeefAPISeedanceUploadRequest{
+			uploadCtx, reporter := beginReferenceProgress(ctx, referenceMediaLabel(group.kind, index), int64(len(data)))
+			session, err := CreateBeefAPISeedanceUpload(uploadCtx, config, BeefAPISeedanceUploadRequest{
 				Kind:   group.kind,
 				Bytes:  int64(len(data)),
 				SHA256: hexDigest,
@@ -153,7 +154,7 @@ func PrepareBeefAPISeedanceReferences(ctx context.Context, config Config, input 
 				return MapBeefAPISeedanceUploadError(err, false)
 			}
 			started = true
-			uploaded, err := CompleteBeefAPISeedanceUpload(ctx, config, session, data)
+			uploaded, err := CompleteBeefAPISeedanceUpload(uploadCtx, config, session, data)
 			size := int64(len(data))
 			data = nil
 			if err != nil {
@@ -173,6 +174,7 @@ func PrepareBeefAPISeedanceReferences(ctx context.Context, config Config, input 
 			if uploaded.Bytes > 0 {
 				media.Bytes = uploaded.Bytes
 			}
+			reporter.report("processing", size)
 		}
 	}
 	return nil
@@ -365,7 +367,7 @@ func PutBeefAPISeedanceBytes(ctx context.Context, session BeefAPISeedanceUploadS
 	if err := ValidateBeefAPISeedanceSecureURL(ctx, session.UploadURL); err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, strings.TrimSpace(session.UploadURL), bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, strings.TrimSpace(session.UploadURL), referenceUploadReader(ctx, bytes.NewReader(data)))
 	if err != nil {
 		return errBeefAPISeedanceUploadUnavailable
 	}

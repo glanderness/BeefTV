@@ -85,6 +85,7 @@ func (a *DesktopApp) MigrateStorage(target string) (desktopstorage.Usage, error)
 		return desktopstorage.Usage{}, errors.New("数据正在迁移，请等待完成")
 	}
 	defer a.migrationMu.Unlock()
+	a.setMigrationProgress(desktopstorage.Progress{Phase: "preparing", Detail: "正在检查存储目录与磁盘空间"})
 	if a.storageRoot == "" && strings.TrimSpace(os.Getenv("CANVAS_DESKTOP_DATA_DIR")) != "" {
 		return desktopstorage.Usage{}, errors.New("请先移除 CANVAS_DESKTOP_DATA_DIR 环境变量，再在设置中迁移存储目录")
 	}
@@ -129,6 +130,7 @@ func (a *DesktopApp) MigrateStorage(target string) (desktopstorage.Usage, error)
 		return desktopstorage.Usage{}, errors.New("工作区尚未就绪，迁移未开始。请重启 BeefTV 后重试")
 	}
 	prepareCtx, prepareCancel := context.WithTimeout(ctx, 10*time.Second)
+	a.setMigrationProgress(desktopstorage.Progress{Phase: "preparing", Detail: "正在停止后台任务并保存工作区"})
 	resume, prepareErr := currentRuntime.PrepareStorageMigration(prepareCtx)
 	prepareCancel()
 	if prepareErr != nil {
@@ -167,13 +169,19 @@ func (a *DesktopApp) MigrateStorage(target string) (desktopstorage.Usage, error)
 	// Release before rollback reopens the source runtime.
 	oldRestore := restore
 	restore = func(cause error) (desktopstorage.Usage, error) { _ = sourceLock.Close(); return oldRestore(cause) }
+	a.setMigrationProgress(desktopstorage.Progress{Phase: "processing", Detail: "正在检查原目录文件"})
 	files, err := desktopstorage.Snapshot(source)
 	if err != nil {
 		return restore(err)
 	}
-	if err := desktopstorage.CopyClosedWorkspace(ctx, source, target); err != nil {
+	if err := desktopstorage.CopyClosedWorkspace(ctx, source, target, a.setMigrationProgress); err != nil {
 		return restore(fmt.Errorf("迁移失败，原数据已保留: %w", err))
 	}
+	a.mu.RLock()
+	progress := a.migrationProgress
+	a.mu.RUnlock()
+	progress.Phase, progress.Detail = "processing", "正在核对原目录与新目录的完整性"
+	a.setMigrationProgress(progress)
 	if err = desktopstorage.VerifySnapshot(source, files, false); err != nil {
 		return restore(err)
 	}
@@ -184,6 +192,8 @@ func (a *DesktopApp) MigrateStorage(target string) (desktopstorage.Usage, error)
 	if err != nil {
 		return restore(err)
 	}
+	progress.Detail = "正在打开新目录并恢复工作区"
+	a.setMigrationProgress(progress)
 	next, err := openDesktopRuntime(ctx, target)
 	if err != nil {
 		return restore(fmt.Errorf("新目录无法打开，继续使用原目录: %w", err))
@@ -206,7 +216,21 @@ func (a *DesktopApp) MigrateStorage(target string) (desktopstorage.Usage, error)
 		return restore(fmt.Errorf("存储目录设置未保存，继续使用原目录: %w", err))
 	}
 	a.installStorageRuntime(target, next)
+	progress.Phase, progress.Detail = "done", "迁移完成，正在重新载入"
+	a.setMigrationProgress(progress)
 	return usage, nil
+}
+
+func (a *DesktopApp) setMigrationProgress(progress desktopstorage.Progress) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.migrationProgress = progress
+}
+
+func (a *DesktopApp) StorageMigrationStatus() desktopstorage.Progress {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.migrationProgress
 }
 
 func (a *DesktopApp) installStorageRuntime(path string, runtime *bootstrap.Runtime) {

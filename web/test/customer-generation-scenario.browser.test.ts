@@ -223,17 +223,19 @@ for (const failure of ["connection-reset", "http-503"] as const) test(`unknown s
     } finally { await close(); }
 }, 20000);
 
-test("reference preparation notice closes when the supplier task starts processing", async () => {
+test("reference preparation appears in its video node and closes when the supplier task starts processing", async () => {
     const { page, state, close } = await open("character");
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     await page.route("**/api/projects/synthetic-domain/characters/character-asset", async route => { await gate; await route.continue(); });
     try {
         await start(page);
-        await page.getByText("正在准备参考素材…", { exact: true }).waitFor();
+        const progress = page.getByRole("region", { name: "视频节点" }).getByRole("status", { name: "正在准备参考素材", exact: true });
+        await progress.waitFor();
+        expect(await page.getByText("正在准备参考素材…", { exact: true }).count()).toBe(0);
         release();
         await until(() => state.posts.length === 1);
         await page.waitForFunction(() => document.querySelector("output")?.textContent === "供应商处理中");
-        await page.waitForFunction(() => !document.querySelector(".ant-message")?.textContent?.includes("正在准备参考素材"), undefined, { timeout: 1500 });
+        await progress.waitFor({ state: "hidden", timeout: 1500 });
     } finally { release(); await close(); }
 }, 15000);

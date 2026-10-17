@@ -18,7 +18,7 @@ import (
 	"infinite-canvas/backend/internal/outbound"
 )
 
-func Upload(ctx context.Context, config Config, path string) (string, error) {
+func Upload(ctx context.Context, config Config, path string, observers ...func(int64, int64, string)) (string, error) {
 	if !config.Enabled {
 		return "", errors.New("尚未启用参考素材对象存储")
 	}
@@ -27,10 +27,10 @@ func Upload(ctx context.Context, config Config, path string) (string, error) {
 	}
 	client := outbound.OutboundHTTPClient(10 * time.Minute)
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-	return upload(ctx, config, path, client)
+	return upload(ctx, config, path, client, observers...)
 }
 
-func upload(ctx context.Context, config Config, path string, client *http.Client) (string, error) {
+func upload(ctx context.Context, config Config, path string, client *http.Client, observers ...func(int64, int64, string)) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -40,6 +40,12 @@ func upload(ctx context.Context, config Config, path string, client *http.Client
 	if err != nil {
 		return "", err
 	}
+	observe := func(loaded int64, phase string) {
+		if len(observers) > 0 && observers[0] != nil {
+			observers[0](loaded, stat.Size(), phase)
+		}
+	}
+	observe(0, "preparing")
 	hash := sha256.New()
 	if _, err = io.Copy(hash, file); err != nil {
 		return "", err
@@ -59,7 +65,7 @@ func upload(ctx context.Context, config Config, path string, client *http.Client
 	if err != nil {
 		return "", err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, file)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, &uploadReader{Reader: file, total: stat.Size(), observe: observe})
 	if err != nil {
 		return "", err
 	}
@@ -79,6 +85,7 @@ func upload(ctx context.Context, config Config, path string, client *http.Client
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return "", fmt.Errorf("对象存储拒绝上传（HTTP %d），请检查区域、密钥和存储桶权限", response.StatusCode)
 	}
+	observe(stat.Size(), "processing")
 	publicURL, err := url.JoinPath(config.PublicBaseURL, key)
 	if err != nil {
 		return "", err
@@ -105,4 +112,25 @@ func upload(ctx context.Context, config Config, path string, client *http.Client
 		return "", errors.New("公网地址未返回上传的素材，请检查地址与存储桶的对应关系")
 	}
 	return publicURL, nil
+}
+
+type uploadReader struct {
+	io.Reader
+	loaded, total int64
+	last          time.Time
+	observe       func(int64, string)
+}
+
+func (r *uploadReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.loaded += int64(n)
+	if err != nil || r.loaded == r.total || time.Since(r.last) >= 300*time.Millisecond {
+		r.last = time.Now()
+		phase := "transferring"
+		if r.loaded == r.total {
+			phase = "processing"
+		}
+		r.observe(r.loaded, phase)
+	}
+	return n, err
 }

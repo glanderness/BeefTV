@@ -208,7 +208,9 @@ describe("asset page and picker wiring", () => {
         expect(page).toContain("expectedScope: expectedScopeFromQueryKey(queryKey)");
         expect(page).toContain("keepAssetViewPlaceholder(previousData, previousQuery, entryScope)");
         expect(page).toContain("mergeHistoryLibraryAssets(current, next, historyPage)");
-        expect(page).toContain("uploadImage(imageFile, undefined, scope)");
+        const upload = page.slice(page.indexOf("const saveAsset ="), page.indexOf("const base =", page.indexOf("const saveAsset =")));
+        expect(upload).toMatch(/uploadImage\(imageFile, \(loaded, total\) => \{[\s\S]*?\}, scope\)\)/);
+        expect(upload).toContain("userScopeMatches(scope)");
         expect(page).toContain("persistWorkspaceAssetChanges(scope)");
         expect(page).toContain("listWorkspaceAssetFolders(expectedScopeFromQueryKey(queryKey))");
         expect(page).toContain("canonicalHasMore");

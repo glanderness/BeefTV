@@ -110,10 +110,42 @@ func Validate(source, target string) (string, error) {
 
 // Caller must stop all writers and close SQLite first. Copy into a private stage,
 // compare every file, then publish the directory. The source remains untouched.
-func CopyClosedWorkspace(ctx context.Context, source, target string) error {
+func CopyClosedWorkspace(ctx context.Context, source, target string, observers ...func(Progress)) error {
+	progress := Progress{Phase: "preparing", Detail: "正在统计待迁移文件"}
+	observe := func() {
+		if len(observers) > 0 && observers[0] != nil {
+			observers[0](progress)
+		}
+	}
+	observe()
 	target, err := Validate(source, target)
 	if err != nil {
 		return err
+	}
+	if len(observers) > 0 {
+		err = filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if skipScratch(source, path, entry) {
+				return filepath.SkipDir
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if entry.Type().IsRegular() {
+				info, err := entry.Info()
+				if err != nil {
+					return err
+				}
+				progress.TotalBytes += info.Size()
+				progress.TotalFiles++
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
 	}
 	stage, err := os.MkdirTemp(filepath.Dir(target), ".beeftv-migrate-*")
 	if err != nil {
@@ -148,7 +180,17 @@ func CopyClosedWorkspace(ctx context.Context, source, target string) error {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("无法迁移特殊文件：%s", rel)
 		}
-		return copyVerified(ctx, path, dest, info.Mode().Perm())
+		progress.Phase, progress.Detail = "transferring", "正在复制文件"
+		observe()
+		copyErr := copyVerified(ctx, path, dest, info.Mode().Perm(), func(bytes int64) {
+			progress.LoadedBytes += bytes
+			observe()
+		}, func() { progress.Phase, progress.Detail = "processing", "正在校验已复制的文件"; observe() })
+		if copyErr == nil {
+			progress.CompletedFiles++
+			observe()
+		}
+		return copyErr
 	})
 	if err != nil {
 		return err
@@ -167,7 +209,7 @@ func CopyClosedWorkspace(ctx context.Context, source, target string) error {
 	return os.Rename(stage, target)
 }
 
-func copyVerified(ctx context.Context, source, dest string, mode fs.FileMode) error {
+func copyVerified(ctx context.Context, source, dest string, mode fs.FileMode, copied func(int64), verifying func()) error {
 	in, err := openMigrationFile(source)
 	if err != nil {
 		return err
@@ -191,6 +233,9 @@ func copyVerified(ctx context.Context, source, dest string, mode fs.FileMode) er
 				_ = out.Close()
 				return err
 			}
+			if copied != nil {
+				copied(int64(n))
+			}
 		}
 		if readErr == io.EOF {
 			break
@@ -213,6 +258,9 @@ func copyVerified(ctx context.Context, source, dest string, mode fs.FileMode) er
 	}
 	defer check.Close()
 	verified := sha256.New()
+	if verifying != nil {
+		verifying()
+	}
 	if _, err = io.Copy(verified, check); err != nil {
 		return err
 	}

@@ -1,6 +1,7 @@
 import { createClientId } from "@/lib/client-id";
 import { confinedArchivePath } from "@/lib/zip";
 import { canonicalize } from "json-canonicalize";
+import { startOperation } from "@/stores/use-operation-progress";
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
 import {
     collectStorageKeys,
@@ -243,11 +244,27 @@ function withRestoreScope(host: CanvasArchiveRestoreHost, scope: CapturedUserSco
 }
 
 export async function restoreCanvasArchive(input: Blob | OpenCanvasArchive, host: Partial<CanvasArchiveRestoreHost> = {}): Promise<CanvasArchiveRestoreResult> {
+    const progress = startOperation("导入画布备份", { detail: "正在解压并检查备份", totalBytes: input instanceof Blob ? input.size : undefined });
+    try {
+        const result = await restoreCanvasArchiveContents(input, host, (completedFiles, totalFiles) => progress.update({ phase: "processing", detail: "正在恢复媒体并保存画布", completedFiles, totalFiles }));
+        progress.done("画布与媒体已恢复并保存");
+        return result;
+    } catch (error) {
+        if (isUserScopeAbandonedError(error)) progress.dismiss();
+        else progress.fail("画布导入未完成，请查看错误后重试");
+        throw error;
+    }
+}
+
+async function restoreCanvasArchiveContents(input: Blob | OpenCanvasArchive, host: Partial<CanvasArchiveRestoreHost>, onProgress: (completed: number, total: number) => void): Promise<CanvasArchiveRestoreResult> {
     const scope = captureUserScope();
     const localPersistence = isLocalRuntimeMode();
     const archive = "data" in input && "files" in input ? input : await openCanvasArchive(input);
     assertUserScope(scope);
     preflightCanvasArchive(archive.data, archive.files);
+    const totalMedia = archive.data.projects.reduce((total, item) => total + item.files.length, 0);
+    let restoredMedia = 0;
+    onProgress(0, totalMedia);
     const restoreHost = withRestoreScope(createCanvasArchiveRestoreHost(host, scope), scope);
     const folderIds: string[] = [];
     const projectIds: string[] = [];
@@ -285,6 +302,7 @@ export async function restoreCanvasArchive(input: Blob | OpenCanvasArchive, host
                 message: localPersistence ? "正在保存本地媒体" : "正在上传媒体",
             });
             const storageKeyMap = await restoreArchiveMedia(item.files, archive.files, restoreHost, resourceIds, (completed) => {
+                onProgress(restoredMedia + completed, totalMedia);
                 reportProgress(archiveProjectId, {
                     projectId: archiveProjectId,
                     total: item.files.length,
@@ -293,6 +311,7 @@ export async function restoreCanvasArchive(input: Blob | OpenCanvasArchive, host
                     message: localPersistence ? "正在保存本地媒体" : "正在上传媒体",
                 });
             });
+            restoredMedia += item.files.length;
             const remappedNodes = (item.project.nodes || []).map((node) => remapArchiveNode(node, storageKeyMap, item.drawingDocuments || []));
             const remappedTimeline = remapArchiveTimeline(item.project.timeline, storageKeyMap);
             const directorScenes = remapArchiveDirectorScenes(item.project.directorScenes, storageKeyMap);

@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/outbound"
@@ -34,6 +35,7 @@ func (r *deliveryProgressRegistry) record(identity string, progress model.TaskDe
 	if r.entries == nil {
 		r.entries = map[string]model.TaskDeliveryOutputProgress{}
 	}
+	progress.UpdatedAt = time.Now().UnixMilli()
 	r.entries[identity] = progress
 }
 

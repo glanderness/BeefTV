@@ -7,6 +7,7 @@ import { assertUserScope, captureUserScope, isUserScopeAbandonedError, type Capt
 import { importResourceFromUrl, isResourceUrl, resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, ResourceUploadError, uploadResourceFile } from "@/services/api/resources";
 import { cacheResourceObjectUrl, getCachedResourceBlob, getCachedResourceObjectUrl, primeResourceBlobCache } from "@/services/resource-blob-cache";
 import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
+import { startOperation } from "@/stores/use-operation-progress";
 
 export type UploadedImage = {
     url: string;
@@ -60,7 +61,9 @@ export async function uploadImage(input: string | Blob, onProgress?: (uploadedBy
         assertUserScope(expected);
         if (usesBrowserLocalResourceStore()) {
             assertUserScope(expected);
-            await store.setItem(storageKey, blob);
+            const progress = startOperation(input instanceof File ? input.name : "保存图片", { owner: expected, totalBytes: blob.size, detail: "正在保存图片到本机" });
+            try { await store.setItem(storageKey, blob); progress.done("图片已保存到本机"); }
+            catch (error) { progress.fail("图片保存未完成，请检查本机存储空间"); throw error; }
             objectUrls.set(storageKey, previewUrl);
             return { url: previewUrl, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType };
         }

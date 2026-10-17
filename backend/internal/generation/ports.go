@@ -168,18 +168,19 @@ type DeliveryProgressPort interface {
 }
 
 type Runtime struct {
-	ReferenceStorage ReferenceStoragePort
-	Resources        ResourcePort
-	Limits           LimitsPort
-	Receipts         ReceiptPort
-	Stages           StagePort
-	Delivery         DeliveryProgressPort
-	Images           ImageSubmissionPort
-	Workflow         WorkflowPort
-	Prompt           PromptPort
-	Config           ConfigPort
-	Style            StylePort
-	Probe            MediaProbePort
-	Call             CallMeta
-	Endpoints        Endpoints
+	ReferenceStorage  ReferenceStoragePort
+	Resources         ResourcePort
+	Limits            LimitsPort
+	Receipts          ReceiptPort
+	Stages            StagePort
+	Delivery          DeliveryProgressPort
+	ReferenceProgress ReferenceProgressPort
+	Images            ImageSubmissionPort
+	Workflow          WorkflowPort
+	Prompt            PromptPort
+	Config            ConfigPort
+	Style             StylePort
+	Probe             MediaProbePort
+	Call              CallMeta
+	Endpoints         Endpoints
 }

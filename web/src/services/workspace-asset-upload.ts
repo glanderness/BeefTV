@@ -5,6 +5,7 @@ import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { persistWorkspaceAssetChanges } from "@/services/workspace-asset-repository";
 import { useAssetStore } from "@/stores/use-asset-store";
+import { startOperation } from "@/stores/use-operation-progress";
 
 /** A picker submission owns its batch until settlement, independently of React views. */
 export async function uploadWorkspaceAssetFiles(files: File[], folderId: string, expected: CapturedUserScope) {
@@ -14,6 +15,7 @@ export async function uploadWorkspaceAssetFiles(files: File[], folderId: string,
     let cursor = 0;
     let completed = 0;
     let failed = 0;
+    const progress = startOperation("添加素材", { owner: expected, totalFiles: media.length, detail: "正在读取并保存素材" });
     const worker = async () => {
         while (cursor < media.length) {
             if (!userScopeMatches(expected)) return;
@@ -36,10 +38,13 @@ export async function uploadWorkspaceAssetFiles(files: File[], folderId: string,
                 if (isUserScopeAbandonedError(error) || !userScopeMatches(expected)) return;
                 failed += 1;
             }
+            progress.update({ completedFiles: completed + failed, detail: "已处理 " + (completed + failed) + " 个素材" });
         }
     };
+    try {
     await Promise.all(Array.from({ length: Math.min(4, media.length) }, worker));
     assertUserScope(expected);
+    progress.update({ phase: "processing", detail: "正在保存素材记录" });
     let persistenceError: unknown;
     try {
         await persistWorkspaceAssetChanges(expected);
@@ -48,5 +53,8 @@ export async function uploadWorkspaceAssetFiles(files: File[], folderId: string,
         persistenceError = error;
     }
     assertUserScope(expected);
+    if (failed || persistenceError) progress.fail("已添加 " + completed + " 个，" + (failed ? failed + " 个未完成" : "素材记录待重试"));
+    else progress.done("已添加 " + completed + " 个素材");
     return { completed, failed, persistenceError };
+    } catch (error) { progress.dismiss(); throw error; }
 }

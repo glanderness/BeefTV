@@ -5,6 +5,8 @@ import { getDesktopAppBinding, type DesktopStorageUsage } from "@/services/deskt
 import { flushModelConfig, getModelConfigPersistenceState } from "@/services/model-config-repository";
 import { saveRemoteUserDataNow } from "@/services/local-workspace-sync";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
+import { startOperation } from "@/stores/use-operation-progress";
+import { createTransferSampler } from "@/lib/operation-progress";
 
 const size = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 
@@ -44,19 +46,36 @@ export function StorageSettingsPane() {
         setBusy(true);
         setError("");
         let phase = "save_workspace";
+        const progress = startOperation("迁移存储目录", { detail: "正在保存工作区" });
+        const sample = createTransferSampler();
+        let stopped = false;
+        let pollTimer: ReturnType<typeof setTimeout> | undefined;
+        const poll = async () => {
+            try {
+                const state = await binding.StorageMigrationStatus?.();
+                if (!stopped && state?.phase) progress.update({ ...sample(state.loadedBytes, state.totalBytes), ...state });
+            } catch { /* Migration closes the workspace API; Wails polling resumes on the next tick. */ }
+            if (!stopped) pollTimer = setTimeout(poll, 500);
+        };
         recordDiagnosticEvent({ level: "info", category: "action", code: "storage_migration_started", message: "开始准备存储迁移" });
         try {
             await Promise.all([flushModelConfig(), saveRemoteUserDataNow()]);
             const state = getModelConfigPersistenceState();
             if (state.dirty || state.status === "error") throw new Error("模型配置尚未保存，请先解决保存错误再迁移");
             phase = "migrate_workspace";
+            void poll();
             await binding.MigrateStorage!(target.trim());
+            progress.done("迁移完成，正在重新载入");
             window.location.reload();
         } catch (error) {
+            progress.fail("迁移未完成，请查看下方错误详情");
             const details = error instanceof Error ? error.message : String(error);
             recordDiagnosticEvent({ level: "error", category: "action", code: "storage_migration_failed", reason: phase, message: details });
             setError(details);
             setBusy(false);
+        } finally {
+            stopped = true;
+            if (pollTimer) clearTimeout(pollTimer);
         }
     };
     const cleanup = () =>

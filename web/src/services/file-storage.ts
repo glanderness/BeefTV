@@ -11,6 +11,7 @@ import { useConfigStore } from "@/stores/use-config-store";
 import { cacheResourceObjectUrl, getCachedResourceBlob, getCachedResourceObjectUrl, primeResourceBlobCache } from "@/services/resource-blob-cache";
 import { cleanupLocalMedia, deleteLocalMedia, getLocalMediaBlob, resolveLocalMediaUrl, saveLocalMedia, setLocalMediaBlob } from "@/services/local-media-repository";
 import { usesBrowserLocalResourceStore } from "@/services/workspace-resource-storage";
+import { startOperation } from "@/stores/use-operation-progress";
 
 export type UploadedFile = {
     url: string;
@@ -97,7 +98,9 @@ export async function uploadMediaFile(input: Blob, prefix = "file", onProgress?:
 
         if (usesBrowserLocalResourceStore()) {
             assertUserScope(expected);
-            await saveLocalMedia(storageKey, blob, previewUrl);
+            const progress = startOperation(input instanceof File ? input.name : "保存媒体文件", { owner: expected, totalBytes: blob.size, detail: "正在保存媒体文件到本机" });
+            try { await saveLocalMedia(storageKey, blob, previewUrl); progress.done("媒体文件已保存到本机"); }
+            catch (error) { progress.fail("媒体保存未完成，请检查本机存储空间"); throw error; }
             retainPreviewUrl = true;
             return { url: previewUrl, storageKey, bytes: blob.size, mimeType: blob.type || "application/octet-stream", ...meta, preview: poster };
         }

@@ -39,6 +39,7 @@ import { uploadImage } from "@/services/image-storage";
 import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { flushAssetStorePersistence, useAssetStore, type Asset, type AssetCategory, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
+import { startOperation } from "@/stores/use-operation-progress";
 import { assetStorageUsageQueryKey } from "./asset-storage-usage";
 import { loadAssetLibraryPage, localSavedRemotePendingMessage } from "@/services/local-workspace-sync";
 import { isUnsavedWorkspaceAsset, isWorkspaceGeneratedHistoryAsset, usesWorkspaceAssetLibraryApi, WORKSPACE_ASSET_UNLINKED_PROJECT, workspaceAssetAllProjectsCount, workspaceAssetCountSum, workspaceAssetProjectLabel, workspaceAssetProjectOptions, workspaceAssetTraversalTotal } from "@/services/workspace-asset-read";
@@ -547,7 +548,9 @@ function AssetsPageSession() {
             setImageUploading(true);
             setImageUploadProgress({ phase: "uploading", percent: 0 });
             try {
-                const image = await runAssetViewAction(entryScope, (scope) => uploadImage(imageFile, undefined, scope));
+                const image = await runAssetViewAction(entryScope, (scope) => uploadImage(imageFile, (loaded, total) => {
+                    if (userScopeMatches(scope)) setImageUploadProgress(loaded >= total ? { phase: "confirming" } : { phase: "uploading", percent: Math.floor(loaded / total * 100) });
+                }, scope));
                 if (!image) return;
                 if (!userScopeMatches(entryScope)) return;
                 setImageUploadProgress({ phase: "confirming" });
@@ -697,9 +700,11 @@ function AssetsPageSession() {
 
     const importAssetZip = async (file?: File) => {
         if (!file) return;
+        const progress = startOperation("导入素材包", { owner: entryScope, detail: "正在读取与解压素材包", totalBytes: file.size });
         try {
             const imported = await runAssetViewAction(entryScope, async (scope) => {
-                const importedAssets = await readAssetPackage(file);
+                const importedAssets = await readAssetPackage(file, (completedFiles, totalFiles) => progress.update({ phase: "processing", detail: "正在保存素材文件", completedFiles, totalFiles }));
+                progress.update({ phase: "processing", detail: "正在保存素材记录", totalFiles: importedAssets.length, completedFiles: importedAssets.length });
                 if (!userScopeMatches(scope)) return undefined;
                 importedAssets.forEach((asset) => {
                     const payload = { ...asset } as Record<string, unknown>;
@@ -720,7 +725,10 @@ function AssetsPageSession() {
             }
             if (!userScopeMatches(entryScope)) return;
             message.success(`已导入 ${imported} 个素材`);
+            progress.done("已导入 " + imported + " 个素材");
         } catch (error) {
+            if (shouldSuppressAssetViewError(error, entryScope)) progress.dismiss();
+            else progress.fail("素材包导入未完成，请查看错误后重试");
             if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.error("导入失败，请选择有效的素材压缩包");
         } finally {
