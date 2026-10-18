@@ -176,7 +176,7 @@ mock.module("@/services/workspace-mode", () => ({ isLocalWorkspaceMode: () => tr
 mock.module("@/services/api/resources", () => ({ resourceIdFromStorageKey: () => "" }));
 
 const { persistCanvasDocument, refreshLocalCanvasProjectIfChanged, resetLocalCanvasBackendSaveState, syncLocalCanvasProjectToBackend, hasUnconfirmedCanvasEdits, selectPreferredCanvasProject, adoptServerConfirmedGenerationPatch, openLocalCanvasProjectFromBackend, setCanvasProjectionStoreFlushForTest, CanvasBackendSubmitPausedError, CanvasProjectionError } = await import("@/services/local-workspace-repository");
-const { useCanvasStore, canvasDocumentBase, canvasExternalRevisionConflict, clearCanvasDocumentBase, clearCanvasExternalRevisionConflict, recordCanvasDocumentBase } = await import("@/stores/canvas/use-canvas-store");
+const { useCanvasStore, canvasDocumentBase, canvasExternalRevisionConflict, clearCanvasDocumentBase, clearCanvasExternalRevisionConflict, recordCanvasDocumentBase, CANVAS_STORE_KEY } = await import("@/stores/canvas/use-canvas-store");
 const { CanvasJournalError, clearCanvasPendingProjection, loadCanvasOperationJournal, peekCanvasOperationJournal, recordConfirmedCanvasCommit, resetCanvasOperationJournalMemory, saveCanvasOperationJournal, setCanvasJournalStorageDelay, updateCanvasOperationJournal } = await import("@/services/canvas-operation-journal");
 const { canvasBackendSubmitPaused, pauseCanvasBackendSubmit } = await import("@/services/canvas-revision-conflict");
 const { projectSyncProgress, useSyncProgressStore } = await import("@/stores/use-sync-progress-store");
@@ -404,15 +404,69 @@ describe("画布文档提交日记", () => {
         expect(useCanvasStore.getState().openProject("c1")?.revision).toBe(1);
     });
 
-    test("干净缓存采用后端，脏草稿相对已记录基线保留", () => {
+    test("干净缓存采用后端，revision 未超过基线的差异副本按过期缓存采用后端", () => {
         const localClean = canvas("基线", 1);
         const backend = canvas("助手改过", 2);
         recordCanvasDocumentBase(localClean);
         expect(selectPreferredCanvasProject(localClean, backend).title).toBe("助手改过");
 
-        const localDirty = canvas("本地草稿", 1);
+        // 与基线内容不同、但 revision 未超过基线：本地没有比服务端已确认基线更新的
+        // 内容（过期缓存，例如画布随后被 agent API 改写），read 必须采用后端，
+        // 否则过期空副本会永久压过服务端新版本。
+        const localStale = canvas("本地草稿", 1);
         recordCanvasDocumentBase(canvas("基线", 1));
-        expect(selectPreferredCanvasProject(localDirty, backend).title).toBe("本地草稿");
+        expect(selectPreferredCanvasProject(localStale, backend).title).toBe("助手改过");
+    });
+
+    test("revision 规则：空 local/过期缓存采用后端，基线之后的未保存草稿保留本地", () => {
+        // 空 local：直接采用后端。
+        expect(selectPreferredCanvasProject(null, canvas("助手改过", 2)).title).toBe("助手改过");
+
+        // 过期缓存：local.revision < 基线 revision < backend.revision。
+        recordCanvasDocumentBase(canvas("基线", 2));
+        expect(selectPreferredCanvasProject(canvas("过期缓存", 1), canvas("助手改过", 3)).title).toBe("助手改过");
+
+        // 真草稿：revision 高于已记录基线，确有未保存的新编辑，保留本地。
+        recordCanvasDocumentBase(canvas("基线", 2));
+        expect(selectPreferredCanvasProject(canvas("本地草稿", 3), canvas("助手改过", 3)).title).toBe("本地草稿");
+    });
+
+    test("rehydrate 不能用过期缓存覆盖已应用的后端 revision", async () => {
+        // 启动时后端读取已完成：内存中是服务端 rev2 内容。
+        const applied = canvas("助手改过", 2, { nodes: [node("n1", "One")] });
+        useCanvasStore.setState({ projects: [applied] });
+        // IndexedDB 残留 rev1 过期空副本（例如画布随后被 agent API 改写的场景）。
+        stored.set(`${activeScope}:${CANVAS_STORE_KEY}`, JSON.stringify({
+            state: { projects: [canvas("过期空副本", 1)] },
+            version: 0,
+            storageRevision: 1,
+            tombstones: { projects: {}, nodes: {}, connections: {}, sessions: {}, messages: {} },
+        }));
+        try {
+            await useCanvasStore.persist.rehydrate();
+            const kept = useCanvasStore.getState().openProject("c1");
+            expect(kept?.revision).toBe(2);
+            expect(kept?.title).toBe("助手改过");
+            expect(kept?.nodes.map((item) => item.id)).toEqual(["n1"]);
+        } finally {
+            stored.delete(`${activeScope}:${CANVAS_STORE_KEY}`);
+        }
+    });
+
+    test("内存为空时 rehydrate 仍按缓存加载（离线秒开不受影响）", async () => {
+        useCanvasStore.setState({ projects: [] });
+        stored.set(`${activeScope}:${CANVAS_STORE_KEY}`, JSON.stringify({
+            state: { projects: [canvas("缓存画布", 1, { nodes: [node("n1", "One")] })] },
+            version: 0,
+            storageRevision: 1,
+            tombstones: { projects: {}, nodes: {}, connections: {}, sessions: {}, messages: {} },
+        }));
+        try {
+            await useCanvasStore.persist.rehydrate();
+            expect(useCanvasStore.getState().openProject("c1")?.title).toBe("缓存画布");
+        } finally {
+            stored.delete(`${activeScope}:${CANVAS_STORE_KEY}`);
+        }
     });
 
     test("启动恢复提交不能用 loading 空 overlay 覆盖已确认 success+storageKey", async () => {
@@ -611,7 +665,10 @@ describe("画布文档提交日记", () => {
         await loadCanvasOperationJournal("c1");
         useCanvasStore.setState({ projects: [canvas("未确认草稿", 1)] });
         expect(hasUnconfirmedCanvasEdits("c1")).toBe(true);
-        expect(selectPreferredCanvasProject(canvas("未确认草稿", 1), canvas("助手改过", 2)).title).toBe("未确认草稿");
+        // revision 规则：本地 revision 未超过基线时 read 采用后端（内容差异不再无条件
+        // 保留本地）；草稿仍被 hasUnconfirmedCanvasEdits 识别为未确认，后续由
+        // 三方对账/冲突候选流程处理，不会被当作已确认内容覆盖。
+        expect(selectPreferredCanvasProject(canvas("未确认草稿", 1), canvas("助手改过", 2)).title).toBe("助手改过");
     });
 
     test("损坏的日记 fail-closed，不发明空操作", async () => {
