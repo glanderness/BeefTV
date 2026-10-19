@@ -7,6 +7,7 @@ import (
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/provider/workflow"
 )
 
 // TaskSelectRequest is the typed admission input. App supplies the live
@@ -297,12 +298,7 @@ func TaskInputUsesWorkflowProvider(input map[string]any) bool {
 }
 
 func IsWorkflowInterfaceType(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case string(model.ChannelInterfaceRunningHubImage), string(model.ChannelInterfaceRunningHubVideo), string(model.ChannelInterfaceRunningHubAudio):
-		return true
-	default:
-		return false
-	}
+	return workflow.IsProviderInterface(value)
 }
 
 func HasExecutableVideoConfig(input map[string]any) bool {
@@ -312,6 +308,10 @@ func HasExecutableVideoConfig(input map[string]any) bool {
 		return false
 	}
 	interfaceType := admissionString(config["interfaceType"])
+	if workflow.IsComfyUIInterface(interfaceType) {
+		prompt, _ := config["workflowJson"].(map[string]any)
+		return admissionString(config["baseUrl"]) != "" && workflow.ValidateComfyUIWorkflow(prompt) == nil
+	}
 	if IsWorkflowInterfaceType(interfaceType) {
 		if admissionString(config["workflowId"]) == "" && admissionString(config["webappId"]) == "" && admissionString(config["model"]) == "" {
 			return false

@@ -84,7 +84,7 @@ func IsRunningHubInterface(value string) bool {
 
 // IsProviderInterface reports whether the interface is a workflow provider.
 func IsProviderInterface(value string) bool {
-	return IsRunningHubInterface(value)
+	return IsRunningHubInterface(value) || IsComfyUIInterface(value)
 }
 
 func isRunningHubInterface(value string) bool {
@@ -96,6 +96,9 @@ func isWorkflowProviderInterface(value string) bool {
 }
 
 func workflowInterfaceSupportsMode(interfaceType string, mode string) bool {
+	if interfaceType == "comfyui-"+mode && (mode == "image" || mode == "video" || mode == "audio") {
+		return true
+	}
 	switch mode {
 	case "image":
 		return interfaceType == string(model.ChannelInterfaceRunningHubImage)
@@ -116,6 +119,12 @@ func ValidateConfig(mode string, config Config) error {
 	interfaceType := strings.ToLower(strings.TrimSpace(config.InterfaceType))
 	if !workflowInterfaceSupportsMode(interfaceType, mode) {
 		return errf("接口类型 %s 不支持%s生成", config.InterfaceType, mode)
+	}
+	if IsComfyUIInterface(interfaceType) {
+		if _, err := ComfyUIRootURL(config.BaseURL); err != nil {
+			return err
+		}
+		return ValidateComfyUIWorkflow(config.WorkflowJSON)
 	}
 	if isRunningHubInterface(config.InterfaceType) {
 		if APIKey(config) == "" {

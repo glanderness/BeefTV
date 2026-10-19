@@ -473,6 +473,11 @@ export function backendProviderConfig(config: AiConfig, mode: BackendGenerationM
     const requestConfig = resolveModelRequestConfig(config, config.model);
     const workflow = resolveGenerationWorkflowExecution(config, mode);
     if (workflow) return workflowProviderConfig(config, requestConfig, workflow);
+    const comfyui = requestConfig.interfaceType?.startsWith("comfyui-")
+        ? resolveModelChannel(config, config.model).modelProfiles?.find((item) => item.model === requestConfig.model)?.comfyui
+        : undefined;
+    if (requestConfig.interfaceType?.startsWith("comfyui-") && !comfyui?.workflowJson) throw new Error("请先在模型设置中导入 ComfyUI API 工作流");
+    if (comfyui && requestConfig.interfaceType !== `comfyui-${mode}`) throw new Error("ComfyUI 工作流用途与本次生成类型不一致，请选择对应模型");
     const generationOptions = {
         size: config.size,
         quality: omittedImageQuality(config.quality, requestConfig),
@@ -504,6 +509,7 @@ export function backendProviderConfig(config: AiConfig, mode: BackendGenerationM
         headers: requestConfig.headers,
         credentialRef: requestConfig.credentialRef,
         model: requestConfig.model,
+        ...(comfyui ? { workflowJson: comfyui.workflowJson, workflowFields: comfyui.fields } : {}),
         ...generationOptions,
         capabilityConfig: modelCapabilityConfigFor(config, requestConfig.model),
         videoCapabilitiesVersion: resolveModelChannel(config, config.model).modelProfiles?.find((item) => item.model === requestConfig.model)?.videoCapabilitiesVersion,

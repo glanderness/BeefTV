@@ -350,6 +350,7 @@ export const PUBLIC_MODEL_CATALOG_ID = "managed";
 export type ModelChannel = {
     id: string;
     name: string;
+    provider?: "comfyui";
     publicAlias?: string;
     sortOrder?: number;
     baseUrl: string;
@@ -386,6 +387,7 @@ export type ModelChannel = {
         logicalCapabilitySpec?: CapabilitySpec;
         logicalCapabilityProfiles?: CapabilitySpec[];
         defaultOptions?: Record<string, unknown>;
+        comfyui?: { workflowJson: Record<string, unknown>; fields: WorkflowFieldMapping[] };
     }>;
 };
 
@@ -648,7 +650,8 @@ export function channelHasManagedBeefAPICredential(channel: Pick<ModelChannel, "
     return channel.credentialRef === MANAGED_BEEFAPI_CREDENTIAL_REF || channel.hasApiKey === true;
 }
 
-export function channelHasGenerationCredential(channel: Pick<ModelChannel, "id" | "pinned" | "credentialRef" | "hasApiKey" | "apiKey" | "modelProfiles">, model = "") {
+export function channelHasGenerationCredential(channel: Pick<ModelChannel, "id" | "pinned" | "credentialRef" | "hasApiKey" | "apiKey" | "provider" | "modelProfiles">, model = "") {
+    if (channel.provider === "comfyui") return true;
     if (model && channel.modelProfiles?.some((item) => item.model === modelOptionName(model) && item.authType === "none")) return true;
     return channelHasManagedBeefAPICredential(channel) || Boolean(channel.apiKey?.trim());
 }
@@ -711,7 +714,12 @@ export function configWithoutCachedSecrets(config: AiConfig): AiConfig {
     return {
         ...config,
         apiKey: "",
-        channels: config.channels.map((channel) => ({ ...channel, apiKey: "", secretKey: "", headers: [] })),
+        channels: config.channels.map((channel) => ({
+            ...channel, apiKey: "", secretKey: "", headers: [],
+            // Workflows can exceed browser storage limits. The canonical
+            // workspace config restores them together with credentials.
+            modelProfiles: channel.modelProfiles?.map((profile) => profile.comfyui ? { ...profile, comfyui: undefined } : profile),
+        })),
         runningHub: { ...config.runningHub, apiKey: "", walletApiKey: "", uploadApiKey: "" },
     };
 }
@@ -973,8 +981,9 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
     return {
         id: channel?.id?.trim() || nanoid(),
         name: channel?.name?.trim() || "新渠道",
+        provider: channel?.provider === "comfyui" ? "comfyui" : undefined,
         sortOrder: channel?.sortOrder ?? 0,
-        baseUrl: providedBaseUrl || (interfaceType ? defaultBaseUrlForChannelInterface(interfaceType) : defaultBaseUrlForApiFormat(apiFormat)),
+        baseUrl: providedBaseUrl || (channel?.provider === "comfyui" ? "http://127.0.0.1:8188" : interfaceType ? defaultBaseUrlForChannelInterface(interfaceType) : defaultBaseUrlForApiFormat(apiFormat)),
         referenceAssetOrigin: channel?.referenceAssetOrigin?.trim() || undefined,
         apiKey: channel?.apiKey || "",
         secretKey: channel?.secretKey || "",
@@ -1154,6 +1163,7 @@ export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
 }
 
 export function defaultBaseUrlForChannelInterface(interfaceType?: ChannelInterfaceType) {
+    if (interfaceType?.startsWith("comfyui-")) return "http://127.0.0.1:8188";
     if (interfaceType === "gemini-veo" || interfaceType === "gemini-image") return GEMINI_BASE_URL;
     if (interfaceType === "novita-video") return "https://api.novita.ai/v3";
     if (interfaceType === "volcengine-ark-agent-plan-image" || interfaceType === "volcengine-ark-agent-plan-video") return "https://ark.cn-beijing.volces.com/api/plan/v3";

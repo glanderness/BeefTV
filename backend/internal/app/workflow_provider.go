@@ -19,7 +19,7 @@ func isRunningHubInterface(value string) bool {
 }
 
 func isWorkflowProviderInterface(value string) bool {
-	return isRunningHubInterface(value)
+	return workflow.IsProviderInterface(value)
 }
 
 func validateWorkflowProviderConfig(mode string, config providerConfig) error {
@@ -27,6 +27,11 @@ func validateWorkflowProviderConfig(mode string, config providerConfig) error {
 }
 
 func (s *Service) runWorkflowProviderTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
+	if workflow.IsComfyUIInterface(input.Config.InterfaceType) {
+		converted := s.workflowInputFromCanvas(ctx, input)
+		result, err := s.workflowClient(nil).Run(ctx, converted)
+		return result, s.fenceWorkflowSubmission(ctx, converted, err)
+	}
 	if isRunningHubInterface(input.Config.InterfaceType) {
 		return s.runRunningHubWorkflow(ctx, input)
 	}

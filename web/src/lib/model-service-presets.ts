@@ -9,11 +9,13 @@ export const MODEL_SERVICE_PRESETS = [
     { id: "openai", name: "OpenAI", subtitle: "文本 · 图片 · 视频", icon: "OpenAI", baseUrl: "https://api.openai.com/v1", apiFormat: "openai" },
     { id: "gemini", name: "Google Gemini", subtitle: "文本 · 图片 · Veo 视频", icon: "Gemini", baseUrl: "https://generativelanguage.googleapis.com", apiFormat: "gemini" },
     { id: "ark", name: "火山方舟", subtitle: "文本 · 即梦图片 · Seedance 视频", icon: "Volcengine", baseUrl: "https://ark.cn-beijing.volces.com/api/v3", apiFormat: "openai" },
+    { id: "comfyui", name: "ComfyUI", subtitle: "本机或自建 · API 工作流", icon: "ComfyUI", baseUrl: "http://127.0.0.1:8188", apiFormat: "openai" },
 ] as const;
 export type ModelServicePresetId = typeof MODEL_SERVICE_PRESETS[number]["id"];
 export const CAPABILITY_LABELS: Record<ModelCapability, string> = { text: "文本", image: "图片", video: "视频", audio: "音频" };
 
 export function servicePresetFor(channel: ModelChannel): ModelServicePresetId {
+    if (channel.provider === "comfyui") return "comfyui";
     try {
         const host = new URL(channel.baseUrl).hostname;
         if (host === "api.openai.com") return "openai";
@@ -39,6 +41,7 @@ export function serviceModelProfile(channel: ModelChannel, item: ChannelModelCat
         openai: { text: "openai-response", image: "openai-image", video: "newapi" },
         gemini: { text: "gemini-generate-content", image: "gemini-image", video: "gemini-veo" },
         ark: { text: "chat-completion", image: "volcengine-ark-image", video: "volcengine-ark-video" },
+        comfyui: { image: "comfyui-image", video: "comfyui-video", audio: "comfyui-audio" },
     };
     const endpoints: Record<string, string> = { "responses": "openai-response", "openai-responses": "openai-response", "chat.completions": "chat-completion", "chat-completions": "chat-completion", "images.generations": "openai-image", "image-generation": "openai-image", "audio.speech": "openai-audio", "openai-video": "newapi", "openai-videos": "newapi", "video-generations-json": "video-generations-json", "volcengine-ark-video": "volcengine-ark-video" };
     const endpoint = item.supportedEndpointTypes?.map((value) => endpoints[value.trim().toLowerCase()]).find((id) => protocols.some((p) => p.value === id && p.capability === capability && p.enabled !== false));
@@ -77,11 +80,12 @@ export function serviceConnectionError(channel: ModelChannel, options?: { protoc
         if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) return "请填写不含账号、查询参数或片段的 HTTP(S) 服务地址";
         if (/\/(chat\/completions|responses|images\/generations|models)\/?$/i.test(url.pathname)) return "请填写服务的基础地址，不要包含模型或生成接口路径";
     } catch { return "请填写完整的服务地址，例如 https://api.example.com/v1"; }
-    if (options?.requireCredential !== false && !channel.apiKey.trim() && !channel.hasApiKey && !channelAllowsEmptyAPIKey(channel, options?.protocols)) return "请填写 API Key";
+    if (channel.provider !== "comfyui" && options?.requireCredential !== false && !channel.apiKey.trim() && !channel.hasApiKey && !channelAllowsEmptyAPIKey(channel, options?.protocols)) return "请填写 API Key";
     return "";
 }
 
 export function modelCatalogRequestURL(channel: ModelChannel) {
+    if (channel.provider === "comfyui") return "";
     if (!channel.baseUrl.trim()) return "";
     try {
         if (channel.apiFormat === "gemini") return `${channel.baseUrl.replace(/\/+$/, "").replace(/\/v1beta$/, "")}/v1beta/models`;

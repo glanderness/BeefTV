@@ -29,6 +29,13 @@ var ErrVideoJSONRequestTooLarge = errors.New("video request body exceeds the 64 
 
 type submissionKeyContext struct{}
 type binaryNoRedirectContext struct{}
+type binaryCustomRelayContext struct{}
+
+// DoCustomRelayBinary keeps receipt and concurrency handling while enforcing
+// the stricter host and redirect policy for self-hosted model services.
+func DoCustomRelayBinary(req *http.Request) ([]byte, string, error) {
+	return DoBinary(req.WithContext(context.WithValue(req.Context(), binaryCustomRelayContext{}, true)))
+}
 
 func doBinaryWithoutRedirect(req *http.Request) ([]byte, string, error) {
 	return DoBinary(req.WithContext(context.WithValue(req.Context(), binaryNoRedirectContext{}, true)))
@@ -325,11 +332,19 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 	if videoIdleTimeout > 0 && !SameProviderOrigin(credentials.Origin, req.URL.String()) {
 		stripVideoCredentialQuery(req.URL, credentials.Values)
 	}
-	if _, err := outbound.ValidateOutboundURL(req.URL.String()); err != nil {
+	customRelay, _ := req.Context().Value(binaryCustomRelayContext{}).(bool)
+	validateURL := outbound.ValidateOutboundURL
+	if customRelay {
+		validateURL = outbound.ValidateCustomRelayURL
+	}
+	if _, err := validateURL(req.URL.String()); err != nil {
 		return nil, "", err
 	}
 	outbound.ApplyDefaultOutboundHeaders(req)
 	client := outbound.OutboundHTTPClient(requestTimeout)
+	if customRelay {
+		client = outbound.CustomRelayHTTPClient(requestTimeout)
+	}
 	if videoIdleTimeout > 0 {
 		checkRedirect := client.CheckRedirect
 		leftOrigin := false

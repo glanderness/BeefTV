@@ -5,6 +5,7 @@
   "pages": [
     "local-development",
     "http-api",
+    "comfyui",
     "storyboard-operations",
     "code-map",
     "backend-database",

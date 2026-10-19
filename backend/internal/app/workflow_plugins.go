@@ -2,6 +2,7 @@ package app
 
 import (
 	"infinite-canvas/backend/internal/plugins"
+	"infinite-canvas/backend/internal/provider/workflow"
 )
 
 const (
@@ -21,9 +22,15 @@ func (s *Service) WorkflowPluginStatusesForUser(userID string) (map[string]strin
 }
 
 func (s *Service) RequireWorkflowPluginForInterface(interfaceType string) error {
+	if workflow.IsComfyUIInterface(interfaceType) {
+		return nil
+	}
 	return mapPluginAccessError(s.pluginDomain().RequireWorkflowForInterface(interfaceType))
 }
 
 func (s *Service) RequireWorkflowPluginForUser(userID string, interfaceType string) error {
+	if workflow.IsComfyUIInterface(interfaceType) {
+		return nil
+	}
 	return mapPluginAccessError(s.pluginDomain().RequireWorkflowForUser(userID, interfaceType))
 }
