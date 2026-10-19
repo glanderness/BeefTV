@@ -17,6 +17,7 @@ type Request struct {
 	Headers     []outbound.OutboundHeader
 	ContentType string
 	Body        []byte
+	NoRedirect  bool
 }
 
 // RequestExecutor runs JSON and binary provider calls through the existing
@@ -65,6 +66,7 @@ type TimePolicy interface {
 // the provider worker.
 type PollPolicy struct {
 	InitialDelay          time.Duration
+	SkipInitialDelay      bool
 	Interval              time.Duration
 	MaxNotFoundMisses     int
 	MaxMalformedResponses int

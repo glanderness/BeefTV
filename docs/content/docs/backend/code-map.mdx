@@ -33,6 +33,7 @@ Wails / local dev
 | 生成域 | `backend/internal/generation` | 统一生成输入、引用、能力、registry 协议调度和失败归类 |
 | 视频结果取回 | `backend/internal/generation/video_delivery.go` | 所有视频入口共用下载重试、10 秒无进展检测和原任务结果刷新；BeefAPI 取备用存储，自接供应商只查询自己的原任务。认证由所选协议提供，跨域媒体请求清除供应商凭据 |
 | 供应商适配 | `backend/internal/provider`, `protocol`, `outbound` | 外部模型 API、自定义渠道和插件协议 |
+| ComfyUI 扩展适配候选 | `backend/internal/provider/workflow/native_comfyui.go` | 上传、API 图绑定、原 prompt 恢复、精确取消和同源结果取回；尚未注册为内置渠道，扩展宿主契约见 `docs/refactor/native-comfyui-extension-candidate.md` |
 | 模型目录 | `backend/internal/modelcatalog` | 能力合同、渠道目录校验/解析/合并与 BeefAPI/WhatsToken overlay；出站 HTTP 仍走 outbound |
 | 协议插件 | `backend/internal/plugins` | registry、安装/启用和渠道设置用的 provider 能力目录；live 快照按 Runtime 隔离 |
 | Seedance 参考素材预上传 | `backend/internal/app/beefapi_seedance_preupload.go` | 仅内置 BeefAPI Seedance：本机后端把参考图片/视频/音频换成短期 HTTPS 链接后再提交 `/v1/videos`；本机文件在上传完成前保持本地引用 |

@@ -30,6 +30,12 @@ The upstream project was relicensed to MIT in commit
 890ba95858bbb13496d23978003716656109abb2. Its copyright and permission notice
 are preserved in LICENSE.
 
+The native ComfyUI connector and API graph binding include code selectively
+adapted from Seal at commit 8738d1b9be3da375123d33e50135fa94bfe5cabb:
+https://github.com/wenlei-xu/Seal
+Copyright (c) 2026 wenlei-xu (Seal contributions), distributed under the MIT
+License preserved in LICENSE.
+
 BeefTV changes
 --------------
 

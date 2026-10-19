@@ -324,6 +324,10 @@ func resolveWorkflowFieldValue(field Field, files map[string]string, input Input
 		switch strings.ReplaceAll(strings.ReplaceAll(source, "_", ""), "-", "") {
 		case "prompt", "text", "positiveprompt", "positive":
 			return input.Prompt, strings.TrimSpace(input.Prompt) != "", nil
+		case "negativeprompt", "negative":
+			return input.Config.NegativePrompt, strings.TrimSpace(input.Config.NegativePrompt) != "", nil
+		case "seed":
+			return input.Config.Seed, strings.TrimSpace(input.Config.Seed) != "", nil
 		case "size", "imagesize":
 			return input.Config.Size, strings.TrimSpace(input.Config.Size) != "", nil
 		case "resolution":
