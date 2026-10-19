@@ -189,6 +189,7 @@ writeFileSync(join(dir, "repository.ts"), repositorySource
 const repository: typeof import("../src/services/local-workspace-repository") = await import(join(dir, "repository.ts"));
 const store = await import(storePath);
 const request = await import(requestPath);
+const journalStub = await import(journalPath);
 
 const project = (overrides: Partial<Project> = {}): Project => ({
     id: "canvas-a",
@@ -210,6 +211,9 @@ const project = (overrides: Partial<Project> = {}): Project => ({
 beforeEach(() => {
     store.resetProjects([]);
     request.setRemoteProject(undefined);
+    // 已确认日记是跨用例共享的模块状态；不重置会让上一个用例确认的 revision
+    // 拉低后续用例读到的后端版本，触发「后端比已确认版本旧」的保守分支。
+    journalStub.resetCanvasOperationJournalMemory();
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -235,7 +239,12 @@ describe("local workspace stale backend protection", () => {
         store.recordCanvasDocumentBase(project({ nodes: [] }));
         request.setRemoteProject(remote);
 
-        expect(await repository.openLocalCanvasProjectFromBackend(local.id)).toEqual(local);
+        // revision 规则：本地 revision 未超过已记录基线时 read 采用后端进行对账，
+        // 本地独有的草稿节点经三方对账保留，文档 revision/updatedAt 对齐服务端；
+        // 过期缓存不会再无条件压过后端新版本。
+        const opened = await repository.openLocalCanvasProjectFromBackend(local.id);
+        expect(opened?.nodes).toEqual([{ id: "kept-node" }]);
+        expect(opened?.revision).toBe(2);
         expect(store.projects[0].nodes).toEqual([{ id: "kept-node" }]);
     });
 

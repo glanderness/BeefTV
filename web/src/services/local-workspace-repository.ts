@@ -275,14 +275,23 @@ async function replayPendingCanvasProjection(id: string, scope: string, expected
 
 /**
  * 桌面本地：已提交真相是服务端 revision。干净缓存采用后端；未确认草稿相对已记录基线保留。
+ *
+ * revision 规则：内容与基线/后端不同并不足以证明本地是未保存草稿——过期缓存
+ * （例如画布随后被 agent API 等外部写入推进）同样满足该条件。本地 revision 不高于
+ * 已记录基线时，本地没有任何比服务端确认基线更新的内容，必须采用后端，否则过期
+ * 副本会永久压过服务端新版本；只有本地 revision 高于基线（确有基线之后的未保存
+ * 编辑）才保留本地。revision 未超过基线的内容差异交给对账/冲突流程处理。
  */
 export function selectPreferredCanvasProject(local: CanvasProject | null | undefined, backend: CanvasProject, scope = getActiveUserScope()) {
     if (!local) return backend;
     const recorded = canvasDocumentBase(local.id, scope);
     if (recorded) {
         if (sameCanvasDocument(local, recorded.snapshot) || sameCanvasDocument(local, backend)) return backend;
+        if ((local.revision ?? 0) <= recorded.revision) return backend;
         return local;
     }
+    // 无已记录基线（如重启后内存基线尚未从日记恢复）：本地 revision 低于后端即过期缓存。
+    if ((local.revision ?? 0) < (backend.revision ?? 0)) return backend;
     if (sameCanvasDocument(local, backend)) return backend;
     return local;
 }
