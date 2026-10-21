@@ -11,6 +11,12 @@ import (
 
 type SubmissionUnknownError struct{ Cause error }
 
+// SubmissionRejectedError proves a structured gateway rejection without a job.
+type SubmissionRejectedError struct{ Cause error }
+
+func (e SubmissionRejectedError) Error() string { return e.Cause.Error() }
+func (e SubmissionRejectedError) Unwrap() error { return e.Cause }
+
 // RequestNotSentError is created only from transport evidence: no HTTP
 // connection was acquired during this request, including any redirects.
 type RequestNotSentError struct{ Cause error }
@@ -56,6 +62,10 @@ func SafeRouteRejection(err error) bool {
 	var unknown SubmissionUnknownError
 	if errors.As(err, &unknown) {
 		return false
+	}
+	var rejected SubmissionRejectedError
+	if errors.As(err, &rejected) {
+		return true
 	}
 	var preparation RequestPreparationError
 	if errors.As(err, &preparation) {

@@ -28,6 +28,68 @@ tags:
   - name: assistant
   - name: creation-conversations
 paths:
+  /media-upscale/capabilities:
+    get:
+      tags: [beefapi]
+      summary: 读取官方算力超分能力
+      description: 使用已连接账号的服务端凭据。支持列表不代表账号权限、路由或计费已经可用；创建前须获取费用。
+      responses:
+        "200":
+          description: 信封 data 为模型、倍数与媒体格式能力
+        "400":
+          description: 尚未连接官方算力账号
+  /media-upscale/estimate:
+    post:
+      tags: [beefapi]
+      summary: 准备一个素材并获取超分预留费用，不提交生成
+      description: 服务端忽略客户端 Base URL 和密钥，使用当前官方算力连接；素材使用所属用户的 resource 存储键。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode, config, upscale]
+              properties:
+                mode:
+                  type: string
+                  enum: [image, video]
+                config:
+                  type: object
+                  properties:
+                    model:
+                      type: string
+                      enum: [topaz-standard-v2, topaz-wonder-3.5, topaz-proteus, topaz-starlight-fast-2]
+                upscale:
+                  type: object
+                  required: [factor]
+                  properties:
+                    factor:
+                      type: integer
+                      minimum: 1
+                      maximum: 4
+                    outputFormat:
+                      type: string
+                      enum: [png, jpeg]
+                referenceImages:
+                  type: array
+                  maxItems: 1
+                  items:
+                    type: object
+                    properties:
+                      storageKey: {type: string, example: "resource:owned-image"}
+                referenceVideos:
+                  type: array
+                  maxItems: 1
+                  items:
+                    type: object
+                    properties:
+                      storageKey: {type: string, example: "resource:owned-video"}
+      responses:
+        "200":
+          description: 信封 data 包含 model、currency=CNY、reservation 和 generation_submitted=false
+        "400":
+          description: 素材、账号权限、模型路由或计费尚不可用
   /business/tools:
     get:
       tags: [agent-ops]

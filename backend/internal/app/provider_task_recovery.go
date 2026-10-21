@@ -71,7 +71,8 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	if task.Status != model.TaskStatusFailed {
 		return nil, BadAuthRequest("只能人工查询状态为失败的任务")
 	}
-	if !strings.HasPrefix(task.Type, "canvas_video") && !strings.HasPrefix(task.Type, "video_") {
+	upscale := generation.UpscaleMediaType(task.Model) != ""
+	if !strings.HasPrefix(task.Type, "canvas_video") && !strings.HasPrefix(task.Type, "video_") && !upscale {
 		return nil, BadAuthRequest("该任务不是视频生成任务")
 	}
 
@@ -98,7 +99,7 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	workflowVideo := workflow.IsProviderInterface(config.InterfaceType)
 	_, officialVideo := generation.OfficialDeclarativeVideoInterface(config.InterfaceType)
 	legacyVideo := !officialVideo && (strings.TrimSpace(config.InterfaceType) == "" || isArkPlanVideoConfig(config))
-	if !declarative && !beefVideo && !workflowVideo && !legacyVideo {
+	if !declarative && !beefVideo && !workflowVideo && !legacyVideo && !upscale {
 		return nil, BadAuthRequest("该任务的请求协议不支持安全查询上游状态")
 	}
 	input.Config = config
@@ -130,7 +131,9 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	queryCtx := withProviderAnalytics(recoveryCtx, s, *task)
 	var result map[string]interface{}
 	var providerStatus string
-	if beefVideo {
+	if upscale {
+		result, providerStatus, err = generation.RecoverUpscaleResult(queryCtx, input, providerRequestID)
+	} else if beefVideo {
 		result, providerStatus, err = queryBeefAPIVideoResult(queryCtx, input, providerRequestID)
 	} else if workflowVideo {
 		result, providerStatus, err = s.workflowClient(nil).QueryVideo(queryCtx, workflowConfigFromProvider(config), workflow.RootURL(config.BaseURL), providerRequestID)

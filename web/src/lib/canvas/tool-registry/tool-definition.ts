@@ -72,6 +72,7 @@ export type ToolbarHandlers = {
     onMergeVideos: () => void;
     /** 只有画布页的多选工具栏提供这个入口；主工具栏不装配它。 */
     onAskAssistant?: () => void;
+    onUpscaleSelection?: () => void;
     // 节点悬停工具栏——节点操作（均接收当前节点）
     onNodeInfo: (node: CanvasNodeData) => void;
     onNodeDelete: (node: CanvasNodeData) => void;

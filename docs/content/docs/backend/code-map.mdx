@@ -31,6 +31,7 @@ Wails / local dev
 | 生成结果交付 | `backend/internal/taskdelivery` | 第一段把生成 dataURL/字节写入本地资源并改写 ResultJSON；第二段在任务成功后物化素材。不发起新的上游生成。远端产物经 `outbound.DownloadResumable` 断点续传下载：无总超时，只有头部与空闲超时，半成品在 `<data>/cache/artifact-downloads` 下按身份复用 |
 | 生成结果绑定 | `backend/internal/taskbinding` | 将已交付产物绑定到原先指定的画布节点；多张图片按创建前记录的 `outputNodeIds` 与输出序号逐项核对，不新建上游任务 |
 | 生成域 | `backend/internal/generation` | 统一生成输入、引用、能力、registry 协议调度和失败归类 |
+| AI 超分 | `generation/upscale*.go`、`app/media_upscale.go`、`handler/media_upscale.go` | 四款 Topaz 的官方算力凭据、归属校验、费用预估、幂等提交、原任务查询与取消；视频缺失音轨时通过本机 FFmpeg 补回，结果复用任务交付与画布绑定 |
 | 视频结果取回 | `backend/internal/generation/video_delivery.go` | 所有视频入口共用下载重试、10 秒无进展检测和原任务结果刷新；BeefAPI 取备用存储，自接供应商只查询自己的原任务。认证由所选协议提供，跨域媒体请求清除供应商凭据 |
 | 供应商适配 | `backend/internal/provider`, `protocol`, `outbound` | 外部模型 API、自定义渠道和插件协议 |
 | 模型目录 | `backend/internal/modelcatalog` | 能力合同、渠道目录校验/解析/合并与 BeefAPI/WhatsToken overlay；出站 HTTP 仍走 outbound |

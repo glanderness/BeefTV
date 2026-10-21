@@ -41,6 +41,7 @@ type Catalog interface {
 
 type SelectRequest struct {
 	Input          map[string]any
+	Model          string
 	LogicalModelID string
 	Type           string
 	Operation      string

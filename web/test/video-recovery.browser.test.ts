@@ -92,7 +92,7 @@ beforeEach(async () => {
 afterAll(async () => { await browser?.close(); server?.stop(true); });
 
 test("canvas recovery explains query-only behavior and prevents duplicate requests", async () => {
-    expect(await page.getByText("查询原任务并取回视频，不会重新生成。").count()).toBe(1);
+    expect(await page.getByText("查询原任务并取回结果，不会重新生成。").count()).toBe(1);
     expect(await page.getByText("视频下载中断，请取回结果").count()).toBe(1);
     await page.getByRole("button", { name: "double retrieve" }).evaluate((button: HTMLButtonElement) => button.click());
     await page.getByText("原任务仍在处理中，请稍后再取回结果").waitFor();

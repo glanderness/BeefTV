@@ -48,6 +48,12 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 		return nil, errors.New("无法解析系统渠道配置")
 	}
 	applyCanvasTextStreaming(runtime.Call.TaskType, &input)
+	if UpscaleMediaType(input.Config.Model) != "" {
+		if err := requireTaskRuntime(ctx); err != nil {
+			return nil, err
+		}
+		return RunUpscaleTask(ctx, input)
+	}
 	if input.Mode == "image" && providerpreset.IsBeefAPIEndpoint(input.Config.BaseURL) {
 		if contract, ok := providerpreset.BeefAPIImageContract(input.Config.Model); ok {
 			input.Config.InterfaceType = contract.Protocol

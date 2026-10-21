@@ -1,5 +1,5 @@
 import { Button, Modal } from "antd";
-import { ImagePlus, XCircle } from "lucide-react";
+import { XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { CanvasImagePreview } from "@/components/canvas/canvas-image-preview";
@@ -24,9 +24,6 @@ type CanvasProjectStatusDialogsProps = {
     onCancelTask?: (task: GenerationTask) => void;
     onRetrieveTask?: (task: GenerationTask) => void;
     retrievingTaskId?: string | null;
-    superResolveNode: CanvasNodeData | null;
-    onCloseSuperResolve: () => void;
-    onUseLocalUpscale: () => void;
     previewNode: CanvasNodeData | null;
     onClosePreview: () => void;
     clearConfirmOpen: boolean;
@@ -34,7 +31,7 @@ type CanvasProjectStatusDialogsProps = {
     onConfirmClear: () => void;
 };
 
-export function CanvasProjectStatusDialogs({ theme, task, taskLogs, taskLoading, taskError, superResolveNode, previewNode, clearConfirmOpen, onCloseTask, onCancelTask, onRetrieveTask, retrievingTaskId, onCloseSuperResolve, onUseLocalUpscale, onClosePreview, onCancelClear, onConfirmClear }: CanvasProjectStatusDialogsProps) {
+export function CanvasProjectStatusDialogs({ theme, task, taskLogs, taskLoading, taskError, previewNode, clearConfirmOpen, onCloseTask, onCancelTask, onRetrieveTask, retrievingTaskId, onClosePreview, onCancelClear, onConfirmClear }: CanvasProjectStatusDialogsProps) {
     const config = useEffectiveConfig();
     const previewSource = useResolvedPreviewSource(previewNode);
     return (
@@ -65,7 +62,7 @@ export function CanvasProjectStatusDialogs({ theme, task, taskLogs, taskLoading,
                         {task.error ? <p role="status" className="whitespace-pre-wrap break-words">{task.error}</p> : null}
                         {onRetrieveTask && canRetrieveVideoResult(task) ? (
                             <div className="flex flex-wrap items-center justify-between gap-3">
-                                <p>查询原任务并取回视频，不会重新生成。</p>
+                                <p>查询原任务并取回结果，不会重新生成。</p>
                                 <Button loading={retrievingTaskId === task.id} onClick={() => onRetrieveTask(task)}>取回结果</Button>
                             </div>
                         ) : null}
@@ -86,18 +83,6 @@ export function CanvasProjectStatusDialogs({ theme, task, taskLogs, taskLoading,
                         </div>
                     </div>
                 ) : null}
-            </Modal>
-
-            <Modal title="AI 超分" open={Boolean(superResolveNode?.metadata?.content)} centered footer={null} onCancel={onCloseSuperResolve}>
-                <div className="space-y-4 py-3">
-                    <div className="rounded-lg border p-3 text-sm leading-6" style={{ borderColor: theme.node.stroke, background: theme.node.panel, color: theme.node.muted }}>
-                        当前部署未配置独立的 AI 超分模型。你仍可以使用本地高质量插值放大，原图会保留，结果将作为新的图片节点放回画布。
-                    </div>
-                    <div className="flex justify-end gap-2">
-                        <Button onClick={onCloseSuperResolve}>取消</Button>
-                        <Button type="primary" icon={<ImagePlus className="size-4" />} onClick={onUseLocalUpscale}>使用本地高质量放大</Button>
-                    </div>
-                </div>
             </Modal>
 
             <AppModal

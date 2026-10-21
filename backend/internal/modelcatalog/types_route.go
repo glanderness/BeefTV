@@ -217,6 +217,7 @@ type AdminChannelModelFetchResult struct {
 }
 
 type FailureInfo struct {
+	RejectedNoJob     bool
 	StatusCode        int
 	RetryAfter        time.Duration
 	SlotCode          string

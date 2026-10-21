@@ -58,6 +58,9 @@ func IsBeefAPISeedancePreuploadConfig(ctx context.Context, config Config) bool {
 }
 
 func requiresBeefAPIHTTPReferences(ctx context.Context, config Config) bool {
+	if UpscaleMediaType(config.Model) != "" {
+		return IsBeefAPIVideoConfig(ctx, config)
+	}
 	contract, ok := providerpreset.BeefAPIVideoContract(config.Model)
 	return ok && contract.RequiresHTTPReferences && IsBeefAPIVideoConfig(ctx, config)
 }

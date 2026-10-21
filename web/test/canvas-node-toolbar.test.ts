@@ -71,7 +71,7 @@ describe("canvas node toolbar model", () => {
         const groups = new Map(tools.map((tool) => [tool.id, resolveNodeToolbarPlacement(tool, ctx).group]));
 
         expect([...groups].filter(([, group]) => group === "primary").map(([id]) => id)).toEqual(["trimRegenerate", "subtitles"]);
-        expect([...groups].filter(([, group]) => group === "process").map(([id]) => id)).toEqual(["extractFrames", "extractAudio"]);
+        expect([...groups].filter(([, group]) => group === "process").map(([id]) => id)).toEqual(["extractFrames", "extractAudio", "video-super-resolve"]);
         expect(groups.get("download")).toBe("utility");
         expect(groups.get("timeline")).toBe("workspace");
         expect(groups.get("uploadVideo")).toBe("more");
@@ -127,7 +127,7 @@ describe("canvas node toolbar model", () => {
 
         expect(tools.find((tool) => tool.id === "angle")?.group).toBe("viewpoint");
         expect(tools.find((tool) => tool.id === "maskEdit")?.group).toBe("primary");
-        expect(tools.some((tool) => tool.id === "superResolve")).toBe(false);
+        expect(tools.find((tool) => tool.id === "superResolve")?.label).toBe("AI 超分");
         expect(tools.find((tool) => tool.id === "emotion")?.group).toBe("portrait");
         expect(tools.find((tool) => tool.id === "upscale")?.description).toContain("不是 AI 超分");
         expect(tools.find((tool) => tool.id === "crop")?.section).toBe("构图与尺寸");

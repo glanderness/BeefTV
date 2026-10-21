@@ -112,6 +112,9 @@ import { useCanvasDirector } from "./use-canvas-director";
 import { useCanvasHistory } from "./use-canvas-history";
 import { useCanvasKeyboard } from "./use-canvas-keyboard";
 import { useCanvasMediaTools } from "./use-canvas-media-tools";
+import { useCanvasUpscale } from "./use-canvas-upscale";
+import { generationErrorMessage } from "@/lib/generation-error";
+import { CanvasNodeAIUpscaleDialog } from "@/components/canvas/canvas-node-ai-upscale-dialog";
 import { useCanvasNodeEditor } from "./use-canvas-node-editor";
 import { useCanvasNodeOperations } from "./use-canvas-node-operations";
 import { useCanvasProjectLifecycle } from "./use-canvas-project-lifecycle";
@@ -1182,6 +1185,8 @@ function InfiniteCanvasPage() {
         recoverDepthCaptureNodes(controller.signal);
         return () => controller.abort();
     }, [projectId, projectLoaded, recoverDepthCaptureNodes]);
+
+    const { estimateUpscale, startUpscale } = useCanvasUpscale({ projectId, nodesRef, connectionsRef, setNodes, setConnections, setSelectedNodeIds, bindGenerationTask, applyGenerationTaskResult, startGenerationRequest, finishGenerationRequest });
 
     const handleNodesDeleted = useCallback(
         (removedIds: Set<string>, nextNodes: CanvasNodeData[], removedNodes: CanvasNodeData[]) => {
@@ -2956,6 +2961,7 @@ function InfiniteCanvasPage() {
                                 onBatchConnect={() => beginBatchConnectionMode(Array.from(selectedNodeIds))}
                                 onMergeVideos={() => void mergeSelectedVideos()}
                                 onAskAssistant={openAssistant}
+                                onUpscaleSelection={nodes.some((node) => selectedNodeIds.has(node.id) && (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video) && node.metadata?.content) ? () => setSuperResolveNodeId(nodes.find((node) => selectedNodeIds.has(node.id) && (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video) && node.metadata?.content)!.id) : undefined}
                             />
                         ) : null}
 
@@ -3127,6 +3133,13 @@ function InfiniteCanvasPage() {
                         <CanvasUploadModal open={uploadModalOpen} onClose={closeUploadModal} onUpload={handleUploadFiles} onImportUrl={handleImportUrl} />
                         <input ref={imageInputRef} type="file" accept="image/*,video/*,.mp4,.mov,.m4v,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav,.txt,.md,.markdown" multiple className="hidden" onChange={handleImageInputChange} />
 
+                        {superResolveNode ? <CanvasNodeAIUpscaleDialog
+                            key={superResolveNode.id}
+                            nodes={selectedNodeIds.has(superResolveNode.id) ? nodes.filter((node) => selectedNodeIds.has(node.id) && (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video) && node.metadata?.content) : [superResolveNode]}
+                            onClose={() => setSuperResolveNodeId(null)}
+                            onEstimate={estimateUpscale}
+                            onConfirm={(quote) => { setSuperResolveNodeId(null); void startUpscale(quote).catch((error) => message.error(generationErrorMessage(error))); }}
+                        /> : null}
                         <CanvasProjectEditorDialogs
                             projectId={projectId}
                             theme={theme}
@@ -3341,12 +3354,6 @@ function InfiniteCanvasPage() {
                                 onCancelTask: cancelCanvasTask,
                                 onRetrieveTask: (task) => void retrieveTaskResult(task),
                                 retrievingTaskId,
-                                superResolveNode,
-                                onCloseSuperResolve: () => setSuperResolveNodeId(null),
-                                onUseLocalUpscale: () => {
-                                    if (superResolveNode) void upscaleImageNode(superResolveNode, { targetLongEdge: 2048, algorithm: "high" });
-                                    setSuperResolveNodeId(null);
-                                },
                                 previewNode,
                                 onClosePreview: () => setPreviewNodeId(null),
                                 clearConfirmOpen,

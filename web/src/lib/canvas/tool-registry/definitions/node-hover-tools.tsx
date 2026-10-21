@@ -33,6 +33,7 @@ function canRetry(ctx: ToolContext) {
 }
 
 export const nodeHoverToolbarTools: ToolDefinition[] = [
+    { id: "video-super-resolve", toolbar: "node-hover", category: "node-state", label: "AI 超分", icon: <WandSparkles />, defaultVisible: true, defaultOrder: 43, nodeToolbar: { group: "process", order: 25, description: "放大视频并保留原音轨" }, applicable: hasVideo, run: (ctx) => ctx.handlers.onNodeSuperResolve(ctx.node!) },
     // 基础工具组
     {
         id: "info",

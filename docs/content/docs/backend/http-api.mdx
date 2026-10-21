@@ -53,6 +53,7 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 | `/timeline/renders`、`/timeline/transcriptions` | 本机时间线成片任务与字幕转写任务 |
 | `/depth-captures` | 本机深度动作捕捉任务 |
 | `/tasks/*` | 生成任务创建、查询、取消、恢复与事件流 |
+| `/media-upscale/*` | 官方算力超分能力查询与费用预估；执行复用 `/tasks` |
 | `/ai/*` | 外部模型目录和自定义协议转发 |
 | `/plugins/*`, `/skills/*` | 本地扩展包与技能 |
 | `/creation-conversations/*` | `/create` 页面对话的提交事实：按对话 CAS 读写、导入与墓碑删除 |
@@ -228,7 +229,21 @@ Windows 的运行地址描述文件位于用户目录的 `.beeftv/runtime/`，�
 
 `GET /projects/:id/chapter-apply-receipts?taskIds=` 查询最多 100 个任务的已提交回执。页面不以更新时间猜测是否写入；没有回执的分镜结果保留待核对，确认后可直接写入，不重新生成。
 
-`POST /tasks/:id/query-provider` 用于取回失败视频任务的原有结果：校验归属、持久化的供应商任务 ID 和协议支持后，只查询状态及下载，不重新提交生成。恢复成功会保存任务结果并登记产物；正在处理时返回 `recovered=false`。没有原任务 ID 的记录不能凭本地 ID 自动找回。已发出但未取得回执的提交标记为 `submission_unknown`，阻止付费重试；明确限流、鉴权拒绝或尚未发送的请求保留对应错误类别。
+`POST /tasks/:id/query-provider` 用于取回失败视频任务和 Topaz 图片超分任务的原有结果：校验归属、持久化的供应商任务 ID 和协议支持后，只查询状态及下载，不重新提交生成。恢复成功会保存任务结果并登记产物；正在处理时返回 `recovered=false`。没有原任务 ID 的记录不能凭本地 ID 自动找回。已发出但未取得回执的提交标记为 `submission_unknown`，阻止付费重试；明确限流、鉴权拒绝或尚未发送的请求保留对应错误类别。
+
+### 图片与视频 AI 超分
+
+`GET /media-upscale/capabilities` 查询官方算力支持的模型；`POST /media-upscale/estimate` 准备一个所属用户的素材并获取人民币预留费用，不提交生成。最终费用按实际用量结算，预留金额不是最终价格或费用上限。客户端不接收 fal 密钥，也不提供供应商直连配置。
+
+生成完成后即可下载和回填，供应商账单暂不可读不会阻止结果交付；最终费用待账单可读后结算。`topaz-starlight-fast-2` 的实际输出分辨率可能高于所选倍数，客户端按结果文件的真实尺寸保存。
+
+执行使用现有 `POST /tasks`，图片类型为 `canvas_image`，视频类型为 `canvas_video`。`input.config` 只需 `credentialRef=beefapi-enterprise`、所选公开模型 ID 和 `interfaceType=newapi`；凭据由后端解析和加密。`input.upscale` 包含整数 `factor`（1–4，界面默认 2）与图片 `outputFormat`（png/jpeg）。`referenceImages` 或 `referenceVideos` 仅包含一个 `storageKey=resource:<id>` 的源素材。批处理由画布逐素材创建，每个素材各有操作编号、任务和结果节点。
+
+图片保真使用 `topaz-standard-v2`，细节重建使用 `topaz-wonder-3.5`。默认不增强人脸，Wonder 使用低强度。视频保真使用 `topaz-proteus`，细节重建使用 `topaz-starlight-fast-2`，输出 MP4/H.264，不补帧，原视频不超过 5 分钟。结果缺少音轨时后端从原素材补回，校验完成后才入库。原素材与结果作为不同资源保存。
+
+预估和创建前均检查实际文件归属、类型、尺寸与本机生成资源限制。图片按放大后的像素估算常见 8 位输出，视频按源文件大小和放大倍数保守估算；估算超过当前单个生成资源上限时拒绝提交。编码和压缩比会变化，结果仍按实际大小校验，失败时保留原任务供调整资源上限后取回。
+
+超分复用任务幂等、取消、恢复、受鉴权下载和画布消费确认。已受理任务恢复时只查询原任务 ID，不重新上传或生成。人工取回会调用原任务的 `recover`，日常轮询只读状态。取消请求是否确认由供应商回执决定，停止本地等待不表示上游已经停机或退款。下载失败可取回原结果；图片超分也支持 `/tasks/:id/query-provider`。
 
 视频结果优先下载供应商返回的地址并保存到本地。实际传输开始后，连续 10 秒没有收到数据会结束当前下载；持续传输的大文件不受 10 秒总时长限制。内置 BeefAPI 使用原任务的备用内容接口刷新存储链接；自接供应商使用已知原任务的查询协议获取新地址，不请求 BeefAPI 备用接口，也不重新生成。同源下载保留该协议的认证方式，外部媒体和跨域重定向不携带供应商密钥。可信 BeefAPI 视频状态默认每 5 秒查询一次；其他供应商及显式配置的周期不变，继续尊重 `Retry-After`。
 

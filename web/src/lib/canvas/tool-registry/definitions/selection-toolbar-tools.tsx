@@ -3,6 +3,7 @@ import { AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignHorizonta
 import { registerToolbarTools, type ToolDefinition } from "@/lib/canvas/tool-registry";
 
 export const selectionToolbarTools: ToolDefinition[] = [
+    { id: "selection-upscale", toolbar: "selection", category: "selection", label: "AI 超分", icon: <Sparkles />, defaultVisible: true, defaultOrder: 6, applicable: (ctx) => Boolean(ctx.handlers.onUpscaleSelection), run: (ctx) => ctx.handlers.onUpscaleSelection?.() },
     { id: "selection-ask-assistant", toolbar: "selection", category: "selection", label: "问助手", icon: <Sparkles />, defaultVisible: true, defaultOrder: 5, applicable: (ctx) => Boolean(ctx.handlers.onAskAssistant), run: (ctx) => ctx.handlers.onAskAssistant?.() },
     { id: "selection-align-left", toolbar: "selection", category: "layout", label: "左对齐", icon: <AlignHorizontalJustifyStart />, defaultVisible: true, defaultOrder: 10, run: (ctx) => ctx.handlers.onAlign("left") },
     { id: "selection-align-center-x", toolbar: "selection", category: "layout", label: "水平居中", icon: <AlignHorizontalJustifyCenter />, defaultVisible: true, defaultOrder: 20, run: (ctx) => ctx.handlers.onAlign("centerX") },

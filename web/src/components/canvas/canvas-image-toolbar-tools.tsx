@@ -144,6 +144,16 @@ const imageToolDefinitions: ImageToolDefinition[] = [
         run: (node, handlers) => handlers.onUpscale(node),
     },
     {
+        id: "superResolve",
+        label: "AI 超分",
+        section: "构图与尺寸",
+        description: "保真放大或重建细节，保留原图",
+        icon: () => <Scaling className="size-3.5" />,
+        group: "process",
+        order: 25,
+        run: (node, handlers) => handlers.onSuperResolve(node),
+    },
+    {
         id: "angle",
         label: "多角度",
         section: "视角",

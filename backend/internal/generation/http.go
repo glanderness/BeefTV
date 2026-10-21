@@ -56,6 +56,10 @@ func PostJSON(ctx context.Context, config Config, path string, body interface{},
 }
 
 func PostJSONWithSubmissionKey(ctx context.Context, config Config, path string, body interface{}, target interface{}) error {
+	return postJSONWithSubmissionKey(ctx, config, path, body, target, nil)
+}
+
+func postJSONWithSubmissionKey(ctx context.Context, config Config, path string, body interface{}, target interface{}, classify func(error) error) error {
 	req, err := newJSONRequest(ctx, http.MethodPost, APIURL(config.BaseURL, path), config, body)
 	if err != nil {
 		return err
@@ -64,7 +68,11 @@ func PostJSONWithSubmissionKey(ctx context.Context, config Config, path string, 
 		req.Header.Set("Idempotency-Key", key)
 	}
 	req.GetBody = nil
-	return UncertainVideoSubmission(ctx, DoJSON(req, target))
+	err = DoJSON(req, target)
+	if classify != nil {
+		err = classify(err)
+	}
+	return UncertainVideoSubmission(ctx, err)
 }
 
 func GetJSON(ctx context.Context, config Config, path string, target interface{}) error {

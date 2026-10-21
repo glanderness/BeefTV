@@ -12,6 +12,7 @@ import (
 )
 
 type MediaMetadata struct {
+	FormatName         string
 	Width, Height      int
 	DurationMs         int64
 	HasAudio, HasVideo bool
@@ -35,7 +36,7 @@ func ProbeLocal(ctx context.Context, path string) (MediaMetadata, error) {
 		return facts, err
 	}
 	cmd := exec.CommandContext(ctx, bin, "-v", "error", "-protocol_whitelist", "file,pipe",
-		"-show_entries", "stream=codec_type,width,height,duration:format=duration", "-of", "json", path)
+		"-show_entries", "stream=codec_type,width,height,duration:format=duration,format_name", "-of", "json", path)
 	HideConsole(cmd)
 	output, err := cmd.Output()
 	if ctx.Err() != nil {
@@ -51,13 +52,15 @@ func ProbeLocal(ctx context.Context, path string) (MediaMetadata, error) {
 			Duration      string `json:"duration"`
 		} `json:"streams"`
 		Format struct {
-			Duration string `json:"duration"`
+			FormatName string `json:"format_name"`
+			Duration   string `json:"duration"`
 		} `json:"format"`
 	}
 	if err := json.Unmarshal(output, &parsed); err != nil {
 		return facts, fmt.Errorf("无法解析媒体检查结果")
 	}
 	facts.DurationMs = probeDuration(parsed.Format.Duration)
+	facts.FormatName = parsed.Format.FormatName
 	for _, stream := range parsed.Streams {
 		if stream.CodecType == "audio" {
 			facts.HasAudio = true

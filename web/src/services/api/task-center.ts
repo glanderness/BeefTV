@@ -350,7 +350,7 @@ export function queryFailedVideoProviderTask(id: string) {
 }
 
 export function canRetrieveVideoResult(task: GenerationTask) {
-    return task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_")) && Boolean(task.providerRequestId);
+    return task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_") || task.model === "topaz-standard-v2" || task.model === "topaz-wonder-3.5") && Boolean(task.providerRequestId);
 }
 
 export function refreshGenerationTaskStatus(id: string, options?: { signal?: AbortSignal }) {

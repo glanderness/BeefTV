@@ -169,6 +169,8 @@ func routeFailureInfo(err error) modelcatalog.FailureInfo {
 		info.RetryAfter = upstream.RetryAfter
 	}
 	info.ImageThrottle = definiteImageThrottle(err)
+	var rejection generation.SubmissionRejectedError
+	info.RejectedNoJob = errors.As(err, &rejection)
 	var preparation generation.RequestPreparationError
 	info.PreparationFailed = errors.As(err, &preparation)
 	info.Canceled = errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
