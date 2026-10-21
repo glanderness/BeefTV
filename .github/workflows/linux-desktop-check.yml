@@ -38,7 +38,7 @@ jobs:
           bun-version: 1.4.2
       - uses: actions/setup-node@v4
         with:
-          node-version: '24.15.0'
+          node-version: '24.22.1'
       - name: Install native desktop and media dependencies
         run: |
           sudo apt-get update

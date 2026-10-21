@@ -19,14 +19,14 @@
 1. 使用交接消息中的分支和完整提交 SHA。已有仓库有改动时，新建工作树或单独 clone，不覆盖本地修改。
 2. 保存工作、退出 BeefTV，备份数据目录：macOS 为 `~/Library/Application Support/BeefTV`，Windows 为 `%AppData%\BeefTV`。备份包含数据库、素材和本地配置，不能只备份可执行文件。不要把配置内容或密钥粘贴到聊天。
 3. 检查 Git、Bun、Go 和编译工具。Bun 按 `web/package.json` 的 `packageManager` 安装，Go 版本按 `backend/go.mod`；macOS 需要 Xcode Command Line Tools，Windows 需要支持 CGO 的 GCC 和 WebView2。详细前置条件见[桌面构建](desktop-release.md)。
-4. Agent 随包使用 **Node 24.15.0**。从 Node 官方发行源取得与目标系统、架构一致的运行时并校验官方 SHA-256。`BEEFTV_NODE_RUNTIME` 指向解压目录：macOS 下应有 `bin/node`，Windows 下应有 `node.exe`。不要指向不匹配的全局 Node。
+4. Agent 随包使用 **Node 24.22.1**。从 Node 官方发行源取得与目标系统、架构一致的运行时并校验官方 SHA-256。`BEEFTV_NODE_RUNTIME` 指向解压目录：macOS 下应有 `bin/node`，Windows 下应有 `node.exe`。不要指向不匹配的全局 Node。
 
 ## macOS
 
 在仓库根目录执行，`BEEFTV_NODE_RUNTIME` 替换为本机已校验的目录：
 
 ```bash
-export BEEFTV_NODE_RUNTIME="/absolute/path/to/node-v24.15.0-darwin-arm64"
+export BEEFTV_NODE_RUNTIME="/absolute/path/to/node-v24.22.1-darwin-arm64"
 export PATH="$BEEFTV_NODE_RUNTIME/bin:$PATH"
 bun scripts/package-agent-host.mjs darwin/arm64 --verify-runtime
 (cd web && bun install --frozen-lockfile)
@@ -35,14 +35,14 @@ bun scripts/package-agent-host.mjs darwin/arm64 --verify-runtime
 open /Applications/BeefTV.app
 ```
 
-Intel Mac 使用 `node-v24.15.0-darwin-x64` 和 `darwin/amd64`。安装脚本会构建、验证签名并更新 `/Applications/BeefTV.app`，结束后清理中间 `.app`。无需全局安装 pi。
+Intel Mac 使用 `node-v24.22.1-darwin-x64` 和 `darwin/amd64`。安装脚本会构建、验证签名并更新 `/Applications/BeefTV.app`，结束后清理中间 `.app`。无需全局安装 pi。
 
 ## Windows x64
 
 在仓库根目录使用 PowerShell：
 
 ```powershell
-$env:BEEFTV_NODE_RUNTIME = "C:\path\to\node-v24.15.0-win-x64"
+$env:BEEFTV_NODE_RUNTIME = "C:\path\to\node-v24.22.1-win-x64"
 bun scripts/package-agent-host.mjs windows/amd64 --verify-runtime
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-beeftv-windows-release.ps1
 ```

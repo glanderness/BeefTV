@@ -58,7 +58,7 @@ jobs:
           bun-version: 1.4.2
       - uses: actions/setup-node@v4
         with:
-          node-version: '24.15.0'
+          node-version: '24.22.1'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -66,6 +66,9 @@ jobs:
         shell: bash
         run: |
           node -e 'const fs=require("fs"),p=require("path"); const bin=p.dirname(process.execPath); fs.appendFileSync(process.env.GITHUB_ENV, `BEEFTV_NODE_RUNTIME=${process.platform==="win32"?bin:p.dirname(bin)}\n`);'
+      - name: Verify bundled Agent runtime
+        shell: bash
+        run: bun test scripts/package-agent-host.test.mjs
       - name: Linux desktop dependencies
         if: runner.os == 'Linux'
         run: |
