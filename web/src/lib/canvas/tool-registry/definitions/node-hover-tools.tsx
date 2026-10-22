@@ -27,7 +27,7 @@ function opensSavedHistory(ctx: ToolContext) { return Boolean(ctx.node && canvas
 function canRetry(ctx: ToolContext) {
     if (ctx.nodeMetadata?.fileUpload) return false;
     const explanation = ctx.node ? canvasNodeFailureExplanation(ctx.node) : explainGenerationError(ctx.nodeMetadata?.errorDetails || ctx.nodeMetadata?.generationErrorCode, { stage: ctx.nodeMetadata?.taskStage });
-    const blocked = explanation.uncertain || (explanation.category === "download_failed" && !(ctx.node && canRecoverOrRetryDepthCapture(ctx.node)));
+    const blocked = Boolean(ctx.nodeMetadata?.resourceReloadAvailable) || explanation.uncertain || (explanation.category === "download_failed" && !(ctx.node && canRecoverOrRetryDepthCapture(ctx.node)));
     const batchHasFailures = isImageBatchRoot(ctx) && (ctx.nodeMetadata?.batchFailedCount || (ctx.nodeMetadata?.status === "error" ? 1 : 0)) > 0;
     return (ctx.nodeMetadata?.status === "error" || (batchHasFailures && ctx.nodeMetadata?.status !== "loading")) && !blocked;
 }

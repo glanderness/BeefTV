@@ -331,7 +331,8 @@ export function CanvasNodeToolbar({
     // Image nodes use a deliberately small, stable action hierarchy. Keep the
     // underlying handlers/tool definitions intact, but only expose the actions
     // that belong to the four image workflows in the primary dock.
-    const imagePrimaryTools = primary.filter((tool) => tool.id === "maskEdit");
+    const imagePrimaryTools = primary.filter((tool) => tool.id === "maskEdit" || tool.id === "retry");
+    const videoPrimaryTools = primary.filter((tool) => tool.id === "retry");
     const portraitTools = compact ? [] : isImage ? inGroup("portrait").filter((tool) => tool.id === "emotion") : inGroup("portrait");
     const viewpointLightingTools = compact ? [] : isImage ? [...inGroup("viewpoint"), ...inGroup("lighting")].filter((tool) => tool.id === "angle" || tool.id === "lighting") : [...inGroup("viewpoint"), ...inGroup("lighting")];
     const panoramaTools = compact || isImage ? [] : inGroup("panorama");
@@ -400,6 +401,9 @@ export function CanvasNodeToolbar({
             <div role="toolbar" aria-label="节点快捷工具" className="flex h-10 max-w-full items-center gap-0.5 overflow-visible rounded-[var(--dock-radius-tight)] px-1.5 backdrop-blur-2xl" style={{ ...dockStyle, border: 0 }}>
                 {isVideo ? (
                     <>
+                        {videoPrimaryTools.map((tool) => (
+                            <NodeDockToolButton key={tool.id} tool={tool} />
+                        ))}
                         <NodeDockToolButton tool={{ id: "ai-upscale", label: "AI超分", icon: <UpscaleToolbarIcon />, group: "process", order: 1, onClick: () => onSuperResolve(node) }} showTooltip={false} />
                         {videoProcessingTools.length ? <NodeDockMenuButton menuId="video-processing" label="视频处理" icon={null} tools={videoProcessingTools} openMenuId={openMenuId} onOpenChange={handleMenuOpenChange} placement="bottomLeft" /> : null}
                         {videoAudioTool ? <NodeDockToolButton tool={videoAudioTool} showTooltip={false} /> : null}
