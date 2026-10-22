@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { bindSeedanceCharacterReferences, hydrateNodeGenerationContext, type NodeGenerationContext } from "../src/components/canvas/canvas-node-generation";
+import { compileNodeGenerationReferences, hydrateNodeGenerationContext, type NodeGenerationContext } from "../src/components/canvas/canvas-node-generation";
 import type { AiConfig } from "../src/stores/use-config-store";
 import * as projects from "../src/services/api/projects";
 import * as resources from "../src/services/api/resources";
@@ -72,7 +72,7 @@ test("video promptOnly keeps character identity bound to actual non-contiguous i
     } as Awaited<ReturnType<typeof projects.getProjectCharacter>>));
     try {
         const prompt = "@角色1 在右侧拿手机，@角色2 在左侧说：你找我？";
-        const hydrated = bindSeedanceCharacterReferences(await hydrateNodeGenerationContext({
+        const hydrated = compileNodeGenerationReferences(await hydrateNodeGenerationContext({
             prompt,
             referenceImages: [{ id: "scene", name: "scene.png", type: "image/png", dataUrl: "", storageKey: "resource:scene" }],
             referenceVideos: [], referenceAudios: [],
@@ -98,7 +98,7 @@ test("two characters can bind an already connected voice sample without duplicat
     const resource = spyOn(resources, "getResource").mockRejectedValue(new Error("sample is already connected"));
     try {
         const audio = { id: "sample", name: "sample.mp3", type: "audio/mpeg", url: "https://example.com/sample.mp3", storageKey: "resource:shared-voice", durationMs: 2500 };
-        const hydrated = bindSeedanceCharacterReferences(await hydrateNodeGenerationContext({
+        const hydrated = compileNodeGenerationReferences(await hydrateNodeGenerationContext({
             prompt: "@角色1 说早安，@角色2 回答你好。", referenceImages: [], referenceVideos: [], referenceAudios: [audio],
             characterReferences: [{ nodeId: "a", assetId: "甲" }, { nodeId: "b", assetId: "乙" }],
             resolvedCharacterVersions: [], resolvedCharacterVoices: [], textCount: 0, imageCount: 0, videoCount: 0, audioCount: 1,
@@ -128,7 +128,7 @@ test("character binding does not alter TTS, images, H3 ordering, frames or workf
         for (const config of [
             { ...seedanceConfig, taskWorkflowProvider: "workflow" },
             { ...seedanceConfig, model: "fal::minimax/h3-max", channels: [{ id: "fal", models: ["minimax/h3-max"], modelProfiles: [{ model: "minimax/h3-max", protocol: "newapi" }] }] },
-        ]) expect(bindSeedanceCharacterReferences(hydrated, config as AiConfig, "reference_to_video").prompt).toBe("你好");
-        expect(bindSeedanceCharacterReferences(hydrated, seedanceConfig, "image_to_video").prompt).toBe("你好");
+        ]) expect(compileNodeGenerationReferences(hydrated, config as AiConfig, "reference_to_video").prompt).toBe("你好");
+        expect(compileNodeGenerationReferences(hydrated, seedanceConfig, "image_to_video").prompt).toBe("你好");
     } finally { character.mockRestore(); }
 });

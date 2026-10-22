@@ -3,7 +3,7 @@ import { createClientId } from "@/lib/client-id";
 import { useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import { App } from "antd";
 
-import { bindSeedanceCharacterReferences, buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
+import { compileNodeGenerationReferences, buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { buildVideoGenerationMetadata, isGenerationCanceled } from "@/lib/canvas/canvas-project-generation";
 import { buildConfirmedGenerationConfig } from "./canvas-assistant-proposal-execution";
@@ -243,6 +243,7 @@ export function useCanvasGenerationExecutor({
                                 editingTextNode ? buildTextRewritePrompt(sourceTextContent, prompt) : generationPrompt,
                                 inputAssets,
                                 promptOnly,
+                                { preserveMediaBindings: mode === "video" },
                             );
                             const requirements = generationModelRequirements(mode, baseContext, sourceNode, generationConfig, true);
                             if (requirements?.input) {
@@ -279,7 +280,10 @@ export function useCanvasGenerationExecutor({
                             return;
                         }
                         let effectivePrompt = skillExecution.prompt.trim();
-                        if (mode === "video") effectivePrompt = bindSeedanceCharacterReferences({ ...rawGenerationContext, prompt: effectivePrompt }, generationConfig, buildVideoGenerationMetadata(sourceNode, rawGenerationContext, generationConfig).videoEditOperation).prompt;
+                        if (mode === "video") {
+                            rawGenerationContext = compileNodeGenerationReferences({ ...rawGenerationContext, prompt: effectivePrompt }, generationConfig, buildVideoGenerationMetadata(sourceNode, rawGenerationContext, generationConfig).videoEditOperation);
+                            effectivePrompt = rawGenerationContext.prompt;
+                        }
                         stage = "parameters";
                         let styleMetadata = {};
                         if (mode === "image") {

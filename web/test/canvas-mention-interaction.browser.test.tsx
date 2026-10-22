@@ -178,7 +178,8 @@ test("Scenario 2: Primary menu nodes and skill buttons direct selection", async 
 
     await menu.waitFor({ state: "hidden", timeout: 5000 });
     let promptText = await page.locator("#rich-prompt-display").innerText();
-    expect(promptText).toContain("@音频节点 1");
+    expect(promptText).toContain("@[node:node-1]");
+    expect(await input.locator(".canvas-resource-inline-mention").innerText()).toContain("音频节点 1");
 
     // 2. 选择技能库（智能分镜技能）
     await input.focus();
@@ -261,7 +262,7 @@ test("Scenario 5: Plain textarea keyboard navigation and Tab selection", async (
 
     await menu.waitFor({ state: "hidden", timeout: 5000 });
     const plainText = await page.locator("#plain-prompt-display").innerText();
-    expect(plainText).toContain("@音频节点 1");
+    expect(plainText).toContain("@[node:node-1]");
 }, 30000);
 
 test("Scenario 6: Click internal menu space does not close; outside click closes", async () => {

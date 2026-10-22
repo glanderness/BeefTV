@@ -52,6 +52,7 @@ export function canvasResourceMentionToken(reference: CanvasResourceReference) {
     if (reference.mentionToken) return reference.mentionToken;
     if (reference.kind === "skill" && reference.skill?.skillId) return canvasSkillMentionToken(reference.skill.skillId);
     if (reference.assetId) return `@[asset:${reference.assetId}]`;
+    if (reference.nodeId) return canvasNodeMentionToken(reference.nodeId);
     return `@${reference.label}`;
 }
 
@@ -63,13 +64,6 @@ export function canvasResourceMentionToken(reference: CanvasResourceReference) {
  */
 export function referencedAssetIdsInPrompt(prompt: string): string[] {
     return [...new Set(Array.from(prompt.matchAll(/@\[asset:([^\]\s]+)\]/g), (match) => match[1]))];
-}
-
-export function normalizeCanvasNodeMentionTokens(prompt: string, references: CanvasResourceReference[]) {
-    return references.reduce((value, reference) => {
-        if (!reference.nodeId || reference.assetId || reference.kind === "skill") return value;
-        return value.split(canvasNodeMentionToken(reference.nodeId)).join(`@${reference.label}`);
-    }, prompt);
 }
 
 /** 将提示词内已连接素材的名称替换为对应引用；同名的每处指代都会保留为独立引用。 */
@@ -193,15 +187,15 @@ function rewriteCanvasPromptAfterReferenceChange(prompt: string, previousReferen
     const nextByNodeId = new Map(nextCanvasReferences.map((reference) => [reference.nodeId, reference]));
     let value = prompt;
     previousCanvasReferences.forEach((reference) => {
-        const nodeToken = canvasNodeMentionToken(reference.nodeId);
-        canvasResourceReferenceMentionTokens(reference).forEach((token) => {
-            if (token !== nodeToken) value = replaceCanvasMentionToken(value, token, nodeToken);
-        });
+        value = replaceCanvasMentionToken(value, `@${reference.label}`, `@[legacy-slot:${reference.nodeId}]`);
     });
     previousCanvasReferences.filter((reference) => !nextByNodeId.has(reference.nodeId)).forEach((reference) => {
         value = removeCanvasMentionToken(value, canvasNodeMentionToken(reference.nodeId));
+        value = removeCanvasMentionToken(value, `@[legacy-slot:${reference.nodeId}]`);
     });
-    value = normalizeCanvasNodeMentionTokens(value, nextCanvasReferences);
+    nextCanvasReferences.forEach((reference) => {
+        value = replaceCanvasMentionToken(value, `@[legacy-slot:${reference.nodeId}]`, `@${reference.label}`);
+    });
     return value === prompt ? prompt : compactRemovedCanvasMentionPrompt(value);
 }
 
@@ -239,7 +233,7 @@ export function replaceCanvasMentionToken(value: string, token: string, replacem
     // Numbered media mentions can touch Chinese prose or another mention, but not a longer number.
     const boundary = /^@(图片|视频|音频|文本)\d+$/.test(token)
         ? "(?![0-9])"
-        : token.startsWith("@[node:") ? "" : `(?=${CANVAS_RESOURCE_MENTION_BOUNDARY.source})`;
+        : token.startsWith("@[node:") || token.startsWith("@[legacy-slot:") ? "" : `(?=${CANVAS_RESOURCE_MENTION_BOUNDARY.source})`;
     return value.replace(new RegExp(`${escapedToken}${boundary}`, "gu"), replacement);
 }
 
