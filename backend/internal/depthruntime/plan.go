@@ -56,10 +56,11 @@ func DownloadPlan(ctx context.Context, options EnsureOptions) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	paths = artifactPaths(paths, artifact)
 	runtimeReady := installedRuntime(paths, options.Platform)
 	archiveReady := runtimeReady || verifyFileContext(ctx, paths.Archive, artifact) == nil
 	modelPath := filepath.Join(options.DataDir, "models", "video-depth-anything-small", "v1", "checkpoints", "video_depth_anything_vits.pth")
-	return installationPlan(options.DataDir, artifact, manifest.Model, archiveReady, verifyFileContext(ctx, modelPath, manifest.Model) == nil, runtimeReady)
+	return installationPlan(ctx, options.DataDir, artifact, manifest.Model, archiveReady, verifyFileContext(ctx, modelPath, manifest.Model) == nil, runtimeReady)
 }
 
 func installedRuntime(paths runtimePaths, platform string) bool {
@@ -84,7 +85,7 @@ func loadArtifacts(ctx context.Context, options EnsureOptions) (Manifest, Artifa
 		}
 		manifest = *options.FallbackManifest
 	}
-	if (windows && manifest.Version != 2) || (!windows && manifest.Version != 1) {
+	if (windows && manifest.Version != 2 && manifest.Version != 3) || (!windows && manifest.Version != 1) {
 		return Manifest{}, Artifact{}, fmt.Errorf("不支持的深度组件清单版本 %d", manifest.Version)
 	}
 	artifact := manifest.Runtime
@@ -101,10 +102,16 @@ func loadArtifacts(ctx context.Context, options EnsureOptions) (Manifest, Artifa
 	if artifact.Size <= 0 || manifest.Model.Size <= 0 {
 		return Manifest{}, Artifact{}, errors.New("深度组件清单缺少下载大小")
 	}
+	if err := validateWheels(manifest.Version, options.Platform+"/"+options.Variant, artifact.Wheels); err != nil {
+		return Manifest{}, Artifact{}, err
+	}
+	if len(manifest.Model.Wheels) != 0 {
+		return Manifest{}, Artifact{}, errors.New("模型不能声明独立依赖")
+	}
 	return manifest, artifact, nil
 }
 
-func installationPlan(dataDir string, artifact, model Artifact, archiveReady, modelReady, runtimeReady bool) (Plan, error) {
+func installationPlan(ctx context.Context, dataDir string, artifact, model Artifact, archiveReady, modelReady, runtimeReady bool) (Plan, error) {
 	var plan Plan
 	if !archiveReady {
 		plan.DownloadBytes += artifact.Size
@@ -115,6 +122,18 @@ func installationPlan(dataDir string, artifact, model Artifact, archiveReady, mo
 	}
 	if !runtimeReady {
 		plan.RequiredBytes += artifact.ExpandedSize
+		for _, wheel := range artifact.Wheels {
+			if verifyFileContext(ctx, wheelPath(dataDir, wheel), wheel.artifact()) != nil {
+				if err := ctx.Err(); err != nil {
+					return Plan{}, err
+				}
+				plan.DownloadBytes += wheel.Size
+				plan.RequiredBytes += wheel.Size
+			}
+			// pip's target install can temporarily hold both its install tree
+			// and the final copy. Its temp directory is on this same volume.
+			plan.RequiredBytes += 2 * wheel.ExpandedSize
+		}
 	}
 	if !modelReady {
 		plan.DownloadBytes += model.Size

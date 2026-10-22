@@ -45,8 +45,16 @@ func verifySignedManifest(raw []byte, public ed25519.PublicKey) (Manifest, error
 	if err := decodeManifestJSON(payload, &manifest); err != nil {
 		return Manifest{}, fmt.Errorf("深度组件清单内容无效: %w", err)
 	}
-	if manifest.Version != 2 || len(manifest.Runtimes) == 0 {
+	if (manifest.Version != 2 && manifest.Version != 3) || len(manifest.Runtimes) == 0 {
 		return Manifest{}, errors.New("深度组件清单版本或运行包为空")
+	}
+	for platform, artifact := range manifest.Runtimes {
+		if err := validateWheels(manifest.Version, platform, artifact.Wheels); err != nil {
+			return Manifest{}, err
+		}
+	}
+	if len(manifest.Model.Wheels) != 0 || len(manifest.Runtime.Wheels) != 0 {
+		return Manifest{}, errors.New("模型或旧版运行包不能声明独立依赖")
 	}
 	return manifest, nil
 }
