@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, MouseEvent, PointerEvent, TextareaHTMLAttributes } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeft, ChevronRight, FileText, Folder, Image as ImageIcon, Music2, Pencil, Search, UserRound, Video, Workflow } from "lucide-react";
@@ -33,6 +33,11 @@ type MentionTextPart =
           reference: CanvasResourceReference;
       };
 
+export type CanvasMentionEditorActions = {
+    replaceRange: (start: number, end: number, text: string) => void;
+    focus: () => void;
+};
+
 type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "value"> & {
     value: string;
     references: CanvasResourceReference[];
@@ -49,10 +54,13 @@ type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "val
     onReferenceFilesDrop?: (reference: CanvasResourceReference, files: File[]) => void;
     autoLinkEnabled?: boolean;
     nodeSectionLabel?: string;
+    editorActionsRef?: React.Ref<CanvasMentionEditorActions>;
+    onCursorChange?: (value: string, cursor: number | null) => void;
+    onBeforeKeyDown?: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 };
 
 export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function CanvasResourceMentionTextarea(
-    { value, references, onSelectReference, onChange, onSubmit, onKeyDown, className, containerClassName, style, highlightLabels = true, mentionMenuWidth = 320, sendOnEnter = true, onContentSizeChange, includeAssetLibrary = false, activeDropReferenceId, onReferenceFilesDrop, autoLinkEnabled = false, nodeSectionLabel = "画布节点", ...props },
+    { value, references, onSelectReference, onChange, onSubmit, onKeyDown, className, containerClassName, style, highlightLabels = true, mentionMenuWidth = 320, sendOnEnter = true, onContentSizeChange, includeAssetLibrary = false, activeDropReferenceId, onReferenceFilesDrop, autoLinkEnabled = false, nodeSectionLabel = "画布节点", editorActionsRef, onCursorChange, onBeforeKeyDown, ...props },
     forwardedRef,
 ) {
     const rawTheme = useActiveTheme();
@@ -252,12 +260,21 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         if (typeof selectionStart === "number") focusEditor(selectionStart);
     };
 
+    useImperativeHandle(editorActionsRef, () => ({
+        replaceRange: (start, end, text) => {
+            closeMention();
+            updateValue(value.slice(0, start) + text + value.slice(end), start + text.length);
+        },
+        focus: () => focusEditor(),
+    }));
+
     const closeMention = () => {
         setMention(null);
         setActiveIndex(-1);
     };
 
     const syncMention = (nextValue: string, cursor: number) => {
+        onCursorChange?.(nextValue, cursor);
         setAutoLinkCursor(cursor);
         const prefix = nextValue.slice(0, cursor);
         const match = /@([^\s@,.;:!?，。；：！？、)\]}】）]*)$/.exec(prefix);
@@ -340,6 +357,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         const selection = getEditableSelection(editor);
         if (!selection || selection.start !== selection.end) {
             setAutoLinkCursor(null);
+            onCursorChange?.(serializeEditableValue(editor), null);
             return;
         }
         syncMention(serializeEditableValue(editor), selection.start);
@@ -405,6 +423,10 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                     aria-multiline="true"
                     aria-label={props["aria-label"]}
                     aria-disabled={props.disabled}
+                    aria-controls={props["aria-controls"]}
+                    aria-expanded={props["aria-expanded"]}
+                    aria-haspopup={props["aria-haspopup"]}
+                    aria-activedescendant={props["aria-activedescendant"]}
                     contentEditable={!props.disabled && !props.readOnly}
                     suppressContentEditableWarning
                     spellCheck={props.spellCheck}
@@ -456,6 +478,8 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                         props.onDrop?.(event as unknown as React.DragEvent<HTMLTextAreaElement>);
                     }}
                     onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+                        onBeforeKeyDown?.(event as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
+                        if (event.defaultPrevented) return;
                         if ((event.key === "Backspace" || event.key === "Delete") && !event.nativeEvent.isComposing && !composingRef.current) {
                             event.stopPropagation();
                             const editor = editorRef.current;
@@ -608,9 +632,12 @@ if (event.key === "Enter" && (event.nativeEvent.isComposing || composingRef.curr
                 onSelect={(event) => {
                     const textarea = event.currentTarget;
                     setAutoLinkCursor(textarea.selectionStart === textarea.selectionEnd ? textarea.selectionStart : null);
+                    onCursorChange?.(textarea.value, textarea.selectionStart === textarea.selectionEnd ? textarea.selectionStart : null);
                     props.onSelect?.(event);
                 }}
                 onKeyDown={(event) => {
+                    onBeforeKeyDown?.(event);
+                    if (event.defaultPrevented) return;
 if (event.key === "Enter" && (event.nativeEvent.isComposing || composingRef.current || event.keyCode === 229)) return;
                         if (autoLinkMatch && event.key === "Tab" && !event.shiftKey && !event.nativeEvent.isComposing && !composingRef.current) {
                             event.preventDefault();
