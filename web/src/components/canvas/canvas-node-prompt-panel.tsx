@@ -76,6 +76,8 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const themeName = useActiveTheme();
     const theme = canvasThemes[themeName];
     const preferredFontSize = useCreationPreferencesStore((state) => state.preferences.promptFontSize);
+    const rememberImageSettings = useCreationPreferencesStore((state) => state.rememberImageSettings);
+    const rememberVideoSettings = useCreationPreferencesStore((state) => state.rememberVideoSettings);
     const promptFontSize = preferredFontSize ?? DEFAULT_PROMPT_FONT_SIZE;
     const expandedFontSize = promptFontSize;
     const promptOptimizerInstallation = usePluginStore((state) => state.installations.find((item) => item.manifest.id === PROMPT_OPTIMIZER_PLUGIN_ID));
@@ -356,7 +358,11 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                             fullWidth
                             config={config}
                             value={config.model}
-                            onChange={(model) => onConfigChange(node.id, mode === "image" ? { model, ...defaultImageParamsForModel(config, model) } : { model })}
+                            onChange={(model) => {
+                                if (mode === "image") rememberImageSettings({ model });
+                                if (mode === "video") rememberVideoSettings({ model });
+                                onConfigChange(node.id, mode === "image" ? { model, ...defaultImageParamsForModel(config, model) } : { model });
+                            }}
                             capability={mode}
                             requirements={resolvedRequirements}
                             onMissingConfig={() => navigateToSettings({ section: "channels", continueCreation: true })}
@@ -410,7 +416,10 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                                 config={config}
                                 placement={expanded ? "topRight" : "topLeft"}
                                 buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
-                                onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
+                                onConfigChange={(key, value) => {
+                                    rememberImageSettings(imagePreferencePatch(key, value));
+                                    onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value });
+                                }}
                                 onMissingConfig={() => navigateToSettings({ continueCreation: true })}
                                 onOpenChange={expanded ? undefined : onImageSettingsOpenChange}
                             />
@@ -433,7 +442,10 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                                     audioCount: requirements.input?.audioCount,
                                 }, node.metadata)}
                                 buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
-                                onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))}
+                                onConfigChange={(key, value) => {
+                                    rememberVideoSettings(videoPreferencePatch(key, value));
+                                    onConfigChange(node.id, videoConfigPatch(key, value));
+                                }}
                             >
                                 {h3Model ? <><CanvasH3Controls model={config.model} value={node.metadata?.videoH3Options} onChange={(videoH3Options) => onConfigChange(node.id, { videoH3Options })} /><CanvasH3UnsupportedFrames model={config.model} metadata={node.metadata} onChange={(patch) => onConfigChange(node.id, patch)} /></> : null}
                             </CanvasVideoSettingsPopover>
@@ -1070,6 +1082,23 @@ function promptPlaceholder(mode: CanvasNodeGenerationMode, hasImageContent: bool
     if (mode === "audio") return "描述你想要的音频效果，可用 @ 引用音频";
     if (mode === "image") return hasImageContent ? "输入新提示词，重新生成当前图片" : "描述要生成的图片内容";
     return hasTextContent ? "请输入你想要将本段文本修改成什么" : "请输入你想要生成的文本内容";
+}
+
+function imagePreferencePatch(key: keyof AiConfig, value: string) {
+    if (key === "size") return { ratio: value };
+    if (key === "quality") return { quality: value };
+    if (key === "count") return { count: String(Number(value) || 1) };
+    if (key === "transparentBackground") return { transparentBackground: value };
+    return {};
+}
+
+function videoPreferencePatch(key: keyof AiConfig, value: string) {
+    if (key === "size") return { ratio: value };
+    if (key === "videoSeconds") return { seconds: value };
+    if (key === "vquality") return { videoQuality: value };
+    if (key === "videoGenerateAudio") return { generateAudio: value };
+    if (key === "videoWatermark") return { watermark: value };
+    return {};
 }
 
 function videoConfigPatch(key: keyof AiConfig, value: string) {

@@ -130,3 +130,48 @@ func TestConfigAllowsLocalHTTPWhenPrivateUpstreamsEnabled(t *testing.T) {
 		t.Fatal("strict mode accepted allowlisted loopback HTTP")
 	}
 }
+
+func TestObjectEndpointURLHandlesVirtualHostedAndPathStyleProviders(t *testing.T) {
+	cases := []struct {
+		name     string
+		endpoint string
+		bucket   string
+		want     string
+	}{
+		{
+			name:     "standard path style S3/R2",
+			endpoint: "https://s3.example.com",
+			bucket:   "fixture",
+			want:     "https://s3.example.com/fixture/beeftv/references/abc",
+		},
+		{
+			name:     "tencent cos service endpoint promotes to virtual-hosted bucket domain",
+			endpoint: "https://cos.ap-guangzhou.myqcloud.com",
+			bucket:   "media-1250000000",
+			want:     "https://media-1250000000.cos.ap-guangzhou.myqcloud.com/beeftv/references/abc",
+		},
+		{
+			name:     "tencent cos bucket domain avoids duplicate bucket path segment",
+			endpoint: "https://media-1250000000.cos.ap-guangzhou.myqcloud.com",
+			bucket:   "media-1250000000",
+			want:     "https://media-1250000000.cos.ap-guangzhou.myqcloud.com/beeftv/references/abc",
+		},
+		{
+			name:     "alibaba oss service endpoint promotes to virtual-hosted bucket domain",
+			endpoint: "https://oss-cn-hangzhou.aliyuncs.com",
+			bucket:   "beeftv-media",
+			want:     "https://beeftv-media.oss-cn-hangzhou.aliyuncs.com/beeftv/references/abc",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := objectEndpointURL(Config{Endpoint: tc.endpoint, Bucket: tc.bucket}, "beeftv/references/abc")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

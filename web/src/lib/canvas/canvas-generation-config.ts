@@ -4,9 +4,11 @@ import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-ge
 import { isH3Model, h3VideoOperation } from "@/lib/h3-video";
 import { seedancePortraitModel } from "@/lib/seedance-portrait";
 import { workflowFieldCurrentValue, workflowFieldHasStoredValue, workflowFieldKey, workflowFieldRandomKey, workflowFieldSubmissionValue, workflowOutputSizeValue, workflowVideoFieldsFromJson } from "@/lib/model-capabilities";
-import { modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, type ModelGenerationDefaults, type ModelInputSummary, type ModelRequirements } from "@/lib/model-selection";
+import { modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, resolveModelVideoBooleanOptions, type ModelGenerationDefaults, type ModelInputSummary, type ModelRequirements } from "@/lib/model-selection";
+import { mediaGeneratorMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { resolveCanvasWorkflowProvider } from "@/lib/canvas/canvas-workflow";
-import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData } from "@/types/canvas";
+import { useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
+import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
 // Preview counts may reserve character images; resolved counts contain the actual
 // representations. Callers choose their input summary for each validation stage.
@@ -172,6 +174,67 @@ export function resolveCanvasGenerationModel(config: AiConfig, model: string | u
     if (mode === "video" && seedancePortraitModel(model)) return normalized || model;
     if (!normalized) return "";
     return configuredModelMatchesCapability(config, normalized, mode) ? normalized : "";
+}
+
+export function preferredMediaGeneratorMetadata(
+    config: AiConfig,
+    mode: "image" | "video" | "audio",
+    overrides: CanvasNodeMetadata = {},
+): CanvasNodeMetadata {
+    const prefs = useCreationPreferencesStore.getState().preferences;
+    if (mode === "image" && prefs.image) {
+        const model =
+            overrides.model
+            || resolveCanvasGenerationModel(config, prefs.image.model, "image")
+            || resolveCanvasGenerationModel(config, config.imageModel, "image")
+            || config.imageModel
+            || defaultConfig.imageModel;
+        const normalized = resolveModelGenerationDefaults(config, model, "image", {
+            size: prefs.image.ratio,
+            quality: prefs.image.quality,
+            count: prefs.image.count,
+            transparentBackground: prefs.image.transparentBackground,
+        });
+        return mediaGeneratorMetadata({
+            generationMode: "image",
+            ...(prefs.image.model && model ? { model } : {}),
+            ...(prefs.image.ratio && normalized.size ? { size: normalized.size } : {}),
+            ...(prefs.image.quality && normalized.quality ? { quality: normalized.quality } : {}),
+            ...(prefs.image.count && normalized.count ? { count: Number(normalized.count) || 1 } : {}),
+            ...(prefs.image.transparentBackground && normalized.transparentBackground ? { transparentBackground: normalized.transparentBackground } : {}),
+            ...overrides,
+        });
+    }
+    if (mode === "video" && prefs.video) {
+        const model =
+            overrides.model
+            || resolveCanvasGenerationModel(config, prefs.video.model, "video")
+            || resolveCanvasGenerationModel(config, config.videoModel, "video")
+            || config.videoModel
+            || defaultConfig.videoModel;
+        const normalized = resolveModelGenerationDefaults(config, model, "video", {
+            size: prefs.video.ratio,
+            videoSeconds: prefs.video.seconds,
+            vquality: prefs.video.videoQuality,
+            videoGenerateAudio: prefs.video.generateAudio,
+            videoWatermark: prefs.video.watermark,
+        });
+        const booleans = resolveModelVideoBooleanOptions(config, model, {
+            videoGenerateAudio: prefs.video.generateAudio,
+            videoWatermark: prefs.video.watermark,
+        });
+        return mediaGeneratorMetadata({
+            generationMode: "video",
+            ...(prefs.video.model && model ? { model } : {}),
+            ...(prefs.video.ratio && normalized.size !== undefined ? { size: normalized.size } : {}),
+            ...(prefs.video.seconds && normalized.videoSeconds ? { seconds: normalized.videoSeconds } : {}),
+            ...(prefs.video.videoQuality && normalized.vquality ? { vquality: normalized.vquality } : {}),
+            ...(prefs.video.generateAudio !== undefined ? { generateAudio: booleans.videoGenerateAudio } : {}),
+            ...(prefs.video.watermark !== undefined ? { watermark: booleans.videoWatermark } : {}),
+            ...overrides,
+        });
+    }
+    return mediaGeneratorMetadata({ generationMode: mode, ...overrides });
 }
 
 function applyWorkflowParameterValues(fields: WorkflowFieldMapping[] | undefined, values: Record<string, unknown>) {

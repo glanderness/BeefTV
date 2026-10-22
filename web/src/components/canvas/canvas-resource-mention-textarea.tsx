@@ -863,7 +863,7 @@ function MentionMenu({ anchor, connectedReferences, assetReferences, filteredRef
         <div
             ref={menuRef}
             data-canvas-resource-mention-menu="true"
-            className="canvas-resource-mention-menu fixed z-[var(--z-tooltip)]"
+            className="canvas-resource-mention-menu fixed z-[var(--z-dialog-popover)]"
             data-placement={position.showAbove ? "top" : "bottom"}
             style={{ left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight, transform: position.showAbove ? "translateY(-100%)" : undefined }}
             onPointerDown={stopCanvasInteraction}
