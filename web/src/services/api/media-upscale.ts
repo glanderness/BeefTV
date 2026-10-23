@@ -8,7 +8,12 @@ export type UpscaleCapability = { mediaType: "image" | "video"; mode: UpscaleMod
 export type UpscaleCapabilities = { modes: UpscaleCapability[]; cloudProcessing: boolean; maxVideoDurationMs: number };
 export type UpscaleEstimate = { mediaType: "image" | "video"; source: { width: number; height: number; durationMs?: number }; output: { width: number; height: number; durationMs?: number }; reservation: number; currency: "CNY"; generationSubmitted: false; cloudProcessing: boolean };
 export const getUpscaleCapabilities = () => http.get<UpscaleCapabilities>("/media-upscale/capabilities");
-export const estimateUpscale = (params: UpscaleParams) => http.post<UpscaleEstimate>("/media-upscale/estimate", params).then(quote => {
+// Estimation uploads and validates the source before querying the gateway.
+// Allow the backend's five-minute outbound deadline plus a response margin.
+export const estimateUpscale = (params: UpscaleParams) => http.post<UpscaleEstimate>("/media-upscale/estimate", params, {
+    timeout: 330_000,
+    timeoutErrorMessage: "超分估价等待超时，尚未提交生成任务。请检查网络后重新获取费用。",
+}).then(quote => {
     if (quote.currency !== "CNY" || !Number.isFinite(quote.reservation) || quote.reservation <= 0 || quote.generationSubmitted !== false) throw new Error("超分费用未能确认，请重新获取");
     return quote;
 });
