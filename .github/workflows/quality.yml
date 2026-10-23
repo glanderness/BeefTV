@@ -86,7 +86,7 @@ jobs:
         run: |
           node --test scripts/image-preparation-release-contract.test.mjs
           node --test scripts/music3-release-contract.test.mjs
-          node --test scripts/v201-release-contract.test.mjs scripts/v202-release-contract.test.mjs
+          node --test scripts/v201-release-contract.test.mjs scripts/v202-release-contract.test.mjs scripts/v203-release-contract.test.mjs
           python3 -m unittest discover -s scripts -p 'test_publish_desktop_r2.py'
           node --test scripts/distribution-notices.test.mjs
           python3 -m unittest discover -s scripts -p 'test_package_macos_media_source.py'
