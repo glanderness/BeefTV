@@ -84,6 +84,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test immutable publication and activation
         run: |
+          node --test scripts/configure-ubuntu-apt.test.mjs
           node --test scripts/image-preparation-release-contract.test.mjs
           node --test scripts/music3-release-contract.test.mjs
           node --test scripts/v201-release-contract.test.mjs scripts/v202-release-contract.test.mjs scripts/v203-release-contract.test.mjs
