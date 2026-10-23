@@ -2,7 +2,7 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSPr
 import { Link2 } from "lucide-react";
 
 import { ConnectionPath, canvasConnectionPath } from "@/components/canvas/canvas-connections";
-import { canvasNodeDragGeometry, subscribeCanvasNodeDragPreview } from "@/lib/canvas/canvas-live-viewport";
+import { canvasNodeDragGeometry, subscribeCanvasNodeDragPreview, type CanvasNodeDragPreview } from "@/lib/canvas/canvas-live-viewport";
 import { CanvasFrameNode } from "@/components/canvas/canvas-frame-node";
 import { CanvasNode } from "@/components/canvas/canvas-node";
 import type { CanvasVideoCropRect } from "@/components/canvas/canvas-video-crop-dialog";
@@ -103,6 +103,7 @@ const EMPTY_CANVAS_NODES: CanvasNodeData[] = [];
 export const CanvasProjectWorldLayers = memo(function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
     const { viewportScale } = props;
     const connectionLayerRef = useRef<SVGSVGElement>(null);
+    const connectionDragPreviewRef = useRef<{ container: HTMLDivElement; projectId: string; preview: CanvasNodeDragPreview } | null>(null);
     useLayoutEffect(() => {
         const layer = connectionLayerRef.current;
         const container = props.containerRef.current || layer?.closest<HTMLDivElement>("[data-canvas-viewport]");
@@ -112,9 +113,25 @@ export const CanvasProjectWorldLayers = memo(function CanvasProjectWorldLayers(p
             const id = group.dataset.canvasConnectionId;
             if (id) groups.set(id, group);
         });
-        return subscribeCanvasNodeDragPreview(container, (preview) => {
-            for (const { connection, from, to } of props.displayConnections) {
-                if (preview && !preview.nodeIds.has(from.id) && !preview.nodeIds.has(to.id)) continue;
+        const connectionsByNodeId = new Map<string, Set<CanvasDisplayConnection>>();
+        for (const display of props.displayConnections) {
+            for (const nodeId of [display.from.id, display.to.id]) {
+                let adjacent = connectionsByNodeId.get(nodeId);
+                if (!adjacent) connectionsByNodeId.set(nodeId, adjacent = new Set());
+                adjacent.add(display);
+            }
+        }
+        let previousConnections = new Set<CanvasDisplayConnection>();
+        const updatePreview = (preview: CanvasNodeDragPreview | null) => {
+            connectionDragPreviewRef.current = preview ? { container, projectId: props.projectId, preview } : null;
+            const currentConnections = new Set<CanvasDisplayConnection>();
+            for (const nodeId of preview?.nodeIds || []) {
+                for (const display of connectionsByNodeId.get(nodeId) || []) currentConnections.add(display);
+            }
+            // Reset edges leaving the preview as well, including cancellation.
+            const affectedConnections = new Set([...previousConnections, ...currentConnections]);
+            previousConnections = currentConnections;
+            for (const { connection, from, to } of affectedConnections) {
                 const group = groups.get(connection.id);
                 if (!group) continue;
                 const movedFrom = canvasNodeDragGeometry(from, preview);
@@ -132,8 +149,30 @@ export const CanvasProjectWorldLayers = memo(function CanvasProjectWorldLayers(p
                 gradient?.setAttribute("x2", String(endX));
                 gradient?.setAttribute("y2", String(endY));
             }
+        };
+        // Layout effects may refresh while a pointer is still captured. Reapply
+        // its preview before paint and keep cancellation tied to those edges.
+        const retained = connectionDragPreviewRef.current;
+        if (retained?.container === container && retained.projectId === props.projectId) updatePreview(retained.preview);
+        else if (retained) {
+            for (const nodeId of retained.preview.nodeIds) {
+                for (const display of connectionsByNodeId.get(nodeId) || []) previousConnections.add(display);
+            }
+            updatePreview(null);
+        }
+        const unsubscribe = subscribeCanvasNodeDragPreview(container, updatePreview);
+        // Hover mounts extra strokes inside a memoized connection. Keep newly
+        // mounted strokes aligned even while the pointer is paused mid-drag.
+        const observer = new MutationObserver(() => {
+            const live = connectionDragPreviewRef.current;
+            if (live) updatePreview(live.preview);
         });
-    }, [props.containerRef, props.displayConnections, props.scriptScrollTopById]);
+        observer.observe(layer, { childList: true, subtree: true });
+        return () => {
+            unsubscribe();
+            observer.disconnect();
+        };
+    }, [props.containerRef, props.displayConnections, props.projectId, props.scriptScrollTopById]);
     const [activeMediaNodeId, setActiveMediaNodeId] = useState<string | null>(null);
     useEffect(() => {
         if (activeMediaNodeId && !props.nodeById.has(activeMediaNodeId)) setActiveMediaNodeId(null);
