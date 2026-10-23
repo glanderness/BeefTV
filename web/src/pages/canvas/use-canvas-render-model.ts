@@ -4,15 +4,16 @@ import { buildNodeGenerationInputs, type NodeGenerationInput } from "@/component
 import { isFrameNode } from "@/lib/canvas/canvas-frame";
 import { sameNodeSemanticData } from "@/lib/canvas/canvas-project-domain";
 import { canvasNodeRenderBudget, canvasNodeRenderPadding, CANVAS_MAX_RENDERED_CONNECTIONS, shouldReduceCanvasMediaEffects } from "@/lib/canvas/canvas-performance-mode";
-import { buildCanvasNodeMentionReferenceMap, buildCanvasResourceReferences } from "@/lib/canvas/canvas-resource-references";
+import { buildCanvasNodeMentionReferenceMap, buildCanvasResourceReferences, reuseCanvasResourceReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { buildSkillMentionReferences } from "@/lib/canvas/canvas-skill-mentions";
-import { buildCanvasSpatialIndex, canvasNodeBounds, type CanvasSpatialIndex, type CanvasSpatialIndexEntry } from "@/lib/canvas/canvas-spatial-index";
+import { buildCanvasSpatialIndex, canvasNodeBounds, type CanvasSpatialIndexEntry } from "@/lib/canvas/canvas-spatial-index";
 import type { Skill } from "@/services/api/skills";
 import type { Asset, ImageAsset } from "@/stores/use-asset-store";
 import type { DirectorScene } from "@/types/director";
 import { CanvasNodeType, type CanvasConnection, type CanvasDisplayConnection, type CanvasMediaPerformanceMode, type CanvasNodeData, type ContextMenuState, type ViewportTransform } from "@/types/canvas";
 
 type DragPreview = { x: number; y: number; nodeIds: Set<string> } | null;
+type IndexedConnection = { connection: CanvasConnection; fromId: string; toId: string };
 
 type UseCanvasRenderModelOptions = {
     nodes: CanvasNodeData[];
@@ -154,21 +155,22 @@ export function useCanvasRenderModel({
             retain: { left: viewLeft - retainPadding, top: viewTop - retainPadding, right: viewLeft + viewWidth + retainPadding, bottom: viewTop + viewHeight + retainPadding },
         };
     }, [reduceMediaEffects, viewport.k, viewport.x, viewport.y, viewportSize.height, viewportSize.width]);
-    const nodeSpatialIndexRef = useRef<{ source: CanvasNodeData[]; index: CanvasSpatialIndex<string> } | null>(null);
-    const nodeSpatialIndex = useMemo(() => {
-        const previous = nodeSpatialIndexRef.current;
+    const geometryNodesRef = useRef(nodes);
+    const geometryNodes = useMemo(() => {
+        const previous = geometryNodesRef.current;
         const geometryUnchanged =
-            previous &&
-            previous.source.length === nodes.length &&
+            previous.length === nodes.length &&
             nodes.every((node, index) => {
-                const old = previous.source[index];
-                return old.id === node.id && old.position.x === node.position.x && old.position.y === node.position.y && old.width === node.width && old.height === node.height;
+                const old = previous[index];
+                return old === node || (old.id === node.id && old.type === node.type && old.parentId === node.parentId
+                    && old.position.x === node.position.x && old.position.y === node.position.y && old.width === node.width && old.height === node.height
+                    && old.metadata?.batchRootId === node.metadata?.batchRootId && old.metadata?.imageBatchExpanded === node.metadata?.imageBatchExpanded
+                    && old.metadata?.frame?.collapsed === node.metadata?.frame?.collapsed);
             });
-        if (geometryUnchanged) return previous.index;
-        const index = buildCanvasSpatialIndex(nodes.map((node) => ({ id: node.id, bounds: canvasNodeBounds(node), value: node.id })));
-        nodeSpatialIndexRef.current = { source: nodes, index };
-        return index;
+        if (!geometryUnchanged) geometryNodesRef.current = nodes;
+        return geometryNodesRef.current;
     }, [nodes]);
+    const nodeSpatialIndex = useMemo(() => buildCanvasSpatialIndex(geometryNodes.map((node) => ({ id: node.id, bounds: canvasNodeBounds(node), value: node.id }))), [geometryNodes]);
     const renderedNodeIdsRef = useRef<Set<string>>(new Set());
     const visibleNodesRef = useRef<CanvasNodeData[]>([]);
     const visibleNodes = useMemo(() => {
@@ -274,15 +276,22 @@ export function useCanvasRenderModel({
         return { nodeIds, connectionIds };
     }, [activeNodeId, connections]);
     const connectionSpatialIndex = useMemo(() => {
-        const entries: CanvasSpatialIndexEntry<CanvasDisplayConnection>[] = [];
+        // Store identities, not media/metadata snapshots. A title or task-status
+        // update must refresh the endpoints below without rebuilding the grid.
+        const geometryById = new Map(geometryNodes.map(node => [node.id, node]));
+        const entries: CanvasSpatialIndexEntry<IndexedConnection>[] = [];
         const connectionIdsByNodeId = new Map<string, Set<string>>();
+        const hiddenByBatch = (node: CanvasNodeData) => {
+            const root = node.metadata?.batchRootId ? geometryById.get(node.metadata.batchRootId) : undefined;
+            return Boolean(root && !root.metadata?.imageBatchExpanded);
+        };
         connections.forEach((connection) => {
-            if (collapsedBatchChildIds.has(connection.fromNodeId) || collapsedBatchChildIds.has(connection.toNodeId)) return;
-            const fromNode = nodeById.get(connection.fromNodeId);
-            const toNode = nodeById.get(connection.toNodeId);
+            const fromNode = geometryById.get(connection.fromNodeId);
+            const toNode = geometryById.get(connection.toNodeId);
             if (!fromNode || !toNode) return;
-            const fromParent = fromNode.parentId ? nodeById.get(fromNode.parentId) : null;
-            const toParent = toNode.parentId ? nodeById.get(toNode.parentId) : null;
+            if (hiddenByBatch(fromNode) || hiddenByBatch(toNode)) return;
+            const fromParent = fromNode.parentId ? geometryById.get(fromNode.parentId) : null;
+            const toParent = toNode.parentId ? geometryById.get(toNode.parentId) : null;
             const displayFrom = fromParent && isFrameNode(fromParent) && fromParent.metadata?.frame?.collapsed ? fromParent : fromNode;
             const displayTo = toParent && isFrameNode(toParent) && toParent.metadata?.frame?.collapsed ? toParent : toNode;
             if (displayFrom.id === displayTo.id) return;
@@ -290,7 +299,7 @@ export function useCanvasRenderModel({
             const top = Math.min(displayFrom.position.y, displayTo.position.y);
             const right = Math.max(displayFrom.position.x + displayFrom.width, displayTo.position.x + displayTo.width);
             const bottom = Math.max(displayFrom.position.y + displayFrom.height, displayTo.position.y + displayTo.height);
-            const value = { connection, from: displayFrom, to: displayTo };
+            const value = { connection, fromId: displayFrom.id, toId: displayTo.id };
             entries.push({ id: connection.id, bounds: { left, top, right, bottom }, value });
             for (const nodeId of new Set([connection.fromNodeId, connection.toNodeId, displayFrom.id, displayTo.id])) {
                 const ids = connectionIdsByNodeId.get(nodeId) || new Set<string>();
@@ -299,10 +308,10 @@ export function useCanvasRenderModel({
             }
         });
         return { index: buildCanvasSpatialIndex(entries), connectionIdsByNodeId, entriesById: new Map(entries.map((entry) => [entry.id, entry.value])) };
-    }, [collapsedBatchChildIds, connections, nodeById]);
+    }, [connections, geometryNodes]);
     const displayConnectionsRef = useRef<CanvasDisplayConnection[]>([]);
     const displayConnections = useMemo(() => {
-        const candidateById = new Map<string, CanvasDisplayConnection>();
+        const candidateById = new Map<string, IndexedConnection>();
         connectionSpatialIndex.index.query(renderBounds.retain, CANVAS_MAX_RENDERED_CONNECTIONS).forEach((display) => candidateById.set(display.connection.id, display));
         dragPreview?.nodeIds.forEach((nodeId) => {
             connectionSpatialIndex.connectionIdsByNodeId.get(nodeId)?.forEach((connectionId) => {
@@ -310,7 +319,10 @@ export function useCanvasRenderModel({
                 if (display) candidateById.set(connectionId, display);
             });
         });
-        const next = [...candidateById.values()].flatMap(({ connection, from: sourceFrom, to: sourceTo }) => {
+        const next = [...candidateById.values()].flatMap(({ connection, fromId, toId }) => {
+            const sourceFrom = nodeById.get(fromId);
+            const sourceTo = nodeById.get(toId);
+            if (!sourceFrom || !sourceTo) return [];
             const from = dragPreview?.nodeIds.has(sourceFrom.id) ? { ...sourceFrom, position: { x: sourceFrom.position.x + dragPreview.x, y: sourceFrom.position.y + dragPreview.y } } : sourceFrom;
             const to = dragPreview?.nodeIds.has(sourceTo.id) ? { ...sourceTo, position: { x: sourceTo.position.x + dragPreview.x, y: sourceTo.position.y + dragPreview.y } } : sourceTo;
             const connectionLeft = Math.min(from.position.x, to.position.x);
@@ -332,7 +344,7 @@ export function useCanvasRenderModel({
         }
         displayConnectionsRef.current = next;
         return next;
-    }, [connectionSpatialIndex, dragPreview, renderBounds]);
+    }, [connectionSpatialIndex, dragPreview, nodeById, renderBounds]);
 
     const configInputsById = useMemo(() => {
         const map = new Map<string, NodeGenerationInput[]>();
@@ -360,17 +372,18 @@ export function useCanvasRenderModel({
         }
         return targetNodes;
     }, [activeNodeId, dialogNodeId, nodeById, visibleNodes]);
-    const canvasResourceReferences = useMemo(
-        () => buildCanvasResourceReferences(semanticNodes, connections, dialogNodeId || activeNodeId, resourceReferenceTargetNodes),
-        [activeNodeId, connections, dialogNodeId, resourceReferenceTargetNodes, semanticNodes],
-    );
+    const canvasResourceReferencesRef = useRef<CanvasResourceReference[]>([]);
+    const canvasResourceReferences = useMemo(() => {
+        const next = buildCanvasResourceReferences(semanticNodes, connections, dialogNodeId || activeNodeId, resourceReferenceTargetNodes);
+        return canvasResourceReferencesRef.current = reuseCanvasResourceReferences(canvasResourceReferencesRef.current, next);
+    }, [activeNodeId, connections, dialogNodeId, resourceReferenceTargetNodes, semanticNodes]);
     const resourceReferenceByNodeId = useMemo(() => new Map(canvasResourceReferences.map((reference) => [reference.nodeId, reference])), [canvasResourceReferences]);
     const skillMentionReferences = useMemo(() => buildSkillMentionReferences(addedSkills), [addedSkills]);
+    const mentionReferencesRef = useRef(new Map<string, CanvasResourceReference[]>());
     const mentionReferencesByNodeId = useMemo(() => {
         const map = buildCanvasNodeMentionReferenceMap(semanticNodes, connections, visibleNodes);
-        if (!skillMentionReferences.length) return map;
-        map.forEach((references, nodeId) => map.set(nodeId, [...references, ...skillMentionReferences]));
-        return map;
+        map.forEach((references, nodeId) => map.set(nodeId, reuseCanvasResourceReferences(mentionReferencesRef.current.get(nodeId), skillMentionReferences.length ? [...references, ...skillMentionReferences] : references)));
+        return mentionReferencesRef.current = map;
     }, [connections, semanticNodes, skillMentionReferences, visibleNodes]);
 
     return {

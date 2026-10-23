@@ -3,6 +3,7 @@ import { AlertCircle, BookOpenCheck, Download, Image as ImageIcon, LoaderCircle,
 
 import { VideoPlayer } from "@/components/video-player";
 import { CachedResourceImage } from "@/components/cached-resource-image";
+import { usesCanvasCustomNodeContent } from "@/lib/canvas/canvas-node-content-policy";
 import { GenerationFailureNotice } from "@/components/generation/generation-failure-notice";
 import { explainGenerationError } from "@/lib/generation-error";
 import { canvasNodeFailureExplanation, canRecoverOrRetryDepthCapture } from "@/lib/canvas/canvas-depth-capture";
@@ -85,16 +86,7 @@ export function CanvasNodeContent(props: CanvasNodeContentProps) {
     if (props.node.type === CanvasNodeType.Upscale) return <UpscaleNodeContent node={props.node} theme={props.theme} />;
     if (props.node.metadata?.fileUpload) return <CanvasFileUploadContent node={props.node} theme={props.theme} reduceMotion={props.reduceMediaEffects} />;
     if (operation) return <CanvasNodeGenerationProgress node={props.node} theme={props.theme} operation={operation} onOpenTaskDetails={props.onOpenTaskDetails} onCancelTask={props.onCancelTask} />;
-    const hasCustomContent = props.node.type === CanvasNodeType.Config
-        || Boolean(props.node.metadata?.reusableWorkflow)
-        || Boolean(props.node.metadata?.workflowSlot)
-        || props.node.type === CanvasNodeType.Script
-        || props.node.type === CanvasNodeType.BatchTable
-        || props.node.type === CanvasNodeType.Director
-        || Boolean(props.node.metadata?.directorSceneId)
-        || (props.node.metadata?.workflowKind === "character" && Boolean(props.node.metadata.characterAssetId))
-        || (props.node.metadata?.workflowKind === "story_input" && !props.isEditingContent)
-        || (props.node.metadata?.workflowKind === "styleboard" && !props.node.metadata.content);
+    const hasCustomContent = usesCanvasCustomNodeContent(props.node, props.isEditingContent);
     if (hasCustomContent && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.node.type === ART_CRITIQUE_NODE_TYPE) return <ArtCritiqueNodeContent node={props.node} />;
     if (props.node.type === MEDIA_CONVERSION_NODE_TYPE) return <MediaConversionNodeContent node={props.node} theme={props.theme} />;

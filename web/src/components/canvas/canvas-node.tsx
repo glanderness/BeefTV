@@ -7,6 +7,7 @@ import { shouldBlockManualRetry } from "@/lib/generation-error";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { canvasConnectionTilt } from "@/lib/canvas/canvas-connection-tilt";
+import { usesCanvasCustomNodeContent } from "@/lib/canvas/canvas-node-content-policy";
 import { storyboardMinNodeHeight } from "@/lib/canvas/canvas-storyboard-layout";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeTypeId, type Position } from "@/types/canvas";
@@ -582,17 +583,6 @@ export const CanvasNode = React.memo(function CanvasNode({
     );
 }, areCanvasNodePropsEqual);
 
-function usesCustomNodeContentRenderer(node: CanvasNodeData) {
-    return (
-        node.type === CanvasNodeType.Config ||
-        node.type === CanvasNodeType.Script ||
-        node.type === CanvasNodeType.BatchTable ||
-        node.type === CanvasNodeType.Director ||
-        Boolean(node.metadata?.directorSceneId) ||
-        Boolean(node.metadata?.workflowKind)
-    );
-}
-
 function areCanvasNodePropsEqual(previous: CanvasNodeProps, next: CanvasNodeProps) {
     return (
         previous.data === next.data &&
@@ -612,7 +602,7 @@ function areCanvasNodePropsEqual(previous: CanvasNodeProps, next: CanvasNodeProp
         previous.readOnly === next.readOnly &&
         previous.resourceLabel === next.resourceLabel &&
         previous.mentionReferences === next.mentionReferences &&
-        (!usesCustomNodeContentRenderer(next.data) || previous.renderNodeContent === next.renderNodeContent) &&
+        (!usesCanvasCustomNodeContent(next.data) || previous.renderNodeContent === next.renderNodeContent) &&
         previous.drawingProjectId === next.drawingProjectId &&
         previous.batchCount === next.batchCount &&
         previous.batchPreviewNodes === next.batchPreviewNodes &&
