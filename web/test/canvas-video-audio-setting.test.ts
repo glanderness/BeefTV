@@ -4,6 +4,7 @@ import { inferVideoHasAudio } from "../src/lib/canvas/canvas-media-preview";
 import { mediaResultMetadata, normalizeCanvasMediaNodeSemantics } from "../src/lib/canvas/canvas-node-semantics";
 import { normalizeVideoBoolean, parseVideoBoolean } from "../src/lib/video-generation-options";
 import { resolveModelGenerationDefaults } from "../src/lib/model-selection";
+import { defaultModelCapabilityConfig } from "../src/lib/model-capabilities";
 import { defaultConfig, normalizeConfigSnapshot } from "../src/stores/use-config-store";
 import { useCreationPreferencesStore } from "../src/stores/use-creation-preferences-store";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata } from "../src/types/canvas";
@@ -14,6 +15,23 @@ function metadata(value: unknown): CanvasNodeMetadata {
 }
 
 describe("video audio setting at JSON boundaries", () => {
+    test("remembered ratio is omitted when the selected model exposes no ratio options", () => {
+        const previous = useCreationPreferencesStore.getState().preferences;
+        try {
+            useCreationPreferencesStore.setState({ preferences: { video: { ratio: "9:16" } } });
+            const capabilityConfig = defaultModelCapabilityConfig("gemini-veo");
+            capabilityConfig.video!.ratios = [];
+            capabilityConfig.video!.defaultRatio = "";
+            const config = normalizeConfigSnapshot({ config: {
+                ...defaultConfig,
+                videoModel: "custom::veo-no-ratio",
+                channels: [{ id: "custom", name: "Custom", baseUrl: "https://example.test", apiKey: "fixture", apiFormat: "openai", models: ["veo-no-ratio"], modelProfiles: [{ model: "veo-no-ratio", capability: "video", protocol: "gemini-veo", capabilityConfig }] }],
+            } }).config;
+            expect(preferredMediaGeneratorMetadata(config, "video")).not.toHaveProperty("size");
+        } finally {
+            useCreationPreferencesStore.setState({ preferences: previous });
+        }
+    });
     test("restoring persisted video switches preserves false before generation", () => {
         for (const value of [true, false, "true", "false"]) {
             const saved = JSON.parse(JSON.stringify({ config: { videoGenerateAudio: value, videoWatermark: value, videoArkPrivateAssetUpload: value } }));

@@ -226,7 +226,7 @@ export function preferredMediaGeneratorMetadata(
         return mediaGeneratorMetadata({
             generationMode: "video",
             ...(prefs.video.model && model ? { model } : {}),
-            ...(prefs.video.ratio && normalized.size !== undefined ? { size: normalized.size } : {}),
+            ...(prefs.video.ratio && normalized.size ? { size: normalized.size } : {}),
             ...(prefs.video.seconds && normalized.videoSeconds ? { seconds: normalized.videoSeconds } : {}),
             ...(prefs.video.videoQuality && normalized.vquality ? { vquality: normalized.vquality } : {}),
             ...(prefs.video.generateAudio !== undefined ? { generateAudio: booleans.videoGenerateAudio } : {}),
