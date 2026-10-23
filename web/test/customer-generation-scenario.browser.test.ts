@@ -13,7 +13,7 @@ beforeAll(async () => {
     const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((path): path is string => Boolean(path && existsSync(path)));
     browser = await chromium.launch({ executablePath, headless: true });
 }, 60000);
-afterAll(async () => { for (const state of runtime.contexts.values()) state.release(); await browser?.close(); runtime?.stop(); });
+afterAll(async () => { for (const state of runtime.contexts.values()) state.release(); await browser?.close(); runtime?.stop(); }, 30000);
 
 async function open(scenario: CustomerGenerationScenario, options = "") {
     const { id, state } = runtime.create(scenario);
@@ -33,6 +33,27 @@ async function until(predicate: () => boolean, timeout = 3500) {
     while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
     expect(predicate()).toBe(true);
 }
+
+test("preflight length failure keeps the prior output and clears when an explicit limit change allows the full prompt", async () => {
+    const { page, state, errors, close } = await open("five-images", "long-prompt-limit");
+    try {
+        await start(page);
+        await page.waitForFunction(() => (window as any).__customer.settled);
+        const metadata = await page.evaluate(() => (window as any).__customer.nodes.find((node: any) => node.id === "target").metadata);
+        expect(metadata.generationPreflightError).toContain("8000");
+        expect(metadata.generationPreflightError).toContain("8066");
+        expect(metadata.storageKey).toBe("resource:previous-result");
+        expect(metadata.status).toBe("success");
+        expect(state.posts).toHaveLength(0);
+        await page.evaluate(() => (window as any).__customer.allowLongPrompt());
+        await start(page);
+        await until(() => state.posts.length === 1);
+        expect(Array.from(state.posts[0].prompt).length).toBe(8066);
+        expect(state.posts[0].input.referenceImages).toHaveLength(5);
+        expect(await page.evaluate(() => (window as any).__customer.nodes.find((node: any) => node.id === "target").metadata.generationPreflightError)).toBeUndefined();
+        expect(errors).toEqual([]);
+    } finally { await close(); }
+}, 15000);
 
 for (const scenario of ["five-images", "video-image", "character"] as const) test(`customer ${scenario}: owned references submit while actual blob cache queue is blocked`, async () => {
     const { page, state, errors, close } = await open(scenario, "block-cache");

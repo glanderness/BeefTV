@@ -137,6 +137,11 @@ export function useCanvasGenerationExecutor({
                         if (controller.signal.aborted || isGenerationCanceled(error)) return;
                         const errText = generationErrorMessage(error);
                         diagnostic(error instanceof Error && error.name === "CanvasPreparationTimeoutError" ? "generation_preflight_timeout" : "generation_preflight_failed", "error", errText);
+                        if (["references", "skills", "parameters"].includes(stage)) {
+                            setNodes((current) => current.map((node) => node.id === nodeId
+                                ? { ...node, metadata: { ...node.metadata, generationPreflightError: errText } }
+                                : node));
+                        }
                         message.error(errText);
                     };
                     try {
@@ -229,6 +234,9 @@ export function useCanvasGenerationExecutor({
                         if (mode === "video") preparationProgress = startOperation("准备视频素材", { target: { projectId, nodeId }, detail: "正在准备参考素材" });
                         else message.loading({ key: preparationMessageKey, content: "正在准备参考素材…", duration: 0 });
                         stage = "references";
+                        setNodes((current) => current.map((node) => node.id === nodeId && node.metadata?.generationPreflightError
+                            ? { ...node, metadata: { ...node.metadata, generationPreflightError: undefined } }
+                            : node));
                         diagnostic("generation_preflight_stage");
                         // AutoDL/其他声明式视频协议需要结构化参考素材；只有普通
                         // 模型视频接口才把提示词视为纯文本输入。
