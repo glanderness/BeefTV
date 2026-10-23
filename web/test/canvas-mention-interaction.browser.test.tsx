@@ -182,7 +182,12 @@ test("Scenario 2: Primary menu nodes and skill buttons direct selection", async 
     expect(await input.locator(".canvas-resource-inline-mention").innerText()).toContain("音频节点 1");
 
     // 2. 选择技能库（智能分镜技能）
-    await input.focus();
+    // Reference insertion restores the caret on the next animation frame.
+    // Check that handoff before continuing synthetic typing in the same frame.
+    const focusRestored = await input.evaluate((element) => new Promise<boolean>((resolve) => {
+        requestAnimationFrame(() => resolve(document.activeElement === element));
+    }));
+    expect(focusRestored).toBe(true);
     await input.pressSequentially(" and skill: @");
     await menu.waitFor({ state: "visible", timeout: 5000 });
 

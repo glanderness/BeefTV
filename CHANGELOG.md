@@ -9,6 +9,16 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v2.0.3
+
+- 视频提示词改为按所选模型与接口校验长度，移除通用 8000 字符默认拦截，不自动截断提示词。
+- 新插入的参考素材引用跟随具体素材，调整连线后仍对应原图；改善 Seedance 全能参考中的人物与素材对应关系。
+- 修复素材栏引用按钮点击无效的问题；素材表与实际引用矛盾时，在生成前提示。
+- 失败视频沿用原任务恢复，进行中或已完成的任务继续取回已有结果。
+- 延长超分报价、创建和恢复请求的等待时间，改善网络超时和源文件不可用时的提示。
+
+注意：旧提示词中的手写编号保持原顺序；已有自定义字数上限仍然生效，可在模型设置中恢复默认限制。人物服装、发型等生成细节仍可能不稳定。
+
 ## v2.0.2
 
 - 支持已配置 Seedream 渠道的图层拆分和关联组图，生成结果分别保存到画布。
