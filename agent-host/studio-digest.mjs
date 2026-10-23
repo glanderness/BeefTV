@@ -8,6 +8,20 @@ const TYPE_LABEL = {
 };
 const MEDIA = new Set(['image', 'video', 'audio']);
 
+// The SDK can resume an already prepared request. Patch its named section at
+// dispatch time too, rather than relying on a previously rendered checkpoint.
+export function withCurrentStudio(messages, digest) {
+  const current = messages.map(message => {
+    if (message.role !== 'system' || !Object.hasOwn(message.sections || {}, 'beeftv_studio')) return message;
+    const sections = { ...message.sections };
+    delete sections.beeftv_studio;
+    return { ...message, sections };
+  });
+  return [...current, { role: 'system', content: '', timestamp: Date.now(), sections: {
+    beeftv_studio: `<beeftv_studio>\n${digest || '当前画布无法读取，现场状态未知。不要使用历史快照推断当前内容；本次相关写入已暂停，请说明读取失败后再继续。'}\n</beeftv_studio>`,
+  } }];
+}
+
 const clip = (value, limit) => {
   const text = String(value ?? '').replace(/\s+/g, ' ').trim();
   return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
@@ -61,6 +75,11 @@ export function buildStudioDigest(canvas, { maxBytes = 3600, selectedNodeIds = [
   });
   lines.push(`[制作现场｜画布版本 ${canvas?.revision ?? '?'}｜本轮请求前的实际状态]`);
   lines.push(nodes.length ? `概况：${summary.join('｜')}｜连线 ${connections.length}` : '概况：画布是空的。');
+  const documents = nodes.filter(node => !MEDIA.has(node.type) && node.type !== 'script');
+  if (documents.length) {
+    lines.push(`内容节点（正文仅为预览，原文用 canvas_get 按当前版本读取）：${documents.slice(0, 8).map(node =>
+      `${node.id}「${clip(node.title, 24)}」${TYPE_LABEL[node.type] || node.type} ${clip(node.metadata?.content || node.metadata?.composerContent, 100)}`).join('；')}${documents.length > 8 ? `…共 ${documents.length} 个` : ''}`);
+  }
 
   const rowBound = new Set();
   for (const board of nodes.filter((node) => node.type === 'script')) {

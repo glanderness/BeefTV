@@ -55,7 +55,7 @@ Node fetch 的 bypass 规则与 Go 不完全相同。对固定模型 `BaseURL`�
 | `root.submit` / `submission.wait` / `root.abort` | 采用 | 回合提交、终态结算与停止；`whenBusy: "steer"` 用于运行中补充。 |
 | pi-coding-agent 技能（`formatSkillsForPrompt` / `/skill:name` 展开） | 照样实现 | Durable 没有技能组件。目录按 `<available_skills>` 的格式写成常驻系统提示段，正文按官方 `<skill name=…>` 块写进用户消息或 `skill_load` 工具结果；目录函数要求本机文件路径，不直接复用。 |
 | `thinkingLevel`（根会话） | 采用 | 默认 `low`（约 2048 个思考 token），可用 `BEEFTV_AGENT_THINKING` 改为 off、minimal、low、medium 或 high；已有对话在下一轮开始时跟上。只对 Anthropic 协议的模型打开思考，思考和回答共用 `BEEFTV_AGENT_MAX_TOKENS`（默认 16384）。 |
-| `GenerationTask.beforeRequest` hook | 采用 | 准备请求前重读 Go 授权、历史素材归属与补充输入，并在实际 HTTP dispatch 前转换已验证的媒体结果。 |
+| `GenerationTask.beforeRequest` hook | 采用 | 每次实际模型请求前重读 Go 授权、当前画布、历史素材归属与补充输入；使用官方 system sections 更新制作现场，包括恢复时已经准备好的请求，并在 HTTP dispatch 前转换已验证的媒体结果。 |
 | pi 的字节级空闲超时（undici `bodyTimeout` / `httpIdleTimeoutMs`） | 不采用 | 只按“收到任意字节”重置，SSE 心跳会把它续上；且不在 Durable 路径安装。宿主保留按实际文本/工具进展计时的空闲上限，见 `model-stream-idle.mjs`。 |
 | `auto_retry_start` / `auto_retry_end` | 采用（只读进度） | 重试仍由官方任务按 `settings.retry` 执行，宿主不另做重试。事件映射为已有的 `lifecycle` 行 `retry`（`attempt` 与归类后的 `reason`：`rate_limited`、`timeout`、`provider_unavailable`、`network`、`model_error`）和 `retry_end`；上游错误原文不进入 NDJSON 或历史。映射在 `durable-session-owner.mjs` 的 `durableStreamEvents`。 |
 | `watchEvents` 完整文字事件 / `watchDoc` 制作计划 | 采用（只读投影） | `durable-stream-text.mjs` 按本次 submission 的用户 entry 限定范围，处理初始/溢出 snapshot、message_start、text_start/delta、block/message 替换及 message_end；向页面发送可替换的 `text_snapshot`，不把初始块和最终尾部当作空增量丢掉。制作计划订阅已提交的 `beeftv.host` 文档，变化时发 `plan`，不等待整轮结束。观察者关闭时释放两项订阅。 |
@@ -90,6 +90,15 @@ Node fetch 的 bypass 规则与 Go 不完全相同。对固定模型 `BaseURL`�
 - 界面在消息发出前（就绪检查、读取对话阶段）停下时，清掉待发送内容，提示“已停下，这条消息没有发出。”，可用“重试”原样再发。发出后停下：停止返回 `pending` 且历史里既没有进行中的回合也没有它的记录时，提示“已停下，这条消息没有被处理。”，结束等待、不再轮询，可重试（新的 `requestId`）。其余按历史里的停下记录收尾。
 - Go 转发 `/assistant/chat` 不设整体超时，只限制等宿主回应头的时间（10 分钟）；NDJSON 持续到官方回合结束，包括模型重试与退避。
 - 进程 `SIGTERM`/`SIGINT` 先把 store 标为关闭，排空该画布预约队列，再 `disposeAll`（关闭官方 Harness）。关闭后新的预约直接失败。`SIGKILL` 仍无法拦截，中断回执语义不变。
+
+## 画布现场与版本冲突
+
+- 本机界面发送助手消息前，等待当前画布持久化与后端保存回执；仍有未确认编辑时不提交助手轮次。
+- 宿主在每次模型请求前读取当前画布，替换请求中旧的 `beeftv_studio` section；聊天、计划、工具身份仍由官方 Durable 保存。空闲时不为同步画布额外请求模型。
+- 现场读取失败时明确标为未知，保留上次成功快照用于恢复比较，但不把它当成当前状态，暂停画布写工具及生成提案。
+- Go 的 `stale_revision` / `revision_conflict` 仍表示明确拒绝。操作桥补读有界的最新画布，将证据附入原工具错误，并暂停同一批剩余写入。下一次模型请求取得新现场后才能重新决策；不把旧操作的版本号直接替换为最新版本。
+- 冲突暂停状态与工具执行回执一同持久化，恢复中的旧工具不能越过暂停状态；网络超时等结果未知的错误不走上述明确拒绝分支，不自动重放操作或提交付费生成。每轮原有调用预算继续限制反复冲突。
+- 同步边界是已保存的服务端画布与下一次模型决策；模型请求发出后发生的修改由后端 CAS 保护，未保存的前端草稿不作为服务端事实。
 
 ## 仍由本产品持有
 

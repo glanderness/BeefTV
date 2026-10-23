@@ -51,6 +51,15 @@ describe('buildStudioDigest', () => {
   test('空画布', () => {
     expect(buildStudioDigest({ revision: 0, nodes: [], connections: [] }).text).toContain('画布是空的');
   });
+  test('文本节点的身份与当前正文预览可见，长文仍需按版本读取原文', () => {
+    const { text } = buildStudioDigest({ revision: 23, nodes: [media('brief', 'text', '用户刚修改的要求', { content: '保持角色一致性。'.repeat(40) })] });
+    expect(text).toContain('brief');
+    expect(text).toContain('用户刚修改的要求');
+    expect(text).toContain('保持角色一致性');
+    expect(text).toContain('预览');
+    expect(text).toContain('canvas_get');
+    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(3600);
+  });
 });
 
 describe('describeChangesSince', () => {

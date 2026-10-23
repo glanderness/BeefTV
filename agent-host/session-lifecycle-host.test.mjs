@@ -503,8 +503,8 @@ test('真实宿主：停止先于 /chat 到达时只停这一条请求；同一�
     expect(await chat('late-turn', 'late-req')).toMatchObject({ turnId: 'late-turn', requestId: 'late-req', cancelled: true });
     expect(await chat('early-turn-3', 'early-req')).toMatchObject({ turnId: 'early-turn-1', cancelled: true });
     expect(getModelCalls()).toBe(1);
-    // Only the one request that ran read the skill catalog for its model request; stopped ones did nothing.
-    expect(getOpsRequests().filter((line) => line.includes('/api/ops/'))).toEqual(['POST /api/ops/skill.catalog']);
+    // Only the admitted request reads its initial and dispatch snapshots/catalog.
+    expect(getOpsRequests().filter((line) => line.includes('/api/ops/'))).toEqual(['POST /api/ops/canvas.get', 'POST /api/ops/skill.catalog', 'POST /api/ops/canvas.get']);
     expect(completed()).toEqual(['early-turn-1', 'early-turn-2', 'other-turn', 'late-turn', 'early-turn-3']);
     const history = await api(`/history?canvasId=${canvasId}&sessionId=${encodeURIComponent(sessionId)}`);
     expect(history.payload.active).toBeNull();

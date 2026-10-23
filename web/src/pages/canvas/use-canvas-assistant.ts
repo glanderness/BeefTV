@@ -7,6 +7,7 @@ import { scopedLocalStorage, getActiveUserScope, getActiveUserScopeEpoch, subscr
 import { captureUserScope, userScopeMatches, assertUserScope } from "@/lib/user-scope-guard";
 import { flushModelConfig, getModelConfigPersistenceState } from "@/services/model-config-repository";
 import { workspaceCapabilities } from "@/services/workspace-mode";
+import { saveCanvasForAssistant } from "@/services/assistant-canvas-save";
 import {
     activateAssistantSession,
     agentAssistantFailureText,
@@ -419,6 +420,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         rerenderIfActive(targetCanvas);
         try {
             if (workspaceCapabilities().local) {
+                await saveCanvasForAssistant(targetCanvas, expectedScope);
                 await flushModelConfig();
                 const persistence = getModelConfigPersistenceState();
                 if (persistence.dirty || persistence.status === "error") throw new Error("助手模型还没保存成功，请稍后重试");

@@ -15,7 +15,7 @@ import { SYSTEM_PROMPT } from './system-prompt.mjs';
 import { SKILL_LOAD_PARAMETERS, createSkillCatalogSection, expandSkillContent, loadPinnedSkills, loadedSkillRecord,
   normalizeSkillCatalog, sameSkillPin, skillsToLoad, activeSkillProjection, createActiveSkillSection, guardSkillModelRequests } from './skill-resource.mjs';
 import { PLAN_UPDATE_PARAMETERS, applyPlanUpdate, emptyPlan, planContinuation, publicPlan, renderPlanSection } from './plan.mjs';
-import { buildStudioDigest, describeChangesSince } from './studio-digest.mjs';
+import { buildStudioDigest, describeChangesSince, withCurrentStudio } from './studio-digest.mjs';
 import { normalizeModelTransportError } from './model-transport-error.mjs';
 
 // On-disk format tag written into manifests and host state since 1.0.4; not the
@@ -218,6 +218,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       const canvas = await readCanvas(entry, signal, turnId);
       if (!canvas || typeof canvas !== 'object') throw new Error('canvas_snapshot_unavailable');
       const digest = buildStudioDigest(canvas, { selectedNodeIds });
+      entry.turn.studioReadAvailable = true;
       let diffText = '';
       await update(entry, (doc) => {
         // Older hosts could persist the operation wrapper as an empty snapshot.
@@ -234,6 +235,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       // Do not present the previous turn's digest as current after a failed read.
       // Preserve the last successful snapshot so recovery compares real states.
       await update(entry, (doc) => { doc.studioDigestText = ''; });
+      entry.turn.studioReadAvailable = false;
       return '';
     }
   }
@@ -483,19 +485,28 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     ];
     const operationExtension=defineExtension({ name: 'beeftv.operations.v1', tools, sections: operationSections, hooks: [hook(GenerationTask, {
       afterResponse: normalizeModelTransportError,
-      beforeRequest: async (request) => {
+      beforeRequest: async (request, runtime, context) => {
         for (;;) {
           if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
           if (entry.generation.pendingInput?.state === 'pending') await entry.generation.pendingInput.promise;
           if (entry.generation.aborted) throw fail('aborted');
           await authorization(entry, entry.turn.turnId);
+          let studioDiff = '';
+          if (typeof readCanvas === 'function') {
+            studioDiff = await refreshStudioDigest(entry, entry.turn.turnId, { selectedNodeIds: entry.input?.selectedNodeIds || [], computeDiff: true, signal: context.abortSignal });
+          }
+          if (entry.generation.aborted) throw fail('aborted');
           const nativeDoc = await state(entry);
           const active = nativeDoc.active;
           entry.nativeHistory = await officialNativeHistory(entry,nativeDoc,CTX);
           if(entry.budget) {entry.budget.nativeHistory=entry.nativeHistory;entry.budget.sessionId=entry.sessionId;}
           if (entry.generation.pendingInput?.state === 'pending') continue;
           if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
-          let messages = request.messages;
+          let messages = typeof readCanvas === 'function'
+            ? withCurrentStudio(request.messages, [nativeDoc.studioDigestText, studioDiff].filter(Boolean).join('\n')) : request.messages;
+          // Only a new decision with current evidence can release a conflict
+          // fence. Tool reads and unrelated successful writes cannot release it.
+          if (entry.turn.studioReadAvailable === true) entry.turn.canvasContextChanged = false;
           // A recovered generation may already have checkpointed its prepared
           // request before steering was queued. Overlay only missing durable user
           // inputs through the official request hook; the queue still owns their
