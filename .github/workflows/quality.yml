@@ -119,6 +119,7 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Install native media test dependencies
         run: |
+          bash ../scripts/configure-ubuntu-apt.sh
           sudo apt-get update
           sudo apt-get install -y ffmpeg fontconfig fonts-noto-cjk
           fc-cache -f
@@ -149,6 +150,7 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Install native media test dependencies
         run: |
+          bash ../scripts/configure-ubuntu-apt.sh
           if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
             sudo apt-get update
             sudo apt-get install -y --no-install-recommends ffmpeg
