@@ -265,14 +265,15 @@
     "evidence": [
       "docs/release-evidence/v2.0.3-targeted.md"
     ],
-    "result": "pending",
+    "result": "approved",
     "independent": true,
     "reviewer": "Grok Companion",
     "reviewedHead": "e6a9715a8e723087b3fa6b322f96acc73d1bba30",
     "initialJob": "20261023-190718-review-afa434cc",
     "reassessmentJob": "20261023-193053-continue-cbc9e4b1",
     "priorApprovedHead": "2e41bcc89905a442b2498eb2f85ac7b43cc0731b",
-    "priorApprovedJob": "20261023-193851-continue-9c8f0317"
+    "priorApprovedJob": "20261023-193851-continue-9c8f0317",
+    "finalJob": "20261023-201606-continue-84daa834"
   },
   "verification": {
     "referenceBinding": {
@@ -325,8 +326,15 @@
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
-      "status": "pending",
-      "method": "github-actions"
+      "status": "passed",
+      "method": "github-actions",
+      "head": "3f46f6fa7442c713e81fc40a36d7da67b4d3c6cb",
+      "scope": "quality-director-linux-package",
+      "runs": [
+        "https://github.com/glanderness/BeefTV/actions/runs/39952014513",
+        "https://github.com/glanderness/BeefTV/actions/runs/39952014484",
+        "https://github.com/glanderness/BeefTV/actions/runs/39952014474"
+      ]
     },
     "localReleaseGate": {
       "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
