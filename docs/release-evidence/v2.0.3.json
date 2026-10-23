@@ -1,7 +1,7 @@
 {
   "version": "v2.0.3",
   "contractVersion": 3,
-  "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+  "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
   "baseRelease": "v2.0.2",
   "baseCommit": "2715bf22147661f27ced853f14005e4bcbe88641",
   "includedMain": "95ee1445bb09c42b06121ebf79e8efc467af9f77",
@@ -11,7 +11,7 @@
   ],
   "releasePreparationPullRequest": 245,
   "ownerException": {
-    "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+    "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
     "evidence": [
       "docs/release-evidence/v2.0.3-targeted.md"
     ],
@@ -70,161 +70,161 @@
   },
   "agentChecks": {
     "canvas_read": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "asset_reference": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "canvas_mutation": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "multi_turn": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "proposal_decline": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "proposal_stale": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "proposal_idempotency": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "session_history": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "session_restart": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "cancel": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "conflict_undo": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "host_recovery": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "scope_isolation": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "budget": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "cli_mcp": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "durable_resume": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "native_video": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "native_audio": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "skill_version": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "skill_files": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "permission_modes": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "external_business": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
       "status": "not_run_targeted_release"
     },
     "media_film_review": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
@@ -261,21 +261,22 @@
     ]
   },
   "review": {
-    "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+    "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
     "evidence": [
       "docs/release-evidence/v2.0.3-targeted.md"
     ],
     "result": "pending",
     "independent": true,
     "reviewer": "Grok Companion",
-    "reviewedHead": "2e41bcc89905a442b2498eb2f85ac7b43cc0731b",
+    "reviewedHead": "e6a9715a8e723087b3fa6b322f96acc73d1bba30",
     "initialJob": "20261023-190718-review-afa434cc",
     "reassessmentJob": "20261023-193053-continue-cbc9e4b1",
-    "finalJob": "20261023-193851-continue-9c8f0317"
+    "priorApprovedHead": "2e41bcc89905a442b2498eb2f85ac7b43cc0731b",
+    "priorApprovedJob": "20261023-193851-continue-9c8f0317"
   },
   "verification": {
     "referenceBinding": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
@@ -284,7 +285,7 @@
       "executedSourceDigest": "f27586b28f1329ae4442263e556b09ac8a0abf61e1e3f07b02450ffcd005c929"
     },
     "promptLimits": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
@@ -293,7 +294,7 @@
       "executedSourceDigest": "f27586b28f1329ae4442263e556b09ac8a0abf61e1e3f07b02450ffcd005c929"
     },
     "videoRetry": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
@@ -302,7 +303,7 @@
       "executedSourceDigest": "f27586b28f1329ae4442263e556b09ac8a0abf61e1e3f07b02450ffcd005c929"
     },
     "upscale": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
@@ -311,7 +312,7 @@
       "executedSourceDigest": "f27586b28f1329ae4442263e556b09ac8a0abf61e1e3f07b02450ffcd005c929"
     },
     "publisher": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
@@ -320,7 +321,7 @@
       "executedSourceDigest": "f27586b28f1329ae4442263e556b09ac8a0abf61e1e3f07b02450ffcd005c929"
     },
     "ci": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md"
       ],
@@ -328,7 +329,7 @@
       "method": "github-actions"
     },
     "localReleaseGate": {
-      "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+      "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
       "evidence": [
         "docs/release-evidence/v2.0.3-targeted.md",
         ".github/workflows/release-desktop.yml"
@@ -339,7 +340,7 @@
     }
   },
   "upgrade": {
-    "sourceDigest": "54a646e62d4ecc699e4f0f8b27ff910c9521d16b23370105ec2ee7f31c021959",
+    "sourceDigest": "4cede4c2e81ac6bad12f79a3810fbee5602c4c3f099f755a4bf2f8e15f398de8",
     "evidence": [
       "docs/release-evidence/v2.0.3-targeted.md"
     ],
