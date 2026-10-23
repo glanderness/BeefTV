@@ -271,7 +271,12 @@ function InfiniteCanvasPage() {
     const [connections, setConnections] = useState<CanvasConnection[]>([]);
     const [chatSessions, setChatSessions] = useState<CanvasAssistantSession[]>([]);
     const [activeChatId, setActiveChatId] = useState<string | null>(null);
-    const [viewport, setViewport] = useState<ViewportTransform>({ x: 0, y: 0, k: 1 });
+    const [viewport, setCommittedViewport] = useState<ViewportTransform>({ x: 0, y: 0, k: 1 });
+    const [virtualizationViewport, setVirtualizationViewport] = useState<ViewportTransform | null>(null);
+    const setViewport = useCallback<Dispatch<SetStateAction<ViewportTransform>>>((next) => {
+        setVirtualizationViewport(null);
+        setCommittedViewport(next);
+    }, []);
     const [size, setSize] = useState({ width: 1200, height: 720 });
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
     const workflowsRef = useRef<CanvasWorkflowsHandle>(null);
@@ -891,10 +896,12 @@ function InfiniteCanvasPage() {
     } = useCanvasViewportController({
         containerRef,
         size,
+        viewport,
         viewportRef,
         nodesRef,
         selectedNodeIdsRef,
         setViewport,
+        setVirtualizationViewport,
         setSelectedNodeIds,
         setSelectedConnectionId,
         setContextMenu,
@@ -1744,7 +1751,7 @@ function InfiniteCanvasPage() {
         nodes,
         connections,
         assets,
-        viewport,
+        viewport: virtualizationViewport ?? viewport,
         viewportSize: size,
         mediaPerformanceMode,
         selectedNodeIds,

@@ -1,11 +1,11 @@
 import { afterEach, expect, test } from "bun:test";
 import type LocalForage from "localforage";
-import { installLocalForageStoreFactoryForTests } from "../src/lib/localforage-storage";
+import { installLocalForageStoreFactoryForTests, RESOURCE_BLOBS_STORE_NAME } from "../src/lib/localforage-storage";
 import { getActiveUserScope, setActiveUserScope } from "../src/lib/user-scope";
 import { UserScopeAbandonedError } from "../src/lib/user-scope-guard";
 import { apiClient } from "../src/services/api/request";
 import { getResourcePlaybackBlob } from "../src/services/api/resources";
-import { cacheResourceObjectUrl, getCachedResourceBlob } from "../src/services/resource-blob-cache";
+import { cacheResourceObjectUrl, getCachedResourceBlob, getCachedResourceObjectUrl } from "../src/services/resource-blob-cache";
 
 const originalAdapter = apiClient.defaults.adapter;
 afterEach(() => { apiClient.defaults.adapter = originalAdapter; installLocalForageStoreFactoryForTests(); });
@@ -66,6 +66,61 @@ function deferred<T>() {
     const promise = new Promise<T>((done) => { resolve = done; });
     return { promise, resolve };
 }
+
+test("多节点同时恢复同一大素材时，只从 IndexedDB 读取一次原始 Blob", async () => {
+    const gate = deferred<Blob>();
+    const blob = new Blob(["unchanged-original-media"], { type: "image/png" });
+    let reads = 0;
+    installLocalForageStoreFactoryForTests((name) => ({
+        ready: async () => undefined,
+        getItem: async () => {
+            if (name !== RESOURCE_BLOBS_STORE_NAME) return null;
+            reads++;
+            return gate.promise;
+        },
+        setItem: async (_key: string, value: unknown) => value,
+    }) as unknown as LocalForage);
+    const key = "resource:concurrent-persisted-original";
+    const urls = Array.from({ length: 20 }, (_, i) => i % 2 ? cacheResourceObjectUrl(key) : getCachedResourceObjectUrl(key));
+    const references = Array.from({ length: 10 }, () => getCachedResourceBlob(key));
+    let observedReads = 0;
+    try {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        observedReads = reads;
+    } finally { gate.resolve(blob); }
+    const resolved = await Promise.all(urls);
+    expect(observedReads).toBe(1);
+    expect(new Set(resolved).size).toBe(1);
+    expect(await (await fetch(resolved[0])).text()).toBe("unchanged-original-media");
+    expect((await Promise.all(references)).every((value) => value === blob)).toBe(true);
+});
+
+test("A→B→A 后的新缓存读取不复用旧工作区轮次的未完成读取", async () => {
+    const previous = getActiveUserScope();
+    const gate = deferred<Blob>();
+    const started = deferred<void>();
+    let reads = 0;
+    installLocalForageStoreFactoryForTests((name) => ({
+        ready: async () => undefined,
+        getItem: async () => {
+            if (name !== RESOURCE_BLOBS_STORE_NAME) return null;
+            if (++reads === 1) { started.resolve(); return gate.promise; }
+            return new Blob(["current"]);
+        },
+    }) as unknown as LocalForage);
+    setActiveUserScope("persisted-read-epoch-a");
+    const old = getCachedResourceObjectUrl("resource:persisted-read-epoch").catch((error) => error);
+    try {
+        await started.promise;
+        setActiveUserScope("persisted-read-epoch-b");
+        setActiveUserScope("persisted-read-epoch-a");
+        const current = await getCachedResourceObjectUrl("resource:persisted-read-epoch");
+        expect(await (await fetch(current)).text()).toBe("current");
+        gate.resolve(new Blob(["old"]));
+        expect(await old).toBeInstanceOf(UserScopeAbandonedError);
+        expect(reads).toBe(2);
+    } finally { gate.resolve(new Blob(["old"])); setActiveUserScope(previous); }
+});
 
 function emptyStore() {
     installLocalForageStoreFactoryForTests(() => ({

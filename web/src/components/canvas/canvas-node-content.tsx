@@ -22,7 +22,8 @@ import type { CanvasTheme } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import type { GenerationTask } from "@/services/api/task-center";
-import { cacheResourceObjectUrl, getCachedResourceObjectUrl, peekCachedResourceObjectUrl, scheduleResourceBlobCache } from "@/services/resource-blob-cache";
+import { cacheResourceImagePreviewObjectUrl, cacheResourceObjectUrl, getCachedResourceObjectUrl, peekCachedResourceObjectUrl, scheduleResourceBlobCache } from "@/services/resource-blob-cache";
+import { canvasImagePreviewSize } from "@/lib/canvas/canvas-image-preview-blob";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { useResourceVideoPlayback } from "@/hooks/use-resource-video-playback";
 import { resolveImageUrl } from "@/services/image-storage";
@@ -209,6 +210,7 @@ function ErrorContent({ node, theme, onRetry, onReloadResource, onOpenTaskDetail
         <div
             data-canvas-no-zoom
             data-canvas-wheel-scroll
+            data-canvas-live-scale
             className="canvas-node-error-content flex max-w-[260px] flex-col items-center gap-3 overflow-y-auto px-3 py-2 text-center"
             style={{
                 boxSizing: "border-box",
@@ -607,7 +609,17 @@ function EmptyAudioContent({ theme }: { theme: CanvasTheme }) {
 function ImageContent({ node, theme, scale = 1, isBatchRoot, batchCount, batchPreviewNodes, batchExpanded, batchOpening, batchRecovering, onToggleBatch }: Pick<CanvasNodeContentProps, "node" | "theme" | "scale" | "isBatchRoot" | "batchCount" | "batchPreviewNodes" | "batchExpanded" | "batchOpening" | "batchRecovering" | "onToggleBatch">) {
     const imageContainerRef = useRef<HTMLDivElement>(null);
     const nearViewport = useNearViewport(imageContainerRef);
-    const { url, loading, error, retry, fail } = useNodeResourceUrl(node, nearViewport);
+    const [pixelRatio, setPixelRatio] = useState(() => typeof window === "undefined" ? 1 : window.devicePixelRatio || 1);
+    useEffect(() => {
+        const resolution = window.matchMedia(`(resolution: ${pixelRatio}dppx)`);
+        const update = () => setPixelRatio(window.devicePixelRatio || 1);
+        resolution.addEventListener("change", update);
+        window.addEventListener("resize", update);
+        return () => { resolution.removeEventListener("change", update); window.removeEventListener("resize", update); };
+    }, [pixelRatio]);
+    const previewSize = resourceIdFromStorageKey(node.metadata?.storageKey)
+        ? canvasImagePreviewSize(node.width, node.height, scale, pixelRatio, node.metadata?.naturalWidth || 0, node.metadata?.naturalHeight || 0, node.metadata?.mimeType || "") : undefined;
+    const { url, loading, error, retry, fail } = useNodeResourceUrl(node, nearViewport, previewSize);
     const importedFromLibTV = node.metadata?.importSource?.provider === "libtv";
     const { updateMediaNode } = useCanvasNodeActions();
     const measuredSizeRef = useRef<{ width: number; height: number } | null>(null);
@@ -626,8 +638,8 @@ function ImageContent({ node, theme, scale = 1, isBatchRoot, batchCount, batchPr
     const fitToImage = (element: HTMLImageElement) => {
         // LibTV 已提供原图尺寸和节点尺寸；960px 缩略图不能反向覆盖这些数据。
         if (importedFromLibTV) return;
-        const naturalWidth = element.naturalWidth;
-        const naturalHeight = element.naturalHeight;
+        const naturalWidth = previewSize ? node.metadata!.naturalWidth! : element.naturalWidth;
+        const naturalHeight = previewSize ? node.metadata!.naturalHeight! : element.naturalHeight;
         if (!naturalWidth || !naturalHeight) return;
         if (measuredSizeRef.current?.width === naturalWidth && measuredSizeRef.current.height === naturalHeight) return;
         measuredSizeRef.current = { width: naturalWidth, height: naturalHeight };
@@ -639,7 +651,7 @@ function ImageContent({ node, theme, scale = 1, isBatchRoot, batchCount, batchPr
             <div ref={imageContainerRef} className="h-full w-full overflow-hidden rounded-[var(--node-radius)]">
                 {error ? (
                     <div role="status" aria-label="图片加载失败" className="flex size-full items-center justify-center text-center text-xs" style={{ background: theme.node.fill, color: theme.node.text }}>
-                        <div className="flex flex-col items-center gap-2" style={{ transform: "scale(var(--canvas-live-inverse-scale, 1))", transformOrigin: "center" }}>
+                        <div data-canvas-live-scale className="flex flex-col items-center gap-2" style={{ transform: "scale(var(--canvas-live-inverse-scale, 1))", transformOrigin: "center" }}>
                             {!compactStatus ? <span>图片加载失败</span> : null}
                             <button type="button" data-canvas-no-zoom aria-label="重新加载图片" title="重新加载图片" className={`inline-flex items-center justify-center gap-1.5 rounded border focus-visible:outline focus-visible:outline-2 ${compactStatus ? "size-7" : "px-3 py-1"}`} style={{ borderColor: theme.node.stroke, color: theme.node.text }} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); retry(); }}>
                                 <RefreshCw className="size-4 shrink-0" aria-hidden />
@@ -647,13 +659,13 @@ function ImageContent({ node, theme, scale = 1, isBatchRoot, batchCount, batchPr
                             </button>
                         </div>
                     </div>
-                ) : url ? <img src={url} alt={node.title} loading="lazy" decoding="async" draggable={false} onDragStart={(event) => event.preventDefault()} onError={fail} onLoad={(event) => fitToImage(event.currentTarget)} className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`} /> : <div role="status" aria-label="正在加载图片" className="grid size-full place-items-center" style={{ background: theme.node.fill, color: theme.node.muted }}><span style={{ transform: "scale(var(--canvas-live-inverse-scale, 1))" }}>{loading ? <LoaderCircle className="size-5 animate-spin" /> : <ImageIcon className="size-5" />}</span></div>}
+                ) : url ? <img src={url} alt={node.title} loading="lazy" decoding="async" draggable={false} onDragStart={(event) => event.preventDefault()} onError={fail} onLoad={(event) => fitToImage(event.currentTarget)} className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`} /> : <div role="status" aria-label="正在加载图片" className="grid size-full place-items-center" style={{ background: theme.node.fill, color: theme.node.muted }}><span data-canvas-live-scale style={{ transform: "scale(var(--canvas-live-inverse-scale, 1))" }}>{loading ? <LoaderCircle className="size-5 animate-spin" /> : <ImageIcon className="size-5" />}</span></div>}
             </div>
         </BatchFrame>
     );
 }
 
-function useNodeResourceUrl(node: CanvasNodeData, eager: boolean) {
+function useNodeResourceUrl(node: CanvasNodeData, eager: boolean, previewSize?: number) {
     const storageKey = node.metadata?.storageKey || "";
     const rawContent = node.metadata?.content || "";
     const content = node.type === CanvasNodeType.Video && node.metadata?.importSource?.provider === "libtv"
@@ -670,7 +682,7 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean) {
     const isRemoteResource = Boolean(resourceId);
     // 远程资源接口受登录/桌面令牌保护，原生 `<img>` 无法附带该令牌。
     // 重登后只能先通过 cacheResourceObjectUrl() 走鉴权下载，再挂载 Blob URL。
-    const synchronousUrl = eager && isRemoteResource && node.type === CanvasNodeType.Image ? peekCachedResourceObjectUrl(storageKey) : "";
+    const synchronousUrl = !previewSize && eager && isRemoteResource && node.type === CanvasNodeType.Image ? peekCachedResourceObjectUrl(storageKey) : "";
     // Inline data URLs are already local, but decoding thousands of them is
     // still expensive. Images must wait for the same viewport gate as remote
     // resources; otherwise DOM virtualization does not reduce image work.
@@ -682,6 +694,7 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean) {
     const [attempt, setAttempt] = useState(0);
     const reloadRequested = useRef(false);
     const [scopeEpoch, setScopeEpoch] = useState(getActiveUserScopeEpoch);
+    const sourceIdentityRef = useRef(`${scopeEpoch}:${storageKey}`);
     useEffect(() => subscribeUserScope((epoch) => setScopeEpoch(epoch.generation)), []);
     const reportImageEvent = useCallback((code: "CANVAS_IMAGE_READ_FAILED" | "CANVAS_IMAGE_DECODE_FAILED" | "CANVAS_IMAGE_RELOAD") => {
         if (node.type !== CanvasNodeType.Image) return;
@@ -699,6 +712,10 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean) {
 
     useEffect(() => {
         let cancelled = false;
+        const sourceIdentity = `${scopeEpoch}:${storageKey}`;
+        const sourceChanged = sourceIdentityRef.current !== sourceIdentity;
+        sourceIdentityRef.current = sourceIdentity;
+        if (sourceChanged) setUrl("");
         setError(false);
         if (!isRemoteResource && isLazyVisual && storageKey) {
             if (!eager) {
@@ -726,18 +743,21 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean) {
         }
         const reload = reloadRequested.current;
         reloadRequested.current = false;
-        const cachedSync = reload ? "" : peekCachedResourceObjectUrl(storageKey);
+        const cachedSync = reload || previewSize ? "" : peekCachedResourceObjectUrl(storageKey);
         if (cachedSync) {
             setUrl(cachedSync);
             setLoading(false);
             return;
         }
-        setUrl("");
+        // Keep the current image while the next display tier is prepared.
+        if (!isLazyVisual || sourceChanged || reload) setUrl("");
         setLoading(eager);
         // 只有进入视口或被激活的节点才下载远程媒体；缓存层会复用已有 Blob URL 和 in-flight 请求。
-        const resolve = eager ? cacheResourceObjectUrl(storageKey, reload) : getCachedResourceObjectUrl(storageKey);
+        const resolve = previewSize
+            ? eager ? cacheResourceImagePreviewObjectUrl(storageKey, previewSize, reload) : Promise.resolve("")
+            : eager ? cacheResourceObjectUrl(storageKey, reload) : getCachedResourceObjectUrl(storageKey);
         void resolve.then((cached) => {
-            if (!cancelled && cached) setUrl(cached);
+            if (!cancelled && cached) { setUrl(cached); setError(false); }
             if (!cancelled && eager && !cached) { setError(true); reportImageEvent("CANVAS_IMAGE_READ_FAILED"); }
             // Never hand a protected resource URL to a native <img> after a
             // cache miss. It cannot attach the auth header and would render
@@ -748,7 +768,7 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean) {
             if (!cancelled) setLoading(false);
         });
         return () => { cancelled = true; };
-    }, [eager, fallback, isLazyVisual, isRemoteResource, storageKey, attempt, scopeEpoch, reportImageEvent]);
+    }, [eager, fallback, isLazyVisual, isRemoteResource, storageKey, attempt, scopeEpoch, reportImageEvent, previewSize]);
 
     return { url, loading, error, retry, fail };
 }

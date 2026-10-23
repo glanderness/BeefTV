@@ -5,6 +5,38 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Camera coordinates are observed on the viewport itself. The world receives
+   its transform directly; inheriting these values needlessly restyles nodes. */
+@property --canvas-live-x {
+    syntax: "*";
+    inherits: false;
+    initial-value: 0;
+}
+
+@property --canvas-live-y {
+    syntax: "*";
+    inherits: false;
+    initial-value: 0;
+}
+
+@property --canvas-live-scale {
+    syntax: "<number>";
+    inherits: false;
+    initial-value: 1;
+}
+
+@property --canvas-live-inverse-scale {
+    syntax: "<number>";
+    inherits: false;
+    initial-value: 1;
+}
+
+@property --canvas-committed-scale {
+    syntax: "<number>";
+    inherits: false;
+    initial-value: 1;
+}
+
 /* =========================================================================
    Design Token System — 三层架构 (Primitive → Semantic → Component)
    这些是产品工作区的共享基础样式。

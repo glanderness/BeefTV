@@ -129,7 +129,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
             scaleRef.current = next.k;
             onViewportPreviewChange?.(next);
             const container = containerRef.current;
-            if (container) container.dataset.canvasViewportInteracting = "true";
+            if (container && container.dataset.canvasViewportInteracting !== "true") container.dataset.canvasViewportInteracting = "true";
             nextViewportRef.current = next;
             if (!frameRef.current) frameRef.current = requestAnimationFrame((now) => {
                 frameRef.current = null;
@@ -461,7 +461,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
                 data-canvas-world-layer
                 className="canvas-world-layer absolute origin-top-left"
             >
-                <div data-canvas-world-raster-layer className="canvas-world-raster-layer absolute origin-top-left">
+                <div data-canvas-world-raster-layer className="canvas-world-raster-layer absolute origin-top-left" style={{ "--canvas-committed-scale": viewport.k } as React.CSSProperties}>
                     {children}
                 </div>
             </div>
