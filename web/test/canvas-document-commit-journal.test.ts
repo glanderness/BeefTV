@@ -1139,6 +1139,63 @@ describe("画布文档提交日记", () => {
         expect(journalA.pendingProjection?.remote.nodes.map((item) => item.id)).toEqual(["n-gen"]);
     });
 
+    test.each(["loading", "error"])("同版本绑定回执仍结算本地 %s 状态，保留提示词和新增节点", async (status) => {
+        const completed = node("image-result", "图片", {
+            metadata: { taskId: "task-result", status: "success", taskStatus: "succeeded", content: "/api/resources/result/file", storageKey: "resource:result", prompt: "原提示" },
+        });
+        const confirmed = canvas("已确认", 329, { nodes: [completed] });
+        await seedConfirmed(confirmed);
+        useCanvasStore.getState().updateProject("c1", {
+            nodes: [
+                { ...completed, metadata: { taskId: "task-result", status, taskStatus: "running", content: "", errorDetails: "旧的回写提示", prompt: "用户新提示" } },
+                node("local-only", "本地新节点"),
+            ] as never,
+        });
+
+        const adopted = await adoptServerConfirmedGenerationPatch(confirmed);
+
+        expect(adopted.nodes[0].metadata).toMatchObject({ status: "success", content: "/api/resources/result/file", storageKey: "resource:result", prompt: "用户新提示" });
+        expect(adopted.nodes.map((item) => item.id)).toEqual(["image-result", "local-only"]);
+        expect(useCanvasStore.getState().openProject("c1")?.nodes).toEqual(adopted.nodes);
+        expect(adopted.nodes[0].metadata?.errorDetails).toBeUndefined();
+        expect(server.postStarted).toBe(0);
+        expect((await loadCanvasOperationJournal("c1")).confirmedRevision).toBe(329);
+        server.revision = 329;
+        server.document = confirmed;
+        server.enforceRevision = true;
+        await syncLocalCanvasProjectToBackend("c1");
+        expect(server.commits).toHaveLength(1);
+        expect(server.commits[0].expectedRevision).toBe(329);
+        expect((server.document as { nodes: Array<{ metadata: Record<string, unknown> }> }).nodes[0].metadata.status).toBe("success");
+    });
+
+    test("同版本绑定回执不解除已有冲突，也不覆盖新任务或人类换图", async () => {
+        const completed = node("image-result", "图片", {
+            metadata: { taskId: "task-result", status: "success", content: "/api/resources/result/file", storageKey: "resource:result" },
+        });
+        const confirmed = canvas("已确认", 329, { nodes: [completed] });
+        await seedConfirmed(confirmed);
+        pauseCanvasBackendSubmit("c1");
+        useCanvasStore.getState().updateProject("c1", {
+            nodes: [{ ...completed, metadata: { taskId: "task-result", status: "loading", content: "" } }] as never,
+        });
+        expect((await adoptServerConfirmedGenerationPatch(confirmed)).nodes[0].metadata?.status).toBe("success");
+        expect(canvasBackendSubmitPaused("c1")).toBe(true);
+        for (const metadata of [
+            { taskId: "task-new", status: "loading", content: "" },
+            { taskId: "task-result", status: "loading", content: "用户换的图" },
+            { taskId: "task-result", status: "idle", content: "" },
+        ]) {
+            useCanvasStore.getState().updateProject("c1", { nodes: [{ ...completed, metadata }] as never });
+            const adopted = await adoptServerConfirmedGenerationPatch(confirmed);
+            expect(adopted.nodes[0].metadata).toEqual(metadata);
+            expect(canvasBackendSubmitPaused("c1")).toBe(true);
+        }
+        useCanvasStore.getState().updateProject("c1", { nodes: [] });
+        expect((await adoptServerConfirmedGenerationPatch(confirmed)).nodes).toEqual([]);
+        expect(server.postStarted).toBe(0);
+    });
+
     test("生成回写入草稿时按 id 合并，不丢掉本地额外节点", async () => {
         const localOnly = node("n-local", "本地节点");
         const generated = node("n-gen", "生成结果");
