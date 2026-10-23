@@ -729,7 +729,7 @@ export function modelCapabilityConfigFor(
     return { ...fallback, ...capabilityConfig, text, image, video };
 }
 
-function isSeedance2Family(protocol: ModelProtocol | undefined, modelName: string) {
+export function isSeedance2Family(protocol: ModelProtocol | undefined, modelName: string) {
     return Boolean(protocol && ["openai", "openai-videos", "newapi", "newapi-channel-2", "volcengine-ark-video", "volcengine-ark-agent-plan-video"].includes(protocol) && String(modelName).toLowerCase().includes("seedance-2"));
 }
 

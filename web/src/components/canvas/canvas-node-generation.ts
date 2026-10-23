@@ -18,9 +18,10 @@ import { audioFileExtension } from "@/lib/character-voice-formats";
 import type { ModelReferenceLimits } from "@/lib/model-selection";
 import type { Asset } from "@/stores/use-asset-store";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
-import { assertCanvasImageReferenceTable } from "@/lib/canvas/canvas-reference-table";
+import { assertCanvasImageReferenceTable, type CanvasImageTableReference } from "@/lib/canvas/canvas-reference-table";
 import { compileBoundMediaReferences, renderCharacterReferenceBindings, type BoundMediaMention, type CharacterReferenceBinding } from "@/lib/canvas/generation-reference-contract";
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import { isSeedance2Family } from "@/lib/model-capabilities";
 
 export type CharacterGenerationReference = {
     nodeId: string;
@@ -45,6 +46,7 @@ export type NodeGenerationContext = {
     prompt: string;
     characterReferenceBindings?: CharacterReferenceBinding[];
     boundMediaMentions?: BoundMediaMention[];
+    imageReferenceTableReferences?: CanvasImageTableReference[];
     referenceImages: ReferenceImage[];
     referenceVideos: ReferenceVideo[];
     referenceAudios: ReferenceAudio[];
@@ -106,7 +108,9 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
             connectedInputs,
             options.preserveMediaBindings,
         );
-        if (sourceNode?.type === CanvasNodeType.Image || sourceNode?.type === CanvasNodeType.Video) assertCanvasImageReferenceTable(context.prompt, generationImageTableReferences(context.referenceImages, mentionInputs));
+        const tableReferences = generationImageTableReferences(context.referenceImages, mentionInputs);
+        if (options.preserveMediaBindings) context.imageReferenceTableReferences = tableReferences;
+        else if (sourceNode?.type === CanvasNodeType.Image || sourceNode?.type === CanvasNodeType.Video) assertCanvasImageReferenceTable(context.prompt, tableReferences);
         return context;
     }
 
@@ -123,7 +127,8 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     const referenceAudios = connectedInputs.map((input) => input.audio).filter((audio): audio is ReferenceAudio => Boolean(audio));
 
     const composedPrompt = promptOnly ? prompt : upstreamText ? `${basePrompt}\n\n${upstreamText}` : basePrompt;
-    if (sourceNode?.type === CanvasNodeType.Image || sourceNode?.type === CanvasNodeType.Video) assertCanvasImageReferenceTable(composedPrompt, generationImageTableReferences(referenceImages, connectedInputs));
+    const tableReferences = generationImageTableReferences(referenceImages, connectedInputs);
+    if (!options.preserveMediaBindings && (sourceNode?.type === CanvasNodeType.Image || sourceNode?.type === CanvasNodeType.Video)) assertCanvasImageReferenceTable(composedPrompt, tableReferences);
     return {
         prompt: composedPrompt,
         referenceImages,
@@ -136,6 +141,7 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
         imageCount: referenceImages.length,
         videoCount: referenceVideos.length,
         audioCount: referenceAudios.length,
+        ...(options.preserveMediaBindings ? { imageReferenceTableReferences: tableReferences } : {}),
     };
 }
 
@@ -399,7 +405,7 @@ function generationImageTableReferences(images: ReferenceImage[], inputs: NodeGe
     return images.map((image) => {
         const input = inputsByImageId.get(image.id);
         const kind = input?.sourceKind === "drawing" ? "drawing" : "image";
-        return { title: input?.title || image.name, label: generationLabel(kind, counts[kind]++) };
+        return { id: image.id, title: input?.title || image.name, label: generationLabel(kind, counts[kind]++) };
     });
 }
 
@@ -648,8 +654,7 @@ export function compileNodeGenerationReferences<T extends NodeGenerationContext>
     const request = resolveModelRequestConfig(config, config.model);
     const seedanceReferences = operation === "reference_to_video"
         && (!config.taskWorkflowProvider || config.taskWorkflowProvider === "model")
-        && ["newapi", "openai", "openai-videos", "volcengine-ark-video", "volcengine-ark-agent-plan-video"].includes(request.interfaceType || "")
-        && /seedance/i.test(request.model);
+        && isSeedance2Family(request.interfaceType, request.model);
     const compiled = compileBoundMediaReferences(context, seedanceReferences);
     return seedanceReferences && context.characterReferenceBindings?.length
         ? { ...compiled, prompt: `${renderCharacterReferenceBindings(context.characterReferenceBindings, compiled)}\n\n${compiled.prompt}` }

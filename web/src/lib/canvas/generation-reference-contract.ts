@@ -1,5 +1,6 @@
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+import { assertCanvasImageReferenceTable, type CanvasImageTableReference } from "@/lib/canvas/canvas-reference-table";
 
 export type BoundMediaMention = {
     token: string;
@@ -20,6 +21,7 @@ type ReferenceContext = {
     referenceVideos: ReferenceVideo[];
     referenceAudios: ReferenceAudio[];
     boundMediaMentions?: BoundMediaMention[];
+    imageReferenceTableReferences?: CanvasImageTableReference[];
 };
 
 /** Render only bound tokens. Free text and legacy positional references keep their original meaning. */
@@ -46,13 +48,21 @@ export function compileBoundMediaReferences<T extends ReferenceContext>(context:
     const referenceVideos = reorder(context.referenceVideos, "video");
     const referenceAudios = reorder(context.referenceAudios, "audio");
     const labels = new Map<string, string>();
+    const boundImageSlots = new Map<string, number>();
     const arrays = { image: referenceImages, video: referenceVideos, audio: referenceAudios };
     const names = { image: "图片", video: "视频", audio: "音频" };
     mentions.forEach((binding) => {
         const index = arrays[binding.kind].findIndex((item) => item.id === binding.referenceId);
         if (index < 0) throw new Error("引用的素材已不可用，请重新选择后再生成");
         labels.set(binding.token, `@${names[binding.kind]}${index + 1}`);
+        if (binding.kind === "image") boundImageSlots.set(binding.token.slice(1), index + 1);
     });
+    const tableReferencesById = new Map((context.imageReferenceTableReferences || []).map((image) => [image.id, image]));
+    // Check the original table's explicit bindings against the final upload order.
+    // Saved labels/names remain useful here; synthetic file names cannot replace them.
+    assertCanvasImageReferenceTable(context.prompt, referenceImages.map((image, index) => tableReferencesById.get(image.id) || {
+        title: image.name, label: `图片${index + 1}`,
+    }), boundImageSlots);
     return {
         ...context,
         prompt: context.prompt.replace(/@\[(?:node|asset):[^\]]+\]/gu, (token) => labels.get(token)!),
