@@ -5,6 +5,20 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Live pan coordinates are observable on the viewport, but only the world
+   layer consumes them. Do not invalidate every node's inherited styles. */
+@property --canvas-live-x {
+    syntax: "*";
+    inherits: false;
+    initial-value: 0px;
+}
+
+@property --canvas-live-y {
+    syntax: "*";
+    inherits: false;
+    initial-value: 0px;
+}
+
 /* =========================================================================
    Design Token System — 三层架构 (Primitive → Semantic → Component)
    这些是产品工作区的共享基础样式。
