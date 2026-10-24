@@ -43,7 +43,7 @@ test("backend canvas revision 409 offers reload without treating it as a model f
 const task: GenerationTask = { id: "task-failure", type: "canvas_image", status: "failed", prompt: "draw", attempts: 1, createdAt: "2026-09-26T00:00:00Z", updatedAt: "2026-09-26T00:00:00Z", errorCode: "content_policy_violation", error: "opaque" };
 const image = (id: string, storageKey: string): CanvasNodeData => ({ id, type: CanvasNodeType.Image, title: id, position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { content: `https://example.test/${id}.png`, storageKey } });
 
-test("confirmed image input rejection replaces stale uncertainty and permits changed input", () => {
+test("complete image input rejection permits changed input while uncertain tasks stay locked", () => {
     const corrected: GenerationTask = { ...task, stage: "任务失败", errorCode: "moderation_input", error: "输入文本未通过内容安全审核。请调整提示词后重新生成。" };
     const stale = image("rejected-node", "");
     stale.metadata = { taskId: task.id, status: "error", taskStage: "submission_unknown", generationSubmissionState: "unknown", generationErrorCode: "submission_uncertain" };
@@ -54,6 +54,10 @@ test("confirmed image input rejection replaces stale uncertainty and permits cha
     expect(canvasGenerationRetryBlocked(restored.metadata, { mode: "image", prompt: "draw" })).toBe(true);
     expect(canvasGenerationRetryBlocked(restored.metadata, { mode: "image", prompt: "a different drawing" })).toBe(false);
     expect(taskRetryBlocked(corrected)).toBe(true);
+    const uncertain: GenerationTask = { ...task, stage: "submission_unknown", errorCode: "submission_uncertain", error: "图片结果尚未确认" };
+    const pending = canvasGenerationTaskNodes([stale], stale.id, uncertain)[0];
+    expect(canvasImageGenerationHasPendingResult(pending, [pending])).toBe(true);
+    expect(canvasGenerationRetryBlocked(pending.metadata, { mode: "image", prompt: "a different drawing" })).toBe(true);
 });
 
 describe("canvas generation failure consumers", () => {

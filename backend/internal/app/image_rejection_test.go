@@ -75,22 +75,30 @@ func TestImageHTTPRejectionSurvivesExecutionAndTaskOutput(t *testing.T) {
 	}
 }
 
-func TestHistoricalImageRejectionProjectionAndRetry(t *testing.T) {
+func TestHistoricalImageRejectionKeepsOriginalUncertainty(t *testing.T) {
 	s, db, task, row, _ := imageSubmissionFixture(t, false)
 	if err := db.Delete(row).Error; err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := s.repo.LatestRouteAttempt(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt.DispatchState = "submission_unknown"
+	if err := s.repo.SaveRouteAttempt(attempt); err != nil {
 		t.Fatal(err)
 	}
 	task.Status, task.Stage, task.Error = model.TaskStatusFailed, "submission_unknown", "图片结果尚未确认，自动恢复已停止"
 	task.FailureDiagnostics = imageRejectionDiagnostics("InputTextSensitiveContentDetected", "The request failed because the input text may contain sensitive information.")
 	got := taskForOutput(task)
-	if got.ErrorCode != "moderation_input" || got.Stage == "submission_unknown" || !strings.Contains(got.Error, "输入文本未通过内容安全审核") {
+	if got.ErrorCode != "submission_uncertain" || got.Stage != "submission_unknown" || !strings.Contains(got.Error, "尚未确认") {
 		t.Fatalf("detail=%+v", got)
 	}
-	if taskSummaryForOutput(task).ErrorCode != "moderation_input" {
+	if summary := taskSummaryForOutput(task); summary.ErrorCode != "submission_uncertain" || summary.Stage != "submission_unknown" {
 		t.Fatal("list differs from detail")
 	}
-	if err := s.validateImageTaskRetry(&task); err != nil {
-		t.Fatalf("edited-input retry blocked: %v", err)
+	if err := s.validateImageTaskRetry(&task); err == nil {
+		t.Fatal("incomplete historical evidence unlocked a retry")
 	}
 	if task.Stage != "submission_unknown" || !strings.HasPrefix(task.Error, "图片结果尚未确认") {
 		t.Fatal("raw history changed")
@@ -179,6 +187,30 @@ func TestHistoricalImageInputRejectionCannotOverrideAcceptedAttempt(t *testing.T
 			if err := s.validateImageTaskRetry(&task); err == nil {
 				t.Fatal("accepted or earlier uncertain request unlocked")
 			}
+			if got := taskForOutput(task); got.Stage != "submission_unknown" {
+				t.Fatalf("task detail discarded prior acceptance or sends: %+v", got)
+			}
+			if got := taskSummaryForOutput(task); got.Stage != "submission_unknown" {
+				t.Fatalf("task list discarded prior acceptance or sends: %+v", got)
+			}
 		})
+	}
+}
+
+func TestHistoricalImageRejectionDoesNotInferMissingResponseEvidence(t *testing.T) {
+	for _, cause := range []providerHTTPError{
+		{StatusCode: 400, IdempotencyReplayed: true, Body: `{"error":{"code":"invalid_request","message":"invalid size"}}`},
+		{StatusCode: 400, Body: `{"id":"accepted-job","error":{"code":"invalid_request","message":"invalid size"}}`},
+		{StatusCode: 400, Body: `{"data":{"id":"accepted-job"},"error":{"code":"invalid_request","message":"invalid size"}}`},
+	} {
+		if definiteImageInputRejection(cause) {
+			t.Fatal("fixture must retain uncertainty in the live response")
+		}
+		// The stored summary omits replay headers and JSON id fields. It cannot
+		// prove more than the original response, even with one request recorded.
+		task := model.Task{Type: "canvas_image", Status: model.TaskStatusFailed, Stage: "submission_unknown", FailureDiagnostics: imageRejectionDiagnostics("invalid_request", "invalid size")}
+		if got := taskForOutput(task); got.Stage != "submission_unknown" {
+			t.Fatalf("lossy diagnostics unlocked an uncertain response: %+v", got)
+		}
 	}
 }

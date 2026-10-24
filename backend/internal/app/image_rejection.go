@@ -7,11 +7,12 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/generation"
-	"infinite-canvas/backend/internal/model"
 )
 
 // A completed input rejection ends this attempt. It does not authorize an
 // automatic resend, and cannot erase an earlier accepted or uncertain request.
+// Historical summaries omit replay headers and JSON job IDs; they cannot
+// reconstruct this decision or unlock a task whose submission is still unknown.
 func definiteImageInputRejection(err error) bool {
 	var unknown generation.SubmissionUnknownError
 	var pending generation.StatePendingError
@@ -56,20 +57,4 @@ func imageRejectionHasJob(body map[string]any, depth int) bool {
 		}
 	}
 	return false
-}
-
-// Only one fully recorded create response can repair the historical label.
-// Poll errors, omitted requests and earlier transport failures cannot prove rejection.
-func recordedImageInputRejection(task model.Task) (generation.Failure, bool) {
-	d := task.FailureDiagnostics
-	if task.Type != "canvas_image" || task.Status != model.TaskStatusFailed || task.Stage != "submission_unknown" || task.ProviderRequestID != "" || task.ResultJSON != "" || len(task.Outputs) != 0 || d == nil || d.ProviderTaskID != "" || d.Source != "upstream_http" || d.ExecutionResult != "failed" || d.OmittedRequests != 0 || len(d.Requests) != 1 {
-		return generation.Failure{}, false
-	}
-	r := d.Requests[0]
-	if !r.Dispatched || r.Method != http.MethodPost || (r.Operation != "image_generate" && r.Operation != "image_edit") || r.TransportPhase != "response" || r.Outcome != "http_error" || r.HTTPStatus != d.HTTPStatus || r.ProviderCode != d.ProviderCode || r.RequestID != d.RequestID {
-		return generation.Failure{}, false
-	}
-	raw, _ := json.Marshal(map[string]any{"error": map[string]string{"code": r.ProviderCode, "message": r.Summary}, "request_id": r.RequestID})
-	err := providerHTTPError{StatusCode: r.HTTPStatus, Body: string(raw)}
-	return classifyProviderHTTP(err), definiteImageInputRejection(err)
 }
