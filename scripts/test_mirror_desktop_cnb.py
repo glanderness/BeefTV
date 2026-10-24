@@ -53,6 +53,12 @@ class MirrorTest(unittest.TestCase):
         for version, token in [("../v2.0.4", "test"), ("v2.0.2", "test"), ("v2.0.4", "")]:
             with self.assertRaises(RuntimeError):
                 cnb.mirror(version, token, lambda *_: self.fail("must not call network"))
+        source = release()
+        source["assets"][0]["digest"] = None
+        with self.assertRaisesRegex(RuntimeError, "Invalid official installer"):
+            cnb.expected_installers(source, "v2.0.4")
+        with self.assertRaisesRegex(RuntimeError, "another endpoint"):
+            cnb.request_json(cnb.PUBLIC + "v2.0.4/beeftv-mirror.json", token="isolated-test")
 
     def test_mismatched_record_and_rejected_trigger_fail(self):
         source = release()

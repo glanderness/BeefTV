@@ -73,7 +73,7 @@ def expected_installers(release, version):
             raise RuntimeError(f"Missing or duplicate official installer: {platform}")
         asset = matches[0]
         if (asset.get("state") != "uploaded" or type(asset.get("size")) is not int or not 1 < asset["size"] <= 2 * 1024 ** 3
-                or not re.fullmatch(r"sha256:[a-f0-9]{64}", asset.get("digest", ""))
+                or not re.fullmatch(r"sha256:[a-f0-9]{64}", asset.get("digest") or "")
                 or asset.get("browser_download_url") != f"https://github.com/glanderness/BeefTV/releases/download/{version}/{name}"):
             raise RuntimeError(f"Invalid official installer metadata: {platform}")
         result.append({"platform": platform, "name": name, "size": asset["size"], "sha256": asset["digest"][7:]})
