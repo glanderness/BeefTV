@@ -351,7 +351,7 @@ test("expanded modal allows pointer selection of references and image/video para
         const editor = dialog.getByRole("textbox", { name: "expanded-editor" });
         // Clicking waits for modal motion to settle; fill only waits for visibility/editability.
         await editor.click();
-        await editor.fill("");
+        await clearRichEditor(page, editor);
         await editor.pressSequentially("@");
         const menu = page.locator("[data-canvas-resource-mention-menu]");
         await menu.waitFor({ state: "visible", timeout: 5000 }).catch(async error => {
