@@ -82,7 +82,9 @@ describe("canvas screen-space background", () => {
         expect(graphics).toEqual(viewports);
         expect(previews).toEqual([]);
         expect(scrolls).toBe(0);
-        expect(world.style.willChange).toBe("transform");
+        // Toggling will-change at gesture edges rebuilt every card's
+        // compositing state on release; the world layer keeps a stable hint.
+        expect(world.style.willChange).toBe("");
 
         container.dataset.canvasViewportInteracting = "false";
         applyCanvasLiveViewport(container as unknown as HTMLDivElement, viewports[0]);

@@ -88,8 +88,6 @@ export function applyCanvasLiveViewport(container: HTMLDivElement | null, viewpo
         // 平移期间直接更新合成层，避免修改容器继承变量导致所有节点重新计算样式。
         if (worldLayer.style.transformOrigin !== "0px 0px") worldLayer.style.transformOrigin = "0px 0px";
         worldLayer.style.transform = `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.k / committedScale})`;
-        const willChange = container.dataset.canvasViewportInteracting === "true" ? "transform" : "";
-        if (worldLayer.style.willChange !== willChange) worldLayer.style.willChange = willChange;
     }
     // Keep the live camera coordinates observable to overlays and automation
     // while the world layer is moved through a compositor transform.

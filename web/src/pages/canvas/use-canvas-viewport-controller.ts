@@ -24,6 +24,8 @@ type UseCanvasViewportControllerOptions = {
     setContextMenu: Dispatch<SetStateAction<ContextMenuState | null>>;
     setDialogNodeId: Dispatch<SetStateAction<string | null>>;
     setToolbarNodeId: Dispatch<SetStateAction<string | null>>;
+    /** True while a renderer culls per frame itself (overview LOD); previews then skip React refreshes. */
+    virtualizationPausedRef?: { current: boolean };
 };
 
 export function useCanvasViewportController({
@@ -40,6 +42,7 @@ export function useCanvasViewportController({
     setContextMenu,
     setDialogNodeId,
     setToolbarNodeId,
+    virtualizationPausedRef,
 }: UseCanvasViewportControllerOptions) {
     const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const renderedViewportRef = useRef(viewportRef.current);
@@ -164,6 +167,9 @@ export function useCanvasViewportController({
     const handleViewportPreviewChange = useCallback((next: ViewportTransform) => {
         cancelViewportTransition();
         viewportRef.current = next;
+        // The overview canvas redraws every frame from the live camera and
+        // only leaves LOD after the gesture commits.
+        if (virtualizationPausedRef?.current) return;
         const now = performance.now();
         if (!shouldRefreshCanvasVirtualization(renderedViewportRef.current, next, lastVirtualizationRefreshAtRef.current, now)) return;
         renderedViewportRef.current = next;
@@ -173,7 +179,7 @@ export function useCanvasViewportController({
         // existing scale limits, and commit the final camera on gesture end.
         if (shouldRebaseCanvasRaster(next, viewport)) setViewport(next);
         else setVirtualizationViewport(next);
-    }, [cancelViewportTransition, setViewport, setVirtualizationViewport, viewport, viewportRef]);
+    }, [cancelViewportTransition, setViewport, setVirtualizationViewport, viewport, viewportRef, virtualizationPausedRef]);
 
     return {
         fitCanvasContent,

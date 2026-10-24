@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef } from "react";
 
 import { buildNodeGenerationInputs, type NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import { isFrameNode } from "@/lib/canvas/canvas-frame";
+import { canvasLodTypicalNodeExtent, resolveCanvasLodActive } from "@/lib/canvas/canvas-lod";
 import { sameNodeSemanticData } from "@/lib/canvas/canvas-project-domain";
-import { canvasNodeRenderBudget, canvasNodeRenderPadding, CANVAS_MAX_RENDERED_CONNECTIONS, shouldReduceCanvasMediaEffects } from "@/lib/canvas/canvas-performance-mode";
+import { canvasNodeRenderPadding, CANVAS_MAX_RENDERED_CONNECTIONS, shouldReduceCanvasMediaEffects } from "@/lib/canvas/canvas-performance-mode";
 import { buildCanvasNodeMentionReferenceMap, buildCanvasResourceReferences, reuseCanvasResourceReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { buildSkillMentionReferences } from "@/lib/canvas/canvas-skill-mentions";
 import { buildCanvasSpatialIndex, canvasNodeBounds, type CanvasSpatialIndexEntry } from "@/lib/canvas/canvas-spatial-index";
@@ -42,7 +43,14 @@ type UseCanvasRenderModelOptions = {
     directorNodeId: string | null;
     scriptEditorNodeId: string | null;
     dialogNodeId: string | null;
+    /** Nodes that must stay interactive DOM cards while the overview canvas is active. */
+    lodPinnedNodeIds?: ReadonlySet<string>;
+    /** True while a camera gesture is still in flight. */
+    viewportInteracting?: boolean;
 };
+
+const EMPTY_LOD_NODES: CanvasNodeData[] = [];
+const EMPTY_PINNED_NODE_IDS: ReadonlySet<string> = new Set();
 
 export function useCanvasRenderModel({
     nodes,
@@ -71,6 +79,8 @@ export function useCanvasRenderModel({
     directorNodeId,
     scriptEditorNodeId,
     dialogNodeId,
+    lodPinnedNodeIds = EMPTY_PINNED_NODE_IDS,
+    viewportInteracting = false,
 }: UseCanvasRenderModelOptions) {
     const reduceMediaEffects = useMemo(() => shouldReduceCanvasMediaEffects(mediaPerformanceMode, nodes), [mediaPerformanceMode, nodes]);
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
@@ -135,14 +145,6 @@ export function useCanvasRenderModel({
         return { batchChildCountById, batchMotionById, canvasImageNodes, collapsedBatchChildIds, frameChildrenById, renderHiddenNodeIds };
     }, [collapsingBatchIds, nodeById, nodes]);
     const { batchChildCountById, batchMotionById, canvasImageNodes, collapsedBatchChildIds, frameChildrenById, renderHiddenNodeIds } = nodeDerivedData;
-    const connectionLayerBounds = useMemo(() => {
-        const padding = (reduceMediaEffects ? 96 : 144) / Math.max(viewport.k, 0.05);
-        const left = -viewport.x / viewport.k - padding;
-        const top = -viewport.y / viewport.k - padding;
-        const width = viewportSize.width / viewport.k + padding * 2;
-        const height = viewportSize.height / viewport.k + padding * 2;
-        return { left, top, width: Math.max(2, width), height: Math.max(2, height) };
-    }, [reduceMediaEffects, viewport.k, viewport.x, viewport.y, viewportSize.height, viewportSize.width]);
     const renderBounds = useMemo(() => {
         const enterPadding = canvasNodeRenderPadding(reduceMediaEffects, false) / viewport.k;
         const retainPadding = canvasNodeRenderPadding(reduceMediaEffects, true) / viewport.k;
@@ -172,15 +174,20 @@ export function useCanvasRenderModel({
     }, [nodes]);
     const nodeSpatialIndex = useMemo(() => buildCanvasSpatialIndex(geometryNodes.map((node) => ({ id: node.id, bounds: canvasNodeBounds(node), value: node.id }))), [geometryNodes]);
     const renderedNodeIdsRef = useRef<Set<string>>(new Set());
+    const retainedNodeIdsRef = useRef<Set<string>>(new Set());
+    const domNodeIdsRef = useRef<Set<string>>(new Set());
     const visibleNodesRef = useRef<CanvasNodeData[]>([]);
-    const visibleNodes = useMemo(() => {
+    const lodNodesRef = useRef<CanvasNodeData[]>(EMPTY_LOD_NODES);
+    const lodActiveRef = useRef(false);
+    const { visibleNodes, lodNodes, lodActive } = useMemo(() => {
         const frames: CanvasNodeData[] = [];
         const regular: CanvasNodeData[] = [];
         const renderedNodeIds = renderedNodeIdsRef.current;
-        const renderBudget = canvasNodeRenderBudget(viewport.k);
-        const forcedNodeIds = new Set([...selectedNodeIds, ...(dragPreview?.nodeIds || [])].slice(0, renderBudget));
+        // Spatial bounds may cull offscreen nodes; a count budget must not
+        // discard visible media or displace it when selection is retained.
+        const forcedNodeIds = new Set([...selectedNodeIds, ...(dragPreview?.nodeIds || [])]);
         const candidates = nodeSpatialIndex
-            .query(renderBounds.retain, renderBudget + forcedNodeIds.size)
+            .query(renderBounds.retain)
             .map((nodeId) => nodeById.get(nodeId))
             .filter((node): node is CanvasNodeData => Boolean(node));
         const candidateIds = new Set(candidates.map((node) => node.id));
@@ -190,7 +197,7 @@ export function useCanvasRenderModel({
             if (node) candidates.push(node);
         }
         const prioritized = candidates.filter((node) => forcedNodeIds.has(node.id));
-        const remaining = candidates.filter((node) => !forcedNodeIds.has(node.id)).slice(0, Math.max(0, renderBudget - prioritized.length));
+        const remaining = candidates.filter((node) => !forcedNodeIds.has(node.id));
         [...prioritized, ...remaining].forEach((node) => {
             if (renderHiddenNodeIds.has(node.id)) return;
             const retained = forcedNodeIds.has(node.id) || renderedNodeIds.has(node.id);
@@ -198,17 +205,44 @@ export function useCanvasRenderModel({
             if (!retained && !insideEnterBounds) return;
             (isFrameNode(node) ? frames : regular).push(node);
         });
-        const next = [...frames, ...regular];
-        const previous = visibleNodesRef.current;
-        if (previous.length === next.length && next.every((node, index) => node === previous[index])) {
-            return previous;
+
+        // Overview LOD: every regular node is still displayed by the overview
+        // canvas; only interactive ones are mounted as full DOM cards.
+        const nextLodActive = resolveCanvasLodActive({
+            previous: lodActiveRef.current,
+            typicalExtent: canvasLodTypicalNodeExtent(regular),
+            scale: viewport.k,
+            deferExit: viewportInteracting,
+        });
+        lodActiveRef.current = nextLodActive;
+        let domRegular = regular;
+        let nextLod = EMPTY_LOD_NODES;
+        if (nextLodActive) {
+            // The overview canvas culls each frame against the live camera, so
+            // it receives every displayable node instead of a stale window.
+            nextLod = nodes.filter((node) => !isFrameNode(node) && !renderHiddenNodeIds.has(node.id));
+            const dragging = Boolean(dragPreview?.nodeIds.size);
+            const previousDomIds = domNodeIdsRef.current;
+            // Transient drag transforms are bound to the elements mounted when
+            // the drag began, so DOM membership is frozen until it ends.
+            domRegular = regular.filter((node) => dragging ? previousDomIds.has(node.id) : lodPinnedNodeIds.has(node.id));
         }
-        visibleNodesRef.current = next;
-        return next;
-    }, [dragPreview, nodeById, nodeSpatialIndex, renderBounds, renderHiddenNodeIds, selectedNodeIds]);
+        retainedNodeIdsRef.current = new Set([...frames, ...regular].map((node) => node.id));
+
+        const next = [...frames, ...domRegular];
+        const previous = visibleNodesRef.current;
+        const nextVisible = previous.length === next.length && next.every((node, index) => node === previous[index]) ? previous : next;
+        visibleNodesRef.current = nextVisible;
+        const previousLod = lodNodesRef.current;
+        const stableLod = previousLod.length === nextLod.length && nextLod.every((node, index) => node === previousLod[index]) ? previousLod : nextLod;
+        lodNodesRef.current = stableLod;
+        return { visibleNodes: nextVisible, lodNodes: stableLod, lodActive: nextLodActive };
+    }, [dragPreview, lodPinnedNodeIds, nodeById, nodeSpatialIndex, nodes, renderBounds, renderHiddenNodeIds, selectedNodeIds, viewport.k, viewportInteracting]);
     useEffect(() => {
-        renderedNodeIdsRef.current = new Set(visibleNodes.map((node) => node.id));
-    }, [visibleNodes]);
+        domNodeIdsRef.current = new Set(visibleNodes.map((node) => node.id));
+        // Enter/retain hysteresis tracks what is displayed in the camera window.
+        renderedNodeIdsRef.current = retainedNodeIdsRef.current;
+    }, [lodNodes, visibleNodes]);
 
     const imageAssets = useMemo(() => assets.filter((asset): asset is ImageAsset => asset.kind === "image" && asset.status !== "archived"), [assets]);
     const semanticNodesRef = useRef(nodes);
@@ -400,12 +434,13 @@ export function useCanvasRenderModel({
         batchMotionById,
         canvasImageNodes,
         configInputsById,
-        connectionLayerBounds,
         contextMenuNode,
         displayConnections,
         frameChildrenById,
         imageAssets,
         infoNode,
+        lodActive,
+        lodNodes,
         maskEditNode,
         mentionReferencesByNodeId,
         nodeById,

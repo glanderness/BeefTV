@@ -90,7 +90,6 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
         delete container?.dataset.canvasViewportInteracting;
         setIsPanning(false);
         setIsSpacePressed(false);
-        document.body.style.cursor = "default";
     }, [interactive, containerRef]);
 
     useLayoutEffect(() => {
@@ -116,7 +115,6 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
             if (frameRef.current) cancelAnimationFrame(frameRef.current);
             if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
             delete containerRef.current?.dataset.canvasViewportInteracting;
-            document.body.style.cursor = "";
         },
         [containerRef],
     );
@@ -302,7 +300,6 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
                 hasMoved: false,
             };
             setIsPanning(true);
-            document.body.style.cursor = "grabbing";
             return;
         }
 
@@ -321,7 +318,6 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
                 hasMoved: false,
             };
             setIsPanning(true);
-            document.body.style.cursor = "grabbing";
         }
 
     };
@@ -377,7 +373,6 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
                 delete containerRef.current?.dataset.canvasViewportInteracting;
                 syncViewport();
                 setIsPanning(false);
-                document.body.style.cursor = "";
                 return;
             }
 
@@ -394,7 +389,6 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
             delete containerRef.current?.dataset.canvasViewportInteracting;
             syncViewport();
             setIsPanning(false);
-            document.body.style.cursor = "";
         };
 
         window.addEventListener("pointermove", handlePointerMove);
@@ -417,10 +411,17 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
         const observer = new ResizeObserver(updateRect);
         observer.observe(container);
         window.addEventListener("resize", updateRect);
-        container.addEventListener("wheel", handleWheel, { passive: false, capture: true });
         return () => {
             observer.disconnect();
             window.removeEventListener("resize", updateRect);
+        };
+    }, [interactive, containerRef]);
+
+    useEffect(() => {
+        const container = containerRef.current;
+        if (!container || !interactive) return;
+        container.addEventListener("wheel", handleWheel, { passive: false, capture: true });
+        return () => {
             container.removeEventListener("wheel", handleWheel, { capture: true });
         };
     }, [interactive, containerRef, handleWheel]);
@@ -429,8 +430,8 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
         <div
             ref={containerRef}
             data-canvas-viewport
-            data-canvas-pan-state={isPanning ? "grabbing" : isSpacePressed || !boxSelectEnabled ? "grab" : undefined}
-            className={`relative h-full w-full select-none overflow-hidden touch-none ${isPanning ? "cursor-grabbing" : isSpacePressed || !boxSelectEnabled ? "cursor-grab" : "canvas-cursor-select"}`}
+            data-canvas-pan-state={isSpacePressed || !boxSelectEnabled ? "grab" : undefined}
+            className={`relative h-full w-full select-none overflow-hidden touch-none ${isSpacePressed || !boxSelectEnabled ? "cursor-grab" : "canvas-cursor-select"}`}
             style={{
                 background: resolvedAppearance.background,
                 overscrollBehavior: "none",
@@ -465,6 +466,10 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
                     {children}
                 </div>
             </div>
+            {/* Pointer capture keeps the gesture on the viewport. A small,
+                transparent hit surface changes the cursor without restyling
+                every descendant of the viewport or document body. */}
+            <div aria-hidden data-canvas-pan-cursor className="absolute inset-0 z-[var(--z-node-toolbar)] cursor-grabbing" style={{ pointerEvents: isPanning ? "auto" : "none" }} />
         </div>
     );
 }

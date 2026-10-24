@@ -31,6 +31,8 @@ import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 import type { CanvasHistorySnapshot } from "./use-canvas-history";
 
+const CANVAS_VIEWPORT_SAVE_DELAY_MS = 2000;
+
 function isExpectedLocalOnlySyncError(error: unknown) {
     const message = error instanceof Error ? error.message : String(error || "");
     return /尚未建立云端同步会话|未登录|guest/i.test(message);
@@ -569,11 +571,14 @@ export function useCanvasProjectLifecycle({
     useEffect(() => {
         if (!projectLoaded || editorProjectIdRef.current !== projectId) return;
         if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
+        // Persisting reconciles and serializes the whole canvas store. Wait
+        // until the camera has rested so the write never lands between wheel
+        // notches; unmount and leave flushes still save the latest viewport.
         viewportSaveTimerRef.current = setTimeout(() => {
             if (editorProjectIdRef.current !== projectId) return;
             updateProject(projectId, { viewport: viewportRef.current });
             viewportSaveTimerRef.current = null;
-        }, 500);
+        }, CANVAS_VIEWPORT_SAVE_DELAY_MS);
         return () => {
             if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
         };

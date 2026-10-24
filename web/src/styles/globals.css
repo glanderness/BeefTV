@@ -11525,20 +11525,8 @@ html:not(.dark) .creation-studio-control:hover,
         text-align: center;
     }
 
-    [data-canvas-viewport-interacting="true"] .canvas-node-shell,
-    [data-canvas-viewport-interacting="true"] .canvas-frame-shell,
-    [data-canvas-viewport-interacting="true"] .aceternity-comet-card {
-        transition: none !important;
-    }
-
-    /* 平移时优先保证世界层合成，暂时关闭每个媒体卡片及其内部浮层的滤镜和阴影绘制。 */
-    [data-canvas-viewport-interacting="true"] :where(.canvas-node-shell, .canvas-frame-shell, .canvas-folder-preview, .canvas-folder-front, .aceternity-comet-card),
-    [data-canvas-viewport-interacting="true"] :where(.canvas-node-shell, .canvas-frame-shell) :where([class*="backdrop-blur"], [class*="shadow-"]) {
-        box-shadow: none !important;
-        filter: none !important;
-        backdrop-filter: none !important;
-        -webkit-backdrop-filter: none !important;
-    }
+    /* Keep card effects stable through camera gestures. Toggling filters and
+       shadows rebuilt WebKit's layer tree at every gesture boundary. */
 
     /* LibTV 式默认选择光标：短促圆润的黑色箭头配细白描边，不使用发光或阴影。 */
     .canvas-cursor-select {
@@ -11563,14 +11551,11 @@ html:not(.dark) .creation-studio-control:hover,
         cursor: grab !important;
     }
 
-    [data-canvas-pan-state="grabbing"] [data-node-id] {
-        cursor: grabbing !important;
-    }
-
     /* 静止期用最终倍率重新排版 DOM，避免 Windows Chromium 复用交互期的低分辨率合成纹理。 */
     .canvas-world-layer {
         transform: translate(var(--canvas-live-x), var(--canvas-live-y)) scale(var(--canvas-live-scale-ratio));
         transform-origin: 0 0;
+        will-change: transform;
     }
 
     .canvas-world-raster-layer {
@@ -11579,9 +11564,17 @@ html:not(.dark) .creation-studio-control:hover,
         transform-origin: 0 0;
     }
 
-    [data-canvas-viewport-interacting="true"] .canvas-world-layer {
-        transform: translate3d(var(--canvas-live-x), var(--canvas-live-y), 0) scale(var(--canvas-live-scale-ratio));
-        will-change: transform;
+    @supports (font: -apple-system-body) {
+        /* Screen-sized titles counter-scale during zoom. Keep their repaint
+           separate from media; otherwise each title dirties a shared surface
+           containing the full image. Use this only for windows of up to 80
+           mounted nodes. Overlap also promotes unmarked siblings, so partial
+           promotion in a larger world can exceed WebKit's RemoteLayerTree IPC
+           limit. Larger windows keep normal rendering and all their nodes. */
+        [data-canvas-world-raster-layer]:not(:has(> .node-element:nth-of-type(81))) > .node-element > .canvas-node-external-header,
+        [data-canvas-world-raster-layer]:not(:has(> .node-element:nth-of-type(81))) > .node-element > .canvas-node-shell {
+            will-change: transform;
+        }
     }
 
     [data-canvas-viewport-interacting="true"] :where(.canvas-connection-flow, .canvas-connection-comet, .canvas-connection-draft) {
