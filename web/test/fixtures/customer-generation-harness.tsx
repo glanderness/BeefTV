@@ -15,6 +15,7 @@ import { customerGenerationProject, type CustomerGenerationScenario } from "./cu
 import { CanvasNodeGenerationProgress } from "../../src/components/canvas/canvas-node-generation-progress";
 import { canvasThemes } from "../../src/lib/canvas-theme";
 import { canvasNodeOperation } from "../../src/lib/operation-progress";
+import { defaultModelCapabilityConfig } from "../../src/lib/model-capabilities";
 import { useOperationProgress } from "../../src/stores/use-operation-progress";
 
 const params = new URLSearchParams(location.search);
@@ -27,11 +28,22 @@ useUserStore.getState().setStorageMode("local");
 const selectedModel = params.has("incompatible-model") ? "kling-v2.6" : "seedance-2.5";
 const protocol = params.has("incompatible-model") ? "novita-video" : "newapi-channel-2";
 const channel = createModelChannel({ id: "synthetic", name: "Synthetic", baseUrl: location.origin + "/upstream", apiKey: "synthetic-not-a-secret", interfaceType: protocol, models: [selectedModel], modelProfiles: [{ model: selectedModel, protocol }] });
+if (params.has("long-prompt-limit")) {
+    const capabilityConfig = defaultModelCapabilityConfig(protocol, selectedModel);
+    capabilityConfig.video!.references.promptMaxChars = 8000;
+    channel.modelProfiles = [{ model: selectedModel, protocol, capabilityConfig }];
+    project.nodes.find(node => node.id === "target")!.metadata!.composerContent = "镜".repeat(8066);
+}
 const model = encodeChannelModel(channel.id, selectedModel);
-useConfigStore.getState().replaceConfig({ ...defaultConfig, channels: [channel], model, videoModel: model, videoModels: [model], models: [model], videoSeconds: "5", size: "16:9" });
+const config = { ...defaultConfig, channels: [channel], model, videoModel: model, videoModels: [model], models: [model], videoSeconds: "5", size: "16:9" };
+useConfigStore.getState().replaceConfig(config);
 await recordConfirmedCanvasCommit(project);
 useCanvasStore.setState({ projects: [project], hydrated: true });
 const harness = (window as any).__customer = { settled: false, error: "", messages: [] as string[], controller: undefined as AbortController | undefined, nodes: project.nodes, blocked: [] as Promise<string>[], generate: noop, edit: noop, cancel: noop };
+(harness as any).allowLongPrompt = () => {
+    channel.modelProfiles![0].capabilityConfig!.video!.references.promptMaxChars = 0;
+    useConfigStore.getState().replaceConfig({ ...config });
+};
 new MutationObserver(changes => {
     for (const change of changes) for (const node of change.addedNodes) {
         if (node instanceof HTMLElement && (node.classList.contains("ant-message-notice") || node.querySelector(".ant-message-notice"))) harness.messages.push(node.textContent || "");

@@ -126,14 +126,19 @@ test("image submission waits for the target node save and shares one submission 
     expect(events).toEqual(["save", "saved", "submit", "consume"]);
 });
 
-for (const error of [new ApiError("保存冲突", { status: 409, reason: "conflict" }), new CanvasBackendSubmitPausedError(), new Error("disk failure")]) {
+for (const [error, guidance] of [
+    [new ApiError("保存冲突", { status: 409, reason: "conflict" }), "请点击画布顶部的保存状态"],
+    [new ApiError("版本过期", { status: 409, reason: "stale_revision" }), "请点击画布顶部的保存状态"],
+    [new CanvasBackendSubmitPausedError(), "请点击画布顶部的保存状态"],
+    [new Error("disk failure"), "画布尚未保存"],
+] as const) {
     test(`a rejected target save creates no paid task: ${error.name}`, async () => {
         let submissions = 0;
         await expect(runCanvasGenerationTaskToConsumer(input, {
             prepareTarget: (options) => persistCanvasGenerationTarget(options, async () => { throw error; }),
             bindTask: () => undefined, consumeTask: async () => undefined,
             runTask: async () => { submissions++; return { images: [] }; },
-        })).rejects.toThrow("未开始生成");
+        })).rejects.toThrow(guidance);
         expect(submissions).toBe(0);
         expect(useCanvasStore.getState().projects[0]?.nodes.map((node) => node.id)).toEqual([input.nodeId]);
     });

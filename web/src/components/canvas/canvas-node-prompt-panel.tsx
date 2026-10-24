@@ -505,6 +505,11 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                     max={bounds.max}
                     onResize={setManualPromptHeight}
                 />}
+                {node.metadata?.generationPreflightError ? (
+                    <p role="alert" className="mx-2.5 my-2 whitespace-pre-wrap break-words text-[var(--fs-tiny)]" style={{ color: theme.accent.danger }}>
+                        未开始生成：{node.metadata.generationPreflightError}
+                    </p>
+                ) : null}
             </>
         );
     };
