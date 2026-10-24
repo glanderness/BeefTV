@@ -357,9 +357,13 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                             config={config}
                             value={config.model}
                             onChange={(model) => {
-                                if (mode === "image") rememberImageSettings({ model });
-                                if (mode === "video") rememberVideoSettings({ model });
-                                onConfigChange(node.id, mode === "image" ? { model, ...defaultImageParamsForModel(config, model) } : { model });
+                                const patch = mode === "image" ? { model, ...defaultImageParamsForModel(config, model) } : { model };
+                                if (mode === "image" || mode === "video") {
+                                    const nextConfig = buildNodeConfig(globalConfig, { ...node, metadata: { ...node.metadata, ...patch } }, mode, { ...requirements, options: undefined });
+                                    if (mode === "image") rememberImageSettings({ model: nextConfig.model, ratio: nextConfig.size, quality: nextConfig.quality, count: nextConfig.count, transparentBackground: nextConfig.transparentBackground });
+                                    else rememberVideoSettings({ model: nextConfig.model, ratio: nextConfig.size, seconds: nextConfig.videoSeconds, videoQuality: nextConfig.vquality, generateAudio: nextConfig.videoGenerateAudio, watermark: nextConfig.videoWatermark });
+                                }
+                                onConfigChange(node.id, patch);
                             }}
                             capability={mode}
                             requirements={resolvedRequirements}

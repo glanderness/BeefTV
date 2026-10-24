@@ -183,21 +183,27 @@ export function preferredMediaGeneratorMetadata(
 ): CanvasNodeMetadata {
     const prefs = useCreationPreferencesStore.getState().preferences;
     if (mode === "image" && prefs.image) {
-        const model =
+        const preferredModel =
             overrides.model
             || resolveCanvasGenerationModel(config, prefs.image.model, "image")
             || resolveCanvasGenerationModel(config, config.imageModel, "image")
             || config.imageModel
             || defaultConfig.imageModel;
-        const normalized = resolveModelGenerationDefaults(config, model, "image", {
-            size: prefs.image.ratio,
-            quality: prefs.image.quality,
-            count: prefs.image.count,
-            transparentBackground: prefs.image.transparentBackground,
-        });
+        const requested = {
+            size: overrides.size ?? prefs.image.ratio,
+            quality: overrides.quality ?? prefs.image.quality,
+            count: overrides.count === undefined ? prefs.image.count : String(overrides.count),
+            transparentBackground: overrides.transparentBackground ?? prefs.image.transparentBackground,
+        };
+        const model = resolveCompatibleModel(config, preferredModel, {
+            capability: "image",
+            imageSize: requested.size,
+            options: requested,
+        }) || preferredModel;
+        const normalized = resolveModelGenerationDefaults(config, model, "image", requested);
         return mediaGeneratorMetadata({
             generationMode: "image",
-            ...(prefs.image.model && model ? { model } : {}),
+            ...((prefs.image.model || model !== preferredModel) && model ? { model } : {}),
             ...(prefs.image.ratio && normalized.size ? { size: normalized.size } : {}),
             ...(prefs.image.quality && normalized.quality ? { quality: normalized.quality } : {}),
             ...(prefs.image.count && normalized.count ? { count: Number(normalized.count) || 1 } : {}),
@@ -206,26 +212,29 @@ export function preferredMediaGeneratorMetadata(
         });
     }
     if (mode === "video" && prefs.video) {
-        const model =
+        const preferredModel =
             overrides.model
             || resolveCanvasGenerationModel(config, prefs.video.model, "video")
             || resolveCanvasGenerationModel(config, config.videoModel, "video")
             || config.videoModel
             || defaultConfig.videoModel;
-        const normalized = resolveModelGenerationDefaults(config, model, "video", {
-            size: prefs.video.ratio,
-            videoSeconds: prefs.video.seconds,
-            vquality: prefs.video.videoQuality,
-            videoGenerateAudio: prefs.video.generateAudio,
-            videoWatermark: prefs.video.watermark,
-        });
-        const booleans = resolveModelVideoBooleanOptions(config, model, {
-            videoGenerateAudio: prefs.video.generateAudio,
-            videoWatermark: prefs.video.watermark,
-        });
+        const requested = {
+            size: overrides.size ?? prefs.video.ratio,
+            videoSeconds: overrides.seconds ?? prefs.video.seconds,
+            vquality: overrides.vquality ?? prefs.video.videoQuality,
+            videoGenerateAudio: overrides.generateAudio ?? prefs.video.generateAudio,
+            videoWatermark: overrides.watermark ?? prefs.video.watermark,
+        };
+        const model = resolveCompatibleModel(config, preferredModel, {
+            capability: "video",
+            videoSeconds: requested.videoSeconds,
+            options: requested,
+        }) || preferredModel;
+        const normalized = resolveModelGenerationDefaults(config, model, "video", requested);
+        const booleans = resolveModelVideoBooleanOptions(config, model, requested);
         return mediaGeneratorMetadata({
             generationMode: "video",
-            ...(prefs.video.model && model ? { model } : {}),
+            ...((prefs.video.model || model !== preferredModel) && model ? { model } : {}),
             ...(prefs.video.ratio && normalized.size ? { size: normalized.size } : {}),
             ...(prefs.video.seconds && normalized.videoSeconds ? { seconds: normalized.videoSeconds } : {}),
             ...(prefs.video.videoQuality && normalized.vquality ? { vquality: normalized.vquality } : {}),
