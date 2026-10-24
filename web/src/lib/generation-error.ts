@@ -631,7 +631,7 @@ function classifyText(raw: string): Classified {
     }
     if (/^[{[]/.test(text)) return { category: "unknown", providerCode: sanitizeProviderCode(fields.code), requestId: sanitizeDebugId(fields.requestId), taskId: sanitizeDebugId(fields.taskId), retryable: false };
     const persisted = matchPersistedCategory(text);
-    if (persisted) return { category: persisted, uncertain: ["timeout", "download_failed", "submission_uncertain"].includes(persisted), retryable: false };
+    if (persisted) return { category: persisted, uncertain: ["download_failed", "submission_uncertain"].includes(persisted) || (persisted === "timeout" && (text.includes("可能仍在服务端执行") || text.includes("请勿立即重试"))), retryable: false };
     if (isMalformedText(text)) return { category: "malformed_response", retryable: false };
     const fromFull = categoryFromProviderMessage(text);
     if (fromFull) return specialize({ category: fromFull }, { ...emptyFields(), message: text });

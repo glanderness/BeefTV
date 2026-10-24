@@ -8,6 +8,7 @@ type GenerationFailureNoticeProps = {
     explanation: GenerationFailureExplanation;
     context?: GenerationFailureContext;
     compact?: boolean;
+    allowManualRetry?: boolean;
     onRetry?: () => void;
     retryLabel?: string;
     onOpenDetails?: () => void;
@@ -15,10 +16,10 @@ type GenerationFailureNoticeProps = {
     summaryOnly?: boolean;
 };
 
-export function GenerationFailureNotice({ explanation, context, compact, onRetry, retryLabel, onOpenDetails, retryDisabled, summaryOnly }: GenerationFailureNoticeProps) {
+export function GenerationFailureNotice({ explanation, context, compact, allowManualRetry, onRetry, retryLabel, onOpenDetails, retryDisabled, summaryOnly }: GenerationFailureNoticeProps) {
     const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
     const diagnostics = formatGenerationDiagnostics(explanation, { ...context, traceId: context?.traceId || getDiagnosticTraceId(context?.taskId || explanation.taskId) });
-    const showRetry = Boolean(onRetry) && !explanation.blockManualRetry && !retryDisabled;
+    const showRetry = Boolean(onRetry) && (allowManualRetry || !explanation.blockManualRetry) && !retryDisabled;
     const copyDiagnostics = async () => {
         try {
             if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {

@@ -72,7 +72,7 @@ export function canvasGenerationRetryBlocked(metadata: CanvasNodeMetadata | unde
     }
     if (input) {
         const category = explainGenerationError(error).category;
-        return metadata?.taskStage === "submission_unknown" || isKeptGenerationResultCode(category) || ["submission_uncertain", "timeout", "results_missing", "partial_success"].includes(category);
+        return metadata?.taskStage === "submission_unknown" || isKeptGenerationResultCode(category) || category === "submission_uncertain";
     }
     return true;
 }
