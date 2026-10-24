@@ -349,10 +349,14 @@ test("expanded modal allows pointer selection of references and image/video para
         const dialog = page.getByRole("dialog", { name: "放大提示词" });
         await dialog.waitFor({ state: "visible" });
         const editor = dialog.getByRole("textbox", { name: "expanded-editor" });
+        // Clicking waits for modal motion to settle; fill only waits for visibility/editability.
+        await editor.click();
         await editor.fill("");
         await editor.pressSequentially("@");
         const menu = page.locator("[data-canvas-resource-mention-menu]");
-        await menu.waitFor({ state: "visible" });
+        await menu.waitFor({ state: "visible", timeout: 5000 }).catch(async error => {
+            throw new Error(`${error.message} editor=${await editor.innerText()} focused=${await editor.evaluate(element => document.activeElement === element)}`);
+        });
         expect(await menu.evaluate((element) => Number(getComputedStyle(element).zIndex))).toBeGreaterThan(layer);
         await menu.locator(".canvas-resource-mention-folder", { hasText: "个人资产库" }).click();
         await menu.locator(".canvas-resource-mention-item", { hasText: "道具钥匙" }).click();
