@@ -210,6 +210,8 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 按轮撤销不依赖浏览器流或宿主的最后一条消息：轮前文档由后端在转发前落盘，变更摘要由该轮自己的写入回执重建，
 因此浏览器断流（没有 `turn_end`）、用户取消或后端在回合中途重启之后，已经落地的助手写入仍然可以撤销。
 
+媒体工具从已拥有的画布节点或素材读取资源。`storageKey`、`content` 支持 `resource:<id>` 和资源文件 URL（如 `/api/resources/<id>/file`），与画布保存使用相同的资源 ID 解析规则。URL 只用于提取 ID，不会被直接请求；读取前仍校验目标关联关系、资源归属和就绪状态。
+
 活跃回合的历史响应可带 `active.streamed`，用于页面刷新后恢复当前文字；计划来自顶层 `plan`。文字仅包含本轮助手可见文本，不带推理内容、工具参数或上游错误原文。重新附着观察流会先发送当前文字和计划快照，不重新执行模型调用。
 
 成功的媒体工具记录可带 `toolCalls[].mediaFacts`：`source{resourceId,version,startMs,endMs,nodeId?}`、`mode: frames|video|audio|check`、`durationMs`、`hasAudio`，以及客观检测的可选 `silenceIntervals[{startMs,endMs}]`、`meanDb`、`peakDb`。摘要仅从真实成功结果白名单投影；原生媒体转换失败时不记录成功读取，区间来自结果而非请求参数。摘要不含媒体字节、路径、URL 或自由文本，随既有回合记录保存并通过历史与 `turn_end` 返回。界面的“媒体检查记录”按资源和版本分开显示读取区间与静音事实；`nodeId` 仅用于匹配当前节点名称，不从当前节点推断历史媒体状态。不表示模型理解、全片检查或质量通过；“步骤进度”只是助手记录的步骤计数。旧记录没有摘要时不回填或推断，需要再次实际检查才产生新记录。

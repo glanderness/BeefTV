@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/editing"
 )
 
@@ -195,9 +196,8 @@ func collectMediaResourceIDs(value any, ids map[string]bool) {
 				}
 			}
 			if key == "storageKey" || key == "content" {
-				if value, ok := item.(string); ok && strings.HasPrefix(value, "resource:") {
-					id := strings.TrimPrefix(value, "resource:")
-					if mediaResourceIDPattern.MatchString(id) {
+				if value, ok := item.(string); ok {
+					if id := assets.ResourceID(value); id != "" {
 						ids[id] = true
 					}
 				}
@@ -227,8 +227,6 @@ func ReferencedMediaResourceIDs(raw json.RawMessage) ([]string, error) {
 	sort.Strings(result)
 	return result, nil
 }
-
-var mediaResourceIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
 
 const maxMediaSourceBytes int64 = 256 << 20
 const maxMediaPartBytes int64 = 8 << 20
