@@ -2775,6 +2775,7 @@ function InfiniteCanvasPage() {
                                         <CanvasLodLayer
                                             containerRef={containerRef}
                                             active={lodActive}
+                                            interactive={!versions.preview && !readOnly}
                                             viewport={viewport}
                                             nodes={lodNodes}
                                             nodeStackOrder={nodeStackOrder}

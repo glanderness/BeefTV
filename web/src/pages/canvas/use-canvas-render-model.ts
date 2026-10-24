@@ -185,7 +185,7 @@ export function useCanvasRenderModel({
         const renderedNodeIds = renderedNodeIdsRef.current;
         // Spatial bounds may cull offscreen nodes; a count budget must not
         // discard visible media or displace it when selection is retained.
-        const forcedNodeIds = new Set([...selectedNodeIds, ...(dragPreview?.nodeIds || [])]);
+        const forcedNodeIds = new Set([...selectedNodeIds, ...lodPinnedNodeIds, ...(dragPreview?.nodeIds || [])]);
         const candidates = nodeSpatialIndex
             .query(renderBounds.retain)
             .map((nodeId) => nodeById.get(nodeId))

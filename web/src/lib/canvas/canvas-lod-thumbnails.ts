@@ -17,12 +17,14 @@ export type CanvasLodThumbnail = { source: CanvasImageSource; width: number; hei
 type Entry = {
     state: "pending" | "ready" | "failed";
     thumbnail?: CanvasLodThumbnail;
+    failedAt?: number;
     listeners: Set<() => void>;
 };
 
 const THUMBNAIL_MAX_SIDE = 256;
 const MAX_ENTRIES = 900;
 const MAX_CONCURRENT_LOADS = 4;
+const FAILED_RETRY_DELAY_MS = 1000;
 // Persisted preview tier shared with the DOM image cards.
 const IMAGE_PREVIEW_TIER = 512;
 
@@ -39,7 +41,7 @@ export function canvasLodThumbnailKey(node: CanvasNodeData) {
     const metadata = node.metadata;
     if (node.type === CanvasNodeType.Image) {
         const identity = metadata?.storageKey || metadata?.previewContent || metadata?.content || "";
-        return identity ? `image:${getActiveUserScopeEpoch()}:${identity}:${metadata?.content ? "c" : "p"}` : "";
+        return identity ? `image:${getActiveUserScopeEpoch()}:${identity}` : "";
     }
     if (node.type === CanvasNodeType.Video) {
         const identity = metadata?.videoPreview?.storageKey || canvasNodeVideoPreviewUrl(node) || metadata?.storageKey || metadata?.content || "";
@@ -64,9 +66,15 @@ export function getCanvasLodThumbnail(node: CanvasNodeData, onReady: () => void)
             entries.set(key, existing);
             return existing.thumbnail || null;
         }
-        if (existing.state === "failed") return "failed";
-        existing.listeners.add(onReady);
-        return null;
+        if (existing.state === "failed") {
+            if (Date.now() - (existing.failedAt || 0) < FAILED_RETRY_DELAY_MS) return "failed";
+            // A transient download/decode failure must not poison the overview
+            // for the rest of the session. Retry on a later visible redraw.
+            entries.delete(key);
+        } else {
+            existing.listeners.add(onReady);
+            return null;
+        }
     }
     const entry: Entry = { state: "pending", listeners: new Set([onReady]) };
     entries.set(key, entry);
@@ -97,15 +105,18 @@ function pumpQueue() {
                 if (job.epoch !== getActiveUserScopeEpoch()) return;
                 entry.state = thumbnail ? "ready" : "failed";
                 entry.thumbnail = thumbnail || undefined;
+                if (!thumbnail) entry.failedAt = Date.now();
             })
             .catch(() => {
                 entry.state = "failed";
+                entry.failedAt = Date.now();
             })
             .finally(() => {
                 activeLoads -= 1;
                 const listeners = [...entry.listeners];
                 entry.listeners.clear();
                 listeners.forEach((listener) => listener());
+                evictOverflow();
                 pumpQueue();
             });
     }

@@ -79,6 +79,14 @@ test("far zoom draws cards in the overview canvas and mounts only pinned DOM car
     expect(new Set(model.dom)).toEqual(new Set(["node-3", "node-7"]));
 });
 
+test("playing or editing nodes remain mounted when panned outside the overview window", () => {
+    const fixture = nodes(80);
+    const offscreen = { ...fixture[0], id: "playing-offscreen", position: { x: 100000, y: 100000 } };
+    const model = renderModel([...fixture, offscreen], { pinned: new Set([offscreen.id]) });
+    expect(model.lodActive).toBe(true);
+    expect(model.dom).toContain(offscreen.id);
+});
+
 test("readable zoom keeps full DOM cards and no overview canvas", () => {
     const fixture = nodes(12);
     const model = renderModel(fixture, { viewport: { x: 0, y: 0, k: 1 } });

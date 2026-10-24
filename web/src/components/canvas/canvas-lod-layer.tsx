@@ -10,6 +10,7 @@ import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "@/t
 type CanvasLodLayerProps = {
     containerRef: RefObject<HTMLDivElement | null>;
     active: boolean;
+    interactive?: boolean;
     viewport: ViewportTransform;
     /** Every displayed regular node; interactive ones are also mounted as DOM cards on top. */
     nodes: CanvasNodeData[];
@@ -25,7 +26,6 @@ type CanvasLodLayerProps = {
 // Mirrors InfiniteCanvas: floating UI and explicit no-zoom controls keep their events.
 const POINTER_IGNORE_SELECTOR = "[data-canvas-no-zoom],[data-connection-create-menu],[data-connection-id],.ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown";
 const NODE_RADIUS = 12;
-const DOUBLE_PRESS_MS = 450;
 
 /**
  * Overview renderer: one screen-space canvas below the DOM world layer. It
@@ -186,7 +186,7 @@ export function CanvasLodLayer(props: CanvasLodLayerProps) {
 
     useEffect(() => {
         const container = resolveContainer();
-        if (!container || !props.active) return;
+        if (!container || !props.active || props.interactive === false) return;
         const worldPoint = (event: MouseEvent) => {
             const viewport = viewportRef.current;
             const { left, top } = sizeRef.current;
@@ -201,25 +201,16 @@ export function CanvasLodLayer(props: CanvasLodLayerProps) {
             hoverRef.current = nodeId;
             propsRef.current.onHoverNodeChange(nodeId);
         };
-        let lastPress: { nodeId: string; at: number } | null = null;
         const handlePointerDown = (event: PointerEvent) => {
             if (event.button !== 0 || event.pointerType === "touch") return;
+            // InfiniteCanvas owns Space + drag even when the press hits an
+            // overview node. Its normal node path also leaves pointerdown free.
+            if (container.dataset.canvasSpacePressed === "true") return;
             const node = hitNode(event);
-            if (!node) {
-                // The first press promotes the node to a DOM card, so the
-                // second press of a double-click lands on that card instead.
-                const domNodeId = event.target instanceof Element ? event.target.closest("[data-node-id]")?.getAttribute("data-node-id") : null;
-                if (lastPress && domNodeId === lastPress.nodeId && event.timeStamp - lastPress.at < DOUBLE_PRESS_MS) {
-                    const promoted = orderedRef.current.find((candidate) => candidate.id === domNodeId);
-                    if (promoted) propsRef.current.onNodeDoubleClick(promoted);
-                }
-                lastPress = null;
-                return;
-            }
+            if (!node) return;
             // The node owns this press; the canvas must not start a pan or box select.
             event.stopPropagation();
             setHover(node.id);
-            lastPress = { nodeId: node.id, at: event.timeStamp };
             propsRef.current.onNodePointerDown(event, node.id);
         };
         const handleContextMenu = (event: MouseEvent) => {
@@ -266,7 +257,7 @@ export function CanvasLodLayer(props: CanvasLodLayerProps) {
             if (moveFrame !== null) cancelAnimationFrame(moveFrame);
             setHover(null);
         };
-    }, [props.active, resolveContainer]);
+    }, [props.active, props.interactive, resolveContainer]);
 
     return (
         <canvas

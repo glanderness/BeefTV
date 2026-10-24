@@ -430,6 +430,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
         <div
             ref={containerRef}
             data-canvas-viewport
+            data-canvas-space-pressed={isSpacePressed ? "true" : undefined}
             data-canvas-pan-state={isSpacePressed || !boxSelectEnabled ? "grab" : undefined}
             className={`relative h-full w-full select-none overflow-hidden touch-none ${isSpacePressed || !boxSelectEnabled ? "cursor-grab" : "canvas-cursor-select"}`}
             style={{

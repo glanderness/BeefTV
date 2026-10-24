@@ -6,6 +6,9 @@ test("重复节点共用按屏幕尺寸生成的透明预览，放大切档且�
     const build = await Bun.build({ entrypoints: [import.meta.dir + "/fixtures/canvas-image-preview-harness.ts"], target: "browser",
         define: { "process.env.NODE_ENV": '"production"', "import.meta.env": '{"VITE_CANVAS_LOCAL_MODE":"false","VITE_CANVAS_BACKEND_URL":"/api"}' },
         plugins: [{ name: "alias", setup(builder) {
+            // Bun 1.3.9 can miss these relative imports when the same module is
+            // also reached through @/. Resolve both spellings to the same file.
+            builder.onResolve({ filter: /^\.\.?\/.*(?:canvas-theme|user-scope)$/ }, args => ({ path: Bun.resolveSync(args.path, args.resolveDir) }));
             builder.onResolve({ filter: /^@\// }, args => ({ path: Bun.resolveSync("../src/" + args.path.slice(2), import.meta.dir) }));
             builder.onLoad({ filter: /\.(css|svg|png|jpe?g|gif|webp|woff2?)$/ }, () => ({ contents: "export default ''", loader: "js" }));
         } }] });
