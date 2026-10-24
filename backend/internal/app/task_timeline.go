@@ -151,6 +151,9 @@ type timelineRenderInput struct {
 	ProjectID string          `json:"projectId"`
 	Timeline  editing.Project `json:"timeline"`
 	Options   editing.Options `json:"options"`
+	// Metadata 承载产物登记信息（短剧成片把结果写回对应工作流阶段），
+	// 渲染执行本身不使用，但会随任务输入持久化供登记路径读取。
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 type TimelineRenderPlanRequest struct {

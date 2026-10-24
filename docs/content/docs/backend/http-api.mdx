@@ -79,7 +79,7 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 
 `POST /timeline/render-plan` 接收时间线快照、不透明源标识和输出选项，返回版本化语义计划。源标识是 nodeId 或 resource id，不是本地路径。请求不得携带 ffmpeg 参数。该接口不做生成、不写资源、不创建任务。
 
-`POST /timeline/renders` 接收同一套时间线快照和输出选项（宽高、帧率、采样率、是否烧录字幕），创建本机 ffmpeg 成片任务。选项进入任务输入并在执行时编译进语义计划。
+`POST /timeline/renders` 接收同一套时间线快照和输出选项（宽高、帧率、采样率、是否烧录字幕），创建本机 ffmpeg 成片任务。选项进入任务输入并在执行时编译进语义计划。可选 `metadata` 携带产物登记信息（短剧成片用它把结果写回对应工作流阶段），字段随任务输入持久化，渲染执行本身不解释；省略时任务成功不登记项目产物。
 
 时间线 v2 可在 `timeline.output` 保存 `width`、`height`、`fps`、`sampleRate` 与 `burnSubtitles`。编译、原生渲染和浏览器导出共同使用这些工程规格；单次请求显式提供的 `options` 优先，均未提供时才使用默认值。`canvas.timeline.update` 同时保留轨道的 `label`、`order`、`locked`，以及片段标题和字幕关联编号。
 
