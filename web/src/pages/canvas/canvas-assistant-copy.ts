@@ -131,9 +131,14 @@ export function assistantProposalText(proposal: AssistantGenerationProposal, pri
         const images = targets.filter(t => t.kind === "image").length;
         const videos = targets.filter(t => t.kind === "video");
         const audio = targets.filter(t => t.kind === "audio");
-        const labels: Record<string,string> = {size:"画幅",quality:"质量",vquality:"分辨率",seconds:"时长（秒）",generateAudio:"生成声音",audioVoice:"音色",audioSpeed:"语速",audioFormat:"音频格式",audioInstructions:"朗读指令",transparentBackground:"透明背景",watermark:"水印"};
+        const labels: Record<string,string> = {size:"画幅",quality:"质量",vquality:"分辨率",seconds:"时长（秒）",generateAudio:"生成声音",audioVoice:"音色",audioSpeed:"语速",audioFormat:"音频格式",audioInstructions:"朗读指令",transparentBackground:"透明背景",watermark:"水印",seedreamOutputFormat:"图片格式",seedreamOptimize:"提示词优化",seedreamWatermark:"图片水印"};
         const lines = [`整片制作方案：${images} 张图片、${videos.length} 段视频、${audio.length} 段配音`, ...targets.map(t => {
-            const params = Object.entries(t.parameters).filter(([key]) => labels[key]).map(([key,value]) => `${labels[key]}：${value}`).join(" · ");
+            const params = Object.entries(t.parameters).filter(([key]) => labels[key]).map(([key,value]) => {
+                const display = key === "seedreamOptimize" ? (value === "standard" ? "标准" : value === "fast" ? "快速" : value)
+                    : key === "seedreamWatermark" ? (value === "true" ? "开启" : "关闭")
+                    : key === "seedreamOutputFormat" ? value.toUpperCase() : value;
+                return `${labels[key]}：${display}`;
+            }).join(" · ");
             const refs = t.referenceNodeIds.map(id => targets.find(item => item.nodeId === id)?.title || "已有参考素材");
             return `${t.title} · ${t.modelKey.split("::").pop()} · ${t.parameters.count || "1"} 个\n${params}${refs.length ? `\n参考：${refs.join("、")}` : ""}\n${t.kind === "audio" ? "台词" : "提示词"}：${t.prompt}`;
         })];
@@ -157,7 +162,7 @@ export function assistantProposalProgress(proposal: AssistantGenerationProposal,
         };
         const matched = nodes.filter(matches);
         if (!matched.length) { if (proposal.production) planned++; else unknown = true; continue; }
-        const roots = new Set(matched.flatMap(node => node.metadata?.isBatchRoot ? [node.id] : node.metadata?.batchRootId ? [node.metadata.batchRootId] : []));
+        const roots = new Set(matched.flatMap(node => (node.metadata?.isBatchRoot || node.metadata?.generationOutputNodeIds?.includes(node.id)) ? [node.id] : node.metadata?.batchRootId ? [node.metadata.batchRootId] : []));
         if (roots.size) {
             for (const rootId of roots) {
                 const root = byId.get(rootId);
@@ -372,7 +377,9 @@ export function assistantUnresolvedFailures(calls: AgentToolCall[] | undefined):
             return [...keys].every(key => JSON.stringify(before[key]) === JSON.stringify(after[key]));
         });
         if (resolved) return;
-        const label = call.tool.replace("_", ".") === "media.inspect"
+        const label = call.tool === "canvas.generation.propose" && /^production_seedream_multiple_outputs(?::|$)/.test(call.error || "")
+            ? "整片制作暂不支持 Seedream 图层拆分或组图。请先在画布生成图片，再用已有图片继续制作。"
+            : call.tool.replace("_", ".") === "media.inspect"
             ? call.args?.mode === "audio" ? "有音频片段听取未完成"
                 : call.args?.mode === "video" ? "有视频片段查看未完成"
                     : !call.args?.mode || call.args.mode === "frames" ? "有素材的画面查看未完成" : `${assistantActionLabel(call.tool)}没有成功`

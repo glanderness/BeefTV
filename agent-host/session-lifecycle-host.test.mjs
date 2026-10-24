@@ -518,6 +518,7 @@ test('真实宿主：停止先于 /chat 到达时只停这一条请求；同一�
     expect(await chat('early-turn-1', 'early-req')).toMatchObject({ turnId: 'early-turn-1', requestId: 'early-req', cancelled: true, error: null, reply: '' });
     // The same request again under a new Go turn: nothing runs, and that turn is closed as well.
     expect(await chat('early-turn-2', 'early-req')).toMatchObject({ turnId: 'early-turn-1', requestId: 'early-req', cancelled: true });
+    expect(getOpsRequests().filter((line) => line.includes('/api/ops/'))).toEqual([]);
     // Another request on the same conversation is not affected.
     expect(await chat('other-turn', 'other-req')).toMatchObject({ turnId: 'other-turn', reply: 'ok', cancelled: false, error: null });
     expect((await api('/cancel', { canvasId, sessionId, requestId: 'other-req' })).payload).toEqual({ accepted: true, state: 'finished' });
@@ -528,8 +529,9 @@ test('真实宿主：停止先于 /chat 到达时只停这一条请求；同一�
     expect(await chat('late-turn', 'late-req')).toMatchObject({ turnId: 'late-turn', requestId: 'late-req', cancelled: true });
     expect(await chat('early-turn-3', 'early-req')).toMatchObject({ turnId: 'early-turn-1', cancelled: true });
     expect(getModelCalls()).toBe(1);
-    // Only the one request that ran read the skill catalog for its model request; stopped ones did nothing.
-    expect(getOpsRequests().filter((line) => line.includes('/api/ops/'))).toEqual(['POST /api/ops/skill.catalog']);
+    // The request that ran read the current canvas and skill catalog; stopped
+    // requests do neither, including those replayed after the restart.
+    expect(getOpsRequests().filter((line) => line.includes('/api/ops/'))).toEqual(['POST /api/ops/canvas.get', 'POST /api/ops/skill.catalog']);
     expect(completed()).toEqual(['early-turn-1', 'early-turn-2', 'other-turn', 'late-turn', 'early-turn-3']);
     const history = await api(`/history?canvasId=${canvasId}&sessionId=${encodeURIComponent(sessionId)}`);
     expect(history.payload.active).toBeNull();

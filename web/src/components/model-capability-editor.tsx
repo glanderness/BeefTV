@@ -1,6 +1,6 @@
 import { ImageSizePresetsEditor } from "./image-size-presets-editor";
 import { imageSizeConfigWithPresets, imageSizePresets } from "@/lib/image-size-presets";
-import { Input, InputNumber, Select } from "antd";
+import { Button, Input, InputNumber, Select } from "antd";
 import { Switch } from "@/components/ui/base/switch";
 import { SegmentedControl } from "@/components/ui/base/segmented-control";
 import type { ReactNode } from "react";
@@ -43,7 +43,8 @@ export function ModelCapabilityEditor({ value, onChange, protocol, capability = 
     if (capability === "image") {
         return <ImageCapabilityEditor value={value} onChange={onChange} protocol={protocol} model={model} disabled={disabled} section={section} />;
     }
-    const profile = normalizeModelCapabilityConfig(value || defaultModelCapabilityConfig(protocol)).video!;
+    const defaults = defaultModelCapabilityConfig(protocol, model).video!;
+    const profile = normalizeModelCapabilityConfig(value || { version: 1, video: defaults }).video!;
     const update = (patch: Partial<VideoCapabilityConfig>) => onChange?.({ version: 1, video: { ...profile, ...patch } });
     const updateReferences = (patch: Partial<VideoCapabilityConfig["references"]>) => update({ references: { ...profile.references, ...patch } });
     const updateDuration = (patch: Partial<VideoCapabilityConfig["duration"]>) => update({ duration: { ...profile.duration, ...patch } });
@@ -80,7 +81,7 @@ export function ModelCapabilityEditor({ value, onChange, protocol, capability = 
                         <NumberField label="单个视频最长秒数" value={profile.references.maxVideoDurationSeconds} min={0} disabled={disabled} onChange={(value) => updateReferences({ maxVideoDurationSeconds: value || 0 })} />
                     </ReferenceCard>
                     <ReferenceCard title="通用限制" description="所有视频请求共用的基础约束">
-                        <NumberField label="提示词最大字符数" value={profile.references.promptMaxChars} min={1} disabled={disabled} onChange={(value) => updateReferences({ promptMaxChars: value || 1 })} />
+                        <VideoPromptLimitFields references={profile.references} defaults={defaults.references} disabled={disabled} onChange={updateReferences} />
                         <BooleanField label="水印" value={profile.watermark} disabled={disabled} onChange={(watermark) => update({ watermark })} />
                     </ReferenceCard>
                 </div>
@@ -339,7 +340,7 @@ export function ModelCapabilityEditor({ value, onChange, protocol, capability = 
 
                     <CapabilityGroup title="通用限制" description="不属于单一媒体类型的请求与输出约束">
                         <div className="grid gap-3 sm:grid-cols-2">
-                            <NumberField label="提示词最大字符数" value={profile.references.promptMaxChars} min={1} disabled={disabled} onChange={(value) => updateReferences({ promptMaxChars: value || 1 })} />
+                            <VideoPromptLimitFields references={profile.references} defaults={defaults.references} disabled={disabled} onChange={updateReferences} />
                             <BooleanField label="水印" value={profile.watermark} disabled={disabled} onChange={(watermark) => update({ watermark })} />
                         </div>
                     </CapabilityGroup>
@@ -347,6 +348,20 @@ export function ModelCapabilityEditor({ value, onChange, protocol, capability = 
             ) : null}
         </div>
     );
+}
+
+function VideoPromptLimitFields({ references, defaults, disabled, onChange }: {
+    references: VideoCapabilityConfig["references"];
+    defaults: VideoCapabilityConfig["references"];
+    disabled: boolean;
+    onChange: (value: Partial<VideoCapabilityConfig["references"]>) => void;
+}) {
+    const usesUtf16 = Boolean(references.promptMaxUtf16Units || (!references.promptMaxChars && defaults.promptMaxUtf16Units));
+    return <div className="space-y-2">
+        <NumberField label="提示词最大字符数" value={usesUtf16 ? references.promptMaxUtf16Units || 0 : references.promptMaxChars} min={0} disabled={disabled} onChange={(value) => onChange(usesUtf16 ? { promptMaxChars: 0, promptMaxUtf16Units: value ?? 0 } : { promptMaxChars: value ?? 0, promptMaxUtf16Units: 0 })} />
+        <p className="text-[var(--fs-label)] leading-relaxed text-foreground/60">设为 0 时由服务商校验。{usesUtf16 ? "此通道按 UTF-16 计数，常见表情占 2 个字符。" : ""}</p>
+        <Button size="small" disabled={disabled} onClick={() => onChange({ promptMaxChars: defaults.promptMaxChars, promptMaxUtf16Units: defaults.promptMaxUtf16Units || 0 })}>恢复默认限制</Button>
+    </div>;
 }
 
 function TextCapabilityEditor({ value, onChange, protocol, disabled, section }: Pick<Props, "value" | "onChange" | "protocol" | "disabled" | "section">) {

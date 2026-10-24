@@ -136,7 +136,6 @@ import { linkedFolderPresentation } from "./canvas-resource-handoff-plan";
 import { useCanvasAssistantProposal } from "./use-canvas-assistant-proposal";
 import { useCanvasConnectedNodeVisibility } from "./use-canvas-connected-node-visibility";
 import { useCanvasGenerationOrchestration } from "./use-canvas-generation-orchestration";
-import { useCanvasMentionNormalize } from "./use-canvas-mention-normalize";
 import { useCanvasNodeContent } from "./use-canvas-node-content";
 import { useCanvasPointerSelectionChrome, useCanvasNodeToolbarHover } from "./use-canvas-pointer-chrome";
 import { useCanvasProjectDialogs } from "./use-canvas-project-dialogs";
@@ -1770,7 +1769,6 @@ function InfiniteCanvasPage() {
         dialogNodeId,
     });
     const renderedConnections = showConnections ? displayConnections : [];
-    useCanvasMentionNormalize(mentionReferencesByNodeId, setNodes);
     const dialogNodeCandidate = dialogNodeId ? nodeById.get(dialogNodeId) || null : null;
     const dialogNode = canOpenCanvasNodePromptPanel(dialogNodeCandidate) ? dialogNodeCandidate : null;
     // dragPreview is published on the same pointer-down frame as isNodeDragging.

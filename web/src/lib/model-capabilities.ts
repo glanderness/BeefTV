@@ -2,6 +2,7 @@ import { isVolcengineArkVideoProtocol, type ModelProtocol, type ModelProtocolWor
 import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
 import { seedreamImageCapability } from "@/lib/seedream-image";
 import type { ImageResolutionOption, ImageResolutionTier } from "@/lib/image-resolution-tiers";
+import { videoPromptLimits } from "@/lib/video-prompt-limits";
 
 export type ModelCapabilityConfig = {
     version: number;
@@ -26,14 +27,8 @@ export type TextCapabilityConfig = {
 
 export type ImageSizeParameter = "none" | "size" | "aspect_ratio";
 
-/**
- * 普通视频模型提示词字符数的默认上限。
- *
- * 视频提示词由「输入框文本 + 连线内容 + 技能上下文」合成，远长于用户手输内容，
- * 因此不能沿用偏小的默认值把画布工作流拦在本地。必须与后端
- * `DefaultVideoPromptMaxChars` 保持一致，否则前端放行后端拒绝（或反之）。
- */
-export const DEFAULT_VIDEO_PROMPT_MAX_CHARS = 8000;
+/** 0 means no documented local character limit; the supplier still validates. */
+export const DEFAULT_VIDEO_PROMPT_MAX_CHARS = 0;
 
 export type ImageCapabilityConfig = {
     references: {
@@ -66,6 +61,7 @@ export type ImageCapabilityConfig = {
 export type VideoCapabilityConfig = {
     references: {
         promptMaxChars: number;
+        promptMaxUtf16Units?: number;
         minImages: number;
         maxImages: number;
         maxImageBytes: number;
@@ -166,7 +162,8 @@ export function normalizeModelCapabilityConfig(config: ModelCapabilityConfig): M
 }
 
 const catalogIntBounds: Record<string, [number, number]> = {
-    promptMaxChars: [1, 1_000_000],
+    promptMaxChars: [0, 1_000_000],
+    promptMaxUtf16Units: [0, 1_000_000],
     minImages: [0, 100],
     maxImages: [0, 100],
     maxVideos: [0, 100],
@@ -656,6 +653,7 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.ratios = [...video.ratios, "adaptive"];
         if (isSeedance25Model(model)) video.operations = [...video.operations, "inpaint", "extend"];
     }
+    Object.assign(video.references, videoPromptLimits(protocol, model));
     return { version: 1, text, image: defaultImageCapabilityConfig(protocol, model), video };
 }
 
@@ -708,7 +706,7 @@ export function modelCapabilityConfigFor(
     }
     const capabilityConfig = normalizeModelCapabilityConfig(profile.capabilityConfig);
     const text = capabilityConfig.text ? { ...fallback.text!, ...capabilityConfig.text, references: { ...fallback.text!.references, ...capabilityConfig.text.references } } : fallback.text;
-    const video = (capabilityConfig.video ? { ...fallback.video!, ...capabilityConfig.video, references: { ...fallback.video!.references, ...capabilityConfig.video.references } } : fallback.video)!;
+    const video = (capabilityConfig.video ? { ...fallback.video!, ...capabilityConfig.video, references: { ...fallback.video!.references, ...capabilityConfig.video.references, promptMaxUtf16Units: capabilityConfig.video.references.promptMaxUtf16Units ?? 0 } } : fallback.video)!;
     alignMaterialPixels(video);
     const configuredImage = capabilityConfig.image;
     const image = configuredImage
@@ -736,7 +734,7 @@ export function modelCapabilityConfigFor(
     return { ...fallback, ...capabilityConfig, text, image, video };
 }
 
-function isSeedance2Family(protocol: ModelProtocol | undefined, modelName: string) {
+export function isSeedance2Family(protocol: ModelProtocol | undefined, modelName: string) {
     return Boolean(protocol && ["openai", "openai-videos", "newapi", "newapi-channel-2", "volcengine-ark-video", "volcengine-ark-agent-plan-video"].includes(protocol) && String(modelName).toLowerCase().includes("seedance-2"));
 }
 

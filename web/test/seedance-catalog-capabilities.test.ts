@@ -104,6 +104,18 @@ test("catalog import stores managed video capabilities and version", () => {
     expect(profiles[0]?.capabilityConfig?.video?.references.maxAudios).toBe(1);
 });
 
+test("catalog zero prompt ceiling and UTF-16 limit survive import and reload", () => {
+    const video = sampleVideo(0, 0);
+    video.references.promptMaxChars = 0;
+    video.references.promptMaxUtf16Units = 1000;
+    const channel = createModelChannel({ id: "beefapi", baseUrl: "https://enterprise.beefapi.com", models: ["gen4_turbo"] });
+    const profiles = mergeFetchedChannelModelProfiles(channel, [{ id: "gen4_turbo", modelType: "video", videoCapabilities: video, videoCapabilitiesVersion: "utf16-v1" }]);
+    const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [{ ...channel, modelProfiles: profiles }] } }).config;
+    const references = modelCapabilityConfigFor(config, "beefapi::gen4_turbo").video!.references;
+    expect(references.promptMaxChars).toBe(0);
+    expect(references.promptMaxUtf16Units).toBe(1000);
+});
+
 test("refresh replaces managed capabilities and keeps the new version", () => {
     const channel = createModelChannel({
         id: "beefapi",

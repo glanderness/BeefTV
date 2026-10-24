@@ -12,6 +12,7 @@
     "generation-errors",
     "seedance-task-constraints",
     "video-model-contracts",
+    "video-prompt-limits",
     "desktop-updater",
     "desktop-account",
     "depth-video-runtime"

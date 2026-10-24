@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+
+	"infinite-canvas/backend/internal/providerpreset"
 )
 
 // GenerationTarget freezes the paid inputs confirmed by the user. Delivered
@@ -129,6 +132,23 @@ func GenerationTargets(domain Domain, doc map[string]any, ids []string) ([]Gener
 		for _, key := range []string{"size", "quality", "count", "transparentBackground", "seconds", "vquality", "generateAudio", "watermark", "audioVoice", "audioFormat", "audioSpeed", "audioInstructions", "videoStartFrameNodeId", "videoEndFrameNodeId", "videoMiddleFrameNodeId"} {
 			if v, ok := meta[key]; ok && v != nil {
 				parameters[key] = fmt.Sprint(v)
+			}
+		}
+		if kind == "image" {
+			model := choice.ModelKey
+			if i := strings.LastIndex(model, "::"); i >= 0 {
+				model = model[i+2:]
+			}
+			if family := providerpreset.SeedreamFamily(model); family != "" {
+				for _, key := range []string{"seedreamMode", "seedreamMaxImages", "seedreamOutputFormat", "seedreamOptimize", "seedreamWatermark"} {
+					if v, ok := meta[key]; ok && v != nil {
+						parameters[key] = fmt.Sprint(v)
+					}
+				}
+				maxImages, _ := strconv.Atoi(parameters["seedreamMaxImages"])
+				if parameters["seedreamMode"] == "layers" || (family != "pro" && family != "flash" && maxImages > 1) {
+					return nil, InvalidArg("production_seedream_multiple_outputs", "整片制作暂不支持 Seedream 图层拆分或组图。请先在画布生成图片，再用已有图片继续制作。")
+				}
 			}
 		}
 		var metadata map[string]any
