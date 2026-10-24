@@ -53,9 +53,9 @@
 
 ## 产品演示
 
-[![BeefTV 新版产品演示，点击播放完整视频](assets/readme/beeftv-demo-2.0-poster.jpg)](assets/readme/beeftv-demo-2.0.mp4)
+<video src="https://github.com/user-attachments/assets/da4081e0-26bc-424e-b20c-124f92ce6538" controls preload="metadata" playsinline></video>
 
-新版产品演示 · 约 45 秒 · 点击封面观看。
+新版产品演示 · 约 45 秒。
 
 ## 工作流
 
@@ -69,7 +69,9 @@
 | --- | --- |
 | ![原片中穿灰色西装的人物腾空跳跃](assets/readme/beeftv-character-source-motion.webp) | ![同一时间点，完整版中的人物外貌和服装已替换，仍处于腾空跳跃姿态](assets/readme/beeftv-character-result-motion.webp) |
 
-[观看 20 秒完整版](assets/readme/beeftv-character-replacement-demo.mp4) · [制作记录](docs/content/docs/overview/examples.mdx#工作流单人物替换)
+<video src="https://github.com/user-attachments/assets/cadf1e3b-e1fa-4a45-83a0-c8cdacc4d1b1" controls preload="metadata" playsinline></video>
+
+[制作记录](docs/content/docs/overview/examples.mdx#工作流单人物替换)
 
 - **把处理与生成串起来**：帧率适配在本地完成，视频与角色图分别作为生成参考。
 - **保留可编辑的配置**：调整节点、连线、模型、提示词和输出参数，保存为模板版本。
@@ -85,9 +87,14 @@
 
 在本地案例 **《最后一瓶水》** 中，用户说明创作顺序并确认生成方案，Agent 自行搭建了 **25 个节点、48 条连线**：从剧本架构、8 镜分镜表，到角色、场景、镜头首帧、视频与中文旁白，过程和素材都留在画布上。
 
-| 角色设定 · 沈默 | 场景设定 · 水塔配给点 | 生成镜头 · 点击播放 |
-| --- | --- | --- |
-| ![Agent 生成的主角沈默设定图](assets/readme/beeftv-agent-drama-role-shenmo.webp) | ![Agent 生成的末日水塔配给点场景](assets/readme/beeftv-agent-drama-scene-water-tower.webp) | [![镜头 4 的真实视频帧：大衣内藏着水瓶](assets/readme/beeftv-agent-drama-shot-4-poster.webp)](assets/readme/beeftv-agent-drama-shot-4.mp4) |
+<table>
+  <tr><th width="33%">角色设定 · 沈默</th><th width="33%">场景设定 · 水塔配给点</th><th width="34%">生成镜头 · 点击播放</th></tr>
+  <tr>
+    <td><img src="assets/readme/beeftv-agent-drama-role-shenmo.webp" alt="Agent 生成的主角沈默设定图"></td>
+    <td><img src="assets/readme/beeftv-agent-drama-scene-water-tower.webp" alt="Agent 生成的末日水塔配给点场景"></td>
+    <td><video src="https://github.com/user-attachments/assets/0c0e1174-479d-4394-a4b2-7c64a3367e0a" controls preload="metadata" playsinline></video></td>
+  </tr>
+</table>
 
 ![BeefTV Agent 实际使用画面：角色与场景节点通过连线关联分镜和视频，右侧显示制作步骤与执行进度](assets/readme/beeftv-agent-drama-canvas.png)
 
@@ -95,7 +102,11 @@
 - **再执行**：创建节点与参考连线，确认后调用模型，生成角色图、场景图、镜头和旁白。
 - **可检查、可继续**：读取实际产物，核对设定图与分镜首帧，保留成功素材和失败状态，继续调整与编辑。
 
-[另一段镜头 · 约 9 秒](assets/readme/beeftv-agent-drama-shot-6.mp4) · [开场旁白试听](assets/readme/beeftv-agent-drama-narration-opening.mp3) · [制作记录](docs/content/docs/overview/examples.mdx#agent聊天驱动的短剧制作)
+另一段镜头 · 约 9 秒：
+
+<video src="https://github.com/user-attachments/assets/b304bdd1-5a3f-4e96-929b-46a9cbff29bf" controls preload="metadata" playsinline></video>
+
+[开场旁白试听](assets/readme/beeftv-agent-drama-narration-opening.mp3) · [制作记录](docs/content/docs/overview/examples.mdx#agent聊天驱动的短剧制作)
 
 本例已完成 3 张角色图、2 张场景图、5 张分镜首帧、3 段视频与 2 段旁白；整片剪辑、字幕和最终影音验收尚未完成。生成需要可用的模型渠道，影音审查还需支持的多模态模型；结果仍需人工核对。
 

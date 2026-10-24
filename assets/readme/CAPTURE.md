@@ -151,6 +151,14 @@
 
 ## 新版产品演示视频（2026-10-24）
 
+### GitHub 页内播放修复
+
+- 根因：封面 Markdown 链接跳转到 GitHub blob 文件页，不是播放器；GitHub 的 Markdown 渲染会移除普通仓库 MP4 地址的 `<video>`，保留 GitHub 用户附件地址。此前远端 HTTP 可访问检查不足以验证播放器。
+- 参考 Hypit README 的表格内 `<video controls>` 方案。当前中英文 README 和案例页均使用 GitHub 视频附件；章节顺序与三列表格布局保持不变。
+- 附件通过 GitHub 官方 CLI 的 `internal/attachments/client.go` 所用上传接口创建。地址与文件大小记录在 `video-attachments.json`，文档保存稳定附件地址，不保存短时签名地址。
+- 三个短剧镜头的网页副本为 `beeftv-agent-drama-shot-{4,5,6}-web.mp4`，分别 2,286,138 / 1,522,906 / 2,335,706 字节；保留原分辨率、帧率和完整内容，H.264 / yuv420p + AAC，播放索引前置，原片未修改。
+- 五段视频全量解码与 faststart 检查通过。GitHub Markdown 渲染接口在中英文 README 和案例页分别保留 4 个播放器。
+
 - 来源：用户提供的 `10月24日-BeefTV新版演示宣传片-X.mp4`，原片约 127 MiB、44.93 秒、2564 × 1440、60 fps，保留原文件不变。
 - 网页版：`beeftv-demo-2.0.mp4`，6,699,829 字节（约 6.39 MiB），1920 × 1078、30 fps，H.264 / yuv420p + AAC，容器时长 44.952 秒，未裁剪内容。视频 CRF 26、峰值码率约束 1500 kbit/s，音频 96 kbit/s；复杂画面和小字会有压缩损失。
 - `moov` 位于偏移 32，`mdat` 位于偏移 47,793，可先读取播放索引再逐步加载；全量音视频解码通过。
