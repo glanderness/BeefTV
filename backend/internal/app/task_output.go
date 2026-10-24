@@ -26,6 +26,7 @@ func taskSummariesForOutput(tasks []model.Task) []TaskSummary {
 }
 
 func taskSummaryForOutput(task model.Task) TaskSummary {
+	task = correctPersistedImageInputRejection(task)
 	task = correctPersistedVODParameterFailure(task)
 	errorCode := persistedFailureErrorCode(task.Error, task.Stage)
 	if errorCode == string(generation.CategoryUnknown) && !isContentModerationFailure(task.Error) {
@@ -227,6 +228,7 @@ func truncateRunes(value string, limit int) string {
 }
 
 func taskForOutput(task model.Task) *model.Task {
+	task = correctPersistedImageInputRejection(task)
 	task = correctPersistedVODParameterFailure(task)
 	task.FailureDiagnostics = generation.SanitizeTaskDiagnostics(task.FailureDiagnostics)
 	task.InputJSON = publicTaskInputJSON(task.InputJSON)
@@ -292,6 +294,14 @@ func publicTaskInputJSON(raw string) string {
 	}
 	data, _ := json.Marshal(public)
 	return string(data)
+}
+
+func correctPersistedImageInputRejection(task model.Task) model.Task {
+	if failure, confirmed := recordedImageInputRejection(task); confirmed {
+		task.Stage = "任务失败"
+		task.Error = failure.UserMessage()
+	}
+	return task
 }
 
 // Read-time projection repairs an old uncertainty label only when one complete

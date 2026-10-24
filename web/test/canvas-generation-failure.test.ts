@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildNodeGenerationContext } from "../src/components/canvas/canvas-node-generation";
-import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasTaskFailureMetadata } from "../src/pages/canvas/canvas-generation-failure";
+import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasTaskFailureMetadata, canvasGenerationTaskNodes, canvasImageGenerationHasPendingResult } from "../src/pages/canvas/canvas-generation-failure";
 import { taskAttentionReason, taskRetryBlocked } from "../src/pages/tasks/task-shared";
 import { resolveMetadataReferences, generationTaskMetadata, resetGenerationTaskMetadata } from "../src/lib/canvas/canvas-project-generation";
 import { ApiError } from "../src/services/api/request";
@@ -42,6 +42,19 @@ test("backend canvas revision 409 offers reload without treating it as a model f
 });
 const task: GenerationTask = { id: "task-failure", type: "canvas_image", status: "failed", prompt: "draw", attempts: 1, createdAt: "2026-09-26T00:00:00Z", updatedAt: "2026-09-26T00:00:00Z", errorCode: "content_policy_violation", error: "opaque" };
 const image = (id: string, storageKey: string): CanvasNodeData => ({ id, type: CanvasNodeType.Image, title: id, position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { content: `https://example.test/${id}.png`, storageKey } });
+
+test("confirmed image input rejection replaces stale uncertainty and permits changed input", () => {
+    const corrected: GenerationTask = { ...task, stage: "任务失败", errorCode: "moderation_input", error: "输入文本未通过内容安全审核。请调整提示词后重新生成。" };
+    const stale = image("rejected-node", "");
+    stale.metadata = { taskId: task.id, status: "error", taskStage: "submission_unknown", generationSubmissionState: "unknown", generationErrorCode: "submission_uncertain" };
+    const restored = canvasGenerationTaskNodes([stale], stale.id, corrected)[0];
+    expect(restored.metadata?.errorDetails).toContain("输入文本未通过内容安全审核");
+    expect(restored.metadata?.errorDetails).not.toContain("结果尚未确认");
+    expect(canvasImageGenerationHasPendingResult(restored, [restored])).toBe(false);
+    expect(canvasGenerationRetryBlocked(restored.metadata, { mode: "image", prompt: "draw" })).toBe(true);
+    expect(canvasGenerationRetryBlocked(restored.metadata, { mode: "image", prompt: "a different drawing" })).toBe(false);
+    expect(taskRetryBlocked(corrected)).toBe(true);
+});
 
 describe("canvas generation failure consumers", () => {
     test("copied diagnostics hide mounted and UNC paths and label configuration honestly", () => {
