@@ -1702,7 +1702,7 @@
   },
   {
     "id": "media.inspect",
-    "summary": "实际读取指定区间，每次最多 15 秒：frames 看静态截图，video 看连续原生视频，audio 听原生音频；按问题选择，不把抽帧当作完整影音审查。",
+    "summary": "实际读取媒体：图片默认保留原始像素，可用 imageCrop 分区看小字、纹理和长图，图片 startMs/endMs 均为0；影音每次最多 15 秒，frames 看截图，video 看连续视频，audio 听音频，不把抽帧当作完整影音审查。",
     "readOnly": true,
     "scope": "canvas",
     "params": {
@@ -1741,6 +1741,39 @@
             "video",
             "audio"
           ]
+        },
+        "imageCrop": {
+          "type": "object",
+          "description": "仅用于图片 frames 检查。按原始像素读取局部，不缩小分辨率；坐标相对显示方向，从左上角起，x/y/width/height 均为0到1的比例，范围必须完整位于图内。用于小字、纹理及长图分区。",
+          "properties": {
+            "x": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "y": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "width": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            },
+            "height": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "width",
+            "height"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -1757,7 +1790,7 @@
   },
   {
     "id": "media.overview",
-    "summary": "获取已关联媒体的版本、时长与静态预览；概要不能替代连续视频或声音内容审查。已知15秒以内区间可用 evidence 一次读取真实 frames/video/audio 及客观检测。",
+    "summary": "获取已关联媒体的版本、时长与画面。图片在大小允许时保留原始像素；image.view=preview 表示仅有概览，细节需用 media.inspect imageCrop 分区查看。已知15秒以内影音区间可用 evidence 读取真实 frames/video/audio 及客观检测。概览不能替代连续影音审查。",
     "readOnly": true,
     "scope": "canvas",
     "params": {

@@ -143,7 +143,7 @@ func TestNativeImageURLLocatorsPreserveContentAndOwnership(t *testing.T) {
 			}
 			part := result.Content[0]
 			data, err := base64.StdEncoding.DecodeString(part.Data)
-			if err != nil || part.Type != "image" || part.MimeType != "image/jpeg" || !bytes.HasPrefix(data, []byte{0xff, 0xd8}) {
+			if err != nil || part.Type != "image" || part.MimeType != "image/png" || !bytes.Equal(data, encoded.Bytes()) {
 				t.Fatal("URL locator did not return actual image bytes")
 			}
 		}
