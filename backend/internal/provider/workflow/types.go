@@ -33,6 +33,19 @@ type Config struct {
 	WorkflowJSON          map[string]interface{}
 	WorkflowFields        []Field
 	RunningHubUploadKey   string
+	AuthType              string
+	AuthHeader            string
+	NegativePrompt        string
+	Seed                  string
+	ComfyUI               *ComfyWorkflow
+}
+
+// ComfyWorkflow 是待扩展宿主接入的协议配置，不注册内置渠道或持久化格式。
+type ComfyWorkflow struct {
+	Graph        map[string]any `json:"graph"`
+	Fields       []Field        `json:"fields"`
+	OutputNodeID string         `json:"outputNodeId"`
+	OutputField  string         `json:"outputField"`
 }
 
 // Media is the workflow-needed slice of providerMedia.
@@ -56,6 +69,7 @@ type Input struct {
 	Mask             *Media
 	ResumedRequestID string
 	LocalWorkspace   bool
+	ClientID         string
 }
 
 // FetchRequest is the exported workflow-settings fetch contract.
