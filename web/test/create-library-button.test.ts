@@ -31,7 +31,7 @@ describe("creation library button", () => {
         expect(source).not.toContain("creation-composer-mode-row");
         expect(dockSource).not.toContain('aria-label="打开素材库选择参考内容"');
         expect(dockSource).not.toContain('aria-label="从本机上传附件"');
-        expect(source).toContain("onClick={props.onOpenLibrary}");
+        expect(source).toContain("onClick={canAddMoreReferences ? props.onOpenLibrary : handleReferencesLimitReached}");
         expect(source).toContain("creation-reference-add-button");
         expect(source).toContain('variant="creation"');
         expect(source).not.toContain("showSelectedPrice");
@@ -93,7 +93,9 @@ describe("creation library button", () => {
         expect(source).toContain("creation-reference-add-button");
         expect(source).toContain("addReferenceLabel");
         expect(source).toContain("aria-busy={interactionBusy}");
-        expect(source).toContain("disabled={interactionBusy || !canAddMoreReferences}");
+        expect(source).toContain("disabled={interactionBusy}");
+        expect(source).toContain("onClick={canAddMoreReferences ? props.onOpenLibrary : handleReferencesLimitReached}");
+        expect(source).toContain("handleReferencesLimitReached");
         expect(source).toContain("creation-reference-track-button");
         expect(source).toContain("imageReferenceAtPoint");
         expect(source).toContain("setDropTargetReferenceId");
@@ -141,7 +143,7 @@ describe("creation library button", () => {
 
         expect(source).toContain("onPointerDownCapture={(event) => event.stopPropagation()}");
         expect(source).toContain("onRemove(item.id)");
-        expect(source).toContain("onClick={props.onOpenLibrary}");
+        expect(source).toContain("onClick={canAddMoreReferences ? props.onOpenLibrary : handleReferencesLimitReached}");
         expect(source).not.toContain("onClick={() => props.fileInputRef.current?.click()}");
     });
 });

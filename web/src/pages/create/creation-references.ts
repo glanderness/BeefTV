@@ -34,6 +34,37 @@ export function reconcileCreationAttachmentLimit(attachments: CreationAttachment
     return { attachments: nextAttachments, removedReferences };
 }
 
+export type CreationAttachmentAddPlan = {
+    attachments: CreationAttachment[];
+    addedCount: number;
+    droppedCount: number;
+    limit: number;
+};
+
+/** 参考内容达到模型上限时的统一提示文案：说清上限多少、进去几个、剩下几个为什么没进去。 */
+export function attachmentLimitMessage(limit: number, addedCount: number, droppedCount: number) {
+    const dropped = Math.max(0, droppedCount);
+    if (limit <= 0) return `当前模型不支持参考内容，已忽略 ${dropped} 个素材`;
+    if (addedCount > 0) return `当前模型最多支持 ${limit} 个参考内容，已加入 ${addedCount} 个，另有 ${dropped} 个未加入`;
+    return `参考内容已达当前模型上限（${limit} 个），所选 ${dropped} 个素材未加入`;
+}
+
+/**
+ * 把新选中的素材并入现有参考内容，并报告因当前模型上限被丢掉的个数，
+ * 让界面能明确提示「还有几个没加进去」，而不是静默裁剪。
+ */
+export function planCreationAttachmentAdd(attachments: CreationAttachment[], incoming: CreationAttachment[], maxReferences: number): CreationAttachmentAddPlan {
+    const limit = Math.max(0, Math.floor(maxReferences));
+    const incomingIDs = new Set(incoming.map((attachment) => attachment.id));
+    const merged = [...attachments.filter((attachment) => !incomingIDs.has(attachment.id)), ...incoming];
+    const kept = merged.slice(0, limit);
+    const keptIDs = new Set(kept.map((attachment) => attachment.id));
+    const existingIDs = new Set(attachments.map((attachment) => attachment.id));
+    const addedCount = incoming.filter((attachment) => keptIDs.has(attachment.id) && !existingIDs.has(attachment.id)).length;
+    const droppedCount = incoming.filter((attachment) => !keptIDs.has(attachment.id)).length;
+    return { attachments: kept, addedCount, droppedCount, limit };
+}
+
 export function removeCreationReferenceTokens(value: string, references: CreationReference[]) {
     return references.reduce((current, reference) => current.split(canvasResourceMentionToken(reference)).join("").split(`@${reference.label}`).join(""), value);
 }

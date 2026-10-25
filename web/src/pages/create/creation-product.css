@@ -24,6 +24,8 @@
 }
 .app-product-workspace .creation-home .creation-reference-add-button.creation-chat-reference-add:hover:not(:disabled) { background: var(--user-surface-hover); color: var(--user-ink); }
 .app-product-workspace .creation-home .creation-reference-add-button.creation-chat-reference-add svg { width: 16px; height: 16px; }
+.app-product-workspace .creation-home .creation-reference-quota { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 999px; background: var(--user-surface-muted); color: var(--user-ink-muted); font-size: 12px; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.app-product-workspace .creation-home .creation-reference-quota.is-limit { background: transparent; border: 1px solid var(--user-border-strong); color: var(--user-ink); font-weight: 600; }
 .app-product-workspace .creation-home .creation-submit.is-icon-only.ant-btn { width: 44px; height: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 50%; background: transparent !important; box-shadow: none; }
 .app-product-workspace .creation-home .creation-submit.is-icon-only .creation-submit-cost { display: none; }
 .app-product-workspace .creation-home .creation-submit.is-icon-only .creation-submit-action { display: grid; width: 44px; height: 44px; place-items: center; padding: 0; border-radius: 50%; background: var(--user-action-bg); color: var(--user-action-foreground); transition: background var(--user-motion), transform var(--user-motion); }
