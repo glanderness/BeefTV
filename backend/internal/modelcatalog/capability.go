@@ -228,8 +228,7 @@ func DefaultModelCapabilityConfigForModel(protocol string, modelName string) *Mo
 	case model.ChannelInterfaceType("full-video"):
 		// 自定义视频服务（full-video 插件）：上游接口由第三方网关提供，参考素材边界按较宽的一档给；
 		// 时长上限按模型代际判定——2.5 一代官方支持 30 秒，其余保守 15 秒。
-		// 与 web/src/lib/model-capabilities.ts 的 defaultModelCapabilityConfig("full-video") 保持同一规则，
-		// 否则前端能选 30 秒、后端按默认 15 秒校验会直接拒单。
+		// 与 web/src/lib/model-capabilities.ts 的 defaultModelCapabilityConfig("full-video") 保持同一规则。
 		is25 := isFullVideoSeedance25(modelName)
 		video.Operations = []string{"text_to_video", "image_to_video", "reference_to_video"}
 		video.References.MaxImages = 9
@@ -383,7 +382,28 @@ func NormalizeModelCapabilityConfigForModel(capability string, protocol string, 
 	return value, nil
 }
 
+// 渠道建好后视频能力是存下来的快照，旧版给自定义视频服务（full-video）写的上限是 15 秒，
+// 快照会直接覆盖默认值，所以 2.5 一代要把这条旧上限抬到 30 秒；其他代际和用户自定的上限保持不动。
+func upgradeLegacySeedance25DurationCeiling(profile *VideoCapabilityConfig, protocol string, modelName string) *VideoCapabilityConfig {
+	if profile == nil {
+		return profile
+	}
+	if model.ChannelInterfaceType(strings.TrimSpace(protocol)) != model.ChannelInterfaceType("full-video") {
+		return profile
+	}
+	if !isFullVideoSeedance25(modelName) {
+		return profile
+	}
+	if profile.Duration.Selection != "range" || profile.Duration.Max != 15 {
+		return profile
+	}
+	value := *profile
+	value.Duration.Max = 30
+	return &value
+}
+
 func applyModelSpecificVideoCapability(profile *VideoCapabilityConfig, protocol string, modelName string) *VideoCapabilityConfig {
+	profile = upgradeLegacySeedance25DurationCeiling(profile, protocol, modelName)
 	if profile == nil {
 		return profile
 	}

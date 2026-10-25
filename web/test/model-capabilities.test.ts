@@ -213,3 +213,33 @@ test("自定义视频服务（full-video）默认时长：2.5 放开到 30 秒�
     // 自定义渠道的模型名由用户输入，代际判定要容忍空格与大小写（后端 isFullVideoSeedance25 同规则）。
     assert.equal(defaultModelCapabilityConfig("full-video", " SD-Native-Full-2.5 ").video!.duration.max, 30);
 });
+
+test("渠道里存下的 full-video 旧上限（15 秒）对 2.5 模型放开到 30 秒，其他代际和自定上限不动", () => {
+    // 旧版建渠道时把上限存成 15 秒，快照会盖掉默认值，所以按模型代际在读取时抬到 30 秒。
+    const savedLegacy = (model: string) => {
+        const legacy = defaultModelCapabilityConfig("full-video", "原生不卡人脸-全参2.0").video!;
+        return {
+            channels: [{
+                id: "custom",
+                models: [model],
+                modelProfiles: [{
+                    model,
+                    protocol: "full-video",
+                    capabilityConfig: { version: 1, video: { ...legacy, duration: { selection: "range", min: 4, max: 15, step: 1, default: 5 } } },
+                }],
+            }],
+        } as AiConfig;
+    };
+
+    const profile25 = modelCapabilityConfigFor(savedLegacy("原生不卡人脸-全参2.5"), "custom::原生不卡人脸-全参2.5").video!;
+    assert.equal(profile25.duration.max, 30);
+    assert.ok(videoDurationAllowed(profile25, 30));
+
+    const profile20 = modelCapabilityConfigFor(savedLegacy("原生不卡人脸-全参2.0"), "custom::原生不卡人脸-全参2.0").video!;
+    assert.equal(profile20.duration.max, 15);
+    assert.equal(videoDurationAllowed(profile20, 30), false);
+
+    const custom = savedLegacy("原生不卡人脸-全参2.5");
+    custom.channels[0].modelProfiles![0].capabilityConfig!.video!.duration.max = 20;
+    assert.equal(modelCapabilityConfigFor(custom, "custom::原生不卡人脸-全参2.5").video!.duration.max, 20);
+});
