@@ -18,11 +18,17 @@ import { canvasNodeOperation } from "../../src/lib/operation-progress";
 import { defaultModelCapabilityConfig } from "../../src/lib/model-capabilities";
 import { useOperationProgress } from "../../src/stores/use-operation-progress";
 import { configureApiRuntime } from "../../src/services/api/request";
+import { CanvasNodePromptPanel } from "../../src/components/canvas/canvas-node-prompt-panel";
+import { buildCanvasNodeMentionReferenceMap } from "../../src/lib/canvas/canvas-resource-references";
 
 const params = new URLSearchParams(location.search);
 const scenario = (params.get("scenario") || "five-images") as CustomerGenerationScenario;
-if (scenario === "library-references") configureApiRuntime(location.origin + "/api", "synthetic-desktop-token");
+if (scenario === "library-references" || params.has("reference-repair-ui")) configureApiRuntime(location.origin + "/api", "synthetic-desktop-token");
 const project = (window as any).__customerProject || customerGenerationProject(scenario);
+if (params.has("reference-repair-ui")) {
+    project.nodes.push({ ...project.nodes[0], id: "unlinked", title: "未连接的场景图" });
+    project.nodes.find((node: CanvasNodeData) => node.id === "target")!.metadata!.composerContent = "保留 @[node:image-1]，参考 @[node:unlinked] 和 @[asset:missing-library]。正文保持不变。";
+}
 const noop = () => {};
 setActiveUserScope("synthetic-customer");
 useUserStore.getState().setHydrated(true);
@@ -81,6 +87,16 @@ function Harness() {
     (harness as any).replaceOutput = () => setNodes(current => current.map(node => node.id === "target" ? { ...node, metadata: { ...node.metadata, content: "/api/resources/newer-result/file", storageKey: "resource:newer-result", assetId: "newer-asset", durationMs: 7000 } } : node));
     harness.cancel = () => harness.controller?.abort();
     return <>
+        {params.has("reference-repair-ui") ? <CanvasNodePromptPanel
+            projectId={project.id} node={target} referenceNodes={nodes} isRunning={Boolean(generation.runningNodeId)}
+            referenceConnections={project.connections}
+            mentionReferences={buildCanvasNodeMentionReferenceMap(nodes, project.connections).get(target.id)}
+            onAddReference={(referenceNodeId, reference) => reference.active || reference.assetId ? reference : undefined}
+            onPromptChange={(id, composerContent) => setNodes(current => current.map(node => node.id === id ? { ...node, metadata: { ...node.metadata, composerContent } } : node))}
+            onConfigChange={(id, patch) => setNodes(current => current.map(node => node.id === id ? { ...node, metadata: { ...node.metadata, ...patch } } : node))}
+            onGenerate={() => void harness.generate()}
+            onLocateReferenceNode={(id) => { (harness as any).locatedNodeId = id; }}
+        /> : null}
         <button onClick={() => void harness.generate()}>生成视频</button>
         <button onClick={() => harness.edit()}>准备期间修改画布</button>
         <button onClick={() => harness.cancel()}>取消准备</button>

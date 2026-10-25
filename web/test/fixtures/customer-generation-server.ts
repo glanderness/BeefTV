@@ -82,8 +82,11 @@ export async function startCustomerScenarioServer(options: { port?: number } = {
                 { id: "library-video", kind: "video", data: { url: "/api/resources/video-1/file", storageKey: "resource:video-1", mimeType: "video/mp4", width: 1280, height: 720, durationMs: 2500, bytes: 128 } },
             ].filter(asset => ids.includes(asset.id)).map(asset => ({ ...asset, title: asset.id, coverUrl: "", tags: [], status: "confirmed", createdAt: "2026-10-25T00:00:00Z", updatedAt: "2026-10-25T00:00:00Z" })) });
         }
+        if (url.pathname === "/api/assets") return json({ assets: [], page: 1, pageSize: 100, total: 0, hasMore: false });
         if (url.pathname.startsWith("/api/")) return json([]);
-        return new Response('<meta charset="utf-8"><div id="root"></div><script>window.__customerProject=' + JSON.stringify(state.project).replaceAll("<", "\\u003c") + '</script><script type="module" src="/harness.js"></script>', { headers: { "Content-Type": "text/html; charset=utf-8", "Set-Cookie": `scenario=${id}; Path=/; SameSite=Lax` } });
+        // Vite expands the model-logo icon glob; this Bun fixture omits icon loading.
+        // Tailwind is not compiled here; retain real portal geometry above AntD modal masks.
+        return new Response('<meta charset="utf-8"><style>.canvas-resource-mention-menu{position:fixed;z-index:var(--z-tooltip,1000)!important;overflow:auto;background:white}.canvas-resource-mention-menu img,.canvas-resource-mention-menu video{width:32px;height:32px;object-fit:cover}</style><div id="root"></div><script>globalThis.Bun={};window.__customerProject=' + JSON.stringify(state.project).replaceAll("<", "\\u003c") + '</script><script type="module" src="/harness.js"></script>', { headers: { "Content-Type": "text/html; charset=utf-8", "Set-Cookie": `scenario=${id}; Path=/; SameSite=Lax` } });
     } });
     return { server, contexts, stop() { for (const state of contexts.values()) state.release(); server.stop(true); mediaServer.stop(true); }, create(scenario: CustomerGenerationScenario) {
         const id = crypto.randomUUID();

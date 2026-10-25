@@ -2192,6 +2192,9 @@ function InfiniteCanvasPage() {
                 <CanvasNodePromptPanel
                     projectId={projectId}
                     node={panelNode}
+                    referenceNodes={nodesRef.current}
+                    referenceConnections={connectionsRef.current}
+                    onLocateReferenceNode={focusCanvasNode}
                     isRunning={isCanvasNodeGenerating(panelNode, runningNodeId)}
                     mentionReferences={[
                         ...(mentionReferencesByNodeId.get(panelNode.id) || EMPTY_RESOURCE_REFERENCES),
@@ -2238,6 +2241,7 @@ function InfiniteCanvasPage() {
             handleReorderNodeReferences,
             handleReplaceNodeReference,
             handleReplaceNodeReferenceFiles,
+            focusCanvasNode,
             mentionReferencesByNodeId,
             message,
             projectId,

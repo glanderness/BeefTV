@@ -24,7 +24,8 @@ async function open(scenario: CustomerGenerationScenario, options = "") {
     const errors: string[] = [];
     page.on("pageerror", error => errors.push(error.message));
     await page.goto(`${server.url}?case=${id}&scenario=${scenario}&${options}`);
-    await page.getByRole("button", { name: "生成视频", exact: true }).waitFor();
+    try { await page.getByRole("button", { name: "生成视频", exact: true }).waitFor({ timeout: 5000 }); }
+    catch (error) { await context.close(); throw new Error(`Scenario did not render: ${errors.join("; ")}`, { cause: error }); }
     return { page, state, errors, close: async () => { state.release(); await context.close(); } };
 }
 async function start(page: Page) { await page.getByRole("button", { name: "生成视频", exact: true }).click(); }
@@ -33,6 +34,85 @@ async function until(predicate: () => boolean, timeout = 3500) {
     while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
     expect(predicate()).toBe(true);
 }
+
+test("reference repair marks and locates invalid bindings, cancels safely, then submits only after explicit reselect", async () => {
+    const { page, state, errors, close } = await open("five-images", "reference-repair-ui");
+    try {
+        const issues = page.getByRole("region", { name: "需要修正的引用" });
+        await issues.waitFor();
+        expect(await page.locator(".canvas-resource-inline-mention.is-invalid").count()).toBe(2);
+        const original = await page.evaluate(() => (window as any).__customer.nodes.find((node: any) => node.id === "target").metadata.composerContent);
+        await page.getByRole("button", { name: "生成", exact: true }).click();
+        expect(state.posts).toHaveLength(0);
+        const disconnected = issues.getByRole("listitem").filter({ hasText: "未连接到当前生成节点" });
+        await disconnected.getByRole("button", { name: "定位引用" }).click();
+        expect(await page.locator("[data-reference-located]").getAttribute("data-mention-token")).toBe("@[node:unlinked]");
+        await disconnected.getByRole("button", { name: "定位节点" }).click();
+        expect(await page.evaluate(() => (window as any).__customer.locatedNodeId)).toBe("unlinked");
+        await disconnected.getByRole("button", { name: "重新选择" }).click();
+        await page.getByRole("button", { name: "取消重新选择" }).click();
+        expect(await page.evaluate(() => (window as any).__customer.nodes.find((node: any) => node.id === "target").metadata.composerContent)).toBe(original);
+        await disconnected.getByRole("button", { name: "重新选择" }).click();
+        await page.locator("[data-canvas-resource-mention-menu]").getByRole("button").filter({ hasText: "image-2" }).click();
+        expect(await page.locator(".canvas-resource-inline-mention.is-invalid").count()).toBe(1);
+        await issues.getByRole("button", { name: "重新选择" }).click();
+        await page.locator("[data-canvas-resource-mention-menu]").getByRole("button").filter({ hasText: "image-3" }).click();
+        await issues.waitFor({ state: "hidden" });
+        const repaired = await page.evaluate(() => (window as any).__customer.nodes.find((node: any) => node.id === "target").metadata.composerContent);
+        expect(repaired).toBe("保留 @[node:image-1]，参考 @[node:image-2] 和 @[node:image-3]。正文保持不变。");
+        expect(state.posts).toHaveLength(0);
+        await page.getByRole("textbox", { name: "视频提示词" }).fill(original);
+        await page.getByRole("button", { name: "放大编辑提示词" }).first().click();
+        const dialog = page.getByRole("dialog");
+        await dialog.waitFor();
+        expect(await page.locator("[data-canvas-resource-mention-menu]").count()).toBe(0);
+        await dialog.getByRole("button", { name: "重新选择", exact: true }).first().click();
+        await page.locator("[data-canvas-resource-mention-menu]").waitFor();
+        expect(await page.locator("[data-canvas-resource-mention-menu]").count()).toBe(1);
+        expect(await page.evaluate(() => Number(getComputedStyle(document.querySelector('[data-canvas-resource-mention-menu]')!).zIndex) > Number(getComputedStyle(document.querySelector('.ant-modal-wrap')!).zIndex))).toBe(true);
+        await page.locator("[data-canvas-resource-mention-menu]").getByRole("button").filter({ hasText: "image-2" }).click();
+        await dialog.getByRole("button", { name: "重新选择", exact: true }).click();
+        await page.locator("[data-canvas-resource-mention-menu]").getByRole("button").filter({ hasText: "image-3" }).click();
+        await dialog.getByRole("button", { name: "Close", exact: true }).click();
+        await dialog.waitFor({ state: "hidden" });
+        expect(await page.locator("[data-canvas-resource-mention-menu]").count()).toBe(0);
+        await page.getByRole("button", { name: "生成", exact: true }).click();
+        await until(() => state.posts.length === 1);
+        expect(state.posts[0].input.referenceImages).toHaveLength(5);
+        expect(errors).toEqual([]);
+    } finally { await close(); }
+}, 20000);
+
+test("reference lookup stays pending until authoritative read completes and network failures offer retry", async () => {
+    const { page, state, errors, close } = await open("five-images", "reference-repair-ui");
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    try {
+        await page.getByRole("region", { name: "需要修正的引用" }).waitFor();
+        await page.route("**/api/assets/batch", async route => { await gate; await route.continue(); });
+        await page.getByRole("textbox", { name: "视频提示词" }).fill("参考 @[asset:library-image]，保留正文。");
+        await page.getByRole("status").filter({ hasText: "正在检查参考素材" }).waitFor();
+        expect(await page.locator(".canvas-resource-inline-mention.is-invalid").count()).toBe(0);
+        release();
+        await page.getByRole("status").filter({ hasText: "正在检查参考素材" }).waitFor({ state: "hidden" });
+        expect(await page.getByRole("region", { name: "需要修正的引用" }).count()).toBe(0);
+        await page.getByRole("textbox", { name: "视频提示词" }).fill("参考 @[asset:library-image]，@");
+        const menu = page.locator("[data-canvas-resource-mention-menu]");
+        await menu.waitFor();
+        expect(await menu.locator("section").filter({ hasText: "画布节点" }).innerText()).not.toContain("library-image");
+        await page.keyboard.press("Escape");
+        await page.unroute("**/api/assets/batch");
+        await page.route("**/api/assets/batch", route => route.abort("internetdisconnected"));
+        await page.getByRole("textbox", { name: "视频提示词" }).fill("参考 @[asset:library-video]，保留正文。");
+        await page.getByRole("button", { name: "重新检查" }).waitFor();
+        expect(await page.locator(".canvas-resource-inline-mention.is-invalid").count()).toBe(0);
+        await page.unroute("**/api/assets/batch");
+        await page.getByRole("button", { name: "重新检查" }).click();
+        await page.getByRole("button", { name: "重新检查" }).waitFor({ state: "hidden" });
+        expect(state.posts).toHaveLength(0);
+        expect(errors).toEqual([]);
+    } finally { release(); await close(); }
+}, 20000);
 
 test("owned library references missing from the visible catalog resolve before task submission", async () => {
     const { page, state, errors, close } = await open("library-references");

@@ -117,12 +117,20 @@ export async function loadWorkspaceAssetLibraryPage(options: WorkspaceAssetLibra
     return overlaid;
 }
 
+export class WorkspaceAssetUnavailableError extends Error {
+    constructor(public readonly assetIds: string[]) {
+        super("部分本地素材不存在，请重新选择素材");
+        this.name = "WorkspaceAssetUnavailableError";
+    }
+}
+
 export async function loadWorkspaceAssetsForUse(ids: Iterable<string>, expectedScope?: CapturedUserScope) {
     const unique = [...new Set([...ids].map((id) => id.trim()).filter(Boolean))];
     if (!unique.length) return;
     if (!usesWorkspaceAssetLibraryApi()) {
         const available = new Set(useAssetStore.getState().assets.map((asset) => asset.id));
-        if (unique.some((id) => !available.has(id))) throw new Error("部分本地素材不存在，请重新选择素材");
+        const missing = unique.filter((id) => !available.has(id));
+        if (missing.length) throw new WorkspaceAssetUnavailableError(missing);
         return;
     }
 
@@ -134,7 +142,7 @@ export async function loadWorkspaceAssetsForUse(ids: Iterable<string>, expectedS
     const deleted = new Set(drafts.deletes.map((draft) => draft.id));
     const upsertById = new Map(drafts.upserts.map((draft) => [draft.id, draft]));
     const storeById = new Map(useAssetStore.getState().assets.map((asset) => [asset.id, asset]));
-    if (unique.some((id) => deleted.has(id))) throw new Error("部分本地素材不存在，请重新选择素材");
+    if (unique.some((id) => deleted.has(id))) throw new WorkspaceAssetUnavailableError(unique.filter((id) => deleted.has(id)));
 
     const lookupIds = unique.filter((id) => !upsertById.has(id));
     const found = new Set<string>();
@@ -158,7 +166,7 @@ export async function loadWorkspaceAssetsForUse(ids: Iterable<string>, expectedS
     }
     projectCommittedAssets(loaded, expected);
     if (snapshots.length) projectDraftSnapshots(snapshots, expected);
-    if (unique.some((id) => !found.has(id))) throw new Error("部分本地素材不存在，请重新选择素材");
+    if (unique.some((id) => !found.has(id))) throw new WorkspaceAssetUnavailableError(unique.filter((id) => !found.has(id)));
 }
 
 export async function preserveLegacyCacheOnlyAssetDrafts(expectedScope?: CapturedUserScope) {
