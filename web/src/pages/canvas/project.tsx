@@ -2772,6 +2772,7 @@ function InfiniteCanvasPage() {
                                     viewport={viewport}
                                     appearance={canvasAppearance}
                                     backgroundMode={backgroundMode}
+                                    wheelBehavior={wheelBehavior}
                                     graphicsLayer={
                                         <>
                                         <CanvasLodLayer

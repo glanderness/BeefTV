@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { autoMentionCanvasResourceReferences, findCanvasResourceAutoLinkMatch, type CanvasResourceReference, applyCanvasConnectionPromptSync, buildAssetMentionReferences, buildCanvasNodeMentionReferenceMap, buildNodeMentionReferences, buildOrderedCanvasResourceReferences, canvasResourceMentionToken, collectUpstreamVideoNodes, imageGenerationReferenceConnections, reorderCanvasResourceConnections, replaceCanvasMentionToken, replaceCanvasReferenceMentions } from "../src/lib/canvas/canvas-resource-references";
+import { autoMentionCanvasResourceReferences, findCanvasResourceAutoLinkMatch, type CanvasResourceReference, applyCanvasConnectionPromptSync, buildAssetMentionReferences, buildCanvasNodeMentionReferenceMap, buildNodeMentionReferences, buildOrderedCanvasResourceReferences, canvasResourceMentionToken, canvasResourceReferenceInsertText, collectUpstreamVideoNodes, imageGenerationReferenceConnections, reorderCanvasResourceConnections, replaceCanvasMentionToken, replaceCanvasReferenceMentions } from "../src/lib/canvas/canvas-resource-references";
 import { bindCanvasNodeResourceAsset, bindMissingCanvasResourceAssets, canvasNodeToAsset, canvasNodesMissingResourceAssetBinding } from "../src/lib/canvas/canvas-node-asset";
 import { buildNodeGenerationInputs } from "../src/components/canvas/canvas-node-generation";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../src/types/canvas";
@@ -28,6 +28,18 @@ describe("canvas smart references", () => {
         // 没有自定义标题的节点只显示自动编号，仍然直接替换。
         const untitled: CanvasResourceReference = { id: "image-3", nodeId: "image-3", kind: "image", label: "图片3", title: "图片3", active: true };
         expect(autoMentionCanvasResourceReferences("图片3 在左侧", [untitled])).toBe("@[node:image-3] 在左侧");
+    });
+
+    test("@ 选中和 Tab 补全时，完整打出的角色名保留，搜索片段和自动编号只插引用", () => {
+        const character = smartReferences[1];
+        expect(canvasResourceReferenceInsertText(character, "唐妙菱")).toBe("唐妙菱 @[node:character] ");
+        expect(canvasResourceReferenceInsertText(character, "唐")).toBe("@[node:character] ");
+        expect(canvasResourceReferenceInsertText(character, "")).toBe("@[node:character] ");
+        expect(canvasResourceReferenceInsertText(character, "角色1")).toBe("@[node:character] ");
+        // 名字后面已经跟着自己的引用时，Tab 不再重复提示。
+        const linked = "唐妙菱 @[node:character] 看向远景";
+        expect(findCanvasResourceAutoLinkMatch(linked, "唐妙菱".length, smartReferences)).toBeNull();
+        expect(findCanvasResourceAutoLinkMatch("唐妙菱 看向远景", "唐妙菱".length, smartReferences)?.reference.id).toBe("character");
     });
 
     test("returns exact replacement offsets for names and shelf orders", () => {

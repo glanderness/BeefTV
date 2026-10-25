@@ -160,6 +160,8 @@ export function findCanvasResourceAutoLinkMatch(prompt: string, cursor: number, 
         if (candidate.isBareOrder && previous && !/[\s,.!?;:，。！？；：、)\]}】）]/u.test(previous)) continue;
         if (candidate.isBareOrder && next && !/[\s,.!?;:，。！？；：、)\]}】）]/u.test(next)) continue;
         if (/^[A-Za-z0-9_]+$/u.test(candidate.name) && previous && /[A-Za-z0-9_]/u.test(previous)) continue;
+        // 名字后面已经跟着同一个引用（保留名字时插入的），不再重复提示。
+        if (prompt.slice(cursor).trimStart().startsWith(canvasResourceMentionToken(candidate.reference))) continue;
         return { reference: candidate.reference, start, end: cursor, query: candidate.name };
     }
     return null;
@@ -195,6 +197,16 @@ const AUTO_RESOURCE_LABEL = /^(角色|图片|图|视频|音频|绘图|文本|技
  */
 function keepsTypedResourceName(reference: CanvasResourceReference, name: string) {
     return name === reference.title.trim() && !AUTO_RESOURCE_LABEL.test(name);
+}
+
+/**
+ * @ 菜单选中和 Tab 补全时替换输入文字的内容：用户打出的是完整的角色名/素材标题，就保留名字再追加引用；
+ * 只是搜索片段或自动编号时，仍只插入引用。
+ */
+export function canvasResourceReferenceInsertText(reference: CanvasResourceReference, typedName: string) {
+    const token = canvasResourceMentionToken(reference);
+    const name = typedName.trim();
+    return keepsTypedResourceName(reference, name) ? `${name} ${token} ` : `${token} `;
 }
 
 const CANVAS_RESOURCE_MENTION_BOUNDARY = /(?:$|\s|[,.!?;:，。！？；：、)\]}】）])/;

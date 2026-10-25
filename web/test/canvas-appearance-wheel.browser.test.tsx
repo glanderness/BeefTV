@@ -23,7 +23,7 @@ beforeAll(async () => {
     css = await productCss();
     const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((path): path is string => Boolean(path && existsSync(path)));
     browser = await chromium.launch({ headless: true, executablePath });
-    page = await browser.newPage({ viewport: { width: 400, height: 900 } });
+    page = await browser.newPage({ viewport: { width: 800, height: 900 } });
     page.on("pageerror", (error) => console.error(error.message));
     await page.route("https://beeftv-appearance.test/**", (route) => {
         const path = new URL(route.request().url()).pathname;
@@ -45,4 +45,27 @@ test("画布外观面板里新增滚轮操作，默认自动并可切换为固�
     expect(await page.evaluate(() => (window as unknown as { __wheelBehavior?: string }).__wheelBehavior)).toBe("pan");
     const width = await segmented.evaluate((element) => element.getBoundingClientRect().width);
     expect(width).toBeLessThanOrEqual(288);
+});
+
+async function wheelOnCanvas(deltaY: number) {
+    const before = await page.locator("#wheel-viewport").textContent();
+    await page.evaluate((delta) => {
+        document.querySelector("#wheel-canvas [data-canvas-viewport]")!.dispatchEvent(new WheelEvent("wheel", { deltaY: delta, clientX: 500, clientY: 200, bubbles: true, cancelable: true }));
+    }, deltaY);
+    await page.waitForFunction((previous) => document.querySelector("#wheel-viewport")!.textContent !== previous, before, { timeout: 5000 });
+    return JSON.parse((await page.locator("#wheel-viewport").textContent())!) as { x: number; y: number; k: number };
+}
+
+test("在面板里切换滚轮操作后，画布的滚轮手感跟着变", async () => {
+    const segmented = page.locator(".ant-segmented").last();
+    // 鼠标滚轮常见的 120 步长：固定平移后只平移，不缩放。
+    await segmented.getByText("平移", { exact: true }).click();
+    const panned = await wheelOnCanvas(120);
+    expect(panned.k).toBe(1);
+    expect(panned.y).toBeCloseTo(-120, 1);
+    // 触控板式的小步长：固定缩放后也缩放。
+    await segmented.getByText("缩放", { exact: true }).click();
+    await page.waitForTimeout(250);
+    const zoomed = await wheelOnCanvas(3);
+    expect(zoomed.k).toBeLessThan(1);
 });

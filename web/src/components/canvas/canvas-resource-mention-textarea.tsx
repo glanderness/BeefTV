@@ -7,7 +7,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { canvasPopoverLayer } from "@/lib/canvas/canvas-popover-layer";
 import { usePersonalAssetLibrary } from "@/hooks/use-personal-asset-library";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
-import { buildAssetMentionReferences, canvasResourceDisplayName, canvasResourceMentionToken, findCanvasResourceAutoLinkMatch, type CanvasResourceAutoLinkMatch, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { buildAssetMentionReferences, canvasResourceDisplayName, canvasResourceMentionToken, canvasResourceReferenceInsertText, findCanvasResourceAutoLinkMatch, type CanvasResourceAutoLinkMatch, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { AssetCategory } from "@/stores/use-asset-store";
 import { CanvasNodeType } from "@/types/canvas";
 import { useResolvedCanvasResourceReferences } from "./use-resolved-canvas-resource-references";
@@ -278,7 +278,8 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         if (!mention) return;
         const selected = onSelectReference ? onSelectReference(reference) : reference;
         if (!selected) return;
-        const insertText = `${canvasResourceMentionToken(selected)} `;
+        // 以提示词里真实打出的文字为准（菜单搜索框改过的关键词不算用户写的名字）。
+        const insertText = canvasResourceReferenceInsertText(selected, value.slice(mention.start + 1, mention.end));
         const next = `${value.slice(0, mention.start)}${insertText}${value.slice(mention.end)}`;
         closeMention();
         updateValue(next, mention.start + insertText.length);
@@ -298,7 +299,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
 
     const insertAutoLink = (match: CanvasResourceAutoLinkMatch) => {
         const currentValue = editorRef.current ? serializeEditableValue(editorRef.current) : value;
-        const insertText = `${canvasResourceMentionToken(match.reference)} `;
+        const insertText = canvasResourceReferenceInsertText(match.reference, match.query);
         const next = `${currentValue.slice(0, match.start)}${insertText}${currentValue.slice(match.end)}`;
         updateValue(next, match.start + insertText.length);
         setAutoLinkCursor(match.start + insertText.length);
