@@ -41,7 +41,7 @@ import { modelOptionName, resolveModelChannel, type AiConfig } from "@/stores/us
 import { useAppearanceStore } from "@/stores/use-appearance-store";
 import { useUserStore } from "@/stores/use-user-store";
 import type { PromptOptimizerProvider } from "@/lib/plugins/plugin-types";
-import { displayCreationPrompt, type CreationReference } from "./creation-references";
+import { displayCreationPrompt, referenceSlotLimitLabel, referenceSlotLimitMessage, type CreationReference } from "./creation-references";
 import { creationAttachmentKind, creationMediaAspectRatio, removeCreationAttachment, type CreationAttachment, type CreationMode } from "./creation-assets";
 import { conversationTimestamp, isImageAttachment, isVideoAttachment } from "./creation-conversations";
 import { conversationTimeFormatter, countOptions, historyDayFormatter, messageTimeFormatter, modeLabels, qualityOptions, ratioOptions, resolutionOptions, shotScriptLabels, type CreationConversation, type CreationMessage, type CreationShotRailEntry, type CreationStatus } from "./creation-types";
@@ -418,12 +418,13 @@ export function CreationComposer(props: ComposerProps) {
     const imageReferencesSupported = props.imageProfile.references.maxImages > 0;
     const referencesSupported = props.mode === "image" ? imageReferencesSupported : props.mode !== "video" || props.videoProfile.operations.includes("image_to_video");
     const canAddMoreReferences = referencesSupported && props.attachments.length < props.maxReferences;
-    const addReferenceLabel = interactionBusy ? (props.referenceReplacementBusy ? "正在替换参考图" : "生成中暂不能添加参考内容") : canAddMoreReferences ? "添加更多参考内容" : `已达到当前模型的参考内容上限（${props.maxReferences} 个）`;
+    const addReferenceLabel = interactionBusy ? (props.referenceReplacementBusy ? "正在替换参考图" : "生成中暂不能添加参考内容") : canAddMoreReferences ? "添加更多参考内容" : referenceSlotLimitLabel(props.maxReferences);
     const handleReferencesLimitReached = () => {
         if (interactionBusy) return;
-        composerToast.warning(props.maxReferences > 0
-            ? `当前模型最多支持 ${props.maxReferences} 个参考内容，已达上限；可先移除部分参考内容，或切换到支持更多参考内容的模型`
-            : "当前模型不支持参考内容，请切换到支持参考内容的模型");
+        composerToast.warning(referenceSlotLimitMessage(props.maxReferences, {
+            videos: props.videoProfile.references.maxVideos,
+            audios: props.videoProfile.references.maxAudios,
+        }));
     };
     const referenceCounts = useMemo(() => props.attachments.reduce((counts, attachment) => {
         const kind = creationAttachmentKind(attachment);

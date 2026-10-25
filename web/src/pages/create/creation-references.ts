@@ -41,16 +41,40 @@ export type CreationAttachmentAddPlan = {
     limit: number;
 };
 
-/** 参考内容达到模型上限时的统一提示文案：说清上限多少、进去几个、剩下几个为什么没进去。 */
+/**
+ * 创作页把图片、视频、音频排进同一列参考内容，这一列的槽位数取自当前模型的参考图上限；
+ * 而视频模型对参考图、参考视频、参考音频是分别计数的（例如参考图 9 张、参考视频 3 个、参考音频 3 段）。
+ * 因此所有提示都要说成创作页的槽位限制，不能写成模型对全部参考素材的上限，否则会误导用户去删素材或换模型。
+ */
+export function referenceSlotLimitLabel(limit: number) {
+    return `创作页的 ${limit} 个参考内容槽位（取自当前模型的参考图上限）`;
+}
+
+/** 点「添加参考内容」时才凑到上限的提示：说明是创作页槽位，并点出模型侧是按素材类型分别计数的。 */
+export function referenceSlotLimitMessage(limit: number, mediaLimits?: { videos: number; audios: number }) {
+    if (limit <= 0) return "当前模型不支持参考图输入，请切换到支持参考图输入的模型";
+    const modelLimits = [`参考图 ${limit} 张`];
+    if (mediaLimits?.videos && mediaLimits.videos > 0) modelLimits.push(`参考视频 ${mediaLimits.videos} 个`);
+    if (mediaLimits?.audios && mediaLimits.audios > 0) modelLimits.push(`参考音频 ${mediaLimits.audios} 段`);
+    return `创作页一次最多放入 ${limit} 个参考内容：槽位取自当前模型的参考图上限，模型侧是按类型分别计数的（${modelLimits.join("、")}）。可先移除部分参考内容，或切换到参考图更多的模型`;
+}
+
+/** 从素材库选入后被槽位挡住的提示：说清上限多少、进去几个、剩下几个为什么没进去。 */
 export function attachmentLimitMessage(limit: number, addedCount: number, droppedCount: number) {
     const dropped = Math.max(0, droppedCount);
-    if (limit <= 0) return `当前模型不支持参考内容，已忽略 ${dropped} 个素材`;
-    if (addedCount > 0) return `当前模型最多支持 ${limit} 个参考内容，已加入 ${addedCount} 个，另有 ${dropped} 个未加入`;
-    return `参考内容已达当前模型上限（${limit} 个），所选 ${dropped} 个素材未加入`;
+    if (limit <= 0) return `当前模型不支持参考图输入，已忽略 ${dropped} 个素材`;
+    if (addedCount > 0) return `${referenceSlotLimitLabel(limit)}，已加入 ${addedCount} 个，另有 ${dropped} 个未加入`;
+    return `${referenceSlotLimitLabel(limit)}已满，所选 ${dropped} 个素材未加入`;
+}
+
+/** 切换模型或恢复会话导致超出槽位、自动移除时的提示。 */
+export function attachmentRemovalMessage(limit: number, removedCount: number) {
+    if (limit <= 0) return `当前模型不支持参考图输入，已移除 ${removedCount} 个素材`;
+    return `${referenceSlotLimitLabel(limit)}已满，已移除 ${removedCount} 个超出槽位的素材`;
 }
 
 /**
- * 把新选中的素材并入现有参考内容，并报告因当前模型上限被丢掉的个数，
+ * 把新选中的素材并入现有参考内容，并报告因超出创作页槽位被丢掉的个数，
  * 让界面能明确提示「还有几个没加进去」，而不是静默裁剪。
  */
 export function planCreationAttachmentAdd(attachments: CreationAttachment[], incoming: CreationAttachment[], maxReferences: number): CreationAttachmentAddPlan {
