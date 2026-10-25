@@ -531,7 +531,7 @@ export function useCanvasNodeOperations({
         const confirmation = modal.confirm({
             ...canvasTaskConfirmation,
             title: "新建节点继续生成？",
-            content: "将保留原节点，新节点会带上相同的提示词、参数和参考素材连接。此操作不会开始生成；之后点击生成会创建新任务，可能再次计费。建议先在生成历史中确认是否已有结果。",
+            content: "将保留原节点，并带上原提示词、参数和素材连接，新节点不会自动生成。之后点击生成可能再次计费，请先确认历史中没有所需结果。",
             okText: "新建节点",
             cancelText: "取消",
             onOk: () => {
