@@ -46,6 +46,8 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 
 `canvas.generation.propose` 是只读操作，返回的 `source` 包含 `canvasId`、`canvasRevision`、`modelConfigRevision`；模型键与配置版本来自同一次配置读取。提案不创建生成任务。
 
+外部读写客户端的提议还返回 `nextAction`：由外部宿主审批后调用 `canvas.generation.submit`，提交 `canvasId`、1 至 8 个 `nodeIds`、`expectedRevision`、`expectedModelConfigRevision` 和稳定 `operationId`。两个版本分别来自提议的 `source.canvasRevision` 与 `source.modelConfigRevision`。此路径不依赖内置助手回合或确认卡，返回已受理的 `taskIds`、`nodeIds` 与画布新 `revision`；同键同参数回读原回执，过期版本、未就绪参考和已关联任务的目标拒绝。当前复用单节点单产物的制作准入；已有任务通过 `task.get` 和原任务恢复入口处理，不换键重复购买。历史只读凭据不能提交或回放写回执。
+
 整片提案可用 `productionNodeIds` 列出全部 1–24 项图片、视频和音频草稿，`nodeIds` 仅列首批依赖已就绪的同类素材。返回的 `production.targets` 固定节点、模型、提示词、参数、参考节点与数量。界面 `POST /assistant/turns/:turnId/proposals/:proposalId/production` 接收 `{ canvasId, kind, nodeIds, targets }`，在一个业务事务中校验当前方案、保存原回合授权、创建首批既有任务及自动接续回执；只允许可信界面调用。重复确认复用原素材任务，不会重新付费。
 
 获得同一原回合授权的官方 Pi 接续轮可用 `canvas.generation.submit` 执行已确认素材；未授权、输入变化或旧意图已停止时拒绝。宿主工具等待真实任务终态、资源保存及画布绑定后再交给模型继续，不用模型反复轮询。未知结果保留原任务身份；不自动重生成失败素材。授权约束精确素材计划，并非人民币金额硬封顶，报价未知时不能承诺满足金额预算。
@@ -210,6 +212,10 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 按轮撤销不依赖浏览器流或宿主的最后一条消息：轮前文档由后端在转发前落盘，变更摘要由该轮自己的写入回执重建，
 因此浏览器断流（没有 `turn_end`）、用户取消或后端在回合中途重启之后，已经落地的助手写入仍然可以撤销。
 
+媒体工具从已拥有的画布节点或素材读取资源。`storageKey`、`content` 支持 `resource:<id>` 和资源文件 URL（如 `/api/resources/<id>/file`），与画布保存使用相同的资源 ID 解析规则。URL 只用于提取 ID，不会被直接请求；读取前仍校验目标关联关系、资源归属和就绪状态。
+
+静态图片不再固定缩到 640 像素。PNG/JPEG 在单张 3 MiB 的传输预算内直接返回原始文件，其他可解码图片转为原始像素大小的 PNG。结果的 `image` 描述实际返回的 `view: original|preview|crop`、`width`、`height`、`originalWidth`、`originalHeight`。超过预算时，`media.overview` 返回明确标注的概览预览；`media.inspect` 不会为满足体积而缩小图片，可传 `imageCrop:{x,y,width,height}` 按原始像素读取局部，坐标为显示方向上从左上角起的 0～1 比例，范围须完整位于图片内。图片检查的 `startMs`、`endMs` 均为 0；局部结果仍绑定原资源版本，不写入新素材。视频抽帧的预览尺寸不受此改动影响。
+
 活跃回合的历史响应可带 `active.streamed`，用于页面刷新后恢复当前文字；计划来自顶层 `plan`。文字仅包含本轮助手可见文本，不带推理内容、工具参数或上游错误原文。重新附着观察流会先发送当前文字和计划快照，不重新执行模型调用。
 
 成功的媒体工具记录可带 `toolCalls[].mediaFacts`：`source{resourceId,version,startMs,endMs,nodeId?}`、`mode: frames|video|audio|check`、`durationMs`、`hasAudio`，以及客观检测的可选 `silenceIntervals[{startMs,endMs}]`、`meanDb`、`peakDb`。摘要仅从真实成功结果白名单投影；原生媒体转换失败时不记录成功读取，区间来自结果而非请求参数。摘要不含媒体字节、路径、URL 或自由文本，随既有回合记录保存并通过历史与 `turn_end` 返回。界面的“媒体检查记录”按资源和版本分开显示读取区间与静音事实；`nodeId` 仅用于匹配当前节点名称，不从当前节点推断历史媒体状态。不表示模型理解、全片检查或质量通过；“步骤进度”只是助手记录的步骤计数。旧记录没有摘要时不回填或推断，需要再次实际检查才产生新记录。
@@ -309,6 +315,8 @@ schema 3 另包含以下证据：
 视频结果优先下载供应商返回的地址并保存到本地。实际传输开始后，连续 10 秒没有收到数据会结束当前下载；持续传输的大文件不受 10 秒总时长限制。内置 BeefAPI 使用原任务的备用内容接口刷新存储链接；自接供应商使用已知原任务的查询协议获取新地址，不请求 BeefAPI 备用接口，也不重新生成。同源下载保留该协议的认证方式，外部媒体和跨域重定向不携带供应商密钥。可信 BeefAPI 视频状态默认每 5 秒查询一次；其他供应商及显式配置的周期不变，继续尊重 `Retry-After`。
 
 支持原请求幂等恢复的图片渠道，只在通过本地检查和渠道并发限制、即将发出 HTTP 请求时消耗恢复发送次数。熔断或等待并发配额不消耗发送次数，但仍受任务取消、截止时间和恢复窗口约束；请求交给传输后发生的未知网络错误仍计入次数。此规则不为普通自定义渠道新增自动重发能力。
+
+图片创建请求完整返回 HTTP 400 或 422，且错误确认是输入参数、输入素材或输入内容审核拒绝时，保留实际错误类别，不标记为 `submission_unknown`，也不自动重发。若已经获得供应商任务 ID、接受回执，或此前发送结果不确定，仍阻止重复提交。历史 `submission_unknown` 任务的诊断摘要未保留完整响应及重放标志，不能据此解锁重试或修改其失败状态。内容审核失败须调整输入后重新生成，不能原样重试。
 
 NewAPI Channel 2 与 BeefAPI 视频的暂时下载断连会保留原任务 ID 并继续后台取回，自动恢复最长到任务开始后 24 小时；超出窗口后可在失败任务详情手动取回。任务日志接口提供脱敏的 `summary`，不返回原始 `message` / `payload` 内容；摘要不写回数据库。
 

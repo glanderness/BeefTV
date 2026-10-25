@@ -1,0 +1,56 @@
+import React, { memo, useCallback, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
+import type { Dispatch, SetStateAction } from "react";
+import { InfiniteCanvas } from "../../src/components/canvas/infinite-canvas";
+import { useCanvasViewportController } from "../../src/pages/canvas/use-canvas-viewport-controller";
+import type { CanvasNodeData, ViewportTransform } from "../../src/types/canvas";
+import { applyCanvasLiveViewport, applyCanvasNodeSelectionPreview } from "../../src/lib/canvas/canvas-live-viewport";
+
+Object.assign(window, { async scopedScaleProbe() {
+    const container = document.createElement("div");
+    container.style.cssText = "position:relative;--canvas-committed-scale:0.05";
+    container.innerHTML = '<div data-canvas-world-layer><div style="transform:scale(.05);transform-origin:0 0"><div id="scope-title" data-canvas-live-scale style="width:100px;height:20px;transform:scale(var(--canvas-live-inverse-scale));transform-origin:0 0"></div><div id="scope-unrelated" data-node-id="scope-unrelated" style="width:100px;height:20px"></div></div></div>';
+    document.body.append(container);
+    const title = container.querySelector<HTMLElement>("#scope-title")!;
+    const unrelated = container.querySelector<HTMLElement>("#scope-unrelated")!;
+    applyCanvasLiveViewport(container, { x: 0, y: 0, k: .05 });
+    const first = { titleWidth: title.getBoundingClientRect().width, inverse: getComputedStyle(title).getPropertyValue("--canvas-live-inverse-scale"), unrelated: getComputedStyle(unrelated).getPropertyValue("--canvas-live-inverse-scale") };
+    const late = document.createElement("div"); late.dataset.canvasLiveScale = "";
+    late.style.transform = "scale(var(--canvas-live-inverse-scale))"; container.append(late);
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const lateInverse = getComputedStyle(late).getPropertyValue("--canvas-live-inverse-scale");
+    applyCanvasLiveViewport(container, { x: 30, y: 20, k: .1 });
+    applyCanvasNodeSelectionPreview(container, { includeNodeIds: new Set(["scope-unrelated"]), removeNodeIds: new Set() });
+    const next = { titleWidth: title.getBoundingClientRect().width, inverse: getComputedStyle(title).getPropertyValue("--canvas-live-inverse-scale"), selectionInverse: getComputedStyle(unrelated).getPropertyValue("--canvas-live-inverse-scale") };
+    container.remove(); return { first, lateInverse, next };
+} });
+
+let nodeRenders = 0;
+const Node = memo(function Node({ scale }: { scale: number }) {
+    nodeRenders++;
+    return <div id="node" data-scale={scale} style={{ position: "absolute", left: 200, top: 100, width: 100, height: 80, background: "red" }} />;
+});
+const noop = () => {};
+function Harness() {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const [viewport, setCommittedViewport] = useState<ViewportTransform>({ x: 0, y: 0, k: 1 });
+    const [virtualizationViewport, setVirtualizationViewport] = useState<ViewportTransform | null>(null);
+    const setViewport = useCallback<Dispatch<SetStateAction<ViewportTransform>>>((next) => {
+        setVirtualizationViewport(null);
+        setCommittedViewport(next);
+    }, []);
+    const viewportRef = useRef(viewport);
+    const nodesRef = useRef<CanvasNodeData[]>([]);
+    const selectedNodeIdsRef = useRef(new Set<string>());
+    const controller = useCanvasViewportController({
+        containerRef, size: { width: 800, height: 600 }, viewport, viewportRef,
+        nodesRef, selectedNodeIdsRef, setViewport, setVirtualizationViewport,
+        setSelectedNodeIds: noop, setSelectedConnectionId: noop, setContextMenu: noop,
+        setDialogNodeId: noop, setToolbarNodeId: noop,
+    });
+    Object.assign(window, { viewportProbe: () => ({ viewport, virtualizationViewport, live: viewportRef.current, nodeRenders }) });
+    return <InfiniteCanvas containerRef={containerRef} viewport={viewport} onViewportChange={controller.handleViewportChange} onViewportPreviewChange={controller.handleViewportPreviewChange}>
+        <Node scale={viewport.k} />
+    </InfiniteCanvas>;
+}
+createRoot(document.getElementById("root")!).render(<Harness />);

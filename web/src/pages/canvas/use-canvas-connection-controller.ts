@@ -13,6 +13,7 @@ import { attachNodeToStoryboardRow, createCanvasNode, getConnectionTargetAnchor,
 import { createCanvasDrawingFromImage } from "@/lib/canvas/canvas-drawing-storage";
 import type { CanvasDrawingEngine } from "@/lib/canvas/canvas-drawing-engine";
 import { isFrameNode, isNodeHiddenByCollapsedFrame } from "@/lib/canvas/canvas-frame";
+import { preferredMediaGeneratorMetadata } from "@/lib/canvas/canvas-generation-config";
 import { canOpenCanvasNodePromptPanel } from "@/lib/canvas/canvas-node-semantics";
 import { normalizeRunningHubCapability, type AiConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type ConnectionHandle, type ContextMenuState, type Position, type ViewportTransform } from "@/types/canvas";
@@ -314,7 +315,9 @@ export function useCanvasConnectionController({
             : nodeType === CanvasNodeType.Script && scriptPrompt
               ? { prompt: scriptPrompt, composerContent: scriptPrompt }
             : nodeType === CanvasNodeType.Video && storyboardRow
-              ? { prompt: videoPrompt, composerContent: videoPrompt, ...storyboardPromptTemplateMetadata(storyboardRow, "video"), generationMode: "video" as const, videoEditOperation: "text_to_video" as const, workflowKind: "shot" as const, workflowTitle: `镜头 ${storyboardRow.shotNumber} 视频`, shotIndex: storyboardRow.shotNumber, seconds: String(storyboardRow.durationSeconds), status: NODE_STATUS_IDLE }
+              ? preferredMediaGeneratorMetadata(config, "video", { prompt: videoPrompt, composerContent: videoPrompt, ...storyboardPromptTemplateMetadata(storyboardRow, "video"), generationMode: "video" as const, videoEditOperation: "text_to_video" as const, workflowKind: "shot" as const, workflowTitle: `镜头 ${storyboardRow.shotNumber} 视频`, shotIndex: storyboardRow.shotNumber, seconds: String(storyboardRow.durationSeconds), status: NODE_STATUS_IDLE })
+            : nodeType === CanvasNodeType.Image || nodeType === CanvasNodeType.Video || nodeType === CanvasNodeType.Audio
+              ? preferredMediaGeneratorMetadata(config, nodeType === CanvasNodeType.Image ? "image" : nodeType === CanvasNodeType.Video ? "video" : "audio")
               : undefined;
         // A pin click has no dragged endpoint, so place its new node beside
         // the source. A dragged connection must use its recorded drop point.

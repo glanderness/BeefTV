@@ -1,0 +1,37 @@
+name: Mirror desktop installers to CNB
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+    secrets:
+      BEEFTV_CNB_TRIGGER_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Published version to mirror (for example v2.0.3); does not rebuild or republish'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-cnb-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    if: github.repository == 'glanderness/BeefTV' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trigger CNB and wait for anonymous verification
+        env:
+          VERSION: ${{ inputs.version }}
+          BEEFTV_CNB_TRIGGER_TOKEN: ${{ secrets.BEEFTV_CNB_TRIGGER_TOKEN }}
+        run: python3 scripts/mirror-desktop-cnb.py --version "$VERSION"

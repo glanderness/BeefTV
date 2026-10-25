@@ -7,6 +7,7 @@ import { shouldBlockManualRetry } from "@/lib/generation-error";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { canvasConnectionTilt } from "@/lib/canvas/canvas-connection-tilt";
+import { usesCanvasCustomNodeContent } from "@/lib/canvas/canvas-node-content-policy";
 import { storyboardMinNodeHeight } from "@/lib/canvas/canvas-storyboard-layout";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeTypeId, type Position } from "@/types/canvas";
@@ -582,17 +583,6 @@ export const CanvasNode = React.memo(function CanvasNode({
     );
 }, areCanvasNodePropsEqual);
 
-function usesCustomNodeContentRenderer(node: CanvasNodeData) {
-    return (
-        node.type === CanvasNodeType.Config ||
-        node.type === CanvasNodeType.Script ||
-        node.type === CanvasNodeType.BatchTable ||
-        node.type === CanvasNodeType.Director ||
-        Boolean(node.metadata?.directorSceneId) ||
-        Boolean(node.metadata?.workflowKind)
-    );
-}
-
 function areCanvasNodePropsEqual(previous: CanvasNodeProps, next: CanvasNodeProps) {
     return (
         previous.data === next.data &&
@@ -612,7 +602,7 @@ function areCanvasNodePropsEqual(previous: CanvasNodeProps, next: CanvasNodeProp
         previous.readOnly === next.readOnly &&
         previous.resourceLabel === next.resourceLabel &&
         previous.mentionReferences === next.mentionReferences &&
-        (!usesCustomNodeContentRenderer(next.data) || previous.renderNodeContent === next.renderNodeContent) &&
+        (!usesCanvasCustomNodeContent(next.data) || previous.renderNodeContent === next.renderNodeContent) &&
         previous.drawingProjectId === next.drawingProjectId &&
         previous.batchCount === next.batchCount &&
         previous.batchPreviewNodes === next.batchPreviewNodes &&
@@ -739,6 +729,7 @@ function NodeExternalHeader({ node, scale, dimensionLabel, active, editable, edi
     return (
         <div
             className="canvas-node-external-header absolute bottom-full left-0 z-[var(--node-z-overlay)] flex min-h-6 items-center gap-1"
+            data-canvas-live-scale
             data-expanded={active || editing ? "true" : undefined}
             data-editing={editing ? "true" : undefined}
             style={{
@@ -905,12 +896,15 @@ function ConnectionSideRail({ side, scale, theme, visible = false, onPointerDown
                 resetHandle();
             }}
             onPointerDown={(event) => onPointerDown(event, 0.5)}
+            onFocus={() => setRailHovered(true)}
+            onBlur={() => { setRailHovered(false); resetHandle(); }}
             aria-label={`${side === "left" ? "输入" : "输出"}连接点，单击创建节点或拖动连线`}
         >
             <span
                 ref={handleRef}
                 className="absolute left-1/2 top-1/2 block transition-transform duration-[80ms] ease-out group-hover:brightness-125 group-focus-visible:brightness-125"
                 style={{
+                    display: visible || railHovered ? undefined : "none",
                     width: handleSize,
                     height: handleSize,
                     marginLeft: -handleSize / 2,
@@ -918,7 +912,7 @@ function ConnectionSideRail({ side, scale, theme, visible = false, onPointerDown
                     transform: `translate(${sideOffset}px, 0) scale(1)`,
                     transition: "transform 80ms ease-out",
                     transformOrigin: "center",
-                    willChange: "transform",
+                    willChange: railHovered ? "transform" : undefined,
                 }}
             >
                 <svg

@@ -35,6 +35,23 @@ export type CanvasResourceReference = {
     mentionToken?: string;
 };
 
+/** Keep memoized nodes independent of unrelated reference-map rebuilds. */
+export function reuseCanvasResourceReferences(previous: CanvasResourceReference[] | undefined, next: CanvasResourceReference[]) {
+    if (!previous) return next;
+    if (!previous.length && !next.length) return previous;
+    const previousById = new Map(previous.map(reference => [reference.id, reference]));
+    const shared = next.map(reference => {
+        const old = previousById.get(reference.id);
+        if (!old) return reference;
+        const keys = Object.keys(reference) as Array<keyof CanvasResourceReference>;
+        const equal = keys.length === Object.keys(old).length && keys.every(key => key === "videoPreviewSource"
+            ? Boolean(old.videoPreviewSource) === Boolean(reference.videoPreviewSource) && old.videoPreviewSource?.metadata === reference.videoPreviewSource?.metadata
+            : old[key] === reference[key]);
+        return equal ? old : reference;
+    });
+    return shared.length === previous.length && shared.every((reference, index) => reference === previous[index]) ? previous : shared;
+}
+
 export function canvasSkillMentionToken(skillId: string) {
     return `@[skill:${skillId}]`;
 }

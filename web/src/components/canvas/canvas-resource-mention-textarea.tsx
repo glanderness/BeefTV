@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { ArrowLeft, ChevronRight, FileText, Folder, Image as ImageIcon, Music2, Pencil, Search, UserRound, Video, Workflow } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { canvasPopoverLayer } from "@/lib/canvas/canvas-popover-layer";
 import { usePersonalAssetLibrary } from "@/hooks/use-personal-asset-library";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { buildAssetMentionReferences, canvasResourceDisplayName, canvasResourceMentionToken, findCanvasResourceAutoLinkMatch, hasCanvasMentionBoundary as hasMentionBoundary, type CanvasResourceAutoLinkMatch, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -846,8 +847,7 @@ function MentionMenu({ anchor, connectedReferences, assetReferences, filteredRef
     const selectedRef = useRef(false);
     const [category, setCategory] = useState<AssetCategory | null>(null);
     const [position, setPosition] = useState(() => mentionMenuPosition(anchor, cursorOffset, preferredWidth));
-    const modal = anchor.closest(".ant-modal-wrap");
-    const modalZIndex = modal ? Number.parseInt(getComputedStyle(modal).zIndex, 10) : NaN;
+    const popoverLayer = canvasPopoverLayer(anchor);
 
     useLayoutEffect(() => {
         let frame = 0;
@@ -912,9 +912,9 @@ function MentionMenu({ anchor, connectedReferences, assetReferences, filteredRef
         <div
             ref={menuRef}
             data-canvas-resource-mention-menu="true"
-            className="canvas-resource-mention-menu fixed z-[var(--z-tooltip)]"
+            className="canvas-resource-mention-menu fixed z-[var(--z-dialog-popover)]"
             data-placement={position.showAbove ? "top" : "bottom"}
-            style={{ left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight, "--z-tooltip": Number.isFinite(modalZIndex) ? String(modalZIndex + 1) : undefined, transform: position.showAbove ? "translateY(-100%)" : undefined } as CSSProperties}
+            style={{ zIndex: popoverLayer, "--z-dialog-popover": typeof popoverLayer === "number" ? String(popoverLayer) : undefined, left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight, transform: position.showAbove ? "translateY(-100%)" : undefined } as CSSProperties}
             onPointerDown={stopCanvasInteraction}
             onMouseDown={(event) => {
                 stopCanvasInteraction(event);

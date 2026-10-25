@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/editing"
 )
 
@@ -58,6 +59,7 @@ type MediaResult struct {
 	PeakDB           *float64               `json:"peakDb,omitempty"`
 	Note             string                 `json:"note,omitempty"`
 	Evidence         []string               `json:"evidence,omitempty"`
+	Image            *MediaImageRead        `json:"image,omitempty"`
 }
 
 type MediaSilenceDetection struct {
@@ -81,6 +83,7 @@ type mediaArgs struct {
 	EndMs           int64                 `json:"endMs"`
 	Mode            string                `json:"mode"`
 	Evidence        *mediaEvidenceRequest `json:"evidence,omitempty"`
+	ImageCrop       *MediaImageCrop       `json:"imageCrop,omitempty"`
 }
 
 type mediaEvidenceRequest struct {
@@ -111,8 +114,8 @@ func ValidateMediaReference(domain Domain, userID, canvasID, nodeID, assetID, re
 func registerMediaOps(r *Registry) {
 	registerMediaReview(r)
 	summaries := map[string]string{
-		"media.overview": "获取已关联媒体的版本、时长与静态预览；概要不能替代连续视频或声音内容审查。已知15秒以内区间可用 evidence 一次读取真实 frames/video/audio 及客观检测。",
-		"media.inspect":  "实际读取指定区间，每次最多 15 秒：frames 看静态截图，video 看连续原生视频，audio 听原生音频；按问题选择，不把抽帧当作完整影音审查。",
+		"media.overview": "获取已关联媒体的版本、时长与画面。图片在大小允许时保留原始像素；image.view=preview 表示仅有概览，细节需用 media.inspect imageCrop 分区查看。已知15秒以内影音区间可用 evidence 读取真实 frames/video/audio 及客观检测。概览不能替代连续影音审查。",
+		"media.inspect":  "实际读取媒体：图片默认保留原始像素，可用 imageCrop 分区看小字、纹理和长图，图片 startMs/endMs 均为0；影音每次最多 15 秒，frames 看截图，video 看连续视频，audio 听音频，不把抽帧当作完整影音审查。",
 		"media.check":    "客观测量指定区间的黑屏、音量与静音停顿（固定 -35 dB、最少 120 ms，返回原素材坐标）；音量与停顿不能判断声音内容。停顿仅是候选切点，随后用 media.inspect audio 裁剪并实际听取确认，不能当作词时间戳或语义切点，不能替代实际查看和听取。",
 	}
 	for _, id := range []string{"media.overview", "media.inspect", "media.check"} {
@@ -124,6 +127,8 @@ func registerMediaOps(r *Registry) {
 		properties := ""
 		if operation == "media.overview" {
 			properties = `,"evidence":` + mediaEvidenceSchema
+		} else if operation == "media.inspect" {
+			properties = `,"imageCrop":` + mediaImageCropSchema
 		}
 		r.Register(Op{AssistantCanvas: true, ID: operation, Summary: summaries[operation], ReadOnly: true, Scope: ScopeCanvas,
 			Params:  json.RawMessage(fmt.Sprintf(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeId":{"type":"string"},"assetId":{"type":"string"},"resourceId":{"type":"string"},"expectedVersion":{"type":"string","minLength":1,"description":"先调用 media.overview，使用返回的 version；inspect 和 check 必填，不猜版本。"},"startMs":{"type":"integer","minimum":0},"endMs":{"type":"integer","minimum":0},"mode":{"type":"string","description":"frames：离散静态截图，用于构图与画面内容，不能判断连续运动或声音；video：连续原生视频片段，用于运镜、动作、转场与音画关系，保留可用音轨；audio：原生音频片段，用于说话、对白、音乐和声音内容。按检查目标选择；inspect 每次最多 15 秒。","enum":["frames","video","audio"]}%s},"required":%s}`, properties, required)),
@@ -195,9 +200,8 @@ func collectMediaResourceIDs(value any, ids map[string]bool) {
 				}
 			}
 			if key == "storageKey" || key == "content" {
-				if value, ok := item.(string); ok && strings.HasPrefix(value, "resource:") {
-					id := strings.TrimPrefix(value, "resource:")
-					if mediaResourceIDPattern.MatchString(id) {
+				if value, ok := item.(string); ok {
+					if id := assets.ResourceID(value); id != "" {
 						ids[id] = true
 					}
 				}
@@ -228,8 +232,6 @@ func ReferencedMediaResourceIDs(raw json.RawMessage) ([]string, error) {
 	return result, nil
 }
 
-var mediaResourceIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
-
 const maxMediaSourceBytes int64 = 256 << 20
 const maxMediaPartBytes int64 = 8 << 20
 
@@ -249,6 +251,9 @@ func runMedia(opCtx *Context, operation string, raw json.RawMessage) (any, error
 	var args mediaArgs
 	if err := decodeParams(raw, &args); err != nil {
 		return nil, err
+	}
+	if args.ImageCrop != nil && (operation != "media.inspect" || (args.Mode != "" && args.Mode != "frames") || args.StartMs != 0 || args.EndMs != 0 || !args.ImageCrop.valid()) {
+		return nil, InvalidArg("invalid_image_crop", "图片局部范围必须位于原图内，且只能用于图片的零区间 frames 检查")
 	}
 	if args.Evidence != nil {
 		if operation != "media.overview" || args.Evidence.StartMs == nil || args.Evidence.EndMs == nil || len(args.Evidence.Modes) == 0 || len(args.Evidence.Modes) > 3 {
@@ -275,6 +280,9 @@ func runMedia(opCtx *Context, operation string, raw json.RawMessage) (any, error
 	}
 	if resource == nil || resource.Size > maxMediaSourceBytes {
 		return nil, PreconditionFailed("media_too_large", "当前媒体检查支持 256 MiB 以内的素材", nil)
+	}
+	if args.ImageCrop != nil && !strings.HasPrefix(resource.MimeType, "image/") {
+		return nil, InvalidArg("invalid_image_crop", "局部图片检查仅适用于图片素材")
 	}
 	opener, ok := opCtx.Domain.(MediaSourceOpener)
 	if !ok {
@@ -444,12 +452,12 @@ func (p preparedMedia) read(ctx context.Context, operation string, args mediaArg
 		if !facts.HasVideo {
 			return MediaResult{}, InvalidArg("media_no_video", "这个素材没有画面")
 		}
+		if image {
+			return p.readImage(ctx, bin, operation, args, result)
+		}
 		count := 4
 		if operation == "media.overview" {
 			count = 3
-		}
-		if image {
-			count = 1
 		}
 		for i := 0; i < count; i++ {
 			at := args.StartMs + (args.EndMs-args.StartMs)*int64(2*i+1)/int64(2*count)

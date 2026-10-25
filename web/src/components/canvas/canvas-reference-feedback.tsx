@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { AlertCircle, LoaderCircle } from "lucide-react";
 import { buildAssetMentionReferences, referencedAssetIdsInPrompt, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { canvasReferenceIssues, type CanvasReferenceIssue } from "@/lib/canvas/canvas-reference-issues";
@@ -12,7 +13,7 @@ import "./canvas-reference-feedback.css";
 export function useCanvasReferenceCheck(nodeId: string, prompt: string, references: CanvasResourceReference[], nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     const scope = captureUserScope();
     const assets = useAssetStore((state) => state.assets);
-    const selectedIds = referencedAssetIdsInPrompt(prompt);
+    const selectedIds = useMemo(() => referencedAssetIdsInPrompt(prompt), [prompt]);
     const missingIds = selectedIds.filter((id) => !assets.some((asset) => asset.id === id));
     const lookup = useQuery({
         queryKey: ["canvas-explicit-reference-check", scope.userScope, missingIds],
@@ -38,8 +39,8 @@ export function useCanvasReferenceCheck(nodeId: string, prompt: string, referenc
     const pending = missingIds.length > 0 && lookup.isPending;
     const unchecked = missingIds.filter((id) => !lookup.data?.includes(id));
     const selectedReferences = buildAssetMentionReferences(assets.filter((asset) => selectedIds.includes(asset.id)));
-    const unresolved = inspectNodeGenerationMentions(nodeId, nodes, connections, prompt, assets).unresolved
-        .filter((token) => !unchecked.some((id) => token === `@[asset:${id}]`));
+    const unresolvedTokens = useMemo(() => inspectNodeGenerationMentions(nodeId, nodes, connections, prompt, assets).unresolved, [nodeId, nodes, connections, prompt, assets]);
+    const unresolved = unresolvedTokens.filter((token) => !unchecked.some((id) => token === `@[asset:${id}]`));
     return {
         issues: canvasReferenceIssues(unresolved, [...references, ...selectedReferences], nodes),
         selectedReferences,

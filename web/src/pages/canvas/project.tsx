@@ -79,6 +79,7 @@ import {
 import { CanvasConnectionCreateMenu, CanvasNodePanelOverlay, type PendingConnectionCreate } from "@/components/canvas/canvas-workspace-overlays";
 import { CanvasOverlayLayerContainer, CanvasOverlayLayerProvider } from "@/components/canvas/canvas-overlay-layer";
 import { CanvasLeaferGraphicsLayer } from "@/components/canvas/canvas-leafer-graphics-layer";
+import { CanvasLodLayer } from "@/components/canvas/canvas-lod-layer";
 import { CanvasFreeformEmptyState, CanvasLinkedProjectEmptyState, CanvasShortDramaEmptyState, CanvasShortDramaGuide, CanvasStoryInputNodeContent, CanvasStylePlaceholderNodeContent } from "@/components/canvas/canvas-short-drama-entry";
 import { resolveCanvasEmptyStateKind } from "@/lib/canvas/canvas-starter";
 import { createCanvasNode, getInputSummary } from "@/lib/canvas/canvas-project-domain";
@@ -271,7 +272,12 @@ function InfiniteCanvasPage() {
     const [connections, setConnections] = useState<CanvasConnection[]>([]);
     const [chatSessions, setChatSessions] = useState<CanvasAssistantSession[]>([]);
     const [activeChatId, setActiveChatId] = useState<string | null>(null);
-    const [viewport, setViewport] = useState<ViewportTransform>({ x: 0, y: 0, k: 1 });
+    const [viewport, setCommittedViewport] = useState<ViewportTransform>({ x: 0, y: 0, k: 1 });
+    const [virtualizationViewport, setVirtualizationViewport] = useState<ViewportTransform | null>(null);
+    const setViewport = useCallback<Dispatch<SetStateAction<ViewportTransform>>>((next) => {
+        setVirtualizationViewport(null);
+        setCommittedViewport(next);
+    }, []);
     const [size, setSize] = useState({ width: 1200, height: 720 });
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
     const workflowsRef = useRef<CanvasWorkflowsHandle>(null);
@@ -285,6 +291,12 @@ function InfiniteCanvasPage() {
         setWorkflowLibraryOpen(false);
     }, [projectId, canvasStorageScope]);
     const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+    // Overview LOD: the node under the pointer is promoted to a full DOM card.
+    const [lodHoverNodeId, setLodHoverNodeId] = useState<string | null>(null);
+    const [activeMediaNodeId, setActiveMediaNodeId] = useState<string | null>(null);
+    // While the overview canvas is active it culls every frame itself, so
+    // camera previews need not re-render this page to refresh virtualization.
+    const lodActiveRef = useRef(false);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     const [isMiniMapOpen, setIsMiniMapOpen] = useState(() => scopedLocalStorage.getItem("canvas:minimap") === "1");
     const [canvasAppearance, setCanvasAppearance] = useState<CanvasAppearance>({ mode: "follow" });
@@ -891,15 +903,18 @@ function InfiniteCanvasPage() {
     } = useCanvasViewportController({
         containerRef,
         size,
+        viewport,
         viewportRef,
         nodesRef,
         selectedNodeIdsRef,
         setViewport,
+        setVirtualizationViewport,
         setSelectedNodeIds,
         setSelectedConnectionId,
         setContextMenu,
         setDialogNodeId,
         setToolbarNodeId,
+        virtualizationPausedRef: lodActiveRef,
     });
 
     const workflowInstances = useCanvasWorkflowInstances({
@@ -1709,6 +1724,14 @@ function InfiniteCanvasPage() {
         return result;
     }, [assets, linkedProjectQuery.data?.assets]);
 
+    const singleSelectedNodeId = selectedNodeIds.size === 1 ? selectedNodeIds.values().next().value ?? null : null;
+    // Nodes that need live controls stay as DOM cards above the overview canvas.
+    const lodPinnedNodeIds = useMemo(() => new Set([
+        lodHoverNodeId, hoveredNodeId, singleSelectedNodeId, activeMediaNodeId, dialogNodeId,
+        cropNodeId, videoCropNodeId, annotationNodeId, maskEditNodeId,
+        connectionTargetNodeId, connectingParams?.nodeId,
+    ].filter((nodeId): nodeId is string => Boolean(nodeId))), [activeMediaNodeId, annotationNodeId, connectingParams?.nodeId, connectionTargetNodeId, cropNodeId, dialogNodeId, hoveredNodeId, lodHoverNodeId, maskEditNodeId, singleSelectedNodeId, videoCropNodeId]);
+
     const {
         activeDirectorScene,
         activeNodeId,
@@ -1721,11 +1744,12 @@ function InfiniteCanvasPage() {
         batchMotionById,
         canvasImageNodes,
         configInputsById,
-        connectionLayerBounds,
         contextMenuNode,
         displayConnections,
         frameChildrenById,
         infoNode,
+        lodActive,
+        lodNodes,
         maskEditNode,
         mentionReferencesByNodeId,
         nodeById,
@@ -1744,7 +1768,7 @@ function InfiniteCanvasPage() {
         nodes,
         connections,
         assets,
-        viewport,
+        viewport: virtualizationViewport ?? viewport,
         viewportSize: size,
         mediaPerformanceMode,
         selectedNodeIds,
@@ -1767,7 +1791,10 @@ function InfiniteCanvasPage() {
         directorNodeId,
         scriptEditorNodeId,
         dialogNodeId,
+        lodPinnedNodeIds,
+        viewportInteracting: Boolean(virtualizationViewport),
     });
+    lodActiveRef.current = lodActive;
     const renderedConnections = showConnections ? displayConnections : [];
     const dialogNodeCandidate = dialogNodeId ? nodeById.get(dialogNodeId) || null : null;
     const dialogNode = canOpenCanvasNodePromptPanel(dialogNodeCandidate) ? dialogNodeCandidate : null;
@@ -2546,6 +2573,17 @@ function InfiniteCanvasPage() {
     );
     const openCanvasNodeVersions = useCallback((node: CanvasNodeData) => setVersionCompareRootId(node.metadata?.versionOfNodeId || node.id), []);
     const viewCanvasNodeImage = useCallback((node: CanvasNodeData) => setPreviewNodeId(node.id), []);
+    // Overview nodes reuse the DOM card handlers; native events carry the
+    // fields those handlers read (button, modifiers, client coordinates).
+    const handleLodNodePointerDown = useCallback((event: PointerEvent, nodeId: string) => {
+        handleNodeMouseDown(event as unknown as ReactMouseEvent, nodeId);
+    }, [handleNodeMouseDown]);
+    const handleLodNodeContextMenu = useCallback((event: MouseEvent, nodeId: string) => {
+        handleNodeContextMenu(event as unknown as ReactMouseEvent, nodeId);
+    }, [handleNodeContextMenu]);
+    const handleLodNodeDoubleClick = useCallback((node: CanvasNodeData) => {
+        if (node.type === CanvasNodeType.Image && node.metadata?.content) viewCanvasNodeImage(node);
+    }, [viewCanvasNodeImage]);
     const locateProjectStyleNode = useCallback(() => {
         const styleNode = nodesRef.current.find((node) => node.type === CanvasNodeType.Text && node.metadata?.workflowKind === "styleboard");
         if (!styleNode) {
@@ -2737,6 +2775,21 @@ function InfiniteCanvasPage() {
                                     appearance={canvasAppearance}
                                     backgroundMode={backgroundMode}
                                     graphicsLayer={
+                                        <>
+                                        <CanvasLodLayer
+                                            containerRef={containerRef}
+                                            active={lodActive}
+                                            interactive={!versions.preview && !readOnly}
+                                            viewport={viewport}
+                                            nodes={lodNodes}
+                                            nodeStackOrder={nodeStackOrder}
+                                            selectedNodeIds={selectedNodeIds}
+                                            theme={theme}
+                                            onNodePointerDown={handleLodNodePointerDown}
+                                            onNodeContextMenu={handleLodNodeContextMenu}
+                                            onNodeDoubleClick={handleLodNodeDoubleClick}
+                                            onHoverNodeChange={setLodHoverNodeId}
+                                        />
                                         <CanvasLeaferGraphicsLayer
                                             containerRef={containerRef}
                                             viewport={viewport}
@@ -2752,6 +2805,7 @@ function InfiniteCanvasPage() {
                                             selectedNodeBounds={selectedNodeBounds}
                                             alignmentGuides={alignmentGuides}
                                         />
+                                        </>
                                     }
                                     onViewportChange={handleViewportChange}
                                     onViewportPreviewChange={handleViewportPreviewChange}
@@ -2772,7 +2826,6 @@ function InfiniteCanvasPage() {
                                                 connectionApproach={connectionApproach}
                                                 projectId={projectId}
                                                 viewportScale={viewport.k}
-                                                connectionLayerBounds={connectionLayerBounds}
                                                 displayConnections={renderedConnections}
                                                 selectedConnectionId={selectedConnectionId}
                                                 relatedConnectionIds={relatedHighlight.connectionIds}
@@ -2787,6 +2840,8 @@ function InfiniteCanvasPage() {
                                                 linkedFolderPreviewNodesById={linkedFolderPreviewNodesById}
                                                 dragPreview={dragPreview}
                                                 selectedNodeIds={selectedNodeIds}
+                                                activeMediaNodeId={activeMediaNodeId}
+                                                onActiveMediaNodeChange={setActiveMediaNodeId}
                                                 frameDropTargetId={frameDropTargetId}
                                                 relatedNodeIds={relatedHighlight.nodeIds}
                                                 activeNodeId={activeNodeId}

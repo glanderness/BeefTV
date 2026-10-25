@@ -6,35 +6,43 @@ import { applyCanvasLiveViewport } from "@/lib/canvas/canvas-live-viewport";
 import { canOpenCanvasNodePromptPanel, isCanvasMediaResultNode } from "@/lib/canvas/canvas-node-semantics";
 import { getCanvasNodesBounds, viewportAtScale, viewportForBounds, type CanvasViewportSize } from "@/lib/canvas/canvas-viewport";
 import { shouldRefreshCanvasVirtualization } from "@/lib/canvas/canvas-viewport-render-sync";
+import { shouldRebaseCanvasRaster } from "@/lib/canvas/canvas-leafer-viewport";
 import { CanvasNodeType, type CanvasNodeData, type ContextMenuState, type Position, type ViewportTransform } from "@/types/canvas";
 import { useCanvasViewportTransition } from "./use-canvas-viewport-transition";
 
 type UseCanvasViewportControllerOptions = {
     containerRef: { current: HTMLDivElement | null };
     size: CanvasViewportSize;
+    viewport: ViewportTransform;
     viewportRef: { current: ViewportTransform };
     nodesRef: { current: CanvasNodeData[] };
     selectedNodeIdsRef: { current: Set<string> };
     setViewport: Dispatch<SetStateAction<ViewportTransform>>;
+    setVirtualizationViewport: Dispatch<SetStateAction<ViewportTransform | null>>;
     setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
     setSelectedConnectionId: Dispatch<SetStateAction<string | null>>;
     setContextMenu: Dispatch<SetStateAction<ContextMenuState | null>>;
     setDialogNodeId: Dispatch<SetStateAction<string | null>>;
     setToolbarNodeId: Dispatch<SetStateAction<string | null>>;
+    /** True while a renderer culls per frame itself (overview LOD); previews then skip React refreshes. */
+    virtualizationPausedRef?: { current: boolean };
 };
 
 export function useCanvasViewportController({
     containerRef,
     size,
+    viewport,
     viewportRef,
     nodesRef,
     selectedNodeIdsRef,
     setViewport,
+    setVirtualizationViewport,
     setSelectedNodeIds,
     setSelectedConnectionId,
     setContextMenu,
     setDialogNodeId,
     setToolbarNodeId,
+    virtualizationPausedRef,
 }: UseCanvasViewportControllerOptions) {
     const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const renderedViewportRef = useRef(viewportRef.current);
@@ -42,7 +50,8 @@ export function useCanvasViewportController({
 
     const previewViewport = useCallback((next: ViewportTransform) => {
         viewportRef.current = next;
-        if (containerRef.current) containerRef.current.dataset.canvasViewportInteracting = "true";
+        const container = containerRef.current;
+        if (container && container.dataset.canvasViewportInteracting !== "true") container.dataset.canvasViewportInteracting = "true";
         applyCanvasLiveViewport(containerRef.current, next);
     }, [containerRef, viewportRef]);
 
@@ -158,12 +167,19 @@ export function useCanvasViewportController({
     const handleViewportPreviewChange = useCallback((next: ViewportTransform) => {
         cancelViewportTransition();
         viewportRef.current = next;
+        // The overview canvas redraws every frame from the live camera and
+        // only leaves LOD after the gesture commits.
+        if (virtualizationPausedRef?.current) return;
         const now = performance.now();
         if (!shouldRefreshCanvasVirtualization(renderedViewportRef.current, next, lastVirtualizationRefreshAtRef.current, now)) return;
         renderedViewportRef.current = next;
         lastVirtualizationRefreshAtRef.current = now;
-        setViewport((current) => current.x === next.x && current.y === next.y && current.k === next.k ? current : next);
-    }, [cancelViewportTransition, setViewport, viewportRef]);
+        // Keep culling current without relaying every camera tick as a new
+        // scale prop to all mounted nodes. Rebase with the graphics layer's
+        // existing scale limits, and commit the final camera on gesture end.
+        if (shouldRebaseCanvasRaster(next, viewport)) setViewport(next);
+        else setVirtualizationViewport(next);
+    }, [cancelViewportTransition, setViewport, setVirtualizationViewport, viewport, viewportRef, virtualizationPausedRef]);
 
     return {
         fitCanvasContent,
