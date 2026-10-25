@@ -65,7 +65,7 @@ import { STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardMinNodeHeigh
 import { CanvasDirectorNodePanel } from "@/components/canvas/director/canvas-director-node-panel";
 import { useFocusMode } from "@/hooks/use-focus-mode";
 import { connectCanvasTextMention } from "@/lib/canvas/canvas-text-mention";
-import { saveCanvasTextNode, writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
+import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
 import {
     applyCanvasConnectionPromptSync,
     buildCanvasAgentMentionReferences,
@@ -3362,7 +3362,7 @@ function InfiniteCanvasPage() {
                                 node: textEditorNode,
                                 onClose: () => setTextEditorNodeId(null),
                                 onSave: (nodeId, title, content, richText) => {
-                                    setNodes((current) => current.map((node) => (node.id === nodeId ? saveCanvasTextNode(node, { title, content, richText }) : node)));
+                                    setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, title, metadata: { ...node.metadata, content, richText } } : node)));
                                 },
                             }}
                             drawing={{

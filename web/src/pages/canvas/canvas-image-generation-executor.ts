@@ -4,7 +4,7 @@ import { projectCanvasGenerationSubmission, rebaseCanvasGenerationTarget } from 
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { canGenerateImageInPlace, findAvailableGenerationGroupPosition, imageGenerationChildPosition, generationFailureNodeStatus, imageGenerationGroupSize } from "@/lib/canvas/canvas-generation-layout";
 import { cancelIncompleteImageBatch, retireImageBatchChildren } from "@/lib/canvas/canvas-image-batch-retry";
-import { buildImageGenerationNodeTitle, resolvePromptNodeTitle } from "@/lib/canvas/canvas-generation-title";
+import { buildImageGenerationNodeTitle, promptNodeTitle } from "@/lib/canvas/canvas-generation-title";
 import { nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { canvasImageReferenceLimitError, buildImageGenerationMetadata, clearInPlaceMediaOutputMetadata, getGenerationCount, isGenerationCanceled, resetGenerationTaskMetadata, runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
 import { imageGenerationReferenceConnections } from "@/lib/canvas/canvas-resource-references";
@@ -194,14 +194,13 @@ export async function executeImageGeneration({
             if (isConfigNode) return { ...node, metadata: { ...node.metadata, ...canvasGenerationPromptMetadata(prompt, effectivePrompt), status: NODE_STATUS_LOADING, errorDetails: undefined } };
             if (reuseSourceNode) return rebaseCanvasGenerationTarget(node, rootNode, sourceNode);
             if (isImageNode) return node.metadata?.content ? node : { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } };
-            const convertedTitle = resolvePromptNodeTitle(node, prompt);
             return {
                 ...node,
                 type: CanvasNodeType.Text,
-                title: convertedTitle.title,
+                title: promptNodeTitle(node, prompt),
                 width: parentConfig.width,
                 height: parentConfig.height,
-                metadata: { ...node.metadata, content: prompt, richText: undefined, prompt, composerContent: prompt, autoTitle: convertedTitle.autoTitle, status: NODE_STATUS_SUCCESS, fontSize: 14, errorDetails: undefined },
+                metadata: { ...node.metadata, content: prompt, richText: undefined, prompt, composerContent: prompt, status: NODE_STATUS_SUCCESS, fontSize: 14, errorDetails: undefined },
             };
         }),
         ...(reuseSourceNode ? [] : [rootNode]),
