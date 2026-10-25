@@ -18,14 +18,16 @@ import { resolveCanvasStyleExecution } from "@/lib/canvas/canvas-style-execution
 import { generationErrorMessage } from "@/lib/generation-error";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { modelCompatibilityError, modelGroupReferenceLimits, modelPromptLengthError, modelRequestOptions, type ModelRequirements } from "@/lib/model-selection";
+import { referencedAssetIdsInPrompt } from "@/lib/canvas/canvas-resource-references";
 import type { Skill } from "@/services/api/skills";
 import { skillRuntime } from "@/services/skill-runtime";
+import { loadWorkspaceAssetsForUse } from "@/services/workspace-asset-read";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
 import { findGenerationTaskByOperation, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { assertUserScope, captureUserScope } from "@/lib/user-scope-guard";
 import { useConfigStore, useEffectiveConfig, resolveModelRequestConfig } from "@/stores/use-config-store";
 import { seedanceReferenceRatioWarning } from "@/lib/seedance-channel-warning";
-import type { Asset } from "@/stores/use-asset-store";
+import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
 import { executeImageGeneration } from "./canvas-image-generation-executor";
@@ -150,7 +152,7 @@ export function useCanvasGenerationExecutor({
                         const inputNodes = frozen.nodes;
                         const inputConnections = frozen.connections;
                         const inputConfig = frozen.config;
-                        const inputAssets = frozen.assets;
+                        let inputAssets = frozen.assets;
                         const inputSkills = frozen.skills;
                         const sourceNode = inputNodes.find((node) => node.id === nodeId);
                         const pendingSubmissions = nodesRef.current.filter((node) => (node.id === nodeId || node.metadata?.generatedFromNodeId === nodeId) && ["submitting", "unknown"].includes(node.metadata?.generationSubmissionState || ""));
@@ -244,6 +246,15 @@ export function useCanvasGenerationExecutor({
                         // 普通视频协议只保留输入框文本（显式 @文本 引用仍会展开为真实内容）；声明式工作流还要保留连接媒体。
                         const promptOnly = mode === "video" && !usesWorkflowProvider;
                         try {
+                            // 素材库列表按需加载，显式引用不能仅凭是否出现在列表中判断失效。
+                            const missingAssetIds = referencedAssetIdsInPrompt(generationPrompt).filter((id) => !inputAssets.some((asset) => asset.id === id));
+                            if (missingAssetIds.length) {
+                                const scope = captureUserScope();
+                                await waitForCanvasPreparation(() => loadWorkspaceAssetsForUse(missingAssetIds, scope), controller.signal);
+                                assertUserScope(scope);
+                                const loaded = useAssetStore.getState().assets.filter((asset) => missingAssetIds.includes(asset.id));
+                                inputAssets = [...inputAssets, ...structuredClone(loaded)];
+                            }
                             const baseContext = buildNodeGenerationContext(
                                 nodeId,
                                 inputNodes,

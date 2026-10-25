@@ -25,6 +25,10 @@ mock.module("antd", () => ({ App: { useApp: () => ({ modal: { confirm: (input: a
 // Keep the real trace helpers used by transitive task/operation imports.
 mock.module("@/services/diagnostics/client-diagnostics", () => ({ ...clientDiagnostics, recordDiagnosticEvent: (event: any) => diagnostics.push(event) }));
 mock.module("@/stores/use-config-store", () => ({ useEffectiveConfig: () => ({}), useConfigStore: (select: any) => select({ isAiConfigReady: () => true }), resolveModelRequestConfig: () => ({}) }));
+// Actual library parsing and owned reads run in customer-generation-scenario.browser.test.ts.
+mock.module("@/lib/canvas/canvas-resource-references", () => ({ referencedAssetIdsInPrompt: () => [] }));
+mock.module("@/services/workspace-asset-read", () => ({ loadWorkspaceAssetsForUse: async () => { throw new Error("unexpected library lookup in lifecycle-only fixture"); } }));
+mock.module("@/stores/use-asset-store", () => ({ useAssetStore: { getState: () => ({ assets: [] }) } }));
 mock.module("@/components/canvas/canvas-node-generation", () => ({ buildNodeGenerationContext: (_id: any, _nodes: any, _edges: any, prompt: string) => ({ prompt, referenceImages: [], referenceVideos: [], referenceAudios: [], characterReferences: [], resolvedCharacterVersions: [], resolvedCharacterVoices: [] }), hydrateNodeGenerationContext: (context: any) => hydrate(context), compileNodeGenerationReferences: (context: any) => context }));
 mock.module("@/pages/canvas/canvas-assistant-proposal-execution", () => ({ buildConfirmedGenerationConfig: () => ({ model: "fixture", taskWorkflowProvider: "model", size: "1:1" }) }));
 mock.module("@/lib/canvas/canvas-project-generation", () => ({ isGenerationCanceled: (error: any) => error?.name === "AbortError", buildVideoGenerationMetadata: () => ({ videoEditOperation: "text_to_video" }) }));

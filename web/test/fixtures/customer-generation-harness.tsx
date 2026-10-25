@@ -17,9 +17,11 @@ import { canvasThemes } from "../../src/lib/canvas-theme";
 import { canvasNodeOperation } from "../../src/lib/operation-progress";
 import { defaultModelCapabilityConfig } from "../../src/lib/model-capabilities";
 import { useOperationProgress } from "../../src/stores/use-operation-progress";
+import { configureApiRuntime } from "../../src/services/api/request";
 
 const params = new URLSearchParams(location.search);
 const scenario = (params.get("scenario") || "five-images") as CustomerGenerationScenario;
+if (scenario === "library-references") configureApiRuntime(location.origin + "/api", "synthetic-desktop-token");
 const project = (window as any).__customerProject || customerGenerationProject(scenario);
 const noop = () => {};
 setActiveUserScope("synthetic-customer");

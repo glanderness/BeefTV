@@ -75,6 +75,13 @@ export async function startCustomerScenarioServer(options: { port?: number } = {
             }
             return json({ resource: { id: name, status: "ready", userId: "synthetic-customer", kind: name === "audio-1" ? "audio" : "image", mimeType: name === "audio-1" ? "audio/wav" : "image/svg+xml", durationMs: name === "audio-1" ? 0 : 2500, width: 1280, height: 720, size: 128, objectKey: name } });
         }
+        if (url.pathname === "/api/assets/batch" && request.method === "POST") {
+            const { ids } = await request.json();
+            return json({ assets: [
+                { id: "library-image", kind: "image", data: { dataUrl: "/api/resources/image-1/file", storageKey: "resource:image-1", mimeType: "image/png", width: 1280, height: 720, bytes: 128 } },
+                { id: "library-video", kind: "video", data: { url: "/api/resources/video-1/file", storageKey: "resource:video-1", mimeType: "video/mp4", width: 1280, height: 720, durationMs: 2500, bytes: 128 } },
+            ].filter(asset => ids.includes(asset.id)).map(asset => ({ ...asset, title: asset.id, coverUrl: "", tags: [], status: "confirmed", createdAt: "2026-10-25T00:00:00Z", updatedAt: "2026-10-25T00:00:00Z" })) });
+        }
         if (url.pathname.startsWith("/api/")) return json([]);
         return new Response('<meta charset="utf-8"><div id="root"></div><script>window.__customerProject=' + JSON.stringify(state.project).replaceAll("<", "\\u003c") + '</script><script type="module" src="/harness.js"></script>', { headers: { "Content-Type": "text/html; charset=utf-8", "Set-Cookie": `scenario=${id}; Path=/; SameSite=Lax` } });
     } });

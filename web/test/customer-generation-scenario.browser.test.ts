@@ -34,6 +34,55 @@ async function until(predicate: () => boolean, timeout = 3500) {
     expect(predicate()).toBe(true);
 }
 
+test("owned library references missing from the visible catalog resolve before task submission", async () => {
+    const { page, state, errors, close } = await open("library-references");
+    try {
+        await start(page);
+        await until(() => state.posts.length === 1).catch(async error => {
+            const metadata = await page.evaluate(() => (window as any).__customer.nodes.find((node: any) => node.id === "target").metadata);
+            throw new Error(JSON.stringify(metadata), { cause: error });
+        });
+        expect(state.posts[0].input.referenceImages.map((image: any) => image.id)).toEqual(["library-image"]);
+        expect(state.posts[0].input.referenceVideos.map((video: any) => video.id)).toEqual(["library-video"]);
+        expect(errors).toEqual([]);
+    } finally { await close(); }
+}, 15000);
+
+test("missing library records still block submission and preserve the previous output", async () => {
+    const { page, state, errors, close } = await open("library-references");
+    await page.route("**/api/assets/batch", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: { assets: [] }, msg: "ok" }) }));
+    try {
+        await start(page);
+        await page.waitForFunction(() => (window as any).__customer.settled);
+        expect(state.posts).toHaveLength(0);
+        const metadata = await page.evaluate(() => (window as any).__customer.nodes.find((node: any) => node.id === "target").metadata);
+        expect(metadata.generationPreflightError).toContain("素材不存在");
+        expect(metadata.storageKey).toBe("resource:previous-result");
+        expect(errors).toEqual([]);
+    } finally { await close(); }
+}, 15000);
+
+test("cancelled library lookup cannot submit when the late lookup completes", async () => {
+    const { page, state, errors, close } = await open("library-references");
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let held = false;
+    await page.route("**/api/assets/batch", async route => { held = true; await gate; await route.continue(); });
+    try {
+        await start(page);
+        await until(() => held);
+        await page.getByRole("button", { name: "取消准备" }).click();
+        await page.waitForFunction(() => (window as any).__customer.settled);
+        const completedLookup = page.waitForResponse(response => new URL(response.url()).pathname === "/api/assets/batch");
+        release();
+        await completedLookup;
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        expect(await page.evaluate(() => (window as any).__customer.nodes.find((node: any) => node.id === "target").metadata.storageKey)).toBe("resource:previous-result");
+        expect(state.posts).toHaveLength(0);
+        expect(errors).toEqual([]);
+    } finally { release(); await close(); }
+}, 15000);
+
 test("preflight length failure keeps the prior output and clears when an explicit limit change allows the full prompt", async () => {
     const { page, state, errors, close } = await open("five-images", "long-prompt-limit");
     try {
