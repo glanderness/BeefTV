@@ -5,7 +5,7 @@ import { App } from "antd";
 
 import { compileNodeGenerationReferences, buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
-import { buildVideoGenerationMetadata, isGenerationCanceled } from "@/lib/canvas/canvas-project-generation";
+import { buildVideoGenerationMetadata, isGenerationCanceled, MISSING_GENERATION_TASK_IDENTITY_DETAILS } from "@/lib/canvas/canvas-project-generation";
 import { buildConfirmedGenerationConfig } from "./canvas-assistant-proposal-execution";
 import type { ConfirmedGenerationInputs } from "./canvas-assistant-proposal-snapshot";
 import { canReleaseCanvasGenerationSource, canvasGenerationPromptMetadata, canvasGenerationRequestFingerprint, runCanvasGenerationSubmissionOnce } from "@/lib/canvas/canvas-generation-submission";
@@ -23,7 +23,7 @@ import type { Skill } from "@/services/api/skills";
 import { skillRuntime } from "@/services/skill-runtime";
 import { loadWorkspaceAssetsForUse } from "@/services/workspace-asset-read";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
-import { findGenerationTaskByOperation, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
+import { findGenerationTaskByOperation, queryGenerationTask, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { assertUserScope, captureUserScope } from "@/lib/user-scope-guard";
 import { useConfigStore, useEffectiveConfig, resolveModelRequestConfig } from "@/stores/use-config-store";
 import { seedanceReferenceRatioWarning } from "@/lib/seedance-channel-warning";
@@ -139,7 +139,7 @@ export function useCanvasGenerationExecutor({
                         if (controller.signal.aborted || isGenerationCanceled(error)) return;
                         const errText = generationErrorMessage(error);
                         diagnostic(error instanceof Error && error.name === "CanvasPreparationTimeoutError" ? "generation_preflight_timeout" : "generation_preflight_failed", "error", errText);
-                        if (["references", "skills", "parameters"].includes(stage)) {
+                        if (["validation", "references", "skills", "parameters"].includes(stage)) {
                             setNodes((current) => current.map((node) => node.id === nodeId
                                 ? { ...node, metadata: { ...node.metadata, generationPreflightError: errText } }
                                 : node));
@@ -160,10 +160,16 @@ export function useCanvasGenerationExecutor({
                             const scope = captureUserScope();
                             startGenerationRequest(nodeId, nodeId, nodeId, controller);
                             for (const target of pendingSubmissions) {
-                                const task = await findGenerationTaskByOperation(target.metadata!.taskClientOperationId!, projectId, controller.signal);
+                                const taskId = target.metadata?.taskId;
+                                const operationId = target.metadata?.taskClientOperationId;
+                                if (!taskId && !operationId?.trim()) throw new Error(MISSING_GENERATION_TASK_IDENTITY_DETAILS);
+                                const task = taskId
+                                    ? await queryGenerationTask(taskId, { signal: controller.signal, expectedScope: scope })
+                                    : await findGenerationTaskByOperation(operationId!, projectId, controller.signal);
                                 controller.signal.throwIfAborted();
                                 assertUserScope(scope);
                                 if (!task) { message.warning("尚未查到上次提交的任务，请稍后再查询，暂勿重新生成"); continue; }
+                                if (task.projectId && task.projectId !== projectId) throw new Error("生成任务不属于当前画布");
                                 bindGenerationTask(target.id, task);
                                 const completed = await waitForGenerationTask(task.id, { signal: controller.signal, expectedScope: scope, initialTask: task, onTaskUpdate: (update) => bindGenerationTask(target.id, update) });
                                 controller.signal.throwIfAborted();

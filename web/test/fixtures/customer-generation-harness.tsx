@@ -20,11 +20,23 @@ import { useOperationProgress } from "../../src/stores/use-operation-progress";
 import { configureApiRuntime } from "../../src/services/api/request";
 import { CanvasNodePromptPanel } from "../../src/components/canvas/canvas-node-prompt-panel";
 import { buildCanvasNodeMentionReferenceMap } from "../../src/lib/canvas/canvas-resource-references";
+import { isolateCopiedNodeMetadata } from "../../src/lib/canvas/canvas-node-copy";
 
 const params = new URLSearchParams(location.search);
 const scenario = (params.get("scenario") || "five-images") as CustomerGenerationScenario;
 if (scenario === "library-references" || params.has("reference-repair-ui")) configureApiRuntime(location.origin + "/api", "synthetic-desktop-token");
 const project = (window as any).__customerProject || customerGenerationProject(scenario);
+if (params.has("copied-submission")) {
+    const target = project.nodes.find((node: CanvasNodeData) => node.id === "target")!;
+    const source = { ...target, id: "original-pending", metadata: { ...target.metadata, status: "loading" as const, taskClientOperationId: "canvas:original", generationSubmissionState: "unknown" as const } };
+    project.nodes.push(source);
+    target.metadata = isolateCopiedNodeMetadata(source, new Map([[source.id, target.id]]));
+}
+if (params.has("missing-submission-id") || params.has("known-task-only")) {
+    const target = project.nodes.find((node: CanvasNodeData) => node.id === "target")!;
+    Object.assign(target.metadata!, { status: "error", generationSubmissionState: "unknown", errorDetails: "页面刷新后本地生成已中断，请重新生成。" });
+    if (params.has("known-task-only")) target.metadata!.taskId = "original-customer-task";
+}
 if (params.has("reference-repair-ui")) {
     project.nodes.push({ ...project.nodes[0], id: "unlinked", title: "未连接的场景图" });
     project.nodes.find((node: CanvasNodeData) => node.id === "target")!.metadata!.composerContent = "保留 @[node:image-1]，参考 @[node:unlinked] 和 @[asset:missing-library]。正文保持不变。";

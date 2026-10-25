@@ -20,7 +20,7 @@ mock.module("@/components/canvas/canvas-node-generation", () => ({ buildNodeGene
 mock.module("@/pages/canvas/canvas-assistant-proposal-execution", () => ({ buildConfirmedGenerationConfig: () => ({ model: "fixture", taskWorkflowProvider: "model", size: "1:1" }) }));
 const submission = await import("@/lib/canvas/canvas-generation-submission");
 mock.module("@/lib/canvas/canvas-generation-submission", () => ({ ...submission, canvasGenerationRequestFingerprint: () => "repeat" }));
-mock.module("@/lib/canvas/canvas-project-generation", () => ({ isGenerationCanceled: () => false, buildVideoGenerationMetadata: () => ({ videoEditOperation: "text_to_video" }) }));
+mock.module("@/lib/canvas/canvas-project-generation", () => ({ MISSING_GENERATION_TASK_IDENTITY_DETAILS: "missing task identity", isGenerationCanceled: () => false, buildVideoGenerationMetadata: () => ({ videoEditOperation: "text_to_video" }) }));
 mock.module("@/lib/model-selection", () => ({ modelCompatibilityError: () => "", modelGroupReferenceLimits: () => undefined, modelPromptLengthError: () => "", modelRequestOptions: () => ({}) }));
 mock.module("@/services/skill-runtime", () => ({ skillRuntime: { prepare: async ({ prompt }: any) => ({ prompt, metadata: {} }) } }));
 mock.module("@/lib/canvas/canvas-style-execution", () => ({ resolveCanvasStyleExecution: () => undefined }));

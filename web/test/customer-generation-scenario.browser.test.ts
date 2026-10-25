@@ -35,6 +35,44 @@ async function until(predicate: () => boolean, timeout = 3500) {
     expect(predicate()).toBe(true);
 }
 
+test("copied pending video can submit independently without querying an undefined receipt", async () => {
+    const { page, state, close } = await open("five-images", "copied-submission");
+    try {
+        await start(page);
+        await until(() => state.posts.length === 1);
+        expect(state.lookups).toEqual([]);
+        const source = await page.evaluate(() => (window as any).__customer.nodes.find((node: any) => node.id === "original-pending"));
+        expect(source.metadata.taskClientOperationId).toBe("canvas:original");
+        expect(source.metadata.generationSubmissionState).toBe("unknown");
+        await page.getByRole("button", { name: "取消准备", exact: true }).click();
+    } finally { await close(); }
+});
+
+test("missing submission identity shows a persistent reason without a lookup or a paid retry", async () => {
+    const { page, state, close } = await open("five-images", "missing-submission-id&recover");
+    try {
+        await page.waitForFunction(() => (window as any).__customer.nodes.find((node: any) => node.id === "target").metadata.errorDetails.includes("缺少任务标识"));
+        await start(page);
+        await page.waitForFunction(() => (window as any).__customer.settled);
+        expect(state.posts).toHaveLength(0);
+        expect(state.lookups).toEqual([]);
+        expect(await page.evaluate(() => (window as any).__customer.nodes.find((node: any) => node.id === "target").metadata.generationPreflightError)).toContain("缺少任务标识");
+        expect(await page.evaluate(() => (window as any).__customer.nodes.find((node: any) => node.id === "target").metadata.generationSubmissionState)).toBe("unknown");
+    } finally { await close(); }
+});
+
+test("a known task without an operation id is recovered by task id without another submission", async () => {
+    const { page, state, close } = await open("five-images", "known-task-only");
+    try {
+        Object.assign(state, { task: { id: "original-customer-task", projectId: state.project.id, type: "canvas_video", status: "running", attempts: 1, createdAt: "2026-10-25T00:00:00Z", updatedAt: "2026-10-25T00:00:00Z" } });
+        await start(page);
+        await page.waitForFunction(() => (window as any).__customer.nodes.find((node: any) => node.id === "target").metadata.generationSubmissionState === "accepted");
+        expect(state.posts).toHaveLength(0);
+        expect(state.lookups).toEqual([]);
+        await page.getByRole("button", { name: "取消准备", exact: true }).click();
+    } finally { await close(); }
+});
+
 test("reference repair marks and locates invalid bindings, cancels safely, then submits only after explicit reselect", async () => {
     const { page, state, errors, close } = await open("five-images", "reference-repair-ui");
     try {
