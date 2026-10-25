@@ -1,6 +1,6 @@
 import { isVolcengineArkVideoProtocol, type ModelProtocol, type ModelProtocolWorkflow } from "@/lib/model-protocols";
 import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
-import { seedreamImageCapability } from "@/lib/seedream-image";
+import { seedreamFamily, seedreamImageCapability } from "@/lib/seedream-image";
 import type { ImageResolutionOption, ImageResolutionTier } from "@/lib/image-resolution-tiers";
 import { videoPromptLimits } from "@/lib/video-prompt-limits";
 
@@ -530,7 +530,9 @@ export function resolveImageResponseFormat(profile: ImageCapabilityConfig | unde
  * 给出选项却发不出去，等于又造一个「设置了不生效」。
  */
 export function imageResponseFormatSelectable(protocol: ModelProtocol | undefined, model: string) {
-    return protocol === "openai-image" && !beefAPIImageContract(model);
+    if (protocol !== "openai-image" || beefAPIImageContract(model)) return false;
+    // Seedream 走专用请求体，单图分支写死 b64_json，选了 url 也发不出去。
+    return !seedreamFamily(model);
 }
 
 export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = ""): ModelCapabilityConfig {

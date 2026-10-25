@@ -24,4 +24,10 @@ describe("图片 response_format 取值", () => {
         expect(imageResponseFormatSelectable("openai-image", "hy-image-v3")).toBe(false);
         expect(imageResponseFormatSelectable("grok-image", "grok-2-image")).toBe(false);
     });
+
+    test("Seedream 走专用请求体，不提供这个选择器", () => {
+        expect(imageResponseFormatSelectable("openai-image", "seedream-4-5-251128")).toBe(false);
+        expect(imageResponseFormatSelectable("openai-image", "seedream-4-0-250828")).toBe(false);
+        expect(imageResponseFormatSelectable("openai-image", "vendor::seedream-5-0-pro-260225")).toBe(false);
+    });
 });
