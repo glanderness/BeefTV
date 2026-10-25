@@ -13,6 +13,9 @@ mock.module("antd", () => ({ App: { useApp: () => ({ modal: { confirm: (input: a
 // Only suppress event recording; task/operation dependencies retain real trace helpers.
 mock.module("@/services/diagnostics/client-diagnostics", () => ({ ...clientDiagnostics, recordDiagnosticEvent: () => {} }));
 mock.module("@/stores/use-config-store", () => ({ useEffectiveConfig: () => ({}), useConfigStore: (select: any) => select({ isAiConfigReady: () => true }), resolveModelRequestConfig: () => ({}) }));
+mock.module("@/lib/canvas/canvas-resource-references", () => ({ referencedAssetIdsInPrompt: () => [] }));
+mock.module("@/services/workspace-asset-read", () => ({ loadWorkspaceAssetsForUse: async () => { throw new Error("unexpected library lookup in live-graph-only fixture"); } }));
+mock.module("@/stores/use-asset-store", () => ({ useAssetStore: { getState: () => ({ assets: [] }) } }));
 mock.module("@/components/canvas/canvas-node-generation", () => ({ buildNodeGenerationContext: (_nodes: any, _edges: any, _id: any, prompt: string) => ({ prompt, referenceImages: [], referenceVideos: [], referenceAudios: [], characterReferences: [], resolvedCharacterVoices: [] }), hydrateNodeGenerationContext: async (context: any) => context, compileNodeGenerationReferences: (context: any) => context }));
 mock.module("@/pages/canvas/canvas-assistant-proposal-execution", () => ({ buildConfirmedGenerationConfig: () => ({ model: "fixture", taskWorkflowProvider: "model", size: "1:1" }) }));
 const submission = await import("@/lib/canvas/canvas-generation-submission");
