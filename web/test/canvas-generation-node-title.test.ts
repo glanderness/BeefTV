@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { buildImageGenerationNodeTitle, renameCanvasNodeTitle, resolvePromptNodeTitle } from "@/lib/canvas/canvas-generation-title";
+import { saveCanvasTextNode } from "@/lib/canvas/canvas-node-prompt";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 function node(title: string, autoTitle?: string, type: CanvasNodeData["type"] = CanvasNodeType.Text): CanvasNodeData {
@@ -54,5 +55,21 @@ describe("canvas generation node title", () => {
         const renamed = renameCanvasNodeTitle(renameCanvasNodeTitle(automatic, "分镜 1"), automatic.title);
         expect(renamed.title).toBe("第一版提示词");
         expect(resolvePromptNodeTitle(renamed, "第二版提示词")).toEqual({ title: "第一版提示词", autoTitle: undefined });
+    });
+
+    test("stops following prompts after a rename saved from the text editor", () => {
+        const automatic = generated(node("文本节点"), "第一版提示词");
+        const renamed = saveCanvasTextNode(automatic, { title: "分镜 1", content: "正文" });
+        const reverted = saveCanvasTextNode(renamed, { title: automatic.title, content: "正文" });
+        expect(reverted.title).toBe("第一版提示词");
+        expect(reverted.metadata?.autoTitle).toBeUndefined();
+        expect(resolvePromptNodeTitle(reverted, "第二版提示词")).toEqual({ title: "第一版提示词", autoTitle: undefined });
+    });
+
+    test("keeps following prompts when the text editor only changes content", () => {
+        const automatic = generated(node("文本节点"), "第一版提示词");
+        const saved = saveCanvasTextNode(automatic, { title: automatic.title, content: "改写后的正文" });
+        expect(saved.metadata?.autoTitle).toBe("第一版提示词");
+        expect(resolvePromptNodeTitle(saved, "第二版提示词")).toEqual({ title: "第二版提示词", autoTitle: "第二版提示词" });
     });
 });

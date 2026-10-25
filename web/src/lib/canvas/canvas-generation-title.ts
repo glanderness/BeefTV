@@ -50,6 +50,7 @@ export function resolvePromptNodeTitle(node: CanvasNodeData, prompt: string): { 
  * resolvePromptNodeTitle 认不出它是自动名，就按用户名字保留。
  */
 export function renameCanvasNodeTitle(node: CanvasNodeData, title: string): CanvasNodeData {
+    if (title === node.title) return node;
     if (!node.metadata || !Object.hasOwn(node.metadata, "autoTitle")) return { ...node, title };
     const { autoTitle: _autoTitle, ...metadata } = node.metadata;
     return { ...node, title, metadata };

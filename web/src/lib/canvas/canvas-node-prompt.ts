@@ -1,3 +1,4 @@
+import { renameCanvasNodeTitle } from "@/lib/canvas/canvas-generation-title";
 import { getNodeResourceKind } from "@/lib/canvas/node-registry";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 
@@ -34,4 +35,20 @@ export function writeCanvasNodePrompt(node: CanvasNodeData, prompt: string, opti
             ? { ...metadata, ...promptTemplateMetadata, composerContent: prompt }
             : { ...metadata, ...promptTemplateMetadata, prompt, composerContent: prompt },
     };
+}
+
+export type CanvasTextNodeSave = {
+    title: string;
+    content: string;
+    richText?: Record<string, unknown>;
+};
+
+/**
+ * 文本编辑器的保存是第二个改名入口（标题在弹窗里可编辑）。内容编辑必须保留
+ * 自动命名状态，只有标题真的变了才按改名处理，所以标题交给 renameCanvasNodeTitle，
+ * 它会在标题未变时原样返回节点。
+ */
+export function saveCanvasTextNode(node: CanvasNodeData, input: CanvasTextNodeSave) {
+    const renamed = renameCanvasNodeTitle(node, input.title);
+    return { ...renamed, metadata: { ...renamed.metadata, content: input.content, richText: input.richText } };
 }
