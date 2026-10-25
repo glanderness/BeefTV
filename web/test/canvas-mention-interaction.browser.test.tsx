@@ -380,3 +380,57 @@ test("expanded modal allows pointer selection of references and image/video para
         await dialog.waitFor({ state: "hidden" });
     }
 }, 30000);
+
+test("Scenario 9: 手动 @ 选中角色时保留提示词里写的角色名", async () => {
+    const input = page.getByRole("textbox", { name: "rich-editor" });
+    await clearRichEditor(page, input);
+    await input.pressSequentially("镜头一：@唐妙菱");
+
+    const menu = page.locator("[data-canvas-resource-mention-menu]");
+    await menu.waitFor({ state: "visible", timeout: 5000 });
+
+    const characterItem = menu.locator(".canvas-resource-mention-item", { hasText: "唐妙菱" });
+    await characterItem.waitFor({ state: "visible", timeout: 5000 });
+    await characterItem.click();
+
+    await menu.waitFor({ state: "hidden", timeout: 5000 });
+    const promptText = (await page.locator("#rich-prompt-display").innerText()).trim();
+    // 角色名保留在提示词里，引用追加在后面，而不是把角色名替换成引用
+    expect(promptText).toBe("RichPrompt: 镜头一：唐妙菱 @[node:node-char-1]");
+    expect(promptText.split("唐妙菱").length - 1).toBe(1);
+}, 30000);
+
+test("Scenario 10: 按 Tab 补全角色引用时保留角色名", async () => {
+    const input = page.getByRole("textbox", { name: "rich-editor" });
+    await clearRichEditor(page, input);
+    await input.pressSequentially("镜头二：@唐妙菱");
+
+    const menu = page.locator("[data-canvas-resource-mention-menu]");
+    await menu.waitFor({ state: "visible", timeout: 5000 });
+
+    const characterItem = menu.locator(".canvas-resource-mention-item", { hasText: "唐妙菱" });
+    await characterItem.waitFor({ state: "visible", timeout: 5000 });
+
+    await input.press("Tab");
+
+    await menu.waitFor({ state: "hidden", timeout: 5000 });
+    const promptText = (await page.locator("#rich-prompt-display").innerText()).trim();
+    expect(promptText).toBe("RichPrompt: 镜头二：唐妙菱 @[node:node-char-1]");
+    expect(promptText.split("唐妙菱").length - 1).toBe(1);
+}, 30000);
+
+test("Scenario 11: 输入角色名按 Tab 自动补全引用时保留角色名", async () => {
+    const input = page.getByRole("textbox", { name: "autolink-editor" });
+    await clearRichEditor(page, input);
+    await input.pressSequentially("唐妙菱");
+
+    const autoLinkHint = page.getByRole("button", { name: "引用唐妙菱" });
+    await autoLinkHint.waitFor({ state: "visible", timeout: 5000 });
+
+    await input.press("Tab");
+    await autoLinkHint.waitFor({ state: "hidden", timeout: 5000 });
+
+    const promptText = (await page.locator("#autolink-prompt-display").innerText()).trim();
+    expect(promptText).toBe("AutoLinkPrompt: 唐妙菱 @[node:node-char-1]");
+    expect(promptText.split("唐妙菱").length - 1).toBe(1);
+}, 30000);

@@ -109,6 +109,14 @@ const mockReferences: CanvasResourceReference[] = [
             fileCount: 4,
         },
     },
+    {
+        id: "ref-node-char-1",
+        kind: "character",
+        label: "唐妙菱",
+        title: "唐妙菱",
+        nodeId: "node-char-1",
+        active: true,
+    },
 ];
 
 function TestApp() {
@@ -120,6 +128,7 @@ function TestApp() {
     const [parameterUpdate, setParameterUpdate] = useState("");
     const [richPrompt, setRichPrompt] = useState("");
     const [plainPrompt, setPlainPrompt] = useState("");
+    const [autoLinkPrompt, setAutoLinkPrompt] = useState("");
     const [underlyingClicks, setUnderlyingClicks] = useState(0);
 
     return (
@@ -187,6 +196,26 @@ function TestApp() {
                         onChange={setPlainPrompt}
                         onSelectReference={(ref) => ref}
                         placeholder="纯原生 textarea 输入框"
+                        style={{ width: "100%", height: "80px", color: "#fff", background: "transparent", border: "none", resize: "none" }}
+                    />
+                </div>
+            </div>
+
+            {/* Auto Link Section */}
+            <div style={{ marginTop: "24px" }}>
+                <div style={{ marginBottom: "8px" }}>
+                    <span id="autolink-prompt-display">AutoLinkPrompt: {autoLinkPrompt}</span>
+                </div>
+                <div style={{ background: "#27272a", borderRadius: "8px", padding: "12px", minHeight: "100px" }}>
+                    <CanvasResourceMentionTextarea
+                        id="autolink-mention-input"
+                        aria-label="autolink-editor"
+                        value={autoLinkPrompt}
+                        references={mockReferences}
+                        autoLinkEnabled
+                        onChange={setAutoLinkPrompt}
+                        onSelectReference={(ref) => ref}
+                        placeholder="输入角色名后按 Tab 自动补全引用"
                         style={{ width: "100%", height: "80px", color: "#fff", background: "transparent", border: "none", resize: "none" }}
                     />
                 </div>
