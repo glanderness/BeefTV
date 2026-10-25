@@ -382,28 +382,7 @@ func NormalizeModelCapabilityConfigForModel(capability string, protocol string, 
 	return value, nil
 }
 
-// 渠道建好后视频能力是存下来的快照，旧版给自定义视频服务（full-video）写的上限是 15 秒，
-// 快照会直接覆盖默认值，所以 2.5 一代要把这条旧上限抬到 30 秒；其他代际和用户自定的上限保持不动。
-func upgradeLegacySeedance25DurationCeiling(profile *VideoCapabilityConfig, protocol string, modelName string) *VideoCapabilityConfig {
-	if profile == nil {
-		return profile
-	}
-	if model.ChannelInterfaceType(strings.TrimSpace(protocol)) != model.ChannelInterfaceType("full-video") {
-		return profile
-	}
-	if !isFullVideoSeedance25(modelName) {
-		return profile
-	}
-	if profile.Duration.Selection != "range" || profile.Duration.Max != 15 {
-		return profile
-	}
-	value := *profile
-	value.Duration.Max = 30
-	return &value
-}
-
 func applyModelSpecificVideoCapability(profile *VideoCapabilityConfig, protocol string, modelName string) *VideoCapabilityConfig {
-	profile = upgradeLegacySeedance25DurationCeiling(profile, protocol, modelName)
 	if profile == nil {
 		return profile
 	}

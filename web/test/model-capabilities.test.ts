@@ -214,10 +214,10 @@ test("自定义视频服务（full-video）默认时长：2.5 放开到 30 秒�
     assert.equal(defaultModelCapabilityConfig("full-video", " SD-Native-Full-2.5 ").video!.duration.max, 30);
 });
 
-test("渠道里存下的 full-video 旧上限（15 秒）对 2.5 模型放开到 30 秒，其他代际和自定上限不动", () => {
-    // 旧版建渠道时把上限存成 15 秒，快照会盖掉默认值，所以按模型代际在读取时抬到 30 秒。
-    const savedLegacy = (model: string) => {
-        const legacy = defaultModelCapabilityConfig("full-video", "原生不卡人脸-全参2.0").video!;
+test("渠道里存下的 full-video 时长上限原样生效，2.5 模型也不改写用户设的 15 秒", () => {
+    // 管理员可以明确把 2.5 的上限设成 15 秒，这属于有效配置，读取时不能凭数值等于 15 就抬到 30 秒。
+    const saved = (model: string, duration: { selection: "range"; min: number; max: number; step: number; default: number }) => {
+        const base = defaultModelCapabilityConfig("full-video", "原生不卡人脸-全参2.5").video!;
         return {
             channels: [{
                 id: "custom",
@@ -225,21 +225,24 @@ test("渠道里存下的 full-video 旧上限（15 秒）对 2.5 模型放开到
                 modelProfiles: [{
                     model,
                     protocol: "full-video",
-                    capabilityConfig: { version: 1, video: { ...legacy, duration: { selection: "range", min: 4, max: 15, step: 1, default: 5 } } },
+                    capabilityConfig: { version: 1, video: { ...base, duration } },
                 }],
             }],
         } as AiConfig;
     };
+    const read = (config: AiConfig, model: string) => modelCapabilityConfigFor(config, `custom::${model}`).video!;
 
-    const profile25 = modelCapabilityConfigFor(savedLegacy("原生不卡人脸-全参2.5"), "custom::原生不卡人脸-全参2.5").video!;
-    assert.equal(profile25.duration.max, 30);
-    assert.ok(videoDurationAllowed(profile25, 30));
+    const explicit15 = read(saved("原生不卡人脸-全参2.5", { selection: "range", min: 4, max: 15, step: 1, default: 5 }), "原生不卡人脸-全参2.5");
+    assert.equal(explicit15.duration.max, 15);
+    assert.equal(videoDurationAllowed(explicit15, 30), false);
 
-    const profile20 = modelCapabilityConfigFor(savedLegacy("原生不卡人脸-全参2.0"), "custom::原生不卡人脸-全参2.0").video!;
-    assert.equal(profile20.duration.max, 15);
-    assert.equal(videoDurationAllowed(profile20, 30), false);
+    const custom5to15 = read(saved("原生不卡人脸-全参2.5", { selection: "range", min: 5, max: 15, step: 5, default: 5 }), "原生不卡人脸-全参2.5");
+    assert.equal(custom5to15.duration.min, 5);
+    assert.equal(custom5to15.duration.max, 15);
+    assert.equal(custom5to15.duration.step, 5);
+    assert.equal(videoDurationAllowed(custom5to15, 30), false);
 
-    const custom = savedLegacy("原生不卡人脸-全参2.5");
-    custom.channels[0].modelProfiles![0].capabilityConfig!.video!.duration.max = 20;
-    assert.equal(modelCapabilityConfigFor(custom, "custom::原生不卡人脸-全参2.5").video!.duration.max, 20);
+    const saved30 = read(saved("原生不卡人脸-全参2.5", { selection: "range", min: 4, max: 30, step: 1, default: 5 }), "原生不卡人脸-全参2.5");
+    assert.equal(saved30.duration.max, 30);
+    assert.ok(videoDurationAllowed(saved30, 30));
 });

@@ -509,11 +509,6 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
     return image;
 }
 
-// 与后端 modelcatalog.isFullVideoSeedance25 同一条规则：模型名按后缀判代际（自定义渠道的模型名由用户起名）。
-function isFullVideoSeedance25(model: string) {
-    return model.trim().toLowerCase().split("/").pop()?.endsWith("2.5") ?? false;
-}
-
 export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = ""): ModelCapabilityConfig {
     const text: TextCapabilityConfig = {
         streaming: true,
@@ -544,7 +539,8 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         defaultOperation: "text_to_video",
     };
     if (protocol === "full-video") {
-        const is25 = isFullVideoSeedance25(model);
+        // 与后端 modelcatalog.isFullVideoSeedance25 同一条规则：模型名按后缀判代际（自定义渠道的模型名由用户起名）。
+        const is25 = model.trim().toLowerCase().split("/").pop()?.endsWith("2.5") ?? false;
         video.references.promptMaxChars = 4000;
         video.references.maxImages = is25 ? 30 : 9;
         video.references.maxVideos = is25 ? 10 : 3;
@@ -712,8 +708,6 @@ export function modelCapabilityConfigFor(
     const capabilityConfig = normalizeModelCapabilityConfig(profile.capabilityConfig);
     const text = capabilityConfig.text ? { ...fallback.text!, ...capabilityConfig.text, references: { ...fallback.text!.references, ...capabilityConfig.text.references } } : fallback.text;
     const video = (capabilityConfig.video ? { ...fallback.video!, ...capabilityConfig.video, references: { ...fallback.video!.references, ...capabilityConfig.video.references, promptMaxUtf16Units: capabilityConfig.video.references.promptMaxUtf16Units ?? 0 } } : fallback.video)!;
-    // 旧版建渠道时把自定义视频服务的上限存成 15 秒，快照会盖掉默认值；2.5 一代读取时抬到 30 秒，其他代际和自定上限不动。
-    if (protocol === "full-video" && isFullVideoSeedance25(modelName) && video.duration.selection === "range" && video.duration.max === 15) video.duration = { ...video.duration, max: 30 };
     alignMaterialPixels(video);
     const configuredImage = capabilityConfig.image;
     const image = configuredImage
