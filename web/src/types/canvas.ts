@@ -249,6 +249,12 @@ export type CanvasNodeMetadata = {
     richText?: Record<string, unknown>;
     composerContent?: string;
     prompt?: string;
+    /**
+     * 上一次由提示词自动生成的节点名（飞书需求 #66）。
+     * 与 title 相等表示当前名称仍由系统按提示词生成，可以继续跟随提示词更新；
+     * 不相等表示名称是用户或流程起的，生成时不要再替换。
+     */
+    autoTitle?: string;
     promptTemplateOperation?: string;
     promptTemplateVariables?: Record<string, string>;
     status?: CanvasNodeStatus;
