@@ -6,7 +6,7 @@ import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { applyCanvasLiveViewport, subscribeCanvasViewportPreview } from "@/lib/canvas/canvas-live-viewport";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { ViewportTransform } from "@/types/canvas";
-import { canvasWheelIntent } from "@/lib/canvas/canvas-wheel";
+import { canvasWheelIntent, type CanvasWheelBehavior } from "@/lib/canvas/canvas-wheel";
 
 type InfiniteCanvasProps = {
     interactive?: boolean;
@@ -14,6 +14,7 @@ type InfiniteCanvasProps = {
     viewport: ViewportTransform;
     appearance?: CanvasAppearance;
     backgroundMode?: CanvasBackgroundMode;
+    wheelBehavior?: CanvasWheelBehavior;
     onViewportChange: (viewport: ViewportTransform) => void;
     onViewportPreviewChange?: (viewport: ViewportTransform) => void;
     onCanvasMouseDown?: (event: React.PointerEvent<HTMLDivElement>) => void;
@@ -45,7 +46,7 @@ type PinchState = {
     initialScale: number;
 };
 
-export function InfiniteCanvas({ interactive = true, containerRef, viewport, appearance, backgroundMode = "lines", onViewportChange, onViewportPreviewChange, onCanvasMouseDown, boxSelectEnabled = false, onCanvasDoubleClick, onCanvasDeselect, onContextMenu, onDrop, onFileDragEnter, onFileDragLeave, onFileDragOver, graphicsLayer, children }: InfiniteCanvasProps) {
+export function InfiniteCanvas({ interactive = true, containerRef, viewport, appearance, backgroundMode = "lines", wheelBehavior = "auto", onViewportChange, onViewportPreviewChange, onCanvasMouseDown, boxSelectEnabled = false, onCanvasDoubleClick, onCanvasDeselect, onContextMenu, onDrop, onFileDragEnter, onFileDragLeave, onFileDragOver, graphicsLayer, children }: InfiniteCanvasProps) {
     const colorTheme = useActiveTheme();
     const resolvedAppearance = resolveCanvasAppearance(appearance, colorTheme);
     const panState = useRef({
@@ -201,7 +202,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
             const now = performance.now();
             const modifiers = Number(isPinchZoom) * 2 + Number(event.shiftKey);
             const previous = wheelGestureRef.current?.modifiers === modifiers ? wheelGestureRef.current : null;
-            const intent = canvasWheelIntent(event, previous, now);
+            const intent = canvasWheelIntent(event, previous, now, wheelBehavior);
             wheelGestureRef.current = { intent, at: now, modifiers };
             const looksLikeTrackpadPan = intent === "pan";
 
@@ -219,7 +220,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
             if (!rect) return;
             const mouseX = event.clientX - rect.left;
             const mouseY = event.clientY - rect.top;
-            const zoomDelta = isPinchZoom && event.deltaMode === 0 && absY < 40 ? TRACKPAD_PINCH_ZOOM_DELTA : WHEEL_ZOOM_DELTA;
+            const zoomDelta = (isPinchZoom || wheelBehavior === "zoom") && event.deltaMode === 0 && absY < 40 ? TRACKPAD_PINCH_ZOOM_DELTA : WHEEL_ZOOM_DELTA;
             const factor = Math.pow(1.1, -deltaY / zoomDelta);
             const newScale = clampScale(current.k * factor);
             const worldX = (mouseX - current.x) / current.k;

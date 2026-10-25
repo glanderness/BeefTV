@@ -12,6 +12,7 @@ import {
     type CanvasCustomAppearance,
 } from "@/lib/canvas/canvas-appearance";
 import type { CanvasBackgroundMode, CanvasColorTheme, CanvasTheme } from "@/lib/canvas-theme";
+import type { CanvasWheelBehavior } from "@/lib/canvas/canvas-wheel";
 
 const DARK_PRESETS = ["#000000", "#30272B", "#302D26", "#25302E"];
 
@@ -27,6 +28,8 @@ export function CanvasAppearanceControls({
     onSnapToGridChange,
     showConnections,
     onShowConnectionsChange,
+    wheelBehavior,
+    onWheelBehaviorChange,
 }: {
     appearance: CanvasAppearance;
     backgroundMode: CanvasBackgroundMode;
@@ -39,6 +42,8 @@ export function CanvasAppearanceControls({
     onSnapToGridChange: (enabled: boolean) => void;
     showConnections: boolean;
     onShowConnectionsChange: (visible: boolean) => void;
+    wheelBehavior: CanvasWheelBehavior;
+    onWheelBehaviorChange: (behavior: CanvasWheelBehavior) => void;
 }) {
     const [draft, setDraft] = useState(appearance);
 
@@ -123,6 +128,18 @@ export function CanvasAppearanceControls({
                 <span className="inline-flex items-center gap-1.5 font-medium"><Link2 className="size-3.5 opacity-65" />显示连线</span>
                 <Switch size="sm" checked={showConnections} onChange={onShowConnectionsChange} aria-label="显示连线" />
             </div>
+
+            <div className="mt-3 text-[var(--fs-micro)] font-semibold uppercase opacity-45">滚轮操作</div>
+            <Segmented
+                className="mt-1 w-full !rounded-[var(--dock-item-radius-labeled)] !p-0.5 [&_.ant-segmented-group]:!flex [&_.ant-segmented-item]:!min-h-7 [&_.ant-segmented-item]:!flex-1 [&_.ant-segmented-item-label]:!min-h-7 [&_.ant-segmented-item-label]:!text-[var(--fs-tiny)] [&_.ant-segmented-item-label]:!leading-7"
+                value={wheelBehavior}
+                onChange={(value) => onWheelBehaviorChange(value as CanvasWheelBehavior)}
+                options={[
+                    { value: "auto", label: "自动" },
+                    { value: "zoom", label: "缩放" },
+                    { value: "pan", label: "平移" },
+                ]}
+            />
         </>
     );
 }

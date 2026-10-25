@@ -104,14 +104,23 @@ export function autoMentionCanvasResourceReferences(prompt: string, references: 
     if (!names.length) return prompt;
 
     const matcher = new RegExp(`(^|[^A-Za-z0-9_@])(${names.map(escapeRegExp).join("|")})(?![A-Za-z0-9_])`, "gu");
+    // 分段替换，跳过已经是 @ 引用的片段；另记每段在原文里的起点，用来判断名字后面是否已有同一引用。
+    let partOffset = 0;
     return prompt
         .split(/(@\[[^\]]+\]|@[^\s@,.;:!?，。；：！？、)\]}】）]+)/gu)
         .map((part) => {
+            const startOfPart = partOffset;
+            partOffset += part.length;
             if (part.startsWith("@")) return part;
             return part.replace(matcher, (match, prefix: string, name: string, offset: number, source: string) => {
+                const reference = referenceByName.get(name)!;
+                const token = canvasResourceMentionToken(reference);
                 const nextCharacter = source[offset + match.length];
                 const separator = needsAutoMentionSeparator(nextCharacter) ? " " : "";
-                return `${prefix}${canvasResourceMentionToken(referenceByName.get(name)!)}${separator}`;
+                if (!keepsTypedResourceName(reference, name)) return `${prefix}${token}${separator}`;
+                // 用户自己写的名字（角色名、素材标题）是提示词的语义，保留原文并把引用追加在后面。
+                if (prompt.slice(startOfPart + offset + match.length).trimStart().startsWith(token)) return match;
+                return `${prefix}${name} ${token}${separator}`;
             });
         })
         .join("");
@@ -176,6 +185,15 @@ function escapeRegExp(value: string) {
 
 function needsAutoMentionSeparator(nextCharacter: string | undefined) {
     return Boolean(nextCharacter && !/[\s,.!?;:，。！？；：、)\]}】）]/u.test(nextCharacter));
+}
+
+/**
+ * 只有匹配到的名字是该素材自己的标题（且不同于自动编号「图片1 / 角色1」）时才保留原文，
+ * 否则保留只会得到「图片1 @图片1」这种重复。
+ */
+function keepsTypedResourceName(reference: CanvasResourceReference, name: string) {
+    const title = reference.title.trim();
+    return Boolean(title) && title !== reference.label.trim() && title === name;
 }
 
 const CANVAS_RESOURCE_MENTION_BOUNDARY = /(?:$|\s|[,.!?;:，。！？；：、)\]}】）])/;

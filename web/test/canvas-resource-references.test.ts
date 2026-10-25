@@ -12,8 +12,11 @@ const smartReferences: CanvasResourceReference[] = [
 
 describe("canvas smart references", () => {
     test("converts repeated names and aliases without rewriting existing mentions", () => {
+        // 用户自己写的标题（宫门全景 / 唐妙菱）保留原文，引用追加在后面；自动编号仍然直接替换。
         expect(autoMentionCanvasResourceReferences("图片6在前景，图6退后；宫门全景可见。唐妙菱看向图片60。", smartReferences))
-            .toBe("@[node:image-6] 在前景，@[node:image-6] 退后；@[node:image-6] 可见。@[node:character] 看向图片60。");
+            .toBe("@[node:image-6] 在前景，@[node:image-6] 退后；宫门全景 @[node:image-6] 可见。唐妙菱 @[node:character] 看向图片60。");
+        const alreadyLinked = "唐妙菱 @[node:character] 看向远景";
+        expect(autoMentionCanvasResourceReferences(alreadyLinked, smartReferences)).toBe(alreadyLinked);
         const existing = "已有 @图片6 和 @[node:image-6]、@[asset:宫门全景]。";
         expect(autoMentionCanvasResourceReferences(existing, smartReferences)).toBe(existing);
         expect(autoMentionCanvasResourceReferences("请使用 2。不要改约2秒。", smartReferences)).toBe("请使用 2。不要改约2秒。");
@@ -33,7 +36,7 @@ describe("canvas smart references", () => {
             { ...smartReferences[0], id: "image-2", label: "图片2", title: "2" },
         ];
         const prompt = "固定 2 人，只有 1 句对白。\n| IMAGE 1 | 走廊 |\n| IMAGE 2 | 服装 |\n0-2.4 秒，6.0-7.0 秒，机位 30 度，@图片2 保持一致。";
-        expect(autoMentionCanvasResourceReferences(prompt, references)).toBe(prompt.replace("走廊", "@[node:image-6]"));
+        expect(autoMentionCanvasResourceReferences(prompt, references)).toBe(prompt.replace("走廊", "走廊 @[node:image-6]"));
     });
 
     test("image aliases use the image label instead of the mixed resource shelf position", () => {
@@ -44,7 +47,7 @@ describe("canvas smart references", () => {
             smartReferences[1],
         ];
         expect(autoMentionCanvasResourceReferences("image1、image 2、图1、图片2、声音、唐妙菱", references))
-            .toBe("@[node:image-6]、@[node:image-2]、@[node:image-6]、@[node:image-2]、@[node:audio]、@[node:character]");
+            .toBe("@[node:image-6]、@[node:image-2]、@[node:image-6]、@[node:image-2]、声音 @[node:audio]、唐妙菱 @[node:character]");
         expect(findCanvasResourceAutoLinkMatch("image1", 6, references)?.reference.nodeId).toBe("image-6");
         expect(findCanvasResourceAutoLinkMatch("image2", 6, smartReferences)).toBeNull();
     });
@@ -74,7 +77,7 @@ describe("canvas smart references", () => {
 
     test("escapes regular expression characters and preserves explicit mention tokens", () => {
         const reference = { ...smartReferences[0], title: "场景(夜)+", mentionToken: "@[node:image-6]" };
-        expect(autoMentionCanvasResourceReferences("场景(夜)+出现", [reference])).toBe("@[node:image-6] 出现");
+        expect(autoMentionCanvasResourceReferences("场景(夜)+出现", [reference])).toBe("场景(夜)+ @[node:image-6] 出现");
         expect(findCanvasResourceAutoLinkMatch(reference.title, reference.title.length, [reference])?.reference).toBe(reference);
     });
 });

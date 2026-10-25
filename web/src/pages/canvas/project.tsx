@@ -24,6 +24,7 @@ import { canOpenCanvasNodePromptPanel, isCanvasMediaResultNode } from "@/lib/can
 import copyToClipboard from "copy-to-clipboard";
 import { nanoid } from "nanoid";
 import { DEFAULT_CANVAS_BACKGROUND_MODE, normalizeCanvasAppearance, resolveCanvasAppearance, writeCanvasAppearanceDefault, type CanvasAppearance } from "@/lib/canvas/canvas-appearance";
+import { parseCanvasWheelBehavior, type CanvasWheelBehavior } from "@/lib/canvas/canvas-wheel";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { persistCanvasMediaPerformanceMode, readCanvasMediaPerformanceMode } from "@/lib/canvas/canvas-performance-mode";
 import { summarizeCanvasContext } from "@/lib/canvas/canvas-context-summary";
@@ -304,6 +305,7 @@ function InfiniteCanvasPage() {
     const [showImageInfo, setShowImageInfo] = useState(false);
     const [snapToGrid, setSnapToGrid] = useState(() => scopedLocalStorage.getItem("canvas:snap-to-grid") === "1");
     const [showConnections, setShowConnections] = useState(() => scopedLocalStorage.getItem("canvas:show-connections") !== "0");
+    const [wheelBehavior, setWheelBehavior] = useState<CanvasWheelBehavior>(() => parseCanvasWheelBehavior(scopedLocalStorage.getItem("canvas:wheel-behavior")));
     const [canvasTool, setCanvasTool] = useState<CanvasToolMode>("box-select");
     const [mediaPerformanceMode, setMediaPerformanceMode] = useState<CanvasMediaPerformanceMode>(readCanvasMediaPerformanceMode);
     const [projectLoaded, setProjectLoaded] = useState(false);
@@ -2963,6 +2965,11 @@ function InfiniteCanvasPage() {
                                         onShowConnectionsChange={(visible) => {
                                             setShowConnections(visible);
                                             scopedLocalStorage.setItem("canvas:show-connections", visible ? "1" : "0");
+                                        }}
+                                        wheelBehavior={wheelBehavior}
+                                        onWheelBehaviorChange={(behavior) => {
+                                            setWheelBehavior(behavior);
+                                            scopedLocalStorage.setItem("canvas:wheel-behavior", behavior);
                                         }}
                                         onShowImageInfoChange={setShowImageInfo}
                                         onOpenMyAssets={() => {
