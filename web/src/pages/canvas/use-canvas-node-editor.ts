@@ -5,6 +5,7 @@ import { App } from "antd";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { FOLDER_COLLAPSED_HEIGHT, FOLDER_COLLAPSED_WIDTH, FRAME_COLLAPSED_HEIGHT, FRAME_COLLAPSED_WIDTH, getFrameChildIds, isCanvasFolderNode, isFrameNode } from "@/lib/canvas/canvas-frame";
 import { buildCanvasMediaDownloadFileName } from "@/lib/canvas/canvas-media-download";
+import { renameCanvasNodeTitle } from "@/lib/canvas/canvas-generation-title";
 import { ownedResourceIdFromMediaRef } from "@/services/api/resources";
 import { downloadOwnedOrBrowserMedia, reportOwnedMediaSave } from "@/services/desktop-media-save";
 import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
@@ -95,7 +96,7 @@ export function useCanvasNodeEditor({
     }, [nodesRef, setDialogNodeId, setHoveredNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds, setToolbarNodeId]);
 
     const handleNodeTitleChange = useCallback((nodeId: string, title: string) => {
-        setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, title } : node)));
+        setNodes((current) => current.map((node) => (node.id === nodeId ? renameCanvasNodeTitle(node, title) : node)));
     }, [setNodes]);
 
     const handleFolderStyleChange = useCallback((nodeId: string, style: CanvasFolderStyle) => {

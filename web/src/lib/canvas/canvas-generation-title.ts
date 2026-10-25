@@ -42,6 +42,19 @@ export function resolvePromptNodeTitle(node: CanvasNodeData, prompt: string): { 
     return systemOwned ? { title: promptTitle, autoTitle: promptTitle } : { title: node.title, autoTitle: previousAutoTitle };
 }
 
+/**
+ * 用户手动改名：同时取消这一轮的自动命名状态，这个名字从此归用户所有。
+ *
+ * 只清 autoTitle 不够用的情况是「自动命名 A → 手动改成 B → 手动改回 A」：留着
+ * autoTitle = A 会让下一次生成把 A 当成自己起的名字继续覆盖。清掉之后
+ * resolvePromptNodeTitle 认不出它是自动名，就按用户名字保留。
+ */
+export function renameCanvasNodeTitle(node: CanvasNodeData, title: string): CanvasNodeData {
+    if (!node.metadata || !Object.hasOwn(node.metadata, "autoTitle")) return { ...node, title };
+    const { autoTitle: _autoTitle, ...metadata } = node.metadata;
+    return { ...node, title, metadata };
+}
+
 function defaultNodeTitle(type: CanvasNodeData["type"]) {
     const defaults = NODE_DEFAULT_SIZE as Record<string, { title?: string } | undefined>;
     return defaults[type]?.title;

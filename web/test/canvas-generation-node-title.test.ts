@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test";
 
-import { buildImageGenerationNodeTitle, resolvePromptNodeTitle } from "@/lib/canvas/canvas-generation-title";
+import { buildImageGenerationNodeTitle, renameCanvasNodeTitle, resolvePromptNodeTitle } from "@/lib/canvas/canvas-generation-title";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 function node(title: string, autoTitle?: string, type: CanvasNodeData["type"] = CanvasNodeType.Text): CanvasNodeData {
     return { id: "node-1", type, title, position: { x: 0, y: 0 }, width: 320, height: 180, metadata: autoTitle ? { autoTitle } : {} };
+}
+
+function generated(node: CanvasNodeData, prompt: string): CanvasNodeData {
+    const resolved = resolvePromptNodeTitle(node, prompt);
+    return { ...node, title: resolved.title, metadata: resolved.autoTitle ? { ...node.metadata, autoTitle: resolved.autoTitle } : node.metadata };
 }
 
 describe("canvas generation node title", () => {
@@ -35,5 +40,19 @@ describe("canvas generation node title", () => {
 
     test("keeps generation result nodes named after the prompt", () => {
         expect(buildImageGenerationNodeTitle("一只猫", undefined)).toBe("一只猫");
+    });
+
+    test("stops following prompts after the user renames the node", () => {
+        const renamed = renameCanvasNodeTitle(generated(node("文本节点"), "第一版提示词"), "分镜 1 - 清晨街角");
+        expect(renamed.title).toBe("分镜 1 - 清晨街角");
+        expect(renamed.metadata?.autoTitle).toBeUndefined();
+        expect(resolvePromptNodeTitle(renamed, "第二版提示词")).toEqual({ title: "分镜 1 - 清晨街角", autoTitle: undefined });
+    });
+
+    test("keeps the user's name when it matches an earlier automatic name", () => {
+        const automatic = generated(node("文本节点"), "第一版提示词");
+        const renamed = renameCanvasNodeTitle(renameCanvasNodeTitle(automatic, "分镜 1"), automatic.title);
+        expect(renamed.title).toBe("第一版提示词");
+        expect(resolvePromptNodeTitle(renamed, "第二版提示词")).toEqual({ title: "第一版提示词", autoTitle: undefined });
     });
 });
