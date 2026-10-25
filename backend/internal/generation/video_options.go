@@ -104,6 +104,15 @@ func ImageParameterSupported(profile *ImageCapabilityConfig, parameter string) b
 	return profile.OutputFormat.Supported
 }
 
+// ImageResponseFormatValue 返回图片接口应发送的 response_format 取值。
+// 渠道没有显式选择时沿用 b64_json，保持既有行为不变。
+func ImageResponseFormatValue(profile *ImageCapabilityConfig) string {
+	if profile != nil && strings.EqualFold(strings.TrimSpace(profile.ResponseFormat.Value), modelcatalog.ImageResponseFormatURL) {
+		return modelcatalog.ImageResponseFormatURL
+	}
+	return modelcatalog.ImageResponseFormatBase64
+}
+
 func ImageQualitySupported(profile *ImageCapabilityConfig) bool {
 	return profile == nil || profile.Quality.Supported
 }

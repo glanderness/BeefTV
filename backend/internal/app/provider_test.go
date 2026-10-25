@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/prompts"
 	"infinite-canvas/backend/internal/protocol"
 )
@@ -1412,6 +1413,51 @@ func TestRunImageTaskOmitsAutomaticQualityAndSize(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("runImageTask() error = %v", err)
+	}
+}
+
+// 第三方图片渠道选择 url 响应格式后必须真的发出 response_format=url，
+// 上游返回的链接原样交给交付层下载落库；没选过取值的渠道继续走内联 base64。
+func TestRunImageTaskHonorsConfiguredResponseFormat(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	formats := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		format, _ := body["response_format"].(string)
+		formats = append(formats, format)
+		w.Header().Set("Content-Type", "application/json")
+		if format == "url" {
+			_, _ = w.Write([]byte(`{"data":[{"url":"https://cdn.example.com/result.png"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[{"b64_json":"aGVsbG8="}]}`))
+	}))
+	defer server.Close()
+
+	config := providerConfig{BaseURL: server.URL, APIKey: "key", Model: "third-party-image", InterfaceType: "openai-image"}
+	profile := DefaultImageCapabilityConfig("openai-image", "third-party-image")
+	profile.ResponseFormat = modelcatalog.ImageResponseFormat{Supported: true, Value: modelcatalog.ImageResponseFormatURL}
+	result, err := runImageTask(context.Background(), canvasGenerationInput{Prompt: "a product photo", Config: config, ImageCapability: profile})
+	if err != nil {
+		t.Fatalf("runImageTask() error = %v", err)
+	}
+	if len(formats) != 1 || formats[0] != modelcatalog.ImageResponseFormatURL {
+		t.Fatalf("response_format = %#v, want url", formats)
+	}
+	images, ok := result["images"].([]map[string]string)
+	if !ok || len(images) != 1 || images[0]["dataUrl"] != "https://cdn.example.com/result.png" {
+		t.Fatalf("images = %#v, want the upstream link handed to delivery", result["images"])
+	}
+
+	profile.ResponseFormat = modelcatalog.ImageResponseFormat{Supported: true}
+	if _, err := runImageTask(context.Background(), canvasGenerationInput{Prompt: "a product photo", Config: config, ImageCapability: profile}); err != nil {
+		t.Fatalf("runImageTask() with default format error = %v", err)
+	}
+	if len(formats) != 2 || formats[1] != modelcatalog.ImageResponseFormatBase64 {
+		t.Fatalf("response_format = %#v, want b64_json by default", formats)
 	}
 }
 

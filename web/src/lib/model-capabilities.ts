@@ -27,6 +27,14 @@ export type TextCapabilityConfig = {
 
 export type ImageSizeParameter = "none" | "size" | "aspect_ratio";
 
+export type ImageResponseFormat = "b64_json" | "url";
+
+/**
+ * 图片接口 response_format 的开关与取值。
+ * value 留空时按 b64_json 处理，让没有选过的渠道保持原有行为。
+ */
+export type ImageResponseFormatConfig = { supported: boolean; value?: ImageResponseFormat };
+
 /** 0 means no documented local character limit; the supplier still validates. */
 export const DEFAULT_VIDEO_PROMPT_MAX_CHARS = 0;
 
@@ -50,7 +58,7 @@ export type ImageCapabilityConfig = {
         default: string;
     };
     transparentBackground: { supported: boolean; default: boolean };
-    responseFormat: { supported: boolean };
+    responseFormat: ImageResponseFormatConfig;
     outputFormat: { supported: boolean };
     maxOutputs: number;
     fixedOutputs?: number;
@@ -507,6 +515,22 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
         image.maxOutputs = 1;
     }
     return image;
+}
+
+/** 图片接口实际要发送的 response_format：未开启返回 null，没选过取值时按 b64_json。 */
+export function resolveImageResponseFormat(profile: ImageCapabilityConfig | undefined): ImageResponseFormat | null {
+    if (!profile?.responseFormat?.supported) return null;
+    return profile.responseFormat.value === "url" ? "url" : "b64_json";
+}
+
+/**
+ * 能力编辑器里是否允许选择 response_format 的取值。
+ * 只有走通用 OpenAI 兼容图片请求的渠道会按配置发出这个参数：
+ * 本体自营的 BeefAPI 图片契约固定接受内联 base64，grok / seedream / 火山等协议各自写死请求体，
+ * 给出选项却发不出去，等于又造一个「设置了不生效」。
+ */
+export function imageResponseFormatSelectable(protocol: ModelProtocol | undefined, model: string) {
+    return protocol === "openai-image" && !beefAPIImageContract(model);
 }
 
 export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = ""): ModelCapabilityConfig {
