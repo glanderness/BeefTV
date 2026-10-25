@@ -75,12 +75,15 @@ export function useCanvasNodeOperations({
     if (deletionContext.current.projectId !== projectId) deletionContext.current = { projectId };
     const mounted = useRef(true);
     const deleteConfirmation = useRef<{ destroy?: () => void } | null>(null);
+    const recoveryConfirmation = useRef<{ destroy?: () => void } | null>(null);
     useLayoutEffect(() => {
         mounted.current = true;
         const dismiss = () => {
             const pending = deleteConfirmation.current;
             deleteConfirmation.current = null;
             pending?.destroy?.();
+            recoveryConfirmation.current?.destroy?.();
+            recoveryConfirmation.current = null;
         };
         const unsubscribe = subscribeUserScope(dismiss);
         return () => {
@@ -520,6 +523,26 @@ export function useCanvasNodeOperations({
         setDialogNodeId(canOpenCanvasNodePromptPanel(copiedNodes.find((node) => node.id === id)) ? id : null);
     }, [cloneDrawingForNode, commitConnections, commitNodes, connectionsRef, isolateDirectorCopies, nodesRef, selectNodes, setDialogNodeId]);
 
+    const createGenerationReplacement = useCallback((nodeId: string) => {
+        const context = deletionContext.current;
+        const scope = captureUserScope();
+        if (!nodesRef.current.some(node => node.id === nodeId)) return;
+        recoveryConfirmation.current?.destroy?.();
+        const confirmation = modal.confirm({
+            ...canvasTaskConfirmation,
+            title: "新建节点继续生成？",
+            content: "将保留原节点，新节点会带上相同的提示词、参数和参考素材连接。此操作不会开始生成；之后点击生成会创建新任务，可能再次计费。建议先在生成历史中确认是否已有结果。",
+            okText: "新建节点",
+            cancelText: "取消",
+            onOk: () => {
+                if (!mounted.current || deletionContext.current !== context || !userScopeMatches(scope)) return;
+                duplicateNode(nodeId, "copy");
+            },
+            afterClose: () => { if (recoveryConfirmation.current === confirmation) recoveryConfirmation.current = null; },
+        });
+        recoveryConfirmation.current = confirmation;
+    }, [duplicateNode, modal, nodesRef]);
+
     const setPrimaryVersion = useCallback((nodeId: string) => {
         const target = nodesRef.current.find((node) => node.id === nodeId);
         if (!target) return;
@@ -665,6 +688,7 @@ export function useCanvasNodeOperations({
         copySelectedNodes,
         createFolder,
         createNode,
+        createGenerationReplacement,
         createReferenceGroup,
         createStoryboardGroup,
         deleteConnection,

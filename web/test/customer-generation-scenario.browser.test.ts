@@ -73,6 +73,89 @@ test("a known task without an operation id is recovered by task id without anoth
     } finally { await close(); }
 });
 
+test("recovery creates a clean connected node only after confirmation and leaves submission to the user", async () => {
+    const { page, state, close } = await open("five-images", "missing-submission-id&recover&submission-recovery-ui");
+    try {
+        const actions = page.getByRole("region", { name: "生成恢复" });
+        await actions.waitFor();
+        await page.getByRole("button", { name: "生成", exact: true }).click();
+        await page.waitForFunction(() => (window as any).__customer.settled);
+        const original = await page.evaluate(() => (window as any).__customer.nodes.find((node: any) => node.id === "target"));
+        await actions.getByRole("button", { name: "新建节点继续" }).click();
+        let dialog = page.getByRole("dialog", { name: "新建节点继续生成？" });
+        await dialog.waitFor();
+        expect(await dialog.textContent()).toContain("可能再次计费");
+        await dialog.getByRole("button", { name: "取消", exact: true }).click();
+        await dialog.waitFor({ state: "hidden" });
+        expect(await page.evaluate(() => (window as any).__customer.nodes.length)).toBe(state.project.nodes.length);
+        expect(state.posts).toHaveLength(0);
+        await actions.getByRole("button", { name: "新建节点继续" }).click();
+        dialog = page.getByRole("dialog", { name: "新建节点继续生成？" });
+        await dialog.getByRole("button", { name: "新建节点", exact: true }).click();
+        await page.waitForFunction(() => (window as any).__customer.activeNodeId !== "target");
+        const snapshot = await page.evaluate(() => { const h = (window as any).__customer; return { original: h.nodes.find((n: any) => n.id === "target"), replacement: h.nodes.find((n: any) => n.id === h.activeNodeId), connections: h.connections }; });
+        expect(snapshot.original.metadata).toEqual(original.metadata);
+        expect(snapshot.replacement.metadata.composerContent).toBe(original.metadata.composerContent);
+        expect(snapshot.replacement.metadata.generationSubmissionState).toBeUndefined();
+        expect(snapshot.replacement.metadata.generationPreflightError).toBeUndefined();
+        expect(snapshot.replacement.metadata.taskId).toBeUndefined();
+        expect(snapshot.connections.filter((c: any) => c.toNodeId === snapshot.replacement.id).map((c: any) => c.fromNodeId)).toEqual(state.project.connections.filter(c => c.toNodeId === "target").map(c => c.fromNodeId));
+        expect(state.posts).toHaveLength(0);
+        await dialog.waitFor({ state: "hidden" });
+        await actions.waitFor({ state: "hidden" });
+        await page.getByRole("button", { name: "生成", exact: true }).click();
+        await until(() => state.posts.length === 1);
+        expect(state.posts[0].input.metadata.nodeId).toBe(snapshot.replacement.id);
+        expect(state.posts[0].input.referenceImages).toHaveLength(5);
+        expect(state.lookups).toEqual([]);
+        await page.getByRole("button", { name: "取消准备", exact: true }).click();
+    } finally { await close(); }
+}, 15000);
+
+test("missing-identity recovery opens the existing generation history without creating a node or task", async () => {
+    const { page, state, close } = await open("five-images", "missing-submission-id&recover&submission-recovery-ui");
+    try {
+        await page.getByRole("region", { name: "生成恢复" }).getByRole("button", { name: "查看生成历史" }).click();
+        await page.getByRole("dialog", { name: "生成历史", exact: true }).waitFor();
+        expect(state.posts).toHaveLength(0);
+        expect(state.lookups).toEqual([]);
+        expect(await page.evaluate(() => (window as any).__customer.activeNodeId)).toBe("target");
+    } finally { await close(); }
+});
+
+test("recovery actions fit the narrow expanded editor and its confirmation remains clickable", async () => {
+    const { page, state, close } = await open("five-images", "missing-submission-id&recover&submission-recovery-ui");
+    try {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.getByRole("button", { name: "放大编辑提示词" }).first().click();
+        const editor = page.getByRole("dialog");
+        const actions = editor.getByRole("region", { name: "生成恢复" });
+        await actions.waitFor();
+        const geometry = await actions.evaluate(el => ({ width: el.getBoundingClientRect().width, client: el.clientWidth, scroll: el.scrollWidth }));
+        expect(geometry.width).toBeLessThanOrEqual(390);
+        expect(geometry.scroll).toBeLessThanOrEqual(geometry.client);
+        await actions.getByRole("button", { name: "新建节点继续" }).click();
+        const confirmation = page.getByRole("dialog", { name: "新建节点继续生成？" });
+        await confirmation.getByRole("button", { name: "取消", exact: true }).click();
+        await confirmation.waitFor({ state: "hidden" });
+        expect(state.posts).toHaveLength(0);
+        expect(await page.evaluate(() => (window as any).__customer.activeNodeId)).toBe("target");
+    } finally { await close(); }
+});
+
+test("switching user scope dismisses recovery confirmation without copying or submitting", async () => {
+    const { page, state, close } = await open("five-images", "missing-submission-id&recover&submission-recovery-ui");
+    try {
+        await page.getByRole("region", { name: "生成恢复" }).getByRole("button", { name: "新建节点继续" }).click();
+        const confirmation = page.getByRole("dialog", { name: "新建节点继续生成？" });
+        await confirmation.waitFor();
+        await page.evaluate(() => (window as any).__customer.switchScope());
+        await confirmation.waitFor({ state: "hidden" });
+        expect(state.posts).toHaveLength(0);
+        expect(await page.evaluate(() => (window as any).__customer.nodes.length)).toBe(state.project.nodes.length);
+    } finally { await close(); }
+});
+
 test("reference repair marks and locates invalid bindings, cancels safely, then submits only after explicit reselect", async () => {
     const { page, state, errors, close } = await open("five-images", "reference-repair-ui");
     try {

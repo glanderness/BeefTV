@@ -10,7 +10,7 @@ import { cacheResourceObjectUrl } from "../../src/services/resource-blob-cache";
 import { createModelChannel, defaultConfig, encodeChannelModel, useConfigStore } from "../../src/stores/use-config-store";
 import { useCanvasStore } from "../../src/stores/canvas/use-canvas-store";
 import { useUserStore } from "../../src/stores/use-user-store";
-import type { CanvasNodeData } from "../../src/types/canvas";
+import type { CanvasConnection, CanvasNodeData } from "../../src/types/canvas";
 import { customerGenerationProject, type CustomerGenerationScenario } from "./customer-generation-scenarios";
 import { CanvasNodeGenerationProgress } from "../../src/components/canvas/canvas-node-generation-progress";
 import { canvasThemes } from "../../src/lib/canvas-theme";
@@ -21,6 +21,8 @@ import { configureApiRuntime } from "../../src/services/api/request";
 import { CanvasNodePromptPanel } from "../../src/components/canvas/canvas-node-prompt-panel";
 import { buildCanvasNodeMentionReferenceMap } from "../../src/lib/canvas/canvas-resource-references";
 import { isolateCopiedNodeMetadata } from "../../src/lib/canvas/canvas-node-copy";
+import { useCanvasNodeOperations } from "../../src/pages/canvas/use-canvas-node-operations";
+import { CanvasGenerationHistoryPicker } from "../../src/components/canvas/canvas-generation-history-picker";
 
 const params = new URLSearchParams(location.search);
 const scenario = (params.get("scenario") || "five-images") as CustomerGenerationScenario;
@@ -60,6 +62,7 @@ useConfigStore.getState().replaceConfig(config);
 await recordConfirmedCanvasCommit(project);
 useCanvasStore.setState({ projects: [project], hydrated: true });
 const harness = (window as any).__customer = { settled: false, error: "", messages: [] as string[], controller: undefined as AbortController | undefined, nodes: project.nodes, blocked: [] as Promise<string>[], generate: noop, edit: noop, cancel: noop };
+(harness as any).switchScope = () => setActiveUserScope("another-synthetic-user");
 (harness as any).allowLongPrompt = () => {
     channel.modelProfiles![0].capabilityConfig!.video!.references.promptMaxChars = 0;
     useConfigStore.getState().replaceConfig({ ...config });
@@ -72,11 +75,24 @@ new MutationObserver(changes => {
 
 function Harness() {
     const [nodes, setNodesState] = useState<CanvasNodeData[]>(project.nodes);
-    const target = nodes.find(node => node.id === "target")!;
+    const [activeNodeId, setActiveNodeId] = useState("target");
+    const [historyOpen, setHistoryOpen] = useState(false);
+    const [connections, setConnectionsState] = useState<CanvasConnection[]>(project.connections);
+    const target = nodes.find(node => node.id === activeNodeId)!;
+    (harness as any).activeNodeId = activeNodeId;
+    (harness as any).connections = connections;
     const preparation = useOperationProgress(state => canvasNodeOperation(state.entries, project.id, target.id, target.metadata?.taskId));
     const nodesRef = useRef(nodes);
     nodesRef.current = nodes;
     const connectionsRef = useRef(project.connections);
+    connectionsRef.current = connections;
+    const selectedNodeIdsRef = useRef(new Set(["target"]));
+    const setConnections = useCallback<Dispatch<SetStateAction<CanvasConnection[]>>>(update => setConnectionsState(current => {
+        const next = typeof update === "function" ? update(current) : update;
+        connectionsRef.current = next;
+        useCanvasStore.getState().updateProject(project.id, { connections: next });
+        return next;
+    }), []);
     const setNodes = useCallback<Dispatch<SetStateAction<CanvasNodeData[]>>>(update => setNodesState(current => {
         const next = typeof update === "function" ? update(current) : update;
         nodesRef.current = next;
@@ -84,14 +100,17 @@ function Harness() {
         useCanvasStore.getState().updateProject(project.id, { nodes: next });
         return next;
     }), []);
+    const nodeOperations = useCanvasNodeOperations({ projectId: project.id, defaultDrawingEngine: "excalidraw", nodesRef, connectionsRef, selectedNodeIdsRef,
+        getCanvasCenter: () => ({ x: 400, y: 300 }), setNodes, setConnections, setSelectedNodeIds: noop, setSelectedConnectionId: noop, setContextMenu: noop,
+        setDialogNodeId: id => { if (id) setActiveNodeId(id); }, onNodesDeleted: noop });
     const generation = useCanvasGeneration({ projectId: project.id, domainProjectId: "synthetic-domain", projectLoaded: params.has("recover"), nodes, nodesRef, setNodes });
     const generate = useCanvasGenerationExecutor({ projectId: project.id, domainProjectId: "synthetic-domain", addedSkills: [], assets: [], nodesRef, connectionsRef, setNodes, setConnections: noop, setSelectedNodeIds: noop, setSelectedConnectionId: noop, setDialogNodeId: noop,
         setRunningNodeId: generation.setRunningNodeId, startGenerationRequest: generation.startGenerationRequest, finishGenerationRequest: generation.finishGenerationRequest, bindGenerationTask: generation.bindGenerationTask, applyGenerationTaskResult: generation.applyGenerationTaskResult });
     harness.generate = async () => {
         harness.settled = false;
         harness.controller = new AbortController();
-        const prompt = nodesRef.current.find(node => node.id === "target")!.metadata!.composerContent!;
-        try { await generate("target", "video", prompt, { controller: harness.controller }); }
+        const prompt = nodesRef.current.find(node => node.id === activeNodeId)!.metadata!.composerContent!;
+        try { await generate(activeNodeId, "video", prompt, { controller: harness.controller }); }
         catch (error) { harness.error = error instanceof Error ? error.message : String(error); }
         finally { harness.settled = true; }
     };
@@ -99,16 +118,19 @@ function Harness() {
     (harness as any).replaceOutput = () => setNodes(current => current.map(node => node.id === "target" ? { ...node, metadata: { ...node.metadata, content: "/api/resources/newer-result/file", storageKey: "resource:newer-result", assetId: "newer-asset", durationMs: 7000 } } : node));
     harness.cancel = () => harness.controller?.abort();
     return <>
-        {params.has("reference-repair-ui") ? <CanvasNodePromptPanel
+        {params.has("reference-repair-ui") || params.has("submission-recovery-ui") ? <CanvasNodePromptPanel
             projectId={project.id} node={target} referenceNodes={nodes} isRunning={Boolean(generation.runningNodeId)}
-            referenceConnections={project.connections}
-            mentionReferences={buildCanvasNodeMentionReferenceMap(nodes, project.connections).get(target.id)}
+            referenceConnections={connections}
+            mentionReferences={buildCanvasNodeMentionReferenceMap(nodes, connections).get(target.id)}
             onAddReference={(referenceNodeId, reference) => reference.active || reference.assetId ? reference : undefined}
             onPromptChange={(id, composerContent) => setNodes(current => current.map(node => node.id === id ? { ...node, metadata: { ...node.metadata, composerContent } } : node))}
             onConfigChange={(id, patch) => setNodes(current => current.map(node => node.id === id ? { ...node, metadata: { ...node.metadata, ...patch } } : node))}
             onGenerate={() => void harness.generate()}
+            onOpenGenerationHistory={() => setHistoryOpen(true)}
+            onCreateGenerationReplacement={nodeOperations.createGenerationReplacement}
             onLocateReferenceNode={(id) => { (harness as any).locatedNodeId = id; }}
         /> : null}
+        <CanvasGenerationHistoryPicker open={historyOpen} projectId={project.id} onClose={() => setHistoryOpen(false)} onSelect={() => {}} />
         <button onClick={() => void harness.generate()}>生成视频</button>
         <button onClick={() => harness.edit()}>准备期间修改画布</button>
         <button onClick={() => harness.cancel()}>取消准备</button>

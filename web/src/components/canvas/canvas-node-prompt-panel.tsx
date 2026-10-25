@@ -45,6 +45,8 @@ type CanvasNodePromptPanelProps = {
     onPromptChange: (nodeId: string, prompt: string) => void;
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeMetadata>) => void;
     onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => void;
+    onOpenGenerationHistory?: () => void;
+    onCreateGenerationReplacement?: (nodeId: string) => void;
     mentionReferences?: CanvasResourceReference[];
     onAddReference?: (nodeId: string, reference: CanvasResourceReference) => CanvasResourceReference | undefined;
     onRemoveReference?: (nodeId: string, reference: CanvasResourceReference) => void;
@@ -76,7 +78,7 @@ const PROMPT_EDITOR_MODAL_WIDTH = "min(1200px, 92vw)";
 const PROMPT_EDITOR_MODAL_DEFAULT_WIDTH = 1200;
 const PROMPT_EDITOR_MODAL_DEFAULT_HEIGHT = 420;
 
-export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChange, onConfigChange, onGenerate, mentionReferences = [], onAddReference, onRemoveReference, onReorderReferences, onReplaceReference, onReplaceReferenceFiles, referenceNodes = [node], referenceConnections = [], onLocateReferenceNode, onClose, onNodeMouseDown, onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
+export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChange, onConfigChange, onGenerate, onOpenGenerationHistory, onCreateGenerationReplacement, mentionReferences = [], onAddReference, onRemoveReference, onReorderReferences, onReplaceReference, onReplaceReferenceFiles, referenceNodes = [node], referenceConnections = [], onLocateReferenceNode, onClose, onNodeMouseDown, onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
     const globalConfig = useEffectiveConfig();
     const themeName = useActiveTheme();
     const theme = canvasThemes[themeName];
@@ -108,6 +110,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const resolvedMentionReferences = useResolvedCanvasResourceReferences(mentionReferences, { projectId });
     const referenceCheck = useCanvasReferenceCheck(node.id, prompt, resolvedMentionReferences, referenceNodes, referenceConnections);
     const [referenceAction, setReferenceAction] = useState<CanvasReferenceAction | null>(null);
+    const missingSubmissionIdentity = ["submitting", "unknown"].includes(node.metadata?.generationSubmissionState || "") && !node.metadata?.taskId && !node.metadata?.taskClientOperationId?.trim();
     const activeReferences = resolvedMentionReferences.filter((item) => item.active && item.kind !== "skill");
     const requirements = buildCanvasGenerationRequirements(globalConfig, node, mode, {
         textCount: (prompt.trim() ? 1 : 0) + activeReferences.filter((item) => item.kind === "text").length,
@@ -533,6 +536,15 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                     <p role="alert" className="mx-2.5 my-2 whitespace-pre-wrap break-words text-[var(--fs-tiny)]" style={{ color: theme.accent.danger }}>
                         未开始生成：{node.metadata.generationPreflightError}
                     </p>
+                ) : null}
+                {missingSubmissionIdentity && (onOpenGenerationHistory || onCreateGenerationReplacement) ? (
+                    <section aria-label="生成恢复" className="mx-2.5 my-2 text-[var(--fs-tiny)]">
+                        <p style={{ color: theme.node.muted }}>可以取回已有结果，或保留原节点、新建节点继续。</p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                            {onOpenGenerationHistory ? <Button className="min-h-10" onClick={onOpenGenerationHistory}>查看生成历史</Button> : null}
+                            {onCreateGenerationReplacement ? <Button className="min-h-10" onClick={() => onCreateGenerationReplacement(node.id)}>新建节点继续</Button> : null}
+                        </div>
+                    </section>
                 ) : null}
             </>
         );

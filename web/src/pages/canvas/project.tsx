@@ -1314,6 +1314,7 @@ function InfiniteCanvasPage() {
         copySelectedNodes,
         createFolder,
         createNode,
+        createGenerationReplacement,
         createReferenceGroup,
         createStoryboardGroup,
         deleteConnection,
@@ -2245,6 +2246,8 @@ function InfiniteCanvasPage() {
                     onPromptChange={handleNodePromptChange}
                     onConfigChange={handleConfigNodeChange}
                     onGenerate={handleGenerateNode}
+                    onOpenGenerationHistory={() => setGenerationHistoryOpen(true)}
+                    onCreateGenerationReplacement={createGenerationReplacement}
                     onRemoveReference={handleRemoveNodeReference}
                     onReorderReferences={handleReorderNodeReferences}
                     onReplaceReference={handleReplaceNodeReference}
@@ -2263,6 +2266,8 @@ function InfiniteCanvasPage() {
             configInputsById,
             handleConfigNodeChange,
             handleGenerateNode,
+            createGenerationReplacement,
+            setGenerationHistoryOpen,
             handleNodePromptChange,
             handleRemoveNodeReference,
             handleReorderNodeReferences,

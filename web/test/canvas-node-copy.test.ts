@@ -37,11 +37,12 @@ describe("canvas generation copy metadata", () => {
     test.each(["submitting", "unknown", "accepted", "rejected"] as const)("复制 %s 节点时同时隔离任务身份与提交状态", (state) => {
         const source: CanvasNodeData = {
             id: "source", type: CanvasNodeType.Video, title: "镜头", position: { x: 0, y: 0 }, width: 340, height: 240,
-            metadata: { status: "loading", taskClientOperationId: "canvas:original", generationSubmissionState: state, composerContent: "保留提示词" },
+            metadata: { status: "loading", taskClientOperationId: "canvas:original", generationSubmissionState: state, composerContent: "保留提示词", generationPreflightError: "原任务尚未确认" },
         };
         const metadata = isolateCopiedNodeMetadata(source, new Map([[source.id, "copy"]]));
         expect(metadata.taskClientOperationId).toBeUndefined();
         expect(metadata.generationSubmissionState).toBeUndefined();
+        expect(metadata.generationPreflightError).toBeUndefined();
         expect(metadata.status).toBe("idle");
         expect(metadata.composerContent).toBe("保留提示词");
         expect(source.metadata?.generationSubmissionState).toBe(state);
