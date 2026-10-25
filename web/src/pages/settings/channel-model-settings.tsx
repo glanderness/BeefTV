@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, App, Button, Popconfirm, Segmented, Tag } from "antd";
+import { Alert, App, Button, Popconfirm, Segmented, Tag, Tooltip } from "antd";
 import { ReferenceMediaTransportFields } from "./reference-media-transport-fields";
 import { ChevronRight, FlaskConical, Settings2 } from "lucide-react";
 
@@ -79,6 +79,13 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
     const inferredProtocol = activeModel ? (inferProtocolCapabilityFromModel(activeModel) === "video" ? channel.interfaceType || "" : defaultProtocolForModel(activeModel, availableProtocols)) : "";
     const activeProtocol = activeModelProfile ? activeModelProfile.protocol || channel.interfaceType || "" : inferredProtocol;
     const activeCapability = activeModelProfile?.capability || modelProtocolCapability(activeProtocol, availableProtocols) || (activeModel ? inferProtocolCapabilityFromModel(activeModel) : "text");
+    // 「生成测试」被禁用时必须说清原因：这里同时给按钮的提示文案和 disabled 使用。
+    const testBlocker = protocolLoading ? "正在读取可用协议…" : protocolError ? `协议目录读取失败：${protocolError}` : !activeProtocol ? "先在「基本信息」里选择请求协议，才能发起生成测试" : "";
+    const testButton = (
+        <Button icon={<FlaskConical className="size-4" />} loading={Boolean(testingModel)} disabled={Boolean(testBlocker)}>
+            生成测试
+        </Button>
+    );
 
     return (
         <div className="mt-4">
@@ -133,15 +140,15 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
                     <div className="model-editor-footer">
                         <span className="text-xs text-foreground/50">{draft ? "完成后，点击「保存并使用」保存更改" : "更改实时保存到本地工作区"}</span>
                         <div className="model-editor-footer-actions">
-                            <Popconfirm title="生成一次测试结果？" description="会向当前服务商提交真实生成任务，费用由服务商收取。结果可在任务中心查看。" okText="开始生成" cancelText="取消" onConfirm={() => { if (activeModel && activeProtocol) void testModel(activeModel, activeCapability, activeProtocol); }}>
-                            <Button
-                                icon={<FlaskConical className="size-4" />}
-                                loading={Boolean(testingModel)}
-                                disabled={!activeProtocol || protocolLoading || Boolean(protocolError)}
-                            >
-                                生成测试
-                            </Button>
-                            </Popconfirm>
+                            {testBlocker ? (
+                                <Tooltip title={testBlocker}>
+                                    <span className="inline-flex">{testButton}</span>
+                                </Tooltip>
+                            ) : (
+                                <Popconfirm title="生成一次测试结果？" description="会向当前服务商提交真实生成任务，费用由服务商收取。结果可在任务中心查看。" okText="开始生成" cancelText="取消" onConfirm={() => { if (activeModel && activeProtocol) void testModel(activeModel, activeCapability, activeProtocol); }}>
+                                    {testButton}
+                                </Popconfirm>
+                            )}
                             <Button disabled={Boolean(testingModel)} onClick={() => setActiveModel(null)}>完成</Button>
                         </div>
                     </div>
@@ -151,7 +158,6 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
                         key: "protocol",
                         label: "基本信息",
                         children: <div className="space-y-4" inert={Boolean(testingModel)}>
-                            {!testingModel && testResult && <Alert type={testResult.success ? "success" : "error"} title={testResult.detail} showIcon />}
                             <section className="space-y-2">
                                 <div className="text-xs font-medium">模型能力</div>
                                 <Segmented<ModelCapabilityChoice>
@@ -201,7 +207,9 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
                         </div>,
                     },
                 ] : []}
-            />
+            >
+                {(tabs) => <>{!testingModel && testResult ? <Alert className="mx-6 mt-4 shrink-0" type={testResult.success ? "success" : "error"} title={testResult.detail} showIcon /> : null}{tabs}</>}
+            </ModelEditorModal>
         </div>
     );
 }

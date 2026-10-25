@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 
 import { CANVAS_VIDEO_PREVIEW_VERSION, canvasVideoPreviewNeedsHydration } from "../src/services/canvas-video-preview";
-import { capturePresentedVideoPoster } from "../src/lib/video-poster";
+import { capturePresentedVideoPoster, drawVideoFramePoster } from "../src/lib/video-poster";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
 const node = (videoPreview?: CanvasNodeData["metadata"]["videoPreview"]): CanvasNodeData => ({
@@ -81,6 +81,79 @@ test("poster capture waits for a presented video frame before drawing", async ()
     expect(result.width).toBe(1920);
     expect(result.height).toBe(1080);
     expect(result.poster?.type).toBe("image/jpeg");
+});
+
+test("the decoded frame is captured without waiting for a presentation callback", async () => {
+    let drawCount = 0;
+    const video = Object.assign(new EventTarget(), {
+        videoWidth: 1280,
+        videoHeight: 720,
+        duration: 4,
+        currentTime: 0,
+        readyState: 4,
+        // WebKit can leave requestVideoFrameCallback pending for a paused capture.
+        requestVideoFrameCallback() {
+            return 1;
+        },
+        async play() {},
+        pause() {},
+    }) as unknown as HTMLVideoElement;
+    const canvas = {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+            fillStyle: "",
+            fillRect() {},
+            drawImage() {
+                drawCount += 1;
+            },
+            getImageData: (_x: number, _y: number, width: number, height: number) => ({
+                data: new Uint8ClampedArray(width * height * 4).fill(120),
+            }),
+        }),
+        toBlob(callback: BlobCallback) {
+            callback(new Blob(["poster"], { type: "image/jpeg" }));
+        },
+    } as unknown as HTMLCanvasElement;
+
+    const result = await drawVideoFramePoster(video, canvas, { maxWidth: 400 });
+
+    expect(drawCount).toBe(1);
+    expect(result.poster?.type).toBe("image/jpeg");
+});
+
+test("a wholly black capture yields no poster so the placeholder stays readable", async () => {
+    const video = Object.assign(new EventTarget(), {
+        videoWidth: 1280,
+        videoHeight: 720,
+        duration: 4,
+        currentTime: 0,
+        readyState: 4,
+        requestVideoFrameCallback() {
+            return 1;
+        },
+        async play() {},
+        pause() {},
+    }) as unknown as HTMLVideoElement;
+    const canvas = {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+            fillStyle: "",
+            fillRect() {},
+            drawImage() {},
+            getImageData: (_x: number, _y: number, width: number, height: number) => ({
+                data: new Uint8ClampedArray(width * height * 4),
+            }),
+        }),
+        toBlob(callback: BlobCallback) {
+            callback(new Blob(["poster"], { type: "image/jpeg" }));
+        },
+    } as unknown as HTMLCanvasElement;
+
+    const result = await drawVideoFramePoster(video, canvas, { maxWidth: 400 });
+
+    expect(result.poster).toBeUndefined();
 });
 
 afterEach(() => {
