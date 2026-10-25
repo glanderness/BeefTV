@@ -42,39 +42,36 @@ export type CreationAttachmentAddPlan = {
 };
 
 /**
- * 创作页把图片、视频、音频排进同一列参考内容，这一列的槽位数取自当前模型的参考图上限；
- * 而视频模型对参考图、参考视频、参考音频是分别计数的（例如参考图 9 张、参考视频 3 个、参考音频 3 段）。
- * 因此所有提示都要说成创作页的槽位限制，不能写成模型对全部参考素材的上限，否则会误导用户去删素材或换模型。
+ * 参考内容上限是创作页自己的容量，不是模型能力：文字模式固定 6 个，图片和视频模式才取模型上限。
+ * 所以提示只说页面允许多少、还差多少、下一步怎么处理；不解释上限从哪来，也不建议换模型
+ * （换模型对文字模式的固定容量没有帮助）。
  */
 export function referenceSlotLimitLabel(limit: number) {
-    return `创作页的 ${limit} 个参考内容槽位（取自当前模型的参考图上限）`;
+    return `创作页最多放入 ${limit} 个参考内容`;
 }
 
-/** 点「添加参考内容」时才凑到上限的提示：说明是创作页槽位，并点出模型侧是按素材类型分别计数的。 */
-export function referenceSlotLimitMessage(limit: number, mediaLimits?: { videos: number; audios: number }) {
-    if (limit <= 0) return "当前模型不支持参考图输入，请切换到支持参考图输入的模型";
-    const modelLimits = [`参考图 ${limit} 张`];
-    if (mediaLimits?.videos && mediaLimits.videos > 0) modelLimits.push(`参考视频 ${mediaLimits.videos} 个`);
-    if (mediaLimits?.audios && mediaLimits.audios > 0) modelLimits.push(`参考音频 ${mediaLimits.audios} 段`);
-    return `创作页一次最多放入 ${limit} 个参考内容：槽位取自当前模型的参考图上限，模型侧是按类型分别计数的（${modelLimits.join("、")}）。可先移除部分参考内容，或切换到参考图更多的模型`;
+/** 点「添加参考内容」但已满时的提示：说明页面容量，并给出当前唯一有效的下一步。 */
+export function referenceSlotLimitMessage(limit: number) {
+    if (limit <= 0) return "当前模型不支持参考内容，请选择支持参考内容的模型";
+    return `${referenceSlotLimitLabel(limit)}，已达上限；请先移除部分参考内容再添加`;
 }
 
-/** 从素材库选入后被槽位挡住的提示：说清上限多少、进去几个、剩下几个为什么没进去。 */
+/** 从素材库选入后被容量挡住的提示：说清能放几个、进去几个、剩下几个没进去。 */
 export function attachmentLimitMessage(limit: number, addedCount: number, droppedCount: number) {
     const dropped = Math.max(0, droppedCount);
-    if (limit <= 0) return `当前模型不支持参考图输入，已忽略 ${dropped} 个素材`;
+    if (limit <= 0) return `当前模型不支持参考内容，已忽略 ${dropped} 个素材`;
     if (addedCount > 0) return `${referenceSlotLimitLabel(limit)}，已加入 ${addedCount} 个，另有 ${dropped} 个未加入`;
     return `${referenceSlotLimitLabel(limit)}已满，所选 ${dropped} 个素材未加入`;
 }
 
-/** 切换模型或恢复会话导致超出槽位、自动移除时的提示。 */
+/** 切换模型或恢复会话导致超出页面容量、自动移除时的提示。 */
 export function attachmentRemovalMessage(limit: number, removedCount: number) {
-    if (limit <= 0) return `当前模型不支持参考图输入，已移除 ${removedCount} 个素材`;
-    return `${referenceSlotLimitLabel(limit)}已满，已移除 ${removedCount} 个超出槽位的素材`;
+    if (limit <= 0) return `当前模型不支持参考内容，已移除 ${removedCount} 个素材`;
+    return `${referenceSlotLimitLabel(limit)}已满，已移除 ${removedCount} 个超出上限的素材`;
 }
 
 /**
- * 把新选中的素材并入现有参考内容，并报告因超出创作页槽位被丢掉的个数，
+ * 把新选中的素材并入现有参考内容，并报告因超出创作页容量被丢掉的个数，
  * 让界面能明确提示「还有几个没加进去」，而不是静默裁剪。
  */
 export function planCreationAttachmentAdd(attachments: CreationAttachment[], incoming: CreationAttachment[], maxReferences: number): CreationAttachmentAddPlan {

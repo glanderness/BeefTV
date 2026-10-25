@@ -421,10 +421,7 @@ export function CreationComposer(props: ComposerProps) {
     const addReferenceLabel = interactionBusy ? (props.referenceReplacementBusy ? "正在替换参考图" : "生成中暂不能添加参考内容") : canAddMoreReferences ? "添加更多参考内容" : referenceSlotLimitLabel(props.maxReferences);
     const handleReferencesLimitReached = () => {
         if (interactionBusy) return;
-        composerToast.warning(referenceSlotLimitMessage(props.maxReferences, {
-            videos: props.videoProfile.references.maxVideos,
-            audios: props.videoProfile.references.maxAudios,
-        }));
+        composerToast.warning(referenceSlotLimitMessage(props.maxReferences));
     };
     const referenceCounts = useMemo(() => props.attachments.reduce((counts, attachment) => {
         const kind = creationAttachmentKind(attachment);

@@ -247,7 +247,7 @@ export default function CreatePage() {
         // 参考内容上限由下面的 reconcile 统一裁剪（并给出提示），这里不再静默截断。
     }, [composerPreferencesHydrated, composerPreferencesInitialized, mode, selectedModel, videoProfile]);
 
-    // 参考内容超出创作页槽位时（切换模型、恢复会话等）要说明原因，而不是让素材静默消失。
+    // 参考内容超出创作页容量时（切换模型、恢复会话等）要说明原因，而不是让素材静默消失。
     useEffect(() => {
         const reconciled = reconcileCreationAttachmentLimit(attachments, mentionReferences, maxReferences);
         if (reconciled.attachments === attachments) return;
