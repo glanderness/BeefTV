@@ -30,7 +30,7 @@ import type { PromptOptimizerProvider } from "@/lib/plugins/plugin-types";
 import { promptOptimizerPlugin, PROMPT_OPTIMIZER_PLUGIN_ID } from "@/lib/plugins/builtin/prompt-optimizer";
 import { createPluginHostContext } from "@/services/plugin-host";
 import { usePluginStore } from "@/stores/use-plugin-store";
-import { buildCreationMentionReferences, expandCreationPrompt, reconcileCreationAttachmentLimit, removeCreationReferenceTokens, replaceCreationAttachmentReference, selectedCreationReferences, type CreationReference } from "./creation-references";
+import { buildCreationMentionReferences, creationReferenceKindMessage, creationReferenceLimitsFor, creationReferenceOverflowMessage, expandCreationPrompt, fitCreationAttachmentsToLimits, reconcileCreationAttachmentLimit, removeCreationReferenceTokens, replaceCreationAttachmentReference, selectedCreationReferences, type CreationReference } from "./creation-references";
 import { creationAttachmentFromAsset, creationAttachmentFromAudio, creationAttachmentFromAudioAsset, creationAttachmentFromDocument, creationAttachmentFromExternalAsset, creationAttachmentFromImage, creationAttachmentFromVideo, creationAttachmentFromVideoAsset, creationAttachmentKind, creationAudioAsset, creationFileAccepted, creationImageAsset, creationMediaAspectRatio, creationUploadAccept, creationVideoAsset, removeCreationAttachment, splitCreationAttachments, type CreationAttachment } from "./creation-assets";
 import { defaultCreationMode, modeLabels, type CreationConversation, type CreationMessage, type CreationMode, type CreationRetryContext, type CreationSettings, type CreationShotRailEntry, type CreationStatus } from "./creation-types";
 import { attachCreationTaskContexts, completedCreationGenerationTask, conversationTimestamp, creationShotRail, creationVideoShotOrdinal, isImageAttachment, isVideoAttachment, materializeCreationTaskResults, newConversation, newMessage, reconcileCreationTaskMessages } from "./creation-conversations";
@@ -165,7 +165,12 @@ export default function CreatePage() {
     const selectedModel = resolveCompatibleModel(config, preferredModel, modelRequirements) || preferredModel;
     const imageProfile = useMemo(() => modelCapabilityConfigFor(config, selectedModel).image!, [config, selectedModel]);
     const videoProfile = useMemo(() => modelCapabilityConfigFor(config, selectedModel).video!, [config, selectedModel]);
-    const maxReferences = mode === "video" ? videoProfile.operations.includes("image_to_video") ? videoProfile.references.maxImages : 0 : mode === "image" ? imageProfile.references.maxImages : 6;
+    // 参考素材上限按官方文档分类型取（视频：图 / 视频 / 音频各自限量，见 Seedance 2.0 的 9/3/3），
+    // 不再自己合成一个总数上限。
+    const referenceLimits = useMemo(
+        () => creationReferenceLimitsFor(mode, modelCapabilityConfigFor(config, selectedModel)),
+        [config, mode, selectedModel],
+    );
     const referenceImageSize = useMemo(() => {
         const imageAttachments = attachments.filter(isImageAttachment);
         if (imageAttachments.length !== 1) return undefined;
@@ -244,16 +249,14 @@ export default function CreatePage() {
         setSeconds(normalized.seconds);
         setRatio(normalized.ratio);
         setVideoQuality(normalized.resolution.replace(/p$/i, ""));
-        const maxReferences = videoProfile.operations.includes("image_to_video") ? videoProfile.references.maxImages : 0;
-        if (attachments.length > maxReferences) setAttachments((current) => current.slice(0, maxReferences));
     }, [composerPreferencesHydrated, composerPreferencesInitialized, mode, selectedModel, videoProfile]);
 
     useEffect(() => {
-        const reconciled = reconcileCreationAttachmentLimit(attachments, mentionReferences, maxReferences);
+        const reconciled = reconcileCreationAttachmentLimit(attachments, mentionReferences, referenceLimits);
         if (reconciled.attachments === attachments) return;
         setAttachments(reconciled.attachments);
         if (reconciled.removedReferences.length) setPrompt((current) => removeCreationReferenceTokens(current, reconciled.removedReferences));
-    }, [attachments, maxReferences, mentionReferences]);
+    }, [attachments, mentionReferences, referenceLimits]);
 
     useEffect(() => {
         let cancelled = false;
@@ -553,7 +556,10 @@ export default function CreatePage() {
             return external ? [creationAttachmentFromExternalAsset(external)] : [];
         });
         if (!next.length) return;
-        setAttachments((current) => [...current.filter((item) => !next.some((candidate) => candidate.id === item.id)), ...next].slice(0, maxReferences));
+        const merged = [...attachments.filter((item) => !next.some((candidate) => candidate.id === item.id)), ...next];
+        const fitted = fitCreationAttachmentsToLimits(merged, referenceLimits);
+        if (fitted.dropped.length) toast.warning(`${creationReferenceKindMessage(referenceLimits, fitted.dropped[0])}，超出的 ${fitted.dropped.length} 个素材没有加入`);
+        setAttachments(fitted.attachments);
         setLibraryOpen(false);
     };
 
@@ -649,8 +655,9 @@ export default function CreatePage() {
             releaseRetryLock();
             return;
         }
-        if (attachments.length > maxReferences) {
-            toast.warning("参考内容正在按当前模型能力调整，请稍后重试");
+        const overflowMessage = creationReferenceOverflowMessage(referenceLimits, attachments);
+        if (overflowMessage) {
+            toast.warning(overflowMessage);
             releaseRetryLock();
             return;
         }
@@ -1126,7 +1133,7 @@ export default function CreatePage() {
         referenceReplacementBusy,
         attachments,
         referenceImageSize,
-        maxReferences,
+        referenceLimits,
         references: mentionReferences,
         onRemoveAttachment: removeAttachment,
         onClearAttachments: clearAttachments,
