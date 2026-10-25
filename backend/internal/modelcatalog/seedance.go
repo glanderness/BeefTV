@@ -53,6 +53,14 @@ func isSeedance2Family(protocol, modelName string) bool {
 	return strings.Contains(name, "seedance-2")
 }
 
+// isFullVideoSeedance25 判定自定义视频服务（full-video）的模型是否属于 2.5 一代。
+// 该协议的模型名由用户在插件里自定义（如「原生不卡人脸-全参2.5」「sd-native-full-2.5」），
+// 无法按家族前缀识别，所以与 web/src/lib/model-capabilities.ts 一样只看 「2.5」后缀。
+func isFullVideoSeedance25(modelName string) bool {
+	parts := strings.Split(strings.ToLower(strings.TrimSpace(modelName)), "/")
+	return strings.HasSuffix(parts[len(parts)-1], "2.5")
+}
+
 func isSeedance25Model(modelName string) bool {
 	parts := strings.Split(strings.ToLower(strings.TrimSpace(modelName)), "/")
 	base := parts[len(parts)-1]

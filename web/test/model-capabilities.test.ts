@@ -196,3 +196,20 @@ test("BeefAPI generic newapi Seedance accepts mixed image and video references w
         videoSeconds: "5",
     }), "");
 });
+
+test("自定义视频服务（full-video）默认时长：2.5 放开到 30 秒、2.0 保持 15 秒，与后端默认值一致", () => {
+    const video25 = defaultModelCapabilityConfig("full-video", "原生不卡人脸-全参2.5").video!;
+    assert.equal(video25.duration.selection, "range");
+    assert.deepEqual([video25.duration.min, video25.duration.max, video25.duration.default], [4, 30, 5]);
+    assert.equal(video25.references.maxVideos, 10);
+    assert.equal(video25.references.maxVideoDurationSeconds, 30);
+    assert.ok(video25.operations.includes("reference_to_video"));
+    assert.ok(videoDurationAllowed(video25, 30));
+
+    const video20 = defaultModelCapabilityConfig("full-video", "原生不卡人脸-全参2.0").video!;
+    assert.deepEqual([video20.duration.min, video20.duration.max, video20.duration.default], [4, 15, 5]);
+    assert.equal(videoDurationAllowed(video20, 30), false);
+
+    // 自定义渠道的模型名由用户输入，代际判定要容忍空格与大小写（后端 isFullVideoSeedance25 同规则）。
+    assert.equal(defaultModelCapabilityConfig("full-video", " SD-Native-Full-2.5 ").video!.duration.max, 30);
+});

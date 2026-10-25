@@ -225,6 +225,30 @@ func DefaultModelCapabilityConfigForModel(protocol string, modelName string) *Mo
 		video.Ratios = []string{"16:9", "9:16", "1:1"}
 		video.Resolutions = []string{"1080p"}
 		video.DefaultResolution = "1080p"
+	case model.ChannelInterfaceType("full-video"):
+		// 自定义视频服务（full-video 插件）：上游接口由第三方网关提供，参考素材边界按较宽的一档给；
+		// 时长上限按模型代际判定——2.5 一代官方支持 30 秒，其余保守 15 秒。
+		// 与 web/src/lib/model-capabilities.ts 的 defaultModelCapabilityConfig("full-video") 保持同一规则，
+		// 否则前端能选 30 秒、后端按默认 15 秒校验会直接拒单。
+		is25 := isFullVideoSeedance25(modelName)
+		video.Operations = []string{"text_to_video", "image_to_video", "reference_to_video"}
+		video.References.MaxImages = 9
+		video.References.MaxVideos, video.References.MaxAudios = 3, 3
+		video.References.MaxVideoBytes, video.References.MaxAudioBytes = 100_000_000, 100_000_000
+		video.References.MinVideoDuration, video.References.MinAudioDuration = 2, 2
+		video.References.MaxVideoDuration, video.References.MaxAudioDuration = 15, 15
+		maxDuration := 15
+		if is25 {
+			maxDuration = 30
+			video.References.MaxImages = 30
+			video.References.MaxVideos, video.References.MaxAudios = 10, 10
+			video.References.MaxVideoDuration, video.References.MaxAudioDuration = 30, 30
+			video.Resolutions = []string{"480p", "720p"}
+		} else {
+			video.Resolutions = []string{"480p", "720p", "1080p"}
+		}
+		video.Duration = VideoDurationConfig{Selection: "range", Min: 4, Max: maxDuration, Step: 1, Default: 5}
+		video.DefaultResolution = "480p"
 	case model.ChannelInterfaceMiniMaxVideo:
 		video.Operations = append(video.Operations, "reference_to_video")
 		video.References.MaxImages = 9

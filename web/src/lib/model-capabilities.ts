@@ -539,7 +539,8 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         defaultOperation: "text_to_video",
     };
     if (protocol === "full-video") {
-        const is25 = model.endsWith("2.5");
+        // 与后端 modelcatalog.isFullVideoSeedance25 同一条规则：模型名按后缀判代际（自定义渠道的模型名由用户起名）。
+        const is25 = model.trim().toLowerCase().split("/").pop()?.endsWith("2.5") ?? false;
         video.references.promptMaxChars = 4000;
         video.references.maxImages = is25 ? 30 : 9;
         video.references.maxVideos = is25 ? 10 : 3;
