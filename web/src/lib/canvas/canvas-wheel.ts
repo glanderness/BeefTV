@@ -24,7 +24,7 @@ export function canvasWheelIntent(
     if (behavior === "zoom" || behavior === "pan") return behavior;
     if (previous && now - previous.at < 200) return previous.intent;
     const magnitude = Math.abs(event.deltaY);
-    // 行模式（Firefox 等）默认按缩放处理；像素模式里整数步长（100/120 等）通常来自滚轮，
+    // 行模式（Firefox 等）默认按缩放处理；像素模式里 60/80/100/120 这类整十步长通常来自滚轮，
     // 小步长（触控板）按平移处理。
     return event.deltaMode !== 0 || (magnitude >= 40 && magnitude % 20 === 0) ? "zoom" : "pan";
 }

@@ -232,7 +232,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
                 k: newScale,
             }, true);
         },
-        [containerRef, scheduleViewportChange],
+        [containerRef, scheduleViewportChange, wheelBehavior],
     );
 
     const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {

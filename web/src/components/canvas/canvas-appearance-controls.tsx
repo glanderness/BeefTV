@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Button, ColorPicker, Input, Segmented, Slider } from "antd";
 import { Switch } from "@/components/ui/base/switch";
-import { CircleDot, Grid2x2, Link2, Moon, Sun, Paintbrush, RotateCcw, Save, Square } from "lucide-react";
+import { CircleDot, Grid2x2, Link2, Moon, Move, Sun, Paintbrush, RotateCcw, Save, Square, Wand2, ZoomIn } from "lucide-react";
 
 import {
     canvasAppearanceForTheme,
@@ -15,6 +15,8 @@ import type { CanvasBackgroundMode, CanvasColorTheme, CanvasTheme } from "@/lib/
 import type { CanvasWheelBehavior } from "@/lib/canvas/canvas-wheel";
 
 const DARK_PRESETS = ["#000000", "#30272B", "#302D26", "#25302E"];
+
+const SEGMENTED_ROW_CLASS = "mt-1 w-full !rounded-[var(--dock-item-radius-labeled)] !p-0.5 [&_.ant-segmented-group]:!flex [&_.ant-segmented-item]:!min-h-7 [&_.ant-segmented-item]:!flex-1 [&_.ant-segmented-item-label]:!min-h-7 [&_.ant-segmented-item-label]:!text-[var(--fs-tiny)] [&_.ant-segmented-item-label]:!leading-7";
 
 export function CanvasAppearanceControls({
     appearance,
@@ -111,7 +113,7 @@ export function CanvasAppearanceControls({
 
             <div className="mt-3 text-[var(--fs-micro)] font-semibold uppercase opacity-45">空间网格</div>
             <Segmented
-                className="mt-1 w-full !rounded-[var(--dock-item-radius-labeled)] !p-0.5 [&_.ant-segmented-group]:!flex [&_.ant-segmented-item]:!min-h-7 [&_.ant-segmented-item]:!flex-1 [&_.ant-segmented-item-label]:!min-h-7 [&_.ant-segmented-item-label]:!text-[var(--fs-tiny)] [&_.ant-segmented-item-label]:!leading-7"
+                className={SEGMENTED_ROW_CLASS}
                 value={backgroundMode}
                 onChange={(value) => onBackgroundModeChange(value as CanvasBackgroundMode)}
                 options={[
@@ -131,13 +133,13 @@ export function CanvasAppearanceControls({
 
             <div className="mt-3 text-[var(--fs-micro)] font-semibold uppercase opacity-45">滚轮操作</div>
             <Segmented
-                className="mt-1 w-full !rounded-[var(--dock-item-radius-labeled)] !p-0.5 [&_.ant-segmented-group]:!flex [&_.ant-segmented-item]:!min-h-7 [&_.ant-segmented-item]:!flex-1 [&_.ant-segmented-item-label]:!min-h-7 [&_.ant-segmented-item-label]:!text-[var(--fs-tiny)] [&_.ant-segmented-item-label]:!leading-7"
+                className={SEGMENTED_ROW_CLASS}
                 value={wheelBehavior}
                 onChange={(value) => onWheelBehaviorChange(value as CanvasWheelBehavior)}
                 options={[
-                    { value: "auto", label: "自动" },
-                    { value: "zoom", label: "缩放" },
-                    { value: "pan", label: "平移" },
+                    { value: "auto", label: <span className="inline-flex items-center gap-1.5"><Wand2 className="size-3.5" />自动</span> },
+                    { value: "zoom", label: <span className="inline-flex items-center gap-1.5"><ZoomIn className="size-3.5" />缩放</span> },
+                    { value: "pan", label: <span className="inline-flex items-center gap-1.5"><Move className="size-3.5" />平移</span> },
                 ]}
             />
         </>

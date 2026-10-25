@@ -187,13 +187,14 @@ function needsAutoMentionSeparator(nextCharacter: string | undefined) {
     return Boolean(nextCharacter && !/[\s,.!?;:，。！？；：、)\]}】）]/u.test(nextCharacter));
 }
 
+const AUTO_RESOURCE_LABEL = /^(角色|图片|图|视频|音频|绘图|文本|技能)\s*\d+$/u;
+
 /**
- * 只有匹配到的名字是该素材自己的标题（且不同于自动编号「图片1 / 角色1」）时才保留原文，
- * 否则保留只会得到「图片1 @图片1」这种重复。
+ * 用户自己起的名字（角色名、素材标题）要保留原文，把引用追加在后面；
+ * 自动编号「图片1 / 角色1」保留下来只会变成「图片1 @图片1」，仍然直接替换。
  */
 function keepsTypedResourceName(reference: CanvasResourceReference, name: string) {
-    const title = reference.title.trim();
-    return Boolean(title) && title !== reference.label.trim() && title === name;
+    return name === reference.title.trim() && !AUTO_RESOURCE_LABEL.test(name);
 }
 
 const CANVAS_RESOURCE_MENTION_BOUNDARY = /(?:$|\s|[,.!?;:，。！？；：、)\]}】）])/;

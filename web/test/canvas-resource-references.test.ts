@@ -22,6 +22,14 @@ describe("canvas smart references", () => {
         expect(autoMentionCanvasResourceReferences("请使用 2。不要改约2秒。", smartReferences)).toBe("请使用 2。不要改约2秒。");
     });
 
+    test("上传素材以标题为编号时仍保留用户写的标题", () => {
+        const asset: CanvasResourceReference = { id: "asset:宫门全景", nodeId: "asset", kind: "image", label: "宫门全景", title: "宫门全景", active: true };
+        expect(autoMentionCanvasResourceReferences("宫门全景 推近", [asset])).toBe("宫门全景 @[node:asset] 推近");
+        // 没有自定义标题的节点只显示自动编号，仍然直接替换。
+        const untitled: CanvasResourceReference = { id: "image-3", nodeId: "image-3", kind: "image", label: "图片3", title: "图片3", active: true };
+        expect(autoMentionCanvasResourceReferences("图片3 在左侧", [untitled])).toBe("@[node:image-3] 在左侧");
+    });
+
     test("returns exact replacement offsets for names and shelf orders", () => {
         for (const alias of ["唐妙菱", "角色1", "2"]) {
             const prompt = `请使用 ${alias}，然后继续`;
