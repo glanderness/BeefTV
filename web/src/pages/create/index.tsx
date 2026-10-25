@@ -20,7 +20,7 @@ import type { BackendGenerationResult } from "@/services/api/generation-task";
 import type { Skill } from "@/services/api/skills";
 import type { GenerationTask } from "@/services/api/task-center";
 import { acceptSavedCreationConversation, conversationHasConflict, deleteCreationConversation, hasParkedCreationConversationDraft, loadCreationConversations, loadLocalCreationConversationDrafts, pendingCreationTaskIds, removeCreationConversationSnapshot, restoreParkedCreationConversation, saveCreationConversations, updateCreationConversationSnapshot } from "@/services/creation-conversation-store";
-import { resolveModelChannel, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { modelOptionName, resolveModelChannel, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
@@ -167,10 +167,12 @@ export default function CreatePage() {
     const videoProfile = useMemo(() => modelCapabilityConfigFor(config, selectedModel).video!, [config, selectedModel]);
     // 参考素材上限按官方文档分类型取（视频：图 / 视频 / 音频各自限量，见 Seedance 2.0 的 9/3/3），
     // 不再自己合成一个总数上限。
-    const referenceLimits = useMemo(
-        () => creationReferenceLimitsFor(mode, modelCapabilityConfigFor(config, selectedModel)),
-        [config, mode, selectedModel],
-    );
+    const referenceLimits = useMemo(() => {
+        // 只有显式配置过能力的文字模型才按它声明的图片/视频引用上限来限制；
+        // 没配 capabilityConfig 的自定义渠道拿到的是默认补出的 0，不能当成“不支持参考素材”。
+        const textReferencesDeclared = Boolean(resolveModelChannel(config, selectedModel).modelProfiles?.find((item) => item.model === modelOptionName(selectedModel))?.capabilityConfig?.text);
+        return creationReferenceLimitsFor(mode, modelCapabilityConfigFor(config, selectedModel), { textReferencesDeclared });
+    }, [config, mode, selectedModel]);
     const referenceImageSize = useMemo(() => {
         const imageAttachments = attachments.filter(isImageAttachment);
         if (imageAttachments.length !== 1) return undefined;

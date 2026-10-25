@@ -47,16 +47,45 @@ test("图片模式只限制参考图", () => {
     assert.equal(creationReferenceLimit(limits, "audio"), 0);
 });
 
-test("文字模式的音频和文档没有官方数量限制", () => {
+test("文字模式显式配置过能力时跟随它声明的图片、视频上限，音频和文档不设上限", () => {
     const limits = creationReferenceLimitsFor(
         "text",
         capabilities({ text: { references: { maxImages: 2, maxVideos: 1 } } } as unknown as Partial<ModelCapabilityConfig>),
+        { textReferencesDeclared: true },
     );
 
     assert.equal(creationReferenceLimit(limits, "image"), 2);
     assert.equal(creationReferenceLimit(limits, "video"), 1);
     assert.equal(creationReferenceLimit(limits, "audio"), undefined);
     assert.equal(creationReferenceLimit(limits, "file"), undefined);
+});
+
+test("没配 capabilityConfig 的文字模型拿到默认的 0，不能被当成不支持参考素材", () => {
+    // 自定义文字渠道没有能力配置时，modelCapabilityConfigFor 补出的是 0/0。
+    const defaulted = capabilities({ text: { references: { maxImages: 0, maxVideos: 0 } } } as unknown as Partial<ModelCapabilityConfig>);
+    const limits = creationReferenceLimitsFor("text", defaulted, { textReferencesDeclared: false });
+
+    assert.deepEqual(limits, {});
+    assert.equal(creationReferenceLimit(limits, "image"), undefined);
+    assert.equal(creationReferenceLimit(limits, "video"), undefined);
+
+    const attachments = [attachment("image-0", "image"), attachment("video-0", "video")];
+    const fitted = fitCreationAttachmentsToLimits(attachments, limits);
+    assert.equal(fitted.attachments.length, 2);
+    assert.equal(fitted.dropped.length, 0);
+    assert.equal(referenceOverflowKind(limits, attachments), undefined);
+    assert.equal(creationReferenceHasRoom(limits, { image: 99, video: 99, audio: 0, file: 0 }, "image"), true);
+});
+
+test("文字模型显式声明 0 张参考图时仍然按声明拦截", () => {
+    const limits = creationReferenceLimitsFor(
+        "text",
+        capabilities({ text: { references: { maxImages: 0, maxVideos: 0 } } } as unknown as Partial<ModelCapabilityConfig>),
+        { textReferencesDeclared: true },
+    );
+
+    assert.equal(creationReferenceLimit(limits, "image"), 0);
+    assert.equal(creationReferenceKindMessage(limits, attachment("image-0", "image")), "当前模型不支持参考图");
 });
 
 test("9 张图 + 3 个视频 + 3 段音频同时可选，不会因为合计超 9 被砍", () => {
