@@ -92,15 +92,8 @@ function captureVideoPosterNow(source: string, options: CaptureVideoPosterOption
                 .then(() => capturePresentedVideoPoster(video, document.createElement("canvas"), options))
                 .then((captured) => finish({ ...metadata, ...captured }))
                 .catch((error) => {
-                    if (error instanceof DOMException && error.name === "AbortError") {
-                        fail(error);
-                        return;
-                    }
-                    // 呈现回调可能不触发（WebKit 在暂停或后台标签页里常见），
-                    // 但 loadeddata 之后第一帧通常已经解码，直接读它比丢掉首帧更有用。
-                    void drawVideoFramePoster(video, document.createElement("canvas"), options)
-                        .then((captured) => finish({ ...metadata, ...captured }))
-                        .catch(() => finish(metadata));
+                    if (error instanceof DOMException && error.name === "AbortError") fail(error);
+                    else finish(metadata);
                 });
         };
         video.src = source;
@@ -138,15 +131,6 @@ export async function capturePresentedVideoPoster(
     options: Pick<CaptureVideoPosterOptions, "maxWidth" | "timeoutMs"> = {},
 ): Promise<CapturedVideoPoster> {
     await waitForPresentedVideoFrame(video, Math.min(options.timeoutMs ?? 1_500, 1_500));
-    return drawVideoFramePoster(video, canvas, options);
-}
-
-/** 把视频元素当前的画面画到画布上；不等待呈现回调，用于第一帧已经解码但尚未呈现的情况。 */
-export async function drawVideoFramePoster(
-    video: HTMLVideoElement,
-    canvas: HTMLCanvasElement,
-    options: Pick<CaptureVideoPosterOptions, "maxWidth"> = {},
-): Promise<CapturedVideoPoster> {
     const width = video.videoWidth || 1280;
     const height = video.videoHeight || 720;
     const maxWidth = Math.max(1, options.maxWidth ?? 400);
@@ -157,8 +141,7 @@ export async function drawVideoFramePoster(
     context.fillStyle = "#000";
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    // 全黑画面说明还没取到真实内容，交给调用方退回占位提示，而不是留一张黑图。
-    const poster = isBlankPosterFrame(context, canvas) ? undefined : await new Promise<Blob | undefined>((resolve) => canvas.toBlob((blob) => resolve(blob || undefined), "image/jpeg", 0.82));
+    const poster = await new Promise<Blob | undefined>((resolve) => canvas.toBlob((blob) => resolve(blob || undefined), "image/jpeg", 0.82));
     return {
         width,
         height,
@@ -167,21 +150,6 @@ export async function drawVideoFramePoster(
         poster,
         capturedAtMs: Math.round(video.currentTime * 1000),
     };
-}
-
-function isBlankPosterFrame(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
-    try {
-        const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
-        let max = 0;
-        for (let i = 0; i < data.length; i += 4) {
-            const luminance = (data[i] + data[i + 1] + data[i + 2]) / 3;
-            if (luminance > max) max = luminance;
-        }
-        return max < 6;
-    } catch {
-        // 无法读取像素时按有内容处理，避免整段截图被误判丢弃。
-        return false;
-    }
 }
 
 function isCrossOriginHttpUrl(source: string) {
