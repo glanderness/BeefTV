@@ -101,9 +101,9 @@ func TestOfficialRunwayVideoRejectsUnsentMediaRoles(t *testing.T) {
 	}
 }
 
-// gen4.5 的 promptImage 只有一张 position=first，官方不接受尾帧；本地校验必须在
-// 提交前挡掉，而不是让上游 400。veo3.1 的双帧用例在上面的测试里保持不变。
-func TestOfficialRunwayVideoRejectsLastFrameForSingleFrameModels(t *testing.T) {
+// gen4.5 的 promptImage 只有一张 position=first；只发首帧时必须照常发送（尾帧被拒
+// 的用例见 TestOfficialRunwayVideoRejectsLastFrameForFirstOnlyModels）。
+func TestOfficialRunwayVideoKeepsFirstFrameForFirstOnlyModels(t *testing.T) {
 	adapter := officialPackageAdapter(t, "runway-video.beeftv-plugin", "runway-video")
 
 	firstOnly, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
@@ -120,16 +120,58 @@ func TestOfficialRunwayVideoRejectsLastFrameForSingleFrameModels(t *testing.T) {
 	if first, _ := frames[0].(map[string]any); first["position"] != "first" || first["uri"] != "https://cdn.example/first.png" {
 		t.Fatalf("gen4.5 promptImage frame = %#v", frames[0])
 	}
+}
 
-	_, err = adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
-		Model: "gen4.5", Prompt: "a glass cube",
-		Images: []MediaReference{
-			{URL: "https://cdn.example/first.png", Role: "first_frame", Order: 1},
-			{URL: "https://cdn.example/last.png", Role: "last_frame", Order: 2},
-		},
-	}})
-	if err == nil || !strings.Contains(err.Error(), "尾帧") {
-		t.Fatalf("gen4.5 带尾帧必须在校验阶段报错，实际 error = %v", err)
+// 官方 POST /v1/image_to_video 的 promptImage 能力按 model 区分：gen4.5 这类模型
+// 只有 position=first，veo3.1、kling2.5_turbo_pro、seedance2_5、h3_max 等接受
+// position=last。校验只拦官方明确限制的单帧模型，其它模型的双帧请求必须原样发送，
+// 否则新模型和中转会被本地名单误拦。
+func TestOfficialRunwayVideoKeepsLastFrameForModelsThatSupportIt(t *testing.T) {
+	adapter := officialPackageAdapter(t, "runway-video.beeftv-plugin", "runway-video")
+	for _, model := range []string{"veo3.1", "veo3.1_fast", "kling2.5_turbo_pro", "kling3.0_pro", "seedance2_5", "h3_max", "kling_4", "wan3", "some-future-model"} {
+		t.Run(model, func(t *testing.T) {
+			spec, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+				Model: model, Prompt: "a glass cube",
+				Images: []MediaReference{
+					{URL: "https://cdn.example/first.png", Role: "first_frame", Order: 1},
+					{URL: "https://cdn.example/last.png", Role: "last_frame", Order: 2},
+				},
+			}})
+			if err != nil {
+				t.Fatalf("%s 的双帧请求被本地校验挡住: %v", model, err)
+			}
+			frames, _ := manifestTestBody(t, spec)["promptImage"].([]any)
+			if len(frames) != 2 {
+				t.Fatalf("%s promptImage = %#v, want first + last", model, frames)
+			}
+			first, _ := frames[0].(map[string]any)
+			last, _ := frames[1].(map[string]any)
+			if first["position"] != "first" || first["uri"] != "https://cdn.example/first.png" {
+				t.Fatalf("%s first frame = %#v", model, frames[0])
+			}
+			if last["position"] != "last" || last["uri"] != "https://cdn.example/last.png" {
+				t.Fatalf("%s last frame = %#v", model, frames[1])
+			}
+		})
+	}
+}
+
+// 官方把这些模型的 position 限定为 first，带尾帧必须在校验阶段报错。
+func TestOfficialRunwayVideoRejectsLastFrameForFirstOnlyModels(t *testing.T) {
+	adapter := officialPackageAdapter(t, "runway-video.beeftv-plugin", "runway-video")
+	for _, model := range []string{"gen4.5", "gen4_turbo", "happyhorse_1_0", "gemini_omni_flash", "grok_imagine_1_5", "grok_imagine_1_5_lite"} {
+		t.Run(model, func(t *testing.T) {
+			_, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+				Model: model, Prompt: "a glass cube",
+				Images: []MediaReference{
+					{URL: "https://cdn.example/first.png", Role: "first_frame", Order: 1},
+					{URL: "https://cdn.example/last.png", Role: "last_frame", Order: 2},
+				},
+			}})
+			if err == nil || !strings.Contains(err.Error(), "尾帧") {
+				t.Fatalf("%s 带尾帧必须在校验阶段报错，实际 error = %v", model, err)
+			}
+		})
 	}
 }
 

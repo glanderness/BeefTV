@@ -5,7 +5,7 @@ All notable public changes to BeefTV are documented in this file.
 ## Unreleased
 
 - 修复海外视频模型「生成成功却取不到视频」：Runway 按官方字段发送 `promptText` / `promptImage` / `ratio` 并补上 `X-Runway-Version` 请求头，成片从 `output[]` 取回；Luma 从 `assets.video` 取回，时长按官方 `5s` 字符串、首尾帧写入 `keyframes`；xAI 用创建返回的 `request_id` 查询并从 `video.url` 取回。
-- 参考素材按官方要求收紧：Luma 的首尾帧只发送在线图片地址，本地图片先上传到对象存储，拿不到在线地址时在提交前报错；Runway 的尾帧只对 `veo3.1` 系列发送，其它模型带尾帧会在提交前报错。
+- 参考素材按官方要求收紧：Luma 的首尾帧只发送在线图片地址，本地图片先上传到对象存储，拿不到在线地址时在提交前报错；Runway 只拦官方明确限制为单帧的模型（`gen4.5`、`gen4_turbo`、`gemini_omni_flash`、`grok_imagine_1_5` 等），`veo3.1`、`kling2.5_turbo_pro`、`seedance2_5`、`h3_max` 等支持尾帧的模型照常发送。
 - `runway-video` 插件包随包分发 LiteLLM 派生素材的完整 MIT 声明（插件目录内的 `LICENSE`），独立下载的包不再缺少版权与许可。
 - 官方视频服务状态更新：OpenAI 已于 2026-09-24 关闭 Sora 2 与 Videos API，Gemini API 的 Veo 预览模型已于 2026-10-22 关闭；OpenAI 与 Gemini 服务预设不再声称可直接生成视频，`openai-videos`（Sora）与 `google-gemini-veo` 协议照旧保留给仍转发同名接口的第三方中转。
 - Built-in BeefAPI can be connected from the desktop app without pasting a key.
