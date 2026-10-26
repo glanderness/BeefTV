@@ -25,7 +25,7 @@
 | --- | --- | --- | --- | --- |
 | `model` | string | 是 | `model` | 视频模型 ID。 |
 | `prompt` | string | 是 | `prompt` | 视频提示词。 |
-| `images` | media[] | 否 | `keyframes.frame0 / frame1` | 首帧与尾帧；官方服务建议传公网图片地址。 |
+| `images` | media[] | 否 | `keyframes.frame0 / frame1` | 首帧与尾帧；官方只接受在线图片地址，本地图片先上传到对象存储再发送。 |
 | `duration` | integer | 否 | `duration（如 5s）` | 时长秒数，按官方字符串格式发送。 |
 | `aspectRatio` | string | 否 | `aspect_ratio` | 画幅比例。 |
 | `resolution` | string | 否 | `resolution` | 分辨率档位，小写后发送，2160p 按官方写法转成 4k。 |
@@ -68,7 +68,7 @@
 
 ## 兼容边界
 
-该 profile 对应 Dream Machine API 的 `POST /dream-machine/v1/generations` 与 `GET /dream-machine/v1/generations/{id}`。创建请求按官方字段发送 `model`、`prompt`、`aspect_ratio`、`resolution`、`duration` 与 `keyframes`：`duration` 写成官方要求的字符串（例如 `5s`；官方 schema 允许任意字符串，常见取值为 `5s` / `9s`），`resolution` 统一小写、2160p 转成官方写法 `4k`，首帧与尾帧写成 `keyframes.frame0` / `frame1` 的 `image` 类型；角色或风格参考图、参考视频、参考音频在提交前报错，不会静默丢弃。官方文档说明图片以公网地址为唯一传递方式；本 profile 不额外拦截本地素材，便于仍接受内嵌图片的中转使用，官方服务本身可能拒绝内嵌图片。结果从官方 `assets.video` 取回。
+该 profile 对应 Dream Machine API 的 `POST /dream-machine/v1/generations` 与 `GET /dream-machine/v1/generations/{id}`。创建请求按官方字段发送 `model`、`prompt`、`aspect_ratio`、`resolution`、`duration` 与 `keyframes`：`duration` 写成官方要求的字符串（例如 `5s`；官方 schema 允许任意字符串，常见取值为 `5s` / `9s`），`resolution` 统一小写、2160p 转成官方写法 `4k`，首帧与尾帧写成 `keyframes.frame0` / `frame1` 的 `image` 类型；角色或风格参考图、参考视频、参考音频在提交前报错，不会静默丢弃。官方文档把在线图片地址写成唯一传递方式，因此本 profile 声明 `requiresPublicMediaUrls: true` 且 `mediaTransport.image` 为 `url`：本地图片由宿主先上传到对象存储换成在线地址，拿不到在线地址时在提交前返回 `reference_media_requires_url`，不会把 data URL 写进只接受在线地址的 `keyframes.frame0.url` / `frame1.url`。结果从官方 `assets.video` 取回。
 
 <!-- BEEFTV_PLUGIN_MANIFEST_START -->
 ## Manifest 完整接口定义
@@ -114,7 +114,10 @@
           "agent"
         ],
         "baseUrl": "https://api.lumalabs.ai",
-        "requiresPublicMediaUrls": false,
+        "requiresPublicMediaUrls": true,
+        "mediaTransport": {
+          "image": "url"
+        },
         "auth": {
           "type": "bearer",
           "field": "apiKey"

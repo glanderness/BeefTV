@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -97,6 +98,38 @@ func TestOfficialRunwayVideoRejectsUnsentMediaRoles(t *testing.T) {
 	}})
 	if err == nil {
 		t.Fatal("reference video must fail instead of being dropped")
+	}
+}
+
+// gen4.5 的 promptImage 只有一张 position=first，官方不接受尾帧；本地校验必须在
+// 提交前挡掉，而不是让上游 400。veo3.1 的双帧用例在上面的测试里保持不变。
+func TestOfficialRunwayVideoRejectsLastFrameForSingleFrameModels(t *testing.T) {
+	adapter := officialPackageAdapter(t, "runway-video.beeftv-plugin", "runway-video")
+
+	firstOnly, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+		Model: "gen4.5", Prompt: "a glass cube",
+		Images: []MediaReference{{URL: "https://cdn.example/first.png", Role: "first_frame", Order: 1}},
+	}})
+	if err != nil {
+		t.Fatalf("gen4.5 的首帧必须照常发送: %v", err)
+	}
+	frames, _ := manifestTestBody(t, firstOnly)["promptImage"].([]any)
+	if len(frames) != 1 {
+		t.Fatalf("gen4.5 promptImage = %#v, want only the first frame", frames)
+	}
+	if first, _ := frames[0].(map[string]any); first["position"] != "first" || first["uri"] != "https://cdn.example/first.png" {
+		t.Fatalf("gen4.5 promptImage frame = %#v", frames[0])
+	}
+
+	_, err = adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+		Model: "gen4.5", Prompt: "a glass cube",
+		Images: []MediaReference{
+			{URL: "https://cdn.example/first.png", Role: "first_frame", Order: 1},
+			{URL: "https://cdn.example/last.png", Role: "last_frame", Order: 2},
+		},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "尾帧") {
+		t.Fatalf("gen4.5 带尾帧必须在校验阶段报错，实际 error = %v", err)
 	}
 }
 

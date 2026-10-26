@@ -129,7 +129,10 @@ provider code outside its `enterprise/` directory:
   `litellm/constants.py` (the default `X-Runway-Version` value)
 
 They were re-expressed as BeefTV declarative manifest templates and Go tests;
-no Python runtime or Python source is shipped. LiteLLM's MIT permission
+no Python runtime or Python source is shipped.
+The same notice ships inside the plugin package as
+`plugin-packages/runway-video/LICENSE`, so a downloaded
+`runway-video.beeftv-plugin` carries it without the repository root. LiteLLM's MIT permission
 notice applies to that derived material:
 
 > MIT License

@@ -23,7 +23,7 @@
 | --- | --- | --- | --- | --- |
 | `model` | string | 是 | `model` | 视频模型 ID。 |
 | `prompt` | string | 是 | `promptText` | 视频提示词。 |
-| `images` | media[] | 否 | `promptImage（first / last）` | 首帧与尾帧图片；其它角色在提交前报错。 |
+| `images` | media[] | 否 | `promptImage（first / last）` | 首帧是所有图生视频模型的入口；尾帧只有 `veo3.1` 系列接受，其它模型带尾帧会在提交前报错。其它角色同样在提交前报错。 |
 | `duration` | integer | 否 | `duration` | 时长秒数，取值区间由所选模型决定。 |
 | `aspectRatio` | string | 否 | `ratio（像素比，如 1280:720）` | 画幅比例，按官方像素比换算后发送。 |
 | `providerOptions` | object | 否 | `provider-specific fields` | 插件命名空间内的厂商扩展字段。 |
@@ -68,9 +68,9 @@
 
 ## 兼容边界
 
-该协议的请求体是按 `model` 区分的判别联合：`ratio` 的可选像素比、`duration` 的取值区间、提示词长度上限都随模型变化。插件只固定线协议入口和统一字段，按官方字段发送 `promptText`、`promptImage`、`ratio`、`duration`：`aspectRatio` 先换算成官方像素比（16:9→1280:720、9:16→720:1280、1:1→960:960、4:3→1104:832、3:4→832:1104、21:9→1584:672），无法换算时原样发送；首帧与尾帧写成 `promptImage` 的 `first` / `last` 位置，角色或风格参考图、参考视频、参考音频在提交前报错，不会静默丢弃。分辨率由 `ratio` 决定：本 profile 不下发宿主的分辨率档位（`resolution`），选 480p 还是 1080p 不会改变请求，输出档位以 `ratio` 为准。部分模型另有 `resolution` 字段、或只接受特定像素比例（例如少数 4K 模型只收 `3840:2160`），需要时用 `providerOptions.runway-video.body` 覆盖。任务成功后从官方 `output[]` 取回视频地址。云签名型入口在未配置对应鉴权驱动时会明确失败，不会伪装成 Bearer 成功。
+该协议的请求体是按 `model` 区分的判别联合：`ratio` 的可选像素比、`duration` 的取值区间、提示词长度上限都随模型变化。插件只固定线协议入口和统一字段，按官方字段发送 `promptText`、`promptImage`、`ratio`、`duration`：`aspectRatio` 先换算成官方像素比（16:9→1280:720、9:16→720:1280、1:1→960:960、4:3→1104:832、3:4→832:1104、21:9→1584:672），无法换算时原样发送；首帧与尾帧写成 `promptImage` 的 `first` / `last` 位置；官方只让 `veo3.1` / `veo3.1_fast` 的 `promptImage` 带 `position: last`，其它模型（如 `gen4.5`）只接受一张 `position: first`，所以尾帧按模型校验，选错模型会在提交前报错而不是被上游拒绝。角色或风格参考图、参考视频、参考音频同样在提交前报错，不会静默丢弃。分辨率由 `ratio` 决定：本 profile 不下发宿主的分辨率档位（`resolution`），选 480p 还是 1080p 不会改变请求，输出档位以 `ratio` 为准。部分模型另有 `resolution` 字段、或只接受特定像素比例（例如少数 4K 模型只收 `3840:2160`），需要时用 `providerOptions.runway-video.body` 覆盖。任务成功后从官方 `output[]` 取回视频地址。云签名型入口在未配置对应鉴权驱动时会明确失败，不会伪装成 Bearer 成功。
 
-字段对应与固定成功样例移植自 LiteLLM 的 MIT 部分（`litellm/llms/runwayml/videos/transformation.py` 及其单测，提交 `dddbaa803d6e9fcc862ea7a5412f771cb1ae040e`），版权与许可声明见仓库 `THIRD_PARTY_NOTICES.md`；这里只重写为声明式模板与 Go 测试，不引入 Python 运行时。
+字段对应与固定成功样例移植自 LiteLLM 的 MIT 部分（`litellm/llms/runwayml/videos/transformation.py` 及其单测，提交 `dddbaa803d6e9fcc862ea7a5412f771cb1ae040e`），完整 MIT 声明随本插件包分发，见插件目录内的 `LICENSE`（仓库根目录的 `THIRD_PARTY_NOTICES.md` 记录同一份声明）；这里只重写为声明式模板与 Go 测试，不引入 Python 运行时。
 
 <!-- BEEFTV_PLUGIN_MANIFEST_START -->
 ## Manifest 完整接口定义
@@ -602,7 +602,9 @@
                   "$len": {
                     "$filter": {
                       "from": {
-                        "$ref": "request.images"
+                        "$sortByOrder": {
+                          "$ref": "request.images"
+                        }
                       },
                       "as": "media",
                       "where": {
@@ -618,10 +620,34 @@
                     }
                   }
                 },
-                1
+                {
+                  "$switch": {
+                    "cases": [
+                      {
+                        "when": {
+                          "$in": [
+                            {
+                              "$lower": {
+                                "$trim": {
+                                  "$ref": "request.model"
+                                }
+                              }
+                            },
+                            [
+                              "veo3.1",
+                              "veo3.1_fast"
+                            ]
+                          ]
+                        },
+                        "then": 1
+                      }
+                    ],
+                    "default": 0
+                  }
+                }
               ]
             },
-            "message": "Runway Video 最多接收一张尾帧图片"
+            "message": "Runway Video 只有 veo3.1 系列模型接受尾帧；当前模型只发送首帧，请移除尾帧或改选 veo3.1"
           },
           {
             "assert": {
