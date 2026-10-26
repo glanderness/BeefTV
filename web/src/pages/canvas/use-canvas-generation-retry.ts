@@ -27,6 +27,7 @@ import { isCanvasWorkflowProvider } from "@/lib/canvas/canvas-workflow";
 import { isDepthCaptureResultNode } from "@/lib/canvas/canvas-depth-capture";
 import { buildPortraitTexturePrompt } from "@/lib/canvas/canvas-portrait-texture";
 import { resolveCanvasStyleExecution } from "@/lib/canvas/canvas-style-execution";
+import { canvasGenerationResultUnavailable, canvasSubmissionVerdictSettled } from "@/lib/canvas/canvas-node-task-state";
 import { generationFailureMetadata, shouldBlockManualRetry } from "@/lib/generation-error";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { navigateToSettings } from "@/lib/settings-navigation";
@@ -39,6 +40,7 @@ import { resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@
 import type { Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeTypeId } from "@/types/canvas";
 import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, type CanvasGenerationFailureInput } from "./canvas-generation-failure";
+import { confirmCanvasGeneration } from "./canvas-generation-preflight";
 
 type UseCanvasGenerationRetryOptions = {
     projectId: string;
@@ -75,7 +77,7 @@ export function useCanvasGenerationRetry({
     applyGenerationTaskResult,
     regenerateImageBatch,
 }: UseCanvasGenerationRetryOptions) {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const projectIdRef = useRef(projectId);
@@ -93,7 +95,32 @@ export function useCanvasGenerationRetry({
                 message.warning("当前节点不能使用通用生成重试");
                 return;
             }
-            if (retryMode === "video" && node.metadata?.taskId && node.metadata.status === "error") {
+            // 原任务已失败、失败原因就是「提交结果未确认」：后端拒绝重试同一个任务，只能按当前画布新建任务。
+            // 判定与恢复扫描的自动取回共用同一份任务侧证据（stage 或错误码），避免两边不一致时跳过付费确认。
+            const submissionVerdictSettled = canvasSubmissionVerdictSettled(node.metadata);
+            if (submissionVerdictSettled && !canvasGenerationResultUnavailable(node.metadata)) {
+                // 原结果还没确认取不回：恢复扫描正在按回执取回，或已亮起「继续取回」，这里不抢先新建任务。
+                message.info(node.metadata?.resourceReloadAvailable ? "原任务的结果还在，请点击「继续取回」" : "正在取回原任务的结果，取不回时再重新生成");
+                return;
+            }
+            if (submissionVerdictSettled) {
+                // 原结果已确认取不回：重新生成会新建任务并可能再次消耗积分，必须先让用户确认。
+                const controller = startGenerationRequest(node.id, node.id);
+                const confirmed = await confirmCanvasGeneration((callbacks) => modal.confirm({
+                    title: "重新生成？",
+                    content: "原任务已经结束，但结果没有取回。重新生成会新建任务，并可能再次消耗积分。",
+                    okText: "仍然生成",
+                    cancelText: "取消",
+                    centered: true,
+                    ...callbacks,
+                }), controller.signal);
+                finishGenerationRequest(node.id, controller);
+                if (!confirmed) {
+                    message.info("已保留原任务记录，未重新生成");
+                    return;
+                }
+            }
+            if (retryMode === "video" && node.metadata?.taskId && node.metadata.status === "error" && !submissionVerdictSettled) {
                 const taskId = node.metadata.taskId;
                 if (retryingVideos.current.has(taskId)) return;
                 retryingVideos.current.add(taskId);

@@ -8,6 +8,7 @@ import { GenerationFailureNotice } from "@/components/generation/generation-fail
 import { explainGenerationError } from "@/lib/generation-error";
 import { canvasNodeFailureExplanation, canRecoverOrRetryDepthCapture } from "@/lib/canvas/canvas-depth-capture";
 import { isGenerationTaskSubmissionUncertain } from "@/lib/generation-task-display";
+import { generationTaskVerdictSettled } from "@/lib/canvas/canvas-node-task-state";
 import { canvasNodeOperation } from "@/lib/operation-progress";
 import { useOperationProgress } from "@/stores/use-operation-progress";
 import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
@@ -205,7 +206,8 @@ function ErrorContent({ node, theme, onRetry, onReloadResource, onOpenTaskDetail
         officialStatus: node.metadata?.taskOfficialStatus,
         errorCode: node.metadata?.taskErrorCode || node.metadata?.generationErrorCode,
     };
-    const submissionUncertain = isGenerationTaskSubmissionUncertain(errorDisplayTask) || explanation.uncertain;
+    // 「正在取回结果」按待处理显示；原任务已终态且结果确认取不回时，卡片回到普通失败并给出重新生成。
+    const submissionUncertain = explanation.uncertain || (isGenerationTaskSubmissionUncertain(errorDisplayTask) && !generationTaskVerdictSettled(node.metadata));
     return (
         <div
             data-canvas-no-zoom

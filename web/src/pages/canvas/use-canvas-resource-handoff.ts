@@ -9,9 +9,11 @@ import { refreshCanvasCharacterReferenceNodes } from "@/lib/canvas/canvas-charac
 import { canvasAssetHandoffIds, consumeCanvasAssetHandoff } from "@/lib/canvas/canvas-asset-handoff";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { isUserScopeAbandonedError } from "@/lib/user-scope-guard";
+import { canvasTaskProvesSubmissionUnknown } from "@/lib/canvas/canvas-node-task-state";
 import { createStyleProfileSnapshot, resolveStyleProfile, serializeStyleProfile } from "@/lib/canvas/style-profile";
 import { getProject } from "@/services/api/projects";
-import { queryGenerationTask, retryGenerationTask, type GenerationTask } from "@/services/api/task-center";
+import { queryGenerationTask, retryGenerationTask, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
+import { recoverCanvasTaskResult } from "@/services/canvas-task-result-recovery";
 import { loadAssetsForUse } from "@/services/local-workspace-sync";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
@@ -22,7 +24,7 @@ import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canv
 
 import { readOwnedCanvasNodes, runOwnedCanvasEnsureQueue, runOwnedCanvasPageCommit, useCanvasOwnerLifetime } from "./canvas-owner-epoch";
 import { applyArchivedCanvasNodeAssets, CANVAS_HANDOFF_PERSIST_FAILED_MESSAGE, commitOwnedCanvasAssetHandoff, rebaseCreatedCanvasNodes } from "./canvas-resource-handoff-commit";
-import { canvasGenerationFailureMetadata } from "./canvas-generation-failure";
+import { canvasGenerationFailureMetadata, canvasGenerationResultUnavailableMetadata } from "./canvas-generation-failure";
 import { linkedFolderPresentation, planCanvasHandoffEffect, resolveCanvasAssetHandoffPlan } from "./canvas-resource-handoff-plan";
 
 const NODE_STATUS_SUCCESS = "success" as const;
@@ -310,6 +312,18 @@ export function useCanvasResourceHandoff({
             try {
                 let task = await queryGenerationTask(taskId, { signal: controller.signal });
                 if (!isCurrent()) return;
+                // 提交结论未确认的原任务已终态：先请后端按已存回执重建结果（不重新提交上游），再照常取回。
+                if ((task.status === "failed" || task.status === "cancelled") && canvasTaskProvesSubmissionUnknown(node.metadata)) {
+                    const recovered = await recoverCanvasTaskResult(taskId, controller.signal);
+                    if (!isCurrent()) return;
+                    if (!recovered) {
+                        setNodes((current) => current.map((item) => (item.id === targetNodeId ? { ...item, metadata: { ...item.metadata, status: "error", ...canvasGenerationResultUnavailableMetadata() } } : item)));
+                        message.info("原任务的结果已取不回，可以重新生成");
+                        return;
+                    }
+                    task = recovered.status === "succeeded" ? recovered : await waitForGenerationTask(taskId, { signal: controller.signal, initialTask: recovered });
+                    if (!isCurrent()) return;
+                }
                 if (task.status !== "succeeded") throw new Error("原生成任务尚未成功，暂时无法取回结果");
                 if (task.stage === "delivery_paused" || task.stage === "delivery_timed_out") {
                     task = await retryGenerationTask(taskId);

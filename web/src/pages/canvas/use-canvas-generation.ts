@@ -14,8 +14,10 @@ import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { canvasNodeNeedsGenerationRecovery, consumeGenerationRecoveryRestore, isGenerationRecoveryRestored } from "@/lib/canvas/canvas-project-generation";
+import { canvasNodeNeedsOriginalResultRecovery } from "@/lib/canvas/canvas-node-task-state";
+import { recoverCanvasTaskResult } from "@/services/canvas-task-result-recovery";
 import { generationFailureMetadata } from "@/lib/generation-error";
-import { canvasGenerationTaskNodes, canvasTaskFailureMetadata } from "./canvas-generation-failure";
+import { canvasGenerationResultUnavailableMetadata, canvasGenerationTaskNodes, canvasTaskFailureMetadata } from "./canvas-generation-failure";
 import { runGenerationConsumer } from "@/services/generation-consumer-lifecycle";
 import { consumeCanvasGenerationContinuation } from "./use-canvas-operation-history";
 
@@ -463,10 +465,33 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                         if (recoveringTaskIdsRef.current.has(taskId)) return;
                         recoveringTaskIdsRef.current.add(taskId);
                         const continuationOnly = !node.metadata?.taskId && node.metadata?.agentGenerationContinuation?.taskId === taskId && !discoveredTask;
+                        // 提交结论未确认、原任务却已终态：先请后端按已存的上游回执重建结果，再照常取回写回。
+                        // 这一步不重新提交上游、不产生费用，所以不需要用户点。
+                        const originalResultRecovery = !continuationOnly && canvasNodeNeedsOriginalResultRecovery(node);
                         try {
-                            const completed = await observeSubscribedGenerationTask(taskId, signal, (task) => {
-                                if (owns() && !continuationOnly) bindGenerationTask(node.id, task);
-                            });
+                            let completed: GenerationTask;
+                            if (originalResultRecovery) {
+                                const recovered = await recoverCanvasTaskResult(taskId, signal);
+                                if (!owns()) return;
+                                if (!recovered) {
+                                    // 后端确认结果取不回：标成「不能继续取回」，不自动新建任务，重新生成交回用户决定。
+                                    setNodes((current) => current.map((item) => (item.id === node.id && ownsNode(item) ? { ...item, metadata: { ...item.metadata, ...canvasGenerationResultUnavailableMetadata() } } : item)));
+                                    return;
+                                }
+                                // 恢复后的任务进入「已生成、待取回」，之后和其他任务一样走订阅、下载和进度显示。
+                                bindGenerationTask(node.id, recovered);
+                                completed = recovered.status === "succeeded" ? recovered : await observeSubscribedGenerationTask(taskId, signal, (task) => {
+                                    if (owns()) bindGenerationTask(node.id, task);
+                                });
+                                if (completed.status === "failed" || completed.status === "cancelled") {
+                                    if (owns()) setNodes((current) => current.map((item) => (item.id === node.id && ownsNode(item) ? { ...item, metadata: { ...item.metadata, ...canvasGenerationResultUnavailableMetadata() } } : item)));
+                                    return;
+                                }
+                            } else {
+                                completed = await observeSubscribedGenerationTask(taskId, signal, (task) => {
+                                    if (owns() && !continuationOnly) bindGenerationTask(node.id, task);
+                                });
+                            }
                             if (!owns()) return;
                             await recoverCanvasGenerationTaskNode({
                                 projectId: startedProjectId,
@@ -495,7 +520,8 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                                               metadata: {
                                                   ...item.metadata,
                                                   status: continuationOnly ? item.metadata?.status : NODE_STATUS_ERROR,
-                                                  ...(continuationOnly ? {} : failure),
+                                                  // 按回执取回途中断网或服务端出错：结果可能还在，保留原失败原因并交给「继续取回」，不自动反复重试。
+                                                  ...(continuationOnly ? {} : originalResultRecovery ? { resourceReloadAvailable: true } : failure),
                                                   ...(item.metadata?.agentGenerationContinuation?.status === "pending"
                                                       ? {
                                                             agentGenerationContinuation: { ...item.metadata.agentGenerationContinuation, status: "failed" as const },
@@ -592,8 +618,13 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                 const recoverLateNodes = () => {
                     if (!context.isCurrentProject()) return;
                     const restored = nodesRef.current.filter(isGenerationRecoveryRestored);
-                    if (!restored.length) return;
-                    const claims = claimRecoveryNodes(selectRecoveryNodes(restored));
+                    // 会话中途才变成「提交结论未确认 + 原任务已终态」的节点也交给同一个扫描取回。
+                    // 取回一结束节点就离开这个状态（成功、可继续取回或确认取不回），不会被反复认领。
+                    const settled = nodesRef.current.filter(canvasNodeNeedsOriginalResultRecovery);
+                    // 同一节点可能两条路都在：先按节点去重再认领，否则第二次认领会顶掉第一次，取回的结果写不回。
+                    const candidates = Array.from(new Map([...restored, ...settled].map((node) => [node.id, node])).values());
+                    if (!candidates.length) return;
+                    const claims = claimRecoveryNodes(selectRecoveryNodes(candidates));
                     // 只交出一次；跳过的节点（本次会话的请求、已在恢复的同一任务）也一并清掉。
                     consumeGenerationRecoveryRestore(restored);
                     if (!claims.length) return;
