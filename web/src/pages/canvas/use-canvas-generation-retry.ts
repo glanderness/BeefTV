@@ -27,7 +27,7 @@ import { isCanvasWorkflowProvider } from "@/lib/canvas/canvas-workflow";
 import { isDepthCaptureResultNode } from "@/lib/canvas/canvas-depth-capture";
 import { buildPortraitTexturePrompt } from "@/lib/canvas/canvas-portrait-texture";
 import { resolveCanvasStyleExecution } from "@/lib/canvas/canvas-style-execution";
-import { generationTaskVerdictSettled, isGenerationTaskSubmissionUncertain } from "@/lib/generation-task-display";
+import { canvasSubmissionVerdictSettled } from "@/lib/canvas/canvas-node-task-state";
 import { generationFailureMetadata, shouldBlockManualRetry } from "@/lib/generation-error";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { navigateToSettings } from "@/lib/settings-navigation";
@@ -99,7 +99,8 @@ export function useCanvasGenerationRetry({
             // 原任务已终态、失败原因就是「提交结果未确认」时，后端拒绝重试同一个任务
             // （SubmissionUncertainRetryMessage）。这种情况直接走下面的通用生成路径，
             // 按当前画布重新提交，不再发一次注定被拒的存储任务重试。
-            const submissionVerdictSettled = generationTaskVerdictSettled(node.metadata) && isGenerationTaskSubmissionUncertain({ status: (node.metadata?.taskStatus || "failed") as GenerationTask["status"], stage: node.metadata?.taskStage ?? "" });
+            // 判定与自动取回共用同一份任务侧证据（stage 或错误码），避免两边不一致时跳过付费确认。
+            const submissionVerdictSettled = canvasSubmissionVerdictSettled(node.metadata);
             // 解锁「提交结果未确认」的锁会新建任务并可能再次消耗积分，这一步必须先让用户确认。
             const confirmSettledRegeneration = (signal: AbortSignal) => confirmCanvasGeneration((callbacks) => modal.confirm({
                 title: "重新生成？",

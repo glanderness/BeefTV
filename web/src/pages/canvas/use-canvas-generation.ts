@@ -631,7 +631,10 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                     // 每个任务只自动试一次，失败或取不回都交给用户，避免反复打后端。
                     const settled = nodesRef.current.filter((node) => canvasNodeNeedsOriginalResultRecovery(node) && !autoRecoveredRef.current.has(`${node.id}:${node.metadata?.taskId}`));
                     settled.forEach((node) => autoRecoveredRef.current.add(`${node.id}:${node.metadata?.taskId}`));
-                    const candidates = [...restored, ...settled];
+                    // 同一节点可能同时来自「后到快照」和「中途变成终态」两条路：先去重再认领。
+                    // 否则它会被认领两次，第二次覆盖第一次的认领后因任务已在恢复而退出，
+                    // 第一次取回成功的结果就写不回画布。
+                    const candidates = Array.from(new Map([...restored, ...settled].map((node) => [node.id, node])).values());
                     if (!candidates.length) return;
                     const claims = claimRecoveryNodes(selectRecoveryNodes(candidates));
                     if (!claims.length) return;

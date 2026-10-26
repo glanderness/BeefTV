@@ -43,7 +43,48 @@ test("a backend refusal means the result is gone, and no result is reported", as
         waitForGenerationTask: async () => { calls.push("wait"); return task("succeeded"); },
     });
     expect(result).toBeUndefined();
-    expect(calls).toEqual(["query", "retry"]);
+    // 拒绝后必须重新读一次任务，确认它真的还是失败状态，才敢说结果取不回。
+    expect(calls).toEqual(["query", "retry", "query"]);
+});
+
+test("a lost recovery response is consumed as the existing result, not read as a lost result", async () => {
+    // 第一次恢复已在后端成功、只是响应没回来：再发一次会被拒（任务已成功），
+    // 这时重新读任务必须拿到成功结果并交回调用方，而不是报「取不回」。
+    const calls: string[] = [];
+    let reads = 0;
+    const result = await recoverCanvasTaskResult("task-1", signal(), () => calls.push("update"), {
+        queryGenerationTask: async () => { calls.push("query"); reads += 1; return reads === 1 ? task("failed") : task("succeeded", "等待取回结果"); },
+        retryGenerationTask: async () => { calls.push("retry"); throw new ApiError("只有失败的任务可以重试", { status: 400, reason: "bad_request" }); },
+        waitForGenerationTask: async () => { calls.push("wait"); return task("succeeded"); },
+    });
+    expect(result?.status).toBe("succeeded");
+    expect(calls).toEqual(["query", "retry", "query", "update"]);
+});
+
+test("a refusal with a task still running waits instead of reporting a lost result", async () => {
+    const calls: string[] = [];
+    let reads = 0;
+    const result = await recoverCanvasTaskResult("task-1", signal(), () => calls.push("update"), {
+        queryGenerationTask: async () => { calls.push("query"); reads += 1; return reads === 1 ? task("failed") : task("running", "生成中"); },
+        retryGenerationTask: async () => { calls.push("retry"); throw new ApiError("只有失败的任务可以重试", { status: 400, reason: "bad_request" }); },
+        waitForGenerationTask: async (_id, options) => { calls.push(`wait:${options?.initialTask?.status}`); return task("succeeded"); },
+    });
+    expect(result?.status).toBe("succeeded");
+    expect(calls).toEqual(["query", "retry", "query", "update", "wait:running"]);
+});
+
+test("an unreadable task after a refusal is an error, never a lost result", async () => {
+    const refusal = new ApiError("提交结果尚未确认，请先查询原任务，不要立即重新提交", { status: 400, reason: "bad_request" });
+    let reads = 0;
+    await expect(recoverCanvasTaskResult("task-1", signal(), () => {}, {
+        queryGenerationTask: async () => {
+            reads += 1;
+            if (reads === 1) return task("failed");
+            throw new Error("读取任务失败");
+        },
+        retryGenerationTask: async () => { throw refusal; },
+        waitForGenerationTask: async () => task("succeeded"),
+    })).rejects.toBe(refusal);
 });
 
 test("infrastructure failures propagate so callers never read them as a refusal", async () => {

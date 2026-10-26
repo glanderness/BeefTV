@@ -72,18 +72,26 @@
 | 文件 | 改动 |
 | --- | --- |
 | `src/lib/generation-task-display.ts` | 新增 `generationTaskVerdictSettled`：原任务已终态（failed/cancelled）即「提交是否成立已有结论」 |
-| `src/lib/canvas/canvas-node-task-state.ts` | 新增 `imageSubmissionUnknown`（从页面模块下移到 lib，页面模块改为再导出）、`canvasTaskProvesSubmissionUnknown`、`canvasGenerationResultUnavailable`、`canvasNodeNeedsOriginalResultRecovery`、`canvasNodeNeedsGenerationRecoveryRetry`。放在 lib 是为了让 `lib/canvas/canvas-depth-capture.ts` 能引用而不会反向依赖页面模块 |
+| `src/lib/canvas/canvas-node-task-state.ts` | 新增 `imageSubmissionUnknown`（从页面模块下移到 lib，页面模块改为再导出）、`canvasTaskProvesSubmissionUnknown`、`canvasSubmissionVerdictSettled`、`canvasGenerationResultUnavailable`、`canvasNodeNeedsOriginalResultRecovery`、`canvasNodeNeedsGenerationRecoveryRetry`。放在 lib 是为了让 `lib/canvas/canvas-depth-capture.ts` 能引用而不会反向依赖页面模块 |
 | `src/types/canvas.ts` | 节点元数据新增 `generationResultUnavailableTaskId`：原任务已终态但结果确认取不回时记下任务身份，换任务即失效 |
 | `src/pages/canvas/canvas-generation-failure.ts` | `canvasGenerationRetryBlocked` 的「提交结果未确认」分支改为 `!generationTaskVerdictSettled`；新增 `canvasGenerationResultUnavailableMetadata`；`canvasImageGenerationHasPendingResult` 不再把「已确认取不回」算成还留着结果；提示文案分三态（结论未定 / 正在自动取回 / 已取不回） |
 | `src/lib/canvas/canvas-depth-capture.ts` | 节点失败说明分两态：**正在取回**（`uncertain: true`、`blockManualRetry: true`，不显示重新生成）与**已取不回**（`uncertain: false`、`blockManualRetry: false`，可重新生成且会先确认） |
 | `src/components/canvas/canvas-node-content.tsx` | `submissionUncertain` 以节点失败说明为准：取回期间按待处理显示、不给重新生成；已取不回时回到普通失败并给出重新生成 |
 | `src/components/canvas/canvas-node.tsx` | 批次子节点的「重新生成」改用同一份节点失败说明，避免两处判断不一致 |
-| `src/services/canvas-task-result-recovery.ts`（新增） | 取回原结果：先查任务；还在跑就等；已终态就请后端按回执恢复（不重新付费）；后端明确拒绝（4xx）返回「取不回」；瞬时错误按既有节奏重试后上抛，调用方不得据此重复提交 |
-| `src/pages/canvas/use-canvas-generation.ts` | 恢复流程对「提交结论未确认 + 原任务已终态」的节点改走取回；取不回时在节点上记下任务身份；会话中途进入该状态的节点由同一恢复流程接手；停留在该状态期间按 10 秒 × 6 次自动复查 |
-| `src/pages/canvas/use-canvas-generation-retry.ts` | 图片节点：可能还有原结果时先取回（成功即结束）；已确认取不回时不再重复取回，直接进「确认后新建任务」；视频节点在「提交结论未确认但任务已终态」时不再发一次注定被拒的存储任务重试，改为确认后重新生成 |
+| `src/services/canvas-task-result-recovery.ts`（新增） | 取回原结果：先查任务；还在跑就等；已终态就请后端按回执恢复（不重新付费）；后端明确拒绝（4xx）时**先重新读一次任务**再判定「取不回」（上一次恢复可能已在后端成功、只是响应丢失）；瞬时错误按既有节奏重试后上抛，调用方不得据此重复提交 |
+| `src/pages/canvas/use-canvas-generation.ts` | 恢复流程对「提交结论未确认 + 原任务已终态」的节点改走取回；取不回时在节点上记下任务身份；会话中途进入该状态的节点由同一恢复流程接手；停留在该状态期间按 10 秒 × 6 次自动复查；后到快照与「中途变成终态」两条路交来的节点**先去重再认领**，避免同一节点被认领两次导致取回成功却写不回 |
+| `src/pages/canvas/use-canvas-generation-retry.ts` | 图片节点：可能还有原结果时先取回（成功即结束）；已确认取不回时不再重复取回，直接进「确认后新建任务」；「提交结论未确认」的判定改用 `canvasSubmissionVerdictSettled`（与自动取回同一份任务侧证据，stage 或错误码都算），不再只认 `taskStage = submission_unknown`；视频节点在「提交结论未确认但任务已终态」时不再发一次注定被拒的存储任务重试，改为确认后重新生成 |
 | `src/pages/canvas/use-canvas-generation-executor.ts` | 待确认提交优先按已有任务号查任务；节点属于「已终态待取回」时改走取回而不是把失败当结论 |
 
 修复后的行为（图片节点，原任务已终态）：节点自己进入「原任务已结束，正在取回结果」→ 取回成功则结果出现在画布上（用户没有点过任何按钮）；取不回则变成「原任务已结束，但结果已取不回」并给出「重新生成」，点击后先确认再新建任务。
+
+## 独立检查发现的三个问题与修法
+
+独立检查（2026-10-26，内存模拟复现，未调用真实生成服务）指出三处问题，均已修复，并各补了在旧代码上会失败的回归测试：
+
+1. **部分错误状态会跳过付费确认**：手动「重新生成」的「提交结论未确认」判定原来只认 `taskStage = submission_unknown`，而自动取回还接受错误码 `submission_uncertain`。于是 stage 为「任务失败」、错误码为 `submission_uncertain` 的节点在取回被拒后点「重新生成」，会直接新建任务、不弹确认（模拟结果：0 次确认、1 次新建任务）。改为两边共用 `canvasSubmissionVerdictSettled`（`web/src/lib/canvas/canvas-node-task-state.ts`），`use-canvas-generation-retry.ts` 只调用它。
+2. **后到快照重复认领，取回成功也写不回**：`recoverLateNodes` 原来把「后到快照待恢复」和「中途变成终态」两个数组直接拼接，同一节点出现两次时第二次认领会覆盖第一次，随后又因任务已在恢复而退出（模拟结果：恢复调用 1 次、结果应用 0 次、节点仍是失败）。改为按节点 id 先去重再认领。
+3. **恢复响应丢失被误判为「取不回」**：第一次恢复已在后端成功、只是响应没回来时，再发一次会因为任务已经成功而返回 4xx，原实现直接判定结果取不回。改为拒绝后**先重新读任务**：已成功就按成功结果消费，仍在跑就继续等，仍是失败/取消才算取不回，读不到状态则把拒绝交回调用方（按错误处理，不新建任务）。
 
 ## 上游 Infinite Canvas 对照
 
@@ -100,9 +108,11 @@
 
 - 前端类型检查：`cd web && bun run typecheck` 通过。
 - 前端构建：`cd web && bun run build` 通过。
-- 前端全量测试：`cd web && bun run test` 通过——465 个文件 3327 项通过、0 失败（1 项按条件跳过）；其中改动涉及模块的 28 个测试文件（289 项，含 `canvas-generation-failure`、`canvas-depth-capture`、`canvas-image-save-barrier`、`canvas-binding-conflict-actions`、`canvas-task-binding-recovery`、`canvas-local-generation-recovery`、`generation-task-display`、`vod-image-errors`、`vod-moderation`）全部通过；`bun run test:canvas` 36 项通过。
+- 前端全量测试：`cd web && bun run test` 通过——465 个文件 3331 项通过、0 失败（1 项按条件跳过）；其中改动涉及模块的 28 个测试文件（289 项，含 `canvas-generation-failure`、`canvas-depth-capture`、`canvas-image-save-barrier`、`canvas-binding-conflict-actions`、`canvas-task-binding-recovery`、`canvas-local-generation-recovery`、`generation-task-display`、`vod-image-errors`、`vod-moderation`）全部通过；`bun run test:canvas` 36 项通过。
   - 全量套件在机器高负载时偶发两处与本次改动无关的浏览器测试超时/竞态（`assistant-input.browser.test.ts` 20 秒超时、`customer-generation-scenario.browser.test.ts` 在 `page.goto` 后读 `window.__customer` 的竞态）；两者单独运行均通过（`customer-generation-scenario` 连跑 3 次 13/13 通过），随后重跑全量套件也是 0 失败。
-- 新增单元测试：`test/canvas-task-result-recovery.test.ts` 覆盖「已终态任务按回执取回而不重新提交」「仍在执行的任务只等待」「后端拒绝即取不回且不新建任务」「瞬时错误按预算重试、之后才上抛」「等待期间任务再次失败即取不回」「已取消的请求不触达后端」。`test/canvas-generation-failure.test.ts` 新增 settled 两态断言（正在取回无重新生成入口 / 已取不回有重新生成入口），并断言只有客户端一侧的「提交状态未知」**不**触发自动取回。
+- 新增单元测试：`test/canvas-task-result-recovery.test.ts` 覆盖「已终态任务按回执取回而不重新提交」「仍在执行的任务只等待」「后端拒绝即取不回且不新建任务（拒绝后必须重读一次任务）」「拒绝后重读拿到成功结果 → 按已有结果消费，不报取不回」「拒绝后任务仍在跑 → 继续等待」「拒绝后读不到状态 → 上抛原错误」「瞬时错误按预算重试、之后才上抛」「等待期间任务再次失败即取不回」「已取消的请求不触达后端」。`test/canvas-generation-failure.test.ts` 新增 settled 两态断言（正在取回无重新生成入口 / 已取不回有重新生成入口），并断言只有客户端一侧的「提交状态未知」**不**触发自动取回。
+- 新增取回判定与确认的回归测试：`test/canvas-settled-retry-confirmation.test.ts` 驱动真实 `useCanvasGenerationRetry`（独立进程夹具 `test/fixtures/canvas-settled-retry-confirmation.fixture.ts`），断言两种任务侧证据（`taskStage = submission_unknown`、错误码 `submission_uncertain`）下取不回之后新建任务前都必须弹确认、取消即不新建，且已确认取不回时不再重复取回；在旧判定下第一条断言就失败（0 次确认）。
+- 新增后到快照恢复测试：`test/canvas-late-generation-recovery.browser.test.ts` 新增两例——后到快照里的「已终态待取回」节点（同时属于两条恢复路径）必须把原任务结果写回画布、且不新建任务；后端拒绝时节点保持失败、只尝试一次、不新建任务。去掉去重后这两例都会失败。
 - 新增浏览器测试：`test/canvas-uncertain-recovery.browser.test.ts` 用真实 Chrome 渲染画布节点错误卡，断言：任务终态但结果未取回时**没有**「重新生成」、文案为「原任务已结束，正在取回结果」；后端确认取不回时出现「重新生成」且可点击、文案为「原任务已结束，但结果已取不回」；结论未定时**没有**「重新生成」且保留「查看原任务」；结果已保留时**没有**「重新生成」但保留「继续取回」并可用。
 - 既有浏览器测试：`canvas-late-generation-recovery`、`canvas-lifecycle-restart`、`canvas-image-recovery`、`canvas-video-recovery`、`customer-generation-scenario`（含「提交结果未确认时重复提交只查任务、不重复付费」）、`canvas-node-screen-controls` 共 56 项通过（1 项按条件跳过）。
 

@@ -32,6 +32,16 @@ export function canvasTaskProvesSubmissionUnknown(metadata: CanvasNodeMetadata |
 }
 
 /**
+ * 手动「重新生成」前的判定：原任务已终态，且这次提交结论未确认。
+ *
+ * 必须与自动取回用同一份任务侧证据：两边判定不一致时，会出现
+ * 「自动取回被后端拒绝 → 点重新生成 → 没弹付费确认就新建任务」。
+ */
+export function canvasSubmissionVerdictSettled(metadata: CanvasNodeMetadata | undefined) {
+    return generationTaskVerdictSettled(metadata) && canvasTaskProvesSubmissionUnknown(metadata);
+}
+
+/**
  * 需要自动取回原结果的节点：提交结论未确认，而原任务已经终态。
  *
  * 只有这一类节点可以自动调用任务重试：后端会先按已存回执重建结果，不会重新提交上游；

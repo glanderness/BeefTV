@@ -69,7 +69,17 @@ export async function recoverCanvasTaskResult(
                 task = await dependencies.retryGenerationTask(taskId, { signal, expectedScope });
                 break;
             } catch (error) {
-                if (isBackendRefusal(error)) return undefined;
+                if (isBackendRefusal(error)) {
+                    // 后端拒绝不等于结果取不回：上一次恢复可能已经在后端成功，只是响应没回来，
+                    // 再发一次就会因为任务已经成功而被拒。重新读任务，按真实状态决定。
+                    const latest = await dependencies.queryGenerationTask(taskId, { signal, expectedScope }).catch(() => undefined);
+                    check();
+                    // 读不到状态就不敢断言「取不回」：把拒绝交回调用方，由它按错误处理（不会新建任务）。
+                    if (!latest) throw error;
+                    if (latest.status === "failed" || latest.status === "cancelled") return undefined;
+                    task = latest;
+                    break;
+                }
                 if (attempts >= retry.retries) throw error;
                 await waitForRecoveryRetry(retry.delayMs, signal);
                 check();
