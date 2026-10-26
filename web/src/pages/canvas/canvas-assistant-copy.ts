@@ -392,7 +392,9 @@ function assistantActionTarget(call: AgentToolCall): string | null {
             // 模型重试新建时常会调整标题或数量：之后任何一次新建成功都算这一步已完成。
             return "create";
         case "canvas.generation.propose":
-            return `propose:${Array.isArray(args.nodeIds) ? args.nodeIds.join("|") : ""}`;
+        case "canvas_generation_propose":
+            // 助手调整待生成节点范围后重新登记提议并成功时，不再把中间的参数校验失败当成未解决错误。
+            return "propose";
         default:
             return null;
     }

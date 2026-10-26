@@ -1014,7 +1014,9 @@ function InfiniteCanvasPage() {
         getCanvasCenter,
     });
 
-    const assistantContinuation = useCanvasAssistantContinuation(assistant, nodes, !readOnly);
+    const assistantContinuation = useCanvasAssistantContinuation(assistant, nodes, !readOnly, (canvasId) => {
+        if (canvasId === projectId) void refreshLocalCanvasProjectIfChanged(canvasId);
+    });
     const { runAssistantProposal, assistantProposalFeedback, runningProposalIds } = useCanvasAssistantProposal({
         projectId,
         addedSkills,
@@ -1024,7 +1026,10 @@ function InfiniteCanvasPage() {
         markProposalHandled: assistant.markProposalHandled,
         continuationSessionId: assistant.sessionId,
         continuePlan: Boolean(assistant.plan?.items.some(item => item.status !== "done")),
-        onContinuationArmed: assistantContinuation.refresh,
+        onContinuationArmed: () => {
+            assistantContinuation.refresh();
+            void refreshLocalCanvasProjectIfChanged(projectId);
+        },
         handleGenerateNode,
     });
 

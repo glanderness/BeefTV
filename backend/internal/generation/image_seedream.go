@@ -21,6 +21,34 @@ func seedreamFamily(model string) string {
 	return providerpreset.SeedreamFamily(model)
 }
 
+var seedreamAspectRatioSizes = map[string]string{
+	"4:3":  "2304x1728",
+	"3:4":  "1728x2304",
+	"16:9": "2560x1440",
+	"9:16": "1440x2560",
+	"3:2":  "2496x1664",
+	"2:3":  "1664x2496",
+	"21:9": "3024x1296",
+}
+
+func normalizeSeedreamSize(raw string, layers bool) string {
+	size := strings.TrimSpace(raw)
+	if size == "" || size == "1:1" {
+		return "2K"
+	}
+	if mapped, ok := seedreamAspectRatioSizes[size]; ok {
+		if layers {
+			return "2K"
+		}
+		return mapped
+	}
+	size = strings.ReplaceAll(strings.ToUpper(size), "X", "x")
+	if size == "AUTO" {
+		return "auto"
+	}
+	return size
+}
+
 func seedreamImageBody(input Input) (map[string]any, error) {
 	family := seedreamFamily(input.Config.Model)
 	modern := family == "pro" || family == "flash"
@@ -51,14 +79,7 @@ func seedreamImageBody(input Input) (map[string]any, error) {
 	if layers && (!modern || len(refs) != 1) {
 		return nil, errors.New("图层拆分需要 Pro 或 Flash，并连接一张图片")
 	}
-	size := input.Config.Size
-	if size == "" || size == "1:1" {
-		size = "2K"
-	}
-	size = strings.ReplaceAll(strings.ToUpper(size), "X", "x")
-	if size == "AUTO" {
-		size = "auto"
-	}
+	size := normalizeSeedreamSize(input.Config.Size, layers)
 	body := map[string]any{"model": input.Config.Model, "prompt": WithSystemPrompt(input.Config, input.Prompt), "size": size, "response_format": "b64_json", "watermark": input.Config.SeedreamWatermark == "true"}
 	if len(refs) == 1 {
 		body["image"] = refs[0]

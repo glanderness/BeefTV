@@ -3,7 +3,7 @@ package generation
 import "strings"
 
 func persistedTaskConstraintCopy(message string) (categoryCopy, bool) {
-	for _, input := range []string{"video_first_frame_ratio_unreadable", "video_first_frame_ratio_unsupported", "video_first_frame_ratio_mismatch", "视频画幅仅支持 当前传入 adaptive", "TaskTypeConstraint ratio first-frame", "TaskTypeConstraint duration", "TaskTypeConstraint ratio", "TaskTypeConstraint"} {
+	for _, input := range []string{"video_first_frame_ratio_unreadable", "video_first_frame_ratio_unsupported", "video_first_frame_ratio_mismatch", "视频画幅仅支持 当前传入 adaptive", "size is not supported by this seedream model", "size exceeds seedream pixel or aspect-ratio limits", "TaskTypeConstraint ratio first-frame", "TaskTypeConstraint duration", "TaskTypeConstraint ratio", "TaskTypeConstraint"} {
 		copy, _ := taskConstraintCopy(input)
 		if strings.HasPrefix(strings.TrimSpace(message), copy.Reason+"。"+copy.Action) {
 			return copy, true
@@ -25,6 +25,9 @@ func taskConstraintCopy(message string) (categoryCopy, bool) {
 	}
 	if strings.Contains(m, "视频画幅仅支持") && strings.Contains(m, "当前传入 adaptive") {
 		return categoryCopy{Reason: "当前渠道暂不支持自适应画幅", Action: "首帧生成请更换模型；文生视频请指定固定比例后再提交"}, true
+	}
+	if strings.Contains(m, "size is not supported by this seedream model") || strings.Contains(m, "size exceeds seedream pixel or aspect-ratio limits") {
+		return categoryCopy{Reason: "当前 Seedream 模型不支持所选图片尺寸", Action: "请改用模型支持的分辨率档位（如 1K、1.5K、2K）或符合像素范围的宽×高尺寸后重试"}, true
 	}
 	if !strings.Contains(m, "tasktypeconstraint") {
 		return categoryCopy{}, false

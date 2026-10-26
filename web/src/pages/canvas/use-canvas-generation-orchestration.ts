@@ -9,7 +9,7 @@ import { captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
 
 import { promoteLegacyBatchTableSize } from "@/lib/canvas/canvas-batch-table";
 import { persistCanvasDocument } from "@/services/local-workspace-repository";
-import { cancelGenerationTask, type GenerationTask } from "@/services/api/task-center";
+import { cancelGenerationTask, queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { canvasTaskConfirmation } from "./canvas-task-confirmation";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import type { Skill } from "@/services/api/skills";
@@ -241,6 +241,19 @@ export function useCanvasGenerationOrchestration({
                         if (!isCurrent()) return;
                         message.success(deliveryOnly ? "已停止取回" : "任务已取消");
                     } catch (error) {
+                        if (!isCurrent()) return;
+                        try {
+                            const latest = await queryGenerationTask(task.id, { expectedScope: userScope });
+                            if (!isCurrent()) return;
+                            if (latest.status === "failed" || latest.status === "cancelled" || latest.status === "succeeded") {
+                                const node = nodesRef.current.find((item) => item.metadata?.taskId === task.id);
+                                if (node) bindGenerationTask(node.id, latest);
+                                setTaskDetail((current) => (current?.id === task.id ? latest : current));
+                                await queryClient.invalidateQueries({ queryKey: ["canvas-active-tasks", projectId] });
+                            }
+                        } catch {
+                            // Keep original cancel error below when task query also fails.
+                        }
                         if (!isCurrent()) return;
                         message.error(error instanceof Error ? error.message : "取消任务失败");
                     }

@@ -61,7 +61,7 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 	saved, planned := map[string]bool{}, map[string]bool{}
 	pending := []operations.GenerationTarget{}
 	allSaved := true
-	failed, running := false, false
+	failed, running, changed := false, false, false
 	for _, target := range plan.Targets {
 		planned[target.NodeID] = true
 		task, err := domain.repo.TaskByClientOperation(receipt.UserID, productionTaskKey(plan, target.NodeID))
@@ -76,11 +76,29 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 		if err := validateProductionTask(task, receipt.CanvasID, target); err != nil {
 			return false, err
 		}
+		meta, _ := nodes[target.NodeID]["metadata"].(map[string]any)
 		if task.Status == model.TaskStatusFailed || task.Status == model.TaskStatusCancelled {
+			if meta == nil {
+				meta = map[string]any{}
+				nodes[target.NodeID]["metadata"] = meta
+			}
+			for field, value := range map[string]any{
+				"taskId":                    task.ID,
+				"taskStatus":                string(task.Status),
+				"status":                    "error",
+				"error":                     task.Error,
+				"errorDetails":              task.Error,
+				"taskStage":                 task.Stage,
+				"generationSubmissionState": "accepted",
+			} {
+				if meta[field] != value {
+					meta[field] = value
+					changed = true
+				}
+			}
 			failed = true
 			continue
 		}
-		meta, _ := nodes[target.NodeID]["metadata"].(map[string]any)
 		var settled bool
 		saved[target.NodeID], settled, err = productionTargetState(tx, receipt.UserID, target, task, meta)
 		if err != nil {
@@ -93,6 +111,12 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 		allSaved = allSaved && saved[target.NodeID]
 	}
 	if failed {
+		if changed {
+			encoded, _ := json.Marshal(doc)
+			if _, _, err := domain.canvas.CommitUserCanvasDocument(receipt.UserID, receipt.CanvasID, assistantDocRevision(doc), encoded); err != nil {
+				return false, err
+			}
+		}
 		// Keep the single wake until every already-admitted sibling settles.
 		// Do not admit pending dependants or repurchase a failed task.
 		return !running, nil

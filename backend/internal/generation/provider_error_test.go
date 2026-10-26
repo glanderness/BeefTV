@@ -23,6 +23,17 @@ func TestNoAvailableChannelIsNotUserRateLimiting(t *testing.T) {
 	}
 }
 
+func TestSeedreamSizeValidationErrorIsInvalidParams(t *testing.T) {
+	body := `{"error":{"code":"model_price_error","message":"size is not supported by this Seedream model (request id: req-seedream-size)","type":"new_api_error"}}`
+	failure := generation.ClassifyHTTP(400, "req-seedream-size", body)
+	if failure.Category != generation.CategoryInvalidParams {
+		t.Fatalf("expected invalid_params for seedream size rejection, got %+v", failure)
+	}
+	if persisted := generation.ClassifyText(failure.UserMessage()); persisted.Category != generation.CategoryInvalidParams {
+		t.Fatalf("expected persisted copy to remain invalid_params, got %+v", persisted)
+	}
+}
+
 func TestOutboundPolicyErrorsHaveActionableCopyAndDiagnostics(t *testing.T) {
 	for _, message := range []string{
 		"不允许访问本机或内网地址", "不允许访问本机、内网或链路本地地址",

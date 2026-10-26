@@ -63,6 +63,27 @@ func TestSeedreamCustomGatewayKeepsConfiguredVersion(t *testing.T) {
 	}
 }
 
+func TestSeedreamMapsCanvasAspectRatiosToSupportedDimensions(t *testing.T) {
+	body, err := seedreamImageBody(Input{Prompt: "ink painting", Config: Config{Model: "dola-seedream-5-0-pro-260628", Size: "16:9"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body["size"] != "2560x1440" {
+		t.Fatalf("expected 16:9 to map to 2560x1440, got %#v", body["size"])
+	}
+	layerBody, err := seedreamImageBody(Input{
+		Prompt:          "layers",
+		Config:          Config{Model: "dola-seedream-5-0-pro-260628", Size: "16:9", SeedreamMode: "layers"},
+		ReferenceImages: []Media{{URL: "https://example.test/source.png"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layerBody["size"] != "2K" {
+		t.Fatalf("expected layers mode to map aspect ratio to 2K, got %#v", layerBody["size"])
+	}
+}
+
 func TestSeedreamStreamKeepsDeliveredImagesAfterPartialFailure(t *testing.T) {
 	data := []byte("data: {\"type\":\"image_generation.partial_succeeded\",\"image_index\":0,\"url\":\"https://example.test/0.png\",\"size\":\"2048x2048\"}\n\ndata: {\"type\":\"image_generation.partial_failed\",\"image_index\":1,\"error\":{\"message\":\"filtered\"}}\n\n")
 	payload, err := readSeedreamImageEvents(data)

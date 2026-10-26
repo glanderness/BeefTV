@@ -225,13 +225,11 @@ func (s *operationSession) admitProductionTargets(userID, canvasID string, plan 
 				}
 			}
 			if existing.Status == model.TaskStatusFailed || existing.Status == model.TaskStatusCancelled {
-				if meta["status"] != "error" {
-					meta["status"] = "error"
-					changed = true
-				}
-				if meta["error"] != existing.Error {
-					meta["error"] = existing.Error
-					changed = true
+				for field, value := range map[string]any{"status": "error", "error": existing.Error, "errorDetails": existing.Error, "taskStage": existing.Stage} {
+					if meta[field] != value {
+						meta[field] = value
+						changed = true
+					}
 				}
 			} else if storage, _ := meta["storageKey"].(string); storage == "" && meta["status"] != "loading" {
 				meta["status"] = "loading"

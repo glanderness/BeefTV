@@ -167,12 +167,24 @@ func TestProductionProgressStopRevokesFurtherAdmissions(t *testing.T) {
 }
 
 func TestProductionProgressFailedTaskWakesPiWithoutRepurchase(t *testing.T) {
-	svc, _, id := productionProgressFixture(t)
+	svc, canvasID, id := productionProgressFixture(t)
 	image := progressTask(t, svc, "image")
 	svc.Database().Model(&image).Updates(map[string]any{"status": model.TaskStatusFailed, "error": "upstream failed"})
 	claim, err := svc.ClaimAssistantContinuation("local", id)
 	if err != nil || claim.State != "claimed" {
 		t.Fatalf("original failure not offered to Pi: %v %v", claim, err)
+	}
+	raw, err := svc.UserCanvasProject("local", canvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	meta := doc["nodes"].([]any)[0].(map[string]any)["metadata"].(map[string]any)
+	if meta["status"] != "error" || meta["taskStatus"] != "failed" || meta["errorDetails"] != "upstream failed" {
+		t.Fatalf("failed task state was not synced onto canvas node: %#v", meta)
 	}
 	if _, err := svc.ClaimAssistantContinuation("local", id); err != nil {
 		t.Fatal(err)

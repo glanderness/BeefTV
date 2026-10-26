@@ -30,7 +30,12 @@ export async function continueAssistantOnce(row: AssistantContinuation, access: 
 }
 
 /** Only an active canvas observes. Go owns the claim; no draft or composer state enters this path. */
-export function useCanvasAssistantContinuation(assistant: CanvasAssistantController, nodes: CanvasNodeData[], enabled: boolean) {
+export function useCanvasAssistantContinuation(
+    assistant: CanvasAssistantController,
+    nodes: CanvasNodeData[],
+    enabled: boolean,
+    onCanvasRefresh?: (canvasId: string) => void,
+) {
     const live = useRef(assistant); live.current = assistant;
     const [rows, setRows] = useState<AssistantContinuation[]>([]);
     const knownRows = useRef(rows); knownRows.current = rows;
@@ -66,11 +71,18 @@ export function useCanvasAssistantContinuation(assistant: CanvasAssistantControl
                         const dispatched = await continueAssistantOnce(row, {
                             current: () => isCurrent() ? live.current : null,
                             claim: claimAssistantContinuation,
-                            onDispatch: () => { sent.current.add(row.id); setNotice("正在检查结果并继续原计划"); },
+                            onDispatch: () => {
+                                sent.current.add(row.id);
+                                setNotice("正在检查结果并继续原计划");
+                                onCanvasRefresh?.(assistant.canvasId);
+                            },
                         });
                         if (dispatched) break;
                     } catch (error) {
-                        if (error instanceof ApiError && error.reason === "continuation_waiting") continue;
+                        if (error instanceof ApiError && error.reason === "continuation_waiting") {
+                            onCanvasRefresh?.(assistant.canvasId);
+                            continue;
+                        }
                         if (isCurrent()) setNotice("暂未自动继续，可手动检查结果或重新读取。");
                     }
                 }

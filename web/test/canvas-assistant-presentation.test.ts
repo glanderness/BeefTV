@@ -407,6 +407,10 @@ describe("assistantUnresolvedFailures", () => {
         const failed = { tool: "canvas.generation.propose", args: { nodeIds: ["image"] }, isError: true, error: "production_seedream_multiple_outputs: server detail must not be shown" };
         expect(assistantUnresolvedFailures([failed])).toEqual(["整片制作暂不支持 Seedream 图层拆分或组图。请先在画布生成图片，再用已有图片继续制作。"]);
         expect(assistantUnresolvedFailures([failed, { ...failed, isError: false }])).toEqual([]);
+        expect(assistantUnresolvedFailures([
+            { tool: "canvas.generation.propose", args: { kind: "image", nodeIds: ["image", "audio"] }, isError: true, error: "generation_kind_mismatch" },
+            { tool: "canvas.generation.propose", args: { kind: "image", nodeIds: ["image"], productionNodeIds: ["image", "audio"] }, isError: false },
+        ])).toEqual([]);
         expect(assistantUnresolvedFailures([{ ...failed, error: "another_error: private detail" }])).toEqual(["准备生成没有成功"]);
     });
     test("同一素材 overview 补齐资源重试成功不留下误报，其他素材仍报告", async () => {
