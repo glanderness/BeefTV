@@ -8,9 +8,7 @@ import { parseBackendGenerationResult } from "@/services/api/generation-task";
 import type { GenerationTask, GenerationTaskOutput } from "@/services/api/task-center";
 import { resolveMediaUrl, type UploadedFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
-import { CANVAS_VIDEO_PREVIEW_VERSION } from "@/services/canvas-video-preview";
-import { acquireCanvasVideoSource } from "@/services/canvas-video-source";
-import { captureVideoPoster } from "@/lib/video-poster";
+import { captureGeneratedVideoPreview, videoPreviewFromImage } from "@/services/generated-video-preview";
 import { ownedResourceIdFromMediaRef, resourceStorageKey } from "@/services/api/resources";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -64,16 +62,7 @@ export function videoMetadata(video: UploadedFile): CanvasNodeMetadata {
         mimeType: video.mimeType || "video/mp4",
         durationMs: video.durationMs,
         hasAudio: video.hasAudio,
-        videoPreview: video.preview ? {
-            content: video.preview.url,
-            storageKey: video.preview.storageKey,
-            width: video.preview.width,
-            height: video.preview.height,
-            bytes: video.preview.bytes,
-            mimeType: video.preview.mimeType,
-            captureVersion: CANVAS_VIDEO_PREVIEW_VERSION,
-            sourceKey: video.storageKey || video.url,
-        } : undefined,
+        videoPreview: videoPreviewFromImage(video.preview, video.storageKey || video.url),
         errorDetails: undefined,
         generationErrorCode: undefined,
         resourceReloadAvailable: undefined,
@@ -143,27 +132,11 @@ const defaultGenerationResultMediaIO: GenerationResultMediaIO = {
     resolveMediaUrl,
     storeGeneratedVideo,
     storeGeneratedAudio,
-    captureVideoPreview: storeGeneratedVideoPreview,
+    captureVideoPreview: captureGeneratedVideoPreview,
     fetchBlob: async (url) => (await fetch(url)).blob(),
 };
 
-/**
- * 生成完成后把首帧存成图片，和拖入视频走同一套取帧代码。
- * 这类预览只影响未激活节点的显示，取不到时返回 undefined，视频本身照常落地。
- */
-async function storeGeneratedVideoPreview(media: { storageKey?: string; content: string }): Promise<UploadedImage | undefined> {
-    const source = await acquireCanvasVideoSource(media.storageKey, media.content);
-    if (!source.url) { source.release(); return undefined; }
-    let captured: Awaited<ReturnType<typeof captureVideoPoster>>;
-    try {
-        captured = await captureVideoPoster(source.url, { maxWidth: 400 });
-    } finally {
-        source.release();
-    }
-    if (!captured.poster) return undefined;
-    return uploadImage(captured.poster);
-}
-
+// 这类预览只影响未激活节点的显示，取不到时返回 undefined，视频本身照常落地。
 async function generatedVideoPreview(video: UploadedFile, mediaIO: GenerationResultMediaIO): Promise<UploadedImage | undefined> {
     if (video.preview) return video.preview;
     try {

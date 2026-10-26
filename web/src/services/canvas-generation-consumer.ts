@@ -14,7 +14,10 @@ import { hydrateBackendGeneratedOutputs, type ensureCanvasNodeAsset } from "@/se
 import { useAssetStore } from "@/stores/use-asset-store";
 import { publishGenerationDeliveryProgress } from "@/stores/use-generation-delivery-progress";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
-import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
+import { captureGeneratedVideoPreview, videoPreviewFromImage, type GeneratedVideoMedia } from "@/services/generated-video-preview";
+import { CANVAS_VIDEO_PREVIEW_VERSION } from "@/services/canvas-video-preview";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
+import type { UploadedImage } from "@/services/image-storage";
 import { recordCanvasBindingDiagnostic } from "@/services/diagnostics/canvas-binding-diagnostics";
 
 function throwIfAborted(signal?: AbortSignal) {
@@ -85,6 +88,8 @@ export type BindBackendCanvasGenerationRuntime = {
     sleep?: SleepWithSignal;
     now?: () => number;
     publishDeliveryProgress?: (taskId: string, progress: GenerationTaskDeliveryProgress | undefined) => void;
+    /** 生成视频的首帧写入；和用户拖入视频共用同一套取帧代码。 */
+    captureVideoPreview?: (media: GeneratedVideoMedia) => Promise<UploadedImage | undefined>;
 };
 
 // Delivery downloads the remote artifact after the task is already succeeded.
@@ -424,7 +429,79 @@ export async function bindBackendCanvasGenerationResult(input: {
         input.nodesRef.current = adopted.nodes;
         input.setNodes(adopted.nodes);
     }
+    // 后端绑定回执会清掉上一个视频的预览，但不会为新视频生成首帧。
+    // 这里补一张，节点才会像用户拖入的视频那样显示首帧。
+    if (!(receipt.bindingStatus === "deleted")) {
+        await stampGeneratedVideoPreview({
+            canvasId: capturedCanvasId,
+            nodeId: input.nodeId,
+            task,
+            adopted,
+            nodesRef: input.nodesRef,
+            setNodes: input.setNodes,
+            persistDocument,
+            capturedScope,
+            liveScope,
+            isCurrent: input.isCurrent,
+            captureVideoPreview: runtime.captureVideoPreview ?? captureGeneratedVideoPreview,
+        });
+    }
     recordCanvasBindingDiagnostic({ phase: "confirmed", canvasId: capturedCanvasId, nodeId: input.nodeId, outputIndex, task, project: adopted });
+}
+
+/**
+ * 生成完成的视频要有一张首帧。取帧或保存失败只留诊断日志：
+ * 视频已经绑定成功，不能因为首帧把结果报成失败；节点下次打开时会重新读取。
+ */
+async function stampGeneratedVideoPreview(input: {
+    canvasId: string;
+    nodeId: string;
+    task: GenerationTask;
+    adopted?: CanvasProject;
+    nodesRef: { current: CanvasNodeData[] };
+    setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
+    persistDocument: PersistCanvasDocumentWithScope;
+    capturedScope: CapturedUserScope;
+    liveScope: () => CapturedUserScope;
+    isCurrent: () => boolean;
+    captureVideoPreview: (media: GeneratedVideoMedia) => Promise<UploadedImage | undefined>;
+}) {
+    if (!isVideoGenerationTask(input.task)) return;
+    const nodes = input.adopted?.nodes ?? input.nodesRef.current;
+    const node = nodes.find((item) => item.id === input.nodeId);
+    if (!node || node.type !== CanvasNodeType.Video) return;
+    const storageKey = node.metadata?.storageKey || "";
+    const content = node.metadata?.content || "";
+    const sourceKey = storageKey || content;
+    if (!sourceKey) return;
+    const existing = node.metadata?.videoPreview;
+    // 已经属于当前视频的首帧不再取一次，重复打开结果不会重复解码。
+    if (existing?.content && existing.captureVersion === CANVAS_VIDEO_PREVIEW_VERSION && existing.sourceKey === sourceKey) return;
+
+    let image: UploadedImage | undefined;
+    try {
+        image = await input.captureVideoPreview({ storageKey, content });
+    } catch (error) {
+        console.warn("生成视频的首帧没能读取，节点仍可播放", { nodeId: input.nodeId, storageKey, error });
+        return;
+    }
+    const preview = videoPreviewFromImage(image, sourceKey);
+    if (!preview || !input.isCurrent() || !userScopeMatches(input.capturedScope, input.liveScope())) return;
+
+    const patched = nodes.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, videoPreview: preview } } : item));
+    input.nodesRef.current = patched;
+    input.setNodes(patched);
+    try {
+        await input.persistDocument(input.canvasId, { nodes: patched }, input.capturedScope);
+    } catch (error) {
+        // 内存里已经显示首帧，保存失败下次打开项目会重新读取，不回滚视频结果。
+        console.warn("生成视频的首帧没能写入画布，下次打开项目会重新读取", { nodeId: input.nodeId, storageKey, error });
+    }
+}
+
+// 视频任务只有 canvas_video 一种；媒体类型兜底给没带 outputs 的历史任务。
+function isVideoGenerationTask(task: GenerationTask) {
+    return task.type === "canvas_video" || (task.type !== "canvas_image" && task.type !== "canvas_audio" && task.type !== "canvas_text" && Boolean(task.outputs?.length) && task.outputs!.every((output) => output.mediaType === "video"));
 }
 
 function assertBindDispatchScope(expected: CapturedUserScope, live: () => CapturedUserScope) {
