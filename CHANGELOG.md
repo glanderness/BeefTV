@@ -4,6 +4,7 @@ All notable public changes to BeefTV are documented in this file.
 
 ## Unreleased
 
+- 生成不再替换节点已有的名称：从文本节点发起生成时，你自己起的名字保持不变，只有在节点还没起名、仍是默认名时才按提示词命名。
 - Built-in BeefAPI can be connected from the desktop app without pasting a key.
 - Prepared the first audited public source snapshot.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.

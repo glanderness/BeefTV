@@ -25,13 +25,19 @@ func referenceDurationIsOpaqueAsset(media MediaRef) bool {
 }
 
 const (
-	OfficialSeedanceImageMinEdge    = 300
-	OfficialSeedanceImageMaxEdge    = 6000
-	OfficialSeedanceImageMinAspect  = 0.4
-	OfficialSeedanceImageMaxAspect  = 2.5
-	OfficialSeedanceVideoMinPixels  = 409600
-	OfficialSeedanceVideoMaxPixels  = 8295044
-	OfficialSeedanceMinAudioSeconds = 1.8
+	OfficialSeedanceImageMinEdge   = 300
+	OfficialSeedanceImageMaxEdge   = 6000
+	OfficialSeedanceImageMinAspect = 0.4
+	OfficialSeedanceImageMaxAspect = 2.5
+	OfficialSeedanceVideoMinPixels = 409600
+	OfficialSeedanceVideoMaxPixels = 8295044
+	// 火山方舟与腾讯 WAND 的 Seedance 文档都把参考音频单段下限写成 2 秒。
+	OfficialSeedanceMinAudioSeconds = 2
+)
+
+const (
+	// 火山方舟与腾讯 WAND 的输出时长下限都是 4 秒（2.0 为 4~15，2.5 为 4~30）。
+	documentedSeedanceOutputMinSeconds = 4
 )
 
 const (
@@ -86,6 +92,69 @@ func seedanceMaterialLibraryHost(baseURL string) bool {
 	}
 }
 
+// 输出时长下限官方是 4 秒：2.0 为 4~15，2.5 为 4~30。
+// 区间、连续（fractionalMin）和枚举三种已保存配置都要收紧，枚举里的 -1（自动）保留。
+func tightenSeedanceOutputDuration(duration *VideoDurationConfig) {
+	minimum := documentedSeedanceOutputMinSeconds
+	if duration == nil {
+		return
+	}
+	if duration.Selection == "enum" {
+		values := make([]int, 0, len(duration.Values))
+		for _, seconds := range duration.Values {
+			if seconds != -1 && seconds < minimum {
+				continue
+			}
+			values = append(values, seconds)
+		}
+		// 过滤后没有合法时长时保留空列表：这份配置没有可提交的时长，
+		// 让校验直接拒绝，而不是退回原来的低于 4 秒的值。
+		duration.Values = values
+		if len(values) == 0 {
+			return
+		}
+		if duration.Default == -1 && containsInt(values, -1) || containsInt(values, duration.Default) {
+			return
+		}
+		duration.Default = values[0]
+		if duration.Default == -1 && len(values) > 1 {
+			duration.Default = values[1]
+		}
+		return
+	}
+	if duration.Continuous && duration.FractionalMin > 0 && duration.FractionalMin < float64(minimum) {
+		duration.FractionalMin = float64(minimum)
+	}
+	if duration.Min < minimum {
+		duration.Min = minimum
+	}
+	if duration.Default < minimum {
+		duration.Default = minimum
+	}
+}
+
+// 官方文档写的下限只会收紧素材合同，不会放宽管理员已经配得更严的数值。
+// 输出时长与参考音频下限对所有 Seedance 2.x 线路都成立。
+func tightenSeedanceDocumentedRouteLimits(config TaskConfig, value *VideoCapabilityConfig) {
+	if value == nil || !isSeedance2Family(config.InterfaceType, config.Model) {
+		return
+	}
+	tightenSeedanceOutputDuration(&value.Duration)
+	if value.References.MinAudioDuration < officialSeedanceMinAudioSeconds {
+		value.References.MinAudioDuration = officialSeedanceMinAudioSeconds
+	}
+}
+
+func tightenedVideoCapability(config TaskConfig, profile *VideoCapabilityConfig) *VideoCapabilityConfig {
+	if profile == nil {
+		return nil
+	}
+	value := *profile
+	value.References = profile.References
+	tightenSeedanceDocumentedRouteLimits(config, &value)
+	return &value
+}
+
 func overlayOfficialSeedance2References(base VideoReferenceConfig, is25 bool) VideoReferenceConfig {
 	refs := base
 	if is25 {
@@ -126,6 +195,7 @@ func validateVideoReferenceMedia(profile *VideoCapabilityConfig, input TaskInput
 	if profile == nil {
 		return kernel.BadAuthRequest("当前视频模型能力参数无效")
 	}
+	profile = tightenedVideoCapability(input.Config, profile)
 	refs := profile.References
 	applySeedanceDocumentedVideoPixelFloor(input.Config, &refs)
 	if isNativeDreaminaSeedance(input.Config.InterfaceType, input.Config.Model) && isSeedance25Model(input.Config.Model) && metadataString(input.Metadata, "videoEditOperation") == "inpaint" && refs.MinVideoDuration < 4 {

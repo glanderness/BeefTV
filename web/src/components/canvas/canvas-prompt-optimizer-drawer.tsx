@@ -811,7 +811,7 @@ function ReferenceSelection({ references, selectedReferences, onToggle }: { refe
                     })}
                 </div>
             ) : (
-                <p className="canvas-prompt-optimizer-reference-empty">请先添加参考图、角色或文本，再使用此模式。</p>
+                <p className="canvas-prompt-optimizer-reference-empty">请先添加参考图片、视频、音频、角色或文本，再使用此模式。</p>
             )}
         </div>
     );
