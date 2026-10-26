@@ -12024,6 +12024,18 @@ html:not(.dark) .creation-chat-reference:hover:not(:disabled) { background: rgba
     padding: 6px 12px 12px 14px;
 }
 
+/* 提交前被拦下的说明：写清哪一项、现在多少、要改成多少，放在输入框内始终可见。 */
+.creation-composer-notice {
+    margin: 0;
+    padding: 0 18px 8px;
+    color: var(--creation-warning, #f5a524);
+    font-size: 12px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.creation-chat-composer.is-empty .creation-composer-notice { padding: 0 24px 8px; }
+
 .creation-chat-controls {
     display: flex;
     min-width: 0;

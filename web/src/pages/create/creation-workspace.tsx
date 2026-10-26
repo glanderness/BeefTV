@@ -379,6 +379,8 @@ type ComposerProps = {
     composerFocusRef: RefObject<HTMLTextAreaElement | null>;
     onPromptFocus: () => void;
     placeholderOverride?: string;
+    /** 提交前被拦下的说明：写清哪一项、现在多少、要改成多少，显示在输入框内。 */
+    notice?: string;
     onSubmit: () => void;
 };
 
@@ -589,6 +591,7 @@ export function CreationComposer(props: ComposerProps) {
                 </div> : null}
             </div>
         </div>
+        {props.notice ? <p className="creation-composer-notice" role="alert">{props.notice}</p> : null}
         <footer className="creation-chat-dock">
             <div className="creation-chat-controls">
                 {props.variant === "thread" ? <ModePicker mode={props.mode} onModeChange={props.onModeChange} /> : null}

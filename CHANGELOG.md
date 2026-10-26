@@ -6,6 +6,7 @@ All notable public changes to BeefTV are documented in this file.
 
 - 画布外观新增「滚轮操作」，可固定为缩放或平移；换到另一台电脑时不必再靠设备步长猜测（默认仍是自动）。
 - 提示词里手写的角色名和素材标题保留原文，「一键引用」与 @ 只把素材引用追加在后面，不再替换掉名字。
+- 生成不再替换节点已有的名称：从文本节点发起生成时，你自己起的名字保持不变，只有在节点还没起名、仍是默认名时才按提示词命名。
 - Built-in BeefAPI can be connected from the desktop app without pasting a key.
 - Prepared the first audited public source snapshot.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
