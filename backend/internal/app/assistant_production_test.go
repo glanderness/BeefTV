@@ -162,7 +162,7 @@ func TestAssistantProductionAtomicAuthorizationAndReplay(t *testing.T) {
 	}
 }
 
-func TestAssistantProductionNaturalLanguageConfirmationInNextTurn(t *testing.T) {
+func TestAssistantProductionPendingProposalCannotAuthorizeNextTurn(t *testing.T) {
 	svc, canvasID, _ := newAssistantTurnService(t)
 	sqlDB, _ := svc.Database().DB()
 	sqlDB.SetMaxOpenConns(1)
@@ -215,8 +215,8 @@ func TestAssistantProductionNaturalLanguageConfirmationInNextTurn(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	// Next user turn: user sends natural-language confirmation ("确认 全部开始吧"),
-	// which invalidates previous continuations on /assistant/chat admission.
+	// A new user turn (question, rejection, or edit request)
+	// invalidates previous continuations on /assistant/chat admission.
 	if err := svc.CancelAssistantContinuations("local", canvasID, backgroundContinuationSession, true); err != nil {
 		t.Fatal(err)
 	}
@@ -228,23 +228,24 @@ func TestAssistantProductionNaturalLanguageConfirmationInNextTurn(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	// First batch (image) submitted by Pi in confirmTurn promotes the pending proposal.
-	if err := svc.Database().Transaction(func(tx *gorm.DB) error {
+	// A model's next-turn submit call is not a user confirmation event.
+	err = svc.Database().Transaction(func(tx *gorm.DB) error {
 		_, e := svc.BindDomain(tx).(*operationSession).SubmitAuthorizedGeneration("local", confirmTurn, canvasID, targets[:1])
 		return e
-	}); err != nil {
-		t.Fatalf("expected natural-language confirmation turn to admit first batch: %v", err)
-	}
-	// Second batch (speech) submitted in the same confirmTurn succeeds under the promoted authorization.
-	if err := svc.Database().Transaction(func(tx *gorm.DB) error {
-		_, e := svc.BindDomain(tx).(*operationSession).SubmitAuthorizedGeneration("local", confirmTurn, canvasID, targets[1:])
-		return e
-	}); err != nil {
-		t.Fatalf("expected subsequent batch in confirmTurn to succeed: %v", err)
+	})
+	if err == nil {
+		t.Fatal("pending proposal was promoted without an explicit confirmation grant")
 	}
 	var count int64
 	svc.Database().Model(&model.Task{}).Count(&count)
-	if count != 2 {
-		t.Fatalf("expected 2 admitted tasks, got %d", count)
+	if count != 0 {
+		t.Fatalf("unconfirmed next turn admitted %d paid tasks", count)
+	}
+	for _, id := range []string{proposeTurn, confirmTurn} {
+		var turn model.AssistantTurn
+		if err := svc.Database().First(&turn, "turn_id = ?", id).Error; err != nil { t.Fatal(err) }
+		var grant operations.GenerationAuthorization
+		if turn.GenerationAuthorizationJSON != "" { _ = json.Unmarshal([]byte(turn.GenerationAuthorizationJSON), &grant) }
+		if grant.SourceTurnID != "" { t.Fatal("unconfirmed call persisted a spend grant") }
 	}
 }
