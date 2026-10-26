@@ -359,10 +359,39 @@ func ProtocolRequestFromInput(input Input) protocol.GenerationRequest {
 			}
 		}
 	}
+	applyImageResponseFormatOption(&request, input)
 	if input.Mode == "video" && usesSeedanceTaskOptions(input.Config) {
 		request = protocol.NormalizeSeedanceTaskOptions(request)
 	}
 	return request
+}
+
+// applyImageResponseFormatOption 把渠道上选定的 response_format 写进 providerOptions。
+// 官方 OpenAI Images 插件（plugin-packages/openai-images）自己拼请求体，只从
+// providerOptions.openai-image.response_format 取这个参数，不读能力配置；
+// 不写进去，插件启用时界面上选 url 也发不出去。
+// 只在渠道显式选过取值时覆盖，渠道里手配的 providerOptions 在没选过时照旧生效。
+func applyImageResponseFormatOption(request *protocol.GenerationRequest, input Input) {
+	if input.Mode != "image" || request == nil {
+		return
+	}
+	if strings.TrimSpace(input.Config.InterfaceType) != string(model.ChannelInterfaceOpenAIImage) {
+		return
+	}
+	profile := input.ImageCapability
+	if profile == nil || !profile.ResponseFormat.Supported {
+		return
+	}
+	if strings.TrimSpace(profile.ResponseFormat.Value) == "" {
+		return
+	}
+	namespace := string(model.ChannelInterfaceOpenAIImage)
+	options := make(map[string]any, len(request.ProviderOptions[namespace])+1)
+	for key, value := range request.ProviderOptions[namespace] {
+		options[key] = value
+	}
+	options["response_format"] = ImageResponseFormatValue(profile)
+	request.ProviderOptions[namespace] = options
 }
 
 // protocolImageAspectRatio keeps the canvas size for protocol AspectRatio unless

@@ -27,12 +27,14 @@ import { h3VideoOperation, isH3Model, isH3Style } from "@/lib/h3-video";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import { CanvasPortraitTexturePopover } from "./canvas-portrait-texture-popover";
 import { CanvasPromptOptimizerDrawer } from "./canvas-prompt-optimizer-drawer";
-import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
+import { CanvasNodeType, type CanvasConnection, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
 import { autoMentionCanvasResourceReferences, canvasResourceDisplayName, canvasResourceMentionToken, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { promptOptimizerPlugin, PROMPT_OPTIMIZER_PLUGIN_ID } from "@/lib/plugins/builtin/prompt-optimizer";
 import { createPluginHostContext } from "@/services/plugin-host";
 import { usePluginStore } from "@/stores/use-plugin-store";
 import { useResolvedCanvasResourceReferences } from "./use-resolved-canvas-resource-references";
+import { CanvasReferenceFeedback, useCanvasReferenceCheck } from "./canvas-reference-feedback";
+import type { CanvasReferenceAction } from "@/lib/canvas/canvas-reference-issues";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
 
@@ -43,12 +45,17 @@ type CanvasNodePromptPanelProps = {
     onPromptChange: (nodeId: string, prompt: string) => void;
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeMetadata>) => void;
     onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => void;
+    onOpenGenerationHistory?: () => void;
+    onCreateGenerationReplacement?: (nodeId: string) => void;
     mentionReferences?: CanvasResourceReference[];
     onAddReference?: (nodeId: string, reference: CanvasResourceReference) => CanvasResourceReference | undefined;
     onRemoveReference?: (nodeId: string, reference: CanvasResourceReference) => void;
     onReorderReferences?: (nodeId: string, orderedNodeIds: string[]) => void;
     onReplaceReference?: (nodeId: string, oldReference: CanvasResourceReference, sourceNodeId: string) => void;
     onReplaceReferenceFiles?: (nodeId: string, oldReference: CanvasResourceReference, files: File[]) => void;
+    referenceNodes?: CanvasNodeData[];
+    referenceConnections?: CanvasConnection[];
+    onLocateReferenceNode?: (nodeId: string) => void;
     onClose?: () => void;
     onNodeMouseDown?: (event: ReactPointerEvent, nodeId: string) => void;
     onImageSettingsOpenChange?: (open: boolean) => void;
@@ -71,7 +78,7 @@ const PROMPT_EDITOR_MODAL_WIDTH = "min(1200px, 92vw)";
 const PROMPT_EDITOR_MODAL_DEFAULT_WIDTH = 1200;
 const PROMPT_EDITOR_MODAL_DEFAULT_HEIGHT = 420;
 
-export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChange, onConfigChange, onGenerate, mentionReferences = [], onAddReference, onRemoveReference, onReorderReferences, onReplaceReference, onReplaceReferenceFiles, onClose, onNodeMouseDown, onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
+export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChange, onConfigChange, onGenerate, onOpenGenerationHistory, onCreateGenerationReplacement, mentionReferences = [], onAddReference, onRemoveReference, onReorderReferences, onReplaceReference, onReplaceReferenceFiles, referenceNodes = [node], referenceConnections = [], onLocateReferenceNode, onClose, onNodeMouseDown, onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
     const globalConfig = useEffectiveConfig();
     const themeName = useActiveTheme();
     const theme = canvasThemes[themeName];
@@ -101,6 +108,9 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const [promptOptimizerOpen, setPromptOptimizerOpen] = useState(false);
     const [autoLinkEnabled, setAutoLinkEnabled] = useState(true);
     const resolvedMentionReferences = useResolvedCanvasResourceReferences(mentionReferences, { projectId });
+    const referenceCheck = useCanvasReferenceCheck(node.id, prompt, resolvedMentionReferences, referenceNodes, referenceConnections);
+    const [referenceAction, setReferenceAction] = useState<CanvasReferenceAction | null>(null);
+    const missingSubmissionIdentity = ["submitting", "unknown"].includes(node.metadata?.generationSubmissionState || "") && !node.metadata?.taskId && !node.metadata?.taskClientOperationId?.trim();
     const activeReferences = resolvedMentionReferences.filter((item) => item.active && item.kind !== "skill");
     const requirements = buildCanvasGenerationRequirements(globalConfig, node, mode, {
         textCount: (prompt.trim() ? 1 : 0) + activeReferences.filter((item) => item.kind === "text").length,
@@ -176,6 +186,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     }, [node.id, savedPrompt]);
 
     useEffect(() => {
+        setReferenceAction(null);
         setExpandedPromptOpen(false);
         setExpandedPresetOpen(false);
         setExpandedModalSize(null);
@@ -201,6 +212,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const updatePrompt = (value: string) => {
         setPrompt(value);
         onPromptChange(node.id, value);
+        if (node.metadata?.generationPreflightError) onConfigChange(node.id, { generationPreflightError: undefined });
         if (/(^|\s)\/[\p{L}\p{N}_-]*$/u.test(value)) {
             if (expandedPromptOpen) setExpandedPresetOpen(true);
             else setPresetOpen(true);
@@ -227,6 +239,10 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const submit = () => {
         const text = prompt.trim();
         if (!text || isRunning) return false;
+        if (referenceCheck.issues.length) {
+            setReferenceAction({ type: "locate", token: referenceCheck.issues[0].token, key: Date.now() });
+            return false;
+        }
         onGenerate(node.id, mode, text);
         return true;
     };
@@ -484,6 +500,10 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                     <CanvasResourceMentionTextarea
                         value={prompt}
                         references={resolvedMentionReferences}
+                        selectedAssetReferences={referenceCheck.selectedReferences}
+                        referenceIssues={referenceCheck.issues}
+                        referenceAction={expanded === expandedPromptOpen ? referenceAction : null}
+                        onReferenceActionHandled={() => setReferenceAction(null)}
                         onSelectReference={onAddReference ? (reference) => onAddReference(node.id, reference) : undefined}
                         includeAssetLibrary
                         onChange={updatePrompt}
@@ -505,6 +525,27 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                     max={bounds.max}
                     onResize={setManualPromptHeight}
                 />}
+                <CanvasReferenceFeedback
+                    {...referenceCheck}
+                    onRetry={referenceCheck.retry}
+                    onLocate={(issue) => setReferenceAction({ type: "locate", token: issue.token, key: Date.now() })}
+                    onReplace={(issue) => setReferenceAction({ type: "replace", token: issue.token, key: Date.now() })}
+                    onLocateNode={onLocateReferenceNode}
+                />
+                {node.metadata?.generationPreflightError ? (
+                    <p role="alert" className="mx-2.5 my-2 whitespace-pre-wrap break-words text-[var(--fs-tiny)]" style={{ color: theme.accent.danger }}>
+                        未开始生成：{node.metadata.generationPreflightError}
+                    </p>
+                ) : null}
+                {missingSubmissionIdentity && (onOpenGenerationHistory || onCreateGenerationReplacement) ? (
+                    <section aria-label="生成恢复" className="mx-2.5 my-2 text-[var(--fs-tiny)]">
+                        <p style={{ color: theme.node.muted }}>可以取回已有结果，或保留原节点、新建节点继续。</p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                            {onOpenGenerationHistory ? <Button className="min-h-10" onClick={onOpenGenerationHistory}>查看生成历史</Button> : null}
+                            {onCreateGenerationReplacement ? <Button className="min-h-10" onClick={() => onCreateGenerationReplacement(node.id)}>新建节点继续</Button> : null}
+                        </div>
+                    </section>
+                ) : null}
             </>
         );
     };
@@ -1079,7 +1120,7 @@ function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
 export { buildNodeConfig };
 
 function promptPlaceholder(mode: CanvasNodeGenerationMode, hasImageContent: boolean, hasTextContent: boolean) {
-    if (mode === "video") return "描述你想要生成的画面内容，@引用素材";
+    if (mode === "video") return "描述你想要生成的画面内容，可用 @ 引用图片、视频、音频或角色";
     if (mode === "audio") return "描述你想要的音频效果，可用 @ 引用音频";
     if (mode === "image") return hasImageContent ? "输入新提示词，重新生成当前图片" : "描述要生成的图片内容";
     return hasTextContent ? "请输入你想要将本段文本修改成什么" : "请输入你想要生成的文本内容";

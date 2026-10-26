@@ -181,11 +181,16 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 		}
 		proposedTargets = targets
 		result["production"] = map[string]any{"targets": targets}
-	} else if targets, err := GenerationTargets(ctx.Domain, doc, nodeIDs); err == nil {
-		proposedTargets = targets
 	}
-	if strings.TrimSpace(ctx.TurnID) != "" && len(proposedTargets) > 0 {
+	if strings.TrimSpace(ctx.TurnID) != "" {
 		if recorder, ok := ctx.Domain.(ProposedGenerationRecorder); ok {
+			if len(proposedTargets) == 0 {
+				var err error
+				proposedTargets, err = GenerationTargets(ctx.Domain, doc, nodeIDs)
+				if err != nil {
+					return nil, AsError(err)
+				}
+			}
 			if err := recorder.RecordAssistantGenerationProposal(ctx.UserID, ctx.TurnID, args.CanvasID, GenerationAuthorization{
 				ProposalID: proposalID,
 				Targets:    proposedTargets,

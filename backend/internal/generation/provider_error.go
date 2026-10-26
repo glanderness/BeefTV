@@ -1150,6 +1150,13 @@ func referenceDurationCopy(text string) (categoryCopy, bool) {
 	if copy, ok := referenceAudioCopy(text, false); ok {
 		return copy, true
 	}
+	// 当前提示写法：哪一项、现在多少、要改到多少，动作沿用后端给出的那句。
+	if m := regexp.MustCompile(`^((?:第 \d+ 段)?(?:参考)?(?:音频|视频)(?:「[^」]*」)?)时长为 (\d+(?:\.\d+)?) 秒[，。]需要改到 ([^；;]+)[；;](.+?)。?$`).FindStringSubmatch(text); len(m) == 5 {
+		return categoryCopy{Reason: fmt.Sprintf("%s时长为 %s 秒", m[1], m[2]), Action: fmt.Sprintf("需要改到 %s；%s", m[3], m[4])}, true
+	}
+	if m := regexp.MustCompile(`^输出时长为 ([\d.]+) 秒[，。]当前模型只支持 ([^；;]+)[；;](.+?)。?$`).FindStringSubmatch(text); len(m) == 4 {
+		return categoryCopy{Reason: fmt.Sprintf("输出时长为 %s 秒", m[1]), Action: fmt.Sprintf("当前模型只支持 %s；%s", m[2], m[3])}, true
+	}
 	if m := regexp.MustCompile(`^第 (\d+) 段参考(音频|视频)时长为 (\d+(?:\.\d+)?) 秒[，。]需要 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?) 秒`).FindStringSubmatch(text); len(m) == 6 {
 		return categoryCopy{Reason: fmt.Sprintf("第 %s 段参考%s时长为 %s 秒", m[1], m[2], m[3]), Action: fmt.Sprintf("需要 %s–%s 秒；请裁剪或更换这段素材后再提交", m[4], m[5])}, true
 	}

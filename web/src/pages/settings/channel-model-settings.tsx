@@ -151,7 +151,6 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
                         key: "protocol",
                         label: "基本信息",
                         children: <div className="space-y-4" inert={Boolean(testingModel)}>
-                            {!testingModel && testResult && <Alert type={testResult.success ? "success" : "error"} title={testResult.detail} showIcon />}
                             <section className="space-y-2">
                                 <div className="text-xs font-medium">模型能力</div>
                                 <Segmented<ModelCapabilityChoice>
@@ -201,7 +200,9 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
                         </div>,
                     },
                 ] : []}
-            />
+            >
+                {(tabs) => <>{!testingModel && testResult ? <Alert className="mx-6 mt-4 shrink-0" type={testResult.success ? "success" : "error"} title={testResult.detail} showIcon /> : null}{tabs}</>}
+            </ModelEditorModal>
         </div>
     );
 }

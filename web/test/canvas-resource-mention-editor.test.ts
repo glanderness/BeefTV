@@ -9,7 +9,7 @@ function source(path: string) {
 describe("canvas resource mention editor", () => {
     test("refreshes async reference previews even when prompt text has not changed", () => {
         const component = source("../src/components/canvas/canvas-resource-mention-textarea.tsx");
-        const unchangedTextBranch = component.match(/if \(currentValue === value && lastRenderedValueRef.current === value\) \{([^}]+)\}/)?.[1] || "";
+        const unchangedTextBranch = component.match(/if \(currentValue === value && lastRenderedValueRef.current === value[^)]*\) \{([^}]+)\}/)?.[1] || "";
         expect(unchangedTextBranch).toContain("syncInlineMentionPreviews(editor, activeReferences)");
         const sync = component.slice(component.indexOf("function syncInlineMentionPreviews("), component.indexOf("function MentionMenu("));
         expect(sync).toContain('byId.get(chip.dataset.mentionReferenceId || "")');

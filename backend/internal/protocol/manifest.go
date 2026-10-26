@@ -1053,6 +1053,9 @@ func manifestExpressionValue(expression string, request GenerationRequest, taskI
 // platform request. It lets uploaded manifests address media items by index
 // without exposing Go structs or adding provider-specific host code.
 func manifestRequestValues(request GenerationRequest) map[string]any {
+	// providerOptions 是 map[string]map[string]any，模板路径只认 map[string]any；
+	// 直接放进去会让 request.providerOptions.<namespace>.<key> 永远取到 nil。
+	providerOptions, _ := requestAsManifestValue(request.ProviderOptions)
 	userContent := make([]any, 0)
 	if strings.TrimSpace(request.Prompt) != "" {
 		userContent = append(userContent, map[string]any{"type": "text", "text": request.Prompt})
@@ -1141,7 +1144,7 @@ func manifestRequestValues(request GenerationRequest) map[string]any {
 		"watermark":       request.Watermark,
 		"operation":       request.Operation,
 		"output":          outputValue,
-		"providerOptions": request.ProviderOptions,
+		"providerOptions": providerOptions,
 		"extra":           request.Extra,
 	}
 }

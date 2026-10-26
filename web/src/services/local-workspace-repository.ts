@@ -830,7 +830,18 @@ export async function adoptServerConfirmedGenerationPatch(project: CanvasProject
             if (journal.pendingProjection) {
                 return replayPendingCanvasProjection(project.id, journalScope, expected, { throwOnFailure: true });
             }
-            return openLocalCanvasProject(project.id) ?? undefined;
+            const live = openLocalCanvasProject(project.id);
+            if (!live) return undefined;
+            // 同一份绑定回执也可能晚于编辑器的 loading/error 状态：
+            // 版本没变仍须结算同任务结果，不解除已有冲突或覆盖用户编辑。
+            const settled = settleInFlightGenerationOverlay({ base: journal.confirmedSnapshot, local: live, remote: project });
+            if (settled !== live) {
+                applyLiveCanvasProject(project.id, settled, false);
+                void flushCanvasStorePersistence().catch((error) => {
+                    console.error("画布本地缓存写入失败，生成结果已保存到桌面数据库", { id: project.id, error });
+                });
+            }
+            return settled;
         }
         const liveAtStart = openLocalCanvasProject(project.id);
         const existed = Boolean(liveAtStart);
