@@ -198,3 +198,36 @@ func TestCorruptCapabilityJSONFailsClosedOnSanitize(t *testing.T) {
 		t.Fatal("corrupt capability JSON must fail closed")
 	}
 }
+
+func TestValidateImageCapabilityConfigRestrictsResponseFormat(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		value   string
+		wantVal string
+		wantErr bool
+	}{
+		{"empty stays empty", "", "", false},
+		{"url is kept", "url", ImageResponseFormatURL, false},
+		{"b64_json is kept", "b64_json", ImageResponseFormatBase64, false},
+		{"case is normalized", " URL ", ImageResponseFormatURL, false},
+		{"unknown value is rejected", "webp", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			profile := DefaultImageCapabilityConfig("openai-image", "third-party-image")
+			profile.ResponseFormat = ImageResponseFormat{Supported: true, Value: tc.value}
+			err := ValidateImageCapabilityConfig(profile)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected an error for response_format %q", tc.value)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if profile.ResponseFormat.Value != tc.wantVal {
+				t.Fatalf("response_format value = %q, want %q", profile.ResponseFormat.Value, tc.wantVal)
+			}
+		})
+	}
+}

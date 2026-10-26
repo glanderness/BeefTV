@@ -30,7 +30,7 @@ type ImageCapabilityConfig struct {
 	Size                  ImageSizeConfig      `json:"size"`
 	Quality               ImageQualityConfig   `json:"quality"`
 	TransparentBackground VideoBooleanConfig   `json:"transparentBackground"`
-	ResponseFormat        ParameterSupport     `json:"responseFormat"`
+	ResponseFormat        ImageResponseFormat  `json:"responseFormat"`
 	OutputFormat          ParameterSupport     `json:"outputFormat"`
 	MaxOutputs            int                  `json:"maxOutputs"`
 	GenerationOutputs     []int                `json:"generationOutputs,omitempty"`
@@ -69,6 +69,21 @@ type ImageQualityConfig struct {
 type ParameterSupport struct {
 	Supported bool `json:"supported"`
 }
+
+// ImageResponseFormat 是图片接口 response_format 的开关与取值。
+// Value 为空时按 b64_json 处理，保持既有渠道的行为不变；url 让上游返回图片链接，
+// 由 BeefTV 下载成字节后再落库——链接会过期，不能直接当作结果保存。
+type ImageResponseFormat struct {
+	Supported bool   `json:"supported"`
+	Value     string `json:"value,omitempty"`
+}
+
+const (
+	// ImageResponseFormatBase64 让上游内联返回 base64，是默认取值。
+	ImageResponseFormatBase64 = "b64_json"
+	// ImageResponseFormatURL 让上游返回图片链接，由 BeefTV 下载后转成字节。
+	ImageResponseFormatURL = "url"
+)
 
 type VideoCapabilityConfig struct {
 	References        VideoReferenceConfig `json:"references"`

@@ -83,6 +83,17 @@ export function referencedAssetIdsInPrompt(prompt: string): string[] {
     return [...new Set(Array.from(prompt.matchAll(/@\[asset:([^\]\s]+)\]/g), (match) => match[1]))];
 }
 
+/** The editor and submission checks recognize the same explicit reference syntax. */
+export function canvasGenerationMentionMatches(prompt: string) {
+    return [...prompt.matchAll(/@\[(node|asset):([^\]]+)\]|@(图片|视频|音频|文本|角色|绘图)(\d+)/g)]
+        .filter((match) => !match[3] || hasCanvasMentionBoundary(prompt, (match.index || 0) + match[0].length));
+}
+
+export function hasCanvasMentionBoundary(value: string, index: number) {
+    const next = value[index];
+    return !next || /\s|[,.!?;:，。！？；：、)\]}】）`"'|]/.test(next);
+}
+
 /** 将提示词内已连接素材的名称替换为对应引用；同名的每处指代都会保留为独立引用。 */
 export function autoMentionCanvasResourceReferences(prompt: string, references: CanvasResourceReference[]) {
     const referenceByName = new Map<string, CanvasResourceReference | null>();

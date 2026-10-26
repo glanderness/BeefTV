@@ -1316,6 +1316,7 @@ function InfiniteCanvasPage() {
         copySelectedNodes,
         createFolder,
         createNode,
+        createGenerationReplacement,
         createReferenceGroup,
         createStoryboardGroup,
         deleteConnection,
@@ -2221,6 +2222,9 @@ function InfiniteCanvasPage() {
                 <CanvasNodePromptPanel
                     projectId={projectId}
                     node={panelNode}
+                    referenceNodes={nodesRef.current}
+                    referenceConnections={connectionsRef.current}
+                    onLocateReferenceNode={focusCanvasNode}
                     isRunning={isCanvasNodeGenerating(panelNode, runningNodeId)}
                     mentionReferences={[
                         ...(mentionReferencesByNodeId.get(panelNode.id) || EMPTY_RESOURCE_REFERENCES),
@@ -2244,6 +2248,8 @@ function InfiniteCanvasPage() {
                     onPromptChange={handleNodePromptChange}
                     onConfigChange={handleConfigNodeChange}
                     onGenerate={handleGenerateNode}
+                    onOpenGenerationHistory={() => setGenerationHistoryOpen(true)}
+                    onCreateGenerationReplacement={createGenerationReplacement}
                     onRemoveReference={handleRemoveNodeReference}
                     onReorderReferences={handleReorderNodeReferences}
                     onReplaceReference={handleReplaceNodeReference}
@@ -2262,11 +2268,14 @@ function InfiniteCanvasPage() {
             configInputsById,
             handleConfigNodeChange,
             handleGenerateNode,
+            createGenerationReplacement,
+            setGenerationHistoryOpen,
             handleNodePromptChange,
             handleRemoveNodeReference,
             handleReorderNodeReferences,
             handleReplaceNodeReference,
             handleReplaceNodeReferenceFiles,
+            focusCanvasNode,
             mentionReferencesByNodeId,
             message,
             projectId,

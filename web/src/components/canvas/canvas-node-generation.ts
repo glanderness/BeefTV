@@ -5,7 +5,7 @@ import { seedanceReferenceLabel } from "@/lib/seedance-video";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { CanvasNodeType, type CanvasConnection, type CanvasGenerationMode, type CanvasNodeData } from "@/types/canvas";
-import { getGenerationResourceNodes, getContextResourceNodes, getMentionResourceNodes } from "@/lib/canvas/canvas-resource-references";
+import { canvasGenerationMentionMatches, hasCanvasMentionBoundary as hasMentionBoundary, getGenerationResourceNodes, getContextResourceNodes, getMentionResourceNodes } from "@/lib/canvas/canvas-resource-references";
 import { canvasNodeVideoPreviewUrl, canvasVideoAssetPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { isNeutralColorGrade, resolveCanvasColorGradeReference } from "@/lib/canvas/canvas-color-grade";
 import { getNodeResourceKind } from "@/lib/canvas/node-registry";
@@ -82,15 +82,9 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     }
     const connectedInputs = withArkAssetReferenceInputs(buildNodeGenerationInputs(nodeId, nodes, connections), nodes, assets);
     const sourceNode = nodes.find((node) => node.id === nodeId);
-    const portraitTextureInput = sourceNode?.type === CanvasNodeType.Image && sourceNode.metadata?.content && sourceNode.metadata?.portraitTexture
-        ? (() => {
-              const image = readReferenceImage(sourceNode, nodes, connections);
-              return image ? [{ nodeId: sourceNode.id, type: "image" as const, title: sourceNode.title, image }] : [];
-          })()
-        : [];
     // 显式 @ 引用必须与提示词面板展示的资源集合一致；默认自动输入仍只取入边，
     // 避免已有图片在没有 @图片N 时被悄悄当作自身参考图。
-    const mentionInputs = withArkAssetReferenceInputs(mergeGenerationInputs(buildNodeMentionGenerationInputs(nodeId, nodes, connections), portraitTextureInput, buildAssetGenerationInputs(assets)), nodes, assets);
+    const mentionInputs = nodeGenerationMentionInputs(nodeId, nodes, connections, assets);
     const storyboardInputs = getConnectedStoryboardRows(nodeId, nodes, connections);
     assertResolvableGenerationMentions(prompt, mentionInputs);
     const hasExplicitResourceMention = hasResolvableGenerationMention(prompt, mentionInputs);
@@ -229,7 +223,7 @@ function buildComposerGenerationContext(
         });
     }
 
-    for (const match of normalizedPrompt.matchAll(GENERATION_MENTION_PATTERN)) {
+    for (const match of canvasGenerationMentionMatches(normalizedPrompt)) {
         if (match.index === undefined) continue;
         nextPrompt += normalizedPrompt.slice(lastIndex, match.index);
         const input = resolveGenerationMention(normalizedPrompt, match, slotInputByToken, nodeInputById, assetInputById);
@@ -330,8 +324,6 @@ function buildComposerGenerationContext(
     };
 }
 
-const GENERATION_MENTION_PATTERN = /@\[(node|asset):([^\]]+)\]|@(图片|视频|音频|文本|角色|绘图)(\d+)/g;
-
 export function generationInputMentionLabel(input: NodeGenerationInput, inputs: NodeGenerationInput[]) {
     const entry = generationSlotEntries(inputs).find((item) => item.input.nodeId === input.nodeId);
     return entry?.label || generationLabel(input.sourceKind === "drawing" ? "drawing" : input.type, 0);
@@ -349,6 +341,22 @@ function hasResolvableGenerationMention(prompt: string, inputs: NodeGenerationIn
     return inspectGenerationMentions(prompt, inputs).hasResolved;
 }
 
+/** The prompt UI and the submit path share resource eligibility, not preview availability. */
+export function inspectNodeGenerationMentions(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string, assets: Asset[]) {
+    return inspectGenerationMentions(prompt, nodeGenerationMentionInputs(nodeId, nodes, connections, assets));
+}
+
+function nodeGenerationMentionInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], assets: Asset[]) {
+    const sourceNode = nodes.find((node) => node.id === nodeId);
+    const portraitTextureInput = sourceNode?.type === CanvasNodeType.Image && sourceNode.metadata?.content && sourceNode.metadata?.portraitTexture
+        ? (() => {
+              const image = readReferenceImage(sourceNode, nodes, connections);
+              return image ? [{ nodeId: sourceNode.id, type: "image" as const, title: sourceNode.title, image }] : [];
+          })()
+        : [];
+    return withArkAssetReferenceInputs(mergeGenerationInputs(buildNodeMentionGenerationInputs(nodeId, nodes, connections), portraitTextureInput, buildAssetGenerationInputs(assets)), nodes, assets);
+}
+
 function assertResolvableGenerationMentions(prompt: string, inputs: NodeGenerationInput[]) {
     const { unresolved } = inspectGenerationMentions(prompt, inputs);
     if (!unresolved.length) return;
@@ -362,7 +370,7 @@ function inspectGenerationMentions(prompt: string, inputs: NodeGenerationInput[]
     const assetInputById = new Map(inputs.filter((input) => input.nodeId.startsWith("asset:")).map((input) => [input.nodeId.slice("asset:".length), input]));
     const unresolved = new Set<string>();
     let hasResolved = false;
-    for (const match of normalizedPrompt.matchAll(GENERATION_MENTION_PATTERN)) {
+    for (const match of canvasGenerationMentionMatches(normalizedPrompt)) {
         if (match[3]) {
             const end = (match.index || 0) + match[0].length;
             if (!hasMentionBoundary(normalizedPrompt, end)) continue;
@@ -407,11 +415,6 @@ function generationImageTableReferences(images: ReferenceImage[], inputs: NodeGe
         const kind = input?.sourceKind === "drawing" ? "drawing" : "image";
         return { id: image.id, title: input?.title || image.name, label: generationLabel(kind, counts[kind]++) };
     });
-}
-
-function hasMentionBoundary(value: string, index: number) {
-    const char = value[index];
-    return !char || /\s|[,.!?;:，。！？；：、)\]}】）`"'|]/.test(char);
 }
 
 export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): NodeGenerationInput[] {
