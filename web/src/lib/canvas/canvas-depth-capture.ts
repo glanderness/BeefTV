@@ -1,5 +1,5 @@
 import { explainGenerationError, generationFailureMetadata } from "@/lib/generation-error";
-import { canvasGenerationResultUnavailable, generationTaskVerdictSettled } from "@/lib/canvas/canvas-node-task-state";
+import { canvasGenerationResultUnavailable, canvasSubmissionVerdictSettled } from "@/lib/canvas/canvas-node-task-state";
 import { CanvasGenerationDurableAckError } from "@/services/canvas-generation-errors";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
@@ -70,7 +70,7 @@ export function canvasNodeFailureExplanation(node: CanvasNodeData) {
     if (explanation.category === "result_target_unavailable") return { ...explanation, blockManualRetry: false };
     // 原任务已经终态，说明这次提交是否成立已有结论；继续显示「提交结果未确认」
     // 会让节点既没有原任务可查、也没有重新生成入口。
-    if (explanation.category === "submission_uncertain" && generationTaskVerdictSettled(node.metadata)) {
+    if (explanation.category === "submission_uncertain" && canvasSubmissionVerdictSettled(node.metadata)) {
         // 自动取回中途断网或服务端出错：结果可能还在，交给「继续取回」，不重复提交。
         if (node.metadata?.resourceReloadAvailable) {
             return { ...explanation, reason: "原任务已结束，结果还没取回", action: "点击「继续取回」，不会重新生成", uncertain: true, retryable: false, blockAutomaticRetry: true, blockManualRetry: true };

@@ -214,7 +214,7 @@ export function useCanvasGenerationOrchestration({
         finishGenerationRequest,
         bindGenerationTask,
         applyGenerationTaskResult,
-        regenerateImageBatch: async (nodeId, prompt) => { await handleGenerateNode(nodeId, "image", prompt); },
+        regenerateImageBatch: async (nodeId, prompt, options) => { await handleGenerateNode(nodeId, "image", prompt, options); },
     });
 
     const cancelCanvasTask = useCallback(

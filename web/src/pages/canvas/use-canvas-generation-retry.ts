@@ -39,7 +39,7 @@ import { resolveImageUrl } from "@/services/image-storage";
 import { resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import type { Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeTypeId } from "@/types/canvas";
-import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, type CanvasGenerationFailureInput } from "./canvas-generation-failure";
+import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, PAID_RETRY_CONFIRMATION, type CanvasGenerationFailureInput } from "./canvas-generation-failure";
 import { confirmCanvasGeneration } from "./canvas-generation-preflight";
 
 type UseCanvasGenerationRetryOptions = {
@@ -55,7 +55,7 @@ type UseCanvasGenerationRetryOptions = {
     finishGenerationRequest: (targetNodeId: string, controller: AbortController) => void;
     bindGenerationTask: (targetNodeId: string, task: GenerationTask) => void;
     applyGenerationTaskResult: (targetNodeId: string, task: GenerationTask) => Promise<void>;
-    regenerateImageBatch: (nodeId: string, prompt: string) => Promise<void>;
+    regenerateImageBatch: (nodeId: string, prompt: string, options?: { paidRetryConfirmed?: boolean }) => Promise<void>;
 };
 
 const NODE_STATUS_LOADING = "loading" as const;
@@ -106,14 +106,7 @@ export function useCanvasGenerationRetry({
             if (submissionVerdictSettled) {
                 // 原结果已确认取不回：重新生成会新建任务并可能再次消耗积分，必须先让用户确认。
                 const controller = startGenerationRequest(node.id, node.id);
-                const confirmed = await confirmCanvasGeneration((callbacks) => modal.confirm({
-                    title: "重新生成？",
-                    content: "原任务已经结束，但结果没有取回。重新生成会新建任务，并可能再次消耗积分。",
-                    okText: "仍然生成",
-                    cancelText: "取消",
-                    centered: true,
-                    ...callbacks,
-                }), controller.signal);
+                const confirmed = await confirmCanvasGeneration((callbacks) => modal.confirm({ ...PAID_RETRY_CONFIRMATION, centered: true, ...callbacks }), controller.signal);
                 finishGenerationRequest(node.id, controller);
                 if (!confirmed) {
                     message.info("已保留原任务记录，未重新生成");
@@ -174,7 +167,7 @@ export function useCanvasGenerationRetry({
             const groupRoot = batchRoot || node;
             const multipleNativeBatches = nativeOutputs > 0 && (groupRoot.metadata?.batchChildIds?.length || 0) > nativeOutputs;
             if (nativeOutputs && !multipleNativeBatches) {
-                await regenerateImageBatch(groupRoot.id, retryPromptSource);
+                await regenerateImageBatch(groupRoot.id, retryPromptSource, { paidRetryConfirmed: submissionVerdictSettled });
                 return;
             }
             if (multipleNativeBatches && !batchRoot) {

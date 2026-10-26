@@ -49,7 +49,7 @@ const retry = (node: any) => {
 };
 
 // 1. 原结果还没取过：交给恢复扫描自动取回，不弹确认、不新建任务。
-await retry(settledNode({ taskStage: "任务失败", taskErrorCode: "submission_uncertain", generationErrorCode: "submission_uncertain", generationSubmissionState: "unknown" }));
+await retry(settledNode({ taskStage: "任务失败", taskErrorCode: "submission_uncertain", generationErrorCode: "submission_uncertain", generationSubmissionState: "accepted" }));
 assert.equal(confirmations.length, 0, "还没取过原结果时不能新建任务");
 assert.equal(infos.length, 1, "应说明正在取回原结果");
 

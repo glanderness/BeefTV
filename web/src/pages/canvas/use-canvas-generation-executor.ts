@@ -31,7 +31,7 @@ import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/ty
 import { executeImageGeneration } from "./canvas-image-generation-executor";
 import { executeAudioGeneration, executeVideoGeneration } from "./canvas-media-generation-executors";
 import { executeTextGeneration } from "./canvas-text-generation-executor";
-import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasImageGenerationHasPendingResult, canvasImagePendingResultMessage } from "./canvas-generation-failure";
+import { canvasGenerationFailureMetadata, canvasGenerationNeedsPaidRetryConfirmation, canvasGenerationRetryBlocked, canvasImageGenerationHasPendingResult, canvasImagePendingResultMessage, PAID_RETRY_CONFIRMATION } from "./canvas-generation-failure";
 import { createReferenceLinkResolver } from "@/components/generation-reference-links";
 import { confirmCanvasGeneration, waitForCanvasPreparation } from "./canvas-generation-preflight";
 import { startOperation } from "@/stores/use-operation-progress";
@@ -72,6 +72,8 @@ export type CanvasNodeGenerationOptions = {
     onTaskUpdate?: (task: GenerationTask) => void;
     onSubmissionPlan?: (manifest: import("@/services/api/assistant-continuation").AssistantSubmissionManifest) => Promise<void>;
     skipDuplicateConfirmation?: boolean;
+    /** 调用方已就「原结果取不回、重新生成可能再次扣积分」弹过确认。 */
+    paidRetryConfirmed?: boolean;
 };
 
 export function useCanvasGenerationExecutor({
@@ -347,9 +349,18 @@ export function useCanvasGenerationExecutor({
                             promptTemplateVariables: sourceNode?.metadata?.promptTemplateVariables,
                             context: generationContext,
                         });
-                        const duplicateConfirmationRequired = !options?.skipDuplicateConfirmation && !options?.retryContext && sourceNode?.metadata?.lastGenerationRequestFingerprint === requestFingerprint;
+                        const paidRetryConfirmationRequired = !options?.paidRetryConfirmed && canvasGenerationNeedsPaidRetryConfirmation(sourceNode, inputNodes);
+                        const duplicateConfirmationRequired = !paidRetryConfirmationRequired && !options?.skipDuplicateConfirmation && !options?.retryContext && sourceNode?.metadata?.lastGenerationRequestFingerprint === requestFingerprint;
                         message.destroy(preparationMessageKey);
                         stage = "duplicate_confirmation";
+                        if (paidRetryConfirmationRequired) {
+                            // 原结果已确认取不回：提示词面板的「生成」同样新建任务、可能再次扣积分，必须先确认。
+                            diagnostic("generation_confirmation_waiting");
+                            if (!(await confirmCanvasGeneration((callbacks) => modal.confirm({ ...PAID_RETRY_CONFIRMATION, centered: true, ...callbacks }), controller.signal))) {
+                                diagnostic("generation_confirmation_cancelled");
+                                return;
+                            }
+                        }
                         if (duplicateConfirmationRequired) {
                             diagnostic("generation_confirmation_waiting");
                             if (!(await confirmDuplicateSubmission(controller.signal))) {

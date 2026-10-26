@@ -86,6 +86,12 @@
 2. **后到快照重复认领**：`recoverLateNodes` 先按节点 id 去重再认领。回归：`test/canvas-late-generation-recovery.browser.test.ts`「a settled submission-uncertain node in a later remote copy takes its original result back」。
 3. **恢复响应丢失被误判取不回**：被拒后先重读任务。回归：`test/canvas-task-result-recovery.test.ts`「a lost recovery response is consumed as the existing result」。
 
+### 第二轮检查（Codex）指出的三处问题与修法
+
+1. **客户端错误码会触发自动重试**：`canvasTaskProvesSubmissionUnknown` 不再认客户端写入的 `generationErrorCode`，只认从任务同步来的 `taskStage` / `taskErrorCode`；节点正在提交或新提交结论未知（`generationSubmissionState` 为 `submitting` / `unknown`）时也不算，因为挂着的任务号可能是普通失败的旧任务。回归：`test/canvas-generation-failure.test.ts`（`clientCodeOnStaleTask`、`resubmissionUnknown`）。
+2. **提示词面板绕过付费确认**：`canvasGenerationRetryBlocked` 改为只有确认取不回（`resourceReloadAvailable === false`）才解锁；新增 `canvasGenerationNeedsPaidRetryConfirmation`，提示词面板的「生成」（`use-canvas-generation-executor.ts`）和「重新生成」都先弹同一个确认框，「重新生成」确认过的批次重生成不再重复弹。回归：`test/fixtures/generation-preflight.fixture.ts`（取消不提交、确认后提交 1 次）。
+3. **临时拒绝被当成取不回**：`recoverCanvasTaskResult` 只有后端返回明确的「取不回」文案（`SubmissionUncertainRetryMessage`、`validateImageTaskRetry`、`imageRecoveryError`）才返回 undefined；恢复锁冲突（400）、存储配额（403）等其他 4xx 原样抛出，节点保留「继续取回」。回归：`test/canvas-task-result-recovery.test.ts`「temporary refusals ...」。
+
 ## 上游 Infinite Canvas 对照
 
 `github.com/basketikun/infinite-canvas` **没有**任务中心、异步任务、结果回写或恢复层，也没有 `submission_unknown` 这类提交不确定状态，没有同类逻辑可照搬，只能按 BeefTV 自身已有的任务/回执模式修。
@@ -101,7 +107,7 @@
 
 - `cd web && bun run typecheck` 通过。
 - `cd web && bun run build` 通过。
-- `cd web && bun run test`：3339 通过、1 跳过、1 失败。失败的是 `video-api-contracts.test.ts`「时长未知时在网络提交之前拒绝参考素材」，在不含本改动的 main（7b0dc27）上单独运行同样失败，是 main 上视频时长提示改文案后测试没跟上，与本改动无关。
+- `cd web && bun run test`：3340 通过、1 跳过、1 失败。失败的是 `video-api-contracts.test.ts`「时长未知时在网络提交之前拒绝参考素材」，在不含本改动的 main（7b0dc27）上单独运行同样失败，是 main 上视频时长提示改文案后测试没跟上，与本改动无关。
 - 相关测试：`canvas-task-result-recovery`、`canvas-generation-failure`、`canvas-settled-retry-confirmation`、`canvas-late-generation-recovery.browser`（新增「服务端出错时交给继续取回、只试一次」）、`canvas-uncertain-recovery.browser`。
 
 ## 验证限制

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildNodeGenerationContext } from "../src/components/canvas/canvas-node-generation";
-import { canvasGenerationFailureMetadata, canvasGenerationResultUnavailableMetadata, canvasGenerationRetryBlocked, canvasTaskFailureMetadata, canvasGenerationTaskNodes, canvasImageGenerationHasPendingResult, imageSubmissionUnknown } from "../src/pages/canvas/canvas-generation-failure";
+import { canvasGenerationFailureMetadata, canvasGenerationNeedsPaidRetryConfirmation, canvasGenerationResultUnavailableMetadata, canvasGenerationRetryBlocked, canvasTaskFailureMetadata, canvasGenerationTaskNodes, canvasImageGenerationHasPendingResult, imageSubmissionUnknown } from "../src/pages/canvas/canvas-generation-failure";
 import { canvasNodeNeedsOriginalResultRecovery } from "../src/lib/canvas/canvas-node-task-state";
 import { canvasNodeFailureExplanation } from "../src/lib/canvas/canvas-depth-capture";
 import { generationTaskVerdictSettled } from "../src/lib/canvas/canvas-node-task-state";
@@ -63,8 +63,8 @@ test("complete image input rejection permits changed input while unresolved unce
     // 原任务还在跑：提交结论未知，保持锁定，不能重复提交。
     expect(canvasGenerationRetryBlocked({ ...pending.metadata, taskStatus: "running" }, { mode: "image", prompt: "a different drawing" })).toBe(true);
     expect(imageSubmissionUnknown({ ...pending.metadata, taskStatus: "running" })).toBe(true);
-    // 原任务已终态：提交是否成立已有结论，锁定解除；结果由客户端自动取回，不需要用户点。
-    expect(canvasGenerationRetryBlocked(pending.metadata, { mode: "image", prompt: "a different drawing" })).toBe(false);
+    // 原任务已终态：结果由客户端自动取回，不需要用户点；取回结论出来前仍不能新建任务。
+    expect(canvasGenerationRetryBlocked(pending.metadata, { mode: "image", prompt: "a different drawing" })).toBe(true);
     expect(canvasImageGenerationHasPendingResult(pending, [pending])).toBe(true);
     expect(generationTaskVerdictSettled(pending.metadata)).toBe(true);
     // 自动取回期间不给重新生成入口；取不回时才有。
@@ -76,6 +76,10 @@ test("complete image input rejection permits changed input while unresolved unce
     expect(canvasNodeNeedsOriginalResultRecovery(unavailable)).toBe(false);
     expect(canvasNodeFailureExplanation(unavailable).retryable).toBe(true);
     expect(canvasNodeFailureExplanation(unavailable).blockManualRetry).toBe(false);
+    // 确认取不回后解锁，但任何入口新建任务都要先确认扣费。
+    expect(canvasGenerationRetryBlocked(unavailable.metadata, { mode: "image", prompt: "a different drawing" })).toBe(false);
+    expect(canvasGenerationNeedsPaidRetryConfirmation(unavailable, [unavailable])).toBe(true);
+    expect(canvasGenerationNeedsPaidRetryConfirmation(pending, [pending])).toBe(false);
     // 取回途中断网：交给「继续取回」，不自动重来，也不给重新生成。
     const interrupted = { ...pending, metadata: { ...pending.metadata, resourceReloadAvailable: true } };
     expect(canvasNodeNeedsOriginalResultRecovery(interrupted)).toBe(false);
@@ -104,6 +108,12 @@ test("a settled submission-uncertain node is recovered automatically and only as
     const running = canvasNodeFailureExplanation(node({ ...settled, taskStatus: "running" }));
     expect(running.uncertain).toBe(true);
     expect(running.blockManualRetry).toBe(true);
+    // 客户端自己写的错误码不足以触发自动取回：节点上挂的可能是普通失败的旧任务，重试会真的重新入队并扣费。
+    const clientCodeOnStaleTask = node({ ...settled, taskStage: "任务失败", taskErrorCode: "invalid_params", generationErrorCode: "submission_uncertain" });
+    expect(canvasNodeNeedsOriginalResultRecovery(clientCodeOnStaleTask)).toBe(false);
+    // 重新提交时丢了响应（提交状态未知）：旧任务的 stage 也不能当证据。
+    const resubmissionUnknown = node({ ...settled, generationSubmissionState: "unknown" } as typeof settled);
+    expect(canvasNodeNeedsOriginalResultRecovery(resubmissionUnknown)).toBe(false);
     // 只有客户端一侧的「提交状态未知」不足以触发自动取回：这类任务的重试可能真的重新提交上游并付费。
     const clientOnlyUnknown = node({ ...settled, taskStage: "任务失败", taskErrorCode: "invalid_params", generationErrorCode: "invalid_params" });
     expect(canvasNodeNeedsOriginalResultRecovery(clientOnlyUnknown)).toBe(false);

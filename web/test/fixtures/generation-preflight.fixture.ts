@@ -31,7 +31,7 @@ mock.module("@/lib/canvas/canvas-project-generation", () => ({ isGenerationCance
 mock.module("@/lib/model-selection", () => ({ modelCompatibilityError: () => compatible ? "" : "参数不兼容", modelGroupReferenceLimits: () => undefined, modelPromptLengthError: () => "", modelRequestOptions: () => ({}) }));
 mock.module("@/services/skill-runtime", () => ({ skillRuntime: { prepare: async ({ prompt }: any) => ({ prompt, metadata: {} }) } }));
 mock.module("@/lib/canvas/canvas-style-execution", () => ({ resolveCanvasStyleExecution: () => undefined }));
-mock.module("@/pages/canvas/canvas-generation-failure", () => ({ canvasGenerationRetryBlocked: () => false, canvasImageGenerationHasPendingResult: () => false, canvasImagePendingResultMessage: () => "", canvasGenerationFailureMetadata: () => ({}) }));
+mock.module("@/pages/canvas/canvas-generation-failure", () => ({ canvasGenerationRetryBlocked: () => false, canvasImageGenerationHasPendingResult: () => false, canvasImagePendingResultMessage: () => "", canvasGenerationFailureMetadata: () => ({}), canvasGenerationNeedsPaidRetryConfirmation: (node: any) => node?.metadata?.resultGone === true, PAID_RETRY_CONFIRMATION: { title: "重新生成？" } }));
 mock.module("@/components/generation-reference-links", () => ({ createReferenceLinkResolver: () => undefined }));
 mock.module("@/pages/canvas/canvas-image-generation-executor", () => ({ executeImageGeneration: async () => {} }));
 mock.module("@/pages/canvas/canvas-media-generation-executors", () => ({ executeVideoGeneration: (input: any) => executeVideo(input), executeAudioGeneration: async () => {} }));
@@ -160,6 +160,23 @@ await next;
 assert.equal(running, null);
 assert.equal(requests.size, 0);
 assert.equal(loading.size, 0);
+// 原结果已确认取不回的节点：提示词面板的「生成」同样必须先确认扣费，取消则不提交。
+hydrate = async (context) => context;
+nodesRef.current = [{ id: "gone", type: "video", metadata: { status: "error", resultGone: true } }];
+const paidBefore = confirmations.length;
+const goneDispatched = dispatched;
+const goneCancelled = generate("gone", "video", "gone shot");
+while (confirmations.length === paidBefore) await tick();
+assert.equal(confirmations.at(-1).title, "重新生成？");
+confirmations.at(-1).afterClose();
+await goneCancelled;
+assert.equal(dispatched, goneDispatched, "prompt-panel generation must not submit before the paid confirmation");
+const goneConfirmed = generate("gone", "video", "gone shot");
+while (confirmations.length === paidBefore + 1) await tick();
+confirmations.at(-1).onOk();
+await goneConfirmed;
+assert.equal(dispatched, goneDispatched + 1);
+console.log("PASS: prompt-panel generation on a node whose result is gone confirms before submitting");
 console.log("PASS: source release during delivery, isolated result controller, newer request survives old completion");
 console.log("PASS: preflight lifecycle, duplicate lock, abort fencing, validation, closed dialog retry, private diagnostics");
 

@@ -30,6 +30,18 @@ test("a backend refusal means the result is gone only after the task still reads
     expect(calls).toEqual(["retry", "query"]);
 });
 
+test("temporary refusals such as a recovery lock or storage quota are errors, never a lost result", async () => {
+    for (const temporary of [
+        new ApiError("task provider recovery is already running", { status: 400, reason: "bad_request" }),
+        new ApiError("存储空间已用完，请清理后重试", { status: 403, reason: "quota_exceeded" }),
+    ]) {
+        await expect(recoverCanvasTaskResult("task-1", signal(), {
+            queryGenerationTask: async () => task("failed"),
+            retryGenerationTask: async () => { throw temporary; },
+        })).rejects.toBe(temporary);
+    }
+});
+
 test("a lost recovery response is consumed as the existing result, not read as a lost result", async () => {
     // 第一次恢复已在后端成功、只是响应没回来：再发一次会被拒（任务已成功），重读任务必须拿到成功结果。
     const result = await recoverCanvasTaskResult("task-1", signal(), {

@@ -34,11 +34,14 @@ export function canvasGenerationResultUnavailable(metadata: CanvasNodeMetadata |
 
 /**
  * 原任务自己就能证明这次提交结论未确认：后端对这类任务只会按回执取回，
- * 取不到回执就拒绝重试，不会重新提交上游。自动取回只认这种任务侧证据，
- * 不认仅来自客户端的 `generationSubmissionState`（那种情况下的重试可能真的重新提交并产生费用）。
+ * 取不到回执就拒绝重试，不会重新提交上游。只认从任务同步来的 `taskStage` / `taskErrorCode`；
+ * 客户端自己写的 `generationErrorCode`、`generationSubmissionState` 不算——
+ * 节点上可能还挂着一个普通失败的旧任务，对它调重试会真的重新入队并扣费。
+ * 节点正在提交或新提交结论未知时，挂着的任务号可能是旧的，同样不算。
  */
 export function canvasTaskProvesSubmissionUnknown(metadata: CanvasNodeMetadata | undefined) {
-    return metadata?.taskStage === "submission_unknown" || metadata?.generationErrorCode === "submission_uncertain" || metadata?.taskErrorCode === "submission_uncertain";
+    if (metadata?.generationSubmissionState === "submitting" || metadata?.generationSubmissionState === "unknown") return false;
+    return metadata?.taskStage === "submission_unknown" || metadata?.taskErrorCode === "submission_uncertain";
 }
 
 /**

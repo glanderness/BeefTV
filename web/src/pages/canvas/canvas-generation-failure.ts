@@ -1,5 +1,5 @@
 import { explainGenerationError, generationFailureMetadata, generationPromptFingerprint, shouldBlockManualRetry, unchangedModeratedPrompt } from "@/lib/generation-error";
-import { canvasGenerationResultUnavailable, canvasNodeNeedsOriginalResultRecovery, generationTaskVerdictSettled, imageSubmissionUnknown } from "@/lib/canvas/canvas-node-task-state";
+import { canvasGenerationResultUnavailable, canvasNodeNeedsOriginalResultRecovery, canvasSubmissionVerdictSettled, imageSubmissionUnknown } from "@/lib/canvas/canvas-node-task-state";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 import type { GenerationTask } from "@/services/api/task-center";
 import { CanvasGenerationTargetSaveError } from "@/services/canvas-generation-errors";
@@ -74,9 +74,9 @@ export function canvasGenerationRetryBlocked(metadata: CanvasNodeMetadata | unde
     if (input) {
         const category = explainGenerationError(error).category;
         if (metadata?.taskStage === "submission_unknown" || category === "submission_uncertain") {
-            // 「提交结果未确认」的锁只在结论未知时成立。原任务已由任务中心确认终态还继续锁着，
-            // 节点就既不能重新生成、也没有可查询的原任务；重新生成会先尝试取回原结果。
-            return !generationTaskVerdictSettled(metadata);
+            // 「提交结果未确认」的锁只在后端确认原结果取不回后才解开；解开后新建任务的每个入口都要先确认扣费
+            // （见 canvasGenerationNeedsPaidRetryConfirmation）。
+            return !canvasGenerationResultUnavailable(metadata);
         }
         return isKeptGenerationResultCode(category) || ["timeout", "results_missing", "partial_success"].includes(category);
     }
@@ -93,9 +93,9 @@ export function canvasImagePendingResultMessage(node: CanvasNodeData | undefined
     const related = [node, ...nodes.filter((item) => node?.metadata?.batchChildIds?.includes(item.id) || item.metadata?.generatedFromNodeId === node?.id)];
     const unavailable = related.find((item) => item?.metadata?.generationErrorCode === "result_target_unavailable");
     if (unavailable) return explainGenerationError({ code: "result_target_unavailable" }).message;
-    if (related.some((item) => imageSubmissionUnknown(item?.metadata) && !generationTaskVerdictSettled(item?.metadata))) return "提交结果尚未确认，请查询原任务";
+    if (related.some((item) => imageSubmissionUnknown(item?.metadata) && !canvasSubmissionVerdictSettled(item?.metadata))) return "提交结果尚未确认，请查询原任务";
     // 原任务已终态、结果还没写进画布：客户端会自动按原任务取回，不需要用户操作。
-    if (related.some((item) => imageSubmissionUnknown(item?.metadata) && item?.metadata?.resourceReloadAvailable === undefined)) return "原任务已结束，正在自动取回结果；取不回时再重新生成";
+    if (related.some((item) => canvasSubmissionVerdictSettled(item?.metadata) && item?.metadata?.resourceReloadAvailable === undefined)) return "原任务已结束，正在自动取回结果；取不回时再重新生成";
     // 后端确认这次结果取不回：是否重新生成由用户决定。
     if (related.some((item) => canvasGenerationResultUnavailable(item?.metadata))) return "原任务已结束，结果已取不回；可以重新生成";
     const missing = related.find((item) => item?.metadata?.generationErrorCode === "results_missing");
@@ -103,6 +103,21 @@ export function canvasImagePendingResultMessage(node: CanvasNodeData | undefined
 }
 
 export { canvasGenerationResultUnavailable, canvasNodeNeedsOriginalResultRecovery, imageSubmissionUnknown };
+
+/**
+ * 原结果已确认取不回的节点（或它的批次子图）再新建任务前，必须先让用户确认可能再次扣积分。
+ * 「重新生成」和提示词面板的「生成」都走这一条。
+ */
+export function canvasGenerationNeedsPaidRetryConfirmation(node: CanvasNodeData | undefined, nodes: CanvasNodeData[]) {
+    return [node, ...nodes.filter((item) => node?.metadata?.batchChildIds?.includes(item.id) || item.metadata?.generatedFromNodeId === node?.id)].some((item) => canvasGenerationResultUnavailable(item?.metadata));
+}
+
+export const PAID_RETRY_CONFIRMATION = {
+    title: "重新生成？",
+    content: "原任务已经结束，但结果没有取回。重新生成会新建任务，并可能再次消耗积分。",
+    okText: "仍然生成",
+    cancelText: "取消",
+} as const;
 
 /** 后端确认原结果取不回：节点标成「不能继续取回」，把「重新生成」交回用户。 */
 export function canvasGenerationResultUnavailableMetadata() {
