@@ -3,6 +3,7 @@ import { buildApiUrl } from "@/stores/use-config-store";
 import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
 import { inferProtocolCapabilityFromModel, type ModelProtocolDefinition } from "@/lib/model-protocols";
 import { catalogEndpointCapability, type ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
+import { serviceCredentialGuide } from "@/lib/service-credentials";
 
 export const MODEL_SERVICE_PRESETS = [
     { id: "compatible", name: "第三方模型服务", subtitle: "OpenAI 兼容 API · 中转服务", icon: "OpenAI", baseUrl: "", apiFormat: "openai" },
@@ -81,7 +82,15 @@ export function serviceConnectionError(channel: ModelChannel, options?: { protoc
         if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) return "请填写不含账号、查询参数或片段的 HTTP(S) 服务地址";
         if (/\/(chat\/completions|responses|images\/generations|models)\/?$/i.test(url.pathname)) return "请填写服务的基础地址，不要包含模型或生成接口路径";
     } catch { return "请填写完整的服务地址，例如 https://api.example.com/v1"; }
-    if (options?.requireCredential !== false && !channel.apiKey.trim() && !channel.hasApiKey && !channelAllowsEmptyAPIKey(channel, options?.protocols)) return "请填写 API Key";
+    if (options?.requireCredential !== false) {
+        const credential = serviceCredentialGuide(channel, options?.protocols);
+        if (credential.conflict) return credential.conflict;
+        if (!channel.apiKey.trim() && !channel.hasApiKey && !channelAllowsEmptyAPIKey(channel, options?.protocols)) return `请填写 ${credential.apiKeyLabel}`;
+        // 只在「这个连接还没有已保存凭证」时要求补齐 Secret Key。登录态工作区会把密钥
+        // 隐去、只留 hasApiKey/hasSecretKey，那种情况不能拦，保存时后端会沿用原密钥。
+        const noStoredCredential = !channel.hasApiKey && !channel.hasSecretKey;
+        if (credential.secretKeyRequired && !channel.secretKey?.trim() && noStoredCredential) return `请填写 ${credential.secretKeyLabel}：这个请求协议要两个密钥，缺一个会签名失败`;
+    }
     return "";
 }
 

@@ -4,6 +4,8 @@ All notable public changes to BeefTV are documented in this file.
 
 ## Unreleased
 
+- 模型服务的密钥栏按所选请求协议写明要填哪一种凭证：方舟原生接口用普通方舟 Key，Agent Plan 接口用 Agent Plan 专属 Key，即梦用 Access Key + Secret Key；一个连接里混用两种凭证会先被拦下，并提示拆成两个连接。
+- 读不到模型目录时写清可以手填模型 ID 继续，并保留服务商返回的真实错误原因。
 - Built-in BeefAPI can be connected from the desktop app without pasting a key.
 - Prepared the first audited public source snapshot.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
