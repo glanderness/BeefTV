@@ -4,6 +4,8 @@ All notable public changes to BeefTV are documented in this file.
 
 ## Unreleased
 
+- 修复海外视频模型「生成成功却取不到视频」：Runway 按官方字段发送 `promptText` / `promptImage` / `ratio` 并补上 `X-Runway-Version` 请求头，成片从 `output[]` 取回；Luma 从 `assets.video` 取回，时长按官方 `5s` 字符串、首尾帧写入 `keyframes`；xAI 用创建返回的 `request_id` 查询并从 `video.url` 取回。
+- 官方视频服务状态更新：OpenAI 已于 2026-09-24 关闭 Sora 2 与 Videos API，Gemini API 的 Veo 预览模型已于 2026-10-22 关闭；OpenAI 与 Gemini 服务预设不再声称可直接生成视频，`openai-videos`（Sora）与 `google-gemini-veo` 协议照旧保留给仍转发同名接口的第三方中转。
 - Built-in BeefAPI can be connected from the desktop app without pasting a key.
 - Prepared the first audited public source snapshot.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
