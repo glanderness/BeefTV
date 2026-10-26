@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -134,9 +134,9 @@ async function withHost(run, envExtra = {}, options = {}) {
         catch { return false; }
       }, 10000);
     };
-    const restart = async (modelId) => {
+    const restart = async (modelId, signal = 'SIGTERM') => {
       const exited = new Promise((resolve) => child.once('close', resolve));
-      child.kill('SIGTERM');
+      child.kill(signal);
       await exited;
       if (modelId) env.BEEFTV_AGENT_MODEL = modelId;
       await start();
@@ -272,6 +272,31 @@ test('真实宿主：SIGTERM 释放活动会话后退出', async () => {
     expect(code).not.toBe('timeout');
     expect(getLog()).toContain('关闭，释放');
   });
+}, 35000);
+
+test('真实宿主：旧会话交接前停止经强杀重启仍生效，下一条请求正常执行', async () => {
+  await withHost(async ({ api, directory, restart, getModelCalls, getOpsRequests }) => {
+    const canvasId = 'canvas', sessionId = 'legacy-early-stop', requestId = 'legacy-stopped-request';
+    const canvasDir = path.join(directory, 'sessions', canvasKey(canvasId));
+    mkdirSync(canvasDir, { recursive: true });
+    const row = { type: 'session', version: 3, id: sessionId, timestamp: '2026-10-07T12:00:00.000Z', cwd: path.join(directory, 'workspace', canvasKey(canvasId)) };
+    writeFileSync(path.join(canvasDir, `2026-10-07T12-00-00-000Z_${sessionId}.jsonl`), JSON.stringify(row) + '\n');
+    writeFileSync(path.join(canvasDir, 'current.json'), JSON.stringify({ sessionId }));
+    const stopped = await api('/cancel', { canvasId, sessionId, requestId });
+    expect(stopped.status).toBe(202);
+    expect(stopped.payload.state).toBe('pending');
+    expect(JSON.parse(readFileSync(path.join(canvasDir, 'current.json'), 'utf8')).sessionId).toBe(sessionId);
+    expect(getModelCalls()).toBe(0);
+    await restart(undefined, 'SIGKILL');
+    const chat = await api('/chat', { canvasId, sessionId, requestId, turnId: 'legacy-stopped-turn', message: '已停止的旧请求' });
+    const end = chat.text.trim().split('\n').map(JSON.parse).find(event => event.type === 'turn_end');
+    expect(end?.cancelled).toBe(true);
+    expect(getModelCalls()).toBe(0);
+    expect(getOpsRequests().filter(request => request.includes('/ops/'))).toHaveLength(0);
+    const next = await api('/chat', { canvasId, sessionId, requestId: 'legacy-new-request', turnId: 'legacy-next-turn', message: '新的要求' });
+    expect(next.text).toContain('"reply":"ok"');
+    expect(getModelCalls()).toBe(1);
+  }, {}, { slowFirstModel: false });
 }, 35000);
 
 for (const failFirstModel of [false, true]) test(`真实宿主：旧 JSONL 交接首轮${failFirstModel ? '失败' : '成功'}后重启仍复用会话和上下文`, async () => {
@@ -493,6 +518,7 @@ test('真实宿主：停止先于 /chat 到达时只停这一条请求；同一�
     expect(await chat('early-turn-1', 'early-req')).toMatchObject({ turnId: 'early-turn-1', requestId: 'early-req', cancelled: true, error: null, reply: '' });
     // The same request again under a new Go turn: nothing runs, and that turn is closed as well.
     expect(await chat('early-turn-2', 'early-req')).toMatchObject({ turnId: 'early-turn-1', requestId: 'early-req', cancelled: true });
+    expect(getOpsRequests().filter((line) => line.includes('/api/ops/'))).toEqual([]);
     // Another request on the same conversation is not affected.
     expect(await chat('other-turn', 'other-req')).toMatchObject({ turnId: 'other-turn', reply: 'ok', cancelled: false, error: null });
     expect((await api('/cancel', { canvasId, sessionId, requestId: 'other-req' })).payload).toEqual({ accepted: true, state: 'finished' });

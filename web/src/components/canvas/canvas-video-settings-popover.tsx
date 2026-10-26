@@ -5,6 +5,7 @@ import { Button } from "antd";
 
 import { VideoSettingsPanel, videoResolutionLabel, videoSecondsLabel, videoSizeLabel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { canvasPopoverLayer } from "@/lib/canvas/canvas-popover-layer";
 import { modelCapabilityConfigFor, resolveVideoRatioValue, resolveVideoResolutionValue } from "@/lib/model-capabilities";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
@@ -60,7 +61,7 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClass
         };
     }, [open]);
 
-    const panel = open && buttonRect ? <VideoSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} onConfigChange={onConfigChange} taskConstraints={taskConstraints}>{children}</VideoSettingsPortal> : null;
+    const panel = open && buttonRect ? <VideoSettingsPortal layer={canvasPopoverLayer(buttonRef.current)} buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} onConfigChange={onConfigChange} taskConstraints={taskConstraints}>{children}</VideoSettingsPortal> : null;
 
     return (
         <>
@@ -75,6 +76,7 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClass
 }
 
 function VideoSettingsPortal({
+    layer,
     buttonRect,
     panelRef,
     placement,
@@ -84,6 +86,7 @@ function VideoSettingsPortal({
     taskConstraints,
     children,
 }: {
+    layer: number | string;
     children?: ReactNode;
     taskConstraints?: VideoSettingsConstraints;
     buttonRect: DOMRect;
@@ -106,7 +109,7 @@ function VideoSettingsPortal({
     const placeAbove = topPlacement ? topSpace >= estimatedHeight || topSpace >= bottomSpace : bottomSpace < estimatedHeight && topSpace > bottomSpace;
     const style = {
         position: "fixed",
-        zIndex: "var(--z-dialog-popover)",
+        zIndex: layer,
         width,
         left: Math.max(margin, Math.min(window.innerWidth - width - margin, left)),
         ...(placeAbove ? { bottom: window.innerHeight - buttonRect.top + gap, maxHeight: Math.max(260, topSpace) } : { top: buttonRect.bottom + gap, maxHeight: Math.max(260, bottomSpace) }),

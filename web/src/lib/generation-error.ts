@@ -738,8 +738,15 @@ function specialize(classified: Classified, fields: ExtractedFields): Classified
 function referenceDurationCopy(text: string): CategoryCopy | undefined {
     const audio = referenceAudioCopy(text);
     if (audio) return audio;
+    // 当前提示写法：说清哪一项、现在多少、要改到多少，动作由后端给出。
+    const actionable = text.match(/^((?:第 \d+ 段)?(?:参考)?(?:音频|视频)(?:「[^」]*」)?)时长为 (\d+(?:\.\d+)?) 秒[，。]需要改到 ([^；;]+)[；;](.+?)。?$/);
+    if (actionable) return { reason: `${actionable[1]}时长为 ${actionable[2]} 秒`, action: `需要改到 ${actionable[3]}；${actionable[4]}` };
+    // 旧版本已存进对话记录里的写法，继续按原样解释。
     const numbered = text.match(/^第 (\d+) 段参考(音频|视频)时长为 (\d+(?:\.\d+)?) 秒[，。]需要 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?) 秒/);
     if (numbered) return { reason: `第 ${numbered[1]} 段参考${numbered[2]}时长为 ${numbered[3]} 秒`, action: `需要 ${numbered[4]}–${numbered[5]} 秒；请裁剪或更换这段素材后再提交` };
+    // 输出时长不在模型范围内：写出现在的值和可选时长。
+    const output = text.match(/^输出时长为 ([\d.]+) 秒[，。]当前模型只支持 ([^；;]+)[；;](.+?)。?$/);
+    if (output) return { reason: `输出时长为 ${output[1]} 秒`, action: `当前模型只支持 ${output[2]}；${output[3]}` };
     const missing = text.match(/^第 (\d+) 段参考(音频|视频)的时长无法读取/);
     if (missing) return { reason: `第 ${missing[1]} 段参考${missing[2]}的时长无法读取`, action: "请重新导入素材后再提交" };
     const persisted = text.match(/^参考素材时长不符合模型要求。请检查每段参考音频和视频，将不符合要求的素材调整为 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?) 秒/);

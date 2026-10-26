@@ -25,44 +25,91 @@
 <p align="center">
   <a href="https://beeftv.app/"><img src="assets/readme/button-website.svg" width="180" alt="Visit the BeefTV website"></a>
   <a href="https://github.com/glanderness/BeefTV/releases/latest"><img src="assets/readme/button-download.svg" width="175" alt="Download BeefTV desktop app"></a>
+  <a href="https://beeftv.app/assets/beeftv-wecom-qr.png"><img src="assets/readme/button-community.svg" width="185" alt="Scan to join the BeefTV community"></a>
+  <a href="https://x.com/beefnoode"><img src="assets/readme/button-x.svg" width="180" alt="Follow @beefnoode on X"></a>
 </p>
 
 <p align="center">
   <a href="README.md">简体中文</a> ·
+  <a href="#recent-updates">Recent updates</a> ·
   <a href="#product-demo">Product demo</a> ·
+  <a href="#workflows">Workflows</a> ·
   <a href="#beeftv-agent">Agent</a> ·
   <a href="#skills">Skills</a> ·
-  <a href="#workflows">Workflows</a> ·
   <a href="docs/content/docs/overview/features.mdx">Feature list</a> ·
   <a href="QUICKSTART.md">Get started</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
+## Recent updates
+
+- **[v2.0.3](https://github.com/glanderness/BeefTV/releases/tag/v2.0.3)** — Improve video prompt and reference validation, restore saved parameters on retry, and improve upscaling request reliability.
+- **[v2.0.2](https://github.com/glanderness/BeefTV/releases/tag/v2.0.2)** — Add Seedream layer splitting and related image sets; improve Agent multi-image checks, task recovery, and reference uploads.
+- **[v2.0.1](https://github.com/glanderness/BeefTV/releases/tag/v2.0.1)** — Add reusable workflows and Topaz upscaling, with fixed-version skill installation, rollback, and private adaptations.
+- **[v2.0.0](https://github.com/glanderness/BeefTV/releases/tag/v2.0.0)** — Connect storyboard planning, production, and video export through the creative assistant, with audiovisual checks, a skill marketplace, and editable projects.
+- **[v1.7.27](https://github.com/glanderness/BeefTV/releases/tag/v1.7.27)** — Standardize Music 3.0 output on MP3 and improve music generation connections and desktop update downloads.
+
+[All releases and detailed notes](https://github.com/glanderness/BeefTV/releases)
+
 ## Product demo
 
-https://github.com/user-attachments/assets/94fe6a39-6933-44b3-a9a9-dbc28b2d284c
+<div>
+  <video src="https://github.com/user-attachments/assets/da4081e0-26bc-424e-b20c-124f92ce6538" controls preload="metadata" playsinline></video>
+</div>
 
-[Download the demo](assets/readme/beeftv-demo.mp4) · An early canvas interface demo. For 2.0 features, see the sections below and the [release notes](https://github.com/glanderness/BeefTV/releases/latest).
+New product demo · About 45 seconds.
 
-[See the 2.0.1 hands-on examples](docs/content/docs/overview/examples.mdx) (Chinese): an editable storyboard, three text skills, and a workflow reused with two inputs.
+## Workflows
+
+**Save the steps that work for your next creation.**
+
+Connect media, local processing, and AI generation in an editable workflow. The **single-character replacement workflow** takes a motion video and a character reference image, adapts the video frame rate, then passes both references to Seedance 2.0 Fast.
+
+![Actual single-character replacement workflow editor: replaceable video and image inputs, frame-rate adaptation, video generation, and model settings](assets/readme/beeftv-character-workflow-editor.png)
+
+<table>
+  <tr><th width="50%">Source video</th><th width="50%">Finished character replacement</th></tr>
+  <tr>
+    <td><video src="https://github.com/user-attachments/assets/1d8e5c42-d6be-40f5-be55-504b7381bf90" controls preload="metadata" playsinline></video></td>
+    <td><video src="https://github.com/user-attachments/assets/cadf1e3b-e1fa-4a45-83a0-c8cdacc4d1b1" controls preload="metadata" playsinline></video></td>
+  </tr>
+</table>
+
+[Production record](docs/content/docs/overview/examples.mdx#工作流单人物替换) (Chinese)
+
+- **Connect processing and generation:** Adapt frame rate locally; use the video and character image as separate generation references.
+- **Keep the configuration editable:** Adjust nodes, connections, models, prompts, and output settings, then save a template revision.
+- **Reuse the structure with new inputs:** Bind a different motion video or character image; adapt constraints and parameters to the new shots.
+
+Template revisions 13 and 14 have successful runs in the local 2.0.1 app. The finished example also includes shot-level corrections, stitching, and restoration of the original audio. Those steps are not all encapsulated in the template; this does not demonstrate one-click completion for arbitrary media or frame-perfect preservation. Model generation is billed by your chosen provider.
 
 ## BeefTV Agent
 
-**Turn creative intent into an editable deliverable.**
+**Turn a conversation into an editable creative project.**
 
-Describe your goal. The creative assistant prepares storyboards, organizes references, and proposes a generation plan. After you confirm the plan, it can continue generating media, checking results, editing, and exporting a finished video with an editable project.
+> “Help me make a viral post-apocalyptic short drama.”
 
-- **Create in context:** Work with the media and creative context on your canvas.
-- **Review, then proceed:** Check the plan before production and follow task progress.
-- **Keep control:** Review results and continue refining the media and edit.
+In the local example **The Last Bottle of Water**, the user specified the production order and confirmed generation plans. The Agent built **25 nodes and 48 connections**, covering the story outline, an eight-shot storyboard, characters, scenes, first frames, video, and Mandarin narration. The process and assets remain on the canvas.
 
-![BeefTV Agent delivers the confirmed coffee storyboard as two editable text nodes](assets/readme/beeftv-2.0.1-agent-delivery.webp)
+<table>
+  <tr><th width="25%">Character design · Shenmo</th><th width="25%">Scene design · Water ration point</th><th width="25%">Generated shot 1</th><th width="25%">Generated shot 2</th></tr>
+  <tr>
+    <td><img src="assets/readme/beeftv-agent-drama-role-shenmo.webp" alt="Lead character design generated by the Agent"></td>
+    <td><img src="assets/readme/beeftv-agent-drama-scene-water-tower.webp" alt="Post-apocalyptic water ration point generated by the Agent"></td>
+    <td><video src="https://github.com/user-attachments/assets/0c0e1174-479d-4394-a4b2-7c64a3367e0a" controls preload="metadata" playsinline></video></td>
+    <td><video src="https://github.com/user-attachments/assets/b304bdd1-5a3f-4e96-929b-46a9cbff29bf" controls preload="metadata" playsinline></video></td>
+  </tr>
+</table>
 
-**Hands-on example: an 8-second coffee storyboard.** Describe someone receiving coffee at night and looking up at dawn → confirm the two-shot plan → let the Agent write duration, visuals, and sound into two editable text nodes. This example delivers a text storyboard; no finished video was generated. [See the request and deliverable](docs/content/docs/overview/examples.mdx#agent从创意到两个可编辑分镜) (Chinese).
+![BeefTV Agent in use: character and scene nodes connect to storyboard and video nodes, with production steps and progress shown on the right](assets/readme/beeftv-agent-drama-canvas.png)
 
-Generation requires configured model providers. Audiovisual checks also require a supported multimodal model. Review subtitles, visuals, and local text layout yourself.
+- **Plan:** Define the world, characters, and storyboard, including shot duration, visuals, motion, and sound.
+- **Execute:** Create nodes and reference connections, then generate characters, scenes, shots, and narration after confirmation.
+- **Inspect and continue:** Read actual outputs, check designs and first frames, preserve successful assets and failure states, and continue refining.
 
-[Explore the creative assistant](docs/content/docs/overview/features.mdx#beeftv-agent创作助手)
+[Listen to the opening narration](assets/readme/beeftv-agent-drama-narration-opening.mp3) · [Production record](docs/content/docs/overview/examples.mdx#agent聊天驱动的短剧制作) (Chinese)
+
+This example has 3 character images, 2 scene images, 5 shot first frames, 3 video clips, and 2 narration clips. Final editing, subtitles, and audiovisual acceptance remain unfinished. Generation requires configured model providers; audiovisual review also requires a supported multimodal model. Human review is still needed.
 
 ## Skills
 
@@ -86,28 +133,6 @@ Captured from the installed 2.0.1 app. These runs used private local copies of t
 
 Text-only skills do not require a multimodal model. Skills involving images, video, or audio require the capabilities listed in their requirements.
 
-[Explore skill use and management](docs/content/docs/overview/features.mdx#skills创作技能)
-
-## Workflows
-
-**Save the steps that work for your next creation.**
-
-Save canvas nodes as a reusable workflow with replaceable inputs, fixed content, and outputs. Swap in new media and run it again with your existing configuration.
-
-| First run: racing video | Second run: neon street video |
-| --- | --- |
-| ![The keyframe workflow completes with a racing video and outputs a driver frame](assets/readme/beeftv-2.0.1-workflow-first.webp) | ![The same workflow completes with a neon street video and outputs a street frame](assets/readme/beeftv-2.0.1-workflow-second.webp) |
-
-**Hands-on example: one template, two inputs.** Save a local keyframe extraction workflow, run the racing video, then replace it with the neon street video. Both runs keep template version 1 and the same extraction settings, show “Completed 1 / 1,” and output their respective first frames. Processing runs locally without model calls. [See the reuse steps](docs/content/docs/overview/examples.mdx#workflows同一模板两组素材) (Chinese).
-
-- **Capture from the canvas:** Select nodes and choose “Save as workflow.”
-- **Edit the template:** Adjust nodes, connections, models, and processing parameters.
-- **Run with new inputs:** Add it to the canvas, bind new media, and follow progress and results.
-
-Workflows support generation and media processing steps; the editor indicates which operations are supported. Model generation is billed by your chosen provider.
-
-[Explore workflow creation and reuse](docs/content/docs/overview/features.mdx#将画布节点保存为可复用工作流)
-
 ## One canvas, a complete creative workflow
 
 - **Generate:** Create text, images, video, and audio from prompts or reference media.
@@ -115,7 +140,7 @@ Workflows support generation and media processing steps; the editor indicates wh
 - **Refine:** Crop, annotate, inpaint, split, reference, and combine results.
 - **Iterate:** Keep your process and reuse assets, turning a single generation into an evolving workflow.
 
-BeefTV also includes project and personal asset libraries, asynchronous tasks, model providers, and creative tools. See the full [feature list](docs/content/docs/overview/features.mdx).
+BeefTV also includes project and personal asset libraries, asynchronous tasks, model providers, and creative tools.
 
 ## Why BeefTV
 
@@ -132,19 +157,10 @@ BeefTV also includes project and personal asset libraries, asynchronous tasks, m
 ## Get started
 
 1. [Download the desktop app](https://github.com/glanderness/BeefTV/releases/latest) and follow the [first-launch instructions](QUICKSTART.md#下载与首次打开). Enter your local workspace without signing up.
-2. In model settings, connect BeefAPI or add your own model provider.
+2. In model settings, connect your BeefTV account or add your own model provider.
 3. Create a canvas, add reference media, and describe your goal to the creative assistant. You can also start creating directly with nodes.
 
 See [Quick Start](QUICKSTART.md) for model setup and building from source, and the [desktop release guide](docs/desktop-release.md) for packaging requirements.
-
-## Community
-
-Discuss creative methods, share skills and workflows, or report issues.
-
-<p>
-  <a href="https://beeftv.app/assets/beeftv-wecom-qr.png"><img src="assets/readme/button-community.svg" width="185" alt="Scan to join the BeefTV community"></a>
-  <a href="https://x.com/beefnoode"><img src="assets/readme/button-x.svg" width="180" alt="Follow @beefnoode on X"></a>
-</p>
 
 ## Contributing and license
 
@@ -155,6 +171,22 @@ The repository uses licenses with different scopes. Original content added under
 The new license permits self-hosting, internal customization, and creating and selling works with BeefTV. Written authorization is required for commercial resale, rebranding and resale, paid deployment or custom delivery of covered software, and providing hosted features to third parties, whether free or paid. Independent tutorials, training, and general technical consulting may be paid services, but must not be used to deliver the software system indirectly. Contact us about authorization at [lucas@bf-labs.cn](mailto:lucas@bf-labs.cn).
 
 The new restrictions do not apply retroactively to historical MIT content or override independently licensed third-party materials. This is a source-available license; the entire repository should not be treated as standard MIT or as an open source project under the OSI definition. See the [license guide](docs/content/docs/overview/licensing.mdx) for covered scenarios and boundaries, and [`NOTICE`](NOTICE) for upstream sources and third-party attributions.
+
+## Special thanks
+
+Thank you to the partners, sponsors, and customers supporting BeefTV's continued development.
+
+<table>
+  <tr><th width="26%" align="center">Acknowledgements</th><th align="center">About</th></tr>
+  <tr>
+    <td align="center" valign="middle"><img src="assets/readme/partner-tencent-cloud.png" width="32" height="32" alt="Tencent Cloud icon"><br><strong>Tencent Cloud</strong></td>
+    <td><a href="https://cloud.tencent.com/">Tencent Cloud</a> provides cloud computing, AI, and audio and video services, including media storage, processing, and delivery, for developers and enterprises.</td>
+  </tr>
+  <tr>
+    <td align="center" valign="middle"><img src="assets/readme/partner-byteplus.png" width="32" height="32" alt="BytePlus icon"><br><strong>BytePlus</strong></td>
+    <td><a href="https://www.byteplus.com/en">BytePlus</a> draws on ByteDance's technology to offer generative AI, cloud infrastructure, and audio and video solutions to enterprises worldwide. Special thanks to the BytePlus Overseas Incubator for its compute resources and ecosystem support for this project.</td>
+  </tr>
+</table>
 
 ## ⭐ Star History
 

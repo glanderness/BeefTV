@@ -91,6 +91,11 @@ type Config struct {
 	Size                     string                    `json:"size"`
 	Quality                  string                    `json:"quality"`
 	TransparentBackground    string                    `json:"transparentBackground"`
+	SeedreamMode             string                    `json:"seedreamMode,omitempty"`
+	SeedreamMaxImages        string                    `json:"seedreamMaxImages,omitempty"`
+	SeedreamOutputFormat     string                    `json:"seedreamOutputFormat,omitempty"`
+	SeedreamOptimize         string                    `json:"seedreamOptimize,omitempty"`
+	SeedreamWatermark        string                    `json:"seedreamWatermark,omitempty"`
 	Count                    string                    `json:"count"`
 	VideoSeconds             string                    `json:"videoSeconds"`
 	VQuality                 string                    `json:"vquality"`

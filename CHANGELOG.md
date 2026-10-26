@@ -4,10 +4,33 @@ All notable public changes to BeefTV are documented in this file.
 
 ## Unreleased
 
+- 生成不再替换节点已有的名称：从文本节点发起生成时，你自己起的名字保持不变，只有在节点还没起名、仍是默认名时才按提示词命名。
 - Built-in BeefAPI can be connected from the desktop app without pasting a key.
 - Prepared the first audited public source snapshot.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
+
+## v2.0.3
+
+- 视频提示词改为按所选模型与接口校验长度，移除通用 8000 字符默认拦截，不自动截断提示词。
+- 新插入的参考素材引用跟随具体素材，调整连线后仍对应原图；改善 Seedance 全能参考中的人物与素材对应关系。
+- 修复素材栏引用按钮点击无效的问题；素材表与实际引用矛盾时，在生成前提示。
+- 失败视频重试使用原任务保存的提示词、素材和参数；如需使用后来修改的内容，请从节点的生成入口新建请求。进行中或已完成的任务继续取回已有结果。
+- 延长超分报价、创建和恢复请求的等待时间，改善网络超时和源文件不可用时的提示。
+
+注意：旧提示词中的手写编号保持原顺序；已有自定义字数上限仍然生效，可在模型设置中恢复默认限制。人物服装、发型等生成细节仍可能不稳定。
+
+## v2.0.2
+
+- 支持已配置 Seedream 渠道的图层拆分和关联组图，生成结果分别保存到画布。
+- 修复助手生成多图后无法检查结果的问题；整片制作暂不支持图层拆分或组图，会在生成前提示。
+- 改善创作助手的任务恢复、停止与进度显示，修复读取当前画布和选择审片素材的问题。
+- 参考图上传遇到临时故障时有限重试，中断后继续原上传记录。
+- 修复部分外接视频渠道的多图请求，以及临时 DNS 错误导致的任务查询中断。
+- 助手宽表格可在侧栏内横向滚动。
+- 修复 Windows 已运行 BeefTV 时再次打开技能安装链接失败的问题；链接仍只打开指定版本的安装确认页。
+
+已知限制：影音模型仍可能漏报剪点或写错同音词，字幕与画面需结合原片核对；助手成片的角标排版和局部文字修改仍需人工检查。
 
 ## v2.0.1
 

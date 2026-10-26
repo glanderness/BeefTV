@@ -134,8 +134,10 @@ func (s *Service) resolveArchivedTaskRoute(task *model.Task, intent ModelRequest
 
 func (s *Service) finishTaskRouteAttempt(attempt *model.RouteAttempt, task *model.Task, taskErr error) {
 	image := modelcatalog.ImageSubmissionView{}
+	info := routeFailureInfo(taskErr)
 	if task != nil && task.Type == "canvas_image" {
 		image = s.imageSubmissionView(attempt, task)
+		info.ExplicitRejection = info.ExplicitRejection || definiteImageInputRejection(taskErr)
 	}
-	modelcatalog.FinishRouteAttempt(s.routeStore(), attempt, task, taskErr, taskFailureMessage(taskErr), routeFailureInfo(taskErr), image, time.Now)
+	modelcatalog.FinishRouteAttempt(s.routeStore(), attempt, task, taskErr, taskFailureMessage(taskErr), info, image, time.Now)
 }

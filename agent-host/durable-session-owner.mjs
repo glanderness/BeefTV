@@ -17,6 +17,7 @@ import { SKILL_LOAD_PARAMETERS, createSkillCatalogSection, expandSkillContent, l
 import { PLAN_UPDATE_PARAMETERS, applyPlanUpdate, emptyPlan, planContinuation, publicPlan, renderPlanSection } from './plan.mjs';
 import { buildStudioDigest, describeChangesSince, withCurrentStudio } from './studio-digest.mjs';
 import { normalizeModelTransportError } from './model-transport-error.mjs';
+import { businessLifecycle } from './business-progress.mjs';
 
 // On-disk format tag written into manifests and host state since 1.0.4; not the
 // package version. Changing it rejects every existing session as mismatched.
@@ -92,6 +93,11 @@ function snapshotLifecycle(event) {
   const compaction = (event.compactions || []).find((item) => item.blocking);
   if (compaction) return { type: 'lifecycle', phase: 'compaction', taskId: compaction.taskId };
   if (event.generation?.retry) return retryLifecycle(event.generation.attempt, event.generation.retry.error);
+  for (const slot of [...(event.nestedTools || []), ...(event.tools || [])]) {
+    if (slot.status !== 'running') continue;
+    const progress = businessLifecycle(slot.name, slot.details);
+    if (progress) return progress;
+  }
   const tool = (event.tools || []).find((slot) => slot.status === 'running');
   return tool ? { type: 'lifecycle', phase: 'tool', toolName: tool.name } : null;
 }
@@ -100,6 +106,10 @@ export function durableStreamEvents(event, current = null) {
   switch (event?.type) {
     case 'plan': return [{ type: 'plan', plan: event.plan }];
     case 'tool_execution_start': return [{ type: 'lifecycle', phase: 'tool', toolName: event.toolName }];
+    case 'tool_execution_update': {
+      const progress = businessLifecycle(event.toolName, event.details);
+      return progress ? [progress] : [];
+    }
     case 'tool_execution_end': {
       const result = event.entry?.model?.find((message) => message.role === 'toolResult' && message.toolCallId === event.toolCallId && message.toolName === event.toolName);
       return [{ type: 'lifecycle', phase: 'tool_end', toolName: event.toolName,
@@ -119,10 +129,11 @@ export function durableLifecycleState(current, event) {
   switch (event?.type) {
     case 'snapshot': return snapshotLifecycle(event);
     case 'auto_retry_start': case 'tool_execution_start': return durableStreamEvents(event)[0];
+    case 'tool_execution_update': return durableStreamEvents(event)[0] || current;
     case 'compaction_start': return durableStreamEvents(event, current)[0] || current;
     case 'compaction_end': return durableStreamEvents(event, current).length ? null : current;
     case 'auto_retry_end': return current?.phase === 'retry' ? null : current;
-    case 'tool_execution_end': return current?.phase === 'tool' && current.toolName === event.toolName ? durableStreamEvents(event)[0] : current;
+    case 'tool_execution_end': return ['tool', 'business'].includes(current?.phase) && current.toolName === event.toolName ? durableStreamEvents(event)[0] : current;
     default: return current;
   }
 }
@@ -466,7 +477,8 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
           const proposalCount = entry.turn.proposals.length;
           // Bridge tools return {content}; Durable's ToolExecutionResult names it output.
           const { content, ...result } = await runWithBudget(entry, () => tool.execute(String(api.taskId), args, context.abortSignal,
-            { executeTool: (name, params, options) => api.executeTool(name, params, context, options) }));
+            { executeTool: (name, params, options) => api.executeTool(name, params, context, options),
+              reportProgress: (progress) => api.details({ beeftvProgress: progress }, context) }));
           entry.generation.toolCalledSinceYield = true;
           if (!tool.readOnly && typeof readCanvas === 'function') {
             await refreshStudioDigest(entry, entry.turn.turnId, { selectedNodeIds: entry.input?.selectedNodeIds || [], computeDiff: false, signal: context.abortSignal });
@@ -875,9 +887,11 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       : await lock(canvasId, async () => {
         const current = sessions.get(canvasId);
         if (current?.sessionId === target) return recordStopIntent(current, requestId);
-        // A legacy conversation not handed off yet has no durable state: memory only.
-        if (!hasSession(canvasId, target)) return false;
-        const entry = await open(canvasId, target);
+        // Persist an early legacy stop in its deterministic successor, without
+        // publishing it or scheduling a model turn. Handoff later keeps this doc.
+        const exists = hasSession(canvasId, target);
+        if (!exists && isDurableSessionId(sessionId)) return false;
+        const entry = exists ? await open(canvasId, target) : await prepareSession(canvasId, sessionId);
         try { return await recordStopIntent(entry, requestId); }
         finally { await entry.harness.close(CTX); }
       });

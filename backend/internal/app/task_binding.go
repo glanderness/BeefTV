@@ -39,6 +39,9 @@ func (s *Service) recoverCanvasTaskBindings(task model.Task) error {
 	if task.Status != model.TaskStatusSucceeded {
 		return nil
 	}
+	if err := s.prepareSeedreamOutputNodes(task); err != nil {
+		return err
+	}
 	registry := s.workspaceOperations()
 	intents := s.CanvasBindingIntents(task)
 	var last error

@@ -108,7 +108,8 @@ func NormalizeCatalogVideoCapability(raw json.RawMessage) (map[string]any, bool)
 func normalizeCatalogReferences(input map[string]any) (map[string]any, bool) {
 	refs := map[string]any{}
 	intFields := map[string][2]int{
-		"promptMaxChars":               {1, 1000000},
+		"promptMaxChars":               {0, 1000000},
+		"promptMaxUtf16Units":          {0, 1000000},
 		"minImages":                    {0, 100},
 		"maxImages":                    {0, 100},
 		"maxVideos":                    {0, 100},

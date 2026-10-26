@@ -439,16 +439,23 @@ function AssetsPageSession() {
         setFolderSaving(true);
         try {
             const saved = await runAssetViewAction(entryScope, async (scope) => {
-                if (creating) await createWorkspaceAssetFolder(name, scope);
-                else await renameWorkspaceAssetFolder(folderId, name, scope);
+                const created = creating ? await createWorkspaceAssetFolder(name, scope) : undefined;
+                if (!creating) await renameWorkspaceAssetFolder(folderId, name, scope);
                 if (!folderApi) setLocalFolders(await listWorkspaceAssetFolders(scope));
                 await invalidateAssetLibrary(scope);
-                return creating ? "created" : "renamed";
+                return creating ? { mode: "created" as const, folder: created } : { mode: "renamed" as const, folder: undefined };
             });
             if (!saved) return;
             setFolderEditor(null);
             setFolderName("");
-            message.success(saved === "created" ? "素材分类已创建" : "素材分类已重命名");
+            if (saved.mode === "created") {
+                setFiltersOpen(true);
+                if (saved.folder?.id) {
+                    setFolderFilter(saved.folder.id);
+                    setPage(1);
+                }
+            }
+            message.success(saved.mode === "created" ? "素材分类已创建" : "素材分类已重命名");
         } catch (error) {
             if (shouldSuppressAssetViewError(error, entryScope)) return;
             message.error(error instanceof Error ? error.message : "素材分类保存失败");

@@ -263,6 +263,7 @@ export function resetGenerationTaskMetadata(metadata: CanvasNodeMetadata | undef
         errorDetails: undefined,
         generationErrorCode: undefined,
         generationErrorSummary: undefined,
+        generationPreflightError: undefined,
         resourceReloadAvailable: undefined,
         failedPromptFingerprint: undefined,
         failedInputFingerprint: undefined,
@@ -272,6 +273,7 @@ export function resetGenerationTaskMetadata(metadata: CanvasNodeMetadata | undef
     delete next.taskOutputIndex;
     delete next.generationOutputNodeIds;
     delete next.taskClientOperationId;
+    delete next.generationSubmissionState;
     delete next.retryOf;
     delete next.attemptGroupId;
     delete next.taskStatus;
@@ -338,6 +340,11 @@ export function buildImageGenerationMetadata(type: CanvasImageGenerationType, co
         size: config.size,
         quality: config.quality,
         transparentBackground: config.transparentBackground,
+        seedreamMode: config.seedreamMode,
+        seedreamMaxImages: config.seedreamMaxImages,
+        seedreamOutputFormat: config.seedreamOutputFormat,
+        seedreamOptimize: config.seedreamOptimize,
+        seedreamWatermark: config.seedreamWatermark,
         count,
         references: references.map(referenceUrl).filter((url): url is string => Boolean(url)),
     };
@@ -546,6 +553,7 @@ export function supportsVideoReferenceAudio(config: AiConfig) {
 }
 
 const LEGACY_INTERRUPTED_GENERATION_DETAILS = "页面刷新后生成已中断，请重新生成。";
+export const MISSING_GENERATION_TASK_IDENTITY_DETAILS = "上次提交缺少任务标识，暂时无法确认是否已生成。请先在生成历史中核对结果，避免重复扣费。";
 
 /** 节点是否还要和任务中心对账。首次打开画布和之后才载入的快照共用这一条判定。 */
 export function canvasNodeNeedsGenerationRecovery(node: CanvasNodeData) {

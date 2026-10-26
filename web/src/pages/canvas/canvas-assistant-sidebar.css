@@ -158,17 +158,28 @@
     border-left: 2px solid var(--border);
     color: var(--muted-foreground);
 }
-.canvas-assistant-reply table {
-    display: block;
+.canvas-assistant-table-scroll {
     max-width: 100%;
     overflow-x: auto;
+    margin-bottom: 9px;
+    overscroll-behavior-x: contain;
+}
+.canvas-assistant-table-scroll:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+}
+.canvas-assistant-reply table {
+    width: max-content;
+    max-width: none;
     border-collapse: collapse;
 }
 .canvas-assistant-reply th,
 .canvas-assistant-reply td {
+    max-width: 16rem;
     border: 1px solid var(--border);
     padding: 5px 9px;
     text-align: left;
+    vertical-align: top;
 }
 .canvas-assistant-card {
     display: flex;
@@ -188,6 +199,7 @@
 .canvas-assistant-plan ol { padding-left: 20px; margin: 8px 0 0; list-style: decimal; }
 .canvas-assistant-plan li { margin-top: 6px; }
 .canvas-assistant-plan li > .canvas-assistant-meta { margin-left: 8px; }
+.canvas-assistant-plan li > .canvas-assistant-meta:not(.canvas-assistant-plan-note) { white-space: nowrap; }
 .canvas-assistant-plan li > .canvas-assistant-plan-note { display: block; margin-left: 0; }
 .canvas-assistant-plan summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
 .canvas-assistant-change { display: flex; flex-direction: column; gap: 8px; padding: 12px 0 12px 14px; border-left: 2px solid var(--border); font-size: 13px; }

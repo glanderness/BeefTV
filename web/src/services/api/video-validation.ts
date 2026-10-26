@@ -1,5 +1,5 @@
 import { normalizeVideoDuration } from "@/lib/video-generation-options";
-import { modelCapabilityConfigFor, videoDurationAllowed } from "@/lib/model-capabilities";
+import { modelCapabilityConfigFor, videoDurationAllowed, videoDurationRequirement } from "@/lib/model-capabilities";
 import { channelHasGenerationCredential, isBuiltinBeefAPIChannel, resolveModelChannel } from "@/stores/use-config-store";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import type { ReferenceImage } from "@/types/image";
@@ -20,7 +20,7 @@ export function assertVideoCapability(
     if (audioReferences.length > refs.maxAudios) throw new Error(`当前视频模型最多支持 ${refs.maxAudios} 段参考音频`);
     if (audioReferences.length && !references.length && !videoReferences.length && !profile.operations.includes("audio_to_video")) throw new Error("当前视频模型不支持只用音频生成视频，请同时添加参考图片或参考视频");
     if (references.length < refs.minImages) throw new Error(`当前视频模型至少需要 ${refs.minImages} 张参考图`);
-    if (!videoDurationAllowed(profile, Number(seconds))) throw new Error("视频时长不在当前模型支持范围内");
+    if (!videoDurationAllowed(profile, Number(seconds))) throw new Error(outputDurationNotice(profile, seconds));
     for (const [index, image] of references.entries()) {
         assertReferenceFileBytes("图", index, image.bytes, refs.maxImageBytes);
         assertReferenceGeometry("图", index, image.width, image.height, refs.minImageWidth, refs.maxImageWidth, refs.minImageHeight, refs.maxImageHeight, refs.minImageAspect, refs.maxImageAspect, refs.minImagePixels, refs.maxImagePixels);
@@ -28,7 +28,7 @@ export function assertVideoCapability(
     let totalVideoMs = 0;
     for (const [index, video] of videoReferences.entries()) {
         totalVideoMs += video.durationMs || 0;
-        if (!referenceDurationIsOpaqueAsset(video) && !(options.deferResourceMetadataToBackend && video.storageKey?.startsWith("resource:") && !video.durationMs)) assertReferenceDuration("视频", index, video.durationMs, refs.minVideoDurationSeconds, refs.maxVideoDurationSeconds);
+        if (!referenceDurationIsOpaqueAsset(video) && !(options.deferResourceMetadataToBackend && video.storageKey?.startsWith("resource:") && !video.durationMs)) assertReferenceDuration("视频", index, video.durationMs, refs.minVideoDurationSeconds, refs.maxVideoDurationSeconds, video.name);
         assertReferenceFileBytes("视频", index, video.bytes, refs.maxVideoBytes);
         if (refs.minVideoPixels && (!video.width || !video.height) && !/^asset:\/\/[A-Za-z0-9_-]+$/.test(video.url || "") && !(options.deferResourceMetadataToBackend && video.storageKey?.startsWith("resource:"))) throw new Error(`第 ${index + 1} 个参考视频尺寸无法读取，请重新导入素材后再提交`);
         assertReferenceGeometry("视频", index, video.width, video.height, refs.minVideoWidth, refs.maxVideoWidth, refs.minVideoHeight, refs.maxVideoHeight, refs.minVideoAspect, refs.maxVideoAspect, refs.minVideoPixels, refs.maxVideoPixels);
@@ -36,7 +36,7 @@ export function assertVideoCapability(
     const maxVideoTotal = refs.maxVideoTotalDurationSeconds || 0;
     if (maxVideoTotal > 0 && totalVideoMs / 1000 > maxVideoTotal) throw new Error(`参考视频总时长为 ${(totalVideoMs / 1000).toFixed(2)} 秒，当前模型最多支持 ${maxVideoTotal} 秒；请裁剪或减少参考视频后再提交`);
     for (const [index, audio] of audioReferences.entries()) {
-        if (!referenceDurationIsOpaqueAsset(audio) && !(options.deferResourceMetadataToBackend && audio.storageKey?.startsWith("resource:") && !audio.durationMs)) assertReferenceDuration("音频", index, audio.durationMs, refs.minAudioDurationSeconds, refs.maxAudioDurationSeconds);
+        if (!referenceDurationIsOpaqueAsset(audio) && !(options.deferResourceMetadataToBackend && audio.storageKey?.startsWith("resource:") && !audio.durationMs)) assertReferenceDuration("音频", index, audio.durationMs, refs.minAudioDurationSeconds, refs.maxAudioDurationSeconds, audio.name);
         assertReferenceFileBytes("音频", index, audio.bytes, refs.maxAudioBytes);
     }
     const totalAudioSeconds = audioReferences.reduce((total, audio) => total + (audio.durationMs || 0), 0) / 1000;
@@ -48,19 +48,42 @@ function referenceDurationIsOpaqueAsset(media: ReferenceVideo | ReferenceAudio) 
     return !media.durationMs && !media.storageKey?.startsWith("resource:") && /^asset:\/\/[A-Za-z0-9_-]+$/.test(media.url || "");
 }
 
-export function assertReferenceDuration(kind: string, index: number, durationMs: number | undefined, minimum = 0, maximum = 0) {
+// 被拦下时要说清哪一项、现在多少、要改成多少，用户才知道下一步做什么。
+export function assertReferenceDuration(kind: "音频" | "视频", index: number, durationMs: number | undefined, minimum = 0, maximum = 0, mediaName = "") {
     if (minimum <= 0 && maximum <= 0) return;
-    const name = `第 ${index + 1} 段参考${kind}`;
-    if (!Number.isFinite(durationMs) || !durationMs || durationMs <= 0) throw new Error(`${name}的时长无法读取，请重新导入素材后再提交`);
+    const label = mediaName ? `${kind}「${mediaName}」` : `第 ${index + 1} 段参考${kind}`;
+    if (!Number.isFinite(durationMs) || !durationMs || durationMs <= 0) throw new Error(`${label}的时长无法读取，请重新导入素材后再提交`);
     const minMs = Math.round(minimum * 1000);
     const maxMs = maximum > 0 ? Math.round(maximum * 1000) : 0;
-    if (durationMs < minMs || (maxMs > 0 && durationMs > maxMs)) throw new Error(`${name}时长为 ${(durationMs / 1000).toFixed(2)} 秒，需要 ${referenceBound(minimum, maximum)} 秒；请裁剪或更换这段素材后再提交`);
+    // 按实际违反的是下限还是上限给建议：2–15 秒的限制下，16 秒的素材要往短改。
+    const tooShort = durationMs < minMs;
+    if (tooShort || (maxMs > 0 && durationMs > maxMs)) {
+        throw new Error(`${label}时长为 ${(durationMs / 1000).toFixed(2)} 秒，需要改到 ${durationRequirement(minimum, maximum)}；${durationFixAction(kind, tooShort)}`);
+    }
+}
+
+export function durationRequirement(minimum: number, maximum: number) {
+    if (minimum <= 0) return `${maximum} 秒以内`;
+    if (maximum <= 0) return `${minimum} 秒以上`;
+    return `${minimum}–${maximum} 秒`;
 }
 
 function referenceBound(minimum: number, maximum: number) {
     if (minimum <= 0) return `不超过 ${maximum}`;
     if (maximum <= 0) return `至少 ${minimum}`;
     return `${minimum}–${maximum}`;
+}
+
+function durationFixAction(kind: "音频" | "视频", tooShort: boolean) {
+    const noun = kind === "音频" ? "音频" : "视频";
+    return tooShort ? `请换一段更长的${noun}后再提交` : `请裁剪或换一段更短的${noun}后再提交`;
+}
+
+// 输出时长不在模型范围内时的提示，写清现在的值和可选的时长。
+export function outputDurationNotice(profile: NonNullable<ReturnType<typeof modelCapabilityConfigFor>["video"]>, seconds: string | number) {
+    const requirement = videoDurationRequirement(profile.duration);
+    if (!requirement) return "当前模型没有可用的输出时长，请先在模型能力里设置至少 4 秒的时长后再提交";
+    return `输出时长为 ${String(seconds).trim()} 秒，当前模型只支持 ${requirement}；请改成 ${requirement}后再提交`;
 }
 
 function assertReferenceFileBytes(kind: string, index: number, bytes: number | undefined, maximum = 0) {

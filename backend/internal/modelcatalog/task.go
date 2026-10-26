@@ -76,5 +76,5 @@ func ValidateWorkflowProviderPromptLength(input TaskInput) error {
 	if input.Mode != "video" || profile == nil || profile.Video == nil {
 		return nil
 	}
-	return validateModelPromptLength("视频", input.Prompt, profile.Video.References.PromptMaxChars)
+	return validateVideoPromptLength(input.Prompt, profile.Video.References)
 }

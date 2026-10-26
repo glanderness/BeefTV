@@ -110,7 +110,7 @@ export function createOperationBridge({
         : canvasWriteViewDescription(descriptor.id)),
       parameters: scopedSchema(descriptor.params, mode !== 'canvas' || descriptor.id === 'canvas.get', descriptor.id),
       ...(descriptor.readOnly ? {} : { executionMode: 'sequential' }),
-      execute: async (toolCallId, args, signal) => {
+      execute: async (toolCallId, args, signal, api = {}) => {
         try { assertToolGeneration(generation, descriptor, signal, turn); }
         catch (error) {
           log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: args || {}, isError: true, error: error.message });
@@ -185,7 +185,8 @@ export function createOperationBridge({
           assertToolGeneration(generation, descriptor, signal, turn);
           let data = await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal, turn.turnId);
           if (descriptor.id === 'canvas.generation.submit' || descriptor.id === 'canvas.timeline.render') {
-            data = await awaitBusinessTasks(data, { opsRequest, turnId: turn.turnId, signal, canvasId: params.canvasId });
+            data = await awaitBusinessTasks(data, { opsRequest, turnId: turn.turnId, signal, canvasId: params.canvasId,
+              rendering: descriptor.id === 'canvas.timeline.render', onProgress: api.reportProgress });
           }
           // A replay can recover the receipt lost between business commit and
           // the durable checkpoint. Only our persisted request may advance

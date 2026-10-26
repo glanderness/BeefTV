@@ -148,6 +148,23 @@ func TestDisabledAndUnavailableModelsAreNotPublic(t *testing.T) {
 	}
 }
 
+func TestSeedanceDoesNotInventACharacterCeiling(t *testing.T) {
+	for _, protocol := range []string{"newapi", "volcengine-ark-video"} {
+		profile := DefaultModelCapabilityConfigForModel(protocol, "seedance-2.0").Video
+		if profile.References.PromptMaxChars != 0 {
+			t.Fatalf("%s prompt ceiling = %d", protocol, profile.References.PromptMaxChars)
+		}
+		for _, length := range []int{8101, 32001} {
+			if err := validateVideoPromptLength(strings.Repeat("镜", length), profile.References); err != nil {
+				t.Fatalf("%s rejected %d characters: %v", protocol, length, err)
+			}
+		}
+	}
+	if got := DefaultModelCapabilityConfigForModel("newapi", "other-video").Video.References.PromptMaxChars; got != 0 {
+		t.Fatalf("unrelated video default changed to %d", got)
+	}
+}
+
 func TestSanitizeChannelModelOmitsSecrets(t *testing.T) {
 	cfg := DefaultModelCapabilityConfigForModel("newapi-channel-2", "seedance-2.0")
 	encoded, err := json.Marshal(cfg)
@@ -179,5 +196,38 @@ func TestCorruptCapabilityJSONFailsClosedOnSanitize(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("corrupt capability JSON must fail closed")
+	}
+}
+
+func TestValidateImageCapabilityConfigRestrictsResponseFormat(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		value   string
+		wantVal string
+		wantErr bool
+	}{
+		{"empty stays empty", "", "", false},
+		{"url is kept", "url", ImageResponseFormatURL, false},
+		{"b64_json is kept", "b64_json", ImageResponseFormatBase64, false},
+		{"case is normalized", " URL ", ImageResponseFormatURL, false},
+		{"unknown value is rejected", "webp", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			profile := DefaultImageCapabilityConfig("openai-image", "third-party-image")
+			profile.ResponseFormat = ImageResponseFormat{Supported: true, Value: tc.value}
+			err := ValidateImageCapabilityConfig(profile)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected an error for response_format %q", tc.value)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if profile.ResponseFormat.Value != tc.wantVal {
+				t.Fatalf("response_format value = %q, want %q", profile.ResponseFormat.Value, tc.wantVal)
+			}
+		})
 	}
 }

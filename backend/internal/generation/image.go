@@ -21,6 +21,9 @@ import (
 )
 
 func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, error) {
+	if seedreamFamily(input.Config.Model) != "" {
+		return runSeedreamImageTask(ctx, input)
+	}
 	outputCount := 1
 	if input.ImageCapability != nil && input.ImageCapability.FixedOutputs > 0 {
 		outputCount = input.ImageCapability.FixedOutputs
@@ -81,7 +84,7 @@ func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, err
 		writeField(writer, "prompt", WithSystemPrompt(input.Config, input.Prompt))
 		writeField(writer, "n", strconv.Itoa(outputCount))
 		if ImageParameterSupported(input.ImageCapability, "response_format") {
-			writeField(writer, "response_format", "b64_json")
+			writeField(writer, "response_format", ImageResponseFormatValue(input.ImageCapability))
 		}
 		if ImageParameterSupported(input.ImageCapability, "output_format") {
 			writeField(writer, "output_format", "png")
@@ -118,7 +121,7 @@ func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, err
 			"n":      outputCount,
 		}
 		if ImageParameterSupported(input.ImageCapability, "response_format") {
-			body["response_format"] = "b64_json"
+			body["response_format"] = ImageResponseFormatValue(input.ImageCapability)
 		}
 		if ImageParameterSupported(input.ImageCapability, "output_format") {
 			body["output_format"] = "png"

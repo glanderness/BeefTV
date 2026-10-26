@@ -345,7 +345,12 @@ func (r *Runtime) Start() error {
 		return err
 	}
 	r.listener = listener
-	r.httpServer = &http.Server{Handler: r.handler, ReadHeaderTimeout: 10 * time.Second}
+	httpContext, cancelHTTP := context.WithCancel(context.Background())
+	r.httpServer = &http.Server{Handler: r.handler, ReadHeaderTimeout: 10 * time.Second,
+		BaseContext: func(net.Listener) context.Context { return httpContext }}
+	// Shutdown waits for streams but does not cancel them. Its callback runs
+	// after Durable releases its invocations while the ops listener is alive.
+	r.httpServer.RegisterOnShutdown(cancelHTTP)
 	if r.localApp != nil {
 		r.localApp.Start()
 	} else {

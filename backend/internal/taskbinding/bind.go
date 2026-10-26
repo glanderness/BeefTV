@@ -49,11 +49,14 @@ func Bind(ports Ports, userID string, req Request) (Receipt, error) {
 	if projectID := strings.TrimSpace(task.ProjectID); projectID != "" && projectID != req.CanvasID {
 		return Receipt{}, conflict("canvas_mismatch", "任务不属于这块画布")
 	}
-	target := localtask.TargetBindingFromInput(task.InputJSON)
+	target := localtask.OutputBinding(*task, req.OutputIndex)
 	nodeID := strings.TrimSpace(target.NodeID)
+	if localtask.SeedreamOutputRoot(*task) != "" && nodeID == "" {
+		return Receipt{}, invalid("invalid_params", "outputIndex 无效")
+	}
 	// Multi-output image tasks freeze the destination for every output before
 	// submission. Never accept a new destination supplied by the bind request.
-	if task.Type == "canvas_image" {
+	if task.Type == "canvas_image" && localtask.SeedreamOutputRoot(*task) == "" {
 		var input struct {
 			Metadata struct {
 				OutputNodeIDs []string `json:"outputNodeIds"`

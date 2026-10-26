@@ -45,8 +45,11 @@ beforeAll(async () => {
     <meta charset="utf-8" />
     <style>
         * { box-sizing: border-box; }
+        :root { --z-dialog-popover: 1100; }
         body { margin: 0; background: #121212; color: #fff; font-family: sans-serif; }
         .canvas-resource-mention-menu {
+            position: fixed;
+            z-index: var(--z-dialog-popover);
             background: #222;
             border: 1px solid rgba(255,255,255,0.15);
             border-radius: 8px;
@@ -178,10 +181,16 @@ test("Scenario 2: Primary menu nodes and skill buttons direct selection", async 
 
     await menu.waitFor({ state: "hidden", timeout: 5000 });
     let promptText = await page.locator("#rich-prompt-display").innerText();
-    expect(promptText).toContain("@音频节点 1");
+    expect(promptText).toContain("@[node:node-1]");
+    expect(await input.locator(".canvas-resource-inline-mention").innerText()).toContain("音频节点 1");
 
     // 2. 选择技能库（智能分镜技能）
-    await input.focus();
+    // Reference insertion restores the caret on the next animation frame.
+    // Check that handoff before continuing synthetic typing in the same frame.
+    const focusRestored = await input.evaluate((element) => new Promise<boolean>((resolve) => {
+        requestAnimationFrame(() => resolve(document.activeElement === element));
+    }));
+    expect(focusRestored).toBe(true);
     await input.pressSequentially(" and skill: @");
     await menu.waitFor({ state: "visible", timeout: 5000 });
 
@@ -261,7 +270,7 @@ test("Scenario 5: Plain textarea keyboard navigation and Tab selection", async (
 
     await menu.waitFor({ state: "hidden", timeout: 5000 });
     const plainText = await page.locator("#plain-prompt-display").innerText();
-    expect(plainText).toContain("@音频节点 1");
+    expect(plainText).toContain("@[node:node-1]");
 }, 30000);
 
 test("Scenario 6: Click internal menu space does not close; outside click closes", async () => {
@@ -332,3 +341,42 @@ test("returning to either editor before its blur timer expires keeps a new menti
         await menu.waitFor({ state: "hidden", timeout: 5000 });
     }
 }, 15000);
+
+test("expanded modal allows pointer selection of references and image/video parameters above its actual layer", async () => {
+    for (const layer of [1200, 2400]) {
+        await page.selectOption("#modal-layer", String(layer));
+        await page.locator("#open-expanded").click();
+        const dialog = page.getByRole("dialog", { name: "放大提示词" });
+        await dialog.waitFor({ state: "visible" });
+        const editor = dialog.getByRole("textbox", { name: "expanded-editor" });
+        // Clicking waits for modal motion to settle; fill only waits for visibility/editability.
+        await editor.click();
+        await clearRichEditor(page, editor);
+        await editor.pressSequentially("@");
+        const menu = page.locator("[data-canvas-resource-mention-menu]");
+        await menu.waitFor({ state: "visible", timeout: 5000 }).catch(async error => {
+            throw new Error(`${error.message} editor=${await editor.innerText()} focused=${await editor.evaluate(element => document.activeElement === element)}`);
+        });
+        expect(await menu.evaluate((element) => Number(getComputedStyle(element).zIndex))).toBeGreaterThan(layer);
+        await menu.locator(".canvas-resource-mention-folder", { hasText: "个人资产库" }).click();
+        await menu.locator(".canvas-resource-mention-item", { hasText: "道具钥匙" }).click();
+        await menu.waitFor({ state: "hidden" });
+        expect(await page.locator("#expanded-prompt").textContent()).toContain("@[asset:asset-prop-1]");
+
+        await dialog.locator('[data-testid="image-settings"] button').click();
+        const settings = page.locator(".canvas-image-settings-popover");
+        await settings.waitFor({ state: "visible" });
+        expect(await settings.evaluate((element) => Number(getComputedStyle(element).zIndex))).toBeGreaterThan(layer);
+        await settings.getByRole("button", { name: "9:16", exact: true }).click();
+        expect(await page.locator("#parameter-update").textContent()).toBe("image:size:1024x1824");
+
+        await dialog.locator('[data-testid="video-settings"] button').click();
+        await settings.waitFor({ state: "visible" });
+        expect(await settings.evaluate((element) => Number(getComputedStyle(element).zIndex))).toBeGreaterThan(layer);
+        await settings.getByRole("spinbutton", { name: "视频时长（秒）" }).fill("8");
+        await settings.getByRole("spinbutton", { name: "视频时长（秒）" }).press("Enter");
+        expect(await page.locator("#parameter-update").textContent()).toBe("video:videoSeconds:8");
+        await dialog.getByRole("button", { name: "Close", exact: true }).click();
+        await dialog.waitFor({ state: "hidden" });
+    }
+}, 30000);

@@ -35,6 +35,23 @@ export type CanvasResourceReference = {
     mentionToken?: string;
 };
 
+/** Keep memoized nodes independent of unrelated reference-map rebuilds. */
+export function reuseCanvasResourceReferences(previous: CanvasResourceReference[] | undefined, next: CanvasResourceReference[]) {
+    if (!previous) return next;
+    if (!previous.length && !next.length) return previous;
+    const previousById = new Map(previous.map(reference => [reference.id, reference]));
+    const shared = next.map(reference => {
+        const old = previousById.get(reference.id);
+        if (!old) return reference;
+        const keys = Object.keys(reference) as Array<keyof CanvasResourceReference>;
+        const equal = keys.length === Object.keys(old).length && keys.every(key => key === "videoPreviewSource"
+            ? Boolean(old.videoPreviewSource) === Boolean(reference.videoPreviewSource) && old.videoPreviewSource?.metadata === reference.videoPreviewSource?.metadata
+            : old[key] === reference[key]);
+        return equal ? old : reference;
+    });
+    return shared.length === previous.length && shared.every((reference, index) => reference === previous[index]) ? previous : shared;
+}
+
 export function canvasSkillMentionToken(skillId: string) {
     return `@[skill:${skillId}]`;
 }
@@ -52,6 +69,7 @@ export function canvasResourceMentionToken(reference: CanvasResourceReference) {
     if (reference.mentionToken) return reference.mentionToken;
     if (reference.kind === "skill" && reference.skill?.skillId) return canvasSkillMentionToken(reference.skill.skillId);
     if (reference.assetId) return `@[asset:${reference.assetId}]`;
+    if (reference.nodeId) return canvasNodeMentionToken(reference.nodeId);
     return `@${reference.label}`;
 }
 
@@ -65,11 +83,15 @@ export function referencedAssetIdsInPrompt(prompt: string): string[] {
     return [...new Set(Array.from(prompt.matchAll(/@\[asset:([^\]\s]+)\]/g), (match) => match[1]))];
 }
 
-export function normalizeCanvasNodeMentionTokens(prompt: string, references: CanvasResourceReference[]) {
-    return references.reduce((value, reference) => {
-        if (!reference.nodeId || reference.assetId || reference.kind === "skill") return value;
-        return value.split(canvasNodeMentionToken(reference.nodeId)).join(`@${reference.label}`);
-    }, prompt);
+/** The editor and submission checks recognize the same explicit reference syntax. */
+export function canvasGenerationMentionMatches(prompt: string) {
+    return [...prompt.matchAll(/@\[(node|asset):([^\]]+)\]|@(图片|视频|音频|文本|角色|绘图)(\d+)/g)]
+        .filter((match) => !match[3] || hasCanvasMentionBoundary(prompt, (match.index || 0) + match[0].length));
+}
+
+export function hasCanvasMentionBoundary(value: string, index: number) {
+    const next = value[index];
+    return !next || /\s|[,.!?;:，。！？；：、)\]}】）`"'|]/.test(next);
 }
 
 /** 将提示词内已连接素材的名称替换为对应引用；同名的每处指代都会保留为独立引用。 */
@@ -78,7 +100,7 @@ export function autoMentionCanvasResourceReferences(prompt: string, references: 
     references
         .filter((reference) => reference.active && !reference.assetId && reference.kind !== "skill")
         .forEach((reference, index) => {
-            canvasResourceMentionNames(reference, index, true).forEach((name) => {
+            canvasResourceMentionNames(reference, index, false).forEach((name) => {
                 if (!referenceByName.has(name)) {
                     referenceByName.set(name, reference);
                     return;
@@ -99,7 +121,6 @@ export function autoMentionCanvasResourceReferences(prompt: string, references: 
             if (part.startsWith("@")) return part;
             return part.replace(matcher, (match, prefix: string, name: string, offset: number, source: string) => {
                 const nextCharacter = source[offset + match.length];
-                if (/^\d+$/u.test(name) && ((prefix && !/[\s,.!?;:，。！？；：、)\]}】）]/u.test(prefix)) || (nextCharacter && !/[\s,.!?;:，。！？；：、)\]}】）]/u.test(nextCharacter)))) return match;
                 const separator = needsAutoMentionSeparator(nextCharacter) ? " " : "";
                 return `${prefix}${canvasResourceMentionToken(referenceByName.get(name)!)}${separator}`;
             });
@@ -147,13 +168,10 @@ export function findCanvasResourceAutoLinkMatch(prompt: string, cursor: number, 
 }
 
 function canvasResourceMentionNames(reference: CanvasResourceReference, index: number, includeBareNumber: boolean) {
-    const names = new Set([reference.label.trim(), reference.title.trim()].filter(Boolean));
+    const names = new Set([reference.label.trim(), reference.title.trim()].filter((name) => name && (includeBareNumber || !/^\d+$/u.test(name))));
     const order = index + 1;
-    names.add(`图片${order}`);
-    names.add(`图${order}`);
-    names.add(`image${order}`);
-    names.add(`image ${order}`);
-    const imageLabelMatch = /^图片(\d+)$/u.exec(reference.label.trim());
+    // Media labels are numbered per kind; the mixed shelf position is not an image slot.
+    const imageLabelMatch = reference.kind === "image" && /^图片(\d+)$/u.exec(reference.label.trim());
     if (imageLabelMatch) {
         names.add(`图${imageLabelMatch[1]}`);
         names.add(`image${imageLabelMatch[1]}`);
@@ -197,15 +215,15 @@ function rewriteCanvasPromptAfterReferenceChange(prompt: string, previousReferen
     const nextByNodeId = new Map(nextCanvasReferences.map((reference) => [reference.nodeId, reference]));
     let value = prompt;
     previousCanvasReferences.forEach((reference) => {
-        const nodeToken = canvasNodeMentionToken(reference.nodeId);
-        canvasResourceReferenceMentionTokens(reference).forEach((token) => {
-            if (token !== nodeToken) value = replaceCanvasMentionToken(value, token, nodeToken);
-        });
+        value = replaceCanvasMentionToken(value, `@${reference.label}`, `@[legacy-slot:${reference.nodeId}]`);
     });
     previousCanvasReferences.filter((reference) => !nextByNodeId.has(reference.nodeId)).forEach((reference) => {
         value = removeCanvasMentionToken(value, canvasNodeMentionToken(reference.nodeId));
+        value = removeCanvasMentionToken(value, `@[legacy-slot:${reference.nodeId}]`);
     });
-    value = normalizeCanvasNodeMentionTokens(value, nextCanvasReferences);
+    nextCanvasReferences.forEach((reference) => {
+        value = replaceCanvasMentionToken(value, `@[legacy-slot:${reference.nodeId}]`, `@${reference.label}`);
+    });
     return value === prompt ? prompt : compactRemovedCanvasMentionPrompt(value);
 }
 
@@ -243,7 +261,7 @@ export function replaceCanvasMentionToken(value: string, token: string, replacem
     // Numbered media mentions can touch Chinese prose or another mention, but not a longer number.
     const boundary = /^@(图片|视频|音频|文本)\d+$/.test(token)
         ? "(?![0-9])"
-        : token.startsWith("@[node:") ? "" : `(?=${CANVAS_RESOURCE_MENTION_BOUNDARY.source})`;
+        : token.startsWith("@[node:") || token.startsWith("@[legacy-slot:") ? "" : `(?=${CANVAS_RESOURCE_MENTION_BOUNDARY.source})`;
     return value.replace(new RegExp(`${escapedToken}${boundary}`, "gu"), replacement);
 }
 

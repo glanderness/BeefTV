@@ -77,12 +77,16 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 			failed = true
 			continue
 		}
-		running = running || task.Status != model.TaskStatusSucceeded
 		meta, _ := nodes[target.NodeID]["metadata"].(map[string]any)
-		saved[target.NodeID], err = productionTargetSaved(tx, receipt.UserID, target, task, meta)
+		var settled bool
+		saved[target.NodeID], settled, err = productionTargetState(tx, receipt.UserID, target, task, meta)
 		if err != nil {
 			return false, err
 		}
+		// A successful supplier task is still in flight until its canonical file
+		// and target binding are saved, even when a sibling has already failed.
+		running = running || !settled
+		failed = failed || (settled && !saved[target.NodeID])
 		allSaved = allSaved && saved[target.NodeID]
 	}
 	if failed {
@@ -112,26 +116,32 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 	return false, err
 }
 
-func productionTargetSaved(tx *gorm.DB, userID string, target operations.GenerationTarget, task *model.Task, meta map[string]any) (bool, error) {
+func productionTargetState(tx *gorm.DB, userID string, target operations.GenerationTarget, task *model.Task, meta map[string]any) (saved bool, settled bool, err error) {
 	key, _ := meta["storageKey"].(string)
-	if task.Status != model.TaskStatusSucceeded || meta["taskId"] != task.ID || meta["status"] != "success" || meta["resourceReloadAvailable"] == true || !strings.HasPrefix(key, "resource:") {
-		return false, nil
+	if task.Status != model.TaskStatusSucceeded {
+		return false, false, nil
 	}
 	var records []model.Result
 	if err := tx.Where("task_id = ? AND user_id = ? AND kind = ?", task.ID, userID, localtask.ResultKindGenerationOutput).Find(&records).Error; err != nil {
-		return false, err
+		return false, false, err
 	}
 	outputs, err := localtask.DecodeOutputResults(records)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	for _, output := range outputs {
-		if output.OutputIndex != 0 || output.ResourceID == "" || output.MaterializationErrorCode != "" || output.MediaType != target.Kind || output.TargetBinding == nil || output.TargetBinding.NodeID != target.NodeID || key != "resource:"+output.ResourceID {
+		if output.OutputIndex != 0 || output.MediaType != target.Kind || output.TargetBinding == nil || output.TargetBinding.NodeID != target.NodeID {
+			continue
+		}
+		if output.MaterializationErrorCode != "" {
+			return false, true, nil
+		}
+		if output.ResourceID == "" || meta["taskId"] != task.ID || meta["status"] != "success" || meta["resourceReloadAvailable"] == true || !strings.HasPrefix(key, "resource:") || key != "resource:"+output.ResourceID {
 			continue
 		}
 		var count int64
 		err := tx.Model(&model.Resource{}).Where("id = ? AND user_id = ? AND status = ?", output.ResourceID, userID, model.ResourceStatusReady).Count(&count).Error
-		return count == 1, err
+		return count == 1, count == 1, err
 	}
-	return false, nil
+	return false, false, nil
 }

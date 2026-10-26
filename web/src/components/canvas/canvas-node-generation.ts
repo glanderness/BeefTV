@@ -5,7 +5,7 @@ import { seedanceReferenceLabel } from "@/lib/seedance-video";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { CanvasNodeType, type CanvasConnection, type CanvasGenerationMode, type CanvasNodeData } from "@/types/canvas";
-import { getGenerationResourceNodes, getContextResourceNodes, getMentionResourceNodes } from "@/lib/canvas/canvas-resource-references";
+import { canvasGenerationMentionMatches, hasCanvasMentionBoundary as hasMentionBoundary, getGenerationResourceNodes, getContextResourceNodes, getMentionResourceNodes } from "@/lib/canvas/canvas-resource-references";
 import { canvasNodeVideoPreviewUrl, canvasVideoAssetPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { isNeutralColorGrade, resolveCanvasColorGradeReference } from "@/lib/canvas/canvas-color-grade";
 import { getNodeResourceKind } from "@/lib/canvas/node-registry";
@@ -18,6 +18,10 @@ import { audioFileExtension } from "@/lib/character-voice-formats";
 import type { ModelReferenceLimits } from "@/lib/model-selection";
 import type { Asset } from "@/stores/use-asset-store";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
+import { assertCanvasImageReferenceTable, type CanvasImageTableReference } from "@/lib/canvas/canvas-reference-table";
+import { compileBoundMediaReferences, renderCharacterReferenceBindings, type BoundMediaMention, type CharacterReferenceBinding } from "@/lib/canvas/generation-reference-contract";
+import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import { isSeedance2Family } from "@/lib/model-capabilities";
 
 export type CharacterGenerationReference = {
     nodeId: string;
@@ -40,6 +44,9 @@ export type ResolvedCharacterVoice = {
 
 export type NodeGenerationContext = {
     prompt: string;
+    characterReferenceBindings?: CharacterReferenceBinding[];
+    boundMediaMentions?: BoundMediaMention[];
+    imageReferenceTableReferences?: CanvasImageTableReference[];
     referenceImages: ReferenceImage[];
     referenceVideos: ReferenceVideo[];
     referenceAudios: ReferenceAudio[];
@@ -66,7 +73,7 @@ export type NodeGenerationInput = {
     character?: CharacterGenerationReference;
 };
 
-export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string, assets: Asset[], promptOnly = false): NodeGenerationContext {
+export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string, assets: Asset[], promptOnly = false, options: { preserveMediaBindings?: boolean } = {}): NodeGenerationContext {
     const pendingConversion = findPendingMediaConversionInput(nodeId, nodes, connections);
     if (pendingConversion) {
         const status = pendingConversion.metadata?.mediaConversion?.status;
@@ -75,31 +82,30 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     }
     const connectedInputs = withArkAssetReferenceInputs(buildNodeGenerationInputs(nodeId, nodes, connections), nodes, assets);
     const sourceNode = nodes.find((node) => node.id === nodeId);
-    const portraitTextureInput = sourceNode?.type === CanvasNodeType.Image && sourceNode.metadata?.content && sourceNode.metadata?.portraitTexture
-        ? (() => {
-              const image = readReferenceImage(sourceNode, nodes, connections);
-              return image ? [{ nodeId: sourceNode.id, type: "image" as const, title: sourceNode.title, image }] : [];
-          })()
-        : [];
     // 显式 @ 引用必须与提示词面板展示的资源集合一致；默认自动输入仍只取入边，
     // 避免已有图片在没有 @图片N 时被悄悄当作自身参考图。
-    const mentionInputs = withArkAssetReferenceInputs(mergeGenerationInputs(buildNodeMentionGenerationInputs(nodeId, nodes, connections), portraitTextureInput, buildAssetGenerationInputs(assets)), nodes, assets);
+    const mentionInputs = nodeGenerationMentionInputs(nodeId, nodes, connections, assets);
     const storyboardInputs = getConnectedStoryboardRows(nodeId, nodes, connections);
     assertResolvableGenerationMentions(prompt, mentionInputs);
     const hasExplicitResourceMention = hasResolvableGenerationMention(prompt, mentionInputs);
     const isWorkflowSource = sourceNode?.type === CanvasNodeType.Config && isCanvasWorkflowProvider(sourceNode.metadata);
     const hasConnectedMedia = connectedInputs.some((input) => input.type === "image" || input.type === "video" || input.type === "audio" || input.type === "character");
     if ((promptOnly && hasConnectedMedia) || (Boolean(sourceNode?.metadata?.composerContent?.trim()) && (sourceNode?.type === CanvasNodeType.Config || isWorkflowSource)) || hasExplicitResourceMention) {
-        const autoIncludeWorkflowMedia = isWorkflowSource;
-        return buildComposerGenerationContext(
+        const includeConnectedMedia = isWorkflowSource || (promptOnly && hasConnectedMedia);
+        const context = buildComposerGenerationContext(
             mentionInputs,
             prompt,
             // 工作流节点由字段映射接收全部连线媒体；视频节点的历史首尾帧字段不能再额外追加参考图。
-            autoIncludeWorkflowMedia || (promptOnly && hasConnectedMedia) ? [] : [sourceNode?.metadata?.videoStartFrameNodeId, sourceNode?.metadata?.videoEndFrameNodeId].filter((id): id is string => Boolean(id)),
+            includeConnectedMedia ? [] : [sourceNode?.metadata?.videoStartFrameNodeId, sourceNode?.metadata?.videoEndFrameNodeId].filter((id): id is string => Boolean(id)),
             promptOnly,
-            autoIncludeWorkflowMedia || (promptOnly && hasConnectedMedia),
+            includeConnectedMedia,
             connectedInputs,
+            options.preserveMediaBindings,
         );
+        const tableReferences = generationImageTableReferences(context.referenceImages, mentionInputs);
+        if (options.preserveMediaBindings) context.imageReferenceTableReferences = tableReferences;
+        else if (sourceNode?.type === CanvasNodeType.Image || sourceNode?.type === CanvasNodeType.Video) assertCanvasImageReferenceTable(context.prompt, tableReferences);
+        return context;
     }
 
     const isStoryboardMedia = sourceNode?.type === CanvasNodeType.Image || sourceNode?.type === CanvasNodeType.Video;
@@ -114,8 +120,11 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     const referenceVideos = connectedInputs.map((input) => input.video).filter((video): video is ReferenceVideo => Boolean(video));
     const referenceAudios = connectedInputs.map((input) => input.audio).filter((audio): audio is ReferenceAudio => Boolean(audio));
 
+    const composedPrompt = promptOnly ? prompt : upstreamText ? `${basePrompt}\n\n${upstreamText}` : basePrompt;
+    const tableReferences = generationImageTableReferences(referenceImages, connectedInputs);
+    if (!options.preserveMediaBindings && (sourceNode?.type === CanvasNodeType.Image || sourceNode?.type === CanvasNodeType.Video)) assertCanvasImageReferenceTable(composedPrompt, tableReferences);
     return {
-        prompt: promptOnly ? prompt : upstreamText ? `${basePrompt}\n\n${upstreamText}` : basePrompt,
+        prompt: composedPrompt,
         referenceImages,
         referenceVideos,
         referenceAudios,
@@ -126,6 +135,7 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
         imageCount: referenceImages.length,
         videoCount: referenceVideos.length,
         audioCount: referenceAudios.length,
+        ...(options.preserveMediaBindings ? { imageReferenceTableReferences: tableReferences } : {}),
     };
 }
 
@@ -186,10 +196,11 @@ function buildComposerGenerationContext(
     prompt: string,
     videoFrameNodeIds: string[] = [],
     promptOnly = false,
-    autoIncludeWorkflowMedia = false,
+    includeConnectedMedia = false,
     workflowMediaInputs: NodeGenerationInput[] = [],
+    preserveMediaBindings = false,
 ): NodeGenerationContext {
-    const normalizedPrompt = normalizeGenerationNodeMentionTokens(prompt, inputs);
+    const normalizedPrompt = preserveMediaBindings ? prompt : normalizeGenerationNodeMentionTokens(prompt, inputs);
     const slotInputByToken = new Map(generationSlotEntries(inputs).map(({ token, input }) => [token, input]));
     const assetInputById = new Map(inputs.filter((input) => input.nodeId.startsWith("asset:")).map((input) => [input.nodeId.slice("asset:".length), input]));
     const nodeInputById = new Map(inputs.filter((input) => !input.nodeId.startsWith("asset:")).map((input) => [input.nodeId, input]));
@@ -200,8 +211,9 @@ function buildComposerGenerationContext(
     let hasToken = false;
     let lastIndex = 0;
     let nextPrompt = "";
+    const boundMediaMentions = new Map<string, BoundMediaMention>();
 
-    if (autoIncludeWorkflowMedia) {
+    if (includeConnectedMedia) {
         // 先固定“图片1/视频1”等提示词标签的顺序，和工作流槽位保持一致；
         // 用户先 @ 第二张图时，提示词也不会把它误标成第一张。
         workflowMediaInputs.forEach((input) => {
@@ -211,7 +223,7 @@ function buildComposerGenerationContext(
         });
     }
 
-    for (const match of normalizedPrompt.matchAll(GENERATION_MENTION_PATTERN)) {
+    for (const match of canvasGenerationMentionMatches(normalizedPrompt)) {
         if (match.index === undefined) continue;
         nextPrompt += normalizedPrompt.slice(lastIndex, match.index);
         const input = resolveGenerationMention(normalizedPrompt, match, slotInputByToken, nodeInputById, assetInputById);
@@ -225,7 +237,11 @@ function buildComposerGenerationContext(
                 if (input.type === "text") textBlocks.push(`【${label}】\n${input.text || ""}`);
                 else selectedInputs.push(input);
             }
-            nextPrompt += input.type === "text" ? `【${label}】` : `@${label}`;
+            const media = input.image || input.video || input.audio;
+            if (preserveMediaBindings && match[1] && media && (input.type === "image" || input.type === "video" || input.type === "audio")) {
+                boundMediaMentions.set(match[0], { token: match[0], kind: input.type, referenceId: media.id });
+                nextPrompt += match[0];
+            } else nextPrompt += input.type === "text" ? `【${label}】` : `@${label}`;
         } else nextPrompt += match[0];
         lastIndex = match.index + match[0].length;
     }
@@ -233,7 +249,17 @@ function buildComposerGenerationContext(
     nextPrompt += normalizedPrompt.slice(lastIndex);
     // 显式 @文本 引用是用户写进输入框的内容，必须内联真实文本；promptOnly 只拦自动上游文本。
     if (textBlocks.length) nextPrompt = `${nextPrompt.trim()}\n\n${textBlocks.join("\n\n")}`;
-    if (autoIncludeWorkflowMedia) {
+    if (preserveMediaBindings) {
+        // Explicitly quoted text can itself contain selected media tokens.
+        for (const match of nextPrompt.matchAll(/@\[(node|asset):([^\]]+)\]/gu)) {
+            const input = match[1] === "node" ? nodeInputById.get(match[2]!) : assetInputById.get(match[2]!);
+            const media = input?.image || input?.video || input?.audio;
+            if (!input || !media || (input.type !== "image" && input.type !== "video" && input.type !== "audio")) continue;
+            boundMediaMentions.set(match[0], { token: match[0], kind: input.type, referenceId: media.id });
+            if (!selectedInputs.some((selected) => selected.nodeId === input.nodeId)) selectedInputs.push(input);
+        }
+    }
+    if (includeConnectedMedia) {
         // RunningHub/ComfyUI 工作流按保存的字段槽位接收图片、视频和音频；
         // 配置节点不能因为提示词里没有逐个 @ 就丢失已连接媒体。
         // 先按连线顺序放入媒体，避免用户在提示词里 @图片2 后改变工作流槽位的索引；
@@ -292,10 +318,11 @@ function buildComposerGenerationContext(
         imageCount: referenceImages.length,
         videoCount: referenceVideos.length,
         audioCount: referenceAudios.length,
+        ...(preserveMediaBindings ? {
+            boundMediaMentions: [...boundMediaMentions.values()],
+        } : {}),
     };
 }
-
-const GENERATION_MENTION_PATTERN = /@\[(node|asset):([^\]]+)\]|@(图片|视频|音频|文本|角色|绘图)(\d+)/g;
 
 export function generationInputMentionLabel(input: NodeGenerationInput, inputs: NodeGenerationInput[]) {
     const entry = generationSlotEntries(inputs).find((item) => item.input.nodeId === input.nodeId);
@@ -314,6 +341,22 @@ function hasResolvableGenerationMention(prompt: string, inputs: NodeGenerationIn
     return inspectGenerationMentions(prompt, inputs).hasResolved;
 }
 
+/** The prompt UI and the submit path share resource eligibility, not preview availability. */
+export function inspectNodeGenerationMentions(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string, assets: Asset[]) {
+    return inspectGenerationMentions(prompt, nodeGenerationMentionInputs(nodeId, nodes, connections, assets));
+}
+
+function nodeGenerationMentionInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], assets: Asset[]) {
+    const sourceNode = nodes.find((node) => node.id === nodeId);
+    const portraitTextureInput = sourceNode?.type === CanvasNodeType.Image && sourceNode.metadata?.content && sourceNode.metadata?.portraitTexture
+        ? (() => {
+              const image = readReferenceImage(sourceNode, nodes, connections);
+              return image ? [{ nodeId: sourceNode.id, type: "image" as const, title: sourceNode.title, image }] : [];
+          })()
+        : [];
+    return withArkAssetReferenceInputs(mergeGenerationInputs(buildNodeMentionGenerationInputs(nodeId, nodes, connections), portraitTextureInput, buildAssetGenerationInputs(assets)), nodes, assets);
+}
+
 function assertResolvableGenerationMentions(prompt: string, inputs: NodeGenerationInput[]) {
     const { unresolved } = inspectGenerationMentions(prompt, inputs);
     if (!unresolved.length) return;
@@ -327,7 +370,7 @@ function inspectGenerationMentions(prompt: string, inputs: NodeGenerationInput[]
     const assetInputById = new Map(inputs.filter((input) => input.nodeId.startsWith("asset:")).map((input) => [input.nodeId.slice("asset:".length), input]));
     const unresolved = new Set<string>();
     let hasResolved = false;
-    for (const match of normalizedPrompt.matchAll(GENERATION_MENTION_PATTERN)) {
+    for (const match of canvasGenerationMentionMatches(normalizedPrompt)) {
         if (match[3]) {
             const end = (match.index || 0) + match[0].length;
             if (!hasMentionBoundary(normalizedPrompt, end)) continue;
@@ -364,9 +407,14 @@ function resolveGenerationMention(
     return undefined;
 }
 
-function hasMentionBoundary(value: string, index: number) {
-    const char = value[index];
-    return !char || /\s|[,.!?;:，。！？；：、)\]}】）]/.test(char);
+function generationImageTableReferences(images: ReferenceImage[], inputs: NodeGenerationInput[]) {
+    const inputsByImageId = new Map(inputs.filter((input) => input.image).map((input) => [input.image!.id, input]));
+    const counts = { image: 0, drawing: 0 };
+    return images.map((image) => {
+        const input = inputsByImageId.get(image.id);
+        const kind = input?.sourceKind === "drawing" ? "drawing" : "image";
+        return { id: image.id, title: input?.title || image.name, label: generationLabel(kind, counts[kind]++) };
+    });
 }
 
 export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): NodeGenerationInput[] {
@@ -579,9 +627,22 @@ export async function hydrateNodeGenerationContext(context: NodeGenerationContex
     }));
     const referenceAudios = [...context.referenceAudios, ...characterVoiceAudios];
     const voiceBlocks = mode === "video" ? resolvedCharacterVoices.map(compileResolvedVoicePrompt) : [];
+    // 角色图可能被普通图片和其他角色的主图隔开；声音样本也可能已作为普通音频连接。
+    // 必须从最终发送数组取编号，不能用角色序号推算图片/音频序号。
+    const characterBindings = details.map((detail, index) => {
+        const reference = context.characterReferences[index]!;
+        const imageIds = referenceImages.filter((image) => image.sourceNodeId === reference.nodeId).map((image) => image.id);
+        const sampleResourceId = stringField(detail.character.voice?.profile.sampleResourceId);
+        const audioIds = mode === "video" && sampleResourceId
+            ? referenceAudios.filter((audio) => resourceIdFromStorageKey(audio.storageKey) === sampleResourceId).map((audio) => audio.id)
+            : [];
+        return { role: index + 1, name: detail.asset.title, imageIds, audioIds };
+    });
     return {
         ...context,
-        prompt: includeCharacterPrompt ? [context.prompt.trim(), ...characterBlocks, ...voiceBlocks].filter(Boolean).join("\n\n") : context.prompt,
+        // promptOnly 不追加角色设定，但已发送媒体的身份绑定不能被一起丢弃。
+        prompt: [context.prompt.trim(), ...(includeCharacterPrompt ? [...characterBlocks, ...voiceBlocks] : [])].filter(Boolean).join("\n\n"),
+        characterReferenceBindings: mode === "video" ? characterBindings : undefined,
         referenceImages,
         referenceAudios,
         resolvedCharacterVersions,
@@ -589,6 +650,18 @@ export async function hydrateNodeGenerationContext(context: NodeGenerationContex
         imageCount: referenceImages.length,
         audioCount: referenceAudios.length,
     };
+}
+
+/** Resolve bound references after model selection; only Seedance reference arrays use mention order. */
+export function compileNodeGenerationReferences<T extends NodeGenerationContext>(context: T, config: AiConfig, operation?: string): T {
+    const request = resolveModelRequestConfig(config, config.model);
+    const seedanceReferences = operation === "reference_to_video"
+        && (!config.taskWorkflowProvider || config.taskWorkflowProvider === "model")
+        && isSeedance2Family(request.interfaceType, request.model);
+    const compiled = compileBoundMediaReferences(context, seedanceReferences);
+    return seedanceReferences && context.characterReferenceBindings?.length
+        ? { ...compiled, prompt: `${renderCharacterReferenceBindings(context.characterReferenceBindings, compiled)}\n\n${compiled.prompt}` }
+        : compiled;
 }
 
 function readNodeTextInput(node: CanvasNodeData) {

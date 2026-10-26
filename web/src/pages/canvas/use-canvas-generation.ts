@@ -13,7 +13,7 @@ import { useTaskDetails } from "@/hooks/use-task-details";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
-import { canvasNodeNeedsGenerationRecovery, consumeGenerationRecoveryRestore, isGenerationRecoveryRestored } from "@/lib/canvas/canvas-project-generation";
+import { canvasNodeNeedsGenerationRecovery, consumeGenerationRecoveryRestore, isGenerationRecoveryRestored, MISSING_GENERATION_TASK_IDENTITY_DETAILS } from "@/lib/canvas/canvas-project-generation";
 import { generationFailureMetadata } from "@/lib/generation-error";
 import { canvasGenerationTaskNodes, canvasTaskFailureMetadata } from "./canvas-generation-failure";
 import { runGenerationConsumer } from "@/services/generation-consumer-lifecycle";
@@ -451,7 +451,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                                                             taskStage: "提交结果待确认",
                                                             errorDetails: "尚未查到上次提交的任务，请稍后重新打开画布查询，暂勿重新生成",
                                                         }
-                                                      : { errorDetails: INTERRUPTED_GENERATION_DETAILS }),
+                                                      : { errorDetails: ["submitting", "unknown"].includes(item.metadata?.generationSubmissionState || "") ? MISSING_GENERATION_TASK_IDENTITY_DETAILS : INTERRUPTED_GENERATION_DETAILS }),
                                               },
                                           }
                                         : item,

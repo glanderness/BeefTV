@@ -1,7 +1,7 @@
 import { App, Button } from "antd";
 import copy from "copy-to-clipboard";
 import { Crosshair, Undo2 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { ASSISTANT_PROPOSAL_INVALIDATED_TEXT, ASSISTANT_PROPOSAL_UNDONE_TEXT, agentAssistantFailureText, type AgentToolCall, type AssistantGenerationProposal, type AssistantTurn } from "@/services/api/agent-assistant";
@@ -35,13 +35,19 @@ type Props = {
     onCheckResults?: (nodeIds: string[]) => void;
 };
 
+const replyMarkdownComponents: Components = {
+    table: ({ children }) => <div className="canvas-assistant-table-scroll" role="region" aria-label="回复表格" tabIndex={0}>
+        <table>{children}</table>
+    </div>,
+};
+
 /** 助手回复用 Markdown 渲染，只走 react-markdown 的安全默认值，不放开原始 HTML。 */
 export function CanvasAssistantReply({ text }: { text: string }) {
     const visible = assistantVisibleReply(text);
     if (!visible) return null;
     return (
         <div className="canvas-assistant-reply">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{visible}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={replyMarkdownComponents}>{visible}</ReactMarkdown>
         </div>
     );
 }

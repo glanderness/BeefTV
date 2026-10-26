@@ -364,7 +364,10 @@ export function resetAgentUiSession() {
 
 export type AgentLifecycleEvent = {
     type: "lifecycle";
-    phase: "compaction" | "compaction_end" | "retry" | "retry_end" | "tool" | "tool_end";
+    phase: "compaction" | "compaction_end" | "retry" | "retry_end" | "tool" | "tool_end" | "business";
+    stage?: "processing" | "downloading" | "saving" | "saved" | "binding" | "rendering" | "exporting" | "checking" | "observation_unavailable";
+    saved?: number;
+    total?: number;
     toolName?: string;
     reason?: string;
     aborted?: boolean;

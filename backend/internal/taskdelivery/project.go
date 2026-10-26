@@ -13,7 +13,6 @@ type Projection struct {
 }
 
 func Project(task model.Task, stored []localtask.CanonicalOutput, loadErr error, failedRetryBlocked bool) Projection {
-	binding := localtask.TargetBindingFromInput(task.InputJSON)
 	parsed, _ := localtask.InspectResultJSON(task.ResultJSON, task.Type)
 	if loadErr != nil {
 		outputs := parsed
@@ -23,7 +22,7 @@ func Project(task model.Task, stored []localtask.CanonicalOutput, loadErr error,
 		for i := range outputs {
 			outputs[i].MaterializedAssetID = ""
 			outputs[i].MaterializationErrorCode = localtask.MaterializeErrorDeliveryUnreadable
-			outputs[i] = localtask.BindOutput(outputs[i], task.ID, binding)
+			outputs[i] = localtask.BindOutput(outputs[i], task.ID, localtask.OutputBinding(task, outputs[i].OutputIndex))
 		}
 		return Projection{Outputs: outputs, ResultState: localtask.ResultStateFailedRetryable, Stage: task.Stage, Err: loadErr}
 	}
@@ -42,7 +41,7 @@ func Project(task model.Task, stored []localtask.CanonicalOutput, loadErr error,
 		if output.MaterializedAssetID == "" && (task.Stage == "delivery_paused" || task.Stage == "delivery_timed_out") {
 			output.MaterializationErrorCode = task.Stage
 		}
-		merged = append(merged, localtask.BindOutput(output, task.ID, binding))
+		merged = append(merged, localtask.BindOutput(output, task.ID, localtask.OutputBinding(task, output.OutputIndex)))
 	}
 	state := localtask.ResultState(task.Status, merged, failedRetryBlocked)
 	stage := task.Stage

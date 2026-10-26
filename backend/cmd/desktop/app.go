@@ -264,7 +264,7 @@ func (a *DesktopApp) startup(ctx context.Context) {
 	a.mu.Lock()
 	a.wailsCtx = ctx
 	a.mu.Unlock()
-	if err := a.start(ctx); err != nil {
+	if err := prepareDesktopApp(a); err != nil {
 		log.Printf("启动本地后端失败: %v", err)
 		wailsruntime.LogErrorf(ctx, "启动本地后端失败: %v", err)
 		wailsruntime.Quit(ctx)

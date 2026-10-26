@@ -45,7 +45,7 @@ func (s *Service) validateImageTaskRetry(task *model.Task) error {
 	}
 	row, err := s.repo.ImageSubmission(attempt.ID, task.ID, task.UserID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		if attempt.DispatchState == "submission_unknown" || attempt.DispatchState == "accepted" {
+		if attempt.DispatchState == "accepted" || attempt.DispatchState == "submission_unknown" {
 			return BadAuthRequest("图片请求可能已经生成，请保留任务记录并联系支持查询结果，不要重复提交")
 		}
 		return nil
@@ -351,6 +351,9 @@ func (s *Service) sendImageSubmissionWith(ctx context.Context, task model.Task, 
 				return nil, "", imageRecoveryError{err}
 			}
 			return data, mime, nil
+		}
+		if definiteImageInputRejection(sendErr) && (row.ResponseAccepted || row.SendCount > 1) {
+			return nil, "", imageRecoveryError{sendErr}
 		}
 		if !row.ResponseAccepted && definiteMidjourneyCountRejection(sendErr) {
 			return nil, "", sendErr

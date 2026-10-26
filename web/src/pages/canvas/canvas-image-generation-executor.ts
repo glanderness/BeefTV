@@ -4,7 +4,7 @@ import { projectCanvasGenerationSubmission, rebaseCanvasGenerationTarget } from 
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { canGenerateImageInPlace, findAvailableGenerationGroupPosition, imageGenerationChildPosition, generationFailureNodeStatus, imageGenerationGroupSize } from "@/lib/canvas/canvas-generation-layout";
 import { cancelIncompleteImageBatch, retireImageBatchChildren } from "@/lib/canvas/canvas-image-batch-retry";
-import { buildImageGenerationNodeTitle } from "@/lib/canvas/canvas-generation-title";
+import { buildImageGenerationNodeTitle, promptNodeTitle } from "@/lib/canvas/canvas-generation-title";
 import { nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { canvasImageReferenceLimitError, buildImageGenerationMetadata, clearInPlaceMediaOutputMetadata, getGenerationCount, isGenerationCanceled, resetGenerationTaskMetadata, runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
 import { imageGenerationReferenceConnections } from "@/lib/canvas/canvas-resource-references";
@@ -197,7 +197,7 @@ export async function executeImageGeneration({
             return {
                 ...node,
                 type: CanvasNodeType.Text,
-                title: prompt.slice(0, 32) || "Prompt",
+                title: promptNodeTitle(node, prompt),
                 width: parentConfig.width,
                 height: parentConfig.height,
                 metadata: { ...node.metadata, content: prompt, richText: undefined, prompt, composerContent: prompt, status: NODE_STATUS_SUCCESS, fontSize: 14, errorDetails: undefined },

@@ -157,6 +157,7 @@ export type GenerationTaskPageRequest = {
 
 /** A missing receipt never authorizes another paid generation. */
 export async function findGenerationTaskByOperation(operationId: string, projectId: string, signal?: AbortSignal): Promise<GenerationTask | undefined> {
+    if (typeof operationId !== "string" || !operationId.trim()) throw new Error("缺少提交标识，无法查询原任务");
     try {
         return await http.get<GenerationTask>(`/tasks/by-operation/${encodeURIComponent(operationId)}`, { params: { projectId }, signal });
     } catch (error) {
@@ -335,8 +336,8 @@ export function queryTaskTextReplay(id: string, after = 0) {
     return http.get<TaskTextReplay>(`/tasks/${encodeURIComponent(id)}/text-deltas`, { params: { after } });
 }
 
-export function retryGenerationTask(id: string) {
-    return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/retry`);
+export function retryGenerationTask(id: string, options?: { signal?: AbortSignal; expectedScope?: CapturedUserScope }) {
+    return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/retry`, undefined, options);
 }
 
 export function cancelGenerationTask(id: string, expectedScope = captureUserScope()) {

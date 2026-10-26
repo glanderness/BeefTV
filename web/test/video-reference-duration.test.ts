@@ -3,13 +3,13 @@ import { modelCapabilityConfigFor } from "../src/lib/model-capabilities";
 import { assertReferenceDuration, assertVideoCapability } from "../src/services/api/video-validation";
 
 test("duration bounds work independently and remain actionable after persistence", () => {
-    expect(() => assertReferenceDuration("音频", 0, 16000, 0, 15)).toThrow("不超过 15");
-    expect(() => assertReferenceDuration("音频", 0, 1000, 2, 0)).toThrow("至少 2");
+    expect(() => assertReferenceDuration("音频", 0, 16000, 0, 15)).toThrow("需要改到 15 秒以内");
+    expect(() => assertReferenceDuration("音频", 0, 1000, 2, 0)).toThrow("需要改到 2 秒以上");
     expect(() => assertReferenceDuration("音频", 0, undefined, 0, 0)).not.toThrow();
     expect(() => assertReferenceDuration("音频", 0, 15000, 0, 15)).not.toThrow();
     for (const [duration, min, max, bound] of [
-        [16000, 0, 15, "不超过 15"],
-        [1000, 2, 0, "至少 2"],
+        [16000, 0, 15, "15 秒以内"],
+        [1000, 2, 0, "2 秒以上"],
     ] as const) {
         try {
             assertReferenceDuration("音频", 0, duration, min, max);
@@ -40,15 +40,25 @@ for (const protocol of ["newapi-channel-2", "newapi", "openai"] as const) {
                 { channels: [{ id: "test", models: [model], baseUrl: protocol === "openai" ? "https://legacy.example.com" : "https://enterprise.beefapi.com", modelProfiles: [{ model, protocol }] }] },
                 `test::${model}`,
             ).video!;
-            const audio = (durationMs: number) => ({ id: "audio", name: "声音", type: "audio/mpeg", url: "https://example.com/a.mp3", durationMs });
-            expect(() => assertVideoCapability(profile, validImages, [], [audio(2500), audio(900)], "5")).toThrow("第 2 段参考音频时长为 0.90 秒");
-            expect(() => assertVideoCapability(profile, validImages, [], [audio(0)], "5")).toThrow("时长无法读取");
+            const audio = (durationMs: number, name = "声音") => ({ id: "audio", name, type: "audio/mpeg", url: "https://example.com/a.mp3", durationMs });
+            // 提示要说清哪一项、现在多少、要改成多少。
+            expect(() => assertVideoCapability(profile, validImages, [], [audio(2500), audio(900, "配音.wav")], "5")).toThrow(`音频「配音.wav」时长为 0.90 秒，需要改到 2–${profile.references.maxAudioDurationSeconds} 秒；请换一段更长的音频后再提交`);
+            expect(() => assertVideoCapability(profile, validImages, [], [audio(0)], "5")).toThrow("音频「声音」的时长无法读取");
             expect(() => assertVideoCapability(profile, validImages, [], [audio(1700)], "5")).toThrow("1.70");
-            expect(() => assertVideoCapability(profile, validImages, [], [audio(1800)], "5")).not.toThrow();
-            const failure = explainGenerationError("第 2 段参考音频时长为 0.90 秒，需要 2–30 秒；请裁剪或更换这段素材后再提交");
+            expect(() => assertVideoCapability(profile, validImages, [], [audio(1800)], "5")).toThrow("1.80");
+            expect(() => assertVideoCapability(profile, validImages, [], [audio(2000)], "5")).not.toThrow();
+            // 过长要说裁短，过短才说换更长；照做才能通过。
+            const tooLong = (profile.references.maxAudioDurationSeconds + 1) * 1000;
+            expect(() => assertVideoCapability(profile, validImages, [], [audio(tooLong)], "5")).toThrow("请裁剪或换一段更短的音频后再提交");
+            // 只有序号没有素材名时退回序号写法。
+            expect(() => assertReferenceDuration("音频", 1, 900, 2, 0)).toThrow("第 2 段参考音频时长为 0.90 秒");
+            const failure = explainGenerationError("音频「配音.wav」时长为 0.90 秒，需要改到 2 秒以上；请换一段更长的音频后再提交");
             expect(failure.category).toBe("invalid_params");
-            expect(failure.reason).toContain("第 2 段");
-            expect(failure.action).toContain("2–30");
+            expect(failure.reason).toContain("配音.wav");
+            expect(failure.action).toContain("2 秒以上");
+            const ranged = explainGenerationError("第 2 段参考音频时长为 0.90 秒，需要改到 2–30 秒；请裁剪到这段区间内或换一段后再提交");
+            expect(ranged.reason).toContain("第 2 段");
+            expect(ranged.action).toContain("2–30");
         });
     }
 }
@@ -148,7 +158,7 @@ test("image geometry and request size are checked before submit", () => {
 
 test("legacy channel protocol without model profiles still applies Seedance duration limits", () => {
     const profile = modelCapabilityConfigFor({ channels: [{ id: "legacy", interfaceType: "openai", models: ["seedance-2.5"] }] }, "legacy::seedance-2.5").video!;
-    expect(profile.references.minAudioDurationSeconds).toBe(1.8);
+    expect(profile.references.minAudioDurationSeconds).toBe(2);
     expect(profile.references.maxAudioDurationSeconds).toBe(30);
 });
 

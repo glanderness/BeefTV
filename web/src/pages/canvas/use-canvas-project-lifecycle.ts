@@ -1,4 +1,5 @@
 import { mergeCanvasRefreshPatch } from "@/lib/canvas/canvas-patch-merge";
+import { canvasDocumentMatchesFields, sameCanvasDocumentValue } from "@/lib/canvas/canvas-document-equality";
 import { rebaseCanvasDocumentThreeWay } from "@/lib/canvas/canvas-document-rebase";
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
@@ -29,6 +30,8 @@ import { useUserStore } from "@/stores/use-user-store";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 import type { CanvasHistorySnapshot } from "./use-canvas-history";
+
+const CANVAS_VIEWPORT_SAVE_DELAY_MS = 2000;
 
 function isExpectedLocalOnlySyncError(error: unknown) {
     const message = error instanceof Error ? error.message : String(error || "");
@@ -99,7 +102,7 @@ function mergeBaseNodes(base: CanvasNodeData[], observed: CanvasNodeData[] | nul
 }
 
 function sameJson(left: unknown, right: unknown) {
-    return left === right || JSON.stringify(left) === JSON.stringify(right);
+    return sameCanvasDocumentValue(left, right);
 }
 
 function sameEditorDocument(left: EditorDocument, right: EditorDocument) {
@@ -539,7 +542,7 @@ export function useCanvasProjectLifecycle({
         if (observedContentRef.current !== observedAtRender) return;
         const snapshot = { nodes, connections, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo };
         if (!observedContentRef.current) return;
-        if (JSON.stringify(observedContentRef.current) === JSON.stringify(snapshot)) {
+        if (canvasDocumentMatchesFields(observedContentRef.current, snapshot)) {
             // Task acknowledgements can already be present in the store before
             // this editor observes them. Equal local graphs still need a CAS save
             // when the backend has not confirmed that document yet.
@@ -555,7 +558,7 @@ export function useCanvasProjectLifecycle({
         const patch = { nodes: next.nodes, connections: next.connections, chatSessions: next.chatSessions, activeChatId: next.activeChatId, appearance: canvasAppearance, backgroundMode, showImageInfo };
         const stored = storedEditorProject();
         // 远端结果投影到编辑器不是一次本地编辑，避免改写时间戳并触发反向保存。
-        if (stored && Object.entries(patch).every(([key, value]) => JSON.stringify(stored[key as keyof CanvasProject]) === JSON.stringify(value))) {
+        if (stored && canvasDocumentMatchesFields(stored, patch)) {
             observedStoreRef.current = stored;
             if (localMode && hasUnconfirmedCanvasEdits(projectId)) scheduleLocalCanvasBackendSync(projectId);
             return;
@@ -568,11 +571,14 @@ export function useCanvasProjectLifecycle({
     useEffect(() => {
         if (!projectLoaded || editorProjectIdRef.current !== projectId) return;
         if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
+        // Persisting reconciles and serializes the whole canvas store. Wait
+        // until the camera has rested so the write never lands between wheel
+        // notches; unmount and leave flushes still save the latest viewport.
         viewportSaveTimerRef.current = setTimeout(() => {
             if (editorProjectIdRef.current !== projectId) return;
             updateProject(projectId, { viewport: viewportRef.current });
             viewportSaveTimerRef.current = null;
-        }, 500);
+        }, CANVAS_VIEWPORT_SAVE_DELAY_MS);
         return () => {
             if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
         };
@@ -602,7 +608,7 @@ export function useCanvasProjectLifecycle({
             if (!useCanvasStore.getState().openProject(projectId)) return;
             const live = leaveFlushStateRef.current;
             const snapshot = { nodes: nodesRef.current, connections: connectionsRef.current, ...live };
-            if (observedContentRef.current && JSON.stringify(observedContentRef.current) !== JSON.stringify(snapshot)) {
+            if (observedContentRef.current && !canvasDocumentMatchesFields(observedContentRef.current, snapshot)) {
                 traceCanvasGraph("editor.leaveFlush", { observed: { id: projectId, ...observedContentRef.current }, live: { id: projectId, ...snapshot }, stored: useCanvasStore.getState().openProject(projectId) });
                 const { next } = reconcileEditorSnapshot(snapshot);
                 updateProject(projectId, {
@@ -683,7 +689,7 @@ export function useCanvasProjectLifecycle({
     const persistLocalEdits = useCallback(async () => {
         if (!projectLoaded || editorProjectIdRef.current !== projectId) return;
         const snapshot = { nodes: nodesRef.current, connections: connectionsRef.current, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo };
-        if (observedContentRef.current && JSON.stringify(observedContentRef.current) !== JSON.stringify(snapshot)) {
+        if (observedContentRef.current && !canvasDocumentMatchesFields(observedContentRef.current, snapshot)) {
             traceCanvasGraph("editor.explicitSave", { observed: { id: projectId, ...observedContentRef.current }, live: { id: projectId, ...snapshot }, stored: useCanvasStore.getState().openProject(projectId) });
             const { next } = reconcileEditorSnapshot(snapshot);
             updateProject(projectId, {

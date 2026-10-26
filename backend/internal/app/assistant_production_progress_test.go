@@ -220,6 +220,45 @@ func TestProductionProgressFailedDependentWaitsForVoice(t *testing.T) {
 	}
 }
 
+func TestProductionProgressFailureWaitsForSuccessfulSiblingMaterialization(t *testing.T) {
+	svc, canvasID, id := productionProgressFixture(t)
+	expectProgressWaiting(t, svc, id, 2)
+	image, voice := progressTask(t, svc, "image"), progressTask(t, svc, "speech")
+	svc.Database().Model(&image).Update("status", model.TaskStatusFailed)
+	svc.Database().Model(&voice).Update("status", model.TaskStatusSucceeded)
+	// The provider finished, but the canonical file and binding are absent.
+	expectProgressWaiting(t, svc, id, 2)
+	completeProgressMaterial(t, svc, canvasID, "speech")
+	claim, err := svc.ClaimAssistantContinuation("local", id)
+	if err != nil || claim.State != "claimed" {
+		t.Fatalf("saved sibling did not release original failure: %v %v", claim, err)
+	}
+	if progressTask(t, svc, "speech").ID != voice.ID {
+		t.Fatal("materialization replaced the original task")
+	}
+}
+
+func TestProductionProgressMaterializationFailureIsReportedWithoutRepurchase(t *testing.T) {
+	svc, _, id := productionProgressFixture(t)
+	expectProgressWaiting(t, svc, id, 2)
+	image, voice := progressTask(t, svc, "image"), progressTask(t, svc, "speech")
+	svc.Database().Model(&image).Update("status", model.TaskStatusFailed)
+	svc.Database().Model(&voice).Update("status", model.TaskStatusSucceeded)
+	output, _ := json.Marshal(localtask.CanonicalOutput{OutputIndex: 0, MediaType: "audio", MaterializationErrorCode: "download_failed", TargetBinding: &localtask.TargetBinding{NodeID: "speech"}})
+	if err := svc.Database().Create(&model.Result{ID: "failed-voice-file", UserID: "local", TaskID: voice.ID, Kind: localtask.ResultKindGenerationOutput, Payload: string(output)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	claim, err := svc.ClaimAssistantContinuation("local", id)
+	if err != nil || claim.State != "claimed" {
+		t.Fatalf("known materialization failure was hidden: %v %v", claim, err)
+	}
+	var count int64
+	svc.Database().Model(&model.Task{}).Count(&count)
+	if count != 2 {
+		t.Fatal("known failure caused another purchase", count)
+	}
+}
+
 func TestProductionProgressChangedInputsStopFurtherAdmissions(t *testing.T) {
 	svc, canvasID, id := productionProgressFixture(t)
 	raw, _ := svc.UserCanvasProject("local", canvasID)

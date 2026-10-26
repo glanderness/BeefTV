@@ -9,6 +9,8 @@ import { buildImageResolutionOptions, formatImageResolutionSize } from "@/lib/im
 import { modelCapabilityConfigFor, normalizeImageValue, type ImageCapabilityConfig } from "@/lib/model-capabilities";
 import { mergedImageCapabilityConfig } from "@/lib/model-selection";
 import { type AiConfig } from "@/stores/use-config-store";
+import { seedreamFamily } from "@/lib/seedream-image";
+import { SeedreamSettings } from "./seedream-settings";
 
 const qualityOptions = [
     { value: "auto", label: "自动" },
@@ -45,7 +47,7 @@ const aspectOptions: AspectOption[] = [
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "quality" | "size" | "transparentBackground" | "count", value: string) => void;
+    onConfigChange: (key: "quality" | "size" | "transparentBackground" | "count" | "seedreamMode" | "seedreamMaxImages" | "seedreamOutputFormat" | "seedreamOptimize" | "seedreamWatermark", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     showQuality?: boolean;
@@ -59,6 +61,7 @@ type ImageSettingsPanelProps = {
 
 export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, showQuality = true, showTransparent = true, showSize = true, showCount = true, className = "w-[304px] space-y-3 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 3 }: ImageSettingsPanelProps) {
     const profile = mergedImageCapabilityConfig(config, config.model || config.imageModel);
+    const seedream = seedreamFamily(config.model || config.imageModel);
     const normalized = normalizeImageValue(profile, config);
     const quality = normalized.quality;
     const transparentBackground = normalized.transparentBackground === "true";
@@ -90,25 +93,25 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         ))}
                     </div>
                 </div> : null}
-                {showTransparent && profile.transparentBackground.supported ? <div className="flex items-center justify-between gap-3">
+                {showTransparent && profile.transparentBackground.supported && (!seedream || config.seedreamMode !== "layers") ? <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
                         <SettingTitle color={theme.node.muted}>透明背景</SettingTitle>
                         <div className="mt-1 text-[var(--fs-label)]" style={{ color: theme.node.muted }}>
-                            请求模型输出保留 Alpha 通道的 PNG
+                            {seedream ? "保留参考图中的透明区域，需要连接一张透明图片。" : "请求模型输出保留 Alpha 通道的 PNG"}
                         </div>
                     </div>
                     <span title="是否支持透明背景由当前模型接口决定" onMouseDown={(event) => event.stopPropagation()}>
                         <Switch
                             size="sm"
                             checked={transparentBackground}
-                            onChange={(checked) => onConfigChange("transparentBackground", checked ? "true" : "false")}
+                            onChange={(checked) => { onConfigChange("transparentBackground", checked ? "true" : "false"); if (checked && seedream) onConfigChange("seedreamOutputFormat", "png"); }}
                         />
                     </span>
                 </div> : null}
-                {showSize ? <ImageSizePicker profile={profile} size={activeSize} quality={quality} onChange={(size, nextQuality) => applyImageSizeSelection(onConfigChange, size, nextQuality)} /> : null}
+                {seedream ? <SeedreamSettings config={config} family={seedream} profile={profile} onChange={onConfigChange} theme={theme} /> : showSize ? <ImageSizePicker profile={profile} size={activeSize} quality={quality} onChange={(size, nextQuality) => applyImageSizeSelection(onConfigChange, size, nextQuality)} /> : null}
                 {showCount && profile.fixedOutputs ? (
                     <div className="space-y-2">
-                        <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
+                        <SettingTitle color={theme.node.muted}>{seedream ? "生成批次" : "生成张数"}</SettingTitle>
                         <div className="grid grid-cols-3 gap-1.5">
                             {(batchCounts?.length ? batchCounts : [profile.fixedOutputs]).map((value) => <OptionPill key={value} selected={count === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>{value}</OptionPill>)}
                         </div>
@@ -116,7 +119,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     </div>
                 ) : showCount && effectiveMaxCount > 1 ? (
                     <div className="space-y-2">
-                        <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
+                        <SettingTitle color={theme.node.muted}>{seedream ? "生成批次" : "生成张数"}</SettingTitle>
                         <div className="grid grid-cols-4 gap-1.5">
                             {Array.from({ length: Math.min(quickCount, effectiveMaxCount) }, (_, index) => index + 1).map((value) => (
                                 <OptionPill key={value} selected={count === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>

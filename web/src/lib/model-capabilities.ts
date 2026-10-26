@@ -1,6 +1,8 @@
 import { isVolcengineArkVideoProtocol, type ModelProtocol, type ModelProtocolWorkflow } from "@/lib/model-protocols";
 import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
+import { seedreamFamily, seedreamImageCapability } from "@/lib/seedream-image";
 import type { ImageResolutionOption, ImageResolutionTier } from "@/lib/image-resolution-tiers";
+import { videoPromptLimits } from "@/lib/video-prompt-limits";
 
 export type ModelCapabilityConfig = {
     version: number;
@@ -25,14 +27,16 @@ export type TextCapabilityConfig = {
 
 export type ImageSizeParameter = "none" | "size" | "aspect_ratio";
 
+export type ImageResponseFormat = "b64_json" | "url";
+
 /**
- * 普通视频模型提示词字符数的默认上限。
- *
- * 视频提示词由「输入框文本 + 连线内容 + 技能上下文」合成，远长于用户手输内容，
- * 因此不能沿用偏小的默认值把画布工作流拦在本地。必须与后端
- * `DefaultVideoPromptMaxChars` 保持一致，否则前端放行后端拒绝（或反之）。
+ * 图片接口 response_format 的开关与取值。
+ * value 留空时按 b64_json 处理，让没有选过的渠道保持原有行为。
  */
-export const DEFAULT_VIDEO_PROMPT_MAX_CHARS = 8000;
+export type ImageResponseFormatConfig = { supported: boolean; value?: ImageResponseFormat };
+
+/** 0 means no documented local character limit; the supplier still validates. */
+export const DEFAULT_VIDEO_PROMPT_MAX_CHARS = 0;
 
 export type ImageCapabilityConfig = {
     references: {
@@ -54,7 +58,7 @@ export type ImageCapabilityConfig = {
         default: string;
     };
     transparentBackground: { supported: boolean; default: boolean };
-    responseFormat: { supported: boolean };
+    responseFormat: ImageResponseFormatConfig;
     outputFormat: { supported: boolean };
     maxOutputs: number;
     fixedOutputs?: number;
@@ -65,6 +69,7 @@ export type ImageCapabilityConfig = {
 export type VideoCapabilityConfig = {
     references: {
         promptMaxChars: number;
+        promptMaxUtf16Units?: number;
         minImages: number;
         maxImages: number;
         maxImageBytes: number;
@@ -165,7 +170,8 @@ export function normalizeModelCapabilityConfig(config: ModelCapabilityConfig): M
 }
 
 const catalogIntBounds: Record<string, [number, number]> = {
-    promptMaxChars: [1, 1_000_000],
+    promptMaxChars: [0, 1_000_000],
+    promptMaxUtf16Units: [0, 1_000_000],
     minImages: [0, 100],
     maxImages: [0, 100],
     maxVideos: [0, 100],
@@ -381,6 +387,8 @@ const defaultImageSizes = [
 ];
 
 export function upgradeGPTImageCapability(profile: ImageCapabilityConfig, protocol: ModelProtocol | undefined, model: string): ImageCapabilityConfig {
+    const seedream = seedreamImageCapability(model);
+    if (seedream) return seedream;
     if (protocol !== "openai-image" || !["gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"].includes(model.trim().toLowerCase())) return profile;
     if (!Array.isArray(profile.quality?.values) || !Array.isArray(profile.size?.values)) return profile;
     const defaults = defaultImageCapabilityConfig(protocol, model);
@@ -393,6 +401,8 @@ export function upgradeGPTImageCapability(profile: ImageCapabilityConfig, protoc
 }
 
 export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = ""): ImageCapabilityConfig {
+    const seedream = seedreamImageCapability(model);
+    if (seedream) return seedream;
     const image: ImageCapabilityConfig = {
         references: { promptMaxChars: 32000, maxImages: 16, maxImageBytes: 30 * 1024 * 1024, maskSupported: true },
         size: { parameter: "size", values: [...defaultImageSizes], default: "1:1", allowCustom: true },
@@ -505,6 +515,24 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
         image.maxOutputs = 1;
     }
     return image;
+}
+
+/** 图片接口实际要发送的 response_format：未开启返回 null，没选过取值时按 b64_json。 */
+export function resolveImageResponseFormat(profile: ImageCapabilityConfig | undefined): ImageResponseFormat | null {
+    if (!profile?.responseFormat?.supported) return null;
+    return profile.responseFormat.value === "url" ? "url" : "b64_json";
+}
+
+/**
+ * 能力编辑器里是否允许选择 response_format 的取值。
+ * 只有走通用 OpenAI 兼容图片请求的渠道会按配置发出这个参数：
+ * 本体自营的 BeefAPI 图片契约固定接受内联 base64，grok / seedream / 火山等协议各自写死请求体，
+ * 给出选项却发不出去，等于又造一个「设置了不生效」。
+ */
+export function imageResponseFormatSelectable(protocol: ModelProtocol | undefined, model: string) {
+    if (protocol !== "openai-image" || beefAPIImageContract(model)) return false;
+    // Seedream 走专用请求体，单图分支写死 b64_json，选了 url 也发不出去。
+    return !seedreamFamily(model);
 }
 
 export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = ""): ModelCapabilityConfig {
@@ -640,7 +668,6 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
     if (isSeedance2Family(protocol, model)) {
         if (protocol === "newapi") video.generateAudio = { supported: true, default: true };
         video.references = overlayOfficialSeedance2References(video.references, isSeedance25Model(model));
-        if (protocol === "volcengine-ark-video" || protocol === "volcengine-ark-agent-plan-video") video.references.minAudioDurationSeconds = 2;
         video.operations = Array.from(new Set([...video.operations, "reference_to_video", ...(isSeedance25Model(model) ? ["audio_to_video" as const] : [])]));
         if (isSeedance25Model(model) && video.duration.selection === "range" && (video.duration.max || 0) < 30) {
             video.duration = { ...video.duration, max: 30 };
@@ -651,6 +678,7 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.ratios = [...video.ratios, "adaptive"];
         if (isSeedance25Model(model)) video.operations = [...video.operations, "inpaint", "extend"];
     }
+    Object.assign(video.references, videoPromptLimits(protocol, model));
     return { version: 1, text, image: defaultImageCapabilityConfig(protocol, model), video };
 }
 
@@ -690,21 +718,27 @@ export function modelCapabilityConfigFor(
     try {
         if (protocol === "openai-image" && beefAPIImageContract(modelName)?.fixedOutputs && ["beeftv.app", "beefapi.com", "enterprise.beefapi.com", "whatstoken.ai", "www.whatstoken.ai"].includes(new URL(channel?.baseUrl || "").hostname.toLowerCase())) return fallback;
     } catch { /* Config without a public endpoint uses its stored capabilities. */ }
-    const alignMaterialPixels = (video: VideoCapabilityConfig | undefined) => {
+    // 官方文档写的下限只收紧、不放宽，所以旧安装里存下来的 1 秒输出、1.8 秒音频也会被改到文档值；
+    // 管理员已经配得更严的数值保持不变。
+    const alignDocumentedRouteLimits = (video: VideoCapabilityConfig | undefined) => {
+        if (!video || !isSeedance2Family(protocol, modelName)) return;
         let host = "";
         try { host = new URL(channel?.baseUrl || "").hostname.toLowerCase(); } catch { /* no public URL */ }
-        const materialHost = ["beeftv.app", "enterprise.beefapi.com", "beefapi.com", "whatstoken.ai", "www.whatstoken.ai"].includes(host);
-        if (video && isSeedance2Family(protocol, modelName) && (isVolcengineArkVideoProtocol(protocol) || materialHost) && video.references.minVideoPixels === 409600 && video.references.maxVideoPixels === 8295044) video.references.minVideoPixels = 407696;
+        const materialHost = ["beeftv.app", "enterprise.beefapi.com", "beefapi.com", "whatstoken.ai", "www.whatstoken.ai"].includes(host) || channel?.id === "beefapi";
+        if ((isVolcengineArkVideoProtocol(protocol) || materialHost) && video.references.minVideoPixels === 409600 && video.references.maxVideoPixels === 8295044) video.references.minVideoPixels = 407696;
+        // 输出时长下限官方 4 秒：区间、连续（fractionalMin）和枚举三种配置都要收紧，枚举里的 -1（自动）保留。
+        video.duration = tightenDocumentedOutputDuration(video.duration);
+        if ((video.references.minAudioDurationSeconds || 0) < 2) video.references.minAudioDurationSeconds = 2;
     };
 
     if (!profile?.capabilityConfig) {
-        alignMaterialPixels(fallback.video);
+        alignDocumentedRouteLimits(fallback.video);
         return fallback;
     }
     const capabilityConfig = normalizeModelCapabilityConfig(profile.capabilityConfig);
     const text = capabilityConfig.text ? { ...fallback.text!, ...capabilityConfig.text, references: { ...fallback.text!.references, ...capabilityConfig.text.references } } : fallback.text;
-    const video = (capabilityConfig.video ? { ...fallback.video!, ...capabilityConfig.video, references: { ...fallback.video!.references, ...capabilityConfig.video.references } } : fallback.video)!;
-    alignMaterialPixels(video);
+    const video = (capabilityConfig.video ? { ...fallback.video!, ...capabilityConfig.video, references: { ...fallback.video!.references, ...capabilityConfig.video.references, promptMaxUtf16Units: capabilityConfig.video.references.promptMaxUtf16Units ?? 0 } } : fallback.video)!;
+    alignDocumentedRouteLimits(video);
     const configuredImage = capabilityConfig.image;
     const image = configuredImage
         ? (() => {
@@ -731,13 +765,31 @@ export function modelCapabilityConfigFor(
     return { ...fallback, ...capabilityConfig, text, image, video };
 }
 
-function isSeedance2Family(protocol: ModelProtocol | undefined, modelName: string) {
+export function isSeedance2Family(protocol: ModelProtocol | undefined, modelName: string) {
     return Boolean(protocol && ["openai", "openai-videos", "newapi", "newapi-channel-2", "volcengine-ark-video", "volcengine-ark-agent-plan-video"].includes(protocol) && String(modelName).toLowerCase().includes("seedance-2"));
 }
 
 export function isSeedance25Model(modelName: string) {
     const base = String(modelName).trim().toLowerCase().split("/").pop() || "";
     return /^seedance-2\.5(?:-|$)/.test(base) || /^(?:doubao|dreamina)-seedance-2[.-]5(?:-|$)/.test(base);
+}
+
+// 输出时长下限官方 4 秒：区间、连续（fractionalMin）和枚举三种已保存配置都要收紧，
+// 枚举里的 -1（自动）保留，管理员配得更严的数值（比如枚举只剩 [5,10]）不受影响。
+export function tightenDocumentedOutputDuration(duration: VideoCapabilityConfig["duration"]): VideoCapabilityConfig["duration"] {
+    const minimum = 4;
+    if (duration.selection === "enum") {
+        const values = (duration.values || []).filter((value) => value === -1 || value >= minimum);
+        // 过滤后没有合法时长时保留空列表：这份配置没有可提交的时长，提交校验会拒绝，
+        // 而不是退回原来的低于 4 秒的值。
+        const kept = values.length ? (values.includes(duration.default) ? duration.default : values.find((value) => value !== -1) ?? values[0]) : duration.default;
+        return { ...duration, values, default: kept };
+    }
+    const min = Math.max(minimum, duration.min || 0);
+    const fractionalMin = duration.continuous && duration.fractionalMin && duration.fractionalMin < minimum ? minimum : duration.fractionalMin;
+    const fallback = Math.max(minimum, duration.default);
+    if (min === duration.min && fractionalMin === duration.fractionalMin && fallback === duration.default) return duration;
+    return { ...duration, min, ...(duration.continuous ? { fractionalMin } : {}), default: fallback };
 }
 
 function overlayOfficialSeedance2References(base: VideoCapabilityConfig["references"], is25: boolean): VideoCapabilityConfig["references"] {
@@ -752,7 +804,7 @@ function overlayOfficialSeedance2References(base: VideoCapabilityConfig["referen
         maxAudios: is25 ? 10 : 3,
         maxAudioBytes: 15 * 1024 * 1024,
         maxAudioDurationSeconds: is25 ? 30 : 15,
-        minAudioDurationSeconds: 1.8,
+        minAudioDurationSeconds: 2,
         maxAudioTotalDurationSeconds: is25 ? 30 : 15,
         maxImageBytes: base.maxImageBytes || 30 * 1024 * 1024,
         minImageWidth: 300,
@@ -1422,6 +1474,20 @@ function normalizeRangeDuration(profile: VideoCapabilityConfig, value: number) {
 	if (profile.duration.continuous) return clamped;
     const maxStep = Math.max(0, Math.floor((max - min) / step));
     return min + Math.min(maxStep, Math.max(0, Math.round((clamped - min) / step))) * step;
+}
+
+// 把模型支持的输出时长写成能照着改的说法：「4–15 秒」「5、10 秒」「自动 或 4–15 秒」。
+export function videoDurationRequirement(duration: VideoCapabilityConfig["duration"]): string {
+    if (duration.selection === "enum") {
+        const manual = (duration.values || []).filter((value) => value !== -1).map((value) => String(value));
+        const parts: string[] = [];
+        if ((duration.values || []).includes(-1)) parts.push("自动");
+        if (manual.length) parts.push(`${manual.join("、")} 秒`);
+        return parts.length ? parts.join(" 或 ") : "";
+    }
+    const min = duration.continuous ? duration.fractionalMin ?? duration.min ?? 1 : duration.min || 1;
+    const max = duration.max || min;
+    return `${min}–${max} 秒`;
 }
 
 export function videoDurationOptions(profile: VideoCapabilityConfig) {

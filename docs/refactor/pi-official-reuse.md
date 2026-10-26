@@ -1,6 +1,6 @@
-# 官方 Pi SDK 复用矩阵（钉选 1.2.0）
+# 官方 Pi SDK 复用矩阵（钉选 1.3.0）
 
-本页记录 BeefTV 内置助手宿主对官方 Pi 1.2.0 的复用。执行运行时只有 `@earendil-works/pi-durable` 一套：新会话走 Durable，已有 JSONL 会话只保留只读历史，不再在其上执行新回合。在旧会话里发新消息会为该画布新建一条 Durable 会话，并用旧会话最后的 user/assistant 文本作为交接说明开头。实现以本仓库 `agent-host/` 与钉选包内声明、示例、文档为准；`pi.dev` 最新文档可能对应更高版本。
+本页记录 BeefTV 内置助手宿主对官方 Pi 1.3.0 的复用。执行运行时只有 `@earendil-works/pi-durable` 一套：新会话走 Durable，已有 JSONL 会话只保留只读历史，不再在其上执行新回合。在旧会话里发新消息会为该画布新建一条 Durable 会话，并用旧会话最后的 user/assistant 文本作为交接说明开头。实现以本仓库 `agent-host/` 与钉选包内声明、示例、文档为准；`pi.dev` 最新文档可能对应更高版本。
 
 宿主启动环境复用 `desktopnet` 的代理选择：非空 HTTP/HTTPS 环境配置优先，否则读取 Windows/macOS 静态系统代理。Go 在启动时覆盖去重大小写代理变量，并默认启用 Node 24 的公开 [`NODE_USE_ENV_PROXY=1`](https://nodejs.org/download/release/v24.15.0/docs/api/cli.html#node_use_env_proxy1)；显式 `NODE_USE_ENV_PROXY=0` 和 `NO_PROXY=*` 保留。`localhost`、`127.0.0.1`、`::1` 始终直连，避免宿主业务凭据进入外部代理。坏代理报连接错误，不自动改走直连；没有新网络执行器、SDK 内部 dispatcher 或重试循环。
 
@@ -12,7 +12,7 @@ Node fetch 的 bypass 规则与 Go 不完全相同。对固定模型 `BaseURL`�
 
 媒体检查事实沿既有工具日志、`beeftv.host` 文档和回合历史保存，不新建质量状态库。操作桥只有在 Go 读取成功且媒体内容转换成功后才记录成功与安全摘要；模型文本、工具参数和计划状态不提供检查事实。静态图片的零时长概览不生成影音检查记录，视频抽帧也不计为连续视频读取。用户界面分开显示步骤进度与各资源版本的实际读取、检测区间，整段静音是测量结果，不自动判定创作失败。原记录没有摘要时不猜测补齐；自然语言要求是否满足、角色一致性与语义质量的自动验收不在此合同内。
 
-本地钉选版本：`pi-durable`、`pi-coding-agent`、`pi-ai` 与 chord 1.2.0。配套 agent-core、codemode、mcp、tui、telemetry 通过 overrides 同钉 1.2.0，避免上游范围依赖自动选择未经验证的版本。锁文件由 Bun 生成；没有修改官方包或另建模型执行循环。Durable 接入验证见 [持久宿主验收](durable-host-verification-20261008.md)。
+本地钉选版本：`pi-durable`、`pi-coding-agent`、`pi-ai` 与 chord 1.3.0。配套 agent-core、codemode、mcp、tui、telemetry 通过 overrides 同钉 1.3.0，避免上游范围依赖自动选择未经验证的版本。锁文件由 Bun 生成；没有修改官方包或另建模型执行循环。Durable 接入验证见 [持久宿主验收](durable-host-verification-20261008.md)。
 
 从 1.0.4 升到 1.2.0 时已适配破坏性改动：业务工具的结果改用 `output` 字段返回；已有会话的磁盘格式标记仍是 1.0.4，旧会话照常打开。
 
@@ -21,6 +21,7 @@ Node fetch 的 bypass 规则与 Go 不完全相同。对固定模型 `BaseURL`�
 - `durable-session-owner.mjs` 使用 `Harness.open`、`openNodeSqliteStorage`、`defineDoc`、`defineExtension`、`defineTool` 与 `watchEvents` 管理会话、提交、工具与持久事件；不在 AgentSession 外再套 Harness。
 - 旧 JSONL 会话退役交接：每个画布内的旧会话固定对应一条 Durable 接续会话，身份写入清单，交接完成状态写入官方 SQLite；`handoffSession` 仅首次用官方 `root.reset(handoffNote)` 写入旧文本，再发布当前指针。失败、断线或重启后的旧 ID 重试复用该会话，不重置已有上下文；显式新建仍创建独立会话，切换旧会话仍可只读历史。NDJSON 在首轮开始时发送 `session` 行，让界面及断流恢复立即使用实际会话 ID；未收到此行也不影响服务端幂等。不调用模型生成摘要，也不把旧 JSONL 导入 Durable。
 - Go 拥有业务回合、素材归属、权限、付费批准、操作去重与撤销。宿主开始或恢复执行前读取 Go 回合记录；HTTP 客户端离开不自动结算持久执行。
+- 完整应用退出时，先让 Durable 宿主释放活动调用，期间保留业务 HTTP 服务；随后取消 HTTP 请求上下文，让事件流退出，再停止工作器与关闭数据库。单独关闭面板或断开浏览器流不触发这条应用退出流程，也不取消已受理业务任务。
 - 每轮工具通过官方 `registry.install` 和 `root.configure` 配置。内置“只读 / 当前画布 / 完全访问”由 Go 持久记录决定，补充消息和恢复不能升权；具体合同见 [Agent 权限与外部工具](agent-access-20261008.md)。
 - 媒体短引用保存在会话中，实际发出模型请求前读取已校验的文件并重新核对当前业务归属。技能目录使用官方 section，常驻显示名称、说明和 id（每页最多 50 个、说明最多约 300 字）；更多技能通过 `skill_catalog` 搜索或翻页。每次新的明确选择都按固定版本展开到用户消息，模型调用 `skill_load` 时正文进入工具结果；相同请求的网络重试由 Durable 提交回执去重。`loadedSkills` 只记录历史读取，Go 的 `AssistantSkillContext` 单独保存活动版本、scope 和 revision。活动规则通过官方 section 从 Go 重建，压缩和进程重启不会依赖摘要保留原文；每次真正发出模型请求前重新验证权限、版本和正文。Durable 会容纳 section/hook 异常并保留旧段落，因此硬性拒绝由 Pi Models 的 provider 准入适配执行，不仅靠 hook 抛错。清除活动技能保留当前对话历史；独立任务调用官方 reset 切断旧的模型可见上下文，界面历史仍保留。具体 HTTP、幂等与预算合同见 [技能上下文](./assistant-skill-context.md)。
 - 以下 SDK 矩阵和 JSONL 所有权规则仅说明已有 JSONL 会话的只读读取，不是新 Durable 会话的数据格式。
@@ -80,7 +81,7 @@ Node fetch 的 bypass 规则与 Go 不完全相同。对固定模型 `BaseURL`�
 - `ensureSession` 只把缺失指针（`ENOENT`）当成可回退：没有会话就新建。EISDIR、损坏 JSON、SDK 装配失败原样抛出。
 - 交接 `handoffSession` 先 `root.reset(handoffNote)` 再发布指针；reset 失败则关闭候选 Harness，不安装。
 - 读取不重放恢复：`recover` 在该会话已有官方 `wait` 观察时直接返回，不再 hydrate、不重读 Go 授权、不重新提交；并发读取共用同一次恢复。`/history` 读取当前会话的活动 owner 时不重写 `current.json`。
-- 运行中进度：宿主把最近一条重试或工具进度只保存在内存，`/history` 的 `active.lifecycle` 返回它，不为每个事件写持久文档；回合结束或观察结束即清空。重复的 `/chat` 接到运行中的回合时先补发这条进度。
+- 运行中进度：宿主把最近一条重试或工具进度投影到 `/history` 的 `active.lifecycle`，回合结束或观察结束即清空。重复的 `/chat` 接到运行中的回合时先补发这条进度。业务工具用官方 `api.details` 保存阶段；重开后的官方 snapshot 可以恢复正在执行的阶段，不新增进度数据库。
 - 观察断开：`/chat` 已开始输出后宿主观察失败时发 `observer_error`；界面不报失败，改为读取历史，直到读到最终回执。
 - 按请求停止：界面每次发送生成一个 `requestId`（`[A-Za-z0-9_-]{1,128}`），随 `/assistant/chat` 转给宿主，作为官方 `submit` 的 `requestId`。Go 只校验格式，回合 ID 与授权仍由 Go 生成，`requestId` 不能代替它。停止带 `{canvasId, sessionId, requestId}`：Go 校验两者成对、格式有效、画布归属，只转发这三个字段；宿主核对会话属于该画布（Durable 清单所在目录，或该画布的旧会话），否则 404。不带这两个字段的旧调用仍按画布停止当前回合。
 - 停止意图沿 STATE 文档与官方提交记录：`cancelRequest` 先按画布、会话、请求身份同步记入内存（同一进程里正持有画布锁的 `submit` 也能读到，同画布其他会话的同名请求不受影响），再一次提交写入 `STATE.stopRequests`（有上限）；该请求已是 `active` 时同时置 `active.stopped`。会话还没打开（如重启后）就在画布锁内临时打开它写入再关闭，不调度任何官方工作。返回 `stopped`（正在执行：沿用原有的标记停止、结算 Go 回合、官方 `abort`）、`finished`（已有记录）或 `pending`（这里还没开始执行它）。别的请求不受影响。
@@ -149,6 +150,8 @@ Node fetch 的 bypass 规则与 Go 不完全相同。对固定模型 `BaseURL`�
 
 `await-business-tasks.mjs` 只在官方 Durable 工具内部观察 Go 已受理的任务，等待任务成功、输出资源保存及目标节点实际绑定；它不请求模型、不提交替代任务、不创建队列。提交操作标记可重放的依据是 Go 原子操作回执及稳定 `proposal:<proposalId>:<nodeId>` 任务键，而非供应商生成可任意重试。Stop 沿官方工具 signal 结束观察，未知状态仍保留原身份。后台首批接续继续使用既有 worker。工程交付采用原生 v4 ZIP 与已有资源下载，不引入第二种工程格式或渲染器。测试见 `assistant_production_test.go`、`await-business-tasks.test.mjs`、既有后台接续及 Durable 测试；真实整片与 GUI 改稿另记验收回执。
 
+Pi 1.3.0 候选沿用磁盘布局标记 `1.0.4` 与官方 SQLite schema 1；包版本不作为数据格式版本，升级不重置旧会话。业务进度只接受 `processing/downloading/saving/saved/binding/rendering/exporting/checking/observation_unavailable`，来自本地任务的真实传输状态、已保存资源与确定性操作。`task.get.delivery` 复用既有下载进度；面板不显示供应商原文、临时 URL 或估计百分比。相互独立的原任务查询并行读取；失败任务不会使仍在保存的成功同批素材提前结束等待，明确的保存错误则返回原任务及不完整状态，不能自动再买。
+
 减少机械模型往返：`model.catalog` 可用 `capabilities` 一次读取所需类型；`canvas.script.prepare` 可直接传 `script:{title,rows}` 创建新分镜及生成草稿，复用节点默认值和分镜行构造，在一次 revision 保存，回执、回放、撤销仍属于原操作。`canvas.generation.submit` 省略 `kind` 时按节点实际类型执行已确认、相互独立且参考已就绪的混合批次；确认的输入与稳定任务键不变。内置 `canvas.timeline.render` 在事务提交后复用同一工具等待器，成功与文件保存后才返回模型；观察失败返回原任务及 pending，Stop 继续中断。公开渲染操作仍返回受理回执，不在数据库事务中等待 FFmpeg。
 
 `media.overview.evidence` 合并同一媒体快照的确定性读取：已知区间不超过15秒时，一次返回所选静态帧、连续视频、音频及客观检测；共享归属、版本、源字节和总内容上限。宿主逐项记录实际成功证据，不做自动质量判断；官方 Durable 仍决定后续操作，生成授权、画布 CAS 和工程导出保持原责任。单次工具减少不等于真实模型耗时已经降低，需另做真实运行验证。
@@ -162,7 +165,7 @@ Node fetch 的 bypass 规则与 Go 不完全相同。对固定模型 `BaseURL`�
 制作技能也按当前业务工具执行：系统提示不再要求每个技能步骤都等待确认；内置技能 `14811816970252` 改用 BeefTV 分镜、节点、生成提案、媒体检查与时间线工具，去掉外部 CLI、固定模型和虚构文件操作。技能包仍按内容版本保存，既有安装版本与活动任务 pin 不自动改写；只有加载新版技能的任务才使用新版方法。
 
 - 未接官方 web-ui / TUI / 实验服务器。
-- 旧 JSONL 会话只读：不自动迁入 Durable；发新消息时以交接说明开一条新 Durable 会话，旧文件保留。在接续会话创建之前按请求停止只记在宿主内存里：这段时间宿主崩溃会丢掉这条停止。
+- 旧 JSONL 会话只读：不自动迁入 Durable；发新消息时以交接说明开一条新 Durable 会话，旧文件保留。交接前按请求停止写入同一确定身份接续会话的官方状态文档，不切换当前指针或调模型；重开并交接后，该请求仍保持停止。
 - 压缩依赖官方内部路径，其内部事件名不映射到面板。自动重试只以归类后的进度显示，次数与退避仍由官方策略决定。
 - 官方 `SessionManager` 在出现 assistant 消息前延迟落 jsonl；宿主读取历史时只认已落盘的会话文件。
 - Go 媒体操作、时间线修改、事务内本地渲染接入见 `agent-media-harness-integration.md`；没有改付费生成协议或默认主模型。

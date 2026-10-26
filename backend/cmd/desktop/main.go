@@ -19,7 +19,7 @@ import (
 )
 
 func main() {
-	// The updater helper must run before defaultDataDir/prepareDesktopApp so a
+	// The updater helper must run before defaultDataDir/runDesktopApp so a
 	// replacement never opens the user database or data directory.
 	if done, err := desktopupdate.HandleHelperCommand(os.Args); done {
 		if err != nil {
@@ -41,21 +41,19 @@ func main() {
 			app.queueSkillLink(arg)
 		}
 	}
-	if err := configureDesktopTemp(dataDir); err != nil {
-		log.Fatal(err)
-	}
-	startupErrorPath := filepath.Join(dataDir, "startup-error.log")
-	if err := prepareDesktopApp(app); err != nil {
-		_ = os.MkdirAll(dataDir, 0o755)
-		_ = os.WriteFile(startupErrorPath, []byte(err.Error()+"\n"), 0o600)
-		log.Fatalf("启动本地后端失败: %v", err)
-	}
-	_ = os.Remove(startupErrorPath)
-
-	err = wails.Run(desktopAppOptions(app))
+	err = runDesktopApp(app, wails.Run)
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func runDesktopApp(app *DesktopApp, run func(*options.App) error) error {
+	if err := configureDesktopTemp(app.dataDir); err != nil {
+		return err
+	}
+	// Wails must forward a second launch before the primary instance's workspace
+	// lock is acquired. Only OnStartup (or its asset-server fallback) opens it.
+	return run(desktopAppOptions(app))
 }
 
 func desktopAppOptions(app *DesktopApp) *options.App {
@@ -102,7 +100,14 @@ func desktopAppOptions(app *DesktopApp) *options.App {
 }
 
 func prepareDesktopApp(app *DesktopApp) error {
-	return app.start(context.Background())
+	startupErrorPath := filepath.Join(app.dataDir, "startup-error.log")
+	if err := app.start(context.Background()); err != nil {
+		_ = os.MkdirAll(app.dataDir, 0o755)
+		_ = os.WriteFile(startupErrorPath, []byte(err.Error()+"\n"), 0o600)
+		return err
+	}
+	_ = os.Remove(startupErrorPath)
+	return nil
 }
 
 func defaultDataDir() (string, error) {

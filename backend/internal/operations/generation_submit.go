@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+
+	"infinite-canvas/backend/internal/providerpreset"
 )
 
 // GenerationTarget freezes the paid inputs confirmed by the user. Delivered
@@ -30,22 +33,36 @@ type AuthorizedGenerationAdmission interface {
 	SubmitAuthorizedGeneration(userID, turnID, canvasID string, targets []GenerationTarget) (any, error)
 }
 
+// External clients own execution approval; they still use the same task admission.
+type ExternalGenerationAdmission interface {
+	SubmitExternalGeneration(userID, operationID, canvasID string, targets []GenerationTarget) (any, error)
+}
+
 func registerGenerationSubmit(r *Registry) {
-	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.generation.submit", Summary: "执行用户已确认的整片制作素材并等待保存绑定；按已确认节点幂等恢复原任务，不重复下单。没有整片授权时先提出生成方案", Scope: ScopeCanvas,
-		Params: json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":8,"description":"同批必须相互独立且参考已就绪；可以同时提交已授权的视频和旁白，避免串行等待"},"kind":{"type":"string","enum":["image","video","audio"],"description":"可省略以按每个已授权节点的实际类型提交混合批次"}},"required":["canvasId","nodeIds"]}`), Handler: opGenerationSubmit})
+	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.generation.submit", Summary: "提交画布素材生成，按所选渠道计费。外部 MCP/CLI 由调用方审批，必填画布与模型配置版本，不需要内置助手确认卡；内置助手仍须已确认的制作授权。返回原任务 ID，重试须复用 operationId", Scope: ScopeCanvas,
+		Params: json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":8,"description":"同批必须相互独立且参考已就绪；外部提交只接受尚未关联任务的节点，已有任务用 task.get 查询或原任务恢复入口处理"},"kind":{"type":"string","enum":["image","video","audio"],"description":"可省略以按各节点实际类型提交混合批次"},"expectedRevision":{"type":"integer","minimum":1,"description":"外部调用必填，来自 canvas.get 或生成提议的 source.canvasRevision"},"expectedModelConfigRevision":{"type":"integer","minimum":0,"description":"外部调用必填，来自生成提议的 source.modelConfigRevision"}},"required":["canvasId","nodeIds"]}`), Handler: opGenerationSubmit})
 }
 
 func opGenerationSubmit(ctx *Context, raw json.RawMessage) (any, error) {
 	var args struct {
-		CanvasID string   `json:"canvasId"`
-		NodeIDs  []string `json:"nodeIds"`
-		Kind     string   `json:"kind"`
+		CanvasID                    string   `json:"canvasId"`
+		NodeIDs                     []string `json:"nodeIds"`
+		Kind                        string   `json:"kind"`
+		ExpectedRevision            *int64   `json:"expectedRevision"`
+		ExpectedModelConfigRevision *int64   `json:"expectedModelConfigRevision"`
 	}
 	if err := decodeParams(raw, &args); err != nil {
 		return nil, err
 	}
-	if ctx.TurnID == "" {
+	external := ctx.Caller.Kind == CallerExternal && !ctx.Caller.ReadOnly
+	if !external && ctx.TurnID == "" {
 		return nil, PermissionDenied("production_authorization_required", "请先确认本次制作方案")
+	}
+	if strings.TrimSpace(args.CanvasID) == "" || len(args.NodeIDs) == 0 || len(args.NodeIDs) > 8 {
+		return nil, InvalidArg("invalid_batch", "canvasId 和 1 至 8 个 nodeIds 必填")
+	}
+	if external && (args.ExpectedRevision == nil || *args.ExpectedRevision < 1 || args.ExpectedModelConfigRevision == nil || *args.ExpectedModelConfigRevision < 0 || ctx.OperationID == "") {
+		return nil, InvalidArg("generation_snapshot_required", "请先读取生成提议，并提交画布版本、模型配置版本和稳定 operationId")
 	}
 	docRaw, err := ctx.Domain.UserCanvasProject(ctx.UserID, args.CanvasID)
 	if err != nil {
@@ -55,6 +72,9 @@ func opGenerationSubmit(ctx *Context, raw json.RawMessage) (any, error) {
 	if err = json.Unmarshal(docRaw, &doc); err != nil {
 		return nil, AsError(err)
 	}
+	if external && canvasRevision(doc) != *args.ExpectedRevision {
+		return nil, Conflict("revision_conflict", "画布已变化，请重新读取并确认生成内容", nil)
+	}
 	targets, err := GenerationTargets(ctx.Domain, doc, args.NodeIDs)
 	if err != nil {
 		return nil, err
@@ -62,6 +82,15 @@ func opGenerationSubmit(ctx *Context, raw json.RawMessage) (any, error) {
 	for _, target := range targets {
 		if args.Kind != "" && target.Kind != args.Kind {
 			return nil, InvalidArg("generation_kind_mismatch", "请按素材类型分批生成")
+		}
+		if external {
+			choice, err := ctx.Domain.ResolveAssistantGenerationModel(target.Kind, target.ModelKey)
+			if err != nil {
+				return nil, AsError(err)
+			}
+			if choice.Revision != *args.ExpectedModelConfigRevision {
+				return nil, Conflict("generation_config_changed", "模型配置已变化，请重新读取生成提议", nil)
+			}
 		}
 	}
 	nodes := map[string]map[string]any{}
@@ -71,6 +100,13 @@ func opGenerationSubmit(ctx *Context, raw json.RawMessage) (any, error) {
 	}
 	if err = validateGenerationDependencies(doc, nodes, args.NodeIDs, args.Kind); err != nil {
 		return nil, err
+	}
+	if external {
+		port, ok := ctx.Domain.(ExternalGenerationAdmission)
+		if !ok {
+			return nil, Unsupported("generation_unavailable", "当前工作区不能提交生成")
+		}
+		return port.SubmitExternalGeneration(ctx.UserID, ctx.OperationID, args.CanvasID, targets)
 	}
 	port, ok := ctx.Domain.(AuthorizedGenerationAdmission)
 	if !ok {
@@ -129,6 +165,23 @@ func GenerationTargets(domain Domain, doc map[string]any, ids []string) ([]Gener
 		for _, key := range []string{"size", "quality", "count", "transparentBackground", "seconds", "vquality", "generateAudio", "watermark", "audioVoice", "audioFormat", "audioSpeed", "audioInstructions", "videoStartFrameNodeId", "videoEndFrameNodeId", "videoMiddleFrameNodeId"} {
 			if v, ok := meta[key]; ok && v != nil {
 				parameters[key] = fmt.Sprint(v)
+			}
+		}
+		if kind == "image" {
+			model := choice.ModelKey
+			if i := strings.LastIndex(model, "::"); i >= 0 {
+				model = model[i+2:]
+			}
+			if family := providerpreset.SeedreamFamily(model); family != "" {
+				for _, key := range []string{"seedreamMode", "seedreamMaxImages", "seedreamOutputFormat", "seedreamOptimize", "seedreamWatermark"} {
+					if v, ok := meta[key]; ok && v != nil {
+						parameters[key] = fmt.Sprint(v)
+					}
+				}
+				maxImages, _ := strconv.Atoi(parameters["seedreamMaxImages"])
+				if parameters["seedreamMode"] == "layers" || (family != "pro" && family != "flash" && maxImages > 1) {
+					return nil, InvalidArg("production_seedream_multiple_outputs", "整片制作暂不支持 Seedream 图层拆分或组图。请先在画布生成图片，再用已有图片继续制作。")
+				}
 			}
 		}
 		var metadata map[string]any

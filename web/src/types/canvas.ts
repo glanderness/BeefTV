@@ -260,6 +260,7 @@ export type CanvasNodeMetadata = {
     locked?: boolean;
     errorDetails?: string;
     generationErrorCode?: string;
+    generationPreflightError?: string;
     outputParameterWarning?: string;
     resourceReloadAvailable?: boolean;
     failedPromptFingerprint?: string;
@@ -277,6 +278,12 @@ export type CanvasNodeMetadata = {
     size?: string;
     quality?: string;
     transparentBackground?: string;
+    imageLayer?: Record<string, unknown>;
+    seedreamMode?: string;
+    seedreamMaxImages?: string;
+    seedreamOutputFormat?: string;
+    seedreamOptimize?: string;
+    seedreamWatermark?: string;
     count?: number;
     textCount?: number;
     seconds?: string;

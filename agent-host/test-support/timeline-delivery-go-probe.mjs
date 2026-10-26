@@ -5,6 +5,7 @@ import path from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createOperationBridge } from '../operation-bridge.mjs';
 import { modelFixture } from './durable-model-switch-probe.mjs';
+import { durableStreamEvents } from '../durable-session-owner.mjs';
 
 const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const bridge = createOperationBridge({ opsUrl: config.backend, hostToken: config.hostToken, turnBudgetContext: new AsyncLocalStorage() });
@@ -36,13 +37,18 @@ try {
   fs.writeFileSync(sessionPath, JSON.stringify({ sessionId: entry.sessionId }));
   const input = { turnId: config.turnId, requestId: 'real-go-delivery', revisionBefore: config.revision, content: 'Deliver the saved media with two subtitle lines.' };
   const submission = config.resume ? await fixture.store.recover(entry) : await fixture.store.submit(entry, input);
-  const result = await fixture.store.wait(entry, submission);
+  const progress = [];
+  const result = await fixture.store.wait(entry, submission, { onEvent: event => {
+    progress.push(...durableStreamEvents(event).filter(item => item.phase === 'business'));
+  } });
   assert.equal(result.error, null);
   assert.equal(responses, 2);
   const reply = fixture.payloads.at(-1).messages.find(message => message.role === 'tool');
   const receipt = JSON.parse(typeof reply.content === 'string' ? reply.content : reply.content.map(part => part.text || '').join(''));
   assert.equal(receipt.result.status, 'delivered', JSON.stringify(receipt));
   assert.ok(receipt.result.project.resourceId);
+  assert(progress.some(item => item.stage === 'exporting'), JSON.stringify(progress));
+  fs.writeFileSync(path.join(config.directory, 'business-progress.json'), JSON.stringify(progress));
   assert.equal((await fixture.store.submit(entry, input)).id, submission.id);
   await fixture.store.wait(entry, submission);
   assert.equal(responses, 2);

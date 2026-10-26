@@ -27,12 +27,14 @@ import { h3VideoOperation, isH3Model, isH3Style } from "@/lib/h3-video";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import { CanvasPortraitTexturePopover } from "./canvas-portrait-texture-popover";
 import { CanvasPromptOptimizerDrawer } from "./canvas-prompt-optimizer-drawer";
-import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
-import { autoMentionCanvasResourceReferences, canvasResourceDisplayName, canvasResourceMentionToken, normalizeCanvasNodeMentionTokens, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { CanvasNodeType, type CanvasConnection, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
+import { autoMentionCanvasResourceReferences, canvasResourceDisplayName, canvasResourceMentionToken, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { promptOptimizerPlugin, PROMPT_OPTIMIZER_PLUGIN_ID } from "@/lib/plugins/builtin/prompt-optimizer";
 import { createPluginHostContext } from "@/services/plugin-host";
 import { usePluginStore } from "@/stores/use-plugin-store";
 import { useResolvedCanvasResourceReferences } from "./use-resolved-canvas-resource-references";
+import { CanvasReferenceFeedback, useCanvasReferenceCheck } from "./canvas-reference-feedback";
+import type { CanvasReferenceAction } from "@/lib/canvas/canvas-reference-issues";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
 
@@ -43,12 +45,17 @@ type CanvasNodePromptPanelProps = {
     onPromptChange: (nodeId: string, prompt: string) => void;
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeMetadata>) => void;
     onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => void;
+    onOpenGenerationHistory?: () => void;
+    onCreateGenerationReplacement?: (nodeId: string) => void;
     mentionReferences?: CanvasResourceReference[];
     onAddReference?: (nodeId: string, reference: CanvasResourceReference) => CanvasResourceReference | undefined;
     onRemoveReference?: (nodeId: string, reference: CanvasResourceReference) => void;
     onReorderReferences?: (nodeId: string, orderedNodeIds: string[]) => void;
     onReplaceReference?: (nodeId: string, oldReference: CanvasResourceReference, sourceNodeId: string) => void;
     onReplaceReferenceFiles?: (nodeId: string, oldReference: CanvasResourceReference, files: File[]) => void;
+    referenceNodes?: CanvasNodeData[];
+    referenceConnections?: CanvasConnection[];
+    onLocateReferenceNode?: (nodeId: string) => void;
     onClose?: () => void;
     onNodeMouseDown?: (event: ReactPointerEvent, nodeId: string) => void;
     onImageSettingsOpenChange?: (open: boolean) => void;
@@ -71,11 +78,13 @@ const PROMPT_EDITOR_MODAL_WIDTH = "min(1200px, 92vw)";
 const PROMPT_EDITOR_MODAL_DEFAULT_WIDTH = 1200;
 const PROMPT_EDITOR_MODAL_DEFAULT_HEIGHT = 420;
 
-export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChange, onConfigChange, onGenerate, mentionReferences = [], onAddReference, onRemoveReference, onReorderReferences, onReplaceReference, onReplaceReferenceFiles, onClose, onNodeMouseDown, onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
+export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChange, onConfigChange, onGenerate, onOpenGenerationHistory, onCreateGenerationReplacement, mentionReferences = [], onAddReference, onRemoveReference, onReorderReferences, onReplaceReference, onReplaceReferenceFiles, referenceNodes = [node], referenceConnections = [], onLocateReferenceNode, onClose, onNodeMouseDown, onImageSettingsOpenChange, workspaceMode = "professional" }: CanvasNodePromptPanelProps) {
     const globalConfig = useEffectiveConfig();
     const themeName = useActiveTheme();
     const theme = canvasThemes[themeName];
     const preferredFontSize = useCreationPreferencesStore((state) => state.preferences.promptFontSize);
+    const rememberImageSettings = useCreationPreferencesStore((state) => state.rememberImageSettings);
+    const rememberVideoSettings = useCreationPreferencesStore((state) => state.rememberVideoSettings);
     const promptFontSize = preferredFontSize ?? DEFAULT_PROMPT_FONT_SIZE;
     const expandedFontSize = promptFontSize;
     const promptOptimizerInstallation = usePluginStore((state) => state.installations.find((item) => item.manifest.id === PROMPT_OPTIMIZER_PLUGIN_ID));
@@ -99,7 +108,9 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const [promptOptimizerOpen, setPromptOptimizerOpen] = useState(false);
     const [autoLinkEnabled, setAutoLinkEnabled] = useState(true);
     const resolvedMentionReferences = useResolvedCanvasResourceReferences(mentionReferences, { projectId });
-    const normalizedSavedPrompt = useMemo(() => normalizeCanvasNodeMentionTokens(savedPrompt, mentionReferences), [mentionReferences, savedPrompt]);
+    const referenceCheck = useCanvasReferenceCheck(node.id, prompt, resolvedMentionReferences, referenceNodes, referenceConnections);
+    const [referenceAction, setReferenceAction] = useState<CanvasReferenceAction | null>(null);
+    const missingSubmissionIdentity = ["submitting", "unknown"].includes(node.metadata?.generationSubmissionState || "") && !node.metadata?.taskId && !node.metadata?.taskClientOperationId?.trim();
     const activeReferences = resolvedMentionReferences.filter((item) => item.active && item.kind !== "skill");
     const requirements = buildCanvasGenerationRequirements(globalConfig, node, mode, {
         textCount: (prompt.trim() ? 1 : 0) + activeReferences.filter((item) => item.kind === "text").length,
@@ -171,16 +182,16 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const canAutoMention = autoMentionedPrompt !== prompt;
 
     useEffect(() => {
-        setPrompt(normalizedSavedPrompt);
-        if (normalizedSavedPrompt !== savedPrompt) onPromptChange(node.id, normalizedSavedPrompt);
-    }, [node.id, normalizedSavedPrompt, onPromptChange, savedPrompt]);
+        setPrompt(savedPrompt);
+    }, [node.id, savedPrompt]);
 
     useEffect(() => {
+        setReferenceAction(null);
         setExpandedPromptOpen(false);
         setExpandedPresetOpen(false);
         setExpandedModalSize(null);
-        setPromptContentHeight(estimatePromptContentHeight(normalizedSavedPrompt, false));
-        setExpandedPromptContentHeight(estimatePromptContentHeight(normalizedSavedPrompt, true));
+        setPromptContentHeight(estimatePromptContentHeight(savedPrompt, false));
+        setExpandedPromptContentHeight(estimatePromptContentHeight(savedPrompt, true));
         setManualPromptHeight(null);
     }, [node.id]);
 
@@ -201,6 +212,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const updatePrompt = (value: string) => {
         setPrompt(value);
         onPromptChange(node.id, value);
+        if (node.metadata?.generationPreflightError) onConfigChange(node.id, { generationPreflightError: undefined });
         if (/(^|\s)\/[\p{L}\p{N}_-]*$/u.test(value)) {
             if (expandedPromptOpen) setExpandedPresetOpen(true);
             else setPresetOpen(true);
@@ -227,6 +239,10 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const submit = () => {
         const text = prompt.trim();
         if (!text || isRunning) return false;
+        if (referenceCheck.issues.length) {
+            setReferenceAction({ type: "locate", token: referenceCheck.issues[0].token, key: Date.now() });
+            return false;
+        }
         onGenerate(node.id, mode, text);
         return true;
     };
@@ -356,7 +372,15 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                             fullWidth
                             config={config}
                             value={config.model}
-                            onChange={(model) => onConfigChange(node.id, mode === "image" ? { model, ...defaultImageParamsForModel(config, model) } : { model })}
+                            onChange={(model) => {
+                                const patch = mode === "image" ? { model, ...defaultImageParamsForModel(config, model) } : { model };
+                                if (mode === "image" || mode === "video") {
+                                    const nextConfig = buildNodeConfig(globalConfig, { ...node, metadata: { ...node.metadata, ...patch } }, mode, { ...requirements, options: undefined });
+                                    if (mode === "image") rememberImageSettings({ model: nextConfig.model, ratio: nextConfig.size, quality: nextConfig.quality, count: nextConfig.count, transparentBackground: nextConfig.transparentBackground });
+                                    else rememberVideoSettings({ model: nextConfig.model, ratio: nextConfig.size, seconds: nextConfig.videoSeconds, videoQuality: nextConfig.vquality, generateAudio: nextConfig.videoGenerateAudio, watermark: nextConfig.videoWatermark });
+                                }
+                                onConfigChange(node.id, patch);
+                            }}
                             capability={mode}
                             requirements={resolvedRequirements}
                             onMissingConfig={() => navigateToSettings({ section: "channels", continueCreation: true })}
@@ -410,7 +434,10 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                                 config={config}
                                 placement={expanded ? "topRight" : "topLeft"}
                                 buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
-                                onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
+                                onConfigChange={(key, value) => {
+                                    rememberImageSettings(imagePreferencePatch(key, value));
+                                    onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value });
+                                }}
                                 onMissingConfig={() => navigateToSettings({ continueCreation: true })}
                                 onOpenChange={expanded ? undefined : onImageSettingsOpenChange}
                             />
@@ -433,7 +460,10 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                                     audioCount: requirements.input?.audioCount,
                                 }, node.metadata)}
                                 buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
-                                onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))}
+                                onConfigChange={(key, value) => {
+                                    rememberVideoSettings(videoPreferencePatch(key, value));
+                                    onConfigChange(node.id, videoConfigPatch(key, value));
+                                }}
                             >
                                 {h3Model ? <><CanvasH3Controls model={config.model} value={node.metadata?.videoH3Options} onChange={(videoH3Options) => onConfigChange(node.id, { videoH3Options })} /><CanvasH3UnsupportedFrames model={config.model} metadata={node.metadata} onChange={(patch) => onConfigChange(node.id, patch)} /></> : null}
                             </CanvasVideoSettingsPopover>
@@ -470,6 +500,10 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                     <CanvasResourceMentionTextarea
                         value={prompt}
                         references={resolvedMentionReferences}
+                        selectedAssetReferences={referenceCheck.selectedReferences}
+                        referenceIssues={referenceCheck.issues}
+                        referenceAction={expanded === expandedPromptOpen ? referenceAction : null}
+                        onReferenceActionHandled={() => setReferenceAction(null)}
                         onSelectReference={onAddReference ? (reference) => onAddReference(node.id, reference) : undefined}
                         includeAssetLibrary
                         onChange={updatePrompt}
@@ -491,6 +525,27 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                     max={bounds.max}
                     onResize={setManualPromptHeight}
                 />}
+                <CanvasReferenceFeedback
+                    {...referenceCheck}
+                    onRetry={referenceCheck.retry}
+                    onLocate={(issue) => setReferenceAction({ type: "locate", token: issue.token, key: Date.now() })}
+                    onReplace={(issue) => setReferenceAction({ type: "replace", token: issue.token, key: Date.now() })}
+                    onLocateNode={onLocateReferenceNode}
+                />
+                {node.metadata?.generationPreflightError ? (
+                    <p role="alert" className="mx-2.5 my-2 whitespace-pre-wrap break-words text-[var(--fs-tiny)]" style={{ color: theme.accent.danger }}>
+                        未开始生成：{node.metadata.generationPreflightError}
+                    </p>
+                ) : null}
+                {missingSubmissionIdentity && (onOpenGenerationHistory || onCreateGenerationReplacement) ? (
+                    <section aria-label="生成恢复" className="mx-2.5 my-2 text-[var(--fs-tiny)]">
+                        <p style={{ color: theme.node.muted }}>可以取回已有结果，或保留原节点、新建节点继续。</p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                            {onOpenGenerationHistory ? <Button className="min-h-10" onClick={onOpenGenerationHistory}>查看生成历史</Button> : null}
+                            {onCreateGenerationReplacement ? <Button className="min-h-10" onClick={() => onCreateGenerationReplacement(node.id)}>新建节点继续</Button> : null}
+                        </div>
+                    </section>
+                ) : null}
             </>
         );
     };
@@ -846,8 +901,7 @@ function ConnectedReferenceShelf({
                                     title={`插入 @${displayName}`}
                                     onPointerDown={(event) => event.stopPropagation()}
                                     onMouseDown={(event) => event.stopPropagation()}
-                                    onClickCapture={(event) => event.stopPropagation()}
-                                    onClick={() => onInsert(reference)}
+                                    onClick={(event) => { event.stopPropagation(); onInsert(reference); }}
                                 >
                                     <span className="opacity-55">@</span>
                                     <span className="truncate">{displayName}</span>
@@ -1066,10 +1120,27 @@ function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
 export { buildNodeConfig };
 
 function promptPlaceholder(mode: CanvasNodeGenerationMode, hasImageContent: boolean, hasTextContent: boolean) {
-    if (mode === "video") return "描述你想要生成的画面内容，@引用素材";
+    if (mode === "video") return "描述你想要生成的画面内容，可用 @ 引用图片、视频、音频或角色";
     if (mode === "audio") return "描述你想要的音频效果，可用 @ 引用音频";
     if (mode === "image") return hasImageContent ? "输入新提示词，重新生成当前图片" : "描述要生成的图片内容";
     return hasTextContent ? "请输入你想要将本段文本修改成什么" : "请输入你想要生成的文本内容";
+}
+
+function imagePreferencePatch(key: keyof AiConfig, value: string) {
+    if (key === "size") return { ratio: value };
+    if (key === "quality") return { quality: value };
+    if (key === "count") return { count: String(Number(value) || 1) };
+    if (key === "transparentBackground") return { transparentBackground: value };
+    return {};
+}
+
+function videoPreferencePatch(key: keyof AiConfig, value: string) {
+    if (key === "size") return { ratio: value };
+    if (key === "videoSeconds") return { seconds: value };
+    if (key === "vquality") return { videoQuality: value };
+    if (key === "videoGenerateAudio") return { generateAudio: value };
+    if (key === "videoWatermark") return { watermark: value };
+    return {};
 }
 
 function videoConfigPatch(key: keyof AiConfig, value: string) {

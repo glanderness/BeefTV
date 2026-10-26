@@ -427,6 +427,11 @@ export type AiConfig = {
     quality: string;
     size: string;
     transparentBackground: string;
+    seedreamMode?: string;
+    seedreamMaxImages?: string;
+    seedreamOutputFormat?: string;
+    seedreamOptimize?: string;
+    seedreamWatermark?: string;
     count: string;
     canvasImageCount: string;
 };

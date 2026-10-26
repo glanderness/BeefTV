@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { chromium } from "playwright";
 import { existsSync } from "node:fs";
 
-test("滚轮缩放期间 React 更新内层倍率不改变节点位置与尺寸，停滚后仍一致", async () => {
+test("缩放提交保持节点几何，中键平移保持光标反馈且释放后恢复命中", async () => {
     const build = await Bun.build({
         entrypoints: [import.meta.dir + "/fixtures/canvas-wheel-harness.tsx"], target: "browser",
         define: { "process.env.NODE_ENV": '"production"', "import.meta.env.DEV": "false", "import.meta.env.PROD": "true", "import.meta.env.MODE": '"production"' },
@@ -41,5 +41,23 @@ test("滚轮缩放期间 React 更新内层倍率不改变节点位置与尺寸�
         const afterIdle = await page.locator("#node").boundingBox();
         expect(afterIdle!.x).toBeCloseTo(beforeIdle!.x, 2);
         expect(afterIdle!.width).toBeCloseTo(beforeIdle!.width, 2);
+
+        await page.addStyleTag({ content: '[data-canvas-pan-cursor]{position:absolute;inset:0;z-index:50;cursor:grabbing}' });
+        const classBeforePan = await page.locator('[data-canvas-viewport]').getAttribute('class');
+        await page.mouse.move(400, 320);
+        await page.mouse.down({ button: 'middle' });
+        await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-canvas-pan-cursor]')!).pointerEvents === 'auto');
+        expect(await page.evaluate(() => getComputedStyle(document.elementFromPoint(400, 320)!).cursor)).toBe('grabbing');
+        const beforePan = await page.locator('#node').boundingBox();
+        await page.mouse.move(500, 360, { steps: 8 });
+        await page.mouse.up({ button: 'middle' });
+        await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-canvas-pan-cursor]')!).pointerEvents === 'none');
+        const afterPan = await page.locator('#node').boundingBox();
+        expect(afterPan!.x - beforePan!.x).toBeCloseTo(100, 1);
+        expect(afterPan!.y - beforePan!.y).toBeCloseTo(40, 1);
+        expect(afterPan!.width).toBeCloseTo(beforePan!.width, 2);
+        expect(await page.locator('[data-canvas-viewport]').getAttribute('class')).toBe(classBeforePan);
+        expect(await page.evaluate(() => document.body.style.cursor)).toBe('');
+        expect(await page.evaluate(() => document.elementFromPoint(500, 360)?.hasAttribute('data-canvas-pan-cursor'))).toBe(false);
     } finally { await browser.close(); server.stop(true); }
 }, 30000);

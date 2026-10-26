@@ -9,7 +9,8 @@ import { alignCanvasNodes, layoutCanvasAuto, layoutCanvasFlow, layoutCanvasNodes
 import { applyCanvasConnectionPromptSync } from "@/lib/canvas/canvas-resource-references";
 import { createCanvasNode, isHiddenBatchChild, removeCanvasNodes } from "@/lib/canvas/canvas-project-domain";
 import { isolateCopiedDirectorScenes, isolateCopiedNodeMetadata, nextCopiedNodeTitle } from "@/lib/canvas/canvas-node-copy";
-import { canOpenCanvasNodePromptPanel, mediaGeneratorMetadata } from "@/lib/canvas/canvas-node-semantics";
+import { preferredMediaGeneratorMetadata } from "@/lib/canvas/canvas-generation-config";
+import { canOpenCanvasNodePromptPanel } from "@/lib/canvas/canvas-node-semantics";
 import { getCanvasNodeCreationDisabledReason } from "@/lib/canvas/canvas-feature-availability";
 import { CanvasNodeType, type CanvasConnection, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type ContextMenuState, type Position } from "@/types/canvas";
 import { cloneCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
@@ -74,12 +75,15 @@ export function useCanvasNodeOperations({
     if (deletionContext.current.projectId !== projectId) deletionContext.current = { projectId };
     const mounted = useRef(true);
     const deleteConfirmation = useRef<{ destroy?: () => void } | null>(null);
+    const recoveryConfirmation = useRef<{ destroy?: () => void } | null>(null);
     useLayoutEffect(() => {
         mounted.current = true;
         const dismiss = () => {
             const pending = deleteConfirmation.current;
             deleteConfirmation.current = null;
             pending?.destroy?.();
+            recoveryConfirmation.current?.destroy?.();
+            recoveryConfirmation.current = null;
         };
         const unsubscribe = subscribeUserScope(dismiss);
         return () => {
@@ -184,7 +188,7 @@ export function useCanvasNodeOperations({
             : type === CanvasNodeType.Config
                 ? { generationMode: "image", workflowProvider: selectedWorkflowProvider || "model" }
                 : type === CanvasNodeType.Image || type === CanvasNodeType.Video || type === CanvasNodeType.Audio
-                    ? mediaGeneratorMetadata({ generationMode: type === CanvasNodeType.Image ? "image" : type === CanvasNodeType.Video ? "video" : "audio" })
+                    ? preferredMediaGeneratorMetadata(effectiveConfig, type === CanvasNodeType.Image ? "image" : type === CanvasNodeType.Video ? "video" : "audio")
                 : undefined;
         const center = position || getCanvasCenter();
         // Only menu-created nodes use the implicit canvas center; explicit
@@ -208,7 +212,7 @@ export function useCanvasNodeOperations({
         selectNodes(new Set([node.id]));
         if (type === CanvasNodeType.Script) setDialogNodeId(null);
         if (canOpenCanvasNodePromptPanel(node) && type !== CanvasNodeType.Text) setDialogNodeId(node.id);
-    }, [commitNodes, defaultDrawingEngine, effectiveConfig.runningHub.enabled, effectiveConfig.runningHub.workflows.length, getCanvasCenter, message, nodesRef, runtimeStatuses, selectNodes, setDialogNodeId, viewportScale]);
+    }, [commitNodes, defaultDrawingEngine, effectiveConfig, getCanvasCenter, message, nodesRef, runtimeStatuses, selectNodes, setDialogNodeId, viewportScale]);
 
     const createFolder = useCallback((position?: Position, linked?: { id: string; projectId: string; title: string; style: CanvasFolderStyle; theme: CanvasFolderTheme; createdAt: string }) => {
         const folder = createCanvasNode(CanvasNodeType.Frame, position || getCanvasCenter(), {
@@ -519,6 +523,26 @@ export function useCanvasNodeOperations({
         setDialogNodeId(canOpenCanvasNodePromptPanel(copiedNodes.find((node) => node.id === id)) ? id : null);
     }, [cloneDrawingForNode, commitConnections, commitNodes, connectionsRef, isolateDirectorCopies, nodesRef, selectNodes, setDialogNodeId]);
 
+    const createGenerationReplacement = useCallback((nodeId: string) => {
+        const context = deletionContext.current;
+        const scope = captureUserScope();
+        if (!nodesRef.current.some(node => node.id === nodeId)) return;
+        recoveryConfirmation.current?.destroy?.();
+        const confirmation = modal.confirm({
+            ...canvasTaskConfirmation,
+            title: "新建节点继续生成？",
+            content: "将保留原节点，并带上原提示词、参数和素材连接，新节点不会自动生成。之后点击生成可能再次计费，请先确认历史中没有所需结果。",
+            okText: "新建节点",
+            cancelText: "取消",
+            onOk: () => {
+                if (!mounted.current || deletionContext.current !== context || !userScopeMatches(scope)) return;
+                duplicateNode(nodeId, "copy");
+            },
+            afterClose: () => { if (recoveryConfirmation.current === confirmation) recoveryConfirmation.current = null; },
+        });
+        recoveryConfirmation.current = confirmation;
+    }, [duplicateNode, modal, nodesRef]);
+
     const setPrimaryVersion = useCallback((nodeId: string) => {
         const target = nodesRef.current.find((node) => node.id === nodeId);
         if (!target) return;
@@ -664,6 +688,7 @@ export function useCanvasNodeOperations({
         copySelectedNodes,
         createFolder,
         createNode,
+        createGenerationReplacement,
         createReferenceGroup,
         createStoryboardGroup,
         deleteConnection,

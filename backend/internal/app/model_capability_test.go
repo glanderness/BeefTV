@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -221,8 +222,11 @@ func TestDefaultSeedance25UsesOfficialCounts(t *testing.T) {
 	if profile.References.MaxImages != 30 || profile.References.MaxVideos != 10 || profile.References.MaxAudios != 10 {
 		t.Fatalf("default 2.5 counts = %#v", profile.References)
 	}
-	if profile.References.MinAudioDuration != 1.8 {
+	if profile.References.MinAudioDuration != 2 {
 		t.Fatalf("default 2.5 min audio = %v", profile.References.MinAudioDuration)
+	}
+	if profile.Duration.Min != 4 {
+		t.Fatalf("default 2.5 output duration min = %d", profile.Duration.Min)
 	}
 	if profile.Duration.Max < 30 {
 		t.Fatalf("default 2.5 output duration max = %d", profile.Duration.Max)
@@ -310,13 +314,89 @@ func TestSeedanceReferenceDurationRejectsShortAndUnknownBeforeSubmit(t *testing.
 		if err := validateVideoTask(profile, input); err == nil || !strings.Contains(err.Error(), "时长无法读取") {
 			t.Fatalf("unknown duration: %v", err)
 		}
-		input.ReferenceAudios[1].DurationMs = 1700
-		if err := validateVideoTask(profile, input); err == nil || !strings.Contains(err.Error(), "1.70") || !strings.Contains(err.Error(), "1.8") {
-			t.Fatalf("1.7s audio: %v", err)
-		}
 		input.ReferenceAudios[1].DurationMs = 1800
-		if err := validateVideoTask(profile, input); err != nil {
+		if err := validateVideoTask(profile, input); err == nil || !strings.Contains(err.Error(), "1.80") || !strings.Contains(err.Error(), "2–") {
 			t.Fatalf("1.8s audio: %v", err)
+		}
+		input.ReferenceAudios[1].DurationMs = 2000
+		if err := validateVideoTask(profile, input); err != nil {
+			t.Fatalf("2s audio: %v", err)
+		}
+	}
+}
+
+func TestSeedanceDocumentedOutputDurationFloor(t *testing.T) {
+	// 输出时长下限官方是 4 秒：3 秒被拒、4 秒通过，提示写出现在的值和支持的范围。
+	profile := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
+	for _, seconds := range []string{"3", "4"} {
+		input := canvasGenerationInput{
+			Prompt: "test", Config: providerConfig{InterfaceType: "newapi", Model: "seedance-2.0", BaseURL: "https://enterprise.beefapi.com", VideoSeconds: seconds},
+			ReferenceImages: []providerMedia{{Width: 512, Height: 512, Bytes: 1000}},
+		}
+		err := validateVideoTask(profile, input)
+		if seconds == "3" {
+			if err == nil || !strings.Contains(err.Error(), "输出时长为 3 秒") || !strings.Contains(err.Error(), "4–15 秒") {
+				t.Fatalf("3s output duration: %v", err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("4s output duration: %v", err)
+		}
+	}
+}
+
+func TestSeedanceReferenceAudioMessageNamesItemAndFix(t *testing.T) {
+	// 提示要说清哪一段、现在多少、要改到多少，用户才知道下一步做什么。
+	profile := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
+	input := canvasGenerationInput{
+		Prompt: "test", Config: providerConfig{InterfaceType: "newapi", Model: "seedance-2.0", BaseURL: "https://enterprise.beefapi.com", VideoSeconds: "5"},
+		ReferenceImages: []providerMedia{{Width: 512, Height: 512, Bytes: 1000}},
+		ReferenceAudios: []providerMedia{{DurationMs: 1900, Bytes: 1000}},
+	}
+	err := validateVideoTask(profile, input)
+	if err == nil || !strings.Contains(err.Error(), "第 1 段参考音频时长为 1.90 秒") || !strings.Contains(err.Error(), "需要改到 2–15 秒") || !strings.Contains(err.Error(), "请换一段更长的音频") {
+		t.Fatalf("audio duration message: %v", err)
+	}
+}
+
+func TestSeedanceSavedEnumAndContinuousDurationsRespectDocumentedFloor(t *testing.T) {
+	enumProfile := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
+	enumProfile.Duration = VideoDurationConfig{Selection: "enum", Values: []int{-1, 1, 2, 3, 4, 5}, Default: 5}
+	continuous := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
+	continuous.Duration = VideoDurationConfig{Selection: "range", Min: 1, Max: 15, Step: 1, FractionalMin: 0.92, Continuous: true, Default: 5}
+	for label, profile := range map[string]*VideoCapabilityConfig{"enum": enumProfile, "continuous": continuous} {
+		for seconds, wantRejected := range map[string]bool{"1": true, "3": true, "4": false, "5": false} {
+			input := canvasGenerationInput{
+				Prompt: "test", Config: providerConfig{InterfaceType: "newapi", Model: "seedance-2.0", BaseURL: "https://enterprise.beefapi.com", VideoSeconds: seconds},
+				ReferenceImages: []providerMedia{{Width: 512, Height: 512, Bytes: 1000}},
+			}
+			err := validateVideoTask(profile, input)
+			if wantRejected != (err != nil) {
+				t.Fatalf("%s %ss duration: rejected=%t err=%v", label, seconds, err != nil, err)
+			}
+		}
+	}
+	// 自动时长（-1）在枚举里保留。
+	if !slices.Contains(enumProfile.Duration.Values, -1) {
+		t.Fatalf("auto duration dropped: %v", enumProfile.Duration.Values)
+	}
+}
+
+func TestSeedanceEnumWithoutLegalDurationRejectsSubmission(t *testing.T) {
+	// 保存的枚举全部低于官方 4 秒下限时，没有任何合法时长可提交：
+	// 收紧后必须拒绝，而不是退回原来的 1 秒。
+	for _, values := range [][]int{{1}, {1, 2, 3}} {
+		profile := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
+		profile.Duration = VideoDurationConfig{Selection: "enum", Values: slices.Clone(values), Default: 1}
+		for _, seconds := range []string{"1", "2", "3", "4"} {
+			input := canvasGenerationInput{
+				Prompt: "test", Config: providerConfig{InterfaceType: "newapi", Model: "seedance-2.0", BaseURL: "https://enterprise.beefapi.com", VideoSeconds: seconds},
+				ReferenceImages: []providerMedia{{Width: 512, Height: 512, Bytes: 1000}},
+			}
+			if err := validateVideoTask(profile, input); err == nil {
+				t.Fatalf("enum %v accepted %ss", values, seconds)
+			}
 		}
 	}
 }
@@ -392,31 +472,18 @@ func TestValidateVideoTaskRejectsPromptAboveCapabilityLimit(t *testing.T) {
 	}
 }
 
-// 视频提示词由输入框文本、连线内容和技能上下文合成，默认上限必须留出足够余量，
-// 否则画布工作流会连同线内容一起被拦在本地。这里锁定默认值与边界行为。
+// 未公布字符上限的通道不应被宿主编造的限制拒绝。
 func TestDefaultVideoPromptMaxCharsAllowsComposedCanvasPrompt(t *testing.T) {
 	profile := DefaultModelCapabilityConfigForModel("seedance-videos-compatible", "sd-2.5").Video
-	if profile.References.PromptMaxChars != 8000 {
-		t.Fatalf("视频默认提示词上限 = %d, want 8000", profile.References.PromptMaxChars)
+	if profile.References.PromptMaxChars != 0 {
+		t.Fatalf("视频默认提示词上限 = %d, want 0", profile.References.PromptMaxChars)
 	}
 
-	// 画布实际合成出的提示词量级（输入框 + 连线 + 技能上下文）必须通过。
-	composed := canvasGenerationInput{Mode: "video", Prompt: strings.Repeat("镜", 2399), Config: providerConfig{Model: "sd-2.5", VideoSeconds: "6", Size: "16:9", VQuality: "720p"}}
-	if err := validateVideoTask(profile, composed); err != nil {
-		t.Fatalf("合成提示词 2399 字符被拒绝: %v", err)
-	}
-	// 恰好等于上限仍然放行，与前端 `actualChars <= maxChars` 的判定保持一致。
-	atLimit := composed
-	atLimit.Prompt = strings.Repeat("镜", 8000)
-	if err := validateVideoTask(profile, atLimit); err != nil {
-		t.Fatalf("提示词 8000 字符被拒绝: %v", err)
-	}
-	// 超出上限必须明确失败，并保持“不自动截断”的语义。
-	overLimit := composed
-	overLimit.Prompt = strings.Repeat("镜", 8001)
-	err := validateVideoTask(profile, overLimit)
-	if err == nil || !strings.Contains(err.Error(), "最多 8000 个字符") || !strings.Contains(err.Error(), "8001 个字符") {
-		t.Fatalf("validateVideoTask() error = %v", err)
+	for _, length := range []int{2399, 8001, 32001} {
+		composed := canvasGenerationInput{Mode: "video", Prompt: strings.Repeat("镜", length), Config: providerConfig{Model: "sd-2.5", VideoSeconds: "6", Size: "16:9", VQuality: "720p"}}
+		if err := validateVideoTask(profile, composed); err != nil {
+			t.Fatalf("合成提示词 %d 字符被拒绝: %v", length, err)
+		}
 	}
 }
 

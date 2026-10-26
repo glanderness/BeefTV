@@ -170,6 +170,7 @@ const NODE_MODEL_GENERATION_PARAMS: ReadonlyArray<keyof CanvasNodeMetadata> = [
     "size",
     "quality",
     "transparentBackground",
+    "seedreamMode", "seedreamMaxImages", "seedreamOutputFormat", "seedreamOptimize", "seedreamWatermark",
     "count",
     "seconds",
     "vquality",

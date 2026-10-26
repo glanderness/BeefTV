@@ -13,7 +13,7 @@ import (
 )
 
 // RegisterDefaultOps 注册全部对外操作（手工 UI、CLI、MCP 与内置助手共用）。
-// 付费生成只经 canvas.generation.propose 提议、由界面确认后执行；
+// 内置助手的付费生成先提议、由界面确认；外部客户端负责自身执行审批。
 // 未经参数与费用风险验收的能力明确不注册，而不是提供 stub 伪成功。
 func RegisterDefaultOps(r *Registry) {
 	registerCanvasEditOps(r)
@@ -178,6 +178,13 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 			}
 		}
 		result["production"] = map[string]any{"targets": targets}
+	}
+	if ctx.Caller.Kind == CallerExternal && !ctx.Caller.ReadOnly {
+		result["nextAction"] = map[string]any{
+			"operation": "canvas.generation.submit", "approval": "external-client",
+			"params":  map[string]any{"canvasId": args.CanvasID, "nodeIds": nodeIDs, "kind": args.Kind, "expectedRevision": doc["revision"], "expectedModelConfigRevision": resolved.Revision},
+			"message": "本次提议尚未生成或扣费。由外部调用方确认后，使用稳定 operationId 提交；无需寻找内置助手确认卡。",
+		}
 	}
 	return result, nil
 }
@@ -363,7 +370,7 @@ func opTaskGet(ctx *Context, params json.RawMessage) (any, error) {
 	}
 	return map[string]any{
 		"taskId": task.ID, "type": task.Type, "status": task.Status, "progress": task.Progress,
-		"outputs": task.Outputs, "resultState": task.ResultState,
+		"outputs": task.Outputs, "resultState": task.ResultState, "delivery": task.Delivery,
 		"createdAt": task.CreatedAt, "updatedAt": task.UpdatedAt,
 	}, nil
 }

@@ -24,6 +24,8 @@ let png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
 let wav: Buffer, longWav: Buffer, video: Buffer, jpeg: Buffer;
 const mediaRequests: { path: string; token: string | null }[] = [];
 let holdFirstPreview = true, releaseFirstPreview: (() => void) | null = null;
+let markFirstPreviewStarted!: () => void;
+const firstPreviewStarted = new Promise<void>(resolve => { markFirstPreviewStarted = resolve; });
 const selectedSkill = { skillId: "story", versionId: "story-v1", contentHash: "a".repeat(64), skillName: "分镜", version: "1.0", status: 1, isAdded: true };
 let installedSkills = [selectedSkill];
 const skillInstalls: { sourceType: string; isPrivate: string; fileName: string }[] = [];
@@ -69,7 +71,7 @@ beforeAll(async () => {
         if (pathname.startsWith("/api/resources/") && pathname.endsWith("/file")) {
             mediaRequests.push({ path: new URL(req.url).pathname + new URL(req.url).search, token: req.headers.get("X-Desktop-Token") });
             if (req.headers.get("X-Desktop-Token") !== "synthetic-desktop-preview") return Response.json({ code: 403 }, { status: 403 });
-            if (holdFirstPreview && pathname.includes("/r1/")) { holdFirstPreview = false; await new Promise<void>(resolve => { releaseFirstPreview = resolve; }); }
+            if (holdFirstPreview && pathname.includes("/r1/")) { holdFirstPreview = false; await new Promise<void>(resolve => { releaseFirstPreview = resolve; markFirstPreviewStarted(); }); }
             const file = resources.get(pathname.split("/")[3]) || { bytes: png, mimeType: "image/png" };
             return new Response(file.bytes, { headers: { "content-type": file.mimeType } });
         }
@@ -136,6 +138,7 @@ test("real Sidebar handles file, paste, drop, attachment-only, purpose/range, dr
     await page.locator('input[type="file"]').setInputFiles({ name: "portrait.jpg", mimeType: "image/jpeg", buffer: jpeg });
     await page.getByRole("combobox", { name: "portrait.jpg 的用途" }).waitFor();
     await page.getByText("正在读取预览…", { exact: true }).waitFor({ timeout: 3000 }).catch(async error => { throw new Error(error.message + " BODY " + await page.locator("body").innerText() + " MEDIA " + JSON.stringify(mediaRequests)); });
+    await firstPreviewStarted;
     expect(releaseFirstPreview).not.toBeNull(); releaseFirstPreview!();
     await page.waitForFunction(() => { const image = document.querySelector<HTMLImageElement>('img[alt="portrait.jpg"]'); return image?.src.startsWith("blob:") && image.complete && image.naturalWidth === 64; });
     expect(mediaRequests.some(item => item.token === "synthetic-desktop-preview" && item.path.includes("proxy=1"))).toBe(true);
