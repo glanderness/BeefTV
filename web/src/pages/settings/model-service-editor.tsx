@@ -11,7 +11,7 @@ import { CAPABILITY_LABELS, MODEL_SERVICE_PRESETS, isTopazUpscaleChannel, modelC
 import { serviceCredentialGuide } from "@/lib/service-credentials";
 import type { ModelProtocolDefinition } from "@/lib/model-protocols";
 import { seedancePortraitLabel } from "@/lib/seedance-portrait";
-import { createModelChannel, useConfigStore, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { createModelChannel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ChannelModelSettings } from "./channel-model-settings";
 import { currentModelConnectionReceipt, useModelConnectionTests } from "@/stores/use-model-connection-tests";
 import "./model-service-editor.css";
@@ -74,11 +74,8 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
         setError("");
         setNotice("");
     };
-    // 已经在保存的配置里的连接，密钥栏留空是「沿用后端那一份」；工作区回读时会把密钥
-    // 清空且不写任何标记，所以只有「这个连接已经存在」能说明它后端有密钥。
-    const savedConnection = (channel: ModelChannel) => useConfigStore.getState().config.channels.some((item) => item.id === channel.id);
     const validateConnection = (requireCredential = true, channel: ModelChannel = draft) => {
-        const problem = serviceConnectionError(channel, { protocols, requireCredential, savedConnection: savedConnection(channel) }) || validateChannelHeaders(channel.headers);
+        const problem = serviceConnectionError(channel, { protocols, requireCredential }) || validateChannelHeaders(channel.headers);
         if (problem) setError(problem);
         return !problem;
     };

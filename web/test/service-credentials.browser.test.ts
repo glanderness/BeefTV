@@ -182,8 +182,8 @@ test("an already saved Jimeng connection is not blocked when the workspace hides
     const page = await openSaveStep("jimeng-saved");
     try {
         await page.getByRole("button", { name: "连接信息", exact: true }).click();
-        // 外部工作区回读的样子：AK 和 SK 都是空串，也没有任何「已保存」标记。
-        // 这个连接已经在保存的配置里，SK 留空表示沿用后端那份密钥，不能拦。
+        // 外部工作区回读的样子：AK 和 SK 字段都是空串，后端用 hasSecretKey 说明 SK 已经存过。
+        // 这种连接重填 AK 时不能要求重填 SK，保存时后端沿用原来那份。
         expect(await page.locator('input[aria-label="Access Key（AK）"]').inputValue()).toBe("");
         expect(await page.locator('input[aria-label="Secret Key（SK）"]').inputValue()).toBe("");
         // 重新填 AK 是本来就要做的事（旧值被隐去）；填完不能再被要求重填后端已保存的 SK。
@@ -207,6 +207,26 @@ test("a legacy text model without a profile cannot hide the second key kind at s
         await page.getByText("请拆成两个连接").first().waitFor();
         await page.waitForTimeout(300);
         expect((await savedOf(page)).length).toBe(0);
+    } finally { await page.close(); }
+}, 60000);
+
+test("switching a saved API-key connection to Jimeng still asks for the Secret Key", async () => {
+    const page = await openSaveStep("jimeng-switched");
+    try {
+        await page.getByRole("button", { name: "连接信息", exact: true }).click();
+        // 这条连接后端只存过 API Key，没有 SK 可沿用：只填 AK 不能放行。
+        expect(await page.locator('input[aria-label="Secret Key（SK）"]').inputValue()).toBe("");
+        await page.locator('input[aria-label="Access Key（AK）"]').fill("refilled-ak");
+        await page.getByRole("button", { name: "手动添加模型", exact: true }).click();
+        await page.getByRole("button", { name: "保存并使用", exact: true }).click();
+        await page.getByText("请填写 Secret Key（SK）：这个请求协议要两个密钥，缺一个会签名失败", { exact: true }).waitFor();
+        expect((await savedOf(page)).length).toBe(0);
+        // 补上 SK 之后才能保存，两个密钥一起提交。
+        await page.locator('input[aria-label="Secret Key（SK）"]').fill("synthetic-sk");
+        await page.getByRole("button", { name: "手动添加模型", exact: true }).click();
+        await page.getByRole("button", { name: "保存并使用", exact: true }).click();
+        await waitForSaved(page, 1, "改协议后补 SK");
+        expect((await savedOf(page))[0]).toMatchObject({ apiKey: "refilled-ak", secretKey: "synthetic-sk" });
     } finally { await page.close(); }
 }, 60000);
 

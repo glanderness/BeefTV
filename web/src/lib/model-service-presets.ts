@@ -70,7 +70,7 @@ export function channelAllowsEmptyAPIKey(channel: Pick<ModelChannel, "models" | 
     });
 }
 
-export function serviceConnectionError(channel: ModelChannel, options?: { protocols?: ModelProtocolDefinition[]; requireCredential?: boolean; savedConnection?: boolean }): string {
+export function serviceConnectionError(channel: ModelChannel, options?: { protocols?: ModelProtocolDefinition[]; requireCredential?: boolean }): string {
     if (channel.referenceAssetOrigin?.trim()) {
         try {
             const origin = new URL(channel.referenceAssetOrigin.trim());
@@ -86,13 +86,10 @@ export function serviceConnectionError(channel: ModelChannel, options?: { protoc
         const credential = serviceCredentialGuide(channel, options?.protocols);
         if (credential.conflict) return credential.conflict;
         if (!channel.apiKey.trim() && !channel.hasApiKey && !channelAllowsEmptyAPIKey(channel, options?.protocols)) return `请填写 ${credential.apiKeyLabel}`;
-        // 空的 Secret Key 有两种意思：新连接是「还没填」，已保存的连接是「沿用后端那一份」。
-        // 外部工作区回读配置时会把密钥清成空串，也不补 hasApiKey/hasSecretKey 这类标记
-        // （backend/internal/handler/business_config.go 的 redactExternalConfig），所以
-        // 只能按「这个连接是否已经保存过」区分；保存时后端 preserveExternalConfigSecrets
-        // 对已存在连接的密钥字段也确实是空值即沿用。
-        const keptSecret = options?.savedConnection === true || channel.hasApiKey === true || channel.hasSecretKey === true;
-        if (credential.secretKeyRequired && !channel.secretKey?.trim() && !keptSecret) return `请填写 ${credential.secretKeyLabel}：这个请求协议要两个密钥，缺一个会签名失败`;
+        // 空的 Secret Key 栏有两种意思：还没填，或者后端已经存着一份（回读时被清空）。后端会把
+        // 「这份密钥到底存没存」作为 hasApiKey/hasSecretKey 返回，只认这个标记，不靠
+        // 「连接已经存在」推断——改协议后旧的空密钥仍然是空，后端沿用不了任何东西。
+        if (credential.secretKeyRequired && !channel.secretKey?.trim() && channel.hasSecretKey !== true) return `请填写 ${credential.secretKeyLabel}：这个请求协议要两个密钥，缺一个会签名失败`;
     }
     return "";
 }

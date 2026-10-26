@@ -92,13 +92,13 @@ test("Jimeng protocols ask for Access Key plus Secret Key and refuse a half cred
     expect(serviceCredentialGuide(jimeng).kind).toBe("signature");
     expect(serviceConnectionError(jimeng, { protocols })).toContain("请填写 Secret Key（SK）");
     expect(serviceConnectionError({ ...jimeng, secretKey: "synthetic-secret" }, { protocols })).toBe("");
-    // 外部工作区回读配置时（backend/internal/handler/business_config.go 的 redactExternalConfig）
-    // 密钥就是空串，也没有 hasApiKey/hasSecretKey 这类标记，只有「连接已经保存过」能说明后端还有一份。
-    const redacted = { ...jimeng, apiKey: "refilled-ak", secretKey: "", hasApiKey: undefined, hasSecretKey: undefined };
+    // 外部工作区回读配置时密钥是空串（backend/internal/handler/business_config.go 的
+    // redactExternalConfig），能不能留空只认后端回的 hasSecretKey，不靠「连接已经存在」推断。
+    const redacted = { ...jimeng, apiKey: "refilled-ak", secretKey: "", hasApiKey: true, hasSecretKey: undefined };
+    // 已保存的普通 API Key 连接改成即梦协议：后端只有 apiKey，没有 SK 可沿用，必须让用户填。
     expect(serviceConnectionError(redacted, { protocols })).toContain("请填写 Secret Key（SK）");
-    expect(serviceConnectionError(redacted, { protocols, savedConnection: true })).toBe("");
-    // 托管渠道仍然靠回读的「已保存」标记放行。
-    expect(serviceConnectionError({ ...redacted, apiKey: "", hasApiKey: true, hasSecretKey: true }, { protocols })).toBe("");
+    // 后端确实存过 SK 时（hasSecretKey）才允许留空。
+    expect(serviceConnectionError({ ...redacted, hasSecretKey: true }, { protocols })).toBe("");
     expect(signatureCredentialHint("volcengine-v4")).toContain("「高级设置」");
     expect(signatureCredentialHint("bearer")).toBeUndefined();
 });

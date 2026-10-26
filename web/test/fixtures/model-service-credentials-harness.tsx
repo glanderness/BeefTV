@@ -17,13 +17,24 @@ function initialChannel(): ModelChannel {
         });
     }
     if (scenario === "jimeng-saved") {
-        // 外部工作区回读配置（redactExternalConfig）就是这个样子：密钥被清成空串，
-        // 也不带任何「已保存」标记。
+        // 外部工作区回读配置就是这个样子：密钥被清成空串，另由后端回 hasSecretKey 说明存过。
         return createModelChannel({
             name: "即梦视频",
             baseUrl: "https://visual.volcengineapi.com",
             models: ["jimeng_t2v_v30"],
             modelProfiles: [{ model: "jimeng_t2v_v30", capability: "video", protocol: "volcengine-jimeng-video", authType: "volcengine-v4" }],
+            hasApiKey: true,
+            hasSecretKey: true,
+        });
+    }
+    if (scenario === "jimeng-switched") {
+        // 已保存的普通 API Key 连接：后端只有 apiKey，没有 SK 可沿用，现在改成了即梦协议。
+        return createModelChannel({
+            name: "即梦视频",
+            baseUrl: "https://visual.volcengineapi.com",
+            models: ["jimeng_t2v_v30"],
+            modelProfiles: [{ model: "jimeng_t2v_v30", capability: "video", protocol: "volcengine-jimeng-video", authType: "volcengine-v4" }],
+            hasApiKey: true,
         });
     }
     if (scenario === "ark-legacy-text") {
@@ -67,8 +78,8 @@ function initialChannel(): ModelChannel {
 
 const dark = new URLSearchParams(location.search).get("theme") === "dark";
 const channel = initialChannel();
-// 已保存的连接只能靠「它已经在保存的配置里」认出来：后端会给已存在连接的密钥字段沿用原值。
-if (scenario.endsWith("-saved")) {
+// 这两个场景是「打开一条已存在的连接」：把它放进配置里，编辑器才会走管理分支。
+if (scenario.startsWith("jimeng-saved") || scenario === "jimeng-switched") {
     const current = useConfigStore.getState().config;
     useConfigStore.setState({ config: { ...current, channels: [channel] } });
 }
