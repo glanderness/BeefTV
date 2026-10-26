@@ -64,7 +64,7 @@ func (s *Service) retry(userID, id string, refresh *retryCredentialRefresh) (*mo
 	if s.deps.Failures.BlocksRetry(task.Error, task.Stage) && !(refresh != nil && s.deps.Failures.Category(task.Error, task.Stage) == generation.CategoryAuth) {
 		category := s.deps.Failures.Category(task.Error, task.Stage)
 		if task.Stage == "submission_unknown" || category == generation.CategorySubmissionUncertain {
-			return nil, kernel.BadAuthRequest(SubmissionUncertainRetryMessage)
+			return nil, ResultUnrecoverable(SubmissionUncertainRetryMessage)
 		}
 		if category == generation.CategoryDownloadFailed {
 			return nil, kernel.BadAuthRequest(DownloadFailureRetryMessage)

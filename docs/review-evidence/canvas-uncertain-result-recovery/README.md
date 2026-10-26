@@ -90,7 +90,10 @@
 
 1. **客户端错误码会触发自动重试**：`canvasTaskProvesSubmissionUnknown` 不再认客户端写入的 `generationErrorCode`，只认从任务同步来的 `taskStage` / `taskErrorCode`；节点正在提交或新提交结论未知（`generationSubmissionState` 为 `submitting` / `unknown`）时也不算，因为挂着的任务号可能是普通失败的旧任务。回归：`test/canvas-generation-failure.test.ts`（`clientCodeOnStaleTask`、`resubmissionUnknown`）。
 2. **提示词面板绕过付费确认**：`canvasGenerationRetryBlocked` 改为只有确认取不回（`resourceReloadAvailable === false`）才解锁；新增 `canvasGenerationNeedsPaidRetryConfirmation`，提示词面板的「生成」（`use-canvas-generation-executor.ts`）和「重新生成」都先弹同一个确认框，「重新生成」确认过的批次重生成不再重复弹。回归：`test/fixtures/generation-preflight.fixture.ts`（取消不提交、确认后提交 1 次）。
-3. **临时拒绝被当成取不回**：`recoverCanvasTaskResult` 只有后端返回明确的「取不回」文案（`SubmissionUncertainRetryMessage`、`validateImageTaskRetry`、`imageRecoveryError`）才返回 undefined；恢复锁冲突（400）、存储配额（403）等其他 4xx 原样抛出，节点保留「继续取回」。回归：`test/canvas-task-result-recovery.test.ts`「temporary refusals ...」。
+3. **临时拒绝被当成取不回**：只按文案判断不够——读回执时数据库临时失败，后端返回的也是同一句「图片结果尚未确认…」。改为后端在确认取不回的拒绝上带机器原因 `reason: "result_unrecoverable"`（`backend/internal/task/errors.go` 的 `ResultUnrecoverable`），前端只认这个原因：
+   - 带原因的：`lifecycle.go` 的提交结论未确认拦截、`validateImageTaskRetry` 的两处拦截、`recoverAcceptedImage` 里回执已确认不能用（多条已接受/未知回执、状态或格式不符、正文解析失败、缺少完整图片）。
+   - 不带原因的：读回执的数据库错误、恢复锁冲突（400）、存储配额（403）等，前端原样抛出，节点保留「继续取回」。
+   - 回归：后端 `TestImageReceiptRecoveryReasonSeparatesUnrecoverableFromTemporaryFailure`（回执不完整带原因、读回执失败不带）、`TestRetryUnknownAcceptanceAndImageReceiptStayOnOriginalTask`（提交结论未确认拦截带原因）；前端 `test/canvas-task-result-recovery.test.ts`「temporary refusals ...」（含同文案、不带原因的读库失败）。
 
 ## 上游 Infinite Canvas 对照
 
@@ -105,6 +108,7 @@
 
 ## 已验证
 
+- `cd backend && go build ./... && go test ./internal/task ./internal/repository` 通过；`go test ./internal/app ./internal/handler` 有 51 项失败，与不含本改动的 main 完全一致（本机未安装渠道插件等环境原因），本改动没有新增失败。
 - `cd web && bun run typecheck` 通过。
 - `cd web && bun run build` 通过。
 - `cd web && bun run test`：3340 通过、1 跳过、1 失败。失败的是 `video-api-contracts.test.ts`「时长未知时在网络提交之前拒绝参考素材」，在不含本改动的 main（7b0dc27）上单独运行同样失败，是 main 上视频时长提示改文案后测试没跟上，与本改动无关。

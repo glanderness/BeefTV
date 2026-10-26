@@ -8,6 +8,8 @@ import (
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/outbound"
+	"infinite-canvas/backend/internal/repository"
+	localtask "infinite-canvas/backend/internal/task"
 )
 
 // Old image tasks could fail while downloading after a successful create.
@@ -16,19 +18,24 @@ func (s *Service) recoverAcceptedImage(task model.Task) (*model.Task, bool, erro
 	if task.Type != "canvas_image" || task.Status != model.TaskStatusFailed {
 		return nil, false, nil
 	}
+	// 下面带 localtask.ResultUnrecoverable 的拒绝表示回执已确认不能用来恢复；
+	// 读回执本身失败（数据库临时故障）不带它，客户端会保留「继续取回」。
 	receipt, err := s.repo.ImageCreateReceipt(task.UserID, task.ID)
+	if errors.Is(err, repository.ErrAmbiguousImageCreateReceipts) {
+		return nil, true, localtask.ResultUnrecoverable(imageRecoveryError{}.Error())
+	}
 	if err != nil {
 		return nil, true, imageRecoveryError{err}
 	}
 	if receipt != nil && (receipt.StatusCode < 200 || (receipt.StatusCode >= 200 && receipt.StatusCode < 300 && (receipt.StatusCode != 200 || receipt.Status != model.ApiCallStatusSucceeded || receipt.APIFormat != "openai" || (!strings.HasSuffix(receipt.Path, "/images/generations") && !strings.HasSuffix(receipt.Path, "/images/edits"))))) {
-		return nil, true, imageRecoveryError{errors.New("创建请求结果未知")}
+		return nil, true, localtask.ResultUnrecoverable(imageRecoveryError{}.Error())
 	}
 	if receipt == nil || receipt.StatusCode < 200 || receipt.StatusCode >= 300 {
 		return nil, false, nil
 	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(receipt.ResponseBody), &payload); err != nil {
-		return nil, true, imageRecoveryError{err}
+		return nil, true, localtask.ResultUnrecoverable(imageRecoveryError{}.Error())
 	}
 	if _, _, failed := generation.PayloadBusinessFailure(payload); failed {
 		return nil, false, nil
@@ -40,7 +47,7 @@ func (s *Service) recoverAcceptedImage(task model.Task) (*model.Task, bool, erro
 		} `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(receipt.ResponseBody), &body); err != nil || len(body.Data) == 0 || (len(body.Error) > 0 && string(body.Error) != "null") {
-		return nil, true, imageRecoveryError{errors.New("成功回执缺少完整图片结果")}
+		return nil, true, localtask.ResultUnrecoverable(imageRecoveryError{}.Error())
 	}
 	images := make([]map[string]any, 0, len(body.Data))
 	for _, image := range body.Data {

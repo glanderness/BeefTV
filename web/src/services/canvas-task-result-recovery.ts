@@ -7,10 +7,9 @@ export type RecoverCanvasTaskResultDependencies = {
     retryGenerationTask: typeof retryGenerationTask;
 };
 
-// 后端明确表示「这次结果取不回、也不能按原任务重试」的拒绝文案（backend/internal/task/errors.go、
-// app/image_submission.go 的 validateImageTaskRetry 与 imageRecoveryError）。恢复锁冲突、存储配额不足等
-// 其他 4xx 只是暂时取不回，结果可能还在，不能据此关掉「继续取回」。
-const RESULT_GONE_MESSAGES = ["提交结果尚未确认，请先查询原任务，不要立即重新提交", "图片请求可能已经生成，请保留任务记录并联系支持查询结果，不要重复提交", "图片结果尚未确认，已停止自动重发；请保留任务记录并联系支持查询结果"];
+// 后端确认「这次结果取不回、也不能按原任务重试」时带的机器原因（backend/internal/task/errors.go 的 ResultUnrecoverableReason）。
+// 读回执失败、恢复锁冲突、存储配额不足等其他拒绝都不带它：结果可能还在，不能据此关掉「继续取回」。
+const RESULT_UNRECOVERABLE_REASON = "result_unrecoverable";
 
 /**
  * 请后端按已保存的上游回执重建「提交结论未确认」任务的结果。
@@ -35,7 +34,7 @@ export async function recoverCanvasTaskResult(taskId: string, signal: AbortSigna
         signal.throwIfAborted();
         assertUserScope(expectedScope);
         if (latest.status !== "failed" && latest.status !== "cancelled") return latest;
-        if (RESULT_GONE_MESSAGES.includes((error as ApiError).message.trim())) return undefined;
+        if ((error as ApiError).reason === RESULT_UNRECOVERABLE_REASON) return undefined;
         throw error;
     }
 }

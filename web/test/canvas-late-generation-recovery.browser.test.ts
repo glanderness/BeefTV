@@ -63,7 +63,7 @@ beforeAll(async () => {
             // 服务端临时出错：结果可能还在，客户端交给「继续取回」，不自动反复重试。
             if (id === "settled-flaky") return Response.json({ code: 503, reason: "unavailable", msg: "服务暂时不可用" }, { status: 503 });
             // 没有回执：后端拒绝，客户端不得据此重新提交付费生成。
-            return Response.json({ code: 400, reason: "bad_request", msg: "提交结果尚未确认，请先查询原任务，不要立即重新提交" }, { status: 400 });
+            return Response.json({ code: 400, reason: "result_unrecoverable", msg: "提交结果尚未确认，请先查询原任务，不要立即重新提交" }, { status: 400 });
         }
         const taskMatch = /^\/api\/tasks\/([^/]+)$/.exec(path);
         if (taskMatch && request.method === "GET") {

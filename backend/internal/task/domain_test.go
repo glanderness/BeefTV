@@ -573,6 +573,14 @@ func TestRetryUnknownAcceptanceAndImageReceiptStayOnOriginalTask(t *testing.T) {
 	if _, err := svc.Retry("user", task.ID); err == nil || !strings.Contains(err.Error(), "不要重复提交") && !strings.Contains(err.Error(), "尚未确认") {
 		t.Fatalf("retry unknown acceptance error = %v", err)
 	}
+	// 不带图片回执的拦截也必须让客户端认出「确认取不回」。
+	svc = domainService(store, func(deps *Dependencies) {
+		deps.Failures = failClass{block: true, category: generation.CategorySubmissionUncertain}
+	})
+	var appErr *kernel.AppError
+	if _, err := svc.Retry("user", task.ID); !errors.As(err, &appErr) || appErr.Reason != ResultUnrecoverableReason {
+		t.Fatalf("submission-uncertain refusal reason = %v", err)
+	}
 	stored, _ := store.TaskForUser("user", task.ID)
 	if stored.Status != model.TaskStatusFailed {
 		t.Fatalf("retry mutated uncertain task: %+v", stored)

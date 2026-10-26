@@ -8,7 +8,7 @@ function task(status: GenerationTask["status"], stage = "任务失败"): Generat
 }
 
 const signal = () => new AbortController().signal;
-const refusal = () => new ApiError("提交结果尚未确认，请先查询原任务，不要立即重新提交", { status: 400, reason: "bad_request" });
+const refusal = () => new ApiError("提交结果尚未确认，请先查询原任务，不要立即重新提交", { status: 400, reason: "result_unrecoverable" });
 
 test("a failed image task takes back its original receipt result instead of submitting again", async () => {
     const calls: string[] = [];
@@ -34,6 +34,8 @@ test("temporary refusals such as a recovery lock or storage quota are errors, ne
     for (const temporary of [
         new ApiError("task provider recovery is already running", { status: 400, reason: "bad_request" }),
         new ApiError("存储空间已用完，请清理后重试", { status: 403, reason: "quota_exceeded" }),
+        // 读回执时数据库临时失败：文案和「确认取不回」一样，但不带 result_unrecoverable。
+        new ApiError("图片结果尚未确认，已停止自动重发；请保留任务记录并联系支持查询结果", { status: 400, reason: "invalid_argument" }),
     ]) {
         await expect(recoverCanvasTaskResult("task-1", signal(), {
             queryGenerationTask: async () => task("failed"),

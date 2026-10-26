@@ -35,7 +35,15 @@ const (
 	VideoConfigRequiredMessage                         = "视频任务缺少可执行的模型配置"
 	CancelChangedMessage                               = "任务状态已变化，请刷新后重试"
 	LocalStorageFailedReason        kernel.ErrorReason = "local_storage_failed"
+	// ResultUnrecoverableReason 表示后端已确认：这次结果取不回，原任务也不能按原输入重试。
+	// 客户端只凭它把节点标成「取不回」并交出重新生成；读库失败、恢复锁冲突等临时错误不带它。
+	ResultUnrecoverableReason kernel.ErrorReason = "result_unrecoverable"
 )
+
+// ResultUnrecoverable 返回带 ResultUnrecoverableReason 的拒绝，只用于已确认取不回的情况。
+func ResultUnrecoverable(message string) *kernel.AppError {
+	return &kernel.AppError{Status: kernel.CodeInvalidArgument, Code: kernel.CodeInvalidArgument, Reason: ResultUnrecoverableReason, Message: message}
+}
 
 func unavailable() error {
 	return kernel.NewAppError(kernel.CodeInternal, "任务服务不可用")

@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"infinite-canvas/backend/internal/model"
+	localtask "infinite-canvas/backend/internal/task"
 )
 
 func TestRetryAcceptedImageUsesOriginalReceiptWithoutCreate(t *testing.T) {
@@ -107,5 +109,32 @@ func TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates(t *testing.T) {
 				t.Fatalf("ambiguous receipt restored: %v %v", handled, err)
 			}
 		})
+	}
+}
+
+// 客户端只凭 result_unrecoverable 关掉「继续取回」：确认取不回的拒绝必须带它，读回执的临时故障不能带。
+func TestImageReceiptRecoveryReasonSeparatesUnrecoverableFromTemporaryFailure(t *testing.T) {
+	s, db, _, _ := creationTestService(t)
+	task := model.Task{ID: "task", UserID: "user", Type: "canvas_image", Status: model.TaskStatusFailed}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	receipt := model.ApiCallLog{ID: "receipt", UserID: task.UserID, TaskID: task.ID, Capability: "image", RequestKind: "create", Method: "POST", Path: "/v1/images/edits", APIFormat: "openai", Status: model.ApiCallStatusSucceeded, StatusCode: 200, ResponseBody: `{"data":[]}`}
+	if err := db.Create(&receipt).Error; err != nil {
+		t.Fatal(err)
+	}
+	var appErr *AppError
+	if _, handled, err := s.recoverAcceptedImage(task); !handled || !errors.As(err, &appErr) || appErr.Reason != localtask.ResultUnrecoverableReason {
+		t.Fatalf("incomplete receipt must be marked unrecoverable: handled=%v err=%v", handled, err)
+	}
+	if err := db.Migrator().DropTable(&model.ApiCallLog{}); err != nil {
+		t.Fatal(err)
+	}
+	_, handled, err := s.recoverAcceptedImage(task)
+	if !handled || err == nil {
+		t.Fatalf("receipt read failure must stop recovery: handled=%v err=%v", handled, err)
+	}
+	if errors.As(err, &appErr) && appErr.Reason == localtask.ResultUnrecoverableReason {
+		t.Fatalf("temporary receipt read failure marked unrecoverable: %v", err)
 	}
 }
