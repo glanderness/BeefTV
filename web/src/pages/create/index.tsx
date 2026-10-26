@@ -121,6 +121,9 @@ export default function CreatePage() {
     const [referenceReplacementBusy, setReferenceReplacementBusy] = useState(false);
     const [historyOpen, setHistoryOpen] = useState(false);
     const [libraryOpen, setLibraryOpen] = useState(false);
+    // 全站关闭了右上角 Toast（globals.css 里 .ant-message 被隐藏），
+    // 参考素材超限这类必须让用户看见的说明改在参考内容面板里就地显示。
+    const [referenceNotice, setReferenceNotice] = useState("");
     const externalAssetSources = useExternalAssetSources(libraryOpen);
     const abortRef = useRef<AbortController | null>(null);
     const composerFocusRef = useRef<HTMLTextAreaElement>(null);
@@ -560,18 +563,20 @@ export default function CreatePage() {
         if (!next.length) return;
         const merged = [...attachments.filter((item) => !next.some((candidate) => candidate.id === item.id)), ...next];
         const fitted = fitCreationAttachmentsToLimits(merged, referenceLimits);
-        if (fitted.dropped.length) toast.warning(`${creationReferenceKindMessage(referenceLimits, fitted.dropped[0])}，超出的 ${fitted.dropped.length} 个素材没有加入`);
+        setReferenceNotice(fitted.dropped.length ? `${creationReferenceKindMessage(referenceLimits, fitted.dropped[0])}，超出的 ${fitted.dropped.length} 个素材没有加入` : "");
         setAttachments(fitted.attachments);
         setLibraryOpen(false);
     };
 
     const removeAttachment = (id: string) => {
+        setReferenceNotice("");
         const reference = mentionReferences.find((item) => item.attachmentId === id);
         setAttachments((current) => removeCreationAttachment(current, id));
         if (reference) setPrompt((current) => removeCreationReferenceTokens(current, [reference]));
     };
 
     const clearAttachments = () => {
+        setReferenceNotice("");
         const attachmentIds = new Set(attachments.map((item) => item.id));
         const references = mentionReferences.filter((item) => item.attachmentId && attachmentIds.has(item.attachmentId));
         setAttachments([]);
@@ -659,7 +664,7 @@ export default function CreatePage() {
         }
         const overflowMessage = creationReferenceOverflowMessage(referenceLimits, attachments);
         if (overflowMessage) {
-            toast.warning(overflowMessage);
+            setReferenceNotice(overflowMessage);
             releaseRetryLock();
             return;
         }
@@ -1136,6 +1141,7 @@ export default function CreatePage() {
         attachments,
         referenceImageSize,
         referenceLimits,
+        referenceNotice,
         references: mentionReferences,
         onRemoveAttachment: removeAttachment,
         onClearAttachments: clearAttachments,

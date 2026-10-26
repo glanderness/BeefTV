@@ -347,6 +347,8 @@ type ComposerProps = {
     attachments: CreationAttachment[];
     referenceImageSize?: { width: number; height: number };
     referenceLimits: CreationReferenceLimits;
+    /** 页内可见的超限说明：全站已关闭右上角 Toast，提示必须留在页面里。 */
+    referenceNotice?: string;
     references: CreationReference[];
     onRemoveAttachment: (id: string) => void;
     onClearAttachments: () => void;
@@ -545,6 +547,7 @@ export function CreationComposer(props: ComposerProps) {
                             <Tooltip title="收起素材面板"><button type="button" className="creation-reference-panel-collapse" onClick={() => setReferencePanelExpanded(false)} aria-label="收起素材面板"><Minimize2 aria-hidden="true" /></button></Tooltip>
                         </div>
                     </div> : null}
+                    {props.referenceNotice ? <p className="creation-reference-notice" role="status">{props.referenceNotice}</p> : null}
                     <div className="creation-reference-track-wrapper">
                         <div className="creation-reference-stack-shell">
                             {trackState.canScrollLeft ? <button type="button" className="creation-reference-track-button is-left" onClick={() => scrollAttachmentTrack(-1)} aria-label="向左浏览参考内容" title="向左浏览参考内容"><ChevronLeft aria-hidden="true" /></button> : null}
