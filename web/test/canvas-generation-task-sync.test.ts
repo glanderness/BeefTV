@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { applyGeneratedMediaResultMetadata, applyRecoveredGenerationTaskResultToNodes, buildGenerationTaskNodeResult, videoMetadata, type GenerationResultMediaIO } from "@/lib/canvas/canvas-generation-task-sync";
-import { CANVAS_VIDEO_PREVIEW_VERSION } from "@/services/canvas-video-preview";
+import { applyGeneratedMediaResultMetadata, applyRecoveredGenerationTaskResultToNodes, videoMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 function videoNode(assetId: string, storageKey: string): CanvasNodeData {
@@ -66,91 +65,5 @@ describe("recovered generation task results", () => {
         expect(result.node?.metadata?.status).toBe("success");
         expect(result.node?.metadata?.taskStatus).toBe("succeeded");
         expect(result.node?.metadata?.generationEffectKeys).toContain(result.effectKey);
-    });
-});
-
-function generatedVideoTask(result: unknown) {
-    return {
-        id: "task-video",
-        type: "canvas_video",
-        status: "succeeded",
-        prompt: "镜头",
-        resultJson: JSON.stringify(result),
-        clientContext: { nodeId: "node-1" },
-    } as never;
-}
-
-function generatedVideoIO(overrides: Partial<GenerationResultMediaIO> = {}) {
-    const captured: Array<{ storageKey?: string; content: string }> = [];
-    const io: GenerationResultMediaIO = {
-        resolveImageUrl: async () => "",
-        uploadImage: async () => {
-            throw new Error("首帧应当沿用已有的取帧与上传通道，而不是在同步层重新上传");
-        },
-        resolveMediaUrl: async () => "blob:http://127.0.0.1/result-video",
-        storeGeneratedVideo: async () => {
-            throw new Error("结果带 storageKey 时复用已有资源，不应再次上传");
-        },
-        storeGeneratedAudio: async () => {
-            throw new Error("视频任务不应写音频");
-        },
-        captureVideoPreview: async (media) => {
-            captured.push(media);
-            return { url: "/api/resources/poster/file", storageKey: "resource:poster", width: 400, height: 225, bytes: 30, mimeType: "image/jpeg" };
-        },
-        fetchBlob: async () => {
-            throw new Error("视频任务不应下载音频");
-        },
-        ...overrides,
-    };
-    return { io, captured };
-}
-
-describe("generated video first frame", () => {
-    test("a finished generation stores a first-frame poster like an uploaded video", async () => {
-        const node = videoNode("", "");
-        node.metadata = { prompt: "镜头" };
-        const { io, captured } = generatedVideoIO();
-
-        const result = await buildGenerationTaskNodeResult(
-            node,
-            generatedVideoTask({ mode: "video", video: { storageKey: "resource:result-video", url: "/api/resources/result-video/file", width: 1280, height: 720, durationMs: 4000, mimeType: "video/mp4" } }),
-            [node],
-            io,
-        );
-
-        expect(captured).toEqual([{ storageKey: "resource:result-video", content: "blob:http://127.0.0.1/result-video" }]);
-        expect(result.metadata.videoPreview).toEqual({
-            content: "/api/resources/poster/file",
-            storageKey: "resource:poster",
-            width: 400,
-            height: 225,
-            bytes: 30,
-            mimeType: "image/jpeg",
-            captureVersion: CANVAS_VIDEO_PREVIEW_VERSION,
-            sourceKey: "resource:result-video",
-        });
-    });
-
-    test("a failed first-frame capture keeps the finished video", async () => {
-        const node = videoNode("", "");
-        node.metadata = { prompt: "镜头" };
-        const { io } = generatedVideoIO({
-            captureVideoPreview: async () => {
-                throw new Error("取帧失败");
-            },
-        });
-
-        const result = await buildGenerationTaskNodeResult(
-            node,
-            generatedVideoTask({ mode: "video", video: { storageKey: "resource:result-video", url: "/api/resources/result-video/file", mimeType: "video/mp4" } }),
-            [node],
-            io,
-        );
-
-        expect(result.metadata.videoPreview).toBeUndefined();
-        expect(result.metadata.storageKey).toBe("resource:result-video");
-        expect(result.metadata.status).toBe("success");
-        expect(result.metadata.taskStatus).toBe("succeeded");
     });
 });

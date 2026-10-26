@@ -79,6 +79,7 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
     const inferredProtocol = activeModel ? (inferProtocolCapabilityFromModel(activeModel) === "video" ? channel.interfaceType || "" : defaultProtocolForModel(activeModel, availableProtocols)) : "";
     const activeProtocol = activeModelProfile ? activeModelProfile.protocol || channel.interfaceType || "" : inferredProtocol;
     const activeCapability = activeModelProfile?.capability || modelProtocolCapability(activeProtocol, availableProtocols) || (activeModel ? inferProtocolCapabilityFromModel(activeModel) : "text");
+
     return (
         <div className="mt-4">
             <div className="mb-2 flex items-center justify-between gap-3">

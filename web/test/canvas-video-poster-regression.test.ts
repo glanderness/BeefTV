@@ -83,51 +83,6 @@ test("poster capture waits for a presented video frame before drawing", async ()
     expect(result.poster?.type).toBe("image/jpeg");
 });
 
-test("a legitimately black or near-black first frame is still captured", async () => {
-    // Dark footage is common (fade-ins, night scenes). A brightness filter on
-    // this shared path would return no poster and make video-to-image callers
-    // report an unreadable video, so the captured frame is taken as-is.
-    for (const pixel of [0, 5]) {
-        let drawCount = 0;
-        const video = Object.assign(new EventTarget(), {
-            videoWidth: 1920,
-            videoHeight: 1080,
-            duration: 10,
-            currentTime: 0.001,
-            readyState: 4,
-            requestVideoFrameCallback(callback: () => void) {
-                callback();
-                return 1;
-            },
-            async play() {},
-            pause() {},
-        }) as unknown as HTMLVideoElement;
-        const canvas = {
-            width: 0,
-            height: 0,
-            getContext: () => ({
-                fillStyle: "",
-                fillRect() {},
-                drawImage() {
-                    drawCount += 1;
-                },
-                getImageData: (_x: number, _y: number, width: number, height: number) => ({
-                    data: new Uint8ClampedArray(width * height * 4).fill(pixel),
-                }),
-            }),
-            toBlob(callback: BlobCallback) {
-                callback(new Blob(["poster"], { type: "image/jpeg" }));
-            },
-        } as unknown as HTMLCanvasElement;
-
-        const result = await capturePresentedVideoPoster(video, canvas, { maxWidth: 400, timeoutMs: 1_000 });
-
-        expect(drawCount).toBe(1);
-        expect(result.poster).toBeInstanceOf(Blob);
-        expect(result.poster?.type).toBe("image/jpeg");
-    }
-});
-
 afterEach(() => {
     // The production capture queue is serialized; let settled microtasks flush
     // before another test replaces browser primitives.

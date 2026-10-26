@@ -37,7 +37,6 @@ function mockIO() {
     const storedVideo: string[] = [];
     const storedAudio: string[] = [];
     const fetched: string[] = [];
-    const capturedPreviews: string[] = [];
     const io: GenerationResultMediaIO = {
         resolveImageUrl: async (storageKey, fallback = "") => {
             resolveImageCalls.push([storageKey, fallback]);
@@ -59,16 +58,12 @@ function mockIO() {
             storedAudio.push(blob.type);
             return { url: "uploaded-audio", storageKey: "audio:new", bytes: 8, mimeType: "audio/mpeg", durationMs: 1200 };
         },
-        captureVideoPreview: async (media) => {
-            capturedPreviews.push(media.storageKey || media.content);
-            return { url: "captured-poster", storageKey: "image:poster", width: 400, height: 225, bytes: 6, mimeType: "image/jpeg" };
-        },
         fetchBlob: async (url) => {
             fetched.push(url);
             return new Blob(["x"], { type: "audio/mpeg" });
         },
     };
-    return { io, resolveImageCalls, resolveMediaCalls, uploaded, storedVideo, storedAudio, fetched, capturedPreviews };
+    return { io, resolveImageCalls, resolveMediaCalls, uploaded, storedVideo, storedAudio, fetched };
 }
 
 describe("buildGenerationTaskNodeResult history reuse", () => {
