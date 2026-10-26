@@ -450,6 +450,7 @@ export default function CreatePage() {
     }, []);
 
     const selectMode = (next: CreationMode) => {
+        setReferenceNotice("");
         setMode(next);
         rememberMode(next);
         const nextModels = selectableModelsByCapability(config, next);
@@ -584,6 +585,7 @@ export default function CreatePage() {
     };
 
     const clearComposer = () => {
+        setReferenceNotice("");
         promptRef.current = "";
         attachmentsRef.current = [];
         setPrompt("");
@@ -724,6 +726,7 @@ export default function CreatePage() {
         setPrompt("");
         setAttachments([]);
         setDraftReferences([]);
+        setReferenceNotice("");
         setBusy(true);
         const controller = new AbortController();
         const requestLifecycle = runtime.beginGenerationConsumer(controller.signal);
@@ -892,6 +895,7 @@ export default function CreatePage() {
         setPrompt("");
         setAttachments([]);
         setDraftReferences([]);
+        setReferenceNotice("");
         setHistoryOpen(false);
     };
 
@@ -938,6 +942,7 @@ export default function CreatePage() {
         setPrompt("");
         setAttachments([]);
         setDraftReferences([]);
+        setReferenceNotice("");
         setHistoryOpen(false);
         setConflictOpen(false);
         const epoch = captureUserScopeEpoch();
@@ -1029,6 +1034,7 @@ export default function CreatePage() {
                         setPrompt("");
                         setAttachments([]);
                         setDraftReferences([]);
+                        setReferenceNotice("");
                     }
                     toastRef.current.success("历史对话已删除，素材仍保留");
                 } catch (error) {
@@ -1156,7 +1162,11 @@ export default function CreatePage() {
         imageProfile,
         videoProfile,
         config,
-        onModelChange: (value: string) => updateConfig(mode === "text" ? "textModel" : mode === "image" ? "imageModel" : "videoModel", value),
+        onModelChange: (value: string) => {
+            // 换模型后各类上限会变，上一轮的超限说明不再成立。
+            setReferenceNotice("");
+            updateConfig(mode === "text" ? "textModel" : mode === "image" ? "imageModel" : "videoModel", value);
+        },
         ratio,
         setRatio: setComposerRatio,
         seconds,
