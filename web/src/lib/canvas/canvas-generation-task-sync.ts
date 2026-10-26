@@ -8,6 +8,9 @@ import { parseBackendGenerationResult } from "@/services/api/generation-task";
 import type { GenerationTask, GenerationTaskOutput } from "@/services/api/task-center";
 import { resolveMediaUrl, type UploadedFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
+import { CANVAS_VIDEO_PREVIEW_VERSION } from "@/services/canvas-video-preview";
+import { acquireCanvasVideoSource } from "@/services/canvas-video-source";
+import { captureVideoPoster } from "@/lib/video-poster";
 import { ownedResourceIdFromMediaRef, resourceStorageKey } from "@/services/api/resources";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -68,6 +71,8 @@ export function videoMetadata(video: UploadedFile): CanvasNodeMetadata {
             height: video.preview.height,
             bytes: video.preview.bytes,
             mimeType: video.preview.mimeType,
+            captureVersion: CANVAS_VIDEO_PREVIEW_VERSION,
+            sourceKey: video.storageKey || video.url,
         } : undefined,
         errorDetails: undefined,
         generationErrorCode: undefined,
@@ -127,6 +132,8 @@ export type GenerationResultMediaIO = {
     resolveMediaUrl: typeof resolveMediaUrl;
     storeGeneratedVideo: typeof storeGeneratedVideo;
     storeGeneratedAudio: typeof storeGeneratedAudio;
+    /** 生成视频的首帧写入；和拖入视频共用 captureVideoPoster 取帧。 */
+    captureVideoPreview: (media: { storageKey?: string; content: string }) => Promise<UploadedImage | undefined>;
     fetchBlob: (url: string) => Promise<Blob>;
 };
 
@@ -136,8 +143,37 @@ const defaultGenerationResultMediaIO: GenerationResultMediaIO = {
     resolveMediaUrl,
     storeGeneratedVideo,
     storeGeneratedAudio,
+    captureVideoPreview: storeGeneratedVideoPreview,
     fetchBlob: async (url) => (await fetch(url)).blob(),
 };
+
+/**
+ * 生成完成后把首帧存成图片，和拖入视频走同一套取帧代码。
+ * 这类预览只影响未激活节点的显示，取不到时返回 undefined，视频本身照常落地。
+ */
+async function storeGeneratedVideoPreview(media: { storageKey?: string; content: string }): Promise<UploadedImage | undefined> {
+    const source = await acquireCanvasVideoSource(media.storageKey, media.content);
+    if (!source.url) { source.release(); return undefined; }
+    let captured: Awaited<ReturnType<typeof captureVideoPoster>>;
+    try {
+        captured = await captureVideoPoster(source.url, { maxWidth: 400 });
+    } finally {
+        source.release();
+    }
+    if (!captured.poster) return undefined;
+    return uploadImage(captured.poster);
+}
+
+async function generatedVideoPreview(video: UploadedFile, mediaIO: GenerationResultMediaIO): Promise<UploadedImage | undefined> {
+    if (video.preview) return video.preview;
+    try {
+        return await mediaIO.captureVideoPreview({ storageKey: video.storageKey, content: video.url });
+    } catch (error) {
+        // 首帧只影响未激活节点的显示，不能因此丢掉已经生成好的视频。
+        console.warn("写入生成视频首帧失败，继续使用视频本身", { storageKey: video.storageKey, error });
+        return undefined;
+    }
+}
 
 export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: GenerationTask, nodes: CanvasNodeData[] = [node], mediaIO: GenerationResultMediaIO = defaultGenerationResultMediaIO): Promise<CanvasNodeData> {
     const mode = generationTaskMode(task, node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "image");
@@ -198,6 +234,7 @@ export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: 
                   mimeType: result.video?.mimeType || "video/mp4",
               }
             : await mediaIO.storeGeneratedVideo({ url: videoSource, mimeType: result.video?.mimeType || "video/mp4" });
+        const videoPreview = await generatedVideoPreview(video, mediaIO);
         const videoSize = fitNodeSize(video.width || node.width || VIDEO_NODE_MAX_SIZE.width, video.height || node.height || VIDEO_NODE_MAX_SIZE.height, VIDEO_NODE_MAX_SIZE.width, VIDEO_NODE_MAX_SIZE.height);
         const geometry = node.metadata?.locked
             ? {}
@@ -210,7 +247,7 @@ export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: 
             ...node,
             type: CanvasNodeType.Video,
             ...geometry,
-            metadata: applyGeneratedMediaResultMetadata(node, { ...videoMetadata(video), outputParameterWarning: seedanceOutputWarning(task.inputJson, video.width, video.height, task.model) }, { prompt, ...completedTaskMetadata(task) }),
+            metadata: applyGeneratedMediaResultMetadata(node, { ...videoMetadata({ ...video, preview: videoPreview }), outputParameterWarning: seedanceOutputWarning(task.inputJson, video.width, video.height, task.model) }, { prompt, ...completedTaskMetadata(task) }),
         };
     }
 

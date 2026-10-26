@@ -8,6 +8,7 @@ import { shouldRefreshCanvasVirtualization } from "../src/lib/canvas/canvas-view
 import { videoMetadata } from "../src/lib/canvas/canvas-generation-task-sync";
 import { canvasNodeVideoPreviewUrl, canvasVideoAssetPreviewUrl } from "../src/lib/canvas/canvas-media-preview";
 import { collectImageStorageKeys } from "../src/services/image-storage";
+import { CANVAS_VIDEO_PREVIEW_VERSION } from "../src/services/canvas-video-preview";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 import { detectVideoAudioTrack, detectVideoAudioTrackFromBlob, detectVideoAudioTrackFromUrl } from "../src/lib/video-poster";
 
@@ -319,7 +320,18 @@ describe("passive video previews", () => {
         const video = node("video", CanvasNodeType.Video);
         video.metadata = { ...metadata, previewContent: "https://example.com/legacy-poster.jpg" };
 
-        expect(metadata.videoPreview).toEqual({ content: "blob:poster", storageKey: "image:user:1", width: 400, height: 225, bytes: 256, mimeType: "image/jpeg" });
+        // 首帧记录来自哪个视频（sourceKey）和取帧口径（captureVersion），
+        // 这样同源首帧不会被当成旧图再解一次视频。
+        expect(metadata.videoPreview).toEqual({
+            content: "blob:poster",
+            storageKey: "image:user:1",
+            width: 400,
+            height: 225,
+            bytes: 256,
+            mimeType: "image/jpeg",
+            captureVersion: CANVAS_VIDEO_PREVIEW_VERSION,
+            sourceKey: "video:user:1",
+        });
         expect(metadata.hasAudio).toBe(false);
         expect(collectImageStorageKeys(metadata)).toContain("image:user:1");
         expect(canvasNodeVideoPreviewUrl(video)).toBe("blob:poster");
