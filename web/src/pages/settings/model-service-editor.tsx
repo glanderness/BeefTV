@@ -11,7 +11,7 @@ import { CAPABILITY_LABELS, MODEL_SERVICE_PRESETS, isTopazUpscaleChannel, modelC
 import { serviceCredentialGuide } from "@/lib/service-credentials";
 import type { ModelProtocolDefinition } from "@/lib/model-protocols";
 import { seedancePortraitLabel } from "@/lib/seedance-portrait";
-import { createModelChannel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { createModelChannel, useConfigStore, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ChannelModelSettings } from "./channel-model-settings";
 import { currentModelConnectionReceipt, useModelConnectionTests } from "@/stores/use-model-connection-tests";
 import "./model-service-editor.css";
@@ -74,8 +74,11 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
         setError("");
         setNotice("");
     };
-    const validateConnection = (requireCredential = true) => {
-        const problem = serviceConnectionError(draft, { protocols, requireCredential }) || validateChannelHeaders(draft.headers);
+    // 已经在保存的配置里的连接，密钥栏留空是「沿用后端那一份」；工作区回读时会把密钥
+    // 清空且不写任何标记，所以只有「这个连接已经存在」能说明它后端有密钥。
+    const savedConnection = (channel: ModelChannel) => useConfigStore.getState().config.channels.some((item) => item.id === channel.id);
+    const validateConnection = (requireCredential = true, channel: ModelChannel = draft) => {
+        const problem = serviceConnectionError(channel, { protocols, requireCredential, savedConnection: savedConnection(channel) }) || validateChannelHeaders(channel.headers);
         if (problem) setError(problem);
         return !problem;
     };
@@ -149,6 +152,9 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
         const profiles = isTopazUpscaleChannel(draft) ? draft.modelProfiles || [] : draft.models.map((id) => serviceModelProfile(draft, catalog.find((item) => item.id === id) || { id }, protocols));
         const missing = profiles.find((profile) => !profile.protocol);
         if (missing) { setError(`${missing.model} 还需要选择请求协议，请打开高级模型设置`); setEditingCapabilities(true); return; }
+        // 没单独配置协议的模型会在上面补成预设协议，所以凭证要按真正提交的 profiles 再查一次，
+        // 否则「旧连接里的文本模型 + Agent Plan 视频模型」这种混用会被漏过去。
+        if (!validateConnection(true, { ...draft, modelProfiles: profiles })) { setStep(0); return; }
         setBusy(true);
         setSaving(true);
         setError("");

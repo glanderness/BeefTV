@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client";
 import { App, ConfigProvider } from "antd";
 import { getAntThemeConfig } from "../../src/lib/app-theme";
 import { ModelServiceEditor } from "../../src/pages/settings/model-service-editor";
-import { createModelChannel, type ModelChannel } from "../../src/stores/use-config-store";
+import { createModelChannel, useConfigStore, type ModelChannel } from "../../src/stores/use-config-store";
 
 // 场景用 query 切换，避免为每种凭证类型重复一份构建。
 const scenario = new URLSearchParams(location.search).get("scenario") || "ark-none";
@@ -17,14 +17,22 @@ function initialChannel(): ModelChannel {
         });
     }
     if (scenario === "jimeng-saved") {
-        // 登录态工作区只回读「已保存」标记，不返回密钥本体。
+        // 外部工作区回读配置（redactExternalConfig）就是这个样子：密钥被清成空串，
+        // 也不带任何「已保存」标记。
         return createModelChannel({
             name: "即梦视频",
             baseUrl: "https://visual.volcengineapi.com",
             models: ["jimeng_t2v_v30"],
             modelProfiles: [{ model: "jimeng_t2v_v30", capability: "video", protocol: "volcengine-jimeng-video", authType: "volcengine-v4" }],
-            hasApiKey: true,
-            hasSecretKey: true,
+        });
+    }
+    if (scenario === "ark-legacy-text") {
+        // 旧连接：文本模型没有 profile（协议会在保存时补成预设协议），视频已经是 Agent Plan。
+        return createModelChannel({
+            name: "火山方舟",
+            baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+            models: ["doubao-seed", "doubao-seedance-2.5"],
+            modelProfiles: [{ model: "doubao-seedance-2.5", capability: "video", protocol: "volcengine-ark-agent-plan-video", authType: "bearer" }],
         });
     }
     if (scenario === "agent-plan") {
@@ -58,6 +66,12 @@ function initialChannel(): ModelChannel {
 }
 
 const dark = new URLSearchParams(location.search).get("theme") === "dark";
+const channel = initialChannel();
+// 已保存的连接只能靠「它已经在保存的配置里」认出来：后端会给已存在连接的密钥字段沿用原值。
+if (scenario.endsWith("-saved")) {
+    const current = useConfigStore.getState().config;
+    useConfigStore.setState({ config: { ...current, channels: [channel] } });
+}
 // 保存结果回写给测试：没有这一步，浏览器用例只能证明文字出现，证明不了行为。
 const saved: Array<{ apiKey: string; secretKey?: string; models: string[] }> = [];
 (globalThis as unknown as { __saved: typeof saved }).__saved = saved;
@@ -65,7 +79,7 @@ const saved: Array<{ apiKey: string; secretKey?: string; models: string[] }> = [
 createRoot(document.getElementById("root")!).render(
     <ConfigProvider theme={getAntThemeConfig(dark)}>
         <App>
-            <ModelServiceEditor initial={initialChannel()} onClose={() => {}} onSave={async (channel) => { saved.push({ apiKey: channel.apiKey, secretKey: channel.secretKey, models: channel.models }); }} />
+            <ModelServiceEditor initial={channel} onClose={() => {}} onSave={async (savedChannel) => { saved.push({ apiKey: savedChannel.apiKey, secretKey: savedChannel.secretKey, models: savedChannel.models }); }} />
         </App>
     </ConfigProvider>,
 );

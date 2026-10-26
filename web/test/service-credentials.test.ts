@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { protocolAuthType, protocolCredentialKind, serviceCredentialGuide, signatureCredentialHint } from "../src/lib/service-credentials";
-import { serviceConnectionError } from "../src/lib/model-service-presets";
+import { serviceConnectionError, serviceModelProfile } from "../src/lib/model-service-presets";
 import { createModelChannel, type ModelChannel } from "../src/stores/use-config-store";
 import type { ModelProtocolDefinition } from "../src/lib/model-protocols";
 
@@ -92,10 +92,34 @@ test("Jimeng protocols ask for Access Key plus Secret Key and refuse a half cred
     expect(serviceCredentialGuide(jimeng).kind).toBe("signature");
     expect(serviceConnectionError(jimeng, { protocols })).toContain("请填写 Secret Key（SK）");
     expect(serviceConnectionError({ ...jimeng, secretKey: "synthetic-secret" }, { protocols })).toBe("");
-    // 密钥被隐去、只剩「已保存」标记的连接不能拦：保存时后端会沿用原密钥。
-    expect(serviceConnectionError({ ...jimeng, apiKey: "", hasApiKey: true, hasSecretKey: true }, { protocols })).toBe("");
+    // 外部工作区回读配置时（backend/internal/handler/business_config.go 的 redactExternalConfig）
+    // 密钥就是空串，也没有 hasApiKey/hasSecretKey 这类标记，只有「连接已经保存过」能说明后端还有一份。
+    const redacted = { ...jimeng, apiKey: "refilled-ak", secretKey: "", hasApiKey: undefined, hasSecretKey: undefined };
+    expect(serviceConnectionError(redacted, { protocols })).toContain("请填写 Secret Key（SK）");
+    expect(serviceConnectionError(redacted, { protocols, savedConnection: true })).toBe("");
+    // 托管渠道仍然靠回读的「已保存」标记放行。
+    expect(serviceConnectionError({ ...redacted, apiKey: "", hasApiKey: true, hasSecretKey: true }, { protocols })).toBe("");
     expect(signatureCredentialHint("volcengine-v4")).toContain("「高级设置」");
     expect(signatureCredentialHint("bearer")).toBeUndefined();
+});
+
+test("credentials are judged on the profiles that will actually be saved", () => {
+    // 旧连接：文本模型没写过 profile，视频模型已经选了 Agent Plan。草稿上只看得到一种 Key。
+    const protocols = [
+        { value: "chat-completion", capability: "text", enabled: true, authType: "bearer" },
+        { value: "volcengine-ark-agent-plan-video", capability: "video", enabled: true, authType: "bearer" },
+    ] as ModelProtocolDefinition[];
+    const legacy = channel({
+        models: ["doubao-seed", "doubao-seedance-2.5"],
+        modelProfiles: [{ model: "doubao-seedance-2.5", capability: "video", protocol: "volcengine-ark-agent-plan-video", authType: "bearer" }],
+    });
+    expect(legacy.interfaceType).toBeUndefined();
+    expect(serviceConnectionError(legacy, { protocols })).toBe("");
+    // save() 会把这些 profile 补齐后提交，凭证必须按补齐后的结果判断。
+    const profiles = legacy.models.map((id) => serviceModelProfile(legacy, { id }, protocols));
+    expect(profiles.find((profile) => profile.model === "doubao-seed")?.protocol).toBe("chat-completion");
+    const submitted = { ...legacy, modelProfiles: profiles };
+    expect(serviceConnectionError(submitted, { protocols })).toContain("请拆成两个连接");
 });
 
 test("the runtime protocol catalog decides the auth type, not the cached value", () => {

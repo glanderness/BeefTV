@@ -25,10 +25,12 @@ beforeAll(async () => {
         + readFileSync(import.meta.dir + "/../src/styles/workspace-product.css", "utf8")
         + await build.outputs.find((output) => output.path.endsWith(".css"))!.text();
     const providers = [
+        // 真实目录里文本要用的 chat-completion 也在，否则旧连接补出来的文本协议找不到定义。
+        { id: "chat-completion", name: "OpenAI Chat Completions", create: "POST /chat/completions", contentType: "application/json", authType: "bearer" },
         { id: "volcengine-ark-video", name: "Volcengine Ark Seedance", create: "POST /api/v3/contents/generations/tasks", poll: "GET /api/v3/contents/generations/tasks/{task_id}", contentType: "application/json", authType: "bearer" },
         { id: "volcengine-ark-agent-plan-video", name: "Volcengine Ark Agent Plan Seedance", create: "POST /api/plan/v3/contents/generations/tasks", poll: "GET /api/plan/v3/contents/generations/tasks/{task_id}", contentType: "application/json", authType: "bearer" },
         { id: "volcengine-jimeng-video", name: "Volcengine Jimeng Video", create: "POST /?Action=CVSync2AsyncSubmitTask", poll: "GET /?Action=CVSync2AsyncGetResult", contentType: "application/json", authType: "volcengine-v4" },
-    ].map((provider) => ({ ...provider, version: "1.0.0", vendor: "BeefTV", categories: ["video"], scopes: ["user.custom-channel"], enabled: true }));
+    ].map((provider) => ({ ...provider, version: "1.0.0", vendor: "BeefTV", categories: [provider.id === "chat-completion" ? "text" : "video"], scopes: ["user.custom-channel"], enabled: true }));
     server = Bun.serve({ port: 0, fetch(request) {
         const url = new URL(request.url);
         if (url.pathname === "/harness.js") return new Response(js, { headers: { "Content-Type": "application/javascript" } });
@@ -180,11 +182,31 @@ test("an already saved Jimeng connection is not blocked when the workspace hides
     const page = await openSaveStep("jimeng-saved");
     try {
         await page.getByRole("button", { name: "连接信息", exact: true }).click();
-        // 只回读了 hasApiKey/hasSecretKey：密钥本体是空的，但绝不能因此拦住保存。
+        // 外部工作区回读的样子：AK 和 SK 都是空串，也没有任何「已保存」标记。
+        // 这个连接已经在保存的配置里，SK 留空表示沿用后端那份密钥，不能拦。
         expect(await page.locator('input[aria-label="Access Key（AK）"]').inputValue()).toBe("");
+        expect(await page.locator('input[aria-label="Secret Key（SK）"]').inputValue()).toBe("");
+        // 重新填 AK 是本来就要做的事（旧值被隐去）；填完不能再被要求重填后端已保存的 SK。
+        await page.locator('input[aria-label="Access Key（AK）"]').fill("refilled-ak");
         await page.getByRole("button", { name: "手动添加模型", exact: true }).click();
         await page.getByRole("button", { name: "保存并使用", exact: true }).click();
         await waitForSaved(page, 1, "已保存凭证的连接");
+        expect((await savedOf(page))[0]).toMatchObject({ apiKey: "refilled-ak", secretKey: "" });
+    } finally { await page.close(); }
+}, 60000);
+
+test("a legacy text model without a profile cannot hide the second key kind at save time", async () => {
+    const page = await openConnectionStep("ark-legacy-text");
+    try {
+        // 文本模型还没写过 profile，草稿上只看得到 Agent Plan 这一种 Key。
+        expect(await page.locator('input[aria-label="Agent Plan 专属 Key"]').count()).toBe(1);
+        await page.locator('input[aria-label="Agent Plan 专属 Key"]').fill("synthetic-plan-key");
+        await page.getByRole("button", { name: "手动添加模型", exact: true }).click();
+        await page.getByRole("button", { name: "保存并使用", exact: true }).click();
+        // 保存时会按最终提交的 profiles 复查：文本模型补成普通方舟协议，和 Agent Plan 就是混用。
+        await page.getByText("请拆成两个连接").first().waitFor();
+        await page.waitForTimeout(300);
+        expect((await savedOf(page)).length).toBe(0);
     } finally { await page.close(); }
 }, 60000);
 
