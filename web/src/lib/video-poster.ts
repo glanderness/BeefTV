@@ -13,19 +13,7 @@ type CaptureVideoPosterOptions = {
     signal?: AbortSignal;
     maxWidth?: number;
     timeoutMs?: number;
-    /**
-     * 只给画布静态预览用：解码还没真正出画面时 drawImage 会得到一张全黑图，
-     * 拿它当首帧显示就是一个黑框。开启后这种空画面不产出封面，
-     * 由调用方重试或退回占位提示。导出、分享、图生图等取帧路径不要开。
-     */
-    rejectBlankFrame?: boolean;
 };
-
-/** 接近纯黑即视为“这一帧其实还没解出来”，正常暗场画面的数值远高于这个阈值。 */
-const BLANK_FRAME_MAX_CHANNEL = 8;
-/** 空画面最多再等两帧重画；两帧还没有画面就不是“慢一帧”，交给调用方重试或退回占位。 */
-const BLANK_FRAME_REDRAWS = 2;
-const BLANK_FRAME_FRAME_WAIT_MS = 400;
 
 const MAX_MP4_AUDIO_PROBE_BYTES = 32 * 1024 * 1024;
 const MP4_AUDIO_PROBE_RANGE_BYTES = 1024 * 1024;
@@ -140,7 +128,7 @@ async function prepareVideoPosterFrame(video: HTMLVideoElement, signal?: AbortSi
 export async function capturePresentedVideoPoster(
     video: HTMLVideoElement,
     canvas: HTMLCanvasElement,
-    options: Pick<CaptureVideoPosterOptions, "maxWidth" | "timeoutMs" | "rejectBlankFrame"> = {},
+    options: Pick<CaptureVideoPosterOptions, "maxWidth" | "timeoutMs"> = {},
 ): Promise<CapturedVideoPoster> {
     await waitForPresentedVideoFrame(video, Math.min(options.timeoutMs ?? 1_500, 1_500));
     const width = video.videoWidth || 1280;
@@ -151,60 +139,14 @@ export async function capturePresentedVideoPoster(
     const context = canvas.getContext("2d");
     const result = { width, height, durationMs: Number.isFinite(video.duration) ? Math.round(video.duration * 1000) : undefined, hasAudio: detectVideoAudioTrack(video), capturedAtMs: Math.round(video.currentTime * 1000) };
     if (!context) return result;
-    const draw = () => {
-        context.fillStyle = "#000";
-        context.fillRect(0, 0, canvas.width, canvas.height);
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    };
-    draw();
-    if (options.rejectBlankFrame) {
-        for (let attempt = 0; attempt < BLANK_FRAME_REDRAWS && isBlankFrame(context, canvas); attempt += 1) {
-            await waitForAnotherFrame(video, BLANK_FRAME_FRAME_WAIT_MS);
-            draw();
-        }
-        if (isBlankFrame(context, canvas)) return result;
-    }
+    // 这里只把当前这一帧画下来，不判断画面“该不该算空”：纯黑或很暗本身可能就是
+    // 合法内容（黑场片头、淡入、夜景），按亮度丢弃会让这类视频永远拿不到封面。
+    // 取帧失败走调用方的重试，不在这里猜。
+    context.fillStyle = "#000";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
     const poster = await new Promise<Blob | undefined>((resolve) => canvas.toBlob((blob) => resolve(blob || undefined), "image/jpeg", 0.82));
     return { ...result, poster };
-}
-
-/** 空画面说明这一帧还没进可绘制缓冲，再要一帧往往就有了。 */
-async function waitForAnotherFrame(video: HTMLVideoElement, timeoutMs: number) {
-    if (typeof video.requestVideoFrameCallback !== "function") {
-        await new Promise<void>((resolve) => globalThis.setTimeout(resolve, timeoutMs));
-        return;
-    }
-    await new Promise<void>((resolve) => {
-        let settled = false;
-        const finish = () => {
-            if (settled) return;
-            settled = true;
-            globalThis.clearTimeout(timer);
-            resolve();
-        };
-        const timer = globalThis.setTimeout(finish, timeoutMs);
-        video.requestVideoFrameCallback(finish);
-        void Promise.resolve(video.play()).catch(finish);
-    });
-    video.pause();
-}
-
-/**
- * 刚生成完的视频在部分 WebView 上会先画出一张全黑图：请求帧回调已经触发，
- * 但画面还没进到可绘制的缓冲区。这样的封面显示出来就是一个黑框，
- * 所以这里按“整帧接近纯黑”判空。读像素失败（跨域视频会污染画布）时按有画面处理，
- * 宁可显示一帧，也不要因为读不到像素就丢掉封面。
- */
-function isBlankFrame(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
-    try {
-        const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
-        for (let index = 0; index < data.length; index += 4) {
-            if (data[index] > BLANK_FRAME_MAX_CHANNEL || data[index + 1] > BLANK_FRAME_MAX_CHANNEL || data[index + 2] > BLANK_FRAME_MAX_CHANNEL) return false;
-        }
-        return true;
-    } catch {
-        return false;
-    }
 }
 
 function isCrossOriginHttpUrl(source: string) {

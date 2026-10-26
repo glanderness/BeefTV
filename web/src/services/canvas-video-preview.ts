@@ -9,9 +9,23 @@ type VideoPreviewSource = Pick<CanvasNodeData, "metadata"> & { id?: string };
 
 export const CANVAS_VIDEO_PREVIEW_VERSION = 2;
 /**
- * 刚生成完的视频偶尔还在落盘或解码准备中，第一次取帧会落空（或只画出一张黑图）。
- * 以前这种落空只算一次失败，同一个节点要等重新打开画布才再试，表现就是“一直没有首帧”。
- * 所以同一次请求里补一次，两次之间等一小段让资源就绪。
+ * 需求 #113：生成出来的视频节点在 Mac 客户端里只有黑底和播放按钮。
+ *
+ * 在本机 2.0.3 客户端（这段代码与当时一致）里能看到的事实：
+ * 1. 这些节点 metadata.videoPreview 一直是空的，封面只能来自这条显示时取帧的路径；
+ * 2. 出问题那张截图里该节点整块是纯 (0,0,0)、没有占位文字，尺寸正好等于节点框；
+ *    占位卡片是 #262626 加标题和提示文字的，所以当时显示的不是占位，而是一张全黑的封面图；
+ * 3. 那个视频自己的首帧是蓝色（约 RGB 51,74,97），不可能是这张黑图；
+ * 4. 同一个节点现在在这台客户端上打开显示正常，而数据库里 videoPreview 仍为空——
+ *    说明它的封面确实就是显示时现取、只存在内存里的 blob。
+ *
+ * 当时为什么会取出一张全黑封面，只能当假设：取帧代码先 fillRect(#000) 再 drawImage，
+ * 如果 requestVideoFrameCallback 已经触发、画面却还没进可绘制的缓冲，留下的就是这张黑底。
+ * 这属于事后无法复现的推断，下面的诊断事件就是为了下次复现时能分开
+ * 「没触发 / 取不到地址 / 取帧失败 / 取到空结果」这几种情况。
+ *
+ * 因此这里只补两件有把握的事：同一次请求里重试一次，以及把失败原因记进诊断。
+ * 画面内容是黑是亮一律不判断，合法的黑场封面要照常留下。
  */
 const PREVIEW_CAPTURE_ATTEMPTS = 2;
 const PREVIEW_RETRY_DELAY_MS = 400;
@@ -88,7 +102,7 @@ async function generateCanvasVideoPreview(node: VideoPreviewSource, signal?: Abo
         }
         let captured: Awaited<ReturnType<typeof captureVideoPoster>>;
         try {
-            captured = await captureVideoPoster(source.url, { signal, maxWidth: 400, rejectBlankFrame: true });
+            captured = await captureVideoPoster(source.url, { signal, maxWidth: 400 });
         } catch (error) {
             if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) throw error;
             recordCanvasVideoPreviewDiagnostic(node, "capture_failed", error);
