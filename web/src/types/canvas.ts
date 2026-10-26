@@ -262,6 +262,8 @@ export type CanvasNodeMetadata = {
     generationErrorCode?: string;
     outputParameterWarning?: string;
     resourceReloadAvailable?: boolean;
+    /** 原任务已终态但结果确认取不回（后端按回执恢复被拒）：记的是被拒的任务身份，换任务即失效。 */
+    generationResultUnavailableTaskId?: string;
     failedPromptFingerprint?: string;
     failedInputFingerprint?: string;
     lastGenerationRequestFingerprint?: string;

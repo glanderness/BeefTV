@@ -40,7 +40,7 @@ import { resolveImageUrl } from "@/services/image-storage";
 import { resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import type { Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeTypeId } from "@/types/canvas";
-import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, type CanvasGenerationFailureInput } from "./canvas-generation-failure";
+import { canvasGenerationFailureMetadata, canvasGenerationResultUnavailable, canvasGenerationResultUnavailableMetadata, canvasGenerationRetryBlocked, type CanvasGenerationFailureInput } from "./canvas-generation-failure";
 import { confirmCanvasGeneration } from "./canvas-generation-preflight";
 
 type UseCanvasGenerationRetryOptions = {
@@ -111,11 +111,14 @@ export function useCanvasGenerationRetry({
             }), signal);
             // 结果可能已经生成、只是没写进画布（上游成功但取回失败，或提交结果未确认但任务已终态）：
             // 先取回原结果，取不回再重新生成。已保存的结果不能被重新提交付费生成覆盖。
+            // 已经确认取不回（自动取回被后端拒绝过）就不再重复尝试，直接交给用户决定是否重新生成。
+            const resultConfirmedUnavailable = canvasGenerationResultUnavailable(node.metadata);
             const originalResultMayExist = Boolean(
                 retryMode === "image"
                 && node.metadata?.taskId
                 && node.metadata.status === "error"
-                && (node.metadata.taskStatus === "succeeded" || submissionVerdictSettled),
+                && (node.metadata.taskStatus === "succeeded" || submissionVerdictSettled)
+                && !resultConfirmedUnavailable,
             );
             if (originalResultMayExist) {
                 const taskId = node.metadata!.taskId!;
@@ -139,10 +142,21 @@ export function useCanvasGenerationRetry({
                     if (isCurrentRequest()) setRunningNodeId(null);
                 }
                 if (resultRecovered) return;
+                // 后端确认取不回：节点回到「可以重新生成」的状态，再由用户决定是否新建任务。
+                setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, ...canvasGenerationResultUnavailableMetadata(taskId) } } : item)));
                 // 取不回结果才解锁重新生成。
                 const confirmed = isCurrentRequest() && await confirmSettledRegeneration(controller.signal);
                 if (!confirmed) {
                     if (isCurrentRequest()) message.info("已保留原任务记录，未重新生成");
+                    return;
+                }
+            } else if (retryMode === "image" && submissionVerdictSettled) {
+                // 原结果已经确认取不回：重新生成会新建任务，同样先让用户确认。
+                const controller = startGenerationRequest(node.id, node.id);
+                const confirmed = await confirmSettledRegeneration(controller.signal);
+                finishGenerationRequest(node.id, controller);
+                if (!confirmed) {
+                    message.info("已保留原任务记录，未重新生成");
                     return;
                 }
             }

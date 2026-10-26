@@ -1,5 +1,6 @@
 import { explainGenerationError, generationFailureMetadata, generationPromptFingerprint, shouldBlockManualRetry, unchangedModeratedPrompt } from "@/lib/generation-error";
 import { generationTaskVerdictSettled } from "@/lib/generation-task-display";
+import { canvasGenerationResultUnavailable, canvasNodeNeedsOriginalResultRecovery, imageSubmissionUnknown } from "@/lib/canvas/canvas-node-task-state";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 import type { GenerationTask } from "@/services/api/task-center";
 import { CanvasGenerationTargetSaveError } from "@/services/canvas-generation-errors";
@@ -84,7 +85,8 @@ export function canvasGenerationRetryBlocked(metadata: CanvasNodeMetadata | unde
 }
 
 export function canvasImageGenerationHasPendingResult(node: CanvasNodeData | undefined, nodes: CanvasNodeData[]) {
-    const pending = (item: CanvasNodeData | undefined) => Boolean(imageSubmissionUnknown(item?.metadata) || item?.metadata?.generationErrorCode === "results_missing" || item?.metadata?.resourceReloadAvailable || isKeptGenerationResultCode(item?.metadata?.generationErrorCode));
+    // 结果确认取不回之后，这条提交不再算「还留着结果」：节点回到普通失败，重新生成由用户决定。
+    const pending = (item: CanvasNodeData | undefined) => Boolean((imageSubmissionUnknown(item?.metadata) && !canvasGenerationResultUnavailable(item?.metadata)) || item?.metadata?.generationErrorCode === "results_missing" || item?.metadata?.resourceReloadAvailable || isKeptGenerationResultCode(item?.metadata?.generationErrorCode));
     return pending(node) || nodes.some((item) => (node?.metadata?.batchChildIds?.includes(item.id) || item.metadata?.generatedFromNodeId === node?.id) && pending(item));
 }
 
@@ -93,14 +95,22 @@ export function canvasImagePendingResultMessage(node: CanvasNodeData | undefined
     const unavailable = related.find((item) => item?.metadata?.generationErrorCode === "result_target_unavailable");
     if (unavailable) return explainGenerationError({ code: "result_target_unavailable" }).message;
     if (related.some((item) => imageSubmissionUnknown(item?.metadata) && !generationTaskVerdictSettled(item?.metadata))) return "提交结果尚未确认，请查询原任务";
-    // 原任务已经终态、结果却没有写进画布：重新生成会先取回原结果，取不回再重新提交。
-    if (related.some((item) => imageSubmissionUnknown(item?.metadata))) return "原任务已结束但结果没有取回，请点击「重新生成」先取回原结果";
+    // 原任务已终态、结果还没写进画布：客户端会自动按原任务取回，不需要用户操作。
+    if (related.some((item) => imageSubmissionUnknown(item?.metadata) && !canvasGenerationResultUnavailable(item?.metadata))) return "原任务已结束，正在自动取回结果；取不回时再重新生成";
+    // 后端确认这次结果取不回：是否重新生成由用户决定。
+    if (related.some((item) => canvasGenerationResultUnavailable(item?.metadata))) return "原任务已结束，结果已取不回；可以重新生成";
     const missing = related.find((item) => item?.metadata?.generationErrorCode === "results_missing");
     return missing?.metadata?.errorDetails || node?.metadata?.errorDetails || "生成结果已保留，请点击「继续取回」";
 }
 
-export function imageSubmissionUnknown(metadata: CanvasNodeMetadata | undefined) {
-    return metadata?.generationSubmissionState === "unknown" || metadata?.taskStage === "submission_unknown" || metadata?.generationErrorCode === "submission_uncertain";
+export { canvasGenerationResultUnavailable, canvasNodeNeedsOriginalResultRecovery, imageSubmissionUnknown };
+
+/**
+ * 后端确认原结果取不回：记下是哪个任务的结果取不回，把「重新生成」交回用户。
+ * 换了任务（重新生成后）这个标记自然失效。
+ */
+export function canvasGenerationResultUnavailableMetadata(taskId: string) {
+    return { generationResultUnavailableTaskId: taskId, errorDetails: "原任务已结束，结果已取不回；可以重新生成" };
 }
 
 export function canvasGenerationTaskNodes(nodes: CanvasNodeData[], targetNodeId: string, task: GenerationTask): CanvasNodeData[] {

@@ -47,16 +47,49 @@ test("a backend refusal means the result is gone, and no result is reported", as
 });
 
 test("infrastructure failures propagate so callers never read them as a refusal", async () => {
+    const calls: string[] = [];
     await expect(recoverCanvasTaskResult("task-1", signal(), () => {}, {
         queryGenerationTask: async () => task("failed"),
-        retryGenerationTask: async () => { throw new Error("网络不可用"); },
+        retryGenerationTask: async () => { calls.push("retry"); throw new Error("网络不可用"); },
         waitForGenerationTask: async () => task("succeeded"),
+        transientRetry: { retries: 2, delayMs: 0 },
     })).rejects.toThrow("网络不可用");
+    // 瞬时错误按既有节奏重试，不当作「结果取不回」。
+    expect(calls).toEqual(["retry", "retry", "retry"]);
     await expect(recoverCanvasTaskResult("task-1", signal(), () => {}, {
         queryGenerationTask: async () => { throw new Error("读取任务失败"); },
         retryGenerationTask: async () => task("succeeded"),
         waitForGenerationTask: async () => task("succeeded"),
     })).rejects.toThrow("读取任务失败");
+});
+
+test("a transient failure that clears on retry still takes the result back", async () => {
+    const calls: string[] = [];
+    let attempts = 0;
+    const result = await recoverCanvasTaskResult("task-1", signal(), () => calls.push("update"), {
+        queryGenerationTask: async () => task("failed"),
+        retryGenerationTask: async () => {
+            attempts += 1;
+            if (attempts === 1) throw new ApiError("上游暂时不可用", { status: 503, reason: "temporarily_unavailable" });
+            return task("succeeded", "等待取回结果");
+        },
+        waitForGenerationTask: async () => task("succeeded"),
+        transientRetry: { retries: 2, delayMs: 0 },
+    });
+    expect(result?.status).toBe("succeeded");
+    expect(calls).toEqual(["update"]);
+});
+
+test("a task that fails again while waiting means the result is gone", async () => {
+    const result = await recoverCanvasTaskResult("task-1", signal(), () => {}, {
+        queryGenerationTask: async () => task("running", "生成中"),
+        retryGenerationTask: async () => task("succeeded"),
+        waitForGenerationTask: async (_id, options) => {
+            options?.onTaskUpdate?.(task("failed"));
+            return task("failed");
+        },
+    });
+    expect(result).toBeUndefined();
 });
 
 test("an aborted request stops before touching the backend", async () => {

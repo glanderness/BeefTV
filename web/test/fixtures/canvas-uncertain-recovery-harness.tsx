@@ -4,10 +4,10 @@ import { CanvasNodeContent } from "../../src/components/canvas/canvas-node-conte
 import { canvasThemes } from "../../src/lib/canvas-theme";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata } from "../../src/types/canvas";
 
-type Scenario = "settled" | "running" | "kept";
+type Scenario = "settled" | "gone" | "running" | "kept";
 
 const scenarios: Record<Scenario, CanvasNodeMetadata> = {
-    // 上游可能已经生成，任务却已经终态：节点必须给出「重新生成」出口。
+    // 上游可能已经生成，任务却已经终态：客户端自动按原任务取回结果，不给重新生成入口。
     settled: {
         status: "error",
         taskId: "task-settled",
@@ -17,6 +17,19 @@ const scenarios: Record<Scenario, CanvasNodeMetadata> = {
         generationErrorCode: "submission_uncertain",
         generationSubmissionState: "unknown",
         errorDetails: "上一次提交结果不明确，为避免重复创建上游任务已停止自动重发",
+        prompt: "一只在雨里奔跑的猫",
+    },
+    // 后端确认这次结果取不回：必须重新给出「重新生成」出口。
+    gone: {
+        status: "error",
+        taskId: "task-gone",
+        taskStatus: "failed",
+        taskStage: "submission_unknown",
+        taskErrorCode: "submission_uncertain",
+        generationErrorCode: "submission_uncertain",
+        generationSubmissionState: "unknown",
+        generationResultUnavailableTaskId: "task-gone",
+        errorDetails: "原任务已结束，结果已取不回；可以重新生成",
         prompt: "一只在雨里奔跑的猫",
     },
     // 结论未知：仍然只能等待/查询原任务，不能重新生成。

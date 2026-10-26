@@ -31,7 +31,8 @@ import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/ty
 import { executeImageGeneration } from "./canvas-image-generation-executor";
 import { executeAudioGeneration, executeVideoGeneration } from "./canvas-media-generation-executors";
 import { executeTextGeneration } from "./canvas-text-generation-executor";
-import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasImageGenerationHasPendingResult, canvasImagePendingResultMessage } from "./canvas-generation-failure";
+import { canvasGenerationFailureMetadata, canvasGenerationResultUnavailableMetadata, canvasGenerationRetryBlocked, canvasImageGenerationHasPendingResult, canvasImagePendingResultMessage, canvasNodeNeedsOriginalResultRecovery } from "./canvas-generation-failure";
+import { recoverCanvasTaskResult } from "@/services/canvas-task-result-recovery";
 import { createReferenceLinkResolver } from "@/components/generation-reference-links";
 import { confirmCanvasGeneration, waitForCanvasPreparation } from "./canvas-generation-preflight";
 import { startOperation } from "@/stores/use-operation-progress";
@@ -165,6 +166,19 @@ export function useCanvasGenerationExecutor({
                                 assertUserScope(scope);
                                 if (!task) { message.warning("尚未查到上次提交的任务，请稍后再查询，暂勿重新生成"); continue; }
                                 bindGenerationTask(target.id, task);
+                                // 提交结论未确认、原任务已终态：先按后端已保存的上游回执取回结果。
+                                // 这一步不新建任务；后端拒绝就把「重新生成」交回用户，这里不擅自重新提交。
+                                if (canvasNodeNeedsOriginalResultRecovery(target)) {
+                                    const recovered = await recoverCanvasTaskResult(task.id, controller.signal, (update) => bindGenerationTask(target.id, update));
+                                    controller.signal.throwIfAborted();
+                                    assertUserScope(scope);
+                                    if (!recovered) {
+                                        setNodes((current) => current.map((item) => (item.id === target.id ? { ...item, metadata: { ...item.metadata, status: "error", ...canvasGenerationResultUnavailableMetadata(task.id) } } : item)));
+                                        continue;
+                                    }
+                                    await applyGenerationTaskResult(target.id, recovered);
+                                    continue;
+                                }
                                 const completed = await waitForGenerationTask(task.id, { signal: controller.signal, expectedScope: scope, initialTask: task, onTaskUpdate: (update) => bindGenerationTask(target.id, update) });
                                 controller.signal.throwIfAborted();
                                 assertUserScope(scope);

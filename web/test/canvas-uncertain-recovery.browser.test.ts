@@ -4,9 +4,9 @@ import { chromium } from "playwright";
 
 const shotDirectory = "/tmp/beeftv-pr-shots/reczz28RZUXaynMg";
 
-// 提交结果未确认的节点：原任务终态后必须重新给出「重新生成」出口；
-// 结论未定、或结果已保留时，仍然不能出现这个出口。
-test("提交结果未确认的节点在原任务终态后给出重新生成出口", async () => {
+// 提交结果未确认的节点：原任务终态后客户端自动取回结果，不给用户添一次点击；
+// 只有后端确认结果取不回时才给出「重新生成」出口。结论未定、或结果已保留时，仍然不能出现这个出口。
+test("提交结果未确认的节点原任务终态后自动取回，取不回时才给重新生成出口", async () => {
     const build = await Bun.build({
         entrypoints: [import.meta.dir + "/fixtures/canvas-uncertain-recovery-harness.tsx"],
         target: "browser",
@@ -39,15 +39,26 @@ test("提交结果未确认的节点在原任务终态后给出重新生成出�
         };
         const settled = await open("settled");
         try {
-            await settled.page.getByText("原任务已结束，但没有取回结果").waitFor({ timeout: 7000 });
-            await settled.page.getByText("可以重新生成；会新建任务，可能再次消耗积分").waitFor();
-            const retry = settled.page.getByRole("button", { name: "重新生成" });
-            await retry.waitFor();
-            await retry.click();
-            expect(await settled.page.evaluate(() => (window as { retries: number }).retries)).toBe(1);
+            await settled.page.getByText("原任务已结束，正在取回结果").waitFor({ timeout: 7000 });
+            await settled.page.getByText("取回期间不用重新生成；结果取不回时会给出重新生成入口").waitFor();
+            // 自动取回期间不给用户点击：不需要用户点，也不该重复提交付费生成。
+            expect(await settled.page.getByRole("button", { name: "重新生成" }).count()).toBe(0);
+            expect(await settled.page.getByRole("button", { name: "查看原任务" }).count()).toBe(1);
             expect(settled.errors).toEqual([]);
             await settled.page.screenshot({ path: `${shotDirectory}/settled-submission-uncertain.png` });
         } finally { await settled.context.close(); }
+
+        const gone = await open("gone");
+        try {
+            await gone.page.getByText("原任务已结束，但结果已取不回").waitFor({ timeout: 7000 });
+            await gone.page.getByText("可以重新生成；会新建任务，可能再次消耗积分").waitFor();
+            const retry = gone.page.getByRole("button", { name: "重新生成" });
+            await retry.waitFor();
+            await retry.click();
+            expect(await gone.page.evaluate(() => (window as { retries: number }).retries)).toBe(1);
+            expect(gone.errors).toEqual([]);
+            await gone.page.screenshot({ path: `${shotDirectory}/gone-submission-uncertain.png` });
+        } finally { await gone.context.close(); }
 
         const running = await open("running");
         try {

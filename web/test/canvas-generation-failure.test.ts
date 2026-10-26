@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { buildNodeGenerationContext } from "../src/components/canvas/canvas-node-generation";
-import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasTaskFailureMetadata, canvasGenerationTaskNodes, canvasImageGenerationHasPendingResult, imageSubmissionUnknown } from "../src/pages/canvas/canvas-generation-failure";
+import { canvasGenerationFailureMetadata, canvasGenerationResultUnavailableMetadata, canvasGenerationRetryBlocked, canvasTaskFailureMetadata, canvasGenerationTaskNodes, canvasImageGenerationHasPendingResult, imageSubmissionUnknown } from "../src/pages/canvas/canvas-generation-failure";
+import { canvasNodeNeedsGenerationRecoveryRetry, canvasNodeNeedsOriginalResultRecovery } from "../src/lib/canvas/canvas-node-task-state";
 import { canvasNodeFailureExplanation } from "../src/lib/canvas/canvas-depth-capture";
 import { generationTaskVerdictSettled } from "../src/lib/generation-task-display";
 import { taskAttentionReason, taskRetryBlocked } from "../src/pages/tasks/task-shared";
@@ -62,28 +63,47 @@ test("complete image input rejection permits changed input while unresolved unce
     // 原任务还在跑：提交结论未知，保持锁定，不能重复提交。
     expect(canvasGenerationRetryBlocked({ ...pending.metadata, taskStatus: "running" }, { mode: "image", prompt: "a different drawing" })).toBe(true);
     expect(imageSubmissionUnknown({ ...pending.metadata, taskStatus: "running" })).toBe(true);
-    // 原任务已终态：提交是否成立已有结论，锁定解除；重新生成会先尝试取回原结果。
+    // 原任务已终态：提交是否成立已有结论，锁定解除；结果由客户端自动取回，不需要用户点。
     expect(canvasGenerationRetryBlocked(pending.metadata, { mode: "image", prompt: "a different drawing" })).toBe(false);
     expect(canvasImageGenerationHasPendingResult(pending, [pending])).toBe(true);
     expect(generationTaskVerdictSettled(pending.metadata)).toBe(true);
-    expect(canvasNodeFailureExplanation(pending).retryable).toBe(true);
+    // 自动取回期间不给重新生成入口；取不回时才有。
+    expect(canvasNodeFailureExplanation(pending).retryable).toBe(false);
+    expect(canvasNodeFailureExplanation(pending).reason).toContain("正在取回结果");
+    expect(canvasNodeNeedsOriginalResultRecovery(pending)).toBe(true);
+    const unavailable = { ...pending, metadata: { ...pending.metadata, ...canvasGenerationResultUnavailableMetadata(task.id) } };
+    expect(canvasImageGenerationHasPendingResult(unavailable, [unavailable])).toBe(false);
+    expect(canvasNodeNeedsOriginalResultRecovery(unavailable)).toBe(false);
+    expect(canvasNodeNeedsGenerationRecoveryRetry(unavailable)).toBe(false);
+    expect(canvasNodeFailureExplanation(unavailable).retryable).toBe(true);
+    expect(canvasNodeFailureExplanation(unavailable).blockManualRetry).toBe(false);
 });
 
-test("a settled submission-uncertain node keeps an exit instead of staying locked forever", () => {
+test("a settled submission-uncertain node is recovered automatically and only asks the user when the result is gone", () => {
     const settled = { taskId: task.id, taskStatus: "failed", taskStage: "submission_unknown", generationErrorCode: "submission_uncertain", errorDetails: "上一次提交结果不明确，为避免重复创建上游任务已停止自动重发", status: "error" as const };
     const node = (metadata: typeof settled) => ({ ...image("uncertain-node", ""), metadata }) as CanvasNodeData;
     const explanation = canvasNodeFailureExplanation(node(settled));
     expect(explanation.category).toBe("submission_uncertain");
-    expect(explanation.uncertain).toBe(false);
-    expect(explanation.blockManualRetry).toBe(false);
-    // 自动重发仍然禁止：只有用户确认后才会新建任务。
+    // 结果还没确认取不回：客户端按原任务自动取回，不需要用户点，也不该重复提交。
+    expect(explanation.uncertain).toBe(true);
+    expect(explanation.blockManualRetry).toBe(true);
     expect(explanation.blockAutomaticRetry).toBe(true);
-    expect(explanation.reason).toContain("原任务已结束");
-    expect(explanation.action).toContain("可能再次消耗积分");
+    expect(explanation.reason).toContain("正在取回结果");
+    // 后端确认结果取不回：交回「重新生成」，新建任务前仍要用户确认。
+    const gone = canvasNodeFailureExplanation(node({ ...settled, ...canvasGenerationResultUnavailableMetadata(task.id) }));
+    expect(gone.uncertain).toBe(false);
+    expect(gone.blockManualRetry).toBe(false);
+    expect(gone.blockAutomaticRetry).toBe(true);
+    expect(gone.reason).toContain("结果已取不回");
+    expect(gone.action).toContain("可能再次消耗积分");
     // 原任务还没结束时不改变原有提示。
     const running = canvasNodeFailureExplanation(node({ ...settled, taskStatus: "running" }));
     expect(running.uncertain).toBe(true);
     expect(running.blockManualRetry).toBe(true);
+    // 只有客户端一侧的「提交状态未知」不足以触发自动取回：这类任务的重试可能真的重新提交上游并付费。
+    const clientOnlyUnknown = node({ ...settled, taskStage: "任务失败", taskErrorCode: "invalid_params", generationErrorCode: "invalid_params" });
+    expect(canvasNodeNeedsOriginalResultRecovery(clientOnlyUnknown)).toBe(false);
+    expect(canvasNodeNeedsGenerationRecoveryRetry(clientOnlyUnknown)).toBe(false);
 });
 
 describe("canvas generation failure consumers", () => {
