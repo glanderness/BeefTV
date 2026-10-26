@@ -48,7 +48,7 @@ test("panning does not propagate camera coordinates into every node and SVG desc
     });
     expect(result.rootX).toBe("123.5");
     expect(result.rootY).toBe("-72.25");
-    expect(result.nodeX).toBe("0px");
+    expect(result.nodeX).toBe("0");
     expect(result.pathY).toBe("0px");
 });
 
