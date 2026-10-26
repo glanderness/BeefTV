@@ -4,13 +4,13 @@ import { tmpdir } from "node:os";
 import { chromium, type Browser, type Page } from "playwright";
 
 let browser: Browser, page: Page, server: ReturnType<typeof Bun.serve>, dir: string;
-let writes = 0, videoReads = 0;
-let retryReads = 0;
+let writes = 0, videoReads = 0, blackReads = 0;
+let flakyReads = 0;
 let releaseSlow: (() => void) | undefined;
 let slow: Promise<void>;
 beforeAll(async () => {
     dir = mkdtempSync(`${tmpdir()}/beeftv-derived-preview-`);
-    for (const color of ["red", "blue"]) {
+    for (const color of ["red", "blue", "black"]) {
         const result = Bun.spawnSync(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", `color=c=${color}:s=320x180:d=1`, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", `${dir}/${color}.mp4`]);
         if (result.exitCode) throw new Error(result.stderr.toString());
     }
@@ -23,7 +23,9 @@ beforeAll(async () => {
     server = Bun.serve({ port: 0, async fetch(request) {
         const path = new URL(request.url).pathname;
         if (request.method !== "GET") writes += 1;
-        if (path.endsWith(".mp4")) { videoReads += 1; if (path === "/retry.mp4" && ++retryReads === 1) return new Response("unavailable", { status: 404 }); if (path === "/slow.mp4") await slow; return new Response(Bun.file(`${dir}/${path === "/blue.mp4" ? "blue" : "red"}.mp4`), { headers: { "Content-Type": "video/mp4" } }); }
+        if (path === "/broken.mp4") { videoReads += 1; return new Response("unavailable", { status: 404 }); }
+        if (path === "/black.mp4") blackReads += 1;
+        if (path.endsWith(".mp4")) { videoReads += 1; if (path === "/flaky.mp4" && ++flakyReads === 1) return new Response("unavailable", { status: 404 }); if (path === "/slow.mp4") await slow; return new Response(Bun.file(`${dir}/${path === "/blue.mp4" ? "blue" : path === "/black.mp4" ? "black" : "red"}.mp4`), { headers: { "Content-Type": "video/mp4" } }); }
         if (path === "/harness.js") return new Response(script, { headers: { "Content-Type": "text/javascript" } });
         if (path === "/poster.svg") return new Response('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="green"/></svg>', { headers: { "Content-Type": "image/svg+xml" } });
         if (path.startsWith("/api/")) return Response.json({ code: 0, data: [] });
@@ -32,14 +34,27 @@ beforeAll(async () => {
     const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((p): p is string => Boolean(p && existsSync(p)));
     browser = await chromium.launch({ executablePath, headless: true });
 }, 60000);
-beforeEach(async () => { await page?.close(); writes = videoReads = retryReads = 0; slow = new Promise((resolve) => { releaseSlow = resolve; }); page = await browser.newPage(); await page.goto(server.url.toString()); await page.waitForFunction(() => Boolean((window as any).previewHarness)); });
+beforeEach(async () => { await page?.close(); writes = videoReads = flakyReads = blackReads = 0; slow = new Promise((resolve) => { releaseSlow = resolve; }); page = await browser.newPage(); await page.goto(server.url.toString()); await page.waitForFunction(() => Boolean((window as any).previewHarness)); });
 afterAll(async () => { releaseSlow?.(); await browser?.close(); server?.stop(true); rmSync(dir, { recursive: true, force: true }); });
 async function enter() { await page.evaluate(() => window.scrollTo(0, 3000)); }
-test("failed first decode retries for the next consumer; old release cannot erase success", async () => {
-    expect(await page.evaluate(() => (window as any).previewHarness.retry())).toEqual({ failed: null, succeeded: true, sameAfterOldRelease: true });
-    expect(retryReads).toBe(2); expect(writes).toBe(0);
+test("one lease retries a first decode that failed, so a fresh result does not stay without a poster", async () => {
+    expect(await page.evaluate(() => (window as any).previewHarness.flaky())).toBe(true);
+    expect(flakyReads).toBe(2); expect(writes).toBe(0);
     const state = await page.evaluate(() => (window as any).previewHarness.state());
     expect(state.created).toHaveLength(1); expect(state.revoked).toEqual(state.created);
+});
+test("a request that never gets a video is dropped so the next consumer can retry", async () => {
+    expect(await page.evaluate(() => (window as any).previewHarness.broken())).toEqual({ first: true, recovered: true });
+    expect(writes).toBe(0);
+});
+test("a first frame that decodes to an all-black surface shows the readable placeholder, never a black box", async () => {
+    await page.evaluate(() => (window as any).previewHarness.source("/black.mp4")); await enter();
+    await page.waitForFunction(() => document.body.textContent?.includes("首帧暂不可用") || document.body.textContent?.includes("点击播放视频"));
+    expect(blackReads).toBeGreaterThanOrEqual(1);
+    // 重试落空后仍要一直停在可读的占位，不能再冒出一张全黑封面。
+    await page.waitForTimeout(1_200);
+    expect(await page.locator("img").count()).toBe(0);
+    expect(writes).toBe(0);
 });
 async function ready() { await page.waitForFunction(() => { const image = document.querySelector("img"); return image?.src.startsWith("blob:") && image.complete && image.naturalWidth === 320; }); }
 async function color() { return page.evaluate(() => { const canvas = document.createElement("canvas"); canvas.width = canvas.height = 1; const ctx = canvas.getContext("2d")!; ctx.drawImage(document.querySelector("img")!, 0, 0, 1, 1); return Array.from(ctx.getImageData(0, 0, 1, 1).data); }); }

@@ -23,17 +23,22 @@ function Harness() {
         oldPoster: () => setNode((n) => ({ ...n, metadata: { content: "/red.mp4", videoPreview: { content: "/poster.svg", captureVersion: 2, sourceKey: "/red.mp4" } } })),
         cycle: () => { setActiveUserScope("B"); setActiveUserScope("A"); },
         unmount: () => setVisible(false),
-        retry: async () => {
-            const node = { ...initial, metadata: { content: "/retry.mp4" } };
-            const a = acquireCanvasVideoPreview(node);
-            const failed = await a.promise;
-            const b = acquireCanvasVideoPreview(node);
-            const success = await b.promise;
-            a.release();
-            const c = acquireCanvasVideoPreview(node);
-            const shared = await c.promise;
-            b.release(); c.release();
-            return { failed, succeeded: Boolean(success), sameAfterOldRelease: shared === success };
+        /** 第一次读取视频失败：同一次请求内部重试后就该拿到首帧，不需要等重新挂载。 */
+        flaky: async () => {
+            const lease = acquireCanvasVideoPreview({ ...initial, metadata: { content: "/flaky.mp4" } });
+            const preview = await lease.promise;
+            lease.release();
+            return Boolean(preview);
+        },
+        /** 一直取不到视频：这次请求只能放弃，但失败的请求不能把后面的重试也堵掉。 */
+        broken: async () => {
+            const failed = acquireCanvasVideoPreview({ ...initial, metadata: { content: "/broken.mp4" } });
+            const first = await failed.promise;
+            failed.release();
+            const recovered = acquireCanvasVideoPreview(initial);
+            const second = await recovered.promise;
+            recovered.release();
+            return { first: first === null, recovered: Boolean(second) };
         },
         releaseRace: async () => {
             const create = URL.createObjectURL;
