@@ -7,6 +7,7 @@ import type { GeneratedVideoMedia } from "@/services/generated-video-preview";
 import type { GenerationTask } from "@/services/api/task-center";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+import type { UploadedImage } from "@/services/image-storage";
 
 // 正常生成完成后走的是后端绑定回执这条路（use-canvas-generation 调用
 // bindBackendCanvasGenerationResult），不经过历史插入用的 buildGenerationTaskNodeResult。
@@ -54,46 +55,74 @@ function boundVideoNode(metadata: CanvasNodeData["metadata"] = {}): CanvasNodeDa
     return videoNode({ taskId: "task-video-1", status: "success", nodeRole: "result", resultOrigin: "generated", storageKey: "resource:video-result", content: "/api/resources/video-result/file", ...metadata });
 }
 
-function bindWithVideoReceipt(options: {
+/**
+ * 按 project.tsx 的真实结构搭夹具：编辑器的 setNodes 立刻写 nodesRef，
+ * store 要等自动保存的 effect 才跟上。所以夹具里 setNodes 不碰 store，
+ * 用户的编辑也走同一个入口——这正是取帧期间最容易丢改动的地方。
+ */
+function bindVideo(params: {
     node: CanvasNodeData;
-    captureVideoPreview?: (media: GeneratedVideoMedia) => Promise<{ url: string; storageKey: string; width: number; height: number; bytes: number; mimeType: string } | undefined>;
-    onPersist?: (nodes: CanvasNodeData[]) => void;
-    onNodes?: (nodes: CanvasNodeData[]) => void;
+    task?: GenerationTask;
+    captureVideoPreview?: (media: GeneratedVideoMedia) => Promise<UploadedImage | undefined>;
 }) {
-    const project = videoProject([options.node]);
+    const project = videoProject([params.node]);
     useCanvasStore.setState({ projects: [project] });
-    return bindBackendCanvasGenerationResult({
+    const nodesRef = { current: [params.node] };
+    const editor = { current: [params.node] };
+    const published: CanvasNodeData[][] = [];
+    const persisted: CanvasNodeData[][] = [];
+    const setNodes = (value: CanvasNodeData[] | ((current: CanvasNodeData[]) => CanvasNodeData[])) => {
+        const next = typeof value === "function" ? value(editor.current) : value;
+        editor.current = next;
+        nodesRef.current = next;
+        published.push(next);
+    };
+    // 用户改画布：只更新编辑器和 ref，store 仍是旧快照（自动保存还没跑）。
+    const userEdit = (next: CanvasNodeData[]) => {
+        editor.current = next;
+        nodesRef.current = next;
+    };
+    const done = bindBackendCanvasGenerationResult({
         canvasId: project.id,
-        nodeId: options.node.id,
-        task: succeededVideoTask(),
+        nodeId: params.node.id,
+        task: params.task ?? succeededVideoTask(),
         isCurrent: () => true,
-        nodesRef: { current: [options.node] },
-        setNodes: (value) => {
-            const nodes = typeof value === "function" ? value([options.node]) : value;
-            options.onNodes?.(nodes as CanvasNodeData[]);
-        },
+        nodesRef,
+        setNodes,
         runtime: {
             hydrateOutputs: async () => undefined,
             captureScope: () => captured,
             liveScope: () => captured,
             now: () => 0,
             sleep: async () => undefined,
-            refreshTask: async () => succeededVideoTask(),
+            refreshTask: async () => params.task ?? succeededVideoTask(),
             adoptConfirmedProjection: async () => project,
-            persistDocument: async (_id, patch) => { options.onPersist?.((patch.nodes as CanvasNodeData[]) || []); },
+            persistDocument: async (_id, patch) => { persisted.push((patch.nodes as CanvasNodeData[]) || []); },
             bindOutput: async (value) => ({
                 op: "canvas.task.bind",
                 opId: value.operationId,
                 replayed: false,
                 result: { bindingStatus: "bound" as const, canvas: project, revision: 8 },
             }),
-            captureVideoPreview: options.captureVideoPreview ?? (async (media) => {
+            captureVideoPreview: params.captureVideoPreview ?? (async (media) => {
                 expect(media).toEqual({ storageKey: "resource:video-result", content: "/api/resources/video-result/file" });
                 return { url: "/api/resources/poster/file", storageKey: "resource:poster", width: 400, height: 225, bytes: 30, mimeType: "image/jpeg" };
             }),
         },
     });
+    return { done, nodesRef, editor, published, persisted, userEdit };
 }
+
+const posterPreview = {
+    content: "/api/resources/poster/file",
+    storageKey: "resource:poster",
+    width: 400,
+    height: 225,
+    bytes: 30,
+    mimeType: "image/jpeg",
+    captureVersion: CANVAS_VIDEO_PREVIEW_VERSION,
+    sourceKey: "resource:video-result",
+};
 
 describe("generated video first frame on the bind path", () => {
     beforeEach(() => {
@@ -101,91 +130,47 @@ describe("generated video first frame on the bind path", () => {
     });
 
     test("a freshly bound generation result gets a stored first frame", async () => {
-        let published: CanvasNodeData[] = [];
-        let persisted: CanvasNodeData[] = [];
-        await bindWithVideoReceipt({
-            node: boundVideoNode(),
-            onNodes: (nodes) => { published = nodes; },
-            onPersist: (nodes) => { persisted = nodes; },
-        });
+        const harness = bindVideo({ node: boundVideoNode() });
+        await harness.done;
 
-        const preview = {
-            content: "/api/resources/poster/file",
-            storageKey: "resource:poster",
-            width: 400,
-            height: 225,
-            bytes: 30,
-            mimeType: "image/jpeg",
-            captureVersion: CANVAS_VIDEO_PREVIEW_VERSION,
-            sourceKey: "resource:video-result",
-        };
-        expect(published.find((node) => node.id === "video-node")?.metadata.videoPreview).toEqual(preview);
-        expect(persisted.find((node) => node.id === "video-node")?.metadata.videoPreview).toEqual(preview);
+        const node = harness.editor.current.find((item) => item.id === "video-node");
+        expect(node?.metadata.videoPreview).toEqual(posterPreview);
+        // 首帧还要落盘，重开项目仍在。
+        expect(harness.persisted[harness.persisted.length - 1]?.find((item) => item.id === "video-node")?.metadata.videoPreview).toEqual(posterPreview);
         // 视频本体保持绑定回执里的值，首帧只是附加信息。
-        expect(persisted.find((node) => node.id === "video-node")?.metadata.storageKey).toBe("resource:video-result");
+        expect(node?.metadata.storageKey).toBe("resource:video-result");
     });
 
     test("a first frame that cannot be read still leaves the bound video intact", async () => {
-        let published: CanvasNodeData[] = [];
-        await bindWithVideoReceipt({
-            node: boundVideoNode(),
-            onNodes: (nodes) => { published = nodes; },
-            captureVideoPreview: async () => { throw new Error("取帧失败"); },
-        });
+        const harness = bindVideo({ node: boundVideoNode(), captureVideoPreview: async () => { throw new Error("取帧失败"); } });
+        await harness.done;
 
-        expect(published.find((node) => node.id === "video-node")?.metadata.storageKey).toBe("resource:video-result");
-        expect(published.find((node) => node.id === "video-node")?.metadata.videoPreview).toBeUndefined();
+        const node = harness.editor.current.find((item) => item.id === "video-node");
+        expect(node?.metadata.storageKey).toBe("resource:video-result");
+        expect(node?.metadata.videoPreview).toBeUndefined();
     });
 
     test("an existing first frame for this video is not captured again", async () => {
         let calls = 0;
-        let published: CanvasNodeData[] = [];
-        await bindWithVideoReceipt({
-            node: boundVideoNode({
-                videoPreview: { content: "/api/resources/poster/file", storageKey: "resource:poster", captureVersion: CANVAS_VIDEO_PREVIEW_VERSION, sourceKey: "resource:video-result" },
-            }),
+        const harness = bindVideo({
+            node: boundVideoNode({ videoPreview: { content: "/api/resources/poster/file", storageKey: "resource:poster", captureVersion: CANVAS_VIDEO_PREVIEW_VERSION, sourceKey: "resource:video-result" } }),
             captureVideoPreview: async () => { calls += 1; return undefined; },
-            onNodes: (nodes) => { published = nodes; },
         });
+        await harness.done;
 
         expect(calls).toBe(0);
-        expect(published.find((node) => node.id === "video-node")?.metadata.videoPreview).toEqual({
-            content: "/api/resources/poster/file",
-            storageKey: "resource:poster",
-            captureVersion: CANVAS_VIDEO_PREVIEW_VERSION,
-            sourceKey: "resource:video-result",
-        });
+        expect(harness.editor.current.find((item) => item.id === "video-node")?.metadata.videoPreview?.content).toBe("/api/resources/poster/file");
     });
 
     test("an image result never triggers video capture", async () => {
         let calls = 0;
-        const node = { id: "video-node", type: CanvasNodeType.Video, title: "图片", position: { x: 0, y: 0 }, width: 320, height: 180, metadata: { taskId: "task-video-1", storageKey: "resource:video-result" } } as CanvasNodeData;
-        const project = videoProject([node]);
-        useCanvasStore.setState({ projects: [project] });
-        await bindBackendCanvasGenerationResult({
-            canvasId: project.id,
-            nodeId: node.id,
-            task: {
-                ...succeededVideoTask(),
-                type: "canvas_image",
-                outputs: [{ outputIndex: 0, mediaType: "image", materializedAssetId: "asset-image" }],
-            },
-            isCurrent: () => true,
-            nodesRef: { current: [node] },
-            setNodes: () => {},
-            runtime: {
-                hydrateOutputs: async () => undefined,
-                captureScope: () => captured,
-                liveScope: () => captured,
-                now: () => 0,
-                sleep: async () => undefined,
-                refreshTask: async () => succeededVideoTask(),
-                adoptConfirmedProjection: async () => project,
-                persistDocument: async () => undefined,
-                bindOutput: async (value) => ({ op: "canvas.task.bind", opId: value.operationId, replayed: false, result: { bindingStatus: "bound" as const, canvas: project, revision: 8 } }),
-                captureVideoPreview: async () => { calls += 1; return undefined; },
-            },
+        const harness = bindVideo({
+            node: boundVideoNode(),
+            task: { ...succeededVideoTask(), type: "canvas_image", outputs: [{ outputIndex: 0, mediaType: "image", materializedAssetId: "asset-image" }] },
+            captureVideoPreview: async () => { calls += 1; return undefined; },
         });
+        await harness.done;
+
         expect(calls).toBe(0);
     });
 });
@@ -208,81 +193,62 @@ function deferredPoster() {
     };
 }
 
-function storeNodes(): CanvasNodeData[] {
-    return useCanvasStore.getState().openProject("canvas-video")?.nodes ?? [];
-}
-
 describe("first frame capture keeps concurrent canvas edits", () => {
     beforeEach(() => {
         useCanvasStore.setState({ projects: [] });
     });
 
-    test("a node deleted while the frame is being read is not restored", async () => {
+    test("a node deleted in the editor while the frame is being read is not restored", async () => {
         const poster = deferredPoster();
-        const persisted: CanvasNodeData[][] = [];
-        const published: CanvasNodeData[][] = [];
-        const done = bindWithVideoReceipt({
-            node: boundVideoNode(),
-            captureVideoPreview: poster.capture,
-            onPersist: (nodes) => { persisted.push(nodes); },
-            onNodes: (nodes) => { published.push(nodes); },
-        });
+        const harness = bindVideo({ node: boundVideoNode(), captureVideoPreview: poster.capture });
         await poster.started;
-        // 绑定前的常规保存与回执采纳都在取帧之前，之后不应再有写入。
-        const writesBeforeCapture = persisted.length;
-        const publishesBeforeCapture = published.length;
+        const writesBeforeCapture = harness.persisted.length;
+        const publishesBeforeCapture = harness.published.length;
 
-        useCanvasStore.setState({ projects: [videoProject([])] });
+        harness.userEdit([]);
         poster.release();
-        await done;
+        await harness.done;
 
-        expect(storeNodes()).toHaveLength(0);
-        expect(persisted.slice(writesBeforeCapture)).toEqual([]);
-        expect(published.slice(publishesBeforeCapture)).toEqual([]);
+        expect(harness.editor.current).toHaveLength(0);
+        expect(harness.nodesRef.current).toHaveLength(0);
+        expect(harness.persisted.slice(writesBeforeCapture)).toEqual([]);
+        expect(harness.published.slice(publishesBeforeCapture)).toEqual([]);
     });
 
-    test("a video swapped while the frame is being read keeps the newer video and gets no stale poster", async () => {
+    test("a video swapped in the editor while the frame is being read keeps the newer video", async () => {
         const poster = deferredPoster();
-        const persisted: CanvasNodeData[][] = [];
-        const published: CanvasNodeData[][] = [];
-        const done = bindWithVideoReceipt({
-            node: boundVideoNode(),
-            captureVideoPreview: poster.capture,
-            onPersist: (nodes) => { persisted.push(nodes); },
-            onNodes: (nodes) => { published.push(nodes); },
-        });
+        const harness = bindVideo({ node: boundVideoNode(), captureVideoPreview: poster.capture });
         await poster.started;
-        const writesBeforeCapture = persisted.length;
-        const publishesBeforeCapture = published.length;
+        const writesBeforeCapture = harness.persisted.length;
+        const publishesBeforeCapture = harness.published.length;
 
-        useCanvasStore.setState({ projects: [videoProject([videoNode({ taskId: "task-video-1", storageKey: "resource:user-replaced", content: "/api/resources/user-replaced/file" })])] });
+        harness.userEdit([videoNode({ taskId: "task-video-1", storageKey: "resource:user-replaced", content: "/api/resources/user-replaced/file" })]);
         poster.release();
-        await done;
+        await harness.done;
 
-        const node = storeNodes().find((item) => item.id === "video-node");
+        const node = harness.editor.current.find((item) => item.id === "video-node");
         expect(node?.metadata.storageKey).toBe("resource:user-replaced");
         expect(node?.metadata.videoPreview).toBeUndefined();
-        expect(persisted.slice(writesBeforeCapture)).toEqual([]);
-        expect(published.slice(publishesBeforeCapture)).toEqual([]);
+        expect(harness.persisted.slice(writesBeforeCapture)).toEqual([]);
+        expect(harness.published.slice(publishesBeforeCapture)).toEqual([]);
     });
 
-    test("edits to other nodes made while the frame is being read survive the poster write", async () => {
+    test("edits made in the editor while the frame is being read survive the poster write", async () => {
         const poster = deferredPoster();
-        const persisted: CanvasNodeData[][] = [];
-        const done = bindWithVideoReceipt({ node: boundVideoNode(), captureVideoPreview: poster.capture, onPersist: (nodes) => { persisted.push(nodes); } });
+        const harness = bindVideo({ node: boundVideoNode(), captureVideoPreview: poster.capture });
         await poster.started;
 
         const neighbour: CanvasNodeData = { id: "neighbour-node", type: CanvasNodeType.Text, title: "旁白", position: { x: 500, y: 0 }, width: 320, height: 180, metadata: { content: "用户刚写的旁白", status: "success" } };
         const edited = videoNode({ taskId: "task-video-1", status: "success", storageKey: "resource:video-result", content: "/api/resources/video-result/file", prompt: "用户刚改的提示词" });
-        useCanvasStore.setState({ projects: [videoProject([edited, neighbour])] });
+        harness.userEdit([edited, neighbour]);
         poster.release();
-        await done;
+        await harness.done;
 
-        // 首帧那次写入以取帧结束时的画布为准：两个节点都在，用户的改动都还在。
-        const lastWrite = persisted[persisted.length - 1] ?? [];
+        const lastWrite = harness.persisted[harness.persisted.length - 1] ?? [];
+        // 首帧那次写入以取帧结束时的编辑器节点为准：两个节点都在，用户的改动都还在。
         expect(lastWrite.map((item) => item.id).sort()).toEqual(["neighbour-node", "video-node"]);
         expect(lastWrite.find((item) => item.id === "neighbour-node")?.metadata.content).toBe("用户刚写的旁白");
         expect(lastWrite.find((item) => item.id === "video-node")?.metadata.prompt).toBe("用户刚改的提示词");
-        expect(lastWrite.find((item) => item.id === "video-node")?.metadata.videoPreview?.sourceKey).toBe("resource:video-result");
+        expect(lastWrite.find((item) => item.id === "video-node")?.metadata.videoPreview).toEqual(posterPreview);
     });
 });

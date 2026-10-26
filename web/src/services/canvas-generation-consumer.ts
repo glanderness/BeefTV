@@ -489,8 +489,9 @@ async function stampGeneratedVideoPreview(input: {
     if (!preview || !input.isCurrent() || !userScopeMatches(input.capturedScope, input.liveScope())) return;
 
     // 取帧要等视频解码，期间用户可能删掉这个节点、换成别的视频，或改了别的节点。
-    // 因此以取帧结束时的最新节点列表为准，只给来源没变的那个节点补首帧。
-    const latest = useCanvasStore.getState().openProject(input.canvasId)?.nodes ?? input.nodesRef.current;
+    // 编辑器的 setNodes 会立刻写 nodesRef，store 要等自动保存的 effect 才跟上，
+    // 所以取帧结束时只认 nodesRef，不回读 store：读 store 会把已删除的节点写回来。
+    const latest = input.nodesRef.current;
     const current = latest.find((item) => item.id === input.nodeId);
     if (!current || current.type !== CanvasNodeType.Video) return;
     if ((current.metadata?.storageKey || current.metadata?.content || "") !== sourceKey) return;
