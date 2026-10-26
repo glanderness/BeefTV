@@ -7,9 +7,17 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+// 读投影只取小字段；完整冻结请求由恢复路径按原任务、用户和 attempt 单独读取。
+type ImageSubmissionEvidence struct {
+	AttemptID        string
+	TaskID           string
+	UserID           string
+	ResponseAccepted bool
+}
+
 type ImageRecoveryEvidence struct {
 	Attempt    *model.RouteAttempt
-	Submission *model.ImageSubmission
+	Submission *ImageSubmissionEvidence
 	HasReceipt bool
 }
 
@@ -20,7 +28,7 @@ func (r *Repository) ImageRecoveryEvidence(taskIDs []string) (map[string]ImageRe
 		return facts, nil
 	}
 	var attempts []model.RouteAttempt
-	if err := r.db.Where("task_id IN ?", taskIDs).
+	if err := r.db.Select("id", "task_id", "route_run", "channel_id", "dispatch_state", "started_at").Where("task_id IN ?", taskIDs).
 		Where(`id = (SELECT ra.id FROM route_attempts ra WHERE ra.task_id = route_attempts.task_id ORDER BY ra.route_run DESC, ra.attempt_number DESC, ra.id ASC LIMIT 1)`).Find(&attempts).Error; err != nil {
 		return nil, err
 	}
@@ -31,8 +39,9 @@ func (r *Repository) ImageRecoveryEvidence(taskIDs []string) (map[string]ImageRe
 		attemptIDs = append(attemptIDs, a.ID)
 	}
 	if len(attemptIDs) > 0 {
-		var submissions []model.ImageSubmission
-		if err := r.db.Where("attempt_id IN ? AND task_id IN ?", attemptIDs, taskIDs).Find(&submissions).Error; err != nil {
+		var submissions []ImageSubmissionEvidence
+		if err := r.db.Model(&model.ImageSubmission{}).Select("attempt_id", "task_id", "user_id", "response_accepted").
+			Where("attempt_id IN ? AND task_id IN ?", attemptIDs, taskIDs).Find(&submissions).Error; err != nil {
 			return nil, err
 		}
 		for i := range submissions {

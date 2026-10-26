@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/outbound"
@@ -125,7 +126,7 @@ func (s *Service) failedImageResultWith(ctx context.Context, task model.Task, se
 		return nil, "", err
 	}
 	evidence := all[task.ID]
-	attempt, row := evidence.Attempt, evidence.Submission
+	attempt, submission := evidence.Attempt, evidence.Submission
 	receipt, err := s.repo.ImageCreateReceipt(task.UserID, task.ID)
 	// 同键恢复也会追加创建日志。历史日志有歧义时不能挑一个旧成功结果，
 	// 但仍可由当前轮次的冻结请求及原键向网关取回确切回执。
@@ -150,16 +151,24 @@ func (s *Service) failedImageResultWith(ctx context.Context, task model.Task, se
 		return result, "", nil
 	}
 
-	if attempt != nil && attempt.RouteRun == task.RouteRun && attempt.DispatchState == "rejected_no_job" && (row == nil || !row.ResponseAccepted) {
+	if attempt != nil && attempt.RouteRun == task.RouteRun && attempt.DispatchState == "rejected_no_job" && (submission == nil || !submission.ResponseAccepted) {
 		return nil, localtask.RecoveryNoResult, nil
 	}
 	if receipt != nil {
-		if conclusion := imageReceiptConclusion(receipt.ResponseBody); conclusion != "" {
+		if conclusion := imageReceiptConclusion(receipt.StatusCode, receipt.ResponseBody); conclusion != "" {
 			return nil, conclusion, nil
 		}
 	}
-	if row == nil || attempt == nil || attempt.RouteRun != task.RouteRun || (attempt.DispatchState != "accepted" && attempt.DispatchState != "submission_unknown") {
+	if submission == nil || attempt == nil || attempt.RouteRun != task.RouteRun || (attempt.DispatchState != "accepted" && attempt.DispatchState != "submission_unknown") {
 		return nil, localtask.RecoveryUnrecoverable, nil
+	}
+	// 仅实际恢复需要读取完整冻结请求，读投影始终只查询小字段。
+	row, err := s.repo.ImageSubmission(attempt.ID, task.ID, task.UserID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, localtask.RecoveryUnrecoverable, nil
+	}
+	if err != nil {
+		return nil, "", err
 	}
 	if row.RequestCipher == "" || time.Since(row.CreatedAt) >= imageRecoveryLifetime {
 		return nil, localtask.RecoveryUnrecoverable, nil
@@ -209,7 +218,7 @@ func (s *Service) failedImageResultWith(ctx context.Context, task model.Task, se
 		}
 		return nil, "", sendErr
 	}
-	if conclusion := imageReceiptConclusion(string(data)); conclusion != "" {
+	if conclusion := imageReceiptConclusion(http.StatusOK, string(data)); conclusion != "" {
 		return nil, conclusion, nil
 	}
 	var payload imageResponse
@@ -224,11 +233,18 @@ func (s *Service) failedImageResultWith(ctx context.Context, task model.Task, se
 	return result, "", err
 }
 
-func imageReceiptConclusion(body string) string {
+func imageReceiptConclusion(statusCode int, body string) string {
+	if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
+		return localtask.RecoveryUnrecoverable
+	}
 	switch imageReceiptErrorCode(body) {
 	case "image_result_unknown", "image_result_expired", "idempotency_conflict":
 		return localtask.RecoveryUnrecoverable
 	case "image_submission_pending", "image_submission_unavailable", "image_result_unavailable":
+		return ""
+	}
+	// 通用 HTTP 错误正文不是生成终态；408/429/5xx 等仍可按原键取回。
+	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
 		return ""
 	}
 	var payload map[string]any

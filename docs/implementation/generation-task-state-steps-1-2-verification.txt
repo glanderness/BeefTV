@@ -1,7 +1,7 @@
 生成任务状态：第 1、2 步验证回执（脱敏摘要）
 日期：2026-10-27（构建机本地时间）
 代码范围：起点 1bf517b + 本任务分支变更；没有合并参考调研分支。
-状态：实现方自测；待 Chief 安排架构师独立评审，不是上线/真实收费验收。
+状态：已收到独立评审；两项阻塞问题已修正待复审。本文件是实现方验证，不是上线/真实收费验收。
 
 一、测试前提与范围
 - 仅本任务工作区、独立临时 SQLite、httptest HTTP/TLS 服务和假凭据。
@@ -15,11 +15,11 @@
 命令：
 go test -p 4 -timeout 4m ./internal/task ./internal/taskdelivery ./internal/database ./internal/repository ./internal/generation
 结果：
-ok infinite-canvas/backend/internal/task         1.497s
-ok infinite-canvas/backend/internal/taskdelivery 3.242s
-ok infinite-canvas/backend/internal/database     14.190s
-ok infinite-canvas/backend/internal/repository   3.664s
-ok infinite-canvas/backend/internal/generation   48.243s
+ok infinite-canvas/backend/internal/task         2.621s
+ok infinite-canvas/backend/internal/taskdelivery 5.837s
+ok infinite-canvas/backend/internal/database     32.316s
+ok infinite-canvas/backend/internal/repository   10.943s
+ok infinite-canvas/backend/internal/generation   (cached)
 
 覆盖包括：Outcome、原交付投影、迁移、仓储、原请求准入及禁止重定向。
 迁移专项：
@@ -31,8 +31,8 @@ ok infinite-canvas/backend/internal/generation   48.243s
 命令：
 go test -p 2 -timeout 4m ./internal/app ./internal/handler -run 'Image|TaskOutcome|TaskDelivery|TaskOperationProjection|RunningImageLease|ImageRecoveryScan|RouteAttempt' -count=1
 结果：
-ok infinite-canvas/backend/internal/app     19.967s
-ok infinite-canvas/backend/internal/handler 2.891s
+ok infinite-canvas/backend/internal/app     26.174s
+ok infinite-canvas/backend/internal/handler 3.858s
 
 覆盖原人工 /retry、JSON/multipart 冻结、超旧发送上限但不超 23 小时、当前轮次/原键/协议校验、历史回执、暂时失败、配额/租约、原渠道身份及三个任务读接口。
 - TestImageRecoveryScanCoversLegacyAndKeepsCursorPastContendedTasks：含无路由历史回执、游标越过租约争用。
@@ -43,9 +43,9 @@ ok infinite-canvas/backend/internal/handler 2.891s
 命令：
 go test -race -p 1 -timeout 2m ./internal/app ./internal/handler ./internal/generation -run 'TestAutomaticImage|TestHistoricalImageAuto|TestImageRecoveryScan|TestRunningImageLease|TestTaskOutcome|TestRetryAcceptedImage|TestImageReceiptRecovery|TestImageSubmission|TestFrozenImageDispatch|TestTransportDispatchAdmission' -count=1
 结果：
-ok infinite-canvas/backend/internal/app        24.306s
-ok infinite-canvas/backend/internal/handler    5.321s
-ok infinite-canvas/backend/internal/generation 1.512s
+ok infinite-canvas/backend/internal/app        32.381s
+ok infinite-canvas/backend/internal/handler    6.045s
+ok infinite-canvas/backend/internal/generation 1.609s
 
 五、原渠道与原凭据身份独立列出的专项：通过，exit=0
 命令：
@@ -110,5 +110,36 @@ go test ./internal/task -run TestComputeOutcome -v -count=1
 
 十、交接
 - 说明文件：docs/implementation/generation-task-state-steps-1-2.md。
-- 仅实现方自查和确定性测试；未独立架构师评审。
+- 已收到独立评审，本轮修正两项阻塞意见并自行验证，等待复审；不冒充复审通过。
 - 停在待 review；不执行 Done、不建 PR、不合并、不发布。
+
+十一、独立评审修订验证（2026-10-27）
+修订生产文件：app/image_auto_recovery.go、app/task_outcome.go、repository/image_recovery.go。
+新增测试文件：app/image_recovery_review_test.go；没有迁移、依赖、前端或收费守门变更。
+
+A. 修前反证（expected exit=1）
+仅在临时目录保存 d74a0e0（上一轮交付）上述三个生产文件的 git show 内容，生成 Go overlay 的绝对路径 Replace 映射，保留当前新增测试。没有改写/切换工作树；临时 overlay 目录随命令结束删除。
+命令：
+go test -overlay <临时 overlay.json> ./internal/app -run 'TestAutomaticImageRecoveryTemporaryReceiptKeepsSameKeyRecovery|TestTaskOutcomeReadsNeverLoadFrozenImageRequest' -count=1
+关键输出：
+- 唯一 408/429/500/503 回执：临时回执误判为终态，pass=0 sends=0 outcome="no_result" err=<nil>。
+- 状态读取：任务读取查询了完整冻结请求，而不是小字段。
+- succeeded/running/queued 的三个读入口：提交证据查询数=1 want=0。
+- app FAIL，2.622s，exit=1；不是编译错误或夹具错误。这是缺陷反证，不是当前代码测试失败。
+
+B. 修后专项：通过，exit=0
+命令：
+go test ./internal/app -run 'TestAutomaticImageRecoveryTemporaryReceiptKeepsSameKeyRecovery|TestTaskOutcomeReadsNeverLoadFrozenImageRequest|TestImageReceiptRecoveryConclusionUsesHTTPStatus' -count=1 -v
+结果：PASS；app 2.468s。
+- 回执分类表 8 项通过：503 通用错误、2xx 明确业务失败、401、403、pending、unavailable、expired、conflict。
+- 唯一 408/429/500/503 通用错误回执各一项：两次临时发送失败后，第三次同键取回成功并保存。发送函数全为假实现，没有调用真实模型；三次均核对原 URL、Authorization、Idempotency-Key 与完整正文；最终原任务 succeeded、原 routeRun 不变、recovery_outcome 为空。
+- failed/succeeded/running/queued × detail/list/by-operation 共 12 项通过。两份各约 1.25 MiB、不能解密的假快照常驻临时 SQLite；查询回调检查 SELECT 不包含 request_cipher 或 *。失败任务单次批量查询小字段（列表含两项仍为一次），其他三类状态为零次。
+- 上述 SQL 断言验证不读取媒体快照，不代表已经量过 100×64 MiB 的生产负载、峰值内存或吞吐。
+
+C. 临近回归与静态检查
+本文件二、三、四节已更新为本轮真实结果：核心包 exit=0（generation 命中缓存）、图片/读接口矩阵 exit=0、三包相关 race exit=0，无 DATA RACE 报告；均含本轮生产修改。最终图片矩阵和 race 包含三项新增测试。
+go vet ./internal/task ./internal/taskdelivery ./internal/repository ./internal/database：本轮 exit=0。
+格式和 diff 检查仍按第八节执行；没有放宽旧测试断言。
+
+D. 未解决的验证缺口
+本轮未重跑此前超时的 go test ./...；全量通过状态仍未建立。实际旧前端展示、真实扣费/退款、真实工作区迁移及发布仍未做，不因专项通过而清零。#32 的新计费映射不在本次修订范围。
