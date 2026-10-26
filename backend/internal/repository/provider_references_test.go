@@ -70,9 +70,10 @@ func TestTaskProviderReferencesResolvesTheDispatchedProtocol(t *testing.T) {
 		"cancelling-protocol":    1,
 		"legacy-protocol":        1,
 		"newapi":                 1,
-		// The route marker is recorded, but no manifest provider is named this, so
-		// it can never retain a plugin by itself.
-		"managed": 3,
+		// Only the running route task carries the route marker; the succeeded one
+		// is not counted. No manifest provider is named "managed", so it can never
+		// retain a plugin by itself.
+		"managed": 1,
 	}
 	if len(counts) != len(want) {
 		t.Fatalf("task references = %#v want %#v", counts, want)
