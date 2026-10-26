@@ -189,3 +189,100 @@ describe("generated video first frame on the bind path", () => {
         expect(calls).toBe(0);
     });
 });
+
+// 取帧要等视频解码，这一段时间用户仍然可以编辑画布。
+// 首帧只能补在那一个节点上，不能把取帧前的快照整份写回去。
+function deferredPoster() {
+    let release!: () => void;
+    let started!: () => void;
+    const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    return {
+        started: startedPromise,
+        release,
+        capture: async () => {
+            started();
+            await gate;
+            return { url: "/api/resources/poster/file", storageKey: "resource:poster", width: 400, height: 225, bytes: 30, mimeType: "image/jpeg" };
+        },
+    };
+}
+
+function storeNodes(): CanvasNodeData[] {
+    return useCanvasStore.getState().openProject("canvas-video")?.nodes ?? [];
+}
+
+describe("first frame capture keeps concurrent canvas edits", () => {
+    beforeEach(() => {
+        useCanvasStore.setState({ projects: [] });
+    });
+
+    test("a node deleted while the frame is being read is not restored", async () => {
+        const poster = deferredPoster();
+        const persisted: CanvasNodeData[][] = [];
+        const published: CanvasNodeData[][] = [];
+        const done = bindWithVideoReceipt({
+            node: boundVideoNode(),
+            captureVideoPreview: poster.capture,
+            onPersist: (nodes) => { persisted.push(nodes); },
+            onNodes: (nodes) => { published.push(nodes); },
+        });
+        await poster.started;
+        // 绑定前的常规保存与回执采纳都在取帧之前，之后不应再有写入。
+        const writesBeforeCapture = persisted.length;
+        const publishesBeforeCapture = published.length;
+
+        useCanvasStore.setState({ projects: [videoProject([])] });
+        poster.release();
+        await done;
+
+        expect(storeNodes()).toHaveLength(0);
+        expect(persisted.slice(writesBeforeCapture)).toEqual([]);
+        expect(published.slice(publishesBeforeCapture)).toEqual([]);
+    });
+
+    test("a video swapped while the frame is being read keeps the newer video and gets no stale poster", async () => {
+        const poster = deferredPoster();
+        const persisted: CanvasNodeData[][] = [];
+        const published: CanvasNodeData[][] = [];
+        const done = bindWithVideoReceipt({
+            node: boundVideoNode(),
+            captureVideoPreview: poster.capture,
+            onPersist: (nodes) => { persisted.push(nodes); },
+            onNodes: (nodes) => { published.push(nodes); },
+        });
+        await poster.started;
+        const writesBeforeCapture = persisted.length;
+        const publishesBeforeCapture = published.length;
+
+        useCanvasStore.setState({ projects: [videoProject([videoNode({ taskId: "task-video-1", storageKey: "resource:user-replaced", content: "/api/resources/user-replaced/file" })])] });
+        poster.release();
+        await done;
+
+        const node = storeNodes().find((item) => item.id === "video-node");
+        expect(node?.metadata.storageKey).toBe("resource:user-replaced");
+        expect(node?.metadata.videoPreview).toBeUndefined();
+        expect(persisted.slice(writesBeforeCapture)).toEqual([]);
+        expect(published.slice(publishesBeforeCapture)).toEqual([]);
+    });
+
+    test("edits to other nodes made while the frame is being read survive the poster write", async () => {
+        const poster = deferredPoster();
+        const persisted: CanvasNodeData[][] = [];
+        const done = bindWithVideoReceipt({ node: boundVideoNode(), captureVideoPreview: poster.capture, onPersist: (nodes) => { persisted.push(nodes); } });
+        await poster.started;
+
+        const neighbour: CanvasNodeData = { id: "neighbour-node", type: CanvasNodeType.Text, title: "旁白", position: { x: 500, y: 0 }, width: 320, height: 180, metadata: { content: "用户刚写的旁白", status: "success" } };
+        const edited = videoNode({ taskId: "task-video-1", status: "success", storageKey: "resource:video-result", content: "/api/resources/video-result/file", prompt: "用户刚改的提示词" });
+        useCanvasStore.setState({ projects: [videoProject([edited, neighbour])] });
+        poster.release();
+        await done;
+
+        // 首帧那次写入以取帧结束时的画布为准：两个节点都在，用户的改动都还在。
+        const lastWrite = persisted[persisted.length - 1] ?? [];
+        expect(lastWrite.map((item) => item.id).sort()).toEqual(["neighbour-node", "video-node"]);
+        expect(lastWrite.find((item) => item.id === "neighbour-node")?.metadata.content).toBe("用户刚写的旁白");
+        expect(lastWrite.find((item) => item.id === "video-node")?.metadata.prompt).toBe("用户刚改的提示词");
+        expect(lastWrite.find((item) => item.id === "video-node")?.metadata.videoPreview?.sourceKey).toBe("resource:video-result");
+    });
+});

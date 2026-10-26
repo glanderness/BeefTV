@@ -488,7 +488,13 @@ async function stampGeneratedVideoPreview(input: {
     const preview = videoPreviewFromImage(image, sourceKey);
     if (!preview || !input.isCurrent() || !userScopeMatches(input.capturedScope, input.liveScope())) return;
 
-    const patched = nodes.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, videoPreview: preview } } : item));
+    // 取帧要等视频解码，期间用户可能删掉这个节点、换成别的视频，或改了别的节点。
+    // 因此以取帧结束时的最新节点列表为准，只给来源没变的那个节点补首帧。
+    const latest = useCanvasStore.getState().openProject(input.canvasId)?.nodes ?? input.nodesRef.current;
+    const current = latest.find((item) => item.id === input.nodeId);
+    if (!current || current.type !== CanvasNodeType.Video) return;
+    if ((current.metadata?.storageKey || current.metadata?.content || "") !== sourceKey) return;
+    const patched = latest.map((item) => (item.id === current.id ? { ...item, metadata: { ...item.metadata, videoPreview: preview } } : item));
     input.nodesRef.current = patched;
     input.setNodes(patched);
     try {
