@@ -293,9 +293,8 @@ func (a taskProviderAdapter) RequestCancel(ctx context.Context, task *model.Task
 type taskPresenterAdapter struct{ s *Service }
 
 func (a taskPresenterAdapter) Task(task model.Task) *model.Task {
-	projected := taskForOutput(task)
-	a.s.attachTaskDelivery(projected)
-	return projected
+	a.s.attachTaskDelivery(&task)
+	return taskForOutput(task)
 }
 
 func (a taskPresenterAdapter) Summaries(tasks []model.Task) []localtask.Summary {

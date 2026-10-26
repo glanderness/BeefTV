@@ -1,0 +1,114 @@
+生成任务状态：第 1、2 步验证回执（脱敏摘要）
+日期：2026-10-27（构建机本地时间）
+代码范围：起点 1bf517b + 本任务分支变更；没有合并参考调研分支。
+状态：实现方自测；待 Chief 安排架构师独立评审，不是上线/真实收费验收。
+
+一、测试前提与范围
+- 仅本任务工作区、独立临时 SQLite、httptest HTTP/TLS 服务和假凭据。
+- 无真实付费生成，无真实账户数据库迁移，无正式应用操作，无发布产物。
+- 按仓库 CI 生成协议包：sh plugin-packages/build-packages.sh（86 个 ignored 包）。
+- 安装锁定宿主依赖：cd agent-host && bun install --frozen-lockfile。
+- 未修改依赖 manifest/lock 或协议包源代码；生成包和依赖不提交。
+- 下列 Go 命令均在 backend/ 执行。原始本机日志仅作排障；本文件保存可审阅的命令、终态和关键证据，不复制完整 SQL/堆栈。
+
+二、最新核心包完整测试：通过，exit=0
+命令：
+go test -p 4 -timeout 4m ./internal/task ./internal/taskdelivery ./internal/database ./internal/repository ./internal/generation
+结果：
+ok infinite-canvas/backend/internal/task         1.497s
+ok infinite-canvas/backend/internal/taskdelivery 3.242s
+ok infinite-canvas/backend/internal/database     14.190s
+ok infinite-canvas/backend/internal/repository   3.664s
+ok infinite-canvas/backend/internal/generation   48.243s
+
+覆盖包括：Outcome、原交付投影、迁移、仓储、原请求准入及禁止重定向。
+迁移专项：
+- TestTaskRecoveryOutcomeMigrationOnlyAddsNullableColumn
+- TestTaskRecoveryOutcomeMigrationRollsBackWithLedgerFailure
+验证 v25→v26、nullable/no-default/no-backfill、历史与未知列保留、重复迁移、缺列拒绝 Ready，以及 ledger 写入失败时 DDL 同事务回滚。
+
+三、最新图片行为及读接口矩阵：通过，exit=0
+命令：
+go test -p 2 -timeout 4m ./internal/app ./internal/handler -run 'Image|TaskOutcome|TaskDelivery|TaskOperationProjection|RunningImageLease|ImageRecoveryScan|RouteAttempt' -count=1
+结果：
+ok infinite-canvas/backend/internal/app     19.967s
+ok infinite-canvas/backend/internal/handler 2.891s
+
+覆盖原人工 /retry、JSON/multipart 冻结、超旧发送上限但不超 23 小时、当前轮次/原键/协议校验、历史回执、暂时失败、配额/租约、原渠道身份及三个任务读接口。
+- TestImageRecoveryScanCoversLegacyAndKeepsCursorPastContendedTasks：含无路由历史回执、游标越过租约争用。
+- TestRunningImageLeaseSurvivesDatabaseReopenWithoutCancellation：真实关闭/重开临时 SQLite 后仍为原 running 任务、原轮次，不取消。
+- 详情、列表、by-operation：outcome 一致；旧状态保留，私有恢复列、API Key 不输出。
+
+四、最新相关竞态专项：通过，exit=0，无 DATA RACE 报告
+命令：
+go test -race -p 1 -timeout 2m ./internal/app ./internal/handler ./internal/generation -run 'TestAutomaticImage|TestHistoricalImageAuto|TestImageRecoveryScan|TestRunningImageLease|TestTaskOutcome|TestRetryAcceptedImage|TestImageReceiptRecovery|TestImageSubmission|TestFrozenImageDispatch|TestTransportDispatchAdmission' -count=1
+结果：
+ok infinite-canvas/backend/internal/app        24.306s
+ok infinite-canvas/backend/internal/handler    5.321s
+ok infinite-canvas/backend/internal/generation 1.512s
+
+五、原渠道与原凭据身份独立列出的专项：通过，exit=0
+命令：
+go test ./internal/app -run 'TestImageSubmissionFreezesOriginalAttemptChannel|TestImageSubmissionRunningReplayStopsWhenOriginalIdentityUnavailable|TestAutomaticImageRecoveryPinsOriginalChannelAndCredentialIdentity|TestAutomaticImageRecoveryStopsOnOriginalCredentialRejection|TestAutomaticImageRecoveryDirectChannelIdentity' -count=1 -v
+结果：PASS；app 3.478s。
+
+子场景全部通过：
+1. 冻结请求使用原 attempt 的 ChannelID，不被当前任务的新渠道覆盖。
+2. 原渠道不变：一次原请求发送，URL、Authorization、Idempotency-Key、正文与原快照完全一致。
+3. 当前任务改选其他渠道：仍使用原渠道，运行时统计与并发渠道也不改到新渠道。
+4. 历史系统路由快照没有新增 ChannelID：用原 attempt 核对，不猜测当前选择。
+5. 原渠道停用、删除、原 token 替换、原源地址替换、快照渠道或 token 不一致：均零发送；发送次数不增加。
+6. 发送前检查通过、准入前再停用或换 token：仍零发送，未借其他启用渠道重发。
+7. 对这些不能恢复的失败任务再走真实恢复编排：持久化 unrecoverable，读投影 failed + confirm；原任务、routeRun、attempt 数不增加。
+8. 渠道表读取失败：不发送，不写永久恢复结论，仅退避。
+9. 原 worker 对已发送 running 图片继续/重启重放时，停用、删除、换 token 也零发送；不是仅新增扫描器有保护。
+10. 假上游对原凭据返回 401/403：只尝试原身份一次，停止自动取回，不切换凭据，结论不代表未计费。
+11. 本地配置中的 beefapi/custom 直连：原身份可用；轮换、停用、删除均不可用。
+
+新快照的 ChannelID 保存在既有加密 JSON 内，不新增数据库身份表；原 Header 的实际鉴权值不更新为当前 token。测试使用假凭据，不向真实 BeefAPI 发 POST。
+
+六、历史回执到旧画布的真实后台链：连续三次通过
+命令：
+go test ./internal/app -run '^TestHistoricalImageAutoRecoveryDownloadsAndBindsLegacyCanvas$' -count=3 -timeout 60s -v
+结果：三次 PASS（7.08s / 6.33s / 6.02s），app 20.897s。
+每次关键证据相同：
+历史回执→后台重建→GET 下载→旧画布 success/content：通过；task=historical-image routeRun=3，GET=1 POST=0
+
+场景：无 RouteAttempt、无 ImageSubmission 的旧失败任务；只启动真实交付定时器，不启动生成 worker、不调用 /retry；下载本机假 PNG 为资源，保留原任务和 routeRun=3，旧画布 status=success/content/storageKey 写回，任务总数为 1、路由数为 0。
+本次另在行为矩阵和 race 中通过该测试。
+测试会等待实际画布字段写回，不以任务先变成 ready 替代画布绑定完成。
+
+七、Outcome 表格专项：通过，exit=0
+命令：
+go test ./internal/task -run TestComputeOutcome -v -count=1
+结果：22 个子场景 PASS，task 0.524s。
+包括重启后 running 不变 cancelled、未发送、已接受、同键待取回、无路由旧回执、读证据失败、暂时下载失败、确定取不回、审核、计费不明及原视频查询投影。不从 Error 文案推断费用；未接入消费准入。
+
+八、格式与静态检查
+- git diff --check：通过。
+- 对全部本任务改动的 tracked/untracked Go 文件执行 gofmt -l：无输出，exit=0。
+- go vet ./internal/task ./internal/taskdelivery ./internal/repository ./internal/database：通过，exit=0。
+- go vet ./internal/app ./internal/generation：exit=1，下列均为未改动位置的既有告警；未为本任务扩大修改范围：
+  internal/generation/seedance_multipart.go:145/:148：possible context leak
+  internal/generation/seedance_single_upload.go:39/:47：possible context leak
+  internal/app/provider_submission.go:32：unkeyed routeDispatchUncertainError literal
+  internal/app/task_worker_applied_test.go:75：unkeyed routeDispatchUncertainError literal
+
+九、必须保留的失败与验证缺口
+1. 全量尝试：go test -p 4 -timeout 8m ./...
+   最终 exit=1。app 包在整包运行达到 8 分钟上限：
+   panic: test timed out after 8m0s
+   running tests: TestPluginRuntimeIsTheProtocolSourceOfTruth (2s)
+   FAIL infinite-canvas/backend/internal/app 480.679s
+   handler 整包在该次运行通过（469.676s），其余包均成功或无测试。
+   此次全量发生在追加渠道身份校验之前，不是最终 diff 的完整回归成功凭据。超时原因未独立确定；不能称已确认与本改动无关，也不能称全部测试通过。需要评审/PR 前安排足够预算的完整回归。
+2. 中间迭代中，新身份检查拦住了缺原渠道的旧测试夹具；已明确补建原渠道与原凭据，没有放宽发送/安全断言。
+3. 行为矩阵曾暴露测试把任务 ready 误当成画布已绑定；已改为等待真正的旧画布消费字段，之后行为、race 及三次重复均通过。没有用同步重绑逻辑改变产品流程以迎合测试。
+4. 未做实际旧前端浏览器绘制验收；仅证明服务端旧消费字段和后台下载/绑定已完成，没有截图或“实际看到了成片”的证据。
+5. 未测试真实扣费/退款、生产 BeefAPI 当前开关、真实用户工作区迁移、桌面安装或发布。
+6. 当前只有 SQLite 实现，不宣称已验证 PostgreSQL。视频自动恢复、付费同意/守门和前端改造不在本次范围。
+
+十、交接
+- 说明文件：docs/implementation/generation-task-state-steps-1-2.md。
+- 仅实现方自查和确定性测试；未独立架构师评审。
+- 停在待 review；不执行 Done、不建 PR、不合并、不发布。

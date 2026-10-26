@@ -46,13 +46,17 @@ func (r *Repository) MarkImageSubmissionAccepted(row *model.ImageSubmission) err
 func (r *Repository) ClaimImageSubmissionSend(row *model.ImageSubmission, owner string, maxSends int) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		var count int64
-		if err := taskLeaseWriter(tx.Model(&model.Task{}), owner).Where("id = ? AND user_id = ? AND status = ?", row.TaskID, row.UserID, model.TaskStatusRunning).Count(&count).Error; err != nil {
+		if err := imageSubmissionTaskWriter(tx, row, owner, maxSends).Count(&count).Error; err != nil {
 			return err
 		}
 		if count != 1 {
 			return ErrTaskStateConflict
 		}
-		result := tx.Model(&model.ImageSubmission{}).Where("attempt_id = ? AND send_count = ? AND (send_count < ? OR response_accepted = ?)", row.AttemptID, row.SendCount, maxSends, true).Update("send_count", gorm.Expr("send_count + 1"))
+		query := tx.Model(&model.ImageSubmission{}).Where("attempt_id = ? AND task_id = ? AND user_id = ? AND send_count = ?", row.AttemptID, row.TaskID, row.UserID, row.SendCount)
+		if maxSends > 0 {
+			query = query.Where("send_count < ? OR response_accepted = ?", maxSends, true)
+		}
+		result := query.Update("send_count", gorm.Expr("send_count + 1"))
 		if result.Error != nil {
 			return result.Error
 		}
