@@ -1,4 +1,5 @@
 import { explainGenerationError, generationFailureMetadata } from "@/lib/generation-error";
+import { generationTaskVerdictSettled } from "@/lib/generation-task-display";
 import { CanvasGenerationDurableAckError } from "@/services/canvas-generation-errors";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
@@ -67,6 +68,11 @@ export function canvasNodeFailureExplanation(node: CanvasNodeData) {
     const explanation = explainGenerationError({ code: node.metadata?.generationErrorCode || node.metadata?.taskErrorCode, message: node.metadata?.errorDetails }, { taskId: node.metadata?.taskId, model: node.metadata?.model, createdAt: node.metadata?.taskCreatedAt, stage: node.metadata?.taskStage });
     // This action opens saved history; it must never dispatch another generation.
     if (explanation.category === "result_target_unavailable") return { ...explanation, blockManualRetry: false };
+    // 原任务已经终态，说明这次提交是否成立已有结论；继续显示「提交结果未确认」
+    // 会让节点既没有原任务可查、也没有重新生成入口。结果没取回时如实说明，并交回给用户决定。
+    if (explanation.category === "submission_uncertain" && generationTaskVerdictSettled(node.metadata)) {
+        return { ...explanation, reason: "原任务已结束，但没有取回结果", action: "可以重新生成；会新建任务，可能再次消耗积分", uncertain: false, retryable: true, blockAutomaticRetry: true, blockManualRetry: false };
+    }
     if (!canRecoverOrRetryDepthCapture(node)) return explanation;
     if (node.metadata?.taskStage === "已暂停，等待手动继续") {
         return { ...explanation, reason: "深度捕捉已暂停", action: "确认组件已安装后，点击重试继续", uncertain: false, retryable: true, blockAutomaticRetry: false, blockManualRetry: false };

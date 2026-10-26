@@ -21,7 +21,7 @@ import { modelCompatibilityError, modelGroupReferenceLimits, modelPromptLengthEr
 import type { Skill } from "@/services/api/skills";
 import { skillRuntime } from "@/services/skill-runtime";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
-import { findGenerationTaskByOperation, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
+import { findGenerationTaskByOperation, queryGenerationTask, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { assertUserScope, captureUserScope } from "@/lib/user-scope-guard";
 import { useConfigStore, useEffectiveConfig, resolveModelRequestConfig } from "@/stores/use-config-store";
 import { seedanceReferenceRatioWarning } from "@/lib/seedance-channel-warning";
@@ -153,7 +153,14 @@ export function useCanvasGenerationExecutor({
                             const scope = captureUserScope();
                             startGenerationRequest(nodeId, nodeId, nodeId, controller);
                             for (const target of pendingSubmissions) {
-                                const task = await findGenerationTaskByOperation(target.metadata!.taskClientOperationId!, projectId, controller.signal);
+                                // 已经有任务号就直接查任务；只有提交标识时按它回读回执。
+                                // 两个身份都没有的节点查不到原任务，保持锁定比重复付费生成安全。
+                                const operationId = target.metadata?.taskClientOperationId;
+                                const task = target.metadata?.taskId
+                                    ? await queryGenerationTask(target.metadata.taskId, { signal: controller.signal, expectedScope: scope })
+                                    : operationId
+                                      ? await findGenerationTaskByOperation(operationId, projectId, controller.signal)
+                                      : undefined;
                                 controller.signal.throwIfAborted();
                                 assertUserScope(scope);
                                 if (!task) { message.warning("尚未查到上次提交的任务，请稍后再查询，暂勿重新生成"); continue; }

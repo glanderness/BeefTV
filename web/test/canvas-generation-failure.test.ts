@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { buildNodeGenerationContext } from "../src/components/canvas/canvas-node-generation";
-import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasTaskFailureMetadata, canvasGenerationTaskNodes, canvasImageGenerationHasPendingResult } from "../src/pages/canvas/canvas-generation-failure";
+import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasTaskFailureMetadata, canvasGenerationTaskNodes, canvasImageGenerationHasPendingResult, imageSubmissionUnknown } from "../src/pages/canvas/canvas-generation-failure";
+import { canvasNodeFailureExplanation } from "../src/lib/canvas/canvas-depth-capture";
+import { generationTaskVerdictSettled } from "../src/lib/generation-task-display";
 import { taskAttentionReason, taskRetryBlocked } from "../src/pages/tasks/task-shared";
 import { resolveMetadataReferences, generationTaskMetadata, resetGenerationTaskMetadata } from "../src/lib/canvas/canvas-project-generation";
 import { ApiError } from "../src/services/api/request";
@@ -43,7 +45,7 @@ test("backend canvas revision 409 offers reload without treating it as a model f
 const task: GenerationTask = { id: "task-failure", type: "canvas_image", status: "failed", prompt: "draw", attempts: 1, createdAt: "2026-09-26T00:00:00Z", updatedAt: "2026-09-26T00:00:00Z", errorCode: "content_policy_violation", error: "opaque" };
 const image = (id: string, storageKey: string): CanvasNodeData => ({ id, type: CanvasNodeType.Image, title: id, position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { content: `https://example.test/${id}.png`, storageKey } });
 
-test("complete image input rejection permits changed input while uncertain tasks stay locked", () => {
+test("complete image input rejection permits changed input while unresolved uncertain tasks stay locked", () => {
     const corrected: GenerationTask = { ...task, stage: "任务失败", errorCode: "moderation_input", error: "输入文本未通过内容安全审核。请调整提示词后重新生成。" };
     const stale = image("rejected-node", "");
     stale.metadata = { taskId: task.id, status: "error", taskStage: "submission_unknown", generationSubmissionState: "unknown", generationErrorCode: "submission_uncertain" };
@@ -57,7 +59,31 @@ test("complete image input rejection permits changed input while uncertain tasks
     const uncertain: GenerationTask = { ...task, stage: "submission_unknown", errorCode: "submission_uncertain", error: "图片结果尚未确认" };
     const pending = canvasGenerationTaskNodes([stale], stale.id, uncertain)[0];
     expect(canvasImageGenerationHasPendingResult(pending, [pending])).toBe(true);
-    expect(canvasGenerationRetryBlocked(pending.metadata, { mode: "image", prompt: "a different drawing" })).toBe(true);
+    // 原任务还在跑：提交结论未知，保持锁定，不能重复提交。
+    expect(canvasGenerationRetryBlocked({ ...pending.metadata, taskStatus: "running" }, { mode: "image", prompt: "a different drawing" })).toBe(true);
+    expect(imageSubmissionUnknown({ ...pending.metadata, taskStatus: "running" })).toBe(true);
+    // 原任务已终态：提交是否成立已有结论，锁定解除；重新生成会先尝试取回原结果。
+    expect(canvasGenerationRetryBlocked(pending.metadata, { mode: "image", prompt: "a different drawing" })).toBe(false);
+    expect(canvasImageGenerationHasPendingResult(pending, [pending])).toBe(true);
+    expect(generationTaskVerdictSettled(pending.metadata)).toBe(true);
+    expect(canvasNodeFailureExplanation(pending).retryable).toBe(true);
+});
+
+test("a settled submission-uncertain node keeps an exit instead of staying locked forever", () => {
+    const settled = { taskId: task.id, taskStatus: "failed", taskStage: "submission_unknown", generationErrorCode: "submission_uncertain", errorDetails: "上一次提交结果不明确，为避免重复创建上游任务已停止自动重发", status: "error" as const };
+    const node = (metadata: typeof settled) => ({ ...image("uncertain-node", ""), metadata }) as CanvasNodeData;
+    const explanation = canvasNodeFailureExplanation(node(settled));
+    expect(explanation.category).toBe("submission_uncertain");
+    expect(explanation.uncertain).toBe(false);
+    expect(explanation.blockManualRetry).toBe(false);
+    // 自动重发仍然禁止：只有用户确认后才会新建任务。
+    expect(explanation.blockAutomaticRetry).toBe(true);
+    expect(explanation.reason).toContain("原任务已结束");
+    expect(explanation.action).toContain("可能再次消耗积分");
+    // 原任务还没结束时不改变原有提示。
+    const running = canvasNodeFailureExplanation(node({ ...settled, taskStatus: "running" }));
+    expect(running.uncertain).toBe(true);
+    expect(running.blockManualRetry).toBe(true);
 });
 
 describe("canvas generation failure consumers", () => {

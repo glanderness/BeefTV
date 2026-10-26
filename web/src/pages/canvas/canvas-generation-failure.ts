@@ -1,4 +1,5 @@
 import { explainGenerationError, generationFailureMetadata, generationPromptFingerprint, shouldBlockManualRetry, unchangedModeratedPrompt } from "@/lib/generation-error";
+import { generationTaskVerdictSettled } from "@/lib/generation-task-display";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 import type { GenerationTask } from "@/services/api/task-center";
 import { CanvasGenerationTargetSaveError } from "@/services/canvas-generation-errors";
@@ -72,7 +73,12 @@ export function canvasGenerationRetryBlocked(metadata: CanvasNodeMetadata | unde
     }
     if (input) {
         const category = explainGenerationError(error).category;
-        return metadata?.taskStage === "submission_unknown" || isKeptGenerationResultCode(category) || ["submission_uncertain", "timeout", "results_missing", "partial_success"].includes(category);
+        if (metadata?.taskStage === "submission_unknown" || category === "submission_uncertain") {
+            // 「提交结果未确认」的锁只在结论未知时成立。原任务已由任务中心确认终态还继续锁着，
+            // 节点就既不能重新生成、也没有可查询的原任务；重新生成会先尝试取回原结果。
+            return !generationTaskVerdictSettled(metadata);
+        }
+        return isKeptGenerationResultCode(category) || ["timeout", "results_missing", "partial_success"].includes(category);
     }
     return true;
 }
@@ -86,7 +92,9 @@ export function canvasImagePendingResultMessage(node: CanvasNodeData | undefined
     const related = [node, ...nodes.filter((item) => node?.metadata?.batchChildIds?.includes(item.id) || item.metadata?.generatedFromNodeId === node?.id)];
     const unavailable = related.find((item) => item?.metadata?.generationErrorCode === "result_target_unavailable");
     if (unavailable) return explainGenerationError({ code: "result_target_unavailable" }).message;
-    if (related.some((item) => imageSubmissionUnknown(item?.metadata))) return "提交结果尚未确认，请查询原任务";
+    if (related.some((item) => imageSubmissionUnknown(item?.metadata) && !generationTaskVerdictSettled(item?.metadata))) return "提交结果尚未确认，请查询原任务";
+    // 原任务已经终态、结果却没有写进画布：重新生成会先取回原结果，取不回再重新提交。
+    if (related.some((item) => imageSubmissionUnknown(item?.metadata))) return "原任务已结束但结果没有取回，请点击「重新生成」先取回原结果";
     const missing = related.find((item) => item?.metadata?.generationErrorCode === "results_missing");
     return missing?.metadata?.errorDetails || node?.metadata?.errorDetails || "生成结果已保留，请点击「继续取回」";
 }

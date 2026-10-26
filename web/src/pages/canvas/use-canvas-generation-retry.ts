@@ -27,6 +27,7 @@ import { isCanvasWorkflowProvider } from "@/lib/canvas/canvas-workflow";
 import { isDepthCaptureResultNode } from "@/lib/canvas/canvas-depth-capture";
 import { buildPortraitTexturePrompt } from "@/lib/canvas/canvas-portrait-texture";
 import { resolveCanvasStyleExecution } from "@/lib/canvas/canvas-style-execution";
+import { generationTaskVerdictSettled, isGenerationTaskSubmissionUncertain } from "@/lib/generation-task-display";
 import { generationFailureMetadata, shouldBlockManualRetry } from "@/lib/generation-error";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { navigateToSettings } from "@/lib/settings-navigation";
@@ -34,11 +35,13 @@ import type { Skill } from "@/services/api/skills";
 import { skillRuntime, type SkillRuntimeMetadata } from "@/services/skill-runtime";
 import type { GenerationTask } from "@/services/api/task-center";
 import { retryStoredCanvasVideo } from "@/services/canvas-video-retry";
+import { recoverCanvasTaskResult } from "@/services/canvas-task-result-recovery";
 import { resolveImageUrl } from "@/services/image-storage";
 import { resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import type { Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeTypeId } from "@/types/canvas";
 import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, type CanvasGenerationFailureInput } from "./canvas-generation-failure";
+import { confirmCanvasGeneration } from "./canvas-generation-preflight";
 
 type UseCanvasGenerationRetryOptions = {
     projectId: string;
@@ -75,7 +78,7 @@ export function useCanvasGenerationRetry({
     applyGenerationTaskResult,
     regenerateImageBatch,
 }: UseCanvasGenerationRetryOptions) {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const projectIdRef = useRef(projectId);
@@ -93,7 +96,67 @@ export function useCanvasGenerationRetry({
                 message.warning("当前节点不能使用通用生成重试");
                 return;
             }
-            if (retryMode === "video" && node.metadata?.taskId && node.metadata.status === "error") {
+            // 原任务已终态、失败原因就是「提交结果未确认」时，后端拒绝重试同一个任务
+            // （SubmissionUncertainRetryMessage）。这种情况直接走下面的通用生成路径，
+            // 按当前画布重新提交，不再发一次注定被拒的存储任务重试。
+            const submissionVerdictSettled = generationTaskVerdictSettled(node.metadata) && isGenerationTaskSubmissionUncertain({ status: (node.metadata?.taskStatus || "failed") as GenerationTask["status"], stage: node.metadata?.taskStage ?? "" });
+            // 解锁「提交结果未确认」的锁会新建任务并可能再次消耗积分，这一步必须先让用户确认。
+            const confirmSettledRegeneration = (signal: AbortSignal) => confirmCanvasGeneration((callbacks) => modal.confirm({
+                title: "重新生成？",
+                content: "原任务已经结束，但结果没有取回。重新生成会新建任务，并可能再次消耗积分。",
+                okText: "仍然生成",
+                cancelText: "取消",
+                centered: true,
+                ...callbacks,
+            }), signal);
+            // 结果可能已经生成、只是没写进画布（上游成功但取回失败，或提交结果未确认但任务已终态）：
+            // 先取回原结果，取不回再重新生成。已保存的结果不能被重新提交付费生成覆盖。
+            const originalResultMayExist = Boolean(
+                retryMode === "image"
+                && node.metadata?.taskId
+                && node.metadata.status === "error"
+                && (node.metadata.taskStatus === "succeeded" || submissionVerdictSettled),
+            );
+            if (originalResultMayExist) {
+                const taskId = node.metadata!.taskId!;
+                const requestProjectId = projectId;
+                const scope = captureUserScope();
+                const isCurrentRequest = () => projectIdRef.current === requestProjectId && userScopeMatches(scope);
+                const controller = startGenerationRequest(node.id, node.id);
+                setRunningNodeId(node.id);
+                let resultRecovered = false;
+                try {
+                    const task = await recoverCanvasTaskResult(taskId, controller.signal, (update) => {
+                        if (isCurrentRequest()) bindGenerationTask(node.id, update);
+                    });
+                    resultRecovered = Boolean(task);
+                    if (task && isCurrentRequest() && !controller.signal.aborted) await applyGenerationTaskResult(node.id, task);
+                } catch (error) {
+                    if (!isGenerationCanceled(error) && isCurrentRequest()) message.error(error instanceof Error ? error.message : "取回原结果失败，请稍后重试");
+                    return;
+                } finally {
+                    finishGenerationRequest(node.id, controller);
+                    if (isCurrentRequest()) setRunningNodeId(null);
+                }
+                if (resultRecovered) return;
+                // 取不回结果才解锁重新生成。
+                const confirmed = isCurrentRequest() && await confirmSettledRegeneration(controller.signal);
+                if (!confirmed) {
+                    if (isCurrentRequest()) message.info("已保留原任务记录，未重新生成");
+                    return;
+                }
+            }
+            if (retryMode === "video" && node.metadata?.taskId && node.metadata.status === "error" && submissionVerdictSettled) {
+                // 视频节点没有可查询的上游任务号时取不回原结果，只能重新生成；同样先确认。
+                const controller = startGenerationRequest(node.id, node.id);
+                const confirmed = await confirmSettledRegeneration(controller.signal);
+                finishGenerationRequest(node.id, controller);
+                if (!confirmed) {
+                    message.info("已保留原任务记录，未重新生成");
+                    return;
+                }
+            }
+            if (retryMode === "video" && node.metadata?.taskId && node.metadata.status === "error" && !submissionVerdictSettled) {
                 const taskId = node.metadata.taskId;
                 if (retryingVideos.current.has(taskId)) return;
                 retryingVideos.current.add(taskId);

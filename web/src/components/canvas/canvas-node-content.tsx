@@ -7,7 +7,7 @@ import { usesCanvasCustomNodeContent } from "@/lib/canvas/canvas-node-content-po
 import { GenerationFailureNotice } from "@/components/generation/generation-failure-notice";
 import { explainGenerationError } from "@/lib/generation-error";
 import { canvasNodeFailureExplanation, canRecoverOrRetryDepthCapture } from "@/lib/canvas/canvas-depth-capture";
-import { isGenerationTaskSubmissionUncertain } from "@/lib/generation-task-display";
+import { generationTaskVerdictSettled, isGenerationTaskSubmissionUncertain } from "@/lib/generation-task-display";
 import { canvasNodeOperation } from "@/lib/operation-progress";
 import { useOperationProgress } from "@/stores/use-operation-progress";
 import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
@@ -205,7 +205,7 @@ function ErrorContent({ node, theme, onRetry, onReloadResource, onOpenTaskDetail
         officialStatus: node.metadata?.taskOfficialStatus,
         errorCode: node.metadata?.taskErrorCode || node.metadata?.generationErrorCode,
     };
-    const submissionUncertain = isGenerationTaskSubmissionUncertain(errorDisplayTask) || explanation.uncertain;
+    const submissionUncertain = (isGenerationTaskSubmissionUncertain(errorDisplayTask) || explanation.uncertain) && !generationTaskVerdictSettled(node.metadata);
     return (
         <div
             data-canvas-no-zoom
