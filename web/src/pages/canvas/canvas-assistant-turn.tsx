@@ -5,7 +5,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { ASSISTANT_PROPOSAL_INVALIDATED_TEXT, ASSISTANT_PROPOSAL_UNDONE_TEXT, agentAssistantFailureText, type AgentToolCall, type AssistantGenerationProposal, type AssistantTurn } from "@/services/api/agent-assistant";
-import { ASSISTANT_UNDONE_INCOMPLETE_TEXT, assistantChangeSummary, assistantSkillLabel, assistantChangedNodeIds, assistantProposalText, assistantProposalProgress, assistantTurnCanContinue, assistantUnresolvedFailures, assistantUndoFailureText, assistantVisibleReply } from "./canvas-assistant-copy";
+import { ASSISTANT_UNDONE_INCOMPLETE_TEXT, assistantChangeSummary, assistantSkillLabel, assistantChangedNodeIds, assistantProductionProposalParts, assistantProposalText, assistantProposalProgress, assistantTurnCanContinue, assistantUnresolvedFailures, assistantUndoFailureText, assistantVisibleReply } from "./canvas-assistant-copy";
 import type { CanvasNodeData } from "@/types/canvas";
 import { dismissedProposalKey, type AssistantTurnStatus } from "./use-canvas-assistant";
 import { modelOptionName, resolveModelChannel, useEffectiveConfig } from "@/stores/use-config-store";
@@ -75,6 +75,10 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
     const canContinue = Boolean(turn.error && assistantTurnCanContinue(turn.errorReason));
     // 停下前已经改了画布：保留改动，可在输入框确认后接着做；不自动重发。
     const stoppedWithChanges = Boolean(turn.cancelled && !turn.error && summary && !undone);
+    const fallbackNote = !turn.reply?.trim()
+        ? (turn.proposals || []).map((item) => item.note?.trim() || "").find(Boolean) || ""
+        : "";
+    const visibleReply = turn.reply?.trim() || fallbackNote;
     const copyDiagnostics = async () => {
         try {
             const text = formatAssistantDiagnostics(turn, { canvasId, assistantSessionId: sessionId || undefined });
@@ -87,7 +91,7 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
             <CanvasAssistantUserMessage text={turn.userText} selectedCount={turn.selectedNodeIds?.length ?? 0} continuationId={turn.continuationId} />
             <CanvasAssistantAttachments attachments={turn.attachments || []} />
             {(turn.skills || []).map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>{assistantSkillLabel(skill)}</span>)}
-            {turn.reply ? <CanvasAssistantReply text={turn.reply} /> : null}
+            {visibleReply ? <CanvasAssistantReply text={visibleReply} /> : null}
             {turn.supplementInputs?.length ? turn.supplementInputs.map((input, index) => <div key={`supplement:${index}`} className="canvas-assistant-supplement">
                 <CanvasAssistantUserMessage text={input.message} selectedCount={0} /><CanvasAssistantAttachments attachments={input.attachments || []} />
                 {(input.skills || []).map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>{assistantSkillLabel(skill)}</span>)}
@@ -163,9 +167,36 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
                 const priceError = videoModels.filter((model) => seedancePortraitModel(model)).map((model) => portraitGenerationError(config, model)).find(Boolean) || "";
                 const running = Boolean(runningProposalIds?.has(proposal.proposalId));
                 const progress = started && nodes ? assistantProposalProgress(proposal, nodes) : null;
+                const awaitingConfirmation = !started && !skipped && !undone && !turn.proposalsInvalidated;
+                const productionParts = assistantProductionProposalParts(proposal, awaitingConfirmation, config);
+                const rawNote = proposal.note?.trim() || "";
+                const cardNote = rawNote && !visibleReply.includes(rawNote) ? rawNote : "";
                 return (
                     <div key={proposal.proposalId} className="canvas-assistant-card">
-                        <span style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{assistantProposalText(proposal, portraitPriceLines(profile?.videoPricing), !started && !skipped && !undone && !turn.proposalsInvalidated, config)}</span>
+                        {productionParts ? (
+                            <>
+                                <span style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{productionParts.header}</span>
+                                {cardNote ? <span className="canvas-assistant-meta" style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{cardNote}</span> : null}
+                                {productionParts.targetLines.length > 0 ? (
+                                    <details className="canvas-assistant-proposal-details">
+                                        <summary>查看 {productionParts.targetLines.length} 项镜头与提示词明细</summary>
+                                        <div className="canvas-assistant-proposal-targets">
+                                            {productionParts.targetLines.map((line, index) => (
+                                                <div key={`${proposal.proposalId}:target:${index}`} className="canvas-assistant-proposal-target">
+                                                    {line}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </details>
+                                ) : null}
+                                {productionParts.footer ? <span className="canvas-assistant-meta" style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{productionParts.footer}</span> : null}
+                            </>
+                        ) : (
+                            <>
+                                <span style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{assistantProposalText(proposal, portraitPriceLines(profile?.videoPricing), awaitingConfirmation, config)}</span>
+                                {cardNote ? <span className="canvas-assistant-meta" style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{cardNote}</span> : null}
+                            </>
+                        )}
                         {priceError && !started && !skipped && !undone && !turn.proposalsInvalidated ? <span className="canvas-assistant-meta" role="status">{priceError}</span> : null}
                         {!skipped && !running && ((!undone && !turn.proposalsInvalidated) || started) && proposalFeedback?.[proposal.proposalId] ? <span className="canvas-assistant-meta" role="status" style={{ overflowWrap: "anywhere" }}>{proposalFeedback[proposal.proposalId]}</span> : null}
                         {started ? (

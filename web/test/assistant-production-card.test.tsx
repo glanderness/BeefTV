@@ -113,3 +113,37 @@ test("started production does not ask the user to manually continue the next ste
     expect(html).not.toContain(">检查结果<");
     expect(html).toContain("0/2");
 });
+test("production proposal renders collapsible target details and surfaces proposal.note when turn.reply is empty",()=>{
+    const updatedProposal: AssistantGenerationProposal = {
+        ...proposal,
+        note: "已将首帧模型更换为支持 16:9 的 gpt-image-1.5，其余镜头保持不变。",
+    };
+    const turn: AssistantTurn = {
+        turnId: "turn-update-proposal",
+        userText: "把首帧换成支持16:9的模型",
+        selectedNodeIds: [],
+        reply: "",
+        toolCalls: [],
+        change: null,
+        error: null,
+        cancelled: false,
+        createdAt: "2026-10-26",
+        proposals: [updatedProposal],
+    };
+    const html = renderToStaticMarkup(
+        <CanvasAssistantTurnView
+            turn={turn}
+            handledProposals={new Set()}
+            nodes={[]}
+            onLocate={() => {}}
+            onUndo={() => {}}
+            onRunProposal={() => {}}
+            onDismissProposal={() => {}}
+        />,
+    );
+    expect(html).toContain("canvas-assistant-reply");
+    expect(html).toContain("已将首帧模型更换为支持 16:9 的 gpt-image-1.5，其余镜头保持不变。");
+    expect(html).toContain("canvas-assistant-proposal-details");
+    expect(html).toContain("查看 2 项镜头与提示词明细");
+    expect(html).toContain("确认并制作整片");
+});

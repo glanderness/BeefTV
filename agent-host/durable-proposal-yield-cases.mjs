@@ -110,6 +110,20 @@ test('writes and plan_update before proposing persist without a post-proposal mo
   assert.match(f.state.models[1].tools.find(tool => tool.function.name === 'canvas_generation_propose').function.description, /先完成本阶段的计划更新/);
 });
 
+test('assistant explanation emitted before a terminal tool-only proposal is preserved in record.reply', { timeout: 30000 }, async t => {
+  const plan = { goal: 'Update the shot aspect ratio', items: [{ id: 'shot', title: 'Confirm updated 9:16 shot', status: 'needs_user' }] };
+  const f = await fixture(t, { onRequest: async (_, count) => count === 1
+    ? { reply: '已按你的要求把首帧画幅调整为 9:16，并更新了制作方案。', toolCalls: [configure, { id: 'plan', name: 'plan_update', args: plan }] }
+    : count === 2 ? { toolCalls: [propose] } : { reply: 'Unexpected post-proposal summary.' } });
+  const { store } = f.current, entry = await store.createSession('canvas');
+  const record = await store.wait(entry, await store.submit(entry, input));
+  assert.equal(f.state.models.length, 2);
+  assert.equal(record.reply, '已按你的要求把首帧画幅调整为 9:16，并更新了制作方案。');
+  assert.equal(record.proposals.length, 1);
+  const history = await store.history('canvas', entry.sessionId);
+  assert.equal(history.turns[0].reply, '已按你的要求把首帧画幅调整为 9:16，并更新了制作方案。');
+});
+
 for (const failure of ['rejected', 'error-result']) {
   test(`a ${failure} proposal still returns to the model`, { timeout: 30000 }, async t => {
     const f = await fixture(t, { reject: failure === 'rejected', isError: failure === 'error-result' });

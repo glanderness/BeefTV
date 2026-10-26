@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/canvas/capability"
+	"infinite-canvas/backend/internal/providerpreset"
 )
 
 func registerCanvasNodeConfigureOps(r *Registry) {
@@ -75,6 +76,17 @@ func opCanvasNodeConfigure(ctx *Context, raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if _, hasModel := patch["model"]; !hasModel {
+		params := map[string]string{}
+		for k, v := range patch {
+			if s, ok := v.(string); ok {
+				params[k] = s
+			}
+		}
+		if err := validateModelGenerationParameters(args.Kind, nodeSelectedModel(node), params); err != nil {
+			return nil, err
+		}
+	}
 	if _, err := ctx.Domain.UpdateUserCanvasNodeFields(ctx.UserID, args.CanvasID, args.NodeID, patch, args.ExpectedRevision); err != nil {
 		return nil, mapDomainError(err)
 	}
@@ -121,8 +133,62 @@ func resolveGenerationDraft(ctx *Context, kind string, raw map[string]json.RawMe
 			return nil, PreconditionFailed("generation_model_unavailable", "所选模型当前不可用", nil)
 		}
 		patch["model"] = choice.ModelKey
+		params := map[string]string{}
+		for k, v := range patch {
+			if s, ok := v.(string); ok {
+				params[k] = s
+			}
+		}
+		if err := validateModelGenerationParameters(kind, choice.ModelKey, params); err != nil {
+			return nil, err
+		}
 	}
 	return patch, nil
+}
+
+func validateModelGenerationParameters(kind, modelKey string, params map[string]string) error {
+	if kind != "image" || strings.TrimSpace(modelKey) == "" {
+		return nil
+	}
+	modelName := strings.TrimSpace(modelKey)
+	if i := strings.LastIndex(modelName, "::"); i >= 0 {
+		modelName = strings.TrimSpace(modelName[i+2:])
+	}
+	size := strings.TrimSpace(params["size"])
+	if size == "" {
+		return nil
+	}
+	if family := providerpreset.SeedreamFamily(modelName); family != "" {
+		if !isValidSeedreamDraftSize(size) {
+			return InvalidArg("invalid_parameter", "Seedream 模型不支持 size="+size+"，可选值：1:1、16:9、9:16、4:3、3:4、3:2、2:3、21:9、1K、2K、3K、4K 或 1024x1024..4096x4096 像素尺寸")
+		}
+		return nil
+	}
+	if contract, ok := providerpreset.BeefAPIImageContract(modelName); ok {
+		if _, err := contract.PixelSize(size); err != nil {
+			return InvalidArg("invalid_parameter", err.Error())
+		}
+	}
+	return nil
+}
+
+func isValidSeedreamDraftSize(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	switch strings.ToUpper(trimmed) {
+	case "", "AUTO", "1K", "1.5K", "2K", "3K", "4K":
+		return true
+	}
+	switch trimmed {
+	case "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9":
+		return true
+	}
+	parts := strings.Split(strings.ToLower(strings.ReplaceAll(trimmed, "×", "x")), "x")
+	if len(parts) != 2 {
+		return false
+	}
+	w, errW := strconv.Atoi(strings.TrimSpace(parts[0]))
+	h, errH := strconv.Atoi(strings.TrimSpace(parts[1]))
+	return errW == nil && errH == nil && w >= 1024 && w <= 4096 && h >= 1024 && h <= 4096
 }
 
 func validateDraftValue(name, value string) error {

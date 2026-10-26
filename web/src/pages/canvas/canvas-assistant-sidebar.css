@@ -280,6 +280,40 @@
 .canvas-assistant-card strong {
     font-weight: 600;
 }
+.canvas-assistant-proposal-details {
+    display: block;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--muted);
+    padding: 8px 10px;
+    font-size: 12px;
+    line-height: 1.65;
+}
+.canvas-assistant-proposal-details > summary {
+    cursor: pointer;
+    font-weight: 500;
+    color: var(--foreground);
+    user-select: none;
+}
+.canvas-assistant-proposal-details > summary:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+}
+.canvas-assistant-proposal-targets {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    max-height: 260px;
+    overflow-y: auto;
+}
+.canvas-assistant-proposal-target {
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+    color: var(--muted-foreground);
+}
 .canvas-assistant-plan { display: block; overflow-wrap: anywhere; }
 .canvas-assistant-plan summary { cursor: pointer; font-weight: 500; }
 .canvas-assistant-plan p { margin: 8px 0; }

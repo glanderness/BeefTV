@@ -158,6 +158,45 @@ function formatProductionPriceSummary(
     return "预计费用：当前渠道未返回目录单价，按所选渠道实际标准计费";
 }
 
+export interface AssistantProductionProposalParts {
+    header: string;
+    targetLines: string[];
+    footer: string;
+}
+
+export function assistantProductionProposalParts(
+    proposal: AssistantGenerationProposal,
+    awaitingConfirmation = true,
+    config?: AiConfig,
+): AssistantProductionProposalParts | null {
+    if (!proposal.production) return null;
+    const targets = proposal.production.targets;
+    const images = targets.filter(t => t.kind === "image").length;
+    const videos = targets.filter(t => t.kind === "video");
+    const audio = targets.filter(t => t.kind === "audio");
+    const labels: Record<string,string> = {size:"画幅",quality:"质量",vquality:"分辨率",seconds:"时长（秒）",generateAudio:"生成声音",audioVoice:"音色",audioSpeed:"语速",audioFormat:"音频格式",audioInstructions:"朗读指令",transparentBackground:"透明背景",watermark:"水印",seedreamOutputFormat:"图片格式",seedreamOptimize:"提示词优化",seedreamWatermark:"图片水印"};
+    const videoEstimates = targets.map(t => t.kind === "video"
+        ? estimateVideoTargetPrice(resolveModelVideoPricing(config, t.modelKey), t.parameters, t.referenceNodeIds.length)
+        : null);
+    const priceSummary = formatProductionPriceSummary(images, videos.length, audio.length, videoEstimates);
+    const header = `整片制作方案：${images} 张图片、${videos.length} 段视频、${audio.length} 段配音${awaitingConfirmation ? `\n${priceSummary}` : ""}`;
+    const targetLines = targets.map((t, index) => {
+        const params = Object.entries(t.parameters).filter(([key]) => labels[key]).map(([key,value]) => {
+            const display = key === "seedreamOptimize" ? (value === "standard" ? "标准" : value === "fast" ? "快速" : value)
+                : key === "seedreamWatermark" ? (value === "true" ? "开启" : "关闭")
+                : key === "seedreamOutputFormat" ? value.toUpperCase() : value;
+            return `${labels[key]}：${display}`;
+        }).join(" · ");
+        const refs = t.referenceNodeIds.map(id => targets.find(item => item.nodeId === id)?.title || "已有参考素材");
+        const estimate = awaitingConfirmation ? videoEstimates[index] : null;
+        return `${t.title} · ${t.modelKey.split("::").pop()} · ${t.parameters.count || "1"} 个\n${params}${refs.length ? `\n参考：${refs.join("、")}` : ""}${estimate ? `\n${estimate.text}` : ""}\n${t.kind === "audio" ? "台词" : "提示词"}：${t.prompt}`;
+    });
+    const footer = awaitingConfirmation
+        ? "确认后按此方案生成素材，并自动完成声音、字幕和剪辑（可点击下方按钮或直接发送「确认」开始）。素材按所选渠道计费；失败后确认新方案重新生成也会重新计费，新增或修改生成内容时会重新确认。"
+        : "";
+    return { header, targetLines, footer };
+}
+
 /** 提议可能来自自建渠道，不能把所有费用都归到 BeefAPI。 */
 export function assistantProposalText(
     proposal: AssistantGenerationProposal,
@@ -166,29 +205,9 @@ export function assistantProposalText(
     config?: AiConfig,
 ): string {
     const count = proposal.nodeIds?.length ?? 0;
-    if (proposal.production) {
-        const targets = proposal.production.targets;
-        const images = targets.filter(t => t.kind === "image").length;
-        const videos = targets.filter(t => t.kind === "video");
-        const audio = targets.filter(t => t.kind === "audio");
-        const labels: Record<string,string> = {size:"画幅",quality:"质量",vquality:"分辨率",seconds:"时长（秒）",generateAudio:"生成声音",audioVoice:"音色",audioSpeed:"语速",audioFormat:"音频格式",audioInstructions:"朗读指令",transparentBackground:"透明背景",watermark:"水印",seedreamOutputFormat:"图片格式",seedreamOptimize:"提示词优化",seedreamWatermark:"图片水印"};
-        const videoEstimates = targets.map(t => t.kind === "video"
-            ? estimateVideoTargetPrice(resolveModelVideoPricing(config, t.modelKey), t.parameters, t.referenceNodeIds.length)
-            : null);
-        const priceSummary = formatProductionPriceSummary(images, videos.length, audio.length, videoEstimates);
-        const header = `整片制作方案：${images} 张图片、${videos.length} 段视频、${audio.length} 段配音${awaitingConfirmation ? `\n${priceSummary}` : ""}`;
-        const lines = [header, ...targets.map((t, index) => {
-            const params = Object.entries(t.parameters).filter(([key]) => labels[key]).map(([key,value]) => {
-                const display = key === "seedreamOptimize" ? (value === "standard" ? "标准" : value === "fast" ? "快速" : value)
-                    : key === "seedreamWatermark" ? (value === "true" ? "开启" : "关闭")
-                    : key === "seedreamOutputFormat" ? value.toUpperCase() : value;
-                return `${labels[key]}：${display}`;
-            }).join(" · ");
-            const refs = t.referenceNodeIds.map(id => targets.find(item => item.nodeId === id)?.title || "已有参考素材");
-            const estimate = awaitingConfirmation ? videoEstimates[index] : null;
-            return `${t.title} · ${t.modelKey.split("::").pop()} · ${t.parameters.count || "1"} 个\n${params}${refs.length ? `\n参考：${refs.join("、")}` : ""}${estimate ? `\n${estimate.text}` : ""}\n${t.kind === "audio" ? "台词" : "提示词"}：${t.prompt}`;
-        })];
-        return lines.join("\n\n") + (awaitingConfirmation ? "\n\n确认后按此方案生成素材，并自动完成声音、字幕和剪辑（可点击下方按钮或直接发送「确认」开始）。素材按所选渠道计费；失败后确认新方案重新生成也会重新计费，新增或修改生成内容时会重新确认。" : "");
+    const parts = assistantProductionProposalParts(proposal, awaitingConfirmation, config);
+    if (parts) {
+        return [parts.header, ...parts.targetLines].join("\n\n") + (parts.footer ? `\n\n${parts.footer}` : "");
     }
     const target = proposal.kind === "video" ? "视频" : proposal.kind === "audio" ? "音频" : "图片";
     const title = `为 ${count} 个节点生成${target} · ${seedancePortraitLabel(proposal.model) || proposal.model}`;

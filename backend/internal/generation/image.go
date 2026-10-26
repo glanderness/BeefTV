@@ -21,7 +21,7 @@ import (
 )
 
 func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, error) {
-	if seedreamFamily(input.Config.Model) != "" {
+	if seedreamFamily(input.Config.Model) != "" && !model.IsVolcengineArkImageProtocol(model.ChannelInterfaceType(input.Config.InterfaceType)) {
 		return runSeedreamImageTask(ctx, input)
 	}
 	outputCount := 1

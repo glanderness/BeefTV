@@ -1090,6 +1090,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
   async function completionRecord(entry, active, settled) {
     // The official settlement points at its exact answer entry. Never take the
     // last assistant in transcript: it may belong to a previous successful turn.
+    const textOf = (message) => message?.content?.filter((block) => block.type === 'text').map((block) => block.text).join('') || '';
     const answer = settled.answer ? await entry.harness.commit((tx) => tx.entry(settled.answer), CTX) : null;
     let assistant = answer?.model?.find((message) => message.role === 'assistant');
     if (active.stopped || settled.reason === 'aborted') {
@@ -1104,9 +1105,23 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
           .filter((message) => message.role === 'assistant' && message.stopReason === 'aborted').at(-1);
         if (partial) assistant = partial;
       }
+    } else if (settled.status === 'done' && assistant && !['error', 'aborted'].includes(assistant.stopReason) && !textOf(assistant).trim()) {
+      // Terminal tool calls (such as canvas.generation.propose) end the turn via
+      // control:{terminate:true} without a post-tool summary call. Preserve any
+      // assistant explanation emitted in earlier steps of this same submission.
+      const lowerBound = settled.entry;
+      if (lowerBound !== undefined) {
+        const view = await entry.root.context(CTX);
+        const texts = view.entries.filter((item) => item.id > lowerBound).flatMap((item) => item.model || [])
+          .filter((message) => message.role === 'assistant' && !['error', 'aborted'].includes(message.stopReason))
+          .map((message) => textOf(message).trim()).filter(Boolean);
+        if (texts.length) {
+          assistant = { ...assistant, content: [{ type: 'text', text: texts.join('\n\n') }] };
+        }
+      }
     }
     const preparationError = entry.generation.pendingInputError || entry.generation.skillContextFailure;
-    const completion = preparationError ? { reply: assistant?.content?.filter(block => block.type === 'text').map(block => block.text).join('') || '', cancelled: false, error: preparationError.message, errorReason: preparationError.reason } : durableCompletion(settled, assistant, entry.budget?.failure, active.stopped);
+    const completion = preparationError ? { reply: textOf(assistant), cancelled: false, error: preparationError.message, errorReason: preparationError.reason } : durableCompletion(settled, assistant, entry.budget?.failure, active.stopped);
     const planView = entry.turn.plan || active.plan || null;
     return { ...publicDurableTurn(active), ...completion,
       toolCalls: [...entry.log], change: turnChange(entry.turn), proposals: [...entry.turn.proposals],

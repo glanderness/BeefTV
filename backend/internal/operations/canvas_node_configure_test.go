@@ -90,3 +90,25 @@ func TestConfigureRejectsForeignKindUnknownFieldsAndMalformedValues(t *testing.T
 		}
 	}
 }
+
+func TestConfigureAndProposeValidateModelSpecificImageSizes(t *testing.T) {
+	p := configureFixture(t, "image")
+	p.resolve = func(_, selected string) (AssistantGenerationModel, error) {
+		return AssistantGenerationModel{Display: "doubao-seedream-5-0-260128", ModelKey: "beefapi::doubao-seedream-5-0-260128", Revision: 1}, nil
+	}
+	// Valid Seedream sizes (both standard aspect ratio 16:9 and 2K tier) should succeed.
+	for _, validSize := range []string{"16:9", "2K", "2560x1440"} {
+		raw, _ := json.Marshal(map[string]any{"canvasId": "c1", "nodeId": "n", "kind": "image", "expectedRevision": 4 + p.writes, "patch": map[string]any{"model": "doubao-seedream-5-0-260128", "size": validSize}})
+		if _, err := opCanvasNodeConfigure(&Context{UserID: "owner", Domain: p}, raw); err != nil {
+			t.Fatalf("expected valid Seedream size %q to succeed, got %v", validSize, err)
+		}
+	}
+	// Invalid Seedream size (e.g. "1080p" or "512x512") must be rejected at configure and propose time.
+	for _, invalidSize := range []string{"1080p", "512x512"} {
+		beforeWrites := p.writes
+		raw, _ := json.Marshal(map[string]any{"canvasId": "c1", "nodeId": "n", "kind": "image", "expectedRevision": 4 + p.writes, "patch": map[string]any{"model": "doubao-seedream-5-0-260128", "size": invalidSize}})
+		if _, err := opCanvasNodeConfigure(&Context{UserID: "owner", Domain: p}, raw); err == nil || AsError(err).Reason != "invalid_parameter" || p.writes != beforeWrites {
+			t.Fatalf("expected invalid Seedream size %q to be rejected at configure, got err=%v", invalidSize, err)
+		}
+	}
+}

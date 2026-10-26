@@ -399,11 +399,14 @@ func applyImageResponseFormatOption(request *protocol.GenerationRequest, input I
 // with no ratio table of its own (openai-images).
 func ProtocolImageAspectRatio(input Input) string {
 	raw := strings.TrimSpace(input.Config.Size)
-	key, value := ImageSizeParameter(input.ImageCapability, input.Config.Size)
-	if key != "size" || value == "" {
+	if strings.TrimSpace(input.Config.InterfaceType) != string(model.ChannelInterfaceOpenAIImage) {
 		return raw
 	}
-	if strings.TrimSpace(input.Config.InterfaceType) != string(model.ChannelInterfaceOpenAIImage) {
+	if seedreamFamily(input.Config.Model) != "" {
+		return normalizeSeedreamSize(raw, input.Config.SeedreamMode == "layers")
+	}
+	key, value := ImageSizeParameter(input.ImageCapability, input.Config.Size)
+	if key != "size" || value == "" {
 		return raw
 	}
 	return value
