@@ -16,7 +16,7 @@
 ./scripts/build-beeftv-release.sh
 ```
 
-macOS 构建必须包含原生 FFmpeg。默认复用已安装 BeefTV 包内的编码器；首次构建或修复缺失组件时，通过 `BEEFTV_FFMPEG_RUNTIME` 指定可执行二进制，`BEEFTV_FFMPEG_LICENSE` 指定对应许可文件（默认查找二进制同目录的 `ffmpeg.LICENSE`）。缺少任一项会在构建前失败，不再生成缺少本地工作流处理能力的应用。编码器须匹配目标架构且仅依赖系统动态库；公开分发仍需满足上方媒体组件交付要求。
+macOS 构建会从固定源码构建并校验原生媒体探测组件，不要求构建机预装 BeefTV。可用 `BEEFTV_FFMPEG_RUNTIME` 提供额外编码器，并用 `BEEFTV_FFMPEG_LICENSE` 指定许可文件（默认查找同目录 `ffmpeg.LICENSE`）；显式指定但缺失或不可执行时构建失败。打包时仍校验编码器目标架构和系统动态库依赖，公开分发须满足上方媒体组件交付要求。
 
 如果系统没有全局 Go，可通过 `BEEFTV_GO_DIR` 指定本地工具链目录：
 

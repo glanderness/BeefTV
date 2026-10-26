@@ -14,13 +14,12 @@ if [[ "$AGENT_TARGET" == linux/* && ( "$HOST_OS" != linux || "$AGENT_TARGET" != 
   echo "Linux releases require a native Linux x64 host" >&2
   exit 1
 fi
-if [[ "$AGENT_TARGET" == darwin/* ]]; then
-  # Finder does not inherit the shell PATH. A desktop release without its own
-  # encoder would disable local workflow operations even on a configured Mac.
-  ENCODER_SOURCE="${BEEFTV_FFMPEG_RUNTIME:-/Applications/BeefTV.app/Contents/Resources/agent-host/media-runtime/ffmpeg}"
-  ENCODER_LICENSE="${BEEFTV_FFMPEG_LICENSE:-$(dirname "$ENCODER_SOURCE")/ffmpeg.LICENSE}"
-  [[ -x "$ENCODER_SOURCE" ]] || { echo "Native encoder required: set BEEFTV_FFMPEG_RUNTIME to an executable FFmpeg binary" >&2; exit 1; }
-  [[ -f "$ENCODER_LICENSE" ]] || { echo "Encoder license missing: set BEEFTV_FFMPEG_LICENSE to its license file" >&2; exit 1; }
+# A clean build host has no installed BeefTV. Only an explicitly supplied
+# encoder is a required input; the native probe packet is built below.
+if [[ "$AGENT_TARGET" == darwin/* && -n "${BEEFTV_FFMPEG_RUNTIME:-}" ]]; then
+  [[ -x "$BEEFTV_FFMPEG_RUNTIME" ]] || { echo "Explicit encoder is not executable: $BEEFTV_FFMPEG_RUNTIME" >&2; exit 1; }
+  ENCODER_LICENSE="${BEEFTV_FFMPEG_LICENSE:-$(dirname "$BEEFTV_FFMPEG_RUNTIME")/ffmpeg.LICENSE}"
+  [[ -f "$ENCODER_LICENSE" ]] || { echo "Encoder license missing: $ENCODER_LICENSE" >&2; exit 1; }
 fi
 bun "$ROOT_DIR/scripts/package-agent-host.mjs" "$AGENT_TARGET" --verify-runtime
 
