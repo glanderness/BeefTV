@@ -26,7 +26,7 @@ function render(notice?: string) {
             generationActive={false}
             referenceReplacementBusy={false}
             attachments={[]}
-            maxReferences={videoProfile.references.maxImages}
+            referenceLimits={{ image: videoProfile.references.maxImages, video: videoProfile.references.maxVideos, audio: videoProfile.references.maxAudios }}
             references={[]}
             onRemoveAttachment={() => {}}
             onClearAttachments={() => {}}
