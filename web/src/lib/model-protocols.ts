@@ -146,15 +146,20 @@ export function selectableProtocol(item: ModelProtocolDefinition) {
     return item.enabled !== false && !item.retired;
 }
 
-export function defaultProtocolForCapability(capability: ProtocolCapability, availableProtocols: ModelProtocolDefinition[] = []): ModelProtocol {
+// Returns undefined when the catalog lists protocols for this capability but none
+// of them is selectable: a new model then stays unconfigured and the settings UI
+// asks the user to choose, instead of silently assigning a retired protocol.
+export function defaultProtocolForCapability(capability: ProtocolCapability, availableProtocols: ModelProtocolDefinition[] = []): ModelProtocol | undefined {
+    // No catalog at all means the host has nothing to say about retirement, so the
+    // standard order still applies; an unavailable catalog must not block setup.
+    if (!availableProtocols.length) return FALLBACK_PROTOCOLS[capability] || "chat-completion";
     for (const id of STANDARD_PROTOCOLS[capability] || []) {
-        if (!availableProtocols.length || availableProtocols.some((item) => item.value === id && selectableProtocol(item))) return id;
+        if (availableProtocols.some((item) => item.value === id && selectableProtocol(item))) return id;
     }
-    const matched = availableProtocols.find((item) => item.capability === capability && selectableProtocol(item));
-    return matched?.value || FALLBACK_PROTOCOLS[capability] || "chat-completion";
+    return availableProtocols.find((item) => item.capability === capability && selectableProtocol(item))?.value;
 }
 
-export function defaultProtocolForModel(model: string, availableProtocols: ModelProtocolDefinition[] = []): ModelProtocol {
+export function defaultProtocolForModel(model: string, availableProtocols: ModelProtocolDefinition[] = []): ModelProtocol | undefined {
     return defaultProtocolForCapability(inferProtocolCapabilityFromModel(model), availableProtocols);
 }
 

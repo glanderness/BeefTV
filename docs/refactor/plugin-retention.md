@@ -43,6 +43,8 @@
 实现：替换前比较已提交记录与新包，只有在**定义确实变化**且**仍有未取回结果的任务**引用该协议时，这一轮保留旧记录（清单、包哈希、启用状态都不动），新包下一次启动再采用。因此：
 
 - 已保存连接本身**不会**冻结升级——只有未完成任务才会，否则每个在用的插件都会永远停在旧版本；
+- **盘点失败也会推迟升级**：“盘点失败”和“没有接入盘点”是两回事。前者说明这台机器确实有待取回任务的可能，只是读不出来，因此保留已安装定义；后者（只用自己的 registry 的独立运行时）保持原行为。代价要写明：配置长期损坏时，同名插件会一直停在旧版本，直到盘点恢复正常——宁可晚升级，也不拿旧任务的取回方式去赌；
+- 是否“算一次升级”只比较清单（执行定义）。重新打包但定义没变时（例如只刷新了包路径/哈希）不算，避免把同版本的重新打包误报成推迟；
 - 推迟期间插件仍随包发行，所以照常可选，只是 `retention.reasons` 会说明“升级已推迟”；
 - 副作用要说清楚：一个长期挂着的失败任务（保留上游 ID、等人工取回）会持续推迟该插件的升级，直到用户重试或处理掉这个任务。这是按方案 7.3.3“没有版本关联就暂不升级”做的取舍，方向是宁可晚升级，也不让旧任务被新定义取回。
 
@@ -64,6 +66,7 @@
 - 协议目录接口 `ProviderCatalogItem` 增加 `retired` 与 `retiredReason`。
 - 前端 `plugin-catalog.ts` 把这些标记带进 `ModelProtocolDefinition`。撤下的协议仍留在协议列表里，所以老模型照常显示自己保存的协议名称和请求信息；`ModelProtocolBrowser` 只是把它的选项置为不可选中。
 - 光把选项禁用还不够：默认协议由 `defaultProtocolForCapability()` 决定，它原先只看 `enabled`。新增 `selectableProtocol()`（`enabled` 且未撤下）用于默认选择、协议分组和设置页的兜底选择，而按值查名称/请求信息的路径不变，所以旧配置保存的协议不会被改写。
+- **兜底也必须遵守撤下限制**：目录里有这个能力、但可选协议全是撤下的，函数返回 `undefined`，新模型保持“待配置”，由设置页让用户自己选；绝不退回内置协议表（`FALLBACK_PROTOCOLS`）。只有目录完全为空（宿主没有撤下信息）时才用内置表，避免目录不可用时把新建连接堵死。受此影响，`defaultProtocolForCapability`/`defaultProtocolForModel`/`beefApiVideoProtocol` 的返回类型都放宽为可空，调用方按“未配置”处理。
 
 插件中心里针对撤下插件的文案标签属于下一步（`P1-B 精简默认目录`），本步不加界面元素。
 
@@ -87,11 +90,14 @@
 | 升级改查询路径时有未取回任务 → 保留旧定义 | `TestDeferredUpgradeKeepsTheOldQueryDefinition` |
 | 任务结束后下一次启动采用新版本 | `TestUpgradeAdoptsNewDefinitionOnceWorkIsDone` |
 | 只有已保存连接时不冻结升级 | `TestSavedConnectionAloneNeverFreezesAnUpgrade` |
+| 盘点失败时升级同名包 → 保留已安装定义 | `TestFailedAuditDefersUpgradeOfShippedPlugin` |
+| 盘点失败但包没变 → 照常采用，不误报推迟 | `TestFailedAuditStillAdoptsAnUnchangedPackage` |
 | 安装 / 启停 / 卸载后撤下标记仍在 | `TestRetentionSurvivesUnrelatedPluginChanges` |
 | 仅剩备份时仍能盘点；两个文件都没有才是空 | `TestSavedProtocolReferencesReadsRecoverableBackup`、`TestSavedProtocolReferencesWithoutBothFilesIsEmpty` |
 | 任务协议取自 `config.interfaceType`（真实入参形状） | `TestTaskProviderReferencesResolvesTheDispatchedProtocol`、`TestTaskProtocolsReadsTheDispatchedProtocol`、`TestInputProtocolIgnoresCredentials` |
 | 前端：撤下协议可解析、不可新选 | `web/test/plugin-catalog-retired.test.tsx` |
 | 前端：新模型不会默认选中撤下协议 | 同上，`a retired protocol never becomes the default of a new model` |
+| 前端：没有可选协议时保持待配置，不退回内置表 | 同上，`with no selectable protocol a new model stays unconfigured` |
 
 ## 证据限度
 

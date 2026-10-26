@@ -126,9 +126,28 @@ func (c *Runtime) retentionDecisions(missing []RegistryRecord, snapshot referenc
 // package hash and the enabled state stay untouched for this startup, and the
 // shipped package is adopted on a later startup once the work is done. Only
 // unfinished work defers an upgrade — a saved connection alone must never freeze
-// a plugin at an old version.
+// a plugin at an old version. An unreadable inventory also defers, because
+// "cannot tell" must not be treated like "nothing pending".
 func deferralFor(stored, next RegistryRecord, snapshot referenceSnapshot) *RetentionView {
-	if !snapshot.present() || !registryRecordContentChanged(stored, next) {
+	// Only the manifest describes how a task is queried and parsed; blob
+	// bookkeeping (package path, hash) can change without changing execution.
+	// Comparing it keeps a re-packaged identical definition from being reported as
+	// a deferred upgrade.
+	if string(stored.Raw) == string(next.Raw) {
+		return nil
+	}
+	// A failed inventory is not the same as no inventory: the runtime does have an
+	// audit, it just could not read it, so we cannot rule out a task that still
+	// needs the installed definition. Keep it rather than let a new query path
+	// poll unfinished work.
+	if snapshot.unavailable {
+		return &RetentionView{
+			Reasons: []string{"插件引用盘点失败，无法确认是否仍有任务需要当前版本，升级已推迟"},
+		}
+	}
+	// No audit attached at all (a runtime that owns its registry outright) keeps
+	// the historical behavior of adopting the shipped package.
+	if !snapshot.present() {
 		return nil
 	}
 	_, pending := snapshot.total(stored)

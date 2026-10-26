@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { ModelProtocolBrowser } from "@/components/model-protocol-browser";
-import { defaultProtocolForCapability, ensureModelProfilesWithUiDefaults, modelProtocolLabel, selectableProtocol } from "@/lib/model-protocols";
+import { defaultProtocolForCapability, defaultProtocolForModel, ensureModelProfilesWithUiDefaults, modelProtocolLabel, selectableProtocol } from "@/lib/model-protocols";
 import { providerCatalogDefinition } from "@/services/api/plugin-catalog";
 
 const catalog = [
@@ -57,5 +57,23 @@ describe("retired protocol plugins", () => {
         // ... while a new model is assigned a selectable one.
         const fresh = ensureModelProfilesWithUiDefaults(["gpt-image-3"], undefined, [retiredImage, shippedImage]);
         expect(fresh[0]?.protocol).toBe("gemini-image");
+    });
+
+    test("with no selectable protocol a new model stays unconfigured", () => {
+        // The catalog lists the capability but every entry is retired. Falling back
+        // to the built-in standard protocol would silently assign a retired one.
+        const onlyRetiredImage = [{ value: "openai-image", label: "OpenAI Images", capability: "image" as const, create: "POST /v1/images/generations", contentType: "application/json", media: "内置协议", enabled: true, retired: true }];
+        expect(defaultProtocolForCapability("image", onlyRetiredImage)).toBeUndefined();
+        expect(defaultProtocolForModel("gpt-image-3", onlyRetiredImage)).toBeUndefined();
+        const profiles = ensureModelProfilesWithUiDefaults(["gpt-image-3"], undefined, onlyRetiredImage);
+        expect(profiles[0]?.protocol).toBeUndefined();
+        // "disabled" is not the same as "retired": an unavailable protocol was
+        // already excluded before this change and must behave the same way.
+        const onlyDisabledImage = [{ ...onlyRetiredImage[0], retired: false, enabled: false }];
+        expect(defaultProtocolForCapability("image", onlyDisabledImage)).toBeUndefined();
+
+        // With no catalog at all the host has nothing to say about retirement, so
+        // the built-in default still applies and setup is not blocked.
+        expect(defaultProtocolForCapability("image", [])).toBe("openai-image");
     });
 });

@@ -440,3 +440,58 @@ func TestRetentionSurvivesUnrelatedPluginChanges(t *testing.T) {
 func retentionManifestWithPoll(pluginID, providerID, version, pollPath string) []byte {
 	return []byte(fmt.Sprintf(`{"apiVersion":"beeftv.plugin/v1","id":%q,"version":%q,"name":%q,"author":"Test","documentation":"# %s","contributes":{"providers":[{"id":%q,"label":%q,"capabilities":["video"],"scopes":["canvas","user.custom-channel"],"create":{"method":"POST","path":"/tasks","fields":{"prompt":"request.prompt"}},"poll":{"method":"GET","path":%q},"response":{"statusPaths":["status"]}}]}}`, pluginID, version, pluginID, pluginID, providerID, providerID, pollPath))
 }
+
+// TestFailedAuditDefersUpgradeOfShippedPlugin covers "cannot tell" being treated
+// like "nothing pending": a broken configuration file makes the inventory
+// unreadable while tasks may still need the installed definition, so the shipped
+// package must not overwrite it.
+func TestFailedAuditDefersUpgradeOfShippedPlugin(t *testing.T) {
+	release := t.TempDir()
+	t.Setenv("CANVAS_OFFICIAL_PLUGIN_DIR", release)
+	oldManifest := retentionManifestWithPoll("audit-failed-upgrade", "audit-failed-upgrade", "1.0.0", "/v1/videos/{{taskId}}")
+	newManifest := retentionManifestWithPoll("audit-failed-upgrade", "audit-failed-upgrade", "2.0.0", "/v1/video/generations/{{taskId}}")
+	shipPackage(t, release, newManifest)
+	stored := storedOfficialRecord(t, oldManifest, true)
+	runtime, err := NewRuntimeWithReferences(t.TempDir(), retentionStore(stored), failingReferences{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, ok := ByID(runtime.List(), "audit-failed-upgrade")
+	if !ok {
+		t.Fatal("plugin disappeared while the inventory was unreadable")
+	}
+	if item.Manifest.Version != "1.0.0" {
+		t.Fatalf("overwrote the installed definition while the inventory was unreadable: version %q", item.Manifest.Version)
+	}
+	if adapter, resolvable := runtime.Registry().Resolve("audit-failed-upgrade"); !resolvable || !strings.Contains(adapter.Metadata().Poll, "/v1/videos/") {
+		t.Fatalf("execution definition changed under an unreadable inventory: %#v", adapter.Metadata().Poll)
+	}
+	if item.Retention == nil || item.Retention.Retired {
+		t.Fatalf("deferred upgrade must stay selectable: %#v", item.Retention)
+	}
+	if !strings.Contains(strings.Join(item.Retention.Reasons, ""), "盘点失败") {
+		t.Fatalf("retention reasons = %v", item.Retention.Reasons)
+	}
+}
+
+// TestFailedAuditStillAdoptsAnUnchangedPackage keeps the deferral about changes
+// only: with an unreadable inventory a package that did not change is not
+// "deferred", there is simply nothing to decide.
+func TestFailedAuditStillAdoptsAnUnchangedPackage(t *testing.T) {
+	release := t.TempDir()
+	t.Setenv("CANVAS_OFFICIAL_PLUGIN_DIR", release)
+	manifest := retentionManifestWithPoll("audit-failed-same", "audit-failed-same", "1.0.0", "/v1/videos/{{taskId}}")
+	shipPackage(t, release, manifest)
+	stored := storedOfficialRecord(t, manifest, true)
+	runtime, err := NewRuntimeWithReferences(t.TempDir(), retentionStore(stored), failingReferences{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, ok := ByID(runtime.List(), "audit-failed-same")
+	if !ok || item.Manifest.Version != "1.0.0" {
+		t.Fatalf("unchanged package was not adopted: %#v", item.Manifest.Version)
+	}
+	if item.Retention != nil {
+		t.Fatalf("unchanged package reported a deferral: %#v", item.Retention)
+	}
+}

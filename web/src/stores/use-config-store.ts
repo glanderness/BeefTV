@@ -812,7 +812,7 @@ export function normalizeConfigSnapshot(snapshot: ConfigStoreSnapshot | undefine
     };
 }
 
-function beefApiVideoProtocol(model: string, current?: ModelProtocol): ModelProtocol {
+function beefApiVideoProtocol(model: string, current?: ModelProtocol): ModelProtocol | undefined {
     const contract = beefAPIVideoContract(model)?.protocol as ModelProtocol | undefined;
     if (contract) return contract;
     // A video profile must not keep a protocol that runs a different
@@ -948,7 +948,9 @@ function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
             model,
             capability: "video",
             protocol,
-            capabilityConfig: beefApiVideoCapabilityConfig(model, protocol, current?.capabilityConfig, current?.videoCapabilitiesVersion !== undefined),
+            // No selectable protocol means the model stays unconfigured; keep its
+            // capability metadata instead of deriving it from a retired protocol.
+            capabilityConfig: protocol ? beefApiVideoCapabilityConfig(model, protocol, current?.capabilityConfig, current?.videoCapabilitiesVersion !== undefined) : current?.capabilityConfig,
         });
     }
     return { ...channel, models, modelProfiles: Array.from(existing.values()) };
