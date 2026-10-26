@@ -124,7 +124,7 @@ describe("Volcengine Ark full-modal references", () => {
     test("时长未知时在网络提交之前拒绝参考素材", async () => {
         let submitted = false;
         const deps = { transport: { post: async () => { submitted = true; return { id: "unexpected" }; } }, response: videoResponseTools } as unknown as VideoProviderDeps;
-        await expect(createSeedanceTask(deps, config as never, model, "保持主体一致", [{id:"image",name:"image",type:"image/png",dataUrl:"",url:"https://cdn.example.com/image.png",width:512,height:512}], [], [{ id: "audio", name: "audio.mp3", type: "audio/mpeg", url: "https://cdn.example.com/audio.mp3" }])).rejects.toThrow("第 1 段参考音频的时长无法读取");
+        await expect(createSeedanceTask(deps, config as never, model, "保持主体一致", [{id:"image",name:"image",type:"image/png",dataUrl:"",url:"https://cdn.example.com/image.png",width:512,height:512}], [], [{ id: "audio", name: "audio.mp3", type: "audio/mpeg", url: "https://cdn.example.com/audio.mp3" }])).rejects.toThrow("音频「audio.mp3」的时长无法读取，请重新导入素材后再提交");
         expect(submitted).toBe(false);
     });
 
