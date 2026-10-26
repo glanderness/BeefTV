@@ -103,3 +103,52 @@ func TestSavedProtocolReferencesFailsClosedOnCorruptConfig(t *testing.T) {
 		t.Fatal("corrupt configuration was reported as an empty reference set")
 	}
 }
+
+// TestSavedProtocolReferencesReadsRecoverableBackup covers the case where only the
+// backup survives: the normal read path recovers from it, so the audit must count
+// it too instead of reporting "no configuration" and letting the plugin go.
+func TestSavedProtocolReferencesReadsRecoverableBackup(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewProviderConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"placeholder-key","models":["m"],"modelProfiles":[{"model":"m","protocol":"agnes-video"}]}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	// A second save rotates the previous document into the backup; then the
+	// primary disappears, which is exactly the state loadDocument() recovers from.
+	if err := store.SaveLocalModelConfig([]byte(`{"channels":[{"id":"direct","apiKey":"placeholder-key","models":["m"],"modelProfiles":[{"model":"m","protocol":"agnes-video"}]}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, LocalProviderConfigFile)); err != nil {
+		t.Fatal(err)
+	}
+	counts, err := store.SavedProtocolReferences()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts["agnes-video"] != 1 {
+		t.Fatalf("backup references = %#v", counts)
+	}
+	// The audit stays read-only: it must not recreate or rewrite either file.
+	if _, err := os.Stat(filepath.Join(dir, LocalProviderConfigFile)); !os.IsNotExist(err) {
+		t.Fatal("audit recreated the primary configuration file")
+	}
+}
+
+// TestSavedProtocolReferencesWithoutBothFilesIsEmpty keeps a genuine first run
+// empty rather than conservative.
+func TestSavedProtocolReferencesWithoutBothFilesIsEmpty(t *testing.T) {
+	store, err := NewProviderConfig(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts, err := store.SavedProtocolReferences()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(counts) != 0 {
+		t.Fatalf("references = %#v", counts)
+	}
+}

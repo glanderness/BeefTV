@@ -54,17 +54,52 @@ func cloneRetention(note *RetentionView) *RetentionView {
 	return &RetentionView{Retired: note.Retired, Unknown: note.Unknown, Reasons: cloneStringSlice(note.Reasons)}
 }
 
+// referenceSnapshot is one startup inventory read, shared by every retention
+// decision so a single reconcile never audits the same state twice.
+type referenceSnapshot struct {
+	usage map[string]ReferenceUsage
+	// unavailable means the inventory could not be read at all. Every decision
+	// then falls back to keeping the installed definition.
+	unavailable bool
+}
+
+// snapshotReferences reads the inventory once. A nil source reports "no
+// inventory", which keeps the historical behavior of callers that own their
+// registry outright.
+func (c *Runtime) snapshotReferences() referenceSnapshot {
+	if c.references == nil {
+		return referenceSnapshot{}
+	}
+	usage, err := c.references.ReferencedProviders()
+	if err != nil {
+		return referenceSnapshot{unavailable: true}
+	}
+	return referenceSnapshot{usage: usage}
+}
+
+// present reports whether the inventory can answer questions at all.
+func (s referenceSnapshot) present() bool { return s.usage != nil }
+
+// total counts the saved state that still needs this record's protocol IDs.
+func (s referenceSnapshot) total(record RegistryRecord) (configured, pending int64) {
+	for _, id := range recordProviderIDs(record.Raw) {
+		usage := s.usage[id]
+		configured += usage.Configured
+		pending += usage.PendingTasks
+	}
+	return configured, pending
+}
+
 // retentionDecisions decides which built-in records survive this startup even
 // though the release no longer ships their package. A record absent from the
 // result is dropped, which keeps the historical cleanup for every plugin
 // nothing references any more.
-func (c *Runtime) retentionDecisions(missing []RegistryRecord) map[string]*RetentionView {
+func (c *Runtime) retentionDecisions(missing []RegistryRecord, snapshot referenceSnapshot) map[string]*RetentionView {
 	decisions := make(map[string]*RetentionView, len(missing))
 	if len(missing) == 0 || c.references == nil {
 		return decisions
 	}
-	references, err := c.references.ReferencedProviders()
-	if err != nil {
+	if snapshot.unavailable {
 		// An unreadable inventory must never delete an executable protocol.
 		for _, record := range missing {
 			decisions[record.ID] = &RetentionView{
@@ -76,20 +111,37 @@ func (c *Runtime) retentionDecisions(missing []RegistryRecord) map[string]*Reten
 		return decisions
 	}
 	for _, record := range missing {
-		if note := retentionFor(record, references); note != nil {
+		if note := retentionFor(record, snapshot); note != nil {
 			decisions[record.ID] = note
 		}
 	}
 	return decisions
 }
 
-func retentionFor(record RegistryRecord, references map[string]ReferenceUsage) *RetentionView {
-	var configured, pending int64
-	for _, id := range recordProviderIDs(record.Raw) {
-		usage := references[id]
-		configured += usage.Configured
-		pending += usage.PendingTasks
+// deferralFor reports that this release must not overwrite an installed
+// definition yet, because a task that has not retrieved its result would then
+// be polled with a new query path or result mapping.
+//
+// This is the release-side half of "protect old work": the stored manifest, its
+// package hash and the enabled state stay untouched for this startup, and the
+// shipped package is adopted on a later startup once the work is done. Only
+// unfinished work defers an upgrade — a saved connection alone must never freeze
+// a plugin at an old version.
+func deferralFor(stored, next RegistryRecord, snapshot referenceSnapshot) *RetentionView {
+	if !snapshot.present() || !registryRecordContentChanged(stored, next) {
+		return nil
 	}
+	_, pending := snapshot.total(stored)
+	if pending <= 0 {
+		return nil
+	}
+	return &RetentionView{
+		Reasons: []string{fmt.Sprintf("%d 个未完成或待取回结果的任务仍在使用该协议的当前版本，升级已推迟到这些任务结束", pending)},
+	}
+}
+
+func retentionFor(record RegistryRecord, snapshot referenceSnapshot) *RetentionView {
+	configured, pending := snapshot.total(record)
 	if configured <= 0 && pending <= 0 {
 		return nil
 	}

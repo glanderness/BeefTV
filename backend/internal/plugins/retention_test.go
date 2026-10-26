@@ -296,3 +296,147 @@ func TestRuntimeWithoutAuditStillDropsRemovedOfficialPlugin(t *testing.T) {
 		t.Fatal("runtime without a reference audit kept a removed official plugin")
 	}
 }
+
+// TestDeferredUpgradeKeepsTheOldQueryDefinition covers an upgrade that changes the
+// query path while a task has not retrieved its result yet. Tasks are not bound to
+// a plugin version, so adopting the new definition would change how that task is
+// polled; the installed definition must survive this startup.
+func TestDeferredUpgradeKeepsTheOldQueryDefinition(t *testing.T) {
+	release := t.TempDir()
+	t.Setenv("CANVAS_OFFICIAL_PLUGIN_DIR", release)
+	oldManifest := retentionManifestWithPoll("upgraded-query", "upgraded-query", "1.0.0", "/v1/videos/{{taskId}}")
+	newManifest := retentionManifestWithPoll("upgraded-query", "upgraded-query", "2.0.0", "/v1/video/generations/{{taskId}}")
+	shipPackage(t, release, newManifest)
+	stored := storedOfficialRecord(t, oldManifest, true)
+	store := retentionStore(stored)
+	runtime, err := NewRuntimeWithReferences(t.TempDir(), store, staticReferences{"upgraded-query": {PendingTasks: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, ok := ByID(runtime.List(), "upgraded-query")
+	if !ok {
+		t.Fatal("plugin disappeared during a deferred upgrade")
+	}
+	if item.Manifest.Version != "1.0.0" {
+		t.Fatalf("adopted the new definition while a task still needs the old one: version %q", item.Manifest.Version)
+	}
+	if item.Retention == nil || item.Retention.Retired {
+		t.Fatalf("deferred upgrade must stay selectable: %#v", item.Retention)
+	}
+	if !strings.Contains(strings.Join(item.Retention.Reasons, ""), "升级已推迟") {
+		t.Fatalf("retention reasons = %v", item.Retention.Reasons)
+	}
+	// The old poll path is still what the registry executes with.
+	if adapter, resolvable := runtime.Registry().Resolve("upgraded-query"); !resolvable || !strings.Contains(adapter.Metadata().Poll, "/v1/videos/") {
+		t.Fatalf("execution definition changed under an unfinished task: %#v", adapter.Metadata().Poll)
+	}
+	// A deferred plugin is still shipped, so it stays offered for new selections.
+	catalog := New(runtime, nil).ProviderCatalog("user.custom-channel", "video", false)
+	if len(catalog) != 1 || catalog[0].Retired {
+		t.Fatalf("deferred plugin was retired from the catalog: %#v", catalog)
+	}
+	// The stored registry keeps the old manifest, so the next startup re-decides.
+	persisted, _, err := store.LoadPluginRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, record := range persisted {
+		if record.ID == "upgraded-query" && !strings.Contains(string(record.Raw), `"1.0.0"`) {
+			t.Fatalf("deferred upgrade was persisted: %s", record.Raw)
+		}
+	}
+}
+
+// TestUpgradeAdoptsNewDefinitionOnceWorkIsDone proves the deferral is temporary:
+// the same stored record follows the shipped package on the next startup.
+func TestUpgradeAdoptsNewDefinitionOnceWorkIsDone(t *testing.T) {
+	release := t.TempDir()
+	t.Setenv("CANVAS_OFFICIAL_PLUGIN_DIR", release)
+	oldManifest := retentionManifestWithPoll("late-upgrade", "late-upgrade", "1.0.0", "/v1/videos/{{taskId}}")
+	newManifest := retentionManifestWithPoll("late-upgrade", "late-upgrade", "2.0.0", "/v1/video/generations/{{taskId}}")
+	shipPackage(t, release, newManifest)
+	stored := storedOfficialRecord(t, oldManifest, true)
+	store := retentionStore(stored)
+	pending := staticReferences{"late-upgrade": {PendingTasks: 1}}
+	if _, err := NewRuntimeWithReferences(t.TempDir(), store, pending); err != nil {
+		t.Fatal(err)
+	}
+	finished := staticReferences{"late-upgrade": {Configured: 1}}
+	second, err := NewRuntimeWithReferences(t.TempDir(), store, finished)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, ok := ByID(second.List(), "late-upgrade")
+	if !ok || item.Manifest.Version != "2.0.0" {
+		t.Fatalf("upgrade did not resume after the task finished: %#v", item.Manifest.Version)
+	}
+	if item.Retention != nil {
+		t.Fatalf("retention survived the completed upgrade: %#v", item.Retention)
+	}
+}
+
+// TestSavedConnectionAloneNeverFreezesAnUpgrade keeps the deferral narrow: a saved
+// connection without unfinished work must not pin a plugin to an old version.
+func TestSavedConnectionAloneNeverFreezesAnUpgrade(t *testing.T) {
+	release := t.TempDir()
+	t.Setenv("CANVAS_OFFICIAL_PLUGIN_DIR", release)
+	shipPackage(t, release, retentionManifest("config-only", "config-only", "2.0.0"))
+	stored := storedOfficialRecord(t, retentionManifest("config-only", "config-only", "1.0.0"), true)
+	runtime, err := NewRuntimeWithReferences(t.TempDir(), retentionStore(stored), staticReferences{"config-only": {Configured: 4}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, ok := ByID(runtime.List(), "config-only")
+	if !ok || item.Manifest.Version != "2.0.0" {
+		t.Fatalf("saved configuration blocked an upgrade: %#v", item.Manifest.Version)
+	}
+}
+
+// TestRetentionSurvivesUnrelatedPluginChanges covers every rebuild path: installing,
+// enabling or disabling another plugin must not turn a retired protocol back into a
+// selectable one.
+func TestRetentionSurvivesUnrelatedPluginChanges(t *testing.T) {
+	t.Setenv("CANVAS_OFFICIAL_PLUGIN_DIR", t.TempDir())
+	stored := storedOfficialRecord(t, retentionManifest("kept-official", "newapi", "1.0.0"), true)
+	runtime, err := NewRuntimeWithReferences(t.TempDir(), retentionStore(stored), staticReferences{"newapi": {PendingTasks: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(runtime, nil)
+	assertRetired := func(stage string) {
+		t.Helper()
+		item, ok := ByID(runtime.List(), "kept-official")
+		if !ok || item.Retention == nil || !item.Retention.Retired {
+			t.Fatalf("%s: retention lost: %#v", stage, item.Retention)
+		}
+		catalog := service.ProviderCatalog("user.custom-channel", "video", false)
+		for _, entry := range catalog {
+			if entry.ID == "newapi" && !entry.Retired {
+				t.Fatalf("%s: retired protocol offered again for a new selection", stage)
+			}
+		}
+	}
+	assertRetired("startup")
+	if _, err := runtime.Install(testPluginPackage(t, testManifest("unrelated-app", "1.0.0")), "unrelated-app.beeftv-plugin"); err != nil {
+		t.Fatal(err)
+	}
+	assertRetired("after install")
+	if _, err := runtime.SetEnabled("unrelated-app", false); err != nil {
+		t.Fatal(err)
+	}
+	assertRetired("after disable")
+	if _, err := runtime.SetEnabled("unrelated-app", true); err != nil {
+		t.Fatal(err)
+	}
+	assertRetired("after enable")
+	if err := runtime.Uninstall("unrelated-app"); err != nil {
+		t.Fatal(err)
+	}
+	assertRetired("after uninstall")
+}
+
+// retentionManifestWithPoll is retentionManifest with an explicit poll path, so a
+// test can make an upgrade change what the runtime queries.
+func retentionManifestWithPoll(pluginID, providerID, version, pollPath string) []byte {
+	return []byte(fmt.Sprintf(`{"apiVersion":"beeftv.plugin/v1","id":%q,"version":%q,"name":%q,"author":"Test","documentation":"# %s","contributes":{"providers":[{"id":%q,"label":%q,"capabilities":["video"],"scopes":["canvas","user.custom-channel"],"create":{"method":"POST","path":"/tasks","fields":{"prompt":"request.prompt"}},"poll":{"method":"GET","path":%q},"response":{"statusPaths":["status"]}}]}}`, pluginID, version, pluginID, pluginID, providerID, providerID, pollPath))
+}

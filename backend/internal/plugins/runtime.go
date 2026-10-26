@@ -104,11 +104,10 @@ func (c *Runtime) open() error {
 	if err != nil {
 		return err
 	}
-	plugins, registry, err := materializeRecords(next)
+	plugins, registry, err := c.build(next)
 	if err != nil {
 		return err
 	}
-	applyRetention(plugins, c.retained)
 	if !found || !registryContentEqual(stored, next) {
 		if err := c.persistRecords(next, persistExtras{}); err != nil {
 			return err

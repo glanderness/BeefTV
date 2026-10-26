@@ -1,6 +1,11 @@
 package repository
 
-import "infinite-canvas/backend/internal/model"
+import (
+	"encoding/json"
+	"strings"
+
+	"infinite-canvas/backend/internal/model"
+)
 
 // providerReferenceCount is one row of the plugin retention audit: how many
 // saved records still point at a protocol/provider ID.
@@ -26,31 +31,86 @@ func (r *Repository) ChannelModelProtocolReferences() (map[string]int64, error) 
 	return referenceCountMap(rows), nil
 }
 
-// TaskProviderReferences counts provider tasks whose result may still need the
-// original protocol:
-//   - queued or running tasks the worker keeps polling;
-//   - failed tasks that already hold an upstream task ID, because result
-//     recovery queries the same protocol instead of submitting again;
-//   - cancelled tasks whose upstream cancellation is still open.
+// TaskProviderReferences counts the protocols that tasks awaiting a result
+// still execute with.
 //
-// Finished tasks, tasks that failed before submission and text replay containers
-// are excluded: they never call a provider again.
+// The top-level tasks.provider column cannot answer this: ordinary BYOK tasks
+// leave it empty and route tasks set it to "managed", while the protocol that
+// is actually dispatched lives in the task input at config.interfaceType. A
+// query on provider alone therefore misses real in-flight work and would let a
+// release delete the plugin those tasks still need. Both sources are read and
+// de-duplicated per task.
+//
+// Only work that can still reach the provider is counted: queued or running
+// tasks the worker keeps polling, failed tasks that already hold an upstream
+// task ID (manual recovery queries the same protocol instead of submitting
+// again), and cancelled tasks whose upstream cancellation is still open.
+// Finished tasks, tasks that failed before submission and text replay
+// containers never call a provider again.
 func (r *Repository) TaskProviderReferences() (map[string]int64, error) {
 	active := []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}
-	var rows []providerReferenceCount
+	var rows []taskReferenceRow
 	err := r.db.Model(&model.Task{}).
-		Select("provider AS provider, COUNT(*) AS total").
-		Where("provider IS NOT NULL AND provider <> ''").
+		Select("provider", "input_json").
 		Where(
 			"status IN ? OR (status = ? AND provider_request_id <> '') OR (status = ? AND provider_request_id <> '' AND provider_cancel_status = ?)",
 			active, model.TaskStatusFailed, model.TaskStatusCancelled, model.ProviderCancelStatusRequested,
 		).
-		Group("provider").
 		Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
-	return referenceCountMap(rows), nil
+	counts := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		for _, protocol := range taskProtocols(row.Provider, row.InputJSON) {
+			counts[protocol]++
+		}
+	}
+	return counts, nil
+}
+
+type taskReferenceRow struct {
+	Provider  string
+	InputJSON string
+}
+
+// taskProtocols lists the protocol IDs one task can still dispatch with,
+// without duplicates. A legacy row may only carry the top-level provider; a
+// BYOK row carries the protocol in its input config.
+func taskProtocols(provider, inputJSON string) []string {
+	seen := make(map[string]struct{}, 2)
+	protocols := make([]string, 0, 2)
+	add := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		if _, exists := seen[id]; exists {
+			return
+		}
+		seen[id] = struct{}{}
+		protocols = append(protocols, id)
+	}
+	add(provider)
+	add(inputProtocol(inputJSON))
+	return protocols
+}
+
+// inputProtocol reads the dispatched protocol from the stored task input. It
+// decodes only this one field; credential values are never read or returned.
+func inputProtocol(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	var document struct {
+		Config struct {
+			InterfaceType string `json:"interfaceType"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal([]byte(raw), &document); err != nil {
+		return ""
+	}
+	return document.Config.InterfaceType
 }
 
 func referenceCountMap(rows []providerReferenceCount) map[string]int64 {

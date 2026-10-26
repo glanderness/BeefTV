@@ -289,14 +289,12 @@ func (s *ProviderConfig) LoadEffectiveModelConfig() (EffectiveModelConfig, Confi
 func (s *ProviderConfig) SavedProtocolReferences() (map[string]int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	body, err := os.ReadFile(s.path())
-	if errors.Is(err, os.ErrNotExist) {
-		// A first run has no saved connection; the backup alone is not a user
-		// selection the audit needs to protect.
-		return map[string]int64{}, nil
-	}
+	body, err := s.readAuditDocument()
 	if err != nil {
-		return nil, fmt.Errorf("读取本地模型配置失败: %w", err)
+		return nil, err
+	}
+	if body == nil {
+		return map[string]int64{}, nil
 	}
 	document, _, decodeErr := s.decodeStoredDocument(body)
 	if decodeErr != nil {
@@ -321,6 +319,32 @@ func (s *ProviderConfig) SavedProtocolReferences() (map[string]int64, error) {
 		}
 	}
 	return counts, nil
+}
+
+// readAuditDocument returns the configuration bytes the audit should count,
+// without repairing, migrating or rewriting anything.
+//
+// The normal read path recovers a lost primary file from its backup, so a
+// missing primary is not the same as "no configuration": silently reporting an
+// empty inventory there would delete the plugins the recovered connections
+// need. A first run (neither file) is genuinely empty; an unreadable pair is
+// reported as an error so bootstrap keeps everything.
+func (s *ProviderConfig) readAuditDocument() ([]byte, error) {
+	body, err := os.ReadFile(s.path())
+	if err == nil {
+		return body, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("读取本地模型配置失败: %w", err)
+	}
+	backup, backupErr := os.ReadFile(s.backupPath())
+	if errors.Is(backupErr, os.ErrNotExist) {
+		return nil, nil
+	}
+	if backupErr != nil {
+		return nil, fmt.Errorf("读取本地模型配置备份失败: %w", backupErr)
+	}
+	return backup, nil
 }
 
 func countProtocolReference(counts map[string]int64, value any) {

@@ -23,21 +23,34 @@ func newProviderReferenceRepo(t *testing.T) *Repository {
 	return New(db)
 }
 
-// TestTaskProviderReferencesKeepsOnlyRetrievableWork pins which tasks still need
-// the protocol they were submitted with. Anything else must not keep a retired
-// plugin alive.
-func TestTaskProviderReferencesKeepsOnlyRetrievableWork(t *testing.T) {
+// TestTaskProviderReferencesResolvesTheDispatchedProtocol pins which tasks still
+// need the protocol they would dispatch with. Ordinary BYOK tasks leave
+// tasks.provider empty and carry the protocol in input config.interfaceType, so a
+// provider-only query would miss them; route tasks set provider to "managed".
+func TestTaskProviderReferencesResolvesTheDispatchedProtocol(t *testing.T) {
 	repo := newProviderReferenceRepo(t)
 	now := time.Now().UTC()
+	byokInput := `{"mode":"video","config":{"interfaceType":"video-generations-json","baseUrl":"https://relay.example","apiKey":"__enc__","model":"seedance-2.5"}}`
 	tasks := []model.Task{
-		{ID: "queued", UserID: "u", Provider: "queued-protocol", Status: model.TaskStatusQueued, CreatedAt: now, UpdatedAt: now},
-		{ID: "running", UserID: "u", Provider: "queued-protocol", Status: model.TaskStatusRunning, CreatedAt: now, UpdatedAt: now},
-		{ID: "succeeded", UserID: "u", Provider: "finished-protocol", Status: model.TaskStatusSucceeded, ProviderRequestID: "up-1", CreatedAt: now, UpdatedAt: now},
-		{ID: "failed-unsent", UserID: "u", Provider: "unsent-protocol", Status: model.TaskStatusFailed, CreatedAt: now, UpdatedAt: now},
-		{ID: "failed-upstream", UserID: "u", Provider: "recoverable-protocol", Status: model.TaskStatusFailed, ProviderRequestID: "up-2", CreatedAt: now, UpdatedAt: now},
-		{ID: "cancelled-open", UserID: "u", Provider: "cancelling-protocol", Status: model.TaskStatusCancelled, ProviderRequestID: "up-3", ProviderCancelStatus: model.ProviderCancelStatusRequested, CreatedAt: now, UpdatedAt: now},
-		{ID: "cancelled-done", UserID: "u", Provider: "cancelled-protocol", Status: model.TaskStatusCancelled, ProviderRequestID: "up-4", ProviderCancelStatus: model.ProviderCancelStatusConfirmed, CreatedAt: now, UpdatedAt: now},
-		{ID: "text-replay", UserID: "u", Provider: "text-protocol", Status: model.TaskStatusTextReplay, CreatedAt: now, UpdatedAt: now},
+		// Real BYOK shape: no top-level provider, protocol in the input config.
+		{ID: "byok-queued", UserID: "u", Status: model.TaskStatusQueued, InputJSON: byokInput, CreatedAt: now, UpdatedAt: now},
+		{ID: "byok-running", UserID: "u", Status: model.TaskStatusRunning, InputJSON: byokInput, CreatedAt: now, UpdatedAt: now},
+		// Route task: provider is "managed", the protocol is still in the input.
+		{ID: "managed-running", UserID: "u", Provider: "managed", Status: model.TaskStatusRunning, InputJSON: `{"config":{"interfaceType":"xai-video"}}`, CreatedAt: now, UpdatedAt: now},
+		{ID: "succeeded", UserID: "u", Provider: "managed", Status: model.TaskStatusSucceeded, ProviderRequestID: "up-1", InputJSON: byokInput, CreatedAt: now, UpdatedAt: now},
+		// Failed before submission: nothing left to retrieve.
+		{ID: "failed-unsent", UserID: "u", Status: model.TaskStatusFailed, InputJSON: `{"config":{"interfaceType":"unsent-protocol"}}`, CreatedAt: now, UpdatedAt: now},
+		// Failed after submission: manual recovery queries the same protocol.
+		{ID: "failed-upstream", UserID: "u", Status: model.TaskStatusFailed, ProviderRequestID: "up-2", InputJSON: `{"config":{"interfaceType":"recoverable-protocol"}}`, CreatedAt: now, UpdatedAt: now},
+		{ID: "cancelled-open", UserID: "u", Status: model.TaskStatusCancelled, ProviderRequestID: "up-3", ProviderCancelStatus: model.ProviderCancelStatusRequested, InputJSON: `{"config":{"interfaceType":"cancelling-protocol"}}`, CreatedAt: now, UpdatedAt: now},
+		{ID: "cancelled-done", UserID: "u", Status: model.TaskStatusCancelled, ProviderRequestID: "up-4", ProviderCancelStatus: model.ProviderCancelStatusConfirmed, InputJSON: `{"config":{"interfaceType":"cancelled-protocol"}}`, CreatedAt: now, UpdatedAt: now},
+		{ID: "text-replay", UserID: "u", Status: model.TaskStatusTextReplay, Provider: "text-protocol", CreatedAt: now, UpdatedAt: now},
+		// Legacy row: protocol only in the top-level provider, no usable input.
+		{ID: "legacy", UserID: "u", Provider: "legacy-protocol", Status: model.TaskStatusQueued, InputJSON: "", CreatedAt: now, UpdatedAt: now},
+		// Same protocol in both places counts once.
+		{ID: "both", UserID: "u", Provider: "newapi", Status: model.TaskStatusQueued, InputJSON: `{"config":{"interfaceType":"newapi"}}`, CreatedAt: now, UpdatedAt: now},
+		// Corrupt input cannot be resolved; the task no longer executes.
+		{ID: "corrupt", UserID: "u", Status: model.TaskStatusQueued, InputJSON: `{"config":`, CreatedAt: now, UpdatedAt: now},
 	}
 	for index := range tasks {
 		if err := repo.Create(&tasks[index]); err != nil {
@@ -49,9 +62,17 @@ func TestTaskProviderReferencesKeepsOnlyRetrievableWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]int64{
-		"queued-protocol":      2,
-		"recoverable-protocol": 1,
-		"cancelling-protocol":  1,
+		// Three BYOK/route tasks share the JSON protocol; the succeeded task does
+		// not count even though it carries the same input.
+		"video-generations-json": 2,
+		"xai-video":              1,
+		"recoverable-protocol":   1,
+		"cancelling-protocol":    1,
+		"legacy-protocol":        1,
+		"newapi":                 1,
+		// The route marker is recorded, but no manifest provider is named this, so
+		// it can never retain a plugin by itself.
+		"managed": 3,
 	}
 	if len(counts) != len(want) {
 		t.Fatalf("task references = %#v want %#v", counts, want)
@@ -59,6 +80,11 @@ func TestTaskProviderReferencesKeepsOnlyRetrievableWork(t *testing.T) {
 	for id, total := range want {
 		if counts[id] != total {
 			t.Fatalf("task reference %q = %d want %d (all: %#v)", id, counts[id], total, counts)
+		}
+	}
+	for _, absent := range []string{"finished-protocol", "unsent-protocol", "cancelled-protocol", "text-protocol"} {
+		if counts[absent] != 0 {
+			t.Fatalf("task that can no longer reach a provider was counted: %q in %#v", absent, counts)
 		}
 	}
 }
@@ -86,5 +112,47 @@ func TestChannelModelProtocolReferencesIgnoresRemovedRows(t *testing.T) {
 	}
 	if counts[string(model.ChannelInterfaceNewAPIVideo)] != 2 || counts[string(model.ChannelInterfaceXAIVideo)] != 1 || len(counts) != 2 {
 		t.Fatalf("channel model references = %#v", counts)
+	}
+}
+
+// TestTaskProtocolsReadsTheDispatchedProtocol covers the resolution rules without
+// a database: BYOK rows carry the protocol only in the input config, route rows
+// add "managed" at the top level, and a legacy row may carry it in provider.
+func TestTaskProtocolsReadsTheDispatchedProtocol(t *testing.T) {
+	cases := []struct {
+		name     string
+		provider string
+		input    string
+		want     []string
+	}{
+		{"byok", "", `{"mode":"video","config":{"interfaceType":"video-generations-json"}}`, []string{"video-generations-json"}},
+		{"route", "managed", `{"config":{"interfaceType":"xai-video"}}`, []string{"managed", "xai-video"}},
+		{"legacy", "legacy-protocol", "", []string{"legacy-protocol"}},
+		{"deduplicated", "newapi", `{"config":{"interfaceType":"newapi"}}`, []string{"newapi"}},
+		{"corrupt input", "", `{"config":`, nil},
+		{"empty", "  ", "  ", nil},
+	}
+	for _, tc := range cases {
+		got := taskProtocols(tc.provider, tc.input)
+		if len(got) != len(tc.want) {
+			t.Fatalf("%s: protocols = %#v want %#v", tc.name, got, tc.want)
+		}
+		for index := range tc.want {
+			if got[index] != tc.want[index] {
+				t.Fatalf("%s: protocols = %#v want %#v", tc.name, got, tc.want)
+			}
+		}
+	}
+}
+
+// TestInputProtocolIgnoresCredentials makes sure the audit reads the protocol and
+// nothing else from a stored task input.
+func TestInputProtocolIgnoresCredentials(t *testing.T) {
+	raw := `{"config":{"interfaceType":"volcengine-jimeng-video","apiKey":"__enc__","secretKey":"__enc__","headers":[{"name":"X-Key","value":"__enc__"}]}}`
+	if got := inputProtocol(raw); got != "volcengine-jimeng-video" {
+		t.Fatalf("inputProtocol = %q", got)
+	}
+	if got := inputProtocol(`{"mode":"video"}`); got != "" {
+		t.Fatalf("missing interfaceType = %q", got)
 	}
 }

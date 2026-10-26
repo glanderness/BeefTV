@@ -57,6 +57,10 @@ func (c *Runtime) reconcileBuiltIns(stored []RegistryRecord) ([]RegistryRecord, 
 		return nil, fmt.Errorf("读取官方插件目录失败：%w", err)
 	}
 	builtInIDs := make(map[string]struct{}, len(entries)+2)
+	// One inventory read serves every decision below: which shipped plugin may
+	// not be overwritten yet, and which removed plugin must be kept.
+	snapshot := c.snapshotReferences()
+	retained := make(map[string]*RetentionView)
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), protocol.PluginPackageExtension) {
 			continue
@@ -94,9 +98,6 @@ func (c *Runtime) reconcileBuiltIns(stored []RegistryRecord) ([]RegistryRecord, 
 		}
 		hash := pluginHash(packageData)
 		packageName := hash + protocol.PluginPackageExtension
-		if _, err := ensurePluginBlob(filepath.Join(c.packageDir, packageName), packageData); err != nil {
-			return nil, fmt.Errorf("缓存官方插件 %q：%w", id, err)
-		}
 		now := time.Now().UTC()
 		next := RegistryRecord{
 			ID: id, Raw: manifestData, Source: OriginOfficial, FileName: entry.Name(),
@@ -107,6 +108,17 @@ func (c *Runtime) reconcileBuiltIns(stored []RegistryRecord) ([]RegistryRecord, 
 		}
 		if !registryRecordContentChanged(record, next) {
 			next.UpdatedAt = record.UpdatedAt
+		}
+		// An upgrade replaces the query path and result mapping too. Keep the
+		// installed definition while a task that has not retrieved its result
+		// would otherwise be polled with the new one; the package is adopted on a
+		// later startup once that work is done.
+		if note := deferralFor(record, next, snapshot); note != nil {
+			retained[id] = note
+			continue
+		}
+		if _, err := ensurePluginBlob(filepath.Join(c.packageDir, packageName), packageData); err != nil {
+			return nil, fmt.Errorf("缓存官方插件 %q：%w", id, err)
 		}
 		byID[id] = next
 	}
@@ -155,7 +167,9 @@ func (c *Runtime) reconcileBuiltIns(stored []RegistryRecord) ([]RegistryRecord, 
 	// configuration or an unfinished task still executes with. Retained records
 	// keep their committed manifest, package hash and enabled state; they are
 	// marked as retired so no new selection offers them.
-	retained := c.retentionDecisions(missing)
+	for id, note := range c.retentionDecisions(missing, snapshot) {
+		retained[id] = note
+	}
 	result := make([]RegistryRecord, 0, len(byID))
 	for _, record := range byID {
 		if IsBuiltInSource(record.Source) {

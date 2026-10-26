@@ -6,7 +6,7 @@ export type ModelProtocolWorkflow = { id: string; label: string; providerId: str
 export type ModelProtocolDefinition = { value: ModelProtocol; label: string; vendor?: string; capability: ProtocolCapability; create: string; contentType: string; poll?: string; media: string; enabled?: boolean; baseUrl?: string; authType?: string; workflows?: ModelProtocolWorkflow[]; retired?: boolean; retiredReason?: string };
 
 export function protocolGroups(protocols: ModelProtocolDefinition[]) {
-    return (["text", "image", "video", "audio"] as ProtocolCapability[]).map((capability) => ({ label: { text: "文本", image: "图片", video: "视频", audio: "音频" }[capability], options: protocols.filter((item) => item.capability === capability && item.enabled !== false).map((item) => ({ label: `${item.label} · ${item.create.replace(/^POST /, "")}`, value: item.value })) }));
+    return (["text", "image", "video", "audio"] as ProtocolCapability[]).map((capability) => ({ label: { text: "文本", image: "图片", video: "视频", audio: "音频" }[capability], options: protocols.filter((item) => item.capability === capability && selectableProtocol(item)).map((item) => ({ label: `${item.label} · ${item.create.replace(/^POST /, "")}`, value: item.value })) }));
 }
 export function modelProtocolDefinition(value: string | undefined, definitions: ModelProtocolDefinition[] = []) { return definitions.find((item) => item.value === value); }
 export function modelProtocolLabel(value: string | undefined, definitions: ModelProtocolDefinition[] = []) { return modelProtocolDefinition(value, definitions)?.label || (value ? value : "未安装协议"); }
@@ -139,11 +139,18 @@ export function inferProtocolCapabilityFromModel(model: string): ProtocolCapabil
     return "text";
 }
 
+// A retired protocol stays resolvable so saved configuration keeps showing the
+// protocol it runs with, but it must never become the default for a new model.
+// Defaults therefore use this predicate while lookups by value do not.
+export function selectableProtocol(item: ModelProtocolDefinition) {
+    return item.enabled !== false && !item.retired;
+}
+
 export function defaultProtocolForCapability(capability: ProtocolCapability, availableProtocols: ModelProtocolDefinition[] = []): ModelProtocol {
     for (const id of STANDARD_PROTOCOLS[capability] || []) {
-        if (!availableProtocols.length || availableProtocols.some((item) => item.value === id && item.enabled !== false)) return id;
+        if (!availableProtocols.length || availableProtocols.some((item) => item.value === id && selectableProtocol(item))) return id;
     }
-    const matched = availableProtocols.find((item) => item.capability === capability && item.enabled !== false);
+    const matched = availableProtocols.find((item) => item.capability === capability && selectableProtocol(item));
     return matched?.value || FALLBACK_PROTOCOLS[capability] || "chat-completion";
 }
 

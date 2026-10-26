@@ -10,7 +10,7 @@ import { seedancePortraitLabel } from "@/lib/seedance-portrait";
 import { ModelCapabilityEditor } from "@/components/model-capability-editor";
 import { type ModelCapabilityChoice } from "@/components/model-protocol-picker";
 import { defaultModelCapabilityConfig } from "@/lib/model-capabilities";
-import { defaultProtocolForCapability, defaultProtocolForModel, inferProtocolCapabilityFromModel, modelProtocolCapability, modelProtocolDefinition, type ModelProtocol, type ModelProtocolDefinition } from "@/lib/model-protocols";
+import { defaultProtocolForCapability, defaultProtocolForModel, inferProtocolCapabilityFromModel, modelProtocolCapability, modelProtocolDefinition, selectableProtocol, type ModelProtocol, type ModelProtocolDefinition } from "@/lib/model-protocols";
 import { fetchPluginProviderCatalog } from "@/services/api/plugin-catalog";
 import { modelOptionName, type ModelChannel } from "@/stores/use-config-store";
 import { currentModelConnectionReceipt, useModelConnectionTests } from "@/stores/use-model-connection-tests";
@@ -158,7 +158,7 @@ export function ChannelModelSettings({ channel, onChange, draft = false }: { cha
                                     options={[{ label: "文本", value: "text" }, { label: "图片", value: "image" }, { label: "视频", value: "video" }, { label: "音频", value: "audio" }]}
                                     value={activeCapability}
                                     onChange={(nextCapability) => {
-                                        const nextProtocol = availableProtocols.find((item) => item.value === activeProtocol && item.capability === nextCapability && item.enabled !== false)?.value || (nextCapability === "video" ? undefined : defaultProtocolForCapability(nextCapability, availableProtocols));
+                                        const nextProtocol = availableProtocols.find((item) => item.value === activeProtocol && item.capability === nextCapability && selectableProtocol(item))?.value || (nextCapability === "video" ? undefined : defaultProtocolForCapability(nextCapability, availableProtocols));
                                         updateProfile(activeModel, {
                                             protocol: nextProtocol,
                                             capability: nextCapability,
