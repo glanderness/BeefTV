@@ -14,8 +14,10 @@ import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { canvasNodeNeedsGenerationRecovery, consumeGenerationRecoveryRestore, isGenerationRecoveryRestored } from "@/lib/canvas/canvas-project-generation";
+import { canvasNodeNeedsGenerationRecoveryRetry, canvasNodeNeedsOriginalResultRecovery } from "@/lib/canvas/canvas-node-task-state";
+import { recoverCanvasTaskResult, waitForRecoveryRetry } from "@/services/canvas-task-result-recovery";
 import { generationFailureMetadata } from "@/lib/generation-error";
-import { canvasGenerationTaskNodes, canvasTaskFailureMetadata } from "./canvas-generation-failure";
+import { canvasGenerationResultUnavailableMetadata, canvasGenerationTaskNodes, canvasTaskFailureMetadata } from "./canvas-generation-failure";
 import { runGenerationConsumer } from "@/services/generation-consumer-lifecycle";
 import { consumeCanvasGenerationContinuation } from "./use-canvas-operation-history";
 
@@ -39,6 +41,9 @@ const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
 const INTERRUPTED_GENERATION_DETAILS = "页面刷新后本地生成已中断，请重新生成。";
+// 节点停在「提交结论未确认」时的自动复查节奏：只读任务、不新建任务，最多 6 次（约 1 分钟）。
+const RECOVERY_RESCAN_LIMIT = 6;
+const RECOVERY_RESCAN_DELAY_MS = 10_000;
 
 function recoveryTaskIdentity(node: CanvasNodeData) {
     return node.metadata?.taskId || node.metadata?.agentGenerationContinuation?.taskId || "";
@@ -185,6 +190,8 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
     const recoveringTaskIdsRef = useRef(new Set<string>());
     // 正在恢复的节点及其认领：同一节点同一任务同时只交给恢复器一次；新认领或新请求会顶掉旧认领。
     const recoveringNodesRef = useRef(new Map<string, GenerationRecoveryClaim>());
+    // 已经自动取回过的「提交结论未确认 + 原任务已终态」节点（按节点与任务身份），避免重复打后端。
+    const autoRecoveredRef = useRef(new Set<string>());
     const lateRecoveryRef = useRef<(() => void) | null>(null);
     const autoSavedTaskIdsRef = useRef(new Set<string>());
     const consumerControllerRef = useRef(new AbortController());
@@ -464,10 +471,35 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                         recoveringTaskIdsRef.current.add(taskId);
                         const continuationOnly = !node.metadata?.taskId && node.metadata?.agentGenerationContinuation?.taskId === taskId && !discoveredTask;
                         try {
-                            const completed = await observeSubscribedGenerationTask(taskId, signal, (task) => {
-                                if (owns() && !continuationOnly) bindGenerationTask(node.id, task);
-                            });
+                            // 提交结论未确认、原任务却已终态：先按后端已保存的上游回执把结果取回来写进节点。
+                            // 这一步不重新提交上游、不产生费用，所以不需要用户点。
+                            const originalResultRecovery = !continuationOnly && canvasNodeNeedsOriginalResultRecovery(node);
+                            const completed = originalResultRecovery
+                                ? await recoverCanvasTaskResult(taskId, signal, (task) => {
+                                      if (owns()) bindGenerationTask(node.id, task);
+                                  })
+                                : await observeSubscribedGenerationTask(taskId, signal, (task) => {
+                                      if (owns() && !continuationOnly) bindGenerationTask(node.id, task);
+                                  });
                             if (!owns()) return;
+                            if (!completed) {
+                                // 后端确认这次结果取不回：不自动新建任务，把「重新生成」交回用户决定。
+                                setNodes((current) =>
+                                    current.map((item) =>
+                                        item.id === node.id && ownsNode(item)
+                                            ? {
+                                                  ...item,
+                                                  metadata: {
+                                                      ...item.metadata,
+                                                      status: NODE_STATUS_ERROR,
+                                                      ...canvasGenerationResultUnavailableMetadata(taskId),
+                                                  },
+                                              }
+                                            : item,
+                                    ),
+                                );
+                                return;
+                            }
                             await recoverCanvasGenerationTaskNode({
                                 projectId: startedProjectId,
                                 node,
@@ -575,6 +607,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
             .switchProject(projectId, async (context) => {
                 recoveringTaskIdsRef.current.clear();
                 recoveringNodesRef.current.clear();
+                autoRecoveredRef.current.clear();
                 consumerControllerRef.current = context.controller;
                 const scans = new Set<Promise<void>>();
                 const scan = (lateClaims?: GenerationRecoveryClaim[]) => {
@@ -592,18 +625,36 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                 const recoverLateNodes = () => {
                     if (!context.isCurrentProject()) return;
                     const restored = nodesRef.current.filter(isGenerationRecoveryRestored);
-                    if (!restored.length) return;
-                    const claims = claimRecoveryNodes(selectRecoveryNodes(restored));
-                    // 只交出一次；跳过的节点（本次会话的请求、已在恢复的同一任务）也一并清掉。
-                    consumeGenerationRecoveryRestore(restored);
+                    // 恢复标记只交出一次；跳过的节点（本次会话的请求、已在恢复的同一任务）也一并清掉。
+                    if (restored.length) consumeGenerationRecoveryRestore(restored);
+                    // 会话中途才变成「提交结论未确认 + 原任务已终态」的节点同样自动取回；
+                    // 每个任务只自动试一次，失败或取不回都交给用户，避免反复打后端。
+                    const settled = nodesRef.current.filter((node) => canvasNodeNeedsOriginalResultRecovery(node) && !autoRecoveredRef.current.has(`${node.id}:${node.metadata?.taskId}`));
+                    settled.forEach((node) => autoRecoveredRef.current.add(`${node.id}:${node.metadata?.taskId}`));
+                    // 同一节点可能同时来自「后到快照」和「中途变成终态」两条路：先去重再认领。
+                    // 否则它会被认领两次，第二次覆盖第一次的认领后因任务已在恢复而退出，
+                    // 第一次取回成功的结果就写不回画布。
+                    const candidates = Array.from(new Map([...restored, ...settled].map((node) => [node.id, node])).values());
+                    if (!candidates.length) return;
+                    const claims = claimRecoveryNodes(selectRecoveryNodes(candidates));
                     if (!claims.length) return;
                     scan(claims).catch((error) => {
                         if (!(error instanceof Error && error.name === "AbortError")) throw error;
                     });
                 };
                 lateRecoveryRef.current = recoverLateNodes;
+                const needsRecoveryRescan = () => nodesRef.current.some((node) => canvasNodeNeedsGenerationRecoveryRetry(node) && !isLiveRequestNode(node.id));
                 try {
                     await scan();
+                    // 节点停在「提交结论未确认」期间，原任务可能刚到服务端、结果也可能刚可取回：
+                    // 按固定节奏自动复查，不新建任务也不付费；取不回或次数用完后交给用户决定。
+                    for (let attempt = 0; attempt < RECOVERY_RESCAN_LIMIT && !context.signal.aborted && needsRecoveryRescan(); attempt += 1) {
+                        await waitForRecoveryRetry(RECOVERY_RESCAN_DELAY_MS, context.signal).catch(() => undefined);
+                        if (context.signal.aborted || !needsRecoveryRescan()) break;
+                        await scan().catch((error) => {
+                            if (!(error instanceof Error && error.name === "AbortError")) throw error;
+                        });
+                    }
                     await new Promise<void>((resolve) => {
                         if (context.signal.aborted) resolve();
                         else context.signal.addEventListener("abort", () => resolve(), { once: true });
@@ -619,7 +670,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
         return () => {
             void coordinator.abortAndDrain();
         };
-    }, [claimRecoveryNodes, nodesRef, projectId, projectLoaded, recoverInterruptedGenerationTasks, selectRecoveryNodes]);
+    }, [claimRecoveryNodes, isLiveRequestNode, nodesRef, projectId, projectLoaded, recoverInterruptedGenerationTasks, selectRecoveryNodes]);
 
     useEffect(() => {
         if (projectLoaded) lateRecoveryRef.current?.();

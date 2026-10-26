@@ -21,7 +21,7 @@ import { modelCompatibilityError, modelGroupReferenceLimits, modelPromptLengthEr
 import type { Skill } from "@/services/api/skills";
 import { skillRuntime } from "@/services/skill-runtime";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
-import { findGenerationTaskByOperation, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
+import { findGenerationTaskByOperation, queryGenerationTask, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { assertUserScope, captureUserScope } from "@/lib/user-scope-guard";
 import { useConfigStore, useEffectiveConfig, resolveModelRequestConfig } from "@/stores/use-config-store";
 import { seedanceReferenceRatioWarning } from "@/lib/seedance-channel-warning";
@@ -31,7 +31,8 @@ import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/ty
 import { executeImageGeneration } from "./canvas-image-generation-executor";
 import { executeAudioGeneration, executeVideoGeneration } from "./canvas-media-generation-executors";
 import { executeTextGeneration } from "./canvas-text-generation-executor";
-import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasImageGenerationHasPendingResult, canvasImagePendingResultMessage } from "./canvas-generation-failure";
+import { canvasGenerationFailureMetadata, canvasGenerationResultUnavailableMetadata, canvasGenerationRetryBlocked, canvasImageGenerationHasPendingResult, canvasImagePendingResultMessage, canvasNodeNeedsOriginalResultRecovery } from "./canvas-generation-failure";
+import { recoverCanvasTaskResult } from "@/services/canvas-task-result-recovery";
 import { createReferenceLinkResolver } from "@/components/generation-reference-links";
 import { confirmCanvasGeneration, waitForCanvasPreparation } from "./canvas-generation-preflight";
 import { startOperation } from "@/stores/use-operation-progress";
@@ -153,11 +154,31 @@ export function useCanvasGenerationExecutor({
                             const scope = captureUserScope();
                             startGenerationRequest(nodeId, nodeId, nodeId, controller);
                             for (const target of pendingSubmissions) {
-                                const task = await findGenerationTaskByOperation(target.metadata!.taskClientOperationId!, projectId, controller.signal);
+                                // 已经有任务号就直接查任务；只有提交标识时按它回读回执。
+                                // 两个身份都没有的节点查不到原任务，保持锁定比重复付费生成安全。
+                                const operationId = target.metadata?.taskClientOperationId;
+                                const task = target.metadata?.taskId
+                                    ? await queryGenerationTask(target.metadata.taskId, { signal: controller.signal, expectedScope: scope })
+                                    : operationId
+                                      ? await findGenerationTaskByOperation(operationId, projectId, controller.signal)
+                                      : undefined;
                                 controller.signal.throwIfAborted();
                                 assertUserScope(scope);
                                 if (!task) { message.warning("尚未查到上次提交的任务，请稍后再查询，暂勿重新生成"); continue; }
                                 bindGenerationTask(target.id, task);
+                                // 提交结论未确认、原任务已终态：先按后端已保存的上游回执取回结果。
+                                // 这一步不新建任务；后端拒绝就把「重新生成」交回用户，这里不擅自重新提交。
+                                if (canvasNodeNeedsOriginalResultRecovery(target)) {
+                                    const recovered = await recoverCanvasTaskResult(task.id, controller.signal, (update) => bindGenerationTask(target.id, update));
+                                    controller.signal.throwIfAborted();
+                                    assertUserScope(scope);
+                                    if (!recovered) {
+                                        setNodes((current) => current.map((item) => (item.id === target.id ? { ...item, metadata: { ...item.metadata, status: "error", ...canvasGenerationResultUnavailableMetadata(task.id) } } : item)));
+                                        continue;
+                                    }
+                                    await applyGenerationTaskResult(target.id, recovered);
+                                    continue;
+                                }
                                 const completed = await waitForGenerationTask(task.id, { signal: controller.signal, expectedScope: scope, initialTask: task, onTaskUpdate: (update) => bindGenerationTask(target.id, update) });
                                 controller.signal.throwIfAborted();
                                 assertUserScope(scope);

@@ -14,6 +14,18 @@ export function isGenerationTaskSubmissionUncertain(task: GenerationTaskDisplayT
     return task.stage === "submission_unknown";
 }
 
+type SubmissionVerdictTarget = { taskId?: string; taskStatus?: string };
+
+/**
+ * 原任务已在任务中心落定终态（失败或取消）：这次提交到底有没有成立已经有了结论。
+ *
+ * 「提交结果未确认」的防重锁只能在结论未知时成立；任务已经终态还继续锁着，
+ * 节点就永远没有出路（既不能重新生成，也没有可查询的原任务）。
+ */
+export function generationTaskVerdictSettled(target: SubmissionVerdictTarget | undefined) {
+    return Boolean(target?.taskId && (target.taskStatus === "failed" || target.taskStatus === "cancelled"));
+}
+
 export function generationTaskStatusLabel(task: GenerationTaskDisplayTarget) {
     if (isGenerationTaskSubmissionUncertain(task)) return "提交结果待确认";
     if (task.stage === "delivery_paused" || task.stage === "delivery_timed_out") return "待取回结果";

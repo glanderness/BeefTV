@@ -31,7 +31,7 @@ mock.module("@/lib/canvas/canvas-project-generation", () => ({ isGenerationCance
 mock.module("@/lib/model-selection", () => ({ modelCompatibilityError: () => compatible ? "" : "参数不兼容", modelGroupReferenceLimits: () => undefined, modelPromptLengthError: () => "", modelRequestOptions: () => ({}) }));
 mock.module("@/services/skill-runtime", () => ({ skillRuntime: { prepare: async ({ prompt }: any) => ({ prompt, metadata: {} }) } }));
 mock.module("@/lib/canvas/canvas-style-execution", () => ({ resolveCanvasStyleExecution: () => undefined }));
-mock.module("@/pages/canvas/canvas-generation-failure", () => ({ canvasGenerationRetryBlocked: () => false, canvasImageGenerationHasPendingResult: () => false, canvasImagePendingResultMessage: () => "", canvasGenerationFailureMetadata: () => ({}) }));
+mock.module("@/pages/canvas/canvas-generation-failure", () => ({ canvasGenerationRetryBlocked: () => false, canvasImageGenerationHasPendingResult: () => false, canvasImagePendingResultMessage: () => "", canvasGenerationFailureMetadata: () => ({}), canvasNodeNeedsOriginalResultRecovery: () => false, canvasGenerationResultUnavailable: () => false, canvasGenerationResultUnavailableMetadata: () => ({}) }));
 mock.module("@/components/generation-reference-links", () => ({ createReferenceLinkResolver: () => undefined }));
 mock.module("@/pages/canvas/canvas-image-generation-executor", () => ({ executeImageGeneration: async () => {} }));
 mock.module("@/pages/canvas/canvas-media-generation-executors", () => ({ executeVideoGeneration: (input: any) => executeVideo(input), executeAudioGeneration: async () => {} }));

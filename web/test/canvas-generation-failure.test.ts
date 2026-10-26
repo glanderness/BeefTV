@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { buildNodeGenerationContext } from "../src/components/canvas/canvas-node-generation";
-import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasTaskFailureMetadata, canvasGenerationTaskNodes, canvasImageGenerationHasPendingResult } from "../src/pages/canvas/canvas-generation-failure";
+import { canvasGenerationFailureMetadata, canvasGenerationResultUnavailableMetadata, canvasGenerationRetryBlocked, canvasTaskFailureMetadata, canvasGenerationTaskNodes, canvasImageGenerationHasPendingResult, imageSubmissionUnknown } from "../src/pages/canvas/canvas-generation-failure";
+import { canvasNodeNeedsGenerationRecoveryRetry, canvasNodeNeedsOriginalResultRecovery } from "../src/lib/canvas/canvas-node-task-state";
+import { canvasNodeFailureExplanation } from "../src/lib/canvas/canvas-depth-capture";
+import { generationTaskVerdictSettled } from "../src/lib/generation-task-display";
 import { taskAttentionReason, taskRetryBlocked } from "../src/pages/tasks/task-shared";
 import { resolveMetadataReferences, generationTaskMetadata, resetGenerationTaskMetadata } from "../src/lib/canvas/canvas-project-generation";
 import { ApiError } from "../src/services/api/request";
@@ -43,7 +46,7 @@ test("backend canvas revision 409 offers reload without treating it as a model f
 const task: GenerationTask = { id: "task-failure", type: "canvas_image", status: "failed", prompt: "draw", attempts: 1, createdAt: "2026-09-26T00:00:00Z", updatedAt: "2026-09-26T00:00:00Z", errorCode: "content_policy_violation", error: "opaque" };
 const image = (id: string, storageKey: string): CanvasNodeData => ({ id, type: CanvasNodeType.Image, title: id, position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { content: `https://example.test/${id}.png`, storageKey } });
 
-test("complete image input rejection permits changed input while uncertain tasks stay locked", () => {
+test("complete image input rejection permits changed input while unresolved uncertain tasks stay locked", () => {
     const corrected: GenerationTask = { ...task, stage: "任务失败", errorCode: "moderation_input", error: "输入文本未通过内容安全审核。请调整提示词后重新生成。" };
     const stale = image("rejected-node", "");
     stale.metadata = { taskId: task.id, status: "error", taskStage: "submission_unknown", generationSubmissionState: "unknown", generationErrorCode: "submission_uncertain" };
@@ -57,7 +60,50 @@ test("complete image input rejection permits changed input while uncertain tasks
     const uncertain: GenerationTask = { ...task, stage: "submission_unknown", errorCode: "submission_uncertain", error: "图片结果尚未确认" };
     const pending = canvasGenerationTaskNodes([stale], stale.id, uncertain)[0];
     expect(canvasImageGenerationHasPendingResult(pending, [pending])).toBe(true);
-    expect(canvasGenerationRetryBlocked(pending.metadata, { mode: "image", prompt: "a different drawing" })).toBe(true);
+    // 原任务还在跑：提交结论未知，保持锁定，不能重复提交。
+    expect(canvasGenerationRetryBlocked({ ...pending.metadata, taskStatus: "running" }, { mode: "image", prompt: "a different drawing" })).toBe(true);
+    expect(imageSubmissionUnknown({ ...pending.metadata, taskStatus: "running" })).toBe(true);
+    // 原任务已终态：提交是否成立已有结论，锁定解除；结果由客户端自动取回，不需要用户点。
+    expect(canvasGenerationRetryBlocked(pending.metadata, { mode: "image", prompt: "a different drawing" })).toBe(false);
+    expect(canvasImageGenerationHasPendingResult(pending, [pending])).toBe(true);
+    expect(generationTaskVerdictSettled(pending.metadata)).toBe(true);
+    // 自动取回期间不给重新生成入口；取不回时才有。
+    expect(canvasNodeFailureExplanation(pending).retryable).toBe(false);
+    expect(canvasNodeFailureExplanation(pending).reason).toContain("正在取回结果");
+    expect(canvasNodeNeedsOriginalResultRecovery(pending)).toBe(true);
+    const unavailable = { ...pending, metadata: { ...pending.metadata, ...canvasGenerationResultUnavailableMetadata(task.id) } };
+    expect(canvasImageGenerationHasPendingResult(unavailable, [unavailable])).toBe(false);
+    expect(canvasNodeNeedsOriginalResultRecovery(unavailable)).toBe(false);
+    expect(canvasNodeNeedsGenerationRecoveryRetry(unavailable)).toBe(false);
+    expect(canvasNodeFailureExplanation(unavailable).retryable).toBe(true);
+    expect(canvasNodeFailureExplanation(unavailable).blockManualRetry).toBe(false);
+});
+
+test("a settled submission-uncertain node is recovered automatically and only asks the user when the result is gone", () => {
+    const settled = { taskId: task.id, taskStatus: "failed", taskStage: "submission_unknown", generationErrorCode: "submission_uncertain", errorDetails: "上一次提交结果不明确，为避免重复创建上游任务已停止自动重发", status: "error" as const };
+    const node = (metadata: typeof settled) => ({ ...image("uncertain-node", ""), metadata }) as CanvasNodeData;
+    const explanation = canvasNodeFailureExplanation(node(settled));
+    expect(explanation.category).toBe("submission_uncertain");
+    // 结果还没确认取不回：客户端按原任务自动取回，不需要用户点，也不该重复提交。
+    expect(explanation.uncertain).toBe(true);
+    expect(explanation.blockManualRetry).toBe(true);
+    expect(explanation.blockAutomaticRetry).toBe(true);
+    expect(explanation.reason).toContain("正在取回结果");
+    // 后端确认结果取不回：交回「重新生成」，新建任务前仍要用户确认。
+    const gone = canvasNodeFailureExplanation(node({ ...settled, ...canvasGenerationResultUnavailableMetadata(task.id) }));
+    expect(gone.uncertain).toBe(false);
+    expect(gone.blockManualRetry).toBe(false);
+    expect(gone.blockAutomaticRetry).toBe(true);
+    expect(gone.reason).toContain("结果已取不回");
+    expect(gone.action).toContain("可能再次消耗积分");
+    // 原任务还没结束时不改变原有提示。
+    const running = canvasNodeFailureExplanation(node({ ...settled, taskStatus: "running" }));
+    expect(running.uncertain).toBe(true);
+    expect(running.blockManualRetry).toBe(true);
+    // 只有客户端一侧的「提交状态未知」不足以触发自动取回：这类任务的重试可能真的重新提交上游并付费。
+    const clientOnlyUnknown = node({ ...settled, taskStage: "任务失败", taskErrorCode: "invalid_params", generationErrorCode: "invalid_params" });
+    expect(canvasNodeNeedsOriginalResultRecovery(clientOnlyUnknown)).toBe(false);
+    expect(canvasNodeNeedsGenerationRecoveryRetry(clientOnlyUnknown)).toBe(false);
 });
 
 describe("canvas generation failure consumers", () => {

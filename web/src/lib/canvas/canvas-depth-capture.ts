@@ -1,4 +1,6 @@
 import { explainGenerationError, generationFailureMetadata } from "@/lib/generation-error";
+import { canvasGenerationResultUnavailable } from "@/lib/canvas/canvas-node-task-state";
+import { generationTaskVerdictSettled } from "@/lib/generation-task-display";
 import { CanvasGenerationDurableAckError } from "@/services/canvas-generation-errors";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
@@ -67,6 +69,16 @@ export function canvasNodeFailureExplanation(node: CanvasNodeData) {
     const explanation = explainGenerationError({ code: node.metadata?.generationErrorCode || node.metadata?.taskErrorCode, message: node.metadata?.errorDetails }, { taskId: node.metadata?.taskId, model: node.metadata?.model, createdAt: node.metadata?.taskCreatedAt, stage: node.metadata?.taskStage });
     // This action opens saved history; it must never dispatch another generation.
     if (explanation.category === "result_target_unavailable") return { ...explanation, blockManualRetry: false };
+    // 原任务已经终态，说明这次提交是否成立已有结论；继续显示「提交结果未确认」
+    // 会让节点既没有原任务可查、也没有重新生成入口。
+    if (explanation.category === "submission_uncertain" && generationTaskVerdictSettled(node.metadata)) {
+        // 结果还没确认取不回：客户端会自动按原任务取回结果，不需要用户点，也不该重复提交。
+        if (!canvasGenerationResultUnavailable(node.metadata)) {
+            return { ...explanation, reason: "原任务已结束，正在取回结果", action: "取回期间不用重新生成；结果取不回时会给出重新生成入口", uncertain: true, retryable: false, blockAutomaticRetry: true, blockManualRetry: true };
+        }
+        // 后端确认结果取不回：交回「重新生成」给用户决定（新建任务前仍会确认）。
+        return { ...explanation, reason: "原任务已结束，但结果已取不回", action: "可以重新生成；会新建任务，可能再次消耗积分", uncertain: false, retryable: true, blockAutomaticRetry: true, blockManualRetry: false };
+    }
     if (!canRecoverOrRetryDepthCapture(node)) return explanation;
     if (node.metadata?.taskStage === "已暂停，等待手动继续") {
         return { ...explanation, reason: "深度捕捉已暂停", action: "确认组件已安装后，点击重试继续", uncertain: false, retryable: true, blockAutomaticRetry: false, blockManualRetry: false };

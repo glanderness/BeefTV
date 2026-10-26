@@ -55,11 +55,21 @@ beforeAll(async () => {
         if (path === "/harness.js") return new Response(script, { headers: { "Content-Type": "text/javascript" } });
         if (!path.startsWith("/api/")) return new Response('<div id="root"></div><script type="module" src="/harness.js"></script>', { headers: { "Content-Type": "text/html" } });
         requests.push(`${request.method} ${path}`);
+        const taskRetryMatch = /^\/api\/tasks\/([^/]+)\/retry$/.exec(path);
+        if (taskRetryMatch && request.method === "POST") {
+            const id = decodeURIComponent(taskRetryMatch[1]);
+            // 有完整回执：后端按回执恢复结果，不重新提交上游。
+            if (id === "settled-receipt") return Response.json({ code: 0, data: succeededTask(id) });
+            // 没有回执：后端拒绝，客户端不得据此重新提交付费生成。
+            return Response.json({ code: 400, reason: "bad_request", msg: "提交结果尚未确认，请先查询原任务，不要立即重新提交" }, { status: 400 });
+        }
         const taskMatch = /^\/api\/tasks\/([^/]+)$/.exec(path);
         if (taskMatch && request.method === "GET") {
             const id = decodeURIComponent(taskMatch[1]);
             const reads = (taskReads.get(id) ?? 0) + 1;
             taskReads.set(id, reads);
+            // 已终态、提交结论未确认的原任务：客户端应按回执取回，取不回就停手。
+            if (id === "settled-receipt" || id === "settled-refused") return Response.json({ code: 0, data: { ...runningTask(id), status: "failed", stage: "submission_unknown", error: "上一次提交结果不明确" } });
             if (id === "late-task") return Response.json({ code: 0, data: reads === 1 ? runningTask(id) : succeededTask(id) });
             if (id === "late-done") return Response.json({ code: 0, data: succeededTask(id) });
             if (id === "late-failed" || id === "cont-task") return Response.json({ code: 0, data: { ...runningTask(id), status: "failed", error: "上游生成失败" } });
@@ -189,6 +199,40 @@ test("late nodes in every recoverable state are reconciled, not only loading one
     expect(nodeIn(snap, "node-late-legacy")?.metadata?.status).toBe("error");
     expect(taskReads.get("late-failed") ?? 0).toBeGreaterThan(0);
     expect(taskReads.get("cont-task") ?? 0).toBeGreaterThan(0);
+}, 20_000);
+
+test("a settled submission-uncertain node in a later remote copy takes its original result back", async () => {
+    // 这个节点同时属于「后到快照待恢复」和「已终态待取回」两条路：先去重再认领。
+    // 否则它会被认领两次，第二次覆盖认领后因任务正在恢复而退出，取回成功的结果就写不回画布。
+    await page.evaluate((nodes) => window.lateHarness!.remoteLoad(nodes as never), [{
+        id: "node-settled", type: "video", title: "settled", position: { x: 0, y: 400 }, width: 320, height: 180,
+        metadata: { status: "error", taskId: "settled-receipt", taskStatus: "failed", taskStage: "submission_unknown", errorDetails: "上一次提交结果不明确，为避免重复创建上游任务已停止自动重发" },
+    }]);
+    await waitUntil("settled node takes its original result back", async () => nodeIn(await snapshot(), "node-settled")?.metadata?.status === "success", 10_000);
+    const snap = await snapshot();
+    expect(nodeIn(snap, "node-settled")?.metadata?.storageKey).toBe("resource:settled-receipt-video");
+    expect(nodeIn(snap, "node-settled")?.metadata?.errorDetails).toBeUndefined();
+    expect(requests.filter((request) => request === "POST /api/ops/canvas.task.bind")).toHaveLength(1);
+    expect(requests).toContain("POST /api/tasks/settled-receipt/retry");
+    // 自动取回只按回执恢复：绝不新建任务。
+    expect(requests.some((request) => request.startsWith("POST /api/tasks") && !request.endsWith("/retry"))).toBe(false);
+}, 20_000);
+
+test("a settled submission-uncertain node whose result is gone keeps the failure and stops asking the backend", async () => {
+    await page.evaluate((nodes) => window.lateHarness!.remoteLoad(nodes as never), [{
+        id: "node-gone", type: "video", title: "gone", position: { x: 0, y: 400 }, width: 320, height: 180,
+        metadata: { status: "error", taskId: "settled-refused", taskStatus: "failed", taskStage: "submission_unknown", errorDetails: "上一次提交结果不明确，为避免重复创建上游任务已停止自动重发" },
+    }]);
+    await waitUntil("refused result marked unavailable", async () => Boolean(nodeIn(await snapshot(), "node-gone")?.metadata?.generationResultUnavailableTaskId), 10_000);
+    const attempts = requests.filter((request) => request === "POST /api/tasks/settled-refused/retry").length;
+    expect(attempts).toBe(1);
+    const snap = await snapshot();
+    expect(nodeIn(snap, "node-gone")?.metadata?.status).toBe("error");
+    expect(nodeIn(snap, "node-gone")?.metadata?.generationResultUnavailableTaskId).toBe("settled-refused");
+    // 取不回不新建任务，也不反复打后端。
+    expect(requests.some((request) => request.startsWith("POST /api/tasks") && !request.endsWith("/retry"))).toBe(false);
+    await Bun.sleep(500);
+    expect(requests.filter((request) => request === "POST /api/tasks/settled-refused/retry")).toHaveLength(1);
 }, 20_000);
 
 test("nodes merged by a normal refresh are left alone, even with the restore text in them", async () => {
