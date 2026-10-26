@@ -142,17 +142,35 @@ func (c *Runtime) reconcileBuiltIns(stored []RegistryRecord) ([]RegistryRecord, 
 		}
 		byID[bundled.Metadata.ID] = next
 	}
+	missing := make([]RegistryRecord, 0, len(byID))
+	for _, record := range byID {
+		if !IsBuiltInSource(record.Source) {
+			continue
+		}
+		if _, shipped := builtInIDs[record.ID]; !shipped {
+			missing = append(missing, record)
+		}
+	}
+	// A release must not silently delete an official plugin that saved
+	// configuration or an unfinished task still executes with. Retained records
+	// keep their committed manifest, package hash and enabled state; they are
+	// marked as retired so no new selection offers them.
+	retained := c.retentionDecisions(missing)
 	result := make([]RegistryRecord, 0, len(byID))
 	for _, record := range byID {
 		if IsBuiltInSource(record.Source) {
-			if _, exists := builtInIDs[record.ID]; !exists {
+			if _, shipped := builtInIDs[record.ID]; !shipped {
 				// Built-in records are reconciled from repository packages and host
-				// manifests on every startup, so removed plugins cannot survive stale.
-				continue
+				// manifests on every startup, so an unreferenced removed plugin
+				// cannot survive stale.
+				if _, keep := retained[record.ID]; !keep {
+					continue
+				}
 			}
 		}
 		result = append(result, record)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	c.retained = retained
 	return result, nil
 }

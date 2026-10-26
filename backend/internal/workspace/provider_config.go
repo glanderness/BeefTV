@@ -279,6 +279,62 @@ func (s *ProviderConfig) LoadEffectiveModelConfig() (EffectiveModelConfig, Confi
 	return effective, health, nil
 }
 
+// SavedProtocolReferences counts the protocol IDs saved in local channels and
+// model profiles. Bootstrap uses it to keep an official protocol plugin alive
+// while a saved connection still executes with it.
+//
+// The audit is read-only on purpose: it decodes the stored document without
+// rewriting it, never returns a credential value, and leaves repair and
+// migration to the normal read path.
+func (s *ProviderConfig) SavedProtocolReferences() (map[string]int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	body, err := os.ReadFile(s.path())
+	if errors.Is(err, os.ErrNotExist) {
+		// A first run has no saved connection; the backup alone is not a user
+		// selection the audit needs to protect.
+		return map[string]int64{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("读取本地模型配置失败: %w", err)
+	}
+	document, _, decodeErr := s.decodeStoredDocument(body)
+	if decodeErr != nil {
+		return nil, fmt.Errorf("本地模型配置无法解析，保留全部官方协议: %w", decodeErr)
+	}
+	counts := make(map[string]int64)
+	channels, _ := document.Config["channels"].([]any)
+	for _, entry := range channels {
+		channel, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		// interfaceType keeps the protocol of channels that were configured
+		// before per-model profiles existed.
+		countProtocolReference(counts, channel["interfaceType"])
+		countProtocolReference(counts, channel["protocol"])
+		profiles, _ := channel["modelProfiles"].([]any)
+		for _, profile := range profiles {
+			if item, ok := profile.(map[string]any); ok {
+				countProtocolReference(counts, item["protocol"])
+			}
+		}
+	}
+	return counts, nil
+}
+
+func countProtocolReference(counts map[string]int64, value any) {
+	text, ok := value.(string)
+	if !ok {
+		return
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	counts[text]++
+}
+
 func (s *ProviderConfig) loadDocument() (ProviderStateDocument, ConfigHealth, error) {
 	body, err := os.ReadFile(s.path())
 	if errors.Is(err, os.ErrNotExist) {

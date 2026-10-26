@@ -8,6 +8,7 @@ All notable public changes to BeefTV are documented in this file.
 - Prepared the first audited public source snapshot.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
+- 版本升级不再删除仍被使用的官方协议插件：启动时先盘点本地连接、渠道模型和还没取回结果的任务，仍有引用就保留执行能力并标记为已撤下，不再用于新的协议选择。
 
 ## v2.0.4
 

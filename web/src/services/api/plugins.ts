@@ -12,6 +12,9 @@ export type BackendPlugin = {
     status: "enabled" | "disabled" | "invalid" | string;
     error?: string;
     management: PluginManagement;
+    // Present only for a plugin this release no longer ships but that saved
+    // configuration or unfinished tasks still execute with.
+    retention?: { retired: boolean; reasons?: string[]; unknown?: boolean };
 };
 
 export type WorkflowPluginStatus = "enabled" | "disabled" | "invalid" | string;

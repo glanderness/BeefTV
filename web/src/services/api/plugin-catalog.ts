@@ -23,12 +23,16 @@ type PluginProviderCatalogItem = {
         parameters: Array<{ name: string; type: string; required?: boolean; description?: string; values?: string[]; mapping?: string }>;
         defaults?: Record<string, string | number | boolean>;
     }>;
+    // A protocol this release no longer ships but that stays executable for
+    // configuration saved before the removal.
+    retired?: boolean;
+    retiredReason?: string;
 };
 
 export async function fetchPluginProviderCatalog(scope: string, capability?: ProtocolCapability) {
     try {
         const result = await http.get<{ providers: PluginProviderCatalogItem[] }>("/plugins/catalog", { params: { scope, capability } });
-        return result.providers.filter((item) => item.enabled && !item.unavailableReason).map(toProviderDefinition);
+        return result.providers.filter((item) => item.enabled && !item.unavailableReason).map(providerCatalogDefinition);
     } catch (error) {
         // The local desktop profile can run without the optional plugin center.
         // Keep the built-in OpenAI-compatible protocols available so a custom
@@ -48,7 +52,10 @@ const BUILTIN_OPENAI_PROTOCOLS: ModelProtocolDefinition[] = [
     { value: "newapi", label: "OpenAI Videos", vendor: "OpenAI compatible", capability: "video", create: "POST /v1/videos", poll: "GET /v1/videos/{task_id}", contentType: "multipart/form-data", media: "内置协议", enabled: true },
 ];
 
-function toProviderDefinition(item: PluginProviderCatalogItem): ModelProtocolDefinition {
+// A retired protocol stays in the list so saved configuration keeps showing the
+// protocol and request it runs with; the pickers mark it as not selectable for a
+// new choice.
+export function providerCatalogDefinition(item: PluginProviderCatalogItem): ModelProtocolDefinition {
     return {
         value: item.id,
         label: item.name,
@@ -62,5 +69,7 @@ function toProviderDefinition(item: PluginProviderCatalogItem): ModelProtocolDef
         baseUrl: item.baseUrl,
         authType: item.authType,
         workflows: item.workflows || [],
+        retired: item.retired,
+        retiredReason: item.retiredReason,
     };
 }
