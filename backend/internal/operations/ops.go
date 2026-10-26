@@ -158,11 +158,13 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 	if err := validateGenerationDependencies(doc, owned, nodeIDs, args.Kind); err != nil {
 		return nil, err
 	}
+	proposalID := newProposalID()
 	result := map[string]any{
-		"proposalId": newProposalID(), "kind": args.Kind, "nodeIds": nodeIDs,
+		"proposalId": proposalID, "kind": args.Kind, "nodeIds": nodeIDs,
 		"model": resolved.Display, "modelKey": resolved.ModelKey, "note": strings.TrimSpace(args.Note),
 		"source": map[string]any{"canvasId": args.CanvasID, "canvasRevision": doc["revision"], "modelConfigRevision": resolved.Revision},
 	}
+	var proposedTargets []GenerationTarget
 	if len(args.ProductionNodeIDs) > 0 {
 		targets, err := GenerationTargets(ctx.Domain, doc, args.ProductionNodeIDs)
 		if err != nil {
@@ -177,7 +179,20 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 				return nil, InvalidArg("production_target_missing", "首批素材必须包含在整片制作计划中")
 			}
 		}
+		proposedTargets = targets
 		result["production"] = map[string]any{"targets": targets}
+	} else if targets, err := GenerationTargets(ctx.Domain, doc, nodeIDs); err == nil {
+		proposedTargets = targets
+	}
+	if strings.TrimSpace(ctx.TurnID) != "" && len(proposedTargets) > 0 {
+		if recorder, ok := ctx.Domain.(ProposedGenerationRecorder); ok {
+			if err := recorder.RecordAssistantGenerationProposal(ctx.UserID, ctx.TurnID, args.CanvasID, GenerationAuthorization{
+				ProposalID: proposalID,
+				Targets:    proposedTargets,
+			}); err != nil {
+				return nil, AsError(err)
+			}
+		}
 	}
 	if ctx.Caller.Kind == CallerExternal && !ctx.Caller.ReadOnly {
 		result["nextAction"] = map[string]any{

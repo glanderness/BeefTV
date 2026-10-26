@@ -33,6 +33,10 @@ type AuthorizedGenerationAdmission interface {
 	SubmitAuthorizedGeneration(userID, turnID, canvasID string, targets []GenerationTarget) (any, error)
 }
 
+type ProposedGenerationRecorder interface {
+	RecordAssistantGenerationProposal(userID, turnID, canvasID string, proposal GenerationAuthorization) error
+}
+
 // External clients own execution approval; they still use the same task admission.
 type ExternalGenerationAdmission interface {
 	SubmitExternalGeneration(userID, operationID, canvasID string, targets []GenerationTarget) (any, error)

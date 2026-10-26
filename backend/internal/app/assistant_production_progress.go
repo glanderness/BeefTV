@@ -27,6 +27,9 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 	if err := json.Unmarshal([]byte(source.GenerationAuthorizationJSON), &plan); err != nil {
 		return false, err
 	}
+	if plan.SourceTurnID == "" {
+		return true, nil
+	}
 	if source.Undone || source.ContinuationInvalidated || plan.SourceTurnID != source.TurnID || plan.ProposalID != receipt.ProposalID {
 		return false, operations.PreconditionFailed("production_revoked", "本次制作授权已停止", nil)
 	}

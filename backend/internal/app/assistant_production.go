@@ -3,6 +3,7 @@ package app
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -61,7 +62,10 @@ func (s *Service) ConfirmAssistantProduction(userID, turnID string, input Assist
 		plan := operations.GenerationAuthorization{SourceTurnID: turnID, ProposalID: input.ProposalID, Targets: current}
 		encoded, _ := json.Marshal(plan)
 		if source.GenerationAuthorizationJSON != "" && source.GenerationAuthorizationJSON != string(encoded) {
-			return operations.Conflict("production_changed", "这一轮已确认了不同的制作方案", nil)
+			var existing operations.GenerationAuthorization
+			if json.Unmarshal([]byte(source.GenerationAuthorizationJSON), &existing) != nil || existing.SourceTurnID != "" {
+				return operations.Conflict("production_changed", "这一轮已确认了不同的制作方案", nil)
+			}
 		}
 		if err = tx.Model(&source).Update("generation_authorization_json", string(encoded)).Error; err != nil {
 			return err
@@ -106,6 +110,90 @@ func productionTaskKey(plan operations.GenerationAuthorization, nodeID string) s
 	return "proposal:" + plan.ProposalID + ":" + nodeID
 }
 
+func (s *operationSession) RecordAssistantGenerationProposal(userID, turnID, canvasID string, proposal operations.GenerationAuthorization) error {
+	if strings.TrimSpace(turnID) == "" || strings.TrimSpace(proposal.ProposalID) == "" || len(proposal.Targets) == 0 {
+		return nil
+	}
+	var turn model.AssistantTurn
+	if err := s.tx.First(&turn, "turn_id = ? AND user_id = ? AND canvas_id = ?", turnID, userID, canvasID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if turn.GenerationAuthorizationJSON != "" {
+		var existing operations.GenerationAuthorization
+		if json.Unmarshal([]byte(turn.GenerationAuthorizationJSON), &existing) == nil && existing.SourceTurnID != "" {
+			return nil
+		}
+	}
+	proposal.SourceTurnID = ""
+	encoded, err := json.Marshal(proposal)
+	if err != nil {
+		return err
+	}
+	return s.tx.Model(&turn).Update("generation_authorization_json", string(encoded)).Error
+}
+
+func (s *operationSession) authorizePendingProposalFromPreviousTurn(userID string, source *model.AssistantTurn, canvasID string) (operations.GenerationAuthorization, error) {
+	if source == nil || source.Undone || source.ContinuationInvalidated || strings.TrimSpace(source.DurableSessionID) == "" {
+		return operations.GenerationAuthorization{}, operations.PreconditionFailed("production_authorization_required", "请先确认本次整片制作方案", nil)
+	}
+	var prev model.AssistantTurn
+	if err := s.tx.Where("user_id = ? AND canvas_id = ? AND durable_session_id = ? AND turn_id <> ?",
+		userID, canvasID, source.DurableSessionID, source.TurnID).
+		Order("created_at DESC").First(&prev).Error; err != nil {
+		return operations.GenerationAuthorization{}, operations.PreconditionFailed("production_authorization_required", "请先确认本次整片制作方案", nil)
+	}
+	if prev.Undone {
+		return operations.GenerationAuthorization{}, operations.PreconditionFailed("production_revoked", "这次制作授权已停止，请重新确认", nil)
+	}
+	var pending operations.GenerationAuthorization
+	if prev.GenerationAuthorizationJSON == "" ||
+		json.Unmarshal([]byte(prev.GenerationAuthorizationJSON), &pending) != nil ||
+		pending.SourceTurnID != "" ||
+		strings.TrimSpace(pending.ProposalID) == "" ||
+		len(pending.Targets) == 0 {
+		return operations.GenerationAuthorization{}, operations.PreconditionFailed("production_authorization_required", "请先确认本次整片制作方案", nil)
+	}
+	raw, err := s.UserCanvasProject(userID, canvasID)
+	if err != nil {
+		return operations.GenerationAuthorization{}, err
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return operations.GenerationAuthorization{}, err
+	}
+	ids := make([]string, 0, len(pending.Targets))
+	for _, target := range pending.Targets {
+		ids = append(ids, target.NodeID)
+	}
+	current, err := operations.GenerationTargets(s, doc, ids)
+	if err != nil {
+		return operations.GenerationAuthorization{}, err
+	}
+	if !reflect.DeepEqual(current, pending.Targets) {
+		return operations.GenerationAuthorization{}, operations.Conflict("production_changed", "制作方案已变化，请重新确认", nil)
+	}
+	plan := operations.GenerationAuthorization{
+		SourceTurnID: source.TurnID,
+		ProposalID:   pending.ProposalID,
+		Targets:      current,
+	}
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		return operations.GenerationAuthorization{}, err
+	}
+	if err := s.tx.Model(source).Update("generation_authorization_json", string(encoded)).Error; err != nil {
+		return operations.GenerationAuthorization{}, err
+	}
+	if err := s.tx.Model(&prev).Update("generation_authorization_json", string(encoded)).Error; err != nil {
+		return operations.GenerationAuthorization{}, err
+	}
+	source.GenerationAuthorizationJSON = string(encoded)
+	return plan, nil
+}
+
 func (s *operationSession) SubmitAuthorizedGeneration(userID, turnID, canvasID string, targets []operations.GenerationTarget) (any, error) {
 	var source model.AssistantTurn
 	if err := s.tx.First(&source, "turn_id = ? AND user_id = ? AND canvas_id = ?", turnID, userID, canvasID).Error; err != nil {
@@ -113,7 +201,11 @@ func (s *operationSession) SubmitAuthorizedGeneration(userID, turnID, canvasID s
 	}
 	var plan operations.GenerationAuthorization
 	if json.Unmarshal([]byte(source.GenerationAuthorizationJSON), &plan) != nil || plan.SourceTurnID == "" {
-		return nil, operations.PreconditionFailed("production_authorization_required", "请先确认本次整片制作方案", nil)
+		promoted, err := s.authorizePendingProposalFromPreviousTurn(userID, &source, canvasID)
+		if err != nil {
+			return nil, err
+		}
+		plan = promoted
 	}
 	var owner model.AssistantTurn
 	if err := s.tx.First(&owner, "turn_id = ? AND user_id = ? AND canvas_id = ?", plan.SourceTurnID, userID, canvasID).Error; err != nil {

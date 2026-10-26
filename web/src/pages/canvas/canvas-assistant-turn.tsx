@@ -87,11 +87,11 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
             <CanvasAssistantUserMessage text={turn.userText} selectedCount={turn.selectedNodeIds?.length ?? 0} continuationId={turn.continuationId} />
             <CanvasAssistantAttachments attachments={turn.attachments || []} />
             {(turn.skills || []).map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>{assistantSkillLabel(skill)}</span>)}
-            {turn.supplementInputs?.length ? turn.supplementInputs.map((input, index) => <div key={`supplement:${index}`}>
+            {turn.reply ? <CanvasAssistantReply text={turn.reply} /> : null}
+            {turn.supplementInputs?.length ? turn.supplementInputs.map((input, index) => <div key={`supplement:${index}`} className="canvas-assistant-supplement">
                 <CanvasAssistantUserMessage text={input.message} selectedCount={0} /><CanvasAssistantAttachments attachments={input.attachments || []} />
                 {(input.skills || []).map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>{assistantSkillLabel(skill)}</span>)}
-            </div>) : (turn.supplements || []).map((text, index) => <CanvasAssistantUserMessage key={`supplement:${index}`} text={text} selectedCount={0} />)}
-            {turn.reply ? <CanvasAssistantReply text={turn.reply} /> : null}
+            </div>) : (turn.supplements || []).map((text, index) => <div key={`supplement:${index}`} className="canvas-assistant-supplement"><CanvasAssistantUserMessage text={text} selectedCount={0} /></div>)}
             <CanvasAssistantMediaFacts calls={turn.toolCalls || []} nodes={nodes} />
             {turn.outputs?.length ? <CanvasAssistantOutputs outputs={turn.outputs} /> : null}
             {turn.cancelled && stoppedWithChanges ? (
@@ -151,17 +151,21 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
             ) : null}
 
             {(turn.proposals || []).map((proposal) => {
-                const started = handledProposals.has(proposal.proposalId);
+                const prefix = `proposal:${proposal.proposalId}:`;
+                const admittedOnCanvas = Boolean(nodes?.some((node) => (node.metadata?.taskClientOperationId || "").startsWith(prefix)));
+                const started = handledProposals.has(proposal.proposalId) || admittedOnCanvas;
                 const skipped = handledProposals.has(dismissedProposalKey(proposal.proposalId));
                 const selectedModel = proposal.modelKey || proposal.model;
-                const portrait = seedancePortraitModel(selectedModel);
+                const videoModels = proposal.production
+                    ? proposal.production.targets.filter((target) => target.kind === "video").map((target) => target.modelKey)
+                    : [selectedModel];
                 const profile = proposal.kind === "video" ? resolveModelChannel(config, selectedModel).modelProfiles?.find((item) => item.model === modelOptionName(selectedModel)) : undefined;
-                const priceError = portrait ? portraitGenerationError(config, selectedModel) : "";
+                const priceError = videoModels.filter((model) => seedancePortraitModel(model)).map((model) => portraitGenerationError(config, model)).find(Boolean) || "";
                 const running = Boolean(runningProposalIds?.has(proposal.proposalId));
                 const progress = started && nodes ? assistantProposalProgress(proposal, nodes) : null;
                 return (
                     <div key={proposal.proposalId} className="canvas-assistant-card">
-                        <span style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{assistantProposalText(proposal, portraitPriceLines(profile?.videoPricing), !started && !skipped && !undone && !turn.proposalsInvalidated)}</span>
+                        <span style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{assistantProposalText(proposal, portraitPriceLines(profile?.videoPricing), !started && !skipped && !undone && !turn.proposalsInvalidated, config)}</span>
                         {priceError && !started && !skipped && !undone && !turn.proposalsInvalidated ? <span className="canvas-assistant-meta" role="status">{priceError}</span> : null}
                         {!skipped && !running && ((!undone && !turn.proposalsInvalidated) || started) && proposalFeedback?.[proposal.proposalId] ? <span className="canvas-assistant-meta" role="status" style={{ overflowWrap: "anywhere" }}>{proposalFeedback[proposal.proposalId]}</span> : null}
                         {started ? (

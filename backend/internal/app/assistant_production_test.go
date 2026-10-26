@@ -161,3 +161,90 @@ func TestAssistantProductionAtomicAuthorizationAndReplay(t *testing.T) {
 		t.Fatal("stopped authorization revived")
 	}
 }
+
+func TestAssistantProductionNaturalLanguageConfirmationInNextTurn(t *testing.T) {
+	svc, canvasID, _ := newAssistantTurnService(t)
+	sqlDB, _ := svc.Database().DB()
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+	if err := svc.SaveLocalModelConfig([]byte(`{"imageModel":"custom::image","audioModel":"custom::speech","channels":[{"id":"custom","enabled":true,"baseUrl":"https://example.invalid/v1","apiKey":"test-only","models":["image","speech"],"modelProfiles":[{"model":"image","capability":"image","protocol":"openai-image"},{"model":"speech","capability":"audio","protocol":"openai-audio"}]}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := svc.UserCanvasProject("local", canvasID)
+	var doc map[string]any
+	_ = json.Unmarshal(raw, &doc)
+	doc["nodes"] = []any{
+		map[string]any{"id": "image", "type": "image", "title": "首帧", "metadata": map[string]any{"prompt": "雨后的花店", "size": "9:16", "count": 1}},
+		map[string]any{"id": "speech", "type": "audio", "title": "旁白", "metadata": map[string]any{"prompt": "把春天，带回家。", "model": "custom::speech", "audioVoice": "alloy"}},
+	}
+	doc["connections"] = []any{}
+	raw, _ = json.Marshal(doc)
+	if _, err := svc.UpsertUserCanvasProject("local", raw); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = svc.UserCanvasProject("local", canvasID)
+	_ = json.Unmarshal(raw, &doc)
+	targets, err := operations.GenerationTargets(svc.BindDomain(nil), doc, []string{"image", "speech"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const proposeTurn = "1111222233334444"
+	if _, err := svc.BeginAssistantTurn("local", canvasID, proposeTurn, AssistantTurnInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.BindAssistantDurableSession("local", proposeTurn, backgroundContinuationSession, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Database().Transaction(func(tx *gorm.DB) error {
+		return svc.BindDomain(tx).(*operationSession).RecordAssistantGenerationProposal("local", proposeTurn, canvasID, operations.GenerationAuthorization{
+			ProposalID: "gp-chat-confirm",
+			Targets:    targets,
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Self-confirming in the same turn without a user reply must be rejected.
+	if err := svc.Database().Transaction(func(tx *gorm.DB) error {
+		_, e := svc.BindDomain(tx).(*operationSession).SubmitAuthorizedGeneration("local", proposeTurn, canvasID, targets[:1])
+		return e
+	}); err == nil {
+		t.Fatal("model self-confirmed proposal in the proposing turn")
+	}
+	if err := svc.FinalizeAssistantTurn(proposeTurn); err != nil {
+		t.Fatal(err)
+	}
+
+	// Next user turn: user sends natural-language confirmation ("确认 全部开始吧"),
+	// which invalidates previous continuations on /assistant/chat admission.
+	if err := svc.CancelAssistantContinuations("local", canvasID, backgroundContinuationSession, true); err != nil {
+		t.Fatal(err)
+	}
+	const confirmTurn = "5555666677778888"
+	if _, err := svc.BeginAssistantTurn("local", canvasID, confirmTurn, AssistantTurnInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.BindAssistantDurableSession("local", confirmTurn, backgroundContinuationSession, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// First batch (image) submitted by Pi in confirmTurn promotes the pending proposal.
+	if err := svc.Database().Transaction(func(tx *gorm.DB) error {
+		_, e := svc.BindDomain(tx).(*operationSession).SubmitAuthorizedGeneration("local", confirmTurn, canvasID, targets[:1])
+		return e
+	}); err != nil {
+		t.Fatalf("expected natural-language confirmation turn to admit first batch: %v", err)
+	}
+	// Second batch (speech) submitted in the same confirmTurn succeeds under the promoted authorization.
+	if err := svc.Database().Transaction(func(tx *gorm.DB) error {
+		_, e := svc.BindDomain(tx).(*operationSession).SubmitAuthorizedGeneration("local", confirmTurn, canvasID, targets[1:])
+		return e
+	}); err != nil {
+		t.Fatalf("expected subsequent batch in confirmTurn to succeed: %v", err)
+	}
+	var count int64
+	svc.Database().Model(&model.Task{}).Count(&count)
+	if count != 2 {
+		t.Fatalf("expected 2 admitted tasks, got %d", count)
+	}
+}
