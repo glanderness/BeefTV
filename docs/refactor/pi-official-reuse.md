@@ -59,7 +59,7 @@ Node fetch 的 bypass 规则与 Go 不完全相同。对固定模型 `BaseURL`�
 | `GenerationTask.beforeRequest` hook | 采用 | 每次实际模型请求前重读 Go 授权、当前画布、历史素材归属与补充输入；使用官方 system sections 更新制作现场，包括恢复时已经准备好的请求，并在 HTTP dispatch 前转换已验证的媒体结果。 |
 | pi 的字节级空闲超时（undici `bodyTimeout` / `httpIdleTimeoutMs`） | 不采用 | 只按“收到任意字节”重置，SSE 心跳会把它续上；且不在 Durable 路径安装。宿主保留按实际文本/工具进展计时的空闲上限，见 `model-stream-idle.mjs`。 |
 | `auto_retry_start` / `auto_retry_end` | 采用（只读进度） | 重试仍由官方任务按 `settings.retry` 执行，宿主不另做重试。事件映射为已有的 `lifecycle` 行 `retry`（`attempt` 与归类后的 `reason`：`rate_limited`、`timeout`、`provider_unavailable`、`network`、`model_error`）和 `retry_end`；上游错误原文不进入 NDJSON 或历史。映射在 `durable-session-owner.mjs` 的 `durableStreamEvents`。 |
-| `watchEvents` 完整文字事件 / `watchDoc` 制作计划 | 采用（只读投影） | `durable-stream-text.mjs` 按本次 submission 的用户 entry 限定范围，处理初始/溢出 snapshot、message_start、text_start/delta、block/message 替换及 message_end；向页面发送可替换的 `text_snapshot`，不把初始块和最终尾部当作空增量丢掉。制作计划订阅已提交的 `beeftv.host` 文档，变化时发 `plan`，不等待整轮结束。观察者关闭时释放两项订阅。 |
+| `watchEvents` 完整文字与思考事件 / `watchDoc` 制作计划 | 采用（只读投影） | `durable-turn-projection.mjs` 按本次 submission 的用户 entry 限定范围，处理初始/溢出 snapshot、message_start、text_start/delta、thinking_start/delta、block/message 替换及 message_end；向页面发送可替换的 `text_snapshot` 与 `reasoning_snapshot`（只含可读思考正文、块身份和阶段，签名与 redacted 载荷不出宿主），不把初始块和最终尾部当作空增量丢掉。制作计划订阅已提交的 `beeftv.host` 文档，变化时发 `plan`，不等待整轮结束。观察者关闭时释放两项订阅。 |
 | `compaction_*` | 不映射到面板 | Durable 的压缩在官方任务内部完成。 |
 | 官方 TUI / RPC 实验服务器 | 不采用 | 产品 UI 是 React + Go 代理。 |
 | `@earendil-works/pi-web-ui` | 不采用 | 钉选时代的包是过期 Lit + IndexedDB，且会在浏览器里跑 Agent。 |

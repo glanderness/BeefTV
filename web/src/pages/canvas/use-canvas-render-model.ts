@@ -5,6 +5,7 @@ import { isFrameNode } from "@/lib/canvas/canvas-frame";
 import { canvasLodTypicalNodeExtent, resolveCanvasLodActive } from "@/lib/canvas/canvas-lod";
 import { sameNodeSemanticData } from "@/lib/canvas/canvas-project-domain";
 import { canvasNodeRenderPadding, CANVAS_MAX_RENDERED_CONNECTIONS, shouldReduceCanvasMediaEffects } from "@/lib/canvas/canvas-performance-mode";
+import { CANVAS_GESTURE_RETAIN_LIMIT, type CanvasVirtualizationViewport } from "@/lib/canvas/canvas-viewport-render-sync";
 import { buildCanvasNodeMentionReferenceMap, buildCanvasResourceReferences, reuseCanvasResourceReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { buildSkillMentionReferences } from "@/lib/canvas/canvas-skill-mentions";
 import { buildCanvasSpatialIndex, canvasNodeBounds, type CanvasSpatialIndexEntry } from "@/lib/canvas/canvas-spatial-index";
@@ -84,6 +85,7 @@ export function useCanvasRenderModel({
 }: UseCanvasRenderModelOptions) {
     const reduceMediaEffects = useMemo(() => shouldReduceCanvasMediaEffects(mediaPerformanceMode, nodes), [mediaPerformanceMode, nodes]);
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+    const nodeIndexById = useMemo(() => new Map(nodes.map((node, index) => [node.id, index])), [nodes]);
     // These maps are consumed by both virtualization and node chrome. Building
     // them together keeps a metadata update from walking a 50k-node array six
     // separate times before React can paint the next frame.
@@ -146,8 +148,12 @@ export function useCanvasRenderModel({
     }, [collapsingBatchIds, nodeById, nodes]);
     const { batchChildCountById, batchMotionById, canvasImageNodes, collapsedBatchChildIds, frameChildrenById, renderHiddenNodeIds } = nodeDerivedData;
     const renderBounds = useMemo(() => {
-        const enterPadding = canvasNodeRenderPadding(reduceMediaEffects, false) / viewport.k;
-        const retainPadding = canvasNodeRenderPadding(reduceMediaEffects, true) / viewport.k;
+        // A gesture refreshes this window only when the camera nears its edge
+        // (see shouldRefreshCanvasVirtualization). The controller widens the
+        // margin a step per refresh and passes it with the camera.
+        const gesturePadding = viewportInteracting ? (viewport as CanvasVirtualizationViewport).renderPaddingPx ?? 0 : 0;
+        const enterPadding = Math.max(canvasNodeRenderPadding(reduceMediaEffects, false), gesturePadding) / viewport.k;
+        const retainPadding = Math.max(canvasNodeRenderPadding(reduceMediaEffects, true), gesturePadding) / viewport.k;
         const viewLeft = -viewport.x / viewport.k;
         const viewTop = -viewport.y / viewport.k;
         const viewWidth = viewportSize.width / viewport.k;
@@ -156,7 +162,7 @@ export function useCanvasRenderModel({
             enter: { left: viewLeft - enterPadding, top: viewTop - enterPadding, right: viewLeft + viewWidth + enterPadding, bottom: viewTop + viewHeight + enterPadding },
             retain: { left: viewLeft - retainPadding, top: viewTop - retainPadding, right: viewLeft + viewWidth + retainPadding, bottom: viewTop + viewHeight + retainPadding },
         };
-    }, [reduceMediaEffects, viewport.k, viewport.x, viewport.y, viewportSize.height, viewportSize.width]);
+    }, [reduceMediaEffects, viewport, viewportInteracting, viewportSize.height, viewportSize.width]);
     const geometryNodesRef = useRef(nodes);
     const geometryNodes = useMemo(() => {
         const previous = geometryNodesRef.current;
@@ -179,6 +185,7 @@ export function useCanvasRenderModel({
     const visibleNodesRef = useRef<CanvasNodeData[]>([]);
     const lodNodesRef = useRef<CanvasNodeData[]>(EMPTY_LOD_NODES);
     const lodActiveRef = useRef(false);
+    const lodScaleRef = useRef<number | null>(null);
     const { visibleNodes, lodNodes, lodActive } = useMemo(() => {
         const frames: CanvasNodeData[] = [];
         const regular: CanvasNodeData[] = [];
@@ -195,12 +202,27 @@ export function useCanvasRenderModel({
             if (candidateIds.has(nodeId)) continue;
             const node = nodeById.get(nodeId);
             if (node) candidates.push(node);
+            candidateIds.add(nodeId);
+        }
+        // During a pan or zoom, cards already mounted stay mounted: unmounting
+        // them mid-gesture is most of the DOM churn behind slow frames. The
+        // gesture-end commit culls them again. Very large windows skip this.
+        const previousDomIds = domNodeIdsRef.current;
+        const gestureRetainedIds = viewportInteracting && previousDomIds.size <= CANVAS_GESTURE_RETAIN_LIMIT ? previousDomIds : EMPTY_PINNED_NODE_IDS;
+        for (const nodeId of gestureRetainedIds) {
+            if (candidateIds.has(nodeId)) continue;
+            const node = nodeById.get(nodeId);
+            if (node) candidates.push(node);
         }
         const prioritized = candidates.filter((node) => forcedNodeIds.has(node.id));
         const remaining = candidates.filter((node) => !forcedNodeIds.has(node.id));
+        // Gesture-retained nodes were appended after the spatial query. Keep
+        // document order so React never moves a mounted card (a moved <video>
+        // reloads) when a node passes between the query and the retained set.
+        if (gestureRetainedIds.size) remaining.sort((left, right) => (nodeIndexById.get(left.id) ?? 0) - (nodeIndexById.get(right.id) ?? 0));
         [...prioritized, ...remaining].forEach((node) => {
             if (renderHiddenNodeIds.has(node.id)) return;
-            const retained = forcedNodeIds.has(node.id) || renderedNodeIds.has(node.id);
+            const retained = forcedNodeIds.has(node.id) || renderedNodeIds.has(node.id) || gestureRetainedIds.has(node.id);
             const insideEnterBounds = node.position.x + node.width > renderBounds.enter.left && node.position.x < renderBounds.enter.right && node.position.y + node.height > renderBounds.enter.top && node.position.y < renderBounds.enter.bottom;
             if (!retained && !insideEnterBounds) return;
             (isFrameNode(node) ? frames : regular).push(node);
@@ -208,13 +230,18 @@ export function useCanvasRenderModel({
 
         // Overview LOD: every regular node is still displayed by the overview
         // canvas; only interactive ones are mounted as full DOM cards.
-        const nextLodActive = resolveCanvasLodActive({
+        // The typical extent follows whichever nodes are in view, so a pan can
+        // cross the threshold at a fixed zoom. Only a scale change may switch
+        // modes mid-gesture; a pan resolves it once, at the gesture-end commit.
+        const panOnly = viewportInteracting && lodScaleRef.current === viewport.k;
+        const nextLodActive = panOnly ? lodActiveRef.current : resolveCanvasLodActive({
             previous: lodActiveRef.current,
             typicalExtent: canvasLodTypicalNodeExtent(regular),
             scale: viewport.k,
             deferExit: viewportInteracting,
         });
         lodActiveRef.current = nextLodActive;
+        lodScaleRef.current = viewport.k;
         let domRegular = regular;
         let nextLod = EMPTY_LOD_NODES;
         if (nextLodActive) {
@@ -222,9 +249,10 @@ export function useCanvasRenderModel({
             // it receives every displayable node instead of a stale window.
             nextLod = nodes.filter((node) => !isFrameNode(node) && !renderHiddenNodeIds.has(node.id));
             const dragging = Boolean(dragPreview?.nodeIds.size);
-            const previousDomIds = domNodeIdsRef.current;
             // Transient drag transforms are bound to the elements mounted when
-            // the drag began, so DOM membership is frozen until it ends.
+            // the drag began, so DOM membership is frozen until it ends. Cards
+            // are not kept over the overview canvas mid-zoom: drawing both
+            // layers costs more than mounting them again (measured in #50).
             domRegular = regular.filter((node) => dragging ? previousDomIds.has(node.id) : lodPinnedNodeIds.has(node.id));
         }
         retainedNodeIdsRef.current = new Set([...frames, ...regular].map((node) => node.id));
@@ -237,7 +265,7 @@ export function useCanvasRenderModel({
         const stableLod = previousLod.length === nextLod.length && nextLod.every((node, index) => node === previousLod[index]) ? previousLod : nextLod;
         lodNodesRef.current = stableLod;
         return { visibleNodes: nextVisible, lodNodes: stableLod, lodActive: nextLodActive };
-    }, [dragPreview, lodPinnedNodeIds, nodeById, nodeSpatialIndex, nodes, renderBounds, renderHiddenNodeIds, selectedNodeIds, viewport.k, viewportInteracting]);
+    }, [dragPreview, lodPinnedNodeIds, nodeById, nodeIndexById, nodeSpatialIndex, nodes, renderBounds, renderHiddenNodeIds, selectedNodeIds, viewport.k, viewportInteracting]);
     useEffect(() => {
         domNodeIdsRef.current = new Set(visibleNodes.map((node) => node.id));
         // Enter/retain hysteresis tracks what is displayed in the camera window.

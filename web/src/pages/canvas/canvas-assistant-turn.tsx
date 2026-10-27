@@ -14,6 +14,7 @@ import { portraitGenerationError } from "@/lib/model-selection";
 import { CanvasAssistantAttachments } from "./canvas-assistant-attachments";
 import { CanvasAssistantOutputs } from "./canvas-assistant-outputs";
 import { CanvasAssistantMediaFacts } from "./canvas-assistant-media-facts";
+import { AssistantReasoning } from "@/components/ai/message-reasoning";
 import { formatAssistantDiagnostics } from "@/services/diagnostics/assistant-diagnostics";
 
 type Props = {
@@ -33,6 +34,9 @@ type Props = {
     onContinue?: () => void;
     nodes?: CanvasNodeData[];
     onCheckResults?: (nodeIds: string[]) => void;
+    /** 思考区域是否展开；展开状态由调用方按回合持有，这里只负责显示。 */
+    reasoningOpen?: boolean;
+    onReasoningOpenChange?: (open: boolean) => void;
 };
 
 const replyMarkdownComponents: Components = {
@@ -64,7 +68,7 @@ export function CanvasAssistantUserMessage({ text, selectedCount, continuationId
     );
 }
 
-export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, handledProposals, proposalFeedback, runningProposalIds, generationDisabled, onLocate, onUndo, onRunProposal, onDismissProposal, onContinue, nodes, onCheckResults }: Props) {
+export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, handledProposals, proposalFeedback, runningProposalIds, generationDisabled, onLocate, onUndo, onRunProposal, onDismissProposal, onContinue, nodes, onCheckResults, reasoningOpen, onReasoningOpenChange }: Props) {
     const { message } = App.useApp();
     const config = useEffectiveConfig();
     const summary = assistantChangeSummary(turn.change);
@@ -87,6 +91,8 @@ export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, han
             <CanvasAssistantUserMessage text={turn.userText} selectedCount={turn.selectedNodeIds?.length ?? 0} continuationId={turn.continuationId} />
             <CanvasAssistantAttachments attachments={turn.attachments || []} />
             {(turn.skills || []).map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>{assistantSkillLabel(skill)}</span>)}
+            {/* 思考过程默认折叠，与下面的正文分开；工具活动和改动卡片仍在正文之后。 */}
+            <AssistantReasoning segments={turn.reasoning || []} open={Boolean(reasoningOpen)} onOpenChange={(open) => onReasoningOpenChange?.(open)} />
             {turn.reply ? <CanvasAssistantReply text={turn.reply} /> : null}
             {turn.supplementInputs?.length ? turn.supplementInputs.map((input, index) => <div key={`supplement:${index}`} className="canvas-assistant-supplement">
                 <CanvasAssistantUserMessage text={input.message} selectedCount={0} /><CanvasAssistantAttachments attachments={input.attachments || []} />

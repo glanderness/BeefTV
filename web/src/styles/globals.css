@@ -11591,6 +11591,19 @@ html:not(.dark) .creation-studio-control:hover,
         backdrop-filter: none !important;
     }
 
+    /* 节点内的徽章和按钮也用了毛玻璃。WebKit 每帧都要对底下的图片重新取样模糊，
+       平移、缩放时先关掉，手势结束后恢复。 */
+    [data-canvas-viewport-interacting="true"] [data-canvas-world-layer] :where(*, *::before, *::after) {
+        -webkit-backdrop-filter: none !important;
+        backdrop-filter: none !important;
+    }
+
+    /* 平移、缩放期间每条连线只画一条单色主线：底衬描边、光晕、端点、流光都先不画。
+       透明的点击路径不产生绘制，保留不动。 */
+    [data-canvas-viewport-interacting="true"] g[data-canvas-connection-id] > :not(.canvas-connection-line, [data-connection-id], defs) {
+        display: none;
+    }
+
     /* 节点状态徽章 success 淡出动画（对应 #97 决策2）*/
     @keyframes canvas-status-success-fade {
         0% { opacity: 1; transform: scale(1); }
