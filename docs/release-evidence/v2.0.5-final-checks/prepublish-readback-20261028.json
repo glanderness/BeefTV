@@ -1,0 +1,195 @@
+{
+  "checkedAt": "2026-10-27T17:56:13.215038+00:00",
+  "note": "本轮只读检查；没有触发发布。公开清单读取不替代签名验证，CI 状态不替代完整客户端补验或正式包验收。",
+  "version": "v2.0.5",
+  "localHead": "6a155448096d2425aa07e81cc6016410091ad0be",
+  "sourceDigest": "7145758f40c31439a24486f4addac63f1f7455cc3b970f20e46f71bb815cdb70",
+  "main": {
+    "sha": "6a155448096d2425aa07e81cc6016410091ad0be"
+  },
+  "tagRefs": [],
+  "release": {
+    "exitCode": 1,
+    "message": "release not found"
+  },
+  "latestDesktopRuns": [
+    {
+      "conclusion": "success",
+      "createdAt": "2026-10-26T14:00:20Z",
+      "databaseId": 40335617674,
+      "headSha": "542124baadcdbe5ce34ba9029ef7f1d192b49d16",
+      "status": "completed",
+      "url": "https://github.com/glanderness/BeefTV/actions/runs/40335617674"
+    },
+    {
+      "conclusion": "success",
+      "createdAt": "2026-10-23T14:42:41Z",
+      "databaseId": 39971954923,
+      "headSha": "3530b3f0d2429970c323281eb5a1f7dbbd7b3220",
+      "status": "completed",
+      "url": "https://github.com/glanderness/BeefTV/actions/runs/39971954923"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-10-23T13:27:23Z",
+      "databaseId": 39961341807,
+      "headSha": "e13263c948fbbada3724442fc2c9ee6aaea6cfa2",
+      "status": "completed",
+      "url": "https://github.com/glanderness/BeefTV/actions/runs/39961341807"
+    }
+  ],
+  "mainRuns": [
+    {
+      "conclusion": "",
+      "createdAt": "2026-10-27T17:51:48Z",
+      "databaseId": 40554555098,
+      "headSha": "6a155448096d2425aa07e81cc6016410091ad0be",
+      "name": "Quality checks",
+      "status": "in_progress",
+      "url": "https://github.com/glanderness/BeefTV/actions/runs/40554555098"
+    },
+    {
+      "conclusion": "",
+      "createdAt": "2026-10-27T17:51:48Z",
+      "databaseId": 40554555286,
+      "headSha": "6a155448096d2425aa07e81cc6016410091ad0be",
+      "name": "Publish container images",
+      "status": "in_progress",
+      "url": "https://github.com/glanderness/BeefTV/actions/runs/40554555286"
+    },
+    {
+      "conclusion": "success",
+      "createdAt": "2026-10-27T17:51:48Z",
+      "databaseId": 40554555204,
+      "headSha": "6a155448096d2425aa07e81cc6016410091ad0be",
+      "name": "Director browser checks",
+      "status": "completed",
+      "url": "https://github.com/glanderness/BeefTV/actions/runs/40554555204"
+    },
+    {
+      "conclusion": "success",
+      "createdAt": "2026-10-27T17:26:11Z",
+      "databaseId": 40550565336,
+      "headSha": "6a155448096d2425aa07e81cc6016410091ad0be",
+      "name": "Director browser checks",
+      "status": "completed",
+      "url": "https://github.com/glanderness/BeefTV/actions/runs/40550565336"
+    },
+    {
+      "conclusion": "success",
+      "createdAt": "2026-10-27T17:26:11Z",
+      "databaseId": 40550565428,
+      "headSha": "6a155448096d2425aa07e81cc6016410091ad0be",
+      "name": "Linux desktop package checks",
+      "status": "completed",
+      "url": "https://github.com/glanderness/BeefTV/actions/runs/40550565428"
+    },
+    {
+      "conclusion": "success",
+      "createdAt": "2026-10-27T17:26:11Z",
+      "databaseId": 40550565817,
+      "headSha": "6a155448096d2425aa07e81cc6016410091ad0be",
+      "name": "Quality checks",
+      "status": "completed",
+      "url": "https://github.com/glanderness/BeefTV/actions/runs/40550565817"
+    }
+  ],
+  "passedQualityJobs": {
+    "conclusion": "success",
+    "headSha": "6a155448096d2425aa07e81cc6016410091ad0be",
+    "jobs": [
+      {
+        "conclusion": "success",
+        "name": "Windows storage migration",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "Release publisher checks",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "Web checks",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "Backend checks",
+        "status": "completed"
+      },
+      {
+        "conclusion": "skipped",
+        "name": "Published Windows upgrade and rollback",
+        "status": "completed"
+      },
+      {
+        "conclusion": "skipped",
+        "name": "SQLite and runtime (${{ matrix.os }})",
+        "status": "completed"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/glanderness/BeefTV/actions/runs/40550565817"
+  },
+  "sourceComparison": {
+    "ahead_by": 2,
+    "behind_by": 0,
+    "files": [
+      "docs/release-evidence/v2.0.5-final-checks/cos-before-release.json",
+      "docs/release-evidence/v2.0.5-final-checks/director-ci.json",
+      "docs/release-evidence/v2.0.5-final-checks/integration-provenance.json",
+      "docs/release-evidence/v2.0.5-final-checks/linux-ci.json",
+      "docs/release-evidence/v2.0.5-final-checks/observed-local-checks.md",
+      "docs/release-evidence/v2.0.5-final-checks/public-before-release.json",
+      "docs/release-evidence/v2.0.5-final-checks/quality-ci.json",
+      "docs/release-evidence/v2.0.5-final-checks/r2-before-release.json",
+      "docs/release-evidence/v2.0.5-final-checks/website-before-release.json",
+      "docs/release-evidence/v2.0.5-release.md",
+      "docs/release-evidence/v2.0.5.json"
+    ],
+    "status": "ahead",
+    "total_commits": 2
+  },
+  "publicBaseline": [
+    {
+      "name": "r2",
+      "url": "https://updates.beefapi.com/beeftv/desktop-update.json",
+      "httpStatus": 200,
+      "bytes": 5106,
+      "sha256": "d8d178886131e513f9449848eb917d12f651937c07e9050f8c33a06fc5dd9554",
+      "version": "v2.0.4",
+      "commit": "542124baadcdbe5ce34ba9029ef7f1d192b49d16",
+      "signatureVerified": false
+    },
+    {
+      "name": "cos",
+      "url": "https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/beeftv/desktop-update.json",
+      "httpStatus": 200,
+      "bytes": 5106,
+      "sha256": "d8d178886131e513f9449848eb917d12f651937c07e9050f8c33a06fc5dd9554",
+      "version": "v2.0.4",
+      "commit": "542124baadcdbe5ce34ba9029ef7f1d192b49d16",
+      "signatureVerified": false
+    },
+    {
+      "name": "website",
+      "url": "https://beeftv.app/data/releases.json",
+      "httpStatus": 200,
+      "bytes": 75627,
+      "sha256": "e074f084aed0a42a8c6d12327466a209b31a7940ae800474560c7a2a0916fbfc",
+      "latestRelease": "v2.0.4",
+      "mirrorVersions": [
+        "v2.0.4",
+        "v2.0.3"
+      ]
+    }
+  ],
+  "waitingFor": {
+    "todoNumber": 87,
+    "todoId": "bquwwhQIC6-wFjupAjQDO",
+    "required": "完整客户端免费恢复验证通过，提交原始证据和适用源码",
+    "publisherTodoNumber": 85,
+    "workflowDispatched": false
+  }
+}
