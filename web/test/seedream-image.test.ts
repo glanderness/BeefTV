@@ -1,9 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import { seedreamImageCapability } from "../src/lib/seedream-image";
+import { seedreamFamily, seedreamImageCapability } from "../src/lib/seedream-image";
 import { backendProviderConfig } from "../src/services/api/generation-task";
 import { defaultConfig } from "../src/stores/use-config-store";
 
 describe("Seedream model capabilities", () => {
+    test("domestic doubao- models keep their own family", () => {
+        expect(seedreamFamily("doubao-seedream-5-0-pro-260628")).toBe("pro");
+        expect(seedreamFamily("doubao-seedream-5-0-flash-260915")).toBe("flash");
+        expect(seedreamFamily("doubao-seedream-5-0-260128")).toBe("lite");
+        expect(seedreamFamily("doubao-seedream-4-5-251128")).toBe("4.5");
+        expect(seedreamFamily("doubao-seedream-4-0-250828")).toBe("4.0");
+        expect(seedreamFamily("channel::doubao-seedream-5-0-pro-260628")).toBe("pro");
+        expect(seedreamFamily("doubao-seedream-test")).toBe("");
+        const domestic = seedreamImageCapability("doubao-seedream-5-0-pro-260628")!;
+        expect(domestic.size.values).toEqual(["1K", "1.5K", "2K"]);
+        expect(domestic.references.maxImages).toBe(10);
+        expect(domestic.transparentBackground.supported).toBe(true);
+    });
     test("Pro and Flash expose their actual sizes and alpha editing", () => {
         const p = seedreamImageCapability("channel::dola-seedream-5-0-pro-260628")!;
         expect(p.size.values).toEqual(["1K", "1.5K", "2K"]);

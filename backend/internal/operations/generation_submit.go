@@ -187,6 +187,9 @@ func GenerationTargets(domain Domain, doc map[string]any, ids []string) ([]Gener
 					return nil, InvalidArg("production_seedream_multiple_outputs", "整片制作暂不支持 Seedream 图层拆分或组图。请先在画布生成图片，再用已有图片继续制作。")
 				}
 			}
+			if err := validateSeedreamDraftSize(kind, choice.ModelKey, parameters); err != nil {
+				return nil, err
+			}
 		}
 		var metadata map[string]any
 		for _, key := range []string{"videoEditOperation", "videoOperation", "videoMiddleFrameTime", "videoReferenceOrder", "videoH3Options", "providerOptions"} {

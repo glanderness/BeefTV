@@ -26,6 +26,7 @@ import (
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/protocol"
+	"infinite-canvas/backend/internal/providerpreset"
 
 	"github.com/google/uuid"
 	"github.com/volcengine/volc-sdk-golang/base"
@@ -399,11 +400,19 @@ func applyImageResponseFormatOption(request *protocol.GenerationRequest, input I
 // with no ratio table of its own (openai-images).
 func ProtocolImageAspectRatio(input Input) string {
 	raw := strings.TrimSpace(input.Config.Size)
-	key, value := ImageSizeParameter(input.ImageCapability, input.Config.Size)
-	if key != "size" || value == "" {
+	if strings.TrimSpace(input.Config.InterfaceType) != string(model.ChannelInterfaceOpenAIImage) {
 		return raw
 	}
-	if strings.TrimSpace(input.Config.InterfaceType) != string(model.ChannelInterfaceOpenAIImage) {
+	// OpenAI 兼容渠道上的 Seedream 需要官方像素尺寸：画布比例交给 OpenAI 档位表会变成
+	// 上游不接受的尺寸。规则与真实请求共用，无法解析时保持原值交由请求路径报错。
+	if family := seedreamFamily(input.Config.Model); family != "" {
+		if size, err := providerpreset.SeedreamSize(family, raw, input.Config.SeedreamMode == "layers"); err == nil {
+			return size
+		}
+		return raw
+	}
+	key, value := ImageSizeParameter(input.ImageCapability, input.Config.Size)
+	if key != "size" || value == "" {
 		return raw
 	}
 	return value

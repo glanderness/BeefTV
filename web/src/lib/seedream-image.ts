@@ -1,9 +1,11 @@
 import type { ImageCapabilityConfig } from "./model-capabilities";
 
 export function seedreamFamily(model = "") {
-    const name = model.split("::").pop() || "";
-    if (/^dola-seedream-5-0-pro-/.test(name)) return "pro";
-    if (/^dola-seedream-5-0-flash-/.test(name)) return "flash";
+    // 国内渠道带 doubao- 前缀、国际渠道带 dola- 前缀；Pro / Flash 必须先于通用 5.0 匹配，
+    // 否则国内 Pro / Flash 会被当成 Lite，能力与后端判定不一致。
+    const name = (model.split("::").pop() || "").trim().toLowerCase().replace(/^doubao-/, "");
+    if (/^(dola-)?seedream-5-0-pro-/.test(name)) return "pro";
+    if (/^(dola-)?seedream-5-0-flash-/.test(name)) return "flash";
     if (/^seedream-5-0-/.test(name)) return "lite";
     if (/^seedream-4-5-/.test(name)) return "4.5";
     if (/^seedream-4-0-/.test(name)) return "4.0";

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/canvas/capability"
+	"infinite-canvas/backend/internal/providerpreset"
 )
 
 func registerCanvasNodeConfigureOps(r *Registry) {
@@ -75,6 +76,12 @@ func opCanvasNodeConfigure(ctx *Context, raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 未改模型时草稿沿用节点已有模型，仍要按该模型的尺寸能力预检。
+	if _, hasModel := patch["model"]; !hasModel {
+		if err := validateSeedreamDraftSize(args.Kind, nodeSelectedModel(node), draftParams(patch)); err != nil {
+			return nil, err
+		}
+	}
 	if _, err := ctx.Domain.UpdateUserCanvasNodeFields(ctx.UserID, args.CanvasID, args.NodeID, patch, args.ExpectedRevision); err != nil {
 		return nil, mapDomainError(err)
 	}
@@ -121,8 +128,43 @@ func resolveGenerationDraft(ctx *Context, kind string, raw map[string]json.RawMe
 			return nil, PreconditionFailed("generation_model_unavailable", "所选模型当前不可用", nil)
 		}
 		patch["model"] = choice.ModelKey
+		if err := validateSeedreamDraftSize(kind, choice.ModelKey, draftParams(patch)); err != nil {
+			return nil, err
+		}
 	}
 	return patch, nil
+}
+
+// draftParams 取草稿里的字符串字段，供按模型的参数预检使用。
+func draftParams(patch map[string]any) map[string]string {
+	params := map[string]string{}
+	for name, value := range patch {
+		if text, ok := value.(string); ok {
+			params[name] = text
+		}
+	}
+	return params
+}
+
+// validateSeedreamDraftSize 在配置、分镜准备和提案阶段按型号族校验 Seedream 的 size，
+// 与真实请求共用 providerpreset 的尺寸规则，避免合法自填尺寸被拦、无效值留到上游才报错。
+func validateSeedreamDraftSize(kind, modelKey string, params map[string]string) error {
+	if kind != "image" {
+		return nil
+	}
+	modelName := strings.TrimSpace(modelKey)
+	if i := strings.LastIndex(modelName, "::"); i >= 0 {
+		modelName = strings.TrimSpace(modelName[i+2:])
+	}
+	family := providerpreset.SeedreamFamily(modelName)
+	size := strings.TrimSpace(params["size"])
+	if family == "" || size == "" {
+		return nil
+	}
+	if _, err := providerpreset.SeedreamSize(family, size, params["seedreamMode"] == "layers"); err != nil {
+		return InvalidArg("invalid_parameter", err.Error())
+	}
+	return nil
 }
 
 func validateDraftValue(name, value string) error {

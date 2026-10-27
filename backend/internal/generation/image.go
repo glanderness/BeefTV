@@ -21,7 +21,10 @@ import (
 )
 
 func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, error) {
-	if seedreamFamily(input.Config.Model) != "" {
+	// Seedream 型号自带请求体，能保留图层拆分、图片格式、水印和提示词优化设置；改走通用插件
+	// 会静默丢掉这些设置。Agent Plan 图片协议是独立端点（/api/plan/v3/images/generations），
+	// 必须继续交给声明式插件，不能按型号名套用官方 Ark 路径。
+	if seedreamFamily(input.Config.Model) != "" && model.ChannelInterfaceType(input.Config.InterfaceType) != model.ChannelInterfaceVolcengineArkAgentPlanImage {
 		return runSeedreamImageTask(ctx, input)
 	}
 	outputCount := 1
