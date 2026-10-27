@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/operations"
 	localtask "infinite-canvas/backend/internal/task"
@@ -54,9 +53,6 @@ func (s *Service) recoverCanvasTaskBindings(task model.Task) error {
 				unchanged, stateErr := s.canvasBindTargetUnchanged(task, marker)
 				if stateErr == nil && unchanged {
 					continue
-				}
-				if stateErr == nil && bindRecovery.Remove(target.nodeID, target.outputIndex) {
-					bindRecoveryDirty = true
 				}
 			}
 			if err := s.executeCanvasTaskBind(registry, task, target.nodeID, target.outputIndex); err != nil {
@@ -156,68 +152,20 @@ func (s *Service) recoverPendingCanvasBindings(limit int) error {
 	return last
 }
 
-type canvasBindTargetState struct {
-	present             bool
-	taskID              string
-	topLevelTaskID      string
-	nodeType            string
-	clientOperationID   string
-	status              string
-	hasBindingOccupancy bool
-}
-
+// canvasBindTargetUnchanged reports whether a refused target can be skipped.
+// Node refusals depend on the canvas, so they are retried after any canvas
+// write: the revision only moves forward and every save increments it. This
+// does not try to predict which edits make the bind succeed.
 func (s *Service) canvasBindTargetUnchanged(task model.Task, marker localtask.CanvasBindRecoveryTarget) (bool, error) {
-	if marker.Reason != "node_deleted" && marker.Reason != "node_task_mismatch" {
+	if marker.Revision <= 0 {
+		// node_mismatch / canvas_mismatch are decided from the task alone.
 		return true, nil
 	}
-	current, err := s.canvasBindTargetState(task.UserID, task.ProjectID, marker.NodeID)
+	current, err := s.repo.CanvasProjectMetadata(task.UserID, task.ProjectID)
 	if err != nil {
 		return false, err
 	}
-	return current.present == marker.NodePresent &&
-		current.taskID == strings.TrimSpace(marker.NodeTaskID) &&
-		current.topLevelTaskID == strings.TrimSpace(marker.NodeTopLevelTaskID) &&
-		current.nodeType == strings.TrimSpace(marker.NodeType) &&
-		current.clientOperationID == strings.TrimSpace(marker.NodeClientOperationID) &&
-		current.status == strings.TrimSpace(marker.NodeStatus) &&
-		current.hasBindingOccupancy == marker.NodeHasBindingOccupancy, nil
-}
-
-func (s *Service) canvasBindTargetState(userID, canvasID, nodeID string) (canvasBindTargetState, error) {
-	raw, err := s.UserCanvasProject(userID, canvasID)
-	if err != nil {
-		return canvasBindTargetState{}, err
-	}
-	var doc struct {
-		Nodes []map[string]any `json:"nodes"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return canvasBindTargetState{}, err
-	}
-	for _, node := range doc.Nodes {
-		if strings.TrimSpace(canvasBindStateString(node, "id")) != strings.TrimSpace(nodeID) {
-			continue
-		}
-		metadata, _ := node["metadata"].(map[string]any)
-		return canvasBindTargetState{
-			present:             true,
-			taskID:              canvasBindStateString(metadata, "taskId"),
-			topLevelTaskID:      canvasBindStateString(node, "taskId"),
-			nodeType:            canvasBindStateString(node, "type"),
-			clientOperationID:   canvasBindStateString(metadata, "taskClientOperationId"),
-			status:              canvasBindStateString(metadata, "status"),
-			hasBindingOccupancy: canvas.NodeHasBindingOccupancy(node),
-		}, nil
-	}
-	return canvasBindTargetState{}, nil
-}
-
-func canvasBindStateString(fields map[string]any, key string) string {
-	if fields == nil {
-		return ""
-	}
-	value, _ := fields[key].(string)
-	return strings.TrimSpace(value)
+	return current.Revision == marker.Revision, nil
 }
 
 func canvasBindRecoveryTarget(target canvasBindTarget, err error) (localtask.CanvasBindRecoveryTarget, bool) {
@@ -227,56 +175,37 @@ func canvasBindRecoveryTarget(target canvasBindTarget, err error) (localtask.Can
 	}
 	marker := localtask.CanvasBindRecoveryTarget{NodeID: target.nodeID, OutputIndex: target.outputIndex, Reason: reason}
 	switch reason {
-	case "node_deleted":
-		// The failed bind transaction observed no node. Do not read the canvas
-		// again here: a concurrent recreation must make the marker stale.
-		marker.NodePresent = false
-		return marker, true
-	case "node_task_mismatch":
-		state, ok := canvasBindFailureState(err)
+	case "node_deleted", "node_task_mismatch":
+		// Use the revision the refusing bind read, never a fresh read: a write
+		// that lands after the refusal must make the marker stale.
+		revision, ok := canvasBindFailureRevision(err)
 		if !ok {
 			return localtask.CanvasBindRecoveryTarget{}, false
 		}
-		marker.NodePresent = state.present
-		marker.NodeTaskID = state.taskID
-		marker.NodeTopLevelTaskID = state.topLevelTaskID
-		marker.NodeType = state.nodeType
-		marker.NodeClientOperationID = state.clientOperationID
-		marker.NodeStatus = state.status
-		marker.NodeHasBindingOccupancy = state.hasBindingOccupancy
-		return marker, true
-	default:
-		return marker, true
+		marker.Revision = revision
 	}
+	return marker, true
 }
 
-func canvasBindFailureState(err error) (canvasBindTargetState, bool) {
+func canvasBindFailureRevision(err error) (int64, bool) {
 	var opErr *operations.Error
 	if !errors.As(err, &opErr) || opErr.Details == nil {
-		return canvasBindTargetState{}, false
+		return 0, false
 	}
 	binding, ok := opErr.Details["canvasBinding"].(map[string]any)
 	if !ok {
-		return canvasBindTargetState{}, false
+		return 0, false
 	}
-	present, ok := binding["nodePresent"].(bool)
-	if !ok {
-		return canvasBindTargetState{}, false
+	var revision int64
+	switch value := binding["revision"].(type) {
+	case int64:
+		revision = value
+	case float64:
+		revision = int64(value)
+	case json.Number:
+		revision, _ = value.Int64()
 	}
-	return canvasBindTargetState{
-		present:             present,
-		taskID:              canvasBindStateString(binding, "nodeTaskId"),
-		topLevelTaskID:      canvasBindStateString(binding, "nodeTopLevelTaskId"),
-		nodeType:            canvasBindStateString(binding, "nodeType"),
-		clientOperationID:   canvasBindStateString(binding, "nodeClientOperationId"),
-		status:              canvasBindStateString(binding, "nodeStatus"),
-		hasBindingOccupancy: canvasBindBool(binding, "nodeHasBindingOccupancy"),
-	}, true
-}
-
-func canvasBindBool(fields map[string]any, key string) bool {
-	value, _ := fields[key].(bool)
-	return value
+	return revision, revision > 0
 }
 
 func terminalCanvasBindError(err error) bool {

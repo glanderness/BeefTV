@@ -5,7 +5,10 @@ import (
 	"strings"
 )
 
-const canvasBindRecoveryPrefix = "canvas_bind:"
+const (
+	canvasBindRecoveryPrefix  = "canvas_bind:"
+	canvasBindRecoveryVersion = 1
+)
 
 // CanvasBindRecovery records a terminal bind refusal without creating a second
 // task lifecycle. It lives in the existing private recovery_outcome column.
@@ -16,17 +19,14 @@ type CanvasBindRecovery struct {
 	Targets []CanvasBindRecoveryTarget `json:"targets"`
 }
 
+// CanvasBindRecoveryTarget remembers one refused target. Revision is the canvas
+// revision the refusing bind read; zero means the refusal did not depend on
+// the canvas (the task itself names another node or canvas).
 type CanvasBindRecoveryTarget struct {
-	NodeID                  string `json:"nodeId"`
-	OutputIndex             int    `json:"outputIndex"`
-	Reason                  string `json:"reason"`
-	NodePresent             bool   `json:"nodePresent"`
-	NodeTaskID              string `json:"nodeTaskId,omitempty"`
-	NodeTopLevelTaskID      string `json:"nodeTopLevelTaskId,omitempty"`
-	NodeType                string `json:"nodeType,omitempty"`
-	NodeClientOperationID   string `json:"nodeClientOperationId,omitempty"`
-	NodeStatus              string `json:"nodeStatus,omitempty"`
-	NodeHasBindingOccupancy bool   `json:"nodeHasBindingOccupancy"`
+	NodeID      string `json:"nodeId"`
+	OutputIndex int    `json:"outputIndex"`
+	Reason      string `json:"reason"`
+	Revision    int64  `json:"revision,omitempty"`
 }
 
 // DecodeCanvasBindRecovery accepts only the marker written by this package.
@@ -37,14 +37,14 @@ func DecodeCanvasBindRecovery(raw *string) (CanvasBindRecovery, bool) {
 		return CanvasBindRecovery{}, false
 	}
 	var state CanvasBindRecovery
-	if json.Unmarshal([]byte(strings.TrimPrefix(*raw, canvasBindRecoveryPrefix)), &state) != nil || state.Version != 3 {
+	if json.Unmarshal([]byte(strings.TrimPrefix(*raw, canvasBindRecoveryPrefix)), &state) != nil || state.Version != canvasBindRecoveryVersion {
 		return CanvasBindRecovery{}, false
 	}
 	return state, true
 }
 
 func EncodeCanvasBindRecovery(state CanvasBindRecovery) (*string, error) {
-	state.Version = 3
+	state.Version = canvasBindRecoveryVersion
 	encoded, err := json.Marshal(state)
 	if err != nil {
 		return nil, err
@@ -70,7 +70,6 @@ func (state *CanvasBindRecovery) Upsert(target CanvasBindRecoveryTarget) {
 		return
 	}
 	target.NodeID = strings.TrimSpace(target.NodeID)
-	target.NodeTaskID = strings.TrimSpace(target.NodeTaskID)
 	for i := range state.Targets {
 		if state.Targets[i].NodeID == target.NodeID && state.Targets[i].OutputIndex == target.OutputIndex {
 			state.Targets[i] = target

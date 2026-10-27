@@ -43,7 +43,7 @@ func TestCanvasBindRecoveryStopsTerminalFailuresAndResumesWhenNodeReturns(t *tes
 			t.Fatal(err)
 		}
 		marker, ok := localtask.DecodeCanvasBindRecovery(stored.RecoveryOutcome)
-		if !ok || len(marker.Targets) != 1 || marker.Targets[0].Reason != "node_task_mismatch" || marker.Targets[0].NodeTaskID != "other-task" {
+		if !ok || len(marker.Targets) != 1 || marker.Targets[0].Reason != "node_task_mismatch" || marker.Targets[0].Revision != canvasBindTestRevision(t, svc, canvasID) {
 			t.Fatalf("mismatch marker = %#v, raw=%v", marker, stored.RecoveryOutcome)
 		}
 
@@ -102,7 +102,7 @@ func TestCanvasBindRecoveryStopsTerminalFailuresAndResumesWhenNodeReturns(t *tes
 			t.Fatal(err)
 		}
 		marker, ok := localtask.DecodeCanvasBindRecovery(stored.RecoveryOutcome)
-		if !ok || len(marker.Targets) != 1 || marker.Targets[0].Reason != "node_deleted" || marker.Targets[0].NodePresent {
+		if !ok || len(marker.Targets) != 1 || marker.Targets[0].Reason != "node_deleted" || marker.Targets[0].Revision != canvasBindTestRevision(t, svc, canvasID) {
 			t.Fatalf("deleted marker = %#v, raw=%v", marker, stored.RecoveryOutcome)
 		}
 
@@ -166,44 +166,133 @@ func canvasBindTraceCount(t *testing.T, svc *Service) int {
 func TestCanvasBindRecoveryUsesFailureSnapshot(t *testing.T) {
 	svc, canvasID, revision := newAssistantTurnService(t)
 	task := seedCanvasBindRecoveryTask(t, svc, canvasID, revision, "bind-race", "node-race", "other-task")
+	failedAt := canvasBindTestRevision(t, svc, canvasID)
+	// The canvas moves on after the refusal. The marker must keep the revision
+	// the failed bind read, not the current one, or that write would be missed.
 	setCanvasBindTestNodeTaskID(t, svc, canvasID, "node-race", task.ID)
 
 	err := &operations.Error{Reason: "node_task_mismatch", Details: map[string]any{
-		"canvasBinding": map[string]any{
-			"nodePresent": true, "nodeTaskId": "other-task", "nodeTopLevelTaskId": "",
-			"nodeType": "text", "nodeClientOperationId": "", "nodeStatus": "",
-			"nodeHasBindingOccupancy": true,
-		},
+		"canvasBinding": map[string]any{"nodePresent": true, "nodeTaskId": "other-task", "revision": failedAt},
 	}}
 	marker, ok := canvasBindRecoveryTarget(canvasBindTarget{nodeID: "node-race", outputIndex: 0}, err)
-	if !ok || marker.NodeTaskID != "other-task" || marker.NodePresent != true || !marker.NodeHasBindingOccupancy {
-		t.Fatalf("marker did not preserve failed transaction state: ok=%v marker=%+v", ok, marker)
+	if !ok || marker.Revision != failedAt {
+		t.Fatalf("marker did not preserve failed transaction revision: ok=%v marker=%+v want=%d", ok, marker, failedAt)
+	}
+	unchanged, stateErr := svc.canvasBindTargetUnchanged(task, marker)
+	if stateErr != nil || unchanged {
+		t.Fatalf("write after refusal was not detected: unchanged=%v err=%v", unchanged, stateErr)
+	}
+
+	missing := &operations.Error{Reason: "node_task_mismatch", Details: map[string]any{"canvasBinding": map[string]any{"nodePresent": true}}}
+	if _, ok := canvasBindRecoveryTarget(canvasBindTarget{nodeID: "node-race"}, missing); ok {
+		t.Fatal("refusal without a revision must not be recorded")
 	}
 }
 
-func TestCanvasBindRecoveryTracksPendingVideoIdentity(t *testing.T) {
+func TestCanvasBindRecoveryRetriesPendingVideoAfterClientOperationRestored(t *testing.T) {
 	svc, canvasID, revision := newAssistantTurnService(t)
-	_ = seedCanvasBindRecoveryTask(t, svc, canvasID, revision, "bind-video", "node-video", "")
-	setCanvasBindTestNodeType(t, svc, canvasID, "node-video", "video")
-	setCanvasBindTestNodeMetadata(t, svc, canvasID, "node-video", map[string]any{
-		"taskId": "", "taskClientOperationId": "operation-old", "status": "",
-	})
-	marker := localtask.CanvasBindRecoveryTarget{
-		NodeID: "node-video", Reason: "node_task_mismatch", NodePresent: true,
-		NodeType: "video", NodeClientOperationID: "operation-old", NodeHasBindingOccupancy: false,
+	now := time.Now()
+	operationID := "operation-video-pending"
+	resource := model.Resource{ID: "res-pending-video", UserID: "local", Kind: "video", Status: model.ResourceStatusReady, MimeType: "video/mp4", Size: 128, CreatedAt: now, UpdatedAt: now}
+	asset := model.Asset{ID: "asset-pending-video", UserID: "local", PayloadJSON: `{"data":{"storageKey":"resource:res-pending-video"}}`, CreatedAt: now, UpdatedAt: now}
+	task := model.Task{
+		ID: "bind-video-pending", UserID: "local", ProjectID: canvasID, Type: "canvas_video", Status: model.TaskStatusSucceeded,
+		ClientOperationID: &operationID, InputJSON: `{"metadata":{"source":"canvas","nodeId":"node-video-pending"}}`,
+		ResultJSON: `{"mode":"video","video":{"resourceId":"res-pending-video","storageKey":"resource:res-pending-video"}}`,
+		CreatedAt:  now, UpdatedAt: now, CompletedAt: &now,
 	}
-	// The task id stays empty, but restoring the pending client operation id
-	// changes whether canBindPendingVideoNode can accept the node.
-	unchanged, err := svc.canvasBindTargetUnchanged(model.Task{UserID: "local", ProjectID: canvasID}, marker)
-	if err != nil || !unchanged {
-		t.Fatalf("initial pending-video state changed: unchanged=%v err=%v", unchanged, err)
+	output := localtask.CanonicalOutput{OutputIndex: 0, MediaType: "video", MaterializedAssetID: asset.ID, ResourceID: resource.ID, ProviderArtifactRef: "resource:" + resource.ID}
+	payload, err := localtask.EncodeOutputPayload(output)
+	if err != nil {
+		t.Fatal(err)
 	}
-	setCanvasBindTestNodeMetadata(t, svc, canvasID, "node-video", map[string]any{
-		"taskId": "", "taskClientOperationId": "operation-new", "status": "",
+	result := model.Result{ID: "result-pending-video", UserID: "local", TaskID: task.ID, Kind: "generation_output", Payload: payload, CreatedAt: now}
+	for _, item := range []any{&resource, &asset, &task, &result} {
+		if err := svc.Database().Create(item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	canvasDoc, err := json.Marshal(map[string]any{
+		"id": canvasID, "title": "视频待绑定", "revision": revision,
+		"nodes": []any{map[string]any{
+			"id": "node-video-pending", "type": "video",
+			"metadata": map[string]any{"taskClientOperationId": "operation-other"},
+		}}, "connections": []any{},
 	})
-	unchanged, err = svc.canvasBindTargetUnchanged(model.Task{UserID: "local", ProjectID: canvasID}, marker)
-	if err != nil || unchanged {
-		t.Fatalf("pending-video identity recovery was not detected: unchanged=%v err=%v", unchanged, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpsertUserCanvasProject("local", canvasDoc); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.recoverCanvasTaskBindings(task); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := svc.repo.Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if marker, ok := localtask.DecodeCanvasBindRecovery(stored.RecoveryOutcome); !ok || len(marker.Targets) != 1 {
+		t.Fatalf("pending video with another operation id did not record a marker: %v", stored.RecoveryOutcome)
+	}
+	beforeRetryBinds := canvasBindTraceCount(t, svc)
+	if err := svc.recoverCanvasTaskBindings(*stored); err != nil {
+		t.Fatal(err)
+	}
+	if got := canvasBindTraceCount(t, svc); got != beforeRetryBinds {
+		t.Fatalf("unchanged canvas retried canvas.bind: before=%d after=%d", beforeRetryBinds, got)
+	}
+
+	// Only the client operation id comes back; the task id stays empty.
+	setCanvasBindTestNodeMetadata(t, svc, canvasID, "node-video-pending", map[string]any{"taskClientOperationId": operationID})
+	if err := svc.recoverCanvasTaskBindings(*stored); err != nil {
+		t.Fatal(err)
+	}
+	final, err := svc.repo.Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.RecoveryOutcome != nil {
+		t.Fatalf("restored pending video kept recovery marker: %q", *final.RecoveryOutcome)
+	}
+	if meta := canvasBindTestNodeMetadata(t, svc, canvasID, "node-video-pending"); meta["taskId"] != task.ID {
+		t.Fatalf("restored pending video did not bind: %#v", meta)
+	}
+}
+
+func TestCanvasBindRecoveryRetriesOnceAfterUnrelatedEdit(t *testing.T) {
+	svc, canvasID, revision := newAssistantTurnService(t)
+	task := seedCanvasBindRecoveryTask(t, svc, canvasID, revision, "bind-unrelated", "node-unrelated", "other-task")
+	if err := svc.recoverCanvasTaskBindings(task); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := svc.repo.Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An edit that does not touch the node still moves the revision: one retry,
+	// then the scanner is quiet again until the next edit.
+	addCanvasBindTestNode(t, svc, canvasID, "node-elsewhere", "")
+	before := canvasBindTraceCount(t, svc)
+	for pass := 0; pass < 3; pass++ {
+		current, err := svc.repo.Task(task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.recoverCanvasTaskBindings(*current); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := canvasBindTraceCount(t, svc); got != before+1 {
+		t.Fatalf("unrelated edit retried %d times, want 1", got-before)
+	}
+	final, err := svc.repo.Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker, ok := localtask.DecodeCanvasBindRecovery(final.RecoveryOutcome)
+	if !ok || len(marker.Targets) != 1 || marker.Targets[0].Revision != canvasBindTestRevision(t, svc, canvasID) {
+		t.Fatalf("retry did not refresh marker revision: %#v (stored=%v)", marker, stored.RecoveryOutcome)
 	}
 }
 
@@ -251,7 +340,7 @@ func TestCanvasBindRecoveryBindsAfterVideoContentCleared(t *testing.T) {
 		t.Fatal(err)
 	}
 	marker, ok := localtask.DecodeCanvasBindRecovery(stored.RecoveryOutcome)
-	if !ok || len(marker.Targets) != 1 || !marker.Targets[0].NodeHasBindingOccupancy {
+	if !ok || len(marker.Targets) != 1 || marker.Targets[0].Revision <= 0 {
 		t.Fatalf("occupied video marker = %#v, raw=%v", marker, stored.RecoveryOutcome)
 	}
 
@@ -313,6 +402,15 @@ func bindTestText(taskID string) string {
 	}
 }
 
+func canvasBindTestRevision(t *testing.T, svc *Service, canvasID string) int64 {
+	t.Helper()
+	project, err := svc.repo.CanvasProjectMetadata("local", canvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return project.Revision
+}
+
 func canvasBindTestDocument(t *testing.T, svc *Service, canvasID string) map[string]any {
 	t.Helper()
 	raw, err := svc.UserCanvasProject("local", canvasID)
@@ -346,18 +444,6 @@ func setCanvasBindTestNodeTaskID(t *testing.T, svc *Service, canvasID, nodeID, t
 		node := rawNode.(map[string]any)
 		if node["id"] == nodeID {
 			node["metadata"].(map[string]any)["taskId"] = taskID
-		}
-	}
-	saveCanvasBindTestDocument(t, svc, doc)
-}
-
-func setCanvasBindTestNodeType(t *testing.T, svc *Service, canvasID, nodeID, nodeType string) {
-	t.Helper()
-	doc := canvasBindTestDocument(t, svc, canvasID)
-	for _, rawNode := range doc["nodes"].([]any) {
-		node := rawNode.(map[string]any)
-		if node["id"] == nodeID {
-			node["type"] = nodeType
 		}
 	}
 	saveCanvasBindTestDocument(t, svc, doc)

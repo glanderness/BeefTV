@@ -74,11 +74,14 @@ func (s *Service) bindTaskOutputOnce(userID string, patch TaskOutputBind) (TaskO
 	if err != nil {
 		return TaskOutputBindResult{}, err
 	}
+	// Refusals carry the revision this read observed, so a caller can tell
+	// whether the canvas changed since the refusal without re-reading it.
+	refusal := map[string]any{"revision": canvasRevisionValue(doc)}
 	node := findCanvasNode(doc, patch.NodeID)
 	if node == nil {
 		return TaskOutputBindResult{}, &kernel.AppError{
 			Status: http.StatusNotFound, Reason: kernel.ErrorReason("node_deleted"),
-			Message: "原任务节点已删除，未重新创建节点",
+			Message: "原任务节点已删除，未重新创建节点", Details: refusal,
 		}
 	}
 	if got := nodeString(nodeMetadata(node), "taskId"); got != strings.TrimSpace(patch.TaskID) && !canBindEmptyRenderNode(node, patch) && !canBindPendingVideoNode(node, patch) {
@@ -88,7 +91,7 @@ func (s *Service) bindTaskOutputOnce(userID string, patch TaskOutputBind) (TaskO
 		}
 		return TaskOutputBindResult{}, &kernel.AppError{
 			Status: http.StatusConflict, Reason: kernel.ErrorReason("node_task_mismatch"),
-			Message: message,
+			Message: message, Details: refusal,
 		}
 	}
 	metadata := nodeMetadata(node)
@@ -386,24 +389,17 @@ func canBindEmptyRenderNode(node map[string]any, patch TaskOutputBind) bool {
 	if !patch.AllowEmptyVideo || patch.MediaType != "video" || nodeString(node, "type") != "video" {
 		return false
 	}
-	return !NodeHasBindingOccupancy(node)
-}
-
-// NodeHasBindingOccupancy mirrors the empty-render guard used before a video
-// bind. It includes both node-level and metadata-level fields because either
-// location can keep a node occupied and block recovery.
-func NodeHasBindingOccupancy(node map[string]any) bool {
 	metadata := nodeMetadata(node)
 	for _, fields := range []map[string]any{node, metadata} {
 		for _, key := range []string{"taskId", "content", "storageKey", "assetId", "resourceId", "url", "dataUrl"} {
 			if value, exists := fields[key]; exists && value != nil {
 				if text, ok := value.(string); !ok || text != "" {
-					return true
+					return false
 				}
 			}
 		}
 	}
-	return false
+	return true
 }
 
 func alreadyBound(metadata map[string]any, patch TaskOutputBind) bool {
