@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -185,6 +186,67 @@ func (r *Repository) HasAPICallLogForTask(taskID string) (bool, error) {
 }
 
 var ErrAmbiguousImageCreateReceipts = errors.New("图片包含多条已接受或结果未知的创建回执，不能重新生成")
+
+type ProviderBillingEvidence struct {
+	TaskID              string
+	RouteRun            int
+	ProviderRequestID   string
+	Source              string
+	UsageState          string
+	BillingState        string
+	UsageStatePresent   bool
+	BillingStatePresent bool
+}
+
+// TaskProviderBillingEvidence is a legacy read fallback for tasks created
+// before BillingEvidence was persisted on the task row. It only accepts a
+// formal BeefAPI log from the task's current route run.
+func (r *Repository) TaskProviderBillingEvidence(taskIDs []string) (map[string]ProviderBillingEvidence, error) {
+	facts := make(map[string]ProviderBillingEvidence, len(taskIDs))
+	if len(taskIDs) == 0 {
+		return facts, nil
+	}
+	var rows []ProviderBillingEvidence
+	err := r.db.Model(&model.ApiCallLog{}).
+		Select("api_call_logs.task_id, api_call_logs.route_run, api_call_logs.provider_request_id, api_call_logs.source, api_call_logs.usage_state, api_call_logs.billing_state, api_call_logs.usage_state_present, api_call_logs.billing_state_present").
+		Joins("JOIN tasks ON tasks.id = api_call_logs.task_id AND tasks.user_id = api_call_logs.user_id AND tasks.route_run = api_call_logs.route_run").
+		Where("api_call_logs.task_id IN ? AND api_call_logs.source = ?", taskIDs, "beefapi").
+		Where("api_call_logs.usage_state_present = ? OR api_call_logs.billing_state_present = ?", true, true).
+		Where(`api_call_logs.id = (SELECT latest.id FROM api_call_logs latest WHERE latest.task_id = api_call_logs.task_id AND latest.user_id = api_call_logs.user_id AND latest.route_run = api_call_logs.route_run AND latest.source = ? AND (latest.usage_state_present = ? OR latest.billing_state_present = ?) ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1)`, "beefapi", true, true).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		facts[row.TaskID] = row
+	}
+	return facts, nil
+}
+
+func (r *Repository) UpdateTaskBillingEvidence(taskID, userID string, evidence *model.TaskBillingEvidence) error {
+	if evidence == nil {
+		return nil
+	}
+	encoded, err := json.Marshal(evidence)
+	if err != nil {
+		return err
+	}
+	result := r.db.Model(&model.Task{}).Where("id = ? AND user_id = ? AND route_run = ?", taskID, userID, evidence.RouteRun).
+		Updates(map[string]any{"billing_evidence": string(encoded), "updated_at": time.Now()})
+	return result.Error
+}
+
+// LatestBeefAPIImageJobIDForTask only reads the current route run. A job ID
+// from an earlier retry is not a valid recovery identity for the new run.
+func (r *Repository) LatestBeefAPIImageJobIDForTask(task model.Task) (string, error) {
+	var row model.ApiCallLog
+	err := r.db.Where("task_id = ? AND user_id = ? AND route_run = ? AND source = ? AND capability = ? AND request_kind = ? AND method = ? AND image_job_id <> ?", task.ID, task.UserID, task.RouteRun, "beefapi", "image", "create", "POST", "").
+		Order("created_at DESC, id DESC").First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", nil
+	}
+	return strings.TrimSpace(row.ImageJobID), err
+}
 
 // Recovery requires one unambiguous create receipt. A later failed/unknown
 // create must never be hidden by selecting an earlier successful response.

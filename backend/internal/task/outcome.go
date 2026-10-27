@@ -14,15 +14,25 @@ const (
 	RecoveryUnrecoverable = "unrecoverable"
 )
 
+func normalizeBillingState(state string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(state), "-", "_"))
+}
+
 // OutcomeFacts 来自持久化证据。读失败必须显式标记，不能当成没有证据。
-// 渠道未声明某类失败不收费时，ConfirmedUncharged 保持 false。
+// Billing* 保留上游原值与字段存在性，空值和缺键不是同一事实。
 type OutcomeFacts struct {
 	Unreadable            bool
 	DispatchState         string
 	HasImageReceipt       bool
 	ImageResponseAccepted bool
 	SafeImageReplay       bool
-	ConfirmedUncharged    bool
+	BillingSource         string
+	UsageState            string
+	UsageStatePresent     bool
+	BillingState          string
+	BillingStatePresent   bool
+	// ConfirmedUncharged is retained for non-BeefAPI legacy evidence.
+	ConfirmedUncharged bool
 }
 
 func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) Outcome {
@@ -51,6 +61,27 @@ func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) Out
 	if task.Type == model.TaskTypeDepthCapture || facts.ConfirmedUncharged || (!facts.ImageResponseAccepted && task.ProviderRequestID == "" && (facts.DispatchState == "not_sent" || facts.DispatchState == "rejected_no_job" || ((task.Stage == "request_not_sent" || task.Stage == "请求尚未提交") && facts.DispatchState != "accepted" && facts.DispatchState != "submission_unknown"))) {
 		regenerate = "allowed"
 	}
+	if facts.BillingSource == "beefapi" {
+		if facts.UsageStatePresent {
+			switch normalizeBillingState(facts.UsageState) {
+			case "failed", "refunded", "not_charged", "uncharged", "no_charge", "refund_completed":
+				regenerate = "allowed"
+			case "pending", "":
+				regenerate = "blocked"
+			case "completed", "settled", "charged":
+				regenerate = "confirm"
+			}
+		} else if facts.BillingStatePresent {
+			switch normalizeBillingState(facts.BillingState) {
+			case "refunded", "failed", "not_charged", "uncharged", "no_charge", "refund_completed":
+				regenerate = "allowed"
+			case "":
+				regenerate = "blocked"
+			case "settled", "completed", "charged":
+				regenerate = "confirm"
+			}
+		}
+	}
 	// 只读结构化上游错误码；不从 Error 文案重新推断审核或计费。
 	if d := task.FailureDiagnostics; d != nil {
 		code := d.ProviderCode
@@ -61,7 +92,7 @@ func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) Out
 	if task.RecoveryOutcome != nil {
 		switch *task.RecoveryOutcome {
 		case RecoveryUnrecoverable:
-			return out("failed", "confirm", "result_unrecoverable")
+			return out("failed", regenerate, "result_unrecoverable")
 		case RecoveryNoResult:
 			return out("failed", regenerate, "no_result")
 		}

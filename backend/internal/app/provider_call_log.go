@@ -110,6 +110,14 @@ func (s *Service) enrichAPICallLogPayload(log *model.ApiCallLog, payload map[str
 		log.ProviderRequestID = firstNonEmpty(nestedTaskID, log.ProviderRequestID)
 	}
 	log.ProviderStatus = strings.ToLower(firstNonEmpty(stringField(payload, "status"), log.ProviderStatus))
+	if value, present := providerStringField(payload, "usage_state", "usageState"); present {
+		log.UsageStatePresent = true
+		log.UsageState = strings.ToLower(value)
+	}
+	if value, present := providerStringField(payload, "billing_state", "billingState"); present {
+		log.BillingStatePresent = true
+		log.BillingState = strings.ToLower(value)
+	}
 	if log.ProviderStatus == "failed" || log.ProviderStatus == "cancelled" || log.ProviderStatus == "expired" {
 		log.Status = model.ApiCallStatusFailed
 		errorCode, errorMessage := providerFailureDetails(payload)
@@ -123,6 +131,16 @@ func (s *Service) enrichAPICallLogPayload(log *model.ApiCallLog, payload map[str
 			log.MediaCount = len(images)
 		}
 	}
+}
+
+func providerStringField(payload map[string]any, keys ...string) (string, bool) {
+	for _, key := range keys {
+		if _, present := payload[key]; !present {
+			continue
+		}
+		return strings.TrimSpace(stringField(payload, key)), true
+	}
+	return "", false
 }
 
 func providerResponsePayloads(responseBody []byte) []map[string]any {

@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 26
+const CurrentSchemaVersion int64 = 27
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -124,6 +124,9 @@ func canonicalLocalMigrations() []localMigration {
 		}},
 		{version: 26, name: "task-recovery-outcome", apply: func(tx *gorm.DB) error {
 			return ensureSQLiteColumn(tx, "tasks", "recovery_outcome", "TEXT")
+		}},
+		{version: 27, name: "task-billing-evidence", apply: func(tx *gorm.DB) error {
+			return ensureSQLiteColumn(tx, "tasks", "billing_evidence", "TEXT")
 		}},
 	}
 }

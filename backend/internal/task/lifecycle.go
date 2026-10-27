@@ -13,18 +13,32 @@ import (
 	"infinite-canvas/backend/internal/repository"
 )
 
+type retryOperationStore interface {
+	RetryTaskWithOperation(userID string, prepared *model.Task, limit int, operationID, payloadHash string) (*model.Task, error)
+	RetryOperationResult(userID, operationID, payloadHash string) (*model.Task, bool, error)
+}
+
+type retryOperation struct {
+	id   string
+	hash string
+}
+
 func (s *Service) Retry(userID, id string) (*model.Task, error) {
-	return s.retry(userID, id, nil)
+	return s.retry(userID, id, nil, nil)
+}
+
+func (s *Service) RetryWithOperation(userID, id, operationID, payloadHash string) (*model.Task, error) {
+	return s.retry(userID, id, nil, &retryOperation{id: operationID, hash: payloadHash})
 }
 
 // RetryWithCredentialRefresh is an in-process retry command. It can update
 // only connection credentials of an unaccepted task; request content and the
 // original admission identity are immutable. HTTP callers cannot set it.
 func (s *Service) RetryWithCredentialRefresh(userID, id, expectedInputJSON, inputJSON string) (*model.Task, error) {
-	return s.retry(userID, id, &retryCredentialRefresh{expectedInputJSON, inputJSON})
+	return s.retry(userID, id, &retryCredentialRefresh{expectedInputJSON, inputJSON}, nil)
 }
 
-func (s *Service) retry(userID, id string, refresh *retryCredentialRefresh) (*model.Task, error) {
+func (s *Service) retry(userID, id string, refresh *retryCredentialRefresh, operation *retryOperation) (*model.Task, error) {
 	if s.deps.Runtime == nil || s.deps.Images == nil || s.deps.Failures == nil || s.deps.Secrets == nil || s.deps.Catalog == nil || s.deps.Media == nil || s.deps.Policy == nil || s.deps.Projects == nil || s.deps.Present == nil {
 		return nil, unavailable()
 	}
@@ -33,6 +47,25 @@ func (s *Service) retry(userID, id string, refresh *retryCredentialRefresh) (*mo
 	}
 	if s.store == nil {
 		return nil, kernel.WrapAppError(kernel.CodeInternal, "任务服务不可用", errStoreRequired)
+	}
+	if operation != nil {
+		store, ok := s.store.(retryOperationStore)
+		if !ok {
+			return nil, unavailable()
+		}
+		replayed, found, err := store.RetryOperationResult(userID, operation.id, operation.hash)
+		if err != nil {
+			if errors.Is(err, repository.ErrRetryOperationConflict) {
+				return nil, kernel.NewAppError(kernel.CodeConflict, "同一操作 ID 已用于不同的重试任务")
+			}
+			if errors.Is(err, repository.ErrRetryOperationInProgress) {
+				return nil, kernel.NewAppError(kernel.CodeConflict, "同一重试操作正在执行，请稍后重试")
+			}
+			return nil, err
+		}
+		if found {
+			return presentTask(s.deps.Present, *replayed)
+		}
 	}
 	task, err := s.store.TaskForUser(userID, id)
 	if err != nil {
@@ -118,6 +151,12 @@ func (s *Service) retry(userID, id string, refresh *retryCredentialRefresh) (*mo
 			return nil, unavailable()
 		}
 		task, err = store.RetryWithExpectedInput(userID, task, limit, refresh.expectedInputJSON)
+	} else if operation != nil {
+		store, ok := s.store.(retryOperationStore)
+		if !ok {
+			return nil, unavailable()
+		}
+		task, err = store.RetryTaskWithOperation(userID, task, limit, operation.id, operation.hash)
 	} else {
 		task, err = s.store.Retry(userID, task, limit)
 	}

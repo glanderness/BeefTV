@@ -67,6 +67,31 @@ func (r *Repository) ImageRecoveryEvidence(taskIDs []string) (map[string]ImageRe
 	return facts, nil
 }
 
+func (r *Repository) FailedVideoTasksForRecovery(afterID string, limit int) ([]model.Task, error) {
+	var tasks []model.Task
+	if limit <= 0 {
+		limit = 8
+	}
+	err := r.db.Where("tasks.id > ? AND tasks.status = ? AND tasks.provider_request_id <> ?", afterID, model.TaskStatusFailed, "").
+		Where("tasks.type LIKE ? OR tasks.type LIKE ? OR tasks.type LIKE ?", "canvas_video%", "video_%", "%upscale%").
+		Where("(tasks.recovery_outcome IS NULL OR tasks.recovery_outcome = '') AND (tasks.next_poll_at IS NULL OR tasks.next_poll_at <= ?)", time.Now()).
+		Order("tasks.id ASC").Limit(limit).Find(&tasks).Error
+	return tasks, err
+}
+
+func (r *Repository) FinishProviderRecoveryWait(task model.Task, nextPollAt time.Time) error {
+	result := taskLeaseWriter(r.db.Model(&model.Task{}), task.LeaseOwner).
+		Where("id = ? AND user_id = ? AND status = ? AND route_run = ?", task.ID, task.UserID, model.TaskStatusFailed, task.RouteRun).
+		Updates(map[string]any{"next_poll_at": nextPollAt, "updated_at": time.Now()})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrTaskStateConflict
+	}
+	return nil
+}
+
 func (r *Repository) FailedImagesForRecovery(afterID string, limit int) ([]model.Task, error) {
 	var tasks []model.Task
 	err := r.db.Where("tasks.id > ? AND tasks.type = ? AND tasks.status = ?", afterID, "canvas_image", model.TaskStatusFailed).

@@ -81,6 +81,7 @@ type TransportObservation struct {
 	DeclaredResponseBytes int64
 	ReceivedBytes         int64
 	RequestID             string
+	ResponseHeaders       http.Header
 	Outcome               string
 }
 
@@ -155,6 +156,7 @@ type CallMeta struct {
 	VideoSeconds      int
 	RequestKind       string
 	ProviderRequestID string
+	RouteRun          int
 	ConcurrencyLimit  int
 }
 

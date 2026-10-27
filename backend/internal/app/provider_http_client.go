@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,9 +12,12 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
+	"os"
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 )
@@ -182,7 +186,7 @@ func mediaBytes(media providerMedia) ([]byte, string, error) {
 	return generation.MediaBytes(media)
 }
 
-func recordProviderRequest(service *Service, req *http.Request, startedAt time.Time, statusCode int, responseBody []byte, requestErr error) {
+func recordProviderRequest(service *Service, req *http.Request, startedAt time.Time, statusCode int, responseHeaders http.Header, responseBody []byte, requestErr error) {
 	if req == nil || service == nil {
 		return
 	}
@@ -209,13 +213,24 @@ func recordProviderRequest(service *Service, req *http.Request, startedAt time.T
 	if req.Header.Get("x-goog-api-key") != "" {
 		apiFormat = "gemini"
 	}
+	source := "backend-task"
+	if call.Capability == "image" || call.Capability == "video" {
+		origin := req.URL.Scheme + "://" + req.URL.Host
+		testOrigin := strings.TrimRight(strings.TrimSpace(os.Getenv("BEEFTV_ENTERPRISE_TEST_ORIGIN")), "/")
+		if beefapi.IsManagedChannel(call.ChannelID, "", origin) || generation.IsBeefAPIHost(req.URL.Hostname()) || (testOrigin != "" && strings.TrimRight(origin, "/") == testOrigin) {
+			source = "beefapi"
+		}
+	}
+	usageState, usageStatePresent, billingState, billingStatePresent := providerBillingStates(responseBody)
 	callLog := model.ApiCallLog{
 		UserID: call.UserID, TraceID: call.TraceID, RequestID: call.RequestID, ChannelID: call.ChannelID, TaskID: call.TaskID,
-		Source: "backend-task", Capability: call.Capability, Operation: call.Operation,
+		Source: source, Capability: call.Capability, Operation: call.Operation,
 		RequestKind: requestKind,
 		APIFormat:   apiFormat, Method: req.Method, Path: req.URL.Path, Model: call.Model,
-		Status: status, StatusCode: statusCode, DurationMs: time.Since(startedAt).Milliseconds(),
-		ErrorCode: errorCode, Error: errorText, ConcurrencyLimit: call.ConcurrencyLimit, UpstreamURL: req.URL.Scheme + "://" + req.URL.Host + req.URL.Path,
+		Status: status, StatusCode: statusCode, DurationMs: time.Since(startedAt).Milliseconds(), RouteRun: call.RouteRun,
+		UsageState: usageState, UsageStatePresent: usageStatePresent, BillingState: billingState, BillingStatePresent: billingStatePresent,
+		ImageJobID: imageJobIDFromHeaders(responseHeaders),
+		ErrorCode:  errorCode, Error: errorText, ConcurrencyLimit: call.ConcurrencyLimit, UpstreamURL: req.URL.Scheme + "://" + req.URL.Host + req.URL.Path,
 		ProviderRequestID: call.ProviderRequestID, RequestContentType: req.Header.Get("Content-Type"), RequestBody: requestPayloadForLog(req), ResponseBody: SanitizeAPICallPayload(responseBody, ""),
 	}
 	if code, message := ChannelSlotFailureDetails(requestErr); code != "" {
@@ -239,6 +254,65 @@ func recordProviderRequest(service *Service, req *http.Request, startedAt time.T
 		callLog.ProviderRequestID = call.ProviderRequestID
 	}
 	_ = service.LogAPICall(callLog)
+}
+
+func providerBillingStates(body []byte) (usage string, usagePresent bool, billing string, billingPresent bool) {
+	var payload any
+	if json.Unmarshal(body, &payload) != nil {
+		return "", false, "", false
+	}
+	var visit func(any)
+	visit = func(value any) {
+		if usagePresent && billingPresent {
+			return
+		}
+		switch item := value.(type) {
+		case map[string]any:
+			for key, nested := range item {
+				switch strings.ToLower(strings.ReplaceAll(key, "-", "_")) {
+				case "usage_state", "usagestate":
+					usagePresent = true
+					if text, ok := nested.(string); ok {
+						usage = text
+					}
+				case "billing_state", "billingstate":
+					billingPresent = true
+					if text, ok := nested.(string); ok {
+						billing = text
+					}
+				}
+				visit(nested)
+			}
+		case []any:
+			for _, nested := range item {
+				visit(nested)
+			}
+		}
+	}
+	visit(payload)
+	return usage, usagePresent, billing, billingPresent
+}
+
+func imageJobIDFromHeaders(headers http.Header) string {
+	if headers == nil {
+		return ""
+	}
+	if id := strings.TrimSpace(headers.Get("X-Image-Job-Id")); id != "" {
+		return id
+	}
+	location := strings.TrimSpace(headers.Get("Location"))
+	if location == "" {
+		return ""
+	}
+	parsed, err := url.Parse(location)
+	if err != nil || !strings.Contains(parsed.Path, "/images/jobs/") {
+		return ""
+	}
+	parts := strings.Split(strings.TrimRight(parsed.Path, "/"), "/")
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(parts[len(parts)-1])
 }
 
 func providerRequestErrorDetails(err error) (string, string) {

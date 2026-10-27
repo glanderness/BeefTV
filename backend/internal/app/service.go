@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -291,18 +292,102 @@ func (s *Service) refreshTaskProviderState(task *model.Task) error {
 }
 
 func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
-	if s.IsDraining() {
+	return s.retryTask(userID, id, "")
+}
+
+func (s *Service) RetryTaskWithOperation(userID, id, clientOperationID string) (*model.Task, error) {
+	return s.retryTask(userID, id, clientOperationID)
+}
+
+func (s *Service) retryTask(userID, id, clientOperationID string) (*model.Task, error) {
+	if strings.TrimSpace(clientOperationID) == "" && s.IsDraining() {
 		return s.taskDomain().Retry(userID, id)
 	}
-	if task, err := s.repo.TaskForUser(userID, id); err == nil {
-		if task.Status == model.TaskStatusSucceeded && deliveryPaused(task.Stage) {
-			return s.resumeGenerationDownload(*task)
-		}
-		if restored, handled, err := s.recoverAcceptedImage(*task); handled {
-			return restored, err
+	var task *model.Task
+	if s.repo != nil {
+		if loaded, err := s.repo.TaskForUser(userID, id); err == nil {
+			task = loaded
 		}
 	}
-	return s.taskDomain().Retry(userID, id)
+	operationID := strings.TrimSpace(clientOperationID)
+	payloadHash := ""
+	if operationID != "" && task != nil {
+		payload := map[string]any{"taskId": id, "routeRun": task.RouteRun, "action": "retry"}
+		encoded, _ := json.Marshal(payload)
+		payloadHash = operations.PayloadHash("task.retry", operations.CanonicalJSON(encoded))
+		if replayed, found, err := s.repo.RetryOperationResult(userID, operationID, payloadHash); err != nil {
+			return nil, err
+		} else if found {
+			return replayed, nil
+		}
+	}
+	freeRecovery := task != nil && s.freeRetryPath(*task)
+	operationClaimed := false
+	if operationID != "" && freeRecovery && !s.IsDraining() {
+		if err := s.repo.BeginRetryOperation(userID, operationID, payloadHash); err != nil {
+			return nil, err
+		}
+		operationClaimed = true
+	}
+	var result *model.Task
+	var err error
+	if s.IsDraining() {
+		if operationID != "" {
+			result, err = s.taskDomain().RetryWithOperation(userID, id, operationID, payloadHash)
+		} else {
+			result, err = s.taskDomain().Retry(userID, id)
+		}
+	} else if task != nil && task.Status == model.TaskStatusSucceeded && deliveryPaused(task.Stage) {
+		result, err = s.resumeGenerationDownload(*task)
+	} else if task != nil {
+		if restored, handled, recoveryErr := s.recoverAcceptedImage(*task); handled {
+			result, err = restored, recoveryErr
+		} else if operationID != "" {
+			result, err = s.taskDomain().RetryWithOperation(userID, id, operationID, payloadHash)
+		} else {
+			result, err = s.taskDomain().Retry(userID, id)
+		}
+	} else if operationID != "" {
+		result, err = s.taskDomain().RetryWithOperation(userID, id, operationID, payloadHash)
+	} else {
+		result, err = s.taskDomain().Retry(userID, id)
+	}
+	if err != nil {
+		if operationClaimed {
+			// Free recovery may fail before the task reaches a terminal
+			// projection. Do not leave a running receipt that blocks a later
+			// retry of the same client operation after a transient failure.
+			_ = s.repo.AbortRetryOperation(userID, operationID, payloadHash)
+		}
+		return nil, err
+	}
+	if operationID != "" && freeRecovery && !s.IsDraining() {
+		if err := s.repo.CompleteRetryOperation(userID, operationID, payloadHash, "free_recovery", result); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+func (s *Service) freeRetryPath(task model.Task) bool {
+	if task.Status == model.TaskStatusSucceeded && deliveryPaused(task.Stage) {
+		return true
+	}
+	if task.Type != "canvas_image" || task.Status != model.TaskStatusFailed {
+		return false
+	}
+	receipt, err := s.repo.ImageCreateReceipt(task.UserID, task.ID)
+	if err != nil {
+		return false
+	}
+	if _, handled, receiptErr := imageResultFromReceipt(receipt); handled && receiptErr == nil {
+		return true
+	}
+	// An accepted BeefAPI image may only expose an asynchronous job ID in its
+	// creation response. Presence of that ID is enough to keep /retry on the
+	// query-only recovery path; imageJobResult performs the actual GET later.
+	jobID, err := s.repo.LatestBeefAPIImageJobIDForTask(task)
+	return err == nil && strings.TrimSpace(jobID) != ""
 }
 
 func (s *Service) CancelTask(ctx context.Context, userID string, id string) (*model.Task, error) {
