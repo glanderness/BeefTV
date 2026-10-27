@@ -13,9 +13,14 @@ func TestBillingEvidenceConfirmsNoChargeOnlyForExplicitStates(t *testing.T) {
 			t.Fatalf("state %q was not recognized as explicit no-charge evidence", state)
 		}
 	}
-	for _, state := range []string{"", "settled", "charged", "unknown", "failed"} {
+	for _, state := range []string{"", "settled", "charged", "unknown"} {
 		if billingEvidenceConfirmsNoCharge(state, "") {
 			t.Fatalf("state %q was treated as no-charge evidence", state)
+		}
+	}
+	for _, states := range [][2]string{{"failed", ""}, {"", "failed"}} {
+		if billingEvidenceConfirmsNoCharge(states[0], states[1]) {
+			t.Fatalf("billing states %q/%q were treated as explicit no-charge evidence", states[0], states[1])
 		}
 	}
 }
@@ -30,7 +35,7 @@ func TestTaskProviderBillingEvidenceReadsOnlyLatestSmallFields(t *testing.T) {
 	if err := db.Create(&model.ApiCallLog{
 		ID: "billing-evidence-log", UserID: task.UserID, TaskID: task.ID,
 		Capability: "video", RequestKind: "create", Method: "POST",
-		BillingState: "refunded", ResponseBody: `{"large":"must not be selected"}`, CreatedAt: now,
+		BillingState: "refunded", BillingStatePresent: true, ResponseBody: `{"large":"must not be selected"}`, CreatedAt: now,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}

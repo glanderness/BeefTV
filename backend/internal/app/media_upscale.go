@@ -106,6 +106,13 @@ func (s *Service) RecoverMediaUpscale(ctx context.Context, user, id string) (*mo
 		return nil, BadAuthRequest("原超分任务已取消，请在任务详情核对结果与扣费状态")
 	}
 	if task.Status == model.TaskStatusSucceeded {
+		if deliveryPaused(task.Stage) {
+			resumed, err := s.resumeGenerationDownload(*task)
+			if err != nil {
+				return nil, err
+			}
+			return taskForOutput(*resumed), nil
+		}
 		if err := s.DeliverSucceededTask(*task); err != nil {
 			return nil, err
 		}

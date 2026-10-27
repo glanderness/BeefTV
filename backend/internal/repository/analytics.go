@@ -187,9 +187,11 @@ func (r *Repository) HasAPICallLogForTask(taskID string) (bool, error) {
 var ErrAmbiguousImageCreateReceipts = errors.New("图片包含多条已接受或结果未知的创建回执，不能重新生成")
 
 type ProviderBillingEvidence struct {
-	TaskID       string
-	UsageState   string
-	BillingState string
+	TaskID              string
+	UsageState          string
+	BillingState        string
+	UsageStatePresent   bool
+	BillingStatePresent bool
 }
 
 // TaskProviderBillingEvidence reads only the small billing fields needed by
@@ -202,7 +204,7 @@ func (r *Repository) TaskProviderBillingEvidence(taskIDs []string) (map[string]P
 	}
 	var rows []ProviderBillingEvidence
 	err := r.db.Model(&model.ApiCallLog{}).
-		Select("api_call_logs.task_id, api_call_logs.usage_state, api_call_logs.billing_state").
+		Select("api_call_logs.task_id, api_call_logs.usage_state, api_call_logs.billing_state, api_call_logs.usage_state_present, api_call_logs.billing_state_present").
 		Joins("JOIN tasks ON tasks.id = api_call_logs.task_id AND tasks.user_id = api_call_logs.user_id").
 		Where("api_call_logs.task_id IN ?", taskIDs).
 		Where(`api_call_logs.id = (SELECT latest.id FROM api_call_logs latest WHERE latest.task_id = api_call_logs.task_id AND latest.user_id = api_call_logs.user_id ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1)`).

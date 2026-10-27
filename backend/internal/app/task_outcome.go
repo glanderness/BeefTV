@@ -34,7 +34,7 @@ func (s *Service) taskOutcomeFacts(tasks []model.Task) map[string]localtask.Outc
 				}
 			}
 		}
-		if b, ok := billing[task.ID]; ok {
+		if b, ok := billing[task.ID]; ok && (b.UsageStatePresent || b.BillingStatePresent || b.UsageState != "" || b.BillingState != "") {
 			f.ConfirmedUncharged = billingEvidenceConfirmsNoCharge(b.UsageState, b.BillingState)
 		}
 		facts[task.ID] = f
@@ -44,10 +44,14 @@ func (s *Service) taskOutcomeFacts(tasks []model.Task) map[string]localtask.Outc
 
 func billingEvidenceConfirmsNoCharge(usageState, billingState string) bool {
 	for _, state := range []string{usageState, billingState} {
-		switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(state), "-", "_")) {
+		switch normalizeBillingState(state) {
 		case "not_charged", "uncharged", "no_charge", "refunded", "refund_completed":
 			return true
 		}
 	}
 	return false
+}
+
+func normalizeBillingState(state string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(state), "-", "_"))
 }

@@ -103,6 +103,8 @@ type ApiCallLog struct {
 	ProviderStatus      string        `json:"providerStatus,omitempty" gorm:"size:32"`
 	UsageState          string        `json:"-" gorm:"size:32"`
 	BillingState        string        `json:"-" gorm:"size:32"`
+	UsageStatePresent   bool          `json:"-"`
+	BillingStatePresent bool          `json:"-"`
 	ImageJobID          string        `json:"-" gorm:"size:160"`
 	InputTokens         int64         `json:"inputTokens"`
 	OutputTokens        int64         `json:"outputTokens"`

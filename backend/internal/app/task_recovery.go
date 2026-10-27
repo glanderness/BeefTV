@@ -29,6 +29,13 @@ func (s *Service) RecoverTask(ctx context.Context, userID, taskID string) (*Task
 		return nil, BadAuthRequest("任务不存在")
 	}
 	if task.Status == model.TaskStatusSucceeded {
+		if deliveryPaused(task.Stage) {
+			resumed, err := s.resumeGenerationDownload(*task)
+			if err != nil {
+				return nil, err
+			}
+			return &TaskRecoveryResult{Task: taskForOutput(*resumed), Recovered: true, QueryOnly: true}, nil
+		}
 		if err := s.DeliverSucceededTask(*task); err != nil {
 			return nil, err
 		}
