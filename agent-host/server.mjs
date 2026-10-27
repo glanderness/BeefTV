@@ -479,7 +479,9 @@ const server = http.createServer(async (req, res) => {
         if (value.active && entry.lifecycle) value.active.lifecycle = entry.lifecycle;
         if (value.active && entry.turnProjection?.initialized) value.active.streamed = entry.turnProjection.text;
         // 重开面板时正在进行的这一轮也要能看到已收到的思考，与实时流同形。
-        if (value.active && entry.turnProjection?.reasoning.length) value.active.reasoning = entry.turnProjection.reasoning;
+        // 投影初始化之后思考是权威值：清空后必须写空数组，轮询才能撤掉上一次读到的旧思考；
+        // 没拿到初始投影时仍然省略字段，不把尚未观测到的状态当成确定空值。
+        if (value.active && entry.turnProjection?.initialized) value.active.reasoning = entry.turnProjection.reasoning;
         respond(res,200,value); return;
       }
       const file = SessionManager.findById(cwd, sessionId, sessionDir);

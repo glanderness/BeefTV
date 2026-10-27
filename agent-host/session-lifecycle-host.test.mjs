@@ -737,3 +737,59 @@ test('真实宿主：跨工具调用的思考在流式、终态和历史里是�
     expect(history.payload.turns[0].reasoning).toEqual(last);
   }, {}, { canvasId: 'reasoning-tool-canvas', slowFirstModel: false, anthropicScript: anthropicToolThenAnswer });
 }, 35000);
+
+/**
+ * 进行中回合的轮询回归：投影已经初始化、可读思考为空时，历史响应必须带空数组，
+ * 之后思考再变化时也要跟着更新——轮询才能撤掉旧内容，而不是一直显示上一次读到的思考。
+ * 假模型先回一个不可读的 redacted 思考块和正文，挂住这一轮；测试读到空数组后再放行一段可读思考。
+ */
+test('真实宿主：进行中的历史带空思考数组，轮询跟着思考变化', async () => {
+  let releaseModel;
+  let releaseThinking;
+  const heldModel = new Promise((resolve) => { releaseModel = resolve; });
+  const nextThinking = new Promise((resolve) => { releaseThinking = resolve; });
+  const redactedThenThinking = async (call, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    const send = async (type, data) => { res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`); await delay(60); };
+    await send('message_start', { type: 'message_start', message: { id: 'msg_synthetic_redacted', type: 'message', role: 'assistant', model: 'synthetic',
+      content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } });
+    await send('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'redacted_thinking', data: 'opaque-synthetic-payload' } });
+    await send('content_block_stop', { type: 'content_block_stop', index: 0 });
+    await send('content_block_start', { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } });
+    await send('content_block_delta', { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: '已经重新看过画布。' } });
+    await send('content_block_stop', { type: 'content_block_stop', index: 1 });
+    await nextThinking;
+    await send('content_block_start', { type: 'content_block_start', index: 2, content_block: { type: 'thinking', thinking: '', signature: '' } });
+    await send('content_block_delta', { type: 'content_block_delta', index: 2, delta: { type: 'thinking_delta', thinking: '再确认时间线顺序' } });
+    await send('content_block_stop', { type: 'content_block_stop', index: 2 });
+    await heldModel;
+    try { await send('message_stop', { type: 'message_stop' }); res.end(); } catch { /* 宿主已退出：连接已断开 */ }
+  };
+  try {
+    await withHost(async ({ api, waitFor, getModelCalls }) => {
+      const canvasId = 'reasoning-clear-canvas';
+      const sessionId = (await api('/sessions', { canvasId })).payload.sessionId;
+      const chat = api('/chat', { canvasId, sessionId, turnId: 'reasoning-clear-turn', requestId: 'reasoning-clear-request', revisionBefore: 1, message: '先想再回答' });
+      await waitFor(() => getModelCalls() >= 1, 8000);
+      // 这一轮仍在进行中：正文已经进面板，可读思考为空。
+      await waitFor(async () => (await api(`/history?canvasId=${canvasId}`)).payload.active?.streamed === '已经重新看过画布。', 8000);
+      const active = (await api(`/history?canvasId=${canvasId}`)).payload.active;
+      expect(active).toMatchObject({ turnId: 'reasoning-clear-turn', status: 'running' });
+      // 投影已经初始化，空思考必须是空数组而不是缺字段：轮询据此撤掉上一次读到的旧思考。
+      expect(active.reasoning).toEqual([]);
+      // redacted 载荷本身不进任何展示字段。
+      expect(JSON.stringify(active)).not.toContain('opaque-synthetic-payload');
+
+      // 思考再变化时，进行中的历史跟着更新，不把空数组当成终态。
+      releaseThinking();
+      await waitFor(async () => (await api(`/history?canvasId=${canvasId}`)).payload.active?.reasoning?.length === 1, 8000);
+      const grown = (await api(`/history?canvasId=${canvasId}`)).payload.active;
+      expect(grown.reasoning.map((segment) => segment.text)).toEqual(['再确认时间线顺序']);
+      expect(grown.reasoning.map((segment) => segment.status)).toEqual(['streaming']);
+
+      await api('/cancel', { canvasId });
+      const end = (await chat).text.trim().split('\n').map((line) => JSON.parse(line)).find((line) => line.type === 'turn_end');
+      expect(end.cancelled).toBe(true);
+    }, {}, { canvasId: 'reasoning-clear-canvas', slowFirstModel: false, anthropicScript: redactedThenThinking });
+  } finally { releaseThinking(); releaseModel(); }
+}, 35000);

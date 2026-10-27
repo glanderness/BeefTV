@@ -32,7 +32,7 @@
 | --- | --- | --- |
 | 宿主投影 | `bun test agent-host/durable-stream-events.test.mjs` | 20 pass；含增量累积、streaming→done、思考→工具→思考→正文、redacted/空思考不出抽屉、溢出快照不重复、签名与工具参数不进快照、终态与历史同形，以及第二轮新增的「变空发空数组」用例 |
 | 公开回合裁剪 | `bun test agent-host/durable-session-owner.test.mjs`（跑 `durable-session-owner-cases.mjs`） | 28 pass；含新增「历史投影保留可读思考、仍丢弃 provider 块」 |
-| 真实宿主 + Anthropic 假模型 | `bun test agent-host/session-lifecycle-host.test.mjs` | 19 pass；含「两段思考各自增量到达、第二段追加、正文开始后不再 streaming、`message_end` 后片段身份换成官方 entry、正文快照不含思考、签名不出现在任何一行、`turn_end.reasoning` 与实时流同一份」与第二轮新增的「跨工具调用两段思考在流式、终态和历史里同形」 |
+| 真实宿主 + Anthropic 假模型 | `bun test agent-host/session-lifecycle-host.test.mjs` | 20 pass；含「两段思考各自增量到达、第二段追加、正文开始后不再 streaming、`message_end` 后片段身份换成官方 entry、正文快照不含思考、签名不出现在任何一行、`turn_end.reasoning` 与实时流同一份」、第二轮新增的「跨工具调用两段思考在流式、终态和历史里同形」与第三轮新增的「进行中的历史带空思考数组，轮询不会留着旧内容」 |
 | Go 转发 | `go test ./internal/handler/ -run Reasoning` | 新增用例：`reasoning_snapshot` 逐行原样转发；`turn_end` 重新编码后 `reasoning` 仍在；历史回合保留 `reasoning`、同时后端仍覆盖宿主伪造的 `outputs` |
 | 真链路（假 Anthropic 模型 → 真宿主 → 真 Go） | 见下「复现」 | 6 条 `reasoning_snapshot`、`turn_end.reasoning`、`history.turns[0].reasoning` 全部到位；签名 `sig-local-fake-secret` 在 NDJSON 与历史里都不出现 |
 | 浏览器（真实 hook + 真实侧栏） | `cd web && bun test test/assistant-stream-progress.browser.test.ts` | 4 pass；新增思考用例断言默认折叠（正文不在 DOM 里）、展开看增量、正文与思考分开、回合结束后仍展开且标题变「思考过程」，第二轮新增「宿主发空思考快照」与「终态权威空思考」两个撤掉旧内容的用例 |
