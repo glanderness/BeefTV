@@ -13,6 +13,7 @@ import { DepthComponentsPanel } from "@/components/depth-components-panel";
 import { ReferenceStoragePane } from "./reference-storage-pane";
 import { getDesktopAppBinding } from "@/services/desktop-runtime";
 import { PageHeader } from "@/components/layout/workspace-page";
+import { LanguageSwitch } from "@/i18n/language-switch";
 
 type ConfigSectionKey = "channels" | "models" | "storage" | "diagnostics";
 
@@ -111,6 +112,7 @@ export default function SettingsPage() {
 
     return (
         <main className="settings-page app-workspace-page app-user-workspace app-section-page flex h-full min-h-0 flex-col text-foreground">
+            <div className="flex justify-end px-4 pt-3"><LanguageSwitch /></div>
                 {shouldPromptContinue ? <div className="settings-topbar shrink-0">
                     <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                         {shouldPromptContinue ? <>
