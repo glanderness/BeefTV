@@ -6,8 +6,10 @@ import (
 )
 
 const (
-	canvasBindRecoveryPrefix  = "canvas_bind:"
-	canvasBindRecoveryVersion = 1
+	canvasBindRecoveryPrefix = "canvas_bind:"
+	// #25 wrote versions 1-3 with per-field node snapshots and no revision.
+	// Those markers must not decode as this format.
+	canvasBindRecoveryVersion = 4
 )
 
 // CanvasBindRecovery records a terminal bind refusal without creating a second

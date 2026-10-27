@@ -260,6 +260,39 @@ func TestCanvasBindRecoveryRetriesPendingVideoAfterClientOperationRestored(t *te
 	}
 }
 
+func TestCanvasBindRecoveryRetriesLegacyMarkers(t *testing.T) {
+	// #25 wrote versions 1-3 without a revision. Each must lead to a retry,
+	// never a permanent skip.
+	for _, legacy := range []string{
+		`canvas_bind:{"version":1,"targets":[{"nodeId":"node-legacy","outputIndex":0,"reason":"node_task_mismatch","nodeTaskId":"other-task"}]}`,
+		`canvas_bind:{"version":2,"targets":[{"nodeId":"node-legacy","outputIndex":0,"reason":"node_task_mismatch","nodePresent":true,"nodeTaskId":"other-task"}]}`,
+		`canvas_bind:{"version":3,"targets":[{"nodeId":"node-legacy","outputIndex":0,"reason":"node_deleted","nodePresent":false,"nodeHasBindingOccupancy":false}]}`,
+	} {
+		svc, canvasID, revision := newAssistantTurnService(t)
+		task := seedCanvasBindRecoveryTask(t, svc, canvasID, revision, "bind-legacy", "node-legacy", "bind-legacy")
+		if err := svc.Database().Model(&model.Task{}).Where("id = ?", task.ID).Update("recovery_outcome", legacy).Error; err != nil {
+			t.Fatal(err)
+		}
+		stored, err := svc.repo.Task(task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.recoverCanvasTaskBindings(*stored); err != nil {
+			t.Fatal(err)
+		}
+		if meta := canvasBindTestNodeMetadata(t, svc, canvasID, "node-legacy"); meta["content"] != "节点重建后绑定" {
+			t.Fatalf("legacy marker %s blocked the bind: %#v", legacy, meta)
+		}
+	}
+
+	// A current-format node marker without a revision must not skip either.
+	marker := localtask.CanvasBindRecoveryTarget{NodeID: "node-legacy", Reason: "node_task_mismatch"}
+	svc, canvasID, _ := newAssistantTurnService(t)
+	if unchanged, err := svc.canvasBindTargetUnchanged(model.Task{UserID: "local", ProjectID: canvasID}, marker); err != nil || unchanged {
+		t.Fatalf("revision-less node marker skipped: unchanged=%v err=%v", unchanged, err)
+	}
+}
+
 func TestCanvasBindRecoveryRetriesOnceAfterUnrelatedEdit(t *testing.T) {
 	svc, canvasID, revision := newAssistantTurnService(t)
 	task := seedCanvasBindRecoveryTask(t, svc, canvasID, revision, "bind-unrelated", "node-unrelated", "other-task")

@@ -10,7 +10,7 @@
 
 - `internal/canvas/task_bind.go`：`node_deleted` / `node_task_mismatch` 拒绝时，在错误里带上这次读到的 revision。拒绝判断和这个 revision 来自同一次读。
 - `internal/operations/task_bind.go`：把这个 revision 放进拒绝证据 `canvasBinding.revision`。`node_deleted` 现在也带一份最小证据（节点 ID、`nodePresent:false`、revision）。这里不重新读画布，所以失败之后才落下的写入一定会让标记过期。
-- `internal/task/canvas_bind_recovery.go`：标记只剩节点 ID、输出序号、原因、revision，格式版本改为 1。#25 版本 3 的标记解不开，按「没有标记」处理，下一轮重新记，不会漏绑。
+- `internal/task/canvas_bind_recovery.go`：标记只剩节点 ID、输出序号、原因、revision，格式版本改为 4（#25 用过 1、2、3）。#25 留下的旧标记解不开，按「没有标记」处理，下一轮重新尝试，不会漏绑。另外，`node_deleted` / `node_task_mismatch` 标记如果没有有效 revision，也不会被跳过。
 - `internal/app/task_binding.go`：扫描前只读画布元数据（`CanvasProjectMetadata`，不读 payload）比较 revision。`node_mismatch` / `canvas_mismatch` 只由任务本身决定，记下后不再重试。拿不到 revision 的拒绝不记标记，退回原来的每轮重试。
 - 删掉 #25 新加的 `NodeHasBindingOccupancy`、`nodeTopLevelTaskId` / `nodeHasBindingOccupancy` 证据字段，以及节点状态比对代码。
 
@@ -35,7 +35,7 @@
 
 ## 测试
 
-- `go test ./internal/app/ -run CanvasBindRecovery`：保留 #25 的回归测试（换任务后不再重试、指回原任务后重试一次并绑上、删除后不再重试、按原 ID 重建后重试一次并绑上、视频清空 content 后能绑上）。另加三条：失败之后画布又改过，标记必须用失败时的 revision；视频只把提交编号改回来（taskId 仍为空）也会重试并绑上；改了无关节点只重试一次，之后不再重试。
+- `go test ./internal/app/ -run CanvasBindRecovery`：保留 #25 的回归测试（换任务后不再重试、指回原任务后重试一次并绑上、删除后不再重试、按原 ID 重建后重试一次并绑上、视频清空 content 后能绑上）。另加四条：#25 留下的版本 1、2、3 旧标记都不会挡住绑定；失败之后画布又改过，标记必须用失败时的 revision；视频只把提交编号改回来（taskId 仍为空）也会重试并绑上；改了无关节点只重试一次，之后不再重试。
 - `go test ./internal/operations/`：拒绝证据里的 revision 等于当时画布的 revision（换任务、删除两种）。
 - `internal/task`、`internal/canvas`、`internal/taskbinding`、`internal/diagnostics`、`internal/repository` 全部通过。
 - `internal/app` 全量有 47 个失败（缺少插件包 `.beeftv-plugin`、协议插件没安装等）。在 #25 分支原样（没有本次改动）上跑，也是同样的 47 个，和本次改动无关。

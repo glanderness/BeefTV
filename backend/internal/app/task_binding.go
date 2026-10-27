@@ -157,7 +157,13 @@ func (s *Service) recoverPendingCanvasBindings(limit int) error {
 // write: the revision only moves forward and every save increments it. This
 // does not try to predict which edits make the bind succeed.
 func (s *Service) canvasBindTargetUnchanged(task model.Task, marker localtask.CanvasBindRecoveryTarget) (bool, error) {
-	if marker.Revision <= 0 {
+	switch marker.Reason {
+	case "node_deleted", "node_task_mismatch":
+		if marker.Revision <= 0 {
+			// Without the refusal's revision the marker cannot prove anything.
+			return false, nil
+		}
+	default:
 		// node_mismatch / canvas_mismatch are decided from the task alone.
 		return true, nil
 	}
