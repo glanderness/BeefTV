@@ -32,6 +32,8 @@ jobs:
       - name: Open sync pull request
         env:
           GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          # gh 默认优先选名为 upstream 的远程，必须钉死在 fork 上
+          GH_REPO: ${{ github.repository }}
         run: |
           git fetch origin custom
           if [ "$(git rev-list --count origin/custom..HEAD)" = "0" ]; then
