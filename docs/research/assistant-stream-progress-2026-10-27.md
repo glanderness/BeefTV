@@ -2,13 +2,14 @@
 
 报障来源：2026-10-26 会议待办 §4.3「流式：沿已有链路找停顿点」。用户口径是「助手回复不是边生成边出，而是最后一大串一下子出来」，只看 Mac 客户端，不涉及 Web/Nginx 部署路径。
 
-涉及模块：`agent-host/durable-stream-text.mjs`（Durable 正文投影）、`backend/internal/handler/agent_proxy.go`（NDJSON 转发）、`web/src/services/api/agent-assistant.ts`（流解析）、`web/src/pages/canvas/use-canvas-assistant.ts`（回合状态）、`web/src/pages/canvas/canvas-assistant-sidebar.tsx` + `canvas-assistant-turn.tsx`（回复组件）。
+涉及模块：`agent-host/durable-turn-projection.mjs`（回合展示投影，测量时叫 `durable-stream-text.mjs`，由 #283 改名并加入思考投影）、`backend/internal/handler/agent_proxy.go`（NDJSON 转发）、`web/src/services/api/agent-assistant.ts`（流解析）、`web/src/pages/canvas/use-canvas-assistant.ts`（回合状态）、`web/src/pages/canvas/canvas-assistant-sidebar.tsx` + `canvas-assistant-turn.tsx`（回复组件）。
 
 ## 一、结论
 
 1. **客户端四层都没有把正文攒到最后。** 宿主、Go 转发、前端 hook、回复组件，以及**原生桌面 v2.0.3 的 WKWebView** 全部逐段出字：本地慢速替身分 8 段、每段间隔 1.5s 时，真实客户端面板依次看到 2 → 5 → 7 → 8 段。因此「只修攒住内容的那一处」在客户端里没有对应的那一处。
-2. **用户看到的现象对应 §4.3 的第二种情况：推理阶段没有正文。** 真实会话里模型（`claude-opus-5-5`，`thinkingLevel: low`）先长时间推理，期间面板只有「助手正在处理…」；客户端按既有边界不展示推理内容（`durable-stream-text.mjs`「Only visible text is projected. Reasoning… stay private」、`canvas-assistant-copy.ts` 剥离 `<thinking>`/`<think>` 标记）。推理结束后正文开始吐字，视觉上就像一次性涌出。§4.3 明确要求区分这两种情况，且不允许用逐字动画掩盖真实等待，因此这里不改产品行为。
-3. 本次改动只补上**界面级回归用例**：终态之前面板必须已经显示多个分开发出的片段（并附负向对照，证明用例真的会因为「有一层攒内容」而失败）。宿主侧的快照替换/不重复字/不丢字用例 `agent-host/durable-stream-events.test.mjs` 已覆盖，不重复新增。
+2. **用户看到的现象对应 §4.3 的第二种情况：推理阶段没有正文。** 真实会话里模型（`claude-opus-5-5`，`thinkingLevel: low`）先长时间推理，期间面板只有「助手正在处理…」；测量时的代码按既有边界不展示推理内容（投影只送可见正文、`canvas-assistant-copy.ts` 剥离 `<thinking>`/`<think>` 标记）。推理结束后正文开始吐字，视觉上就像一次性涌出。§4.3 明确要求区分这两种情况，且不允许用逐字动画掩盖真实等待，因此本次没有为「让等待看起来在动」改产品行为。
+3. **这个缺口随后已由 #283 补上**（`feat(assistant): 助手显示思考过程，默认折叠，工具与正文分开`，已在 main）：投影改为 `durable-turn-projection.mjs`，实时与历史都产出 `reasoning_snapshot`，面板默认折叠地显示可读思考。它的记录见 `docs/research/assistant-reasoning-display-2026-10-27.md`。也就是说本文测量的是 v2.0.3 / #283 之前的客户端；当前 main 的等待期已经有可读思考，不再是「只有助手正在处理…」。
+4. 本次改动只补上**界面级回归用例**：终态之前面板必须已经显示多个分开发出的片段（并附负向对照，证明用例真的会因为「有一层攒内容」而失败）。宿主侧的快照替换/不重复字/不丢字用例 `agent-host/durable-stream-events.test.mjs` 已覆盖，不重复新增。
 
 ## 二、四层实测（全部指向本地慢速替身，零付费模型调用）
 
@@ -63,4 +64,4 @@ Received: "第一段内容。第二段内容。第三段内容。第四段内容
 ## 六、未决与后续
 
 1. **用户实际渠道是否逐段回正文尚未证实。** 用户机器上 `agent-requests.jsonl` 出现最多的是本机中转 `http://127.0.0.1:18794/v1/messages`；该中转当时没有监听，且客户端已排除，所以只能在渠道侧确认（对同一条上游做一次直连流式取样即可）。
-2. **若希望等待期更可读**，可选做法是把推理阶段展示到面板（仓库已有 `web/src/components/ai/message-reasoning.tsx`，目前只用于创作页）。这会改变「推理不进 UI」的既有安全边界（推理文本可能含系统提示与画布快照），需要产品侧确认后再动。
+2. **等待期可读性**：测量时的「推理不进 UI」边界已由 #283 改为「投影可读思考、面板默认折叠」（`docs/research/assistant-reasoning-display-2026-10-27.md`）。当时设想的做法（复用 `web/src/components/ai/message-reasoning.tsx`，此前只用于创作页）正是 #283 采用的路径，因此这里不再作为后续项。
