@@ -8,7 +8,7 @@ import { createModels } from '@earendil-works/pi-ai/models';
 import { defineDoc } from '@earendil-works/pi-durable';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createDurableSessionStore } from './durable-session-owner.mjs';
-import { createDurableTextProjection } from './durable-stream-text.mjs';
+import { createDurableTurnProjection } from './durable-turn-projection.mjs';
 import { fixtureSkillContext } from './test-support/skill-context-fixture.mjs';
 
 const msgText = (message) => typeof message.content === 'string'
@@ -121,7 +121,7 @@ describe('creative producer durable host', () => {
       await planSeen;
       return { reply: '开头和结尾必须完整。' };
     } });
-    const projection = createDurableTextProjection();
+    const projection = createDurableTurnProjection();
     const events = [];
     try {
       const entry = await fixture.store.ensureSession('canvas-1');
@@ -136,6 +136,8 @@ describe('creative producer durable host', () => {
       } });
       expect(record.reply).toBe('开头和结尾必须完整。');
       expect(projection.text).toBe(record.reply);
+      // 终态思考与实时流同形：这条假模型没有思考，两边都不该凭空造出来。
+      expect(projection.reasoning).toEqual(record.reasoning ?? []);
       expect(events.some(event => event.type === 'message_start' && event.message.role === 'assistant')).toBe(true);
       expect(events.some(event => event.type === 'plan' && event.plan?.goal === '实时制作计划')).toBe(true);
     } finally { releaseReply(); await fixture.close(); }

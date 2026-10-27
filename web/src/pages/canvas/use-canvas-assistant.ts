@@ -31,6 +31,7 @@ import {
     type AgentHostStatus,
     type AssistantSessionSummary,
     type AssistantTurn,
+    type AssistantReasoningSegment,
     type AssistantPlan,
     type AssistantUndoFailure,
 } from "@/services/api/agent-assistant";
@@ -101,6 +102,10 @@ type CanvasRun = {
     pendingSkills: AssistantSkillSelection[];
     pendingPermissionMode: AssistantPermissionMode | null;
     streamed: string;
+    /** 本回合模型返回的可读思考片段；宿主每次给完整状态，这里整段替换。 */
+    reasoning: AssistantReasoningSegment[];
+    /** 思考区域的展开状态：按回合记住（进行中的那一轮用 ASSISTANT_LIVE_TURN_KEY），用户展开后不自动折回。 */
+    reasoningOpen: Record<string, boolean>;
     streaming: boolean;
     lifecycleNotice: string | null;
     supplementBusy: boolean;
@@ -114,6 +119,11 @@ type CanvasRun = {
 const ASSISTANT_STOPPED_BEFORE_SEND_TEXT = "已停下，这条消息没有发出。";
 const ASSISTANT_STOPPED_UNPROCESSED_TEXT = "已停下，这条消息没有被处理。";
 
+/**
+ * 进行中那一轮在思考展开状态里的键：回合结算后把用户的选择转到真实 turnId 上。
+ */
+export const ASSISTANT_LIVE_TURN_KEY = "live";
+
 /** 消息还没发出、或助手还没开始处理就停下：不会执行，不留待发送内容；「重试」仍可原样再发。 */
 function markStoppedBeforeSend(run: CanvasRun, text = ASSISTANT_STOPPED_BEFORE_SEND_TEXT) {
     run.pendingUserText = null;
@@ -123,6 +133,8 @@ function markStoppedBeforeSend(run: CanvasRun, text = ASSISTANT_STOPPED_BEFORE_S
     run.pendingSkills = [];
     run.pendingPermissionMode = null;
     run.streamed = "";
+    run.reasoning = [];
+    delete run.reasoningOpen[ASSISTANT_LIVE_TURN_KEY];
     run.lifecycleNotice = null;
     run.recovery = null;
     run.error = text;
@@ -149,6 +161,8 @@ const createRun = (): CanvasRun => ({
     pendingSkills: [],
     pendingPermissionMode: null,
     streamed: "",
+    reasoning: [],
+    reasoningOpen: {},
     streaming: false,
     lifecycleNotice: null,
     supplementBusy: false,
@@ -290,6 +304,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                 run.pendingSkills = [];
                 run.pendingPermissionMode = null;
                 run.streamed = "";
+                run.reasoning = [];
                 run.error = null;
                 run.recovery = null;
                 run.backgroundActive = false;
@@ -309,6 +324,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                 run.pendingSkills = active.skills || [];
                 run.pendingPermissionMode = assistantPermissionMode(active.permissionMode);
                 if (!run.controller && typeof active.streamed === "string") run.streamed = active.streamed;
+                if (!run.controller && Array.isArray(active.reasoning)) run.reasoning = active.reasoning;
                 run.supplements = active.supplementInputs?.length ? active.supplementInputs.map(input => ({ text: input.message, attachments: input.attachments, skills: input.skills, status: "accepted" })) : (active.supplements || []).map(text => ({ text, status: "accepted" }));
                 run.recovery = { sessionId: nextSession, turnId: active.turnId, knownTurnIds: history.turns.map(turn => turn.turnId), text: active.userText, selectedNodeIds: active.selectedNodeIds || [] };
                 run.requestId = active.requestId ?? null;
@@ -336,7 +352,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         } catch (error) {
             if (userScopeMatches(expectedScope) && request === run.historyRequest) {
                 run.historyHostUnavailable = error instanceof ApiError && (error.reason === "host_unreachable" || error.reason === "model_not_configured");
-                run.historyError = run.turns.length || run.pendingUserText || run.pendingAttachments.length || run.streamed
+                run.historyError = run.turns.length || run.pendingUserText || run.pendingAttachments.length || run.streamed || run.reasoning.length
                     ? "没能读取对话，已有内容仍然保留。请重新读取。" : "没能读取对话。请重新读取。";
             }
             return false;
@@ -405,6 +421,8 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         run.pendingSkills = skills;
         run.pendingPermissionMode = permissionMode;
         run.streamed = "";
+        run.reasoning = [];
+        delete run.reasoningOpen[ASSISTANT_LIVE_TURN_KEY];
         run.streaming = true;
         run.lifecycleNotice = null;
         run.supplements = [];
@@ -456,6 +474,11 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                     runFor(targetCanvas).streamed = text;
                     rerenderIfActive(targetCanvas);
                 },
+                onReasoning: (segments) => {
+                    if (!userScopeMatches(expectedScope)) return;
+                    runFor(targetCanvas).reasoning = segments;
+                    rerenderIfActive(targetCanvas);
+                },
                 onPlan: (plan) => {
                     if (!userScopeMatches(expectedScope)) return;
                     runFor(targetCanvas).plan = plan;
@@ -470,14 +493,18 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                 onTurnEnd: (end) => {
                     if (!userScopeMatches(expectedScope)) return;
                     const current = runFor(targetCanvas);
+                    const turnId = end.turnId || `${targetCanvas}:${Date.now()}`;
                     const turn: AssistantTurn = {
-                        turnId: end.turnId || `${targetCanvas}:${Date.now()}`,
+                        turnId,
                         continuationId: end.continuationId,
                         permissionMode: assistantPermissionMode(end.permissionMode),
                         userText: message,
                         selectedNodeIds: selectedSnapshot,
                         reply: end.reply || current.streamed,
                         toolCalls: end.toolCalls || [],
+                        // 宿主终态是权威值（含空数组）：照它替换，清掉流里可能已经过期的旧内容。
+                        // 只有字段确实缺失（旧记录、旧宿主）才退回流里已收到的片段，且这一轮已结束，不再有「正在思考」。
+                        reasoning: end.reasoning === undefined ? current.reasoning.map(segment => ({ ...segment, status: "done" as const })) : end.reasoning,
                         change: end.change ?? null,
                         proposals: end.proposals || [],
                         proposalsInvalidated: end.proposalsInvalidated,
@@ -493,6 +520,9 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                         createdAt: new Date().toISOString(),
                     };
                     current.turns = [...current.turns, turn];
+                    // 进行中就被用户展开过：结算后把展开状态转到这条回合上，不折回。
+                    if (current.reasoningOpen[ASSISTANT_LIVE_TURN_KEY]) current.reasoningOpen[turnId] = true;
+                    delete current.reasoningOpen[ASSISTANT_LIVE_TURN_KEY];
                     recordDiagnosticEvent({ category: "task", level: turn.error ? "warning" : "info", code: "assistant_turn_settled", reason: turn.errorReason || undefined, message: "助手执行回执已记录", requestId, canvasId: targetCanvas, assistantSessionId: end.sessionId || current.sessionId || undefined, assistantTurnId: turn.turnId });
                     current.plan = end.plan ?? null;
                     current.recovery = null;
@@ -507,6 +537,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                     current.pendingSkills = [];
                     current.pendingPermissionMode = null;
                     current.streamed = "";
+                    current.reasoning = [];
                     current.lifecycleNotice = null;
                     if (turn.change?.canvasChanges?.length) {
                         for (const changed of turn.change.canvasChanges) onCanvasChangedRef.current?.(changed.canvasId, assistantChangedNodeIds(changed));
@@ -617,6 +648,20 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         rerenderIfActive(activeCanvasRef.current);
     }, [rerenderIfActive, runFor, expectedScope]);
 
+    /**
+     * 展开或收起某个回合的思考区域。
+     *
+     * 状态按回合记在运行记录里而不是组件里：回合列表重排或流式重渲染都不会丢，
+     * 用户展开后也不会被自动折回。`key` 用回合 id，进行中的那一轮用 ASSISTANT_LIVE_TURN_KEY。
+     */
+    const setReasoningOpen = useCallback((key: string, nextOpen: boolean) => {
+        if (!userScopeMatches(expectedScope)) return;
+        const run = runFor(activeCanvasRef.current);
+        if (run.reasoningOpen[key] === nextOpen) return;
+        run.reasoningOpen = { ...run.reasoningOpen, [key]: nextOpen };
+        rerenderIfActive(activeCanvasRef.current);
+    }, [expectedScope, rerenderIfActive, runFor]);
+
     const startNewSession = useCallback(async () => {
         if (!userScopeMatches(expectedScope)) return;
         const targetCanvas = activeCanvasRef.current;
@@ -631,6 +676,8 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             run.sessionId = sessionId;
             run.recovery = null;
             run.turns = [];
+            run.reasoning = [];
+            run.reasoningOpen = {};
             run.plan = null;
             run.error = null;
             run.pendingUserText = null;
@@ -665,6 +712,8 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             if (await loadHistory(targetCanvas, activated)) {
                 run.recovery = null;
                 run.turnStatus = {};
+                run.reasoning = [];
+                run.reasoningOpen = {};
                 run.error = null;
                 run.lastSent = null;
                 run.pendingUserText = null;
@@ -741,7 +790,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         turns: run.turns,
         plan: run.plan,
         historyLoaded: run.historyLoaded,
-        historyError: status?.reason === "model_not_configured" && run.historyHostUnavailable && !run.turns.length && !run.pendingUserText && !run.pendingAttachments.length && !run.streamed ? null : run.historyError,
+        historyError: status?.reason === "model_not_configured" && run.historyHostUnavailable && !run.turns.length && !run.pendingUserText && !run.pendingAttachments.length && !run.streamed && !run.reasoning.length ? null : run.historyError,
         sessionBusy: run.sessionBusy,
         reloadHistory: () => loadHistory(canvasId),
         pendingUserText: run.pendingUserText,
@@ -753,6 +802,9 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         permissionLocked: run.streaming || Boolean(run.recovery) || run.sessionBusy,
         setPermissionMode,
         streamed: run.streamed,
+        reasoning: run.reasoning,
+        reasoningOpen: run.reasoningOpen,
+        setReasoningOpen,
         streaming: run.streaming,
         lifecycleNotice: run.lifecycleNotice,
         supplements: run.supplements,
