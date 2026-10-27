@@ -44,14 +44,36 @@ func (s *Service) recoverCanvasTaskBindings(task model.Task) error {
 	}
 	registry := s.workspaceOperations()
 	intents := s.CanvasBindingIntents(task)
+	bindRecovery, _ := localtask.DecodeCanvasBindRecovery(task.RecoveryOutcome)
+	bindRecoveryDirty := false
 	var last error
 	if registry != nil {
 		for _, target := range canvasBindTargets(task, intents) {
+			if marker, ok := bindRecovery.Target(target.nodeID, target.outputIndex); ok {
+				unchanged, stateErr := s.canvasBindTargetUnchanged(task, marker)
+				if stateErr == nil && unchanged {
+					continue
+				}
+				if stateErr == nil && bindRecovery.Remove(target.nodeID, target.outputIndex) {
+					bindRecoveryDirty = true
+				}
+			}
 			if err := s.executeCanvasTaskBind(registry, task, target.nodeID, target.outputIndex); err != nil {
+				if terminalCanvasBindError(err) {
+					if marker, ok := s.canvasBindRecoveryTarget(task, target, err); ok {
+						bindRecovery.Upsert(marker)
+						bindRecoveryDirty = true
+					}
+					continue
+				}
 				if skippableCanvasBindError(err) {
 					continue
 				}
 				last = err
+				continue
+			}
+			if bindRecovery.Remove(target.nodeID, target.outputIndex) {
+				bindRecoveryDirty = true
 			}
 		}
 		for _, target := range messageBindTargets(task, intents) {
@@ -59,6 +81,22 @@ func (s *Service) recoverCanvasTaskBindings(task model.Task) error {
 				if skippableCanvasBindError(err) {
 					continue
 				}
+				last = err
+			}
+		}
+	}
+	if bindRecoveryDirty {
+		var outcome *string
+		if !bindRecovery.Empty() {
+			encoded, err := localtask.EncodeCanvasBindRecovery(bindRecovery)
+			if err != nil {
+				last = err
+			} else {
+				outcome = encoded
+			}
+		}
+		if outcome != nil || bindRecovery.Empty() {
+			if err := s.repo.UpdateTaskRecoveryOutcome(task.UserID, task.ID, outcome); err != nil {
 				last = err
 			}
 		}
@@ -117,6 +155,73 @@ func (s *Service) recoverPendingCanvasBindings(limit int) error {
 	return last
 }
 
+type canvasBindTargetState struct {
+	present bool
+	taskID  string
+}
+
+func (s *Service) canvasBindTargetUnchanged(task model.Task, marker localtask.CanvasBindRecoveryTarget) (bool, error) {
+	if marker.Reason != "node_deleted" && marker.Reason != "node_task_mismatch" {
+		return true, nil
+	}
+	current, err := s.canvasBindTargetState(task.UserID, task.ProjectID, marker.NodeID)
+	if err != nil {
+		return false, err
+	}
+	return current.present == marker.NodePresent && current.taskID == strings.TrimSpace(marker.NodeTaskID), nil
+}
+
+func (s *Service) canvasBindTargetState(userID, canvasID, nodeID string) (canvasBindTargetState, error) {
+	raw, err := s.UserCanvasProject(userID, canvasID)
+	if err != nil {
+		return canvasBindTargetState{}, err
+	}
+	var doc struct {
+		Nodes []struct {
+			ID       string         `json:"id"`
+			Metadata map[string]any `json:"metadata"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return canvasBindTargetState{}, err
+	}
+	for _, node := range doc.Nodes {
+		if strings.TrimSpace(node.ID) != strings.TrimSpace(nodeID) {
+			continue
+		}
+		taskID, _ := node.Metadata["taskId"].(string)
+		return canvasBindTargetState{present: true, taskID: strings.TrimSpace(taskID)}, nil
+	}
+	return canvasBindTargetState{}, nil
+}
+
+func (s *Service) canvasBindRecoveryTarget(task model.Task, target canvasBindTarget, err error) (localtask.CanvasBindRecoveryTarget, bool) {
+	reason := canvasBindErrorReason(err)
+	if reason == "" || !terminalCanvasBindError(err) {
+		return localtask.CanvasBindRecoveryTarget{}, false
+	}
+	marker := localtask.CanvasBindRecoveryTarget{NodeID: target.nodeID, OutputIndex: target.outputIndex, Reason: reason}
+	if reason != "node_deleted" && reason != "node_task_mismatch" {
+		return marker, true
+	}
+	state, stateErr := s.canvasBindTargetState(task.UserID, task.ProjectID, target.nodeID)
+	if stateErr != nil {
+		return localtask.CanvasBindRecoveryTarget{}, false
+	}
+	marker.NodePresent = state.present
+	marker.NodeTaskID = state.taskID
+	return marker, true
+}
+
+func terminalCanvasBindError(err error) bool {
+	switch canvasBindErrorReason(err) {
+	case "node_deleted", "node_task_mismatch", "node_mismatch", "canvas_mismatch":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Service) executeMessageTaskAttach(registry *operations.Registry, task model.Task, conversationID, messageID string, outputIndex int) error {
 	conversationID = strings.TrimSpace(conversationID)
 	messageID = strings.TrimSpace(messageID)
@@ -167,9 +272,6 @@ func (s *Service) executeCanvasTaskBind(registry *operations.Registry, task mode
 		Caller: operations.ManualCaller(false),
 		Params: params,
 	})
-	if skippableCanvasBindError(err) {
-		return nil
-	}
 	return err
 }
 
@@ -246,11 +348,11 @@ func skippableCanvasBindError(err error) bool {
 	if bindInfrastructureUnavailable(err) {
 		return true
 	}
-	var opErr *operations.Error
-	if !errors.As(err, &opErr) {
+	reason := canvasBindErrorReason(err)
+	if reason == "" {
 		return false
 	}
-	switch opErr.Reason {
+	switch reason {
 	case "node_deleted", "node_task_mismatch", "node_mismatch", "canvas_mismatch",
 		"conversation_deleted", "message_deleted", "message_mismatch", "conversation_mismatch",
 		"message_task_mismatch",
@@ -262,6 +364,17 @@ func skippableCanvasBindError(err error) bool {
 	default:
 		return false
 	}
+}
+
+func canvasBindErrorReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	var opErr *operations.Error
+	if !errors.As(err, &opErr) {
+		return ""
+	}
+	return opErr.Reason
 }
 
 func bindInfrastructureUnavailable(err error) bool {
